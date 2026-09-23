@@ -1184,5 +1184,96 @@
   "reconAnnulloEsito": "{riaperti, plural, one {# bonifico è tornato in coda} other {# bonifici sono tornati in coda}}.",
   "reconAnnulloParziale": "{riaperti, plural, one {# bonifico è tornato in coda} other {# bonifici sono tornati in coda}}, {falliti, plural, one {# non è stato riaperto} other {# non sono stati riaperti}}: controlla il registro filtrato per questo import.",
   "reconAnnulloFattureVive": "Fatture ancora valide su {n, plural, one {# movimento} other {# movimenti}}: {numeri}. Restano emesse e vanno annullate a parte.",
-  "reconAvvisiTroncati": "Gli avvisi sono partiti solo per {n, plural, one {il primo movimento} other {i primi # movimenti}} di questo import: le famiglie delle righe restanti non sono state avvisate, e riaprire il riepilogo non le recupera. Apri il registro filtrato per questo import."
+  "reconAvvisiTroncati": "Gli avvisi sono partiti solo per {n, plural, one {il primo movimento} other {i primi # movimenti}} di questo import: le famiglie delle righe restanti non sono state avvisate, e riaprire il riepilogo non le recupera. Apri il registro filtrato per questo import.",
+  "codaFatture": {
+    "titolo": "Coda fatture",
+    "sottotitolo": "Le fatture in coda partono da sole: puoi chiudere la pagina, l’invio continua.",
+    "stato": {
+      "attiva": "L’invio continua anche a PC spento.",
+      "sospesa": "Coda sospesa: nessun invio in corso.",
+      "pausa": "In pausa fino alle {ora}.",
+      "stimaFine": "Fine stimata: {ora}."
+    },
+    "conteggi": {
+      "inCoda": "In coda",
+      "inInvio": "In invio",
+      "errore": "Errore",
+      "emesse7g": "Emesse (7 giorni)"
+    },
+    "azioni": {
+      "togli": "Togli",
+      "rimetti": "Rimetti in coda",
+      "sospendi": "Sospendi coda",
+      "riprendi": "Riprendi invio"
+    },
+    "lotto": {
+      "messeInCoda": "{n, plural, one {# fattura messa in coda} other {# fatture messe in coda}}. Partono da sole, anche se chiudi la pagina o spegni il PC.",
+      "giaInCoda": "{n, plural, one {# era già in coda} other {# erano già in coda}}.",
+      "vaiAllaCoda": "Vai alla coda fatture",
+      "mettiInCoda": "Metti in coda",
+      "invio": "Metto in coda le fatture…",
+      "tetto": "{n, plural, one {Al massimo # fattura per volta} other {Al massimo # fatture per volta}}: entrano in coda e partono al ritmo che concede Aruba.",
+      "errore": "La coda non ha confermato: le fatture potrebbero non essere entrate. Riprova pure: quelle già in coda non si duplicano.",
+      "esitoIncerto": "La richiesta è arrivata, ma la risposta non dice quante fatture sono entrate: controlla la pagina della coda prima di riprovare."
+    },
+    "singola": {
+      "messaInCoda": "Messa in coda: parte entro pochi minuti.",
+      "giaInCoda": "Era già in coda: lo stato si vede nella pagina Coda fatture."
+    },
+    "esiti": {
+      "emessa": "Emessa",
+      "gia_emessa": "Già emessa",
+      "scarto_aruba": "Scartata da Aruba",
+      "esito_incerto": "Esito incerto: controlla sul pannello Aruba prima di rimetterla in coda",
+      "aruba_429": "Aruba ha risposto «troppe richieste»: riparte da sola",
+      "non_tentata": "Non ancora tentata in questo giro: riparte al prossimo",
+      "pagamento_non_trovato": "Pagamento non trovato",
+      "trasporto_da_verificare": "Trasporto da verificare: controlla il pannello Aruba prima di rimetterla in coda",
+      "rifiuto_locale": "Rifiutata prima dell’invio",
+      "intestatario_non_valido": "Intestatario non leggibile: rimettila in coda dal lotto",
+      "non_saldato": "Pagamento non ancora saldato",
+      "intestatario_mancante": "Intestatario non impostato sull’anagrafica",
+      "intestatario_in_conflitto": "Pagamento diviso fra due genitori: scegli l’intestatario dal lotto",
+      "intestatario_non_del_bambino": "L’intestatario indicato non è un genitore di questo bambino",
+      "gia_emessa_altro_intestatario": "Già emessa con un altro intestatario",
+      "quota_estranea": "Quota già fatturata su un altro documento",
+      "partita_non_registrata": "Fattura partita ma non a registro: verifica prima di riprovare",
+      "periodo_competenza_mancante": "Periodo di competenza mancante: indicalo sul pagamento",
+      "dati_minore_mancanti": "Dati del bambino incompleti: codice fiscale o data di nascita"
+    },
+    "menu": {
+      "codaFatture": "Coda fatture",
+      "vociAttive": "{n, plural, one {# voce attiva in coda} other {# voci attive in coda}}"
+    },
+    "statoVoce": {
+      "in_coda": "In coda",
+      "in_invio": "In invio",
+      "emessa": "Emessa",
+      "errore": "Errore",
+      "tolta": "Tolta"
+    },
+    "caricamento": "Caricamento…",
+    "erroreCaricamento": "Impossibile caricare la coda.",
+    "riprova": "Riprova",
+    "nonDisponibile": "La coda fatture non è ancora disponibile: la migrazione non è stata applicata.",
+    "elencoVuoto": "Nessuna fattura in coda.",
+    "aggiorna": "Aggiorna",
+    "selezionate": "{n, plural, one {# selezionata} other {# selezionate}}",
+    "selezionaTutto": "Seleziona tutto",
+    "urgente": "Urgente",
+    "posizione": "Posizione {n}",
+    "confermaTogliTitolo": "Togliere dalla coda?",
+    "confermaTogliTesto": "{n, plural, one {Verrà tolta # fattura dalla coda.} other {Verranno tolte # fatture dalla coda.}}",
+    "confermaRimettiTitolo": "Rimettere in coda?",
+    "confermaRimettiTesto": "{n, plural, one {Verrà rimessa in coda # fattura.} other {Verranno rimesse in coda # fatture.}}",
+    "confermaSospendiTitolo": "Sospendere la coda?",
+    "confermaSospendiTesto": "Nessun invio partirà finché non la riprendi.",
+    "confermaRiprendiTitolo": "Riprendere l’invio?",
+    "confermaRiprendiTesto": "Il prossimo giro riparte entro pochi minuti.",
+    "annulla": "Annulla",
+    "conferma": "Conferma",
+    "soloAdmin": "Riservato alla Direzione.",
+    "erroreOperazione": "Operazione non riuscita.",
+    "aggiornateEsito": "{n, plural, one {# voce aggiornata} other {# voci aggiornate}}."
+  }
 }

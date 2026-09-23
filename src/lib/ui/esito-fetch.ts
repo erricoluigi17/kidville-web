@@ -2791,6 +2791,23 @@ export const CODICI_ERRORE = {
      * che serve davvero a chi ha appena premuto il bottone.
      */
     PERSONALE_OPERAZIONE_NON_RIUSCITA: 'errorePersonaleOperazioneNonRiuscita',
+    /**
+     * ─── LA CODA DELLE FATTURE (route `pagamenti/fattura/coda`, `…/azioni`, `…/sospensione`) ───
+     *
+     * 503 — la tabella della coda non esiste ancora (PGRST205/42P01): la migrazione non è
+     * applicata. Non è un guasto dell'utente e non si finge un successo: nessuna voce è stata
+     * toccata.
+     */
+    CODA_FATTURE_NON_DISPONIBILE: 'erroreCodaFattureNonDisponibile',
+    /**
+     * 500 — la scrittura sulla coda (accodamento, azione su voci, sospensione) è fallita.
+     *
+     * ⚠️ La frase NON promette «nessuna voce è cambiata»: su un accodamento di più voci il
+     * `catch` non sa a che punto si è fermato. Manda a ricaricare e controllare.
+     */
+    CODA_FATTURE_SCRITTURA_FALLITA: 'erroreCodaFattureScritturaFallita',
+    /** 400 — si chiede di mettere in coda la fattura di un pagamento non ancora `pagato`. */
+    PAGAMENTO_NON_SALDATO: 'errorePagamentoNonSaldato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

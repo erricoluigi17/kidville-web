@@ -512,5 +512,8 @@
   "erroreFascicoloNonCancellato": "We could not remove the documents from storage: no data has been deleted. Please try again in a few minutes.",
   "errorePersonaleOperazioneNonRiuscita": "We could not complete the operation. Reload the record and check its state before trying again.",
   "erroreAnnulloImportInterrotto": "The cancellation stopped halfway: some bank transfers may already be back in the queue. Open the register filtered by this import and check which ones are still green before trying again.",
-  "erroreRiepilogoNotificheInterrotte": "Sending the notifications to families stopped halfway: some have already gone out. Reopen the summary to finish sending — anyone already notified will not be notified twice."
+  "erroreRiepilogoNotificheInterrotte": "Sending the notifications to families stopped halfway: some have already gone out. Reopen the summary to finish sending — anyone already notified will not be notified twice.",
+  "erroreCodaFattureNonDisponibile": "The invoice queue isn’t available yet: nothing was changed. Please try again later.",
+  "erroreCodaFattureScritturaFallita": "We couldn’t update the invoice queue. Reload the page and check its state before trying again.",
+  "errorePagamentoNonSaldato": "An invoice can only be queued for payments that have been paid in full: no invoice was queued."
 }

@@ -1184,5 +1184,96 @@
   "reconAnnulloEsito": "{riaperti, plural, one {# bank transfer is back in the queue} other {# bank transfers are back in the queue}}.",
   "reconAnnulloParziale": "{riaperti, plural, one {# bank transfer is back in the queue} other {# bank transfers are back in the queue}}, {falliti, plural, one {# was not reopened} other {# were not reopened}}: check the register filtered by this import.",
   "reconAnnulloFattureVive": "Invoices still valid on {n, plural, one {# movement} other {# movements}}: {numeri}. They stay issued and must be cancelled separately.",
-  "reconAvvisiTroncati": "Notices were sent only for {n, plural, one {the first movement} other {the first # movements}} of this import: the families of the remaining rows were not notified, and reopening the summary does not recover them. Open the register filtered by this import."
+  "reconAvvisiTroncati": "Notices were sent only for {n, plural, one {the first movement} other {the first # movements}} of this import: the families of the remaining rows were not notified, and reopening the summary does not recover them. Open the register filtered by this import.",
+  "codaFatture": {
+    "titolo": "Invoice queue",
+    "sottotitolo": "Queued invoices send themselves: you can close the page, sending continues.",
+    "stato": {
+      "attiva": "Sending continues even with the PC off.",
+      "sospesa": "Queue suspended: nothing is sending.",
+      "pausa": "Paused until {ora}.",
+      "stimaFine": "Estimated finish: {ora}."
+    },
+    "conteggi": {
+      "inCoda": "Queued",
+      "inInvio": "Sending",
+      "errore": "Error",
+      "emesse7g": "Sent (7 days)"
+    },
+    "azioni": {
+      "togli": "Remove",
+      "rimetti": "Requeue",
+      "sospendi": "Suspend queue",
+      "riprendi": "Resume sending"
+    },
+    "lotto": {
+      "messeInCoda": "{n, plural, one {# invoice queued} other {# invoices queued}}. They send themselves, even if you close the page or turn off the PC.",
+      "giaInCoda": "{n, plural, one {# was already queued} other {# were already queued}}.",
+      "vaiAllaCoda": "Go to the invoice queue",
+      "mettiInCoda": "Add to queue",
+      "invio": "Queuing the invoices…",
+      "tetto": "{n, plural, one {At most # invoice at a time} other {At most # invoices at a time}}: they join the queue and send at the pace Aruba allows.",
+      "errore": "The queue didn’t confirm: the invoices may not have gone in. You can try again: invoices already queued aren’t duplicated.",
+      "esitoIncerto": "The request arrived, but the reply doesn’t say how many invoices went in: check the queue page before trying again."
+    },
+    "singola": {
+      "messaInCoda": "Queued: it will send within minutes.",
+      "giaInCoda": "It was already queued: you can see its status on the Invoice queue page."
+    },
+    "esiti": {
+      "emessa": "Sent",
+      "gia_emessa": "Already sent",
+      "scarto_aruba": "Rejected by Aruba",
+      "esito_incerto": "Uncertain outcome: check the Aruba panel before requeuing it",
+      "aruba_429": "Aruba replied “too many requests”: it retries on its own",
+      "non_tentata": "Not attempted this run yet: it retries next time",
+      "pagamento_non_trovato": "Payment not found",
+      "trasporto_da_verificare": "Delivery to verify: check the Aruba panel before requeuing it",
+      "rifiuto_locale": "Rejected before sending",
+      "intestatario_non_valido": "Billed-to party isn’t readable: requeue it from the batch",
+      "non_saldato": "Payment not settled yet",
+      "intestatario_mancante": "Billed-to party not set on the record",
+      "intestatario_in_conflitto": "Payment split between two parents: choose the billed-to party from the batch",
+      "intestatario_non_del_bambino": "The billed-to party isn’t a parent of this child",
+      "gia_emessa_altro_intestatario": "Already issued to a different billed-to party",
+      "quota_estranea": "Share already invoiced on another document",
+      "partita_non_registrata": "Invoice sent but not on record: check before retrying",
+      "periodo_competenza_mancante": "Missing accrual period: set it on the payment",
+      "dati_minore_mancanti": "Child’s details incomplete: tax code or date of birth"
+    },
+    "menu": {
+      "codaFatture": "Invoice queue",
+      "vociAttive": "{n, plural, one {# active item in the queue} other {# active items in the queue}}"
+    },
+    "statoVoce": {
+      "in_coda": "Queued",
+      "in_invio": "Sending",
+      "emessa": "Sent",
+      "errore": "Error",
+      "tolta": "Removed"
+    },
+    "caricamento": "Loading…",
+    "erroreCaricamento": "Couldn’t load the queue.",
+    "riprova": "Retry",
+    "nonDisponibile": "The invoice queue isn’t available yet: the migration hasn’t been applied.",
+    "elencoVuoto": "No invoices in the queue.",
+    "aggiorna": "Refresh",
+    "selezionate": "{n, plural, one {# selected} other {# selected}}",
+    "selezionaTutto": "Select all",
+    "urgente": "Urgent",
+    "posizione": "Position {n}",
+    "confermaTogliTitolo": "Remove from the queue?",
+    "confermaTogliTesto": "{n, plural, one {# invoice will be removed from the queue.} other {# invoices will be removed from the queue.}}",
+    "confermaRimettiTitolo": "Requeue?",
+    "confermaRimettiTesto": "{n, plural, one {# invoice will be requeued.} other {# invoices will be requeued.}}",
+    "confermaSospendiTitolo": "Suspend the queue?",
+    "confermaSospendiTesto": "No sending will start until you resume it.",
+    "confermaRiprendiTitolo": "Resume sending?",
+    "confermaRiprendiTesto": "The next run starts within minutes.",
+    "annulla": "Cancel",
+    "conferma": "Confirm",
+    "soloAdmin": "Reserved for Management.",
+    "erroreOperazione": "The operation failed.",
+    "aggiornateEsito": "{n, plural, one {# entry updated} other {# entries updated}}."
+  }
 }

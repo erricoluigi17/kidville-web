@@ -6,7 +6,9 @@ import { useTranslations } from 'next-intl';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { motion } from 'framer-motion';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
-import { NAV_GROUPS, activeHref, visibleItem } from './admin-nav-config';
+import { NAV_GROUPS, activeHref, visibleItem, CODA_FATTURE_HREF, puoLeggereCodaFatture } from './admin-nav-config';
+import { useConteggioCodaFatture } from './use-conteggio-coda-fatture';
+import { ContatoreCodaFatture } from './ContatoreCodaFatture';
 
 // Voce "Esci" in fondo alla sidebar (il cockpit desktop ha il menu account nella
 // TopBar; qui resta come scorciatoia). Su mobile la nav è la bottom-nav +
@@ -25,10 +27,21 @@ export function AdminSidebar() {
   // Etichette di nav localizzate (namespace `etichette`, chiavi nav_*/navgruppo_*).
   // Fallback all'IT del config se la chiave manca → nessuna rottura, mai la chiave.
   const te = useTranslations('etichette');
+  // Coda fatture (nucleo §4): l'unica voce la cui etichetta non vive in `etichette`
+  // ma in `adminContabilita.codaFatture.menu.codaFatture` — vedi la nota su
+  // `CODA_FATTURE_HREF` in admin-nav-config.ts.
+  const tc = useTranslations('adminContabilita');
   // userId (→ href ?userId=) e ruolo dall'identità condivisa del cockpit. Il
   // provider risolve userId in two-pass (null al primo render, come l'SSR) →
   // gli href della sidebar combaciano e non c'è hydration mismatch.
-  const { ruolo, withUser } = useAdminIdentity();
+  const { userId, ruolo, withUser } = useAdminIdentity();
+  // Contatore delle voci attive accanto a «Coda fatture» (nucleo §4): una lettura leggera
+  // (`?solo=conteggi`) a ogni cambio di pagina, niente polling. Vedi l'hook.
+  const vociCoda = useConteggioCodaFatture({
+    attivo: puoLeggereCodaFatture(ruolo),
+    userId,
+    chiave: pathname ?? '',
+  });
 
   const current = activeHref(pathname);
 
@@ -81,7 +94,12 @@ export function AdminSidebar() {
                       strokeWidth={2.2}
                       className={`relative z-10 shrink-0 ${active ? 'text-kidville-yellow' : ''}`}
                     />
-                    <span className="relative z-10 font-semibold">{te.has(item.labelKey) ? te(item.labelKey) : item.label}</span>
+                    <span className="relative z-10 font-semibold">
+                      {item.href === CODA_FATTURE_HREF
+                        ? tc('codaFatture.menu.codaFatture')
+                        : te.has(item.labelKey) ? te(item.labelKey) : item.label}
+                    </span>
+                    {item.href === CODA_FATTURE_HREF && <ContatoreCodaFatture n={vociCoda} attivo={active} />}
                   </Link>
                 );
               })}

@@ -40,7 +40,9 @@ import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
 import { useOverlayIndietro } from '@/lib/mobile/overlay-indietro';
 import { useSediAttive } from '@/lib/context/sede-context';
-import { NAV_GROUPS, visibleItem } from './admin-nav-config';
+import { NAV_GROUPS, visibleItem, CODA_FATTURE_HREF, puoLeggereCodaFatture } from './admin-nav-config';
+import { useConteggioCodaFatture } from './use-conteggio-coda-fatture';
+import { ContatoreCodaFatture } from './ContatoreCodaFatture';
 
 // Elementi che possono ricevere focus dentro lo sheet — per il focus-trap.
 const FOCUSABLE =
@@ -53,6 +55,11 @@ interface AdminMenuSheetProps {
   withUser: (href: string) => string;
   /** Ruolo corrente per il gating `visibleItem` delle voci. */
   ruolo: string;
+  /**
+   * Utente corrente, per il contatore di «Coda fatture» (nucleo §4). Assente ⇒ nessuna
+   * lettura e nessun contatore: lo sheet resta usabile anche fuori dal cockpit.
+   */
+  userId?: string | null;
   /** Bottone «Menu» a cui restituire il focus alla chiusura. */
   returnFocusRef: React.RefObject<HTMLButtonElement | null>;
 }
@@ -91,12 +98,21 @@ function SedeRigaMenu({ nome, attiva, onClick }: { nome: string; attiva: boolean
   );
 }
 
-export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef }: AdminMenuSheetProps) {
+export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, returnFocusRef }: AdminMenuSheetProps) {
   const t = useTranslations('adminNav');
   // Etichette delle voci di nav dal config condiviso (namespace `etichette`).
   // Fallback all'IT del config se la chiave manca → nessuna rottura.
   const te = useTranslations('etichette');
   const ts = useTranslations('shared');
+  // Coda fatture (nucleo §4): stesso caso speciale della sidebar desktop, vedi
+  // la nota su `CODA_FATTURE_HREF` in admin-nav-config.ts.
+  const tc = useTranslations('adminContabilita');
+  // Il contatore si legge a ogni APERTURA del menu, e solo a menu aperto: niente polling.
+  const vociCoda = useConteggioCodaFatture({
+    attivo: open && puoLeggereCodaFatture(ruolo),
+    userId,
+    chiave: open ? 'aperto' : 'chiuso',
+  });
   const { sedi, effettive, soloSede, tutte } = useSediAttive();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
@@ -251,7 +267,12 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
                 return (
                   <Link key={item.href} href={withUser(item.href)} onClick={onClose} className={ROW_CLS}>
                     <Icon size={20} strokeWidth={2} className="shrink-0 text-kidville-green" />
-                    <span className="min-w-0 flex-1 font-semibold">{te.has(item.labelKey) ? te(item.labelKey) : item.label}</span>
+                    <span className="min-w-0 flex-1 font-semibold">
+                      {item.href === CODA_FATTURE_HREF
+                        ? tc('codaFatture.menu.codaFatture')
+                        : te.has(item.labelKey) ? te(item.labelKey) : item.label}
+                    </span>
+                    {item.href === CODA_FATTURE_HREF && <ContatoreCodaFatture n={vociCoda} />}
                     <ChevronRight size={16} className="text-kidville-muted shrink-0" strokeWidth={2} />
                   </Link>
                 );

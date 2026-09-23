@@ -68,12 +68,13 @@ describe('le costanti del ritmo', () => {
 
   it('il tetto della SELEZIONE e quello del BLOCCO sono due numeri diversi', () => {
     // ⚠️ Fino al 2026-09-07 erano lo stesso, e il nome `TETTO_LOTTO` significava
-    // entrambe le cose. Adesso: quante se ne mettono in coda (50, la soglia oraria
-    // che l'app si dà su Aruba) e quante ne parte alla volta (15, ciò che entra nel
-    // budget di un'invocazione). Confonderli dimezzerebbe la selezione o farebbe
-    // partire blocchi che non stanno nei 300 secondi.
+    // entrambe le cose. Adesso: quante se ne mettono in coda con un gesto (500 dal
+    // 2026-09-23, quanto la POST della coda accetta — prima era 50, la soglia oraria,
+    // perché il lotto partiva dal browser) e quante ne parte alla volta (15, ciò che
+    // entra nel budget di un'invocazione del lavoratore). Confonderli ridurrebbe la
+    // selezione o farebbe partire blocchi che non stanno nei 300 secondi.
     expect(TETTO_LOTTO).toBeGreaterThan(TETTO_BLOCCO)
-    expect(TETTO_LOTTO).toBe(50)
+    expect(TETTO_LOTTO).toBe(500)
     expect(TETTO_BLOCCO).toBe(15)
   })
 })

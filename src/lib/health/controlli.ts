@@ -26,13 +26,16 @@ import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
  * e per ognuno esiste un test che lo forza a dirlo.
  *
  * ════════════════════════════════════════════════════════════════════════════════
- * LE CINQUE MISURE, E COSA VEDE CIASCUNA CHE LE ALTRE NON VEDONO
+ * LE SETTE MISURE, E COSA VEDE CIASCUNA CHE LE ALTRE NON VEDONO
  *
  *  1. `db-lettura`   — il database risponde e il service role legge davvero.
  *  2. `schema-atteso`— le tabelle che il codice usa SENZA tollerarne l'assenza ci sono.
  *  3. `cron-battito` — ogni job critico ha lasciato un «ok» dentro la sua finestra.
  *  4. `tasso-errore` — quante impronte d'errore distinte sono ATTIVE adesso.
  *  5. `config`       — le variabili la cui assenza produce un guasto silenzioso.
+ *  6. `sezione-testo-allineato` — il testo della classe coincide col nome della sezione.
+ *  7. `coda-fatture` — la coda delle fatture Aruba non è ferma: nessuna voce aspetta
+ *                      da più di 24 ore, e la coda non è sospesa da più di 24 ore.
  *
  * ════════════════════════════════════════════════════════════════════════════════
  * NESSUN DATO PERSONALE, E LA TENSIONE CON LA REGOLA 3 DI AGENTS.md
@@ -816,6 +819,164 @@ async function controlloTestoClasse(supabase: SupabaseClient): Promise<Controllo
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * 7. La coda delle fatture Aruba non è ferma
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Oltre quante ore una voce che aspetta ancora di partire è un guasto.
+ *
+ * La coda spedisce 50 fatture l'ora (`SOGLIA_ORARIA_APP`), e il gesto più grande che la
+ * segreteria può fare è 500 voci: dieci ore di invii. Ventiquattro ore coprono quel
+ * gesto, una pausa di 60 minuti dopo un 429 e una notte intera — e restano abbastanza
+ * corte perché una coda ferma si veda il giorno stesso, non alla telefonata della
+ * famiglia che aspetta la fattura per la detrazione.
+ */
+export const ORE_ALLARME_ATTESA = 24
+
+/**
+ * Oltre quante ore una coda SOSPESA è un guasto. La sospensione è un gesto dell'admin,
+ * e un gesto dimenticato ha la stessa forma di un guasto: le fatture non partono e
+ * nessuno lo dice.
+ */
+export const ORE_ALLARME_SOSPESA = 24
+
+/**
+ * Gli stati di una voce che ASPETTA ancora di partire. `in_invio` c'è di proposito: una
+ * voce presa da un lavoratore che poi è morto resta `in_invio` finché il bidello non la
+ * chiude — e se il cron è fermo il bidello non passa, cioè la voce resta lì per sempre
+ * senza che nessuna voce `in_coda` la tradisca. `errore` e i due stati conclusi
+ * (`emessa`, `tolta`) non aspettano niente: li legge la segreteria nella pagina della coda.
+ */
+export const STATI_IN_ATTESA = ['in_coda', 'in_invio'] as const
+
+interface RigaAttesa {
+    in_attesa_dal?: string | null
+}
+
+interface RigaStatoCoda {
+    sospesa?: boolean | null
+    sospesa_il?: string | null
+}
+
+/**
+ * IL CONTROLLO CHE SI ACCORGE DI UNA CODA CHE NON SPEDISCE PIÙ.
+ *
+ * La coda nasce per un gesto preciso: la segreteria accoda fino a 500 fatture, spegne il
+ * PC e se ne va. Da quel momento nessuno guarda più: se il cron si ferma, se il
+ * lavoratore resta appeso, se Aruba rifiuta ogni accesso, se un admin sospende la coda e
+ * se ne dimentica, le fatture restano ferme e la prima a saperlo è la famiglia. È la
+ * forma esatta del difetto che la testata di questo file racconta: ciò che non parte non
+ * logga.
+ *
+ * ─── `in_attesa_dal`, NON `accodata_il` ──────────────────────────────────────
+ * `in_attesa_dal` si azzera a ogni rientro in coda («Rimetti in coda» dopo un errore).
+ * Con `accodata_il` una voce rimessa oggi dopo tre giorni in errore griderebbe subito,
+ * cioè l'allarme suonerebbe proprio nel momento in cui qualcuno ha appena rimediato.
+ * `riprova` (429 prima del numero, giro fermato) NON lo azzera: una voce che rimbalza da
+ * un giorno è ferma da un giorno, e deve comparire.
+ *
+ * ─── TABELLA ASSENTE → `ok`, CON LA NOTA ─────────────────────────────────────
+ * Il database E2E della CI non è migrato, e in produzione la migrazione la applica
+ * l'integrazione al merge: fino a quel momento la coda NON È INSTALLATA, e una coda che
+ * non esiste non può avere voci ferme. Rispondere `degradato` farebbe suonare l'allarme
+ * da solo — e un allarme che suona da solo viene spento. La nota nel dettaglio resta, così
+ * chi legge `/api/health` sa che questo controllo non ha ancora niente da guardare.
+ *
+ * ⚠️ Il ripiego vale per `fatture_coda`, cioè per la coda intera. Se `fatture_coda`
+ * risponde e `fatture_coda_stato` no, la coda C'È ed è installata a metà: le due tabelle
+ * nascono nella stessa migrazione, e una sola delle due è un guasto, non un «non ancora».
+ *
+ * ─── COSA ESCE NEL CORPO ─────────────────────────────────────────────────────
+ * La rotta è pubblica: escono conteggi, ore e codici d'errore. Nessun `message`, nessun
+ * id di pagamento, nessun nome. La `select` chiede una colonna di tempo e basta.
+ *
+ * `degradato` e mai `giu`: una coda ferma non impedisce a nessuno di aprire l'app.
+ */
+export async function controlloCodaFatture(
+    supabase: SupabaseClient,
+    adesso: number,
+): Promise<Controllo> {
+    return misura('coda-fatture', 'degradato', async () => {
+        const [voci, stato] = await Promise.all([
+            // La più VECCHIA fra le voci in attesa: l'ordine crescente la mette in testa
+            // (in Postgres i NULL vanno in fondo), e `limit(1)` ne trasporta una sola.
+            // `count: 'exact'` conta tutte quelle che combaciano, non solo la riga letta.
+            supabase
+                .from('fatture_coda')
+                .select('in_attesa_dal', { count: 'exact' })
+                .in('stato', [...STATI_IN_ATTESA])
+                .order('in_attesa_dal', { ascending: true })
+                .limit(1),
+            supabase.from('fatture_coda_stato').select('sospesa, sospesa_il').eq('id', 1).maybeSingle(),
+        ])
+
+        // PostgREST non lancia: ritorna `{ error }` (AGENTS, regola 7). Senza questi due
+        // rami una lettura caduta darebbe «nessuna voce in attesa», cioè un verde che non
+        // ha misurato niente.
+        if (voci.error) {
+            const codice = codiceDi(voci.error)
+            if (CODICI_TABELLA_ASSENTE.has(codice)) {
+                return { esito: 'ok', dettaglio: `coda non ancora installata (${codice})` }
+            }
+            return { esito: 'degradato', dettaglio: `fatture_coda ${codice}` }
+        }
+        if (stato.error) {
+            return { esito: 'degradato', dettaglio: `fatture_coda_stato ${codiceDi(stato.error)}` }
+        }
+
+        const guasti: string[] = []
+        const note: string[] = []
+
+        const righe = (voci.data ?? []) as RigaAttesa[]
+        const inAttesa = voci.count ?? righe.length
+        note.push(`in attesa: ${inAttesa}`)
+        if (righe.length > 0) {
+            const dal = Date.parse(String(righe[0].in_attesa_dal ?? ''))
+            if (Number.isNaN(dal)) {
+                // Un istante illeggibile non è «nessuna attesa»: è una misura mancata, e
+                // un controllo che la prendesse per buona sarebbe verde per il motivo
+                // sbagliato.
+                guasti.push('fatture_coda in_attesa_dal illeggibile')
+            } else {
+                const attesaMs = adesso - dal
+                const ore = Math.floor(attesaMs / ORA)
+                // STRETTAMENTE maggiore: a 24 h esatte la voce non è ancora in ritardo.
+                if (attesaMs > ORE_ALLARME_ATTESA * ORA) {
+                    guasti.push(
+                        `voci in attesa da oltre ${ORE_ALLARME_ATTESA} h (la più vecchia da ${ore} h, in attesa: ${inAttesa})`,
+                    )
+                } else {
+                    note.push(`la più vecchia da ${ore} h`)
+                }
+            }
+        }
+
+        const riga = stato.data as RigaStatoCoda | null
+        if (riga === null || riga === undefined) {
+            // La migrazione inserisce la riga `id=1`, e tutto il motore la legge: senza,
+            // non si sa nemmeno se la coda è sospesa.
+            guasti.push('fatture_coda_stato senza la riga id=1')
+        } else if (riga.sospesa === true) {
+            const il = Date.parse(String(riga.sospesa_il ?? ''))
+            if (Number.isNaN(il)) {
+                guasti.push('coda sospesa senza istante di sospensione')
+            } else {
+                const sospesaMs = adesso - il
+                const ore = Math.floor(sospesaMs / ORA)
+                if (sospesaMs > ORE_ALLARME_SOSPESA * ORA) {
+                    guasti.push(`coda sospesa da oltre ${ORE_ALLARME_SOSPESA} h (da ${ore} h)`)
+                } else {
+                    note.push(`sospesa da ${ore} h`)
+                }
+            }
+        }
+
+        if (guasti.length > 0) return { esito: 'degradato', dettaglio: guasti.join('; ') }
+        return { esito: 'ok', dettaglio: note.join(', ') }
+    })
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
 
@@ -833,9 +994,9 @@ export interface OpzioniSalute {
 }
 
 /**
- * I sei controlli girano IN PARALLELO.
+ * I sette controlli girano IN PARALLELO.
  *
- * In serie il caso peggiore sarebbe 6 × il tetto = 12 secondi, cioè oltre il timeout di
+ * In serie il caso peggiore sarebbe 7 × il tetto = 14 secondi, cioè oltre il timeout di
  * ogni monitor ragionevole: l'endpoint verrebbe dichiarato giù proprio quando il suo
  * compito è dire in che modo è giù. In parallelo il caso peggiore resta il tetto singolo.
  */
@@ -852,6 +1013,7 @@ export async function eseguiControlli(
         controlloTassoErrore(supabase, adesso, opzioni.ambiente),
         controlloConfig(),
         controlloTestoClasse(supabase),
+        controlloCodaFatture(supabase, adesso),
     ])
     return { stato: aggrega(controlli), ms: Date.now() - t0, controlli }
 }

@@ -920,11 +920,12 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     selezionabili.slice(0, TETTO_LOTTO).every((m) => selezionati.has(m.id));
 
   /**
-   * ⚠️ IL TETTO SI APPLICA QUI, non nel lotto: troncare in silenzio dodici righe
-   * su venti al momento dell'emissione significherebbe non emettere otto fatture
-   * che l'operatore crede partite. Il rifiuto della tredicesima spunta è
-   * spiegato a schermo dalla riga «si emette al massimo N per volta», che la
-   * barra mostra sempre.
+   * ⚠️ IL TETTO SI APPLICA QUI, non nel lotto: troncare in silenzio le righe in
+   * più al momento dell'accodamento significherebbe non mettere in coda fatture
+   * che l'operatore crede partite (e la POST della coda, oltre `TETTO_VOCI_CODA`,
+   * risponderebbe 400 per tutte). Il rifiuto della spunta oltre il tetto — 500
+   * dal 2026-09-23, quanto la coda accetta in un gesto — è spiegato a schermo
+   * dalla riga «al massimo N fatture per volta», che la barra mostra sempre.
    */
   const spunta = (m: MovimentoUi) => {
     setSelezionati((prima) => {

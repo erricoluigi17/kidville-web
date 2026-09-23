@@ -512,5 +512,8 @@
   "erroreFascicoloNonCancellato": "Non è stato possibile togliere i documenti dall’archivio: nessun dato è stato cancellato. Riprova fra qualche minuto.",
   "errorePersonaleOperazioneNonRiuscita": "Non è stato possibile completare l’operazione. Ricarica la scheda e controlla com’è rimasta prima di riprovare.",
   "erroreAnnulloImportInterrotto": "L’annullamento si è interrotto a metà: una parte dei bonifici può essere già tornata in coda. Apri il registro filtrato per questo import e controlla quali sono ancora verdi prima di riprovare.",
-  "erroreRiepilogoNotificheInterrotte": "L’invio degli avvisi alle famiglie si è interrotto a metà: una parte è già partita. Riapri il riepilogo per completare l’invio — chi è già stato avvisato non lo sarà due volte."
+  "erroreRiepilogoNotificheInterrotte": "L’invio degli avvisi alle famiglie si è interrotto a metà: una parte è già partita. Riapri il riepilogo per completare l’invio — chi è già stato avvisato non lo sarà due volte.",
+  "erroreCodaFattureNonDisponibile": "La coda delle fatture non è ancora disponibile: non è stato modificato nulla. Riprova più tardi.",
+  "erroreCodaFattureScritturaFallita": "Non è stato possibile aggiornare la coda delle fatture. Ricarica la pagina e controlla com’è rimasta prima di riprovare.",
+  "errorePagamentoNonSaldato": "La fattura si può mettere in coda solo per pagamenti saldati: nessuna fattura è stata messa in coda."
 }

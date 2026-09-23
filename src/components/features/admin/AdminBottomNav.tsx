@@ -64,7 +64,7 @@ const PILL_BASE =
 export function AdminBottomNav() {
   const pathname = usePathname();
   const t = useTranslations('adminNav');
-  const { ruolo, withUser } = useAdminIdentity();
+  const { userId, ruolo, withUser } = useAdminIdentity();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -156,6 +156,7 @@ export function AdminBottomNav() {
         onClose={() => setMenuOpen(false)}
         withUser={withUser}
         ruolo={ruolo}
+        userId={userId}
         returnFocusRef={menuBtnRef}
       />
     </>

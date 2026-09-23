@@ -21,6 +21,15 @@
  * ⚠️ Repo PUBBLICO: nomi e codici fiscali sintetici. Il cast verificato a zero
  * occorrenze su `parents`, `alunni` e sui file veri è `FABBRI` · `BIANCHI` ·
  * `PERLINI` (vedi `REGOLA-NOMI-FINTI`): non se ne inventano altri.
+ *
+ * ─── DAL 2026-09-23 LE STRADE SONO DUE (nucleo della coda fatture, §4) ──────
+ *  · nessuna scelta, o un ADULTO in archivio → `POST /api/pagamenti/fattura/coda`,
+ *    una voce, `urgente: true`, l'intestatario dentro la voce;
+ *  · una PERSONA digitata a mano («Altro») → la POST diretta di sempre, con la sua
+ *    «ricorda sulla scheda» DOPO l'emissione. La coda accetta solo il ramo `adult`
+ *    (`zAdultScelto`): non custodisce anagrafiche digitate nel browser.
+ * I casi qui sotto dicono quale delle due strade prende ogni scelta, e lo verificano
+ * sull'URL — non solo sul corpo.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
@@ -32,10 +41,22 @@ import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/re
  * distinguerli.
  */
 vi.mock('next-intl', async () => {
-    const catalogo = (await import('../../messages/it/adminContabilita.json')).default as Record<string, string>
+    // Il catalogo è NIDIFICATO da quando porta la sezione `codaFatture` (nucleo
+    // coda-fatture, §4): le chiavi piatte si leggono come prima, quelle puntate
+    // (`codaFatture.singola.messaInCoda`) scendendo il percorso.
+    const catalogo = (await import('../../messages/it/adminContabilita.json')).default as unknown as Record<string, unknown>
+    const foglia = (key: string): string | undefined => {
+        if (typeof catalogo[key] === 'string') return catalogo[key] as string
+        let corrente: unknown = catalogo
+        for (const pezzo of key.split('.')) {
+            if (!corrente || typeof corrente !== 'object') return undefined
+            corrente = (corrente as Record<string, unknown>)[pezzo]
+        }
+        return typeof corrente === 'string' ? corrente : undefined
+    }
     const useTranslations = () => {
         const t = (key: string, valori?: Record<string, unknown>) => {
-            const testo = catalogo[key] ?? key
+            const testo = foglia(key) ?? key
             if (!valori) return testo
             return testo.replace(/\{(\w+)\}/g, (_m, k: string) => String(valori[k] ?? `{${k}}`))
         }
@@ -97,7 +118,10 @@ const BIANCHI_INCOMPLETO: Candidato = {
 
 let chiamate: { url: string; init?: RequestInit }[] = []
 let anteprima: { ok: boolean; body: unknown } = { ok: true, body: null }
+/** La POST DIRETTA (solo per la persona digitata). */
 let emissione: { ok: boolean; body: unknown } = { ok: true, body: { success: true, data: { fattura_stato: 'in_attesa' } } }
+/** La POST alla CODA (nessuna scelta, o un adulto in archivio). */
+let coda: { ok: boolean; body: unknown } = { ok: true, body: { gruppo_id: 'gruppo-1', accodate: 1, gia_in_coda: [] } }
 let patchStudente: { ok: boolean; body: unknown } = { ok: true, body: { success: true } }
 
 function corpoAnteprima(
@@ -134,14 +158,24 @@ function montaFetch() {
         chiamate.push({ url: u, init })
         if (u.includes('/anteprima')) return { ok: anteprima.ok, json: async () => anteprima.body } as unknown as Response
         if (u.includes('/api/admin/students')) return { ok: patchStudente.ok, json: async () => patchStudente.body } as unknown as Response
+        if (u.includes('/api/pagamenti/fattura/coda')) return { ok: coda.ok, json: async () => coda.body } as unknown as Response
         return { ok: emissione.ok, json: async () => emissione.body } as unknown as Response
     }) as unknown as typeof fetch
 }
 
+const URL_CODA = '/api/pagamenti/fattura/coda'
+const URL_DIRETTA = '/api/pagamenti/fattura'
 const post = () => chiamate.find((c) => c.init?.method === 'POST')
 const patch = () => chiamate.find((c) => c.init?.method === 'PATCH')
-const corpoPost = (): Record<string, unknown> => JSON.parse(String(post()?.init?.body ?? '{}'))
 const corpoPatch = (): Record<string, unknown> => JSON.parse(String(patch()?.init?.body ?? '{}'))
+/** Il corpo della POST DIRETTA: lì l'intestatario sta al primo livello. */
+const corpoPost = (): Record<string, unknown> => JSON.parse(String(post()?.init?.body ?? '{}'))
+/** La voce accodata: nella coda l'intestatario sta DENTRO la voce, non al primo livello. */
+const voceCoda = (): Record<string, unknown> => {
+    const c = chiamate.find((x) => x.init?.method === 'POST' && x.url === URL_CODA)
+    const corpo = JSON.parse(String(c?.init?.body ?? '{"voci":[]}')) as { voci: Record<string, unknown>[] }
+    return corpo.voci[0] ?? {}
+}
 
 async function apri() {
     fireEvent.click(screen.getByRole('button', { name: /invia fattura/i }))
@@ -161,7 +195,9 @@ function valoreOpzione(testo: RegExp): string {
 
 beforeEach(() => {
     montaFetch()
+    document.documentElement.setAttribute('lang', 'it')
     emissione = { ok: true, body: { success: true, data: { fattura_stato: 'in_attesa' } } }
+    coda = { ok: true, body: { gruppo_id: 'gruppo-1', accodate: 1, gia_in_coda: [] } }
     patchStudente = { ok: true, body: { success: true } }
     anteprima = corpoAnteprima({
         quote: [],
@@ -184,8 +220,10 @@ describe('FatturaButton — chi riceve la fattura si sceglie, e si conferma', ()
 
         fireEvent.click(bottoneEmetti())
         await waitFor(() => expect(post()).toBeTruthy())
-        // Nessuna scelta = comportamento di sempre: la cascata del server decide.
-        expect(corpoPost().intestatario).toBeUndefined()
+        // Nessuna scelta = comportamento di sempre: la cascata (del lavoratore) decide.
+        expect(post()?.url).toBe(URL_CODA)
+        expect(voceCoda().pagamento_id).toBe(PAG)
+        expect(voceCoda().intestatario).toBeUndefined()
     })
 
     it('un candidato NON fatturabile resta nell’elenco, col motivo accanto', async () => {
@@ -212,14 +250,22 @@ describe('FatturaButton — chi riceve la fattura si sceglie, e si conferma', ()
         expect(post()).toBeUndefined()
     })
 
-    it('scegliendo un candidato fatturabile, la POST porta `intestatario` di tipo adult', async () => {
+    it('scegliendo un candidato fatturabile, la voce in CODA porta `intestatario` di tipo adult', async () => {
         render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
         await apri()
         fireEvent.change(selettore(), { target: { value: P_FABBRI } })
         fireEvent.click(bottoneEmetti())
         await waitFor(() => expect(post()).toBeTruthy())
 
-        expect(corpoPost().intestatario).toEqual({ tipo: 'adult', adult_id: P_FABBRI })
+        expect(post()?.url).toBe(URL_CODA)
+        expect(voceCoda().intestatario).toEqual({ tipo: 'adult', adult_id: P_FABBRI })
+        // ⚠️ E SENZA `conferma_proposta`: quel campo autorizza il lavoratore a scrivere
+        // l'intestatario sulla scheda del bambino, e una scelta fatta qui vale per QUESTO
+        // documento e basta — come valeva con la POST diretta. La scheda si cambia dalla
+        // scheda.
+        expect(voceCoda().conferma_proposta).toBeUndefined()
+        // Nessuna PATCH: non si «ricorda» un adulto scelto dal selettore.
+        expect(patch()).toBeUndefined()
     })
 })
 
@@ -297,12 +343,13 @@ describe('FatturaButton — pagamento ripartito: l’intestatario non si sceglie
         expect(screen.getByText(/quote del pagamento/i)).toBeTruthy()
     })
 
-    it('emette come sempre: la POST non porta nessun intestatario', async () => {
+    it('va in coda come sempre: la voce non porta nessun intestatario', async () => {
         render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
         await apri()
         fireEvent.click(bottoneEmetti())
         await waitFor(() => expect(post()).toBeTruthy())
-        expect(corpoPost().intestatario).toBeUndefined()
+        expect(post()?.url).toBe(URL_CODA)
+        expect(voceCoda().intestatario).toBeUndefined()
     })
 })
 
@@ -350,6 +397,12 @@ describe('FatturaButton — «Altro»: si digita, e si valida con la stessa funz
         fireEvent.click(bottoneEmetti())
         await waitFor(() => expect(post()).toBeTruthy())
 
+        // ⚠️ LA PERSONA DIGITATA NON VA IN CODA: la coda accetta solo `adult`
+        // (`zAdultScelto`) e non custodisce anagrafiche digitate nel browser. Mandarla
+        // alla coda sarebbe un 400 garantito, cioè la funzione tolta in silenzio: resta
+        // la POST diretta di sempre, e questo caso lo inchioda sull'URL.
+        expect(post()?.url).toBe(URL_DIRETTA)
+        expect(chiamate.some((c) => c.url === URL_CODA)).toBe(false)
         expect(corpoPost().intestatario).toEqual({
             tipo: 'persona',
             codice_fiscale: CF_DIGITATO,
@@ -437,8 +490,32 @@ describe('FatturaButton — «Altro»: si digita, e si valida con la stessa funz
     })
 })
 
-describe('FatturaButton — l’errore dell’emissione si legge a schermo, non in un alert() del browser', () => {
-    it('un 409 con codice esce tradotto dentro il `role="alert"`, e `alert()` non viene chiamato', async () => {
+describe('FatturaButton — l’errore si legge a schermo, non in un alert() del browser', () => {
+    it('un rifiuto della CODA con codice esce tradotto dentro il `role="alert"`, e `alert()` non viene chiamato', async () => {
+        const finto = vi.fn()
+        const originale = global.alert
+        global.alert = finto as unknown as typeof global.alert
+        try {
+            coda = {
+                ok: false,
+                body: {
+                    error: 'prosa del server che non deve arrivare a schermo',
+                    codice: 'PAGAMENTO_NON_SALDATO',
+                },
+            }
+            render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
+            await apri()
+            fireEvent.click(bottoneEmetti())
+
+            await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/solo per pagamenti saldati/i))
+            expect(screen.getByRole('alert').textContent).not.toMatch(/prosa del server/)
+            expect(finto).not.toHaveBeenCalled()
+        } finally {
+            global.alert = originale
+        }
+    })
+
+    it('un 409 della POST DIRETTA (persona digitata) esce tradotto allo stesso modo', async () => {
         const finto = vi.fn()
         const originale = global.alert
         global.alert = finto as unknown as typeof global.alert
@@ -452,9 +529,19 @@ describe('FatturaButton — l’errore dell’emissione si legge a schermo, non 
             }
             render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
             await apri()
+            fireEvent.change(selettore(), { target: { value: valoreOpzione(/altro/i) } })
+            await screen.findByLabelText(/codice fiscale/i)
+            for (const [etichetta, valore] of Object.entries({
+                '^nome': 'Carlo', '^cognome': 'Perlini', 'codice fiscale': CF_DIGITATO,
+                'indirizzo': 'Via delle Prove 1', '^CAP': '80014', 'comune': 'Giugliano in Campania',
+            })) {
+                fireEvent.change(screen.getByLabelText(new RegExp(etichetta, 'i')), { target: { value: valore } })
+            }
+            await waitFor(() => expect(bottoneEmetti().disabled).toBe(false))
             fireEvent.click(bottoneEmetti())
 
             await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/nota di variazione/i))
+            expect(post()?.url).toBe(URL_DIRETTA)
             expect(finto).not.toHaveBeenCalled()
         } finally {
             global.alert = originale
@@ -472,8 +559,9 @@ describe('FatturaButton — senza il blocco `intestatario` nella risposta, tutto
         expect(bottoneEmetti().disabled).toBe(false)
         fireEvent.click(bottoneEmetti())
         await waitFor(() => expect(post()).toBeTruthy())
-        expect(corpoPost().intestatario).toBeUndefined()
-        expect(corpoPost().causale).toBeNull()
+        expect(post()?.url).toBe(URL_CODA)
+        expect(voceCoda().intestatario).toBeUndefined()
+        expect(voceCoda().causale).toBeNull()
     })
 })
 

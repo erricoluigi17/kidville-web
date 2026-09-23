@@ -117,6 +117,100 @@ export function posterioriCheContengono(
 }
 
 /**
+ * LE MIGRAZIONI SCRITTE E ATTESE AL MERGE — la sola via d'uscita dalle tre guardie di
+ * freschezza (`rls-per-sede`, `onconflict-arbitro`, `tracce-docente-dichiarate`), e si
+ * dichiara QUI, file per file, con la ragione accanto.
+ *
+ * ─── PERCHÉ ESISTE (2026-09-23, coda fatture, contratto S21) ─────────────────
+ *
+ * Le tre guardie gridano su ogni migrazione posteriore alla fotografia che tocca ciò che
+ * la fotografia contiene, e la loro unica cura è RIGENERARE la fotografia dalla
+ * produzione. Ma una migrazione dentro una PR non è in produzione: la applica
+ * l'integrazione Supabase AL MERGE, mai a mano. Fino a quel momento nessuna
+ * rigenerazione la può contenere — il database non la conosce ancora — e il rosso non
+ * si può spegnere se non applicandola a mano prima del merge, cioè facendo proprio ciò
+ * che la regola del repo vieta. Un lock che si fa tornare verde solo violando una regola
+ * insegna a violarla, oppure a mettere `.skip`.
+ *
+ * La dichiarazione non spegne niente in silenzio, perché è TENUTA DA PROVE GEMELLE
+ * (`soglia-fotografia.test.ts`) che la fanno diventare rossa da sola:
+ *  1. ogni chiave è un file che esiste davvero in `supabase/migrations/`;
+ *  2. nessuna chiave è già fra le `version` della fotografia delle migrazioni: il giorno
+ *     in cui la PR-B rigenera le fotografie dalla produzione la migrazione c'è, la prova
+ *     diventa rossa e IMPONE di svuotare questo elenco — la voce non può sopravvivere
+ *     al suo motivo;
+ *  3. ogni chiave è posteriore a TUTTE e tre le fotografie che le guardie leggono: se
+ *     una fotografia viene rigenerata dopo, il file si rinomina con l'istante vero (mai
+ *     con un istante futuro), non si lascia la dichiarazione a coprire uno scatto che
+ *     la migrazione non l'ha mai vista;
+ *  4. la ragione è scritta per esteso e nomina l'integrazione e la PR-B;
+ *  5. nessuna voce morta: ogni chiave è riconosciuta da almeno una delle tre guardie
+ *     (un file che nessuna guardia segnala non ha bisogno di essere dichiarato, e una
+ *     dichiarazione inutile è un'esenzione che aspetta il prossimo file con quel nome);
+ *  6. un controllo positivo su una cartella sintetica: la sottrazione toglie ESATTAMENTE
+ *     i file dichiarati, e lascia gridare ogni altro file posteriore.
+ *
+ * Chiave: il nome del file, esatto. Il riconoscimento resta quello delle guardie: la
+ * dichiarazione toglie il file dall'elenco, non allarga nessun riconoscitore.
+ */
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20260923102831_fatture_coda_nucleo.sql':
+        "PR-A coda fatture (nucleo): tabelle `fatture_coda` e `fatture_coda_stato` con la RLS " +
+        "accesa, indice unico parziale e RPC. La applica l'integrazione Supabase al merge della " +
+        'PR-A, mai a mano; le fotografie (migrazioni, policy, indici unici, FK) si rigenerano ' +
+        'dalla produzione nella PR-B, e lì questa voce si toglie.',
+}
+
+/**
+ * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file
+ * dichiarati in `attese` (per nome esatto). Il quarto parametro esiste per il controllo
+ * positivo su una cartella sintetica; le guardie usano sempre la costante.
+ */
+export function posterioriDaRigenerare(
+    cartella: string,
+    soglia: Soglia,
+    riconosci: (sql: string) => boolean,
+    attese: Readonly<Record<string, string>> = MIGRAZIONI_ATTESE_AL_MERGE,
+): string[] {
+    return posterioriCheContengono(cartella, soglia, riconosci).filter(
+        (f) => !Object.prototype.hasOwnProperty.call(attese, f),
+    )
+}
+
+/**
+ * Questa migrazione può cambiare ciò che la fotografia degli INDICI UNICI contiene?
+ *
+ * È il riconoscitore di `onconflict-arbitro.test.ts`, spostato qui (2026-09-23) con lo
+ * stesso testo perché ora serve anche alla prova gemella «nessuna voce morta» di
+ * `MIGRAZIONI_ATTESE_AL_MERGE`. Si guarda lo SQL, non la prosa: una migrazione che nel
+ * commento dichiara di NON toccare un vincolo lo nomina comunque, e un guard che misura
+ * la spiegazione paga chi commenta di meno. Il riconoscimento è LARGO di proposito —
+ * anche una PRIMARY KEY entra nella fotografia — e un falso allarme costa una
+ * rigenerazione, che è l'unico momento in cui qualcuno guarda davvero se repo e database
+ * dicono la stessa cosa.
+ */
+export function toccaUnUnico(sql: string): boolean {
+    const istruzioni = senzaCommenti(sql)
+    return /\bunique\b/i.test(istruzioni) || /\bprimary\s+key\b/i.test(istruzioni)
+}
+
+/**
+ * Questa migrazione può cambiare ciò che la fotografia delle FK verso `utenti` contiene?
+ *
+ * È il riconoscitore di `tracce-docente-dichiarate.test.ts`, spostato qui (2026-09-23)
+ * con lo stesso testo, per la stessa ragione di `toccaUnUnico`. Si cercano le due forme
+ * che possono cambiare una FK — un `references utenti` e un `add`/`drop constraint` —
+ * non la parola «on delete»: il 2026-09-20 quel filtro più largo ha sparato su una frase
+ * scritta in un commento DENTRO un corpo `$$`, dove `senzaCommenti` giustamente non
+ * tocca niente. `add constraint` / `drop constraint` restano perché cambiare la
+ * `ON DELETE` di una chiave esistente si fa SOLO così.
+ */
+export function toccaLeFkUtenti(sql: string): boolean {
+    const s = senzaCommenti(sql)
+    return /references\s+(public\.)?utenti\b/i.test(s) || /\b(add|drop)\s+constraint\b/i.test(s)
+}
+
+/**
  * Questa migrazione può cambiare ciò che la fotografia della RLS contiene?
  *
  * ─── IL SECONDO PUNTO CIECO (2026-08-04) ──────────────────────────────────────

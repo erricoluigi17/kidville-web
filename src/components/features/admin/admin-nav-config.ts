@@ -22,6 +22,7 @@ import {
   Stamp,
   Newspaper,
   Flag,
+  ListOrdered,
 } from 'lucide-react';
 
 /**
@@ -56,6 +57,9 @@ export interface NavGroup {
   titleKey?: string | null;
   items: NavItem[];
 }
+
+/** I ruoli che `requireStaff` ammette di default sulle route della coda fatture. */
+const RUOLI_CODA_FATTURE: readonly string[] = ['admin', 'coordinator', 'segreteria'];
 
 export const NAV_GROUPS: NavGroup[] = [
   {
@@ -112,6 +116,18 @@ export const NAV_GROUPS: NavGroup[] = [
     titleKey: 'navgruppo_amministrazione',
     items: [
       { href: '/admin/pagamenti', label: 'Contabilità', labelKey: 'nav_pagamenti', icon: Euro },
+      // Coda fatture (nucleo §4, docs/superpowers/specs/2026-09-22-coda-fatture-aruba/nucleo.md):
+      // sta SOTTO Contabilità nell'elenco, come voce a sé — non una vista interna di
+      // `/admin/pagamenti` (ContabilitaNav), perché la coda è tutta-sede e non ha bisogno
+      // di `SedeRequired`. `labelKey` punta apposta a una chiave assente da `etichette`
+      // (quella voce non esiste, per progetto): l'etichetta VERA vive in
+      // `adminContabilita.codaFatture.menu.codaFatture` — le chiavi che questo pannello
+      // scrive e che il resto della coda-fatture riusa — e i renderer (`AdminSidebar`,
+      // `AdminMenuSheet`) la risolvono con un caso speciale su questo `href`.
+      // `roles` = quelli che `requireStaff` ammette di default sulle route della coda: senza,
+      // la `cuoca` vedrebbe la voce, aprirebbe un 403 — e il contatore della voce (nucleo §4,
+      // `useConteggioCodaFatture`) chiederebbe un 403 a ogni cambio di pagina.
+      { href: '/admin/coda-fatture', label: 'Coda fatture', labelKey: 'nav_coda_fatture', icon: ListOrdered, roles: [...RUOLI_CODA_FATTURE] },
       // Registro protocolli: riservato ad admin+segreteria (decisione spec
       // 2026-07-12); primo uso reale del campo `roles` (il gate vero è nelle API).
       { href: '/admin/protocolli', label: 'Protocollo', labelKey: 'nav_protocolli', icon: Stamp, roles: ['admin', 'segreteria'] },
@@ -144,6 +160,17 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
 ];
+
+// Unico punto che nomina l'href: i renderer (`AdminSidebar`, `AdminMenuSheet`) lo
+// confrontano per pescare l'etichetta da `adminContabilita.codaFatture.menu.codaFatture`
+// invece che da `etichette` (vedi la nota sulla voce qui sopra), e per affiancarle il
+// contatore delle voci attive (`useConteggioCodaFatture`).
+export const CODA_FATTURE_HREF = '/admin/coda-fatture';
+
+/** Chi vede la voce «Coda fatture» e ne legge il contatore: i ruoli di `requireStaff`. */
+export function puoLeggereCodaFatture(ruolo: string | null | undefined): boolean {
+  return !!ruolo && RUOLI_CODA_FATTURE.includes(ruolo);
+}
 
 export const ALL_HREFS = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href));
 

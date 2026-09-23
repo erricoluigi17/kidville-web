@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { posterioriCheContengono, sogliaFotografia, toccaLaRls } from './soglia-fotografia'
+import { posterioriDaRigenerare, sogliaFotografia, toccaLaRls } from './soglia-fotografia'
 
 /**
  * LOCK · la RLS deve rispondere «su quale sede», non solo «che ruolo hai».
@@ -314,8 +314,14 @@ describe('lock architettura · RLS per sede (fotografia di pg_policies)', () => 
         // Le due cecità si sommavano: il guard esiste per coprire l'unico punto cieco
         // della fotografia — ciò che accade DOPO lo scatto — e non copriva né il primo
         // giorno né le forme di scrittura che si usano proprio nelle migrazioni nuove.
+        //
+        // `posterioriDaRigenerare` (2026-09-23) toglie dall'elenco i SOLI file dichiarati
+        // in `MIGRAZIONI_ATTESE_AL_MERGE`: migrazioni dentro una PR, che la applica
+        // l'integrazione al merge e che nessuna fotografia può ancora contenere. La
+        // dichiarazione è tenuta da prove gemelle in `soglia-fotografia.test.ts`, e si
+        // svuota da sola quando la fotografia delle migrazioni le contiene.
         const soglia = sogliaFotografia(foto)
-        const inSospeso = posterioriCheContengono(MIGRAZIONI, soglia, toccaLaRls)
+        const inSospeso = posterioriDaRigenerare(MIGRAZIONI, soglia, toccaLaRls)
         expect(
             inSospeso,
             `Queste migrazioni toccano le policy, la RLS o la colonna di sede, ma sono ` +

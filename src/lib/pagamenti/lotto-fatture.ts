@@ -32,25 +32,27 @@ import type { IntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
  */
 
 /**
- * Quante righe si possono SELEZIONARE per un lotto.
+ * Quante righe si possono SELEZIONARE per un lotto — cioè quante se ne mettono in
+ * coda con UN gesto.
  *
- * ⚠️ DAL 2026-09-07 QUESTO NUMERO SIGNIFICA UN'ALTRA COSA, e vale la pena dirlo
- * perché il nome è rimasto. Prima era anche la dimensione di ciò che partiva —
- * una POST per riga, dodici righe, dodici accessi ad Aruba. Adesso il lotto parte
- * a BLOCCHI (`TETTO_BLOCCO`) e questo è solo il tetto della **selezione**, cioè
- * quanto si può mettere in coda in una volta.
+ * ⚠️ DAL 2026-09-23 (nucleo della coda fatture) QUESTO NUMERO NON È PIÙ LEGATO AL
+ * RITMO DI ARUBA, e vale la pena dirlo perché fino al giorno prima lo era. Il lotto
+ * non emette più niente dal browser: fa UNA `POST /api/pagamenti/fattura/coda`, e a
+ * inviare è il lavoratore sul server, al ritmo di `SOGLIA_ORARIA_APP` (50 l'ora, in
+ * `tetto-orario-aruba.ts`) e a blocchi di `TETTO_BLOCCO`. Finché partiva dal browser
+ * il tetto della selezione doveva stare dentro un'ora di quota, e valeva 50; adesso la
+ * coda aspetta quanto serve, anche a PC spento, e i due numeri sono INDIPENDENTI:
  *
- * IL CONTO: 50 è la soglia che l'app si dà sul volume orario di Aruba
- * (`SOGLIA_ORARIA_APP` in `src/lib/pagamenti/tetto-orario-aruba.ts`, che il tetto
- * vero di 60 lo tiene sotto per lasciare margine a chi fattura a mano dal
- * pannello). Selezionarne di più sarebbe promettere qualcosa che il provider non
- * concede: la guardia sul server troncherebbe comunque.
+ *   · `TETTO_LOTTO` (500) — quanto si accoda in un gesto;
+ *   · `SOGLIA_ORARIA_APP` (50) — quante ne partono in un'ora.
  *
- * ⚠️ Il valore deve restare uguale a `SOGLIA_ORARIA_APP`. Non si importa perché
- * quel modulo parla con Supabase e questo lo legge il browser: a tenerli insieme
- * c'è un test.
+ * ⚠️ Il valore deve restare uguale a `TETTO_VOCI_CODA` di `src/lib/fatture-coda/api.ts`,
+ * che è il massimo di voci che la POST accetta: una selezione più larga partirebbe
+ * verso un 400. Non si importa perché quel modulo tira dentro `next/server` e il
+ * logger del server, e questo lo legge il browser: a tenerli insieme c'è un test
+ * (`__tests__/pagamenti/tetto-orario-aruba.test.ts`).
  */
-export const TETTO_LOTTO = 50
+export const TETTO_LOTTO = 500
 
 /**
  * Quante fatture partono in UNA chiamata al server.
@@ -62,7 +64,9 @@ export const TETTO_LOTTO = 50
  * e a ~3 secondi per fattura quindici ci stanno larghe.
  *
  * ⚠️ NON è il tetto di Aruba e non va confuso con `TETTO_LOTTO`: quello dice
- * quante se ne possono mettere in coda, questo quante ne parte alla volta.
+ * quante se ne possono mettere in coda, questo quante ne parte alla volta. Dal
+ * 2026-09-23 lo usano la route del lotto e il lavoratore della coda
+ * (`src/lib/fatture-coda/giro.ts`), non più il browser.
  */
 export const TETTO_BLOCCO = 15
 

@@ -419,6 +419,7 @@
   "erroreChatThreadNonCreato": "La conversazione non si è potuta aprire. Riprova fra qualche minuto.",
   "erroreVigilanzaNonTracciabile": "La lettura non si è potuta registrare nel registro degli accessi, e per questo la conversazione non è stata aperta. Riprova fra qualche minuto.",
   "erroreFatturaTrasportoIgnoto": "La fattura è stata numerata, ma Aruba non ha confermato l’invio: nessuno sa se sia partita. NON ripremere «Emetti»: controlla prima sul pannello Aruba se il documento risulta trasmesso.",
+  "erroreFatturaPartitaNonRegistrata": "La fattura di questo pagamento risulta già partita verso Aruba ma non è registrata nell’app: non se ne emette una seconda. Va prima registrata. Nessun numero è stato consumato.",
   "erroreLottoTettoOrario": "Aruba concede un numero massimo di fatture all’ora e per quest’ora sono esaurite. Nessuna fattura è stata emessa e nessun numero è stato consumato: riprova fra un’ora.",
   "erroreDiarioLetturaFallita": "Non è stato possibile leggere la registrazione da eliminare. Riprova.",
   "erroreDiarioNonEliminato": "Non è stato possibile eliminare la registrazione. Riprova.",

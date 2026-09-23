@@ -7,6 +7,7 @@ import { assertFatturaInScope } from '@/lib/pagamenti/scope-fattura'
 import { caricaVisibilitaFatture } from '@/lib/pagamenti/visibilita-fatture'
 import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
 import { fatturaViva } from '@/lib/pagamenti/fattura-viva'
+import { MOTIVO_PARTITA_NON_REGISTRATA } from '@/lib/pagamenti/fattura-partita-non-registrata'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { zIntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
@@ -108,6 +109,15 @@ const CODICE_RIGA_ESTRANEA = 'FATTURA_RIGA_VIVA_ESTRANEA_ALLE_QUOTE'
  * merito (`motivo: 'scartata'`), dove il rimedio è correggere e riemettere.
  */
 const CODICE_TRASPORTO_IGNOTO = 'FATTURA_TRASPORTO_IGNOTO'
+/**
+ * 409 — «partita ma non registrata» (D1§8): il predicato CASE di C0.3 — con
+ * `fattura_aruba_id` valorizzato, nessuna riga viva col file di QUEL
+ * pagamento; senza, nessuna riga viva di sorta — è vero. Una riga viva di
+ * un'altra quota non basta a fermare il rifiuto. Non se ne emette una
+ * seconda: va prima registrata a mano, o la ritrova lo script delle orfane
+ * (D1§9). Nessun numero viene consumato da questo rifiuto.
+ */
+const CODICE_PARTITA_NON_REGISTRATA = 'FATTURA_PARTITA_NON_REGISTRATA'
 
 /**
  * 404 — il PDF della fattura non c'è: non è ancora tornato dallo SDI, oppure la
@@ -464,6 +474,12 @@ export const POST = withRoute('pagamenti/fattura:POST', async (request: Request)
       if (esito.motivo === 'intestatario_non_del_bambino') {
         return NextResponse.json(
           { error: esito.messaggio, codice: CODICE_NON_DEL_BAMBINO, data: { motivo: esito.motivo } },
+          { status: esito.httpStatus }
+        )
+      }
+      if (esito.motivo === MOTIVO_PARTITA_NON_REGISTRATA) {
+        return NextResponse.json(
+          { error: esito.messaggio, codice: CODICE_PARTITA_NON_REGISTRATA, data: { motivo: esito.motivo } },
           { status: esito.httpStatus }
         )
       }

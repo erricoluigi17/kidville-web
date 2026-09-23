@@ -8,6 +8,7 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { zAdultScelto } from '@/lib/fatturazione/intestatario-scelto'
 import { ricordaIntestatarioSullaScheda } from '@/lib/pagamenti/intestatari'
+import { MOTIVO_PARTITA_NON_REGISTRATA } from '@/lib/pagamenti/fattura-partita-non-registrata'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
@@ -136,6 +137,13 @@ const bodySchema = z.object({
 const CODICE_TETTO_ORARIO = 'LOTTO_TETTO_ORARIO_RAGGIUNTO'
 /** Copiato dalla route singola: è un pezzo di contratto che viaggia nel JSON. */
 const CODICE_TRASPORTO_IGNOTO = 'FATTURA_TRASPORTO_IGNOTO'
+/**
+ * Copiato dalla route singola (D1§8.3): «partita ma non registrata». A
+ * differenza del trasporto ignoto, questo 409 NON ferma il lotto — vedi
+ * `fermaIlLotto` più sotto — perché il guasto è di QUEL pagamento, non del
+ * canale verso Aruba.
+ */
+const CODICE_PARTITA_NON_REGISTRATA = 'FATTURA_PARTITA_NON_REGISTRATA'
 
 const attendi = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -376,11 +384,13 @@ export const POST = withRoute('pagamenti/fattura/lotto:POST', async (request: Re
     }
 
     const trasporto = esito.motivo === 'errore' && esito.httpStatus === 502
+    const partitaNonRegistrata = esito.motivo === MOTIVO_PARTITA_NON_REGISTRATA
     fallite.push({
       pagamento_id: riga.pagamento_id,
       messaggio: esito.messaggio,
       statoHttp: esito.httpStatus,
       ...(trasporto ? { codice: CODICE_TRASPORTO_IGNOTO } : {}),
+      ...(partitaNonRegistrata ? { codice: CODICE_PARTITA_NON_REGISTRATA } : {}),
     })
 
     // `fermaIlLotto` è lo stesso verdetto che usava il browser, e resta lì: 0, 429 e

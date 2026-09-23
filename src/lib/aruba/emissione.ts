@@ -54,6 +54,11 @@ import {
 import { buildFatturaElettronicaXml, causalePerTracciato, verificaCoerenzaIva, LIMITI, type IvaFattura } from './fatturapa-xml'
 import { fatturaViva } from '@/lib/pagamenti/fattura-viva'
 import {
+  fatturaPartitaNonRegistrata,
+  MOTIVO_PARTITA_NON_REGISTRATA,
+} from '@/lib/pagamenti/fattura-partita-non-registrata'
+import { vincoloDelRifiuto } from '@/lib/fatturazione/vincolo-registro'
+import {
   adultoEGenitoreDi,
   applicaIntestatarioScelto,
   determinaQuoteFatturazione,
@@ -214,6 +219,14 @@ export type EsitoEmissione =
         | 'gia_emessa_altro_intestatario'
         /** 409 — multi-quota: una riga viva a registro non corrisponde alle quote di oggi. */
         | 'quota_estranea'
+        /**
+         * 409 — il pagamento è `in_attesa`: la fattura è PARTITA verso Aruba, ma il suo
+         * documento non è a registro (predicato unico `fatturaPartitaNonRegistrata`, CR1).
+         * Si ferma prima di ogni RPC e di ogni `signin`: nessun numero consumato, e
+         * `fattura_stato`/`fattura_aruba_id` restano dove sono, perché la scoperta delle
+         * orfane li deve ancora vedere.
+         */
+        | typeof MOTIVO_PARTITA_NON_REGISTRATA
         | 'scartata'
         | 'errore'
       messaggio: string
@@ -387,13 +400,26 @@ export function progressivoInvioFattura(sezionale: Sezionale, numero: number, an
  * documento caricato a mano con un numero sbagliato, l'import di un altro gestionale —
  * porterebbe la serie a un miliardo, per sempre.
  *
- * Diecimila è largo di proposito: deve lasciar passare il funzionamento normale, compreso
- * lo scarto vero fra Aruba e il nostro registro. Misurato il 2026-09-07: la serie FPR era
- * a 1955 su Aruba e a 1952 da noi, perché tre fatture erano state scritte a mano dal
- * pannello. Quello scarto è il motivo per cui Aruba la leggiamo: la guardia ferma
- * l'assurdo, non il mestiere.
+ * ─── PERCHÉ 50, E NON PIÙ 10.000 (misurato il 2026-09-23, D1§2.3-2.4) ─────────
+ * Diecimila fermava solo l'assurdo, e l'assurdo non è ciò che è successo. Il 18/09 la serie
+ * FPR è passata da 2154 a 2516 in un colpo: un salto di **361** numeri passato indenne sotto
+ * un tetto di diecimila, e 361 buchi in un registro fiscale che nessuna UPDATE riempie. Il
+ * 21/09 la serie «Asilo» è saltata di **11** (2529 → 2541).
+ *
+ * Lo scarto LEGITTIMO, invece, è piccolo e si misura:
+ *  · **3** — il controllo positivo del 2026-09-07 (J0): FPR a 1955 su Aruba e a 1952 da noi,
+ *    tre fatture scritte a mano dal pannello. È il motivo per cui Aruba la leggiamo;
+ *  · **6** — il massimo di documenti nati FUORI dall'app in una finestra di quattro ore
+ *    (F2, 18/09 09:18 → 13:18 UTC: 8 documenti su Aruba, 2 dall'app).
+ *
+ * Cinquanta è otto volte il massimo osservato: lascia passare il mestiere — la segreteria
+ * che emette a mano fra un'emissione e l'altra — e ferma il salto di 361 prima che la RPC lo
+ * renda definitivo. Un salto di 11 passa ancora, e non è una svista: sotto il tetto la
+ * guardia non blocca, SCRIVE (`pavimento-sopra-contatore`, livello warn), così un salto
+ * anomalo ma piccolo resta interrogabile invece di sparire. Il confine: `salto > 50` ferma,
+ * 50 passa.
  */
-const SCARTO_MASSIMO_PAVIMENTO = 10_000
+const SCARTO_MASSIMO_PAVIMENTO = 50
 
 const TTL_ULTIMO_NUMERO_MS = 5 * 60 * 1000
 
@@ -805,8 +831,10 @@ export async function emettiFatturaPagamento(
     // Una stringa SOLA, per quanto lunga: spezzata con `+` il client Supabase
     // perde il tipo letterale del select e ogni campo di `pag` diventa un errore
     // di compilazione. Non è uno stile, è un vincolo dell'inferenza.
+    // `fattura_stato` e `fattura_aruba_id` (colonne della baseline, ci sono anche sul DB
+    // E2E non migrato) servono al 409 «partita ma non registrata» del passo 6.
     .select(
-      'id, descrizione, importo, stato, scadenza, periodo_competenza, scuola_id, fattura_causale, categoria_id, alunno_id, payment_categories:categoria_id ( slug ), alunni:alunno_id ( id, nome, cognome, codice_fiscale, data_nascita, genitori_separati, retta_split_config, intestatario_fatture )'
+      'id, descrizione, importo, stato, scadenza, periodo_competenza, scuola_id, fattura_causale, categoria_id, alunno_id, fattura_stato, fattura_aruba_id, payment_categories:categoria_id ( slug ), alunni:alunno_id ( id, nome, cognome, codice_fiscale, data_nascita, genitori_separati, retta_split_config, intestatario_fatture )'
     )
     .eq('id', pagamentoId)
     .single()
@@ -1392,6 +1420,53 @@ export async function emettiFatturaPagamento(
      */
     intestatario: { nome?: string | null; cognome?: string | null; codice_fiscale?: string | null } | null
   }[]
+
+  // ─── 🔴 LA FATTURA È PARTITA, MA NON È A REGISTRO: SI FERMA QUI (409) ─────────
+  // Un pagamento `in_attesa` dice «un documento è partito verso Aruba»: lo scrive
+  // l'aggregato qui sotto, col file della PRIMA quota riuscita, solo dopo un upload
+  // andato a buon fine. Se a registro quel documento non c'è — l'INSERT è stato
+  // rifiutato (il vecchio vincolo per sede, 6 fatture così in produzione il 23/09), o
+  // la riga del file è sparita in qualunque altro modo — l'idempotenza qui sotto guarda
+  // SOLO le righe vive e non trova niente: allocherebbe un numero nuovo e caricherebbe
+  // un SECONDO documento allo SdI per lo stesso incasso. Una fattura doppia non si
+  // annulla con un UPDATE: si corregge con una nota di variazione.
+  //
+  // Il predicato NON sta qui: è `fatturaPartitaNonRegistrata` (forma CASE di CR1, con
+  // un gemello SQL che usano gli script delle orfane e, nella PR-A, la coda). Riceve
+  // TUTTE le righe del pagamento, scartate comprese: col file sul pagamento conta solo
+  // la riga di QUEL file (una quota B viva non dice niente sulla A; una scartata dello
+  // stesso file è la ritrasmissione legittima), senza file conta una riga viva qualsiasi.
+  //
+  // Il posto è questo e nessun altro: dopo la lettura del registro, PRIMA del passo 7,
+  // dove partono il `signin`, la lettura del pavimento e la RPC che consuma il numero.
+  // E si ritorna PRIMA dell'aggregato: `fattura_stato` e `fattura_aruba_id` restano dove
+  // sono, così `scripts/fatture-orfane.mjs` la trova ancora e la registra.
+  if (fatturaPartitaNonRegistrata(pag, righeEsistenti)) {
+    const fileDelPagamento: string | null = pag.fattura_aruba_id ?? null
+    logEvento('fattura', 'warn', {
+      operazione: 'emettiFatturaPagamento:idempotenza',
+      esito: 'partita-non-registrata-fermata',
+      provider: 'aruba',
+      scuola_id: pag.scuola_id,
+      pagamento_id: pagamentoId,
+      // Il nome file sta SOLO qui, nel `msg` (C§0 punto 5): è la chiave con cui la si
+      // ritrova su Aruba, e fra i `campi` non entra.
+      msg: fileDelPagamento
+        ? `pagamento «in attesa» con la fattura partita (file ${fileDelPagamento}) e nessuna riga a ` +
+          'registro per quel documento: emissione fermata prima di allocare il numero'
+        : 'pagamento «in attesa» con la fattura partita (file non indicato sul pagamento) e nessuna ' +
+          'riga viva a registro: emissione fermata prima di allocare il numero',
+    })
+    return {
+      ok: false,
+      motivo: MOTIVO_PARTITA_NON_REGISTRATA,
+      httpStatus: 409,
+      messaggio:
+        `La fattura di questo pagamento risulta già partita verso Aruba (${fileDelPagamento ?? 'senza nome file'}) ` +
+        'ma non è registrata nell’app: non se ne emette una seconda. Va prima registrata. ' +
+        'Nessun numero è stato consumato.',
+    }
+  }
 
   // 7. emissione indipendente per quota
   // La sessione del chiamante quando c'è, altrimenti una tutta nostra: `creaSessioneAruba`
@@ -2142,10 +2217,15 @@ export async function emettiFatturaPagamento(
     // un'etichetta a nove cifre su Aruba — porterebbe la serie dove nessuno la
     // riporta indietro senza una UPDATE a mano su un registro fiscale.
     const contatore = await contatoreARegistro(supabase, sezionale, anno)
-    if (contatore !== null && ultimoAruba - contatore > SCARTO_MASSIMO_PAVIMENTO) {
+    // `salto` = quanti numeri la RPC scavalcherebbe: con `GREATEST(contatore, p_min) + 1`
+    // il prossimo numero sarebbe `ultimoAruba + 1`, e fra `contatore + 1` e `ultimoAruba`
+    // restano `ultimoAruba − contatore` numeri che dal registro non si vedranno mai.
+    // `null` quando il contatore non si è potuto leggere: allora non si giudica.
+    const salto = contatore !== null ? ultimoAruba - contatore : null
+    if (salto !== null && salto > SCARTO_MASSIMO_PAVIMENTO) {
       const dettoPavimento =
         `pavimento letto da Aruba fuori scala sulla serie ${sezionale}: ${ultimoAruba} contro ` +
-        `${contatore} a registro (scarto massimo ammesso ${SCARTO_MASSIMO_PAVIMENTO}). ` +
+        `${contatore} a registro, salto di ${salto} (scarto massimo ammesso ${SCARTO_MASSIMO_PAVIMENTO}). ` +
         'Nessun numero è stato consumato.'
       logEvento('fattura', 'error', {
         operazione: 'emettiFatturaPagamento:prossimoNumero',
@@ -2156,6 +2236,7 @@ export async function emettiFatturaPagamento(
         anno,
         pavimento: ultimoAruba,
         contatore,
+        salto,
         msg: dettoPavimento,
       })
       esiti.push({
@@ -2164,12 +2245,32 @@ export async function emettiFatturaPagamento(
         ok: false,
         motivo: 'numerazione',
         messaggio:
-          `Su Aruba risulta un numero fuori scala per la serie «${sezionale}» (${ultimoAruba}), mentre a ` +
-          `registro siamo a ${contatore}. Emettere adesso sposterebbe la numerazione in modo NON reversibile. ` +
-          'La fattura non è stata emessa. Nessun numero è stato consumato. Va prima corretto il documento ' +
-          'anomalo sul pannello Aruba: segnalalo.',
+          `Su Aruba la serie «${sezionale}» risulta arrivata al numero ${ultimoAruba}, mentre a registro siamo a ` +
+          `${contatore}: emettere adesso salterebbe ${salto} numeri, e il salto non si potrebbe più annullare. ` +
+          'La fattura non è stata emessa e nessun numero è stato consumato. Avvisa l\'amministratore: va ' +
+          'controllato su Aruba il documento con quel numero e, se è giusto, allineato il contatore.',
       })
       continue
+    }
+    // Sotto il tetto, un pavimento PIÙ ALTO del contatore non si blocca — è il mestiere:
+    // la segreteria che emette a mano dal pannello — ma NON si tace. Fino al 2026-09-23 il
+    // ramo scriveva solo sopra i 10.000, e il salto di 361 del 18/09 non ha lasciato una
+    // riga: per ricostruirlo è servita un'indagine. Scritto PRIMA della RPC, perché dopo il
+    // contatore è già salito e i due numeri non si possono più confrontare.
+    if (salto !== null && salto > 0) {
+      logEvento('fattura', 'warn', {
+        operazione: 'emettiFatturaPagamento:prossimoNumero',
+        esito: 'pavimento-sopra-contatore',
+        scuola_id: pag.scuola_id,
+        pagamento_id: pagamentoId,
+        anno,
+        pavimento: ultimoAruba,
+        contatore,
+        salto,
+        msg:
+          `serie ${sezionale}: su Aruba ${ultimoAruba}, a registro ${contatore}: documenti emessi fuori ` +
+          'dall\'app spingono la serie',
+      })
     }
 
     const numRes = await supabase.rpc('prossimo_numero_fattura_sezionale', {
@@ -2495,26 +2596,85 @@ export async function emettiFatturaPagamento(
       // rimasta orfana (col nome file), non «duplicate key value violates unique constraint».
       // Il `code` del DB non si perde — `logEvento` lo pesca dalla causa per la colonna `codice`.
       //
-      // IL 23505 È UN CASO A PARTE, e va nominato. I due indici unici di
-      // `fatture_emesse` sono `(sezionale, anno, numero)` e
-      // `(pagamento_id, quota_adult_id)` sulle righe non scartate: se uno dei due
-      // rifiuta QUI, il database sta dicendo che per questa quota (o per questo
-      // numero) un documento esisteva già — cioè che allo SDI è appena partita una
-      // seconda fattura, ed è l'unico momento in cui qualcuno può accorgersene.
-      // «duplicate key value violates unique constraint» da solo non lo racconta.
-      const doppione = (errRegistro as { code?: string } | null)?.code === '23505'
-      const dettoOrfana = doppione
-        ? `DOPPIA EMISSIONE: la fattura ${numeroFattura} è partita verso Aruba (${up.uploadFileName ?? 'senza nome file'}) ma il registro l'ha RIFIUTATA perché per questa quota (o per questo numero) esisteva già un documento. Verifica su Aruba e prepara la nota di variazione`
-        : `fattura ${numeroFattura} inviata ad Aruba (${up.uploadFileName ?? 'senza nome file'}) ma NON scritta a registro: resterà fuori dal sync SDI`
+      // IL 23505 NON È UNA COSA SOLA, e va nominato PER VINCOLO. Su `fatture_emesse`
+      // insistono tre vincoli di unicità, e raccontano tre fatti diversi:
+      //  · `fatture_emesse_pagamento_quota_uidx` (pagamento, quota, sulle righe non
+      //    scartate) — la sola vera DOPPIA EMISSIONE: per questa retta un documento vivo
+      //    c'era già, e allo SdI adesso ce ne sono due. Serve la nota di variazione;
+      //  · `fatture_emesse_sezionale_anno_numero_uidx` (serie, anno, numero) — si è
+      //    ripetuta la NUMERAZIONE, non il pagamento: nessuna nota, va capito quale dei
+      //    due documenti lo SdI ha accettato;
+      //  · `fatture_emesse_scuola_id_anno_numero_key` (sede, anno, numero) — il vincolo
+      //    della BASELINE, che fino al 2026-09-23 questo commento dimenticava. Confonde
+      //    due serie della stessa sede con lo stesso numero: il documento è VALIDO e va
+      //    solo registrato. La migrazione di D1 lo toglie; resta vivo sui DB non migrati
+      //    (la CI). È lui ad aver prodotto le sei orfane contate in produzione il 23/09,
+      //    tutte etichettate «DOPPIA EMISSIONE»: la segreteria veniva mandata a preparare
+      //    note di variazione per fatture giuste.
+      // Qualunque altro nome è `ignoto`: non si indovina, si guarda su Aruba.
+      // Il riconoscimento sta in `vincoloDelRifiuto` (puro, lo riusa la coda). Un errore
+      // che non è un 23505 resta «riga persa» (`registro-non-scritto`), com'era.
+      const rifiuto = vincoloDelRifiuto(errRegistro)
+      const file = up.uploadFileName ?? 'senza nome file'
+      const { esito: esitoRegistro, detto: dettoOrfana } = ((): { esito: string; detto: string } => {
+        switch (rifiuto?.vincolo) {
+          case 'pagamento-quota':
+            return {
+              esito: 'registro-doppione-rifiutato',
+              detto:
+                `DOPPIA EMISSIONE: la fattura ${numeroFattura} è partita verso Aruba (${file}) ma il registro l'ha ` +
+                'RIFIUTATA perché per questo pagamento (quota) esisteva già una fattura viva: allo SdI ci sono due ' +
+                'documenti per la stessa retta. Verifica su Aruba e prepara la nota di variazione',
+            }
+          case 'numero-serie':
+            return {
+              esito: 'registro-numero-serie-duplicato',
+              detto:
+                `NUMERO GIÀ A REGISTRO: la fattura ${numeroFattura} è partita verso Aruba (${file}) ma nella serie ` +
+                `${sezionale} il numero ${numero}/${anno} è già di un altro documento a registro. Non è una seconda ` +
+                'fattura per lo stesso pagamento: si è ripetuta la NUMERAZIONE. Controlla su Aruba quale dei due lo ' +
+                'SdI ha accettato e registra quella rimasta fuori (scripts/fatture-orfane.mjs)',
+            }
+          case 'numero-per-sede':
+            return {
+              esito: 'registro-vincolo-per-sede',
+              detto:
+                'REGISTRO NON SCRITTO per il vecchio vincolo per sede (scuola, anno, numero): la fattura ' +
+                `${numeroFattura} è partita verso Aruba (${file}) ed è un documento VALIDO; il vincolo l'ha confusa ` +
+                'con il documento dell\'altra serie che ha lo stesso numero nella stessa sede. NON è una doppia ' +
+                'emissione e NON serve una nota di variazione: va solo registrata (scripts/fatture-orfane.mjs)',
+            }
+          case 'ignoto':
+            return {
+              esito: 'registro-vincolo-ignoto',
+              detto:
+                `la fattura ${numeroFattura} è partita verso Aruba (${file}) ma il registro l'ha rifiutata per un ` +
+                `vincolo di unicità non previsto («${rifiuto.nome ?? 'sconosciuto'}»): verifica su Aruba prima di ` +
+                'qualunque altra azione, poi registrala',
+            }
+          default:
+            return {
+              esito: 'registro-non-scritto',
+              detto: `fattura ${numeroFattura} inviata ad Aruba (${file}) ma NON scritta a registro: resterà fuori dal sync SDI`,
+            }
+        }
+      })()
       logEvento('fattura', 'error', {
         operazione: 'emettiFatturaPagamento',
-        // `esito` è in lista bianca e resta in chiaro in tabella: due valori diversi
-        // rendono interrogabile la differenza fra «riga persa» e «doppione emesso».
-        esito: doppione ? 'registro-doppione-rifiutato' : 'registro-non-scritto',
+        // `esito` è in lista bianca e resta in chiaro in tabella: un valore per vincolo
+        // rende interrogabile la differenza fra «riga persa», «doppione emesso»,
+        // «numerazione ripetuta» e «vecchio vincolo per sede».
+        esito: esitoRegistro,
         provider: 'aruba',
         scuola_id: pag.scuola_id,
+        // Sempre: è l'uuid con cui la si riconcilia (e con cui la trovano le orfane).
+        pagamento_id: pagamentoId,
         numero,
         anno,
+        // Il pavimento letto da Aruba e il contatore PRIMA della RPC: dicono se il numero
+        // rifiutato è nato da un salto. Numeri, in chiaro; il nome file resta nel `msg`.
+        pavimento: ultimoAruba,
+        contatore_prima: contatore,
         msg: dettoOrfana,
       }, erroreConCausa(dettoOrfana, errRegistro))
     } else {
@@ -2535,6 +2695,10 @@ export async function emettiFatturaPagamento(
         scuola_id: pag.scuola_id,
         numero,
         anno,
+        // Il pavimento letto da Aruba e il contatore prima della RPC, accanto al numero
+        // dato: con questi tre numeri un salto si legge dal battito, senza indagine.
+        pavimento: ultimoAruba,
+        contatore_prima: contatore,
         msg: `fattura ${numeroFattura} inviata ad Aruba: ${up.uploadFileName ?? 'senza nome file'}`,
       })
     }
@@ -2553,11 +2717,23 @@ export async function emettiFatturaPagamento(
   const okEsiti = esiti.filter((e) => e.ok)
   const nowIso = new Date().toISOString()
   if (okEsiti.length === 0) {
-    const { error: errAggScarto } = await supabase
-      .from('pagamenti')
-      .update({ fattura_stato: 'scartata' })
-      .eq('id', pagamentoId)
-    if (errAggScarto) segnalaStatoNonAggiornato(pagamentoId, pag.scuola_id, 'scartata', errAggScarto)
+    // ─── UNO STOP DI NUMERAZIONE NON È UNO SCARTO (S27) ──────────────────────────
+    // I tre rami `motivo: 'numerazione'` — pavimento illeggibile, pavimento fuori scala,
+    // RPC del numero fallita — si fermano PRIMA della RPC o senza che la RPC abbia dato
+    // un numero, e comunque prima dell'upload: allo SdI non è successo niente. Scriverci
+    // sopra `scartata` era una frase falsa sul pagamento, e misurata: il 23/09, 3 dei 4
+    // pagamenti `scartata` senza nessun documento a registro venivano da qui. Il
+    // pagamento resta dov'era, e si riemette quando la numerazione torna leggibile.
+    // Solo quando si fermano TUTTE le quote e TUTTE per numerazione: le fermate miste o
+    // d'altro tipo restano come prima fino alla coda (PR-A, S51).
+    const soloStopDiNumerazione = esiti.length > 0 && esiti.every((e) => !e.ok && e.motivo === 'numerazione')
+    if (!soloStopDiNumerazione) {
+      const { error: errAggScarto } = await supabase
+        .from('pagamenti')
+        .update({ fattura_stato: 'scartata' })
+        .eq('id', pagamentoId)
+      if (errAggScarto) segnalaStatoNonAggiornato(pagamentoId, pag.scuola_id, 'scartata', errAggScarto)
+    }
     const first = esiti[0]
     const motivoAgg =
       first?.motivo === 'intestatario_mancante' ? 'intestatario_mancante'

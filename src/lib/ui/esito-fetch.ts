@@ -1885,6 +1885,22 @@ export const CODICI_ERRORE = {
      */
     FATTURA_TRASPORTO_IGNOTO: 'erroreFatturaTrasportoIgnoto',
     /**
+     * ─── LA FATTURA È PARTITA, MA A REGISTRO NON C'È ─────────────────────────
+     * 409 — `POST /api/pagamenti/fattura` e `POST …/fattura/lotto` (D1§8): il
+     * predicato CASE di C0.3 è vero — con file registrato, nessuna riga viva
+     * di QUEL file; senza, nessuna riga viva di sorta. Una riga viva di
+     * un'altra quota non basta a fermare il rifiuto. Non se ne emette una
+     * seconda: va prima registrata a mano, o la ritrova lo script delle
+     * orfane. NESSUN numero è stato consumato da questo rifiuto — a
+     * differenza di `FATTURA_TRASPORTO_IGNOTO`, qui ripremere non rischia una
+     * seconda fattura vera.
+     *
+     * Sta anche in `CODICI_CON_DETTAGLIO`: la prosa del server porta il NOME
+     * FILE della fattura partita, che il catalogo non può conoscere ed è
+     * l'unica cosa che dice quale documento andare a registrare.
+     */
+    FATTURA_PARTITA_NON_REGISTRATA: 'erroreFatturaPartitaNonRegistrata',
+    /**
      * ─── IL PDF DELLA FATTURA NON C'È, E LO SI DICE ─────────────────────────
      * 404 — `GET /api/pagamenti/fattura`: il documento non è (ancora) nel bucket
      * `fatture`. O lo SdI non l'ha restituito, o la chiave scritta a registro non
@@ -2831,6 +2847,9 @@ export const CODICI_CON_DETTAGLIO: ReadonlySet<CodiceErrore> = new Set<CodiceErr
     // dice «non ripremere, verifica sul pannello Aruba», e senza il numero quel
     // controllo non si può fare — è l'unica cosa che dice QUALE documento cercare.
     'FATTURA_TRASPORTO_IGNOTO',
+    // Il NOME FILE della fattura già partita: senza, chi riceve il rifiuto sa
+    // solo che una fattura è partita, non quale andare a registrare.
+    'FATTURA_PARTITA_NON_REGISTRATA',
 ]);
 
 const CATALOGHI: Record<Locale, Record<string, string>> = {

@@ -253,6 +253,34 @@ describe('un guasto a metà blocco', () => {
     expect(body.data.fallite).toHaveLength(1)
     expect(body.data.restanti).toEqual([])
   })
+
+  /**
+   * ─── ROSSO DICHIARATO (R1-1.4 → si chiude con R1-2.2) ──────────────────────
+   *
+   * D1§8.3: sul 409 «partita ma non registrata» `fallite[].codice` deve portare
+   * `FATTURA_PARTITA_NON_REGISTRATA`, e — come ogni rifiuto LOCALE — il blocco
+   * prosegue con le righe dopo. Il codice non è ancora spinto in `fallite.push`
+   * (arriva in R1-2.2): questo caso resta rosso fino ad allora, per
+   * `AssertionError` sul `codice`, mai per un errore di caricamento.
+   */
+  it('rifiuto «partita ma non registrata»: il codice arriva in `fallite[]`, e il blocco prosegue', async () => {
+    h.emetti.mockImplementation(async (_sb: unknown, id: string) =>
+      id === uuid(2)
+        ? { ok: false, motivo: 'partita_non_registrata', messaggio: 'partita ma non registrata', httpStatus: 409 }
+        : esitoOk,
+    )
+
+    const res = await POST(richiesta(4))
+    const body = (await res.json()) as {
+      data: { emesse: unknown[]; fallite: { codice?: string }[]; restanti: string[]; fermato: string | null }
+    }
+
+    expect(body.data.fermato).toBeNull()
+    expect(body.data.emesse).toHaveLength(3)
+    expect(body.data.fallite).toHaveLength(1)
+    expect(body.data.fallite[0].codice).toBe('FATTURA_PARTITA_NON_REGISTRATA')
+    expect(body.data.restanti).toEqual([])
+  })
 })
 
 describe('«già a registro» non si conta come «emessa adesso»', () => {

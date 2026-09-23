@@ -1788,6 +1788,140 @@ SELECT (SELECT count(*) FROM allegati_registro) AS allegati,
 
 ---
 
+## Changelog — Il vincolo per sede, il salto FPR 2154→2516 e le fatture partite ma non registrate — 2026-09-23 (branch `fix/fatture-vincolo-numero-per-sede`, PR-D1)
+
+**⏳ Indagine in corso: questa voce riporta solo ciò che è già misurato. L'esito completo
+(P0-P7, conclusione, prospetto per il commercialista ed eventuale allineamento dei contatori)
+arriva con la PR-D1b**, perché la lettura vera su Aruba richiede la finestra fuori dall'orario
+della segreteria (dopo le 18:30 Europe/Rome) e ogni ora di attesa in più produce nuove fatture
+partite e non registrate: il codice di questa PR è sicuro con qualunque esito dell'indagine
+(vedi il tetto a 50 più sotto), quindi il merge precede l'indagine invece di seguirla.
+
+### Il vincolo per sede: un difetto della baseline, non di questa correzione
+
+Su `fatture_emesse` c'è un solo vincolo di unicità nato nella baseline,
+`fatture_emesse_scuola_id_anno_numero_key` su `(sede, anno, numero)`. **Il numero di fattura non
+è per sede**: le tre sedi condividono lo stesso soggetto fiscale e le stesse due serie (Asilo e
+FPR), quindi lo stesso numero nella stessa sede ma su serie diverse collide nel registro anche
+quando su Aruba sono due documenti perfettamente validi. Dal 2026-08-09 esistono già le due difese
+giuste — un indice unico parziale su `(sezionale, anno, numero)` dove il sezionale non è nullo, e
+un indice unico parziale per pagamento e quota — e nessuna riga del registro è oggi senza
+sezionale. Nessuna FK e nessun codice dipendono dal vincolo per sede: si può togliere senza
+lasciare il numero di fattura senza difesa nel database.
+
+La migrazione di questa PR toglie quel vincolo con un `DROP CONSTRAINT IF EXISTS` (idempotente,
+nessun `UPDATE` né `DELETE`), preceduto da un blocco di guardia che si rifiuta di procedere se uno
+dei due indici corretti manca o se esiste anche una sola riga senza sezionale. **La applica
+l'integrazione GitHub di Supabase al merge della PR-D1**: nessun `apply_migration`, nessun `db
+push` in scrittura, mai eseguiti a mano.
+
+**Riga P3 del prospetto per il commercialista: la numerazione è unica per `(sezionale, anno)`,
+non per sede.**
+
+### Il salto FPR 2154→2516 (e altri tre salti minori): i fatti misurati
+
+Al registro `fatture_emesse` risultano 425 righe (ultima del 22/09), e la serie FPR passa da 2154
+a 2516 in un solo salto — oltre 360 numeri mai emessi dall'app. Altri tre salti più piccoli, sulla
+stessa forma, compaiono fra il 18/09 e il 21/09 (due sulla serie Asilo, uno sulla serie FPR; nessuno
+dei salti coinvolge entrambe le serie insieme). In tutti e quattro i casi il contatore della serie
+coincide col massimo a registro **prima** del salto: non è un contatore che si è mosso da solo, è
+un numero **dato una volta sola e mai riutilizzato**.
+
+Il confronto fra la crescita osservata su Aruba e le righe scritte dall'app nella stessa finestra
+di tempo mostra, per ognuno dei quattro salti, un numero di documenti «nati fuori dall'app»
+compatibile con l'ampiezza del salto (fra 1 e 6 documenti a seconda della finestra). Il codice
+attivo in produzione al momento di ciascun salto è, sui percorsi della numerazione, identico
+byte per byte al codice di oggi: i salti non sono stati prodotti da una versione del codice già
+corretta nel frattempo e poi tornata indietro.
+
+Sul fronte dei pagamenti: 11 pagamenti risultano `scartata` pur essendo `pagato`. Di questi, 7
+hanno una riga di scarto SdI nel registro e 4 non hanno alcuna riga né un documento associato; di
+questi 4, 3 hanno in log l'esito di uno stop di numerazione. La causa individuata è nell'aggregato
+dell'emissione, che oggi scrive `scartata` per qualunque motivo di fermata, compreso il fermo di
+numerazione dove allo SdI non è arrivato nulla e il pagamento avrebbe dovuto restare dov'era —
+corretto più sotto (aggregato).
+
+La sincronizzazione con Aruba (`pg_cron`, ogni 30 minuti) ha un tetto di 300 secondi per
+esecuzione e un margine di 60 secondi sull'ultima chiamata: una sync partita in un dato minuto può
+ancora chiamare Aruba diversi minuti dopo. I log applicativi degli ultimi giorni non mostrano
+alcuna riga degli esiti che questa PR introduce (fermate per pavimento o per «partita ma non
+registrata»): il difetto era silenzioso, non segnalato da nessun log fino ad oggi.
+
+**Due controprove indipendenti**, già eseguite in sola lettura (mai in scrittura) prima che
+l'indagine vera (dopo le 18:30) possa girare:
+
+- **Replica a mano, con soli comandi `git`/`gh`**, del confronto fra il deploy di produzione
+  attivo a ogni salto e il codice di oggi sui percorsi della numerazione: **confermato indipendente-
+  mente** che coincidono byte per byte, con il controllo positivo (un commit precedente, diverso,
+  dà davvero esito diverso) verificato a sua volta.
+- **Controprova dal database**, di sola lettura: i contatori delle due serie sono avanzati di
+  un'unità ciascuno rispetto alla misura precedente — atteso, il ritmo non si estrapola (vale in
+  entrambe le direzioni) e non è un disaccordo. Le fatture partite e non registrate, misurate col
+  predicato unico di questa PR, sono salite da 6 a 7 nello stesso intervallo: **il difetto è
+  ancora vivo in produzione**, e ogni nuova fattura partita fuori registro nel frattempo è una
+  fattura in più che le orfane di questa correzione dovranno chiudere. Le tabelle dei salti, delle
+  finestre di documenti fuori app e dei pagamenti scartati, ricostruite da zero con query
+  indipendenti, tornano coerenti con quanto misurato sopra: le uniche differenze inizialmente
+  segnalate erano dovute al taglio della finestra temporale della query di controprova, non a un
+  disaccordo reale.
+
+Il prospetto completo per il commercialista (intervalli dell'app, numeri fuori app con data,
+numeri mai usati) e l'eventuale allineamento dei contatori arrivano con la PR-D1b, dopo che
+l'indagine vera avrà letto anche i documenti su Aruba.
+
+### Guardia a 50 sul salto del pavimento, log e aggregato
+
+Il tetto oltre il quale l'emissione si ferma invece di consumare un numero passa da 10.000 a
+**50**: le misure di cui sopra mostrano uno scarto legittimo di poche unità e, al massimo, una
+manciata di documenti fuori app in poche ore — un salto di centinaia di numeri non è mai
+legittimo. Sopra il tetto l'emissione si ferma con un messaggio che spiega alla segreteria cosa è
+successo (nessun numero consumato, nessun upload) e un log a livello di errore con il numero
+esatto del salto; sotto il tetto ma sopra il contatore, un log di avviso registra comunque la
+situazione prima di allocare il numero, perché anche un salto piccolo e legittimo va tracciato. In
+entrambi i casi il numero del pavimento letto su Aruba e il contatore di partenza restano nel log,
+mai il nome del file.
+
+L'aggregato finale, che oggi marca `scartata` qualunque fermata, smette di farlo quando **tutte**
+le quote di un pagamento si sono fermate solo per un motivo di numerazione: in quel caso allo SdI
+non è successo nulla, e il pagamento resta nello stato in cui era — è la correzione della causa
+individuata sopra sui pagamenti scartati senza documento.
+
+### Il 409 e il predicato unico «partita ma non registrata»
+
+Il rifiuto del database sul numero duplicato (errore `23505`) viene ora classificato in quattro
+casi distinti, sempre con l'identificativo del pagamento in chiaro nel log: doppia emissione vera
+(stesso pagamento, stessa quota), numero duplicato nella stessa serie, il vecchio vincolo per sede
+che confondeva le due serie (questo caso **non** è una doppia emissione e non richiede una nota di
+variazione, va solo registrato), o un vincolo non previsto. I primi due restano un blocco reale;
+il terzo è esattamente il difetto di cui sopra e la sua unica conseguenza è che il documento va
+recuperato col programma delle orfane.
+
+Una fattura può risultare «partita verso Aruba ma non registrata nell'app»: il pagamento segna che
+il documento è partito, ma nessuna riga viva del registro lo conferma. Da oggi un unico predicato
+(condiviso, con una copia SQL provata identica alla copia TypeScript) ferma l'emissione con un 409
+**prima** di ogni contatto con Aruba e prima di allocare un numero, così non se ne parte una
+seconda per lo stesso pagamento. Il 409 compare nella route singola e come codice sulla riga
+d'esito nel lotto, senza fermare le altre righe del lotto.
+
+### Script e guardie (tabella assente, errore di lettura, finestra, cancello)
+
+I due script che leggono Aruba per l'indagine e per il recupero delle orfane condividono un'unica
+guardia, eseguita prima del login e prima di **ogni** chiamata: se la tabella della coda fatture
+non esiste ancora, la guardia lascia proseguire (la coda non è ancora in produzione); su qualunque
+altro errore di lettura, o se la coda risulta installata ma non sospesa, o se il circuito verso
+Aruba è aperto, o se il cancello è in mano a un altro processo, la guardia **blocca** e nessuna
+chiamata parte. Alla prima risposta 429 di Aruba lo script si ferma da solo, salva i risultati
+parziali già raccolti e non riprova prima di un'ora. Nessuno dei due script apre una shell: ogni
+processo esterno (CLI del database, `git`, `gh`, `openssl`) parte con gli argomenti in un array,
+mai con una stringa interpolata; le credenziali non compaiono mai in un log.
+
+### Advisors
+
+Gli advisors di Supabase non sono eseguibili in questa sessione: il connettore MCP verso Supabase
+non è autenticato.
+
+---
+
 ## Changelog — Il contesto che si paga a ogni turno: CLAUDE.md da 34.774 a 6.279 byte — 2026-09-18 (branch `docs/prd-video-in-produzione`)
 
 **Nessun cambiamento a codice, funzionalità o schema dati.** È un intervento sui file di contesto

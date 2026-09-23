@@ -25,6 +25,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile'
 import { useDateFormat } from '@/lib/i18n/date'
+import { quandoRelativo } from '@/lib/i18n/quando-relativo'
 import { formatEuro } from '@/lib/format/valuta'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch'
@@ -97,7 +98,7 @@ function selezionabile(voce: VoceCoda): boolean {
 
 export function CodaFatturePanel({ userId, ruolo }: Props) {
     const t = useTranslations('adminContabilita')
-    const { dataOra, ora } = useDateFormat()
+    const { dataOra, locale } = useDateFormat()
     const admin = ruolo === 'admin'
 
     const [dati, setDati] = useState<RispostaCoda | null>(null)
@@ -270,6 +271,10 @@ export function CodaFatturePanel({ userId, ruolo }: Props) {
     // il costruttore no. Stesso valore, e il render resta idempotente per l'analyzer.
     const adesso = new Date().getTime()
     const inPausa = !!attiva?.stato.pausa_fino_a && new Date(attiva.stato.pausa_fino_a).getTime() > adesso
+    // Il GIORNO, non solo l'ora (consegna 2a, rilievo c): 300 fatture a 50 l'ora fanno sei ore,
+    // e «fine stimata alle 00:03» letto alle 18:03 è il giorno dopo.
+    const pausaFino = inPausa ? quandoRelativo(attiva?.stato.pausa_fino_a, adesso, locale) : null
+    const fineStimata = quandoRelativo(attiva?.stima_fine, adesso, locale)
 
     return (
         <section className="rounded-card border border-kidville-line bg-kidville-white p-5">
@@ -331,13 +336,13 @@ export function CodaFatturePanel({ userId, ruolo }: Props) {
                         >
                             {attiva.stato.sospesa
                                 ? t('codaFatture.stato.sospesa')
-                                : inPausa && attiva.stato.pausa_fino_a
-                                    ? t('codaFatture.stato.pausa', { ora: ora(attiva.stato.pausa_fino_a) })
+                                : pausaFino
+                                    ? t('codaFatture.stato.pausa', { giorno: pausaFino.giorno, ora: pausaFino.ora, data: pausaFino.data })
                                     : t('codaFatture.stato.attiva')}
                         </p>
-                        {attiva.stima_fine && !attiva.stato.sospesa && (
+                        {fineStimata && !attiva.stato.sospesa && (
                             <p className="mt-1 font-maven text-xs text-kidville-sub">
-                                {t('codaFatture.stato.stimaFine', { ora: ora(attiva.stima_fine) })}
+                                {t('codaFatture.stato.stimaFine', { giorno: fineStimata.giorno, ora: fineStimata.ora, data: fineStimata.data })}
                             </p>
                         )}
                         {admin && (

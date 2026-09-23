@@ -38,6 +38,8 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
 import { fatturaViva } from '@/lib/pagamenti/fattura-viva'
 import { formattaNumeroFattura } from '@/lib/fatturazione/sezionale'
+import { STATI_ATTIVI, type StatoCodaAttivo } from '@/lib/fatture-coda/api'
+import { leggiCodaAttiva } from '@/lib/fatture-coda/stato-righe'
 /**
  * IL MOTORE DELLO STATO DI FATTURAZIONE — la stessa politica che disegna il chip.
  *
@@ -682,6 +684,14 @@ interface MovimentoArricchito extends MovimentoRiga {
    * perché dopo l'informazione non c'è più.
    */
   altra_sede: AltraSedeUi | null
+  /**
+   * La voce ATTIVA della coda fatture per il pagamento abbinato (consegna 2a, rilievo e):
+   * `in_coda`, `in_invio` o `errore`. Stessa regola di `fattura_stato`: si valorizza solo
+   * sulle righe CONFERMATE di una sede dell'operatore, ed esce sempre, anche a `null`
+   * (vedi la nota su `conFatturazione`). `null` = nessuna voce attiva, riga non visibile,
+   * oppure coda non letta: quest'ultimo caso lo dicono i log di `leggiCodaAttiva`.
+   */
+  coda_stato: StatoCodaAttivo | null
 }
 
 /**
@@ -737,6 +747,7 @@ function conFatturazione(
   fatturaStato: FatturaStato | null = null,
   altraSede: AltraSedeUi | null = null,
   sedeDedottaUi: SedeDedottaUi | null = null,
+  codaStato: StatoCodaAttivo | null = null,
 ): MovimentoArricchito {
   return {
     ...r,
@@ -744,6 +755,7 @@ function conFatturazione(
     fattura_stato: fatturaStato,
     altra_sede: altraSede,
     sede_dedotta: sedeDedottaUi,
+    coda_stato: codaStato,
   }
 }
 
@@ -1379,8 +1391,22 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     const sediAttive = new Set(await resolveScuoleAttive(request, supabase, auth.user))
     // A BLOCCHI DI `BLOCCO_PAGAMENTI`, mai in una `.in()` sola: gli id finiscono nella query
     // string, e 500 uuid la fanno rifiutare con un 431 (vedi la nota sulla costante).
-    const { righe: pagSedi, errore: errSedi } = await aBlocchi<PagamentoAbbinato>(pagIds, (blocco) =>
-      supabase.from('pagamenti').select('id, scuola_id, stato, fattura_stato').in('id', blocco))
+    //
+    // Insieme, la voce attiva della coda fatture (consegna 2a, rilievo e): per SEDE e per
+    // STATO, mai per id — gli stessi 500 uuid farebbero lo stesso 431. Al conteggio le righe
+    // non escono (`rispondi`, sopra): niente da marcare.
+    const leggiCoda = !soloConteggi && confermateConPagamento.length > 0 && sediAttive.size > 0
+    const [{ righe: pagSedi, errore: errSedi }, codaPerPagamento] = await Promise.all([
+      aBlocchi<PagamentoAbbinato>(pagIds, (blocco) =>
+        supabase.from('pagamenti').select('id, scuola_id, stato, fattura_stato').in('id', blocco)),
+      leggiCoda
+        ? leggiCodaAttiva(
+            () => supabase.from('fatture_coda').select('pagamento_id, stato')
+              .in('scuola_id', [...sediAttive]).in('stato', [...STATI_ATTIVI]),
+            OPERAZIONE_GET,
+          )
+        : Promise.resolve(new Map<string, StatoCodaAttivo>()),
+    ])
     if (errSedi || !pagSedi) {
       // UNA query fallita, DUE conseguenze distinte — e ognuna ha il suo nome in `app_log`,
       // perché chi indaga cerca il sintomo che ha visto, non la causa che ancora non conosce:
@@ -1643,7 +1669,14 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
       const pag = pid ? pagDi.get(pid) : undefined
       const visibile = pag != null && pag.scuola_id != null && sediAttive.has(pag.scuola_id)
       return visibile
-        ? conFatturazione(conSuggerimenti, pag.stato ?? null, normalizzaFattura(pag.fattura_stato), altraSede, sedeDedottaUi)
+        ? conFatturazione(
+            conSuggerimenti,
+            pag.stato ?? null,
+            normalizzaFattura(pag.fattura_stato),
+            altraSede,
+            sedeDedottaUi,
+            pid ? (codaPerPagamento.get(pid) ?? null) : null,
+          )
         : conFatturazione(conSuggerimenti, null, null, altraSede, sedeDedottaUi)
     })
     return rispondi(minimizzate, true)

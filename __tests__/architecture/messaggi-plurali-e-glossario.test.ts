@@ -238,13 +238,14 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     // descritto più su resta aperto, e si stringe di due.
     { ns: 'teacherNav', chiave: 'allergieConta', variabile: 'count' },
     { ns: 'teacherNav', chiave: 'noteMedicheConta', variabile: 'count' },
-    // ── 2026-09-07 · LE DUE FRASI NUOVE DEL LOTTO DI FATTURE ────────────────
-    // `reconLottoStimaMinuti` è ciò che uno screen reader sente per diciotto
-    // minuti («circa 4 minuti alla fine»): un plurale rotto lì non lo vede
-    // nessun collaudo a vista, come le due dell'IBAN. `reconLottoSoloLePronte` è
-    // la frase che lega «3 bonifici selezionati» a «Emetti ora (2)»: se dicesse
-    // «1 restano da completare» sembrerebbe l'errore che sta spiegando.
-    { ns: 'adminContabilita', chiave: 'reconLottoStimaMinuti', variabile: 'minuti' },
+    // ── 2026-09-07 · LA FRASE DEL LOTTO DI FATTURE ──────────────────────────
+    // `reconLottoSoloLePronte` è la frase che lega «3 bonifici selezionati» al
+    // pulsante che manda in coda le pronte: se dicesse «1 restano da completare»
+    // sembrerebbe l'errore che sta spiegando.
+    // 2026-09-23 · 28 → 27 voci. Qui c'era anche la stima in minuti del vecchio
+    // invio a blocchi pilotato dal browser: la chiave è uscita dal catalogo con
+    // quella schermata (consegna 2a della coda fatture, rilievo d). Nessun
+    // contatore vivo esce dalla sorveglianza.
     { ns: 'adminContabilita', chiave: 'reconLottoSoloLePronte', variabile: 'n' },
     // ── 2026-09-12 → 2026-09-13 · LA RIGA CHE C'ERA QUI, E PERCHÉ NON C'È PIÙ ──
     // Sorvegliava `adminContabilita.reconComponiAvvisoRiapertura`, l'avviso che

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { RiconciliazionePanel } from '@/components/features/admin/pagamenti/RiconciliazionePanel';
 
 /**
@@ -93,7 +93,7 @@ describe('RiconciliazionePanel — lo stato della fattura sulla riga', () => {
     expect(rigaDi('BONIFICO DUE').textContent).not.toContain('Da fatturare');
   });
 
-  it('nessuna fattura, pagamento SALDATO → chip «Da fatturare» (giallo pieno: è l’unico che chiede di agire)', async () => {
+  it('nessuna fattura, pagamento SALDATO → chip «Da fatturare» (giallo pieno: chiede di agire)', async () => {
     vi.stubGlobal('fetch', stubFetch());
     render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
     await waitFor(() => expect(screen.getByText(/BONIFICO TRE/)).toBeInTheDocument());
@@ -212,6 +212,43 @@ describe('RiconciliazionePanel — lo stato della fattura sulla riga', () => {
       ...screen.queryAllByText('Da fatturare'),
     ];
     expect(chip).toHaveLength(3);
+  });
+
+  it('la voce ATTIVA della coda fatture: un chip suo accanto a «Da fatturare» (2026-09-23)', async () => {
+    // Consegna 2a della coda fatture, rilievo (e). Una propria `stubFetch`: un «Da
+    // fatturare» in più in `movimenti` romperebbe il `getByText` del caso giallo.
+    // UNDICI porta `'tolta'`, uno stato FUORI dai tre: il server non lo manda (`attivo()`
+    // in `stato-righe.ts`), ed è la prova della guardia del pannello — senza, `pelle.testo`
+    // lancerebbe un TypeError e la lista intera non si renderebbe.
+    const saldata = { stato: 'confermato', controparte: '', suggerimenti: [], fattura: { stato: 'da_fatturare', numeri: [] }, pagamento_stato: 'pagato', fattura_stato: 'non_richiesta' };
+    vi.stubGlobal('fetch', stubFetch([
+      { ...saldata, id: 'mc9', data_operazione: '2026-10-14', importo: 150, causale: 'BONIFICO NOVE', pagamento_id: 'pg-c9', coda_stato: 'in_invio' },
+      { ...saldata, id: 'mc10', data_operazione: '2026-10-15', importo: 151, causale: 'BONIFICO DIECI', pagamento_id: 'pg-c10', coda_stato: null },
+      { ...saldata, id: 'mc11', data_operazione: '2026-10-16', importo: 152, causale: 'BONIFICO UNDICI', pagamento_id: 'pg-c11', coda_stato: 'tolta' },
+      { ...saldata, id: 'mc12', data_operazione: '2026-10-17', importo: 153, causale: 'BONIFICO DODICI', pagamento_id: 'pg-c12', coda_stato: 'errore' },
+    ]));
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/BONIFICO NOVE/)).toBeInTheDocument());
+
+    const inInvio = within(rigaDi('BONIFICO NOVE')).getByTestId('coda-chip');
+    expect(inInvio).toHaveTextContent('In invio');
+    expect(inInvio.className).toContain('kv-recon-chip');
+    expect(inInvio.className).toContain('bg-kidville-white');
+    expect(inInvio.className).toContain('text-kidville-info-strong');
+    // carta bianca in Alto Contrasto: nessuna àncora di variante
+    expect(inInvio.className).not.toContain('kv-recon-chip--');
+    expect(inInvio.className).not.toMatch(/bg-kidville-[a-z-]+\//);
+
+    const errore = within(rigaDi('BONIFICO DODICI')).getByTestId('coda-chip');
+    expect(errore).toHaveTextContent('Errore in coda');
+    expect(errore.className).toContain('text-kidville-error-strong');
+    expect(errore.className).toContain('kv-recon-chip--coda-errore');
+
+    // Le assenze DOPO la presenza delle righe (.claude/rules/test.md, punto 3). La riga
+    // UNDICI c'è: lo stato ignoto non ha fatto cadere la lista.
+    expect(within(rigaDi('BONIFICO DIECI')).queryByTestId('coda-chip')).toBeNull();
+    expect(within(rigaDi('BONIFICO UNDICI')).getByText('Da fatturare')).toBeInTheDocument();
+    expect(within(rigaDi('BONIFICO UNDICI')).queryByTestId('coda-chip')).toBeNull();
   });
 });
 

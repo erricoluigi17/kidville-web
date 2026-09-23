@@ -33,3 +33,37 @@ describe('FatturaChip', () => {
     expect(screen.getByText('Scartata')).toBeInTheDocument();
   });
 });
+
+/**
+ * La voce ATTIVA della coda fatture sulla riga (2026-09-23, consegna 2a della coda
+ * fatture, rilievo e). Il chip della coda si AGGIUNGE a quello di fatturazione, non lo
+ * sostituisce: finché Aruba non ha risposto il pagamento resta «Da fatturare».
+ */
+describe('FatturaChip — la voce in coda', () => {
+  it('in_coda → «Da fatturare» E il chip blu «In coda»', () => {
+    render(<FatturaChip stato="pagato" fatturaStato="non_richiesta" codaStato="in_coda" />);
+    expect(screen.getByText('Da fatturare')).toBeInTheDocument();
+    const chip = screen.getByTestId('coda-chip');
+    expect(chip).toHaveTextContent('In coda');
+    expect(chip).toHaveClass('text-kidville-info-strong');
+  });
+
+  it('in_invio → «In invio»', () => {
+    render(<FatturaChip stato="pagato" fatturaStato="non_richiesta" codaStato="in_invio" />);
+    expect(screen.getByTestId('coda-chip')).toHaveTextContent('In invio');
+  });
+
+  it('errore → «Errore in coda», rosso: è l’unico dei tre che chiede di agire', () => {
+    render(<FatturaChip stato="pagato" fatturaStato="non_richiesta" codaStato="errore" />);
+    const chip = screen.getByTestId('coda-chip');
+    expect(chip).toHaveTextContent('Errore in coda');
+    expect(chip).toHaveClass('text-kidville-error-strong');
+  });
+
+  it('codaStato null → c’è «Da fatturare», il chip della coda no', () => {
+    render(<FatturaChip stato="pagato" fatturaStato="non_richiesta" codaStato={null} />);
+    // l'assenza DOPO la presenza (.claude/rules/test.md, punto 3)
+    expect(screen.getByText('Da fatturare')).toBeInTheDocument();
+    expect(screen.queryByTestId('coda-chip')).toBeNull();
+  });
+});

@@ -92,7 +92,7 @@ Si inserisce la riga `id=1`.
 
 ### RPC
 
-Tutte SECURITY DEFINER, `SET search_path = public`, REVOKE da PUBLIC, anon e authenticated, GRANT EXECUTE a `service_role`.
+Tutte SECURITY DEFINER, `SET search_path = public, pg_temp` (così nella migrazione), REVOKE da PUBLIC, anon e authenticated, GRANT EXECUTE a `service_role`.
 
 - **`fatture_coda_accoda(p_voci jsonb, p_creato_da uuid, p_urgente boolean) returns jsonb`**
   - `p_voci` = `[{pagamento_id, intestatario_scelto?, conferma_proposta?, causale_manuale?, ordine_selezione}]`.
@@ -115,7 +115,7 @@ Tutte SECURITY DEFINER, `SET search_path = public`, REVOKE da PUBLIC, anon e aut
 - **`fatture_coda_bidello() returns int`**
   - Voci `in_invio` con `prestito_scade_il < now()` → `errore` con codice `esito_incerto` («invio interrotto: controllare sul pannello Aruba prima di rimetterla in coda»).
   - Mai di nuovo `in_coda` in automatico.
-- **`fatture_coda_togli(p_ids uuid[], p_attore uuid) returns int`**: solo `in_coda` ed `errore` → `tolta`, con `concluso_il` e i campi personali azzerati.
+- **`fatture_coda_togli(p_ids uuid[], p_attore uuid) returns int`**: solo `in_coda` ed `errore` → `tolta`, con `concluso_il` e i campi personali azzerati; dalla consegna 2a azzera anche l'esito (`esito_codice`, `esito_messaggio`), come `fatture_coda_rimetti` (migrazione `20260923191725_fatture_coda_togli_azzera_esito.sql`).
 - **`fatture_coda_rimetti(p_ids uuid[], p_attore uuid) returns int`**: solo `errore` → `in_coda`, con un nuovo `gruppo_seq` (in fondo), `in_attesa_dal = now()` ed esito azzerato.
 - **`fatture_coda_sospendi(p_attore uuid, p_sospesa boolean) returns void`**
 - **`fatture_coda_tick_http() returns void`**
@@ -187,7 +187,7 @@ Schemi zod e tipi in **`src/lib/fatture-coda/api.ts`**. Tutte le route usano `wi
 
 **Pagina** `src/app/(dashboard)/admin/coda-fatture/page.tsx` con `src/components/features/admin/pagamenti/CodaFatturePanel.tsx`
 - Polling di `GET /coda` ogni 20 s, **solo a scheda visibile**.
-- Striscia di stato: sospesa, in pausa fino alle HH:MM, oppure «l'invio continua anche a PC spento»; orario stimato di fine.
+- Striscia di stato: sospesa, in pausa fino alle HH:MM, a domani alle HH:MM o a gg/mm alle HH:MM col giorno breve davanti, «ven 25/09» (Europe/Rome), oppure «l'invio continua anche a PC spento»; fine stimata nella stessa forma (consegna 2a).
 - Contatori.
 - Elenco con selezione multipla: «Togli» (su `in_coda` ed `errore`) e «Rimetti in coda» (su `errore`).
 - Interruttore «Sospendi coda / Riprendi» visibile solo all'admin.

@@ -49,8 +49,11 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
                 {!saldato && <span className="font-bold text-kidville-green">{t('cardmRestano')} {formatEuro(residuo)}</span>}
             </div>
 
-            <div className="mt-2 flex items-center justify-between gap-2">
-                <FatturaChip stato={pagamento.stato} fatturaStato={pagamento.fattura_stato} />
+            {/* `flex-wrap`: il Badge non va a capo e FatturaChip può rendere DUE chip (fattura + coda).
+                Senza, «Errore in coda» spinge «Dettagli» fuori dalla card a 360/375 px; col wrap
+                i bottoni scendono a destra (il loro `ml-auto`) solo quando non c'è spazio. */}
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <FatturaChip stato={pagamento.stato} fatturaStato={pagamento.fattura_stato} codaStato={pagamento.coda_stato} />
                 <div className="ml-auto flex items-center gap-2">
                     {!saldato && (
                         <button type="button" onClick={onIncassa}

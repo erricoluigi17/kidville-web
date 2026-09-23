@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { sogliaFotografia, posterioriCheContengono, senzaCommenti } from './soglia-fotografia'
+import { sogliaFotografia, posterioriDaRigenerare, toccaLeFkUtenti } from './soglia-fotografia'
 import { creaFintoSupabase } from '../fixtures/finto-supabase'
 import type { DBFinto } from '../fixtures/finto-supabase'
 import {
@@ -150,12 +150,12 @@ describe('la fotografia non è cieca a ciò che è successo dopo', () => {
     // riscrive. Il filtro è ancora largo — una migrazione che tocca un vincolo
     // qualunque fa gridare al lupo — ed è il verso giusto in cui sbagliare: un
     // falso allarme si chiude rigenerando la fotografia, un silenzio non si chiude.
-    const sospette = posterioriCheContengono(MIGRAZIONI, sogliaFotografia(foto), (sql) => {
-      const s = senzaCommenti(sql)
-      return (
-        /references\s+(public\.)?utenti\b/i.test(s) || /\b(add|drop)\s+constraint\b/i.test(s)
-      )
-    })
+    //
+    // Il riconoscitore è `toccaLeFkUtenti` (./soglia-fotografia), spostato lì il 2026-09-23
+    // con lo stesso testo. `posterioriDaRigenerare` toglie i SOLI file dichiarati in
+    // `MIGRAZIONI_ATTESE_AL_MERGE` (migrazioni dentro una PR, applicate dall'integrazione al
+    // merge), tenuti da prove gemelle in `soglia-fotografia.test.ts`.
+    const sospette = posterioriDaRigenerare(MIGRAZIONI, sogliaFotografia(foto), toccaLeFkUtenti)
     expect(
       sospette,
       'Migrazioni applicate dopo lo scatto che nominano `utenti` o una `ON DELETE`. ' +

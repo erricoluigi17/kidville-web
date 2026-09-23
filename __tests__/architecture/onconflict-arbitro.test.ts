@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { posterioriCheContengono, senzaCommenti, sogliaFotografia } from './soglia-fotografia'
+import { posterioriDaRigenerare, sogliaFotografia, toccaUnUnico } from './soglia-fotografia'
 import { CHIAVE_OVERRIDE, CHIAVE_ROTAZIONE } from '@/lib/mensa/chiave-menu'
 import { CHIAVE_REGISTRO, CHIAVE_REGISTRO_LEGACY } from '@/lib/registro/chiave-orario'
 
@@ -400,15 +400,12 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
 
   it('la fotografia non è più vecchia dell’ultima migrazione applicata', () => {
     const soglia = sogliaFotografia(foto)
-    // Si guarda lo SQL, non la prosa: una migrazione che nel commento dichiara di NON toccare un
-    // vincolo lo nomina comunque, e un guard che misura la spiegazione paga chi commenta di meno.
-    // Il riconoscimento è LARGO di proposito — anche una PRIMARY KEY entra nella fotografia — e
-    // un falso allarme costa una rigenerazione, che è l'unico momento in cui qualcuno guarda
-    // davvero se repo e database dicono la stessa cosa.
-    const posteriori = posterioriCheContengono(MIGRAZIONI, soglia, (sql) => {
-      const istruzioni = senzaCommenti(sql)
-      return /\bunique\b/i.test(istruzioni) || /\bprimary\s+key\b/i.test(istruzioni)
-    })
+    // Il riconoscitore è `toccaUnUnico` (./soglia-fotografia), spostato lì il 2026-09-23 con lo
+    // stesso testo: si guarda lo SQL, non la prosa, e il riconoscimento è LARGO di proposito —
+    // anche una PRIMARY KEY entra nella fotografia. Un falso allarme costa una rigenerazione.
+    // `posterioriDaRigenerare` toglie i SOLI file dichiarati in `MIGRAZIONI_ATTESE_AL_MERGE`
+    // (migrazioni dentro una PR, applicate dall'integrazione al merge), tenuti da prove gemelle.
+    const posteriori = posterioriDaRigenerare(MIGRAZIONI, soglia, toccaUnUnico)
     expect(
       posteriori,
       `Queste migrazioni toccano un indice UNIQUE e sono POSTERIORI alla fotografia ` +

@@ -1279,6 +1279,25 @@ const AMMESSE: Record<string, string> = {
     'pagamenti/genera:POST': 'generazione rette: idem, e ogni riga creata prende la `scuola_id` DELL ALUNNO',
     'pagamenti/genera-rette:GET': 'anteprima annuale: esclude i periodi già generati per gli alunni già filtrati per sede',
     'pagamenti/fattura/sync:POST': 'sincronizzazione SDI: interroga il provider sulle fatture in volo, che sono di tutte le sedi; ogni aggiornamento è per `id` della fattura',
+    // ── La coda fatture Aruba (2026-09-23, nucleo) — due esenzioni, misurate ──
+    // L'utenza Aruba è UNA per tutte e tre le sedi e il tetto orario è condiviso
+    // (decisione 6 del titolare): la coda è una sola, e si legge da tutte le sedi.
+    // Le SCRITTURE sulle voci restano per sede, e il lock le vede tutte e due così:
+    //  · `coda:POST` — segnalata per `rpc-senza-sede` su `fatture_coda_accoda`;
+    //  · `coda/sospensione:POST` — segnalata per `rpc-senza-sede` su `fatture_coda_sospendi`.
+    // `coda:GET`, `coda/azioni:POST` e `coda/giro:POST` NON sono qui, e non per
+    // distrazione: la GET legge `fatture_coda`, che la fotografia
+    // `tabelle-scuola-id.json` (01/09) non conosce ancora; la POST delle azioni rilegge
+    // le voci per id e nega con `rifiutoSede` se una sola è di un plesso che l'utente
+    // non ha; il giro, nel proprio file, non ha query — il lavoratore di tutte le sedi
+    // vive in `src/lib/fatture-coda/giro.ts`, che questo lock non audita. ⚠️ Quando la
+    // PR-B rigenera la fotografia delle tabelle, `fatture_coda` (che HA `scuola_id`)
+    // diventa sensibile e le due vanno RIMISURATE: la GET di tutte le sedi avrà
+    // bisogno della sua voce, con la stessa decisione 6 come ragione.
+    'pagamenti/fattura/coda:POST':
+        'accodamento: OGNI voce passa da `assertPagamentoInScope` e dalla lettura dei pagamenti filtrata per `.in(\'scuola_id\', plessi)` PRIMA della RPC, e basta una voce fuori sede per rifiutare tutto il gesto. La RPC riceve quelle stesse voci e la sede la ricava lei da `pagamenti.scuola_id`, mai dal client. Il lock non vede il legame perché i 500 id arrivano alla RPC attraverso `voci.map(voceRpc)`, non come espressione verificata in linea',
+    'pagamenti/fattura/coda/sospensione:POST':
+        'sospensione della coda: la RPC non tocca nessuna voce, scrive la sola riga di stato `id=1`, che vale per TUTTE le sedi perché l\'utenza Aruba è una (decisione 6). Per questo la decide solo la Direzione: `requireStaff(request, [\'admin\'])`, 403 a chiunque altro',
     'pagamenti/ticket:GET': 'saldo ticket mensa di UN alunno, il cui accesso è verificato prima (staff o genitore)',
 
     // ── Modulistica: i modelli GLOBALI (scuola_id NULL) esistono per progetto ──
@@ -2374,7 +2393,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // (POST della notifica differita). Misurato rieseguendo il lock, non
             // dedotto: il passo NON coincide col numero di file, perché la prima
             // rotta espone due metodi.
-            routeConServiceRole: 330,
+            // 2026-09-23 · coda fatture Aruba (nucleo), 330 → 334: `pagamenti/fattura/coda`
+            // (GET + POST), `pagamenti/fattura/coda/azioni` (POST),
+            // `pagamenti/fattura/coda/sospensione` (POST) e `pagamenti/fattura/coda/giro`
+            // (POST, il lavoratore: apre il service role ma non ha né `.from(` né `.rpc(` —
+            // tutto il lavoro sta in `src/lib/fatture-coda/giro.ts`, che questo lock non
+            // audita, e il gate è il segreto del cron). Misurato rieseguendo il lock, non dedotto.
+            routeConServiceRole: 334,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2550,7 +2575,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 498 → 501 il 2026-09-20: i tre handler dell'annullo in blocco di un
             // import (`annulla-import` GET e POST, `riepilogo-visto` POST). Vedi la
             // nota accanto a `routeConServiceRole`.
-            handlerControllati: 501,
+            // 501 → 506 il 2026-09-23: i cinque handler della coda fatture (`coda` GET e
+            // POST, `coda/azioni` POST, `coda/sospensione` POST, `coda/giro` POST). Il passo
+            // NON coincide col numero di file perché la prima rotta espone due metodi. Vedi
+            // la nota accanto a `routeConServiceRole`.
+            handlerControllati: 506,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -2869,7 +2898,22 @@ describe('coverage-lock isolamento fra sedi', () => {
             //    plessi che chi ha importato non gestisce.
             // Il terzo handler nuovo (`annulla-import:GET`) NON è qui: la sua
             // lettura di `pagamenti` porta il filtro di sede dentro la query.
-            handlerEsentati: 107,
+            // 🔴 107 → 109 il 2026-09-23 (coda fatture Aruba, nucleo): due esenzioni in
+            // più, dichiarate una per una in AMMESSE col motivo per esteso.
+            //  · `pagamenti/fattura/coda:POST` — lo scope c'è, voce per voce
+            //    (`assertPagamentoInScope` su ognuna, più la lettura dei pagamenti filtrata
+            //    per sede), ma i 500 id arrivano alla RPC `fatture_coda_accoda` dentro un
+            //    `map`, e il lock non sa seguirli: una lettura in meno SORVEGLIATA da qui,
+            //    non una lettura in meno protetta. Il 403 per voce lo prova
+            //    `__tests__/api/fattura-coda.test.ts` sulla rotta vera.
+            //  · `pagamenti/fattura/coda/sospensione:POST` — non c'è niente da isolare:
+            //    la RPC scrive la sola riga di stato, che vale per tutte le sedi perché
+            //    l'utenza Aruba è una. Il presidio è il ruolo (solo `admin`).
+            // Gli altri tre handler della coda NON sono qui: `coda:GET` legge una tabella
+            // che la fotografia delle tabelle non conosce ancora (la PR-B la rimisura),
+            // `coda/azioni:POST` rilegge le voci e nega con `rifiutoSede`, e `coda/giro:POST`
+            // nel proprio file non ha query (il lavoro sta in `src/lib/fatture-coda/giro.ts`).
+            handlerEsentati: 109,
         })
     })
 })

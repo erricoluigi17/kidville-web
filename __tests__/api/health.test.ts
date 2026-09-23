@@ -70,7 +70,8 @@ function battito(job: string, quandoMs: number, extra: Record<string, unknown> =
     }
 }
 
-/** Il database SANO: tutte le tabelle attese, tutti e sei i job che hanno battuto da poco. */
+/** Il database SANO: tutte le tabelle attese, tutti i job che hanno battuto da poco, la
+ *  coda delle fatture installata, vuota e non sospesa. */
 function dbSano(): DBFinto {
     return {
         utenti: [{ id: 'u1' }],
@@ -78,6 +79,8 @@ function dbSano(): DBFinto {
         avvisi: [{ id: 'v1' }],
         notifiche: [{ id: 'n1' }],
         pagamenti: [{ id: 'p1' }],
+        fatture_coda: [],
+        fatture_coda_stato: [{ id: 1, sospesa: false, sospesa_il: null }],
         // DERIVATI da `JOB_CRON`, non elencati a mano: un elenco cablato qui dentro dice
         // «tutto sano» finché qualcuno non aggiunge un job sorvegliato — e da quel momento
         // il fixture descrive un mondo che non esiste più, e il test rosso parla del
@@ -138,6 +141,7 @@ describe('GET /api/health', () => {
         // Non basta lo stato aggregato: se un controllo sparisse dall'elenco,
         // l'aggregato resterebbe 'ok' e nessuno se ne accorgerebbe.
         expect(corpo.controlli.map((c) => c.nome).sort()).toEqual([
+            'coda-fatture',
             'config',
             'cron-battito',
             'db-lettura',
@@ -528,6 +532,39 @@ describe('GET /api/health', () => {
 
         expect(controllo(corpo, 'config').esito).toBe('degradato')
         expect(controllo(corpo, 'config').dettaglio).toContain('CRON_SECRET')
+    })
+
+    /* ═══════════════════════════════════════════════════════════════════════
+     * (e) LA CODA DELLE FATTURE — i casi di confine stanno in
+     *     __tests__/lib/health/coda-fatture.test.ts; qui si prova che il controllo
+     *     è AGGANCIATO all'endpoint e che il suo verdetto arriva allo stato complessivo.
+     * ═══════════════════════════════════════════════════════════════════════ */
+
+    it('una voce in coda da 25 ore porta a degraded (200) e il controllo lo dice', async () => {
+        const db = dbSano()
+        db.fatture_coda = [
+            { id: 'voce-1', stato: 'in_coda', in_attesa_dal: fa(25 * ORA), accodata_il: fa(25 * ORA) },
+        ]
+        montaDb(db)
+
+        const { stato, corpo } = await chiama()
+
+        // `degradato`, non `giu`: una coda ferma non impedisce a nessuno di aprire l'app.
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('degraded')
+        expect(controllo(corpo, 'coda-fatture').esito).toBe('degradato')
+        expect(controllo(corpo, 'coda-fatture').dettaglio).toContain('oltre 24 h')
+    })
+
+    it('con la coda NON ancora installata (DB E2E, prima del merge) lo stato resta ok, con la nota', async () => {
+        montaDb(dbSano(), { fatture_coda: { code: 'PGRST205', message: 'not found' } })
+
+        const { stato, corpo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('ok')
+        expect(controllo(corpo, 'coda-fatture').esito).toBe('ok')
+        expect(controllo(corpo, 'coda-fatture').dettaglio).toBe('coda non ancora installata (PGRST205)')
     })
 
     /* ═══════════════════════════════════════════════════════════════════════

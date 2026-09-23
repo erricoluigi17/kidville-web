@@ -212,12 +212,16 @@
 // /offline dove si era fermato — altrimenti l'unica lettura possibile è «l'accesso
 // non ha funzionato», che è falsa.
 //
-// `VERSIONE` sale a `v11` per la ragione di sempre, che è tutta di questo blocco:
+// `VERSIONE` sale a `v12` per la ragione di sempre, che è tutta di questo blocco:
 // i cataloghi di /offline sono serviti dalla CacheStorage, e finché i BYTE di
 // questo file restano identici il browser non reinstalla niente. La copia
 // vecchia della pagina resterebbe su ogni dispositivo che l'ha già salvata.
-const VERSIONE = 'v11';
-// IMPRONTA-PAGINA-OFFLINE: a5b029480c6114b32812cb944d80c432e3510ebd6e1af448d5401c1f41743ef6
+//
+// Questa volta il cambio è la voce «coda-fatture» aggiunta a `segmenti` in
+// `messages/{it,en}/offline.json` (nucleo coda-fatture §4): senza, l'elenco di
+// /offline avrebbe reso «Coda-fatture» capitalizzando l'URL invece del nome.
+const VERSIONE = 'v12';
+// IMPRONTA-PAGINA-OFFLINE: 5461aa452f035ce3c28deeb4e54acf690ef9066ffe5c8d4fab7074484ef6bdff
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

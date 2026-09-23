@@ -18,14 +18,43 @@
  * ⚠️ Questi test si verificano **rompendo il codice**: rimettere
  * `useState(descrizione ?? '')` e il primo caso deve diventare rosso. Un test mai
  * visto fallire non è un test.
+ *
+ * ─── DAL 2026-09-23 «EMETTI» METTE IN CODA ───────────────────────────────────
+ * (nucleo della coda fatture, §4.) La POST non va più a `/api/pagamenti/fattura` ma a
+ * `/api/pagamenti/fattura/coda`, con UNA voce e `urgente: true`: la causale viaggia
+ * DENTRO la voce, con la stessa regola di prima (`null` = togli la correzione salvata).
+ * I casi sulla causale restano identici nella sostanza e guardano la voce; quelli
+ * nuovi misurano l'accodamento — urgente, una voce sola, la frase «Messa in coda», il
+ * 503 della coda non ancora migrata.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+import sharedIt from '../../messages/it/shared.json'
+
+const logSpy = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/logging/client', async (importOriginal) => {
+    const vero = await importOriginal<typeof import('@/lib/logging/client')>()
+    return { ...vero, logClient: logSpy }
+})
 
 vi.mock('next-intl', async () => {
-    const catalogo = (await import('../../messages/it/adminContabilita.json')).default as Record<string, string>
+    // Il catalogo è NIDIFICATO da quando porta la sezione `codaFatture` (nucleo
+    // coda-fatture, §4): le chiavi piatte si leggono come prima, quelle puntate
+    // (`codaFatture.singola.messaInCoda`) scendendo il percorso. Con il solo accesso
+    // piatto la frase nuova tornerebbe il proprio nome, e l'asserzione su di lei
+    // sarebbe verde su una stringa che nessuno legge.
+    const catalogo = (await import('../../messages/it/adminContabilita.json')).default as unknown as Record<string, unknown>
+    const foglia = (key: string): string | undefined => {
+        if (typeof catalogo[key] === 'string') return catalogo[key] as string
+        let corrente: unknown = catalogo
+        for (const pezzo of key.split('.')) {
+            if (!corrente || typeof corrente !== 'object') return undefined
+            corrente = (corrente as Record<string, unknown>)[pezzo]
+        }
+        return typeof corrente === 'string' ? corrente : undefined
+    }
     const useTranslations = () => {
-        const t = (key: string) => catalogo[key] ?? key
+        const t = (key: string) => foglia(key) ?? key
         return Object.assign(t, { rich: t, markup: t, raw: t, has: () => true })
     }
     return { useTranslations, useLocale: () => 'it', NextIntlClientProvider: ({ children }: { children: unknown }) => children }
@@ -62,9 +91,14 @@ const DAL_MODELLO =
 /** Le chiamate spedite, per guardare il CORPO della POST — che è il punto. */
 let chiamate: { url: string; init?: RequestInit }[] = []
 let anteprima: { ok: boolean; body: unknown } = { ok: true, body: null }
+/** La risposta della coda: di default una voce accodata adesso. `null` = la rete cade. */
+let coda: { ok: boolean; status: number; body: unknown } | null = null
+
+const CODA_OK = { ok: true, status: 200, body: { gruppo_id: 'gruppo-1', accodate: 1, gia_in_coda: [] } }
 
 function montaFetch() {
     chiamate = []
+    coda = CODA_OK
     global.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const u = String(url)
         chiamate.push({ url: u, init })
@@ -74,13 +108,26 @@ function montaFetch() {
                 json: async () => anteprima.body,
             } as unknown as Response
         }
+        if (u.includes('/api/pagamenti/fattura/coda')) {
+            if (coda === null) throw new TypeError('Failed to fetch')
+            const r = coda
+            return { ok: r.ok, status: r.status, json: async () => r.body } as unknown as Response
+        }
         return { ok: true, json: async () => ({ success: true, data: { fattura_stato: 'in_attesa' } }) } as unknown as Response
     }) as unknown as typeof fetch
 }
 
+const posts = () => chiamate.filter((c) => c.init?.method === 'POST')
+
+/** Il corpo INTERO della POST alla coda: `{ voci, urgente }`. */
+function corpoCoda(): { voci: Record<string, unknown>[]; urgente?: unknown } {
+    const post = posts().find((c) => c.url.includes('/api/pagamenti/fattura/coda'))
+    return JSON.parse(String(post?.init?.body ?? '{"voci":[]}'))
+}
+
+/** La voce (una sola) che il pulsante accoda: è lì dentro che viaggia la causale. */
 function corpoPost(): Record<string, unknown> {
-    const post = chiamate.find((c) => c.init?.method === 'POST')
-    return JSON.parse(String(post?.init?.body ?? '{}'))
+    return corpoCoda().voci[0] ?? {}
 }
 
 async function apri() {
@@ -90,6 +137,8 @@ async function apri() {
 
 beforeEach(() => {
     montaFetch()
+    logSpy.mockClear()
+    document.documentElement.setAttribute('lang', 'it')
     anteprima = {
         ok: true,
         body: { success: true, data: { causale: DAL_MODELLO, origine: 'categoria', lunghezza: 99, limite: 200, eccede: false } },
@@ -178,6 +227,106 @@ describe('FatturaButton — la causale che si vede è quella che parte', () => {
         }
         render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
         await apri()
-        await waitFor(() => expect(screen.getByRole('status').textContent?.trim()).toBeTruthy())
+        // ⚠️ Per id e non con `getByRole('status')`: a modale aperto le live region sono
+        // DUE — questa, e quella (vuota) che porterà «Messa in coda» accanto al trigger.
+        const avviso = document.getElementById(`causale-avviso-${PAG}`)
+        expect(avviso?.getAttribute('role')).toBe('status')
+        await waitFor(() => expect(avviso?.textContent?.trim()).toBeTruthy())
+    })
+})
+
+describe('FatturaButton — «Emetti» mette in CODA, in testa', () => {
+    async function emettiEAspetta() {
+        render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
+        await apri()
+        await screen.findByDisplayValue(DAL_MODELLO)
+        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+        await waitFor(() => expect(posts().length).toBe(1))
+    }
+
+    it('UNA POST alla coda, con `urgente: true` e UNA voce sola — e nessuna alla route diretta', async () => {
+        await emettiEAspetta()
+
+        expect(posts()).toHaveLength(1)
+        expect(posts()[0].url).toBe('/api/pagamenti/fattura/coda')
+        expect(chiamate.some((c) => c.init?.method === 'POST' && c.url === '/api/pagamenti/fattura')).toBe(false)
+        const corpo = corpoCoda()
+        // ⚠️ `toBe(true)`, non «truthy»: è ciò che mette la voce DAVANTI al lotto. Senza,
+        // chi preme per una fattura sola aspetterebbe in fila dietro cinquecento.
+        expect(corpo.urgente).toBe(true)
+        expect(corpo.voci).toHaveLength(1)
+        expect(corpo.voci[0].pagamento_id).toBe(PAG)
+        // Il pulsante non conferma nessuna proposta: non scrive sulla scheda del bambino.
+        expect(corpo.voci[0].conferma_proposta).toBeUndefined()
+    })
+
+    it('a voce accodata il modale si chiude, e al posto del pulsante c’è «Messa in coda: parte entro pochi minuti.»', async () => {
+        const onEmessa = vi.fn()
+        render(<FatturaButton pagamentoId={PAG} userId={UTENTE} onEmessa={onEmessa} />)
+        await apri()
+        await screen.findByDisplayValue(DAL_MODELLO)
+        // La live region nasce VUOTA ad apertura del modale…
+        const live = screen.getByTestId('fattura-accodata')
+        expect(live.getAttribute('role')).toBe('status')
+        expect(live.textContent).toBe('')
+
+        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+        await waitFor(() => expect(screen.getByTestId('fattura-accodata').textContent).toBe('Messa in coda: parte entro pochi minuti.'))
+        // …ed è LO STESSO nodo quando la frase arriva: inserita col testo dentro,
+        // NVDA e JAWS la tacerebbero.
+        expect(screen.getByTestId('fattura-accodata')).toBe(live)
+        expect(screen.queryByRole('button', { name: /^emetti$/i })).toBeNull()
+        // Un secondo «Invia fattura» non accoderebbe niente: il comando non c'è più.
+        expect(screen.queryByRole('button', { name: /invia fattura/i })).toBeNull()
+        expect(onEmessa).toHaveBeenCalledTimes(1)
+    })
+
+    it('se la coda l’aveva già, lo dice — non «messa in coda»', async () => {
+        coda = { ok: true, status: 200, body: { gruppo_id: 'gruppo-1', accodate: 0, gia_in_coda: [PAG] } }
+        await emettiEAspetta()
+        await waitFor(() => expect(screen.getByTestId('fattura-accodata').textContent).toBe(
+            'Era già in coda: lo stato si vede nella pagina Coda fatture.',
+        ))
+    })
+
+    it('503 della coda non ancora migrata: la frase tradotta nell’alert, il modale resta, niente «scartata»', async () => {
+        coda = {
+            ok: false,
+            status: 503,
+            body: { error: 'La coda delle fatture non è ancora disponibile.', codice: 'CODA_FATTURE_NON_DISPONIBILE' },
+        }
+        const onEmessa = vi.fn()
+        render(<FatturaButton pagamentoId={PAG} userId={UTENTE} onEmessa={onEmessa} />)
+        await apri()
+        await screen.findByDisplayValue(DAL_MODELLO)
+        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+
+        await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(sharedIt.erroreCodaFattureNonDisponibile))
+        // Si può ripremere: niente è entrato in coda.
+        expect((screen.getByRole('button', { name: /^emetti$/i }) as HTMLButtonElement).disabled).toBe(false)
+        expect(screen.getByTestId('fattura-accodata').textContent).toBe('')
+        expect(onEmessa).not.toHaveBeenCalled()
+
+        // ⚠️ Un accodamento rifiutato NON è un documento scartato dallo SDI: chiuso il
+        // modale, il trigger resta «Invia fattura», non diventa «Riprova fattura».
+        fireEvent.click(screen.getByRole('button', { name: /^annulla$/i }))
+        expect(screen.getByRole('button', { name: /invia fattura/i })).toBeTruthy()
+        expect(screen.queryByRole('button', { name: /riprova fattura/i })).toBeNull()
+    })
+
+    it('la rete cade: il rifiuto generico a schermo, il modale resta, e il guasto si LOGGA', async () => {
+        coda = null
+        render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
+        await apri()
+        await screen.findByDisplayValue(DAL_MODELLO)
+        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+
+        await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Fattura non emessa/))
+        expect(screen.getByTestId('fattura-accodata').textContent).toBe('')
+        // Un `catch` che non logga è un bug (AGENTS.md, regola 6) — e solo il nome
+        // dell'errore, mai un dato del pagamento.
+        const righe = logSpy.mock.calls.map(([e]) => (e as { messaggio?: string }).messaggio ?? '')
+        expect(righe.some((m) => m.startsWith('fattura-singola-accodamento-fallito'))).toBe(true)
+        expect(righe.join(' ')).not.toContain('RSSMRA')
     })
 })

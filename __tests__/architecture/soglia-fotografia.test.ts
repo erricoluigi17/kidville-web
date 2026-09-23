@@ -1,13 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+    MIGRAZIONI_ATTESE_AL_MERGE,
     migrazioniPosteriori,
     posterioriCheContengono,
+    posterioriDaRigenerare,
     sogliaFotografia,
     toccaLaRls,
+    toccaLeFkUtenti,
+    toccaUnUnico,
     versioneDelFile,
+    type MetadatiFotografia,
 } from './soglia-fotografia'
 
 /**
@@ -191,5 +196,166 @@ describe('riconoscitore · una migrazione che cambia ciò che la fotografia dell
                        EXECUTE format('create policy %I on public.t for select using (true)', 'p');
                      END $$;`
         expect(toccaLaRls(sql)).toBe(true)
+    })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LE PROVE GEMELLE DI `MIGRAZIONI_ATTESE_AL_MERGE` (2026-09-23, contratto S21)
+//
+// A differenza di tutto ciò che sta sopra, queste prove leggono la cartella VERA e
+// le fotografie VERE, e di proposito: non collaudano una funzione, collaudano una
+// DICHIARAZIONE contro lo stato del repo. È una dichiarazione che toglie file da
+// tre guardie, e l'unico modo perché non diventi un'allowlist che marcisce è che
+// diventi rossa da sola nel momento in cui smette di essere vera — la migrazione
+// applicata (prova 2), il file rinominato o sparito (prova 1), una fotografia
+// scattata dopo (prova 3), un file che nessuna guardia segnala più (prova 5).
+//
+// PROVE DI ROTTURA, eseguite davvero il 2026-09-23 e poi rimesse a posto:
+//  · chiave con un nome che non esiste su disco → rossa la prova 1;
+//  · chiave sostituita con una migrazione già applicata
+//    (`20260919132612_avvisi_scadenze_posti_e_partecipanti.sql`) → rossa la prova 2
+//    (e la 3, perché è anche anteriore agli scatti);
+//  · chiave sostituita con `20260923071958_fatture_emesse_senza_vincolo_numero_per_sede.sql`,
+//    non applicata ma anteriore a `generato_alle` di fk-utenti → rossa la sola prova 3;
+//  · ragione ridotta a «PR-A» → rossa la prova 4;
+//  · `posterioriDaRigenerare` che ignora le dichiarazioni, oppure che restituisce
+//    sempre `[]` → rossa la prova 6.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RADICE = process.cwd()
+const MIGRAZIONI_VERE = join(RADICE, 'supabase', 'migrations')
+const FIXTURES = join(RADICE, '__tests__', 'fixtures')
+
+const leggiFoto = <T,>(nome: string): T => JSON.parse(readFileSync(join(FIXTURES, nome), 'utf8')) as T
+
+/** Le tre fotografie che le guardie di freschezza leggono, con la guardia di ciascuna. */
+const FOTO_DELLE_GUARDIE: { guardia: string; file: string }[] = [
+    { guardia: 'rls-per-sede', file: 'pg-policies-snapshot.json' },
+    { guardia: 'onconflict-arbitro', file: 'indici-unici-snapshot.json' },
+    { guardia: 'tracce-docente-dichiarate', file: 'fk-utenti-snapshot.json' },
+]
+
+const CHIAVI_ATTESE = Object.keys(MIGRAZIONI_ATTESE_AL_MERGE)
+
+describe('MIGRAZIONI_ATTESE_AL_MERGE · una dichiarazione che si chiude da sola', () => {
+    it('1 · ogni chiave è un file di migrazione che esiste davvero, nella forma giusta', () => {
+        const fantasma = CHIAVI_ATTESE.filter(
+            (f) => versioneDelFile(f) === null || !existsSync(join(MIGRAZIONI_VERE, f)),
+        )
+        expect(
+            fantasma,
+            'Voci di MIGRAZIONI_ATTESE_AL_MERGE che non corrispondono a un file in supabase/migrations/ ' +
+                '(rinominato, cancellato o scritto male): una dichiarazione che non nomina niente è ' +
+                "un'esenzione in attesa del prossimo file con quel nome. Toglila o correggila.",
+        ).toEqual([])
+    })
+
+    it('2 · nessuna chiave è già applicata: quando la fotografia la contiene, la voce si toglie', () => {
+        const foto = leggiFoto<{ migrazioni: { version: string }[] }>('migrazioni-applicate-snapshot.json')
+        const applicate = new Set(foto.migrazioni.map((m) => m.version))
+        // Sanity: una fotografia vuota renderebbe verde questa prova per il motivo sbagliato.
+        expect(applicate.size).toBeGreaterThan(60)
+        const giaApplicate = CHIAVI_ATTESE.filter((f) => applicate.has(versioneDelFile(f) ?? ''))
+        expect(
+            giaApplicate,
+            'Queste migrazioni risultano APPLICATE nella fotografia delle migrazioni, e sono ancora ' +
+                'dichiarate «attese al merge». Il motivo della dichiarazione è finito: toglile da ' +
+                'MIGRAZIONI_ATTESE_AL_MERGE e rigenera le fotografie delle guardie (policy, indici ' +
+                'unici, FK verso utenti) — è la PR-B della coda fatture.',
+        ).toEqual([])
+    })
+
+    it('3 · ogni chiave è posteriore a TUTTE le fotografie che le guardie leggono', () => {
+        const anteriori: string[] = []
+        for (const { guardia, file } of FOTO_DELLE_GUARDIE) {
+            const soglia = sogliaFotografia(leggiFoto<MetadatiFotografia>(file))
+            for (const f of CHIAVI_ATTESE) {
+                if ((versioneDelFile(f) ?? '') < soglia) anteriori.push(`${f} < ${file} (${guardia}, ${soglia})`)
+            }
+        }
+        expect(
+            anteriori,
+            'Una fotografia è stata scattata DOPO l\'istante che il file dichiara: quella fotografia ' +
+                'o la contiene (e allora la migrazione è applicata: togli la voce) o no (e allora il ' +
+                'nome del file mente sul suo istante). Rinomina il file con l\'istante vero in cui è ' +
+                'scritto — mai con un istante futuro — e aggiorna la chiave.',
+        ).toEqual([])
+    })
+
+    it('4 · ogni voce porta la sua ragione per esteso, con l\'integrazione e la PR-B', () => {
+        for (const [f, ragione] of Object.entries(MIGRAZIONI_ATTESE_AL_MERGE)) {
+            expect(ragione.length, `«${f}» non ha una ragione scritta per esteso.`).toBeGreaterThan(30)
+            expect(ragione, `«${f}»: la ragione deve dire CHI la applica (l'integrazione).`).toMatch(/integrazione/i)
+            expect(ragione, `«${f}»: la ragione deve dire DOVE la voce si toglie (la PR-B).`).toContain('PR-B')
+        }
+    })
+
+    it('5 · nessuna voce morta: ogni chiave è un file che almeno una guardia segnalerebbe', () => {
+        const nessunaGuardia = CHIAVI_ATTESE.filter((f) => existsSync(join(MIGRAZIONI_VERE, f))).filter((f) => {
+            const sql = readFileSync(join(MIGRAZIONI_VERE, f), 'utf8')
+            return !(toccaLaRls(sql) || toccaUnUnico(sql) || toccaLeFkUtenti(sql))
+        })
+        expect(
+            nessunaGuardia,
+            'Queste migrazioni sono dichiarate ma nessuna delle tre guardie le segnalerebbe: la ' +
+                'dichiarazione non serve, e un\'esenzione che non serve aspetta solo di coprire ' +
+                'qualcos\'altro. Toglila.',
+        ).toEqual([])
+    })
+
+    it('6 · controllo positivo: la sottrazione toglie ESATTAMENTE i dichiarati, gli altri gridano ancora', () => {
+        // Senza questa prova, una `posterioriDaRigenerare` che restituisse sempre `[]`
+        // renderebbe verdi le tre guardie per sempre — e le prove 1-5 non se ne
+        // accorgerebbero, perché guardano la dichiarazione, non la sottrazione.
+        const cartella = mkdtempSync(join(tmpdir(), 'kv-attese-'))
+        try {
+            const RLS = 'CREATE TABLE public.t (id uuid primary key);\nALTER TABLE public.t ENABLE ROW LEVEL SECURITY;'
+            writeFileSync(join(cartella, '20260901000000_prima_dello_scatto.sql'), RLS, 'utf8')
+            writeFileSync(join(cartella, '20260923100000_dichiarata.sql'), RLS, 'utf8')
+            writeFileSync(join(cartella, '20260923110000_non_dichiarata.sql'), RLS, 'utf8')
+            // Stesso nome della dichiarata ma con un'altra version: il confronto è per nome ESATTO.
+            writeFileSync(join(cartella, '20260923120000_dichiarata.sql'), RLS, 'utf8')
+            const attese = { '20260923100000_dichiarata.sql': 'PR-A: la applica l’integrazione al merge; PR-B la toglie.' }
+            const soglia = '20260920000000'
+
+            expect(posterioriCheContengono(cartella, soglia, toccaLaRls)).toEqual([
+                '20260923100000_dichiarata.sql',
+                '20260923110000_non_dichiarata.sql',
+                '20260923120000_dichiarata.sql',
+            ])
+            expect(posterioriDaRigenerare(cartella, soglia, toccaLaRls, attese)).toEqual([
+                '20260923110000_non_dichiarata.sql',
+                '20260923120000_dichiarata.sql',
+            ])
+            // Il riconoscitore resta quello della guardia: un file dichiarato non diventa
+            // «riconosciuto» per il fatto di essere dichiarato, né il contrario.
+            expect(posterioriDaRigenerare(cartella, soglia, toccaUnUnico, attese)).toEqual([
+                '20260923110000_non_dichiarata.sql',
+                '20260923120000_dichiarata.sql',
+            ])
+            expect(posterioriDaRigenerare(cartella, soglia, toccaLeFkUtenti, attese)).toEqual([])
+            // Senza il quarto argomento vale la costante: sui file sintetici non toglie niente.
+            expect(posterioriDaRigenerare(cartella, soglia, toccaLaRls)).toEqual(
+                posterioriCheContengono(cartella, soglia, toccaLaRls),
+            )
+        } finally {
+            rmSync(cartella, { recursive: true, force: true })
+        }
+    })
+})
+
+describe('i riconoscitori spostati qui dalle guardie dicono ancora la stessa cosa', () => {
+    it('`toccaUnUnico` vede UNIQUE e PRIMARY KEY nello SQL, non nei commenti', () => {
+        expect(toccaUnUnico('CREATE UNIQUE INDEX i ON public.t (a) WHERE b;')).toBe(true)
+        expect(toccaUnUnico('CREATE TABLE public.t (id uuid PRIMARY KEY);')).toBe(true)
+        expect(toccaUnUnico('-- niente unique qui\nCREATE INDEX i ON public.t (a);')).toBe(false)
+    })
+
+    it('`toccaLeFkUtenti` vede `references utenti` e `add/drop constraint`, non la prosa', () => {
+        expect(toccaLeFkUtenti('ALTER TABLE t ADD COLUMN u uuid REFERENCES public.utenti(id);')).toBe(true)
+        expect(toccaLeFkUtenti('ALTER TABLE t DROP CONSTRAINT t_u_fkey;')).toBe(true)
+        expect(toccaLeFkUtenti('-- references utenti, on delete cascade\nSELECT 1;')).toBe(false)
+        // Senza FK verso `utenti` (è il caso di `fatture_coda.creato_da`): non si accende.
+        expect(toccaLeFkUtenti('CREATE TABLE t (creato_da uuid NOT NULL, p uuid REFERENCES public.pagamenti(id));')).toBe(false)
     })
 })

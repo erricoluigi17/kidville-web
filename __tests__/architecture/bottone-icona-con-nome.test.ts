@@ -311,6 +311,24 @@ const catalogo = (ns: string): Record<string, unknown> | null => {
     return fs.existsSync(p) ? (JSON.parse(fs.readFileSync(p, 'utf8')) as Record<string, unknown>) : null
 }
 
+/**
+ * La foglia di un percorso puntato (`stato.attiva`) dentro un catalogo — anche
+ * quando è nidificato. Per una chiave senza punto è `catalogo[chiave]`, identico
+ * a prima: nessun catalogo esistente cambia esito. Senza questo, una chiave
+ * NIDIFICATA vera (es. `codaFatture.titolo`, nucleo coda-fatture §4) verrebbe
+ * cercata come proprietà letterale `"codaFatture.titolo"` — che non esiste su
+ * NESSUN oggetto, nidificato o no — e il lock griderebbe al refuso su una chiave
+ * che next-intl risolve benissimo a runtime: un falso positivo, non una difesa.
+ */
+const foglia = (radice: Record<string, unknown>, chiave: string): unknown => {
+    let corrente: unknown = radice
+    for (const pezzo of chiave.split('.')) {
+        if (typeof corrente !== 'object' || corrente === null) return undefined
+        corrente = (corrente as Record<string, unknown>)[pezzo]
+    }
+    return corrente
+}
+
 export function chiaviNomeMancanti(sorgente: string, nomeFile = 'prova.tsx'): string[] {
     const sf = ts.createSourceFile(nomeFile, sorgente, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
     /** variabile → namespace a cui `useTranslations` l'ha legata, in QUESTO file. */
@@ -359,7 +377,7 @@ export function chiaviNomeMancanti(sorgente: string, nomeFile = 'prova.tsx'): st
         if (!ns) continue // `t` ricevuto come prop: da qui non si può giudicare
         const cataloghi = [...ns].map(catalogo).filter((c): c is Record<string, unknown> => c !== null)
         if (cataloghi.length === 0) continue
-        const esiste = cataloghi.some((c) => typeof c[chiave] === 'string' && (c[chiave] as string).trim())
+        const esiste = cataloghi.some((c) => { const v = foglia(c, chiave); return typeof v === 'string' && v.trim() !== '' })
         if (!esiste) {
             mancanti.push(`${nomeFile}:${riga} → ${variabile}('${chiave}') non esiste in ${[...ns].join(' | ')}`)
         }

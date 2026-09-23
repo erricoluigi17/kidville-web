@@ -140,19 +140,35 @@ describe('contaEmesseUltimaOra', () => {
   })
 })
 
-describe('il tetto della selezione e la soglia oraria devono restare lo stesso numero', () => {
-  it('TETTO_LOTTO === SOGLIA_ORARIA_APP', async () => {
-    // ⚠️ I due valori NON si importano l'uno dall'altro, e non per pigrizia: questo
-    // modulo parla con Supabase e col logger, mentre `lotto-fatture.ts` lo carica il
-    // browser (niente React, niente next-intl, niente server — è scritto nella sua
-    // testata). Un import qui trascinerebbe il client Supabase dentro il bundle del
-    // pannello.
-    //
-    // Il prezzo di quella separazione è un numero scritto due volte, e il prezzo di un
-    // numero scritto due volte è che diverge in silenzio: la selezione lascerebbe
-    // mettere in coda più fatture di quante il server ne lasci passare, e la segreteria
-    // scoprirebbe il troncamento solo a lotto avviato. Questa riga è ciò che lo impedisce.
+describe('il tetto della selezione e la soglia oraria sono due numeri INDIPENDENTI', () => {
+  // ⚠️ FINO AL 2026-09-22 QUI SI PRETENDEVA `TETTO_LOTTO === SOGLIA_ORARIA_APP`, ed era
+  // giusto: il lotto partiva dal BROWSER, e selezionare più fatture di quante Aruba ne
+  // conceda in un'ora voleva dire un troncamento scoperto solo a lotto avviato.
+  //
+  // Dal nucleo della coda fatture (2026-09-23) il lotto non emette: ACCODA, con una POST
+  // sola, e a inviare è il lavoratore sul server, al ritmo di `SOGLIA_ORARIA_APP`, anche
+  // a PC spento. Il tetto della selezione è diventato il tetto di un GESTO, e l'unico
+  // numero a cui deve restare uguale è quanto la POST della coda accetta
+  // (`TETTO_VOCI_CODA`): oltre, la coda risponderebbe 400 all'intero lotto.
+  //
+  // ⚠️ L'import resta DINAMICO, e i valori NON si importano l'uno dall'altro nei
+  // sorgenti, per la stessa ragione di prima: `lotto-fatture.ts` lo carica il browser,
+  // mentre questo modulo e `fatture-coda/api.ts` parlano col server. Un numero scritto
+  // due volte diverge in silenzio: queste righe sono ciò che lo impedisce.
+  it('TETTO_LOTTO è il tetto per GESTO: uguale a ciò che la POST della coda accetta', async () => {
     const { TETTO_LOTTO } = await import('@/lib/pagamenti/lotto-fatture')
-    expect(TETTO_LOTTO).toBe(SOGLIA_ORARIA_APP)
+    const { TETTO_VOCI_CODA } = await import('@/lib/fatture-coda/api')
+    // Controprova che l'import dinamico abbia davvero letto qualcosa: con un modulo
+    // sbagliato `undefined === undefined` sarebbe verde su niente.
+    expect(typeof TETTO_LOTTO).toBe('number')
+    expect(TETTO_LOTTO).toBe(TETTO_VOCI_CODA)
+    expect(TETTO_LOTTO).toBe(500)
+  })
+
+  it('SOGLIA_ORARIA_APP resta il RITMO del lavoratore, e non limita più la selezione', async () => {
+    const { TETTO_LOTTO } = await import('@/lib/pagamenti/lotto-fatture')
+    expect(SOGLIA_ORARIA_APP).toBe(50)
+    // Il gesto accoda più di un'ora di quota: è il punto della coda, non un difetto.
+    expect(TETTO_LOTTO).toBeGreaterThan(SOGLIA_ORARIA_APP)
   })
 })

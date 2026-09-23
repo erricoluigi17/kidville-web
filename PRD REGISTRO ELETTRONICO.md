@@ -1987,12 +1987,32 @@ Numero preso all'invio, data documento = giorno d'invio, `emettiFatturaPagamento
 
 ## Changelog — Il vincolo per sede, il salto FPR 2154→2516 e le fatture partite ma non registrate — 2026-09-23 (branch `fix/fatture-vincolo-numero-per-sede`, PR-D1)
 
-**⏳ Indagine in corso: questa voce riporta solo ciò che è già misurato. L'esito completo
-(P0-P7, conclusione, prospetto per il commercialista ed eventuale allineamento dei contatori)
-arriva con la PR-D1b**, perché la lettura vera su Aruba richiede la finestra fuori dall'orario
-della segreteria (dopo le 18:30 Europe/Rome) e ogni ora di attesa in più produce nuove fatture
-partite e non registrate: il codice di questa PR è sicuro con qualunque esito dell'indagine
-(vedi il tetto a 50 più sotto), quindi il merge precede l'indagine invece di seguirla.
+**✅ Indagine chiusa il 23/09/2026 alle 16:39** (`scripts/numerazione-serie.mjs`, sola lettura, coda
+sospesa dalla guardia del nucleo; PR-B). Le misure riguardano 3.772 documenti su Aruba e 428 righe a registro.
+
+- **Causa: H1, documenti emessi fuori dall'app** sulla stessa utenza Aruba (pannello web: segreteria e
+  commercialista, numero scritto a mano).
+  - **7 salti su 7 spiegati**, 0 non spiegati. Esempio: FPR 2154→2516 del 18/09 si spiega con una
+    «FPR 2515/2026» nata fuori dall'app.
+  - L'app legge il massimo della serie su Aruba e ci salta sopra: il codice era corretto. Il tetto a 50
+    di questa correzione ora ferma i salti anomali invece di seguirli.
+- **Contatori corretti**: pavimento − contatore = 0 su entrambe le serie (Asilo 2546, FPR 2543). Nessun
+  allineamento necessario (P6 vera).
+- **Buchi**: FPR 2155–2514 (360 numeri) e Asilo 2530–2538 (9 numeri). Il prospetto per il commercialista
+  è fuori dal repo (`$LAVORO/indagine-r1/prospetto-numerazione-2026.txt`).
+- **Doppioni: 25 coppie serie+numero presenti due volte su Aruba.**
+  - 11 storici (febbraio–luglio, tutti fuori app): scarto seguito dalla ritrasmissione con lo stesso
+    numero. Rimedio regolare.
+  - 13: un invio fuori app di un numero che l'app aveva già usato, **scartato dallo SdI**. Nessun danno,
+    ma prova che le emissioni a mano usano numeri sbagliati; succede ancora il 23/09 (Asilo 2544 e 2545).
+  - **1 doppione valido: FPR 2524/2026.** La copia dell'app è del 21/09 ed è un'orfana; quella fuori app
+    è del 23/09. Entrambe risultano «Non consegnata» (emesse). **Serve la decisione del commercialista**
+    (nota di variazione).
+- **Orfane registrate: 6 su 7** (Asilo 2526 e 2527; FPR 2525, 2541, 2542 e 2543), il 23/09 fra le 17:08
+  e le 17:11, a coda sospesa. Autore «sistema», 6 righe `registrazione_fattura_orfana` in
+  `registro_modifiche`. FPR 2524 resta DA DECIDERE (controllo f: doppione su Aruba).
+- **Azione organizzativa per il titolare**: finché qualcuno emette dal pannello Aruba scrivendo il numero a
+  mano, i buchi e i doppioni continuano. Ora ogni emissione può passare dalla coda dell'app.
 
 ### Il vincolo per sede: un difetto della baseline, non di questa correzione
 

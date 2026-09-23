@@ -419,6 +419,7 @@
   "erroreChatThreadNonCreato": "The conversation could not be opened. Please try again in a few minutes.",
   "erroreVigilanzaNonTracciabile": "The access could not be written to the audit log, so the conversation was not opened. Please try again in a few minutes.",
   "erroreFatturaTrasportoIgnoto": "The invoice was numbered, but Aruba did not confirm the upload: nobody knows whether it was sent. Do NOT press “Issue” again: first check on the Aruba panel whether the document was transmitted.",
+  "erroreFatturaPartitaNonRegistrata": "This payment’s invoice was already sent to Aruba but is not registered in the app: a second one will not be issued. It must be registered first. No number was consumed.",
   "erroreLottoTettoOrario": "Aruba allows a maximum number of invoices per hour and this hour’s allowance is used up. No invoice was issued and no number was consumed: try again in an hour.",
   "erroreDiarioLetturaFallita": "The entry to delete could not be read. Please try again.",
   "erroreDiarioNonEliminato": "The entry could not be deleted. Please try again.",

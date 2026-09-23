@@ -55,15 +55,21 @@ async function carica(finto: ClientFinto) {
 }
 
 /**
- * Fake di Supabase che CONTA le allocazioni e sa far fallire una SELECT.
+ * Fake di Supabase che CONTA le allocazioni, registra gli UPDATE per tabella e sa far
+ * fallire sia una SELECT sia la RPC (R1-1.9: serve al caso «RPC fallita → nessun UPDATE»).
  *
- * `errori` esiste per un caso solo, ed è quello che conta: PostgREST **non lancia**,
- * ritorna `{ error }`. Un fake che restituisce sempre `error: null` sarebbe verde con la
- * gestione dell'errore e senza.
+ * `errori` esiste per due casi: `errori[<tabella>]` fa fallire la `SELECT` di quella
+ * tabella, `errori.rpc` fa fallire `prossimo_numero_fattura_sezionale`. PostgREST **non
+ * lancia**, ritorna `{ error }`. Un fake che restituisce sempre `error: null` sarebbe verde
+ * con la gestione dell'errore e senza.
  */
-function makeSupabase(responses: Record<string, unknown> & { rpc?: number }, errori: Record<string, unknown> = {}) {
+function makeSupabase(
+  responses: Record<string, unknown> & { rpc?: number },
+  errori: Record<string, unknown> & { rpc?: unknown } = {},
+) {
   const inserts: { table: string; row: unknown }[] = []
-  const rpc = vi.fn(async () => ({ data: responses.rpc ?? 1, error: null }))
+  const updates: { table: string; row: unknown }[] = []
+  const rpc = vi.fn(async () => (errori.rpc ? { data: null, error: errori.rpc } : { data: responses.rpc ?? 1, error: null }))
   return {
     from(table: string) {
       const builder = {
@@ -75,14 +81,27 @@ function makeSupabase(responses: Record<string, unknown> & { rpc?: number }, err
           inserts.push({ table, row })
           return { error: null }
         },
-        update: () => ({ eq: async () => ({ error: null }) }),
+        update: (row: unknown) => ({
+          eq: async () => {
+            updates.push({ table, row })
+            return { error: null }
+          },
+        }),
       }
       return builder
     },
     rpc,
     _inserts: inserts,
+    _updates: updates,
     _rpc: rpc,
   }
+}
+
+/** I `campi` di dominio di una riga `app_log`, cioè quello che `logEvento` NON promuove a
+ * colonna (`livello`, `messaggio`): stesso accesso di
+ * `emissione-multi-quota-estranea.test.ts:571`. */
+function campiDi(riga: Record<string, unknown> | undefined) {
+  return (riga?.contestoExtra as { campi?: Record<string, unknown> } | undefined)?.campi ?? {}
 }
 
 const pagamentoSaldato = {
@@ -177,7 +196,7 @@ describe('il tetto sul pavimento letto da Aruba', () => {
       // `numerazione` è il motivo della QUOTA; l'aggregato di `EsitoEmissione` lo
       // rinomina, ed è il nome che la route mappa sul 503.
       expect(esito.motivo).toBe('numerazione_non_allineata')
-      expect(esito.messaggio).toContain('Nessun numero è stato consumato')
+      expect(esito.messaggio).toMatch(/nessun numero è stato consumato/i)
     }
     expect(sb._rpc, 'la RPC alza il contatore e non lo riabbassa: qui non deve partire').not.toHaveBeenCalled()
     expect(upload).not.toHaveBeenCalled()
@@ -262,5 +281,213 @@ describe('il tetto sul pavimento letto da Aruba', () => {
 
     expect(esito.ok, 'una guardia che non sa non deve impedire di lavorare').toBe(true)
     expect(sb._rpc).toHaveBeenCalled()
+  })
+})
+
+/**
+ * R1-1.9 (D1§5.1-5.3): il tetto scende da 10.000 a 50, con `salto` in log e in messaggio, e
+ * niente `scartata` quando l'unico motivo di fermata è la numerazione.
+ *
+ * ⚠️ ROSSO DICHIARATO fino a R1-2.1 (CONVENZIONI, C0-1): `SCARTO_MASSIMO_PAVIMENTO` in
+ * `emissione.ts` vale ancora 10.000 e il guard di §5.3 non esiste, quindi qui sotto diversi
+ * casi falliscono per ASSERTIONERROR — mai per un errore di caricamento — e restano rossi
+ * finché R1-2.1 non riscrive quel ramo.
+ */
+describe('R1-1.9 · il tetto a 50 e il suo log (D1§5.1-5.3)', () => {
+  it('reale 2515 contro 2154 (salto 361): nessuna RPC né upload, log error con `salto` e «Avvisa l\'amministratore»', async () => {
+    const upload = vi.fn(async () => ({ ok: true, uploadFileName: 'IT_x.xml.p7m', errorCode: '0000' }))
+    const { emettiFatturaPagamento } = await carica({
+      arubaSignin: vi.fn(async () => tokenOk),
+      arubaUltimoNumeroFattura: vi.fn(async () => 2515),
+      arubaUpload: upload,
+    })
+    const sb = makeSupabase({
+      pagamenti: pagamentoSaldato,
+      admin_settings: settingsConfig,
+      parents: parentCompleto,
+      fatture_numerazione_sezionale: { ultimo_numero: 2154 },
+      rpc: 2516,
+    })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+
+    expect(esito.ok).toBe(false)
+    if (!esito.ok) {
+      expect(esito.motivo).toBe('numerazione_non_allineata')
+      // D1§5.1: la frase «Avvisa l'amministratore» sta nel MESSAGGIO ALL'OPERATORE
+      // (`esito.messaggio`), non nel `msg` della riga di log: sono due stringhe diverse.
+      expect(
+        esito.messaggio,
+        'D1§5.1: il messaggio all\'operatore deve invitare ad avvisare l\'amministratore',
+      ).toContain("Avvisa l'amministratore")
+    }
+    expect(sb._rpc, 'la RPC alza il contatore e non lo riabbassa: col salto a 361 non deve partire').not.toHaveBeenCalled()
+    expect(upload).not.toHaveBeenCalled()
+    // Niente riga `fatture_emesse` e niente UPDATE su `pagamenti`: uno stop di sola
+    // numerazione non consuma il numero e (D1§5.3) non tocca lo stato del pagamento.
+    expect(sb._inserts.filter((i) => i.table === 'fatture_emesse')).toHaveLength(0)
+    expect(sb._updates.filter((u) => u.table === 'pagamenti'), 'D1§5.3: uno stop di sola numerazione non aggiorna pagamenti').toHaveLength(0)
+
+    await vi.waitFor(() => {
+      const riga = righeLog.find((r) => String(campiDi(r).esito) === 'pavimento-fuori-scala')
+      expect(riga, 'il rifiuto deve lasciare una riga error con esito pavimento-fuori-scala').toBeTruthy()
+      expect(riga?.livello).toBe('error')
+      // D1§5.1: il campo NUMERICO `salto = ultimoAruba - contatore`, non solo i due
+      // numeri grezzi — è quello che dice a colpo d'occhio «di quanto» era fuori scala.
+      expect(campiDi(riga).salto).toBe(361)
+      expect(campiDi(riga).pavimento).toBe(2515)
+      expect(campiDi(riga).contatore).toBe(2154)
+    })
+  })
+
+  it('RPC fallita (contatore letto, salto nullo): nessun UPDATE su pagamenti', async () => {
+    // Diverso dal caso sopra: qui il pavimento PASSA (nessuno scarto) e a fermarsi è la
+    // RPC che alloca il numero. Anche questo è un motivo `numerazione` puro: D1§5.3 vuole
+    // che nemmeno questo stop scriva `fattura_stato = 'scartata'`.
+    const { emettiFatturaPagamento } = await carica({
+      arubaSignin: vi.fn(async () => tokenOk),
+      arubaUltimoNumeroFattura: vi.fn(async () => 2331),
+      arubaUpload: vi.fn(async () => ({ ok: true, uploadFileName: 'IT_x.xml.p7m', errorCode: '0000' })),
+    })
+    const sb = makeSupabase(
+      { pagamenti: pagamentoSaldato, admin_settings: settingsConfig, parents: parentCompleto },
+      { rpc: { code: '55P03', message: 'could not obtain lock on advisory lock' } },
+    )
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+
+    expect(esito.ok).toBe(false)
+    if (!esito.ok) expect(esito.motivo).toBe('numerazione_non_allineata')
+    expect(sb._rpc, 'la RPC è stata TENTATA: è lei a fallire').toHaveBeenCalled()
+    expect(sb._updates.filter((u) => u.table === 'pagamenti'), 'D1§5.3: RPC fallita è ancora motivo numerazione, niente scartata').toHaveLength(0)
+  })
+
+  it('confine: salto 50 passa (emette)', async () => {
+    const { emettiFatturaPagamento } = await carica({
+      arubaSignin: vi.fn(async () => tokenOk),
+      arubaUltimoNumeroFattura: vi.fn(async () => 1050),
+      arubaUpload: vi.fn(async () => ({ ok: true, uploadFileName: 'IT_x.xml.p7m', errorCode: '0000' })),
+    })
+    const sb = makeSupabase({
+      pagamenti: pagamentoSaldato,
+      admin_settings: settingsConfig,
+      parents: parentCompleto,
+      fatture_numerazione_sezionale: { ultimo_numero: 1000 },
+      rpc: 1051,
+    })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+
+    expect(esito.ok, 'salto=50 è il confine ammesso: deve passare').toBe(true)
+    expect(sb._rpc).toHaveBeenCalled()
+  })
+
+  it('confine: salto 51 si ferma (non emette)', async () => {
+    const upload = vi.fn(async () => ({ ok: true, uploadFileName: 'IT_x.xml.p7m', errorCode: '0000' }))
+    const { emettiFatturaPagamento } = await carica({
+      arubaSignin: vi.fn(async () => tokenOk),
+      arubaUltimoNumeroFattura: vi.fn(async () => 1051),
+      arubaUpload: upload,
+    })
+    const sb = makeSupabase({
+      pagamenti: pagamentoSaldato,
+      admin_settings: settingsConfig,
+      parents: parentCompleto,
+      fatture_numerazione_sezionale: { ultimo_numero: 1000 },
+      rpc: 1052,
+    })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+
+    expect(esito.ok, 'salto=51 supera il tetto: deve fermarsi').toBe(false)
+    if (!esito.ok) expect(esito.motivo).toBe('numerazione_non_allineata')
+    expect(sb._rpc).not.toHaveBeenCalled()
+    expect(upload).not.toHaveBeenCalled()
+  })
+
+  it('salto 3, sotto il tetto: warn `pavimento-sopra-contatore` con `salto: 3`, e la fattura parte comunque', async () => {
+    // D1§5.2: un pavimento un po' più avanti del registro non è l'anomalia — è la prova
+    // che qualcuno ha emesso fuori dall'app (J0/F2 nel commento in testa al file). Va
+    // scritto, non bloccato: per questo l'esito resta `ok: true`.
+    const { emettiFatturaPagamento } = await carica({
+      arubaSignin: vi.fn(async () => tokenOk),
+      arubaUltimoNumeroFattura: vi.fn(async () => 2003),
+      arubaUpload: vi.fn(async () => ({ ok: true, uploadFileName: 'IT_x.xml.p7m', errorCode: '0000' })),
+    })
+    const sb = makeSupabase({
+      pagamenti: pagamentoSaldato,
+      admin_settings: settingsConfig,
+      parents: parentCompleto,
+      fatture_numerazione_sezionale: { ultimo_numero: 2000 },
+      rpc: 2004,
+    })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+
+    expect(esito.ok).toBe(true)
+    await vi.waitFor(() => {
+      const riga = righeLog.find((r) => String(campiDi(r).esito) === 'pavimento-sopra-contatore')
+      expect(riga, 'il pavimento sopra il contatore, entro il tetto, deve lasciare un warn').toBeTruthy()
+      expect(riga?.livello).toBe('warn')
+      expect(campiDi(riga).salto).toBe(3)
+      expect(campiDi(riga).pavimento).toBe(2003)
+      expect(campiDi(riga).contatore).toBe(2000)
+    })
+  })
+
+  it('salto 0 (stesso numero su Aruba e a registro): nessun warn', async () => {
+    const { emettiFatturaPagamento } = await carica({
+      arubaSignin: vi.fn(async () => tokenOk),
+      arubaUltimoNumeroFattura: vi.fn(async () => 2000),
+      arubaUpload: vi.fn(async () => ({ ok: true, uploadFileName: 'IT_x.xml.p7m', errorCode: '0000' })),
+    })
+    const sb = makeSupabase({
+      pagamenti: pagamentoSaldato,
+      admin_settings: settingsConfig,
+      parents: parentCompleto,
+      fatture_numerazione_sezionale: { ultimo_numero: 2000 },
+      rpc: 2001,
+    })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+    expect(esito.ok).toBe(true)
+
+    // Non un controllo secco subito dopo l'`esito`: si aspetta un log di sicuro arrivo
+    // (`inviata`, scritto DOPO il punto in cui il warn sarebbe partito nello stesso giro)
+    // e SOLO allora si guarda che il warn non ci sia — altrimenti un'assenza vera e
+    // un'assenza «non ancora arrivata» sarebbero indistinguibili (.claude/rules/test.md).
+    await vi.waitFor(() => {
+      const rigaInviata = righeLog.find((r) => String(campiDi(r).esito) === 'inviata')
+      expect(rigaInviata, 'serve un log di successo per essere sicuri che il giro sia finito').toBeTruthy()
+    })
+    expect(righeLog.find((r) => String(campiDi(r).esito) === 'pavimento-sopra-contatore')).toBeUndefined()
+  })
+
+  it('il negativo del §5.3: un rifiuto di MERITO (non numerazione) aggiorna comunque pagamenti a scartata', async () => {
+    // Controllo di selettività: il guard di §5.3 deve sospendere SOLO `scartata` quando il
+    // motivo è `numerazione` puro. Un rifiuto di Aruba sul contenuto del documento (motivo
+    // `scartata`) deve continuare a scrivere `fattura_stato = 'scartata'` come oggi — questo
+    // è già vero PRIMA di R1-2.1 (`fattura-emissione.test.ts:255-267` fa da controllo
+    // opposto sullo stesso comportamento) e deve restare vero anche dopo.
+    const { emettiFatturaPagamento } = await carica({
+      arubaSignin: vi.fn(async () => tokenOk),
+      arubaUltimoNumeroFattura: vi.fn(async () => 2331),
+      arubaUpload: vi.fn(async () => ({ ok: false, errorCode: '0094', errorDescription: 'IdTrasmittente non valido' })),
+    })
+    const sb = makeSupabase({
+      pagamenti: pagamentoSaldato,
+      admin_settings: settingsConfig,
+      parents: parentCompleto,
+      fatture_numerazione_sezionale: { ultimo_numero: 2331 },
+      rpc: 2332,
+    })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+
+    expect(esito.ok).toBe(false)
+    if (!esito.ok) expect(esito.motivo).toBe('scartata')
+    const pagUpd = sb._updates.find((u) => u.table === 'pagamenti')
+    expect(pagUpd, 'un rifiuto di merito NON è un motivo numerazione: deve restare scartata').toBeTruthy()
+    expect((pagUpd?.row as { fattura_stato?: string } | undefined)?.fattura_stato).toBe('scartata')
   })
 })

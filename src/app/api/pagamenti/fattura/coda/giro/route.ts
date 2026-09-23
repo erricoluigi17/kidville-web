@@ -43,9 +43,10 @@ const postQuerySchema = z.object({}) // nessun parametro in ingresso
  * (`controlloBattitoCron` in `src/lib/health/controlli.ts`) conta come vivo un job solo se
  * trova `esito` in `ESITI_BATTITO` — cioè `ok` o `ok-parziale`. Scrivere lì
  * `niente-da-fare` o `finestra-sync` farebbe dare «senza battito» a un cron che gira
- * benissimo, il giorno in cui `fatture-coda-tick` entra in `JOB_CRON`: l'allarme che suona
- * da solo, e che quindi viene spento. Per questo ogni esito che non sia `errore` batte
- * `esito: 'ok'` a livello info, e l'esito del giro va in `tipo` (lista bianca di `redact`).
+ * benissimo, ora che `fatture-coda-tick` è entrato in `JOB_CRON` (dal 2026-09-23, PR-B della
+ * coda, finestra di 30 minuti): l'allarme che suona da solo, e che quindi viene spento.
+ * Per questo ogni esito che non sia `errore` batte `esito: 'ok'` a livello info, e l'esito
+ * del giro va in `tipo` (lista bianca di `redact`).
  * Il `tipo` sta anche nel `msg`, perché l'impronta di `app_log` non guarda il contesto:
  * una riga al giorno per tipo, ciascuna col proprio `contesto` coerente.
  */

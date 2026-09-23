@@ -171,7 +171,9 @@ describe('CodaFatturePanel — striscia di stato e contatori', () => {
     })
 
     it('in pausa: mostra l’orario nel fuso Europe/Rome', async () => {
-        const finoA = '2026-09-23T14:35:00.000Z'
+        // Relativo ad ADESSO, mai una data cablata: il pannello mostra la pausa solo se è ancora nel
+        // futuro, e un orario scritto a mano fa scadere il test col calendario (.claude/rules/test.md).
+        const finoA = new Date(Date.now() + 60 * 60 * 1000).toISOString()
         code = [risposta({ stato: { sospesa: false, sospesa_il: null, pausa_fino_a: finoA, pausa_motivo: 'aruba-429', ultimo_giro_il: null } })]
         render(<CodaFatturePanel userId={UTENTE} ruolo="segreteria" />)
 

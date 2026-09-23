@@ -211,6 +211,47 @@ describe('GET /coda — contenuto', () => {
     expect(perId[uuid(2)].scuola_id).toBe(SEDE_B)
   })
 
+  it('fuori sede resta chiuso SOLO il messaggio d’esito: nome dell’alunno, importo e chi ha accodato attraversano (voce AMMESSE `coda:GET`)', async () => {
+    // Due voci gemelle, una per sede, accodate da un'utente che NON è quella che legge. Tutto
+    // ciò che la GET restituisce per la voce propria lo restituisce identico per quella
+    // dell'altra sede, tranne `esito_messaggio`. Se un giorno si nasconde anche un altro campo
+    // (o se ne scopre uno nuovo), questo test diventa rosso e la voce di
+    // `isolamento-sede-coverage` va riscritta insieme: deve dire per esteso cosa attraversa.
+    const ALTRA = uuid(900)
+    db.utenti = [...db.utenti, { id: ALTRA, nome: 'Collega', cognome: 'Finta' }]
+    const gemella = {
+      stato: 'errore',
+      esito_codice: 'scarto_aruba',
+      esito_messaggio: 'dettaglio',
+      creato_da: ALTRA,
+      pagamenti: { descrizione: 'Retta', importo: '230.50', alunni: { nome: 'Alunno', cognome: 'Gemello' } },
+    }
+    db.fatture_coda = [
+      voce(1, { ...gemella, scuola_id: SEDE_A }),
+      voce(2, { ...gemella, scuola_id: SEDE_B }),
+    ]
+    const corpo = await (await GET(get())).json()
+    const perId = Object.fromEntries(corpo.voci.map((v: { id: string }) => [v.id, v]))
+    const fuori = perId[uuid(2)]
+
+    expect(fuori).toMatchObject({
+      alunno: 'Alunno Gemello',
+      importo: 230.5,
+      descrizione: 'Retta',
+      creato_da_nome: 'Collega Finta',
+      esito_codice: 'scarto_aruba',
+      esito_messaggio: null,
+      propria: false,
+    })
+
+    // Il confronto campo per campo: diversi solo ciò che per costruzione deve esserlo.
+    const DIVERSI = new Set(['id', 'pagamento_id', 'scuola_id', 'propria', 'esito_messaggio'])
+    const senza = (v: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(v).filter(([k]) => !DIVERSI.has(k)))
+    expect(senza(fuori)).toEqual(senza(perId[uuid(1)]))
+    expect(perId[uuid(1)].esito_messaggio).toBe('dettaglio')
+  })
+
   it('`propria` dice se la voce è di una sede dell’utente: il pannello la rende selezionabile solo allora', async () => {
     // /coda/azioni rifiuta TUTTO il gesto (403) se anche una sola voce è di un'altra sede:
     // senza questo campo il pannello lasciava spuntare anche quelle, e «Seleziona tutto» +

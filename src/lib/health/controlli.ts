@@ -142,6 +142,7 @@ export interface JobCron {
  *   notifiche-promemoria  notifiche-promemoria  0 6 ogni gg    26 h
  *   pagamenti-solleciti   pagamenti-solleciti-run  0 6 ogni gg 26 h
  *   mensa-allergie-check  mensa-check-allergie  0 7 ogni gg    26 h
+ *   fatture-coda-tick     fatture-coda-tick   ogni 5 min*      30 min  (*salta :02 e :32; dal 2026-09-23)
  *
  * La finestra è ~3-4 volte la cadenza per i job frequenti e cadenza+2h per i giornalieri:
  * deve assorbire un giro saltato senza gridare, e non due. Un allarme che scatta al primo
@@ -272,6 +273,26 @@ export const JOB_CRON: readonly JobCron[] = [
     //
     // 26 h come gli altri giornalieri: assorbe un giro saltato, non due.
     { nome: 'iscrizioni-import-invio', finestraMs: 26 * ORA },
+    // `fatture-coda-tick` (`POST /api/pagamenti/fattura/coda/giro`,
+    // `7,12,17,22,27,37,42,47,52,57 * * * *`): il lavoratore della coda fatture. È ciò che
+    // manda ad Aruba le fatture che la segreteria ha accodato e poi è andata via col PC
+    // spento: se smette, la coda non si svuota e nessuno lo vede, perché «in coda» non è uno
+    // stato d'errore — è esattamente com'era prima.
+    //
+    // Entrato qui il 2026-09-23 nella PR-B della coda, DOPO che la migrazione che lo schedula
+    // (`20260923102831_fatture_coda_nucleo`) è stata applicata in produzione e la fotografia
+    // delle migrazioni rigenerata: il lock `cron-sorvegliato-e-applicato` vieta di sorvegliare
+    // un lavoro prima che esista.
+    //
+    // PERCHÉ 30 MINUTI e non i 20 di `push-dispatch`, che pure gira ogni cinque: la cadenza
+    // non è uniforme — salta :02 e :32 per stare fuori dalle finestre della sync SDI, quindi
+    // due battiti consecutivi distano fino a 10 minuti anche a lavoro sano — e il battito si
+    // scrive a FINE giro, che può durare fino ai 300 s del `maxDuration`. Un giro regolare può
+    // quindi tacere ~15 minuti (:27 veloce, poi :37 che finisce alle :42); con un giro saltato
+    // ~20. Trenta assorbono un giro saltato anche attorno al buco dei :32, con margine; mezz'ora
+    // di silenzio, invece, non è più un ritardo.
+    // Ogni esito del giro (anche «niente da fare» e «finestra della sync») batte `esito: 'ok'`.
+    { nome: 'fatture-coda-tick', finestraMs: 30 * MIN },
 ]
 
 /**

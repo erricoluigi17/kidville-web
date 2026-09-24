@@ -1893,6 +1893,13 @@ sveglia non si perde); il rosso di G2 e di G9 si è visto rompendo il codice (pe
 al posto di `inizioMs: inizio`). Ogni correzione è stata poi rotta su
 una copia, col suo test diventato rosso e l'originale rimesso (`shasum` uguale).
 
+**7b. Un test instabile, fuori dalla coda.** Il primo giro di CI della PR #164 è caduto su
+`__tests__/components/AvvisoDetails-permessi.test.tsx` («dopo un gesto riuscito con `occupati: null`…»), verde
+in locale quattro volte su quattro, anche in UTC. Era una gara del test: `letturaRisposte()` conta le fetch
+PARTITE, e fra la seconda chiamata e la sua resa il riquadro dei posti può non esserci; sotto il carico della CI
+`getAllByRole('status')` l'ha cercato lì. Ora si aspetta la sua presenza col testo giusto. Nessun codice
+dell'app cambia.
+
 **8. Fuori, e perché** (§1.4 del piano):
 - le ricerche del giro contro quelle della sync (un blocco che scavalca i minuti 0 o 30 può sommare le sue
   letture a quelle della sync): le chiude il **cancello condiviso** della seconda consegna;

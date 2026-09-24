@@ -108,7 +108,7 @@ Tutte SECURITY DEFINER, `SET search_path = public, pg_temp` (così nella migrazi
   - Funziona solo se `lavoratore_token = p_token` e la voce è `in_invio`.
   - `p_esito ∈ {emessa, errore, riprova}`:
     - `riprova` → la voce torna `in_coda` (posizione invariata, `in_attesa_dal` invariato);
-    - `emessa` → `concluso_il = now()`, `causale_manuale` e `intestatario_scelto` azzerati.
+    - `emessa` → `concluso_il = now()`, `causale_manuale` e `intestatario_scelto` azzerati; dalla consegna 2b (D13) anche `esito_messaggio`, sempre, qualunque messaggio passi il chiamante (migrazione `20260924010455_fatture_coda_chiudi_emessa_azzera_messaggio.sql`, con un blocco `DO` che ripulisce le emesse che ne avessero già uno).
 - **`fatture_coda_rilascia(p_token uuid, p_pausa_minuti int, p_motivo text) returns void`**
   - Libera il lavoratore se il token combacia.
   - Se `p_pausa_minuti > 0`: `pausa_fino_a = greatest(coalesce(pausa_fino_a, now()), now() + p_pausa_minuti minuti)` e `pausa_motivo`.
@@ -159,7 +159,7 @@ Schemi zod e tipi in **`src/lib/fatture-coda/api.ts`**. Tutte le route usano `wi
 **`GET /api/pagamenti/fattura/coda`** → `{disponibile, stato, conteggi, stima_fine, voci}`
 - `stato` = `{sospesa, sospesa_il, pausa_fino_a, pausa_motivo, ultimo_giro_il}`.
 - `conteggi` = `{in_coda, in_invio, errore, emesse_7g, tolte_7g}`.
-- `stima_fine`: ISO oppure null, calcolata con 50/ora sulle voci in attesa.
+- `stima_fine`: ISO oppure null. Dalla consegna 2b (D3) `stimaFineCoda` simula i tick del cron (`MINUTI_TICK_CODA`, legati da un test alla migrazione) con le regole del giro: a ogni tick al più `TETTO_BLOCCO` fatture e i posti rimasti nel secchio delle 50/ora, contando le emesse dell'ultima ora e il momento in cui escono dalla finestra (`istantiEmesseUltimaOra`, `tetto-orario-aruba.ts`). Se le emesse non si possono misurare è `null`, come il giro, che senza misura non invia.
 - `voci`: le attive più le concluse negli ultimi 7 giorni, al massimo 1000. Ogni voce: `{id, stato, urgente, accodata_il, esito_codice, esito_messaggio, scuola_id, scuola_nome, pagamento_id, alunno, descrizione, importo, creato_da_nome, posizione}`.
   - Tutte le sedi per tutto lo staff (decisione 6).
   - `esito_messaggio` è **null** se l'utente non ha la sede della voce (degli altri si vede solo il codice).
@@ -167,6 +167,7 @@ Schemi zod e tipi in **`src/lib/fatture-coda/api.ts`**. Tutte le route usano `wi
 
 **`POST /api/pagamenti/fattura/coda`**
 - Corpo: `{voci: [{pagamento_id, intestatario?, conferma_proposta?, causale?}] (1..500), urgente?: boolean}`.
+- `intestatario`: nel nucleo solo il ramo `adult`. Dalla consegna 2b (D1) anche `persona` (scritta a mano), ma **solo in un gesto di una voce** (`superRefine` su `zCorpoAccoda`): da un lotto non entra nessuna anagrafica digitata. La persona si controlla con `validaCessionario` **prima** di ogni lettura del DB: se è incompleta, 400 `INTESTATARIO_DIGITATO_INCOMPLETO` (log `warn` `intestatario-digitato-incompleto`, solo il conteggio) e non si accoda niente. Non esce dalla GET né dai log. Con la persona, `conferma_proposta` vuol dire «ricorda sulla scheda»: il nome del campo è storico.
 - `assertPagamentoInScope` su **ogni** voce, e pagamento `pagato` (altrimenti 400 `PAGAMENTO_NON_SALDATO`).
 - `rpc('fatture_coda_accoda', …)`, poi **sveglia**: `rpc('fatture_coda_tick_http')` senza attendere l'esito.
 - Risposta `{gruppo_id, accodate, gia_in_coda}`.
@@ -174,6 +175,7 @@ Schemi zod e tipi in **`src/lib/fatture-coda/api.ts`**. Tutte le route usano `wi
 **`POST /api/pagamenti/fattura/coda/azioni`**
 - Corpo: `{azione: 'togli' | 'rimetti', ids: uuid[] (1..500)}` → `{aggiornate}`.
 - Dopo «rimetti» parte la sveglia.
+- Dalla consegna 2b (D2) i log di «Togli» e «Rimetti» portano l'attore (`utente`) e `distingui: ['operazione']`: senza, le due azioni avevano la stessa impronta e `app_log` ne teneva una riga sola al giorno. Una riga per utente, azione e giorno. «Sospendi/Riprendi» portava già l'attore.
 
 **`POST /api/pagamenti/fattura/coda/sospensione`**
 - Corpo: `{sospesa: boolean}`, **solo admin** (403 altrimenti).
@@ -204,6 +206,7 @@ Schemi zod e tipi in **`src/lib/fatture-coda/api.ts`**. Tutte le route usano `wi
 - Invece della POST diretta fa `POST /coda` con `urgente:true` e la causale scritta a mano, se c'è.
 - Esito mostrato: «Messa in coda: parte entro pochi minuti».
 - La route diretta `POST /api/pagamenti/fattura` **resta** (nessun 410 nel nucleo), ma l'interfaccia non la usa più.
+- Consegna 2b (D1): il pulsante accoda **sempre**, anche con l'intestatario scritto a mano (nel nucleo quel ramo usava ancora la POST diretta). «Ricorda sulla scheda» viaggia come `conferma_proposta: true`, e la PATCH della scheda dal browser non c'è più: la scrive il lavoratore (`ricordaPersonaDigitata` in `esegui-blocco-fatture.ts`, che chiama `ricordaPersonaSullaScheda` di `intestatari.ts`) solo dopo un'emissione nuova riuscita e con l'attore del registro noto, leggendo prima il valore che sostituisce, e la riga del registro delle scritture porta quel valore, la sede e la classe del bambino. **Perimetro di sede**, lo stesso della PATCH (`assertAlunnoInScope`): scrive solo se la sede del bambino è fra quelle di chi ha accodato (`scuoleDiUtente`); se quelle sedi non si leggono (elenco vuoto) non scrive niente; fuori sede non tocca la scheda né il registro e logga il `warn` `intestatario-persona-fuori-sede`, e la fattura resta emessa (il gate del giro è la sede del **pagamento**, che dopo un trasferimento del bambino resta quella di partenza). Se la lettura o la scrittura falliscono, niente sulla scheda e un `warn` `intestatario-persona-non-salvato`; senza attore `intestatario-persona-non-ricordato-attore-ignoto`, su eccezione `intestatario-persona-non-ricordato` (fail-open); a scheda scritta `info` `intestatario-persona-salvato`. Con una voce attiva il pulsante sparisce; su «Errore in coda» al suo posto c'è il collegamento alla pagina «Coda fatture» (D5). `onEmessa` riceve `{ accodata: 'nuova' | 'gia' }` (D12).
 
 **Chiavi i18n (le scrive SOLO il compito dell'interfaccia; gli altri usano questi nomi)**
 - File: `messages/{it,en}/adminContabilita.json`, sotto `codaFatture`.

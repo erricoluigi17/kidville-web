@@ -23,7 +23,13 @@ import path from 'node:path'
 const h = vi.hoisted(() => ({
   emetti: vi.fn(),
   conta: vi.fn(),
-  eventi: [] as { evento: string; livello: string; campi: Record<string, unknown> }[],
+  eventi: [] as {
+    evento: string
+    livello: string
+    campi: Record<string, unknown>
+    errore?: unknown
+    opzioni?: unknown
+  }[],
 }))
 
 vi.mock('@/lib/aruba/emissione', async (originale) => {
@@ -38,8 +44,10 @@ vi.mock('@/lib/logging/logger', async (originale) => {
   const vero = await originale<typeof import('@/lib/logging/logger')>()
   return {
     ...vero,
-    logEvento: (evento: string, livello: string, campi: Record<string, unknown>) => {
-      h.eventi.push({ evento, livello, campi })
+    // Anche il quarto e il quinto argomento (2b): l'errore PostgREST e il `distingui`
+    // sono parte di ciò che il giro promette di loggare.
+    logEvento: (evento: string, livello: string, campi: Record<string, unknown>, errore?: unknown, opzioni?: unknown) => {
+      h.eventi.push({ evento, livello, campi, errore, opzioni })
     },
   }
 })
@@ -56,6 +64,8 @@ import {
   CODICI_ESITO_CODA,
 } from '@/lib/fatture-coda/giro'
 import { TETTO_BLOCCO } from '@/lib/pagamenti/lotto-fatture'
+import { datiAltroDaPersonaScelta } from '@/lib/fatturazione/intestatario-scelto'
+import { VALORE_NON_REGISTRATO } from '@/lib/audit/riassunto'
 import { SOGLIA_ORARIA_APP } from '@/lib/pagamenti/tetto-orario-aruba'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -64,6 +74,11 @@ function uuid(n: number): string {
   return `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 }
 const SEDE = uuid(8000)
+/**
+ * La sede del BAMBINO, diversa da quella dell'attore (`SEDE`, in `utenti`): la riga di audit
+ * della persona sulla scheda deve stare sotto il plesso del bambino (2b, T4).
+ */
+const SEDE_ALUNNO = uuid(8001)
 const STAFF = uuid(7000)
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
@@ -97,6 +112,18 @@ class CodaFinta {
   /** Le scritture arrivate con `.from(…)`: tabella, operazione, corpo, filtri. */
   scritture: { tabella: string; op: string; payload: unknown; filtri: Record<string, unknown> }[] = []
   utenti: { id: string; role: string; scuola_id: string | null }[] = [{ id: STAFF, role: 'segreteria', scuola_id: SEDE }]
+  /**
+   * Il ponte `utenti_scuole` della Direzione (`scuoleDiUtente`): il ramo della persona confronta
+   * la sede del BAMBINO con le sedi di chi ha accodato, come faceva la PATCH (giro 1, correzione).
+   */
+  utentiScuole: { utente_id: string; scuola_id: string }[] = []
+  /** Risposta forzata sul ponte (caso i′: lettura fallita ⇒ nessuna sede ⇒ nessuna scrittura). */
+  guastoSedi: { data: unknown; error: unknown } | null = null
+  /** La scheda del bambino, come la legge `ricordaPersonaSullaScheda` PRIMA di sostituirla (2b, T4). */
+  scheda: { intestatario_fatture: unknown; scuola_id: string; section_id: string | null } | null =
+    { intestatario_fatture: null, scuola_id: SEDE_ALUNNO, section_id: null }
+  /** Risposte forzate sulla scheda: la lettura o la UPDATE di `alunni` (caso h). */
+  guastoScheda: { lettura?: { data: unknown; error: unknown }; scrittura?: { data: unknown; error: unknown } } = {}
 
   accoda(n: number, extra: Partial<VoceFinta> = {}, da = 1): VoceFinta[] {
     const nuove = Array.from({ length: n }, (_, i) => ({
@@ -183,7 +210,22 @@ class CodaFinta {
         const esegui = () => {
           if (ctx.op !== 'select') this.scritture.push({ tabella, op: ctx.op, payload: ctx.payload, filtri: { ...ctx.filtri } })
           if (tabella === 'utenti') return { data: this.utenti, error: null }
-          if (tabella === 'alunni' && ctx.op === 'update') return { data: [{ id: ctx.filtri.id }], error: null }
+          if (tabella === 'utenti_scuole') {
+            if (this.guastoSedi) return this.guastoSedi
+            return { data: this.utentiScuole.filter((r) => r.utente_id === ctx.filtri.utente_id), error: null }
+          }
+          if (tabella === 'alunni' && ctx.op === 'update') {
+            if (this.guastoScheda.scrittura) return this.guastoScheda.scrittura
+            // Con STATO, come le RPC: una lettura fatta DOPO la UPDATE vedrebbe già la persona.
+            if (this.scheda) {
+              this.scheda = {
+                ...this.scheda,
+                intestatario_fatture: (ctx.payload as { intestatario_fatture: unknown }).intestatario_fatture,
+              }
+            }
+            return { data: [{ id: ctx.filtri.id }], error: null }
+          }
+          if (tabella === 'alunni') return this.guastoScheda.lettura ?? { data: this.scheda, error: null }
           return { data: [], error: null }
         }
         Object.assign(b, {
@@ -191,8 +233,11 @@ class CodaFinta {
           update: (p: unknown) => { ctx.op = 'update'; ctx.payload = p; return b },
           insert: (p: unknown) => { ctx.op = 'insert'; ctx.payload = p; return b },
           eq: (k: string, v: unknown) => { ctx.filtri[k] = v; return b },
-          is: () => b,
+          // Registrato e non valutato: la condizione «scheda vuota» dell'adulto si verifica
+          // guardando il filtro che arriva, non simulandolo.
+          is: (k: string, v: unknown) => { ctx.filtri['is:' + k] = v; return b },
           in: () => b,
+          maybeSingle: () => Promise.resolve(esegui()),
           then: (ok: (r: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(esegui()).then(ok, ko),
         })
         return b
@@ -538,12 +583,258 @@ describe('ciò che la voce porta arriva fino all’emissione', () => {
 
     const schede = coda.scritture.filter((s) => s.tabella === 'alunni')
     expect(schede).toEqual([
-      { tabella: 'alunni', op: 'update', payload: { intestatario_fatture: adulto }, filtri: { id: uuid(3001) } },
+      // La condizione «scheda vuota» viaggia DENTRO la UPDATE: l'adulto non sovrascrive mai.
+      {
+        tabella: 'alunni',
+        op: 'update',
+        payload: { intestatario_fatture: adulto },
+        filtri: { id: uuid(3001), 'is:intestatario_fatture': null },
+      },
     ])
     // E la scrittura lascia la sua riga nel registro immodificabile, a nome di chi ha accodato.
     const audit = coda.scritture.filter((s) => s.tabella === 'audit_scritture_docente')
     expect(audit).toHaveLength(1)
     expect((audit[0].payload as { attore_id: string }).attore_id).toBe(STAFF)
+  })
+})
+
+/**
+ * La persona scritta a mano, col cast di `FatturaButton-intestatario.test.tsx` (`COMPLETI`, con
+ * `CF_DIGITATO`), ricopiato: non se ne inventa un'altra.
+ */
+const PERSONA = {
+  tipo: 'persona' as const,
+  codice_fiscale: 'PRLCRL85M41H501Y',
+  nome: 'Carlo',
+  cognome: 'Perlini',
+  indirizzo: 'Via delle Prove 1',
+  cap: '80014',
+  comune: 'Giugliano in Campania',
+}
+
+describe('l’intestatario scritto a mano («Altro», consegna 2b, D1)', () => {
+  const esitoConAlunno = { ...esitoOk, alunnoId: uuid(3001) }
+  const schede = () => coda.scritture.filter((s) => s.tabella === 'alunni')
+  const audit = () => coda.scritture.filter((s) => s.tabella === 'audit_scritture_docente')
+  const evento = (esito: string) => h.eventi.filter((e) => e.campi.esito === esito)
+
+  // Chi accoda, in questo blocco, è la Direzione di DUE plessi: la sua sede primaria (`SEDE`,
+  // in `utenti`) e quella del bambino (`SEDE_ALUNNO`, dal ponte). Così la scheda si può
+  // scrivere, e resta provato che il registro va sotto la sede del BAMBINO e non sotto la
+  // primaria dell'attore. Il caso (i) torna alla segreteria di un plesso solo.
+  beforeEach(() => {
+    coda.utenti = [{ id: STAFF, role: 'admin', scuola_id: SEDE }]
+    coda.utentiScuole = [{ utente_id: STAFF, scuola_id: SEDE_ALUNNO }]
+  })
+
+  it('(a) la persona arriva fino all’emissione, intera', async () => {
+    coda.accoda(1, { intestatario_scelto: PERSONA })
+
+    await giro()
+
+    expect(h.emetti).toHaveBeenCalledTimes(1)
+    expect(h.emetti.mock.calls[0][3].intestatarioScelto).toEqual(PERSONA)
+    expect(coda.voce(1).stato).toBe('emessa')
+  })
+
+  it('(b) con «ricorda» e un’emissione NUOVA: la scheda si SOSTITUISCE, e il registro ha il valore di prima sotto la sede del bambino', async () => {
+    coda.scheda = {
+      intestatario_fatture: { tipo: 'adult', adult_id: uuid(3100) },
+      scuola_id: SEDE_ALUNNO,
+      section_id: uuid(3200),
+    }
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true })
+    h.emetti.mockResolvedValue(esitoConAlunno)
+
+    await giro()
+
+    expect(schede()).toEqual([
+      {
+        tabella: 'alunni',
+        op: 'update',
+        payload: { intestatario_fatture: { tipo: 'altro', dati: datiAltroDaPersonaScelta(PERSONA) } },
+        // ⚠️ NESSUN `is:intestatario_fatture`: chi ha spuntato «ricorda» ha chiesto di sostituire.
+        filtri: { id: uuid(3001) },
+      },
+    ])
+    const righe = audit()
+    expect(righe).toHaveLength(1)
+    const riga = righe[0].payload as {
+      attore_id: string
+      entita_id: string
+      scuola_id: string
+      section_id: string | null
+      valore_prima: unknown
+      valore_dopo: { intestatario_fatture: { dati: Record<string, unknown> } }
+    }
+    expect(riga.attore_id).toBe(STAFF)
+    expect(riga.entita_id).toBe(uuid(3001))
+    // Non `SEDE`: con la sede dell'attore la riga uscirebbe dalla vista del plesso del bambino.
+    expect(riga.scuola_id).toBe(SEDE_ALUNNO)
+    expect(riga.section_id).toBe(uuid(3200))
+    // Il valore SOSTITUITO: senza, il registro perderebbe chi era l'intestatario della detrazione.
+    expect(riga.valore_prima).toEqual({ intestatario_fatture: { tipo: 'adult', adult_id: uuid(3100) } })
+    const dati = riga.valore_dopo.intestatario_fatture.dati
+    expect(dati.nome).toBe(VALORE_NON_REGISTRATO)
+    expect(dati.cognome).toBe(VALORE_NON_REGISTRATO)
+    expect(dati.cf).toBe(VALORE_NON_REGISTRATO)
+    const salvato = evento('intestatario-persona-salvato')
+    expect(salvato).toHaveLength(1)
+    expect(salvato[0].livello).toBe('info')
+    expect(salvato[0].campi).toMatchObject({ operazione: OPERAZIONE_GIRO, pagamento_id: uuid(1), alunno_id: uuid(3001) })
+    expect(salvato[0].opzioni).toEqual({ distingui: ['alunno_id'] })
+  })
+
+  it('(c) senza «ricorda» la scheda non si tocca, anche quando l’attore è noto per un’altra voce dello stesso giro', async () => {
+    // ⚠️ DUE voci dello STESSO operatore nello stesso giro, e non una sola: con la voce senza
+    // «ricorda» da sola `leggiAttori` non legge l'attore, e la scrittura salterebbe per il ramo
+    // «attore ignoto», non per la casella. Qui l'attore è noto (lo porta la voce 1), quindi
+    // l'unica cosa che tiene ferma la scheda del bambino della voce 2 è `ricordaSullaScheda`.
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true })
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: false }, 2)
+    h.emetti.mockImplementation(async (_sb: unknown, pagamentoId: string) => ({
+      ...esitoOk,
+      alunnoId: pagamentoId === uuid(1) ? uuid(3001) : uuid(3002),
+    }))
+
+    await giro()
+
+    expect(coda.voce(1).stato).toBe('emessa')
+    expect(coda.voce(2).stato).toBe('emessa')
+    // Presenza: la voce con la casella scrive la SUA scheda (l'attore c'è davvero).
+    expect(schede().map((s) => s.filtri.id)).toEqual([uuid(3001)])
+    // Assenza: nessuna scrittura, né riga di registro, col bambino della voce senza casella.
+    expect(audit().map((s) => (s.payload as { entita_id: string }).entita_id)).toEqual([uuid(3001)])
+    expect(evento('intestatario-persona-non-ricordato-attore-ignoto')).toEqual([])
+  })
+
+  it('(d) una riga GIÀ a registro non dice niente su oggi: nessuna scrittura', async () => {
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true })
+    h.emetti.mockResolvedValue({ ...esitoConAlunno, gia: true })
+
+    await giro()
+
+    expect(coda.voce(1).stato).toBe('emessa')
+    expect(schede()).toEqual([])
+    expect(audit()).toEqual([])
+  })
+
+  it('(e) un’emissione rifiutata non lascia dietro una modifica permanente', async () => {
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true })
+    h.emetti.mockResolvedValue(ko('intestatario_non_del_bambino', 422))
+
+    await giro()
+
+    expect(coda.voce(1).stato).toBe('errore')
+    expect(schede()).toEqual([])
+  })
+
+  it('(f) chi ha accodato non si legge: niente scrittura senza la sua riga di audit, e lo si dice', async () => {
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true, creato_da: uuid(7002) })
+    h.emetti.mockResolvedValue(esitoConAlunno)
+
+    await giro()
+
+    expect(coda.voce(1).stato).toBe('emessa')
+    expect(schede()).toEqual([])
+    expect(audit()).toEqual([])
+    const avviso = evento('intestatario-persona-non-ricordato-attore-ignoto')
+    expect(avviso).toHaveLength(1)
+    expect(avviso[0].livello).toBe('warn')
+  })
+
+  it('(b′) l’attore si legge anche per la persona con «ricorda»', async () => {
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true })
+    h.emetti.mockResolvedValue(esitoConAlunno)
+
+    await giro()
+
+    expect(evento('intestatario-persona-non-ricordato-attore-ignoto')).toEqual([])
+    expect(audit()).toHaveLength(1)
+  })
+
+  const ERRORE_FINTO = { code: '42501', message: 'permesso negato' }
+  it.each([
+    ['la lettura della scheda in errore', { lettura: { data: null, error: ERRORE_FINTO } }, ERRORE_FINTO],
+    ['la UPDATE in errore', { scrittura: { data: null, error: ERRORE_FINTO } }, ERRORE_FINTO],
+    ['la UPDATE a zero righe', { scrittura: { data: [], error: null } }, undefined],
+  ])('(h) %s: nessuna riga di audit, un `warn` con l’errore, e la voce resta emessa', async (_nome, guasto, errore) => {
+    coda.guastoScheda = guasto
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true })
+    h.emetti.mockResolvedValue(esitoConAlunno)
+
+    await giro()
+
+    expect(coda.voce(1).stato).toBe('emessa')
+    expect(audit()).toEqual([])
+    expect(evento('intestatario-persona-salvato')).toEqual([])
+    const avviso = evento('intestatario-persona-non-salvato')
+    expect(avviso).toHaveLength(1)
+    expect(avviso[0].livello).toBe('warn')
+    expect(avviso[0].campi).toMatchObject({ operazione: OPERAZIONE_GIRO, pagamento_id: uuid(1), alunno_id: uuid(3001) })
+    expect(avviso[0].errore).toEqual(errore)
+    expect(avviso[0].opzioni).toEqual({ distingui: ['alunno_id'] })
+    // Fallita la lettura, non si scrive: il registro non avrebbe il valore sostituito.
+    if ('lettura' in guasto) expect(schede()).toEqual([])
+  })
+
+  it('(g) nessun evento registrato porta nome, cognome o codice fiscale della persona', async () => {
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true })
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true, creato_da: uuid(7002) }, 2)
+    coda.accoda(1, { intestatario_scelto: { ...PERSONA, nome: '' } }, 3) // illeggibile: il ramo d'errore
+    h.emetti.mockResolvedValue(esitoConAlunno)
+
+    await giro()
+    coda.guastoScheda = { scrittura: { data: null, error: ERRORE_FINTO } }
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true }, 4)
+    vi.setSystemTime(new Date('2026-09-23T08:12:00Z'))
+    await giro()
+
+    // Sono passati tutti i rami: il salvato, l'attore ignoto, l'illeggibile e il non salvato.
+    for (const e of ['intestatario-persona-salvato', 'intestatario-persona-non-ricordato-attore-ignoto', 'intestatario-persona-non-salvato']) {
+      expect(evento(e), e).toHaveLength(1)
+    }
+    const testo = JSON.stringify(h.eventi)
+    for (const dato of [PERSONA.nome, PERSONA.cognome, PERSONA.codice_fiscale]) expect(testo).not.toContain(dato)
+  })
+
+  /*
+   * ⚠️ IL PERIMETRO DI SEDE DEL BAMBINO (giro 1, correzione). La PATCH del browser che questo
+   * ramo sostituisce passava da `assertAlunnoInScope` (403 «alunno fuori dal tuo plesso»). Il
+   * giro controlla la sede del PAGAMENTO, e dopo un trasferimento i pagamenti vecchi restano
+   * nella sede di partenza: senza il confronto, la segreteria di `SEDE` riscriverebbe
+   * l'intestatario della detrazione di un bambino che ora sta in `SEDE_ALUNNO`.
+   */
+  it('(i) segreteria di un plesso, bambino in un ALTRO: fattura emessa, scheda intatta, niente registro, un `warn`', async () => {
+    coda.utenti = [{ id: STAFF, role: 'segreteria', scuola_id: SEDE }]
+    coda.utentiScuole = [{ utente_id: STAFF, scuola_id: SEDE_ALUNNO }] // ignorato: non è Direzione
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true })
+    h.emetti.mockResolvedValue(esitoConAlunno)
+
+    await giro()
+
+    expect(coda.voce(1).stato).toBe('emessa')
+    expect(schede()).toEqual([])
+    expect(audit()).toEqual([])
+    expect(evento('intestatario-persona-salvato')).toEqual([])
+    const avviso = evento('intestatario-persona-fuori-sede')
+    expect(avviso).toHaveLength(1)
+    expect(avviso[0].livello).toBe('warn')
+    expect(avviso[0].campi).toMatchObject({ operazione: OPERAZIONE_GIRO, pagamento_id: uuid(1), alunno_id: uuid(3001) })
+    expect(avviso[0].opzioni).toEqual({ distingui: ['alunno_id'] })
+  })
+
+  it('(i′) le sedi della Direzione non si leggono: fail-closed, nessuna scrittura sulla scheda', async () => {
+    coda.guastoSedi = { data: null, error: { code: '57014', message: 'timeout finto' } }
+    coda.accoda(1, { intestatario_scelto: PERSONA, conferma_proposta: true })
+    h.emetti.mockResolvedValue(esitoConAlunno)
+
+    await giro()
+
+    expect(coda.voce(1).stato).toBe('emessa')
+    expect(schede()).toEqual([])
+    expect(audit()).toEqual([])
+    expect(evento('intestatario-persona-fuori-sede')).toHaveLength(1)
   })
 })
 

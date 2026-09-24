@@ -22,6 +22,13 @@ import { codaAssente, senzaDoppioni, svegliaCoda, zCorpoAzioni, type RispostaAzi
  * si rileggono per id, e basta UNA voce di un'altra sede perché l'intera richiesta sia
  * rifiutata. Gli id che non esistono non si passano alla RPC: non c'è niente da cambiare, e
  * nessuna sede da verificare.
+ *
+ * ─── L'ATTORE NEI LOG (D2, consegna 2b) ─────────────────────────────────────────────
+ * Chi ha tolto o rimesso sta già nella colonna `app_log.utente_id` (la mette il gate); il campo
+ * `utente` lo rende leggibile nella riga e verificabile da un test. `distingui: ['operazione']`
+ * tiene separate togli e rimetti: senza, avrebbero la stessa impronta (stesso messaggio, stessa
+ * route, stesso utente) e la seconda azione del giorno si sommerebbe alla prima, col contesto
+ * della prima. Costo dichiarato: una riga per utente, azione e giorno — sono gesti di persone.
  */
 
 const CODICE_NON_DISPONIBILE = 'CODA_FATTURE_NON_DISPONIBILE'
@@ -29,6 +36,8 @@ const CODICE_SCRITTURA_FALLITA = 'CODA_FATTURE_SCRITTURA_FALLITA'
 const CODICE_LETTURA_FALLITA = 'LETTURA_FALLITA'
 
 const ID_PER_LETTURA = 100
+
+const DISTINGUI_AZIONE = { distingui: ['operazione'] } as const
 
 export const POST = withRoute('pagamenti/fattura/coda/azioni:POST', async (request: Request) => {
   const auth = await requireStaff(request)
@@ -85,7 +94,13 @@ export const POST = withRoute('pagamenti/fattura/coda/azioni:POST', async (reque
   }
 
   if (trovate.length === 0) {
-    logEvento('fattura', 'info', { operazione, esito: 'nessuna-voce-trovata', n: ids.length })
+    logEvento(
+      'fattura',
+      'info',
+      { operazione, esito: 'nessuna-voce-trovata', n: ids.length, utente: auth.user.id },
+      undefined,
+      DISTINGUI_AZIONE,
+    )
     const corpo: RispostaAzioni = { aggiornate: 0 }
     return NextResponse.json(corpo)
   }
@@ -107,7 +122,13 @@ export const POST = withRoute('pagamenti/fattura/coda/azioni:POST', async (reque
         { status: 503 },
       )
     }
-    logEvento('fattura', 'error', { operazione, esito: 'azione-fallita', n: trovate.length }, error)
+    logEvento(
+      'fattura',
+      'error',
+      { operazione, esito: 'azione-fallita', n: trovate.length, utente: auth.user.id },
+      error,
+      DISTINGUI_AZIONE,
+    )
     return NextResponse.json(
       { error: 'Non è stato possibile aggiornare la coda: riprova fra poco.', codice: CODICE_SCRITTURA_FALLITA },
       { status: 500 },
@@ -115,7 +136,13 @@ export const POST = withRoute('pagamenti/fattura/coda/azioni:POST', async (reque
   }
 
   const aggiornate = typeof data === 'number' && Number.isFinite(data) ? data : Number(data) || 0
-  logEvento('fattura', 'info', { operazione, esito: 'azione-eseguita', n: aggiornate, richieste: trovate.length })
+  logEvento(
+    'fattura',
+    'info',
+    { operazione, esito: 'azione-eseguita', n: aggiornate, richieste: trovate.length, utente: auth.user.id },
+    undefined,
+    DISTINGUI_AZIONE,
+  )
 
   if (azione === 'rimetti' && aggiornate > 0) svegliaCoda(sb, operazione)
 

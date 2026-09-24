@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { RiconciliazionePanel } from '@/components/features/admin/pagamenti/RiconciliazionePanel';
+
+/** Il catalogo italiano, letto e non ricopiato (come `MovimentoDialog.test.tsx`). */
+const CATALOGO_IT = JSON.parse(
+  readFileSync(join(process.cwd(), 'messages/it/adminContabilita.json'), 'utf8'),
+) as Record<string, string>;
 
 /**
  * IL CHIP DELLA FATTURA SULLA RIGA DEL MOVIMENTO.
@@ -249,6 +256,27 @@ describe('RiconciliazionePanel — lo stato della fattura sulla riga', () => {
     expect(within(rigaDi('BONIFICO DIECI')).queryByTestId('coda-chip')).toBeNull();
     expect(within(rigaDi('BONIFICO UNDICI')).getByText('Da fatturare')).toBeInTheDocument();
     expect(within(rigaDi('BONIFICO UNDICI')).queryByTestId('coda-chip')).toBeNull();
+
+    // ── D5 (consegna 2b): una riga con una voce ATTIVA non sta nella lista di lavoro,
+    // quindi niente casella del lotto. `'tolta'` è fuori dai tre e la casella la tiene.
+    const casella = (causale: string) => within(rigaDi(causale)).queryAllByRole('checkbox', { name: /Seleziona il bonifico/ });
+    expect(casella('BONIFICO DIECI')).toHaveLength(1);
+    expect(casella('BONIFICO UNDICI')).toHaveLength(1);
+    expect(casella('BONIFICO NOVE')).toHaveLength(0);
+    expect(casella('BONIFICO DODICI')).toHaveLength(0);
+
+    // ── D7 sulla riga (T10): «Errore in coda» è un collegamento FUORI dal `<button>`,
+    // fratello nel `<li>` come la casella. Un `<a>` dentro un `<button>` è HTML non valido.
+    expect(errore.tagName).toBe('A');
+    expect(errore).toHaveAttribute('href', '/admin/coda-fatture');
+    expect(errore).toHaveAccessibleName(CATALOGO_IT.fatChip_coda_errore_link);
+    expect(errore.closest('button')).toBeNull();
+    // l'assenza DOPO la presenza del collegamento: dentro il bottone della riga il chip non c'è
+    expect(rigaDi('BONIFICO DODICI').querySelector('button [data-testid="coda-chip"]')).toBeNull();
+    // «In invio» resta un'etichetta DENTRO il bottone, e nella riga nessun collegamento
+    expect(inInvio.tagName).toBe('SPAN');
+    expect(inInvio.closest('button')).not.toBeNull();
+    expect(within(rigaDi('BONIFICO NOVE')).queryByRole('link')).toBeNull();
   });
 });
 

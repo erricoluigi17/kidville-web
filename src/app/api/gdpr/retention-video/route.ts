@@ -411,10 +411,11 @@ type EsitoConsegna = { consegnato: boolean; codice?: string }
  * quarantena — e `video_riconciliazione` la conta, così «nessuno lo consegnerà mai»
  * è un numero e non una scoperta.
  *
- * ─── I DUE TIPI CHE ESISTONO OGGI ──────────────────────────────────────────
+ * ─── I TRE TIPI CHE ESISTONO OGGI ──────────────────────────────────────────
  *
- * `intent.superseded` e `intent.revoked`. Sono gli unici che qualcuno emette
- * (`:1083` e `:1232`), e il loro effetto POST-COMMIT è scritto accanto
+ * `intent.superseded` e `intent.revoked` li emette il database
+ * (`20260916190200_video_intent_lifecycle.sql`, gli INSERT in `video_outbox` di
+ * `:1093` e `:1242`), e il loro effetto POST-COMMIT è scritto accanto
  * all'emissione: «la revisione superata porta con sé i propri originali, che nessuno
  * pubblicherà più: **la retention deve saperlo**, o quei file restano sette giorni
  * in più di quanto serva». Il destinatario di quei due eventi, quindi, è questo
@@ -423,17 +424,34 @@ type EsitoConsegna = { consegnato: boolean; codice?: string }
  * transazione sia sopravvissuto al commit. Se non ce l'ha, l'evento NON è
  * consegnato: si riprova, e il codice dice cosa cercare.
  *
- * ⚠️ QUANDO V08/V09 AGGIUNGERANNO `intent.published` E GLI ALTRI, il posto in cui
- * scrivere il loro destinatario è questo oggetto, una riga per tipo. Finché non c'è,
- * quel tipo grida a ogni giro invece di essere consegnato per finta.
+ * `gallery.published` lo scrive `POST /api/gallery` (V08) attraverso
+ * `video_intent_finalize`. Fino al 2026-09-24 qui non aveva un destinatario: dal
+ * 18 al 23/09 tredici eventi hanno gridato `outbox-senza-destinatario` a ogni giro
+ * e sono finiti in quarantena (`attempts` 25) con `DESTINATARIO_ASSENTE`. La
+ * sessione che rilascia questa correzione li rimette in circolo una volta, a mano
+ * (consegna 2b, D14).
+ *
+ * ⚠️ QUANDO V09 AGGIUNGERÀ `news.published` E GLI ALTRI, il posto in cui scrivere il
+ * loro destinatario è questo oggetto, una riga per tipo. Finché non c'è, quel tipo
+ * grida a ogni giro invece di essere consegnato per finta — e il lock di famiglia in
+ * `__tests__/api/gdpr-retention-video.test.ts` diventa rosso appena qualcuno lo
+ * scrive in `video_outbox` con un letterale.
  */
 const DESTINATARI: Record<string, (supabase: Supa, evento: EventoOutbox) => Promise<EsitoConsegna>> = {
     'intent.superseded': ricevutaRetention,
     'intent.revoked': ricevutaRetention,
+    // V08 (`src/app/api/gallery/route.ts`, la RPC che accoda questo tipo). La
+    // notifica ai genitori parte già SINCRONA in quella richiesta: un secondo avviso
+    // da qui sarebbe un doppione. L'effetto dopo il commit che resta è la retention:
+    // `video_intent_finalize` pubblica solo con tutti i job `ready` e verificati, e
+    // un job `ready` ha per vincolo la scadenza dell'originale
+    // (`video_jobs_ready_chk`). La ricevuta lo verifica.
+    'gallery.published': ricevutaRetention,
 }
 
 /**
- * La ricevuta della retention: ogni job dell'intent ha una scadenza, o è già uscito.
+ * La ricevuta della retention: ogni job dell'intent dell'evento ha una scadenza, o
+ * è già uscito.
  *
  * `head: true` con `count: 'exact'`: si chiede un NUMERO, non le righe. Da questa
  * query non esce nessun percorso e nessun mime — sono video di minori, e un elenco
@@ -465,7 +483,7 @@ async function ricevutaRetention(supabase: Supa, evento: EventoOutbox): Promise<
             esito: 'outbox-originali-senza-scadenza',
             intent_id: evento.intent_id,
             n_righe: count ?? 0,
-            msg: `${JOB}: l'intent superato o ritirato ha ancora job senza scadenza dell'originale`,
+            msg: `${JOB}: l'intent dell'evento ha ancora job senza scadenza dell'originale`,
         })
         return { consegnato: false, codice: 'ORIGINALI_SENZA_SCADENZA' }
     }

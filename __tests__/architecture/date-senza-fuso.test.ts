@@ -287,6 +287,45 @@ describe('lock architettura · nessuna toLocale* su una data senza fuso', () => 
         expect(conRimedio.length).toBeGreaterThan(30)
     })
 
+    it('nessun .toDateString( in src: il giorno si decide in Europe/Rome', () => {
+        // `toDateString()` dice il giorno nel fuso del PROCESSO (il telefono di una famiglia,
+        // Vercel in UTC), e il confronto «stesso giorno» che ci si costruiva sopra sbagliava
+        // «Oggi»/«Ieri» dei separatori della chat ogni notte fra mezzanotte e le due, e il
+        // 29/03 anche a Roma (D11, consegna 2b della coda fatture, 24/09). Il rimedio è UNO:
+        // `scartoGiorniCivili` di `@/lib/i18n/quando-relativo`, sulle date civili di Roma.
+        // Si cerca sul testo SENZA COMMENTI: un commento che spiega il divieto non è un uso.
+        const RE = /\.toDateString\s*\(/g
+        const trova = (src: string): number[] => {
+            const { senzaCommenti } = mascheraSorgente(src)
+            const indici: number[] = []
+            let m: RegExpExecArray | null
+            RE.lastIndex = 0
+            while ((m = RE.exec(senzaCommenti))) indici.push(m.index)
+            return indici
+        }
+
+        // Controllo positivo: la regex riconosce l'uso, anche con lo spazio, e ignora il commento.
+        const finto = [
+            '// d.toDateString() nel commento non conta',
+            'const a = d.toDateString() === oggi.toDateString ();',
+        ].join('\n')
+        expect(trova(finto)).toHaveLength(2)
+
+        const colpevoli: string[] = []
+        for (const file of fileSorgente(SRC)) {
+            const src = fs.readFileSync(file, 'utf8')
+            for (const indice of trova(src)) {
+                colpevoli.push(`${path.relative(process.cwd(), file)}:${riga(src, indice)}`)
+            }
+        }
+        expect(
+            colpevoli,
+            'toDateString() decide il giorno nel fuso del dispositivo: usa scartoGiorniCivili ' +
+                '(@/lib/i18n/quando-relativo), che lo decide in Europe/Rome.\n' +
+                colpevoli.join('\n'),
+        ).toEqual([])
+    })
+
     it('«adesso» non si formatta nel corpo del render di un componente client', () => {
         // `date-con-timezone.test.ts` vieta `.format(new Date())` fuori da
         // `useClientValue`: il server rende l'HTML col SUO orologio, il browser

@@ -6,6 +6,9 @@ import { assertPagamentoInScope, formaConfronto, scuoleDiUtente } from '@/lib/au
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
+import { validaCessionario } from '@/lib/fatturazione/cessionario'
+import { anagraficaDaPersonaScelta } from '@/lib/fatturazione/intestatario-scelto'
+import { istantiEmesseUltimaOra } from '@/lib/pagamenti/tetto-orario-aruba'
 import {
   GIORNI_STORICO_CODA,
   STATI_ATTIVI,
@@ -41,6 +44,9 @@ import {
  *
  * POST — accoda fino a 500 pagamenti in un gesto. Scope di sede su OGNI voce, pagamento
  * saldato, poi la RPC `fatture_coda_accoda` e la sveglia del lavoratore, senza aspettarlo.
+ * L'intestatario scritto a mano («Altro», consegna 2b, D1) entra solo in un gesto di una voce
+ * (lo schema), e `validaCessionario` lo controlla PRIMA di ogni lettura: 400
+ * `INTESTATARIO_DIGITATO_INCOMPLETO`. Nei log mai un suo dato, solo quante ne arrivano.
  *
  * DB non migrato (tabella o RPC assenti): la GET risponde `{disponibile:false}`, la POST 503
  * `CODA_FATTURE_NON_DISPONIBILE`. Non è un guasto dell'utente, e non si finge un successo.
@@ -51,6 +57,7 @@ const CODICE_NON_DISPONIBILE = 'CODA_FATTURE_NON_DISPONIBILE'
 const CODICE_NON_SALDATO = 'PAGAMENTO_NON_SALDATO'
 const CODICE_SCRITTURA_FALLITA = 'CODA_FATTURE_SCRITTURA_FALLITA'
 const CODICE_LETTURA_FALLITA = 'LETTURA_FALLITA'
+const CODICE_INTESTATARIO_DIGITATO = 'INTESTATARIO_DIGITATO_INCOMPLETO'
 
 const MESSAGGIO_NON_DISPONIBILE =
   'La coda delle fatture non è ancora disponibile: nessuna fattura è stata messa in coda.'
@@ -152,7 +159,7 @@ export const GET = withRoute('pagamenti/fattura/coda:GET', async (request: Reque
     return NextResponse.json(corpo)
   }
 
-  // Otto letture indipendenti, in parallelo. I conteggi sono ESATTI e separati dall'elenco:
+  // Nove letture indipendenti, in parallelo. I conteggi sono ESATTI e separati dall'elenco:
   // l'elenco si ferma a 1000 righe, i contatori no.
   const leggiStato = sb
     .from('fatture_coda_stato')
@@ -177,11 +184,15 @@ export const GET = withRoute('pagamenti/fattura/coda:GET', async (request: Reque
     .order('concluso_il', { ascending: false })
     .limit(TETTO_VOCI_GET) as unknown as PromiseLike<Esito<RigaVoce[] | null>>
 
-  const [statoR, attiveR, concluseR, conteggiR] = await Promise.all([
+  // Il quinto elemento sono gli istanti delle fatture dell'ultima ora, per la stima di fine
+  // (consegna 2b, D3). Sta FUORI da `errori`: un guasto di `fatture_emesse` spegne la stima
+  // (`null`, e la funzione lo logga), non la coda.
+  const [statoR, attiveR, concluseR, conteggiR, emesseUltimaOra] = await Promise.all([
     leggiStato,
     leggiAttive,
     leggiConcluse,
     Promise.all(CONTEGGI.map(([stato, storico]) => conta(sb, stato, storico ? da7g : undefined))),
+    istantiEmesseUltimaOra(sb, adesso),
   ])
 
   const errori = [statoR.error, attiveR.error, concluseR.error, ...conteggiR.map((c) => c.error)].filter(Boolean)
@@ -259,10 +270,13 @@ export const GET = withRoute('pagamenti/fattura/coda:GET', async (request: Reque
     disponibile: true,
     stato,
     conteggi,
-    stima_fine: stimaFineCoda(conteggi.in_coda + conteggi.in_invio, {
+    stima_fine: stimaFineCoda({
       adesso,
+      inCoda: conteggi.in_coda,
+      inInvio: conteggi.in_invio,
       sospesa: stato.sospesa,
       pausaFinoA: stato.pausa_fino_a,
+      emesseUltimaOra,
     }),
     voci,
   }
@@ -310,6 +324,27 @@ export const POST = withRoute('pagamenti/fattura/coda:POST', async (request: Req
   if ('response' in b) return b.response
   const voci = senzaDoppioni(b.data.voci, (v) => v.pagamento_id)
   const urgente = b.data.urgente === true
+
+  // ─── L'INTESTATARIO SCRITTO A MANO: le regole dell'emissione, PRIMA di accodare (D1) ───
+  // `validaCessionario` è il gate che l'emissione applica al ramo persona
+  // (`src/lib/aruba/emissione.ts:1897`). Qui gira prima di ogni lettura: una persona incompleta
+  // non deve diventare, un giro dopo, un «errore» in coda. Nel log solo il numero.
+  const scartate = voci.filter(
+    (v) =>
+      v.intestatario?.tipo === 'persona' &&
+      Object.keys(validaCessionario(anagraficaDaPersonaScelta(v.intestatario))).length > 0,
+  )
+  if (scartate.length > 0) {
+    logEvento('fattura', 'warn', { operazione: 'coda:POST', esito: 'intestatario-digitato-incompleto', n: scartate.length })
+    return NextResponse.json(
+      {
+        error: 'L’intestatario scritto a mano è incompleto o non valido: nessuna fattura è stata messa in coda.',
+        codice: CODICE_INTESTATARIO_DIGITATO,
+        data: { pagamento_ids: scartate.map((v) => v.pagamento_id) },
+      },
+      { status: 400 },
+    )
+  }
 
   const sb = await createAdminClient()
 
@@ -388,6 +423,8 @@ export const POST = withRoute('pagamenti/fattura/coda:POST', async (request: Req
     n: risposta.accodate,
     gia_in_coda: risposta.gia_in_coda.length,
     urgente,
+    // Quante voci portano un intestatario scritto a mano: un numero, mai i suoi dati.
+    digitati: voci.filter((v) => v.intestatario?.tipo === 'persona').length,
   })
 
   if (risposta.accodate > 0 || !letta.success) svegliaCoda(sb, 'coda:POST')

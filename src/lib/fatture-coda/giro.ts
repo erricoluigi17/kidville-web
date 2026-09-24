@@ -410,7 +410,8 @@ export async function eseguiGiroCoda(sb: SupabaseClient, adesso: Date = new Date
         await chiudi(voce, {
           esito: 'errore',
           codice: 'intestatario_non_valido',
-          messaggio: 'L’intestatario scelto per questa fattura non è leggibile: rimettila in coda dal lotto.',
+          messaggio:
+            'L’intestatario scelto per questa fattura non è leggibile: toglila dalla coda e rifalla dal lotto o da «Invia fattura».',
           segnale: 'nessuno',
         })
         continue
@@ -516,7 +517,9 @@ async function rilascia(sb: SupabaseClient, token: string, minuti: number, motiv
 /**
  * Chi ha accodato, con ruolo e sede: serve SOLO al registro delle scritture quando il
  * blocco ricorda l'intestatario sulla scheda. Si legge solo se c'è almeno una voce che
- * potrebbe farlo (proposta del bonifico confermata con un adulto).
+ * potrebbe farlo: `conferma_proposta` con un adulto (la proposta del bonifico confermata)
+ * o, dalla consegna 2b (D1), con la persona scritta a mano (la casella «ricorda sulla
+ * scheda» del pulsante).
  *
  * Fallita la lettura, la mappa è vuota e il promemoria salta con un suo log: una
  * scrittura su `alunni` senza la sua riga di audit è peggio di un promemoria mancato.
@@ -526,11 +529,10 @@ async function leggiAttori(sb: SupabaseClient, voci: readonly VoceCoda[]): Promi
   const ids = [
     ...new Set(
       voci
-        .filter(
-          (v) =>
-            v.conferma_proposta === true &&
-            (v.intestatario_scelto as { tipo?: unknown } | null | undefined)?.tipo === 'adult',
-        )
+        .filter((v) => {
+          const tipo = (v.intestatario_scelto as { tipo?: unknown } | null | undefined)?.tipo
+          return v.conferma_proposta === true && (tipo === 'adult' || tipo === 'persona')
+        })
         .map((v) => v.creato_da),
     ),
   ]

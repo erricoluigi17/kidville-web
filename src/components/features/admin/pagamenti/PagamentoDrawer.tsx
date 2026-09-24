@@ -8,6 +8,7 @@ import { Drawer } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
 import { FatturaChip } from './FatturaChip';
 import { FatturaButton } from './FatturaButton';
+import type { EsitoAccodamento } from './FatturaButton';
 import { STATI_PAGAMENTO, METODO_LABEL } from './stati';
 import { formatEuro } from '@/lib/format/valuta';
 import type { PagamentoRow } from './RegistraIncassoModal';
@@ -37,6 +38,8 @@ interface Props {
     onIncassa: () => void;
     onModifica: () => void;
     onRateizza: () => void;
+    /** Dopo un accodamento da «Invia fattura» nel drawer, con l'esito (D12): il cruscotto aggiorna la riga. */
+    onAccodata?: (esito?: EsitoAccodamento) => void;
     /** Slot per azioni extra (es. SospensioneToggle) rese dal chiamante. */
     extra?: React.ReactNode;
 }
@@ -45,7 +48,7 @@ interface Props {
  * Drawer di dettaglio pagamento: riepilogo, timeline incassi/storni e tutte le
  * azioni in un punto solo. L'emissione fattura resta manuale (FatturaButton).
  */
-export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModifica, onRateizza, extra }: Props) {
+export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModifica, onRateizza, onAccodata, extra }: Props) {
     const t = useTranslations('adminContabilita');
     const f = useDateFormat();
     // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
@@ -89,7 +92,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                         </button>
                     )}
                     {saldato && (
-                        <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} />
+                        <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} codaStato={pagamento.coda_stato ?? null} onEmessa={onAccodata} />
                     )}
                     <button type="button" onClick={onModifica}
                         className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
@@ -108,7 +111,11 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
             <div className="mb-4 rounded-card bg-kidville-cream/60 p-3">
                 <div className="flex items-center justify-between gap-2">
                     <Badge tone={st.tone}>{st.label}</Badge>
-                    <FatturaChip stato={pagamento.stato} fatturaStato={pagamento.fattura_stato} />
+                    {/* Il chip della fattura e quello della coda (D6), dai dati della riga: fotografia del caricamento.
+                        Un contenitore, perché FatturaChip rende un frammento di due chip. */}
+                    <span className="flex flex-wrap items-center justify-end gap-1">
+                        <FatturaChip stato={pagamento.stato} fatturaStato={pagamento.fattura_stato} codaStato={pagamento.coda_stato} />
+                    </span>
                 </div>
                 <div className="mt-2 flex justify-between font-maven text-xs">
                     <span className="text-kidville-muted">{t('drawerTotale')} {formatEuro(pagamento.importo)}</span>

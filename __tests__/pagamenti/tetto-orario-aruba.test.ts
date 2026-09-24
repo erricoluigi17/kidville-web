@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+const h = vi.hoisted(() => ({ logEvento: vi.fn() }))
+vi.mock('@/lib/logging/logger', async (originale) => {
+  const actual = await originale<typeof import('@/lib/logging/logger')>()
+  return { ...actual, logEvento: h.logEvento }
+})
+
 import {
   contaEmesseUltimaOra,
+  istantiEmesseUltimaOra,
+  ISTANTI_MAX,
   posizioniDisponibili,
   quanteSePossonoTentare,
   FINESTRA_MS,
@@ -137,6 +145,85 @@ describe('contaEmesseUltimaOra', () => {
     // che leggesse il `count` senza guardare l'`error` passerebbe un test più indulgente.
     const sb = supabaseFinto({ count: 99, error: { code: '42703', message: 'column does not exist' } })
     expect(await contaEmesseUltimaOra(sb)).toBeNull()
+  })
+})
+
+/**
+ * Consegna 2b, D3: la stima della coda non basta sapere QUANTE fatture sono uscite nell'ultima
+ * ora — serve QUANDO, perché la stima deve sapere quando ciascuna esce dal secchio. Stessa
+ * lettura di `contaEmesseUltimaOra`, su TUTTE le sedi, con gli istanti.
+ */
+describe('istantiEmesseUltimaOra', () => {
+  let q: { tabella: string; colonne: string[]; filtri: string[]; ordine: string[]; limite: number[] }
+
+  function supabaseFinto(risposta: { data?: unknown; error?: unknown }) {
+    q = { tabella: '', colonne: [], filtri: [], ordine: [], limite: [] }
+    const builder: Record<string, unknown> = {}
+    Object.assign(builder, {
+      select: (col: string) => {
+        q.colonne.push(col)
+        return builder
+      },
+      eq: (campo: string) => {
+        q.filtri.push(`eq:${campo}`)
+        return builder
+      },
+      gte: (campo: string, valore: string) => {
+        q.filtri.push(`gte:${campo}:${valore}`)
+        return builder
+      },
+      order: (campo: string, o?: { ascending?: boolean }) => {
+        q.ordine.push(`${campo}:${o?.ascending === false ? 'desc' : 'asc'}`)
+        return builder
+      },
+      limit: async (n: number) => {
+        q.limite.push(n)
+        return { data: risposta.data ?? null, error: risposta.error ?? null }
+      },
+    })
+    return {
+      from: (t: string) => {
+        q.tabella = t
+        return builder
+      },
+    } as never
+  }
+
+  const ADESSO = new Date('2026-09-23T08:00:00.000Z')
+
+  beforeEach(() => {
+    h.logEvento.mockClear()
+  })
+
+  it('legge gli istanti di fatture_emesse dell’ultima ora, su TUTTE le sedi, in ordine, con un tetto', async () => {
+    const sb = supabaseFinto({ data: [{ creato_il: '2026-09-23T07:10:00.000Z' }, { creato_il: '2026-09-23T07:40:00.000Z' }] })
+    const istanti = await istantiEmesseUltimaOra(sb, ADESSO)
+    expect(istanti).toEqual(['2026-09-23T07:10:00.000Z', '2026-09-23T07:40:00.000Z'])
+    expect(q.tabella).toBe('fatture_emesse')
+    expect(q.colonne).toEqual(['creato_il'])
+    expect(q.filtri).toEqual([`gte:creato_il:${new Date(ADESSO.getTime() - FINESTRA_MS).toISOString()}`])
+    expect(q.filtri.some((f) => f.startsWith('eq:scuola_id')), 'un filtro di sede qui è un difetto').toBe(false)
+    expect(q.ordine).toEqual(['creato_il:asc'])
+    expect(q.limite).toEqual([ISTANTI_MAX])
+    expect(ISTANTI_MAX).toBe(500)
+  })
+
+  it('PostgREST non lancia: `{ error }` (anche con `data`) ⇒ null e un warn `tetto-non-misurato`', async () => {
+    const sb = supabaseFinto({ data: [{ creato_il: '2026-09-23T07:10:00.000Z' }], error: { code: 'XX000', message: 'boom' } })
+    expect(await istantiEmesseUltimaOra(sb, ADESSO)).toBeNull()
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'fattura',
+      'warn',
+      expect.objectContaining({ operazione: 'tettoOrarioAruba:istanti', esito: 'tetto-non-misurato' }),
+      expect.objectContaining({ code: 'XX000' }),
+    )
+  })
+
+  it('le righe con creato_il non stringa si scartano; nessuna riga ⇒ elenco vuoto, non null', async () => {
+    const sb = supabaseFinto({ data: [{ creato_il: null }, { creato_il: 12 }, {}, { creato_il: '2026-09-23T07:59:00.000Z' }] })
+    expect(await istantiEmesseUltimaOra(sb, ADESSO)).toEqual(['2026-09-23T07:59:00.000Z'])
+    expect(await istantiEmesseUltimaOra(supabaseFinto({ data: null }), ADESSO)).toEqual([])
+    expect(h.logEvento).not.toHaveBeenCalled()
   })
 })
 

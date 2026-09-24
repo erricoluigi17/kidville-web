@@ -1,10 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { PagamentoDrawer } from '@/components/features/admin/pagamenti/PagamentoDrawer';
 
-// FatturaButton fa fetch proprie: lo stubbiamo per isolare il drawer.
+/**
+ * FatturaButton fa fetch proprie: lo stubbiamo per isolare il drawer.
+ *
+ * ⚠️ LO STUB REGISTRA LE PROPS (consegna 2b, D5 e D12). Il difetto che il gruppo della coda
+ * blocca è *una prop non passata* (`codaStato`, `onEmessa`): uno stub che rende soltanto un
+ * segnaposto sarebbe verde con e senza la correzione. Si guarda l'ULTIMA resa.
+ */
+const spiaFattura = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }));
 vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
-  FatturaButton: () => <span data-testid="fattura-button" />,
+  FatturaButton: (props: Record<string, unknown>) => {
+    spiaFattura.props.push(props);
+    return <span data-testid="fattura-button" />;
+  },
 }));
 
 const dettaglio = {
@@ -129,5 +139,72 @@ describe('PagamentoDrawer', () => {
         onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} />
     );
     await waitFor(() => expect(screen.getByText('Storno')).toBeInTheDocument());
+  });
+});
+
+/**
+ * ─── LA CODA FATTURE NEL DRAWER (consegna 2b, D5 · D6 · D12, 2026-09-24) ─────
+ *
+ * Il drawer è la terza strada verso «Invia fattura» (telefono e «Dettagli»): senza
+ * `codaStato` il pulsante ricomparirebbe su una riga già in coda (D5), senza `onEmessa`
+ * il cruscotto non saprebbe dell'accodamento (D12), e senza `codaStato` sul
+ * `FatturaChip` il riepilogo tacerebbe la voce (D6). Il chip è quello VERO (`FatturaChip`
+ * non è finto): qui se ne prova il TESTO; che «Errore in coda» sia un collegamento lo prova
+ * `FatturaChip.test.tsx`.
+ */
+describe('PagamentoDrawer — la coda fatture (consegna 2b)', () => {
+  beforeEach(() => {
+    spiaFattura.props.length = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => dettaglio })));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function ultimeProps(): Record<string, unknown> {
+    const ultime = spiaFattura.props.at(-1);
+    if (!ultime) throw new Error('FatturaButton mai reso');
+    return ultime;
+  }
+
+  it('errore: al pulsante arrivano `codaStato` ed `onEmessa` (lo stesso `onAccodata`)', async () => {
+    const onAccodata = vi.fn();
+    render(
+      <PagamentoDrawer pagamento={{ ...pagamentoRow, coda_stato: 'errore' as const }} userId="u1" onClose={() => {}}
+        onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} onAccodata={onAccodata} />
+    );
+    expect(await screen.findByTestId('fattura-button')).toBeInTheDocument();
+    expect(ultimeProps().codaStato).toBe('errore');
+    expect(ultimeProps().onEmessa).toBe(onAccodata);
+  });
+
+  it('senza voce: al pulsante arriva `codaStato` null (non assente)', async () => {
+    render(
+      <PagamentoDrawer pagamento={pagamentoRow} userId="u1" onClose={() => {}}
+        onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} />
+    );
+    expect(await screen.findByTestId('fattura-button')).toBeInTheDocument();
+    expect(ultimeProps()).toHaveProperty('codaStato', null);
+  });
+
+  it('in_coda: il chip della coda dice «In coda», e il suo contenitore va a capo', async () => {
+    render(
+      <PagamentoDrawer pagamento={{ ...pagamentoRow, coda_stato: 'in_coda' as const }} userId="u1" onClose={() => {}}
+        onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} />
+    );
+    const chip = await screen.findByTestId('coda-chip');
+    expect(chip).toHaveTextContent('In coda');
+    // Due chip (fattura e coda) in un riepilogo stretto: il padre deve poter andare a capo.
+    expect(chip.parentElement).toHaveClass('flex-wrap');
+    // E accanto c'è ancora il chip della fattura: il contenitore li porta tutti e due.
+    expect(within(chip.parentElement as HTMLElement).getByText('Da fatturare')).toBeInTheDocument();
+  });
+
+  it('errore: il chip della coda dice «Errore in coda»', async () => {
+    render(
+      <PagamentoDrawer pagamento={{ ...pagamentoRow, coda_stato: 'errore' as const }} userId="u1" onClose={() => {}}
+        onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} />
+    );
+    expect(await screen.findByTestId('coda-chip')).toHaveTextContent('Errore in coda');
   });
 });

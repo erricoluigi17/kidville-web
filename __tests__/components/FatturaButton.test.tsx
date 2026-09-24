@@ -1,6 +1,6 @@
 /**
- * Il modale «Emetti fattura»: mostra ciò che uscirà, e la correzione a mano è un atto
- * deliberato.
+ * Il modale «Metti in coda la fattura» (fino al 2026-09-24 «Emetti fattura»): mostra ciò che
+ * uscirà, e la correzione a mano è un atto deliberato.
  *
  * ─── IL DIFETTO CHE QUESTI TEST INCHIODANO ───────────────────────────────────
  * Fino al 2026-09-04 il modale nasceva con la casella della causale **già piena con la
@@ -132,7 +132,7 @@ function corpoPost(): Record<string, unknown> {
 
 async function apri() {
     fireEvent.click(screen.getByRole('button', { name: /invia fattura/i }))
-    await waitFor(() => expect(screen.getByRole('button', { name: /^emetti$/i })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: /^metti in coda$/i })).toBeTruthy())
 }
 
 beforeEach(() => {
@@ -165,7 +165,7 @@ describe('FatturaButton — la causale che si vede è quella che parte', () => {
         render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
         await apri()
         await screen.findByDisplayValue(DAL_MODELLO)
-        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+        fireEvent.click(screen.getByRole('button', { name: /^metti in coda$/i }))
         await waitFor(() => expect(chiamate.some((c) => c.init?.method === 'POST')).toBe(true))
 
         const corpo = corpoPost()
@@ -181,7 +181,7 @@ describe('FatturaButton — la causale che si vede è quella che parte', () => {
         const casella = screen.getByDisplayValue(DAL_MODELLO) as HTMLTextAreaElement
         expect(casella.readOnly).toBe(false)
         fireEvent.change(casella, { target: { value: 'Saldo iscrizione — accordo del 12/09' } })
-        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+        fireEvent.click(screen.getByRole('button', { name: /^metti in coda$/i }))
         await waitFor(() => expect(chiamate.some((c) => c.init?.method === 'POST')).toBe(true))
 
         expect(corpoPost().causale).toBe('Saldo iscrizione — accordo del 12/09')
@@ -192,7 +192,7 @@ describe('FatturaButton — la causale che si vede è quella che parte', () => {
         await apri()
         await screen.findByDisplayValue(DAL_MODELLO)
         fireEvent.click(screen.getByRole('button', { name: /personalizza/i }))
-        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+        fireEvent.click(screen.getByRole('button', { name: /^metti in coda$/i }))
         await waitFor(() => expect(chiamate.some((c) => c.init?.method === 'POST')).toBe(true))
 
         // Congelare la causale su un pagamento significa rendere invisibile ogni
@@ -200,12 +200,12 @@ describe('FatturaButton — la causale che si vede è quella che parte', () => {
         expect(corpoPost().causale).toBeNull()
     })
 
-    it('se l’anteprima FALLISCE, «Emetti» resta bloccato e l’errore si vede', async () => {
+    it('se l’anteprima FALLISCE, «Metti in coda» resta bloccato e l’errore si vede', async () => {
         anteprima = { ok: false, body: { error: 'Impossibile leggere i modelli di causale della sede' } }
         render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
         fireEvent.click(screen.getByRole('button', { name: /invia fattura/i }))
 
-        const emetti = await screen.findByRole('button', { name: /^emetti$/i })
+        const emetti = await screen.findByRole('button', { name: /^metti in coda$/i })
         await waitFor(() => expect((emetti as HTMLButtonElement).disabled).toBe(true))
         expect(screen.getByRole('alert').textContent).toBeTruthy()
 
@@ -235,12 +235,12 @@ describe('FatturaButton — la causale che si vede è quella che parte', () => {
     })
 })
 
-describe('FatturaButton — «Emetti» mette in CODA, in testa', () => {
+describe('FatturaButton — «Metti in coda» mette in CODA, in testa', () => {
     async function emettiEAspetta() {
         render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
         await apri()
         await screen.findByDisplayValue(DAL_MODELLO)
-        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+        fireEvent.click(screen.getByRole('button', { name: /^metti in coda$/i }))
         await waitFor(() => expect(posts().length).toBe(1))
     }
 
@@ -270,23 +270,33 @@ describe('FatturaButton — «Emetti» mette in CODA, in testa', () => {
         expect(live.getAttribute('role')).toBe('status')
         expect(live.textContent).toBe('')
 
-        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+        fireEvent.click(screen.getByRole('button', { name: /^metti in coda$/i }))
         await waitFor(() => expect(screen.getByTestId('fattura-accodata').textContent).toBe('Messa in coda: parte entro pochi minuti.'))
         // …ed è LO STESSO nodo quando la frase arriva: inserita col testo dentro,
         // NVDA e JAWS la tacerebbero.
         expect(screen.getByTestId('fattura-accodata')).toBe(live)
-        expect(screen.queryByRole('button', { name: /^emetti$/i })).toBeNull()
+        expect(screen.queryByRole('button', { name: /^metti in coda$/i })).toBeNull()
         // Un secondo «Invia fattura» non accoderebbe niente: il comando non c'è più.
         expect(screen.queryByRole('button', { name: /invia fattura/i })).toBeNull()
         expect(onEmessa).toHaveBeenCalledTimes(1)
+        // D12: il genitore riceve l'ESITO, e con `nuova` aggiorna la sola riga senza
+        // rileggere tutto (lo stato è noto per costruzione: la RPC ha appena scritto `in_coda`).
+        expect(onEmessa).toHaveBeenCalledWith({ accodata: 'nuova' })
     })
 
-    it('se la coda l’aveva già, lo dice — non «messa in coda»', async () => {
+    it('se la coda l’aveva già, lo dice — non «messa in coda» — e lo dice anche al genitore', async () => {
         coda = { ok: true, status: 200, body: { gruppo_id: 'gruppo-1', accodate: 0, gia_in_coda: [PAG] } }
-        await emettiEAspetta()
+        const onEmessa = vi.fn()
+        render(<FatturaButton pagamentoId={PAG} userId={UTENTE} onEmessa={onEmessa} />)
+        await apri()
+        await screen.findByDisplayValue(DAL_MODELLO)
+        fireEvent.click(screen.getByRole('button', { name: /^metti in coda$/i }))
         await waitFor(() => expect(screen.getByTestId('fattura-accodata').textContent).toBe(
             'Era già in coda: lo stato si vede nella pagina Coda fatture.',
         ))
+        // Con `gia` lo stato vero può essere `in_invio` o `errore`: il genitore rilegge.
+        expect(onEmessa).toHaveBeenCalledTimes(1)
+        expect(onEmessa).toHaveBeenCalledWith({ accodata: 'gia' })
     })
 
     it('503 della coda non ancora migrata: la frase tradotta nell’alert, il modale resta, niente «scartata»', async () => {
@@ -299,11 +309,11 @@ describe('FatturaButton — «Emetti» mette in CODA, in testa', () => {
         render(<FatturaButton pagamentoId={PAG} userId={UTENTE} onEmessa={onEmessa} />)
         await apri()
         await screen.findByDisplayValue(DAL_MODELLO)
-        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+        fireEvent.click(screen.getByRole('button', { name: /^metti in coda$/i }))
 
         await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(sharedIt.erroreCodaFattureNonDisponibile))
         // Si può ripremere: niente è entrato in coda.
-        expect((screen.getByRole('button', { name: /^emetti$/i }) as HTMLButtonElement).disabled).toBe(false)
+        expect((screen.getByRole('button', { name: /^metti in coda$/i }) as HTMLButtonElement).disabled).toBe(false)
         expect(screen.getByTestId('fattura-accodata').textContent).toBe('')
         expect(onEmessa).not.toHaveBeenCalled()
 
@@ -319,14 +329,94 @@ describe('FatturaButton — «Emetti» mette in CODA, in testa', () => {
         render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
         await apri()
         await screen.findByDisplayValue(DAL_MODELLO)
-        fireEvent.click(screen.getByRole('button', { name: /^emetti$/i }))
+        fireEvent.click(screen.getByRole('button', { name: /^metti in coda$/i }))
 
-        await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Fattura non emessa/))
+        await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/La fattura non è entrata in coda/))
         expect(screen.getByTestId('fattura-accodata').textContent).toBe('')
         // Un `catch` che non logga è un bug (AGENTS.md, regola 6) — e solo il nome
         // dell'errore, mai un dato del pagamento.
         const righe = logSpy.mock.calls.map(([e]) => (e as { messaggio?: string }).messaggio ?? '')
         expect(righe.some((m) => m.startsWith('fattura-singola-accodamento-fallito'))).toBe(true)
         expect(righe.join(' ')).not.toContain('RSSMRA')
+    })
+})
+
+/**
+ * ─── D5: CON UNA VOCE ATTIVA IN CODA, «INVIA FATTURA» NON C'È ─────────────────
+ * (consegna 2b, `consegna-2b-rifiniture.md` §4.10.) Un secondo «Invia fattura» su un
+ * pagamento che la coda ha già non accoderebbe niente (tornerebbe «già in coda»): il
+ * pulsante sparisce, e su «Errore in coda» al suo posto c'è il collegamento alla pagina
+ * «Coda fatture», dove la voce si toglie o si rimette. La regola è del motore
+ * (`azioneConCoda`, `@/lib/pagamenti/fatturazione-riga`); qui si guarda la resa.
+ *
+ * La resa è sincrona: al montaggio non parte nessuna fetch (l'anteprima si chiede
+ * all'apertura del modale), quindi le assenze qui sotto non sono «dati non ancora
+ * arrivati». Ogni assenza è verificata DOPO una presenza sullo stesso albero.
+ */
+describe('FatturaButton — con una voce ATTIVA in coda', () => {
+    const invia = () => screen.queryByRole('button', { name: /invia fattura/i })
+    const vaiAllaCoda = () => screen.queryByRole('link', { name: 'Vai alla coda fatture' })
+
+    it('senza voce il pulsante c’è; con `in_coda` e con `in_invio` non ci sono né il pulsante né il collegamento', () => {
+        const { rerender } = render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
+        expect(invia()).toBeTruthy()
+
+        rerender(<FatturaButton pagamentoId={PAG} userId={UTENTE} codaStato="in_coda" />)
+        expect(invia()).toBeNull()
+        expect(screen.queryByRole('link')).toBeNull()
+
+        rerender(<FatturaButton pagamentoId={PAG} userId={UTENTE} codaStato={null} />)
+        expect(invia()).toBeTruthy()
+
+        rerender(<FatturaButton pagamentoId={PAG} userId={UTENTE} codaStato="in_invio" />)
+        expect(invia()).toBeNull()
+        expect(screen.queryByRole('link')).toBeNull()
+        expect(chiamate).toHaveLength(0)
+    })
+
+    it('`errore`: al posto del pulsante il collegamento alla pagina «Coda fatture»', () => {
+        const { rerender } = render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
+        expect(invia()).toBeTruthy()
+        expect(vaiAllaCoda()).toBeNull()
+
+        rerender(<FatturaButton pagamentoId={PAG} userId={UTENTE} codaStato="errore" />)
+        const link = vaiAllaCoda()
+        expect(link?.tagName).toBe('A')
+        expect(link?.getAttribute('href')).toBe('/admin/coda-fatture')
+        expect(invia()).toBeNull()
+    })
+
+    it('`scartata` con la voce in `errore`: niente «Riprova fattura», c’è il collegamento', () => {
+        const { rerender } = render(<FatturaButton pagamentoId={PAG} userId={UTENTE} fatturaStato="scartata" />)
+        expect(screen.getByRole('button', { name: /riprova fattura/i })).toBeTruthy()
+
+        rerender(<FatturaButton pagamentoId={PAG} userId={UTENTE} fatturaStato="scartata" codaStato="errore" />)
+        expect(screen.queryByRole('button', { name: /riprova fattura/i })).toBeNull()
+        expect(vaiAllaCoda()?.getAttribute('href')).toBe('/admin/coda-fatture')
+    })
+
+    it('uno stato fuori dai tre attivi (`tolta`) non nasconde niente', () => {
+        // Il tipo della prop non lo ammette: arriva così solo da un dato che il server
+        // non dovrebbe mandare, ed è proprio il caso in cui il pulsante deve restare.
+        render(<FatturaButton pagamentoId={PAG} userId={UTENTE} codaStato={'tolta' as never} />)
+        expect(invia()).toBeTruthy()
+        expect(vaiAllaCoda()).toBeNull()
+    })
+
+    it('accodata qui, poi il genitore ricarica la riga con `in_coda`: la frase è LO STESSO nodo, e resta', async () => {
+        const onEmessa = vi.fn()
+        const { rerender } = render(<FatturaButton pagamentoId={PAG} userId={UTENTE} onEmessa={onEmessa} />)
+        await apri()
+        await screen.findByDisplayValue(DAL_MODELLO)
+        const live = screen.getByTestId('fattura-accodata')
+        fireEvent.click(screen.getByRole('button', { name: /^metti in coda$/i }))
+        await waitFor(() => expect(live.textContent).toBe('Messa in coda: parte entro pochi minuti.'))
+
+        // D12: il genitore aggiorna la riga. Se il pulsante sparisse nel GENITORE (e non
+        // qui dentro), la live region verrebbe smontata proprio mentre annuncia (T8).
+        rerender(<FatturaButton pagamentoId={PAG} userId={UTENTE} onEmessa={onEmessa} codaStato="in_coda" />)
+        expect(screen.getByTestId('fattura-accodata')).toBe(live)
+        expect(live.textContent).toBe('Messa in coda: parte entro pochi minuti.')
+        expect(invia()).toBeNull()
     })
 })

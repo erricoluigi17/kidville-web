@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getGenitoriDiAlunno, getGenitoriDiAlunnoEsito } from '@/lib/anagrafiche/legami'
 import { logEvento } from '@/lib/logging/logger'
+import { formaConfronto } from '@/lib/auth/scope'
 import {
   anagraficaDaIntestatarioAltro,
   anagraficaDaPersonaScelta,
@@ -202,6 +203,69 @@ export async function ricordaIntestatarioSullaScheda(
     .select('id')
   if (error) return { esito: 'non_salvato', error }
   return { esito: (data?.length ?? 0) > 0 ? 'salvato' : 'gia_impostato', error: null }
+}
+
+/** La scheda com'era PRIMA della sostituzione: la vuole il registro immodificabile (consegna 2b, T4). */
+export interface SchedaPrimaDellaPersona {
+  intestatario_fatture: unknown
+  scuola_id: string
+  section_id: string | null
+}
+
+/**
+ * La persona scritta a mano, sulla scheda del bambino (consegna 2b, D1). A differenza di
+ * `ricordaIntestatarioSullaScheda` SOSTITUISCE anche una scheda già impostata: non è una deduzione
+ * dall'ordinante, è la casella «ricorda sulla scheda» spuntata da chi ha scritto quei dati — la
+ * stessa semantica della PATCH del pulsante che questa funzione sostituisce, perimetro di sede
+ * compreso (sotto).
+ *
+ * Per questo LEGGE PRIMA. La PATCH registrava il valore sostituito, sotto la sede e la classe del
+ * bambino (`admin/students/route.ts`): senza, una persona che prende il posto di un adulto
+ * cancellerebbe dal registro chi era l'intestatario della detrazione. Lettura fallita ⇒ nessuna
+ * scrittura. Fra la lettura e la UPDATE può passare un'altra scrittura, come nella PATCH.
+ *
+ * ⚠️ IL PERIMETRO DI SEDE DEL BAMBINO. La PATCH passava da `assertAlunnoInScope`: 403 «alunno
+ * fuori dal tuo plesso». Il giro della coda controlla la sede del PAGAMENTO, non quella del
+ * bambino, e dopo un trasferimento i pagamenti vecchi restano nella sede di partenza: senza
+ * questo confronto una segreteria riscriverebbe l'intestatario della detrazione (730) di un
+ * bambino che ora sta in un plesso dove lei non ha accesso. `sedi` sono le sedi di chi ha
+ * accodato (`scuoleDiUtente`); vuote ⇒ nessuna (fail-closed, come `scuoleDiUtente` stessa). La
+ * sede si confronta con `formaConfronto`, mai come stringa. Fuori sede ⇒ `fuori_sede`, nessuna
+ * scrittura: la lettura, che porta già `scuola_id`, è il punto in cui si sa dov'è il bambino.
+ *
+ * ⚠️ PostgREST non lancia (AGENTS.md, regola 7): lettura e scrittura si guardano dal valore di
+ * ritorno, e l'errore torna al chiamante, che lo logga col suo corpo.
+ */
+export async function ricordaPersonaSullaScheda(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  dati: Record<string, string>,
+  sedi: readonly string[],
+): Promise<
+  | { esito: 'salvato'; error: null; prima: SchedaPrimaDellaPersona }
+  | { esito: 'non_salvato'; error: unknown }
+  | { esito: 'fuori_sede'; error: null }
+> {
+  const letta = await supabase
+    .from('alunni')
+    .select('intestatario_fatture, scuola_id, section_id')
+    .eq('id', alunnoId)
+    .maybeSingle()
+  if (letta.error) return { esito: 'non_salvato', error: letta.error }
+  if (!letta.data) return { esito: 'non_salvato', error: null }
+  const prima = letta.data as SchedaPrimaDellaPersona
+  const ammesse = new Set(sedi.map(formaConfronto))
+  if (!prima.scuola_id || !ammesse.has(formaConfronto(prima.scuola_id))) {
+    return { esito: 'fuori_sede', error: null }
+  }
+  const { data, error } = await supabase
+    .from('alunni')
+    .update({ intestatario_fatture: { tipo: 'altro', dati } })
+    .eq('id', alunnoId)
+    .select('id')
+  if (error) return { esito: 'non_salvato', error }
+  if ((data?.length ?? 0) === 0) return { esito: 'non_salvato', error: null }
+  return { esito: 'salvato', error: null, prima }
 }
 
 interface Voce {

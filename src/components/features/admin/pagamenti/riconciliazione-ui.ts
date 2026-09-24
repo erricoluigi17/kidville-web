@@ -496,10 +496,12 @@ export function classiChipAltraSede(): string {
 }
 
 /**
- * La voce della coda fatture sulla riga (consegna 2a, rilievo e). Come «altra sede»: una
- * pelle a sé e NON un quinto tono, perché è un altro asse (qui sopra). Carta bianca;
- * inchiostro blu mentre aspetta o parte, rosso sull'errore, l'unico che chiede di agire
- * a chi guarda (pagina «Coda fatture»: rimetti o togli).
+ * La voce della coda fatture sulla riga (consegna 2a, rilievo e) e nel popup (consegna 2b,
+ * D6). Come «altra sede»: una pelle a sé e NON un quinto tono, perché è un altro asse (qui
+ * sopra). Carta bianca; inchiostro blu mentre aspetta o parte, rosso sull'errore, l'unico
+ * che chiede di agire a chi guarda (pagina «Coda fatture»: rimetti o togli). Dalla 2b
+ * «Errore in coda» è un collegamento a quella pagina (D7): nel popup, e sulla riga FUORI
+ * dal bottone (`ChipCoda` in `MovimentoDialog.tsx`).
  *
  * Alto Contrasto: «In coda» e «In invio» prendono la regola comune di `kv-recon-chip`
  * (carta bianca, inchiostro nero: non chiedono niente). «Errore in coda» ha un'àncora sua,
@@ -514,9 +516,14 @@ export const CHIP_CODA: Record<StatoCodaAttivo, PelleCoda> = {
   errore: { labelKey: 'fatChip_coda_errore', testo: 'text-kidville-error-strong', hcClass: 'kv-recon-chip--coda-errore' },
 }
 
-/** Lo STESSO vestito dei chip di fatturazione (`classiChipFatturazione`): cambia solo la pelle. */
-export function classiChipCoda(pelle: PelleCoda): string {
-  return classiChipFatturazione({ bg: 'bg-kidville-white', testo: pelle.testo, hcClass: pelle.hcClass })
+/**
+ * Lo STESSO vestito dei chip di fatturazione (`classiChipFatturazione`): cambia solo la pelle.
+ * `suCarta` (consegna 2b) è la stessa forma dei chip di fatturazione sulla carta: la usano il
+ * popup e il collegamento «Errore in coda» fuori dal bottone della riga, che posa sul fondo
+ * della lista e non sul semaforo della riga.
+ */
+export function classiChipCoda(pelle: PelleCoda, suCarta = false): string {
+  return classiChipFatturazione({ bg: 'bg-kidville-white', testo: pelle.testo, hcClass: pelle.hcClass }, suCarta)
 }
 
 /**

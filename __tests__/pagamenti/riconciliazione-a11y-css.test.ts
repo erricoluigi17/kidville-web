@@ -205,6 +205,9 @@ describe('globals.css — la pelle del pulsante fattura nel popup', () => {
   it('qualunque cosa renda il pulsante, il bersaglio arriva a 44px', () => {
     const b = blocco('.kv-recon-azione-fattura > a,');
     expect(b).toMatch(/min-height:\s*44px/);
+    // Consegna 2b (D5): su «Errore in coda» `FatturaButton` rende, dentro il suo `div`, il
+    // collegamento «Vai alla coda fatture» — `span.kv-recon-azione-fattura > div > a`.
+    expect(b).toContain('.kv-recon-azione-fattura > div > a');
   });
 
   /**

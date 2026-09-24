@@ -12,6 +12,7 @@
 // «già riconciliato da un altro operatore» diventano messaggi chiari (+ refetch).
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import { AlertTriangle, Check, Clock, FileCheck, FileText, Layers, Receipt, Search, X, Users } from 'lucide-react';
@@ -29,9 +30,15 @@ import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { CODA_FATTURE_HREF } from '../admin-nav-config';
+import { azioneConCoda } from '@/lib/pagamenti/fatturazione-riga';
+// `import type`: `@/lib/fatture-coda/api` tira dentro `next/server` e il logger del server.
+import type { StatoCodaAttivo } from '@/lib/fatture-coda/api';
 import {
   chipFatturazione,
   classiChipFatturazione,
+  CHIP_CODA,
+  classiChipCoda,
   labelPagamentoAperto,
   movimentoMultiCf,
   testoRicercaPagamento,
@@ -39,6 +46,7 @@ import {
   type EsitoComposizione,
   type MovimentoUi,
   type PagamentoApertoUi,
+  type PelleCoda,
   type StatoFattura,
   type TonoFatturazione,
 } from './riconciliazione-ui';
@@ -124,6 +132,33 @@ export function ChipFatturazione({ fat, suCarta = false }: {
       {t(fat.labelKey, fat.params)}
     </span>
   );
+}
+
+/**
+ * IL CHIP DELLA CODA — UNO SOLO, per la riga e per il popup (consegna 2b, D6/D7). Con
+ * `collegamento`, «Errore in coda» è il collegamento alla pagina «Coda fatture». Dentro il
+ * `<button>` della riga non si passa MAI `collegamento`: un `<a>` lì dentro è HTML non valido.
+ * La riga rende dentro il bottone le etichette («In coda», «In invio») e FUORI, fratello come
+ * la casella del lotto, il collegamento dell'errore (`RiconciliazionePanel`).
+ */
+export function ChipCoda({ stato, suCarta = false, collegamento = false }: {
+  stato: StatoCodaAttivo | null | undefined;
+  suCarta?: boolean;
+  collegamento?: boolean;
+}) {
+  const t = useTranslations('adminContabilita');
+  // Uno stato fuori dai tre non ha pelle e non si mostra (la guardia che stava nel pannello).
+  const pelle: PelleCoda | undefined = stato ? (CHIP_CODA as Partial<Record<string, PelleCoda>>)[stato] : undefined;
+  if (!pelle) return null;
+  if (collegamento && azioneConCoda(stato) === 'vai_alla_coda') {
+    return (
+      <Link href={CODA_FATTURE_HREF} data-testid="coda-chip" aria-label={t('fatChip_coda_errore_link')}
+        className={cx(classiChipCoda(pelle, suCarta), 'min-h-6 underline underline-offset-2')}>
+        {t(pelle.labelKey)}
+      </Link>
+    );
+  }
+  return <span data-testid="coda-chip" className={classiChipCoda(pelle, suCarta)}>{t(pelle.labelKey)}</span>;
 }
 
 /**
@@ -1014,10 +1049,18 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                 {/* Lo stato sta SULLA RIGA DELL'OCCHIELLO — «DOCUMENTI … FATTURATA» — e
                     non più sopra i pulsanti: lì era il terzo di tre pillole identiche di
                     cui una sola non si preme. Un titolo di riquadro e il suo stato sono
-                    la stessa informazione, e stanno sulla stessa riga. */}
+                    la stessa informazione, e stanno sulla stessa riga.
+                    Dal 2026-09-24 (consegna 2b, D6) gli stati sono due, fatturazione e coda,
+                    in un contenitore che li porta a destra e a capo INSIEME: con tre figli,
+                    `justify-between` porterebbe il primo chip a metà riga. Il chip della coda
+                    non dipende da `fat`, `saldato` o `loadingPag`: i suoi dati sono della riga
+                    (fotografia del caricamento, come `movimento` intero). */}
                 <div className="flex items-center justify-between gap-3">
                   <h3 className={OCCHIELLO}>{t('movdlgDocumenti')}</h3>
-                  {!loadingPag && saldato && movimento.pagamento_id && fat && <ChipFatturazione fat={fat} suCarta />}
+                  <span className="flex flex-wrap items-center justify-end gap-2">
+                    {!loadingPag && saldato && movimento.pagamento_id && fat && <ChipFatturazione fat={fat} suCarta />}
+                    {movimento.pagamento_id && <ChipCoda stato={movimento.coda_stato} suCarta collegamento />}
+                  </span>
                 </div>
                 {loadingPag ? (
                   <p className="mt-2 font-maven text-sm text-kidville-sub">{t('movdlgCaricamento')}</p>
@@ -1053,14 +1096,21 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                         sopravviveva accanto al badge «In attesa SDI» reso dal pulsante
                         stesso. `onEmessa` adesso alza PRIMA il segnale di rilettura e
                         POI avvisa la lista: quando la risposta arriva, questo ramo
-                        sparisce da sé e il chip è l'unico a parlare. */}
-                    {pagamentoFattura !== 'in_attesa' && (
+                        sparisce da sé e il chip è l'unico a parlare.
+
+                        Consegna 2b (D5): con una voce che aspetta o parte (`in_coda`,
+                        `in_invio`) il pulsante non ha niente da rendere, e il contenitore
+                        non si monta — salvo su emessa (i documenti) e scartata (i motivi),
+                        che restano. Su «Errore in coda» il pulsante c'è e rende il
+                        collegamento alla coda. La regola è del motore (`azioneConCoda`). */}
+                    {pagamentoFattura !== 'in_attesa' && (pagamentoFattura === 'emessa' || pagamentoFattura === 'scartata' || azioneConCoda(movimento.coda_stato) !== 'nessuna') && (
                       <div className="mt-4 flex flex-wrap items-center gap-2">
                         <span className="kv-recon-azione-fattura" data-tono={fat?.tono ?? 'da_fatturare'}>
                           <FatturaButton
                             pagamentoId={movimento.pagamento_id}
                             userId={userId}
                             fatturaStato={pagamentoFattura ?? undefined}
+                            codaStato={movimento.coda_stato ?? null}
                             onEmessa={() => { setRicarica((n) => n + 1); onDone(); }}
                           />
                         </span>

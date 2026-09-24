@@ -104,3 +104,36 @@ export async function contaEmesseUltimaOra(
   }
   return typeof count === 'number' ? count : null
 }
+
+/** Il massimo misurato in un'ora negli ultimi 30 giorni è 49 (24/09): 500 è dieci volte il tetto orario. */
+export const ISTANTI_MAX = 500
+
+/**
+ * Gli istanti delle fatture dell'ultima ora, su TUTTE le sedi, per la stima della coda (consegna
+ * 2b, D3): la stima deve sapere QUANDO ciascuna esce dal secchio, non solo quante sono. `null` =
+ * non letti, e la coda non mostra la fine stimata (il giro, senza misura, non invia).
+ */
+export async function istantiEmesseUltimaOra(
+  supabase: SupabaseClient,
+  adesso: Date = new Date(),
+): Promise<string[] | null> {
+  const da = new Date(adesso.getTime() - FINESTRA_MS).toISOString()
+  const { data, error } = await supabase
+    .from('fatture_emesse')
+    .select('creato_il')
+    // NIENTE `.eq('scuola_id', …)`: vedi la testata. Il secchio è per IP, non per sede.
+    .gte('creato_il', da)
+    .order('creato_il', { ascending: true })
+    .limit(ISTANTI_MAX)
+  if (error) {
+    logEvento('fattura', 'warn', {
+      operazione: 'tettoOrarioAruba:istanti',
+      esito: 'tetto-non-misurato',
+      msg: 'istanti delle fatture dell’ultima ora non letti: la coda non mostra la fine stimata',
+    }, error)
+    return null
+  }
+  return ((data ?? []) as { creato_il?: unknown }[])
+    .map((r) => r.creato_il)
+    .filter((x): x is string => typeof x === 'string')
+}

@@ -53,6 +53,13 @@
  *     congiunzione è ricomparsa parola per parola dentro `selezionabile`. Le cinque
  *     regole qui sopra non la vedevano: guardano `chipFatturazione` e gli import
  *     della rotta. Mutando SOLO la copia della rotta il lock restava verde.
+ *  7. LA CODA FATTURE NELLA LISTA DI LAVORO (consegna 2b, D5): una riga con la voce
+ *     attiva in `fatture_coda` (in coda, in invio, in errore) esce dalle «Da
+ *     fatturare». La regola ha tre nomi nel motore (`STATI_CODA_OCCUPATA`,
+ *     `inCodaAttiva`, `azioneConCoda`), una definizione a testa; la lista di lavoro
+ *     la chiama; e in `src/components` e `src/app/api` nessuno confronta
+ *     `coda_stato`/`codaStato` con uno stato scritto a mano — cioè nessuno si tiene
+ *     una seconda copia dell'elenco, che è la storia di questo lock un'altra volta.
  *
  * NON verifica che la politica sia GIUSTA: quello è
  * `__tests__/pagamenti/riconciliazione-ui.test.ts` (le 75 combinazioni del
@@ -74,6 +81,31 @@ const PANNELLO = path.join('src', 'components', 'features', 'admin', 'pagamenti'
 
 /** Le funzioni che compongono la politica: una definizione a testa, e sta nel motore. */
 const FUNZIONI = ['esitoFatturazione', 'fatturaGiaFatta', 'fatturaDaFare']
+
+/** I tre nomi della regola della coda (consegna 2b, D5): una definizione a testa, nel motore. */
+const NOMI_CODA = ['inCodaAttiva', 'azioneConCoda', 'STATI_CODA_OCCUPATA']
+
+const STATO_CODA = `['"](?:in_coda|in_invio|errore)['"]`
+const CAMPO_CODA = String.raw`\b(?:coda_stato|codaStato)\b`
+
+/**
+ * LE COPIE DELLA REGOLA DELLA CODA in un sorgente (già senza commenti), in tre forme:
+ *  (i)   un confronto di `coda_stato`/`codaStato` con uno stato attivo scritto a mano, nei due versi;
+ *  (ii)  nei file che nominano `coda_stato`/`codaStato`, un `case` su uno stato attivo;
+ *  (iii) negli stessi file, un elenco letterale (array o unione di tipi) con due o più stati attivi.
+ * `\b` davanti al campo: `fatture_coda_stato` non conta.
+ */
+function copieDellaRegolaCoda(codice: string): string[] {
+  const trovate: string[] = []
+  const confronto = new RegExp(`${CAMPO_CODA}\\s*[!=]==?\\s*${STATO_CODA}|${STATO_CODA}\\s*[!=]==?\\s*${CAMPO_CODA}`, 'g')
+  for (const m of codice.matchAll(confronto)) trovate.push(`(i) ${m[0]}`)
+  if (!new RegExp(CAMPO_CODA).test(codice)) return trovate
+  for (const m of codice.matchAll(new RegExp(`\\bcase\\s+${STATO_CODA}`, 'g'))) trovate.push(`(ii) ${m[0]}`)
+  const distinti = (t: string) => new Set([...t.matchAll(new RegExp(STATO_CODA, 'g'))].map((x) => x[0].slice(1, -1))).size
+  for (const m of codice.matchAll(/\[[^[\]]*\]/g)) if (distinti(m[0]) >= 2) trovate.push(`(iii) ${m[0]}`)
+  for (const m of codice.matchAll(/['"][a-z_]+['"](?:\s*\|\s*['"][a-z_]+['"])+/g)) if (distinti(m[0]) >= 2) trovate.push(`(iii) ${m[0]}`)
+  return trovate
+}
 
 /** Via i commenti: un lock non si aggira — né si innesca — con una frase. */
 const soloCodice = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -266,5 +298,71 @@ describe('LOCK · un motore solo per lo stato di fatturazione della riga', () =>
     const testo = fs.readFileSync(path.join(process.cwd(), MOTORE), 'utf-8')
     expect(testo).not.toMatch(/^\s*['"]use client['"]/m)
     expect(soloCodice(testo)).not.toMatch(/from\s*'(react|next\/|next-intl)/)
+    // Dalla consegna 2b il motore prende `StatoCodaAttivo` da `fatture-coda/api.ts`, che importa
+    // `next/server`: solo come TIPO (cancellato alla compilazione). Un import di valore da lì
+    // trascinerebbe `next/server` nel bundle del browser che disegna il chip.
+    const daApi = [...soloCodice(testo).matchAll(/^[ \t]*import\s+(type\s+)?[^;]*?from\s+'@\/lib\/fatture-coda\/api'/gm)]
+    expect(daApi.length, 'il motore non importa più il tipo della coda: il controllo sotto non vede niente').toBeGreaterThan(0)
+    for (const m of daApi) expect(m[1], `import di VALORE da fatture-coda/api nel motore: ${m[0]}`).toBeTruthy()
+  })
+})
+
+/**
+ * ─── D5: LA CODA FATTURE NELLA LISTA DI LAVORO (consegna 2b) ──────────────────
+ *
+ * Una riga con la voce attiva in coda NON è da fatturare: niente pillola, niente elenco, niente casella del lotto,
+ * niente «Invia fattura». Se questa regola si riscrivesse in un componente — un `codaStato === 'errore'` qui, un
+ * `['in_coda', 'in_invio']` là — il giorno in cui il nucleo aggiungesse uno stato la lista, il pulsante e la card KPI
+ * direbbero tre cose diverse sullo stesso pagamento. È la storia di questo lock (due copie che coincidono finché una
+ * non cambia), su un campo nuovo.
+ */
+describe('LOCK · la coda fatture nella lista di lavoro passa dal motore (consegna 2b, D5)', () => {
+  it('inCodaAttiva, azioneConCoda, STATI_CODA_OCCUPATA: una definizione sola, e sta nel motore', () => {
+    for (const nome of NOMI_CODA) {
+      const re = new RegExp(`export\\s+(?:function|const)\\s+${nome}\\b`)
+      const definizioni = FILE.filter((f) => re.test(f.codice)).map((f) => f.relativo)
+      expect(definizioni, `${nome} deve essere definita una volta sola, in ${MOTORE}`).toEqual([MOTORE])
+    }
+  })
+
+  it('la lista di lavoro chiama inCodaAttiva nel proprio corpo', () => {
+    const codice = di(MOTORE)!.codice
+    const corpo = corpoDi(codice, 'daFatturareInListaDiLavoro')
+    // Controllo positivo del taglio: il corpo c'è, finisce alla sua graffa, e ha la regola vecchia accanto.
+    expect(corpo.length, 'il corpo di daFatturareInListaDiLavoro non è stato trovato').toBeGreaterThan(80)
+    expect(corpo.trimEnd().endsWith('}')).toBe(true)
+    expect(corpo).toMatch(/fatturaDaFare\(/)
+    expect(corpo, 'la lista di lavoro non esclude più le righe in coda').toMatch(/!\s*inCodaAttiva\(/)
+  })
+
+  it('il riconoscitore delle copie vede le tre forme (controllo positivo) e non i sosia', () => {
+    // Tre sorgenti finti, uno per forma: senza, «zero copie» qui sotto sarebbe verde anche con un riconoscitore rotto.
+    expect(copieDellaRegolaCoda(`if (p.coda_stato === 'errore') vai()`)).toEqual([`(i) coda_stato === 'errore'`])
+    expect(copieDellaRegolaCoda(`const x = "in_invio" !== codaStato`)).toEqual([`(i) "in_invio" !== codaStato`])
+    expect(copieDellaRegolaCoda(`switch (codaStato) {\n  case 'in_invio': return null\n}`)).toEqual([`(ii) case 'in_invio'`])
+    expect(copieDellaRegolaCoda(`const c = r.coda_stato\nconst ATTIVI = ['in_coda', 'tolta', 'errore']`))
+      .toEqual([`(iii) ['in_coda', 'tolta', 'errore']`])
+    expect(copieDellaRegolaCoda(`const c = r.coda_stato\ntype T = 'in_coda' | 'in_invio'`)).toEqual([`(iii) 'in_coda' | 'in_invio'`])
+    // I sosia: un campo che contiene la parola, un `case 'errore'` in un file che non parla di coda, un elenco con
+    // un solo stato attivo, un confronto su un altro campo.
+    expect(copieDellaRegolaCoda(`if (r.fatture_coda_stato === 'errore') x()`)).toEqual([])
+    expect(copieDellaRegolaCoda(`switch (esito) {\n  case 'errore': return 1\n}`)).toEqual([])
+    expect(copieDellaRegolaCoda(`const c = r.coda_stato\nconst L = ['errore', 'emessa']`)).toEqual([])
+    expect(copieDellaRegolaCoda(`const c = r.coda_stato\nif (esito === 'errore') x()`)).toEqual([])
+  })
+
+  it('in `src/components` e `src/app/api` nessuna copia della regola della coda', () => {
+    const componenti = path.join('src', 'components') + path.sep
+    const api = path.join('src', 'app', 'api') + path.sep
+    const scansionati = FILE.filter((f) => f.relativo.startsWith(componenti) || f.relativo.startsWith(api))
+    // Controllo positivo: il perimetro è letto, e dentro ci sono i file che nominano davvero `coda_stato`.
+    expect(scansionati.length).toBeGreaterThan(500)
+    expect(scansionati.filter((f) => new RegExp(CAMPO_CODA).test(f.codice)).length).toBeGreaterThanOrEqual(5)
+    const copie = scansionati.flatMap((f) => copieDellaRegolaCoda(f.codice).map((c) => `${f.relativo}: ${c}`))
+    expect(
+      copie,
+      'Lo stato della coda si chiede al motore (`inCodaAttiva`, `azioneConCoda`, `STATI_CODA_OCCUPATA` in ' +
+        `${MOTORE}), non si confronta a mano:\n${copie.join('\n')}`,
+    ).toEqual([])
   })
 })

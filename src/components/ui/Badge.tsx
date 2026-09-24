@@ -41,15 +41,24 @@ interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   tone?: BadgeTone
 }
 
+/**
+ * Le classi del Badge, per chi deve dare la stessa faccia a un elemento che non è uno
+ * `span` — il collegamento «Errore in coda» di `FatturaChip` (consegna 2b, D7), che non
+ * può annidare uno `span` dentro l'`a` e restare un bersaglio solo.
+ */
+export function classiBadge(tone: BadgeTone = 'info', className?: string): string {
+  return cx(
+    'inline-flex items-center gap-[5px] whitespace-nowrap rounded-pill px-[11px] py-1 font-barlow text-[11.5px] font-extrabold uppercase leading-[1.35] tracking-[0.06em]',
+    TONES[tone],
+    className,
+  )
+}
+
 /** Badge/pill di stato del design (DR `.kv-badge`). */
 export function Badge({ tone = 'info', className, children, ...rest }: BadgeProps) {
   return (
     <span
-      className={cx(
-        'inline-flex items-center gap-[5px] whitespace-nowrap rounded-pill px-[11px] py-1 font-barlow text-[11.5px] font-extrabold uppercase leading-[1.35] tracking-[0.06em]',
-        TONES[tone],
-        className,
-      )}
+      className={classiBadge(tone, className)}
       {...rest}
     >
       {children}

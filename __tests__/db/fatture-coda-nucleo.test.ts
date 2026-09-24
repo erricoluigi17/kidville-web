@@ -4,7 +4,9 @@
  * Coda fatture Aruba, NUCLEO — la migrazione `20260923102831_fatture_coda_nucleo.sql`
  * eseguita su PGlite dal FILE VERO della cartella delle migrazioni, seguita dalla
  * correzione della consegna 2a `<version>_fatture_coda_togli_azzera_esito.sql` (rilievo b:
- * «Togli» azzera anche `esito_codice` ed `esito_messaggio`), trovata per suffisso.
+ * «Togli» azzera anche `esito_codice` ed `esito_messaggio`), trovata per suffisso, e da
+ * quella della consegna 2b `<version>_fatture_coda_chiudi_emessa_azzera_messaggio.sql`
+ * (D13: la chiusura «emessa» azzera sempre `esito_messaggio`), trovata allo stesso modo.
  *
  * Stesso impianto di `__tests__/lib/video-job-next.test.ts`: i ruoli di Supabase
  * ricostruiti a mano, le sole tabelle toccate dalla migrazione (`schools`, `pagamenti`,
@@ -40,6 +42,11 @@ const SUFFISSO_TOGLI = '_fatture_coda_togli_azzera_esito.sql'
 const TROVATI_TOGLI = readdirSync(CARTELLA_MIGRAZIONI).filter((nome) => nome.endsWith(SUFFISSO_TOGLI))
 const NOME_TOGLI = TROVATI_TOGLI[0] ?? ''
 const TOGLI_AZZERA = NOME_TOGLI ? readFileSync(join(CARTELLA_MIGRAZIONI, NOME_TOGLI), 'utf8') : ''
+
+const SUFFISSO_CHIUDI = '_fatture_coda_chiudi_emessa_azzera_messaggio.sql'
+const TROVATI_CHIUDI = readdirSync(CARTELLA_MIGRAZIONI).filter((nome) => nome.endsWith(SUFFISSO_CHIUDI))
+const NOME_CHIUDI = TROVATI_CHIUDI[0] ?? ''
+const CHIUDI_AZZERA = NOME_CHIUDI ? readFileSync(join(CARTELLA_MIGRAZIONI, NOME_CHIUDI), 'utf8') : ''
 
 const SEDE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const SEDE_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
@@ -278,6 +285,7 @@ beforeEach(async () => {
   await preparaDatabase()
   await db.exec(MIGRAZIONE)
   if (TOGLI_AZZERA) await db.exec(TOGLI_AZZERA)
+  if (CHIUDI_AZZERA) await db.exec(CHIUDI_AZZERA)
 })
 
 afterEach(async () => {
@@ -375,9 +383,10 @@ describe('fatture_coda · forma dello schema', () => {
     await sospendi(true)
 
     await expect(db.exec(MIGRAZIONE)).resolves.toBeDefined()
-    // Rieseguire il solo nucleo rimette la togli vecchia (CREATE OR REPLACE):
-    // l'ordine vero è nucleo → correzione della consegna 2a.
+    // Rieseguire il solo nucleo rimette la togli e la chiudi vecchie (CREATE OR REPLACE):
+    // l'ordine vero è nucleo → correzione della consegna 2a → correzione della 2b.
     if (TOGLI_AZZERA) await expect(db.exec(TOGLI_AZZERA)).resolves.toBeDefined()
+    if (CHIUDI_AZZERA) await expect(db.exec(CHIUDI_AZZERA)).resolves.toBeDefined()
 
     expect(await voci()).toHaveLength(1)
     const s = await stato()
@@ -765,6 +774,75 @@ describe('fatture_coda_chiudi', () => {
     expect((await erroreDi(chiudi(voce.id, TOKEN_A, 'boh')))?.code).toBe('22023')
     expect((await erroreDi(chiudi(pag(200), TOKEN_A, 'emessa')))?.code).toBe('P0002')
     expect((await voceDi(1)).stato).toBe('in_invio')
+  })
+
+  // ── consegna 2b, D13: «emessa» azzera SEMPRE il messaggio d'esito ──────────
+  it('la migrazione della consegna 2b esiste, è una sola, viene dopo quella della 2a e non è nel futuro', () => {
+    expect(TROVATI_CHIUDI).toHaveLength(1)
+    const version = NOME_CHIUDI.slice(0, 14)
+    expect(version).toMatch(/^\d{14}$/)
+    expect(version > NOME_TOGLI.slice(0, 14)).toBe(true)
+    expect(version <= new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)).toBe(true)
+  })
+
+  it('non accende nessuna guardia delle fotografie, e revoca per nome', () => {
+    expect(CHIUDI_AZZERA).not.toBe('')
+    expect(toccaLaRls(CHIUDI_AZZERA)).toBe(false)
+    expect(toccaUnUnico(CHIUDI_AZZERA)).toBe(false)
+    expect(toccaLeFkUtenti(CHIUDI_AZZERA)).toBe(false)
+    expect(senzaCommenti(CHIUDI_AZZERA)).not.toMatch(/scuola_id/i)
+    expect(CHIUDI_AZZERA).toContain(
+      'REVOKE ALL ON FUNCTION public.fatture_coda_chiudi(uuid, uuid, text, text, text) FROM PUBLIC, anon, authenticated;',
+    )
+  })
+
+  it('emessa: il messaggio passato dal chiamante NON resta (su errore invece resta)', async () => {
+    const voce = await unaInMano(1)
+    await chiudi(voce.id, TOKEN_A, 'emessa', 'emessa', 'Messaggio finto')
+    expect(await voceDi(1)).toMatchObject({
+      stato: 'emessa',
+      esito_codice: 'emessa',
+      esito_messaggio: null,
+      causale_manuale: null,
+      intestatario_scelto: null,
+    })
+
+    // Controllo: una seconda voce chiusa in errore col messaggio lo tiene.
+    const seconda = await unaInMano(2)
+    await chiudi(seconda.id, TOKEN_A, 'errore', 'scarto_aruba', 'Messaggio finto')
+    expect(await voceDi(2)).toMatchObject({ stato: 'errore', esito_messaggio: 'Messaggio finto' })
+  })
+
+  it('la stessa chiusura «emessa» ripetuta resta un no-op anche con un messaggio', async () => {
+    const voce = await unaInMano()
+    await chiudi(voce.id, TOKEN_A, 'emessa', 'emessa', 'Messaggio finto')
+    const dopo = await voceDi(1)
+    await expect(chiudi(voce.id, TOKEN_A, 'emessa', 'emessa', 'Messaggio finto')).resolves.toBeUndefined()
+    const ancora = await voceDi(1)
+    expect(ancora.concluso_il?.getTime()).toBe(dopo.concluso_il?.getTime())
+    expect(ancora).toMatchObject({ stato: 'emessa', esito_codice: 'emessa', esito_messaggio: null })
+  })
+
+  it('ripulisce le emesse che avevano già un messaggio, ed è idempotente', async () => {
+    if (!CHIUDI_AZZERA) throw new Error(`manca la migrazione *${SUFFISSO_CHIUDI}`)
+    // Nucleo e 2a di nuovo = la chiudi che è in produzione oggi.
+    await db.exec(MIGRAZIONE)
+    if (TOGLI_AZZERA) await db.exec(TOGLI_AZZERA)
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const prese = await prendi(TOKEN_A, 2)
+    const idDi = (n: number) => prese.find((v) => v.pagamento_id === pag(n))!.id
+    await chiudi(idDi(1), TOKEN_A, 'emessa', 'emessa', 'Messaggio finto')
+    await chiudi(idDi(2), TOKEN_A, 'errore', 'esito_incerto', 'Resta')
+    expect((await voceDi(1)).esito_messaggio).toBe('Messaggio finto') // lo stato da ripulire c'è davvero
+
+    await db.exec(CHIUDI_AZZERA)
+    expect(await voceDi(1)).toMatchObject({ stato: 'emessa', esito_codice: 'emessa', esito_messaggio: null })
+    expect(await voceDi(2)).toMatchObject({ stato: 'errore', esito_codice: 'esito_incerto', esito_messaggio: 'Resta' })
+
+    await expect(db.exec(CHIUDI_AZZERA)).resolves.toBeDefined()
+    expect(await voceDi(1)).toMatchObject({ esito_messaggio: null })
+    expect((await voceDi(2)).esito_messaggio).toBe('Resta')
   })
 })
 
@@ -1180,6 +1258,32 @@ describe('controlli negativi · le prove devono fallire sulla migrazione rotta',
     const [voce] = await prendi(TOKEN_A, 1)
     await chiudi(voce.id, TOKEN_A, 'errore', 'scarto_aruba', 'Messaggio finto')
     await togli([voce.id]) // la togli VECCHIA
+    await db.exec(senzaDo)
+    expect((await voceDi(1)).esito_messaggio).toBe('Messaggio finto')
+  })
+
+  it('senza la riga nel ramo emessa il messaggio resterebbe: la prova della chiusura lo misura', async () => {
+    const rotta = CHIUDI_AZZERA.replace(/esito_messaggio\s+= NULL,(\s+concluso_il)/, 'esito_messaggio     = v_messaggio,$1')
+    expect(rotta).not.toBe(CHIUDI_AZZERA)
+    await conMigrazione(MIGRAZIONE)
+    await db.exec(TOGLI_AZZERA)
+    await db.exec(rotta)
+    await nuovoPagamento(1)
+    await accoda([{ pagamento_id: pag(1) }])
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'emessa', 'emessa', 'Messaggio finto')
+    expect((await voceDi(1)).esito_messaggio).toBe('Messaggio finto')
+  })
+
+  it('senza il blocco DO le emesse di prima restano col messaggio: la prova della ripulitura lo misura', async () => {
+    const senzaDo = CHIUDI_AZZERA.replace(/DO \$\$[\s\S]*?END \$\$;/, '')
+    expect(senzaDo).not.toBe(CHIUDI_AZZERA)
+    await conMigrazione(MIGRAZIONE)
+    await db.exec(TOGLI_AZZERA)
+    await nuovoPagamento(1)
+    await accoda([{ pagamento_id: pag(1) }])
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'emessa', 'emessa', 'Messaggio finto') // la chiudi VECCHIA
     await db.exec(senzaDo)
     expect((await voceDi(1)).esito_messaggio).toBe('Messaggio finto')
   })

@@ -504,6 +504,73 @@ describe('MovimentoDialog — forma, bersagli e àncore di stile', () => {
     expect(chip.className).toContain('border-current');
   });
 
+  /**
+   * ─── LA VOCE DELLA CODA NEL POPUP (consegna 2b, D5/D6/D7) ────────────────────
+   *
+   * D6: il chip della coda, dai dati della riga, accanto a quello di fatturazione. D7:
+   * «Errore in coda» è il collegamento alla pagina «Coda fatture». D5: con una voce che
+   * aspetta o parte il pulsante della fattura non c'è, e nemmeno il suo contenitore.
+   *
+   * ⚠️ OGNI ASSENZA VIENE DOPO IL CHIP DI FATTURAZIONE. Quello si rende solo a lettura
+   * del pagamento finita, quando pulsante e contenitore si decidono; il chip della coda
+   * invece c'è già al montaggio, prima della lettura, quando pulsante e contenitore
+   * mancano comunque. Un'assenza ancorata a lui sarebbe verde anche senza la condizione
+   * (`.claude/rules/test.md`, punto 3).
+   */
+  const inCoda = (coda_stato: MovimentoUi['coda_stato']): MovimentoUi => ({ ...confermato, coda_stato });
+  const ancora = () => screen.findByText(testo('reconChipDaFatturare'));
+
+  it('coda `in_invio` → il chip è un’etichetta sulla carta, senza collegamento', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('non_richiesta'));
+    render(<MovimentoDialog movimento={inCoda('in_invio')} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await ancora();
+    const chip = screen.getByTestId('coda-chip');
+    expect(chip.tagName).toBe('SPAN');
+    expect(chip).toHaveTextContent(testo('fatChip_coda_in_invio'));
+    expect(chip.className).toContain('kv-recon-chip');
+    expect(chip.className).toContain('border-current');
+    expect(chip.className).toContain('text-kidville-info-strong');
+    expect(screen.queryByRole('link', { name: /Coda fatture/i })).toBeNull();
+  });
+
+  it('coda `errore` → «Errore in coda» è il collegamento alla pagina, e il pulsante riceve lo stato', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('non_richiesta'));
+    render(<MovimentoDialog movimento={inCoda('errore')} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await ancora();
+    const link = screen.getByRole('link', { name: testo('fatChip_coda_errore_link') });
+    expect(link).toHaveAttribute('href', '/admin/coda-fatture');
+    expect(link).toHaveAttribute('data-testid', 'coda-chip');
+    expect(link.className).toContain('kv-recon-chip--coda-errore');
+    expect(link.className).toContain('border-current');
+    expect(link.className).toContain('min-h-6');
+    // D5: su errore il posto del pulsante resta (dentro, FatturaButton rende il collegamento)
+    expect(screen.getByTestId('fattura-button')).toBeInTheDocument();
+    expect(spiaFattura.props.at(-1)?.codaStato).toBe('errore');
+  });
+
+  it('nessuna voce in coda → nessun chip della coda, e il pulsante riceve `codaStato: null`', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('non_richiesta'));
+    render(<MovimentoDialog movimento={inCoda(null)} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await ancora();
+    expect(screen.getByTestId('fattura-button')).toBeInTheDocument();
+    expect(spiaFattura.props.at(-1)?.codaStato).toBeNull();
+    expect(screen.queryByTestId('coda-chip')).toBeNull();
+  });
+
+  it('coda `in_coda` → niente pulsante e niente contenitore vuoto (D5)', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('non_richiesta'));
+    const { container } = render(<MovimentoDialog movimento={inCoda('in_coda')} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await ancora();
+    expect(screen.getByTestId('coda-chip')).toHaveTextContent(testo('fatChip_coda_in_coda'));
+    expect(screen.queryByTestId('fattura-button')).toBeNull();
+    // col pulsante vero il guscio resterebbe vuoto; col finto lo si vedrebbe pieno
+    expect(container.querySelector('.kv-recon-azione-fattura')).toBeNull();
+  });
+
   it('la ✕ è un bersaglio da 44px e non usa il grigio `muted` (3,80:1)', async () => {
     vi.stubGlobal('fetch', rispostaPagamento('emessa'));
     render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
@@ -1105,7 +1172,12 @@ describe('MovimentoDialog — il chip di stato sta sull’occhiello', () => {
 
     const occhiello = screen.getByText('Documenti');
     const chip = container.querySelector('.kv-recon-chip') as HTMLElement;
-    expect(chip.parentElement, 'lo stato va accanto al titolo del riquadro').toBe(occhiello.parentElement);
+    // Dal 2026-09-24 (consegna 2b, D6) sulla riga dell'occhiello gli stati sono due,
+    // fatturazione e coda, dentro un contenitore che li porta a destra e a capo INSIEME:
+    // la misura scende di un livello, la tesi no. Portati nella fila dei pulsanti, il
+    // loro nonno sarebbe la `section` e non la riga dell'occhiello.
+    expect(chip.parentElement?.parentElement, 'lo stato va accanto al titolo del riquadro').toBe(occhiello.parentElement);
+    expect(chip.parentElement?.className, 'i chip dell’occhiello vanno a capo insieme').toContain('flex-wrap');
     // …e non ha più la forma del pulsante che gli sta sotto
     expect(chip.className).toContain('rounded-md');
     expect(chip.className).not.toContain('rounded-pill');

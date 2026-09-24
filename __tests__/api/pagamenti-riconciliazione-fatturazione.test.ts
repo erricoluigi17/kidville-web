@@ -1321,15 +1321,64 @@ describe('GET /api/pagamenti/riconciliazione — coda_stato, la voce attiva dell
     expect(rigaDi(j, MID(3))).toHaveProperty('coda_stato', 'errore')
   })
 
-  it('`?conteggi=1`: le righe non escono, e `fatture_coda` non si legge', async () => {
-    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1))]
-    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta')]
-    h.db.fatture_coda = [voceCoda(PID(1), 'sc-1', 'in_coda')]
+  /**
+   * D5 (consegna 2b): una riga con la voce ATTIVA in coda non è più «da fatturare» — né nella pillola né
+   * nell'elenco. Fino alla 2a il conteggio NON leggeva la coda (qui c'era il test «`?conteggi=1` … `fatture_coda`
+   * non si legge»): la regola che fissava è l'opposto di D5, e si è sostituita. Al conteggio la coda serve a CONTARE.
+   */
+  const cinqueSaldateQuattroVoci = () => {
+    h.db.riconciliazione_movimenti = [1, 2, 3, 4, 5].map((n) => mov(n, 'confermato', PID(n)))
+    h.db.pagamenti = [1, 2, 3, 4, 5].map((n) => pag(n, 'pagato', 'non_richiesta'))
+    h.db.fatture_coda = [
+      voceCoda(PID(1), 'sc-1', 'in_coda'),
+      voceCoda(PID(2), 'sc-1', 'in_invio'),
+      voceCoda(PID(3), 'sc-1', 'errore'),
+      voceCoda(PID(4), 'sc-1', 'tolta'),
+    ]
+  }
+
+  it('`?conteggi=1` legge la coda, e le righe in coda non contano fra le «Da fatturare»', async () => {
+    cinqueSaldateQuattroVoci()
 
     const res = await get('?conteggi=1')
     expect(res.status).toBe(200)
-    expect(h.chiamate.some((c) => c.tabella === 'pagamenti')).toBe(true)
-    expect(chiamateCoda()).toHaveLength(0)
+    const j = await res.json()
+    expect(j.data).toEqual([])
+    // Cinque saldate da fatturare, tre con una voce attiva (in coda, in invio, in errore): ne restano DUE. La
+    // `tolta` non occupa più il pagamento, e conta.
+    expect(j.conteggi.da_fatturare).toBe(2)
+    const [lettura, ...altre] = chiamateCoda()
+    expect(altre).toHaveLength(0)
+    expect(lettura.filtri).toContainEqual({ op: 'in', col: 'scuola_id', val: ['sc-1'] })
+    expect(lettura.filtri).toContainEqual({ op: 'in', col: 'stato', val: ['in_coda', 'in_invio', 'errore'] })
+
+    // Il controllo, nello stesso caso: senza voci in coda le stesse cinque righe contano tutte.
+    h.db.fatture_coda = []
+    const senza = await (await get('?conteggi=1')).json()
+    expect(senza.conteggi.da_fatturare).toBe(5)
+  })
+
+  it('`?fattura=da_fatturare` non restituisce le righe in coda', async () => {
+    cinqueSaldateQuattroVoci()
+
+    const j = await (await get('?fattura=da_fatturare')).json()
+    expect(j.fatturazione_disponibile).toBe(true)
+    expect(j.data.map((r: { id: string }) => r.id).sort()).toEqual([MID(4), MID(5)])
+  })
+
+  it('guasto della coda nel conteggio: fail-open dichiarato (200, le cinque contano, un warn)', async () => {
+    cinqueSaldateQuattroVoci()
+    h.errori.fatture_coda = { code: '08006', message: 'connection failure' }
+
+    const res = await get('?conteggi=1')
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    // La coda non letta non toglie niente: meglio una riga contata due volte (la RPC risponde «già in coda») che
+    // una fattura da fare sparita dal numero. E lo si dice nel log.
+    expect(j.conteggi.da_fatturare).toBe(5)
+    const nonLetta = h.eventi.filter((e) => e.campi.esito === 'coda-badge-non-letta')
+    expect(nonLetta).toHaveLength(1)
+    expect(nonLetta[0].livello).toBe('warn')
   })
 
   it('registro senza confermate con pagamento: `fatture_coda` non si legge', async () => {

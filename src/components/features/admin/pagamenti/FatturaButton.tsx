@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { FileText, Loader2, X, Pencil } from 'lucide-react';
@@ -19,7 +20,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 // ⚠️ `import type`, e NON un import di valori: `@/lib/fatture-coda/api` tira dentro
 // `next/server`, il logger del server e il conteggio orario su Supabase. Un tipo sparisce
 // a compilazione e lega questo pulsante al contratto vero della coda, senza bundle.
-import type { CorpoAccoda, RispostaAccoda } from '@/lib/fatture-coda/api';
+import type { CorpoAccoda, RispostaAccoda, StatoCodaAttivo } from '@/lib/fatture-coda/api';
 /**
  * ⚠️ IL BLOCCO DELL'INTESTATARIO SI IMPORTA, NON SI RICOPIA.
  *
@@ -38,6 +39,8 @@ import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } f
 import { CHIAVE_MOTIVO_PROPOSTA, propostaApplicabile } from '@/lib/pagamenti/proposta-intestatario';
 import type { ScartoFattura } from '@/lib/pagamenti/scarico-fattura';
 import { FatturaDocumenti } from '@/components/features/pagamenti/FatturaDocumenti';
+import { CODA_FATTURE_HREF } from '@/components/features/admin/admin-nav-config';
+import { azioneConCoda } from '@/lib/pagamenti/fatturazione-riga';
 
 /**
  * PERCHÉ LO SDI HA RESPINTO IL DOCUMENTO — la sola resa, per i QUATTRO punti che la usano.
@@ -156,11 +159,16 @@ function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: str
     );
 }
 
+/** L'esito di un accodamento, per chi monta il pulsante (D12). */
+export type EsitoAccodamento = { accodata: 'nuova' | 'gia' };
+
 interface Props {
     pagamentoId: string;
     userId: string;
     fatturaStato?: string;
-    onEmessa?: () => void;
+    /** La voce ATTIVA della coda sul pagamento, dai dati della riga (D5): fotografia del caricamento. */
+    codaStato?: StatoCodaAttivo | null;
+    onEmessa?: (esito?: EsitoAccodamento) => void;
 }
 
 /** Ciò che `/api/pagamenti/fattura/anteprima` risponde: il testo che uscirà davvero. */
@@ -223,10 +231,6 @@ const VALORE_ALTRO = '__altro__';
 /** La route che accoda (nucleo coda fatture, §3). */
 const URL_CODA = '/api/pagamenti/fattura/coda';
 
-/** Il solo intestatario che la coda accetta: un adulto già in archivio, per id. */
-type AdultoScelto = Extract<IntestatarioScelto, { tipo: 'adult' }>;
-type PersonaScelta = Extract<IntestatarioScelto, { tipo: 'persona' }>;
-
 // Pulsante "Invia Fattura" (emissione reale Aruba/SDI). Prima di emettere apre un
 // modale che MOSTRA la causale composta dal modello della sede e CHI riceverà il
 // documento; personalizzare l'una o cambiare l'altro sono gesti in più, deliberati.
@@ -247,7 +251,7 @@ type PersonaScelta = Extract<IntestatarioScelto, { tipo: 'persona' }>;
 // 579 alunni su 630 non hanno un intestatario risolvibile e i genitori marcati
 // «intestatario di famiglia» sono DUE su 735. Il selettore non raffina: è ciò che
 // sblocca l'emissione. Proprio per questo la proposta ricavata dall'ordinante del
-// bonifico è una PRESELEZIONE e mai un invio: si preme «Emetti» comunque.
+// bonifico è una PRESELEZIONE e mai un invio: si preme «Metti in coda» comunque.
 //
 // Né la causale né l'intestatario sono ricalcolati qui: arrivano da
 // `/api/pagamenti/fattura/anteprima`, che chiama gli stessi `componiCausalePagamento`
@@ -263,16 +267,29 @@ type PersonaScelta = Extract<IntestatarioScelto, { tipo: 'persona' }>;
 // il tetto orario, lo stop su 429/5xx — invece di una seconda strada che quei limiti
 // non li vede. A schermo: «Messa in coda: parte entro pochi minuti».
 //
-// ⚠️ L'UNICA ECCEZIONE È L'INTESTATARIO DIGITATO A MANO («Altro», `tipo: 'persona'`).
-// Il contratto della coda accetta solo il ramo `adult` (`zAdultScelto` in
-// `src/lib/fatture-coda/api.ts`), per una ragione scritta lì: la coda non custodisce
-// nome, codice fiscale e residenza digitati nel browser. Mandarla alla coda vorrebbe
-// dire un 400 garantito, cioè la funzione tolta senza dirlo. Finché la coda non ha una
-// forma per quella persona (seconda consegna), quel solo ramo emette come prima, con
-// la POST diretta e la sua «ricorda sulla scheda» DOPO l'emissione riuscita.
-export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: Props) {
+// ─── DAL 2026-09-24 LA STRADA È UNA SOLA (consegna 2b, D1 e D5) ──────────────
+// (`docs/superpowers/specs/2026-09-22-coda-fatture-aruba/consegna-2b-rifiniture.md` §4.10)
+// Anche l'intestatario scritto a mano («Altro», `tipo: 'persona'`) va in coda: il
+// contratto lo accetta in un gesto di UNA voce e la POST lo valida con
+// `validaCessionario` PRIMA di accodare (400 `INTESTATARIO_DIGITATO_INCOMPLETO`). La
+// «ricorda sulla scheda» non è più una PATCH del browser: viaggia nella voce come
+// `conferma_proposta: true`, e la scheda la scrive il lavoratore solo a emissione nuova
+// riuscita. La route diretta `POST /api/pagamenti/fattura` resta, per decisione, ma
+// dall'interfaccia non la chiama più nessuno.
+//
+// Con una voce ATTIVA sul pagamento (`codaStato`, dai dati della riga) il pulsante non
+// c'è: un secondo accodamento tornerebbe «già in coda». Su «Errore in coda» al suo posto
+// c'è il collegamento alla pagina «Coda fatture», dove la voce si toglie o si rimette. La
+// regola è del motore (`azioneConCoda`, `@/lib/pagamenti/fatturazione-riga`): qui c'è
+// solo la resa. Sparisce QUI DENTRO e non nel genitore, perché smontarlo lì porterebbe
+// via la live region «Messa in coda» proprio quando il genitore aggiorna la riga (D12).
+export function FatturaButton({ pagamentoId, userId, fatturaStato, codaStato, onEmessa }: Props) {
     const t = useTranslations('adminContabilita');
-    const [stato, setStato] = useState(fatturaStato ?? 'non_richiesta');
+    // Dalla prop, a ogni resa: il suo setter lo usava solo la POST diretta, che da qui non
+    // parte più. Così un genitore che ricarica la riga (D12) aggiorna anche il pulsante.
+    const stato = fatturaStato ?? 'non_richiesta';
+    // Letta dalla prop a ogni resa, MAI copiata in uno stato: è la fotografia del caricamento.
+    const azione = azioneConCoda(codaStato);
     const [busy, setBusy] = useState(false);
     const [open, setOpen] = useState(false);
     const [anteprima, setAnteprima] = useState<Anteprima | null>(null);
@@ -285,9 +302,9 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
     const [scelta, setScelta] = useState('');
     const [altro, setAltro] = useState<DatiAltro>(ALTRO_VUOTO);
     const [ricorda, setRicorda] = useState(false);
-    /** L'esito dell'ULTIMA azione: emissione rifiutata, o scheda non aggiornata. */
+    /** L'esito dell'ULTIMA azione: l'accodamento rifiutato. */
     const [erroreAzione, setErroreAzione] = useState<string | null>(null);
-    /** Emessa in questa sessione del modale: «Emetti» non si ripreme. */
+    /** Accodata in questa sessione del modale: «Metti in coda» non si ripreme. */
     const [emessa, setEmessa] = useState(false);
     /**
      * L'esito dell'accodamento: `nuova` = è entrata adesso, `gia` = la coda l'aveva già
@@ -409,43 +426,6 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
         };
     };
 
-    /**
-     * «Ricorda sulla scheda», e il perché di DOPO.
-     *
-     * Si scrive `alunni.intestatario_fatture` solo a emissione riuscita: prima
-     * vorrebbe dire che una fattura rifiutata da Aruba — o fermata da un gate —
-     * lascia comunque dietro di sé un intestatario nuovo su tutte le rette future
-     * del bambino, deciso da nessuno. La forma dei dati è quella condivisa col
-     * backend (`tipo: 'altro'`, `dati.cf`, `dati.civico`): non se ne inventa una
-     * seconda, o la scheda direbbe una cosa e l'emissione un'altra.
-     *
-     * Ritorna `false` se non si è salvato: il chiamante lo trasforma in un avviso
-     * a schermo. La fattura, a quel punto, è già uscita — e va detto.
-     */
-    const ricordaSullaScheda = async (): Promise<boolean> => {
-        if (!ricorda || !digitando || !alunno?.id) return true;
-        const v = (campo: CampoAltro) => altro[campo].trim();
-        const dati: Record<string, string> = {
-            nome: v('nome'), cognome: v('cognome'), cf: v('codice_fiscale'),
-            indirizzo: v('indirizzo'), cap: v('cap'), comune: v('comune'),
-        };
-        if (v('provincia')) dati.provincia = v('provincia');
-        if (v('civico')) dati.civico = v('civico');
-        try {
-            const res = await fetch('/api/admin/students', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                body: JSON.stringify({ id: alunno.id, intestatario_fatture: { tipo: 'altro', dati } }),
-            });
-            return res.ok;
-        } catch {
-            // Non è un `catch` muto: l'esito `false` diventa la riga rossa che dice
-            // «la fattura è uscita, la scheda no». Ingoiarlo qui lascerebbe credere
-            // di aver impostato un intestatario che non è stato salvato.
-            return false;
-        }
-    };
-
     const emettiBloccato = busy || !anteprima || emessa || sceltoNonFatturabile || altroIncompleto;
 
     /**
@@ -454,23 +434,27 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
      * Una voce sola, `urgente: true`. La causale è quella di `causaleDaSpedire()` — la
      * correzione scritta a mano, oppure `null`, che per il lavoratore significa, come
      * per la POST diretta, TOGLIERE la correzione salvata. L'intestatario, se scelto, è
-     * un adulto per id.
+     * un adulto per id oppure la persona digitata a mano (D1).
      *
-     * ⚠️ `conferma_proposta` NON si manda: è ciò che autorizza il lavoratore a SCRIVERE
-     * l'intestatario sulla scheda del bambino, e questo pulsante non l'ha mai fatto per
-     * un adulto scelto dal selettore — vale per QUESTO documento e basta, come diceva la
-     * POST diretta. La scheda si cambia dalla scheda.
+     * ⚠️ `conferma_proposta` è ciò che autorizza il lavoratore a SCRIVERE l'intestatario
+     * sulla scheda del bambino (il nome è storico: nel lavoratore è `ricordaSullaScheda`,
+     * T3). Per un ADULTO scelto dal selettore NON si manda, come prima: vale per QUESTO
+     * documento e basta, e la scheda si cambia dalla scheda. Per la PERSONA digitata è la
+     * casella «ricorda sulla scheda», e parte solo se è accesa e se l'anteprima sa di
+     * quale bambino è la retta. La scrittura avviene nel lavoratore, a emissione nuova
+     * riuscita: un documento rifiutato non lascia dietro nessuna modifica.
      *
-     * ⚠️ `onEmessa` si chiama anche qui, pur non essendo ancora uscito niente: i genitori
-     * lo usano per rileggere, e rileggere dopo un accodamento non costa niente.
+     * ⚠️ `onEmessa` si chiama anche qui, pur non essendo ancora uscito niente, e porta
+     * l'ESITO (D12): con `nuova` il genitore aggiorna la sola riga, con `gia` rilegge.
      */
-    const mettiInCoda = async (adulto: AdultoScelto | undefined) => {
+    const mettiInCoda = async (intestatarioScelto?: IntestatarioScelto) => {
         const corpo: CorpoAccoda = {
             urgente: true,
             voci: [{
                 pagamento_id: pagamentoId,
                 causale: causaleDaSpedire(),
-                ...(adulto ? { intestatario: adulto } : {}),
+                ...(intestatarioScelto ? { intestatario: intestatarioScelto } : {}),
+                ...(intestatarioScelto?.tipo === 'persona' && ricorda && alunno?.id ? { conferma_proposta: true } : {}),
             }],
         };
         let res: Response;
@@ -510,38 +494,7 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
         setAccodata(giaInCoda ? 'gia' : 'nuova');
         setEmessa(true);
         setOpen(false);
-        onEmessa?.();
-    };
-
-    /**
-     * ─── L'ECCEZIONE: la persona digitata a mano, con la POST diretta ───────────
-     * (Il perché sta in testa al componente.) Il corpo di questo ramo è quello di prima,
-     * riga per riga: la «ricorda sulla scheda» parte DOPO l'emissione riuscita, mai prima.
-     */
-    const emettiSubito = async (persona: PersonaScelta) => {
-        const res = await fetch('/api/pagamenti/fattura', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-            body: JSON.stringify({
-                pagamento_id: pagamentoId,
-                causale: causaleDaSpedire(),
-                intestatario: persona,
-            }),
-        });
-        const j = await res.json();
-        if (!res.ok) {
-            setStato(j?.data?.fattura_stato ?? 'scartata');
-            setErroreAzione(messaggioDaCorpo(j, t('fatBtn_err_emissione')));
-            return;
-        }
-        setStato(j?.data?.fattura_stato ?? 'in_attesa');
-        setEmessa(true);
-        if (!(await ricordaSullaScheda())) {
-            setErroreAzione(t('fatBtn_int_ricorda_errore'));
-            return;
-        }
-        setOpen(false);
-        onEmessa?.();
+        onEmessa?.({ accodata: giaInCoda ? 'gia' : 'nuova' });
     };
 
     const emetti = async () => {
@@ -549,9 +502,7 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
         setBusy(true);
         setErroreAzione(null);
         try {
-            const daSpedire = intestatarioDaSpedire();
-            if (daSpedire?.tipo === 'persona') await emettiSubito(daSpedire);
-            else await mettiInCoda(daSpedire);
+            await mettiInCoda(intestatarioDaSpedire());
         } finally { setBusy(false); }
     };
 
@@ -586,12 +537,21 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
                 // ragione per cui la prima volta non è andata. Colonna e non riga
                 // perché la prosa del provider è una frase, non un'etichetta.
                 <div className="inline-flex flex-col items-start gap-1">
-                    {accodata === null && (
+                    {accodata === null && azione === 'invia' && (
                         <button onClick={apri}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded-pill border-[1.5px] border-kidville-line text-kidville-muted text-xs font-bold transition-colors hover:border-kidville-green hover:text-kidville-green">
                             <FileText size={12} />
                             {stato === 'scartata' ? t('fatBtn_riprova') : t('fatBtn_invia')}
                         </button>
+                    )}
+                    {/* «Errore in coda» (D5): la voce si toglie o si rimette dalla pagina
+                        «Coda fatture», non da qui. Con `in_coda`/`in_invio` non c'è niente:
+                        il chip della riga dice già dov'è la fattura. */}
+                    {azione === 'vai_alla_coda' && (
+                        <Link href={CODA_FATTURE_HREF}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-pill border-[1.5px] border-current text-kidville-error-strong text-xs font-bold underline-offset-2 hover:underline">
+                            {t('fatBtn_vai_alla_coda')}
+                        </Link>
                     )}
                     {/* ⚠️ «MESSA IN CODA» È UNA LIVE REGION MONTATA VUOTA E RIEMPITA DOPO.
                         Nasce (vuota) quando si apre il modale, e resta lo stesso nodo
@@ -733,7 +693,7 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
                                                             Solo `formato`, di proposito: «manca» sotto sei
                                                             caselle appena aperte e ancora vuote è rumore che
                                                             insegna a non leggere gli avvisi. Il riepilogo li
-                                                            nomina comunque, e «Emetti» resta bloccato. */}
+                                                            nomina comunque, e «Metti in coda» resta bloccato. */}
                                                         <p id={`${idCampo}-errore`} className="font-maven text-[11px] text-kidville-error">
                                                             {motivo === 'formato' ? t('fatBtn_int_campo_formato') : ''}
                                                         </p>

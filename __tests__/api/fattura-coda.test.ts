@@ -24,7 +24,7 @@ vi.mock('@/lib/auth/scope', async (originale) => {
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => h.sb }))
 
 import { GET, POST } from '@/app/api/pagamenti/fattura/coda/route'
-import { CODICI_ERRORE_CODA } from '@/lib/fatture-coda/api'
+import { CODICI_ERRORE_CODA, PASSO_FATTURA_STIMA_MS } from '@/lib/fatture-coda/api'
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 const SEDE_A = 'aaaaaaaa-0000-4000-8000-000000000001'
@@ -102,6 +102,8 @@ beforeEach(() => {
     fatture_coda_stato: [{ id: 1, sospesa: false, sospesa_il: null, pausa_fino_a: null, pausa_motivo: null, ultimo_giro_il: null }],
     pagamenti: [],
     utenti: [{ id: STAFF, nome: 'Operatrice', cognome: 'Finta' }],
+    // Gli istanti dell'ultima ora per la stima di fine (consegna 2b, D3).
+    fatture_emesse: [],
   }
   monta()
   h.requireStaff.mockResolvedValue({ user: { id: STAFF, role: 'segreteria', scuola_id: SEDE_A } })
@@ -191,10 +193,31 @@ describe('GET /coda — contenuto', () => {
       urgente: false,
     })
 
-    // 4 in attesa (3 in coda + 1 in invio) a 50 l'ora ⇒ meno di cinque minuti da adesso.
+    // 3 in coda più 1 in invio, secchio vuoto: il primo tick del cron arriva entro 10 minuti
+    // (i salti 27→37 e 57→07), poi tre fatture da `PASSO_FATTURA_STIMA_MS`.
     const fine = Date.parse(corpo.stima_fine)
     expect(fine).toBeGreaterThan(Date.now())
-    expect(fine - Date.now()).toBeLessThanOrEqual((4 / 50) * 3_600_000 + 1_000)
+    expect(fine - Date.now()).toBeLessThanOrEqual(10 * 60_000 + 3 * PASSO_FATTURA_STIMA_MS + 1_000)
+  })
+
+  it('la stima conta le fatture emesse nell’ultima ora: 50 un minuto fa ⇒ la fine è fra più di 59 minuti', async () => {
+    const unMinutoFa = new Date(Date.now() - 60_000).toISOString()
+    db.fatture_emesse = Array.from({ length: 50 }, (_, i) => ({ id: uuid(5000 + i), creato_il: unMinutoFa, scuola_id: SEDE_B }))
+    db.fatture_coda = [voce(1)]
+    const corpo = await (await GET(get())).json()
+    expect(corpo.stima_fine).not.toBeNull()
+    expect(Date.parse(corpo.stima_fine) - Date.now()).toBeGreaterThan(59 * 60_000)
+  })
+
+  it('un guasto di fatture_emesse spegne la STIMA, non la coda', async () => {
+    monta({ errori: { fatture_emesse: { code: 'XX000' } } })
+    db.fatture_coda = [voce(1)]
+    const res = await GET(get())
+    expect(res.status).toBe(200)
+    const corpo = await res.json()
+    expect(corpo.disponibile).toBe(true)
+    expect(corpo.voci.map((v: { id: string }) => v.id)).toEqual([uuid(1)])
+    expect(corpo.stima_fine).toBeNull()
   })
 
   it('il messaggio d’esito di una voce di un’ALTRA sede è null; il codice resta', async () => {
@@ -296,6 +319,27 @@ describe('GET /coda — contenuto', () => {
     const res = await GET(new Request('http://localhost/api/pagamenti/fattura/coda?solo=voci'))
     expect(res.status).toBe(400)
     expect(h.scuole).not.toHaveBeenCalled()
+  })
+
+  it('l’intestatario scritto a mano NON esce dalla GET (consegna 2b, D1)', async () => {
+    // Dati SINTETICI (il cast di `FatturaButton-intestatario.test.tsx`).
+    const persona = {
+      tipo: 'persona',
+      nome: 'Carlo',
+      cognome: 'Perlini',
+      codice_fiscale: 'PRLCRL85M41H501Y',
+      indirizzo: 'Via delle Prove 1',
+      cap: '80014',
+      comune: 'Giugliano in Campania',
+    }
+    db.fatture_coda = [voce(1, { intestatario_scelto: persona }), voce(2)]
+    const corpo = await (await GET(get())).json()
+    // Presenza prima dell'assenza: le due voci ci sono.
+    expect(corpo.voci.map((v: { id: string }) => v.id).sort()).toEqual([uuid(1), uuid(2)])
+    for (const v of corpo.voci) expect(v).not.toHaveProperty('intestatario_scelto')
+    const testo = JSON.stringify(corpo)
+    expect(testo).not.toContain(persona.codice_fiscale)
+    expect(testo).not.toContain(persona.cognome)
   })
 
   it('coda sospesa ⇒ stima_fine null', async () => {

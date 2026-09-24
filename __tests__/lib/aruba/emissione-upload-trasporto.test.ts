@@ -306,6 +306,10 @@ describe('un rifiuto di TRASPORTO non è uno scarto fiscale', () => {
       // rispondere «Internal Server Error» a un limite di frequenza.
       expect(esito.httpStatus).toBe(502)
       expect(esito.messaggio.toLowerCase()).toContain('non ripremere')
+      // D10: la frase arriva anche nella pagina «Coda fatture», dove un pulsante «Emetti»
+      // non esiste: il gesto pericoloso lì è «Rimetti in coda».
+      expect(esito.messaggio).not.toContain('«Emetti»')
+      expect(esito.messaggio.toLowerCase()).toContain('non rimetterla in coda')
       expect(esito.messaggio).not.toContain('<html')
     }
   })
@@ -353,6 +357,10 @@ describe('un rifiuto di TRASPORTO non è uno scarto fiscale', () => {
       // registro. E non 200, che è ciò che diceva prima.
       expect(e2.httpStatus).toBe(409)
       expect(e2.messaggio.toLowerCase()).toContain('non ripremere')
+      // D10: nessun «Emetti» (il pulsante non accoda più con quel nome), e la frase dice di
+      // non rimetterla in coda, che è il gesto pericoloso nella pagina «Coda fatture».
+      expect(e2.messaggio).not.toContain('«Emetti»')
+      expect(e2.messaggio.toLowerCase()).toContain('non rimetterla in coda')
     }
     // ⚠️ IL FATTO CHE VALEVA IL DIFETTO: `fattura_stato='in_attesa'` con `fattura_aruba_id`
     // nullo è uno stato da cui il pagamento non esce più — nessun giro di `fattura/sync` lo

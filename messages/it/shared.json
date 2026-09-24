@@ -515,5 +515,6 @@
   "erroreRiepilogoNotificheInterrotte": "L’invio degli avvisi alle famiglie si è interrotto a metà: una parte è già partita. Riapri il riepilogo per completare l’invio — chi è già stato avvisato non lo sarà due volte.",
   "erroreCodaFattureNonDisponibile": "La coda delle fatture non è ancora disponibile: non è stato modificato nulla. Riprova più tardi.",
   "erroreCodaFattureScritturaFallita": "Non è stato possibile aggiornare la coda delle fatture. Ricarica la pagina e controlla com’è rimasta prima di riprovare.",
-  "errorePagamentoNonSaldato": "La fattura si può mettere in coda solo per pagamenti saldati: nessuna fattura è stata messa in coda."
+  "errorePagamentoNonSaldato": "La fattura si può mettere in coda solo per pagamenti saldati: nessuna fattura è stata messa in coda.",
+  "erroreIntestatarioDigitatoIncompleto": "L’intestatario scritto a mano è incompleto o non valido: controlla codice fiscale, nome, cognome, indirizzo, CAP e comune. Nessuna fattura è stata messa in coda."
 }

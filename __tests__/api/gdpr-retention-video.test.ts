@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
+import { senzaCommenti } from '../architecture/soglia-fotografia'
 
 // =============================================================================
 // LA CONSERVAZIONE DEGLI ORIGINALI VIDEO — e le cinque cose che i tre gemelli
@@ -29,6 +32,140 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // =============================================================================
 
 const CRON_SECRET = 'segreto-di-prova-video-non-usato-altrove'
+
+// ── I TIPI CHE QUALCUNO SCRIVE IN `video_outbox` (per il lock di famiglia, D14) ──
+// Raccolti a livello di modulo perché `it.each` ne ha bisogno prima dei test.
+const RADICE = join(__dirname, '..', '..')
+
+function fileSorgente(cartella: string): string[] {
+    const fuori: string[] = []
+    for (const voce of readdirSync(cartella, { withFileTypes: true })) {
+        const percorso = join(cartella, voce.name)
+        if (voce.isDirectory()) fuori.push(...fileSorgente(percorso))
+        else if (/\.(ts|tsx)$/.test(voce.name)) fuori.push(percorso)
+    }
+    return fuori
+}
+
+/** Il gruppo `( … )` che si apre a `inizio`, con le parentesi bilanciate e gli apici rispettati. */
+function gruppoBilanciato(sql: string, inizio: number): string {
+    let profondita = 0
+    let inApice = false
+    for (let i = inizio; i < sql.length; i++) {
+        const c = sql[i]
+        if (inApice) {
+            if (c === "'") inApice = false
+            continue
+        }
+        if (c === "'") inApice = true
+        else if (c === '(') profondita += 1
+        else if (c === ')') {
+            profondita -= 1
+            if (profondita === 0) return sql.slice(inizio, i + 1)
+        }
+    }
+    return sql.slice(inizio)
+}
+
+/**
+ * Un sorgente TS senza commenti `//…` e `/*…*\/`, rispettando stringhe ('…', "…",
+ * `…`) e letterali regex: `'http://…'` non è un commento, e `/['"]/` non apre una
+ * stringa. Ogni commento diventa uno spazio (o l'a capo resta), così le righe e le
+ * parole restano separate. È un'approssimazione (nessun `${…}` annidato con un
+ * backtick dentro): se sbaglia su `src/app/api/gallery/route.ts`, l'anti-cecità
+ * qui sotto diventa ROSSA, che è la direzione giusta in cui sbagliare.
+ */
+function senzaCommentiTs(testo: string): string {
+    let fuori = ''
+    let i = 0
+    // L'ultimo carattere significativo del CODICE: decide se `/` apre una regex.
+    let precedente = ''
+    while (i < testo.length) {
+        const c = testo[i]
+        const due = testo.slice(i, i + 2)
+        if (due === '//') {
+            const fine = testo.indexOf('\n', i)
+            i = fine < 0 ? testo.length : fine
+            continue
+        }
+        if (due === '/*') {
+            const fine = testo.indexOf('*/', i + 2)
+            i = fine < 0 ? testo.length : fine + 2
+            fuori += ' '
+            continue
+        }
+        const apreRegex = c === '/' && (precedente === '' || /[(,=:[!&|?{};+\-*%<>~^]/.test(precedente))
+        if (c === "'" || c === '"' || c === '`' || apreRegex) {
+            let j = i + 1
+            let inClasse = false
+            while (j < testo.length) {
+                const d = testo[j]
+                if (d === '\\') {
+                    j += 2
+                    continue
+                }
+                if (apreRegex) {
+                    if (d === '[') inClasse = true
+                    else if (d === ']') inClasse = false
+                    else if (d === '/' && !inClasse) break
+                    else if (d === '\n') break
+                } else if (d === c) break
+                j += 1
+            }
+            fuori += testo.slice(i, j + 1)
+            precedente = 'x'
+            i = j + 1
+            continue
+        }
+        fuori += c
+        if (!/\s/.test(c)) precedente = c
+        i += 1
+    }
+    return fuori
+}
+
+type Scrittura = { tipo: string; percorso: string }
+
+/**
+ * Forma (i), PURA: chi passa un letterale come `p_event_type:` a una RPC. Riceve i
+ * sorgenti già letti, così un caso in memoria prova il filtro dei commenti senza
+ * toccare file che questo compito non possiede.
+ */
+function scrittureDaSorgenti(sorgenti: { percorso: string; testo: string }[]): Scrittura[] {
+    const fuori: Scrittura[] = []
+    for (const { percorso, testo } of sorgenti) {
+        for (const m of senzaCommentiTs(testo).matchAll(/p_event_type:\s*['"]([a-z][a-z0-9_.-]*)['"]/g)) {
+            fuori.push({ tipo: m[1], percorso })
+        }
+    }
+    return fuori
+}
+
+function scrittureInOutbox(): Scrittura[] {
+    // (i) `src/**/*.{ts,tsx}`, percorso relativo alla radice con `/`.
+    const fuori = scrittureDaSorgenti(
+        fileSorgente(join(RADICE, 'src')).map((file) => ({
+            percorso: relative(RADICE, file).split(sep).join('/'),
+            testo: readFileSync(file, 'utf8'),
+        })),
+    )
+    // (ii) le migrazioni, senza commenti: i letterali col punto dentro il VALUES di
+    // un `INSERT INTO [public.]video_outbox`.
+    const cartella = join(RADICE, 'supabase', 'migrations')
+    for (const nome of readdirSync(cartella).filter((f) => f.endsWith('.sql'))) {
+        const sql = senzaCommenti(readFileSync(join(cartella, nome), 'utf8'))
+        for (const m of sql.matchAll(/insert\s+into\s+(?:public\.)?video_outbox\b[^;]*?\bvalues\s*\(/gi)) {
+            const valori = gruppoBilanciato(sql, (m.index ?? 0) + m[0].length - 1)
+            for (const l of valori.matchAll(/'([a-z][a-z0-9_]*\.[a-z0-9_.-]+)'/g)) {
+                fuori.push({ tipo: l[1], percorso: `supabase/migrations/${nome}` })
+            }
+        }
+    }
+    return fuori
+}
+
+const SCRITTURE_IN_OUTBOX = scrittureInOutbox()
+const TIPI_SCRITTI_IN_OUTBOX = [...new Set(SCRITTURE_IN_OUTBOX.map((s) => s.tipo))].sort()
 
 const JOB_A = '40000000-0000-4000-8000-00000000000a'
 const JOB_B = '40000000-0000-4000-8000-00000000000b'
@@ -607,7 +744,10 @@ describe('la coda delle notifiche: svuotata con le RPC che esistono già', () =>
         // che nessuno l'abbia consegnato; e bruciarlo subito con 25 tentativi in
         // sedici millisecondi è la misura che ha scritto il backoff di
         // `video_outbox_fail`.
-        h.outboxClaim = { ok: true, eventi: [evento('intent.published')] }
+        // `tipo.inesistente` e non `intent.published`: un nome plausibile diventerebbe
+        // falso il giorno in cui arriva un `*.published` vero (è successo con
+        // `gallery.published`, 2b D14).
+        h.outboxClaim = { ok: true, eventi: [evento('tipo.inesistente')] }
 
         const res = await POST(chiamata())
         expect(await res.json()).toMatchObject({ outbox_senza_destinatario: 1, outbox_inviati: 0 })
@@ -619,6 +759,135 @@ describe('la coda delle notifiche: svuotata con le RPC che esistono già', () =>
         // Configurazione mancante = livello `error`, mai `info` (AGENTS.md, regola 4).
         expect(grido?.livello).toBe('error')
     })
+
+    // ── D14 (consegna 2b): `gallery.published` ──────────────────────────────────
+    // Dal 18 al 23/09/2026 tredici eventi `gallery.published` sono finiti in
+    // quarantena (`attempts` 25) con `DESTINATARIO_ASSENTE`: `POST /api/gallery` li
+    // scriveva, e qui nessuno li sapeva consegnare. Il destinatario è la RICEVUTA
+    // della retention, non una seconda notifica: quella ai genitori parte già
+    // sincrona nella richiesta che pubblica.
+    it('`gallery.published` ha un destinatario: la ricevuta della retention', async () => {
+        h.outboxClaim = { ok: true, eventi: [evento('gallery.published')] }
+        h.senzaScadenzaPerIntent = 0
+
+        const res = await POST(chiamata())
+        expect(await res.json()).toMatchObject({
+            outbox_presi: 1,
+            outbox_inviati: 1,
+            outbox_senza_destinatario: 0,
+        })
+        const nomi = h.rpc.map((r) => r.nome)
+        expect(nomi).toContain('video_outbox_sent')
+        expect(nomi).not.toContain('video_outbox_fail')
+
+        // La consegna È la ricevuta: la query di conteggio su `video_jobs`, con le
+        // tre clausole che la rendono una verifica e non un «inviato» cieco.
+        const ricevuta = h.query.find((q) => q.tabella === 'video_jobs' && q.colonne === 'id')
+        expect(ricevuta, 'la ricevuta non è stata letta').toBeDefined()
+        expect(ricevuta?.clausole).toEqual(
+            expect.arrayContaining([
+                { metodo: 'eq', argomenti: ['intent_id', INTENT] },
+                { metodo: 'is', argomenti: ['original_delete_after', null] },
+                { metodo: 'is', argomenti: ['original_deleted_at', null] },
+            ]),
+        )
+    })
+
+    it('`gallery.published` con job senza scadenza NON si dichiara inviato', async () => {
+        // Un destinatario che rispondesse `{ consegnato: true }` senza leggere niente
+        // passerebbe il caso precedente: questo no.
+        h.outboxClaim = { ok: true, eventi: [evento('gallery.published')] }
+        h.senzaScadenzaPerIntent = 1
+
+        const res = await POST(chiamata())
+        expect(await res.json()).toMatchObject({
+            outbox_presi: 1,
+            outbox_inviati: 0,
+            outbox_senza_destinatario: 0,
+        })
+        expect(h.rpc.map((r) => r.nome)).not.toContain('video_outbox_sent')
+        expect(h.rpc.find((r) => r.nome === 'video_outbox_fail')?.argomenti.p_error_code).toBe(
+            'ORIGINALI_SENZA_SCADENZA',
+        )
+    })
+
+    // ── LOCK DI FAMIGLIA: ogni tipo che qualcuno scrive in `video_outbox` ha un
+    // destinatario. I tipi si raccolgono dal CODICE, non da un elenco scritto qui,
+    // in due forme: (i) il letterale passato come `p_event_type:` in `src/`; (ii) il
+    // letterale dentro `INSERT INTO [public.]video_outbox … VALUES (…)` nelle
+    // migrazioni, lette SENZA commenti. ENTRAMBE le forme leggono il codice senza
+    // commenti: una frase esplicativa che cita la forma (la route della retention lo
+    // fa) immunizzerebbe il lock. Forma NON coperta: un tipo passato da una costante
+    // TS invece che da un letterale — chi la introduce aggiunga qui la terza forma;
+    // l'anti-cecità qui sotto diventa rossa appena la galleria smette di usare il
+    // letterale, perché pretende anche il FILE da cui il tipo arriva.
+    it('il lock di famiglia vede i tre tipi noti, ciascuno dal suo scrittore (anti-cecità)', () => {
+        expect(TIPI_SCRITTI_IN_OUTBOX).toEqual(
+            expect.arrayContaining(['gallery.published', 'intent.revoked', 'intent.superseded']),
+        )
+        expect(
+            SCRITTURE_IN_OUTBOX.filter((s) => s.tipo === 'gallery.published').map((s) => s.percorso),
+        ).toEqual(['src/app/api/gallery/route.ts'])
+        for (const tipo of ['intent.revoked', 'intent.superseded']) {
+            const percorsi = SCRITTURE_IN_OUTBOX.filter((s) => s.tipo === tipo).map((s) => s.percorso)
+            expect(percorsi.length).toBeGreaterThan(0)
+            expect(percorsi.every((p) => p.startsWith('supabase/migrations/'))).toBe(true)
+        }
+    })
+
+    it('la forma (i) raccoglie il codice e NON i commenti che la citano', () => {
+        const scritture = scrittureDaSorgenti([
+            {
+                percorso: 'finto/codice.ts',
+                testo: [
+                    "await supabase.rpc('video_outbox_enqueue', {",
+                    "    p_event_type: 'a.codice',",
+                    "    p_nota: 'http://non-e-un-commento', p_event_type: \"b.dopo_url\",",
+                    '})',
+                    'const re = /[\'"]/ // regex con un apice',
+                    "rpc({ p_event_type: 'c.dopo_regex' })",
+                ].join('\n'),
+            },
+            {
+                percorso: 'finto/commenti.ts',
+                testo: [
+                    "// V08 (`p_event_type: 'x.riga'`)",
+                    "const a = 1 // p_event_type: 'x.coda'",
+                    '/**',
+                    " * p_event_type: 'x.blocco'",
+                    " p_event_type: 'x.blocco_senza_stella'",
+                    ' */',
+                    "const b = /* p_event_type: 'x.in_linea' */ 2",
+                ].join('\n'),
+            },
+        ])
+        expect(scritture).toEqual([
+            { tipo: 'a.codice', percorso: 'finto/codice.ts' },
+            { tipo: 'b.dopo_url', percorso: 'finto/codice.ts' },
+            { tipo: 'c.dopo_regex', percorso: 'finto/codice.ts' },
+        ])
+    })
+
+    it.each(TIPI_SCRITTI_IN_OUTBOX)(
+        'il tipo `%s`, che qualcuno scrive in `video_outbox`, ha un destinatario',
+        async (tipo) => {
+            h.outboxClaim = { ok: true, eventi: [evento(tipo)] }
+            h.senzaScadenzaPerIntent = 0
+
+            const res = await POST(chiamata())
+            const corpo = await res.json()
+            // Prima una PRESENZA (l'evento è stato preso e chiuso), poi le assenze.
+            expect(corpo).toMatchObject({ outbox_presi: 1 })
+            expect(h.eventi.some((e) => e.campi.esito === 'outbox-svuotato')).toBe(true)
+            expect(corpo.outbox_senza_destinatario).toBe(0)
+            expect(
+                h.rpc.filter(
+                    (r) => r.nome === 'video_outbox_fail' && r.argomenti.p_error_code === 'DESTINATARIO_ASSENTE',
+                ),
+            ).toHaveLength(0)
+            expect(h.eventi.some((e) => e.campi.esito === 'outbox-senza-destinatario')).toBe(false)
+        },
+    )
 
     it('la lease del claim è la STESSA che chiude l’evento, altrimenti il database rifiuta', async () => {
         h.outboxClaim = { ok: true, eventi: [evento('intent.superseded')] }

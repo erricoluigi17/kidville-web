@@ -6,9 +6,14 @@ import { NextResponse } from 'next/server'
  * (nucleo §3). Uuid finti: il repository è pubblico.
  */
 
-const h = vi.hoisted(() => ({ requireStaff: vi.fn(), rpc: vi.fn() }))
+const h = vi.hoisted(() => ({ requireStaff: vi.fn(), rpc: vi.fn(), logEvento: vi.fn() }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+// D2 (consegna 2b): si sostituisce SOLO `logEvento`, per leggere chi ha sospeso o ripreso.
+vi.mock('@/lib/logging/logger', async (o) => ({
+  ...(await o<typeof import('@/lib/logging/logger')>()),
+  logEvento: h.logEvento,
+}))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => ({ rpc: h.rpc }) }))
 
 import { POST } from '@/app/api/pagamenti/fattura/coda/sospensione/route'
@@ -86,5 +91,30 @@ describe('DB non migrato e guasti', () => {
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe(CODICI_ERRORE_CODA.SCRITTURA_FALLITA)
     expect(chiamateA('fatture_coda_tick_http')).toEqual([])
+  })
+})
+
+/**
+ * D2 (consegna 2b), caratterizzazione: sospendi e riprendi loggano già l'attore, con livello,
+ * messaggio e `utente` diversi fra loro (nessun `distingui` serve). Nasce verde: la prova è
+ * togliere `utente` dalla route e guardarlo diventare rosso.
+ */
+describe('D2: l’attore nei log', () => {
+  it('sospendi logga l’attore (warn, coda-sospesa)', async () => {
+    await POST(post({ sospesa: true }))
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'fattura',
+      'warn',
+      expect.objectContaining({ esito: 'coda-sospesa', utente: ADMIN }),
+    )
+  })
+
+  it('riprendi logga l’attore (info, coda-ripresa)', async () => {
+    await POST(post({ sospesa: false }))
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'fattura',
+      'info',
+      expect.objectContaining({ esito: 'coda-ripresa', utente: ADMIN }),
+    )
   })
 })

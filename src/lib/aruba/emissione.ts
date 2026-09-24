@@ -521,7 +521,7 @@ const MOTIVO_TRASPORTO_MAX = 200
  * Il motivo che la segreteria legge in tabella. Corto, e **mai** il corpo del provider:
  * il `429` di Aruba è una pagina HTML intera, e fino al 2026-09-03 finiva dentro questa
  * colonna. Il corpo non si perde — `externalFetch` lo mette in `app_log` con lo status —
- * ma non è quello che serve a chi deve decidere se ripremere «Emetti».
+ * ma non è quello che serve a chi deve decidere se riprovare.
  */
 function motivoTrasporto(quale: string): string {
   return `TRASPORTO ${quale}: esito ignoto, verificare sul pannello Aruba prima di ripremere`.slice(
@@ -531,7 +531,9 @@ function motivoTrasporto(quale: string): string {
 }
 
 /**
- * Il messaggio per chi ha appena premuto «Emetti».
+ * Il messaggio per chi deve decidere se riprovare, sulle due strade: la risposta della route
+ * diretta e l'`esito_messaggio` della voce in coda, che la pagina «Coda fatture» mostra (lì il
+ * gesto pericoloso è «Rimetti in coda», e un pulsante «Emetti» non esiste più).
  *
  * Dice l'unica cosa che conta e che nessun altro messaggio di questo file dice: **non
  * ripremere**. Ogni altro fallimento dell'emissione si chiude con «nessun numero è stato
@@ -542,7 +544,7 @@ function motivoTrasporto(quale: string): string {
 function messaggioTrasporto(numeroFattura: string, quale: string): string {
   return (
     `Aruba non ha concluso l’invio della fattura ${numeroFattura} (${quale}) e non sappiamo se il ` +
-    'documento sia partito. Il numero è comunque stato consumato. NON ripremere «Emetti»: ' +
+    'documento sia partito. Il numero è comunque stato consumato. NON ripremere e non rimetterla in coda: ' +
     'controlla prima sul pannello Aruba se la fattura risulta trasmessa.'
   )
 }
@@ -1819,7 +1821,7 @@ export async function emettiFatturaPagamento(
           pagamento_id: pagamentoId,
           numero: gia.numero,
           msg:
-            'ripremuto «Emetti» su una fattura con esito di trasporto ignoto: nessun secondo ' +
+            'nuovo tentativo (pulsante, lotto o coda) su una fattura con esito di trasporto ignoto: nessun secondo ' +
             'documento è stato inviato; il pagamento resta da verificare sul pannello Aruba',
         })
         const numeroFattura = gia.sezionale ? `${gia.sezionale} ${gia.numero}` : String(gia.numero)

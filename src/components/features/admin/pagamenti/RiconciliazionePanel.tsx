@@ -9,7 +9,7 @@ import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { ChipFatturazione, MovimentoDialog } from './MovimentoDialog';
+import { ChipCoda, ChipFatturazione, MovimentoDialog } from './MovimentoDialog';
 import { RiepilogoImportDialog, type EsitoAnnullo } from './RiepilogoImportDialog';
 import { LottoFatturePanel } from './LottoFatturePanel';
 import type { PrecompilaTransazione } from './TransazioniPanel';
@@ -19,7 +19,7 @@ import { LIMITE_UPLOAD_BYTE } from '@/lib/upload/limite-piattaforma';
 // ⚠️ IL PREDICATO SI IMPORTA DAL MOTORE, non si riscrive qui: «questa riga è da
 // fatturare» ha UNA definizione sola, e una copia locale tornerebbe a divergere
 // dal chip e dal filtro esattamente come è già successo il 2026-09-06.
-import { daFatturareInListaDiLavoro } from '@/lib/pagamenti/fatturazione-riga';
+import { azioneConCoda, daFatturareInListaDiLavoro } from '@/lib/pagamenti/fatturazione-riga';
 import { TETTO_LOTTO } from '@/lib/pagamenti/lotto-fatture';
 import {
   SEMAFORO,
@@ -27,9 +27,6 @@ import {
   FILTRI_FATTURA,
   chipFatturazione,
   classiChipAltraSede,
-  CHIP_CODA,
-  classiChipCoda,
-  type PelleCoda,
   etichettaConteggio,
   numeroPillolaFattura,
   suggerimentoPrincipaleCf,
@@ -1388,9 +1385,12 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
             // nel tipo d'ingresso del chip no.
             const fat = chipFatturazione(m);
             // La voce della coda (consegna 2a, rilievo e). Uno stato fuori dai tre non ha pelle e non
-            // si mostra: il server li filtra già (`attivo()` in `stato-righe.ts`), ma un valore inatteso
-            // non deve far cadere l'intera lista con un TypeError (FatturaChip fa lo stesso con `?? null`).
-            const pelleCoda: PelleCoda | undefined = m.coda_stato ? CHIP_CODA[m.coda_stato] : undefined;
+            // si mostra: il server li filtra già (`attivo()` in `stato-righe.ts`), e la guardia contro
+            // un valore inatteso sta in `ChipCoda` (`MovimentoDialog.tsx`), l'unica resa del chip.
+            // D7 (consegna 2b): «Errore in coda» è il collegamento alla pagina «Coda fatture», e un `<a>` dentro
+            // il `<button>` della riga è HTML non valido: sta FUORI, fratello come la casella del lotto (che su
+            // questa riga non c'è: D5). «In coda» e «In invio» restano etichette dentro il bottone. Decide il motore.
+            const codaFuoriDalBottone = azioneConCoda(m.coda_stato) === 'vai_alla_coda';
             return (
               <li key={m.id} className="flex items-stretch gap-1">
                 {/* ── LA CASELLA È FRATELLO DEL BOTTONE, MAI DENTRO ──────────
@@ -1551,13 +1551,21 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
                           opacità) perché vive sopra il verde della riga confermata,
                           e senza filetto: qui a staccarlo basta il fondo. */}
                       {fat && <ChipFatturazione fat={fat} />}
-                      {pelleCoda && (
-                        <span data-testid="coda-chip" className={classiChipCoda(pelleCoda)}>{t(pelleCoda.labelKey)}</span>
-                      )}
+                      {m.coda_stato && !codaFuoriDalBottone && <ChipCoda stato={m.coda_stato} />}
                       <span className={cx('font-barlow text-[11px] font-extrabold uppercase tracking-wide', s.testo)}>{s.label}</span>
                     </span>
                   </div>
                 </button>
+                {/* ── IL COLLEGAMENTO DELLA CODA È FRATELLO DEL BOTTONE, COME LA CASELLA ──
+                    Fuori dalla card il chip posa sul fondo della lista e non sul semaforo della riga: prende
+                    la forma `suCarta`, il cui filetto `border-current` lo delimita come nel popup
+                    (`classiChipFatturazione` in `riconciliazione-ui.ts`). Pelle e àncora HC restano quelle
+                    dell'errore. */}
+                {codaFuoriDalBottone && (
+                  <span className="flex shrink-0 items-center">
+                    <ChipCoda stato={m.coda_stato} suCarta collegamento />
+                  </span>
+                )}
               </li>
             );
           })}

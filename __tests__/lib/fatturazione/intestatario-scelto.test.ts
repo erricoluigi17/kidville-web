@@ -4,6 +4,7 @@ import {
   anagraficaDaIntestatarioAltro,
   anagraficaDaPersonaScelta,
   anagraficaDaScheda,
+  datiAltroDaPersonaScelta,
   nomeDaAnagrafica,
   type IntestatarioScelto,
 } from '@/lib/fatturazione/intestatario-scelto'
@@ -252,5 +253,52 @@ describe('anagraficaDaPersonaScelta — il payload del client È la fonte, e si 
     expect(a.provincia).toBe('')
     expect(a.numero_civico).toBe('')
     expect(a.cognome).toBe('Fabbri')
+  })
+})
+
+/**
+ * La persona scritta a mano, nella forma della scheda (consegna 2b, D1). Il cast è quello di
+ * `FatturaButton-intestatario.test.tsx` (`COMPLETI`, con `CF_DIGITATO`), ricopiato: non se ne
+ * inventa un altro.
+ */
+const PERSONA = {
+  tipo: 'persona' as const,
+  codice_fiscale: 'PRLCRL85M41H501Y',
+  nome: 'Carlo',
+  cognome: 'Perlini',
+  indirizzo: 'Via delle Prove 1',
+  cap: '80014',
+  comune: 'Giugliano in Campania',
+}
+
+describe('datiAltroDaPersonaScelta — la persona sulla scheda, nella forma che la scheda rilegge', () => {
+  it('le chiavi sono quelle che scriveva la «ricorda sulla scheda» del pulsante; provincia e civico solo se valorizzati', () => {
+    expect(datiAltroDaPersonaScelta(PERSONA)).toEqual({
+      nome: 'Carlo',
+      cognome: 'Perlini',
+      cf: 'PRLCRL85M41H501Y',
+      indirizzo: 'Via delle Prove 1',
+      cap: '80014',
+      comune: 'Giugliano in Campania',
+    })
+    expect(datiAltroDaPersonaScelta({ ...PERSONA, provincia: 'NA', numero_civico: '9' })).toEqual({
+      nome: 'Carlo',
+      cognome: 'Perlini',
+      cf: 'PRLCRL85M41H501Y',
+      indirizzo: 'Via delle Prove 1',
+      cap: '80014',
+      comune: 'Giugliano in Campania',
+      provincia: 'NA',
+      civico: '9',
+    })
+    // Una provincia di soli spazi non diventa una chiave vuota sulla scheda.
+    expect(Object.keys(datiAltroDaPersonaScelta({ ...PERSONA, provincia: '  ', numero_civico: '' }))).not.toContain('provincia')
+  })
+
+  it.each([
+    ['senza provincia né civico', PERSONA],
+    ['con provincia e civico', { ...PERSONA, provincia: 'NA', numero_civico: '9' }],
+  ])('andata e ritorno %s: la scheda rilegge la stessa anagrafica che si è emessa', (_nome, p) => {
+    expect(anagraficaDaIntestatarioAltro(datiAltroDaPersonaScelta(p))).toEqual(anagraficaDaPersonaScelta(p))
   })
 })

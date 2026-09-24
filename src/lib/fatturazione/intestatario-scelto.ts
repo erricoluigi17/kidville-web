@@ -94,6 +94,10 @@ const zPersonaScelta = z.strictObject({
  * questo: il lotto non ha nessun modulo da compilare, e accettare da lì
  * l'anagrafica di una persona significherebbe far entrare nome, codice fiscale e
  * residenza dal browser su un documento fiscale che nessuno rilegge.
+ *
+ * La coda fatture (consegna 2b, D1) accetta la persona solo in un gesto di UNA voce
+ * (`zCorpoAccoda`), cioè dal modulo del pulsante: da un lotto non entra comunque
+ * nessuna anagrafica digitata.
  */
 export const zAdultScelto = z.strictObject({
     tipo: z.literal('adult'),
@@ -125,6 +129,26 @@ export function anagraficaDaPersonaScelta(p: PersonaScelta): AnagraficaFatturabi
         provincia: s(p.provincia),
         numero_civico: s(p.numero_civico),
     }
+}
+
+/**
+ * La persona scritta a mano → `alunni.intestatario_fatture.dati` (ramo `tipo: 'altro'`), nella forma che
+ * scriveva la «ricorda sulla scheda» del pulsante: scheda ed emissione leggono la stessa forma
+ * (`anagraficaDaIntestatarioAltro`, di cui questa è l'inversa). Dalla consegna 2b la scrive il
+ * lavoratore della coda.
+ */
+export function datiAltroDaPersonaScelta(p: PersonaScelta): Record<string, string> {
+    const dati: Record<string, string> = {
+        nome: s(p.nome),
+        cognome: s(p.cognome),
+        cf: s(p.codice_fiscale),
+        indirizzo: s(p.indirizzo),
+        cap: s(p.cap),
+        comune: s(p.comune),
+    }
+    if (s(p.provincia)) dati.provincia = s(p.provincia)
+    if (s(p.numero_civico)) dati.civico = s(p.numero_civico)
+    return dati
 }
 
 /**

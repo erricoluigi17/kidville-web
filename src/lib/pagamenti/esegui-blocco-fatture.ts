@@ -1,8 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { creaSessioneAruba, emettiFatturaPagamento, type EsitoEmissione } from '@/lib/aruba/emissione'
-import type { IntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
+import {
+  datiAltroDaPersonaScelta,
+  type IntestatarioScelto,
+  type PersonaScelta,
+} from '@/lib/fatturazione/intestatario-scelto'
 import type { AppUser } from '@/lib/auth/require-staff'
-import { ricordaIntestatarioSullaScheda } from '@/lib/pagamenti/intestatari'
+import { scuoleDiUtente } from '@/lib/auth/scope'
+import { ricordaIntestatarioSullaScheda, ricordaPersonaSullaScheda } from '@/lib/pagamenti/intestatari'
 import { MOTIVO_PARTITA_NON_REGISTRATA } from '@/lib/pagamenti/fattura-partita-non-registrata'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { logEvento } from '@/lib/logging/logger'
@@ -46,7 +51,8 @@ export interface RigaBlocco {
   causale?: unknown
   /**
    * L'intestatario scelto per QUESTA fattura. Il lotto porta solo il ramo `adult`
-   * (`zAdultScelto` nel suo schema); la coda porta ciò che è stato accodato.
+   * (`zAdultScelto` nel suo schema); la coda porta ciò che è stato accodato, compresa
+   * dalla consegna 2b (D1) la persona scritta a mano («Altro») del pulsante.
    */
   intestatario?: IntestatarioScelto
   /** Chi ha chiesto l'emissione: l'attore di `emettiFatturaPagamento`. */
@@ -60,8 +66,11 @@ export interface RigaBlocco {
   attoreAudit: AppUser | null
   /**
    * La riga può ricordare l'intestatario sulla scheda del bambino (le cinque condizioni
-   * restano tutte, qui sotto). Il lotto passa sempre `true`, com'è sempre stato; la coda
-   * lo passa solo per le voci con la proposta del bonifico CONFERMATA.
+   * dell'adulto restano tutte, qui sotto). Il lotto passa sempre `true`, com'è sempre
+   * stato, e non porta mai una persona (il suo schema è `zAdultScelto`); la coda lo passa
+   * per le voci con `conferma_proposta`: per un adulto è la proposta del bonifico
+   * CONFERMATA, per la persona scritta a mano (2b, D1) è la casella «ricorda sulla
+   * scheda» del pulsante.
    */
   ricordaSullaScheda: boolean
 }
@@ -266,6 +275,9 @@ export async function eseguiBloccoFatture<R extends RigaBlocco>(
  * di tutte c'è `riga.ricordaSullaScheda`: la coda ricorda solo la proposta del bonifico
  * CONFERMATA, mai la scelta fatta a mano da chi aveva il nome sotto gli occhi.
  *
+ * La persona scritta a mano (consegna 2b, D1) NON passa da queste condizioni: esce subito
+ * verso `ricordaPersonaDigitata`, che ha le sue (lì nessuno deduce, lo chiede la casella).
+ *
  * ⚠️ L'ALUNNO E LA CASCATA VENGONO DALL'ESITO, non da una seconda lettura: è la stessa riga
  * che ha appena prodotto il documento, e ha già passato il gate di sede.
  *
@@ -281,6 +293,10 @@ async function ricordaChiHaPagato(
   esito: Extract<EsitoEmissione, { ok: true }>,
   operazione: string,
 ): Promise<void> {
+  if (riga.intestatario?.tipo === 'persona') {
+    await ricordaPersonaDigitata(supabase, riga, riga.intestatario, esito, operazione)
+    return
+  }
   if (
     !riga.ricordaSullaScheda ||
     esito.gia ||
@@ -357,6 +373,92 @@ async function ricordaChiHaPagato(
         pagamento_id: riga.pagamento_id,
         alunno_id: alunnoId,
       },
+      err,
+      { distingui: ['alunno_id'] },
+    )
+  }
+}
+
+/**
+ * La persona scritta a mano, con la casella «ricorda sulla scheda» (consegna 2b, D1). Condizioni SUE,
+ * non le cinque dell'adulto: qui nessuno deduce niente, lo ha chiesto chi ha scritto i dati. Solo a
+ * emissione NUOVA riuscita (una riga già a registro non dice niente su oggi), mai senza la riga di
+ * audit, fail-open come l'adulto: la fattura è già partita.
+ *
+ * Prende il posto della PATCH che il pulsante faceva dal browser dopo l'emissione: per questo
+ * SOSTITUISCE anche una scheda già impostata (`ricordaPersonaSullaScheda`), e il suo `warn`
+ * `intestatario-persona-non-salvato` prende il posto dell'avviso a schermo di allora. Nei log solo
+ * uuid ed esiti: nome, cognome e codice fiscale restano nella scheda e nel registro (ridotti).
+ *
+ * ⚠️ Della PATCH eredita anche il PERIMETRO DI SEDE del bambino (`assertAlunnoInScope`, 403). Il
+ * gate a monte è la sede del PAGAMENTO, e dopo un trasferimento i pagamenti vecchi restano nella
+ * sede di partenza: le sedi di chi ha accodato si leggono qui (`scuoleDiUtente`, fail-closed) e
+ * un bambino fuori da quelle non si tocca — `warn` `intestatario-persona-fuori-sede`, niente
+ * scrittura né registro. La fattura resta emessa: il perimetro vale per la scheda, non per lei.
+ */
+async function ricordaPersonaDigitata(
+  supabase: SupabaseClient,
+  riga: RigaBlocco,
+  persona: PersonaScelta,
+  esito: Extract<EsitoEmissione, { ok: true }>,
+  operazione: string,
+): Promise<void> {
+  if (!riga.ricordaSullaScheda || esito.gia || !esito.alunnoId) return
+  const alunnoId = esito.alunnoId
+  const campi = { operazione, pagamento_id: riga.pagamento_id, alunno_id: alunnoId }
+  const attore = riga.attoreAudit
+  if (!attore) {
+    // Come per l'adulto: una scrittura su `alunni` senza la sua riga nel registro
+    // immodificabile è peggio di un promemoria mancato.
+    logEvento(
+      'fattura',
+      'warn',
+      { ...campi, esito: 'intestatario-persona-non-ricordato-attore-ignoto' },
+      undefined,
+      { distingui: ['alunno_id'] },
+    )
+    return
+  }
+  const dati = datiAltroDaPersonaScelta(persona)
+  try {
+    const sedi = await scuoleDiUtente(supabase, attore)
+    const r = await ricordaPersonaSullaScheda(supabase, alunnoId, dati, sedi)
+    logEvento(
+      'fattura',
+      r.esito === 'salvato' ? 'info' : 'warn',
+      {
+        ...campi,
+        esito:
+          r.esito === 'salvato'
+            ? 'intestatario-persona-salvato'
+            : r.esito === 'fuori_sede'
+              ? 'intestatario-persona-fuori-sede'
+              : 'intestatario-persona-non-salvato',
+      },
+      r.error ?? undefined,
+      { distingui: ['alunno_id'] },
+    )
+    if (r.esito === 'salvato') {
+      // La riga che lasciava la PATCH della scheda: il valore SOSTITUITO, e la sede e la classe
+      // del BAMBINO. `admin/audit` filtra per sede: con quella dell'attore, il predefinito di
+      // `logScrittura`, la traccia sparirebbe proprio al plesso del bambino. Del valore di prima
+      // basta il campo che cambia: il registro non è una copia dell'anagrafica.
+      await logScrittura(supabase, {
+        attore,
+        entitaTipo: 'alunni',
+        entitaId: alunnoId,
+        azione: 'update',
+        scuolaId: r.prima.scuola_id,
+        sectionId: r.prima.section_id,
+        valorePrima: { intestatario_fatture: r.prima.intestatario_fatture },
+        valoreDopo: { intestatario_fatture: { tipo: 'altro', dati } },
+      })
+    }
+  } catch (err) {
+    logEvento(
+      'fattura',
+      'warn',
+      { ...campi, esito: 'intestatario-persona-non-ricordato' },
       err,
       { distingui: ['alunno_id'] },
     )

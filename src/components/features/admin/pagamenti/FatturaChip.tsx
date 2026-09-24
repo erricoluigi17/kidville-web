@@ -1,7 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { Badge, classiBadge, type BadgeTone } from '@/components/ui/Badge';
+import { CODA_FATTURE_HREF } from '@/components/features/admin/admin-nav-config';
+import { azioneConCoda } from '@/lib/pagamenti/fatturazione-riga';
 // `import type`: `@/lib/fatture-coda/api` tira dentro `next/server` e il logger del server.
 import type { StatoCodaAttivo } from '@/lib/fatture-coda/api';
 
@@ -14,6 +17,11 @@ const CHIP: Record<string, { labelKey: string; tone: BadgeTone }> = {
 /**
  * La voce ATTIVA della coda fatture (consegna 2a, rilievo e). Blu mentre aspetta o parte;
  * rosso sull'errore, l'unico dei tre che chiede di agire (pagina «Coda fatture»).
+ *
+ * Dal 2026-09-24 (consegna 2b, D7) «Errore in coda» è il COLLEGAMENTO a quella pagina, con
+ * la faccia del Badge (`classiBadge`, niente `span` annidato nell'`a`) e un nome accessibile
+ * che dice dove porta. Se è un collegamento lo decide il motore (`azioneConCoda`), non questo
+ * file. `min-h-6`: il Badge misura circa 23,5 px, sotto i 24 di WCAG 2.5.8.
  */
 const CODA: Record<StatoCodaAttivo, { labelKey: string; tone: BadgeTone }> = {
     in_coda: { labelKey: 'fatChip_coda_in_coda', tone: 'inCorso' },
@@ -38,7 +46,14 @@ export function FatturaChip({ stato, fatturaStato, codaStato }: {
     return (
         <>
             {cfg && <Badge tone={cfg.tone}>{t(cfg.labelKey)}</Badge>}
-            {coda && <Badge tone={coda.tone} data-testid="coda-chip">{t(coda.labelKey)}</Badge>}
+            {coda && (azioneConCoda(codaStato) === 'vai_alla_coda'
+                ? (
+                    <Link href={CODA_FATTURE_HREF} data-testid="coda-chip" aria-label={t('fatChip_coda_errore_link')}
+                        className={classiBadge(coda.tone, 'min-h-6 underline underline-offset-2')}>
+                        {t(coda.labelKey)}
+                    </Link>
+                )
+                : <Badge tone={coda.tone} data-testid="coda-chip">{t(coda.labelKey)}</Badge>)}
         </>
     );
 }

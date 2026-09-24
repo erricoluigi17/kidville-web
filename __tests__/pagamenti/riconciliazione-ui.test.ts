@@ -605,6 +605,25 @@ describe('CHIP_CODA / classiChipCoda — la voce della coda fatture sulla riga',
     expect(classi).toContain('text-kidville-error-strong')
     expect(classi).toContain('kv-recon-chip--coda-errore')
   })
+
+  /**
+   * Consegna 2b (D6/D7): il chip della coda entra anche nel POPUP e, per «Errore in coda», fuori
+   * dal bottone della riga. Lì non posa sul semaforo della riga ma sulla carta: prende la forma
+   * `suCarta` dei chip di fatturazione — angoli quadri e il filetto `border-current` — con la
+   * STESSA pelle. Senza secondo argomento resta la pillola della riga (il caso qui sopra).
+   */
+  it('`suCarta`: etichetta quadra col filetto, stessa pelle, per i tre stati', () => {
+    for (const stato of ['in_coda', 'in_invio', 'errore'] as const) {
+      const classi = classiChipCoda(CHIP_CODA[stato], true)
+      expect(classi).toContain('rounded-md')
+      expect(classi).toContain('border-current')
+      expect(classi).toContain('px-2')
+      expect(classi).toContain('py-1')
+      expect(classi).not.toContain('rounded-pill')
+      expect(classi).toContain('kv-recon-chip')
+      expect(classi).toContain(CHIP_CODA[stato].testo)
+    }
+  })
 })
 
 /**

@@ -7,7 +7,7 @@ import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
-import { FatturaButton } from './FatturaButton';
+import { FatturaButton, type EsitoAccodamento } from './FatturaButton';
 import { FatturaChip } from './FatturaChip';
 import { PagamentoCardMobile } from './PagamentoCardMobile';
 import { PagamentoDrawer } from './PagamentoDrawer';
@@ -141,6 +141,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             setLoading(false);
         }
     }, [userId, scuolaId, t]);
+
+    // D12: dopo un accodamento il chip deve comparire subito. `load()` sono due GET (tutti i pagamenti
+    // della sede e gli iscritti): con `nuova` lo stato è noto per costruzione (la RPC ha appena scritto
+    // `in_coda`) e basta la riga; con `gia`, o senza esito, può essere `in_invio` o `errore`, e si
+    // rilegge. Fotografia dichiarata: il lavoratore può prenderla un attimo dopo.
+    const dopoAccodamento = useCallback((pagamentoId: string, esito?: EsitoAccodamento) => {
+        if (esito?.accodata === 'nuova') {
+            setPagamenti((prima) => prima.map((x) => (x.id === pagamentoId ? { ...x, coda_stato: 'in_coda' as const } : x)));
+            return;
+        }
+        void load();
+    }, [load]);
 
     useEffect(() => { load(); }, [load]);
     useEffect(() => {
@@ -491,7 +503,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                     <button onClick={() => setSelected(p)}
                                                         className={BTN_PRIMARY_SM}>{t('dashIncassa')}</button>
                                                 ) : p ? (
-                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} />
+                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} codaStato={p.coda_stato ?? null} onEmessa={(e) => dopoAccodamento(p.id, e)} />
                                                 ) : null}
                                                 {p && (
                                                     <button onClick={() => setDrawer(p)} title={t('dashDettagli')} className={ICON_BTN}><Eye size={15} /></button>
@@ -602,7 +614,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                     <button onClick={() => setSelected(p)}
                                                         className={BTN_PRIMARY_SM}>{t('dashIncassa')}</button>
                                                 ) : (
-                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} />
+                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} codaStato={p.coda_stato ?? null} onEmessa={(e) => dopoAccodamento(p.id, e)} />
                                                 )}
                                                 {p.tipo === 'singolo' && p.stato !== 'pagato' && (
                                                     <button onClick={() => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }} title={t('dashDividiAcconti')} className={ICON_BTN}><Layers size={15} /></button>
@@ -691,6 +703,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         if (a) setRateizza({ alunno: a, pagamento: drawer });
                         setDrawer(null);
                     }}
+                    // Il `pagamento` del drawer resta la fotografia presa al clic: il suo chip non si
+                    // accende finché non si riapre (dichiarato, D6); la riga della tabella sì.
+                    onAccodata={(e) => dopoAccodamento(drawer.id, e)}
                     extra={
                         <SospensioneToggle alunnoId={drawer.alunno_id} userId={userId} sospeso={!!sospesoByAlunno.get(drawer.alunno_id)} onChange={load} />
                     }

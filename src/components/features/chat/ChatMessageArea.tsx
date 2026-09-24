@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { formattaIstante } from '@/i18n/config';
+import { scartoGiorniCivili } from '@/lib/i18n/quando-relativo';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
@@ -64,16 +65,15 @@ export interface EtichetteGiorno {
     ieri: string;
 }
 
-export function formatMessageDate(iso: string, locale: string, labels: EtichetteGiorno): string {
-    const d = new Date(iso);
-    const today = new Date();
-    const yesterday = new Date(Date.now() - 86400000);
-
-    // «Oggi»/«Ieri» arrivano localizzate (parità it/en); il resto della data
-    // (giorno + mese) è localizzato tramite `Intl.DateTimeFormat(locale, …)`.
-    if (d.toDateString() === today.toDateString()) return labels.oggi;
-    if (d.toDateString() === yesterday.toDateString()) return labels.ieri;
-    return formattaIstante(d, locale, { day: 'numeric', month: 'long' });
+export function formatMessageDate(iso: string, locale: string, labels: EtichetteGiorno, adesso: Date = new Date()): string {
+    // «Oggi»/«Ieri» sulle DATE CIVILI di Roma, come la chiave del gruppo (`groupByDate`): mai col
+    // fuso del dispositivo, mai con «ieri = adesso − 24 ore» (il 29/03 dura 23 ore).
+    // Le etichette arrivano localizzate (parità it/en); il resto della data (giorno + mese) è
+    // localizzato da `formattaIstante`, che su un istante illeggibile restituisce ''.
+    const scarto = scartoGiorniCivili(iso, adesso);
+    if (scarto === 0) return labels.oggi;
+    if (scarto === -1) return labels.ieri;
+    return formattaIstante(iso, locale, { day: 'numeric', month: 'long' });
 }
 
 /**
@@ -88,6 +88,9 @@ export function formatMessageDate(iso: string, locale: string, labels: Etichette
  */
 function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteGiorno): { chiave: string; date: string; messages: ChatMessage[] }[] {
     const groups: { chiave: string; date: string; messages: ChatMessage[] }[] = [];
+    // Un solo «adesso» per tutto l'elenco: due separatori dello stesso render non possono
+    // leggere due orologi diversi a cavallo della mezzanotte.
+    const adesso = new Date();
 
     messages.forEach(msg => {
         const chiave = formattaIstante(msg.created_at, 'it', { year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -96,7 +99,7 @@ function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteG
             ultimo.messages.push(msg);
             return;
         }
-        groups.push({ chiave, date: formatMessageDate(msg.created_at, locale, labels), messages: [msg] });
+        groups.push({ chiave, date: formatMessageDate(msg.created_at, locale, labels, adesso), messages: [msg] });
     });
 
     return groups;

@@ -539,6 +539,9 @@ describe('§5 · nessuna superficie in Alto Contrasto si MANGIA l’anello di fu
     '[data-contrast="high"] .kv-recon-row--suggerito',
     '[data-contrast="high"] .kv-recon-row--da_abbinare',
     '[data-contrast="high"] .kv-recon-row--ignorato',
+    // dal 2026-09-24 “Errore in coda” è un `<a>` nel popup e sulla riga di Riconciliazione,
+    // fuori dal bottone (D7): il chip prende il fuoco, e il test gemello qui sotto lo verifica.
+    '[data-contrast="high"] .kv-recon-chip',
   ];
 
   /** Un selettore nomina, in modo SINTATTICO, qualcosa che prende il fuoco? */
@@ -588,6 +591,17 @@ describe('§5 · nessuna superficie in Alto Contrasto si MANGIA l’anello di fu
     expect(i, 'la classe `kv-recon-row` non è più applicata così').toBeGreaterThan(-1);
     // Il tag che apre l'elemento: si risale fino alla `<` più vicina.
     expect(panel.slice(0, i).lastIndexOf('<button')).toBeGreaterThan(panel.slice(0, i).lastIndexOf('<div'));
+  });
+
+  it('`.kv-recon-chip` sta davvero su un collegamento (D7, consegna 2b: l’elenco dichiarato non è un’opinione)', () => {
+    const dialog = fs.readFileSync(
+      path.join(process.cwd(), 'src/components/features/admin/pagamenti/MovimentoDialog.tsx'),
+      'utf8',
+    );
+    // `classiChipCoda` porta `kv-recon-chip` (riconciliazione-ui.ts); qui si prova che un
+    // `<Link>` la riceve: il chip della coda prende il fuoco, e la sua variante
+    // `:focus-visible` non è una cautela ma un obbligo.
+    expect(dialog).toMatch(/<Link[\s\S]{0,400}?classiChipCoda\(/);
   });
 
   it('ogni superficie con `box-shadow` che prende il fuoco ha la sua variante `:focus-visible`', () => {

@@ -20,7 +20,7 @@ Dal deploy la segreteria deve poter lavorare **senza funzioni a metà**.
 - Coda persistente, in ordine FIFO per gruppo di accodamento; dentro il gruppo per data del pagamento, poi per ordine di selezione.
 - Accodamento dal **lotto in riconciliazione**, che usa il pre-controllo e la conferma dell'intestatario esistenti.
 - Il **pulsante singolo «Fattura»** accoda in **testa** (urgente) e fa partire subito un giro.
-- Motore: cron ogni 5 minuti, fuori dalle finestre della sync (:00–:05 e :30–:35); un solo lavoratore alla volta; tetto orario fail-closed.
+- Motore: cron ogni 5 minuti, fuori dalle finestre della sync (:00–:05 e :30–:35; dal 24/09 il giro sta fuori da :59–:05 e :29–:35); un solo lavoratore alla volta, e dal 24/09 fra due giri che accedono ad Aruba passano almeno 65 s; tetto orario fail-closed.
 - Stop su 429 → pausa di 60 minuti. Esito incerto o 5xx → pausa di 15 minuti.
 - Pagina «Coda fatture» per tutta la segreteria (tutte le sedi):
   - in attesa, in invio, errori, inviate negli ultimi 7 giorni, orario stimato di fine;
@@ -85,6 +85,7 @@ Indici:
 | `lavoratore_token` | uuid |
 | `lavoratore_scade_il` | timestamptz |
 | `ultimo_giro_il` | timestamptz |
+| `ultimo_accesso_il` | timestamptz (dal 24/09) |
 
 Si inserisce la riga `id=1`.
 
@@ -101,9 +102,9 @@ Tutte SECURITY DEFINER, `SET search_path = public, pg_temp` (così nella migrazi
   - Risponde `{gruppo_id, accodate, gia_in_coda: [uuid]}`.
 - **`fatture_coda_prendi(p_token uuid, p_max int, p_prestito_s int) returns setof fatture_coda`**
   1. `pg_advisory_xact_lock(hashtext('fatture_coda'))`.
-  2. Risponde vuoto se la coda è sospesa, se `pausa_fino_a > now()`, oppure se un altro token ha il lavoratore con `lavoratore_scade_il > now()`.
+  2. Risponde vuoto se la coda è sospesa, se `pausa_fino_a > now()`, oppure se un altro token ha il lavoratore con `lavoratore_scade_il > now()`; vuoto anche se sono passati meno di 65 s da `ultimo_accesso_il` (correzione del 24/09, migrazione `20260924103451_fatture_coda_distanza_accessi.sql`): niente testimone, niente `ultimo_giro_il`, nessuna voce toccata.
   3. Altrimenti prende il lavoratore (`token`, `scadenza = now()+p_prestito_s`, `ultimo_giro_il = now()`).
-  4. Seleziona al massimo `p_max` voci `in_coda`, `ORDER BY urgente DESC, gruppo_seq, data_riferimento, ordine_selezione, id`, `FOR UPDATE SKIP LOCKED`, e le porta a `in_invio` con `presa_il`, `prestito_scade_il`, `lavoratore_token` e `tentativi+1`.
+  4. Seleziona al massimo `p_max` voci `in_coda`, `ORDER BY urgente DESC, gruppo_seq, data_riferimento, ordine_selezione, id`, `FOR UPDATE SKIP LOCKED`, e le porta a `in_invio` con `presa_il`, `prestito_scade_il`, `lavoratore_token` e `tentativi+1`. Dal 24/09, se consegna almeno una voce, `ultimo_accesso_il = now()`.
 - **`fatture_coda_chiudi(p_id uuid, p_token uuid, p_esito text, p_codice text, p_messaggio text) returns void`**
   - Funziona solo se `lavoratore_token = p_token` e la voce è `in_invio`.
   - `p_esito ∈ {emessa, errore, riprova}`:
@@ -111,6 +112,7 @@ Tutte SECURITY DEFINER, `SET search_path = public, pg_temp` (così nella migrazi
     - `emessa` → `concluso_il = now()`, `causale_manuale` e `intestatario_scelto` azzerati; dalla consegna 2b (D13) anche `esito_messaggio`, sempre, qualunque messaggio passi il chiamante (migrazione `20260924010455_fatture_coda_chiudi_emessa_azzera_messaggio.sql`, con un blocco `DO` che ripulisce le emesse che ne avessero già uno).
 - **`fatture_coda_rilascia(p_token uuid, p_pausa_minuti int, p_motivo text) returns void`**
   - Libera il lavoratore se il token combacia.
+  - Dal 24/09, per un token che aveva preso voci (`EXISTS` in `fatture_coda` con quel `lavoratore_token`), `ultimo_accesso_il = greatest(coalesce(ultimo_accesso_il, now()), now())`, anche col testimone scaduto. Un giro a vuoto non timbra.
   - Se `p_pausa_minuti > 0`: `pausa_fino_a = greatest(coalesce(pausa_fino_a, now()), now() + p_pausa_minuti minuti)` e `pausa_motivo`.
 - **`fatture_coda_bidello() returns int`**
   - Voci `in_invio` con `prestito_scade_il < now()` → `errore` con codice `esito_incerto` («invio interrotto: controllare sul pannello Aruba prima di rimetterla in coda»).
@@ -128,7 +130,8 @@ Tutte SECURITY DEFINER, `SET search_path = public, pg_temp` (così nella migrazi
 ## 2. Lavoratore
 
 **`src/lib/fatture-coda/giro.ts`** — `eseguiGiroCoda(sb: SupabaseClient, adesso = new Date()): Promise<EsitoGiro>`
-1. **Finestra della sync**: se il minuto Europe/Rome sta in [0,5] o in [30,35], esce con `esito:'finestra-sync'`.
+1. **Finestra della sync**: se il minuto Europe/Rome sta in [0,5] o in [30,35] (dal 24/09 in [59,5] o in [29,35]: la sync, ai minuti 0 e 30, fa il suo `signin` pochi secondi dopo), esce con `esito:'finestra-sync'`.
+   - **1b. Distanza dall'ultimo accesso** (dal 24/09): prima del bidello il giro legge `ultimo_accesso_il`. Se l'unico ostacolo è la distanza (nessun altro lavoratore attivo, nessuna pausa, coda non sospesa) aspetta il residuo dei 65 s più 1 s, al massimo `ATTESA_MASSIMA_MS` (66 s), poi ricontrolla la finestra; bidello, tetto orario e `prendi` usano l'istante di dopo l'attesa, e il budget del blocco si conta dall'inizio dell'invocazione. Log `attesa-accesso` (`info`, con `ms`); se la lettura fallisce (colonna non ancora migrata, DB E2E) non aspetta e scrive `accesso-non-letto` (`warn`): la garanzia resta in `prendi`.
 2. `rpc('fatture_coda_bidello')`.
 3. **Posti**: `contaEmesseUltimaOra` più `posizioniDisponibili`. **Fail-closed**: se il conteggio è `null`, i posti sono 0 (log warn `tetto-non-misurato`). Si prende `max = min(TETTO_BLOCCO, posti)`. Con 0 esce, esito `quota-oraria`.
 4. `token = randomUUID()`, `rpc('fatture_coda_prendi', {p_token, p_max: max, p_prestito_s: 330})`. Nessuna voce → esito `niente-da-fare`, `rilascia`.

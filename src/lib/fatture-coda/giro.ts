@@ -22,6 +22,8 @@ import { contaEmesseUltimaOra, posizioniDisponibili } from '@/lib/pagamenti/tett
  *
  *  1. stare fuori dalle finestre della sync (`fattura-sync` fa il suo `signin`, e Aruba ne
  *     concede UNO al minuto per IP);
+ * 1b. tenere 65 s fra il proprio accesso ad Aruba e quello del giro precedente (correzione
+ *     del 24/09): se manca poco si aspetta, poi si ricontrolla la finestra;
  *  2. far passare il bidello, che chiude come «esito incerto» le voci rimaste in volo da
  *     un'invocazione morta;
  *  3. contare i posti del tetto orario — e se il conteggio non si fa, i posti sono ZERO;
@@ -54,6 +56,32 @@ export const PRESTITO_S = 330
 export const PAUSA_429_MINUTI = 60
 /** La pausa dopo un esito incerto, uno 0 o un 5xx: il canale ha un problema, non la voce. */
 export const PAUSA_INCERTO_MINUTI = 15
+
+/**
+ * I secondi fra due accessi ad Aruba della coda (correzione del 24/09/2026).
+ *
+ * Aruba concede UN `signin` al minuto per IP, e ogni giro è un'invocazione nuova con una
+ * sessione nuova, cioè un `signin` nuovo. Il lavoratore unico impedisce due giri INSIEME,
+ * non due giri a pochi secondi: il 24/09 alle 10:09:59 un giro svegliato da un accodamento
+ * ha fatto il suo `signin` una quarantina di secondi dopo quello del giro precedente, ha
+ * preso `429`, e la pausa del `429` ha fermato la coda per un'ora.
+ *
+ * La garanzia sta in `fatture_coda_prendi` (migrazione `…_fatture_coda_distanza_accessi.sql`,
+ * `interval '65 seconds'`); un test in `__tests__/lib/fatture-coda/giro.test.ts` tiene
+ * insieme i due numeri. Qui serve solo a sapere quanto aspettare.
+ */
+export const DISTANZA_ACCESSI_S = 65
+
+/** Lo scarto concesso fra l'orologio di Vercel e quello del database. */
+const MARGINE_OROLOGIO_MS = 1_000
+
+/**
+ * L'attesa più lunga che un giro si concede prima di chiedere un blocco. Con un ultimo
+ * accesso nel futuro (orologi sfasati, un dato scritto a mano) non si dorme fino al muro dei
+ * 300 s: si aspetta questo, poi decide `prendi`. Un test controlla che dopo l'attesa più
+ * lunga resti il budget per una fattura.
+ */
+export const ATTESA_MASSIMA_MS = DISTANZA_ACCESSI_S * 1000 + MARGINE_OROLOGIO_MS
 
 /** Il tetto di `fatture_coda.esito_messaggio` (vincolo di colonna). */
 const MESSAGGIO_MAX = 500
@@ -168,12 +196,16 @@ function tronca(testo: string | null | undefined): string | null {
 }
 
 /**
- * Il minuto Europe/Rome sta in una finestra della sync (`:00–:05` o `:30–:35`)?
+ * Il minuto Europe/Rome sta in una finestra della sync (`:59–:05` o `:29–:35`)?
  *
- * Il cron `fattura-sync` gira ai minuti 2 e 32 e fa il suo `signin`: Aruba ne concede uno
- * al minuto per IP, e il 2026-09-07 un `signin` del lotto ha preso `429` proprio così. Il
- * cron della coda non tocca mai quei minuti; la finestra protegge dalla SVEGLIA, che parte
- * quando qualcuno accoda e può cadere in qualunque minuto.
+ * Il cron `fatture-sdi-sync` gira ogni trenta minuti, ai minuti 0 e 30, e fa il suo
+ * `signin` pochi secondi dopo (24/09: 10:00:04, 11:00:04, 11:30:03). Aruba ne concede uno
+ * al minuto per IP, e il 2026-09-07 un `signin` del lotto ha preso `429` proprio così.
+ *
+ * Dal 24/09 la finestra comincia ai minuti 59 e 29: un giro partito lì farebbe il suo
+ * `signin` meno di un minuto prima di quello della sync. Il cron della coda non tocca mai
+ * questi minuti; la finestra protegge dalla SVEGLIA, che parte quando qualcuno accoda e può
+ * cadere in qualunque minuto, e dalla fine di un'attesa per la distanza fra gli accessi.
  */
 export function inFinestraSync(adesso: Date): boolean {
   const parti = new Intl.DateTimeFormat('it-IT', {
@@ -186,7 +218,7 @@ export function inFinestraSync(adesso: Date): boolean {
   // Un minuto illeggibile vale come DENTRO la finestra: meglio saltare un giro che
   // rubare lo slot del `signin` alla sync.
   if (!Number.isFinite(minuto)) return true
-  return (minuto >= 0 && minuto <= 5) || (minuto >= 30 && minuto <= 35)
+  return minuto >= 59 || minuto <= 5 || (minuto >= 29 && minuto <= 35)
 }
 
 /**
@@ -256,16 +288,74 @@ const vuoto = (esito: EsitoGiroCodice): EsitoGiro => ({ esito, emesse: 0, errori
 type RigaCoda = RigaBlocco & { voce: VoceCoda }
 
 /**
+ * Quanti millisecondi aspettare prima di chiedere un blocco: 0 se non serve, o se non si sa.
+ *
+ * Si aspetta SOLO quando l'unico ostacolo è la distanza dall'ultimo accesso: con un altro
+ * lavoratore attivo, una pausa o la coda sospesa `prendi` rifiuterebbe comunque. Senza
+ * attesa, una sveglia arrivata subito dopo un giro troverebbe `prendi` chiuso e la fattura
+ * «urgente» aspetterebbe il cron: fino a 5 minuti, 10 a cavallo della sync.
+ *
+ * Una lettura fallita (`42703` prima che arrivi la migrazione del 24/09, il database E2E)
+ * vale 0: si torna al comportamento di prima, e la distanza la garantisce `prendi`.
+ */
+async function attesaPerAccesso(sb: SupabaseClient): Promise<number> {
+  let letto: { data: unknown; error: unknown }
+  try {
+    letto = await sb
+      .from('fatture_coda_stato')
+      .select('ultimo_accesso_il, lavoratore_scade_il, pausa_fino_a, sospesa')
+      .eq('id', 1)
+      .maybeSingle()
+  } catch (err) {
+    // PostgREST non lancia, ma un client rotto sì: il giro non lancia (vedi sotto).
+    logEvento('fattura', 'warn', { operazione: OPERAZIONE_GIRO, esito: 'accesso-non-letto' }, err)
+    return 0
+  }
+  if (letto.error) {
+    logEvento('fattura', 'warn', { operazione: OPERAZIONE_GIRO, esito: 'accesso-non-letto' }, letto.error)
+    return 0
+  }
+  const s = (letto.data ?? null) as {
+    ultimo_accesso_il?: string | null
+    lavoratore_scade_il?: string | null
+    pausa_fino_a?: string | null
+    sospesa?: boolean | null
+  } | null
+  if (!s?.ultimo_accesso_il) return 0
+  const ora = Date.now()
+  const nelFuturo = (iso: string | null | undefined) => typeof iso === 'string' && Date.parse(iso) > ora
+  if (s.sospesa === true || nelFuturo(s.pausa_fino_a) || nelFuturo(s.lavoratore_scade_il)) return 0
+  const residuo = Date.parse(s.ultimo_accesso_il) + DISTANZA_ACCESSI_S * 1000 - ora
+  if (!Number.isFinite(residuo) || residuo <= 0) return 0
+  return Math.min(residuo + MARGINE_OROLOGIO_MS, ATTESA_MASSIMA_MS)
+}
+
+/**
  * Un giro della coda. Non lancia: ogni guasto diventa un esito e una riga di log.
  *
  * @param sb client con service role (la coda non ha policy: si scrive solo dalle RPC)
- * @param adesso l'istante del giro, per la finestra della sync e il tetto orario
+ * @param adesso l'istante della chiamata, per la finestra della sync e il tetto orario;
+ *   dopo un'attesa per la distanza fra gli accessi il giro usa l'istante di dopo
  */
 export async function eseguiGiroCoda(sb: SupabaseClient, adesso: Date = new Date()): Promise<EsitoGiro> {
   const inizio = Date.now()
 
   // ── 1. LA FINESTRA DELLA SYNC ──────────────────────────────────────────────────
   if (inFinestraSync(adesso)) return vuoto('finestra-sync')
+
+  // ── 1b. LA DISTANZA DALL'ULTIMO ACCESSO DELLA CODA (24/09) ─────────────────────
+  // Prima del bidello: bidello, tetto e `prendi` lavorano sui dati di DOPO l'attesa.
+  // Il budget del blocco si conta da `inizio`, quindi l'attesa ne fa parte e il muro dei
+  // 300 s resta: dopo l'attesa più lunga c'è ancora posto per una fattura (lock G6).
+  let momento = adesso
+  const attesa = await attesaPerAccesso(sb)
+  if (attesa > 0) {
+    logEvento('fattura', 'info', { operazione: OPERAZIONE_GIRO, esito: 'attesa-accesso', ms: attesa })
+    await new Promise<void>((fatto) => setTimeout(fatto, attesa))
+    momento = new Date(adesso.getTime() + attesa)
+    // L'attesa può finire dentro la finestra della sync: si ricontrolla.
+    if (inFinestraSync(momento)) return vuoto('finestra-sync')
+  }
 
   // ── 2. IL BIDELLO ──────────────────────────────────────────────────────────────
   // Non è bloccante: le voci in volo scadute restano dove sono fino al giro dopo, e
@@ -288,7 +378,7 @@ export async function eseguiGiroCoda(sb: SupabaseClient, adesso: Date = new Date
   // davanti c'è una persona che vede l'esito di ogni blocco; qui non c'è nessuno, e un
   // giro ogni cinque minuti senza guardia sarebbe il modo più rapido di svuotare il
   // secchio di Aruba per tutti. Senza conteggio i posti sono ZERO.
-  const emesseUltimaOra = await contaEmesseUltimaOra(sb, adesso)
+  const emesseUltimaOra = await contaEmesseUltimaOra(sb, momento)
   let posti: number
   if (emesseUltimaOra === null) {
     logEvento('fattura', 'warn', {

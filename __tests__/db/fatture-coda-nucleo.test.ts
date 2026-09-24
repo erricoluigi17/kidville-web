@@ -6,7 +6,10 @@
  * correzione della consegna 2a `<version>_fatture_coda_togli_azzera_esito.sql` (rilievo b:
  * «Togli» azzera anche `esito_codice` ed `esito_messaggio`), trovata per suffisso, e da
  * quella della consegna 2b `<version>_fatture_coda_chiudi_emessa_azzera_messaggio.sql`
- * (D13: la chiusura «emessa» azzera sempre `esito_messaggio`), trovata allo stesso modo.
+ * (D13: la chiusura «emessa» azzera sempre `esito_messaggio`), trovata allo stesso modo,
+ * e infine dalla correzione del 24/09 `<version>_fatture_coda_distanza_accessi.sql`
+ * (65 s fra due accessi ad Aruba della coda: `prendi` non consegna prima, e `prendi` e
+ * `rilascia` timbrano `ultimo_accesso_il`), trovata allo stesso modo.
  *
  * Stesso impianto di `__tests__/lib/video-job-next.test.ts`: i ruoli di Supabase
  * ricostruiti a mano, le sole tabelle toccate dalla migrazione (`schools`, `pagamenti`,
@@ -47,6 +50,11 @@ const SUFFISSO_CHIUDI = '_fatture_coda_chiudi_emessa_azzera_messaggio.sql'
 const TROVATI_CHIUDI = readdirSync(CARTELLA_MIGRAZIONI).filter((nome) => nome.endsWith(SUFFISSO_CHIUDI))
 const NOME_CHIUDI = TROVATI_CHIUDI[0] ?? ''
 const CHIUDI_AZZERA = NOME_CHIUDI ? readFileSync(join(CARTELLA_MIGRAZIONI, NOME_CHIUDI), 'utf8') : ''
+
+const SUFFISSO_ACCESSI = '_fatture_coda_distanza_accessi.sql'
+const TROVATI_ACCESSI = readdirSync(CARTELLA_MIGRAZIONI).filter((nome) => nome.endsWith(SUFFISSO_ACCESSI))
+const NOME_ACCESSI = TROVATI_ACCESSI[0] ?? ''
+const DISTANZA_ACCESSI = NOME_ACCESSI ? readFileSync(join(CARTELLA_MIGRAZIONI, NOME_ACCESSI), 'utf8') : ''
 
 const SEDE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const SEDE_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
@@ -259,11 +267,30 @@ type Stato = {
   lavoratore_token: string | null
   lavoratore_scade_il: Date | null
   ultimo_giro_il: Date | null
+  ultimo_accesso_il: Date | null
 }
 
 async function stato(): Promise<Stato> {
   const { rows } = await db.query<Stato>(`SELECT * FROM public.fatture_coda_stato WHERE id = 1`)
   return rows[0]
+}
+
+/** Come se l'ultimo accesso della coda fosse di più di 65 s fa: il giro dopo può prendere. */
+async function dimenticaAccesso() {
+  await db.exec(`UPDATE public.fatture_coda_stato SET ultimo_accesso_il = NULL WHERE id = 1`)
+}
+
+/** Mette l'ultimo accesso a un'espressione SQL, per esempio `now() - interval '64 seconds'`. */
+async function accessoA(espressione: string) {
+  await db.exec(`UPDATE public.fatture_coda_stato SET ultimo_accesso_il = ${espressione} WHERE id = 1`)
+}
+
+/** I secondi passati dall'ultimo accesso, misurati dal database. */
+async function secondiDallAccesso(): Promise<number | null> {
+  const { rows } = await db.query<{ s: number | null }>(
+    `SELECT extract(epoch FROM now() - ultimo_accesso_il)::float8 AS s FROM public.fatture_coda_stato WHERE id = 1`,
+  )
+  return rows[0].s
 }
 
 /** L'errore che l'istruzione solleva, o null se passa. */
@@ -286,6 +313,7 @@ beforeEach(async () => {
   await db.exec(MIGRAZIONE)
   if (TOGLI_AZZERA) await db.exec(TOGLI_AZZERA)
   if (CHIUDI_AZZERA) await db.exec(CHIUDI_AZZERA)
+  if (DISTANZA_ACCESSI) await db.exec(DISTANZA_ACCESSI)
 })
 
 afterEach(async () => {
@@ -384,9 +412,10 @@ describe('fatture_coda · forma dello schema', () => {
 
     await expect(db.exec(MIGRAZIONE)).resolves.toBeDefined()
     // Rieseguire il solo nucleo rimette la togli e la chiudi vecchie (CREATE OR REPLACE):
-    // l'ordine vero è nucleo → correzione della consegna 2a → correzione della 2b.
+    // l'ordine vero è nucleo → 2a → 2b → 24/09 (la prendi e la rilascia della distanza).
     if (TOGLI_AZZERA) await expect(db.exec(TOGLI_AZZERA)).resolves.toBeDefined()
     if (CHIUDI_AZZERA) await expect(db.exec(CHIUDI_AZZERA)).resolves.toBeDefined()
+    if (DISTANZA_ACCESSI) await expect(db.exec(DISTANZA_ACCESSI)).resolves.toBeDefined()
 
     expect(await voci()).toHaveLength(1)
     const s = await stato()
@@ -593,8 +622,11 @@ describe('fatture_coda_prendi', () => {
   it('consegna nell’ordine: urgenti, poi gruppo, poi data del pagamento, poi selezione', async () => {
     await preparaCodaMista()
     expect(numeri(await prendi(TOKEN_A, 2))).toEqual([5, 2])
+    await dimenticaAccesso() // ogni presa è un giro nuovo, a distanza dal precedente (24/09)
     expect(numeri(await prendi(TOKEN_A, 2))).toEqual([3, 1])
+    await dimenticaAccesso()
     expect(numeri(await prendi(TOKEN_A, 2))).toEqual([4])
+    await dimenticaAccesso()
     expect(await prendi(TOKEN_A, 2)).toEqual([])
   })
 
@@ -619,22 +651,20 @@ describe('fatture_coda_prendi', () => {
   it('un solo lavoratore: un altro token, finché il primo è vivo, riceve un insieme vuoto', async () => {
     await preparaCodaMista()
     expect(await prendi(TOKEN_A, 1)).toHaveLength(1)
+    await dimenticaAccesso() // il vuoto qui sotto deve essere del lavoratore, non dei 65 s (24/09)
     expect(await prendi(TOKEN_B, 15)).toEqual([])
     expect((await stato()).lavoratore_token).toBe(TOKEN_A)
 
-    // Scaduto il testimone del primo, il secondo subentra.
+    // Scaduto il testimone del primo, il secondo subentra. Un testimone scade 330 s dopo
+    // la presa: anche l'ultimo accesso è di allora (24/09).
     await db.exec(
-      `UPDATE public.fatture_coda_stato SET lavoratore_scade_il = now() - interval '1 second' WHERE id = 1`,
+      `UPDATE public.fatture_coda_stato
+          SET lavoratore_scade_il = now() - interval '1 second',
+              ultimo_accesso_il = now() - interval '331 seconds'
+        WHERE id = 1`,
     )
     expect(numeri(await prendi(TOKEN_B, 15))).toEqual([2, 3, 1, 4])
     expect((await stato()).lavoratore_token).toBe(TOKEN_B)
-  })
-
-  it('dopo il rilascio del primo, un altro token prende subito', async () => {
-    await preparaCodaMista()
-    await prendi(TOKEN_A, 1)
-    await rilascia(TOKEN_A, 0, null)
-    expect(numeri(await prendi(TOKEN_B, 1))).toEqual([2])
   })
 
   it('coda sospesa: vuoto, e il testimone non viene preso', async () => {
@@ -666,7 +696,9 @@ describe('fatture_coda_prendi', () => {
     await chiudi(prese[1].id, TOKEN_A, 'errore', 'scarto_aruba')
     await chiudi(prese[2].id, TOKEN_A, 'errore', 'esito_incerto')
     await togli([(await voceDi(1)).id])
+    await dimenticaAccesso() // un giro nuovo, a distanza: il vuoto qui sotto è per le voci, non per i 65 s
     expect(numeri(await prendi(TOKEN_A))).toEqual([4])
+    await dimenticaAccesso()
     expect(await prendi(TOKEN_A)).toEqual([])
   })
 
@@ -676,6 +708,138 @@ describe('fatture_coda_prendi', () => {
     expect(
       (await erroreDi(db.query(`SELECT * FROM public.fatture_coda_prendi(NULL, 5, 330)`)))?.code,
     ).toBe('22023')
+  })
+
+  // ── correzione del 24/09: il 429 delle 10:09:59 ─────────────────────────────
+  // Aruba concede UN signin al minuto per IP, e ogni giro fa il suo. Il lavoratore unico
+  // impediva due giri INSIEME, non due giri a pochi secondi l'uno dall'altro.
+  describe('65 s fra due accessi ad Aruba (correzione del 24/09)', () => {
+    it('N1 · dopo un giro con voci, un altro token non prende prima di 65 s: niente testimone, niente ultimo_giro_il, voci intatte', async () => {
+      await preparaCodaMista()
+      expect(numeri(await prendi(TOKEN_A, 1))).toEqual([5])
+      await rilascia(TOKEN_A, 0, null)
+      const prima = await stato()
+      expect(prima.ultimo_accesso_il).not.toBeNull()
+
+      expect(await prendi(TOKEN_B, 15)).toEqual([])
+      const dopo = await stato()
+      expect(dopo.lavoratore_token).toBeNull()
+      expect(dopo.ultimo_giro_il!.getTime()).toBe(prima.ultimo_giro_il!.getTime())
+
+      // La sveglia rifiutata non perde voci: restano in_coda, senza tentativi né token.
+      const inCoda = (await voci()).filter((v) => v.stato === 'in_coda')
+      expect(inCoda).toHaveLength(4)
+      for (const v of inCoda) {
+        expect(v.tentativi).toBe(0)
+        expect(v.lavoratore_token).toBeNull()
+      }
+
+      await dimenticaAccesso()
+      expect(numeri(await prendi(TOKEN_B, 15))).toEqual([2, 3, 1, 4])
+    })
+
+    it('N2 · il confine: a 64 s rifiuta, a 65 s consegna', async () => {
+      await preparaCodaMista()
+      await accessoA("now() - interval '64 seconds'")
+      expect(await prendi(TOKEN_A, 1)).toEqual([])
+      // Ogni db.query è una transazione sua: fra le due letture di now() passano millisecondi.
+      await accessoA("now() - interval '65 seconds'")
+      expect(numeri(await prendi(TOKEN_A, 1))).toEqual([5])
+    })
+
+    it('N3 · il rilascio sposta l’orologio alla FINE del giro', async () => {
+      // L'ordine del giro vero (`giro.ts`): prendi → chiudi ogni voce → rilascia. `chiudi` non
+      // azzera `lavoratore_token` in nessun ramo, quindi l'EXISTS di `rilascia` trova ancora
+      // le voci del giro anche quando sono già tutte chiuse. Con la voce chiusa, qui: un
+      // rilascio con la voce ancora `in_invio` non succede mai.
+      await preparaCodaMista()
+      const [presa] = await prendi(TOKEN_A, 1)
+      await chiudi(presa.id, TOKEN_A, 'emessa')
+      await accessoA("now() - interval '10 minutes'") // come se il signin fosse vecchio
+      await rilascia(TOKEN_A, 0, null)
+      expect(await secondiDallAccesso()).toBeLessThan(2)
+      expect(await prendi(TOKEN_B, 1)).toEqual([])
+    })
+
+    it('N4 · un giro a vuoto non timbra', async () => {
+      expect(await prendi(TOKEN_A)).toEqual([])
+      await rilascia(TOKEN_A, 0, null)
+      expect((await stato()).ultimo_accesso_il).toBeNull()
+
+      // La sveglia che segue un cron a vuoto prende subito.
+      await nuovoPagamento(1)
+      await accoda([{ pagamento_id: pag(1) }], true)
+      expect(numeri(await prendi(TOKEN_B, 1))).toEqual([1])
+    })
+
+    it('N5 · rilascia: senza voci non timbra; con voci timbra anche se il testimone è di un altro; mai all’indietro', async () => {
+      await preparaCodaMista()
+
+      // (a) Un token che non ha voci non sposta l'orologio.
+      await accessoA("now() - interval '10 minutes'")
+      await rilascia(TOKEN_B, 0, null)
+      expect(await secondiDallAccesso()).toBeGreaterThan(590)
+
+      // (b) Un token con voci timbra anche se il testimone, nel frattempo, è di un altro.
+      await dimenticaAccesso()
+      await prendi(TOKEN_A, 1)
+      await db.exec(`
+        UPDATE public.fatture_coda_stato
+           SET lavoratore_token = '${TOKEN_B}',
+               lavoratore_scade_il = now() + interval '330 seconds',
+               ultimo_accesso_il = now() - interval '10 minutes'
+         WHERE id = 1
+      `)
+      await rilascia(TOKEN_A, 0, null)
+      expect((await stato()).lavoratore_token).toBe(TOKEN_B)
+      expect(await secondiDallAccesso()).toBeLessThan(2)
+
+      // (c) Mai all'indietro.
+      await accessoA("now() + interval '1 hour'")
+      const futuro = (await stato()).ultimo_accesso_il!.getTime()
+      await rilascia(TOKEN_A, 0, null)
+      expect((await stato()).ultimo_accesso_il!.getTime()).toBe(futuro)
+    })
+
+    it('N6 · «Rimetti» toglie il token alle voci del giro: resta il timbro della presa', async () => {
+      await preparaCodaMista()
+      const [voce] = await prendi(TOKEN_A, 1)
+      await chiudi(voce.id, TOKEN_A, 'errore', 'scarto_aruba')
+      expect(await rimetti([voce.id])).toBe(1)
+      await rilascia(TOKEN_A, 0, null) // nessuna voce porta più A: il rilascio non timbra
+      expect(await prendi(TOKEN_B, 1)).toEqual([])
+    })
+
+    it('N7 · forma: la colonna è timestamptz e ammette null', async () => {
+      const { rows } = await db.query<{ tipo: string; nullo: string }>(`
+        SELECT data_type AS tipo, is_nullable AS nullo
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'fatture_coda_stato' AND column_name = 'ultimo_accesso_il'
+      `)
+      expect(rows).toEqual([{ tipo: 'timestamp with time zone', nullo: 'YES' }])
+    })
+
+    it('N8 · la migrazione del 24/09 esiste, è una sola, viene dopo quella della 2b e non è nel futuro', () => {
+      expect(TROVATI_ACCESSI).toHaveLength(1)
+      const version = NOME_ACCESSI.slice(0, 14)
+      expect(version).toMatch(/^\d{14}$/)
+      expect(version > NOME_CHIUDI.slice(0, 14)).toBe(true)
+      expect(version <= new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)).toBe(true)
+    })
+
+    it('N9 · non accende nessuna guardia delle fotografie, e revoca per nome', () => {
+      expect(DISTANZA_ACCESSI).not.toBe('')
+      expect(toccaLaRls(DISTANZA_ACCESSI)).toBe(false)
+      expect(toccaUnUnico(DISTANZA_ACCESSI)).toBe(false)
+      expect(toccaLeFkUtenti(DISTANZA_ACCESSI)).toBe(false)
+      expect(senzaCommenti(DISTANZA_ACCESSI)).not.toMatch(/scuola_id/i)
+      expect(DISTANZA_ACCESSI).toContain(
+        'REVOKE ALL ON FUNCTION public.fatture_coda_prendi(uuid, integer, integer) FROM PUBLIC, anon, authenticated;',
+      )
+      expect(DISTANZA_ACCESSI).toContain(
+        'REVOKE ALL ON FUNCTION public.fatture_coda_rilascia(uuid, integer, text) FROM PUBLIC, anon, authenticated;',
+      )
+    })
   })
 })
 
@@ -691,6 +855,7 @@ describe('fatture_coda_chiudi', () => {
         intestatario_scelto: { adult_id: '99999999-9999-4999-8999-999999999999' },
       },
     ])
+    await dimenticaAccesso() // ogni voce «in mano» è un giro nuovo, a distanza dal precedente (24/09)
     const [voce] = await prendi(TOKEN_A, 1)
     return voce
   }
@@ -752,7 +917,8 @@ describe('fatture_coda_chiudi', () => {
     })
     expect(dopo.in_attesa_dal.getTime()).toBe(prima.in_attesa_dal.getTime())
 
-    // Al giro dopo è ancora la prima della coda, davanti al 2.
+    // Al giro dopo (a distanza, 24/09) è ancora la prima della coda, davanti al 2.
+    await dimenticaAccesso()
     expect(numeri(await prendi(TOKEN_A, 1))).toEqual([1])
     expect((await voceDi(1)).tentativi).toBe(2)
   })
@@ -920,6 +1086,7 @@ describe('fatture_coda_bidello', () => {
     // Un secondo passaggio non trova niente, e la voce resta in errore: nessun giro la riprende.
     expect(await bidello()).toBe(0)
     await rilascia(TOKEN_A, 0, null)
+    await dimenticaAccesso() // il giro dopo, a distanza (24/09)
     expect(numeri(await prendi(TOKEN_B))).toEqual([3])
     expect((await voceDi(1)).stato).toBe('errore')
 
@@ -1057,6 +1224,7 @@ describe('fatture_coda_rimetti', () => {
     expect(rientrata.in_attesa_dal.getTime()).toBeGreaterThan(primaDelRientro.in_attesa_dal.getTime())
 
     // In fondo: prima il 2 (primo gruppo), poi il 3 (secondo gruppo), poi l'1 rimesso.
+    await dimenticaAccesso() // il giro dopo, a distanza (24/09)
     expect(numeri(await prendi(TOKEN_B))).toEqual([2, 3, 1])
   })
 
@@ -1286,5 +1454,58 @@ describe('controlli negativi · le prove devono fallire sulla migrazione rotta',
     await chiudi(voce.id, TOKEN_A, 'emessa', 'emessa', 'Messaggio finto') // la chiudi VECCHIA
     await db.exec(senzaDo)
     expect((await voceDi(1)).esito_messaggio).toBe('Messaggio finto')
+  })
+
+  // ── correzione del 24/09: 65 s fra due accessi ad Aruba ────────────────────
+  /** Nucleo, 2a e 2b come in produzione, poi il 24/09 (rotto); due pagamenti in coda. */
+  async function conAccessi(sql: string) {
+    await conMigrazione(MIGRAZIONE)
+    await db.exec(TOGLI_AZZERA)
+    await db.exec(CHIUDI_AZZERA)
+    await db.exec(sql)
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+  }
+
+  it('senza il controllo dei 65 s un altro token prenderebbe subito: N1 lo misura', async () => {
+    const rotta = DISTANZA_ACCESSI.replace(/\n\s*IF v_stato\.ultimo_accesso_il IS NOT NULL[\s\S]*?END IF;/, '')
+    expect(rotta).not.toBe(DISTANZA_ACCESSI)
+    await conAccessi(rotta)
+    await prendi(TOKEN_A, 1)
+    await rilascia(TOKEN_A, 0, null)
+    expect(numeri(await prendi(TOKEN_B, 1))).toEqual([2])
+  })
+
+  it('senza il ramo di rilascia l’orologio resterebbe alla presa: N3 lo misura', async () => {
+    const rotta = DISTANZA_ACCESSI.replace(/\n\s*IF p_token IS NOT NULL\s+AND EXISTS[\s\S]*?END IF;/, '')
+    expect(rotta).not.toBe(DISTANZA_ACCESSI)
+    await conAccessi(rotta)
+    const [presa] = await prendi(TOKEN_A, 1)
+    await chiudi(presa.id, TOKEN_A, 'emessa') // l'ordine del giro vero, come in N3
+    await db.exec(
+      `UPDATE public.fatture_coda_stato SET ultimo_accesso_il = now() - interval '10 minutes' WHERE id = 1`,
+    )
+    await rilascia(TOKEN_A, 0, null)
+    expect(numeri(await prendi(TOKEN_B, 1))).toEqual([2])
+  })
+
+  it('senza il timbro della presa, un «Rimetti» prima del rilascio aprirebbe la porta: N6 lo misura', async () => {
+    const rotta = DISTANZA_ACCESSI.replace(/\n\s*IF v_ids IS NOT NULL THEN[\s\S]*?END IF;/, '')
+    expect(rotta).not.toBe(DISTANZA_ACCESSI)
+    await conAccessi(rotta)
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'errore', 'scarto_aruba')
+    expect(await rimetti([voce.id])).toBe(1)
+    await rilascia(TOKEN_A, 0, null)
+    expect(await prendi(TOKEN_B, 1)).toHaveLength(1)
+  })
+
+  it('senza il controllo del lavoratore un secondo token prenderebbe mentre il primo è vivo: «un solo lavoratore» lo misura', async () => {
+    const rotta = DISTANZA_ACCESSI.replace(/\n\s*IF v_stato\.lavoratore_token IS NOT NULL[\s\S]*?END IF;/, '')
+    expect(rotta).not.toBe(DISTANZA_ACCESSI)
+    await conAccessi(rotta)
+    await prendi(TOKEN_A, 1)
+    await dimenticaAccesso() // lontano dall'accesso: l'unico freno rimasto sarebbe il lavoratore
+    expect(await prendi(TOKEN_B, 1)).toHaveLength(1)
   })
 })

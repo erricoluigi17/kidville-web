@@ -96,6 +96,14 @@ export const CODICE_NON_INTERPRETATO = 0
  *       31   «Scartata»         → 4  Scartata dallo SDI                → scartata
  *        9   «Consegnata»       → 7  Consegnata                        → emessa
  *
+ * Dopo l'11/09, in produzione, ne è comparsa UNA QUARTA — sempre e solo lei:
+ * «Inviata» (1.380 righe `stato-non-interpretato` in `app_log` fino al 24/09).
+ * È lo stato IN VOLO, il primo che Aruba dà dopo l'upload, e mancava dal
+ * campione perché quei documenti erano tutti già conclusi. Va sul 3 «Inviata
+ * allo SDI»: `in_attesa`, non terminale, resta in coda. NON è emessa: precede
+ * anche gli scarti. Il livello `error` di `client.ts` per le parole ignote
+ * resta com'è: per una dicitura davvero nuova è giusto che gridi.
+ *
  * ─── ⚠️ «NON CONSEGNATA» NON VUOL DIRE «NON EMESSA», ED È IL CASO NORMALE ────
  * È la voce più sorprendente di questa mappa e la sola che qualcuno, in futuro,
  * sarà tentato di «correggere» in `in_attesa` credendo di sistemare un difetto.
@@ -129,6 +137,10 @@ const DICITURA_A_CODICE = new Map<string, number>([
   ['non consegnata', 6],
   // Respinta dallo SDI: NON è emessa. Va corretta e RITRASMESSA, e la Segreteria va avvisata.
   ['scartata', 4],
+  // IN VOLO: trasmessa allo SDI, esito non ancora arrivato. Precede sia «Non consegnata» sia
+  // «Scartata» (fino a 54 ore, misurato), quindi NON è emessa: è il 3 della tabella, che resta
+  // in coda. Mancava dal campione dell'11/09 perché quei 4.000 documenti erano tutti conclusi.
+  ['inviata', 3],
 ])
 
 /**

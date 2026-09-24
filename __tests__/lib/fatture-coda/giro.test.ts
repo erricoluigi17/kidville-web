@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -10,8 +10,10 @@ import path from 'node:path'
  * Finti: `emettiFatturaPagamento` (la sua correttezza la misurano i test dell'emissione),
  * il conteggio del tetto orario, e il database — ma NON come un mock piatto. Le RPC della
  * coda sono simulate da un piccolo modello con STATO (`CodaFinta`) che rispetta il
- * contratto del §1 della spec: `prendi` rifiuta con coda sospesa, in pausa o con un altro
- * lavoratore, `chiudi` vale solo col token giusto, `rilascia` scrive la pausa. Così un
+ * contratto del §1 della spec: `prendi` rifiuta con coda sospesa, in pausa, con un altro
+ * lavoratore o prima di 65 s dall'ultimo accesso della coda ad Aruba (correzione del 24/09:
+ * lo timbrano `prendi` quando consegna voci e `rilascia` per un token che ne aveva prese),
+ * `chiudi` vale solo col token giusto, `rilascia` scrive la pausa. Così un
  * test può chiedere «dopo tre giri la coda è vuota?» invece di «è stata chiamata una
  * funzione?», che sarebbe verde anche con il giro sbagliato.
  *
@@ -62,8 +64,11 @@ import {
   PAUSA_429_MINUTI,
   PAUSA_INCERTO_MINUTI,
   CODICI_ESITO_CODA,
+  DISTANZA_ACCESSI_S,
+  ATTESA_MASSIMA_MS,
 } from '@/lib/fatture-coda/giro'
-import { TETTO_BLOCCO } from '@/lib/pagamenti/lotto-fatture'
+import { TETTO_BLOCCO, BUDGET_BLOCCO_MS, RISERVA_PEGGIORE_MS, PAUSA_FRA_UPLOAD_MS } from '@/lib/pagamenti/lotto-fatture'
+import { senzaCommenti } from '../../architecture/soglia-fotografia'
 import { datiAltroDaPersonaScelta } from '@/lib/fatturazione/intestatario-scelto'
 import { VALORE_NON_REGISTRATO } from '@/lib/audit/riassunto'
 import { SOGLIA_ORARIA_APP } from '@/lib/pagamenti/tetto-orario-aruba'
@@ -108,7 +113,20 @@ class CodaFinta {
   pausaFinoA: number | null = null
   pausaMotivo: string | null = null
   lavoratore: { token: string; scade: number } | null = null
-  chiamate: { nome: string; args: Record<string, unknown> }[] = []
+  /**
+   * Fin quando un giro della coda può aver usato una sessione Aruba (`ultimo_accesso_il`,
+   * correzione del 24/09). `prendi` non consegna niente prima di 65 s da qui.
+   */
+  ultimoAccesso: number | null = null
+  /**
+   * I token che hanno preso voci: il modello dell'`EXISTS … lavoratore_token = p_token` di
+   * `rilascia`. Serve a parte perché il `chiudi` del modello azzera il token delle voci,
+   * quindi le voci da sole non basterebbero a ricostruirlo.
+   */
+  tokenConVoci = new Set<string>()
+  /** Risposta forzata sulla lettura di `fatture_coda_stato` (G5: colonna non ancora migrata). */
+  guastoStato: { data: unknown; error: unknown } | null = null
+  chiamate: { nome: string; args: Record<string, unknown>; t: number }[] = []
   /** Le scritture arrivate con `.from(…)`: tabella, operazione, corpo, filtri. */
   scritture: { tabella: string; op: string; payload: unknown; filtri: Record<string, unknown> }[] = []
   utenti: { id: string; role: string; scuola_id: string | null }[] = [{ id: STAFF, role: 'segreteria', scuola_id: SEDE }]
@@ -155,7 +173,7 @@ class CodaFinta {
   }
 
   rpc(nome: string, args: Record<string, unknown> = {}): { data: unknown; error: unknown } {
-    this.chiamate.push({ nome, args })
+    this.chiamate.push({ nome, args, t: Date.now() })
     const adesso = Date.now()
     switch (nome) {
       case 'fatture_coda_bidello':
@@ -164,6 +182,10 @@ class CodaFinta {
         if (this.sospesa) return { data: [], error: null }
         if (this.pausaFinoA !== null && this.pausaFinoA > adesso) return { data: [], error: null }
         if (this.lavoratore && this.lavoratore.token !== args.p_token && this.lavoratore.scade > adesso) {
+          return { data: [], error: null }
+        }
+        // Meno di 65 s dall'ultimo accesso: come la pausa, niente testimone e nessuna voce toccata.
+        if (this.ultimoAccesso !== null && adesso - this.ultimoAccesso < DISTANZA_ACCESSI_S * 1000) {
           return { data: [], error: null }
         }
         this.lavoratore = { token: String(args.p_token), scade: adesso + Number(args.p_prestito_s) * 1000 }
@@ -175,6 +197,11 @@ class CodaFinta {
           v.stato = 'in_invio'
           v.lavoratore_token = String(args.p_token)
           v.tentativi++
+        }
+        // Almeno una voce consegnata: il `signin` di questo giro arriva fra un istante.
+        if (prese.length > 0) {
+          this.ultimoAccesso = adesso
+          this.tokenConVoci.add(String(args.p_token))
         }
         return { data: prese.map((v) => ({ ...v })), error: null }
       }
@@ -188,6 +215,10 @@ class CodaFinta {
         return { data: null, error: null }
       }
       case 'fatture_coda_rilascia': {
+        // Il timbro della FINE del giro, per un token che aveva voci: mai all'indietro.
+        if (this.tokenConVoci.has(String(args.p_token))) {
+          this.ultimoAccesso = Math.max(this.ultimoAccesso ?? adesso, adesso)
+        }
         if (this.lavoratore?.token === args.p_token) this.lavoratore = null
         const minuti = Number(args.p_pausa_minuti)
         if (minuti > 0) {
@@ -226,6 +257,19 @@ class CodaFinta {
             return { data: [{ id: ctx.filtri.id }], error: null }
           }
           if (tabella === 'alunni') return this.guastoScheda.lettura ?? { data: this.scheda, error: null }
+          if (tabella === 'fatture_coda_stato') {
+            if (this.guastoStato) return this.guastoStato
+            const iso = (t: number | null | undefined) => (typeof t === 'number' ? new Date(t).toISOString() : null)
+            return {
+              data: {
+                ultimo_accesso_il: iso(this.ultimoAccesso),
+                lavoratore_scade_il: iso(this.lavoratore?.scade),
+                pausa_fino_a: iso(this.pausaFinoA),
+                sospesa: this.sospesa,
+              },
+              error: null,
+            }
+          }
           return { data: [], error: null }
         }
         Object.assign(b, {
@@ -298,7 +342,9 @@ const giro = (adesso = new Date(Date.now())) => completa(eseguiGiroCoda(coda.cli
 const nomi = () => coda.chiamate.map((c) => c.nome)
 
 describe('la finestra della sync', () => {
-  it.each([0, 2, 5, 30, 32, 35])('al minuto %i di Roma è DENTRO: il giro non tocca niente', async (minuto) => {
+  // Dal 24/09 la finestra comincia ai minuti 59 e 29: un giro partito lì farebbe il suo
+  // `signin` meno di un minuto prima di quello della sync (ai minuti 0 e 30).
+  it.each([0, 2, 5, 29, 30, 32, 35, 59])('al minuto %i di Roma è DENTRO: il giro non tocca niente', async (minuto) => {
     coda.accoda(3)
     const r = await giro(new Date(`2026-09-23T08:${String(minuto).padStart(2, '0')}:30Z`))
 
@@ -309,7 +355,7 @@ describe('la finestra della sync', () => {
     expect(h.emetti).not.toHaveBeenCalled()
   })
 
-  it.each([6, 7, 29, 36, 57])('al minuto %i è FUORI', (minuto) => {
+  it.each([6, 7, 28, 36, 57, 58])('al minuto %i è FUORI', (minuto) => {
     expect(inFinestraSync(new Date(`2026-09-23T08:${String(minuto).padStart(2, '0')}:00Z`))).toBe(false)
   })
 
@@ -904,6 +950,186 @@ describe('la coda si svuota da sola, un giro del cron dopo l’altro', () => {
       const nellOra = emissioni.filter((x) => x >= t && x < t + 3_600_000).length
       expect(nellOra).toBeLessThanOrEqual(SOGLIA_ORARIA_APP)
     }
+  })
+})
+
+/*
+ * ─── LA DISTANZA FRA DUE ACCESSI AD ARUBA (correzione del 24/09/2026) ────────────────
+ * Il 24/09 alle 10:09:59 un giro svegliato da un accodamento ha fatto il `signin` una
+ * quarantina di secondi dopo quello del giro precedente: Aruba ne concede uno al minuto per
+ * IP, ha risposto `429`, e la pausa del `429` ha fermato la coda per un'ora. `prendi` ora
+ * rifiuta prima di 65 s dall'ultimo accesso (il modello lo riproduce); il giro, se l'unico
+ * ostacolo è la distanza, ASPETTA il residuo invece di lasciare l'urgente al cron.
+ */
+describe('la distanza fra due accessi ad Aruba (24/09)', () => {
+  const eventi = (esito: string) => h.eventi.filter((e) => e.campi.esito === esito)
+
+  it('G1 · il 24/09 in piccolo: la sveglia arriva 42 s dopo la fine del giro precedente, il giro ASPETTA, poi emette', async () => {
+    coda.accoda(1, { urgente: true })
+    await giro()
+    const fine = coda.ultimoAccesso!
+    expect(fine, 'il rilascia del modello timbra la fine del giro').not.toBeNull()
+
+    coda.accoda(1, { urgente: true }, 2)
+    vi.setSystemTime(fine + 42_000)
+    h.eventi.length = 0
+    const r = await giro()
+
+    expect(r).toMatchObject({ esito: 'eseguito', emesse: 1 })
+    expect(coda.voce(2).stato).toBe('emessa')
+    const prese = coda.chiamate.filter((c) => c.nome === 'fatture_coda_prendi')
+    expect(prese.at(-1)!.t - fine).toBeGreaterThanOrEqual(DISTANZA_ACCESSI_S * 1000)
+    const attese = eventi('attesa-accesso')
+    expect(attese).toHaveLength(1)
+    expect(attese[0].livello).toBe('info')
+    expect(attese[0].campi.operazione).toBe(OPERAZIONE_GIRO)
+    expect(attese[0].campi.ms).toBeGreaterThanOrEqual(23_000)
+    expect(attese[0].campi.ms).toBeLessThanOrEqual(24_000)
+    // Il tetto orario si conta sull'istante di DOPO l'attesa.
+    const istante = h.conta.mock.calls.at(-1)![1] as Date
+    expect(istante.getTime() - fine).toBeGreaterThanOrEqual(DISTANZA_ACCESSI_S * 1000)
+  })
+
+  it.each([
+    ['un altro lavoratore attivo', (c: CodaFinta) => { c.lavoratore = { token: uuid(9999), scade: Date.now() + 60_000 } }],
+    ['la pausa di un 429', (c: CodaFinta) => { c.pausaFinoA = Date.now() + 30 * 60_000 }],
+    ['la coda sospesa', (c: CodaFinta) => { c.sospesa = true }],
+  ])('G2 · con %s il giro NON aspetta: prendi rifiuterebbe comunque', async (_nome, ostacolo) => {
+    coda.accoda(1)
+    // Senza la regola si aspetterebbero 56 s.
+    coda.ultimoAccesso = Date.now() - 10_000
+    ostacolo(coda)
+    const t0 = Date.now()
+
+    const r = await giro()
+
+    expect(r.esito).toBe('niente-da-fare')
+    expect(h.emetti).not.toHaveBeenCalled()
+    expect(eventi('attesa-accesso')).toEqual([])
+    expect(Date.now() - t0).toBeLessThan(5_000)
+  })
+
+  it('G3 · un’attesa che finisce dentro la finestra della sync: il giro si ferma lì, prima del bidello', async () => {
+    // 10:28:40 a Roma, fuori finestra; l'attesa di 56 s porta alle 10:29:36, dentro.
+    vi.setSystemTime(new Date('2026-09-23T08:28:40Z'))
+    coda.accoda(1)
+    coda.ultimoAccesso = Date.now() - 10_000
+
+    const r = await giro()
+
+    expect(r.esito).toBe('finestra-sync')
+    expect(eventi('attesa-accesso')).toHaveLength(1)
+    expect(nomi(), 'né bidello né prendi').toEqual([])
+    expect(h.emetti).not.toHaveBeenCalled()
+    expect(coda.voce(1).stato).toBe('in_coda')
+  })
+
+  it('G4 · la sveglia che arriva mentre un giro lavora non perde la voce: la prende il cron dopo, UNA volta', async () => {
+    coda.accoda(1)
+    h.emetti.mockImplementationOnce(async () => {
+      await new Promise((r) => setTimeout(r, 20_000))
+      return esitoOk
+    })
+
+    const primo = eseguiGiroCoda(coda.client(), new Date(Date.now()))
+    await vi.advanceTimersByTimeAsync(10_000)
+    coda.accoda(1, {}, 2)
+    const secondo = eseguiGiroCoda(coda.client(), new Date(Date.now()))
+    const [r1, r2] = await completa(Promise.all([primo, secondo]))
+
+    expect(r1).toMatchObject({ esito: 'eseguito', emesse: 1 })
+    expect(r2.esito).toBe('niente-da-fare')
+    expect(coda.voce(2)).toMatchObject({ stato: 'in_coda', tentativi: 0 })
+
+    vi.setSystemTime(new Date('2026-09-23T08:12:00Z'))
+    const r3 = await giro()
+    expect(r3).toMatchObject({ esito: 'eseguito', emesse: 1 })
+    expect(h.emetti.mock.calls.map((c) => c[1])).toEqual([uuid(1), uuid(2)])
+  })
+
+  it('G5 · la lettura dell’ultimo accesso fallisce (42703, colonna non ancora migrata): nessuna attesa, un `warn`, decide prendi', async () => {
+    coda.accoda(1)
+    coda.guastoStato = { data: null, error: { code: '42703', message: 'colonna finta assente' } }
+
+    const r = await giro()
+
+    expect(r).toMatchObject({ esito: 'eseguito', emesse: 1 })
+    const avvisi = eventi('accesso-non-letto')
+    expect(avvisi).toHaveLength(1)
+    expect(avvisi[0].livello).toBe('warn')
+    expect(avvisi[0].campi.operazione).toBe(OPERAZIONE_GIRO)
+    expect(avvisi[0].errore).toMatchObject({ code: '42703' })
+    expect(eventi('attesa-accesso')).toEqual([])
+  })
+
+  // Il budget del blocco si conta da PRIMA dell'attesa (`inizioMs: inizio`): l'attesa sta dentro
+  // gli stessi 300 s dell'invocazione. Qui ogni fattura dura 10 s: con l'attesa contata il blocco
+  // si ferma prima di quanto farebbe partendo dopo l'attesa, e le altre restano in coda.
+  it('G9 · l’attesa si paga col budget del blocco: si emettono meno fatture, le altre restano in coda', async () => {
+    const DURATA_MS = 10_000
+    const quanteNelBudget = (partenzaMs: number) => {
+      let t = partenzaMs
+      let n = 0
+      for (let i = 0; i < TETTO_BLOCCO; i++) {
+        if (t + RISERVA_PEGGIORE_MS > BUDGET_BLOCCO_MS) break
+        if (i > 0) t += PAUSA_FRA_UPLOAD_MS
+        t += DURATA_MS
+        n++
+      }
+      return n
+    }
+    coda.accoda(TETTO_BLOCCO)
+    coda.ultimoAccesso = Date.now() - 10_000
+    h.emetti.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, DURATA_MS))
+      return esitoOk
+    })
+
+    const r = await giro()
+
+    const attesa = eventi('attesa-accesso')[0].campi.ms as number
+    expect(attesa).toBeGreaterThan(50_000)
+    const conAttesa = quanteNelBudget(attesa)
+    // La prova ha senso solo se partire dopo l'attesa darebbe un numero diverso.
+    expect(conAttesa).toBeLessThan(quanteNelBudget(0))
+    expect(r.emesse).toBe(conAttesa)
+    expect(coda.voci.filter((v) => v.stato === 'in_coda')).toHaveLength(TETTO_BLOCCO - conAttesa)
+  })
+
+  it('G8 · un ultimo accesso nel FUTURO: si aspetta al massimo ATTESA_MASSIMA_MS', async () => {
+    coda.accoda(1)
+    coda.ultimoAccesso = Date.now() + 60 * 60_000
+    const t0 = Date.now()
+
+    const r = await giro()
+
+    // Il modello rifiuta ancora: decide `prendi`, non l'attesa.
+    expect(r.esito).toBe('niente-da-fare')
+    expect(Date.now() - t0).toBeLessThanOrEqual(ATTESA_MASSIMA_MS + 1_000)
+    const attese = eventi('attesa-accesso')
+    expect(attese).toHaveLength(1)
+    expect(attese[0].campi.ms).toBe(ATTESA_MASSIMA_MS)
+    expect(coda.voce(1).stato).toBe('in_coda')
+  })
+})
+
+describe('LOCK: la distanza fra gli accessi è UNA, scritta in due lingue', () => {
+  const cartella = path.join(process.cwd(), 'supabase/migrations')
+  const trovati = readdirSync(cartella).filter((f) => f.endsWith('_fatture_coda_distanza_accessi.sql'))
+
+  it('G6 · in supabase/migrations c’è UN solo file della distanza fra gli accessi', () => {
+    expect(trovati).toHaveLength(1)
+  })
+
+  it('G6 · l’SQL eseguibile ha UN solo intervallo in secondi, uguale a DISTANZA_ACCESSI_S', () => {
+    const sql = senzaCommenti(readFileSync(path.join(cartella, trovati[0]), 'utf8'))
+    const intervalli = [...sql.matchAll(/interval\s+'(\d+)\s+seconds?'/gi)].map((m) => Number(m[1]))
+    expect(intervalli).toEqual([DISTANZA_ACCESSI_S])
+  })
+
+  it('G6 · l’attesa più lunga è la distanza più un secondo, e dopo resta il budget per una fattura', () => {
+    expect(ATTESA_MASSIMA_MS).toBe(DISTANZA_ACCESSI_S * 1000 + 1_000)
+    expect(ATTESA_MASSIMA_MS + RISERVA_PEGGIORE_MS).toBeLessThan(BUDGET_BLOCCO_MS)
   })
 })
 

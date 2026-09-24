@@ -55,10 +55,20 @@ describe('mapStatoAruba', () => {
 
 describe('codiceStatoAruba', () => {
   // Le tre diciture misurate su 4.000 documenti veri il 2026-09-11. Sono TRE, non dieci.
-  it('le tre diciture misurate → i codici della tabella', () => {
+  it("le tre diciture terminali misurate l'11/09 → i codici della tabella", () => {
     expect(codiceStatoAruba('Consegnata')).toBe(7)
     expect(codiceStatoAruba('Non consegnata')).toBe(6)
     expect(codiceStatoAruba('Scartata')).toBe(4)
+  })
+
+  // Misurata in produzione dopo l'11/09 (app_log, fino al 24/09 sempre e solo lei): lo stato IN VOLO.
+  it('«Inviata» è 3: in attesa, non terminale, non scarto — resta in coda', () => {
+    expect(codiceStatoAruba('Inviata')).toBe(3)
+    expect(codiceStatoAruba('  INVIATA ')).toBe(3)
+    expect(mapStatoAruba(codiceStatoAruba('Inviata'))).toMatchObject({
+      fatturaStato: 'in_attesa', isTerminal: false, isScarto: false,
+    })
+    expect(etichettaStatoAruba(mapStatoAruba(3), 'Inviata')).toBe('Inviata allo SDI — Aruba: «Inviata»')
   })
 
   // ⚠️ IL TEST PIÙ IMPORTANTE DEL FILE, e il più facile da cancellare per sbaglio.
@@ -240,16 +250,18 @@ describe('dicitura → `fatturaStato`, che è ciò che vede la contabilità', ()
 
   /**
    * ⚠️ LA GARANZIA ASIMMETRICA, scritta come una proprietà e non come un esempio.
-   * Qualunque parola fuori dalle tre misurate — oggi, e qualunque cosa Aruba inventi
+   * Qualunque parola fuori dalle quattro misurate — oggi, e qualunque cosa Aruba inventi
    * domani — non può diventare `emessa` e non può diventare terminale. Deve restare in
    * coda, perché fra i due modi di sbagliare uno torna indietro e l'altro no: una
    * fattura congelata si scongela al giro dopo, una fattura scartata marcata «emessa»
    * esce dalla coda, non genera avvisi, resta a bilancio come valida e non viene mai
    * corretta né ritrasmessa.
    */
-  it('NESSUNA parola fuori dalle tre misurate può diventare «emessa» o terminale', () => {
+  it('NESSUNA parola fuori dalle quattro misurate può diventare «emessa» o terminale', () => {
     const mai_viste = [
       'Boh',
+      // Contiene «Inviata» ma NON è «Inviata»: niente sottostringhe, deve restare 0.
+      'Inviata allo SDI',
       'In elaborazione',
       'Accettata dal destinatario',
       'consegnata parzialmente',
@@ -263,7 +275,7 @@ describe('dicitura → `fatturaStato`, che è ciò che vede la contabilità', ()
     ]
     for (const parola of mai_viste) {
       const codice = codiceStatoAruba(parola)
-      expect(codice, `«${parola}» non è fra le tre misurate`).toBe(CODICE_NON_INTERPRETATO)
+      expect(codice, `«${parola}» non è fra le quattro misurate`).toBe(CODICE_NON_INTERPRETATO)
       const m = mapStatoAruba(codice)
       expect(m.fatturaStato, `«${parola}»`).toBe('in_attesa')
       expect(m.fatturaStato, `«${parola}»`).not.toBe('emessa')

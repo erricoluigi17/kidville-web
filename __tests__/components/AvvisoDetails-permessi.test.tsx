@@ -872,9 +872,14 @@ describe('AvvisoDetailsContent — `occupati: null` vuol dire «non misurato», 
         // la RILETTURA dell'elenco: la prima è quella del montaggio, la seconda
         // arriva solo da `onFatto`.
         await waitFor(() => expect(letturaRisposte()).toBe(2))
-        // …e solo a quel punto il dialogo è chiuso (stessa gestione del click).
+        // ⚠️ `letturaRisposte` conta le fetch PARTITE, non quelle arrivate a schermo: fra
+        // la seconda chiamata e la sua resa il riquadro dei posti può non esserci ancora.
+        // Il 24/09 in CI (PR #164) `getAllByRole('status')` l'ha cercato proprio lì, dopo
+        // 248 ms: «Unable to find an accessible element with the role "status"». Si
+        // aspetta la sua PRESENZA col testo giusto, poi il resto.
+        await waitFor(() => expect(riepilogoPosti()).toHaveTextContent('7 persone'))
+        // …e a quel punto il dialogo è chiuso (stessa gestione del click).
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-        expect(riepilogoPosti()).toHaveTextContent('7 persone')
         expect(riepilogoPosti().textContent).not.toContain('0 persone')
     })
 })

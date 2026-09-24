@@ -354,7 +354,7 @@ describe('arubaGetByFilename — la risposta MISURATA, non quella immaginata', (
   })
 
   /**
-   * Le tre diciture misurate, dentro l'involucro vero, fino al `fatturaStato` finale.
+   * Le quattro diciture misurate, dentro l'involucro vero, fino al `fatturaStato` finale.
    *
    * Il client restituisce un CODICE; chi decide se una fattura è emessa è
    * `mapStatoAruba`. Fermarsi al codice lascerebbe scoperto il pezzo che conta per la
@@ -362,11 +362,13 @@ describe('arubaGetByFilename — la risposta MISURATA, non quella immaginata', (
    * codici diversi (6 e 7) danno lo stesso `emessa`, e uno solo (4) dà `scartata`, che
    * è il verdetto su cui si decide se una fattura va corretta e ritrasmessa.
    */
-  it('le tre diciture misurate escono con codice E `fatturaStato` giusti dall\'involucro vero', async () => {
+  it('le quattro diciture misurate escono con codice E `fatturaStato` giusti dall\'involucro vero', async () => {
     for (const [dicitura, atteso, statoFattura] of [
       ['Consegnata', 7, 'emessa'],
       ['Non consegnata', 6, 'emessa'],
       ['Scartata', 4, 'scartata'],
+      // Lo stato IN VOLO, misurato dopo l'11/09: 3 = `in_attesa`, resta in coda.
+      ['Inviata', 3, 'in_attesa'],
     ] as const) {
       fetchMock.mockResolvedValue(
         mockResponse({ ...INVOLUCRO_MISURATO, invoices: [{ ...INVOLUCRO_MISURATO.invoices[0], status: dicitura }] }),
@@ -470,12 +472,15 @@ describe('arubaGetByFilename — la dicitura mai vista GRIDA', () => {
     expect(String(campi.msg)).not.toContain('«')
   })
 
-  it('le tre diciture conosciute NON fanno rumore', async () => {
+  it('le quattro diciture conosciute NON fanno rumore', async () => {
     // «Scartata» compresa: quella è una fattura respinta, non un vocabolario che non capiamo.
     // Se finisse anche lei in questo canale, l'allarme suonerebbe 31 volte su 4.000 documenti
     // per un fatto normale e nessuno lo guarderebbe più — che è il modo in cui un segnale
     // muore senza che nessuno lo spenga.
-    for (const dicitura of ['Consegnata', 'Non consegnata', 'Scartata'] as const) {
+    // «Inviata» compresa: è lo stato in volo di OGNI fattura appena trasmessa. Fino al 24/09
+    // gridava `error` a ogni giro della sync (1.380 falsi allarmi): è il caso che questo ciclo
+    // deve tenere zitto.
+    for (const dicitura of ['Consegnata', 'Non consegnata', 'Scartata', 'Inviata'] as const) {
       h.logEvento.mockClear()
       fetchMock.mockResolvedValue(
         mockResponse({

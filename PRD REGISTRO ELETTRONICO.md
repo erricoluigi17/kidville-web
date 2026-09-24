@@ -75,7 +75,7 @@
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` — ⚠️ **fino al 2026-09-06 il SALVATAGGIO del menu non funzionava in nessuna sede** (`42P10`: `ON CONFLICT` contro indici parziali). Corretto con le migrazioni `20260906122753`/`20260906122807` e sorvegliato dal lock `onconflict-arbitro`. **Resta vero che nessuna delle tre sedi ha ancora un menu vero caricato**: misurato il 2026-09-06, Cesa 0 righe, Aversa 0, Giugliano solo il menu demo. Il menu va inserito da capo |
 > | **Chat** | ✅ Operativo · 🔧 correzione del 14/09 sul branch `fix/chat-doppioni-coda-notifica`, ⏳ **non ancora in produzione** | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — conversazione **1:1** fra un'insegnante e un genitore su un bambino: chi non è uno dei due riceve 403. Dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`). **Dal branch del 14/09** (vedi il changelog): `GET /api/chat/messages` legge gli **ultimi 50** e pagina all'indietro con il cursore `primaDi` (`offset` → 400), con **«Carica messaggi precedenti»** in cima alla conversazione — fino a quel giorno leggeva i 50 più **vecchi**, e 48 messaggi in 7 conversazioni non erano mai stati mostrati; il messaggio inviato **non compare più due volte**; il tocco su una notifica di chat **apre la conversazione** (link `/<area>/chat?thread=<uuid>`) da push nativa, web push, notifica del browser e centro notifiche. Stato e regole in `useConversazioneChat` + `@/lib/chat/stato-conversazione`, condivisi dalle due pagine |
 > | **Vigilanza sulle chat** | ✅ Operativo (2026-09-09) | `/admin/messaggi` → «Tutti i messaggi» e «Registro accessi» | Segreteria e Direzione consultano qualunque conversazione della propria sede, e la consultazione è **silenziosa** per i due interlocutori. Ogni lettura e ogni ricerca finiscono in `chat_vigilanza_accessi`, in **sola aggiunta**; se il registro non si scrive il contenuto **non esce** (503 `VIGILANZA_NON_TRACCIABILE`). Il registro lo legge **solo la Direzione**, senza esenzioni per sé. Ritenzione: la riga resta, IP/browser/termine si azzerano a 12 mesi |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)). ✅ **IN PRODUZIONE dal 2026-09-20** — PR [#158](https://github.com/erricoluigi17/kidville-web/pull/158), merge `29bb04c7` (branch `feat/riconciliazione-automatica`; ⚠️ *questa casella ha detto «non ancora in produzione» fino al 2026-09-24, quattro giorni dopo il merge*): la causale del bonifico porta il **codice della voce** (`{codice}`, inserito d'ufficio anche nei modelli che le tre sedi avevano già configurato) e app del genitore ed email di sollecito escono dalla **stessa porta** (`causaleBonifico`) — **la causale della fattura elettronica il codice NON lo porta**, ed è una decisione, non un limite; il matcher riconosce il codice e lo pesa **dieci volte il codice fiscale** (`CODICE_BONUS = 10000` contro 1000, in `src/lib/pagamenti/riconciliazione.ts`) senza mai auto-confermare da solo; l'import legge le voci aperte **paginate** (prima troncava in silenzio) e poi **chiude da sé i bonifici certi** (`valutaCertezza`, marca `abbinato_auto_il`, riepilogo e annullamento in blocco — tre changelog del 2026-09-20 più sotto); il popup del movimento passa da **512 px** a ~95% dello schermo; e sui movimenti rossi si **cerca il bambino** (`GET /api/pagamenti/riconciliazione/alunni`, dentro il perimetro di chi cerca, **codice fiscale come chiave di ricerca ma mai in risposta**) per poi comporre partendo da lui (`?alunni=`, al massimo **5** bambini per richiesta). ✅ **IN PRODUZIONE dal 2026-09-23**: il **nucleo della coda fatture** — PR [#160](https://github.com/erricoluigi17/kidville-web/pull/160), merge **15:34** (`a447e4ce`), deploy 15:36:54, cron `fatture-coda-tick` **verificato** in `app_log`: primo battito 15:37:02 (8 secondi dopo il deploy), esito `niente-da-fare` (`docs/superpowers/specs/2026-09-22-coda-fatture-aruba/nucleo.md`) — accodamento fino a 500 fatture, invio in background anche a PC spento, stesso motore del lotto (50/ora, pause 60′/15′): lavoratore, route `/api/pagamenti/fattura/coda*`, pagina `/admin/coda-fatture` con contatore nel menu, lotto e pulsante «Fattura» che accodano. Dalla consegna 2b anche l'intestatario **scritto a mano** («Altro») va in coda: validato all'accodamento (400 prima di accodare se è incompleto), custodito in coda finché la voce non è emessa o tolta («Rimetti» lo conserva per la riemissione), mai nella GET né nei log; «ricorda sulla scheda» la scrive il lavoratore dopo un'emissione nuova riuscita, con la riga del registro delle scritture che porta il valore sostituito e la sede del bambino, come quando la cambia la Segreteria dalla scheda. Migrazione `20260923102831` **applicata in produzione** dall'integrazione Supabase al merge (mai a mano). ✅ **PR-B** ([#161](https://github.com/erricoluigi17/kidville-web/pull/161), in produzione dal 23/09): `fatture-coda-tick` sorvegliato nel battito di `/api/health` (`JOB_CRON`, finestra 30 minuti), fotografie rigenerate dalla produzione, guardia degli script d'indagine allineata al nucleo (partono solo a coda sospesa, fuori pausa e senza lavoratore attivo). ✅ **Consegna 2a** ([#162](https://github.com/erricoluigi17/kidville-web/pull/162), in produzione dal 23/09 alle 23:07, migrazione `20260923191725` applicata dall'integrazione): «Togli» azzera anche l'esito (migrazione `20260923191725`), pausa e fine stimata della pagina «Coda fatture» col giorno in Europe/Rome, via il codice morto del vecchio lotto e le 18 chiavi `reconLotto*`, chip «In coda» / «In invio» / «Errore in coda» sulle righe di Pagamenti e Riconciliazione. 🔧 **Consegna 2b** (branch `fix/coda-fatture-rifiniture-2b`; lo stato di produzione lo registra la PR di documenti dopo il deploy): l'intestatario scritto a mano entra in coda, «Togli»/«Rimetti» loggano chi, la fine stimata conta le emesse dell'ultima ora, le righe già in coda escono da «Da fatturare», dal lotto e da «Invia fattura» (su errore c'è il collegamento alla «Coda fatture», anche nel popup, nel drawer e sulla riga di Riconciliazione), «Oggi»/«Ieri» della chat in Europe/Rome, e `gallery.published` ha finalmente un destinatario in `video_outbox` (i 13 finiti in quarantena si riprendono con una scrittura dopo il deploy). ⏳ **Consegna 2c** (notifiche) e il resto del piano completo (fra cui la verifica automatica degli esiti incerti) — dettagli e rilievi aperti in `docs/superpowers/specs/2026-09-22-coda-fatture-aruba/HANDOFF.md` (changelog sotto) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)). ✅ **IN PRODUZIONE dal 2026-09-20** — PR [#158](https://github.com/erricoluigi17/kidville-web/pull/158), merge `29bb04c7` (branch `feat/riconciliazione-automatica`; ⚠️ *questa casella ha detto «non ancora in produzione» fino al 2026-09-24, quattro giorni dopo il merge*): la causale del bonifico porta il **codice della voce** (`{codice}`, inserito d'ufficio anche nei modelli che le tre sedi avevano già configurato) e app del genitore ed email di sollecito escono dalla **stessa porta** (`causaleBonifico`) — **la causale della fattura elettronica il codice NON lo porta**, ed è una decisione, non un limite; il matcher riconosce il codice e lo pesa **dieci volte il codice fiscale** (`CODICE_BONUS = 10000` contro 1000, in `src/lib/pagamenti/riconciliazione.ts`) senza mai auto-confermare da solo; l'import legge le voci aperte **paginate** (prima troncava in silenzio) e poi **chiude da sé i bonifici certi** (`valutaCertezza`, marca `abbinato_auto_il`, riepilogo e annullamento in blocco — tre changelog del 2026-09-20 più sotto); il popup del movimento passa da **512 px** a ~95% dello schermo; e sui movimenti rossi si **cerca il bambino** (`GET /api/pagamenti/riconciliazione/alunni`, dentro il perimetro di chi cerca, **codice fiscale come chiave di ricerca ma mai in risposta**) per poi comporre partendo da lui (`?alunni=`, al massimo **5** bambini per richiesta). ✅ **IN PRODUZIONE dal 2026-09-23**: il **nucleo della coda fatture** — PR [#160](https://github.com/erricoluigi17/kidville-web/pull/160), merge **15:34** (`a447e4ce`), deploy 15:36:54, cron `fatture-coda-tick` **verificato** in `app_log`: primo battito 15:37:02 (8 secondi dopo il deploy), esito `niente-da-fare` (`docs/superpowers/specs/2026-09-22-coda-fatture-aruba/nucleo.md`) — accodamento fino a 500 fatture, invio in background anche a PC spento, stesso motore del lotto (50/ora, pause 60′/15′): lavoratore, route `/api/pagamenti/fattura/coda*`, pagina `/admin/coda-fatture` con contatore nel menu, lotto e pulsante «Fattura» che accodano. Dalla consegna 2b anche l'intestatario **scritto a mano** («Altro») va in coda: validato all'accodamento (400 prima di accodare se è incompleto), custodito in coda finché la voce non è emessa o tolta («Rimetti» lo conserva per la riemissione), mai nella GET né nei log; «ricorda sulla scheda» la scrive il lavoratore dopo un'emissione nuova riuscita, con la riga del registro delle scritture che porta il valore sostituito e la sede del bambino, come quando la cambia la Segreteria dalla scheda. Migrazione `20260923102831` **applicata in produzione** dall'integrazione Supabase al merge (mai a mano). ✅ **PR-B** ([#161](https://github.com/erricoluigi17/kidville-web/pull/161), in produzione dal 23/09): `fatture-coda-tick` sorvegliato nel battito di `/api/health` (`JOB_CRON`, finestra 30 minuti), fotografie rigenerate dalla produzione, guardia degli script d'indagine allineata al nucleo (partono solo a coda sospesa, fuori pausa e senza lavoratore attivo). ✅ **Consegna 2a** ([#162](https://github.com/erricoluigi17/kidville-web/pull/162), in produzione dal 23/09 alle 23:07, migrazione `20260923191725` applicata dall'integrazione): «Togli» azzera anche l'esito (migrazione `20260923191725`), pausa e fine stimata della pagina «Coda fatture» col giorno in Europe/Rome, via il codice morto del vecchio lotto e le 18 chiavi `reconLotto*`, chip «In coda» / «In invio» / «Errore in coda» sulle righe di Pagamenti e Riconciliazione. ✅ **Consegna 2b** ([#163](https://github.com/erricoluigi17/kidville-web/pull/163), in produzione dal 24/09 alle 06:39, migrazione `20260924010455` applicata dall'integrazione): l'intestatario scritto a mano entra in coda, «Togli»/«Rimetti» loggano chi, la fine stimata conta le emesse dell'ultima ora, le righe già in coda escono da «Da fatturare», dal lotto e da «Invia fattura» (su errore c'è il collegamento alla «Coda fatture», anche nel popup, nel drawer e sulla riga di Riconciliazione), «Oggi»/«Ieri» della chat in Europe/Rome, e `gallery.published` ha finalmente un destinatario in `video_outbox` (i 13 finiti in quarantena sono stati ripresi e consegnati il 24/09 alle 06:43). 🔧 **Correzione del 24/09** (branch `fix/coda-fatture-distanza-signin`; lo stato di produzione lo registra la PR di documenti dopo il deploy): 65 s fra due accessi ad Aruba della coda, e «Inviata» della sync SdI riconosciuta come «in volo». ⏳ **Consegna 2c** (notifiche) e il resto del piano completo (fra cui la verifica automatica degli esiti incerti) — dettagli e rilievi aperti in `docs/superpowers/specs/2026-09-22-coda-fatture-aruba/HANDOFF.md` (changelog sotto) |
 > | **Conciliazione composita — un bonifico, più voci** | ✅ **IN PRODUZIONE dal 2026-09-13** — PR [#145](https://github.com/erricoluigi17/kidville-web/pull/145), merge `161f1e42`. ⚠️ *Questa casella ha detto «✅ Completa sul branch `feat/conciliazione-composita` (13/09/2026) · ⏳ **non ancora in produzione** … manca il rilascio del **codice**» fino al **2026-09-20**, cioè per una settimana dopo che il codice era stato rilasciato: il merge è avvenuto lo **stesso 13/09** in cui la riga fu scritta, e nessuno l'ha più riletta. Corretta verificando invece che deducendo — `git merge-base --is-ancestor 161f1e42 HEAD` risponde vero e `git log -1 161f1e42` dà «Merge pull request #145 from erricoluigi17/feat/conciliazione-composita», data 2026-09-13.* **Le tre migrazioni (`20260912180000`, `…180100`, `…180200`) sono già applicate sul database (le tre `version` risultano presenti in `supabase_migrations.schema_migrations`, verificato il 13/09, e il fixture `__tests__/fixtures/migrazioni-applicate-snapshot.json` le elenca): NON riapplicarle.** ⚠️ *Qui si leggeva «applicate **dal 12/09**»: la data è stata tolta perché **quella tabella non sa quando**. Le sue colonne sono `version`, `statements`, `name`, `created_by`, `idempotency_key`, `rollback` — nessuna è una data — e la strada per ricavarla dal commit è chiusa: `track_commit_timestamp` è `off`, quindi `pg_xact_commit_timestamp(xmin)` risponde `55000: could not get commit timestamp data` (provato il 13/09). Il «12/09» era il timestamp del **nome del file**, non una misura: resta vero che sono applicate, non quando* | `/admin/pagamenti` → *Riconciliazione* → popup del movimento → **«Componi il pagamento»** (`ComposizioneBonifico`, dentro il popup e non in una pagina a sé) | `GET /api/pagamenti/riconciliazione/[id]/contesto` (**non scrive niente**: di chi è il bonifico, quali figli ha la famiglia, cosa hanno di aperto, quali categorie, quanto costa un ticket in quella sede) e `POST /api/pagamenti/riconciliazione/[id]/componi` (registra l'intera composizione in **una** transazione atomica — RPC `registra_transazione_contabile` — con compare-and-swap sul movimento). Spunta le voci aperte, **ne crea di nuove**, **aggiunge ticket mensa** (quantità × costo unitario, che accreditano anche i pasti), e conferma **solo quando quadra all'esatto**: niente eccedenza, niente residuo. Funziona anche per **fratelli di plessi diversi**. 🔴 **Una sola fattura, con una riga sola, per il totale del bonifico e la descrizione della voce àncora** — con la conseguenza fiscale che ne segue, scritta per intero nel changelog del 13/09 |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
@@ -1788,7 +1788,156 @@ SELECT (SELECT count(*) FROM allegati_registro) AS allegati,
 
 ---
 
-## Changelog — Coda fatture Aruba — consegna 2b: le rifiniture (D1–D14) — 2026-09-24 (branch `fix/coda-fatture-rifiniture-2b`; stato di produzione: lo registra la PR di documenti dopo il deploy)
+## Changelog — Coda fatture Aruba — correzione urgente del 24/09: 65 s fra due accessi ad Aruba, e «Inviata» non è più un errore — 2026-09-24 (branch `fix/coda-fatture-distanza-signin`; stato di produzione: lo registra la PR di documenti dopo il deploy)
+
+Correzione urgente, non una consegna, su richiesta del titolare: «correggi tutto e poi vai avanti fino al
+deploy». Piano esecutivo unico, scritto prima degli esecutori in parallelo:
+`docs/superpowers/specs/2026-09-22-coda-fatture-aruba/correzione-distanza-signin.md`. Orari di Roma; in DB
+sono UTC.
+
+**1. Le prime fatture vere della coda (24/09).** **15 voci, tutte emesse** dal lavoratore: 4 alle 09:57 da
+un lotto accodato alle 09:56:42, 1 alle 10:09 da un pulsante «Fattura» (urgente), e 10 alle 11:12–11:13 dal
+tick del cron delle 11:12, **senza nessuno davanti**. Il cardine della coda (una fattura accodata parte
+anche a PC spento) è provato con fatture vere. Alla lettura delle 13:14 le voci emesse nel giorno sono **19**
+(altre 4 fra le 11:41 e le 12:39), e **4 voci urgenti** aspettano in coda (punto 2).
+
+**2. Due 429 nella stessa mattina: 10:09:59 e 12:39:33.** Un secondo pulsante, alle 10:09, ha svegliato un giro nuovo mentre il primo
+finiva. Quel giro ha preso il testimone appena liberato (10:09:56,5) e ha fatto il suo `signin` circa
+**41 s dopo** quello del giro precedente. Aruba ha risposto **429** proprio sul `signin` (`app_log`:
+`aruba:signin` error con `stato_http` 429, `numerazione-non-allineabile-asilo`, `voce-aruba_429` warn), e il
+giro ha chiesto la pausa dei 429: `pausa_motivo` `aruba-429`, `pausa_fino_a` **11:09:59**. **La coda si è
+fermata un'ora per tutte le sedi**; le sveglie delle 10:10–10:37 e i tick del cron l'hanno trovata in
+pausa, e il primo tick dopo, alle 11:12, ha preso le 10 voci arretrate.
+
+**Lo stesso difetto si è ripetuto alle 12:39:33.** Un pulsante (urgente) accodato alle 12:39:11 è stato preso
+subito, col suo `signin` 200 alle 12:39:13,8, ed emesso alle 12:39:29 (`giro-concluso` alle 12:39:29,3). Un
+secondo pulsante, accodato alle 12:39:30, ha svegliato un giro che ha preso il testimone appena liberato e ha
+fatto il `signin` circa **19,5 s dopo** il precedente: di nuovo **429** (la riga `aruba:signin` error con
+`stato_http` 429 ha ora 2 occorrenze, l'ultima alle 12:39:33,3), `voce-aruba_429` warn alle 12:39:33,5 e pausa
+`aruba-429` fino alle **13:39:33**. La voce del secondo pulsante è tornata `in_coda` con `esito_codice`
+`aruba_429` e `tentativi` 1. **Letto alle 13:14** (`fatture_coda_stato`, `fatture_coda`, solo colonne non
+personali): coda ancora in pausa fino alle 13:39:33, nessun lavoratore, `ultimo_giro_il` 12:39:30, **4 voci
+urgenti in coda**, accodate fra le 12:39:30 e le 12:53:11. È lo stesso meccanismo del punto 3, e la correzione
+lo copre: la sveglia delle 12:39:30 avrebbe letto l'ultimo accesso timbrato dal rilascio (circa 12:39:29),
+aspettato circa 64 s e preso verso le 12:40:35.
+
+**3. Causa.** Il lavoratore unico (advisory lock più testimone in `fatture_coda_prendi`) impedisce due giri
+**insieme**, non due giri a pochi secondi. Ogni giro è un'invocazione Vercel nuova, cioè una sessione Aruba
+nuova (`creaSessioneAruba` in `esegui-blocco-fatture.ts`) e un `signin` nuovo; Aruba ne concede **uno al
+minuto per IP**. La sveglia parte a ogni accodamento, dopo «Rimetti» e alla ripresa: due accodamenti vicini
+facevano due `signin` vicini, e il 429 sul `signin` si legge come «429 prima del numero», quindi 60 minuti
+di pausa.
+
+**4. Correzione.** Una migrazione,
+`supabase/migrations/20260924103451_fatture_coda_distanza_accessi.sql`, e il giro:
+- **C1** · colonna nuova `fatture_coda_stato.ultimo_accesso_il timestamptz` (nulla ammessa): `ultimo_giro_il`
+  non si poteva riusare, perché `prendi` la scrive anche nei giri a vuoto del cron ed è il «segno di vita»
+  della GET.
+- **C2** · il controllo sta **in `fatture_coda_prendi`**, sotto l'advisory lock, dopo sospesa, pausa e
+  lavoratore: vuoto se `ultimo_accesso_il` è più recente di 65 s (60 più margine). Come la pausa: niente
+  testimone, niente `ultimo_giro_il`, nessuna voce toccata. È il solo punto atomico da cui passano tutti i
+  giri.
+- **C3** · **due timbri**: `prendi` timbra quando consegna almeno una voce; `rilascia` timbra alla fine del
+  giro per un token che aveva voci, con `GREATEST`, anche col testimone scaduto, e mai all'indietro. Un giro a
+  vuoto non timbra. Il timbro della presa copre un «Rimetti» che toglie il token alle voci prima del
+  rilascio; quello del rilascio copre il `signin` che arriva dopo le voci respinte dai controlli locali.
+- **C4** · il giro, **dopo la finestra della sync e prima del bidello**, legge `ultimo_accesso_il` e, se
+  l'unico ostacolo è la distanza, **aspetta** il residuo più 1 s (al massimo `ATTESA_MASSIMA_MS` = 66 s), poi
+  ricontrolla la finestra. Con un altro lavoratore, una pausa o la coda sospesa non aspetta. Senza attesa il
+  pulsante «urgente» aspetterebbe il cron, fino a 5 minuti. Bidello, tetto orario e `prendi` usano l'istante
+  di dopo l'attesa; il budget si conta dall'inizio dell'invocazione, e il muro dei 300 s resta.
+- **C5** · se la lettura fallisce (colonna assente prima della migrazione, il DB E2E) non si aspetta: si torna
+  al comportamento di prima, e la garanzia resta in `prendi`.
+- **C6** · la finestra della sync del giro diventa **`:59–:05` e `:29–:35`**: la sync fa il suo `signin`
+  pochi secondi dopo i minuti 0 e 30, e un giro partito al minuto 59 lo farebbe meno di un minuto prima. I
+  minuti del cron non cambiano (il commento di `giro.ts` che diceva «2 e 32» era sbagliato ed è corretto).
+- **C7** · `EsitoGiroCodice`, la route del giro e la GET non cambiano: un rifiuto per distanza nel battito è
+  `niente-da-fare`, e la spiegazione sta nella riga `attesa-accesso`.
+
+**Una migrazione, applicata dall'integrazione al merge, mai a mano; nessuna scrittura in produzione.** Nessuna
+tabella, indice o vincolo nuovo: `MIGRAZIONI_ATTESE_AL_MERGE` resta `{}`.
+
+**5. La sync SdI e «Inviata».** Difetto indipendente dal 429 e più vecchio della coda. `arubaGetByFilename`
+traduce la dicitura di stato con `DICITURA_A_CODICE` (`src/lib/aruba/stato.ts`), che aveva solo le tre
+diciture **terminali** del campione dell'11/09. «Inviata», il primo stato dopo l'upload, **in volo**,
+diventava codice 0, un `error` `stato-non-interpretato` e «Stato sconosciuto (0)» a registro: **1.380 falsi
+`error`** dall'11/09 al 24/09 (e altri il 24/09, fino al deploy), sempre e solo quella parola. **C8**: «Inviata» → **3**
+«Inviata allo SDI», `in_attesa`, non terminale; per `mapStatoAruba` 0 e 3 danno lo stesso `in_attesa`, quindi
+coda, aggregato del pagamento e PDF non cambiano, cambiano l'etichetta e il falso allarme. Non è «emessa»:
+precede anche gli scarti. Il livello `error` per le parole davvero nuove resta. Le fatture del 24/09
+rimaste a `sdi_stato` 0 non si toccano a mano: la sync le aggiorna da sola appena Aruba cambia dicitura (il
+24/09 pomeriggio le 10 della mattina erano già passate a 6, «Non consegnata»); dopo il deploy «Inviata» dà 3.
+
+**6. Log** (`fattura`, operazione `fatture-coda/giro`, senza dati personali): `attesa-accesso` (`info`, con
+`ms`, quando il giro aspetta la distanza) e `accesso-non-letto` (`warn`, con l'errore, quando la lettura di
+`ultimo_accesso_il` fallisce). Con «Inviata» in mappa sparisce il falso `error` della sync.
+
+**7. Test.** Su PGlite (`__tests__/db/fatture-coda-nucleo.test.ts`): N1–N9 (distanza dopo
+un giro con voci, il confine 64/65 s, il timbro alla fine del giro, il giro a vuoto che non timbra, il
+rilascio con e senza voci e mai all'indietro, «Rimetti» prima del rilascio, la forma della colonna, la
+migrazione unica e dopo la 2b, nessuna guardia delle fotografie accesa) e quattro controlli negativi che
+eseguono la migrazione rotta (il quarto: senza il controllo del lavoratore un secondo token prenderebbe). N3
+segue l'ordine del giro vero, prendi → chiudi → rilascia: `chiudi` non azzera il token, quindi il timbro di fine
+giro scatta anche con le voci già chiuse. Il test «dopo il rilascio del primo, un altro token prende subito» diceva
+l'opposto della correzione: è **tolto, e N1 ne prende il posto**; sette test esistenti sono adattati
+dimenticando l'ultimo accesso fra una presa e l'altra. In `__tests__/lib/fatture-coda/giro.test.ts`: G1–G9
+(il 24/09 in piccolo, i tre ostacoli senza attesa, l'attesa che finisce nella finestra, la sveglia che non
+perde la voce, la lettura fallita, il lock che tiene insieme i 65 s della migrazione e del codice e il budget
+dopo l'attesa più lunga, la finestra nuova, l'ultimo accesso nel futuro; G9: l'attesa si paga col budget del
+blocco, cioè il blocco parte dall'istante di PRIMA dell'attesa e con fatture da 10 s ne emette meno, lasciando
+le altre in coda). «Inviata» in
+`__tests__/lib/aruba/stato.test.ts` e `client.test.ts` (le quattro diciture misurate, e nessun rumore).
+Nessun file di test nuovo: la suite intera dà `Test Files 1442 passed (1442)`. Ogni caso nuovo è stato visto
+rosso prima del codice, tranne G2, G4 e G9, verdi già prima: G4 è di regressione per scelta (la voce della
+sveglia non si perde); il rosso di G2 e di G9 si è visto rompendo il codice (per G9, `inizioMs: Date.now()`
+al posto di `inizioMs: inizio`). Ogni correzione è stata poi rotta su
+una copia, col suo test diventato rosso e l'originale rimesso (`shasum` uguale).
+
+**7b. Un test instabile, fuori dalla coda.** Il primo giro di CI della PR #164 è caduto su
+`__tests__/components/AvvisoDetails-permessi.test.tsx` («dopo un gesto riuscito con `occupati: null`…»), verde
+in locale quattro volte su quattro, anche in UTC. Era una gara del test: `letturaRisposte()` conta le fetch
+PARTITE, e fra la seconda chiamata e la sua resa il riquadro dei posti può non esserci; sotto il carico della CI
+`getAllByRole('status')` l'ha cercato lì. Ora si aspetta la sua presenza col testo giusto. Nessun codice
+dell'app cambia.
+
+**8. Fuori, e perché** (§1.4 del piano):
+- le ricerche del giro contro quelle della sync (un blocco che scavalca i minuti 0 o 30 può sommare le sue
+  letture a quelle della sync): le chiude il **cancello condiviso** della seconda consegna;
+- le route dirette `POST /api/pagamenti/fattura` e `…/lotto`, senza chiamanti dall'interfaccia ma ancora
+  capaci di un `signin` non coordinato: 410 o cancello, seconda consegna;
+- 60 minuti di pausa dopo un 429 sul `signin` sono sproporzionati (il limite è al minuto), ma il giro non
+  distingue quel 429 da quello della ricerca senza toccare i messaggi dell'emissione: decisione per dopo;
+- gli script di `scripts/lib/aruba-lettura.mjs` partono già solo senza attività Aruba recente e a coda
+  sospesa;
+- «Presa in carico» non entra in mappa: mai misurata;
+- un giro in volo con le funzioni vecchie mentre la migrazione si applica non timbra: finestra di secondi, e
+  il testimone protegge comunque dalla sovrapposizione.
+
+**Verifica dopo il merge** (solo `SELECT`, dalla radice del repo, §5.2 del piano). **Non si approva** il run
+«DB migrate (prod)» che nascerà, e non si applica niente a mano.
+```sh
+supabase db query --linked "select version, name from supabase_migrations.schema_migrations where version >= '20260924010455' order by version"
+supabase db query --linked "select name, count(*) from supabase_migrations.schema_migrations group by name having count(*) > 1"
+supabase db query --linked "select column_name, data_type, is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'fatture_coda_stato' and column_name = 'ultimo_accesso_il'"
+supabase db query --linked "select p.proname, md5(p.prosrc), length(p.prosrc), p.prosecdef, p.proconfig, has_function_privilege('anon', p.oid, 'EXECUTE') as anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth, has_function_privilege('service_role', p.oid, 'EXECUTE') as sr, pg_get_function_identity_arguments(p.oid) as args from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in ('fatture_coda_prendi', 'fatture_coda_rilascia') order by 1"
+```
+Atteso: due righe (`20260924010455` e `20260924103451`, con la version del **file**); nessun nome doppio; la
+colonna `timestamp with time zone`, nulla ammessa; **una sola** riga per funzione, con `md5` diversi da quelli
+di prima (`e06cffa4…` per `prendi`, `9cfa221d…` per `rilascia`) e uguali al corpo `AS $$ … $$` del file;
+definer, `search_path=public, pg_temp`, `anon`/`auth` falsi, `sr` vero, argomenti invariati. Se la riga
+nuova manca si indaga l'integrazione, mai a mano. Nelle ore dopo: nessun 429 del giro, nessuna riga nuova
+«fuori tabella», nessuna fattura a `sdi_stato` 0 con «Inviata» dopo il primo giro della sync,
+`ultimo_accesso_il` valorizzato dopo il primo giro con voci, `attesa-accesso` solo con due accodamenti vicini.
+La prova vera è la prossima mattina di pulsanti ravvicinati: la coda non deve più fermarsi.
+
+**Il deploy non accorcia una pausa già in corso.** `pausa_fino_a` resta quella scritta dal 429 (alla lettura
+delle 13:14: 13:39:33). Se si rilascia prima delle 13:39:33, le voci in coda ripartono al primo tick del cron
+dopo la pausa (le 13:42), non al deploy. La pausa **non si tocca a mano**: sarebbe una scrittura in produzione,
+e la coda riparte da sola.
+
+---
+
+## Changelog — Coda fatture Aruba — consegna 2b: le rifiniture (D1–D14) — 2026-09-24 (branch `fix/coda-fatture-rifiniture-2b`, ✅ IN PRODUZIONE — PR [#163](https://github.com/erricoluigi17/kidville-web/pull/163), merge 24/09 06:38 (`02eb9836`))
 
 Segue la 2a (PR #162) su richiesta del titolare: «correggi tutto e poi vai avanti fino al deploy».
 **Una migrazione**, `supabase/migrations/20260924010455_fatture_coda_chiudi_emessa_azzera_messaggio.sql`,
@@ -1963,6 +2112,12 @@ Atteso: due righe (la 2a e `20260924010455`, con la version del **file**); nessu
 sola** riga per `fatture_coda_chiudi`, con `md5` diverso da `108511b7…` e uguale al corpo `AS $$ … $$`
 del file nuovo, definer, `search_path=public, pg_temp`, `anon`/`auth` falsi, `sr` vero, argomenti
 invariati; 0 emesse con un messaggio. Se la riga nuova manca si indaga l'integrazione, mai a mano.
+
+**Verificato il 24/09** (solo `SELECT`). Deploy `6630315575` `success` alle 06:39:58. La migrazione
+`20260924010455` è presente in `schema_migrations`, applicata dall'integrazione al merge. L'`md5` del corpo di
+`fatture_coda_chiudi` in produzione è `4869df98d72fe9c07cc4f296cb469fb2`, uguale al file. Il run «DB migrate
+(prod)» `35956482220` resta in attesa e **non è stato approvato**. D14: i 13 `gallery.published` sono stati
+inviati alle 06:43; 0 non inviati, 0 in quarantena.
 
 ---
 

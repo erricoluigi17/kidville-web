@@ -218,3 +218,30 @@ Prima del workflow, l'orchestratore crea il ramo e copia questo piano nella spec
 
 ## Domande aperte
 Nessuna. Resta solo da verificare su Play Console (in esecuzione) il primo `versionCode` libero.
+
+## Decisioni aggiunte prima del lancio (24/09, titolare)
+- **Nota già firmata e poi MODIFICATA** → la firma del genitore **si azzera** (va rifirmata sul testo nuovo).
+  Eliminarla resta possibile (sparisce anche la firma).
+- **Lezione eliminata con allegati** → gli allegati vanno nel **cestino per 7 giorni**. Si possono ripristinare
+  **solo rifirmando la lezione** nello stesso slot (sezione + data + ora). Conseguenze tecniche:
+  - la FK `allegati_registro.registro_id` passa a `ON DELETE SET NULL` (e a nullable);
+  - l'allegato conserva lo slot d'origine (`slot_section_id`, `slot_data`, `slot_ora_lezione`) per potersi riagganciare;
+  - senza una lezione in quello slot il ripristino risponde `409 LEZIONE_DA_RIFIRMARE`.
+- **Modificare un allegato** = **rinominare** (nome mostrato) **e sostituire il file**.
+- **File sostituito** (allegato o documento del fascicolo) → il vecchio va nel **cestino per 7 giorni**. Si realizza
+  così: la riga vecchia va nel cestino e se ne crea una nuova con il file nuovo. Per il fascicolo la riga nuova copia
+  tipo, descrizione e scadenza. Ripristinare la vecchia la riaggiunge accanto alla nuova.
+
+## Convenzioni di esecuzione (valgono per esecutori e critici)
+- **Data dell'evento** per il termine: lezione/firma/allegato = `registro_orario.data`; impreparato = `data`;
+  valutazione e nota = data di Roma di `creato_il`. Il termine è di 2 giorni, oppure 15 se la valutazione è
+  `scritto_pratico` (secondo `lock_tipo`/`tipo`), valori per sede da `admin_settings`. Se una modifica cambia la data,
+  il termine si controlla **su entrambe** le date.
+- **Il termine vale per tutti**, anche Segreteria e Direzione. La Direzione (admin/coordinator) ha «Sblocca» accanto
+  alla voce bloccata. Il fascicolo **non** ha termine.
+- **Impreparato**: si modificano tipo, motivo, materia e data. Quelli segnati dal docente il genitore li vede
+  **dopo 10'** (come i voti, stessa finestra della notifica).
+- **Appello annullato**: serve la connessione, l'annullamento non va nella coda offline.
+- **Ogni lettura** di `allegati_registro` e `student_documents` esclude le righe nel cestino (`eliminato_il is null`),
+  tranne cestino e purga. Un lock di architettura lo impone, sul modello di `cestino-galleria-ogni-lettura-dichiara`.
+- **Nessun dato reale** (nomi, uuid di persone) in codice, test, commenti o commit: il repo è pubblico.

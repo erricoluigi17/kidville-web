@@ -7,6 +7,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
+import { TIPI_AVVISO_CODA } from '@/lib/fatture-coda/avvisi-testi'
 
 const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body eventuale del cron non viene letto)
 
@@ -45,6 +46,47 @@ const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body ev
  * con i soli errori, «nessun log» non distingue «tutto ok» da «non è mai partito niente».
  */
 const JOB = 'push-dispatch'
+
+/**
+ * ALLO STAFF LA PUSH PORTA SOLO GLI AVVISI DELLA CODA FATTURE E LO SCARTO SDI (consegna 2c
+ * della coda fatture; decisione 21 del titolare: la push entro 5 minuti, e mai un nome).
+ *
+ * Fino alla 2c nessuno dello staff aveva un dispositivo iscritto. Il pulsante della «Coda
+ * fatture» iscrive la PERSONA, non un tipo: senza questo filtro le porterebbe anche tutte le
+ * altre notifiche dello staff — misurate il 24/09: 3.267 in 30 giorni su 7 destinatari, più di
+ * un terzo di tipi che mettono nel corpo il nome di una persona (un genitore, un bambino, chi ha
+ * ricevuto le credenziali: `onboarding_completato`, `credenziali`, `assenza_comunicata`,
+ * `allergie_aggiornate`) — sulla schermata di blocco, e gli avvisi della coda ci annegherebbero
+ * dentro. Quelle restano nella campanella, com'erano.
+ * La cuoca sta nell'elenco per la stessa ragione: vive nell'area admin. Allargarlo è una
+ * decisione del titolare (docs/superpowers/specs/2026-09-22-coda-fatture-aruba/
+ * consegna-2c-notifiche.md, §7.2).
+ * Il filtro vede solo le push che passano DI QUI: un modulo che chiamasse `sendPush` o
+ * `sendNativePush` da sé, sui dispositivi dello staff, lo scavalcherebbe. Per questo il
+ * dispatch è l'unico canale verso lo staff: l'alert allergie della mensa, che fino al giro 2
+ * della 2c spediva da sé nome del bambino e allergeni a tutti i dispositivi dei destinatari,
+ * ora lascia la riga pendente e passa di qui (`src/lib/mensa/notify.ts`). Fuori da
+ * `src/lib/push/` importa i due invii solo il saldo basso della mensa, che va ai genitori. Lo
+ * tiene fermo un lock in fondo a `__tests__/api/push-dispatch.test.ts`.
+ */
+const RUOLI_PUSH_SOLO_CODA = new Set(['admin', 'coordinator', 'segreteria', 'cuoca'])
+const TIPI_PUSH_STAFF = new Set<string>([...TIPI_AVVISO_CODA, 'fattura_scartata'])
+
+/**
+ * Il destinatario è dello staff? Lo dice la relazione incorporata sull'utente (i due campi del
+ * ruolo) della stessa lettura (una FK sola, `notifiche_utente_id_fkey`): un oggetto, un array per
+ * prudenza. Schema doppio `role`/`ruolo`, come `staffScuola`. Riga senza utente → non è staff.
+ * Nella stessa lettura e non in una seconda query sulla tabella degli utenti, che se fallisse
+ * fermerebbe con un 500 anche la push dei genitori. Il lock `isolamento-sede-coverage` guarda
+ * le `.from()`, non le relazioni incorporate: qui passa il solo ruolo del destinatario di
+ * ciascuna riga, nessun dato di sede.
+ */
+function destinatarioDelloStaff(n: { utenti?: unknown }): boolean {
+  const u: unknown = Array.isArray(n.utenti) ? n.utenti[0] : n.utenti
+  if (!u || typeof u !== 'object') return false
+  const { role, ruolo } = u as { role?: unknown; ruolo?: unknown }
+  return RUOLI_PUSH_SOLO_CODA.has(String(role ?? '')) || RUOLI_PUSH_SOLO_CODA.has(String(ruolo ?? ''))
+}
 
 /**
  * IL BATTITO NON PUÒ MENTIRE — ed è per questo che ogni query si controlla.
@@ -144,7 +186,7 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
     const nowIso = new Date().toISOString()
     const { data: pendenti, error: errPendenti } = await supabase
       .from('notifiche')
-      .select('id, utente_id, titolo, corpo, link')
+      .select('id, utente_id, tipo, titolo, corpo, link, utenti(role, ruolo)')
       .is('push_inviata_il', null)
       .or(`invio_programmato_il.is.null,invio_programmato_il.lte.${nowIso}`)
       .order('creato_il', { ascending: true })
@@ -215,11 +257,21 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
     // Notifiche NON marcate perché nessuno dei loro canali era configurato:
     // restano in coda e partiranno da sole appena le chiavi arrivano.
     let rimandate = 0
+    // Notifiche dello staff che la push NON porta per scelta (vedi `TIPI_PUSH_STAFF`): marcate
+    // come quelle di chi non ha dispositivi, e contate — «non spedita apposta» non è muto.
+    let escluseStaff = 0
     const toRemove: string[] = []
     const inviateIds: string[] = []
 
     for (const n of pendenti) {
       const userSubs = subsByUser.get(n.utente_id) || []
+      // Allo staff solo gli avvisi della coda e lo scarto SdI (consegna 2c): il resto resta
+      // nella campanella. Niente da spedire e niente da riprovare, come senza dispositivi.
+      if (userSubs.length > 0 && destinatarioDelloStaff(n) && !TIPI_PUSH_STAFF.has(n.tipo)) {
+        escluseStaff++
+        inviateIds.push(n.id)
+        continue
+      }
       const payload = { title: n.titolo, body: n.corpo ?? undefined, url: n.link ?? '/', tag: n.id }
       // Per NOTIFICA, non per giro: `tentate` conta gli invii davvero eseguiti
       // (riusciti, rifiutati o su subscription morta — tutti e tre sono
@@ -373,6 +425,7 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
       fallite,
       notifiche: inviateIds.length,
       subs_rimosse: toRemove.length,
+      escluse_staff: escluseStaff,
       msg: `${JOB}: ok`,
     })
     return NextResponse.json({
@@ -383,6 +436,7 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
         fallite,
         notifiche: inviateIds.length,
         subs_rimosse: toRemove.length,
+        escluse_staff: escluseStaff,
       },
     })
   } catch (err) {

@@ -1171,6 +1171,8 @@
   "reconAnnulloParziale": "{riaperti, plural, one {# bonifico è tornato in coda} other {# bonifici sono tornati in coda}}, {falliti, plural, one {# non è stato riaperto} other {# non sono stati riaperti}}: controlla il registro filtrato per questo import.",
   "reconAnnulloFattureVive": "Fatture ancora valide su {n, plural, one {# movimento} other {# movimenti}}: {numeri}. Restano emesse e vanno annullate a parte.",
   "reconAvvisiTroncati": "Gli avvisi sono partiti solo per {n, plural, one {il primo movimento} other {i primi # movimenti}} di questo import: le famiglie delle righe restanti non sono state avvisate, e riaprire il riepilogo non le recupera. Apri il registro filtrato per questo import.",
+  "codaFatturePushAttiva": "Attiva le notifiche della coda su questo dispositivo",
+  "codaFatturePushAttive": "Notifiche della coda attive su questo dispositivo",
   "codaFatture": {
     "titolo": "Coda fatture",
     "sottotitolo": "Le fatture in coda partono da sole: puoi chiudere la pagina, l’invio continua.",

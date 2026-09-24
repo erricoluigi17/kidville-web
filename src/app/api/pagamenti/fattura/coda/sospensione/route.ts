@@ -5,6 +5,7 @@ import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { codaAssente, svegliaCoda, zCorpoSospensione, type RispostaSospensione } from '@/lib/fatture-coda/api'
+import { spedisciAvvisiCoda } from '@/lib/fatture-coda/avvisi'
 
 /**
  * ─── «SOSPENDI CODA» / «RIPRENDI» — SOLO ADMIN ──────────────────────────────────────
@@ -56,6 +57,10 @@ export const POST = withRoute('pagamenti/fattura/coda/sospensione:POST', async (
     esito: sospesa ? 'coda-sospesa' : 'coda-ripresa',
     utente: auth.user.id,
   })
+
+  // Consegna 2c (decisione 12): sospensione e ripresa si avvisano agli admin e a chi ha fatture
+  // in attesa, meno chi ha premuto. Non lancia e non cambia la risposta: lo stato è già scritto.
+  await spedisciAvvisiCoda(sb, { operazione, attore: auth.user.id })
 
   if (!sospesa) svegliaCoda(sb, operazione)
 

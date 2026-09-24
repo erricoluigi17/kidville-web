@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
 
 // Mock generico: builder thenable (risolve per-tabella FIFO) + registro chiamate.
 const h = vi.hoisted(() => {
@@ -39,6 +41,7 @@ const native = vi.hoisted(() => ({ sendNativePush: vi.fn(), fcmConfigured: vi.fn
 vi.mock('@/lib/push/native-push', () => native)
 
 import { POST } from '@/app/api/push/dispatch/route'
+import { TIPI_AVVISO_CODA } from '@/lib/fatture-coda/avvisi-testi'
 
 function req(secret?: string): Request {
   return new Request('http://localhost/api/push/dispatch', {
@@ -353,5 +356,217 @@ describe('POST /api/push/dispatch', () => {
     const body = await res.json()
     expect(body.data.subs_rimosse).toBe(1)
     expect(h.state.calls.some((c) => c.table === 'push_subscriptions' && c.m === 'delete')).toBe(true)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSEGNA 2c DELLA CODA FATTURE — allo staff la push porta SOLO la coda e lo
+// scarto SdI. Il pulsante della «Coda fatture» iscrive la PERSONA: senza filtro
+// le porterebbe anche le altre notifiche dello staff, fra cui quelle col nome di
+// un genitore o di un bambino nel corpo. Le escluse si marcano come per chi non
+// ha dispositivi (niente da spedire, niente da riprovare) e si contano.
+// Utenti, sedi e sottoscrizioni palesemente finti.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fatture (consegna 2c)', () => {
+  const SEGRETERIA = { role: 'segreteria', ruolo: 'segreteria' }
+  const GENITORE = { role: 'genitore', ruolo: 'genitore' }
+  const riga = (id: string, utente_id: string, tipo: string, utenti: unknown) => ({
+    id,
+    utente_id,
+    tipo,
+    titolo: `titolo-${id}`,
+    corpo: null,
+    link: '/x',
+    utenti,
+  })
+  const subWeb = (id: string, utente_id: string) => ({
+    id,
+    utente_id,
+    endpoint: `endpoint-${id}`,
+    p256dh: 'p',
+    auth: 'a',
+    platform: 'web',
+  })
+  const idsMarcati = () => {
+    const c = h.state.calls.find((x) => x.table === 'notifiche' && x.m === 'in')
+    return c ? [...(c.args[1] as string[])].sort() : []
+  }
+  const battitoOk = () => righeInfoOk()[0]
+  const righeInfoOk = () =>
+    log.logEvento.mock.calls
+      .filter((c) => c[1] === 'info' && (c[2] as Record<string, unknown>).esito === 'ok')
+      .map((c) => c[2] as Record<string, unknown>)
+
+  it('la lettura chiede tipo e ruolo del destinatario nella STESSA query', async () => {
+    // Il caso che tiene in piedi gli altri: il finto restituisce `utenti` qualunque cosa
+    // chieda il `select`, e senza questo controllo gli altri resterebbero verdi anche
+    // togliendo la relazione dalla lettura.
+    h.state.queues = { notifiche: [{ data: [], error: null }] }
+    await POST(req('test-secret'))
+    const sel = h.state.calls.find((c) => c.table === 'notifiche' && c.m === 'select')
+    expect(sel).toBeDefined()
+    const arg = String(sel!.args[0])
+    expect(arg.split(',').map((s) => s.trim())).toContain('tipo')
+    expect(arg).toContain('utenti(role, ruolo)')
+  })
+
+  it('segreteria con un dispositivo web: solo coda e scarto in push; il genitore riceve tutto; tutte e quattro marcate', async () => {
+    h.state.queues = {
+      notifiche: [
+        { data: [
+          riga('n-onb', 'u-segr', 'onboarding_completato', SEGRETERIA),
+          riga('n-fine', 'u-segr', 'fattura_coda_fine', SEGRETERIA),
+          riga('n-scarto', 'u-segr', 'fattura_scartata', SEGRETERIA),
+          riga('n-gen', 'u-gen', 'avviso_generico', GENITORE),
+        ], error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [
+        { data: [subWeb('s-segr', 'u-segr'), subWeb('s-gen', 'u-gen')], error: null },
+      ],
+    }
+    const res = await POST(req('test-secret'))
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    const titoli = push.sendPush.mock.calls.map((c) => (c[1] as { title: string }).title).sort()
+    expect(titoli).toEqual(['titolo-n-fine', 'titolo-n-gen', 'titolo-n-scarto'])
+    expect(idsMarcati()).toEqual(['n-fine', 'n-gen', 'n-onb', 'n-scarto'])
+    expect(body.data).toMatchObject({ inviate: 3, notifiche: 4, escluse_staff: 1 })
+    expect(battitoOk()).toMatchObject({ inviate: 3, notifiche: 4, escluse_staff: 1 })
+  })
+
+  it('la cuoca con un dispositivo nativo: la sua `mensa_allergia` non parte, ma si marca e si conta', async () => {
+    native.fcmConfigured.mockReturnValue(true)
+    h.state.queues = {
+      notifiche: [
+        { data: [riga('n-mensa', 'u-cuoca', 'mensa_allergia', { role: 'cuoca', ruolo: 'cuoca' })], error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [
+        { data: [{ id: 's-cuoca', utente_id: 'u-cuoca', endpoint: 'tok', p256dh: null, auth: null, platform: 'android' }], error: null },
+      ],
+    }
+    const body = await (await POST(req('test-secret'))).json()
+    expect(native.sendNativePush).not.toHaveBeenCalled()
+    expect(push.sendPush).not.toHaveBeenCalled()
+    expect(idsMarcati()).toEqual(['n-mensa'])
+    expect(body.data).toMatchObject({ native_inviate: 0, notifiche: 1, escluse_staff: 1 })
+    expect(battitoOk()).toMatchObject({ escluse_staff: 1 })
+  })
+
+  it('ogni tipo della coda a un admin con un dispositivo parte in push', async () => {
+    const ADMIN = { role: 'admin', ruolo: 'admin' }
+    h.state.queues = {
+      notifiche: [
+        { data: TIPI_AVVISO_CODA.map((t) => riga(`n-${t}`, 'u-admin', t, ADMIN)), error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [{ data: [subWeb('s-admin', 'u-admin')], error: null }],
+    }
+    const body = await (await POST(req('test-secret'))).json()
+    expect(TIPI_AVVISO_CODA.length).toBeGreaterThan(0)
+    expect(push.sendPush).toHaveBeenCalledTimes(TIPI_AVVISO_CODA.length)
+    expect(body.data).toMatchObject({ inviate: TIPI_AVVISO_CODA.length, escluse_staff: 0 })
+  })
+
+  it('una segreteria SENZA dispositivi: la riga si marca come sempre e non si conta fra le escluse', async () => {
+    // Si contano le push non portate per scelta, non le righe dello staff.
+    h.state.queues = {
+      notifiche: [
+        { data: [riga('n-onb', 'u-segr', 'onboarding_completato', SEGRETERIA)], error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [{ data: [], error: null }],
+    }
+    const body = await (await POST(req('test-secret'))).json()
+    expect(push.sendPush).not.toHaveBeenCalled()
+    expect(idsMarcati()).toEqual(['n-onb'])
+    expect(body.data).toMatchObject({ notifiche: 1, escluse_staff: 0 })
+    expect(battitoOk()).toMatchObject({ escluse_staff: 0 })
+  })
+
+  // Tutti e quattro i ruoli dello staff, uno per uno: togliere un ruolo dall'elenco (l'admin è
+  // l'iscritto più probabile) deve diventare rosso, non passare coperto dagli altri tre.
+  it.each(['admin', 'coordinator', 'segreteria', 'cuoca'])(
+    '%s con un dispositivo web: un tipo fuori dalla coda non parte, si marca e si conta',
+    async (ruolo) => {
+      h.state.queues = {
+        notifiche: [
+          { data: [riga('n-onb', 'u-staff', 'onboarding_completato', { role: ruolo, ruolo })], error: null },
+          { data: null, error: null }, // update
+        ],
+        push_subscriptions: [{ data: [subWeb('s-staff', 'u-staff')], error: null }],
+      }
+      const body = await (await POST(req('test-secret'))).json()
+      expect(push.sendPush).not.toHaveBeenCalled()
+      expect(idsMarcati()).toEqual(['n-onb'])
+      expect(body.data).toMatchObject({ inviate: 0, notifiche: 1, escluse_staff: 1 })
+      expect(battitoOk()).toMatchObject({ escluse_staff: 1 })
+    },
+  )
+
+  // Chi non è né staff né genitore: il docente (67 iscritti misurati il 24/09) riceve tutto
+  // come prima. Un filtro scritto come «tutti tranne il genitore» gli toglierebbe la push in
+  // silenzio: qui diventa rosso.
+  it('un docente con un dispositivo web riceve in push anche i tipi fuori dalla coda', async () => {
+    h.state.queues = {
+      notifiche: [
+        { data: [riga('n-chat', 'u-doc', 'chat_docente', { role: 'educator', ruolo: 'educator' })], error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [{ data: [subWeb('s-doc', 'u-doc')], error: null }],
+    }
+    const body = await (await POST(req('test-secret'))).json()
+    expect(push.sendPush).toHaveBeenCalledTimes(1)
+    expect((push.sendPush.mock.calls[0][1] as { title: string }).title).toBe('titolo-n-chat')
+    expect(idsMarcati()).toEqual(['n-chat'])
+    expect(body.data).toMatchObject({ inviate: 1, notifiche: 1, escluse_staff: 0 })
+    expect(battitoOk()).toMatchObject({ escluse_staff: 0 })
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IL FILTRO QUI SOPRA VEDE SOLO LE PUSH CHE PASSANO DI QUI. Un modulo che chiama
+// `sendPush` o `sendNativePush` da sé, sui dispositivi dello staff, lo scavalca: fino
+// al giro 2 della 2c lo faceva l'alert allergie della mensa (nome del bambino e
+// allergeni nel corpo, a admin, coordinator, segreteria e cuoca). Questo lock tiene
+// il dispatch unico canale: chi importa i due invii da `src/lib/push/` è il dispatch,
+// più `src/lib/mensa/notify.ts` per il solo saldo basso, che va ai genitori.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('push allo staff: il dispatch è l\'unico canale (consegna 2c, giro 2)', () => {
+  const RADICE = join(__dirname, '..', '..')
+  const SRC = join(RADICE, 'src')
+  function sorgenti(dir: string): string[] {
+    const out: string[] = []
+    for (const nome of readdirSync(dir)) {
+      const p = join(dir, nome)
+      if (statSync(p).isDirectory()) out.push(...sorgenti(p))
+      else if (/\.(ts|tsx)$/.test(nome)) out.push(p)
+    }
+    return out
+  }
+  // Un import (statico o dinamico) di uno dei due invii dai moduli della push. Un commento che
+  // nomina `sendPush` fra apici inversi non è un import, e non conta.
+  const IMPORTA_INVIO =
+    /import\s*\{[^}]*\b(?:sendPush|sendNativePush)\b[^}]*\}\s*from\s*['"](?:@\/lib\/push\/|\.{1,2}\/)[^'"]*push['"]|import\(\s*['"]@\/lib\/push\/(?:web|native)-push['"]\s*\)/
+
+  it('solo il dispatch e il saldo basso della mensa importano `sendPush`/`sendNativePush`', () => {
+    const file = sorgenti(SRC)
+    // Un lock che scansiona zero file è verde per niente.
+    expect(file.length).toBeGreaterThan(500)
+    const chiImporta = file
+      .map((f) => relative(RADICE, f).split(sep).join('/'))
+      .filter((r) => !r.startsWith('src/lib/push/'))
+      .filter((r) => IMPORTA_INVIO.test(readFileSync(join(RADICE, r), 'utf8')))
+      .sort()
+    expect(chiImporta).toEqual(['src/app/api/push/dispatch/route.ts', 'src/lib/mensa/notify.ts'])
+  })
+
+  it('in `mensa/notify.ts` c\'è UNA chiamata a `sendPush`, quella del saldo basso ai genitori', () => {
+    const testo = readFileSync(join(SRC, 'lib', 'mensa', 'notify.ts'), 'utf8')
+    expect(testo.match(/\bsendPush\(/g) ?? []).toHaveLength(1)
+    const inizioSaldo = testo.indexOf('export async function notificaSaldoBasso')
+    expect(inizioSaldo).toBeGreaterThan(0)
+    expect(testo.indexOf('sendPush(')).toBeGreaterThan(inizioSaldo)
   })
 })

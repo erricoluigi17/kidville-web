@@ -10,8 +10,19 @@ import { formattaIstante } from '@/i18n/config'
 
 const PORTATA_LABEL: Record<string, string> = { primo: 'primo', secondo: 'secondo', contorno: 'contorno', frutta: 'frutta' }
 
-// Invia una notifica in-app a una lista di utenti e prova il push immediato.
-// Best-effort: gli errori non bloccano il chiamante.
+// Invia una notifica in-app a una lista di utenti. Best-effort: gli errori non
+// bloccano il chiamante.
+//
+// LA PUSH NON PARTE DA QUI, LA PORTA IL DISPATCH (consegna 2c della coda fatture).
+// La riga nasce pendente (`push_inviata_il` e `invio_programmato_il` nulli) e
+// `notifiche-dispatch` la spedisce entro 5 minuti ai docenti, sul web e sull'app
+// nativa. Allo staff (admin, coordinator, segreteria, cuoca) la push porta solo
+// gli avvisi della coda fatture e lo scarto SdI: questo alert resta nella sua
+// campanella. Qui c'era un `sendPush` diretto su ogni dispositivo dei destinatari,
+// senza guardare il ruolo: col pulsante della «Coda fatture» lo staff può avere un
+// dispositivo web, e nome del bambino e allergeni sarebbero finiti sulla sua
+// schermata di blocco scavalcando quel filtro. In più era un doppione: il dispatch
+// rispediva comunque la stessa riga, rimasta pendente, a chi l'aveva già ricevuta.
 async function inviaNotifiche(
   supabase: SupabaseClient,
   utenti: string[],
@@ -25,8 +36,7 @@ async function inviaNotifiche(
     }))
   )
   // PostgREST non lancia: ritorna `{ error }`. Senza questo controllo l'insert
-  // poteva fallire e la funzione proseguiva verso il push come se nulla fosse —
-  // e il chiamante rispondeva comunque «inviata».
+  // poteva fallire in silenzio — e il chiamante rispondeva comunque «inviata».
   if (error) {
     logEvento('mensa', 'error', {
       operazione: 'mensa/notify:inviaNotifiche',
@@ -34,17 +44,6 @@ async function inviaNotifiche(
       tipo: n.tipo,
       n: utenti.length,
     }, error)
-  }
-  const { data: subs } = await supabase
-    .from('push_subscriptions')
-    .select('endpoint, p256dh, auth, utente_id')
-    .in('utente_id', utenti)
-  for (const s of subs ?? []) {
-    const res = await sendPush(
-      { endpoint: s.endpoint as string, p256dh: s.p256dh as string, auth: s.auth as string },
-      { title: n.titolo, body: n.corpo, url: n.link, tag: n.tipo }
-    )
-    if (res.gone) await supabase.from('push_subscriptions').delete().eq('endpoint', s.endpoint)
   }
 }
 

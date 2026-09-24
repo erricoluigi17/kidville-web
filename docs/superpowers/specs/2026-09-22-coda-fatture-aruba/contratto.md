@@ -657,6 +657,8 @@ Evento `anomalia` e log `anomalia` (error, distinto solo per tipo) si scrivono q
 
 ## 14. Notifiche — un solo meccanismo
 
+> **Riallineamento 2c (24/09).** Per il nucleo valgono `nucleo.md` §6 e `consegna-2c-notifiche.md` §1.5: niente outbox, tipi fuori catalogo, segni sulle voci e sulla riga di stato, scarto SdI allo staff della sede com'era. Questa sezione resta il riferimento del piano completo.
+
 1. **In SQL**, nella stessa transazione del fatto, l'avviso entra in `fatture_coda_avvisi` (§8.4). `chiave_dedup` UNIQUE = un avviso per evento. **(v4)** Un fatto, un avviso (S44): l'anomalia del fatto sta dentro l'avviso della voce; la fine del gruppo si attacca all'avviso in attesa (S45). Gli errori senza anomalia si aggregano per gruppo finché l'avviso non è preso.
 2. **`spedisciAvvisiCoda()`**:
    1. `fatture_coda_avvisi_prendi(token, limite)`;

@@ -6,7 +6,14 @@ import { Bell, BellOff } from 'lucide-react';
 import { isNativeApp, registerNativePush, unregisterNativePush } from '@/lib/push/native-register';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
-interface Props { userId: string }
+interface Props {
+    userId: string;
+    /**
+     * I testi del pulsante per chi non è un genitore (consegna 2c: la pagina «Coda fatture»
+     * dello staff). Assente → i testi dei promemoria pagamenti, come sempre.
+     */
+    etichette?: { attiva: string; attive: string };
+}
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -17,7 +24,7 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
     return arr;
 }
 
-export function PushOptIn({ userId }: Props) {
+export function PushOptIn({ userId, etichette }: Props) {
     const t = useTranslations('pagamenti');
     // Nella shell nativa la push non usa il service worker: bottone sempre disponibile.
     // Lazy initializer (non setState in effect) per non violare react-hooks set-state-in-effect.
@@ -101,7 +108,7 @@ export function PushOptIn({ userId }: Props) {
             className={`flex items-center gap-2 px-4 py-2 rounded-full font-maven text-sm font-bold disabled:opacity-50 ${subscribed ? 'bg-kidville-green text-white' : 'border-2 border-kidville-green text-kidville-green'}`}
         >
             {subscribed ? <Bell size={15} /> : <BellOff size={15} />}
-            {subscribed ? t('promemoriaAttivi') : t('attivaPromemoria')}
+            {subscribed ? (etichette?.attive ?? t('promemoriaAttivi')) : (etichette?.attiva ?? t('attivaPromemoria'))}
         </button>
     );
 }

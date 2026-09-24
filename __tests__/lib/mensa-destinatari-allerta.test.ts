@@ -28,7 +28,8 @@ vi.mock('@/lib/logging/logger', () => ({
   logErrore: vi.fn(),
   logOk: vi.fn(),
 }))
-vi.mock('@/lib/push/web-push', () => ({ sendPush: vi.fn(async () => ({ gone: false })) }))
+const sendPush = vi.fn(async () => ({ gone: false }))
+vi.mock('@/lib/push/web-push', () => ({ sendPush: (...a: unknown[]) => sendPush(...(a as [])) }))
 vi.mock('@/lib/mensa/allergeni', () => ({ allergeneLabel: (a: string) => a }))
 vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: vi.fn(async () => true) }))
 // La maestra della sezione del bambino: mappata su 'maestra1'.
@@ -69,6 +70,7 @@ const opts = (scuolaId: string) => ({
 
 beforeEach(() => {
   logEvento.mockClear()
+  sendPush.mockClear()
   docentiDiSezione.mockResolvedValue(['maestra1'])
 })
 
@@ -137,5 +139,39 @@ describe('notificaAllergie — «inviata» deve voler dire RICEVUTA', () => {
     expect(riga?.[1]).toBe('error')
     // Solo uuid e metadati: mai il nome del bambino, che nel CORPO dell'alert c'è.
     expect(JSON.stringify(riga?.[2])).not.toMatch(/Bambino/)
+  })
+})
+
+describe('notificaAllergie — la push la porta SOLO il dispatch (consegna 2c della coda fatture)', () => {
+  // Il dispatch (`/api/push/dispatch`) allo staff porta in push solo gli avvisi della coda
+  // fatture e lo scarto SdI: il resto resta nella campanella. Il corpo di questo alert porta
+  // nome del bambino e allergeni. Fino alla 2c `inviaNotifiche` chiamava `sendPush` da sé su
+  // ogni `push_subscriptions` dei destinatari, senza guardare il ruolo: col pulsante della
+  // «Coda fatture» lo staff può avere un dispositivo web, e l'alert sarebbe arrivato sulla
+  // sua schermata di blocco scavalcando il filtro. Ora la riga nasce pendente e basta: il
+  // dispatch la porta ai docenti entro 5 minuti (anche sull'app nativa) e allo staff no.
+  it('staff e maestra con un dispositivo web ⇒ `sendPush` MAI chiamata, righe lasciate pendenti al dispatch', async () => {
+    const scritture: Scrittura[] = []
+    const stato = db()
+    stato.push_subscriptions = [
+      { id: 'sub-segr', utente_id: 'segr1', endpoint: 'https://push.example.invalid/segr', p256dh: 'p', auth: 'a', platform: 'web' },
+      { id: 'sub-cuoca', utente_id: 'cuoca1', endpoint: 'https://push.example.invalid/cuoca', p256dh: 'p', auth: 'a', platform: 'web' },
+      { id: 'sub-maestra', utente_id: 'maestra1', endpoint: 'https://push.example.invalid/maestra', p256dh: 'p', auth: 'a', platform: 'web' },
+    ]
+
+    const res = await notificaAllergie(creaFintoSupabase(stato, [], { scritture }), opts(SEDE_A))
+
+    expect(res).toEqual({ inviata: true })
+    expect(sendPush).not.toHaveBeenCalled()
+    // Pendenti: nessuna marcatura di invio e nessun buffer, così il dispatch le vede al giro dopo.
+    expect(stato.notifiche).toHaveLength(5)
+    for (const r of stato.notifiche) {
+      expect(r.push_inviata_il ?? null).toBeNull()
+      expect(r.invio_programmato_il ?? null).toBeNull()
+    }
+    expect(scritture.filter((s) => s.tabella === 'notifiche' && s.operazione !== 'insert')).toHaveLength(0)
+    // I dispositivi restano dove sono: nessuno li tocca da qui.
+    expect(scritture.filter((s) => s.tabella === 'push_subscriptions')).toHaveLength(0)
+    expect(stato.push_subscriptions).toHaveLength(3)
   })
 })

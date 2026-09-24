@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { eseguiGiroCoda, type EsitoGiro } from '@/lib/fatture-coda/giro'
+import { spedisciAvvisiCoda } from '@/lib/fatture-coda/avvisi'
 
 /**
  * POST /api/pagamenti/fattura/coda/giro — un giro del lavoratore della coda fatture.
@@ -96,8 +98,9 @@ export const POST = withRoute('pagamenti/fattura/coda/giro:POST', async (request
   if ('response' in q) return q.response
 
   let giro: EsitoGiro
+  let supabase: SupabaseClient
   try {
-    const supabase = await createAdminClient()
+    supabase = await createAdminClient()
     giro = await eseguiGiroCoda(supabase)
   } catch (err) {
     // Il giro non lancia per progetto; se succede lo stesso, il battito c'è comunque —
@@ -110,6 +113,12 @@ export const POST = withRoute('pagamenti/fattura/coda/giro:POST', async (request
   // errori, nessuna riga non distingue «la coda è vuota» da «il cron non parte più».
   const fallito = giro.esito === 'errore'
   battito(giro.esito, t0, giro)
+
+  // Consegna 2c — gli avvisi della coda (decisioni 12 e 21), dopo il battito e in OGNI esito del
+  // giro: anche con «niente da fare» il bidello può aver chiuso una voce, una «Togli» può aver
+  // finito un gruppo, un admin può aver sospeso. Non lancia e non cambia la risposta; oltre
+  // `LIMITE_AVVISI_MS` rinvia al giro dopo, e i fatti restano da avvisare.
+  await spedisciAvvisiCoda(supabase, { operazione: JOB, inizioMs: t0 })
 
   return NextResponse.json(
     { ok: !fallito, esito: giro.esito, emesse: giro.emesse, errori: giro.errori, riprova: giro.riprova },

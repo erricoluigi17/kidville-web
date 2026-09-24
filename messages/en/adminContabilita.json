@@ -1171,6 +1171,8 @@
   "reconAnnulloParziale": "{riaperti, plural, one {# bank transfer is back in the queue} other {# bank transfers are back in the queue}}, {falliti, plural, one {# was not reopened} other {# were not reopened}}: check the register filtered by this import.",
   "reconAnnulloFattureVive": "Invoices still valid on {n, plural, one {# movement} other {# movements}}: {numeri}. They stay issued and must be cancelled separately.",
   "reconAvvisiTroncati": "Notices were sent only for {n, plural, one {the first movement} other {the first # movements}} of this import: the families of the remaining rows were not notified, and reopening the summary does not recover them. Open the register filtered by this import.",
+  "codaFatturePushAttiva": "Turn on queue notifications on this device",
+  "codaFatturePushAttive": "Queue notifications on for this device",
   "codaFatture": {
     "titolo": "Invoice queue",
     "sottotitolo": "Queued invoices send themselves: you can close the page, sending continues.",

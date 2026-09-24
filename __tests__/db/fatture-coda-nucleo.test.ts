@@ -7,9 +7,12 @@
  * «Togli» azzera anche `esito_codice` ed `esito_messaggio`), trovata per suffisso, e da
  * quella della consegna 2b `<version>_fatture_coda_chiudi_emessa_azzera_messaggio.sql`
  * (D13: la chiusura «emessa» azzera sempre `esito_messaggio`), trovata allo stesso modo,
- * e infine dalla correzione del 24/09 `<version>_fatture_coda_distanza_accessi.sql`
+ * poi dalla correzione del 24/09 `<version>_fatture_coda_distanza_accessi.sql`
  * (65 s fra due accessi ad Aruba della coda: `prendi` non consegna prima, e `prendi` e
- * `rilascia` timbrano `ultimo_accesso_il`), trovata allo stesso modo.
+ * `rilascia` timbrano `ultimo_accesso_il`), trovata allo stesso modo, e infine dagli
+ * avvisi della consegna 2c `<version>_fatture_coda_avvisi.sql` (quattro colonne-segno, la
+ * linea di partenza e `fatture_coda_avvisi_prendi`: i fatti nuovi da avvisare, segnati
+ * nella stessa transazione), trovata allo stesso modo.
  *
  * Stesso impianto di `__tests__/lib/video-job-next.test.ts`: i ruoli di Supabase
  * ricostruiti a mano, le sole tabelle toccate dalla migrazione (`schools`, `pagamenti`,
@@ -36,6 +39,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
 import { senzaCommenti, toccaLaRls, toccaLeFkUtenti, toccaUnUnico } from '../architecture/soglia-fotografia'
+import { componiAvvisi, zFattiCoda } from '@/lib/fatture-coda/avvisi-testi'
 
 const NOME_FILE = '20260923102831_fatture_coda_nucleo.sql'
 const MIGRAZIONE = readFileSync(join(process.cwd(), 'supabase/migrations', NOME_FILE), 'utf8')
@@ -55,6 +59,11 @@ const SUFFISSO_ACCESSI = '_fatture_coda_distanza_accessi.sql'
 const TROVATI_ACCESSI = readdirSync(CARTELLA_MIGRAZIONI).filter((nome) => nome.endsWith(SUFFISSO_ACCESSI))
 const NOME_ACCESSI = TROVATI_ACCESSI[0] ?? ''
 const DISTANZA_ACCESSI = NOME_ACCESSI ? readFileSync(join(CARTELLA_MIGRAZIONI, NOME_ACCESSI), 'utf8') : ''
+
+const SUFFISSO_AVVISI = '_fatture_coda_avvisi.sql'
+const TROVATI_AVVISI = readdirSync(CARTELLA_MIGRAZIONI).filter((nome) => nome.endsWith(SUFFISSO_AVVISI))
+const NOME_AVVISI = TROVATI_AVVISI[0] ?? ''
+const AVVISI = NOME_AVVISI ? readFileSync(join(CARTELLA_MIGRAZIONI, NOME_AVVISI), 'utf8') : ''
 
 const SEDE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const SEDE_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
@@ -88,7 +97,29 @@ type Voce = {
   prestito_scade_il: Date | null
   concluso_il: Date | null
   in_attesa_dal: Date
+  /** Consegna 2c: la `presa_il` del tentativo già avvisato come errore / come fine del gruppo. */
+  avviso_errore_presa?: Date | null
+  avviso_fine_presa?: Date | null
 }
+
+/** L'uscita di `fatture_coda_avvisi_prendi` (consegna 2c), come la restituisce PGlite. */
+type FattiSql = {
+  errori: { gruppo_id: string; creato_da: string; codice: string }[]
+  fini: {
+    gruppo_id: string
+    creato_da: string
+    accodata_il: string
+    voci: number
+    emesse: number
+    tolte: number
+    errori: Record<string, number>
+  }[]
+  pausa: { fino_a: string } | null
+  sospensione: { evento: 'sospesa' | 'ripresa'; il: string | null; da: string | null } | null
+  in_attesa: string[]
+}
+
+const NESSUN_FATTO: FattiSql = { errori: [], fini: [], pausa: null, sospensione: null, in_attesa: [] }
 
 type EsitoAccoda = { gruppo_id: string; accodate: number; gia_in_coda: string[] }
 
@@ -293,6 +324,14 @@ async function secondiDallAccesso(): Promise<number | null> {
   return rows[0].s
 }
 
+/** I fatti nuovi da avvisare (consegna 2c): la funzione li segna mentre li restituisce. */
+async function avvisiPresi(limite = 200): Promise<FattiSql> {
+  const { rows } = await db.query<{ r: FattiSql }>(`SELECT public.fatture_coda_avvisi_prendi($1::int) AS r`, [
+    limite,
+  ])
+  return rows[0].r
+}
+
 /** L'errore che l'istruzione solleva, o null se passa. */
 async function erroreDi(promessa: Promise<unknown>): Promise<{ code?: string; message: string } | null> {
   try {
@@ -314,6 +353,7 @@ beforeEach(async () => {
   if (TOGLI_AZZERA) await db.exec(TOGLI_AZZERA)
   if (CHIUDI_AZZERA) await db.exec(CHIUDI_AZZERA)
   if (DISTANZA_ACCESSI) await db.exec(DISTANZA_ACCESSI)
+  if (AVVISI) await db.exec(AVVISI)
 })
 
 afterEach(async () => {
@@ -379,6 +419,7 @@ describe('fatture_coda · forma dello schema', () => {
     // I NOMI dei parametri sono contratto: PostgREST passa gli argomenti per nome.
     expect(rows.map((r) => [r.nome, r.argomenti, r.risultato])).toEqual([
       ['fatture_coda_accoda', 'p_voci jsonb, p_creato_da uuid, p_urgente boolean', 'jsonb'],
+      ['fatture_coda_avvisi_prendi', 'p_limite integer', 'jsonb'],
       ['fatture_coda_bidello', '', 'integer'],
       ['fatture_coda_chiudi', 'p_id uuid, p_token uuid, p_esito text, p_codice text, p_messaggio text', 'void'],
       ['fatture_coda_prendi', 'p_token uuid, p_max integer, p_prestito_s integer', 'SETOF fatture_coda'],
@@ -412,10 +453,12 @@ describe('fatture_coda · forma dello schema', () => {
 
     await expect(db.exec(MIGRAZIONE)).resolves.toBeDefined()
     // Rieseguire il solo nucleo rimette la togli e la chiudi vecchie (CREATE OR REPLACE):
-    // l'ordine vero è nucleo → 2a → 2b → 24/09 (la prendi e la rilascia della distanza).
+    // l'ordine vero è nucleo → 2a → 2b → 24/09 (la prendi e la rilascia della distanza) → 2c
+    // (gli avvisi: le colonne ci sono già, e la linea di partenza non risegna niente).
     if (TOGLI_AZZERA) await expect(db.exec(TOGLI_AZZERA)).resolves.toBeDefined()
     if (CHIUDI_AZZERA) await expect(db.exec(CHIUDI_AZZERA)).resolves.toBeDefined()
     if (DISTANZA_ACCESSI) await expect(db.exec(DISTANZA_ACCESSI)).resolves.toBeDefined()
+    if (AVVISI) await expect(db.exec(AVVISI)).resolves.toBeDefined()
 
     expect(await voci()).toHaveLength(1)
     const s = await stato()
@@ -1351,6 +1394,492 @@ describe('fatture_coda_tick_http', () => {
 })
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Consegna 2c: gli avvisi. La funzione dice QUALI fatti sono nuovi e li segna nella
+// stessa transazione; i testi li scrive `src/lib/fatture-coda/avvisi-testi.ts`.
+// ⚠️ Dal 24/09 `prendi` non consegna voci entro 65 s dall'ultimo accesso: fra una presa e
+// l'altra dello stesso caso serve `dimenticaAccesso()`, altrimenti la seconda presa torna
+// vuota e il caso cade con un TypeError che non dice perché.
+
+/**
+ * Tre emesse e poi un errore, in un gruppo solo, con `aggiornato_il` fissato a mano (le
+ * emesse PIÙ VECCHIE dell'errore): l'ordine della CTE `nuovi` non deve dipendere dalla
+ * risoluzione dell'orologio né dal pareggio sugli id. Restituisce il gruppo.
+ */
+async function emessePoiUnErrore(): Promise<string> {
+  const n4 = [1, 2, 3, 4]
+  for (const n of n4) await nuovoPagamento(n)
+  const { gruppo_id } = await accoda(n4.map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+  const prese = await prendi(TOKEN_A, 4)
+  expect(numeri(prese)).toEqual(n4)
+  for (const v of prese.slice(0, 3)) await chiudi(v.id, TOKEN_A, 'emessa')
+  await chiudi(prese[3].id, TOKEN_A, 'errore', 'scarto_aruba')
+  await db.exec(`
+    UPDATE public.fatture_coda
+       SET aggiornato_il = now() - make_interval(mins => 10 - (right(pagamento_id::text, 1))::int)
+  `)
+  const { rows } = await db.query<{ n: number; stato: string }>(
+    `SELECT (right(pagamento_id::text, 1))::int AS n, stato FROM public.fatture_coda ORDER BY aggiornato_il, id`,
+  )
+  expect(rows).toEqual([
+    { n: 1, stato: 'emessa' },
+    { n: 2, stato: 'emessa' },
+    { n: 3, stato: 'emessa' },
+    { n: 4, stato: 'errore' },
+  ])
+  return gruppo_id
+}
+
+describe('fatture_coda_avvisi_prendi — consegna 2c', () => {
+  it('guardie: un solo file, dopo la correzione del 24/09, nessuna guardia delle fotografie, niente testo libero, le fini prima degli errori', () => {
+    expect(TROVATI_AVVISI).toHaveLength(1)
+    const version = NOME_AVVISI.slice(0, 14)
+    expect(version).toMatch(/^\d{14}$/)
+    expect(version > NOME_ACCESSI.slice(0, 14)).toBe(true)
+    expect(version <= new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)).toBe(true)
+
+    expect(AVVISI).not.toBe('')
+    expect(toccaLaRls(AVVISI)).toBe(false)
+    expect(toccaUnUnico(AVVISI)).toBe(false)
+    expect(toccaLeFkUtenti(AVVISI)).toBe(false)
+    expect(senzaCommenti(AVVISI)).not.toMatch(/scuola_id/i)
+    // Nessun testo libero della voce esce dalla funzione: né il messaggio d'esito, né la
+    // causale, né l'intestatario (dati di famiglie).
+    expect(senzaCommenti(AVVISI)).not.toMatch(/esito_messaggio|causale_manuale|intestatario_scelto/i)
+    expect(AVVISI).toContain(
+      'REVOKE ALL ON FUNCTION public.fatture_coda_avvisi_prendi(integer) FROM PUBLIC, anon, authenticated;',
+    )
+
+    // Il motivo della pausa è un letterale scritto in due posti: se divergono, la pausa per
+    // 429 non si avvisa più, col gate verde.
+    expect(AVVISI).toContain("pausa_motivo = 'aruba-429'")
+    const giro = readFileSync(join(process.cwd(), 'src/lib/fatture-coda/giro.ts'), 'utf8')
+    expect(giro).toContain("motivo: 'aruba-429' }")
+
+    // La concorrenza non si prova su PGlite (una connessione sola): le sue difese si
+    // guardano nel testo, SENZA i commenti `--`, perché `senzaCommenti` non entra nel
+    // corpo `$$` e una riga commentata lì dentro resterebbe «presente».
+    const codice = AVVISI.replace(/--[^\n]*/g, '')
+    // Le fini PRIMA degli errori.
+    const fini = codice.indexOf('WITH finiti AS')
+    const errori = codice.indexOf('WITH nuovi AS')
+    expect(fini).toBeGreaterThan(-1)
+    expect(errori).toBeGreaterThan(-1)
+    expect(fini).toBeLessThan(errori)
+    // Il lucchetto, prima delle fini: è l'UNICA difesa delle fini fra due chiamate
+    // insieme (giro e sospensione, o cron e sveglia). La UPDATE delle fini non
+    // ricontrolla il segno e `conti` legge la fotografia di prima: senza lucchetto le
+    // due chiamate restituirebbero la stessa fine, e partirebbero due «finito».
+    const lucchetto = codice.indexOf("PERFORM pg_advisory_xact_lock(hashtext('fatture_coda_avvisi'));")
+    expect(lucchetto).toBeGreaterThan(-1)
+    expect(lucchetto).toBeLessThan(fini)
+    // Il ricontrollo nella UPDATE degli errori: una «Rimetti» o un'altra chiamata
+    // arrivate fra la fotografia di `nuovi` e la scrittura escludono la voce.
+    expect(codice).toMatch(
+      /WHERE c\.id = n\.id\s+AND c\.stato = 'errore'\s+AND c\.avviso_errore_presa IS DISTINCT FROM c\.presa_il\s+RETURNING/,
+    )
+  })
+
+  it('A · due giri non avvisano due volte: l’errore una volta, la fine una volta', async () => {
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    const { gruppo_id } = await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+
+    const [presa] = await prendi(TOKEN_A, 1)
+    expect(presa.avviso_errore_presa).toBeNull()
+    await chiudi(presa.id, TOKEN_A, 'errore', 'scarto_aruba', 'Messaggio finto')
+
+    const primo = await avvisiPresi()
+    expect(primo.errori).toEqual([{ gruppo_id, creato_da: SEGRETERIA, codice: 'scarto_aruba' }])
+    expect(primo.fini).toEqual([]) // l'altra voce è ancora in coda
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+
+    await rilascia(TOKEN_A, 0, null)
+    await dimenticaAccesso()
+    const [seconda] = await prendi(TOKEN_B, 1)
+    await chiudi(seconda.id, TOKEN_B, 'emessa')
+
+    const fine = await avvisiPresi()
+    expect(fine.errori).toEqual([])
+    expect(fine.fini).toHaveLength(1)
+    expect(fine.fini[0]).toMatchObject({
+      gruppo_id,
+      creato_da: SEGRETERIA,
+      voci: 2,
+      emesse: 1,
+      tolte: 0,
+    })
+    // `toMatchObject` confronta a sottoinsieme anche gli oggetti annidati: i conteggi per
+    // codice si controllano ESATTI, o un codice in più (l'emessa contata fra gli errori)
+    // passerebbe.
+    expect(fine.fini[0].errori).toEqual({ scarto_aruba: 1 })
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+  })
+
+  it('B · «Rimetti», poi di nuovo errore: è un tentativo nuovo, e si riavvisa', async () => {
+    await nuovoPagamento(1)
+    const { gruppo_id } = await accoda([{ pagamento_id: pag(1) }])
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'errore', 'esito_incerto')
+
+    const primo = await avvisiPresi()
+    expect(primo.errori).toEqual([{ gruppo_id, creato_da: SEGRETERIA, codice: 'esito_incerto' }])
+    expect(primo.fini).toHaveLength(1)
+
+    expect(await rimetti([voce.id])).toBe(1)
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+
+    await rilascia(TOKEN_A, 0, null)
+    await dimenticaAccesso() // dopo «Rimetti» resta il timbro della presa (N6)
+    const [dinuovo] = await prendi(TOKEN_A, 1)
+    await chiudi(dinuovo.id, TOKEN_A, 'errore', 'scarto_aruba')
+
+    const secondo = await avvisiPresi()
+    expect(secondo.errori).toEqual([{ gruppo_id, creato_da: SEGRETERIA, codice: 'scarto_aruba' }])
+    expect(secondo.fini).toHaveLength(1)
+    expect(secondo.fini[0]).toMatchObject({ gruppo_id, voci: 1, emesse: 0 })
+    expect(secondo.fini[0].errori).toEqual({ scarto_aruba: 1 })
+  })
+
+  it('C · un gruppo di sole tolte non finisce; una «Togli» dopo la fine non la riapre', async () => {
+    for (const n of [1, 2, 3, 4]) await nuovoPagamento(n)
+    await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const { gruppo_id } = await accoda([3, 4].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    expect(await togli([(await voceDi(1)).id, (await voceDi(2)).id])).toBe(2)
+
+    const prese = await prendi(TOKEN_A, 2)
+    expect(numeri(prese)).toEqual([3, 4])
+    await chiudi(prese[0].id, TOKEN_A, 'emessa')
+    await chiudi(prese[1].id, TOKEN_A, 'errore', 'scarto_aruba')
+
+    const fatti = await avvisiPresi()
+    expect(fatti.fini).toHaveLength(1)
+    expect(fatti.fini[0]).toMatchObject({ gruppo_id, voci: 2, emesse: 1, tolte: 0 })
+    expect(fatti.fini[0].errori).toEqual({ scarto_aruba: 1 })
+    expect(fatti.errori).toEqual([{ gruppo_id, creato_da: SEGRETERIA, codice: 'scarto_aruba' }])
+
+    expect(await togli([prese[1].id])).toBe(1)
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+  })
+
+  it('D · l’errore scritto dal bidello si avvisa, e chiude il gruppo', async () => {
+    await nuovoPagamento(1)
+    const { gruppo_id } = await accoda([{ pagamento_id: pag(1) }])
+    await prendi(TOKEN_A, 1)
+    await db.exec(`
+      UPDATE public.fatture_coda SET prestito_scade_il = now() - interval '1 second'
+      WHERE pagamento_id = '${pag(1)}'
+    `)
+    expect(await bidello()).toBe(1)
+
+    const fatti = await avvisiPresi()
+    expect(fatti.errori).toEqual([{ gruppo_id, creato_da: SEGRETERIA, codice: 'esito_incerto' }])
+    expect(fatti.fini).toHaveLength(1)
+    expect(fatti.fini[0]).toMatchObject({ gruppo_id, voci: 1, emesse: 0 })
+    expect(fatti.fini[0].errori).toEqual({ esito_incerto: 1 })
+  })
+
+  it('E · la pausa per 429 si avvisa una volta, a chi ha voci in attesa', async () => {
+    await nuovoPagamento(1)
+    await accoda([{ pagamento_id: pag(1) }])
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'riprova', 'aruba_429')
+    await rilascia(TOKEN_A, 60, 'aruba-429')
+
+    const fatti = await avvisiPresi()
+    expect(typeof fatti.pausa?.fino_a).toBe('string')
+    expect(new Date(fatti.pausa!.fino_a).getTime()).toBe((await stato()).pausa_fino_a!.getTime())
+    expect(fatti.in_attesa).toEqual([SEGRETERIA])
+    expect(fatti.errori).toEqual([])
+    expect(fatti.fini).toEqual([])
+
+    const dopo = await avvisiPresi()
+    expect(dopo.pausa).toBeNull()
+    expect(dopo).toEqual(NESSUN_FATTO)
+  })
+
+  it('E · la pausa di 15 minuti per esito incerto NON si avvisa', async () => {
+    await rilascia(TOKEN_A, 15, 'esito-incerto')
+    expect((await stato()).pausa_motivo).toBe('esito-incerto')
+    expect((await avvisiPresi()).pausa).toBeNull()
+  })
+
+  it('F · sospensione e ripresa: una volta ciascuna, con chi ha sospeso', async () => {
+    await nuovoPagamento(1)
+    await accoda([{ pagamento_id: pag(1) }])
+
+    await sospendi(true)
+    const sospesa = await avvisiPresi()
+    expect(sospesa.sospensione).toMatchObject({ evento: 'sospesa', da: ADMIN })
+    expect(typeof sospesa.sospensione?.il).toBe('string')
+    expect(sospesa.in_attesa).toEqual([SEGRETERIA])
+
+    await sospendi(true) // di nuovo: il nucleo non azzera l'orologio, e non è un fatto nuovo
+    expect((await avvisiPresi()).sospensione).toBeNull()
+
+    await sospendi(false)
+    const ripresa = await avvisiPresi()
+    expect(ripresa.sospensione).toEqual({ evento: 'ripresa', il: null, da: null })
+    expect(ripresa.in_attesa).toEqual([SEGRETERIA])
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+  })
+
+  it('G · linea di partenza: i fatti di prima della migrazione non si avvisano, quelli nuovi sì, anche rieseguendola', async () => {
+    // Un database SENZA la 2c, come la produzione prima del merge.
+    await db.close()
+    db = new PGlite()
+    await preparaDatabase()
+    await db.exec(MIGRAZIONE)
+    await db.exec(TOGLI_AZZERA)
+    await db.exec(CHIUDI_AZZERA)
+    await db.exec(DISTANZA_ACCESSI)
+
+    for (const n of [1, 2, 3, 5, 6]) await nuovoPagamento(n)
+    await accoda([{ pagamento_id: pag(1) }]) // un gruppo che finirà in errore
+    const inCorso = await accoda([2, 3].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+
+    const [uno] = await prendi(TOKEN_A, 1)
+    expect(numeri([uno])).toEqual([1])
+    await chiudi(uno.id, TOKEN_A, 'errore', 'scarto_aruba')
+    await rilascia(TOKEN_A, 0, null)
+    await dimenticaAccesso()
+    const [due] = await prendi(TOKEN_A, 1)
+    expect(numeri([due])).toEqual([2])
+    await chiudi(due.id, TOKEN_A, 'emessa')
+    await rilascia(TOKEN_A, 0, null)
+
+    // Un secondo gruppo in corso alla migrazione, urgente per passare davanti al 3: una
+    // voce emessa, una in coda. Finirà con una «Togli», cioè SENZA una chiusura nuova.
+    const tolto = await accoda([5, 6].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })), true)
+    await dimenticaAccesso()
+    const [cinque] = await prendi(TOKEN_A, 1)
+    expect(numeri([cinque])).toEqual([5])
+    await chiudi(cinque.id, TOKEN_A, 'emessa')
+    await rilascia(TOKEN_A, 60, 'aruba-429')
+    await sospendi(true)
+
+    // La 2c arriva adesso: niente di quello che è già successo esce.
+    await db.exec(AVVISI)
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+
+    // La ripresa è un fatto nuovo.
+    await sospendi(false)
+    const ripresa = await avvisiPresi()
+    expect(ripresa.sospensione).toEqual({ evento: 'ripresa', il: null, da: null })
+
+    // Il gruppo in corso alla migrazione che finisce con una «Togli» si avvisa: la linea
+    // di partenza (il NOT EXISTS) non ha segnato la sua emessa, e nessuna presa nuova
+    // arriverebbe a riaprire il segno.
+    expect(await togli([(await voceDi(6)).id])).toBe(1)
+    const conTogli = await avvisiPresi()
+    expect(conTogli.errori).toEqual([])
+    expect(conTogli.fini).toHaveLength(1)
+    expect(conTogli.fini[0]).toMatchObject({ gruppo_id: tolto.gruppo_id, voci: 2, emesse: 1, tolte: 1 })
+    expect(conTogli.fini[0].errori).toEqual({})
+
+    // Il gruppo in corso alla migrazione, quando finisce, si avvisa.
+    await db.exec(`UPDATE public.fatture_coda_stato SET pausa_fino_a = now() - interval '1 second' WHERE id = 1`)
+    await dimenticaAccesso()
+    const [tre] = await prendi(TOKEN_A, 1)
+    expect(numeri([tre])).toEqual([3])
+    await chiudi(tre.id, TOKEN_A, 'emessa')
+    await rilascia(TOKEN_A, 0, null)
+    const fine = await avvisiPresi()
+    expect(fine.errori).toEqual([])
+    expect(fine.fini).toHaveLength(1)
+    expect(fine.fini[0]).toMatchObject({ gruppo_id: inCorso.gruppo_id, voci: 2, emesse: 2, tolte: 0 })
+    expect(fine.fini[0].errori).toEqual({})
+
+    // Un errore nuovo, poi la migrazione rieseguita: l'errore esce lo stesso.
+    await nuovoPagamento(4)
+    const nuovo = await accoda([{ pagamento_id: pag(4) }])
+    await dimenticaAccesso()
+    const [quattro] = await prendi(TOKEN_A, 1)
+    await chiudi(quattro.id, TOKEN_A, 'errore', 'non_saldato')
+    await db.exec(AVVISI)
+    const dopo = await avvisiPresi()
+    expect(dopo.errori).toEqual([{ gruppo_id: nuovo.gruppo_id, creato_da: SEGRETERIA, codice: 'non_saldato' }])
+    expect(dopo.fini.map((f) => f.gruppo_id)).toEqual([nuovo.gruppo_id])
+  })
+
+  it('H · il limite: al più p_limite errori per chiamata, il resto alla chiamata dopo; la fine li conta tutti', async () => {
+    const n7 = [1, 2, 3, 4, 5, 6, 7]
+    for (const n of n7) await nuovoPagamento(n)
+    const { gruppo_id } = await accoda(n7.map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const prese = await prendi(TOKEN_A, 7)
+    expect(prese).toHaveLength(7)
+    for (const v of prese) await chiudi(v.id, TOKEN_A, 'errore', 'non_saldato')
+
+    const primo = await avvisiPresi(5)
+    expect(primo.errori).toHaveLength(5)
+    expect(primo.fini).toHaveLength(1)
+    expect(primo.fini[0]).toMatchObject({ gruppo_id, voci: 7, emesse: 0 })
+    expect(primo.fini[0].errori).toEqual({ non_saldato: 7 })
+
+    const secondo = await avvisiPresi(5)
+    expect(secondo.errori).toHaveLength(2)
+    expect(secondo.fini).toEqual([])
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+  })
+
+  it('M · il limite conta solo gli errori: le emesse più vecchie non lo riempiono', async () => {
+    // Senza `c.stato = 'errore'` nella CTE `nuovi`, le emesse (avviso_errore_presa NULL,
+    // presa_il scritta) entrano nel LIMIT in ordine di aggiornato_il, la UPDATE le scarta e
+    // l'errore non esce MAI: niente fattura_coda_errori, niente «da verificare» agli admin.
+    const gruppo_id = await emessePoiUnErrore()
+
+    const primo = await avvisiPresi(2)
+    expect(primo.errori).toEqual([{ gruppo_id, creato_da: SEGRETERIA, codice: 'scarto_aruba' }])
+    expect(primo.fini).toHaveLength(1)
+    expect(primo.fini[0]).toMatchObject({ gruppo_id, voci: 4, emesse: 3, tolte: 0 })
+    expect(primo.fini[0].errori).toEqual({ scarto_aruba: 1 })
+
+    // Le emesse non restano «da avvisare» come errori, e non tornano fuori.
+    expect(await avvisiPresi(2)).toEqual(NESSUN_FATTO)
+    expect(await avvisiPresi(2)).toEqual(NESSUN_FATTO)
+  })
+
+  // J, K, L: i filtri di STATO della funzione. Senza questi casi, togliere 'in_invio' dal
+  // bool_and o da in_attesa, o lo stato dal bool_or, lasciava verdi tutti gli altri.
+  it('J · una voce ancora in invio tiene aperto il gruppo: niente «finito» a conti a metà', async () => {
+    // Il caso reale: la route del giro svegliata a lavoratore occupato, o la sospensione,
+    // chiamano gli avvisi mentre il giro ha ancora una voce del gruppo in mano.
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    const { gruppo_id } = await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const prese = await prendi(TOKEN_A, 2)
+    expect(prese).toHaveLength(2)
+    await chiudi(prese[0].id, TOKEN_A, 'emessa')
+    expect((await voceDi(2)).stato).toBe('in_invio')
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+
+    await chiudi(prese[1].id, TOKEN_A, 'emessa')
+    const fine = await avvisiPresi()
+    expect(fine.fini).toHaveLength(1)
+    expect(fine.fini[0]).toMatchObject({ gruppo_id, voci: 2, emesse: 2, tolte: 0 })
+    expect(fine.fini[0].errori).toEqual({})
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+  })
+
+  it('K · in_attesa: chi ha voci in coda o in invio, non chi le ha tutte chiuse', async () => {
+    const CHIUSO = 'c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2' // un accodante non admin, voci tutte chiuse
+    for (const n of [1, 2, 3]) await nuovoPagamento(n)
+    await accoda([{ pagamento_id: pag(1) }], false, CHIUSO)
+    const [uno] = await prendi(TOKEN_A, 1)
+    await chiudi(uno.id, TOKEN_A, 'emessa')
+    await rilascia(TOKEN_A, 0, null)
+
+    await accoda([{ pagamento_id: pag(2) }], false, SEGRETERIA)
+    await dimenticaAccesso()
+    const [due] = await prendi(TOKEN_B, 1)
+    expect(numeri([due])).toEqual([2])
+    expect((await voceDi(2)).stato).toBe('in_invio')
+    await accoda([{ pagamento_id: pag(3) }], false, ADMIN) // in coda
+
+    await sospendi(true)
+    const fatti = await avvisiPresi()
+    expect(fatti.sospensione).toMatchObject({ evento: 'sospesa', da: ADMIN })
+    expect(fatti.in_attesa).toEqual([SEGRETERIA, ADMIN].sort())
+  })
+
+  it('L · una voce tolta DOPO un errore non riapre il gruppo a ogni chiamata, e non conta fra gli errori', async () => {
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    const { gruppo_id } = await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const [x] = await prendi(TOKEN_A, 1)
+    await chiudi(x.id, TOKEN_A, 'errore', 'scarto_aruba')
+    expect(await togli([x.id])).toBe(1) // la tolta porta con sé la presa_il scritta
+    expect((await voceDi(1)).presa_il).not.toBeNull()
+    await rilascia(TOKEN_A, 0, null)
+    await dimenticaAccesso()
+    const [y] = await prendi(TOKEN_A, 1)
+    await chiudi(y.id, TOKEN_A, 'emessa')
+
+    const fine = await avvisiPresi()
+    expect(fine.fini).toHaveLength(1)
+    expect(fine.fini[0]).toMatchObject({ gruppo_id, voci: 2, emesse: 1, tolte: 1 })
+    expect(fine.fini[0].errori).toEqual({})
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+    expect(await avvisiPresi()).toEqual(NESSUN_FATTO)
+  })
+
+  it('I · niente dati personali: né il messaggio, né la causale, né l’intestatario; chiavi esatte', async () => {
+    await nuovoPagamento(1)
+    await accoda([
+      {
+        pagamento_id: pag(1),
+        causale_manuale: 'Causale finta',
+        intestatario_scelto: { adult_id: '99999999-9999-4999-8999-999999999999', ruolo: 'finto' },
+      },
+    ])
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'errore', 'scarto_aruba', 'Messaggio finto')
+
+    const fatti = await avvisiPresi()
+    const testo = JSON.stringify(fatti)
+    expect(testo).not.toContain('Messaggio finto')
+    expect(testo).not.toContain('Causale finta')
+    expect(testo).not.toContain('99999999-9999')
+    expect(fatti.errori).toHaveLength(1)
+    expect(fatti.fini).toHaveLength(1)
+    expect(Object.keys(fatti.errori[0]).sort()).toEqual(['codice', 'creato_da', 'gruppo_id'])
+    expect(Object.keys(fatti.fini[0]).sort()).toEqual([
+      'accodata_il',
+      'creato_da',
+      'emesse',
+      'errori',
+      'gruppo_id',
+      'tolte',
+      'voci',
+    ])
+    expect(Object.keys(fatti).sort()).toEqual(['errori', 'fini', 'in_attesa', 'pausa', 'sospensione'])
+  })
+
+  it('contratto SQL → testi: l’uscita vera passa lo schema e diventa gli avvisi attesi, una volta sola', async () => {
+    const ALTRO_ADMIN = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd2'
+    const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+
+    // Due voci della segreteria in un gruppo (un'emessa, un esito incerto col messaggio) e una
+    // dell'admin, da sola, chiusa come partita non registrata. Una presa sola.
+    for (const n of [1, 2, 3]) await nuovoPagamento(n)
+    await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    await accoda([{ pagamento_id: pag(3) }], false, ADMIN)
+    const prese = await prendi(TOKEN_A, 3)
+    expect(numeri(prese)).toEqual([1, 2, 3])
+    await chiudi(prese[0].id, TOKEN_A, 'emessa')
+    await chiudi(prese[1].id, TOKEN_A, 'errore', 'esito_incerto', 'Messaggio finto')
+    await chiudi(prese[2].id, TOKEN_A, 'errore', 'partita_non_registrata', 'Messaggio finto')
+
+    const fatti = zFattiCoda.parse(await avvisiPresi())
+    const avvisi = componiAvvisi(fatti, { adesso: new Date(), admin: [ADMIN] })
+    expect(avvisi.map((a) => [a.tipo, a.destinatari, a.titolo])).toEqual([
+      ['fattura_coda_fine', [SEGRETERIA], 'Fatture in coda: finito'],
+      ['fattura_coda_fine', [ADMIN], 'Fattura da verificare'],
+      ['fattura_coda_da_verificare', [ADMIN], 'Fattura da verificare'], // la sua voce non conta
+    ])
+    expect(avvisi[0].corpo).toContain('1 inviata su 2')
+    for (const a of avvisi) {
+      expect(a.titolo + a.corpo).not.toContain('Messaggio finto')
+      expect(a.titolo + a.corpo).not.toMatch(UUID)
+    }
+
+    // Due chiamate non avvisano due volte, nemmeno a testi composti.
+    expect(componiAvvisi(zFattiCoda.parse(await avvisiPresi()), { adesso: new Date(), admin: [ADMIN] })).toEqual([])
+
+    // Pausa per 429 e sospensione dell'admin, con una voce della segreteria in coda.
+    await rilascia(TOKEN_A, 60, 'aruba-429')
+    await nuovoPagamento(4)
+    await accoda([{ pagamento_id: pag(4) }])
+    await sospendi(true, ADMIN)
+    const ferma = componiAvvisi(zFattiCoda.parse(await avvisiPresi()), {
+      adesso: new Date(),
+      admin: [ADMIN, ALTRO_ADMIN],
+      attore: ADMIN,
+    })
+    const a = (tipo: string) => ferma.find((x) => x.tipo === tipo)?.destinatari.slice().sort()
+    expect(ferma.map((x) => x.tipo)).toEqual(['fattura_coda_pausa', 'fattura_coda_sospesa'])
+    expect(a('fattura_coda_pausa')).toEqual([SEGRETERIA, ADMIN, ALTRO_ADMIN].sort())
+    expect(a('fattura_coda_sospesa')).toEqual([SEGRETERIA, ALTRO_ADMIN].sort())
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
 describe('controlli negativi · le prove devono fallire sulla migrazione rotta', () => {
   async function conMigrazione(sql: string) {
     await db.close()
@@ -1507,5 +2036,188 @@ describe('controlli negativi · le prove devono fallire sulla migrazione rotta',
     await prendi(TOKEN_A, 1)
     await dimenticaAccesso() // lontano dall'accesso: l'unico freno rimasto sarebbe il lavoratore
     expect(await prendi(TOKEN_B, 1)).toHaveLength(1)
+  })
+
+  // ── consegna 2c: gli avvisi ────────────────────────────────────────────────
+  /** Nucleo, 2a, 2b e 24/09 come in produzione, SENZA la 2c: la mette (rotta) il caso. */
+  async function senzaAvvisi() {
+    await conMigrazione(MIGRAZIONE)
+    await db.exec(TOGLI_AZZERA)
+    await db.exec(CHIUDI_AZZERA)
+    await db.exec(DISTANZA_ACCESSI)
+  }
+
+  it('senza il segno dell’errore, la seconda chiamata riavviserebbe lo stesso errore: A lo misura', async () => {
+    const rotta = AVVISI.replace('SET avviso_errore_presa = c.presa_il', 'SET avviso_errore_presa = NULL')
+    expect(rotta).not.toBe(AVVISI)
+    await senzaAvvisi()
+    await db.exec(rotta)
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'errore', 'scarto_aruba')
+    expect((await avvisiPresi()).errori).toHaveLength(1)
+    expect((await avvisiPresi()).errori).toHaveLength(1)
+  })
+
+  it('senza il bool_and, un gruppo con una voce in coda uscirebbe fra le fini: A lo misura', async () => {
+    const rotta = AVVISI.replace(/HAVING bool_and\(c\.stato NOT IN \('in_coda', 'in_invio'\)\)\s+AND /, 'HAVING ')
+    expect(rotta).not.toBe(AVVISI)
+    await senzaAvvisi()
+    await db.exec(rotta)
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'emessa')
+    expect((await voceDi(2)).stato).toBe('in_coda')
+    expect((await avvisiPresi()).fini).toHaveLength(1)
+  })
+
+  it('con un motivo qualunque, la pausa di 15 minuti per esito incerto si avviserebbe: E lo misura', async () => {
+    const rotta = AVVISI.replace("v_stato.pausa_motivo = 'aruba-429'", 'v_stato.pausa_motivo IS NOT NULL')
+    expect(rotta).not.toBe(AVVISI)
+    await senzaAvvisi()
+    await db.exec(rotta)
+    await rilascia(TOKEN_A, 15, 'esito-incerto')
+    expect((await avvisiPresi()).pausa).not.toBeNull()
+  })
+
+  it('senza la linea di partenza degli errori, un errore di prima della migrazione uscirebbe: G lo misura', async () => {
+    const rotta = AVVISI.replace(
+      "UPDATE public.fatture_coda SET avviso_errore_presa = presa_il WHERE stato = 'errore';",
+      '',
+    )
+    expect(rotta).not.toBe(AVVISI)
+    await senzaAvvisi()
+    await nuovoPagamento(1)
+    await accoda([{ pagamento_id: pag(1) }])
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'errore', 'scarto_aruba')
+    await db.exec(rotta)
+    expect((await avvisiPresi()).errori).toHaveLength(1)
+  })
+
+  it('senza il NOT EXISTS della linea di partenza delle fini, un gruppo in corso alla migrazione e finito con una «Togli» non si avviserebbe più', async () => {
+    /** Il gruppo in corso alla migrazione (un'emessa, una in coda), la migrazione, poi la «Togli» sulla voce IN CODA. */
+    async function scenario(sql: string): Promise<FattiSql['fini']> {
+      await senzaAvvisi()
+      for (const n of [1, 2]) await nuovoPagamento(n)
+      await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+      const [voce] = await prendi(TOKEN_A, 1)
+      await chiudi(voce.id, TOKEN_A, 'emessa')
+      await rilascia(TOKEN_A, 0, null)
+      await db.exec(sql)
+      // Su una voce in_invio la «Togli» non fa niente: la prova va sulla voce in coda.
+      expect(await togli([(await voceDi(2)).id])).toBe(1)
+      return (await avvisiPresi()).fini
+    }
+
+    // La migrazione giusta avvisa il gruppo…
+    const giusta = await scenario(AVVISI)
+    expect(giusta).toHaveLength(1)
+    expect(giusta[0]).toMatchObject({ voci: 2, emesse: 1, tolte: 1 })
+    expect(giusta[0].errori).toEqual({})
+
+    // …quella rotta lo segna come già avvisato alla nascita della colonna.
+    const rotta = AVVISI.replace(/\s+AND NOT EXISTS \(\s*SELECT 1 FROM public\.fatture_coda a[\s\S]*?\)\);/, ';')
+    expect(rotta).not.toBe(AVVISI)
+    expect(await scenario(rotta)).toEqual([])
+  })
+
+  it('senza «in_invio» nel bool_and, una voce ancora in mano al giro chiuderebbe il gruppo: J lo misura', async () => {
+    const rotta = AVVISI.replace(
+      "HAVING bool_and(c.stato NOT IN ('in_coda', 'in_invio'))",
+      "HAVING bool_and(c.stato NOT IN ('in_coda'))",
+    )
+    expect(rotta).not.toBe(AVVISI)
+    await senzaAvvisi()
+    await db.exec(rotta)
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const prese = await prendi(TOKEN_A, 2)
+    await chiudi(prese[0].id, TOKEN_A, 'emessa')
+    expect((await voceDi(2)).stato).toBe('in_invio')
+    expect((await avvisiPresi()).fini).toHaveLength(1)
+  })
+
+  it('senza il filtro di stato di in_attesa, o senza «in_invio», i destinatari cambierebbero: K lo misura', async () => {
+    const CHIUSO = 'c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2'
+    const FILTRO = "WHERE c.stato IN ('in_coda', 'in_invio')) a;"
+    /** Un accodante con la sola voce chiusa, la segreteria con una in invio, l'admin con una in coda. */
+    async function scenario(sql: string): Promise<string[]> {
+      await senzaAvvisi()
+      await db.exec(sql)
+      for (const n of [1, 2, 3]) await nuovoPagamento(n)
+      await accoda([{ pagamento_id: pag(1) }], false, CHIUSO)
+      const [uno] = await prendi(TOKEN_A, 1)
+      await chiudi(uno.id, TOKEN_A, 'emessa')
+      await rilascia(TOKEN_A, 0, null)
+      await accoda([{ pagamento_id: pag(2) }], false, SEGRETERIA)
+      await dimenticaAccesso()
+      await prendi(TOKEN_B, 1)
+      await accoda([{ pagamento_id: pag(3) }], false, ADMIN)
+      await sospendi(true)
+      return (await avvisiPresi()).in_attesa
+    }
+
+    expect(AVVISI).toContain(FILTRO)
+    expect(await scenario(AVVISI)).toEqual([SEGRETERIA, ADMIN].sort())
+    // Senza il filtro: anche chi ha tutto chiuso.
+    expect(await scenario(AVVISI.replace(FILTRO, ') a;'))).toContain(CHIUSO)
+    // Senza «in_invio»: la segreteria, che ha una fattura in mano al giro, no.
+    expect(await scenario(AVVISI.replace(FILTRO, "WHERE c.stato IN ('in_coda')) a;"))).not.toContain(SEGRETERIA)
+  })
+
+  it('senza lo stato nel bool_or, una voce tolta dopo un errore riaprirebbe il gruppo a ogni chiamata: L lo misura', async () => {
+    const rotta = AVVISI.replace(
+      "bool_or(c.stato IN ('emessa', 'errore') AND c.avviso_fine_presa IS DISTINCT FROM c.presa_il)",
+      'bool_or(c.avviso_fine_presa IS DISTINCT FROM c.presa_il)',
+    )
+    expect(rotta).not.toBe(AVVISI)
+    await senzaAvvisi()
+    await db.exec(rotta)
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const [x] = await prendi(TOKEN_A, 1)
+    await chiudi(x.id, TOKEN_A, 'errore', 'scarto_aruba')
+    await togli([x.id])
+    await rilascia(TOKEN_A, 0, null)
+    await dimenticaAccesso()
+    const [y] = await prendi(TOKEN_A, 1)
+    await chiudi(y.id, TOKEN_A, 'emessa')
+    expect((await avvisiPresi()).fini).toHaveLength(1)
+    expect((await avvisiPresi()).fini).toHaveLength(1)
+  })
+
+  it('con per_codice su tutte le chiuse, l’emessa conterebbe fra gli errori: A lo misura (toEqual, non toMatchObject)', async () => {
+    const rotta = AVVISI.replace(
+      "JOIN finiti f ON f.gruppo_id = c.gruppo_id\n     WHERE c.stato = 'errore'",
+      "JOIN finiti f ON f.gruppo_id = c.gruppo_id\n     WHERE c.stato IN ('errore', 'emessa', 'tolta')",
+    )
+    expect(rotta).not.toBe(AVVISI)
+    await senzaAvvisi()
+    await db.exec(rotta)
+    for (const n of [1, 2]) await nuovoPagamento(n)
+    await accoda([1, 2].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const prese = await prendi(TOKEN_A, 2)
+    await chiudi(prese[0].id, TOKEN_A, 'errore', 'scarto_aruba')
+    await chiudi(prese[1].id, TOKEN_A, 'emessa')
+    const [fine] = (await avvisiPresi()).fini
+    expect(fine).toMatchObject({ errori: { scarto_aruba: 1 } }) // il vecchio controllo: verde anche qui
+    expect(fine.errori).not.toEqual({ scarto_aruba: 1 })
+  })
+
+  it('senza lo stato nella CTE nuovi, le emesse riempirebbero il limite e l’errore non uscirebbe mai: M lo misura', async () => {
+    const rotta = AVVISI.replace(
+      /(WITH nuovi AS \(\s+SELECT c\.id\s+FROM public\.fatture_coda c\s+WHERE )c\.stato = 'errore'\s+AND /,
+      '$1',
+    )
+    expect(rotta).not.toBe(AVVISI)
+    // La rottura tocca la sola CTE: il ricontrollo nella UPDATE resta, ed è lui a scartarle.
+    expect(rotta).toMatch(/WHERE c\.id = n\.id\s+AND c\.stato = 'errore'/)
+    await senzaAvvisi()
+    await db.exec(rotta)
+    await emessePoiUnErrore()
+    for (let giro = 0; giro < 3; giro++) expect((await avvisiPresi(2)).errori).toEqual([])
   })
 })

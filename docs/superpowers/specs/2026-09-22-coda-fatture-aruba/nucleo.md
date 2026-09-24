@@ -28,7 +28,7 @@ Dal deploy la segreteria deve poter lavorare **senza funzioni a metà**.
   - «Sospendi / Riprendi» solo per l'admin.
 - `/api/health`: guasto se una voce è in coda da più di 24 ore o se la coda è sospesa da più di 24 ore. Tabella assente → ok con nota.
 
-**Fuori dal nucleo** (seconda consegna, elenco in `HANDOFF.md`): notifiche, «fattura tutto il periodo», selezione multipla nella lista Pagamenti, sezione nella scheda alunno, verifica automatica degli incerti, «Rimanda» con lo stesso numero, cancello condiviso con la sync, giornale dei numeri, livelli di priorità ulteriori, 410 sui vecchi percorsi, test cardine su PGlite completo, E2E nuovi.
+**Fuori dal nucleo** (seconda consegna, elenco in `HANDOFF.md`): «fattura tutto il periodo», selezione multipla nella lista Pagamenti, sezione nella scheda alunno, verifica automatica degli incerti, «Rimanda» con lo stesso numero, cancello condiviso con la sync, giornale dei numeri, livelli di priorità ulteriori, 410 sui vecchi percorsi, test cardine su PGlite completo, E2E nuovi (le notifiche sono entrate con la consegna 2c, §6).
 
 **Invariati**: numero preso all'invio, data documento = giorno d'invio, `emettiFatturaPagamento` usata così com'è.
 
@@ -154,6 +154,7 @@ Tutte SECURITY DEFINER, `SET search_path = public, pg_temp` (così nella migrazi
 - Gate `segretoCronValido` sull'header `x-cron-secret`: 401 con log `secret-errato`.
 - `const JOB = 'fatture-coda-tick'`; battito `logEvento('cron','info',{operazione: JOB, esito})` in **ogni** esito.
 - Client service role; risponde `{ok:true, esito, emesse, errori, riprova}`.
+- Consegna 2c: dopo il battito, in ogni esito tranne l'eccezione, gli avvisi (§6). Non cambiano la risposta.
 
 ## 3. API per l'interfaccia (contratto HTTP)
 
@@ -182,6 +183,7 @@ Schemi zod e tipi in **`src/lib/fatture-coda/api.ts`**. Tutte le route usano `wi
 
 **`POST /api/pagamenti/fattura/coda/sospensione`**
 - Corpo: `{sospesa: boolean}`, **solo admin** (403 altrimenti).
+- Consegna 2c: dopo la RPC riuscita, gli avvisi di sospensione e ripresa (§6), prima della sveglia.
 - Alla ripresa parte la sveglia.
 
 **Isolamento di sede**
@@ -222,3 +224,39 @@ Schemi zod e tipi in **`src/lib/fatture-coda/api.ts`**. Tutte le route usano `wi
 - Guardie di freschezza delle fotografie (`rls-per-sede`, `onconflict-arbitro`, eventuali altre) sulla migrazione nuova: si soddisfano col meccanismo previsto nel contratto, S21 / R2A-4.7 (dichiarazione delle migrazioni attese al merge con prova gemella). Mai spegnendo o allentando un lock.
 - Gate: `npx eslint . --max-warnings 0` · `npx tsc --noEmit` · `npx vitest run` (conteggio dei file) · `npm run build` · CI tutta verde.
 - La migrazione la applica l'integrazione Supabase al merge. Mai a mano.
+
+## 6. Notifiche (consegna 2c)
+
+> Aggiunta dalla consegna 2c (24/09, branch `feat/coda-fatture-notifiche-2c`; decisioni 12 e 21 del titolare). Per le notifiche del nucleo **prevale** questa sezione. I testi esatti, i casi e le prove stanno nel piano esecutivo `consegna-2c-notifiche.md` (§3); `contratto.md` §14 e `d5-interfaccia-notifiche.md` §10 restano il riferimento del piano completo.
+
+**Migrazione** `supabase/migrations/20260924160753_fatture_coda_avvisi.sql` (dopo la correzione del 24/09). Nessuna tabella, indice o vincolo: le guardie delle fotografie non si accendono.
+- **Colonne-segno**, tutte `timestamptz`: `fatture_coda.avviso_errore_presa`, `fatture_coda.avviso_fine_presa`, `fatture_coda_stato.avviso_pausa_fino_a`, `fatture_coda_stato.avviso_sospesa_il`. Il segno è il **valore del fatto**, non un orario: la `presa_il` del tentativo avvisato (errori e fine), la `pausa_fino_a` della pausa, la `sospesa_il` della sospensione (torna `NULL` quando si avvisa la ripresa). «Rimetti» azzera `presa_il`: un tentativo nuovo è un fatto nuovo e si riavvisa.
+- **Linea di partenza**: i fatti già accaduti quando la colonna nasce sono segnati come avvisati; un gruppo ancora in corso resta da avvisare; rieseguita, la migrazione non segna niente.
+- **`fatture_coda_avvisi_prendi(p_limite integer DEFAULT 200) RETURNS jsonb`**, definer, `search_path=public, pg_temp`, EXECUTE al solo `service_role`. Prende i fatti nuovi e li segna nella **stessa transazione**; risponde `{ errori: [{gruppo_id, creato_da, codice}], fini: [{gruppo_id, creato_da, accodata_il, voci, emesse, tolte, errori: {<codice>: n}}], pausa: {fino_a} | null, sospensione: {evento: 'sospesa'|'ripresa', il, da} | null, in_attesa: [uuid] }`. Cerca le fini **prima** degli errori (gli errori di un gruppo che finisce nella stessa chiamata stanno nella fine); al più 100 gruppi finiti e `p_limite` errori (1..500) per chiamata. Mai il messaggio d'esito.
+
+**Categorie del codice d'esito**: «da verificare» = `esito_incerto`, `trasporto_da_verificare`; «anomalia» = `partita_non_registrata`; ogni altro codice = «da correggere». Nessun codice nuovo.
+
+**Tipi** — fuori da `TIPI_NOTIFICA`, accodati **senza sede** (nessun interruttore li spegne), link `/admin/coda-fatture`, `entitaTipo` `fattura_coda_gruppo` e `gruppo_id` solo per la fine:
+
+| Tipo | Quando | A chi |
+|---|---|---|
+| `fattura_coda_fine` | un gruppo senza più voci `in_coda`/`in_invio`, anche di una voce sola | chi ha accodato |
+| `fattura_coda_errori` | errori nuovi di gruppi non finiti, riuniti per accodante | chi ha accodato |
+| `fattura_coda_da_verificare` | errori nuovi «da verificare» o anomalie, di voci che l'admin non ha accodato | ogni admin delle sedi reali |
+| `fattura_coda_pausa` | pausa `aruba-429` non ancora avvisata (una volta per pausa) | chi ha voci `in_coda`/`in_invio` e gli admin, senza doppioni |
+| `fattura_coda_sospesa` | sospensione non ancora avvisata | chi ha voci in attesa e gli admin, meno chi ha sospeso e l'attore della route |
+| `fattura_coda_ripresa` | ripresa non ancora avvisata | chi ha voci in attesa e gli admin, meno l'attore della route |
+
+Gli admin sono quelli delle sedi reali: `sediReali` più `staffScuola(sede, ['admin'])`. Un admin che ha anche accodato riceve ogni fatto una volta. Dopo «Rimetti» il destinatario resta `creato_da`. Queste scelte (S3 del piano) valgono fino alla risposta del titolare (piano §7.2).
+
+**Testi**: `src/lib/fatture-coda/avvisi-testi.ts` (puro; `zFattiCoda`, `componiAvvisi`), in italiano, solo da conteggi, categorie e orari Europe/Rome (`quandoRelativo`); mai nomi, numeri di fattura, cause o stringhe lette dal database. La pausa dice «dopo le HH:MM». Frasi in `consegna-2c-notifiche.md` §3.1.
+
+**Scarto SdI com'è**: `fattura_scartata` resta allo staff della sede, con `scuolaId` e con l'interruttore; chi ha accodato ci sta sempre (S4). Lo scarto Aruba nel merito è l'errore `scarto_aruba` della coda.
+
+**Push allo staff**: `PushOptIn` nella pagina «Coda fatture» (web e app), con le chiavi `adminContabilita.codaFatturePushAttiva`/`codaFatturePushAttive`. Nel `push/dispatch`, a chi ha un ruolo di staff (admin, coordinator, segreteria, cuoca) la push porta **solo** i sei tipi e `fattura_scartata`; le altre sue notifiche si marcano come per chi non ha dispositivi e si contano in `escluse_staff`. Il ruolo arriva nella stessa lettura (`utenti(role, ruolo)`). Nessuna iscrizione automatica nell'area admin. Il dispatch è l'unico canale push verso lo staff in quanto staff (resta un `sendPush` diretto in `notificaSaldoBasso`, `src/lib/mensa/notify.ts`, verso i genitori dell'alunno: uno staff collegato anche come genitore lo riceverebbe; oggi 0 su 14): l'allerta allergie della mensa (`src/lib/mensa/notify.ts`), che chiamava `sendPush` da sé su ogni dispositivo dei destinatari, non lo fa più (giro 2 di verifica della 2c); se debba arrivare in push alla cucina è una domanda al titolare (`consegna-2c-notifiche.md` §7.2 domanda 7).
+
+**Chi chiama e tempi**: `spedisciAvvisiCoda` (`src/lib/fatture-coda/avvisi.ts`, non lancia mai) dalla route del giro, dopo il battito, in ogni esito tranne l'eccezione, entro `LIMITE_AVVISI_MS` (280 s) dall'inizio, oltre i quali rinvia; e dalla route della sospensione, dopo la RPC riuscita, con l'attore. Una `enqueueNotifiche` per destinatario, `bufferMin: 0`: campanella subito, push al `notifiche-dispatch` successivo (5 minuti).
+
+**Limiti dichiarati**: consegna **al più una volta** (segnato, poi spedito: un inserimento fallito è un avviso perso, registrato da `enqueueNotifiche`); 200 errori e 100 gruppi per chiamata, il resto al giro dopo; una «Togli» che chiude un gruppo si avvisa al tick dopo; niente outbox, niente anomalie di sistema come notifica (restano nei log e in `/api/health`), niente sospensione «sistema», niente catalogo con «obbligatoria» (R2A-1.8).
+
+**Log**: `logEvento('fattura', …)` con `operazione` `fatture-coda/avvisi`, una riga per chiamata: `avvisi-spediti`, `avvisi-nessuno`, `avvisi-rinviati` (`info`); `avvisi-non-disponibili` (`warn`); `avvisi-non-letti`, `avvisi-illeggibili`, `avvisi-eccezione` (`error`); più `admin-non-risolti` (`warn`) e `avviso-non-accodato` (`error`).

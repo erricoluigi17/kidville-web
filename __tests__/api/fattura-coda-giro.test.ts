@@ -15,10 +15,14 @@ import path from 'node:path'
 const h = vi.hoisted(() => ({
   giro: vi.fn(),
   admin: vi.fn(),
+  avvisi: vi.fn(),
+  // Consegna 2c: quanti battiti c'erano quando la route ha chiamato gli avvisi.
+  battitiAllaChiamata: [] as number[],
   eventi: [] as { evento: string; livello: string; campi: Record<string, unknown>; errore: unknown }[],
 }))
 
 vi.mock('@/lib/fatture-coda/giro', () => ({ eseguiGiroCoda: h.giro }))
+vi.mock('@/lib/fatture-coda/avvisi', () => ({ spedisciAvvisiCoda: h.avvisi }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: h.admin }))
 vi.mock('@/lib/logging/logger', async (originale) => {
   const vero = await originale<typeof import('@/lib/logging/logger')>()
@@ -46,12 +50,18 @@ const battiti = () => h.eventi.filter((e) => e.evento === 'cron' && e.campi.oper
 beforeEach(() => {
   vi.clearAllMocks()
   h.eventi.length = 0
+  h.battitiAllaChiamata.length = 0
   vi.stubEnv('CRON_SECRET', SEGRETO)
   h.admin.mockResolvedValue(CLIENT_FINTO)
   h.giro.mockResolvedValue({ esito: 'niente-da-fare', emesse: 0, errori: 0, riprova: 0, pausaMinuti: 0 })
+  h.avvisi.mockImplementation(async () => {
+    h.battitiAllaChiamata.push(battiti().length)
+    return { esito: 'nessuno', avvisi: 0, tentate: 0 }
+  })
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllEnvs()
 })
 
@@ -176,6 +186,92 @@ describe('il giro e il battito', () => {
     expect(b.campi.esito).toBe('errore')
     expect(b.campi.tipo).toBe('errore')
     expect(b.errore).toBe(guasto)
+  })
+})
+
+/**
+ * Consegna 2c (decisioni 12 e 21): dopo il battito, in OGNI esito del giro, la route chiama
+ * gli avvisi della coda — col client del giro, l'operazione del job e l'istante d'inizio
+ * (oltre `LIMITE_AVVISI_MS` gli avvisi si rinviano al giro dopo). Non cambiano la risposta.
+ */
+describe('consegna 2c: gli avvisi della coda dopo il battito', () => {
+  it.each([
+    ['finestra-sync', 200],
+    ['quota-oraria', 200],
+    ['niente-da-fare', 200],
+    ['eseguito', 200],
+    ['errore', 500],
+  ] as const)('esito «%s»: una chiamata, col client del giro, DOPO il battito, risposta %i', async (esito, stato) => {
+    h.giro.mockResolvedValue({ esito, emesse: 0, errori: 0, riprova: 0, pausaMinuti: 0 })
+
+    const res = await POST(richiesta({ 'x-cron-secret': SEGRETO }))
+
+    expect(res.status).toBe(stato)
+    expect(h.avvisi).toHaveBeenCalledTimes(1)
+    expect(h.avvisi.mock.calls[0][0]).toBe(CLIENT_FINTO)
+    expect(h.avvisi.mock.calls[0][1]).toEqual({ operazione: 'fatture-coda-tick', inizioMs: expect.any(Number) })
+    // Il battito era già scritto quando gli avvisi sono partiti.
+    expect(h.battitiAllaChiamata).toEqual([1])
+  })
+
+  it('`inizioMs` è l’istante d’INIZIO della route, non quello della chiamata agli avvisi', async () => {
+    // Con `inizioMs: Date.now()` il tempo trascorso sarebbe sempre ~0 e `LIMITE_AVVISI_MS`
+    // non scatterebbe mai: dopo un giro lungo gli avvisi partirebbero a ridosso del muro dei
+    // 300 s, la RPC segnerebbe i fatti e l'invocazione potrebbe morire durante gli invii
+    // (la stessa rottura che la #164 ha fissato nel giro con G9).
+    const T0 = Date.parse('2026-09-24T10:00:00Z')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T0)
+    h.giro.mockImplementation(async () => {
+      vi.setSystemTime(T0 + 250_000) // un giro lungo 250 s
+      return { esito: 'eseguito', emesse: 1, errori: 0, riprova: 0, pausaMinuti: 0 }
+    })
+
+    await POST(richiesta({ 'x-cron-secret': SEGRETO }))
+
+    expect(h.avvisi).toHaveBeenCalledTimes(1)
+    expect(h.avvisi.mock.calls[0][1].inizioMs).toBe(T0)
+  })
+
+  it('nessuna chiamata sui due 401 (senza header e con header sbagliato)', async () => {
+    expect((await POST(richiesta())).status).toBe(401)
+    expect((await POST(richiesta({ 'x-cron-secret': 'sbagliato' }))).status).toBe(401)
+    expect(h.avvisi).not.toHaveBeenCalled()
+  })
+
+  it('nessuna chiamata quando il giro lancia', async () => {
+    h.giro.mockRejectedValue(new Error('imprevisto'))
+
+    const res = await POST(richiesta({ 'x-cron-secret': SEGRETO }))
+
+    expect(res.status).toBe(500)
+    expect(h.avvisi).not.toHaveBeenCalled()
+  })
+
+  it('la route ASPETTA gli avvisi prima di rispondere (su Vercel il lavoro dopo la risposta non è garantito)', async () => {
+    // Il finto finisce dopo un macrotask: con `void spedisciAvvisiCoda(…)` la risposta
+    // arriverebbe prima, e la RPC avrebbe già segnato i fatti senza che gli avvisi partano.
+    let finiti = 0
+    h.avvisi.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 5))
+      finiti++
+      return { esito: 'nessuno', avvisi: 0, tentate: 0 }
+    })
+
+    const res = await POST(richiesta({ 'x-cron-secret': SEGRETO }))
+
+    expect(res.status).toBe(200)
+    expect(finiti).toBe(1)
+  })
+
+  it('un esito degli avvisi andato male non cambia la risposta del giro', async () => {
+    h.avvisi.mockResolvedValue({ esito: 'non-letti', avvisi: 0, tentate: 0 })
+
+    const res = await POST(richiesta({ 'x-cron-secret': SEGRETO }))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, esito: 'niente-da-fare', emesse: 0, errori: 0, riprova: 0 })
+    expect(h.avvisi).toHaveBeenCalledTimes(1)
   })
 })
 

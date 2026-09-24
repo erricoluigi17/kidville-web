@@ -1170,6 +1170,8 @@ Autotest __tests__/helpers/emissione-supabase-finto.test.ts: un documento emesso
 
 ### R2A-1.8 · Catalogo delle notifiche obbligatorie — sonnet/medium
 
+> Non fatto dalla consegna 2c: i sei tipi della coda stanno fuori dal catalogo (`consegna-2c-notifiche.md`, S2). Resta al piano completo.
+
 D5§10.2:
 - TipoNotifica += obbligatoria?;
 - isNotificaAbilitata risponde true per un tipo obbligatorio, prima di ogni lettura;
@@ -1839,6 +1841,8 @@ Test __tests__/lib/fatture-coda/stato-coda.test.ts, con la prova di rottura su o
 
 ### R2A-4.13 · testi-notifica.ts con test — sonnet/high
 
+> Sostituito per il nucleo dalla consegna 2c (`consegna-2c-notifiche.md`).
+
 D5§10.3. Crea src/lib/fatture-coda/testi-notifica.ts, con testoAvviso esaustivo:
 - forma neutra; frase per giornale_non_aperto;
 - CR9: {doc} = formattaNumeroFattura dentro un try, col ripiego «una fattura»;
@@ -2104,6 +2108,8 @@ Test 10 in __tests__/lib/fatture-coda/risolvi.test.ts.
 - **Perché questo modello:** Decide ricerca, registrazione e reinvio dopo un esito incerto.
 
 ### R2A-5.9 · notifiche.ts (spedisciAvvisiCoda) con test — opus/high
+
+> Sostituito per il nucleo dalla consegna 2c (`consegna-2c-notifiche.md`).
 
 D5§10.1:
 - prendi con la RPC letterale; idempotenza su entita_id;

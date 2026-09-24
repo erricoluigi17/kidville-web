@@ -1293,6 +1293,9 @@ const AMMESSE: Record<string, string> = {
     // ha ora la sua voce, qui sotto. `coda/giro:POST` resta fuori, e il lock è d'accordo:
     // nel proprio file non ha query — il lavoratore di tutte le sedi vive in
     // `src/lib/fatture-coda/giro.ts`, che questo lock non audita.
+    // Dalla consegna 2c la route chiama anche `spedisciAvvisiCoda` (`src/lib/fatture-coda/avvisi.ts`,
+    // fuori da questo audit per la stessa ragione), che legge la coda e gli admin di tutte le sedi
+    // reali: negli avvisi solo conteggi, categorie e orari.
     'pagamenti/fattura/coda:GET':
         'la coda di TUTTE le sedi a tutto lo staff, per decisione 6 del titolare: l\'utenza Aruba è UNA e il tetto orario è condiviso, quindi chi fattura a Cesa deve vedere le quaranta fatture di Giugliano che ha davanti. ATTRAVERSA la sede, per ogni voce: stato, urgenza, posizione e orario d\'accodamento, sede (id e nome del plesso), id del pagamento, NOME E COGNOME DELL\'ALUNNO, descrizione e IMPORTO del pagamento, codice d\'esito, e il NOME E COGNOME DI CHI HA ACCODATO (`creato_da_nome`, letto da `utenti` per id senza filtro di sede). NON attraversa soltanto il messaggio d\'esito del provider (può nominare un intestatario): per le voci di un plesso che l\'utente non ha si vede solo il codice. Ogni voce porta `propria`, e le scritture restano per sede (`coda/azioni:POST`). Gate: `requireStaff`',
     'pagamenti/fattura/coda:<modulo>':
@@ -1302,7 +1305,7 @@ const AMMESSE: Record<string, string> = {
     'pagamenti/fattura/coda:POST':
         'accodamento: OGNI voce passa da `assertPagamentoInScope` e dalla lettura dei pagamenti filtrata per `.in(\'scuola_id\', plessi)` PRIMA della RPC, e basta una voce fuori sede per rifiutare tutto il gesto. La RPC riceve quelle stesse voci e la sede la ricava lei da `pagamenti.scuola_id`, mai dal client. Il lock non vede il legame perché i 500 id arrivano alla RPC attraverso `voci.map(voceRpc)`, non come espressione verificata in linea',
     'pagamenti/fattura/coda/sospensione:POST':
-        'sospensione della coda: la RPC non tocca nessuna voce, scrive la sola riga di stato `id=1`, che vale per TUTTE le sedi perché l\'utenza Aruba è una (decisione 6). Per questo la decide solo la Direzione: `requireStaff(request, [\'admin\'])`, 403 a chiunque altro',
+        'sospensione della coda: la RPC non tocca nessuna voce, scrive la sola riga di stato `id=1`, che vale per TUTTE le sedi perché l\'utenza Aruba è una (decisione 6). Per questo la decide solo la Direzione: `requireStaff(request, [\'admin\'])`, 403 a chiunque altro. Dalla consegna 2c, dopo la RPC riuscita, la route chiama `spedisciAvvisiCoda` (`src/lib/fatture-coda/avvisi.ts`, fuori da questo audit), che legge la coda di TUTTE le sedi e avvisa gli admin e chi ha fatture in attesa: nei testi solo conteggi e orari, nessun dato di una voce',
     'pagamenti/ticket:GET': 'saldo ticket mensa di UN alunno, il cui accesso è verificato prima (staff o genitore)',
 
     // ── Pipeline video (2026-09-18) — emersa il 2026-09-23 ───────────────────

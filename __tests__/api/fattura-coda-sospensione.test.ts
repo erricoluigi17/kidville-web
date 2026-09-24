@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server'
  * (nucleo §3). Uuid finti: il repository è pubblico.
  */
 
-const h = vi.hoisted(() => ({ requireStaff: vi.fn(), rpc: vi.fn(), logEvento: vi.fn() }))
+const h = vi.hoisted(() => ({ requireStaff: vi.fn(), rpc: vi.fn(), logEvento: vi.fn(), avvisi: vi.fn() }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 // D2 (consegna 2b): si sostituisce SOLO `logEvento`, per leggere chi ha sospeso o ripreso.
@@ -14,7 +14,10 @@ vi.mock('@/lib/logging/logger', async (o) => ({
   ...(await o<typeof import('@/lib/logging/logger')>()),
   logEvento: h.logEvento,
 }))
-vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => ({ rpc: h.rpc }) }))
+const CLIENT = vi.hoisted(() => ({ rpc: undefined as unknown }))
+vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => CLIENT }))
+// Consegna 2c: gli avvisi della coda sono finti qui; il modulo vero è in `avvisi.test.ts`.
+vi.mock('@/lib/fatture-coda/avvisi', () => ({ spedisciAvvisiCoda: h.avvisi }))
 
 import { POST } from '@/app/api/pagamenti/fattura/coda/sospensione/route'
 import { CODICI_ERRORE_CODA } from '@/lib/fatture-coda/api'
@@ -35,6 +38,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: ADMIN, role: 'admin' } })
   h.rpc.mockResolvedValue({ data: null, error: null })
+  CLIENT.rpc = h.rpc
+  h.avvisi.mockResolvedValue({ esito: 'nessuno', avvisi: 0, tentate: 0 })
 })
 
 describe('solo admin', () => {
@@ -116,5 +121,67 @@ describe('D2: l’attore nei log', () => {
       'info',
       expect.objectContaining({ esito: 'coda-ripresa', utente: ADMIN }),
     )
+  })
+})
+
+/**
+ * Consegna 2c (decisione 12): sospensione e ripresa si avvisano agli admin e a chi ha fatture
+ * in attesa, meno chi ha premuto — quindi la route passa l'attore. Solo dopo la RPC riuscita:
+ * uno stato non scritto non si avvisa.
+ */
+describe('consegna 2c: gli avvisi dopo la RPC riuscita', () => {
+  const chiamataSospendi = () => h.rpc.mock.invocationCallOrder[h.rpc.mock.calls.findIndex((c) => c[0] === 'fatture_coda_sospendi')]
+
+  it('sospendi: una chiamata col client e l’attore, dopo la RPC', async () => {
+    expect((await POST(post({ sospesa: true }))).status).toBe(200)
+    expect(h.avvisi).toHaveBeenCalledTimes(1)
+    expect(h.avvisi.mock.calls[0][0]).toBe(CLIENT)
+    expect(h.avvisi.mock.calls[0][1]).toEqual({ operazione: 'coda-sospensione:sospendi', attore: ADMIN })
+    expect(chiamataSospendi()).toBeLessThan(h.avvisi.mock.invocationCallOrder[0])
+  })
+
+  it('riprendi: operazione «riprendi», dopo la RPC, e la sveglia resta', async () => {
+    expect((await POST(post({ sospesa: false }))).status).toBe(200)
+    expect(h.avvisi).toHaveBeenCalledTimes(1)
+    expect(h.avvisi.mock.calls[0][0]).toBe(CLIENT)
+    expect(h.avvisi.mock.calls[0][1]).toEqual({ operazione: 'coda-sospensione:riprendi', attore: ADMIN })
+    expect(chiamataSospendi()).toBeLessThan(h.avvisi.mock.invocationCallOrder[0])
+    await vi.waitFor(() => expect(chiamateA('fatture_coda_tick_http')).toHaveLength(1))
+  })
+
+  it('la route ASPETTA gli avvisi prima di rispondere (su Vercel il lavoro dopo la risposta non è garantito)', async () => {
+    // Il finto finisce dopo un macrotask: con `void spedisciAvvisiCoda(…)` la risposta
+    // arriverebbe prima, e la sospensione scritta resterebbe senza avviso.
+    let finiti = 0
+    h.avvisi.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 5))
+      finiti++
+      return { esito: 'nessuno', avvisi: 0, tentate: 0 }
+    })
+    expect((await POST(post({ sospesa: true }))).status).toBe(200)
+    expect(finiti).toBe(1)
+  })
+
+  it('un esito degli avvisi andato male non cambia la risposta', async () => {
+    h.avvisi.mockResolvedValueOnce({ esito: 'eccezione', avvisi: 0, tentate: 0 })
+    const res = await POST(post({ sospesa: true }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ sospesa: true })
+  })
+
+  it('nessuna chiamata su 400, 401 e 403', async () => {
+    expect((await POST(post({}))).status).toBe(400)
+    h.requireStaff.mockResolvedValueOnce({ response: NextResponse.json({ error: 'no' }, { status: 403 }) })
+    expect((await POST(post({ sospesa: true }))).status).toBe(403)
+    h.requireStaff.mockResolvedValueOnce({ response: NextResponse.json({ error: 'no' }, { status: 401 }) })
+    expect((await POST(post({ sospesa: true }))).status).toBe(401)
+    expect(h.avvisi).not.toHaveBeenCalled()
+  })
+
+  it.each(['PGRST202', 'XX000'])('RPC in errore (%s: 503 o 500): nessuna chiamata', async (code) => {
+    h.rpc.mockResolvedValueOnce({ data: null, error: { code } })
+    const res = await POST(post({ sospesa: true }))
+    expect([503, 500]).toContain(res.status)
+    expect(h.avvisi).not.toHaveBeenCalled()
   })
 })

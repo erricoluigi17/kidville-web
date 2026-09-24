@@ -395,6 +395,8 @@ Prop `coda?`, con la mappa `Record<(typeof STATI_VOCE_ATTIVI)[number], chiave>`.
 
 ## 10. Notifiche (meccanismo di C§14; qui solo le scelte interne)
 
+> **Riallineamento 2c (24/09).** Per il nucleo valgono `nucleo.md` §6 e `consegna-2c-notifiche.md` §1.5: niente outbox, tipi fuori catalogo, segni sulle voci e sulla riga di stato, scarto SdI allo staff della sede com'era. Questa sezione resta il riferimento del piano completo.
+
 ### 10.1 `src/lib/fatture-coda/notifiche.ts` — `spedisciAvvisiCoda(supabase, opz?)`
 Non lancia mai.
 1. **Presa:** `supabase.rpc('fatture_coda_avvisi_prendi', {p_token, p_limite})` letterale, letta con `leggiEsitoRpc`.

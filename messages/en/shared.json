@@ -515,5 +515,6 @@
   "erroreRiepilogoNotificheInterrotte": "Sending the notifications to families stopped halfway: some have already gone out. Reopen the summary to finish sending — anyone already notified will not be notified twice.",
   "erroreCodaFattureNonDisponibile": "The invoice queue isn’t available yet: nothing was changed. Please try again later.",
   "erroreCodaFattureScritturaFallita": "We couldn’t update the invoice queue. Reload the page and check its state before trying again.",
-  "errorePagamentoNonSaldato": "An invoice can only be queued for payments that have been paid in full: no invoice was queued."
+  "errorePagamentoNonSaldato": "An invoice can only be queued for payments that have been paid in full: no invoice was queued.",
+  "erroreIntestatarioDigitatoIncompleto": "The billed-to details typed by hand are incomplete or invalid: check tax code, first name, last name, address, postcode and town. No invoice was queued."
 }

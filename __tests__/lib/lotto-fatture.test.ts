@@ -11,16 +11,17 @@ import {
   MAX_DURATION_BLOCCO_S,
   prontaPerIlLotto,
   quoteTutteFatturabili,
-  corpoEmissione,
   fermaIlLotto,
 } from '@/lib/pagamenti/lotto-fatture'
 
 /**
  * IL MOTORE DEL LOTTO — puro, in ambiente `node`, senza React né `next-intl`.
  *
- * Qui non si collauda una schermata: si collaudano le quattro decisioni che
- * rendono «emetti tutte» una funzione utile invece che un modo rapido di bruciare
- * la quota di Aruba e di spedire dodici fatture con la causale sbagliata.
+ * Qui non si collauda una schermata: si collaudano le tre decisioni del lotto —
+ * le costanti del ritmo, `fermaIlLotto` (quando il blocco del lavoratore della coda
+ * si ferma) e `prontaPerIlLotto` (quali righe entrano in coda con un gesto).
+ * `corpoEmissione`, il corpo della vecchia POST del lotto nel browser, è stato tolto
+ * nella consegna 2b (D9): lo tiene fuori l'ultimo `describe` di questo file.
  */
 
 describe('le costanti del ritmo', () => {
@@ -80,30 +81,6 @@ describe('fermaIlLotto — quando NON si prova la riga successiva', () => {
 
   it('falso su 200: una riga riuscita non ferma niente', () => {
     expect(fermaIlLotto(200)).toBe(false)
-  })
-})
-
-describe('corpoEmissione — `causale: null`, MAI `undefined`', () => {
-  it('il campo `causale` c’è ed è `null`', () => {
-    const corpo = corpoEmissione('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')
-    expect(corpo.pagamento_id).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')
-    expect(corpo.causale).toBeNull()
-    // ⚠️ `toBeNull()` da solo NON basta: `undefined` fallirebbe qui, ma un corpo
-    // che il campo non ce l'ha affatto è indistinguibile da uno che lo manda
-    // `null` una volta serializzato male. `null` significa «togli la correzione
-    // manuale salvata», `undefined` (cioè il campo assente) «non toccarla»: è la
-    // differenza che ha mandato allo SDI la FPR 1948/26 con la causale sbagliata.
-    expect('causale' in corpo).toBe(true)
-    expect(JSON.parse(JSON.stringify(corpo))).toHaveProperty('causale', null)
-    expect(Object.keys(JSON.parse(JSON.stringify(corpo)))).toContain('causale')
-  })
-
-  it('serializzato, il corpo del lotto NON è quello che omette la causale', () => {
-    const conNull = JSON.stringify(corpoEmissione('p-1'))
-    const senza = JSON.stringify({ pagamento_id: 'p-1', causale: undefined })
-    expect(conNull).not.toBe(senza)
-    expect(senza).not.toContain('causale')
-    expect(conNull).toContain('"causale":null')
   })
 })
 
@@ -193,21 +170,20 @@ describe('prontaPerIlLotto — quando è la proposta a sbloccare la riga', () =>
   })
 })
 
-describe('corpoEmissione — l’intestatario viaggia, la causale no', () => {
-  it('senza intestatario il campo è ASSENTE, non `null`', () => {
-    const c = corpoEmissione('p-1')
-    expect(c).toEqual({ pagamento_id: 'p-1', causale: null })
-    expect('intestatario' in c).toBe(false)
+describe('gli export del motore del lotto — l’insieme ESATTO (consegna 2b, D9)', () => {
+  // Fragile di proposito: un export nuovo e legittimo si aggiunge QUI a mano, dopo averlo deciso.
+  // Allargare l'elenco in automatico farebbe tornare il codice morto senza rumore.
+  it('nessun export in più: `corpoEmissione`, morto dal nucleo della coda, non torna', async () => {
+    const modulo = await import('@/lib/pagamenti/lotto-fatture')
+    expect(Object.keys(modulo).sort()).toEqual([
+      'BUDGET_BLOCCO_MS', 'LAVORO_UTILE_MS', 'MARGINE_PIATTAFORMA_MS', 'MAX_DURATION_BLOCCO_S',
+      'PAUSA_FRA_UPLOAD_MS', 'RISERVA_PEGGIORE_MS', 'TETTO_BLOCCO', 'TETTO_LOTTO',
+      'fermaIlLotto', 'prontaPerIlLotto', 'quoteTutteFatturabili',
+    ])
   })
-
-  it('con intestatario porta solo il ramo `adult`', () => {
-    expect(corpoEmissione('p-1', 'a-1')).toEqual({
-      pagamento_id: 'p-1', causale: null, intestatario: { tipo: 'adult', adult_id: 'a-1' },
-    })
-  })
-
-  it('`causale: null` resta in ENTRAMBI i casi: è ciò che toglie la correzione appiccicosa', () => {
-    expect(corpoEmissione('p-1').causale).toBe(null)
-    expect(corpoEmissione('p-1', 'a-1').causale).toBe(null)
+  it('nemmeno come tipo: lo verifica `tsc --noEmit`, non vitest', () => {
+    // @ts-expect-error — `CorpoEmissione` è stato tolto nella consegna 2b (D9): se torna esportato, questa direttiva resta inutilizzata e il gate `tsc` diventa rosso.
+    const morto: import('@/lib/pagamenti/lotto-fatture').CorpoEmissione | undefined = undefined
+    expect(morto).toBeUndefined()
   })
 })

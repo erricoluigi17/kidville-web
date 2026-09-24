@@ -26,6 +26,25 @@ function giorniFra(da: string, a: string): number {
 }
 
 /**
+ * Giorni di calendario a Roma da `adesso` a `istante`: 0 oggi, 1 domani, -1 ieri. Istante illeggibile → `null`.
+ *
+ * Il motore unico di «oggi, ieri, domani» (consegna 2b della coda fatture, D11): lo usano
+ * `quandoRelativo` qui sotto e i separatori di giorno della chat (`formatMessageDate`). Le date
+ * civili si prendono in Europe/Rome, qualunque sia il fuso del processo o del browser.
+ */
+export function scartoGiorniCivili(
+  istante: string | number | Date | null | undefined,
+  adesso: Date | number,
+): number | null {
+  if (istante === null || istante === undefined || istante === '') return null
+  const d = istante instanceof Date ? istante : new Date(istante)
+  const a = adesso instanceof Date ? adesso : new Date(adesso)
+  // `dataCivile` chiama `Intl…format`, che su una Date invalida LANCIA: il controllo va prima.
+  if (Number.isNaN(d.getTime()) || Number.isNaN(a.getTime())) return null
+  return giorniFra(dataCivile(a), dataCivile(d))
+}
+
+/**
  * Un istante detto come lo legge la segreteria: «alle 14:30», «domani alle 00:03»,
  * «ven 25/09 alle 08:00» (consegna 2a della coda fatture, rilievo c).
  *
@@ -38,12 +57,9 @@ export function quandoRelativo(
   adesso: Date | number,
   locale: string,
 ): QuandoRelativo | null {
-  if (istante === null || istante === undefined || istante === '') return null
-  const d = istante instanceof Date ? istante : new Date(istante)
-  const a = adesso instanceof Date ? adesso : new Date(adesso)
-  // `dataCivile` chiama `Intl…format`, che su una Date invalida LANCIA: il controllo va prima.
-  if (Number.isNaN(d.getTime()) || Number.isNaN(a.getTime())) return null
-  const scarto = giorniFra(dataCivile(a), dataCivile(d))
+  const scarto = scartoGiorniCivili(istante, adesso)
+  if (scarto === null) return null
+  const d = istante instanceof Date ? istante : new Date(istante as string | number)
   return {
     giorno: scarto === 0 ? 'oggi' : scarto === 1 ? 'domani' : 'altro',
     ora: formattaIstante(d, locale, { hour: '2-digit', minute: '2-digit' }),

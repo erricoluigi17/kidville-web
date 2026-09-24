@@ -280,7 +280,7 @@ async function finoAllaConfermaMolte() {
   await finoA(() => screen.queryByText(/Bonifico lotto 0/) !== null);
   fireEvent.click(screen.getByRole('checkbox', { name: /Seleziona tutte le da fatturare/ }));
   await avanza(0);
-  fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Controlla e metti in coda/ }));
   await finoA(() => screen.queryByText(/fatture pronte/) !== null, 400);
 }
 
@@ -295,7 +295,7 @@ async function finoAllaConferma(quali = ['m1', 'm2', 'm3']) {
     const n = id.replace('m', '');
     fireEvent.click(screen.getByRole('checkbox', { name: new RegExp(`\\(0${n}/10/2026\\)`) }));
   }
-  fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Controlla e metti in coda/ }));
   await finoA(() => screen.queryByText(/fatture pronte|fattura pronta|Nessuna delle righe/) !== null);
 }
 
@@ -525,7 +525,7 @@ describe('il PRE-VOLO non spende quota: dice chi è pronto e chi no', () => {
     for (const c of screen.getAllByRole('checkbox', { name: /Seleziona il bonifico/ })) fireEvent.click(c);
     await avanza(0);
 
-    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Controlla e metti in coda/ }));
     await avanza(0); // il primo blocco di quattro anteprime è in volo
     fireEvent.click(screen.getByRole('button', { name: 'Interrompi' }));
     await avanza(1_000);
@@ -547,7 +547,7 @@ describe('il PRE-VOLO non spende quota: dice chi è pronto e chi no', () => {
     const { unmount } = render(
       <LottoFatturePanel userId="u1" selezionate={selezionate} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Controlla e metti in coda/ }));
     await avanza(0);
     expect(anteprime(f)).toHaveLength(4);
 
@@ -731,7 +731,7 @@ describe('l’accodamento: UNA POST alla coda, e il lotto non emette niente da s
     vi.stubGlobal('fetch', f);
     render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={onDone} onLavoro={onLavoro} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Controlla e metti in coda/ }));
     await finoA(() => screen.queryByText(/fattura pronta/) !== null);
     expect(onDone).not.toHaveBeenCalled();
     fireEvent.click(bottoneMetti());
@@ -807,7 +807,7 @@ describe('quando la coda dice di no, lo si legge — e si ritenta dalla conferma
     });
     vi.stubGlobal('fetch', f);
     render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={onDone} onLavoro={onLavoro} />);
-    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Controlla e metti in coda/ }));
     await finoA(() => screen.queryByText(/fattura pronta/) !== null);
 
     fireEvent.click(bottoneMetti());
@@ -919,7 +919,7 @@ describe('il piè di pagina dice ciò che serve ALLA FASE in cui si trova', () =
 
     // In `conferma` la selezione è congelata: il tetto non è più una regola che
     // riguarda un gesto possibile.
-    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Controlla e metti in coda/ }));
     await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
     expect(screen.queryByText(/Al massimo \d+ fatture per volta/)).toBeNull();
   });
@@ -940,7 +940,7 @@ describe('«3 selezionati» accanto a «Metti in coda (2)» va SPIEGATO, non ded
 
     expect(screen.getByText('3 bonifici selezionati')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Metti in coda (2)' })).toBeInTheDocument();
-    expect(screen.getByText(/Si emettono solo le righe pronte: 1 resta da completare e non parte/))
+    expect(screen.getByText(/In coda vanno solo le righe pronte: 1 resta da completare e non entra/))
       .toBeInTheDocument();
 
     // …e in coda vanno le DUE pronte, non la terza.
@@ -953,7 +953,7 @@ describe('«3 selezionati» accanto a «Metti in coda (2)» va SPIEGATO, non ded
     vi.stubGlobal('fetch', stubFetch());
     await finoAllaConferma();
     expect(screen.getByRole('button', { name: 'Metti in coda (3)' })).toBeInTheDocument();
-    expect(screen.queryByText(/Si emettono solo le righe pronte/)).toBeNull();
+    expect(screen.queryByText(/In coda vanno solo le righe pronte/)).toBeNull();
   });
 });
 
@@ -986,7 +986,7 @@ describe('il lotto usa la proposta, e la fa confermare', () => {
     const f = stubFetch({ movimenti: [daFatturare(1)], ...(anteprima ? { anteprimaPerId: { pg1: anteprima } } : {}) });
     vi.stubGlobal('fetch', f);
     render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Controlla e metti in coda/ }));
     return f;
   };
 
@@ -1086,7 +1086,7 @@ describe('quote vuote: l’anagrafica tace, il bonifico no', () => {
     const f = stubFetch({ movimenti: [daFatturare(1)], anteprimaPerId: { pg1: dati } });
     vi.stubGlobal('fetch', f);
     render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Controlla e metti in coda/ }));
     return f;
   };
 

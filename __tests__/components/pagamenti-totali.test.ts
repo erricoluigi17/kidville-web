@@ -48,6 +48,17 @@ describe('calcolaTotaliPagamenti', () => {
         expect(t.nDaFatturare).toBe(1);
     });
 
+    // Consegna 2b della coda fatture, D5: la card KPI dice la stessa parola del chip «In coda» sulla stessa
+    // schermata. Un saldato la cui fattura è già in coda non è più «da fatturare».
+    it('un saldato in coda non entra in "Da fatturare"', () => {
+        const t = calcolaTotaliPagamenti([
+            { importo: 150, importo_pagato: 150, stato: 'pagato', fattura_stato: 'non_richiesta' },
+            { importo: 150, importo_pagato: 150, stato: 'pagato', fattura_stato: 'non_richiesta', coda_stato: 'in_coda' },
+        ]);
+        expect(t.daFatturare).toBe(150);
+        expect(t.nDaFatturare).toBe(1);
+    });
+
     it('gestisce importi come stringhe (payload API)', () => {
         const t = calcolaTotaliPagamenti([
             { importo: '120.50', importo_pagato: '20.50', stato: 'parziale' },

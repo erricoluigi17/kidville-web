@@ -26,6 +26,10 @@ import type { PrecompilaTransazione } from '@/components/features/admin/pagament
  * un mock che chiama sempre `onDone(esito)` sarebbe verde anche se il pannello
  * mostrasse il riepilogo SEMPRE, cioè anche dopo una conferma qualunque. Con
  * entrambe le porte, la differenza fra «riepilogo» e «nessun riepilogo» è misurata.
+ *
+ * Il finto espone anche `ChipCoda` (consegna 2b), perché il pannello lo importa: vitest
+ * lancia «No "ChipCoda" export is defined on the mock» appena lo si legge. Non è una porta
+ * del contratto del popup, e qui non si prova (lo prova `RiconciliazionePanel-fattura`).
  */
 
 /** L'esito che la rotta `…/componi` restituisce, come il popup lo consegna. */
@@ -43,6 +47,7 @@ const esitoCorrente = vi.hoisted(() => ({ valore: null as EsitoComposizione | nu
 
 vi.mock('@/components/features/admin/pagamenti/MovimentoDialog', () => ({
   ChipFatturazione: ({ fat }: { fat: { labelKey: string } }) => <span>{fat.labelKey}</span>,
+  ChipCoda: () => null,
   MovimentoDialog: ({ movimento, onDone, onClose, onIncassoUnico }: FintoProps) => (
     <div role="dialog" aria-label="finto popup">
       <button type="button" onClick={() => { onDone(esitoCorrente.valore ?? undefined); onClose(); }}>

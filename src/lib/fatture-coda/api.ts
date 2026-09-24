@@ -2,9 +2,10 @@ import { after } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { zUuid } from '@/lib/validation/common'
-import { zAdultScelto } from '@/lib/fatturazione/intestatario-scelto'
+import { zIntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
 import { logEvento } from '@/lib/logging/logger'
-import { SOGLIA_ORARIA_APP } from '@/lib/pagamenti/tetto-orario-aruba'
+import { FINESTRA_MS, posizioniDisponibili } from '@/lib/pagamenti/tetto-orario-aruba'
+import { PAUSA_FRA_UPLOAD_MS, TETTO_BLOCCO } from '@/lib/pagamenti/lotto-fatture'
 
 /**
  * ─── IL CONTRATTO HTTP DELLA CODA FATTURE (nucleo, §3) ───────────────────────────────
@@ -27,15 +28,28 @@ export const TETTO_VOCI_CODA = 500
 export const TETTO_VOCI_GET = 1000
 /** Da quanti giorni la GET mostra le voci concluse (emesse e tolte). */
 export const GIORNI_STORICO_CODA = 7
-/** Il ritmo su cui si stima l'orario di fine: lo stesso tetto orario del lavoratore. */
-export const RITMO_ORARIO_STIMA = SOGLIA_ORARIA_APP
+/**
+ * I minuti in cui pg_cron sveglia il giro (`fatture-coda-tick`, nucleo `:804-807`). Il cron gira in
+ * GMT ed Europe/Rome ha scarti di ore intere: il minuto è lo stesso. Un test li lega alla migrazione.
+ */
+export const MINUTI_TICK_CODA = [7, 12, 17, 22, 27, 37, 42, 47, 52, 57] as const
+/** Quanto pesa una fattura in un blocco: la pausa fra gli upload più ~3 s d'invio (`lotto-fatture.ts:65-67`, `:83`). */
+export const PASSO_FATTURA_STIMA_MS = PAUSA_FRA_UPLOAD_MS + 3_000
+/** Oltre ~41 giorni di tick non si stima. */
+const TICK_MAX_STIMA = 10_000
+const ORA_MS = 60 * 60 * 1000
 
 // ─── Stati e codici d'esito ────────────────────────────────────────────────────────
 
 export const STATI_CODA = ['in_coda', 'in_invio', 'emessa', 'errore', 'tolta'] as const
 export type StatoVoceCoda = (typeof STATI_CODA)[number]
-/** Gli stati che occupano il posto del pagamento (indice unico parziale della migrazione). */
-export const STATI_ATTIVI: readonly StatoVoceCoda[] = ['in_coda', 'in_invio', 'errore']
+/**
+ * Gli stati che occupano il posto del pagamento (indice unico parziale della migrazione).
+ * L'elenco è UNO, nel motore della fatturazione (consegna 2b, D5): qui si riesporta col nome
+ * storico. Il motore importa da qui solo il TIPO `StatoCodaAttivo` (`import type`): nessun ciclo
+ * a runtime.
+ */
+export { STATI_CODA_OCCUPATA as STATI_ATTIVI } from '@/lib/pagamenti/fatturazione-riga'
 /** Gli stati attivi come TIPO: ciò che una riga di Pagamenti o Riconciliazione può dire (consegna 2a, rilievo e). */
 export type StatoCodaAttivo = Extract<StatoVoceCoda, 'in_coda' | 'in_invio' | 'errore'>
 
@@ -71,28 +85,45 @@ export const CODICI_ERRORE_CODA = {
 /**
  * Una voce da accodare.
  *
- * `intestatario`: SOLO il ramo `adult`, come nel lotto e per la stessa ragione — la coda non
- * deve custodire nome, codice fiscale e residenza digitati nel browser. Viaggia l'id; il resto
- * si rilegge da `parents` all'emissione.
+ * `intestatario`: il ramo `adult` per id (nome, codice fiscale e residenza si rileggono da
+ * `parents` all'emissione) oppure, dalla consegna 2b (D1), la persona scritta a mano («Altro»)
+ * — ma SOLO in un gesto di UNA voce (il `superRefine` di `zCorpoAccoda`): il pulsante ha il
+ * modulo da compilare, il lotto no. La persona vive in `fatture_coda.intestatario_scelto` fino
+ * alla chiusura (emessa e «Togli» la azzerano); non esce dalla GET, e nei log il corpo passa da
+ * `redactInput`. La validano `validaCessionario` all'accodamento (400
+ * `INTESTATARIO_DIGITATO_INCOMPLETO`, prima di ogni lettura) e l'emissione.
+ *
+ * `conferma_proposta`: autorizza il lavoratore a SCRIVERE l'intestatario sulla scheda del
+ * bambino dopo un'emissione nuova riuscita. Con `adult` è la proposta del bonifico confermata
+ * (lotto); con `persona` la casella «ricorda sulla scheda» del pulsante. Il nome è storico (T3).
  *
  * `causale`: la correzione scritta a mano (1..1000 caratteri dopo il trim). Stringa vuota o
  * `null` ⇒ nessuna causale manuale.
  */
 export const zVoceAccodamento = z.object({
   pagamento_id: zUuid,
-  intestatario: zAdultScelto.optional(),
+  intestatario: zIntestatarioScelto.optional(),
   conferma_proposta: z.boolean().optional(),
   causale: z.string().trim().max(1000, 'Causale troppo lunga (massimo 1000 caratteri)').nullable().optional(),
 })
 export type VoceAccodamento = z.infer<typeof zVoceAccodamento>
 
-export const zCorpoAccoda = z.object({
-  voci: z
-    .array(zVoceAccodamento)
-    .min(1, 'Nessuna fattura da mettere in coda')
-    .max(TETTO_VOCI_CODA, `Al massimo ${TETTO_VOCI_CODA} fatture per volta`),
-  urgente: z.boolean().optional(),
-})
+export const zCorpoAccoda = z
+  .object({
+    voci: z
+      .array(zVoceAccodamento)
+      .min(1, 'Nessuna fattura da mettere in coda')
+      .max(TETTO_VOCI_CODA, `Al massimo ${TETTO_VOCI_CODA} fatture per volta`),
+    urgente: z.boolean().optional(),
+  })
+  .superRefine((corpo, ctx) => {
+    // T1 (consegna 2b, D1): l'intestatario scritto a mano entra solo da un gesto di UNA voce, il
+    // pulsante, che ha il modulo da compilare. Il lotto non ce l'ha: da lì un'anagrafica digitata
+    // finirebbe su un documento fiscale che nessuno ha riletto.
+    if (corpo.voci.length > 1 && corpo.voci.some((v) => v.intestatario?.tipo === 'persona')) {
+      ctx.addIssue({ code: 'custom', path: ['voci'], message: 'Un intestatario scritto a mano si mette in coda una fattura alla volta' })
+    }
+  })
 export type CorpoAccoda = z.infer<typeof zCorpoAccoda>
 
 export const zCorpoAzioni = z.object({
@@ -169,7 +200,10 @@ export type RispostaGetCoda =
       disponibile: true
       stato: StatoCoda
       conteggi: ConteggiCoda
-      /** ISO, oppure `null` (niente in attesa, o coda sospesa). */
+      /**
+       * ISO, oppure `null`: niente in attesa, coda sospesa, fatture dell'ultima ora non lette
+       * (il giro non invierebbe: fail-closed), oltre l'orizzonte della stima.
+       */
       stima_fine: string | null
       voci: VoceCodaVista[]
     }
@@ -207,29 +241,61 @@ export function codaAssente(error: unknown): boolean {
   return typeof codice === 'string' && CODICI_ASSENZA.has(codice)
 }
 
-/**
- * L'orario stimato di fine, a `RITMO_ORARIO_STIMA` fatture l'ora sulle voci in attesa.
- *
- * - niente in attesa ⇒ `null`;
- * - coda sospesa ⇒ `null`: finché qualcuno non la riprende, non finisce;
- * - pausa in corso ⇒ si parte dalla fine della pausa, non da adesso.
- *
- * È una stima dichiarata: non conosce le fatture già emesse nell'ultima ora né quelle fatte a
- * mano dal pannello Aruba, che consumano lo stesso secchio.
- */
-export function stimaFineCoda(
-  inAttesa: number,
-  opzioni: { adesso: Date; sospesa: boolean; pausaFinoA: string | null },
-): string | null {
-  if (!Number.isFinite(inAttesa) || inAttesa <= 0) return null
-  if (opzioni.sospesa) return null
-  let inizio = opzioni.adesso.getTime()
-  if (opzioni.pausaFinoA) {
-    const pausa = Date.parse(opzioni.pausaFinoA)
-    if (Number.isFinite(pausa) && pausa > inizio) inizio = pausa
+export interface IngressiStima {
+  adesso: Date
+  inCoda: number
+  inInvio: number
+  sospesa: boolean
+  pausaFinoA: string | null
+  /** Istanti ISO delle righe di `fatture_emesse` dell'ultima ora, TUTTE le sedi. `null` = non misurato. */
+  emesseUltimaOra: readonly string[] | null
+}
+
+/** Il primo tick del cron a un istante >= `ms`, secondi a zero. */
+function prossimoTick(ms: number): number {
+  const ora = Math.floor(ms / ORA_MS) * ORA_MS
+  for (const m of MINUTI_TICK_CODA) {
+    const t = ora + m * 60_000
+    if (t >= ms) return t
   }
-  const durataMs = (inAttesa / RITMO_ORARIO_STIMA) * 60 * 60 * 1000
-  return new Date(inizio + Math.ceil(durataMs)).toISOString()
+  return ora + ORA_MS + MINUTI_TICK_CODA[0] * 60_000
+}
+
+/**
+ * L'orario stimato di fine: i giri del cron simulati con le regole del giro vero. A ogni tick si
+ * contano le fatture con `creato_il >= t - 1h` (come `contaEmesseUltimaOra`), si prendono
+ * `min(TETTO_BLOCCO, posti, restanti)` (come `giro.ts:301-303`), e ognuna pesa
+ * `PASSO_FATTURA_STIMA_MS`. `null`: niente in attesa, coda sospesa, emesse non misurate (il giro
+ * non invia: fail-closed), oltre l'orizzonte.
+ *
+ * Limiti dichiarati: ignora la «sveglia» dopo un accodamento (il primo blocco può partire prima:
+ * pessimista di al più 10 minuti) e le fatture fatte a mano dal pannello Aruba (il margine di 10
+ * di `SOGLIA_ORARIA_APP`).
+ */
+export function stimaFineCoda(i: IngressiStima): string | null {
+  const inCoda = Math.max(0, Math.floor(Number(i.inCoda) || 0))
+  const inInvio = Math.max(0, Math.floor(Number(i.inInvio) || 0))
+  if (inCoda + inInvio === 0 || i.sospesa || i.emesseUltimaOra === null) return null
+  const adesso = i.adesso.getTime()
+  if (!Number.isFinite(adesso)) return null
+  const secchio = i.emesseUltimaOra.map((s) => Date.parse(s)).filter(Number.isFinite)
+  for (let k = 0; k < inInvio; k++) secchio.push(adesso) // le voci in volo occupano il secchio adesso
+  secchio.sort((a, b) => a - b)
+  if (inCoda === 0) return new Date(adesso + inInvio * PASSO_FATTURA_STIMA_MS).toISOString()
+  const pausa = i.pausaFinoA ? Date.parse(i.pausaFinoA) : Number.NaN
+  let t = prossimoTick(Number.isFinite(pausa) && pausa > adesso ? pausa : adesso)
+  let restanti = inCoda
+  let testa = 0
+  for (let g = 0; g < TICK_MAX_STIMA; g++) {
+    while (testa < secchio.length && secchio[testa] < t - FINESTRA_MS) testa++
+    const prese = Math.min(TETTO_BLOCCO, posizioniDisponibili(secchio.length - testa), restanti)
+    // Il secchio resta ordinato senza riordinarlo: ogni istante aggiunto viene dopo il primo tick, che è >= adesso.
+    for (let k = 1; k <= prese; k++) secchio.push(t + k * PASSO_FATTURA_STIMA_MS)
+    restanti -= prese
+    if (restanti === 0) return new Date(t + prese * PASSO_FATTURA_STIMA_MS).toISOString()
+    t = prossimoTick(t + 60_000)
+  }
+  return null
 }
 
 /** Toglie i doppioni mantenendo il primo, nell'ordine dato. */

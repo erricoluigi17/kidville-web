@@ -690,6 +690,11 @@ interface MovimentoArricchito extends MovimentoRiga {
    * sulle righe CONFERMATE di una sede dell'operatore, ed esce sempre, anche a `null`
    * (vedi la nota su `conFatturazione`). `null` = nessuna voce attiva, riga non visibile,
    * oppure coda non letta: quest'ultimo caso lo dicono i log di `leggiCodaAttiva`.
+   *
+   * Dalla consegna 2b (D5) decide anche la LISTA DI LAVORO: una riga con la voce attiva
+   * non sta fra le «Da fatturare» (sottofiltro, conteggio, caselle del lotto), per la
+   * regola del motore `daFatturareInListaDiLavoro`. Coda non letta ⇒ `null` ⇒ la riga
+   * resta contata: fail-open, dichiarato dal `warn` di `leggiCodaAttiva`.
    */
   coda_stato: StatoCodaAttivo | null
 }
@@ -899,6 +904,9 @@ function perFatturazione(r: MovimentoArricchito): RigaListaDiLavoro {
     pagamento_stato: r.pagamento_stato,
     fattura_stato: r.fattura_stato,
     fattura: (r.fattura ?? null) as FatturaMovimentoUi | null,
+    // La voce attiva della coda (consegna 2b, D5): la passa e basta. Che cosa significhi
+    // per la lista di lavoro lo decide il motore (`inCodaAttiva`), non questo adattatore.
+    coda_stato: r.coda_stato,
   }
 }
 
@@ -1393,9 +1401,11 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     // string, e 500 uuid la fanno rifiutare con un 431 (vedi la nota sulla costante).
     //
     // Insieme, la voce attiva della coda fatture (consegna 2a, rilievo e): per SEDE e per
-    // STATO, mai per id — gli stessi 500 uuid farebbero lo stesso 431. Al conteggio le righe
-    // non escono (`rispondi`, sopra): niente da marcare.
-    const leggiCoda = !soloConteggi && confermateConPagamento.length > 0 && sediAttive.size > 0
+    // STATO, mai per id — gli stessi 500 uuid farebbero lo stesso 431. Si legge ANCHE al
+    // conteggio (consegna 2b, D5): lì le righe non escono, ma la coda serve a CONTARE — una
+    // riga con la voce attiva non è fra le «Da fatturare», e senza leggerla il numero sulla
+    // pillola smentirebbe l'elenco che la pillola apre. Sempre una query per sede e stato.
+    const leggiCoda = confermateConPagamento.length > 0 && sediAttive.size > 0
     const [{ righe: pagSedi, errore: errSedi }, codaPerPagamento] = await Promise.all([
       aBlocchi<PagamentoAbbinato>(pagIds, (blocco) =>
         supabase.from('pagamenti').select('id, scuola_id, stato, fattura_stato').in('id', blocco)),

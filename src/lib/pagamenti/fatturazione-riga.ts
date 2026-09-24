@@ -56,6 +56,10 @@
  * `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`.
  */
 
+// Solo tipo: il motore resta puro (niente `next/server`, che `api.ts` importa). Lock:
+// `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`.
+import type { StatoCodaAttivo } from '@/lib/fatture-coda/api'
+
 /** Gli stati di `pagamenti.fattura_stato` (colonna esistente, nessuna migrazione). */
 export type StatoFattura = 'non_richiesta' | 'in_attesa' | 'emessa' | 'scartata'
 
@@ -178,6 +182,12 @@ export function esitoFatturazione(m: RigaFatturabile): EsitoFatturazione | null 
  * bidoni per quattro chip, ed è per questo che le etichette li nominano tutti e
  * quattro (v. `FILTRI_FATTURA` in `riconciliazione-ui.ts`). Una riga senza chip non
  * sta in nessuno dei due.
+ *
+ * I toni restano una partizione anche con la coda: una riga il cui pagamento ha una
+ * voce ATTIVA in `fatture_coda` ha ancora il tono `da_fatturare` (il chip non cambia),
+ * ma dalla LISTA DI LAVORO esce lo stesso — non sta in nessuno dei due bidoni del
+ * sottofiltro, perché la fattura è già stata chiesta e la sta facendo la coda. Lo
+ * decide `daFatturareInListaDiLavoro` (consegna 2b, D5), non questi due insiemi.
  */
 const TONI_FATTA = new Set<TonoFatturazione>(['fatturata', 'attesa'])
 const TONI_DA_FARE = new Set<TonoFatturazione>(['da_fatturare', 'scartata'])
@@ -217,6 +227,30 @@ export interface RigaListaDiLavoro extends RigaFatturabile {
    * campo necessario invece che ridondante.
    */
   stato?: string | null
+  /**
+   * La voce ATTIVA della coda fatture sul pagamento (`in_coda`, `in_invio`, `errore`),
+   * o `null`/assente se non ce n'è: fotografia del caricamento, come la mette la rotta
+   * del registro sulle righe visibili. Consegna 2b, D5: una riga con la voce attiva
+   * esce dalla lista di lavoro (v. `daFatturareInListaDiLavoro`).
+   */
+  coda_stato?: StatoCodaAttivo | null
+}
+
+/**
+ * Gli stati di `fatture_coda` che OCCUPANO il pagamento (l'indice unico parziale del nucleo). L'UNICO elenco:
+ * `fatture-coda/api.ts` lo riesporta come `STATI_ATTIVI` (consegna 2b, D5), perché questo file non può importare
+ * valori da lì (`api.ts` importa `next/server`).
+ */
+export const STATI_CODA_OCCUPATA: readonly StatoCodaAttivo[] = ['in_coda', 'in_invio', 'errore']
+/** Elenco esplicito, non `!= null`: un valore imprevisto non deve togliere una riga senza mostrarne il chip. */
+export function inCodaAttiva(codaStato: unknown): codaStato is StatoCodaAttivo {
+  return typeof codaStato === 'string' && (STATI_CODA_OCCUPATA as readonly string[]).includes(codaStato)
+}
+export type AzioneConCoda = 'invia' | 'nessuna' | 'vai_alla_coda'
+/** Che cosa offre il posto del pulsante della fattura, data la voce in coda (consegna 2b, D5). */
+export function azioneConCoda(codaStato: unknown): AzioneConCoda {
+  if (!inCodaAttiva(codaStato)) return 'invia'
+  return codaStato === 'errore' ? 'vai_alla_coda' : 'nessuna'
 }
 
 /**
@@ -229,7 +263,7 @@ export interface RigaListaDiLavoro extends RigaFatturabile {
  * per parola, e le due copie coincidevano: è esattamente lo stato in cui si
  * trovavano `chipFatturazione` e la rotta il giorno prima di divergere.
  *
- * LE TRE CONDIZIONI IN PIÙ RISPETTO ALLA FATTURA, e perché ciascuna:
+ * LE QUATTRO CONDIZIONI IN PIÙ RISPETTO ALLA FATTURA, e perché ciascuna:
  *  · `stato === 'confermato'` — un movimento non abbinato non ha nessun pagamento
  *    da fatturare;
  *  · `pagamento_id` — senza, il documento che si vedesse sulla riga sarebbe
@@ -239,7 +273,12 @@ export interface RigaListaDiLavoro extends RigaFatturabile {
  *    l'operatore contro un rifiuto. Fuori dalle proprie sedi quel campo arriva
  *    `null` per minimizzazione, quindi la stessa condizione tiene fuori anche i
  *    bonifici di un altro plesso — che l'emissione respingerebbe con
- *    `assertPagamentoInScope` dopo che il pre-volo li ha dichiarati «pronti».
+ *    `assertPagamentoInScope` dopo che il pre-volo li ha dichiarati «pronti»;
+ *  · `!inCodaAttiva(coda_stato)` — dalla consegna 2b (D5): una fattura già in coda,
+ *    in invio o in errore NON è da fare di nuovo. Contarla fra le «Da fatturare», o
+ *    offrirne la casella del lotto, porterebbe l'operatore a chiederla una seconda
+ *    volta (la RPC risponderebbe «già in coda», ma il numero sulla pillola mentirebbe).
+ *    L'errore compreso: si risolve dalla pagina «Coda fatture», non accodandola ancora.
  *
  * ⚠️ NON è un doppione di `fatturaDaFare`, ed è il motivo per cui quest'ultima
  * resta esportata da sola: il CHIP la usa senza queste tre condizioni, perché una
@@ -248,5 +287,5 @@ export interface RigaListaDiLavoro extends RigaFatturabile {
  * semplicemente non la si può spuntare.
  */
 export function daFatturareInListaDiLavoro(r: RigaListaDiLavoro): boolean {
-  return r.stato === 'confermato' && !!r.pagamento_id && r.pagamento_stato === 'pagato' && fatturaDaFare(r)
+  return r.stato === 'confermato' && !!r.pagamento_id && r.pagamento_stato === 'pagato' && !inCodaAttiva(r.coda_stato) && fatturaDaFare(r)
 }

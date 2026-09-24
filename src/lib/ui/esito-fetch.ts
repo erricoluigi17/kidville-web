@@ -2808,6 +2808,8 @@ export const CODICI_ERRORE = {
     CODA_FATTURE_SCRITTURA_FALLITA: 'erroreCodaFattureScritturaFallita',
     /** 400 — si chiede di mettere in coda la fattura di un pagamento non ancora `pagato`. */
     PAGAMENTO_NON_SALDATO: 'errorePagamentoNonSaldato',
+    /** 400 — accodamento con un intestatario scritto a mano che `validaCessionario` rifiuta (consegna 2b, D1). */
+    INTESTATARIO_DIGITATO_INCOMPLETO: 'erroreIntestatarioDigitatoIncompleto',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

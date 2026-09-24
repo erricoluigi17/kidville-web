@@ -1,5 +1,4 @@
 import { intestatarioAutomaticoDelLotto, type AnteprimaConProposta } from './proposta-intestatario'
-import type { IntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
 
 /**
  * ─── IL MOTORE DEL LOTTO DI FATTURE — puro, e collaudabile senza un browser ──
@@ -224,54 +223,6 @@ export function prontaPerIlLotto(anteprima: AnteprimaPerIlLotto | null | undefin
   // buttava via due volte — il suo tipo non la conteneva, e il corpo
   // dell'emissione non aveva il campo dove spedirla.
   return intestatarioAutomaticoDelLotto(anteprima) !== null
-}
-
-/** Il corpo della POST di emissione di UNA riga del lotto. */
-export interface CorpoEmissione {
-  pagamento_id: string
-  /** SEMPRE `null`: vedi `corpoEmissione`. Il tipo non ammette `undefined`. */
-  causale: null
-  /**
-   * L'intestatario proposto dal bonifico, quando c'è. ASSENTE (mai `null`) quando
-   * non c'è: il campo mancante significa «decide la cascata del server», che è il
-   * comportamento su cui contano tutti gli altri punti da cui si emette.
-   *
-   * Solo il ramo `adult`: il lotto non ha nessun modulo da compilare, e accettare
-   * l'anagrafica di una persona dal browser è ciò che lo schema della POST vieta
-   * per iscritto — `zAdultScelto`, non l'unione intera. ⚠️ Fino al 2026-09-08 questa
-   * frase era FALSA: lo schema era `zIntestatarioScelto.optional()`, cioè accettava
-   * anche il ramo `persona`. Il commento prometteva una protezione che non c'era.
-   */
-  intestatario?: Extract<IntestatarioScelto, { tipo: 'adult' }>
-}
-
-/**
- * ⚠️ `causale: null`, MAI `undefined` — ed è il difetto più caro di questo file.
- *
- * In `POST /api/pagamenti/fattura` i tre valori significano tre cose diverse:
- *
- *   stringa non vuota → si SCRIVE la correzione manuale su `pagamenti.fattura_causale`
- *   `null`            → si TOGLIE la correzione salvata
- *   `undefined`       → non si tocca niente
- *
- * `fattura_causale` è appiccicoso: una volta scritto batte qualunque modello
- * configurato in Contabilità → Causali, per sempre e senza che nessuno possa
- * capire perché. È così che la FPR 1948/26 è partita verso lo SdI con «Retta
- * 09/2026» mentre la sede aveva configurato un modello coi segnaposti. Un lotto
- * che mandasse `undefined` lascerebbe congelata quella correzione su OGNI
- * pagamento del lotto: lo stesso difetto, moltiplicato per dodici, su documenti
- * che si correggono solo con una nota di variazione.
- *
- * Il lotto non personalizza mai la causale — non c'è nessun campo da compilare —
- * quindi «togli la correzione salvata» è esattamente ciò che deve dire.
- */
-export function corpoEmissione(pagamentoId: string, adultId?: string | null): CorpoEmissione {
-  // `adultId` non riguarda la causale: la nota qui sopra resta intera.
-  return {
-    pagamento_id: pagamentoId,
-    causale: null,
-    ...(adultId ? { intestatario: { tipo: 'adult' as const, adult_id: adultId } } : {}),
-  }
 }
 
 /**

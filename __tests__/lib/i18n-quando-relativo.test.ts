@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { IntlMessageFormat } from 'intl-messageformat'
-import { quandoRelativo, type QuandoRelativo } from '@/lib/i18n/quando-relativo'
+import { quandoRelativo, scartoGiorniCivili, type QuandoRelativo } from '@/lib/i18n/quando-relativo'
 import catalogoIt from '../../messages/it/adminContabilita.json'
 import catalogoEn from '../../messages/en/adminContabilita.json'
 
@@ -130,6 +130,44 @@ describe.each(FUSI)('quandoRelativo con il processo nel fuso %s', (fuso, offsetA
     expect(quandoRelativo('', adesso, 'it-IT')).toBeNull()
     expect(quandoRelativo('non-una-data', adesso, 'it-IT')).toBeNull()
     expect(quandoRelativo('2026-09-23T11:00:00Z', new Date(NaN), 'it-IT')).toBeNull()
+  })
+})
+
+/**
+ * `scartoGiorniCivili` — lo scarto di calendario a Roma, esportato dal 24/09 (consegna 2b, D11)
+ * perché «oggi/ieri» della chat lo decida lo STESSO motore di «oggi/domani» della coda, e non più
+ * `toDateString()` nel fuso del processo con «ieri = adesso − 24 ore».
+ */
+describe.each(FUSI)('scartoGiorniCivili con il processo nel fuso %s', (fuso, offsetAtteso) => {
+  const tzOriginale = process.env.TZ
+
+  beforeAll(() => { process.env.TZ = fuso })
+  afterAll(() => { ripristinaTZ(tzOriginale) })
+
+  it(`il fuso di prova è davvero applicato (offset di settembre ${offsetAtteso})`, () => {
+    expect(new Date('2026-09-14T12:00:00').getTimezoneOffset()).toBe(offsetAtteso)
+  })
+
+  it('0 · stesso giorno civile a Roma', () => {
+    expect(scartoGiorniCivili('2026-09-23T21:59:00Z', new Date('2026-09-23T21:30:00Z'))).toBe(0)
+  })
+
+  it('1 · la mezzanotte di Roma è già il giorno dopo', () => {
+    expect(scartoGiorniCivili('2026-09-23T22:00:00Z', new Date('2026-09-23T21:30:00Z'))).toBe(1)
+  })
+
+  it('-1 · un istante del giorno civile prima (a Roma), anche se a meno di 24 ore', () => {
+    expect(scartoGiorniCivili('2026-09-23T21:59:00Z', new Date('2026-09-23T22:00:00Z'))).toBe(-1)
+    expect(scartoGiorniCivili('2026-09-22T10:00:00Z', new Date(Date.UTC(2026, 8, 23, 21, 30)).getTime())).toBe(-1)
+  })
+
+  it('null · istante illeggibile, vuoto o adesso invalido, mai un’eccezione', () => {
+    const adesso = new Date('2026-09-23T10:00:00Z')
+    expect(scartoGiorniCivili('non-una-data', adesso)).toBeNull()
+    expect(scartoGiorniCivili(null, adesso)).toBeNull()
+    expect(scartoGiorniCivili(undefined, adesso)).toBeNull()
+    expect(scartoGiorniCivili('', adesso)).toBeNull()
+    expect(scartoGiorniCivili('2026-09-23T11:00:00Z', new Date(NaN))).toBeNull()
   })
 })
 

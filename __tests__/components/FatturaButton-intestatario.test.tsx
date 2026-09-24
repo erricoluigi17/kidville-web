@@ -1,5 +1,6 @@
 /**
- * Il modale «Emetti fattura», seconda metà: CHI riceve il documento.
+ * Il modale «Metti in coda la fattura» (fino al 2026-09-24 «Emetti fattura»), seconda
+ * metà: CHI riceve il documento.
  *
  * ─── PERCHÉ QUESTI TEST ESISTONO ─────────────────────────────────────────────
  * Misurato in produzione il 2026-09-04: su 93 pagamenti saldati, 88 rispondono
@@ -10,29 +11,33 @@
  * variazione.
  *
  * Le tre cose che questi test inchiodano, e che senza di loro nessuno vedrebbe:
- *  1. la proposta è PRESELEZIONE, non invio: finché non si preme «Emetti» non
- *     parte niente;
+ *  1. la proposta è PRESELEZIONE, non invio: finché non si preme «Metti in coda»
+ *     non parte niente;
  *  2. i quattro `motivo` producono quattro frasi DIVERSE. Con una frase sola
  *     l'interfaccia direbbe «è l'intestatario sulla scheda» anche quando la
  *     scheda non c'entra: cioè mentirebbe a chi sta per confermare;
- *  3. la casella «ricorda sulla scheda» scrive DOPO l'emissione riuscita e mai
- *     prima — un documento rifiutato non lascia dietro una modifica permanente.
+ *  3. la casella «ricorda sulla scheda» NON scrive niente dal browser: viaggia nella
+ *     voce come `conferma_proposta: true`, e la scheda la scrive il LAVORATORE solo a
+ *     emissione nuova riuscita (consegna 2b, T3/T4) — un documento rifiutato non
+ *     lascia dietro una modifica permanente.
  *
  * ⚠️ Repo PUBBLICO: nomi e codici fiscali sintetici. Il cast verificato a zero
  * occorrenze su `parents`, `alunni` e sui file veri è `FABBRI` · `BIANCHI` ·
  * `PERLINI` (vedi `REGOLA-NOMI-FINTI`): non se ne inventano altri.
  *
- * ─── DAL 2026-09-23 LE STRADE SONO DUE (nucleo della coda fatture, §4) ──────
- *  · nessuna scelta, o un ADULTO in archivio → `POST /api/pagamenti/fattura/coda`,
- *    una voce, `urgente: true`, l'intestatario dentro la voce;
- *  · una PERSONA digitata a mano («Altro») → la POST diretta di sempre, con la sua
- *    «ricorda sulla scheda» DOPO l'emissione. La coda accetta solo il ramo `adult`
- *    (`zAdultScelto`): non custodisce anagrafiche digitate nel browser.
- * I casi qui sotto dicono quale delle due strade prende ogni scelta, e lo verificano
- * sull'URL — non solo sul corpo.
+ * ─── DAL 2026-09-24 LA STRADA È UNA SOLA: LA CODA (consegna 2b, D1) ─────────
+ * Nessuna scelta, un ADULTO in archivio o una PERSONA digitata a mano («Altro»): tutto
+ * va a `POST /api/pagamenti/fattura/coda`, una voce, `urgente: true`, l'intestatario
+ * dentro la voce. Dal 23/09 al 24/09 la persona prendeva ancora la POST diretta, con
+ * la PATCH della scheda fatta dal browser: la coda ora accetta il ramo `persona` (in un
+ * gesto di UNA voce, validato con `validaCessionario` prima di accodare), e la PATCH
+ * non esiste più. Il finto `fetch` qui sotto REGISTRA ogni chiamata che non si aspetta:
+ * i casi verificano sull'URL che non parta niente verso `/api/pagamenti/fattura`
+ * (esatto) e nessuna PATCH.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+import sharedIt from '../../messages/it/shared.json'
 
 /**
  * Il finto `next-intl` INTERPOLA i segnaposti, invece di restituire la stringa
@@ -117,12 +122,11 @@ const BIANCHI_INCOMPLETO: Candidato = {
 }
 
 let chiamate: { url: string; init?: RequestInit }[] = []
+/** Le chiamate che il finto NON si aspetta: la POST diretta, la PATCH della scheda, altro. */
+let nonPreviste: { url: string; init?: RequestInit }[] = []
 let anteprima: { ok: boolean; body: unknown } = { ok: true, body: null }
-/** La POST DIRETTA (solo per la persona digitata). */
-let emissione: { ok: boolean; body: unknown } = { ok: true, body: { success: true, data: { fattura_stato: 'in_attesa' } } }
-/** La POST alla CODA (nessuna scelta, o un adulto in archivio). */
+/** La POST alla CODA: l'unica strada, qualunque sia l'intestatario. */
 let coda: { ok: boolean; body: unknown } = { ok: true, body: { gruppo_id: 'gruppo-1', accodate: 1, gia_in_coda: [] } }
-let patchStudente: { ok: boolean; body: unknown } = { ok: true, body: { success: true } }
 
 function corpoAnteprima(
     intestatario: Omit<BloccoIntestatario, 'alunno'> | null,
@@ -153,13 +157,17 @@ function corpoAnteprima(
 
 function montaFetch() {
     chiamate = []
+    nonPreviste = []
     global.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const u = String(url)
         chiamate.push({ url: u, init })
         if (u.includes('/anteprima')) return { ok: anteprima.ok, json: async () => anteprima.body } as unknown as Response
-        if (u.includes('/api/admin/students')) return { ok: patchStudente.ok, json: async () => patchStudente.body } as unknown as Response
-        if (u.includes('/api/pagamenti/fattura/coda')) return { ok: coda.ok, json: async () => coda.body } as unknown as Response
-        return { ok: emissione.ok, json: async () => emissione.body } as unknown as Response
+        if (u === URL_CODA) return { ok: coda.ok, json: async () => coda.body } as unknown as Response
+        // ⚠️ Nessun ramo «emissione riuscita» per la POST diretta né per la PATCH della
+        // scheda: una chiamata che nessuno dovrebbe fare si REGISTRA e risponde come un
+        // guasto, così un ritorno alla vecchia strada non passa per un verde.
+        nonPreviste.push({ url: u, init })
+        return { ok: false, status: 599, json: async () => ({ error: `chiamata non prevista: ${u}` }) } as unknown as Response
     }) as unknown as typeof fetch
 }
 
@@ -167,24 +175,24 @@ const URL_CODA = '/api/pagamenti/fattura/coda'
 const URL_DIRETTA = '/api/pagamenti/fattura'
 const post = () => chiamate.find((c) => c.init?.method === 'POST')
 const patch = () => chiamate.find((c) => c.init?.method === 'PATCH')
-const corpoPatch = (): Record<string, unknown> => JSON.parse(String(patch()?.init?.body ?? '{}'))
-/** Il corpo della POST DIRETTA: lì l'intestatario sta al primo livello. */
-const corpoPost = (): Record<string, unknown> => JSON.parse(String(post()?.init?.body ?? '{}'))
-/** La voce accodata: nella coda l'intestatario sta DENTRO la voce, non al primo livello. */
-const voceCoda = (): Record<string, unknown> => {
+/** Nessuna chiamata alla route DIRETTA (esatto: `…/fattura/coda` non conta). */
+const nessunaDiretta = () => chiamate.every((c) => c.url !== URL_DIRETTA)
+/** Il corpo INTERO della POST alla coda: `{ voci, urgente }`. */
+const corpoCoda = (): { voci: Record<string, unknown>[]; urgente?: unknown } => {
     const c = chiamate.find((x) => x.init?.method === 'POST' && x.url === URL_CODA)
-    const corpo = JSON.parse(String(c?.init?.body ?? '{"voci":[]}')) as { voci: Record<string, unknown>[] }
-    return corpo.voci[0] ?? {}
+    return JSON.parse(String(c?.init?.body ?? '{"voci":[]}')) as { voci: Record<string, unknown>[]; urgente?: unknown }
 }
+/** La voce accodata: nella coda l'intestatario sta DENTRO la voce, non al primo livello. */
+const voceCoda = (): Record<string, unknown> => corpoCoda().voci[0] ?? {}
 
 async function apri() {
     fireEvent.click(screen.getByRole('button', { name: /invia fattura/i }))
-    await waitFor(() => expect(screen.getByRole('button', { name: /^emetti$/i })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: /^metti in coda$/i })).toBeTruthy())
     await screen.findByDisplayValue(CAUSALE)
 }
 
 const selettore = () => screen.getByLabelText(/intestatario della fattura/i) as HTMLSelectElement
-const bottoneEmetti = () => screen.getByRole('button', { name: /^emetti$/i }) as HTMLButtonElement
+const bottoneEmetti = () => screen.getByRole('button', { name: /^metti in coda$/i }) as HTMLButtonElement
 
 /** Il `value` dell'opzione che porta quel testo: il test non deve conoscere la costante. */
 function valoreOpzione(testo: RegExp): string {
@@ -196,9 +204,7 @@ function valoreOpzione(testo: RegExp): string {
 beforeEach(() => {
     montaFetch()
     document.documentElement.setAttribute('lang', 'it')
-    emissione = { ok: true, body: { success: true, data: { fattura_stato: 'in_attesa' } } }
     coda = { ok: true, body: { gruppo_id: 'gruppo-1', accodate: 1, gia_in_coda: [] } }
-    patchStudente = { ok: true, body: { success: true } }
     anteprima = corpoAnteprima({
         quote: [],
         ripartito: false,
@@ -236,7 +242,7 @@ describe('FatturaButton — chi riceve la fattura si sceglie, e si conferma', ()
         expect(opzione.textContent).toMatch(/CAP/i)
     })
 
-    it('scegliendo un candidato NON fatturabile, «Emetti» si blocca e l’avviso nomina i campi', async () => {
+    it('scegliendo un candidato NON fatturabile, «Metti in coda» si blocca e l’avviso nomina i campi', async () => {
         render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
         await apri()
         fireEvent.change(selettore(), { target: { value: P_BIANCHI } })
@@ -383,35 +389,42 @@ describe('FatturaButton — «Altro»: si digita, e si valida con la stessa funz
         }
     })
 
-    it('un CAP di quattro cifre blocca «Emetti» e viene nominato', async () => {
+    it('un CAP di quattro cifre blocca «Metti in coda» e viene nominato', async () => {
         await apriAltro()
         compila({ ...COMPLETI, '^CAP': '8001' })
         await waitFor(() => expect(bottoneEmetti().disabled).toBe(true))
         expect(screen.getByRole('alert').textContent).toMatch(/CAP/)
     })
 
-    it('con i campi completi la POST porta `tipo: persona`, e provincia/civico restano facoltativi', async () => {
+    /** La persona di COMPLETI come deve viaggiare: provincia e civico vuoti NON ci sono. */
+    const PERSONA = {
+        tipo: 'persona',
+        codice_fiscale: CF_DIGITATO,
+        nome: 'Carlo',
+        cognome: 'Perlini',
+        indirizzo: 'Via delle Prove 1',
+        cap: '80014',
+        comune: 'Giugliano in Campania',
+    }
+
+    it('con i campi completi la persona va in CODA, urgente, e provincia/civico restano facoltativi', async () => {
         await apriAltro()
         compila(COMPLETI)
         await waitFor(() => expect(bottoneEmetti().disabled).toBe(false))
         fireEvent.click(bottoneEmetti())
         await waitFor(() => expect(post()).toBeTruthy())
 
-        // ⚠️ LA PERSONA DIGITATA NON VA IN CODA: la coda accetta solo `adult`
-        // (`zAdultScelto`) e non custodisce anagrafiche digitate nel browser. Mandarla
-        // alla coda sarebbe un 400 garantito, cioè la funzione tolta in silenzio: resta
-        // la POST diretta di sempre, e questo caso lo inchioda sull'URL.
-        expect(post()?.url).toBe(URL_DIRETTA)
-        expect(chiamate.some((c) => c.url === URL_CODA)).toBe(false)
-        expect(corpoPost().intestatario).toEqual({
-            tipo: 'persona',
-            codice_fiscale: CF_DIGITATO,
-            nome: 'Carlo',
-            cognome: 'Perlini',
-            indirizzo: 'Via delle Prove 1',
-            cap: '80014',
-            comune: 'Giugliano in Campania',
-        })
+        // ⚠️ UNA STRADA SOLA (D1): fino al 24/09 la persona digitata prendeva la POST
+        // diretta, fuori dal tetto orario e dalla sessione Aruba del lavoratore. Questo
+        // caso lo inchioda sull'URL, e non solo sul corpo.
+        expect(post()?.url).toBe(URL_CODA)
+        expect(nessunaDiretta()).toBe(true)
+        expect(nonPreviste).toEqual([])
+        expect(corpoCoda().urgente).toBe(true)
+        expect(corpoCoda().voci).toHaveLength(1)
+        expect(voceCoda().intestatario).toEqual(PERSONA)
+        // Casella spenta: niente autorizzazione a scrivere sulla scheda del bambino.
+        expect(voceCoda().conferma_proposta).toBeUndefined()
     })
 
     it('la casella «ricorda sulla scheda» nasce SPENTA e nomina il bambino', async () => {
@@ -420,44 +433,51 @@ describe('FatturaButton — «Altro»: si digita, e si valida con la stessa funz
         expect(casella.checked).toBe(false)
     })
 
-    it('accesa, scrive sulla scheda DOPO l’emissione riuscita — mai prima', async () => {
+    it('accesa, viaggia nella voce come `conferma_proposta: true` — e il browser non scrive la scheda', async () => {
         await apriAltro()
         compila(COMPLETI)
         fireEvent.click(screen.getByRole('checkbox', { name: /Carlo Perlini/ }))
         fireEvent.click(bottoneEmetti())
+        await waitFor(() => expect(post()).toBeTruthy())
 
-        await waitFor(() => expect(patch()).toBeTruthy())
-        // L'ordine è la sostanza: un documento rifiutato non deve lasciare dietro
-        // di sé un intestatario nuovo su tutte le rette future del bambino.
-        const iPost = chiamate.findIndex((c) => c.init?.method === 'POST')
-        const iPatch = chiamate.findIndex((c) => c.init?.method === 'PATCH')
-        expect(iPost).toBeGreaterThanOrEqual(0)
-        expect(iPatch).toBeGreaterThan(iPost)
-
-        expect(corpoPatch()).toEqual({
-            id: ALUNNO,
-            intestatario_fatture: {
-                tipo: 'altro',
-                dati: {
-                    nome: 'Carlo', cognome: 'Perlini', cf: CF_DIGITATO,
-                    indirizzo: 'Via delle Prove 1', cap: '80014', comune: 'Giugliano in Campania',
-                },
-            },
-        })
-    })
-
-    it('se l’emissione FALLISCE, la scheda non viene toccata', async () => {
-        emissione = { ok: false, body: { error: 'Aruba ha rifiutato il documento' } }
-        await apriAltro()
-        compila(COMPLETI)
-        fireEvent.click(screen.getByRole('checkbox', { name: /Carlo Perlini/ }))
-        fireEvent.click(bottoneEmetti())
-
-        await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Aruba/))
+        // La scheda la scrive il LAVORATORE, e solo a emissione nuova riuscita (T3, T4):
+        // un documento rifiutato non lascia dietro un intestatario nuovo su tutte le rette
+        // future del bambino. Qui si guarda che l'autorizzazione parta, e niente altro.
+        expect(post()?.url).toBe(URL_CODA)
+        expect(voceCoda().intestatario).toEqual(PERSONA)
+        expect(voceCoda().conferma_proposta).toBe(true)
         expect(patch()).toBeUndefined()
+        expect(nonPreviste).toEqual([])
     })
 
-    it('il blocco arriva SENZA il bambino → nessuna casella e nessuna PATCH', async () => {
+    it('la coda rifiuta la persona (400 `INTESTATARIO_DIGITATO_INCOMPLETO`): la frase del catalogo, non la prosa, e nessuna PATCH', async () => {
+        coda = {
+            ok: false,
+            body: { error: 'prosa del server che non deve arrivare a schermo', codice: 'INTESTATARIO_DIGITATO_INCOMPLETO' },
+        }
+        const finto = vi.fn()
+        const originale = global.alert
+        global.alert = finto as unknown as typeof global.alert
+        try {
+            await apriAltro()
+            compila(COMPLETI)
+            fireEvent.click(screen.getByRole('checkbox', { name: /Carlo Perlini/ }))
+            fireEvent.click(bottoneEmetti())
+
+            // La frase si LEGGE dal catalogo condiviso, mai ricopiata: `messaggioDaCorpo`
+            // traduce solo i codici di `CODICI_ERRORE`, leggendo `shared.json` direttamente.
+            await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(sharedIt.erroreIntestatarioDigitatoIncompleto))
+            expect(screen.getByRole('alert').textContent).not.toMatch(/prosa del server/)
+            expect(patch()).toBeUndefined()
+            expect(finto).not.toHaveBeenCalled()
+            // Niente è entrato in coda: si corregge e si ripreme.
+            expect(bottoneEmetti().disabled).toBe(false)
+        } finally {
+            global.alert = originale
+        }
+    })
+
+    it('il blocco arriva SENZA il bambino → nessuna casella, e nessun `conferma_proposta`', async () => {
         // Il caso «campo perso», che va tenuto distinto da «campo spostato»: se
         // l'anteprima non sa dire di chi è la retta, la scelta non si può ricordare
         // su nessuna scheda — e offrire una casella che non salverebbe niente è
@@ -473,20 +493,28 @@ describe('FatturaButton — «Altro»: si digita, e si valida con la stessa funz
 
         fireEvent.click(bottoneEmetti())
         await waitFor(() => expect(post()).toBeTruthy())
+        expect(post()?.url).toBe(URL_CODA)
+        expect(voceCoda().intestatario).toEqual(PERSONA)
+        expect(voceCoda().conferma_proposta).toBeUndefined()
         expect(patch()).toBeUndefined()
     })
 
-    it('se la scheda non si aggiorna, lo dice: la fattura è uscita lo stesso', async () => {
-        patchStudente = { ok: false, body: { error: 'Nessun campo da aggiornare' } }
+    it('adulto → «Altro» con la casella accesa → di nuovo un adulto: `conferma_proposta` NON parte', async () => {
         await apriAltro()
+        fireEvent.change(selettore(), { target: { value: P_FABBRI } })
+        fireEvent.change(selettore(), { target: { value: valoreOpzione(/altro/i) } })
+        await screen.findByLabelText(/codice fiscale/i)
         compila(COMPLETI)
-        fireEvent.click(screen.getByRole('checkbox', { name: /Carlo Perlini/ }))
-        fireEvent.click(bottoneEmetti())
+        const casella = screen.getByRole('checkbox', { name: /Carlo Perlini/ }) as HTMLInputElement
+        fireEvent.click(casella)
+        expect(casella.checked).toBe(true)
 
-        await waitFor(() => expect(patch()).toBeTruthy())
-        await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/emessa/i))
-        // …e non si ripreme «Emetti»: una seconda fattura vera per la stessa retta.
-        expect(bottoneEmetti().disabled).toBe(true)
+        // Il consenso raccolto per la persona digitata non si spende per un adulto.
+        fireEvent.change(selettore(), { target: { value: P_FABBRI } })
+        fireEvent.click(bottoneEmetti())
+        await waitFor(() => expect(post()).toBeTruthy())
+        expect(voceCoda().intestatario).toEqual({ tipo: 'adult', adult_id: P_FABBRI })
+        expect(voceCoda().conferma_proposta).toBeUndefined()
     })
 })
 
@@ -515,16 +543,16 @@ describe('FatturaButton — l’errore si legge a schermo, non in un alert() del
         }
     })
 
-    it('un 409 della POST DIRETTA (persona digitata) esce tradotto allo stesso modo', async () => {
+    it('un 400 della CODA sull’intestatario scritto a mano esce tradotto allo stesso modo, e l’URL è la coda', async () => {
         const finto = vi.fn()
         const originale = global.alert
         global.alert = finto as unknown as typeof global.alert
         try {
-            emissione = {
+            coda = {
                 ok: false,
                 body: {
-                    error: 'Questo pagamento ha già una fattura viva (FPR 1947/26)…',
-                    codice: 'FATTURA_GIA_EMESSA_ALTRO_INTESTATARIO',
+                    error: 'prosa del server che non deve arrivare a schermo',
+                    codice: 'INTESTATARIO_DIGITATO_INCOMPLETO',
                 },
             }
             render(<FatturaButton pagamentoId={PAG} userId={UTENTE} />)
@@ -540,8 +568,10 @@ describe('FatturaButton — l’errore si legge a schermo, non in un alert() del
             await waitFor(() => expect(bottoneEmetti().disabled).toBe(false))
             fireEvent.click(bottoneEmetti())
 
-            await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/nota di variazione/i))
-            expect(post()?.url).toBe(URL_DIRETTA)
+            await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(sharedIt.erroreIntestatarioDigitatoIncompleto))
+            expect(screen.getByRole('alert').textContent).not.toMatch(/prosa del server/)
+            expect(post()?.url).toBe(URL_CODA)
+            expect(nessunaDiretta()).toBe(true)
             expect(finto).not.toHaveBeenCalled()
         } finally {
             global.alert = originale

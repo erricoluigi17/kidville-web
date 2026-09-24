@@ -2,6 +2,7 @@
 // Il chip di stato si rende con il `<Badge tone={…}>` dell'app: il `tone` mappa
 // lo stato sui toni semantici del Badge (linguaggio unico con genitore/docente).
 import type { BadgeTone } from '@/components/ui/Badge';
+import { inCodaAttiva } from '@/lib/pagamenti/fatturazione-riga';
 
 export const STATI_PAGAMENTO: Record<string, { label: string; tone: BadgeTone }> = {
     da_pagare: { label: 'Da pagare', tone: 'neutral' },
@@ -24,6 +25,12 @@ export interface PagamentoTotalizzabile {
     importo_pagato?: number | string | null;
     stato?: string | null;
     fattura_stato?: string | null;
+    /**
+     * La voce attiva della coda fatture sul pagamento (consegna 2b, D5): con `in_coda`,
+     * `in_invio` o `errore` il saldato non è più «da fatturare» — la fattura è già chiesta.
+     * Lo decide il motore (`inCodaAttiva`), non un confronto scritto qui.
+     */
+    coda_stato?: string | null;
 }
 
 export interface TotaliPagamenti {
@@ -49,7 +56,7 @@ export function calcolaTotaliPagamenti(pagamenti: PagamentoTotalizzabile[]): Tot
         const resto = Number(p.importo) - Number(p.importo_pagato || 0);
         if (resto > 0) daIncassare += resto;
         if (p.stato === 'scaduto') scaduto += resto;
-        if (p.stato === 'pagato' && (!p.fattura_stato || p.fattura_stato === 'non_richiesta')) {
+        if (p.stato === 'pagato' && (!p.fattura_stato || p.fattura_stato === 'non_richiesta') && !inCodaAttiva(p.coda_stato)) {
             daFatturare += Number(p.importo);
             nDaFatturare += 1;
         }

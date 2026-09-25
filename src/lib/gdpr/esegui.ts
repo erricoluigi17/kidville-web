@@ -373,6 +373,37 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
     come:
       'L\u2019ORIGINALE caricato da un telefono, prima della conversione. Non lo tocca nessun canale di oblio, e non per dimenticanza: l\u2019oggetto \u00e8 indicizzato per chi ha caricato e per job, non per il bambino ripreso, quindi una cancellazione per alunno non saprebbe quale file guardare. A svuotarlo \u00e8 la CONSERVAZIONE: `video_retention_scadenze` d\u00e0 a ogni job concluso una data di cancellazione (sette giorni dalla verifica, subito per gli annullati) e il giro di `/api/gdpr/retention-video` toglie il file prima della riga, per riga. Il video pubblicato \u2014 quello che una famiglia vede \u2014 vive in `gallery` o in `news`, ed \u00e8 l\u00ec che l\u2019oblio per alunno lo raggiunge. \u26a0\ufe0f FINESTRA RESIDUA DICHIARATA: fra una richiesta di cancellazione e la scadenza dell\u2019originale possono passare fino a sette giorni. \u00c8 una scelta, non una svista, e il numero sta in un posto solo.',
   },
+  // Nominato il 2026-09-25. Il bucket esisteva in produzione dal 2026-09-23 (lo crea
+  // la `createBucket` di `primaria/allegati` al primo caricamento), ma la fotografia
+  // dello Storage non era stata rigenerata: per due giorni è stato un magazzino NON
+  // NOMINATO, cioè il terzo caso, quello che questo registro esiste per impedire.
+  // Lo stesso giorno è stato dichiarato `escluso` come LACUNA APERTA («nessun termine
+  // di conservazione») e, sempre il 2026-09-25, il titolare l'ha chiusa con un
+  // termine: da qui `coperto-fuori-oblio`, lo stato dei bucket che svuota la
+  // CONSERVAZIONE e non un canale d'oblio (come `video_originals` e
+  // `documenti_personale`).
+  'registro-allegati': {
+    stato: 'coperto-fuori-oblio',
+    come:
+      'Gli allegati delle lezioni del registro della primaria (`allegati_registro`, ambito ' +
+      '«argomento» o «compiti»: PDF e immagini). La riga è agganciata alla LEZIONE (`registro_id` → ' +
+      'classe, data e ora), non a un alunno né a un genitore: nessuna colonna dice di quale bambino ' +
+      'parli un file, quindi `anonimizzaAlunno` e `anonimizzaParent` non hanno niente da cui risalire, ' +
+      'e non lo raggiungono per costruzione. A svuotarlo è la CONSERVAZIONE, per DECISIONE DEL ' +
+      'TITOLARE DEL 2026-09-25: ogni allegato si distrugge DEFINITIVAMENTE 365 giorni dopo il ' +
+      'CARICAMENTO (`creato_il`), vivo o nel cestino che sia — il numero vive in un posto solo, ' +
+      '`GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO` di `src/lib/primaria/cestino-registro.ts`. Lo applica ' +
+      'la purga GIORNALIERA `POST /api/gdpr/retention-cestino-registro` (cron ' +
+      '`cestino-registro-retention`, sorvegliato da /api/health), contenitore `conservazione`: PRIMA ' +
+      'il file dal bucket e POI la riga, per riga, e un file che un’altra riga ancora nel termine ' +
+      'nomina non si tocca. La stessa purga toglie prima, dopo sette giorni, ciò che qualcuno ha ' +
+      'messo nel CESTINO. La prova sta accanto al meccanismo, in ' +
+      '`__tests__/api/gdpr-retention-cestino-registro.test.ts`: questo registro dichiara chi svuota ' +
+      'il magazzino, non verifica che lo svuoti. ⚠️ FINESTRA RESIDUA DICHIARATA: un’immagine può ' +
+      'ritrarre un bambino o il suo quaderno col nome, e dopo un oblio quel file resta fino alla ' +
+      'scadenza del suo termine — al più 365 giorni dal caricamento più un giro di purga. Vale solo ' +
+      'per il registro: i documenti del fascicolo (`sensitive_documents`) non hanno questo termine.',
+  },
   video_processing: {
     stato: 'escluso',
     motivo:
@@ -404,26 +435,6 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
     stato: 'escluso',
     motivo:
       'Allegati degli incarichi interni allo staff: riguardano l’organizzazione del lavoro fra colleghi, non la famiglia, e nessuna colonna li lega a un alunno o a un genitore. La cancellazione dell’account di un membro dello staff è un percorso diverso da questo, che è l’oblio dell’interessato-famiglia.',
-  },
-  // Nominato il 2026-09-25. Il bucket esisteva in produzione dal 2026-09-23 (lo crea
-  // la `createBucket` di `primaria/allegati` al primo caricamento), ma la fotografia
-  // dello Storage non era stata rigenerata: per due giorni è stato un magazzino NON
-  // NOMINATO, cioè il terzo caso, quello che questo registro esiste per impedire.
-  'registro-allegati': {
-    stato: 'escluso',
-    motivo:
-      '🔴 NON È UNA DECISIONE, È UNA LACUNA APERTA, e sta scritta qui perché non sparisca. Sono gli ' +
-      'allegati delle lezioni del registro della primaria (`allegati_registro`, ambito «argomento» ' +
-      'o «compiti»: PDF e immagini). La riga è agganciata alla LEZIONE (`registro_id` → classe, ' +
-      'data e ora), non a un alunno né a un genitore: nessuna colonna dice di quale bambino parli ' +
-      'un file, quindi `anonimizzaAlunno` e `anonimizzaParent` non hanno niente da cui risalire. ' +
-      'Di solito sono materiali della classe, come gli allegati degli avvisi. Ma un’immagine può ' +
-      'ritrarre un bambino o il suo quaderno col nome, e quel file resta dopo un oblio. L’unico ' +
-      'meccanismo che svuota il bucket è il CESTINO: `/api/gdpr/retention-cestino-registro` ' +
-      'distrugge file e riga sette giorni dopo l’eliminazione, e solo per ciò che qualcuno ha ' +
-      'messo nel cestino. Misurato il 2026-09-25: bucket privato, 11 oggetti. La chiusura vera ' +
-      'spetta al titolare: un termine di conservazione per gli allegati del registro, oppure un ' +
-      'aggancio agli alunni. Non è un filtro da inventare qui.',
   },
   iscrizioni_elenchi: {
     stato: 'escluso',

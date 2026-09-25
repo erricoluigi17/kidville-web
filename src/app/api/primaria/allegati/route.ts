@@ -11,7 +11,7 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { statoVoci, chiaveVoce } from '@/lib/primaria/permesso-voce'
 import { allegatiRegistroVivi } from '@/lib/primaria/cestino-allegati-registro'
-import { scadenzaCestino } from '@/lib/primaria/cestino-registro'
+import { ripristinabileFinoAlAllegato } from '@/lib/primaria/cestino-registro'
 import {
   BUCKET_ALLEGATI_REGISTRO,
   CESTINO_ASSENTE,
@@ -386,7 +386,9 @@ export const DELETE = withRoute('primaria/allegati:DELETE', async (request: Next
       data: {
         id,
         eliminatoIl: adesso,
-        ripristinabileFinoAl: scadenzaCestino(adesso)?.toISOString() ?? null,
+        // Il primo che scade fra custodia e conservazione (decisione del titolare del
+        // 2026-09-25): un allegato caricato quasi un anno fa non resta sette giorni.
+        ripristinabileFinoAl: ripristinabileFinoAlAllegato(adesso, allegato.creato_il)?.toISOString() ?? null,
       },
     })
   } catch (err) {

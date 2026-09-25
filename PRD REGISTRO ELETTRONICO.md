@@ -108,6 +108,91 @@
 
 ---
 
+## 🗓️ Changelog — Conservazione degli allegati del registro: 365 giorni dal caricamento, poi file e riga spariscono — 2026-09-25 (modifiche non ancora su un branch proprio)
+
+**La decisione del titolare (2026-09-25).** Gli allegati del registro della primaria
+(`allegati_registro`, bucket `registro-allegati`) si cancellano **definitivamente 365 giorni dopo il
+caricamento** (`creato_il`), sia quelli vivi sia quelli nel cestino. Vale **solo per il registro**:
+i documenti del fascicolo (`student_documents`) restano come sono, senza termine. L'informativa
+`/privacy` **non** cambia: il lock `informativa-conservazione-dichiarata` controlla solo che le
+promesse di cancellazione automatica scritte lì abbiano un job che le mantiene, e non chiede che
+ogni termine sia scritto nell'informativa. Quindi non c'era conflitto.
+
+**Il numero, in un posto solo.** `GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO = 365` sta in
+`src/lib/primaria/cestino-registro.ts`, accanto a `GIORNI_CESTINO_REGISTRO`, con le funzioni pure
+`sogliaConservazioneAllegatiRegistro()` e `scadenzaConservazioneAllegato()`. I giorni sono di 24 ore
+sull'istante, non «un anno» di calendario. Il lock `cestino-registro-giorni-un-numero-solo` ora
+copre anche questa costante: una dichiarazione sola in `src/`, la purga la importa, nessun file che
+usa il modulo e nessun catalogo `messages/` scrive il numero in cifre.
+
+**Chi la applica.** Non c'è un cron nuovo. La purga giornaliera che esiste già
+(`POST /api/gdpr/retention-cestino-registro`, job `cestino-registro-retention`, `29 5 * * *`,
+sorvegliato da `/api/health`) ha un **terzo contenitore**, `conservazione`, oltre a `allegati` e
+`fascicolo`. Segue le stesse regole: prima il file dal bucket (`BUCKET_ALLEGATI_REGISTRO`, la stessa
+costante dell'upload) e poi la riga, riga per riga. Un file che un'altra riga ancora nel termine
+nomina non si tocca: la riga vecchia esce, il file resta. Se non si riesce a sapere chi reclama un
+file, non si tocca niente (fail-closed). La `delete` ripete `creato_il < soglia`. I lotti hanno un
+tetto di 500 righe. È idempotente: se la `delete` fallisce dopo il `remove`, il giro dopo trova il
+file «già assente» e chiude. Ogni contenitore ha il suo esito: `500` se restano righe oltre il
+termine, `503` se il DB non è migrato, mai un `error.message` al client. Il battito resta uno, con
+`evento: 'cron'`. Porta i totali e i conteggi **separati**: `n_cestino_*` e `n_conservazione_*`
+(scaduti, righe, file). Nei log non entra nessun percorso. Una riga con `creato_il` NULL non scade.
+
+**L'oblio.** In `REGISTRO_BUCKET_OBLIO` (`src/lib/gdpr/esegui.ts`) la voce `registro-allegati` era
+`escluso` come «LACUNA APERTA». Passa a `coperto-fuori-oblio`, lo stato dei bucket svuotati dalla
+conservazione (come `video_originals`), e la motivazione cita la decisione del 2026-09-25. ⚠️ Resta
+una **finestra dichiarata**: dopo un oblio, un'immagine che ritrae un bambino resta fino alla
+scadenza del suo termine, cioè al più 365 giorni dal caricamento più un giro di purga.
+
+**Il cestino degli allegati promette il termine VERO.** Custodia e conservazione contano da istanti
+diversi (eliminazione e caricamento), e vince quello che scade **prima**: un allegato caricato 360
+giorni fa e cestinato oggi lo distrugge la conservazione fra 5 giorni, non il cestino fra 7.
+- `GET /api/primaria/allegati/cestino` calcola `ripristinabileFinoAl` e `giorniResidui` con
+  `ripristinabileFinoAlAllegato` / `giorniResiduiAllegatoNelCestino` (il minimo dei due termini), e
+  non elenca un allegato già oltre la conservazione (`filtroEntroConservazioneAllegati`, il
+  complemento esatto della soglia della purga, `creato_il` NULL compreso).
+- `POST …/cestino` (ripristino) rifiuta un allegato oltre la conservazione con
+  **`409 ALLEGATO_REGISTRO_CONSERVAZIONE_SCADUTA`** (log `info` `ripristino-conservazione-scaduta`,
+  codice nel catalogo `esito-fetch` e frase in `messages/it|en`), e l'UPDATE ripete la condizione
+  nella stessa istruzione. Così un allegato il cui file la purga ha già tolto, con la `delete` della
+  riga fallita, non torna vivo.
+- Anche `DELETE /api/primaria/allegati` e `POST …/sostituisci` rispondono `ripristinabileFinoAl` sul
+  primo dei due termini. Il fascicolo non ha la conservazione e resta com'è.
+- ⚠️ Finestra **dichiarata** nella testata della purga: se il `remove` riesce e la `delete` di una
+  riga **viva** fallisce, quella riga resta visibile nel registro con un file che non c'è più fino al
+  giro dopo (un giorno). Il giro esce `500 cancellazione-fallita`, quindi chi sorveglia lo vede.
+
+**I test.**
+- `__tests__/api/primaria-allegati-cestino.test.ts`, 7 casi nuovi: la scadenza promessa dal GET per un
+  allegato di 360 giorni cestinato adesso (4 giorni interi, non 6), l'allegato oltre il termine che
+  non si elenca, il `409` del ripristino, il ripristino a 364 giorni che passa, la corsa in cui il
+  termine scade fra il controllo e l'UPDATE (l'allegato resta nel cestino), e la risposta di DELETE e
+  sostituzione. Togliendo di proposito ciascuna delle sei modifiche diventa rosso il caso suo.
+- `__tests__/api/gdpr-retention-cestino-registro.test.ts`: i **lotti a tetto** ora hanno una prova,
+  per la conservazione e per il cestino (501 righe: ne escono 500, le più vecchie, con `lotto-pieno`
+  e `lotto_pieno: true` nel battito), più il `42703` sulla sola lettura della conservazione (`503`,
+  nessun `remove`, nessuna `delete`). Senza `.limit` o `.order` il caso diventa rosso.
+- Il lock `cestino-registro-giorni-un-numero-solo` pretende che le tre route degli allegati usino
+  `ripristinabileFinoAlAllegato` e mai `scadenzaCestino`.
+- `__tests__/api/gdpr-retention-cestino-registro.test.ts` ha 10 casi nuovi. Esce chi è a 365 giorni
+  più un'ora, resta chi è a 365 meno un'ora (e chi è a 364). Il `remove` viene prima della `delete`.
+  Un file condiviso viene preservato. Il fascicolo non si tocca. Controllati anche: conteggi separati
+  nel battito, `lettura-fallita` e `reclami-non-letti` con PostgREST che ritorna `{ error }`, righe
+  trattenute, idempotenza, `delete` che ripete la condizione, nessun percorso nei log. Rompendo di
+  proposito la route (togliendo il contenitore, oppure la condizione della `delete`) diventano rossi 9
+  e 3 casi.
+- Nuovo `__tests__/lib/gdpr-registro-allegati-conservazione.test.ts`: aggancia la voce del registro
+  dell'oblio al meccanismo (stato, costante, numero in prosa uguale alla costante, job in `JOB_CRON`,
+  contenitore presente nella route). Riportando la voce a `escluso` diventano rossi 3 casi su 4.
+- Il lock `cestino-allegati-registro-ogni-lettura-dichiara` sale da 3 a 5 letture dichiarate per la
+  purga: le scadute e la `delete` della conservazione, entrambe `AncheNelCestino`.
+
+⏳ **Dopo il deploy**: al primo giro, nel battito di `app_log`, `n_conservazione_righe` dovrebbe
+restare 0. Il bucket è nato il 2026-09-23 e nessun allegato ha ancora un anno. Il primo allegato
+scadrà intorno al 2027-09-23.
+
+---
+
 ## 🚨 Changelog — Regressione della #166: la push nativa restava appesa su «PushNotifications.then() is not implemented» — 2026-09-25 (branch `fix/plugin-push-then`)
 
 **Il sintomo.** Dal rilascio della PR #166 (25/09, ~03:00 UTC) `app_log` ha raccolto, a livello
@@ -240,6 +325,8 @@ chiusi così:
   svuota il bucket è la purga del cestino, e tocca solo ciò che è stato eliminato. **Decisione del
   titolare**: dare un termine di conservazione agli allegati del registro, oppure agganciarli agli
   alunni.
+  ✅ **Decisa il 2026-09-25**: termine di conservazione, 365 giorni dal caricamento. Vedi il
+  changelog «Conservazione degli allegati del registro» più in alto.
 
 ---
 

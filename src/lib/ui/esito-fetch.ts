@@ -856,6 +856,11 @@ export const CODICI_ERRORE = {
     ALLEGATO_REGISTRO_CAMBIATO: 'erroreAllegatoRegistroCambiato',
     ALLEGATO_REGISTRO_NON_NEL_CESTINO: 'erroreAllegatoRegistroNonNelCestino',
     ALLEGATO_REGISTRO_CESTINO_SCADUTO: 'erroreAllegatoRegistroCestinoScaduto',
+    /**
+     * 409 del ripristino: l'allegato è oltre il termine di CONSERVAZIONE del registro
+     * (decisione del titolare del 2026-09-25, contato dal caricamento), cestino o no.
+     */
+    ALLEGATO_REGISTRO_CONSERVAZIONE_SCADUTA: 'erroreAllegatoRegistroConservazioneScaduta',
     ALLEGATO_REGISTRO_SCRITTURA_FALLITA: 'erroreAllegatoRegistroScritturaFallita',
     ALLEGATO_REGISTRO_CESTINO_NON_DISPONIBILE: 'erroreAllegatoRegistroCestinoNonDisponibile',
     LEZIONE_DA_RIFIRMARE: 'erroreLezioneDaRifirmare',

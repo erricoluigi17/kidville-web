@@ -385,6 +385,7 @@
   "erroreAllegatoRegistroCambiato": "The attachment was deleted or replaced in the meantime. Reload the page.",
   "erroreAllegatoRegistroNonNelCestino": "The attachment is no longer in the bin. Reload the page.",
   "erroreAllegatoRegistroCestinoScaduto": "The time to restore this attachment has expired.",
+  "erroreAllegatoRegistroConservazioneScaduta": "This attachment has passed the register’s retention period and can no longer be restored.",
   "erroreAllegatoRegistroScritturaFallita": "We could not save the change to the attachment. Reload the page and check.",
   "erroreAllegatoRegistroCestinoNonDisponibile": "The attachment bin is not available yet: the attachment was not touched.",
   "erroreLezioneDaRifirmare": "The lesson of this attachment was deleted: sign it again in the same period, then restore the attachment.",

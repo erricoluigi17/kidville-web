@@ -207,6 +207,11 @@ export const JOB_CRON: readonly JobCron[] = [
     // ore di margine, cioè assorbe un ritardo, NON un giro saltato. Una notte senza battito
     // `ok` porta /api/health in `degradato` alle 07:29 UTC.
     //
+    // Dal 2026-09-25 (decisione del titolare) lo stesso giro applica anche la CONSERVAZIONE
+    // degli allegati del registro: `GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO` giorni dal
+    // caricamento, vivi o nel cestino. Stesso battito, stessa finestra: il silenzio di questo
+    // job adesso lascia oltre il termine anche gli allegati mai eliminati.
+    //
     // Entrata qui il 2026-09-25, DOPO il primo battito e non prima: la migrazione
     // (`20260924220100_cestino_registro_cron`) l'ha applicata l'integrazione al merge della
     // PR #166, e il primo giro in produzione è delle 05:29 UTC di quel giorno — `app_log`

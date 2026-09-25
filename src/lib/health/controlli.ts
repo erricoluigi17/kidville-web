@@ -347,13 +347,13 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
     {
         nome: 'cestino-registro-retention',
         perche:
-            'IN ATTESA DELL’APPLY, non per scelta (2026-09-25): la migrazione ' +
-            '`20260924220100_cestino_registro_cron.sql` la applica l’integrazione al merge, e il ' +
-            'lock `cron-sorvegliato-e-applicato` vieta di sorvegliare un lavoro che non è ancora ' +
-            'nella fotografia delle applicate — manderebbe /api/health in `degradato` dal primo ' +
-            'deploy su un lavoro che non esiste. È GIORNALIERO (`29 5 * * *`) e il suo battito ' +
-            'dichiara `esito: ok`: dopo l’apply si rigenera la fotografia e il nome passa in ' +
-            '`JOB_CRON` con `finestraMs: 26 * ORA`, come `galleria-retention`.',
+            'IN ATTESA DEL PRIMO BATTITO, non per scelta (2026-09-25): la migrazione ' +
+            '`20260924220100_cestino_registro_cron.sql` è stata applicata dall’integrazione al ' +
+            'merge della PR #166 ed è nella fotografia delle applicate, ma il primo giro è alle ' +
+            '05:29 UTC: sorvegliarlo prima manderebbe /api/health in `degradato` su un lavoro che ' +
+            'non ha ancora avuto occasione di battere. È GIORNALIERO (`29 5 * * *`) e il suo ' +
+            'battito dichiara `esito: ok`: visto il primo battito, il nome passa in `JOB_CRON` ' +
+            'con `finestraMs: 26 * ORA`, come `galleria-retention`.',
     },
     {
         nome: 'app-log-purge',

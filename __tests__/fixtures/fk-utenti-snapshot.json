@@ -1,13 +1,18 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/fk-utenti-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/fk-utenti-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-23",
-  "generato_alle": "2026-09-23T09:22:26Z",
-  "sha256": "33e60654a8866f5e727401f453e7bfec541b7ea09af68d0ebc65fb1024a916e2",
+  "generato_il": "2026-09-25",
+  "generato_alle": "2026-09-25T03:07:33Z",
+  "sha256": "f25fea0670f4c53ae6be05db4036e8fc68b6c75029de2a255066f2c943e54fa5",
   "fk": [
     {
       "tabella": "allegati_registro",
       "colonna": "caricato_da",
       "azione": "blocca"
+    },
+    {
+      "tabella": "allegati_registro",
+      "colonna": "eliminato_da",
+      "azione": "set-null"
     },
     {
       "tabella": "anagrafica_personale",
@@ -238,6 +243,11 @@
       "tabella": "student_documents",
       "colonna": "caricato_da",
       "azione": "blocca"
+    },
+    {
+      "tabella": "student_documents",
+      "colonna": "eliminato_da",
+      "azione": "set-null"
     },
     {
       "tabella": "student_guardians",

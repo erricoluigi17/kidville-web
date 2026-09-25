@@ -405,6 +405,26 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
     motivo:
       'Allegati degli incarichi interni allo staff: riguardano l’organizzazione del lavoro fra colleghi, non la famiglia, e nessuna colonna li lega a un alunno o a un genitore. La cancellazione dell’account di un membro dello staff è un percorso diverso da questo, che è l’oblio dell’interessato-famiglia.',
   },
+  // Nominato il 2026-09-25. Il bucket esisteva in produzione dal 2026-09-23 (lo crea
+  // la `createBucket` di `primaria/allegati` al primo caricamento), ma la fotografia
+  // dello Storage non era stata rigenerata: per due giorni è stato un magazzino NON
+  // NOMINATO, cioè il terzo caso, quello che questo registro esiste per impedire.
+  'registro-allegati': {
+    stato: 'escluso',
+    motivo:
+      '🔴 NON È UNA DECISIONE, È UNA LACUNA APERTA, e sta scritta qui perché non sparisca. Sono gli ' +
+      'allegati delle lezioni del registro della primaria (`allegati_registro`, ambito «argomento» ' +
+      'o «compiti»: PDF e immagini). La riga è agganciata alla LEZIONE (`registro_id` → classe, ' +
+      'data e ora), non a un alunno né a un genitore: nessuna colonna dice di quale bambino parli ' +
+      'un file, quindi `anonimizzaAlunno` e `anonimizzaParent` non hanno niente da cui risalire. ' +
+      'Di solito sono materiali della classe, come gli allegati degli avvisi. Ma un’immagine può ' +
+      'ritrarre un bambino o il suo quaderno col nome, e quel file resta dopo un oblio. L’unico ' +
+      'meccanismo che svuota il bucket è il CESTINO: `/api/gdpr/retention-cestino-registro` ' +
+      'distrugge file e riga sette giorni dopo l’eliminazione, e solo per ciò che qualcuno ha ' +
+      'messo nel cestino. Misurato il 2026-09-25: bucket privato, 11 oggetti. La chiusura vera ' +
+      'spetta al titolare: un termine di conservazione per gli allegati del registro, oppure un ' +
+      'aggancio agli alunni. Non è un filtro da inventare qui.',
+  },
   iscrizioni_elenchi: {
     stato: 'escluso',
     motivo:

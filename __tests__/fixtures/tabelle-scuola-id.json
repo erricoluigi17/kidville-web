@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node scripts/tabelle-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/tabelle-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-23",
-  "generato_alle": "2026-09-23T13:57:10Z",
+  "generato_il": "2026-09-25",
+  "generato_alle": "2026-09-25T03:07:33Z",
   "sha256": "4fe6e3a041f813e4aeb5219e798d738834d1473a3cdfe6f07fe1b259e38ac939",
   "con_scuola_id": [
     "admin_settings",

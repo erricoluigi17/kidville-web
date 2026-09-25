@@ -21,6 +21,14 @@
 -- conteggi): `giustifiche_didattiche` 7 righe, tutte `origine='docente'` col
 -- testo fisso «Impreparato giustificato»; `allegati_registro` 11 righe;
 -- `student_documents` 275; `sblocchi_audit` 0.
+--
+-- ✅ APPLICATA il 2026-09-25, dall'integrazione Supabase al merge della PR #166,
+-- con la version del FILE (`20260924220000`, una sola riga in
+-- `schema_migrations`). Subito dopo sono state rigenerate dalla produzione le
+-- fotografie (migrazioni, policy, indici unici, FK di sede e verso `utenti`,
+-- tabelle con `scuola_id`), e le due FK nuove verso `utenti`
+-- (`allegati_registro.eliminato_da`, `student_documents.eliminato_da`, SET NULL)
+-- sono state censite in `TRACCE_DOCENTE`.
 -- ============================================================================
 
 

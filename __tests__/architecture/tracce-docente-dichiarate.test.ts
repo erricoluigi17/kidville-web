@@ -178,7 +178,7 @@ describe("l'anteprima e l'esecuzione decidono nello stesso modo", () => {
 
   const UTENTE = '11111111-1111-4111-8111-111111111111'
 
-  it('una traccia su QUALUNQUE voce del registro porta ad archivia — tutte e 44', async () => {
+  it('una traccia su QUALUNQUE voce del registro porta ad archivia — tutte e 46', async () => {
     // Non una voce campione: tutte. Una voce che il registro dichiara ma che la
     // funzione di conteggio non interroga resterebbe altrimenti invisibile.
     for (const v of VOCI_CHE_PESANO) {

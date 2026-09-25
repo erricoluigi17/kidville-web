@@ -35,6 +35,21 @@
   certificato `Apple Distribution` è **cloud managed**, quindi `security find-identity`
   NON lo mostra: la prova che esiste è l'export che riesce, non quell'elenco.
 
+  SENZA ACCOUNT IN XCODE (terminale di un agente, macchina nuova, CI) l'export si ferma
+  con «exportArchive No Accounts» e «No signing certificate "iOS Distribution" found»:
+  il certificato non manca, manca l'account a cui chiederlo. Si passa la App Store
+  Connect API key all'export (così è uscita la 1.1 (5) il 2026-09-25):
+
+    xcodebuild -exportArchive -archivePath <p>.xcarchive \
+      -exportOptionsPlist ios/ExportOptions.plist -exportPath <out> \
+      -allowProvisioningUpdates \
+      -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8 \
+      -authenticationKeyID <KEY_ID> \
+      -authenticationKeyIssuerID "$(tr -d '[:space:]' < ~/.appstoreconnect/issuer_id)"
+
+  L'Issuer ID si legge da quel file, fuori dal repo: MAI scriverlo qui.
+  Dettagli ed esito misurato in `docs/store-submission.md`, §5.
+
   Gli entitlement vanno letti sull'`.ipa`, MAI sull'`.xcarchive`: dentro l'archive
   l'app resta firmata `Apple Development` con `aps-environment = development`, ed è
   normale — è l'export a rifirmare in distribuzione.

@@ -577,6 +577,55 @@ xcodebuild -exportArchive -archivePath /percorso/App.xcarchive \
 </dict>
 ```
 
+(Dal 2026-08-04 il file sta nel repo: `ios/ExportOptions.plist`, con in più
+`manageAppVersionAndBuildNumber = false`.)
+
+### Variante: sessione senza account Xcode — usata il 2026-09-25 per la `1.1 (5)`
+
+La procedura qui sopra presuppone un Xcode **autenticato** sull'account del team: è da lì
+che l'export prende il certificato cloud managed e crea il profilo. Da una sessione in cui
+Xcode non ha nessun account configurato (terminale di un agente, macchina nuova, CI)
+l'archive riesce, ma l'export si ferma con due errori:
+
+```text
+error: exportArchive No Accounts
+error: exportArchive No signing certificate "iOS Distribution" found
+```
+
+Il secondo sembra un certificato mancante e non lo è: è la conseguenza del primo. Senza un
+account, Xcode non ha nessuno a cui chiedere il certificato cloud managed.
+
+Si risolve dando all'export la **App Store Connect API key** al posto dell'account. Stesso
+comando, tre flag in più:
+
+```bash
+xcodebuild -exportArchive -archivePath <p>.xcarchive \
+  -exportOptionsPlist ios/ExportOptions.plist -exportPath <out> \
+  -allowProvisioningUpdates \
+  -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8 \
+  -authenticationKeyID <KEY_ID> \
+  -authenticationKeyIssuerID "$(tr -d '[:space:]' < ~/.appstoreconnect/issuer_id)"
+# → ** EXPORT SUCCEEDED **
+```
+
+L'Issuer ID **si legge dal file** `~/.appstoreconnect/issuer_id`, fuori dal repository:
+non va mai scritto in chiaro né qui né in uno script tracciato. Il `tr` toglie l'a capo
+finale, che altrimenti finirebbe dentro il valore.
+
+Esito misurato sulla `1.1 (5)`:
+
+| Controllo | Risultato |
+|---|---|
+| `xcodebuild -exportArchive` | `EXPORT SUCCEEDED` |
+| `codesign -d --entitlements :-` sull'app dentro l'`.ipa` | `aps-environment = production`, `get-task-allow = false` |
+| `codesign -dvvv … \| grep Authority` | `Authority=Apple Distribution: …` |
+| `xcrun altool --validate-app` | `VERIFY SUCCEEDED` |
+| `xcrun altool --upload-app` | `UPLOAD SUCCEEDED` |
+| build `5` su App Store Connect | `processingState: VALID` |
+
+La stessa chiave serve poi ad `altool` (`--apiKey <KEY_ID> --apiIssuer …`, vedi sotto): con
+questa variante l'intero percorso archive → export → upload gira senza aprire Xcode.
+
 ### La prova — misurata sull'artefatto, non dedotta
 
 Sull'app estratta dall'`.ipa` (`unzip App.ipa` → `Payload/App.app`):
@@ -642,7 +691,9 @@ Corollari, tutti verificati il 2026-07-26:
   serve una App Store Connect API key (assente sulla macchina — cercata in
   `~/.appstoreconnect/private_keys/`, `~/private_keys/`, fastlane, variabili `ASC_*`;
   l'unico `.p8` presente è la chiave **APNs** `G2XN848ZNY`, che serve alle push e **non**
-  autentica l'API di App Store Connect).
+  autentica l'API di App Store Connect). *Aggiornamento:* la API key è stata creata lo
+  stesso giorno per l'upload (sotto), e dal 2026-09-25 firma anche l'export senza sessione
+  Xcode — vedi la variante qui sopra.
 
 ### ✅ Caricata su App Store Connect — 2026-07-26
 

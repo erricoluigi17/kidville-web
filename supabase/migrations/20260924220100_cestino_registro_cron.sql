@@ -8,9 +8,10 @@
 -- Version `20260924220100`, quella del FILE: una sola riga in `schema_migrations`
 -- (nessun apply a mano). Guardato in sola lettura dopo il merge: `cron.job` ha una
 -- riga `cestino-registro-retention`, `29 5 * * *`, `active = true`. La fotografia
--- delle applicate è stata rigenerata lo stesso giorno. Il nome resta ancora in
--- `JOB_CRON_NON_SORVEGLIATI` finché non si vede il primo battito (05:29 UTC): lo
--- sposta in `JOB_CRON` un passo successivo, non questo.
+-- delle applicate è stata rigenerata lo stesso giorno. Il primo battito è arrivato
+-- il 2026-09-25 alle 05:29 UTC (`app_log` `evento = 'cron'`, `esito: ok`;
+-- `cron.job_run_details` `succeeded`), e da quel giorno il nome sta in `JOB_CRON`
+-- con `finestraMs: 26 * ORA`: il lavoro è sorvegliato da `/api/health`.
 --
 -- Com'era scritto prima dell'apply, e resta vero come regola: questa migrazione
 -- viaggiava dentro la PR dei sei interventi e dell'app 1.1, e al merge
@@ -34,11 +35,11 @@
 -- ancora: `/api/health` sarebbe andato in `degradato` dal primo deploy. Quella
 -- condizione è superata dal 2026-09-25: la migrazione è applicata, attestata qui in
 -- testa, e sta nella fotografia delle applicate
--- (`__tests__/fixtures/migrazioni-applicate-snapshot.json`). Il nome resta fra i
--- non sorvegliati per un'altra ragione: si aspetta il PRIMO BATTITO, alle 05:29 UTC.
--- Sorvegliare un lavoro che non ha mai scritto un battito vorrebbe dire
--- `degradato` fino al primo giro. Dopo quel battito lo si sposta in `JOB_CRON` con
--- `finestraMs: 26 * ORA`, come dice già la ragione scritta in `controlli.ts`.
+-- (`__tests__/fixtures/migrazioni-applicate-snapshot.json`). Il nome è rimasto fra i
+-- non sorvegliati ancora qualche ora per un'altra ragione: si aspettava il PRIMO
+-- BATTITO, alle 05:29 UTC. Sorvegliare un lavoro che non ha mai scritto un battito
+-- vorrebbe dire `degradato` fino al primo giro. Visto quel battito, il 2026-09-25,
+-- è passato in `JOB_CRON` con `finestraMs: 26 * ORA`, come `galleria-retention`.
 --
 -- ─── PERCHÉ QUESTA MIGRAZIONE ESISTE ─────────────────────────────────────────
 --

@@ -26,6 +26,10 @@
 -- spedisce SENZA badge, con una riga `warn`: nessuna push si ferma.
 --
 -- IDEMPOTENTE: CREATE OR REPLACE, REVOKE e GRANT si possono ripetere.
+--
+-- ✅ APPLICATA il 2026-09-25, dall'integrazione Supabase al merge della PR #166,
+-- con la version del FILE (`20260924220200`). Guardato in sola lettura dopo il
+-- merge: la funzione `notifiche_non_lette_per_utente` c'è, SECURITY INVOKER.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION public.notifiche_non_lette_per_utente(p_utenti uuid[])

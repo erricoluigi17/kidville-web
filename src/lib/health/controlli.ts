@@ -194,6 +194,27 @@ export const JOB_CRON: readonly JobCron[] = [
     // sequenza, non per una scelta: il lock `cron-sorvegliato-e-applicato` vieta di sorvegliare
     // un lavoro la cui migrazione non è nella fotografia delle applicate.
     { nome: 'galleria-retention', finestraMs: 26 * ORA },
+    // `cestino-registro-retention` (`POST /api/gdpr/retention-cestino-registro`, `29 5 * * *`,
+    // OGNI NOTTE): la gemella di `galleria-retention` per la primaria. Distrugge — prima il file,
+    // poi la riga — gli allegati del registro (`allegati_registro`) e i documenti del fascicolo
+    // (`student_documents`) che stanno nel cestino da più di `GIORNI_CESTINO_REGISTRO` giorni.
+    // Anche qui c'è una promessa scritta a schermo: «Ripristina» per sette giorni, poi riga e
+    // file spariscono. Se il job smettesse di girare, il cestino diventerebbe un archivio eterno
+    // di diagnosi, PEI e verbali — invisibili nel prodotto e mai cancellati — e la schermata
+    // continuerebbe a promettere il contrario. Il battito si scrive in un `finally`, SEMPRE,
+    // anche a cestino vuoto, ed è `esito: 'ok'` solo sul giro riuscito: il silenzio qui è un
+    // guasto, non una notte tranquilla. 26 h come gli altri giornalieri: la cadenza più due
+    // ore di margine, cioè assorbe un ritardo, NON un giro saltato. Una notte senza battito
+    // `ok` porta /api/health in `degradato` alle 07:29 UTC.
+    //
+    // Entrata qui il 2026-09-25, DOPO il primo battito e non prima: la migrazione
+    // (`20260924220100_cestino_registro_cron`) l'ha applicata l'integrazione al merge della
+    // PR #166, e il primo giro in produzione è delle 05:29 UTC di quel giorno — `app_log`
+    // `evento = 'cron'`, `esito: 'ok'`, e `cron.job_run_details` `succeeded`, letti con SELECT.
+    // Fino ad allora stava in `JOB_CRON_NON_SORVEGLIATI` «in attesa del primo battito»:
+    // sorvegliare un lavoro che non ha mai battuto manda /api/health in `degradato` su un
+    // guasto che non c'è, e un allarme che suona da solo viene spento.
+    { nome: 'cestino-registro-retention', finestraMs: 26 * ORA },
     // `candidature-retention` (`POST /api/gdpr/retention-candidature`): fa scadere la
     // candidatura spontanea di una persona adulta e il CURRICULUM che ha allegato.
     //
@@ -343,17 +364,6 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             '(tetto email raggiunto, edizione lasciata in coda) e `digest-arretrate`. ' +
             'Diventa sorvegliabile da qui il giorno in cui la cadenza passa a giornaliera: ' +
             'allora entra in `JOB_CRON` con `finestraMs: 26 * ORA` come tutti gli altri.',
-    },
-    {
-        nome: 'cestino-registro-retention',
-        perche:
-            'IN ATTESA DELL’APPLY, non per scelta (2026-09-25): la migrazione ' +
-            '`20260924220100_cestino_registro_cron.sql` la applica l’integrazione al merge, e il ' +
-            'lock `cron-sorvegliato-e-applicato` vieta di sorvegliare un lavoro che non è ancora ' +
-            'nella fotografia delle applicate — manderebbe /api/health in `degradato` dal primo ' +
-            'deploy su un lavoro che non esiste. È GIORNALIERO (`29 5 * * *`) e il suo battito ' +
-            'dichiara `esito: ok`: dopo l’apply si rigenera la fotografia e il nome passa in ' +
-            '`JOB_CRON` con `finestraMs: 26 * ORA`, come `galleria-retention`.',
     },
     {
         nome: 'app-log-purge',

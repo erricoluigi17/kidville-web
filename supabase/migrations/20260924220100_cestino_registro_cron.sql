@@ -3,13 +3,21 @@
 -- — «cestino-registro-retention». Scritta il 2026-09-25.
 -- ═══════════════════════════════════════════════════════════════════════════════
 --
--- ─── ⚠️ NON APPLICATA: LA APPLICA L'INTEGRAZIONE AL MERGE ──────────────────────
+-- ─── ✅ APPLICATA il 2026-09-25, DALL'INTEGRAZIONE AL MERGE DELLA PR #166 ──────
 --
--- Questa migrazione viaggia dentro la PR dei sei interventi e dell'app 1.1: al
--- merge l'integrazione Supabase la applica da sé, con la version del FILE
--- (`20260924220100`). NON va applicata a mano prima: al merge ne nascerebbero due
--- righe in `schema_migrations` (è successo il 2026-09-12 con la gemella
--- `galleria-retention`). Dopo il merge si GUARDA se il database l'ha già, e basta.
+-- Version `20260924220100`, quella del FILE: una sola riga in `schema_migrations`
+-- (nessun apply a mano). Guardato in sola lettura dopo il merge: `cron.job` ha una
+-- riga `cestino-registro-retention`, `29 5 * * *`, `active = true`. La fotografia
+-- delle applicate è stata rigenerata lo stesso giorno. Il primo battito è arrivato
+-- il 2026-09-25 alle 05:29 UTC (`app_log` `evento = 'cron'`, `esito: ok`;
+-- `cron.job_run_details` `succeeded`), e da quel giorno il nome sta in `JOB_CRON`
+-- con `finestraMs: 26 * ORA`: il lavoro è sorvegliato da `/api/health`.
+--
+-- Com'era scritto prima dell'apply, e resta vero come regola: questa migrazione
+-- viaggiava dentro la PR dei sei interventi e dell'app 1.1, e al merge
+-- l'integrazione Supabase l'ha applicata da sé, con la version del FILE. Applicarla
+-- a mano prima avrebbe fatto nascere due righe in `schema_migrations` (è successo il
+-- 2026-09-12 con la gemella `galleria-retention`).
 --
 -- ⚠️ L'ORDINE conta ed è quello giusto per costruzione: il codice
 -- (`POST /api/gdpr/retention-cestino-registro`) arriva in produzione con lo stesso
@@ -21,13 +29,17 @@
 -- ⚠️ E DIPENDE DA `20260924220000_primaria_modifica_elimina.sql`, che aggiunge
 -- `eliminato_il` alle due tabelle: la version di questo file è successiva apposta.
 --
--- Finché questa migrazione non è nella fotografia delle applicate
--- (`__tests__/fixtures/migrazioni-applicate-snapshot.json`), il nome del lavoro sta
--- in `JOB_CRON_NON_SORVEGLIATI` (`src/lib/health/controlli.ts`) e NON in
--- `JOB_CRON`: il lock `cron-sorvegliato-e-applicato` vieta di sorvegliare un
--- lavoro che non esiste ancora (manderebbe `/api/health` in `degradato` dal primo
--- deploy). Dopo l'apply: attestare «APPLICATA il AAAA-MM-GG» qui, rigenerare la
--- fotografia, spostare il nome in `JOB_CRON` con `finestraMs: 26 * ORA`.
+-- Fino all'apply il nome del lavoro stava in `JOB_CRON_NON_SORVEGLIATI`
+-- (`src/lib/health/controlli.ts`) e NON in `JOB_CRON`, perché il lock
+-- `cron-sorvegliato-e-applicato` vieta di sorvegliare un lavoro che non esiste
+-- ancora: `/api/health` sarebbe andato in `degradato` dal primo deploy. Quella
+-- condizione è superata dal 2026-09-25: la migrazione è applicata, attestata qui in
+-- testa, e sta nella fotografia delle applicate
+-- (`__tests__/fixtures/migrazioni-applicate-snapshot.json`). Il nome è rimasto fra i
+-- non sorvegliati ancora qualche ora per un'altra ragione: si aspettava il PRIMO
+-- BATTITO, alle 05:29 UTC. Sorvegliare un lavoro che non ha mai scritto un battito
+-- vorrebbe dire `degradato` fino al primo giro. Visto quel battito, il 2026-09-25,
+-- è passato in `JOB_CRON` con `finestraMs: 26 * ORA`, come `galleria-retention`.
 --
 -- ─── PERCHÉ QUESTA MIGRAZIONE ESISTE ─────────────────────────────────────────
 --

@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/bucket-storage-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/bucket-storage-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-18",
-  "sha256": "374904aee23eb9438e12fd23acb6bec4a1da5f921ea6c5e7812db002921ce64e",
+  "generato_il": "2026-09-25",
+  "sha256": "f8804803e7c8ed6be1789123138f2b55b23c2a4d889439f71dc9bbbcd4eab4f4",
   "bucket": [
     {
       "id": "avvisi_allegati",
@@ -57,6 +57,10 @@
     },
     {
       "id": "protocollo",
+      "pubblico": false
+    },
+    {
+      "id": "registro-allegati",
       "pubblico": false
     },
     {

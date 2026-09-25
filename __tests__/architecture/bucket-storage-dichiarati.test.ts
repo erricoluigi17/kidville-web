@@ -265,6 +265,18 @@ const RISERVATI = [
   'news_bozze',
   'pagelle',
   'protocollo',
+  // Gli ALLEGATI DEL REGISTRO della primaria (classificato il 2026-09-25): PDF e
+  // immagini che l'insegnante aggancia a una lezione, come argomento o come compito.
+  // Li vedono i genitori della classe attraverso un indirizzo firmato a scadenza
+  // breve (`parent/primaria`, `primaria/compiti`), e dentro può esserci il quaderno
+  // di un bambino col suo nome: non è materia pubblica. ⚠️ NATO DA UNA ROUTE, NON DA
+  // UNA MIGRAZIONE: lo ha creato la `createBucket` di `src/app/api/primaria/allegati/route.ts`
+  // al primo caricamento (in produzione `created_at` = 2026-09-23 08:15 UTC, privato).
+  // È rimasto fuori da questo elenco per due giorni perché la fotografia dello Storage
+  // non era stata rigenerata: la prova «nessun bucket sfugge alla classificazione»
+  // sarebbe stata rossa, e nessuno la stava guardando. Il suo limite vive nella route
+  // e non in una migrazione, ed è dichiarato in `IN_ATTESA_DI_UN_LIMITE`.
+  'registro-allegati',
   'task_allegati',
 ] as const
 
@@ -456,7 +468,10 @@ const TETTO_GLOBALE_STORAGE_B = 2_000_000_000
  * I bucket classificati che NESSUNA migrazione pinna ancora — dichiarati uno per uno,
  * con la misura e la ragione, come `IN_CODA` in `migrazioni-complete.test.ts`.
  *
- * ─── DAL 2026-09-18 QUESTA MAPPA È VUOTA, E VUOTA È IL SUO PUNTO D'ARRIVO ──────
+ * ─── DAL 2026-09-18 AL 2026-09-25 QUESTA MAPPA È STATA VUOTA ─────────────────
+ * Vuota resta il suo punto d'arrivo. Dal 2026-09-25 porta di nuovo una voce,
+ * `registro-allegati`, con la misura e la ragione accanto: vedi la mappa qui sotto.
+ * Quello che segue racconta come ci si era arrivati la prima volta.
  *
  * Ci stavano gli ultimi cinque: `cassa-giustificativi`, `chat-allegati`, `pagelle`,
  * `protocollo`, `sensitive_documents`. Li pinna
@@ -469,17 +484,19 @@ const TETTO_GLOBALE_STORAGE_B = 2_000_000_000
  * 50 MiB a 2 GB per i video e si è portato dietro tre archivi che con i video non
  * c'entravano niente.
  *
- * COSA SIGNIFICA PER CHI LEGGE OGGI: la prova qui sotto non ha più nessuna via
- * d'uscita. Un bucket in `RISERVATI` o in `PUBBLICI_PER_DECISIONE` senza
- * `file_size_limit` dichiarato in una migrazione è rosso, e l'unico modo di farlo
- * tacere è riaprire questa mappa e scriverci una misura — che è un gesto visibile in
- * revisione, non un silenzio.
+ * CHE COSA SIGNIFICAVA, dal 2026-09-18 al 2026-09-25: la prova qui sotto non aveva
+ * vie d'uscita. Un bucket in `RISERVATI` o in `PUBBLICI_PER_DECISIONE` senza
+ * `file_size_limit` dichiarato in una migrazione era rosso, e l'unico modo di farlo
+ * tacere era riaprire questa mappa e scriverci una misura — un gesto visibile in
+ * revisione, non un silenzio. È esattamente quello che è successo il 2026-09-25 con
+ * `registro-allegati`.
  *
- * ⚠️ E QUELLO CHE UNA MAPPA VUOTA NON DIMOSTRA, detto prima che qualcuno ci si appoggi:
- * la prova gemella qui sotto gira su zero voci, quindi è verde per costruzione. Non è
- * lei a tenere in piedi la regola — è la prova principale, che adesso interroga tutti e
- * sedici i bucket classificati e non ne assolve nessuno. La gemella serve il giorno in
- * cui qualcuno riapre la mappa, e quel giorno pretenderà una ragione e un numero.
+ * ⚠️ E QUELLO CHE UNA MAPPA VUOTA NON DIMOSTRAVA, detto prima che qualcuno ci si appoggi:
+ * finché la mappa era vuota, la prova gemella qui sotto girava su zero voci, quindi era
+ * verde per costruzione. Non è lei a tenere in piedi la regola: è la prova principale,
+ * che interroga tutti i bucket classificati e assolve soltanto quelli scritti in questa
+ * mappa (dal 2026-09-25, `registro-allegati` e nessun altro). La gemella pretende, per
+ * ogni voce, una ragione e un numero.
  * ⚠️ E questo lock misura ciò che il repo DICHIARA, non ciò che il database ha:
  * rimisurato il 2026-09-18, in produzione tre bucket su sedici hanno ancora
  * `file_size_limit = NULL` (`certificati-medici`, `credenziali`, `fatture`), perché la
@@ -521,7 +538,23 @@ const TETTO_GLOBALE_STORAGE_B = 2_000_000_000
  * `migrazioni-complete.test.ts` con le migrazioni che nel frattempo sono state applicate.
  * Un'esenzione che sopravvive al suo motivo è un buco che nessuno ricorda di aver aperto.
  */
-const IN_ATTESA_DI_UN_LIMITE: Record<string, string | undefined> = {}
+const IN_ATTESA_DI_UN_LIMITE: Record<string, string | undefined> = {
+  // ─── RIAPERTA IL 2026-09-25, con una voce sola ──────────────────────────────
+  // La mappa era vuota dal 18/09 (vedi sopra) e lo sarebbe rimasta, se lo Storage
+  // non avesse avuto nel frattempo un bucket in più: `registro-allegati`, nato il
+  // 2026-09-23 da una `createBucket` e non da una migrazione. È il caso per cui il
+  // meccanismo era stato lasciato in piedi: il tetto esiste ed è dichiarato nel repo,
+  // ma nel posto sbagliato. La voce muore da sola il giorno in cui una migrazione lo
+  // pinna (prova «non contiene voci morte»).
+  'registro-allegati':
+    'Misurato in produzione il 2026-09-25 (select id, file_size_limit from storage.buckets ' +
+    "where id = 'registro-allegati'): 10485760 byte. È `MAX_PDF_ALLEGATO` di " +
+    '`src/lib/primaria/allegati-registro.ts`, che la `createBucket` di ' +
+    '`src/app/api/primaria/allegati/route.ts` spedisce come `fileSizeLimit`: da lì è nato il ' +
+    'bucket, al primo caricamento (2026-09-23), e quindi il numero del database è quello del ' +
+    'codice. Nessuna migrazione lo dichiara ancora: pinnarlo è un compito a sé, perché una ' +
+    'migrazione dentro una PR la applica l’integrazione al merge.',
+}
 
 describe('lock architettura · i bucket dello storage sono dichiarati in migrazione', () => {
   it('le migrazioni si leggono davvero (sanity)', () => {

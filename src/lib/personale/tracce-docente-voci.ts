@@ -22,7 +22,7 @@
 //
 // ─── IL FATTO DA CUI NASCE ──────────────────────────────────────────────────
 //
-// `utenti.id` è FK verso `auth.users(id)` con `ON DELETE CASCADE`, e 56 chiavi
+// `utenti.id` è FK verso `auth.users(id)` con `ON DELETE CASCADE`, e 58 chiavi
 // esterne puntano a `utenti(id)`. Una cancellazione vera quindi:
 //   • viene RIFIUTATA da Postgres se esiste una riga su una FK `NO ACTION`
 //     (diario, presenze, valutazioni, registro, firme, pagamenti…);
@@ -80,9 +80,11 @@ export interface VoceTraccia {
 }
 
 /**
- * IL REGISTRO — tutte e 56 le FK verso `utenti(id)`, misurate da `pg_constraint`
- * il 2026-09-20. Non dai file di migrazione: ricostruirle dai `.sql` ne trova ~46,
- * e le dieci che mancano sono esattamente quelle che nessuno si ricorda.
+ * IL REGISTRO — tutte e 58 le FK verso `utenti(id)`, misurate da `pg_constraint`
+ * il 2026-09-20 (56) e il 2026-09-25 (+2: i due `eliminato_da` del cestino del
+ * registro e del fascicolo). Non dai file di migrazione: ricostruirle dai `.sql`
+ * ne trova ~46, e le dieci che mancano sono esattamente quelle che nessuno si
+ * ricorda.
  */
 export const TRACCE_DOCENTE: VoceTraccia[] = [
   // ───────────────────────────────────────────────────────────────────────────
@@ -327,6 +329,21 @@ export const TRACCE_DOCENTE: VoceTraccia[] = [
     chiave: 'tracciaDocenteAllegatiRegistro',
   },
   {
+    // Censita il 2026-09-25 (PR-B dei sei interventi), dalla fotografia rigenerata
+    // dopo l'apply di `20260924220000_primaria_modifica_elimina.sql`. È CHI HA
+    // MESSO L'ALLEGATO NEL CESTINO (7 giorni, poi la purga notturna). Pesa per la
+    // stessa ragione di `galleria_media_v2.eliminato_da`: eliminare un allegato
+    // del registro è un atto di lavoro sul registro di una classe, non servizio
+    // dell'account. E `SET NULL` qui NON è innocuo: finché la riga sta nel
+    // cestino, cancellare l'account toglierebbe la risposta a «chi l'ha tolto?»
+    // proprio nella finestra in cui la si può ancora ripristinare.
+    tabella: 'allegati_registro',
+    colonna: 'eliminato_da',
+    azioneFk: 'set-null',
+    pesa: true,
+    chiave: 'tracciaDocenteAllegatiEliminati',
+  },
+  {
     tabella: 'registro_modifiche',
     colonna: 'utente_id',
     azioneFk: 'blocca',
@@ -357,6 +374,18 @@ export const TRACCE_DOCENTE: VoceTraccia[] = [
     azioneFk: 'blocca',
     pesa: true,
     chiave: 'tracciaDocenteDocumentiAlunni',
+  },
+  {
+    // Censita il 2026-09-25 insieme ad `allegati_registro.eliminato_da`, con la
+    // stessa migrazione e la stessa ragione: è chi ha messo nel cestino un
+    // documento del FASCICOLO di un bambino. Un atto sul fascicolo è lavoro, e
+    // sui dati più delicati che il registro conservi; `SET NULL` cancellerebbe
+    // l'autore dell'eliminazione mentre il documento è ancora ripristinabile.
+    tabella: 'student_documents',
+    colonna: 'eliminato_da',
+    azioneFk: 'set-null',
+    pesa: true,
+    chiave: 'tracciaDocenteDocumentiEliminati',
   },
   {
     tabella: 'firme_documenti',

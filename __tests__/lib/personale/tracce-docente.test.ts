@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 // Le regole PURE della decisione «questo docente si cancella o si archivia?», più
-// l'integrità del registro delle 56 chiavi esterne verso `utenti(id)`.
+// l'integrità del registro delle 58 chiavi esterne verso `utenti(id)`.
 //
 // ⚠️ PROVA PER ROTTURA — eseguita il 2026-09-20, una mutazione alla volta su un
 // file ripristinato da copia pulita. I numeri sono misurati, non previsti: la
@@ -108,16 +108,21 @@ describe('decisioneEliminazione — le due regole che si sbagliano', () => {
 })
 
 describe('TRACCE_DOCENTE — integrità del registro', () => {
-  it('copre tutte e 56 le chiavi esterne verso utenti(id), senza doppioni', () => {
-    // 56 misurate da `pg_constraint` il 2026-09-20. Il numero sta qui e non solo
+  it('copre tutte e 58 le chiavi esterne verso utenti(id), senza doppioni', () => {
+    // 56 misurate da `pg_constraint` il 2026-09-20, 58 il 2026-09-25: le due nuove
+    // sono `allegati_registro.eliminato_da` e `student_documents.eliminato_da`
+    // (cestino del registro e del fascicolo, `SET NULL`). Il numero SALE perché il
+    // database ne ha due in più, non per far tornare un conto. Sta qui e non solo
     // nel commento perché una FK nuova deve rendere rosso qualcosa.
-    expect(TRACCE_DOCENTE).toHaveLength(56)
+    expect(TRACCE_DOCENTE).toHaveLength(58)
     const chiavi = TRACCE_DOCENTE.map((v) => `${v.tabella}.${v.colonna}`)
     expect(new Set(chiavi).size).toBe(chiavi.length)
   })
 
-  it('44 voci pesano, e ognuna porta la chiave con cui la si racconta', () => {
-    expect(VOCI_CHE_PESANO).toHaveLength(44)
+  it('46 voci pesano, e ognuna porta la chiave con cui la si racconta', () => {
+    // 44 fino al 2026-09-25; le due `eliminato_da` del cestino pesano come
+    // `galleria_media_v2.eliminato_da` (vedi il registro).
+    expect(VOCI_CHE_PESANO).toHaveLength(46)
     for (const v of VOCI_CHE_PESANO) {
       expect(v.chiave, `${v.tabella}.${v.colonna} pesa ma non ha chiave`).toBeTruthy()
       expect(v.perche, `${v.tabella}.${v.colonna} pesa e non deve motivare`).toBeUndefined()

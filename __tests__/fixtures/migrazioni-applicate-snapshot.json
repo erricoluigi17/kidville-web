@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-23",
-  "generato_alle": "2026-09-23T13:57:05Z",
-  "sha256": "d616eec00a1645c8e5a74580ca642728d554b5d2f1ba261f9f1cc3a78f7ae30a",
+  "generato_il": "2026-09-25",
+  "generato_alle": "2026-09-25T03:07:33Z",
+  "sha256": "115f27223116400a1e3a9586c9b34f0ea7ec51df138450278334a3265b3c64d3",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -743,6 +743,34 @@
     {
       "version": "20260923102831",
       "name": "fatture_coda_nucleo"
+    },
+    {
+      "version": "20260923191725",
+      "name": "fatture_coda_togli_azzera_esito"
+    },
+    {
+      "version": "20260924010455",
+      "name": "fatture_coda_chiudi_emessa_azzera_messaggio"
+    },
+    {
+      "version": "20260924103451",
+      "name": "fatture_coda_distanza_accessi"
+    },
+    {
+      "version": "20260924160753",
+      "name": "fatture_coda_avvisi"
+    },
+    {
+      "version": "20260924220000",
+      "name": "primaria_modifica_elimina"
+    },
+    {
+      "version": "20260924220100",
+      "name": "cestino_registro_cron"
+    },
+    {
+      "version": "20260924220200",
+      "name": "push_badge_non_lette"
     }
   ]
 }

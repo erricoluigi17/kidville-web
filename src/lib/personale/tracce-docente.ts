@@ -73,7 +73,7 @@ async function esiste(
  * sapere se esiste una riga, e un `limit(1)` si ferma alla prima. Un
  * `count: 'exact'` su `presenze` — 51 docenti su 80 ne hanno — deve invece
  * contarle tutte, su una colonna senza indice. Con la separazione, l'anteprima
- * fa 44 sonde che si fermano subito e conta per esteso solo le tre o quattro
+ * fa 46 sonde che si fermano subito e conta per esteso solo le tre o quattro
  * voci che finiranno davvero a schermo.
  *
  * Un conteggio fallito NON è zero: torna `null`, e a schermo si legge «non
@@ -141,8 +141,8 @@ export async function contaTracceDocente(
     }
   }
 
-  // 2. Le 44 sonde. In sequenza e non in parallelo: sono letture su un client
-  //    service-role condiviso, e un `Promise.all` da 44 rami su PostgREST è il
+  // 2. Le 46 sonde. In sequenza e non in parallelo: sono letture su un client
+  //    service-role condiviso, e un `Promise.all` da 46 rami su PostgREST è il
   //    modo di prendersi un 503 proprio mentre si sta decidendo di cancellare.
   const voci: ConteggioVoce[] = []
   for (const voce of VOCI_CHE_PESANO) {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { GIORNI_CESTINO_REGISTRO } from '@/lib/primaria/cestino-registro'
+import { GIORNI_CESTINO_REGISTRO, GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO } from '@/lib/primaria/cestino-registro'
 
 /**
  * La purga a 7 giorni del cestino di registro e fascicolo
@@ -27,10 +27,15 @@ const h = vi.hoisted(() => ({
     bucket: {} as Record<string, Set<string>>,
     /** File che `remove()` NON toglie pur rispondendo senza errore (ancora presenti). */
     resistenti: new Set<string>(),
-    /** Errori iniettati: `${tabella}:scadute|reclami|delete` e `remove:${bucket}`. */
+    /**
+     * Errori iniettati: `${tabella}:scadute|conservazione|reclami|delete` e `remove:${bucket}`.
+     * `scadute` è la lettura del cestino (`lt('eliminato_il')`), `conservazione` quella per
+     * età di caricamento (`lt('creato_il')`); `${tabella}:delete:creato_il` colpisce la sola
+     * cancellazione per conservazione.
+     */
     errori: {} as Record<string, unknown>,
     /** Eseguito dopo la lettura delle scadute di una tabella (per simulare un ripristino concorrente). */
-    dopoLettura: null as null | ((tabella: string) => void),
+    dopoLettura: null as null | ((tabella: string, tipo: string) => void),
     sequenza: [] as { tipo: 'select' | 'remove' | 'delete'; dove: string; valore: unknown }[],
     eventi: [] as { evento: string; livello: string; campi: Record<string, unknown> }[],
     staffNegato: null as unknown,
@@ -61,7 +66,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
             const filtri: Filtro[] = []
             let op: 'select' | 'delete' = 'select'
             let colonne = ''
-            let conLt = false
+            let colLt: string | null = null
             let conIn = false
             let ordine: { col: string; asc: boolean } | null = null
             let tetto: number | null = null
@@ -76,13 +81,18 @@ vi.mock('@/lib/supabase/server-client', () => ({
                     conta = opts?.count === 'exact'
                     return q
                 },
+                is(col: string, valore: unknown) {
+                    if (valore !== null) throw new Error(`is(${String(valore)}) non previsto`)
+                    filtri.push((r) => r[col] === null || r[col] === undefined)
+                    return q
+                },
                 not(col: string, operatore: string, valore: unknown) {
                     if (operatore !== 'is' || valore !== null) throw new Error(`not(${operatore}) non previsto`)
                     filtri.push((r) => r[col] !== null && r[col] !== undefined)
                     return q
                 },
                 lt(col: string, valore: string) {
-                    conLt = true
+                    colLt = col
                     filtri.push((r) => typeof r[col] === 'string' && Date.parse(r[col] as string) < Date.parse(valore))
                     return q
                 },
@@ -104,15 +114,19 @@ vi.mock('@/lib/supabase/server-client', () => ({
                         .then(() => {
                             const righe = h.tabelle[tabella] ?? []
                             if (op === 'delete') {
-                                const err = h.errori[`${tabella}:delete`]
-                                h.sequenza.push({ tipo: 'delete', dove: tabella, valore: null })
+                                const err = h.errori[`${tabella}:delete:${colLt}`] ?? h.errori[`${tabella}:delete`]
+                                // La cancellazione per conservazione si riconosce dalla colonna
+                                // del suo `lt`: così le prove sull'ordine la distinguono dal cestino.
+                                const dove = colLt === 'creato_il' ? `${tabella}:conservazione` : tabella
+                                h.sequenza.push({ tipo: 'delete', dove, valore: null })
                                 if (err) return { data: null, error: err, count: null }
                                 const via = righe.filter((r) => filtri.every((f) => f(r)))
                                 h.tabelle[tabella] = righe.filter((r) => !via.includes(r))
                                 h.sequenza[h.sequenza.length - 1].valore = via.map((r) => r.id)
                                 return { data: null, error: null, count: conta ? via.length : null }
                             }
-                            const tipo = conLt ? 'scadute' : conIn ? 'reclami' : 'altro'
+                            const tipo =
+                                colLt === 'creato_il' ? 'conservazione' : colLt ? 'scadute' : conIn ? 'reclami' : 'altro'
                             const err = h.errori[`${tabella}:${tipo}`]
                             h.sequenza.push({ tipo: 'select', dove: `${tabella}:${tipo}`, valore: colonne })
                             if (err) return { data: null, error: err }
@@ -126,7 +140,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
                             if (tetto !== null) out = out.slice(0, tetto)
                             const cols = colonne.split(',').map((c) => c.trim())
                             const proiettate = out.map((r) => Object.fromEntries(cols.map((c) => [c, r[c] ?? null])))
-                            if (tipo === 'scadute') h.dopoLettura?.(tabella)
+                            if (tipo === 'scadute' || tipo === 'conservazione') h.dopoLettura?.(tabella, tipo)
                             return { data: proiettate, error: null }
                         })
                         .then(risolvi, rifiuta)
@@ -176,6 +190,18 @@ const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0
 function allegato(n: number, eliminato_il: string | null, file = `registro/${uuid(900)}/file-${n}.pdf`): Riga {
     return { id: uuid(n), file_url: file, eliminato_il }
 }
+/** Un allegato con la data di CARICAMENTO: è quella che la conservazione guarda. */
+function caricato(
+    n: number,
+    creato_il: string,
+    eliminato_il: string | null = null,
+    file = `registro/${uuid(900)}/file-${n}.pdf`,
+): Riga {
+    return { id: uuid(n), file_url: file, eliminato_il, creato_il }
+}
+const vecchio = () => fa((GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO + 1) * GIORNO)
+const recente = () => fa((GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO - 1) * GIORNO)
+
 function documento(
     n: number,
     eliminato_il: string | null,
@@ -407,6 +433,21 @@ describe('POST /api/gdpr/retention-cestino-registro — la purga', () => {
         expect(battito()?.campi).toMatchObject({ esito: 'ok', n_righe: 1, n_file_rimossi: 0, n_file_gia_assenti: 1 })
     })
 
+    it('lotti a TETTO anche nel cestino: oltre 500 scaduti ne escono 500, i PIÙ VECCHI per eliminazione', async () => {
+        const minuto = 60 * 1000
+        const base = (GIORNI_CESTINO_REGISTRO + 1) * GIORNO
+        // Dal meno vecchio (n. 1) al più vecchio: senza `.order` resterebbe il più vecchio.
+        semina(Array.from({ length: 501 }, (_, i) => allegato(i + 1, fa(base + (i + 1) * minuto))), [])
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        expect((await res.json()).allegati).toMatchObject({ scadute: 500, cancellate: 500, lottoPieno: true })
+        expect(ids('allegati_registro')).toEqual([uuid(1)])
+        expect(
+            h.eventi.some((e) => e.livello === 'warn' && e.campi.esito === 'lotto-pieno' && e.campi.tipo === 'allegati'),
+        ).toBe(true)
+        expect(battito()?.campi).toMatchObject({ lotto_pieno: true, n_cestino_righe: 500 })
+    })
+
     it('DB non migrato (colonna del cestino assente): 503 dichiarato, nessuna scrittura', async () => {
         semina([allegato(1, scaduta())], [documento(11, scaduta())])
         h.errori['allegati_registro:scadute'] = { code: '42703', message: 'column does not exist' }
@@ -434,6 +475,249 @@ describe('POST /api/gdpr/retention-cestino-registro — la purga', () => {
         expect(log).not.toContain('file-1.pdf')
         expect(log).not.toContain('doc-11.pdf')
         expect(log).not.toContain(uuid(800))
+    })
+})
+
+describe('POST /api/gdpr/retention-cestino-registro — la conservazione a 365 giorni dal caricamento', () => {
+    // Decisione del titolare del 2026-09-25: gli allegati del registro si distruggono
+    // `GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO` giorni dopo il CARICAMENTO, vivi o nel
+    // cestino. Il fascicolo non ha questo termine.
+    const f = (n: number) => `registro/${uuid(900)}/file-${n}.pdf`
+
+    it('distrugge file e righe caricati oltre 365 giorni (vivi E cestinati), NON quelli a 364; il fascicolo non si tocca', async () => {
+        semina(
+            [
+                caricato(1, vecchio()), //                     vivo, oltre il termine → esce
+                caricato(2, vecchio(), giovane()), //          nel cestino da poco, oltre il termine → esce
+                caricato(3, recente()), //                     vivo, 364 giorni → resta
+                caricato(4, recente(), giovane()), //          nel cestino da poco, 364 giorni → resta
+                caricato(5, fa(10 * GIORNO)), //               vivo, recente → resta
+            ],
+            [{ ...documento(11, null), creato_il: vecchio() }],
+        )
+
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        const corpo = await res.json()
+        expect(corpo).toMatchObject({
+            ok: true,
+            giorni: GIORNI_CESTINO_REGISTRO,
+            giorni_conservazione: GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO,
+        })
+        expect(corpo.conservazione).toMatchObject({ scadute: 2, cancellate: 2, fileRimossi: 2, trattenute: 0 })
+        expect(corpo.allegati).toMatchObject({ scadute: 0, cancellate: 0 })
+
+        // Le righe: via le due oltre il termine, restano le tre dentro.
+        expect(ids('allegati_registro')).toEqual([uuid(3), uuid(4), uuid(5)])
+        // I file: via i due, restano i tre.
+        expect([...h.bucket[B_ALLEGATI]].sort()).toEqual([f(3), f(4), f(5)].sort())
+        const remove = h.sequenza.filter((x) => x.tipo === 'remove' && x.dove === B_ALLEGATI)
+        expect(remove).toHaveLength(1)
+        expect((remove[0].valore as string[]).sort()).toEqual([f(1), f(2)].sort())
+
+        // Il fascicolo, anche vecchio di più di un anno, resta com'è: riga e file.
+        expect(ids('student_documents')).toEqual([uuid(11)])
+        expect(h.bucket[B_FASCICOLO].size).toBe(1)
+        expect(h.sequenza.some((x) => x.tipo === 'remove' && x.dove === B_FASCICOLO)).toBe(false)
+
+        // PRIMA IL FILE, POI LA RIGA.
+        const iRemove = h.sequenza.findIndex((x) => x.tipo === 'remove' && x.dove === B_ALLEGATI)
+        const iDelete = h.sequenza.findIndex((x) => x.tipo === 'delete' && x.dove === 'allegati_registro:conservazione')
+        expect(iRemove).toBeGreaterThanOrEqual(0)
+        expect(iDelete, 'il file esce PRIMA della riga').toBeGreaterThan(iRemove)
+        expect((h.sequenza[iDelete].valore as string[]).sort()).toEqual([uuid(1), uuid(2)])
+
+        // Il battito: conteggi SEPARATI per cestino e conservazione, totali coerenti.
+        const b = battito()
+        expect(b?.evento).toBe('cron')
+        expect(b?.campi).toMatchObject({
+            operazione: 'cestino-registro-retention',
+            esito: 'ok',
+            giorni: GIORNI_CESTINO_REGISTRO,
+            giorni_conservazione: GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO,
+            n_conservazione_scaduti: 2,
+            n_conservazione_righe: 2,
+            n_conservazione_file: 2,
+            n_cestino_scaduti: 0,
+            n_cestino_righe: 0,
+            n_cestino_file: 0,
+            n_righe: 2,
+            n_file_rimossi: 2,
+            conteggio_verificato: true,
+        })
+        // Il successo del contenitore si logga, col suo tipo.
+        const purgato = h.eventi.find((e) => e.campi.esito === 'contenitore-purgato' && e.campi.tipo === 'conservazione')
+        expect(purgato?.campi).toMatchObject({ n_righe: 2, n_file_rimossi: 2, bucket: B_ALLEGATI })
+    })
+
+    it('cestino e conservazione nello stesso giro: conteggi separati, somma nei totali', async () => {
+        semina([allegato(1, scaduta()), caricato(2, vecchio())], [documento(11, scaduta())])
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        expect(ids('allegati_registro')).toEqual([])
+        expect(battito()?.campi).toMatchObject({
+            esito: 'ok',
+            n_cestino_righe: 2,
+            n_cestino_file: 2,
+            n_conservazione_righe: 1,
+            n_conservazione_file: 1,
+            n_allegati_righe: 1,
+            n_fascicolo_righe: 1,
+            n_righe: 3,
+            n_file_rimossi: 3,
+        })
+    })
+
+    it('il confine è il termine: a 365 giorni meno un\'ora resta, a 365 giorni più un\'ora esce', async () => {
+        const ora = 60 * 60 * 1000
+        semina(
+            [
+                caricato(1, fa(GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO * GIORNO - ora)),
+                caricato(2, fa(GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO * GIORNO + ora)),
+            ],
+            [],
+        )
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        expect(ids('allegati_registro')).toEqual([uuid(1)])
+        expect([...h.bucket[B_ALLEGATI]]).toEqual([f(1)])
+    })
+
+    it('un file che un\'altra riga ANCORA NEL TERMINE nomina non si tocca: la riga vecchia esce, il file resta', async () => {
+        const condiviso = `registro/${uuid(900)}/condiviso.pdf`
+        semina([caricato(1, vecchio(), null, condiviso), caricato(2, recente(), giovane(), condiviso)], [])
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        expect(ids('allegati_registro')).toEqual([uuid(2)])
+        expect(h.bucket[B_ALLEGATI].has(condiviso)).toBe(true)
+        expect(h.sequenza.some((x) => x.tipo === 'remove')).toBe(false)
+        expect(battito()?.campi).toMatchObject({ n_conservazione_righe: 1, n_conservazione_file: 0, n_file_ancora_reclamati: 1 })
+    })
+
+    it('la delete ripete la condizione: una riga che risulta caricata DOPO la soglia non si cancella', async () => {
+        semina([caricato(1, vecchio()), caricato(2, vecchio())], [])
+        // Fra la lettura e la cancellazione la riga 2 «ringiovanisce»: se la delete
+        // cancellasse per soli id, sparirebbe lo stesso.
+        h.dopoLettura = (tabella, tipo) => {
+            if (tabella !== 'allegati_registro' || tipo !== 'conservazione') return
+            const r = h.tabelle.allegati_registro.find((x) => x.id === uuid(2))
+            if (r) r.creato_il = fa(GIORNO)
+        }
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        expect(ids('allegati_registro')).toEqual([uuid(2)])
+        expect(h.eventi.some((e) => e.campi.esito === 'conteggio-discorde' && e.campi.tipo === 'conservazione')).toBe(true)
+        expect(battito()?.campi).toMatchObject({ n_conservazione_righe: 1 })
+    })
+
+    it('lettura fallita (PostgREST ritorna { error }): 500, nessun file tolto, il cestino si purga lo stesso', async () => {
+        semina([allegato(1, scaduta()), caricato(2, vecchio())], [])
+        h.errori['allegati_registro:conservazione'] = { code: '57014', message: 'timeout' }
+        const res = await chiama()
+        expect(res.status).toBe(500)
+        const corpo = await res.json()
+        expect(corpo.motivo).toBe('lettura-fallita')
+        expect(corpo).not.toHaveProperty('error')
+        expect(JSON.stringify(corpo)).not.toContain('timeout')
+        // Il cestino è indipendente: la riga 1 esce, la 2 (e il suo file) restano.
+        expect(ids('allegati_registro')).toEqual([uuid(2)])
+        expect(h.bucket[B_ALLEGATI].has(f(2))).toBe(true)
+        expect(battito()?.campi).toMatchObject({ esito: 'lettura-fallita', n_cestino_righe: 1, n_conservazione_righe: 0 })
+        expect(
+            h.eventi.some((e) => e.livello === 'error' && e.campi.tipo === 'conservazione' && e.campi.esito === 'lettura-fallita'),
+        ).toBe(true)
+    })
+
+    it('se non si sa chi reclama i file, non si tocca NIENTE della conservazione (fail-closed)', async () => {
+        semina([caricato(1, vecchio())], [])
+        h.errori['allegati_registro:reclami'] = { code: '57014', message: 'timeout' }
+        const res = await chiama()
+        expect(res.status).toBe(500)
+        expect((await res.json()).motivo).toBe('reclami-non-letti')
+        expect(ids('allegati_registro')).toEqual([uuid(1)])
+        expect(h.bucket[B_ALLEGATI].has(f(1))).toBe(true)
+        expect(h.sequenza.some((x) => x.tipo === 'remove')).toBe(false)
+    })
+
+    it('un file che resta nel bucket trattiene la SUA riga: 500 «righe-trattenute»', async () => {
+        semina([caricato(1, vecchio()), caricato(2, vecchio())], [])
+        h.resistenti.add(f(1))
+        const res = await chiama()
+        expect(res.status).toBe(500)
+        expect((await res.json()).motivo).toBe('righe-trattenute')
+        expect(ids('allegati_registro')).toEqual([uuid(1)])
+        expect(battito()?.campi).toMatchObject({ n_conservazione_righe: 1, n_righe_trattenute: 1 })
+    })
+
+    it('è IDEMPOTENTE: una delete fallita dopo il remove si chiude al giro dopo', async () => {
+        semina([caricato(1, vecchio())], [])
+        h.errori['allegati_registro:delete:creato_il'] = { code: '40001', message: 'serializzazione' }
+        const primo = await chiama()
+        expect(primo.status).toBe(500)
+        expect((await primo.json()).motivo).toBe('cancellazione-fallita')
+        expect(h.bucket[B_ALLEGATI].size).toBe(0)
+        expect(ids('allegati_registro')).toEqual([uuid(1)])
+
+        delete h.errori['allegati_registro:delete:creato_il']
+        h.eventi = []
+        const secondo = await chiama()
+        expect(secondo.status).toBe(200)
+        expect(ids('allegati_registro')).toEqual([])
+        expect(battito()?.campi).toMatchObject({ esito: 'ok', n_conservazione_righe: 1, n_file_gia_assenti: 1 })
+    })
+
+    it('lotti a TETTO: oltre 500 allegati scaduti ne escono 500, i PIÙ VECCHI per caricamento, e si dichiara', async () => {
+        // 501 allegati oltre il termine, ciascuno un minuto più vecchio del precedente:
+        // il n. 1 è il meno vecchio. Seminati dal più giovane al più vecchio, così una
+        // lettura senza `.order('creato_il')` terrebbe i primi 500 e lascerebbe il più
+        // vecchio, e una senza `.limit()` li prenderebbe tutti.
+        const minuto = 60 * 1000
+        const base = (GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO + 1) * GIORNO
+        const tanti = Array.from({ length: 501 }, (_, i) => caricato(i + 1, fa(base + (i + 1) * minuto)))
+        semina(tanti, [])
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        const corpo = await res.json()
+        expect(corpo.conservazione).toMatchObject({ scadute: 500, cancellate: 500, lottoPieno: true })
+        // Resta il SOLO meno vecchio: il giro dopo lo prende.
+        expect(ids('allegati_registro')).toEqual([uuid(1)])
+        expect([...h.bucket[B_ALLEGATI]]).toEqual([f(1)])
+        // Il taglio si dichiara: un warn col tipo del contenitore, e il battito lo porta.
+        expect(
+            h.eventi.some((e) => e.livello === 'warn' && e.campi.esito === 'lotto-pieno' && e.campi.tipo === 'conservazione'),
+        ).toBe(true)
+        expect(battito()?.campi).toMatchObject({ esito: 'ok', lotto_pieno: true, n_conservazione_righe: 500 })
+
+        // Il giro dopo chiude il resto, e il lotto non è più pieno.
+        h.eventi = []
+        const secondo = await chiama()
+        expect(secondo.status).toBe(200)
+        expect(ids('allegati_registro')).toEqual([])
+        expect(battito()?.campi).toMatchObject({ lotto_pieno: false, n_conservazione_righe: 1 })
+    })
+
+    it('DB non migrato per la sola `creato_il` (42703 sulla lettura della conservazione): 503, nessun remove, nessuna delete', async () => {
+        semina([caricato(1, vecchio())], [])
+        h.errori['allegati_registro:conservazione'] = { code: '42703', message: 'column creato_il does not exist' }
+        const res = await chiama()
+        expect(res.status).toBe(503)
+        const corpo = await res.json()
+        expect(corpo.motivo).toBe('colonne-cestino-assenti')
+        expect(JSON.stringify(corpo)).not.toContain('does not exist')
+        expect(h.sequenza.some((x) => x.tipo === 'remove' || x.tipo === 'delete')).toBe(false)
+        expect(ids('allegati_registro')).toEqual([uuid(1)])
+        expect(h.bucket[B_ALLEGATI].has(f(1))).toBe(true)
+        expect(battito()?.campi).toMatchObject({ esito: 'colonne-cestino-assenti', n_conservazione_righe: 0 })
+    })
+
+    it('nei log non entra NESSUN percorso', async () => {
+        semina([caricato(1, vecchio()), caricato(2, vecchio())], [])
+        h.resistenti.add(f(2))
+        await chiama()
+        const log = JSON.stringify(h.eventi)
+        expect(log).not.toContain('file-1.pdf')
+        expect(log).not.toContain('file-2.pdf')
+        expect(log).not.toContain(uuid(900))
     })
 })
 

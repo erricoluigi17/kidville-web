@@ -10,7 +10,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { allegatiRegistroNelCestino, allegatiRegistroVivi } from '@/lib/primaria/cestino-allegati-registro'
-import { scadenzaCestino } from '@/lib/primaria/cestino-registro'
+import { ripristinabileFinoAlAllegato } from '@/lib/primaria/cestino-registro'
 import {
   BUCKET_ALLEGATI_REGISTRO,
   CESTINO_ASSENTE,
@@ -195,7 +195,12 @@ export const POST = withRoute('primaria/allegati/sostituisci:POST', async (reque
       {
         success: true,
         data: nuovo,
-        sostituito: { id, eliminatoIl: adesso, ripristinabileFinoAl: scadenzaCestino(adesso)?.toISOString() ?? null },
+        sostituito: {
+          id,
+          eliminatoIl: adesso,
+          // Il primo che scade fra custodia e conservazione (vedi `cestino-registro.ts`).
+          ripristinabileFinoAl: ripristinabileFinoAlAllegato(adesso, vecchio.creato_il)?.toISOString() ?? null,
+        },
       },
       { status: 201 },
     )

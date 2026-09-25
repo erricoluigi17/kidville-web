@@ -385,6 +385,7 @@
   "erroreAllegatoRegistroCambiato": "L’allegato è stato eliminato o sostituito nel frattempo. Ricarica la pagina.",
   "erroreAllegatoRegistroNonNelCestino": "L’allegato non è più nel cestino. Ricarica la pagina.",
   "erroreAllegatoRegistroCestinoScaduto": "Il tempo per ripristinare questo allegato è scaduto.",
+  "erroreAllegatoRegistroConservazioneScaduta": "Questo allegato ha superato il termine di conservazione del registro e non si può più ripristinare.",
   "erroreAllegatoRegistroScritturaFallita": "Non siamo riusciti a salvare la modifica dell’allegato. Ricarica la pagina e controlla.",
   "erroreAllegatoRegistroCestinoNonDisponibile": "Il cestino degli allegati non è ancora disponibile: l’allegato non è stato toccato.",
   "erroreLezioneDaRifirmare": "La lezione di questo allegato è stata eliminata: rifirmala nella stessa ora, poi ripristina l’allegato.",

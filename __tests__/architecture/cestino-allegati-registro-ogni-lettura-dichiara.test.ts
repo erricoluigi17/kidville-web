@@ -318,8 +318,12 @@ const COPERTE_ATTESE: Record<string, { letture: number; embed: number }> = {
   'src/app/api/primaria/registro/route.ts': { letture: 3, embed: 1 },
   'src/app/api/primaria/compiti/route.ts': { letture: 0, embed: 1 },
   'src/app/api/parent/primaria/route.ts': { letture: 0, embed: 1 },
-  // La PURGA (compito PU1): le scadute · chi reclama ancora i percorsi (`AncheNelCestino`) · il DELETE
-  'src/app/api/gdpr/retention-cestino-registro/route.ts': { letture: 3, embed: 0 },
+  // La PURGA (compito PU1): le scadute · chi reclama ancora i percorsi (`AncheNelCestino`) · il DELETE.
+  // Da 3 a 5 il 2026-09-25: la CONSERVAZIONE degli allegati (365 giorni dal caricamento,
+  // decisione del titolare) aggiunge le sue scadute e il suo DELETE, entrambi
+  // `AncheNelCestino` perché il termine vale per vivi e cestinati; i reclami sono
+  // una funzione sola condivisa fra cestino e conservazione (resta UNA lettura).
+  'src/app/api/gdpr/retention-cestino-registro/route.ts': { letture: 5, embed: 0 },
 }
 
 /**

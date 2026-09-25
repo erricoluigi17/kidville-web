@@ -14,8 +14,10 @@ import { rispostaPermessoNegato } from '@/lib/primaria/permesso-voce'
 import { allegatiRegistroNelCestino } from '@/lib/primaria/cestino-allegati-registro'
 import {
   cestinoScaduto,
-  giorniResiduiCestino,
-  scadenzaCestino,
+  conservazioneAllegatoScaduta,
+  filtroEntroConservazioneAllegati,
+  giorniResiduiAllegatoNelCestino,
+  ripristinabileFinoAlAllegato,
   sogliaPurgaCestinoRegistro,
 } from '@/lib/primaria/cestino-registro'
 import {
@@ -49,8 +51,9 @@ import {
  * (`caricato_da`), o Segreteria e Direzione, e la classe nello scope. Altrimenti
  * `403 VOCE_NON_AUTORE`, con la stessa forma di `rispostaPermessoNegato`.
  *
- * FINO A QUANDO è la CUSTODIA del cestino, e basta: il termine sulla data della
- * lezione (2 giorni, poi lo sblocco della Direzione) la spec lo mette su modifica ed
+ * FINO A QUANDO è la CUSTODIA del cestino (più la conservazione, vedi sotto): il
+ * termine sulla data della lezione (2 giorni, poi lo sblocco della Direzione) la spec
+ * lo mette su modifica ed
  * eliminazione, non sul ripristino. Applicarlo qui ridurrebbe i 7 giorni del cestino
  * a pochi giorni al massimo, e lo sblocco non aiuterebbe: `primaria/sblocca` legge
  * solo gli allegati VIVI. Per questo il GET non dice `bloccata`: un «Sblocca» su una
@@ -65,6 +68,21 @@ import {
  * non si elenca e non si ripristina. La scadenza si controlla PRIMA di tutto il resto:
  * un allegato scaduto ha quasi sempre una lezione vecchia, e nessun'altra risposta
  * deve coprire «è scaduto».
+ *
+ * ─── E LA CONSERVAZIONE (decisione del titolare del 2026-09-25) ─────────────
+ * La stessa purga distrugge un allegato del registro anche per ETÀ: oltre
+ * `GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO` giorni dal CARICAMENTO, vivo o nel cestino.
+ * I due termini contano da istanti diversi, e vince quello che scade PRIMA: un
+ * allegato caricato 360 giorni fa e cestinato ieri lo distrugge la conservazione fra
+ * cinque giorni, non il cestino fra sei. Quindi:
+ *  · il GET non elenca un allegato oltre la conservazione (stesso filtro, complemento
+ *    esatto di quello della purga: `filtroEntroConservazioneAllegati`) e promette
+ *    `ripristinabileFinoAl`/`giorniResidui` sul PRIMO dei due termini
+ *    (`ripristinabileFinoAlAllegato`);
+ *  · il POST rifiuta un allegato oltre la conservazione con `409
+ *    ALLEGATO_REGISTRO_CONSERVAZIONE_SCADUTA`, e l'UPDATE ripete la condizione nella
+ *    stessa istruzione. È ciò che chiude la finestra della purga: un file già tolto
+ *    con la `delete` della riga fallita non torna mai vivo da qui.
  */
 
 const getQuerySchema = z.object({
@@ -106,7 +124,10 @@ export const GET = withRoute('primaria/allegati/cestino:GET', async (request: Ne
         .from('allegati_registro')
         .select(COLONNE_ALLEGATO)
         .eq('slot_section_id', sectionId)
-        .gte('eliminato_il', sogliaPurgaCestinoRegistro()),
+        .gte('eliminato_il', sogliaPurgaCestinoRegistro())
+        // Né oltre la custodia né oltre la conservazione: quello che la purga può già
+        // aver tolto non si elenca (vedi la testata).
+        .or(filtroEntroConservazioneAllegati()),
     )
     const staff = haUnRuolo(auth.user, RUOLI_STAFF)
     if (!staff) query = query.eq('caricato_da', auth.user.id)
@@ -154,8 +175,10 @@ export const GET = withRoute('primaria/allegati/cestino:GET', async (request: Ne
         eliminato_da: r.eliminato_da,
         slot_data: r.slot_data,
         slot_ora_lezione: r.slot_ora_lezione,
-        ripristinabileFinoAl: scadenzaCestino(r.eliminato_il)?.toISOString() ?? null,
-        giorniResidui: giorniResiduiCestino(r.eliminato_il, adesso),
+        // Il PRIMO dei due termini che scade: custodia (da `eliminato_il`) o
+        // conservazione (da `creato_il`). Vedi la testata.
+        ripristinabileFinoAl: ripristinabileFinoAlAllegato(r.eliminato_il, r.creato_il)?.toISOString() ?? null,
+        giorniResidui: giorniResiduiAllegatoNelCestino(r.eliminato_il, r.creato_il, adesso),
         lezioneDaRifirmare,
         // Solo CHI e la lezione: il termine sulla data della lezione non vale per il
         // ripristino (vedi la testata), quindi niente `bloccata` né «Sblocca».
@@ -229,9 +252,26 @@ export const POST = withRoute('primaria/allegati/cestino:POST', async (request: 
       )
     }
 
+    // ── 4-bis. Oltre la CONSERVAZIONE (decisione del titolare del 2026-09-25): la
+    //    purga distrugge l'allegato `GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO` giorni dopo
+    //    il caricamento, nel cestino o no, e può averne già tolto il file anche se la
+    //    `delete` della riga è fallita. Ripristinarlo riporterebbe viva una riga col
+    //    link rotto. Stessa posizione della custodia, e per la stessa ragione.
+    if (conservazioneAllegatoScaduta(allegato.creato_il)) {
+      logEvento('registro', 'info', { operazione, esito: 'ripristino-conservazione-scaduta', allegato_id: id, sezione: sectionId })
+      return NextResponse.json(
+        {
+          error: 'Questo allegato ha superato il termine di conservazione del registro e non si può più ripristinare',
+          codice: 'ALLEGATO_REGISTRO_CONSERVAZIONE_SCADUTA',
+        },
+        { status: 409 },
+      )
+    }
+
     // ── 5. CHI: l'autore o lo staff. Nessun termine sulla data della lezione: il
-    //    limite del ripristino è la custodia del cestino, già controllata sopra. Si
-    //    decide PRIMA di dire «rifirma la lezione» a chi comunque non potrebbe.
+    //    limite del ripristino è la custodia del cestino (e la conservazione), già
+    //    controllate sopra. Si decide PRIMA di dire «rifirma la lezione» a chi
+    //    comunque non potrebbe.
     if (!puoRipristinare(auth.user, allegato)) {
       logEvento('registro', 'info', { operazione, esito: 'ripristino-non-autore', allegato_id: id, sezione: sectionId })
       return rispostaPermessoNegato({ ok: false, stato: 403, codice: 'VOCE_NON_AUTORE' })
@@ -265,17 +305,18 @@ export const POST = withRoute('primaria/allegati/cestino:POST', async (request: 
       )
     }
 
-    // ── 6. Il ripristino, condizionato: ancora nel cestino E ancora entro la
-    //    custodia. Fra la lettura e qui può essere passata la purga, o un secondo
-    //    «Ripristina». Il `registro_id` si rimette nello STESSO update: un allegato
-    //    vivo senza lezione il database lo rifiuta (23514).
+    // ── 6. Il ripristino, condizionato: ancora nel cestino, ancora entro la
+    //    custodia E ancora entro la conservazione. Fra la lettura e qui può essere
+    //    passata la purga, o un secondo «Ripristina». Il `registro_id` si rimette nello
+    //    STESSO update: un allegato vivo senza lezione il database lo rifiuta (23514).
     const riagganciato = allegato.registro_id !== lezione.id
     const { data: tornato, error: erroreRipristino } = await allegatiRegistroNelCestino(
       supabase
         .from('allegati_registro')
         .update({ eliminato_il: null, eliminato_da: null, registro_id: lezione.id })
         .eq('id', id)
-        .gte('eliminato_il', sogliaPurgaCestinoRegistro()),
+        .gte('eliminato_il', sogliaPurgaCestinoRegistro())
+        .or(filtroEntroConservazioneAllegati()),
     ).select('id, registro_id, ambito, tipo, file_name, dimensione_byte, caricato_da, creato_il').maybeSingle()
     if (erroreRipristino) {
       logEvento('registro', 'error', { operazione, esito: 'allegato-non-ripristinato', allegato_id: id }, erroreRipristino)

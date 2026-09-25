@@ -6,7 +6,12 @@ import { logEvento } from '@/lib/logging/logger'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { percorsoNelBucket } from '@/lib/allegati/storage'
-import { GIORNI_CESTINO_REGISTRO, sogliaPurgaCestinoRegistro } from '@/lib/primaria/cestino-registro'
+import {
+    GIORNI_CESTINO_REGISTRO,
+    GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO,
+    sogliaPurgaCestinoRegistro,
+    sogliaConservazioneAllegatiRegistro,
+} from '@/lib/primaria/cestino-registro'
 import { fascicoloNelCestino, fascicoloAncheNelCestino } from '@/lib/primaria/cestino-fascicolo'
 import { allegatiRegistroNelCestino, allegatiRegistroAncheNelCestino } from '@/lib/primaria/cestino-allegati-registro'
 import { BUCKET_ALLEGATI_REGISTRO } from '@/lib/primaria/allegati-registro'
@@ -51,10 +56,22 @@ import { BUCKET_ALLEGATI_REGISTRO } from '@/lib/primaria/allegati-registro'
  * 3. **IDEMPOTENTE SENZA COLONNE IN PIÙ.** A differenza della galleria qui non c'è
  *    un `file_rimosso_il`, e non serve: se il file è uscito e la `delete` della
  *    riga fallisce, il giro dopo rilegge la stessa riga, `rimuoviEVerifica` trova
- *    il file «già assente» (che NON è un guasto) e la riga si cancella. E nel
- *    frattempo nessuno può ripristinarla: una riga oltre la custodia non è più
- *    ripristinabile (`cestinoScaduto`), quindi non esiste la finestra in cui un
- *    «Ripristina» restituirebbe un file distrutto.
+ *    il file «già assente» (che NON è un guasto) e la riga si cancella.
+ *
+ *    La FINESTRA fra il `remove` riuscito e la `delete` fallita, contenitore per
+ *    contenitore:
+ *     · i due cestini: la riga è oltre la custodia, e il ripristino la rifiuta
+ *       (`cestinoScaduto`, ripetuto nell'UPDATE): nessun «Ripristina» restituisce
+ *       un file distrutto;
+ *     · la conservazione: la riga può essere nel CESTINO o VIVA. Nel cestino la
+ *       chiude il ripristino, che rifiuta un allegato oltre la conservazione
+ *       (`conservazioneAllegatoScaduta`, `409 ALLEGATO_REGISTRO_CONSERVAZIONE_SCADUTA`,
+ *       e la stessa condizione nell'UPDATE); il cestino non la elenca nemmeno. VIVA,
+ *       invece, la riga resta visibile nel registro — al docente e ai genitori — con
+ *       un file che non c'è più, fino al giro dopo che la cancella. È una finestra
+ *       DICHIARATA, non chiusa: la lunghezza è un giro di purga (un giorno), il danno
+ *       è un link che risponde «non trovato», e nessun dato torna indietro. Il giro
+ *       esce comunque `500` (`cancellazione-fallita`), quindi chi sorveglia lo sa.
  *
  * 4. **LA `delete` RIPETE LE CONDIZIONI DEL CESTINO.** `eliminato_il` non nullo e
  *    più vecchio della soglia, nella stessa istruzione che cancella: una riga viva,
@@ -76,9 +93,22 @@ import { BUCKET_ALLEGATI_REGISTRO } from '@/lib/primaria/allegati-registro'
  *    silenzio i plessi che il job non conosce. Non c'è nemmeno un utente da cui
  *    derivare uno scope: la chiama `pg_net` col cron secret.
  *
- * 8. **I DUE CONTENITORI SONO INDIPENDENTI.** Un guasto sugli allegati non ferma
- *    il fascicolo e viceversa: ciascuno ha il suo esito, e l'esito del giro è
- *    `ok` soltanto se lo sono entrambi.
+ * 8. **I CONTENITORI SONO INDIPENDENTI.** Un guasto sugli allegati non ferma
+ *    il fascicolo né la conservazione, e viceversa: ciascuno ha il suo esito, e
+ *    l'esito del giro è `ok` soltanto se lo sono tutti e tre.
+ *
+ * 9. **LA CONSERVAZIONE DEGLI ALLEGATI DEL REGISTRO È UN TERZO CONTENITORE.**
+ *    Decisione del titolare del 2026-09-25: un allegato del registro
+ *    (`allegati_registro`, bucket `registro-allegati`) si distrugge
+ *    `GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO` giorni dopo il CARICAMENTO
+ *    (`creato_il`), vivo o nel cestino che sia. Non è un secondo cron: è il
+ *    contenitore `conservazione` di questo stesso giro, con le stesse regole — prima
+ *    il file e poi la riga, un file che un'altra riga nomina ancora non si tocca,
+ *    la `delete` ripete la condizione (`creato_il` oltre la soglia), lotti a tetto,
+ *    esito suo. Il fascicolo (`student_documents`) NON ha questo termine e da qui
+ *    non si raggiunge. Una riga con `creato_il` NULL (lo schema lo permette, il
+ *    default `now()` lo impedisce in pratica) non scade: `lt` non la prende, e la
+ *    purga non inventa un'età che la riga non dichiara.
  *
  * ─── COSA NON ENTRA NEI LOG ─────────────────────────────────────────────────
  *
@@ -126,7 +156,7 @@ function codiceDi(errore: unknown): string {
     return typeof c === 'string' ? c : ''
 }
 
-type ChiaveContenitore = 'allegati' | 'fascicolo'
+type ChiaveContenitore = 'allegati' | 'conservazione' | 'fascicolo'
 
 type Supabase = Awaited<ReturnType<typeof createAdminClient>>
 
@@ -136,6 +166,13 @@ type Cancellazione = PromiseLike<{ error: unknown; count: number | null }>
 type Contenitore = {
     chiave: ChiaveContenitore
     bucket: string
+    /** Il termine che questo contenitore applica, per i log e la risposta. */
+    giorni: number
+    /**
+     * La soglia ISO di QUESTO contenitore: `eliminato_il` per i due cestini,
+     * `creato_il` per la conservazione. Calcolata dal modulo puro, mai qui.
+     */
+    soglia: (adesso: Date) => string
     /**
      * Le colonne del percorso, IN ORDINE DI PRECEDENZA: si usa la prima valorizzata.
      * `student_documents` porta il percorso in `storage_path` **e** in `file_url`
@@ -151,19 +188,36 @@ type Contenitore = {
      * (`@/lib/primaria/cestino-fascicolo`). Le condizioni sono le stesse per le due
      * tabelle, e le prove della suite le verificano su entrambe.
      *
-     *  · `scadute`  — nel cestino E oltre la custodia, le più vecchie per prime;
+     *  · `scadute`  — nel cestino E oltre la custodia (per la conservazione: caricate
+     *                 oltre il termine, vive o cestinate), le più vecchie per prime;
      *  · `reclami`  — chi nomina questi percorsi, cestino COMPRESO;
-     *  · `cancella` — per id, RIPETENDO le condizioni del cestino (regola 4).
+     *  · `cancella` — per id, RIPETENDO le condizioni della lettura (regola 4).
      */
     scadute: (s: Supabase, soglia: string) => Lettura
     reclami: (s: Supabase, colonna: string, percorsi: string[]) => Lettura
     cancella: (s: Supabase, soglia: string, ids: string[]) => Cancellazione
 }
 
+/**
+ * Chi nomina questi percorsi fra gli allegati del registro, cestino COMPRESO. Una
+ * funzione sola per i due contenitori che toccano `registro-allegati` (cestino e
+ * conservazione): la domanda è la stessa, e due copie divergerebbero in silenzio.
+ */
+const reclamiAllegatiRegistro = (s: Supabase, colonna: string, percorsi: string[]): Lettura =>
+    allegatiRegistroAncheNelCestino(
+        s.from('allegati_registro').select(`id, ${colonna}`).in(colonna, percorsi),
+        'la domanda «un\'altra riga nomina ancora questo percorso?» deve vedere anche gli allegati ' +
+            'nel CESTINO non ancora scaduti: reclamano il loro file finché sono ripristinabili, e ' +
+            'filtrando i soli vivi la purga toglierebbe dal bucket il file di un allegato che il ' +
+            'docente può ancora ripristinare.',
+    )
+
 const CONTENITORI_CESTINO_REGISTRO: readonly Contenitore[] = [
     {
         chiave: 'allegati',
         bucket: BUCKET_ALLEGATI_REGISTRO,
+        giorni: GIORNI_CESTINO_REGISTRO,
+        soglia: (adesso) => sogliaPurgaCestinoRegistro(adesso),
         colonnePercorso: ['file_url'],
         // Lettura DENTRO il cestino: è la purga, una delle due eccezioni della spec
         // alla regola «ogni lettura esclude il cestino».
@@ -174,22 +228,50 @@ const CONTENITORI_CESTINO_REGISTRO: readonly Contenitore[] = [
                 .limit(TETTO_LOTTO),
         // Cestino COMPRESO: una riga cestinata e non ancora scaduta reclama il suo
         // file finché è ripristinabile (vedi la ragione scritta sul fascicolo, qui sotto).
-        reclami: (s, colonna, percorsi) =>
-            allegatiRegistroAncheNelCestino(
-                s.from('allegati_registro').select(`id, ${colonna}`).in(colonna, percorsi),
-                'la domanda «un\'altra riga nomina ancora questo percorso?» deve vedere anche gli allegati ' +
-                    'nel CESTINO non ancora scaduti: reclamano il loro file finché sono ripristinabili, e ' +
-                    'filtrando i soli vivi la purga toglierebbe dal bucket il file di un allegato che il ' +
-                    'docente può ancora ripristinare.',
-            ),
+        reclami: reclamiAllegatiRegistro,
         cancella: (s, soglia, ids) =>
             allegatiRegistroNelCestino(s.from('allegati_registro').delete({ count: 'exact' }))
                 .lt('eliminato_il', soglia)
                 .in('id', ids),
     },
     {
+        // LA CONSERVAZIONE (decisione del titolare del 2026-09-25, regola 9): gli
+        // allegati caricati oltre il termine, VIVI O NEL CESTINO. Stesso bucket e
+        // stessa costante del contenitore qui sopra: chi carica, chi cestina e chi
+        // conserva leggono tutti `BUCKET_ALLEGATI_REGISTRO`.
+        chiave: 'conservazione',
+        bucket: BUCKET_ALLEGATI_REGISTRO,
+        giorni: GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO,
+        soglia: (adesso) => sogliaConservazioneAllegatiRegistro(adesso),
+        colonnePercorso: ['file_url'],
+        scadute: (s, soglia) =>
+            allegatiRegistroAncheNelCestino(
+                s.from('allegati_registro').select('id, file_url'),
+                'la conservazione conta dal CARICAMENTO e vale per vivi e cestinati insieme: decisione del ' +
+                    'titolare del 2026-09-25, un allegato del registro si distrugge oltre il termine anche se ' +
+                    'nessuno lo ha mai eliminato, e filtrare i soli vivi lascerebbe indietro quelli nel cestino.',
+            )
+                .lt('creato_il', soglia)
+                .order('creato_il', { ascending: true })
+                .limit(TETTO_LOTTO),
+        reclami: reclamiAllegatiRegistro,
+        // La `delete` ripete la condizione della lettura: una riga caricata DOPO la
+        // soglia non è cancellabile da qui nemmeno se il suo id arrivasse per errore.
+        cancella: (s, soglia, ids) =>
+            allegatiRegistroAncheNelCestino(
+                s.from('allegati_registro').delete({ count: 'exact' }),
+                'la cancellazione per conservazione tocca vivi e cestinati: il termine del titolare del ' +
+                    '2026-09-25 si misura sul caricamento, non sull\'eliminazione, e la condizione vera è ' +
+                    'il creato_il oltre la soglia, ripetuta qui sotto nella stessa istruzione.',
+            )
+                .lt('creato_il', soglia)
+                .in('id', ids),
+    },
+    {
         chiave: 'fascicolo',
         bucket: BUCKET_FASCICOLO,
+        giorni: GIORNI_CESTINO_REGISTRO,
+        soglia: (adesso) => sogliaPurgaCestinoRegistro(adesso),
         colonnePercorso: ['storage_path', 'file_url'],
         scadute: (s, soglia) =>
             fascicoloNelCestino(s.from('student_documents').select('id, storage_path, file_url'))
@@ -284,8 +366,10 @@ async function purgaContenitore(
 
     // ── LE RIGHE SCADUTE ─────────────────────────────────────────────────────
     // Lettura di proposito DENTRO il cestino (è la purga: una delle due eccezioni
-    // alla regola «ogni lettura esclude il cestino» della spec). Ordinate per
-    // `eliminato_il` crescente: se il tetto taglia, taglia le meno in ritardo.
+    // alla regola «ogni lettura esclude il cestino» della spec). Ordinate in modo
+    // crescente sulla colonna del termine di QUESTO contenitore (`eliminato_il` per i
+    // due cestini, `creato_il` per la conservazione): se il tetto taglia, taglia le
+    // meno in ritardo.
     const { data, error } = await c.scadute(supabase, soglia)
 
     if (error) {
@@ -297,7 +381,7 @@ async function purgaContenitore(
                 esito: esito.esito,
                 error_code: codice,
                 msg:
-                    `${JOB}: su questo database il cestino di questo contenitore non esiste (${codice}): ` +
+                    `${JOB}: su questo database le colonne di questo contenitore non esistono (${codice}): ` +
                     `nessuna riga trattata, e non si finge il contrario`,
             })
             return esito
@@ -306,7 +390,7 @@ async function purgaContenitore(
         logEvento(
             'cron',
             'error',
-            { ...base, esito: esito.esito, error_code: codice, msg: `${JOB}: lettura delle righe scadute nel cestino non riuscita` },
+            { ...base, esito: esito.esito, error_code: codice, msg: `${JOB}: lettura delle righe scadute non riuscita` },
             error,
         )
         return esito
@@ -485,13 +569,13 @@ async function purgaContenitore(
             n_file_bloccanti: esito.fileBloccanti,
             n_file_ancora_presenti: rimozione.ancoraPresenti.length,
             n_file_non_verificati: rimozione.incerti.length,
-            msg: `${JOB}: ${esito.trattenute} righe del cestino NON cancellate: il loro file è ancora nell'archivio, non verificabile o non riconoscibile`,
+            msg: `${JOB}: ${esito.trattenute} righe scadute NON cancellate: il loro file è ancora nell'archivio, non verificabile o non riconoscibile`,
         })
         return esito
     }
 
     // Il SUCCESSO del contenitore si logga: è un evento critico (distrugge dati di
-    // minori) e il battito, da solo, somma i due contenitori.
+    // minori) e il battito, da solo, somma i tre contenitori.
     logEvento('cron', 'info', {
         ...base,
         esito: 'contenitore-purgato',
@@ -501,7 +585,7 @@ async function purgaContenitore(
         n_file_gia_assenti: esito.fileGiaAssenti,
         n_file_ancora_reclamati: esito.fileAncoraReclamati,
         conteggio_verificato: esito.conteggioVerificato,
-        msg: `${JOB}: ${esito.cancellate} righe e ${esito.fileRimossi} file distrutti oltre i ${GIORNI_CESTINO_REGISTRO} giorni`,
+        msg: `${JOB}: ${esito.cancellate} righe e ${esito.fileRimossi} file distrutti oltre i ${c.giorni} giorni`,
     })
     return esito
 }
@@ -514,6 +598,7 @@ export const POST = withRoute('gdpr/retention-cestino-registro:POST', async (req
     let esitoBattito = 'ok'
     const esiti: Record<ChiaveContenitore, EsitoContenitore> = {
         allegati: { ...NIENTE },
+        conservazione: { ...NIENTE },
         fascicolo: { ...NIENTE },
     }
 
@@ -540,10 +625,12 @@ export const POST = withRoute('gdpr/retention-cestino-registro:POST', async (req
         }
 
         const supabase = await createAdminClient()
-        const soglia = sogliaPurgaCestinoRegistro(new Date())
+        // UN istante per tutto il giro: le soglie dei tre contenitori si calcolano
+        // dallo stesso «adesso», ciascuna col suo termine.
+        const adesso = new Date()
 
         for (const c of CONTENITORI_CESTINO_REGISTRO) {
-            esiti[c.chiave] = await purgaContenitore(supabase, c, soglia, canale)
+            esiti[c.chiave] = await purgaContenitore(supabase, c, c.soglia(adesso), canale)
         }
 
         const lista = Object.values(esiti)
@@ -551,7 +638,9 @@ export const POST = withRoute('gdpr/retention-cestino-registro:POST', async (req
         const assenza = lista.find((e) => ESITI_ASSENZA.has(e.esito))
         const corpo = {
             giorni: GIORNI_CESTINO_REGISTRO,
+            giorni_conservazione: GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO,
             allegati: esiti.allegati,
+            conservazione: esiti.conservazione,
             fascicolo: esiti.fascicolo,
         }
 
@@ -577,28 +666,47 @@ export const POST = withRoute('gdpr/retention-cestino-registro:POST', async (req
         // ── IL BATTITO ── SEMPRE, anche a zero, anche quando tutto è fallito.
         // `evento: 'cron'` e non `'gdpr'`: `controlloBattitoCron` (/api/health) legge
         // `.eq('evento','cron')` e conta solo `esito: 'ok'`.
+        //
+        // I totali (`n_righe`, `n_file_rimossi`, …) sommano i TRE contenitori; i conteggi
+        // SEPARATI dicono quanto viene dal cestino (allegati + fascicolo, oltre i
+        // giorni di custodia) e quanto dalla conservazione (allegati del registro
+        // oltre i giorni dal caricamento): con la sola somma, «12 righe» non
+        // distinguerebbe un cestino che si svuota da un archivio che scade.
         const a = esiti.allegati
+        const k = esiti.conservazione
         const f = esiti.fascicolo
+        const tutti = [a, k, f]
+        const somma = (campo: 'scadute' | 'cancellate' | 'trattenute' | 'fileRimossi' | 'fileGiaAssenti' | 'fileBloccanti' | 'fileAncoraReclamati') =>
+            tutti.reduce((n, e) => n + e[campo], 0)
         logEvento('cron', 'info', {
             operazione: JOB,
             esito: esitoBattito,
             canale,
             giorni: GIORNI_CESTINO_REGISTRO,
+            giorni_conservazione: GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO,
             n_cestino_scaduti: a.scadute + f.scadute,
-            n_righe: a.cancellate + f.cancellate,
-            n_righe_trattenute: a.trattenute + f.trattenute,
-            n_file_rimossi: a.fileRimossi + f.fileRimossi,
-            n_file_gia_assenti: a.fileGiaAssenti + f.fileGiaAssenti,
-            n_file_bloccanti: a.fileBloccanti + f.fileBloccanti,
-            n_file_ancora_reclamati: a.fileAncoraReclamati + f.fileAncoraReclamati,
+            n_conservazione_scaduti: k.scadute,
+            n_righe: somma('cancellate'),
+            n_righe_trattenute: somma('trattenute'),
+            n_file_rimossi: somma('fileRimossi'),
+            n_file_gia_assenti: somma('fileGiaAssenti'),
+            n_file_bloccanti: somma('fileBloccanti'),
+            n_file_ancora_reclamati: somma('fileAncoraReclamati'),
+            n_cestino_righe: a.cancellate + f.cancellate,
+            n_cestino_file: a.fileRimossi + f.fileRimossi,
+            n_conservazione_righe: k.cancellate,
+            n_conservazione_file: k.fileRimossi,
             n_allegati_righe: a.cancellate,
             n_allegati_file: a.fileRimossi,
             n_fascicolo_righe: f.cancellate,
             n_fascicolo_file: f.fileRimossi,
-            lotto_pieno: a.lottoPieno || f.lottoPieno,
-            conteggio_verificato: (a.cancellate === 0 || a.conteggioVerificato) && (f.cancellate === 0 || f.conteggioVerificato),
+            lotto_pieno: tutti.some((e) => e.lottoPieno),
+            conteggio_verificato: tutti.every((e) => e.cancellate === 0 || e.conteggioVerificato),
             ms: Date.now() - t0,
-            msg: `${JOB}: ${a.cancellate + f.cancellate} righe e ${a.fileRimossi + f.fileRimossi} file del cestino distrutti oltre i ${GIORNI_CESTINO_REGISTRO} giorni`,
+            msg:
+                `${JOB}: cestino ${a.cancellate + f.cancellate} righe e ${a.fileRimossi + f.fileRimossi} file ` +
+                `oltre i ${GIORNI_CESTINO_REGISTRO} giorni; conservazione ${k.cancellate} righe e ${k.fileRimossi} ` +
+                `file oltre i ${GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO} giorni dal caricamento`,
         })
     }
 })

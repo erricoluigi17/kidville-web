@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server'
 import type { Riga, Scrittura } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import { dataRomaDi } from '@/lib/primaria/timelock'
-import { GIORNI_CESTINO_REGISTRO } from '@/lib/primaria/cestino-registro'
+import { GIORNI_CESTINO_REGISTRO, GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO } from '@/lib/primaria/cestino-registro'
 
 // =============================================================================
 // R2 — ALLEGATI DEL REGISTRO: cestino, ripristino, rinomina, sostituzione.
@@ -634,5 +634,136 @@ describe('POST /api/primaria/allegati/cestino — il ripristino', () => {
     expect((await RIPRISTINA(reqRipristina(ALL_MIO))).status).toBe(200)
     const presente = ((await (await GET(reqGet(LEZ))).json()).data as Array<{ id: string }>).map((a) => a.id)
     expect(presente).toContain(ALL_MIO)
+  })
+})
+
+// ─── La conservazione (decisione del titolare del 2026-09-25) ────────────────
+//
+// La purga distrugge un allegato del registro anche per ETÀ: oltre
+// GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO giorni dal CARICAMENTO, vivo o nel cestino.
+// I due termini contano da istanti diversi e vince quello che scade PRIMA: il cestino
+// non deve promettere sette giorni a un allegato che la purga toglie fra cinque, né
+// riportare vivo un allegato il cui file la purga può aver già distrutto.
+
+describe('la conservazione degli allegati: il primo termine che scade vince', () => {
+  const ALL_QUASI_UN_ANNO = '66666666-0000-4000-8000-00000000000d'
+  const ALL_OLTRE_UN_ANNO = '66666666-0000-4000-8000-00000000000e'
+  /** Caricato da 360 giorni: alla conservazione ne restano cinque, meno della custodia. */
+  const QUASI = GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO - 5
+
+  it('GET: caricato 360 giorni fa e cestinato ADESSO → la scadenza è quella della conservazione, non del cestino', async () => {
+    // Mezzo giorno in più: il conto dei giorni residui non dipende dal millisecondo.
+    const creato = fa(QUASI + 0.5)
+    righe('allegati_registro').push(allegato(ALL_QUASI_UN_ANNO, { creato_il: creato, eliminato_il: fa(0), eliminato_da: DOCENTE }))
+    const res = await GET_CESTINO(reqCestino(SEZ))
+    expect(res.status).toBe(200)
+    const voci = (await res.json()).data as Array<Record<string, unknown>>
+    const v = voci.find((x) => x.id === ALL_QUASI_UN_ANNO)!
+    expect(v).toBeDefined()
+    // Esattamente caricamento + conservazione: la custodia (eliminazione + 7) sarebbe più tardi.
+    expect(Date.parse(String(v.ripristinabileFinoAl)) - Date.parse(creato)).toBe(GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO * GIORNO_MS)
+    expect(Date.parse(String(v.ripristinabileFinoAl))).toBeLessThan(Date.now() + GIORNI_CESTINO_REGISTRO * GIORNO_MS)
+    // Quattro giorni e mezzo, per difetto: 4. Col solo cestino sarebbero 6.
+    expect(v.giorniResidui).toBe(4)
+
+    // E per un allegato giovane vince ancora la custodia: niente è cambiato per gli altri.
+    const giovane = voci.find((x) => x.id === ALL_NEL_CESTINO)!
+    expect(Date.parse(String(giovane.ripristinabileFinoAl)) - Date.parse(String(giovane.eliminato_il))).toBe(
+      GIORNI_CESTINO_REGISTRO * GIORNO_MS,
+    )
+  })
+
+  it('GET: un allegato oltre la conservazione (anche se cestinato ieri) non si elenca', async () => {
+    righe('allegati_registro').push(allegato(ALL_OLTRE_UN_ANNO, {
+      creato_il: fa(GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO + 1), eliminato_il: fa(1), eliminato_da: DOCENTE,
+    }))
+    const res = await GET_CESTINO(reqCestino(SEZ))
+    expect(res.status).toBe(200)
+    const ids = ((await res.json()).data as Array<{ id: string }>).map((v) => v.id)
+    expect(ids).not.toContain(ALL_OLTRE_UN_ANNO)
+    // Il resto del cestino c'è ancora: il filtro toglie l'età, non il cestino.
+    expect(ids).toContain(ALL_NEL_CESTINO)
+  })
+
+  it('POST: il ripristino di un allegato oltre la conservazione → 409 ALLEGATO_REGISTRO_CONSERVAZIONE_SCADUTA, niente scritto', async () => {
+    righe('allegati_registro').push(allegato(ALL_OLTRE_UN_ANNO, {
+      creato_il: fa(GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO + 1), eliminato_il: fa(1), eliminato_da: DOCENTE,
+    }))
+    const res = await RIPRISTINA(reqRipristina(ALL_OLTRE_UN_ANNO))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ALLEGATO_REGISTRO_CONSERVAZIONE_SCADUTA')
+    expect(riga('allegati_registro', ALL_OLTRE_UN_ANNO)!.eliminato_il).not.toBeNull()
+    expect(scritte('allegati_registro')).toHaveLength(0)
+    expect(h.logScrittura).not.toHaveBeenCalled()
+  })
+
+  it('POST: a 364 giorni dal caricamento il ripristino passa ancora', async () => {
+    righe('allegati_registro').push(allegato(ALL_QUASI_UN_ANNO, {
+      creato_il: fa(GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO - 1), eliminato_il: fa(1), eliminato_da: DOCENTE,
+    }))
+    const res = await RIPRISTINA(reqRipristina(ALL_QUASI_UN_ANNO))
+    expect(res.status).toBe(200)
+    expect(riga('allegati_registro', ALL_QUASI_UN_ANNO)).toMatchObject({ eliminato_il: null, registro_id: LEZ })
+  })
+
+  it('POST: se il termine scade FRA il controllo e l’UPDATE, l’UPDATE lo ripete e l’allegato resta nel cestino', async () => {
+    // La corsa con la purga: il controllo vede l'allegato un secondo sotto il termine,
+    // poi l'orologio passa oltre prima dell'UPDATE. Solo la condizione ripetuta
+    // nell'istruzione (`filtroEntroConservazioneAllegati`) impedisce di riportare vivo
+    // un allegato il cui file la purga può aver già tolto. L'orologio avanza alla
+    // prima lettura di `registro_orario`, che per un ORFANO avviene proprio lì in mezzo.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const t0 = Date.now()
+      vi.setSystemTime(t0)
+      comeSegreteria()
+      const lezioni = [...righe('registro_orario'), lezione(LEZ_RIFIRMATA, OGGI, { ora_lezione: 4 })]
+      let avanzato = false
+      Object.defineProperty(h.db, 'registro_orario', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          if (!avanzato) {
+            avanzato = true
+            vi.setSystemTime(t0 + 2000)
+          }
+          return lezioni
+        },
+      })
+      righe('allegati_registro').push(allegato(ALL_OLTRE_UN_ANNO, {
+        registro_id: null, caricato_da: COLLEGA, slot_ora_lezione: 4,
+        creato_il: new Date(t0 - GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO * GIORNO_MS + 1000).toISOString(),
+        eliminato_il: new Date(t0 - GIORNO_MS).toISOString(), eliminato_da: SEGRETERIA,
+      }))
+      const res = await RIPRISTINA(reqRipristina(ALL_OLTRE_UN_ANNO, SEGRETERIA))
+      expect(avanzato).toBe(true)
+      expect(res.status).toBe(409)
+      expect(riga('allegati_registro', ALL_OLTRE_UN_ANNO)).toMatchObject({ registro_id: null })
+      expect(riga('allegati_registro', ALL_OLTRE_UN_ANNO)!.eliminato_il).not.toBeNull()
+      expect(h.logScrittura).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('DELETE: la risposta promette la conservazione quando scade prima della custodia', async () => {
+    const creato = fa(QUASI)
+    riga('allegati_registro', ALL_MIO)!.creato_il = creato
+    const res = await DELETE(reqDelete(ALL_MIO))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(Date.parse(body.data.ripristinabileFinoAl) - Date.parse(creato)).toBe(GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO * GIORNO_MS)
+    expect(Date.parse(body.data.ripristinabileFinoAl)).toBeLessThan(Date.parse(body.data.eliminatoIl) + GIORNI_CESTINO_REGISTRO * GIORNO_MS)
+  })
+
+  it('SOSTITUISCI: il file sostituito promette la conservazione quando scade prima della custodia', async () => {
+    const creato = fa(QUASI)
+    riga('allegati_registro', ALL_MIO)!.creato_il = creato
+    const res = await SOSTITUISCI(reqMultipart(`${URL_BASE}/sostituisci`, { id: ALL_MIO, file: pdf('nuova.pdf') }))
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(Date.parse(body.sostituito.ripristinabileFinoAl) - Date.parse(creato)).toBe(
+      GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO * GIORNO_MS,
+    )
   })
 })

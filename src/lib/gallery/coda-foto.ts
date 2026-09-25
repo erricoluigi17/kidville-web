@@ -1,8 +1,9 @@
 import { db, type LocalGalleryMedia } from '@/lib/offline/db'
 import { caricaMediaGalleria } from '@/lib/gallery/carica-media'
 import { mimeBase } from '@/lib/gallery/limiti'
-import { logClient } from '@/lib/logging/client'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 import { conTetto } from '@/lib/logging/tetto'
+import { leggiByteFoto } from '@/lib/gallery/byte-foto'
 
 const TETTO_PUBBLICAZIONE_MS = 30_000
 const pubblicazioniInCorso = new Set<string>()
@@ -36,8 +37,8 @@ function prossimoTentativo(response: Response, defaultSeconds = 60): number {
     return Date.now() + Math.min(Math.max(seconds, 1), 3600) * 1000
 }
 
-function registra(messaggio: string, stato?: number): void {
-    logClient({ livello: 'error', evento: 'offline', messaggio, route: '/teacher/gallery', ...(stato ? { stato } : {}) })
+function registra(messaggio: string, stato?: number, codice?: string): void {
+    logClient({ livello: 'error', evento: 'offline', messaggio, route: '/teacher/gallery', ...(stato ? { stato } : {}), ...(codice ? { campi: { error_code: codice } } : {}) })
 }
 
 export async function listaFotoInCoda(scope: AmbitoCodaFoto): Promise<LocalGalleryMedia[]> {
@@ -62,8 +63,12 @@ export async function statoCodaFoto(scope: AmbitoCodaFoto): Promise<StatoCodaFot
 export async function accodaFotoGalleria(data: Omit<LocalGalleryMedia, 'sync_status' | 'file_type' | 'phase' | 'upload_id'> & { id: string; scuola_id: string; phase?: 'preparing' | 'upload' }): Promise<void> {
     if (!data.uploaded_by || !data.scuola_id) throw new Error('ambito_coda_foto_mancante')
     try {
+        const fileBytes = await leggiByteFoto(data.file_blob)
+        const fileMime = data.file_mime ?? (data.file_blob instanceof Blob ? data.file_blob.type : 'image/jpeg')
         await db.galleria.put({
             ...data,
+            file_blob: fileBytes,
+            file_mime: fileMime,
             upload_id: data.id,
             file_type: 'foto',
             phase: data.phase ?? 'upload',
@@ -73,7 +78,7 @@ export async function accodaFotoGalleria(data: Omit<LocalGalleryMedia, 'sync_sta
             last_error: data.phase === 'preparing' ? 'processing' : null,
         })
     } catch (error) {
-        registra('gallery-coda-salvataggio-fallito')
+        registra('gallery-coda-salvataggio-fallito', undefined, nomeErrore(error))
         throw error
     }
 }
@@ -111,10 +116,10 @@ export async function riprovaFotoInCoda(scope: AmbitoCodaFoto, id: string): Prom
     if (row.phase === 'preparing') {
         try {
             const { processImageWithWatermark } = await import('@/lib/media/processing')
-            const originale = new File([row.file_blob], row.file_name, { type: row.file_blob.type })
+            const originale = new File([row.file_blob], row.file_name, { type: mimeFoto(row) })
             const processed = await processImageWithWatermark(originale, '/watermark.png')
             await db.galleria.update(id, {
-                file_blob: processed, file_name: processed.name,
+                file_blob: await leggiByteFoto(processed), file_mime: processed.type, file_name: processed.name,
                 phase: 'upload', sync_status: 'pending', last_error: null,
             })
             return true
@@ -154,7 +159,7 @@ async function drain(scope: AmbitoCodaFoto): Promise<void> {
         if (!row.upload_id) await db.galleria.update(row.id, { upload_id: uploadId })
         let path = row.storage_path ?? null
         if (row.phase !== 'publish' && row.phase !== 'publishing') {
-            const mime = mimeBase(row.file_blob.type) || 'image/jpeg'
+            const mime = mimeFoto(row)
             const file = new File([row.file_blob], row.file_name, { type: mime })
             const esito = await caricaMediaGalleria(file, mime, {
                 canContinue: () => attivo(scope),
@@ -168,7 +173,7 @@ async function drain(scope: AmbitoCodaFoto): Promise<void> {
             if (!attivo(scope)) return
             if (!esito.ok) {
                 await db.galleria.update(row.id, { sync_status: 'error', last_error: 'upload' })
-                registra('gallery-coda-upload-fallito', esito.stato ?? undefined)
+                registra('gallery-coda-upload-fallito', esito.stato ?? undefined, esito.motivo)
                 if (esito.stato === 401 || esito.stato === 403) return
                 if (esito.stato === 429) {
                     await sospendiAutore(scope.ownerId, Date.now() + ('retryAfterMs' in esito ? (esito.retryAfterMs ?? 60_000) : 60_000))
@@ -246,6 +251,10 @@ async function drain(scope: AmbitoCodaFoto): Promise<void> {
             pubblicazioniInCorso.delete(row.id)
         }
     }
+}
+
+function mimeFoto(row: LocalGalleryMedia): string {
+    return mimeBase(row.file_mime ?? (row.file_blob instanceof Blob ? row.file_blob.type : '')) || 'image/jpeg'
 }
 
 const drains = new Map<string, { schoolId: string; promise: Promise<void> }>()

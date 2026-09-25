@@ -47,6 +47,7 @@
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { TETTO_GALLERIA_BYTE, mimeBase } from '@/lib/gallery/limiti';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
+import { leggiByteFoto } from '@/lib/gallery/byte-foto';
 
 export type EsitoCarica =
     | { ok: true; path: string }
@@ -225,10 +226,15 @@ export async function caricaMediaGalleria(file: File, mime: string, opzioni?: Op
     // ── 3. il file, diritto allo Storage. Senza tetto di tempo (vedi testata) ──
     let put: Response;
     try {
+        // Una File ricostruita da IndexedDB può fallire nel processo di rete
+        // WebKit pur essendo leggibile. Trasferiamo i byte delle sole foto
+        // (massimo 50 MiB); i video continuano a usare il proprio trasporto.
+        const body = tipo.startsWith('image/') ? await leggiByteFoto(file) : file;
+        if (opzioni?.canContinue?.() === false) return { ok: false, motivo: 'ambito-cambiato', stato: null };
         put = await fetch(signedUrl, {
             method: 'PUT',
             headers: { 'content-type': tipo, 'x-upsert': 'false' },
-            body: file,
+            body,
         });
     } catch (err) {
         segnala(`gallery-put-fallito: ${nomeErrore(err)}`, null);

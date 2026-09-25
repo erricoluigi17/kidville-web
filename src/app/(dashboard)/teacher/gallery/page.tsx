@@ -17,6 +17,7 @@ import { useVideoGalleria } from '@/components/features/gallery/use-video-galler
 import { syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
 import { accodaFotoGalleria, assegnaSedeFotoLegacy, listaFotoInCoda, prossimaRipresaCodaFoto, riprovaFotoInCoda, scartaFotoInCoda } from '@/lib/gallery/coda-foto';
 import type { LocalGalleryMedia } from '@/lib/offline/db';
+import { FotoTroppoGrandeError } from '@/lib/gallery/byte-foto';
 import { processImageWithWatermark, ImageProcessingError } from '@/lib/media/processing';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { applicaTagATutte, fotoDaConfigurare, fotoGiaConfigurate } from '@/lib/gallery/applica-tag';
@@ -538,11 +539,11 @@ function TeacherGalleryContent() {
                     fotoAccodate++;
                     accodati.add(id);
                     completati.add(i);
-                } catch {
+                } catch (error) {
                     // Quota IndexedDB o altro guasto locale: il file non è in coda,
                     // quindi resta nello step dei tag finché l'utente non riprova.
                     logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-foto-accodamento-fallito', route: '/teacher/gallery' });
-                    setUploadError(t('galleryCodaSalvataggioFallito'));
+                    setUploadError(t(error instanceof FotoTroppoGrandeError ? 'galleryErrTroppoGrande' : 'galleryCodaSalvataggioFallito'));
                 }
             }
             if (fotoAccodate > 0 && isOnline && sedeVideo) {

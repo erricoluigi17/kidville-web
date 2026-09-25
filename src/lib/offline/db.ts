@@ -86,7 +86,9 @@ export interface LocalGalleryMedia {
     is_broadcast: boolean;
     target_classes: string[] | null;
     file_type: 'foto' | 'video';
-    file_blob: Blob;
+    /** Byte nelle nuove foto; Blob nelle voci legacy, ancora recuperabili. */
+    file_blob: Blob | ArrayBuffer;
+    file_mime?: string;
     file_name: string;
     phase?: 'preparing' | 'upload' | 'publish' | 'publishing';
     storage_path?: string | null;

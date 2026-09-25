@@ -135,6 +135,9 @@ export function scriptPreparazioneBuild(): string {
   const archivio = `${CARTELLA_BUILD}.tar.xz`
   return [
     'set -eu',
+    // Il runtime node22 di Sandbox non include xz. La dipendenza viene
+    // installata soltanto quando manca; un errore interrompe la preparazione.
+    `if ! command -v xz >/dev/null 2>&1; then sudo -n dnf -y install xz >&2 || exit ${USCITE_PREPARAZIONE.estrazione}; fi`,
     `mkdir -p ${CARTELLA_BUILD}`,
     `curl -fsSL --retry 3 --retry-all-errors -o ${archivio} '${ARCHIVIO_FFMPEG_URL}' || exit ${USCITE_PREPARAZIONE.scarico}`,
     `echo '${ARCHIVIO_FFMPEG_SHA256}  ${archivio}' | sha256sum -c - || exit ${USCITE_PREPARAZIONE.impronta}`,

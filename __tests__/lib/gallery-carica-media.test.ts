@@ -78,6 +78,14 @@ afterEach(() => {
 })
 
 describe('caricaMediaGalleria · il mime col suffisso codec', () => {
+  it('invia i byte della foto come ArrayBuffer, leggibili anche dopo IndexedDB su WebKit', async () => {
+    const chiamate = fetchFinta()
+    const file = new File([new Uint8Array([255, 216, 255, 224])], 'foto.jpg', { type: 'image/jpeg' })
+    await caricaMediaGalleria(file, file.type)
+    const body = putDi(chiamate)?.init.body
+    expect(body).toBeInstanceOf(ArrayBuffer)
+    expect(Array.from(new Uint8Array(body as ArrayBuffer))).toEqual([255, 216, 255, 224])
+  })
   it('il corpo della FIRMA porta il container puro, non ciò che MediaRecorder ha scritto', async () => {
     const chiamate = fetchFinta()
     await caricaMediaGalleria(fileDa(9_000_000, 'video/mp4;codecs=avc1'), 'video/mp4;codecs=avc1')

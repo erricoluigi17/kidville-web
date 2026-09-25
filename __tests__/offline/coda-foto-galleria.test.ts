@@ -52,6 +52,25 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('coda foto persistente', () => {
+  it('persiste byte e MIME senza Blob/File e li ricostruisce per la ripresa', async () => {
+    vi.useRealTimers()
+    const dati = {
+      id: id(1), uploaded_by: ownerId, scuola_id: schoolId, caption: null,
+      tag_students: [], is_broadcast: false, target_classes: null,
+      file_blob: new File(['foto'], 'foto.png', { type: 'image/png' }), file_name: 'foto.png',
+      creato_il: '2026-09-25T00:00:00.000Z',
+    }
+    await accodaFotoGalleria(dati)
+    const salvata = h.righe.get(id(1))!
+    // structuredClone del banco Node restituisce un buffer del proprio realm.
+    expect(Object.prototype.toString.call(salvata.file_blob)).toBe('[object ArrayBuffer]')
+    expect(Array.from(new Uint8Array(salvata.file_blob as ArrayBuffer))).toEqual([102, 111, 116, 111])
+    expect(salvata.file_mime).toBe('image/png')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }))
+    await drainGalleryPhotoQueue({ ownerId, schoolId })
+    expect(h.carica.mock.calls[0][0]).toMatchObject({ name: 'foto.png', type: 'image/png', size: 4 })
+    expect(h.righe.size).toBe(0)
+  })
   it('programma la ripresa alla prima scadenza futura del Retry-After', () => {
     const now = Date.now()
     expect(prossimaRipresaCodaFoto([

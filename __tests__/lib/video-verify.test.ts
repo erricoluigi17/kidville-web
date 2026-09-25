@@ -557,6 +557,26 @@ function sideData(sonda: unknown): string[] {
 }
 
 describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
+  it('preserva PTS irregolari MOV a timebase 1/600 senza quantizzarli al frame rate medio', contesto => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-vfr-jitter-', cartella => {
+      const ingresso = join(cartella, 'sorgente.mov')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(binari, [
+        '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=30:duration=2',
+        '-vf', "settb=1/600,setpts='N*20+mod(N,3)'", '-fps_mode', 'passthrough', '-enc_time_base', 'filter',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-video_track_timescale', '600', '-an', ingresso,
+      ], 'fixture MOV con PTS irregolari')
+      const probe = probeDiIngresso(binari, ingresso)
+      eseguiFfmpeg(binari, buildVideoEncodeArgs(probe, {
+        channel: 'gallery', inputPath: ingresso, outputPath: uscita,
+        watermarkPath: join(process.cwd(), 'public/watermark.png'),
+      }), 'conversione MOV con PTS irregolari')
+      expect(provaTemporale(binari, probe, ingresso, uscita))
+        .toMatchObject({ ok: true, sourceFrames: 60, outputFrames: 60 })
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({ ok: true })
+    })
+  }, 60_000)
   for (const timescale of [30, 60]) it(`MP4 reale con timebase 1/${timescale} conserva tutti i 60 frame`, contesto => {
     const binari = binariVideo(contesto)
     inCartellaTemporanea('kidville-timescale-', cartella => {

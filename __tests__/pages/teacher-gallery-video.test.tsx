@@ -418,3 +418,44 @@ describe('un fallimento della conversione si legge, e non resta lì per sempre',
     expect(screen.queryByText('VIDEO_TROPPO_LUNGO')).toBeNull()
   })
 })
+
+describe('lo stesso file scelto di nuovo dopo che il suo intento è finito', () => {
+  // Stesso nome, peso e data → stessa chiave → stesso intento. Se quello è già
+  // pubblicato (e magari poi cancellato), prima si diceva «in preparazione» senza
+  // caricare niente: una maestra che ricarica un video cancellato per errore non
+  // lo vedeva mai comparire.
+  it.each(['published', 'cancelled'])('intento %s: si apre un intento NUOVO e il video si carica davvero', async (finito) => {
+    const JOB_NUOVO = '33333333-0000-4000-8000-000000000033'
+    const aperture: Array<Record<string, unknown>> = []
+    const fetchBase = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.endsWith('/api/video-uploads') && init?.method === 'POST') {
+        chiamate.push({ url: u, init })
+        const corpo = JSON.parse(String(init.body)) as { file: Array<{ chiaveIdempotenza: string }> }
+        aperture.push({ chiaveIdempotenza: corpo.file[0].chiaveIdempotenza })
+        const primo = aperture.length === 1
+        return rispostaFinta({
+          intentId: primo ? INTENTO : '44444444-0000-4000-8000-000000000044',
+          revisione: 1,
+          canale: 'gallery',
+          intent: { status: primo ? finito : 'pending' },
+          scadenzaCaricamentoIl: '2026-09-18T12:00:00.000Z',
+          job: [{ jobId: primo ? JOB : JOB_NUOVO, chiaveIdempotenza: corpo.file[0].chiaveIdempotenza, caricamento: COORDINATE, firma: 'firma-finta', needs_upload: !primo, status: primo ? 'ready' : 'awaiting_upload' }],
+        }, 201)
+      }
+      return fetchBase(url, init)
+    }))
+
+    await finoAlTag(video())
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(itServizi.galleryPubblica.split('{')[0].trim()) }))
+
+    await waitFor(() => expect(h.accoda).toHaveBeenCalled())
+    // La seconda apertura ha una chiave nuova; le successive (la ripresa che segue
+    // il job) restano su quella, mai sulla vecchia.
+    expect(aperture.length).toBeGreaterThanOrEqual(2)
+    expect(aperture[1].chiaveIdempotenza).not.toBe(aperture[0].chiaveIdempotenza)
+    expect(aperture.slice(1).every((a) => a.chiaveIdempotenza === aperture[1].chiaveIdempotenza)).toBe(true)
+    expect((h.accoda.mock.calls[0][1] as { jobId: string }).jobId).toBe(JOB_NUOVO)
+  })
+})

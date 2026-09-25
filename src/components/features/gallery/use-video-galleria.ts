@@ -486,9 +486,15 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             if (!apertura.ok) return { ok: false, messaggio: apertura.messaggio };
 
             if (opzioniRef.current.utenteId !== owner || opzioniRef.current.sede !== sede) return { ok: false, messaggio: frase('VIDEO_NON_AUTORIZZATO') };
-            if (apertura.dati.statoIntent === 'published') return { ok: true };
-            if (['cancelled', 'superseded'].includes(apertura.dati.statoIntent)) return { ok: false, messaggio: frase('VIDEO_RIPROVA') };
-            if (['failed', 'rejected'].includes(apertura.dati.statoJob)) {
+            // Una scelta NUOVA dello stesso file (stesso nome, peso e data) ritrova
+            // l'intento di prima. Se quello è già finito — pubblicato e magari poi
+            // cancellato, ritirato, sostituito, fallito — riaprirlo non porta da
+            // nessuna parte: prima diceva «in preparazione» senza caricare niente, o
+            // «riprova» all'infinito. È un caricamento nuovo, con un intento nuovo.
+            const concluso = ['published', 'cancelled', 'superseded'].includes(apertura.dati.statoIntent)
+                || ['failed', 'rejected'].includes(apertura.dati.statoJob);
+            if (concluso) {
+                logClient({ livello: 'warn', evento: 'fetch', messaggio: `video-nuovo-intento-dopo-concluso: job=${apertura.dati.jobId}`, campi: { stato_intento: apertura.dati.statoIntent, stato_job: apertura.dati.statoJob } });
                 chiave = `${chiave}-${crypto.randomUUID()}`;
                 apertura = await apriIntentoVideoGalleria(fetch, { file, scuolaId: sede, durataSecondi: scelta.durataSecondi, chiaveIdempotenza: chiave, ripiego: ripiegoRef.current });
                 if (!apertura.ok) return { ok: false, messaggio: apertura.messaggio };

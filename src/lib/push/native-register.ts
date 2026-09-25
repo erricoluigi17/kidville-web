@@ -48,23 +48,33 @@ function pluginPushDisponibile(): 'si' | 'assente' | 'bridge-illeggibile' {
 }
 
 /**
- * UN IMPORT SOLO DEL PLUGIN PER SESSIONE. L'automatica all'accesso e «attiva» in PushOptIn possono
+ * UN IMPORT SOLO DEL MODULO PER SESSIONE. L'automatica all'accesso e «attiva» in PushOptIn possono
  * partire insieme: con la promise condivisa le due chiamate ricevono lo stesso modulo, invece di due
  * caricamenti in volo. Se l'import fallisce la promise si scarta, e il prossimo tentativo riprova.
+ *
+ * ⚠️ SI TIENE IL MODULO, MAI IL PLUGIN (regressione della #166, 2026-09-25). La versione precedente
+ * teneva `import(…).then((m) => m.PushNotifications)`: una promise che si RISOLVE con il plugin. Ma
+ * il plugin di Capacitor è un `Proxy` che risponde a OGNI proprietà con un metodo del bridge, `then`
+ * compreso: la promise lo prende per un «thenable», chiama `PushNotifications.then(risolvi, rifiuta)`,
+ * e il bridge risponde `"PushNotifications.then()" is not implemented on ios|android` — un rifiuto che
+ * nessuno aspetta, mentre la promise di partenza resta appesa per sempre. Registrazione del token,
+ * canale Android e `statoPermessoPush()` (quindi l'avviso settimanale) non arrivavano mai alla fine.
+ * Il namespace del modulo non ha un `then`: attraversa `await` intatto, e il plugin si prende DOPO
+ * (`const { PushNotifications } = await caricaModuloPush()`). Lock:
+ * `__tests__/architecture/plugin-capacitor-mai-risolto-da-promise.test.ts`.
  */
-let pluginPush: Promise<PushNotificationsPlugin> | null = null
+type ModuloPush = typeof import('@capacitor/push-notifications')
 
-function caricaPluginPush(): Promise<PushNotificationsPlugin> {
-  if (!pluginPush) {
-    pluginPush = import('@capacitor/push-notifications').then(
-      (m) => m.PushNotifications,
-      (e: unknown) => {
-        pluginPush = null
-        throw e
-      },
-    )
+let moduloPush: Promise<ModuloPush> | null = null
+
+function caricaModuloPush(): Promise<ModuloPush> {
+  if (!moduloPush) {
+    moduloPush = import('@capacitor/push-notifications').catch((e: unknown) => {
+      moduloPush = null
+      throw e
+    })
   }
-  return pluginPush
+  return moduloPush
 }
 
 // Ultimo token nativo registrato in questa sessione (per la disattivazione).
@@ -204,7 +214,7 @@ export async function statoPermessoPush(): Promise<StatoPermessoPush> {
   if (!isNativeApp()) return 'non-nativo'
   if (pluginPushDisponibile() !== 'si') return 'non-disponibile'
   try {
-    const PushNotifications = await caricaPluginPush()
+    const { PushNotifications } = await caricaModuloPush()
     const perm = await PushNotifications.checkPermissions()
     return normalizzaPermesso(perm.receive)
   } catch (e) {
@@ -538,7 +548,7 @@ function agganciaAscoltatori(PushNotifications: PushNotificationsPlugin): Array<
  * plugin rotto) e la guardia la conservasse, ogni `registerNativePush` successivo della sessione
  * riprenderebbe la stessa promise rifiutata: `register()` non partirebbe mai più, e nessun nuovo
  * tentativo — nemmeno quello al ritorno in primo piano — potrebbe guarire fino al riavvio dell'app.
- * È lo stesso trattamento dell'import del plugin in `caricaPluginPush`.
+ * È lo stesso trattamento dell'import del modulo in `caricaModuloPush`.
  *
  * La guardia si riapre SUBITO (in modo sincrono, prima che chi aspetta riceva l'esito), e solo se è
  * ancora quella fallita: una coppia nuova agganciata nel frattempo non si tocca. Le maniglie che ce
@@ -700,7 +710,7 @@ export async function registerNativePush(userId?: string | null): Promise<Esito>
     return { ok: false, error: 'plugin_unavailable' }
   }
   try {
-    const PushNotifications = await caricaPluginPush()
+    const { PushNotifications } = await caricaModuloPush()
 
     // SOLO `denied` è un rifiuto (giro 2 del critico, 2026-09-25). Prima ogni stato diverso da
     // `granted` finiva in `gestisciRifiuto`: un valore mai dichiarato dal plugin diventava

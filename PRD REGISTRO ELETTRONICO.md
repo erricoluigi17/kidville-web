@@ -108,6 +108,55 @@
 
 ---
 
+## 🚨 Changelog — Regressione della #166: la push nativa restava appesa su «PushNotifications.then() is not implemented» — 2026-09-25 (branch `fix/plugin-push-then`)
+
+**Il sintomo.** Dal rilascio della PR #166 (25/09, ~03:00 UTC) `app_log` ha raccolto, a livello
+`error`, da iOS e da Android, sulle route `/parent` e `/teacher`, una trentina di righe l'ora con lo
+stesso testo: `"PushNotifications.then()" is not implemented on ios|android`. Nessun test era rosso.
+
+**La causa.** `caricaPluginPush()` in `src/lib/push/native-register.ts` teneva in cache
+`import('@capacitor/push-notifications').then((m) => m.PushNotifications)`, cioè una promise che si
+**risolve con il plugin**. Per risolversi con un valore, una promise legge `valore.then`. Il plugin di
+Capacitor però è un `Proxy` (`registerPlugin` in `@capacitor/core`) che a ogni proprietà sconosciuta
+risponde con un metodo del bridge, anche a `then`. La promise lo chiamava con `(risolvi, rifiuta)` e il
+bridge rifiutava con «not implemented», ma quel rifiuto nessuno lo aspettava. La promise di partenza
+**restava appesa per sempre**, senza rifiutare. Per questo non partivano più, per tutti gli utenti
+dell'app, la registrazione del token, il canale Android e `statoPermessoPush()`, e quindi nemmeno
+l'avviso settimanale «notifiche disattivate». I `catch` non scattavano: le righe di `app_log`
+arrivavano dal gestore globale dei rifiuti non gestiti. I test non potevano vederlo perché il loro
+plugin finto era un oggetto piatto, senza `then`.
+
+**La correzione.** In cache si tiene il **modulo**, non il plugin: `caricaModuloPush()` restituisce
+`Promise<typeof import('@capacitor/push-notifications')>`. Il plugin si prende dopo l'`await`, con
+`const { PushNotifications } = await caricaModuloPush()`. Il namespace di un modulo non ha `then` e
+attraversa la risoluzione intatto. La semantica resta quella di prima: un solo import per sessione, e
+azzeramento se l'import fallisce. Livelli e messaggi di log non cambiano. Negli altri file di `src/`
+che usano plugin Capacitor (`native-shell`, `share`, `scarica`, `camera`, `biometric`, `badge`,
+`status-bar`, `splash`, `avvisi-settimanali` e i componenti) non c'erano altre occorrenze.
+
+**I test.**
+- `__tests__/lib/native-register-plugin-proxy.test.ts` usa un finto che imita fedelmente il proxy di
+  `registerPlugin`. Col codice vecchio le chiamate scadono e compare la stessa stringa di `app_log`.
+  C'è anche un caso sull'import che fallisce e si riprova: diventa rosso se si toglie l'azzeramento.
+- Il nuovo lock `__tests__/architecture/plugin-capacitor-mai-risolto-da-promise.test.ts` lavora
+  sull'AST e vieta nove forme: `.then` su `import('<plugin>')`, callback che restituisce un plugin,
+  async che restituisce un plugin, `await <plugin>`, `Promise<…Plugin>`, promise risolta a mano col
+  plugin (anche dal primo parametro dell'esecutore di `new Promise`, qualunque nome abbia),
+  `Promise.all/allSettled/race/any` con un plugin nell'array (spread compresi), `yield <plugin>` o
+  `yield* [<plugin>]` in un generatore asincrono, e `for await (… of [<plugin>])`. Queste ultime tre
+  sono state aggiunte al terzo giro del critico: passano ogni elemento da una risoluzione e prima il
+  lock non le vedeva. Ognuna ha un caso nel controllo positivo, anche con `Haptics`; rompendo di
+  proposito ciascun riconoscimento, il caso corrispondente diventa rosso.
+- Il lock riconosce un plugin **per scoperta**, non da un elenco: import nominali, destrutturazioni
+  anche rinominate di `await import(…)`, `(await import(…)).X`, `mod.X` su un modulo di plugin. Il
+  controllo positivo lo prova su `Haptics`, che non è nell'elenco. Al secondo giro del critico queste
+  forme sfuggivano.
+
+⏳ **Dopo il deploy** la conferma sta in produzione: in `app_log` devono sparire le righe
+«PushNotifications.then()» e in `push_subscriptions` devono ricomparire le registrazioni native.
+
+---
+
 ## 🧭 Changelog — PR-B dei sei interventi: fotografie dalla produzione, le due FK del cestino censite, e un bucket che nessuno aveva classificato — 2026-09-25 (branch `chore/dopo-merge-166`)
 
 Seguito della PR #166 (voce qui sotto), come la PR #161 lo era stata del nucleo della coda fatture.

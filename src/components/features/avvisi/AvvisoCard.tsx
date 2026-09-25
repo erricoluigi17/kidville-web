@@ -5,6 +5,7 @@ import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, M
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { condividi } from '@/lib/native/share';
+import { avvisoDocumento, nomeDocumentoDa, suNativo, type AvvisoDocumento } from '@/lib/native/documento-genitore';
 import { formatData } from '@/lib/i18n/date';
 import { etichettaDestinatario, type ClasseNota } from '@/lib/avvisi/destinatari';
 
@@ -265,8 +266,14 @@ function statoPerFiglio(figli: readonly FiglioAvviso[], t: Traduttore) {
 
 export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt, onAdesione, onModificaNumero, onShowDetails, onEdit, onDelete }: Props) {
     const t = useTranslations('avvisi');
+    const ts = useTranslations('shared');
     const locale = useLocale();
     const [expanded, setExpanded] = useState(false);
+    // Nell'app, l'ultimo tocco sull'allegato non ha mostrato niente (anteprima non aperta,
+    // condivisione fallita, copia muta negli appunti): lo si dice, o il pulsante resta muto.
+    // Il valore è il TIPO d'avviso: sul binario 1.0 (`'aggiorna'`) riprovare non riuscirà
+    // mai, e il testo lo deve dire invece di «riprova fra qualche minuto».
+    const [allegatoNonAperto, setAllegatoNonAperto] = useState<AvvisoDocumento | null>(null);
     // L'id del pannello che il bottone della testata governa. Da `useId()` e non
     // da `avviso.id`: un id ricavato dal DATO è una proprietà del dato, non
     // dell'ISTANZA — due card dello stesso avviso montate nello stesso documento
@@ -561,6 +568,18 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                                         href={fileUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
+                                        // L'allegato è da GUARDARE (spec 2026-09-24, NAT3c): sul web
+                                        // il collegamento resta com'è; nell'app 1.1 `suNativo` apre
+                                        // l'anteprima di sistema dentro l'app. Il log lo scrive l'helper.
+                                        onClick={suNativo(
+                                            'apri',
+                                            () => ({
+                                                sorgente: String(fileUrl),
+                                                nomeFile: nomeDocumentoDa(null, String(fileUrl), 'kidville-avviso'),
+                                                etichetta: 'allegato-avviso',
+                                            }),
+                                            (esito) => setAllegatoNonAperto(avvisoDocumento(esito)),
+                                        )}
                                         className="inline-flex items-center gap-1.5 rounded-xl border border-kidville-line bg-kidville-cream px-3 py-2 font-maven text-xs font-semibold text-kidville-green transition-colors hover:bg-kidville-cream-dark"
                                     >
                                         {t('allegatoFile')}
@@ -575,6 +594,11 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                                     >
                                         {t('linkEsterno')}
                                     </a>
+                                )}
+                                {fileUrl && allegatoNonAperto && (
+                                    <p role="alert" className="basis-full font-maven text-xs text-kidville-error">
+                                        {ts(allegatoNonAperto === 'aggiorna' ? 'documentoAppDaAggiornare' : 'documentoNonAperto')}
+                                    </p>
                                 )}
                             </div>
                         )}

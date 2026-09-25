@@ -345,6 +345,17 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'allora entra in `JOB_CRON` con `finestraMs: 26 * ORA` come tutti gli altri.',
     },
     {
+        nome: 'cestino-registro-retention',
+        perche:
+            'IN ATTESA DELL’APPLY, non per scelta (2026-09-25): la migrazione ' +
+            '`20260924220100_cestino_registro_cron.sql` la applica l’integrazione al merge, e il ' +
+            'lock `cron-sorvegliato-e-applicato` vieta di sorvegliare un lavoro che non è ancora ' +
+            'nella fotografia delle applicate — manderebbe /api/health in `degradato` dal primo ' +
+            'deploy su un lavoro che non esiste. È GIORNALIERO (`29 5 * * *`) e il suo battito ' +
+            'dichiara `esito: ok`: dopo l’apply si rigenera la fotografia e il nome passa in ' +
+            '`JOB_CRON` con `finestraMs: 26 * ORA`, come `galleria-retention`.',
+    },
+    {
         nome: 'app-log-purge',
         perche:
             'Job di sola SQL, non passa da una route HTTP: qui sarebbe sempre rosso. Vale anche ' +

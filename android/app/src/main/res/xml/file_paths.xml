@@ -2,4 +2,9 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <external-path name="my_images" path="." />
     <cache-path name="my_cache_images" path="." />
+    <!-- App 1.1: i file scaricati con @capacitor/file-transfer in Directory.Data
+         (files dir interna) devono poter uscire verso il foglio di condivisione
+         (@capacitor/share usa questo provider, `${applicationId}.fileprovider`).
+         Cache ed External erano già coperti dalle due righe sopra. -->
+    <files-path name="kv_file_scaricati" path="." />
 </paths>

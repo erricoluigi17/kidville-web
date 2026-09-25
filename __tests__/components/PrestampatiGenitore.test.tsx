@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
 import itGenitore from '../../messages/it/prestampatiGenitore.json'
 import enGenitore from '../../messages/en/prestampatiGenitore.json'
 import itShared from '../../messages/it/shared.json'
@@ -40,6 +40,21 @@ import itShared from '../../messages/it/shared.json'
 
 const h = vi.hoisted(() => ({ logClient: vi.fn(), nomeErrore: () => 'TypeError' }))
 vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: h.nomeErrore }))
+
+/**
+ * NAT3c (spec 2026-09-24): il PDF si salva con l'helper unico. L'helper è finto qui — ha i
+ * suoi test — e si misura CHI lo chiama e con che cosa; `isNativeApp` decide fra l'app e il
+ * web. Per i casi scritti prima di NAT3c il valore resta «web», cioè il comportamento di ieri.
+ */
+const nat = vi.hoisted(() => ({ nativo: false, scarica: vi.fn() }))
+vi.mock('@/lib/push/native-register', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/push/native-register')>()),
+  isNativeApp: () => nat.nativo,
+}))
+vi.mock('@/lib/native/scarica', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/native/scarica')>()),
+  scaricaDocumento: nat.scarica,
+}))
 
 const UTENTE = 'f0000000-0000-4000-8000-000000000001'
 
@@ -321,6 +336,8 @@ async function firmaFinoAllEsito(): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.stubGlobal('fetch', fetchMock)
+  nat.nativo = false
+  nat.scarica.mockResolvedValue({ esito: 'web-blob' })
 })
 
 afterEach(() => cleanup())
@@ -954,5 +971,398 @@ describe('prestampatiGenitore — il catalogo non conserva frasi che il prodotto
     const it = foglie(itGenitore as unknown as Record<string, unknown>).sort()
     const en = foglie(enGenitore as unknown as Record<string, unknown>).sort()
     expect(it).toEqual(en)
+  })
+})
+
+describe('PrestampatiGenitore — il PDF si SALVA con l’helper (NAT3c)', () => {
+  const URL_FIRMATO = 'https://esempio.test/prestampato.pdf'
+
+  /** Il banco del percorso di firma, con l'esito che il caso vuole. */
+  function armaFirma(esito: unknown): void {
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id) }],
+      dettaglio: [{ ok: true, status: 200, corpo: dettaglioServito(FIGLIO_A.id) }],
+      otp: otpInviato(),
+      firma: { ok: true, status: 201, corpo: esito },
+    })
+  }
+
+  const ESITO_ARCHIVIATO = {
+    success: true,
+    documentoId: 'd0000000-0000-4000-8000-000000000001',
+    archiviato: true,
+    inAttesaAccettazione: false,
+    riferimentoFirma: 'firma-finta-0001',
+    titolo: 'Scheda sanitaria',
+    url: URL_FIRMATO,
+    signature_log: { signed_at: '2026-08-14T09:30:00.000Z' },
+  }
+
+  it('esito con `url`, nell’app: il collegamento non naviga e passa da `scaricaDocumento`', async () => {
+    nat.nativo = true
+    nat.scarica.mockResolvedValueOnce({ esito: 'non-riuscito', motivo: 'foglio-file-non-aperto' })
+    armaFirma(ESITO_ARCHIVIATO)
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+    await firmaFinoAllEsito()
+
+    const link = await screen.findByRole('link', { name: itGenitore.scarica })
+    expect(fireEvent.click(link)).toBe(false)
+    expect(nat.scarica).toHaveBeenCalledWith({
+      sorgente: URL_FIRMATO,
+      nomeFile: `${MODELLO_SANITARIO.slug}.pdf`,
+      mime: 'application/pdf',
+      etichetta: 'prestampato',
+    })
+    // Il file non è arrivato: lo si dice accanto al pulsante.
+    expect(await screen.findByRole('alert')).toHaveTextContent(itShared.documentoNonSalvato)
+  })
+
+  /**
+   * Il verdetto dell'helper sul BINARIO 1.0 (Filesystem assente, sorgente non condivisibile
+   * come link): lì riprovare non riuscirà mai, e il testo lo deve dire.
+   */
+  const BINARIO_1_0 = {
+    esito: 'non-riuscito',
+    motivo: 'plugin-assenti:filesystem|link-non-condivisibile',
+    binarioDaAggiornare: true,
+  }
+
+  it('esito con `url`, nell’app col binario 1.0: l’avviso dice di AGGIORNARE, non di riprovare', async () => {
+    nat.nativo = true
+    nat.scarica.mockResolvedValueOnce(BINARIO_1_0)
+    armaFirma(ESITO_ARCHIVIATO)
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+    await firmaFinoAllEsito()
+
+    fireEvent.click(await screen.findByRole('link', { name: itGenitore.scarica }))
+    const avviso = await screen.findByRole('alert')
+    expect(avviso).toHaveTextContent(itShared.documentoAppDaAggiornare)
+    expect(avviso).not.toHaveTextContent(itShared.documentoNonSalvato)
+  })
+
+  it('esito con `pdfBase64` col binario 1.0: l’avviso dice di AGGIORNARE, non di riprovare', async () => {
+    nat.scarica.mockResolvedValueOnce(BINARIO_1_0)
+    armaFirma({
+      ...ESITO_ARCHIVIATO,
+      archiviato: false,
+      inAttesaAccettazione: true,
+      url: null,
+      pdfBase64: btoa('%PDF-1.4'),
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+    await firmaFinoAllEsito()
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.scarica }))
+    const avviso = await screen.findByRole('alert')
+    expect(avviso).toHaveTextContent(itShared.documentoAppDaAggiornare)
+    expect(avviso).not.toHaveTextContent(itShared.documentoNonSalvato)
+  })
+
+  it('esito con `url`, sul web: il collegamento resta com’era, l’helper non entra', async () => {
+    armaFirma(ESITO_ARCHIVIATO)
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+    await firmaFinoAllEsito()
+
+    const link = await screen.findByRole('link', { name: itGenitore.scarica })
+    let fermato: boolean | null = null
+    document.addEventListener('click', (e) => { fermato = e.defaultPrevented; e.preventDefault() }, { once: true })
+    fireEvent.click(link)
+    expect(fermato).toBe(false)
+    expect(nat.scarica).not.toHaveBeenCalled()
+  })
+
+  it('esito con `pdfBase64`: il bottone consegna all’helper i byte del PDF, non un indirizzo', async () => {
+    armaFirma({
+      ...ESITO_ARCHIVIATO,
+      archiviato: false,
+      inAttesaAccettazione: true,
+      url: null,
+      pdfBase64: btoa('%PDF-1.4'),
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+    await firmaFinoAllEsito()
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.scarica }))
+    await waitFor(() => expect(nat.scarica).toHaveBeenCalledTimes(1))
+    const input = nat.scarica.mock.calls[0][0]
+    expect(input).toMatchObject({
+      nomeFile: `${MODELLO_SANITARIO.slug}.pdf`,
+      mime: 'application/pdf',
+      etichetta: 'prestampato',
+    })
+    const blob: Blob = await input.sorgente()
+    expect(blob.type).toBe('application/pdf')
+    expect(blob.size).toBe(8)
+    // `web-blob` è una consegna: nessun avviso. L'assenza si guarda DOPO che la promessa
+    // dell'helper si è risolta e il `.then` ha girato — prima sarebbe vera comunque.
+    await act(async () => {
+      await nat.scarica.mock.results[0].value
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('esito con `pdfBase64` non salvato: l’avviso COMPARE, e un secondo tentativo riuscito non lo inventa', async () => {
+    // La metà «presenza» del caso sopra: con lo stesso banco, un esito da segnalare mostra
+    // l'avviso. Senza questa, l'assenza di prima potrebbe essere solo un avviso mai disegnato.
+    nat.scarica.mockResolvedValueOnce({ esito: 'non-riuscito', motivo: 'foglio-file-non-aperto' })
+    armaFirma({
+      ...ESITO_ARCHIVIATO,
+      archiviato: false,
+      inAttesaAccettazione: true,
+      url: null,
+      pdfBase64: btoa('%PDF-1.4'),
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+    await firmaFinoAllEsito()
+
+    const bottone = await screen.findByRole('button', { name: itGenitore.scarica })
+    fireEvent.click(bottone)
+    expect(await screen.findByRole('alert')).toHaveTextContent(itShared.documentoNonSalvato)
+
+    // Secondo tocco, stavolta consegnato (`web-blob` del beforeEach): l'avviso se ne va.
+    fireEvent.click(bottone)
+    await waitFor(() => expect(nat.scarica).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      await nat.scarica.mock.results[1].value
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('certificato nell’app: il pulsante resta «in corso» finché il SALVATAGGIO non finisce, e un secondo tocco non rifà la POST', async () => {
+    // 🔴 Il difetto: `certificatoInCorso` tornava a null subito dopo la POST, mentre il
+    // salvataggio (FileTransfer + foglio) era ancora in volo. Il pulsante tornava «Genera»,
+    // attivo: un secondo tocco rifaceva la POST — un secondo numero di protocollo su un
+    // registro WORM — e apriva un secondo foglio.
+    nat.nativo = true
+    let chiudiFoglio: (r: unknown) => void = () => {}
+    nat.scarica.mockImplementationOnce(() => new Promise((ok) => { chiudiFoglio = ok }))
+    armaFetch({
+      elenco: [
+        { ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) },
+        { ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) },
+      ],
+      documento: { ok: true, status: 201, corpo: { success: true, archiviato: true, url: URL_FIRMATO } },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    const genera = await screen.findByRole('button', { name: itGenitore.certificatoGenera })
+    fireEvent.click(genera)
+    await waitFor(() => expect(nat.scarica).toHaveBeenCalledTimes(1))
+
+    // Il foglio è ancora aperto: il pulsante dice che è in corso ed è fermo.
+    // `Btn` usa `aria-disabled` + la guardia nel gestore (vedi `Btn.tsx`), non `disabled`.
+    const inCorso = screen.getByRole('button', { name: itGenitore.certificatoInCorso })
+    expect(inCorso).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(inCorso)
+
+    const postDocumento = () =>
+      fetchMock.mock.calls.filter(
+        (c) => (c[1] as RequestInit | undefined)?.method === 'POST' && !String(c[0]).includes('/firma'),
+      ).length
+    expect(postDocumento()).toBe(1)
+    expect(nat.scarica).toHaveBeenCalledTimes(1)
+
+    // Il foglio si chiude: il pulsante torna disponibile.
+    await act(async () => {
+      chiudiFoglio({ esito: 'nativo-file' })
+    })
+    const tornato = await screen.findByRole('button', { name: itGenitore.certificatoGenera })
+    expect(tornato).not.toHaveAttribute('aria-disabled')
+    expect(postDocumento()).toBe(1)
+  })
+
+  it('certificato con `url`, nell’app: `scaricaDocumento`, e nessun `window.open`', async () => {
+    nat.nativo = true
+    const apertura = vi.spyOn(window, 'open').mockReturnValue(null)
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+      documento: { ok: true, status: 201, corpo: { success: true, archiviato: true, url: URL_FIRMATO } },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoGenera }))
+    await waitFor(() => expect(nat.scarica).toHaveBeenCalledTimes(1))
+    expect(nat.scarica).toHaveBeenCalledWith({
+      sorgente: URL_FIRMATO,
+      nomeFile: `${MODELLO_CERTIFICATO.slug}.pdf`,
+      mime: 'application/pdf',
+      etichetta: 'prestampato',
+    })
+    expect(apertura).not.toHaveBeenCalled()
+    apertura.mockRestore()
+  })
+
+  it('certificato con `url`, sul web: il `window.open` di prima, senza helper', async () => {
+    const apertura = vi.spyOn(window, 'open').mockReturnValue(null)
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+      documento: { ok: true, status: 201, corpo: { success: true, archiviato: true, url: URL_FIRMATO } },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoGenera }))
+    await waitFor(() => expect(apertura).toHaveBeenCalledWith(URL_FIRMATO, '_blank', 'noopener,noreferrer'))
+    expect(nat.scarica).not.toHaveBeenCalled()
+    apertura.mockRestore()
+  })
+
+  it('certificato con `pdfBase64` non salvato e non archiviato: «Salva di nuovo» riusa gli STESSI byte, senza una seconda POST', async () => {
+    // 🔴 Il difetto: l'avviso diceva «Riprova fra qualche minuto» accanto a «non premere
+    // Genera», i byte si buttavano, e l'unico gesto a schermo era «Genera» — cioè un secondo
+    // numero di protocollo su un registro WORM, nel caso in cui la famiglia non ha copie.
+    const BYTE = '%PDF-1.4 certificato di prova'
+    nat.scarica.mockResolvedValueOnce({ esito: 'non-riuscito', motivo: 'corpo-vuoto' })
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+      documento: {
+        ok: true,
+        status: 201,
+        corpo: { success: true, archiviato: false, url: null, pdfBase64: btoa(BYTE) },
+      },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoGenera }))
+    const testo = `${itGenitore.certificatoNonSalvatoRisalva} ${itGenitore.certificatoNonArchiviato}`
+    expect(await screen.findByText(testo)).toBeInTheDocument()
+    // Le due frasi non si contraddicono più: niente «riprova fra qualche minuto».
+    expect(testo).not.toContain(itShared.documentoNonSalvato)
+    expect(testo.toLowerCase()).not.toContain('riprova fra qualche minuto')
+    expect(nat.scarica.mock.calls[0][0]).toMatchObject({ etichetta: 'prestampato', mime: 'application/pdf' })
+
+    const postDocumento = () =>
+      fetchMock.mock.calls.filter(
+        (c) => (c[1] as RequestInit | undefined)?.method === 'POST' && !String(c[0]).includes('/firma'),
+      ).length
+    expect(postDocumento()).toBe(1)
+
+    // «Salva di nuovo»: il secondo salvataggio riesce, con gli stessi byte.
+    nat.scarica.mockResolvedValueOnce({ esito: 'nativo-file' })
+    fireEvent.click(screen.getByRole('button', { name: itGenitore.salvaDiNuovo }))
+    await waitFor(() => expect(nat.scarica).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      await nat.scarica.mock.results[1].value
+    })
+
+    const secondo = nat.scarica.mock.calls[1][0] as { sorgente: () => Blob; nomeFile: string; mime: string }
+    expect(secondo.nomeFile).toBe(`${MODELLO_CERTIFICATO.slug}.pdf`)
+    expect(secondo.mime).toBe('application/pdf')
+    const blob = secondo.sorgente()
+    expect(blob).toBeInstanceOf(Blob)
+    const letto = await new Promise<string>((ok) => {
+      const lettore = new FileReader()
+      lettore.onload = () => ok(String(lettore.result))
+      lettore.readAsText(blob)
+    })
+    expect(letto).toBe(BYTE)
+    // Nessuna nuova POST: nessun numero di protocollo consumato per un salvataggio mancato.
+    expect(postDocumento()).toBe(1)
+
+    // Salvato: l'avviso del salvataggio e il pulsante se ne vanno, resta la mancata
+    // archiviazione (che è ancora vera). Si guarda DOPO aver atteso la promessa.
+    expect(await screen.findByText(itGenitore.certificatoNonArchiviato)).toBeInTheDocument()
+    expect(screen.queryByText(testo)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: itGenitore.salvaDiNuovo })).not.toBeInTheDocument()
+  })
+
+  it('«Salva di nuovo» che fallisce ancora: byte, avviso e pulsante restano', async () => {
+    nat.scarica.mockResolvedValueOnce({ esito: 'non-riuscito', motivo: 'corpo-vuoto' })
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+      documento: {
+        ok: true,
+        status: 201,
+        corpo: { success: true, archiviato: false, url: null, pdfBase64: btoa('%PDF-1.4') },
+      },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoGenera }))
+    const testo = `${itGenitore.certificatoNonSalvatoRisalva} ${itGenitore.certificatoNonArchiviato}`
+    await screen.findByText(testo)
+
+    nat.scarica.mockResolvedValueOnce({ esito: 'non-riuscito', motivo: 'condivisione-non-riuscita' })
+    fireEvent.click(screen.getByRole('button', { name: itGenitore.salvaDiNuovo }))
+    await waitFor(() => expect(nat.scarica).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      await nat.scarica.mock.results[1].value
+    })
+    expect(screen.getByText(testo)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: itGenitore.salvaDiNuovo })).toBeInTheDocument()
+  })
+
+  it('certificato con `url`, nell’app col binario 1.0: il testo dice di AGGIORNARE, non di riprovare', async () => {
+    nat.nativo = true
+    nat.scarica.mockResolvedValueOnce(BINARIO_1_0)
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+      documento: { ok: true, status: 201, corpo: { success: true, archiviato: true, url: URL_FIRMATO } },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoGenera }))
+    expect(await screen.findByText(itShared.documentoAppDaAggiornare)).toBeInTheDocument()
+    expect(screen.queryByText(itShared.documentoNonSalvato)).not.toBeInTheDocument()
+  })
+
+  it('certificato con `pdfBase64` non archiviato, col binario 1.0: niente «usa Salva di nuovo», ma «aggiorna» e il numero consumato', async () => {
+    // 🔴 Sul binario 1.0 «Salva di nuovo» fallisce per sempre: un testo che invita a usarlo
+    // promette il falso, proprio al genitore che ha appena consumato un numero di protocollo.
+    nat.scarica.mockResolvedValueOnce(BINARIO_1_0)
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+      documento: {
+        ok: true,
+        status: 201,
+        corpo: { success: true, archiviato: false, url: null, pdfBase64: btoa('%PDF-1.4') },
+      },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoGenera }))
+    const testo = `${itShared.documentoAppDaAggiornare} ${itGenitore.certificatoNonArchiviato}`
+    expect(await screen.findByText(testo)).toBeInTheDocument()
+    expect(screen.queryByText(new RegExp(itGenitore.certificatoNonSalvatoRisalva.slice(0, 30)))).not.toBeInTheDocument()
+    expect(screen.queryByText(new RegExp(itShared.documentoNonSalvato.slice(0, 30)))).not.toBeInTheDocument()
+  })
+
+  it('«Salva di nuovo» che scopre il binario 1.0: il testo passa ad «aggiorna»', async () => {
+    nat.scarica.mockResolvedValueOnce({ esito: 'non-riuscito', motivo: 'corpo-vuoto' })
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+      documento: {
+        ok: true,
+        status: 201,
+        corpo: { success: true, archiviato: true, url: null, pdfBase64: btoa('%PDF-1.4') },
+      },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoGenera }))
+    await screen.findByText(itGenitore.certificatoNonSalvatoRisalva)
+
+    nat.scarica.mockResolvedValueOnce(BINARIO_1_0)
+    fireEvent.click(screen.getByRole('button', { name: itGenitore.salvaDiNuovo }))
+    expect(await screen.findByText(itShared.documentoAppDaAggiornare)).toBeInTheDocument()
+    expect(screen.queryByText(itGenitore.certificatoNonSalvatoRisalva)).not.toBeInTheDocument()
+  })
+
+  it('foglio chiuso senza salvare un certificato non archiviato: i byte restano, con «Salva di nuovo»', async () => {
+    nat.scarica.mockResolvedValueOnce({ esito: 'non-riuscito', motivo: 'annullato' })
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+      documento: {
+        ok: true,
+        status: 201,
+        corpo: { success: true, archiviato: false, url: null, pdfBase64: btoa('%PDF-1.4') },
+      },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoGenera }))
+    // Annullato non è un errore: l'avviso è quello della mancata archiviazione, senza la
+    // frase del salvataggio — ma i byte per conservarlo ci sono.
+    expect(await screen.findByText(itGenitore.certificatoNonArchiviato)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: itGenitore.salvaDiNuovo })).toBeInTheDocument()
   })
 })

@@ -3,7 +3,9 @@
 import { motion } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { logClient } from '@/lib/logging/client';
-import { nomeFileScarico, scarica, type RisultatoScarico } from '@/lib/native/scarica';
+// `scaricaMedia` del modulo è rinominata qui perché il componente ha già una
+// `scaricaMedia` sua (il `useCallback` con la guardia «uno alla volta»).
+import { nomeFileScarico, scaricaMedia as scaricaNelDispositivo, type TipoMedia } from '@/lib/native/scarica';
 import { condividiLink } from '@/lib/native/share';
 import { Download, Share2, Play, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -53,7 +55,23 @@ export interface MediaItem {
 
 interface Props {
     items: MediaItem[];
-    showActions?: boolean; // Download/Share per genitore
+    /**
+     * I comandi del GENITORE: Scarica, Condividi e — nel visore — «Segnala
+     * foto/video» (C5 §2). Non si riusa per lo staff: la segnalazione di un
+     * contenuto è un gesto della famiglia verso la scuola, non della scuola verso
+     * sé stessa. Per docenti e Segreteria c'è `scaricabile`, qui sotto.
+     */
+    showActions?: boolean;
+    /**
+     * SOLO «Scarica», sulla card e nel visore — per docenti e Segreteria
+     * (spec 2026-09-24 §7: «Scarica» in galleria anche per docenti e Segreteria).
+     *
+     * Una prop dedicata e non `showActions`, di proposito: `showActions` porta con sé
+     * anche Condividi e Segnala, che sono gesti pensati per il genitore. Lo scarico è
+     * lo STESSO del genitore (stessa funzione, stessa guardia, stessi log): cambia
+     * soltanto quali comandi compaiono accanto. Con `showActions` è implicita.
+     */
+    scaricabile?: boolean;
     /**
      * L'ELIMINAZIONE VERA — e adesso è una PROMISE, che è tutta la differenza.
      *
@@ -160,63 +178,45 @@ function etichettaCard(item: MediaItem, t: Traduttore): string {
  */
 
 /**
- * L'ESITO DELLO SCARICO FINISCE SEMPRE IN `app_log` — successo compreso.
+ * L'ESITO DELLO SCARICO FINISCE SEMPRE IN `app_log` — successo compreso — ma
+ * da app 1.1 LO SCRIVE L'HELPER, non questo file.
  *
- * ─── PERCHÉ ANCHE IL SUCCESSO ────────────────────────────────────────────────
- * Senza la riga del successo, «nessun log» non distingue «va tutto bene» da «il
- * pulsante non ha mai fatto partire niente» — ed è ESATTAMENTE così che questo
- * guasto è rimasto in piedi: in trenta giorni di `app_log` c'è UNA sola riga
- * sullo scarico della galleria (2026-09-05, iOS), e nessuna che dica che una
- * volta abbia funzionato. Il silenzio sembrava salute (§5 di AGENTS.md).
+ * Qui c'era `registraEsitoScarico`, che traduceva il verdetto di `scarica()` in
+ * una riga: `gallery-scarico-riuscito:<esito>`, `gallery-scarico-ripiego-*: <motivo>`,
+ * `gallery-scarico-non-riuscito: <motivo>`. `scaricaMedia` di `@/lib/native/scarica`
+ * (NAT2) scrive GLI STESSI token da sé — con `etichetta: 'gallery'` — più i campi
+ * `esito`, `operazione` e `piattaforma`, e conosce un esito in più: `nativo-galleria`,
+ * la foto finita nel Rullino. Loggare anche da qui sarebbe la stessa notizia due
+ * volte in `app_log`, cioè un contatore di successi raddoppiato.
  *
- * ─── PERCHÉ `warn` PER UN SUCCESSO, che sembra sbagliato ─────────────────────
- * Perché il canale non ha di meglio: `/api/logs` accetta **solo** `warn|error`
- * (difesa n. 4 della route: «un client non può riempire la tabella di `info`»),
- * quindi un `info` non è spedibile e l'unico modo di NON conservare un evento è
- * non mandarlo. Il costo è misurato, non stimato: `app_log` deduplica per
- * `(fingerprint, giorno)` — una riga al giorno per utente, con `occorrenze` che
- * conta il resto — e `controlloTassoErrore` guarda **solo** `livello = 'error'`,
- * quindi un battito a `warn` non può far dire «degradato» a un'app sana.
+ * Le ragioni che reggevano quella funzione restano vere e ora valgono per
+ * `registraEsito` dell'helper:
+ *  - ANCHE IL SUCCESSO: senza, «nessun log» non distingue «va tutto bene» da «il
+ *    pulsante non ha mai fatto partire niente» (§5 di AGENTS.md) — ed è così che il
+ *    guasto dello scarico è rimasto in piedi per mesi;
+ *  - `warn` PER UN SUCCESSO: `/api/logs` accetta solo `warn|error`, e
+ *    `controlloTassoErrore` guarda solo `error`;
+ *  - LO STATO HTTP NEL MESSAGGIO e non in `stato`: `livelloFetch` scarterebbe in
+ *    silenzio un 403, che è proprio l'indirizzo firmato scaduto.
  *
- * ─── PERCHÉ LO STATO HTTP STA NEL MESSAGGIO E NON IN `stato` ─────────────────
- * Perché `livelloEvento()` applica a ogni `stato` fra 400 e 599 la politica di
- * `livelloFetch`, che per un 403 o un 404 risponde `null` = «non spedire». Un
- * indirizzo firmato scaduto (403) è il caso più probabile di scarico fallito:
- * dichiararlo in `stato` significherebbe scartare in silenzio proprio la riga
- * che si sta aggiungendo. Come token dentro `messaggio` invece resta, e il
- * livello resta quello dichiarato qui.
+ * Cosa resta al componente, su due piani distinti:
+ *  - UNA sola riga di LOG: `gallery-scarico-gia-in-corso`, la pressione scartata
+ *    dalla guardia «uno scarico alla volta». L'helper non la può scrivere perché
+ *    non viene mai chiamato;
+ *  - gli AVVISI A SCHERMO, che sono della UI e NON si loggano, perché l'helper ha
+ *    già registrato l'esito: `mediaLinkCopiato` su `ripiego-appunti`,
+ *    `mediaSalvataInGalleria` su `nativo-galleria`, `mediaScaricoNonRiuscito` su
+ *    `non-riuscito` tranne quando `motivo === 'annullato'` (gesto ritirato, non guasto).
  */
-function registraEsitoScarico(risultato: RisultatoScarico): void {
-    const coda = risultato.motivo ? `: ${risultato.motivo}` : '';
-    if (risultato.esito === 'nativo-file' || risultato.esito === 'web-blob') {
-        logClient({
-            livello: 'warn',
-            evento: 'fetch',
-            messaggio: `gallery-scarico-riuscito:${risultato.esito}`,
-        });
-        return;
-    }
-    if (risultato.esito === 'ripiego-condivisione' || risultato.esito === 'ripiego-appunti') {
-        // Degradato, non guasto: l'utente ha ottenuto il link. Vale `warn`.
-        //
-        // I DUE RIPIEGHI RESTANO DUE TOKEN DIVERSI in tabella
-        // (`gallery-scarico-ripiego-condivisione` e `gallery-scarico-ripiego-appunti`),
-        // perché non sono la stessa degradazione: col foglio l'utente vede
-        // qualcosa succedere, con gli appunti no. Contarli insieme nasconderebbe
-        // proprio il ramo che si è dovuto rendere parlante.
-        logClient({
-            livello: 'warn',
-            evento: 'fetch',
-            messaggio: `gallery-scarico-${risultato.esito}${coda}`,
-        });
-        return;
-    }
-    // L'utente non ha ottenuto NIENTE: è il solo caso che merita un `error`.
-    logClient({
-        livello: 'error',
-        evento: 'fetch',
-        messaggio: `gallery-scarico-non-riuscito${coda}`,
-    });
+
+/**
+ * Il tipo che l'helper vuole (`foto` | `video`), dal `file_type` della riga.
+ * Tutto ciò che non è `video` è una foto: è la stessa regola di `estensioneMedia`
+ * (un tipo sconosciuto diventa `.jpg`). Sbagliarlo non è innocuo: un video passato
+ * come `foto` finisce in `savePhoto`, e la Galleria lo rifiuta.
+ */
+function tipoMedia(fileType: string): TipoMedia {
+    return (fileType ?? '').trim().toLowerCase() === 'video' ? 'video' : 'foto';
 }
 
 function timeAgo(iso: string, t: Traduttore): string {
@@ -228,8 +228,10 @@ function timeAgo(iso: string, t: Traduttore): string {
     return t('galleryGiorniFa', { n: days });
 }
 
-export function MediaGrid({ items, showActions, onDelete, eliminabile, students, onUpdateTags, colonne = 2 }: Props) {
+export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabile, students, onUpdateTags, colonne = 2 }: Props) {
     const t = useTranslations('shared');
+    /** «Scarica» compare: col genitore (`showActions`) o con la prop del solo scarico. */
+    const conScarica = Boolean(showActions || scaricabile);
     const [lightbox, setLightbox] = useState<MediaItem | null>(null);
     const [editMode, setEditMode] = useState(false);
     const [tempTagged, setTempTagged] = useState<string[]>([]);
@@ -380,15 +382,18 @@ export function MediaGrid({ items, showActions, onDelete, eliminabile, students,
         }
         scaricoInCorso.current = true;
         try {
-            const risultato = await scarica({
+            // L'HELPER UNICO DELL'APP 1.1: nell'app aggiornata foto e video vanno
+            // DIRETTAMENTE in Galleria/Rullino (Android: album «Kidville»); sul web e
+            // sul binario 1.0 fa quello che faceva `scarica()`. Logga da sé l'esito
+            // — successo compreso — PRIMA di risolvere: quindi la riga c'è già
+            // quando qui sotto, eventualmente, parte l'`alert()` che blocca il thread.
+            const risultato = await scaricaNelDispositivo({
                 url,
                 nomeFile: nomeFileScarico(item.caption, url, item.file_type),
+                tipo: tipoMedia(item.file_type),
                 titolo: item.caption ?? t('galleryFotoDaKidville'),
+                etichetta: 'gallery',
             });
-            // Prima la riga, poi l'avviso: `alert()` blocca il thread finché
-            // l'utente non chiude, e un log che parte dopo è un log che si perde
-            // se lui intanto se ne va dalla pagina.
-            registraEsitoScarico(risultato);
             // L'UNICO RAMO MUTO, e va detto — esattamente come fa `condividiMedia`
             // qui sotto. Ci si arriva sul web senza Web Share (Firefox su desktop)
             // quando l'indirizzo firmato è scaduto: il file non c'è, negli appunti
@@ -396,6 +401,19 @@ export function MediaGrid({ items, showActions, onDelete, eliminabile, students,
             // righe «Scarica» tornerebbe a essere un pulsante che sembra rotto,
             // che è il difetto da cui è nato tutto questo lavoro.
             if (risultato.esito === 'ripiego-appunti') alert(t('mediaLinkCopiato'));
+            // I DUE SILENZI DELL'APP 1.1. `nativo-galleria` scrive il file nel
+            // Rullino SENZA foglio di sistema: prima, sul binario nativo, almeno il
+            // foglio di condivisione si vedeva; ora, senza questa conferma, «Scarica»
+            // (magari dopo parecchi secondi di FileTransfer per un video) non
+            // cambierebbe niente sullo schermo — e le pressioni ripetute finirebbero
+            // tutte in `gallery-scarico-gia-in-corso`. `non-riuscito` è l'altro
+            // silenzio: l'utente non ha niente e nessuno glielo dice. Tranne
+            // `annullato`, che è un gesto ritirato, non un guasto. Nessun log qui:
+            // l'helper ha già registrato l'esito.
+            if (risultato.esito === 'nativo-galleria') alert(t('mediaSalvataInGalleria'));
+            else if (risultato.esito === 'non-riuscito' && risultato.motivo !== 'annullato') {
+                alert(t('mediaScaricoNonRiuscito'));
+            }
         } finally {
             scaricoInCorso.current = false;
         }
@@ -690,7 +708,7 @@ export function MediaGrid({ items, showActions, onDelete, eliminabile, students,
                         {/* Pulsanti Download e Condividi diretti sulla card.
                             Senza indirizzo firmato non possono fare nulla: si tolgono,
                             invece di offrire un bottone che scarica un errore. */}
-                        {showActions && url && (
+                        {conScarica && url && (
                             /*
                               SEMPRE VISIBILI, E ADESSO C'È SCRITTO.
 
@@ -717,7 +735,9 @@ export function MediaGrid({ items, showActions, onDelete, eliminabile, students,
                                 >
                                     <Download size={14} strokeWidth={2.5} />
                                 </button>
-                                <button
+                                {/* Condividi resta del GENITORE (`showActions`): a docenti e
+                                    Segreteria la spec dà il solo «Scarica». */}
+                                {showActions && <button
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         void condividiMedia(item, url, t('mediaLinkCopiato'));
@@ -726,7 +746,7 @@ export function MediaGrid({ items, showActions, onDelete, eliminabile, students,
                                     title={t('mediaCondividi')}
                                 >
                                     <Share2 size={14} strokeWidth={2.5} />
-                                </button>
+                                </button>}
                             </div>
                         )}
                     </motion.div>
@@ -1001,7 +1021,9 @@ export function MediaGrid({ items, showActions, onDelete, eliminabile, students,
                             tagliati a sinistra e ~68 a destra, cioè metà della prima pillola
                             e metà dell'ultima. Andare a capo costa una riga in più; non
                             andarci costa due comandi. */}
-                        {showActions && (
+                        {/* Col solo `scaricabile` e senza indirizzo firmato non resterebbe
+                            nessun comando: niente riga vuota da `mt-4` in mezzo al visore. */}
+                        {(showActions || (scaricabile && urlVisore)) && (
                             <div data-testid="visore-comandi" className="flex flex-wrap items-center justify-center gap-2 mt-4">
                                 {/* Gli STESSI due gesti della card, e nient'altro: la
                                     duplicazione fra questi due punti è ciò che aveva
@@ -1011,18 +1033,19 @@ export function MediaGrid({ items, showActions, onDelete, eliminabile, students,
                                     className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green hover:bg-kidville-green/90 text-white rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
                                     <Download size={14} strokeWidth={2.5} /> {t('mediaScarica')}
                                 </button>}
-                                {urlVisore && <button
+                                {showActions && urlVisore && <button
                                     onClick={() => { void condividiMedia(lightbox, urlVisore, t('mediaLinkCopiatoLungo')); }}
                                     className="flex items-center gap-2 px-5 py-2.5 bg-kidville-yellow hover:bg-kidville-yellow/90 text-kidville-green rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
                                     <Share2 size={14} strokeWidth={2.5} /> {t('mediaCondividi')}
                                 </button>}
-                                {/* Segnalazione contenuto (C5 §2): sempre etichettata, lato genitore. */}
-                                <SegnalaContenuto
+                                {/* Segnalazione contenuto (C5 §2): sempre etichettata, SOLO lato
+                                    genitore — con `scaricabile` (staff) non compare. */}
+                                {showActions && <SegnalaContenuto
                                     tipoOggetto="media_galleria"
                                     oggettoId={lightbox.id}
                                     label={t('mediaSegnala')}
                                     variant="pill"
-                                />
+                                />}
                             </div>
                         )}
 

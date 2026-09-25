@@ -106,6 +106,14 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     gruppo: 'genitore',
     descrizione: 'Quando il docente inserisce una nuova valutazione',
   },
+  // Tipo PROPRIO e non `valutazione` (compito V2, 2026-09-25): una sede che spegne
+  // gli avvisi dei voti non deve spegnere in silenzio anche quelli degli
+  // impreparati, e viceversa. Parte dopo lo stesso buffer delle valutazioni.
+  impreparato_segnato: {
+    label: 'Impreparati',
+    gruppo: 'genitore',
+    descrizione: 'Quando il docente segna il figlio impreparato (anche giustificato)',
+  },
   pagella: {
     label: 'Pagella pubblicata',
     gruppo: 'genitore',

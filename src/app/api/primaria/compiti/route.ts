@@ -9,6 +9,7 @@ import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { firmaPercorsi, percorsoNelBucket } from '@/lib/allegati/storage'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { allegatiRegistroViviDalJoin } from '@/lib/primaria/cestino-allegati-registro'
 
 // ─── IL CONTENITORE DEGLI ALLEGATI DEL REGISTRO ──────────────────────────────
 //
@@ -343,6 +344,8 @@ type AllegatoRiga = {
   ambito: string | null
   file_url: string | null
   file_name: string | null
+  /** Cestino: valorizzato = eliminato. Letto solo per scartarlo (`allegatiRegistroViviDalJoin`). */
+  eliminato_il?: string | null
 }
 
 /** Una riga di `registro_orario` con i suoi join. */
@@ -673,7 +676,7 @@ export const GET = withRoute('primaria/compiti:GET', async (request: NextRequest
           materie(nome),
           firme_docenti(id, compiti_propri),
           registro_destinatari(firma_id),
-          allegati_registro(id, ambito, tipo, file_url, file_name)
+          allegati_registro(id, ambito, tipo, file_url, file_name, eliminato_il)
         `)
         .eq('section_id', sectionId)
         .eq('scuola_id', sezione.scuola_id)
@@ -735,7 +738,12 @@ export const GET = withRoute('primaria/compiti:GET', async (request: NextRequest
         )
       }
 
-      const lette = (righe ?? []) as unknown as RigaRegistro[]
+      // Gli allegati nel CESTINO non escono: si scartano QUI, prima che qualunque
+      // passo successivo (la firma dei link compresa) li veda.
+      const lette = ((righe ?? []) as unknown as RigaRegistro[]).map((r) => ({
+        ...r,
+        allegati_registro: allegatiRegistroViviDalJoin(r.allegati_registro),
+      }))
       conCompiti.push(...lette.filter(haCompiti))
 
       const ultima = lette[lette.length - 1]

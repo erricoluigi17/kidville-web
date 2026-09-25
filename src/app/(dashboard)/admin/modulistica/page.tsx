@@ -27,6 +27,8 @@ import {
   opzioniClasseModuli,
 } from '@/components/features/admin/iscrizioni/filtri-moduli-genitori';
 import { formattaIstante } from '@/i18n/config';
+import { logClient, nomeErrore } from '@/lib/logging/client';
+import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
 
@@ -452,9 +454,29 @@ function ModulisticaInner() {
         yOffset += 6;
       }
 
-      doc.save(`Cumulative_${form.title.replace(/\s+/g, '_')}_${className}.pdf`);
-      showToastMsg(t('modToastReportScaricato'));
+      // NON `doc.save()`: sul web è un'ancora `download` su un `blob:`, che nella WebView
+      // dell'app non scarica niente e non lancia — e il toast diceva «scaricato» lo stesso.
+      // Il Blob passa all'helper unico: sul web lo scarica come prima, nell'app apre il
+      // foglio «Salva su File». Il toast segue l'ESITO; il log (successo compreso) lo scrive
+      // l'helper, senza nome del file (porta titolo del modulo e classe).
+      const esito = await scaricaDocumento({
+        sorgente: doc.output('blob'),
+        nomeFile: `Cumulative_${form.title.replace(/\s+/g, '_')}_${className}.pdf`,
+        mime: 'application/pdf',
+        etichetta: 'modulistica-cumulativo',
+      });
+      showToastMsg(
+        fileConsegnato(esito) ? t('modToastReportScaricato') : `❌ ${t('modErroreEsportazione')}`,
+      );
     } catch (err) {
+      // Un `catch` che non logga è un bug (AGENTS.md §6). Nel log va solo la classe
+      // dell'errore: il messaggio può ripetere dati della classe.
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `modulistica-cumulativo-non-generato: ${nomeErrore(err)}`,
+        route: '/admin/modulistica',
+      });
       showToastMsg(`❌ ${(err as { message?: string })?.message || t('modErroreEsportazione')}`);
     }
   };

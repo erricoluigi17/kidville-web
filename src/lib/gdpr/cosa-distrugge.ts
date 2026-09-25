@@ -3,6 +3,7 @@ import { schemaAssente } from '@/lib/news/schema-assente'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { sorteDellaFoto, uuidDichiarati, type RigaMedia } from './foto-partizione'
 import { ancheNelCestino } from '@/lib/gallery/cestino'
+import { fascicoloAncheNelCestino } from '@/lib/primaria/cestino-fascicolo'
 import { CAMPI_CONTEGGIO, OBLIO_DISTRUGGE, OBLIO_RESTA } from './cosa-distrugge-voci'
 import type { CampoConteggioOblio, VoceOblio } from './cosa-distrugge-voci'
 
@@ -132,8 +133,14 @@ export async function contaCosaDistrugge(
   // riga — `document_type`, il percorso, le note — non serve a un conteggio e
   // porterebbe in memoria (e a un passo dai log) la frase «questo bambino ha una
   // dieta speciale». L'aggancio è `student_id`, come nell'esecuzione.
+  // ⚠️ ANCHE IL CESTINO: `obliaFascicoloAlunno` (esegui.ts) cancella ogni riga
+  // dell'alunno, eliminate comprese, e il preventivo deve annunciare lo stesso numero.
   const fascicolo = await leggi<{ id: string }>(
-    supabase.from('student_documents').select('id').eq('student_id', id),
+    fascicoloAncheNelCestino(
+      supabase.from('student_documents').select('id').eq('student_id', id),
+      "preventivo dell'oblio: l'esecuzione cancella anche i documenti nel cestino del " +
+        'fascicolo, e il numero che la Direzione conferma deve essere quello che accade',
+    ),
     'dryrun_fascicolo',
     op,
   )

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
 // Obiettivi di apprendimento disponibili per una valutazione in itinere.
@@ -25,16 +26,43 @@ export function livelloDaSezioneName(name?: string | null): number | null {
 
 /**
  * Obiettivi attivi per la materia (e livello dedotto dalla sezione, se passata).
- * Ritorna [] se la scuola non ha configurato obiettivi per quella materia/livello.
+ * Ritorna [] se la scuola non ha configurato obiettivi per quella materia/livello
+ * — e anche se la lettura FALLISCE, contratto storico di POST valutazioni e
+ * /api/primaria/obiettivi. Il guasto però si logga: il filtro sta in un punto
+ * solo, `leggiObiettiviDisponibili`, e questa è solo la sua forma «vuoto se
+ * fallisce».
  */
 export async function obiettiviDisponibili(
   supabase: SupabaseClient,
   materia: { codice: string; scuola_id: string },
   sectionId?: string | null,
 ): Promise<ObiettivoRow[]> {
+  const r = await leggiObiettiviDisponibili(supabase, materia, sectionId)
+  if (!r.ok) {
+    logEvento('db', 'error', { operazione: 'primaria/obiettivi-disponibili', esito: 'obiettivi-non-letti' }, r.error)
+    return []
+  }
+  return r.righe
+}
+
+export type LetturaObiettivi = { ok: true; righe: ObiettivoRow[] } | { ok: false; error: unknown }
+
+/**
+ * IL filtro (unico: `obiettiviDisponibili` lo avvolge). Una lettura FALLITA non
+ * si confonde con «nessun obiettivo configurato»: per chi SCRIVE i collegamenti
+ * (PATCH valutazioni) quel vuoto finto vorrebbe dire lasciare i collegamenti
+ * com'erano e rispondere 200 — la modifica persa senza che nessuno lo sappia.
+ * Il chiamante decide come loggare e cosa rispondere.
+ */
+export async function leggiObiettiviDisponibili(
+  supabase: SupabaseClient,
+  materia: { codice: string; scuola_id: string },
+  sectionId?: string | null,
+): Promise<LetturaObiettivi> {
   let livello: number | null = null
   if (sectionId) {
-    const { data: sez } = await supabase.from('sections').select('name').eq('id', sectionId).single()
+    const { data: sez, error: sezErr } = await supabase.from('sections').select('name').eq('id', sectionId).maybeSingle()
+    if (sezErr) return { ok: false, error: sezErr }
     livello = livelloDaSezioneName(sez?.name)
   }
 
@@ -47,6 +75,7 @@ export async function obiettiviDisponibili(
     .order('codice')
   if (livello) q = q.eq('livello', livello)
 
-  const { data } = await q
-  return (data ?? []) as ObiettivoRow[]
+  const { data, error } = await q
+  if (error) return { ok: false, error }
+  return { ok: true, righe: (data ?? []) as ObiettivoRow[] }
 }

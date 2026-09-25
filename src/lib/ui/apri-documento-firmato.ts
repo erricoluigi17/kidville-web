@@ -1,5 +1,11 @@
+import type { MouseEvent } from 'react'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { conTetto } from '@/lib/logging/tetto'
+import { suNativo } from '@/lib/native/documento-genitore'
+import { nomeConEstensione } from '@/lib/native/nome-da-percorso'
+import { apriDocumento } from '@/lib/native/scarica'
+import { isNativeApp } from '@/lib/push/native-register'
+import { documentoNonConsegnato } from '@/lib/ui/documento-segreteria'
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
@@ -17,9 +23,10 @@ import { conTetto } from '@/lib/logging/tetto'
  * ── 1. LA FINESTRA SI APRE PRIMA DELLA FETCH, DENTRO IL GESTO ───────────────
  *
  * `window.open` chiamata in continuazione di promise — cioè dopo un `await` — è
- * bloccata da Safari e dalla WebView Capacitor (l'app è spedita nativa): per
- * quei motori il gesto dell'utente è finito quando la microtask riprende. Il
- * risultato non è un errore: è un pulsante che non fa niente e non dice niente.
+ * bloccata da Safari: per quel motore il gesto dell'utente è finito quando la
+ * microtask riprende. Il risultato non è un errore: è un pulsante che non fa
+ * niente e non dice niente. (Vale sul web: nell'app la scheda non si apre, vedi
+ * il punto 5.)
  * Perciò la scheda si apre VUOTA e SUBITO, e riceve la URL solo dopo, con
  * `location.replace` — che non aggiunge una voce alla cronologia della scheda
  * nuova, così «indietro» non riporta su una pagina bianca.
@@ -55,6 +62,21 @@ import { conTetto } from '@/lib/logging/tetto'
  * («candidatura non trovata», «anagrafica non trovata»), non del file: la frase
  * giusta la conosce solo il pannello, ed è già tradotta nel suo catalogo. Qui si
  * torna un esito, non una prosa.
+ *
+ * ── 5. NELL'APP NATIVA LA SCHEDA NON ESISTE (app 1.1, spec 2026-09-24, NAT3g) ─
+ *
+ * Nella WebView Capacitor le finestre multiple non sono abilitate: `window.open`
+ * torna `null` senza lanciare, e il ramo «bloccato» mostrava un link `_blank` che
+ * nella WebView non apre niente — due pulsanti muti in fila. Nell'app, quindi,
+ * NESSUNA scheda: si chiede la URL firmata e il documento passa da `apriDocumento`
+ * dell'helper unico (`@/lib/native/scarica`), che lo scarica in Cache e lo mostra
+ * nell'ANTEPRIMA DI SISTEMA dentro l'app (ripiego: foglio di condivisione col file;
+ * sul binario 1.0: il ripiego di prima). L'esito lo logga l'helper, successo
+ * compreso; qui si traduce soltanto in `aperto` / `errore`. Sul web non cambia niente.
+ *
+ * Il nome del file sul dispositivo è l'ETICHETTA con l'estensione del percorso
+ * (`candidatura-cv.pdf`): l'ultimo pezzo del percorso può contenere il nome che la
+ * persona ha dato al suo file, e il nome finisce nel foglio di sistema.
  */
 
 /** L'esito dell'apertura. Tre casi, e ognuno ha un rimedio diverso a schermo. */
@@ -63,7 +85,12 @@ export type EsitoDocumentoFirmato =
   | { esito: 'aperto' }
   /** Il browser ha bloccato la scheda: si offre la URL come link (vedi la classe sotto). */
   | { esito: 'bloccato'; url: string }
-  /** Il server non ha firmato niente. `stato` è `null` quando la rete è caduta. */
+  /**
+   * Il documento non è arrivato a chi ha premuto: il server non ha firmato
+   * (`stato` = lo stato HTTP), la rete è caduta (`stato` = `null`), oppure, nell'app,
+   * l'anteprima o il foglio dell'helper non hanno consegnato niente dopo una firma
+   * riuscita (`stato` = `null`, vedi il punto 5).
+   */
   | { esito: 'errore'; stato: number | null }
 
 /**
@@ -88,8 +115,9 @@ export const AVVISO_FINESTRA_BLOCCATA =
  * «il tetto vive dall'altra parte, dentro la route» — e per un hook che riempie
  * uno stato è vero: al massimo un pannello resta in caricamento.
  *
- * Qui no, ed è la ragione per cui questo modulo esiste. Prima della fetch è già
- * stata aperta una SCHEDA VUOTA dentro il gesto (punto 1 in testa): senza tetto,
+ * Qui no, ed è la ragione per cui questo modulo esiste. Sul web, prima della fetch
+ * è già stata aperta una SCHEDA VUOTA dentro il gesto (punto 1 in testa; nel ramo
+ * nativo nessuna scheda è aperta, vedi il punto 5): senza tetto,
  * una rete che non risponde lascia la segreteria davanti a una pagina bianca che
  * non diventerà mai niente e non dirà mai niente — cioè lo stesso «pulsante che
  * non fa niente e non dice niente» che questa funzione è nata per eliminare,
@@ -138,7 +166,9 @@ export async function apriDocumentoFirmato({
   etichetta,
 }: RichiestaDocumentoFirmato): Promise<EsitoDocumentoFirmato> {
   // ── Dentro il gesto, prima di qualunque `await`. Vedi il punto 1 in testa. ──
-  const finestra = typeof window !== 'undefined' ? window.open('', '_blank') : null
+  // Nell'app NESSUNA scheda: vedi il punto 5.
+  const nativo = isNativeApp()
+  const finestra = !nativo && typeof window !== 'undefined' ? window.open('', '_blank') : null
 
   try {
     const separatore = endpoint.includes('?') ? '&' : '?'
@@ -159,6 +189,15 @@ export async function apriDocumentoFirmato({
     }
 
     const url = String(json.url)
+    if (nativo) {
+      // L'helper non lancia mai e registra da sé l'esito (successo compreso).
+      const risultato = await apriDocumento({
+        sorgente: url,
+        nomeFile: nomeConEstensione(etichetta, path),
+        etichetta,
+      })
+      return documentoNonConsegnato(risultato) ? { esito: 'errore', stato: null } : { esito: 'aperto' }
+    }
     if (finestra && !finestra.closed) {
       try {
         finestra.opener = null
@@ -186,4 +225,32 @@ export async function apriDocumentoFirmato({
     })
     return { esito: 'errore', stato: null }
   }
+}
+
+/**
+ * IL LINK DEL RIPIEGO («apri a mano»), e ogni altro `<a target="_blank">` della
+ * Segreteria che porta a un documento.
+ *
+ * Sul web il link resta quello di sempre: il gestore ritorna senza toccare niente,
+ * niente `preventDefault`, e il browser apre la scheda come ieri (clic centrale e
+ * «copia indirizzo» compresi). Nell'APP un'ancora `_blank` non apre niente (punto 5):
+ * il gestore ferma la navigazione e passa da `apriDocumento`, cioè l'anteprima di
+ * sistema dentro l'app. `onNonConsegnato` scatta quando chi ha premuto non ha
+ * ottenuto niente che si veda — il pannello decide che frase mostrare.
+ *
+ * Il nome del file: quello mostrato (`nomeMostrato`) se c'è, altrimenti l'etichetta;
+ * in entrambi i casi con l'estensione presa dall'indirizzo.
+ */
+export function apriLinkNellApp(
+  url: string,
+  etichetta: string,
+  opzioni: { nomeMostrato?: string | null; onNonConsegnato?: () => void } = {},
+): (evento: MouseEvent<HTMLElement>) => void {
+  return suNativo(
+    'apri',
+    () => ({ sorgente: url, nomeFile: nomeConEstensione(opzioni.nomeMostrato || etichetta, url), etichetta }),
+    (risultato) => {
+      if (documentoNonConsegnato(risultato)) opzioni.onNonConsegnato?.()
+    },
+  )
 }

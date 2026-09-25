@@ -184,8 +184,24 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * toccate qui: sono debito già pagato da altri lavori, e stringerle dentro un cambiamento che
  * parla di fatture significherebbe rivendicare pagamenti non fatti in questo giro. Vanno strette,
  * ma da chi le ha pagate — e la misura di partenza è scritta qui sopra.
+ *
+ * 🔻 277 → 276 il 2026-09-25, branch `feat/sei-interventi-e-app-1-1` (compito P1). La voce
+ * `primaria/sblocca/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo
+ * gemello su `MAX_OCCORRENZE`.
+ *
+ * 🔻 276 → 275 il 2026-09-25, stesso branch (compito NO1, note della primaria). La voce
+ * `primaria/note/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo gemello
+ * su `MAX_OCCORRENZE`.
+ *
+ * 🔻 275 → 274 il 2026-09-25, stesso branch (compito V2, impreparati del docente). La voce
+ * `primaria/giustifiche-didattiche/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il
+ * paragrafo gemello su `MAX_OCCORRENZE`.
+ *
+ * 🔻 274 → 273 il 2026-09-25, stesso branch (compito R2, allegati del registro). La voce
+ * `primaria/allegati/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo
+ * gemello su `MAX_OCCORRENZE`.
  */
-const MAX_FILE = 277;
+const MAX_FILE = 273;
 /**
  * ⚠️ 1416 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
  * il 2026-09-10, è **1384**. I due numeri divergono di 32 per le 18 voci stantie dette qui sopra.
@@ -268,8 +284,70 @@ const MAX_FILE = 277;
  * farlo, ed è un lavoro, non una riga di configurazione. Finché non lo sa, questo paragrafo è
  * l'unico posto del repository in cui quelle cinque risposte esistono ancora.
  * `MAX_FILE` non si muove: la voce resta in elenco, non è arrivata a zero (9 risposte).
+ *
+ * 🔻 1408 → 1407 il 2026-09-25, branch `feat/sei-interventi-e-app-1-1` (compito M1, cutoff
+ * mensa in ora italiana). Debito PAGATO: il 400 di `mensa/prenotazioni:DELETE` per il genitore
+ * oltre l'orario limite ora porta `codice: 'MENSA_OLTRE_CUTOFF'`, e la voce del file scende da
+ * 12 a 11. Il tetto scende con la somma, nello stesso giro. `MAX_FILE` non si muove.
+ *
+ * 🔻 1407 → 1404 il 2026-09-25, stesso branch (compito P1, sblocchi della primaria). Debito
+ * PAGATO: le tre risposte senza codice di `primaria/sblocca:POST` — il guasto
+ * (`SBLOCCO_NON_REGISTRATO` / `SBLOCCO_NON_DISPONIBILE`), il 404 della voce
+ * (`SBLOCCO_VOCE_NON_TROVATA`) e il `catch` che rimandava `err.message` grezzo al client (ora
+ * `SBLOCCO_NON_REGISTRATO`) — portano il loro codice. La voce scende da 3 a 0 ed esce
+ * dall'elenco; `MAX_FILE` scende di uno insieme a lei. Misurato con `inventario()` su questo
+ * albero, non dedotto.
+ *
+ * 🔻 1404 → 1400 il 2026-09-25, stesso branch (compito NO1, modifica ed eliminazione delle note
+ * della primaria). Debito PAGATO: le quattro risposte senza codice di `primaria/note` — i due 500
+ * di GET e POST che rimandavano al client il `message` GREZZO di PostgREST, e i due `catch` che
+ * rimandavano `err.message` — ora portano `LETTURA_FALLITA` / `NOTA_OPERAZIONE_NON_RIUSCITA`,
+ * col messaggio del database che resta nel log. La voce scende da 4 a 0 ed esce dall'elenco;
+ * `MAX_FILE` scende di uno insieme a lei. Misurato con `inventario()` su questo albero.
+ *
+ * 🔻 1400 → 1397 il 2026-09-25, stesso branch (compito G1, impreparati lato genitore). Debito
+ * PAGATO: in `parent/giustifiche-didattiche` il 500 dell'insert che rimandava il `message`
+ * GREZZO di PostgREST e il `catch` con `err.message` ora portano `IMPREPARATO_NON_SALVATO`
+ * (voce da 4 a 2); in `parent/primaria/valutazioni` il `catch` con `err.message` porta
+ * `LETTURA_FALLITA` (voce da 2 a 1). `MAX_FILE` non si muove: nessuna voce arriva a zero.
+ *
+ * 🔻 1397 → 1394 il 2026-09-25, stesso branch (compito V1, modifica ed eliminazione delle
+ * valutazioni della primaria). Debito PAGATO: i tre 400 di `primaria/valutazioni:POST`
+ * (annotazione fuori scala, obiettivo mancante, obiettivo non valido) portano ora
+ * `VALUTAZIONE_ANNOTAZIONE_NON_VALIDA` / `VALUTAZIONE_OBIETTIVO_MANCANTE` /
+ * `VALUTAZIONE_OBIETTIVO_NON_VALIDO` — gli stessi codici della PATCH nuova, che con la stessa
+ * frase SENZA codice nella POST avrebbe fatto scattare la regola «la frase di un codice non
+ * viaggia sola». La voce del file scende da 10 a 7. `MAX_FILE` non si muove.
+ *
+ * 🔻 1394 → 1390 il 2026-09-25, stesso branch (compito V2, impreparati del docente). Debito
+ * PAGATO: le quattro risposte senza codice di `primaria/giustifiche-didattiche` — i due 500 di
+ * GET e POST che rimandavano al client il `message` GREZZO di PostgREST, e i due `catch` con
+ * `err.message` — ora portano `LETTURA_FALLITA` / `IMPREPARATO_NON_SALVATO`, col messaggio del
+ * database che resta nel log. La voce scende da 4 a 0 ed esce dall'elenco; `MAX_FILE` scende di
+ * uno insieme a lei. Misurato con `inventario()` su questo albero.
+ *
+ * 🔻 1390 → 1387 il 2026-09-25, stesso branch (compito F1, fascicolo). Debito PAGATO: i due 500
+ * del POST di `primaria/fascicolo` (upload e insert) rimandavano al client il `message` GREZZO
+ * dello Storage e di PostgREST; ora portano `FASCICOLO_FILE_NON_CARICATO` /
+ * `FASCICOLO_SCRITTURA_FALLITA`, col messaggio nel log. La voce scende da 11 a 8: la terza unità
+ * era gioco fra voce e misura, rimisurato col lock (a 7 dice «misurate 8»). `MAX_FILE` non si
+ * muove: la voce non arriva a zero.
+ *
+ * 🔻 1387 → 1378 il 2026-09-25, stesso branch (compito R2, allegati del registro). Debito
+ * PAGATO: le nove risposte senza codice di `primaria/allegati` — fra cui i 500 che rimandavano
+ * al client il `message` GREZZO dello Storage e di PostgREST, e i due `catch` con `err.message` —
+ * ora portano `LETTURA_FALLITA` / `LEZIONE_NON_TROVATA` / `ALLEGATO_NON_CARICATO` /
+ * `ALLEGATO_REGISTRO_*`, col messaggio nel log. La voce scende da 9 a 0 ed esce dall'elenco;
+ * `MAX_FILE` scende di uno insieme a lei. Misurato col lock su questo albero.
+ *
+ * 🔻 1378 → 1376 il 2026-09-25, stesso branch (compito I7, download del fascicolo). Debito
+ * PAGATO: i due 500 del GET di `primaria/fascicolo/file` rimandavano al client il `message`
+ * GREZZO dello Storage (la firma dell'URL, che può nominare bucket e percorso del file) e quello
+ * dell'eccezione nel `catch`; ora portano `LETTURA_FALLITA`, col messaggio nel log. La voce
+ * scende da 6 a 4, misurato col lock (a 3 dice «misurate 4»). `MAX_FILE` non si muove: la voce
+ * non arriva a zero.
  */
-const MAX_OCCORRENZE = 1408;
+const MAX_OCCORRENZE = 1376;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

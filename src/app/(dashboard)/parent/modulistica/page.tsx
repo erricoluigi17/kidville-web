@@ -27,7 +27,9 @@ import { useClientValue } from '@/lib/hooks/use-client-value';
 import { dataCivile } from '@/i18n/config';
 import { decidiStatoElenco } from '@/lib/ui/filtri/motore';
 import { useFiltri } from '@/lib/ui/filtri/use-filtri';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
+import { scaricaDocumento } from '@/lib/native/scarica';
+import { avvisoDocumento } from '@/lib/native/documento-genitore';
 import {
   campiArchivio,
   campiCertificatiMedici,
@@ -491,17 +493,33 @@ function ContenutoModulistica() {
         showToastMsg(`❌ ${soloCatalogoDaCorpo(j, t('modulisticaErrRete'))}`);
         return;
       }
-      // Stesso schema di `PrestampatiGenitore.scaricaBase64`: un `<a download>` invece di
-      // `window.open`, che dopo un `await` il blocco pop-up del browser ferma.
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `ricevuta-firma-${submissionId.slice(0, 8)}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      // Un catch che non logga è un bug: qui il canale è il genitore, e il messaggio è
-      // l'unica traccia che vede chi sta aspettando il file.
+      // La ricevuta è un documento da SALVARE: passa dall'helper unico (spec 2026-09-24,
+      // NAT3c). Sul web fa quello che si faceva qui — `<a download>` su un `blob:`, perché
+      // `window.open` dopo un `await` il blocco pop-up lo ferma —; nell'app 1.1 apre il
+      // foglio «Salva su File», dove l'ancora nella WebView non scaricava niente. Il corpo
+      // si legge QUI e non nell'helper: sul rifiuto serve il `codice` del server, sopra.
+      // L'esito lo registra l'helper, successo compreso.
+      const esito = await scaricaDocumento({
+        sorgente: await res.blob(),
+        nomeFile: `ricevuta-firma-${submissionId.slice(0, 8)}.pdf`,
+        mime: 'application/pdf',
+        etichetta: 'ricevuta-firma',
+      });
+      // Sul binario 1.0 (niente Filesystem) riprovare non riuscirà mai: lì il testo dice
+      // di aggiornare l'app, non «riprova fra qualche minuto».
+      const avviso = avvisoDocumento(esito);
+      if (avviso) {
+        showToastMsg(`❌ ${ts(avviso === 'aggiorna' ? 'documentoAppDaAggiornare' : 'documentoNonSalvato')}`);
+      }
+    } catch (e) {
+      // Un catch che non logga è un bug: il genitore vede il messaggio, e `app_log` la riga
+      // (solo il `name` dell'errore: niente URL, niente id della domanda).
+      logClient({
+        livello: 'warn',
+        evento: 'fetch',
+        messaggio: `ricevuta-firma-lettura-non-riuscita:${nomeErrore(e)}`,
+        route: '/parent/modulistica',
+      });
       showToastMsg(t('modulisticaErrRete'));
     }
   };

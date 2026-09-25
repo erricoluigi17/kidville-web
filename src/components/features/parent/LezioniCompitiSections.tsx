@@ -11,6 +11,7 @@ import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { decidiStatoElenco, opzioniDerivate } from '@/lib/ui/filtri/motore';
 import type { FiltroAttivo, OpzioneFiltro } from '@/lib/ui/filtri/tipi';
 import { cx } from '@/lib/ui/cx';
+import { avvisoDocumento, nomeDocumentoDa, suNativo, type AvvisoDocumento } from '@/lib/native/documento-genitore';
 import { StatoElenco, testiStatoElenco, type TestiStatoElenco } from '@/components/ui/StatoElenco';
 
 // `file_url` è NULLABILE, e il tipo lo dice.
@@ -78,18 +79,60 @@ const fmtGiorno = (g: string, locale: string) =>
  * non lo dice a nessuno.
  */
 function AllegatiLezione({ allegati, etichettaVuota }: { allegati: Allegato[]; etichettaVuota: string }) {
+  const ts = useTranslations('shared');
+  /**
+   * Gli allegati il cui ULTIMO tocco, nell'app, non ha mostrato niente (anteprima non
+   * aperta, condivisione fallita, copia muta negli appunti). Senza, il ramo nativo
+   * rifaceva il «pulsante muto» che doveva togliere. Per id: un'apertura riuscita di un
+   * altro allegato non cancella il guasto di questo. Il valore è il TIPO d'avviso: sul
+   * binario 1.0 (`'aggiorna'`) riprovare non riuscirà mai, e il testo lo deve dire.
+   */
+  const [nonAperti, setNonAperti] = useState<ReadonlyMap<string, AvvisoDocumento>>(() => new Map());
   // Il predicato di tipo, e non un `!` più avanti: è la stessa condizione detta
   // una volta sola, e il compilatore la porta fino all'`href`.
   const apribili = allegati.filter((a): a is Allegato & { file_url: string } => !!a.file_url);
   if (apribili.length === 0) return null;
+  const segnaEsito = (id: string, avviso: AvvisoDocumento | null) =>
+    setNonAperti((prima) => {
+      if ((prima.get(id) ?? null) === avviso) return prima;
+      const dopo = new Map(prima);
+      if (avviso) dopo.set(id, avviso);
+      else dopo.delete(id);
+      return dopo;
+    });
+  const avvisiVisibili = apribili.map((a) => nonAperti.get(a.id)).filter(Boolean);
   return (
     <div className="mt-1 flex flex-wrap gap-2">
       {apribili.map((a) => (
-        <a key={a.id} href={a.file_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-pill bg-white px-2 py-0.5 text-[11px] text-kidville-muted">
+        <a
+          key={a.id}
+          href={a.file_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          // Un allegato è da GUARDARE (spec 2026-09-24, NAT3c): sul web il collegamento
+          // resta com'è; nell'app 1.1 `suNativo` apre l'anteprima di sistema dentro l'app,
+          // dove `target="_blank"` nella WebView non apriva niente. Il log lo scrive l'helper.
+          onClick={suNativo(
+            'apri',
+            () => ({
+              sorgente: a.file_url,
+              nomeFile: nomeDocumentoDa(a.file_name, a.file_url, 'kidville-allegato'),
+              ...(a.tipo === 'pdf' ? { mime: 'application/pdf' } : {}),
+              etichetta: 'allegato-lezione',
+            }),
+            (esito) => segnaEsito(a.id, avvisoDocumento(esito)),
+          )}
+          className="inline-flex items-center gap-1 rounded-pill bg-white px-2 py-0.5 text-[11px] text-kidville-muted"
+        >
           {a.tipo === 'pdf' ? <FileText size={11} /> : <ImageIcon size={11} />}
           {a.file_name || etichettaVuota}
         </a>
       ))}
+      {avvisiVisibili.length > 0 && (
+        <p role="alert" className="basis-full font-maven text-[11px] text-kidville-error">
+          {ts(avvisiVisibili.includes('aggiorna') ? 'documentoAppDaAggiornare' : 'documentoNonAperto')}
+        </p>
+      )}
     </div>
   );
 }

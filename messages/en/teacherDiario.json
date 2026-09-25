@@ -68,6 +68,8 @@
   "nannaAiutoCompilazione": "Fills in the time for everyone: only those with a time are saved.",
   "salvaConOrario": "{count, plural, one {Save # child} other {Save # children}}",
   "nannaNessunOrario": "No time filled in",
+  "nannaTogliOrari": "{count, plural, one {Remove # time} other {Remove # times}}",
+  "nannaOrariTolti": "{count, plural, one {Time removed for # child} other {Time removed for # children}}",
   "alertErroreEliminazione": "I couldn’t delete the entry. Please try again.",
   "bagnoNessunaRegistrazione": "No bathroom recorded",
   "pastoNessunaPortata": "No course marked",

@@ -11,6 +11,7 @@ import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { tabellaMancante } from '@/lib/db/tolleranza-schema'
 import { riconciliaTutto } from '@/lib/armadietto/richieste'
 import { promemoriaAdesioni } from '@/lib/avvisi/promemoria-adesioni'
+import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
 
 // =============================================================================
 // POST /api/notifiche/promemoria — giro promemoria GIORNALIERO.
@@ -319,10 +320,14 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
     // ── 3. Documenti in scadenza (≤30 giorni) → segreteria ────────────────────
     try {
       const soglia = new Date(Date.now() + 30 * MS_GIORNO).toISOString().slice(0, 10)
-      const { data: docs, error } = await supabase
-        .from('student_documents')
-        .select('id, student_id, document_type, expiry_date')
-        .lte('expiry_date', soglia)
+      // Un documento nel cestino non «scade»: ricordarlo alla segreteria la manderebbe a
+      // rinnovare un documento che qualcuno ha eliminato (o già sostituito).
+      const { data: docs, error } = await fascicoloVivo(
+        supabase
+          .from('student_documents')
+          .select('id, student_id, document_type, expiry_date')
+          .lte('expiry_date', soglia),
+      )
       if (error) {
         if (!tabellaMancante(error)) throw error
         saltate.push('documenti')

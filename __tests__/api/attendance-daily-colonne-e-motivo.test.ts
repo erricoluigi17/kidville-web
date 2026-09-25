@@ -218,6 +218,33 @@ describe('T24 — il motivo arriva all’appello 0-6, che è chi la famiglia cre
     },
   )
 
+  /**
+   * «ANNULLA» (spec 2026-09-24, punto 6) PENDE DA `registrato_da`.
+   *
+   * La schermata dell'appello 0-6 distingue l'appello FATTO dal personale dalla sola
+   * comunicazione del genitore guardando `registrato_da`: in tutti e due i casi lo
+   * stato è `assente`. Senza la colonna nella GET, «Annulla» sparisce da ogni riga
+   * caricata e l'etichetta «Assenza comunicata dal genitore» non compare più — con
+   * tutti i test della UI verdi, perché la loro GET finta la porta già. È questo
+   * test che la fissa, per chi l'appello lo fa (l'insegnante) e per chi lo fa dalla
+   * segreteria (`colonneConMotivo` senza motivo, che non deve toglierla).
+   */
+  it.each(['educator', 'segreteria', 'coordinator', 'admin'])(
+    'la `select` della GET chiede `registrato_da` anche per «%s»',
+    async (ruolo) => {
+      h.ruolo = ruolo
+      await GET(get())
+      const sel = h.select.find((s) => s.tabella === 'presenze')?.colonne ?? ''
+      // Colonna per colonna, non come sottostringa: `registrato_da` deve essere
+      // UNA delle colonne chieste, non un pezzo di un'altra.
+      const colonne = sel.split(',').map((c) => c.trim())
+      expect(
+        colonne,
+        'senza `registrato_da` la schermata non separa l’appello fatto dalla comunicazione del genitore: «Annulla» sparisce',
+      ).toContain('registrato_da')
+    },
+  )
+
   it('la GET NON porta comunque la firma del genitore né la nota interna', async () => {
     h.ruolo = 'educator'
     await GET(get())

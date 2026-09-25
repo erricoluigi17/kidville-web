@@ -4,6 +4,7 @@ import { AppBar } from '@/components/features/shell/AppBar';
 import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto';
 import TeacherBottomNav from '@/components/features/teacher/TeacherBottomNav';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
+import { AvvisiSettimanaliApp } from '@/components/providers/AvvisiSettimanaliApp';
 import { requireArea } from '@/lib/auth/area-guard';
 
 // Cornice persistente dell'area Insegnante: AppBar verde (wordmark + back +
@@ -41,6 +42,8 @@ export default async function TeacherLayout({ children }: { children: React.Reac
       <Suspense fallback={null}>
         <NativePushAutoRegister />
       </Suspense>
+      {/* Avvisi settimanali dell'app nativa (notifiche spente, binario 1.0): sul web non rende niente. */}
+      <AvvisiSettimanaliApp />
       {/* Con la tastiera aperta Chromium allinea il campo a fuoco a `top: 0` —
           sotto l'AppBar sticky — e NON onora lo `scroll-margin-top` dichiarato
           in globals.css. Misurato sul genitore (82 px su 112 coperti), ma la

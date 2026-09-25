@@ -140,6 +140,7 @@
   "modulisticaAl": "al",
   "modulisticaNoteGenitore": "Note genitore:",
   "modulisticaApriDocumento": "Apri documento",
+  "modulisticaDocumentoNonApribile": "Non è stato possibile aprire il certificato. Riprova.",
   "modulisticaNotaValidazioneLabel": "Nota di validazione (opzionale, obbligatoria per il rifiuto)",
   "modulisticaNotaPlaceholder": "Es. Periodo corretto in 01/03–04/03",
   "modulisticaRifiuta": "Rifiuta",

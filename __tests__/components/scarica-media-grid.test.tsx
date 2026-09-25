@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-library/react'
 
 /**
- * I DUE PULSANTI DELLA GALLERIA DEVONO ESSERE LO STESSO PULSANTE.
+ * I DUE PULSANTI DELLA GALLERIA DEVONO ESSERE LO STESSO PULSANTE — e da app 1.1
+ * passano dall'HELPER UNICO (`scaricaMedia` di `@/lib/native/scarica`, NAT2).
  *
  * ─── IL DIFETTO ──────────────────────────────────────────────────────────────
  * «Scarica» e «Condividi» erano scritti DUE VOLTE in `MediaGrid`: una sulla card
@@ -10,34 +11,51 @@ import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/re
  * aveva nemmeno un `logClient` — e questo è il motivo per cui in trenta giorni
  * di `app_log` esiste UNA sola riga sullo scarico, e viene dal visore.
  *
- * Questo file blocca ciò che rende il difetto irripetibile:
- *  1. i due punti chiamano la STESSA funzione, con lo STESSO argomento;
- *  2. l'esito finisce sempre in `app_log` — successo compreso, perché senza
- *     «nessun log» non distingue «tutto ok» da «non è mai partito niente»;
- *  3. il nome del file ha un'estensione (prima era la didascalia nuda).
+ * ─── APP 1.1 (spec 2026-09-24 §7) ───────────────────────────────────────────
+ * Foto e video vanno DIRETTAMENTE in Galleria/Rullino. La strada la decide
+ * l'helper (`scaricaMedia`), non `MediaGrid`: qui si verifica che la griglia lo
+ * chiami — con il `tipo` giusto, perché un video passato come foto finirebbe in
+ * `savePhoto` e la Galleria lo rifiuterebbe — e che il log dell'esito resti UNO
+ * (l'helper logga da sé: una seconda riga da `MediaGrid` raddoppierebbe i
+ * successi in `app_log`).
+ *
+ * E «Scarica» anche per docenti e Segreteria, con la prop dedicata `scaricabile`
+ * — senza Condividi e senza «Segnala», che sono gesti del genitore.
  */
 
+type ArgomentoScaricaMedia = {
+  url: string
+  nomeFile: string
+  tipo: 'foto' | 'video'
+  titolo?: string
+  etichetta?: string
+}
+
 // I doppi sono TIPIZZATI: senza gli argomenti dichiarati, `mock.calls[0][0]` è
-// una tupla vuota per TypeScript e il gate `tsc --noEmit` cade — cioè il lock
-// più importante di questo file non compilerebbe nemmeno.
-const scaricaMock = vi.hoisted(() =>
-  vi.fn<(input: { url: string; nomeFile: string; titolo?: string }) => Promise<{ esito: string; motivo?: string }>>(),
+// una tupla vuota per TypeScript e il gate `tsc --noEmit` cade.
+const scaricaMediaMock = vi.hoisted(() =>
+  vi.fn<(input: ArgomentoScaricaMedia) => Promise<{ esito: string; motivo?: string }>>(),
 )
 const condividiLinkMock = vi.hoisted(() =>
   vi.fn<(input: { url?: string; title?: string; text?: string }) => Promise<string>>(),
 )
 const logClientMock = vi.hoisted(() => vi.fn())
+/** L'helper VERO, per il caso che deve passare dal suo log e non da un finto. */
+const vero = vi.hoisted(() => ({ scaricaMedia: null as null | ((i: ArgomentoScaricaMedia) => Promise<unknown>) }))
 
 vi.mock('@/lib/native/scarica', async () => {
   // `nomeFileScarico` NON si finge: il nome del file è metà della correzione, e
   // un doppio finto lo direbbe giusto qualunque cosa faccia il vero.
-  const vero = await vi.importActual<typeof import('@/lib/native/scarica')>('@/lib/native/scarica')
-  return { ...vero, scarica: scaricaMock }
+  const modulo = await vi.importActual<typeof import('@/lib/native/scarica')>('@/lib/native/scarica')
+  vero.scaricaMedia = modulo.scaricaMedia as unknown as (i: ArgomentoScaricaMedia) => Promise<unknown>
+  return { ...modulo, scaricaMedia: scaricaMediaMock }
 })
-vi.mock('@/lib/native/share', () => ({ condividiLink: condividiLinkMock }))
+vi.mock('@/lib/native/share', () => ({ condividiLink: condividiLinkMock, condividiFileLocale: vi.fn() }))
 vi.mock('@/lib/logging/client', () => ({ logClient: logClientMock, nomeErrore: () => 'Error' }))
 vi.mock('@/components/features/segnalazioni/SegnalaContenuto', () => ({
-  SegnalaContenuto: () => null,
+  // Un segnaposto VISIBILE, non `null`: il test sullo staff deve poter dire che
+  // la segnalazione NON c'è, e un finto che non rende niente lo direbbe sempre.
+  SegnalaContenuto: () => <span data-testid="segnala-contenuto" />,
 }))
 
 /** next-intl con il catalogo VERO: le etichette devono esistere davvero. */
@@ -54,6 +72,8 @@ import { MediaGrid, type MediaItem } from '@/components/features/gallery/MediaGr
 
 const URL_FIRMATO =
   'https://esempio.supabase.co/storage/v1/object/sign/gallery/uploads/abc/foto.jpg?token=xyz'
+const URL_VIDEO =
+  'https://esempio.supabase.co/storage/v1/object/sign/gallery/uploads/abc/clip.mp4?token=xyz'
 
 const VOCE: MediaItem = {
   id: 'm1',
@@ -67,10 +87,24 @@ const VOCE: MediaItem = {
   uploader_name: 'Insegnante',
 }
 
+const VIDEO: MediaItem = {
+  ...VOCE,
+  id: 'm2',
+  file_url: URL_VIDEO,
+  file_type: 'video',
+  caption: 'Recita di fine anno',
+}
+
+/** Apre il visore del media indicato (per la foto: la miniatura; per il video: la card). */
+function apriVisore(etichettaCard: string) {
+  fireEvent.click(screen.getByRole('button', { name: etichettaCard }))
+  return screen.getByRole('dialog')
+}
+
 describe('MediaGrid — lo scarico lato genitore', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    scaricaMock.mockResolvedValue({ esito: 'web-blob' })
+    scaricaMediaMock.mockResolvedValue({ esito: 'web-blob' })
     condividiLinkMock.mockResolvedValue('foglio')
     vi.spyOn(window, 'alert').mockImplementation(() => {})
   })
@@ -86,7 +120,7 @@ describe('MediaGrid — lo scarico lato genitore', () => {
     //    visore esista: dopo ce ne sarebbero due con lo stesso nome).
     const sullaCard = screen.getByTitle('Scarica')
     fireEvent.click(sullaCard)
-    await waitFor(() => expect(scaricaMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(1))
 
     // 2) Si apre il visore e si preme il suo «Scarica», che è un ALTRO elemento.
     fireEvent.click(screen.getByAltText('Laboratorio dei colori'))
@@ -94,127 +128,175 @@ describe('MediaGrid — lo scarico lato genitore', () => {
     const nelVisore = tutti.find((b) => b !== sullaCard)
     expect(nelVisore).toBeDefined()
     fireEvent.click(nelVisore!)
-    await waitFor(() => expect(scaricaMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(2))
 
     // È il lock: due punti, un solo comportamento.
-    expect(scaricaMock.mock.calls[1][0]).toEqual(scaricaMock.mock.calls[0][0])
+    expect(scaricaMediaMock.mock.calls[1][0]).toEqual(scaricaMediaMock.mock.calls[0][0])
   })
 
-  it('il file scaricato ha un nome CON estensione (prima era la didascalia nuda)', async () => {
+  it('passa dall’helper 1.1 con nome CON estensione, tipo `foto` ed etichetta `gallery`', async () => {
     render(<MediaGrid items={[VOCE]} showActions />)
 
     fireEvent.click(screen.getByTitle('Scarica'))
-    await waitFor(() => expect(scaricaMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(1))
 
-    expect(scaricaMock.mock.calls[0][0]).toEqual({
+    expect(scaricaMediaMock.mock.calls[0][0]).toEqual({
       url: URL_FIRMATO,
       nomeFile: 'Laboratorio dei colori.jpg',
+      tipo: 'foto',
       titolo: 'Laboratorio dei colori',
+      etichetta: 'gallery',
     })
   })
 
-  it('anche il SUCCESSO lascia una riga: senza, il silenzio sembra salute', async () => {
+  it('un VIDEO si dichiara `video`: con `foto` finirebbe in `savePhoto` e la Galleria lo rifiuterebbe', async () => {
+    render(<MediaGrid items={[VIDEO]} showActions />)
+
+    fireEvent.click(screen.getByTitle('Scarica'))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(1))
+
+    expect(scaricaMediaMock.mock.calls[0][0]).toMatchObject({
+      url: URL_VIDEO,
+      nomeFile: 'Recita di fine anno.mp4',
+      tipo: 'video',
+    })
+  })
+
+  it('il log dell’esito lo scrive l’helper: `MediaGrid` non aggiunge una seconda riga', async () => {
+    // Qualunque esito: se `MediaGrid` rilogga, qui compare una riga sua.
+    scaricaMediaMock.mockResolvedValue({ esito: 'non-riuscito', motivo: 'http-403|condivisione-non-riuscita' })
     render(<MediaGrid items={[VOCE]} showActions />)
 
     fireEvent.click(screen.getByTitle('Scarica'))
-    await waitFor(() => expect(logClientMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(1))
+    // Si aspetta che la promessa sia risolta (il `finally` rilascia la guardia):
+    // un secondo clic che riparte prova che il primo è arrivato in fondo.
+    fireEvent.click(screen.getByTitle('Scarica'))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(2))
 
-    // ⚠️ NESSUN campo `route`, ed è la parte che questa asserzione custodisce.
-    // Fino al 2026-09-06 queste righe dichiaravano `route: '/gallery'`, una pagina che
-    // NON ESISTE: `MediaGrid` è montata su `/parent/gallery`, `/parent/diary`,
-    // `/teacher/gallery` e `/admin/gallery`, e nessuna delle quattro si chiama così.
-    // `logClient` il luogo se lo legge da sé (`e.route || pagina()`, cioè
-    // `location.pathname` già redatto): passare una costante SOPPRIMEVA il luogo vero e
-    // rendeva indistinguibili in `app_log` quattro superfici diverse. `toHaveBeenCalledWith`
-    // pretende l'oggetto ESATTO, quindi se qualcuno rimette il campo questo test diventa
-    // rosso — che è il motivo per cui l'asserzione è scritta così e non con
-    // `objectContaining`.
-    expect(logClientMock).toHaveBeenCalledWith({
-      livello: 'warn',
-      evento: 'fetch',
-      messaggio: 'gallery-scarico-riuscito:web-blob',
-    })
+    expect(logClientMock).not.toHaveBeenCalled()
   })
 
-  it('il ripiego si legge nel log, COL MOTIVO (la riga di ieri non lo aveva)', async () => {
-    scaricaMock.mockResolvedValue({
-      esito: 'ripiego-condivisione',
-      motivo: 'plugin-filesystem-assente',
+  it('con l’helper VERO sul web: UNA sola riga in `app_log`, successo compreso, coi campi dell’helper', async () => {
+    // Il web vero di jsdom: `fetch` → `blob:` → ancora `download`.
+    scaricaMediaMock.mockImplementation((input) => vero.scaricaMedia!(input) as Promise<{ esito: string }>)
+    // ⚠️ Il corpo è un Uint8Array, MAI un `new Blob(...)`: in jsdom il Blob non ha
+    // `stream()`, e `new Response(<Blob di jsdom>)` in Node 22 (la CI) lancia
+    // `object.stream is not a function` — l'helper finiva nel ripiego e l'ancora non
+    // partiva — mentre in Node 24 usciva il TESTO «[object Blob]» al posto della foto.
+    // Per questo sotto si asseriscono i BYTE e il tipo arrivati a `createObjectURL`.
+    const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
+    const fetchMock = vi.fn(async () => new Response(JPEG, {
+      status: 200,
+      headers: { 'content-type': 'image/jpeg' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const creaIndirizzo = vi.fn((oggetto: Blob) => {
+      void oggetto
+      return 'blob:kidville/1'
     })
+    const revoca = vi.fn()
+    const originaleCrea = URL.createObjectURL
+    const originaleRevoca = URL.revokeObjectURL
+    URL.createObjectURL = creaIndirizzo as unknown as typeof URL.createObjectURL
+    URL.revokeObjectURL = revoca as unknown as typeof URL.revokeObjectURL
+    const clic = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    try {
+      render(<MediaGrid items={[VOCE]} showActions />)
+      fireEvent.click(screen.getByTitle('Scarica'))
+      await waitFor(() => expect(logClientMock).toHaveBeenCalledTimes(1))
+
+      expect(fetchMock).toHaveBeenCalledWith(URL_FIRMATO)
+      // Il file che l'ancora scarica è la FOTO: byte e tipo, non «[object Blob]».
+      expect(creaIndirizzo).toHaveBeenCalledTimes(1)
+      const file = creaIndirizzo.mock.calls[0][0]
+      expect(file.type).toBe('image/jpeg')
+      expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual(Array.from(JPEG))
+      expect(clic).toHaveBeenCalledTimes(1)
+      const ancora = clic.mock.contexts[0] as HTMLAnchorElement
+      expect(ancora.getAttribute('href')).toBe('blob:kidville/1')
+      expect(ancora.download).toBe('Laboratorio dei colori.jpg')
+      // ⚠️ NESSUN campo `route`: `logClient` la rotta se la legge da sé, e una
+      // costante renderebbe indistinguibili le quattro superfici della galleria.
+      expect(logClientMock).toHaveBeenCalledWith({
+        livello: 'warn',
+        evento: 'fetch',
+        messaggio: 'gallery-scarico-riuscito:web-blob',
+        campi: { esito: 'web-blob', operazione: 'scarico', piattaforma: 'web' },
+      })
+    } finally {
+      URL.createObjectURL = originaleCrea
+      URL.revokeObjectURL = originaleRevoca
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('il ripiego sul foglio NON avvisa: il foglio è già a schermo', async () => {
+    scaricaMediaMock.mockResolvedValue({ esito: 'ripiego-condivisione', motivo: 'plugin-assenti:media' })
     const avviso = vi.spyOn(window, 'alert').mockImplementation(() => {})
     render(<MediaGrid items={[VOCE]} showActions />)
 
     fireEvent.click(screen.getByTitle('Scarica'))
-    await waitFor(() => expect(logClientMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(1))
+    await Promise.resolve()
 
-    expect(logClientMock.mock.calls[0][0]).toMatchObject({
-      livello: 'warn',
-      messaggio: 'gallery-scarico-ripiego-condivisione: plugin-filesystem-assente',
-    })
-    // E QUI NON SI AVVISA: il foglio di sistema si è aperto, l'utente lo sta
-    // guardando. Un popup sopra un foglio già visibile è un secondo gesto che
-    // nessuno ha chiesto — la metà «negativa» del lock qui sotto, senza la quale
-    // «avvisa sempre» passerebbe verde.
     expect(avviso).not.toHaveBeenCalled()
   })
 
   it('lo scarico finito NEGLI APPUNTI avvisa: una copia muta si legge come un pulsante rotto', async () => {
-    // È il ramo del genitore su Firefox desktop (niente Web Share API) con
-    // l'indirizzo firmato scaduto: `scarica` ripiega, il link finisce negli
-    // appunti, e sullo schermo non cambia niente. Ha premuto «Scarica» e non ha
-    // il file: senza questo avviso il pulsante torna a sembrare rotto.
-    scaricaMock.mockResolvedValue({ esito: 'ripiego-appunti', motivo: 'http-403' })
+    scaricaMediaMock.mockResolvedValue({ esito: 'ripiego-appunti', motivo: 'http-403' })
     const avviso = vi.spyOn(window, 'alert').mockImplementation(() => {})
     render(<MediaGrid items={[VOCE]} showActions />)
 
     fireEvent.click(screen.getByTitle('Scarica'))
     await waitFor(() => expect(avviso).toHaveBeenCalledTimes(1))
 
-    // Il testo viene dal catalogo VERO (`messages/it/shared.json`): una chiave
-    // inventata qui direbbe «avvisato» mostrando il nome della chiave.
+    // Il testo viene dal catalogo VERO (`messages/it/shared.json`).
     expect(avviso).toHaveBeenCalledWith('Link copiato negli appunti!')
-    // E il ripiego resta un TOKEN SUO in `app_log`: contarlo insieme al foglio
-    // nasconderebbe proprio il ramo che si è dovuto rendere parlante.
-    expect(logClientMock.mock.calls[0][0]).toMatchObject({
-      livello: 'warn',
-      messaggio: 'gallery-scarico-ripiego-appunti: http-403',
-    })
   })
 
-  it('quando l’utente non ottiene NIENTE il livello è `error`, e lo stato http sta nel messaggio', async () => {
-    scaricaMock.mockResolvedValue({
-      esito: 'non-riuscito',
-      motivo: 'http-403|condivisione-non-riuscita',
-    })
+  it('app 1.1: il salvataggio DIRETTO in Galleria conferma, perché non apre nessun foglio', async () => {
+    scaricaMediaMock.mockResolvedValue({ esito: 'nativo-galleria' })
+    const avviso = vi.spyOn(window, 'alert').mockImplementation(() => {})
     render(<MediaGrid items={[VOCE]} showActions />)
 
     fireEvent.click(screen.getByTitle('Scarica'))
-    await waitFor(() => expect(logClientMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(avviso).toHaveBeenCalledTimes(1))
 
-    const evento = logClientMock.mock.calls[0][0]
-    expect(evento).toMatchObject({
-      livello: 'error',
-      messaggio: 'gallery-scarico-non-riuscito: http-403|condivisione-non-riuscita',
-    })
-    // Lo `stato` NON si dichiara: `livelloEvento()` applicherebbe la politica di
-    // `livelloFetch`, che per un 403 risponde «non spedire» — e la riga appena
-    // aggiunta verrebbe scartata in silenzio, che è il difetto di partenza.
-    expect(evento).not.toHaveProperty('stato')
+    // Catalogo VERO: senza la chiave `t` restituirebbe il nome della chiave.
+    expect(avviso).toHaveBeenCalledWith('Salvato nella Galleria del telefono')
+  })
+
+  it('lo scarico NON RIUSCITO lo dice: l’utente non ha niente e altrimenti nessuno glielo direbbe', async () => {
+    scaricaMediaMock.mockResolvedValue({ esito: 'non-riuscito', motivo: 'http-403|condivisione-non-riuscita' })
+    const avviso = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    render(<MediaGrid items={[VOCE]} showActions />)
+
+    fireEvent.click(screen.getByTitle('Scarica'))
+    await waitFor(() => expect(avviso).toHaveBeenCalledTimes(1))
+
+    expect(avviso).toHaveBeenCalledWith('Scaricamento non riuscito, riprova')
+  })
+
+  it('un gesto ANNULLATO non è un guasto: niente avviso d’errore', async () => {
+    scaricaMediaMock.mockResolvedValue({ esito: 'non-riuscito', motivo: 'annullato' })
+    const avviso = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    render(<MediaGrid items={[VOCE]} showActions />)
+
+    fireEvent.click(screen.getByTitle('Scarica'))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(1))
+    // Si aspetta una PRESENZA: il secondo clic riparte solo dopo il `finally`
+    // del primo, cioè dopo che il ramo degli avvisi è già stato valutato.
+    fireEvent.click(screen.getByTitle('Scarica'))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(2))
+
+    expect(avviso).not.toHaveBeenCalled()
   })
 
   it('la pressione scartata perché uno scarico è già in corso lascia una riga', async () => {
-    /**
-     * «UNO SCARICO ALLA VOLTA» NON PUÒ ESSERE UN `return` MUTO.
-     *
-     * `scarica()` non lancia mai, ma può NON RISOLVERE: la `fetch` verso
-     * l'indirizzo firmato è cross-origin e nella WebView può accettare e tacere —
-     * è la riga di produzione del 2026-09-05 con `stato_http = 0`. Qui la si
-     * riproduce con una promessa appesa: da quel momento il `finally` non gira
-     * mai, il ref resta alzato per tutta la vita della pagina e OGNI pressione
-     * successiva esce dalla guardia. Senza la riga di log, «pulsante incagliato»
-     * e «nessuno l'ha mai premuto» sarebbero lo stesso silenzio in `app_log`.
-     */
-    scaricaMock.mockReturnValue(new Promise<{ esito: string }>(() => {}))
+    // L'helper può NON RISOLVERE (fetch cross-origin muta nella WebView): da quel
+    // momento ogni pressione esce dalla guardia, e deve dirlo.
+    scaricaMediaMock.mockReturnValue(new Promise<{ esito: string }>(() => {}))
     render(<MediaGrid items={[VOCE]} showActions />)
 
     const bottone = screen.getByTitle('Scarica')
@@ -222,11 +304,7 @@ describe('MediaGrid — lo scarico lato genitore', () => {
     fireEvent.click(bottone)
 
     await waitFor(() => expect(logClientMock).toHaveBeenCalledTimes(1))
-    // La guardia ha tenuto: `scarica` è partita UNA volta sola…
-    expect(scaricaMock).toHaveBeenCalledTimes(1)
-    // …e l'unica riga in tabella è quella della pressione scartata, perché la
-    // prima non è mai arrivata a un esito.
-    // Anche qui senza `route`: vedi la ragione per esteso nel test del successo.
+    expect(scaricaMediaMock).toHaveBeenCalledTimes(1)
     expect(logClientMock).toHaveBeenCalledWith({
       livello: 'warn',
       evento: 'fetch',
@@ -253,5 +331,88 @@ describe('MediaGrid — lo scarico lato genitore', () => {
 
     fireEvent.click(screen.getByTitle('Condividi'))
     await waitFor(() => expect(avviso).toHaveBeenCalledTimes(1))
+  })
+
+  it('col genitore il visore porta anche Condividi e «Segnala»', () => {
+    render(<MediaGrid items={[VOCE]} showActions />)
+    const visore = apriVisore('Foto: Laboratorio dei colori')
+
+    expect(visore.querySelector('[data-testid="segnala-contenuto"]')).not.toBeNull()
+    // Solo dentro i comandi del VISORE: il Condividi della card resta nel DOM (è
+    // `inert`, e testing-library non esclude i nodi `inert`), quindi un conteggio
+    // su tutto lo schermo sarebbe verde anche senza Condividi nel visore.
+    const comandi = within(visore).getByTestId('visore-comandi')
+    expect(within(comandi).getByRole('button', { name: 'Condividi' })).toBeTruthy()
+  })
+})
+
+describe('MediaGrid — «Scarica» per docenti e Segreteria (`scaricabile`)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    scaricaMediaMock.mockResolvedValue({ esito: 'nativo-galleria' })
+    vi.spyOn(window, 'alert').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('anche per lo staff il salvataggio in Galleria si conferma a schermo', async () => {
+    render(<MediaGrid items={[VIDEO]} scaricabile />)
+
+    fireEvent.click(screen.getByTitle('Scarica'))
+    await waitFor(() => expect(window.alert).toHaveBeenCalledTimes(1))
+
+    expect(window.alert).toHaveBeenCalledWith('Salvato nella Galleria del telefono')
+  })
+
+  it('sulla card: «Scarica» c’è, Condividi NO', async () => {
+    render(<MediaGrid items={[VOCE]} scaricabile onDelete={async () => {}} />)
+
+    fireEvent.click(screen.getByTitle('Scarica'))
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(1))
+    expect(scaricaMediaMock.mock.calls[0][0]).toEqual({
+      url: URL_FIRMATO,
+      nomeFile: 'Laboratorio dei colori.jpg',
+      tipo: 'foto',
+      titolo: 'Laboratorio dei colori',
+      etichetta: 'gallery',
+    })
+    expect(screen.queryByTitle('Condividi')).toBeNull()
+  })
+
+  it('nel visore: «Scarica» c’è (e scarica il VIDEO come video), Condividi e «Segnala» NO', async () => {
+    render(<MediaGrid items={[VIDEO]} scaricabile onDelete={async () => {}} />)
+    const visore = apriVisore('Video: Recita di fine anno')
+
+    const comandi = screen.getByTestId('visore-comandi')
+    expect(visore.contains(comandi)).toBe(true)
+    const nelVisore = Array.from(comandi.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Scarica'),
+    )
+    expect(nelVisore).toBeDefined()
+    fireEvent.click(nelVisore!)
+    await waitFor(() => expect(scaricaMediaMock).toHaveBeenCalledTimes(1))
+    expect(scaricaMediaMock.mock.calls[0][0]).toMatchObject({ url: URL_VIDEO, tipo: 'video' })
+
+    expect(screen.queryByRole('button', { name: 'Condividi' })).toBeNull()
+    expect(screen.queryByTestId('segnala-contenuto')).toBeNull()
+    // Elimina resta dov'era: il solo scarico non toglie niente allo staff.
+    expect(screen.getByRole('button', { name: /Elimina Media/ })).toBeTruthy()
+  })
+
+  it('senza `scaricabile` né `showActions` non c’è nessuno «Scarica» (il default non cambia)', () => {
+    render(<MediaGrid items={[VOCE]} onDelete={async () => {}} />)
+    expect(screen.queryByTitle('Scarica')).toBeNull()
+    apriVisore('Foto: Laboratorio dei colori')
+    expect(screen.queryByRole('button', { name: 'Scarica' })).toBeNull()
+    expect(screen.queryByTestId('visore-comandi')).toBeNull()
+  })
+
+  it('senza indirizzo firmato non resta una riga di comandi vuota nel visore', () => {
+    render(<MediaGrid items={[{ ...VOCE, file_url: null }]} scaricabile />)
+    expect(screen.queryByTitle('Scarica')).toBeNull()
+    apriVisore('Foto: Laboratorio dei colori')
+    expect(screen.queryByTestId('visore-comandi')).toBeNull()
   })
 })

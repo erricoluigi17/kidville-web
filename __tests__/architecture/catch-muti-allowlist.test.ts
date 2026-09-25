@@ -110,7 +110,8 @@ const ESENTE = 'src/lib/logging/';
 // `.catch(() => {})` inghiottiva l'esito del comando «Fattura»: al genitore il pulsante
 // spariva — o non faceva niente — e di quel guasto non restava una riga da nessuna parte,
 // che è lo stesso silenzio delle email di credenziali da cui nasce la regola 6. Adesso
-// l'esito passa da `registraEsitoScarico` (`src/lib/pagamenti/scarico-fattura.ts`), che
+// l'esito passa da `scaricaDocumento` (`src/lib/native/scarica.ts`, chiamato da
+// `salvaFattura` in `src/lib/pagamenti/scarico-fattura.ts`; 2026-09-25, NAT3b), che
 // logga anche il SUCCESSO: senza la riga del successo, «nessun log» non distinguerebbe
 // «va tutto bene» da «il pulsante non ha mai fatto partire niente».
 //
@@ -144,8 +145,13 @@ const ESENTE = 'src/lib/logging/';
 // Rimisurati il 2026-09-15 sul ramo finale (`fix/chat-doppioni-coda-notifica`, dopo le parti B e C,
 // che toccano pagine chat, `ChatMessageArea`, Service Worker, pannelli e shell nativa), con la stessa
 // misura di questo file: 46 file e 69 occorrenze, uguali all'allowlist. I tetti restano quelli.
-const MAX_FILE = 46;
-const MAX_OCCORRENZE = 69;
+//
+// 🔻 46 → 45 e 69 → 68 il 2026-09-25 (NAT3g1): `CompetenzePanel.tsx` esce dall'allowlist. Il suo
+// unico `.catch` muto era sul caricamento delle quinte: con l'elenco non arrivato la pagina
+// diceva «nessuna quinta», uguale al caso vero, e non restava traccia. Ora logga
+// (`competenze-sezioni-non-caricate`).
+const MAX_FILE = 45;
+const MAX_OCCORRENZE = 68;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

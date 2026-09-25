@@ -175,5 +175,8 @@
   "docentiMaterieRimuovi": "Remove assignment",
   "materieElimina": "Delete subject",
   "obiettiviElimina": "Delete objective",
+  "obiettiviModifica": "Edit objective",
+  "obiettiviSalvaModifica": "Save",
+  "obiettiviAnnullaModifica": "Cancel",
   "periodiElimina": "Delete period"
 }

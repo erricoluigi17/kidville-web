@@ -152,7 +152,50 @@ export function useDiaryDay(
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [savedStudentIds, setSavedStudentIds] = useState<Set<string>>(new Set());
+    /**
+     * CHI HA UNA REGISTRAZIONE IN ARCHIVIO OGGI, per il tipo aperto, con i
+     * `dettagli` che l'archivio contiene: alunno_id → dettagli.
+     *
+     * Non è la ✅, ed è il motivo per cui esiste. La ✅ dice «ciò che vedi a
+     * schermo è ciò che c'è in archivio», e sparisce appena si tocca il campo o si
+     * preme «Tutti a nanna ora». Se fosse lei a dire «questo bambino aveva la
+     * nanna salvata», svuotare l'orario la toglierebbe PRIMA del salvataggio, e il
+     * salvataggio non saprebbe più che c'è una riga da cancellare: la riga resta,
+     * il campo è vuoto, il toast è verde (il difetto N1 del 24/09).
+     *
+     * I dettagli servono al caso di guasto: se la cancellazione non riesce, lo
+     * schermo torna a mostrare ciò che in archivio c'è ancora, invece di un campo
+     * vuoto che finge il successo.
+     *
+     * ⚠️ PORTA IL SUO TIPO (`tipo`). Le righe di `nanna_inizio` lette mentre è
+     * aperta la Sveglia hanno il campo `orario_fine` «vuoto» per costruzione: se
+     * valessero per il tipo aperto, il Salva cancellerebbe le Sveglie vere di tutti
+     * i bambini con la Nanna registrata. `idsDaTogliere` resta vuoto finché `tipo`
+     * non è il tipo aperto.
+     */
+    const [registrate, setRegistrate] = useState<{
+        tipo: DiaryEventType | null;
+        righe: Record<string, Record<string, unknown>>;
+    }>({ tipo: null, righe: {} });
+    /**
+     * Il numero dell'ULTIMO ripristino chiesto. Ogni cambio di tipo lo incrementa,
+     * e un ripristino che torna col numero vecchio non scrive niente: una GET
+     * arrivata in ritardo (la Nanna toccata e subito dopo la Sveglia) riempirebbe
+     * lo stato del tipo aperto con le righe di un altro — prima di N1 sbagliava lo
+     * schermo, dopo N1 fa partire DELETE su righe che nessuno ha toccato.
+     */
+    const ripristinoCorrente = useRef(0);
+    /**
+     * Il riquadro aperto ADESSO, letto dopo un `await`. `selectedEvent` no: dentro
+     * `handleSave` è quello della chiusura, cioè del momento in cui si è premuto Salva.
+     * Serve a riconoscere il riquadro CHIUSO E RIAPERTO mentre il salvataggio era in
+     * volo: stesso tipo, ma un ripristino nuovo che può aver letto l'archivio prima
+     * che la POST o la DELETE ci arrivassero.
+     */
+    const tipoAperto = useRef<DiaryEventType | null>(null);
     const [showSavedToast, setShowSavedToast] = useState(false);
+    /** Cosa dice il toast: quanti salvati e quanti orari tolti nell'ultimo salvataggio. */
+    const [esitoSalvataggio, setEsitoSalvataggio] = useState<{ salvati: number; tolti: number }>({ salvati: 0, tolti: 0 });
     const [activities, setActivities] = useState<ActivityItem[]>([]);
     const [notaLibera, setNotaLibera] = useState('');
     // Nota per SINGOLO bambino (E1): mappa alunno_id → testo. Distinta da notaLibera
@@ -236,15 +279,22 @@ export function useDiaryDay(
     // Ripristina lo stato UI dai dati già salvati su Supabase per un certo tipo evento
     const restoreFromSupabase = async (eventType: DiaryEventType, studentList?: DiaryStudent[]) => {
         const list = studentList ?? students;
-        if (list.length === 0 || !sezione) { setSavedStudentIds(new Set()); return; }
+        // Questo ripristino vale solo finché nessuno ne ha chiesto un altro: dopo
+        // ogni `await` si controlla, e se è superato si esce SENZA scrivere stato.
+        const mio = ++ripristinoCorrente.current;
+        const superato = () => mio !== ripristinoCorrente.current;
+        const nessuna = () => { setSavedStudentIds(new Set()); setRegistrate({ tipo: eventType, righe: {} }); };
+        if (list.length === 0 || !sezione) { nessuna(); return; }
         try {
             const today = todayISO();
             const res = await fetch(`/api/diary/entries?${paramClasse}&date=${today}&userId=${userId}`);
+            if (superato()) return;
             const entries = await res.json();
-            if (!Array.isArray(entries)) { setSavedStudentIds(new Set()); return; }
+            if (superato()) return;
+            if (!Array.isArray(entries)) { nessuna(); return; }
 
             const filtered = entries.filter((e: { tipo_evento: string }) => e.tipo_evento === eventType);
-            if (filtered.length === 0) { setSavedStudentIds(new Set()); return; }
+            if (filtered.length === 0) { nessuna(); return; }
 
             // Per ogni studente, prendi l'ultimo salvataggio
             const latestPerStudent: Record<string, { dettagli: Record<string, unknown>; activity_description?: string }> = {};
@@ -256,6 +306,7 @@ export function useDiaryDay(
 
             const newState = buildInitialState(eventType, list);
             const savedIds = new Set<string>();
+            const inArchivio: Record<string, Record<string, unknown>> = {};
             const restoredNotes: Record<string, string> = {};
             Object.entries(latestPerStudent).forEach(([studentId, entry]) => {
                 // Nota per-bambino (E1): la ripopolo SEMPRE (prima dell'early-return
@@ -273,9 +324,16 @@ export function useDiaryDay(
                     if (!voceDaMostrare(eventType, entry.dettagli, { conNota: typeof nb === 'string' && nb.trim().length > 0 })) return;
                     newState[studentId] = entry.dettagli;
                     savedIds.add(studentId);
+                    // Solo le righe col CAMPO PIENO in archivio (niente `conNota`): è
+                    // ciò che la maestra può «svuotare». Una riga col campo già vuoto
+                    // (le vecchie `{orario_inizio: ''}`, anche se tenute in piedi da
+                    // una nota) non l'ha svuotata nessuno, e non la si cancella al
+                    // posto suo a un Salva qualsiasi.
+                    if (voceDaMostrare(eventType, entry.dettagli)) inArchivio[studentId] = entry.dettagli;
                 }
             });
             setNoteBambino(restoredNotes);
+            setRegistrate({ tipo: eventType, righe: inArchivio });
 
             // Ricostruisce activities[] con partecipazione per-studente dal primo entry trovato
             if (eventType === 'attivita') {
@@ -309,18 +367,27 @@ export function useDiaryDay(
             // Il diario è il posto con i dati più delicati dell'app (pasti, bagno, sonno,
             // partecipazione di ogni bambino): dell'errore esce la classe e basta.
             logClient({ livello: 'error', evento: 'fetch', messaggio: `diario-ripristino-dati-fallito: ${nomeErrore(err)}` });
+            // Il log sì (il guasto c'è stato), lo stato no se nel frattempo è
+            // aperto un altro tipo: azzerarlo cancellerebbe il ripristino giusto.
+            if (superato()) return;
             setSavedStudentIds(new Set());
+            setRegistrate({ tipo: eventType, righe: {} });
         }
     };
 
     const handleEventSelect = async (type: DiaryEventType) => {
         if (selectedEvent === type) {
+            // Chiudere il riquadro supera anche il ripristino eventualmente in volo.
+            ripristinoCorrente.current += 1;
+            tipoAperto.current = null;
             setSelectedEvent(null);
             return;
         }
         // Prima imposta il tipo e lo stato pulito
+        tipoAperto.current = type;
         setSelectedEvent(type);
         setSavedStudentIds(new Set());
+        setRegistrate({ tipo: null, righe: {} });
         setNotaLibera('');
         setNoteBambino({});
         // Inizializza con una attività vuota, con partecipazione null per ogni studente
@@ -367,6 +434,33 @@ export function useDiaryDay(
     };
 
     /**
+     * La DELETE di UNA registrazione di oggi: un bambino, un tipo evento. Lancia
+     * se la rotta non risponde ok. Condivisa fra il cestino e il salvataggio con
+     * l'orario svuotato, perché la richiesta deve essere la stessa: un tipo solo,
+     * mai «tutta la nanna» — Nanna e Sveglia sono due righe e due decisioni.
+     */
+    const cancellaInArchivio = async (studentId: string, tipo: DiaryEventType, uid: string) => {
+        const qs = new URLSearchParams({
+            alunno_id: studentId,
+            tipo_evento: tipo,
+            date: todayISO(),
+            userId: uid,
+        });
+        const res = await fetch(`/api/diary/entries?${qs.toString()}`, {
+            method: 'DELETE',
+            headers: { 'x-user-id': uid },
+        });
+        if (!res.ok) {
+            // Il nome porta lo status (`HTTP500`), perché `nomeErrore` lascia uscire
+            // dal dispositivo SOLO il nome della classe d'errore: con `Error` e basta,
+            // il log direbbe che è fallita e non come.
+            const e = new Error(String(res.status));
+            e.name = `HTTP${res.status}`;
+            throw e;
+        }
+    };
+
+    /**
      * ELIMINA una registrazione di nanna segnata per errore.
      *
      * Perché serve un gesto suo, e non «svuota il campo e risalva»: dopo il filtro
@@ -374,6 +468,8 @@ export function useDiaryDay(
      * salvataggio lascerebbe la riga in archivio esattamente com'era — un no-op che
      * SEMBRA aver funzionato, perché il campo è vuoto a schermo e la ✅ è sparita.
      * Sarebbe il difetto che stiamo chiudendo, riaperto dal suo stesso rimedio.
+     * (Per la sola NANNA, dal 24/09 il salvataggio quel caso lo gestisce: vedi
+     * `idsDaTogliere`. Per bagno, pasti e attività il cestino resta l'unica via.)
      *
      * Niente aggiornamento ottimistico: la ✅ si toglie SOLO a cancellazione avvenuta.
      * Una spunta che sparisce mentre la riga resta è la bugia opposta a quella di prima.
@@ -381,18 +477,13 @@ export function useDiaryDay(
     const eliminaRegistrazione = async (studentId: string) => {
         if (!selectedEvent || !userId || !eliminabile(selectedEvent)) return;
         try {
-            const qs = new URLSearchParams({
-                alunno_id: studentId,
-                tipo_evento: selectedEvent,
-                date: todayISO(),
-                userId,
-            });
-            const res = await fetch(`/api/diary/entries?${qs.toString()}`, {
-                method: 'DELETE',
-                headers: { 'x-user-id': userId },
-            });
-            if (!res.ok) throw new Error(String(res.status));
+            await cancellaInArchivio(studentId, selectedEvent, userId);
             setSavedStudentIds(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+            setRegistrate(prev => {
+                if (prev.tipo !== selectedEvent) return prev;
+                const righe = { ...prev.righe }; delete righe[studentId];
+                return { tipo: prev.tipo, righe };
+            });
             // Lo stato torna a com'è fatto un evento VUOTO di quel tipo, chiedendolo
             // a `buildInitialState` invece di cablare qui il campo da azzerare: era
             // `{ [campo]: '' }`, cioè la forma della sola nanna. Con cinque famiglie
@@ -409,8 +500,12 @@ export function useDiaryDay(
 
     // Cambio sezione dal consumer: la selezione e le spunte riferivano la sezione precedente.
     const resetSelection = () => {
+        // Un ripristino in volo riguarda la sezione precedente: superato.
+        ripristinoCorrente.current += 1;
+        tipoAperto.current = null;
         setSelectedEvent(null);
         setSavedStudentIds(new Set());
+        setRegistrate({ tipo: null, righe: {} });
     };
 
     /**
@@ -434,12 +529,52 @@ export function useDiaryDay(
         return studentStates[studentId] ?? {};
     };
 
-    /** Quanti finiranno davvero in archivio: la stessa regola del salvataggio. */
+    /** Una nota (di sezione o del bambino) tiene in piedi la voce: vedi `voceDaMostrare`. */
+    const conNotaDi = (studentId: string): boolean =>
+        notaLibera.trim().length > 0 || (noteBambino[studentId]?.trim().length ?? 0) > 0;
+
+    /**
+     * NANNA / SVEGLIA SVUOTATA ⇒ LA RIGA SI CANCELLA (decisione del titolare, 24/09).
+     *
+     * Chi aveva una registrazione in archivio (`registrate`, NON la ✅) e ora ha il
+     * CAMPO VUOTO esce dall'archivio con la DELETE di quel SOLO tipo: Nanna vuota
+     * toglie `nanna_inizio`, Sveglia vuota toglie `nanna_fine`, e l'altra riga resta
+     * com'è.
+     *
+     * Si decide SOLO sul campo, senza eccezioni: niente `conNota`. Una nota (del
+     * bambino o, peggio, di SEZIONE, che vale per tutti) non tiene in piedi la riga:
+     * se la tenesse, il bambino ripartirebbe nella POST con l'orario vuoto, la riga
+     * resterebbe in archivio, e il genitore leggerebbe la frase di ripiego «Ho fatto
+     * un bel sonnellino!» per una nanna che la maestra ha appena tolto. La riga si
+     * cancella con la sua nota: la regola dice «cancella la registrazione».
+     *
+     * Solo la nanna, di proposito: per bagno, pasti e attività il gesto d'uscita
+     * resta il cestino.
+     *
+     * E solo se `registrate` è DEL TIPO APERTO: righe di un altro tipo (una GET in
+     * ritardo, un salvataggio finito dopo un cambio di riquadro) non decidono
+     * nessuna cancellazione.
+     */
+    const idsDaTogliere: string[] = (selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine')
+        && registrate.tipo === selectedEvent
+        ? students
+            .filter(s => registrate.righe[s.id] !== undefined
+                && !voceDaMostrare(selectedEvent, dettagliDi(s.id)))
+            .map(s => s.id)
+        : [];
+    const daTogliere = idsDaTogliere.length;
+    const daTogliereSet = new Set(idsDaTogliere);
+
+    /**
+     * Quanti finiranno davvero in archivio: la stessa regola del salvataggio.
+     * Chi sta per essere cancellato (`idsDaTogliere`) NON conta: non riparte nella
+     * POST con l'orario vuoto.
+     */
     const daSalvare = selectedEvent === null
         ? 0
         : eventoSelettivo(selectedEvent)
-            ? students.filter(s => voceDaMostrare(selectedEvent, dettagliDi(s.id), {
-                conNota: notaLibera.trim().length > 0 || (noteBambino[s.id]?.trim().length ?? 0) > 0,
+            ? students.filter(s => !daTogliereSet.has(s.id) && voceDaMostrare(selectedEvent, dettagliDi(s.id), {
+                conNota: conNotaDi(s.id),
               })).length
             : students.length;
 
@@ -447,6 +582,16 @@ export function useDiaryDay(
         setIsSaving(true);
         try {
             if (!selectedEvent || !userId) return;
+            // IL RIQUADRO DI QUESTO SALVATAGGIO. Mentre la POST o le DELETE sono in
+            // volo i riquadri restano cliccabili: la maestra può aprire la Sveglia
+            // (o chiudere e riaprire). Il contatore dei ripristini sale a ogni cambio
+            // di tipo, alla chiusura e in `resetSelection`: se dopo un `await` non è
+            // più quello di adesso, lo stato per bambino sullo schermo è di un altro
+            // riquadro, e scriverci i «tolti» o i «falliti» della Nanna svuoterebbe
+            // una Sveglia vera — che il Salva successivo cancellerebbe.
+            // Log, avviso e toast restano: dicono com'è andato QUESTO salvataggio.
+            const giro = ripristinoCorrente.current;
+            const stessoRiquadro = () => giro === ripristinoCorrente.current;
             const nowIso = new Date().toISOString();
             // CHI FINISCE IN ARCHIVIO. Una domanda sola, e una funzione sola a
             // risponderla: `voceDaMostrare` (`@/lib/diary/registrazione`).
@@ -481,52 +626,175 @@ export function useDiaryDay(
             // cui l'attività è diventata selettiva quella divergenza avrebbe
             // significato «nessuna attività salvata, mai» — con un toast verde.
             // L'ha trovata un test, non io.
+            // Chi aveva la nanna in archivio e ora ha il campo vuoto: esce con la
+            // DELETE del suo tipo (vedi `idsDaTogliere`). Calcolato PRIMA della
+            // POST, sullo stesso stato che la schermata mostra — e quei bambini
+            // restano FUORI dalla POST, anche con una nota: se ci entrassero, la
+            // rotta aggiornerebbe la riga con l'orario vuoto invece di toglierla.
+            const daCancellare = idsDaTogliere;
             const targetStudents = students
+                .filter(student => !daTogliereSet.has(student.id))
                 .map(student => ({ student, dettagli: dettagliDi(student.id) }))
                 .filter(({ student, dettagli }) => voceDaMostrare(
                     selectedEvent, dettagli,
                     { conNota: notaSezione || (noteBambino[student.id]?.trim().length ?? 0) > 0 },
                 ));
-            if (targetStudents.length === 0) return;
-            const payload = targetStudents.map(({ student, dettagli }) => {
-                return {
-                    alunno_id: student.id,
-                    maestra_id: userId,
-                    tipo_evento: selectedEvent,
-                    orario_inizio: nowIso,
-                    dettagli,
-                    // Nota di sezione: identica per tutti (broadcast).
-                    nota_libera: notaLibera.trim() || null,
-                    // Nota per-bambino: solo di questo bambino, altrimenti null (E1).
-                    nota_bambino: noteBambino[student.id]?.trim() || null,
-                };
-            });
+            if (targetStudents.length === 0 && daCancellare.length === 0) return;
 
-            const res = await fetch(`/api/diary/entries?userId=${userId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                body: JSON.stringify(payload),
-            });
+            let salvati = 0;
+            if (targetStudents.length > 0) {
+                const payload = targetStudents.map(({ student, dettagli }) => {
+                    return {
+                        alunno_id: student.id,
+                        maestra_id: userId,
+                        tipo_evento: selectedEvent,
+                        orario_inizio: nowIso,
+                        dettagli,
+                        // Nota di sezione: identica per tutti (broadcast).
+                        nota_libera: notaLibera.trim() || null,
+                        // Nota per-bambino: solo di questo bambino, altrimenti null (E1).
+                        nota_bambino: noteBambino[student.id]?.trim() || null,
+                    };
+                });
 
-            // 200 = tutto ok, 207 = parzialmente salvato (es. colonna mancante ma righe inserite)
-            if (!res.ok && res.status !== 207) {
-                const err = await res.json();
-                throw new Error(err.error || 'Errore salvataggio');
+                const res = await fetch(`/api/diary/entries?userId=${userId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+                    body: JSON.stringify(payload),
+                });
+
+                // 200 = tutto ok, 207 = parzialmente salvato (es. colonna mancante ma righe inserite)
+                if (!res.ok && res.status !== 207) {
+                    const err = await res.json();
+                    throw new Error(err.error || 'Errore salvataggio');
+                }
+
+                const result = await res.json();
+                // Conta quanti sono stati effettivamente salvati
+                const savedItems = Array.isArray(result) ? result : (result.saved ?? []);
+                const savedIds = new Set<string>(
+                    savedItems
+                        .map((r: { alunno_id?: string }) => r.alunno_id)
+                        .filter(Boolean)
+                );
+                // Se nessuno ha un alunno_id nel result, segna come salvati i soli inviati (upsert silent)
+                const salvatiIds = savedIds.size > 0 ? savedIds : new Set(targetStudents.map(({ student }) => student.id));
+                // Le ✅ sono del riquadro salvato: su un altro finirebbero su chi non c'entra.
+                if (stessoRiquadro()) setSavedStudentIds(salvatiIds);
+                // Ciò che ora è in archivio: se fra un minuto la maestra svuota uno di
+                // questi campi, il salvataggio deve sapere che c'è una riga da togliere.
+                // Solo chi ha il CAMPO PIENO (niente `conNota`, come al ripristino): una
+                // riga salvata con l'orario vuoto e la sola nota non l'ha «svuotata»
+                // nessuno, e il Salva successivo non deve cancellarla da solo.
+                // Se nel frattempo è stato aperto un altro riquadro, `registrate` è
+                // già suo: non ci si scrivono righe di questo tipo.
+                setRegistrate(prev => {
+                    if (prev.tipo !== selectedEvent) return prev;
+                    const righe = { ...prev.righe };
+                    targetStudents.forEach(({ student, dettagli }) => {
+                        if (salvatiIds.has(student.id) && voceDaMostrare(selectedEvent, dettagli)) righe[student.id] = dettagli;
+                    });
+                    return { tipo: prev.tipo, righe };
+                });
+                salvati = salvatiIds.size;
             }
 
-            const result = await res.json();
-            // Conta quanti sono stati effettivamente salvati
-            const savedItems = Array.isArray(result) ? result : (result.saved ?? []);
-            const savedIds = new Set<string>(
-                savedItems
-                    .map((r: { alunno_id?: string }) => r.alunno_id)
-                    .filter(Boolean)
-            );
-            // Se nessuno ha un alunno_id nel result, segna come salvati i soli inviati (upsert silent)
-            setSavedStudentIds(savedIds.size > 0 ? savedIds : new Set(targetStudents.map(({ student }) => student.id)));
-            setShowSavedToast(true);
-            setTimeout(() => setShowSavedToast(false), 2500);
-            opts?.onSaved?.();
+            // ── Le cancellazioni: una DELETE per bambino, del SOLO tipo aperto. ──
+            // Niente finestra di conferma: svuotare il campo e premere Salva è già
+            // il gesto esplicito. Ma l'esito si vede: spunta tolta, campo vuoto, toast.
+            const esiti = await Promise.all(daCancellare.map(async (id) => {
+                try {
+                    await cancellaInArchivio(id, selectedEvent, userId);
+                    return { id, ok: true as const };
+                } catch (err) {
+                    return { id, ok: false as const, errore: nomeErrore(err) };
+                }
+            }));
+            const tolti = esiti.filter(e => e.ok).map(e => e.id);
+            const falliti = esiti.filter((e): e is { id: string; ok: false; errore: string } => !e.ok);
+
+            if (tolti.length > 0) {
+                setRegistrate(prev => {
+                    if (prev.tipo !== selectedEvent) return prev;
+                    const righe = { ...prev.righe };
+                    tolti.forEach(id => { delete righe[id]; });
+                    return { tipo: prev.tipo, righe };
+                });
+                // Lo schermo si aggiorna solo se mostra ancora il riquadro salvato:
+                // altrimenti il campo vuoto e la ✅ tolta finirebbero su un altro tipo.
+                if (stessoRiquadro()) {
+                    setSavedStudentIds(prev => { const n = new Set(prev); tolti.forEach(id => n.delete(id)); return n; });
+                    const vuoto = buildInitialState(selectedEvent, students);
+                    setStudentStates(prev => {
+                        const n = { ...prev };
+                        tolti.forEach(id => { n[id] = vuoto[id] ?? {}; });
+                        return n;
+                    });
+                    // La riga è uscita con la sua nota: lo schermo non la mostra più come
+                    // se fosse ancora in archivio. (La nota di SEZIONE resta: è di tutti.)
+                    setNoteBambino(prev => {
+                        const n = { ...prev };
+                        tolti.forEach(id => { delete n[id]; });
+                        return n;
+                    });
+                }
+            }
+            if (falliti.length > 0) {
+                // LO STATO NON FINGE IL SUCCESSO. La riga è ancora in archivio, quindi
+                // lo schermo torna a mostrarla — orario d'archivio e ✅ — invece di un
+                // campo vuoto che direbbe «tolto». `registrate` resta: al prossimo
+                // Salva con il campo di nuovo vuoto la DELETE si ritenta.
+                // Del guasto esce il codice e il conteggio, mai un nome.
+                logClient({
+                    livello: 'error', evento: 'fetch',
+                    messaggio: `diario-nanna-svuotata-eliminazione-fallita: ${falliti[0].errore}`,
+                    campi: {
+                        tipo_evento: selectedEvent,
+                        falliti: falliti.length,
+                        totale: esiti.length,
+                        error_code: [...new Set(falliti.map(f => f.errore))].join(','),
+                    },
+                });
+                // I dettagli d'archivio sono del tipo salvato: rimetterli nello stato di
+                // un altro riquadro gli presterebbe `{orario_inizio}` e la ✅.
+                if (stessoRiquadro()) {
+                    setStudentStates(prev => {
+                        const n = { ...prev };
+                        falliti.forEach(({ id }) => { const r = registrate.righe[id]; if (r) n[id] = r; });
+                        return n;
+                    });
+                    setSavedStudentIds(prev => { const n = new Set(prev); falliti.forEach(({ id }) => n.add(id)); return n; });
+                }
+                alert(t('alertErroreEliminazione'));
+            }
+
+            // ── IL RIQUADRO CHIUSO E RIAPERTO MENTRE IL SALVATAGGIO ERA IN VOLO. ──
+            // Stesso tipo, ma lo stato sullo schermo l'ha scritto il ripristino della
+            // riapertura, e quella GET può essere stata servita PRIMA che la POST o la
+            // DELETE arrivassero in archivio: mostrerebbe con la ✅ l'orario appena
+            // tolto, e il Salva successivo lo riscriverebbe (il campo è pieno) — la
+            // nanna che la maestra aveva tolto tornerebbe al genitore. Le guardie
+            // `stessoRiquadro()` qui sopra non bastano: tacciono, e lo schermo resta
+            // affidato a quella GET. Adesso POST e DELETE sono concluse, quindi una
+            // lettura nuova è fresca; il suo `++ripristinoCorrente` scarta qualunque
+            // GET della riapertura ancora in volo. Con un tipo DIVERSO aperto (la
+            // Sveglia) non si rilegge niente: quel riquadro non l'ha toccato nessuno.
+            if (!stessoRiquadro() && tipoAperto.current === selectedEvent
+                && (salvati > 0 || tolti.length > 0 || falliti.length > 0)) {
+                // Si riparte da vuoto, come all'apertura: con l'archivio di quel tipo
+                // ormai VUOTO il ripristino non scrive lo stato per bambino, e l'orario
+                // tolto resterebbe nel campo senza ✅, pronto per la POST dopo.
+                setStudentStates(buildInitialState(selectedEvent, students));
+                setNoteBambino({});
+                await restoreFromSupabase(selectedEvent);
+            }
+
+            if (salvati > 0 || tolti.length > 0) {
+                setEsitoSalvataggio({ salvati, tolti: tolti.length });
+                setShowSavedToast(true);
+                setTimeout(() => setShowSavedToast(false), 2500);
+                opts?.onSaved?.();
+            }
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `diario-salvataggio-fallito: ${nomeErrore(err)}` });
             alert(t('alertErroreSalvataggio'));
@@ -560,6 +828,8 @@ export function useDiaryDay(
         bulkNannaOra,
         handleSave,
         daSalvare,
+        daTogliere,
+        esitoSalvataggio,
         eliminaRegistrazione,
         resetSelection,
     };
@@ -576,7 +846,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     const {
         students, eventTypes, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
         activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
-        daSalvare,
+        daSalvare, daTogliere, esitoSalvataggio,
         isSaving, showSavedToast,
         handleEventSelect, updateStudent, updateMealCourse, counter, bulkNannaOra, handleSave,
         eliminaRegistrazione,
@@ -766,10 +1036,9 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                     {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                                                 </span>
                                                 {/* ELIMINA — compare solo su una registrazione che ESISTE
-                                                    in archivio (la ✅). Svuotare il campo non basterebbe:
-                                                    da quando si salva solo chi ha l'orario, un campo vuoto
-                                                    ESCLUDE il bambino dal salvataggio, quindi la riga
-                                                    resterebbe dov'è. Sarebbe un no-op che sembra riuscito. */}
+                                                    in archivio (la ✅). Dal 24/09 anche svuotare il campo e
+                                                    salvare cancella la riga (vedi `idsDaTogliere`): il cestino
+                                                    resta la via diretta, senza passare dal Salva. */}
                                                 {isSaved && (
                                                     <BottoneEliminaRegistrazione
                                                         nome={`${student.firstName} ${student.lastName}`}
@@ -1009,13 +1278,20 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                             <div className="px-4 py-3 border-t border-kidville-line">
                                 <button
                                     onClick={handleSave}
-                                    disabled={isSaving || daSalvare === 0}
+                                    // Un orario svuotato È lavoro da salvare: il pulsante
+                                    // resta vivo anche con zero bambini da scrivere,
+                                    // altrimenti togliere l'ultima nanna sarebbe impossibile.
+                                    disabled={isSaving || (daSalvare === 0 && daTogliere === 0)}
                                     className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
                                 >
                                     {isSaving
                                         ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {t('salvataggio')}</>
                                         : selettivo
-                                            ? <><span>{cfg.emoji}</span> {daSalvare === 0 ? nessunaRegistrazione() : t('salvaConOrario', { count: daSalvare })}</>
+                                            ? <><span>{cfg.emoji}</span> {daSalvare > 0
+                                                ? t('salvaConOrario', { count: daSalvare })
+                                                : daTogliere > 0
+                                                    ? t('nannaTogliOrari', { count: daTogliere })
+                                                    : nessunaRegistrazione()}</>
                                             : <><span>{cfg.emoji}</span> {t('salvaPerTutti', { evento: eventLabel(selectedEvent ?? '') })}</>
                                     }
                                 </button>
@@ -1046,9 +1322,11 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                         initial={{ opacity: 0, y: -20, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2"
+                        role="status"
+                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex flex-col items-center gap-0.5 text-center"
                     >
-                        {t('salvatoConSuccesso')}
+                        {(esitoSalvataggio.salvati > 0 || esitoSalvataggio.tolti === 0) && <span>{t('salvatoConSuccesso')}</span>}
+                        {esitoSalvataggio.tolti > 0 && <span>{t('nannaOrariTolti', { count: esitoSalvataggio.tolti })}</span>}
                     </motion.div>
                 )}
             </AnimatePresence>

@@ -31,6 +31,8 @@ import { useSediAttive } from '@/lib/context/sede-context'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { erroreDaRisposta } from '@/lib/ui/esito-fetch'
 import { LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
+import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica'
+import { isNativeApp } from '@/lib/push/native-register'
 import {
   campiDifformita,
   opzioniClasse,
@@ -85,6 +87,10 @@ const DA_CORREGGERE: Record<string, string> = {
   'colonna-senza-classe': 'questi alunni non entrano nell’elenco',
 }
 const daCorreggere = (genere: string): boolean => genere in DA_CORREGGERE
+
+/** Il foglio riscaricato di una sede: lo stesso indirizzo per il link del web e per l'app. */
+const urlEsportaElenco = (scuolaId: string): string =>
+  `/api/admin/iscrizioni/elenco/export?scuola_id=${encodeURIComponent(scuolaId)}`
 
 export function ElencoClassi() {
   // I testi della barra vengono da `shared`, le etichette dei campi da `adminModulistica`
@@ -167,6 +173,28 @@ export function ElencoClassi() {
       setInCorso(null)
       if (inputRef.current) inputRef.current.value = ''
     }
+  }
+
+  /**
+   * «Scarica con gli esiti». Sul web resta un LINK: la route risponde `attachment` e il
+   * browser salva il foglio, come sempre. Nell'app quel link non scarica niente (la WebView
+   * non ha un gestore di download): lì il clic passa dall'helper unico, che mette il file
+   * in Cache e apre il foglio «Salva su File». Il log dell'esito lo scrive l'helper.
+   */
+  function scaricaElencoNellApp(ev: React.MouseEvent<HTMLAnchorElement>, scuolaId: string) {
+    if (!isNativeApp()) return
+    ev.preventDefault()
+    setErrore(null)
+    setEsito(null)
+    void scaricaDocumento({
+      sorgente: urlEsportaElenco(scuolaId),
+      // Lo stesso nome che dà la route: mai quello del file caricato (porta plesso e anno).
+      nomeFile: `elenco-classi-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      etichetta: 'elenco-classi-esiti',
+    }).then((risultato) => {
+      if (!fileConsegnato(risultato)) setErrore(tFiltri('scaricoNonRiuscito'))
+    })
   }
 
   const perSede = new Map(elenchi.map((e) => [e.scuolaId, e]))
@@ -337,7 +365,8 @@ export function ElencoClassi() {
                 </button>
                 {e && (
                   <a
-                    href={`/api/admin/iscrizioni/elenco/export?scuola_id=${encodeURIComponent(s.id)}`}
+                    href={urlEsportaElenco(s.id)}
+                    onClick={(ev) => scaricaElencoNellApp(ev, s.id)}
                     className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-kidville-line text-kidville-ink text-sm font-medium hover:bg-kidville-cream transition-all"
                   >
                     <Download className="w-4 h-4" />

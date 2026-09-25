@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, type MouseEvent } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { formattaIstante } from '@/i18n/config';
+import { isNativeApp } from '@/lib/push/native-register';
+import { apriDocumento } from '@/lib/native/scarica';
 
 interface TaskAttachment {
     name: string;
@@ -174,6 +176,15 @@ export function TaskCard({
     // Lightbox for Images
     const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
+    // UN ALLEGATO ALLA VOLTA, per tutta la card (come `scaricoInCorso` di MediaGrid):
+    // nell'app lo scarico impiega secondi, e un secondo tocco lancerebbe un secondo
+    // FileTransfer sullo stesso percorso in Cache; la seconda anteprima o il secondo
+    // foglio verrebbero rifiutati da quelli già aperti — un avviso «non apribile» e un
+    // `error` in app_log sopra un allegato che invece si è aperto. Il ref è la guardia
+    // (sincrona), lo stato dice a schermo QUALE allegato è in volo (la sua sorgente).
+    const allegatoInVolo = useRef(false);
+    const [allegatoAperto, setAllegatoAperto] = useState<string | null>(null);
+
     useEffect(() => {
         if (expanded && isUpdated && onMarkRead) {
             onMarkRead();
@@ -222,6 +233,33 @@ export function TaskCard({
         return uploaded;
     };
 
+    // NELL'APP l'ancora qui sotto non fa niente: `target="_blank"` nella WebView non
+    // apre finestre (`capacitor.config.ts` non le abilita) e `download` è ignorato. Lì
+    // l'allegato si apre nell'anteprima di sistema DENTRO l'app con l'helper unico, che
+    // ripiega sul foglio di condivisione e logga da sé l'esito. Sul web il clic resta
+    // quello di sempre: nessun `preventDefault`, l'ancora fa il suo mestiere.
+    const apriAllegatoSuNativo = (e: MouseEvent<HTMLAnchorElement>, att: TaskAttachment) => {
+        if (!isNativeApp()) return;
+        e.preventDefault();
+        if (allegatoInVolo.current) return;
+        allegatoInVolo.current = true;
+        const sorgente = att.fileUrl || att.url;
+        setAllegatoAperto(sorgente);
+        void apriDocumento({
+            sorgente,
+            nomeFile: att.name,
+            mime: att.type,
+            etichetta: 'compito-allegato',
+        })
+            .then((r) => {
+                if (r.esito === 'non-riuscito') alert(t('allegatoNonApribile'));
+            })
+            .finally(() => {
+                allegatoInVolo.current = false;
+                setAllegatoAperto(null);
+            });
+    };
+
     // Render attachments grid with file types
     const renderAttachments = (attachmentsList?: TaskAttachment[] | null) => {
         if (!attachmentsList || attachmentsList.length === 0) return null;
@@ -229,6 +267,7 @@ export function TaskCard({
             <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {attachmentsList.map((att, idx) => {
                     const isImage = att.type?.startsWith('image/');
+                    const inVolo = allegatoAperto !== null && allegatoAperto === (att.fileUrl || att.url);
                     return (
                         <div key={idx} className="flex items-center gap-2 p-2 bg-kidville-cream border border-kidville-line rounded-xl text-xs truncate max-w-full">
                             {isImage ? (
@@ -258,7 +297,11 @@ export function TaskCard({
                                 download={att.name}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="p-1.5 text-kidville-muted hover:text-kidville-green transition-colors"
+                                onClick={(e) => apriAllegatoSuNativo(e, att)}
+                                // Il NOME resta quello; lo stato lo dice `aria-busy`
+                                // (solo quando è vero) e l'icona attenuata.
+                                aria-busy={inVolo || undefined}
+                                className={`p-1.5 text-kidville-muted hover:text-kidville-green transition-colors${inVolo ? ' cursor-wait opacity-60' : ''}`}
                                 title={t('scaricaApri')}
                             >
                                 <ExternalLink size={13} />

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, Loader2, Trash2, UserMinus, UserPlus } from 'lucide-react';
+import { puoEliminareStaff } from '@/lib/personale/permessi-eliminazione';
 
 /**
  * ZONA PERICOLOSA — eliminare un membro del personale, riportarlo a genitore, o
@@ -50,6 +51,45 @@ import { AlertTriangle, Loader2, Trash2, UserMinus, UserPlus } from 'lucide-reac
  * li valida comunque lo `z.enum` della route, che li legge dalla fonte vera.
  */
 type Relazione = 'mother' | 'father' | 'delegate';
+
+/**
+ * LA SEGRETERIA VEDE LA ZONA PERICOLOSA? Solo dove il server le darebbe ragione.
+ *
+ * Decisione del titolare del 2026-09-24: la zona, fino ad allora dietro `canEdit`
+ * (sola Direzione), compare ANCHE alla Segreteria, sulla sua sede. Il server la
+ * ammetteva già dal 2026-09-20 — `requireStaff` di default, `assertUtenteInScope`,
+ * `puoEliminareStaff` — e un permesso concesso lato server e irraggiungibile lato
+ * client è un permesso che non esiste.
+ *
+ * ⚠️ NON SI ALLARGA `canEdit`: governa ruolo, classi e fasce d'età, che alla
+ * Segreteria restano negati. Questa è una condizione A PARTE, che vale per la sola
+ * zona pericolosa. La Direzione resta com'era, e non passa da qui.
+ *
+ * ⚠️ LA REGOLA NON SI RISCRIVE: si chiama `puoEliminareStaff`, la stessa funzione
+ * pura che decidono le tre rotte. Qui si aggiunge soltanto la metà che quella
+ * funzione lascia al chiamante — la SEDE — con lo stesso insieme che usa
+ * `assertUtenteInScope`: `sediUtente` sono le `schools` di `admin/staff:GET`, cioè
+ * `scuoleDiUtente`, la stessa lista che il server confronta.
+ *
+ * Tutto ciò che non si conosce ancora nega: scheda in caricamento, identità non
+ * risolta, sede del bersaglio assente. Nascondere è una CORTESIA — niente comandi
+ * destinati a un 403 — non la difesa, che resta nelle rotte.
+ */
+export function segreteriaVedeZonaPericolosa({
+  ruoloAttivo,
+  userId,
+  bersaglio,
+  sediUtente,
+}: {
+  ruoloAttivo: string | null | undefined;
+  userId: string | null | undefined;
+  bersaglio: { id: string; ruolo: string | null | undefined; scuola_id?: string | null } | null | undefined;
+  sediUtente: readonly string[];
+}): boolean {
+  if (ruoloAttivo !== 'segreteria' || !userId || !bersaglio) return false;
+  if (!bersaglio.scuola_id || !sediUtente.includes(bersaglio.scuola_id)) return false;
+  return puoEliminareStaff({ id: userId, role: 'segreteria' }, bersaglio.id, bersaglio.ruolo).consentito;
+}
 
 type Decisione = 'cancella' | 'archivia' | 'profilo-doppio' | 'non-deciso';
 

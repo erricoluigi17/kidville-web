@@ -52,6 +52,20 @@ expect.extend(toHaveNoViolations)
  */
 
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'Error' }))
+/**
+ * L'APP NATIVA è pilotabile (spec 2026-09-24, NAT3g): serve al solo collaudo del link
+ * di ripiego della scansione nell'app. Il default è il web, quindi nessun test già
+ * scritto cambia significato; l'anteprima di sistema è una spia.
+ */
+const nativo = vi.hoisted(() => ({ attivo: false, apriDocumento: vi.fn() }))
+vi.mock('@/lib/push/native-register', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/push/native-register')>()),
+  isNativeApp: () => nativo.attivo,
+}))
+vi.mock('@/lib/native/scarica', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/native/scarica')>()),
+  apriDocumento: nativo.apriDocumento,
+}))
 vi.mock('@/lib/auth/use-session-identity', () => ({
   useSessionIdentity: () => ({ userId: 'u-admin', role: ruoloCorrente, ready: true }),
 }))
@@ -263,6 +277,7 @@ function serverPredefinito(url: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  nativo.attivo = false
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(ADESSO)
   ruoloCorrente = 'admin'
@@ -662,6 +677,30 @@ describe('scheda staff · il tab Documento', () => {
 
     fireEvent.click(apriFaccia('Fronte'))
     await waitFor(() => expect(screen.getByRole('link', { name: 'Aprilo a mano' })).toHaveAttribute('href', 'https://storage.example.test/firmata'))
+  })
+
+  it('NELL’APP il ripiego che non consegna niente dà l’errore e TOGLIE il «apri a mano»: mai due role="alert" che si smentiscono', async () => {
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda()
+    await apriTab('Documento')
+    openMock.mockImplementation(() => null)
+    fireEvent.click(apriFaccia('Fronte'))
+    const link = await screen.findByRole('link', { name: 'Aprilo a mano' })
+
+    // Da qui la pagina è dentro l'app: il link di ripiego passa dall'anteprima di sistema.
+    nativo.attivo = true
+    nativo.apriDocumento.mockResolvedValue({ esito: 'non-riuscito', motivo: 'foglio-file-non-aperto' })
+    expect(fireEvent.click(link), 'nell’app il link `_blank` deve fermare la navigazione').toBe(false)
+
+    await waitFor(() => expect(screen.getByText('Non è stato possibile aprire la scansione.')).toBeInTheDocument())
+    expect(nativo.apriDocumento.mock.calls[0][0]).toMatchObject({
+      sorgente: 'https://storage.example.test/firmata',
+      etichetta: 'anagrafica-documento',
+    })
+    expect(
+      screen.queryByRole('link', { name: 'Aprilo a mano' }),
+      'l’errore e il «apri a mano» sono a schermo INSIEME',
+    ).not.toBeInTheDocument()
   })
 
   /**

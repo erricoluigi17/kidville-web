@@ -12,6 +12,8 @@ import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 import { oraDiRoma } from '@/lib/presenze/orario';
 import { OrarioCorreggibile, type CampoOrario } from '@/components/features/presenze/OrarioCorreggibile';
 import { orariAmmessi } from '@/lib/presenze/orario-ammesso';
+import { isNativeApp } from '@/lib/push/native-register';
+import { scaricaDocumento } from '@/lib/native/scarica';
 
 // Nomi di mesi e giorni localizzati via Intl (niente array hardcoded per lingua).
 // I giorni sono indicizzati per Date.getDay() (0 = domenica).
@@ -393,10 +395,26 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
                 return;
             }
             const blob = await res.blob();
+            const nomeFile = nomeFileDaHeader(res.headers.get('Content-Disposition'));
+            if (isNativeApp()) {
+                // NELL'APP l'ancora `download` su un `blob:` non fa niente (nessun
+                // `DownloadListener` su Android, WKWebView la ignora): il PDF va nel
+                // foglio di sistema con l'helper unico, che logga da sé l'esito —
+                // successo compreso — e sul binario 1.0 ripiega da solo. I byte sono già
+                // qui (la route vuole i cookie di sessione): si passa il `Blob`, non l'URL.
+                const esito = await scaricaDocumento({
+                    sorgente: blob,
+                    nomeFile,
+                    mime: 'application/pdf',
+                    etichetta: 'registro-presenze-pdf',
+                });
+                if (esito.esito === 'non-riuscito') setError('caricamento');
+                return;
+            }
             url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = nomeFileDaHeader(res.headers.get('Content-Disposition'));
+            a.download = nomeFile;
             document.body.appendChild(a);
             a.click();
             a.remove();

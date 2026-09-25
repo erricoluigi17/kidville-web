@@ -195,6 +195,160 @@ describe('externalFetch — il corpo dell\'errore è obbligatorio', () => {
 });
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * 1-bis. I DUE CAMPI OPZIONALI DI UN RIFIUTO: `retryAfter` e `codice`.
+ *
+ * Esistono per chi ritenta (FCM, `native-push`): il primo perché su `!ok` la Response non si
+ * restituisce e il `Retry-After` altrimenti si perderebbe; il secondo perché una riga d'errore
+ * scritta DOPO dal chiamante non metta `'0'` in `app_log.codice`. Tutti e due devono comparire
+ * SOLO dove hanno senso: con `toEqual` una chiave in più fa diventare rosso il test.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('externalFetch — Retry-After e codice di rete nell\'esito', () => {
+    const conIntestazioni = (corpo: string, status: number, headers: Record<string, string>) =>
+        vi.fn(async () => new Response(corpo, { status, headers })) as unknown as typeof fetch;
+
+    it('429 con Retry-After: 30 → l\'esito porta `retryAfter` così come è arrivato', async () => {
+        const { externalFetch } = await carica();
+        globalThis.fetch = conIntestazioni('quota esaurita', 429, { 'Retry-After': '30' });
+
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+
+        expect(r).toEqual({ ok: false, stato: 429, corpo: 'quota esaurita', retryAfter: '30' });
+    });
+
+    it('503 SENZA Retry-After → la forma dell\'esito resta quella di sempre, senza la chiave', async () => {
+        const { externalFetch } = await carica();
+        globalThis.fetch = rispondi('giù', 503);
+
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+
+        expect(r).toEqual({ ok: false, stato: 503, corpo: 'giù' });
+        expect('retryAfter' in r).toBe(false);
+        expect('codice' in r).toBe(false); // il codice di rete è solo di `stato: 0`
+    });
+
+    it('200 con Retry-After → sul successo `retryAfter` non c\'è', async () => {
+        const { externalFetch } = await carica();
+        globalThis.fetch = conIntestazioni('{}', 200, { 'Retry-After': '30' });
+
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+
+        expect(r.ok).toBe(true);
+        expect('retryAfter' in r).toBe(false);
+    });
+
+    it('Retry-After vuoto o fatto di spazi → nessun `retryAfter`', async () => {
+        const { externalFetch } = await carica();
+        globalThis.fetch = conIntestazioni('quota', 429, { 'Retry-After': '   ' });
+
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+
+        expect(r).toEqual({ ok: false, stato: 429, corpo: 'quota' });
+    });
+
+    it('una Response finta SENZA `headers` non fa lanciare niente', async () => {
+        const { externalFetch } = await carica();
+        globalThis.fetch = vi.fn(async () => ({
+            ok: false,
+            status: 503,
+            body: null,
+            text: async () => 'giù',
+        })) as unknown as typeof fetch;
+
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+
+        expect(r).toEqual({ ok: false, stato: 503, corpo: 'giù' });
+    });
+
+    it('timeout (nessuna risposta) → `codice: \'timeout\'`, lo stesso della riga in `app_log.codice`', async () => {
+        const { externalFetch } = await carica();
+        globalThis.fetch = vi.fn(async () => {
+            throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+        }) as unknown as typeof fetch;
+
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+
+        expect(r.ok).toBe(false);
+        expect(r.stato).toBe(0);
+        expect(r.codice).toBe('timeout');
+        expect((await rigaPersistita()).codice).toBe('timeout');
+    });
+
+    it('rete giù con un code STRINGA → lo si riporta; con un code numerico o assente → nessun `codice`', async () => {
+        const { externalFetch } = await carica();
+        globalThis.fetch = vi.fn(async () => {
+            throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+        }) as unknown as typeof fetch;
+        expect((await externalFetch('fcm', 'https://fcm.googleapis.com/x')).codice).toBe('ECONNREFUSED');
+
+        globalThis.fetch = vi.fn(async () => {
+            throw new DOMException('aborted', 'AbortError'); // code numerico 20: non è un codice
+        }) as unknown as typeof fetch;
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+        expect(r.stato).toBe(0);
+        expect('codice' in r).toBe(false);
+
+        globalThis.fetch = vi.fn(async () => {
+            throw new TypeError('fetch failed');
+        }) as unknown as typeof fetch;
+        expect('codice' in (await externalFetch('fcm', 'https://fcm.googleapis.com/x'))).toBe(false);
+    });
+
+    it('rete giù nella forma VERA di undici (code sulla CAUSA) → `codice: \'ENOTFOUND\'`, lo stesso di `app_log.codice`', async () => {
+        // `fetch('http://nonesiste.invalid/')` in Node: `e.code` è undefined, `e.cause.code` è
+        // 'ENOTFOUND' (idem ECONNRESET, ECONNREFUSED, UND_ERR_CONNECT_TIMEOUT). Il logger scrive
+        // `codice = d.codice ?? d.causa?.codice`: l'esito deve dire la stessa cosa della riga.
+        const { externalFetch } = await carica();
+        globalThis.fetch = vi.fn(async () => {
+            throw new TypeError('fetch failed', {
+                cause: Object.assign(new Error('getaddrinfo ENOTFOUND fcm.googleapis.com'), { code: 'ENOTFOUND' }),
+            });
+        }) as unknown as typeof fetch;
+
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+
+        expect(r.stato).toBe(0);
+        expect(r.codice).toBe('ENOTFOUND');
+        expect((await rigaPersistita()).codice).toBe(r.codice);
+    });
+
+    it('code NUMERICO in cima e code stringa sulla causa → nessun `codice`: come il logger, non si scende', async () => {
+        // Il logger usa il code di cima quando c'è (anche numerico): scendere alla causa darebbe
+        // all'esito un codice DIVERSO da quello della riga.
+        const { externalFetch } = await carica();
+        globalThis.fetch = vi.fn(async () => {
+            throw Object.assign(new Error('aborted', { cause: Object.assign(new Error('x'), { code: 'ECONNRESET' }) }), {
+                code: 20,
+            });
+        }) as unknown as typeof fetch;
+
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+
+        expect(r.stato).toBe(0);
+        expect('codice' in r).toBe(false);
+    });
+
+    it('una causa ostile (getter che lancia) non fa lanciare `externalFetch`', async () => {
+        const { externalFetch } = await carica();
+        globalThis.fetch = vi.fn(async () => {
+            const e = new TypeError('fetch failed');
+            Object.defineProperty(e, 'cause', {
+                get() {
+                    throw new Error('getter ostile');
+                },
+            });
+            throw e;
+        }) as unknown as typeof fetch;
+
+        const r = await externalFetch('fcm', 'https://fcm.googleapis.com/x');
+
+        expect(r.ok).toBe(false);
+        expect(r.stato).toBe(0);
+        expect('codice' in r).toBe(false);
+    });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
  * 2. IL SUCCESSO SI LOGGA (AGENTS, regola 5).
  * ════════════════════════════════════════════════════════════════════════════ */
 
@@ -421,7 +575,7 @@ describe('native-push (FCM)', () => {
 
         const r = await sendNativePush('token-x', 'ios', { title: 'x' });
 
-        expect(r).toEqual({ ok: false, gone: true });
+        expect(r).toEqual({ ok: false, gone: true, tentativi: 1 }); // gone NON si ritenta
     });
 
     it('400 + UNREGISTERED nel corpo → gone: semantica INVARIATA', async () => {
@@ -433,7 +587,7 @@ describe('native-push (FCM)', () => {
 
         const r = await sendNativePush('token-x', 'android', { title: 'x' });
 
-        expect(r).toEqual({ ok: false, gone: true });
+        expect(r).toEqual({ ok: false, gone: true, tentativi: 1 }); // gone NON si ritenta
     });
 
     it('400 con un ALTRO motivo NON è gone: il corpo è loggato E propagato (era `fcm_http_400`)', async () => {
@@ -455,7 +609,7 @@ describe('native-push (FCM)', () => {
         const { sendNativePush } = await carica();
         globalThis.fetch = fcmChe({ corpo: '{"name":"projects/kidville/messages/1"}', stato: 200 });
 
-        expect(await sendNativePush('token-x', 'ios', { title: 'x' })).toEqual({ ok: true });
+        expect(await sendNativePush('token-x', 'ios', { title: 'x' })).toEqual({ ok: true, tentativi: 1 });
 
         const r = await ultimaRiga(2); // [0] è il rinnovo del token OAuth, [1] l'invio
         expect(r.evento).toBe('push');

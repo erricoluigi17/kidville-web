@@ -3,14 +3,13 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
-import { Award, AlertTriangle, PenLine, CalendarOff, Hand, CalendarPlus, FileText, Download, Lock } from 'lucide-react';
+import { Award, AlertTriangle, PenLine, CalendarOff, CalendarPlus, FileText, Download, Lock } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { useDateFormat } from '@/lib/i18n/date';
 
 interface Valutazione { id: string; materia: string; tipo: string; modalita: string; argomento: string | null; giudizio_sintetico: string | null; giudizio_testo: string | null; creato_il: string }
 interface Nota { id: string; categoria: string; testo: string; richiede_firma: boolean; firmata_il: string | null; creato_il: string }
 interface Assenza { id: string; data: string; stato: string; giustificata: boolean; giustificazione_testo: string | null; giust_vista_il: string | null }
-interface Materia { id: string; nome: string }
 interface Pagella { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null; firmato: boolean }
 export interface ScrutinioView { firmato: boolean; periodo: string; anno: string; discipline: { materia: string; giudizio: string }[]; comportamento: string | null; giudizioGlobale: string | null }
 type OtpParams = { code: string; expiry: number; ticket: string };
@@ -33,13 +32,12 @@ const STATO_ASSENZA_KEY: Record<string, string> = {
 const oggiIso = () => new Date().toISOString().slice(0, 10);
 
 export function PrimariaParentView({
-  valutazioni, note, assenze, materie, pagelle, onSign, onGiustifica, onRequestGiustificaOtp, onImpreparato, onComunicaAssenza, onScaricaPagella, onRequestPagellaOtp, onFirmaPagella, onCaricaScrutinio, signing,
+  valutazioni, note, assenze, pagelle, onSign, onGiustifica, onRequestGiustificaOtp, onComunicaAssenza, onScaricaPagella, onRequestPagellaOtp, onFirmaPagella, onCaricaScrutinio, signing,
 }: {
-  valutazioni: Valutazione[]; note: Nota[]; assenze: Assenza[]; materie: Materia[]; pagelle: Pagella[];
+  valutazioni: Valutazione[]; note: Nota[]; assenze: Assenza[]; pagelle: Pagella[];
   onSign: (id: string) => void;
   onGiustifica: (data: string, motivo: string, otp: OtpParams) => void | Promise<void>;
   onRequestGiustificaOtp: () => Promise<{ expiry: number; ticket: string; devCode?: string } | null>;
-  onImpreparato: (data: string, motivo: string, materiaId?: string) => void | Promise<void>;
   onComunicaAssenza: (data: string, motivo: string) => void | Promise<void>;
   onScaricaPagella: (scrutinioId: string) => void;
   onRequestPagellaOtp: () => Promise<{ expiry: number; ticket: string; devCode?: string } | null>;
@@ -92,11 +90,9 @@ export function PrimariaParentView({
         </div>
       )}
 
-      {/* Giustifiche: assenze + impreparato a priori (solo primaria) */}
-      <div className="grid gap-5 md:grid-cols-2">
-        <AssenzeCard assenze={assenze} onGiustifica={onGiustifica} onRequestGiustificaOtp={onRequestGiustificaOtp} onComunicaAssenza={onComunicaAssenza} />
-        <ImpreparatoForm materie={materie} onImpreparato={onImpreparato} />
-      </div>
+      {/* Giustifiche delle assenze. Il modulo «Dichiara impreparato» che stava qui
+          accanto vive in `ImpreparatoForm.tsx`, montato nella pagina Voti. */}
+      <AssenzeCard assenze={assenze} onGiustifica={onGiustifica} onRequestGiustificaOtp={onRequestGiustificaOtp} onComunicaAssenza={onComunicaAssenza} />
 
       {/* Valutazioni (giudizi, no voti numerici) */}
       <section className="rounded-card bg-white p-5 shadow-sm">
@@ -403,60 +399,5 @@ function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
       )}
       {err && <p className="font-maven text-[11px] text-kidville-error mt-1">{err}</p>}
     </li>
-  );
-}
-
-// Form per dichiarare l'alunno impreparato a priori (giustifica didattica), con materia.
-function ImpreparatoForm({ materie, onImpreparato }: {
-  materie: Materia[];
-  onImpreparato: (data: string, motivo: string, materiaId?: string) => void | Promise<void>;
-}) {
-  const t = useTranslations('parentPrimaria');
-  const [data, setData] = useState(oggiIso);
-  const [materiaId, setMateriaId] = useState('');
-  const [motivo, setMotivo] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
-
-  const invia = async () => {
-    setBusy(true);
-    await onImpreparato(data, motivo, materiaId || undefined);
-    setBusy(false);
-    setMotivo('');
-    setMsg(t('viewDichiarazioneInviata'));
-  };
-
-  return (
-    <section className="rounded-card bg-white p-5 shadow-sm">
-      <h3 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2 mb-3">
-        <Hand size={18} className="text-kidville-warn" /> {t('viewDichiaraImpreparato')}
-      </h3>
-      <p className="font-maven text-xs text-kidville-sub mb-3">
-        {t('viewDichiaraImpreparatoHint')}
-      </p>
-      <div className="flex flex-col gap-2">
-        <DateField
-          value={data}
-          onChange={setData}
-          aria-label={t('viewImpreparatoDataAria')}
-          className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
-        />
-        <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm">
-          <option value="">{t('viewMateriaFacoltativa')}</option>
-          {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
-        </select>
-        <input
-          type="text"
-          value={motivo}
-          onChange={(e) => setMotivo(e.target.value)}
-          placeholder={t('viewMotivoFacoltativo')}
-          className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
-        />
-        {msg && <p className="font-maven text-xs text-kidville-success">{msg}</p>}
-        <button onClick={invia} disabled={busy} className="font-maven self-start rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50">
-          {busy ? t('viewInvio') : t('viewInviaDichiarazione')}
-        </button>
-      </div>
-    </section>
   );
 }

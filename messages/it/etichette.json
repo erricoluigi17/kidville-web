@@ -82,6 +82,8 @@
   "notifica_nota_desc": "Quando viene inserita una nota (incluse quelle da firmare)",
   "notifica_valutazione_label": "Valutazioni",
   "notifica_valutazione_desc": "Quando il docente inserisce una nuova valutazione",
+  "notifica_impreparato_segnato_label": "Impreparati",
+  "notifica_impreparato_segnato_desc": "Quando il docente segna il figlio impreparato (anche giustificato)",
   "notifica_pagella_label": "Pagella pubblicata",
   "notifica_pagella_desc": "Quando la pagella o i giudizi vengono pubblicati",
   "notifica_assenza_non_comunicata_label": "Assenza all’appello",

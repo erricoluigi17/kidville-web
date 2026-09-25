@@ -359,6 +359,69 @@ export type CampiClient<T> = {
         : K extends Lowercase<Extract<K, string>> ? T[K] : ChiaveCampoNonAmmessa<K>;
 };
 
+/**
+ * LA VERSIONE DEL BINARIO NATIVO — il campo `versione_app` di ogni evento (2026-09-25, PC2).
+ *
+ * PERCHÉ. Con l'app 1.1 convivono per mesi due binari: chi ha aggiornato e chi è rimasto sulla 1.0,
+ * che per esempio non contiene il plugin Filesystem. `piattaforma` dice «ios», non dice QUALE app:
+ * senza questo campo la domanda «succede solo sulla 1.0?» non ha risposta, esattamente come
+ * «succede solo su Android?» non l'ebbe per un mese (vedi `piattaforma()`).
+ *
+ * DA DOVE ARRIVA. Da `App.getInfo()` di `@capacitor/app`, che QUESTO modulo non può importare (REGOLA
+ * 1: l'unico import ammesso è `./path`). Lo legge `setupNativeShell` e lo deposita qui con
+ * `impostaVersioneApp`. Sul web resta `null` e il campo non parte: un sito non ha un binario.
+ *
+ * LA FORMA è `<versione>+<build>` (`1.1+5`), e la si controlla QUI prima di tenerla: `redact.ts`
+ * lascia in chiaro la chiave `versione_app` SOLO se il valore ha questa forma (vedi lì il perché),
+ * e un valore che non la rispetta uscirebbe `[redatto:str/N]` — si tiene solo ciò che passerà.
+ */
+const CAMPO_VERSIONE_APP = 'versione_app';
+/**
+ * La STESSA forma di `FORMA_VERSIONE_APP` in `redact.ts`. È duplicata perché questo modulo non può
+ * importare `redact.ts` (REGOLA 1); che le due restino uguali lo sorveglia
+ * `__tests__/lib/logging-versione-app.test.ts` (sorgente e flag, più i valori al confine), per questo
+ * è esportata. Se diverge, il client spedirebbe un valore che il server redige: campo perso a gate verde.
+ */
+export const FORMA_VERSIONE_APP = /^\d{1,4}(\.\d{1,4}){0,3}\+\d{1,9}$/;
+let versioneApp: string | null = null;
+
+/**
+ * Deposita la versione del binario nativo (`App.getInfo()`: `version` e `build`). Non lancia mai.
+ * Un valore fuori forma si ignora: meglio nessun campo che un campo che il server redigerebbe.
+ */
+export function impostaVersioneApp(versione: unknown, build: unknown): void {
+    try {
+        if (typeof versione !== 'string' || (typeof build !== 'string' && typeof build !== 'number')) return;
+        const v = `${versione.trim()}+${String(build).trim()}`;
+        if (FORMA_VERSIONE_APP.test(v)) versioneApp = v;
+    } catch {
+        // Fail-open: si perde il campo, non il log.
+    }
+}
+
+/**
+ * L'evento come parte dal dispositivo, con la versione del binario nei campi.
+ *
+ * Si aggiunge al FLUSH e non all'accodamento, e la differenza è misurata sulla sequenza d'avvio: la
+ * versione si legge con un `await` sul bridge, e gli eventi più preziosi — lo splash che non si
+ * chiude, un plugin che non si carica — nascono prima che arrivi. Al flush (che parte a pagina
+ * nascosta, al ritorno della rete, su un errore) la versione c'è quasi sempre già.
+ *
+ * Non sostituisce un `versione_app` già presente (l'evento l'aveva già al suo primo giro) e non
+ * sfonda il tetto dei campi: con dodici campi pieni l'evento parte senza, come prima.
+ */
+function conVersioneApp(e: EventoClient): EventoClient {
+    try {
+        if (versioneApp === null) return e;
+        const campi = e.campi ?? {};
+        if (CAMPO_VERSIONE_APP in campi) return e;
+        if (Object.keys(campi).length >= CAMPI_MAX) return e;
+        return { ...e, campi: { ...campi, [CAMPO_VERSIONE_APP]: versioneApp } };
+    } catch {
+        return e;
+    }
+}
+
 /* Stato di modulo. NON è contaminabile fra utenti: nel browser il modulo è per-scheda. */
 let coda: EventoClient[] = [];
 const visti = new Map<string, number>();
@@ -823,7 +886,9 @@ export function flush(): void {
         // (`getRequestUserId`), che è l'unico che può rifiutarla. Un campo nel body sarebbe
         // un'identità dichiarata da chi la usa.
         const url = uid === null ? SINK : `${SINK}?userId=${encodeURIComponent(uid)}`;
-        const corpo = JSON.stringify({ eventi: inviati, piattaforma: piattaforma() });
+        // `conVersioneApp` su una COPIA: la coda (e la sua copia persistita) resta com'era, e un
+        // batch rimesso in coda ripassa di qui senza doppioni (la funzione è idempotente).
+        const corpo = JSON.stringify({ eventi: inviati.map(conVersioneApp), piattaforma: piattaforma() });
 
         const beacon = typeof navigator !== 'undefined'
             && typeof navigator.sendBeacon === 'function'

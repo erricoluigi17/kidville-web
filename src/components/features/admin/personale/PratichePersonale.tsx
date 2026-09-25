@@ -20,7 +20,7 @@ import { useSediAttive } from '@/lib/context/sede-context'
 import { useRuoloCockpit } from '@/lib/context/admin-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { messaggioDaCorpo, messaggioErrore } from '@/lib/ui/esito-fetch'
-import { apriDocumentoFirmato, AVVISO_FINESTRA_BLOCCATA } from '@/lib/ui/apri-documento-firmato'
+import { apriDocumentoFirmato, apriLinkNellApp, AVVISO_FINESTRA_BLOCCATA } from '@/lib/ui/apri-documento-firmato'
 import { FUOCO_ESITO } from '@/lib/ui/fuoco'
 import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
 import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
@@ -978,9 +978,11 @@ export function PratichePersonale() {
    * ⚠️ IL COME NON STA QUI, e non è una delega di comodo. Aprire un file di un bucket
    * privato è lo stesso gesto in tre pannelli della Segreteria (curriculum, allegato
    * d'iscrizione, e questa scansione) e porta con sé quattro fatti già pagati: la
-   * finestra si apre PRIMA della fetch, dentro il gesto (Safari e la WebView Capacitor
-   * bloccano una `window.open` in continuazione di promise, e il risultato non è un
-   * errore: è un pulsante che non fa niente); `opener` a null; il blocco popup è il
+   * finestra si apre PRIMA della fetch, dentro il gesto (Safari blocca una
+   * `window.open` in continuazione di promise, e il risultato non è un errore: è un
+   * pulsante che non fa niente; nell'app non si apre nessuna scheda e il documento
+   * passa dall'anteprima di sistema, vedi il punto 5 di `apriDocumentoFirmato`);
+   * `opener` a null; il blocco popup è il
    * caso più frequente e non è un guasto; nessun percorso nei log. Vivono in
    * `apriDocumentoFirmato`, una volta sola.
    *
@@ -1441,6 +1443,10 @@ export function PratichePersonale() {
             onChiudiEsito={() => setEsito(null)}
             onEsegui={esegui}
             onApriDocumento={apriDocumento}
+            onDocNonAperto={() => {
+              setDocBloccato(null)
+              setErrore(t('pratErroreDoc'))
+            }}
           />
         ) : null}
       </Drawer>
@@ -2006,7 +2012,7 @@ function PannelloPratica({
   setConferma, motivo, setMotivo, destinazione, setDestinazione, sediDestinazione,
   sediNonLette, onApriSposta, lavorando, esito, avvisi, errore, sguardo, docBloccato,
   isDirezione, ruoloRisolto, ruoloAggiunto, onRuoloAggiunto, onChiudiEsito, onEsegui,
-  onApriDocumento,
+  onApriDocumento, onDocNonAperto,
 }: {
   pratica: Pratica
   oggi: string
@@ -2052,6 +2058,12 @@ function PannelloPratica({
   onChiudiEsito: () => void
   onEsegui: (azione: Azione) => void
   onApriDocumento: (path?: string | null) => void
+  /**
+   * Il collegamento di ripiego del documento, nell'app, non ha consegnato niente
+   * all'anteprima di sistema. L'errore finisce in `errore`, IN PAGINA come quello
+   * di `apriDocumento`: mai un `alert()` (vedi l'intestazione del file).
+   */
+  onDocNonAperto: () => void
 }) {
   const t = useTranslations('adminAltro')
   const f = useDateFormat()
@@ -2288,6 +2300,9 @@ function PannelloPratica({
                 href={docBloccato}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={apriLinkNellApp(docBloccato, 'pratica-personale-documento', {
+                  onNonConsegnato: onDocNonAperto,
+                })}
                 className="inline-flex min-h-[44px] min-w-[44px] items-center font-bold text-kidville-green underline"
               >
                 {t('pratDocApriManuale')}

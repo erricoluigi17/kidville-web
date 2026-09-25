@@ -11,6 +11,7 @@ import { categoriaDocumento, etichettaTipo, istanteFirma } from '@/lib/documenti
 import { withRoute } from '@/lib/logging/with-route'
 import CATALOGO from '../../../../../messages/it/shared.json'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
 
 /**
  * GET /api/documenti-firmati/dettaglio?fonte=&id= — apre UN documento.
@@ -95,11 +96,13 @@ async function risolvi(
   }
 
   if (fonte === 'fascicolo') {
-    const { data, error } = await supabase
-      .from('student_documents')
-      .select('id, student_id, document_type, descrizione, file_name, storage_path, file_url, expiry_date, created_at')
-      .eq('id', id)
-      .maybeSingle()
+    // Un documento nel cestino del fascicolo non si apre dall'archivio: è eliminato.
+    const { data, error } = await fascicoloVivo(
+      supabase
+        .from('student_documents')
+        .select('id, student_id, document_type, descrizione, file_name, storage_path, file_url, expiry_date, created_at')
+        .eq('id', id),
+    ).maybeSingle()
     if (error || !data || !data.student_id) return null
     return {
       alunnoId: data.student_id as string,

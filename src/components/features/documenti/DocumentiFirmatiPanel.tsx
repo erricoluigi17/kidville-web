@@ -1,12 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { FileText, HeartPulse, PenLine, Search, X, AlertCircle, Download } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useDateFormat } from '@/lib/i18n/date';
 import { TABLE, TABLE_WRAP, TD, TH, TONE } from '@/components/ui/cockpit';
 import type { DocumentoAlunno } from '@/lib/documenti/registro';
+import { isNativeApp } from '@/lib/push/native-register';
+import { scaricaDocumento } from '@/lib/native/scarica';
+import { nomeConEstensione } from '@/lib/native/nome-da-percorso';
 
 /**
  * L'archivio dei documenti di ogni alunno — una schermata sola, usata sia dalla
@@ -355,6 +358,9 @@ export function DocumentiFirmatiPanel({ conFiltroSede = false }: { conFiltroSede
 
       {(dettaglio || dettaglioInCorso) && (
         <PannelloDettaglio
+          // Un documento nuovo è un pannello nuovo: l'avviso di uno scarico fallito
+          // non deve restare appeso sopra il documento successivo.
+          key={dettaglio?.id ?? 'in-caricamento'}
           dettaglio={dettaglio}
           inCorso={dettaglioInCorso}
           onChiudi={() => setDettaglio(null)}
@@ -428,6 +434,47 @@ function PannelloDettaglio({
   onChiudi: () => void;
 }) {
   const t = useTranslations('documenti');
+  const [scaricoFallito, setScaricoFallito] = useState(false);
+  // UNO SCARICO ALLA VOLTA (come `scaricoInCorso` di MediaGrid): FileTransfer impiega
+  // secondi, e un secondo tocco lancerebbe un secondo scarico sullo stesso file in
+  // Cache e un secondo `Share.share`, che iOS rifiuta col primo foglio ancora aperto
+  // («Can't share while sharing is in progress») — un «non riuscito» a schermo e un
+  // `error` in app_log sopra un foglio che invece si è aperto. Il ref è la guardia
+  // (sincrona: due clic nello stesso giro non vedono uno stato non ancora
+  // ridisegnato); lo stato è solo il segnale a schermo.
+  const scaricoInVolo = useRef(false);
+  const [inVolo, setInVolo] = useState(false);
+
+  /**
+   * NELL'APP l'ancora «Scarica» non fa niente: `target="_blank"` nella WebView non
+   * apre finestre, e l'indirizzo firmato dello Storage è di un'altra origine. Lì il
+   * file va nel foglio di sistema («Salva su File») con l'helper unico, che lo
+   * scarica nativamente, ripiega da solo sul binario 1.0 e logga da sé l'esito.
+   * Il nome: quello caricato se c'è, altrimenti uno generico — mai il titolo, che
+   * può essere il nome del file e portare quello di un bambino fin nel foglio —, e
+   * l'estensione del file vero, presa dal percorso dell'indirizzo firmato.
+   * Sul web il clic resta quello di sempre.
+   */
+  const scaricaSuNativo = (e: MouseEvent<HTMLAnchorElement>, url: string) => {
+    if (!isNativeApp()) return;
+    e.preventDefault();
+    if (scaricoInVolo.current) return;
+    scaricoInVolo.current = true;
+    setInVolo(true);
+    setScaricoFallito(false);
+    void scaricaDocumento({
+      sorgente: url,
+      nomeFile: nomeConEstensione(dettaglio?.fileName, url, 'documento-alunno'),
+      etichetta: 'documento-alunno',
+    })
+      .then((r) => {
+        if (r.esito === 'non-riuscito') setScaricoFallito(true);
+      })
+      .finally(() => {
+        scaricoInVolo.current = false;
+        setInVolo(false);
+      });
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-kidville-ink/40 p-0 sm:items-center sm:p-6">
@@ -456,10 +503,20 @@ function PannelloDettaglio({
                 href={dettaglio.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-bold uppercase text-kidville-white"
+                onClick={(e) => scaricaSuNativo(e, dettaglio.url as string)}
+                // Il NOME resta «Scarica»; che stia lavorando lo dice `aria-busy`
+                // (solo quando è vero) e l'ancora attenuata.
+                aria-busy={inVolo || undefined}
+                className={`inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-bold uppercase text-kidville-white${inVolo ? ' cursor-wait opacity-60' : ''}`}
               >
                 <Download size={16} /> {t('scarica')}
               </a>
+            )}
+
+            {scaricoFallito && (
+              <p role="alert" className="rounded-xl border border-kidville-error bg-kidville-error-soft px-3 py-2 text-sm text-kidville-error-strong">
+                {t('scaricoNonRiuscito')}
+              </p>
             )}
 
             {dettaglio.fileAssente && dettaglio.fonte !== 'modulo_firmato' && (

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { resolveMenuGiorno, type ResolveOptions, type RotazioneRow, type OverrideRow } from './resolveMenu'
+import { oggiRoma, entroCutoff as entroCutoffRoma } from './cutoff'
 
 export interface MensaConfig {
   cutoffOra: string            // 'HH:MM' o 'HH:MM:SS'
@@ -91,24 +92,19 @@ export async function resolveMenuConfigId(
   return (row?.menu_config_id as string | null) ?? null
 }
 
-// Data odierna del server in formato YYYY-MM-DD.
-export function oggi(): string {
-  return new Date().toISOString().slice(0, 10)
+// Data odierna in formato YYYY-MM-DD, nel calendario di ROMA (non di UTC: fra
+// mezzanotte e le 2 italiane il server su Vercel è ancora nel giorno prima).
+export function oggi(adesso?: Date): string {
+  return oggiRoma(adesso)
 }
 
-// Verifica se una data è prenotabile/disdicibile rispetto al cutoff.
+// Verifica se una data è prenotabile/disdicibile rispetto al cutoff, in ora
+// italiana. La logica sta in `./cutoff` (pura, condivisa con l'interfaccia):
 //   - date passate: bloccate
-//   - data odierna: bloccata se l'ora corrente supera il cutoff
+//   - data odierna: bloccata se l'ora italiana supera il cutoff
 //   - date future: sempre consentite
-export function entroCutoff(dateStr: string, cutoffOra: string): boolean {
-  const today = oggi()
-  if (dateStr < today) return false
-  if (dateStr > today) return true
-  const [h, m] = cutoffOra.split(':').map(Number)
-  const now = new Date()
-  const cutoff = new Date()
-  cutoff.setHours(h || 0, m || 0, 0, 0)
-  return now.getTime() <= cutoff.getTime()
+export function entroCutoff(dateStr: string, cutoffOra: string, adesso?: Date): boolean {
+  return entroCutoffRoma(dateStr, cutoffOra, adesso)
 }
 
 // Comodo: il menu di una data è "prenotabile" (giorno attivo e non chiuso)?

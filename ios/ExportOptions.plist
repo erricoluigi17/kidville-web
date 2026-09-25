@@ -17,8 +17,10 @@
   l'export — e il numero che poi si legge su App Store Connect non è quello messo in
   `CURRENT_PROJECT_VERSION`. Si scopre agganciando alla versione la build sbagliata.
 
-  Uso (dalla radice del repo, con Xcode CHIUSO e dopo
-  `CAP_SERVER_URL="https://app.kidville.it" npx cap sync ios`):
+  Uso (dalla radice del repo, con Xcode CHIUSO e dopo `npm run rilascio:sync`, che
+  sincronizza ENTRAMBE le piattaforme con `CAP_SERVER_URL=https://app.kidville.it` e poi
+  verifica la shell. MAI `npx cap sync ios` a mano: riscrive una piattaforma sola e, senza
+  la variabile, svuota `server.url` — l'app diventa una schermata bianca):
 
     xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
       -destination 'generic/platform=iOS' -archivePath <p>.xcarchive \

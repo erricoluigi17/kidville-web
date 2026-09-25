@@ -18,7 +18,7 @@ vi.mock('next/navigation', () => ({
     useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
-import { useAperturaThreadRichiesta } from '@/components/features/chat/useAperturaThreadRichiesta';
+import { CAMPIONE_APERTE, useAperturaThreadRichiesta } from '@/components/features/chat/useAperturaThreadRichiesta';
 import { richiediAperturaThread } from '@/lib/chat/apertura-thread';
 import type { EsitoApertura, StatoThreads } from '@/components/features/chat/useConversazioneChat';
 
@@ -83,11 +83,20 @@ function monta(f: ReturnType<typeof conversazioneFinta>, iniziale = f.chat()) {
     return { ...r, onAperta };
 }
 
+/**
+ * Il log del SUCCESSO è campionato (`CAMPIONE_APERTE`, 2026-09-25): qui sotto i test della coda lo
+ * usano come prova che un'apertura è arrivata in fondo, quindi il sorteggio si fissa a «spedisci».
+ * Il campionamento ha i suoi test, in fondo al file, che il sorteggio lo fissano da sé.
+ */
+let sorteggio: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
     h.logClient.mockClear();
+    sorteggio = vi.spyOn(Math, 'random').mockReturnValue(0);
 });
 
 afterEach(() => {
+    sorteggio.mockRestore();
     window.history.replaceState(null, '', '/');
 });
 
@@ -330,5 +339,93 @@ describe('useAperturaThreadRichiesta — la coda', () => {
         expect(window.location.search).toBe('');
         expect(h.logClient).not.toHaveBeenCalled();
         unmount();
+    });
+});
+
+/**
+ * IL SUCCESSO SI CAMPIONA, I FALLIMENTI NO (PC2, 2026-09-25).
+ *
+ * Prima ogni apertura riuscita scriveva un `warn`: ~1.400 a settimana, il grosso del canale `warn` del
+ * client. Qui il sorteggio si fissa: sopra la soglia la riga non parte (ROSSO sul codice di prima, che la
+ * scriveva sempre), sotto parte con il fattore nei campi, e i fallimenti partono a qualunque sorteggio.
+ */
+describe('useAperturaThreadRichiesta — il log del successo è campionato', () => {
+    it('sorteggio sopra la soglia: la conversazione si apre, ma nessuna riga parte', async () => {
+        sorteggio.mockReturnValue(0.5);
+        window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
+        const f = conversazioneFinta();
+        const { onAperta, unmount } = monta(f);
+        await scorri();
+        await concludi(f.stato, B, 'aperto');
+
+        // Controllo positivo: l'apertura è avvenuta davvero, ed è solo il log a mancare.
+        expect(onAperta).toHaveBeenCalledTimes(1);
+        expect(window.location.search).toBe('');
+        expect(h.logClient).not.toHaveBeenCalled();
+        unmount();
+    });
+
+    it('sorteggio sotto la soglia: UNA riga, con il fattore di campionamento nei campi', async () => {
+        sorteggio.mockReturnValue((1 / CAMPIONE_APERTE) * 0.99);
+        window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
+        const f = conversazioneFinta();
+        const { unmount } = monta(f);
+        await scorri();
+        await concludi(f.stato, B, 'aperto');
+
+        expect(CAMPIONE_APERTE).toBe(20);
+        expect(h.logClient).toHaveBeenCalledTimes(1);
+        expect(h.logClient).toHaveBeenCalledWith({
+            livello: 'warn',
+            evento: 'push',
+            messaggio: 'chat-apertura-da-notifica: aperta (url)',
+            route: '/parent/chat',
+            campi: { campione: 20 },
+        });
+        unmount();
+    });
+
+    it('esattamente sulla soglia (1/20) non parte: la probabilità è 1 su 20, non 2 su 21', async () => {
+        sorteggio.mockReturnValue(1 / CAMPIONE_APERTE);
+        window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
+        const f = conversazioneFinta();
+        const { unmount } = monta(f);
+        await scorri();
+        await concludi(f.stato, B, 'aperto');
+        expect(h.logClient).not.toHaveBeenCalled();
+        unmount();
+    });
+
+    it('i fallimenti partono SEMPRE, anche col sorteggio più sfavorevole', async () => {
+        sorteggio.mockReturnValue(0.999);
+
+        // non-trovata
+        window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
+        const f1 = conversazioneFinta();
+        const m1 = monta(f1);
+        await scorri();
+        await concludi(f1.stato, B, 'non-trovato');
+        m1.unmount();
+
+        // guasto
+        window.history.replaceState(null, '', `/parent/chat?thread=${C}`);
+        const f2 = conversazioneFinta();
+        const m2 = monta(f2);
+        await scorri();
+        await concludi(f2.stato, C, new TypeError('x'));
+        m2.unmount();
+
+        // id non valido
+        window.history.replaceState(null, '', '/parent/chat?thread=non-un-uuid');
+        const f3 = conversazioneFinta();
+        const m3 = monta(f3);
+        await scorri();
+        m3.unmount();
+
+        expect(h.logClient.mock.calls.map((c) => (c[0] as { messaggio: string }).messaggio)).toEqual([
+            'chat-apertura-da-notifica: non-trovata (url)',
+            'chat-apertura-da-notifica: guasto (url)',
+            'chat-apertura-da-notifica: id-non-valido (url)',
+        ]);
     });
 });

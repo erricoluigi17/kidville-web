@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 
 import itParentServizi from '../../messages/it/parentServizi.json';
+import itShared from '../../messages/it/shared.json';
 
 /**
  * «MODULISTICA» DEL GENITORE — la ricevuta di firma, e da chi la chiede.
@@ -31,7 +32,14 @@ import itParentServizi from '../../messages/it/parentServizi.json';
 const GENITORE = 'c0000000-0000-4000-8000-00000000000c';
 const SUBMISSION = 'd0000000-0000-4000-8000-00000000000d';
 
-const h = vi.hoisted(() => ({ fetchMock: vi.fn(), query: '' }));
+const h = vi.hoisted(() => ({ fetchMock: vi.fn(), query: '', scarica: vi.fn(), pdf: null as Blob | null }));
+
+// NAT3c (spec 2026-09-24): la ricevuta si salva con l'helper unico. Finto qui — ha i suoi
+// test —: si misura che cosa gli arriva.
+vi.mock('@/lib/native/scarica', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/native/scarica')>()),
+  scaricaDocumento: h.scarica,
+}));
 
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(h.query),
@@ -67,6 +75,8 @@ const chiamate = (frammento: string): string[] =>
 beforeEach(() => {
   vi.clearAllMocks();
   h.query = '';
+  h.scarica.mockResolvedValue({ esito: 'web-blob' });
+  h.pdf = new Blob(['%PDF-1.7'], { type: 'application/pdf' });
   h.fetchMock.mockImplementation((url: string) => {
     if (String(url).includes('/api/parent/submissions')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => [FIRMATO] });
@@ -75,7 +85,7 @@ beforeEach(() => {
       return Promise.resolve({
         ok: true,
         status: 200,
-        blob: async () => new Blob(['%PDF-1.7'], { type: 'application/pdf' }),
+        blob: async () => h.pdf,
         json: async () => ({}),
       });
     }
@@ -113,5 +123,66 @@ describe('parent/modulistica — la ricevuta di firma la disegna il server', () 
     // `entita` diverso la rotta risponde 400, e il pulsante non farebbe niente.
     expect(url).toContain('entita=forms');
     expect(url).toContain(SUBMISSION);
+  });
+});
+
+describe('parent/modulistica — la ricevuta si SALVA con l’helper (NAT3c)', () => {
+  async function premiRicevuta(): Promise<void> {
+    h.query = 'tab=archivio';
+    render(<ParentModulisticaPage />);
+    await screen.findByText(FIRMATO.forms_templates.title);
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(itParentServizi.modulisticaRicevutaPdf) }));
+  }
+
+  it('i byte della risposta vanno a `scaricaDocumento`, col nome e l’etichetta della ricevuta', async () => {
+    await premiRicevuta();
+    await waitFor(() => expect(h.scarica).toHaveBeenCalledTimes(1));
+    const input = h.scarica.mock.calls[0][0];
+    // Lo STESSO Blob della risposta: il corpo si legge una volta, nella pagina.
+    expect(input.sorgente).toBe(h.pdf);
+    expect(input).toMatchObject({
+      nomeFile: `ricevuta-firma-${SUBMISSION.slice(0, 8)}.pdf`,
+      mime: 'application/pdf',
+      etichetta: 'ricevuta-firma',
+    });
+  });
+
+  /** Il testo del catalogo come espressione LETTERALE (i punti non sono jolly). */
+  const letterale = (testo: string): RegExp => new RegExp(testo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+  it('la ricevuta che non si salva lo DICE', async () => {
+    h.scarica.mockResolvedValueOnce({ esito: 'non-riuscito', motivo: 'foglio-file-non-aperto' });
+    await premiRicevuta();
+    expect(await screen.findByText(letterale(itShared.documentoNonSalvato))).toBeInTheDocument();
+    expect(screen.queryByText(letterale(itShared.documentoAppDaAggiornare))).not.toBeInTheDocument();
+  });
+
+  it('col binario 1.0 la ricevuta non si salva MAI: il testo dice di aggiornare, non di riprovare', async () => {
+    // Il verdetto dell'helper quando Filesystem manca e la sorgente è un Blob: riprovare
+    // fra qualche minuto non cambierebbe niente.
+    h.scarica.mockResolvedValueOnce({
+      esito: 'non-riuscito',
+      motivo: 'plugin-assenti:filesystem|link-non-condivisibile',
+      binarioDaAggiornare: true,
+    });
+    await premiRicevuta();
+    expect(await screen.findByText(letterale(itShared.documentoAppDaAggiornare))).toBeInTheDocument();
+    expect(screen.queryByText(letterale(itShared.documentoNonSalvato))).not.toBeInTheDocument();
+  });
+
+  it('una risposta di rifiuto non arriva all’helper', async () => {
+    h.fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('/api/parent/submissions')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => [FIRMATO] });
+      }
+      if (String(url).includes('/api/fea/receipt')) {
+        return Promise.resolve({ ok: false, status: 403, json: async () => ({ codice: 'NON_AUTORIZZATO' }) });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+    });
+    await premiRicevuta();
+    await waitFor(() => expect(chiamate('/api/fea/receipt')).toHaveLength(1));
+    expect(await screen.findByText(new RegExp(itParentServizi.modulisticaErrRete))).toBeInTheDocument();
+    expect(h.scarica).not.toHaveBeenCalled();
   });
 });

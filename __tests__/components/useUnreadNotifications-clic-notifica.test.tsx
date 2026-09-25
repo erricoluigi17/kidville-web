@@ -108,7 +108,7 @@ describe('clic sulla notifica del browser di un messaggio di chat', () => {
     });
 
     it('con più conversazioni non lette apre quella di cui la notifica parla: la più recente con messaggi non letti', async () => {
-        // A è la più recente, ma i suoi messaggi sono letti: la notifica prende nome e testo da B.
+        // A è la più recente, ma i suoi messaggi sono letti: la notifica parla di B.
         rispondeConLista([thread(A, 0), thread(B, 2), thread(C, 1)]);
         const pagina = paginaChatMontata();
         const { notifica, smonta } = await notificaArrivata();

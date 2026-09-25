@@ -96,6 +96,7 @@
   "placeholderMotivoModifica": "Reason for the task change… *",
   "altAllegato": "Attachment",
   "scaricaApri": "Download or open in a new tab",
+  "allegatoNonApribile": "The attachment could not be opened. Please try again.",
   "dettagliNonDisponibili": "Details unavailable",
   "erroreCaricamentoFile": "Error while uploading the file",
 

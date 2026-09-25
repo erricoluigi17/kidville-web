@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.types'
 import { formattaIstante } from '@/i18n/config'
+import { scaricaCompilazionePdf, scaricaCompilazioniXlsx } from './scarica-compilazioni'
 
 export interface SubmissionRow {
   id: string
@@ -70,24 +71,27 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
       })
     : []
 
+  // Lo scarico passa dall'helper unico (vedi `scarica-compilazioni.ts`): nell'app apre il
+  // foglio «Salva su File», sul web scarica come prima. L'avviso è legato all'id della
+  // compilazione: aprendone un'altra, quello della precedente non resta a schermo.
+  const [scaricoFallito, setScaricoFallito] = useState<string | null>(null)
+
+  const scaricaConAvviso = async (id: string, scarico: () => Promise<boolean>) => {
+    setScaricoFallito(null)
+    const consegnato = await scarico()
+    if (!consegnato) setScaricoFallito(id)
+  }
+
   const handleDownloadPDF = () => {
     if (!submission) return
-    const a = document.createElement('a')
-    a.href = `/api/forms/export/pdf?id=${submission.id}`
-    a.download = `compilazione-${submission.id.slice(0, 8)}.pdf`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    const id = submission.id
+    void scaricaConAvviso(id, () => scaricaCompilazionePdf(id))
   }
 
   const handleDownloadXLSX = () => {
     if (!submission) return
-    const a = document.createElement('a')
-    a.href = `/api/forms/export/xlsx?ids=${submission.id}`
-    a.download = `compilazione-${submission.id.slice(0, 8)}.xlsx`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    const id = submission.id
+    void scaricaConAvviso(id, () => scaricaCompilazioniXlsx([id]))
   }
 
   return (
@@ -273,6 +277,11 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                 {t('subEsportaXlsx')}
               </button>
               </div>
+              {scaricoFallito === submission.id && (
+                <p role="alert" className="text-xs text-kidville-error-strong font-maven">
+                  {t('scaricoNonRiuscito')}
+                </p>
+              )}
             </div>
           </motion.aside>
         </>

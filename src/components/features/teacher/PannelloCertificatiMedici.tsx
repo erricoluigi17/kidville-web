@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertCircle, Calendar, FileText } from 'lucide-react';
 import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri';
@@ -12,6 +12,9 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { logClient } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { campiCertificatiMedici } from '@/components/features/teacher/filtri-modulistica';
+import { isNativeApp } from '@/lib/push/native-register';
+import { apriDocumento } from '@/lib/native/scarica';
+import { nomeConEstensione } from '@/lib/native/nome-da-percorso';
 
 /**
  * ─── I CERTIFICATI MEDICI DELLA SEZIONE ─────────────────────────────────────
@@ -27,6 +30,11 @@ import { campiCertificatiMedici } from '@/components/features/teacher/filtri-mod
  * perché): la sezione è la cornice, e cambiarla fa rinascere la barra già sulla
  * sezione nuova invece di lasciarla mentire per un render.
  */
+
+/** L'indirizzo del file del certificato: lo stesso per l'ancora (web) e per l'helper (app). */
+function indirizzoCertificato(id: string, teacherId: string): string {
+  return `/api/parent/medical-certificates/file?id=${id}&userId=${teacherId}`;
+}
 
 /** Il certificato come lo serve `GET /api/teacher/medical-certificates`. */
 export interface CertificatoDocente {
@@ -72,6 +80,14 @@ export function PannelloCertificatiMedici({
 
   const [inValidazione, setInValidazione] = useState<CertificatoDocente | null>(null);
   const [nota, setNota] = useState('');
+  // UNA APERTURA ALLA VOLTA (come `scaricoInCorso` di MediaGrid): nell'app lo scarico
+  // del certificato impiega secondi, e un secondo tocco lancerebbe un secondo
+  // `apriDocumento` sullo stesso file in Cache; l'anteprima e poi il foglio, già
+  // presentati dal primo, lo rifiuterebbero — un toast «non apribile» e un `error`
+  // in app_log sopra un certificato che invece si è aperto. Il ref è la guardia
+  // (sincrona), lo stato è solo il segnale a schermo.
+  const aperturaInVolo = useRef(false);
+  const [aprendo, setAprendo] = useState(false);
 
   const chiaveServer = stato.chiaveServer;
 
@@ -146,6 +162,36 @@ export function PannelloCertificatiMedici({
         route: '/teacher/modulistica',
       });
     }
+  };
+
+  /**
+   * NELL'APP l'ancora del certificato non apre niente: `target="_blank"` nella WebView
+   * non ha finestre. Lì il file si apre nell'anteprima di sistema DENTRO l'app con
+   * l'helper unico — la route è della stessa origine e vuole i cookie di sessione, che
+   * la `fetch` dell'helper porta — e il suo link non si condivide mai come ripiego (ha
+   * `userId` in chiaro). La route risponde `application/octet-stream`: l'estensione,
+   * senza la quale l'anteprima non sa che file sia, si prende dal percorso nello
+   * Storage. Il nome resta generico: niente nome del bambino sul dispositivo.
+   * Sul web il clic resta quello di sempre.
+   */
+  const apriCertificatoSuNativo = (e: MouseEvent<HTMLAnchorElement>, cert: CertificatoDocente) => {
+    if (!isNativeApp()) return;
+    e.preventDefault();
+    if (aperturaInVolo.current) return;
+    aperturaInVolo.current = true;
+    setAprendo(true);
+    void apriDocumento({
+      sorgente: indirizzoCertificato(cert.id, teacherId),
+      nomeFile: nomeConEstensione('certificato-medico', cert.file_path),
+      etichetta: 'certificato-medico',
+    })
+      .then((r) => {
+        if (r.esito === 'non-riuscito') onToast(t('modulisticaDocumentoNonApribile'));
+      })
+      .finally(() => {
+        aperturaInVolo.current = false;
+        setAprendo(false);
+      });
   };
 
   const impostaFiltro = (chiave: string, valore: ValoreFiltro) => {
@@ -295,10 +341,17 @@ export function PannelloCertificatiMedici({
               )}
 
               <a
-                href={`/api/parent/medical-certificates/file?id=${inValidazione.id}&userId=${teacherId}`}
+                href={indirizzoCertificato(inValidazione.id, teacherId)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-kidville-green hover:underline"
+                onClick={(e) => apriCertificatoSuNativo(e, inValidazione)}
+                // Il NOME resta «Apri documento»; lo stato lo dice `aria-busy`
+                // (solo quando è vero) e l'ancora attenuata.
+                aria-busy={aprendo || undefined}
+                className={cx(
+                  'inline-flex items-center gap-1.5 text-xs font-bold text-kidville-green hover:underline',
+                  aprendo && 'cursor-wait opacity-60',
+                )}
               >
                 <FileText size={14} aria-hidden="true" /> {t('modulisticaApriDocumento')}
               </a>

@@ -126,6 +126,40 @@ export const CODICI_ERRORE = {
      */
     ORARIO_INCOERENTE: 'erroreOrarioIncoerente',
     /**
+     * I QUATTRO RIFIUTI DELL'ANNULLAMENTO DELL'APPELLO (`DELETE /api/attendance/daily`,
+     * libreria `@/lib/presenze/annulla-appello`, condivisa con la primaria).
+     *  · 409 — l'appello si annulla solo nel giorno stesso, in data di Roma;
+     *  · 404 — per quel bambino, quel giorno, non c'è nessuna presenza;
+     *  · 409 — c'è solo la comunicazione del genitore: l'appello non è mai stato fatto;
+     *  · 409 — la riga è cambiata fra lettura e scrittura (il genitore ha comunicato
+     *    nel frattempo): nessuna riga toccata, si ricarica.
+     */
+    APPELLO_ANNULLA_SOLO_OGGI: 'erroreAppelloAnnullaSoloOggi',
+    PRESENZA_NON_TROVATA: 'errorePresenzaNonTrovata',
+    NIENTE_DA_ANNULLARE: 'erroreNienteDaAnnullare',
+    APPELLO_CAMBIATO_NEL_FRATTEMPO: 'erroreAppelloCambiatoNelFrattempo',
+    /**
+     * 500 — l'annullamento dell'appello (`DELETE /api/attendance/daily` e
+     * `DELETE /api/primaria/appello`, risposta unica in
+     * `@/lib/presenze/annulla-appello-risposta`) non è riuscito per un guasto. Il `message` di PostgREST resta
+     * nel log; al docente si dice che niente è cambiato e che può riprovare.
+     */
+    APPELLO_NON_ANNULLATO: 'erroreAppelloNonAnnullato',
+    /**
+     * I RIFIUTI DI «ANNULLA PRESA VISIONE» della giustifica, primaria
+     * (`DELETE /api/primaria/presenze/giust-vista`, spec 2026-09-24 punto 2):
+     *  · 404 — la presenza non esiste (più);
+     *  · 409 — non c'è nessuna presa visione da annullare;
+     *  · 403 — l'ha presa un altro docente: la annulla lui, o Segreteria/Direzione;
+     *  · 409 — la presa visione è cambiata fra lettura e scrittura: nessuna riga toccata;
+     *  · 500 — guasto di lettura o scrittura: il `message` resta nel log.
+     */
+    PRESA_VISIONE_PRESENZA_NON_TROVATA: 'errorePresaVisionePresenzaNonTrovata',
+    PRESA_VISIONE_ASSENTE: 'errorePresaVisioneAssente',
+    PRESA_VISIONE_NON_TUA: 'errorePresaVisioneNonTua',
+    PRESA_VISIONE_CAMBIATA: 'errorePresaVisioneCambiata',
+    PRESA_VISIONE_NON_ANNULLATA: 'errorePresaVisioneNonAnnullata',
+    /**
      * 403 — non si può APRIRE una conversazione fra queste due persone su questo
      * bambino: il docente non è della sua sezione, o non è più in servizio, o lo
      * staff è di un altro plesso (`@/lib/chat/rubrica`). Vale sulla porta, non
@@ -587,7 +621,9 @@ export const CODICI_ERRORE = {
     GIUSTIFICA_NON_SALVATA: 'erroreGiustificaNonSalvata',
     /**
      * 500 — le presenze del bambino non si sono POTUTE LEGGERE
-     * (`GET /api/parent/presenze`: anagrafica, appello di oggi, riepilogo).
+     * (`GET /api/parent/presenze`: anagrafica, appello di oggi, riepilogo;
+     * `GET /api/primaria/appello`: alunni e presenze della classe, da cui dipende
+     * anche `appello_fatto` — un 200 con righe vuote mostrerebbe un appello mai fatto).
      *
      * NON riusa `ALUNNO_NON_TROVATO`, ed è tutto il punto: fino al 2026-08-07 una
      * lettura fallita usciva proprio da quella porta, perché PostgREST non lancia e
@@ -753,6 +789,104 @@ export const CODICI_ERRORE = {
     TROPPE_SEDI: 'erroreTroppeSedi',
     CORPO_NON_VALIDO: 'erroreCorpoNonValido',
     LETTURA_FALLITA: 'erroreLetturaFallita',
+    /**
+     * PRIMARIA — modifica ed eliminazione delle voci (`src/lib/primaria/permesso-voce.ts`).
+     * 403: la voce è di un altro docente. 423: oltre il termine, serve lo sblocco della
+     * Direzione (`/api/primaria/sblocca`).
+     */
+    VOCE_NON_AUTORE: 'erroreVoceNonAutore',
+    VOCE_BLOCCATA: 'erroreVoceBloccata',
+    /**
+     * PRIMARIA — note disciplinari (`/api/primaria/note`, PATCH/DELETE).
+     * 404: la nota (o il suo gruppo) non c'è più. 500: scrittura non riuscita.
+     */
+    NOTA_NON_TROVATA: 'erroreNotaNonTrovata',
+    NOTA_OPERAZIONE_NON_RIUSCITA: 'erroreNotaOperazioneNonRiuscita',
+    /**
+     * 409: firma o allegato vivo (non nel cestino) con `registro_id` NULL.
+     * Un allegato nel cestino è 404 `SBLOCCO_VOCE_NON_TROVATA`.
+     */
+    VOCE_SENZA_LEZIONE: 'erroreVoceSenzaLezione',
+    /**
+     * PRIMARIA — modifica (PATCH) ed eliminazione (DELETE) di una valutazione
+     * (`/api/primaria/valutazioni`). 404: la voce non c'è più (eliminata nel frattempo).
+     * 500: scrittura non riuscita; `…_OBIETTIVI_NON_AGGIORNATI` = il giudizio è salvato
+     * ma i collegamenti agli obiettivi no (riprovare completa). 400: gli stessi rifiuti
+     * della POST, con il codice.
+     */
+    VALUTAZIONE_NON_TROVATA: 'erroreValutazioneNonTrovata',
+    VALUTAZIONE_NON_SALVATA: 'erroreValutazioneNonSalvata',
+    VALUTAZIONE_NON_ELIMINATA: 'erroreValutazioneNonEliminata',
+    VALUTAZIONE_OBIETTIVI_NON_AGGIORNATI: 'erroreValutazioneObiettiviNonAggiornati',
+    VALUTAZIONE_ANNOTAZIONE_NON_VALIDA: 'erroreValutazioneAnnotazioneNonValida',
+    VALUTAZIONE_OBIETTIVO_MANCANTE: 'erroreValutazioneObiettivoMancante',
+    VALUTAZIONE_OBIETTIVO_NON_VALIDO: 'erroreValutazioneObiettivoNonValido',
+    /** 404/500/503 di `/api/primaria/sblocca`: voce inesistente, audit non scritto, schema non migrato. */
+    SBLOCCO_VOCE_NON_TROVATA: 'erroreSbloccoVoceNonTrovata',
+    SBLOCCO_NON_REGISTRATO: 'erroreSbloccoNonRegistrato',
+    SBLOCCO_NON_DISPONIBILE: 'erroreSbloccoNonDisponibile',
+    /**
+     * Impreparato dichiarato dal GENITORE (`PATCH`/`DELETE /api/parent/giustifiche-didattiche`).
+     * 404: la dichiarazione non c'è o non è sua; 409: il giorno dichiarato è passato (o la
+     * nuova data è nel passato), in data di Roma; 400: materia di un'altra classe; 500: la
+     * scrittura non è riuscita. Gli stessi 404/400/500 li usa anche la route del DOCENTE
+     * (`/api/primaria/giustifiche-didattiche`, compito V2), anche per l'eliminazione: per
+     * questo le frasi in catalogo sono neutre («impreparato», «operazione»).
+     */
+    IMPREPARATO_NON_TROVATO: 'erroreImpreparatoNonTrovato',
+    IMPREPARATO_DATA_PASSATA: 'erroreImpreparatoDataPassata',
+    IMPREPARATO_MATERIA_NON_VALIDA: 'erroreImpreparatoMateriaNonValida',
+    IMPREPARATO_NON_SALVATO: 'erroreImpreparatoNonSalvato',
+    /**
+     * `PATCH /api/primaria/giustifiche-didattiche` (compito V2): 400 quando si chiede il tipo
+     * «impreparato» su una dichiarazione del GENITORE, che resta sempre «giustificato».
+     */
+    IMPREPARATO_TIPO_GENITORE: 'erroreImpreparatoTipoGenitore',
+    /**
+     * Allegati del registro della primaria (compito R2: `primaria/allegati`,
+     * `…/sostituisci`, `…/cestino`). 400 formato o dimensione (PDF fino a 10 MB, immagini
+     * fino a 3 MB); 404 allegato vivo che non c'è; 409 eliminato o sostituito nel
+     * frattempo, non più nel cestino, oltre i giorni di custodia, oppure lezione eliminata
+     * e non ancora rifirmata nello stesso slot (`LEZIONE_DA_RIFIRMARE`); 500 scrittura non
+     * riuscita; 503 DB non migrato (il cestino non c'è: niente è cambiato).
+     */
+    ALLEGATO_REGISTRO_FORMATO_NON_AMMESSO: 'erroreAllegatoRegistroFormatoNonAmmesso',
+    ALLEGATO_REGISTRO_TROPPO_GRANDE: 'erroreAllegatoRegistroTroppoGrande',
+    ALLEGATO_REGISTRO_NON_TROVATO: 'erroreAllegatoRegistroNonTrovato',
+    ALLEGATO_REGISTRO_CAMBIATO: 'erroreAllegatoRegistroCambiato',
+    ALLEGATO_REGISTRO_NON_NEL_CESTINO: 'erroreAllegatoRegistroNonNelCestino',
+    ALLEGATO_REGISTRO_CESTINO_SCADUTO: 'erroreAllegatoRegistroCestinoScaduto',
+    ALLEGATO_REGISTRO_SCRITTURA_FALLITA: 'erroreAllegatoRegistroScritturaFallita',
+    ALLEGATO_REGISTRO_CESTINO_NON_DISPONIBILE: 'erroreAllegatoRegistroCestinoNonDisponibile',
+    LEZIONE_DA_RIFIRMARE: 'erroreLezioneDaRifirmare',
+    /**
+     * `DELETE /api/primaria/registro` — la propria firma (`?firmaId=`) o la lezione
+     * intera (`?registroId=`). 404 firma/lezione che non c'è; 403 lezione intera
+     * chiesta da chi non è Segreteria o Direzione; 500 eliminazione non riuscita
+     * (la frase non promette «non è cambiato niente»: manda a ricaricare); 503 DB
+     * non migrato con allegati da mettere nel cestino (la lezione resta).
+     */
+    FIRMA_NON_TROVATA: 'erroreFirmaNonTrovata',
+    LEZIONE_NON_TROVATA: 'erroreLezioneNonTrovata',
+    LEZIONE_ELIMINA_SOLO_STAFF: 'erroreLezioneEliminaSoloStaff',
+    REGISTRO_NON_ELIMINATO: 'erroreRegistroNonEliminato',
+    REGISTRO_CESTINO_NON_DISPONIBILE: 'erroreRegistroCestinoNonDisponibile',
+    /**
+     * `/api/primaria/scrutinio/riapri` (Segreteria e Direzione). 404: lo scrutinio non c'è;
+     * 409: non è chiuso (o un'altra riapertura è passata prima); 500: un passo non è riuscito —
+     * lo scrutinio resta chiuso e la richiesta si può ripetere.
+     */
+    SCRUTINIO_RIAPERTURA_NON_TROVATO: 'erroreScrutinioRiaperturaNonTrovato',
+    SCRUTINIO_RIAPERTURA_NON_CHIUSO: 'erroreScrutinioRiaperturaNonChiuso',
+    SCRUTINIO_RIAPERTURA_NON_RIUSCITA: 'erroreScrutinioRiaperturaNonRiuscita',
+    /**
+     * `DELETE /api/primaria/pagella` (Segreteria e Direzione): una sola pagella. 404: lo
+     * scrutinio non c'è, oppure non c'è né la riga né il PDF di quell'alunno; 500: un passo
+     * non è riuscito — la richiesta si può ripetere (file prima, riga poi).
+     */
+    PAGELLA_ELIMINAZIONE_SCRUTINIO_NON_TROVATO: 'errorePagellaEliminazioneScrutinioNonTrovato',
+    PAGELLA_ELIMINAZIONE_NON_TROVATA: 'errorePagellaEliminazioneNonTrovata',
+    PAGELLA_ELIMINAZIONE_NON_RIUSCITA: 'errorePagellaEliminazioneNonRiuscita',
     /**
      * 404 — il pagamento di cui si chiede l'anteprima della fattura non c'è più.
      *
@@ -1266,6 +1400,40 @@ export const CODICI_ERRORE = {
      * documento sanitario da fuori — è un segnale, non rumore.
      */
     DOCUMENTO_SANITARIO_NEGATO: 'erroreDocumentoSanitarioNegato',
+    /*
+     * ── FASCICOLO: modifica, sostituzione, cestino, ripristino (spec 2026-09-24, F1) ──
+     * Route `primaria/fascicolo` (PATCH, DELETE), `…/sostituisci`, `…/cestino`.
+     */
+    /** 401 — nessuna sessione riconosciuta sulle route di gestione del fascicolo. */
+    FASCICOLO_NON_AUTENTICATO: 'erroreFascicoloNonAutenticato',
+    /** 403 — chi ACCEDE al fascicolo ma non è né l'autore del documento né Segreteria/Direzione. */
+    FASCICOLO_GESTIONE_NEGATA: 'erroreFascicoloGestioneNegata',
+    /** 400 — PATCH senza nessuno dei tre campi modificabili (tipo, descrizione, scadenza). */
+    FASCICOLO_NIENTE_DA_MODIFICARE: 'erroreFascicoloNienteDaModificare',
+    /** 400 — il file sostitutivo non è un PDF né un'immagine ammessa. */
+    FASCICOLO_FORMATO_NON_AMMESSO: 'erroreFascicoloFormatoNonAmmesso',
+    /** 400 — il file sostitutivo supera il tetto del fascicolo. */
+    FASCICOLO_FILE_TROPPO_GRANDE: 'erroreFascicoloFileTroppoGrande',
+    /** 500 — upload del file fallito (caricamento o sostituzione): nel fascicolo non è cambiato niente. */
+    FASCICOLO_FILE_NON_CARICATO: 'erroreFascicoloFileNonCaricato',
+    /** 500 — scrittura su `student_documents` fallita (caricamento, modifica, cestino, ripristino, sostituzione). */
+    FASCICOLO_SCRITTURA_FALLITA: 'erroreFascicoloScritturaFallita',
+    /**
+     * 409 — il documento è stato eliminato o sostituito da qualcun altro fra la lettura e la
+     * scrittura. Non è un 404: il documento c'era quando la schermata è stata disegnata.
+     */
+    FASCICOLO_DOCUMENTO_CAMBIATO: 'erroreFascicoloDocumentoCambiato',
+    /** 409 — ripristino di un documento che non è (più) nel cestino. */
+    FASCICOLO_NON_NEL_CESTINO: 'erroreFascicoloNonNelCestino',
+    /** 409 — ripristino oltre i giorni di custodia del cestino (`GIORNI_CESTINO_REGISTRO`). */
+    FASCICOLO_CESTINO_SCADUTO: 'erroreFascicoloCestinoScaduto',
+    /**
+     * 409 — PATCH o sostituzione di una riga di `student_documents` che NON è del fascicolo
+     * (tipo fuori da `TIPI_FASCICOLO`): un prestampato firmato dal genitore o protocollato.
+     * La firma, la data della firma e il numero di protocollo appartengono a quel modulo:
+     * dal fascicolo si può solo mettere nel cestino.
+     */
+    FASCICOLO_DOCUMENTO_NON_MODIFICABILE: 'erroreFascicoloDocumentoNonModificabile',
 
     /* ── I diciassette PRESTAMPATI (`src/lib/prestampati/`) ──────────────────
      *
@@ -1867,6 +2035,12 @@ export const CODICI_ERRORE = {
     MENSA_ALUNNO_FUORI_CLASSE: 'erroreMensaAlunnoFuoriClasse',
     /** 500 — non si è potuto verificare a chi appartiene quel bambino. */
     MENSA_SCOPE_NON_VERIFICATO: 'erroreMensaScopeNonVerificato',
+    /**
+     * 400 (disdetta) o esito della prenotazione — il genitore ha chiesto un giorno
+     * già passato, o oggi dopo l'orario limite della sua sede (ora italiana,
+     * `mensa/prenotazioni`). Lo staff non lo riceve mai: allo sportello forza.
+     */
+    MENSA_OLTRE_CUTOFF: 'erroreMensaOltreCutoff',
     /**
      * ─── LA FATTURA È PARTITA, MA ARUBA NON L'HA CONFERMATO ─────────────────
      * 502 — rifiuto di TRASPORTO (`POST /api/pagamenti/fattura`): il numero è
@@ -2810,6 +2984,12 @@ export const CODICI_ERRORE = {
     PAGAMENTO_NON_SALDATO: 'errorePagamentoNonSaldato',
     /** 400 — accodamento con un intestatario scritto a mano che `validaCessionario` rifiuta (consegna 2b, D1). */
     INTESTATARIO_DIGITATO_INCOMPLETO: 'erroreIntestatarioDigitatoIncompleto',
+    /**
+     * 409 — PATCH di un obiettivo della primaria col codice di un'altra riga della
+     * stessa materia e classe (UNIQUE scuola_id, materia_codice, livello, codice).
+     * Nessuna riga è stata modificata.
+     */
+    OBIETTIVO_CODICE_DUPLICATO: 'erroreObiettivoCodiceDuplicato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -10,6 +10,7 @@ import { addGiorni, isoToIt } from '@/lib/format/data';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco';
+import { LinkAllegatoRegistro } from '@/components/features/primaria/LinkAllegatoRegistro';
 import { decidiStatoElenco } from '@/lib/ui/filtri/motore';
 
 /**
@@ -819,11 +820,14 @@ function CompitiClasse() {
                     {voce.allegati.map((a) => {
                       const marca = marcaAmbito(a.ambito);
                       return a.file_url ? (
-                        <a
+                        // R5: sul web la stessa ancora di prima (scheda nuova);
+                        // nell'app l'anteprima di sistema con l'helper unico.
+                        <LinkAllegatoRegistro
                           key={a.id}
+                          allegato={a}
                           href={a.file_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          etichetta="compiti-allegato"
+                          titolo={t('classeCompitiAllegato')}
                           className={`${ALLEGATO} bg-kidville-cream text-kidville-ink hover:bg-kidville-cream-dark`}
                         >
                           {iconaAllegato(a.tipo)}
@@ -833,7 +837,7 @@ function CompitiClasse() {
                               file, altrimenti torna a essere un allegato
                               dell'argomento presentato come compito. */}
                           {marca && <em className="not-italic text-[10px]">({marca})</em>}
-                        </a>
+                        </LinkAllegatoRegistro>
                       ) : (
                         // Niente `<a>`: un collegamento che non porta da nessuna
                         // parte è peggio di nessun collegamento — si clicca, si

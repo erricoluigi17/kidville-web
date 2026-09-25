@@ -158,7 +158,15 @@ export const GET = withRoute('primaria/scrutinio:GET', async (request: NextReque
     }
     if (!scrutinio) return NextResponse.json({ error: 'Impossibile aprire lo scrutinio' }, { status: 500 })
 
-    const [{ data: alunni }, { data: materie }, { data: mieMaterie }, { data: giudizi }, { data: comportamento }, { data: scala }] =
+    const [
+      { data: alunni },
+      { data: materie },
+      { data: mieMaterie },
+      { data: giudizi },
+      { data: comportamento },
+      { data: scala },
+      { data: pagelle, error: errPagelle },
+    ] =
       await Promise.all([
         supabase.from('alunni').select('id, nome, cognome').eq('section_id', sectionId).order('cognome'),
         supabase.from('materie').select('id, nome, codice, e_civica, ordine').eq('section_id', sectionId).eq('attiva', true).order('ordine'),
@@ -168,7 +176,21 @@ export const GET = withRoute('primaria/scrutinio:GET', async (request: NextReque
         scuolaId
           ? supabase.from('giudizi_sintetici_scala').select('etichetta, ordine').eq('scuola_id', scuolaId).eq('attivo', true).order('ordine')
           : Promise.resolve({ data: [] as { etichetta: string; ordine: number }[] }),
+        // Quali alunni hanno DAVVERO un PDF archiviato (spec 2026-09-24, S3):
+        // la pagina mostra «Elimina pagella» solo su queste, non su ogni alunno.
+        supabase.from('pagelle').select('alunno_id').eq('scrutinio_id', scrutinio.id),
       ])
+
+    // Degrado DICHIARATO, non un 500: senza questo elenco la pagina dello
+    // scrutinio (giudizi, comportamento, PDF) resta utilizzabile, e l'unica cosa
+    // che si perde è il comando distruttivo «Elimina pagella», che non si mostra.
+    // Nascondere è il lato sicuro; `pagelleArchiviateNonLette` dice perché.
+    if (errPagelle) {
+      logEvento('db', 'error', { operazione: 'primaria/scrutinio:GET', esito: 'pagelle-archiviate-non-lette' }, errPagelle)
+    }
+    const pagelleArchiviate = errPagelle
+      ? []
+      : [...new Set((pagelle ?? []).map((p) => p.alunno_id as string))]
 
     // Materie modificabili: l'educator solo le proprie (contitolarità); staff/segreteria
     // possono intervenire su tutte le materie della sezione (agiscono per l'intera classe).
@@ -186,6 +208,10 @@ export const GET = withRoute('primaria/scrutinio:GET', async (request: NextReque
         giudizi: giudizi ?? [],
         comportamento: comportamento ?? [],
         scala: (scala ?? []).map((g) => g.etichetta),
+        // Solo uuid degli alunni: nessun dato personale in più di quanto la
+        // risposta porti già con `alunni`.
+        pagelleArchiviate,
+        pagelleArchiviateNonLette: Boolean(errPagelle),
       },
     })
   } catch (err) {

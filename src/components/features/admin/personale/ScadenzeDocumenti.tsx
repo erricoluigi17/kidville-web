@@ -18,6 +18,11 @@ import { messaggioErrore } from '@/lib/ui/esito-fetch'
 import { TIPI_DOCUMENTO } from '@/lib/forms/personale-template'
 import { SOGLIA_SCADUTO, giorniResidui, sogliaRaggiunta } from '@/lib/anagrafica/scadenze'
 import { dataCivile } from '@/i18n/config'
+import { apriDocumento as apriDocumentoNativo } from '@/lib/native/scarica'
+import { nomeConEstensione } from '@/lib/native/nome-da-percorso'
+import { isNativeApp } from '@/lib/push/native-register'
+import { documentoNonConsegnato } from '@/lib/ui/documento-segreteria'
+import { apriLinkNellApp } from '@/lib/ui/apri-documento-firmato'
 
 /**
  * IL CRUSCOTTO DELLE SCADENZE DEI DOCUMENTI D'IDENTITÀ — lato Segreteria.
@@ -626,22 +631,29 @@ export function ScadenzeDocumenti({ userId, statoIniziale = null, oggi }: Props)
    * Apre la scansione del documento: la URL è firmata dal server e vive cinque
    * minuti.
    *
-   * La finestra si apre PRIMA della fetch, dentro il gesto dell'utente: Safari e
-   * la WebView Capacitor (l'app è spedita nativa) bloccano una `window.open`
-   * chiamata in continuazione di promise. Se la finestra non c'è, la URL si
-   * mostra come collegamento da aprire a mano — invece di un pulsante che non fa
-   * niente e non dice niente.
+   * SUL WEB la finestra si apre PRIMA della fetch, dentro il gesto dell'utente:
+   * Safari blocca una `window.open` chiamata in continuazione di promise. Se la
+   * finestra non c'è, la URL si mostra come collegamento da aprire a mano —
+   * invece di un pulsante che non fa niente e non dice niente.
+   *
+   * NELL'APP (spec 2026-09-24, NAT3g) non si apre nessuna finestra e non si
+   * mostra nessun collegamento: dopo la firma il documento passa da
+   * `apriDocumento` di `@/lib/native/scarica` (qui `apriDocumentoNativo`), cioè
+   * l'anteprima di sistema dentro l'app, e il ramo «bloccato» non si presenta
+   * più. Se l'anteprima non consegna niente, resta l'avviso d'errore in pagina.
    *
    * ⚠️ PERCHÉ QUI NON SI USA `@/lib/ui/apri-documento-firmato`, che pure fa
    * esattamente questo per gli altri tre pannelli: quella funzione apre la
    * finestra prima del PRIMO `await` che fa lei — e in questo pannello il primo
    * `await` è un altro, la richiesta del DETTAGLIO, perché il percorso nel bucket
    * non esce mai in elenco (proiezione povera: niente residenza, niente numero di
-   * documento, niente percorso di storage). Delegando, la `window.open`
-   * cadrebbe dopo quell'`await`, cioè fuori dal gesto, cioè bloccata da Safari e
-   * dalla WebView — che è precisamente il difetto che quel modulo esiste per
-   * evitare. Il giorno in cui l'elenco portasse il percorso, questo blocco si
-   * cancella e si chiama la funzione condivisa.
+   * documento, niente percorso di storage). Delegando, SUL WEB la `window.open`
+   * finirebbe dopo quell'`await`, quindi fuori dal gesto, e Safari la
+   * bloccherebbe: è proprio il difetto che quel modulo esiste per evitare.
+   * Nell'app il problema non c'è, perché non si apre nessuna scheda (vedi
+   * sopra), ma il ramo web basta a tenere qui il blocco. Il giorno in cui
+   * l'elenco portasse il percorso, questo blocco si cancella e si chiama la
+   * funzione condivisa.
    */
   async function apriDocumento(riga: RigaScadenza) {
     const utenteId = riga.utente_id
@@ -657,7 +669,11 @@ export function ScadenzeDocumenti({ userId, statoIniziale = null, oggi }: Props)
     setErrore(null)
     aprendoRef.current = utenteId
     setAprendo(utenteId)
-    const finestra = typeof window !== 'undefined' ? window.open('', '_blank') : null
+    // NELL'APP NESSUNA SCHEDA (spec 2026-09-24, NAT3g): nella WebView `window.open`
+    // torna `null` e il link del ripiego `_blank` non apre niente. Lì il documento
+    // passa dall'anteprima di sistema dell'helper unico, qui sotto dopo la firma.
+    const nativo = isNativeApp()
+    const finestra = !nativo && typeof window !== 'undefined' ? window.open('', '_blank') : null
     try {
       // Il percorso non si conosce in elenco (non esce mai in lista): si chiede
       // il dettaglio, che è anche il punto in cui l'accesso viene registrato.
@@ -714,6 +730,18 @@ export function ScadenzeDocumenti({ userId, statoIniziale = null, oggi }: Props)
         return
       }
       const url = String(json.url)
+      if (nativo) {
+        // Anteprima dentro l'app; l'helper non lancia mai e logga da sé l'esito
+        // (successo compreso). Nome del file: niente nome di persona, solo il tipo
+        // di gesto e l'estensione vera del percorso.
+        const risultato = await apriDocumentoNativo({
+          sorgente: url,
+          nomeFile: nomeConEstensione('scadenze-documento', percorso),
+          etichetta: 'scadenze-documento',
+        })
+        if (documentoNonConsegnato(risultato)) setErrore(t('scadErroreDocumento'))
+        return
+      }
       if (finestra && !finestra.closed) {
         // `opener` a null: la scheda del documento non deve poter toccare il
         // cockpit da cui è nata.
@@ -835,6 +863,13 @@ export function ScadenzeDocumenti({ userId, statoIniziale = null, oggi }: Props)
             href={documentoBloccato.url}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={apriLinkNellApp(documentoBloccato.url, 'scadenze-documento', {
+              // Le due fasce si escludono a vicenda (vedi sopra): l'errore prende il posto del ripiego.
+              onNonConsegnato: () => {
+                setDocumentoBloccato(null)
+                setErrore(t('scadErroreDocumento'))
+              },
+            })}
             className="inline-flex min-h-[44px] items-center gap-1.5 font-semibold text-kidville-green underline"
           >
             {t('scadApriDocumentoDi', { nome: documentoBloccato.nome })} <ExternalLink size={14} aria-hidden="true" />

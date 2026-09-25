@@ -82,6 +82,8 @@
   "notifica_nota_desc": "When a note is added (including those to be signed)",
   "notifica_valutazione_label": "Assessments",
   "notifica_valutazione_desc": "When the teacher adds a new assessment",
+  "notifica_impreparato_segnato_label": "Unprepared",
+  "notifica_impreparato_segnato_desc": "When the teacher marks your child as unprepared (including justified)",
   "notifica_pagella_label": "Report card published",
   "notifica_pagella_desc": "When the report card or grades are published",
   "notifica_assenza_non_comunicata_label": "Absence at roll call",

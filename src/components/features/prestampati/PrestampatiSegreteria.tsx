@@ -31,6 +31,8 @@ import {
   type SoggettoPrestampato,
 } from '@/lib/prestampati/registro'
 import { logClient, nomeErrore } from '@/lib/logging/client'
+import { apriDocumento, fileConsegnato, scaricaDocumento } from '@/lib/native/scarica'
+import { isNativeApp } from '@/lib/push/native-register'
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch'
 import { FUOCO_ESITO } from '@/lib/ui/fuoco'
 
@@ -423,12 +425,22 @@ function nomeFileDaHeader(intestazione: string | null, slug: string): string {
   return trovato && trovato.length > 0 ? trovato : `${slug}.pdf`
 }
 
-/** Il PDF appena generato scende sul disco: stessa forma dell'export dell'anagrafica. */
-function scaricaFile(url: string, nomeFile: string): void {
-  const a = document.createElement('a')
-  a.href = url
-  a.download = nomeFile
-  a.click()
+/**
+ * Il PDF appena generato scende sul dispositivo passando dall'helper unico
+ * (`scaricaDocumento`, `src/lib/native/scarica.ts`). Sul web fa ciò che faceva l'ancora
+ * `download` che stava qui; nell'app — dove quell'ancora su un `blob:` non scaricava niente
+ * e non lanciava — mette il file in Cache e apre il foglio «Salva su File». L'esito, successo
+ * compreso, lo logga l'helper con l'etichetta `prestampato`: mai il nome del file, che porta
+ * quello del modello e può portare quello del bambino.
+ */
+async function scaricaPdf(blob: Blob, nomeFile: string): Promise<boolean> {
+  const esito = await scaricaDocumento({
+    sorgente: blob,
+    nomeFile,
+    mime: 'application/pdf',
+    etichetta: 'prestampato',
+  })
+  return fileConsegnato(esito)
 }
 
 // ─── L'esito di una generazione ─────────────────────────────────────────────────
@@ -436,6 +448,10 @@ function scaricaFile(url: string, nomeFile: string): void {
 interface Esito {
   /** URL del blob: resta viva finché non se ne genera un'altra (vedi `genera`). */
   url: string
+  /** Il PDF stesso: nell'app «Scarica» e «Anteprima» lo passano all'helper, non all'URL. */
+  blob: Blob
+  /** Il salvataggio automatico dopo la generazione non ha consegnato il file. */
+  scaricoFallito: boolean
   nomeFile: string
   /** `X-Prestampato-Protocollo`, quando il foglio esce dalla scuola. */
   protocollo: string | null
@@ -905,12 +921,19 @@ export function PrestampatiSegreteria() {
       const nomeFile = nomeFileDaHeader(res.headers.get('Content-Disposition'), modello.slug)
       setEsito({
         url,
+        blob,
+        scaricoFallito: false,
         nomeFile,
         protocollo: res.headers.get('X-Prestampato-Protocollo'),
         archiviato: res.headers.get('X-Prestampato-Archiviato'),
         incompleto: res.headers.get('X-Prestampato-Incompleto') !== null,
       })
-      scaricaFile(url, nomeFile)
+      // Il documento ESISTE già (e può aver consumato un protocollo): se il salvataggio non
+      // riesce, il riquadro dell'esito resta e lo dice — «Scarica» è lì per riprovare.
+      const consegnato = await scaricaPdf(blob, nomeFile)
+      if (!consegnato) {
+        setEsito((prec) => (prec && prec.url === url ? { ...prec, scaricoFallito: true } : prec))
+      }
     } catch (e) {
       // La rete è caduta davvero: il server non ha risposto, e non si sa se il documento
       // sia stato generato. Un `catch` che non logga sarebbe un bug.
@@ -924,6 +947,37 @@ export function PrestampatiSegreteria() {
     } finally {
       setInGenerazione(false)
     }
+  }
+
+  /**
+   * «Scarica» e «Anteprima» nel riquadro dell'esito. Sul web restano LINK sul `blob:`
+   * (ancora `download` e scheda nuova), come sempre. Nell'app nessuno dei due fa niente — la
+   * WebView non scarica un `blob:` e non apre schede — quindi lì il clic passa dall'helper:
+   * «Scarica» apre il foglio «Salva su File», «Anteprima» l'anteprima di sistema dentro l'app.
+   * Il log lo scrive l'helper; qui si aggiorna solo l'avviso sul riquadro.
+   */
+  const segnaConsegna = (url: string, consegnato: boolean) =>
+    setEsito((prec) => (prec && prec.url === url ? { ...prec, scaricoFallito: !consegnato } : prec))
+
+  const scaricaNellApp = (ev: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!esito || !isNativeApp()) return
+    ev.preventDefault()
+    const { url, blob, nomeFile } = esito
+    void scaricaPdf(blob, nomeFile).then((consegnato) => segnaConsegna(url, consegnato))
+  }
+
+  const apriAnteprimaNellApp = (ev: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!esito || !isNativeApp()) return
+    ev.preventDefault()
+    const { url, blob, nomeFile } = esito
+    // Un'anteprima di sistema (`nativo-anteprima`) NON è un salvataggio: il PDF resta nella Cache
+    // dell'app, quindi l'avviso di un salvataggio fallito non va tolto. Lo toglie solo un file
+    // consegnato davvero (l'helper ripiegato sul foglio «Salva su File»); un esito non riuscito
+    // lo mette.
+    void apriDocumento({ sorgente: blob, nomeFile, mime: 'application/pdf', etichetta: 'prestampato' })
+      .then((risultato) => {
+        if (risultato.esito !== 'nativo-anteprima') segnaConsegna(url, fileConsegnato(risultato))
+      })
   }
 
   // ── Ciò che si disegna ─────────────────────────────────────────────────────
@@ -1490,6 +1544,12 @@ export function PrestampatiSegreteria() {
                   {t('documentoIncompleto')}
                 </p>
               )}
+              {esito.scaricoFallito && (
+                <p className="mt-1 flex items-start gap-2 font-maven text-sm font-semibold text-kidville-error-strong">
+                  <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+                  {t('scaricoNonRiuscito')}
+                </p>
+              )}
               {/* COME SI RIPARTE, detto a parole. Finché questo riquadro è aperto il comando
                   «Genera» non c'è — ed è voluto: un foglio che ha già consumato un numero di
                   protocollo non si rifà con un secondo clic distratto. Ma un pulsante che
@@ -1501,6 +1561,7 @@ export function PrestampatiSegreteria() {
                 <a
                   href={esito.url}
                   download={esito.nomeFile}
+                  onClick={scaricaNellApp}
                   className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-[13px] font-bold uppercase tracking-[0.03em] text-kidville-white"
                 >
                   <Download size={15} aria-hidden="true" /> {t('scarica')}
@@ -1509,6 +1570,7 @@ export function PrestampatiSegreteria() {
                   href={esito.url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={apriAnteprimaNellApp}
                   className={BTN_LEGGERO}
                 >
                   <ExternalLink size={15} aria-hidden="true" /> {t('anteprima')}

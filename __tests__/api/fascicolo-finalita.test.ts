@@ -23,7 +23,7 @@ const h = vi.hoisted(() => {
     return {
       from(table: string) {
         const qb: Record<string, unknown> = {}
-        for (const m of ['select', 'eq', 'order', 'limit', 'in']) qb[m] = () => qb
+        for (const m of ['select', 'eq', 'order', 'limit', 'in', 'is']) qb[m] = () => qb
         qb.single = () => Promise.resolve(take(table))
         qb.maybeSingle = () => Promise.resolve(take(table))
         qb.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>

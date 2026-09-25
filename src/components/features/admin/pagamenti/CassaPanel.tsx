@@ -32,6 +32,8 @@ import { CassaImpostazioni } from './CassaImpostazioni';
 import { metodoLabel } from '@/lib/cassa/tipi';
 import type { RigaMovimentoCassa, SaldoCassa, CassaChiusura, EntratoOggiVoce } from '@/lib/cassa/tipi';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { isNativeApp } from '@/lib/push/native-register';
+import { AvvisoDocumentoNativo, useDocumentoNativo } from './LinkDocumento';
 
 interface Props {
   userId: string;
@@ -83,6 +85,19 @@ export function importoTone(r: Pick<RigaMovimentoCassa, 'tipo' | 'importo'>): st
   return direzioneNegativa(r) ? 'text-kidville-error-strong' : 'text-kidville-success-strong';
 }
 
+/**
+ * Il nome del giustificativo sul telefono: `giustificativo-cassa` più l'estensione
+ * del file caricato. Del percorso (`<sede>/<anno>/<uuid>-<nome originale>`) si
+ * tiene SOLO l'estensione: il nome originale lo ha scritto chi ha caricato, e può
+ * contenere un nome di persona.
+ */
+export function nomeGiustificativo(path: string): string {
+  const ultimo = (path ?? '').slice((path ?? '').lastIndexOf('/') + 1);
+  const punto = ultimo.lastIndexOf('.');
+  const estensione = punto > 0 ? ultimo.slice(punto + 1).toLowerCase() : '';
+  return /^[a-z0-9]{1,5}$/.test(estensione) ? `giustificativo-cassa.${estensione}` : 'giustificativo-cassa';
+}
+
 export function CassaPanel({ userId, scuolaId }: Props) {
   const t = useTranslations('adminContabilita');
   const f = useDateFormat();
@@ -102,6 +117,8 @@ export function CassaPanel({ userId, scuolaId }: Props) {
   const [modalTipo, setModalTipo] = useState<'uscita' | 'entrata' | null>(null);
   const [modalChiusura, setModalChiusura] = useState(false);
   const [stornoTarget, setStornoTarget] = useState<RigaMovimentoCassa | null>(null);
+
+  const giustificativo = useDocumentoNativo();
 
   const uscitaRef = useRef<HTMLButtonElement>(null);
   const entrataRef = useRef<HTMLButtonElement>(null);
@@ -149,12 +166,24 @@ export function CassaPanel({ userId, scuolaId }: Props) {
   const usciteMese = totali ? totali.uscite_contanti + totali.uscite_altre : 0;
 
   const apriGiustificativo = async (path: string) => {
+    const nativo = isNativeApp();
     try {
       const r = await fetch(`/api/pagamenti/cassa/allegato?userId=${userId}&path=${encodeURIComponent(path)}`, { headers: hdr(userId) });
       const j = (await r.json()) as { url?: string };
-      if (j?.url) window.open(j.url, '_blank', 'noopener');
+      if (!j?.url) {
+        // Prima taceva su entrambe le piattaforme: ora almeno lo stato resta nel log.
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: `cassa-allegato-url-assente: http-${r.status}`, route: '/admin/pagamenti', stato: r.status });
+        // Il binario non c'entra: il server non ha dato l'URL (403, sessione scaduta…).
+        if (nativo) giustificativo.setAvviso('riprova');
+        return;
+      }
+      // Nell'app `window.open` non apre niente (la WebView non ha schede): anteprima
+      // di sistema con l'helper unico, che logga da sé l'esito. Sul web, come prima.
+      if (nativo) await giustificativo.esegui(j.url, { modo: 'apri', nomeFile: nomeGiustificativo(path), etichetta: 'giustificativo-cassa' });
+      else window.open(j.url, '_blank', 'noopener');
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-allegato-apertura-fallita: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      if (nativo) giustificativo.setAvviso('riprova');
     }
   };
 
@@ -199,6 +228,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
       </div>
 
       {errore && <p role="alert" className="rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">{t(errore)}</p>}
+      {giustificativo.avviso && <AvvisoDocumentoNativo tipo={giustificativo.avviso} className="block rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong" />}
 
       {/* KPI: SOLO se il payload ha `totali` (server decide) */}
       {mostraKpi && (

@@ -16,7 +16,7 @@ import { useSediAttive } from '@/lib/context/sede-context'
 import { useAdminIdentity } from '@/lib/context/admin-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { messaggioDaCorpo, messaggioErrore } from '@/lib/ui/esito-fetch'
-import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato'
+import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato, apriLinkNellApp } from '@/lib/ui/apri-documento-firmato'
 import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
 import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
 import { useFiltri } from '@/lib/ui/filtri/use-filtri'
@@ -2025,6 +2025,10 @@ export function CandidatureInsegnanti() {
                 onChiudiEsito={() => setEsito(null)}
                 onEsegui={esegui}
                 onApriCv={apriCurriculum}
+                onCvNonAperto={() => {
+                  setCvBloccato(null)
+                  setErrore(t('candErroreCv'))
+                }}
                 onIndietro={chiudiDettaglio}
               />
             )}
@@ -2179,7 +2183,7 @@ function PannelloDettaglio({
   titoloStudio, disponibilita,
   isDirezione, motivoBlocco, conferma, setConferma, motivo, setMotivo, avvisaEmail,
   setAvvisaEmail, lavorando, esito, avvisi, cvBloccato, onChiudiEsito, onEsegui,
-  onApriCv, onIndietro,
+  onApriCv, onCvNonAperto, onIndietro,
 }: {
   cand: Candidatura
   nomeSede: string
@@ -2213,6 +2217,12 @@ function PannelloDettaglio({
   onChiudiEsito: () => void
   onEsegui: (azione: 'approva' | 'rifiuta') => void
   onApriCv: (path?: string | null) => void
+  /**
+   * Il collegamento di ripiego del CV, nell'app, non ha consegnato niente
+   * all'anteprima di sistema. L'errore va IN PAGINA come quello di
+   * `apriCurriculum`, mai in un `alert()` (vedi l'intestazione del file).
+   */
+  onCvNonAperto: () => void
   onIndietro: () => void
 }) {
   const t = useTranslations('adminAltro')
@@ -2530,6 +2540,9 @@ function PannelloDettaglio({
               href={cvBloccato}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={apriLinkNellApp(cvBloccato, 'candidatura-cv', {
+                onNonConsegnato: onCvNonAperto,
+              })}
               className="font-bold text-kidville-green underline"
             >
               {t('candCvApriManuale')}

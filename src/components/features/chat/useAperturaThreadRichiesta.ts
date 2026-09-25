@@ -26,8 +26,9 @@ import type { EsitoApertura, RottaChat, StatoThreads } from './useConversazioneC
  * ─── GLI ESITI ───────────────────────────────────────────────────────────────
  *
  *  · `aperto`      → la vista mobile passa alla conversazione (`onAperta`), il parametro sparisce
- *                    dall'URL, e una riga di log registra il SUCCESSO: senza, «nessuna riga» non
- *                    distinguerebbe «il tocco apre la conversazione» da «non parte niente»;
+ *                    dall'URL, e una riga di log registra il SUCCESSO, campionata (`CAMPIONE_APERTE`):
+ *                    senza, «nessuna riga» non distinguerebbe «il tocco apre la conversazione» da
+ *                    «non parte niente»;
  *  · `non-trovato` → la conversazione non è fra quelle dell'utente nemmeno dopo una ricarica: log e
  *                    pulizia. Non si ritenta: l'id resterebbe lì a costare una GET a ogni giro;
  *  · `annullato`   → l'utente ha scelto (o chiuso) un'altra conversazione: la sua scelta vince, e si
@@ -71,6 +72,29 @@ import type { EsitoApertura, RottaChat, StatoThreads } from './useConversazioneC
  */
 
 type Origine = 'url' | 'evento';
+
+/**
+ * IL SUCCESSO SI CAMPIONA, I FALLIMENTI NO (2026-09-25, PC2).
+ *
+ * La riga «aperta» esiste per la regola 5 di AGENTS.md: senza, «nessuna riga» non distingueva «il
+ * tocco apre la conversazione» da «non parte niente». Ma scritta a ogni apertura era ~1.400 `warn` a
+ * settimana, cioè il grosso del canale `warn` del client — e dentro quel volume una `non-trovata` o un
+ * `guasto` non si vedevano più. Il canale del client non ha un livello `info` (`/api/logs` accetta solo
+ * `warn`/`error`, e persiste tutto ciò che riceve): l'unico modo di sporcare meno è spedire meno.
+ *
+ * Si spedisce UN successo su `CAMPIONE_APERTE`, a caso, con il fattore nei campi (`campione: 20`): il
+ * volume vero si ricostruisce in SQL (`occorrenze × campione`), e resta vero che «zero righe per una
+ * settimana» vuol dire «non si apre niente» — con ~70 righe attese a settimana, la probabilità di
+ * vederne zero per puro caso è trascurabile. A caso e non «una ogni venti»: un contatore di modulo
+ * ripartirebbe da zero a ogni avvio dell'app, e il tocco su una push È quasi sempre un avvio.
+ *
+ * `non-trovata`, `id-non-valido` e `guasto` restano scritti SEMPRE: sono loro il motivo del canale.
+ */
+export const CAMPIONE_APERTE = 20;
+
+function daCampionare(): boolean {
+    return Math.random() * CAMPIONE_APERTE < 1;
+}
 
 interface Richiesta {
     id: string;
@@ -185,7 +209,16 @@ export function useAperturaThreadRichiesta(chat: Conversazione, { rotta, onApert
                 togliThreadDallUrl();
                 if (esito === 'aperto') {
                     onApertaRef.current();
-                    logClient({ livello: 'warn', evento: 'push', messaggio: `chat-apertura-da-notifica: aperta (${r.origine})`, route: rotta });
+                    // Campionato: vedi `CAMPIONE_APERTE`.
+                    if (daCampionare()) {
+                        logClient({
+                            livello: 'warn',
+                            evento: 'push',
+                            messaggio: `chat-apertura-da-notifica: aperta (${r.origine})`,
+                            route: rotta,
+                            campi: { campione: CAMPIONE_APERTE },
+                        });
+                    }
                 } else if (esito === 'non-trovato') {
                     logClient({ livello: 'warn', evento: 'push', messaggio: `chat-apertura-da-notifica: non-trovata (${r.origine})`, route: rotta });
                 }

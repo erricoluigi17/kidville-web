@@ -5,6 +5,7 @@ import BottomNav from '@/components/features/parent/BottomNav';
 import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher';
 import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
+import { AvvisiSettimanaliApp } from '@/components/providers/AvvisiSettimanaliApp';
 import { requireArea } from '@/lib/auth/area-guard';
 
 export default async function ParentLayout({ children }: { children: React.ReactNode }) {
@@ -40,6 +41,8 @@ export default async function ParentLayout({ children }: { children: React.React
       <Suspense fallback={null}>
         <NativePushAutoRegister />
       </Suspense>
+      {/* Avvisi settimanali dell'app nativa (notifiche spente, binario 1.0): sul web non rende niente. */}
+      <AvvisiSettimanaliApp />
       {/* Con la tastiera aperta, Chromium allinea il campo a fuoco a `top: 0` —
           cioè sotto l'AppBar sticky — e NON onora lo `scroll-margin-top` che
           globals.css dichiara. Misurato sull'emulatore: 82 px su 112 (73%) del

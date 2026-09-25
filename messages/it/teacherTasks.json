@@ -96,6 +96,7 @@
   "placeholderMotivoModifica": "Motivo per la modifica del task… *",
   "altAllegato": "Allegato",
   "scaricaApri": "Scarica o apri in nuova scheda",
+  "allegatoNonApribile": "Non è stato possibile aprire l’allegato. Riprova.",
   "dettagliNonDisponibili": "Dettagli non disponibili",
   "erroreCaricamentoFile": "Errore durante il caricamento del file",
 

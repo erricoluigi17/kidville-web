@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // T4 — la Segreteria può FORZARE prenotazione/disdetta dei pasti fuori orario
 // (telefonate out-of-hours), con saldo che può andare in negativo. Qui si prova
@@ -27,6 +27,12 @@ const h = vi.hoisted(() => ({
   prenUpserts: [] as Record<string, unknown>[],
   prenUpdates: [] as Record<string, unknown>[],
   ledger: [] as Record<string, unknown>[],
+  // M1 — cutoff PER SEDE (admin_settings.mensa_cutoff_ora): la config si legge
+  // dalla sede dell'alunno, e qui ogni sede può averne uno diverso.
+  cutoffPerSede: {} as Record<string, string>,
+  sedeConfigLetta: [] as string[],
+  // filtri di intervallo della GET (per verificare il «oggi» di default)
+  intervallo: [] as [string, string, unknown][],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
@@ -35,7 +41,10 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
 // in `__tests__/api/galleria-mensa-scope-sede.test.ts`.
 vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: vi.fn(async () => null) }))
 vi.mock('@/lib/mensa/server', () => ({
-  loadMensaConfig: async () => ({ cutoffOra: '09:30', giorniAttivi: [1, 2, 3, 4, 5], settimaneRotazione: 4, sogliaSaldoBasso: 5 }),
+  loadMensaConfig: async (_sb: unknown, scuolaId: string) => {
+    h.sedeConfigLetta.push(scuolaId)
+    return { cutoffOra: h.cutoffPerSede[scuolaId] ?? '09:30', giorniAttivi: [1, 2, 3, 4, 5], settimaneRotazione: 4, sogliaSaldoBasso: 5 }
+  },
   loadResolveOptions: async () => ({}),
   resolveMenuConfigId: async () => null,
   entroCutoff: h.entroCutoff,
@@ -87,7 +96,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
     from: (table: string) => {
       const b: Record<string, unknown> = {}
       const chain = () => b
-      b.select = chain; b.eq = chain; b.gte = chain; b.lte = chain
+      b.select = chain; b.eq = chain
+      b.gte = (col: string, v: unknown) => { h.intervallo.push(['gte', col, v]); return b }
+      b.lte = (col: string, v: unknown) => { h.intervallo.push(['lte', col, v]); return b }
       // .order() è terminale nel route (GET: lista prenotazioni del range)
       b.order = async () => ({ data: h.prenotazioniList, error: null })
       b.maybeSingle = async () => {
@@ -118,6 +129,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { GET, POST, DELETE } from '@/app/api/mensa/prenotazioni/route'
+// L'implementazione VERA del cutoff (non mockata): i test «ora italiana» la
+// collegano al posto del finto, così è la logica reale a decidere.
+import { entroCutoff as entroCutoffVero } from '@/lib/mensa/cutoff'
 
 const getReq = (qs: string) => new Request(`http://localhost/api/mensa/prenotazioni?${qs}`)
 const postReq = (body: unknown) =>
@@ -138,6 +152,7 @@ beforeEach(() => {
   h.rpcError = null
   h.alunno = { id: ALUNNO, scuola_id: 'sc-1', nome: 'Mia', cognome: 'Rossi', classe_sezione: '1A', section_id: null, allergies: null, allergeni: null }
   h.saldoWrites = []; h.prenUpserts = []; h.prenUpdates = []; h.ledger = []
+  h.cutoffPerSede = {}; h.sedeConfigLetta = []; h.intervallo = []
   h.requireUser.mockResolvedValue({ user: { id: GENITORE, role: 'genitore' } })
   h.entroCutoff.mockReturnValue(true)
   h.genitoreHasFiglio.mockResolvedValue(true)
@@ -206,9 +221,15 @@ describe('POST /api/mensa/prenotazioni', () => {
     const j = await res.json()
     expect(j.data.esiti[0].ok).toBe(false)
     expect(j.data.esiti[0].motivo).toBe("Oltre l'orario limite (cutoff)")
+    // M1 — codice stabile, che l'interfaccia traduce
+    expect(j.data.esiti[0].codice).toBe('MENSA_OLTRE_CUTOFF')
     expect(h.saldoWrites).toHaveLength(0)
     expect(h.prenUpserts).toHaveLength(0)
     expect(h.ledger).toHaveLength(0)
+    // il rifiuto si conta nel log dell'evento, separato dagli altri KO
+    const ev = eventiMensa()
+    expect(ev).toHaveLength(1)
+    expect(ev[0][2]).toMatchObject({ operazione: 'mensa/prenotazioni:POST', esitiOk: 0, esitiKo: 1, esitiOltreCutoff: 1, origine: 'genitore' })
   })
 
   it('genitore NON legato all\'alunno → 403', async () => {
@@ -355,9 +376,16 @@ describe('DELETE /api/mensa/prenotazioni', () => {
     expect(res.status).toBe(400)
     const j = await res.json()
     expect(j.error).toBe('Oltre l\'orario limite: disdetta non più possibile')
+    // M1 — codice stabile accanto alla prosa
+    expect(j.codice).toBe('MENSA_OLTRE_CUTOFF')
     expect(h.saldoWrites).toHaveLength(0)
     expect(h.prenUpdates).toHaveLength(0)
     expect(h.ledger).toHaveLength(0)
+    // log del rifiuto: operazione + codice, nessun dato personale
+    const ev = eventiMensa()
+    expect(ev).toHaveLength(1)
+    expect(ev[0][1]).toBe('info')
+    expect(ev[0][2]).toEqual({ operazione: 'mensa/prenotazioni:DELETE', esito: 'oltre-cutoff', error_code: 'MENSA_OLTRE_CUTOFF' })
   })
 
   it('SEGRETERIA oltre cutoff → 200: rettifica con riaccredito (bypass cutoff, simmetrico al POST)', async () => {
@@ -391,5 +419,107 @@ describe('GET /api/mensa/prenotazioni', () => {
     expect(j.data.saldo).toBe(-2)
     expect(j.data.prenotazioni).toHaveLength(1)
     expect(j.data.prenotazioni[0].origine).toBe('segreteria')
+  })
+})
+
+// ─── M1 — il cutoff VERO, in ora italiana e per sede ────────────────────────
+// Qui il finto di `entroCutoff` è sostituito dall'implementazione reale di
+// `@/lib/mensa/cutoff`, e l'orologio è fermato su istanti scritti in UTC: è la
+// route intera (config della sede dell'alunno → cutoff di Roma) che decide.
+describe('mensa/prenotazioni · cutoff in ora italiana, per sede (implementazione reale)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    h.entroCutoff.mockImplementation((data: string, cutoff: string) => entroCutoffVero(data, cutoff))
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('ora legale: 09:29 italiane (07:29 UTC) → il genitore prenota oggi', async () => {
+    vi.setSystemTime(new Date('2026-07-15T07:29:00Z'))
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-15' }))
+    expect(res.status).toBe(201)
+    const j = await res.json()
+    expect(j.data.esiti[0]).toEqual({ data: '2026-07-15', ok: true })
+    expect(h.prenUpserts).toHaveLength(1)
+  })
+
+  it('ora legale: 09:31 italiane (07:31 UTC) → oggi rifiutato con MENSA_OLTRE_CUTOFF, nessuna scrittura', async () => {
+    // Col vecchio calcolo (ora del processo = UTC) erano le 07:31: «dentro».
+    vi.setSystemTime(new Date('2026-07-15T07:31:00Z'))
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-15' }))
+    const j = await res.json()
+    expect(j.data.esiti[0]).toMatchObject({ ok: false, codice: 'MENSA_OLTRE_CUTOFF' })
+    expect(h.saldoWrites).toHaveLength(0)
+    expect(h.prenUpserts).toHaveLength(0)
+  })
+
+  it('ora solare: 09:31 italiane (08:31 UTC) → la disdetta di oggi è 400 MENSA_OLTRE_CUTOFF', async () => {
+    vi.setSystemTime(new Date('2026-01-15T08:31:00Z'))
+    h.existingPren = { id: 'pr-1', stato: 'prenotato', ticket_scalato: 1 }
+    const res = await DELETE(delReq(`alunno_id=${ALUNNO}&data=2026-01-15`))
+    expect(res.status).toBe(400)
+    expect((await res.json()).codice).toBe('MENSA_OLTRE_CUTOFF')
+    expect(h.saldoWrites).toHaveLength(0)
+    expect(h.prenUpdates).toHaveLength(0)
+  })
+
+  it('ora solare: 09:29 italiane (08:29 UTC) → la disdetta di oggi passa', async () => {
+    vi.setSystemTime(new Date('2026-01-15T08:29:00Z'))
+    h.existingPren = { id: 'pr-1', stato: 'prenotato', ticket_scalato: 1 }
+    h.saldo = 4
+    const res = await DELETE(delReq(`alunno_id=${ALUNNO}&data=2026-01-15`))
+    expect(res.status).toBe(200)
+    expect(h.prenUpdates[0].stato).toBe('disdetto')
+  })
+
+  it('00:30 italiane del 25/09 (22:30 UTC del 24): il giorno prima NON si prenota né si disdice più', async () => {
+    vi.setSystemTime(new Date('2026-09-24T22:30:00Z'))
+    const post = await POST(postReq({ alunno_id: ALUNNO, date: '2026-09-24' }))
+    expect((await post.json()).data.esiti[0]).toMatchObject({ ok: false, codice: 'MENSA_OLTRE_CUTOFF' })
+    h.existingPren = { id: 'pr-1', stato: 'prenotato', ticket_scalato: 1 }
+    const del = await DELETE(delReq(`alunno_id=${ALUNNO}&data=2026-09-24`))
+    expect(del.status).toBe(400)
+    expect(h.saldoWrites).toHaveLength(0)
+    expect(h.prenUpserts).toHaveLength(0)
+    expect(h.prenUpdates).toHaveLength(0)
+  })
+
+  it('cutoff diverso per sede: alle 09:45 italiane la sede con 10:00 accetta, quella con 09:30 no', async () => {
+    vi.setSystemTime(new Date('2026-07-15T07:45:00Z')) // 09:45 a Roma
+    h.cutoffPerSede = { 'sc-1': '09:30', 'sc-2': '10:00' }
+
+    const primo = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-15' }))
+    expect((await primo.json()).data.esiti[0]).toMatchObject({ ok: false, codice: 'MENSA_OLTRE_CUTOFF' })
+
+    h.alunno = { ...(h.alunno as Record<string, unknown>), scuola_id: 'sc-2' }
+    const secondo = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-15' }))
+    expect((await secondo.json()).data.esiti[0]).toEqual({ data: '2026-07-15', ok: true })
+    // la config letta è quella della sede DELL'ALUNNO, una per richiesta
+    expect(h.sedeConfigLetta).toEqual(['sc-1', 'sc-2'])
+    expect(h.prenUpserts).toHaveLength(1)
+    expect(h.prenUpserts[0].scuola_id).toBe('sc-2')
+  })
+
+  it('lo staff resta esente anche col cutoff vero: Segreteria prenota e disdice un giorno PASSATO', async () => {
+    vi.setSystemTime(new Date('2026-07-15T12:00:00Z'))
+    h.requireUser.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria' } })
+    h.genitoreHasFiglio.mockResolvedValue(false)
+    const post = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-10' }))
+    expect(post.status).toBe(201)
+    expect((await post.json()).data.esiti[0]).toEqual({ data: '2026-07-10', ok: true })
+
+    h.existingPren = { id: 'pr-1', stato: 'prenotato', ticket_scalato: 1 }
+    const del = await DELETE(delReq(`alunno_id=${ALUNNO}&data=2026-07-10`))
+    expect(del.status).toBe(200)
+  })
+
+  it('GET senza intervallo: «oggi» è la data di Roma (alle 00:30 italiane del 25/09 non è più il 24)', async () => {
+    vi.setSystemTime(new Date('2026-09-24T22:30:00Z'))
+    const res = await GET(getReq(`alunno_id=${ALUNNO}`))
+    expect(res.status).toBe(200)
+    expect(h.intervallo).toEqual([
+      ['gte', 'data', '2026-09-25'],
+      ['lte', 'data', '2026-09-25'],
+    ])
+    expect((await res.json()).data.cutoffOra).toBe('09:30')
   })
 })

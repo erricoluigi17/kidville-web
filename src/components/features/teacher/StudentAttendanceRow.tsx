@@ -3,7 +3,7 @@
 import { type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
-import { User, Clock, CheckCircle, Timer, LogOut, X } from 'lucide-react';
+import { User, Clock, CheckCircle, Timer, LogOut, X, Undo2 } from 'lucide-react';
 import { OrarioCorreggibile, type CampoOrario } from '@/components/features/presenze/OrarioCorreggibile';
 import { orariAmmessi } from '@/lib/presenze/orario-ammesso';
 
@@ -28,6 +28,20 @@ export interface AttendanceRecord {
      * riga e nell'appello della primaria, che sono le due superfici dichiarate.
      */
     giustificazione_testo?: string | null;
+    /**
+     * L'appello per questo bambino l'ha FATTO qualcuno del personale (docente o
+     * segreteria): `presenze.registrato_da` valorizzato, oppure un salvataggio
+     * appena accettato da questa schermata. È la condizione per offrire «Annulla»:
+     * una riga che porta solo la comunicazione del genitore non ha un appello da
+     * annullare (il server risponderebbe `NIENTE_DA_ANNULLARE`).
+     */
+    appelloFatto?: boolean;
+    /**
+     * La riga è SOLO la comunicazione d'assenza del genitore: l'appello non è
+     * ancora stato fatto. Si mostra come tale, perché il bottone «Assente»
+     * premuto da solo non dice chi l'ha scritto.
+     */
+    comunicazioneGenitore?: boolean;
 }
 
 interface Student {
@@ -61,6 +75,13 @@ interface Props {
      * correggendo.
      */
     orarioInCorso?: CampoOrario | null;
+    /**
+     * Annulla l'appello di questo bambino (torna a «da registrare»). **Opzionale**:
+     * chi monta la riga la passa solo quando l'annullamento è ammesso — data di
+     * oggi (Roma) — e la riga mostra il comando solo se l'appello è stato fatto
+     * (`record.appelloFatto`). La conferma la chiede chi la passa.
+     */
+    onAnnulla?: (studentId: string) => void;
 }
 
 // Solo i token cromatici del badge "uscita anticipata"; le etichette testuali
@@ -135,7 +156,7 @@ const STATI_BOTTONI: {
  */
 
 
-export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading, onSetOrario, orarioInCorso }: Props) {
+export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading, onSetOrario, orarioInCorso, onAnnulla }: Props) {
     const t = useTranslations('teacherPresenze');
     // L'etichetta della giustifica del genitore è GIÀ tradotta (it/en) per
     // l'appello della primaria: si riusa quella invece di scriverne una gemella.
@@ -160,6 +181,9 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
     const mostraUscita = ammessi.uscita;
     const salva = (campo: CampoOrario) =>
         onSetOrario ? (ora: string) => onSetOrario(student.id, campo, ora) : null;
+    // «Annulla» solo su un appello FATTO: la sola comunicazione del genitore non si
+    // annulla da qui (è del genitore), e il server la respingerebbe comunque.
+    const annullabile = Boolean(onAnnulla && record?.appelloFatto);
 
     // ── Bordo sinistro = UNICO segnale cromatico dello stato della riga ──────────
     // WCAG 2.1 §1.4.11 chiede 3:1 per un segnale di stato non testuale, e i fondi
@@ -251,6 +275,15 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                             {motivoGenitore}
                         </p>
                     )}
+                    {/* SOLO LA COMUNICAZIONE DEL GENITORE, appello non ancora fatto.
+                        È anche lo stato in cui torna la riga quando si annulla un
+                        appello fatto sopra una comunicazione: senza questa
+                        etichetta, «Assente» premuto non direbbe chi l'ha scritto. */}
+                    {record?.comunicazioneGenitore && (
+                        <p className="mt-1 inline-flex font-maven text-xs font-semibold text-kidville-sub bg-kidville-cream rounded-xl px-2 py-1">
+                            {t('comunicazioneGenitore')}
+                        </p>
+                    )}
                 </div>
             </div>
 
@@ -307,6 +340,21 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                                 className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-kidville-yellow text-kidville-green-dark border border-kidville-yellow hover:opacity-90 transition-all"
                             >
                                 {t('uscita')}
+                            </button>
+                        )}
+
+                        {/* ANNULLA L'APPELLO — torna a «da registrare». Icona + testo
+                            visibile; il nome accessibile dice DI CHI, perché in una
+                            lista di venti bambini «Annulla» da solo non basta. */}
+                        {annullabile && (
+                            <button
+                                type="button"
+                                id={`btn-annulla-appello-${student.id}`}
+                                aria-label={t('annullaAppelloAria', { alunno: nomeAlunno })}
+                                onClick={() => onAnnulla?.(student.id)}
+                                className="min-h-11 px-3 font-maven font-medium text-sm rounded-xl bg-white text-kidville-sub border border-kidville-line hover:bg-kidville-cream transition-all flex items-center gap-1.5"
+                            >
+                                <Undo2 size={15} aria-hidden="true" /> {t('annullaAppello')}
                             </button>
                         )}
                     </>

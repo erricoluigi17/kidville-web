@@ -17,6 +17,7 @@ import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { verificaCoerenza } from '@/lib/fiscale/coerenza';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formattaIstante } from '@/i18n/config';
+import { apriLinkNellApp } from '@/lib/ui/apri-documento-firmato';
 
 interface Student {
     id: string;
@@ -158,6 +159,7 @@ interface Props {
 
 export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiattiva, variant = 'drawer' }: Props) {
     const t = useTranslations('adminStudents');
+    const tShared = useTranslations('shared');
     const locale = useLocale();
     // Il pannello è montato per-alunno ({selectedStudent && <StudentDetailPanel/>}):
     // form inizializzato dal prop, niente state+effect (react-hooks/set-state-in-effect).
@@ -1391,6 +1393,11 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                                                 href={att.fileUrl || att.url}
                                                                 target="_blank"
                                                                 rel="noopener noreferrer"
+                                                                // Nell'app: anteprima di sistema (NAT3g); sul web invariato.
+                                                                onClick={apriLinkNellApp(att.fileUrl || att.url, 'compito-allegato', {
+                                                                    nomeMostrato: att.name,
+                                                                    onNonConsegnato: () => alert(tShared('documentoNonAperto')),
+                                                                })}
                                                                 className="inline-flex items-center gap-1 text-[9px] text-kidville-green hover:underline truncate max-w-full font-semibold"
                                                             >
                                                                 📎 {att.name}

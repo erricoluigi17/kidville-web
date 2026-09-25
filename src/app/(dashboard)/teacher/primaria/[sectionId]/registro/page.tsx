@@ -3,25 +3,42 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { PenLine, BookOpen, Check, Paperclip, FileText, Image as ImageIcon, AlertTriangle } from 'lucide-react';
+import { PenLine, BookOpen, Check, Paperclip, AlertTriangle, Trash2 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalRegistro, syncPendingRegistro } from '@/lib/offline/syncEngine';
 import { nomeCompleto } from '@/lib/format/nome';
 import { isoToIt } from '@/lib/format/data';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { DateField } from '@/components/ui/DateField';
 import { NavigatoreData } from '@/components/ui/NavigatoreData';
 import { Modal } from '@/components/ui/Modal';
 import { btnClass } from '@/components/ui/Btn';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
+import { BottoneSblocca, puoSbloccare, type BersaglioSblocco } from '@/components/features/primaria/BottoneSblocca';
+import {
+  AvvisoVoceBloccata,
+  ModaleEliminaRegistro,
+  bersaglioDi,
+  giorniLimiteDa,
+  puoEliminareLezione,
+  type Eliminazione,
+} from '@/components/features/primaria/AzioniRegistroLezione';
+import { AllegatiLezione } from '@/components/features/primaria/AllegatiRegistro';
+import { CestinoAllegatiRegistro } from '@/components/features/primaria/CestinoAllegatiRegistro';
 
 /** La rotta della PAGINA: è il luogo dell'incidente, non l'URL della fetch. */
 const ROTTA = '/teacher/primaria/[sectionId]/registro';
 
 interface Campanella { id: string; ordine: number; ora_inizio: string; ora_fine: string; tipo: string }
 interface OrarioCella { campanella_id: string; materia_id: string | null; materie?: { nome: string } | null }
-interface Firma { id: string; maestra_id: string; tipo_compresenza: string; argomento_proprio: string | null; compiti_propri: string | null; utenti?: { nome: string; cognome: string } | null }
+interface Firma {
+  id: string; maestra_id: string; tipo_compresenza: string; argomento_proprio: string | null; compiti_propri: string | null;
+  utenti?: { nome: string; cognome: string } | null;
+  /** Oltre il termine e senza sblocco (dalla GET, `statoVoci`). Assente = il server non lo dichiara. */
+  bloccata?: boolean;
+}
 interface Allegato { id: string; ambito: string; tipo: string; file_url: string; file_name: string | null }
 /** Chi riceve i contenuti «propri» di UNA firma (assegnazione mirata). */
 interface Destinatario { id: string; firma_id: string; alunno_id: string }
@@ -45,6 +62,20 @@ interface Riga {
   firme_docenti?: Firma[];
   registro_destinatari?: Destinatario[];
   allegati_registro?: Allegato[];
+  /** La lezione è oltre il termine e senza sblocco (dalla GET). Assente = non dichiarato. */
+  bloccata?: boolean;
+}
+/**
+ * Il termine della GIORNATA, come lo dichiara la GET (`statoTermineGiornata` nella
+ * route): serve alle ore MAI firmate, che non hanno una riga su cui dirlo, e a
+ * «Sblocca il giorno», che ha senso solo su una data davvero oltre il termine.
+ */
+interface TermineGiornata {
+  letto: boolean;
+  oltreTermine: boolean;
+  giorniLimite: number | null;
+  giornoSbloccato: boolean;
+  oreSbloccate: number[];
 }
 interface Materia { id: string; nome: string }
 interface Alunno { id: string; nome: string; cognome: string }
@@ -249,6 +280,35 @@ export default function RegistroPage() {
    */
   const [ruolo, setRuolo] = useState<string | null>(null);
   const [modal, setModal] = useState<{ ordine: number; materiaId: string; riga: Riga | null } | null>(null);
+  /** La conferma di «Elimina la mia firma» / «Elimina lezione» a schermo, se c'è. */
+  const [eliminazione, setEliminazione] = useState<Eliminazione | null>(null);
+  /**
+   * Il termine della giornata, dalla GET: le ore bloccate si vedono AL CARICAMENTO,
+   * per chiunque apra la pagina — la Direzione trova «Sblocca» sulla riga senza
+   * dover provocare un 423. `null` = il server non l'ha detto (guasto o server
+   * più vecchio): nessun blocco inventato, resta il ripiego qui sotto.
+   */
+  const [termine, setTermine] = useState<TermineGiornata | null>(null);
+  /**
+   * IL RIPIEGO: le ore scoperte bloccate AL GESTO (423 su firma o eliminazione),
+   * per numero d'ora. Serve quando la GET non ha potuto dichiarare il termine, o
+   * quando lo stato è cambiato dopo il caricamento. Ha la precedenza su quello
+   * della GET (è più recente). Vale per il giorno a schermo: cambiando giorno si
+   * azzera.
+   */
+  const [bloccate, setBloccate] = useState<Record<number, { bersaglio: BersaglioSblocco; giorniLimite: number | null }>>({});
+  /** L'esito dell'ultima eliminazione o sblocco, sopra la griglia. */
+  const [esito, setEsito] = useState<{ testo: string; tipo: 'ok' | 'errore' } | null>(null);
+  /**
+   * Cresce a ogni cambiamento degli allegati (rinomina, sostituzione, eliminazione,
+   * ripristino, lezione eliminata coi suoi allegati): i permessi degli allegati e il
+   * cestino si rileggono. Un contatore e non un «ricarica tutto»: il cestino è della
+   * CLASSE, non del giorno, e non si rilegge a ogni cambio di data.
+   */
+  const [versioneAllegati, setVersioneAllegati] = useState(0);
+  /** Il cestino degli allegati della classe, chiuso finché non lo si apre: niente richieste a vuoto. */
+  const [cestinoAperto, setCestinoAperto] = useState(false);
+  const cestinoId = useId();
 
   // Elenco di tutte le sezioni primaria, per la "firma in un'altra classe" (supplenza).
   // La route filtra già per plesso (`resolveScuoleAttive`): qui non si restringe altro.
@@ -310,6 +370,13 @@ export default function RegistroPage() {
    */
   const cambiaData = useCallback((iso: string) => {
     setData(iso);
+    // I blocchi, il termine e gli esiti sono del giorno lasciato: sull'altro giorno
+    // direbbero il falso. Il termine soprattutto: finché la GET del giorno nuovo non
+    // risponde, «Sblocca il giorno» e gli «Sblocca» delle voci userebbero la data
+    // NUOVA con il termine VECCHIO, e creerebbero sblocchi che non autorizzano niente.
+    setBloccate({});
+    setTermine(null);
+    setEsito(null);
     const q = new URLSearchParams(search?.toString() ?? '');
     q.set('data', iso);
     router.replace(`${pathname}?${q.toString()}`, { scroll: false });
@@ -356,7 +423,7 @@ export default function RegistroPage() {
       // più coprirlo dalla pagina. Resta perché costa nulla ed è l'ultima rete se
       // un domani `data` tornasse a essere scritta da qualcun altro — ma va saputo
       // che sembra coperto e non lo è.
-      type Giornata = { campanelle: Campanella[]; orarioCelle: OrarioCella[]; righe: Riga[] };
+      type Giornata = { campanelle: Campanella[]; orarioCelle: OrarioCella[]; righe: Riga[]; termine?: TermineGiornata };
       const giornata: Promise<Esito<Giornata>> = dataInterrogabile(data)
         ? chiediJson<Giornata>(
             `/api/primaria/registro?sectionId=${sectionId}&data=${data}&userId=${userId}`,
@@ -382,6 +449,8 @@ export default function RegistroPage() {
         setCampanelle(reg.dati.campanelle);
         setOrarioCelle(reg.dati.orarioCelle);
         setRighe(reg.dati.righe);
+        // `letto: false` è un guasto dichiarato: vale quanto «non detto».
+        setTermine(reg.dati.termine?.letto ? reg.dati.termine : null);
       } else {
         /*
          * LA GIORNATA CHE NON ARRIVA AZZERA LA GRIGLIA, e non è pulizia estetica.
@@ -415,6 +484,7 @@ export default function RegistroPage() {
         setCampanelle([]);
         setOrarioCelle([]);
         setRighe([]);
+        setTermine(null);
       }
       if (ctx.dati) {
         setMaterie(ctx.dati.materie ?? []);
@@ -441,6 +511,13 @@ export default function RegistroPage() {
   }, [sectionId, data, userId]);
 
   useEffect(() => { load(); }, [load]);
+
+  /** Un allegato è cambiato: si rileggono il registro, i permessi degli allegati e il cestino. */
+  const allegatiCambiati = useCallback(() => {
+    setVersioneAllegati((v) => v + 1);
+    void load();
+  }, [load]);
+  const esitoAllegati = useCallback((testo: string, tipo: 'ok' | 'errore') => setEsito({ testo, tipo }), []);
 
   // Flush della coda registro al ritorno della connessione.
   useEffect(() => {
@@ -503,6 +580,57 @@ export default function RegistroPage() {
    */
   const oraDiLezione = (camp: Campanella) => lezioni.findIndex((c) => c.id === camp.id) + 1;
 
+  const segnaBloccata = (ora: number, bersaglio: BersaglioSblocco, giorniLimite: number | null) =>
+    setBloccate((prima) => ({ ...prima, [ora]: { bersaglio, giorniLimite } }));
+  const togliBlocco = (ora: number) =>
+    setBloccate((prima) => {
+      if (!(ora in prima)) return prima;
+      const dopo = { ...prima };
+      delete dopo[ora];
+      return dopo;
+    });
+
+  /** Il nome accessibile di «Sblocca» su una riga: QUALE voce di QUALE ora, non una fila di «Sblocca» uguali. */
+  const descrizioneSblocco = (ora: number, b: BersaglioSblocco) => {
+    const quando = { ora, data: isoToIt(data) };
+    if (b.modo === 'voce' && b.entitaTipo === 'firma') return t('registroSbloccaFirmaNome', quando);
+    if (b.modo === 'voce') return t('registroSbloccaLezioneNome', quando);
+    return t('registroSbloccaOraNome', quando);
+  };
+
+  /**
+   * Il blocco di un'ora da mostrare sulla riga: quello scoperto al gesto (423, più
+   * recente) oppure quello dichiarato dalla GET.
+   *  · ora SCRITTA  → la lezione come voce (`registro` + id). Lo sblocco della voce
+   *    porta con sé anche le coordinate dello slot (`primaria/sblocca`), quindi
+   *    copre la firma (POST), le firme (DELETE) e la lezione (DELETE);
+   *  · ora MAI FIRMATA → per slot, che è l'unico modo di indicarla: niente uuid.
+   *    Bloccata se la data è oltre il termine e né il giorno né lo slot sono
+   *    sbloccati.
+   */
+  const bloccoDi = (ora: number, riga: Riga | undefined): { bersaglio: BersaglioSblocco; giorniLimite: number | null } | null => {
+    if (bloccate[ora]) return bloccate[ora];
+    if (!termine?.oltreTermine) return null;
+    if (riga) {
+      return riga.bloccata
+        ? { bersaglio: { modo: 'voce', entitaTipo: 'registro', entitaId: riga.id }, giorniLimite: termine.giorniLimite }
+        : null;
+    }
+    if (termine.giornoSbloccato || termine.oreSbloccate.includes(ora)) return null;
+    return { bersaglio: { modo: 'slot', sectionId, data, oraLezione: ora }, giorniLimite: termine.giorniLimite };
+  };
+
+  /**
+   * «Sblocca il giorno» nella testata: solo per la Direzione, e solo quando la GET
+   * dice che la data è DAVVERO oltre il termine e non è già sbloccata. Con il
+   * termine di 2 giorni ieri e l'altro ieri non sono bloccati: uno sblocco lì
+   * sarebbe una riga d'audit che non autorizza niente. Termine non dichiarato
+   * (guasto) = niente bottone: resta lo sblocco per riga, al 423.
+   */
+  const direzione = puoSbloccare(ruolo) && !!userId;
+  const sbloccoGiornoVisibile = direzione && !!termine?.oltreTermine && !termine.giornoSbloccato;
+  const giornoGiaSbloccato = direzione && !!termine?.oltreTermine && termine.giornoSbloccato;
+
   return (
     <div className="rounded-card bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
@@ -518,9 +646,73 @@ export default function RegistroPage() {
         />
       </div>
 
+      {/* Lo sblocco della GIORNATA (spec 2026-09-24: «voce per voce E per
+          classe+giorno»): tutte le voci di questa classe in questa data. */}
+      {sbloccoGiornoVisibile && userId && (
+        <div className="mb-4 flex flex-wrap items-center justify-end gap-2" data-testid="registro-sblocca-giorno">
+          <span className="font-maven text-[11px] text-kidville-sub">{t('registroSbloccaGiornoHint')}</span>
+          <BottoneSblocca
+            bersaglio={{ modo: 'giorno', sectionId, data }}
+            userId={userId}
+            ruolo={ruolo}
+            onSbloccato={() => {
+              setBloccate({});
+              setEsito({ testo: t('registroGiornoSbloccato', { data: isoToIt(data) }), tipo: 'ok' });
+              void load();
+            }}
+            descrizioneAccessibile={t('registroSbloccaGiornoNome', { data: isoToIt(data) })}
+          />
+        </div>
+      )}
+      {giornoGiaSbloccato && (
+        <p data-testid="registro-giorno-gia-sbloccato" className="mb-4 text-right font-maven text-[11px] text-kidville-sub">
+          {t('registroGiornoGiaSbloccato')}
+        </p>
+      )}
+
+      {/* Il CESTINO degli allegati della classe (spec 2026-09-24, R4): eliminati o
+          sostituiti, ripristinabili per GIORNI_CESTINO_REGISTRO giorni. */}
+      {userId && (
+        <div className="mb-4 flex justify-end">
+          <button
+            type="button"
+            aria-expanded={cestinoAperto}
+            aria-controls={cestinoId}
+            aria-label={t('registroCestinoApriNome')}
+            onClick={() => setCestinoAperto((a) => !a)}
+            className="font-maven inline-flex min-h-6 items-center gap-1 rounded-pill border border-kidville-line px-3 py-1 text-xs text-kidville-ink hover:border-kidville-green"
+          >
+            <Trash2 size={12} aria-hidden="true" /> {t('registroCestinoApri')}
+          </button>
+        </div>
+      )}
+      {userId && cestinoAperto && (
+        <div id={cestinoId}>
+          <CestinoAllegatiRegistro
+            sectionId={sectionId}
+            userId={userId}
+            versione={versioneAllegati}
+            onRipristinato={allegatiCambiati}
+            onEsito={esitoAllegati}
+          />
+        </div>
+      )}
+
       {erroreCaricamento !== null && (
         <div role="alert" className="mb-4 rounded-card bg-kidville-error/10 px-3 py-2 font-maven text-sm text-kidville-error">
           {erroreCaricamento || t('registroErroreCaricamento')}
+        </div>
+      )}
+
+      {esito && (
+        <div
+          role={esito.tipo === 'errore' ? 'alert' : 'status'}
+          data-testid="registro-esito"
+          className={`mb-4 rounded-card px-3 py-2 font-maven text-sm ${
+            esito.tipo === 'errore' ? 'bg-kidville-error-soft text-kidville-error-strong' : 'bg-kidville-green/10 text-kidville-green'
+          }`}
+        >
+          {esito.testo}
         </div>
       )}
 
@@ -577,6 +769,16 @@ export default function RegistroPage() {
             const plannedName = orarioCelle.find((o) => o.campanella_id === camp.id)?.materie?.nome;
             const materiaNome = riga?.materie?.nome || riga?.materia || plannedName;
             const firmata = (riga?.firme_docenti?.length ?? 0) > 0;
+            const blocco = bloccoDi(ora, riga);
+            // Il blocco della LEZIONE, da qualunque fonte: dichiarato dalla GET
+            // (`riga.bloccata`) o scoperto al gesto (423 → `bloccate[ora]`). Governa solo
+            // «Elimina lezione», che fallirebbe di nuovo con lo stesso 423.
+            // La FIRMA ha un blocco suo (`f.bloccata`): il server, sulla DELETE di una
+            // firma, decide sulla firma soltanto, anche quando è l'unica. Uno sblocco
+            // della sola firma lascia la lezione bloccata (`riga.bloccata: true`) e la
+            // firma libera: il gesto sulla firma deve tornare, quello sulla lezione no.
+            // Dopo lo sblocco `togliBlocco(ora)` + `load()` rileggono entrambi.
+            const bloccataOra = riga?.bloccata === true || !!bloccate[ora];
             return (
               <li key={camp.id} className="rounded-card border border-kidville-line p-3">
                 <div className="flex items-start justify-between gap-3">
@@ -602,21 +804,75 @@ export default function RegistroPage() {
                       </p>
                     )}
                     {riga?.firme_docenti?.map((f) => (
-                      <div key={f.id} className="mt-1 text-[11px] text-kidville-muted">
-                        ✍ {f.utenti ? nomeCompleto(f.utenti.nome, f.utenti.cognome) : '—'} ({f.tipo_compresenza})
-                        {f.argomento_proprio && <span className="ml-1 text-kidville-info">· {t('registroAttivitaIndividualizzata')}</span>}
+                      <div key={f.id} className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-kidville-muted">
+                        <span>
+                          ✍ {f.utenti ? nomeCompleto(f.utenti.nome, f.utenti.cognome) : '—'} ({f.tipo_compresenza})
+                          {f.argomento_proprio && <span className="ml-1 text-kidville-info">· {t('registroAttivitaIndividualizzata')}</span>}
+                        </span>
+                        {/* Solo sulla PROPRIA firma: quella dei colleghi è in sola lettura.
+                            Conta il blocco della FIRMA, non quello della lezione: dichiarato
+                            dalla GET (`f.bloccata`) o scoperto al 423 di un gesto sull'ora
+                            (`bloccate[ora]`, il ripiego quando la GET non dichiara il termine).
+                            Bloccata, il gesto non si offre: sulla riga c'è già il messaggio (e,
+                            alla Direzione, «Sblocca»). La lezione bloccata con la firma libera
+                            NON nasconde il gesto: il server decide solo sulla firma.
+                            Area di tocco ≥ 24px (WCAG 2.5.8): la pagina si usa dal telefono. */}
+                        {userId && f.maestra_id === userId && f.bloccata !== true && !bloccate[ora] && (
+                          <button
+                            type="button"
+                            aria-haspopup="dialog"
+                            aria-label={t('registroEliminaMiaFirmaNome', { ora })}
+                            onClick={() => {
+                              setEsito(null);
+                              setEliminazione({
+                                modo: 'firma',
+                                firmaId: f.id,
+                                ora,
+                                unica: (riga?.firme_docenti?.length ?? 0) <= 1,
+                                nAllegati: riga?.allegati_registro?.length ?? 0,
+                              });
+                            }}
+                            className="-mx-1 inline-flex min-h-6 items-center gap-0.5 px-1 font-maven text-[11px] font-semibold text-kidville-error-strong underline-offset-2 hover:underline"
+                          >
+                            <Trash2 size={11} aria-hidden="true" /> {t('registroEliminaMiaFirma')}
+                          </button>
+                        )}
                       </div>
                     ))}
-                    {(riga?.allegati_registro?.length ?? 0) > 0 && (
-                      <div className="mt-1.5 flex flex-wrap gap-2">
-                        {riga!.allegati_registro!.map((a) => (
-                          <a key={a.id} href={a.file_url} target="_blank" rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 rounded-pill bg-kidville-cream px-2 py-0.5 text-[11px] text-kidville-ink hover:bg-kidville-cream-dark">
-                            {a.tipo === 'pdf' ? <FileText size={11} /> : <ImageIcon size={11} />}
-                            {a.file_name || t('registroAllegato')}
-                          </a>
-                        ))}
-                      </div>
+                    {blocco && userId && (
+                      <AvvisoVoceBloccata
+                        bersaglio={blocco.bersaglio}
+                        giorniLimite={blocco.giorniLimite}
+                        userId={userId}
+                        ruolo={ruolo}
+                        descrizioneAccessibile={descrizioneSblocco(ora, blocco.bersaglio)}
+                        onSbloccato={() => {
+                          togliBlocco(ora);
+                          // Lo sblocco della sola FIRMA non copre la lezione
+                          // (permesso-voce per slot accetta solo le righe
+                          // `registro`): dire «ora sbloccata» sarebbe falso,
+                          // perché la lezione resta bloccata sulla stessa riga.
+                          const soloFirma = blocco.bersaglio.modo === 'voce' && blocco.bersaglio.entitaTipo === 'firma';
+                          setEsito({
+                            testo: soloFirma ? t('registroFirmaSbloccata', { ora }) : t('registroVoceSbloccata', { ora }),
+                            tipo: 'ok',
+                          });
+                          void load();
+                        }}
+                      />
+                    )}
+                    {/* Gli allegati, con «Rinomina», «Sostituisci file» ed «Elimina»
+                        secondo i permessi che dichiara il server (R4). */}
+                    {riga && (riga.allegati_registro?.length ?? 0) > 0 && (
+                      <AllegatiLezione
+                        registroId={riga.id}
+                        allegati={riga.allegati_registro ?? []}
+                        userId={userId}
+                        ruolo={ruolo}
+                        versione={versioneAllegati}
+                        onCambiato={allegatiCambiati}
+                        onEsito={esitoAllegati}
+                      />
                     )}
                     {riga && (
                       <div className="mt-1.5 flex items-center gap-3">
@@ -638,15 +894,38 @@ export default function RegistroPage() {
                       </div>
                     )}
                   </div>
-                  <button
-                    onClick={() => setModal({ ordine: ora, materiaId: plannedId, riga: riga ?? null })}
-                    className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-xs ${
-                      firmata ? 'bg-kidville-cream text-kidville-green' : 'bg-kidville-green text-kidville-yellow'
-                    }`}
-                  >
-                    {firmata ? <Check size={13} /> : <PenLine size={13} />}
-                    {firmata ? t('registroModifica') : t('registroFirma')}
-                  </button>
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <button
+                      onClick={() => setModal({ ordine: ora, materiaId: plannedId, riga: riga ?? null })}
+                      className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-xs ${
+                        firmata ? 'bg-kidville-cream text-kidville-green' : 'bg-kidville-green text-kidville-yellow'
+                      }`}
+                    >
+                      {firmata ? <Check size={13} /> : <PenLine size={13} />}
+                      {firmata ? t('registroModifica') : t('registroFirma')}
+                    </button>
+                    {/* La lezione INTERA: Segreteria e Direzione (il server lo ribadisce, 403). */}
+                    {riga && userId && puoEliminareLezione(ruolo) && !bloccataOra && (
+                      <button
+                        type="button"
+                        aria-haspopup="dialog"
+                        aria-label={t('registroEliminaLezioneNome', { ora })}
+                        onClick={() => {
+                          setEsito(null);
+                          setEliminazione({
+                            modo: 'lezione',
+                            registroId: riga.id,
+                            ora,
+                            nFirme: riga.firme_docenti?.length ?? 0,
+                            nAllegati: riga.allegati_registro?.length ?? 0,
+                          });
+                        }}
+                        className="font-maven -mx-1 inline-flex min-h-6 items-center gap-1 px-1 text-[11px] font-semibold text-kidville-error-strong underline-offset-2 hover:underline"
+                      >
+                        <Trash2 size={12} aria-hidden="true" /> {t('registroEliminaLezione')}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </li>
             );
@@ -671,7 +950,68 @@ export default function RegistroPage() {
           riga={modal.riga}
           defaultMateriaId={modal.materiaId}
           onClose={() => setModal(null)}
-          onSaved={() => { setModal(null); load(); }}
+          onSaved={() => {
+            togliBlocco(modal.ordine);
+            setModal(null);
+            // Una lezione appena firmata può essere proprio quella che il cestino
+            // chiedeva di rifirmare: se il cestino è aperto si rilegge, e l'avviso
+            // «prima rifirma…» segue la nuova risposta del server.
+            setVersioneAllegati((v) => v + 1);
+            load();
+          }}
+          onBloccata={(giorniLimite) =>
+            // Un'ora già scritta si sblocca come VOCE (la riga di registro); una
+            // mai firmata non ha un uuid, e si sblocca per SLOT. Entrambe le
+            // strade le legge `primaria/registro:POST`.
+            segnaBloccata(
+              modal.ordine,
+              modal.riga
+                ? { modo: 'voce', entitaTipo: 'registro', entitaId: modal.riga.id }
+                : { modo: 'slot', sectionId, data, oraLezione: modal.ordine },
+              giorniLimite,
+            )
+          }
+        />
+      )}
+
+      {eliminazione && userId && (
+        <ModaleEliminaRegistro
+          // Una conferma per voce: cambiare voce la rimonta pulita.
+          key={eliminazione.modo === 'firma' ? eliminazione.firmaId : eliminazione.registroId}
+          eliminazione={eliminazione}
+          userId={userId}
+          onChiudi={() => setEliminazione(null)}
+          onEliminata={({ eliminata, allegatiNelCestino }) => {
+            const ora = eliminazione.ora;
+            setEliminazione(null);
+            togliBlocco(ora);
+            // Il server dice che cosa è sparito davvero: la firma sola, oppure la
+            // lezione (intera, o con la sua ultima firma).
+            const testo = eliminata === 'firma'
+              ? t('registroFirmaEliminata', { ora })
+              : eliminazione.modo === 'firma'
+                ? t('registroFirmaUnicaEliminata', { ora })
+                : t('registroLezioneEliminata', { ora });
+            setEsito({
+              testo: allegatiNelCestino > 0
+                ? `${testo} ${t('registroAllegatiNelCestino', { n: allegatiNelCestino })}`
+                : testo,
+              tipo: 'ok',
+            });
+            // Gli allegati della lezione sono finiti nel cestino: se è aperto, si rilegge.
+            if (allegatiNelCestino > 0) setVersioneAllegati((v) => v + 1);
+            void load();
+          }}
+          onBloccata={(giorniLimite) => {
+            segnaBloccata(eliminazione.ora, bersaglioDi(eliminazione), giorniLimite);
+            setEliminazione(null);
+          }}
+          onRifiutata={(messaggio) => {
+            // Lo stato a schermo era vecchio: il messaggio va sopra la griglia e si rilegge.
+            setEliminazione(null);
+            setEsito({ testo: messaggio, tipo: 'errore' });
+            void load();
+          }}
         />
       )}
     </div>
@@ -679,12 +1019,18 @@ export default function RegistroPage() {
 }
 
 function FirmaModal({
-  sectionId, userId, ruolo, data, ordine, materie, alunni, sezioni, riga, defaultMateriaId, onClose, onSaved,
+  sectionId, userId, ruolo, data, ordine, materie, alunni, sezioni, riga, defaultMateriaId, onClose, onSaved, onBloccata,
 }: {
   sectionId: string; userId: string; ruolo: string | null; data: string; ordine: number;
   materie: Materia[]; alunni: Alunno[]; sezioni: { id: string; name: string }[];
   riga: Riga | null; defaultMateriaId: string;
   onClose: () => void; onSaved: () => void;
+  /**
+   * 423 della firma, nella PROPRIA classe: la pagina segna l'ora come bloccata,
+   * e alla chiusura la riga mostra il messaggio e, alla Direzione, «Sblocca».
+   * `giorniLimite` = null quando il server non lo dichiara nel corpo.
+   */
+  onBloccata?: (giorniLimite: number | null) => void;
 }) {
   const t = useTranslations('teacherPrimaria');
   const uid = useId();
@@ -749,6 +1095,8 @@ function FirmaModal({
   const [perAlunniSel, setPerAlunniSel] = useState(assegnazioneMirata(firmaIniziale));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  /** L'ultima risposta è stata 423 (oltre il termine): sotto l'errore, dove si sblocca. */
+  const [bloccata, setBloccata] = useState(false);
 
   /**
    * IL PROMEMORIA «argomento sì, compiti no»: se è a schermo, e se è già stato
@@ -1179,9 +1527,17 @@ function FirmaModal({
     // per sempre — la stessa lezione già imparata dieci righe più su, sugli allegati.
     const d = await r.json().catch(() => ({} as { error?: string; success?: boolean }));
     setSaving(false);
+    // Oltre il termine: la riga dell'ora, fuori da questa modale, mostrerà
+    // «Sblocca» alla Direzione. Solo nella PROPRIA classe: in supplenza il 423
+    // riguarda l'ora di un'altra classe, che su questa griglia non c'è.
+    const oltreTermine = r.status === 423;
+    setBloccata(oltreTermine && !altraClasse);
+    if (oltreTermine && !altraClasse) onBloccata?.(giorniLimiteDa(d));
     if (!r.ok || d.success === false) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: 'registro-firma-rifiutata', route: ROTTA, stato: r.status });
-      setError(d.error || t('comuneErrore'));
+      // Codice → catalogo nella lingua dell'interfaccia (il 423 porta `VOCE_BLOCCATA`):
+      // la prosa del server è italiana, e resta solo come ripiego senza codice.
+      setError(messaggioDaCorpo(d, t('comuneErrore')));
     } else onSaved();
   };
 
@@ -1228,6 +1584,14 @@ function FirmaModal({
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
           {error && <div role="alert" className="rounded-card bg-kidville-error/10 text-kidville-error px-3 py-2 text-sm font-maven">{error}</div>}
+          {/* Lo sblocco NON sta qui dentro: questa modale ha il velo sfocato come
+              antenato, e su Android la modale dello sblocco sparirebbe dall'albero
+              di accessibilità. Sta sulla riga dell'ora, dopo la chiusura. */}
+          {bloccata && (
+            <p data-testid="firma-bloccata-hint" className="font-maven text-[11px] text-kidville-warn-strong">
+              {puoSbloccare(ruolo) ? t('firmaModalBloccataDirezione') : t('firmaModalBloccataDocente')}
+            </p>
+          )}
 
           {/* Classe: di default la corrente, ma è possibile firmare in un'altra (supplenza). */}
           {sezioni.length > 1 && (

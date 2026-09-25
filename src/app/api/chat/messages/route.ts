@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
@@ -19,6 +19,124 @@ import { assertTerminiAccettatiSeGenitore } from '@/lib/onboarding/consensi';
 import { firmaAllegatiChat, normalizzaAllegatoChat } from '@/lib/chat/allegati';
 import { linkConversazione } from '@/lib/chat/link-conversazione';
 import { sedeDiAlunno, sedeDiAccount } from '@/lib/anagrafiche/sedi';
+import { eseguiDispatch } from '@/lib/push/dispatch';
+
+/**
+ * LA DURATA DELLA FUNZIONE, per la push della chat inviata SUBITO (PS3, spec «sei interventi»
+ * del 24/09, §3 Notifiche: «dispatch 30 s dopo il messaggio»).
+ *
+ * La POST programma con `after()` un giro di `eseguiDispatch` 30 secondi dopo il messaggio (vedi
+ * `programmaDispatchChat`). `after()` vive dentro il `maxDuration` della route: al default della
+ * piattaforma la Function si fermerebbe a metà dell'attesa, oppure a metà del giro — e un giro
+ * troncato DOPO la presa atomica lascia le notifiche marcate e mai spedite («IL PREZZO DELLA
+ * PRESA» in `src/lib/push/dispatch.ts`). Serve quindi l'attesa PIÙ il caso peggiore del giro:
+ * 30 s + `DURATA_MINIMA_FUNZIONE_S` (250 s con i valori di oggi, `src/lib/push/durata-dispatch.ts`)
+ * = 280 s. 300 s è il valore della route del cron e delle altre route lunghe del repo.
+ *
+ * Due lock lo tengono fermo: `__tests__/lib/push-dispatch-durata.test.ts` (≥ il caso peggiore del
+ * giro, per ogni route che chiama `eseguiDispatch`) e `__tests__/api/chat-messages-dispatch-anticipato.test.ts`
+ * (≥ attesa + caso peggiore, solo per questa). Vale per il segmento intero, quindi anche per la GET:
+ * è un tetto, non un costo — la GET finisce quando ha finito. Il numero resta scritto qui perché
+ * Next legge la configurazione del segmento senza eseguire il codice.
+ */
+export const maxDuration = 300
+
+/**
+ * Quanto aspetta la push della chat prima di partire. Non subito: le raffiche restano raggruppate.
+ * La notifica di una conversazione è UNA (il `debounce` di `notificaEvento` la sostituisce a ogni
+ * messaggio), quindi chi scrive tre messaggi in dieci secondi produce una push sola, quella
+ * dell'ultimo. I giri programmati dai messaggi successivi trovano la notifica già presa e non
+ * spediscono niente: la presa atomica di `eseguiDispatch` impedisce il doppione, anche col cron
+ * ogni 5 minuti che parte nello stesso secondo.
+ */
+const ATTESA_DISPATCH_CHAT_MS = 30_000;
+
+/**
+ * Programma, DOPO la risposta, il giro di dispatch anticipato della chat: 30 s di attesa e poi
+ * `eseguiDispatch({ origine: 'chat' })`. Nessun effetto sulla risposta: non lancia mai, e la POST
+ * risponde 201 senza aspettarlo.
+ *
+ * I LOG. `eseguiDispatch` scrive già il suo battito sotto `push-dispatch-chat`; qui si scrivono
+ * l'avvio (dopo l'attesa) e l'esito visti dalla chat, con il thread: senza, «nessun log» non
+ * distinguerebbe «la push è partita» da «`after()` non è mai arrivato in fondo». Evento `push`,
+ * persistito. Nel log solo l'uuid del thread e i contatori: mai testo, mai nomi.
+ *
+ * SE `after()` NON SI PUÒ USARE (fuori da un contesto di richiesta: test, script) si rinuncia al
+ * giro anticipato e lo si dice a `warn`: la notifica è in coda e il cron la spedisce entro 5
+ * minuti. Non si parte «subito» come ripiego: un giro lanciato senza `after()` sarebbe troncato
+ * dalla piattaforma a metà, dopo la presa, cioè la perdita che la presa atomica paga col tempo.
+ */
+function programmaDispatchChat(threadId: string): void {
+    const operazione = 'chat/messages:POST';
+    const giro = async (): Promise<void> => {
+        try {
+            await new Promise<void>((fatto) => setTimeout(fatto, ATTESA_DISPATCH_CHAT_MS));
+            logEvento('push', 'info', {
+                operazione,
+                esito: 'dispatch-anticipato-avviato',
+                threadId,
+                msg: `${operazione}: dispatch anticipato della chat avviato`,
+            });
+            const esito = await eseguiDispatch({ origine: 'chat' });
+            if (esito.stato === 500) {
+                // Il guasto è già scritto da `eseguiDispatch` con i dettagli (righe
+                // `push-dispatch-chat`); qui si dice solo che riguardava la chat. Il 500 NON dice
+                // che fine ha fatto questa notifica: può essere ancora in coda (lettura fallita
+                // prima della presa), già spedita (presa parziale, o rimozione delle subscription
+                // fallita dopo l'invio), marcata e bloccata (ritorno in coda fallito) o ignota
+                // (eccezione). Per questo il messaggio non promette un recupero dal cron: vale solo
+                // che le notifiche NON prese restano in coda.
+                logEvento('push', 'error', {
+                    operazione,
+                    esito: 'dispatch-anticipato-fallito',
+                    threadId,
+                    msg: `${operazione}: dispatch anticipato della chat fallito (dettagli nelle righe push-dispatch-chat); le notifiche non prese restano in coda per il cron`,
+                });
+                return;
+            }
+            if ('non_configurato' in esito.data) {
+                // Configurazione mancante = `error` (regola 4 di AGENTS.md).
+                logEvento('push', 'error', {
+                    operazione,
+                    esito: 'dispatch-anticipato-non-configurato',
+                    threadId,
+                    msg: `${operazione}: dispatch anticipato della chat senza canali push configurati`,
+                });
+                return;
+            }
+            logEvento('push', 'info', {
+                operazione,
+                esito: 'dispatch-anticipato-ok',
+                threadId,
+                notifiche: esito.data.notifiche,
+                inviate: esito.data.inviate,
+                native_inviate: esito.data.native_inviate,
+                fallite: esito.data.fallite,
+                gia_prese: esito.data.gia_prese,
+                rimesse_in_coda: esito.data.rimesse_in_coda,
+                msg: `${operazione}: dispatch anticipato della chat concluso`,
+            });
+        } catch (err) {
+            // `eseguiDispatch` non lancia: qui arriva solo l'imprevisto (il timer, il logger).
+            logEvento('push', 'error', {
+                operazione,
+                esito: 'dispatch-anticipato-eccezione',
+                threadId,
+                msg: `${operazione}: dispatch anticipato della chat interrotto da un'eccezione`,
+            }, err);
+        }
+    };
+    try {
+        after(giro);
+    } catch (err) {
+        logEvento('push', 'warn', {
+            operazione,
+            esito: 'dispatch-anticipato-non-programmato',
+            threadId,
+            msg: `${operazione}: after() non disponibile, la push della chat parte col cron (entro 5 minuti)`,
+        }, err);
+    }
+}
 
 // markRead='' è ammesso per retro-compatibilità: equivale ad assente (nessun mark-read).
 const getQuerySchema = z.object({
@@ -486,6 +604,10 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
                     bufferMin: 0,
                     debounce: true,
                 });
+                // La push parte SUBITO (30 s), non al prossimo giro del cron (fino a 5 minuti:
+                // 2,8' di ritardo medio misurato il 24/09). Solo DOPO l'accodamento: il giro
+                // spedisce ciò che trova in coda. Non lancia e non tocca la risposta.
+                programmaDispatchChat(thread_id);
             }
         } catch (e) {
             // `error` benché il messaggio sia salvato (201): la controparte non riceve la spinta,

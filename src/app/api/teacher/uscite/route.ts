@@ -24,6 +24,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `gruppo` e `alunno_ids` (CSV di id, split nel codice) sono entrambi opzionali
@@ -202,11 +203,14 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
       // non ha risponde `22P02` — cioè questo semaforo diventerebbe un 500 su un
       // ambiente in cui tutto il resto funziona. Si legge ciò che quei bambini hanno
       // e si filtra in TypeScript, dove uno slug è una stringa.
-      const { data: documenti, error: erroreDocumenti } = await supabase
-        .from('student_documents')
-        .select('student_id, document_type, created_at')
-        .in('student_id', alunniList)
-        .gte('created_at', String(uscita.creato_il ?? new Date(0).toISOString()))
+      // Solo i documenti VIVI: un'autorizzazione messa nel cestino non autorizza più.
+      const { data: documenti, error: erroreDocumenti } = await fascicoloVivo(
+        supabase
+          .from('student_documents')
+          .select('student_id, document_type, created_at')
+          .in('student_id', alunniList)
+          .gte('created_at', String(uscita.creato_il ?? new Date(0).toISOString())),
+      )
       if (erroreDocumenti) {
         // Un dato sbagliato è peggio di un errore dichiarato: col silenzio
         // l'insegnante lascerebbe a scuola dei bambini autorizzati.

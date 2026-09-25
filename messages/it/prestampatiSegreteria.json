@@ -110,6 +110,7 @@
   "generazioneInCorso": "Generazione in corso…",
   "anteprima": "Anteprima",
   "scarica": "Scarica il PDF",
+  "scaricoNonRiuscito": "Il PDF è stato generato, ma non è arrivato sul dispositivo: riprova con «Scarica il PDF».",
   "annulla": "Annulla",
   "chiudi": "Chiudi",
   "riprova": "Riprova",

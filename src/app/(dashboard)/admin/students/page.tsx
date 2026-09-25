@@ -16,6 +16,7 @@ import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
+import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica';
 
 type TipoVista = 'child' | 'adult' | 'sections' | 'staff' | 'codici' | 'archiviati';
 
@@ -472,7 +473,7 @@ function AdminStudentsInner() {
   // Esporta l'elenco corrente (già filtrato) in CSV — lato client, nessuna nuova
   // API (non esiste un endpoint di export per l'anagrafica). Decisione utente.
   const csvCell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-  const handleExport = () => {
+  const handleExport = async () => {
     const rows = filteredStudents;
     if (rows.length === 0) { showToastMsg(t('exportVuoto')); return; }
     const isChild = viewType === 'child';
@@ -494,14 +495,21 @@ function AdminStudentsInner() {
       return cols.map((c) => csvCell(String(c))).join(',');
     });
     const csv = [headers.join(','), ...lines].join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `anagrafica-${viewType}-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToastMsg(`✅ ${t('toastExport', { n: rows.length })}`);
+    // Il Blob passa all'helper unico (`scaricaDocumento`): sul web lo scarica con l'ancora
+    // come prima, nell'app apre il foglio «Salva su File» — dove l'ancora su un `blob:` non
+    // scaricava niente e il toast diceva «Esportati» lo stesso. Il toast ora segue l'ESITO;
+    // il log (successo compreso) lo scrive l'helper, senza nome del file né contenuto.
+    const esito = await scaricaDocumento({
+      sorgente: new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }),
+      nomeFile: `anagrafica-${viewType}-${new Date().toISOString().slice(0, 10)}.csv`,
+      mime: 'text/csv',
+      etichetta: 'anagrafica-export',
+    });
+    showToastMsg(
+      fileConsegnato(esito)
+        ? `✅ ${t('toastExport', { n: rows.length })}`
+        : `❌ ${t('toastExportNonRiuscito')}`,
+    );
   };
 
   if (isLoading) {
@@ -530,7 +538,7 @@ function AdminStudentsInner() {
                 assente. */}
             {viewType !== 'codici' && viewType !== 'archiviati' && (
               <button
-                onClick={handleExport}
+                onClick={() => void handleExport()}
                 className="inline-flex h-[46px] items-center gap-2 rounded-pill border border-kidville-line bg-kidville-white px-5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green"
               >
                 <FileDown size={16} /> {t('azioneEsporta')}

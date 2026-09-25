@@ -15,6 +15,12 @@ import { colonneConMotivo } from '@/lib/presenze/motivo-visibile';
 import { orariAmmessi } from '@/lib/presenze/orario-ammesso';
 import { aOrarioIso } from '@/lib/presenze/orario';
 import { logScrittura } from '@/lib/audit/scrittura';
+import { annullaAppelloAlunno } from '@/lib/presenze/annulla-appello';
+import {
+    rispostaAnnullaAppello,
+    rispostaAnnullaSoloOggi,
+    rispostaAppelloNonAnnullato,
+} from '@/lib/presenze/annulla-appello-risposta';
 
 /**
  * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=<classe>
@@ -39,6 +45,11 @@ const COLONNE_APPELLO = [
     'orario_uscita',
     'panic_alert',
     'giustificazione_testo',
+    // Chi ha fatto l'appello (uuid dello staff, come nella GET della primaria).
+    // Serve alla schermata per distinguere l'appello FATTO dalla sola comunicazione
+    // del genitore: solo il primo si può annullare (DELETE qui sotto), e la seconda
+    // si mostra come tale.
+    'registrato_da',
     'alunni!inner ( id, nome, cognome, classe_sezione )',
 ] as const;
 
@@ -680,5 +691,60 @@ export const PATCH = withRoute('attendance/daily:PATCH', async (request: NextReq
     } catch (err) {
         logErrore({ operazione: 'attendance/daily:PATCH', stato: 500 }, err);
         return erroreInterno();
+    }
+});
+
+/**
+ * ─── DELETE /api/attendance/daily?alunno_id=&data= — ANNULLA L'APPELLO ──────
+ *
+ * Il bambino torna a «da registrare» (spec 2026-09-24, punto 6). Se la riga
+ * portava una comunicazione del genitore si torna a quella; altrimenti la riga
+ * si cancella. La logica sta in `@/lib/presenze/annulla-appello`, condivisa con
+ * la primaria; qui restano le due cose che sono della ROTTA:
+ *  · lo stesso gate e lo stesso scope della POST (docente della sezione o
+ *    segreteria della sede: `assertAlunnoInScope`);
+ *  · il «solo il giorno stesso», in data di ROMA: il runtime gira in UTC e fra
+ *    mezzanotte e le due `toISOString()` direbbe ancora ieri;
+ * La traduzione degli esiti in stati e codici NON sta qui: la scrive
+ * `@/lib/presenze/annulla-appello-risposta`, la stessa della primaria.
+ *
+ * Nessuna coda offline: l'annullamento chiede la connessione (convenzioni di
+ * esecuzione della spec), quindi qui non arriva mai «in differita».
+ */
+const deleteQuerySchema = z.object({
+    alunno_id: zUuid,
+    data: zDataYMD,
+});
+
+export const DELETE = withRoute('attendance/daily:DELETE', async (request: NextRequest) => {
+    try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        const q = parseQuery(request, deleteQuerySchema);
+        if ('response' in q) return q.response;
+        const { alunno_id, data } = q.data;
+
+        const supabase = await createAdminClient();
+
+        // LO SCOPE PRIMA DI TUTTO: dopo un diniego `presenze` non si legge nemmeno.
+        const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id);
+        if (fuoriScope) return fuoriScope;
+
+        if (data !== oggiFiscaleISO()) return rispostaAnnullaSoloOggi();
+
+        const r = await annullaAppelloAlunno(supabase, {
+            alunnoId: alunno_id,
+            data,
+            attore: auth.user,
+            operazione: 'attendance/daily:DELETE',
+        });
+
+        // Stati, codici e le sei colonne: un contratto solo, condiviso con la
+        // primaria (500 compreso: `APPELLO_NON_ANNULLATO`).
+        return rispostaAnnullaAppello(r);
+    } catch (err) {
+        logErrore({ operazione: 'attendance/daily:DELETE', stato: 500 }, err);
+        return rispostaAppelloNonAnnullato();
     }
 });

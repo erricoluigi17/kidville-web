@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { sendPush } from '@/lib/push/web-push'
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { allergeneLabel, type ConflittoAllergia } from '@/lib/mensa/allergeni'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
@@ -138,15 +137,33 @@ export async function notificaAllergie(
 }
 
 // Notifica al genitore che il saldo ticket mensa è sceso sotto la soglia.
-// Crea una riga in `notifiche` (feed in-app realtime) e prova l'invio push a
-// tutte le subscription del genitore. Best-effort: errori non bloccano lo scalo.
+// Crea una riga in `notifiche` (feed in-app realtime) e basta: la push la porta
+// il dispatch. Best-effort: errori non bloccano lo scalo.
+//
+// LA PUSH NON PARTE DA QUI (intervento W2, 2026-09-24), come per l'alert
+// allergie qui sopra. C'era un ciclo di `sendPush` su TUTTE le
+// `push_subscriptions` dei genitori, native comprese: un token FCM/APNs non ha le
+// chiavi web, e ogni giro produceva l'errore «must have auth and p256dh keys». In
+// più chi usa il web la riceveva DUE volte: la riga nasce pendente
+// (`push_inviata_il` e `invio_programmato_il` nulli) e `notifiche-dispatch` la
+// rispediva comunque — lui sì, sul canale giusto per ogni dispositivo.
 export async function notificaSaldoBasso(
   supabase: SupabaseClient,
   opts: { alunnoId: string; saldo: number; nomeAlunno?: string | null }
 ): Promise<void> {
   try {
     // Gate toggle: scuola risolta dall'alunno (best-effort, fail-open).
-    const { data: alunno } = await supabase.from('alunni').select('scuola_id').eq('id', opts.alunnoId).maybeSingle()
+    const { data: alunno, error: erroreAlunno } = await supabase
+      .from('alunni').select('scuola_id').eq('id', opts.alunnoId).maybeSingle()
+    if (erroreAlunno) {
+      // Fail-open voluto: senza la sede il gate usa il default, e l'avviso parte
+      // lo stesso. Lo si registra, perché un catch muto è un bug.
+      logEvento('mensa', 'warn', {
+        operazione: 'notificaSaldoBasso',
+        esito: 'sede-alunno-non-letta',
+        alunno_id: opts.alunnoId,
+      }, erroreAlunno)
+    }
     if (!(await isNotificaAbilitata(supabase, 'mensa_saldo_basso', (alunno?.scuola_id as string | undefined) ?? null))) return
 
     // genitori legati all'alunno — unione runtime (`legame_genitori_alunni`) +
@@ -160,7 +177,7 @@ export async function notificaSaldoBasso(
     const corpo = `Il saldo ticket mensa${opts.nomeAlunno ? ` di ${opts.nomeAlunno}` : ''} è sceso a ${opts.saldo}. Contatta la segreteria per ricaricare.`
     const link = '/parent/mensa'
 
-    await supabase.from('notifiche').insert(
+    const { error } = await supabase.from('notifiche').insert(
       genitori.map(g => ({
         utente_id: g,
         tipo: 'mensa_saldo_basso',
@@ -171,20 +188,26 @@ export async function notificaSaldoBasso(
         entita_id: opts.alunnoId,
       }))
     )
-
-    const { data: subs } = await supabase
-      .from('push_subscriptions')
-      .select('endpoint, p256dh, auth')
-      .in('utente_id', genitori)
-    for (const s of subs ?? []) {
-      const res = await sendPush(
-        { endpoint: s.endpoint as string, p256dh: s.p256dh as string, auth: s.auth as string },
-        { title: titolo, body: corpo, url: link, tag: 'mensa-saldo' }
-      )
-      if (res.gone) {
-        await supabase.from('push_subscriptions').delete().eq('endpoint', s.endpoint)
-      }
+    // PostgREST non lancia: ritorna `{ error }`. Senza questo controllo l'avviso
+    // si perdeva in silenzio, e il log di successo qui sotto avrebbe mentito.
+    if (error) {
+      logEvento('mensa', 'error', {
+        operazione: 'notificaSaldoBasso',
+        esito: 'notifiche-non-inserite',
+        alunno_id: opts.alunnoId,
+        n: genitori.length,
+      }, error)
+      return
     }
+    // Il SUCCESSO si logga anche lui: senza, «nessun log» non distingue
+    // «avviso accodato» da «non è mai partito niente». Nessun nome né saldo:
+    // solo uuid e il numero di righe.
+    logEvento('mensa', 'info', {
+      operazione: 'notificaSaldoBasso',
+      esito: 'accodata',
+      alunno_id: opts.alunnoId,
+      n: genitori.length,
+    })
   } catch (err) {
     // Best-effort: non blocca lo scalo ticket. Via logger (mai console.*).
     logEvento('mensa', 'error', { operazione: 'notificaSaldoBasso', esito: 'notifica-saldo-basso-non-inviata' }, err)

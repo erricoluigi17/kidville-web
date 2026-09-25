@@ -797,7 +797,10 @@ function TeacherGalleryContent() {
                                 <p className="font-maven text-sm text-kidville-muted">{t('galleryCaricamento')}</p>
                             </div>
                         ) : (
-                            <MediaGrid items={media} onDelete={handleDeleteMedia} students={students} onUpdateTags={handleUpdateTags} />
+                            /* `scaricabile`: il solo «Scarica» (card e visore) anche per i
+                               docenti — non `showActions`, che porterebbe Condividi e
+                               «Segnala», gesti del genitore. */
+                            <MediaGrid items={media} scaricabile onDelete={handleDeleteMedia} students={students} onUpdateTags={handleUpdateTags} />
                         )}
                     </motion.div>
                 )}

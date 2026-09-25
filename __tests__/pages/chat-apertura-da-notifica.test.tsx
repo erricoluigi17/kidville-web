@@ -250,9 +250,16 @@ beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn(fetchFinto));
     vi.stubGlobal('IntersectionObserver', FintoIO as unknown as typeof IntersectionObserver);
     Element.prototype.scrollIntoView = function () {};
+    // Il log del SUCCESSO è campionato (`CAMPIONE_APERTE` in `useAperturaThreadRichiesta`, 2026-09-25):
+    // qui è la prova che l'apertura è arrivata in fondo, quindi il sorteggio si fissa a «spedisci». Il
+    // campionamento ha i suoi test in `__tests__/components/useAperturaThreadRichiesta.test.tsx`.
+    sorteggio = vi.spyOn(Math, 'random').mockReturnValue(0);
 });
 
+let sorteggio: ReturnType<typeof vi.spyOn>;
+
 afterEach(() => {
+    sorteggio.mockRestore();
     cleanup();
     vi.unstubAllGlobals();
     vi.useRealTimers();

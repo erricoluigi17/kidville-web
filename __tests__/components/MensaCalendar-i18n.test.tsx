@@ -27,7 +27,7 @@ const CHIAVI_RICHIESTE = [
   'cutoffNota', 'sessioneScaduta', 'accediDiNuovo', 'nonCollegato', 'saldoEsaurito',
   'nessunGiorno', 'mensaChiusa', 'menuNonPubblicato', 'prenotato', 'disdici',
   'prenotaPranzo', 'inseritoSegreteria', 'pranzoPrenotato', 'prenotazioneDisdetta',
-  'operazioneNonRiuscita', 'errore',
+  'operazioneNonRiuscita', 'errore', 'oltreCutoffOggi',
 ];
 
 describe('i18n — namespace mensa (it/en)', () => {

@@ -6,20 +6,11 @@ import { useTranslations } from 'next-intl';
 import { AlertTriangle, Check } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { nomeCompleto } from '@/lib/format/nome';
+import { logClient } from '@/lib/logging/client';
+import { AzioniNota, CATEGORIE_NOTA, type NotaElenco } from '@/components/features/primaria/AzioniNota';
 
 interface Alunno { id: string; nome: string; cognome: string }
-interface Nota {
-  id: string; alunno_id: string; categoria: string; testo: string; richiede_firma: boolean;
-  firmata_il: string | null; creato_il: string; alunni?: { nome: string; cognome: string } | null;
-}
-
-// L'etichetta è tradotta al render via t(`noteCategoria_${key}`): l'array a scope
-// modulo tiene solo la chiave stabile (usata anche come `categoria` lato API) e lo stile.
-const CATEGORIE: { key: string; cls: string }[] = [
-  { key: 'disciplinare', cls: 'bg-kidville-error/10 text-kidville-error' },
-  { key: 'didattica', cls: 'bg-kidville-info-soft text-kidville-info' },
-  { key: 'compiti_non_svolti', cls: 'bg-kidville-warn-soft text-kidville-warn' },
-];
+type Nota = NotaElenco;
 
 export default function NotePage() {
   const t = useTranslations('teacherPrimaria');
@@ -36,28 +27,101 @@ export default function NotePage() {
   const [richiedeFirma, setRichiedeFirma] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
-  const [apiError, setApiError] = useState<string | null>(null);
+  /** `testo: null` = nessun messaggio dal server: al render si mostra il ripiego tradotto. */
+  const [apiError, setApiError] = useState<{ testo: string | null } | null>(null);
+  /**
+   * `false` = il server ha dato l'elenco ma non è riuscito a calcolare i permessi
+   * (`statoVociDisponibile`): le note si vedono, Modifica/Elimina no, e lo si dice.
+   */
+  const [permessiDisponibili, setPermessiDisponibili] = useState(true);
+  /** Il ruolo di chi guarda (`/api/primaria/me`): decide solo se «Sblocca» si mostra. */
+  const [ruolo, setRuolo] = useState<string | null>(null);
+  /** L'esito dell'ultima modifica/eliminazione, sopra l'elenco. */
+  const [esitoElenco, setEsitoElenco] = useState<{ testo: string; tipo: 'ok' | 'errore' } | null>(null);
 
+  // `t` NON è fra le dipendenze: il messaggio di ripiego si traduce al render.
+  // Con `t` qui, una `t` non stabile (il mock dei test la ricrea a ogni render)
+  // rileggeva la classe a ogni render, in un giro senza fine.
   useEffect(() => {
     fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.success) { setAlunni(d.data.alunni ?? []); setApiError(null); }
-        else setApiError(d.error ?? t('comuneImpossibileCaricareAlunni'));
+        else setApiError({ testo: typeof d.error === 'string' ? d.error : null });
+      })
+      .catch((err: unknown) => {
+        logClient({
+          livello: 'error',
+          evento: 'fetch',
+          messaggio: `note-alunni-non-caricati: ${err instanceof Error ? err.name : 'errore'}`,
+          route: typeof window !== 'undefined' ? window.location.pathname : undefined,
+        });
+        setApiError({ testo: null });
       });
-  }, [sectionId, userId, t]);
+  }, [sectionId, userId]);
 
   const loadNote = useCallback(async () => {
     try {
       const r = await fetch(`/api/primaria/note?sectionId=${sectionId}&userId=${userId}`);
       const d = await r.json();
-      if (d.success) setNote(d.data);
+      if (d.success) {
+        setNote(d.data);
+        setPermessiDisponibili(d.statoVociDisponibile !== false);
+      }
     } finally {
-      // nessuno stato di caricamento da azzerare
+      // nessuno stato di caricamento da azzerare. Il `catch` sta al punto di
+      // chiamata (`ricaricaNote`): qui dentro farebbe scattare
+      // `react-hooks/set-state-in-effect`.
     }
   }, [sectionId, userId]);
 
-  useEffect(() => { loadNote(); }, [loadNote]);
+  /** Rilegge l'elenco; un guasto di rete non passa in silenzio. */
+  const ricaricaNote = useCallback(() => {
+    loadNote().catch((err: unknown) => {
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `note-elenco-non-caricato: ${err instanceof Error ? err.name : 'errore'}`,
+        route: typeof window !== 'undefined' ? window.location.pathname : undefined,
+      });
+    });
+  }, [loadNote]);
+
+  useEffect(() => { ricaricaNote(); }, [ricaricaNote]);
+
+  /**
+   * Dopo uno sblocco riuscito l'avviso «Voce bloccata…» sopra l'elenco è falso:
+   * si toglie PRIMA di rileggere, altrimenti resterebbe sopra una nota di nuovo
+   * modificabile.
+   */
+  const dopoSblocco = useCallback(() => {
+    setEsitoElenco(null);
+    ricaricaNote();
+  }, [ricaricaNote]);
+
+  // Il ruolo serve solo a mostrare «Sblocca» alla Direzione: senza risposta non
+  // si mostra (fail-closed), e il gate vero resta sul server.
+  useEffect(() => {
+    let vivo = true;
+    fetch(`/api/primaria/me?userId=${userId}`)
+      .then((r) => r.json())
+      .then((d) => { if (vivo && d?.success && typeof d.data?.ruolo === 'string') setRuolo(d.data.ruolo); })
+      .catch((err) => {
+        logClient({
+          livello: 'warn',
+          evento: 'fetch',
+          messaggio: `note-ruolo-non-risolto: ${err instanceof Error ? err.name : 'errore'}`,
+          route: typeof window !== 'undefined' ? window.location.pathname : undefined,
+        });
+      });
+    return () => { vivo = false; };
+  }, [userId]);
+
+  /** Quante note di ciascun gruppo risultano firmate nell'elenco. */
+  const firmatePerGruppo = new Map<string, number>();
+  for (const n of note) {
+    if (n.nota_gruppo_id && n.firmata_il) firmatePerGruppo.set(n.nota_gruppo_id, (firmatePerGruppo.get(n.nota_gruppo_id) ?? 0) + 1);
+  }
 
   const toggle = (id: string) => setSel((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   const toggleAll = () => setSel(sel.length === alunni.length ? [] : alunni.map((a) => a.id));
@@ -75,7 +139,7 @@ export default function NotePage() {
     const d = await r.json();
     setSaving(false);
     if (!r.ok) setMsg(d.error || t('comuneErrore'));
-    else { setMsg(t('noteInviata')); setTesto(''); setSel([]); loadNote(); }
+    else { setMsg(t('noteInviata')); setTesto(''); setSel([]); ricaricaNote(); }
   };
 
   return (
@@ -87,7 +151,7 @@ export default function NotePage() {
 
         {apiError && (
           <div className="mb-3 flex items-center gap-2 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error">
-            <AlertTriangle size={14} /> {apiError}
+            <AlertTriangle size={14} /> {apiError.testo ?? t('comuneImpossibileCaricareAlunni')}
           </div>
         )}
 
@@ -105,7 +169,7 @@ export default function NotePage() {
         </div>
 
         <div className="mb-3 flex flex-wrap gap-1.5">
-          {CATEGORIE.map((c) => (
+          {CATEGORIE_NOTA.map((c) => (
             <button key={c.key} onClick={() => setCategoria(c.key)} className={`font-maven rounded-pill px-3 py-1 text-xs ${categoria === c.key ? c.cls + ' ring-1 ring-current' : 'bg-kidville-cream text-kidville-muted'}`}>{t(`noteCategoria_${c.key}`)}</button>
           ))}
         </div>
@@ -124,14 +188,26 @@ export default function NotePage() {
 
       <div className="rounded-card bg-white p-5 shadow-sm">
         <h3 className="font-barlow text-base font-bold text-kidville-ink mb-3">{t('noteRecenti')}</h3>
+        {!permessiDisponibili && note.length > 0 && (
+          <p className="mb-2 font-maven text-xs text-kidville-warn">{t('noteAzioniNonDisponibili')}</p>
+        )}
+        {esitoElenco && (
+          <p
+            role={esitoElenco.tipo === 'errore' ? 'alert' : 'status'}
+            className={`mb-2 font-maven text-sm ${esitoElenco.tipo === 'ok' ? 'text-kidville-success' : 'text-kidville-error'}`}
+          >
+            {esitoElenco.testo}
+          </p>
+        )}
         <ul className="divide-y divide-kidville-line">
           {note.map((n) => {
-            const cat = CATEGORIE.find((c) => c.key === n.categoria);
+            const cat = CATEGORIE_NOTA.find((c) => c.key === n.categoria);
+            const nomeAlunno = nomeCompleto(n.alunni?.nome, n.alunni?.cognome, 'cognome-nome');
             return (
               <li key={n.id} className="py-2.5">
                 <div className="flex items-center gap-2">
                   <span className={`rounded-pill px-2 py-0.5 text-[11px] font-maven ${cat?.cls}`}>{cat ? t(`noteCategoria_${cat.key}`) : ''}</span>
-                  <span className="font-maven text-sm text-kidville-ink">{nomeCompleto(n.alunni?.nome, n.alunni?.cognome, 'cognome-nome')}</span>
+                  <span className="font-maven text-sm text-kidville-ink">{nomeAlunno}</span>
                   {n.richiede_firma && (
                     <span className={`text-[11px] font-maven ${n.firmata_il ? 'text-kidville-success' : 'text-kidville-warn'}`}>
                       {n.firmata_il ? t('noteFirmata') : t('noteAttesaFirma')}
@@ -139,6 +215,18 @@ export default function NotePage() {
                   )}
                 </div>
                 <p className="font-maven text-xs text-kidville-muted mt-0.5">{n.testo}</p>
+                <AzioniNota
+                  nota={n}
+                  nomeAlunno={nomeAlunno}
+                  firmateNelGruppo={n.nota_gruppo_id ? firmatePerGruppo.get(n.nota_gruppo_id) ?? 0 : n.firmata_il ? 1 : 0}
+                  userId={userId ?? ''}
+                  ruolo={ruolo}
+                  permessiDisponibili={permessiDisponibili && !!userId}
+                  onCambiato={ricaricaNote}
+                  onEsito={(testo, tipo) => setEsitoElenco({ testo, tipo })}
+                  onApri={() => setEsitoElenco(null)}
+                  onSbloccato={dopoSblocco}
+                />
               </li>
             );
           })}

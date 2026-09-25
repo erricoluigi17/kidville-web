@@ -8,7 +8,8 @@ const STORAGE = 'https://uimulkjyekgemjakmepp.supabase.co'
 const h = vi.hoisted(() => ({
   nativo: false,
   filesystem: false,
-  scarica: vi.fn(),
+  share: true,
+  scaricaDocumento: vi.fn(),
   telemetria: vi.fn(async (input: { esito: string }) => {
     void input
   }),
@@ -18,9 +19,16 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/push/native-register', () => ({ isNativeApp: () => h.nativo }))
 vi.mock('@capacitor/core', () => ({
-  Capacitor: { isPluginAvailable: () => h.filesystem },
+  Capacitor: {
+    isPluginAvailable: (nome: string) => nome === 'Filesystem' ? h.filesystem : nome === 'Share' ? h.share : false,
+  },
+  registerPlugin: vi.fn(),
 }))
-vi.mock('@/lib/native/scarica', () => ({ scarica: h.scarica }))
+// `fileConsegnato` resta quello VERO dell'helper: è la regola che decide «ok» o avviso.
+vi.mock('@/lib/native/scarica', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/native/scarica')>()),
+  scaricaDocumento: h.scaricaDocumento,
+}))
 vi.mock('@/lib/pagamenti/esito-fattura', () => ({ registraEsitoFattura: h.telemetria }))
 vi.mock('@/lib/supabase/public-config', () => ({
   SUPABASE_URL: 'https://uimulkjyekgemjakmepp.supabase.co',
@@ -72,7 +80,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.nativo = false
   h.filesystem = false
-  h.scarica.mockResolvedValue({ esito: 'nativo-file' })
+  h.share = true
+  h.scaricaDocumento.mockResolvedValue({ esito: 'nativo-file' })
   vi.stubGlobal('location', { origin: 'http://localhost', assign: h.assign })
   vi.stubGlobal('fetch', vi.fn())
 })
@@ -101,23 +110,133 @@ describe('salvaFattura', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('sul nativo col Filesystem riusa scarica con nome fiscale e URL attachment', async () => {
+  it('nell’app 1.1 passa da scaricaDocumento: PDF della route in attachment, nome fiscale, etichetta fattura', async () => {
     h.nativo = true
     h.filesystem = true
     expect(presentazioneSalvataggioFattura()).toEqual({ modalita: 'filesystem-nativo', etichetta: 'Salva' })
 
-    const esito = await salvaFattura(input())
+    const chiamante = new AbortController()
+    const esito = await salvaFattura(input(chiamante.signal))
 
     expect(esito).toEqual({ ok: true, modalita: 'filesystem-nativo', avviso: null })
-    expect(h.scarica).toHaveBeenCalledWith({
-      url: `/api/pagamenti/fattura?pagamento_id=${PAGAMENTO}&userId=${UTENTE}&fattura_id=${FATTURA}&download=1`,
+    expect(h.scaricaDocumento).toHaveBeenCalledOnce()
+    // La sorgente è una FUNZIONE del modulo (il tetto ferma la lettura, non il foglio),
+    // e all'helper arriva il segnale del CHIAMANTE, identico: mai quello del tetto.
+    expect(h.scaricaDocumento).toHaveBeenCalledWith({
+      sorgente: expect.any(Function),
       nomeFile: 'fattura-1948-2026.pdf',
-      titolo: undefined,
-      signal: expect.any(AbortSignal),
+      mime: 'application/pdf',
+      etichetta: 'fattura',
+      signal: chiamante.signal,
     })
     expect(h.telemetria).toHaveBeenCalledWith(expect.objectContaining({ esito: 'salvataggio_avviato' }))
-    expect(h.telemetria.mock.invocationCallOrder[0]).toBeLessThan(h.scarica.mock.invocationCallOrder[0])
-    expect(JSON.stringify(h.logClient.mock.calls)).not.toContain('fattura-scarico-riuscito')
+    expect(h.telemetria.mock.invocationCallOrder[0]).toBeLessThan(h.scaricaDocumento.mock.invocationCallOrder[0])
+    // Il verdetto lo logga l'helper: salvaFattura non rilogga.
+    expect(h.logClient).not.toHaveBeenCalled()
+    expect(h.assign).not.toHaveBeenCalled()
+    // L'helper finto non l'ha chiamata: nessuna fetch finché la sorgente non è letta.
+    expect(fetch).not.toHaveBeenCalled()
+
+    // La sorgente legge la route in attachment, stessa origine e coi cookie.
+    // ⚠️ Il corpo è un Uint8Array, MAI un `new Blob(...)`: in jsdom il Blob non ha
+    // `stream()`, e `new Response(<Blob di jsdom>)` in Node 22 (la CI) lancia
+    // `object.stream is not a function`, in Node 24 esce come il TESTO «[object Blob]».
+    // Si asseriscono i BYTE e il tipo: è l'unica verifica vera in entrambi.
+    const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]) // «%PDF-1.7»
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(PDF, {
+      status: 200,
+      headers: { 'content-type': 'application/pdf' },
+    }))
+    const { sorgente } = h.scaricaDocumento.mock.calls[0]?.[0] as { sorgente: () => Promise<Blob> }
+    const letto = await sorgente()
+    expect(letto.type).toBe('application/pdf')
+    expect(Array.from(new Uint8Array(await letto.arrayBuffer()))).toEqual(Array.from(PDF))
+    const [url, opzioni] = vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe(`/api/pagamenti/fattura?pagamento_id=${PAGAMENTO}&userId=${UTENTE}&fattura_id=${FATTURA}&download=1`)
+    expect(opzioni).toMatchObject({ credentials: 'same-origin' })
+    expect(opzioni.signal).toBeInstanceOf(AbortSignal)
+    expect(opzioni.signal).not.toBe(chiamante.signal)
+  })
+
+  it('la sorgente nativa rifiuta un HTTP non-2xx con `httpStatus`, senza URL nel messaggio', async () => {
+    h.nativo = true
+    h.filesystem = true
+    await salvaFattura(input())
+    // Senza segnale del chiamante l'helper non ne riceve nessuno (non quello del tetto).
+    expect(h.scaricaDocumento.mock.calls[0]?.[0]).not.toHaveProperty('signal')
+
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('no', { status: 503 }))
+    const { sorgente } = h.scaricaDocumento.mock.calls[0]?.[0] as { sorgente: () => Promise<Blob> }
+    const errore = await sorgente().then(() => null, (e: unknown) => e)
+    expect(errore).toMatchObject({ httpStatus: 503 })
+    expect(String((errore as Error).message)).not.toContain('/api/')
+  })
+
+  it('il titolo del foglio arriva all’helper, e non è mai un nome di persona per costruzione', async () => {
+    h.nativo = true
+    h.filesystem = true
+
+    await salvaFattura({ ...input(), titolo: 'Fattura' })
+
+    expect(h.scaricaDocumento).toHaveBeenCalledWith(expect.objectContaining({ titolo: 'Fattura' }))
+  })
+
+  it('con Filesystem ma senza Share resta sul ripiego del browser: niente foglio senza il plugin', async () => {
+    h.nativo = true
+    h.filesystem = true
+    h.share = false
+    vi.mocked(fetch).mockResolvedValue(rispostaEsterna())
+
+    expect(presentazioneSalvataggioFattura().modalita).toBe('browser-esterno')
+    await expect(salvaFattura(input())).resolves.toEqual({ ok: true, modalita: 'browser-esterno', avviso: null })
+    expect(h.scaricaDocumento).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['un 503 della route', { esito: 'non-riuscito', motivo: 'http-503' }, 'http-503', 'non-riuscito'],
+    ['il foglio che non si apre', { esito: 'non-riuscito', motivo: 'foglio-file-non-aperto' }, 'foglio-file-non-aperto', 'non-riuscito'],
+    ['un ripiego col link', { esito: 'ripiego-condivisione', motivo: 'x' }, 'x', 'non-consegnato'],
+  ])('nell’app 1.1 %s non è un successo e parla all’utente', async (_caso, verdetto, motivo, avviso) => {
+    h.nativo = true
+    h.filesystem = true
+    h.scaricaDocumento.mockResolvedValue(verdetto)
+
+    await expect(salvaFattura(input())).resolves.toEqual({
+      ok: false,
+      modalita: 'filesystem-nativo',
+      motivo,
+      riprovabile: true,
+      avviso,
+    })
+    expect(h.logClient).not.toHaveBeenCalled()
+  })
+
+  it('nell’app 1.1 un gesto annullato dall’helper non mostra avvisi', async () => {
+    h.nativo = true
+    h.filesystem = true
+    h.scaricaDocumento.mockResolvedValue({ esito: 'non-riuscito', motivo: 'annullato' })
+
+    await expect(salvaFattura(input())).resolves.toMatchObject({ ok: false, motivo: 'annullato', avviso: null })
+  })
+
+  it('un rifiuto inatteso dell’helper diventa un verdetto loggato, e libera il lucchetto', async () => {
+    h.nativo = true
+    h.filesystem = true
+    h.scaricaDocumento.mockRejectedValueOnce(new TypeError('x'))
+
+    await expect(salvaFattura(input())).resolves.toMatchObject({ ok: false, motivo: 'TypeError', avviso: 'non-riuscito' })
+    expect(h.logClient).toHaveBeenCalledWith({
+      livello: 'error',
+      evento: 'fetch',
+      messaggio: 'fattura-salvataggio-nativo:eccezione:TypeError',
+    })
+    await expect(salvaFattura(input())).resolves.toMatchObject({ ok: true })
+  })
+
+  it('il codice morto dello scarico vecchio non esiste più', async () => {
+    const modulo = await import('@/lib/pagamenti/scarico-fattura')
+    expect(Object.keys(modulo)).not.toContain('useScaricoFattura')
+    expect(Object.keys(modulo)).not.toContain('apriOScaricaFattura')
   })
 
   it('senza Filesystem espone l’etichetta browser, chiede esterno senza download e valida il link', async () => {
@@ -317,7 +436,7 @@ describe('salvaFattura', () => {
       motivo: 'annullato',
       avviso: null,
     })
-    expect(h.scarica).not.toHaveBeenCalled()
+    expect(h.scaricaDocumento).not.toHaveBeenCalled()
     expect(h.assign).not.toHaveBeenCalled()
     expect(h.telemetria).not.toHaveBeenCalled()
   })

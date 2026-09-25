@@ -18,7 +18,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
  */
 
 const appAddListener = vi.hoisted(() => vi.fn())
-vi.mock('@capacitor/app', () => ({ App: { addListener: appAddListener, exitApp: vi.fn(async () => undefined) } }))
+// `getInfo`: la shell legge la versione del binario per i log (PC2, 2026-09-25).
+vi.mock('@capacitor/app', () => ({
+  App: {
+    addListener: appAddListener,
+    exitApp: vi.fn(async () => undefined),
+    getInfo: vi.fn(async () => ({ version: '1.1', build: '5' })),
+  },
+}))
 
 const pushAddListener = vi.hoisted(() => vi.fn())
 vi.mock('@capacitor/push-notifications', () => ({ PushNotifications: { addListener: pushAddListener } }))
@@ -39,7 +46,11 @@ vi.mock('@/lib/mobile/splash', () => ({ nascondiSplashNativo: vi.fn(async () => 
 vi.mock('@/lib/mobile/status-bar', () => ({ applicaStiloStatusBar: vi.fn(async () => undefined) }))
 
 const logClient = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/logging/client', () => ({ logClient, nomeErrore: (e: unknown) => (e as Error).name }))
+vi.mock('@/lib/logging/client', () => ({
+  logClient,
+  nomeErrore: (e: unknown) => (e as Error).name,
+  impostaVersioneApp: vi.fn(),
+}))
 
 import { setupNativeShell } from '@/lib/mobile/native-shell'
 import { ascoltaAperturaThread } from '@/lib/chat/apertura-thread'

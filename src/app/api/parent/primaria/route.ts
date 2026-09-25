@@ -10,6 +10,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { firmaPercorsi, percorsoNelBucket } from '@/lib/allegati/storage'
+import { allegatiRegistroViviDalJoin } from '@/lib/primaria/cestino-allegati-registro'
 
 // ─── IL CONTENITORE DEGLI ALLEGATI DEL REGISTRO ──────────────────────────────
 //
@@ -32,6 +33,8 @@ type AllegatoRegistro = {
   tipo: string | null
   file_url: string | null
   file_name: string | null
+  /** Cestino: valorizzato = eliminato. Letto solo per scartarlo (`allegatiRegistroViviDalJoin`). */
+  eliminato_il?: string | null
 }
 
 // ─── LA FINESTRA DEL REGISTRO: IL PREIMPOSTATO E IL TETTO ────────────────────
@@ -304,7 +307,7 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
           materie(nome),
           firme_docenti(id, argomento_proprio, compiti_propri),
           registro_destinatari(firma_id, alunno_id),
-          allegati_registro(id, tipo, file_url, file_name)
+          allegati_registro(id, tipo, file_url, file_name, eliminato_il)
         `,
           // Il conteggio lo fa il DATABASE sull'intera finestra, e NON risente
           // del `.limit()` qui sotto: è la differenza fra «ho letto tutto» e «ho
@@ -378,7 +381,8 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
     // sostituire, altrimenti le due strade possono divergere in silenzio.
     const percorsoPerAllegato = new Map<string, string | null>()
     for (const r of registro ?? []) {
-      for (const a of (r.allegati_registro ?? []) as AllegatoRegistro[]) {
+      // Solo i VIVI: un allegato nel cestino non si firma e non esce.
+      for (const a of allegatiRegistroViviDalJoin(r.allegati_registro as AllegatoRegistro[] | null)) {
         percorsoPerAllegato.set(a.id, percorsoNelBucket(BUCKET_REGISTRO_ALLEGATI, a.file_url))
       }
     }
@@ -411,7 +415,7 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
         // percorso grezzo, che come indirizzo non funziona lo stesso e
         // maschererebbe un guasto dello Storage da «allegato rotto». Il client
         // non rende nessuna ancora per un allegato senza indirizzo.
-        allegati: ((r.allegati_registro ?? []) as AllegatoRegistro[]).map((a) => {
+        allegati: allegatiRegistroViviDalJoin(r.allegati_registro as AllegatoRegistro[] | null).map((a) => {
           const p = percorsoPerAllegato.get(a.id) ?? null
           return {
             id: a.id,

@@ -47,6 +47,7 @@ import {
 } from '../banco'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
 
 /**
  * POST /api/prestampati/genera — il foglio esce dallo sportello.
@@ -809,11 +810,14 @@ async function consegnaCopiaFirmata(
     scuolaId: string
   },
 ): Promise<NextResponse> {
-  const { data, error } = await supabase
-    .from('student_documents')
-    .select('id, file_name, storage_path, created_at, descrizione')
-    .eq('student_id', input.alunnoId)
-    .eq('document_type', input.voce.slug)
+  // Solo i documenti VIVI: una copia messa nel cestino del fascicolo non si riconsegna.
+  const { data, error } = await fascicoloVivo(
+    supabase
+      .from('student_documents')
+      .select('id, file_name, storage_path, created_at, descrizione')
+      .eq('student_id', input.alunnoId)
+      .eq('document_type', input.voce.slug),
+  )
     .order('created_at', { ascending: false })
     .limit(RIGHE_COPIA_FIRMATA)
 

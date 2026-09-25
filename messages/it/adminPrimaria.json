@@ -188,5 +188,8 @@
   "docentiMaterieRimuovi": "Rimuovi assegnazione",
   "materieElimina": "Elimina materia",
   "obiettiviElimina": "Elimina obiettivo",
+  "obiettiviModifica": "Modifica obiettivo",
+  "obiettiviSalvaModifica": "Salva",
+  "obiettiviAnnullaModifica": "Annulla",
   "periodiElimina": "Elimina periodo"
 }

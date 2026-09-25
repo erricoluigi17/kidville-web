@@ -17,8 +17,15 @@ const ESITO_BADGE: Record<string, { labelKey: string; bg: string; color: string 
 }
 import { RankingAdjustModal, type RankingRow, type ManualAdjustment } from './RankingAdjustModal'
 import { formattaIstante } from '@/i18n/config'
+import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica'
+import { isNativeApp } from '@/lib/push/native-register'
 
 /* ── helpers ───────────────────────────────────────────────── */
+
+/** L'indirizzo del PDF della delibera: lo stesso per il link del web e per l'app. */
+function urlDelibera(modelId: string, userId: string): string {
+  return `/api/forms/export/delibera?modelId=${modelId}${userId ? `&userId=${userId}` : ''}`
+}
 
 function candidateLabel(data: Record<string, unknown>, fallback: string): string {
   const nome =
@@ -138,6 +145,7 @@ export function RankingTable() {
   const [posti, setPosti] = useState(0)
   const [soglia, setSoglia] = useState(0)
   const [deliberando, setDeliberando] = useState(false)
+  const [scaricoFallito, setScaricoFallito] = useState(false)
 
   /* ── fetch form models (via route server gated) ── */
   useEffect(() => {
@@ -197,6 +205,25 @@ export function RankingTable() {
     } finally {
       setDeliberando(false)
     }
+  }
+
+  /* ── PDF della delibera ──
+   * Sul web resta un LINK: la route risponde `inline` e il browser apre il PDF, come
+   * sempre. Nell'app, navigare la WebView su un PDF la porta fuori dalla pagina senza
+   * un «indietro» (iOS) o non fa niente (Android): lì il clic passa dall'helper unico,
+   * che scarica il file e apre il foglio «Salva su File». Il log lo scrive l'helper. */
+  const apriDeliberaNellApp = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!isNativeApp()) return
+    e.preventDefault()
+    setScaricoFallito(false)
+    void scaricaDocumento({
+      sorgente: urlDelibera(filterFormId, userId),
+      nomeFile: `delibera-${filterFormId.slice(0, 8)}.pdf`,
+      mime: 'application/pdf',
+      etichetta: 'graduatoria-delibera',
+    }).then((esito) => {
+      if (!fileConsegnato(esito)) setScaricoFallito(true)
+    })
   }
 
   /* ── filter by search ── */
@@ -320,12 +347,18 @@ export function RankingTable() {
             {t('rnkApplicaDelibera')}
           </button>
           <a
-            href={`/api/forms/export/delibera?modelId=${filterFormId}${userId ? `&userId=${userId}` : ''}`}
+            href={urlDelibera(filterFormId, userId)}
+            onClick={apriDeliberaNellApp}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-kidville-info text-sm font-semibold transition-all hover:text-kidville-green"
             style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
           >
             <FileDown className="w-4 h-4" /> {t('rnkEsportaPdf')}
           </a>
+          {scaricoFallito && (
+            <p role="alert" className="basis-full text-xs text-kidville-error-strong font-maven">
+              {t('scaricoNonRiuscito')}
+            </p>
+          )}
         </div>
       )}
 

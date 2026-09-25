@@ -1022,3 +1022,88 @@ describe('la sorgente viva e i byte salvati sul dispositivo', () => {
     expect(Buffer.from(server.unicoOggetto()!.byte).equals(Buffer.from(byteOriginali()))).toBe(true)
   })
 })
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 8. SECONDA CRITICA INDIPENDENTE (2026-09-26): i rami non coperti
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('i rami che la seconda critica ha trovato scoperti', () => {
+  it('se nemmeno la riga si scrive, il video si rifiuta con un codice invece di lanciare', async () => {
+    const { archivio, dip } = banco()
+    archivio.scrivi = async () => { throw Object.assign(new Error('chiuso'), { name: 'DatabaseClosedError' }) }
+
+    const accodato = await accoda(dip)
+
+    expect(accodato).toEqual({ ok: false, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' })
+    expect(logCon('video-upload-riga-non-scritta')).toMatchObject({
+      livello: 'error',
+      messaggio: `video-upload-riga-non-scritta: job=${JOB}`,
+      campi: { error_code: 'DatabaseClosedError' },
+    })
+  })
+
+  it('riaccodando, un deposito illeggibile si riscrive invece di essere riusato', async () => {
+    const { archivio, dip } = banco()
+    const scrivi = archivio.scriviByte.bind(archivio)
+    let copie = 0
+    archivio.scriviByte = async (id, byte) => { copie++; await scrivi(id, byte) }
+    await accoda(dip)
+    archivio.leggiByte = async () => { throw new ErroreByteVideo('VIDEO_ARCHIVIO_NON_VALIDO') }
+
+    const secondo = await accoda(dip)
+
+    expect(secondo.ok).toBe(true)
+    expect(copie).toBe(2)
+    expect(logCon('video-upload-deposito-da-riscrivere')?.campi).toMatchObject({ error_code: 'VIDEO_ARCHIVIO_NON_VALIDO' })
+  })
+
+  it('i ritentativi di tus restano quelli di prima per la rete: un 5xx si ritenta, un 4xx no', async () => {
+    const primo = banco([0, 0, 0])
+    await accoda(primo.dip)
+    primo.server.statoForzatoSullaProssimaPatch = 503
+    expect((await caricaVideo(primo.dip, JOB)).esito).toBe('caricato')
+    expect(primo.server.viste.filter((v) => v.metodo === 'HEAD').length).toBeGreaterThan(0)
+
+    const secondo = banco([0, 0, 0])
+    await accoda(secondo.dip)
+    secondo.server.statoForzatoSullaProssimaPatch = 400
+    expect(await caricaVideo(secondo.dip, JOB)).toEqual({ esito: 'fallito', jobId: JOB, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' })
+    expect(secondo.server.viste.filter((v) => v.metodo === 'HEAD')).toHaveLength(0)
+  })
+
+  it('i log del caricamento portano il job nel messaggio (la deduplica ignora i campi)', async () => {
+    const { dip } = banco()
+    await accoda(dip)
+    await caricaVideo(dip, JOB)
+    expect(logCon('video-upload-riuscito')?.messaggio).toBe(`video-upload-riuscito: job=${JOB}`)
+  })
+
+  it('un caricamento chiuso come fallito dimentica il file vivo: riaperto a mano non riparte da lì', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    server.statoForzatoSullaProssimaPatch = 404
+    expect((await caricaVideo(dip, JOB)).esito).toBe('fallito')
+    const richiestePrima = server.viste.length
+    await archivio.aggiorna(JOB, { stato: 'in_corso', codice: null })
+
+    const esito = await caricaVideo(dip, JOB)
+
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB, codice: 'VIDEO_RIPROVA' })
+    expect(server.viste.length).toBe(richiestePrima)
+    expect(logCon('video-upload-byte-spariti')).toBeDefined()
+  })
+
+  it('la potatura all’avvio toglie anche i depositi orfani, e un suo errore non ferma la schermata', async () => {
+    const { archivio: base, dip } = banco()
+    // L'archivio in memoria non ha depositi orfani: qui si prova solo chi lo chiama.
+    const archivio = base as ArchivioCaricamentiInMemoria & { potaDepositiOrfani?: () => Promise<number> }
+    archivio.potaDepositiOrfani = async () => 2
+    await potaArchivioCaricamenti(dip)
+    expect(logCon('video-upload-potatura-orfani')?.campi).toMatchObject({ depositi: 2 })
+
+    logClient.mockClear()
+    archivio.potaDepositiOrfani = async () => { throw Object.assign(new Error('x'), { name: 'UnknownError' }) }
+    await expect(potaArchivioCaricamenti(dip)).resolves.toBe(0)
+    expect(logCon('video-upload-potatura-orfani-fallita')?.campi).toMatchObject({ error_code: 'UnknownError' })
+  })
+})

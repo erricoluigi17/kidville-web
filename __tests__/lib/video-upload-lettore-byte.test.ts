@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Blob as NodeBlob } from 'node:buffer'
 import { LettoreBlob } from '@/lib/media/video/upload/lettore-blob'
 import { ErroreByteVideo, LETTURA_VIDEO_MASSIMA, leggiBloccoBlob } from '@/lib/media/video/upload/byte-video'
@@ -74,5 +74,21 @@ describe('leggiBloccoBlob', () => {
     Object.defineProperty(blob, 'arrayBuffer', { value: undefined })
     const buffer = await leggiBloccoBlob(blob)
     expect(Array.from(new Uint8Array(buffer))).toEqual([9, 8, 7])
+  })
+
+  it('un errore del FileReader rigetta con la causa del lettore, non resta appeso', async () => {
+    class LettoreRotto {
+      error = Object.assign(new Error('illeggibile'), { name: 'NotReadableError' })
+      onerror: (() => void) | null = null
+      readAsArrayBuffer() { queueMicrotask(() => this.onerror?.()) }
+    }
+    vi.stubGlobal('FileReader', LettoreRotto)
+    try {
+      const blob = new Blob([new Uint8Array([1])])
+      Object.defineProperty(blob, 'arrayBuffer', { value: undefined })
+      await expect(leggiBloccoBlob(blob)).rejects.toMatchObject({ name: 'NotReadableError' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

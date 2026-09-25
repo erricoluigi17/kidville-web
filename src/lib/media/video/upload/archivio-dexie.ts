@@ -164,6 +164,18 @@ async function apriDeposito(jobId: string): Promise<DbDeposito> {
   return deposito
 }
 
+/**
+ * Il deposito da cui LEGGERE: se la connessione non è aperta lo si riapre solo se
+ * un manifest lo nomina ancora. Aprire un database che non c'è lo crea vuoto, e
+ * un lettore rimasto indietro lascerebbe dietro di sé database fantasma.
+ */
+async function depositoPerLettura(jobId: string): Promise<DbDeposito | null> {
+  const aperto = depositiAperti.get(jobId)
+  if (aperto?.isOpen()) return aperto
+  if (!eManifest(await apri().byte.get(jobId))) return null
+  return apriDeposito(jobId)
+}
+
 async function cancellaDeposito(jobId: string): Promise<void> {
   const aperto = depositiAperti.get(jobId)
   depositiAperti.delete(jobId)
@@ -283,9 +295,16 @@ export class ArchivioCaricamentiDexie implements ArchivioCaricamentiVideo {
       scrittureInCorso.add(jobId)
       let generazione: string | null = null
       let deposito: DbDeposito | null = null
+      let precedente: DepositoByte | undefined
       try {
         generazione = nuovaGenerazione()
+        precedente = await apri().byte.get(jobId)
+        // Prima di copiare si toglie ciò che nessun manifest nomina: i blocchi di
+        // una copia interrotta dalla chiusura dell'app. Lasciati lì, si sommerebbero
+        // alla copia nuova proprio sul telefono che ha poco spazio.
+        if (!eManifest(precedente)) await cancellaDeposito(jobId)
         deposito = await apriDeposito(jobId)
+        if (eManifest(precedente)) await rimuoviAltreGenerazioni(jobId, deposito, precedente.generazione)
         // Una fetta alla volta, ciascuna nella propria transazione: in memoria c'è
         // al massimo un blocco, e ogni commit libera ciò che ha scritto.
         for (let indice = 0, offset = 0; offset < byte.size; indice++, offset += BLOCCO_VIDEO_LOCALE) {
@@ -306,7 +325,12 @@ export class ArchivioCaricamentiDexie implements ArchivioCaricamentiVideo {
           error_code: nomeErrore(err),
           ...(causaInterna(err) ? { causa: causaInterna(err)! } : {}),
         })
-        if (deposito && generazione) await rimuoviGenerazione(jobId, deposito, generazione)
+        // Senza un deposito precedente da conservare il database del job se ne va
+        // INTERO: su WebKit togliere le righe non libera il disco, e con il telefono
+        // pieno anche la riga del caricamento — che in memoria non ci sta — non
+        // si scriverebbe più (misurato: 774 MB rimasti, 16 MB liberi).
+        if (!eManifest(precedente)) await cancellaDeposito(jobId)
+        else if (deposito && generazione) await rimuoviGenerazione(jobId, deposito, generazione)
         throw err
       } finally {
         scrittureInCorso.delete(jobId)
@@ -339,15 +363,18 @@ export class ArchivioCaricamentiDexie implements ArchivioCaricamentiVideo {
     for (const nome of nomi) {
       const jobId = nome.slice(PREFISSO_DEPOSITO_VIDEO.length)
       if (scrittureInCorso.has(jobId)) continue
-      const [manifest, riga] = await Promise.all([d.byte.get(jobId), d.caricamenti.get(jobId)])
-      if (eManifest(manifest) && riga) continue
-      if (eManifest(manifest) && etaGenerazione(manifest.generazione) < ETA_MINIMA_ORFANO_MS) continue
-      if (!eManifest(manifest) && (await generazionePiuGiovane(jobId)) < ETA_MINIMA_ORFANO_MS) continue
-      await inFila(jobId, async () => {
+      // La decisione si prende DENTRO la fila del job: presa fuori, una copia
+      // conclusa nel frattempo verrebbe cancellata sulla base di una foto vecchia.
+      const rimosso = await inFila(jobId, async () => {
+        const [manifest, riga] = await Promise.all([d.byte.get(jobId), d.caricamenti.get(jobId)])
+        if (eManifest(manifest) && riga) return false
+        if (eManifest(manifest) && etaGenerazione(manifest.generazione) < ETA_MINIMA_ORFANO_MS) return false
+        if (!eManifest(manifest) && (await generazionePiuGiovane(jobId)) < ETA_MINIMA_ORFANO_MS) return false
         if (eManifest(manifest)) await d.byte.delete(jobId)
         await cancellaDeposito(jobId)
+        return true
       })
-      rimossi++
+      if (rimosso) rimossi++
     }
     return rimossi
   }
@@ -402,7 +429,8 @@ function sorgenteDeposito(jobId: string, iniziale: ManifestBlocchi): ByteVideoPe
         const attesi = Math.min(dimensione, manifest.size - indice * dimensione)
         let blocco: BloccoVideo | undefined
         try {
-          blocco = await (await apriDeposito(jobId)).blocchi.get(chiaveBlocco(manifest.generazione, indice))
+          const deposito = await depositoPerLettura(jobId)
+          blocco = deposito ? await deposito.blocchi.get(chiaveBlocco(manifest.generazione, indice)) : undefined
         } catch (err) {
           // Transitorio (su iOS: «Connection to Indexed Database server lost» dopo
           // una sospensione): chi carica riprova più tardi, i byte sono ancora lì.
@@ -413,16 +441,22 @@ function sorgenteDeposito(jobId: string, iniziale: ManifestBlocchi): ByteVideoPe
           // Una riscrittura dello stesso video (doppia selezione) può aver sostituito
           // la generazione sotto questo lettore: se il manifest nuovo descrive lo
           // stesso file, si prosegue su quello.
+          const attuale = await apri().byte.get(jobId)
           if (!riletto) {
             riletto = true
-            const attuale = await apri().byte.get(jobId)
             if (eManifest(attuale) && attuale.generazione !== manifest.generazione
               && attuale.size === manifest.size && attuale.type === manifest.type) {
               manifest = attuale
               continue
             }
           }
-          segnalaDeposito('error', 'video-upload-blocco-assente', jobId, { indice })
+          if (!eManifest(attuale)) {
+            // Non è un guasto dei byte: il deposito è stato tolto (caricamento
+            // annullato o concluso altrove). Il lettore si ferma e basta.
+            segnalaDeposito('warn', 'video-upload-deposito-rimosso', jobId, { indice })
+          } else {
+            segnalaDeposito('error', 'video-upload-blocco-assente', jobId, { indice })
+          }
           throw new ErroreByteVideo('VIDEO_BLOCCO_INCOMPLETO')
         }
         const interno = offset - indice * dimensione

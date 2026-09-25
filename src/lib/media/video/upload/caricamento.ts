@@ -223,6 +223,21 @@ function dimenticaSorgenteViva(archivio: ArchivioCaricamentiVideo, jobId: string
  * locale fallisce per quota, mentre l'invio allo Storage di spazio non ne chiede.
  * Si perde la ripresa dopo la chiusura dell'app per QUEL video, non il video.
  */
+/**
+ * La riga è piccola ma senza di lei non c'è caricamento da seguire. Se non si
+ * scrive (IndexedDB chiuso o disco pieno) il video si rifiuta con un messaggio:
+ * lasciar salire l'eccezione fermerebbe anche il resto del lotto della galleria.
+ */
+async function scriviRiga(dip: DipendenzeCaricamentoVideo, riga: CaricamentoVideoLocale): Promise<boolean> {
+  try {
+    await dip.archivio.scrivi(riga)
+    return true
+  } catch (err) {
+    segnala('error', 'video-upload-riga-non-scritta', riga.jobId, campiErrore(err))
+    return false
+  }
+}
+
 async function salvaPerRipresa(dip: DipendenzeCaricamentoVideo, jobId: string, file: File): Promise<void> {
   try {
     await dip.archivio.scriviByte(jobId, file)
@@ -286,7 +301,7 @@ export async function accodaCaricamentoVideo(
     }
     // Soltanto la nuova selezione esplicita può attribuire una riga legacy.
     const aggiornata = { ...esistente, ownerId: esistente.ownerId ?? ingresso.ownerId ?? null, scuolaId: esistente.scuolaId ?? ingresso.scuolaId ?? null }
-    await dip.archivio.scrivi(aggiornata)
+    if (!(await scriviRiga(dip, aggiornata))) return { ok: false, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }
     if (esistente.stato !== 'caricato') {
       ricordaSorgenteViva(dip.archivio, jobId, file)
       // Stesso job, stesso file: se il deposito c'è già intero non si ricopiano
@@ -321,7 +336,10 @@ export async function accodaCaricamentoVideo(
   // «byte spariti» lo dice invece di tacere.
   ricordaSorgenteViva(dip.archivio, jobId, file)
   await salvaPerRipresa(dip, jobId, file)
-  await dip.archivio.scrivi(riga)
+  if (!(await scriviRiga(dip, riga))) {
+    dimenticaSorgenteViva(dip.archivio, jobId)
+    return { ok: false, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }
+  }
   return { ok: true, riga }
 }
 

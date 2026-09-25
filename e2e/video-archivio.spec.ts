@@ -281,11 +281,19 @@ test('video: un deposito cancellato da fuori durante la copia fa fallire la scri
     await window.Dexie.delete(prefisso + jobId)
     sblocca()
     const esito = await Promise.race([scrittura, new Promise<string>(r => setTimeout(() => r('APPESA'), 10_000))])
-    return { esito, manifest: !!(await a.leggiByte(jobId)) }
+    const manifest = !!(await a.leggiByte(jobId))
+    // La connessione chiusa dall'esterno non resta inutilizzabile: la copia dopo
+    // riapre un database nuovo e si rilegge.
+    await a.scriviByte(jobId, new Blob([new Uint8Array([8, 9])]))
+    const byte = await a.leggiByte(jobId)
+    const riletti = byte ? Array.from((await (await new window.videoArchivioQA.LettoreBlob().openFile(byte)).slice(0, 2)).value) : []
+    await a.eliminaByte(jobId)
+    return { esito, manifest, riletti }
   }, jobId)
   expect(risultato.esito).not.toBe('APPESA')
   expect(risultato.esito).not.toBe('riuscita')
   expect(risultato.manifest).toBe(false)
+  expect(risultato.riletti).toEqual([8, 9])
 })
 
 test('video: elimina toglie riga, manifest e database dei blocchi', async ({ page }) => {
@@ -295,7 +303,8 @@ test('video: elimina toglie riga, manifest e database dei blocchi', async ({ pag
     await a.scriviByte(jobId, new Blob([new Uint8Array([1, 2])]))
     await a.scrivi({ jobId } as never)
     await a.elimina(jobId)
-  }, jobId)
+    return !!(await a.leggi(jobId))
+  }, jobId).then(rigaRimasta => expect(rigaRimasta).toBe(false))
   expect((await depositi(page)).nomi).toEqual([])
   expect(await manifest(page)).toBe(0)
 })
@@ -348,4 +357,245 @@ test('video: un deposito legacy {blob} scritto dalle versioni precedenti resta l
     return { valori: Array.from(fetta.value), done: fetta.done, assente: !(await a.leggiByte(jobId)) }
   }, jobId)
   expect(letto).toEqual({ valori: [5, 4, 3], done: true, assente: true })
+})
+
+/* ─── Seconda critica indipendente (2026-09-26): i rami rimasti scoperti ─── */
+
+test('video: la prima copia fallita toglie il database del job intero (su WebKit le righe non liberano il disco)', async ({ page }) => {
+  const jobId = 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1'
+  const esito = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    class FettaCorta extends Blob {
+      slice(inizio = 0, fine = this.size, tipo?: string) {
+        // Il secondo blocco torna più corto del dovuto: una copia che non si può fidare.
+        return inizio >= blocco ? new Blob([new Uint8Array(1)]) : super.slice(inizio, fine, tipo)
+      }
+    }
+    let errore = ''
+    try { await a.scriviByte(jobId, new FettaCorta([new Uint8Array(blocco + 10)])) }
+    catch (e) { errore = (e as Error).name }
+    return { errore, manifest: !!(await a.leggiByte(jobId)) }
+  }, jobId)
+  expect(esito).toEqual({ errore: 'VIDEO_BLOCCO_INCOMPLETO', manifest: false })
+  expect((await depositi(page)).nomi).toEqual([])
+})
+
+test('video: gli avanzi di copie interrotte e di altre generazioni spariscono alla copia successiva', async ({ page }) => {
+  const jobId = 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2'
+  await page.evaluate(async jobId => {
+    const { PREFISSO_DEPOSITO_VIDEO: prefisso } = window.videoArchivioQA
+    const d = new window.Dexie(prefisso + jobId, { autoOpen: false })
+    d.version(1).stores({ blocchi: 'chiave' })
+    await d.open()
+    // Una copia interrotta dalla chiusura dell'app: blocchi senza manifest.
+    await d.table('blocchi').bulkPut([
+      { chiave: '0000-interrotta:0', buffer: new ArrayBuffer(8) },
+      { chiave: '0000-interrotta:1', buffer: new ArrayBuffer(8) },
+    ])
+    d.close()
+  }, jobId)
+  // Gli avanzi devono sparire PRIMA della copia nuova, non dopo: su un telefono
+  // quasi pieno è durante la copia che lo spazio serve.
+  const duranteLaCopia = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, BLOCCO_VIDEO_LOCALE: blocco, PREFISSO_DEPOSITO_VIDEO: prefisso } = window.videoArchivioQA
+    let sblocca: () => void = () => {}
+    let inPausa: () => void = () => {}
+    const pausa = new Promise<void>(r => { inPausa = r })
+    const attesa = new Promise<void>(r => { sblocca = r })
+    class SecondaSospesa extends Blob {
+      async arrayBuffer(): Promise<ArrayBuffer> { inPausa(); await attesa; return new ArrayBuffer(3) }
+    }
+    class FileSospeso extends Blob {
+      slice(inizio = 0, fine = this.size, tipo?: string) {
+        return inizio >= blocco ? new SecondaSospesa() : super.slice(inizio, fine, tipo)
+      }
+    }
+    const a = new ArchivioCaricamentiDexie()
+    const copia = a.scriviByte(jobId, new FileSospeso([new Uint8Array(blocco + 3)]))
+    await pausa
+    const d = new window.Dexie(prefisso + jobId, { autoOpen: false })
+    d.version(1).stores({ blocchi: 'chiave' })
+    await d.open()
+    const chiavi = (await d.table('blocchi').toCollection().primaryKeys()) as string[]
+    d.close()
+    sblocca()
+    await copia
+    await a.scriviByte(jobId, new Blob([new Uint8Array([1, 2, 3])]))
+    return chiavi
+  }, jobId)
+  expect(duranteLaCopia.some(c => c.includes('interrotta'))).toBe(false)
+  const primaCopia = (await depositi(page, jobId)).chiavi
+  expect(primaCopia).toHaveLength(1)
+  expect(primaCopia[0]).not.toContain('interrotta')
+  // Avanzi sotto e SOPRA la generazione valida (un orologio che è andato avanti e
+  // indietro): la copia dopo li toglie entrambi.
+  await page.evaluate(async jobId => {
+    const { PREFISSO_DEPOSITO_VIDEO: prefisso } = window.videoArchivioQA
+    const d = new window.Dexie(prefisso + jobId, { autoOpen: false })
+    d.version(1).stores({ blocchi: 'chiave' })
+    await d.open()
+    await d.table('blocchi').bulkPut([
+      { chiave: '0000-passata:0', buffer: new ArrayBuffer(4) },
+      { chiave: 'zzzz-futura:0', buffer: new ArrayBuffer(4) },
+    ])
+    d.close()
+    const a = new window.videoArchivioQA.ArchivioCaricamentiDexie()
+    await a.scriviByte(jobId, new Blob([new Uint8Array([4, 5])]))
+  }, jobId)
+  const seconda = (await depositi(page, jobId)).chiavi
+  expect(seconda).toHaveLength(1)
+  expect(seconda[0]).not.toMatch(/passata|futura/)
+  expect(seconda[0]).not.toBe(primaCopia[0])
+})
+
+test('video: due copie dello stesso job nella stessa scheda vanno in fila e lasciano un deposito solo', async ({ page }) => {
+  const jobId = 'b3b3b3b3-b3b3-4b3b-8b3b-b3b3b3b3b3b3'
+  const letti = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, LettoreBlob, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    const uno = new Uint8Array(blocco + 3).fill(1)
+    const due = new Uint8Array(blocco + 3).fill(2)
+    await Promise.all([a.scriviByte(jobId, new Blob([uno])), a.scriviByte(jobId, new Blob([due]))])
+    const byte = await a.leggiByte(jobId)
+    if (!byte) throw Error('Deposito assente')
+    const s = await new LettoreBlob().openFile(byte)
+    const inizio = Array.from((await s.slice(0, 2)).value)
+    const fine = Array.from((await s.slice(blocco, blocco + 3)).value)
+    return { inizio, fine }
+  }, jobId)
+  // Vince l'ultima accodata, per intero: mai un deposito fatto di pezzi di due copie.
+  expect(letti).toEqual({ inizio: [2, 2], fine: [2, 2, 2] })
+  expect((await depositi(page, jobId)).chiavi).toHaveLength(2)
+})
+
+test('video: manifest non valido, blocco troncato e intervallo fuori misura sono rifiutati e registrati', async ({ page }) => {
+  const risultato = await page.evaluate(async () => {
+    const { ArchivioCaricamentiDexie, PREFISSO_DEPOSITO_VIDEO: prefisso } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    await a.leggi('x') // apre il database principale con lo schema di produzione
+    const principale = new window.Dexie('KidvilleVideoUploadDB')
+    principale.version(1).stores({ caricamenti: 'jobId, stato, aggiornatoIl', byte: 'jobId' })
+    const nonValido = 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1'
+    await principale.table('byte').put({ jobId: nonValido, formato: 'blocchi-v2', generazione: 'g', size: -1, type: 'video/mp4', dimensioneBlocco: 0 })
+    principale.close()
+    let manifestErrato = ''
+    try { await a.leggiByte(nonValido) } catch (e) { manifestErrato = (e as Error).name }
+
+    const troncato = 'c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2'
+    await a.scriviByte(troncato, new Blob([new Uint8Array([1, 2, 3, 4])]))
+    const d = new window.Dexie(prefisso + troncato, { autoOpen: false })
+    d.version(1).stores({ blocchi: 'chiave' })
+    await d.open()
+    const [chiave] = (await d.table('blocchi').toCollection().primaryKeys()) as string[]
+    await d.table('blocchi').put({ chiave, buffer: new ArrayBuffer(2) })
+    d.close()
+    const byte = await a.leggiByte(troncato)
+    if (!byte || !('leggiIntervallo' in byte)) throw Error('Sorgente persistente attesa')
+    let bloccoTroncato = ''
+    try { await byte.leggiIntervallo(0, 4) } catch (e) { bloccoTroncato = (e as Error).name }
+    let fuoriMisura = ''
+    try { await byte.leggiIntervallo(0, 5) } catch (e) { fuoriMisura = (e as Error).name }
+    await a.eliminaByte(troncato)
+    return { manifestErrato, bloccoTroncato, fuoriMisura, log: window.videoArchivioQA.log.map(e => e.messaggio) }
+  })
+  expect(risultato.manifestErrato).toBe('VIDEO_ARCHIVIO_NON_VALIDO')
+  expect(risultato.bloccoTroncato).toBe('VIDEO_BLOCCO_INCOMPLETO')
+  expect(risultato.fuoriMisura).toBe('VIDEO_INTERVALLO_NON_VALIDO')
+  expect(risultato.log).toEqual(expect.arrayContaining([
+    'video-upload-archivio-non-valido: job=c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1',
+    'video-upload-blocco-assente: job=c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2',
+    'video-upload-intervallo-non-valido: job=c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2',
+  ]))
+})
+
+test('video: un deposito scritto con un blocco diverso resta leggibile (il layout sta nel manifest)', async ({ page }) => {
+  const jobId = 'c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3'
+  const letto = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, LettoreBlob, PREFISSO_DEPOSITO_VIDEO: prefisso } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    await a.leggi('x')
+    const d = new window.Dexie(prefisso + jobId, { autoOpen: false })
+    d.version(1).stores({ blocchi: 'chiave' })
+    await d.open()
+    // Dieci byte in blocchi da 4: [0..3] [4..7] [8,9]
+    await d.table('blocchi').bulkPut([0, 1, 2].map(i => ({
+      chiave: `g4:${i}`, buffer: new Uint8Array(Array.from({ length: i === 2 ? 2 : 4 }, (_, k) => i * 4 + k)).buffer,
+    })))
+    d.close()
+    const principale = new window.Dexie('KidvilleVideoUploadDB')
+    principale.version(1).stores({ caricamenti: 'jobId, stato, aggiornatoIl', byte: 'jobId' })
+    await principale.table('byte').put({ jobId, formato: 'blocchi-v2', generazione: 'g4', size: 10, type: 'video/mp4', dimensioneBlocco: 4 })
+    principale.close()
+    const byte = await a.leggiByte(jobId)
+    if (!byte) throw Error('Deposito assente')
+    const s = await new LettoreBlob().openFile(byte)
+    const fetta = await s.slice(3, 10)
+    await a.eliminaByte(jobId)
+    return { valori: Array.from(fetta.value), done: fetta.done }
+  }, jobId)
+  expect(letto).toEqual({ valori: [3, 4, 5, 6, 7, 8, 9], done: true })
+})
+
+test('video: un lettore non segue una riscrittura con un file DIVERSO, e dopo la rimozione non ricrea database', async ({ page }) => {
+  const jobId = 'c4c4c4c4-c4c4-4c4c-8c4c-c4c4c4c4c4c4'
+  const esito = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, LettoreBlob, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    await a.scriviByte(jobId, new Blob([new Uint8Array(blocco * 2).fill(1)], { type: 'video/mp4' }))
+    const byte = await a.leggiByte(jobId)
+    if (!byte) throw Error('Deposito assente')
+    const s = await new LettoreBlob().openFile(byte)
+    await s.slice(0, blocco)
+    // Un file diverso (altra dimensione) al posto del primo: il lettore aperto non
+    // deve cucire i byte dell'uno con quelli dell'altro.
+    await a.scriviByte(jobId, new Blob([new Uint8Array(blocco * 2 + 1).fill(2)], { type: 'video/mp4' }))
+    let diverso = ''
+    try { await s.slice(blocco, blocco * 2) } catch (e) { diverso = (e as Error).name }
+    const s2 = await new LettoreBlob().openFile((await a.leggiByte(jobId))!)
+    await a.eliminaByte(jobId)
+    let rimosso = ''
+    try { await s2.slice(0, 4) } catch (e) { rimosso = (e as Error).name }
+    return { diverso, rimosso, log: window.videoArchivioQA.log.map(e => e.messaggio) }
+  }, jobId)
+  expect(esito.diverso).toBe('VIDEO_BLOCCO_INCOMPLETO')
+  expect(esito.rimosso).toBe('VIDEO_BLOCCO_INCOMPLETO')
+  expect(esito.log).toContain(`video-upload-deposito-rimosso: job=${jobId}`)
+  expect((await depositi(page)).nomi).toEqual([])
+})
+
+test('video: la potatura decide anche sui manifest senza riga e sui database vuoti', async ({ page }) => {
+  const esito = await page.evaluate(async () => {
+    const { ArchivioCaricamentiDexie, PREFISSO_DEPOSITO_VIDEO: prefisso, ETA_MINIMA_ORFANO_MS: eta } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    const manifestVecchio = 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1'
+    const manifestGiovane = 'd2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2'
+    const vuoto = 'd3d3d3d3-d3d3-4d3d-8d3d-d3d3d3d3d3d3'
+    await a.scriviByte(manifestGiovane, new Blob([new Uint8Array([1])]))
+    await a.scriviByte(manifestVecchio, new Blob([new Uint8Array([1])]))
+    // Il manifest del «vecchio» porta una generazione nata più di un'ora fa.
+    const principale = new window.Dexie('KidvilleVideoUploadDB')
+    principale.version(1).stores({ caricamenti: 'jobId, stato, aggiornatoIl', byte: 'jobId' })
+    const m = await principale.table('byte').get(manifestVecchio)
+    const vecchia = `${(Date.now() - eta - 60_000).toString(36)}-sintetica`
+    const d = new window.Dexie(prefisso + manifestVecchio, { autoOpen: false })
+    d.version(1).stores({ blocchi: 'chiave' })
+    await d.open()
+    await d.table('blocchi').put({ chiave: `${vecchia}:0`, buffer: new ArrayBuffer(1) })
+    d.close()
+    await principale.table('byte').put({ ...m, generazione: vecchia })
+    principale.close()
+    const v = new window.Dexie(prefisso + vuoto, { autoOpen: false })
+    v.version(1).stores({ blocchi: 'chiave' })
+    await v.open()
+    v.close()
+    const rimossi = await a.potaDepositiOrfani()
+    const rimasti = (await indexedDB.databases()).map(x => x.name ?? '').filter(n => n.startsWith(prefisso)).map(n => n.slice(prefisso.length))
+    const manifestTolto = !(await a.leggiByte(manifestVecchio))
+    await a.eliminaByte(manifestGiovane)
+    return { rimossi, rimasti, manifestTolto, attesi: [manifestGiovane] }
+  })
+  expect(esito.rimossi).toBe(2)
+  expect(esito.rimasti).toEqual(esito.attesi)
+  expect(esito.manifestTolto).toBe(true)
 })

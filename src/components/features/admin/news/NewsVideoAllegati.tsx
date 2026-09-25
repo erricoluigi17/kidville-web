@@ -35,21 +35,20 @@ import {
   accodaCaricamentoVideo,
   caricaVideo,
   creaArchivioCaricamenti,
-  jobDaSeguire,
   potaArchivioCaricamenti,
   type ArchivioCaricamentiVideo,
   type DipendenzeCaricamentoVideo,
 } from '@/lib/media/video/upload';
+import { caricamentoNelContesto } from '@/lib/media/video/upload/stato';
 import { cx } from '@/lib/ui/cx';
 
 import { urlAllegatoBozzaVideo } from './video/allegato-bozza';
 import {
   ACCEPT_VIDEO_NEWS,
   apriIntentoVideoNews,
-  confermaIntentoVideoNews,
+  completaVideoNews,
   leggiStatoIntentoVideoNews,
   preflightVideoNews,
-  segnalaVideoCaricato,
   type DipendenzeFlussoVideoNews,
 } from './video/flusso';
 
@@ -141,7 +140,8 @@ function misuraDurata(file: File): Promise<number | null> {
     let indirizzo: string;
     try {
       indirizzo = URL.createObjectURL(file);
-    } catch {
+    } catch (err) {
+      logClient({ livello: 'warn', evento: 'offline', messaggio: 'video-news-durata-non-disponibile', campi: { error_code: nomeErrore(err) } });
       risolvi(null);
       return;
     }
@@ -154,9 +154,8 @@ function misuraDurata(file: File): Promise<number | null> {
       video.removeAttribute('src');
       try {
         URL.revokeObjectURL(indirizzo);
-      } catch {
-        // Un indirizzo già revocato non è un guasto: non c'è niente da dire e
-        // niente da fare. La misura è comunque conclusa.
+      } catch (err) {
+        logClient({ livello: 'warn', evento: 'offline', messaggio: 'video-news-url-gia-rilasciato', campi: { error_code: nomeErrore(err) } });
       }
       risolvi(valore);
     };
@@ -175,6 +174,9 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
   const tShared = useTranslations('shared');
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const contesto = `${userId}:${tuttiSedi ? 'globale' : scuolaId}`;
+  const contestoRif = useRef<string | null>(contesto);
+  useEffect(() => { contestoRif.current = contesto; return () => { contestoRif.current = null; }; }, [contesto]);
   const archivioRif = useRef<ArchivioCaricamentiVideo | null>(null);
   const [allegati, setAllegati] = useState<Allegato[]>([]);
   const [errore, setErrore] = useState<CodiceMostratoVideo | null>(null);
@@ -209,6 +211,7 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
   /* ── IL BATTITO: a che punto è il server ──────────────────────────────── */
 
   const battito = useCallback(async () => {
+    const atteso = contesto;
     const intenti = [
       ...new Set(
         rif.current
@@ -219,6 +222,7 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
 
     for (const intentId of intenti) {
       const esito = await leggiStatoIntentoVideoNews(dipFlusso, intentId);
+      if (contestoRif.current !== atteso) return;
       if (!esito.ok) {
         aggiorna((prec) =>
           prec.map((a) => (a.intentId === intentId ? { ...a, fase: 'errore', codice: esito.codice } : a)),
@@ -226,10 +230,14 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
         continue;
       }
 
+      if (esito.statoIntent === 'published') {
+        aggiorna(prec => prec.filter(a => a.intentId !== intentId));
+        continue;
+      }
       for (const job of esito.job) {
         const prima = rif.current.find((a) => a.jobId === job.jobId);
         if (!prima) continue;
-        const fase = faseDaStato(job.stato);
+        const fase = ['cancelled', 'superseded'].includes(esito.statoIntent) ? 'errore' : faseDaStato(job.stato);
 
         if (fase === 'pronto' && !prima.collegato) {
           const url = urlAllegatoBozzaVideo(userId, job.jobId);
@@ -277,7 +285,7 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
         );
       }
     }
-  }, [aggiorna, dipFlusso, etichettaLink, onPronto, userId]);
+  }, [aggiorna, contesto, dipFlusso, etichettaLink, onPronto, userId]);
 
   /** Il battito vive in un ref: l'orologio non deve ricrearsi a ogni render. */
   const battitoRif = useRef(battito);
@@ -292,61 +300,71 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
 
   useEffect(() => {
     let vivo = true;
+    const ancora = () => vivo && contestoRif.current === contesto;
     void (async () => {
-      let archivio: ArchivioCaricamentiVideo;
-      try {
-        archivio = await creaArchivioCaricamenti();
-      } catch (err) {
-        // L'archivio è già tollerante (ripiega in memoria e lo dice): se anche
-        // quello fallisce, il caricamento nuovo resta possibile e la ripresa no.
-        logClient({
-          livello: 'error',
-          evento: 'offline',
-          messaggio: `video-news-archivio-non-disponibile: ${nomeErrore(err)}`,
-          route: '/admin/news',
-        });
-        return;
-      }
-      if (!vivo) return;
+      await Promise.resolve();
+      if (!ancora()) return;
+      aggiorna(() => []);
+      if (!userId || (!tuttiSedi && !scuolaId)) return;
+      const archivio = await creaArchivioCaricamenti();
+      if (!ancora()) return;
       archivioRif.current = archivio;
-
-      const dip: DipendenzeCaricamentoVideo = { archivio, intestazioni: () => ({}) };
-      // La potatura non è un di più: senza, l'unico modo che ha un deposito di
-      // Blob da due gigabyte di sparire è che il browser sfratti tutto.
-      await potaArchivioCaricamenti(dip);
-      const seguire = (await jobDaSeguire(dip)).filter((j) => j.canale === 'news');
-      if (!vivo || seguire.length === 0) return;
-
-      aggiorna((prec) => [
-        ...prec,
-        ...seguire
-          .filter((j) => !prec.some((a) => a.jobId === j.jobId))
-          .map<Allegato>((j) => ({
-            chiave: j.jobId,
-            intentId: j.intentId,
-            jobId: j.jobId,
-            revisione: 1,
-            fase: 'conversione',
-            pct: avanzamentoDaStatoVideo('queued') ?? 0,
-            codice: null,
-            collegato: false,
-            riaperto: true,
-          })),
-      ]);
-      void battitoRif.current();
-    })();
-    return () => {
-      vivo = false;
-    };
-  }, [aggiorna]);
+      await potaArchivioCaricamenti({ archivio, intestazioni: () => ({}) });
+      const seguire = (await archivio.elenca()).filter(r => caricamentoNelContesto(r, userId, tuttiSedi ? null : scuolaId, 'news')
+        && ['caricato', 'in_corso', 'da_caricare'].includes(r.stato));
+      for (const riga of seguire) {
+        if (!ancora()) return;
+        const riapri = () => apriIntentoVideoNews(dipFlusso, {
+          scuolaId: riga.scuolaId ?? null, ambitoGlobale: riga.scuolaId === null,
+          chiaveIdempotenza: riga.chiaveIdempotenza,
+          file: { name: riga.nome, size: riga.dimensioneByte, type: riga.mime }, mime: riga.mime, durataSecondi: null,
+        });
+        const apertura = await riapri();
+        if (!ancora()) return;
+        if (apertura.ok && apertura.statoIntent === 'published') { await archivio.elimina(riga.jobId); continue; }
+        aggiorna(prec => [...prec, { chiave: riga.jobId, intentId: riga.intentId, jobId: riga.jobId, revisione: apertura.ok ? apertura.revisione : 1,
+          fase: 'conversione', pct: 0, codice: null, collegato: false, riaperto: true }]);
+        const fallisci = (codice: CodiceMostratoVideo) => { if (ancora()) aggiorna(prec => prec.map(a => a.jobId === riga.jobId ? { ...a, fase: 'errore', codice } : a)); };
+        if (!apertura.ok) { fallisci(apertura.codice); continue; }
+        if (apertura.jobId !== riga.jobId || apertura.intentId !== riga.intentId || ['cancelled', 'superseded'].includes(apertura.statoIntent)
+            || ['failed', 'rejected', 'cancelled'].includes(apertura.statoJob)) { fallisci('VIDEO_RIPROVA'); continue; }
+        if (apertura.needsUpload) {
+          if (riga.stato === 'caricato') { fallisci('VIDEO_RIPROVA'); continue; }
+          let firma = apertura.firma; let scade = Date.parse(apertura.expiresAt ?? '') || 0;
+          const dip: DipendenzeCaricamentoVideo = { archivio, intestazioni: async () => {
+            if (!ancora()) throw new Error('ContestoCambiato');
+            if (scade <= Date.now() + 15_000) {
+              const rinnovo = await riapri();
+              if (!ancora() || !rinnovo.ok || rinnovo.jobId !== riga.jobId || !rinnovo.needsUpload) throw new Error('FirmaNonDisponibile');
+              firma = rinnovo.firma; scade = Date.parse(rinnovo.expiresAt ?? '') || 0;
+            }
+            return { 'x-signature': firma };
+          } };
+          const caricato = await caricaVideo(dip, riga.jobId);
+          if (!ancora()) return;
+          if (caricato.esito !== 'caricato') { fallisci('codice' in caricato && caricato.codice || 'VIDEO_RIPROVA'); continue; }
+        } else if (riga.stato !== 'caricato') {
+          await archivio.aggiorna(riga.jobId, { stato: 'caricato', offsetByte: riga.dimensioneByte });
+          await archivio.eliminaByte(riga.jobId);
+        }
+        const completo = await completaVideoNews(dipFlusso, apertura, { byte: riga.dimensioneByte, mime: riga.mime }, ancora);
+        if (!completo.ok) fallisci(completo.codice);
+      }
+      if (ancora()) void battitoRif.current();
+    })().catch(err => logClient({ livello: 'error', evento: 'offline', messaggio: 'video-news-ripresa-interrotta', campi: { error_code: nomeErrore(err) } }));
+    return () => { vivo = false; };
+  }, [aggiorna, contesto, dipFlusso, scuolaId, tuttiSedi, userId]);
 
   /* ── IL GIRO DI UN VIDEO NUOVO ────────────────────────────────────────── */
 
   const avvia = useCallback(
     async (file: File) => {
+      const ancora = () => contestoRif.current === contesto;
+      if (!userId || (!tuttiSedi && !scuolaId)) { setErrore('SEDE_DA_SPECIFICARE'); return; }
       setErrore(null);
 
       const durata = await misuraDurata(file);
+      if (!ancora()) return;
       const pre = preflightVideoNews(file, durata);
       if (!pre.ok) {
         // Il rifiuto avviene QUI, prima che parta un solo byte: il contrario
@@ -383,28 +401,39 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
         mime: pre.mime,
         durataSecondi: durata,
       });
+      if (!ancora()) return;
       if (!apertura.ok) {
         fallisci(apertura.codice);
         return;
       }
 
+      if (['published', 'cancelled', 'superseded'].includes(apertura.statoIntent) || ['cancelled', 'failed', 'rejected'].includes(apertura.statoJob)) { fallisci('VIDEO_RIPROVA'); return; }
       const archivio = archivioRif.current ?? (await creaArchivioCaricamenti());
       archivioRif.current = archivio;
       // La firma è di QUESTO job e scade: si chiede al momento di spedire, e non
       // si conserva accanto ai byte (sarebbe una credenziale su IndexedDB).
-      const dip: DipendenzeCaricamentoVideo = {
-        archivio,
-        intestazioni: () => ({ 'x-signature': apertura.firma }),
-      };
+      let firma = apertura.firma; let scade = Date.parse(apertura.expiresAt ?? '') || 0;
+      const dip: DipendenzeCaricamentoVideo = { archivio, intestazioni: async () => {
+        if (!ancora()) throw new Error('ContestoCambiato');
+        if (scade <= Date.now() + 15_000) {
+          const rinnovo = await apriIntentoVideoNews(dipFlusso, { scuolaId: tuttiSedi ? null : scuolaId, ambitoGlobale: tuttiSedi,
+            chiaveIdempotenza: apertura.chiaveIdempotenza, file, mime: pre.mime, durataSecondi: durata });
+          if (!ancora() || !rinnovo.ok || rinnovo.jobId !== apertura.jobId || !rinnovo.needsUpload) throw new Error('FirmaNonDisponibile');
+          firma = rinnovo.firma; scade = Date.parse(rinnovo.expiresAt ?? '') || 0;
+        }
+        return { 'x-signature': firma };
+      } };
 
       const messo = await accodaCaricamentoVideo(dip, {
         jobId: apertura.jobId,
         intentId: apertura.intentId,
         canale: 'news',
+        ownerId: userId, scuolaId: tuttiSedi ? null : scuolaId,
         chiaveIdempotenza: apertura.chiaveIdempotenza,
         coordinate: apertura.coordinate,
         file,
       });
+      if (!ancora()) return;
       if (!messo.ok) {
         fallisci(messo.codice);
         return;
@@ -418,12 +447,18 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
         ),
       );
 
-      const esito = await caricaVideo(dip, apertura.jobId, {
+      const esito = apertura.needsUpload ? await caricaVideo(dip, apertura.jobId, {
         alProgresso: (fatti, totali) => {
+          if (!ancora()) return;
           const pct = totali > 0 ? Math.min(100, Math.round((fatti / totali) * 100)) : 0;
           aggiorna((prec) => prec.map((a) => (a.chiave === chiave ? { ...a, pct } : a)));
         },
-      });
+      }) : { esito: 'caricato' as const };
+      if (!ancora()) return;
+      if (!apertura.needsUpload) {
+        await archivio.aggiorna(apertura.jobId, { stato: 'caricato', offsetByte: file.size });
+        await archivio.eliminaByte(apertura.jobId);
+      }
 
       if (esito.esito !== 'caricato') {
         // `interrotto` non è un fallimento: i byte restano sul dispositivo e la
@@ -434,23 +469,9 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
         return;
       }
 
-      const segnalato = await segnalaVideoCaricato(dipFlusso, apertura.intentId, apertura.jobId, {
-        byte: file.size,
-        mime: pre.mime,
-      });
-      if (!segnalato.ok) {
-        fallisci(segnalato.codice);
-        return;
-      }
-
-      // LA CONFERMA È L'ISTANTE IN CUI CI SI PUÒ ANDARE. Senza, l'intento
-      // resterebbe in attesa e il video non verrebbe mai convertito: chi chiude
-      // la pagina troverebbe un filmato fermo per sempre, senza saperlo.
-      const confermato = await confermaIntentoVideoNews(dipFlusso, apertura.intentId, apertura.revisione);
-      if (!confermato.ok) {
-        fallisci(confermato.codice);
-        return;
-      }
+      const completo = await completaVideoNews(dipFlusso, apertura, { byte: file.size, mime: pre.mime }, ancora);
+      if (!ancora()) return;
+      if (!completo.ok) { fallisci(completo.codice); return; }
 
       // La barra passa dalla scala dei BYTE a quella delle FASI: i due numeri
       // misurano cose diverse, e tenere il 100 % del trasporto mentre la
@@ -465,14 +486,17 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
       );
       void battitoRif.current();
     },
-    [aggiorna, dipFlusso, scuolaId, tuttiSedi],
+    [aggiorna, contesto, dipFlusso, scuolaId, tuttiSedi, userId],
   );
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (inputRef.current) inputRef.current.value = '';
     if (!file) return;
-    void avvia(file);
+    void avvia(file).catch(err => {
+      logClient({ livello: 'error', evento: 'offline', messaggio: 'video-news-avvio-interrotto', campi: { error_code: nomeErrore(err) } });
+      setErrore('VIDEO_OPERAZIONE_NON_RIUSCITA');
+    });
   };
 
   const togli = (chiave: string) => {

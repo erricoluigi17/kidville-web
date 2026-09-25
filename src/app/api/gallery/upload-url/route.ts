@@ -2,13 +2,14 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { rateLimit, clientIp } from '@/lib/security/rate-limit';
+import { rateLimit } from '@/lib/security/rate-limit';
 import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
 import { rifiutoLegacyVideo, videoLegacyDaFermare } from '@/lib/media/blocco-legacy-video';
 import { BUCKET_GALLERIA, MIME_GALLERIA, TETTO_GALLERIA_BYTE, estensioneDaMime, mimeBase } from '@/lib/gallery/limiti';
+import { percorsoUploadProprio } from '@/lib/gallery/pubblicazione-foto';
 
 // =============================================================================
 // GALLERIA · URL FIRMATO — il file va dal telefono allo Storage, senza passare di qui.
@@ -84,6 +85,7 @@ const postBodySchema = z.object({
     // ≈ 87.400 caratteri: il corpo di questa richiesta resta due ordini di grandezza
     // sotto il tetto della piattaforma, che è il punto di tutto l'esercizio.
     testa_b64: z.string().max(120_000).optional(),
+    resume_path: z.string().min(1).max(300).optional(),
     // NESSUN `nome`, ed è una deviazione deliberata dai due modelli (Protocolli e
     // Cassa lo accettano). Un file di galleria si chiama `IMG_bambina-rossi.mov`: è
     // anagrafica di un minore, e finirebbe nella chiave dell'oggetto — quindi in
@@ -96,22 +98,13 @@ export const POST = withRoute('gallery/upload-url:POST', async (request: Request
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        // Chiave PROPRIA, non condivisa con protocolli e cassa: una raffica di firme
-        // di galleria è un guasto diverso, e con due chiavi si legge separatamente.
-        const rl = await rateLimit(`galleria-upload:${clientIp(request)}`, {
-            limit: 30,
-            windowMs: 10 * 60 * 1000,
-        });
-        if (!rl.ok) {
-            return NextResponse.json(
-                { error: 'Troppi caricamenti. Riprova tra qualche minuto.', codice: 'TROPPE_RICHIESTE' },
-                { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
-            );
-        }
-
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
-        const { mime, size, testa_b64 } = b.data;
+        const { mime, size, testa_b64, resume_path } = b.data;
+        if (resume_path && (!mime.startsWith('image/') || !percorsoUploadProprio(resume_path, auth.user.id))) {
+            logEvento('galleria', 'warn', { operazione: 'gallery/upload-url:POST', esito: 'ripresa-percorso-invalido' });
+            return NextResponse.json({ error: 'Percorso del caricamento non valido.', codice: 'ALLEGATO_NON_VALIDO' }, { status: 400 });
+        }
 
         // ── IL PERCORSO VECCHIO DEI VIDEO, quando sarà ora, si chiude qui ──────────
         // Di qui passano il browser dell'insegnante e la coda offline Dexie
@@ -164,12 +157,48 @@ export const POST = withRoute('gallery/upload-url:POST', async (request: Request
             }
         }
 
+        const supabase = await createAdminClient();
+        if (resume_path) {
+            // La PUT può aver fatto commit anche se il telefono non ha ricevuto la
+            // risposta. Il prefisso è già verificato contro l'identità del gate.
+            const { data: oggetto, error: errInfo } = await supabase.storage.from(BUCKET_GALLERIA).info(resume_path);
+            const assente = String((errInfo as { statusCode?: string; status?: number } | null)?.statusCode ?? errInfo?.status) === '404';
+            if (errInfo && !assente) {
+                logErrore({ operazione: 'gallery/upload-url:POST', stato: 500, evento: 'storage' }, errInfo);
+                return NextResponse.json({ error: 'Verifica del caricamento non riuscita. Riprova.', codice: 'ALLEGATO_NON_CARICATO' }, { status: 500 });
+            }
+            if (oggetto) {
+                if (oggetto.size !== size || mimeBase(oggetto.contentType ?? '') !== mime) {
+                    logEvento('galleria', 'warn', { operazione: 'gallery/upload-url:POST', esito: 'ripresa-metadata-diversi' });
+                    return NextResponse.json({ error: 'Il percorso contiene un file diverso.', codice: 'CARICAMENTO_IN_CONFLITTO' }, { status: 409 });
+                }
+                logEvento('galleria', 'info', { operazione: 'gallery/upload-url:POST', esito: 'caricamento-recuperato', size, mime });
+                return NextResponse.json({ path: resume_path, uploaded: true });
+            }
+            if (!assente) {
+                logErrore({ operazione: 'gallery/upload-url:POST', stato: 500, evento: 'storage' }, new Error('Metadata oggetto mancanti'));
+                return NextResponse.json({ error: 'Verifica del caricamento non riuscita. Riprova.', codice: 'ALLEGATO_NON_CARICATO' }, { status: 500 });
+            }
+        }
+
+        // Ogni persona ha 30 firme: il Wi-Fi della scuola non condivide la quota.
+        const rl = await rateLimit(`galleria-upload:${auth.user.id}`, {
+            limit: 30,
+            windowMs: 10 * 60 * 1000,
+        });
+        if (!rl.ok) {
+            logEvento('galleria', 'warn', { operazione: 'gallery/upload-url:POST', esito: 'limite-firme', stato: 429 });
+            return NextResponse.json(
+                { error: 'Troppi caricamenti. Riprova tra qualche minuto.', codice: 'TROPPE_RICHIESTE' },
+                { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+            );
+        }
+
         // Il percorso è intestato all'utente DEL GATE, mai a un campo del client: è la
         // stessa scelta di `gallery/upload`, e la ragione è che quel segmento è l'unica
         // cosa che separa i file di una maestra da quelli di un'altra.
-        const path = `uploads/${auth.user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.${estensioneDaMime(mime)}`;
+        const path = resume_path ?? `uploads/${auth.user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.${estensioneDaMime(mime)}`;
 
-        const supabase = await createAdminClient();
         const { data, error } = await supabase.storage.from(BUCKET_GALLERIA).createSignedUploadUrl(path);
         if (error || !data?.signedUrl || !data.token) {
             // Il corpo dell'errore del fornitore resta nel LOG e non torna al client
@@ -182,6 +211,7 @@ export const POST = withRoute('gallery/upload-url:POST', async (request: Request
             );
         }
 
+        logEvento('galleria', 'info', { operazione: 'gallery/upload-url:POST', esito: 'firma-emessa', size, mime, ripresa: Boolean(resume_path) });
         return NextResponse.json({ path, token: data.token, signedUrl: data.signedUrl });
     } catch (error) {
         logErrore({ operazione: 'gallery/upload-url:POST', stato: 500 }, error);

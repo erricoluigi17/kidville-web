@@ -351,7 +351,10 @@ async function chiama<T>(
     return { ok: false, codice: null, messaggio: opzioni.ripiego, stato: null }
   }
 
-  const corpo = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  const corpo = (await res.json().catch((err: unknown) => {
+    logClient({ livello: 'error', evento: 'fetch', route: '/teacher/gallery', messaggio: 'video-risposta-illeggibile', campi: { error_code: nomeErrore(err) } })
+    return null
+  })) as Record<string, unknown> | null
 
   if (!res.ok) {
     const codice = typeof corpo?.codice === 'string' ? corpo.codice : null
@@ -400,6 +403,10 @@ export interface IntentoApertoVideo {
   coordinate: CoordinateCaricamentoVideo
   /** La firma `x-signature` con cui il browser autentica l'upload allo Storage. */
   firma: string
+  statoIntent: string
+  statoJob: StatoJobVideo
+  needsUpload: boolean
+  expiresAt: string | null
 }
 
 /**
@@ -429,7 +436,8 @@ export async function apriIntentoVideoGalleria(
   const esito = await chiama<{
     intentId?: unknown
     revisione?: unknown
-    job?: Array<{ jobId?: unknown; chiaveIdempotenza?: unknown; caricamento?: unknown; firma?: unknown }>
+    intent?: { status?: unknown }
+    job?: Array<{ jobId?: unknown; chiaveIdempotenza?: unknown; caricamento?: unknown; firma?: unknown; status?: unknown; needs_upload?: unknown; expires_at?: unknown }>
   }>(
     rete,
     '/api/video-uploads',
@@ -466,8 +474,9 @@ export async function apriIntentoVideoGalleria(
   const revisione = Number(esito.dati.revisione)
   const jobId = typeof primo?.jobId === 'string' ? primo.jobId : ''
   const firma = typeof primo?.firma === 'string' ? primo.firma : ''
+  const needsUpload = primo?.needs_upload !== false
 
-  if (!intentId || !jobId || !firma || !Number.isInteger(revisione) || revisione < 1) {
+  if (!intentId || !jobId || (needsUpload && !firma) || !Number.isInteger(revisione) || revisione < 1) {
     // La porta ha risposto 201 e non ha restituito ciò che promette: è un difetto
     // NOSTRO, e va visto — senza questa riga il caricamento morirebbe dopo, dentro
     // tus, con un errore che la causa non la nomina.
@@ -491,6 +500,10 @@ export async function apriIntentoVideoGalleria(
         typeof primo?.chiaveIdempotenza === 'string' ? primo.chiaveIdempotenza : dati.chiaveIdempotenza,
       coordinate: primo?.caricamento as CoordinateCaricamentoVideo,
       firma,
+      statoIntent: typeof esito.dati.intent?.status === 'string' ? esito.dati.intent.status : 'pending',
+      statoJob: (typeof primo?.status === 'string' ? primo.status : 'awaiting_upload') as StatoJobVideo,
+      needsUpload,
+      expiresAt: typeof primo?.expires_at === 'string' ? primo.expires_at : null,
     },
   }
 }

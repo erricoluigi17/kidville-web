@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import itShared from '../../messages/it/shared.json';
 import enShared from '../../messages/en/shared.json';
+import itTeacher from '../../messages/it/teacherServizi.json';
 
 /**
  * Galleria docente — l'errore del server si legge nella lingua dell'interfaccia.
@@ -179,6 +180,24 @@ const testoRifiuto = (): string => {
 };
 
 describe('Galleria docente — il rifiuto del server si legge nella lingua dell’interfaccia', () => {
+    it('GET fallita mostra Riprova lettura e un nuovo GET ripristina la griglia', async () => {
+        const base = fetchMock.getMockImplementation()!;
+        let primoGet = true;
+        fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+            if (String(url).includes('/api/gallery') && (init?.method ?? 'GET') === 'GET' && primoGet) {
+                primoGet = false;
+                return Promise.resolve({ ok: false, status: 503 });
+            }
+            return base(url, init);
+        });
+        render(<TeacherGalleryPage />);
+        const retry = await screen.findByRole('button', { name: itTeacher.galleryRiprovaLettura });
+        expect(screen.getByText(itTeacher.galleryLetturaFallita)).toBeInTheDocument();
+        fireEvent.click(retry);
+        await waitFor(() => expect(screen.getByAltText(MEDIA.caption)).toBeInTheDocument());
+        expect(screen.queryByText(itTeacher.galleryLetturaFallita)).toBeNull();
+    });
+
     it('PATCH 403 con `codice`, interfaccia EN: la frase è quella inglese di catalogo', async () => {
         await salvaTag();
         expect(testoAvviso()).toBe(enShared.erroreTagFuoriSede);

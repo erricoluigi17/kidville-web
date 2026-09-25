@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process'
+import { videoTemporalProgram, type VideoTemporalEvidence } from '@/lib/media/video/temporale'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -72,7 +74,7 @@ function outputProbe() {
   }
 }
 
-const decoded = { exitCode: 0, decodedFrames: 300 }
+const decoded = { exitCode: 0, decodedFrames: 300, temporal: { version: 1, ok: true, mode: 'preserve', sourceFrames: 300, outputFrames: 300, sourceFps: 30, outputFps: 30 } as const }
 
 /* ════════════════════════════════════════════════════════════════════════════
  * I CASI SINTETICI RESTANO, e non per affetto.
@@ -194,7 +196,7 @@ describe('verifyVideoOutput — casi sintetici', () => {
     raw.streams[1].duration = '180.021333'
     raw.format.duration = '180.021333'
 
-    expect(verifyVideoOutput(longSource, raw, 1, { exitCode: 0, decodedFrames: 5_400 })).toMatchObject({
+    expect(verifyVideoOutput(longSource, raw, 1, { exitCode: 0, decodedFrames: 5_400, temporal: { ...decoded.temporal, sourceFrames: 5_400, outputFrames: 5_400 } })).toMatchObject({
       ok: true,
       output: { durationSeconds: 180.021333 },
     })
@@ -259,12 +261,12 @@ describe('verifyVideoOutput — casi sintetici', () => {
     const vfrSource = { ...source, fps: 24000 / 1001 }
     const vfr = outputProbe()
     vfr.streams[0].avg_frame_rate = '24000/1001'
-    expect(verifyVideoOutput(vfrSource, vfr, 1, decoded)).toMatchObject({ ok: true })
+    expect(verifyVideoOutput(vfrSource, vfr, 1, { ...decoded, temporal: { ...decoded.temporal, sourceFps: 24000 / 1001, outputFps: 24000 / 1001 } })).toMatchObject({ ok: true })
 
     const highFpsSource = { ...source, fps: 120 }
     const sixty = outputProbe()
     sixty.streams[0].avg_frame_rate = '60/1'
-    expect(verifyVideoOutput(highFpsSource, sixty, 1, decoded)).toMatchObject({ ok: true })
+    expect(verifyVideoOutput(highFpsSource, sixty, 1, { ...decoded, temporal: { ...decoded.temporal, mode: 'reduce60', sourceFps: 120, outputFps: 60 } })).toMatchObject({ ok: true })
 
     const changed = outputProbe()
     changed.streams[0].avg_frame_rate = '25/1'
@@ -525,12 +527,19 @@ function converti(
   eseguiFfmpeg(binari, argomenti, `conversione di ${ingresso}`)
 }
 
-function verifica(binari: BinariVideo, probe: VideoProbe, uscita: string) {
+function provaTemporale(binari: BinariVideo, probe: VideoProbe, ingresso: string, uscita: string): VideoTemporalEvidence {
+  const script = videoTemporalProgram({ videoIndex: probe.videoStreamIndex, audioIndex: probe.audioStreamIndex, sourceFps: probe.fps })
+  const p = spawnSync(process.execPath, ['-', binari.ffprobe, ingresso, uscita], { input: script, encoding: 'utf8', timeout: 250_000 })
+  if (p.status !== 0) throw new Error(`prova temporale: ${p.stderr}`)
+  return JSON.parse(p.stdout) as VideoTemporalEvidence
+}
+
+function verifica(binari: BinariVideo, probe: VideoProbe, uscita: string, ingresso: string) {
   return verifyVideoOutput(
     probe,
     sondaFfprobe(binari, uscita),
     statSync(uscita).size,
-    provaDiDecodifica(binari, uscita),
+    { ...provaDiDecodifica(binari, uscita), temporal: provaTemporale(binari, probe, ingresso, uscita) },
   )
 }
 
@@ -548,6 +557,87 @@ function sideData(sonda: unknown): string[] {
 }
 
 describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
+  for (const timescale of [30, 60]) it(`MP4 reale con timebase 1/${timescale} conserva tutti i 60 frame`, contesto => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-timescale-', cartella => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(binari, [
+        '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=30:duration=2',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+        '-video_track_timescale', String(timescale), '-an', ingresso,
+      ], 'fixture sintetica MP4 con timebase larga')
+      expect(tracciaVideo(sondaFfprobe(binari, ingresso)).time_base).toBe(`1/${timescale}`)
+      const probe = probeDiIngresso(binari, ingresso)
+      converti(binari, probe, ingresso, uscita)
+      expect(provaTemporale(binari, probe, ingresso, uscita))
+        .toMatchObject({ ok: true, sourceFrames: 60, outputFrames: 60 })
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({ ok: true })
+    })
+  }, 60_000)
+
+  for (const fps of [30, 60]) it(`MP4 reale con timebase 1/${fps}: rifiuta 11 PTS alterati pur conservando numero di frame e durata`, contesto => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-pts-alterati-', cartella => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const corretta = join(cartella, 'corretta.mp4')
+      const alterata = join(cartella, 'pts-alterati.mp4')
+      generaFixture(binari, [
+        '-f', 'lavfi', '-i', `testsrc2=size=320x240:rate=${fps}:duration=2`,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+        '-video_track_timescale', String(fps), '-an', ingresso,
+      ], 'fixture sintetica MP4 con PTS interni alterabili')
+      const probe = probeDiIngresso(binari, ingresso)
+      converti(binari, probe, ingresso, corretta)
+      expect(verifica(binari, probe, corretta, ingresso)).toMatchObject({ ok: true })
+
+      converti(binari, probe, ingresso, alterata, args => {
+        const filter = args.indexOf('-filter_complex') + 1
+        args[filter] = args[filter].replace('[vout]', `,settb=1/15360,setpts='PTS+if(between(N,10,20),${15360 * 0.75 / fps},0)'[vout]`)
+        args.splice(args.length - 1, 0, '-fps_mode', 'passthrough', '-enc_time_base', '1:15360')
+      })
+      expect(tracciaVideo(sondaFfprobe(binari, alterata)).time_base).toBe('1/15360')
+      expect(provaDiDecodifica(binari, alterata)).toMatchObject({ exitCode: 0, decodedFrames: fps * 2 })
+      expect(provaTemporale(binari, probe, ingresso, alterata))
+        .toMatchObject({ ok: false, reason: 'TIMESTAMP_MISMATCH', sourceFrames: fps * 2, outputFrames: fps * 2 })
+      expect(verifica(binari, probe, alterata, ingresso)).toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
+    })
+  }, 60_000)
+
+  for (const conAudio of [false, true]) it(`VFR reale con audio=${conAudio}: tutti i PTS preservati, senza dipendere dalla media del mux`, contesto => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-vfr-', cartella => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(binari, [
+        '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=30:duration=6',
+        ...(conAudio ? ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=6'] : []),
+        '-vf', "select='if(lt(t,3),1,mod(n,3))'", '-fps_mode', 'vfr',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+        ...(conAudio ? ['-c:a', 'aac'] : ['-an']), ingresso,
+      ], 'fixture sintetica VFR, nessun dato personale')
+      const probe = probeDiIngresso(binari, ingresso)
+      // Si usa anche il watermark: l'overlay fa parte della pipeline della Galleria.
+      const args = buildVideoEncodeArgs(probe, {
+        channel: 'gallery', inputPath: ingresso, outputPath: uscita,
+        watermarkPath: join(process.cwd(), 'public/watermark.png'),
+      })
+      eseguiFfmpeg(binari, args, 'conversione VFR Galleria')
+      expect(provaTemporale(binari, probe, ingresso, uscita)).toMatchObject({ ok: true, sourceFrames: 150, outputFrames: 150 })
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({ ok: true })
+
+      // Mutazione reale dell'encoder: un frame perso non diventa lecito solo
+      // perché durate e medie restano vicine. Questo deve restare rosso.
+      const mutilata = join(cartella, 'frame-perso.mp4')
+      const mutati = [...args]
+      mutati[mutati.indexOf('-filter_complex') + 1] = mutati[mutati.indexOf('-filter_complex') + 1].replace('[vout]', ",select='not(eq(n,50))'[vout]")
+      mutati[mutati.length - 1] = mutilata
+      eseguiFfmpeg(binari, mutati, 'mutazione: un frame rimosso')
+      expect(provaTemporale(binari, probe, ingresso, mutilata).ok).toBe(false)
+      expect(verifica(binari, probe, mutilata, ingresso)).toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
+    })
+  }, 60_000)
+
   it('HEVC 4K SDR con audio: esce Full HD H.264/AAC e la verifica lo accetta', (contesto) => {
     const binari = binariVideo(contesto)
     inCartellaTemporanea('kidville-video-4k-', (cartella) => {
@@ -570,7 +660,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
       expect(probe).toMatchObject({ videoCodec: 'hevc', width: 3840, height: 2160, hasAudio: true })
 
       converti(binari, probe, ingresso, uscita)
-      expect(verifica(binari, probe, uscita)).toMatchObject({
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({
         ok: true,
         output: {
           width: 1920,
@@ -620,7 +710,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
         color_range: 'tv',
       })
       expect(sideData(sonda)).toEqual([])
-      expect(verifica(binari, probe, uscita)).toMatchObject({
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({
         ok: true,
         output: { colorPrimaries: 'bt709', colorTransfer: 'bt709', colorSpace: 'bt709' },
       })
@@ -687,7 +777,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
       // guardiamo»: proprio nessun side data, il che dice anche che la
       // cancellazione mirata non ha portato via nient'altro per sbaglio.
       expect(sideData(sonda)).toEqual([])
-      expect(verifica(binari, probe, uscita)).toMatchObject({
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({
         ok: true,
         output: { colorPrimaries: 'bt709', colorTransfer: 'bt709', colorSpace: 'bt709' },
       })
@@ -727,7 +817,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
       const sonda = sondaFfprobe(binari, uscita)
       expect(tracciaVideo(sonda)).toMatchObject({ width: 360, height: 640 })
       expect(sideData(sonda)).toEqual([])
-      expect(verifica(binari, probe, uscita)).toMatchObject({
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({
         ok: true,
         output: { width: 360, height: 640 },
       })
@@ -756,7 +846,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
 
       converti(binari, probe, ingresso, uscita)
       expect(tracciaVideo(sondaFfprobe(binari, uscita))).toMatchObject({ avg_frame_rate: '60/1' })
-      expect(verifica(binari, probe, uscita)).toMatchObject({ ok: true, output: { fps: 60 } })
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({ ok: true, output: { fps: 60 } })
     })
   }, 45_000)
 
@@ -790,7 +880,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
       eseguiFfmpeg(binari, argomenti, 'conversione muta')
       const streams = (sondaFfprobe(binari, uscita) as { streams: Record<string, unknown>[] }).streams
       expect(streams.filter((stream) => stream.codec_type === 'audio')).toEqual([])
-      expect(verifica(binari, probe, uscita)).toMatchObject({
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({
         ok: true,
         output: { hasAudio: false, audioCodec: null, audioStreamIndex: null },
       })
@@ -817,7 +907,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
       expect(probe).toMatchObject({ videoCodec: 'prores', pixelFormat: 'yuv422p10le' })
 
       converti(binari, probe, ingresso, uscita)
-      expect(verifica(binari, probe, uscita)).toMatchObject({
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({
         ok: true,
         output: { width: 1280, height: 720, videoCodec: 'h264', pixelFormat: 'yuv420p' },
       })
@@ -844,7 +934,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
       expect(probe.videoCodec).toBe('dnxhd')
 
       converti(binari, probe, ingresso, uscita)
-      expect(verifica(binari, probe, uscita)).toMatchObject({
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({
         ok: true,
         output: { width: 1280, height: 720, videoCodec: 'h264' },
       })
@@ -880,7 +970,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
 
       const probe = probeDiIngresso(binari, ingresso)
       converti(binari, probe, ingresso, corretta)
-      expect(verifica(binari, probe, corretta)).toMatchObject({
+      expect(verifica(binari, probe, corretta, ingresso)).toMatchObject({
         ok: true,
         output: { width: 1920, height: 1080 },
       })
@@ -891,7 +981,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
         argomenti[indice + 1] = argomenti[indice + 1].replace('scale=1920:1080', 'scale=1280:720')
       })
       expect(tracciaVideo(sondaFfprobe(binari, ridotta))).toMatchObject({ width: 1280, height: 720 })
-      expect(verifica(binari, probe, ridotta)).toEqual({
+      expect(verifica(binari, probe, ridotta, ingresso)).toEqual({
         ok: false,
         code: 'OUTPUT_DIMENSIONS_INVALID',
       })
@@ -951,7 +1041,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
       converti(binari, probe, ingresso, uscita)
       const video = tracciaVideo(sondaFfprobe(binari, uscita))
       expect(video.color_range).toBeUndefined()
-      expect(verifica(binari, probe, uscita)).toMatchObject({
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({
         ok: true,
         output: { colorPrimaries: null, colorTransfer: null, colorSpace: null },
       })
@@ -1021,5 +1111,20 @@ describe('il SAR assente di un video vero', () => {
     expect(
       verifyVideoOutput(source, uscita, 80_000_000, decoded),
     ).toEqual({ ok: false, code: 'OUTPUT_VIDEO_INVALID' })
+  })
+})
+
+
+describe('regressione media VFR e attestazione della timeline', () => {
+  const timeline = { ...decoded.temporal, outputFps: 3000 / 99 }
+  it('accetta una media diversa solo con la prova temporale di tutti i frame', () => {
+    const uscita = outputProbe()
+    uscita.streams[0].avg_frame_rate = '3000/99'
+    expect(verifyVideoOutput(source, uscita, 1234, { ...decoded, temporal: timeline })).toMatchObject({ ok: true })
+  })
+  it('rifiuta frame persi anche se la media FPS resta identica', () => {
+    expect(verifyVideoOutput(source, outputProbe(), 1234, {
+      ...decoded, temporal: { ...timeline, ok: false },
+    })).toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
   })
 })

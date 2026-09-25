@@ -15,6 +15,7 @@ import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 import { assertTagStudentsInScope } from '@/lib/gallery/tag-scope';
 import { firmaMediaGalleria, percorsoNelBucket } from '@/lib/gallery/storage';
+import { percorsoUploadProprio, pubblicaFotoIdempotente } from '@/lib/gallery/pubblicazione-foto';
 import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte';
 // ─── V08 · LA PUBBLICAZIONE DI UN VIDEO ──────────────────────────────────────
 // La metà «Storage» sta in un modulo suo (copia + compensazione); la metà
@@ -154,6 +155,7 @@ const postBodySchema = z.object({
     // copia, mai il client.
     file_url: z.string().min(1, 'file_url è obbligatorio').optional(),
     file_type: z.string().nullish(),
+    upload_id: zUuid.optional(),
     caption: z.string().nullish(),
     // `zUuid` e non `z.string()` (2026-08-03). Era «lasco: oggi nessun vincolo
     // uuid sugli id taggati», e la conseguenza non era estetica: un id
@@ -163,7 +165,7 @@ const postBodySchema = z.object({
     // una richiesta sbagliata: sposta la colpa e sporca il segnale che serve a
     // trovare i guasti veri. Il posto giusto per un id malformato è un 400 di
     // validazione, prima di toccare il database.
-    tag_students: z.array(zUuid).nullish(),
+    tag_students: z.array(zUuid.transform(id => id.toLowerCase())).nullish(),
     is_broadcast: z.boolean().nullish(),
     target_classes: z.array(z.string()).nullish(),
     // Sede (tenant) di pubblicazione. Facoltativa nello schema perché chi ha un
@@ -201,6 +203,9 @@ const postBodySchema = z.object({
  *  · nessuno dei due: il caso storico, dove `file_url` è e resta obbligatorio.
  */
 const postBodySchemaCoerente = postBodySchema.superRefine((b, ctx) => {
+    if (b.upload_id && (b.video_intent_id || (b.file_type != null && b.file_type !== 'foto'))) {
+        ctx.addIssue({ code: 'custom', path: ['upload_id'], message: 'upload_id si usa solo per le foto' });
+    }
     if (b.video_intent_id) {
         if (b.video_revisione == null) {
             ctx.addIssue({
@@ -835,6 +840,7 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             scuola_id,
             video_intent_id,
             video_revisione,
+            upload_id,
         } = b.data;
 
         // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
@@ -1120,6 +1126,11 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // forma canonica.
         const fileUrlDaSalvare = percorsoVideoCopiato ?? percorsoNelBucket(file_url ?? '') ?? (file_url ?? '');
 
+        if (upload_id && !percorsoUploadProprio(fileUrlDaSalvare, uploaded_by)) {
+            logEvento('galleria', 'warn', { operazione: 'gallery:POST', esito: 'upload-percorso-non-autorizzato' });
+            return NextResponse.json({ error: 'Il caricamento non appartiene a questo utente.', codice: 'ALLEGATO_NON_VALIDO' }, { status: 403 });
+        }
+
         const baseRecord: Record<string, unknown> = {
             uploaded_by,
             file_url: fileUrlDaSalvare,
@@ -1139,29 +1150,38 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // comprese, e ha ragione a non fare eccezioni per forma — `insert` e
         // `update` sono la stessa catena di `select`, e il giorno in cui una
         // scrittura dovesse guardare il cestino non ci sarebbe niente a ricordarlo.
-        let insRes = await ancheNelCestino(
-            supabase
-                .from('galleria_media_v2')
-                .insert({ ...baseRecord, scuola_id: scuolaId })
-                .select()
-                .single(),
-            'una riga che nasce adesso non puo essere nel cestino: qui non c-e niente da filtrare, e dirlo è il modo di non confondere questa query con una lettura a cui il filtro è stato dimenticato',
-        );
-        // DB E2E CI non migrato: colonna scuola_id assente → PGRST204 (o 42703).
-        // Riprova senza scuola_id così la pubblicazione resta possibile (degrado).
-        if (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '')) {
-            logEvento('galleria', 'info', {
-                operazione: 'gallery:POST',
-                esito: 'degrado-scuola-id-assente',
-            });
+        let insRes;
+        if (upload_id) {
+            const foto = await pubblicaFotoIdempotente(supabase, uploaded_by, scuolaId, upload_id, baseRecord);
+            if (foto.response) return foto.response;
+            // Solo il vincitore raggiunge l'accodamento delle notifiche.
+            if (!foto.created) return NextResponse.json({ ...foto.data, replayed: true });
+            insRes = { data: foto.data, error: null };
+        } else {
             insRes = await ancheNelCestino(
                 supabase
                     .from('galleria_media_v2')
-                    .insert(baseRecord)
+                    .insert({ ...baseRecord, scuola_id: scuolaId })
                     .select()
                     .single(),
-                'ritentativo della pubblicazione senza scuola_id: come il tentativo qui sopra, una riga appena creata non puo essere nel cestino',
+                'una riga che nasce adesso non puo essere nel cestino: qui non c-e niente da filtrare, e dirlo è il modo di non confondere questa query con una lettura a cui il filtro è stato dimenticato',
             );
+            // DB E2E CI non migrato: colonna scuola_id assente → PGRST204 (o 42703).
+            // Riprova senza scuola_id così la pubblicazione resta possibile (degrado).
+            if (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '')) {
+                logEvento('galleria', 'info', {
+                    operazione: 'gallery:POST',
+                    esito: 'degrado-scuola-id-assente',
+                });
+                insRes = await ancheNelCestino(
+                    supabase
+                        .from('galleria_media_v2')
+                        .insert(baseRecord)
+                        .select()
+                        .single(),
+                    'ritentativo della pubblicazione senza scuola_id: come il tentativo qui sopra, una riga appena creata non puo essere nel cestino',
+                );
+            }
         }
         const { data, error } = insRes;
 

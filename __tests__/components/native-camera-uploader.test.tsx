@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 // Verifica il WIRING della fotocamera nativa nei due uploader immagine:
 // su nativo il trigger deve instradare il File della fotocamera nello STESSO
@@ -26,14 +26,15 @@ vi.mock('framer-motion', async () => {
   return { motion, AnimatePresence: ({ children }: { children?: React.ReactNode }) => children }
 })
 
-import { scegliFotoNativa } from '@/lib/native/camera'
+import { fotocameraNativaDisponibile, scegliFotoNativa } from '@/lib/native/camera'
 import { MediaUploader } from '@/components/features/gallery/MediaUploader'
 import { NewsMediaUploader } from '@/components/features/admin/news/NewsMediaUploader'
 
 const scegliMock = vi.mocked(scegliFotoNativa)
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
+  vi.mocked(fotocameraNativaDisponibile).mockReturnValue(true)
   Object.defineProperty(URL, 'createObjectURL', { value: vi.fn(() => 'blob:x'), configurable: true })
 })
 afterEach(() => {
@@ -62,6 +63,117 @@ describe('MediaUploader — fotocamera nativa', () => {
         etichette: expect.objectContaining({ scatta: 'Scatta una foto' }),
       }),
     )
+  })
+
+  it('dopo uno scatto riuscito offre ancora un gesto separato per scegliere un video dal dispositivo', async () => {
+    scegliMock.mockResolvedValue([new File(['foto'], 'scatto.jpg', { type: 'image/jpeg' })])
+    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    fireEvent.click(screen.getByText(/Trascina foto o video/i))
+    await screen.findByRole('button', { name: /1 file/i })
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input.accept).toContain('video/*')
+    const clickInput = vi.spyOn(input, 'click')
+    fireEvent.click(screen.getByRole('button', { name: /scegli.*file/i }))
+    expect(clickInput).toHaveBeenCalledTimes(1)
+    expect(scegliMock, 'la scelta file non riapre la fotocamera').toHaveBeenCalledTimes(1)
+  })
+
+  it('mostra la configurazione iOS e offre la scelta file con un nuovo gesto', async () => {
+    scegliMock.mockImplementation(async opts => {
+      opts?.onErrore?.('errore', 'plist_photo_library_add')
+      return []
+    })
+    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const clickInput = vi.spyOn(input, 'click')
+    fireEvent.click(screen.getByText(/Trascina foto o video/i))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/configurazione/i)
+    expect(clickInput).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /scegli.*file/i }))
+    expect(clickInput).toHaveBeenCalledTimes(1)
+    expect(scegliMock, 'il click DOM dell’input non deve risalire e riaprire la fotocamera').toHaveBeenCalledTimes(1)
+  })
+
+  it('distingue il permesso negato dall’annullamento', async () => {
+    scegliMock.mockImplementationOnce(async opts => {
+      opts?.onErrore?.('permesso_negato', 'permission_denied_camera')
+      return []
+    }).mockResolvedValueOnce([])
+    render(<MediaUploader onUpload={vi.fn()} />)
+    fireEvent.click(screen.getByText(/Trascina foto o video/i))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/permesso/i)
+    fireEvent.click(screen.getByText(/Trascina foto o video/i))
+    await waitFor(() => expect(scegliMock).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('accetta un JPEG senza MIME, mantiene i file validi e segnala quelli sconosciuti', async () => {
+    const onUpload = vi.fn()
+    const { container } = render(<MediaUploader onUpload={onUpload} />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const foto = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0])], 'foto.jpeg')
+    const ignoto = new File([new Uint8Array([1, 2, 3])], 'ingannevole.jpg')
+    fireEvent.change(input, { target: { files: [foto, ignoto] } })
+    expect(await screen.findByRole('alert')).toHaveTextContent(/formato/i)
+    fireEvent.click(screen.getByRole('button', { name: /1 file/i }))
+    expect(onUpload).toHaveBeenCalledTimes(1)
+    expect(onUpload.mock.calls[0][0]).toHaveLength(1)
+    expect(onUpload.mock.calls[0][0][0].file.type).toBe('image/jpeg')
+  })
+
+  it('riconosce un video MP4 senza MIME dai byte, non dall’estensione', async () => {
+    const onUpload = vi.fn()
+    const { container } = render(<MediaUploader onUpload={onUpload} />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const video = new File([new Uint8Array([0, 0, 0, 16, 102, 116, 121, 112, 105, 115, 111, 109])], 'ripresa.bin')
+    fireEvent.change(input, { target: { files: [video] } })
+    const continua = await screen.findByRole('button', { name: /1 file/i })
+    fireEvent.click(continua)
+    expect(onUpload.mock.calls[0][0][0].file.type).toBe('video/mp4')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it.each(['video/quicktime', 'video/x-m4v'])('accetta il video in ingresso %s per la pipeline', async tipo => {
+    const onUpload = vi.fn()
+    const { container } = render(<MediaUploader onUpload={onUpload} />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['video'], 'ripresa.mov', { type: tipo })] } })
+    fireEvent.click(await screen.findByRole('button', { name: /1 file/i }))
+    expect(onUpload.mock.calls[0][0][0].file.type).toBe(tipo)
+  })
+
+  it('rifiuta visibilmente un HEIC senza MIME anche se si chiama video.mp4', async () => {
+    const onUpload = vi.fn()
+    const { container } = render(<MediaUploader onUpload={onUpload} />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const heic = new File([new Uint8Array([0, 0, 0, 16, 102, 116, 121, 112, 104, 101, 105, 99])], 'video.mp4')
+    fireEvent.change(input, { target: { files: [heic] } })
+    expect(await screen.findByRole('alert')).toHaveTextContent(/formato/i)
+    expect(screen.queryByRole('button', { name: /1 file/i })).not.toBeInTheDocument()
+    expect(onUpload).not.toHaveBeenCalled()
+  })
+
+  it('non crea URL oggetto se la lettura della firma termina dopo lo smontaggio', async () => {
+    let completaLettura: (() => void) | undefined
+    class LettoreControllato {
+      result: ArrayBuffer | null = null
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      readAsArrayBuffer() {
+        completaLettura = () => {
+          this.result = new Uint8Array([0xff, 0xd8, 0xff]).buffer
+          this.onload?.()
+        }
+      }
+    }
+    vi.stubGlobal('FileReader', LettoreControllato)
+    const { container, unmount } = render(<MediaUploader onUpload={vi.fn()} />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File([new Uint8Array([0xff, 0xd8, 0xff])], 'foto.jpg')] } })
+    expect(completaLettura).toBeDefined()
+    unmount()
+    await act(async () => { completaLettura?.() })
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
   })
 })
 

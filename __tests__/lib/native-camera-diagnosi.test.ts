@@ -445,7 +445,7 @@ describe('un annullamento su un telefono NON inglese non è un errore', () => {
     expect(logClient).toHaveBeenCalledTimes(1)
     expect((logClient.mock.calls[0][0] as { messaggio?: string }).messaggio).toBe('fotocamera-permesso-negato')
     expect(campiUltimo()).toMatchObject({ esito: 'permesso_negato', error_code: slug })
-    expect(onErrore).toHaveBeenCalledWith('permesso_negato')
+    expect(onErrore).toHaveBeenCalledWith('permesso_negato', slug)
   })
 
   /**
@@ -554,10 +554,12 @@ describe('i campi sopravvivono alla lista bianca del server', () => {
   it('l’errore: ogni campo torna da `redact()` uguale a com’è partito', async () => {
     const { scegliFotoNativa } = await caricaCamera()
     getPhoto.mockRejectedValue(new Error('You are missing NSPhotoLibraryAddUsageDescription in your Info.plist file.'))
-    await scegliFotoNativa({ multiplo: true })
+    const onErrore = vi.fn()
+    await scegliFotoNativa({ multiplo: true, onErrore })
 
     const campi = campiUltimo()
     expect(campi.error_code).toBe('plist_photo_library_add')
+    expect(onErrore).toHaveBeenCalledWith('errore', 'plist_photo_library_add')
     expect(redact(campi)).toEqual(campi)
   })
 

@@ -65,6 +65,8 @@ export interface CaricamentoVideoLocale {
   jobId: string
   intentId: string
   canale: CanaleVideo
+  ownerId?: string | null
+  scuolaId?: string | null
   chiaveIdempotenza: string
   /**
    * Il nome scelto da chi carica. Resta SUL DISPOSITIVO, dove è già: serve alla
@@ -101,6 +103,8 @@ export const CHIAVI_RIGA_CARICAMENTO = [
   'jobId',
   'intentId',
   'canale',
+  'ownerId',
+  'scuolaId',
   'chiaveIdempotenza',
   'nome',
   'dimensioneByte',
@@ -131,6 +135,8 @@ interface IngressoNuovoCaricamento {
   jobId: string
   intentId: string
   canale: CanaleVideo
+  ownerId?: string | null
+  scuolaId?: string | null
   chiaveIdempotenza: string
   nome: string
   dimensioneByte: number
@@ -157,6 +163,8 @@ export function nuovoCaricamento(dati: IngressoNuovoCaricamento): CaricamentoVid
     jobId: dati.jobId,
     intentId: dati.intentId,
     canale: dati.canale,
+    ownerId: dati.ownerId ?? null,
+    scuolaId: dati.scuolaId ?? null,
     chiaveIdempotenza: dati.chiaveIdempotenza,
     nome: dati.nome,
     dimensioneByte: dati.dimensioneByte,
@@ -209,4 +217,10 @@ export function caricamentiDaPotare(
     if (Number.isNaN(quando)) return true
     return oraMs - quando >= ttlMs
   })
+}
+
+
+/** Le righe legacy senza autore/sede non vengono attribuite alla sessione corrente. */
+export function caricamentoNelContesto(riga: CaricamentoVideoLocale, ownerId: string, scuolaId: string | null, canale: CanaleVideo): boolean {
+  return riga.ownerId === ownerId && riga.scuolaId === scuolaId && riga.canale === canale
 }

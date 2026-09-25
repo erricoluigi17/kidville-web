@@ -168,8 +168,8 @@ function coordinate(percorso: string, mime: string): CoordinateCaricamentoVideo 
  * Un job come esce dalla RPC: interessano l'id e il percorso, e il percorso serve
  * a verificare che la RPC abbia davvero preso quello che le si era passato.
  */
-type JobRpc = { id?: unknown; original_path?: unknown }
-type EsitoRpc = { ok?: unknown; code?: unknown; intent?: { id?: unknown; revision?: unknown } | null; job?: JobRpc | null }
+type JobRpc = { id?: unknown; original_path?: unknown; status?: unknown }
+type EsitoRpc = { ok?: unknown; code?: unknown; intent?: { id?: unknown; revision?: unknown; status?: unknown } | null; job?: JobRpc | null }
 
 /**
  * La risposta: il contratto, più la FIRMA.
@@ -183,7 +183,7 @@ type EsitoRpc = { ok?: unknown; code?: unknown; intent?: { id?: unknown; revisio
  * lasciato implicito, perché un'estensione taciuta è esattamente il modo in cui
  * due lati dello stesso confine cominciano a divergere.
  */
-type JobAperto = EsitoAperturaIntentVideo['job'][number] & { firma: string }
+type JobAperto = EsitoAperturaIntentVideo['job'][number]
 
 export const POST = withRoute('video-uploads:POST', async (request: NextRequest) => {
   const OPERAZIONE = 'video-uploads:POST'
@@ -286,6 +286,8 @@ export const POST = withRoute('video-uploads:POST', async (request: NextRequest)
     }
 
     const jobIds: string[] = [primoJobId]
+    const jobRpc: JobRpc[] = [esitoApertura.job!]
+    const statoIntent = String(esitoApertura.intent?.status ?? 'pending')
     for (let i = 1; i < richiesta.file.length; i++) {
       const { data: aggiunta, error: erroreAggiunta } = await supabase.rpc('video_intent_add_job', {
         p_intent_id: intentId,
@@ -314,6 +316,7 @@ export const POST = withRoute('video-uploads:POST', async (request: NextRequest)
         })
       }
       jobIds.push(String(esitoAggiunta.job.id))
+      jobRpc.push(esitoAggiunta.job)
     }
 
     // ── LE FIRME, dopo che il database ha detto di sì. Coniate prima, un rifiuto
@@ -321,24 +324,41 @@ export const POST = withRoute('video-uploads:POST', async (request: NextRequest)
     //    nessuna riga nomina.
     const job: JobAperto[] = []
     for (let i = 0; i < richiesta.file.length; i++) {
-      const { data: firma, error: erroreFirma } = await supabase.storage
-        .from(BUCKET_ORIGINALI_VIDEO)
-        .createSignedUploadUrl(percorsi[i])
-      if (erroreFirma || !firma?.token) {
-        // Il corpo dell'errore del fornitore resta nel LOG e non torna al client:
-        // «Bucket not found: video_originals» non è una frase da mostrare a
-        // un'insegnante, e porta fuori il nome del bucket.
-        logErrore(
-          { operazione: OPERAZIONE, stato: 500, evento: 'storage' },
-          erroreFirma ?? new Error('createSignedUploadUrl senza token'),
-        )
-        return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500)
+      const status = String(jobRpc[i].status ?? 'awaiting_upload') as JobAperto['status']
+      let needsUpload = !['published', 'cancelled', 'superseded'].includes(statoIntent) && status === 'awaiting_upload'
+      let token = ''
+      let expiresAt: string | null = null
+      if (needsUpload) {
+        const { data: originale, error: errInfo } = await supabase.storage.from(BUCKET_ORIGINALI_VIDEO).info(percorsi[i])
+        const assente = String((errInfo as { statusCode?: string; status?: number } | null)?.statusCode ?? errInfo?.status) === '404'
+        if (errInfo && !assente || !originale && !assente) {
+          logErrore({ operazione: OPERAZIONE, stato: 500, evento: 'storage' }, errInfo ?? new Error('Metadata originale mancanti'))
+          return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500)
+        }
+        if (originale) {
+          if (originale.size !== richiesta.file[i].byte) {
+            logVideo(canale, 'warn', { operazione: OPERAZIONE, esito: 'originale-dimensione-diversa', job: jobIds[i] })
+            return rispostaVideo('VIDEO_RIPROVA', 409)
+          }
+          needsUpload = false
+        } else {
+          const { data: firma, error: erroreFirma } = await supabase.storage.from(BUCKET_ORIGINALI_VIDEO).createSignedUploadUrl(percorsi[i])
+          if (erroreFirma || !firma?.token) {
+            logErrore({ operazione: OPERAZIONE, stato: 500, evento: 'storage' }, erroreFirma ?? new Error('Firma mancante'))
+            return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500)
+          }
+          token = firma.token
+          expiresAt = new Date(Date.now() + VALIDITA_FIRMA_SECONDI * 1000).toISOString()
+        }
       }
       job.push({
         jobId: jobIds[i],
         chiaveIdempotenza: richiesta.file[i].chiaveIdempotenza,
         caricamento: coordinate(percorsi[i], richiesta.file[i].mime),
-        firma: firma.token,
+        firma: token,
+        status,
+        needs_upload: needsUpload,
+        expires_at: expiresAt,
       })
     }
 
@@ -362,6 +382,7 @@ export const POST = withRoute('video-uploads:POST', async (request: NextRequest)
     return NextResponse.json(
       {
         intentId,
+        intent: { status: statoIntent },
         revisione,
         canale,
         scadenzaCaricamentoIl: new Date(Date.now() + VALIDITA_FIRMA_SECONDI * 1000).toISOString(),

@@ -350,7 +350,12 @@ async function apparecchiaEAvvia(
   }
 
   await sessione.avvia({
-    ...conShell(scriptConversione({ conWatermark: job.channel === 'gallery' })),
+    ...conShell(scriptConversione({
+      conWatermark: job.channel === 'gallery',
+      videoIndex: probe.probe.videoStreamIndex,
+      audioIndex: probe.probe.audioStreamIndex,
+      sourceFps: probe.probe.fps,
+    })),
     env: ambiente,
     // Il tetto lo fa rispettare la MicroVM, non questo processo: è l'unico che
     // sopravvive alla fine dell'invocazione.
@@ -381,7 +386,15 @@ async function concludi(
     // si passa la prova peggiore possibile, e `verifyVideoOutput` risponde di no.
     esito.prova ?? { exitCode: 1, decodedFrames: 0 },
   )
-  if (!verifica.ok) return await fallisci(d, job, verifica.code, true, esito.diagnosi)
+  if (!verifica.ok) {
+    if (verifica.code === 'OUTPUT_FPS_INVALID') {
+      loggaEsito(job, 'error', {
+        esito: 'verifica-temporale-fallita',
+        error_code: esito.prova?.temporal?.reason ?? 'INVALID_EVIDENCE',
+      })
+    }
+    return await fallisci(d, job, verifica.code, true, esito.diagnosi)
+  }
 
   const scritto = await d.coda.pronto({
     jobId: job.id,
@@ -436,6 +449,7 @@ async function concludi(
     durata_s: Math.round(verifica.output.durationSeconds),
     larghezza: verifica.output.width,
     altezza: verifica.output.height,
+    frame: verifica.output.decodedFrames,
   })
   return { esito: 'pronto', jobId: job.id, byteUscita: verifica.output.bytes }
 }

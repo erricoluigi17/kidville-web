@@ -148,6 +148,71 @@ describe('caricaMediaGalleria · i rami di fallimento restano distinguibili', ()
   })
 })
 
+describe('caricaMediaGalleria · ripresa foto', () => {
+  it('salva il path PRIMA del PUT e lo ripassa come resume_path al rientro', async () => {
+    const eventi: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('upload-url')) {
+        expect(JSON.parse(String(init.body)).resume_path).toBe('uploads/ed-1/precedente.jpg')
+        return { ok: true, status: 200, json: async () => ({ path: 'uploads/ed-1/precedente.jpg', signedUrl: 'https://storage/firmato' }) }
+      }
+      eventi.push('put')
+      return { ok: true, status: 200 }
+    }))
+    const esito = await caricaMediaGalleria(fileDa(100, 'image/jpeg'), 'image/jpeg', {
+      resumePath: 'uploads/ed-1/precedente.jpg',
+      onPath: async path => { expect(path).toBe('uploads/ed-1/precedente.jpg'); eventi.push('persist') },
+    })
+    expect(esito).toEqual({ ok: true, path: 'uploads/ed-1/precedente.jpg' })
+    expect(eventi).toEqual(['persist', 'put'])
+  })
+
+  it('se la firma conferma l’oggetto già presente non fa una seconda PUT', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ path: 'uploads/ed-1/precedente.jpg', uploaded: true }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const esito = await caricaMediaGalleria(fileDa(100, 'image/jpeg'), 'image/jpeg', { resumePath: 'uploads/ed-1/precedente.jpg' })
+    expect(esito).toEqual({ ok: true, path: 'uploads/ed-1/precedente.jpg' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('se IndexedDB non salva il path non avvia la PUT', async () => {
+    const chiamate = fetchFinta()
+    const esito = await caricaMediaGalleria(fileDa(100, 'image/jpeg'), 'image/jpeg', {
+      onPath: async () => { throw new Error('QuotaExceededError') },
+    })
+    expect(esito).toEqual({ ok: false, motivo: 'persistenza', stato: null })
+    expect(putDi(chiamate)).toBeUndefined()
+  })
+
+  it('propaga Retry-After della firma 429 senza fare PUT', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, headers: { get: () => '60' } }))
+    const esito = await caricaMediaGalleria(fileDa(100, 'image/jpeg'), 'image/jpeg')
+    expect(esito).toEqual({ ok: false, motivo: 'firma', stato: 429, retryAfterMs: 60_000 })
+  })
+
+  it('se l’account cambia durante la firma non avvia il PUT', async () => {
+    let attivo = true
+    const chiamate = fetchFinta({ firma: { corpo: FIRMA_OK } })
+    const fetchOriginale = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      const response = await fetchOriginale(url, init)
+      attivo = false
+      return response
+    }))
+    const esito = await caricaMediaGalleria(fileDa(100, 'image/jpeg'), 'image/jpeg', { canContinue: () => attivo })
+    expect(esito).toEqual({ ok: false, motivo: 'ambito-cambiato', stato: null })
+    expect(putDi(chiamate)).toBeUndefined()
+  })
+
+  it('non chiede una firma se l’ambito è già cambiato', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const esito = await caricaMediaGalleria(fileDa(100, 'image/jpeg'), 'image/jpeg', { canContinue: () => false })
+    expect(esito).toEqual({ ok: false, motivo: 'ambito-cambiato', stato: null })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
 describe('caricaMediaGalleria · ciò che non deve MAI finire nei log', () => {
   it('nessuna riga porta il nome del file', async () => {
     fetchFinta({ firma: { status: 400 } })

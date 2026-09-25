@@ -130,7 +130,7 @@ describe('scegliFotoNativa', () => {
     getPhotoMock.mockRejectedValue(new Error('User denied access to camera'))
     const onErrore = vi.fn()
     await expect(scegliFotoNativa({ onErrore })).resolves.toEqual([])
-    expect(onErrore).toHaveBeenCalledWith('permesso_negato')
+    expect(onErrore).toHaveBeenCalledWith('permesso_negato', 'permission_denied_camera')
     expect(logClient).toHaveBeenCalledTimes(1)
     expect(logClient.mock.calls[0][0].messaggio).toBe('fotocamera-permesso-negato')
   })

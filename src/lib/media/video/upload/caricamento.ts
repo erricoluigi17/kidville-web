@@ -112,6 +112,8 @@ export interface IngressoAccodamento {
   jobId: string
   intentId: string
   canale: CanaleVideo
+  ownerId?: string | null
+  scuolaId?: string | null
   chiaveIdempotenza: string
   coordinate: CoordinateCaricamentoVideo
   file: File
@@ -217,15 +219,26 @@ export async function accodaCaricamentoVideo(
   // Un `fallito` o un `annullato` invece si sovrascrivono: lì riaccodare È la
   // richiesta di ricominciare.
   const esistente = await dip.archivio.leggi(jobId)
-  if (esistente && (esistente.stato === 'da_caricare' || esistente.stato === 'in_corso')) {
-    await dip.archivio.scriviByte(jobId, file)
-    return { ok: true, riga: esistente }
+  if (esistente && !['fallito', 'annullato'].includes(esistente.stato)) {
+    if ((esistente.ownerId && ingresso.ownerId && esistente.ownerId !== ingresso.ownerId)
+      || (esistente.scuolaId && ingresso.scuolaId && esistente.scuolaId !== ingresso.scuolaId)
+      || esistente.canale !== ingresso.canale || esistente.dimensioneByte !== file.size) {
+      segnala('warn', 'video-upload-contesto-diverso', jobId, {})
+      return { ok: false, codice: 'VIDEO_NON_AUTORIZZATO' }
+    }
+    // Soltanto la nuova selezione esplicita può attribuire una riga legacy.
+    const aggiornata = { ...esistente, ownerId: esistente.ownerId ?? ingresso.ownerId ?? null, scuolaId: esistente.scuolaId ?? ingresso.scuolaId ?? null }
+    await dip.archivio.scrivi(aggiornata)
+    if (esistente.stato !== 'caricato') await dip.archivio.scriviByte(jobId, file)
+    return { ok: true, riga: aggiornata }
   }
 
   const riga = nuovoCaricamento({
     jobId,
     intentId: ingresso.intentId,
     canale: ingresso.canale,
+    ownerId: ingresso.ownerId,
+    scuolaId: ingresso.scuolaId,
     chiaveIdempotenza: ingresso.chiaveIdempotenza,
     nome: file.name,
     dimensioneByte: file.size,
@@ -304,7 +317,17 @@ type FineTus = { fine: 'riuscito' } | { fine: 'errore'; err: unknown } | { fine:
  * vorrebbe dire due strade che possono divergere — con la seconda esercitata solo
  * quando la rete cade, cioè quasi mai in collaudo e sempre in produzione.
  */
-export async function caricaVideo(
+const trasferimentiInCorso = new Map<string, Promise<EsitoCaricamentoVideo>>()
+
+export function caricaVideo(dip: DipendenzeCaricamentoVideo, jobId: string, opzioni: OpzioniCaricamento = {}): Promise<EsitoCaricamentoVideo> {
+  const esistente = trasferimentiInCorso.get(jobId)
+  if (esistente) return esistente
+  const promessa = eseguiCaricamentoVideo(dip, jobId, opzioni).finally(() => trasferimentiInCorso.delete(jobId))
+  trasferimentiInCorso.set(jobId, promessa)
+  return promessa
+}
+
+async function eseguiCaricamentoVideo(
   dip: DipendenzeCaricamentoVideo,
   jobId: string,
   opzioni: OpzioniCaricamento = {},
@@ -358,9 +381,8 @@ export async function caricaVideo(
   // rotellina — e di quel guasto non ci sarebbe una riga da nessuna parte.
   // È «interrotto» e non «fallito» per la stessa ragione del 401: è un «no» che
   // una persona toglie di mezzo rientrando, e i byte devono essere ancora lì.
-  let intestazioni: Record<string, string>
   try {
-    intestazioni = await dip.intestazioni()
+    await dip.intestazioni()
   } catch (err) {
     segnala('error', 'video-upload-sessione-non-risolta', jobId, {
       error_code: nomeErrore(err),
@@ -414,7 +436,15 @@ export async function caricaVideo(
       uploadUrl: riga.urlTus,
       chunkSize: riga.coordinate.dimensioneBloccoByte,
       retryDelays: dip.ritardiRitentativo ?? [0, 1000, 3000, 5000],
-      headers: intestazioni,
+      // La firma può scadere fra due chunk. La callback mantiene la cache breve
+      // nel chiamante e rinnova soltanto quando necessario, mai su disco.
+      // Si scrive SOLO qui: XMLHttpRequest concatena setRequestHeader ripetuti.
+      // Anche impostarla in `headers` produrrebbe "firma, firma", rifiutata dallo
+      // Storage con Invalid Compact JWS prima del primo byte.
+      onBeforeRequest: async (request) => {
+        const attuali = await dip.intestazioni()
+        for (const [chiave, valore] of Object.entries(attuali)) request.setHeader(chiave, valore)
+      },
       metadata: {
         bucketName: riga.coordinate.bucket,
         objectName: riga.coordinate.percorso,

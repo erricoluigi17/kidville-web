@@ -171,6 +171,7 @@ function marcatore(
     `KV_BYTE_USCITA=${p.byteUscita ?? 8_000_000}`,
     `KV_DECODE_EXIT=${p.decodeExit ?? 0}`,
     `KV_DECODE_FRAMES=${p.decodeFrames ?? 5391}`,
+    `KV_TEMPORAL=${JSON.stringify({ version: 1, ok: true, mode: 'preserve', sourceFrames: p.decodeFrames ?? 5391, outputFrames: p.decodeFrames ?? 5391, sourceFps: 30000 / 1001, outputFps: 30000 / 1001 })}`,
     '===PROBE_SORGENTE===',
     p.probeIn ?? probeSorgente(),
     '===PROBE_USCITA===',
@@ -337,7 +338,11 @@ describe('runner video · gli script e i loro lettori', () => {
   })
 
   it('il marcatore compare TUTTO INSIEME: si scrive a parte e si sposta', () => {
-    const script = scriptConversione({ conWatermark: true })
+    const script = scriptConversione({ conWatermark: true, videoIndex: 0, audioIndex: null, sourceFps: 30 })
+    expect(script).toContain('KV_TEMPORAL=')
+    expect(script).toContain('node -')
+    expect(script).toContain('-show_frames')
+    expect(script).toContain('-fps_mode passthrough')
     // Senza questo `mv`, la sorveglianza potrebbe leggere un marcatore scritto a
     // metà — cioè un probe troncato — e dichiarare guasta una conversione riuscita.
     expect(script).toMatch(/mv\s+\S*parziale\S*\s+\S*esito\.txt/)
@@ -368,7 +373,7 @@ describe('runner video · gli script e i loro lettori', () => {
     expect(letto.uscita).toBe(0)
     expect(letto.byteSorgente).toBe(20_000_000)
     expect(letto.byteUscita).toBe(8_000_000)
-    expect(letto.prova).toEqual({ exitCode: 0, decodedFrames: 12 })
+    expect(letto.prova).toMatchObject({ exitCode: 0, decodedFrames: 12, temporal: { version: 1, ok: true, sourceFrames: 12, outputFrames: 12 } })
     expect(JSON.parse(letto.probeSorgente).format.duration).toBe(String(DURATA_SORGENTE))
     expect(JSON.parse(letto.probeUscita).format.duration).toBe(String(DURATA_USCITA))
   })

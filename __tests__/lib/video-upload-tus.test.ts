@@ -144,7 +144,8 @@ class RichiestaFinta implements HttpRequest {
     return this.url
   }
   setHeader(h: string, v: string) {
-    this.intestazioni[h] = v
+    // XMLHttpRequest.setRequestHeader concatena: una seconda firma non sostituisce la prima.
+    this.intestazioni[h] = this.intestazioni[h] === undefined ? v : `${this.intestazioni[h]}, ${v}`
   }
   getHeader(h: string) {
     return this.intestazioni[h]
@@ -845,4 +846,34 @@ describe('che cosa lascia scritto', () => {
     expect(logClient.mock.calls.length).toBeGreaterThan(0)
     expect(JSON.stringify(logClient.mock.calls)).not.toContain('recita-di-natale')
   })
+})
+
+
+describe('riprese sovrapposte dello stesso job', () => {
+  it('due chiamate in contemporanea condividono un unico trasferimento TUS', async () => {
+    const { server, dip } = banco()
+    await accoda(dip)
+    const risultati = await Promise.all([caricaVideo(dip, JOB), caricaVideo(dip, JOB)])
+    expect(risultati.every(r => r.esito === 'caricato')).toBe(true)
+    expect(server.viste.filter(v => v.metodo === 'POST')).toHaveLength(1)
+  })
+  it('riaccodare un job caricato conserva lo stato senza rispedire i byte', async () => {
+    const { archivio, dip } = banco()
+    await accoda(dip)
+    await caricaVideo(dip, JOB)
+    await accoda(dip)
+    expect((await archivio.leggi(JOB))?.stato).toBe('caricato')
+    expect(await archivio.leggiByte(JOB)).toBeUndefined()
+  })
+})
+
+
+it('rinnova le intestazioni fra i chunk quando la firma scade durante il trasferimento', async () => {
+  const { server, dip } = banco()
+  await accoda(dip)
+  let richieste = 0
+  const intestazioni = () => ({ 'x-signature': ++richieste <= 2 ? 'prima-firma' : 'firma-rinnovata' })
+  await caricaVideo({ ...dip, intestazioni }, JOB)
+  expect(server.viste.some(v => v.intestazioni['x-signature'] === 'firma-rinnovata')).toBe(true)
+  expect(server.viste.filter(v => v.metodo === 'POST')).toHaveLength(1)
 })

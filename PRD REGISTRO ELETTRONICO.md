@@ -1,4 +1,8 @@
 
+## 🛠️ Changelog — Caricamento affidabile foto e video — 2026-09-25 (in corso)
+
+Branch `codex/fix-caricamenti-media`. Intervento approvato: errori fotocamera visibili e scelta alternativa sulle shell iOS precedenti; coda foto persistente con ripresa per file, sede esplicita, limite per utente e pubblicazione idempotente; riconciliazione del caricamento video e firme rinnovabili; verifica VFR tramite evidenze temporali. Spec e piano in `docs/superpowers/specs/2026-09-25-caricamenti-media-design.md` e `docs/superpowers/plans/2026-09-25-caricamenti-media.md`. **Codice non ancora rilasciato**: collaudi e gate finali in corso. Migrazione additiva `20260925180000_gallery_pubblicazione_idempotente` applicata e verificata in produzione: 716 iscrizioni e 3.687 media prima e dopo, registro `gallery_photo_uploads` inizialmente vuoto; 193 migrazioni registrate. Registro idempotente e destinatari sono transazionali; la chiave sopravvive alla purga del media. Il limite rimane 30 firme/10 minuti ed è per utente; la coda conserva file, tag, percorso e orario di ripresa. iOS 1.1/build 5 resta in revisione Apple, distinta dal rilascio web.
+
 > [!IMPORTANT]
 > ## 📊 Stato Implementazione e Architettura Database
 >

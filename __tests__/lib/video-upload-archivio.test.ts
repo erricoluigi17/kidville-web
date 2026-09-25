@@ -281,3 +281,8 @@ describe('la scelta dell’archivio', () => {
     vi.doUnmock('@/lib/logging/client')
   })
 })
+
+
+it('nuove righe conservano autore e sede originali; il legacy resta non attribuito', () => {
+  expect(riga()).toMatchObject({ ownerId: null, scuolaId: null })
+})

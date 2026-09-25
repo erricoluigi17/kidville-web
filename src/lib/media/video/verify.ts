@@ -1,6 +1,7 @@
 import { MAX_VIDEO_INPUT_BYTES } from './limiti'
 import { outputVideoColorMetadata } from './encode'
 import type { VideoProbe } from './probe'
+import type { VideoTemporalEvidence } from './temporale'
 
 const AAC_SAMPLES_PER_FRAME = 1024
 const MAX_LANDSCAPE = { width: 1920, height: 1080 } as const
@@ -9,6 +10,7 @@ const MAX_PORTRAIT = { width: 1080, height: 1920 } as const
 export interface VideoDecodeEvidence {
   exitCode: number
   decodedFrames: number
+  temporal?: VideoTemporalEvidence | null
 }
 
 export interface VerifiedVideoOutput {
@@ -279,11 +281,17 @@ function dimensionsMatch(source: VideoProbe, width: number, height: number): boo
   return widthLoss >= 0 && widthLoss < 4 && heightLoss >= 0 && heightLoss < 4
 }
 
-function fpsMatches(sourceFps: number, outputFps: number): boolean {
-  if (!Number.isFinite(sourceFps) || sourceFps <= 0) return false
-  const expected = Math.min(sourceFps, 60)
-  const tolerance = Math.max(0.01, expected * 0.001)
-  return Math.abs(outputFps - expected) <= tolerance && outputFps <= 60 + tolerance
+function fpsMatches(sourceFps: number, outputFps: number, evidence: VideoDecodeEvidence): boolean {
+  const temporal = evidence.temporal
+  // Fail-closed: media o r_frame_rate, da soli, non dimostrano una conversione
+  // temporale corretta. L'attestazione proviene dalla decodifica nella Sandbox.
+  if (!temporal || temporal.version !== 1 || temporal.ok !== true ||
+      temporal.sourceFps !== sourceFps || temporal.outputFps !== outputFps ||
+      !Number.isSafeInteger(temporal.sourceFrames) || temporal.sourceFrames <= 0 ||
+      temporal.outputFrames !== evidence.decodedFrames) return false
+  return sourceFps > 60
+    ? temporal.mode === 'reduce60' && Math.abs(outputFps - 60) <= 0.01
+    : temporal.mode === 'preserve' && temporal.sourceFrames === temporal.outputFrames
 }
 
 function durationMatches(
@@ -377,7 +385,7 @@ export function verifyVideoOutput(
   if (!dimensionsMatch(source, width, height)) {
     return { ok: false, code: 'OUTPUT_DIMENSIONS_INVALID' }
   }
-  if (!fpsMatches(source.fps, fps)) return { ok: false, code: 'OUTPUT_FPS_INVALID' }
+  if (!fpsMatches(source.fps, fps, decodeEvidence)) return { ok: false, code: 'OUTPUT_FPS_INVALID' }
 
   const colorTransfer = normalizedColorValue(video.color_transfer)
   const colorPrimaries = normalizedColorValue(video.color_primaries)

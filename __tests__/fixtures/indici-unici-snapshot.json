@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
   "generato_il": "2026-09-25",
-  "generato_alle": "2026-09-25T03:07:33Z",
-  "sha256": "638aa56f5539e49be77ffe60afa00abd1a2dd34bffe23ae68dbb059c9a003e0b",
+  "generato_alle": "2026-09-25T18:54:52Z",
+  "sha256": "b722b5b21e4811850daa76e0bbc4998feefba760e40bf8669743b467a16dba01",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -827,6 +827,19 @@
     },
     {
       "tabella": "galleria_media_v2",
+      "indice": "galleria_media_upload_unico_idx",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "scuola_id",
+        "upload_id",
+        "uploaded_by"
+      ]
+    },
+    {
+      "tabella": "galleria_media_v2",
       "indice": "galleria_media_v2_pkey",
       "parziale": false,
       "con_espressioni": false,
@@ -834,6 +847,19 @@
       "ha_colonna_nullable": false,
       "colonne": [
         "id"
+      ]
+    },
+    {
+      "tabella": "gallery_photo_uploads",
+      "indice": "gallery_photo_uploads_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "owner_id",
+        "scuola_id",
+        "upload_id"
       ]
     },
     {

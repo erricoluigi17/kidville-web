@@ -150,8 +150,10 @@ const ESENTE = 'src/lib/logging/';
 // unico `.catch` muto era sul caricamento delle quinte: con l'elenco non arrivato la pagina
 // diceva «nessuna quinta», uguale al caso vero, e non restava traccia. Ora logga
 // (`competenze-sezioni-non-caricate`).
-const MAX_FILE = 45;
-const MAX_OCCORRENZE = 68;
+// 🔻 45 → 44 e 68 → 67 il 2026-09-25: la pagina galleria docente
+// registra ora il fallimento della lettura del ruolo, senza catch muto.
+const MAX_FILE = 44;
+const MAX_OCCORRENZE = 67;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

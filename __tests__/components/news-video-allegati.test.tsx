@@ -19,7 +19,7 @@ const pota = vi.fn()
 const annullaLocale = vi.fn()
 
 vi.mock('@/lib/media/video/upload', () => ({
-  creaArchivioCaricamenti: () => Promise.resolve({ elenca: () => Promise.resolve([]) }),
+  creaArchivioCaricamenti: () => Promise.resolve({ elenca: () => daSeguire(), aggiorna: vi.fn(), eliminaByte: vi.fn(), elimina: vi.fn() }),
   accodaCaricamentoVideo: (...a: unknown[]) => accoda(...a),
   caricaVideo: (...a: unknown[]) => carica(...a),
   jobDaSeguire: (...a: unknown[]) => daSeguire(...a),
@@ -337,8 +337,10 @@ describe('NewsVideoAllegati · il giro completo di un video', () => {
 describe('NewsVideoAllegati · al rientro nella pagina', () => {
   it('ritrova i filmati che il server stava ancora preparando, senza ricaricarli', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
-    daSeguire.mockResolvedValue([{ jobId: JOB, intentId: INTENTO, canale: 'news' }])
-    fetchMock.mockResolvedValue(risposta(200, statoJob('processing')))
+    daSeguire.mockResolvedValue([{ jobId: JOB, intentId: INTENTO, canale: 'news', ownerId: UTENTE, scuolaId: SEDE_A, stato: 'caricato', nome: 'sintetico.mp4', dimensioneByte: 3, mime: 'video/mp4', chiaveIdempotenza: 'k' }])
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+      ? risposta(200, { ...APERTURA, intent: { status: 'confirmed' }, job: [{ ...APERTURA.job[0], status: 'processing', needs_upload: false, firma: '', expires_at: null }] })
+      : risposta(200, statoJob('processing')))
 
     monta()
 
@@ -348,6 +350,35 @@ describe('NewsVideoAllegati · al rientro nella pagina', () => {
     // La potatura all'avvio non è un di più: senza, i Blob da due gigabyte
     // restano sul telefono di un genitore finché il browser non sfratta tutto.
     expect(pota).toHaveBeenCalled()
+  })
+
+  it.each(['caricato', 'conferma'])('riprende metadati senza Blob e riconcilia risposta persa: %s', async persa => {
+    daSeguire.mockResolvedValue([{ jobId: JOB, intentId: INTENTO, canale: 'news', ownerId: UTENTE, scuolaId: SEDE_A,
+      stato: 'caricato', chiaveIdempotenza: 'k', nome: 'sintetico.mp4', dimensioneByte: 3, mime: 'video/mp4' }])
+    let intento = 'pending'; let stato = 'awaiting_upload'
+    const azioni: string[] = []
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return risposta(200, { ...APERTURA, intent: { status: intento },
+        job: [{ ...APERTURA.job[0], status: stato, needs_upload: false, firma: '', expires_at: null }] })
+      if (init?.method === 'PATCH') {
+        const azione = JSON.parse(String(init.body)).azione
+        azioni.push(azione)
+        if (azione === 'caricato') stato = 'queued'
+        if (azione === 'conferma') intento = 'confirmed'
+        if (azione === persa) throw new TypeError('risposta persa')
+      }
+      return risposta(200, { ...statoJob(stato), statoIntent: intento })
+    })
+    monta()
+    await waitFor(() => expect(azioni).toEqual(['caricato', 'conferma']))
+    expect(carica).not.toHaveBeenCalled()
+  })
+  it('ignora archivio di altro proprietario, altra sede e legacy', async () => {
+    const riga = { jobId: JOB, intentId: INTENTO, canale: 'news', stato: 'caricato', ownerId: UTENTE, scuolaId: SEDE_A }
+    daSeguire.mockResolvedValue([{ ...riga, ownerId: 'altro' }, { ...riga, scuolaId: 'altra' }, { ...riga, ownerId: undefined, scuolaId: undefined }])
+    monta()
+    await act(async () => {})
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('un browser che non sa dire la durata non blocca il caricamento', async () => {

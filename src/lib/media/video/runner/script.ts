@@ -1,4 +1,5 @@
 import type { CodiceRunnerVideo } from './codici'
+import { videoTemporalProgram, type VideoTemporalEvidence } from '../temporale'
 import {
   CARTELLA_BUILD,
   FFMPEG,
@@ -67,6 +68,7 @@ const PROBE_USCITA = `${CARTELLA_LAVORO}/uscita.json`
 const DIARIO = `${CARTELLA_LAVORO}/ffmpeg.log`
 const DIARIO_DECODIFICA = `${CARTELLA_LAVORO}/decodifica.log`
 const USCITA_DECODIFICA = `${CARTELLA_LAVORO}/decodifica.exit`
+const PROVA_TEMPORALE = `${CARTELLA_LAVORO}/temporale.json`
 const PARZIALE = `${CARTELLA_LAVORO}/esito.parziale`
 
 /** I nomi delle variabili d'ambiente con cui gli URL firmati entrano nella MicroVM. */
@@ -200,7 +202,7 @@ export const USCITE_CONVERSIONE = {
  * Il caricamento è un `PUT` con `-T`, che *trasmette* il file invece di caricarlo
  * in memoria: è la forma che regge un'uscita da un gigabyte.
  */
-export function scriptConversione(p: { conWatermark: boolean }): string {
+export function scriptConversione(p: { conWatermark: boolean; videoIndex: number; audioIndex: number | null; sourceFps: number }): string {
   const righe = [
     'set -u',
     `mkdir -p ${CARTELLA_LAVORO}`,
@@ -214,6 +216,7 @@ export function scriptConversione(p: { conWatermark: boolean }): string {
     `    echo "KV_BYTE_SORGENTE=$(stat -c %s ${INGRESSO} 2>/dev/null || echo 0)"`,
     `    echo "KV_BYTE_USCITA=$(stat -c %s ${USCITA} 2>/dev/null || echo 0)"`,
     `    echo "KV_DECODE_EXIT=$(cat ${USCITA_DECODIFICA} 2>/dev/null || echo 1)"`,
+    `    echo "KV_TEMPORAL=$(cat ${PROVA_TEMPORALE} 2>/dev/null || echo null)"`,
     `    echo "KV_DECODE_FRAMES=$(grep -o 'frame=[ ]*[0-9]*' ${DIARIO_DECODIFICA} 2>/dev/null ` +
       `| tail -1 | tr -dc '0-9' || echo 0)"`,
     "    echo '===PROBE_SORGENTE==='",
@@ -245,7 +248,12 @@ export function scriptConversione(p: { conWatermark: boolean }): string {
       `|| exit ${USCITE_CONVERSIONE.probe}`,
     // La prova di decodifica non interrompe: il suo esito è un dato, non un verdetto.
     `${FFMPEG} -hide_banner -nostdin -v error -stats -xerror -err_detect explode ` +
-      `-i ${USCITA} -f null - > ${DIARIO_DECODIFICA} 2>&1; echo "$?" > ${USCITA_DECODIFICA}`,
+      `-i ${USCITA} -fps_mode passthrough -f null - > ${DIARIO_DECODIFICA} 2>&1; echo "$?" > ${USCITA_DECODIFICA}`,
+    // Il programma produce SOLO un'attestazione compatta: i frame non attraversano
+    // stdout del comando Vercel, il marcatore, la DB RPC o il logger.
+    `node - ${FFPROBE} ${INGRESSO} ${USCITA} > ${PROVA_TEMPORALE} 2>>${DIARIO} <<'KV_TEMPORAL_PROGRAM'`,
+    videoTemporalProgram(p),
+    'KV_TEMPORAL_PROGRAM',
     `curl -fsS --retry 3 --retry-all-errors -T ${USCITA} ` +
       `-H 'content-type: video/mp4' -H 'x-upsert: true' "$${ENV_URL_USCITA}" >>${DIARIO} 2>&1 ` +
       `|| exit ${USCITE_CONVERSIONE.caricamento}`,
@@ -281,7 +289,7 @@ export interface LetturaEsitoConversione {
   uscita: number
   byteSorgente: number | null
   byteUscita: number | null
-  prova: { exitCode: number; decodedFrames: number } | null
+  prova: { exitCode: number; decodedFrames: number; temporal: VideoTemporalEvidence | null } | null
   probeSorgente: string
   probeUscita: string
   diagnosi: string
@@ -299,6 +307,14 @@ export function leggiEsitoConversione(testo: string): LetturaEsitoConversione {
   const uscita = interoPositivo(valoreDi(t, 'KV_ESITO_EXIT'), true)
   const decodeExit = interoPositivo(valoreDi(t, 'KV_DECODE_EXIT'), true)
   const decodeFrames = interoPositivo(valoreDi(t, 'KV_DECODE_FRAMES'), true)
+  let temporal: VideoTemporalEvidence | null = null
+  try {
+    const parsed = JSON.parse(valoreDi(t, 'KV_TEMPORAL') ?? 'null') as VideoTemporalEvidence | null
+    if (parsed?.version === 1) temporal = parsed
+  } catch {
+    // Un marcatore troncato diventa prova assente: verifyVideoOutput lo rifiuta e
+    // il runner registra OUTPUT_FPS_INVALID senza loggare la sonda.
+  }
   return {
     // `1` e non `0`: senza la riga non sappiamo com'è finita, e non saperlo è un guasto.
     uscita: uscita ?? 1,
@@ -307,7 +323,7 @@ export function leggiEsitoConversione(testo: string): LetturaEsitoConversione {
     prova:
       decodeExit === null || decodeFrames === null
         ? null
-        : { exitCode: decodeExit, decodedFrames: decodeFrames },
+        : { exitCode: decodeExit, decodedFrames: decodeFrames, temporal },
     probeSorgente: fra(t, '===PROBE_SORGENTE===', '===PROBE_USCITA===').trim(),
     probeUscita: fra(t, '===PROBE_USCITA===', '===DIAGNOSI===').trim(),
     diagnosi: dopo(t, '===DIAGNOSI===').trim(),

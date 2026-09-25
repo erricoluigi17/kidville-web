@@ -34,6 +34,7 @@ const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
   rateLimit: vi.fn(),
   createSignedUploadUrl: vi.fn(),
+  info: vi.fn(),
   pathFirmato: '' as string,
 }))
 
@@ -43,6 +44,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     storage: {
       from: () => ({
+        info: h.info,
         createSignedUploadUrl: (p: string) => {
           h.pathFirmato = p
           return h.createSignedUploadUrl(p)
@@ -99,6 +101,7 @@ const CORPO_OK = { mime: 'video/mp4', size: 12_000_000, testa_b64: testaAvc1() }
 beforeEach(() => {
   vi.clearAllMocks()
   h.pathFirmato = ''
+  h.info.mockResolvedValue({ data: null, error: { status: 404 } })
   h.requireDocente.mockResolvedValue({ user: { id: 'ed-1', role: 'educator', scuola_id: 'sc-1' } })
   h.rateLimit.mockResolvedValue({ ok: true })
   h.createSignedUploadUrl.mockResolvedValue({ data: { signedUrl: 'https://storage/firmato', token: 'tok' }, error: null })
@@ -237,5 +240,63 @@ describe('POST /api/gallery/upload-url', () => {
       expect(res.status).toBe(400)
       expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
     })
+  })
+})
+
+
+describe('firma foto · limite per utente autenticato', () => {
+  it('due docenti sullo stesso IP hanno contatori distinti', async () => {
+    await POST(richiesta({ mime: 'image/jpeg', size: 100 }))
+    h.requireDocente.mockResolvedValue({ user: { id: 'ed-2', role: 'educator' } })
+    await POST(richiesta({ mime: 'image/jpeg', size: 100 }))
+    expect(h.rateLimit.mock.calls.map(([key]) => key)).toEqual(['galleria-upload:ed-1', 'galleria-upload:ed-2'])
+    expect(h.rateLimit).toHaveBeenCalledWith('galleria-upload:ed-1', { limit: 30, windowMs: 600_000 })
+  })
+  it('la validazione precede il contatore delle firme', async () => {
+    expect((await POST(richiesta({ mime: 'image/jpeg', size: 0 }))).status).toBe(400)
+    expect(h.rateLimit).not.toHaveBeenCalled()
+  })
+  it('429 espone Retry-After senza consumare una firma', async () => {
+    h.rateLimit.mockResolvedValue({ ok: false, retryAfterMs: 60_100 })
+    const res = await POST(richiesta({ mime: 'image/jpeg', size: 100 }))
+    expect(res.headers.get('Retry-After')).toBe('61')
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('ripresa foto · PUT riuscita con risposta persa', () => {
+  const FOTO = { mime: 'image/jpeg', size: 100, resume_path: 'uploads/ed-1/123-foto.jpg' }
+  it('oggetto già presente e compatibile: conferma senza firma né sovrascrittura', async () => {
+    h.info.mockResolvedValue({ data: { size: 100, contentType: 'image/jpeg' }, error: null })
+    const res = await POST(richiesta(FOTO))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ path: FOTO.resume_path, uploaded: true })
+    expect(h.info).toHaveBeenCalledWith(FOTO.resume_path)
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+    expect(h.rateLimit).not.toHaveBeenCalled()
+  })
+  it('oggetto assente: firma di nuovo lo stesso percorso senza upsert', async () => {
+    const res = await POST(richiesta(FOTO))
+    expect(res.status).toBe(200)
+    expect((await res.json()).path).toBe(FOTO.resume_path)
+    expect(h.createSignedUploadUrl).toHaveBeenCalledWith(FOTO.resume_path)
+  })
+  it('metadata diversi: 409, nessuna firma', async () => {
+    h.info.mockResolvedValue({ data: { size: 101, contentType: 'image/jpeg' }, error: null })
+    const res = await POST(richiesta(FOTO))
+    expect(res.status).toBe(409)
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+  })
+  it.each(['uploads/ed-2/x.jpg', 'uploads/ed-1/../ed-2/x.jpg', 'uploads/ed-1/%2e%2e/x.jpg', '/uploads/ed-1/x.jpg'])('rifiuta il percorso non canonico o altrui %s', async resume_path => {
+    expect((await POST(richiesta({ ...FOTO, resume_path }))).status).toBe(400)
+    expect(h.info).not.toHaveBeenCalled()
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+    expect(h.rateLimit).not.toHaveBeenCalled()
+  })
+  it('errore provider non diventa oggetto assente né permette una firma', async () => {
+    h.info.mockResolvedValue({ data: null, error: { status: 503, message: 'Provider unavailable' } })
+    expect((await POST(richiesta(FOTO))).status).toBe(500)
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
   })
 })

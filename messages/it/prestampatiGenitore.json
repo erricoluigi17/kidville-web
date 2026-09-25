@@ -130,6 +130,8 @@
   "certificatoLivelloNonNido": "Il certificato per il Bonus Asilo Nido si rilascia solo a chi frequenta il nido: per gli altri serve il certificato di iscrizione e frequenza.",
   "erroreCertificato": "Il certificato non è stato generato: riprova fra qualche minuto.",
   "certificatoNonArchiviato": "Il certificato è stato emesso, ma non è entrato nell’archivio della scuola: conservalo adesso, è l’unica copia che ti resta. Non premere di nuovo «Genera»: ne uscirebbe un altro con un numero di protocollo nuovo. Avvisa la segreteria.",
+  "certificatoNonSalvatoRisalva": "Il certificato non si è salvato sul dispositivo: usa «Salva di nuovo» qui accanto, non «Genera».",
+  "salvaDiNuovo": "Salva di nuovo",
   "documentoScarica": "Scarica il modulo firmato",
   "documentoArchiviatoIl": "Nel fascicolo dal {data}.",
   "certificatoNumero": "Protocollo n. {numero}.",

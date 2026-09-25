@@ -140,6 +140,7 @@
   "modulisticaAl": "to",
   "modulisticaNoteGenitore": "Parent note:",
   "modulisticaApriDocumento": "Open document",
+  "modulisticaDocumentoNonApribile": "The certificate could not be opened. Please try again.",
   "modulisticaNotaValidazioneLabel": "Validation note (optional, required for rejection)",
   "modulisticaNotaPlaceholder": "E.g. Period corrected to 01/03–04/03",
   "modulisticaRifiuta": "Reject",

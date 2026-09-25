@@ -23,6 +23,7 @@
   "apri": "Open",
   "chiudi": "Close",
   "scarica": "Download file",
+  "scaricoNonRiuscito": "The file could not be downloaded. Please try again.",
   "totale": "Documents",
   "firmati": "Signed",
   "sanitari": "Health",

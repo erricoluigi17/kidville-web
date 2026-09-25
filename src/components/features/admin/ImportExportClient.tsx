@@ -7,6 +7,9 @@ import { createBrowserClient } from '@supabase/ssr';
 import { buildTemplateCsv } from '@/lib/import/template';
 import { SedeRequired } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica';
+
+const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 interface ImportOutcome {
     totale: number;
@@ -39,7 +42,18 @@ export function ImportExportClient() {
             const worksheet = XLSX.utils.json_to_sheet(data);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, 'Alunni');
-            XLSX.writeFile(workbook, `Esportazione_Alunni_${new Date().toISOString().split('T')[0]}.xlsx`);
+            // NON `XLSX.writeFile`: sul web crea un'ancora `download` su un `blob:`, che nella
+            // WebView dell'app non scarica niente e non lancia. Si produce il Blob e lo si
+            // passa all'helper unico: sul web lo scarica come prima, nell'app apre il foglio
+            // «Salva su File». L'esito (successo compreso) lo logga l'helper.
+            const byte = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+            const esito = await scaricaDocumento({
+                sorgente: new Blob([byte], { type: MIME_XLSX }),
+                nomeFile: `Esportazione_Alunni_${new Date().toISOString().split('T')[0]}.xlsx`,
+                mime: MIME_XLSX,
+                etichetta: 'anagrafica-alunni-xlsx',
+            });
+            if (!fileConsegnato(esito)) alert(t('ieErroreEsportazione'));
         } catch (error) {
             // `error` qui è l'errore PostgREST di `select * from alunni`: il suo `.message`
             // riecheggia colonne e filtri dell'anagrafica dei bambini. Esce solo la classe.
@@ -51,14 +65,15 @@ export function ImportExportClient() {
     };
 
     // Scarica il prestampato CSV (alunno + genitori) da compilare.
-    const handleDownloadTemplate = () => {
-        const blob = new Blob([buildTemplateCsv()], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'prestampato_anagrafiche_kidville.csv';
-        a.click();
-        URL.revokeObjectURL(url);
+    // Stesso helper dell'export: il CSV è un Blob già pronto.
+    const handleDownloadTemplate = async () => {
+        const esito = await scaricaDocumento({
+            sorgente: new Blob([buildTemplateCsv()], { type: 'text/csv;charset=utf-8;' }),
+            nomeFile: 'prestampato_anagrafiche_kidville.csv',
+            mime: 'text/csv',
+            etichetta: 'anagrafica-prestampato-csv',
+        });
+        if (!fileConsegnato(esito)) alert(t('ieErroreEsportazione'));
     };
 
     // Importa il file compilato: parse lato client → POST al server che crea
@@ -143,7 +158,7 @@ export function ImportExportClient() {
 
                     <div className="flex flex-col gap-2 w-full items-center">
                         <button
-                            onClick={handleDownloadTemplate}
+                            onClick={() => void handleDownloadTemplate()}
                             className="px-5 py-2 bg-white border border-kidville-green/20 text-kidville-green rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 hover:bg-kidville-green-light"
                         >
                             <FileDown size={18} /> {t('ieScaricaPrestampato')}

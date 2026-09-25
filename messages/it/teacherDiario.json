@@ -68,6 +68,8 @@
   "nannaAiutoCompilazione": "Riempie l’ora a tutti: si salva solo chi ce l’ha.",
   "salvaConOrario": "{count, plural, one {Salva # bambino} other {Salva # bambini}}",
   "nannaNessunOrario": "Nessun orario compilato",
+  "nannaTogliOrari": "{count, plural, one {Togli # orario} other {Togli # orari}}",
+  "nannaOrariTolti": "{count, plural, one {Orario tolto a # bambino} other {Orario tolto a # bambini}}",
   "alertErroreEliminazione": "Non sono riuscito a eliminare la registrazione. Riprova.",
   "bagnoNessunaRegistrazione": "Nessun bagno registrato",
   "pastoNessunaPortata": "Nessuna portata segnata",

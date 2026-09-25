@@ -41,6 +41,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 import { formattaIstante } from '@/i18n/config';
 import { conIniziale } from '@/lib/i18n/date';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 
 // ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
@@ -72,6 +73,15 @@ const CHIAVE_STATO = {
     assente: 'assente',
     uscita_anticipata: 'uscitaAnt',
 } as const;
+
+// I rifiuti dell'annullamento che dicono «la riga non è quella che vedi»: dopo
+// il messaggio si rilegge l'appello del giorno invece di lasciare a schermo uno
+// stato che il server ha appena smentito.
+const CODICI_DA_RILEGGERE = new Set([
+    'PRESENZA_NON_TROVATA',
+    'NIENTE_DA_ANNULLARE',
+    'APPELLO_CAMBIATO_NEL_FRATTEMPO',
+]);
 
 // ─── Tab ──────────────────────────────────────────────────────────────────────
 
@@ -248,6 +258,12 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
      * salvata davvero.
      */
     const [erroriSalvataggio, setErroriSalvataggio] = useState<Record<string, AttendanceStato>>({});
+    /**
+     * L'esito dell'ultimo «Annulla» (riuscito o no). Uno solo, non una mappa: a
+     * differenza dell'appello, l'annullamento si fa un bambino alla volta, dopo
+     * una conferma, e l'esito riguarda quel gesto.
+     */
+    const [avvisoAnnulla, setAvvisoAnnulla] = useState<{ tipo: 'ok' | 'errore'; testo: string } | null>(null);
     // SSR-safe (niente hydration mismatch né setState-in-effect).
     const isOffline = !useOnlineStatus();
     const [filter, setFilter] = useState<FilterKey>('tutti');
@@ -273,6 +289,11 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
         const res = await fetch(`/api/attendance/daily?data=${selectedDate}&${paramClasse}`).catch(() => null);
         const rows = res?.ok ? await res.json().catch(() => null) : null;
         const map: Record<string, AttendanceRecord> = {};
+        // «Solo comunicazione del genitore» si deduce da `registrato_da` null, e vale
+        // solo per OGGI: le righe 0-6 scritte prima del 2026-08-07 non portavano
+        // `registrato_da` nemmeno quando l'appello l'aveva fatto la maestra, e sui
+        // giorni passati l'etichetta direbbe il falso.
+        const eOggi = selectedDate === oggiFiscaleISO();
         if (Array.isArray(rows)) {
             rows.forEach((row: {
                 alunno_id: string;
@@ -282,7 +303,9 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
                 orario_entrata: string | null;
                 orario_uscita: string | null;
                 giustificazione_testo?: string | null;
+                registrato_da?: string | null;
             }) => {
+                const fatto = typeof row.registrato_da === 'string' && row.registrato_da !== '';
                 map[row.alunno_id] = {
                     id: row.id,
                     alunno_id: row.alunno_id,
@@ -294,6 +317,9 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
                     // (vedi `StudentAttendanceRow`). È il dato che rende vera la
                     // frase mostrata alla famiglia al momento della raccolta.
                     giustificazione_testo: row.giustificazione_testo ?? null,
+                    appelloFatto: fatto,
+                    comunicazioneGenitore:
+                        eOggi && !fatto && row.registrato_da === null && row.stato === 'assente',
                 };
             });
         }
@@ -386,7 +412,13 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
             // Si FONDE, non si sostituisce: la risposta del salvataggio dichiara
             // le sei colonne dell'appello e non il motivo del genitore, che resta
             // quello già in mano al client.
-            setRecords(prev => ({ ...prev, [studentId]: { ...prev[studentId], ...saved } }));
+            // Salvato dal server con `registrato_da` = chi ha toccato: da qui in poi
+            // l'appello è FATTO (quindi annullabile) e non è più la sola
+            // comunicazione del genitore.
+            setRecords(prev => ({
+                ...prev,
+                [studentId]: { ...prev[studentId], ...saved, appelloFatto: true, comunicazioneGenitore: false },
+            }));
             // Questa riga è salvata: se era in errore, esce dall'avviso.
             setErroriSalvataggio(prev => {
                 if (!(studentId in prev)) return prev;
@@ -472,6 +504,132 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
         }
     };
 
+    /**
+     * ── ANNULLA L'APPELLO DI UN BAMBINO ─────────────────────────────────────
+     *
+     * Torna a «da registrare» (spec 2026-09-24, punto 6) con `DELETE
+     * /api/attendance/daily`. Due esiti buoni:
+     *  · `cancellata` — la riga non c'è più: il bambino torna fra i «da registrare»;
+     *  · `ripristinata-comunicazione` — sotto l'appello c'era la comunicazione
+     *    d'assenza del genitore, e la riga torna a quella (assente, senza orari,
+     *    motivo intatto).
+     *
+     * NESSUNA CODA OFFLINE (convenzioni di esecuzione della spec): senza rete non
+     * si chiede nemmeno la conferma, si dice che serve la connessione. E niente
+     * aggiornamento ottimistico: annullare è un gesto raro e deliberato, e la
+     * riga cambia solo quando il server ha detto come.
+     */
+    const handleAnnulla = async (studentId: string) => {
+        const alunno = students.find(s => s.id === studentId);
+        const nome = alunno ? `${alunno.firstName} ${alunno.lastName}` : '';
+
+        if (isOffline) {
+            setAvvisoAnnulla({ tipo: 'errore', testo: t('annullaAppelloServeConnessione') });
+            return;
+        }
+        if (!window.confirm(t('annullaAppelloConferma', { alunno: nome }))) return;
+
+        setAvvisoAnnulla(null);
+        setLoadingStudentId(studentId);
+        let statoHttp: number | undefined;
+        try {
+            const qs = new URLSearchParams({ alunno_id: studentId, data: selectedDate });
+            const res = await fetch(`/api/attendance/daily?${qs.toString()}`, { method: 'DELETE' });
+            statoHttp = res.status;
+            const corpo = (await res.json().catch(() => null)) as {
+                codice?: string;
+                esito?: string;
+                presenza?: Partial<AttendanceRecord> | null;
+            } | null;
+
+            if (!res.ok) {
+                const codice = typeof corpo?.codice === 'string' ? corpo.codice : '';
+                setAvvisoAnnulla({ tipo: 'errore', testo: messaggioAnnulla(codice) });
+                // Il server ha visto una riga diversa da quella a schermo: si
+                // rilegge invece di indovinare.
+                if (CODICI_DA_RILEGGERE.has(codice)) await fetchTodayRecords();
+                logClient({
+                    // Un rifiuto motivato (409/404) è una risposta, non un guasto.
+                    livello: statoHttp >= 500 ? 'error' : 'warn',
+                    evento: 'fetch',
+                    messaggio: 'appello-annullamento-rifiutato',
+                    route: '/teacher/attendance',
+                    stato: statoHttp,
+                    // `error_code`, non `codice`: è la chiave in chiaro della
+                    // redazione per i codici d'errore. Con `codice` il valore usciva
+                    // redatto, e un 409 non diceva più PERCHÉ era stato rifiutato.
+                    campi: { error_code: codice || 'senza-codice' },
+                });
+                return;
+            }
+
+            if (corpo?.esito === 'ripristinata-comunicazione' && corpo.presenza) {
+                const presenza = corpo.presenza;
+                // Si FONDE sul record precedente: il motivo del genitore non viaggia
+                // nella risposta e deve restare sulla riga.
+                setRecords(prev => ({
+                    ...prev,
+                    [studentId]: {
+                        ...prev[studentId],
+                        ...presenza,
+                        alunno_id: studentId,
+                        data: presenza.data ?? selectedDate,
+                        stato: (presenza.stato as AttendanceStato | undefined) ?? 'assente',
+                        orario_entrata: presenza.orario_entrata ?? null,
+                        orario_uscita: presenza.orario_uscita ?? null,
+                        appelloFatto: false,
+                        comunicazioneGenitore: true,
+                    },
+                }));
+                setAvvisoAnnulla({ tipo: 'ok', testo: t('annullaAppelloRipristinata', { alunno: nome }) });
+            } else if (corpo?.esito === 'cancellata') {
+                setRecords(prev => {
+                    const next = { ...prev };
+                    delete next[studentId];
+                    return next;
+                });
+                setAvvisoAnnulla({ tipo: 'ok', testo: t('annullaAppelloCancellata', { alunno: nome }) });
+            } else {
+                // Un 200 con un esito che questa schermata non conosce: non si
+                // inventa lo stato della riga, lo si rilegge. Ma è un'anomalia (il
+                // contratto con la route si è rotto, o il corpo non era JSON) e
+                // un ramo anomalo che non logga è un ramo muto: si registra.
+                logClient({
+                    livello: 'warn',
+                    evento: 'fetch',
+                    messaggio: 'appello-annullamento-esito-sconosciuto',
+                    route: '/teacher/attendance',
+                    stato: statoHttp,
+                    campi: { esito: typeof corpo?.esito === 'string' ? corpo.esito : 'assente' },
+                });
+                await fetchTodayRecords();
+            }
+            setErroriSalvataggio(prev => {
+                if (!(studentId in prev)) return prev;
+                const next = { ...prev };
+                delete next[studentId];
+                return next;
+            });
+        } catch (err) {
+            // La `fetch` che LANCIA è la rete che non c'è (o che è caduta a metà):
+            // la risposta del server, se è arrivata, è gestita sopra.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-annullamento-fallito: ${nomeErrore(err)}`, route: '/teacher/attendance', stato: statoHttp });
+            setAvvisoAnnulla({ tipo: 'errore', testo: t('annullaAppelloServeConnessione') });
+        } finally {
+            setLoadingStudentId(null);
+        }
+    };
+
+    const messaggioAnnulla = (codice: string): string => {
+        switch (codice) {
+            case 'APPELLO_ANNULLA_SOLO_OGGI': return t('annullaAppelloSoloOggi');
+            case 'PRESENZA_NON_TROVATA': return t('annullaAppelloNonTrovato');
+            case 'NIENTE_DA_ANNULLARE': return t('annullaAppelloNienteDaAnnullare');
+            case 'APPELLO_CAMBIATO_NEL_FRATTEMPO': return t('annullaAppelloCambiato');
+            default: return t('annullaAppelloErrore');
+        }
+    };
+
     // ── Panic alert ──
     const handlePanicAlert = async () => {
         if (!selectedCheckout) return;
@@ -524,6 +682,9 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
         if (filter === 'todo') return students.filter((s) => !records[s.id]);
         return students.filter((s) => records[s.id]?.stato === filter);
     }, [students, records, filter]);
+
+    // L'appello si annulla solo nel giorno stesso, e il giorno è quello di ROMA.
+    const appelloDiOggi = selectedDate === oggiFiscaleISO();
 
     // ── Stati UI ──
     if (isLoading) {
@@ -582,7 +743,14 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
                         </button>
                     </div>
                 </div>
-                <DateNavigator date={selectedDate} onChange={setSelectedDate} />
+                <DateNavigator
+                    date={selectedDate}
+                    onChange={(d) => {
+                        setSelectedDate(d);
+                        // L'esito di un annullamento riguarda il giorno in cui è stato fatto.
+                        setAvvisoAnnulla(null);
+                    }}
+                />
             </div>
 
             {/* Card riepilogo + chip filtro */}
@@ -626,6 +794,22 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
                 </div>
             )}
 
+            {/* Esito dell'ultimo «Annulla». `alert` se non è andato, `status` se sì:
+                il primo va annunciato subito, il secondo con garbo. */}
+            {avvisoAnnulla && (
+                <div
+                    id="avviso-annulla-appello"
+                    role={avvisoAnnulla.tipo === 'errore' ? 'alert' : 'status'}
+                    className={
+                        avvisoAnnulla.tipo === 'errore'
+                            ? 'kv-appello-avviso rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-3 font-maven text-sm text-kidville-error-strong'
+                            : 'rounded-2xl border border-kidville-success/30 bg-kidville-success-soft p-3 font-maven text-sm text-kidville-green'
+                    }
+                >
+                    {avvisoAnnulla.testo}
+                </div>
+            )}
+
             {/* Lista studenti (filtrata) */}
             <div className="flex flex-col gap-2">
                 {visibleStudents.map(student => (
@@ -638,6 +822,9 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
                         isLoading={loadingStudentId === student.id}
                         onSetOrario={handleSetOrario}
                         orarioInCorso={orarioInCorso?.studentId === student.id ? orarioInCorso.campo : null}
+                        // Solo il giorno stesso, in data di ROMA — la stessa regola che il
+                        // server applica con `APPELLO_ANNULLA_SOLO_OGGI`.
+                        onAnnulla={appelloDiOggi ? handleAnnulla : undefined}
                     />
                 ))}
                 {visibleStudents.length === 0 && (

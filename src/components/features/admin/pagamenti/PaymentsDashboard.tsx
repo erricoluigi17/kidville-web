@@ -9,6 +9,7 @@ import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pe
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton, type EsitoAccodamento } from './FatturaButton';
 import { FatturaChip } from './FatturaChip';
+import { LinkDocumento, MIME_XLSX } from './LinkDocumento';
 import { PagamentoCardMobile } from './PagamentoCardMobile';
 import { PagamentoDrawer } from './PagamentoDrawer';
 import { SospensioneToggle } from './SospensioneToggle';
@@ -362,10 +363,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <button onClick={() => { setLoading(true); load(); }} aria-label={t('dashAggiorna')} title={t('dashAggiorna')} className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                     <RefreshCw size={14} />
                 </button>
-                <a href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title={t('dashEsportaXlsx')} aria-label={t('dashEsportaXlsx')}
+                <LinkDocumento href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title={t('dashEsportaXlsx')} aria-label={t('dashEsportaXlsx')}
+                    modo="scarica" nomeFile="scadenzario.xlsx" mime={MIME_XLSX} etichetta="export-scadenzario"
                     className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                     <Download size={14} />
-                </a>
+                </LinkDocumento>
             </div>
             )}
 

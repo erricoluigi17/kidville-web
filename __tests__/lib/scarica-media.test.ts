@@ -45,7 +45,7 @@ const filesystemFinto = vi.hoisted(() => ({
   writeFile: vi.fn<(o: OpzioniScrittura) => Promise<{ uri?: string }>>(),
   getUri: vi.fn<(o: { path: string; directory: string }) => Promise<{ uri?: string }>>(),
 }))
-const isPluginAvailable = vi.hoisted(() => vi.fn(() => true))
+const isPluginAvailable = vi.hoisted(() => vi.fn<(nome: string) => boolean>(() => true))
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isPluginAvailable, isNativePlatform: () => false },
   registerPlugin: () => filesystemFinto,
@@ -139,13 +139,39 @@ describe('scarica() — nativo contro web', () => {
 
   it('su NATIVO senza il plugin Filesystem ripiega sulla condivisione del link, non sul silenzio', async () => {
     nativo.mockReturnValue(true)
-    isPluginAvailable.mockReturnValue(false)
+    // Il binario 1.0: Share c'è, Filesystem no. Senza Share il ripiego non ha
+    // canale e lo dice (vedi il test «senza nemmeno Share» qui sotto).
+    isPluginAvailable.mockImplementation((nome) => nome === 'Share')
 
     const esito = await scarica({ url: URL_FIRMATO, nomeFile: 'foto.jpg', titolo: 'T' })
 
     expect(esito).toEqual({ esito: 'ripiego-condivisione', motivo: 'plugin-filesystem-assente' })
     expect(condividiMock).toHaveBeenCalledWith({ url: URL_FIRMATO, title: 'T' })
     expect(filesystemFinto.writeFile).not.toHaveBeenCalled()
+  })
+
+  it('su NATIVO senza nemmeno Share il ripiego NON chiama il plugin: «non riuscito» e il motivo lo dice', async () => {
+    nativo.mockReturnValue(true)
+    isPluginAvailable.mockReturnValue(false)
+
+    const esito = await scarica({ url: URL_FIRMATO, nomeFile: 'foto.jpg', titolo: 'T' })
+
+    expect(esito).toEqual({ esito: 'non-riuscito', motivo: 'plugin-filesystem-assente|plugin-assenti:share' })
+    expect(isPluginAvailable).toHaveBeenCalledWith('Share')
+    expect(condividiMock).not.toHaveBeenCalled()
+    expect(condividiFileMock).not.toHaveBeenCalled()
+  })
+
+  it('binario col solo Filesystem (senza Share): il file scritto NON va a un foglio che non esiste', async () => {
+    nativo.mockReturnValue(true)
+    isPluginAvailable.mockImplementation((nome) => nome === 'Filesystem')
+
+    const esito = await scarica({ url: URL_FIRMATO, nomeFile: 'foto.jpg' })
+
+    expect(filesystemFinto.writeFile).toHaveBeenCalledTimes(1)
+    expect(condividiFileMock).not.toHaveBeenCalled()
+    expect(condividiMock).not.toHaveBeenCalled()
+    expect(esito).toEqual({ esito: 'non-riuscito', motivo: 'foglio-file-non-aperto|plugin-assenti:share' })
   })
 
   it('la fetch che muore nella WebView (il caso misurato in produzione) finisce nel ripiego, col motivo', async () => {
@@ -197,7 +223,9 @@ describe('scarica() — nativo contro web', () => {
 
   it('quando NEMMENO il ripiego offre un canale, il verdetto è «non riuscito» (l’unico da error)', async () => {
     nativo.mockReturnValue(true)
-    isPluginAvailable.mockReturnValue(false)
+    // Il binario 1.0: Share c'è, Filesystem no. Senza Share il ripiego non ha
+    // canale e lo dice (vedi il test «senza nemmeno Share» qui sotto).
+    isPluginAvailable.mockImplementation((nome) => nome === 'Share')
     condividiMock.mockResolvedValueOnce('non-riuscita')
 
     const esito = await scarica({ url: URL_FIRMATO, nomeFile: 'foto.jpg' })
@@ -210,7 +238,9 @@ describe('scarica() — nativo contro web', () => {
 
   it('non lancia MAI: nemmeno se anche il ripiego esplode', async () => {
     nativo.mockReturnValue(true)
-    isPluginAvailable.mockReturnValue(false)
+    // Il binario 1.0: Share c'è, Filesystem no. Senza Share il ripiego non ha
+    // canale e lo dice (vedi il test «senza nemmeno Share» qui sotto).
+    isPluginAvailable.mockImplementation((nome) => nome === 'Share')
     condividiMock.mockRejectedValueOnce(new Error('foglio rotto'))
 
     const esito = await scarica({ url: URL_FIRMATO, nomeFile: 'foto.jpg' })

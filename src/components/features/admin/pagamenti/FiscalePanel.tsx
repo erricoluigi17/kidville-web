@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { RevisioneFatturePanel } from './RevisioneFatturePanel';
+import { LinkDocumento, MIME_XLSX } from './LinkDocumento';
 
 interface RicevutaRiga {
     id: string;
@@ -90,10 +91,11 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                         {anni.map((a) => <option key={a} value={a}>{a}</option>)}
                     </select>
                     {attAlunno ? (
-                        <a href={`/api/pagamenti/attestazione?alunno_id=${attAlunno}&anno=${attAnno}&userId=${userId}`}
+                        <LinkDocumento href={`/api/pagamenti/attestazione?alunno_id=${attAlunno}&anno=${attAnno}&userId=${userId}`}
+                            modo="apri" nomeFile={`attestazione-730-${attAnno}.pdf`} mime="application/pdf" etichetta="attestazione-730"
                             className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark">
                             <Download size={14} /> {t('fisc_scarica_att')}
-                        </a>
+                        </LinkDocumento>
                     ) : (
                         <span className="font-maven text-xs text-kidville-muted">{t('fisc_nessun_alunno')}</span>
                     )}
@@ -107,10 +109,11 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                     <select value={adeAnno} onChange={(e) => setAdeAnno(Number(e.target.value))} className={selCls}>
                         {anni.map((a) => <option key={a} value={a}>{a}</option>)}
                     </select>
-                    <a href={`/api/pagamenti/export?tipo=ade&anno=${adeAnno}&userId=${userId}&scuola_id=${scuolaId}`}
+                    <LinkDocumento href={`/api/pagamenti/export?tipo=ade&anno=${adeAnno}&userId=${userId}&scuola_id=${scuolaId}`}
+                        modo="scarica" nomeFile={`comunicazione-ade-${adeAnno}.xlsx`} mime={MIME_XLSX} etichetta="export-ade"
                         className="inline-flex items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-yellow">
                         <Download size={14} /> {t('fisc_esporta_com')} {adeAnno}
-                    </a>
+                    </LinkDocumento>
                 </div>
             </div>
 

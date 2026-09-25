@@ -23,6 +23,7 @@ import { withRoute } from '@/lib/logging/with-route'
 // traduce per chi guarda l'app in inglese.
 import CATALOGO from '../../../../messages/it/shared.json'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
 
 /**
  * GET /api/documenti-firmati — l'archivio dei documenti dell'alunno.
@@ -190,10 +191,13 @@ export const GET = withRoute('documenti-firmati:GET', async (request: NextReques
         .from('forms_submissions')
         .select('id, student_id, form_id, is_signed, signature_log, created_at, origine')
         .in('student_id', idAlunni),
-      supabase
-        .from('student_documents')
-        .select('id, student_id, document_type, descrizione, file_name, expiry_date, created_at')
-        .in('student_id', idAlunni),
+      // Il cestino del fascicolo NON è archivio: un documento eliminato non si elenca.
+      fascicoloVivo(
+        supabase
+          .from('student_documents')
+          .select('id, student_id, document_type, descrizione, file_name, expiry_date, created_at')
+          .in('student_id', idAlunni),
+      ),
       supabase
         .from('certificati_medici')
         .select('id, alunno_id, data_inizio, data_fine, stato, creato_il')

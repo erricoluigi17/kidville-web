@@ -45,6 +45,8 @@
  * sezione non si lascia collassare dal `debounce` — vedi `comunica-assenza`.
  */
 
+import { haUnRuolo, type AppRole, type AppUser } from '@/lib/auth/predicati-ruolo';
+
 /** La parte di riga che serve a decidere. Nessun'altra colonna va letta. */
 export interface RigaPresaVisione {
     /** Il testo ARCHIVIATO, cioè quello su cui la presa visione è stata data. */
@@ -106,4 +108,36 @@ export function presaVisioneRevocata(
 ): boolean {
     if (!riga?.giust_vista_il) return false;
     return testoCambiato(riga.giustificazione_testo, nuovo);
+}
+
+/**
+ * ─── CHI PUÒ ANNULLARE UNA PRESA VISIONE (spec 2026-09-24, punto 2) ─────────
+ *
+ * Il docente che l'ha presa (`giust_vista_da`), oppure Segreteria e Direzione
+ * sui ruoli REALI (`haUnRuolo`: il cookie del ruolo attivo sceglie una vista,
+ * non apre una porta). Nessun termine.
+ *
+ * Sta QUI, in un posto solo, perché la regola ha due strade: la
+ * `DELETE /api/primaria/presenze/giust-vista`, che la fa rispettare, e la
+ * `GET /api/primaria/appello`, che dice alla schermata se offrire il comando.
+ * Due copie divergerebbero, e la schermata tornerebbe a offrire un gesto che il
+ * server rifiuta sempre (`PRESA_VISIONE_NON_TUA`).
+ */
+export const RUOLI_ANNULLA_PRESA_VISIONE_ALTRUI: readonly AppRole[] = ['segreteria', 'admin', 'coordinator'];
+
+/** La parte di riga che decide il permesso. */
+export interface RigaAnnullaPresaVisione {
+    giust_vista_il?: string | null;
+    giust_vista_da?: string | null;
+}
+
+/**
+ * `user` può togliere la presa visione di questa riga? Falso se non c'è una
+ * presa visione da togliere. Una presa visione con `giust_vista_da` nullo non è
+ * di nessun docente: la può togliere solo Segreteria o Direzione.
+ */
+export function puoAnnullarePresaVisione(user: AppUser, riga: RigaAnnullaPresaVisione | null | undefined): boolean {
+    if (!riga?.giust_vista_il) return false;
+    const autore = riga.giust_vista_da != null && riga.giust_vista_da === user.id;
+    return autore || haUnRuolo(user, RUOLI_ANNULLA_PRESA_VISIONE_ALTRUI);
 }

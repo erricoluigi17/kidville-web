@@ -10,6 +10,7 @@
   "ticket": "ticket",
   "aggiornaSaldo": "Aggiorna saldo",
   "cutoffNota": "Prenota o disdici entro le <strong>{ora}</strong> del giorno stesso.",
+  "oltreCutoffOggi": "Oltre le {ora}, non si può più prenotare o disdire il pasto di oggi.",
   "sessioneScaduta": "Sessione scaduta: effettua di nuovo l’accesso.",
   "accediDiNuovo": "Accedi di nuovo",
   "nonCollegato": "Questo alunno non risulta collegato al tuo account. Contatta la segreteria.",

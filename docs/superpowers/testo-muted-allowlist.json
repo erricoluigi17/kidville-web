@@ -2,7 +2,7 @@
   "_": "Debito misurato di `text-kidville-muted` come INCHIOSTRO. Vedi __tests__/a11y/testo-muted-allowlist.test.ts. Questa lista può solo accorciarsi.",
   "misurato_il": "2026-08-02",
   "totale_file": 176,
-  "totale_occorrenze": 1163,
+  "totale_occorrenze": 1148,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -158,7 +158,7 @@
     },
     {
       "path": "src/app/(dashboard)/parent/primaria/valutazioni/page.tsx",
-      "n": 9
+      "n": 3
     },
     {
       "path": "src/app/(dashboard)/parent/profilo/page.tsx",
@@ -198,7 +198,7 @@
     },
     {
       "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/fascicolo/page.tsx",
-      "n": 5
+      "n": 4
     },
     {
       "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/note/page.tsx",
@@ -226,7 +226,7 @@
     },
     {
       "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/valutazioni/page.tsx",
-      "n": 19
+      "n": 12
     },
     {
       "path": "src/app/(dashboard)/teacher/primaria/page.tsx",
@@ -466,7 +466,7 @@
     },
     {
       "path": "src/components/features/admin/primaria/ObiettiviManager.tsx",
-      "n": 4
+      "n": 3
     },
     {
       "path": "src/components/features/admin/primaria/OrarioManager.tsx",

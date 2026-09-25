@@ -18,11 +18,66 @@
     "loggingBehavior": "none",
     "ios.limitsNavigationsToAppBoundDomains": true
   },
+  "plugin": {
+    "@aparajita/capacitor-biometric-auth": {
+      "ios": "BiometricAuthNative",
+      "android": "com.aparajita.capacitor.biometricauth.BiometricAuthNative"
+    },
+    "@capacitor-community/media": {
+      "ios": "MediaPlugin",
+      "android": "com.getcapacitor.community.media.MediaPlugin"
+    },
+    "@capacitor/app": {
+      "ios": "AppPlugin",
+      "android": "com.capacitorjs.plugins.app.AppPlugin"
+    },
+    "@capacitor/camera": {
+      "ios": "CAPCameraPlugin",
+      "android": "com.capacitorjs.plugins.camera.CameraPlugin"
+    },
+    "@capacitor/file-transfer": {
+      "ios": "FileTransferPlugin",
+      "android": "com.capacitorjs.plugins.filetransfer.FileTransferPlugin"
+    },
+    "@capacitor/file-viewer": {
+      "ios": "FileViewerPlugin",
+      "android": "com.capacitorjs.plugins.fileviewer.FileViewerPlugin"
+    },
+    "@capacitor/filesystem": {
+      "ios": "FilesystemPlugin",
+      "android": "com.capacitorjs.plugins.filesystem.FilesystemPlugin"
+    },
+    "@capacitor/push-notifications": {
+      "ios": "PushNotificationsPlugin",
+      "android": "com.capacitorjs.plugins.pushnotifications.PushNotificationsPlugin"
+    },
+    "@capacitor/share": {
+      "ios": "SharePlugin",
+      "android": "com.capacitorjs.plugins.share.SharePlugin"
+    },
+    "@capacitor/splash-screen": {
+      "ios": "SplashScreenPlugin",
+      "android": "com.capacitorjs.plugins.splashscreen.SplashScreenPlugin"
+    },
+    "@capacitor/status-bar": {
+      "ios": "StatusBarPlugin",
+      "android": "com.capacitorjs.plugins.statusbar.StatusBarPlugin"
+    },
+    "@capawesome/capacitor-badge": {
+      "ios": "BadgePlugin",
+      "android": "io.capawesome.capacitorjs.plugins.badge.BadgePlugin"
+    },
+    "capacitor-native-settings": {
+      "ios": "NativeSettingsPlugin",
+      "android": "nl.raphael.settings.NativeSettingsPlugin"
+    }
+  },
   "_note": {
     "server.url": "Il 2026-08-08 valeva http://localhost:3100. Una build fatta in quel momento apre un indirizzo che sul telefono non esiste: schermata d'errore per sempre, e rigetto Apple 2.1.",
     "server.cleartext": "Vero solo quando l'URL è http://. In rilascio l'URL è https, quindi qui è falso: se è vero, l'artefatto è stato sincronizzato verso un ambiente di sviluppo.",
     "server.allowNavigation": "Rilievo T14-F2 del collaudo 2026-08-03: senza questo host, «Riprova» sulla pagina offline usciva dall'app aprendo il browser di sistema, e l'utente perdeva la sessione nativa.",
     "loggingBehavior": "Con il default `debug` il bridge stampa nei log di sistema il payload intero di ogni risposta nativa — in logcat è finito il base64 di una foto scattata. `none` è l'unico valore che chiude il canale; `production` NON lo chiude, lo peggiora.",
-    "ios.limitsNavigationsToAppBoundDomains": "Segue l'URL: con un sync di sviluppo si spegne, e con lui WKWebView smette di registrare il Service Worker. È il motivo per cui l'offline su iOS non si collauda in dev."
+    "ios.limitsNavigationsToAppBoundDomains": "Segue l'URL: con un sync di sviluppo si spegne, e con lui WKWebView smette di registrare il Service Worker. È il motivo per cui l'offline su iOS non si collauda in dev.",
+    "plugin": "Ogni plugin Capacitor di package.json, con il nome che il RUNTIME cerca: la classe in `packageClassList` di ios/App/App/capacitor.config.json e la `classpath` in android/app/src/main/assets/capacitor.plugins.json (entrambi gitignorati). Il 2026-09-06 @capacitor/filesystem era in package.json e non nei binari: `isPluginAvailable` rispondeva false e ogni «Scarica» ripiegava (1.941 ripieghi, 0 scarichi nativi in 30 giorni). Dalla 1.1 si aggiungono file-transfer, media, file-viewer e capacitor-native-settings. Un plugin nuovo in package.json e non qui fa fallire il cancello: il lock __tests__/architecture/plugin-capacitor-registrati.test.ts pretende che le due liste coincidano."
   }
 }

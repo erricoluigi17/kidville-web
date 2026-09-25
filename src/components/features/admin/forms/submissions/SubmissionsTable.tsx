@@ -13,6 +13,7 @@ import {
   type SubmissionRow,
 } from './SubmissionDetailSidebar'
 import { formattaIstante } from '@/i18n/config'
+import { scaricaCompilazionePdf, scaricaCompilazioniXlsx } from './scarica-compilazioni'
 
 const STATUS_LABEL_KEYS: Record<FormSubmissionStatus, string> = {
   draft: 'statusBozza',
@@ -40,6 +41,7 @@ export function SubmissionsTable() {
   const [filterFormId, setFilterFormId] = useState('')
   const [filterDate, setFilterDate] = useState('')
   const [search, setSearch] = useState('')
+  const [scaricoFallito, setScaricoFallito] = useState(false)
 
   const selectedSubmission = submissions.find(s => s.id === selectedId) ?? null
 
@@ -118,34 +120,28 @@ export function SubmissionsTable() {
       })
     : submissions
 
+  // Gli scarichi passano dall'helper unico (vedi `scarica-compilazioni.ts`): nell'app
+  // aprono il foglio «Salva su File», sul web scaricano come prima. Se il file non arriva
+  // lo si dice, invece di lasciare un bottone che sembra non fare niente.
+  const scaricaConAvviso = async (scarico: () => Promise<boolean>) => {
+    setScaricoFallito(false)
+    const consegnato = await scarico()
+    if (!consegnato) setScaricoFallito(true)
+  }
+
   const handleBulkXLSX = () => {
-    const ids = filtered.map(s => s.id).join(',')
-    const a = document.createElement('a')
-    a.href = `/api/forms/export/xlsx?ids=${ids}`
-    a.download = 'compilazioni.xlsx'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    const ids = filtered.map(s => s.id)
+    void scaricaConAvviso(() => scaricaCompilazioniXlsx(ids))
   }
 
   const handleRowPDF = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    const a = document.createElement('a')
-    a.href = `/api/forms/export/pdf?id=${id}`
-    a.download = `compilazione-${id.slice(0, 8)}.pdf`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    void scaricaConAvviso(() => scaricaCompilazionePdf(id))
   }
 
   const handleRowXLSX = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    const a = document.createElement('a')
-    a.href = `/api/forms/export/xlsx?ids=${id}`
-    a.download = `compilazione-${id.slice(0, 8)}.xlsx`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    void scaricaConAvviso(() => scaricaCompilazioniXlsx([id]))
   }
 
   return (
@@ -254,6 +250,12 @@ export function SubmissionsTable() {
           </button>
         )}
       </div>
+
+      {scaricoFallito && (
+        <p role="alert" className="mb-4 text-sm text-kidville-error-strong font-maven">
+          {t('scaricoNonRiuscito')}
+        </p>
+      )}
 
       {/* Table */}
       {loading ? (

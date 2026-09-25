@@ -86,12 +86,30 @@
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- Push FCM: canale di default per le notifiche in background. Senza,
-             FirebaseMessaging avvisa "Missing Default Notification Channel
-             metadata" e usa un canale di ripiego (titolo/priorità generici). -->
+        <!-- Push FCM: canale di default per le notifiche che arrivano ad app chiusa.
+             Questa riga DICHIARA solo l'id del canale, NON lo crea: su Android 8+ un
+             canale esiste solo se l'app lo registra. Lo crea il JS all'avvio
+             (`PushNotifications.createChannel`, id `CANALE_ANDROID_NOTIFICHE` di
+             `src/lib/push/canale-android.ts` = `kidville_notifiche`, nome
+             «Notifiche Kidville», importanza alta).
+             Finché nessuno lo crea, FirebaseMessaging ripiega sul proprio canale
+             «Varie» (`fcm_fallback_notification_channel`), con priorità generica.
+             L'id qui e quello nel JS devono restare identici. -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="@string/default_notification_channel_id" />
+
+        <!-- Push FCM: icona PICCOLA (barra di stato) e suo colore. Senza, Android usa
+             la sagoma dell'icona dell'app, che è una card piena: un quadrato bianco.
+             L'icona è la «K» del lettering, bianco su trasparente, generata da
+             `node scripts/genera-icona-notifica.mjs`; il colore è il verde del marchio
+             (token `color-kidville-green` di globals.css, `kv_green` in colors.xml). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_kidville" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/kv_green" />
     </application>
 
     <!-- Permissions -->

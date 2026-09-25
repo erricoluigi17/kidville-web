@@ -163,7 +163,7 @@ semantica — **prima** di scoprire il conflitto al momento dell'upload. Massimo
 
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"   # JDK 21
-CAP_SERVER_URL="https://app.kidville.it" npx cap sync android
+npm run rilascio:sync     # sync di ENTRAMBE le piattaforme con l'URL di produzione + verifica
 cat android/app/src/main/assets/capacitor.config.json    # ← VERIFICA OBBLIGATORIA
 cd android && ./gradlew bundleRelease
 # → android/app/build/outputs/bundle/release/app-release.aab
@@ -205,7 +205,13 @@ Verificato uno per uno. Ognuno di questi è un difetto che **non** avete:
   nella **Photo and Video Permissions policy**, con l'obbligo di dimostrare a Google perché
   l'Android Photo Picker non basta — **su un'app che gestisce foto di bambini**. È una porta che
   si apre in dieci secondi e si richiude in settimane.
-- ✅ **`minifyEnabled false`** — lasciarlo. I 7 plugin Capacitor sono caricati **per nome di
+  **Dalla 1.1 (24/09/2026) vale ancora**: «Scarica» salva foto e video con
+  `@capacitor-community/media` **senza** `androidGalleryMode`, cioè nell'album «Kidville»
+  dentro `getExternalMediaDirs()` — la cartella media dell'app, che non chiede permessi su
+  nessuna API ≥ 21 (letto nel sorgente: `isStoragePermissionGranted()` risponde `true` fuori
+  dalla modalità galleria, e il manifest del plugin è vuoto). Quindi **nessun**
+  `WRITE_EXTERNAL_STORAGE`, nemmeno con `maxSdkVersion="29"`, e nessun `READ_MEDIA_*`.
+- ✅ **`minifyEnabled false`** — lasciarlo. I plugin Capacitor (13 dalla 1.1) sono caricati **per nome di
   classe** da `assets/capacitor.plugins.json` e `proguard-rules.pro` è vuoto: R8 li rinominerebbe
   e sparirebbero a runtime, **senza errori di build e senza test rossi**, solo nella release
   firmata.

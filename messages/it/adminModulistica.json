@@ -115,6 +115,7 @@
   "subModelloRimosso": "Modello rimosso",
   "subGestita": "Gestita",
   "subScaricaPdf": "Scarica PDF",
+  "scaricoNonRiuscito": "Il file non è stato salvato. Riprova.",
   "subEsportaXlsx": "Esporta XLSX",
   "subSegnaGestita": "Segna gestita",
   "subSi": "Sì",

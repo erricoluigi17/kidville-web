@@ -80,5 +80,17 @@
   "annullaModifica": "Annulla la modifica",
   "mensileCorreggiAria": "Correggi l’orario di {alunno}, {giorno} — {stato}",
   "nessunDato": "nessun appello",
-  "mensileOrarioNonSalvato": "Non sono riuscito a salvare l’orario di {alunno}. L’ora mostrata è tornata quella di prima: riprova."
+  "mensileOrarioNonSalvato": "Non sono riuscito a salvare l’orario di {alunno}. L’ora mostrata è tornata quella di prima: riprova.",
+  "annullaAppello": "Annulla",
+  "annullaAppelloAria": "Annulla l’appello di {alunno}",
+  "annullaAppelloConferma": "{alunno}: riportare il bambino a «da registrare»?",
+  "annullaAppelloServeConnessione": "Per annullare l’appello serve la connessione: riprova quando sei di nuovo online.",
+  "annullaAppelloCancellata": "Appello annullato per {alunno}: è di nuovo da registrare.",
+  "annullaAppelloRipristinata": "Appello annullato per {alunno}: resta l’assenza comunicata dal genitore.",
+  "annullaAppelloSoloOggi": "L’appello si può annullare solo nel giorno stesso.",
+  "annullaAppelloNonTrovato": "Per questo bambino non c’è un appello da annullare: l’elenco è stato aggiornato.",
+  "annullaAppelloNienteDaAnnullare": "C’è solo la comunicazione del genitore: l’appello non è stato fatto, non c’è niente da annullare.",
+  "annullaAppelloCambiato": "La presenza è cambiata nel frattempo: l’elenco è stato aggiornato, riprova.",
+  "annullaAppelloErrore": "Non sono riuscito ad annullare l’appello. Riprova.",
+  "comunicazioneGenitore": "Assenza comunicata dal genitore"
 }

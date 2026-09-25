@@ -389,6 +389,30 @@ const CHIAVI_DIGEST = insieme('digest');
  */
 const DIGEST_PLAUSIBILE = /^[0-9a-f]{4,64}$/i;
 
+/**
+ * LA VERSIONE DEL BINARIO NATIVO (2026-09-25) — la terza deroga «la chiave apre, il valore
+ * conferma», e perché è lecita.
+ *
+ * `versione_app` la scrive il logger del client (`client.ts → conVersioneApp`) da `App.getInfo()`:
+ * versione e numero di build dell'app installata, per esempio `1.1+5`. NON è un dato personale —
+ * è lo stesso numero per ogni telefono che ha scaricato quel binario dallo store, e non dice nulla
+ * di chi lo usa. Serve a una domanda sola, che senza non ha risposta: «il guasto è della 1.0 o della
+ * 1.1?» (le due convivranno per mesi).
+ *
+ * PERCHÉ NON IN `CHIAVI_IN_CHIARO`: quella lista ammette `FORMA_ENUMERATO`, cioè qualunque token
+ * senza spazi di 64 caratteri, e i `campi` di `/api/logs` arrivano da una porta anonima. Qui la forma
+ * è molto più stretta: solo cifre, punti e UN `+` seguito da cifre. Non ci entra un nome, un'email, un
+ * codice fiscale, un path, né una parola qualsiasi. Tutto ciò che non ha questa forma esce redatto
+ * come ogni altra stringa fuori lista bianca. Solo QUESTA chiave: chi aggiungesse accanto `modello`
+ * o `dispositivo` apre un'impronta del telefono, e va discusso a parte.
+ *
+ * La STESSA forma sta in `client.ts` (`FORMA_VERSIONE_APP`): le due devono restare uguali, o il
+ * client spedisce un valore che qui si redige. Lo sorveglia `__tests__/lib/logging-versione-app.test.ts`
+ * (per questo è esportata): non basta questo commento.
+ */
+const CHIAVI_VERSIONE_APP = insieme('versione_app');
+export const FORMA_VERSIONE_APP = /^\d{1,4}(\.\d{1,4}){0,3}\+\d{1,9}$/;
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -605,6 +629,9 @@ function redactValore(
             // forma non torna si cade sotto, e la stringa esce redatta come qualunque altra:
             // la deroga non ha un ramo "quasi in chiaro".
             if (CHIAVI_DIGEST.has(k) && DIGEST_PLAUSIBILE.test(v)) return v;
+            // LA CHIAVE APRE, IL VALORE CONFERMA (vedi `CHIAVI_VERSIONE_APP`): solo la forma
+            // `1.1+5`. Il resto cade sotto e si redige.
+            if (CHIAVI_VERSIONE_APP.has(k) && FORMA_VERSIONE_APP.test(v)) return v;
         }
         if (stringaAutoDescrittiva(v)) return v;
         return redigiStringa(v);

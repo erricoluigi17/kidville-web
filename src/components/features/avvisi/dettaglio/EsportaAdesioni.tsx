@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, Download } from 'lucide-react';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica';
 
 /**
  * ─── «ESPORTA ELENCO (CSV)» — IL FILE CONTIENE NOMI DI MINORI ───────────────
@@ -21,16 +22,14 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
  * elenco di nomi di alunni e genitori deve saperlo PRIMA, non dopo. Un avviso che
  * compare solo a scaricamento avvenuto informa quando non serve più.
  *
- * ── LO SCARICAMENTO SEGUE IL PATTERN GIÀ IN USO NEL REPO ───────────────────
+ * ── LO SCARICAMENTO PASSA DALL'HELPER UNICO (`scaricaDocumento`) ─────────
  *
- * `fetch` → `blob` → `createObjectURL` → `<a download>` aggiunto al documento →
- * `click()` → rimosso → `revokeObjectURL` ritardato. Le due parti che sembrano
- * superflue e non lo sono (misurate in `MonthlyAttendanceTable`):
- *  · l'ancora va APPESA al documento prima del click, altrimenti in alcune
- *    WebView il gesto non parte;
- *  · la revoca NON va nello stesso giro di eventi: nella WebView di Capacitor lo
- *    scaricamento è asincrono e una revoca immediata lo annulla, lasciando un
- *    bottone che sembra funzionare e non scarica niente.
+ * Qui si fa `fetch` → controllo di `res.ok` → `blob`, e il Blob va a
+ * `scaricaDocumento` (`src/lib/native/scarica.ts`). Sul web l'helper fa ciò che
+ * faceva questo file — ancora `download` appesa al documento, revoca ritardata —
+ * e nell'app scrive il file in Cache e apre il foglio «Salva su File»: nella
+ * WebView l'ancora su un `blob:` non scarica niente e non lancia. La `fetch` resta
+ * QUI, e non nell'helper, perché il nome del file sta in un header della risposta.
  * Il nome del file lo decide il server (`Content-Disposition`): è lui a sapere di
  * quale avviso si tratta e a doverlo ripulire dei caratteri che un header non
  * ammette. Qui resta un ripiego per il caso in cui l'header non arrivi.
@@ -67,7 +66,6 @@ export function EsportaAdesioni({ avvisoId, userId, nAdesioni }: Props) {
         }
 
         setInCorso(true);
-        let url: string | null = null;
         try {
             const res = await fetch(
                 `/api/avvisi/${avvisoId}/risposte/esporta${userId ? `?userId=${encodeURIComponent(userId)}` : ''}`,
@@ -90,13 +88,17 @@ export function EsportaAdesioni({ avvisoId, userId, nAdesioni }: Props) {
                 return;
             }
             const blob = await res.blob();
-            url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = nomeFileDaHeader(res.headers.get('Content-Disposition'), avvisoId);
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
+            // Il Blob passa all'helper unico: sul web lo scarica con l'ancora come prima,
+            // nell'app lo mette in Cache e apre il foglio «Salva su File». L'esito lo logga
+            // l'helper (successo compreso); qui resta solo da dirlo a schermo se il file non
+            // è arrivato — sul binario 1.0, per esempio, dove il plugin non c'è.
+            const esito = await scaricaDocumento({
+                sorgente: blob,
+                nomeFile: nomeFileDaHeader(res.headers.get('Content-Disposition'), avvisoId),
+                mime: 'text/csv',
+                etichetta: 'avviso-adesioni',
+            });
+            if (!fileConsegnato(esito)) setErrore(t('esportaErrore'));
         } catch (e) {
             logClient({
                 livello: 'error',
@@ -106,10 +108,6 @@ export function EsportaAdesioni({ avvisoId, userId, nAdesioni }: Props) {
             });
             setErrore(t('esportaErrore'));
         } finally {
-            if (url) {
-                const daRevocare = url;
-                setTimeout(() => URL.revokeObjectURL(daRevocare), 60_000);
-            }
             setInCorso(false);
         }
     };

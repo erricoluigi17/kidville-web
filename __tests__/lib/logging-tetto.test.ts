@@ -215,16 +215,20 @@ const PRIMITIVE_DI_TETTO: ReadonlyArray<readonly [string, Primitiva]> = [
             'Il budget del salvataggio fattura deve correre sia contro una `fetch` a una nostra '
             + 'route sia contro `eseguiScarico()`, che può attraversare il bridge nativo. Quel '
             + 'bridge non garantisce di rigettare subito quando riceve l\'abort: la corsa restituisce '
-            + 'quindi il verdetto di timeout o annullamento senza perdere la promessa di completamento, '
-            + 'che tiene il mutex fino alla vera chiusura. `conTetto` può solo decorare una `fetch` e '
+            + 'quindi subito l\'annullamento del chiamante senza perdere la promessa di completamento, '
+            + 'che tiene il mutex fino alla vera chiusura; allo scadere del tetto invece si abortisce '
+            + 'la sola lettura del PDF e si aspetta il verdetto dell\'helper: il segnale del tetto '
+            + 'non arriva mai al foglio «Salva su File», dove un «Annulla» dopo 30 s diventerebbe un '
+            + 'falso fallimento. `conTetto` può solo decorare una `fetch` e '
             + 'non rappresenta questa operazione composta. Il limite resta `TETTO_SCARICO_MS`, 30 s.',
     }],
     ['src/lib/pagamenti/scarico-fattura.ts', {
         meccanismo: 'AbortController + setTimeout',
         rilevatore: [TETTO_A_MANO],
         perche:
-            'Il controller unico propaga sia l\'annullamento del chiamante sia la scadenza alla '
-            + 'richiesta interna e al bridge di scarico. Non usa `AbortSignal.timeout`: sulle WebView '
+            'Il controller propaga sia l\'annullamento del chiamante sia la scadenza alle `fetch` '
+            + 'interne (il link esterno e la sorgente-funzione del PDF); al bridge di scarico e al '
+            + 'foglio arriva solo il segnale del chiamante. Non usa `AbortSignal.timeout`: sulle WebView '
             + 'iOS 15 quella API manca, mentre `AbortController` è disponibile; inoltre occorre '
             + 'conservare la promessa sottostante per liberare il mutex solo quando il bridge nativo '
             + 'ha davvero concluso. Il timer è sempre ripulito e non supera i 30 s dichiarati.',
@@ -238,6 +242,20 @@ const PRIMITIVE_DI_TETTO: ReadonlyArray<readonly [string, Primitiva]> = [
             + 'le uscite e funziona anche nelle WebView iOS 15, dove `AbortSignal.timeout` non esiste. '
             + 'Il cleanup cancella timer, fetch e render PDF.js; il tetto resta sotto il limite globale '
             + 'di 30 secondi: `TIMEOUT_MS` vale 25 s.',
+    }],
+    ['src/lib/push/native-register.ts', {
+        meccanismo: 'AbortController + setTimeout',
+        rilevatore: [TETTO_A_MANO],
+        perche:
+            'Il tetto di ogni richiesta a `/api/push/subscribe` dalla shell nativa, POST e DELETE '
+            + '(2026-09-25), in un solo helper, `fetchConTetto`: una rete mobile che accetta e tace '
+            + 'non dà né errore né 5xx, quindi senza tetto nessun ritentativo scattava e '
+            + '`registerNativePush` non si risolveva più — con il bottone di PushOptIn in attesa per '
+            + 'sempre; e la DELETE la attendono il permesso negato, «disattiva» e `doLogout`. Non usa '
+            + '`conTetto` perché il binario iOS parte da iOS 15, dove `AbortSignal.timeout` non esiste '
+            + 'e `conTetto` ricade su «nessun tetto» proprio sui telefoni che ne hanno bisogno. '
+            + '`TETTO_RICHIESTA_SUBSCRIBE_MS` vale 15 s (il tetto per chiamata di Supabase lato '
+            + 'server), il timer è ripulito nel `finally` di ogni richiesta.',
     }],
 ];
 
@@ -331,7 +349,10 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         + 'il difetto che questo file e\' nato per chiudere, riaperto da una protezione. '
         + '`externalFetch` non e\' la strada: e\' lo strumento del SERVER, e questo codice gira nel '
         + 'browser e nella WebView. Il silenzio qui non e\' possibile: ogni esito passa da '
-        + '`RisultatoScarico` e finisce in `app_log` attraverso `MediaGrid` — successo compreso.'],
+        + '`RisultatoScarico` e finisce in `app_log` attraverso `MediaGrid` — successo compreso. '
+        + 'Dall\'app 1.1 c\'e\' anche la `fetch` di `scaricaDocumento`/`apriDocumento` verso una '
+        + 'NOSTRA route della stessa origine (serve i cookie di sessione): il tetto sta nella route, '
+        + 'e l\'esito lo logga l\'helper stesso con `registraEsito`.'],
     ['src/lib/offline/read-cache.ts',
         'BROWSER: è il wrapper di lettura con fallback su IndexedDB delle pagine genitore, e l\'`url` '
         + 'che riceve è sempre una nostra route relativa. Un tetto qui sarebbe per di più il '
@@ -345,8 +366,9 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         + 'decide se il comando ha davvero un file dietro, mentre `/api/pagamenti/fattura` con '
         + '`esterno=1` chiede il link firmato per il browser di sistema. La prima eredita il tetto '
         + 'server dal client Supabase strumentato; la seconda ha anche il budget client composto '
-        + 'di `fetchUrlEsterno`, dichiarato in `PRIMITIVE_DI_TETTO`. `TETTO_SCARICO_MS` copre '
-        + 'inoltre il gesto e il mutex del bridge nativo. Ogni fallimento viene registrato con '
+        + 'di `fetchUrlEsterno`, dichiarato in `PRIMITIVE_DI_TETTO`. Nell\'app 1.1 la stessa route '
+        + 'in `download=1` è letta dalla sorgente-funzione di `scaricaConTetto`, e '
+        + '`TETTO_SCARICO_MS` copre quella lettura (non il foglio). Ogni fallimento viene registrato con '
         + '`logClient`, quindi nessuna delle due strade sparisce in silenzio.'],
     ['src/lib/pagamenti/esito-fattura.ts',
         'BROWSER: `POST /api/pagamenti/fattura/esito`, una nostra route `withRoute` che registra '
@@ -356,7 +378,10 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         + 'l\'uscita dalla pagina; risposta non-ok e rigetto sono entrambi registrati con `logClient`.'],
     ['src/lib/push/native-register.ts',
         'BROWSER: registrazione e cancellazione del token su `/api/push/subscribe`, una nostra '
-        + 'route. Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
+        + 'route. Non passa da `conTetto`, ma nessuna delle due è nuda: POST e DELETE passano da '
+        + '`fetchConTetto`, un tetto suo di 15 s (dichiarato in `PRIMITIVE_DI_TETTO`, perché su '
+        + 'iOS 15 `conTetto` non ne metterebbe nessuno). È in questo elenco solo perché la parola '
+        + '`fetch(` compare senza `conTetto(`.'],
     ['src/lib/sezioni/educator-sections-cache.ts',
         'BROWSER: `GET /api/educator-sections`, una nostra route, con la cache di promesse che '
         + 'la fa chiedere una volta sola per ingresso in pagina. Stessa forma, stesso motivo: il '
@@ -452,7 +477,10 @@ const TETTI_DICHIARATI = new Map<string, string>([
         + 'ragione per cui la deroga non è stata chiesta è che qui il taglio non fa il danno che '
         + 'fa su un video da decine di megabyte (`native/scarica.ts`) — una fattura è un PDF di '
         + 'qualche centinaio di kilobyte. Se 30 s fossero pochi lo direbbe il conteggio: la '
-        + 'scadenza lascia in `app_log` un motivo suo (`tetto-tempo`) apposta per essere contata.'],
+        + 'scadenza lascia in `app_log` un motivo suo (`tetto-tempo`) apposta per essere contata, '
+        + 'in UNA sola riga `error`. Nella strada nativa (app 1.1) il tetto ferma la sola lettura '
+        + 'del PDF: il foglio «Salva su File» non è contato, la riga la scrive l\'helper '
+        + '(`fattura-scarico-non-riuscito: tetto-tempo`), e il lucchetto si libera al suo verdetto.'],
     ['src/components/features/pagamenti/FatturaViewer.tsx',
         'quanto il viewer aspetta il PDF prima di interrompere la richiesta e restituire il '
         + 'controllo all\'utente (2026-09-16). Sono 25 s: il download può includere latenza, '
@@ -523,6 +551,23 @@ const TETTI_DICHIARATI = new Map<string, string>([
         + '`preload` è il caso normale, e contarlo riempirebbe `app_log` di rumore. Si logga il '
         + 'ramo che non dovrebbe capitare — `video-galleria-durata-non-misurabile`, quando nemmeno '
         + 'l\'objectURL si crea, cioè quando lo storage del browser è bloccato.'],
+    ['src/app/api/chat/messages/route.ts',
+        'quanto la POST della chat ASPETTA, dentro `after()`, prima del giro di dispatch '
+        + 'anticipato (`ATTESA_DISPATCH_CHAT_MS`, 30 s — PS3, 2026-09-24). È la voce più strana '
+        + 'dell\'inventario perché NON interrompe niente: non è una scadenza che taglia una '
+        + 'chiamata, è un ritardo voluto, e sta qui perché il nome lo dichiara un\'attesa e il '
+        + 'lock la misura — nasconderla con un nome diverso sarebbe stato il modo sbagliato di '
+        + 'farla tacere. I due limiti che il lock le impone le servono davvero. `> 0`: a zero la '
+        + 'push partirebbe col primo messaggio di una raffica, mentre l\'attesa è ciò che la '
+        + 'raggruppa (il `debounce` di `notificaEvento` sostituisce la notifica del thread a ogni '
+        + 'messaggio, e i giri successivi la trovano già presa). `≤ MAI_OLTRE_MS`: l\'attesa '
+        + 'consuma il `maxDuration` della route (300 s), dimensionato su attesa + caso peggiore '
+        + 'del giro (`DURATA_MINIMA_FUNZIONE_S`); allungarla senza rifare quel conto farebbe '
+        + 'troncare il giro DOPO la presa atomica, cioè notifiche marcate e mai spedite. Il vincolo '
+        + 'con `maxDuration` lo tiene `chat-messages-dispatch-anticipato.test.ts`; qui si tiene '
+        + 'l\'ordine di grandezza. Ogni giro lascia in `app_log` avvio ed esito '
+        + '(`dispatch-anticipato-avviato`, poi `-ok`, `-fallito`, `-eccezione`…), quindi un\'attesa che non arriva in fondo '
+        + 'si vede dal battito mancante.'],
 ]);
 
 /**

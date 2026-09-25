@@ -1,10 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { isNativeApp } from '@/lib/push/native-register';
-import { scarica, type RisultatoScarico } from '@/lib/native/scarica';
+import {
+    fileConsegnato,
+    scaricaDocumento,
+    type DocumentoInput,
+    type RisultatoScarico,
+} from '@/lib/native/scarica';
 import { registraEsitoFattura } from '@/lib/pagamenti/esito-fattura';
 import { SUPABASE_URL } from '@/lib/supabase/public-config';
 
@@ -299,8 +304,10 @@ export interface CoordinateFattura {
  * `target="_blank"` (nella WebView `window.open` non apre e non lo dice).
  *
  * ⚠️ NON RENDERLO ASSOLUTO, e la tentazione è concreta perché ha un movente vero: il
- * ripiego di `scarica()` condivide proprio questo `url`, e un indirizzo relativo dentro
- * il foglio di sistema non lo apre nessuno (vedi `AvvisoScarico`, difetto 2). Solo che
+ * vecchio ripiego di `scarica()` condivideva proprio questo `url`, e un indirizzo relativo
+ * dentro il foglio di sistema non lo apre nessuno (vedi `AvvisoScarico`, difetto 2). Oggi
+ * il salvataggio nativo passa da `scaricaDocumento`, che un indirizzo della STESSA
+ * origine non lo condivide mai come link — e resta così PERCHÉ è relativo. Solo che
  * qui dentro c'è `userId` IN CHIARO, e il ramo legacy che lo accetta è vivo PER
  * DIFETTO: `src/lib/auth/require-staff.ts` lo spegne solo se `ALLOW_HEADER_IDENTITY`
  * vale esattamente la stringa `'false'` — variabile che nel repo è descritta come un
@@ -318,53 +325,64 @@ export function urlFattura({ pagamentoId, fatturaId, userId, scaricare }: Coordi
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
- * Aprire o scaricare
+ * Il lucchetto, il tetto e ciò che si dice all'utente
  * ════════════════════════════════════════════════════════════════════════════ */
 
-export interface BersaglioFattura {
-    url: string;
-    nomeFile: string;
-    /** Titolo del foglio di sistema. MAI un nome di persona: lo legge chi riceve. */
-    titolo?: string;
-}
-
 /**
- * UNO SCARICO ALLA VOLTA, per tutta la pagina — CON UNA SCADENZA.
+ * UN SALVATAGGIO ALLA VOLTA, per tutta la pagina — CON UNA SCADENZA.
  *
  * Su iOS presentare un secondo foglio di condivisione mentre il primo è aperto
  * SOLLEVA, e in una tabella di rette questi comandi sono decine. Il lucchetto è di
  * modulo (una scheda del browser, non un componente) proprio perché il foglio di
  * sistema è uno solo per tutto il dispositivo.
  *
- * ⚠️ MA UN LUCCHETTO SENZA SCADENZA È UN LUCCHETTO CHE SI INCASTRA, e la chiave qui
- * la tiene una `fetch` che non è nostra: `scarica()` non ha timeout, e una richiesta
- * appesa nella WebView non si risolve né si rifiuta — è il caso che in `app_log` si
- * presenta come `stato_http = 0`, «Load failed», e che su una rete mobile che sparisce
- * a metà non è affatto raro. Con un booleano nudo quel giro non finirebbe MAI: da lì
- * in avanti «Apri» e «Scarica» di OGNI riga della pagina risponderebbero soltanto «un
- * altro scarico è in corso», per tutta la vita della scheda. Cioè un pulsante che non
- * fa niente e dà pure la colpa a un altro. Il tetto qui sotto chiude quel giro.
+ * CHE COSA FA IL TETTO (`TETTO_SCARICO_MS`), e che cosa NON fa. Il tetto copre la sola
+ * LETTURA dalla rete — una richiesta appesa nella WebView non si risolve né si rifiuta,
+ * è il caso che in `app_log` si presenta come `stato_http = 0`, «Load failed» — e la
+ * interrompe abortendola; poi decide che cosa dire all'utente. NON tocca il foglio di
+ * sistema e NON libera il lucchetto prima del tempo:
+ *  - strada del browser esterno (binario 1.0): la `fetch` è l'unica cosa in volo, e il
+ *    giro si chiude allo scadere del tetto;
+ *  - strada nativa (app 1.1): il tetto vale fino a quando il PDF è in mano (`fetch` e
+ *    corpo, dentro la sorgente-funzione di `scaricaConTetto`); scrittura in Cache e foglio
+ *    «Salva su File» non sono né contati né interrotti. Il lucchetto resta del giro finché
+ *    `scaricaDocumento` non ha dato il suo verdetto (`scaricaConTetto` lo aspetta; dopo un
+ *    abort del chiamante lo aspetta `sbloccoDifferito`). Così non si aprono mai due fogli
+ *    di sistema insieme.
  *
- * NON è un booleano ma l'IDENTITÀ del giro in volo, e serve proprio al tetto: quando
- * la scadenza libera il lucchetto, il giro vecchio è ancora vivo e può arrivare a
- * verdetto DOPO che un altro l'ha preso. Con un `true/false` quel verdetto tardivo
- * aprirebbe il lucchetto di qualcun altro — due fogli di sistema insieme, che è
- * esattamente ciò che questo lucchetto esiste per impedire.
+ * ⚠️ Il prezzo, accettato sapendolo: un bridge nativo APPESO (`writeFile` o
+ * `Share.share` che non tornano mai) tiene il lucchetto per tutta la vita della scheda,
+ * e da lì «Scarica» di ogni riga risponde soltanto «un altro scarico è in corso». Il
+ * tetto non può chiuderlo, perché il bridge non ascolta l'abort; e liberare il lucchetto
+ * lì vorrebbe dire rischiare il secondo foglio sopra il primo, che su iOS SOLLEVA.
+ * Chiudere la pagina e riaprirla lo sblocca.
+ *
+ * NON è un booleano ma l'IDENTITÀ del giro in volo: quando il rilascio è DIFFERITO
+ * (`sbloccoDifferito`, dopo un abort del chiamante) il verdetto arriva quando la
+ * funzione è già tornata. Il `Symbol` fa sì che quel rilascio tardivo liberi il
+ * lucchetto solo se è ancora di QUESTO giro, e mai quello di un giro successivo. Oggi
+ * nessuno lo passa di mano prima (lo libera solo il `finally` di `salvaFattura`), e il
+ * controllo è una difesa: resta vera anche il giorno in cui qualcuno aggiungesse un
+ * rilascio anticipato.
  */
 let giroInVolo: symbol | null = null;
 
 /**
- * Il motivo con cui il guard qui sopra rifiuta il secondo click. È una COSTANTE e
- * non una stringa scritta due volte perché `avvisoDa()` ci si appoggia per dire
- * all'utente «aspetta» invece di «non è riuscito»: due letterali uguali a occhio
- * sarebbero, il giorno che uno dei due cambia, un avviso che smette di comparire
- * senza che niente diventi rosso.
+ * Il motivo con cui il lucchetto rifiuta il secondo click. È una COSTANTE e non una
+ * stringa scritta due volte perché `avvisoDa()` ci si appoggia per dire all'utente
+ * «aspetta» invece di «non è riuscito»: due letterali uguali a occhio sarebbero, il
+ * giorno che uno dei due cambia, un avviso che smette di comparire senza che niente
+ * diventi rosso.
  */
 const MOTIVO_GIA_IN_CORSO = 'gia-in-corso';
 
 /**
- * Oltre questo tempo il giro si dichiara chiuso: il lucchetto si libera e all'utente
- * si dice che non è riuscito — che è la verità di ciò che ha in mano.
+ * Oltre questo tempo la lettura del PDF che non è ancora arrivata si interrompe, e
+ * all'utente si dice che non è riuscito — che è la verità di ciò che ha in mano. Il
+ * tempo si ferma appena i byte sono in mano: la scrittura in Cache e il foglio «Salva su
+ * File» NON sono contati, e il foglio non riceve MAI il segnale del tetto — né per
+ * chiuderlo né per decidere l'esito di un «Annulla». Il tempo che l'utente passa a
+ * scegliere la cartella è suo (vedi `scaricaConTetto`).
  *
  * Trenta secondi, e non cinque: su una rete lenta una fattura di qualche centinaio di
  * kilobyte ci mette parecchio, e un tetto stretto trasformerebbe uno scarico LENTO in
@@ -372,178 +390,61 @@ const MOTIVO_GIA_IN_CORSO = 'gia-in-corso';
  *
  * ⚠️ 60 s → 30 s il 2026-09-10, e non è un ripensamento di gusto: 30 s è `MAI_OLTRE_MS`,
  * il taglio di piattaforma che `__tests__/lib/logging-tetto.test.ts` impone a OGNI scadenza
- * dichiarata in `src/`, e il minuto della prima stesura lo sforava. Vale per tutti per la
- * ragione scritta lì: «un tetto di mezz'ora è funzionalmente nessun tetto». Il compromesso
- * è lo stesso già accettato — sapendolo — da `src/lib/upload/carica-file.ts`: questo tetto
- * PUÒ chiudere un giro che stava funzionando, e allora l'utente legge un errore e ha un
- * pulsante da premere di nuovo; l'attesa infinita invece non produce niente. E qui il
- * paragone è in discesa e su un file piccolo, non in salita su 4 MB. Se 30 s fossero
- * troppo pochi lo direbbe il CONTEGGIO, non un'opinione: la scadenza lascia in `app_log`
- * il suo `MOTIVO_TETTO` proprio per poter essere contata.
+ * dichiarata in `src/`. Il compromesso è lo stesso già accettato da
+ * `src/lib/upload/carica-file.ts`: questo tetto PUÒ chiudere un giro che stava
+ * funzionando, e allora l'utente legge un errore e ha un pulsante da premere di nuovo;
+ * l'attesa infinita invece non produce niente. Se 30 s fossero troppo pochi lo direbbe
+ * il CONTEGGIO: la scadenza lascia in `app_log` il suo `MOTIVO_TETTO` apposta, in UNA
+ * riga `error` per strada — `fattura-browser-esterno:tetto-tempo` (binario 1.0) e
+ * `fattura-scarico-non-riuscito: tetto-tempo` scritta dall'helper (app 1.1).
  */
 const TETTO_SCARICO_MS = 30_000;
 
 /** Il motivo che la scadenza lascia in `app_log`: serve a poterla CONTARE. */
 const MOTIVO_TETTO = 'tetto-tempo';
 
-/**
- * Apre o scarica UNA fattura, e l'esito finisce SEMPRE in `app_log` — successo
- * compreso.
- *
- * Il successo si logga per la ragione scritta in AGENTS.md §5: senza la sua riga,
- * «nessun log» non distingue «va tutto bene» da «il pulsante non ha mai fatto
- * partire niente», ed è precisamente l'ambiguità in cui uno «Scarica» rotto vive
- * per mesi. `scarica()` NON LANCIA MAI: qui non c'è un ramo d'errore da inventare,
- * c'è un verdetto da registrare.
- *
- * NON chiama `preventDefault()`: il gesto del browser lo decide il chiamante, che
- * è l'unico a sapere se siamo su nativo PRIMA di diventare asincrono.
- */
-export async function apriOScaricaFattura(bersaglio: BersaglioFattura): Promise<RisultatoScarico> {
-    if (giroInVolo) {
-        // NON un `return` nudo, e per DUE ragioni. In tabella: «il comando è
-        // incagliato» e «nessuno l'ha premuto» sarebbero lo stesso silenzio. A
-        // schermo: il motivo torna a chi chiama, `avvisoDa()` lo riconosce e
-        // l'utente legge «aspetta» — senza, il secondo click sarebbe di nuovo un
-        // pulsante premuto che non fa niente e non lo dice.
-        logClient({ livello: 'warn', evento: 'fetch', messaggio: 'fattura-scarico-gia-in-corso' });
-        return { esito: 'non-riuscito', motivo: MOTIVO_GIA_IN_CORSO };
-    }
-    const mio = Symbol('scarico-fattura');
-    giroInVolo = mio;
-    // Solo il PROPRIO giro si libera: se il tetto ha già passato il lucchetto a un
-    // altro, questo non glielo toglie di mano.
-    const libera = () => { if (giroInVolo === mio) giroInVolo = null; };
-
-    return new Promise<RisultatoScarico>((risolvi) => {
-        // Chi ha già risposto a chi ha premuto. Una risposta sola: il tetto e il
-        // verdetto vero corrono insieme, e il secondo che arriva tace a schermo.
-        let risposto = false;
-
-        const scadenza = setTimeout(() => {
-            if (risposto) return;
-            risposto = true;
-            libera();
-            const scaduto: RisultatoScarico = { esito: 'non-riuscito', motivo: MOTIVO_TETTO };
-            registraEsitoScarico(scaduto);
-            risolvi(scaduto);
-        }, TETTO_SCARICO_MS);
-
-        void eseguiScarico(bersaglio).then((risultato) => {
-            clearTimeout(scadenza);
-            libera();
-            if (risposto) {
-                // IL VERDETTO È ARRIVATO DOPO IL TETTO. A schermo ha già parlato la
-                // scadenza, e sovrascrivere quel messaggio adesso — un minuto dopo, su
-                // una riga che l'utente ha smesso di guardare — direbbe una cosa giusta
-                // nel momento sbagliato. Resta però da lasciarne traccia: senza questa
-                // riga «la fetch è morta» e «ci ha messo settanta secondi» sarebbero lo
-                // stesso silenzio, ed è l'unica misura da cui si capisce se il tetto è
-                // tarato bene o se sta tagliando scarichi che sarebbero riusciti.
-                logClient({
-                    livello: 'warn',
-                    evento: 'fetch',
-                    messaggio: `fattura-scarico-tardivo:${risultato.esito}`,
-                });
-                return;
-            }
-            risposto = true;
-            registraEsitoScarico(risultato);
-            risolvi(risultato);
-        });
-    });
-}
+/** Il prefisso dei log di `scaricaDocumento`: `fattura-scarico-riuscito:nativo-file`, … */
+const ETICHETTA_LOG = 'fattura';
 
 /**
- * `scarica()`, con la sua promessa mantenuta anche il giorno in cui smettesse di
- * mantenerla da sé: NON LANCIA MAI.
+ * `scaricaDocumento()`, con la sua promessa mantenuta anche il giorno in cui smettesse
+ * di mantenerla da sé: NON LANCIA MAI.
  *
- * Non è un dubbio sulla parola di `@/lib/native/scarica` (che dichiara di non
- * lanciare, e non lancia): è ciò che rende mantenibile la promessa di QUESTA
- * funzione senza un `.catch` a ogni chiamata. Un rifiuto inatteso resterebbe
- * altrimenti una unhandled rejection — l'unico esito che non lascerebbe traccia da
- * nessuna parte — e per giunta lascerebbe il lucchetto chiuso fino al tetto.
+ * Il verdetto — successo compreso — lo logga `scaricaDocumento` da sé (§5 di
+ * AGENTS.md), con l'etichetta `fattura`: qui NON si rilogga, o ogni gesto avrebbe due
+ * righe in `app_log`. L'unica riga di questo modulo è quella del rifiuto inatteso
+ * qui sotto, che l'helper non avrebbe mai visto.
  */
 async function eseguiScarico(
-    bersaglio: BersaglioFattura,
+    documento: DocumentoInput,
     signal?: AbortSignal,
 ): Promise<RisultatoScarico> {
     try {
-        return await scarica(signal ? { ...bersaglio, signal } : bersaglio);
+        return await scaricaDocumento(signal ? { ...documento, signal } : documento);
     } catch (e) {
-        return { esito: 'non-riuscito', motivo: nomeErrore(e) };
+        const motivo = nomeErrore(e);
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `fattura-salvataggio-nativo:eccezione:${motivo}` });
+        return { esito: 'non-riuscito', motivo };
     }
-}
-
-/**
- * L'esito in `app_log`. Il motivo è già un token (`nomeErrore`, `http-<n>`, o una
- * causa nostra): mai un URL, mai un nome di file.
- *
- * I DUE RIPIEGHI RESTANO DUE TOKEN DIVERSI, e la ragione NON è quella che stava
- * scritta qui («col foglio l'utente vede qualcosa succedere, con gli appunti no»):
- * per la fattura non vede niente di utile né nell'uno né nell'altro, perché quel che
- * si condivide è un indirizzo relativo — è il difetto 2 raccontato su `AvvisoScarico`,
- * e a schermo i due casi oggi dicono la stessa frase. Restano distinti QUI perché
- * questa tabella serve a sapere per quale STRADA ci si è arrivati: `condividiLink` che
- * apre il foglio è un dispositivo che ha una Web Share API e un plugin registrato,
- * `appunti` è un browser che non ce l'ha. Sommarli renderebbe impossibile capire quale
- * dei due mondi sta perdendo le fatture.
- *
- * Detto con precisione: `ripiego-appunti` da QUI non arriva oggi, perché
- * `useScaricoFattura` chiama `scarica()` solo su nativo e lì gli appunti non sono una
- * strada. Il token resta distinto perché a distinguerlo è `scarica.ts`, non questo
- * modulo, e perché il giorno in cui una pelle chiamasse da web sarebbe già contato
- * invece di essere sommato all'altro.
- */
-function registraEsitoScarico(risultato: RisultatoScarico): void {
-    const coda = risultato.motivo ? `: ${risultato.motivo}` : '';
-    if (risultato.esito === 'nativo-file' || risultato.esito === 'web-blob') {
-        // `warn` per un successo non è un refuso: `/api/logs` accetta SOLO
-        // `warn|error`, quindi un `info` non sarebbe spedibile — e non spedirlo
-        // vuol dire non averlo. `controlloTassoErrore` guarda solo gli `error`,
-        // quindi questo battito non fa dire «degradato» a un'app sana.
-        logClient({ livello: 'warn', evento: 'fetch', messaggio: `fattura-scarico-riuscito:${risultato.esito}` });
-        return;
-    }
-    if (risultato.esito === 'ripiego-condivisione' || risultato.esito === 'ripiego-appunti') {
-        logClient({ livello: 'warn', evento: 'fetch', messaggio: `fattura-scarico-${risultato.esito}${coda}` });
-        return;
-    }
-    logClient({ livello: 'error', evento: 'fetch', messaggio: `fattura-scarico-non-riuscito${coda}` });
 }
 
 /**
  * CIÒ CHE VA DETTO ALL'UTENTE quando il gesto NON gli ha consegnato il file.
  *
  * ⚠️ QUESTA ENUMERAZIONE È NATA SBAGLIATA DUE VOLTE, e le due volte hanno la stessa
- * radice: dedurre da `@/lib/native/scarica` — cioè dal modulo della GALLERIA — quali
- * esiti «vanno bene», invece di guardare che cosa resta in mano a chi ha premuto.
+ * radice: dedurre dal modulo della GALLERIA quali esiti «vanno bene», invece di
+ * guardare che cosa resta in mano a chi ha premuto.
  *
- *  1. Prima qui c'era un booleano solo, `ripiegoMuto`, acceso dall'esito
- *     `ripiego-appunti`. Sembrava giusto — `scarica.ts` dichiara che il ramo appunti
- *     è muto e che chi chiama DEVE avvisare — ed era un avviso CHE NON POTEVA
- *     COMPARIRE MAI: `apri()` passa da `scarica()` soltanto quando `isNativeApp()`, e
- *     su nativo `condividiLink` ritorna `foglio` o `non-riuscita`, mai `appunti`
- *     (`src/lib/native/share.ts`). Il ramo che sul telefono capita DAVVERO — plugin
- *     Filesystem non registrato (`scarica.ts`, il riquadro sul `cap sync`), e poi
- *     anche il foglio che non si apre — restava senza una parola.
- *  2. Poi `ripiego-condivisione` è rimasto mappato a «niente da dire», con la
- *     motivazione che il foglio di sistema l'utente lo VEDE aprirsi. Lo vede, ed è
- *     PEGGIO: quel foglio, QUI, non consegna niente. Il ripiego di `scarica()`
- *     condivide `input.url`, e il nostro url è RELATIVO (`/api/pagamenti/fattura?…`,
- *     vedi `urlFattura`). Nella galleria il ripiego funziona perché lì l'indirizzo è
- *     un link firmato ASSOLUTO di Supabase; qui il foglio consegna a WhatsApp o a
- *     Mail una stringa che nessuna app al mondo sa aprire. L'utente vede il gesto
- *     riuscire, si manda «la fattura», e non ha né il documento né un errore: è il
- *     pulsante al buio sopravvissuto DENTRO la propria correzione, per la seconda
- *     volta e nello stesso file.
+ *  1. Un avviso acceso dal solo `ripiego-appunti`, che su nativo non capitava MAI:
+ *     il ramo vero del telefono (plugin Filesystem assente) restava senza una parola.
+ *  2. `ripiego-condivisione` mappato a «niente da dire» perché il foglio di sistema
+ *     l'utente lo VEDE aprirsi. Lo vede, ed è PEGGIO: il vecchio ripiego condivideva
+ *     un indirizzo RELATIVO (`urlFattura`), cioè una stringa che nessuna app sa aprire.
  *
  * ─── LA REGOLA, scritta come si misura ───────────────────────────────────────
- * CONSEGNANO IL FILE, e solo loro: `nativo-file` e `web-blob`. Ogni altro esito è
- * «non consegnato» e PARLA. Non si aggiunge un terzo esito a quei due senza avere il
- * file in mano alla fine — ed è per questo che `avvisoDa()` qui sotto elenca per nome
- * i due che tacciono e manda tutto il resto al ramo di chiusura, invece del
- * contrario: così un esito NUOVO in `EsitoScarico` nasce parlante, non muto.
+ * CONSEGNANO IL FILE, e solo loro, gli esiti di `fileConsegnato()` — l'elenco CHIUSO
+ * dell'helper, uno solo per tutta l'app. Ogni altro esito è «non consegnato» e PARLA:
+ * un esito NUOVO nasce parlante, non muto.
  *
  * ⚠️ E NON SI «AGGIUSTA» RENDENDO ASSOLUTO L'URL: il perché sta su `urlFattura`, e
  * non è un dettaglio di stile — è la chiave d'accesso di un genitore.
@@ -552,78 +453,29 @@ export type AvvisoScarico =
     /** Un altro scarico è in volo: il foglio di sistema è uno solo per dispositivo. */
     | 'in-corso'
     /**
-     * QUALCOSA È SUCCESSO E IL FILE NON C'È. Il foglio di condivisione si è aperto
-     * (`ripiego-condivisione`), oppure il link è finito negli appunti
-     * (`ripiego-appunti`) — e in tutti e due i casi ciò che è stato consegnato è un
-     * indirizzo relativo, cioè niente. È il solo avviso che deve CONTRADDIRE quello
-     * che l'utente ha appena visto con i suoi occhi: senza, resta convinto di avere
-     * la fattura, e se ne accorge il giorno che gli serve.
-     *
-     * I due ripieghi finiscono nello stesso avviso perché all'utente dicono la stessa
-     * identica cosa. In `app_log` restano DUE token distinti (`registraEsitoScarico`):
-     * lì servono a sapere per quale strada ci si è arrivati, e quella distinzione la
-     * fa `scarica.ts`, non lo schermo.
+     * QUALCOSA È SUCCESSO E IL FILE NON C'È: si è aperto un foglio (o sono stati
+     * riempiti gli appunti) con un indirizzo invece del documento. È il solo avviso
+     * che deve CONTRADDIRE quello che l'utente ha appena visto con i suoi occhi.
      */
     | 'non-consegnato'
     /** Non è arrivato niente e non è successo niente: nemmeno il ripiego. */
     | 'non-riuscito';
 
 /**
- * Da un verdetto di `scarica()` all'avviso, o `null` quando davvero non c'è niente da
+ * Da un verdetto dell'helper all'avviso, o `null` quando davvero non c'è niente da
  * dire — cioè SOLO quando il file è stato consegnato.
  *
  * Pura di proposito: è la regola che decide se lo schermo parla, e si vuole poter
  * mettere alla prova senza montare un componente.
  */
 export function avvisoDa(risultato: RisultatoScarico): AvvisoScarico | null {
-    // I DUE CHE CONSEGNANO, per nome. Sono l'eccezione, non la regola: tutto ciò che
-    // non è in questa riga è un gesto che non ha dato il file a nessuno.
-    if (risultato.esito === 'nativo-file' || risultato.esito === 'web-blob') return null;
+    if (fileConsegnato(risultato)) return null;
     if (risultato.esito === 'non-riuscito') {
         return risultato.motivo === MOTIVO_GIA_IN_CORSO ? 'in-corso' : 'non-riuscito';
     }
     // Ramo di CHIUSURA, non un elenco: `ripiego-condivisione`, `ripiego-appunti` e
-    // qualunque esito che `scarica.ts` aggiungesse domani. Un esito nuovo qui dentro
-    // nasce «non consegnato» e va dimostrato consegnante, non il contrario.
+    // qualunque esito che `scarica.ts` aggiungesse domani.
     return 'non-consegnato';
-}
-
-export interface GestoreScaricoFattura {
-    /**
-     * Da mettere sull'`onClick` di OGNI ancora, «Apri» e «Scarica».
-     *
-     * Sul web non fa niente e lascia lavorare l'ancora: la route è stessa origine
-     * e il suo `Content-Disposition` fa già il mestiere. Su nativo ferma il gesto
-     * del browser (che nella WebView non farebbe NULLA, in silenzio) e passa da
-     * `@/lib/native/scarica`.
-     */
-    apri: (evento: { preventDefault: () => void }, bersaglio: BersaglioFattura) => void;
-    /**
-     * Che cosa mostrare a schermo, o `null` per «niente». Chi rende questo gestore
-     * DEVE renderlo: è la parte che trasforma un pulsante muto in un pulsante che
-     * risponde, e sul web resta `null` per costruzione (lì scarica il browser).
-     */
-    avviso: AvvisoScarico | null;
-}
-
-/**
- * Il gesto «apri o scarica una fattura», scritto UNA VOLTA per le due pelli.
- */
-export function useScaricoFattura(): GestoreScaricoFattura {
-    const [avviso, setAvviso] = useState<AvvisoScarico | null>(null);
-
-    const apri = useCallback((evento: { preventDefault: () => void }, bersaglio: BersaglioFattura) => {
-        setAvviso(null);
-        // La domanda si fa PRIMA di diventare asincroni: `preventDefault()` dopo un
-        // `await` non ferma più niente, il browser è già andato per la sua strada.
-        if (!isNativeApp()) return;
-        evento.preventDefault();
-        void apriOScaricaFattura(bersaglio).then((risultato) => {
-            setAvviso(avvisoDa(risultato));
-        });
-    }, []);
-
-    return { apri, avviso };
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -665,9 +517,22 @@ export type RisultatoSalvataggioFattura =
         avviso: AvvisoScarico | null;
       };
 
-function filesystemDisponibile(): boolean {
+/**
+ * I plugin che servono a consegnare il PDF col foglio «Salva su File»: `Filesystem`
+ * (il file in Cache) e `Share` (il foglio col FILE). La fattura è una route della
+ * STESSA origine, quindi `FileTransfer` non serve: i byte li legge la `fetch` della
+ * WebView, che ha i cookie di sessione.
+ *
+ * I binari 1.0 non hanno `Filesystem`: lì la strada resta «Apri nel browser per
+ * salvare». Si chiede ANCHE `Share` perché senza foglio `scaricaDocumento` non ha dove
+ * consegnare il file e risponderebbe «non riuscito» — e il ripiego del browser, che
+ * almeno funziona, andrebbe perso. Nessun plugin si chiama senza `isPluginAvailable`.
+ */
+const PLUGIN_FOGLIO = ['Filesystem', 'Share'] as const;
+
+function foglioNativoDisponibile(): boolean {
     try {
-        return Capacitor.isPluginAvailable('Filesystem');
+        return PLUGIN_FOGLIO.every((nome) => Capacitor.isPluginAvailable(nome));
     } catch (errore) {
         logClient({
             livello: 'warn',
@@ -678,10 +543,16 @@ function filesystemDisponibile(): boolean {
     }
 }
 
-/** Contratto usato dal futuro pulsante: decide testo e strada prima del click. */
+/**
+ * Decide testo e strada PRIMA del click:
+ *  - web → `download-web`: la route in `attachment`, come sempre;
+ *  - app nativa con Filesystem e Share (1.1) → `filesystem-nativo`: il PDF nel foglio
+ *    di condivisione, via `scaricaDocumento`;
+ *  - app nativa senza (binario 1.0) → `browser-esterno`: «Apri nel browser per salvare».
+ */
 export function presentazioneSalvataggioFattura(): PresentazioneSalvataggioFattura {
     if (!isNativeApp()) return { modalita: 'download-web', etichetta: 'Salva' };
-    return filesystemDisponibile()
+    return foglioNativoDisponibile()
         ? { modalita: 'filesystem-nativo', etichetta: 'Salva' }
         : { modalita: 'browser-esterno', etichetta: 'Apri nel browser per salvare' };
 }
@@ -797,20 +668,84 @@ async function fetchUrlEsterno(input: SalvaFatturaInput): Promise<EsitoFetchEste
 type EsitoScaricoConTetto =
     | { tipo: 'risultato'; risultato: RisultatoScarico }
     | { tipo: 'annullato'; completamento: Promise<void> }
-    | { tipo: 'timeout'; completamento: Promise<void> };
+    | { tipo: 'timeout' };
 
+/**
+ * `eseguiScarico()` della route `url`, con il tetto di `TETTO_SCARICO_MS` sulla sola
+ * LETTURA del PDF, e con l'annullamento del chiamante.
+ *
+ * ⚠️ IL TETTO E IL FOGLIO SONO DUE SEGNALI DIVERSI, ED È IL PUNTO DI TUTTA LA FUNZIONE.
+ * All'helper si passa come `signal` SOLO quello del chiamante: è quello che arriva a
+ * `writeFile` e al foglio «Salva su File» (`condividiFileLocale`). Il controller del
+ * tetto invece lo vede soltanto la `fetch` fatta qui dentro, nella sorgente-funzione:
+ * il timer si cancella appena il Blob è in mano. Se il tetto arrivasse al foglio,
+ * `condividiFileLocale` tratterebbe un «Annulla» premuto dopo 30 s come un abort
+ * (`if (signal?.aborted) return false`), e l'utente che ha solo annullato leggerebbe
+ * «non riuscito», con una riga `tetto-tempo` falsa a livello `error` in `app_log`. Con
+ * i segnali separati lo stesso gesto dà lo stesso esito prima e dopo i 30 s.
+ *
+ * Allo scadere del tetto la `fetch` (o la lettura del corpo) si interrompe con un
+ * `AbortError`; la sorgente lo rilancia RINOMINATO in `{ code: MOTIVO_TETTO }`, e l'helper
+ * risponde «non riuscito» PRIMA di `writeFile` e del foglio, scrivendo lui la sola riga
+ * `error` del guasto (`fattura-scarico-non-riuscito: tetto-tempo`, mai `AbortError`, che
+ * qui vorrebbe dire annullamento): `scaduto && !fileConsegnato` → `timeout`. Un file
+ * consegnato non diventa mai un `timeout`, nemmeno se il tetto scade nell'istante in
+ * cui il corpo finisce di arrivare. Un HTTP non-2xx rilancia `{ httpStatus }`, che
+ * l'helper traduce in `http-NNN` (senza URL nei log).
+ *
+ * Il lucchetto aspetta comunque il verdetto dell'helper: un bridge appeso (`writeFile`,
+ * `Share.share` che non torna mai) lascia questo `await` in sospeso — vedi il commento
+ * su `giroInVolo`.
+ *
+ * L'abort del CHIAMANTE (componente smontato, visore chiuso) risponde invece subito
+ * `annullato`, con la promessa `completamento` che tiene il lucchetto fino al verdetto;
+ * abortisce anche la `fetch` in volo.
+ */
 async function scaricaConTetto(
-    bersaglio: BersaglioFattura,
+    url: string,
+    documento: Omit<DocumentoInput, 'sorgente' | 'signal'>,
     signal?: AbortSignal,
 ): Promise<EsitoScaricoConTetto> {
     if (signal?.aborted) {
         return { tipo: 'annullato', completamento: Promise.resolve() };
     }
     const controller = new AbortController();
+    let scaduto = false;
+    const timer = setTimeout(() => {
+        // Si ferma la lettura che non è arrivata, e si aspetta il verdetto dell'helper.
+        scaduto = true;
+        controller.abort();
+    }, TETTO_SCARICO_MS);
+    const sorgente = async (): Promise<Blob> => {
+        try {
+            const risposta = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
+            if (!risposta.ok) {
+                // `motivoErrorePlugin` dell'helper legge `httpStatus` → `http-503`. Il
+                // messaggio non esce mai nei log (e non contiene l'URL).
+                throw Object.assign(new Error('fattura-http'), { httpStatus: risposta.status });
+            }
+            const blob = await risposta.blob();
+            // I byte sono in mano: da qui in poi il tempo è dell'utente.
+            clearTimeout(timer);
+            return blob;
+        } catch (errore) {
+            // Rilancia SEMPRE: il verdetto resta dell'helper. Solo il NOME cambia allo
+            // scadere del tetto: senza questo l'helper leggerebbe l'`AbortError` della
+            // `fetch` interrotta e scriverebbe `fattura-scarico-non-riuscito: AbortError`,
+            // che qui si legge come annullamento. Con un `code` stringa, che
+            // `motivoErrorePlugin` accetta come token, la riga diventa
+            // `fattura-scarico-non-riuscito: tetto-tempo`: UNA sola riga `error`, contabile,
+            // per UN guasto (vedi il ramo `timeout` di `salvaFattura`, che non rilogga).
+            if (scaduto) throw Object.assign(new Error('fattura-tetto'), { code: MOTIVO_TETTO });
+            throw errore;
+        }
+    };
     let chiudiAttesa: ((esito: EsitoScaricoConTetto) => void) | null = null;
     const interruzione = new Promise<EsitoScaricoConTetto>((resolve) => { chiudiAttesa = resolve; });
-    const operazione = eseguiScarico(bersaglio, controller.signal).then<EsitoScaricoConTetto>(
-        (risultato) => ({ tipo: 'risultato', risultato }),
+    const operazione = eseguiScarico({ ...documento, sorgente }, signal).then<EsitoScaricoConTetto>(
+        (risultato) => scaduto && !fileConsegnato(risultato)
+            ? { tipo: 'timeout' }
+            : { tipo: 'risultato', risultato },
     );
     const completamento = operazione.then(() => undefined);
     const annulla = () => {
@@ -818,44 +753,12 @@ async function scaricaConTetto(
         controller.abort();
     };
     signal?.addEventListener('abort', annulla, { once: true });
-    const timer = setTimeout(() => {
-        chiudiAttesa?.({ tipo: 'timeout', completamento });
-        controller.abort();
-    }, TETTO_SCARICO_MS);
     try {
         return await Promise.race([operazione, interruzione]);
     } finally {
         clearTimeout(timer);
         signal?.removeEventListener('abort', annulla);
     }
-}
-
-function statoHttpScarico(motivo: string | undefined): number | undefined {
-    const corrispondenza = /^http-(\d{3})(?:\||$)/.exec(motivo ?? '');
-    if (!corrispondenza) return undefined;
-    const stato = Number(corrispondenza[1]);
-    return stato >= 100 && stato <= 599 ? stato : undefined;
-}
-
-/**
- * Registra soltanto esiti che non hanno consegnato il PDF. Il messaggio usa un
- * codice chiuso derivato dall'enum; URL, token, nome file e motivo libero non
- * entrano mai nel log. Il successo resta la telemetria `salvataggio_avviato`.
- */
-function registraEsitoSalvataggioNativo(risultato: RisultatoScarico): void {
-    if (risultato.esito === 'nativo-file' || risultato.esito === 'web-blob') return;
-    const codice = risultato.esito === 'ripiego-condivisione'
-        ? 'ripiego-condivisione'
-        : risultato.esito === 'ripiego-appunti'
-            ? 'ripiego-appunti'
-            : 'non-riuscito';
-    const stato = statoHttpScarico(risultato.motivo);
-    logClient({
-        livello: 'error',
-        evento: 'fetch',
-        messaggio: `fattura-salvataggio-nativo:${codice}`,
-        ...(stato ? { stato } : {}),
-    });
 }
 
 /**
@@ -879,27 +782,38 @@ export async function salvaFattura(input: SalvaFatturaInput): Promise<RisultatoS
     try {
         if (presentazione.modalita === 'filesystem-nativo') {
             registraAvvio(input, 'salvataggio_avviato');
-            const esito = await scaricaConTetto({
-                url: urlDownload(input),
+            // App 1.1: il PDF in Cache e il foglio di condivisione col FILE («Salva su
+            // File», Mail, WhatsApp). La sorgente è la route della STESSA origine in
+            // `attachment`, letta da una sorgente-funzione di `scaricaConTetto` con la
+            // `fetch` della WebView (i cookie ci sono) e il controllo di `res.ok`: una
+            // funzione, non una stringa, perché il tetto deve fermare la lettura senza
+            // arrivare al foglio. L'helper non la condivide MAI come link.
+            const esito = await scaricaConTetto(urlDownload(input), {
                 nomeFile: nomeFileFattura(input.numero, input.anno),
-                titolo: input.titolo,
+                mime: 'application/pdf',
+                etichetta: ETICHETTA_LOG,
+                ...(input.titolo ? { titolo: input.titolo } : {}),
             }, input.signal);
             if (esito.tipo === 'timeout') {
-                sbloccoDifferito = esito.completamento;
-                logClient({
-                    livello: 'error',
-                    evento: 'fetch',
-                    messaggio: 'fattura-salvataggio-nativo:tetto-tempo',
-                });
+                // Qui l'helper ha GIÀ dato il suo verdetto (la lettura interrotta dal
+                // tetto, prima di `writeFile` e del foglio): il lucchetto si libera subito.
+                // E l'ha GIÀ scritto in `app_log`, a livello `error`, col motivo del tetto
+                // (`fattura-scarico-non-riuscito: tetto-tempo`, dalla sorgente-funzione di
+                // `scaricaConTetto`): qui NON si rilogga, o una scadenza peserebbe il
+                // doppio nel tasso d'errore rispetto a un 503.
                 return risultatoNegativo(presentazione.modalita, MOTIVO_TETTO);
             }
             if (esito.tipo === 'annullato') {
                 sbloccoDifferito = esito.completamento;
                 return risultatoNegativo(presentazione.modalita, 'annullato', null);
             }
+            // Il verdetto in `app_log` l'ha già scritto `scaricaDocumento`, successo
+            // compreso (`fattura-scarico-riuscito:nativo-file`): qui non si rilogga.
             const risultato = esito.risultato;
-            registraEsitoSalvataggioNativo(risultato);
-            return risultato.esito === 'nativo-file' || risultato.esito === 'web-blob'
+            if (risultato.motivo === 'annullato') {
+                return risultatoNegativo(presentazione.modalita, 'annullato', null);
+            }
+            return fileConsegnato(risultato)
                 ? { ok: true, modalita: presentazione.modalita, avviso: null }
                 : risultatoNegativo(
                     presentazione.modalita,

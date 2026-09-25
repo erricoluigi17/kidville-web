@@ -2,6 +2,7 @@ import React from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { User, IdCard, Download, Mail, Phone, MapPin } from 'lucide-react';
 import { formattaIstante } from '@/i18n/config';
+import { apriLinkNellApp } from '@/lib/ui/apri-documento-firmato';
 
 export type AdultType = 'mother' | 'father' | 'delegate';
 
@@ -41,6 +42,7 @@ const Value = ({ children }: { children: React.ReactNode }) => (
 
 export function LinkedAdultProfile({ data, type }: Props) {
     const t = useTranslations('adminStudents');
+    const ts = useTranslations('shared');
     const locale = useLocale();
     const Icon = type === 'delegate' ? IdCard : User;
 
@@ -139,6 +141,12 @@ export function LinkedAdultProfile({ data, type }: Props) {
                                         href={data.document_url} 
                                         target="_blank" 
                                         rel="noopener noreferrer"
+                                        // Nell'app un `_blank` non apre niente: anteprima di
+                                        // sistema dentro l'app (spec 2026-09-24, NAT3g). Sul web
+                                        // il gestore non tocca niente.
+                                        onClick={apriLinkNellApp(data.document_url, 'delegato-documento', {
+                                            onNonConsegnato: () => alert(ts('documentoNonAperto')),
+                                        })}
                                         className="mt-4 flex items-center gap-2 justify-center w-full py-2 bg-kidville-green/20 text-kidville-green hover:bg-kidville-green/30 transition-colors rounded-lg text-xs font-bold font-barlow uppercase tracking-wider border border-kidville-green/30"
                                     >
                                         <Download size={14} />

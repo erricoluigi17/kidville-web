@@ -41,6 +41,8 @@ const h = vi.hoisted(() => {
     addListener,
     removeAllListeners,
     requestPermissions: vi.fn(async () => ({ receive: 'granted' })),
+    checkPermissions: vi.fn(async () => ({ receive: 'granted' })),
+    createChannel: vi.fn(async () => undefined),
     register: vi.fn(async () => undefined),
     logClient: vi.fn(),
   }
@@ -51,11 +53,13 @@ vi.mock('@capacitor/push-notifications', () => ({
     addListener: h.addListener,
     removeAllListeners: h.removeAllListeners,
     requestPermissions: h.requestPermissions,
+    checkPermissions: h.checkPermissions,
+    createChannel: h.createChannel,
     register: h.register,
   },
 }))
 vi.mock('@capacitor/core', () => ({
-  Capacitor: { isNativePlatform: () => true, getPlatform: () => 'android' },
+  Capacitor: { isNativePlatform: () => true, getPlatform: () => 'android', isPluginAvailable: () => true },
 }))
 vi.mock('@/lib/logging/client', () => ({
   logClient: h.logClient,
@@ -125,14 +129,19 @@ describe('registrazione push nativa: gli ascoltatori della registrazione, e solo
     const { registerNativePush, unregisterNativePush } = await carica()
 
     // Due registrazioni nella stessa sessione: l'automatica all'accesso e «attiva» in PushOptIn.
+    // Gli ascoltatori si agganciano UNA volta sola (guardia di modulo, 2026-09-24): la seconda
+    // chiamata aspetta l'esito sulla stessa coppia, e un token parte verso il server una volta.
     const prima = registerNativePush('utente-finto')
     await ascoltatoriRegistrazione(1)
     emetti('registration', { value: 'token-finto-1' })
     await prima
     const seconda = registerNativePush()
-    await ascoltatoriRegistrazione(2)
+    await vi.waitFor(() => expect(h.register).toHaveBeenCalledTimes(2))
+    expect(h.ascoltatori.get('registration')?.size).toBe(1)
+    fetchFinto.mockClear()
     emetti('registration', { value: 'token-finto-1' })
-    await seconda
+    expect(await seconda).toEqual({ ok: true })
+    expect(postDelToken()).toHaveLength(1)
 
     await unregisterNativePush()
     fetchFinto.mockClear()
@@ -146,7 +155,7 @@ describe('registrazione push nativa: gli ascoltatori della registrazione, e solo
     expect(h.logClient).not.toHaveBeenCalled()
     // Ogni ascoltatore della registrazione è stato tolto con la SUA remove, una volta.
     const dellaRegistrazione = h.handle.filter((x) => x.evento === 'registration' || x.evento === 'registrationError')
-    expect(dellaRegistrazione).toHaveLength(4)
+    expect(dellaRegistrazione).toHaveLength(2)
     for (const { remove } of dellaRegistrazione) expect(remove).toHaveBeenCalledTimes(1)
     expect(h.removeAllListeners).not.toHaveBeenCalled()
   })

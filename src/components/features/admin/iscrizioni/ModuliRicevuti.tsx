@@ -13,7 +13,7 @@ import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from 
 import { StatCard } from '@/components/ui/cockpit'
 import { useSediAttive } from '@/lib/context/sede-context'
 import { logClient, nomeErrore } from '@/lib/logging/client'
-import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato'
+import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato, apriLinkNellApp } from '@/lib/ui/apri-documento-firmato'
 import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
 import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
 import { useFiltri } from '@/lib/ui/filtri/use-filtri'
@@ -731,7 +731,15 @@ function DetailPanel({
         <p role="alert" className={AVVISO_FINESTRA_BLOCCATA}>
           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
           {ts('docFinestraBloccata')}{' '}
-          <a href={docBloccato} target="_blank" rel="noopener noreferrer" className="font-bold text-kidville-green underline">
+          <a
+            href={docBloccato}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={apriLinkNellApp(docBloccato, 'iscrizione-documento', {
+              onNonConsegnato: () => alert(t('ricevutiDocumentoErrore')),
+            })}
+            className="font-bold text-kidville-green underline"
+          >
             {ts('docApriManuale')}
           </a>
         </p>

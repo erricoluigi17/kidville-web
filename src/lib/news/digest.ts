@@ -379,10 +379,11 @@ export async function generaEInviaDigest(
 
     // 4) Invio a TUTTE le famiglie della sede (comunicazione istituzionale).
     const { ok: destinatariOk, emails: destinatari } = await emailFamiglie(supabase, sede.id)
-    // SE NON SI È POTUTO NEMMENO TENTARE, NON SI MARCA. È la stessa regola già
-    // scritta e provata in src/app/api/push/dispatch/route.ts (~281): «saltate > 0
-    // e tentate === 0 ⇒ rimandate++ e si continua». Marcare qui significherebbe
-    // perdere l'edizione del mese per sempre.
+    // SE NON SI È POTUTO NEMMENO TENTARE, NON SI MARCA. È la stessa regola del
+    // dispatch delle push, in src/lib/push/dispatch.ts, passo 3 «LE RIMANDATE PER
+    // CANALE SPENTO»: una notifica i cui destinatari non sono raggiungibili perché il
+    // loro canale è spento non si prende e resta in coda (`rimandate++`). Marcare qui
+    // significherebbe perdere l'edizione del mese per sempre.
     //
     // ⚠️ FINO AL 2026-08-20 QUI C'ERA SCRITTO «riparte al giro successivo (il cron
     // gira ogni giorno)». NON GIRA OGNI GIORNO: `news-digest` è schedulato

@@ -20,10 +20,10 @@ import { caricaFile } from '@/lib/upload/carica-file';
 import { messaggioDaCorpo, messaggioSoloCatalogo } from '@/lib/ui/esito-fetch';
 import { useDestinazioniSede, altreSedi, nomeSede, stessaSede } from './destinazioni-sede';
 import { giorniResidui, sogliaRaggiunta } from '@/lib/anagrafica/scadenze';
-import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato';
+import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato, apriLinkNellApp } from '@/lib/ui/apri-documento-firmato';
 import { FUOCO_ESITO } from '@/lib/ui/fuoco';
 import { logClient } from '@/lib/logging/client';
-import { ZonaPericolosaStaff } from './ZonaPericolosaStaff';
+import { ZonaPericolosaStaff, segreteriaVedeZonaPericolosa } from './ZonaPericolosaStaff';
 
 // Scheda dedicata di un membro dello STAFF (elenco reale da `utenti`, tab Staff
 // dell'anagrafica). Si auto-carica da GET /api/admin/staff e seleziona il membro.
@@ -1631,7 +1631,21 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
                       <p role="alert" className={AVVISO_FINESTRA_BLOCCATA}>
                         <AlertTriangle size={13} className="mt-0.5 shrink-0" />
                         {ts('docFinestraBloccata')}{' '}
-                        <a href={docBloccato} target="_blank" rel="noopener noreferrer" className="font-bold text-kidville-green underline">
+                        <a
+                          href={docBloccato}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={apriLinkNellApp(docBloccato, 'anagrafica-documento', {
+                            // Le due fasce si escludono, come in `apriScansione`: via
+                            // il «apri a mano», poi l'errore. Insieme sarebbero due
+                            // role="alert" che si contraddicono.
+                            onNonConsegnato: () => {
+                              setDocBloccato(null);
+                              setErroreDoc(t('staffDocErroreApertura'));
+                            },
+                          })}
+                          className="font-bold text-kidville-green underline"
+                        >
                           {ts('docApriManuale')}
                         </a>
                       </p>
@@ -1746,13 +1760,25 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
         </div>
       ))}
 
-      {/* LA ZONA PERICOLOSA — in fondo, staccata, e SOLO per chi può modificare
-          l'incarico. Sta sotto i comandi ordinari e non fra loro: un
-          «Elimina» accanto a una matita è il bottone che si preme per sbaglio.
-          Il suo stato (anteprima → conferma → esito) vive tutto nel suo
-          componente: tenerlo qui avrebbe intrecciato `editMode` con la conferma,
-          che è il modo in cui due bottoni finiscono per abilitarsi a vicenda. */}
-      {tab === 'incarico' && canEdit && (
+      {/* LA ZONA PERICOLOSA — in fondo, staccata. Sta sotto i comandi ordinari e
+          non fra loro: un «Elimina» accanto a una matita è il bottone che si
+          preme per sbaglio. Il suo stato (anteprima → conferma → esito) vive
+          tutto nel suo componente: tenerlo qui avrebbe intrecciato `editMode`
+          con la conferma, che è il modo in cui due bottoni finiscono per
+          abilitarsi a vicenda.
+
+          CHI LA VEDE: la Direzione (`canEdit`, invariato) e, dal 2026-09-24,
+          la Segreteria sulla propria sede — su un collega non di Direzione e mai
+          su sé stessa, cioè esattamente dove le tre rotte le darebbero ragione.
+          ⚠️ È una condizione A PARTE e non un allargamento di `canEdit`: la
+          regola vive in `segreteriaVedeZonaPericolosa`, che chiama
+          `puoEliminareStaff`. */}
+      {tab === 'incarico' && (canEdit || segreteriaVedeZonaPericolosa({
+        ruoloAttivo: role,
+        userId,
+        bersaglio: member,
+        sediUtente: schools.map((s) => s.id),
+      })) && (
         <ZonaPericolosaStaff staffId={staffId} cognome={member?.cognome} onFatto={load} />
       )}
     </div>

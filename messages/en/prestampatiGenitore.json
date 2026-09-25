@@ -130,6 +130,8 @@
   "certificatoLivelloNonNido": "The INPS Nursery Bonus certificate is only issued for children attending the nursery: for the others you need the enrolment and attendance certificate.",
   "erroreCertificato": "The certificate was not generated: try again in a few minutes.",
   "certificatoNonArchiviato": "The certificate was issued, but it did not make it into the school archive: keep it now, it is the only copy you have. Do not press “Generate” again: that would issue another one with a new protocol number. Please let the school office know.",
+  "certificatoNonSalvatoRisalva": "The certificate was not saved to your device: use “Save again” next to this message, not “Generate”.",
+  "salvaDiNuovo": "Save again",
   "documentoScarica": "Download the signed form",
   "documentoArchiviatoIl": "In the file since {data}.",
   "certificatoNumero": "Protocol no. {numero}.",

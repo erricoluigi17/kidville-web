@@ -342,7 +342,7 @@ describe('Info.plist: le chiavi che il plugin PRETENDE per aprire la fotocamera'
       + 'Il plugin rigetta `getPhoto` alla PRIMA mancante, come prima istruzione e prima di\n'
       + 'qualunque foglio o richiesta di permesso: la fotocamera non si apre AFFATTO, su ogni\n'
       + 'iPhone, e in `app_log` resta solo un `fotocamera-errore`. Aggiungerle nel plist con\n'
-      + 'una stringa di scopo in italiano, poi `npx cap sync ios` e un build nativo.',
+      + 'una stringa di scopo in italiano, poi `npm run rilascio:sync` e un build nativo.',
     ).toEqual([])
 
     // Una stringa di scopo VUOTA passa il controllo del plugin (che guarda solo

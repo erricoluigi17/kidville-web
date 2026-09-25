@@ -16,6 +16,8 @@ import {
 import { SaveCheck, SaveCelebration } from '@/components/ui/SaveConfirmation';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { cx } from '@/lib/ui/cx';
+import { apriDocumento } from '@/lib/native/scarica';
+import { avvisoDocumento, esportaDocumento, type AvvisoDocumento } from '@/lib/ui/documento-segreteria';
 import { formatEuro } from '@/lib/format/valuta';
 
 // ============================ Tipi ============================
@@ -45,6 +47,37 @@ function dataIt(s: string | null | undefined, locale: string) { return s ? forma
 function url(userId: string | null, path: string) {
   const sep = path.includes('?') ? '&' : '?';
   return `/api/admin/merch/${path}${userId ? `${sep}userId=${encodeURIComponent(userId)}` : ''}`;
+}
+// Export e PDF passano dall'helper unico (`@/lib/native/scarica`): nell'app il
+// foglio «Salva su File» o l'anteprima di sistema, sul web la scheda nuova di
+// sempre. L'esito lo logga l'helper; qui si avvisa solo chi ha premuto, con il
+// testo giusto: «aggiorna l'app» sul binario 1.0 (riprovare non servirebbe mai),
+// «riprova» per ogni altro esito da segnalare.
+type AvvisiDocumento = Record<AvvisoDocumento, string>;
+function avvisaSeServe(esito: Parameters<typeof avvisoDocumento>[0], avvisi: AvvisiDocumento) {
+  const avviso = avvisoDocumento(esito);
+  if (avviso) alert(avvisi[avviso]);
+}
+function esportaMerch(userId: string | null, titolo: string, avvisi: AvvisiDocumento) {
+  void esportaDocumento({
+    sorgente: url(userId, 'export'),
+    // Lo stesso nome del `Content-Disposition` della route di export
+    // (`api/admin/merch/export`): due export di giorni diversi restano distinti.
+    nomeFile: `merchandise-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    titolo,
+    etichetta: 'merch-export',
+  }).then((esito) => avvisaSeServe(esito, avvisi));
+}
+/** Il PDF dell'ordine al fornitore (la route lo serve `inline`): si APRE. */
+function apriOrdineFornitore(userId: string | null, po: { id: string; numero?: string | null }, avvisi: AvvisiDocumento) {
+  void apriDocumento({
+    sorgente: url(userId, `ordini-fornitore/pdf?id=${encodeURIComponent(po.id)}`),
+    nomeFile: `${po.numero || 'ordine-fornitore'}.pdf`,
+    mime: 'application/pdf',
+    ...(po.numero ? { titolo: po.numero } : {}),
+    etichetta: 'merch-ordine-fornitore',
+  }).then((esito) => avvisaSeServe(esito, avvisi));
 }
 async function jget<T = unknown>(userId: string | null, path: string): Promise<T | null> {
   try { const r = await fetch(url(userId, path)); return r.ok ? ((await r.json()).data as T) : null; } catch { return null; }
@@ -176,7 +209,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
       <Toolbar search={q} onSearch={setQ} placeholder={t('merchCercaAlunno')}>
         <CockpitSelect value={filtro} onChange={setFiltro} options={[{ value: '', label: t('merchTuttiGliStati') }, ...(['da_ordinare', 'ordinato', 'arrivato', 'consegnato', 'annullato'] as StatoRiga[]).map((s) => ({ value: s, label: STATO_LABEL[s] }))]} />
         <button type="button" className={BTN_GHOST} onClick={reload}><RefreshCw size={14} /> {t('merchAggiorna')}</button>
-        <button type="button" className={BTN_GHOST} onClick={() => window.open(url(userId, 'export'), '_blank')}><Download size={14} /> {t('merchEsportaXLSX')}</button>
+        <button type="button" className={BTN_GHOST} onClick={() => esportaMerch(userId, t('merchTitolo'), { riprova: t('merchDownloadNonRiuscito'), aggiorna: t('docNativoAggiornaApp') })}><Download size={14} /> {t('merchEsportaXLSX')}</button>
       </Toolbar>
 
       {loading ? <Spinner /> : filtrati.length === 0 ? (
@@ -385,8 +418,8 @@ function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChang
     const res = await jsend(userId, 'ordini-fornitore', 'POST', { fornitore_id: fornitoreId, righe_ids: daInviare });
     setBusy(false);
     if (res.ok) {
-      const po = (res.data as { po?: { id: string } | null })?.po;
-      if (po?.id) window.open(url(userId, `ordini-fornitore/pdf?id=${po.id}`), '_blank');
+      const po = (res.data as { po?: { id: string; numero?: string | null } | null })?.po;
+      if (po?.id) apriOrdineFornitore(userId, po, { riprova: t('merchDownloadNonRiuscito'), aggiorna: t('docNativoAggiornaApp') });
       setSel(new Set()); load(); onChanged();
     } else alert(res.error ?? t('merchOperazioneNonRiuscita'));
   };
@@ -485,7 +518,7 @@ function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: 
                 <p className="font-maven text-xs text-kidville-muted">{p.fornitore_nome} · {dataIt(p.creato_il, locale)}</p>
               </div>
               <div className="flex gap-2">
-                <button type="button" className={BTN_GHOST} onClick={() => window.open(url(userId, `ordini-fornitore/pdf?id=${p.id}`), '_blank')}><FileText size={13} /> {t('merchRistampaPDF')}</button>
+                <button type="button" className={BTN_GHOST} onClick={() => apriOrdineFornitore(userId, p, { riprova: t('merchDownloadNonRiuscito'), aggiorna: t('docNativoAggiornaApp') })}><FileText size={13} /> {t('merchRistampaPDF')}</button>
                 <button type="button" disabled={busy || daRicevere.length === 0} className={BTN_PRIMARY} onClick={() => checkin(daRicevere.map((r) => r.id))}><Truck size={15} /> {t('merchRegistraArrivo')}</button>
               </div>
             </div>

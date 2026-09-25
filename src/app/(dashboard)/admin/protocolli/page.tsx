@@ -38,6 +38,8 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
+import { apriDocumento } from '@/lib/native/scarica';
+import { avvisoDocumento, baseNomeProtocollo, esportaDocumento, nomeFileProtocollo, type AvvisoDocumento } from '@/lib/ui/documento-segreteria';
 
 // Traduttore next-intl passato agli helper fuori dai componenti (stesso pattern
 // del resto del repo): il tipo del valore di ritorno di useTranslations.
@@ -96,6 +98,35 @@ function mimeDaFile(f: File): string | null {
 const MAX_MB = 25;
 
 function numeroFmt(numero: number, anno: number) { return `${String(numero).padStart(7, '0')}/${anno}`; }
+
+// ============================ Documenti: web e app ============================
+// Tutti i file del registro passano dall'helper unico (`@/lib/native/scarica`):
+// nell'app l'anteprima di sistema o il foglio «Salva su File», sul web la scheda
+// nuova di sempre. Il nome sul dispositivo è lo STESSO che la route mette nel
+// download firmato (`Prot-0000042-2026.pdf`), e l'esito lo logga l'helper.
+const MIME_PDF = 'application/pdf';
+const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+// Il nome si ricava SEMPRE dal numero formattato («0000042/2026») con
+// `nomeFileProtocollo`/`baseNomeProtocollo` di `@/lib/ui/documento-segreteria`:
+// una sola copia della convenzione, la stessa usata dalle Competenze.
+/**
+ * Apre un file del registro da un indirizzo firmato e restituisce l'avviso da
+ * dare: `null` = consegnato (o il foglio di condivisione si è visto), `'aggiorna'`
+ * = binario 1.0 senza i plugin (riprovare non servirebbe mai), `'riprova'` = ogni
+ * altro esito da segnalare. `apriDocumento` è la PRIMA istruzione: sul web la
+ * scheda si apre dentro il gesto, come faceva il link di prima.
+ */
+async function apriFileProtocollo(url: string, nomeFile: string, mime: string | null | undefined, titolo: string, etichetta: string): Promise<AvvisoDocumento | null> {
+  const esito = await apriDocumento({ sorgente: url, nomeFile, ...(mime ? { mime } : {}), titolo, etichetta });
+  return avvisoDocumento(esito);
+}
+/**
+ * Il testo dell'avviso: «aggiorna l'app» (senza emoji: serve anche al banner)
+ * oppure il «riprova» del punto di chiamata (per i toast `protDownloadFallito`).
+ */
+function testoAvvisoProt(t: Traduttore, avviso: AvvisoDocumento, chiaveRiprova = 'protDownloadFallito'): string {
+  return avviso === 'aggiorna' ? t('protAggiornaApp') : t(chiaveRiprova);
+}
 // Data/ora localizzate (IT identiche a `toLocale*String('it-IT', …)`); il `locale`
 // arriva dai call-site (componenti con `useLocale()`).
 function dataIt(s: string | null | undefined, locale: string) { return s ? formatData(s, locale, 'breve') : ''; }
@@ -249,6 +280,20 @@ function ProtocolliInner() {
   }, [annoCorrente, anno]);
 
   const exportUrl = (formato: 'xlsx' | 'pdf') => urlP(userId, `export?${filtriQuery.toString()}&formato=${formato}`);
+  // Lo stesso nome che la route di export mette nel `Content-Disposition`.
+  const esporta = (formato: 'xlsx' | 'pdf') => {
+    const nome = `registro-protocollo-${anno}${da ? `-dal-${da}` : ''}${a ? `-al-${a}` : ''}`;
+    void esportaDocumento({
+      sorgente: exportUrl(formato),
+      nomeFile: `${nome}.${formato}`,
+      mime: formato === 'xlsx' ? MIME_XLSX : MIME_PDF,
+      titolo: t('protTitle'),
+      etichetta: 'protocolli-export',
+    }).then((esito) => {
+      const avviso = avvisoDocumento(esito);
+      if (avviso) mostraToast(testoAvvisoProt(t, avviso));
+    });
+  };
 
   return (
     <CockpitPage>
@@ -259,10 +304,10 @@ function ProtocolliInner() {
         subtitle={t('protSubtitle')}
         actions={
           <>
-            <button type="button" className={BTN_GHOST} onClick={() => window.open(exportUrl('xlsx'), '_blank')}>
+            <button type="button" className={BTN_GHOST} onClick={() => esporta('xlsx')}>
               <FileSpreadsheet size={14} /> {t('protBtnExcel')}
             </button>
-            <button type="button" className={BTN_GHOST} onClick={() => window.open(exportUrl('pdf'), '_blank')}>
+            <button type="button" className={BTN_GHOST} onClick={() => esporta('pdf')}>
               <FileDown size={14} /> {t('protBtnPdfRegistro')}
             </button>
             <button type="button" className={BTN_GHOST} onClick={() => setDrawerTitolario(true)}>
@@ -378,8 +423,10 @@ function ProtocolliInner() {
                         onClick={async (e) => {
                           e.stopPropagation();
                           const res = await jfull<{ data?: { url: string } }>(userId, `file?id=${r.id}&versione=timbrato`);
-                          if (res?.data?.url) window.open(res.data.url, '_blank');
-                          else mostraToast(t('protDownloadFallito'));
+                          const avviso = res?.data?.url
+                            ? await apriFileProtocollo(res.data.url, nomeFileProtocollo(numeroFmt(r.numero, r.anno)), MIME_PDF, t('protBtnTimbrato'), 'protocollo-timbrato')
+                            : 'riprova';
+                          if (avviso) mostraToast(testoAvvisoProt(t, avviso));
                         }}
                       >
                         <Download size={13} /> {t('protBtnTimbrato')}
@@ -725,9 +772,20 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
             <p className="font-barlow text-[40px] font-black leading-tight text-kidville-green">{esito.numeroFormattato}</p>
           </div>
           {esito.downloadTimbrato ? (
-            <a href={esito.downloadTimbrato} target="_blank" rel="noreferrer" className={BTN_PRIMARY}>
+            <button
+              type="button"
+              className={BTN_PRIMARY}
+              onClick={() => {
+                const url = esito.downloadTimbrato;
+                if (!url) return;
+                setErrore('');
+                void apriFileProtocollo(url, nomeFileProtocollo(esito.numeroFormattato), MIME_PDF, t('protScaricaTimbrato'), 'protocollo-timbrato')
+                  // Il banner ha già la sua icona: testo senza emoji (`protDownloadFallito` è per i toast).
+                  .then((avviso) => { if (avviso) setErrore(testoAvvisoProt(t, avviso, 'protTimbratoNonAperto')); });
+              }}
+            >
               <Download size={16} /> {t('protScaricaTimbrato')}
-            </a>
+            </button>
           ) : (
             <p className="font-maven text-sm text-kidville-sub">{t('protTimbratoArchiviato')}</p>
           )}
@@ -834,7 +892,18 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
             <p className="font-barlow text-[40px] font-black leading-tight text-kidville-green">{esito.numeroFormattato}</p>
           </div>
           {esito.downloadTimbrato && (
-            <a href={esito.downloadTimbrato} target="_blank" rel="noreferrer" className={BTN_PRIMARY}><Download size={16} /> {t('protScaricaTimbrato')}</a>
+            <button
+              type="button"
+              className={BTN_PRIMARY}
+              onClick={() => {
+                const url = esito.downloadTimbrato;
+                if (!url) return;
+                void apriFileProtocollo(url, nomeFileProtocollo(esito.numeroFormattato), MIME_PDF, t('protScaricaTimbrato'), 'protocollo-timbrato')
+                  .then((avviso) => { if (avviso) mostraToast(testoAvvisoProt(t, avviso)); });
+              }}
+            >
+              <Download size={16} /> {t('protScaricaTimbrato')}
+            </button>
           )}
           <button type="button" className={BTN_GHOST} onClick={() => { setEsito(null); setAlunnoId(''); setTitolo(''); setCorpo(''); }}>{t('protGeneraAltro')}</button>
         </div>
@@ -1011,8 +1080,16 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
   const scarica = async (versione: 'originale' | 'timbrato' | 'allegato', allegatoId?: string) => {
     const extra = allegatoId ? `&allegatoId=${allegatoId}` : '';
     const res = await jfull<{ data?: { url: string } }>(userId, `file?id=${id}&versione=${versione}${extra}`);
-    if (res?.data?.url) window.open(res.data.url, '_blank');
-    else mostraToast(t('protDownloadFallito'));
+    if (!res?.data?.url) { mostraToast(t('protDownloadFallito')); return; }
+    // Il nome sul dispositivo è quello che la route mette nel download firmato.
+    const base = (rec ? baseNomeProtocollo(numeroFmt(rec.numero, rec.anno)) : null) ?? 'protocollo';
+    const allegato = allegatoId ? (rec?.allegati ?? []).find((al) => al.id === allegatoId) : undefined;
+    const [nomeFile, mime, titolo] =
+      versione === 'timbrato' ? [`${base}.pdf`, MIME_PDF, t('protPdfTimbrato')]
+      : versione === 'originale' ? [rec?.file_nome_originale ?? `${base}-originale`, null, t('protOriginale')]
+      : [allegato?.nome ?? `${base}-allegato`, allegato?.mime ?? null, t('protTitle')];
+    const avviso = await apriFileProtocollo(res.data.url, nomeFile, mime, titolo, `protocollo-${versione}`);
+    if (avviso) mostraToast(testoAvvisoProt(t, avviso));
   };
 
   const verificaIntegrita = async () => {

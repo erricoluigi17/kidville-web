@@ -7,6 +7,8 @@ import { Download, Check, Award, ShieldCheck } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn, btnClass } from '@/components/ui/Btn';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
+import { apriDocumento } from '@/lib/native/scarica';
+import { avvisoDocumento, suNativo } from '@/lib/native/documento-genitore';
 
 interface PagellaItem { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null; firmato: boolean }
 interface CertItem { id: string; anno: string; stato: string; downloadUrl: string | null }
@@ -19,6 +21,7 @@ interface ScrutinioView {
 function PagelleGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
   const t = useTranslations('parentPrimaria');
+  const ts = useTranslations('shared');
   const [pagelle, setPagelle] = useState<PagellaItem[]>([]);
   const [certificati, setCertificati] = useState<CertItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +31,9 @@ function PagelleGenitore() {
   const [otpCode, setOtpCode] = useState('');
   const [otpTarget, setOtpTarget] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
+  // L'esito del certificato ha un posto suo: `msg` vive dentro l'elenco delle pagelle, che
+  // può essere vuoto mentre il certificato c'è.
+  const [msgCertificati, setMsgCertificati] = useState('');
 
   const carica = useCallback(async () => {
     if (!ready || !parentId || !studentId) return;
@@ -49,9 +55,38 @@ function PagelleGenitore() {
 
   useEffect(() => { carica(); }, [carica]);
 
+  /**
+   * La pagella è da CONSULTARE (spec 2026-09-24, NAT3c): passa da `apriDocumento`.
+   * Sul web è lo stesso `window.open` di prima, aperto dentro il gesto (l'helper non
+   * attende niente prima della scheda); nell'app 1.1 è l'anteprima di sistema DENTRO
+   * l'app — il `window.open` nella WebView non apriva niente. La route è della stessa
+   * origine: nell'app i byte si leggono con la `fetch` della WebView, che ha i cookie di
+   * sessione. L'esito lo registra l'helper, successo compreso.
+   */
   const apriPDF = (scrutinioId: string) => {
     if (!studentId) return;
-    window.open(`/api/primaria/pagella?scrutinioId=${scrutinioId}&alunnoId=${studentId}&userId=${parentId}`, '_blank');
+    void apriDocumento({
+      sorgente: `/api/primaria/pagella?scrutinioId=${scrutinioId}&alunnoId=${studentId}&userId=${parentId}`,
+      nomeFile: `pagella-${scrutinioId.slice(0, 8)}.pdf`,
+      mime: 'application/pdf',
+      etichetta: 'pagella',
+    }).then((esito) => {
+      // Un'apertura riuscita toglie l'avviso di un tentativo precedente fallito — e SOLO
+      // quello: un messaggio della firma (OTP, «pagella firmata») resta dov'è. Sul binario
+      // 1.0 (plugin della 1.1 assenti) il testo dice di aggiornare l'app: lì riprovare non
+      // riuscirà mai.
+      const avvisiApertura = [ts('documentoNonAperto'), ts('documentoAppDaAggiornare')];
+      const avviso = avvisoDocumento(esito);
+      setMsg((m) =>
+        avviso === 'aggiorna'
+          ? avvisiApertura[1]
+          : avviso === 'riprova'
+            ? avvisiApertura[0]
+            : avvisiApertura.includes(m)
+              ? ''
+              : m,
+      );
+    });
   };
 
   const caricaDettaglio = async (scrutinioId: string) => {
@@ -110,7 +145,10 @@ function PagelleGenitore() {
         <p className="font-maven text-sm text-kidville-muted">{t('pagelleVuoto')}</p>
       ) : (
         <div className="space-y-3">
-          {msg && <p className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-error-soft text-kidville-error'}`}>{msg}</p>}
+          {/* Lo stesso `<p>` porta i successi della firma e gli errori (firma, pagella che
+              non si apre): il ruolo segue il tono, così un lettore di schermo annuncia
+              subito un errore e con garbo un successo. */}
+          {msg && <p role={msg.includes('✓') ? 'status' : 'alert'} className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-error-soft text-kidville-error'}`}>{msg}</p>}
 
           {pagelle.map((p) => {
             const det = dettaglio[p.scrutinioId];
@@ -198,6 +236,9 @@ function PagelleGenitore() {
           <h2 className="font-barlow text-lg font-black text-kidville-green uppercase tracking-wide mb-3 flex items-center gap-2">
             <Award size={18} /> {t('pagelleCertificatoTitolo')}
           </h2>
+          {msgCertificati && (
+            <p role="alert" className="mb-3 font-maven text-sm rounded-2xl px-4 py-2 bg-kidville-error-soft text-kidville-error">{msgCertificati}</p>
+          )}
           <div className="space-y-2">
             {certificati.map((c) => (
               <div key={c.id} className="rounded-card border border-kidville-line bg-white shadow-sm px-4 py-3.5 flex items-center justify-between">
@@ -205,8 +246,34 @@ function PagelleGenitore() {
                   <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">{t('pagelleClasseQuinta')}</p>
                   <p className="font-maven text-xs text-kidville-muted">{t('pagelleAnnoScolastico', { anno: c.anno })}</p>
                 </div>
+                {/* Il certificato è da SALVARE: sul web il collegamento resta com'è; nell'app
+                    `suNativo` apre il foglio «Salva su File» con il file (NAT3c). */}
                 {c.downloadUrl ? (
-                  <a href={c.downloadUrl} target="_blank" rel="noreferrer" className={btnClass('ghost', 'sm')}>
+                  <a
+                    href={c.downloadUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={suNativo(
+                      'salva',
+                      () => ({
+                        sorgente: c.downloadUrl as string,
+                        nomeFile: `certificato-competenze-${c.anno.replace(/\//g, '-')}.pdf`,
+                        mime: 'application/pdf',
+                        etichetta: 'certificato-competenze',
+                      }),
+                      (esito) => {
+                        const avviso = avvisoDocumento(esito);
+                        setMsgCertificati(
+                          avviso === 'aggiorna'
+                            ? ts('documentoAppDaAggiornare')
+                            : avviso === 'riprova'
+                              ? ts('documentoNonSalvato')
+                              : '',
+                        );
+                      },
+                    )}
+                    className={btnClass('ghost', 'sm')}
+                  >
                     <Download size={12} /> {t('pagelleScarica')}
                   </a>
                 ) : (

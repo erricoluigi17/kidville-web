@@ -72,6 +72,21 @@ expect.extend(toHaveNoViolations)
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'Error' }))
 
 /**
+ * L'APP NATIVA è pilotabile (spec 2026-09-24, NAT3g): serve al solo collaudo del link
+ * di ripiego del CV nell'app. Il default è il web, quindi nessun test già scritto
+ * cambia significato; l'anteprima di sistema è una spia.
+ */
+const nativo = vi.hoisted(() => ({ attivo: false, apriDocumento: vi.fn() }))
+vi.mock('@/lib/push/native-register', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/push/native-register')>()),
+  isNativeApp: () => nativo.attivo,
+}))
+vi.mock('@/lib/native/scarica', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/native/scarica')>()),
+  apriDocumento: nativo.apriDocumento,
+}))
+
+/**
  * Le sedi attive sono PILOTABILI, come il ruolo: `reFetchKey` è la leva con cui
  * si simula un cambio di sede a metà di una lettura d'elenco già in volo. Senza
  * questa leva l'effetto `[reFetchKey]` non si rieseguiva mai in un test, e il
@@ -225,6 +240,7 @@ function ok(corpo: unknown, status = 200) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  nativo.attivo = false
   ruoloCorrente = 'admin'
   reFetchKeyCorrente = 'sc-giugliano,sc-aversa'
   sedeCorrenteFinta = null
@@ -1602,6 +1618,30 @@ describe('CandidatureInsegnanti — curriculum', () => {
     expect(link).toHaveAttribute('href', 'https://storage.example.test/firmata')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+  })
+
+  it('NELL’APP il ripiego che non consegna niente lo dice IN PAGINA, e toglie il «apri a mano» (mai `alert()`)', async () => {
+    const alertSpia = vi.fn()
+    vi.stubGlobal('alert', alertSpia)
+    openMock.mockImplementation(() => null)
+    await apriPrima()
+    fireEvent.click(screen.getByText('Apri il curriculum'))
+    const link = await screen.findByRole('link', { name: 'Aprilo a mano' })
+
+    // Da qui la pagina è dentro l'app: il link di ripiego passa dall'anteprima di sistema.
+    nativo.attivo = true
+    nativo.apriDocumento.mockResolvedValue({ esito: 'non-riuscito', motivo: 'foglio-file-non-aperto' })
+    expect(fireEvent.click(link), 'nell’app il link `_blank` deve fermare la navigazione').toBe(false)
+
+    await waitFor(() => expect(screen.getByText(/curriculum non è apribile/i)).toBeInTheDocument())
+    expect(nativo.apriDocumento.mock.calls[0][0]).toMatchObject({
+      sorgente: 'https://storage.example.test/firmata',
+      etichetta: 'candidatura-cv',
+    })
+    // Le due fasce si escludono: l'errore non convive con il «apri a mano».
+    expect(screen.queryByRole('link', { name: 'Aprilo a mano' })).not.toBeInTheDocument()
+    expect(alertSpia, 'l’errore del ripiego è finito in un alert() del browser').not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
   })
 
   it('firma non riuscita: avviso in pagina, e la scheda aperta a vuoto si richiude', async () => {

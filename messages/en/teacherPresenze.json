@@ -80,5 +80,17 @@
   "annullaModifica": "Cancel the change",
   "mensileCorreggiAria": "Edit {alunno}’s time, {giorno} — {stato}",
   "nessunDato": "no attendance taken",
-  "mensileOrarioNonSalvato": "Could not save {alunno}’s time. The displayed time has been restored: please try again."
+  "mensileOrarioNonSalvato": "Could not save {alunno}’s time. The displayed time has been restored: please try again.",
+  "annullaAppello": "Undo",
+  "annullaAppelloAria": "Undo {alunno}’s attendance",
+  "annullaAppelloConferma": "{alunno}: set the child back to “to record”?",
+  "annullaAppelloServeConnessione": "Undoing attendance needs a connection: try again when you are back online.",
+  "annullaAppelloCancellata": "Attendance undone for {alunno}: back to “to record”.",
+  "annullaAppelloRipristinata": "Attendance undone for {alunno}: the absence reported by the parent remains.",
+  "annullaAppelloSoloOggi": "Attendance can only be undone on the same day.",
+  "annullaAppelloNonTrovato": "There is no attendance to undo for this child: the list has been refreshed.",
+  "annullaAppelloNienteDaAnnullare": "There is only the parent’s absence notice: attendance was not taken, so there is nothing to undo.",
+  "annullaAppelloCambiato": "The attendance changed in the meantime: the list has been refreshed, please try again.",
+  "annullaAppelloErrore": "Could not undo the attendance. Please try again.",
+  "comunicazioneGenitore": "Absence reported by the parent"
 }

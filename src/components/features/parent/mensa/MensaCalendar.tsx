@@ -12,6 +12,11 @@ import { logClient } from '@/lib/logging/client';
 import { fetchConCache } from '@/lib/offline/read-cache';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { fetchFigliIds } from '@/lib/auth/use-parent-identity';
+import { entroCutoff, oggiRoma } from '@/lib/mensa/cutoff';
+// `HH:MM:SS` della colonna `time` → `HH:MM` per il testo: un lettore solo degli
+// orari (lo stesso modulo su cui poggia `@/lib/mensa/cutoff`), che rifiuta anche
+// un orario fuori scala invece di stamparlo.
+import { oraDiRoma } from '@/lib/presenze/orario';
 
 interface Props { userId: string; studentId: string }
 
@@ -55,6 +60,33 @@ function lunediDella(d: Date): Date {
 }
 function addDays(d: Date, n: number): Date { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
 
+/** Il codice con cui il server rifiuta un giorno passato o «oggi» dopo l'orario limite. */
+const CODICE_OLTRE_CUTOFF = 'MENSA_OLTRE_CUTOFF';
+
+/**
+ * Ogni quanto si ricontrolla l'orologio mentre la pagina resta aperta. Il blocco
+ * di «oggi» scatta al minuto del cutoff: 30 s di ritardo al massimo, e il
+ * ricontrollo al tocco (in `prenota`/`disdici`) chiude anche quella finestra.
+ */
+export const RICONTROLLO_CUTOFF_MS = 30_000;
+
+/**
+ * Perché il genitore non può più prenotare/disdire quel giorno. PURA e testabile.
+ *   - `'passato'`     → la data è prima di oggi nel calendario di ROMA: sempre bloccata;
+ *   - `'oltreCutoff'` → è oggi (a Roma) e l'ora italiana ha superato il cutoff;
+ *   - `null`          → prenotabile/disdicibile.
+ * Stessa regola del server (`entroCutoff` di `@/lib/mensa/cutoff`, un modulo solo),
+ * così il pulsante non resta acceso su una data che la route rifiuterebbe.
+ * Senza `cutoffOra` (GET non ancora arrivata o senza sede) «oggi» NON si blocca qui:
+ * lo schermo non inventa un orario, e il server resta comunque l'arbitro.
+ */
+export function bloccoGiorno(data: string, cutoffOra: string | null, adesso: Date): 'passato' | 'oltreCutoff' | null {
+  const oggi = oggiRoma(adesso);
+  if (data < oggi) return 'passato';
+  if (data === oggi && cutoffOra && !entroCutoff(data, cutoffOra, adesso)) return 'oltreCutoff';
+  return null;
+}
+
 /**
  * Autorecupero dopo un 403: la cache può puntare a un alunno non più collegato.
  * Pulisce kv_student_id e ri-risolve il primo figlio reale del genitore. Ritorna
@@ -93,6 +125,10 @@ export function MensaCalendar({ userId, studentId }: Props) {
   const [cutoffOra, setCutoffOra] = useState<string | null>(null);
   // Celebrazione festosa (spunta + coriandoli) su prenota/disdici riuscita.
   const [celebra, setCelebra] = useState<string | null>(null);
+  // L'istante con cui si decide cosa è bloccato. Si aggiorna da solo (timer leggero
+  // + ritorno in primo piano) così il blocco di «oggi» scatta anche se la pagina
+  // resta aperta oltre il cutoff, e a mezzanotte italiana «oggi» diventa passato.
+  const [adesso, setAdesso] = useState<Date>(() => new Date());
   // Alunno effettivo: la prop iniziale può essere stantia (cache non ancora
   // rivalidata, deep-link vecchio). Su un 403 l'autorecupero la sostituisce.
   const [overrideStudent, setOverrideStudent] = useState<string | null>(null);
@@ -105,7 +141,49 @@ export function MensaCalendar({ userId, studentId }: Props) {
 
   const from = ymd(weekStart);
   const to = ymd(addDays(weekStart, 6));
-  const today = ymd(new Date());
+  // «Oggi» e «passato» si decidono in `bloccoGiorno` con la data di ROMA, non con
+  // quella UTC di `toISOString()`: fra mezzanotte e le 2 italiane la seconda è ancora
+  // ieri, e il giorno appena passato restava prenotabile.
+
+  useEffect(() => {
+    const aggiorna = () => setAdesso(new Date());
+    const id = setInterval(aggiorna, RICONTROLLO_CUTOFF_MS);
+    const suVisibilita = () => { if (document.visibilityState === 'visible') aggiorna(); };
+    document.addEventListener('visibilitychange', suVisibilita);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', suVisibilita);
+    };
+  }, []);
+
+  /** Il testo per «oggi oltre il cutoff», con l'ora della sede. */
+  const testoOltreCutoff = (ora: string) => t('oltreCutoffOggi', { ora: oraDiRoma(ora) ?? ora });
+
+  /**
+   * L'UNICO punto che sceglie il testo di un giorno bloccato dal cutoff, sia al tocco
+   * sia dopo un rifiuto `MENSA_OLTRE_CUTOFF` del server. Per «oggi» la frase con l'ora
+   * della sede; per un giorno ormai passato (pagina rimasta aperta oltre la mezzanotte)
+   * la frase del catalogo, che non dice «oggi». Aggiorna anche l'orologio dello stato,
+   * così il pulsante si spegne subito.
+   */
+  const testoBloccoCutoff = (data: string): string => {
+    const ora = new Date();
+    setAdesso(ora);
+    return cutoffOra && data === oggiRoma(ora)
+      ? testoOltreCutoff(cutoffOra)
+      : soloCatalogoDaCorpo({ codice: CODICE_OLTRE_CUTOFF }, t('errore'));
+  };
+
+  /**
+   * Ricontrollo al tocco: l'orologio dello stato può essere fermo da fino a 30 s.
+   * Se nel frattempo il giorno è diventato bloccato, niente chiamata: si spiega
+   * perché con `testoBloccoCutoff`. Ritorna true se ha bloccato.
+   */
+  const bloccatoAlTocco = (data: string): boolean => {
+    if (!bloccoGiorno(data, cutoffOra, new Date())) return false;
+    setMsg(testoBloccoCutoff(data));
+    return true;
+  };
 
   const load = useCallback(async () => {
     try {
@@ -193,6 +271,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
   }, [authError]);
 
   const prenota = async (data: string) => {
+    if (bloccatoAlTocco(data)) return;
     setBusy(data); setMsg(null);
     const res = await fetch('/api/mensa/prenotazioni', {
       method: 'POST', headers: hdr(userId),
@@ -202,18 +281,23 @@ export function MensaCalendar({ userId, studentId }: Props) {
     setBusy(null);
     if (j.success) {
       const esito = j.data.esiti?.[0];
-      // ⚠️ `esito.motivo` è ancora prosa dell'API, per giorno («mensa chiusa»,
-      // «oltre l'orario»): resta italiana finché il server non manderà un codice
-      // per ciascun motivo. È l'ultimo residuo di T10-F1 in questa schermata, ed
-      // è dichiarato invece che nascosto — a differenza di `j.error`, che sotto
-      // passa dal catalogo.
-      if (esito && !esito.ok) { setMsg(esito.motivo ?? t('operazioneNonRiuscita')); }
+      // Il motivo «oltre l'orario» ha il suo codice (`MENSA_OLTRE_CUTOFF`) e lo
+      // gestisce il primo ramo con `testoBloccoCutoff`, tradotto in it/en.
+      // ⚠️ Restano prosa italiana dell'API solo gli altri motivi per giorno
+      // («Giorno non attivo o mensa chiusa», «Saldo ticket esaurito», e gli
+      // errori dello scalo «Errore prenotazione»/«Errore saldo»), finché il
+      // server non manderà un codice anche per loro. È l'ultimo residuo di T10-F1
+      // in questa schermata, ed è dichiarato invece che nascosto — a differenza
+      // di `j.error`, che sotto passa dal catalogo.
+      if (esito && !esito.ok && esito.codice === CODICE_OLTRE_CUTOFF) { setMsg(testoBloccoCutoff(data)); }
+      else if (esito && !esito.ok) { setMsg(esito.motivo ?? t('operazioneNonRiuscita')); }
       else { setCelebra(t('pranzoPrenotato')); }
       await load();
     } else { setMsg(soloCatalogoDaCorpo(j, t('errore'))); }
   };
 
   const disdici = async (data: string) => {
+    if (bloccatoAlTocco(data)) return;
     setBusy(data); setMsg(null);
     const res = await fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${activeStudent}&data=${data}`, {
       method: 'DELETE', headers: hdr(userId),
@@ -221,7 +305,9 @@ export function MensaCalendar({ userId, studentId }: Props) {
     const j = await res.json();
     setBusy(null);
     // Niente prosa del server: è italiana per costruzione (T10-F1).
-    if (j.success) { setCelebra(t('prenotazioneDisdetta')); await load(); } else { setMsg(soloCatalogoDaCorpo(j, t('errore'))); }
+    if (j.success) { setCelebra(t('prenotazioneDisdetta')); await load(); }
+    else if (j?.codice === CODICE_OLTRE_CUTOFF) { setMsg(testoBloccoCutoff(data)); }
+    else { setMsg(soloCatalogoDaCorpo(j, t('errore'))); }
   };
 
   const giorni = menu.filter(g => {
@@ -277,7 +363,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
       {cutoffOra && !authError && (
         <div className="mb-3 px-3 py-2 rounded-xl bg-kidville-info-soft border border-kidville-info/20 font-maven text-xs text-kidville-info flex items-center gap-2">
           <Clock size={13} className="flex-shrink-0" />
-          <span>{t.rich('cutoffNota', { ora: cutoffOra, strong: (c) => <strong>{c}</strong> })}</span>
+          <span>{t.rich('cutoffNota', { ora: oraDiRoma(cutoffOra) ?? cutoffOra, strong: (c) => <strong>{c}</strong> })}</span>
         </div>
       )}
 
@@ -325,7 +411,14 @@ export function MensaCalendar({ userId, studentId }: Props) {
             const d = new Date(`${g.data}T00:00:00Z`);
             const p = pren[g.data];
             const prenotato = p?.stato === 'prenotato';
-            const isPast = g.data < today;
+            const blocco = bloccoGiorno(g.data, cutoffOra, adesso);
+            // Passato (data di Roma) o oggi oltre il cutoff: nessuna prenotazione né disdetta.
+            const bloccato = blocco !== null;
+            const oggiOltreCutoff = blocco === 'oltreCutoff';
+            // Un pulsante `disabled` esce dal Tab e non dice perché: la ragione è nel
+            // <p> sotto, e i pulsanti la richiamano con `aria-describedby` (solo quando
+            // il <p> esiste davvero, altrimenti punterebbero a un id inesistente).
+            const idOltreCutoff = oggiOltreCutoff && cutoffOra ? `oltre-cutoff-${g.data}` : undefined;
             const bloccaSaldo = !prenotato && (saldo ?? 0) <= 0;
 
             return (
@@ -371,24 +464,31 @@ export function MensaCalendar({ userId, studentId }: Props) {
                       <div className="mt-2">
                         {prenotato ? (
                           <button
-                            disabled={busy === g.data || isPast}
+                            disabled={busy === g.data || bloccato}
                             onClick={() => disdici(g.data)}
+                            aria-describedby={idOltreCutoff}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border-2 border-kidville-success/30 text-kidville-success font-maven text-xs font-bold disabled:opacity-50"
                           >
-                            {isPast ? <Lock size={13} /> : <X size={13} />}
-                            {isPast ? t('prenotato') : t('disdici')}
+                            {bloccato ? <Lock size={13} /> : <X size={13} />}
+                            {bloccato ? t('prenotato') : t('disdici')}
                           </button>
                         ) : (
                           <button
-                            disabled={busy === g.data || isPast || bloccaSaldo}
+                            disabled={busy === g.data || bloccato || bloccaSaldo}
                             onClick={() => prenota(g.data)}
+                            aria-describedby={idOltreCutoff}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-kidville-green text-white font-maven text-xs font-bold disabled:opacity-40"
                           >
-                            <Check size={13} /> {t('prenotaPranzo')}
+                            {bloccato ? <Lock size={13} /> : <Check size={13} />} {t('prenotaPranzo')}
                           </button>
                         )}
                         {p?.origine === 'segreteria' && (
                           <span className="ml-2 font-maven text-[10px] text-kidville-muted">{t('inseritoSegreteria')}</span>
+                        )}
+                        {idOltreCutoff && cutoffOra && (
+                          <p id={idOltreCutoff} className="mt-1.5 font-maven text-[11px] text-kidville-muted flex items-center gap-1">
+                            <Clock size={12} className="flex-shrink-0" /> {testoOltreCutoff(cutoffOra)}
+                          </p>
                         )}
                       </div>
                     )}

@@ -159,7 +159,15 @@ export function posterioriCheContengono(
 // fotografie (migrazioni, policy, indici unici, FK e tabelle con `scuola_id`) sono state
 // rigenerate dalla produzione — la prova gemella 2 l'aveva resa rossa, come previsto. Vuota
 // è lo stato normale: la prossima voce entra con la prossima migrazione scritta in una PR.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20260924220000_primaria_modifica_elimina.sql':
+        'Sei interventi (primaria modificabile/eliminabile): aggiunge due FK verso utenti ' +
+        '(allegati_registro.eliminato_da e student_documents.eliminato_da, ON DELETE SET NULL) e ' +
+        'ricrea la FK allegati_registro.registro_id in SET NULL. La applica l’integrazione Supabase ' +
+        'al merge, mai a mano. La PR-B, dopo il merge, rigenera le fotografie dalla produzione, ' +
+        'censisce le due FK nuove in TRACCE_DOCENTE (il lock «ogni FK verso utenti è censita» lo ' +
+        'imporrà) e toglie questa voce.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

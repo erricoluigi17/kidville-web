@@ -7,6 +7,9 @@ import { COMPETENZE_CHIAVE, LIVELLI, COMPETENZE_SIGNIFICATIVE_CODICE } from '@/l
 import { cx } from '@/lib/ui/cx'
 import { Badge } from '@/components/ui/Badge'
 import { useSediAttive } from '@/lib/context/sede-context'
+import { apriDocumento } from '@/lib/native/scarica'
+import { avvisoDocumento, nomeFileProtocollo } from '@/lib/ui/documento-segreteria'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 interface Livello { competenza_codice: string; livello: string | null; note: string | null }
 interface Cert {
@@ -52,12 +55,26 @@ export function CompetenzePanel({ userId }: { userId: string }) {
     // dal cookie): senza questa dipendenza la tendina restava quella della sede
     // di prima anche dopo aver cambiato plesso nel selettore.
     fetch(`/api/admin/sections?userId=${userId}`, { headers: { ...hdr(), 'x-sedi': reFetchKey } })
-      .then((r) => r.json())
+      .then((r) => {
+        // Una risposta d'errore (401/403/500) è una risposta REGOLARE: non
+        // passa dal `.catch`. Senza questo ramo `d.data ?? []` darebbe la stessa
+        // tendina vuota di «nessuna quinta», senza una riga di log.
+        if (!r.ok) {
+          logClient({ livello: 'warn', evento: 'fetch', messaggio: 'competenze-sezioni-non-caricate', stato: r.status, route: '/admin/competenze' })
+          return null
+        }
+        return r.json()
+      })
       .then((d) => {
+        if (d == null) { setSezioni([]); return }
         const arr: Sezione[] = Array.isArray(d) ? d : d.data ?? []
         setSezioni(arr.filter((s) => s.school_type === 'primaria' && /5/.test(s.name ?? '')))
       })
-      .catch(() => { /* no-op */ })
+      .catch((err) => {
+        // La tendina resta vuota: senza questa riga «nessuna quinta» e «elenco
+        // non arrivato» sarebbero lo stesso schermo, e nessuno lo saprebbe.
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `competenze-sezioni-non-caricate: ${nomeErrore(err)}`, route: '/admin/competenze' })
+      })
       .finally(() => setSezioniLoaded(true))
   }, [userId, hdr, reFetchKey])
 
@@ -133,16 +150,48 @@ export function CompetenzePanel({ userId }: { userId: string }) {
       })
       const d = await r.json()
       if (!r.ok) { setMsg(d.error ?? t('compProtNonRiuscita')); return }
-      setMsg(t('compProtOk', { numero: d.data?.numeroFormattato ?? '' }))
-      if (d.data?.downloadTimbrato) window.open(d.data.downloadTimbrato, '_blank')
+      const numero: string = d.data?.numeroFormattato ?? ''
+      setMsg(t('compProtOk', { numero }))
+      if (d.data?.downloadTimbrato) {
+        // Il PDF timbrato si APRE (anteprima nell'app, scheda nuova sul web). Il
+        // nome è quello del download firmato, «Prot-0000042-2026.pdf», dalla
+        // stessa funzione del Registro protocolli (`nomeFileProtocollo`).
+        const esito = await apriDocumento({
+          sorgente: d.data.downloadTimbrato,
+          nomeFile: nomeFileProtocollo(numero),
+          mime: 'application/pdf',
+          titolo: t('compProtocolla'),
+          etichetta: 'competenze-timbrato',
+        })
+        // NON «riprova»: l'unico modo di riprovare qui sarebbe ripremere
+        // «Protocolla», e la route assegna un NUOVO numero a ogni chiamata (un
+        // numero di protocollo non si cancella, si annulla). Si rimanda al
+        // registro, dove il PDF timbrato è già archiviato. Sul binario 1.0
+        // (`'aggiorna'`) il testo dice di aggiornare l'app: lì non si aprirebbe mai.
+        const avviso = avvisoDocumento(esito)
+        if (avviso) setMsg(t(avviso === 'aggiorna' ? 'compTimbratoAggiornaApp' : 'compTimbratoNonAperto', { numero }))
+      }
     } finally { setBusy(null) }
   }
 
   async function download(c: Cert) {
+    // Si azzera: un «non si è aperto» del tentativo prima resterebbe a schermo
+    // anche dopo un nuovo tentativo riuscito.
+    setMsg(null)
     const r = await fetch(`/api/admin/competenze/download?certificatoId=${c.id}&userId=${userId}`, { headers: hdr() })
     const d = await r.json()
-    if (d.url) window.open(d.url, '_blank')
-    else setMsg(d.error ?? t('compPdfNonDisp'))
+    if (!d.url) { setMsg(d.error ?? t('compPdfNonDisp')); return }
+    // Nel nome del file niente nome del bambino: resta sul dispositivo, ma il
+    // repo non mette dati di minori dove non servono.
+    const esito = await apriDocumento({
+      sorgente: d.url,
+      nomeFile: `certificato-competenze-${String(c.anno_scolastico ?? '').replace(/\//g, '-')}.pdf`,
+      mime: 'application/pdf',
+      titolo: t('compScaricaPdf'),
+      etichetta: 'competenze-certificato',
+    })
+    const avviso = avvisoDocumento(esito)
+    if (avviso) setMsg(t(avviso === 'aggiorna' ? 'compAggiornaApp' : 'compDownloadNonRiuscito'))
   }
 
   // «5 A» esiste in ogni plesso: con più sedi accessibili il solo nome produce

@@ -15,9 +15,10 @@ import { SEDE_A, NOME_SEDE_A } from '../../fixtures/sedi'
 // PostgREST non lancia, il valore di ritorno va controllato; regola 6: un catch
 // che non logga è un bug).
 //
-// La regola di marcatura è la stessa già scritta e provata in
-// `src/app/api/push/dispatch/route.ts` (~281): se non si è potuto nemmeno
-// tentare, NON si marca — la riga torna in coda e riparte al giro dopo.
+// La regola di marcatura è la stessa del dispatch delle push, in
+// `src/lib/push/dispatch.ts`, passo 3 «LE RIMANDATE PER CANALE SPENTO»: se non
+// si è potuto nemmeno tentare, NON si marca — la riga resta in coda e riparte al
+// giro dopo.
 //
 // T17-F5 parte 1 — il tipo di notifica `news` esiste (src/lib/notifiche/tipi.ts)
 // e il gate `isNotificaAbilitata` esiste (src/lib/notifiche/config.ts) con nove

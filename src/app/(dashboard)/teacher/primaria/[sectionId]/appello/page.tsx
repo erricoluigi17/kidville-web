@@ -3,15 +3,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Check, X, Clock, LogIn, LogOut, Users, BarChart2 } from 'lucide-react';
+import { Check, X, Clock, LogIn, LogOut, Users, BarChart2, RotateCcw, EyeOff } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
+import { ritiraCambioAppelloInCoda, rimettiCambioAppelloInCoda } from '@/lib/offline/coda-appello-primaria';
 import { DateField } from '@/components/ui/DateField';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { oraDiRomaAdesso } from '@/lib/presenze/orario';
 import { OrarioCorreggibile, type CampoOrario } from '@/components/features/presenze/OrarioCorreggibile';
 import { orariAmmessi } from '@/lib/presenze/orario-ammesso';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { erroreDaRisposta } from '@/lib/ui/esito-fetch';
 
 type Stato = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
 interface Riga {
@@ -19,6 +21,22 @@ interface Riga {
   orario_entrata: string | null; orario_uscita: string | null;
   presenza_id: string | null; giustificata: boolean;
   giustificazione_testo: string | null; giust_vista_il: string | null;
+  /**
+   * L'appello di questo alunno l'ha fatto qualcuno della scuola (`registrato_da` non
+   * NULL sul server: la GET espone solo il booleano). È la condizione di «Annulla»:
+   * una riga con la sola comunicazione del genitore ha uno stato («assente») ma
+   * niente da annullare — il server risponderebbe sempre `NIENTE_DA_ANNULLARE`.
+   * Stesso criterio di `appelloFatto` nell'appello 0-6.
+   */
+  appello_fatto: boolean;
+  /**
+   * Chi guarda può togliere la presa visione di questa riga (l'ha presa lui, oppure
+   * è Segreteria o Direzione): lo decide la GET con la STESSA regola della DELETE
+   * (`puoAnnullarePresaVisione`), ed espone solo il booleano, mai chi l'ha presa.
+   * In primaria una classe ha più docenti: agli altri il comando finirebbe sempre
+   * in `PRESA_VISIONE_NON_TUA`, quindi non si offre.
+   */
+  presa_visione_annullabile: boolean;
 }
 interface AlunnoLight { id: string; nome: string; cognome: string }
 interface RiepilogoMateria { nome: string; minutiMancati: number; oreMancate: number }
@@ -69,6 +87,34 @@ function oggiIso() {
   return oggiFiscaleISO();
 }
 
+/**
+ * I rifiuti dell'annullamento dopo i quali la riga a schermo non è quella che il
+ * server ha visto: si rilegge l'elenco invece di indovinare. Stesso insieme
+ * dell'appello 0-6 (`AppelloGiornaliero`).
+ */
+const CODICI_DA_RILEGGERE = new Set([
+  'PRESENZA_NON_TROVATA',
+  'NIENTE_DA_ANNULLARE',
+  'APPELLO_CAMBIATO_NEL_FRATTEMPO',
+]);
+
+/**
+ * I rifiuti di «Annulla presa visione» dopo i quali la riga a schermo non dice più
+ * il vero, e si rilegge l'elenco: presenza sparita (`…_PRESENZA_NON_TROVATA`),
+ * presa visione già tolta (`…_ASSENTE`), tolta e rifatta dopo il caricamento della
+ * pagina (`…_CAMBIATA`: il server confronta `vistaIl` con la riga), oppure il
+ * permesso che la GET aveva concesso non vale più (`…_NON_TUA`: i ruoli sono
+ * cambiati fra lettura e clic). In tutti i casi la GET rimette
+ * `presa_visione_annullabile` al valore vero, e un comando che il server
+ * rifiuterebbe sempre sparisce invece di restare offerto.
+ */
+const CODICI_PRESA_VISIONE_DA_RILEGGERE = new Set([
+  'PRESA_VISIONE_PRESENZA_NON_TROVATA',
+  'PRESA_VISIONE_ASSENTE',
+  'PRESA_VISIONE_CAMBIATA',
+  'PRESA_VISIONE_NON_TUA',
+]);
+
 export default function AppelloPage() {
   const t = useTranslations('teacherPrimaria');
   const params = useParams();
@@ -82,6 +128,15 @@ export default function AppelloPage() {
   // Il nome di chi ha subìto una rettifica non riuscita: un avviso che non nomina
   // nessuno, in una classe di venticinque righe, non dice a chi rifare il gesto.
   const [erroreOrario, setErroreOrario] = useState<string | null>(null);
+  // Annullamento dell'appello: l'alunno in corso e l'esito da mostrare.
+  const [annullaInCorso, setAnnullaInCorso] = useState<string | null>(null);
+  const [avvisoAnnulla, setAvvisoAnnulla] = useState<{ tipo: 'ok' | 'errore'; testo: string } | null>(null);
+  // «Annulla presa visione»: l'alunno la cui DELETE è in volo (l'esito va in `avvisoAnnulla`).
+  const [presaVisioneInCorso, setPresaVisioneInCorso] = useState<string | null>(null);
+  // Gli alunni il cui cambio di stato (POST singola, o salvataggio in coda) è
+  // ancora in volo, con quanti ne hanno. Serve a fermare «Annulla» su QUELLA
+  // riga: vedi `setStato`.
+  const [salvataggioInCorso, setSalvataggioInCorso] = useState<ReadonlyMap<string, number>>(() => new Map());
 
   // Riepilogo ore assenze
   const defaultPeriodo = annoScolasticoDefault();
@@ -163,10 +218,256 @@ export default function AppelloPage() {
     // qui si componeva `${data}T${ora}:00`: la forma ISO naïve, senza fuso — la stessa
     // stringa per le 08:45 di settembre e quelle di gennaio. Il formato canonico in
     // colonna lo scrive il SERVER, con `aOrarioIso`, che il fuso lo conosce.
+    // `appello_fatto: true`: la riga ora la scrive il docente (subito, o dalla coda
+    // offline), quindi «Annulla» ha di nuovo qualcosa da togliere.
     setRighe((prev) => prev.map((r) => (r.id === alunnoId
-      ? { ...r, stato, orario_entrata: oraEntrata || null, orario_uscita: oraUscita || null }
+      ? { ...r, stato, orario_entrata: oraEntrata || null, orario_uscita: oraUscita || null, appello_fatto: true }
       : r)));
-    await invia(alunnoId, stato, oraEntrata || undefined, oraUscita || undefined);
+    // Finché questo salvataggio è in volo, «Annulla» di questa riga è fermo. La
+    // riga qui sopra accende subito `appello_fatto`, quindi il bottone comparirebbe
+    // cliccabile mentre la POST non è ancora arrivata. Le due corse possibili:
+    //  · la POST arriva DOPO la DELETE → sul server resta lo stato appena segnato,
+    //    mentre la schermata (svuotata dall'esito) dice «da registrare»;
+    //  · la POST fallisce → `invia` accoda il cambio con `saveLocalAppello` DOPO che
+    //    l'annullamento l'ha già ritirato dalla coda, e il primo flush riscrive
+    //    l'appello annullato.
+    // È lo stesso scopo di `loadingStudentId` nell'appello 0-6 (`isLoading` sulla
+    // riga toglie anche «Annulla»). `finally`: una `invia` che lanciasse non deve
+    // lasciare la riga bloccata fino al ricaricamento.
+    // Un CONTATORE per alunno, non un insieme: con due tocchi rapidi sulla stessa
+    // riga, la prima POST che finisce non deve riattivare «Annulla» mentre la
+    // seconda è ancora in volo.
+    setSalvataggioInCorso((prev) => new Map(prev).set(alunnoId, (prev.get(alunnoId) ?? 0) + 1));
+    try {
+      await invia(alunnoId, stato, oraEntrata || undefined, oraUscita || undefined);
+    } finally {
+      setSalvataggioInCorso((prev) => {
+        const next = new Map(prev);
+        const resto = (next.get(alunnoId) ?? 1) - 1;
+        if (resto > 0) next.set(alunnoId, resto);
+        else next.delete(alunnoId);
+        return next;
+      });
+    }
+  };
+
+  /**
+   * ── ANNULLA L'APPELLO DI UN ALUNNO ─────────────────────────────────────────
+   *
+   * Torna a «da registrare» (spec 2026-09-24, punto 6) con
+   * `DELETE /api/primaria/appello`, la gemella dell'appello 0-6. Due esiti buoni:
+   *  · `cancellata` — la riga non c'è più: l'alunno torna senza stato;
+   *  · `ripristinata-comunicazione` — sotto l'appello c'era l'assenza comunicata
+   *    dal genitore, e la riga torna a quella (assente, senza orari, giustifica
+   *    e presa visione intatte).
+   *
+   * Solo OGGI (data di Roma): il bottone non compare sugli altri giorni, e il
+   * server lo rifiuta comunque (`APPELLO_ANNULLA_SOLO_OGGI`).
+   *
+   * NESSUNA CODA OFFLINE (convenzioni di esecuzione della spec): senza rete non si
+   * chiede nemmeno la conferma, si dice che serve la connessione. E niente
+   * aggiornamento ottimistico: la riga cambia solo quando il server ha detto come.
+   *
+   * «Tutti presenti» resta com'è: ogni alunno si annulla da sé.
+   */
+  const annulla = async (alunnoId: string) => {
+    if (!userId) return;
+    const riga = righe.find((r) => r.id === alunnoId);
+    const nome = riga ? `${riga.cognome} ${riga.nome}` : '';
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setAvvisoAnnulla({ tipo: 'errore', testo: t('appelloAnnullaServeConnessione') });
+      return;
+    }
+    if (!window.confirm(t('appelloAnnullaConferma', { alunno: nome }))) return;
+
+    setAvvisoAnnulla(null);
+    setAnnullaInCorso(alunnoId);
+    let statoHttp: number | undefined;
+    // PRIMA si ritira dalla coda offline il cambio ancora in attesa per questo
+    // alunno e questo giorno. Altrimenti, al primo evento `online`, la coda
+    // rispedirebbe la sua POST e riscriverebbe l'appello appena annullato — in
+    // silenzio, con uno stato vecchio. Vedi `ritiraCambioAppelloInCoda`.
+    // Fuori dal `try`: l'helper non lancia, e il `catch` qui sotto deve poter
+    // RIMETTERE in coda quello che si è ritirato.
+    const ritiro = await ritiraCambioAppelloInCoda(alunnoId, data);
+    const cambioRitirato = ritiro.esito === 'ritirato' ? ritiro.riga : null;
+    // Se la DELETE non va a buon fine, il cambio ritirato torna in coda: lo stato a
+    // schermo è quello segnato e non ancora spedito, e senza questo passo non
+    // sarebbe più né sul server né in coda — la schermata fingerebbe uno stato che
+    // non esiste da nessuna parte.
+    const rimettiInCoda = async () => {
+      if (cambioRitirato) await rimettiCambioAppelloInCoda(cambioRitirato);
+    };
+    // Diventa vero appena la risposta della DELETE è stata letta e il destino del
+    // cambio ritirato è deciso: tolto per sempre (annullamento riuscito) o già
+    // rimesso in coda (rifiuto). Da lì in poi il `catch` NON deve più rimetterlo in
+    // coda: farlo dopo un annullamento riuscito farebbe riscrivere al primo flush
+    // l'appello appena tolto — proprio ciò che il ritiro dalla coda impedisce.
+    let codaDecisa = false;
+    // La rilettura dell'elenco dopo un esito. `load` non ha un `catch` suo e rilancia
+    // (GET che lancia, 502 HTML del gateway che non è JSON): qui NON deve arrivare al
+    // `catch` dell'annullamento, perché l'annullamento è già avvenuto (o già
+    // rifiutato) e l'avviso già detto. Si registra e basta: la riga resta quella
+    // aggiornata dall'esito, e la prossima lettura la riallinea.
+    const rileggi = async () => {
+      try {
+        await load();
+      } catch (err) {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-primaria-rilettura-dopo-annullamento-fallita: ${nomeErrore(err)}`, route: '/teacher/primaria/appello' });
+      }
+    };
+
+    const svuotaRiga = () => setRighe((prev) => prev.map((r) => (r.id === alunnoId
+      ? {
+        ...r,
+        presenza_id: null,
+        stato: null,
+        orario_entrata: null,
+        orario_uscita: null,
+        giustificata: false,
+        giustificazione_testo: null,
+        giust_vista_il: null,
+        appello_fatto: false,
+        presa_visione_annullabile: false,
+      }
+      : r)));
+
+    // La riga torna alla sola assenza comunicata dal genitore: assente, senza
+    // orari, `appello_fatto` falso. Si FONDE sulla riga: giustifica, motivo e
+    // presa visione non viaggiano nella risposta e restano quelli già letti.
+    // Serve a due esiti che dicono la stessa cosa: il 2xx `ripristinata-comunicazione`
+    // e il 409 NIENTE_DA_ANNULLARE dopo aver ritirato un cambio dalla coda.
+    const tornaAllaComunicazione = (presenzaId?: string) => setRighe((prev) => prev.map((r) => (r.id === alunnoId
+      ? {
+        ...r,
+        presenza_id: presenzaId ?? r.presenza_id,
+        stato: 'assente',
+        orario_entrata: null,
+        orario_uscita: null,
+        appello_fatto: false,
+      }
+      : r)));
+
+    try {
+      const qs = new URLSearchParams({ sectionId, alunnoId, data, userId });
+      const res = await fetch(`/api/primaria/appello?${qs.toString()}`, {
+        method: 'DELETE',
+        headers: { 'x-user-id': userId },
+      });
+      statoHttp = res.status;
+      const corpo = (await res.json().catch(() => null)) as {
+        codice?: string;
+        esito?: string;
+        presenza?: { id?: string; stato?: string | null } | null;
+      } | null;
+
+      if (!res.ok) {
+        const codice = typeof corpo?.codice === 'string' ? corpo.codice : '';
+
+        // L'appello di quell'alunno stava SOLO nella coda: sul server non c'era
+        // (404) o c'era solo la comunicazione del genitore (409 NIENTE_DA_ANNULLARE).
+        // Ritirarlo dalla coda È l'annullamento, ed è riuscito: dirlo come errore —
+        // o, peggio, rimettere il cambio in coda — riscriverebbe l'appello che il
+        // docente ha appena chiesto di togliere. Si rilegge la riga dal server.
+        if (cambioRitirato && (codice === 'PRESENZA_NON_TROVATA' || codice === 'NIENTE_DA_ANNULLARE')) {
+          codaDecisa = true;
+          if (codice === 'PRESENZA_NON_TROVATA') {
+            svuotaRiga();
+            setAvvisoAnnulla({ tipo: 'ok', testo: t('appelloAnnullaCancellata', { alunno: nome }) });
+          } else {
+            // La riga si aggiorna SUBITO, senza aspettare la rilettura: lo stato a
+            // schermo era il cambio appena tolto dalla coda, che non esiste più da
+            // nessuna parte. Se la rilettura fallisse (rete instabile: si arriva qui
+            // proprio dopo una POST fallita), resterebbe a schermo un appello finto
+            // accanto all'avviso verde — e un secondo «Annulla» darebbe un errore rosso.
+            tornaAllaComunicazione();
+            setAvvisoAnnulla({ tipo: 'ok', testo: t('appelloAnnullaRipristinata', { alunno: nome }) });
+          }
+          // `warn` (il client non ha `info`): non è un guasto, ma dice che un
+          // appello era rimasto in coda senza mai arrivare al server.
+          logClient({
+            livello: 'warn',
+            evento: 'offline',
+            messaggio: 'appello-primaria-annullato-solo-in-coda',
+            route: '/teacher/primaria/appello',
+            stato: res.status,
+            campi: { error_code: codice },
+          });
+          await rileggi();
+          return;
+        }
+
+        await rimettiInCoda();
+        codaDecisa = true;
+        setAvvisoAnnulla({ tipo: 'errore', testo: messaggioAnnulla(codice) });
+        if (codice === 'NIENTE_DA_ANNULLARE') {
+          // C'è solo la comunicazione del genitore: niente da annullare. La
+          // rilettura qui sotto lo conferma, ma il bottone sparisce subito.
+          setRighe((prev) => prev.map((r) => (r.id === alunnoId ? { ...r, appello_fatto: false } : r)));
+        }
+        // Il server ha visto una riga diversa da quella a schermo: si rilegge.
+        if (CODICI_DA_RILEGGERE.has(codice)) await rileggi();
+        logClient({
+          // Un rifiuto motivato (409/404) è una risposta, non un guasto.
+          livello: res.status >= 500 ? 'error' : 'warn',
+          evento: 'fetch',
+          messaggio: 'appello-primaria-annullamento-rifiutato',
+          route: '/teacher/primaria/appello',
+          stato: res.status,
+          // `error_code`: è la chiave in chiaro della redazione per i codici.
+          campi: { error_code: codice || 'senza-codice' },
+        });
+        return;
+      }
+
+      // 2xx: l'annullamento è avvenuto sul server, il cambio ritirato resta fuori.
+      codaDecisa = true;
+      if (corpo?.esito === 'ripristinata-comunicazione') {
+        // Sotto resta la sola comunicazione del genitore (vedi `tornaAllaComunicazione`).
+        tornaAllaComunicazione(corpo.presenza?.id);
+        setAvvisoAnnulla({ tipo: 'ok', testo: t('appelloAnnullaRipristinata', { alunno: nome }) });
+      } else if (corpo?.esito === 'cancellata') {
+        svuotaRiga();
+        setAvvisoAnnulla({ tipo: 'ok', testo: t('appelloAnnullaCancellata', { alunno: nome }) });
+      } else {
+        // Un 200 con un esito che questa schermata non conosce: non si inventa lo
+        // stato della riga, lo si rilegge — e l'anomalia si registra.
+        logClient({
+          livello: 'warn',
+          evento: 'fetch',
+          messaggio: 'appello-primaria-annullamento-esito-sconosciuto',
+          route: '/teacher/primaria/appello',
+          stato: res.status,
+          campi: { esito: typeof corpo?.esito === 'string' ? corpo.esito : 'assente' },
+        });
+        await rileggi();
+      }
+    } catch (err) {
+      if (codaDecisa) {
+        // L'esito del server c'era già, ed è stato applicato: quello che ha lanciato
+        // viene DOPO (non la rete dell'annullamento). Né coda né avviso cambiano.
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-primaria-annullamento-dopo-esito: ${nomeErrore(err)}`, route: '/teacher/primaria/appello', stato: statoHttp });
+        return;
+      }
+      // La `fetch` che LANCIA è la rete che non c'è (o che è caduta a metà):
+      // l'annullamento non è avvenuto, il cambio ritirato torna in coda.
+      await rimettiInCoda();
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-primaria-annullamento-fallito: ${nomeErrore(err)}`, route: '/teacher/primaria/appello', stato: statoHttp });
+      setAvvisoAnnulla({ tipo: 'errore', testo: t('appelloAnnullaServeConnessione') });
+    } finally {
+      setAnnullaInCorso(null);
+    }
+  };
+
+  const messaggioAnnulla = (codice: string): string => {
+    switch (codice) {
+      case 'APPELLO_ANNULLA_SOLO_OGGI': return t('appelloAnnullaSoloOggi');
+      case 'PRESENZA_NON_TROVATA': return t('appelloAnnullaNonTrovato');
+      case 'NIENTE_DA_ANNULLARE': return t('appelloAnnullaNienteDaAnnullare');
+      case 'APPELLO_CAMBIATO_NEL_FRATTEMPO': return t('appelloAnnullaCambiato');
+      default: return t('appelloAnnullaErrore');
+    }
   };
 
   /**
@@ -210,6 +511,82 @@ export default function AppelloPage() {
     }
   };
 
+  /**
+   * ── ANNULLA LA PRESA VISIONE DELLA GIUSTIFICA ──────────────────────────────
+   *
+   * Spec 2026-09-24, punto 2: `DELETE /api/primaria/presenze/giust-vista`. Toglie la
+   * sola LETTURA del docente: la giustifica e il motivo del genitore restano, e la
+   * riga torna a mostrare «Giustificata · presa visione» da rifare.
+   *
+   * Chi può farlo (chi l'ha presa, oppure Segreteria e Direzione) lo dice la GET
+   * col booleano `presa_visione_annullabile`: il comando si offre solo a loro. Il
+   * server lo verifica comunque. QUALE presa visione si toglie lo dice `vistaIl`:
+   * il `giust_vista_il` della riga a schermo, quella che la persona ha confermato.
+   * Se in tabella nel frattempo ce n'è un'altra (tolta e rifatta da un collega) il
+   * server risponde 409 `PRESA_VISIONE_CAMBIATA` e non tocca niente.
+   *
+   * Ogni rifiuto si mostra tradotto dal catalogo; quelli dopo cui la riga non dice
+   * più il vero (`CODICI_PRESA_VISIONE_DA_RILEGGERE`, compreso `…_NON_TUA` quando i
+   * ruoli sono cambiati fra lettura e clic) rileggono l'elenco, così il comando
+   * sparisce se il server non lo accetterebbe più.
+   *
+   * Nessun termine, nessuna coda offline: senza rete si dice che serve la
+   * connessione. Niente aggiornamento ottimistico: la riga cambia solo col 2xx.
+   */
+  const annullaPresaVisione = async (alunnoId: string, presenzaId: string, vistaIl: string) => {
+    if (!userId) return;
+    const riga = righe.find((r) => r.id === alunnoId);
+    const nome = riga ? `${riga.cognome} ${riga.nome}` : '';
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setAvvisoAnnulla({ tipo: 'errore', testo: t('appelloAnnullaPresaVisioneServeConnessione') });
+      return;
+    }
+    if (!window.confirm(t('appelloAnnullaPresaVisioneConferma', { alunno: nome }))) return;
+
+    setAvvisoAnnulla(null);
+    setPresaVisioneInCorso(alunnoId);
+    let rileggere = false;
+    try {
+      const qs = new URLSearchParams({ presenzaId, vistaIl, userId });
+      const res = await fetch(`/api/primaria/presenze/giust-vista?${qs.toString()}`, {
+        method: 'DELETE',
+        headers: { 'x-user-id': userId },
+      });
+      if (!res.ok) {
+        const esito = await erroreDaRisposta(res, t('appelloAnnullaPresaVisioneErrore'));
+        setAvvisoAnnulla({ tipo: 'errore', testo: esito.testo });
+        // La riga a schermo non è quella che il server ha visto: si rilegge.
+        rileggere = esito.codice !== null && CODICI_PRESA_VISIONE_DA_RILEGGERE.has(esito.codice);
+        logClient({
+          // Un rifiuto motivato (403/404/409) è una risposta, non un guasto.
+          livello: (esito.stato ?? 500) >= 500 ? 'error' : 'warn',
+          evento: 'fetch',
+          messaggio: 'appello-primaria-presa-visione-non-annullata',
+          route: '/teacher/primaria/appello',
+          stato: esito.stato,
+          campi: { error_code: esito.codice ?? 'senza-codice' },
+        });
+      } else {
+        setRighe((prev) => prev.map((r) => (r.id === alunnoId ? { ...r, giust_vista_il: null, presa_visione_annullabile: false } : r)));
+        setAvvisoAnnulla({ tipo: 'ok', testo: t('appelloAnnullaPresaVisioneFatto', { alunno: nome }) });
+      }
+    } catch (err) {
+      // La `fetch` che LANCIA è la rete che non c'è: sul server non è cambiato niente.
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-primaria-presa-visione-annullamento-fallito: ${nomeErrore(err)}`, route: '/teacher/primaria/appello' });
+      setAvvisoAnnulla({ tipo: 'errore', testo: t('appelloAnnullaPresaVisioneServeConnessione') });
+    } finally {
+      setPresaVisioneInCorso(null);
+    }
+    if (rileggere) {
+      try {
+        await load();
+      } catch (err) {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-primaria-rilettura-dopo-presa-visione-fallita: ${nomeErrore(err)}`, route: '/teacher/primaria/appello' });
+      }
+    }
+  };
+
   // Presa visione della giustifica inserita dal genitore.
   const presaVisione = async (presenzaId: string) => {
     if (!userId) return;
@@ -224,17 +601,25 @@ export default function AppelloPage() {
   const tuttiPresenti = async () => {
     if (!userId) return;
     setSaving(true);
-    setRighe((prev) => prev.map((r) => ({ ...r, stato: 'presente', orario_entrata: null, orario_uscita: null })));
-    await fetch(`/api/primaria/appello?userId=${userId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-      body: JSON.stringify({
-        sectionId,
-        data,
-        records: righe.map((r) => ({ alunnoId: r.id, stato: 'presente' })),
-      }),
-    });
-    setSaving(false);
+    // `appello_fatto: true` su ogni riga: l'appello in blocco lo scrive il docente,
+    // e ogni alunno si può di nuovo annullare singolarmente — anche quello che un
+    // annullamento aveva appena riportato alla sola comunicazione del genitore.
+    setRighe((prev) => prev.map((r) => ({ ...r, stato: 'presente', orario_entrata: null, orario_uscita: null, appello_fatto: true })));
+    // `finally`: ora `saving` ferma anche ogni «Annulla»; se la POST lanciasse, un
+    // `saving` rimasto acceso li bloccherebbe fino al ricaricamento della pagina.
+    try {
+      await fetch(`/api/primaria/appello?userId=${userId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({
+          sectionId,
+          data,
+          records: righe.map((r) => ({ alunnoId: r.id, stato: 'presente' })),
+        }),
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -245,13 +630,23 @@ export default function AppelloPage() {
         <div className="flex items-center gap-2">
           <DateField
             value={data}
-            onChange={setData}
+            // L'esito di un annullamento riguarda il giorno su cui è avvenuto.
+            onChange={(v) => { setAvvisoAnnulla(null); setData(v); }}
+            // Fermo mentre una DELETE è in volo: cambiando giorno, `load()` porterebbe
+            // le righe del giorno nuovo e l'esito in arrivo (`svuotaRiga`, o la fusione
+            // di `ripristinata-comunicazione`), che cerca la riga per SOLO `alunnoId`,
+            // la modificherebbe sul giorno sbagliato — «da registrare» su un giorno
+            // che sul server non è cambiato, con l'avviso sul giorno nuovo.
+            disabled={annullaInCorso !== null}
             aria-label={t('appelloDataAria')}
             className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
           />
           <button
             onClick={tuttiPresenti}
-            disabled={saving || righe.length === 0}
+            // Ferma anche durante un annullamento: la POST in blocco, se arrivasse
+            // dopo la DELETE, riscriverebbe «presente» sull'alunno appena annullato
+            // mentre la schermata, svuotata dall'esito, direbbe «da registrare».
+            disabled={saving || annullaInCorso !== null || righe.length === 0}
             className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50"
           >
             <Users size={14} /> {t('appelloTuttiPresenti')}
@@ -269,6 +664,22 @@ export default function AppelloPage() {
         </p>
       )}
 
+      {/* L'esito dell'annullamento, riuscito o no: il bambino a schermo cambia
+            riga (o non la cambia), e va detto perché. */}
+      {avvisoAnnulla && (
+        <p
+          id="avviso-annulla-appello"
+          role={avvisoAnnulla.tipo === 'errore' ? 'alert' : 'status'}
+          className={`kv-appello-avviso font-maven mb-2 rounded-xl px-3 py-2 text-xs ${
+            avvisoAnnulla.tipo === 'errore'
+              ? 'bg-kidville-error-soft text-kidville-error-strong'
+              : 'bg-kidville-success-soft text-kidville-success-strong'
+          }`}
+        >
+          {avvisoAnnulla.testo}
+        </p>
+      )}
+
       {loading ? (
         <p className="font-maven text-kidville-muted text-sm">{t('comuneCaricamento')}</p>
       ) : (
@@ -277,12 +688,18 @@ export default function AppelloPage() {
             <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
               <span className="font-maven text-kidville-ink">{r.cognome} {r.nome}</span>
               <div className="flex flex-wrap items-center gap-1.5">
+                {/* Durante l'annullamento di QUESTO alunno la riga è ferma: uno stato
+                      segnato adesso partirebbe come POST in parallelo alla DELETE, e se
+                      arrivasse dopo il server avrebbe quello stato mentre la schermata,
+                      svuotata dall'esito dell'annullamento, direbbe «da registrare».
+                      Come nell'appello 0-6 (`isLoading` sulla riga). */}
                 {STATI.map((s) => (
                   <button
                     key={s.key}
                     onClick={() => setStato(r.id, s.key)}
+                    disabled={annullaInCorso === r.id}
                     title={t(`appelloStato_${s.key}`)}
-                    className={`font-maven inline-flex items-center gap-1 rounded-pill px-2.5 py-1 text-xs transition ${
+                    className={`font-maven inline-flex items-center gap-1 rounded-pill px-2.5 py-1 text-xs transition disabled:opacity-50 ${
                       r.stato === s.key ? s.cls : 'bg-kidville-cream text-kidville-muted hover:bg-kidville-cream-dark'
                     }`}
                   >
@@ -305,7 +722,7 @@ export default function AppelloPage() {
                     alunno={r.id}
                     nomeAlunno={`${r.nome} ${r.cognome}`}
                     ariaKey="orarioIngressoAria"
-                    inCorso={false}
+                    inCorso={annullaInCorso === r.id}
                     onSalva={(ora) => setOrario(r.id, 'entrata', ora)}
                   />
                 )}
@@ -318,14 +735,56 @@ export default function AppelloPage() {
                     alunno={r.id}
                     nomeAlunno={`${r.nome} ${r.cognome}`}
                     ariaKey="orarioUscitaAria"
-                    inCorso={false}
+                    inCorso={annullaInCorso === r.id}
                     onSalva={(ora) => setOrario(r.id, 'uscita', ora)}
                   />
+                )}
+                {/* ANNULLA — solo oggi (data di Roma) e solo dove l'appello l'ha fatto
+                      la scuola (`appello_fatto`): su una riga con la sola comunicazione
+                      del genitore il comando non potrebbe mai riuscire. Il server
+                      rifiuta comunque ogni altro caso. */}
+                {data === oggiIso() && r.appello_fatto && (
+                  <button
+                    id={`btn-annulla-appello-${r.id}`}
+                    type="button"
+                    onClick={() => annulla(r.id)}
+                    // Fermo anche mentre «Tutti presenti» è in volo: stessa corsa vista
+                    // dall'altro lato (DELETE prima, POST in blocco dopo). E fermo
+                    // mentre il cambio di stato di QUESTO alunno è in volo: la stessa
+                    // corsa sulla POST singola (vedi `setStato`).
+                    disabled={annullaInCorso !== null || saving || salvataggioInCorso.has(r.id)}
+                    aria-label={t('appelloAnnullaAria', { alunno: `${r.cognome} ${r.nome}` })}
+                    className="font-maven inline-flex items-center gap-1 rounded-pill border border-kidville-line px-2.5 py-1 text-xs text-kidville-ink hover:bg-kidville-cream disabled:opacity-50"
+                  >
+                    <RotateCcw size={12} />
+                    <span className="hidden sm:inline">{t('appelloAnnulla')}</span>
+                  </button>
                 )}
                 {/* Stato giustificazione genitore + presa visione del docente. */}
                 {r.giustificata && (
                   r.giust_vista_il ? (
-                    <span className="font-maven text-[11px] text-kidville-success" title={r.giustificazione_testo ?? undefined}>{t('appelloGiustVista')}</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="font-maven text-[11px] text-kidville-success" title={r.giustificazione_testo ?? undefined}>{t('appelloGiustVista')}</span>
+                      {/* ANNULLA PRESA VISIONE — solo a chi il server lo lascerebbe fare
+                            (`presa_visione_annullabile`: chi l'ha presa, Segreteria,
+                            Direzione). Fermo mentre è in volo un annullamento, di questo
+                            gesto o dell'appello. Icona `EyeOff`, non `RotateCcw`: su
+                            telefono l'etichetta è nascosta, e due ↺ identiche sulla
+                            stessa riga sarebbero due gesti diversi con la stessa faccia. */}
+                      {r.presenza_id && r.presa_visione_annullabile && (
+                        <button
+                          id={`btn-annulla-presa-visione-${r.id}`}
+                          type="button"
+                          onClick={() => r.presenza_id && r.giust_vista_il && annullaPresaVisione(r.id, r.presenza_id, r.giust_vista_il)}
+                          disabled={presaVisioneInCorso !== null || annullaInCorso === r.id}
+                          aria-label={t('appelloAnnullaPresaVisioneAria', { alunno: `${r.cognome} ${r.nome}` })}
+                          className="font-maven inline-flex items-center gap-1 rounded-pill border border-kidville-line px-2 py-0.5 text-[11px] text-kidville-ink hover:bg-kidville-cream disabled:opacity-50"
+                        >
+                          <EyeOff size={11} aria-hidden="true" />
+                          <span className="hidden sm:inline">{t('appelloAnnullaPresaVisione')}</span>
+                        </button>
+                      )}
+                    </span>
                   ) : (
                     <button
                       onClick={() => r.presenza_id && presaVisione(r.presenza_id)}

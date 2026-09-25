@@ -3,32 +3,63 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
 // Mock generico: builder thenable (risolve per-tabella FIFO) + registro chiamate.
+// Una voce della coda può essere una FUNZIONE della catena di quella query: serve alla presa
+// atomica (`update … in(ids) is(push_inviata_il, null) select('id')`), che restituisce le righe
+// prese davvero — vedi `PRESA`. Il finto più fedele, con la tabella in memoria e i giri
+// sovrapposti, sta in `__tests__/lib/push-dispatch-presa.test.ts`.
+type Chiamata = { table: string; m: string; args: unknown[] }
+type Voce = { data: unknown; error: unknown } | ((catena: Chiamata[]) => { data: unknown; error: unknown })
 const h = vi.hoisted(() => {
   const state = {
-    queues: {} as Record<string, Array<{ data: unknown; error: unknown }>>,
+    queues: {} as Record<string, Voce[]>,
     used: {} as Record<string, number>,
-    calls: [] as Array<{ table: string; m: string; args: unknown[] }>,
+    calls: [] as Chiamata[],
   }
-  function take(table: string) {
+  function take(table: string, catena: Chiamata[]) {
     const q = state.queues[table] || []
     const i = state.used[table] ?? 0
     state.used[table] = i + 1
-    return q[i] ?? { data: [], error: null }
+    const v = q[i] ?? { data: [], error: null }
+    return typeof v === 'function' ? v(catena) : v
   }
   function makeClient() {
     return {
       from(table: string) {
         const qb: Record<string, unknown> = {}
-        const rec = (m: string) => (...args: unknown[]) => { state.calls.push({ table, m, args }); return qb }
+        const catena: Chiamata[] = []
+        const rec = (m: string) => (...args: unknown[]) => {
+          const c = { table, m, args }
+          state.calls.push(c)
+          catena.push(c)
+          return qb
+        }
         for (const m of ['select', 'is', 'or', 'order', 'limit', 'in', 'update', 'delete', 'eq']) qb[m] = rec(m)
         qb.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
-          Promise.resolve(take(table)).then(res, rej)
+          Promise.resolve(take(table, catena)).then(res, rej)
         return qb
+      },
+      rpc(nome: string, args: unknown) {
+        state.calls.push({ table: `rpc:${nome}`, m: 'rpc', args: [args] })
+        return Promise.resolve(take(`rpc:${nome}`, []))
       },
     }
   }
   return { state, makeClient }
 })
+
+/**
+ * La presa atomica riuscita: l'UPDATE condizionato restituisce tutte le candidate che gli sono
+ * state passate in `.in('id', …)`. Controlla anche che la condizione ci sia: senza
+ * `.is('push_inviata_il', null)` sull'UPDATE la presa non sarebbe atomica, e il finto fallisce.
+ */
+const PRESA: Voce = (catena) => {
+  const ids = catena.find((c) => c.m === 'in' && c.args[0] === 'id')?.args[1] as string[] | undefined
+  const condizionata = catena.some((c) => c.m === 'is' && c.args[0] === 'push_inviata_il' && c.args[1] === null)
+  if (!catena.some((c) => c.m === 'update') || !ids || !condizionata) {
+    return { data: null, error: { code: 'TEST', message: 'presa non condizionata' } }
+  }
+  return { data: ids.map((id) => ({ id })), error: null }
+}
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
@@ -94,7 +125,7 @@ describe('POST /api/push/dispatch', () => {
           { id: 'n1', utente_id: 'u1', titolo: 't1', corpo: 'c1', link: '/' },
           { id: 'n2', utente_id: 'u2', titolo: 't2', corpo: null, link: null },
         ], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [
@@ -121,7 +152,7 @@ describe('POST /api/push/dispatch', () => {
     h.state.queues = {
       notifiche: [
         { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
-        { data: null, error: null },
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [
@@ -142,7 +173,7 @@ describe('POST /api/push/dispatch', () => {
     h.state.queues = {
       notifiche: [
         { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: '/x' }], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [
@@ -186,7 +217,7 @@ describe('POST /api/push/dispatch', () => {
     h.state.queues = {
       notifiche: [
         { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [{ id: 's2', utente_id: 'u1', endpoint: 'fcmtok', p256dh: null, auth: null, platform: 'ios' }], error: null },
@@ -209,7 +240,7 @@ describe('POST /api/push/dispatch', () => {
     h.state.queues = {
       notifiche: [
         { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [
@@ -251,7 +282,7 @@ describe('POST /api/push/dispatch', () => {
     h.state.queues = {
       notifiche: [
         { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [{ id: 's1', utente_id: 'u1', endpoint: 'e1', p256dh: 'p', auth: 'a', platform: 'web' }], error: null },
@@ -285,7 +316,7 @@ describe('POST /api/push/dispatch', () => {
     h.state.queues = {
       notifiche: [
         { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
-        { data: null, error: null },
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [{ id: 's2', utente_id: 'u1', endpoint: 'tok', p256dh: null, auth: null, platform: 'android' }], error: null },
@@ -304,7 +335,7 @@ describe('POST /api/push/dispatch', () => {
     h.state.queues = {
       notifiche: [
         { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
-        { data: null, error: null },
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [{ id: 's1', utente_id: 'u1', endpoint: 'e1', p256dh: 'p', auth: 'a', platform: 'web' }], error: null },
@@ -324,7 +355,7 @@ describe('POST /api/push/dispatch', () => {
     h.state.queues = {
       notifiche: [
         { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
-        { data: null, error: null },
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [{ id: 's1', utente_id: 'u1', endpoint: 'e1', p256dh: 'p', auth: 'a', platform: 'web' }], error: null },
@@ -345,7 +376,7 @@ describe('POST /api/push/dispatch', () => {
     h.state.queues = {
       notifiche: [
         { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [{ id: 's2', utente_id: 'u1', endpoint: 'fcmtok', p256dh: null, auth: null, platform: 'android' }], error: null },
@@ -419,7 +450,7 @@ describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fattu
           riga('n-scarto', 'u-segr', 'fattura_scartata', SEGRETERIA),
           riga('n-gen', 'u-gen', 'avviso_generico', GENITORE),
         ], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [subWeb('s-segr', 'u-segr'), subWeb('s-gen', 'u-gen')], error: null },
@@ -440,7 +471,7 @@ describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fattu
     h.state.queues = {
       notifiche: [
         { data: [riga('n-mensa', 'u-cuoca', 'mensa_allergia', { role: 'cuoca', ruolo: 'cuoca' })], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [
         { data: [{ id: 's-cuoca', utente_id: 'u-cuoca', endpoint: 'tok', p256dh: null, auth: null, platform: 'android' }], error: null },
@@ -459,7 +490,7 @@ describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fattu
     h.state.queues = {
       notifiche: [
         { data: TIPI_AVVISO_CODA.map((t) => riga(`n-${t}`, 'u-admin', t, ADMIN)), error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [{ data: [subWeb('s-admin', 'u-admin')], error: null }],
     }
@@ -474,7 +505,7 @@ describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fattu
     h.state.queues = {
       notifiche: [
         { data: [riga('n-onb', 'u-segr', 'onboarding_completato', SEGRETERIA)], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [{ data: [], error: null }],
     }
@@ -493,7 +524,7 @@ describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fattu
       h.state.queues = {
         notifiche: [
           { data: [riga('n-onb', 'u-staff', 'onboarding_completato', { role: ruolo, ruolo })], error: null },
-          { data: null, error: null }, // update
+          PRESA, // la presa atomica: prende tutte le candidate
         ],
         push_subscriptions: [{ data: [subWeb('s-staff', 'u-staff')], error: null }],
       }
@@ -512,7 +543,7 @@ describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fattu
     h.state.queues = {
       notifiche: [
         { data: [riga('n-chat', 'u-doc', 'chat_docente', { role: 'educator', ruolo: 'educator' })], error: null },
-        { data: null, error: null }, // update
+        PRESA, // la presa atomica: prende tutte le candidate
       ],
       push_subscriptions: [{ data: [subWeb('s-doc', 'u-doc')], error: null }],
     }
@@ -530,8 +561,10 @@ describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fattu
 // `sendPush` o `sendNativePush` da sé, sui dispositivi dello staff, lo scavalca: fino
 // al giro 2 della 2c lo faceva l'alert allergie della mensa (nome del bambino e
 // allergeni nel corpo, a admin, coordinator, segreteria e cuoca). Questo lock tiene
-// il dispatch unico canale: chi importa i due invii da `src/lib/push/` è il dispatch,
-// più `src/lib/mensa/notify.ts` per il solo saldo basso, che va ai genitori.
+// il dispatch unico canale: chi importa i due invii è `src/lib/push/dispatch.ts`.
+// Fino al 2026-09-24 c'era anche `src/lib/mensa/notify.ts` per il saldo basso ai genitori:
+// spediva web-push anche ai token nativi (senza chiavi web ⇒ errore) e un doppione a chi
+// usa il web, perché il dispatch rispediva la stessa riga. Tolto (intervento W2).
 // ═══════════════════════════════════════════════════════════════════════════
 describe('push allo staff: il dispatch è l\'unico canale (consegna 2c, giro 2)', () => {
   const RADICE = join(__dirname, '..', '..')
@@ -550,23 +583,35 @@ describe('push allo staff: il dispatch è l\'unico canale (consegna 2c, giro 2)'
   const IMPORTA_INVIO =
     /import\s*\{[^}]*\b(?:sendPush|sendNativePush)\b[^}]*\}\s*from\s*['"](?:@\/lib\/push\/|\.{1,2}\/)[^'"]*push['"]|import\(\s*['"]@\/lib\/push\/(?:web|native)-push['"]\s*\)/
 
-  it('solo il dispatch e il saldo basso della mensa importano `sendPush`/`sendNativePush`', () => {
+  // Dal 24/09 (PS2) il giro sta in `src/lib/push/dispatch.ts` e la route lo chiama: l'unico
+  // modulo di tutto `src/` che importa i due invii è quello. Si esclude solo chi li DEFINISCE
+  // (`web-push.ts`, `native-push.ts`), non tutta la cartella: un secondo modulo di `src/lib/push/`
+  // che spedisse da sé scavalcherebbe il filtro dello staff quanto uno di fuori.
+  it('solo `eseguiDispatch` importa `sendPush`/`sendNativePush`', () => {
     const file = sorgenti(SRC)
     // Un lock che scansiona zero file è verde per niente.
     expect(file.length).toBeGreaterThan(500)
     const chiImporta = file
       .map((f) => relative(RADICE, f).split(sep).join('/'))
-      .filter((r) => !r.startsWith('src/lib/push/'))
+      .filter((r) => r !== 'src/lib/push/web-push.ts' && r !== 'src/lib/push/native-push.ts')
       .filter((r) => IMPORTA_INVIO.test(readFileSync(join(RADICE, r), 'utf8')))
       .sort()
-    expect(chiImporta).toEqual(['src/app/api/push/dispatch/route.ts', 'src/lib/mensa/notify.ts'])
+    expect(chiImporta).toEqual(['src/lib/push/dispatch.ts'])
   })
 
-  it('in `mensa/notify.ts` c\'è UNA chiamata a `sendPush`, quella del saldo basso ai genitori', () => {
+  it('la route del cron non spedisce da sé: chiama `eseguiDispatch`', () => {
+    const testo = readFileSync(join(SRC, 'app', 'api', 'push', 'dispatch', 'route.ts'), 'utf8')
+    expect(testo).toMatch(/import\s*\{[^}]*\beseguiDispatch\b[^}]*\}\s*from\s*'@\/lib\/push\/dispatch'/)
+    expect(testo).toMatch(/await eseguiDispatch\(\{ origine: 'cron' \}\)/)
+    expect(IMPORTA_INVIO.test(testo)).toBe(false)
+  })
+
+  it('in `mensa/notify.ts` nessun invio diretto: né allergie né saldo basso (W2)', () => {
     const testo = readFileSync(join(SRC, 'lib', 'mensa', 'notify.ts'), 'utf8')
-    expect(testo.match(/\bsendPush\(/g) ?? []).toHaveLength(1)
-    const inizioSaldo = testo.indexOf('export async function notificaSaldoBasso')
-    expect(inizioSaldo).toBeGreaterThan(0)
-    expect(testo.indexOf('sendPush(')).toBeGreaterThan(inizioSaldo)
+    // Il file esiste e contiene davvero le due funzioni: un lock su un file vuoto è verde per niente.
+    expect(testo.indexOf('export async function notificaSaldoBasso')).toBeGreaterThan(0)
+    expect(testo.indexOf('export async function notificaAllergie')).toBeGreaterThan(0)
+    expect(IMPORTA_INVIO.test(testo)).toBe(false)
+    expect(testo.match(/\b(?:sendPush|sendNativePush)\(/g) ?? []).toHaveLength(0)
   })
 })

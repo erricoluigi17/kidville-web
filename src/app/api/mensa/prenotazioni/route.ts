@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser, type AppRole } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, entroCutoff } from '@/lib/mensa/server'
+import { oggiRoma } from '@/lib/mensa/cutoff'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { notificaSaldoBasso } from '@/lib/mensa/notify'
 import { controllaAllergie } from '@/lib/mensa/allergie-check'
@@ -19,6 +20,11 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 // in negativo. La Segreteria è inclusa perché gestisce lo sportello (PRD §3:
 // Segreteria↔Admin); dirigenza/FEA restano su liste esplicite altrove.
 const STAFF_FORZA: readonly AppRole[] = ['admin', 'coordinator', 'segreteria']
+
+// Il genitore ha chiesto una data oltre l'orario limite della sua sede (in ora
+// italiana) o già passata. Codice stabile: l'interfaccia lo traduce invece di
+// mostrare la prosa italiana del server.
+const CODICE_OLTRE_CUTOFF = 'MENSA_OLTRE_CUTOFF'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -170,7 +176,9 @@ export const GET = withRoute('mensa/prenotazioni:GET', async (request: Request) 
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
-    const today = new Date().toISOString().slice(0, 10)
+    // «Oggi» nel calendario di Roma: fra mezzanotte e le 2 italiane la data UTC è
+    // ancora quella di ieri.
+    const today = oggiRoma()
     const from = q.data.from ?? today
     const to = q.data.to ?? today
 
@@ -263,17 +271,20 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
       )
     }
 
-    const esiti: { data: string; ok: boolean; motivo?: string }[] = []
+    const esiti: { data: string; ok: boolean; motivo?: string; codice?: string }[] = []
     let fallbackUsato = false
+    let esitiOltreCutoff = 0
 
     for (const data of dates) {
       const menu = resolveMenuGiorno(data, options)
       if (!menu.attivo || menu.chiuso) {
         esiti.push({ data, ok: false, motivo: 'Giorno non attivo o mensa chiusa' }); continue
       }
-      // cutoff: solo il genitore lo rispetta; lo staff lo salta (anche date passate)
+      // cutoff (per sede, in ora italiana): solo il genitore lo rispetta; lo staff
+      // lo salta (anche date passate)
       if (!isStaff && !entroCutoff(data, config.cutoffOra)) {
-        esiti.push({ data, ok: false, motivo: 'Oltre l\'orario limite (cutoff)' }); continue
+        esitiOltreCutoff++
+        esiti.push({ data, ok: false, motivo: 'Oltre l\'orario limite (cutoff)', codice: CODICE_OLTRE_CUTOFF }); continue
       }
       // già prenotato attivo?
       const { data: existing } = await supabase
@@ -332,6 +343,9 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
       esito: 'prenotazione',
       esitiOk,
       esitiKo,
+      // quanti dei rifiuti sono per l'orario limite (solo genitore): un rifiuto di
+      // cutoff non è un guasto, ma senza questo conteggio si confonderebbe col saldo.
+      esitiOltreCutoff,
       saldoDopo: saldo,
       origine,
     })
@@ -390,7 +404,16 @@ export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Req
     // rettifica con riaccredito del ticket, simmetrica al POST (dove lo staff può
     // prenotare date passate). Il genitore resta vincolato al cutoff.
     if (!isStaff && !entroCutoff(data, config.cutoffOra)) {
-      return NextResponse.json({ error: 'Oltre l\'orario limite: disdetta non più possibile' }, { status: 400 })
+      // Rifiuto atteso, non un guasto: `info`. Solo l'operazione e il codice, nessun dato personale.
+      logEvento('mensa', 'info', {
+        operazione: 'mensa/prenotazioni:DELETE',
+        esito: 'oltre-cutoff',
+        error_code: CODICE_OLTRE_CUTOFF,
+      })
+      return NextResponse.json(
+        { error: 'Oltre l\'orario limite: disdetta non più possibile', codice: CODICE_OLTRE_CUTOFF },
+        { status: 400 },
+      )
     }
 
     const { data: existing } = await supabase

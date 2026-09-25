@@ -32,10 +32,24 @@ const postBodySchema = z.object({
   descrizione: z.string().min(1, 'descrizione obbligatoria'),
 })
 
-// Il body (meno id e scuola_id) va in update(updates): .loose() preserva le chiavi extra.
-const patchBodySchema = z.object({
-  id: zUuid, // sostituisce il 400 manuale
-}).loose()
+// Il body (meno id) va in update(updates). Prima era `.loose()` e ogni chiave
+// arrivava così com'era alla UPDATE: nessun chiamante la usava, ma dal
+// 2026-09-24 la pagina di configurazione ha «Modifica» in riga, e una route
+// raggiungibile da un pulsante non inoltra al DB colonne che nessuno ha
+// dichiarato. Restano modificabili i soli campi che l'interfaccia espone:
+// codice (''/null = nessun codice) e descrizione (mai vuota, come al POST).
+const patchBodySchema = z
+  .object({
+    id: zUuid, // sostituisce il 400 manuale
+    codice: z.preprocess(
+      (v) => (typeof v === 'string' ? v.trim() || null : v),
+      z.string().nullable().optional(),
+    ),
+    descrizione: z.string().trim().min(1, 'descrizione obbligatoria').optional(),
+  })
+  .refine((b) => b.codice !== undefined || b.descrizione !== undefined, {
+    message: 'nessun campo da modificare',
+  })
 
 const deleteQuerySchema = z.object({
   id: zUuid, // obbligatorio (sostituisce il 400 manuale)
@@ -110,7 +124,7 @@ export const POST = withRoute('admin/primaria/obiettivi:POST', async (request: N
   }
 })
 
-// PATCH /api/admin/primaria/obiettivi  body: { id, ...updates }
+// PATCH /api/admin/primaria/obiettivi  body: { id, codice?, descrizione? } (almeno uno dei due)
 export const PATCH = withRoute('admin/primaria/obiettivi:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
@@ -118,8 +132,11 @@ export const PATCH = withRoute('admin/primaria/obiettivi:PATCH', async (request:
 
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
-    const { id, ...updates } = b.data
-    delete updates.scuola_id
+    const { id, codice, descrizione } = b.data
+    // Solo i campi presenti: un PATCH con la sola descrizione non azzera il codice.
+    const updates: { codice?: string | null; descrizione?: string } = {}
+    if (codice !== undefined) updates.codice = codice
+    if (descrizione !== undefined) updates.descrizione = descrizione
 
     const supabase = await createAdminClient()
     // La sede si dichiarava alla creazione (POST, `resolveScuolaScrittura`) e si
@@ -133,7 +150,19 @@ export const PATCH = withRoute('admin/primaria/obiettivi:PATCH', async (request:
       .eq('id', id)
       .in('scuola_id', plessi)
       .select()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      // UNIQUE (scuola_id, materia_codice, livello, codice): dal pulsante «Modifica»
+      // si può dare a una riga il codice di un'altra della stessa materia e classe.
+      // È un inserimento dell'utente, non un guasto: 409 con codice, non la prosa
+      // di Postgres (in inglese tecnico) né un incidente 5xx.
+      if (error.code === '23505') {
+        return NextResponse.json(
+          { error: 'Codice obiettivo già usato per questa materia e classe', codice: 'OBIETTIVO_CODICE_DUPLICATO' },
+          { status: 409 },
+        )
+      }
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
     // 0 righe = obiettivo inesistente OPPURE di un altro plesso: 404 in
     // entrambi i casi, così la risposta non rivela l'esistenza della riga.
     if (!data || data.length === 0) return NextResponse.json({ error: 'Obiettivo non trovato' }, { status: 404 })

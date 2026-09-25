@@ -174,6 +174,25 @@ export interface EsitoEsterno {
      * restituire una Response svuotata sarebbe una trappola.
      */
     res?: Response;
+    /**
+     * L'intestazione `Retry-After` di un rifiuto, così com'è arrivata (secondi oppure data HTTP),
+     * SOLO su `!ok` e solo se il provider l'ha mandata. Su `!ok` la `Response` non si restituisce
+     * (vedi `res`), quindi senza questo campo chi riceve un `429` non avrebbe modo di sapere
+     * quanto il provider gli chiede di aspettare — e ritenterebbe alla cieca (FCM, `native-push`).
+     */
+    retryAfter?: string;
+    /**
+     * SOLO quando la risposta non è arrivata (`stato: 0`): il `code` STRINGA dell'eccezione, cioè
+     * quello che la riga di questa chiamata ha scritto in `app_log.codice` — `'timeout'` per la
+     * scadenza del tetto (vedi `erroreTimeout`), altrimenti il code di rete se è una stringa
+     * (`ECONNREFUSED`…), preso — come fa il logger — dall'eccezione o, se lì manca, dalla sua
+     * `cause`: undici lancia `TypeError('fetch failed')` e mette `ENOTFOUND` sulla causa.
+     * Serve a chi scrive una SUA riga d'errore dopo (i ritentativi esauriti
+     * di `native-push`): senza, lo `stato: 0` finiva in `codice = '0'`, indistinguibile da uno
+     * status e invisibile a `where codice = 'timeout'`. Assente se nessuno dei due livelli ha
+     * un code stringa (o se in cima c'è un code numerico).
+     */
+    codice?: string;
 }
 
 export interface OpzioniEsterne {
@@ -273,7 +292,8 @@ export async function externalFetch(
         // impedire. Gli argomenti sono gli stessi che il chiamante si ritrova nell'esito
         // (`stato: 0`, il messaggio dell'eccezione), così il predicato vede ciò che vedrà lui.
         emetti(provider, url, ms, undefined, livelloDi(0, corpo, opzioni), opzioni, errore);
-        return { ok: false, stato: 0, corpo };
+        const codice = codiceStringaDi(errore);
+        return codice === undefined ? { ok: false, stato: 0, corpo } : { ok: false, stato: 0, corpo, codice };
     }
 
     const ms = Date.now() - t0;
@@ -310,7 +330,46 @@ export async function externalFetch(
 
     const corpo = await leggiCorpo(res);
     emetti(provider, url, ms, stato, livelloDi(stato, corpo, opzioni), opzioni, erroreHttp(stato, corpo));
-    return { ok: false, stato, corpo };
+    const retryAfter = retryAfterDi(res);
+    return retryAfter === undefined ? { ok: false, stato, corpo } : { ok: false, stato, corpo, retryAfter };
+}
+
+/**
+ * Il `code` di un'eccezione di rete, solo se è una stringa non vuota, letto senza poter lanciare
+ * (un getter ostile non deve rompere il chiamante). Un code NUMERICO — il `23` legacy di
+ * DOMException, il `20` di un `AbortError` — non si restituisce: sarebbe indistinguibile da uno
+ * status, che è proprio la confusione che `erroreTimeout` esiste per evitare.
+ *
+ * LA STESSA REGOLA DEL LOGGER, un livello sotto compreso: la riga scrive
+ * `codice = d.codice ?? d.causa?.codice` (`rigaEvento` in `logger.ts`), e nell'errore di rete
+ * VERO di Node/undici il code non sta in cima ma sulla CAUSA — `TypeError('fetch failed')` con
+ * `cause.code = 'ENOTFOUND'` (così anche `ECONNRESET`, `ECONNREFUSED`,
+ * `UND_ERR_CONNECT_TIMEOUT`). Leggendo solo il primo livello, le righe dei tentativi dicevano
+ * `ENOTFOUND` e la riga finale dei ritentativi esauriti `nessuna-risposta`: due codici per lo
+ * stesso guasto. Come nel logger, alla causa si scende SOLO se in cima il `code` manca del
+ * tutto: se c'è (anche numerico) è quello che la riga ha scritto, e non si va a pescarne un altro.
+ */
+function codiceStringaDi(err: unknown): string | undefined {
+    try {
+        const stringa = (v: unknown): string | undefined =>
+            typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
+        const o = err as { code?: unknown; cause?: unknown } | null;
+        const code = o?.code;
+        if (code !== undefined) return stringa(code);
+        return stringa((o?.cause as { code?: unknown } | null | undefined)?.code);
+    } catch {
+        return undefined;
+    }
+}
+
+/** `Retry-After` letto senza poter lanciare: una `Response` finta può non avere `headers`. */
+function retryAfterDi(res: Response): string | undefined {
+    try {
+        const v = res.headers?.get?.('retry-after');
+        return typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

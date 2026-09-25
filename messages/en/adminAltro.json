@@ -200,6 +200,8 @@
   "protBadgeCollegato": "linked",
   "protBtnTimbrato": "Stamped",
   "protDownloadFallito": "❌ Download failed",
+  "protTimbratoNonAperto": "The stamped PDF did not open: try again.",
+  "protAggiornaApp": "This version of the app cannot open the document on the phone: update the app, or open it from the website on a computer.",
   "protNuovoSubtitle": "Upload the file, check the data, get the number and the stamped PDF",
   "protPassoFile": "File",
   "protPassoDati": "Data",

@@ -12,6 +12,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { etichettaDestinatario, type ClasseNota } from '@/lib/avvisi/destinatari';
 import { scadenzaLeggibile } from '@/components/features/avvisi/dettaglio/scadenza-leggibile';
 import { formattaIstante } from '@/i18n/config';
+import { apriLinkNellApp } from '@/lib/ui/apri-documento-firmato';
 
 // Dettaglio avviso a tutta area contenuto (sidebar e header del cockpit
 // restano): testo dell'avviso + monitoraggio letture/adesioni condiviso
@@ -35,6 +36,7 @@ const RUOLI_SCRITTURA_ADESIONI = ['admin', 'coordinator', 'segreteria'];
 function AdminAvvisoDetailInner() {
     const params = useParams<{ id: string }>();
     const t = useTranslations('adminComunicazioni');
+    const ts = useTranslations('shared');
     const locale = useLocale();
     const { userId, role } = useSessionIdentity();
 
@@ -176,6 +178,11 @@ function AdminAvvisoDetailInner() {
                                 href={avviso.attachment_url}
                                 target="_blank"
                                 rel="noreferrer"
+                                // Nell'app un `_blank` non apre niente: anteprima di sistema
+                                // dentro l'app (spec 2026-09-24, NAT3g). Sul web invariato.
+                                onClick={apriLinkNellApp(avviso.attachment_url, 'allegato-avviso', {
+                                    onNonConsegnato: () => alert(ts('documentoNonAperto')),
+                                })}
                                 className="mt-4 inline-flex items-center gap-1.5 rounded-pill bg-kidville-cream px-3 py-1.5 font-maven text-xs font-semibold text-kidville-green hover:bg-kidville-green-soft"
                             >
                                 <Paperclip size={13} strokeWidth={1.8} /> {t('avvisiDettaglioAllegato')}

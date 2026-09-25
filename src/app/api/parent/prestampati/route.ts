@@ -53,6 +53,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
 
 /** Il tempo di aprire il file appena generato, non di girarlo. */
 const TTL_LINK = 60
@@ -383,11 +384,13 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
     // protocollo (schema di produzione, 2026-08-16). Vedi `descrizioneArchivioProtocollata`.
     // Sul DB E2E non migrato una colonna che manca risponde `42703`, e questa lettura
     // degrada già: l'elenco esce lo stesso, senza i pulsanti «Scarica».
-    const { data: righeArchivio, error: erroreArchivio } = await supabase
-      .from('student_documents')
-      .select('id, document_type, descrizione, created_at')
-      .eq('student_id', alunnoId)
-      .order('created_at', { ascending: false })
+    // Solo i documenti VIVI: uno messo nel cestino del fascicolo non si offre da scaricare.
+    const { data: righeArchivio, error: erroreArchivio } = await fascicoloVivo(
+      supabase
+        .from('student_documents')
+        .select('id, document_type, descrizione, created_at')
+        .eq('student_id', alunnoId),
+    ).order('created_at', { ascending: false })
     if (erroreArchivio) {
       // Non ferma l'elenco: senza, i pulsanti «Scarica» non compaiono e la compilazione
       // resta possibile. Ciò che non può succedere è che passi in silenzio.
@@ -775,11 +778,13 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
       null
     if (!nuovo) {
       // PostgREST non lancia: il valore di ritorno va controllato, sempre.
-      const { data: righe, error: erroreLettura } = await supabase
-        .from('student_documents')
-        .select('id, document_type, storage_path, descrizione, created_at')
-        .eq('student_id', alunnoId)
-        .order('created_at', { ascending: false })
+      // Solo i VIVI, come nell'elenco: ciò che il GET non offre, il POST non riconsegna.
+      const { data: righe, error: erroreLettura } = await fascicoloVivo(
+        supabase
+          .from('student_documents')
+          .select('id, document_type, storage_path, descrizione, created_at')
+          .eq('student_id', alunnoId),
+      ).order('created_at', { ascending: false })
       if (erroreLettura) {
         // ⚠️ QUI NON SI PROSEGUE, e su una rotta che genera è la scelta che conta: «non so
         // se ce n'è già uno» + «genero» = un secondo numero di protocollo bruciato su un

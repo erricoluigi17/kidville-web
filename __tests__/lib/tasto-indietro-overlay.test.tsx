@@ -20,7 +20,10 @@ import { renderHook } from '@testing-library/react'
 
 const addListener = vi.hoisted(() => vi.fn())
 const exitApp = vi.hoisted(() => vi.fn(async () => undefined))
-vi.mock('@capacitor/app', () => ({ App: { addListener, exitApp } }))
+// `getInfo`: la shell legge la versione del binario per i log (PC2, 2026-09-25).
+vi.mock('@capacitor/app', () => ({
+  App: { addListener, exitApp, getInfo: vi.fn(async () => ({ version: '1.1', build: '5' })) },
+}))
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: { getPlatform: () => 'android', isNativePlatform: () => true },
@@ -38,7 +41,11 @@ vi.mock('@capacitor/push-notifications', () => ({
 }))
 
 const logClient = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/logging/client', () => ({ logClient, nomeErrore: (e: unknown) => (e as Error).name }))
+vi.mock('@/lib/logging/client', () => ({
+  logClient,
+  nomeErrore: (e: unknown) => (e as Error).name,
+  impostaVersioneApp: vi.fn(),
+}))
 
 import { setupNativeShell } from '@/lib/mobile/native-shell'
 import { useOverlayIndietro } from '@/lib/mobile/overlay-indietro'

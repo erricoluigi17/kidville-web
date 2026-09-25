@@ -27,6 +27,9 @@ import type { MotivoFiglioNascosto } from '@/lib/alunni/attivo';
 import { useDateFormat } from '@/lib/i18n/date';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { scaricaDocumento, type RisultatoScaricoNativo } from '@/lib/native/scarica';
+import { avvisoDocumento, pdfDaBase64, suNativo, type AvvisoDocumento } from '@/lib/native/documento-genitore';
+import { isNativeApp } from '@/lib/push/native-register';
 import { ACCOMPAGNATORE_GENITORE } from '@/lib/prestampati/modelli/genitore';
 
 /**
@@ -450,17 +453,22 @@ function campiMancanti(campi: readonly CampoDTO[], risposte: Risposte, prefisso 
   return mancanti;
 }
 
-/** Il PDF che arriva dentro la risposta: si scarica senza passare da nessun indirizzo. */
-function scaricaBase64(base64: string, nomeFile: string): void {
-  const binario = atob(base64);
-  const byte = new Uint8Array(binario.length);
-  for (let i = 0; i < binario.length; i++) byte[i] = binario.charCodeAt(i);
-  const url = URL.createObjectURL(new Blob([byte], { type: 'application/pdf' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = nomeFile;
-  a.click();
-  URL.revokeObjectURL(url);
+/**
+ * Il PDF che arriva dentro la risposta: si salva senza passare da nessun indirizzo.
+ *
+ * Passa dall'helper unico (spec 2026-09-24, NAT3c): sul web è lo stesso `<a download>` su
+ * un `blob:` di prima; nell'app 1.1 è il foglio «Salva su File» — l'ancora, nella WebView,
+ * non scaricava niente e non lo diceva. L'esito lo registra l'helper, successo compreso.
+ */
+function scaricaBase64(base64: string, nomeFile: string): Promise<RisultatoScaricoNativo> {
+  return scaricaDocumento({
+    // Funzione e non Blob già pronto: un `atob` su un base64 guasto lancia, e dentro
+    // l'helper il lancio diventa un esito registrato invece di un'eccezione nel clic.
+    sorgente: () => pdfDaBase64(base64),
+    nomeFile,
+    mime: 'application/pdf',
+    etichetta: 'prestampato',
+  });
 }
 
 // ─── Il pannello ────────────────────────────────────────────────────────────────
@@ -523,6 +531,7 @@ export function PrestampatiGenitore({
   onAlunnoScelto?: (alunnoId: string) => void;
 }) {
   const t = useTranslations('prestampatiGenitore');
+  const ts = useTranslations('shared');
   const { dataBreve, dataOra } = useDateFormat();
   const { userId, ready } = useSessionIdentity();
   const uid = useId();
@@ -576,6 +585,24 @@ export function PrestampatiGenitore({
     slug: string;
     testo: string;
     tono: 'errore' | 'attenzione';
+  } | null>(null);
+  /**
+   * I BYTE di un certificato che il server ha consegnato dentro la risposta (`pdfBase64`) e
+   * che il dispositivo NON ha salvato: l'unica copia che la famiglia ha, finché non la salva.
+   *
+   * 🔴 Prima si buttavano alla fine del gesto: con `archiviato: false` l'avviso diceva
+   * «conservalo adesso» e «Riprova» mentre sotto restava solo «Genera», cioè un secondo
+   * numero di protocollo su un registro WORM. Tenendoli qui, «Salva di nuovo» ripete il
+   * SALVATAGGIO con gli stessi byte — nessuna POST, nessun numero nuovo.
+   *
+   * `alunnoId` perché il pulsante compaia solo sul figlio a cui il certificato appartiene;
+   * `archiviato` per sapere quale avviso lasciare quando il secondo salvataggio riesce.
+   */
+  const [certificatoDaRisalvare, setCertificatoDaRisalvare] = useState<{
+    slug: string;
+    alunnoId: string;
+    pdfBase64: string;
+    archiviato: boolean | undefined;
   } | null>(null);
 
   /**
@@ -892,6 +919,27 @@ export function PrestampatiGenitore({
     else setErroreFirma(soloCatalogoDaCorpo(r.corpo, r.stato === 500 ? t('erroreGenerazione') : t('erroreFirma')));
   };
 
+  /**
+   * Il certificato non si è salvato e i byte sono in mano: si indica «Salva di nuovo».
+   *
+   * Tranne sul binario 1.0 (`'aggiorna'`: mancano i plugin della 1.1). Lì «Salva di nuovo»
+   * fallirebbe per sempre, e un testo che invita a usarlo promette il falso: si dice di
+   * aggiornare l'app o di passare dal sito. Il pulsante può restare — dopo l'aggiornamento
+   * i byte in memoria non ci sono più comunque —, ma il testo non lo raccomanda.
+   * `certificatoNonArchiviato` segue in entrambi i casi: il numero è consumato.
+   */
+  function testoDaRisalvare(archiviato: boolean | undefined, avviso: AvvisoDocumento): string {
+    return testoNonSalvato(
+      avviso === 'aggiorna' ? ts('documentoAppDaAggiornare') : t('certificatoNonSalvatoRisalva'),
+      archiviato,
+    );
+  }
+
+  /** Il testo del salvataggio mancato, seguito da «non è in archivio» quando è vero. */
+  function testoNonSalvato(testo: string, archiviato: boolean | undefined): string {
+    return archiviato === false ? `${testo} ${t('certificatoNonArchiviato')}` : testo;
+  }
+
   function testoNonFirmabile(motivo: string | null): string {
     const chiave = motivo ? CHIAVE_NON_FIRMABILE[motivo] : undefined;
     return chiave ? t(chiave) : t('erroreFirma');
@@ -921,6 +969,25 @@ export function PrestampatiGenitore({
     if (!userId || !alunnoId || certificatoInCorso) return;
     setCertificatoInCorso(m.slug);
     setErroreCertificato(null);
+    // Un gesto nuovo sostituisce l'avviso di prima, e con lui l'offerta di risalvare: i byte
+    // restano legati al messaggio che li spiega, mai a un pulsante senza contesto.
+    setCertificatoDaRisalvare(null);
+    /**
+     * Il pulsante resta «in corso» fino alla FINE del salvataggio, non solo della POST:
+     * nell'app il salvataggio si attende (FileTransfer scarica, poi il foglio), e un
+     * pulsante tornato attivo in quel mezzo diceva ancora «Genera» — un secondo tocco
+     * rifaceva la POST, apriva un secondo foglio e, col modello non ancora in archivio,
+     * bruciava un secondo numero di protocollo. Il `finally` copre anche i `return`.
+     */
+    try {
+      await chiediESalva(m, nuovo);
+    } finally {
+      setCertificatoInCorso(null);
+    }
+  };
+
+  const chiediESalva = async (m: ModelloElencoDTO, nuovo: boolean) => {
+    if (!userId || !alunnoId) return;
     const r = await chiedi<{
       success?: boolean;
       url?: string | null;
@@ -932,7 +999,6 @@ export function PrestampatiGenitore({
       method: 'POST',
       body: JSON.stringify({ alunnoId, slug: m.slug, nuovo }),
     });
-    setCertificatoInCorso(null);
 
     if (!r.ok || !r.corpo?.success) {
       const chiave = r.corpo?.motivo ? CHIAVE_MOTIVO_CERTIFICATO[r.corpo.motivo] : undefined;
@@ -944,8 +1010,31 @@ export function PrestampatiGenitore({
       return;
     }
 
-    if (r.corpo.url) window.open(r.corpo.url, '_blank', 'noopener,noreferrer');
-    else if (r.corpo.pdfBase64) scaricaBase64(r.corpo.pdfBase64, `${m.slug}.pdf`);
+    /**
+     * Il documento da SALVARE (spec 2026-09-24, NAT3c).
+     *  - `url` firmato, nell'app → `scaricaDocumento`: foglio «Salva su File». Il
+     *    `window.open` dopo un `await`, nella WebView, non apriva niente e non lo diceva.
+     *  - `url` firmato, sul web → `window.open` come prima: «sul web tutto resta com'è».
+     *  - `pdfBase64` → l'helper su entrambe le piattaforme (vedi `scaricaBase64`).
+     */
+    let salvataggio: RisultatoScaricoNativo | null = null;
+    if (r.corpo.url) {
+      if (isNativeApp()) {
+        salvataggio = await scaricaDocumento({
+          sorgente: r.corpo.url,
+          nomeFile: `${m.slug}.pdf`,
+          mime: 'application/pdf',
+          etichetta: 'prestampato',
+        });
+      } else {
+        window.open(r.corpo.url, '_blank', 'noopener,noreferrer');
+      }
+    } else if (r.corpo.pdfBase64) {
+      salvataggio = await scaricaBase64(r.corpo.pdfBase64, `${m.slug}.pdf`);
+    }
+    // `'aggiorna'` sul binario 1.0 (riprovare non riuscirà mai), `'riprova'` altrimenti.
+    const avvisoSalvataggio = salvataggio !== null ? avvisoDocumento(salvataggio) : null;
+    const salvataggioFallito = avvisoSalvataggio !== null;
 
     /**
      * 🔴 `archiviato: false` NON È UN SUCCESSO PIENO, e ignorarlo era il difetto misurato in
@@ -957,7 +1046,49 @@ export function PrestampatiGenitore({
      * `=== false` e non `!archiviato`: una risposta senza il campo (client più nuovo del
      * server, durante un rilascio) non deve inventare un allarme.
      */
-    if (r.corpo.archiviato === false) {
+    /**
+     * I byte ci sono e il telefono non li ha presi: si TENGONO, e l'avviso indica «Salva di
+     * nuovo» — che ripete il salvataggio con gli stessi byte — e non «Riprova fra qualche
+     * minuto», che accanto a «non premere Genera» si contraddiceva e lasciava come unico
+     * gesto a schermo proprio quello che brucia un numero di protocollo.
+     *
+     * Anche il foglio CHIUSO senza salvare (`annullato`, che non si segnala come errore)
+     * tiene i byte quando il certificato non è in archivio: lì l'avviso dice già «conservalo
+     * adesso, è l'unica copia», e senza i byte non ci sarebbe niente da conservare.
+     */
+    const annullato = salvataggio !== null && salvataggio.motivo === 'annullato';
+    const byteDaTenere =
+      r.corpo.pdfBase64 && (salvataggioFallito || (annullato && r.corpo.archiviato === false))
+        ? r.corpo.pdfBase64
+        : null;
+    if (byteDaTenere) {
+      setCertificatoDaRisalvare({
+        slug: m.slug,
+        alunnoId,
+        pdfBase64: byteDaTenere,
+        archiviato: r.corpo.archiviato,
+      });
+    }
+
+    if (avvisoSalvataggio !== null && byteDaTenere) {
+      setErroreCertificato({
+        slug: m.slug,
+        tono: 'errore',
+        testo: testoDaRisalvare(r.corpo.archiviato, avvisoSalvataggio),
+      });
+    } else if (avvisoSalvataggio !== null) {
+      // Dall'indirizzo firmato (quindi in archivio): i byte non sono in mano al client, e il
+      // gesto grande «Scarica» li riprende dall'archivio senza emettere niente. Sul binario
+      // 1.0 però riprovare non basta: il testo dice di aggiornare l'app.
+      setErroreCertificato({
+        slug: m.slug,
+        tono: 'errore',
+        testo: testoNonSalvato(
+          ts(avvisoSalvataggio === 'aggiorna' ? 'documentoAppDaAggiornare' : 'documentoNonSalvato'),
+          r.corpo.archiviato,
+        ),
+      });
+    } else if (r.corpo.archiviato === false) {
       setErroreCertificato({ slug: m.slug, tono: 'attenzione', testo: t('certificatoNonArchiviato') });
     } else {
       setErroreCertificato(null);
@@ -967,6 +1098,43 @@ export function PrestampatiGenitore({
     // e il pulsante deve cambiare da «Genera» a «Scarica» — o il gesto dopo emetterebbe un
     // secondo numero di protocollo credendo di riscaricare il primo.
     void caricaElenco();
+  };
+
+  /**
+   * «Salva di nuovo»: lo STESSO certificato, con gli stessi byte, sullo stesso foglio. Non
+   * c'è nessuna POST — un numero di protocollo consumato non si riconsuma per un salvataggio
+   * mancato. Il pulsante del modello resta «in corso» mentre il foglio è aperto, come nel
+   * primo tentativo, così un tocco su «Genera» in quel mezzo non passa.
+   */
+  const risalvaCertificato = async () => {
+    const daRisalvare = certificatoDaRisalvare;
+    if (!daRisalvare || certificatoInCorso) return;
+    setCertificatoInCorso(daRisalvare.slug);
+    try {
+      const esitoRisalva = await scaricaBase64(daRisalvare.pdfBase64, `${daRisalvare.slug}.pdf`);
+      // Foglio chiuso senza salvare: niente cambia, byte e pulsante restano.
+      if (esitoRisalva.motivo === 'annullato') return;
+      const avvisoRisalva = avvisoDocumento(esitoRisalva);
+      if (avvisoRisalva !== null) {
+        // Fallito di nuovo: lo si dice (anche se prima l'avviso era solo «attenzione»), e
+        // byte e pulsante restano. Sul binario 1.0 il testo dice di aggiornare l'app.
+        setErroreCertificato({
+          slug: daRisalvare.slug,
+          tono: 'errore',
+          testo: testoDaRisalvare(daRisalvare.archiviato, avvisoRisalva),
+        });
+        return;
+      }
+      setCertificatoDaRisalvare(null);
+      // Salvato. Se non è in archivio, quello resta vero e si continua a dirlo.
+      setErroreCertificato(
+        daRisalvare.archiviato === false
+          ? { slug: daRisalvare.slug, tono: 'attenzione', testo: t('certificatoNonArchiviato') }
+          : null,
+      );
+    } finally {
+      setCertificatoInCorso(null);
+    }
   };
 
   // ── Il disegno ───────────────────────────────────────────────────────────────
@@ -1054,6 +1222,11 @@ export function PrestampatiGenitore({
                     onDocumento={(nuovo) => chiediDocumento(m, nuovo)}
                     inCorso={certificatoInCorso === m.slug}
                     esitoGesto={erroreCertificato?.slug === m.slug ? erroreCertificato : null}
+                    onRisalva={
+                      certificatoDaRisalvare?.slug === m.slug && certificatoDaRisalvare.alunnoId === alunnoId
+                        ? () => void risalvaCertificato()
+                        : undefined
+                    }
                     uscita={m.slug === 'autorizzazione_uscita' ? (elenco?.uscita ?? null) : null}
                     dataBreve={dataBreve}
                   />
@@ -1344,6 +1517,7 @@ function SchedaModello({
   onDocumento,
   inCorso,
   esitoGesto,
+  onRisalva,
   uscita,
   dataBreve,
 }: {
@@ -1356,6 +1530,11 @@ function SchedaModello({
   inCorso: boolean;
   /** L'esito dell'ULTIMO gesto su QUESTA scheda, o `null`: si disegna qui, non in cima. */
   esitoGesto: { testo: string; tono: 'errore' | 'attenzione' } | null;
+  /**
+   * «Salva di nuovo», presente solo quando i byte di un certificato non salvato sono in mano
+   * al client: ripete il salvataggio senza una nuova POST (vedi `risalvaCertificato`).
+   */
+  onRisalva?: () => void;
   uscita: { destinazione: string; data: string; oraPartenza: string | null; oraRientro: string | null } | null;
   dataBreve: (v: string | null) => string;
 }) {
@@ -1481,7 +1660,8 @@ function SchedaModello({
    * quel caso è «Generane uno nuovo», più sotto.
    */
   const mostraAzioni = (certificato && emettibile) || archiviato;
-  if (!mostraAzioni) return esitoGesto ? conEsito(scheda, esitoGesto) : scheda;
+  const risalva = onRisalva ? { etichetta: t('salvaDiNuovo'), onClick: onRisalva } : undefined;
+  if (!mostraAzioni) return esitoGesto ? conEsito(scheda, esitoGesto, risalva) : scheda;
 
   return conEsito(
     <div className="space-y-2">
@@ -1525,6 +1705,7 @@ function SchedaModello({
       </div>
     </div>,
     esitoGesto,
+    risalva,
   );
 }
 
@@ -1541,13 +1722,14 @@ function SchedaModello({
 function conEsito(
   scheda: ReactNode,
   esito: { testo: string; tono: 'errore' | 'attenzione' } | null,
+  azione?: { etichetta: string; onClick: () => void },
 ): ReactNode {
   if (!esito) return scheda;
   return (
     <div className="space-y-2">
       {scheda}
       <div role="status">
-        <Avviso tono={esito.tono} testo={esito.testo} />
+        <Avviso tono={esito.tono} testo={esito.testo} azione={azione} />
       </div>
     </div>
   );
@@ -2088,6 +2270,11 @@ function Conferma({
   dataOra: (v: string | null) => string;
 }) {
   const t = useTranslations('prestampatiGenitore');
+  const ts = useTranslations('shared');
+  // Il salvataggio non ha consegnato niente: lo si dice accanto al pulsante, che resta lì
+  // per riprovare. Negli ultimi due rami quel PDF è l'unica copia della famiglia. Il valore
+  // è il TIPO d'avviso: sul binario 1.0 (`'aggiorna'`) riprovare non riuscirà mai.
+  const [nonSalvato, setNonSalvato] = useState<AvvisoDocumento | null>(null);
 
   const inAttesa = esito.inAttesaAccettazione === true;
   const nonArchiviato = !inAttesa && esito.archiviato === false;
@@ -2145,6 +2332,12 @@ function Conferma({
         </section>
       )}
 
+      {nonSalvato && (
+        <p role="alert" className="rounded-xl bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error">
+          {ts(nonSalvato === 'aggiorna' ? 'documentoAppDaAggiornare' : 'documentoNonSalvato')}
+        </p>
+      )}
+
       <div className="flex flex-wrap justify-end gap-3 border-t border-kidville-line pt-4">
         {/* Qui manca il secondo comando, «Scarica la ricevuta della firma»: la voce di
             catalogo `scaricaRicevuta` esiste già ma NON si rende, e non per dimenticanza.
@@ -2154,17 +2347,39 @@ function Conferma({
             cui esistono tutt'e due: un ramo `prestampato` in `resolveEntita` e la colonna
             per il log. La chiave resta perché quel giorno la frase è già scritta in due
             lingue — vedi la testata di `registraFirma` in `parent/prestampati/firma`. */}
+        {/* Il PDF firmato è da SALVARE (spec 2026-09-24, NAT3c). Il collegamento resta un
+            collegamento sul web — lì apre la scheda come ha sempre fatto —; nell'app 1.1
+            `suNativo` ferma la navigazione, che nella WebView non portava da nessuna parte,
+            e apre il foglio «Salva su File». */}
         {esito.url ? (
           <a
             href={esito.url}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={suNativo(
+              'salva',
+              () => ({
+                sorgente: esito.url as string,
+                nomeFile: `${slug}.pdf`,
+                mime: 'application/pdf',
+                etichetta: 'prestampato',
+              }),
+              (r) => setNonSalvato(avvisoDocumento(r)),
+            )}
             className="inline-flex items-center gap-2 rounded-pill bg-kidville-green px-6 py-2.5 font-barlow text-[15.5px] font-extrabold uppercase tracking-[0.05em] text-kidville-yellow-ink"
           >
             <Download size={16} aria-hidden="true" /> {t('scarica')}
           </a>
         ) : esito.pdfBase64 ? (
-          <Btn variant="primary" size="md" onClick={() => scaricaBase64(esito.pdfBase64 as string, `${slug}.pdf`)}>
+          <Btn
+            variant="primary"
+            size="md"
+            onClick={() =>
+              void scaricaBase64(esito.pdfBase64 as string, `${slug}.pdf`).then((r) =>
+                setNonSalvato(avvisoDocumento(r)),
+              )
+            }
+          >
             <Download size={16} aria-hidden="true" /> {t('scarica')}
           </Btn>
         ) : null}

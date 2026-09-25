@@ -115,6 +115,7 @@
   "subModelloRimosso": "Form removed",
   "subGestita": "Handled",
   "subScaricaPdf": "Download PDF",
+  "scaricoNonRiuscito": "The file was not saved. Please try again.",
   "subEsportaXlsx": "Export XLSX",
   "subSegnaGestita": "Mark handled",
   "subSi": "Yes",

@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createAdminClient } from '@/lib/supabase/server-client'
-import { sendPush, vapidConfigured } from '@/lib/push/web-push'
-import { sendNativePush, fcmConfigured } from '@/lib/push/native-push'
 import { parseQuery } from '@/lib/validation/http'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
-import { TIPI_AVVISO_CODA } from '@/lib/fatture-coda/avvisi-testi'
+import { eseguiDispatch, JOB_DISPATCH } from '@/lib/push/dispatch'
 
 const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body eventuale del cron non viene letto)
 
@@ -45,85 +42,51 @@ const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body ev
  * `cron` è in `EVENTI_PERSISTITI`: anche i successi finiscono in `app_log`. È voluto —
  * con i soli errori, «nessun log» non distingue «tutto ok» da «non è mai partito niente».
  */
-const JOB = 'push-dispatch'
+// Dal 24/09 (PS2) i battiti «avviato» e «ok» e le righe d'errore del giro li scrive
+// `eseguiDispatch` in `src/lib/push/dispatch.ts`, con questo stesso nome di job; qui resta solo
+// la riga del secret sbagliato.
+//
+// IL NOME RESTA SCRITTO QUI IN LETTERE, e non è una copia distratta di `JOB_DISPATCH`. È il punto
+// in cui chi legge le route trova i job che `/api/health` sorveglia: il lock «i job sorvegliati
+// esistono davvero» in `__tests__/api/health.test.ts` cerca il letterale nelle `route.ts`, e senza
+// di esso `push-dispatch` risulterebbe un job che non esiste. Che sia lo STESSO nome con cui la lib
+// scrive il battito del cron lo garantisce `satisfies`: `JOB_DISPATCH` ha il tipo letterale
+// `'push-dispatch'`, e se qualcuno lo rinomina `tsc` si ferma qui invece di lasciare `/api/health`
+// a cercare un battito che nessuno scrive più (o a rincorrere quello della chat, che batte sotto
+// `push-dispatch-chat` proprio per non passare per il cron).
+const JOB = 'push-dispatch' satisfies typeof JOB_DISPATCH
 
 /**
- * ALLO STAFF LA PUSH PORTA SOLO GLI AVVISI DELLA CODA FATTURE E LO SCARTO SDI (consegna 2c
- * della coda fatture; decisione 21 del titolare: la push entro 5 minuti, e mai un nome).
+ * LA DURATA DELLA FUNZIONE È LA TERZA DIFESA DELLA PRESA (vedi «IL PREZZO DELLA PRESA» in
+ * `src/lib/push/dispatch.ts`). Il giro PRENDE le notifiche prima di spedirle: se la piattaforma
+ * lo tronca dopo la presa, restano marcate e non partono più, e non resta nemmeno una riga di
+ * log. Il tetto del giro (`TETTO_GIRO_MS`, 40 s) le rimette in coda, ma solo se la funzione vive
+ * abbastanza da arrivarci: al default della piattaforma (10 s, vedi
+ * `src/app/api/pagamenti/riconciliazione/route.ts`) non scatterebbe mai.
  *
- * Fino alla 2c nessuno dello staff aveva un dispositivo iscritto. Il pulsante della «Coda
- * fatture» iscrive la PERSONA, non un tipo: senza questo filtro le porterebbe anche tutte le
- * altre notifiche dello staff — misurate il 24/09: 3.267 in 30 giorni su 7 destinatari, più di
- * un terzo di tipi che mettono nel corpo il nome di una persona (un genitore, un bambino, chi ha
- * ricevuto le credenziali: `onboarding_completato`, `credenziali`, `assenza_comunicata`,
- * `allergie_aggiornate`) — sulla schermata di blocco, e gli avvisi della coda ci annegherebbero
- * dentro. Quelle restano nella campanella, com'erano.
- * La cuoca sta nell'elenco per la stessa ragione: vive nell'area admin. Allargarlo è una
- * decisione del titolare (docs/superpowers/specs/2026-09-22-coda-fatture-aruba/
- * consegna-2c-notifiche.md, §7.2).
- * Il filtro vede solo le push che passano DI QUI: un modulo che chiamasse `sendPush` o
- * `sendNativePush` da sé, sui dispositivi dello staff, lo scavalcherebbe. Per questo il
- * dispatch è l'unico canale verso lo staff: l'alert allergie della mensa, che fino al giro 2
- * della 2c spediva da sé nome del bambino e allergeni a tutti i dispositivi dei destinatari,
- * ora lascia la riga pendente e passa di qui (`src/lib/mensa/notify.ts`). Fuori da
- * `src/lib/push/` importa i due invii solo il saldo basso della mensa, che va ai genitori. Lo
- * tiene fermo un lock in fondo a `__tests__/api/push-dispatch.test.ts`.
+ * IL CASO PEGGIORE non è «il tetto più una notifica»: il tetto si guarda solo prima di
+ * cominciare una notifica, e il budget dei ritentativi (`BUDGET_RITENTATIVI_MS`, 20 s) per
+ * dispositivo. Un invio nativo che comincia a 19,9 s ha ancora tutti i ritentativi: token OAuth,
+ * tre `messages:send` al tetto di 10 s di `externalFetch` e due attese fino a 10 s (il
+ * `Retry-After` di un `429`) fanno 60 s. Poi ogni altro dispositivo della stessa notifica ne
+ * aggiunge fino a 20 senza ritentativi, e alla fine c'è il ritorno in coda, a blocchi, più la
+ * rimozione dei dispositivi morti. E il tetto del giro, dentro il ciclo, non copre ciò che viene
+ * PRIMA. Le letture (notifiche e dispositivi) sono GET, che postgrest-js ritenta da solo su
+ * 503/520 e sugli errori di rete, con attese fino al `Retry-After` senza limite superiore: il loro
+ * tempo non ha un tetto, e per questo il giro guarda l'orologio SUBITO PRIMA della presa
+ * (`SOGLIA_PRESA_MS`) e oltre non prende niente. Dopo quel controllo restano la presa a blocchi e
+ * il badge (scritture e RPC, non ritentate) e il ritorno in coda di tutte le prese. Il conto
+ * intero, ricavato dai tetti veri e dai blocchi che `LIMITE_LETTURA` e `ID_PER_QUERY` impongono, è
+ * `DURATA_MINIMA_FUNZIONE_S` in `src/lib/push/durata-dispatch.ts` (250 s con i valori di oggi e 5
+ * dispositivi per utente).
+ *
+ * 300 s è il valore delle altre route cron lunghe del repo (`pagamenti/fattura/coda/giro`,
+ * `pagamenti/riconciliazione`). Il lock in `__tests__/lib/push-dispatch-durata.test.ts` pretende
+ * da ogni route che chiama `eseguiDispatch` un `maxDuration` di almeno `DURATA_MINIMA_FUNZIONE_S`:
+ * chi alza un tetto alza anche la soglia. Il valore resta un numero scritto qui, perché Next legge
+ * la configurazione del segmento senza eseguire il codice.
  */
-const RUOLI_PUSH_SOLO_CODA = new Set(['admin', 'coordinator', 'segreteria', 'cuoca'])
-const TIPI_PUSH_STAFF = new Set<string>([...TIPI_AVVISO_CODA, 'fattura_scartata'])
-
-/**
- * Il destinatario è dello staff? Lo dice la relazione incorporata sull'utente (i due campi del
- * ruolo) della stessa lettura (una FK sola, `notifiche_utente_id_fkey`): un oggetto, un array per
- * prudenza. Schema doppio `role`/`ruolo`, come `staffScuola`. Riga senza utente → non è staff.
- * Nella stessa lettura e non in una seconda query sulla tabella degli utenti, che se fallisse
- * fermerebbe con un 500 anche la push dei genitori. Il lock `isolamento-sede-coverage` guarda
- * le `.from()`, non le relazioni incorporate: qui passa il solo ruolo del destinatario di
- * ciascuna riga, nessun dato di sede.
- */
-function destinatarioDelloStaff(n: { utenti?: unknown }): boolean {
-  const u: unknown = Array.isArray(n.utenti) ? n.utenti[0] : n.utenti
-  if (!u || typeof u !== 'object') return false
-  const { role, ruolo } = u as { role?: unknown; ruolo?: unknown }
-  return RUOLI_PUSH_SOLO_CODA.has(String(role ?? '')) || RUOLI_PUSH_SOLO_CODA.has(String(ruolo ?? ''))
-}
-
-/**
- * IL BATTITO NON PUÒ MENTIRE — ed è per questo che ogni query si controlla.
- *
- * **PostgREST NON LANCIA: ritorna `{ data, error }`** (regola 7 di AGENTS.md). Il `try/catch`
- * che avvolge questo handler NON scatta su una query fallita — scatta solo su un guasto di
- * rete. Quindi un `const { data: pendenti } = await supabase.from(…)` che ignora `error` (RLS
- * cambiata, statement timeout, 503) lascia `pendenti` a `null`, il codice scivola nel ramo
- * «zero elementi» e il battito di chiusura scrive `esito: 'ok', inviate: 0`. Chi sorveglia i
- * cron li vedrebbe VERDI ogni notte mentre nessuna push parte più: è lo STESSO guasto muto
- * delle email di credenziali, ricreato dal codice che doveva prevenirlo. E stavolta è peggio —
- * senza battito il bug era latente; **con un battito che non controlla `error` diventa una
- * bugia attiva**, cioè il contrario esatto dell'osservabilità.
- *
- * Sulla lettura di `push_subscriptions` l'esito è addirittura DISTRUTTIVO: `subsByUser`
- * resterebbe vuota (nessuna push spedita), ma `inviateIds` si riempirebbe lo stesso e le
- * notifiche verrebbero marcate `push_inviata_il` → **perse per sempre**, con il log che dice ok.
- *
- * Da qui la regola, identica in tutti e cinque i cron: `error` si destruttura SEMPRE, e se è
- * valorizzato il giro finisce lì — riga `error` (in tabella, perché `cron` è in
- * `EVENTI_PERSISTITI`), 500, e **nessun effetto collaterale a valle**.
- */
-function queryFallita(azione: string, error: unknown, t0: number): NextResponse {
-  // `esito` e `azione` sono nella lista bianca di `redact`: escono in chiaro anche nella riga
-  // PERSISTITA, quindi in SQL si legge quale job e QUALE query è caduta. Il `msg` è distinto
-  // per query e non è ridondante: `app_log` deduplica per (fingerprint, giorno) e l'impronta
-  // contiene il messaggio, non il `contesto` — senza, tutte le query fallite di tutti i cron
-  // collasserebbero in una riga sola. Il 4° argomento porta codice, `details` e `hint` di
-  // PostgREST: uno status senza il corpo dell'errore è il bug, non un dettaglio.
-  logEvento(
-    'cron',
-    'error',
-    { operazione: JOB, esito: 'query-fallita', azione, ms: Date.now() - t0, msg: `${JOB}: ${azione} fallita` },
-    error,
-  )
-  return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
-}
+export const maxDuration = 300
 
 // POST /api/push/dispatch — invio Web Push delle notifiche non ancora inviate.
 // SERVICE-TO-SERVICE: richiede header `x-cron-secret`. NON chiamabile dal browser.
@@ -156,295 +119,18 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
       }
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
-    logEvento('cron', 'info', { operazione: JOB, esito: 'avviato', msg: `${JOB}: avviato` })
-
     const q = parseQuery(request, postQuerySchema)
     if ('response' in q) return q.response
 
-    // Senza NESSUN canale configurato (né VAPID web né FCM native) il push non
-    // può partire: esito visibile (non_configurato) e notifiche NON marcate come
-    // inviate, così partiranno appena un canale sarà configurato.
-    const webOk = vapidConfigured()
-    const nativeOk = fcmConfigured()
-    if (!webOk && !nativeOk) {
-      // Configurazione mancante = `error`, mai `info`. Qui il giro si chiude con un 200
-      // «success» mentre in realtà non ha spedito niente e non spedirà niente finché le
-      // chiavi non arrivano: è il guasto muto per eccellenza — quello che le regole di
-      // questo progetto esistono per rendere rumoroso.
-      logEvento('cron', 'error', {
-        operazione: JOB,
-        esito: 'non-configurato',
-        ms: Date.now() - t0,
-        msg: `${JOB}: nessun canale push configurato (VAPID/FCM), notifiche lasciate in coda`,
-      })
-      return NextResponse.json({ success: true, data: { inviate: 0, non_configurato: true } })
-    }
-
-    const supabase = await createAdminClient()
-
-    // notifiche da inviare (push non ancora spedita E buffer scaduto)
-    const nowIso = new Date().toISOString()
-    const { data: pendenti, error: errPendenti } = await supabase
-      .from('notifiche')
-      .select('id, utente_id, tipo, titolo, corpo, link, utenti(role, ruolo)')
-      .is('push_inviata_il', null)
-      .or(`invio_programmato_il.is.null,invio_programmato_il.lte.${nowIso}`)
-      .order('creato_il', { ascending: true })
-      .limit(500)
-    // Senza questo controllo una lettura fallita è indistinguibile da «nessuna notifica in
-    // coda»: si cadrebbe nel ramo qui sotto e si scriverebbe «ok, inviate 0».
-    if (errPendenti) return queryFallita('lettura notifiche', errPendenti, t0)
-
-    if (!pendenti || pendenti.length === 0) {
-      // Il caso normale della stragrande maggioranza dei giri: niente da spedire. Ha
-      // comunque bisogno del suo «ok» — vedi il punto 3 della doc in testa al file.
-      logEvento('cron', 'info', {
-        operazione: JOB,
-        esito: 'ok',
-        ms: Date.now() - t0,
-        notifiche: 0,
-        inviate: 0,
-        msg: `${JOB}: ok`,
-      })
-      return NextResponse.json({ success: true, data: { inviate: 0 } })
-    }
-
-    const utenti = [...new Set(pendenti.map((n) => n.utente_id))]
-    const { data: subs, error: errSubs } = await supabase
-      .from('push_subscriptions')
-      .select('id, utente_id, endpoint, p256dh, auth, platform')
-      .in('utente_id', utenti)
-    // LA LETTURA PIÙ PERICOLOSA DEL FILE. Se fallisce e si tira dritto, `subsByUser` è vuota →
-    // nessuna push parte, MA il ciclo qui sotto riempie `inviateIds` lo stesso e le notifiche
-    // finiscono marcate `push_inviata_il`: **perse per sempre**, e il battito direbbe «ok».
-    // Si esce PRIMA di qualunque invio e PRIMA di qualunque marcatura: le notifiche restano in
-    // coda e partiranno al giro successivo, quando il DB avrà smesso di affannarsi.
-    if (errSubs) return queryFallita('lettura push_subscriptions', errSubs, t0)
-
-    const subsByUser = new Map<string, typeof subs>()
-    for (const s of subs || []) {
-      const arr = subsByUser.get(s.utente_id) || []
-      arr.push(s)
-      subsByUser.set(s.utente_id, arr as typeof subs)
-    }
-
-    let inviate = 0
-    let nativeInviate = 0
-    // IL TERZO ESITO, quello che non esisteva. Il ciclo guardava solo `ok` e `gone`:
-    // ogni altro rifiuto — `403` (chiave VAPID non autorizzata per quell'endpoint),
-    // `413` (payload troppo grande), `401` FCM, la rete giù, le credenziali sbagliate —
-    // cadeva in un ramo che non c'era. Nessun contatore, nessuna riga.
-    //
-    // E la notifica veniva marcata `push_inviata_il` lo stesso (vedi sotto: è
-    // deliberato, evita i ritentativi infiniti), quindi NON verrà mai rispedita. Il
-    // battito continuava intanto a dire `esito:'ok'` con `inviate: 0`: zero push
-    // consegnate, zero tracce — il guasto delle email di credenziali, tale e quale.
-    // Un contatore non ripara niente; rende il guasto DICIBILE, che è il primo passo.
-    let fallite = 0
-    // IL QUARTO ESITO: SALTATA. Un canale non configurato non è né un successo né
-    // un rifiuto del provider — è una notifica che non è mai stata TENTATA.
-    //
-    // Il `continue` c'era già e si chiamava «degrado pulito». Non lo era: la
-    // notifica finiva comunque in `inviateIds`, veniva marcata `push_inviata_il`
-    // e non sarebbe più ripartita. Con `FCM_*` assenti da un deploy — tre
-    // variabili d'ambiente, il guasto di configurazione più banale che ci sia —
-    // ogni push nativa dell'intera scuola veniva scartata e archiviata come
-    // spedita, con il battito che diceva `esito:'ok'`. Zero consegne, zero righe,
-    // e la coda vuota a certificare che era andato tutto bene: il guasto delle
-    // email di credenziali, ricostruito pezzo per pezzo.
-    let saltateNative = 0
-    let saltateWeb = 0
-    // Notifiche NON marcate perché nessuno dei loro canali era configurato:
-    // restano in coda e partiranno da sole appena le chiavi arrivano.
-    let rimandate = 0
-    // Notifiche dello staff che la push NON porta per scelta (vedi `TIPI_PUSH_STAFF`): marcate
-    // come quelle di chi non ha dispositivi, e contate — «non spedita apposta» non è muto.
-    let escluseStaff = 0
-    const toRemove: string[] = []
-    const inviateIds: string[] = []
-
-    for (const n of pendenti) {
-      const userSubs = subsByUser.get(n.utente_id) || []
-      // Allo staff solo gli avvisi della coda e lo scarto SdI (consegna 2c): il resto resta
-      // nella campanella. Niente da spedire e niente da riprovare, come senza dispositivi.
-      if (userSubs.length > 0 && destinatarioDelloStaff(n) && !TIPI_PUSH_STAFF.has(n.tipo)) {
-        escluseStaff++
-        inviateIds.push(n.id)
-        continue
-      }
-      const payload = { title: n.titolo, body: n.corpo ?? undefined, url: n.link ?? '/', tag: n.id }
-      // Per NOTIFICA, non per giro: `tentate` conta gli invii davvero eseguiti
-      // (riusciti, rifiutati o su subscription morta — tutti e tre sono
-      // tentativi), `saltate` quelli impediti da un canale spento.
-      let tentate = 0
-      let saltate = 0
-      for (const s of userSubs!) {
-        if (s.platform === 'ios' || s.platform === 'android') {
-          // Canale nativo (FCM/APNs) — gated.
-          if (!nativeOk) {
-            saltateNative++
-            saltate++
-            continue
-          }
-          tentate++
-          const res = await sendNativePush(s.endpoint, s.platform, payload)
-          if (res.ok) nativeInviate++
-          else if (res.gone) toRemove.push(s.id)
-          else fallite++
-        } else {
-          // Canale web (VAPID). platform 'web' o legacy null.
-          if (!webOk) {
-            saltateWeb++
-            saltate++
-            continue
-          }
-          tentate++
-          const res = await sendPush({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth }, payload)
-          if (res.ok) inviate++
-          else if (res.gone) toRemove.push(s.id)
-          else fallite++
-        }
-      }
-
-      // LA REGOLA DI MARCATURA, e le tre alternative scartate.
-      //
-      // Si marca `push_inviata_il` quando c'è stato ALMENO UN TENTATIVO, oppure
-      // quando non c'era proprio nessun destinatario (zero subscription: non c'è
-      // nulla da spedire e nulla da riprovare — il comportamento di sempre, che
-      // evita i ritentativi infiniti).
-      //
-      // NON si marca solo il caso preciso in cui la notifica AVEVA destinatari e
-      // NESSUNO era raggiungibile perché il canale è spento. Quella e solo quella
-      // torna in coda.
-      //
-      //  · marcare comunque (com'era) = perderla per sempre. È il difetto;
-      //  · non marcare mai nulla di parziale = rispedire al giro dopo anche a chi
-      //    l'ha già ricevuta (un genitore con web + telefono riceverebbe due volte
-      //    ogni notifica finché FCM resta spento). Per questo basta UN tentativo;
-      //  · marcarla e rimetterla in coda a mano = una seconda tabella di stato per
-      //    un caso che si ripara mettendo tre variabili d'ambiente.
-      //
-      // PREZZO DA CONOSCERE: se il canale resta spento a lungo la coda cresce, e
-      // la `.limit(500)` di sopra pesca sempre le PIÙ VECCHIE — oltre 500
-      // rimandate, le nuove non verrebbero più raggiunte. È accettabile solo
-      // perché la condizione che ci porta è essa stessa un `error` gridato a ogni
-      // giro (sotto), con il numero in coda scritto sulla riga: la riparazione è
-      // configurare il canale, non svuotare la coda.
-      if (saltate > 0 && tentate === 0) {
-        rimandate++
-        continue
-      }
-      inviateIds.push(n.id)
-    }
-
-    // Anche le SCRITTURE ritornano `{ error }` senza lanciare, e anche il loro fallimento è
-    // muto: se la marcatura non passa, le stesse notifiche verranno rispedite al giro
-    // successivo (push doppie ai genitori) e nessuno lo saprebbe. Il 500 non annulla le push
-    // già partite — non c'è nulla da annullare — ma impedisce al battito di dire «ok» su un
-    // giro che ok non è stato: è tutta la differenza fra un log e un log che mente.
-    if (inviateIds.length) {
-      const { error } = await supabase
-        .from('notifiche')
-        .update({ push_inviata_il: new Date().toISOString() })
-        .in('id', inviateIds)
-      if (error) return queryFallita('marcatura notifiche inviate', error, t0)
-    }
-    if (toRemove.length) {
-      // Le subscription «gone» (410/404) che non si riesce a cancellare restano lì e ogni notte
-      // riprovano a ricevere una push che non arriverà mai: un errore silenzioso e permanente.
-      const { error } = await supabase.from('push_subscriptions').delete().in('id', toRemove)
-      if (error) return queryFallita('rimozione push_subscriptions', error, t0)
-    }
-
-    // I RIFIUTI ALZANO LA VOCE, E SEPARATAMENTE DAL BATTITO.
-    //
-    // Il battito è `info`: dice «il job gira». Che il provider stia rifiutando gli invii
-    // è un fatto diverso e va cercabile da solo (`livello='warn'`), altrimenti si
-    // troverebbe solo leggendo un campo dentro una riga che per definizione dice «ok».
-    //
-    // `warn` e non `error`: alcuni rifiuti sono transitori (un `429`, un `503` del push
-    // service), e questa route degrada e risponde 200 — un `error` alzerebbe anche la
-    // marca `erroreLoggato`. Ma resta PERSISTITO (`vaPersistito` tiene i warn), quindi
-    // «da mercoledì tutte le push web vengono rifiutate» diventa una query.
-    //
-    // Il `msg` dice a chiare lettere la conseguenza: quelle notifiche sono già marcate
-    // inviate e non torneranno. Chi legge il log non deve dedurlo dal codice.
-    if (fallite > 0) {
-      logEvento('cron', 'warn', {
-        operazione: JOB,
-        esito: 'invii-rifiutati',
-        fallite,
-        inviate,
-        native_inviate: nativeInviate,
-        notifiche: inviateIds.length,
-        ms: Date.now() - t0,
-        msg: `${JOB}: ${fallite} invii push rifiutati dal provider; le notifiche restano marcate inviate e NON verranno ritentate`,
-      })
-    }
-
-    // UN CANALE SPENTO È UN INCIDENTE DI CONFIGURAZIONE, QUINDI `error`.
-    //
-    // Non `warn` come i rifiuti: quelli sono spesso transitori (un 429 del push
-    // service passa da solo), questo no. `FCM_PROJECT_ID`/`FCM_CLIENT_EMAIL`/
-    // `FCM_PRIVATE_KEY` assenti restano assenti finché qualcuno non le mette, e
-    // ogni giro che passa è un altro giorno di famiglie che non ricevono niente.
-    // È la regola 4 di AGENTS.md alla lettera: configurazione mancante = `error`,
-    // mai `info` — e qui, fino a oggi, non era nemmeno `info`.
-    //
-    // La riga porta il NUMERO per canale e le notifiche rimandate: «saltate_native
-    // 412, rimandate 130» dice in un colpo solo quale canale è giù e quanto
-    // arretrato ha prodotto. Il `msg` dice a chiare lettere che cosa succede
-    // adesso, perché chi legge il log non deve dedurlo dal codice.
-    if (saltateNative > 0 || saltateWeb > 0) {
-      logEvento('cron', 'error', {
-        operazione: JOB,
-        esito: 'canale-non-configurato',
-        saltate_native: saltateNative,
-        saltate_web: saltateWeb,
-        rimandate,
-        notifiche: inviateIds.length,
-        ms: Date.now() - t0,
-        msg:
-          `${JOB}: ${saltateNative} invii nativi e ${saltateWeb} web saltati per canale non configurato ` +
-          `(FCM/VAPID); ${rimandate} notifiche NON marcate, restano in coda`,
-      })
-    }
-
-    // I contatori sono NUMERI: `redact()` li lascia passare in chiaro anche in tabella,
-    // qualunque sia la chiave. Sono la seconda metà del battito — non solo «gira», ma
-    // «gira e sta facendo qualcosa»: un dispatch che parte ogni notte e invia sempre 0
-    // è rotto tanto quanto uno che non parte. `fallite` sta accanto a `inviate` perché
-    // è la coppia che va letta insieme: `inviate: 0` da solo può voler dire «niente da
-    // fare», `inviate: 0, fallite: 27` vuol dire «il canale è giù».
-    logEvento('cron', 'info', {
-      operazione: JOB,
-      esito: 'ok',
-      ms: Date.now() - t0,
-      inviate,
-      native_inviate: nativeInviate,
-      fallite,
-      notifiche: inviateIds.length,
-      subs_rimosse: toRemove.length,
-      escluse_staff: escluseStaff,
-      msg: `${JOB}: ok`,
-    })
-    return NextResponse.json({
-      success: true,
-      data: {
-        inviate,
-        native_inviate: nativeInviate,
-        fallite,
-        notifiche: inviateIds.length,
-        subs_rimosse: toRemove.length,
-        escluse_staff: escluseStaff,
-      },
-    })
+    // Tutto il giro (lettura, presa atomica, invii, ritorno in coda, battito) sta in
+    // `src/lib/push/dispatch.ts`, riusabile da chi deve spedire subito (la chat). Non lancia mai:
+    // un guasto è già loggato là dentro, e qui diventa il 500 che vede il cron.
+    const esito = await eseguiDispatch({ origine: 'cron' })
+    if (esito.stato === 500) return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    return NextResponse.json({ success: true, data: esito.data })
   } catch (err) {
-    // `evento: 'cron'` (e non il 'route' di default): il guasto deve stare nello STESSO
-    // flusso dei battiti, perché chi sorveglia i cron interroga `where evento = 'cron'` e
-    // non deve dover sapere che il fallimento totale del job si cerca da un'altra parte.
-    // `logErrore` emette anche l'Error nativo con lo stack VERO, che un `console.error`
-    // sul solo messaggio non dava.
+    // La rete sotto il controllo del secret: `eseguiDispatch` non lancia, ma qui sopra ci sono
+    // header e query. `evento: 'cron'`, perché chi sorveglia i cron interroga quel flusso.
     logErrore({ operazione: JOB, evento: 'cron', ms: Date.now() - t0, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }

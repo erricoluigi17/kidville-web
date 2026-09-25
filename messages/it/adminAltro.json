@@ -200,6 +200,8 @@
   "protBadgeCollegato": "collegato",
   "protBtnTimbrato": "Timbrato",
   "protDownloadFallito": "❌ Download non riuscito",
+  "protTimbratoNonAperto": "Il PDF timbrato non si è aperto: riprova.",
+  "protAggiornaApp": "Con questa versione dell’app il documento non si apre sul telefono: aggiorna l’app, oppure aprilo dal sito su un computer.",
   "protNuovoSubtitle": "Carica il file, controlla i dati, ottieni il numero e il PDF timbrato",
   "protPassoFile": "File",
   "protPassoDati": "Dati",

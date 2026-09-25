@@ -1473,6 +1473,7 @@ const AMMESSE: Record<string, string> = {
     // CONTEGGIO (`head: true`) e nessun percorso attraversa la funzione. Nessun nome,
     // nessuna didascalia, nessun uuid di famiglia. A leggerle è un cron.
     'gdpr/retention-galleria:<modulo>': "helper `spazzaMediaOrfani` + `reclamiConfrontabili`: chiedono quali percorsi elencati nello STORAGE siano reclamati da una riga, per rimuovere quelli che non lo sono, e quante righe portino un percorso non confrontabile. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI i media reclamati dalle altre due sedi e li cancellerebbe — la foto di un bambino distrutta mentre la sua riga è viva, e un riquadro rotto in galleria per quelle famiglie. Leggono una sola colonna (`file_url`) e solo per i percorsi che hanno già in mano, o un puro conteggio con `head: true`: nessun percorso e nessun nome escono da qui. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
+    'gdpr/retention-cestino-registro:<modulo>': "purga a 7 giorni (`GIORNI_CESTINO_REGISTRO`) del cestino di allegati del registro e fascicolo: le tre query di `student_documents` (le scadute, i reclami sul percorso, la `delete` per id) stanno nella tabella `CONTENITORI_CESTINO_REGISTRO` a livello di modulo, scritte col nome della tabella in chiaro perché il lock del cestino del fascicolo le veda. Come la galleria e l'oblio, il termine vale su TUTTE le sedi: un documento messo nel cestino scade lo stesso giorno in ogni plesso, e un `.in('scuola_id', plessi)` lo lascerebbe nell'archivio in silenzio, col battito che dice «ok» — una diagnosi o un PEI di un minore conservato oltre il termine promesso. La `delete` lavora su id già letti dalla prima query e RIPETE le condizioni del cestino (`eliminato_il` non nullo e più vecchio della soglia): non allarga la domanda, e una riga viva non è cancellabile da qui. I reclami leggono solo `id` e la colonna del percorso, e solo per i percorsi già in mano: nessun nome e nessun percorso escono nei log. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret, e il lancio manuale passa da `requireStaff` ma fa lo stesso identico lavoro.",
     // ── LA CONSERVAZIONE DEGLI ORIGINALI VIDEO (2026-09-18, V14) ────────────
     //
     // COSA SEGNALA IL LOCK: tre `rpc()` senza parametro di sede —
@@ -2415,7 +2416,27 @@ describe('coverage-lock isolamento fra sedi', () => {
             // (POST, il lavoratore: apre il service role ma non ha né `.from(` né `.rpc(` —
             // tutto il lavoro sta in `src/lib/fatture-coda/giro.ts`, che questo lock non
             // audita, e il gate è il segreto del cron). Misurato rieseguendo il lock, non dedotto.
-            routeConServiceRole: 334,
+            // 334 → 333 il 2026-09-25 (compito PS2): `push/dispatch:POST` non apre più il
+            // service role — il giro (lettura, presa atomica, invii) è in `src/lib/push/dispatch.ts`,
+            // riusabile dalla chat, e la route tiene solo il segreto del cron. Non è una cecità
+            // nuova: le letture del dispatch sono PER TUTTE LE SEDI per costruzione (la coda di
+            // tutti i destinatari), e nessuna prendeva uno scope dalla richiesta. Misurato.
+            // +1 il 2026-09-25 (compito S1): `primaria/scrutinio/riapri`, file nuovo con un
+            // solo metodo (POST). Dichiara la sede con `assertSezioneInScope` sulla sezione
+            // dello scrutinio, prima di ogni scrittura; nessuna esenzione.
+            // +1 il 2026-09-25 (compito PU1): `gdpr/retention-cestino-registro`, file nuovo con
+            // un solo metodo (POST): la purga a 7 giorni del cestino di registro e fascicolo.
+            // Nessuna esenzione: le due tabelle non hanno `scuola_id` (la sede è della lezione
+            // o dell'alunno) e il termine vale per tutte le sedi, come per la galleria.
+            // +2 il 2026-09-25 (compito F1): `primaria/fascicolo/sostituisci` (POST) e
+            // `primaria/fascicolo/cestino` (GET elenco + POST ripristino), file nuovi. Nessuna
+            // esenzione: `student_documents` non ha `scuola_id`, ogni handler legge la riga
+            // (o l'alunno) e passa da `puoAccedereFascicolo`, che controlla il plesso.
+            // +2 il 2026-09-25 (compito R2): `primaria/allegati/sostituisci` (POST) e
+            // `primaria/allegati/cestino` (GET elenco della classe + POST ripristino), file nuovi.
+            // Nessuna esenzione: `allegati_registro` non ha `scuola_id`, ogni handler risale alla
+            // lezione (o allo slot d'origine) e passa da `assertSezioneInScope` sulla sua classe.
+            routeConServiceRole: 339,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2595,7 +2616,68 @@ describe('coverage-lock isolamento fra sedi', () => {
             // POST, `coda/azioni` POST, `coda/sospensione` POST, `coda/giro` POST). Il passo
             // NON coincide col numero di file perché la prima rotta espone due metodi. Vedi
             // la nota accanto a `routeConServiceRole`.
-            handlerControllati: 506,
+            // +1 il 2026-09-25 (compito A1): `attendance/daily:DELETE`, l'annullamento
+            // dell'appello di un bambino. `routeConServiceRole` NON cresce — il file
+            // c'era già — e `handlerEsentati` nemmeno: la scrittura filtra per la
+            // `scuola_id` della riga appena letta (`@/lib/presenze/annulla-appello`),
+            // dopo `assertAlunnoInScope`. Misurato rieseguendo il lock.
+            // +1 il 2026-09-25 (compito A3): `primaria/appello:DELETE`, la gemella
+            // della primaria. Stessa libreria, stessa ragione: `routeConServiceRole`
+            // e `handlerEsentati` NON crescono (il file c'era già, e la scrittura
+            // filtra per la `scuola_id` della riga letta per sezione verificata da
+            // `assertSezioneInScope`). Misurato rieseguendo il lock: 507 → 508.
+            // −1 il 2026-09-25 (compito PS2): esce `push/dispatch:POST`, che non apre più il
+            // service role (vedi la nota accanto a `routeConServiceRole`, 334 → 333).
+            // +1 il 2026-09-25 (compito S1): `primaria/scrutinio/riapri:POST` (un file, un
+            // metodo: il passo coincide col file). `handlerEsentati` non cresce.
+            // +1 il 2026-09-25 (compito PU1): `gdpr/retention-cestino-registro:POST`, la purga
+            // a 7 giorni del cestino di allegati del registro e fascicolo (un file, un metodo).
+            // `handlerEsentati` non cresce: `allegati_registro` e `student_documents` non
+            // hanno `scuola_id`, e il gate è il segreto del cron (o `requireStaff`).
+            // +2 il 2026-09-25 (compito G1): `parent/giustifiche-didattiche:PATCH` e `:DELETE`,
+            // il genitore corregge o annulla la sua dichiarazione di impreparato.
+            // `routeConServiceRole` NON cresce (il file c'era già) e `handlerEsentati` nemmeno:
+            // la riga si legge filtrata per autore, poi `requireParentOfStudent` sull'alunno.
+            // +1 il 2026-09-25 (compito R1): `primaria/registro:DELETE`, la propria firma o la
+            // lezione intera. `routeConServiceRole` NON cresce (il file c'era già) e
+            // `handlerEsentati` nemmeno: `assertSezionePrimariaFirmabile` sulla sezione della
+            // lezione letta, sia per la firma sia per la lezione intera (per lo staff vale sede +
+            // `school_type = 'primaria'`; `registro_orario` è condiviso col registro 0-6), e il
+            // DELETE di `registro_orario` ripete la `scuola_id` della riga letta.
+            // +2 il 2026-09-25 (compito V1): `primaria/valutazioni:PATCH` e `:DELETE`, la
+            // modifica e l'eliminazione di una valutazione. `routeConServiceRole` NON cresce (il
+            // file c'era già) e `handlerEsentati` nemmeno: `valutazioni` non ha `scuola_id`, la
+            // riga si legge per id e poi `assertSezioneInScope` sulla sua classe, e la scrittura
+            // ripete id e `section_id` della riga letta.
+            // +2 il 2026-09-25 (compito NO1): `primaria/note:PATCH` e `:DELETE`, la modifica e
+            // l'eliminazione di una nota (singola o di gruppo). `routeConServiceRole` NON cresce
+            // (il file c'era già) e `handlerEsentati` nemmeno: `note_disciplinari` non ha
+            // `scuola_id`, la nota si legge per id e poi `assertSezioneInScope` sulla sua classe,
+            // e ogni scrittura ripete gli id e il `section_id` letti.
+            // +5 il 2026-09-25 (compito F1): `primaria/fascicolo:PATCH` e `:DELETE` (modifica e
+            // cestino), `primaria/fascicolo/sostituisci:POST`, `primaria/fascicolo/cestino:GET` e
+            // `:POST`. Tutti CONTROLLATI: la riga si legge per id e poi `puoAccedereFascicolo`
+            // sull'alunno della riga, nello stesso handler; le scritture ripetono l'id letto.
+            // +1 il 2026-09-25 (compito S2): `primaria/pagella:DELETE`, l'eliminazione di UNA
+            // pagella. `routeConServiceRole` NON cresce (il file c'era già, col GET) e
+            // `handlerEsentati` nemmeno: `assertSezioneInScope` sulla sezione dello scrutinio
+            // letto, prima di leggere la pagella e di toccare file o riga; il DELETE ripete id,
+            // `scrutinio_id` e `alunno_id`. Misurato rieseguendo il lock: 521 → 522.
+            // +1 il 2026-09-25 (compito A5): `primaria/presenze/giust-vista:DELETE`, «Annulla
+            // presa visione» della giustifica. `routeConServiceRole` NON cresce (il file c'era
+            // già, con la POST) e `handlerEsentati` nemmeno: la presenza si legge per id, poi
+            // `assertSezioneInScope` sulla sua classe, e la UPDATE ripete id e `section_id` letti.
+            // +2 il 2026-09-25 (compito V2): `primaria/giustifiche-didattiche:PATCH` e `:DELETE`,
+            // la modifica e l'eliminazione di un impreparato. `routeConServiceRole` NON cresce (il
+            // file c'era già, con GET e POST) e `handlerEsentati` nemmeno: `giustifiche_didattiche`
+            // non ha `scuola_id`, la riga si legge per id e poi `assertSezioneInScope` sulla sua
+            // classe, e la scrittura ripete id e `section_id` letti.
+            // +5 il 2026-09-25 (compito R2): `primaria/allegati:PATCH` (rinomina) e `:DELETE`
+            // (cestino), `primaria/allegati/sostituisci:POST`, `primaria/allegati/cestino:GET` e
+            // `:POST` (ripristino). Tutti CONTROLLATI, nessuna esenzione: l'allegato si legge per
+            // id, poi la sua lezione (o lo slot d'origine) e `assertSezioneInScope` sulla classe,
+            // e le scritture ripetono l'id letto. Misurato rieseguendo il lock: 525 → 530.
+            handlerControllati: 530,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -2948,7 +3030,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             //    403 all'intera richiesta prima della RPC;
             //  · `video-uploads/[id]:<modulo>` — i job si leggono per l'intento già
             //    filtrato per `owner_id` in query e passato da `sedeAncoraPropria`.
-            handlerEsentati: 113,
+            // 113 → 114 il 2026-09-25 (compito PU1): `gdpr/retention-cestino-registro:<modulo>`,
+            // la purga a 7 giorni del cestino di registro e fascicolo. È la stessa esenzione
+            // della gemella `gdpr/retention-galleria`, per la stessa ragione (un termine di
+            // custodia non ha confini di plesso) e scritta per esteso in AMMESSE: il lock la
+            // vede solo da quando le query nominano `student_documents` in chiaro.
+            handlerEsentati: 114,
         })
     })
 })

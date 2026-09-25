@@ -110,7 +110,9 @@ ALTER DATABASE postgres SET app.cron_secret         = '<CRON_SECRET, uguale a qu
 
 e assicurati che le migrazioni `*_cron.sql` siano applicate in prod (idempotenti):
 `notifiche-dispatch` (5'), `mensa-check-allergie` (07:00), `genera-rette-mensili` (1° del mese 06:00),
-`genera-solleciti` (ogni 6h).
+`genera-solleciti` (ogni 6h), `cestino-registro-retention` (05:29 UTC: purga a 7 giorni — la costante
+`GIORNI_CESTINO_REGISTRO` — del cestino di allegati del registro e fascicolo, via
+`POST /api/gdpr/retention-cestino-registro`).
 
 ---
 

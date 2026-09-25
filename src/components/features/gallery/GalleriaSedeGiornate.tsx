@@ -371,11 +371,16 @@ export function GalleriaSedeGiornate({ foto, testi, onDelete, onRipristina, test
                                 giorniTotali={giorniTotali}
                             />
                         ) : (
+                            /* `scaricabile`: la Segreteria scarica foto e video (card e
+                               visore) con lo stesso helper del genitore. Il cestino qui
+                               sopra resta SENZA: una foto che si è deciso di rimuovere
+                               non si distribuisce (vedi `GrigliaCestino`). */
                             <MediaGrid
                                 items={g.foto}
                                 students={alunniDellaPagina(g.foto, testi.taggatoSenzaNome)}
                                 colonne={4}
                                 onDelete={onDelete}
+                                scaricabile
                             />
                         )}
                     </section>

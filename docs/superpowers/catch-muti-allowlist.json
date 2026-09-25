@@ -31,8 +31,8 @@
     "Si logga anche il ramo !res.ok, non solo l'eccezione: un 403 è una risposta regolare, e",
     "senza quel ramo resta silenzioso esattamente come prima."
   ],
-  "aggiornato": "2026-09-14",
-  "totale_occorrenze": 69,
+  "aggiornato": "2026-09-25",
+  "totale_occorrenze": 68,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -124,10 +124,6 @@
     },
     {
       "path": "src/components/features/admin/AdminSearchPanel.tsx",
-      "n": 1
-    },
-    {
-      "path": "src/components/features/admin/CompetenzePanel.tsx",
       "n": 1
     },
     {

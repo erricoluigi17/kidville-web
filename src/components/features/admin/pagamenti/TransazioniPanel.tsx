@@ -21,6 +21,7 @@ import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY, MODAL_CARD, MODAL_SHADOW } from './ui';
 import { FatturaButton } from './FatturaButton';
+import { LinkDocumento } from './LinkDocumento';
 import { proponiAllocazione, round2 } from '@/lib/pagamenti/transazioni-quadratura';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
@@ -488,13 +489,14 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                            <a
+                            <LinkDocumento
                                 href={`/api/pagamenti/transazioni/${fatto.transazioneId}/ricevuta?userId=${userId}`}
-                                target="_blank" rel="noopener noreferrer"
+                                target="_blank"
+                                modo="apri" nomeFile="ricevuta-famiglia.pdf" mime="application/pdf" etichetta="ricevuta-transazione"
                                 className={cx(BTN_PRIMARY, 'text-sm')}
                             >
                                 <FileText size={15} /> {t('transRicevutaFamiglia')}
-                            </a>
+                            </LinkDocumento>
                         </div>
 
                         {fatto.voci.length > 0 && (
@@ -545,13 +547,14 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                                                 <span className="font-barlow text-[11px] font-black uppercase text-kidville-error">{t('transAnnullata')}</span>
                                             ) : (
                                                 <div className="flex items-center justify-end gap-1.5">
-                                                    <a
+                                                    <LinkDocumento
                                                         href={`/api/pagamenti/transazioni/${tx.id}/ricevuta?userId=${userId}`}
-                                                        target="_blank" rel="noopener noreferrer" title={t('transRistampaRicevuta')}
+                                                        target="_blank" title={t('transRistampaRicevuta')}
+                                                        modo="apri" nomeFile="ricevuta-famiglia.pdf" mime="application/pdf" etichetta="ricevuta-transazione"
                                                         className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-2 py-1 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20"
                                                     >
                                                         <Printer size={12} /> {t('transRicevuta')}
-                                                    </a>
+                                                    </LinkDocumento>
                                                     <button
                                                         type="button" onClick={() => { setAnnullaTx(tx); setMotivoAnnullo(''); }}
                                                         className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-2 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-error hover:text-kidville-error"

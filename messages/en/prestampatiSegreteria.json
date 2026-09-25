@@ -110,6 +110,7 @@
   "generazioneInCorso": "Generating…",
   "anteprima": "Preview",
   "scarica": "Download the PDF",
+  "scaricoNonRiuscito": "The PDF was generated, but it did not reach the device: try again with “Download the PDF”.",
   "annulla": "Cancel",
   "chiudi": "Close",
   "riprova": "Try again",

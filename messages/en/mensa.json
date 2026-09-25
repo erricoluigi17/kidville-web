@@ -10,6 +10,7 @@
   "ticket": "tickets",
   "aggiornaSaldo": "Refresh balance",
   "cutoffNota": "Book or cancel by <strong>{ora}</strong> on the same day.",
+  "oltreCutoffOggi": "After {ora}, today’s meal can no longer be booked or cancelled.",
   "sessioneScaduta": "Session expired: please sign in again.",
   "accediDiNuovo": "Sign in again",
   "nonCollegato": "This student isn’t linked to your account. Contact the school office.",

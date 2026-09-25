@@ -137,17 +137,21 @@ function plugin(): FilesystemMinimo {
   return proxyFilesystem
 }
 
-function pluginDisponibile(): boolean {
+function pluginDisponibile(nome: string = NOME_PLUGIN): boolean {
   try {
-    return Capacitor.isPluginAvailable(NOME_PLUGIN)
+    return Capacitor.isPluginAvailable(nome)
   } catch {
     // IL SILENZIO È AMMESSO QUI, e va detto perché (§6 di AGENTS.md): se il
-    // bridge non risponde, il plugin non c'è — e l'esito NON si perde. Trenta
-    // righe più giù `scaricaSuNativo` traduce questo `false` in
-    // `ripiego(input, 'plugin-filesystem-assente')`, che diventa una riga
-    // `gallery-scarico-ripiego-*: plugin-filesystem-assente` in `app_log`,
-    // scritta da chi chiama. Loggare anche da qui sarebbe la stessa notizia due
-    // volte, e da un modulo che non conosce la rotta in cui si trova.
+    // bridge non risponde, il plugin non c'è — e l'esito NON si perde. Il
+    // `false` finisce sempre nel `motivo` del verdetto:
+    //  - per Filesystem, in `scaricaSuNativo` diventa
+    //    `ripiego(input, 'plugin-filesystem-assente')`, registrato da chi chiama
+    //    `scarica()` (es. `gallery-scarico-ripiego-*: plugin-filesystem-assente`);
+    //  - per Share, FileTransfer, Media e FileViewer diventa
+    //    `plugin-assenti:<nome>` nel `motivo` degli helper 1.1 (`ripiego`,
+    //    `pluginMancanti`, `documentoNativo`), e lo scrive `registraEsito`.
+    // Loggare anche da qui sarebbe la stessa notizia due volte, e da un modulo
+    // che non conosce la rotta in cui si trova.
     return false
   }
 }
@@ -159,6 +163,12 @@ function pluginDisponibile(): boolean {
 export type EsitoScarico =
   /** Byte scritti sul dispositivo e consegnati al foglio di sistema. */
   | 'nativo-file'
+  /** App 1.1: foto o video salvati DIRETTAMENTE in Galleria/Rullino (`scaricaMedia`). */
+  | 'nativo-galleria'
+  /** App 1.1: documento aperto nell'anteprima di sistema dentro l'app (`apriDocumento`). */
+  | 'nativo-anteprima'
+  /** Web: documento aperto in una scheda nuova (`apriDocumento`). */
+  | 'web-scheda'
   /** Ancora `download` su un `blob:` same-origin: la strada del browser vero. */
   | 'web-blob'
   /**
@@ -262,8 +272,18 @@ export function nomeFileScarico(
   const estensione = estensioneMedia(url, fileType)
   const predefinito =
     (fileType ?? '').trim().toLowerCase() === 'video' ? 'kidville-video' : 'kidville-foto'
+  // IDEMPOTENTE: se il nome porta già la sua estensione, la si stacca PRIMA di
+  // ripulire, si tronca la sola base e la si riattacca. Senza, un nome già passato
+  // di qui (`<58 caratteri>.jpg`, 62 in tutto) al secondo giro perdeva la coda nel
+  // taglio a `BASE_MAX` e diventava `<58>.j.jpg` — e `scaricaMedia` lo ripassa.
+  const testo = didascalia ?? ''
+  const suffisso = `.${estensione}`
+  if (testo.length > suffisso.length && testo.toLowerCase().endsWith(suffisso)) {
+    const base = ripulisciNome(testo.slice(0, -suffisso.length)) || predefinito
+    return `${base}${testo.slice(-suffisso.length)}`
+  }
   const base = ripulisciNome(didascalia) || predefinito
-  return base.toLowerCase().endsWith(`.${estensione}`) ? base : `${base}.${estensione}`
+  return base.toLowerCase().endsWith(suffisso) ? base : `${base}${suffisso}`
 }
 
 function ripulisciNome(valore: string | null | undefined): string {
@@ -346,9 +366,9 @@ async function scaricaSuNativo(input: ScaricoInput): Promise<RisultatoScarico> {
       await pulisciFileAnnullato(fs, input.nomeFile)
       return annullato()
     }
-    const consegnato = input.signal
-      ? await condividiFileLocale(uri, input.titolo, input.signal)
-      : await condividiFileLocale(uri, input.titolo)
+    // `foglioConFile` chiede prima a `isPluginAvailable` se Share c'è: un binario
+    // col solo Filesystem non deve chiamare un plugin che non ha.
+    const consegnato = await foglioConFile(uri, input.titolo, input.signal)
     if (input.signal?.aborted && !consegnato) {
       await pulisciFileAnnullato(fs, input.nomeFile)
       return annullato()
@@ -375,26 +395,34 @@ async function scaricaSuWeb(input: ScaricoInput): Promise<RisultatoScarico> {
     if (input.signal?.aborted) return annullato()
     indirizzoBlob = URL.createObjectURL(blob)
     if (input.signal?.aborted) return annullato()
-    const ancora = document.createElement('a')
-    ancora.href = indirizzoBlob
-    ancora.download = input.nomeFile
-    ancora.rel = 'noopener'
-    document.body.appendChild(ancora)
-    ancora.click()
-    ancora.remove()
+    cliccaAncora(indirizzoBlob, input.nomeFile)
     return { esito: 'web-blob' }
   } catch (e) {
     if (input.signal?.aborted) return annullato()
     return ripiego(input, nomeErrore(e))
   } finally {
-    // La revoca è RITARDATA di proposito: revocare nello stesso tick del click
-    // annulla il salvataggio appena avviato su più di un browser. Il costo è
-    // tenere la foto in memoria per mezzo minuto, una alla volta.
-    if (indirizzoBlob) {
-      const daRevocare = indirizzoBlob
-      setTimeout(() => URL.revokeObjectURL(daRevocare), 30_000)
-    }
+    if (indirizzoBlob) revocaPiuTardi(indirizzoBlob, 30_000)
   }
+}
+
+/** L'ancora `download`, in un posto solo: la usano `scaricaSuWeb` e i documenti. */
+function cliccaAncora(href: string, nomeFile: string): void {
+  const ancora = document.createElement('a')
+  ancora.href = href
+  ancora.download = nomeFile
+  ancora.rel = 'noopener'
+  document.body.appendChild(ancora)
+  ancora.click()
+  ancora.remove()
+}
+
+/**
+ * La revoca è RITARDATA di proposito: revocare nello stesso tick del click
+ * annulla il salvataggio appena avviato su più di un browser. Il costo è tenere
+ * il file in memoria per mezzo minuto, uno alla volta.
+ */
+function revocaPiuTardi(indirizzo: string, ms: number): void {
+  setTimeout(() => URL.revokeObjectURL(indirizzo), ms)
 }
 
 /**
@@ -408,6 +436,12 @@ async function scaricaSuWeb(input: ScaricoInput): Promise<RisultatoScarico> {
  */
 async function ripiego(input: ScaricoInput, motivo: string): Promise<RisultatoScarico> {
   if (input.signal?.aborted) return annullato()
+  // Nessun plugin senza `isPluginAvailable`: nell'app `condividiLink` apre il
+  // foglio con `Share.share`, e un binario senza Share non ha nessun canale.
+  // L'esito lo dice invece di chiamare un plugin assente.
+  if (isNativeApp() && !pluginDisponibile(PLUGIN_SHARE)) {
+    return { esito: 'non-riuscito', motivo: `${motivo}|${motivoPluginAssenti([PLUGIN_SHARE])}` }
+  }
   try {
     const condivisione = {
       url: input.url,
@@ -441,6 +475,17 @@ async function ripiego(input: ScaricoInput, motivo: string): Promise<RisultatoSc
 
 function annullato(): RisultatoScarico {
   return { esito: 'non-riuscito', motivo: 'annullato' }
+}
+
+/**
+ * Il gesto è stato ritirato (segnale interrotto: tetto di tempo, smontaggio)?
+ * Chi fonde il proprio motivo con quello di un passo interno DEVE chiederlo prima:
+ * `plugin-assenti:…|annullato` non è più `annullato`, e `registraEsito` lo
+ * scriverebbe come `error` — un guasto finto, e un avviso «aggiorna l'app» per
+ * un'azione che l'utente non vuole più.
+ */
+function eAnnullato(risultato: RisultatoScarico): boolean {
+  return risultato.esito === 'non-riuscito' && risultato.motivo === 'annullato'
 }
 
 /** Mantiene identica la chiamata storica a fetch quando il signal non è fornito. */
@@ -493,4 +538,714 @@ function blobInBase64(blob: Blob): Promise<string> {
     }
     lettore.readAsDataURL(blob)
   })
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * L'HELPER UNICO DELL'APP 1.1 — media in Galleria, file nel foglio, anteprima
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Tre gesti, un posto solo, e sul WEB lo stesso comportamento di prima:
+ *
+ *  • `scaricaMedia`     foto/video → nativo: `FileTransfer` in Cache (i byte non
+ *                       passano dal bridge in base64) e salvataggio DIRETTO in
+ *                       Galleria con il plugin `Media` — iOS nel Rullino col solo
+ *                       permesso di AGGIUNTA (nessun `albumIdentifier`), Android
+ *                       nell'album «Kidville», creato se manca.
+ *  • `scaricaDocumento` PDF, XLSX, CSV… → nativo: file in Cache e foglio di
+ *                       condivisione con il FILE («Salva su File»).
+ *  • `apriDocumento`    nativo: file in Cache e ANTEPRIMA di sistema dentro l'app
+ *                       (`FileViewer`); web: scheda nuova.
+ *
+ * ─── LA SORGENTE DI UN DOCUMENTO, e perché la strada dipende da lei ───────────
+ *  - URL ASSOLUTO di un'altra origine (link firmato dello Storage): `FileTransfer`
+ *    lo scarica nativamente, senza cookie — non gliene servono.
+ *  - URL della STESSA origine (una nostra route): richiede i cookie di SESSIONE,
+ *    che vivono nella WebView e non nel client HTTP nativo. Quindi `fetch` nella
+ *    WebView e `Filesystem.writeFile`. E il suo LINK non si condivide MAI come
+ *    ripiego: è relativo (nessuna app lo apre) e può portare `userId` in chiaro —
+ *    vedi `urlFattura` in `src/lib/pagamenti/scarico-fattura.ts`.
+ *  - `Blob` già pronto (XLSX, jsPDF) o funzione che lo produce: `writeFile`.
+ *
+ * ─── IL BINARIO 1.0 ─────────────────────────────────────────────────────────
+ * I binari 1.0 non contengono né Filesystem né i plugin nuovi. NESSUN plugin si
+ * chiama senza `Capacitor.isPluginAvailable`: se ne manca uno si ripiega ESATTAMENTE
+ * come prima — `scarica()` qui sopra (Filesystem+Share se c'è, altrimenti il foglio
+ * col link) — e il ripiego si registra: `motivo` porta `plugin-assenti:<nomi>` e il
+ * risultato `binarioDaAggiornare: true`, che serve all'avviso «aggiorna l'app».
+ *
+ * ─── I LOG ──────────────────────────────────────────────────────────────────
+ * A differenza di `scarica()`, questi tre LOGGANO DA SÉ l'esito, successo compreso,
+ * con la forma già in uso in `app_log`: `<etichetta>-scarico-riuscito:<esito>`,
+ * `<etichetta>-scarico-ripiego-condivisione: <motivo>`, `<etichetta>-scarico-non-
+ * riuscito: <motivo>` (per l'apertura `-apertura-riuscita` / `-non-riuscita`).
+ * Chi chiama NON rilogga. `etichetta` è un token (`gallery`, `fattura`, `pagella`…):
+ * un valore fuori forma diventa quello predefinito, perché da qui si va dritti in
+ * `app_log` — e nel log non entrano MAI URL, nome del file o testo dell'errore.
+ */
+
+interface FileTransferMinimo {
+  downloadFile(opzioni: { url: string; path: string; progress?: boolean }): Promise<{ path?: string }>
+}
+
+interface FileViewerMinimo {
+  openDocumentFromLocalPath(opzioni: { path: string }): Promise<void>
+}
+
+interface OpzioniSalvataggioMedia {
+  path: string
+  albumIdentifier?: string
+  fileName?: string
+}
+
+interface MediaMinimo {
+  savePhoto(opzioni: OpzioniSalvataggioMedia): Promise<unknown>
+  saveVideo(opzioni: OpzioniSalvataggioMedia): Promise<unknown>
+  getAlbums(): Promise<{ albums?: { identifier?: string; name?: string }[] }>
+  createAlbum(opzioni: { name: string }): Promise<void>
+  getAlbumsPath(): Promise<{ path?: string }>
+}
+
+const PLUGIN_FILE_TRANSFER = 'FileTransfer'
+const PLUGIN_FILE_VIEWER = 'FileViewer'
+const PLUGIN_MEDIA = 'Media'
+const PLUGIN_SHARE = 'Share'
+
+/** L'album in cui finiscono foto e video su Android. Su iOS si va nel Rullino. */
+export const ALBUM_KIDVILLE = 'Kidville'
+
+/** Un proxy per nome, creato alla prima richiesta: vedi `plugin()` qui sopra. */
+const proxyPlugin = new Map<string, unknown>()
+function pluginNativo<T>(nome: string): T {
+  if (nome === NOME_PLUGIN) return plugin() as unknown as T
+  let proxy = proxyPlugin.get(nome)
+  if (!proxy) {
+    proxy = registerPlugin<T>(nome)
+    proxyPlugin.set(nome, proxy)
+  }
+  return proxy as T
+}
+
+function pluginMancanti(nomi: readonly string[]): string[] {
+  return nomi.filter((nome) => !pluginDisponibile(nome))
+}
+
+function motivoPluginAssenti(mancanti: readonly string[]): string {
+  return `plugin-assenti:${mancanti.map((n) => n.toLowerCase()).join('+')}`
+}
+
+function unisciMotivi(...motivi: (string | undefined)[]): string | undefined {
+  const presenti = motivi.filter((m): m is string => Boolean(m))
+  return presenti.length ? presenti.join('|') : undefined
+}
+
+export interface RisultatoScaricoNativo extends RisultatoScarico {
+  /**
+   * `true` quando l'app installata non ha i plugin della 1.1 e si è ripiegato sulla
+   * strada di prima. È il segnale per l'avviso «aggiorna l'app».
+   */
+  binarioDaAggiornare?: boolean
+}
+
+/** Gli esiti che lasciano DAVVERO il file (o l'anteprima) in mano a chi ha premuto. */
+const ESITI_CONSEGNATI: ReadonlySet<EsitoScarico> = new Set<EsitoScarico>([
+  'nativo-file',
+  'nativo-galleria',
+  'nativo-anteprima',
+  'web-blob',
+  'web-scheda',
+])
+
+/**
+ * Il file è arrivato? Elenco CHIUSO dei consegnanti: un esito nuovo nasce «non
+ * consegnato» e va dimostrato consegnante, non il contrario (la stessa regola di
+ * `avvisoDa` in `scarico-fattura.ts`).
+ */
+export function fileConsegnato(risultato: RisultatoScarico): boolean {
+  return ESITI_CONSEGNATI.has(risultato.esito)
+}
+
+/* ─── Etichetta e log ─────────────────────────────────────────────────────── */
+
+const ETICHETTA_RX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+function etichettaSicura(etichetta: string | undefined, predefinita: string): string {
+  return typeof etichetta === 'string' && etichetta.length <= 40 && ETICHETTA_RX.test(etichetta)
+    ? etichetta
+    : predefinita
+}
+
+function piattaforma(): string {
+  try {
+    const p = Capacitor.getPlatform()
+    return typeof p === 'string' && /^[a-z]{1,16}$/.test(p) ? p : 'sconosciuta'
+  } catch {
+    // Bridge assente o ostile: la piattaforma resta ignota, e il campo lo DICE
+    // invece di sparire. Non è un guasto dello scarico.
+    return 'sconosciuta'
+  }
+}
+
+type Operazione = 'scarico' | 'apertura'
+
+/**
+ * UNA riga per gesto, successo compreso. `warn` per il successo non è un refuso:
+ * `/api/logs` accetta solo `warn|error` (vedi `registraEsitoScarico` in
+ * `MediaGrid`). `error` SOLO quando l'utente non ha ottenuto niente.
+ */
+function registraEsito(etichetta: string, operazione: Operazione, risultato: RisultatoScaricoNativo): void {
+  const coda = risultato.motivo ? `: ${risultato.motivo}` : ''
+  const campi = { esito: risultato.esito, operazione, piattaforma: piattaforma() }
+  const femminile = operazione === 'apertura'
+  if (fileConsegnato(risultato)) {
+    logClient({
+      livello: 'warn',
+      evento: 'fetch',
+      messaggio: `${etichetta}-${operazione}-${femminile ? 'riuscita' : 'riuscito'}:${risultato.esito}${coda}`,
+      campi,
+    })
+    return
+  }
+  if (risultato.esito === 'ripiego-condivisione' || risultato.esito === 'ripiego-appunti') {
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: `${etichetta}-${operazione}-${risultato.esito}${coda}`, campi })
+    return
+  }
+  if (risultato.motivo === 'annullato') {
+    // Smontaggio o gesto ritirato da chi chiama: non è un guasto.
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: `${etichetta}-${operazione}-${femminile ? 'annullata' : 'annullato'}`, campi })
+    return
+  }
+  logClient({
+    livello: 'error',
+    evento: 'fetch',
+    messaggio: `${etichetta}-${operazione}-${femminile ? 'non-riuscita' : 'non-riuscito'}${coda}`,
+    campi,
+  })
+}
+
+/**
+ * Il motivo di un rifiuto dei plugin, come TOKEN: lo stato HTTP se c'è
+ * (`FileTransfer` lo mette in `data.httpStatus`), altrimenti il codice del plugin
+ * (`OS-PLUG-FLTR-0008`, `accessDenied`), altrimenti il `name`. Mai il `message`.
+ */
+function motivoErrorePlugin(e: unknown): string {
+  try {
+    const err = e as { code?: unknown; httpStatus?: unknown; data?: { httpStatus?: unknown } } | null
+    const stato = err?.data?.httpStatus ?? err?.httpStatus
+    if (typeof stato === 'number' && stato >= 100 && stato <= 599) return `http-${stato}`
+    if (typeof err?.code === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(err.code)) return err.code
+  } catch {
+    // Getter ostile sull'errore: si ricade sul `name`, qui sotto.
+    return nomeErrore(e)
+  }
+  return nomeErrore(e)
+}
+
+/* ─── Nomi ────────────────────────────────────────────────────────────────── */
+
+const ESTENSIONI_DA_MIME: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/msword': 'doc',
+  'application/zip': 'zip',
+  'text/csv': 'csv',
+  'text/plain': 'txt',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+}
+
+/**
+ * Le estensioni che un nome di documento può portare e che si RICONOSCONO come
+ * tali: quelle dei mime qui sopra più quelle dei media. Lista chiusa di proposito:
+ * in «ricevuta n.12» il `12` dopo il punto non è un'estensione.
+ */
+const ESTENSIONI_DOCUMENTO: ReadonlySet<string> = new Set([
+  ...Object.values(ESTENSIONI_DA_MIME),
+  ...ESTENSIONI_NOTE,
+])
+
+/**
+ * Il nome di un DOCUMENTO sul dispositivo: ripulito come quello dei media (niente
+ * barre, niente `..`, niente file nascosti) e con un'estensione — senza, iOS non
+ * sa che anteprima usare (`OS-PLUG-FLVW-0013`) e Android non sa con che app aprirlo.
+ *
+ * L'estensione si STACCA prima di ripulire: il taglio a `BASE_MAX` vale per la sola
+ * base. Ripulire il nome intero troncava la coda — `<58 caratteri>.pdf` diventava
+ * `<58>.p` — e un nome di pagella arriva facilmente a 60 caratteri.
+ *
+ * Se il nome porta già un'estensione riconosciuta, quella resta (minuscola) e il
+ * `mime` non la cambia; il `mime` serve a dare l'estensione a chi non ne ha una.
+ */
+export function nomeFileDocumento(nomeFile: string | null | undefined, mime?: string | null): string {
+  const testo = nomeFile ?? ''
+  const punto = testo.lastIndexOf('.')
+  const coda = punto >= 0 ? testo.slice(punto + 1).toLowerCase() : ''
+  const riconosciuta = ESTENSIONI_DOCUMENTO.has(coda)
+  const base = ripulisciNome(riconosciuta ? testo.slice(0, punto) : testo) || 'kidville-documento'
+  if (riconosciuta) return `${base}.${coda}`
+  const tipo = (mime ?? '').split(';')[0].trim().toLowerCase()
+  const estensione = ESTENSIONI_DA_MIME[tipo]
+  return estensione ? `${base}.${estensione}` : base
+}
+
+/* ─── Sorgenti ────────────────────────────────────────────────────────────── */
+
+export type SorgenteDocumento = string | Blob | (() => Blob | Promise<Blob>)
+
+/**
+ * `true` per un http(s) di un'ALTRA origine. Relativo, stessa origine, `blob:` e
+ * `data:` → `false`: si leggono con la `fetch` della WebView, che ha i cookie.
+ */
+function urlAssoluto(url: string): boolean {
+  if (!/^https?:\/\//i.test(url)) return false
+  const qui = typeof location !== 'undefined' ? location.origin : ''
+  try {
+    return new URL(url).origin !== qui
+  } catch {
+    // Assoluto ma malformato: resta «assoluto», e il rifiuto di `FileTransfer` (o
+    // della `fetch` sul web) finisce nel verdetto e quindi nel log.
+    return true
+  }
+}
+
+type Passo<T> = { ok: true; valore: T } | { ok: false; motivo: string }
+
+async function blobDaSorgente(
+  sorgente: SorgenteDocumento,
+  signal?: AbortSignal,
+): Promise<Passo<Blob>> {
+  if (typeof sorgente === 'string') {
+    const risposta = await fetch(sorgente, signal
+      ? { credentials: 'same-origin', signal }
+      : { credentials: 'same-origin' })
+    if (!risposta.ok) return { ok: false, motivo: `http-${risposta.status}` }
+    return { ok: true, valore: await risposta.blob() }
+  }
+  const blob = typeof sorgente === 'function' ? await sorgente() : sorgente
+  if (!(blob instanceof Blob)) return { ok: false, motivo: 'sorgente-non-blob' }
+  return { ok: true, valore: blob }
+}
+
+/* ─── Nativo: il file in Cache ────────────────────────────────────────────── */
+
+/**
+ * Mette il file in `Directory.Cache` e ne ritorna l'uri `file://`.
+ * URL assoluto → `FileTransfer` (i byte non attraversano il bridge); stessa origine
+ * e Blob → `writeFile`. Chi chiama ha già verificato i plugin necessari.
+ */
+async function fileInCache(
+  sorgente: SorgenteDocumento,
+  nomeFile: string,
+  signal?: AbortSignal,
+): Promise<Passo<string>> {
+  const fs = pluginNativo<FilesystemMinimo>(NOME_PLUGIN)
+  try {
+    if (typeof sorgente === 'string' && urlAssoluto(sorgente)) {
+      const { uri } = await fs.getUri({ path: nomeFile, directory: DIRECTORY_CACHE })
+      if (!uri) return { ok: false, motivo: 'uri-assente' }
+      if (signal?.aborted) return { ok: false, motivo: 'annullato' }
+      await pluginNativo<FileTransferMinimo>(PLUGIN_FILE_TRANSFER).downloadFile({ url: sorgente, path: uri })
+      if (signal?.aborted) {
+        await pulisciFileAnnullato(fs, nomeFile)
+        return { ok: false, motivo: 'annullato' }
+      }
+      return { ok: true, valore: uri }
+    }
+
+    const blob = await blobDaSorgente(sorgente, signal)
+    if (signal?.aborted) return { ok: false, motivo: 'annullato' }
+    if (!blob.ok) return blob
+    const dati = await blobInBase64(blob.valore)
+    if (signal?.aborted) return { ok: false, motivo: 'annullato' }
+    if (!dati) return { ok: false, motivo: 'corpo-vuoto' }
+    const scritto = await fs.writeFile({ path: nomeFile, data: dati, directory: DIRECTORY_CACHE, recursive: true })
+    const uri = scritto?.uri || (await fs.getUri({ path: nomeFile, directory: DIRECTORY_CACHE })).uri
+    if (signal?.aborted) {
+      await pulisciFileAnnullato(fs, nomeFile)
+      return { ok: false, motivo: 'annullato' }
+    }
+    return uri ? { ok: true, valore: uri } : { ok: false, motivo: 'uri-assente' }
+  } catch (e) {
+    if (signal?.aborted) return { ok: false, motivo: 'annullato' }
+    return { ok: false, motivo: motivoErrorePlugin(e) }
+  }
+}
+
+/** Il file locale nel foglio di sistema, solo se il plugin Share c'è. */
+async function foglioConFile(uri: string, titolo?: string, signal?: AbortSignal): Promise<boolean> {
+  if (!pluginDisponibile(PLUGIN_SHARE)) return false
+  return signal ? condividiFileLocale(uri, titolo, signal) : condividiFileLocale(uri, titolo)
+}
+
+/* ─── Media → Galleria ────────────────────────────────────────────────────── */
+
+export type TipoMedia = 'foto' | 'video'
+
+export interface ScaricaMediaInput {
+  /** L'indirizzo FIRMATO del media (assoluto, a tempo). */
+  url: string
+  /** Nome con estensione: vedi `nomeFileScarico`. */
+  nomeFile: string
+  tipo: TipoMedia
+  /** Titolo del foglio di sistema nei ripieghi. Mai un nome di persona. */
+  titolo?: string
+  /** Prefisso dei log (`gallery` se assente). */
+  etichetta?: string
+  signal?: AbortSignal
+}
+
+/**
+ * L'identificatore dell'album «Kidville» su Android: è il PERCORSO della cartella
+ * sotto `getAlbumsPath()`. Se non c'è si crea; un «esiste già» (due scarichi in
+ * gara) si verifica rileggendo gli album invece di fallire.
+ */
+async function albumKidvilleAndroid(media: MediaMinimo): Promise<string> {
+  const { path: radice } = await media.getAlbumsPath()
+  if (!radice) throw Object.assign(new Error('album'), { code: 'album-radice-assente' })
+  const atteso = `${radice.replace(/\/+$/, '')}/${ALBUM_KIDVILLE}`
+  const presente = async () => ((await media.getAlbums()).albums ?? []).some((a) => a?.identifier === atteso)
+  if (await presente()) return atteso
+  try {
+    await media.createAlbum({ name: ALBUM_KIDVILLE })
+  } catch (e) {
+    if (!(await presente())) throw e
+  }
+  return atteso
+}
+
+/** Il nome nell'album Android: senza estensione (la mette il plugin) e unico. */
+function nomeNellAlbum(nomeFile: string): string {
+  const senzaEstensione = nomeFile.replace(/\.[a-z0-9]{1,5}$/i, '') || 'kidville'
+  return `${senzaEstensione}-${Date.now()}`
+}
+
+/**
+ * Scarica una foto o un video. Nell'app 1.1 finisce DIRETTAMENTE in Galleria;
+ * sul web e sul binario 1.0 fa esattamente quello che faceva `scarica()`.
+ * Non lancia mai, e logga da sé l'esito.
+ */
+export async function scaricaMedia(input: ScaricaMediaInput): Promise<RisultatoScaricoNativo> {
+  const etichetta = etichettaSicura(input.etichetta, 'gallery')
+  const risultato = await scaricaMediaSenzaLog(input)
+  registraEsito(etichetta, 'scarico', risultato)
+  return risultato
+}
+
+async function scaricaMediaSenzaLog(input: ScaricaMediaInput): Promise<RisultatoScaricoNativo> {
+  // SEMPRE con estensione: su Android il plugin `Media` la ricava dal percorso in
+  // Cache (`lastIndexOf('.')`), e un nome senza punto lo fa fallire.
+  const nomeFile = nomeFileScarico(input.nomeFile, input.url, input.tipo)
+  const base: ScaricoInput = {
+    url: input.url,
+    nomeFile,
+    ...(input.titolo ? { titolo: input.titolo } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
+  }
+  if (input.signal?.aborted) return annullato()
+  if (!isNativeApp()) return scarica(base)
+
+  const mancanti = pluginMancanti([NOME_PLUGIN, PLUGIN_FILE_TRANSFER, PLUGIN_MEDIA])
+  if (mancanti.length) {
+    const vecchio = await scarica(base)
+    // Annullato resta annullato: niente fusione del motivo, niente avviso.
+    if (eAnnullato(vecchio)) return annullato()
+    return { ...vecchio, motivo: unisciMotivi(motivoPluginAssenti(mancanti), vecchio.motivo), binarioDaAggiornare: true }
+  }
+
+  const file = await fileInCache(input.url, nomeFile, input.signal)
+  if (!file.ok) return file.motivo === 'annullato' ? annullato() : ripiego(base, file.motivo)
+  const uri = file.valore
+
+  const media = pluginNativo<MediaMinimo>(PLUGIN_MEDIA)
+  try {
+    const opzioni: OpzioniSalvataggioMedia = { path: uri }
+    if (piattaforma() === 'android') {
+      opzioni.albumIdentifier = await albumKidvilleAndroid(media)
+      opzioni.fileName = nomeNellAlbum(nomeFile)
+    }
+    // iOS: NESSUN album → il plugin chiede il solo permesso di AGGIUNTA al Rullino
+    // (`NSPhotoLibraryAddUsageDescription`), non l'accesso alla libreria intera.
+    if (input.signal?.aborted) {
+      await pulisciFileAnnullato(pluginNativo<FilesystemMinimo>(NOME_PLUGIN), nomeFile)
+      return annullato()
+    }
+    if (input.tipo === 'video') await media.saveVideo(opzioni)
+    else await media.savePhoto(opzioni)
+  } catch (e) {
+    // La Galleria ha detto no (permesso negato, formato rifiutato): il file è già
+    // sul telefono, e il foglio di sistema lo consegna lo stesso («Salva su File»).
+    const motivo = `galleria-${motivoErrorePlugin(e)}`
+    if (input.signal?.aborted) return annullato()
+    if (await foglioConFile(uri, input.titolo, input.signal)) return { esito: 'nativo-file', motivo }
+    return ripiego(base, motivo)
+  }
+  // La copia in Cache non serve più: quella vera sta in Galleria.
+  await pulisciFileAnnullato(pluginNativo<FilesystemMinimo>(NOME_PLUGIN), nomeFile)
+  return { esito: 'nativo-galleria' }
+}
+
+/* ─── Documenti → foglio o anteprima ──────────────────────────────────────── */
+
+export interface DocumentoInput {
+  /** URL assoluto firmato, URL della stessa origine, `Blob`, o funzione che lo produce. */
+  sorgente: SorgenteDocumento
+  /** Nome con cui il file arriva sul dispositivo; l'estensione, se manca, la dà `mime`. */
+  nomeFile: string
+  mime?: string
+  /** Titolo del foglio di sistema. Mai un nome di persona. */
+  titolo?: string
+  /** Prefisso dei log (`documento` se assente): `fattura`, `pagella`, `ricevuta`… */
+  etichetta?: string
+  signal?: AbortSignal
+}
+
+/**
+ * Salva un documento. Nell'app 1.1: file in Cache e foglio di condivisione con il
+ * FILE. Sul web: fetch (coi cookie per la stessa origine) → controllo della
+ * risposta → `<a download>` su un `blob:`, come facevano i punti che sostituisce.
+ * Non lancia mai, e logga da sé l'esito.
+ */
+export async function scaricaDocumento(input: DocumentoInput): Promise<RisultatoScaricoNativo> {
+  const etichetta = etichettaSicura(input.etichetta, 'documento')
+  let risultato: RisultatoScaricoNativo
+  try {
+    risultato = await scaricaDocumentoSenzaLog(input)
+  } catch (e) {
+    // Rete di sicurezza: una sorgente-funzione che lancia fuori dai rami previsti.
+    risultato = { esito: 'non-riuscito', motivo: nomeErrore(e) }
+  }
+  registraEsito(etichetta, 'scarico', risultato)
+  return risultato
+}
+
+async function scaricaDocumentoSenzaLog(input: DocumentoInput): Promise<RisultatoScaricoNativo> {
+  if (input.signal?.aborted) return annullato()
+  const nomeFile = nomeFileDocumento(input.nomeFile, input.mime)
+  return isNativeApp()
+    ? documentoNativo(input, nomeFile, 'foglio')
+    : scaricaDocumentoWeb(input, nomeFile)
+}
+
+/**
+ * Apre un documento. Nell'app 1.1: file in Cache e anteprima di sistema DENTRO
+ * l'app. Sul web: scheda nuova, aperta DENTRO il gesto (prima di ogni `await`,
+ * vedi `apriDocumentoFirmato`) — va chiamata dal gestore del clic.
+ * Non lancia mai, e logga da sé l'esito.
+ */
+export async function apriDocumento(input: DocumentoInput): Promise<RisultatoScaricoNativo> {
+  const etichetta = etichettaSicura(input.etichetta, 'documento')
+  let risultato: RisultatoScaricoNativo
+  try {
+    risultato = await apriDocumentoSenzaLog(input)
+  } catch (e) {
+    risultato = { esito: 'non-riuscito', motivo: nomeErrore(e) }
+  }
+  registraEsito(etichetta, 'apertura', risultato)
+  return risultato
+}
+
+function apriDocumentoSenzaLog(input: DocumentoInput): Promise<RisultatoScaricoNativo> {
+  if (input.signal?.aborted) return Promise.resolve(annullato())
+  const nomeFile = nomeFileDocumento(input.nomeFile, input.mime)
+  // NIENTE `async`/`await` prima di `apriDocumentoWeb`: la scheda va aperta nello
+  // stesso task del clic, o Safari e la WebView la bloccano.
+  return isNativeApp() ? documentoNativo(input, nomeFile, 'anteprima') : apriDocumentoWeb(input, nomeFile)
+}
+
+/**
+ * Il ramo nativo di documento e apertura.
+ *
+ *  1. Mancano i plugin di base (Filesystem, e FileTransfer per un URL assoluto) →
+ *     binario 1.0: URL assoluto → `scarica()` come prima; stessa origine e Blob →
+ *     «non riuscito», SENZA condividere il link (relativo, e con `userId`).
+ *  2. File in Cache.
+ *  3. Anteprima (se richiesta e `FileViewer` c'è) → `nativo-anteprima`. Se manca o
+ *     rifiuta (Android: nessuna app per aprirlo) si passa al foglio col file.
+ *  4. Foglio col file → `nativo-file`; se non si apre, ripiego sul link solo per
+ *     un URL assoluto.
+ */
+async function documentoNativo(
+  input: DocumentoInput,
+  nomeFile: string,
+  modo: 'foglio' | 'anteprima',
+): Promise<RisultatoScaricoNativo> {
+  const { sorgente, signal } = input
+  const assoluto = typeof sorgente === 'string' && urlAssoluto(sorgente)
+  const base: ScaricoInput | null = assoluto
+    ? {
+        url: sorgente as string,
+        nomeFile,
+        ...(input.titolo ? { titolo: input.titolo } : {}),
+        ...(signal ? { signal } : {}),
+      }
+    : null
+
+  const mancantiBase = pluginMancanti(assoluto ? [NOME_PLUGIN, PLUGIN_FILE_TRANSFER] : [NOME_PLUGIN])
+  if (mancantiBase.length) {
+    const assenti = motivoPluginAssenti(mancantiBase)
+    if (base) {
+      const vecchio = await scarica(base)
+      // Annullato resta annullato: niente fusione del motivo, niente avviso.
+      if (eAnnullato(vecchio)) return annullato()
+      return { ...vecchio, motivo: unisciMotivi(assenti, vecchio.motivo), binarioDaAggiornare: true }
+    }
+    return { esito: 'non-riuscito', motivo: `${assenti}|link-non-condivisibile`, binarioDaAggiornare: true }
+  }
+
+  const file = await fileInCache(sorgente, nomeFile, signal)
+  if (!file.ok) {
+    if (file.motivo === 'annullato') return annullato()
+    return base ? ripiego(base, file.motivo) : { esito: 'non-riuscito', motivo: file.motivo }
+  }
+  const uri = file.valore
+
+  let motivo: string | undefined
+  let binarioDaAggiornare = false
+  if (modo === 'anteprima') {
+    if (pluginDisponibile(PLUGIN_FILE_VIEWER)) {
+      try {
+        if (signal?.aborted) return annullato()
+        await pluginNativo<FileViewerMinimo>(PLUGIN_FILE_VIEWER).openDocumentFromLocalPath({ path: uri })
+        return { esito: 'nativo-anteprima' }
+      } catch (e) {
+        motivo = `anteprima-${motivoErrorePlugin(e)}`
+      }
+    } else {
+      motivo = motivoPluginAssenti([PLUGIN_FILE_VIEWER])
+      binarioDaAggiornare = true
+    }
+  }
+
+  if (signal?.aborted) return annullato()
+  // Un gesto annullato non chiede di aggiornare l'app.
+  const conFlag = (r: RisultatoScaricoNativo): RisultatoScaricoNativo =>
+    binarioDaAggiornare && !eAnnullato(r) ? { ...r, binarioDaAggiornare: true } : r
+  if (await foglioConFile(uri, input.titolo, signal)) {
+    return conFlag(motivo ? { esito: 'nativo-file', motivo } : { esito: 'nativo-file' })
+  }
+  if (signal?.aborted) return annullato()
+  const motivoFoglio = unisciMotivi(motivo, 'foglio-file-non-aperto') as string
+  return conFlag(base ? await ripiego(base, motivoFoglio) : { esito: 'non-riuscito', motivo: motivoFoglio })
+}
+
+/* ─── Web ─────────────────────────────────────────────────────────────────── */
+
+function scaricaBlobSuWeb(blob: Blob, nomeFile: string): RisultatoScaricoNativo {
+  const indirizzo = URL.createObjectURL(blob)
+  try {
+    cliccaAncora(indirizzo, nomeFile)
+  } finally {
+    revocaPiuTardi(indirizzo, 30_000)
+  }
+  return { esito: 'web-blob' }
+}
+
+async function scaricaDocumentoWeb(input: DocumentoInput, nomeFile: string): Promise<RisultatoScaricoNativo> {
+  const { sorgente, signal } = input
+  if (typeof sorgente === 'string') {
+    if (urlAssoluto(sorgente)) {
+      // Fuori origine `download` è ignorato: fetch → `blob:` → ancora, come prima.
+      return scarica({
+        url: sorgente,
+        nomeFile,
+        ...(input.titolo ? { titolo: input.titolo } : {}),
+        ...(signal ? { signal } : {}),
+      })
+    }
+  }
+  // Stessa origine, `Blob` o funzione: fetch nella pagina (coi cookie) → controllo
+  // della risposta → `blob:` → ancora. NON un `<a download>` sull'indirizzo della
+  // route: con un 401/403/500 il browser salverebbe il corpo d'errore come
+  // «fattura.pdf» e il log direbbe successo senza aver visto la risposta. È anche
+  // ciò che facevano i punti che questo helper sostituisce (fetch → `res.ok` →
+  // blob → ancora).
+  let blob: Passo<Blob>
+  try {
+    blob = await blobDaSorgente(sorgente, signal)
+  } catch (e) {
+    if (signal?.aborted) return annullato()
+    return { esito: 'non-riuscito', motivo: nomeErrore(e) }
+  }
+  if (signal?.aborted) return annullato()
+  if (!blob.ok) return { esito: 'non-riuscito', motivo: blob.motivo }
+  return scaricaBlobSuWeb(blob.valore, nomeFile)
+}
+
+function staccaOpener(finestra: Window): void {
+  try {
+    finestra.opener = null
+  } catch (e) {
+    // Alcune WebView rendono `opener` non scrivibile: l'apertura vale comunque.
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: `documento-opener-non-scrivibile:${nomeErrore(e)}` })
+  }
+}
+
+/**
+ * La scheda si apre SUBITO, prima di ogni `await`: per un URL o un `Blob` già
+ * pronto direttamente sul documento, per una sorgente-funzione VUOTA e riempita
+ * dopo con `location.replace`. Scheda bloccata → si scarica invece di tacere.
+ */
+function apriDocumentoWeb(input: DocumentoInput, nomeFile: string): Promise<RisultatoScaricoNativo> {
+  const { sorgente } = input
+  const bloccata = async (): Promise<RisultatoScaricoNativo> => {
+    const scaricato = await scaricaDocumentoWeb(input, nomeFile)
+    // Annullato resta annullato: `finestra-bloccata|annullato` finirebbe fra gli `error`.
+    if (eAnnullato(scaricato)) return annullato()
+    return { ...scaricato, motivo: unisciMotivi('finestra-bloccata', scaricato.motivo) }
+  }
+
+  if (typeof sorgente === 'string') {
+    const finestra = window.open(sorgente, '_blank')
+    if (!finestra) return bloccata()
+    staccaOpener(finestra)
+    return Promise.resolve({ esito: 'web-scheda' })
+  }
+
+  if (sorgente instanceof Blob) {
+    const indirizzo = URL.createObjectURL(sorgente)
+    const finestra = window.open(indirizzo, '_blank')
+    if (!finestra) {
+      URL.revokeObjectURL(indirizzo)
+      return bloccata()
+    }
+    staccaOpener(finestra)
+    // La scheda nuova ha bisogno dell'indirizzo finché non ha caricato.
+    revocaPiuTardi(indirizzo, 60_000)
+    return Promise.resolve({ esito: 'web-scheda' })
+  }
+
+  const finestra = window.open('', '_blank')
+  return (async (): Promise<RisultatoScaricoNativo> => {
+    let blob: Passo<Blob>
+    try {
+      blob = await blobDaSorgente(sorgente)
+    } catch (e) {
+      finestra?.close()
+      // Un gesto ritirato mentre la sorgente lavorava non è un guasto.
+      if (input.signal?.aborted) return annullato()
+      return { esito: 'non-riuscito', motivo: nomeErrore(e) }
+    }
+    if (input.signal?.aborted) {
+      finestra?.close()
+      return annullato()
+    }
+    if (!blob.ok) {
+      finestra?.close()
+      return { esito: 'non-riuscito', motivo: blob.motivo }
+    }
+    if (!finestra || finestra.closed) {
+      const scaricato = scaricaBlobSuWeb(blob.valore, nomeFile)
+      return { ...scaricato, motivo: 'finestra-bloccata' }
+    }
+    const indirizzo = URL.createObjectURL(blob.valore)
+    staccaOpener(finestra)
+    finestra.location.replace(indirizzo)
+    revocaPiuTardi(indirizzo, 60_000)
+    return { esito: 'web-scheda' }
+  })()
 }

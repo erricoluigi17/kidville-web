@@ -20,12 +20,16 @@ serve(async (req: Request) => {
 
         // Fetch documents expiring in <= 30 days that don't already have a notification
         // Note: Realistically, you would join with a notifications table or track what has been alerted
+        // Il cestino del fascicolo (spec 2026-09-24, F1): un documento eliminato non è «in
+        // scadenza». Qui è Deno e `fascicoloVivo` di src/ non si importa: il filtro è a mano, e il
+        // lock `cestino-fascicolo-ogni-lettura-dichiara` lo pretende su ogni catena di questa cartella.
         const { data: expiringDocs, error: fetchError } = await supabase
             .from("student_documents")
             .select(`
                 id, student_id, document_type, expiry_date,
                 alunni ( nome, cognome )
             `)
+            .is("eliminato_il", null)
             .lte("expiry_date", thresholdIso);
 
         if (fetchError) {

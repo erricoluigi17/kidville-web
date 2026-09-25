@@ -16,8 +16,8 @@
     "`codice` accanto a `error`. Per i due dinieghi di sede esiste già `rifiutoSede()`",
     "(src/lib/auth/rifiuto-sede.ts): quella è la forma da copiare."
   ],
-  "aggiornato": "2026-09-20",
-  "totale_occorrenze": 1408,
+  "aggiornato": "2026-09-25",
+  "totale_occorrenze": 1376,
   "file": [
     {
       "path": "src/app/api/admin/adults/route.ts",
@@ -570,7 +570,7 @@
     },
     {
       "path": "src/app/api/mensa/prenotazioni/route.ts",
-      "n": 12
+      "n": 11
     },
     {
       "path": "src/app/api/mensa/report/route.ts",
@@ -830,7 +830,7 @@
     },
     {
       "path": "src/app/api/parent/giustifiche-didattiche/route.ts",
-      "n": 4
+      "n": 2
     },
     {
       "path": "src/app/api/parent/medical-certificates/file/route.ts",
@@ -894,7 +894,7 @@
     },
     {
       "path": "src/app/api/parent/primaria/valutazioni/route.ts",
-      "n": 2
+      "n": 1
     },
     {
       "path": "src/app/api/parent/students/route.ts",
@@ -903,10 +903,6 @@
     {
       "path": "src/app/api/parent/submissions/route.ts",
       "n": 5
-    },
-    {
-      "path": "src/app/api/primaria/allegati/route.ts",
-      "n": 9
     },
     {
       "path": "src/app/api/primaria/appello/route.ts",
@@ -922,7 +918,8 @@
     },
     {
       "path": "src/app/api/primaria/fascicolo/file/route.ts",
-      "n": 6
+      "n": 4,
+      "nota": "Sceso da 6 a 4 il 2026-09-25 (compito I7, download del fascicolo). I due 500 del GET rimandavano al client il `message` GREZZO dello Storage (firma dell'URL: può nominare bucket e percorso del file) e quello dell'eccezione nel `catch`: ora portano `LETTURA_FALLITA`, col messaggio che resta nel log (`logErrore`). Misurato col lock (a 3 dice «misurate 4»), non dedotto."
     },
     {
       "path": "src/app/api/primaria/fascicolo/pagelle/route.ts",
@@ -930,19 +927,12 @@
     },
     {
       "path": "src/app/api/primaria/fascicolo/route.ts",
-      "n": 11
-    },
-    {
-      "path": "src/app/api/primaria/giustifiche-didattiche/route.ts",
-      "n": 4
+      "n": 8,
+      "nota": "Sceso da 11 a 8 il 2026-09-25 (compito F1, fascicolo: modifica, sostituzione, cestino). I due 500 del POST di caricamento rimandavano al client il `message` GREZZO dello Storage e di PostgREST (quest'ultimo nomina tabella e vincoli, su una rotta di diagnosi e 104): ora portano `FASCICOLO_FILE_NON_CARICATO` / `FASCICOLO_SCRITTURA_FALLITA`, col messaggio che resta nel log. La terza unità era gioco fra la voce e la misura: rimisurato col lock (dichiarate 7 → misurate 8), non dedotto."
     },
     {
       "path": "src/app/api/primaria/me/route.ts",
       "n": 3
-    },
-    {
-      "path": "src/app/api/primaria/note/route.ts",
-      "n": 4
     },
     {
       "path": "src/app/api/primaria/obiettivi/route.ts",
@@ -977,10 +967,6 @@
       "n": 8
     },
     {
-      "path": "src/app/api/primaria/sblocca/route.ts",
-      "n": 3
-    },
-    {
       "path": "src/app/api/primaria/scrutinio/chiudi/route.ts",
       "n": 5
     },
@@ -1002,7 +988,7 @@
     },
     {
       "path": "src/app/api/primaria/valutazioni/route.ts",
-      "n": 10
+      "n": 7
     },
     {
       "path": "src/app/api/public/cancellazione-account/conferma/route.ts",

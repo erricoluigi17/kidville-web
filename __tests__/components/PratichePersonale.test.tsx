@@ -49,6 +49,21 @@ expect.extend(toHaveNoViolations)
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'Error' }))
 
 /**
+ * L'APP NATIVA è pilotabile (spec 2026-09-24, NAT3g): serve al solo collaudo del link
+ * di ripiego nell'app. Il default è il web, quindi nessun test già scritto cambia
+ * significato; l'anteprima di sistema è una spia.
+ */
+const nativo = vi.hoisted(() => ({ attivo: false, apriDocumento: vi.fn() }))
+vi.mock('@/lib/push/native-register', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/push/native-register')>()),
+  isNativeApp: () => nativo.attivo,
+}))
+vi.mock('@/lib/native/scarica', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/native/scarica')>()),
+  apriDocumento: nativo.apriDocumento,
+}))
+
+/**
  * IL RUOLO DI CHI GUARDA è pilotabile: serve al comando «aggiungi il ruolo di
  * insegnante», che si disegna solo per la Direzione.
  *
@@ -186,6 +201,7 @@ let finestraAperta: ReturnType<typeof finestraFinta> | null = null
 
 beforeEach(() => {
   vi.clearAllMocks()
+  nativo.attivo = false
   // ⚠️ TEMPO CONGELATO: il badge della scadenza si calcola su «oggi». Anna ha il
   // documento scaduto (30/06/2026) e Bruno no (01/01/2031): senza congelare, questo
   // file diventerebbe rosso da solo il 01/01/2031 — e prima ancora cambierebbe
@@ -936,6 +952,29 @@ describe('PratichePersonale — pannello', () => {
     await waitFor(() => expect(screen.getByText(itAdminAltro.pratDocApriManuale)).toBeInTheDocument())
     expect(screen.getByRole('link', { name: itAdminAltro.pratDocApriManuale }).getAttribute('href'))
       .toBe('https://storage.example.test/firmata')
+  })
+
+  it('NELL’APP il ripiego che non consegna niente lo dice IN PAGINA, e toglie il «apri a mano» (mai `alert()`)', async () => {
+    const alertSpia = vi.fn()
+    vi.stubGlobal('alert', alertSpia)
+    vi.stubGlobal('open', vi.fn(() => null))
+    await apriAnna()
+    fireEvent.click(screen.getByRole('button', { name: /Apri il fronte/ }))
+    const link = await screen.findByRole('link', { name: itAdminAltro.pratDocApriManuale })
+
+    // Da qui la pagina è dentro l'app: il link di ripiego passa dall'anteprima di sistema.
+    nativo.attivo = true
+    nativo.apriDocumento.mockResolvedValue({ esito: 'non-riuscito', motivo: 'foglio-file-non-aperto' })
+    expect(fireEvent.click(link), 'nell’app il link `_blank` deve fermare la navigazione').toBe(false)
+
+    await waitFor(() => expect(nelPannello().getByText(itAdminAltro.pratErroreDoc)).toBeInTheDocument())
+    expect(nativo.apriDocumento.mock.calls[0][0]).toMatchObject({
+      sorgente: 'https://storage.example.test/firmata',
+      etichetta: 'pratica-personale-documento',
+    })
+    // Le due fasce si escludono: l'errore non convive con il «apri a mano».
+    expect(screen.queryByText(itAdminAltro.pratDocApriManuale)).not.toBeInTheDocument()
+    expect(alertSpia, 'l’errore del ripiego è finito in un alert() del browser').not.toHaveBeenCalled()
   })
 
   it('🔴 APPROVATA: i pulsanti delle scansioni SPARISCONO, invece di rispondere 403', async () => {

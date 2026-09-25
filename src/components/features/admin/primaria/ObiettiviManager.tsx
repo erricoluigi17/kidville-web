@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Plus, Trash2 } from 'lucide-react';
+import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { creaMuta } from '@/lib/ui/muta';
 
 interface Obiettivo {
@@ -29,6 +29,10 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
   const [obiettivi, setObiettivi] = useState<Obiettivo[]>([]);
   const [nuovo, setNuovo] = useState({ codice: '', descrizione: '' });
   const [error, setError] = useState('');
+  // Una riga alla volta in modifica. Il testo resta nello stato finché il server
+  // non accetta: come per «Aggiungi», una descrizione lunga non si fa riscrivere.
+  const [inModifica, setInModifica] = useState<{ id: string; codice: string; descrizione: string } | null>(null);
+  const [salvando, setSalvando] = useState(false);
 
   const load = useCallback(async () => {
     let next: Obiettivo[] | null = null;
@@ -78,6 +82,35 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
     if (ok) setNuovo({ codice: '', descrizione: '' });
   };
 
+  const salvaModifica = async (o: Obiettivo) => {
+    if (!inModifica || inModifica.id !== o.id || salvando) return;
+    const descrizione = inModifica.descrizione.trim();
+    if (!descrizione) return;
+    setSalvando(true);
+    try {
+      const ok = await mutaSalva(
+        `/api/admin/primaria/obiettivi?userId=${userId}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+          body: JSON.stringify({ id: o.id, codice: inModifica.codice.trim() || null, descrizione }),
+        },
+        'primaria-obiettivo-modifica-respinto',
+        // Il nome della riga com'era PRIMA: è quello che l'operatore ha sotto gli occhi.
+        o.codice || o.descrizione,
+      );
+      if (ok) setInModifica(null);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  // Invio salva, Esc annulla: lo stesso su TUTTI i campi della riga in modifica.
+  const tastiModifica = (o: Obiettivo) => (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') salvaModifica(o);
+    if (e.key === 'Escape') setInModifica(null);
+  };
+
   const remove = async (o: Obiettivo) => {
     await mutaElimina(
       `/api/admin/primaria/obiettivi?id=${o.id}&userId=${userId}`,
@@ -96,7 +129,7 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
       <div className="flex flex-wrap items-center gap-2">
         <select
           value={materiaCodice}
-          onChange={(e) => setMateriaCodice(e.target.value)}
+          onChange={(e) => { setInModifica(null); setMateriaCodice(e.target.value); }}
           className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
         >
           {MATERIE_STD.map(([c, labelKey]) => (
@@ -105,7 +138,7 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
         </select>
         <select
           value={livello}
-          onChange={(e) => setLivello(Number(e.target.value))}
+          onChange={(e) => { setInModifica(null); setLivello(Number(e.target.value)); }}
           className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
         >
           {[1, 2, 3, 4, 5].map((l) => (
@@ -115,17 +148,62 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
       </div>
 
       <ul className="divide-y divide-kidville-line">
-        {obiettivi.map((o) => (
-          <li key={o.id} className="flex items-start justify-between gap-3 py-2.5">
-            <div className="font-maven text-sm text-kidville-ink">
-              {o.codice && <span className="mr-2 text-xs font-semibold text-kidville-green">{o.codice}</span>}
-              {o.descrizione}
-            </div>
-            <button onClick={() => remove(o)} aria-label={t('obiettiviElimina')} className="text-kidville-muted hover:text-kidville-error shrink-0">
-              <Trash2 size={16} />
-            </button>
-          </li>
-        ))}
+        {obiettivi.map((o) =>
+          inModifica?.id === o.id ? (
+            <li key={o.id} className="flex flex-wrap items-center gap-2 py-2.5">
+              <input
+                value={inModifica.codice}
+                onChange={(e) => setInModifica((s) => (s ? { ...s, codice: e.target.value } : s))}
+                onKeyDown={tastiModifica(o)}
+                aria-label={t('obiettiviCodiceOpz')}
+                placeholder={t('obiettiviPlaceholderCodice')}
+                className="font-maven w-24 rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
+              />
+              <input
+                value={inModifica.descrizione}
+                onChange={(e) => setInModifica((s) => (s ? { ...s, descrizione: e.target.value } : s))}
+                onKeyDown={tastiModifica(o)}
+                aria-label={t('obiettiviDescrizione')}
+                placeholder={t('obiettiviPlaceholderDescrizione')}
+                autoFocus
+                className="font-maven flex-1 min-w-[200px] rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
+              />
+              <button
+                onClick={() => salvaModifica(o)}
+                disabled={salvando || !inModifica.descrizione.trim()}
+                className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-3 py-1.5 text-sm text-kidville-yellow disabled:opacity-50"
+              >
+                <Check size={14} /> {t('obiettiviSalvaModifica')}
+              </button>
+              <button
+                onClick={() => setInModifica(null)}
+                disabled={salvando}
+                className="font-maven inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-3 py-1.5 text-sm text-kidville-sub"
+              >
+                <X size={14} /> {t('obiettiviAnnullaModifica')}
+              </button>
+            </li>
+          ) : (
+            <li key={o.id} className="flex items-start justify-between gap-3 py-2.5">
+              <div className="font-maven text-sm text-kidville-ink">
+                {o.codice && <span className="mr-2 text-xs font-semibold text-kidville-green">{o.codice}</span>}
+                {o.descrizione}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  onClick={() => setInModifica({ id: o.id, codice: o.codice ?? '', descrizione: o.descrizione })}
+                  aria-label={t('obiettiviModifica')}
+                  className="text-kidville-sub hover:text-kidville-green"
+                >
+                  <Pencil size={16} />
+                </button>
+                <button onClick={() => remove(o)} aria-label={t('obiettiviElimina')} className="text-kidville-sub hover:text-kidville-error">
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </li>
+          ),
+        )}
         {obiettivi.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">{t('obiettiviNessuno')}</li>}
       </ul>
 

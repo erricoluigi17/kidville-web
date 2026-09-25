@@ -8,18 +8,18 @@
 
 ## Regia e contatore
 
-Massimo **3 cicli completi** di implementazione/revisione/collaudo. Ciclo corrente: **3**. Ogni task ha un esecutore e un critico indipendente; nessun autore approva il proprio lavoro. L'orchestratore verifica anche i verdetti dei critici. Le modifiche che condividono file procedono in sequenza; le attività indipendenti possono procedere in parallelo.
+Massimo **3 cicli completi** di implementazione/revisione/collaudo. Cicli completati: **3**; loop degli agenti concluso. Ogni task ha un esecutore e un critico indipendente; nessun autore approva il proprio lavoro. L'orchestratore verifica anche i verdetti dei critici. Le modifiche che condividono file procedono in sequenza; le attività indipendenti possono procedere in parallelo.
 
 | Task | Modello/effort | Verifica richiesta | Stato |
 |---|---|---|---|
-| Fotocamera e selezione | Sol/high; critica Astra/xhigh | Errore plist, annullamento, MIME vuoto, gesto alternativo | PASS critica; nativo da collaudare |
+| Fotocamera e selezione | Sol/high; critica Astra/xhigh | Errore plist, annullamento, MIME vuoto, gesto alternativo | PASS critica e percorso alternativo nativo |
 | Idempotenza foto e migrazione | Astra/xhigh; critica Astra/xhigh indipendente | Replay concorrenti, conflitto, atomicità, permessi, stesso IP | PASS SQL e concorrenza PostgreSQL reale |
-| Coda foto e interfaccia | Sol/high e xhigh; critica Astra/xhigh | Lotto 31, risposta persa, ripresa, sede/account | Correzioni ciclo 3 consegnate; ultimo riesame |
+| Coda foto e interfaccia | Sol/high e xhigh; critica Astra/xhigh | Lotto 31, risposta persa, ripresa, sede/account | PASS critica finale e recupero WebKit reale |
 | Recupero video | Astra/xhigh | Confini TUS/caricato/conferma, firme, stati terminali, isolamento | PASS critica: 166 test su 9 file |
 | Verifica temporale video | Astra/xhigh; critica Astra/xhigh | VFR reale, controprove, build pinnata | PASS critica finale; gate CI pinnato ancora richiesto |
-| Collaudo web | Orchestratore e Astra/xhigh; critica Astra/xhigh | Docente → genitore con fault injection | Foto e lotto 31 PASS; video reale in corso |
-| Collaudo iOS | Astra/xhigh; critica Astra/xhigh distinta | Maestro e configurazione legacy con fallback | In corso |
-| Collaudo Android | Sol/xhigh; critica Astra/xhigh | Maestro, selezione e riavvio | Esecutore PASS; critica report in corso |
+| Collaudo web | Orchestratore e Astra/xhigh; critica Astra/xhigh | Docente → genitore con fault injection | PASS foto, lotto 31, VFR audio e MOV smartphone |
+| Collaudo iOS | Astra/xhigh; critica Astra/xhigh distinta | Maestro e configurazione legacy con fallback | PASS critica finale; limiti del simulatore dichiarati |
+| Collaudo Android | Sol/xhigh; critica Astra/xhigh | Maestro, selezione e riavvio | PASS critica del percorso assistito; limiti nel report |
 
 ## Sequenza di ogni task
 
@@ -31,14 +31,14 @@ Massimo **3 cicli completi** di implementazione/revisione/collaudo. Ciclo corren
 
 ## Gate finale e rilascio
 
-- [ ] Tutte le coppie esecutore/critico concluse senza difetti aperti.
-- [ ] `npx eslint . --max-warnings 0`, `npx tsc --noEmit`, `npx vitest run`, `npm run build`.
-- [ ] E2E Playwright in CI su database separato; nessun seed locale in produzione.
-- [ ] Verifica diretta dell'orchestratore e PRD allineato alle prove effettive.
-- [ ] Migrazioni additive applicate e verificate; nessun dato reale modificato dal collaudo.
-- [ ] PR, CI, merge, deploy effettivo, prova controllata e log correlati.
-- [ ] Verifica stato versione iOS senza confondere revisione e disponibilità.
-- [ ] Pulizia dei branch secondari dopo il rilascio verificato.
+- Tutte le coppie esecutore/critico concluse senza difetti aperti.
+- `npx eslint . --max-warnings 0`, `npx tsc --noEmit`, `npx vitest run`, `npm run build`.
+- E2E Playwright in CI su database separato; nessun seed locale in produzione.
+- Verifica diretta dell'orchestratore e PRD allineato alle prove effettive.
+- Migrazioni additive applicate e verificate; nessun dato reale modificato dal collaudo.
+- PR, CI, merge, deploy effettivo, prova controllata e log correlati.
+- Verifica stato versione iOS senza confondere revisione e disponibilità.
+- Pulizia dei branch secondari dopo il rilascio verificato.
 
 ## Registro delle prove
 
@@ -104,3 +104,13 @@ Lotto web reale di 31 foto e NAT condiviso: critica indipendente PASS. Trenta fo
 - CI precedente: qualità PASS, 1.534 file / 22.500 test verdi; i 16 test FFmpeg saltati sul Mac eseguiti con la build pinnata. Restano due skip preesistenti del controllo HTML nativo. Playwright richiede nuova run dopo le correzioni WebKit e del selettore video.
 
 - Gate locali dopo correzioni root: ESLint senza warning, TypeScript e build verdi; Vitest completo 1.536 file / 22.491 test verdi / 19 skip (17 fixture FFmpeg non disponibili sul Mac più due HTML nativi). Il primo tentativo della suite era limitato dal sandbox (`listen EPERM` dei server di test); riesecuzione con loopback autorizzato completamente verde.
+
+- Verifica finale personale WebKit dopo rebuild: risposta POST persa → una PUT, POST 201/200, un solo media visibile al genitore; risposta PUT persa → una PUT, POST 201, stesso risultato. Entrambi i media sintetici cestinati via API (200).
+- La regressione MOV sintetica irregolare verifica il comportamento richiesto, ma sulla FFmpeg locale 8.1.2 passa anche senza le nuove opzioni. La riproduzione rosso/verde del difetto dell’encoder è il campione smartphone sulla build pinnata del Sandbox (54 frame, `TIMESTAMP_MISMATCH` prima e successo dopo). Controprove indipendenti: news/gallery, 120→60 fps con audio, PTS alterati ancora respinti; verificatore invariato.
+- Stato Apple confermato anche sul pacchetto associato: versione 1.1 `READY_FOR_SALE`, build 5 `VALID`, non scaduta.
+- Preflight produzione aggiornato: 716 iscrizioni, 3.688 media, zero job queued/processing. Docente, genitore e alunno sintetici già presenti nella sola sede E2E; unico destinatario verificato sintetico. Il collaudo post-deploy usa questi record senza seed e cestina solo il media creato.
+
+- iOS finale su simulatore iPhone 16e/iOS 26.2: copia QA della 1.1 priva della sola dichiarazione PhotoAdd, errore esplicito → nuovo tocco sul percorso alternativo → firma 200, una PUT 200 e una pubblicazione 201. API e riavvio confermano una riga per upload_id e coda vuota. Sessione invalidata dal seed CI: foto/tag conservati e ripresa dopo nuova autenticazione. La voce legacy già trasferita durante la diagnosi è riconosciuta senza ritrasferimento. Genitore reale sintetico risolto da `/api/me`, immagini decodificate 480×360. Limiti: nessuna fotocamera fisica sul simulatore; copia QA equivalente al difetto privacy, non binario Store 1.0; screenshot genitore preso prima della fine del loading, verifica pixel successiva via runtime.
+- Cleanup nativo: cinque media sintetici (quattro iOS e uno Android) cestinati con DELETE 200 e assenza verificata nella lettura successiva. Ripristinati i binari originali iOS e Android e rimosso il reverse proxy Android; app non riavviate verso produzione.
+
+- Critica indipendente del collaudo iOS: PASS funzionale, nessun nuovo difetto riproducibile. Confermati rete, identità, riavvio, immagini genitore, cestinamento e ripristino; nessuna pretesa di collaudo della fotocamera fisica o di purga fisica dello Storage. Tutte le coppie operative/critiche sono concluse. Il rilascio resta subordinato ai gate della PR #170 sul commit finale.

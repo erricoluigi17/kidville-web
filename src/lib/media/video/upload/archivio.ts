@@ -39,4 +39,9 @@ export interface ArchivioCaricamentiVideo {
   scriviByte(jobId: string, byte: Blob): Promise<void>
   /** Libera il peso lasciando la riga: è ciò che succede a caricamento finito. */
   eliminaByte(jobId: string): Promise<void>
+  /**
+   * Toglie i depositi di byte che nessuna riga nomina più (una scrittura interrotta
+   * dalla chiusura dell'app). Facoltativo: l'archivio in memoria non ne lascia.
+   */
+  potaDepositiOrfani?(): Promise<number>
 }

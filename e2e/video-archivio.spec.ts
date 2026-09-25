@@ -1,7 +1,18 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { installaArchivioVideo } from './helpers/archivio-video'
 import type { ArchivioCaricamentiDexie } from '../src/lib/media/video/upload/archivio-dexie'
 import type { LettoreBlob } from '../src/lib/media/video/upload/lettore-blob'
+
+/**
+ * L'ARCHIVIO DEI VIDEO SUL VERO INDEXEDDB — il modulo di produzione, transpilato
+ * e caricato nella pagina, su WebKit e Chromium. jsdom non ha IndexedDB e
+ * `fake-indexeddb` non riprodurrebbe né il rifiuto dei Blob di WebKit né il
+ * comportamento delle transazioni: queste prove esistono per questo.
+ *
+ * Nessun retry: un collaudo di persistenza che passa al secondo tentativo sta
+ * nascondendo esattamente la fragilità che deve misurare.
+ */
+test.describe.configure({ retries: 0 })
 
 declare global {
   interface Window {
@@ -11,8 +22,11 @@ declare global {
       ArchivioCaricamentiDexie: typeof ArchivioCaricamentiDexie
       LettoreBlob: typeof LettoreBlob
       BLOCCO_VIDEO_LOCALE: number
-      log: Array<{ messaggio: string }>
+      PREFISSO_DEPOSITO_VIDEO: string
+      ETA_MINIMA_ORFANO_MS: number
+      log: Array<{ messaggio: string; campi?: Record<string, unknown> }>
     }
+    Dexie: typeof import('dexie').default
   }
 }
 
@@ -21,6 +35,37 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/__archivio-video-e2e')
   await installaArchivioVideo(page)
 })
+
+/** I database di blocchi ancora presenti, e le chiavi dentro quello di un job. */
+async function depositi(page: Page, jobId?: string): Promise<{ nomi: string[]; chiavi: string[] }> {
+  return page.evaluate(async jobId => {
+    const { PREFISSO_DEPOSITO_VIDEO: prefisso } = window.videoArchivioQA
+    const nomi = (await indexedDB.databases()).map(d => d.name ?? '').filter(n => n.startsWith(prefisso))
+    let chiavi: string[] = []
+    if (jobId && nomi.includes(prefisso + jobId)) {
+      const d = new window.Dexie(prefisso + jobId, { autoOpen: false })
+      d.version(1).stores({ blocchi: 'chiave' })
+      await d.open()
+      chiavi = (await d.table('blocchi').toCollection().primaryKeys()) as string[]
+      d.close()
+    }
+    return { nomi, chiavi }
+  }, jobId)
+}
+
+/** Le righe dello store principale `byte` (manifest e Blob legacy). */
+async function manifest(page: Page): Promise<number> {
+  return page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const richiesta = indexedDB.open('KidvilleVideoUploadDB')
+    richiesta.onerror = () => reject(richiesta.error)
+    richiesta.onsuccess = () => {
+      const db = richiesta.result
+      const count = db.transaction('byte').objectStore('byte').count()
+      count.onsuccess = () => { db.close(); resolve(count.result) }
+      count.onerror = () => { db.close(); reject(count.error) }
+    }
+  }))
+}
 
 test('video: byte persistenti dopo reload, offset interno, ultimo blocco e cancellazione', async ({ page }) => {
   const jobId = '11111111-1111-4111-8111-111111111111'
@@ -40,6 +85,7 @@ test('video: byte persistenti dopo reload, offset interno, ultimo blocco e cance
     return { massimo, blocco }
   }, jobId)
   expect(scritto.massimo).toBeLessThanOrEqual(scritto.blocco)
+  expect((await depositi(page, jobId)).chiavi).toHaveLength(2)
   await page.reload()
   await installaArchivioVideo(page)
   const riletto = await page.evaluate(async jobId => {
@@ -49,21 +95,25 @@ test('video: byte persistenti dopo reload, offset interno, ultimo blocco e cance
     if (!byte) throw Error('Byte persi al reload')
     const source = await new LettoreBlob().openFile(byte)
     const aCavallo = await source.slice(blocco - 11, blocco + 19)
-    const ultimo = await source.slice(blocco + 19, blocco + 100)
+    const ultimo = await source.slice(blocco + 19, blocco + 37)
     await a.eliminaByte(jobId)
     const assente = await a.leggiByte(jobId)
-    return { size: source.size, cavallo: Array.from(aCavallo.value), ultimo: Array.from(ultimo.value), done: ultimo.done, sizeFinale: ultimo.value.size, assente: !assente }
+    return { size: source.size, type: byte.type, cavallo: Array.from(aCavallo.value), ultimo: Array.from(ultimo.value), done: ultimo.done, sizeFinale: ultimo.value.size, assente: !assente }
   }, jobId)
   expect(riletto.size).toBe(scritto.blocco + 37)
+  expect(riletto.type).toBe('video/mp4')
   expect(riletto.cavallo).toEqual(Array.from({ length: 30 }, (_, i) => (scritto.blocco - 11 + i) % 251))
   expect(riletto.ultimo).toEqual(Array.from({ length: 18 }, (_, i) => (scritto.blocco + 19 + i) % 251))
   expect(riletto.done).toBe(true)
   expect(riletto.sizeFinale).toBe(18)
   expect(riletto.assente).toBe(true)
-  expect(await contaDepositi(page)).toBe(0)
+  // Il database del job se ne va intero: su WebKit è l'unico modo di restituire
+  // lo spazio (SQLite senza auto_vacuum tiene il file grande dopo i DELETE).
+  expect((await depositi(page)).nomi).toEqual([])
+  expect(await manifest(page)).toBe(0)
 })
 
-test('video: interruzione durante la persistenza conserva il deposito precedente', async ({ page }) => {
+test('video: lettura fallita durante la copia conserva il deposito precedente e non lascia blocchi', async ({ page }) => {
   const jobId = '22222222-2222-4222-8222-222222222222'
   const risultato = await page.evaluate(async jobId => {
     const { ArchivioCaricamentiDexie, LettoreBlob, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
@@ -82,39 +132,24 @@ test('video: interruzione durante la persistenza conserva il deposito precedente
     if (!byte) throw Error('Deposito precedente perso')
     const source = await new LettoreBlob().openFile(byte)
     const fetta = await source.slice(0, 3)
-    const log = window.videoArchivioQA.log.map(e => e.messaggio)
-    await a.eliminaByte(jobId)
-    return { errore, byte: Array.from(fetta.value), log }
+    return { errore, byte: Array.from(fetta.value), log: window.videoArchivioQA.log.map(e => e.messaggio) }
   }, jobId)
   expect(risultato.errore).toBe('AbortError')
   expect(risultato.byte).toEqual([9, 8, 7])
-  expect(risultato.log).toContain('video-upload-persistenza-fallita')
-  expect(await contaDepositi(page)).toBe(0)
+  expect(risultato.log).toContain(`video-upload-persistenza-fallita: job=${jobId}`)
+  expect((await depositi(page, jobId)).chiavi).toHaveLength(1) // Solo il blocco del deposito precedente.
 })
 
-async function contaDepositi(page: import('@playwright/test').Page): Promise<number> {
-  return page.evaluate(() => new Promise<number>((resolve, reject) => {
-    const richiesta = indexedDB.open('KidvilleVideoUploadDB')
-    richiesta.onerror = () => reject(richiesta.error)
-    richiesta.onsuccess = () => {
-      const db = richiesta.result
-      const count = db.transaction('byte').objectStore('byte').count()
-      count.onsuccess = () => { db.close(); resolve(count.result) }
-      count.onerror = () => { db.close(); reject(count.error) }
-    }
-  }))
-}
-
-test('video: quota durante il secondo blocco annulla anche i blocchi parziali', async ({ page }) => {
-  const risultato = await page.evaluate(async () => {
+test('video: quota esaurita sul secondo blocco conserva il deposito precedente e registra la causa', async ({ page }) => {
+  const jobId = '33333333-3333-4333-8333-333333333333'
+  const risultato = await page.evaluate(async jobId => {
     const { ArchivioCaricamentiDexie, LettoreBlob, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
-    const jobId = '33333333-3333-4333-8333-333333333333'
     const a = new ArchivioCaricamentiDexie()
     await a.scriviByte(jobId, new Blob([new Uint8Array([3, 2, 1])]))
     const put = IDBObjectStore.prototype.put
     IDBObjectStore.prototype.put = function(value, key) {
-      const id = (value as { jobId?: string }).jobId
-      if (id?.startsWith(`${jobId}:`) && id.endsWith(':1')) throw new DOMException('Quota sintetica', 'QuotaExceededError')
+      const chiave = (value as { chiave?: string }).chiave
+      if (chiave?.endsWith(':1')) throw new DOMException('Quota sintetica', 'QuotaExceededError')
       return put.call(this, value, key)
     }
     let errore = ''
@@ -124,14 +159,16 @@ test('video: quota durante il secondo blocco annulla anche i blocchi parziali', 
     const byte = await a.leggiByte(jobId)
     if (!byte) throw Error('Deposito precedente perso')
     const source = await new LettoreBlob().openFile(byte)
-    return { errore, byte: Array.from((await source.slice(0, 3)).value) }
-  })
-  expect(risultato.errore).toBe('QuotaExceededError')
+    const log = window.videoArchivioQA.log.find(e => e.messaggio === `video-upload-persistenza-fallita: job=${jobId}`)
+    return { errore, byte: Array.from((await source.slice(0, 3)).value), campi: log?.campi ?? null }
+  }, jobId)
+  expect(risultato.errore).toMatch(/QuotaExceededError|AbortError/)
+  expect(JSON.stringify(risultato.campi)).toContain('QuotaExceededError')
   expect(risultato.byte).toEqual([3, 2, 1])
-  expect(await contaDepositi(page)).toBe(2) // Un manifest e il solo blocco precedente.
+  expect((await depositi(page, jobId)).chiavi).toHaveLength(1)
 })
 
-test('video: chiusura della pagina durante la scrittura non pubblica blocchi parziali', async ({ page }) => {
+test('video: chiusura della pagina durante la copia lascia leggibile il deposito precedente', async ({ page }) => {
   const jobId = '44444444-4444-4444-8444-444444444444'
   await page.evaluate(async jobId => {
     const { ArchivioCaricamentiDexie, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
@@ -154,50 +191,161 @@ test('video: chiusura della pagina durante la scrittura non pubblica blocchi par
   await page.waitForFunction(() => window.videoArchivePause === true)
   await page.reload()
   await installaArchivioVideo(page)
-  const byte = await page.evaluate(async jobId => {
+  const letto = await page.evaluate(async jobId => {
     const { ArchivioCaricamentiDexie, LettoreBlob } = window.videoArchivioQA
     const a = new ArchivioCaricamentiDexie()
     const byte = await a.leggiByte(jobId)
     if (!byte) throw Error('Deposito perso dopo chiusura')
     return Array.from((await (await new LettoreBlob().openFile(byte)).slice(0, 3)).value)
   }, jobId)
-  expect(byte).toEqual([4, 5, 6])
-  expect(await contaDepositi(page)).toBe(2)
+  expect(letto).toEqual([4, 5, 6])
+  // Il primo blocco della copia interrotta è rimasto: è della generazione che
+  // nessun manifest nomina. La prossima copia riuscita lo toglie.
+  expect((await depositi(page, jobId)).chiavi).toHaveLength(2)
+  await page.evaluate(async jobId => {
+    const a = new window.videoArchivioQA.ArchivioCaricamentiDexie()
+    await a.scriviByte(jobId, new Blob([new Uint8Array([7, 7])]))
+  }, jobId)
+  expect((await depositi(page, jobId)).chiavi).toHaveLength(1)
 })
 
 test('video: un blocco mancante viene rifiutato senza spedire byte troncati', async ({ page }) => {
-  const risultato = await page.evaluate(async () => {
-    const jobId = '55555555-5555-4555-8555-555555555555'
-    const { ArchivioCaricamentiDexie, LettoreBlob } = window.videoArchivioQA
+  const jobId = '55555555-5555-4555-8555-555555555555'
+  const risultato = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, LettoreBlob, PREFISSO_DEPOSITO_VIDEO: prefisso } = window.videoArchivioQA
     const a = new ArchivioCaricamentiDexie()
     await a.scriviByte(jobId, new Blob([new Uint8Array([1, 2, 3])]))
-    await new Promise<void>((resolve, reject) => {
-      const richiesta = indexedDB.open('KidvilleVideoUploadDB')
-      richiesta.onerror = () => reject(richiesta.error)
-      richiesta.onsuccess = () => {
-        const db = richiesta.result
-        const tx = db.transaction('byte', 'readwrite')
-        const store = tx.objectStore('byte')
-        const cursore = store.openCursor()
-        cursore.onsuccess = () => {
-          const voce = cursore.result
-          if (!voce) return
-          if (String(voce.key).startsWith(`${jobId}:`)) voce.delete()
-          voce.continue()
-        }
-        tx.oncomplete = () => { db.close(); resolve() }
-        tx.onerror = () => { db.close(); reject(tx.error) }
-      }
-    })
+    const d = new window.Dexie(prefisso + jobId, { autoOpen: false })
+    d.version(1).stores({ blocchi: 'chiave' })
+    await d.open()
+    await d.table('blocchi').clear()
+    d.close()
     const byte = await a.leggiByte(jobId)
     if (!byte) throw Error('Manifest assente')
     let errore = ''
     try { await (await new LettoreBlob().openFile(byte)).slice(0, 3) }
-    catch (e) { errore = (e as Error).message }
+    catch (e) { errore = (e as Error).name }
     await a.eliminaByte(jobId)
     return { errore, log: window.videoArchivioQA.log.map(e => e.messaggio) }
-  })
+  }, jobId)
   expect(risultato.errore).toBe('VIDEO_BLOCCO_INCOMPLETO')
-  expect(risultato.log).toContain('video-upload-blocco-assente')
-  expect(await contaDepositi(page)).toBe(0)
+  expect(risultato.log).toContain(`video-upload-blocco-assente: job=${jobId}`)
+  expect((await depositi(page)).nomi).toEqual([])
+})
+
+test('video: riscrivere lo stesso video mentre un lettore è aperto non gli toglie i byte', async ({ page }) => {
+  const jobId = '66666666-6666-4666-8666-666666666666'
+  const risultato = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, LettoreBlob, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
+    const dati = new Uint8Array(blocco * 2 + 5)
+    for (let i = 0; i < dati.length; i++) dati[i] = (i * 7) % 256
+    const a = new ArchivioCaricamentiDexie()
+    await a.scriviByte(jobId, new Blob([dati], { type: 'video/mp4' }))
+    const byte = await a.leggiByte(jobId)
+    if (!byte) throw Error('Deposito assente')
+    const source = await new LettoreBlob().openFile(byte)
+    const primo = await source.slice(0, blocco)
+    await a.scriviByte(jobId, new Blob([dati], { type: 'video/mp4' }))
+    const secondo = await source.slice(blocco, blocco * 2)
+    const attesi = Array.from(dati.subarray(blocco, blocco + 16))
+    await a.eliminaByte(jobId)
+    return { primo: primo.value.byteLength, secondo: Array.from(secondo.value.subarray(0, 16)), attesi }
+  }, jobId)
+  expect(risultato.primo).toBeGreaterThan(0)
+  expect(risultato.secondo).toEqual(risultato.attesi)
+})
+
+test('video: un deposito cancellato da fuori durante la copia fa fallire la scrittura, non la blocca', async ({ page }) => {
+  const jobId = '77777777-7777-4777-8777-777777777777'
+  const risultato = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, BLOCCO_VIDEO_LOCALE: blocco, PREFISSO_DEPOSITO_VIDEO: prefisso } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    let sblocca: () => void = () => {}
+    const attesa = new Promise<void>(r => { sblocca = r })
+    class BloccoSospeso extends Blob {
+      async arrayBuffer(): Promise<ArrayBuffer> {
+        await attesa
+        return new ArrayBuffer(1)
+      }
+    }
+    class FileSospeso extends Blob {
+      slice(inizio = 0, fine = this.size, tipo?: string) {
+        return inizio >= blocco ? new BloccoSospeso() : super.slice(inizio, fine, tipo)
+      }
+    }
+    const scrittura = a.scriviByte(jobId, new FileSospeso([new Uint8Array(blocco + 1)]))
+      .then(() => 'riuscita', (e: Error) => e.name)
+    // Come «cancella dati del sito» o un'altra scheda che pota: il database del
+    // job sparisce mentre la copia aspetta la seconda fetta.
+    await new Promise(r => setTimeout(r, 200))
+    await window.Dexie.delete(prefisso + jobId)
+    sblocca()
+    const esito = await Promise.race([scrittura, new Promise<string>(r => setTimeout(() => r('APPESA'), 10_000))])
+    return { esito, manifest: !!(await a.leggiByte(jobId)) }
+  }, jobId)
+  expect(risultato.esito).not.toBe('APPESA')
+  expect(risultato.esito).not.toBe('riuscita')
+  expect(risultato.manifest).toBe(false)
+})
+
+test('video: elimina toglie riga, manifest e database dei blocchi', async ({ page }) => {
+  const jobId = '88888888-8888-4888-8888-888888888888'
+  await page.evaluate(async jobId => {
+    const a = new window.videoArchivioQA.ArchivioCaricamentiDexie()
+    await a.scriviByte(jobId, new Blob([new Uint8Array([1, 2])]))
+    await a.scrivi({ jobId } as never)
+    await a.elimina(jobId)
+  }, jobId)
+  expect((await depositi(page)).nomi).toEqual([])
+  expect(await manifest(page)).toBe(0)
+})
+
+test('video: la potatura toglie i depositi orfani vecchi e lascia quelli giovani e quelli nominati', async ({ page }) => {
+  const esito = await page.evaluate(async () => {
+    const { ArchivioCaricamentiDexie, PREFISSO_DEPOSITO_VIDEO: prefisso, ETA_MINIMA_ORFANO_MS: eta } = window.videoArchivioQA
+    const vecchio = '99999999-9999-4999-8999-999999999991'
+    const giovane = '99999999-9999-4999-8999-999999999992'
+    const nominato = '99999999-9999-4999-8999-999999999993'
+    async function orfano(jobId: string, nato: number) {
+      const d = new window.Dexie(prefisso + jobId, { autoOpen: false })
+      d.version(1).stores({ blocchi: 'chiave' })
+      await d.open()
+      await d.table('blocchi').put({ chiave: `${nato.toString(36)}-sintetico:0`, buffer: new ArrayBuffer(4) })
+      d.close()
+    }
+    await orfano(vecchio, Date.now() - eta - 60_000)
+    await orfano(giovane, Date.now())
+    const a = new ArchivioCaricamentiDexie()
+    await a.scriviByte(nominato, new Blob([new Uint8Array([5])]))
+    await a.scrivi({ jobId: nominato } as never)
+    const rimossi = await a.potaDepositiOrfani()
+    const rimasti = (await indexedDB.databases()).map(d => d.name ?? '').filter(n => n.startsWith(prefisso)).map(n => n.slice(prefisso.length)).sort()
+    await a.elimina(nominato)
+    return { rimossi, rimasti, attesi: [giovane, nominato].sort() }
+  })
+  expect(esito.rimossi).toBe(1)
+  expect(esito.rimasti).toEqual(esito.attesi)
+})
+
+test('video: un deposito legacy {blob} scritto dalle versioni precedenti resta leggibile', async ({ page, browserName }) => {
+  // WebKit in un contesto effimero rifiuta proprio i Blob in IndexedDB: è il
+  // difetto che ha reso necessari i blocchi, quindi lì un deposito legacy non può
+  // nemmeno essere preparato.
+  test.skip(browserName === 'webkit', 'WebKit effimero non accetta Blob in IndexedDB')
+  const jobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const letto = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, LettoreBlob } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    await a.leggi(jobId) // apre il database con lo schema di produzione
+    const d = new window.Dexie('KidvilleVideoUploadDB')
+    d.version(1).stores({ caricamenti: 'jobId, stato, aggiornatoIl', byte: 'jobId' })
+    await d.table('byte').put({ jobId, blob: new Blob([new Uint8Array([6, 5, 4, 3])], { type: 'video/mp4' }) })
+    d.close()
+    const byte = await a.leggiByte(jobId)
+    if (!byte) throw Error('Deposito legacy non trovato')
+    const fetta = await (await new LettoreBlob().openFile(byte)).slice(1, 4)
+    await a.eliminaByte(jobId)
+    return { valori: Array.from(fetta.value), done: fetta.done, assente: !(await a.leggiByte(jobId)) }
+  }, jobId)
+  expect(letto).toEqual({ valori: [5, 4, 3], done: true, assente: true })
 })

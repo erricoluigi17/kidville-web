@@ -3,6 +3,7 @@ import type { HttpRequest, HttpResponse, HttpStack } from 'tus-js-client'
 
 import { SEDE_A } from '../fixtures/sedi'
 import { ArchivioCaricamentiInMemoria } from '@/lib/media/video/upload/archivio-memoria'
+import { ErroreByteVideo } from '@/lib/media/video/upload/byte-video'
 import type { CoordinateCaricamentoVideo } from '@/lib/media/video/contratto'
 
 const logClient = vi.fn()
@@ -48,10 +49,10 @@ const {
  *    an instance of Buffer or Readable in this environment». Per questo il modulo
  *    porta il proprio `LettoreBlob` e lo passa sempre — così il codice che gira
  *    nel test è lo stesso che gira sul telefono, invece di essere il suo cugino;
- *  · quello che parte davvero nel corpo di una `PATCH` è un `Blob`, e in jsdom un
- *    `Blob` non ha `stream()`. Il server finto lo legge con `arrayBuffer()` e il
- *    test confronta i byte UNO A UNO con l'originale: un corpo uscito come
- *    «[object Blob]» non potrebbe mai superare quel confronto.
+ *  · quello che parte davvero nel corpo di una `PATCH` è un `Uint8Array` (WebKit
+ *    rifiuta i `Blob` ricostruiti da IndexedDB). Il server finto legge i byte
+ *    della vista, o del `Blob` con `arrayBuffer()`, e il test li confronta UNO A
+ *    UNO con l'originale: un corpo sbagliato non supera quel confronto.
  */
 
 const ENDPOINT = 'https://storage.finta.test/storage/v1/upload/resumable'
@@ -699,9 +700,12 @@ describe('quando lo Storage dice di no', () => {
   it('byte spariti dal dispositivo: fallisce dicendolo, invece di rompersi dentro', async () => {
     const { server, archivio, dip } = banco()
     await accoda(dip)
-    await archivio.eliminaByte(JOB)
+    // L'app si riapre (archivio nuovo, quindi nessun file vivo in memoria) e il
+    // browser nel frattempo ha sfrattato i byte lasciando la riga.
+    const riaperto = new ArchivioCaricamentiInMemoria()
+    await riaperto.scrivi((await archivio.leggi(JOB))!)
 
-    const esito = await caricaVideo(dip, JOB)
+    const esito = await caricaVideo({ ...dip, archivio: riaperto }, JOB)
 
     expect(esito).toEqual({ esito: 'fallito', jobId: JOB, codice: 'VIDEO_RIPROVA' })
     expect(server.viste).toHaveLength(0)
@@ -876,4 +880,145 @@ it('rinnova le intestazioni fra i chunk quando la firma scade durante il trasfer
   await caricaVideo({ ...dip, intestazioni }, JOB)
   expect(server.viste.some(v => v.intestazioni['x-signature'] === 'firma-rinnovata')).toBe(true)
   expect(server.viste.filter(v => v.metodo === 'POST')).toHaveLength(1)
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 7. LA SORGENTE VIVA E I BYTE LOCALI (critica indipendente del 2026-09-26)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** L'app riaperta: un archivio nuovo con la stessa riga, e nessun file in memoria. */
+async function riapri(archivio: ArchivioCaricamentiInMemoria) {
+  const riaperto = new ArchivioCaricamentiInMemoria()
+  await riaperto.scrivi((await archivio.leggi(JOB))!)
+  return riaperto
+}
+
+function logCon(prefisso: string) {
+  return logClient.mock.calls.find(([e]) => String(e.messaggio).startsWith(prefisso))?.[0]
+}
+
+describe('la sorgente viva e i byte salvati sul dispositivo', () => {
+  it('nella stessa sessione i byte sfrattati non fermano l’invio: si legge il file scelto', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    await archivio.eliminaByte(JOB)
+
+    const esito = await caricaVideo(dip, JOB)
+
+    expect(esito).toEqual({ esito: 'caricato', jobId: JOB, byteCaricati: DIMENSIONE })
+    expect(Buffer.from(server.unicoOggetto()!.byte).equals(Buffer.from(byteOriginali()))).toBe(true)
+  })
+
+  it('telefono pieno: il salvataggio locale fallisce, il video parte lo stesso e resta scritto il perché', async () => {
+    const { server, archivio, dip } = banco()
+    const quota = Object.assign(new Error('abort'), {
+      name: 'AbortError',
+      inner: Object.assign(new Error(''), { name: 'QuotaExceededError' }),
+    })
+    archivio.scriviByte = async () => { throw quota }
+
+    const accodato = await accoda(dip)
+
+    expect(accodato.ok).toBe(true)
+    expect(await archivio.leggi(JOB)).toBeDefined()
+    expect(logCon('video-upload-archivio-degradato')).toMatchObject({
+      livello: 'error',
+      campi: { error_code: 'AbortError', causa: 'QuotaExceededError' },
+    })
+    const esito = await caricaVideo(dip, JOB)
+    expect(esito.esito).toBe('caricato')
+    expect(Buffer.from(server.unicoOggetto()!.byte).equals(Buffer.from(byteOriginali()))).toBe(true)
+  })
+
+  it('riaccodare lo stesso video con il deposito già intero non lo ricopia', async () => {
+    const { archivio, dip } = banco()
+    const scrivi = archivio.scriviByte.bind(archivio)
+    let copie = 0
+    archivio.scriviByte = async (id, byte) => { copie++; await scrivi(id, byte) }
+
+    await accoda(dip)
+    await accoda(dip)
+    expect(copie).toBe(1)
+
+    await archivio.eliminaByte(JOB)
+    await accoda(dip)
+    expect(copie).toBe(2)
+  })
+
+  it('un blocco mancante nel deposito chiude come fallito, senza quattro ritentativi', async () => {
+    const { server, archivio, dip } = banco([0, 0, 0, 0])
+    await accoda(dip)
+    const riaperto = await riapri(archivio)
+    let letture = 0
+    let liberati = 0
+    riaperto.leggiByte = async () => ({
+      size: DIMENSIONE,
+      type: 'video/mp4',
+      async leggiIntervallo() {
+        letture++
+        throw new ErroreByteVideo('VIDEO_BLOCCO_INCOMPLETO')
+      },
+    })
+    riaperto.eliminaByte = async () => { liberati++ }
+
+    const esito = await caricaVideo({ ...dip, archivio: riaperto }, JOB)
+
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB, codice: 'VIDEO_RIPROVA' })
+    expect(letture).toBe(1)
+    expect(server.viste.filter((v) => v.metodo === 'HEAD')).toHaveLength(0)
+    expect((await riaperto.leggi(JOB))?.stato).toBe('fallito')
+    expect(liberati).toBe(1)
+    expect(logCon('video-upload-byte-locali-rotti')?.campi).toMatchObject({ error_code: 'VIDEO_BLOCCO_INCOMPLETO' })
+  })
+
+  it('un manifest illeggibile non lancia: chiude come fallito prima di aprire la rete', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    const riaperto = await riapri(archivio)
+    riaperto.leggiByte = async () => { throw new ErroreByteVideo('VIDEO_ARCHIVIO_NON_VALIDO') }
+
+    const esito = await caricaVideo({ ...dip, archivio: riaperto }, JOB)
+
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB, codice: 'VIDEO_RIPROVA' })
+    expect(server.viste).toHaveLength(0)
+    expect(logCon('video-upload-byte-locali-rotti')?.campi).toMatchObject({ error_code: 'VIDEO_ARCHIVIO_NON_VALIDO' })
+  })
+
+  it('IndexedDB momentaneamente irraggiungibile: resta ripescabile e non butta niente', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    const riaperto = await riapri(archivio)
+    let liberati = 0
+    riaperto.leggiByte = async () => { throw Object.assign(new Error('connessione persa'), { name: 'UnknownError' }) }
+    riaperto.eliminaByte = async () => { liberati++ }
+
+    const esito = await caricaVideo({ ...dip, archivio: riaperto }, JOB)
+
+    expect(esito).toEqual({ esito: 'interrotto', jobId: JOB, offsetByte: 0, codice: null })
+    expect(server.viste).toHaveLength(0)
+    expect(liberati).toBe(0)
+    expect(logCon('video-upload-deposito-illeggibile')?.campi).toMatchObject({ error_code: 'UnknownError' })
+  })
+
+  it('se il file scelto non si legge più, il tentativo dopo riparte dalla copia salvata', async () => {
+    const { server, archivio, dip } = banco([0, 0, 0, 0])
+    const copia = new Blob([byteOriginali()])
+    archivio.scriviByte = (id) => ArchivioCaricamentiInMemoria.prototype.scriviByte.call(archivio, id, copia)
+    const file = new File([byteOriginali()], 'recita-di-natale.mp4', { type: 'video/mp4' })
+    await accodaCaricamentoVideo(dip, {
+      jobId: JOB, intentId: INTENT, canale: 'gallery', chiaveIdempotenza: 'chiave-1', coordinate: COORDINATE, file,
+    })
+    file.slice = () => { throw Object.assign(new Error('illeggibile'), { name: 'NotReadableError' }) }
+
+    const primo = await caricaVideo(dip, JOB)
+
+    expect(primo).toMatchObject({ esito: 'interrotto', codice: null })
+    expect(server.viste.filter((v) => v.metodo === 'HEAD')).toHaveLength(0)
+    expect(logCon('video-upload-interrotto')?.campi).toMatchObject({ lettura_locale: true, causa: 'NotReadableError' })
+
+    const secondo = await caricaVideo(dip, JOB)
+
+    expect(secondo.esito).toBe('caricato')
+    expect(Buffer.from(server.unicoOggetto()!.byte).equals(Buffer.from(byteOriginali()))).toBe(true)
+  })
 })

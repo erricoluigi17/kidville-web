@@ -1,4 +1,5 @@
 import type { ArchivioCaricamentiVideo } from './archivio'
+import type { ByteVideo } from './byte-video'
 import type { CaricamentoVideoLocale } from './stato'
 
 /**
@@ -49,7 +50,7 @@ export class ArchivioCaricamentiInMemoria implements ArchivioCaricamentiVideo {
     this.byte.delete(jobId)
   }
 
-  async leggiByte(jobId: string): Promise<Blob | undefined> {
+  async leggiByte(jobId: string): Promise<ByteVideo | undefined> {
     return this.byte.get(jobId)
   }
 

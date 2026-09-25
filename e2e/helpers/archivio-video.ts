@@ -17,7 +17,10 @@ export async function installaArchivioVideo(page: Page): Promise<void> {
     const log = [];
     function carica(nome) {
       if (nome === 'dexie') return window.Dexie;
-      if (nome === '@/lib/logging/client') return { logClient: e => log.push(e), nomeErrore: e => e.name };
+      if (nome === '@/lib/logging/client') return {
+        logClient: e => log.push(e),
+        nomeErrore: e => (e && typeof e.name === 'string' ? e.name : 'errore'),
+      };
       const id = nome.replace('./', '');
       if (cache[id]) return cache[id];
       if (!sorgenti[id]) throw Error('Modulo inatteso: ' + id);

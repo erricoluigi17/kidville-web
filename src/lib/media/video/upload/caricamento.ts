@@ -1,4 +1,4 @@
-import { Upload, type HttpStack } from 'tus-js-client'
+import { Upload, defaultOptions, type HttpStack } from 'tus-js-client'
 
 import { mimeBase } from '@/lib/gallery/limiti'
 import { logClient, nomeErrore } from '@/lib/logging/client'
@@ -11,6 +11,7 @@ import {
 } from '../contratto'
 import { validateVideoInputSize } from '../limiti'
 import type { ArchivioCaricamentiVideo } from './archivio'
+import { ErroreByteVideo, type ByteVideo } from './byte-video'
 import { LettoreBlob } from './lettore-blob'
 import {
   caricamentiDaPotare,
@@ -173,6 +174,63 @@ function segnala(
   logClient({ livello, evento: 'fetch', messaggio: `${messaggio}: job=${jobId}`, campi })
 }
 
+/** Dexie mette la causa vera di un abort in `inner` (è lì che c'è «quota»). */
+function campiErrore(err: unknown): CampiLog {
+  const interno = (err as { inner?: unknown } | null | undefined)?.inner
+  return interno ? { error_code: nomeErrore(err), causa: nomeErrore(interno) } : { error_code: nomeErrore(err) }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * LA SORGENTE VIVA
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Il `File` scelto in QUESTA sessione, accanto all'archivio che l'ha accodato.
+ *
+ * Finché la pagina resta aperta tus legge da qui e non dai blocchi salvati: la
+ * copia in IndexedDB serve alla ripresa dopo la chiusura dell'app, non al
+ * trasferimento. Tre conseguenze, tutte misurate dal critico del 2026-09-26:
+ * un salvataggio locale fallito (telefono pieno) non impedisce più l'invio, una
+ * riscrittura dello stesso video mentre parte non toglie i byte da sotto il
+ * trasferimento, e l'invio non contende IndexedDB con la copia di un altro video.
+ *
+ * Chiave: l'istanza dell'archivio. Una pagina nuova ha un archivio nuovo, cioè
+ * nessuna sorgente viva — esattamente come un'app riaperta.
+ */
+const sorgentiVive = new WeakMap<ArchivioCaricamentiVideo, Map<string, Blob>>()
+
+function ricordaSorgenteViva(archivio: ArchivioCaricamentiVideo, jobId: string, file: Blob): void {
+  let perArchivio = sorgentiVive.get(archivio)
+  if (!perArchivio) {
+    perArchivio = new Map()
+    sorgentiVive.set(archivio, perArchivio)
+  }
+  perArchivio.set(jobId, file)
+}
+
+function sorgenteViva(archivio: ArchivioCaricamentiVideo, jobId: string, dimensione: number): Blob | undefined {
+  const file = sorgentiVive.get(archivio)?.get(jobId)
+  return file && file.size === dimensione ? file : undefined
+}
+
+function dimenticaSorgenteViva(archivio: ArchivioCaricamentiVideo, jobId: string): void {
+  sorgentiVive.get(archivio)?.delete(jobId)
+}
+
+/**
+ * Salva i byte per la ripresa, e se non ci riesce NON ferma il caricamento: lo
+ * dice e prosegue con la sola sorgente viva. Su un telefono quasi pieno la copia
+ * locale fallisce per quota, mentre l'invio allo Storage di spazio non ne chiede.
+ * Si perde la ripresa dopo la chiusura dell'app per QUEL video, non il video.
+ */
+async function salvaPerRipresa(dip: DipendenzeCaricamentoVideo, jobId: string, file: File): Promise<void> {
+  try {
+    await dip.archivio.scriviByte(jobId, file)
+  } catch (err) {
+    segnala('error', 'video-upload-archivio-degradato', jobId, { byte: file.size, ...campiErrore(err) })
+  }
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * ACCODARE
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -229,7 +287,16 @@ export async function accodaCaricamentoVideo(
     // Soltanto la nuova selezione esplicita può attribuire una riga legacy.
     const aggiornata = { ...esistente, ownerId: esistente.ownerId ?? ingresso.ownerId ?? null, scuolaId: esistente.scuolaId ?? ingresso.scuolaId ?? null }
     await dip.archivio.scrivi(aggiornata)
-    if (esistente.stato !== 'caricato') await dip.archivio.scriviByte(jobId, file)
+    if (esistente.stato !== 'caricato') {
+      ricordaSorgenteViva(dip.archivio, jobId, file)
+      // Stesso job, stesso file: se il deposito c'è già intero non si ricopiano
+      // due gigabyte. Un deposito illeggibile vale come assente e si riscrive.
+      const presente = await dip.archivio.leggiByte(jobId).catch((err: unknown) => {
+        segnala('warn', 'video-upload-deposito-da-riscrivere', jobId, campiErrore(err))
+        return undefined
+      })
+      if (presente?.size !== file.size) await salvaPerRipresa(dip, jobId, file)
+    }
     return { ok: true, riga: aggiornata }
   }
 
@@ -248,9 +315,12 @@ export async function accodaCaricamentoVideo(
   })
 
   // I byte PRIMA della riga: se il browser muore in mezzo resta un deposito senza
-  // riga — che la potatura non vedrà, ma che non promette niente a nessuno —
-  // invece di una riga che promette byte che non ci sono.
-  await dip.archivio.scriviByte(jobId, file)
+  // riga — che `potaDepositiOrfani` toglie — invece di una riga che promette byte
+  // che non ci sono. Se il salvataggio fallisce la riga si scrive lo stesso: in
+  // questa sessione l'invio legge la sorgente viva, e dopo una chiusura il ramo
+  // «byte spariti» lo dice invece di tacere.
+  ricordaSorgenteViva(dip.archivio, jobId, file)
+  await salvaPerRipresa(dip, jobId, file)
   await dip.archivio.scrivi(riga)
   return { ok: true, riga }
 }
@@ -360,8 +430,21 @@ async function eseguiCaricamentoVideo(
     return { esito: 'annullato', jobId }
   }
 
-  const byte = await dip.archivio.leggiByte(jobId)
-  if (!byte) {
+  const viva = sorgenteViva(dip.archivio, jobId, riga.dimensioneByte)
+  let letti: ByteVideo | undefined = viva
+  if (!letti) {
+    try {
+      letti = await dip.archivio.leggiByte(jobId)
+    } catch (err) {
+      // Un deposito rotto non si ripara riprovando: si chiude e si chiede di
+      // riscegliere il file. Un IndexedDB momentaneamente irraggiungibile invece
+      // sì: i byte sono ancora lì, e la riga resta ripescabile.
+      if (err instanceof ErroreByteVideo) return chiudiPerByteLocali(dip, jobId, orologio(), riga.offsetByte, err)
+      segnala('warn', 'video-upload-deposito-illeggibile', jobId, campiErrore(err))
+      return { esito: 'interrotto', jobId, offsetByte: riga.offsetByte, codice: null }
+    }
+  }
+  if (!letti) {
     // IL GUASTO CHE SAREBBE MUTO: il browser ha sfrattato IndexedDB per fare
     // posto e si è portato via i Blob, lasciando i metadati. Senza questo ramo si
     // entrerebbe in tus con un `undefined` e si uscirebbe con un errore che la
@@ -374,6 +457,7 @@ async function eseguiCaricamentoVideo(
     })
     return { esito: 'fallito', jobId, codice: 'VIDEO_RIPROVA' }
   }
+  const byte: ByteVideo = letti
 
   // LA SESSIONE CHE NON SI RINNOVA. `intestazioni()` chiama il client Supabase e
   // può rigettare (rete giù, refresh token invalido). Lasciandola propagare,
@@ -426,6 +510,17 @@ async function eseguiCaricamentoVideo(
   }
 
   let staccaSegnale: () => void = () => {}
+  /**
+   * Una lettura LOCALE fallita (file vivo non più leggibile, deposito rotto o
+   * irraggiungibile) non si ripara riprovando subito la stessa sorgente: tus
+   * userebbe quattro `HEAD` per ottenere quattro volte lo stesso errore. Il file
+   * vivo si dimentica, così il prossimo tentativo legge il deposito salvato.
+   */
+  let letturaLocaleFallita = false
+  const lettore = new LettoreBlob(() => {
+    letturaLocaleFallita = true
+    if (viva) dimenticaSorgenteViva(dip.archivio, jobId)
+  })
 
   const fine = await new Promise<FineTus>((risolvi) => {
     // Le dichiarazioni TUS elencano solo le sorgenti del reader predefinito.
@@ -467,7 +562,10 @@ async function eseguiCaricamentoVideo(
       // Il lettore è nostro e si passa sempre: in `lettore-blob.ts` c'è la misura
       // che l'ha reso necessario (sotto vitest si risolve la build node di tus,
       // che un `Blob` non lo sa affettare).
-      fileReader: new LettoreBlob(),
+      fileReader: lettore,
+      onShouldRetry: (err, tentativo, opzioniTus) =>
+        !letturaLocaleFallita
+        && (defaultOptions.onShouldRetry ? defaultOptions.onShouldRetry(err, tentativo, opzioniTus) : true),
       // L'impronta è il `jobId`: deterministica, e senza il nome del file dentro.
       // Quella predefinita del browser userebbe `file.name`, che finirebbe nella
       // chiave del `localStorage` di tus — cioè un nome di bambino su disco.
@@ -534,6 +632,7 @@ async function eseguiCaricamentoVideo(
   }
 
   if (fine.fine === 'riuscito') {
+    dimenticaSorgenteViva(dip.archivio, jobId)
     await dip.archivio.aggiorna(jobId, {
       stato: 'caricato',
       offsetByte: byte.size,
@@ -555,6 +654,14 @@ async function eseguiCaricamentoVideo(
     return { esito: 'caricato', jobId, byteCaricati: byte.size }
   }
 
+  // tus avvolge in un `DetailedError` anche un errore del NOSTRO lettore: la causa
+  // vera sta in `causingError`, e senza di lei un deposito rotto e una rete caduta
+  // lascerebbero nei log la stessa riga.
+  const causa = (fine.err as { causingError?: unknown } | null | undefined)?.causingError
+  if (causa instanceof ErroreByteVideo) {
+    return chiudiPerByteLocali(dip, jobId, orologio(), offsetVisto, causa, durata)
+  }
+
   const stato = statoDiErrore(fine.err)
   const verdetto = classifica(stato)
   const campi: CampiLog = {
@@ -563,6 +670,8 @@ async function eseguiCaricamentoVideo(
     ms: durata,
     error_code: nomeErrore(fine.err),
   }
+  if (causa !== undefined && causa !== null) campi.causa = nomeErrore(causa)
+  if (letturaLocaleFallita) campi.lettura_locale = true
   if (stato !== null) campi.stato_http = stato
 
   if (verdetto.tipo === 'interrotto') {
@@ -576,6 +685,7 @@ async function eseguiCaricamentoVideo(
     return { esito: 'interrotto', jobId, offsetByte: offsetVisto, codice: verdetto.codice }
   }
 
+  dimenticaSorgenteViva(dip.archivio, jobId)
   await dip.archivio.aggiorna(jobId, {
     stato: 'fallito',
     offsetByte: offsetVisto,
@@ -585,6 +695,31 @@ async function eseguiCaricamentoVideo(
   await dip.archivio.eliminaByte(jobId)
   segnala('error', 'video-upload-fallito', jobId, campi)
   return { esito: 'fallito', jobId, codice: verdetto.codice }
+}
+
+/**
+ * I byte salvati sul dispositivo sono rotti (un blocco manca, il manifest non si
+ * legge): riprovare darebbe lo stesso errore a ogni apertura dell'app. Si chiude
+ * come fallito con `VIDEO_RIPROVA` — «riscegli il file» — e si libera il deposito.
+ */
+async function chiudiPerByteLocali(
+  dip: DipendenzeCaricamentoVideo,
+  jobId: string,
+  quando: Date,
+  offset: number,
+  err: ErroreByteVideo,
+  ms = 0,
+): Promise<EsitoCaricamentoVideo> {
+  dimenticaSorgenteViva(dip.archivio, jobId)
+  await dip.archivio.aggiorna(jobId, {
+    stato: 'fallito',
+    offsetByte: offset,
+    codice: 'VIDEO_RIPROVA',
+    aggiornatoIl: quando.toISOString(),
+  })
+  await dip.archivio.eliminaByte(jobId)
+  segnala('error', 'video-upload-byte-locali-rotti', jobId, { offset, ms, error_code: err.codice })
+  return { esito: 'fallito', jobId, codice: 'VIDEO_RIPROVA' }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -635,6 +770,7 @@ async function chiudiComeAnnullato(
   jobId: string,
   quando: Date,
 ): Promise<void> {
+  dimenticaSorgenteViva(dip.archivio, jobId)
   await dip.archivio.aggiorna(jobId, {
     stato: 'annullato',
     codice: null,
@@ -699,10 +835,22 @@ export async function potaArchivioCaricamenti(
   const orologio = dip.adesso ?? (() => new Date())
   const daPotare = caricamentiDaPotare(await dip.archivio.elenca(), orologio().getTime())
   for (const riga of daPotare) {
+    dimenticaSorgenteViva(dip.archivio, riga.jobId)
     await dip.archivio.elimina(riga.jobId)
   }
   if (daPotare.length > 0) {
     segnala('warn', 'video-upload-potatura', 'archivio', { righe: daPotare.length })
+  }
+  // I depositi che nessuna riga nomina: una copia interrotta dalla chiusura
+  // dell'app PRIMA che la riga fosse scritta. Un fallimento qui non ferma
+  // l'avvio della schermata: resta il log, e la prossima apertura riprova.
+  if (dip.archivio.potaDepositiOrfani) {
+    try {
+      const orfani = await dip.archivio.potaDepositiOrfani()
+      if (orfani > 0) segnala('warn', 'video-upload-potatura-orfani', 'archivio', { depositi: orfani })
+    } catch (err) {
+      segnala('warn', 'video-upload-potatura-orfani-fallita', 'archivio', campiErrore(err))
+    }
   }
   return daPotare.length
 }

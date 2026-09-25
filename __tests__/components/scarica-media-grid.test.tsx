@@ -180,9 +180,21 @@ describe('MediaGrid — lo scarico lato genitore', () => {
   it('con l’helper VERO sul web: UNA sola riga in `app_log`, successo compreso, coi campi dell’helper', async () => {
     // Il web vero di jsdom: `fetch` → `blob:` → ancora `download`.
     scaricaMediaMock.mockImplementation((input) => vero.scaricaMedia!(input) as Promise<{ esito: string }>)
-    const fetchMock = vi.fn(async () => new Response(new Blob(['x'], { type: 'image/jpeg' }), { status: 200 }))
+    // ⚠️ Il corpo è un Uint8Array, MAI un `new Blob(...)`: in jsdom il Blob non ha
+    // `stream()`, e `new Response(<Blob di jsdom>)` in Node 22 (la CI) lancia
+    // `object.stream is not a function` — l'helper finiva nel ripiego e l'ancora non
+    // partiva — mentre in Node 24 usciva il TESTO «[object Blob]» al posto della foto.
+    // Per questo sotto si asseriscono i BYTE e il tipo arrivati a `createObjectURL`.
+    const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
+    const fetchMock = vi.fn(async () => new Response(JPEG, {
+      status: 200,
+      headers: { 'content-type': 'image/jpeg' },
+    }))
     vi.stubGlobal('fetch', fetchMock)
-    const creaIndirizzo = vi.fn(() => 'blob:kidville/1')
+    const creaIndirizzo = vi.fn((oggetto: Blob) => {
+      void oggetto
+      return 'blob:kidville/1'
+    })
     const revoca = vi.fn()
     const originaleCrea = URL.createObjectURL
     const originaleRevoca = URL.revokeObjectURL
@@ -195,7 +207,15 @@ describe('MediaGrid — lo scarico lato genitore', () => {
       await waitFor(() => expect(logClientMock).toHaveBeenCalledTimes(1))
 
       expect(fetchMock).toHaveBeenCalledWith(URL_FIRMATO)
+      // Il file che l'ancora scarica è la FOTO: byte e tipo, non «[object Blob]».
+      expect(creaIndirizzo).toHaveBeenCalledTimes(1)
+      const file = creaIndirizzo.mock.calls[0][0]
+      expect(file.type).toBe('image/jpeg')
+      expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual(Array.from(JPEG))
       expect(clic).toHaveBeenCalledTimes(1)
+      const ancora = clic.mock.contexts[0] as HTMLAnchorElement
+      expect(ancora.getAttribute('href')).toBe('blob:kidville/1')
+      expect(ancora.download).toBe('Laboratorio dei colori.jpg')
       // ⚠️ NESSUN campo `route`: `logClient` la rotta se la legge da sé, e una
       // costante renderebbe indistinguibili le quattro superfici della galleria.
       expect(logClientMock).toHaveBeenCalledWith({

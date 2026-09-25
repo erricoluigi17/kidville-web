@@ -138,10 +138,19 @@ describe('salvaFattura', () => {
     expect(fetch).not.toHaveBeenCalled()
 
     // La sorgente legge la route in attachment, stessa origine e coi cookie.
-    const pdf = new Blob(['pdf'], { type: 'application/pdf' })
-    vi.mocked(fetch).mockResolvedValueOnce(new Response(pdf, { status: 200 }))
+    // ⚠️ Il corpo è un Uint8Array, MAI un `new Blob(...)`: in jsdom il Blob non ha
+    // `stream()`, e `new Response(<Blob di jsdom>)` in Node 22 (la CI) lancia
+    // `object.stream is not a function`, in Node 24 esce come il TESTO «[object Blob]».
+    // Si asseriscono i BYTE e il tipo: è l'unica verifica vera in entrambi.
+    const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]) // «%PDF-1.7»
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(PDF, {
+      status: 200,
+      headers: { 'content-type': 'application/pdf' },
+    }))
     const { sorgente } = h.scaricaDocumento.mock.calls[0]?.[0] as { sorgente: () => Promise<Blob> }
-    await expect(sorgente()).resolves.toBeInstanceOf(Blob)
+    const letto = await sorgente()
+    expect(letto.type).toBe('application/pdf')
+    expect(Array.from(new Uint8Array(await letto.arrayBuffer()))).toEqual(Array.from(PDF))
     const [url, opzioni] = vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe(`/api/pagamenti/fattura?pagamento_id=${PAGAMENTO}&userId=${UTENTE}&fattura_id=${FATTURA}&download=1`)
     expect(opzioni).toMatchObject({ credentials: 'same-origin' })

@@ -280,11 +280,11 @@ class ServerTusFinto implements HttpStack {
         return new RispostaFinta(409)
       }
 
-      // ⚠️ IL CORPO SI LEGGE DAVVERO. Quello che tus consegna qui è il `Blob`
-      // affettato dal nostro `LettoreBlob`; in jsdom un `Blob` non ha `stream()`,
-      // e un test che si accontentasse di guardarne la `size` passerebbe anche se
-      // fossero partiti i byte sbagliati.
-      const arrivati = new Uint8Array(await (corpo as Blob).arrayBuffer())
+      // Legge i byte davvero, come XHR: verificare solo size nasconderebbe un
+      // blocco sbagliato. Il reader consegna una view binaria anche su WebKit.
+      const arrivati = ArrayBuffer.isView(corpo)
+        ? new Uint8Array(corpo.buffer, corpo.byteOffset, corpo.byteLength)
+        : new Uint8Array(await (corpo as Blob).arrayBuffer())
 
       const accettati =
         this.interrompiLaProssimaPatchDopo != null

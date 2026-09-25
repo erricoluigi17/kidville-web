@@ -428,7 +428,10 @@ async function eseguiCaricamentoVideo(
   let staccaSegnale: () => void = () => {}
 
   const fine = await new Promise<FineTus>((risolvi) => {
-    const caricamento = new Upload(byte, {
+    // Le dichiarazioni TUS elencano solo le sorgenti del reader predefinito.
+    // Il nostro fileReader è l'unico a leggere questa sorgente lazy e non
+    // richiede che sia un Blob: espone size e lettura asincrona dell'intervallo.
+    const caricamento = new Upload(byte as Blob, {
       endpoint: riga.coordinate.endpoint,
       // È QUESTO CAMPO A RENDERE POSSIBILE LA RIPRESA. Con l'URL, tus manda una
       // `HEAD` e riparte dall'offset che il server ha contato; senza, crea una

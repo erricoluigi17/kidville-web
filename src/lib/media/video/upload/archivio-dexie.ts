@@ -1,7 +1,9 @@
-import Dexie, { type EntityTable } from 'dexie'
+import Dexie, { type EntityTable, type Table } from 'dexie'
 
 import type { ArchivioCaricamentiVideo } from './archivio'
 import type { CaricamentoVideoLocale } from './stato'
+import { BLOCCO_VIDEO_LOCALE, leggiBloccoBlob, type ByteVideo } from './byte-video'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 /**
  * L'ARCHIVIO SU INDEXEDDB — ciò che rende vero «chiudi l'app e ritrovi il lavoro».
@@ -10,7 +12,7 @@ import type { CaricamentoVideoLocale } from './stato'
  *
  * Dexie perché è già il meccanismo di persistenza del repo: `src/lib/offline/db.ts`
  * tiene in IndexedDB le code di scrittura della primaria, il diario, l'armadietto
- * e — già oggi — i media di galleria con il loro `file_blob: Blob`. Riusare la
+ * e i media di galleria con byte o Blob legacy. Riusare la
  * stessa libreria significa riusare anche le lezioni che sono costate: gli stati
  * di una riga in coda, il quarto stato che NON si ripesca, il fatto che un campo
  * nuovo non indicizzato non richiede una versione nuova.
@@ -18,7 +20,7 @@ import type { CaricamentoVideoLocale } from './stato'
  * Un database SUO, e non una v12 di `KidvilleOfflineDB`, per tre ragioni in ordine
  * di peso:
  *
- *  1. **Il peso.** Qui dentro finiscono Blob da un gigabyte. `KidvilleOfflineDB`
+ *  1. **Il peso.** Qui dentro finiscono originali da un gigabyte. `KidvilleOfflineDB`
  *     contiene la coda delle firme dei docenti: se la quota dell'origine si
  *     esaurisce, il browser può sfrattare il database INTERO, e uno sfratto
  *     causato da tre video si porterebbe via le firme del registro. Due database
@@ -36,7 +38,8 @@ import type { CaricamentoVideoLocale } from './stato'
  *
  * ─── DUE STORE, NON UNO ────────────────────────────────────────────────────
  *
- * `caricamenti` porta i metadati e basta; `byte` porta i Blob. `elenca()` deve
+ * `caricamenti` porta i metadati e basta; `byte` porta manifest e blocchi ArrayBuffer,
+ * oltre ai Blob legacy. `elenca()` deve
  * poter rispondere a «che cosa è rimasto a metà?» senza materializzare due
  * gigabyte: in un solo store, `toArray()` li leggerebbe tutti.
  */
@@ -64,14 +67,14 @@ export const VERSIONE_ARCHIVIO_VIDEO = 1
 
 export const NOME_ARCHIVIO_VIDEO = 'KidvilleVideoUploadDB'
 
-interface DepositoByte {
-  jobId: string
-  blob: Blob
-}
+type DepositoByte =
+  | { jobId: string; blob: Blob }
+  | { jobId: string; formato: 'blocchi-v1'; generazione: string; size: number; type: string }
+  | { jobId: string; buffer: ArrayBuffer }
 
 type DbCaricamenti = Dexie & {
   caricamenti: EntityTable<CaricamentoVideoLocale, 'jobId'>
-  byte: EntityTable<DepositoByte, 'jobId'>
+  byte: Table<DepositoByte, string>
 }
 
 /**
@@ -119,20 +122,79 @@ export class ArchivioCaricamentiDexie implements ArchivioCaricamentiVideo {
     // di byte senza la riga che lo nomina — cioè peso che nessuna potatura trova.
     await d.transaction('rw', d.caricamenti, d.byte, async () => {
       await d.caricamenti.delete(jobId)
-      await d.byte.delete(jobId)
+      await eliminaDeposito(d, jobId)
     })
   }
 
-  async leggiByte(jobId: string): Promise<Blob | undefined> {
-    const riga = await apri().byte.get(jobId)
-    return riga?.blob
+  async leggiByte(jobId: string): Promise<ByteVideo | undefined> {
+    const d = apri()
+    const riga = await d.byte.get(jobId)
+    if (!riga) return undefined
+    if ('blob' in riga) return riga.blob // Compatibilità con i depositi già installati.
+    if (!('formato' in riga) || riga.formato !== 'blocchi-v1') throw new Error('VIDEO_ARCHIVIO_NON_VALIDO')
+    return {
+      size: riga.size,
+      type: riga.type,
+      async leggiIntervallo(inizio, fine) {
+        if (!Number.isSafeInteger(inizio) || !Number.isSafeInteger(fine)
+          || inizio < 0 || fine < inizio || fine > riga.size || fine - inizio > BLOCCO_VIDEO_LOCALE) {
+          throw new Error('VIDEO_INTERVALLO_NON_VALIDO')
+        }
+        const risultato = new Uint8Array(fine - inizio)
+        // Si leggono al massimo due blocchi per un offset TUS non allineato.
+        for (let offset = inizio; offset < fine;) {
+          const indice = Math.floor(offset / BLOCCO_VIDEO_LOCALE)
+          const blocco = await d.byte.get(chiaveBlocco(jobId, riga.generazione, indice))
+          const attesi = Math.min(BLOCCO_VIDEO_LOCALE, riga.size - indice * BLOCCO_VIDEO_LOCALE)
+          if (!blocco || !('buffer' in blocco) || blocco.buffer.byteLength !== attesi) {
+            logClient({ livello: 'error', evento: 'offline', messaggio: 'video-upload-blocco-assente', campi: { job_id: jobId, indice } })
+            throw new Error('VIDEO_BLOCCO_INCOMPLETO')
+          }
+          const interno = offset % BLOCCO_VIDEO_LOCALE
+          const quanti = Math.min(fine - offset, attesi - interno)
+          risultato.set(new Uint8Array(blocco.buffer, interno, quanti), offset - inizio)
+          offset += quanti
+        }
+        return risultato
+      },
+    }
   }
 
   async scriviByte(jobId: string, byte: Blob): Promise<void> {
-    await apri().byte.put({ jobId, blob: byte })
+    const d = apri()
+    const generazione = crypto.randomUUID()
+    try {
+      // Manifest e blocchi appartengono alla STESSA transazione: quota esaurita,
+      // lettura fallita o chiusura dell'app annullano anche i blocchi parziali e
+      // preservano l'eventuale deposito precedente. waitFor tiene viva la TX
+      // durante la lettura asincrona della sola fetta (mai del file intero).
+      await d.transaction('rw', d.byte, async () => {
+        await eliminaDeposito(d, jobId)
+        for (let offset = 0; offset < byte.size; offset += BLOCCO_VIDEO_LOCALE) {
+          const fine = Math.min(offset + BLOCCO_VIDEO_LOCALE, byte.size)
+          const buffer = await Dexie.waitFor(leggiBloccoBlob(byte.slice(offset, fine)))
+          if (buffer.byteLength !== fine - offset) throw new Error('VIDEO_BLOCCO_INCOMPLETO')
+          await d.byte.put({ jobId: chiaveBlocco(jobId, generazione, offset / BLOCCO_VIDEO_LOCALE), buffer })
+        }
+        await d.byte.put({ jobId, formato: 'blocchi-v1', generazione, size: byte.size, type: byte.type })
+      })
+    } catch (err) {
+      logClient({ livello: 'error', evento: 'offline', messaggio: 'video-upload-persistenza-fallita', campi: { job_id: jobId, byte: byte.size, error_code: nomeErrore(err) } })
+      throw err
+    }
   }
 
   async eliminaByte(jobId: string): Promise<void> {
-    await apri().byte.delete(jobId)
+    const d = apri()
+    await d.transaction('rw', d.byte, () => eliminaDeposito(d, jobId))
   }
+}
+
+function chiaveBlocco(jobId: string, generazione: string, indice: number): string {
+  return `${jobId}:${generazione}:${indice}`
+}
+
+async function eliminaDeposito(d: DbCaricamenti, jobId: string): Promise<void> {
+  await d.byte.where(':id').startsWith(`${jobId}:`).delete()
+  await d.byte.delete(jobId)
 }

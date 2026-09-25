@@ -104,11 +104,20 @@ test(`foto docente → genitore e ripresa: ${interruzione}`, async ({ page, brow
   const genitore = await browser.newContext({ storageState: STORAGE.genitore, serviceWorkers: 'block' });
   const famiglia = await genitore.newPage();
   try {
+    // Attende la lettura reale della galleria: il DOM iniziale non significa
+    // che autenticazione, API e decodifica siano già concluse (soprattutto WebKit).
+    const lettura = famiglia.waitForResponse(response =>
+      response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/gallery',
+    );
     await famiglia.goto(`/parent/gallery?id=${IDS.A1}`);
+    const response = await lettura;
+    expect(response.ok()).toBe(true);
+    const data = await response.json() as { media: Array<{ id: string }> };
+    expect(data.media.filter(media => media.id === mediaId)).toHaveLength(1);
     const card = famiglia.getByRole('button', { name: `Foto: ${nome}`, exact: true });
-    await expect(card).toHaveCount(1);
+    await expect(card).toHaveCount(1, { timeout: 30_000 });
     await expect(card).toBeVisible();
-    await expect.poll(() => card.locator('img').evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await expect.poll(() => card.locator('img').evaluate(image => (image as HTMLImageElement).naturalWidth), { timeout: 30_000 }).toBeGreaterThan(0);
   } finally {
     await genitore.close();
   }

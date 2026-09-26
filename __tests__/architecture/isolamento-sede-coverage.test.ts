@@ -1306,7 +1306,9 @@ const AMMESSE: Record<string, string> = {
         'accodamento: OGNI voce passa da `assertPagamentoInScope` e dalla lettura dei pagamenti filtrata per `.in(\'scuola_id\', plessi)` PRIMA della RPC, e basta una voce fuori sede per rifiutare tutto il gesto. La RPC riceve quelle stesse voci e la sede la ricava lei da `pagamenti.scuola_id`, mai dal client. Il lock non vede il legame perché i 500 id arrivano alla RPC attraverso `voci.map(voceRpc)`, non come espressione verificata in linea',
     'pagamenti/fattura/coda/sospensione:POST':
         'sospensione della coda: la RPC non tocca nessuna voce, scrive la sola riga di stato `id=1`, che vale per TUTTE le sedi perché l\'utenza Aruba è una (decisione 6). Per questo la decide solo la Direzione: `requireStaff(request, [\'admin\'])`, 403 a chiunque altro. Dalla consegna 2c, dopo la RPC riuscita, la route chiama `spedisciAvvisiCoda` (`src/lib/fatture-coda/avvisi.ts`, fuori da questo audit), che legge la coda di TUTTE le sedi e avvisa gli admin e chi ha fatture in attesa: nei testi solo conteggi e orari, nessun dato di una voce',
-    'pagamenti/ticket:GET': 'saldo ticket mensa di UN alunno, il cui accesso è verificato prima (staff o genitore)',
+    // `pagamenti/ticket:GET` è uscita dall'elenco il 2026-09-26 (K5): la voce diceva «accesso
+    // verificato prima (staff o genitore)», ma per lo STAFF non era vero — nessun controllo di
+    // sede. Ora il ramo staff passa da `assertAlunnoInScope` e il lock la vede coperta da sé.
 
     // ── Pipeline video (2026-09-18) — emersa il 2026-09-23 ───────────────────
     // Non è una voce nuova per una rotta nuova: è un punto cieco della fotografia.
@@ -3035,7 +3037,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // della gemella `gdpr/retention-galleria`, per la stessa ragione (un termine di
             // custodia non ha confini di plesso) e scritta per esteso in AMMESSE: il lock la
             // vede solo da quando le query nominano `student_documents` in chiaro.
-            handlerEsentati: 114,
+            // 114 → 113 il 2026-09-26 (compito K5), ed è il verso buono: esce
+            // `pagamenti/ticket:GET`, che era esentata con «accesso verificato prima (staff o
+            // genitore)» — falso per lo STAFF, che leggeva il saldo di un bambino di qualunque
+            // plesso. Ora il ramo staff passa da `assertAlunnoInScope` e la voce era morta.
+            handlerEsentati: 113,
         })
     })
 })

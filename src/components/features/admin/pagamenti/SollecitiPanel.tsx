@@ -21,6 +21,8 @@ interface Pagamento {
     tipo: string;
     scadenza: string;
     ultimo_sollecito_il?: string | null;
+    /** Nome del plesso: la GET lo manda già (arricchimento lato route). */
+    scuola_nome?: string | null;
     alunni?: { nome?: string; cognome?: string } | null;
 }
 
@@ -33,7 +35,13 @@ interface EsitoSollecito {
     motivo?: string;
 }
 
-interface Props { userId: string; scuolaId: string }
+/**
+ * `scuolaId` è null quando le sedi selezionate sono più di una: la GET allora
+ * NON porta `scuola_id` (la route restringe già alle sedi attive dell'utente) e
+ * la sede si mostra su ogni riga e nell'anteprima. L'invio non cambia: la route
+ * dei solleciti ricava la sede dalla riga del pagamento.
+ */
+interface Props { userId: string; scuolaId: string | null }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 const MS_GIORNO = 86_400_000;
@@ -53,10 +61,17 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
     const [error, setError] = useState<string | null>(null);
 
     const oggi = new Date().toISOString().slice(0, 10);
+    // Più sedi selezionate → la sede va detta su ogni riga: un sollecito al plesso
+    // sbagliato è un'email a una famiglia che lì non deve niente.
+    const mostraSede = scuolaId == null;
+    const sedeDi = (p?: Pagamento) => p?.scuola_nome || t('soll_sede_ignota');
 
     const load = useCallback(async () => {
         try {
-            const r = await fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}&solo_aperti=true&scadenza_a=${oggi}`, { headers: hdr(userId) });
+            // Mai `scuola_id=null`/`undefined`: la route lo valida come uuid e risponde 400.
+            const qs = new URLSearchParams({ userId, solo_aperti: 'true', scadenza_a: oggi });
+            if (scuolaId) qs.set('scuola_id', scuolaId);
+            const r = await fetch(`/api/pagamenti?${qs.toString()}`, { headers: hdr(userId) });
             const j = await r.json();
             if (j?.success) {
                 const aperti = (j.data as Pagamento[])
@@ -153,6 +168,11 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                                         <span className="block truncate font-maven text-sm font-bold text-kidville-green">
                                             {p.alunni?.nome} {p.alunni?.cognome} · {p.descrizione}
                                         </span>
+                                        {mostraSede && (
+                                            <span className="block truncate font-maven text-[11px] font-bold text-kidville-ink">
+                                                {t('soll_sede')}: {sedeDi(p)}
+                                            </span>
+                                        )}
                                         <span className="block font-maven text-[11px] text-kidville-muted">
                                             {t('soll_scaduto_da')} {giorniRitardo(p)}{t('soll_gg_apri')}{dataIt(p.scadenza)}{t('soll_chiudi_ultimo')} {dataIt(p.ultimo_sollecito_il)}
                                         </span>
@@ -184,6 +204,11 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                             <p className="font-barlow text-sm font-black uppercase text-kidville-green">{t('soll_anteprima_banner')}</p>
                             {anteprime.map((e) => (
                                 <div key={e.pagamento_id} className="rounded-input bg-kidville-white p-3">
+                                    {mostraSede && (
+                                        <p className="font-maven text-[11px] font-bold text-kidville-ink">
+                                            {t('soll_sede')}: {sedeDi(rows.find((r) => r.id === e.pagamento_id))}
+                                        </p>
+                                    )}
                                     {e.ok ? (
                                         <>
                                             <p className="font-maven text-xs font-bold text-kidville-green">{t('soll_livello')} {e.livello} · {e.oggetto}</p>

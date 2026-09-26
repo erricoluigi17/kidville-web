@@ -36,7 +36,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const righe = () => h.righe[table] ?? []
       const b: Record<string, unknown> = {}
       const rec = (op: string) => (...args: unknown[]) => { h.filtri.push({ op: `${table}.${op}`, args }); return b }
-      b.select = rec('select'); b.order = rec('order'); b.eq = rec('eq')
+      b.select = rec('select'); b.order = rec('order'); b.eq = rec('eq'); b.range = rec('range')
       b.in = rec('in'); b.or = rec('or'); b.gte = rec('gte'); b.lte = rec('lte')
       b.maybeSingle = async () => ({ data: righe()[0] ?? null, error: null })
       b.then = (resolve: (v: unknown) => unknown) => resolve({ data: righe(), error: null })

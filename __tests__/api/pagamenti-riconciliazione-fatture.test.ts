@@ -27,7 +27,6 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))
 vi.mock('@/lib/auth/scope', () => ({
-  resolveScuolaScrittura: async () => ({ scuolaId: 'sc-1' }),
   resolveScuoleAttive: async () => ['sc-1'],
 }))
 vi.mock('@/lib/logging/logger', () => ({

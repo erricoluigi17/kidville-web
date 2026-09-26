@@ -214,6 +214,29 @@ export interface PagamentoApertoUi {
   importo_pagato: number
   tipo: string
   alunni?: { nome?: string | null; cognome?: string | null } | null
+  /**
+   * La sede del pagamento (P5b, 2026-09-26). Il GET li manda già tutti e due
+   * (`scuola_id` è nella select, `scuola_nome` lo aggiunge l'arricchimento). Con
+   * più sedi la ricerca manuale mescola le voci di tutti i plessi, e due «Retta
+   * Ottobre» dello stesso cognome possono stare a Giugliano e a Cesa.
+   * `scuola_nome: null` = il nome non è stato letto: si dice «senza nome», mai l'uuid.
+   */
+  scuola_id?: string | null
+  scuola_nome?: string | null
+}
+
+/**
+ * I pagamenti aperti vengono da PIÙ di una sede? Solo allora la label nomina la
+ * sede: con una sede sola sarebbe la stessa parola ripetuta su ogni riga. Una
+ * voce senza `scuola_id` non conta come «un'altra sede».
+ */
+export function apertiDiPiuSedi(aperti: readonly PagamentoApertoUi[]): boolean {
+  const sedi = new Set<string>()
+  for (const p of aperti) {
+    if (typeof p.scuola_id === 'string' && p.scuola_id !== '') sedi.add(p.scuola_id)
+    if (sedi.size > 1) return true
+  }
+  return false
 }
 
 /** Esito di un import CSV (POST /api/pagamenti/riconciliazione). */
@@ -329,11 +352,30 @@ const nomeAlunno = (p: PagamentoApertoUi) =>
 const residuoAperto = (p: PagamentoApertoUi) =>
   Math.max(0, Number(p.importo) - Number(p.importo_pagato || 0))
 
-/** Etichetta leggibile del pagamento aperto (ricerca manuale + suggerimenti senza label). */
-export function labelPagamentoAperto(p: PagamentoApertoUi): string {
+/**
+ * Etichetta leggibile del pagamento aperto (ricerca manuale + suggerimenti senza label).
+ *
+ * `sede: true` (P5b) mette il nome del plesso subito dopo il bambino — PRIMA della
+ * descrizione, non in coda: la riga del dialogo è `truncate`, e in coda la sede
+ * sarebbe la prima cosa a sparire su un telefono. I due ripieghi sono GIÀ
+ * TRADOTTI dal chiamante (questo file non ha `t`), e dicono due cose diverse:
+ *  - `senzaNome`: la sede C'È (`scuola_id` valorizzato) ma il nome non è stato letto;
+ *  - `senzaSede`: la voce NON ha una sede (`scuola_id` null o vuoto — la colonna è
+ *    nullable). Qui «senza nome» sarebbe falso; senza ripiego non si nomina nulla.
+ * Stesso criterio di `apertiDiPiuSedi`: senza `scuola_id` non c'è una sede.
+ */
+export function labelPagamentoAperto(
+  p: PagamentoApertoUi,
+  opzioni: { sede?: boolean; senzaNome?: string; senzaSede?: string } = {},
+): string {
   const nome = nomeAlunno(p) || '—'
   const desc = p.descrizione || '—'
-  return `${nome} · ${desc} (residuo ${formatEuro(residuoAperto(p))})`
+  let sede: string | null = null
+  if (opzioni.sede) {
+    const haSede = typeof p.scuola_id === 'string' && p.scuola_id !== ''
+    sede = haSede ? (p.scuola_nome || opzioni.senzaNome || '—') : (opzioni.senzaSede || null)
+  }
+  return `${nome}${sede ? ` · ${sede}` : ''} · ${desc} (residuo ${formatEuro(residuoAperto(p))})`
 }
 
 /** Testo minuscolo su cui filtra la ricerca manuale (nome alunno + descrizione). */

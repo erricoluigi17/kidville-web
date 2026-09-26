@@ -270,7 +270,15 @@ describe('GET /api/parent/presenze — assenze comunicate ancora annullabili', (
     const body = await res.json()
 
     expect(body.data.schoolType).toBe('infanzia')
-    expect(body.data.oggi).toEqual({ stato: null, orario_entrata: null, orario_uscita: null })
+    // A2 (26/09): `oggi` porta anche `assenza_oraria_giustificata` e `note_appello`
+    // — additivi, sempre presenti, spenti quando non c'è un appello di primaria.
+    expect(body.data.oggi).toEqual({
+      stato: null,
+      orario_entrata: null,
+      orario_uscita: null,
+      assenza_oraria_giustificata: false,
+      note_appello: null,
+    })
     // Nei 30 giorni cadono 'p-ieri' (ritardo, un fatto) e 'p-oggi' (assenza solo
     // ANNUNCIATA per il giorno corrente, che dal rilievo Q4 non si conta: era
     // `assenze: 1` con zero appelli fatti). Le assenze FUTURE non gonfiavano già
@@ -352,7 +360,15 @@ describe('GET /api/parent/presenze — assenze comunicate ancora annullabili', (
     // La modifica è additiva: la home continua a ricevere ciò che le serve.
     // `stato: null` è il contratto della rotta quando l'appello non c'è, e la
     // riga dell'11 è un annuncio del genitore (Q4).
-    expect(body.data.oggi).toEqual({ stato: null, orario_entrata: null, orario_uscita: null })
+    // A2 (26/09): `oggi` porta anche `assenza_oraria_giustificata` e `note_appello`
+    // — additivi, sempre presenti, spenti quando non c'è un appello di primaria.
+    expect(body.data.oggi).toEqual({
+      stato: null,
+      orario_entrata: null,
+      orario_uscita: null,
+      assenza_oraria_giustificata: false,
+      note_appello: null,
+    })
     expect(body.data.riepilogo).toMatchObject({ assenze: 0, ritardi: 1 })
   })
 

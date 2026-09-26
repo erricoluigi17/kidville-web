@@ -5,6 +5,7 @@ import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
 import {
   calcolaOreAssenza,
+  eStatoNonInClasse,
   giornataDaCampanelle,
   type PresenzaInput,
   type StatoPresenza,
@@ -118,9 +119,14 @@ export const GET = withRoute('parent/presenze:GET', async (request: NextRequest)
       // soltanto ANNUNCIATA dal genitore usciva come `stato: 'assente'` —
       // contraddicendo il contratto dichiarato in cima a questa rotta e il
       // messaggio neutro di `PresenzeTodayCard`.
+      //
+      // `assenza_oraria_giustificata` e `note_appello` (A2, 26/09) servono alla
+      // card della home per dire «Ritardo giustificato: terapia». La nota esce
+      // SOLO sulla primaria e solo per assente/ritardo/uscita (vedi
+      // `notaVisibileOggi` più sotto).
       supabase
         .from('presenze')
-        .select(`stato, orario_entrata, orario_uscita, ${COLONNE_SORGENTE}`)
+        .select(`stato, orario_entrata, orario_uscita, assenza_oraria_giustificata, note_appello, ${COLONNE_SORGENTE}`)
         .eq('alunno_id', studentId)
         .eq('data', oggiData)
         .maybeSingle(),
@@ -131,7 +137,9 @@ export const GET = withRoute('parent/presenze:GET', async (request: NextRequest)
       limitaAiFatti(
         supabase
           .from('presenze')
-          .select('stato, orario_entrata, orario_uscita, data')
+          // `assenza_oraria_giustificata` (A2): le ore giustificate non pesano
+          // nel monte ore della primaria. Il testo della nota qui non serve.
+          .select('stato, orario_entrata, orario_uscita, data, assenza_oraria_giustificata')
           .eq('alunno_id', studentId)
           .gte('data', from),
         'data',
@@ -224,7 +232,10 @@ export const GET = withRoute('parent/presenze:GET', async (request: NextRequest)
       stato: string
       orario_entrata: string | null
       orario_uscita: string | null
+      assenza_oraria_giustificata?: boolean | null
     }[]
+    // I CONTEGGI non guardano il flag, di proposito: un ritardo giustificato
+    // resta un ritardo (l'alunno non era in classe). Cambiano solo le ORE.
     const conteggi = { presenze: 0, assenze: 0, ritardi: 0, uscite: 0 }
     for (const r of rows) {
       if (r.stato === 'presente') conteggi.presenze++
@@ -256,9 +267,22 @@ export const GET = withRoute('parent/presenze:GET', async (request: NextRequest)
         stato: r.stato as StatoPresenza,
         orario_entrata: r.orario_entrata,
         orario_uscita: r.orario_uscita,
+        assenza_oraria_giustificata: r.assenza_oraria_giustificata === true,
       }))
       riepilogo.ore = calcolaOreAssenza(presenzeInput, giornata)
     }
+
+    // Un annuncio del genitore non è l'appello (Q4): niente stato, niente nota.
+    const soloAnnunciataOggi = eAssenzaSoloAnnunciata({ ...oggiRow, data: oggiData }, oggiData)
+    // Flag e nota escono solo sulla primaria, su una riga dell'APPELLO (non un
+    // annuncio) e solo se l'alunno non era in classe: sono gli stessi stati di
+    // cui `parent/primaria/assenze` mostra già la nota. Una nota su una riga
+    // `presente` al genitore non è mai arrivata, e non arriva nemmeno da qui.
+    const notaVisibileOggi =
+      schoolType === 'primaria' &&
+      oggiRow != null &&
+      !soloAnnunciataOggi &&
+      eStatoNonInClasse(oggiRow.stato)
 
     return NextResponse.json({
       success: true,
@@ -282,11 +306,28 @@ export const GET = withRoute('parent/presenze:GET', async (request: NextRequest)
           // R15 l'annuncio ha una scadenza che si valuta proprio su quella. Senza
           // dichiararlo si ricadrebbe sul ramo prudente della funzione — stesso
           // risultato oggi, ma per caso invece che per costruzione.
-          stato: (eAssenzaSoloAnnunciata({ ...oggiRow, data: oggiData }, oggiData)
-            ? null
-            : oggiRow?.stato ?? null) as StatoPresenza | null,
+          stato: (soloAnnunciataOggi ? null : oggiRow?.stato ?? null) as StatoPresenza | null,
           orario_entrata: oggiRow?.orario_entrata ?? null,
           orario_uscita: oggiRow?.orario_uscita ?? null,
+          /**
+           * A2 (26/09) — ritardo/uscita GIUSTIFICATI (es. terapia): lo stato
+           * resta quello vero, ma le ore non contano. Sempre presente (`false`
+           * quando non c'è riga, quando è un semplice annuncio, quando lo stato
+           * è `presente` o fuori dalla primaria): la forma non cambia fra un
+           * caso e l'altro.
+           */
+          assenza_oraria_giustificata: notaVisibileOggi && oggiRow?.assenza_oraria_giustificata === true,
+          /**
+           * La nota del docente sull'appello di oggi (es. «terapia»). Esce SOLO
+           * sulla primaria e solo per `assente`/`ritardo`/`uscita_anticipata`
+           * (`STATI_NON_IN_CLASSE`), cioè esattamente le righe di cui il
+           * genitore legge già la nota in `parent/primaria/assenze`. Su nido e
+           * infanzia `note_appello` è la nota INTERNA del docente (vedi
+           * `attendance/daily`), e su una riga `presente` della primaria non è
+           * mai stata mostrata: aprirla qui sarebbe una divulgazione nuova.
+           * Testo libero: non entra in nessun log.
+           */
+          note_appello: notaVisibileOggi ? (oggiRow?.note_appello ?? null) : null,
         },
         riepilogo,
         comunicate,

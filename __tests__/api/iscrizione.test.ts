@@ -56,6 +56,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { POST } from '@/app/api/iscrizione/route'
 import { MSG_CODICE_FISCALE_NON_VALIDO } from '@/lib/forms/validate-fields'
+import { CHILD_FIELDS, ADULT_FIELDS } from '@/lib/forms/enrollment-template'
+import { validaCodiceFiscale } from '@/lib/fiscale/validazione'
 
 const req = (body: unknown) =>
   new Request('http://localhost/api/iscrizione', {
@@ -211,5 +213,68 @@ describe('POST /api/iscrizione — il carattere di controllo del codice fiscale'
     } }))
     expect(res.status).toBe(201)
     expect(h.inserts).toHaveLength(1)
+  })
+})
+
+/**
+ * L'OMOCODICO, SUL SERVER, CON I CAMPI VERI DEL MODULO (2026-09-26).
+ *
+ * Il blocco sopra usa campi SENZA pattern. Qui il modello porta i campi codice fiscale
+ * di `CHILD_FIELDS` e `ADULT_FIELDS` così come sono, pattern compreso: è la forma che
+ * il modello standard ha in `form_models` dopo la migrazione `20260926100200`. Prima
+ * di oggi il pattern respingeva l'omocodico con un 400 e la famiglia non poteva inviare.
+ *
+ * `XQQYKV19CLTZVVVR` è costruito da un codice di nessuno (`Z999` non è un luogo):
+ * cifre del giorno e del catastale sostituite con le lettere d'omocodia, carattere di
+ * controllo ricalcolato. `…VVVS` è lo stesso con il controllo sbagliato.
+ */
+describe('POST /api/iscrizione — codice fiscale OMOCODICO con i campi del template', () => {
+  const CF_OMOCODICO = 'XQQYKV19CLTZVVVR'
+  const CF_OMOCODICO_SBAGLIATO = 'XQQYKV19CLTZVVVS'
+  const cfBambino = CHILD_FIELDS.find((c) => c.id === 'codice_fiscale')!
+  const cfAdulto = ADULT_FIELDS.find((c) => c.id === 'fiscal_code')!
+  const modelloTemplate = {
+    schema: {
+      version: '1',
+      pages: [
+        { id: 'bambino', title: 'B', fields: [{ id: 'nome', type: 'text', label: 'Nome', required: true }, cfBambino] },
+        { id: 'adulto', title: 'A', fields: [cfAdulto] },
+      ],
+    },
+  }
+
+  it('i codici di prova sono quello che dicono, e i campi portano davvero un pattern', () => {
+    expect(validaCodiceFiscale(CF_OMOCODICO)).toMatchObject({ valido: true, omocodia: true })
+    expect(validaCodiceFiscale(CF_OMOCODICO_SBAGLIATO).motivi).toEqual(['checksum'])
+    expect(cfBambino.validation?.pattern).toBeTruthy()
+    expect(cfAdulto.validation?.pattern).toBeTruthy()
+  })
+
+  it('omocodico con controllo giusto → 201, e il codice è archiviato così com’è', async () => {
+    h.model = modelloTemplate
+    const res = await POST(req({ data: { presa_visione_informativa: true,
+      children: [{ nome: 'Prova', codice_fiscale: CF_OMOCODICO }],
+      adults: [{ fiscal_code: CF_OMOCODICO }],
+    } }))
+    expect(res.status).toBe(201)
+    expect(h.inserts).toHaveLength(1)
+    const saved = h.inserts[0].data as { children: Array<Record<string, unknown>>; adults: Array<Record<string, unknown>> }
+    expect(saved.children[0].codice_fiscale).toBe(CF_OMOCODICO)
+    expect(saved.adults[0].fiscal_code).toBe(CF_OMOCODICO)
+  })
+
+  it('omocodico con controllo sbagliato → 400 per il CONTROLLO (non per la forma), nessun insert', async () => {
+    h.model = modelloTemplate
+    const res = await POST(req({ data: { presa_visione_informativa: true,
+      children: [{ nome: 'Prova', codice_fiscale: CF_OMOCODICO_SBAGLIATO }],
+      adults: [{ fiscal_code: CF_OMOCODICO_SBAGLIATO }],
+    } }))
+    expect(res.status).toBe(400)
+    expect(h.inserts).toHaveLength(0)
+    const json = await res.json() as {
+      campi: { children?: Record<string, Record<string, string>>; adults?: Record<string, Record<string, string>> }
+    }
+    expect(json.campi.children?.['0']).toEqual({ codice_fiscale: MSG_CODICE_FISCALE_NON_VALIDO })
+    expect(json.campi.adults?.['0']).toEqual({ fiscal_code: MSG_CODICE_FISCALE_NON_VALIDO })
   })
 })

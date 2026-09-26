@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
-import { SEDE_A, SEDE_B, SEDE_C } from '../fixtures/sedi'
+import { SEDE_A, SEDE_B, SEDE_C, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
 import type { DBFinto } from '../fixtures/finto-supabase'
 
 // =============================================================================
@@ -73,6 +73,10 @@ const dbCon = (figli: { id: string; sede: string | null }[]): DBFinto => ({
   alunni: figli.map((f) => ({ id: f.id, nome: 'Figlio', cognome: 'Rossi', scuola_id: f.sede })),
   ticket_mensa: [],
   pagamenti: [],
+  scuole: [
+    { id: SEDE_A, nome: NOME_SEDE_A },
+    { id: SEDE_B, nome: NOME_SEDE_B },
+  ],
 })
 
 beforeEach(() => {
@@ -113,6 +117,8 @@ describe('GET /api/pagamenti/famiglia — il genitore passa dal gate di sede', (
     expect(res.status).toBe(200)
     const j = await res.json()
     expect(j.data.figli.map((f: { id: string }) => f.id)).toEqual([ALU_A])
+    // La sede del figlio viaggia col figlio (K4): quella in scope, col suo nome.
+    expect(j.data.figli[0]).toMatchObject({ scuola_id: SEDE_A, scuola_nome: NOME_SEDE_A })
   })
 
   it('figlio senza sede: NON passa il filtro (una riga senza plesso non è di nessuno)', async () => {

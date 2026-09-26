@@ -31,7 +31,10 @@ vi.mock('@/lib/auth/require-staff', () => ({
     return Promise.resolve({ user: { id: 'u1', role: h.role, scuola_id: SC } })
   },
 }))
-vi.mock('@/lib/auth/scope', () => ({
+// La GET, dal 2026-09-26 (K3), legge le sedi attive e le restringe con la
+// `restringiSedi` VERA (lettura unita: lettura-multisede.test.ts).
+vi.mock('@/lib/auth/scope', async (importActual) => ({
+  restringiSedi: (await importActual<typeof import('@/lib/auth/scope')>()).restringiSedi,
   resolveScuolaScrittura: (...a: unknown[]) => h.scuola(...a),
   resolveScuoleAttive: (...a: unknown[]) => h.scuoleAttive(...a),
 }))
@@ -42,9 +45,12 @@ vi.mock('@/lib/logging/logger', () => ({
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
-    from: () => {
+    from: (table: string) => {
       const b: Record<string, unknown> & { _op?: string } = {}
+      // `schools` = nomi delle sedi (K3): elenco vuoto, non la lista delle categorie.
+      if (table === 'schools') b._op = 'schools'
       b.select = () => b
+      b.in = () => b
       b.or = () => b
       b.is = () => b
       b.order = () => b
@@ -55,7 +61,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.maybeSingle = async () => ({ data: h.cat, error: null })
       b.single = async () => (b._op === 'insert' ? h.insert : h.update)
       b.then = (resolve: (v: unknown) => unknown) =>
-        resolve(b._op === 'delete' ? h.del : h.list)
+        resolve(b._op === 'delete' ? h.del : b._op === 'schools' ? { data: [], error: null } : h.list)
       return b
     },
   }),

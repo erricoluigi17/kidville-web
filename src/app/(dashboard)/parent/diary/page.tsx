@@ -15,6 +15,7 @@ import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
 import { voceDaMostrare } from '@/lib/diary/registrazione';
+import { orarioAttivita, oraDiLatoAttivita } from '@/lib/diary/attivita';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 import { oraDiRoma } from '@/lib/presenze/orario';
@@ -73,6 +74,26 @@ function formatOrarioEntrata(raw: string | null | undefined): string | null {
     return oraDiRoma(raw);
 }
 
+/**
+ * Gli stati dell'appello in cui il bambino È arrivato a scuola (contratto A1 di
+ * `GET /api/diary/checkin`): la card «Entrata» compare anche senza orario.
+ */
+const STATI_ARRIVATO: ReadonlySet<unknown> = new Set(['presente', 'ritardo', 'uscita_anticipata']);
+
+/**
+ * D3 (2026-09-26): l'orario PROPRIO di un'attività, come lo legge il genitore —
+ * «dalle 10:00 alle 11:00», «dalle 10:00» (solo inizio), «fino alle 11:00» (solo
+ * fine), stringa vuota se non c'è. La normalizzazione è quella del contratto D1
+ * (`orarioAttivita`): un valore vuoto o fuori formato non viene «aggiustato», sparisce.
+ */
+function fraseOrarioAttivita(voce: unknown, t: Traduci): string {
+    const { inizio, fine } = orarioAttivita(voce);
+    if (inizio && fine) return t('attivitaOrarioDalleAlle', { inizio, fine });
+    if (inizio) return t('attivitaOrarioDalle', { inizio });
+    if (fine) return t('attivitaOrarioFinoAlle', { fine });
+    return '';
+}
+
 // `locale` non serve più: l'unica cosa che lo usava era la formattazione dell'ora
 // d'ingresso, che ora passa dal motore condiviso e rende `HH:MM` in entrambe le lingue.
 function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null, t: Traduci): { lines: string[], emoji: string } {
@@ -94,6 +115,7 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
 
         const rawActivities = dettagli?.activities as Array<{
             tipo: string; descrizione: string; partecipazione?: string | null;
+            ora_inizio?: string | null; ora_fine?: string | null;
         }> | undefined;
 
         if (rawActivities && rawActivities.length > 0) {
@@ -107,7 +129,8 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
                     ? t(`partecipazione_${a.partecipazione}`)
                     : '';
                 const descPart = a.descrizione ? `: ${a.descrizione}` : '';
-                return `${emoji} ${t('attivitaHoFatto', { label })}${descPart}${partPhrase ? ' ' + partPhrase : ''}`;
+                const orario = fraseOrarioAttivita(a, t);
+                return `${emoji} ${t('attivitaHoFatto', { label })}${orario ? ' ' + orario : ''}${descPart}${partPhrase ? ' ' + partPhrase : ''}`;
             });
             const firstEmoji = ACTIVITY_EMOJIS[rawActivities[0].tipo] ?? '🎨';
             return { emoji: rawActivities.length > 1 ? '🎭' : firstEmoji, lines };
@@ -198,6 +221,19 @@ function formatTime(iso: string, locale: string): string {
     return intlDateTime(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }
 
+/**
+ * Una voce per tipo (l'ultima SALVATA) e l'ordine canonico della giornata.
+ *
+ * D3 (2026-09-26), l'ora di lato dell'attività ora può essere l'inizio della prima
+ * attività invece del salvataggio. Qui volutamente non cambia niente:
+ * - l'ordine della timeline non è mai stato cronologico ma per TIPO (`EVENT_ORDER`:
+ *   entrata, merenda, attività, pranzo, nanna, bagno), quindi non dipende dall'ora
+ *   mostrata né prima né adesso: riordinare per ora sarebbe un cambio di
+ *   comportamento che il titolare non ha chiesto;
+ * - la deduplica DEVE restare sull'ora del salvataggio: la correzione di una
+ *   maestra (salvata dopo, magari con l'attività spostata prima) deve vincere sulla
+ *   registrazione vecchia. Usare l'ora mostrata farebbe perdere la correzione.
+ */
 function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
     const latest = new Map<string, DiaryEntry>();
     entries.forEach(e => {
@@ -222,6 +258,11 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
         t,
     );
     const borderColor = config.accentColor.split(' ').find(c => c.startsWith('border-')) ?? 'border-kidville-line';
+    // D3 (2026-09-26): a lato della voce «attività» va l'ora di inizio della PRIMA
+    // attività (contratto D1, `oraDiLatoAttivita`); se non c'è, l'ora del
+    // salvataggio come per tutte le altre voci.
+    const oraDiLato = (entry.tipo_evento === 'attivita' ? oraDiLatoAttivita(entry.dettagli, entry.timestamp_evento) : null)
+        ?? formatTime(entry.timestamp_evento, f.locale);
 
     return (
         <motion.div
@@ -240,7 +281,7 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
                         {eventLabel(entry.tipo_evento)}
                     </p>
                     <p className="font-maven text-[11px] text-kidville-muted">
-                        {formatTime(entry.timestamp_evento, f.locale)}
+                        {oraDiLato}
                     </p>
                 </div>
                 <span className="text-2xl">{emoji}</span>
@@ -363,7 +404,11 @@ function ParentDiaryContent() {
     const [studentName, setStudentName] = useState<string | null>(null);
     const [classe, setClasse] = useState<string | null>(null);
     // "Entrata" letta dal modulo Presenze (read-only, DL-040).
+    // A1 (2026-09-26): l'ARRIVO e l'ORARIO sono due cose distinte. `arrivato` accende la
+    // card «Entrata» (presente, ritardo, uscita anticipata); `checkIn` è l'ora, che la
+    // route manda SOLO sul ritardo — ai presenti il genitore non vede l'ora del tocco.
     const [checkIn, setCheckIn] = useState<string | null>(null);
+    const [arrivato, setArrivato] = useState(false);
 
     const goDay = (delta: number) => {
         setDirection(delta as 1 | -1);
@@ -401,7 +446,25 @@ function ParentDiaryContent() {
             // "Entrata" dal modulo Presenze (orario di check-in del giorno)
             const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
             const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
-            setCheckIn(formatOrarioEntrata(ci?.orario_entrata));
+            const orarioRisposta = formatOrarioEntrata(ci?.orario_entrata);
+            // D3: l'ora d'ingresso si mostra SOLO sul ritardo (è l'ora del docente).
+            // La route la manda già solo lì, ma la pagina non si regge sul server.
+            // Si distingue il campo MANCANTE dal campo NULLO:
+            //  - proprietà `stato` assente = risposta di un server precedente al
+            //    2026-09-26, che mandava solo l'orario: l'orario vale come arrivo e
+            //    si mostra, come prima;
+            //  - `stato` presente (anche `null`, appello non fatto) = server nuovo:
+            //    l'arrivo lo decide lo stato e l'ora si mostra solo sul ritardo. Un
+            //    orario rimasto su un presente, un assente o uno stato nullo (route
+            //    regredita, riga passata da presente ad assente) non si vede.
+            const serverPrecedente = !(ci && typeof ci === 'object' && 'stato' in ci);
+            const statoRisposta: unknown = serverPrecedente ? undefined : ci.stato;
+            const arrivatoRisposta = serverPrecedente
+                ? Boolean(orarioRisposta)
+                : STATI_ARRIVATO.has(statoRisposta);
+            const mostraOrario = serverPrecedente || statoRisposta === 'ritardo';
+            setCheckIn(mostraOrario ? orarioRisposta : null);
+            setArrivato(arrivatoRisposta);
 
             // Carica foto reali associate a questo alunno per il giorno selezionato
             // (GET gated: identità anche via header, oltre alla sessione)
@@ -577,7 +640,7 @@ function ParentDiaryContent() {
                     )}
 
                     {/* Stato vuoto (nessuna voce e nessuna entrata registrata) */}
-                    {!loading && entries.length === 0 && !checkIn && (
+                    {!loading && entries.length === 0 && !arrivato && (
                         <div className="flex flex-col items-center justify-center py-20 text-center">
                             <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
                                 📖
@@ -592,7 +655,7 @@ function ParentDiaryContent() {
                     )}
 
                     {/* Timeline eventi (con "Entrata" in cima, letta dalle Presenze) */}
-                    {!loading && (checkIn || entries.length > 0) && (
+                    {!loading && (arrivato || entries.length > 0) && (
                         <div className="space-y-3">
                             {/* Banner umore (DR mood banner, M5.4): legge l'evento 'umore' più
                                 recente del giorno (dettagli.umore); senza evento resta il testo
@@ -612,7 +675,7 @@ function ParentDiaryContent() {
                                     </p>
                                 </div>
                             </div>
-                            {checkIn && (
+                            {arrivato && (
                                 <motion.div
                                     initial={{ opacity: 0, y: 14 }}
                                     animate={{ opacity: 1, y: 0 }}
@@ -625,17 +688,21 @@ function ParentDiaryContent() {
                                         </div>
                                         <div className="flex-1">
                                             <p className="font-barlow font-black text-sm uppercase tracking-wide text-kidville-success">{t('entrataLabel')}</p>
-                                            <p className="font-maven text-[11px] text-kidville-muted">{checkIn}</p>
+                                            {checkIn && (
+                                                <p className="font-maven text-[11px] text-kidville-muted">{checkIn}</p>
+                                            )}
                                         </div>
                                         <span className="text-2xl">👋</span>
                                     </div>
                                     <p className="font-maven text-sm text-kidville-ink leading-relaxed pl-1 mt-2">
-                                        {t('narrativaEntrataAlle', { orario: checkIn })}
+                                        {checkIn
+                                            ? t('narrativaEntrataAlle', { orario: checkIn })
+                                            : t('narrativaEntrataSenzaOrario')}
                                     </p>
                                 </motion.div>
                             )}
                             {timelineEntries.map((entry, i) => (
-                                <EventCard key={entry.id} entry={entry} index={i + (checkIn ? 1 : 0)} />
+                                <EventCard key={entry.id} entry={entry} index={i + (arrivato ? 1 : 0)} />
                             ))}
                             {/* Foto reali della giornata */}
                             <PhotosSection photos={photos} />

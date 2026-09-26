@@ -11,8 +11,16 @@
 // Solo admin (server-confirmed via `totali`): StatCard KPI, «Svuota cassa»,
 // report, storico svuotamenti, categorie e impostazioni.
 // Solo token `kidville-*`; importi con formatEuro.
+//
+// Multi-sede (P4a, contratti K3 e P4b). `scuolaId` è null quando le sedi
+// selezionate sono più d'una: allora le GET NON portano `scuola_id` (mai
+// `scuola_id=null` nell'URL) e il server legge tutte le sedi attive. La lettura è
+// unita, ma ogni sede resta un cassetto a sé: saldo, fondo, uscite del mese e
+// ultimo svuotamento si mostrano PER SEDE più il totale, e movimenti e storico
+// portano la colonna Sede. Le scritture restano di una sede sola: le finestre
+// ricevono le sedi effettive e fanno scegliere la sede al loro interno.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Wallet, TrendingDown, TrendingUp, Coins, CalendarDays, ArrowDownCircle, RotateCcw, Paperclip } from 'lucide-react';
@@ -23,12 +31,14 @@ import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
+import { useSediAttive } from '@/lib/context/sede-context';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import { CassaMovimentoModal } from './CassaMovimentoModal';
 import { CassaChiusuraModal } from './CassaChiusuraModal';
 import { CassaReport } from './CassaReport';
 import { CassaCategorieManager } from './CassaCategorieManager';
 import { CassaImpostazioni } from './CassaImpostazioni';
+import type { SedeCassa } from './CassaSede';
 import { metodoLabel } from '@/lib/cassa/tipi';
 import type { RigaMovimentoCassa, SaldoCassa, CassaChiusura, EntratoOggiVoce } from '@/lib/cassa/tipi';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
@@ -37,8 +47,29 @@ import { AvvisoDocumentoNativo, useDocumentoNativo } from './LinkDocumento';
 
 interface Props {
   userId: string;
-  scuolaId: string;
+  /** La sede della pagina, o null quando le sedi selezionate sono più d'una. */
+  scuolaId: string | null;
 }
+
+/** Una riga della GET movimenti: dal K3 porta anche il nome della sede. */
+type RigaMovimento = RigaMovimentoCassa & { scuola_nome?: string | null };
+/** Uno svuotamento della GET chiusura, col nome della sede (K3 §3). */
+type RigaChiusura = CassaChiusura & { scuola_nome?: string | null };
+
+/**
+ * «Uscite del mese» calcolate dal SERVER sul mese corrente (Europe/Rome), con
+ * qualunque metodo e ignorando i filtri (K3 §1). `null` = lettura fallita.
+ */
+interface UsciteMese {
+  da: string;
+  a: string;
+  totale: number;
+  per_sede?: { scuola_id: string; scuola_nome: string | null; totale: number }[];
+}
+
+/** Il saldo di UNA sede, col suo fondo (K3 §2). */
+type SaldoDiSede = { scuola_id: string; scuola_nome: string | null } & (SaldoCassa | { disponibile: false });
+type RispostaSaldo = (SaldoCassa | { disponibile: false }) & { per_sede?: SaldoDiSede[] };
 
 /** Totali della GET movimenti — presenti SOLO per l'admin (server decide). */
 interface TotaliCassa {
@@ -105,12 +136,31 @@ export function CassaPanel({ userId, scuolaId }: Props) {
   const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
   const { ruolo } = useAdminIdentity();
   const isAdmin = ruolo === 'admin'; // cosmetico: il gate vero è `mostraKpi` (server)
+  const { sedi: sediCockpit, effettive } = useSediAttive();
+  const piuSedi = scuolaId == null;
+
+  // Le sedi su cui si SCRIVE, per le finestre (P4b), come `FiscalePanel` fa con la
+  // revisione fatture: con una sede la pagina l'ha già scelta; con più sedi sono le
+  // sedi effettive del cockpit, e la finestra fa scegliere.
+  const sediCassa: SedeCassa[] = useMemo(() => {
+    if (scuolaId) return [{ id: scuolaId, nome: sediCockpit.find((s) => s.id === scuolaId)?.nome ?? '' }];
+    return sediCockpit.filter((s) => effettive.includes(s.id)).map((s) => ({ id: s.id, nome: s.nome }));
+  }, [scuolaId, sediCockpit, effettive]);
 
   const [disponibile, setDisponibile] = useState<boolean | null>(null);
-  const [movimenti, setMovimenti] = useState<RigaMovimentoCassa[]>([]);
+  const [movimenti, setMovimenti] = useState<RigaMovimento[]>([]);
   const [totali, setTotali] = useState<TotaliCassa | null>(null);
+  const [usciteMese, setUsciteMese] = useState<UsciteMese | null>(null);
+  // `saldo` = le SOMME, solo quando tutte le sedi lette sono disponibili (K3 §2).
   const [saldo, setSaldo] = useState<SaldoCassa | null>(null);
-  const [chiusure, setChiusure] = useState<CassaChiusura[]>([]);
+  const [saldoPerSede, setSaldoPerSede] = useState<SaldoDiSede[]>([]);
+  // Saldo NON letto (GET rifiutata o rete caduta) ≠ saldo non disponibile: nel primo
+  // caso la pagina dice che la lettura è fallita, nel secondo che il dato non c'è.
+  const [saldoLetto, setSaldoLetto] = useState(false);
+  const [chiusure, setChiusure] = useState<RigaChiusura[]>([]);
+  // Svuotamenti NON letti ≠ «mai svuotata»: con la GET rifiutata o la rete caduta non
+  // si sa niente. Si parte da `false`: «letti» lo dice solo una risposta arrivata.
+  const [chiusureLette, setChiusureLette] = useState(false);
   const [errore, setErrore] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -128,30 +178,68 @@ export function CassaPanel({ userId, scuolaId }: Props) {
 
   useEffect(() => {
     let active = true;
+    // Con più sedi nessun `scuola_id`: la route legge le sedi attive dell'utente (K3).
+    const sedeQ = scuolaId ? `&scuola_id=${encodeURIComponent(scuolaId)}` : '';
+    const rifiutata = (messaggio: string, stato: number) =>
+      logClient({ livello: 'error', evento: 'fetch', messaggio, route: '/admin/pagamenti', stato });
+    /**
+     * Una lettura secondaria (saldo, svuotamenti) che non deve trascinare con sé le
+     * altre: un rifiuto HTTP logga `<nome>-lettura-rifiutata` con lo stato, una rete
+     * caduta (o un corpo illeggibile) `<nome>-caricamento-fallito` con stato 0. In
+     * entrambi i casi `null` = «non letto», mai un elenco vuoto.
+     */
+    const leggi = async <T,>(url: string, nome: string): Promise<T | null> => {
+      try {
+        const r = await fetch(url, { headers: hdr(userId) });
+        if (!r.ok) { rifiutata(`${nome}-lettura-rifiutata`, r.status); return null; }
+        return (await r.json()) as T;
+      } catch (err) {
+        rifiutata(`${nome}-caricamento-fallito: ${nomeErrore(err)}`, 0);
+        return null;
+      }
+    };
     (async () => {
       try {
-        const rMov = await fetch(`/api/pagamenti/cassa/movimenti?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) });
-        const jMov = (await rMov.json()) as { disponibile?: boolean; movimenti?: RigaMovimentoCassa[]; totali?: TotaliCassa };
+        const rMov = await fetch(`/api/pagamenti/cassa/movimenti?userId=${userId}${sedeQ}`, { headers: hdr(userId) });
+        if (!rMov.ok) {
+          // Un 403 `SEDE_NON_ACCESSIBILE` (o un 500) non è «nessun movimento»: prima il
+          // corpo d'errore diventava una cassa vuota e disponibile, senza un log.
+          rifiutata('cassa-movimenti-lettura-rifiutata', rMov.status);
+          if (active) setErrore('cassaErroreCaricamento');
+          return;
+        }
+        const jMov = (await rMov.json()) as { disponibile?: boolean; movimenti?: RigaMovimento[]; totali?: TotaliCassa; uscite_mese?: UsciteMese | null };
         if (!active) return;
         const disp = jMov?.disponibile !== false;
+        setErrore(null);
         setDisponibile(disp);
         setMovimenti(jMov?.movimenti ?? []);
         const tot = jMov?.totali ?? null;
         setTotali(tot);
+        setUsciteMese(jMov?.uscite_mese ?? null);
         // KPI e sezioni admin SOLO se il server ha inviato `totali` (= admin).
         if (disp && tot) {
-          const [rSaldo, rChius] = await Promise.all([
-            fetch(`/api/pagamenti/cassa/saldo?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) }),
-            fetch(`/api/pagamenti/cassa/chiusura?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) }),
+          // Ciascuna col suo esito: prima un `Promise.all` rifiutato dalla rete finiva nel
+          // catch dei MOVIMENTI («Impossibile caricare i movimenti», che invece erano in
+          // pagina) e lasciava gli svuotamenti «letti» e vuoti, cioè «Mai svuotata».
+          const [jSaldo, jChius] = await Promise.all([
+            leggi<RispostaSaldo>(`/api/pagamenti/cassa/saldo?userId=${userId}${sedeQ}`, 'cassa-saldo'),
+            leggi<{ disponibile?: boolean; chiusure?: RigaChiusura[] }>(`/api/pagamenti/cassa/chiusura?userId=${userId}${sedeQ}`, 'cassa-chiusure'),
           ]);
-          const jSaldo = (await rSaldo.json()) as SaldoCassa | { disponibile: false };
-          const jChius = (await rChius.json()) as { disponibile?: boolean; chiusure?: CassaChiusura[] };
           if (!active) return;
-          setSaldo(jSaldo && (jSaldo as { disponibile?: boolean }).disponibile === false ? null : (jSaldo as SaldoCassa));
+          // Anche UNA sola sede non disponibile toglie le somme (K3 §2): restano i dettagli.
+          setSaldo(jSaldo && jSaldo.disponibile !== false ? (jSaldo as SaldoCassa) : null);
+          setSaldoPerSede(jSaldo?.per_sede ?? []);
+          setSaldoLetto(jSaldo !== null);
           setChiusure(jChius?.chiusure ?? []);
+          setChiusureLette(jChius !== null);
         } else {
+          // Niente KPI (non admin o cassa non attiva): saldo e svuotamenti non si leggono.
           setSaldo(null);
+          setSaldoPerSede([]);
+          setSaldoLetto(false);
           setChiusure([]);
+          setChiusureLette(false);
         }
       } catch (err) {
         logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-movimenti-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
@@ -163,7 +251,46 @@ export function CassaPanel({ userId, scuolaId }: Props) {
   }, [userId, scuolaId, refreshKey]);
 
   const mostraKpi = disponibile === true && !!totali;
-  const usciteMese = totali ? totali.uscite_contanti + totali.uscite_altre : 0;
+
+  /** Il nome di una sede: quello del server, poi quello del selettore, poi l'uuid. */
+  const nomeSede = (id: string | null | undefined, dalServer?: string | null): string =>
+    dalServer?.trim() || (id ? sediCockpit.find((s) => s.id === id)?.nome.trim() : '') || id || '—';
+
+  // Le sedi LETTE, nell'ordine del server (quello di `resolveScuoleAttive`): prima il
+  // saldo, poi le uscite del mese, poi le sedi del cockpit e gli svuotamenti, così una
+  // sede resta in tabella anche quando una delle letture è fallita.
+  const sediLette = useMemo(() => {
+    const ordine: string[] = [];
+    const nomi = new Map<string, string | null>();
+    const aggiungi = (id: string | null | undefined, nome?: string | null) => {
+      if (!id) return;
+      if (!ordine.includes(id)) ordine.push(id);
+      if (nome && !nomi.get(id)) nomi.set(id, nome);
+    };
+    for (const s of saldoPerSede) aggiungi(s.scuola_id, s.scuola_nome);
+    for (const s of usciteMese?.per_sede ?? []) aggiungi(s.scuola_id, s.scuola_nome);
+    for (const s of sediCassa) aggiungi(s.id);
+    for (const c of chiusure) aggiungi(c.scuola_id, c.scuola_nome);
+    return ordine.map((id) => ({ id, nomeServer: nomi.get(id) ?? null }));
+  }, [saldoPerSede, usciteMese, sediCassa, chiusure]);
+
+  /** L'ultimo svuotamento di OGNI sede: la più recente delle sue, non la più recente di tutte. */
+  const ultimaChiusura = useMemo(() => {
+    const m = new Map<string, RigaChiusura>();
+    for (const c of chiusure) {
+      const prima = m.get(c.scuola_id);
+      if (!prima || c.eseguita_il > prima.eseguita_il) m.set(c.scuola_id, c);
+    }
+    return m;
+  }, [chiusure]);
+
+  // Lo storico con più sedi è raggruppato per sede (ordine delle sedi lette); dentro
+  // ogni sede resta l'ordine del server, `eseguita_il` decrescente (sort stabile).
+  const storico = useMemo(() => {
+    if (!piuSedi) return chiusure;
+    const pos = new Map(sediLette.map((s, i) => [s.id, i]));
+    return [...chiusure].sort((x, y) => (pos.get(x.scuola_id) ?? 1e9) - (pos.get(y.scuola_id) ?? 1e9));
+  }, [chiusure, piuSedi, sediLette]);
 
   const apriGiustificativo = async (path: string) => {
     const nativo = isNativeApp();
@@ -233,25 +360,40 @@ export function CassaPanel({ userId, scuolaId }: Props) {
       {/* KPI: SOLO se il payload ha `totali` (server decide) */}
       {mostraKpi && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Senza somme (`saldo` null) i due riquadri dicono «—» e PERCHÉ: saldo non
+              letto (GET rifiutata o rete caduta) oppure non disponibile (con più sedi
+              basta una sede senza schema, K3 §2). Mai «€ 0,00 · nessun incasso oggi»:
+              sarebbe uno zero falso, lo stesso che «Uscite del mese» non dice più. */}
           <StatCard
             icon={Wallet}
             tone="green"
             label={t('cassaKpiSaldoAtteso')}
-            value={saldo ? formatEuro(saldo.saldo_atteso) : '…'}
-            sub={saldo ? `${t('cassaKpiFondo')} ${formatEuro(saldo.fondo)}` : undefined}
+            value={saldo ? formatEuro(saldo.saldo_atteso) : '—'}
+            sub={saldo
+              ? `${t('cassaKpiFondo')} ${formatEuro(saldo.fondo)}${piuSedi ? ` · ${t('cassaMsSommaSedi')}` : ''}`
+              : !saldoLetto
+                ? <span role="alert" className="text-kidville-error-strong">{t('cassaMsSaldoNonLetto')}</span>
+                : t('cassaMsNonDisponibile')}
           />
           <StatCard
             icon={Coins}
             tone="success"
             label={t('cassaKpiEntratoOggi')}
-            value={formatEuro(saldo ? saldo.entrato_oggi.reduce((s, v) => s + v.totale, 0) : 0)}
-            sub={<EntratoOggiSub voci={saldo?.entrato_oggi ?? []} />}
+            value={saldo ? formatEuro(saldo.entrato_oggi.reduce((s, v) => s + v.totale, 0)) : '—'}
+            sub={saldo
+              ? <EntratoOggiSub voci={saldo.entrato_oggi} />
+              : !saldoLetto
+                ? <span className="text-kidville-error-strong">{t('cassaMsSaldoNonLetto')}</span>
+                : t('cassaMsNonDisponibile')}
           />
           <StatCard
             icon={TrendingDown}
             tone="error"
             label={t('cassaKpiUsciteMese')}
-            value={formatEuro(usciteMese)}
+            // Dal server, sul MESE corrente: prima era `uscite_contanti + uscite_altre`
+            // dei totali, cioè le uscite di sempre (K3 §1). Non lette → «—», mai uno 0.
+            value={usciteMese ? formatEuro(usciteMese.totale) : '—'}
+            sub={!usciteMese ? t('cassaMsUsciteMeseNonLette') : piuSedi ? t('cassaMsSommaSedi') : undefined}
           />
         </div>
       )}
@@ -270,10 +412,12 @@ export function CassaPanel({ userId, scuolaId }: Props) {
           La condizione è la STESSA del bottone (`mostraKpi && isAdmin`) e NON
           guarda `saldo`: col saldo degradato questa riga deve restare, o
           sparirebbe proprio nel caso in cui serve capire cosa sta succedendo. */}
-      {mostraKpi && isAdmin && (
+      {mostraKpi && isAdmin && !piuSedi && (
         <p data-testid="cassa-ultimo-svuotamento" className="flex flex-wrap items-center gap-x-2 gap-y-1 font-maven text-[12.5px] text-kidville-sub">
           <ArrowDownCircle size={14} className="shrink-0" />
-          {chiusure.length === 0 ? (
+          {!chiusureLette ? (
+            <span>{t('cassaMsSvuotamentiNonLetti')}</span>
+          ) : chiusure.length === 0 ? (
             <span>{t('cassaMaiSvuotata')}</span>
           ) : (
             <>
@@ -288,6 +432,72 @@ export function CassaPanel({ userId, scuolaId }: Props) {
         </p>
       )}
 
+      {/* Più sedi: un cassetto per sede (K3). Saldo e fondo di ciascuna, le sue uscite
+          del mese e il suo ultimo svuotamento, più il totale. La riga unica qui sopra
+          non c'è: «ultimo svuotamento della cassa» con tre cassetti direbbe quello di
+          una sede come se fosse di tutte. */}
+      {mostraKpi && piuSedi && (
+        <section data-testid="cassa-per-sede">
+          <SectionTitle icon={Wallet} title={t('cassaMsPerSedeTitolo')} sub={t('cassaMsPerSedeSub')} />
+          <div className={TABLE_WRAP}>
+            <table className={TABLE}>
+              <thead>
+                <tr>
+                  <th scope="col" className={TH}>{t('cassaMsThSede')}</th>
+                  <th scope="col" className={cx(TH, 'text-right')}>{t('cassaStoricoSaldoAtteso')}</th>
+                  <th scope="col" className={cx(TH, 'text-right')}>{t('cassaMsThFondo')}</th>
+                  <th scope="col" className={cx(TH, 'text-right')}>{t('cassaKpiUsciteMese')}</th>
+                  {isAdmin && <th scope="col" className={TH}>{t('cassaUltimoSvuotamentoEtichetta')}</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {sediLette.map(({ id, nomeServer }) => {
+                  const s = saldoPerSede.find((x) => x.scuola_id === id);
+                  const u = usciteMese?.per_sede?.find((x) => x.scuola_id === id);
+                  const ultima = ultimaChiusura.get(id);
+                  return (
+                    <tr key={id} data-testid={`cassa-per-sede-${id}`} className={TROW}>
+                      <th scope="row" className={cx(TD, 'text-left font-normal')}><span className="font-maven text-sm font-bold text-kidville-ink">{nomeSede(id, nomeServer)}</span></th>
+                      <td className={cx(TD, 'text-right')}>
+                        <span className="whitespace-nowrap font-maven text-sm text-kidville-ink">
+                          {s ? (s.disponibile ? formatEuro(s.saldo_atteso) : t('cassaMsNonDisponibile')) : '—'}
+                        </span>
+                      </td>
+                      <td className={cx(TD, 'text-right')}><span className="whitespace-nowrap font-maven text-sm text-kidville-sub">{s && s.disponibile ? formatEuro(s.fondo) : '—'}</span></td>
+                      <td className={cx(TD, 'text-right')}><span className="whitespace-nowrap font-maven text-sm text-kidville-ink">{u ? formatEuro(u.totale) : '—'}</span></td>
+                      {isAdmin && (
+                        <td className={TD}>
+                          <span className="font-maven text-sm text-kidville-ink">
+                            {!chiusureLette ? '—' : ultima ? `${dataIt(ultima.eseguita_il)} · ${t('cassaRitiratoEtichetta')} ${formatEuro(ultima.prelevato)}` : t('cassaMsMaiSvuotata')}
+                          </span>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr data-testid="cassa-per-sede-totale" className={TROW}>
+                  <th scope="row" className={cx(TD, 'text-left')}><span className="font-barlow text-sm font-black uppercase text-kidville-green">{t('cassaMsTotale')}</span></th>
+                  {/* Somme solo se TUTTE le sedi sono disponibili: una somma parziale sarebbe sbagliata. */}
+                  <td className={cx(TD, 'text-right')}><span className="whitespace-nowrap font-barlow font-bold text-kidville-ink">{saldo ? formatEuro(saldo.saldo_atteso) : '—'}</span></td>
+                  <td className={cx(TD, 'text-right')}><span className="whitespace-nowrap font-maven text-sm text-kidville-sub">{saldo ? formatEuro(saldo.fondo) : '—'}</span></td>
+                  <td className={cx(TD, 'text-right')}><span className="whitespace-nowrap font-barlow font-bold text-kidville-ink">{usciteMese ? formatEuro(usciteMese.totale) : '—'}</span></td>
+                  {isAdmin && <td className={TD} />}
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          {isAdmin && (
+            <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-maven text-[12.5px] text-kidville-sub">
+              <ArrowDownCircle size={14} className="shrink-0" />
+              {!chiusureLette && <span role="alert" className="text-kidville-error-strong">{t('cassaMsSvuotamentiNonLetti')}</span>}
+              <a href="#cassa-storico" className="underline decoration-kidville-green/40 underline-offset-2 hover:decoration-kidville-green">{t('cassaVediStorico')}</a>
+            </p>
+          )}
+        </section>
+      )}
+
       {/* Lista movimenti — tabella desktop + card mobile */}
       <div>
         <SectionTitle icon={CalendarDays} title={t('cassaSecMovimenti')} sub={t('cassaSecMovimentiSub')} />
@@ -298,12 +508,13 @@ export function CassaPanel({ userId, scuolaId }: Props) {
           !errore && <p className="rounded-card bg-kidville-cream/40 px-3 py-6 text-center font-maven text-sm text-kidville-sub">{t('cassaNessunMovimento')}</p>
         ) : (
           <>
-            <div className="hidden lg:block">
+            <div className="hidden lg:block" data-testid="cassa-movimenti-tabella">
               <div className={TABLE_WRAP}>
                 <table className={TABLE}>
                   <thead>
                     <tr>
                       <th scope="col" className={TH}>{t('cassaThData')}</th>
+                      {piuSedi && <th scope="col" className={TH}>{t('cassaMsThSede')}</th>}
                       <th scope="col" className={TH}>{t('cassaThMovimento')}</th>
                       <th scope="col" className={TH}>{t('cassaThCategoria')}</th>
                       <th scope="col" className={TH}>{t('cassaThMetodo')}</th>
@@ -318,6 +529,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                       return (
                         <tr key={r.id} className={cx(TROW, r.stornato_il && 'opacity-55')}>
                           <td className={TD}><span className="whitespace-nowrap font-maven text-sm text-kidville-ink">{dataIt(r.data)}</span></td>
+                          {piuSedi && <td className={TD}><span className="font-maven text-sm text-kidville-ink">{nomeSede(r.scuola_id, r.scuola_nome)}</span></td>}
                           <td className={TD}>
                             <span className="flex items-center gap-1.5">
                               <Badge tone={info.tone}>{t(info.labelKey)}</Badge>
@@ -360,7 +572,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
               {movimenti.map((r) => {
                 const info = TIPO_INFO[r.tipo] ?? TIPO_INFO.entrata;
                 return (
-                  <div key={r.id} className={cx('rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3', r.stornato_il && 'opacity-55')}>
+                  <div key={r.id} data-testid="cassa-movimento-card" className={cx('rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3', r.stornato_il && 'opacity-55')}>
                     <div className="flex items-start justify-between gap-2">
                       <span className="flex flex-wrap items-center gap-1.5">
                         <Badge tone={info.tone}>{t(info.labelKey)}</Badge>
@@ -372,7 +584,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                     </div>
                     <p className="mt-1.5 font-maven text-sm text-kidville-ink">{r.descrizione ?? r.categoria_nome ?? '—'}</p>
                     <p className="mt-0.5 font-maven text-xs text-kidville-sub">
-                      {dataIt(r.data)} · {metodoLabel(r.metodo)}{r.categoria_nome ? ` · ${r.categoria_nome}` : ''}
+                      {dataIt(r.data)} · {piuSedi ? `${nomeSede(r.scuola_id, r.scuola_nome)} · ` : ''}{metodoLabel(r.metodo)}{r.categoria_nome ? ` · ${r.categoria_nome}` : ''}
                     </p>
                     <div className="mt-2 flex items-center justify-end gap-2">
                       {r.allegato_path && (
@@ -395,13 +607,15 @@ export function CassaPanel({ userId, scuolaId }: Props) {
       {/* Sezioni admin (server-confirmed via `totali`) */}
       {mostraKpi && (
         <>
-          <CassaReport userId={userId} scuolaId={scuolaId} />
+          <CassaReport userId={userId} scuolaId={scuolaId} sedi={sediCassa} />
 
           {/* `scroll-mt-24`: l'ancora deve fermarsi SOTTO la barra fissa dell'admin,
               o il titolo della sezione finisce coperto. */}
           <div id="cassa-storico" className="scroll-mt-24">
             <SectionTitle icon={ArrowDownCircle} title={t('cassaStoricoTitolo')} />
-            {chiusure.length === 0 ? (
+            {!chiusureLette ? (
+              <p className="rounded-card bg-kidville-error-soft px-3 py-6 text-center font-maven text-sm text-kidville-error-strong">{t('cassaMsSvuotamentiNonLetti')}</p>
+            ) : chiusure.length === 0 ? (
               <p className="rounded-card bg-kidville-cream/40 px-3 py-6 text-center font-maven text-sm text-kidville-sub">{t('cassaStoricoVuoto')}</p>
             ) : (
             <div>
@@ -409,6 +623,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                 <table className={TABLE}>
                   <thead>
                     <tr>
+                      {piuSedi && <th scope="col" className={TH}>{t('cassaMsThSede')}</th>}
                       <th scope="col" className={TH}>{t('cassaThData')}</th>
                       <th scope="col" className={cx(TH, 'text-right')}>{t('cassaStoricoSaldoAtteso')}</th>
                       <th scope="col" className={cx(TH, 'text-right')}>{t('cassaStoricoContato')}</th>
@@ -417,8 +632,9 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                     </tr>
                   </thead>
                   <tbody>
-                    {chiusure.map((c) => (
+                    {storico.map((c) => (
                       <tr key={c.id} className={TROW}>
+                        {piuSedi && <td className={TD}><span className="font-maven text-sm text-kidville-ink">{nomeSede(c.scuola_id, c.scuola_nome)}</span></td>}
                         <td className={TD}><span className="whitespace-nowrap font-maven text-sm text-kidville-ink">{dataIt(c.eseguita_il)}</span></td>
                         <td className={cx(TD, 'text-right')}><span className="font-maven text-sm text-kidville-ink">{formatEuro(c.saldo_atteso)}</span></td>
                         <td className={cx(TD, 'text-right')}><span className="font-maven text-sm text-kidville-ink">{formatEuro(c.contato)}</span></td>
@@ -437,8 +653,8 @@ export function CassaPanel({ userId, scuolaId }: Props) {
             )}
           </div>
 
-          <CassaCategorieManager userId={userId} scuolaId={scuolaId} />
-          <CassaImpostazioni userId={userId} scuolaId={scuolaId} />
+          <CassaCategorieManager userId={userId} sedi={sediCassa} sedeIniziale={scuolaId} />
+          <CassaImpostazioni userId={userId} sedi={sediCassa} sedeIniziale={scuolaId} />
         </>
       )}
 
@@ -446,7 +662,8 @@ export function CassaPanel({ userId, scuolaId }: Props) {
       {modalTipo && (
         <CassaMovimentoModal
           userId={userId}
-          scuolaId={scuolaId}
+          sedi={sediCassa}
+          sedeIniziale={scuolaId}
           tipoIniziale={modalTipo}
           returnFocusRef={modalTipo === 'uscita' ? uscitaRef : entrataRef}
           onClose={() => setModalTipo(null)}
@@ -456,7 +673,8 @@ export function CassaPanel({ userId, scuolaId }: Props) {
       {modalChiusura && (
         <CassaChiusuraModal
           userId={userId}
-          scuolaId={scuolaId}
+          sedi={sediCassa}
+          sedeIniziale={scuolaId}
           returnFocusRef={svuotaRef}
           onClose={() => setModalChiusura(false)}
           onDone={() => { setModalChiusura(false); ricarica(); }}

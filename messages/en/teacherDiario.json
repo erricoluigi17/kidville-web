@@ -81,5 +81,13 @@
   "confermaElimina": "Delete “{evento}” for {nome}? The entry disappears from the parent’s diary.",
   "confermaEliminaConNota": "Delete “{evento}” for {nome}? The note written for them disappears too.",
   "attivitaNessunaRegistrazione": "No activity described",
-  "attivitaAiutoCompilazione": "The description applies to the whole class; if you write none, nothing is saved."
+  "attivitaAiutoCompilazione": "The description applies to the whole class; if you write none, nothing is saved.",
+  "attivitaOrarioFacoltativo": "Time (optional)",
+  "attivitaOraInizio": "Start",
+  "attivitaOraFine": "End",
+  "attivitaOraInizioAria": "Start time of activity {n}",
+  "attivitaOraFineAria": "End time of activity {n}",
+  "attivitaOrarioIncoerente": "The end time can’t be before the start time.",
+  "attivitaOrarioNonValido": "Invalid activity time: use the HH:MM format (e.g. 09:30).",
+  "attivitaOrarioSalvataggioBloccato": "Fix the activity times: the end is before the start."
 }

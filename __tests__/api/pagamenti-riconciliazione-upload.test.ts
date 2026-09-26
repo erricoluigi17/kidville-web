@@ -43,8 +43,8 @@ const h = vi.hoisted(() => ({
    * costante del nostro codice. `Infinity` = nessun tetto (il caso di tutti gli altri test).
    */
   tettoPagina: Infinity as number,
-  /** Le sedi che la route ha CHIESTO di risolvere: la scrittura dichiara il suo plesso. */
-  sediRichieste: [] as (string | undefined)[],
+  /** Le sedi ATTIVE dell'operatore: il perimetro dentro cui deve stare la sede dichiarata. */
+  sediAttive: ['sc-1'] as string[],
   /**
    * Le colonne che il database finto NON ha: una SELECT che le nomina risponde `42703`,
    * com'è il DB E2E della CI, che non è migrato e non ha `sconto`.
@@ -78,12 +78,12 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
   logEvento: (...a: unknown[]) => h.logEvento(...a),
   logErrore: (...a: unknown[]) => h.logErrore(...a),
 }))
-vi.mock('@/lib/auth/scope', () => ({
-  resolveScuolaScrittura: async (_r: unknown, _s: unknown, _u: unknown, preferita?: string) => {
-    h.sediRichieste.push(preferita)
-    return { scuolaId: 'sc-1' }
-  },
-  resolveScuoleAttive: async () => ['sc-1'],
+// Dal 2026-09-26 (K5) l'import non chiede più una sede di SCRITTURA: controlla il perimetro
+// (`resolveScuoleAttive`) e, se il corpo ne dichiara una, che ci stia dentro (`restringiSedi`,
+// quella VERA). Il finto registra le sedi attive restituite per poterle cambiare per test.
+vi.mock('@/lib/auth/scope', async (orig) => ({
+  restringiSedi: (await orig<typeof import('@/lib/auth/scope')>()).restringiSedi,
+  resolveScuoleAttive: async () => h.sediAttive,
 }))
 
 /** Blocco di paginazione atteso sulla SELECT degli hash (deve combaciare con la route). */
@@ -291,7 +291,7 @@ beforeEach(() => {
   h.esistenti = []
   h.hashError = null
   h.tettoPagina = Infinity
-  h.sediRichieste = []
+  h.sediAttive = ['sc-1']
   h.aperti = []
   h.colonneAssenti = []
   h.colonneAssentiPrimoLivello = []
@@ -356,13 +356,19 @@ describe('POST multipart — il file della banca arriva com’è', () => {
     expect(righeInserite()[0].importo).toBe(99.5)
   })
 
-  it('la SEDE dichiarata nel multipart arriva a chi risolve la sede di scrittura', async () => {
-    // Con tre sedi in produzione, una scrittura che «indovina» il plesso lo sbaglia in
-    // silenzio. Il pannello manda `scuola_id` accanto al file: se il campo non arrivasse
-    // fin qui, la route ricadrebbe sul cookie e nessun errore lo direbbe.
-    const res = await POST(upload(fileXls(excel(RIGHE_BANCA)), { scuola_id: SEDE }))
-    expect(res.status).toBe(200)
-    expect(h.sediRichieste).toEqual([SEDE])
+  it('la SEDE dichiarata nel multipart arriva fino al controllo di perimetro (mai ignorata)', async () => {
+    // Dal 2026-09-26 (K5) la sede è FACOLTATIVA all'import — l'estratto conto è uno per i
+    // tre plessi — ma se il pannello la manda accanto al file deve arrivare fin qui: dentro
+    // il perimetro passa, fuori è un 403. Se il campo si perdesse per strada, la sede fuori
+    // perimetro passerebbe in silenzio e questo test diventerebbe rosso.
+    h.sediAttive = [SEDE]
+    const dentro = await POST(upload(fileXls(excel(RIGHE_BANCA)), { scuola_id: SEDE }))
+    expect(dentro.status).toBe(200)
+    h.sediAttive = ['sc-1']
+    h.inserts = []
+    const fuori = await POST(upload(fileXls(excel(RIGHE_BANCA)), { scuola_id: SEDE }))
+    expect(fuori.status).toBe(403)
+    expect(h.inserts).toHaveLength(0)
   })
 
   it('una sede che non è un uuid viene RESPINTA, non ignorata', async () => {

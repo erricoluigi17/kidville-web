@@ -10,7 +10,36 @@ import type { FormField } from '@/types/database.types'
  * `db_mapping` resta valorizzato (table.column) per riferimento/ETL.
  */
 
-const CF_PATTERN = '^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$'
+/**
+ * La forma del codice fiscale nel modulo d'iscrizione pubblico, **omocodia compresa**.
+ *
+ * Fino al 26/09/2026 qui c'era `^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$`, che
+ * RESPINGEVA i codici omocodici: quelli in cui l'Agenzia sostituisce alcune cifre con
+ * `L M N P Q R S T U V` per distinguere due persone che collidono. Sono codici veri, e
+ * il pattern li fermava con «Inserisci un codice fiscale valido» prima ancora che il
+ * carattere di controllo venisse guardato: la famiglia non poteva inviare la domanda.
+ * Regola decisa dal titolare: un codice con il carattere di controllo giusto si accetta
+ * SEMPRE (il controllo lo fa `validaCodiceFiscale` dentro `validateField`).
+ *
+ * È UNA costante, esportata, e la importano anche i campi preimpostati di
+ * `anagrafica-fields.ts` e il modulo del personale `personale-template.ts` (che era
+ * omocodico già prima): fino al 26/09/2026 la stringa era scritta in tre file. Le posizioni
+ * numeriche ammettono `[0-9LMNPQRSTUV]` e la lettera del mese è vincolata alle dodici
+ * valide, come `FORMA_CF` di `@/lib/fiscale/tabelle` (che è la fonte, ma è una `RegExp`
+ * che ammette le minuscole: `validateField` vuole un `pattern` testuale, a maiuscole).
+ *
+ * ⚠️ La stessa stringa vive fuori dal codice, dove non si importa:
+ *   - nello schema SALVATO in `form_models` (la route pubblica valida quello), riscritto
+ *     dalla migrazione `20260926100200_form_models_cf_omocodia.sql`;
+ *   - nel CHECK di `pratiche_personale` e `anagrafica_personale` (migrazione
+ *     `20260811205643`), perché il modulo del personale usa questa costante.
+ * `__tests__/lib/forms-validate-fields.test.ts` la confronta con la migrazione di
+ * `form_models` carattere per carattere, `__tests__/lib/personale-template.test.ts` con i
+ * due CHECK; entrambi confrontano il VERDETTO con `FORMA_CF` su codici in maiuscolo.
+ */
+export const CF_PATTERN_ISCRIZIONE =
+  '^[A-Z]{6}[0-9LMNPQRSTUV]{2}[ABCDEHLMPRST][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]$'
+const CF_PATTERN = CF_PATTERN_ISCRIZIONE
 const CAP_PATTERN = '^[0-9]{5}$'
 const PROV_PATTERN = '^[A-Z]{2}$'
 

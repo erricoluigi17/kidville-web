@@ -185,6 +185,48 @@ describe('MovimentoDialog', () => {
     );
   });
 
+  /**
+   * ─── LA SEDE NELLA RICERCA MANUALE (P5b, 2026-09-26) ────────────────────────
+   * Con i pagamenti aperti di più sedi nella stessa lista, due «Retta Ottobre»
+   * dello stesso cognome possono stare a Giugliano e a Cesa: la riga deve dire
+   * quale. Con una sede sola non si ripete.
+   */
+  it('con pagamenti aperti di più sedi ogni voce della ricerca manuale nomina la sua sede', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const dueSedi: PagamentoApertoUi[] = [
+      { ...aperti[0], scuola_id: 'sc-giu', scuola_nome: 'Kidville Giugliano' },
+      { ...aperti[1], scuola_id: 'sc-cesa', scuola_nome: null },
+    ];
+    render(<MovimentoDialog movimento={movBase} aperti={dueSedi} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    expect(screen.getByText(/Tina Blu · Kidville Giugliano · Iscrizione/)).toBeInTheDocument();
+    // nome non letto: il ripiego tradotto, mai l'uuid
+    expect(screen.getByText(new RegExp(`Ugo Verdi · ${testo('reconFiltroSedeSenzaNome')} · Mensa Novembre`))).toBeInTheDocument();
+    expect(screen.queryByText(/sc-cesa/)).toBeNull();
+  });
+
+  // Una voce SENZA `scuola_id` (colonna nullable) non ha una sede di cui manchi il
+  // nome: dire «Sede senza nome» affermerebbe il falso. Si dice che non è riconosciuta.
+  it('con più sedi, la voce senza sede NON diventa «Sede senza nome»', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const conOrfana: PagamentoApertoUi[] = [
+      { ...aperti[0], scuola_id: 'sc-giu', scuola_nome: 'Kidville Giugliano' },
+      { ...aperti[1], scuola_id: 'sc-cesa', scuola_nome: 'Kidville Cesa' },
+      { id: 'pa3', descrizione: 'Retta Ottobre', importo: 90, importo_pagato: 0, tipo: 'singolo', alunni: { nome: 'Ada', cognome: 'Neri' }, scuola_id: null, scuola_nome: null },
+    ];
+    render(<MovimentoDialog movimento={movBase} aperti={conOrfana} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    const riga = screen.getByText(/Ada Neri · .* · Retta Ottobre/);
+    expect(riga.textContent).toContain(`Ada Neri · ${testo('reconFiltroSedeNonRiconosciuta')} · Retta Ottobre`);
+    expect(riga.textContent).not.toContain(testo('reconFiltroSedeSenzaNome'));
+  });
+
+  it('con pagamenti aperti di una sede sola la voce NON ripete la sede', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const unaSede: PagamentoApertoUi[] = aperti.map((p) => ({ ...p, scuola_id: 'sc-giu', scuola_nome: 'Kidville Giugliano' }));
+    render(<MovimentoDialog movimento={movBase} aperti={unaSede} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    expect(screen.getByText(/Tina Blu · Iscrizione/)).toBeInTheDocument();
+    expect(screen.queryByText(/Kidville Giugliano/)).toBeNull();
+  });
+
   it('«Apri Incasso unico» compare SOLO per i multi-CF e solo se il chiamante lo aggancia', () => {
     vi.stubGlobal('fetch', vi.fn());
     const multiCf: MovimentoUi = {

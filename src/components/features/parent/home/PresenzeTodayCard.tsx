@@ -6,11 +6,16 @@ import { CircleCheck, CircleX, Clock, LogOut, CircleHelp } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import type { StatoPresenza } from '@/lib/primaria/oreAssenza'
 import { oraDiRoma } from '@/lib/presenze/orario'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 interface OggiPresenza {
   stato: StatoPresenza | null
   orario_entrata: string | null
   orario_uscita: string | null
+  /** A2/A5: ritardo/uscita giustificati dal docente (le ore non contano).
+   *  Facoltativi: un server più vecchio non li manda. */
+  assenza_oraria_giustificata?: boolean
+  note_appello?: string | null
 }
 
 interface Riepilogo {
@@ -91,11 +96,30 @@ export function PresenzeTodayCard({ studentId, parentId }: Props) {
     if (!studentId || !parentId) return
     let active = true
     fetch(`/api/parent/presenze?studentId=${studentId}&userId=${parentId}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        if (r.ok) return r.json()
+        // Un 403/500 è una risposta regolare, non un'eccezione: senza questo ramo il
+        // riquadro direbbe «non disponibili» senza lasciare traccia del perché.
+        logClient({
+          livello: 'warn',
+          evento: 'fetch',
+          messaggio: 'presenze di oggi non caricate',
+          stato: r.status,
+        })
+        return null
+      })
       .then((d) => {
         if (active && d?.success) setData(d.data as PresenzeData)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        // Rete assente o corpo illeggibile: il riquadro ripiega su «non disponibili».
+        // `warn`: è un disservizio di una schermata, non un guasto dell'applicazione.
+        logClient({
+          livello: 'warn',
+          evento: 'fetch',
+          messaggio: `presenze di oggi non caricate — errore=${nomeErrore(err)}`,
+        })
+      })
       .finally(() => {
         if (active) setLoaded(true)
       })
@@ -136,11 +160,31 @@ export function PresenzeTodayCard({ studentId, parentId }: Props) {
   const pillText = oggi.stato ? t(`presenzePill_${oggi.stato}`) : ''
 
   // Sottotitolo contestuale in base allo stato di oggi.
+  //
+  // A1 (2026-09-26, decisione del titolare): l'ora d'ingresso il genitore la legge
+  // SOLO sul ritardo, dove è quella registrata o corretta dal docente. Per il
+  // «presente» nido e infanzia salvano comunque l'ora del tocco (resta a docenti e
+  // segreteria), ma qui non si mostra: anche se la riga la porta, la frase è neutra.
   let sub = t('presenzeAppelloNonRegistrato')
-  if (oggi.stato === 'presente') sub = oggi.orario_entrata ? t('presenzeIngressoAlle', { ora: hhmm(oggi.orario_entrata) }) : t('presenzePresenteOggi')
+  if (oggi.stato === 'presente') sub = t('presenzePresenteOggi')
   else if (oggi.stato === 'ritardo') sub = oggi.orario_entrata ? t('presenzeIngressoAlle', { ora: hhmm(oggi.orario_entrata) }) : t('presenzeEntratoRitardo')
   else if (oggi.stato === 'uscita_anticipata') sub = oggi.orario_uscita ? t('presenzeUscitaAlle', { ora: hhmm(oggi.orario_uscita) }) : t('presenzeUscitaAnticipata')
   else if (oggi.stato === 'assente') sub = t('presenzeAssentePerOggi')
+
+  // A5 (2026-09-26): ritardo/uscita GIUSTIFICATI dal docente (es. terapia). Lo
+  // stato resta quello vero e il sottotitolo qui sopra (l'ora, logica di A1) non
+  // cambia: si AGGIUNGE la frase con la nota e il chiarimento sulle ore. Solo sui
+  // due stati che il DB lascia giustificare: un flag vero altrove non dice niente.
+  // `note_appello` è testo del docente su un minore: si mostra, non si logga.
+  let giustificata: string | null = null
+  if (oggi.assenza_oraria_giustificata === true) {
+    const nota = oggi.note_appello?.trim() ?? ''
+    if (oggi.stato === 'ritardo') {
+      giustificata = nota ? t('presenzeGiustificataRitardo', { nota }) : t('presenzeGiustificataRitardoSenzaNota')
+    } else if (oggi.stato === 'uscita_anticipata') {
+      giustificata = nota ? t('presenzeGiustificataUscita', { nota }) : t('presenzeGiustificataUscitaSenzaNota')
+    }
+  }
 
   const oreMancate = riepilogo.ore ? Math.round(riepilogo.ore.oreTotali * 10) / 10 : null
 
@@ -160,6 +204,12 @@ export function PresenzeTodayCard({ studentId, parentId }: Props) {
             {statoLabel}
           </span>
           <p className="font-maven text-xs text-kidville-muted">{sub}</p>
+          {giustificata && (
+            <>
+              <p className="font-maven text-xs font-semibold text-kidville-success-strong">{giustificata}</p>
+              <p className="font-maven text-[11px] text-kidville-sub">{t('presenzeGiustificataNonConta')}</p>
+            </>
+          )}
         </div>
         {stato && (
           <span className={'rounded-pill px-3 py-1 font-barlow text-[11px] font-extrabold uppercase tracking-wide ' + stato.pill}>

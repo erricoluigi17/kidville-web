@@ -742,6 +742,7 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['adminStudents.detailPageRiattivatoSenzaClasse', 'nome e cognome del bambino, che rientra senza classe'],
         ['adminPrimaria.materieNessunObiettivoDefinito', 'codice materia e livello ordinale'],
         ['diario.nannaDurata', 'orari di inizio e fine'],
+        ['diario.attivitaOrarioDalleAlle', 'orari di inizio e fine di un’attività (HH:MM)'],
         ['parentServizi.modulisticaPeriodoDalAl', 'date di inizio e fine di un periodo, non conteggi'],
         ['pagamenti.importoScaduti', 'importo in euro, già formattato'],
         ['pagamenti.restaImporto', 'importo in euro, già formattato'],
@@ -899,7 +900,14 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // una sequenza, come `teacherPresenze.pdfPiePagina`, e nessun sostantivo deve
         // concordare col numero. La forma ICU plural sarebbe semanticamente falsa;
         // cambiare «di/of» per schivare l'euristica piegherebbe invece il testo al lock.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(40)
+        //
+        // 2026-09-26 · 40 → 41. `diario.attivitaOrarioDalleAlle` («dalle {inizio} alle
+        // {fine}» / «from {inizio} to {fine}») è l'orario proprio di un'attività nel
+        // diario del genitore (contratto D1). Categoria (a), gemella di
+        // `diario.nannaDurata`: i segnaposti sono ORE «HH:MM», e «alle»/«to» sono
+        // preposizioni, non sostantivi da accordare. Scrivere «{inizio}–{fine}» avrebbe
+        // schivato l'euristica, ma è la frase piegata al lock già scartata sopra.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(41)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

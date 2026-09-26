@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import type React from 'react';
+import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react';
 import { PagamentoDrawer } from '@/components/features/admin/pagamenti/PagamentoDrawer';
 
 /**
@@ -206,5 +207,95 @@ describe('PagamentoDrawer — la coda fatture (consegna 2b)', () => {
         onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} />
     );
     expect(await screen.findByTestId('coda-chip')).toHaveTextContent('Errore in coda');
+  });
+});
+
+/**
+ * P2b (26/09) — il drawer dice di quale sede è la voce quando le sedi accorpate sono più
+ * di una. La sede viene dalla RIGA (`scuola_nome` di `GET /api/pagamenti`), non dal dettaglio.
+ */
+describe('PagamentoDrawer — sede (P2b)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => dettaglio })));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const conSede = { ...pagamentoRow, scuola_nome: 'Kidville Cesa' };
+
+  it('mostraSede: badge con la sede della riga nel riepilogo', async () => {
+    render(
+      <PagamentoDrawer pagamento={conSede} userId="u1" mostraSede onClose={() => {}}
+        onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} />
+    );
+    await waitFor(() => expect(screen.getByText('Bonifico')).toBeInTheDocument());
+    const badge = screen.getByTestId('sede-badge');
+    expect(badge).toHaveTextContent('Kidville Cesa');
+    // Letto: tutto tranne `aria-hidden` → la frase del catalogo, col nome UNA volta.
+    const letto = badge.cloneNode(true) as HTMLElement;
+    letto.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+    expect(letto.textContent?.replace(/\s+/g, ' ').trim()).toBe('Sede: Kidville Cesa');
+    // Con un nome valido il tono è `neutral` (contratto P2b.md), mai `warn`.
+    expect(badge).toHaveClass('bg-kidville-neutral-soft');
+    expect(badge).not.toHaveClass('bg-kidville-warn-soft');
+  });
+
+  it('mostraSede senza scuola_nome: «Sede non indicata»', async () => {
+    render(
+      <PagamentoDrawer pagamento={{ ...pagamentoRow, scuola_nome: null }} userId="u1" mostraSede onClose={() => {}}
+        onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} />
+    );
+    await waitFor(() => expect(screen.getByText('Bonifico')).toBeInTheDocument());
+    const badge = screen.getByTestId('sede-badge');
+    // Confronto ESATTO: «Sede» una volta sola, non «Sede Sede non indicata».
+    expect(badge.textContent?.replace(/\s+/g, ' ').trim()).toBe('Sede non indicata');
+    // Una riga senza sede è un'anomalia da notare: tono `warn` (contratto P2b.md).
+    expect(badge).toHaveClass('bg-kidville-warn-soft');
+    expect(badge).not.toHaveClass('bg-kidville-neutral-soft');
+  });
+
+  it('senza mostraSede nessun badge e nessun nome di sede, a dettaglio caricato', async () => {
+    render(
+      <PagamentoDrawer pagamento={conSede} userId="u1" onClose={() => {}}
+        onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} />
+    );
+    // Si aspetta una PRESENZA (il dettaglio arrivato), poi si verifica l'assenza.
+    await waitFor(() => expect(screen.getByText('Bonifico')).toBeInTheDocument());
+    expect(screen.queryByTestId('sede-badge')).toBeNull();
+    expect(document.body.textContent).not.toContain('Kidville Cesa');
+  });
+
+  it('senza mostraSede (assente o false) il markup è IDENTICO a quello di una riga senza scuola_nome', async () => {
+    // Il drawer può rendere in un portale: si legge `document.body`, e fra un render e
+    // l'altro si smonta con cleanup(). Ogni lettura aspetta la PRESENZA del dettaglio.
+    const htmlDi = async (ui: React.ReactElement) => {
+      render(ui);
+      await waitFor(() => expect(screen.getByText('Bonifico')).toBeInTheDocument());
+      // `useId` di React dà un id nuovo a ogni montaggio (`_r_b_`, `_r_c_`…): si normalizzano
+      // SOLO quelli, perché il confronto riguardi la struttura e non il contatore.
+      const html = document.body.innerHTML.replace(/_r_[a-z0-9]+_/g, '_r_ID_');
+      // Scheletro (tag + testo, senza classi) della prima riga del riepilogo: è il punto
+      // dove P2b interviene. Si confronta con un riferimento FISSO, preso dal markup di
+      // HEAD prima di P2b: confrontare fra loro tre render con `mostraSede` spento non
+      // vedrebbe un cambio di struttura che li colpisce tutti e tre (es. un wrapper <span>
+      // attorno al Badge di stato, la forma del ramo `true`).
+      const riepilogo = document.body.querySelectorAll('div.mb-4.rounded-card');
+      expect(riepilogo).toHaveLength(1);
+      const riga = riepilogo[0].firstElementChild!.outerHTML.replace(/ class="[^"]*"/g, '');
+      cleanup();
+      return { html, riga };
+    };
+    const props = { userId: 'u1', onClose: () => {}, onIncassa: () => {}, onModifica: () => {}, onRateizza: () => {} };
+    const RIGA_DI_OGGI = '<div><span>Pagato</span><span><span>Da fatturare</span></span></div>';
+
+    const oggi = await htmlDi(<PagamentoDrawer pagamento={pagamentoRow} {...props} />);
+    const conSedeAssente = await htmlDi(<PagamentoDrawer pagamento={conSede} {...props} />);
+    const conSedeFalse = await htmlDi(<PagamentoDrawer pagamento={conSede} mostraSede={false} {...props} />);
+
+    expect(oggi.html).toContain('Bonifico');
+    expect(oggi.riga).toBe(RIGA_DI_OGGI);
+    expect(conSedeAssente.html).toBe(oggi.html);
+    expect(conSedeFalse.html).toBe(oggi.html);
   });
 });

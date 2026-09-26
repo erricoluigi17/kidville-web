@@ -49,7 +49,7 @@ function rispostaCassaCategorie(corpoErrore: Record<string, unknown>, stato = 40
 }
 
 async function aggiungiCategoria() {
-  render(<CassaCategorieManager userId="u1" scuolaId="s1" />);
+  render(<CassaCategorieManager userId="u1" sedi={[{ id: 's1', nome: 'Sede' }]} sedeIniziale={null} />);
   const campo = await screen.findByRole('textbox');
   fireEvent.change(campo, { target: { value: 'Cancelleria' } });
   fireEvent.click(screen.getByRole('button', { name: itContabilita.cassaCatAggiungi }));

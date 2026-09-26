@@ -3,8 +3,12 @@ import {
   validateField, validatePage, isProvinceField, MSG_SCEGLI_OPZIONE, MSG_SCEGLI_DA_ELENCO,
   MSG_CODICE_FISCALE_NON_VALIDO,
 } from '@/lib/forms/validate-fields'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { validaCodiceFiscale } from '@/lib/fiscale/validazione'
-import { CHILD_FIELDS, ADULT_FIELDS } from '@/lib/forms/enrollment-template'
+import { carattereControllo } from '@/lib/fiscale/calcolo'
+import { FORMA_CF, OMOCODIA_DA_CIFRA, POSIZIONI_NUMERICHE } from '@/lib/fiscale/tabelle'
+import { CHILD_FIELDS, ADULT_FIELDS, CF_PATTERN_ISCRIZIONE } from '@/lib/forms/enrollment-template'
 import { PERSONALE_FIELDS } from '@/lib/forms/personale-template'
 import { ANAGRAFICA_GROUPS } from '@/lib/forms/anagrafica-fields'
 import type { FormField } from '@/types/database.types'
@@ -146,8 +150,12 @@ describe('validateField — codice fiscale: il carattere di controllo, non solo 
   const CF_VALIDO = 'XQQYKV19C07Z999T'
   const CF_CONTROLLO_SBAGLIATO = 'XQQYKV19C07Z999A'
   const CF_OMOCODICO = 'XQQYKV19CLTZ999B'
-  /** La forma del modulo d'iscrizione: senza omocodia. */
-  const PATTERN_ISCRIZIONE = '^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$'
+  /**
+   * La forma del modulo d'iscrizione. Fino al 26/09/2026 era una copia a sole cifre
+   * (senza omocodia) scritta qui a mano; ora è la costante del template, così questo
+   * blocco prova il pattern che il modulo usa davvero.
+   */
+  const PATTERN_ISCRIZIONE = CF_PATTERN_ISCRIZIONE
 
   it('i codici di prova sono davvero quello che dicono di essere', () => {
     // Se uno di questi cadesse, i test sotto proverebbero un ramo diverso da quello
@@ -171,6 +179,9 @@ describe('validateField — codice fiscale: il carattere di controllo, non solo 
   })
 
   it('omocodico valido → nessun errore: è un codice vero, assegnato dall’Agenzia', () => {
+    // ⚠️ Questo caso usa un campo SENZA pattern, e per questo fino al 26/09/2026 non
+    // vedeva che il pattern del modulo d'iscrizione respingeva l'omocodico. Il caso con
+    // i campi veri del modulo sta nel blocco «OMOCODICO con il pattern del modulo».
     const senzaPattern = f({ id: 'fiscal_code', type: 'text', required: true, db_mapping: 'pratiche_personale.fiscal_code' })
     expect(validateField(senzaPattern, CF_OMOCODICO)).toBeNull()
     expect(validateField(senzaPattern, 'XQQYKVMVCLTZVVVV')).toBeNull()
@@ -254,6 +265,182 @@ describe('validateField — codice fiscale: il carattere di controllo, non solo 
     expect(Object.keys(errori)).toEqual(['codice_fiscale'])
     expect(errori.codice_fiscale).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
     expect(validatePage(campi, { nome: 'Prova', codice_fiscale: CF_VALIDO })).toEqual({})
+  })
+})
+
+/**
+ * ── L'OMOCODICO NEL MODULO D'ISCRIZIONE VERO (2026-09-26) ───────────────────────
+ *
+ * Il blocco sopra provava l'omocodia su un campo SENZA pattern (`fiscal_code` nudo), e
+ * lì passava. Ma i campi veri del modulo d'iscrizione — `CHILD_FIELDS`, `ADULT_FIELDS`
+ * e i preimpostati di `anagrafica-fields.ts` — dichiaravano
+ * `^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$`: il pattern respingeva
+ * l'omocodico con «Inserisci un codice fiscale valido (16 caratteri)» PRIMA che il
+ * carattere di controllo venisse guardato. Una famiglia con un codice vero, assegnato
+ * dall'Agenzia, non poteva inviare la domanda.
+ *
+ * Regola decisa dal titolare: un codice con il carattere di controllo giusto si accetta
+ * SEMPRE. Qui si prova sui campi dei template, non su un campo costruito a mano.
+ *
+ * Gli omocodici si COSTRUISCONO da un codice che non è di nessuno (`Z999` non è il
+ * codice catastale di nessun luogo): si sostituiscono le cifre con le lettere
+ * dell'Agenzia partendo da destra, e il carattere di controllo lo calcola
+ * `carattereControllo`. Nessun codice di persona reale (il repository è pubblico).
+ */
+describe('validateField — codice fiscale OMOCODICO con il pattern del modulo d’iscrizione', () => {
+  const PRIMI_15 = 'XQQYKV19C07Z999'
+
+  /** Sostituisce le ultime `quante` posizioni numeriche (da destra) e ricalcola il controllo. */
+  const omocodico = (quante: number): string => {
+    const c = PRIMI_15.split('')
+    for (const pos of [...POSIZIONI_NUMERICHE].reverse().slice(0, quante)) {
+      c[pos] = OMOCODIA_DA_CIFRA[c[pos]]!
+    }
+    const primi = c.join('')
+    return primi + carattereControllo(primi)
+  }
+  /** Stesso codice con il carattere di controllo SBAGLIATO (il successivo nell'alfabeto). */
+  const conControlloSbagliato = (cf: string): string => {
+    const giusto = cf.charCodeAt(15) - 65
+    return cf.slice(0, 15) + String.fromCharCode(65 + ((giusto + 1) % 26))
+  }
+
+  const OMOCODICI = [1, 2, 3, 7].map(omocodico)
+  const OMOCODICI_SBAGLIATI = OMOCODICI.map(conControlloSbagliato)
+
+  const preimpostati = () => ANAGRAFICA_GROUPS.flatMap((g) => g.fields)
+    .filter((p) => /\.(codice_fiscale|fiscal_code)$/.test(p.presetId))
+    .map((p): [string, FormField] => [`preimpostato ${p.presetId}`, p.toFormField()])
+  const campiDelModulo = (): [string, FormField][] => [
+    ['CHILD_FIELDS.codice_fiscale', CHILD_FIELDS.find((c) => c.id === 'codice_fiscale')!],
+    ['ADULT_FIELDS.fiscal_code', ADULT_FIELDS.find((c) => c.id === 'fiscal_code')!],
+    ...preimpostati(),
+  ]
+
+  it('i codici costruiti sono davvero omocodici validi, e quelli «sbagliati» falliscono SOLO il controllo', () => {
+    // Se la costruzione sbagliasse, i test sotto proverebbero un'altra cosa restando verdi.
+    expect(new Set(OMOCODICI).size).toBe(4)
+    for (const cf of OMOCODICI) {
+      expect(validaCodiceFiscale(cf), cf).toMatchObject({ valido: true, omocodia: true })
+    }
+    for (const cf of OMOCODICI_SBAGLIATI) {
+      expect(validaCodiceFiscale(cf).motivi, cf).toEqual(['checksum'])
+    }
+    // Tutte e sette le posizioni numeriche sono lettere nell'ultimo.
+    expect(OMOCODICI[3]).toMatch(/^[A-Z]{16}$/)
+  })
+
+  it('ogni campo codice fiscale del modulo dichiara un pattern (altrimenti il test sotto non proverebbe il pattern)', () => {
+    const campi = campiDelModulo()
+    // Bambino + adulto del template + quattro preimpostati (bambino, madre, padre, delegato).
+    expect(campi).toHaveLength(6)
+    for (const [nome, campo] of campi) {
+      expect(campo, nome).toBeDefined()
+      expect(campo.validation?.pattern, `${nome}: nessun pattern`).toBeTruthy()
+    }
+  })
+
+  it('omocodico con controllo GIUSTO → accettato da ogni campo del modulo', () => {
+    for (const [nome, campo] of campiDelModulo()) {
+      for (const cf of OMOCODICI) expect(validateField(campo, cf), `${nome} · ${cf}`).toBeNull()
+    }
+  })
+
+  it('omocodico con controllo SBAGLIATO → respinto per il CONTROLLO, non per la forma', () => {
+    // Il messaggio è quello del carattere di controllo: vuol dire che il pattern l'ha
+    // lasciato passare e che il rifiuto viene da `validaCodiceFiscale`. Con il pattern
+    // vecchio il messaggio sarebbe «Inserisci un codice fiscale valido (16 caratteri)».
+    for (const [nome, campo] of campiDelModulo()) {
+      for (const cf of OMOCODICI_SBAGLIATI) {
+        expect(validateField(campo, cf), `${nome} · ${cf}`).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
+      }
+    }
+  })
+
+  it('CONTROLLO NEGATIVO: la forma resta stretta — mese inesistente o lettera fuori tabella respinti dal pattern', () => {
+    const campo = CHILD_FIELDS.find((c) => c.id === 'codice_fiscale')!
+    // Mese `Z` (non è fra le dodici lettere): il carattere di controllo è ricalcolato
+    // apposta, così il rifiuto non può venire dal controllo.
+    const meseZ = 'XQQYKV19Z07Z999'
+    expect(validateField(campo, meseZ + carattereControllo(meseZ))).toBe('Inserisci un codice fiscale valido (16 caratteri)')
+    // `A` in una posizione numerica non è una lettera d'omocodia.
+    const letteraFuori = 'XQQYKV19C07Z99A'
+    expect(validateField(campo, letteraFuori + carattereControllo(letteraFuori))).toBe('Inserisci un codice fiscale valido (16 caratteri)')
+    // Minuscole: il pattern del modulo è a maiuscole, come lo era quello vecchio — questo
+    // intervento allarga le sole posizioni numeriche, non la classe delle lettere.
+    expect(validateField(campo, OMOCODICI[0].toLowerCase())).toBe('Inserisci un codice fiscale valido (16 caratteri)')
+  })
+})
+
+/**
+ * ── LA FORMA DEL CODICE FISCALE, UNA SOLA NEL MODULO D'ISCRIZIONE ────────────────
+ *
+ * Prima di oggi la stessa stringa viveva copiata in `enrollment-template.ts` e in
+ * `anagrafica-fields.ts`; ora c'è UNA costante, `CF_PATTERN_ISCRIZIONE`. Ma il pattern
+ * esiste anche fuori dal codice, e lì non si può importare: nello schema salvato in
+ * `form_models`, riscritto dalla migrazione `20260926100200`. Se le due copie
+ * divergessero, il modulo in produzione (che usa lo schema SALVATO) e il template in
+ * codice direbbero cose diverse sullo stesso codice.
+ */
+describe('CF_PATTERN_ISCRIZIONE — una forma sola, confrontata con le sue copie', () => {
+  const migrazione = readFileSync(
+    join(process.cwd(), 'supabase/migrations/20260926100200_form_models_cf_omocodia.sql'),
+    'utf8',
+  )
+
+  it('è la costante usata da TUTTI i campi codice fiscale del modulo (template e preimpostati)', () => {
+    expect(CF_PATTERN_ISCRIZIONE, 'la costante non è esportata').toBeTruthy()
+    const preimpostati = ANAGRAFICA_GROUPS.flatMap((g) => g.fields)
+      .filter((p) => /\.(codice_fiscale|fiscal_code)$/.test(p.presetId))
+      .map((p) => p.toFormField())
+    const campi = [
+      CHILD_FIELDS.find((c) => c.id === 'codice_fiscale'),
+      ADULT_FIELDS.find((c) => c.id === 'fiscal_code'),
+      ...preimpostati,
+    ]
+    expect(campi).toHaveLength(6)
+    for (const campo of campi) expect(campo?.validation?.pattern).toBe(CF_PATTERN_ISCRIZIONE)
+  })
+
+  it('coincide carattere per carattere con il pattern NUOVO scritto dalla migrazione in `form_models`', () => {
+    // La `replace(schema::text, '<vecchio>', '<nuovo>')`: il secondo letterale è il nuovo.
+    const m = /replace\(\s*schema::text,\s*'([^']+)',\s*'([^']+)'\s*\)/.exec(migrazione)
+    expect(m, 'la replace() della migrazione non è più riconoscibile').not.toBeNull()
+    expect(m![1]).toBe('^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$')
+    expect(m![2]).toBe(CF_PATTERN_ISCRIZIONE)
+  })
+
+  it('è anche il pattern del modulo del personale (che lo importa, e i cui CHECK lo vincolano)', () => {
+    const personale = PERSONALE_FIELDS.find((c) => c.id === 'fiscal_code')?.validation?.pattern
+    expect(personale).toBe(CF_PATTERN_ISCRIZIONE)
+  })
+
+  it('dà lo stesso verdetto di `FORMA_CF` (la fonte in `@/lib/fiscale`) su ogni codice in MAIUSCOLO', () => {
+    // Non si confrontano le `source`: `FORMA_CF` ammette le minuscole, il pattern del
+    // modulo no. A dover coincidere è il verdetto su ciò che il campo lascia arrivare.
+    const forma = new RegExp(CF_PATTERN_ISCRIZIONE)
+    const sonde = [
+      'XQQYKV19C07Z999T', // ordinario
+      'XQQYKVM9C07Z999T', // omocodia sull'anno
+      'XQQYKV19CLTZVVVT', // omocodia su giorno e catastale
+      'XQQYKVMVCLTZVVVT', // omocodia su tutte le posizioni numeriche
+      'XQQYKV19Z07Z999T', // mese `Z`: non esiste
+      'XQQYKV19C07Z99AT', // `A` in posizione numerica: non è omocodia
+      'XQQYKV19C07Z9991', // ultimo carattere numerico
+      'XQQYKV19C07Z999', // quindici caratteri
+      'XQQYKV19C07Z999TT', // diciassette
+      '',
+    ]
+    // Ogni lettera (A-Z) e ogni cifra in ciascuna delle sette posizioni numeriche, e
+    // ogni lettera in quella del mese: una classe che perdesse o guadagnasse anche un
+    // solo carattere darebbe un verdetto diverso da `FORMA_CF` su almeno una sonda.
+    const BASE = 'XQQYKV19C07Z999T'
+    const caratteri = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('')
+    for (const pos of [...POSIZIONI_NUMERICHE, 8]) {
+      for (const ch of caratteri) sonde.push(BASE.slice(0, pos) + ch + BASE.slice(pos + 1))
+    }
+    expect(sonde.length).toBe(10 + 8 * 36)
+    for (const s of sonde) expect(forma.test(s), `verdetti diversi su «${s}»`).toBe(FORMA_CF.test(s))
   })
 })
 

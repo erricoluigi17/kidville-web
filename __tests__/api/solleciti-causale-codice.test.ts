@@ -109,6 +109,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.neq = () => b
       b.order = () => b
       b.limit = () => b
+      // La GET dei pagamenti legge a blocchi (`range`, K1): un blocco solo qui.
+      b.range = () => b
       // L'elenco pagamenti legge le sedi in blocco (`.in('id', …)` → lista), il
       // sollecito una alla volta (`.maybeSingle()`): stessa riga, due forme.
       // Il nome della sede è scritto a mano qui dentro, non preso da una costante

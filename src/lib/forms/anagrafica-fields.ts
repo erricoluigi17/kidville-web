@@ -1,4 +1,5 @@
 import type { FormField } from '@/types/database.types'
+import { CF_PATTERN_ISCRIZIONE } from './enrollment-template'
 
 export interface AnagraficaPresetField {
   presetId: string
@@ -16,7 +17,13 @@ function preset(id: string, config: Omit<FormField, 'id'>): AnagraficaPresetFiel
   return { presetId: id, toFormField: () => ({ id: crypto.randomUUID(), ...config }) }
 }
 
-const CF_PATTERN = '^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$'
+/**
+ * La forma del codice fiscale, omocodia compresa: è la STESSA del modulo d'iscrizione e
+ * si importa da lì invece di ricopiarla. Fino al 26/09/2026 qui c'era una copia a sole
+ * cifre che respingeva i codici omocodici (veri, assegnati dall'Agenzia). La ragione per
+ * esteso sta sopra `CF_PATTERN_ISCRIZIONE`.
+ */
+const CF_PATTERN = CF_PATTERN_ISCRIZIONE
 const CAP_PATTERN = '^[0-9]{5}$'
 const PROV_PATTERN = '^[A-Z]{2}$'
 const DOC_OPTIONS = [

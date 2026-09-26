@@ -177,12 +177,16 @@ describe('personale-template · la forma del codice fiscale, in TRE dichiarazion
   })
 
   /**
-   * L'OMOCODIA PASSA, ed è la differenza dichiarata da `enrollment-template.ts` —
-   * che usa `[0-9]` e quindi RIFIUTA i codici in cui l'Agenzia ha sostituito le cifre.
-   * Sono codici veri, di persone vere: respingerli significa dire a qualcuno che il
+   * L'OMOCODIA PASSA: i codici in cui l'Agenzia ha sostituito alcune cifre con lettere
+   * sono codici veri, di persone vere, e respingerli significa dire a qualcuno che il
    * proprio codice fiscale non esiste.
+   *
+   * Non è più una particolarità del personale: dal 26/09/2026 il pattern è
+   * `CF_PATTERN_ISCRIZIONE` di `enrollment-template.ts`, comune al modulo d'iscrizione
+   * (che fino ad allora usava `[0-9]` e li respingeva). Qui si verifica solo che il
+   * campo del personale li lasci passare, qualunque sia la costante da cui li prende.
    */
-  it('accetta un codice omocodico, che è la ragione per cui questo pattern è suo', () => {
+  it('accetta un codice omocodico, come ogni modulo pubblico', () => {
     expect(forma.test('RSSMRAL0A41H501U')).toBe(true)
     // …e la stessa persona senza omocodia passa comunque: non è un pattern per soli
     // codici omocodici.

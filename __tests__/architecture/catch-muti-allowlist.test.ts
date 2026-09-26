@@ -152,8 +152,15 @@ const ESENTE = 'src/lib/logging/';
 // (`competenze-sezioni-non-caricate`).
 // 🔻 45 → 44 e 68 → 67 il 2026-09-25: la pagina galleria docente
 // registra ora il fallimento della lettura del ruolo, senza catch muto.
-const MAX_FILE = 44;
-const MAX_OCCORRENZE = 67;
+// 🔻 44 → 43 e 67 → 66 il 2026-09-26 (A1): `PresenzeTodayCard.tsx` esce dall'allowlist. Il suo
+// `.catch(() => {})` sul caricamento delle presenze di oggi faceva dire al riquadro «non
+// disponibili» senza traccia; ora logga (`logClient`, anche sul ramo `!res.ok`).
+// 🔻 43 → 42 e 66 → 64 il 2026-09-26 (P2a): `PaymentsDashboard.tsx` esce dall'allowlist. I suoi
+// due `.catch(() => {})` stavano sulle categorie e sulla configurazione Aruba: con più sedi la
+// GET Aruba senza `scuola_id` rispondeva 400 e il badge «integrazione non configurata» spariva
+// in silenzio. Ora la configurazione si legge per sede e ogni guasto logga (`logClient`).
+const MAX_FILE = 42;
+const MAX_OCCORRENZE = 64;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

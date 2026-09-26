@@ -140,6 +140,17 @@ export interface LocalPrimariaAppello {
     alunno_id: string;
     data: string; // YYYY-MM-DD
     stato: 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
+    /**
+     * I campi della finestra di ritardo/uscita anticipata (A4, 2026-09-26). OPZIONALI e
+     * NON indicizzati: nessuna versione Dexie nuova, e le righe accodate prima restano
+     * valide. «Assente» (`undefined`) vuol dire «il corpo non lo nomina» — il server
+     * conserva ora e nota — mentre `null` su `note_appello` è il comando «togli la nota».
+     * Il corpo della POST lo compone `corpoPostAppelloDaCoda`.
+     */
+    orario_entrata?: string; // HH:MM di Roma, lo converte il server
+    orario_uscita?: string; // HH:MM di Roma
+    note_appello?: string | null;
+    assenza_oraria_giustificata?: boolean;
     sync_status: StatoCodaPrimaria;
     /** Vedi `LocalPrimariaRegistro.tentativi`: stessa contabilità, stessa politica. */
     tentativi: number;

@@ -52,3 +52,28 @@ describe('QuickAcquistoModal — anti-duplicato', () => {
     expect(screen.getByText(/non sarà detraibile/i)).toBeInTheDocument();
   });
 });
+
+describe('QuickAcquistoModal — la sede scelta (P2a, più sedi accorpate)', () => {
+  const posted: unknown[] = [];
+  beforeEach(() => {
+    posted.length = 0;
+    vi.stubGlobal('fetch', mockFetch(posted));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('con `sedeNome` il riepilogo dice la sede, e la POST porta la sede scelta', async () => {
+    render(<QuickAcquistoModal alunno={alunno} categoria={categoria} userId="u1" scuolaId="sede-a" sedeNome="Kidville Aversa" onClose={() => {}} onDone={() => {}} />);
+    expect(screen.getByTestId('quick-sede')).toHaveTextContent('Sede: Kidville Aversa');
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '40' } });
+    fireEvent.click(screen.getByRole('button', { name: /Registra acquisto/ }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect((posted[0] as { scuola_id?: string }).scuola_id).toBe('sede-a');
+  });
+
+  it('senza `sedeNome` (una sede sola) il riepilogo resta com\'era', () => {
+    render(<QuickAcquistoModal alunno={alunno} categoria={categoria} userId="u1" scuolaId="s1" onClose={() => {}} onDone={() => {}} />);
+    // Presenza prima: il riepilogo c'è, con la classe e la categoria.
+    expect(screen.getByText(/1A · /)).toBeInTheDocument();
+    expect(screen.queryByTestId('quick-sede')).toBeNull();
+  });
+});

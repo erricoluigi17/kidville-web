@@ -8,6 +8,7 @@ import { Drawer } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
 import { FatturaChip } from './FatturaChip';
 import { FatturaButton } from './FatturaButton';
+import { BadgeSede, type ConSede } from './PagamentoCardMobile';
 import type { EsitoAccodamento } from './FatturaButton';
 import { STATI_PAGAMENTO, METODO_LABEL } from './stati';
 import { formatEuro } from '@/lib/format/valuta';
@@ -32,8 +33,14 @@ interface Dettaglio {
 }
 
 interface Props {
-    pagamento: PagamentoRow & { scadenza?: string | null };
+    pagamento: PagamentoRow & { scadenza?: string | null } & ConSede;
     userId: string;
+    /**
+     * Mostrare la sede della voce? Sì quando le sedi accorpate sono più di una (P2b).
+     * La sede viene dalla RIGA (`scuola_nome`), non dal dettaglio: è quella che l'elenco
+     * ha appena mostrato. Default `false`: il drawer resta identico a prima.
+     */
+    mostraSede?: boolean;
     onClose: () => void;
     onIncassa: () => void;
     onModifica: () => void;
@@ -48,7 +55,7 @@ interface Props {
  * Drawer di dettaglio pagamento: riepilogo, timeline incassi/storni e tutte le
  * azioni in un punto solo. L'emissione fattura resta manuale (FatturaButton).
  */
-export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModifica, onRateizza, onAccodata, extra }: Props) {
+export function PagamentoDrawer({ pagamento, userId, mostraSede = false, onClose, onIncassa, onModifica, onRateizza, onAccodata, extra }: Props) {
     const t = useTranslations('adminContabilita');
     const f = useDateFormat();
     // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
@@ -110,7 +117,14 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
             {/* Riepilogo importi + stato */}
             <div className="mb-4 rounded-card bg-kidville-cream/60 p-3">
                 <div className="flex items-center justify-between gap-2">
-                    <Badge tone={st.tone}>{st.label}</Badge>
+                    {mostraSede ? (
+                        <span className="flex min-w-0 flex-wrap items-center gap-1">
+                            <Badge tone={st.tone}>{st.label}</Badge>
+                            <BadgeSede nome={pagamento.scuola_nome} />
+                        </span>
+                    ) : (
+                        <Badge tone={st.tone}>{st.label}</Badge>
+                    )}
                     {/* Il chip della fattura e quello della coda (D6), dai dati della riga: fotografia del caricamento.
                         Un contenitore, perché FatturaChip rende un frammento di due chip. */}
                     <span className="flex flex-wrap items-center justify-end gap-1">

@@ -21,6 +21,12 @@ interface Props {
     categoria: Categoria;
     userId: string;
     scuolaId?: string;
+    /**
+     * Nome della sede dell'acquisto, da mostrare quando le sedi accorpate sono più d'una
+     * (P2a): la sede l'operatore l'ha appena scelta, e qui la rilegge prima di registrare.
+     * Assente = una sede sola, il riepilogo resta com'era.
+     */
+    sedeNome?: string;
     onClose: () => void;
     onDone: () => void;
 }
@@ -68,7 +74,7 @@ const METODI = [
 // gemella: la primitiva non ce l'ha, e quella scala/opacità era fra le
 // animazioni JS che ignorano `prefers-reduced-motion` (la regola CSS globale
 // azzera solo le transizioni CSS).
-export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClose, onDone }: Props) {
+export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, sedeNome, onClose, onDone }: Props) {
     const t = useTranslations('adminContabilita');
     const f = useDateFormat();
     // Un solo `useId()` per titolo e campi: gli id costanti scritti a mano
@@ -204,6 +210,9 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                     <p className="font-maven text-xs text-kidville-sub">
                         {alunno.classe_sezione || '—'} · {t('quickCategoria')} {categoria.nome}
                     </p>
+                    {sedeNome && (
+                        <p data-testid="quick-sede" className="font-maven text-xs text-kidville-sub">{t('sedeBadge', { nome: sedeNome })}</p>
+                    )}
                 </div>
 
                 {/* Regione viva PERSISTENTE per l'esito: esiste già, vuota, prima

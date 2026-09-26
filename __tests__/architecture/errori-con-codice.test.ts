@@ -200,8 +200,12 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * 🔻 274 → 273 il 2026-09-25, stesso branch (compito R2, allegati del registro). La voce
  * `primaria/allegati/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo
  * gemello su `MAX_OCCORRENZE`.
+ *
+ * 🔻 273 → 272 il 2026-09-26, branch `feat/orario-attivita-appello-contabilita-cf` (compito A1).
+ * La voce `diary/checkin/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo
+ * gemello su `MAX_OCCORRENZE`.
  */
-const MAX_FILE = 273;
+const MAX_FILE = 272;
 /**
  * ⚠️ 1416 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
  * il 2026-09-10, è **1384**. I due numeri divergono di 32 per le 18 voci stantie dette qui sopra.
@@ -346,8 +350,19 @@ const MAX_FILE = 273;
  * dell'eccezione nel `catch`; ora portano `LETTURA_FALLITA`, col messaggio nel log. La voce
  * scende da 6 a 4, misurato col lock (a 3 dice «misurate 4»). `MAX_FILE` non si muove: la voce
  * non arriva a zero.
+ *
+ * 🔻 1376 → 1375 il 2026-09-26, branch `feat/orario-attivita-appello-contabilita-cf` (compito
+ * A1, niente orario al genitore per i presenti). Debito PAGATO: il 500 di `diary/checkin:GET`
+ * rispondeva con una frase italiana senza codice; ora porta `PRESENZE_NON_LETTE`, con la stessa
+ * frase («Errore interno») della route sorella `parent/presenze`, che legge la stessa tabella.
+ * La voce scende da 1 a 0 ed esce dall'elenco; `MAX_FILE` scende di uno insieme a lei.
+ *
+ * 🔻 1375 → 1374 il 2026-09-26, stesso branch (compito K5, morosi ticket con la sede). Debito
+ * PAGATO: il 500 della SELECT di `pagamenti/ticket/morosi:GET` rispondeva senza codice, mentre
+ * lo stesso guasto nella route gemella `pagamenti/ticket:GET` porta `LETTURA_FALLITA`; ora lo
+ * porta anche lui. La voce scende da 2 a 1; `MAX_FILE` non si muove, la voce non arriva a zero.
  */
-const MAX_OCCORRENZE = 1376;
+const MAX_OCCORRENZE = 1374;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

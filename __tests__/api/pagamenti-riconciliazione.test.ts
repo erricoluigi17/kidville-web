@@ -32,8 +32,10 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento }))
 vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: h.verificaRevoca }))
-vi.mock('@/lib/auth/scope', () => ({
-  resolveScuolaScrittura: async () => ({ scuolaId: 'sc-1' }),
+vi.mock('@/lib/auth/scope', async (orig) => ({
+  // Dal 2026-09-26 (K5) l'import usa il PERIMETRO (`resolveScuoleAttive` + `restringiSedi`
+  // vera), non più `resolveScuolaScrittura`: la PRIMA sede attiva è quella del ripiego CI.
+  restringiSedi: (await orig<typeof import('@/lib/auth/scope')>()).restringiSedi,
   resolveScuoleAttive: async () => ['sc-1'],
 }))
 vi.mock('@/lib/supabase/server-client', () => ({

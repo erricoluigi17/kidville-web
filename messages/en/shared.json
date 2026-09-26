@@ -487,6 +487,8 @@
   "erroreMensaOltreCutoff": "The cutoff time has passed: meals for this day can no longer be booked or cancelled.",
   "erroreAppelloNonRegistrato": "Mark the child’s attendance first: with no roll call there is no time to correct.",
   "erroreOrarioIncoerente": "The time does not match the recorded status.",
+  "erroreGiustificazioneStatoNonAmmesso": "Only a late arrival or an early exit can be justified.",
+  "erroreGiustificazioneSenzaNota": "To justify the late arrival or early exit, add a note with the reason.",
   "erroreAppelloAnnullaSoloOggi": "A roll call can only be undone on the same day.",
   "errorePresenzaNonTrovata": "No roll call has been recorded for this day.",
   "erroreNienteDaAnnullare": "There is only the parent’s notice: the roll call has not been taken yet.",
@@ -506,6 +508,8 @@
   "erroreLottoTettoOrario": "Aruba allows a maximum number of invoices per hour and this hour’s allowance is used up. No invoice was issued and no number was consumed: try again in an hour.",
   "erroreDiarioLetturaFallita": "The entry to delete could not be read. Please try again.",
   "erroreDiarioNonEliminato": "The entry could not be deleted. Please try again.",
+  "erroreOrarioAttivitaNonValido": "Invalid activity time: use the HH:MM format (e.g. 09:30). Nothing was saved.",
+  "erroreOrarioAttivitaIncoerente": "An activity’s end time cannot be earlier than its start time. Nothing was saved.",
   "erroreAppelloStatoPrimaNonLetto": "The existing attendance record could not be read: to avoid erasing notes and times, the save was cancelled. Please try again.",
   "erroreTicketRicaricaDuplicata": "A meal-ticket top-up has already been recorded for this child today. Check that this is not the same payment being recorded twice.",
   "erroreSezioneNonTrovata": "This class is no longer available: go back to the list and try again.",
@@ -599,6 +603,10 @@
   "erroreCodaFattureNonDisponibile": "The invoice queue isn’t available yet: nothing was changed. Please try again later.",
   "erroreCodaFattureScritturaFallita": "We couldn’t update the invoice queue. Reload the page and check its state before trying again.",
   "errorePagamentoNonSaldato": "An invoice can only be queued for payments that have been paid in full: no invoice was queued.",
+  "erroreMovimentoPiuSedi": "A bank transaction can’t be split across several locations: record the payment without it, or match it from Reconciliation. No payment was recorded.",
+  "erroreMovimentoNonGestito": "Bank transactions are matched from Reconciliation (“Compose the payment”). No payment was recorded.",
+  "erroreSedeEccedenzaMancante": "This payment covers several locations: choose which location records the family credit. No payment was recorded.",
+  "erroreSedeEccedenzaEstranea": "The family credit location must be one of this payment’s locations. No payment was recorded.",
   "erroreIntestatarioDigitatoIncompleto": "The billed-to details typed by hand are incomplete or invalid: check tax code, first name, last name, address, postcode and town. No invoice was queued.",
   "erroreObiettivoCodiceDuplicato": "This code is already used by another objective for the same subject and class: choose a different one. The objective was not changed."
 }

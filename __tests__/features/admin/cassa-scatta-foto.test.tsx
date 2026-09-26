@@ -24,7 +24,7 @@ function renderModal() {
   return render(
     <CassaMovimentoModal
       userId="u1"
-      scuolaId="s1"
+      sedi={[{ id: 's1', nome: 'Sede' }]} sedeIniziale={null}
       tipoIniziale="uscita"
       onClose={() => {}}
       onDone={() => {}}

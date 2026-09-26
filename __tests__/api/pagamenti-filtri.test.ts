@@ -19,6 +19,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const rec = (op: string) => (...args: unknown[]) => { h.calls.push({ op: `${table}.${op}`, args }); return b }
       b.select = rec('select')
       b.order = rec('order')
+      b.range = rec('range')
       b.eq = rec('eq')
       b.in = rec('in')
       b.or = rec('or')

@@ -39,6 +39,7 @@ import {
   classiChipFatturazione,
   CHIP_CODA,
   classiChipCoda,
+  apertiDiPiuSedi,
   labelPagamentoAperto,
   movimentoMultiCf,
   testoRicercaPagamento,
@@ -761,6 +762,14 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
 
   const q = ricerca.trim().toLowerCase();
   const apertiFiltrati = (q.length === 0 ? aperti : aperti.filter((p) => testoRicercaPagamento(p).includes(q))).slice(0, 25);
+  // P5b: con i pagamenti aperti di più sedi nella stessa lista la voce nomina il
+  // plesso. Si decide sull'elenco INTERO e non su quello filtrato: la sede non deve
+  // comparire e sparire mentre si digita.
+  const opzioniLabel = {
+    sede: apertiDiPiuSedi(aperti),
+    senzaNome: t('reconFiltroSedeSenzaNome'),
+    senzaSede: t('reconFiltroSedeNonRiconosciuta'),
+  };
 
   /**
    * ─── UNA CASELLA SOLA, DUE GRUPPI ────────────────────────────────────────
@@ -1342,7 +1351,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                       <p className="px-1 py-2 font-maven text-xs text-kidville-sub">{t('movdlgNessunPagamentoCorrisponde')}</p>
                     ) : apertiFiltrati.map((p) => (
                       <div key={p.id} className="flex items-center justify-between gap-2 rounded-input bg-kidville-cream px-3 py-2">
-                        <span className="min-w-0 truncate font-maven text-xs text-kidville-ink">{labelPagamentoAperto(p)}</span>
+                        <span className="min-w-0 truncate font-maven text-xs text-kidville-ink">{labelPagamentoAperto(p, opzioniLabel)}</span>
                         <button type="button" onClick={() => azione('conferma', p.id)} disabled={busy}
                           className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-white disabled:opacity-50">
                           <Check size={14} /> {t('movdlgAbbina')}

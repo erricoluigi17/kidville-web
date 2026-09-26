@@ -3,6 +3,8 @@
 // =============================================================================
 // Somma le ore perse sommando: assenze intere (durata della giornata), ritardi
 // (entrata − inizio) e uscite anticipate/permessi (fine − uscita).
+// I ritardi e le uscite anticipate GIUSTIFICATI (`assenza_oraria_giustificata`,
+// es. terapia) sono esclusi da entrambi i calcoli: vedi `oreGiustificate`.
 // Funzione pura e testabile: durata giornata e orari in ingresso, ore in uscita.
 // =============================================================================
 
@@ -10,10 +12,48 @@ import { minutiDiRoma } from '@/lib/presenze/orario';
 
 export type StatoPresenza = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
 
+/**
+ * Gli stati in cui l'alunno NON era (tutto il tempo) in classe. Sono quelli di
+ * cui il genitore vede la nota del docente (`note_appello`): la cronologia di
+ * `parent/primaria/assenze` filtra su questi, e `parent/presenze` non deve
+ * mostrare per `oggi` una nota che quella rotta non mostrerebbe (una nota su
+ * una riga `presente` è testo libero del docente mai arrivato al genitore).
+ */
+export const STATI_NON_IN_CLASSE = ['assente', 'ritardo', 'uscita_anticipata'] as const satisfies readonly StatoPresenza[];
+
+export function eStatoNonInClasse(stato: string | null | undefined): boolean {
+  return (STATI_NON_IN_CLASSE as readonly string[]).includes(stato ?? '');
+}
+
 export interface PresenzaInput {
   stato: StatoPresenza;
   orario_entrata?: string | null; // timestamp ISO (per i ritardi)
   orario_uscita?: string | null;  // timestamp ISO (per le uscite anticipate)
+  /**
+   * Colonna `presenze.assenza_oraria_giustificata` (migrazione 20260926100000).
+   * `true` = ritardo o uscita anticipata GIUSTIFICATI (es. terapia): le ore NON
+   * contano nel monte ore, ma lo stato resta quello vero — l'alunno risulta
+   * comunque non presente in classe. Assente/`undefined`/`null` = `false`.
+   */
+  assenza_oraria_giustificata?: boolean | null;
+}
+
+/**
+ * La riga porta ore giustificate che NON vanno contate?
+ *
+ * Vale solo per `ritardo` e `uscita_anticipata`, di proposito: è l'unico caso che
+ * il titolare ha deciso, ed è l'unico in cui il DB tiene acceso il flag (il
+ * trigger `presenze_spegni_giustificata_fuori_stato` lo spegne sugli altri stati).
+ * Se una riga `assente` arrivasse comunque col flag — un dato incoerente, non una
+ * decisione — la giornata intera continua a contare: azzerare in silenzio
+ * un'assenza è il guasto peggiore dei due, sul numero che decide la validità
+ * dell'anno scolastico.
+ */
+function oreGiustificate(p: PresenzaInput): boolean {
+  return (
+    p.assenza_oraria_giustificata === true &&
+    (p.stato === 'ritardo' || p.stato === 'uscita_anticipata')
+  );
 }
 
 export interface GiornataScolastica {
@@ -75,6 +115,8 @@ export function calcolaOreAssenza(
   let minPermesso = 0;
 
   for (const p of presenze) {
+    // Ore giustificate (A2): la riga resta un ritardo/uscita, ma non pesa.
+    if (oreGiustificate(p)) continue;
     if (p.stato === 'assente') {
       minAssenza += durataGiorno;
     } else if (p.stato === 'ritardo' && p.orario_entrata) {
@@ -162,6 +204,8 @@ export function calcolaOreAssenzaPerMateria(
   };
 
   for (const p of presenze) {
+    // Ore giustificate (A2): nessuna materia perde minuti per quella riga.
+    if (oreGiustificate(p)) continue;
     const giorno = giornoSettimana(p.data);
     // Campanelle di tipo 'lezione' per quel giorno
     const slotsDelGiorno = campanelle.filter(

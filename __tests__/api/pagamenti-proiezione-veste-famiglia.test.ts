@@ -48,7 +48,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
       const b: Record<string, unknown> = {}
-      for (const m of ['select', 'order', 'eq', 'in', 'or', 'gte', 'lte']) b[m] = () => b
+      for (const m of ['select', 'order', 'range', 'eq', 'in', 'or', 'gte', 'lte']) b[m] = () => b
       b.then = (resolve: (v: unknown) => unknown) =>
         resolve({ data: table === 'pagamenti' ? h.pagamenti : [], error: null })
       return b

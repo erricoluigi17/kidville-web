@@ -14,6 +14,8 @@ const h = vi.hoisted(() => {
     listResult: { data: null as unknown, error: null as unknown },
     counts: {} as Record<string, number>,
     countError: null as unknown,
+    /** Le colonne chieste dalla query-LISTA (A5): il flag deve essere fra queste. */
+    colonneLista: null as string | null,
   }
   function makeClient() {
     return {
@@ -22,6 +24,7 @@ const h = vi.hoisted(() => {
         const qb: Record<string, unknown> = {}
         qb.select = (_cols: string, opts?: { head?: boolean; count?: string }) => {
           if (opts?.head) ctx.head = true
+          else if (table === 'presenze') state.colonneLista = _cols
           return qb
         }
         qb.eq = (col: string, val: string) => {
@@ -63,9 +66,9 @@ function req(qs: string): NextRequest {
 }
 
 const NEG = [
-  { id: 'p1', data: '2026-05-10', stato: 'assente', orario_entrata: null, orario_uscita: null, giustificata: false, giustificazione_testo: null, giustificata_il: null, note_appello: null },
-  { id: 'p2', data: '2026-05-08', stato: 'ritardo', orario_entrata: '2026-05-08T08:40:00Z', orario_uscita: null, giustificata: true, giustificazione_testo: 'traffico', giustificata_il: '2026-05-08T10:00:00Z', note_appello: null },
-  { id: 'p3', data: '2026-05-02', stato: 'uscita_anticipata', orario_entrata: null, orario_uscita: '2026-05-02T12:30:00Z', giustificata: false, giustificazione_testo: null, giustificata_il: null, note_appello: 'visita medica' },
+  { id: 'p1', data: '2026-05-10', stato: 'assente', orario_entrata: null, orario_uscita: null, giustificata: false, giustificazione_testo: null, giustificata_il: null, note_appello: null, assenza_oraria_giustificata: false },
+  { id: 'p2', data: '2026-05-08', stato: 'ritardo', orario_entrata: '2026-05-08T08:40:00Z', orario_uscita: null, giustificata: true, giustificazione_testo: 'traffico', giustificata_il: '2026-05-08T10:00:00Z', note_appello: null, assenza_oraria_giustificata: false },
+  { id: 'p3', data: '2026-05-02', stato: 'uscita_anticipata', orario_entrata: null, orario_uscita: '2026-05-02T12:30:00Z', giustificata: false, giustificazione_testo: null, giustificata_il: null, note_appello: 'visita medica', assenza_oraria_giustificata: false },
 ]
 
 beforeEach(() => {
@@ -73,6 +76,7 @@ beforeEach(() => {
   h.state.listResult = { data: [], error: null }
   h.state.counts = {}
   h.state.countError = null
+  h.state.colonneLista = null
   auth.requireParentOfStudent.mockResolvedValue({ user: { id: 'u-1', role: 'genitore' }, response: null })
 })
 
@@ -172,5 +176,59 @@ describe('GET — la risposta dichiara se ha letto davvero (T31)', () => {
     const corpo = JSON.stringify(await res.json())
     expect(corpo).not.toContain('does not exist')
     expect(corpo).not.toContain('pippo')
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A5 — IL GENITORE VEDE LA NOTA DEL RITARDO / DELL'USCITA GIUSTIFICATI
+//
+// Il docente può segnare un ritardo o un'uscita anticipata come «giustificati»
+// (es. terapia): lo stato resta quello vero, ma quelle ore non contano. La pagina
+// del genitore deve poterlo DIRE, quindi la rotta restituisce anche il flag
+// `assenza_oraria_giustificata` — sempre booleano, e vero solo sui due stati in
+// cui ha senso (lo stesso vincolo del trigger nel DB).
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('GET — assenza_oraria_giustificata (A5)', () => {
+  const riga = (o: Record<string, unknown>) => ({
+    id: 'x', data: '2026-09-25', stato: 'ritardo', orario_entrata: '2026-09-25T10:05:00', orario_uscita: null,
+    giustificata: false, giustificazione_testo: null, giustificata_il: null, note_appello: 'terapia',
+    assenza_oraria_giustificata: true, ...o,
+  })
+
+  it('la colonna è chiesta al DB: senza, il flag non arriverebbe mai al genitore', async () => {
+    h.state.listResult = { data: [], error: null }
+    await GET(req('?studentId=a-1'))
+    expect(h.state.colonneLista).toContain('assenza_oraria_giustificata')
+    // la nota era già restituita e resta tale
+    expect(h.state.colonneLista).toContain('note_appello')
+  })
+
+  it('ritardo e uscita giustificati: il flag esce vero, con la nota', async () => {
+    h.state.listResult = {
+      data: [riga({ id: 'r1' }), riga({ id: 'u1', stato: 'uscita_anticipata', note_appello: 'logopedia' })],
+      error: null,
+    }
+    const body = await (await GET(req('?studentId=a-1'))).json()
+    expect(body.data.map((r: { id: string; assenza_oraria_giustificata: unknown; note_appello: unknown }) =>
+      [r.id, r.assenza_oraria_giustificata, r.note_appello])).toEqual([
+      ['r1', true, 'terapia'],
+      ['u1', true, 'logopedia'],
+    ])
+  })
+
+  it('sempre booleano: null o assente dal DB escono come false, mai undefined', async () => {
+    const senza = riga({ id: 's1' }) as Record<string, unknown>
+    delete senza.assenza_oraria_giustificata
+    h.state.listResult = { data: [riga({ id: 'n1', assenza_oraria_giustificata: null }), senza], error: null }
+    const body = await (await GET(req('?studentId=a-1'))).json()
+    expect(body.data.map((r: { assenza_oraria_giustificata: unknown }) => r.assenza_oraria_giustificata)).toEqual([false, false])
+  })
+
+  it('un flag vero su un\'assenza piena non esce vero: si giustificano solo ritardo e uscita', async () => {
+    h.state.listResult = { data: [riga({ id: 'a1', stato: 'assente', orario_entrata: null })], error: null }
+    const body = await (await GET(req('?studentId=a-1'))).json()
+    expect(body.data[0].assenza_oraria_giustificata).toBe(false)
+    // la nota del docente sull'assenza resta visibile come prima
+    expect(body.data[0].note_appello).toBe('terapia')
   })
 })

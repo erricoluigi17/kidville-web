@@ -6,6 +6,7 @@ import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 const getQuerySchema = z.object({
     alunno_id: zUuid,
@@ -43,12 +44,28 @@ export const GET = withRoute('diary/checkin:GET', async (request: NextRequest) =
         .eq('data', date)
         .maybeSingle();
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+        // PostgREST non lancia: l'errore sta nel valore di ritorno. Il messaggio del
+        // database NON torna al browser (riecheggia colonne e filtri): va solo nel log.
+        // Stesso codice e stessa frase della route sorella `GET /api/parent/presenze`, che
+        // legge la stessa tabella: `PRESENZE_NON_LETTE` è dichiarato e tradotto in it/en.
+        logErrore({ operazione: 'diary/checkin:GET', stato: 500, evento: 'db' }, error);
+        return NextResponse.json(
+            { error: 'Errore interno', codice: 'PRESENZE_NON_LETTE' },
+            { status: 500 },
+        );
+    }
 
-    // Solo se il bambino risulta presente (presente/ritardo/uscita anticipata) e c'è un orario.
-    const presente = ['presente', 'ritardo', 'uscita_anticipata'].includes((data?.stato as string) ?? '');
+    // A1 (2026-09-26, decisione del titolare) — il genitore vede l'orario d'ingresso
+    // SOLO sul ritardo: lì è quello registrato (o corretto) dal docente. Nido e
+    // infanzia salvano comunque l'ora del tocco anche sul «presente», ma quell'ora non
+    // deve nemmeno partire verso il browser: `orario_entrata` è null per ogni stato che
+    // non sia 'ritardo' (presente, uscita anticipata, assente, appello non fatto).
+    // Lo stato del giorno esce sempre (contratto in
+    // docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/contratti/A1.md).
+    const stato = (data?.stato as string | null | undefined) ?? null;
     return NextResponse.json({
-        orario_entrata: presente ? (data?.orario_entrata ?? null) : null,
-        stato: data?.stato ?? null,
+        orario_entrata: stato === 'ritardo' ? (data?.orario_entrata ?? null) : null,
+        stato,
     });
 });

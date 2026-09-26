@@ -3,6 +3,8 @@ import type { FormField, FormFieldOption } from '@/types/database.types'
 // `next/server` e lo carica anche un componente `'use client'`.
 import { LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
 import { GRADI_OPTIONS, TITOLI_STUDIO } from '@/lib/forms/insegnanti-template'
+// La forma del codice fiscale, omocodia compresa: una sola per tutti i moduli pubblici.
+import { CF_PATTERN_ISCRIZIONE } from './enrollment-template'
 
 /**
  * Template prestampato dell'ANAGRAFICA DEL PERSONALE IN SERVIZIO — il modulo
@@ -85,14 +87,20 @@ const CAP_PATTERN = '^[0-9]{5}$'
 /**
  * La forma del codice fiscale, **omocodia compresa**.
  *
- * ⚠️ NON è `enrollment-template.ts`, che usa `^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$`
- * e quindi RIFIUTA i codici omocodici — quelli in cui l'Agenzia sostituisce alcune
- * cifre con lettere per distinguere due persone che collidono. Sono codici veri, di
- * persone vere, e un modulo che li respinge dice a qualcuno che il proprio codice
- * fiscale non esiste. Qui la classe delle posizioni numeriche è `[0-9LMNPQRSTUV]` e
- * la lettera del mese è vincolata alle dodici valide, esattamente come `FORMA_CF` di
- * `@/lib/fiscale/tabelle` — che è la fonte, e da cui questa stringa è ribattuta solo
- * perché `validateField` vuole un `pattern` testuale.
+ * Accetta i codici omocodici — quelli in cui l'Agenzia sostituisce alcune cifre con
+ * lettere per distinguere due persone che collidono. Sono codici veri, di persone vere,
+ * e un modulo che li respinge dice a qualcuno che il proprio codice fiscale non esiste.
+ * La classe delle posizioni numeriche è `[0-9LMNPQRSTUV]` e la lettera del mese è
+ * vincolata alle dodici valide, esattamente come `FORMA_CF` di `@/lib/fiscale/tabelle`
+ * — che è la fonte, e da cui la stringa è ribattuta solo perché `validateField` vuole
+ * un `pattern` testuale.
+ *
+ * Fino al 26/09/2026 questo modulo era l'UNICO omocodico: `enrollment-template.ts` usava
+ * `[0-9]` nelle posizioni numeriche e respingeva quei codici alle famiglie. Da quel
+ * giorno la forma è una sola e la stringa è scritta UNA volta, in
+ * `CF_PATTERN_ISCRIZIONE` di `./enrollment-template`, che qui si importa: prima era
+ * copiata anche qui, e due copie tenute uguali da un test sono due copie che prima o
+ * poi divergono.
  *
  * Ed è la stessa forma del CHECK in tabella (migrazione `20260811205643`): tre
  * dichiarazioni che devono coincidere, e `__tests__/lib/personale-template.test.ts` le
@@ -107,8 +115,7 @@ const CAP_PATTERN = '^[0-9]{5}$'
  * in questo repo un documento che descrive una protezione che non c'è è peggio di
  * nessun documento.
  */
-const CF_PATTERN =
-  '^[A-Z]{6}[0-9LMNPQRSTUV]{2}[ABCDEHLMPRST][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]$'
+const CF_PATTERN = CF_PATTERN_ISCRIZIONE
 
 /** Tipo di documento d'identità: elenco chiuso, gli stessi tre di `ADULT_FIELDS`. */
 export const TIPI_DOCUMENTO: FormFieldOption[] = [

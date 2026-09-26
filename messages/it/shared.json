@@ -487,6 +487,8 @@
   "erroreMensaOltreCutoff": "È passato l’orario limite: per questo giorno il pasto non si può più prenotare né disdire.",
   "erroreAppelloNonRegistrato": "Segna prima se il bambino è presente: senza appello non c’è nessun orario da correggere.",
   "erroreOrarioIncoerente": "L’orario non è compatibile con lo stato registrato.",
+  "erroreGiustificazioneStatoNonAmmesso": "Si possono giustificare solo un ritardo o un’uscita anticipata.",
+  "erroreGiustificazioneSenzaNota": "Per giustificare il ritardo o l’uscita anticipata serve una nota con il motivo.",
   "erroreAppelloAnnullaSoloOggi": "L’appello si può annullare solo nel giorno stesso.",
   "errorePresenzaNonTrovata": "Per questo giorno non c’è nessun appello registrato.",
   "erroreNienteDaAnnullare": "C’è solo la comunicazione del genitore: l’appello non è stato ancora fatto.",
@@ -506,6 +508,8 @@
   "erroreLottoTettoOrario": "Aruba concede un numero massimo di fatture all’ora e per quest’ora sono esaurite. Nessuna fattura è stata emessa e nessun numero è stato consumato: riprova fra un’ora.",
   "erroreDiarioLetturaFallita": "Non è stato possibile leggere la registrazione da eliminare. Riprova.",
   "erroreDiarioNonEliminato": "Non è stato possibile eliminare la registrazione. Riprova.",
+  "erroreOrarioAttivitaNonValido": "Orario dell’attività non valido: usa il formato HH:MM (es. 09:30). Nessuna registrazione è stata salvata.",
+  "erroreOrarioAttivitaIncoerente": "L’ora di fine di un’attività non può essere prima dell’ora di inizio. Nessuna registrazione è stata salvata.",
   "erroreAppelloStatoPrimaNonLetto": "Non è stato possibile leggere l’appello già registrato: per non cancellare note e orari, il salvataggio è stato annullato. Riprova.",
   "erroreTicketRicaricaDuplicata": "Oggi a questo bambino è già stata registrata una ricarica di ticket mensa. Controlla che non sia lo stesso pagamento registrato due volte.",
   "erroreSezioneNonTrovata": "Questa classe non risulta più fra quelle disponibili: torna all’elenco e riprova.",
@@ -599,6 +603,10 @@
   "erroreCodaFattureNonDisponibile": "La coda delle fatture non è ancora disponibile: non è stato modificato nulla. Riprova più tardi.",
   "erroreCodaFattureScritturaFallita": "Non è stato possibile aggiornare la coda delle fatture. Ricarica la pagina e controlla com’è rimasta prima di riprovare.",
   "errorePagamentoNonSaldato": "La fattura si può mettere in coda solo per pagamenti saldati: nessuna fattura è stata messa in coda.",
+  "erroreMovimentoPiuSedi": "Un movimento bancario non si divide fra più sedi: registra il pagamento senza movimento, oppure concilialo da Riconciliazione. Nessun pagamento è stato registrato.",
+  "erroreMovimentoNonGestito": "Il movimento bancario si lega da Riconciliazione («Componi il pagamento»). Nessun pagamento è stato registrato.",
+  "erroreSedeEccedenzaMancante": "Il pagamento riguarda più sedi: scegli su quale sede registrare il credito famiglia. Nessun pagamento è stato registrato.",
+  "erroreSedeEccedenzaEstranea": "La sede del credito famiglia deve essere una delle sedi di questo pagamento. Nessun pagamento è stato registrato.",
   "erroreIntestatarioDigitatoIncompleto": "L’intestatario scritto a mano è incompleto o non valido: controlla codice fiscale, nome, cognome, indirizzo, CAP e comune. Nessuna fattura è stata messa in coda.",
   "erroreObiettivoCodiceDuplicato": "Questo codice è già usato da un altro obiettivo della stessa materia e classe: scegline uno diverso. L’obiettivo non è stato modificato."
 }

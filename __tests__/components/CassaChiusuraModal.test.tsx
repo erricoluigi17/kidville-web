@@ -42,7 +42,7 @@ describe('CassaChiusuraModal — svuotamento con differenza a parole', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('con contato 128 su atteso 130 e fondo 100 mostra un «Ammanco» e un prelievo di 28 €', async () => {
-    render(<CassaChiusuraModal userId="u1" scuolaId="sc-1" onClose={() => {}} onDone={() => {}} />);
+    render(<CassaChiusuraModal userId="u1" sedi={[{ id: 'sc-1', nome: 'Sede' }]} sedeIniziale={null} onClose={() => {}} onDone={() => {}} />);
     // Attende il caricamento del saldo (mostra l'atteso).
     await screen.findByText(/€ 130,00/);
     fireEvent.change(screen.getByLabelText(/Totale contato/), { target: { value: '128' } });
@@ -53,7 +53,7 @@ describe('CassaChiusuraModal — svuotamento con differenza a parole', () => {
   });
 
   it('confermando senza contato, l\'input è marcato non valido e collegato al messaggio (P8)', async () => {
-    render(<CassaChiusuraModal userId="u1" scuolaId="sc-1" onClose={() => {}} onDone={() => {}} />);
+    render(<CassaChiusuraModal userId="u1" sedi={[{ id: 'sc-1', nome: 'Sede' }]} sedeIniziale={null} onClose={() => {}} onDone={() => {}} />);
     await screen.findByText(/€ 130,00/);
     fireEvent.click(screen.getByRole('button', { name: /Conferma/ }));
     const alert = await screen.findByRole('alert');
@@ -64,7 +64,7 @@ describe('CassaChiusuraModal — svuotamento con differenza a parole', () => {
   });
 
   it('la conferma invia SOLO { scuola_id, contato, note } (mai il saldo calcolato dal client)', async () => {
-    render(<CassaChiusuraModal userId="u1" scuolaId="sc-1" onClose={() => {}} onDone={() => {}} />);
+    render(<CassaChiusuraModal userId="u1" sedi={[{ id: 'sc-1', nome: 'Sede' }]} sedeIniziale={null} onClose={() => {}} onDone={() => {}} />);
     await screen.findByText(/€ 130,00/);
     fireEvent.change(screen.getByLabelText(/Totale contato/), { target: { value: '128' } });
     fireEvent.change(screen.getByLabelText(/Note/), { target: { value: 'chiusura serale' } });

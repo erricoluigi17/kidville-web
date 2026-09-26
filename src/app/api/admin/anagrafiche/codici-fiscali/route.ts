@@ -16,6 +16,7 @@ import {
     type MotivoIncoerenza,
 } from '@/lib/fiscale/coerenza';
 import { calcolaCodiceFiscale, normalizzaCodiceBelfiore } from '@/lib/fiscale/calcolo';
+import { validaCodiceFiscale } from '@/lib/fiscale/validazione';
 import { risolviComune } from '@/lib/fiscale/comuni';
 
 // =============================================================================
@@ -292,6 +293,35 @@ function valuta(persona: Persona): RigaVerifica | null {
             codiceBelfiore: luogo.belfiore,
         });
     const codiceProposto = proposta?.ok ? proposta.codice : null;
+
+    // ⚠️ L'OMOCODICO COERENTE NON È DA VERIFICARE (decisione del titolare, 26/09/2026).
+    // Un codice omocodico l'ha assegnato l'Agenzia: è DIVERSO dal codice calcolato
+    // dai dati, e un confronto alla lettera con la proposta lo dava per «diverso».
+    // Con la colonna Belfiore vuota e il comune risolto — la forma di quasi tutte le
+    // righe vere — la riga usciva `non-verificabile` con `proposta_combacia: false`,
+    // cioè col bottone «Applica» che avrebbe SOVRASCRITTO il codice vero con uno che
+    // a quella persona non appartiene. Si confronta la BASE senza omocodia, e se
+    // coincide con la proposta (cioè ogni campo torna, luogo compreso) la riga non
+    // compare: non c'è niente da fare.
+    // Due condizioni oltre all'uguaglianza, e ognuna ha un test che diventa rosso se
+    // la si toglie (`__tests__/api/admin-codici-fiscali-omocodia.test.ts`):
+    //  · `valido` — la checksum del codice COSÌ COM'È torna. Un omocodico scritto male
+    //    ha una base perfetta ma non è il codice di nessuno: resta rosso, con «Applica»;
+    //  · `omocodia` — senza omocodia la base È il codice, e il ramo «combacia» qui
+    //    sotto resta quello di sempre (riga in priorità 0, si conferma il luogo).
+    // `esito.coerente` non serve: la proposta si calcola dagli STESSI dati con cui si
+    // verifica, quindi base === proposta implica già che ogni campo torni.
+    // E NON BASTEREBBE al posto del confronto: con la colonna Belfiore vuota il luogo
+    // non si verifica, quindi un omocodico costruito su un comune e registrato con un
+    // `birth_city` che si risolve in un ALTRO Belfiore esce `coerente` — ma la sua
+    // proposta è diversa, e la riga deve restare con «Applica» (decisione (b)). Lo
+    // tiene fermo il test «comune che si risolve in un ALTRO Belfiore».
+    if (codiceProposto !== null && codiceAttuale !== null) {
+        const validazione = validaCodiceFiscale(codiceAttuale);
+        if (validazione.valido && validazione.omocodia && validazione.baseSenzaOmocodia === codiceProposto) {
+            return null;
+        }
+    }
 
     const bloccataDa = codiceProposto !== null ? null : luogo.belfiore === null ? 'luogo' : 'anagrafica';
 

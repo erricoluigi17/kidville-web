@@ -30,7 +30,12 @@ vi.mock('@/lib/auth/require-staff', () => ({
     return Promise.resolve({ user: { id: 'a1', role: h.role, scuola_id: SC } })
   },
 }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuolaScrittura: (...a: unknown[]) => h.scuola(...a) }))
+// Dal 2026-09-26 (K3) la GET legge le sedi attive (`resolveScuoleAttive`) e le
+// restringe con la `restringiSedi` VERA: la lettura unita è in lettura-multisede.test.ts.
+vi.mock('@/lib/auth/scope', async (importActual) => ({
+  restringiSedi: (await importActual<typeof import('@/lib/auth/scope')>()).restringiSedi,
+  resolveScuoleAttive: (...a: unknown[]) => h.scuola(...a),
+}))
 vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: () => Promise.resolve(h.config) }))
 vi.mock('@/lib/cassa/saldo', () => ({
   caricaSaldoCassa: () => Promise.resolve(h.saldo),
@@ -43,7 +48,18 @@ vi.mock('@/lib/logging/logger', () => ({
   logEvento: (...a: unknown[]) => h.logEvento(...a),
   logOk: () => {},
 }))
-vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => ({}) }))
+// Solo `schools` (nomi delle sedi, K3): il saldo vero è finto sopra (caricaSaldoCassa).
+vi.mock('@/lib/supabase/server-client', () => ({
+  createAdminClient: async () => ({
+    from: () => {
+      const b: Record<string, unknown> = {}
+      b.select = () => b
+      b.in = () => b
+      b.then = (resolve: (v: unknown) => unknown) => resolve({ data: [], error: null })
+      return b
+    },
+  }),
+}))
 
 import { GET } from '@/app/api/pagamenti/cassa/saldo/route'
 
@@ -64,7 +80,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.authenticated = true
   h.role = 'admin'
-  h.scuola.mockResolvedValue({ scuolaId: SC })
+  h.scuola.mockResolvedValue([SC])
   h.config = { fondo: 100 }
   h.saldo = saldoPieno
 })

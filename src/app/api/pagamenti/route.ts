@@ -77,8 +77,44 @@ const SELECT = `
   fattura_stato, fattura_pdf_path, fattura_aruba_id, fattura_emessa_il,
   data_incasso, ultimo_sollecito_il, creato_il, aggiornato_il,
   payment_categories ( id, nome, slug, colore, icona ),
-  alunni ( id, nome, cognome, codice_fiscale, classe_sezione, sospeso )
+  alunni ( id, nome, cognome, codice_fiscale, classe_sezione, section_id, sospeso )
 `
+
+// ─── Lettura a blocchi (K1, 2026-09-26) ──────────────────────────────────────
+// PostgREST taglia OGNI risposta a `max_rows` righe e non lo dice: nessun errore,
+// nessuna intestazione che il client guardi. Senza `range` la GET restituiva le
+// prime 1000 righe per scadenza, e con tre sedi accorpate (1.236 pagamenti in
+// produzione il 26/09, già oltre) KPI e tabelle della segreteria uscivano
+// tagliati in silenzio.
+//
+// ⚠️ `BLOCCO` NON può superare `max_rows` (1000 in `supabase/config.toml`, 1000 il
+// default del progetto ospitato): la lettura si ferma al primo blocco CORTO, e un
+// blocco tagliato dal server sembrerebbe corto. Se un giorno `max_rows` scende,
+// questo numero scende con lui.
+const BLOCCO = 1000
+// Tetto di sicurezza contro un ciclo senza fine (50.000 righe). Dopo il 50° blocco
+// PIENO una riga di prova dice se c'è davvero altro: se c'è, la GET risponde 500
+// (tutto-o-niente, come per un blocco fallito) invece di restituire 50.000 righe
+// presentate come tutte. Con esattamente 50.000 righe la prova torna vuota e la
+// risposta è completa: nessun allarme falso.
+const MAX_BLOCCHI = 50
+// Quanti uuid in un `.in()` di arricchimento: ~37 caratteri l'uno, 150 stanno in
+// ~5,6 KB di URL, sotto il limite dei proxy più stretti (8 KB).
+const BLOCCO_IN = 150
+// Blocco della coda fatture: SOTTO `MAX_RIGHE_CODA` (1000) di proposito, perché
+// `leggiCodaAttiva` avvisa «coda-badge-troncato» su una risposta di 1000 righe, e un
+// blocco pieno di 1000 lo farebbe scattare a vuoto.
+const BLOCCO_CODA = 500
+// Le voci ATTIVE sono al più una per pagamento (`fatture_coda_una_attiva_uidx`),
+// quindi non possono superare il tetto delle righe lette sopra: questo limite non
+// scatta in un caso normale, esiste solo perché nessun ciclo resti senza fine.
+const MAX_BLOCCHI_CODA = Math.ceil((MAX_BLOCCHI * BLOCCO) / BLOCCO_CODA)
+
+function aPezzi<T>(elenco: T[], dimensione: number): T[][] {
+  const pezzi: T[][] = []
+  for (let i = 0; i < elenco.length; i += dimensione) pezzi.push(elenco.slice(i, i + dimensione))
+  return pezzi
+}
 
 // SELECT del GET con le colonne Contabilità v2 (sconto/sconto_motivo). Sul DB
 // E2E CI (non migrato) queste colonne non esistono → 42703, gestito con retry
@@ -163,7 +199,13 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     // Costruttore della query parametrizzato sul SELECT: il ramo di retry lo
     // richiama con il SELECT base quando il DB non ha le colonne Contabilità v2.
     const costruisci = (select: string) => {
-      let query = supabase.from('pagamenti').select(select).order('scadenza', { ascending: false })
+      // `id` come secondo criterio NON è estetica: Postgres non garantisce l'ordine
+      // fra righe con la stessa scadenza (e sono la regola: una retta al mese per
+      // alunno), e fra due richieste può cambiarlo. Senza, due blocchi `range`
+      // consecutivi si sovrappongono e perdono righe.
+      let query = supabase.from('pagamenti').select(select)
+        .order('scadenza', { ascending: false })
+        .order('id', { ascending: true })
       if (isStaff && qData) {
         const { alunno_id: alunnoId, stato, categoria_id: categoriaId, scuola_id: scuolaId, gruppo, periodo } = qData
         query = query.in('scuola_id', sediAttive)
@@ -185,12 +227,72 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       return query
     }
 
-    let { data, error } = await costruisci(SELECT_GET)
+    // Legge TUTTE le righe a blocchi di `BLOCCO`, fino al primo blocco corto.
+    // Tutto-o-niente: un blocco che fallisce fa fallire la lettura intera — una
+    // tabella a cui manca un pezzo, presentata come completa, è proprio il difetto
+    // che questa funzione esiste per togliere.
+    //
+    // Al tetto (`MAX_BLOCCHI` blocchi pieni) non si indovina: una riga di prova dice se
+    // oltre c'è altro. `troncata: true` = c'è, e la lettura NON si restituisce.
+    const leggiTutte = async (select: string) => {
+      const righe: unknown[] = []
+      let blocchi = 0
+      for (;;) {
+        if (blocchi === MAX_BLOCCHI) {
+          const oltre = MAX_BLOCCHI * BLOCCO
+          const { data: prova, error: errProva } = await costruisci(select).range(oltre, oltre)
+          blocchi++
+          if (errProva) return { data: null, error: errProva, blocchi, troncata: false }
+          if ((prova ?? []).length === 0) return { data: righe, error: null, blocchi, troncata: false }
+          return { data: null, error: null, blocchi, troncata: true }
+        }
+        const da = blocchi * BLOCCO
+        const { data: pagina, error: errPagina } = await costruisci(select).range(da, da + BLOCCO - 1)
+        blocchi++
+        if (errPagina) return { data: null, error: errPagina, blocchi, troncata: false }
+        const arrivate = (pagina ?? []) as unknown[]
+        righe.push(...arrivate)
+        if (arrivate.length < BLOCCO) return { data: righe, error: null, blocchi, troncata: false }
+      }
+    }
+
+    let { data, error, blocchi, troncata } = await leggiTutte(SELECT_GET)
     // DB E2E CI non migrato: sconto/sconto_motivo assenti → 42703, ritenta senza.
     if (error && (error as { code?: string }).code === '42703') {
-      const retry = await costruisci(SELECT)
+      const retry = await leggiTutte(SELECT)
       data = retry.data
       error = retry.error
+      blocchi = retry.blocchi
+      troncata = retry.troncata
+    }
+    if (troncata) {
+      // Oltre `MAX_BLOCCHI × BLOCCO` righe nel perimetro. Restituire le prime 50.000
+      // come se fossero tutte sarebbe lo stesso taglio muto che K1 toglie, solo più in
+      // là: si risponde 500 e si registra a livello `error` (persistito: è raro, e
+      // quando accade va visto). Solo conteggi.
+      //
+      // `logErrore` e NON `logEvento(…, 'error', …)`: solo `logErrore` alza la marca
+      // anti-doppione (`segnalaErroreLoggato`). Con `logEvento` `withRoute` non la
+      // trovava e sul 500 scriveva una SECONDA riga `route/error`, più povera: due
+      // righe persistite e due `KV_ERR` per un evento solo.
+      logErrore(
+        { operazione: 'pagamenti:GET', stato: 500, evento: 'lettura-troncata' },
+        new Error(`lettura-troncata: oltre ${MAX_BLOCCHI * BLOCCO} righe, ${blocchi} blocchi`),
+      )
+      // ⚠️ DIPENDENZA APERTA (vedi contratti/K1.md): `LETTURA_FALLITA` nel client si
+      // traduce «Riprova fra poco», che qui è il consiglio sbagliato — riprovare non
+      // serve, serve restringere i filtri. Il codice dedicato (`TROPPI_PAGAMENTI`)
+      // va dichiarato in `src/lib/ui/esito-fetch.ts`, fuori dal perimetro di K1: finché
+      // non esiste si usa quello già tradotto, perché un codice non dichiarato fa
+      // rosso il lock `errori-con-codice`. Il campo `error` porta comunque la causa.
+      return NextResponse.json(
+        {
+          error: 'Troppi pagamenti per una sola lettura: restringi i filtri',
+          codice: 'LETTURA_FALLITA',
+          details: `oltre ${MAX_BLOCCHI * BLOCCO} righe`,
+        },
+        { status: 500, headers: SENZA_CACHE },
+      )
     }
     if (error) {
       // PostgREST non lancia: il catch qui sotto non scatterebbe mai. La riga di errore
@@ -203,6 +305,7 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     }
 
     let rows = (data ?? []) as unknown as PagamentoGetRow[]
+    const righeLette = rows.length
 
     // Proiezione lato genitore: nasconde i container rateali (padre); le rate
     // figlie (tipo='rata') restano visibili come voci separate con la propria scadenza.
@@ -214,12 +317,21 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       rows = rows.filter((r) => r.tipo !== 'padre')
       const splitIds = rows.filter((r) => r.tipo === 'split').map((r) => r.id)
       const quoteByPagamento: Record<string, { importo: number; quota_id: string } | undefined> = {}
-      if (splitIds.length > 0) {
-        const { data: quote } = await supabase
-          .from('pagamenti_quote')
-          .select('id, pagamento_id, importo')
-          .in('pagamento_id', splitIds)
-          .eq('adult_id', user.id)
+      // A pezzi di `BLOCCO_IN` id: la lunghezza dell'URL non dipende da quante voci
+      // divise ha la famiglia.
+      const esitiQuote = await Promise.all(
+        aPezzi(splitIds, BLOCCO_IN).map((pezzo) =>
+          supabase
+            .from('pagamenti_quote')
+            .select('id, pagamento_id, importo')
+            .in('pagamento_id', pezzo)
+            .eq('adult_id', user.id),
+        ),
+      )
+      for (const { data: quote, error: errQuote } of esitiQuote) {
+        // PostgREST non lancia. Senza quote le voci divise restano nascoste (come
+        // prima), ma il guasto ora si vede.
+        if (errQuote) logErrore({ operazione: 'pagamenti:GET', evento: 'quote' }, errQuote)
         for (const q of quote || []) {
           quoteByPagamento[q.pagamento_id] = { importo: Number(q.importo), quota_id: q.id }
         }
@@ -258,6 +370,33 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     // (`.in('id', [])` ⇒ nessuna riga). Il perimetro è quello sopra, ed è
     // incondizionato — lo blocca `__tests__/api/pagamenti-scope-vuoto.test.ts`.
     const scuolaIds = [...new Set(rowsArricchite.map((r) => r.scuola_id).filter(Boolean))]
+
+    // Quando un blocco non è bastato: quante richieste, quante righe, quante sedi.
+    // Solo conteggi — nessun uuid, nessun nome.
+    //
+    // ⚠️ `persisti: false`, per la stessa ragione di `coordinate-bonifico` più sotto:
+    // è il riassunto di UNA richiesta, e in `app_log` l'`ON CONFLICT` deduplica per
+    // (impronta, giorno) senza aggiornare il `contesto` — `blocchi`/`righe` in tabella
+    // resterebbero quelli della PRIMA apertura del giorno di quell'utente, cioè un
+    // numero che non dice quanto pesa la lettura. Sulla console di Vercel ogni
+    // richiesta ha la sua riga coi conteggi veri. Il caso che conta davvero — il
+    // tetto superato — è `lettura-troncata`, a livello `error`, e quello si persiste.
+    if (blocchi > 1) {
+      logEvento(
+        'pagamento',
+        'info',
+        {
+          operazione: 'pagamenti:GET',
+          esito: 'lettura-a-blocchi',
+          blocchi,
+          righe: righeLette,
+          sedi: scuolaIds.length,
+        },
+        undefined,
+        { persisti: false },
+      )
+    }
+
     let nomiSedi: Record<string, string> = {}
     if (scuolaIds.length > 0) {
       const { data: sedi, error: errSedi } = await supabase.from('scuole').select('id, nome').in('id', scuolaIds)
@@ -307,6 +446,33 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     // saldati (nucleo §3). Le sedi sono quelle delle righe già filtrate (`scuolaIds`, sopra):
     // mai più larghe della lista.
     const leggiCoda = isStaff && !soloAperti && scuolaIds.length > 0
+    // Per SEDE e STATO, come prima di K1: l'URL resta corto qualunque sia il numero di
+    // righe in elenco, e le voci attive sono poche (quelle ancora da emettere). Contro
+    // `max_rows` si legge a blocchi di `BLOCCO_CODA`, IN SEQUENZA, con ordinamento
+    // stabile per `id`: di norma è UNA richiesta. Il ciclo si ferma al primo blocco
+    // corto o al primo guasto — e un guasto, che `leggiCodaAttiva` registra, produce
+    // quindi UNA riga di log per richiesta, non una per pezzo. Una lettura per
+    // blocco, non una somma: l'avviso «troncato» di `leggiCodaAttiva` resta vero.
+    const leggiCodaABlocchi = async () => {
+      const tutte = new Map<string, StatoCodaAttivo>()
+      for (let n = 0; n < MAX_BLOCCHI_CODA; n++) {
+        const da = n * BLOCCO_CODA
+        let arrivate = 0
+        const mappa = await leggiCodaAttiva(async () => {
+          const esito = await supabase.from('fatture_coda').select('pagamento_id, stato')
+            .in('scuola_id', scuolaIds).in('stato', [...STATI_ATTIVI])
+            .order('id', { ascending: true })
+            .range(da, da + BLOCCO_CODA - 1)
+          arrivate = esito.data?.length ?? 0
+          return esito
+        }, 'pagamenti:GET')
+        for (const [k, v] of mappa) tutte.set(k, v)
+        // Blocco corto — o guasto: `leggiCodaAttiva` restituisce vuoto e ha già loggato.
+        if (arrivate < BLOCCO_CODA) return tutte
+      }
+      logEvento('fattura', 'warn', { operazione: 'pagamenti:GET', esito: 'coda-badge-troncato', n: tutte.size })
+      return tutte
+    }
     const [perSede, codaPerPagamento] = await Promise.all([
       Promise.all(
         scuolaIds.map(async (sid) => {
@@ -317,13 +483,7 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
           return { sid, causali, coordinate }
         }),
       ),
-      leggiCoda
-        ? leggiCodaAttiva(
-            () => supabase.from('fatture_coda').select('pagamento_id, stato')
-              .in('scuola_id', scuolaIds).in('stato', [...STATI_ATTIVI]),
-            'pagamenti:GET',
-          )
-        : Promise.resolve(new Map<string, StatoCodaAttivo>()),
+      leggiCoda ? leggiCodaABlocchi() : Promise.resolve(new Map<string, StatoCodaAttivo>()),
     ])
 
     const causaliBySede: Record<string, Partial<Record<string, string>>> = {}

@@ -222,6 +222,7 @@ export function macchinaVercel(): MacchinaSandbox {
       }
 
       const creata = await Sandbox.create({
+        runtime: 'node22',
         name: nome,
         region: regione,
         resources: { vcpus },

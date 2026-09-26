@@ -30,6 +30,21 @@ import { ArchivioCaricamentiInMemoria } from './archivio-memoria'
  * dispositivo, e `logClient` non ha `info` (`warn` è il pavimento, ed è
  * persistito e contabile).
  */
+/**
+ * UNA sola istanza per la vita della pagina. Il `File` scelto in questa sessione
+ * (la «sorgente viva» di `caricamento.ts`) è legato all'istanza dell'archivio:
+ * con un'istanza nuova a ogni montaggio, uscire dalla galleria e rientrarvi farebbe
+ * dimenticare il file a un caricamento ancora in corso — e un video che sul
+ * telefono pieno non era stato salvato finirebbe in «riprova». Vale anche per il
+ * ripiego in memoria, che senza istanza condivisa perderebbe perfino le righe.
+ *
+ * La prova si RIFÀ a ogni chiamata: un IndexedDB che si guasta a metà sessione
+ * deve poter tornare al ripiego al montaggio dopo, invece di restare l'archivio
+ * rotto fino al ricaricamento della pagina.
+ */
+let archivioCondiviso: ArchivioCaricamentiDexie | null = null
+let ripiegoCondiviso: ArchivioCaricamentiInMemoria | null = null
+
 export async function creaArchivioCaricamenti(): Promise<ArchivioCaricamentiVideo> {
   const ripiega = (motivo: string): ArchivioCaricamentiVideo => {
     logClient({
@@ -38,17 +53,38 @@ export async function creaArchivioCaricamenti(): Promise<ArchivioCaricamentiVide
       messaggio: 'video-upload-archivio-volatile',
       campi: { motivo },
     })
-    return new ArchivioCaricamentiInMemoria()
+    ripiegoCondiviso ??= new ArchivioCaricamentiInMemoria()
+    return ripiegoCondiviso
   }
 
   if (typeof indexedDB === 'undefined') return ripiega('indexeddb_assente')
 
-  const dexie = new ArchivioCaricamentiDexie()
-  try {
-    // La prova: se il database non si apre, qui si scopre — non al primo video.
-    await dexie.elenca()
-    return dexie
-  } catch (err) {
-    return ripiega(nomeErrore(err))
+  // L'istanza resta la stessa anche dopo una prova fallita: non ha stato suo
+  // (Dexie si riapre da sé), e cambiarla farebbe perdere i file vivi dei
+  // caricamenti in corso.
+  archivioCondiviso ??= new ArchivioCaricamentiDexie()
+  const dexie = archivioCondiviso
+  let errore: unknown = null
+  // Due tentativi: un singhiozzo di un attimo non deve spostare l'intera
+  // schermata sulla memoria volatile.
+  for (let tentativo = 0; tentativo < 2; tentativo++) {
+    try {
+      // La prova: se il database non si apre, qui si scopre — non al primo video.
+      await dexie.elenca()
+      errore = null
+      break
+    } catch (err) {
+      errore = err
+    }
   }
+  if (errore) return ripiega(nomeErrore(errore))
+
+  // Un ripiego che ha ancora caricamenti aperti resta l'archivio di questa pagina
+  // finché non si chiudono: tornando a IndexedDB quelle righe diventerebbero
+  // invisibili, e nessuno seguirebbe più quei video.
+  if (ripiegoCondiviso && (await ripiegoCondiviso.elenca()).some((r) => !['fallito', 'annullato'].includes(r.stato))) {
+    logClient({ livello: 'warn', evento: 'offline', messaggio: 'video-upload-archivio-volatile', campi: { motivo: 'caricamenti_aperti_in_memoria' } })
+    return ripiegoCondiviso
+  }
+  return dexie
 }

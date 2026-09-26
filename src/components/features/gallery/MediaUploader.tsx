@@ -1,12 +1,15 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { ArrowRight, X, Image as ImageIcon, Images } from 'lucide-react';
 import { useImagePicker } from '@/lib/native/use-image-picker';
 import { fotocameraNativaDisponibile } from '@/lib/native/camera';
+import type { CodiceFotocamera } from '@/lib/native/camera';
 import { useClientValue } from '@/lib/hooks/use-client-value';
+import { classificaFileGalleria } from '@/lib/gallery/classifica-file';
+import { logClient } from '@/lib/logging/client';
 import { AnteprimaMedia } from './AnteprimaMedia';
 
 interface Props {
@@ -17,18 +20,44 @@ export function MediaUploader({ onUpload }: Props) {
     const t = useTranslations('shared');
     const [previews, setPreviews] = useState<{ file: File; preview: string }[]>([]);
     const [dragOver, setDragOver] = useState(false);
+    const [errore, setErrore] = useState<'permesso' | 'configurazione' | 'fotocamera' | 'file' | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const montatoRef = useRef(true);
 
-    const addFiles = useCallback((fileList: FileList | File[]) => {
-        const newFiles = Array.from(fileList)
-            .filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'))
-            .map(file => ({ file, preview: URL.createObjectURL(file) }));
-        setPreviews(prev => [...prev, ...newFiles]);
+    useEffect(() => {
+        montatoRef.current = true;
+        return () => { montatoRef.current = false; };
+    }, []);
+
+    const addFiles = useCallback(async (fileList: FileList | File[]) => {
+        const files = Array.from(fileList);
+        if (files.length === 0) return;
+        const esiti = await Promise.allSettled(files.map(classificaFileGalleria));
+        if (!montatoRef.current) return;
+        const validi = esiti.flatMap(esito => esito.status === 'fulfilled' && esito.value ? [esito.value] : []);
+        const rifiutati = esiti.length - validi.length;
+        if (rifiutati > 0) {
+            setErrore('file');
+            logClient({
+                livello: 'warn', evento: 'js', messaggio: 'gallery-file-selezione-rifiutata',
+                campi: { rifiutati, accettati: validi.length, lettura_fallita: esiti.some(esito => esito.status === 'rejected') },
+            });
+        } else {
+            setErrore(null);
+        }
+        if (validi.length > 0) {
+            const nuovi = validi.map(file => ({ file, preview: URL.createObjectURL(file) }));
+            setPreviews(prev => [...prev, ...nuovi]);
+        }
+    }, []);
+
+    const onErroreFotocamera = useCallback((codice: 'permesso_negato' | 'errore', dettaglio?: CodiceFotocamera) => {
+        setErrore(codice === 'permesso_negato' ? 'permesso' : dettaglio?.startsWith('plist_') ? 'configurazione' : 'fotocamera');
     }, []);
 
     // Nativo: la foto arriva dalla fotocamera Capacitor; web: click sull'input.
     // In entrambi i casi i file confluiscono in addFiles → flusso identico.
-    const { apri } = useImagePicker({ inputRef, onFiles: addFiles, multiplo: true });
+    const { apri } = useImagePicker({ inputRef, onFiles: files => { void addFiles(files); }, multiplo: true, onErrore: onErroreFotocamera });
 
     // Su nativo il drop-zone apre la fotocamera (solo scatto foto). Per caricare un
     // VIDEO (o scegliere dalla libreria) serve l'<input> — che accetta già
@@ -58,11 +87,12 @@ export function MediaUploader({ onUpload }: Props) {
                 }`}
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
-                onDrop={e => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
-                onClick={() => { void apri(); }}
+                onDrop={e => { e.preventDefault(); setDragOver(false); void addFiles(e.dataTransfer.files); }}
+                onClick={() => { setErrore(null); void apri(); }}
             >
                 <input ref={inputRef} type="file" accept="image/*,video/*" multiple className="hidden"
-                    onChange={e => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }} />
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => { if (e.target.files) void addFiles(e.target.files); e.target.value = ''; }} />
                 <div className="flex flex-col items-center gap-3">
                     <div className="w-14 h-14 rounded-2xl bg-kidville-cream flex items-center justify-center">
                         <ImageIcon size={24} className="text-kidville-green" strokeWidth={1.5} />
@@ -76,6 +106,12 @@ export function MediaUploader({ onUpload }: Props) {
                 </div>
             </div>
 
+            {errore && (
+                <p role="alert" className="rounded-xl border border-kidville-line p-3 font-maven text-sm text-kidville-ink">
+                    {t(errore === 'permesso' ? 'mediaErrorePermesso' : errore === 'configurazione' ? 'mediaErroreConfigurazione' : errore === 'file' ? 'mediaErroreFormato' : 'mediaErroreFotocamera')}
+                </p>
+            )}
+
             {/* Nativo: link secondario per aprire la galleria (foto E video). Su web
                 non compare — il drop-zone apre già l'input. */}
             {nativo && (
@@ -85,7 +121,7 @@ export function MediaUploader({ onUpload }: Props) {
                     className="mx-auto flex items-center gap-2 rounded-pill px-4 py-2 font-maven text-xs font-bold text-kidville-green underline underline-offset-2 transition-opacity hover:opacity-80"
                 >
                     <Images size={15} strokeWidth={1.75} aria-hidden="true" />
-                    {t('mediaCaricaDaGalleria')}
+                    {t('mediaScegliFile')}
                 </button>
             )}
 

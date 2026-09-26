@@ -1,4 +1,5 @@
 import type { CaricamentoVideoLocale } from './stato'
+import type { ByteVideo } from './byte-video'
 
 /**
  * L'ARCHIVIO DEI CARICAMENTI — l'interfaccia, non l'implementazione.
@@ -34,8 +35,13 @@ export interface ArchivioCaricamentiVideo {
   /** Toglie la riga E i suoi byte: un deposito orfano è peso che nessuno trova. */
   elimina(jobId: string): Promise<void>
 
-  leggiByte(jobId: string): Promise<Blob | undefined>
+  leggiByte(jobId: string): Promise<ByteVideo | undefined>
   scriviByte(jobId: string, byte: Blob): Promise<void>
   /** Libera il peso lasciando la riga: è ciò che succede a caricamento finito. */
   eliminaByte(jobId: string): Promise<void>
+  /**
+   * Toglie i depositi di byte che nessuna riga nomina più (una scrittura interrotta
+   * dalla chiusura dell'app). Facoltativo: l'archivio in memoria non ne lascia.
+   */
+  potaDepositiOrfani?(): Promise<number>
 }

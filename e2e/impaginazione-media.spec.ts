@@ -459,9 +459,15 @@ for (const caso of [
             // ── 3 e 4 · il visore, card per card ────────────────────────────────
             let videoVisti = 0;
             let immaginiFirmate = 0;
-            const daAprire = Math.min(quante, CARD_ISPEZIONATE);
+            const indici = Array.from({ length: Math.min(quante, CARD_ISPEZIONATE) }, (_, i) => i);
+            // Altri collaudi pubblicano foto sintetiche: la prima pagina può
+            // contenere più di quattro foto prima del video del seed.
+            const indiceVideo = await card.evaluateAll(elements => elements.findIndex(el =>
+                el.getAttribute('aria-label')?.startsWith('Video: ')));
+            if (indiceVideo >= 0 && !indici.includes(indiceVideo)) indici.push(indiceVideo);
+            const daAprire = indici.length;
 
-            for (let i = 0; i < daAprire; i++) {
+            for (const i of indici) {
                 await apriVisore(page, i);
                 const colonna = page.getByTestId('visore-colonna');
                 const dentro = await contenutoDelVisore(colonna);

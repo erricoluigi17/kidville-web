@@ -40,6 +40,7 @@ const h = vi.hoisted(() => ({
   rateLimit: vi.fn(),
   rpc: vi.fn(),
   createSignedUploadUrl: vi.fn(),
+  info: vi.fn(),
   bucketFirmato: '' as string,
   percorsiFirmati: [] as string[],
   corpoLetto: 0,
@@ -69,6 +70,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       from: (bucket: string) => {
         h.bucketFirmato = bucket
         return {
+          info: h.info,
           createSignedUploadUrl: (percorso: string) => {
             h.percorsiFirmati.push(percorso)
             return h.createSignedUploadUrl(percorso)
@@ -168,6 +170,7 @@ const rigaJob = (id: string, extra: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  h.info.mockResolvedValue({ data: null, error: { status: 404 } })
   h.bucketFirmato = ''
   h.percorsiFirmati = []
   h.corpoLetto = 0
@@ -438,6 +441,48 @@ describe('POST /api/video-uploads — l’apertura dell’intento', () => {
     expect(res.status).toBe(429)
     expect((await res.json()).codice).toBe('TROPPE_RICHIESTE')
     expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('riapertura video · stato autorevole e originali già trasferiti', () => {
+  it('originale completo dopo risposta TUS persa: nessuna firma o sovrascrittura', async () => {
+    h.info.mockResolvedValue({ data: { size: CORPO_GALLERIA.file[0].byte }, error: null })
+    const res = await POST(richiesta(CORPO_GALLERIA))
+    const body = await res.json()
+    expect(res.status).toBe(201)
+    expect(body.intent.status).toBe('pending')
+    expect(body.job[0]).toMatchObject({ status: 'awaiting_upload', needs_upload: false, firma: '', expires_at: null })
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+  })
+  it.each(['queued', 'processing', 'ready', 'failed', 'rejected', 'cancelled'])('job %s non autorizza un nuovo trasferimento', async status => {
+    h.rpc.mockResolvedValue({ data: { ok: true, intent: rigaIntent({ status: 'confirmed' }), job: rigaJob(JOB_1, { status }) }, error: null })
+    const body = await (await POST(richiesta(CORPO_GALLERIA))).json()
+    expect(body.job[0]).toMatchObject({ status, needs_upload: false, firma: '' })
+    expect(h.info).not.toHaveBeenCalled()
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+  })
+  it.each(['published', 'cancelled', 'superseded'])('intento %s non emette firme anche per un job rimasto awaiting_upload', async status => {
+    h.rpc.mockResolvedValue({ data: { ok: true, intent: rigaIntent({ status }), job: rigaJob(JOB_1) }, error: null })
+    const body = await (await POST(richiesta(CORPO_GALLERIA))).json()
+    expect(body.intent.status).toBe(status)
+    expect(body.job[0].needs_upload).toBe(false)
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+  })
+  it('firma nuova con scadenza esplicita quando l’originale è assente', async () => {
+    const body = await (await POST(richiesta(CORPO_GALLERIA))).json()
+    expect(body.job[0]).toMatchObject({ needs_upload: true, status: 'awaiting_upload' })
+    expect(Date.parse(body.job[0].expires_at)).toBeGreaterThan(Date.now())
+  })
+  it('originale con dimensione diversa: rifiuto, nessuna firma', async () => {
+    h.info.mockResolvedValue({ data: { size: 123 }, error: null })
+    expect((await POST(richiesta(CORPO_GALLERIA))).status).toBe(409)
+    expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+  })
+  it('guasto lettura Storage non diventa una nuova firma', async () => {
+    h.info.mockResolvedValue({ data: null, error: { status: 503, message: 'temporary' } })
+    expect((await POST(richiesta(CORPO_GALLERIA))).status).toBe(500)
     expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
   })
 })

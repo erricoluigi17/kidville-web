@@ -92,7 +92,7 @@ const SMOKE_ARTEFATTO = !!process.env.CI || process.env.KV_SMOKE_ARTEFATTO === '
  * che matcha zero file è un progetto verde in un secondo che non prova nulla.
  */
 const SPEC_CRITICI_WEBKIT =
-  /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione|impaginazione-media|chat-precedenti|fatture-pdf)\.spec\.ts$/;
+  /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione|impaginazione-media|gallery-caricamento|video-archivio|chat-precedenti|fatture-pdf)\.spec\.ts$/;
 
 /**
  * Ciò che su WebKit NON si ripete. `public-iscrizione.spec.ts` contiene, oltre

@@ -190,6 +190,9 @@ export const CODICI_ERRORE = {
      * 2026-08-01 usciva invece di qui, in inglese e col nome di un vincolo interno.
      */
     ALLEGATO_NON_CARICATO: 'erroreAllegatoNonCaricato',
+    CARICAMENTO_IN_CONFLITTO: 'erroreCaricamentoInConflitto',
+    CARICAMENTO_ELIMINATO: 'erroreCaricamentoEliminato',
+    CARICAMENTO_NON_DISPONIBILE: 'erroreCaricamentoNonDisponibile',
     /** 403/500 — il file appena caricato non si può togliere dal bucket (`src/lib/allegati/risposte.ts`). */
     ALLEGATO_NON_RIMOSSO: 'erroreAllegatoNonRimosso',
     /** 429 — tetto di frequenza raggiunto (`src/lib/security/otp-rate-limit.ts`). */

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, Tag, WifiOff, X } from 'lucide-react';
@@ -12,14 +12,17 @@ import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { AnteprimaMedia } from '@/components/features/gallery/AnteprimaMedia';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { VideoInLavorazione } from '@/components/features/gallery/VideoInLavorazione';
+import { CodaFoto } from '@/components/features/gallery/CodaFoto';
 import { useVideoGalleria } from '@/components/features/gallery/use-video-galleria';
-import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
+import { syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
+import { accodaFotoGalleria, assegnaSedeFotoLegacy, listaFotoInCoda, prossimaRipresaCodaFoto, riprovaFotoInCoda, scartaFotoInCoda } from '@/lib/gallery/coda-foto';
+import type { LocalGalleryMedia } from '@/lib/offline/db';
+import { FotoTroppoGrandeError } from '@/lib/gallery/byte-foto';
 import { processImageWithWatermark, ImageProcessingError } from '@/lib/media/processing';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { applicaTagATutte, fotoDaConfigurare, fotoGiaConfigurate } from '@/lib/gallery/applica-tag';
-import { caricaMediaGalleria, messaggioCaricamento } from '@/lib/gallery/carica-media';
 import { durataVideoDalFile, sedeDelCaricamento, sediDalCookie } from '@/lib/gallery/video-galleria-flusso';
-import { messaggioErrore, messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { messaggioErrore } from '@/lib/ui/esito-fetch';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { useClientValue } from '@/lib/hooks/use-client-value';
@@ -94,6 +97,10 @@ function TeacherGalleryContent() {
     }[]>([]);
     const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
     const [uploading, setUploading] = useState(false);
+    const [queueRows, setQueueRows] = useState<LocalGalleryMedia[]>([]);
+    const [queueNow, setQueueNow] = useState(0);
+    const [readError, setReadError] = useState(false);
+    const [uploadError, setUploadError] = useState<string | null>(null);
     const [userRole, setUserRole] = useState<string>('educator');
     // SSR-safe (niente hydration mismatch né setState-in-effect).
     const isOnline = useOnlineStatus();
@@ -120,36 +127,54 @@ function TeacherGalleryContent() {
         sediSelezionate,
         sediAccessibili,
     });
+    const ambitoAttivoRef = useRef({ ownerId: teacherId, schoolId: sedeVideo, active: true });
+    useEffect(() => {
+        ambitoAttivoRef.current = { ownerId: teacherId, schoolId: sedeVideo, active: true };
+        return () => { ambitoAttivoRef.current.active = false; };
+    }, [teacherId, sedeVideo]);
+    const ambitoCorrente = useCallback(() =>
+        ambitoAttivoRef.current.active && ambitoAttivoRef.current.ownerId === teacherId
+        && ambitoAttivoRef.current.schoolId === sedeVideo, [teacherId, sedeVideo]);
 
     // Sezione reale da /api/educator-sections: init vuoto, mai hardcoded
     // (i loader sono guardati da `if (!sezione) return`).
     const [sezione, setSezione] = useState<string>('');
     const [availableSections, setAvailableSections] = useState<string[]>([]);
 
-    const loadMedia = useCallback(async () => {
+    const loadMedia = useCallback(async (): Promise<boolean> => {
         // La GET galleria è gated: serve l'identità (sessione o header).
-        if (!sezione || !teacherId) return;
+        if (!sezione || !teacherId) return false;
         try {
             // Seleziona media per la sezione del docente
             const res = await fetch(`/api/gallery?classe=${sezione}`, {
                 headers: { 'x-user-id': teacherId },
-            }).catch(() => null);
-            if (res?.ok) {
-                const data = await res.json().catch(() => null);
-                setMedia(data?.media ?? []);
-            }
+            });
+            if (!res.ok) throw Object.assign(new Error('gallery_read_rejected'), { stato: res.status });
+            const data = await res.json();
+            if (!Array.isArray(data?.media)) throw new Error('gallery_read_invalid');
+            if (!ambitoCorrente()) return false;
+            setMedia(data.media);
+            setReadError(false);
+            return true;
+        } catch (error) {
+            if (!ambitoCorrente()) return false;
+            const stato = (error as { stato?: unknown })?.stato;
+            logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-lettura-fallita', route: '/teacher/gallery', ...(typeof stato === 'number' ? { stato } : {}) });
+            setReadError(true);
+            return false;
         } finally {
             setLoading(false);
         }
-    }, [sezione, teacherId]);
+    }, [sezione, teacherId, ambitoCorrente]);
 
     const loadStudents = useCallback(async () => {
         if (!sezione) return;
         try {
-            const res = await fetch(`/api/diary/students?sezione=${sezione}`).catch(() => null);
-            if (res?.ok) {
-                const data = await res.json().catch(() => null);
+            const res = await fetch(`/api/diary/students?sezione=${sezione}`);
+            if (res.ok) {
+                const data = await res.json();
                 if (Array.isArray(data)) {
+                    if (!ambitoCorrente()) return;
                     setStudents(data.map((s: { id: string; nome: string; cognome: string; consenso_privacy?: boolean; parents?: Student['parents'] }) => ({
                         id: s.id,
                         nome: s.nome,
@@ -158,11 +183,13 @@ function TeacherGalleryContent() {
                         parents: s.parents || [],
                     })));
                 }
+            } else {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-studenti-rifiutati', route: '/teacher/gallery', stato: res.status });
             }
-        } finally {
-            // Nessuno stato di loading dedicato: l'errore di rete lascia lo stato invariato.
+        } catch {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-studenti-fallito', route: '/teacher/gallery' });
         }
-    }, [sezione]);
+    }, [sezione, ambitoCorrente]);
 
     // Carica sezioni educatore (sezione reale, mai hardcoded — pattern locker)
     useEffect(() => {
@@ -187,12 +214,49 @@ function TeacherGalleryContent() {
         fetchSections();
     }, [teacherId]);
 
-    // Quando è (ri)online, sincronizza i media salvati offline.
-    useEffect(() => {
-        if (isOnline) {
-            syncPendingGalleryMedia().then(() => loadMedia()).catch(() => {});
+    const aggiornaCoda = useCallback(async () => {
+        if (!teacherId || !sedeVideo) { setQueueRows([]); return; }
+        try {
+            const righe = await listaFotoInCoda({ ownerId: teacherId, schoolId: sedeVideo });
+            if (!ambitoCorrente()) return;
+            setQueueRows(righe);
+            setQueueNow(Date.now());
         }
-    }, [isOnline, loadMedia]);
+        catch { logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-lettura-fallita' }); }
+    }, [teacherId, sedeVideo, ambitoCorrente]);
+
+    const sincronizzaCoda = useCallback(async () => {
+        if (!teacherId || !sedeVideo) return;
+        try {
+            await syncPendingGalleryMedia({ ownerId: teacherId, schoolId: sedeVideo, isCurrent: ambitoCorrente });
+            if (!ambitoCorrente()) return;
+            await aggiornaCoda();
+            if (isOnline) await loadMedia();
+        } catch {
+            logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-sincronizzazione-fallita' });
+            setUploadError(t('galleryErrCaricamentoGenerico'));
+            await aggiornaCoda();
+        }
+    }, [teacherId, sedeVideo, isOnline, aggiornaCoda, loadMedia, t, ambitoCorrente]);
+
+    // Quando è (ri)online, sincronizza solo la sede e l'account correnti.
+    useEffect(() => {
+        if (!teacherId || !sedeVideo) return;
+        void Promise.resolve().then(() => {
+            void aggiornaCoda();
+            if (isOnline) void sincronizzaCoda();
+        });
+    }, [teacherId, sedeVideo, isOnline, aggiornaCoda, sincronizzaCoda]);
+
+    // Un 429/503 sospende la coda anche dopo il reload. Alla scadenza del
+    // Retry-After la ripresa non richiede che la persona cambi pagina o clicchi.
+    useEffect(() => {
+        if (!isOnline || !ambitoCorrente()) return;
+        const attesaMs = prossimaRipresaCodaFoto(queueRows, queueNow);
+        if (attesaMs === null) return;
+        const timer = window.setTimeout(() => { void sincronizzaCoda(); }, Math.max(1, attesaMs));
+        return () => window.clearTimeout(timer);
+    }, [queueRows, queueNow, isOnline, ambitoCorrente, sincronizzaCoda]);
 
     // Carica ruolo utente corrente (via /api/me gated, niente lettura anon di `utenti`)
     // e, con lui, la SEDE del profilo: da V11 serve a dichiarare dove finirà il video.
@@ -248,8 +312,10 @@ function TeacherGalleryContent() {
     }, [teacherId, userRole]);
 
     useEffect(() => {
-        loadMedia();
-        loadStudents();
+        void Promise.resolve().then(() => {
+            void loadMedia();
+            void loadStudents();
+        });
     }, [loadMedia, loadStudents]);
 
     /**
@@ -265,7 +331,7 @@ function TeacherGalleryContent() {
         utenteId: teacherId,
         sede: sedeVideo,
         classi: sezione ? [sezione] : [],
-        onPubblicato: loadMedia,
+        onPubblicato: () => { void loadMedia(); },
     });
 
     const handleUploadFiles = (files: { file: File; preview: string }[]) => {
@@ -407,44 +473,28 @@ function TeacherGalleryContent() {
     const activeIsBroadcast = activeFile ? activeFile.is_broadcast : false;
 
     const handleConfirmUpload = async () => {
-        if (!teacherId) return;
+        if (!teacherId || uploading) return;
+        if (uploadedFiles.some(f => !f.file.type.startsWith('video/')) && !sedeVideo) {
+            setUploadError(t('galleryCodaSedeRichiesta'));
+            return;
+        }
         setUploading(true);
+        setUploadError(null);
+        const completati = new Set<number>();
+        const accodati = new Set<string>();
+        let fotoAccodate = 0;
+        let videoAvviati = 0;
         try {
-            const offlineMode = !isOnline;
-
-            // Che cosa è successo davvero, per dirlo alla fine senza inventare: le
-            // due strade adesso finiscono in modo diverso — una foto è PUBBLICATA,
-            // un video è soltanto PARTITO, e annunciarli con la stessa frase
-            // («File caricati e pubblicati con successo!») sarebbe la bugia da cui
-            // nasce il secondo caricamento.
-            let fotoConcluse = 0;
-            let videoAvviati = 0;
-
+            // Prima si conserva TUTTO il lotto foto nel dispositivo. La rete parte
+            // solo dopo: un 429 sulla 31ª non perde le prime 30 né l'ultima.
             for (let i = 0; i < uploadedFiles.length; i++) {
                 const f = uploadedFiles[i];
-                let processedFile = f.file;
-                const isVideo = f.file.type.startsWith('video/');
-                if (isVideo) {
-                    // ── V11 · IL VIDEO PARTE COM'È, E LA CONVERSIONE LA FA IL SERVER ──
-                    //
-                    // Niente `<canvas>`, niente `MediaRecorder`, nessun tetto di 50 MiB
-                    // scritto qui: il file va in un bucket privato con un upload TUS che
-                    // riprende da dove si era interrotto, e il resto lo fa la pipeline.
-                    // Quello che resta a questa pagina è dire di no PRIMA — e dirlo con
-                    // i numeri veri della pipeline, non con una loro copia.
-                    //
-                    // ⚠️ OFFLINE NO, e per una ragione diversa da prima: la coda offline
-                    // spedisce col percorso delle FOTO (`syncPendingGalleryMedia`), che
-                    // per un video non è più la strada giusta. Meglio dirlo subito che
-                    // accodare qualcosa che nessuno convertirà mai.
-                    if (offlineMode) {
+                if (f.file.type.startsWith('video/')) {
+                    // La pipeline video ha il suo intento e il proprio TUS riprendibile.
+                    if (!isOnline) {
                         alert(t('galleryAlertVideoOffline', { nome: f.file.name }));
                         continue;
                     }
-
-                    // La durata è best-effort (vedi `durataVideoDalFile`): quando il
-                    // browser la sa, un video di quattro minuti viene fermato QUI invece
-                    // che dopo due gigabyte di caricamento e una conversione pagata.
                     const durata = await durataVideoDalFile(f.file);
                     const avvio = await videoGalleria.avviaVideo(f.file, {
                         tag: f.is_broadcast ? [] : f.tag_students,
@@ -452,169 +502,111 @@ function TeacherGalleryContent() {
                         durataSecondi: durata,
                     });
                     if (!avvio.ok) {
-                        // Il messaggio arriva già tradotto dal catalogo (mai la prosa del
-                        // server) e `continue` perché gli altri file del lotto proseguono:
-                        // è la stessa regola delle foto qui sotto.
                         alert(avvio.messaggio);
                         continue;
                     }
                     videoAvviati++;
-                    // Da qui in poi il video vive per conto suo: la scheda «in
-                    // preparazione» ne racconta l'avanzamento nella schermata della
-                    // galleria, e la riga di `galleria_media_v2` nascerà solo quando la
-                    // conversione sarà finita e verificata.
+                    completati.add(i);
                     continue;
-                } else {
-                    // Ridimensionamento e Watermarking client-side
-                    try {
-                        processedFile = await processImageWithWatermark(f.file, '/watermark.png');
-                    } catch (e) {
-                        // ⚠️ `continue`, NON un'eccezione che esce dal ciclo — ed è la stessa
-                        // cosa che il ramo video fa venti righe più sopra. Da quando
-                        // `processImageWithWatermark` RIFIUTA una tela degenere invece di
-                        // pubblicare un file da 775 byte, questo `await` può lanciare; e il
-                        // `try` che lo avvolgeva è quello aperto PRIMA del `for`, col `catch`
-                        // dopo la sua chiusura. Su cinque foto con la seconda degenere,
-                        // l'insegnante vedeva l'avviso di UNA foto e le foto 3, 4 e 5 non
-                        // venivano mai elaborate né caricate, senza che niente lo dicesse —
-                        // e `setUploadedFiles([])` non veniva raggiunto, quindi un secondo
-                        // tentativo ripubblicava in doppio quelle già passate.
-                        //
-                        // Si intercetta il SOLO rigetto deliberato: `ImageProcessingError`
-                        // porta una frase italiana già pronta e senza il nome del file
-                        // (`MESSAGGIO_UMANO`, `lib/media/immagini.ts`). Qualunque altro
-                        // errore è un guasto inatteso e continua a salire al catch-all, che
-                        // lo logga: trattarlo come «salta questa foto» nasconderebbe un bug.
-                        if (e instanceof ImageProcessingError) {
-                            alert(e.message);
-                            continue;
-                        }
-                        throw e;
-                    }
                 }
-
-                if (offlineMode) {
-                    // Salva in locale nel DB offline
-                    const localId = typeof window !== 'undefined' && window.crypto?.randomUUID 
-                        ? window.crypto.randomUUID() 
-                        : `local-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-                    await saveLocalGalleryMedia({
-                        id: localId,
-                        uploaded_by: teacherId,
+                if (!ambitoCorrente()) break;
+                if (!sedeVideo) continue;
+                let processedFile: File = f.file;
+                let phase: 'preparing' | 'upload' = 'upload';
+                try {
+                    processedFile = await processImageWithWatermark(f.file, '/watermark.png');
+                } catch (error) {
+                    // Anche l'originale non decodificabile resta nel dispositivo.
+                    // «Riprova foto» ripete l'elaborazione; «Scarta» è esplicito.
+                    phase = 'preparing';
+                    logClient({ livello: 'error', evento: 'offline', messaggio: error instanceof ImageProcessingError
+                        ? 'gallery-foto-non-decodificabile' : 'gallery-foto-elaborazione-fallita', route: '/teacher/gallery' });
+                }
+                if (!ambitoCorrente()) break;
+                try {
+                    const id = crypto.randomUUID();
+                    await accodaFotoGalleria({
+                        id, uploaded_by: teacherId, scuola_id: sedeVideo,
                         caption: f.file.name,
                         tag_students: f.is_broadcast ? [] : f.tag_students,
                         is_broadcast: f.is_broadcast,
                         target_classes: f.is_broadcast ? [sezione] : null,
-                        // Qui arrivano solo FOTO: il ramo video esce prima con un
-                        // `continue`, perché la coda offline parla il protocollo delle
-                        // immagini e un video non ci passerebbe comunque.
-                        file_type: 'foto',
                         file_blob: processedFile,
                         file_name: processedFile.name,
-                        creato_il: new Date().toISOString()
+                        creato_il: new Date().toISOString(),
+                        phase,
                     });
-                    fotoConcluse++;
-                } else {
-                    // CARICAMENTO DIRETTO ALLO STORAGE (firma + `PUT`), non più multipart
-                    // attraverso una nostra route.
-                    //
-                    // ⚠️ IL MULTIPART ERA IL DIFETTO. Vercel rifiuta un corpo oltre ~4,5 MB
-                    // con un 413 scritto dall'infrastruttura PRIMA che la funzione parta:
-                    // nei log del server non restava niente, e qui usciva «Errore durante
-                    // il caricamento del file». Misurato in `app_log` il 2026-09-07: sei
-                    // volte in un giorno, e l'unico video passato pesava 4.484.198 byte,
-                    // dodici kilobyte sotto il taglio. Il bucket ne accetta 50 di milioni.
-                    const esito = await caricaMediaGalleria(processedFile, processedFile.type || 'image/jpeg');
-                    if (!esito.ok) {
-                        throw new Error(`«${f.file.name}»: ${messaggioCaricamento(esito, t)}`);
-                    }
-                    const path = esito.path;
-
-                    // Crea il record nel DB
-                    const res = await fetch('/api/gallery', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
-                        body: JSON.stringify({
-                            uploaded_by: teacherId,
-                            file_url: path,
-                            file_type: 'foto',
-                            caption: f.file.name,
-                            tag_students: f.is_broadcast ? [] : f.tag_students,
-                            is_broadcast: f.is_broadcast,
-                            target_classes: f.is_broadcast ? [sezione] : null,
-                        }),
-                    });
-
-                    if (!res.ok) {
-                        const errData = await res.json().catch(() => ({} as Record<string, unknown>));
-                        // Il corpo si legge UNA volta sola, e qui serve due volte: per il
-                        // messaggio e per `nomi`. Perciò `messaggioDaCorpo` e non
-                        // `messaggioErrore` — stessa decisione, corpo già in mano.
-                        const motivo = messaggioDaCorpo(errData, t('galleryErrSalvataggio'));
-                        // Il 422 del Privacy Lock porta `nomi` (bambini senza liberatoria):
-                        // mostriamoli così l'insegnante sa chi togliere dai tag. Restano in
-                        // chiaro a schermo e SOLO lì: nei log non entrano mai (sono minori).
-                        const dettagli = Array.isArray(errData.nomi) && errData.nomi.length > 0 ? ` (${(errData.nomi as string[]).join(', ')})` : '';
-                        // LO STATO VIAGGIA CON L'ERRORE, il nome del file no.
-                        // In `app_log` questo ramo produceva 7 righe in un giorno
-                        // tutte uguali — `gallery-pubblicazione-fallita: Error`,
-                        // `contesto` vuoto — perché `nomeErrore` restituisce il
-                        // TIPO dell'errore e un `new Error` generico si chiama
-                        // «Error» per tutti. Un 413 (file troppo grande), un 422
-                        // (Privacy Lock) e un 500 collassavano nella stessa riga:
-                        // sapevamo che sette foto non erano arrivate e nient'altro.
-                        // Lo status è un numero, quindi passa la redazione; il
-                        // messaggio contiene il nome del file — la foto di un
-                        // minore — e infatti non entra nel log, oggi come prima.
-                        throw Object.assign(new Error(`«${f.file.name}»: ${motivo}${dettagli}`), { stato: res.status });
-                    }
-                    fotoConcluse++;
+                    fotoAccodate++;
+                    accodati.add(id);
+                    completati.add(i);
+                } catch (error) {
+                    // Quota IndexedDB o altro guasto locale: il file non è in coda,
+                    // quindi resta nello step dei tag finché l'utente non riprova.
+                    logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-foto-accodamento-fallito', route: '/teacher/gallery' });
+                    setUploadError(t(error instanceof FotoTroppoGrandeError ? 'galleryErrTroppoGrande' : 'galleryCodaSalvataggioFallito'));
                 }
             }
-
-            // ⚠️ SI ANNUNCIA SOLO CIÒ CHE È DAVVERO SUCCESSO. Prima qui c'era un
-            // `alert` incondizionato: scegliendo un solo video e vedendolo rifiutato,
-            // l'insegnante leggeva comunque «File caricati e pubblicati con
-            // successo!» — e andava a cercarlo in galleria. Adesso ogni frase ha il
-            // suo conteggio dietro.
-            if (offlineMode) {
-                if (fotoConcluse > 0) alert(t('galleryAlertOffline'));
-            } else if (fotoConcluse > 0) {
-                alert(t('galleryAlertPubblicati'));
+            if (fotoAccodate > 0 && isOnline && sedeVideo) {
+                try { await syncPendingGalleryMedia({ ownerId: teacherId, schoolId: sedeVideo, isCurrent: ambitoCorrente }); }
+                catch { logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-drain-fallito', route: '/teacher/gallery' }); }
             }
-            // Un video non è pubblicato: è PARTITO. La differenza è minuti, e dirla
-            // è ciò che impedisce il secondo caricamento.
+            if (fotoAccodate > 0 && !ambitoCorrente()) return;
+            const rows = fotoAccodate > 0 && sedeVideo
+                ? await listaFotoInCoda({ ownerId: teacherId, schoolId: sedeVideo }) : [];
+            if (fotoAccodate > 0) {
+                setQueueRows(rows);
+                setQueueNow(Date.now());
+            }
+            const inCoda = rows.filter(row => accodati.has(row.id)).length;
+            const pubblicate = Math.max(0, fotoAccodate - inCoda);
+            if (fotoAccodate > 0) alert(t('galleryCodaEsito', { pubblicate, inCoda }));
             if (videoAvviati > 0) alert(t('galleryVideoAvviato'));
-
-            await loadMedia();
-            setStep('gallery');
-            setUploadedFiles([]);
-            setActiveFileIndex(0);
-        } catch (err) {
-            // Nel messaggio SOLO il TIPO dell'errore: `nomeErrore` restituisce `e.name`
-            // e niente altro, mentre `e.message` porta il nome del file — cioè la foto
-            // di un minore, che resterebbe trenta giorni in `app_log`. All'utente si
-            // mostra il testo intero, che vive a schermo e non entra in nessuna tabella.
-            //
-            // Questo è il ramo CATCH-ALL, e si distingue da quelli di
-            // `@/lib/gallery/carica-media` (firma, trasferimento, taglia, formato), che
-            // hanno un messaggio e uno stato propri. Fino al 2026-09-07 il messaggio era
-            // uno solo per tutti: la deduplicazione di `logClient` ha per chiave
-            // `evento|messaggio|stato`, quindi guasti diversi collassavano in una riga
-            // sola — e infatti in tabella ogni riga aveva `contesto` vuoto e nessuno
-            // stato, cioè non diceva niente di ciò che era andato storto.
-            const stato = (err as { stato?: unknown })?.stato;
-            logClient({
-                livello: 'error', evento: 'fetch', route: '/teacher/gallery',
-                messaggio: `gallery-pubblicazione-fallita: ${nomeErrore(err)}`,
-                // `stato` è parte della chiave di deduplicazione di `logClient`
-                // (`evento|messaggio|stato`): è ciò che separa il 413 dal 422.
-                ...(typeof stato === 'number' ? { stato } : {}),
-            });
-            alert(err instanceof Error && err.message ? err.message : t('galleryErrCaricamentoGenerico'));
+            if (isOnline && (fotoAccodate > 0 || videoAvviati > 0)) await loadMedia();
+        } catch (error) {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `gallery-pubblicazione-fallita: ${nomeErrore(error)}`, route: '/teacher/gallery' });
+            setUploadError(t('galleryErrCaricamentoGenerico'));
         } finally {
+            if ((fotoAccodate === 0 || ambitoCorrente()) && completati.size > 0) {
+                const rimanenti = uploadedFiles.filter((_, i) => !completati.has(i));
+                setUploadedFiles(rimanenti);
+                setActiveFileIndex(0);
+                setStep(rimanenti.length > 0 ? 'tag' : 'gallery');
+            }
             setUploading(false);
+        }
+    };
+
+    const riprovaFoto = async (id: string) => {
+        if (!teacherId || !sedeVideo) return;
+        try {
+            await riprovaFotoInCoda({ ownerId: teacherId, schoolId: sedeVideo }, id);
+            await sincronizzaCoda();
+        } catch {
+            logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-riprova-fallita', route: '/teacher/gallery' });
+            setUploadError(t('galleryErrCaricamentoGenerico'));
+        }
+    };
+
+    const assegnaSedeFoto = async (id: string) => {
+        if (!teacherId || !sedeVideo) return;
+        try {
+            await assegnaSedeFotoLegacy({ ownerId: teacherId, schoolId: sedeVideo }, id);
+            await sincronizzaCoda();
+        } catch {
+            logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-sede-assegnazione-fallita', route: '/teacher/gallery' });
+            setUploadError(t('galleryErrCaricamentoGenerico'));
+        }
+    };
+
+    const scartaFoto = async (id: string) => {
+        if (!teacherId || !sedeVideo || !confirm(t('galleryCodaConfermaScarta'))) return;
+        try {
+            const scartata = await scartaFotoInCoda({ ownerId: teacherId, schoolId: sedeVideo }, id);
+            if (!scartata) setUploadError(t('galleryCodaScartoBloccato'));
+            await aggiornaCoda();
+        } catch {
+            logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-scarto-fallito', route: '/teacher/gallery' });
+            setUploadError(t('galleryErrCaricamentoGenerico'));
         }
     };
 
@@ -715,6 +707,19 @@ function TeacherGalleryContent() {
                 title={t('galleryTitolo')}
                 subtitle={t('gallerySottotitolo', { sezione: sezione || '…' })}
             />
+
+            {uploadError && <p role="alert" className="mt-3 rounded-xl border border-kidville-warn/30 bg-kidville-warn-soft p-3 font-maven text-sm text-kidville-ink">{uploadError}</p>}
+            {readError && (
+                <div role="alert" className="mt-3 rounded-xl border border-kidville-warn/30 bg-kidville-warn-soft p-3 font-maven text-sm text-kidville-ink">
+                    <p>{t('galleryLetturaFallita')}</p>
+                    <button type="button" onClick={() => { void loadMedia(); }} className="mt-2 font-bold underline underline-offset-2">
+                        {t('galleryRiprovaLettura')}
+                    </button>
+                </div>
+            )}
+            <CodaFoto rows={queueRows} now={queueNow} onRetryAll={() => { void sincronizzaCoda(); }}
+                onRetryRow={(id) => { void riprovaFoto(id); }} onDiscard={(id) => { void scartaFoto(id); }}
+                onAssignSchool={(id) => { void assegnaSedeFoto(id); }} />
 
             {/* Controlli (sezione + step) */}
             <div className="mt-3 flex flex-wrap items-center gap-3">

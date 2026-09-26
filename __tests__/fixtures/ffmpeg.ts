@@ -326,6 +326,8 @@ export function provaDiDecodifica(
     'explode',
     '-i',
     percorso,
+    '-fps_mode',
+    'passthrough',
     '-f',
     'null',
     '-',

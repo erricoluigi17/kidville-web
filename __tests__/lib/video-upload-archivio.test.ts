@@ -281,3 +281,65 @@ describe('la scelta dell’archivio', () => {
     vi.doUnmock('@/lib/logging/client')
   })
 })
+
+
+it('nuove righe conservano autore e sede originali; il legacy resta non attribuito', () => {
+  expect(riga()).toMatchObject({ ownerId: null, scuolaId: null })
+})
+
+
+describe('l’archivio condiviso rifà la prova a ogni montaggio', () => {
+  it('se IndexedDB si guasta a metà sessione, il montaggio dopo ripiega sulla memoria (sempre la stessa)', async () => {
+    vi.resetModules()
+    let rotto = false
+    let singhiozzi = 0
+    const logClient = vi.fn()
+    vi.doMock('@/lib/logging/client', async () => {
+      const vero = await vi.importActual<typeof import('@/lib/logging/client')>('@/lib/logging/client')
+      return { ...vero, logClient: (...a: unknown[]) => logClient(...a) }
+    })
+    vi.doMock('@/lib/media/video/upload/archivio-dexie', () => ({
+      ArchivioCaricamentiDexie: class {
+        async elenca() {
+          if (singhiozzi > 0) { singhiozzi--; throw Object.assign(new Error('singhiozzo'), { name: 'UnknownError' }) }
+          if (rotto) throw Object.assign(new Error('perso'), { name: 'UnknownError' })
+          return []
+        }
+      },
+    }))
+    vi.stubGlobal('indexedDB', {})
+    try {
+      const { creaArchivioCaricamenti } = await import('@/lib/media/video/upload/crea-archivio')
+      // Dopo resetModules la classe va presa dallo stesso grafo di moduli.
+      const { ArchivioCaricamentiInMemoria: Memoria } = await import('@/lib/media/video/upload/archivio-memoria')
+      const primo = await creaArchivioCaricamenti()
+      expect(await creaArchivioCaricamenti()).toBe(primo)
+
+      // Un singhiozzo solo (un tentativo fallito) non sposta la pagina in memoria.
+      singhiozzi = 1
+      expect(await creaArchivioCaricamenti()).toBe(primo)
+
+      rotto = true
+      const ripiego = await creaArchivioCaricamenti()
+      expect(ripiego).toBeInstanceOf(Memoria)
+      expect(await creaArchivioCaricamenti()).toBe(ripiego)
+      expect(logClient.mock.calls.some(([e]) => String(e.messaggio) === 'video-upload-archivio-volatile' && e.campi?.motivo === 'UnknownError')).toBe(true)
+
+      // Finché il ripiego ha un caricamento aperto resta lui l'archivio della
+      // pagina: tornando a IndexedDB quella riga diventerebbe invisibile.
+      await ripiego.scrivi({ jobId: 'aperto', stato: 'in_corso' } as never)
+      rotto = false
+      expect(await creaArchivioCaricamenti()).toBe(ripiego)
+
+      // Chiuso quello, si torna alla STESSA istanza Dexie di prima (i file vivi
+      // dei caricamenti sono legati a lei).
+      await ripiego.aggiorna('aperto', { stato: 'annullato' })
+      expect(await creaArchivioCaricamenti()).toBe(primo)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.doUnmock('@/lib/media/video/upload/archivio-dexie')
+      vi.doUnmock('@/lib/logging/client')
+      vi.resetModules()
+    }
+  })
+})

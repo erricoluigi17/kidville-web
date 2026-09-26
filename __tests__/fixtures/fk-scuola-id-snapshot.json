@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
   "generato_il": "2026-09-25",
-  "generato_alle": "2026-09-25T03:07:33Z",
-  "sha256": "a666e072b466cc401ce5deebd054e6284b73bf4e5873ac65a8b0518cba35ff9d",
+  "generato_alle": "2026-09-25T18:54:56Z",
+  "sha256": "b1c1485ed6bc26c0b3845ed8c50daa1a1cf38b870c0117a1ab814442b74f059b",
   "tabelle": [
     {
       "tabella": "admin_settings",
@@ -176,6 +176,12 @@
       "tabella": "galleria_media_v2",
       "not_null": false,
       "fk_nome": "galleria_media_v2_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "gallery_photo_uploads",
+      "not_null": true,
+      "fk_nome": "gallery_photo_uploads_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {

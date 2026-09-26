@@ -2,8 +2,7 @@ import { db, LocalAttendanceLog, LocalDiaryEntry, LocalGalleryMedia, LocalPrimar
 import { createBrowserClient } from '@supabase/ssr';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { caricaMediaGalleria } from '@/lib/gallery/carica-media';
-import { mimeBase } from '@/lib/gallery/limiti';
+import { accodaFotoGalleria, drainGalleryPhotoQueue, type AmbitoCodaFoto } from '@/lib/gallery/coda-foto';
 
 // Motore di sincronizzazione offline: gira NEL CLIENT, quindi dentro la WebView
 // nativa. Per questo qui non c'è (e non deve tornare) nessun `console.*`: nella
@@ -256,100 +255,20 @@ export async function syncAdults() {
 // Galleria Foto e Video — Fase 3
 // ============================================================
 
+/** Compatibilità per i chiamanti storici: il video usa la propria pipeline. */
 export async function saveLocalGalleryMedia(mediaData: Omit<LocalGalleryMedia, 'sync_status'>) {
-    try {
-        const fullMedia: LocalGalleryMedia = { ...mediaData, sync_status: 'pending' };
-        await db.galleria.put(fullMedia);
-        
-        if (typeof window !== 'undefined' && navigator.onLine) {
-            syncPendingGalleryMedia();
-        }
-    } catch (error) {
-        logSync('salvataggio-locale-galleria-fallito');
-        // Rilancia: il chiamante deve poter mostrare l'errore all'utente.
-        throw error;
+    if (mediaData.file_type !== 'foto' || !mediaData.scuola_id) {
+        logSync('salvataggio-locale-galleria-ambito-mancante');
+        throw new Error('ambito_coda_foto_mancante');
     }
+    await accodaFotoGalleria({ ...mediaData, scuola_id: mediaData.scuola_id, phase: mediaData.phase === 'preparing' ? 'preparing' : 'upload' });
 }
 
-export async function syncPendingGalleryMedia() {
-    if (typeof window !== 'undefined' && !navigator.onLine) {
-        return;
-    }
-
-    try {
-        const pending = await db.galleria
-            .where('sync_status')
-            .anyOf('pending', 'error')
-            .toArray();
-
-        if (pending.length === 0) return;
-
-
-        for (const item of pending) {
-            try {
-                // 1. Carica il blob — firma + `PUT` diretto allo Storage.
-                //
-                // ⚠️ QUI IL MULTIPART ERA UN GUASTO, non una scelta. Un video accodato
-                // può arrivare a 50 MB (il client lo comprime fino a quel tetto prima di
-                // metterlo in coda), e `POST /api/gallery/upload` prendeva 413 da Vercel
-                // al ritorno della rete: la riga finiva `sync_status: 'error'` e quel
-                // video NON RIPARTIVA PIÙ. Riparare la galleria online lasciando rotto il
-                // percorso pensato per la scuola senza campo sarebbe stato metà lavoro.
-                // IL TIPO SI DERIVA DAL BLOB, non si asserisce. Fino al 2026-09-09 questa
-                // riga cablava `video/mp4` per ogni video: ma `processVideoWithWatermark`
-                // sceglie il formato in base a ciò che il dispositivo sa registrare, e
-                // altrove esce **webm**. Un webm partiva dichiarando mp4, e siccome il
-                // server deriva l'estensione dal mime VALIDATO finiva in archivio come
-                // `.mp4` — un file etichettato per quello che non è, nel bucket da cui il
-                // genitore lo scarica. Il cablaggio resta come RIPIEGO, per i blob che un
-                // tipo non ce l'hanno.
-                const mime = mimeBase(item.file_blob.type)
-                    || (item.file_type === 'video' ? 'video/mp4' : 'image/jpeg');
-                const fileObj = new File([item.file_blob], item.file_name, { type: mime });
-
-                const esito = await caricaMediaGalleria(fileObj, mime);
-                if (!esito.ok) {
-                    // Il motivo distingue i rami in SQL: «troppo grande» e «lo Storage ha
-                    // rifiutato» hanno rimedi opposti. Il nome del file resta fuori: è la
-                    // foto di un minore.
-                    logSync(`sync-galleria-upload-fallito: ${esito.motivo}`);
-                    await db.galleria.update(item.id, { sync_status: 'error' });
-                    continue;
-                }
-                const path = esito.path;
-
-                // 2. Salva il record nel database tramite l'API POST
-                const response = await fetch('/api/gallery', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-user-id': item.uploaded_by },
-                    body: JSON.stringify({
-                        uploaded_by: item.uploaded_by,
-                        file_url: path,
-                        file_type: item.file_type,
-                        caption: item.caption,
-                        tag_students: item.tag_students,
-                        is_broadcast: item.is_broadcast,
-                        target_classes: item.target_classes,
-                    }),
-                });
-
-                if (!response.ok) {
-                    const errRes = await response.json();
-                    throw new Error(errRes.error || 'Errore salvataggio DB');
-                }
-
-                // 4. Rimuovi dal database offline dopo il successo
-                await db.galleria.delete(item.id);
-            } catch {
-                logSync('sync-galleria-item-fallito');
-                await db.galleria.update(item.id, { sync_status: 'error' });
-            }
-        }
-    } catch {
-        logSync('sync-galleria-fallito');
-    }
+/** Senza identità e sede esplicite nessun file lascia questo dispositivo. */
+export function syncPendingGalleryMedia(scope?: AmbitoCodaFoto): Promise<void> {
+    if (!scope?.ownerId || !scope.schoolId) return Promise.resolve();
+    return drainGalleryPhotoQueue(scope);
 }
-
 
 // ============================================================
 // Primaria — Appello & Registro (Fase 1) — coda offline verso le API.

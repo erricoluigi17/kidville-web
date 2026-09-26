@@ -77,13 +77,23 @@ export interface LocalStudentDocument {
 export interface LocalGalleryMedia {
     id: string;
     uploaded_by: string;
+    /** Sede scelta nel gesto originale; assente solo nelle righe legacy. */
+    scuola_id?: string | null;
+    /** UUID stabile della pubblicazione foto, identico a `id` nelle righe nuove. */
+    upload_id?: string;
     caption: string | null;
     tag_students: string[];
     is_broadcast: boolean;
     target_classes: string[] | null;
     file_type: 'foto' | 'video';
-    file_blob: Blob;
+    /** Byte nelle nuove foto; Blob nelle voci legacy, ancora recuperabili. */
+    file_blob: Blob | ArrayBuffer;
+    file_mime?: string;
     file_name: string;
+    phase?: 'preparing' | 'upload' | 'publish' | 'publishing';
+    storage_path?: string | null;
+    next_attempt_at?: number | null;
+    last_error?: 'processing' | 'upload' | 'publish' | 'conflict' | 'deleted' | 'privacy' | 'quota' | null;
     sync_status: 'synced' | 'pending' | 'error';
     creato_il: string;
 }
@@ -342,4 +352,3 @@ db.version(11).stores({
  */
 
 export { db };
-

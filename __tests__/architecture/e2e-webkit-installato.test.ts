@@ -180,12 +180,14 @@ describe('lock: i motori dichiarati da Playwright sono quelli installati in CI',
 
     // I quattro percorsi che un genitore su iPhone fa davvero: entrare,
     // la home, i pagamenti (denaro) e il modulo pubblico d'iscrizione (che si
-    // compila da Safari, non dall'app).
+    // compila da Safari, non dall'app). Più l'archivio dei video: WebKit rifiuta i
+    // Blob in IndexedDB, ed è l'unico motore su cui quelle prove dicono qualcosa.
     for (const atteso of [
       'auth.spec.ts',
       'parent-home.spec.ts',
       'parent-pagamenti.spec.ts',
       'public-iscrizione.spec.ts',
+      'video-archivio.spec.ts',
     ]) {
       expect(
         scelti.some((f) => f.endsWith(atteso)),

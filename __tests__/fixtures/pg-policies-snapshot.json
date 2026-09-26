@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
   "generato_il": "2026-09-25",
-  "generato_alle": "2026-09-25T03:07:33Z",
-  "sha256": "5806202779037548eb106b81f5ff4f59e2e28fa8211e9c6565a5a29d2c8dbdb0",
+  "generato_alle": "2026-09-25T18:54:54Z",
+  "sha256": "15e7f14a20f13393b5d1ca74d57ae5ecfb600bf446def58bcffc931ad9b7a78a",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -509,6 +509,7 @@
     "forms_templates",
     "galleria_media",
     "galleria_media_v2",
+    "gallery_photo_uploads",
     "giudizi_sintetici_scala",
     "giudizio_template",
     "gruppi_mensa",
@@ -612,6 +613,7 @@
     "forms_templates",
     "galleria_media",
     "galleria_media_v2",
+    "gallery_photo_uploads",
     "giudizi_sintetici_scala",
     "giudizio_template",
     "giustifiche_didattiche",

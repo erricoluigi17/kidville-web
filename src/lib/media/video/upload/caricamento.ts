@@ -1,4 +1,4 @@
-import { Upload, type HttpStack } from 'tus-js-client'
+import { Upload, defaultOptions, type HttpStack } from 'tus-js-client'
 
 import { mimeBase } from '@/lib/gallery/limiti'
 import { logClient, nomeErrore } from '@/lib/logging/client'
@@ -11,6 +11,7 @@ import {
 } from '../contratto'
 import { validateVideoInputSize } from '../limiti'
 import type { ArchivioCaricamentiVideo } from './archivio'
+import { ErroreByteVideo, type ByteVideo } from './byte-video'
 import { LettoreBlob } from './lettore-blob'
 import {
   caricamentiDaPotare,
@@ -112,6 +113,8 @@ export interface IngressoAccodamento {
   jobId: string
   intentId: string
   canale: CanaleVideo
+  ownerId?: string | null
+  scuolaId?: string | null
   chiaveIdempotenza: string
   coordinate: CoordinateCaricamentoVideo
   file: File
@@ -171,6 +174,78 @@ function segnala(
   logClient({ livello, evento: 'fetch', messaggio: `${messaggio}: job=${jobId}`, campi })
 }
 
+/** Dexie mette la causa vera di un abort in `inner` (è lì che c'è «quota»). */
+function campiErrore(err: unknown): CampiLog {
+  const interno = (err as { inner?: unknown } | null | undefined)?.inner
+  return interno ? { error_code: nomeErrore(err), causa: nomeErrore(interno) } : { error_code: nomeErrore(err) }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * LA SORGENTE VIVA
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Il `File` scelto in QUESTA sessione, accanto all'archivio che l'ha accodato.
+ *
+ * Finché la pagina resta aperta tus legge da qui e non dai blocchi salvati: la
+ * copia in IndexedDB serve alla ripresa dopo la chiusura dell'app, non al
+ * trasferimento. Tre conseguenze, tutte misurate dal critico del 2026-09-26:
+ * un salvataggio locale fallito (telefono pieno) non impedisce più l'invio, una
+ * riscrittura dello stesso video mentre parte non toglie i byte da sotto il
+ * trasferimento, e l'invio non contende IndexedDB con la copia di un altro video.
+ *
+ * Chiave: l'istanza dell'archivio. Una pagina nuova ha un archivio nuovo, cioè
+ * nessuna sorgente viva — esattamente come un'app riaperta.
+ */
+const sorgentiVive = new WeakMap<ArchivioCaricamentiVideo, Map<string, Blob>>()
+
+function ricordaSorgenteViva(archivio: ArchivioCaricamentiVideo, jobId: string, file: Blob): void {
+  let perArchivio = sorgentiVive.get(archivio)
+  if (!perArchivio) {
+    perArchivio = new Map()
+    sorgentiVive.set(archivio, perArchivio)
+  }
+  perArchivio.set(jobId, file)
+}
+
+function sorgenteViva(archivio: ArchivioCaricamentiVideo, jobId: string, dimensione: number): Blob | undefined {
+  const file = sorgentiVive.get(archivio)?.get(jobId)
+  return file && file.size === dimensione ? file : undefined
+}
+
+function dimenticaSorgenteViva(archivio: ArchivioCaricamentiVideo, jobId: string): void {
+  sorgentiVive.get(archivio)?.delete(jobId)
+}
+
+/**
+ * Salva i byte per la ripresa, e se non ci riesce NON ferma il caricamento: lo
+ * dice e prosegue con la sola sorgente viva. Su un telefono quasi pieno la copia
+ * locale fallisce per quota, mentre l'invio allo Storage di spazio non ne chiede.
+ * Si perde la ripresa dopo la chiusura dell'app per QUEL video, non il video.
+ */
+/**
+ * La riga è piccola ma senza di lei non c'è caricamento da seguire. Se non si
+ * scrive (IndexedDB chiuso o disco pieno) il video si rifiuta con un messaggio:
+ * lasciar salire l'eccezione fermerebbe anche il resto del lotto della galleria.
+ */
+async function scriviRiga(dip: DipendenzeCaricamentoVideo, riga: CaricamentoVideoLocale): Promise<boolean> {
+  try {
+    await dip.archivio.scrivi(riga)
+    return true
+  } catch (err) {
+    segnala('error', 'video-upload-riga-non-scritta', riga.jobId, campiErrore(err))
+    return false
+  }
+}
+
+async function salvaPerRipresa(dip: DipendenzeCaricamentoVideo, jobId: string, file: File): Promise<void> {
+  try {
+    await dip.archivio.scriviByte(jobId, file)
+  } catch (err) {
+    segnala('error', 'video-upload-archivio-degradato', jobId, { byte: file.size, ...campiErrore(err) })
+  }
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * ACCODARE
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -216,16 +291,38 @@ export async function accodaCaricamentoVideo(
   //
   // Un `fallito` o un `annullato` invece si sovrascrivono: lì riaccodare È la
   // richiesta di ricominciare.
-  const esistente = await dip.archivio.leggi(jobId)
-  if (esistente && (esistente.stato === 'da_caricare' || esistente.stato === 'in_corso')) {
-    await dip.archivio.scriviByte(jobId, file)
-    return { ok: true, riga: esistente }
+  let esistente: CaricamentoVideoLocale | undefined
+  try {
+    esistente = await dip.archivio.leggi(jobId)
+  } catch (err) {
+    // Un archivio che non si legge non si scriverà nemmeno: il video si rifiuta
+    // con un codice, invece di far salire l'eccezione e fermare il lotto.
+    segnala('error', 'video-upload-riga-illeggibile', jobId, campiErrore(err))
+    return { ok: false, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }
+  }
+  if (esistente && !['fallito', 'annullato'].includes(esistente.stato)) {
+    if ((esistente.ownerId && ingresso.ownerId && esistente.ownerId !== ingresso.ownerId)
+      || (esistente.scuolaId && ingresso.scuolaId && esistente.scuolaId !== ingresso.scuolaId)
+      || esistente.canale !== ingresso.canale || esistente.dimensioneByte !== file.size) {
+      segnala('warn', 'video-upload-contesto-diverso', jobId, {})
+      return { ok: false, codice: 'VIDEO_NON_AUTORIZZATO' }
+    }
+    // Soltanto la nuova selezione esplicita può attribuire una riga legacy.
+    const aggiornata = { ...esistente, ownerId: esistente.ownerId ?? ingresso.ownerId ?? null, scuolaId: esistente.scuolaId ?? ingresso.scuolaId ?? null }
+    if (!(await scriviRiga(dip, aggiornata))) return { ok: false, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }
+    if (esistente.stato !== 'caricato') {
+      ricordaSorgenteViva(dip.archivio, jobId, file)
+      await assicuraDeposito(dip, jobId, file)
+    }
+    return { ok: true, riga: aggiornata }
   }
 
   const riga = nuovoCaricamento({
     jobId,
     intentId: ingresso.intentId,
     canale: ingresso.canale,
+    ownerId: ingresso.ownerId,
+    scuolaId: ingresso.scuolaId,
     chiaveIdempotenza: ingresso.chiaveIdempotenza,
     nome: file.name,
     dimensioneByte: file.size,
@@ -235,11 +332,35 @@ export async function accodaCaricamentoVideo(
   })
 
   // I byte PRIMA della riga: se il browser muore in mezzo resta un deposito senza
-  // riga — che la potatura non vedrà, ma che non promette niente a nessuno —
-  // invece di una riga che promette byte che non ci sono.
-  await dip.archivio.scriviByte(jobId, file)
-  await dip.archivio.scrivi(riga)
+  // riga — che `potaDepositiOrfani` toglie — invece di una riga che promette byte
+  // che non ci sono. Se il salvataggio fallisce la riga si scrive lo stesso: in
+  // questa sessione l'invio legge la sorgente viva, e dopo una chiusura il ramo
+  // «byte spariti» lo dice invece di tacere.
+  ricordaSorgenteViva(dip.archivio, jobId, file)
+  await assicuraDeposito(dip, jobId, file)
+  if (!(await scriviRiga(dip, riga))) {
+    dimenticaSorgenteViva(dip.archivio, jobId)
+    // Senza riga nessuno riprenderà quel deposito: si libera subito lo spazio,
+    // che su un telefono pieno è proprio ciò che ha fatto fallire la riga.
+    await dip.archivio.eliminaByte(jobId).catch((err: unknown) => {
+      segnala('warn', 'video-upload-deposito-non-liberato', jobId, campiErrore(err))
+    })
+    return { ok: false, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }
+  }
   return { ok: true, riga }
+}
+
+/**
+ * Stesso job, stesso file: se c'è già un deposito intero (una scelta ripetuta, o
+ * una copia rimasta senza riga) non si ricopiano due gigabyte accanto a quelli.
+ * Un deposito illeggibile vale come assente e si riscrive.
+ */
+async function assicuraDeposito(dip: DipendenzeCaricamentoVideo, jobId: string, file: File): Promise<void> {
+  const presente = await dip.archivio.leggiByte(jobId).catch((err: unknown) => {
+    segnala('warn', 'video-upload-deposito-da-riscrivere', jobId, campiErrore(err))
+    return undefined
+  })
+  if (presente?.size !== file.size) await salvaPerRipresa(dip, jobId, file)
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -304,7 +425,17 @@ type FineTus = { fine: 'riuscito' } | { fine: 'errore'; err: unknown } | { fine:
  * vorrebbe dire due strade che possono divergere — con la seconda esercitata solo
  * quando la rete cade, cioè quasi mai in collaudo e sempre in produzione.
  */
-export async function caricaVideo(
+const trasferimentiInCorso = new Map<string, Promise<EsitoCaricamentoVideo>>()
+
+export function caricaVideo(dip: DipendenzeCaricamentoVideo, jobId: string, opzioni: OpzioniCaricamento = {}): Promise<EsitoCaricamentoVideo> {
+  const esistente = trasferimentiInCorso.get(jobId)
+  if (esistente) return esistente
+  const promessa = eseguiCaricamentoVideo(dip, jobId, opzioni).finally(() => trasferimentiInCorso.delete(jobId))
+  trasferimentiInCorso.set(jobId, promessa)
+  return promessa
+}
+
+async function eseguiCaricamentoVideo(
   dip: DipendenzeCaricamentoVideo,
   jobId: string,
   opzioni: OpzioniCaricamento = {},
@@ -337,8 +468,25 @@ export async function caricaVideo(
     return { esito: 'annullato', jobId }
   }
 
-  const byte = await dip.archivio.leggiByte(jobId)
-  if (!byte) {
+  const viva = sorgenteViva(dip.archivio, jobId, riga.dimensioneByte)
+  let letti: ByteVideo | undefined = viva
+  if (!letti) {
+    try {
+      letti = await dip.archivio.leggiByte(jobId)
+    } catch (err) {
+      // Un deposito rotto non si ripara riprovando: si chiude e si chiede di
+      // riscegliere il file. Un IndexedDB momentaneamente irraggiungibile invece
+      // sì: i byte sono ancora lì, e la riga resta ripescabile.
+      if (err instanceof ErroreByteVideo) return chiudiPerByteLocali(dip, jobId, orologio(), riga.offsetByte, err)
+      segnala('warn', 'video-upload-deposito-illeggibile', jobId, campiErrore(err))
+      return { esito: 'interrotto', jobId, offsetByte: riga.offsetByte, codice: null }
+    }
+  }
+  if (!letti) {
+    // Un'altra scheda può aver finito (e liberato i byte) fra la lettura della
+    // riga e quella del deposito: allora non c'è niente di sparito.
+    const altrove = await conclusoAltrove(dip, jobId, { byte: riga.dimensioneByte })
+    if (altrove) return altrove
     // IL GUASTO CHE SAREBBE MUTO: il browser ha sfrattato IndexedDB per fare
     // posto e si è portato via i Blob, lasciando i metadati. Senza questo ramo si
     // entrerebbe in tus con un `undefined` e si uscirebbe con un errore che la
@@ -351,6 +499,7 @@ export async function caricaVideo(
     })
     return { esito: 'fallito', jobId, codice: 'VIDEO_RIPROVA' }
   }
+  const byte: ByteVideo = letti
 
   // LA SESSIONE CHE NON SI RINNOVA. `intestazioni()` chiama il client Supabase e
   // può rigettare (rete giù, refresh token invalido). Lasciandola propagare,
@@ -358,9 +507,8 @@ export async function caricaVideo(
   // rotellina — e di quel guasto non ci sarebbe una riga da nessuna parte.
   // È «interrotto» e non «fallito» per la stessa ragione del 401: è un «no» che
   // una persona toglie di mezzo rientrando, e i byte devono essere ancora lì.
-  let intestazioni: Record<string, string>
   try {
-    intestazioni = await dip.intestazioni()
+    await dip.intestazioni()
   } catch (err) {
     segnala('error', 'video-upload-sessione-non-risolta', jobId, {
       error_code: nomeErrore(err),
@@ -404,9 +552,23 @@ export async function caricaVideo(
   }
 
   let staccaSegnale: () => void = () => {}
+  /**
+   * Una lettura LOCALE fallita (file vivo non più leggibile, deposito rotto o
+   * irraggiungibile) non si ripara riprovando subito la stessa sorgente: tus
+   * userebbe quattro `HEAD` per ottenere quattro volte lo stesso errore. Il file
+   * vivo si dimentica, così il prossimo tentativo legge il deposito salvato.
+   */
+  let letturaLocaleFallita = false
+  const lettore = new LettoreBlob(() => {
+    letturaLocaleFallita = true
+    if (viva) dimenticaSorgenteViva(dip.archivio, jobId)
+  })
 
   const fine = await new Promise<FineTus>((risolvi) => {
-    const caricamento = new Upload(byte, {
+    // Le dichiarazioni TUS elencano solo le sorgenti del reader predefinito.
+    // Il nostro fileReader è l'unico a leggere questa sorgente lazy e non
+    // richiede che sia un Blob: espone size e lettura asincrona dell'intervallo.
+    const caricamento = new Upload(byte as Blob, {
       endpoint: riga.coordinate.endpoint,
       // È QUESTO CAMPO A RENDERE POSSIBILE LA RIPRESA. Con l'URL, tus manda una
       // `HEAD` e riparte dall'offset che il server ha contato; senza, crea una
@@ -414,7 +576,15 @@ export async function caricaVideo(
       uploadUrl: riga.urlTus,
       chunkSize: riga.coordinate.dimensioneBloccoByte,
       retryDelays: dip.ritardiRitentativo ?? [0, 1000, 3000, 5000],
-      headers: intestazioni,
+      // La firma può scadere fra due chunk. La callback mantiene la cache breve
+      // nel chiamante e rinnova soltanto quando necessario, mai su disco.
+      // Si scrive SOLO qui: XMLHttpRequest concatena setRequestHeader ripetuti.
+      // Anche impostarla in `headers` produrrebbe "firma, firma", rifiutata dallo
+      // Storage con Invalid Compact JWS prima del primo byte.
+      onBeforeRequest: async (request) => {
+        const attuali = await dip.intestazioni()
+        for (const [chiave, valore] of Object.entries(attuali)) request.setHeader(chiave, valore)
+      },
       metadata: {
         bucketName: riga.coordinate.bucket,
         objectName: riga.coordinate.percorso,
@@ -434,7 +604,10 @@ export async function caricaVideo(
       // Il lettore è nostro e si passa sempre: in `lettore-blob.ts` c'è la misura
       // che l'ha reso necessario (sotto vitest si risolve la build node di tus,
       // che un `Blob` non lo sa affettare).
-      fileReader: new LettoreBlob(),
+      fileReader: lettore,
+      onShouldRetry: (err, tentativo, opzioniTus) =>
+        !letturaLocaleFallita
+        && (defaultOptions.onShouldRetry ? defaultOptions.onShouldRetry(err, tentativo, opzioniTus) : true),
       // L'impronta è il `jobId`: deterministica, e senza il nome del file dentro.
       // Quella predefinita del browser userebbe `file.name`, che finirebbe nella
       // chiave del `localStorage` di tus — cioè un nome di bambino su disco.
@@ -501,6 +674,7 @@ export async function caricaVideo(
   }
 
   if (fine.fine === 'riuscito') {
+    dimenticaSorgenteViva(dip.archivio, jobId)
     await dip.archivio.aggiorna(jobId, {
       stato: 'caricato',
       offsetByte: byte.size,
@@ -522,15 +696,30 @@ export async function caricaVideo(
     return { esito: 'caricato', jobId, byteCaricati: byte.size }
   }
 
+  // tus avvolge in un `DetailedError` anche un errore del NOSTRO lettore: la causa
+  // vera sta in `causingError`, e senza di lei un deposito rotto e una rete caduta
+  // lascerebbero nei log la stessa riga.
+  const causa = (fine.err as { causingError?: unknown } | null | undefined)?.causingError
   const stato = statoDiErrore(fine.err)
-  const verdetto = classifica(stato)
   const campi: CampiLog = {
     offset: offsetVisto,
     byte: byte.size,
     ms: durata,
     error_code: nomeErrore(fine.err),
   }
+  if (causa !== undefined && causa !== null) campi.causa = nomeErrore(causa)
+  if (letturaLocaleFallita) campi.lettura_locale = true
   if (stato !== null) campi.stato_http = stato
+
+  // L'errore resta scritto anche quando vince uno stato concluso altrove.
+  const altrove = await conclusoAltrove(dip, jobId, campi)
+  if (altrove) return altrove
+
+  if (causa instanceof ErroreByteVideo) {
+    return chiudiPerByteLocali(dip, jobId, orologio(), offsetVisto, causa, durata)
+  }
+
+  const verdetto = classifica(stato)
 
   if (verdetto.tipo === 'interrotto') {
     await dip.archivio.aggiorna(jobId, {
@@ -543,6 +732,7 @@ export async function caricaVideo(
     return { esito: 'interrotto', jobId, offsetByte: offsetVisto, codice: verdetto.codice }
   }
 
+  dimenticaSorgenteViva(dip.archivio, jobId)
   await dip.archivio.aggiorna(jobId, {
     stato: 'fallito',
     offsetByte: offsetVisto,
@@ -552,6 +742,59 @@ export async function caricaVideo(
   await dip.archivio.eliminaByte(jobId)
   segnala('error', 'video-upload-fallito', jobId, campi)
   return { esito: 'fallito', jobId, codice: verdetto.codice }
+}
+
+/**
+ * Mentre questo trasferimento era in volo il caricamento può essersi chiuso da
+ * un'altra parte: un'altra scheda l'ha finito, o chi carica l'ha tolto
+ * dall'elenco (e con lui i byte, che è ciò che ha fatto fallire la lettura).
+ * Quello stato vince: un errore arrivato dopo non lo riscrive in «fallito».
+ */
+async function conclusoAltrove(
+  dip: DipendenzeCaricamentoVideo,
+  jobId: string,
+  campi: CampiLog = {},
+): Promise<EsitoCaricamentoVideo | null> {
+  let attuale: CaricamentoVideoLocale | undefined
+  try {
+    attuale = await dip.archivio.leggi(jobId)
+  } catch (err) {
+    segnala('warn', 'video-upload-stato-non-riletto', jobId, campiErrore(err))
+    return null
+  }
+  if (attuale && attuale.stato !== 'caricato' && attuale.stato !== 'annullato') return null
+  segnala('warn', 'video-upload-concluso-altrove', jobId, { ...campi, stato: attuale?.stato ?? 'rimosso' })
+  dimenticaSorgenteViva(dip.archivio, jobId)
+  return attuale?.stato === 'caricato'
+    ? { esito: 'caricato', jobId, byteCaricati: attuale.dimensioneByte }
+    : { esito: 'annullato', jobId }
+}
+
+/**
+ * I byte salvati sul dispositivo sono rotti (un blocco manca, il manifest non si
+ * legge): riprovare darebbe lo stesso errore a ogni apertura dell'app. Si chiude
+ * come fallito con `VIDEO_RIPROVA` — «riscegli il file» — e si libera il deposito.
+ */
+async function chiudiPerByteLocali(
+  dip: DipendenzeCaricamentoVideo,
+  jobId: string,
+  quando: Date,
+  offset: number,
+  err: ErroreByteVideo,
+  ms = 0,
+): Promise<EsitoCaricamentoVideo> {
+  dimenticaSorgenteViva(dip.archivio, jobId)
+  const altrove = await conclusoAltrove(dip, jobId)
+  if (altrove) return altrove
+  await dip.archivio.aggiorna(jobId, {
+    stato: 'fallito',
+    offsetByte: offset,
+    codice: 'VIDEO_RIPROVA',
+    aggiornatoIl: quando.toISOString(),
+  })
+  await dip.archivio.eliminaByte(jobId)
+  segnala('error', 'video-upload-byte-locali-rotti', jobId, { offset, ms, error_code: err.codice })
+  return { esito: 'fallito', jobId, codice: 'VIDEO_RIPROVA' }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -602,6 +845,7 @@ async function chiudiComeAnnullato(
   jobId: string,
   quando: Date,
 ): Promise<void> {
+  dimenticaSorgenteViva(dip.archivio, jobId)
   await dip.archivio.aggiorna(jobId, {
     stato: 'annullato',
     codice: null,
@@ -666,10 +910,22 @@ export async function potaArchivioCaricamenti(
   const orologio = dip.adesso ?? (() => new Date())
   const daPotare = caricamentiDaPotare(await dip.archivio.elenca(), orologio().getTime())
   for (const riga of daPotare) {
+    dimenticaSorgenteViva(dip.archivio, riga.jobId)
     await dip.archivio.elimina(riga.jobId)
   }
   if (daPotare.length > 0) {
     segnala('warn', 'video-upload-potatura', 'archivio', { righe: daPotare.length })
+  }
+  // I depositi che nessuna riga nomina: una copia interrotta dalla chiusura
+  // dell'app PRIMA che la riga fosse scritta. Un fallimento qui non ferma
+  // l'avvio della schermata: resta il log, e la prossima apertura riprova.
+  if (dip.archivio.potaDepositiOrfani) {
+    try {
+      const orfani = await dip.archivio.potaDepositiOrfani()
+      if (orfani > 0) segnala('warn', 'video-upload-potatura-orfani', 'archivio', { depositi: orfani })
+    } catch (err) {
+      segnala('warn', 'video-upload-potatura-orfani-fallita', 'archivio', campiErrore(err))
+    }
   }
   return daPotare.length
 }

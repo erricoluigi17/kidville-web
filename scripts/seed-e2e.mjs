@@ -20,7 +20,7 @@
  * `e2e/isolamento-sedi.spec.ts`.
  *
  * Uso (dalla root del repo): node scripts/seed-e2e.mjs
- * Env richieste (.env.local): NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+ * Env richieste: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY del progetto CI.
  */
 
 import { readFileSync } from 'node:fs';
@@ -48,6 +48,19 @@ const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL || fileEnv.NEXT_PUBLIC_SUPABAS
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || fileEnv.SUPABASE_SERVICE_ROLE_KEY;
 if (!URL_ || !SERVICE_KEY) {
   console.error('Mancano NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (env di processo o .env.local)');
+  process.exit(1);
+}
+
+// Anche il globalSetup e `npm run e2e:seed` passano di qui: la guardia deve
+// precedere il client e ogni rete, non stare nel corpo di un singolo test.
+let databaseIsolato = false;
+try {
+  databaseIsolato = new URL(URL_).href === 'https://azhssawihitkphgnlukl.supabase.co/';
+} catch {
+  // L'errore qui sotto è intenzionalmente privo dell'URL/configurazione ricevuta.
+}
+if (!databaseIsolato) {
+  console.error('Il seed E2E richiede il database CI isolato; nessuna operazione eseguita.');
   process.exit(1);
 }
 

@@ -35,7 +35,7 @@ export interface OpzioniScatto {
   multiplo?: boolean
   etichette?: EtichettePicker
   /** Chiamato quando NON è un annullamento dell'utente ma un problema vero. */
-  onErrore?: (codice: 'permesso_negato' | 'errore') => void
+  onErrore?: (codice: 'permesso_negato' | 'errore', dettaglio?: CodiceFotocamera) => void
 }
 
 /**
@@ -532,7 +532,7 @@ export async function scegliFotoNativa(opts?: OpzioniScatto): Promise<File[]> {
         multiplo,
       },
     })
-    opts?.onErrore?.(causa)
+    opts?.onErrore?.(causa, slug)
     return []
   }
 }

@@ -47,11 +47,27 @@
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { TETTO_GALLERIA_BYTE, mimeBase } from '@/lib/gallery/limiti';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
+import { leggiByteFoto } from '@/lib/gallery/byte-foto';
 
 export type EsitoCarica =
     | { ok: true; path: string }
     | { ok: false; motivo: 'troppo-grande' | 'formato' | 'formato-non-ammesso'; stato: number | null }
-    | { ok: false; motivo: 'firma' | 'trasferimento' | 'rete' | 'app-da-aggiornare'; stato: number | null };
+    | { ok: false; motivo: 'firma' | 'trasferimento' | 'rete' | 'app-da-aggiornare' | 'persistenza' | 'ambito-cambiato'; stato: number | null; retryAfterMs?: number };
+
+export interface OpzioniCaricamentoGalleria {
+    resumePath?: string;
+    /** Interrompe il client quando account/sede corrente cambiano durante un await. */
+    canContinue?: () => boolean;
+    /** Persiste il path della firma prima di inviare un solo byte allo Storage. */
+    onPath?: (path: string) => Promise<void> | void;
+}
+
+function retryAfterMs(response: Response): number | null {
+    const valore = response.headers?.get('Retry-After');
+    if (!valore || !/^\d+$/.test(valore)) return null;
+    const secondi = Number(valore);
+    return Math.min(Math.max(secondi, 1), 3600) * 1000;
+}
 
 /** La rotta che rende `messaggio` distinguibile in SQL: un ramo, un messaggio. */
 function segnala(messaggio: string, stato: number | null, livello: 'warn' | 'error' = 'error') {
@@ -63,7 +79,7 @@ function segnala(messaggio: string, stato: number | null, livello: 'warn' | 'err
     logClient({ livello, evento: 'fetch', messaggio, route: '/teacher/gallery', stato: stato ?? undefined });
 }
 
-export async function caricaMediaGalleria(file: File, mime: string): Promise<EsitoCarica> {
+export async function caricaMediaGalleria(file: File, mime: string, opzioni?: OpzioniCaricamentoGalleria): Promise<EsitoCarica> {
     // ── 0. il solo container, UNA volta ─────────────────────────
     // Il valore serve in TRE posti a settanta righe di distanza — il ramo dei video, il
     // corpo della firma, l'header della `PUT` — e due di quei tre finiscono contro un
@@ -100,16 +116,18 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
         } catch {
             // Header illeggibile: si lascia decidere al server, che è fail-closed.
             // Non è un ramo muto — il 415 che seguirà ha il suo messaggio.
+            segnala('gallery-video-intestazione-illeggibile', null, 'warn');
             testa_b64 = undefined;
         }
     }
 
+    if (opzioni?.canContinue?.() === false) return { ok: false, motivo: 'ambito-cambiato', stato: null };
     let firma: Response;
     try {
         firma = await fetch('/api/gallery/upload-url', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mime: tipo, size: file.size, testa_b64 }),
+            body: JSON.stringify({ mime: tipo, size: file.size, testa_b64, ...(opzioni?.resumePath ? { resume_path: opzioni.resumePath } : {}) }),
         });
     } catch (err) {
         segnala(`gallery-firma-non-emessa: ${nomeErrore(err)}`, null);
@@ -133,7 +151,9 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
         // il resto di questa funzione il corpo non lo tocca (vedi il ramo 2 della
         // testata: su un 413 è `text/plain` e il parse lancia).
         if (firma.status === 409) {
-            const corpo409 = (await firma.json().catch(() => null)) as { codice?: string } | null;
+            let corpo409: { codice?: string } | null = null;
+            try { corpo409 = await firma.json() as { codice?: string }; }
+            catch { segnala('gallery-firma-409-corpo-non-json', firma.status, 'warn'); }
             if (corpo409?.codice === 'VIDEO_APP_DA_AGGIORNARE') {
                 // `warn` e non `error`: è il protocollo che funziona come previsto, un
                 // client vecchio fermato apposta. Ma con un messaggio SUO, perché la
@@ -173,24 +193,48 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
             ok: false,
             motivo: formato ? 'formato' : nonAmmesso ? 'formato-non-ammesso' : 'firma',
             stato: firma.status,
+            ...(firma.status === 429 && retryAfterMs(firma) !== null ? { retryAfterMs: retryAfterMs(firma)! } : {}),
         };
     }
 
-    const corpo = (await firma.json().catch(() => null)) as { path?: string; signedUrl?: string } | null;
-    if (!corpo?.path || !corpo.signedUrl) {
+    let corpo: { path?: string; signedUrl?: string; uploaded?: boolean } | null = null;
+    try { corpo = await firma.json() as { path?: string; signedUrl?: string; uploaded?: boolean }; }
+    catch { segnala('gallery-firma-corpo-non-json', firma.status); }
+    if (!corpo?.path || (!corpo.signedUrl && corpo.uploaded !== true)) {
         // Ramo 3: `res.ok` è vero e il caricamento «riesce», ma senza indirizzo non
         // c'è niente da caricare. Messaggio suo, o in tabella sarebbe indistinguibile.
         segnala('gallery-firma-senza-path', firma.status);
         return { ok: false, motivo: 'firma', stato: firma.status };
     }
 
+    if (opzioni?.canContinue?.() === false) return { ok: false, motivo: 'ambito-cambiato', stato: null };
+    if (corpo.uploaded === true) return { ok: true, path: corpo.path };
+    const signedUrl = corpo.signedUrl;
+    if (!signedUrl) {
+        segnala('gallery-firma-senza-url', firma.status);
+        return { ok: false, motivo: 'firma', stato: firma.status };
+    }
+
+    try {
+        await opzioni?.onPath?.(corpo.path);
+    } catch {
+        segnala('gallery-firma-path-non-persistito', null);
+        return { ok: false, motivo: 'persistenza', stato: null };
+    }
+    if (opzioni?.canContinue?.() === false) return { ok: false, motivo: 'ambito-cambiato', stato: null };
+
     // ── 3. il file, diritto allo Storage. Senza tetto di tempo (vedi testata) ──
     let put: Response;
     try {
-        put = await fetch(corpo.signedUrl, {
+        // Una File ricostruita da IndexedDB può fallire nel processo di rete
+        // WebKit pur essendo leggibile. Trasferiamo i byte delle sole foto
+        // (massimo 50 MiB); i video continuano a usare il proprio trasporto.
+        const body = tipo.startsWith('image/') ? await leggiByteFoto(file) : file;
+        if (opzioni?.canContinue?.() === false) return { ok: false, motivo: 'ambito-cambiato', stato: null };
+        put = await fetch(signedUrl, {
             method: 'PUT',
             headers: { 'content-type': tipo, 'x-upsert': 'false' },
-            body: file,
+            body,
         });
     } catch (err) {
         segnala(`gallery-put-fallito: ${nomeErrore(err)}`, null);
@@ -202,6 +246,7 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
         segnala('gallery-put-fallito', put.status);
         return { ok: false, motivo: 'trasferimento', stato: put.status };
     }
+    if (opzioni?.canContinue?.() === false) return { ok: false, motivo: 'ambito-cambiato', stato: null };
 
     // IL SUCCESSO NON SI LOGGA DA QUI, e non è una dimenticanza: `logClient` ammette
     // solo `warn` ed `error` — un `info` per ogni foto sarebbe la tabella di rumore che
@@ -245,6 +290,8 @@ export function messaggioCaricamento(
         // iPhone e di conversione, che per un `image/heic` respinto non vuol dire niente.
         case 'formato-non-ammesso': return t('galleryErrFormatoNonAmmesso');
         case 'rete': return t('galleryErrRete');
+        case 'persistenza': return t('galleryErrFirma');
+        case 'ambito-cambiato': return t('galleryErrFirma');
         case 'trasferimento': return t('galleryErrTrasferimento');
         case 'firma': return t('galleryErrFirma');
     }

@@ -385,6 +385,13 @@ export function buildVideoEncodeArgs(probe: VideoProbe, options: VideoEncodeOpti
     'medium',
     '-crf',
     '18',
+    // Il default 1/framerate arrotonda i PTS VFR anche quando nessun frame
+    // viene perso. Il filtro mantiene la timebase sorgente (o 1/60 dopo fps),
+    // e passthrough evita un secondo ricampionamento deciso dal muxer.
+    '-fps_mode:v',
+    'passthrough',
+    '-enc_time_base:v',
+    'filter',
     // Capped CRF: il tetto vale sulla sola traccia video, l'audio ha già `-b:a`.
     '-maxrate:v',
     String(MAXRATE_VIDEO_BPS),

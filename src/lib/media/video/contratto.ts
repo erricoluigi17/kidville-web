@@ -626,6 +626,7 @@ export type CoordinateCaricamentoVideo = z.infer<typeof schemaCoordinateCaricame
 
 /** La risposta all'apertura: un job per file, con le sue coordinate d'upload. */
 export const schemaEsitoAperturaIntentVideo = z.object({
+  intent: z.object({ status: z.string() }).default({ status: 'pending' }),
   intentId: z.string().uuid(),
   revisione: z.number().int().min(1),
   canale: z.enum(CANALI_VIDEO),
@@ -653,7 +654,12 @@ export const schemaEsitoAperturaIntentVideo = z.object({
          * il client deve usare e che lo schema non conosce e' una dipendenza che nessun
          * test regge.
          */
-        firma: z.string().min(1),
+        firma: z.string().default(''),
+        status: z.enum(STATI_JOB_VIDEO).default('awaiting_upload'),
+        needs_upload: z.boolean().default(true),
+        expires_at: z.string().datetime().nullable().default(null),
+      }).superRefine((job, ctx) => {
+        if (job.needs_upload && !job.firma) ctx.addIssue({ code: 'custom', path: ['firma'], message: 'Firma necessaria per il trasferimento' })
       }),
     )
     .min(1)

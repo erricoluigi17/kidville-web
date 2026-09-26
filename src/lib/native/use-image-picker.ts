@@ -3,6 +3,7 @@
 import { useCallback } from 'react'
 import { useTranslations } from 'next-intl'
 import { fotocameraNativaDisponibile, scegliFotoNativa } from '@/lib/native/camera'
+import type { CodiceFotocamera } from '@/lib/native/camera'
 
 // Hook condiviso per gli upload immagine: incapsula «se nativo apri la
 // fotocamera Capacitor, altrimenti clicca l'<input type=file>». I file scelti
@@ -21,7 +22,7 @@ export interface UseImagePickerOptions {
   /** Coerenza con `multiple` dell'input (la fotocamera resta comunque 1 scatto). */
   multiplo?: boolean
   /** Problema vero (permesso negato o errore), NON l'annullamento dell'utente. */
-  onErrore?: (codice: 'permesso_negato' | 'errore') => void
+  onErrore?: (codice: 'permesso_negato' | 'errore', dettaglio?: CodiceFotocamera) => void
 }
 
 export function useImagePicker({

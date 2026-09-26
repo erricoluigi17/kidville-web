@@ -158,10 +158,11 @@ beforeEach(() => {
   h.jobDaSeguire.mockResolvedValue([])
   h.daRiprendere.mockReturnValue([])
   h.pota.mockResolvedValue(0)
-  h.accoda.mockImplementation(async (_dip: unknown, ingresso: { jobId: string }) => ({
-    ok: true,
-    riga: { jobId: ingresso.jobId },
-  }))
+  h.accoda.mockImplementation(async (_dip: unknown, ingresso: Record<string, unknown> & { jobId: string; file: File }) => {
+    const riga = { ...ingresso, stato: 'da_caricare', dimensioneByte: ingresso.file.size, mime: ingresso.file.type, nome: ingresso.file.name }
+    h.righeArchivio.push(riga)
+    return { ok: true, riga }
+  })
   h.carica.mockImplementation(async (_dip: unknown, jobId: string) => ({
     esito: 'caricato',
     jobId,
@@ -183,15 +184,19 @@ beforeEach(() => {
       if (u.includes('/api/educator-sections')) return rispostaFinta({ sectionNames: [SEZIONE] })
       if (u.includes('/api/diary/students')) return rispostaFinta([ADA])
       if (u.includes('/api/me')) return rispostaFinta({ ruolo: 'educator', scuola_id: SEDE_A })
-      if (u.includes('/api/video-uploads/')) return rispostaFinta(statoCorrente)
+      if (u.includes('/api/video-uploads/')) {
+        const azione = init?.method === 'PATCH' ? JSON.parse(String(init.body)).azione : null
+        return rispostaFinta({ ...statoCorrente, statoIntent: azione === 'caricato' ? 'pending' : 'confirmed' })
+      }
       if (u.includes('/api/video-uploads')) {
         return rispostaFinta(
           {
             intentId: INTENTO,
             revisione: 1,
             canale: 'gallery',
+            intent: { status: h.righeArchivio.some(r => r.stato === 'caricato') ? 'confirmed' : 'pending' },
             scadenzaCaricamentoIl: '2026-09-18T12:00:00.000Z',
-            job: [{ jobId: JOB, chiaveIdempotenza: 'g-1', caricamento: COORDINATE, firma: 'firma-finta' }],
+            job: [{ jobId: JOB, chiaveIdempotenza: 'g-1', caricamento: COORDINATE, firma: 'firma-finta', needs_upload: !h.righeArchivio.some(r => r.stato === 'caricato'), status: h.righeArchivio.some(r => r.stato === 'caricato') ? statoCorrente.job[0].stato : 'awaiting_upload' }],
           },
           201,
         )
@@ -290,7 +295,7 @@ describe('un video non passa più dalla porta delle foto', () => {
     fireEvent.click(screen.getByRole('button', { name: new RegExp(itServizi.galleryPubblica.split('{')[0].trim()) }))
 
     expect(await screen.findByText(itServizi.galleryVideoFaseConversione)).toBeInTheDocument()
-    expect(alertMock).toHaveBeenCalledWith(itServizi.galleryVideoAvviato)
+    expect(screen.getByText(itServizi.galleryVideoFaseConversione)).toBeInTheDocument()
   })
 })
 
@@ -307,7 +312,7 @@ describe('i limiti sono quelli della pipeline, e si applicano PRIMA di spedire',
 
 describe('l’app chiusa non perde il video', () => {
   it('al rientro ritrova i job da seguire e ne interroga lo stato', async () => {
-    h.jobDaSeguire.mockResolvedValue([{ jobId: JOB, intentId: INTENTO, canale: 'gallery' }])
+    h.righeArchivio = [{ jobId: JOB, intentId: INTENTO, canale: 'gallery', ownerId: DOCENTE, scuolaId: SEDE_A, stato: 'caricato', chiaveIdempotenza: 'g-1', nome: 'sintetico.mp4', dimensioneByte: 1234, mime: 'video/mp4', coordinate: COORDINATE }]
     statoCorrente = statoIntento('processing', 60)
 
     render(<TeacherGalleryPage />)
@@ -319,7 +324,7 @@ describe('l’app chiusa non perde il video', () => {
   })
 
   it('quando il video è pronto CHIEDE i bambini, perché i tag non sono sopravvissuti', async () => {
-    h.jobDaSeguire.mockResolvedValue([{ jobId: JOB, intentId: INTENTO, canale: 'gallery' }])
+    h.righeArchivio = [{ jobId: JOB, intentId: INTENTO, canale: 'gallery', ownerId: DOCENTE, scuolaId: SEDE_A, stato: 'caricato', chiaveIdempotenza: 'g-1', nome: 'sintetico.mp4', dimensioneByte: 1234, mime: 'video/mp4', coordinate: COORDINATE }]
     statoCorrente = statoIntento('ready', 100)
 
     render(<TeacherGalleryPage />)
@@ -332,7 +337,7 @@ describe('l’app chiusa non perde il video', () => {
   })
 
   it('scelti i bambini, la pubblicazione parte con l’intento e la sua revisione', async () => {
-    h.jobDaSeguire.mockResolvedValue([{ jobId: JOB, intentId: INTENTO, canale: 'gallery' }])
+    h.righeArchivio = [{ jobId: JOB, intentId: INTENTO, canale: 'gallery', ownerId: DOCENTE, scuolaId: SEDE_A, stato: 'caricato', chiaveIdempotenza: 'g-1', nome: 'sintetico.mp4', dimensioneByte: 1234, mime: 'video/mp4', coordinate: COORDINATE }]
     statoCorrente = statoIntento('ready', 100)
 
     render(<TeacherGalleryPage />)
@@ -404,12 +409,53 @@ describe('una pubblicazione rifiutata NON si ripete da sola', () => {
 
 describe('un fallimento della conversione si legge, e non resta lì per sempre', () => {
   it('mostra la frase del catalogo che corrisponde al codice, non il codice', async () => {
-    h.jobDaSeguire.mockResolvedValue([{ jobId: JOB, intentId: INTENTO, canale: 'gallery' }])
+    h.righeArchivio = [{ jobId: JOB, intentId: INTENTO, canale: 'gallery', ownerId: DOCENTE, scuolaId: SEDE_A, stato: 'caricato', chiaveIdempotenza: 'g-1', nome: 'sintetico.mp4', dimensioneByte: 1234, mime: 'video/mp4', coordinate: COORDINATE }]
     statoCorrente = statoIntento('failed', null, 'VIDEO_TROPPO_LUNGO')
 
     render(<TeacherGalleryPage />)
 
     expect(await screen.findByText(itShared.erroreVideoTroppoLungo)).toBeInTheDocument()
     expect(screen.queryByText('VIDEO_TROPPO_LUNGO')).toBeNull()
+  })
+})
+
+describe('lo stesso file scelto di nuovo dopo che il suo intento è finito', () => {
+  // Stesso nome, peso e data → stessa chiave → stesso intento. Se quello è già
+  // pubblicato (e magari poi cancellato), prima si diceva «in preparazione» senza
+  // caricare niente: una maestra che ricarica un video cancellato per errore non
+  // lo vedeva mai comparire.
+  it.each(['published', 'cancelled'])('intento %s: si apre un intento NUOVO e il video si carica davvero', async (finito) => {
+    const JOB_NUOVO = '33333333-0000-4000-8000-000000000033'
+    const aperture: Array<Record<string, unknown>> = []
+    const fetchBase = globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.endsWith('/api/video-uploads') && init?.method === 'POST') {
+        chiamate.push({ url: u, init })
+        const corpo = JSON.parse(String(init.body)) as { file: Array<{ chiaveIdempotenza: string }> }
+        aperture.push({ chiaveIdempotenza: corpo.file[0].chiaveIdempotenza })
+        const primo = aperture.length === 1
+        return rispostaFinta({
+          intentId: primo ? INTENTO : '44444444-0000-4000-8000-000000000044',
+          revisione: 1,
+          canale: 'gallery',
+          intent: { status: primo ? finito : 'pending' },
+          scadenzaCaricamentoIl: '2026-09-18T12:00:00.000Z',
+          job: [{ jobId: primo ? JOB : JOB_NUOVO, chiaveIdempotenza: corpo.file[0].chiaveIdempotenza, caricamento: COORDINATE, firma: 'firma-finta', needs_upload: !primo, status: primo ? 'ready' : 'awaiting_upload' }],
+        }, 201)
+      }
+      return fetchBase(url, init)
+    }))
+
+    await finoAlTag(video())
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(itServizi.galleryPubblica.split('{')[0].trim()) }))
+
+    await waitFor(() => expect(h.accoda).toHaveBeenCalled())
+    // La seconda apertura ha una chiave nuova; le successive (la ripresa che segue
+    // il job) restano su quella, mai sulla vecchia.
+    expect(aperture.length).toBeGreaterThanOrEqual(2)
+    expect(aperture[1].chiaveIdempotenza).not.toBe(aperture[0].chiaveIdempotenza)
+    expect(aperture.slice(1).every((a) => a.chiaveIdempotenza === aperture[1].chiaveIdempotenza)).toBe(true)
+    expect((h.accoda.mock.calls[0][1] as { jobId: string }).jobId).toBe(JOB_NUOVO)
   })
 })

@@ -87,6 +87,10 @@ export interface EsitoAperturaIntento {
   chiaveIdempotenza: string
   coordinate: CoordinateCaricamentoVideo
   firma: string
+  statoIntent: string
+  statoJob: string
+  needsUpload: boolean
+  expiresAt: string | null
 }
 
 export type EsitoVideoNews<T> = T | { ok: false; codice: CodiceMostratoVideo }
@@ -223,7 +227,10 @@ async function chiama(
     return { ok: false, codice: RIPIEGO }
   }
 
-  const corpo = (await res.json().catch(() => null)) as unknown
+  const corpo = (await res.json().catch((err: unknown) => {
+    segnala('error', 'video-news-risposta-non-json', { error_code: nomeErrore(err) }, res.status)
+    return null
+  })) as unknown
 
   if (!res.ok) {
     const codice = codiceMostrato(corpo)
@@ -304,6 +311,10 @@ export async function apriIntentoVideoNews(
     chiaveIdempotenza: job.chiaveIdempotenza,
     coordinate: job.caricamento,
     firma: job.firma,
+    statoIntent: letto.data.intent.status,
+    statoJob: job.status,
+    needsUpload: job.needs_upload,
+    expiresAt: job.expires_at,
   }
 }
 
@@ -368,7 +379,7 @@ export function annullaJobVideoNews(
 export async function leggiStatoIntentoVideoNews(
   dip: DipendenzeFlussoVideoNews,
   intentId: string,
-): Promise<EsitoVideoNews<{ ok: true; job: StatoJobVideoLetto[] }>> {
+): Promise<EsitoVideoNews<{ ok: true; job: StatoJobVideoLetto[]; statoIntent: string; revisione: number }>> {
   const esito = await chiama(
     dip,
     `/api/video-uploads/${encodeURIComponent(intentId)}?userId=${encodeURIComponent(dip.userId)}`,
@@ -388,5 +399,40 @@ export async function leggiStatoIntentoVideoNews(
   if (scartate > 0) {
     segnala('error', 'video-news-stato-fuori-contratto', { n_righe: scartate }, 0)
   }
-  return { ok: true, job }
+  const intento = esito.corpo as { statoIntent?: string; revisione?: number } | null
+  return { ok: true, job, statoIntent: intento?.statoIntent ?? 'pending', revisione: intento?.revisione ?? 1 }
+}
+
+/** Riconcilia le due scritture dopo il trasferimento, anche se la risposta è persa. */
+export async function completaVideoNews(
+  dip: DipendenzeFlussoVideoNews,
+  apertura: EsitoAperturaIntento,
+  misura: { byte: number; mime: string },
+  ancora: () => boolean,
+): Promise<EsitoVideoNews<{ ok: true }>> {
+  const interrotto = { ok: false, codice: 'VIDEO_RIPROVA' } as const
+  let statoIntent = apertura.statoIntent
+  let revisione = apertura.revisione
+  if (!ancora() || ['cancelled', 'superseded'].includes(statoIntent)
+      || ['cancelled', 'failed', 'rejected'].includes(apertura.statoJob)) return interrotto
+  if (statoIntent === 'published') return { ok: true }
+  if (apertura.statoJob === 'awaiting_upload') {
+    const esito = await segnalaVideoCaricato(dip, apertura.intentId, apertura.jobId, misura)
+    if (!ancora()) return interrotto
+    if (!esito.ok) {
+      const letto = await leggiStatoIntentoVideoNews(dip, apertura.intentId)
+      if (!ancora() || !letto.ok || !letto.job.some(j => j.jobId === apertura.jobId && j.stato !== 'awaiting_upload')) return esito
+      statoIntent = letto.statoIntent
+      revisione = letto.revisione
+    }
+  }
+  if (statoIntent === 'pending') {
+    const esito = await confermaIntentoVideoNews(dip, apertura.intentId, revisione)
+    if (!ancora()) return interrotto
+    if (!esito.ok) {
+      const letto = await leggiStatoIntentoVideoNews(dip, apertura.intentId)
+      if (!ancora() || !letto.ok || !['confirmed', 'published'].includes(letto.statoIntent)) return esito
+    }
+  }
+  return { ok: true }
 }

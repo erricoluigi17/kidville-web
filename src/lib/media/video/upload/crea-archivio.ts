@@ -59,14 +59,32 @@ export async function creaArchivioCaricamenti(): Promise<ArchivioCaricamentiVide
 
   if (typeof indexedDB === 'undefined') return ripiega('indexeddb_assente')
 
-  const dexie = archivioCondiviso ?? new ArchivioCaricamentiDexie()
-  try {
-    // La prova: se il database non si apre, qui si scopre — non al primo video.
-    await dexie.elenca()
-    archivioCondiviso = dexie
-    return dexie
-  } catch (err) {
-    archivioCondiviso = null
-    return ripiega(nomeErrore(err))
+  // L'istanza resta la stessa anche dopo una prova fallita: non ha stato suo
+  // (Dexie si riapre da sé), e cambiarla farebbe perdere i file vivi dei
+  // caricamenti in corso.
+  archivioCondiviso ??= new ArchivioCaricamentiDexie()
+  const dexie = archivioCondiviso
+  let errore: unknown = null
+  // Due tentativi: un singhiozzo di un attimo non deve spostare l'intera
+  // schermata sulla memoria volatile.
+  for (let tentativo = 0; tentativo < 2; tentativo++) {
+    try {
+      // La prova: se il database non si apre, qui si scopre — non al primo video.
+      await dexie.elenca()
+      errore = null
+      break
+    } catch (err) {
+      errore = err
+    }
   }
+  if (errore) return ripiega(nomeErrore(errore))
+
+  // Un ripiego che ha ancora caricamenti aperti resta l'archivio di questa pagina
+  // finché non si chiudono: tornando a IndexedDB quelle righe diventerebbero
+  // invisibili, e nessuno seguirebbe più quei video.
+  if (ripiegoCondiviso && (await ripiegoCondiviso.elenca()).some((r) => !['fallito', 'annullato'].includes(r.stato))) {
+    logClient({ livello: 'warn', evento: 'offline', messaggio: 'video-upload-archivio-volatile', campi: { motivo: 'caricamenti_aperti_in_memoria' } })
+    return ripiegoCondiviso
+  }
+  return dexie
 }

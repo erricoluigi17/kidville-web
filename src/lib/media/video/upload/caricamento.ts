@@ -483,6 +483,10 @@ async function eseguiCaricamentoVideo(
     }
   }
   if (!letti) {
+    // Un'altra scheda può aver finito (e liberato i byte) fra la lettura della
+    // riga e quella del deposito: allora non c'è niente di sparito.
+    const altrove = await conclusoAltrove(dip, jobId, { byte: riga.dimensioneByte })
+    if (altrove) return altrove
     // IL GUASTO CHE SAREBBE MUTO: il browser ha sfrattato IndexedDB per fare
     // posto e si è portato via i Blob, lasciando i metadati. Senza questo ramo si
     // entrerebbe in tus con un `undefined` e si uscirebbe con un errore che la
@@ -692,19 +696,11 @@ async function eseguiCaricamentoVideo(
     return { esito: 'caricato', jobId, byteCaricati: byte.size }
   }
 
-  const altrove = await conclusoAltrove(dip, jobId)
-  if (altrove) return altrove
-
   // tus avvolge in un `DetailedError` anche un errore del NOSTRO lettore: la causa
   // vera sta in `causingError`, e senza di lei un deposito rotto e una rete caduta
   // lascerebbero nei log la stessa riga.
   const causa = (fine.err as { causingError?: unknown } | null | undefined)?.causingError
-  if (causa instanceof ErroreByteVideo) {
-    return chiudiPerByteLocali(dip, jobId, orologio(), offsetVisto, causa, durata)
-  }
-
   const stato = statoDiErrore(fine.err)
-  const verdetto = classifica(stato)
   const campi: CampiLog = {
     offset: offsetVisto,
     byte: byte.size,
@@ -714,6 +710,16 @@ async function eseguiCaricamentoVideo(
   if (causa !== undefined && causa !== null) campi.causa = nomeErrore(causa)
   if (letturaLocaleFallita) campi.lettura_locale = true
   if (stato !== null) campi.stato_http = stato
+
+  // L'errore resta scritto anche quando vince uno stato concluso altrove.
+  const altrove = await conclusoAltrove(dip, jobId, campi)
+  if (altrove) return altrove
+
+  if (causa instanceof ErroreByteVideo) {
+    return chiudiPerByteLocali(dip, jobId, orologio(), offsetVisto, causa, durata)
+  }
+
+  const verdetto = classifica(stato)
 
   if (verdetto.tipo === 'interrotto') {
     await dip.archivio.aggiorna(jobId, {
@@ -744,7 +750,11 @@ async function eseguiCaricamentoVideo(
  * dall'elenco (e con lui i byte, che è ciò che ha fatto fallire la lettura).
  * Quello stato vince: un errore arrivato dopo non lo riscrive in «fallito».
  */
-async function conclusoAltrove(dip: DipendenzeCaricamentoVideo, jobId: string): Promise<EsitoCaricamentoVideo | null> {
+async function conclusoAltrove(
+  dip: DipendenzeCaricamentoVideo,
+  jobId: string,
+  campi: CampiLog = {},
+): Promise<EsitoCaricamentoVideo | null> {
   let attuale: CaricamentoVideoLocale | undefined
   try {
     attuale = await dip.archivio.leggi(jobId)
@@ -753,7 +763,7 @@ async function conclusoAltrove(dip: DipendenzeCaricamentoVideo, jobId: string): 
     return null
   }
   if (attuale && attuale.stato !== 'caricato' && attuale.stato !== 'annullato') return null
-  segnala('warn', 'video-upload-concluso-altrove', jobId, { stato: attuale?.stato ?? 'rimosso' })
+  segnala('warn', 'video-upload-concluso-altrove', jobId, { ...campi, stato: attuale?.stato ?? 'rimosso' })
   dimenticaSorgenteViva(dip.archivio, jobId)
   return attuale?.stato === 'caricato'
     ? { esito: 'caricato', jobId, byteCaricati: attuale.dimensioneByte }

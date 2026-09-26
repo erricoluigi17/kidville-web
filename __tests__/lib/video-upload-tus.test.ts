@@ -1174,6 +1174,42 @@ describe('terza critica indipendente (2026-09-26)', () => {
     expect(server.viste).toHaveLength(0)
   })
 
+  it('i byte spariti perché un\'altra scheda ha appena finito non chiudono il caricamento come fallito', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    const riaperto = await riapri(archivio)
+    // È ciò che fa l'archivio vero: finito altrove, il manifest non c'è più e
+    // leggiByte risponde undefined.
+    riaperto.leggiByte = async () => {
+      await riaperto.aggiorna(JOB, { stato: 'caricato' })
+      return undefined
+    }
+
+    expect((await caricaVideo({ ...dip, archivio: riaperto }, JOB)).esito).toBe('caricato')
+    expect((await riaperto.leggi(JOB))?.stato).toBe('caricato')
+    expect(server.viste).toHaveLength(0)
+    expect(logCon('video-upload-byte-spariti')).toBeUndefined()
+  })
+
+  it('quando vince lo stato concluso altrove, l\'errore dello Storage resta scritto', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    const riaperto = await riapri(archivio)
+    const copia = new Blob([byteOriginali()])
+    riaperto.leggiByte = async () => ({
+      size: DIMENSIONE,
+      type: 'video/mp4',
+      async leggiIntervallo(inizio: number, fine: number) {
+        await riaperto.aggiorna(JOB, { stato: 'annullato' })
+        return new Uint8Array(await copia.slice(inizio, fine).arrayBuffer())
+      },
+    })
+    server.statoForzatoSullaProssimaPatch = 403
+
+    expect(await caricaVideo({ ...dip, archivio: riaperto }, JOB)).toEqual({ esito: 'annullato', jobId: JOB })
+    expect(logCon('video-upload-concluso-altrove')?.campi).toMatchObject({ stato: 'annullato', stato_http: 403 })
+  })
+
   it('un errore transitorio arrivato dopo che un\'altra scheda ha finito non riporta la riga a «in corso»', async () => {
     const { archivio, dip } = banco([0, 0])
     await accoda(dip)

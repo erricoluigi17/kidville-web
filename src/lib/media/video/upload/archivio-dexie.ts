@@ -296,9 +296,13 @@ export class ArchivioCaricamentiDexie implements ArchivioCaricamentiVideo {
       let generazione: string | null = null
       let deposito: DbDeposito | null = null
       let precedente: DepositoByte | undefined
+      // Distrugge qualcosa solo chi ha LETTO che non c'è un deposito da
+      // conservare: una lettura fallita non è una lettura vuota.
+      let precedenteLetto = false
       try {
         generazione = nuovaGenerazione()
         precedente = await apri().byte.get(jobId)
+        precedenteLetto = true
         // Prima di copiare si toglie ciò che nessun manifest nomina: i blocchi di
         // una copia interrotta dalla chiusura dell'app. Lasciati lì, si sommerebbero
         // alla copia nuova proprio sul telefono che ha poco spazio.
@@ -329,7 +333,7 @@ export class ArchivioCaricamentiDexie implements ArchivioCaricamentiVideo {
         // INTERO: su WebKit togliere le righe non libera il disco, e con il telefono
         // pieno anche la riga del caricamento — che in memoria non ci sta — non
         // si scriverebbe più (misurato: 774 MB rimasti, 16 MB liberi).
-        if (!eManifest(precedente)) await cancellaDeposito(jobId)
+        if (precedenteLetto && !eManifest(precedente)) await cancellaDeposito(jobId)
         else if (deposito && generazione) await rimuoviGenerazione(jobId, deposito, generazione)
         throw err
       } finally {

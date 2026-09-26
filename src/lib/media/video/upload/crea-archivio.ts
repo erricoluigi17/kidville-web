@@ -31,16 +31,21 @@ import { ArchivioCaricamentiInMemoria } from './archivio-memoria'
  * persistito e contabile).
  */
 /**
- * UNA sola istanza Dexie per la vita della pagina. Il `File` scelto in questa
- * sessione (la «sorgente viva» di `caricamento.ts`) è legato all'istanza
- * dell'archivio: con un'istanza nuova a ogni montaggio, uscire dalla galleria e
- * rientrarvi farebbe dimenticare il file a un caricamento ancora in corso — e un
- * video che sul telefono pieno non era stato salvato finirebbe in «riprova».
+ * UNA sola istanza per la vita della pagina. Il `File` scelto in questa sessione
+ * (la «sorgente viva» di `caricamento.ts`) è legato all'istanza dell'archivio:
+ * con un'istanza nuova a ogni montaggio, uscire dalla galleria e rientrarvi farebbe
+ * dimenticare il file a un caricamento ancora in corso — e un video che sul
+ * telefono pieno non era stato salvato finirebbe in «riprova». Vale anche per il
+ * ripiego in memoria, che senza istanza condivisa perderebbe perfino le righe.
+ *
+ * La prova si RIFÀ a ogni chiamata: un IndexedDB che si guasta a metà sessione
+ * deve poter tornare al ripiego al montaggio dopo, invece di restare l'archivio
+ * rotto fino al ricaricamento della pagina.
  */
 let archivioCondiviso: ArchivioCaricamentiDexie | null = null
+let ripiegoCondiviso: ArchivioCaricamentiInMemoria | null = null
 
 export async function creaArchivioCaricamenti(): Promise<ArchivioCaricamentiVideo> {
-  if (archivioCondiviso) return archivioCondiviso
   const ripiega = (motivo: string): ArchivioCaricamentiVideo => {
     logClient({
       livello: 'warn',
@@ -48,18 +53,20 @@ export async function creaArchivioCaricamenti(): Promise<ArchivioCaricamentiVide
       messaggio: 'video-upload-archivio-volatile',
       campi: { motivo },
     })
-    return new ArchivioCaricamentiInMemoria()
+    ripiegoCondiviso ??= new ArchivioCaricamentiInMemoria()
+    return ripiegoCondiviso
   }
 
   if (typeof indexedDB === 'undefined') return ripiega('indexeddb_assente')
 
-  const dexie = new ArchivioCaricamentiDexie()
+  const dexie = archivioCondiviso ?? new ArchivioCaricamentiDexie()
   try {
     // La prova: se il database non si apre, qui si scopre — non al primo video.
     await dexie.elenca()
     archivioCondiviso = dexie
     return dexie
   } catch (err) {
+    archivioCondiviso = null
     return ripiega(nomeErrore(err))
   }
 }

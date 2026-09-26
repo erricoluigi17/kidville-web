@@ -599,3 +599,32 @@ test('video: la potatura decide anche sui manifest senza riga e sui database vuo
   expect(esito.rimasti).toEqual(esito.attesi)
   expect(esito.manifestTolto).toBe(true)
 })
+
+test('video: una lettura fallita del manifest prima della copia non distrugge il deposito valido', async ({ page }) => {
+  const jobId = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1'
+  const esito = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, LettoreBlob } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    await a.scriviByte(jobId, new Blob([new Uint8Array([7, 6, 5])]))
+    const get = IDBObjectStore.prototype.get
+    let iniettato = false
+    IDBObjectStore.prototype.get = function(chiave) {
+      if (!iniettato && this.name === 'byte' && chiave === jobId) {
+        iniettato = true
+        throw new DOMException('Lettura sintetica fallita', 'UnknownError')
+      }
+      return get.call(this, chiave)
+    }
+    let errore = ''
+    try { await a.scriviByte(jobId, new Blob([new Uint8Array([1, 1, 1, 1])])) }
+    catch (e) { errore = (e as Error).name }
+    finally { IDBObjectStore.prototype.get = get }
+    const byte = await a.leggiByte(jobId)
+    const letti = byte ? Array.from((await (await new LettoreBlob().openFile(byte)).slice(0, 3)).value) : []
+    await a.eliminaByte(jobId)
+    return { iniettato, errore, letti }
+  }, jobId)
+  expect(esito.iniettato).toBe(true)
+  expect(esito.errore).not.toBe('')
+  expect(esito.letti).toEqual([7, 6, 5])
+})

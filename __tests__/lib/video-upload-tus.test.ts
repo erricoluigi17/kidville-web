@@ -1035,6 +1035,8 @@ describe('i rami che la seconda critica ha trovato scoperti', () => {
     const accodato = await accoda(dip)
 
     expect(accodato).toEqual({ ok: false, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' })
+    // Senza riga nessuno riprenderà quei byte: lo spazio si libera subito.
+    expect(await archivio.leggiByte(JOB)).toBeUndefined()
     expect(logCon('video-upload-riga-non-scritta')).toMatchObject({
       livello: 'error',
       messaggio: `video-upload-riga-non-scritta: job=${JOB}`,
@@ -1105,5 +1107,87 @@ describe('i rami che la seconda critica ha trovato scoperti', () => {
     archivio.potaDepositiOrfani = async () => { throw Object.assign(new Error('x'), { name: 'UnknownError' }) }
     await expect(potaArchivioCaricamenti(dip)).resolves.toBe(0)
     expect(logCon('video-upload-potatura-orfani-fallita')?.campi).toMatchObject({ error_code: 'UnknownError' })
+  })
+})
+
+describe('terza critica indipendente (2026-09-26)', () => {
+  it('un archivio che non si legge rifiuta il video con un codice, senza lanciare', async () => {
+    const { archivio, dip } = banco()
+    archivio.leggi = async () => { throw Object.assign(new Error('chiuso'), { name: 'DatabaseClosedError' }) }
+
+    expect(await accoda(dip)).toEqual({ ok: false, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' })
+    expect(logCon('video-upload-riga-illeggibile')?.campi).toMatchObject({ error_code: 'DatabaseClosedError' })
+  })
+
+  it('una copia intera rimasta senza riga si riusa invece di ricopiarla accanto', async () => {
+    const { archivio, dip } = banco()
+    await archivio.scriviByte(JOB, new Blob([byteOriginali()]))
+    const scrivi = archivio.scriviByte.bind(archivio)
+    let copie = 0
+    archivio.scriviByte = async (id, byte) => { copie++; await scrivi(id, byte) }
+
+    expect((await accoda(dip)).ok).toBe(true)
+    expect(copie).toBe(0)
+  })
+
+  it.each([
+    ['caricato da un\'altra scheda', 'caricato' as const],
+    ['tolto dall\'elenco', 'rimosso' as const],
+  ])('se durante la lettura il caricamento è stato %s, quello stato vince', async (_nome, come) => {
+    const { archivio, dip } = banco([0, 0])
+    await accoda(dip)
+    const riaperto = await riapri(archivio)
+    riaperto.leggiByte = async () => ({
+      size: DIMENSIONE,
+      type: 'video/mp4',
+      async leggiIntervallo() {
+        if (come === 'caricato') await riaperto.aggiorna(JOB, { stato: 'caricato' })
+        else await riaperto.elimina(JOB)
+        throw new ErroreByteVideo('VIDEO_BLOCCO_INCOMPLETO')
+      },
+    })
+
+    const esito = await caricaVideo({ ...dip, archivio: riaperto }, JOB)
+
+    if (come === 'caricato') {
+      expect(esito).toEqual({ esito: 'caricato', jobId: JOB, byteCaricati: DIMENSIONE })
+      expect((await riaperto.leggi(JOB))?.stato).toBe('caricato')
+    } else {
+      expect(esito).toEqual({ esito: 'annullato', jobId: JOB })
+      expect(await riaperto.leggi(JOB)).toBeUndefined()
+    }
+    expect(logCon('video-upload-concluso-altrove')).toBeDefined()
+    expect(logCon('video-upload-byte-locali-rotti')).toBeUndefined()
+  })
+
+  it('un manifest che sparisce prima di tus, perché un\'altra scheda ha finito, non chiude come fallito', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    const riaperto = await riapri(archivio)
+    riaperto.leggiByte = async () => {
+      await riaperto.aggiorna(JOB, { stato: 'caricato' })
+      throw new ErroreByteVideo('VIDEO_ARCHIVIO_NON_VALIDO')
+    }
+
+    expect(await caricaVideo({ ...dip, archivio: riaperto }, JOB)).toEqual({ esito: 'caricato', jobId: JOB, byteCaricati: DIMENSIONE })
+    expect((await riaperto.leggi(JOB))?.stato).toBe('caricato')
+    expect(server.viste).toHaveLength(0)
+  })
+
+  it('un errore transitorio arrivato dopo che un\'altra scheda ha finito non riporta la riga a «in corso»', async () => {
+    const { archivio, dip } = banco([0, 0])
+    await accoda(dip)
+    const riaperto = await riapri(archivio)
+    riaperto.leggiByte = async () => ({
+      size: DIMENSIONE,
+      type: 'video/mp4',
+      async leggiIntervallo() {
+        await riaperto.aggiorna(JOB, { stato: 'caricato' })
+        throw Object.assign(new Error('connessione persa'), { name: 'UnknownError' })
+      },
+    })
+
+    expect((await caricaVideo({ ...dip, archivio: riaperto }, JOB)).esito).toBe('caricato')
+    expect((await riaperto.leggi(JOB))?.stato).toBe('caricato')
   })
 })

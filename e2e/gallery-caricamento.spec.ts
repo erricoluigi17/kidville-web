@@ -39,8 +39,9 @@ test(`foto docente → genitore e ripresa: ${interruzione}`, async ({ page, brow
     }
     pubblicazione = route.request().postDataJSON() as Record<string, unknown>;
     const response = await route.fetch();
-    esitiPubblicazione.push(response.status());
+    // L'id prima dell'esito: chi vede l'esito deve trovare anche l'id.
     if (response.ok()) mediaId = (await response.json()).id as string;
+    esitiPubblicazione.push(response.status());
     if (interruzione === 'risposta pubblicazione' && !rispostaPersa) {
       expect(response.status()).toBe(201);
       rispostaPersa = true;
@@ -83,11 +84,14 @@ test(`foto docente → genitore e ripresa: ${interruzione}`, async ({ page, brow
     await page.reload();
   }
   await expect(page.getByRole('button', { name: `Foto: ${nome}`, exact: true })).toBeVisible({ timeout: 60_000 });
+  // La card può arrivare dalla GET della griglia dopo il reload mentre la POST è
+  // ancora nel server: la riga è già scritta, ma il 201 parte solo dopo
+  // l'accodamento delle notifiche. Si aspetta l'esito, poi si legge l'id.
+  await expect.poll(() => esitiPubblicazione, { timeout: 30_000 }).toEqual(interruzione === 'risposta pubblicazione' ? [201, 200] : [201]);
   const payload = pubblicazione as Record<string, unknown> | null;
   expect(payload?.upload_id).toMatch(/^[0-9a-f-]{36}$/i);
   expect(payload?.scuola_id).toBe(IDS.SCUOLA);
   expect(mediaId).toMatch(/^[0-9a-f-]{36}$/i);
-  await expect.poll(() => esitiPubblicazione).toEqual(interruzione === 'risposta pubblicazione' ? [201, 200] : [201]);
   await expect(page.getByRole('button', { name: 'Riprova caricamenti', exact: true })).toHaveCount(0);
   expect(trasferimenti).toBe(1);
 

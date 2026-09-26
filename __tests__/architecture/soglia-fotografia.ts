@@ -165,14 +165,13 @@ export function posterioriCheContengono(
 // le fotografie sono state rigenerate dalla produzione (192 migrazioni, 58 FK verso `utenti`)
 // e le due FK nuove (`allegati_registro.eliminato_da`, `student_documents.eliminato_da`) sono
 // censite in TRACCE_DOCENTE.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20260926100000_presenze_assenza_oraria_giustificata.sql':
-        'Migrazione della PR «orario attività, appello, contabilità multi-sede, CF omocodici» ' +
-        '(26/09/2026): aggiunge a `presenze` la colonna `assenza_oraria_giustificata` e il CHECK ' +
-        '`presenze_giustificata_con_nota` (nessuna FK verso `utenti`, nessun indice unico). La ' +
-        'applica l\'integrazione Supabase↔GitHub al merge; la PR-B che segue rigenera le ' +
-        'fotografie dalla produzione e svuota questa voce.',
-}
+//
+// VUOTA di nuovo dal 2026-09-26 (PR-B dopo il merge di #171, `be44d743`):
+// `20260926100000_presenze_assenza_oraria_giustificata.sql` è stata applicata dall'integrazione
+// al merge, e le sette fotografie sono state rigenerate dalla produzione (196 migrazioni,
+// 58 FK verso `utenti` — invariate, 231 indici unici, 78 tabelle con `scuola_id`, fra cui
+// `gallery_photo_uploads` della #170, entrata nella fotografia solo ora).
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/tabelle-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/tabelle-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-25",
-  "generato_alle": "2026-09-25T03:07:33Z",
-  "sha256": "4fe6e3a041f813e4aeb5219e798d738834d1473a3cdfe6f07fe1b259e38ac939",
+  "generato_il": "2026-09-26",
+  "generato_alle": "2026-09-26T18:38:36Z",
+  "sha256": "429be985f5ecaf35682c55a7f00cb2017fd7e8fded39ff3cd4d7829499bd68d8",
   "con_scuola_id": [
     "admin_settings",
     "alunni",
@@ -33,6 +33,7 @@
     "forms_templates",
     "galleria_media",
     "galleria_media_v2",
+    "gallery_photo_uploads",
     "giudizi_sintetici_scala",
     "giudizio_template",
     "gruppi_mensa",

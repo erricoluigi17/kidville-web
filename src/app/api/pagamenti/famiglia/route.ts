@@ -9,7 +9,7 @@ import { residuoEffettivo, statoEffettivo, type AgingPagamento } from '@/lib/pag
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Dati di famiglia per la transazione unica (slice S4 — Contabilità v2) ─────
 // A partire da parents.id: figli (unione legami), voci aperte con residuo effettivo
@@ -19,6 +19,14 @@ import { logErrore } from '@/lib/logging/logger'
 const getQuerySchema = z.object({ parent_id: zUuid })
 
 const round2 = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * 500 — legami, figli, saldi ticket o voci non leggibili. Una risposta sola: le
+ * risposte d'errore senza `codice` sono un debito congelato (lock
+ * `errori-con-codice`), e per chi legge la cassa il rimedio è lo stesso.
+ */
+const recuperoNonRiuscito = () =>
+  NextResponse.json({ error: 'Errore nel recupero delle voci' }, { status: 500 })
 
 const SEL_VOCI = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, sconto, scadenza, stato, tipo, categoria_id, gruppo, periodo_competenza, parent_payment_id'
 const SEL_VOCI_BASE = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, scadenza, stato, tipo, categoria_id, gruppo, periodo_competenza, parent_payment_id'
@@ -74,7 +82,12 @@ export const GET = withRoute('pagamenti/famiglia:GET', async (request: NextReque
     // Figli: unione (student_parents diretto su parents.id) + (unione legami via
     // account, se il genitore ha un auth_user_id). Copre anche i genitori SENZA account.
     const childIds = new Set<string>()
-    const { data: sp } = await supabase.from('student_parents').select('student_id').eq('parent_id', p.id)
+    const { data: sp, error: spErr } = await supabase.from('student_parents').select('student_id').eq('parent_id', p.id)
+    // PostgREST non lancia: un guasto qui diventerebbe «il genitore non ha figli».
+    if (spErr) {
+      logErrore({ operazione: 'pagamenti/famiglia:GET', stato: 500, evento: 'db' }, spErr)
+      return recuperoNonRiuscito()
+    }
     for (const r of (sp ?? []) as { student_id?: string | null }[]) if (r.student_id) childIds.add(r.student_id)
     if (p.auth_user_id) {
       for (const f of await getFigliDiGenitore(supabase, p.auth_user_id)) childIds.add(f)
@@ -86,10 +99,16 @@ export const GET = withRoute('pagamenti/famiglia:GET', async (request: NextReque
     }
 
     // Alunni (limitati allo scope di sede dello staff).
-    const { data: alunniRows } = await supabase
+    const { data: alunniRows, error: aErr } = await supabase
       .from('alunni')
       .select('id, nome, cognome, scuola_id')
       .in('id', [...childIds])
+    // PostgREST non lancia: senza questo controllo un guasto di lettura
+    // diventerebbe «il genitore non ha figli», e la cassa non vedrebbe le voci.
+    if (aErr) {
+      logErrore({ operazione: 'pagamenti/famiglia:GET', stato: 500, evento: 'db' }, aErr)
+      return recuperoNonRiuscito()
+    }
     // Scope vuoto ⇒ NESSUN figlio. Il vecchio predicato era
     // `!a.scuola_id || sedi.length === 0 || sedi.includes(…)`: due scappatoie
     // che allargavano invece di restringere — una riga senza sede passava
@@ -105,15 +124,20 @@ export const GET = withRoute('pagamenti/famiglia:GET', async (request: NextReque
     }
 
     // Saldo ticket mensa per figlio.
-    const { data: ticketRows } = await supabase
+    const { data: ticketRows, error: tErr } = await supabase
       .from('ticket_mensa')
       .select('alunno_id, saldo_ticket')
       .in('alunno_id', scopedIds)
+    // Senza questo controllo ogni figlio mostrerebbe `saldo_ticket: 0` in
+    // silenzio, e la cassa proporrebbe ricariche su un saldo sbagliato.
+    if (tErr) {
+      logErrore({ operazione: 'pagamenti/famiglia:GET', stato: 500, evento: 'db' }, tErr)
+      return recuperoNonRiuscito()
+    }
     const ticketMap = new Map<string, number>()
     for (const t of (ticketRows ?? []) as { alunno_id: string; saldo_ticket?: number | null }[]) {
       ticketMap.set(t.alunno_id, Number(t.saldo_ticket ?? 0))
     }
-    const figli = alunni.map((a) => ({ id: a.id, nome: a.nome ?? null, cognome: a.cognome ?? null, saldo_ticket: ticketMap.get(a.id) ?? 0 }))
 
     // Voci aperte: SELECT con `sconto`, retry senza su DB non migrato (42703).
     let res = await supabase.from('pagamenti').select(SEL_VOCI).in('alunno_id', scopedIds)
@@ -122,12 +146,44 @@ export const GET = withRoute('pagamenti/famiglia:GET', async (request: NextReque
     }
     if (res.error) {
       logErrore({ operazione: 'pagamenti/famiglia:GET', stato: 500, evento: 'db' }, res.error)
-      return NextResponse.json({ error: 'Errore nel recupero delle voci' }, { status: 500 })
+      return recuperoNonRiuscito()
     }
+    const righeVoci = (res.data ?? []) as VoceRow[]
+
+    // Sede di figli e voci (K4, 26/09): con più sedi attive una famiglia può
+    // avere figli in plessi diversi, e la transazione si divide per sede — la
+    // cassa deve vedere DOVE sta ogni figlio e ogni voce. La sede della voce è
+    // la sua (`pagamenti.scuola_id`), non quella del figlio: è quella che decide
+    // in quale transazione finirà.
+    const idSedi = [...new Set([
+      ...alunni.map((a) => a.scuola_id),
+      ...righeVoci.map((v) => v.scuola_id),
+    ].filter((x): x is string => !!x))]
+    const nomiSedi = new Map<string, string | null>()
+    if (idSedi.length > 0) {
+      const { data: sediRows, error: sErr } = await supabase.from('scuole').select('id, nome').in('id', idSedi)
+      // Il nome è un'etichetta: se non si legge, si logga e si risponde lo stesso.
+      if (sErr) {
+        logEvento('pagamento', 'warn', { operazione: 'pagamenti/famiglia:GET', esito: 'nomi-sede-non-letti' }, sErr)
+      } else {
+        for (const s of (sediRows ?? []) as { id: string; nome?: string | null }[]) nomiSedi.set(s.id, s.nome ?? null)
+      }
+    }
+    const nomeSede = (id: string | null | undefined) => (id ? nomiSedi.get(id) ?? null : null)
+
+    const figli = alunni.map((a) => ({
+      id: a.id,
+      nome: a.nome ?? null,
+      cognome: a.cognome ?? null,
+      saldo_ticket: ticketMap.get(a.id) ?? 0,
+      scuola_id: a.scuola_id ?? null,
+      scuola_nome: nomeSede(a.scuola_id),
+    }))
+
     const oggi = new Date().toISOString().slice(0, 10)
-    const voci = ((res.data ?? []) as VoceRow[])
+    const voci = righeVoci
       .filter((v) => v.tipo !== 'padre')
-      .map((v) => ({ ...v, residuo: round2(residuoEffettivo(v)), stato_effettivo: statoEffettivo(v, oggi) }))
+      .map((v) => ({ ...v, scuola_nome: nomeSede(v.scuola_id), residuo: round2(residuoEffettivo(v)), stato_effettivo: statoEffettivo(v, oggi) }))
       .filter((v) => v.residuo > 0)
       // Più vecchie prima: la «proposta automatica» alloca in quest'ordine.
       .sort((a, b) => String(a.scadenza ?? '9999-12-31').localeCompare(String(b.scadenza ?? '9999-12-31')))

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import type { DBFinto, Riga, Scrittura } from '../fixtures/finto-supabase'
-import { SEDE_A, SEDE_B, SEDE_E2E, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_E2E } from '../fixtures/sedi'
+import { SEDE_A, SEDE_B, SEDE_C, SEDE_E2E, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_E2E } from '../fixtures/sedi'
 
 // =============================================================================
 // Configurazione per sede — `admin/settings` e `admin/settings/categorie`.
@@ -41,14 +41,25 @@ const h = vi.hoisted(() => ({
   db: {} as DBFinto,
   tabelle: [] as string[],
   scritture: [] as Scrittura[],
+  errori: {} as Record<string, { code: string }>,
+  logEvento: vi.fn(),
+  logErrore: vi.fn(),
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+// Spie che CONSERVANO l'implementazione vera del logger (K2): il log multi-sede
+// si verifica senza spegnere redazione e fail-open di produzione.
+vi.mock('@/lib/logging/logger', async (importActual) => {
+  const vero = await importActual<typeof import('@/lib/logging/logger')>()
+  h.logEvento.mockImplementation(vero.logEvento)
+  h.logErrore.mockImplementation(vero.logErrore)
+  return { ...vero, logEvento: h.logEvento, logErrore: h.logErrore }
+})
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   return {
-    createAdminClient: async () => creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture }),
-    createClient: async () => creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture }),
+    createAdminClient: async () => creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture, errori: h.errori }),
+    createClient: async () => creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture, errori: h.errori }),
   }
 })
 
@@ -109,6 +120,7 @@ beforeEach(() => {
   h.db = dbBase()
   h.tabelle = []
   h.scritture = []
+  h.errori = {}
   h.requireStaff.mockResolvedValue({ user: SEGRETERIA_A })
 })
 
@@ -237,15 +249,123 @@ describe('GET /api/admin/settings/categorie — la sede dichiarata si valida, no
     expect(ids).toEqual([CAT_GLOBALE_SISTEMA, CAT_GLOBALE_LIBERA, CAT_A])
   })
 
-  // Contratto della route, non dell'interfaccia: chi ha più sedi DEVE dire quale
-  // sta guardando. È il complemento del 400 di `resolveScuolaScrittura`, e sta
-  // qui perché il ripiego può tornare in QUESTO file (`?? auth.user.scuola_id`)
-  // senza che nessuno tocchi `scope.ts`. Chi ha un plesso solo non è toccato.
-  it('admin multi-sede senza scuola_id: 400 e le categorie non si leggono nemmeno', async () => {
+  // K2 (2026-09-26) — fino a ieri qui c'era il 400 «chi ha più sedi deve dire
+  // quale sta guardando». Era giusto per una SCRITTURA e sbagliato per questa
+  // LETTURA: lo Scadenzario con due o tre sedi selezionate chiamava la GET senza
+  // `scuola_id`, riceveva 400, e il menu delle causali restava vuoto senza un
+  // messaggio. Ora la lettura multi-sede è l'unione: globali + le causali di
+  // OGNI sede attiva, ciascuna con il proprio `scuola_id` (null per le globali),
+  // così l'interfaccia sa di quale plesso è ogni riga.
+  it('admin multi-sede senza scuola_id: 200 con globali + causali di TUTTE le sedi attive, ciascuna col suo scuola_id', async () => {
     h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
     const res = await CAT_GET(req('/api/admin/settings/categorie'))
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(200)
+    const corpo = await res.json()
+    const righe = corpo.data as Riga[]
+    expect(righe.map((c) => c.id)).toEqual([CAT_GLOBALE_SISTEMA, CAT_GLOBALE_LIBERA, CAT_A, CAT_B])
+    expect(righe.map((c) => c.scuola_id)).toEqual([null, null, SEDE_A, SEDE_B])
+    // Il log della lettura multi-sede: solo conteggi (e l'id/ruolo di chi legge),
+    // mai nomi di causali o di sedi.
+    const chiamate = h.logEvento.mock.calls.filter(
+      (c) => c[0] === 'multi_sede' && (c[2] as { tipo?: string })?.tipo === 'categorie-multi-sede',
+    )
+    expect(chiamate).toHaveLength(1)
+    expect(chiamate[0][1]).toBe('info')
+    const ctx = chiamate[0][2] as Record<string, unknown>
+    expect(ctx).toEqual(expect.objectContaining({ attive: 2, n: 4, globali: 2 }))
+    expect(Object.keys(ctx).sort()).toEqual(['attive', 'azione', 'globali', 'n', 'ruolo', 'tipo', 'utente'])
+  })
+})
+
+describe('GET /api/admin/settings/categorie — lettura multi-sede (K2)', () => {
+  const CAT_C = '66666666-6666-4666-8666-666666666666'
+
+  it('una causale di una sede NON in scope non entra nell\'unione', async () => {
+    h.db.payment_categories.push({
+      id: CAT_C, scuola_id: SEDE_C, nome: 'Gita', slug: 'gita', is_sistema: false, attivo: true, ordine: 5,
+    })
+    h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
+    const res = await CAT_GET(req('/api/admin/settings/categorie'))
+    expect(res.status).toBe(200)
+    const ids = ((await res.json()).data as Riga[]).map((c) => c.id)
+    expect(ids).toContain(CAT_A)
+    expect(ids).toContain(CAT_B)
+    expect(ids).not.toContain(CAT_C)
+  })
+
+  it('SedeSelector ristretto a una sede sola: si comporta come prima (globali + quella sede)', async () => {
+    h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
+    const res = await CAT_GET(req('/api/admin/settings/categorie', `sedi_attive=${SEDE_B}`))
+    expect(res.status).toBe(200)
+    const ids = ((await res.json()).data as Riga[]).map((c) => c.id)
+    expect(ids).toEqual([CAT_GLOBALE_SISTEMA, CAT_GLOBALE_LIBERA, CAT_B])
+  })
+
+  it('con scuola_id dichiarato resta invariato anche per l\'admin multi-sede: solo quella sede', async () => {
+    h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
+    const res = await CAT_GET(req(`/api/admin/settings/categorie?scuola_id=${SEDE_B}`))
+    expect(res.status).toBe(200)
+    const ids = ((await res.json()).data as Riga[]).map((c) => c.id)
+    expect(ids).toEqual([CAT_GLOBALE_SISTEMA, CAT_GLOBALE_LIBERA, CAT_B])
+  })
+
+  it('segreteria di una sede sola senza scuola_id: invariato (globali + la sua sede)', async () => {
+    const res = await CAT_GET(req('/api/admin/settings/categorie'))
+    expect(res.status).toBe(200)
+    const ids = ((await res.json()).data as Riga[]).map((c) => c.id)
+    expect(ids).toEqual([CAT_GLOBALE_SISTEMA, CAT_GLOBALE_LIBERA, CAT_A])
+  })
+
+  it('cookie manomesso (solo sedi non proprie): 403 come prima, e le categorie non si leggono', async () => {
+    h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
+    const res = await CAT_GET(req('/api/admin/settings/categorie', `sedi_attive=${SEDE_C}`))
+    expect(res.status).toBe(403)
     expect(h.tabelle).not.toContain('payment_categories')
+  })
+
+  it('errore PostgREST sulla lettura multi-sede: 500, niente elenco vuoto spacciato per «nessuna causale»', async () => {
+    h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
+    h.errori = { 'payment_categories:select': { code: '57014' } }
+    const res = await CAT_GET(req('/api/admin/settings/categorie'))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+    expect(h.logErrore).toHaveBeenCalledWith(
+      expect.objectContaining({ operazione: 'admin/settings/categorie:GET', stato: 500, evento: 'db' }),
+      expect.anything(),
+    )
+    // Nessun log di successo su una lettura fallita.
+    expect(h.logEvento.mock.calls.filter(
+      (c) => (c[2] as { tipo?: string })?.tipo === 'categorie-multi-sede',
+    )).toEqual([])
+  })
+
+  // Il ramo a sede dichiarata restituiva il 500 SENZA una riga di log applicativo:
+  // una lettura fallita delle causali con la sede indicata non lasciava traccia.
+  // Status e corpo restano quelli di prima (requisito «con scuola_id → invariato»);
+  // cambia solo che ora il guasto si vede nei log, con `evento: 'db'` (il catch
+  // generico in fondo alla GET non lo mette, quindi non può far passare il test).
+  it('errore PostgREST con scuola_id dichiarato: 500 invariato, ma ora LOGGATO come errore db', async () => {
+    h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
+    h.errori = { 'payment_categories:select': { code: '57014' } }
+    const res = await CAT_GET(req(`/api/admin/settings/categorie?scuola_id=${SEDE_B}`))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBeUndefined()
+    expect(h.logErrore).toHaveBeenCalledWith(
+      expect.objectContaining({ operazione: 'admin/settings/categorie:GET', stato: 500, evento: 'db' }),
+      expect.objectContaining({ code: '57014' }),
+    )
+    // Il ramo multi-sede non è stato attraversato (la sede era dichiarata).
+    expect(h.logEvento.mock.calls.filter(
+      (c) => (c[2] as { tipo?: string })?.tipo === 'categorie-multi-sede',
+    )).toEqual([])
+  })
+
+  it('una sede sola senza scuola_id: nessun log multi-sede (il ramo non scatta)', async () => {
+    const res = await CAT_GET(req('/api/admin/settings/categorie'))
+    expect(res.status).toBe(200)
+    expect(h.logEvento.mock.calls.filter(
+      (c) => (c[2] as { tipo?: string })?.tipo === 'categorie-multi-sede',
+    )).toEqual([])
   })
 })
 

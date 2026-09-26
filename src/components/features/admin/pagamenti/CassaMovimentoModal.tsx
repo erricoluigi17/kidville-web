@@ -8,6 +8,11 @@
 // comunque salvato senza allegato (decisione #6: nessun blocco). Tutte le
 // risposte del server sono gestite senza crash (400 validazione, 503 schema
 // assente su ambiente non migrato). Solo token `kidville-*`, mai hex.
+//
+// Sede (P4b): il movimento è di UNA sede, scelta qui dentro quando le sedi sono
+// più d'una (vedi `CassaSede`). Categorie, allegato e POST usano tutti la sede
+// scelta; senza sede non si legge niente e non si salva niente. Una lettura delle
+// categorie rifiutata (403/500/rete) si logga con lo stato e si dice accanto al select.
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -21,10 +26,14 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import type { CassaCategoria, CassaMetodo } from '@/lib/cassa/tipi';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { CampoSedeCassa, useSedeCassa, type SedeCassa } from './CassaSede';
 
 interface Props {
   userId: string;
-  scuolaId: string;
+  /** Le sedi su cui l'utente può scrivere. Con una sola il selettore non compare. */
+  sedi: SedeCassa[];
+  /** La sede già scelta dalla pagina, o null (con più sedi si sceglie qui, obbligatoriamente). */
+  sedeIniziale: string | null;
   /** Preselezione dal bottone d'apertura (l'utente può comunque cambiarla). */
   tipoIniziale: 'uscita' | 'entrata';
   onClose: () => void;
@@ -38,6 +47,8 @@ type Traduttore = ReturnType<typeof useTranslations>;
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 
 const ERRORE_ID = 'cassa-mov-errore';
+/** Avviso accanto al select della categoria quando la lettura delle categorie è fallita. */
+const CAT_ERRORE_ID = 'cassa-mov-categorie-errore';
 
 /** Chiave i18n del nome italiano dei campi del form, per un 400 azionabile (RC1/E3.2). */
 const CAMPO_LABEL_KEY: Record<string, string> = {
@@ -102,8 +113,9 @@ async function caricaAllegato(userId: string, scuolaId: string, file: File, t: T
   }
 }
 
-export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, onDone, returnFocusRef }: Props) {
+export function CassaMovimentoModal({ userId, sedi, sedeIniziale, tipoIniziale, onClose, onDone, returnFocusRef }: Props) {
   const t = useTranslations('adminContabilita');
+  const { scuolaId, scegli } = useSedeCassa(sedi, sedeIniziale);
   const [tipo, setTipo] = useState<'uscita' | 'entrata'>(tipoIniziale);
   const [importo, setImporto] = useState<number>(0);
   const [categoriaId, setCategoriaId] = useState('');
@@ -115,6 +127,9 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
   const [note, setNote] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [categorie, setCategorie] = useState<CassaCategoria[]>([]);
+  // La sede di cui la lettura delle categorie è fallita (vedi l'effetto qui sotto).
+  const [categorieFallitePer, setCategorieFallitePer] = useState<string | null>(null);
+  const categorieNonLette = scuolaId !== null && categorieFallitePer === scuolaId;
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,30 +141,63 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
   const ariaCampo = (campo: string) =>
     campiErrati.has(campo) ? { 'aria-invalid': true as const, 'aria-describedby': ERRORE_ID } : {};
 
-  // Categorie di uscita (globali + di sede): servono al select dell'uscita.
+  // Categorie di uscita (globali + della sede scelta): servono al select dell'uscita.
+  // Senza sede non si legge niente: nessuna sede «indovinata» nell'URL.
+  // Una lettura RIFIUTATA (403 `SEDE_NON_ACCESSIBILE`, 500, rete) non è «nessuna categoria»:
+  // il select resta vuoto ma dice perché, e «Salva» su un'uscita non risponde «seleziona una
+  // categoria», che porterebbe fuori strada.
   useEffect(() => {
+    if (!scuolaId) return;
     let active = true;
-    fetch(`/api/pagamenti/cassa/categorie?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) })
-      .then((r) => r.json())
-      .then((j: { disponibile?: boolean; categorie?: CassaCategoria[] }) => {
+    (async () => {
+      try {
+        const r = await fetch(`/api/pagamenti/cassa/categorie?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) });
+        if (!r.ok) {
+          logClient({ livello: 'error', evento: 'fetch', messaggio: 'cassa-categorie-lettura-rifiutata', route: '/admin/pagamenti', stato: r.status });
+          if (active) { setCategorie([]); setCategorieFallitePer(scuolaId); }
+          return;
+        }
+        const j = (await r.json()) as { disponibile?: boolean; categorie?: CassaCategoria[] };
         if (!active) return;
         const raw = j?.categorie ?? [];
         // Dedup per slug (una globale e una di sede possono ripetersi): l'ultima vince.
         const perSlug = new Map<string, CassaCategoria>();
         for (const c of raw) if (c.attivo) perSlug.set(c.slug, c);
+        setCategorieFallitePer(null);
         setCategorie([...perSlug.values()].sort((a, b) => a.ordine - b.ordine));
-      })
-      .catch((err) => {
+      } catch (err) {
         logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-categorie-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-      });
+        if (active) { setCategorie([]); setCategorieFallitePer(scuolaId); }
+      }
+    })();
     return () => { active = false; };
   }, [userId, scuolaId]);
+
+  const cambiaSede = (id: string) => {
+    scegli(id);
+    // Le categorie di sede non valgono per un'altra sede: la scelta si rifà sulla lista nuova.
+    setCategorie([]);
+    setCategoriaId('');
+    setCategorieFallitePer(null);
+    setError(null);
+    setCampiErrati(new Set());
+  };
 
   const submit = async () => {
     setError(null);
     setCampiErrati(new Set());
     setWarnFoto(null);
+    if (!scuolaId) {
+      // Con zero sedi il form non è nemmeno reso (vedi sotto): qui si arriva solo con più
+      // sedi e nessuna scelta, e il campo da marcare è il selettore, che c'è.
+      setError(t('cassaSedeObbligatoria'));
+      setCampiErrati(new Set(['scuola_id']));
+      return;
+    }
     if (!importo || importo <= 0) { setError(t('cassaMovImportoZero')); setCampiErrati(new Set(['importo'])); return; }
+    // Categorie non lette: l'avviso accanto al select dice già perché (e il select vi
+    // rimanda con aria-describedby); qui si marca soltanto il campo, senza un secondo testo.
+    if (tipo === 'uscita' && categorieNonLette) { setCampiErrati(new Set(['categoria_id'])); return; }
     if (tipo === 'uscita' && !categoriaId) { setError(t('cassaMovCategoriaUscita')); setCampiErrati(new Set(['categoria_id'])); return; }
     setSaving(true);
     let allegatoPath: string | null = null;
@@ -212,7 +260,30 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
         <button onClick={onClose} aria-label={t('cassaMovChiudi')} className="-mr-2 flex h-10 w-10 items-center justify-center rounded-pill text-kidville-sub hover:text-kidville-ink"><X size={20} /></button>
       </div>
 
+      {sedi.length === 0 ? (
+        // Nessuna sede su cui scrivere: lo si dice SUBITO, come nelle altre tre finestre,
+        // al posto di un form che non potrebbe mai salvare (e senza «Prima scegli la sede»,
+        // che qui non si può fare).
+        <>
+          <p className="rounded-card bg-kidville-cream/60 px-3 py-6 text-center font-maven text-sm text-kidville-sub">
+            {t('cassaSedeNessuna')}
+          </p>
+          <div className="mt-5 flex gap-2">
+            <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>{t('cassaMovAnnulla')}</button>
+          </div>
+        </>
+      ) : (
+      <>
       <div className="space-y-3">
+        <CampoSedeCassa
+          id="cassa-mov-sede"
+          sedi={sedi}
+          valore={scuolaId}
+          onCambia={cambiaSede}
+          disabled={saving}
+          erroreId={campiErrati.has('scuola_id') ? ERRORE_ID : null}
+        />
+
         <div>
           <label htmlFor="cassa-mov-tipo" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelTipo')}</label>
           <select
@@ -241,12 +312,25 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
         {isUscita && (
           <div>
             <label htmlFor="cassa-mov-categoria" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelCategoria')}</label>
-            <select id="cassa-mov-categoria" value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)} className={SELECT} {...ariaCampo('categoria_id')}>
-              <option value="">{t('cassaMovSelezionaCategoria')}</option>
+            <select
+              id="cassa-mov-categoria"
+              value={categoriaId}
+              onChange={(e) => setCategoriaId(e.target.value)}
+              disabled={!scuolaId || categorieNonLette}
+              className={SELECT}
+              {...ariaCampo('categoria_id')}
+              {...(categorieNonLette ? { 'aria-describedby': CAT_ERRORE_ID } : {})}
+            >
+              <option value="">{scuolaId ? t('cassaMovSelezionaCategoria') : t('cassaSedePrimaLaSede')}</option>
               {categorie.map((c) => (
                 <option key={c.id} value={c.id}>{c.icona ? `${c.icona} ` : ''}{c.nome}</option>
               ))}
             </select>
+            {categorieNonLette && (
+              <p id={CAT_ERRORE_ID} role="alert" className="mt-1 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">
+                {t('cassaMovCatErrLettura')}
+              </p>
+            )}
           </div>
         )}
 
@@ -311,6 +395,8 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
           {saving ? t('cassaMovSalvataggio') : `${t('cassaMovSalva')} ${formatEuro(importo || 0)}`}
         </button>
       </div>
+      </>
+      )}
     </Modal>
   );
 }

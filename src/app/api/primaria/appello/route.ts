@@ -42,7 +42,14 @@ const STATI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const
  * l'abbia chiesto.
  */
 const COLONNE_APPELLO =
-  'id, alunno_id, section_id, scuola_id, data, stato, orario_entrata, orario_uscita, note_appello, registrato_da, giustificata, giust_vista_il'
+  'id, alunno_id, section_id, scuola_id, data, stato, orario_entrata, orario_uscita, note_appello, assenza_oraria_giustificata, registrato_da, giustificata, giust_vista_il'
+
+/**
+ * Gli stati su cui «ore giustificate» ha senso (migrazione 20260926100000): l'alunno
+ * c'è stato, ma solo per una parte della giornata. Su `presente` non c'è nulla da
+ * giustificare, e un `assente` ha già la sua giustifica firmata dal genitore.
+ */
+const STATI_GIUSTIFICABILI: ReadonlySet<string> = new Set(['ritardo', 'uscita_anticipata'])
 
 const getQuerySchema = z.object({
   sectionId: zUuid,
@@ -66,8 +73,50 @@ const recordSchema = z.object({
   // sbagliato è un errore del client e si dice: 400.
   orarioEntrata: zOraHHMM.nullish(),
   orarioUscita: zOraHHMM.nullish(),
+  // Ritardo / uscita anticipata GIUSTIFICATI (es. terapia): le ore non contano nelle
+  // ore di assenza, ma lo stato resta quello vero. Opzionale, e ASSENTE vale `false`:
+  // la colonna si riscrive a ogni salvataggio (vedi la costruzione della riga).
+  assenzaOrariaGiustificata: z.boolean().optional(),
 })
 const recordsSchema = z.array(recordSchema)
+
+/**
+ * La regola del flag, controllata DOPO la forma (che resta un 400 di `parseData`).
+ *
+ * È un 422 e non un 400 perché il corpo è ben formato: è la COMBINAZIONE a non avere
+ * senso. Due casi, ciascuno col suo codice perché la finestra (A4) possa dire all'utente
+ * che cosa correggere:
+ *  · flag su uno stato che non è ritardo/uscita anticipata;
+ *  · flag senza nota — il CHECK `presenze_giustificata_con_nota` lo rifiuterebbe comunque,
+ *    ma come 500 dell'upsert e dopo aver letto e preparato tutto. Una giustificazione
+ *    senza motivo è indistinguibile da un clic sbagliato.
+ *
+ * Nel blocco basta UN record sbagliato: non si scrive nessuno (l'upsert è unico).
+ */
+function erroreGiustificazione(records: z.output<typeof recordsSchema>): NextResponse | null {
+  for (const r of records) {
+    if (r.assenzaOrariaGiustificata !== true) continue
+    if (!STATI_GIUSTIFICABILI.has(r.stato)) {
+      return NextResponse.json(
+        {
+          error: 'Si possono giustificare solo un ritardo o un’uscita anticipata.',
+          codice: 'GIUSTIFICAZIONE_STATO_NON_AMMESSO',
+        },
+        { status: 422 },
+      )
+    }
+    if ((r.noteAppello ?? '').trim() === '') {
+      return NextResponse.json(
+        {
+          error: 'Per giustificare il ritardo o l’uscita anticipata serve una nota con il motivo.',
+          codice: 'GIUSTIFICAZIONE_SENZA_NOTA',
+        },
+        { status: 422 },
+      )
+    }
+  }
+  return null
+}
 
 // GET /api/primaria/appello?sectionId=&data=&userId=
 // Alunni della classe + stato presenza del giorno.
@@ -92,6 +141,7 @@ interface RigaAppello {
   giust_vista_il: string | null
   giust_vista_da: string | null
   registrato_da: string | null
+  assenza_oraria_giustificata: boolean | null
 }
 
 /**
@@ -119,6 +169,9 @@ const COLONNE_RIGA_APPELLO = [
   'giust_vista_il',
   'giust_vista_da',
   'registrato_da',
+  // Il flag «ore giustificate» (A3): la finestra ritardo/uscita (A4) lo riapre
+  // com'era, insieme a `note_appello` che ne porta il motivo.
+  'assenza_oraria_giustificata',
 ] as const
 
 export const GET = withRoute('primaria/appello:GET', async (request: NextRequest) => {
@@ -176,6 +229,8 @@ export const GET = withRoute('primaria/appello:GET', async (request: NextRequest
         presenza_id: p?.id ?? null,
         stato: p?.stato ?? null,
         note_appello: p?.note_appello ?? null,
+        // Senza riga: `false`, mai `undefined` — la finestra parte da una spunta spenta.
+        assenza_oraria_giustificata: p?.assenza_oraria_giustificata === true,
         orario_entrata: p?.orario_entrata ?? null,
         orario_uscita: p?.orario_uscita ?? null,
         giustificata: p?.giustificata ?? false,
@@ -202,8 +257,9 @@ export const GET = withRoute('primaria/appello:GET', async (request: NextRequest
 })
 
 // POST /api/primaria/appello?userId=
-//   singolo: { sectionId, alunnoId, data, stato, noteAppello? }
-//   bulk:    { sectionId, data, records: [{ alunnoId, stato, noteAppello? }] }
+//   singolo: { sectionId, alunnoId, data, stato, noteAppello?, assenzaOrariaGiustificata? }
+//   bulk:    { sectionId, data, records: [{ alunnoId, stato, noteAppello?, assenzaOrariaGiustificata? }] }
+//   Contratto completo: docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/contratti/A3.md
 export const POST = withRoute('primaria/appello:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
@@ -227,13 +283,15 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     // a `null`. Il ramo bulk non aveva il problema perché il client i suoi campi li
     // elenca da sé.
     const singolo: Record<string, unknown> = {}
-    for (const campo of ['alunnoId', 'stato', 'noteAppello', 'orarioEntrata', 'orarioUscita'] as const) {
+    for (const campo of ['alunnoId', 'stato', 'noteAppello', 'orarioEntrata', 'orarioUscita', 'assenzaOrariaGiustificata'] as const) {
       if (campo in (b.data as Record<string, unknown>)) singolo[campo] = (b.data as Record<string, unknown>)[campo]
     }
     const rawRecords = Array.isArray(b.data.records) ? b.data.records : [singolo]
     const rec = parseData(recordsSchema, rawRecords)
     if ('response' in rec) return rec.response
     const records = rec.data
+    const giustErr = erroreGiustificazione(records)
+    if (giustErr) return giustErr
 
     // L'istante si compone col MOTORE UNICO (`@/lib/presenze/orario`), non a mano.
     // Il vecchio `${data}T${orario}:00` produceva una forma ISO NAÏVE — senza fuso —
@@ -359,6 +417,14 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
         // di un presente è un fatto che la scuola registra.
         orario_entrata: orarioEntrata,
         orario_uscita: orarioUscita,
+        // «Ore giustificate»: si scrive SEMPRE, `true` o `false`. Non segue la regola
+        // «ciò che il corpo non nomina sopravvive» delle note, e di proposito: un flag
+        // che sopravvive a una correzione toglierebbe ore di assenza a un ritardo che
+        // il docente ha appena ri-registrato senza giustificarlo. Chi vuole tenerlo lo
+        // RIMANDA (la finestra A4 lo fa sempre). Fuori da ritardo/uscita è `false` anche
+        // se il corpo dicesse altro — ma quel caso è già un 422 più sopra; il trigger
+        // del DB lo spegnerebbe comunque.
+        assenza_oraria_giustificata: STATI_GIUSTIFICABILI.has(r.stato) && r.assenzaOrariaGiustificata === true,
         // Provenienza operativa: chi ha registrato (può essere la segreteria). NON è una firma.
         registrato_da: userId,
       }
@@ -369,6 +435,31 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
       .upsert(rows, { onConflict: 'alunno_id,data' })
       .select(COLONNE_APPELLO)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // Giustificazioni salvate o tolte: evento di dominio, con il SUCCESSO (AGENTS.md,
+    // regola 5). Solo uuid e stato: la nota è il motivo — spesso sanitario — di un
+    // minore, e nei log non entra (regola 8).
+    for (const riga of rows) {
+      const prec = esistente.get(riga.alunno_id)
+      const primaGiustificata = prec?.assenza_oraria_giustificata === true
+      if (riga.assenza_oraria_giustificata) {
+        logEvento('registro', 'info', {
+          operazione: 'primaria/appello:POST',
+          esito: 'assenza-oraria-giustificata-salvata',
+          alunno: riga.alunno_id,
+          sezione: sectionId,
+          stato: riga.stato,
+        })
+      } else if (primaGiustificata) {
+        logEvento('registro', 'info', {
+          operazione: 'primaria/appello:POST',
+          esito: 'assenza-oraria-giustificata-rimossa',
+          alunno: riga.alunno_id,
+          sezione: sectionId,
+          stato: riga.stato,
+        })
+      }
+    }
 
     // Audit (diff prima/dopo) + notifica al docente titolare (se segreteria/direzione).
     await logScrittura(supabase, {

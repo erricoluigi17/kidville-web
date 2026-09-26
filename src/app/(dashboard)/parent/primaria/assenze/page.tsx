@@ -21,6 +21,33 @@ interface Presenza {
   orario_entrata: string | null; orario_uscita: string | null;
   giustificata: boolean; giustificazione_testo: string | null;
   giustificata_il: string | null; note_appello: string | null;
+  /** A5: ritardo/uscita giustificati dal docente (es. terapia) — le ore non
+   *  contano. Facoltativo: un server più vecchio non lo manda. */
+  assenza_oraria_giustificata?: boolean;
+}
+
+/**
+ * A5 (2026-09-26) — la frase del ritardo o dell'uscita GIUSTIFICATI, o `null`.
+ *
+ * Vale solo su `ritardo`/`uscita_anticipata`, gli unici stati che il DB lascia
+ * giustificare (trigger `presenze_spegni_giustificata_fuori_stato`): un flag vero
+ * su un'assenza piena, da un server che non lo filtrasse, non deve far dire alla
+ * pagina «giustificato». La nota c'è sempre per il CHECK del DB; se una riga
+ * storica l'avesse vuota si dice «Ritardo giustificato» e basta, senza «: » appeso.
+ */
+function fraseOraGiustificata(
+  p: Presenza,
+  t: (key: string, valori?: Record<string, string>) => string,
+): string | null {
+  if (p.assenza_oraria_giustificata !== true) return null;
+  const nota = p.note_appello?.trim() ?? '';
+  if (p.stato === 'ritardo') {
+    return nota ? t('assenzeOraGiustRitardo', { nota }) : t('assenzeOraGiustRitardoSenzaNota');
+  }
+  if (p.stato === 'uscita_anticipata') {
+    return nota ? t('assenzeOraGiustUscita', { nota }) : t('assenzeOraGiustUscitaSenzaNota');
+  }
+  return null;
 }
 
 // Le pillole di stato usano gli inchiostri FORTI, non le tinte di riempimento.
@@ -273,6 +300,7 @@ function AssenzeGenitore() {
             // stato_ignoto_nuovo») il giorno in cui il backend ne aggiunge uno.
             const statoLabel = meta ? t(meta.labelKey) : ta('statoSconosciuto');
             const statoCls = meta ? meta.cls : 'bg-kidville-neutral-soft text-kidville-sub';
+            const oraGiustificata = fraseOraGiustificata(p, t);
             return (
               <div key={p.id} className="rounded-2xl bg-kidville-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-2 mb-1">
@@ -309,7 +337,16 @@ function AssenzeGenitore() {
                 {p.giustificazione_testo && (
                   <p className="font-maven text-xs text-kidville-sub mt-1 italic">&ldquo;{p.giustificazione_testo}&rdquo;</p>
                 )}
-                {p.note_appello && (
+                {/* A5: sul ritardo/uscita giustificati la nota del docente È il
+                    motivo della giustificazione — si dice una volta sola, dentro
+                    la frase «Ritardo giustificato: terapia», e si chiarisce che
+                    quelle ore non contano. Altrimenti resta «Nota docente». */}
+                {oraGiustificata ? (
+                  <div className="mt-1">
+                    <p className="font-maven text-xs font-semibold text-kidville-success-strong">{oraGiustificata}</p>
+                    <p className="font-maven text-xs text-kidville-sub">{t('assenzeOraGiustNonConta')}</p>
+                  </div>
+                ) : p.note_appello && (
                   <p className="font-maven text-xs text-kidville-sub mt-0.5">{t('assenzeNotaDocente', { value: p.note_appello })}</p>
                 )}
 

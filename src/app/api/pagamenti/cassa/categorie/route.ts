@@ -10,6 +10,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { CassaCategoria } from '@/lib/cassa/tipi'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
+import { sediLetturaCassa, nomiSediCassa } from '@/lib/cassa/lettura-multisede'
 
 // Codici PostgREST/Postgres «schema cassa assente» (DB E2E CI non migrato). Copia
 // locale della lista canonica di `@/lib/cassa/saldo`: tiene questa route — e i suoi
@@ -98,7 +99,13 @@ async function caricaCategoriaConScope(
 }
 
 // GET /api/pagamenti/cassa/categorie?scuola_id=  (staff — serve al form uscita)
-// Ritorna le categorie globali (scuola_id NULL) + quelle della sede.
+// Ritorna le categorie globali (scuola_id NULL) + quelle delle sedi lette.
+//
+// Dal 2026-09-26 (K3) la lettura è UNITA: senza scuola_id le globali + quelle di
+// TUTTE le sedi attive; con scuola_id le globali + quella sede (403 se non è fra le
+// proprie). Ogni categoria porta `scuola_id` (null = globale) e `scuola_nome`, così
+// la finestra dell'uscita può proporre solo quelle della sede scelta.
+// Contratto: docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/contratti/K3.md.
 export const GET = withRoute('pagamenti/cassa/categorie:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
@@ -108,12 +115,14 @@ export const GET = withRoute('pagamenti/cassa/categorie:GET', async (request: Ne
     if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
-    if (sw.response) return sw.response
-    const scuolaId = sw.scuolaId
+    const scope = await sediLetturaCassa(request, supabase, auth.user, q.data.scuola_id, 'pagamenti/cassa/categorie:GET')
+    if (scope.response) return scope.response
+    const sedi = scope.sedi
 
     let query = supabase.from('cassa_categorie').select('*').order('ordine', { ascending: true })
-    if (scuolaId) query = query.or(`scuola_id.is.null,scuola_id.eq.${scuolaId}`)
+    // Gli uuid vengono da `restringiSedi` (forma canonica del DB), mai dalla query
+    // grezza: non possono iniettare altro nel filtro `or`.
+    if (sedi.length > 0) query = query.or(`scuola_id.is.null,scuola_id.in.(${sedi.join(',')})`)
     else query = query.is('scuola_id', null)
 
     const { data, error } = await query
@@ -125,7 +134,12 @@ export const GET = withRoute('pagamenti/cassa/categorie:GET', async (request: Ne
       logErrore({ operazione: 'pagamenti/cassa/categorie:GET', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nel recupero delle categorie' }, { status: 500 })
     }
-    return NextResponse.json({ disponibile: true, categorie: (data ?? []) as CassaCategoria[] })
+    const nomi = await nomiSediCassa(supabase, sedi, 'pagamenti/cassa/categorie:GET')
+    const categorie = ((data ?? []) as CassaCategoria[]).map((c) => ({
+      ...c,
+      scuola_nome: c.scuola_id ? nomi.get(c.scuola_id) ?? null : null,
+    }))
+    return NextResponse.json({ disponibile: true, categorie })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/cassa/categorie:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

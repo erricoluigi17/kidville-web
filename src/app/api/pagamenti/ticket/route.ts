@@ -41,7 +41,8 @@ type EsitoSaldo =
   | { ok: false; messaggio: string }
 
 // GET /api/pagamenti/ticket?alunno_id=&userId=
-//   staff -> saldo di qualsiasi alunno; genitore -> solo dei propri figli
+//   staff -> solo alunni dei propri plessi (assertAlunnoInScope: 403 fuori perimetro,
+//            404 inesistente); genitore -> solo dei propri figli
 export const GET = withRoute('pagamenti/ticket:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
@@ -53,7 +54,15 @@ export const GET = withRoute('pagamenti/ticket:GET', async (request: Request) =>
 
     const supabase = await createAdminClient()
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
-    if (!isStaff) {
+    if (isStaff) {
+      // ⚠️ FINO AL 2026-09-26 (K5) QUI NON C'ERA NIENTE: lo staff leggeva il saldo di
+      // QUALUNQUE bambino di cui avesse l'uuid, anche di un altro plesso — il client è
+      // service-role, la RLS non c'è, e il gate applicativo è l'unico presidio. Ora vale la
+      // stessa regola della POST qui sotto: l'alunno deve stare nei plessi dello staff
+      // (403 fuori perimetro, 404 se non esiste, 5xx se lo scope non si risolve).
+      const scopeErr = await assertAlunnoInScope(supabase, user, alunnoId)
+      if (scopeErr) return scopeErr
+    } else {
       // Unione runtime (`legame_genitori_alunni`) + anagrafica (`student_parents`
       // via ponte `parents.auth_user_id`): col solo runtime il genitore arrivato
       // dal form pubblico non vedeva il saldo mensa del PROPRIO figlio.
@@ -61,8 +70,15 @@ export const GET = withRoute('pagamenti/ticket:GET', async (request: Request) =>
       if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
-    const { data } = await supabase
+    // PostgREST non lancia: un errore qui, ignorato, diventava «saldo 0» — un numero falso
+    // mostrato come vero, a un genitore o alla cassa. «Nessuna riga» invece è un dato vero
+    // (mai ricaricato) e resta il saldo zero di ripiego.
+    const { data, error } = await supabase
       .from('ticket_mensa').select('alunno_id, saldo_ticket, ultimo_carico').eq('alunno_id', alunnoId).maybeSingle()
+    if (error) {
+      logErrore({ operazione: 'pagamenti/ticket:GET', stato: 500 }, error)
+      return NextResponse.json({ error: 'Errore nel caricamento del saldo ticket', codice: 'LETTURA_FALLITA' }, { status: 500 })
+    }
     return NextResponse.json({ success: true, data: data ?? { alunno_id: alunnoId, saldo_ticket: 0, ultimo_carico: null } })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/ticket:GET', stato: 500 }, err)

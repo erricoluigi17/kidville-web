@@ -23,12 +23,31 @@ import {
   SELECT,
 } from './ui'
 
-interface Props {
-  userId: string
-  scuolaId: string
+/** Una sede fra cui scegliere: l'uuid e il nome da mostrare nel selettore. */
+export interface SedeRevisione {
+  id: string
+  nome: string
 }
 
-interface PropsCiclo extends Props {
+interface Props {
+  userId: string
+  /**
+   * Le sedi su cui l'utente può lavorare (le sedi EFFETTIVE del cockpit). Con una sola sede il
+   * pannello lavora su quella e non mostra nessun selettore; con più sedi la sede si sceglie qui
+   * dentro, perché la revisione e soprattutto l'attivazione valgono «per l'intera sede» e non
+   * possono indovinare il plesso.
+   */
+  sedi: SedeRevisione[]
+  /** La sede già scelta dalla pagina (`scuolaId`), o null quando le sedi selezionate sono più d'una. */
+  sedeIniziale: string | null
+}
+
+interface PropsCiclo {
+  userId: string
+  /** La sede su cui si lavora adesso; null finché, con più sedi, l'utente non ne sceglie una. */
+  scuolaId: string | null
+  sedi: SedeRevisione[]
+  onCambiaSede: (scuolaId: string | null) => void
   aperto: boolean
   onApri: () => void
   onChiudi: () => void
@@ -79,13 +98,44 @@ function registraErroreClient(messaggio: string, errore: unknown, stato: number)
   })
 }
 
-export function RevisioneFatturePanel(props: Props) {
+/**
+ * La sede su cui lavorare: l'unica, se è una; altrimenti quella scelta nel selettore, purché sia
+ * ancora fra le sedi disponibili. Mai una sede «indovinata»: con più sedi e nessuna scelta è null.
+ */
+function sedeDiLavoro(sedi: SedeRevisione[], scelta: string | null): string | null {
+  if (sedi.length === 1) return sedi[0].id
+  return scelta !== null && sedi.some((sede) => sede.id === scelta) ? scelta : null
+}
+
+export function RevisioneFatturePanel({ userId, sedi, sedeIniziale }: Props) {
   const [aperto, setAperto] = useState(false)
+  const [scelta, setScelta] = useState<string | null>(sedeIniziale)
+  // Quello che la PAGINA ha deciso: utente, sede indicata e sedi offerte. Quando cambia (cambio di
+  // sede nel cockpit) la scelta interna torna a `sedeIniziale`: una scelta fatta su un'altra
+  // selezione di sedi non sopravvive, altrimenti con più sedi e `sedeIniziale` null il pannello
+  // lavorerebbe su una sede che nessuno ha scelto adesso. La scelta dal selettore interno NON
+  // cambia questa chiave, quindi non la azzera. (Stato derivato dalla prop precedente: l'update
+  // durante il render è il pattern documentato da React, niente effetto né render intermedio.)
+  const chiavePagina = `${userId}:${sedeIniziale ?? ''}:${sedi.map((sede) => sede.id).join(',')}`
+  const [chiavePrecedente, setChiavePrecedente] = useState(chiavePagina)
+  let sceltaCorrente = scelta
+  if (chiavePrecedente !== chiavePagina) {
+    setChiavePrecedente(chiavePagina)
+    setScelta(sedeIniziale)
+    sceltaCorrente = sedeIniziale
+  }
+  const scuolaId = sedeDiLavoro(sedi, sceltaCorrente)
 
   return (
     <RevisioneFatturePanelCiclo
-      key={`${props.userId}:${props.scuolaId}`}
-      {...props}
+      // Si rimonta quando cambia quello che la PAGINA ha deciso (vedi `chiavePagina`), non quando
+      // si sceglie una sede nel selettore interno: lì il reset lo fa `cambiaSede`, e il selettore
+      // appena usato non perde il fuoco.
+      key={chiavePagina}
+      userId={userId}
+      scuolaId={scuolaId}
+      sedi={sedi}
+      onCambiaSede={setScelta}
       aperto={aperto}
       onApri={() => setAperto(true)}
       onChiudi={() => setAperto(false)}
@@ -96,6 +146,8 @@ export function RevisioneFatturePanel(props: Props) {
 function RevisioneFatturePanelCiclo({
   userId,
   scuolaId,
+  sedi,
+  onCambiaSede,
   aperto,
   onApri,
   onChiudi,
@@ -118,9 +170,14 @@ function RevisioneFatturePanelCiclo({
   const controllerRef = useRef(new Set<AbortController>())
   const testoErroreCaricamento = t('revisioneFattureErroreCaricamento')
 
-  const data = caricato?.scuolaId === scuolaId && caricato.pagina === pagina
-    ? caricato.data
+  const caricatoCorrente = caricato !== null
+    && caricato.scuolaId === scuolaId
+    && caricato.pagina === pagina
+    ? caricato
     : null
+  const data = caricatoCorrente?.data ?? null
+  // La sede dei dati a schermo, già stretta a stringa: coincide con `scuolaId` quando `data` c'è.
+  const sedeDati = caricatoCorrente?.scuolaId ?? ''
   const confermaCorrente = confermaAttivazione?.scuolaId === scuolaId
     && confermaAttivazione.userId === userId
     ? confermaAttivazione
@@ -160,7 +217,8 @@ function RevisioneFatturePanelCiclo({
   }, [annullaOperazioni, aperto])
 
   useEffect(() => {
-    if (!aperto) return
+    // Con più sedi e nessuna scelta non si chiama il server: niente `scuola_id=null` nell'URL.
+    if (!aperto || !scuolaId) return
     const operazione = iniziaOperazione()
     const controllers = controllerRef.current
 
@@ -211,6 +269,26 @@ function RevisioneFatturePanelCiclo({
     }
   }, [aperto, iniziaOperazione, operazioneCorrente, pagina, ricarica, scuolaId, testoErroreCaricamento, userId])
 
+  /**
+   * Cambio di sede dal selettore interno: stesso azzeramento dell'apertura, senza chiudere il
+   * pannello. Le operazioni in volo della sede di prima si annullano (una risposta tardiva non
+   * deve comparire sotto la sede nuova), e conferma e anteprima aperte si chiudono: una
+   * conferma d'attivazione nata su una sede non può partire su un'altra.
+   */
+  const cambiaSede = (nuova: string) => {
+    annullaOperazioni()
+    setPagina(1)
+    setCaricato(null)
+    setLoading(false)
+    setErroreCaricamento(null)
+    setErroreOperazione(null)
+    setFatturaInSalvataggio(null)
+    setAttivazioneInCorso(false)
+    setConfermaAttivazione(null)
+    setFatturaAperta(null)
+    onCambiaSede(nuova === '' ? null : nuova)
+  }
+
   const apri = () => {
     annullaOperazioni()
     apertoRef.current = true
@@ -250,6 +328,7 @@ function RevisioneFatturePanelCiclo({
     modalita: Exclude<StatoRevisioneFattura, 'da_verificare'>,
     parentRegistryId: string | null,
   ) => {
+    if (!scuolaId) return
     const operazione = iniziaOperazione()
     setErroreOperazione(null)
     setFatturaInSalvataggio(fattura.id)
@@ -294,6 +373,7 @@ function RevisioneFatturePanelCiclo({
   const attiva = useCallback(async (conferma: ConfermaAttivazione) => {
     if (
       !data
+      || !scuolaId
       || data.da_verificare !== 0
       || data.attiva_il
       || conferma.scuolaId !== scuolaId
@@ -363,6 +443,8 @@ function RevisioneFatturePanelCiclo({
   }
 
   const pagine = data ? Math.max(1, Math.ceil(data.totale / data.per_pagina)) : 1
+  const piuSedi = sedi.length > 1
+  const nomeSede = (id: string) => sedi.find((sede) => sede.id === id)?.nome ?? id
 
   return (
     <section className="rounded-card border border-kidville-line bg-kidville-white p-5">
@@ -374,13 +456,30 @@ function RevisioneFatturePanelCiclo({
           <p className="mt-1 font-maven text-sm text-kidville-sub">
             {t('revisioneFattureSottotitolo')}
           </p>
+          {piuSedi && (
+            <label className="mt-3 block font-maven text-sm font-semibold text-kidville-ink">
+              {t('revisioneFattureSede')}
+              <select
+                className={cx(SELECT, 'mt-1')}
+                value={scuolaId ?? ''}
+                aria-label={t('revisioneFattureSede')}
+                disabled={attivazioneInCorso}
+                onChange={(evento) => cambiaSede(evento.target.value)}
+              >
+                <option value="" disabled>{t('revisioneFattureScegliSede')}</option>
+                {sedi.map((sede) => (
+                  <option key={sede.id} value={sede.id}>{sede.nome}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <div className="flex gap-2">
           <button
             type="button"
             className={BTN_SECONDARY}
             onClick={aggiorna}
-            disabled={loading}
+            disabled={loading || !scuolaId}
             aria-label={t('revisioneFattureAggiorna')}
           >
             <RefreshCw size={16} aria-hidden="true" />
@@ -399,7 +498,11 @@ function RevisioneFatturePanelCiclo({
         </p>
       )}
 
-      {loading && !data ? (
+      {!scuolaId ? (
+        <p className="py-8 text-center font-maven text-sm text-kidville-sub">
+          {sedi.length === 0 ? t('revisioneFattureNessunaSede') : t('revisioneFattureSedeDaScegliere')}
+        </p>
+      ) : loading && !data ? (
         <p className="py-8 text-center font-maven text-sm text-kidville-sub" aria-live="polite">
           {t('revisioneFattureCaricamento')}
         </p>
@@ -440,7 +543,7 @@ function RevisioneFatturePanelCiclo({
                   className={BTN_PRIMARY_AA}
                   disabled={data.da_verificare > 0 || attivazioneInCorso}
                   onClick={() => setConfermaAttivazione({
-                    scuolaId,
+                    scuolaId: sedeDati,
                     userId,
                     irrisolte: data.irrisolte.map((fattura) => ({ ...fattura })),
                   })}
@@ -463,7 +566,7 @@ function RevisioneFatturePanelCiclo({
                 attiva={data.attiva_il !== null}
                 inSalvataggio={fatturaInSalvataggio === fattura.id}
                 onSalva={(modalita, parentRegistryId) => void salva(fattura, modalita, parentRegistryId)}
-                onApri={() => setFatturaAperta({ scuolaId, userId, fattura })}
+                onApri={() => setFatturaAperta({ scuolaId: sedeDati, userId, fattura })}
               />
             ))}
           </div>
@@ -504,6 +607,11 @@ function RevisioneFatturePanelCiclo({
         <h3 className="font-fredoka text-xl font-bold text-kidville-ink">
           {t('revisioneFattureConfermaTitolo')}
         </h3>
+        {piuSedi && confermaCorrente && (
+          <p className="mt-3 font-maven text-sm font-bold text-kidville-ink">
+            {t('revisioneFattureConfermaSede', { sede: nomeSede(confermaCorrente.scuolaId) })}
+          </p>
+        )}
         <p className="mt-3 font-maven text-sm text-kidville-sub">
           {t('revisioneFattureConfermaTesto')}
         </p>

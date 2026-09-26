@@ -29,7 +29,10 @@ vi.mock('@/lib/logging/logger', () => ({
   logErrore: (...a: unknown[]) => h.logCalls.push(a),
   logEvento: (...a: unknown[]) => h.logCalls.push(a),
 }))
-vi.mock('@/lib/auth/scope', () => ({
+// `restringiSedi` resta quella vera: dal 2026-09-26 (K3) è lei a decidere il 403
+// della GET su una sede non propria (lettura unita, lettura-multisede.test.ts).
+vi.mock('@/lib/auth/scope', async (importActual) => ({
+  restringiSedi: (await importActual<typeof import('@/lib/auth/scope')>()).restringiSedi,
   resolveScuoleAttive: h.resolveScuoleAttive,
   resolveScuolaScrittura: h.resolveScuolaScrittura,
 }))

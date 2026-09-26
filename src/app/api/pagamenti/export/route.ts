@@ -12,10 +12,24 @@ import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/atte
 import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
 import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input ─────────────────────────────────────────────
 const zUuidQueryOpzionale = z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional())
+
+/**
+ * K2 — `section_ids`: uuid di sezione separati da virgola (`?section_ids=a,b`),
+ * o ripetuti (`?section_ids=a&section_ids=b`, che `parseQuery` consegna come
+ * array). Vuoto ⇒ assente (nessun filtro). Un solo valore non uuid ⇒ 400: un
+ * filtro scartato in silenzio produrrebbe l'export di TUTTA la sede spacciato
+ * per quello di una classe. Tetto a 200: le sezioni di tre plessi sono decine.
+ */
+const zSectionIds = z.preprocess((v) => {
+  if (v === undefined) return undefined
+  const grezzi = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(','))
+  const puliti = grezzi.map((x) => x.trim()).filter((x) => x !== '')
+  return puliti.length === 0 ? undefined : puliti
+}, z.array(zUuid).min(1).max(200).optional())
 
 const getQuerySchema = z
   .object({
@@ -24,8 +38,14 @@ const getQuerySchema = z
     stato: z.string().optional(),
     categoria_id: zUuidQueryOpzionale,
     anno: z.coerce.number().int().min(2000).max(2100).optional(),
+    section_ids: zSectionIds,
   })
   .refine((q) => q.tipo !== 'ade' || q.anno !== undefined, "l'export AdE richiede l'anno")
+// NB: `section_ids` con `tipo=ade` NON è un 400. Prima di K2 zod scartava la
+// chiave e la risposta era 200: il compito chiede «resto invariato», e rifiutarla
+// romperebbe il download AdE se l'interfaccia riusa la query dello Scadenzario.
+// La comunicazione all'Agenzia delle Entrate resta sull'anno e sulla sede per
+// intero: il filtro si IGNORA (niente file parziale) e lo si dice nel log.
 
 const STATO_LABEL: Record<string, string> = {
   da_pagare: 'Da pagare', parziale: 'Parziale', pagato: 'Pagato', scaduto: 'Scaduto',
@@ -35,6 +55,7 @@ const FATTURA_LABEL: Record<string, string> = {
 }
 
 interface RigaPagamento {
+  scuola_id: string | null
   descrizione: string
   importo: number
   importo_pagato: number | null
@@ -47,6 +68,28 @@ interface RigaPagamento {
   payment_categories?: { nome?: string } | null
 }
 
+/**
+ * K2 — nome di ogni sede in scope, per la colonna «Sede» degli export.
+ *
+ * Con tre plessi due «Sezione A» sono la stessa stringa: senza la sede la riga
+ * non dice di chi è. Se i nomi non si leggono si risponde 500 (PostgREST non
+ * lancia: `{ error }` va guardato) invece di consegnare un export con la
+ * colonna vuota, che sembrerebbe giusto e non lo è.
+ */
+async function nomiDelleSedi(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  sedi: string[],
+): Promise<{ nomi?: Map<string, string>; response?: NextResponse }> {
+  const { data, error } = await supabase.from('schools').select('id, nome').in('id', sedi)
+  if (error) {
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, error)
+    return { response: NextResponse.json({ error: 'Errore nel recupero delle sedi', codice: 'LETTURA_FALLITA' }, { status: 500 }) }
+  }
+  const nomi = new Map<string, string>()
+  for (const s of (data ?? []) as { id: string; nome: string | null }[]) nomi.set(s.id, s.nome ?? '')
+  return { nomi }
+}
+
 // GET /api/pagamenti/export?tipo=scadenzario — XLSX per la segreteria/commercialista
 export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest) => {
   try {
@@ -57,6 +100,14 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const { scuola_id: scuolaId, stato, categoria_id: categoriaId } = q.data
+    // Il filtro classi vale SOLO per lo Scadenzario: per l'AdE non si applica.
+    const sectionIds = q.data.tipo === 'scadenzario' ? q.data.section_ids : undefined
+    if (q.data.tipo === 'ade' && q.data.section_ids) {
+      logEvento('pagamento', 'info', {
+        tipo: 'export-ade-classi-ignorate', azione: 'pagamenti/export:GET',
+        utente: user.id, ruolo: user.role, classi: q.data.section_ids.length,
+      })
+    }
 
     const supabase = await createAdminClient()
     const sediAttive = await resolveScuoleAttive(request, supabase, user)
@@ -68,25 +119,40 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
       entitaTipo: 'export_pagamenti',
       azione: 'insert',
       scuolaId: scuolaId && sediAttive.includes(scuolaId) ? scuolaId : sediAttive[0] ?? null,
-      valoreDopo: { tipo: q.data.tipo, anno: q.data.anno ?? null, sedi: sediAttive },
+      valoreDopo: {
+        tipo: q.data.tipo, anno: q.data.anno ?? null, sedi: sediAttive,
+        classi: sectionIds ?? null,
+      },
     })
 
+    const sedi = await nomiDelleSedi(supabase, sediAttive)
+    if (sedi.response) return sedi.response
+    const nomiSedi = sedi.nomi!
+
     if (q.data.tipo === 'ade') {
-      return exportAde(supabase, sediAttive, q.data.anno!)
+      return exportAde(supabase, sediAttive, q.data.anno!, nomiSedi)
     }
 
+    // K2 — filtro classi. `!inner` SOLO quando le classi si chiedono: senza,
+    // PostgREST non scarta la voce il cui alunno è fuori dalle sezioni, le mette
+    // soltanto `alunni: null` — e l'export «della Sezione A» conterrebbe tutta la
+    // sede. Senza filtro resta il join normale, così le voci senza alunno restano.
+    const embedAlunni = sectionIds
+      ? 'alunni!inner ( nome, cognome, classe_sezione, section_id )'
+      : 'alunni ( nome, cognome, classe_sezione )'
     let query = supabase
       .from('pagamenti')
       .select(`
-        descrizione, importo, importo_pagato, scadenza, periodo_competenza, stato, tipo, fattura_stato,
+        scuola_id, descrizione, importo, importo_pagato, scadenza, periodo_competenza, stato, tipo, fattura_stato,
         payment_categories ( nome ),
-        alunni ( nome, cognome, classe_sezione )
+        ${embedAlunni}
       `)
       .in('scuola_id', sediAttive)
       .order('scadenza', { ascending: true })
     if (scuolaId && sediAttive.includes(scuolaId)) query = query.eq('scuola_id', scuolaId)
     if (stato) query = query.eq('stato', stato)
     if (categoriaId) query = query.eq('categoria_id', categoriaId)
+    if (sectionIds) query = query.in('alunni.section_id', sectionIds)
 
     const { data, error } = await query
     if (error) {
@@ -98,6 +164,8 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     const righe = ((data || []) as unknown as RigaPagamento[])
       .filter((p) => p.tipo !== 'padre')
       .map((p) => ({
+        // K2 — prima colonna: con più plessi è la prima cosa che serve sapere.
+        Sede: p.scuola_id ? (nomiSedi.get(p.scuola_id) ?? '') : '',
         Alunno: [p.alunni?.nome, p.alunni?.cognome].filter(Boolean).join(' '),
         Sezione: p.alunni?.classe_sezione ?? '',
         Categoria: p.payment_categories?.nome ?? '',
@@ -111,9 +179,15 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
       }))
 
     const ws = XLSX.utils.json_to_sheet(righe)
-    ws['!cols'] = [{ wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }]
+    ws['!cols'] = [{ wch: 20 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Scadenzario')
+    // Nessun dato personale: conteggi e numero di classi filtrate.
+    logEvento('pagamento', 'info', {
+      tipo: 'export-scadenzario', azione: 'pagamenti/export:GET',
+      utente: user.id, ruolo: user.role, attive: sediAttive.length,
+      classi: sectionIds?.length ?? 0, n: righe.length,
+    })
 
     // SheetJS ritorna Buffer in Node: cast ad ArrayBuffer per NextResponse
     const rawBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as unknown
@@ -140,6 +214,7 @@ interface AlunnoAde {
   codice_fiscale?: string | null
   opposizione_ade?: boolean | null
   intestatario_fatture?: { tipo?: string | null; adult_id?: string | null; dati?: unknown } | null
+  scuola_id?: string | null
 }
 interface IncassoAde {
   importo: number
@@ -160,6 +235,7 @@ async function exportAde(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   sediAttive: string[],
   anno: number,
+  nomiSedi: Map<string, string>,
 ) {
   // select('*') sugli alunni: tollera i DB senza opposizione_ade (e2e CI).
   const { data: alunniRaw, error: errAlunni } = await supabase
@@ -206,17 +282,19 @@ async function exportAde(
     if (voci.length === 0) continue
     const r = calcolaAttestazione(voci)
     const nome = `${al.nome ?? ''} ${al.cognome ?? ''}`.trim()
+    // K2 — la sede dell'ALUNNO, prima colonna di entrambi i fogli.
+    const sede = al.scuola_id ? (nomiSedi.get(al.scuola_id) ?? '') : ''
 
     if (r.nonTracciabile > 0) {
-      escluse.push({ Alunno: nome, Motivo: 'quota non tracciabile (contanti/altro)', 'Importo €': r.nonTracciabile })
+      escluse.push({ Sede: sede, Alunno: nome, Motivo: 'quota non tracciabile (contanti/altro)', 'Importo €': r.nonTracciabile })
     }
     if (r.escluso > 0) {
-      escluse.push({ Alunno: nome, Motivo: 'categoria non detraibile (divise/materiale)', 'Importo €': r.escluso })
+      escluse.push({ Sede: sede, Alunno: nome, Motivo: 'categoria non detraibile (divise/materiale)', 'Importo €': r.escluso })
     }
     if (r.detraibile <= 0) continue
 
     if (al.opposizione_ade) {
-      escluse.push({ Alunno: nome, Motivo: 'opposizione della famiglia alla comunicazione', 'Importo €': r.detraibile })
+      escluse.push({ Sede: sede, Alunno: nome, Motivo: 'opposizione della famiglia alla comunicazione', 'Importo €': r.detraibile })
       continue
     }
 
@@ -239,11 +317,12 @@ async function exportAde(
     }
     const cfPagatore = digitata ? (digitata.codice_fiscale ?? '') : (reg?.fiscal_code ?? '')
     if (!cfPagatore) {
-      escluse.push({ Alunno: nome, Motivo: 'codice fiscale del pagatore mancante', 'Importo €': r.detraibile })
+      escluse.push({ Sede: sede, Alunno: nome, Motivo: 'codice fiscale del pagatore mancante', 'Importo €': r.detraibile })
       continue
     }
 
     daComunicare.push({
+      Sede: sede,
       'CF alunno': al.codice_fiscale ?? '',
       Alunno: nome,
       'CF pagatore': cfPagatore,

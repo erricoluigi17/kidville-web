@@ -12,6 +12,14 @@ vi.mock('@/lib/context/admin-identity', () => ({
   useAdminIdentity: () => ({ userId: 'u1', ruolo: state.ruolo, withUser: (h: string) => h }),
 }));
 
+// Le sedi del cockpit (P4a): il pannello le passa alle finestre di scrittura. Qui UNA
+// sede, `sc-1`: è il caso che i test storici di questo file fissano. I casi a più
+// sedi stanno in `CassaPanel-multisede.test.tsx`.
+vi.mock('@/lib/context/sede-context', async (orig) => ({
+  ...(await orig<typeof import('@/lib/context/sede-context')>()),
+  useSediAttive: () => ({ sedi: [{ id: 'sc-1', nome: 'Sede Uno' }], effettive: ['sc-1'], sedeCorrente: 'sc-1' }),
+}));
+
 function jsonRes(body: unknown, status = 200) {
   return { ok: status < 400, status, json: async () => body } as Response;
 }

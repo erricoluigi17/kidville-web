@@ -130,3 +130,89 @@ describe('PagamentoCardMobile', () => {
     expect(screen.getByRole('button', { name: /Dettagli/ })).toHaveClass('min-h-[44px]');
   });
 });
+
+/**
+ * P2b (26/09) — con più sedi accorpate la card dice di quale sede è la scadenza.
+ * `scuola_nome` arriva da `GET /api/pagamenti`; senza `mostraSede` la card resta com'era.
+ */
+/** Il testo che lo screen reader legge: tutto tranne ciò che è `aria-hidden`, spazi normalizzati. */
+function testoLetto(el: HTMLElement): string {
+  const copia = el.cloneNode(true) as HTMLElement;
+  copia.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+  return (copia.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+describe('PagamentoCardMobile — sede (P2b)', () => {
+  const conSede = { ...base, scuola_nome: 'Kidville Aversa' };
+
+  it('mostraSede: badge con il nome della sede della riga, annunciato come «Sede»', () => {
+    render(
+      <PagamentoCardMobile pagamento={conSede} alunnoLabel="Mario Rossi" sezioneLabel="Girasoli" mostraSede
+        onIncassa={() => {}} onApri={() => {}} />
+    );
+    const badge = screen.getByTestId('sede-badge');
+    expect(badge).toHaveTextContent('Kidville Aversa');
+    // Letto: una frase sola dal catalogo (ICU «Sede: {nome}»), il nome UNA volta.
+    expect(testoLetto(badge)).toBe('Sede: Kidville Aversa');
+    // Visto: il solo nome, senza prefisso.
+    expect(badge.querySelector('[aria-hidden="true"]:not(svg)')?.textContent).toBe('Kidville Aversa');
+    // Con un nome valido il tono è `neutral` (contratto P2b.md), mai `warn`.
+    expect(badge).toHaveClass('bg-kidville-neutral-soft');
+    expect(badge).not.toHaveClass('bg-kidville-warn-soft');
+  });
+
+  it('mostraSede: il badge resta MAIUSCOLO come ogni Badge, senza utility che lo contraddicono', () => {
+    // In jsdom non c'è CSS: si verifica che non ci siano classi in conflitto con quelle del Badge.
+    // `normal-case`/`tracking-normal` da className perdevano/vincevano a caso secondo l'ordine
+    // nel foglio di stile (uppercase vinceva, tracking-normal pure): maiuscolo senza spaziatura.
+    render(
+      <PagamentoCardMobile pagamento={conSede} alunnoLabel="Mario Rossi" mostraSede onIncassa={() => {}} onApri={() => {}} />
+    );
+    const badge = screen.getByTestId('sede-badge');
+    expect(badge).toHaveClass('uppercase', 'tracking-[0.06em]', 'max-w-full');
+    for (const conflitto of ['normal-case', 'lowercase', 'capitalize', 'tracking-normal', 'tracking-wide', 'tracking-tight']) {
+      expect(badge).not.toHaveClass(conflitto);
+    }
+  });
+
+  it('mostraSede senza scuola_nome: «Sede non indicata», non un vuoto', () => {
+    render(
+      <PagamentoCardMobile pagamento={{ ...base, scuola_nome: null }} alunnoLabel="Mario Rossi" mostraSede
+        onIncassa={() => {}} onApri={() => {}} />
+    );
+    const badge = screen.getByTestId('sede-badge');
+    // Confronto ESATTO, non per sottostringa: con il prefisso sr-only incondizionato si leggeva
+    // «Sede Sede non indicata».
+    expect(badge.textContent?.replace(/\s+/g, ' ').trim()).toBe('Sede non indicata');
+    expect(testoLetto(badge)).toBe('Sede non indicata');
+    // Una riga senza sede è un'anomalia da notare: tono `warn` (contratto P2b.md).
+    expect(badge).toHaveClass('bg-kidville-warn-soft');
+    expect(badge).not.toHaveClass('bg-kidville-neutral-soft');
+  });
+
+  it('mostraSede con scuola_nome di soli spazi: trattato come assente, tono `warn`', () => {
+    render(
+      <PagamentoCardMobile pagamento={{ ...base, scuola_nome: '   ' }} alunnoLabel="Mario Rossi" mostraSede
+        onIncassa={() => {}} onApri={() => {}} />
+    );
+    const badge = screen.getByTestId('sede-badge');
+    expect(badge.textContent?.replace(/\s+/g, ' ').trim()).toBe('Sede non indicata');
+    expect(badge).toHaveClass('bg-kidville-warn-soft');
+  });
+
+  it('senza mostraSede il rendering è IDENTICO a quello di prima (nessun badge)', () => {
+    const oggiHtml = render(
+      <PagamentoCardMobile pagamento={base} alunnoLabel="Mario Rossi" sezioneLabel="Girasoli" onIncassa={() => {}} onApri={() => {}} />
+    ).container.innerHTML;
+    const { container: c1 } = render(
+      <PagamentoCardMobile pagamento={conSede} alunnoLabel="Mario Rossi" sezioneLabel="Girasoli" onIncassa={() => {}} onApri={() => {}} />
+    );
+    const { container: c2 } = render(
+      <PagamentoCardMobile pagamento={conSede} alunnoLabel="Mario Rossi" sezioneLabel="Girasoli" mostraSede={false} onIncassa={() => {}} onApri={() => {}} />
+    );
+    expect(c1.innerHTML).toBe(oggiHtml);
+    expect(c2.innerHTML).toBe(oggiHtml);
+    expect(c1.textContent).not.toContain('Aversa');
+    expect(c1.querySelector('[data-testid="sede-badge"]')).toBeNull();
+  });
+});

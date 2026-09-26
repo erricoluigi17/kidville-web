@@ -2,6 +2,34 @@ import { db, type LocalPrimariaAppello } from '@/lib/offline/db';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
 /**
+ * ─── IL CORPO DELLA POST CHE LA CODA RISPEDISCE ───────────────────────────────────
+ *
+ * Prima il flush (`syncPendingAppello`) mandava `{ sectionId, data, alunnoId, stato }` e
+ * basta: l'ora di un ritardo segnato senza campo si perdeva. Col contratto A3 il danno è
+ * più grave, perché una POST che NON nomina `assenzaOrariaGiustificata` la SPEGNE: un
+ * ritardo giustificato (es. terapia) salvato offline sarebbe arrivato come un ritardo che
+ * conta nelle ore di assenza.
+ *
+ * Ogni campo facoltativo entra nel corpo SOLO se la riga in coda lo porta. Una riga
+ * accodata prima di questa modifica produce il corpo di sempre: `orarioEntrata: null`
+ * cancellerebbe l'ora sul server, `noteAppello: null` la nota. `null` sulla nota invece
+ * si trasporta com'è: è il comando «togli la nota» dato nella finestra.
+ */
+export function corpoPostAppelloDaCoda(r: LocalPrimariaAppello): Record<string, unknown> {
+    const corpo: Record<string, unknown> = {
+        sectionId: r.section_id,
+        data: r.data,
+        alunnoId: r.alunno_id,
+        stato: r.stato,
+    };
+    if (r.orario_entrata !== undefined) corpo.orarioEntrata = r.orario_entrata;
+    if (r.orario_uscita !== undefined) corpo.orarioUscita = r.orario_uscita;
+    if (r.note_appello !== undefined) corpo.noteAppello = r.note_appello;
+    if (r.assenza_oraria_giustificata !== undefined) corpo.assenzaOrariaGiustificata = r.assenza_oraria_giustificata;
+    return corpo;
+}
+
+/**
  * ─── RITIRA DALLA CODA OFFLINE IL CAMBIO D'APPELLO IN ATTESA DI UN ALUNNO ─────────
  *
  * Serve all'«Annulla» dell'appello della primaria (spec 2026-09-24, punto 6), e

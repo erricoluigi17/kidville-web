@@ -47,7 +47,15 @@ import {
 
 interface Props {
   userId: string;
-  scuolaId: string;
+  /**
+   * La sede scelta, o `null` quando l'operatore ne ha più d'una (P5b, 2026-09-26).
+   * Con `null` il pannello NON dichiara nessuna sede: i pagamenti aperti arrivano
+   * da tutte quelle del perimetro (lo decide il server con `resolveScuoleAttive`) e
+   * l'import dell'estratto conto parte senza `scuola_id` — il registro è unico per
+   * le tre sedi (contratto K5). Mai `String(null)`/`String(undefined)`: il server
+   * risponde 422 a quelle due parole.
+   */
+  scuolaId: string | null;
   /**
    * Aggancio «Incasso unico» dei bonifici di famiglia (multi-CF): il pannello
    * risolve il pagante comune agli alunni riconosciuti e chiama questo callback
@@ -433,7 +441,8 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
         fetch(`/api/pagamenti/riconciliazione?userId=${userId}${queryServer}`, { headers: hdr(userId) })
           .then(async (r) => ({ stato: r.status, corpo: (await r.json()) as RispostaMovimenti }))
           .catch(onErr),
-        fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}&solo_aperti=true`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
+        // Con più sedi (`null`) il parametro si OMETTE: il perimetro lo fa il server.
+        fetch(`/api/pagamenti?userId=${userId}${scuolaId ? `&scuola_id=${scuolaId}` : ''}&solo_aperti=true`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
       ]);
       // Sorpassata da una richiesta più recente: si esce senza scrivere niente.
       // Non è un'ottimizzazione, è correttezza — l'ultima risposta ad ARRIVARE non
@@ -639,7 +648,9 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     try {
       const corpo = new FormData();
       corpo.append('file', file);
-      corpo.append('scuola_id', scuolaId);
+      // ⚠️ Con più sedi il campo NON c'è affatto: `append('scuola_id', null)` spedirebbe
+      // la parola "null" (FormData converte in testo), e il server la respinge (K5).
+      if (scuolaId) corpo.append('scuola_id', scuolaId);
       const r = await fetch('/api/pagamenti/riconciliazione', {
         method: 'POST',
         // ⚠️ `hdrFile`, MAI `hdr`: con un `Content-Type` scritto a mano il browser non
@@ -866,6 +877,34 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
   const escluseDalFiltroSede = movimenti.length - visibili.length;
   const opzioniSede = sediDelleRighe(movimenti, nomiSedi);
   const senzaSede = movimenti.filter((m) => sedeDiRiga(m) === SEDE_NON_RICONOSCIUTA).length;
+
+  /**
+   * ─── LA SEDE SULLA RIGA (P5b, 2026-09-26) ──────────────────────────────────
+   *
+   * Il filtro qui sopra dice QUALI sedi ci sono; la riga deve dire DI QUALE è lei,
+   * senza obbligare a filtrare per scoprirlo. Solo quando le sedi delle righe sono
+   * più di una: con una sola sarebbe la stessa parola su ogni riga.
+   *
+   * Stessa fonte del filtro (`sedeDiRiga`), e quindi la stessa distinzione: sulla
+   * confermata la sede è NOTA, sulle altre è DEDOTTA, e la parola lo dice — una
+   * sede dedotta presentata come certa è il falso positivo che la rotta si vieta.
+   * La riga che nessuno ha capito lo dichiara invece di tacere. Il nome è un DATO
+   * (`nomiSedi`); se non è stato letto lo dice una frase a sé
+   * (`reconRigaSedeNotaSenzaNome` / `reconRigaSedeDedottaSenzaNome`: «Sede
+   * nota/dedotta, nome non disponibile»), mai l'uuid e mai l'etichetta del filtro
+   * «Sede senza nome».
+   */
+  const sedeSullaRiga = opzioniSede.length > 1;
+  const testoSedeRiga = (m: MovimentoUi): string => {
+    const id = sedeDiRiga(m);
+    if (id === SEDE_NON_RICONOSCIUTA) return t('reconFiltroSedeNonRiconosciuta');
+    const nota = m.stato === 'confermato' && m.scuola_id === id;
+    const sede = nomiSedi[id];
+    // Nome non letto: una frase a sé («Sede dedotta, nome non disponibile»), non
+    // l'etichetta del filtro infilata nella frase («Sede dedotta: Sede senza nome»).
+    if (!sede) return nota ? t('reconRigaSedeNotaSenzaNome') : t('reconRigaSedeDedottaSenzaNome');
+    return nota ? t('reconRigaSedeNota', { sede }) : t('reconRigaSedeDedotta', { sede });
+  };
 
   const vuoto = !loading && disponibile && !guastoDelCaricamento && !avvisoFatturazione && visibili.length === 0;
 
@@ -1487,6 +1526,13 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
                       <span className={cx('mt-1 block truncate font-maven text-xs', s.sub)} title={m.causale ?? ''}>
                         {m.causale || t('reconNessunaCausale')}{m.controparte ? ` · ${m.controparte}` : ''}
                       </span>
+                      {/* La sede della riga (P5b): inchiostro del semaforo (`s.sub`),
+                          come la causale, perché il fondo è quello pieno dello stato. */}
+                      {sedeSullaRiga && (
+                        <span className={cx('mt-1 block truncate font-maven text-[11px]', s.sub)}>
+                          {testoSedeRiga(m)}
+                        </span>
+                      )}
                       {/* ── PERCHÉ QUESTA RIGA NON SI PUÒ FATTURARE ──────────
                           La riga è confermata, ha un pagamento, e non porta né
                           chip né casella: senza questa frase l'operatrice legge

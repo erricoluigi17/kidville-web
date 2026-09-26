@@ -81,5 +81,13 @@
   "confermaElimina": "Elimini «{evento}» di {nome}? La registrazione sparisce dal diario del genitore.",
   "confermaEliminaConNota": "Elimini «{evento}» di {nome}? Sparisce anche la nota scritta per lui/lei.",
   "attivitaNessunaRegistrazione": "Nessuna attività descritta",
-  "attivitaAiutoCompilazione": "La descrizione vale per tutta la sezione; se non ne scrivi nessuna, non si salva niente."
+  "attivitaAiutoCompilazione": "La descrizione vale per tutta la sezione; se non ne scrivi nessuna, non si salva niente.",
+  "attivitaOrarioFacoltativo": "Orario (facoltativo)",
+  "attivitaOraInizio": "Inizio",
+  "attivitaOraFine": "Fine",
+  "attivitaOraInizioAria": "Ora di inizio dell’attività {n}",
+  "attivitaOraFineAria": "Ora di fine dell’attività {n}",
+  "attivitaOrarioIncoerente": "L’ora di fine non può essere prima dell’ora di inizio.",
+  "attivitaOrarioNonValido": "Orario dell’attività non valido: usa il formato HH:MM (es. 09:30).",
+  "attivitaOrarioSalvataggioBloccato": "Correggi l’orario delle attività: la fine è prima dell’inizio."
 }

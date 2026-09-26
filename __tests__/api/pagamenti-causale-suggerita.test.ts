@@ -43,6 +43,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.in = () => b
       b.or = () => b
       b.order = () => b
+      // La GET legge a blocchi (`range`, K1): qui le righe sono poche, un blocco solo.
+      b.range = () => b
       b.gte = () => b
       b.lte = () => b
       b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : null, error: null })

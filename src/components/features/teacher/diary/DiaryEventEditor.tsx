@@ -10,7 +10,8 @@ import { EVENT_CONFIG, BATHROOM_TYPES, useEventLabel } from '@/components/featur
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
 import { BottoneEliminaRegistrazione } from '@/components/features/teacher/diary/BottoneEliminaRegistrazione';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
+import { ActivityDetailInline, ActivityItem, orarioAttivitaIncoerente } from '@/components/features/teacher/diary/ActivityDetailInline';
+import { orarioAttivita } from '@/lib/diary/attivita';
 import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
 import { voceDaMostrare, eventoSelettivo, eliminabile } from '@/lib/diary/registrazione';
 import { fetchDiarioConfig } from '@/lib/diary/config-cache';
@@ -341,6 +342,7 @@ export function useDiaryDay(
                 const rawActs = firstEntry?.dettagli?.activities as Array<{
                     tipo: string; descrizione: string; partecipazione?: string;
                     studentPartecipazione?: Record<string, string | null>;
+                    ora_inizio?: string | null; ora_fine?: string | null;
                 }> | undefined;
 
                 if (rawActs && rawActs.length > 0) {
@@ -352,10 +354,16 @@ export function useDiaryDay(
                             const acts = eDet?.activities as Array<{ tipo: string; partecipazione?: string }> | undefined;
                             sp[sid] = acts?.[aIdx]?.partecipazione ?? null;
                         });
+                        // L'orario è della singola attività, uguale per tutta la classe:
+                        // si prende dalla stessa voce del tipo e della descrizione.
+                        // Assente / "" / fuori formato ⇒ campo vuoto (`orarioAttivita`).
+                        const orario = orarioAttivita(a);
                         return {
                             tipo: a.tipo,
                             descrizione: a.descrizione ?? '',
                             studentPartecipazione: sp,
+                            oraInizio: orario.inizio ?? '',
+                            oraFine: orario.fine ?? '',
                         };
                     });
                     setActivities(reconstructed);
@@ -519,15 +527,32 @@ export function useDiaryDay(
     const dettagliDi = (studentId: string): Record<string, unknown> => {
         if (selectedEvent === 'attivita') {
             return {
-                activities: activities.map(a => ({
-                    tipo: a.tipo,
-                    descrizione: a.descrizione,
-                    partecipazione: a.studentPartecipazione[studentId] ?? null,
-                })),
+                activities: activities.map(a => {
+                    const voce: Record<string, unknown> = {
+                        tipo: a.tipo,
+                        descrizione: a.descrizione,
+                        partecipazione: a.studentPartecipazione[studentId] ?? null,
+                    };
+                    // L'orario entra SOLO se c'è: un campo vuoto non diventa `""`
+                    // nel jsonb (contratto D1). E non tiene in piedi la voce da
+                    // solo: `attivitaCompilata` guarda descrizione e partecipazione.
+                    const inizio = a.oraInizio?.trim();
+                    const fine = a.oraFine?.trim();
+                    if (inizio) voce.ora_inizio = inizio;
+                    if (fine) voce.ora_fine = fine;
+                    return voce;
+                }),
             };
         }
         return studentStates[studentId] ?? {};
     };
+
+    /**
+     * Un'attività con la fine PRIMA dell'inizio: il salvataggio non parte (il
+     * server risponderebbe 422 `ORARIO_ATTIVITA_INCOERENTE` e non scriverebbe
+     * nessuna riga del lotto). Solo sul riquadro dell'attività.
+     */
+    const orariAttivitaIncoerenti = selectedEvent === 'attivita' && activities.some(orarioAttivitaIncoerente);
 
     /** Una nota (di sezione o del bambino) tiene in piedi la voce: vedi `voceDaMostrare`. */
     const conNotaDi = (studentId: string): boolean =>
@@ -582,6 +607,16 @@ export function useDiaryDay(
         setIsSaving(true);
         try {
             if (!selectedEvent || !userId) return;
+            // Fine prima dell'inizio: il pulsante è già spento, questa è la cintura.
+            // Nessun nome né orario nel log: solo quante voci sono incoerenti.
+            if (orariAttivitaIncoerenti) {
+                logClient({
+                    livello: 'warn', evento: 'js',
+                    messaggio: 'diario-attivita-orario-incoerente-salvataggio-bloccato',
+                    campi: { n_voci_incoerenti: activities.filter(orarioAttivitaIncoerente).length },
+                });
+                return;
+            }
             // IL RIQUADRO DI QUESTO SALVATAGGIO. Mentre la POST o le DELETE sono in
             // volo i riquadri restano cliccabili: la maestra può aprire la Sveglia
             // (o chiudere e riaprire). Il contatore dei ripristini sale a ogni cambio
@@ -665,8 +700,27 @@ export function useDiaryDay(
 
                 // 200 = tutto ok, 207 = parzialmente salvato (es. colonna mancante ma righe inserite)
                 if (!res.ok && res.status !== 207) {
-                    const err = await res.json();
-                    throw new Error(err.error || 'Errore salvataggio');
+                    const err = await res.json() as { error?: unknown; codice?: unknown } | null;
+                    const codice = typeof err?.codice === 'string' ? err.codice : null;
+                    // L'orario d'attività rifiutato dal server (contratto D1): la
+                    // maestra deve leggere il PERCHÉ, non «errore nel salvataggio».
+                    // Nessuna riga è stata scritta (la rotta valida tutto il lotto).
+                    //
+                    // Niente `logClient` qui, ed è voluto: il 422 lo registra già il
+                    // server (`logEvento('diary','warn',{ esito: 'orario-attivita-non-valido',
+                    // error_code, … })`, contratto D1), e la politica dei livelli del
+                    // client (`livelloEvento` in `@/lib/logging/client`) scarta DI
+                    // PROPOSITO un 4xx ordinario: una `logClient` con `stato: 422`
+                    // sembrerebbe loggare e non spedirebbe niente. Non va aggirata
+                    // togliendo `stato` o cambiando `evento`.
+                    if (res.status === 422
+                        && (codice === 'ORARIO_ATTIVITA_INCOERENTE' || codice === 'ORARIO_ATTIVITA_NON_VALIDO')) {
+                        alert(codice === 'ORARIO_ATTIVITA_INCOERENTE'
+                            ? t('attivitaOrarioIncoerente')
+                            : t('attivitaOrarioNonValido'));
+                        return;
+                    }
+                    throw new Error(typeof err?.error === 'string' && err.error ? err.error : 'Errore salvataggio');
                 }
 
                 const result = await res.json();
@@ -829,6 +883,7 @@ export function useDiaryDay(
         handleSave,
         daSalvare,
         daTogliere,
+        orariAttivitaIncoerenti,
         esitoSalvataggio,
         eliminaRegistrazione,
         resetSelection,
@@ -846,7 +901,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     const {
         students, eventTypes, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
         activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
-        daSalvare, daTogliere, esitoSalvataggio,
+        daSalvare, daTogliere, esitoSalvataggio, orariAttivitaIncoerenti,
         isSaving, showSavedToast,
         handleEventSelect, updateStudent, updateMealCourse, counter, bulkNannaOra, handleSave,
         eliminaRegistrazione,
@@ -1276,12 +1331,21 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
 
                             {/* ── Footer salva ── */}
                             <div className="px-4 py-3 border-t border-kidville-line">
+                                {/* L'avviso sta anche qui: il riquadro dell'attività
+                                    incoerente può essere chiuso, e un pulsante spento
+                                    senza una ragione a vista è un vicolo cieco. */}
+                                {orariAttivitaIncoerenti && (
+                                    <p id="diario-attivita-orario-bloccato" className="mb-2 font-maven text-xs text-kidville-error text-center">
+                                        {t('attivitaOrarioSalvataggioBloccato')}
+                                    </p>
+                                )}
                                 <button
                                     onClick={handleSave}
+                                    aria-describedby={orariAttivitaIncoerenti ? 'diario-attivita-orario-bloccato' : undefined}
                                     // Un orario svuotato È lavoro da salvare: il pulsante
                                     // resta vivo anche con zero bambini da scrivere,
                                     // altrimenti togliere l'ultima nanna sarebbe impossibile.
-                                    disabled={isSaving || (daSalvare === 0 && daTogliere === 0)}
+                                    disabled={isSaving || (daSalvare === 0 && daTogliere === 0) || orariAttivitaIncoerenti}
                                     className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
                                 >
                                     {isSaving

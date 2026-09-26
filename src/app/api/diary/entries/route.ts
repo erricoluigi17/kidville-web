@@ -15,6 +15,7 @@ import { withRoute } from '@/lib/logging/with-route';
 import { logEvento, logErrore } from '@/lib/logging/logger';
 import { riconciliaRichieste } from '@/lib/armadietto/richieste';
 import { voceDaMostrare } from '@/lib/diary/registrazione';
+import { eEventoAttivita, ORA_ATTIVITA_RE, oraAttivitaValida } from '@/lib/diary/attivita';
 
 // Modalità genitore: default from = 14 giorni fa, to = oggi (dinamici, calcolati nel codice).
 const getParentQuerySchema = z.object({
@@ -55,6 +56,103 @@ const entrySchema = z.object({
 
 // Il body può essere un singolo evento o un array di eventi.
 const postBodySchema = z.union([z.array(entrySchema), entrySchema]);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORARIO DELLE ATTIVITÀ (D1, 26/09/2026) — contratto in
+// docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/contratti/D1.md
+//
+// Ogni voce di `dettagli.activities[]` di un evento `attivita` può portare
+// `ora_inizio`/`ora_fine` ("HH:MM", facoltativi). Si valida SOLO l'orario: il
+// resto di `dettagli` resta pass-through come prima (`looseObject`, voci non
+// oggetto e `activities` non array lasciate passare), e ciò che si scrive è il
+// `dettagli` ricevuto, non l'output di zod.
+//
+// Stringa vuota e `null` valgono «non inserito»: è ciò che un
+// `<input type="time">` lasciato vuoto produce.
+// ─────────────────────────────────────────────────────────────────────────────
+const MSG_ORA_FORMATO = "Orario dell'attività non valido: usa il formato HH:MM (es. 09:30).";
+const MSG_ORA_FINE_PRIMA = "L'ora di fine di un'attività non può essere prima dell'ora di inizio.";
+
+const zOraAttivita = z.preprocess(
+    (v) => (v === '' || v === null ? undefined : v),
+    z.string({ error: MSG_ORA_FORMATO }).regex(ORA_ATTIVITA_RE, { error: MSG_ORA_FORMATO }).optional(),
+);
+
+const voceAttivitaSchema = z.preprocess(
+    // Una voce non-oggetto passava prima e passa ancora: qui si guarda solo l'orario.
+    (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {}),
+    z.looseObject({ ora_inizio: zOraAttivita, ora_fine: zOraAttivita }).superRefine((voce, ctx) => {
+        // In zod 4 questa refinement gira ANCHE se un campo ha già fallito la regex:
+        // si confronta solo quando entrambi sono "HH:MM" validi (zero-padded), l'unico
+        // caso in cui l'ordine fra stringhe è quello fra orari. Altrimenti '9:30' vs
+        // '10:00' produrrebbe un «fine prima dell'inizio» falso, che per la regola di
+        // precedenza coprirebbe il vero errore di formato.
+        if (
+            oraAttivitaValida(voce.ora_inizio) &&
+            oraAttivitaValida(voce.ora_fine) &&
+            voce.ora_fine < voce.ora_inizio
+        ) {
+            ctx.addIssue({ code: 'custom', message: MSG_ORA_FINE_PRIMA, path: ['ora_fine'] });
+        }
+    }),
+);
+
+const dettagliAttivitaSchema = z.looseObject({
+    activities: z.preprocess(
+        (v) => (Array.isArray(v) ? v : undefined),
+        z.array(voceAttivitaSchema).optional(),
+    ),
+});
+
+/**
+ * Valida gli orari di TUTTE le voci attività del lotto, prima di qualunque
+ * scrittura: tutto-o-niente. `null` = tutto a posto; altrimenti la 422.
+ */
+function validaOrariAttivita(
+    entries: ReadonlyArray<{ tipo_evento: string; dettagli?: unknown }>,
+    lotto: boolean,
+): NextResponse | null {
+    const dettagliErrori: Array<{ path: string; message: string }> = [];
+    let nVociNonValide = 0;
+    entries.forEach((e, i) => {
+        if (!eEventoAttivita(e.tipo_evento)) return;
+        // Solo un oggetto può portare `activities`: `dettagli` array o primitivo
+        // passava prima così com'era e passa ancora.
+        if (!e.dettagli || typeof e.dettagli !== 'object' || Array.isArray(e.dettagli)) return;
+        const r = dettagliAttivitaSchema.safeParse(e.dettagli);
+        if (r.success) return;
+        const voci = new Set<string>();
+        for (const issue of r.error.issues) {
+            const percorso = ['dettagli', ...issue.path.map(String)];
+            voci.add(percorso.slice(0, 3).join('.'));
+            dettagliErrori.push({ path: (lotto ? [String(i), ...percorso] : percorso).join('.'), message: issue.message });
+        }
+        nVociNonValide += voci.size;
+    });
+    if (dettagliErrori.length === 0) return null;
+
+    // «Fine prima dell'inizio» ha la precedenza: è l'errore che la maestra può capire.
+    const incoerente = dettagliErrori.some((d) => d.message === MSG_ORA_FINE_PRIMA);
+    // Solo codici e conteggi: niente alunno, niente descrizione.
+    logEvento('diary', 'warn', {
+        operazione: 'diary/entries:POST',
+        esito: 'orario-attivita-non-valido',
+        error_code: incoerente ? 'ORARIO_ATTIVITA_INCOERENTE' : 'ORARIO_ATTIVITA_NON_VALIDO',
+        n_voci_non_valide: nVociNonValide,
+        n_ricevute: entries.length,
+    });
+    // Codici LETTERALI, uno per ramo: il lock `errori-con-codice` deve poterli leggere.
+    if (incoerente) {
+        return NextResponse.json(
+            { error: MSG_ORA_FINE_PRIMA, codice: 'ORARIO_ATTIVITA_INCOERENTE', details: dettagliErrori },
+            { status: 422 },
+        );
+    }
+    return NextResponse.json(
+        { error: MSG_ORA_FORMATO, codice: 'ORARIO_ATTIVITA_NON_VALIDO', details: dettagliErrori },
+        { status: 422 },
+    );
+}
 
 // GET /api/diary/entries
 // Modalità insegnante: ?sezione=<classe>&date=2026-05-12
@@ -214,6 +312,10 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
     const admin = await createAdminClient();
 
     const entries = Array.isArray(b.data) ? b.data : [b.data];
+
+    // Orario delle attività: 422 PRIMA di ogni lettura/scrittura (vedi validaOrariAttivita).
+    const orarioNonValido = validaOrariAttivita(entries, Array.isArray(b.data));
+    if (orarioNonValido) return orarioNonValido;
 
     // Scope: ogni alunno deve essere nello scope dell'attore (tenant + classe).
     const alunnoIds = [...new Set(entries.map((e) => e.alunno_id).filter(Boolean))];

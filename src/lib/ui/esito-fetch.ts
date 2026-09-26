@@ -2182,6 +2182,16 @@ export const CODICI_ERRORE = {
     /** 500 — la registrazione di diario non è stata tolta (`diary/entries:DELETE`). */
     DIARIO_NON_ELIMINATO: 'erroreDiarioNonEliminato',
     /**
+     * 422 — `diary/entries:POST`: un'attività ha `ora_inizio`/`ora_fine` fuori dal
+     * formato "HH:MM" (compito D1, 2026-09-26). Nessuna riga del lotto scritta.
+     */
+    ORARIO_ATTIVITA_NON_VALIDO: 'erroreOrarioAttivitaNonValido',
+    /**
+     * 422 — `diary/entries:POST`: un'attività ha l'ora di fine PRIMA di quella di
+     * inizio (compito D1, 2026-09-26). Nessuna riga del lotto scritta.
+     */
+    ORARIO_ATTIVITA_INCOERENTE: 'erroreOrarioAttivitaIncoerente',
+    /**
      * 500 — l'appello della primaria non ha potuto leggere lo stato PRECEDENTE
      * (`primaria/appello:POST`). Da quando la riga si costruisce a partire da ciò che
      * c'era, quella lettura è portante: proseguire senza azzererebbe note e orari in
@@ -2988,6 +2998,28 @@ export const CODICI_ERRORE = {
      * `catch` non sa a che punto si è fermato. Manda a ricaricare e controllare.
      */
     CODA_FATTURE_SCRITTURA_FALLITA: 'erroreCodaFattureScritturaFallita',
+    /**
+     * 422 — `POST /api/pagamenti/transazioni` con `movimento_id` e voci di più sedi
+     * (compito K4, 2026-09-26): il movimento bancario è uno solo e non si divide.
+     * Nessuna scrittura.
+     */
+    MOVIMENTO_PIU_SEDI: 'erroreMovimentoPiuSedi',
+    /**
+     * 422 — `POST /api/pagamenti/transazioni` con `movimento_id` (una sede): il
+     * legame col movimento passa da Riconciliazione → Componi, che ha i gate
+     * (compito K4). Nessuna scrittura.
+     */
+    MOVIMENTO_NON_GESTITO: 'erroreMovimentoNonGestito',
+    /**
+     * 422 — transazione divisa su più sedi con eccedenza a credito e senza
+     * `sede_eccedenza` (compito K4). Nessuna scrittura.
+     */
+    SEDE_ECCEDENZA_MANCANTE: 'erroreSedeEccedenzaMancante',
+    /**
+     * 422 — `sede_eccedenza` che non è una delle sedi del pagamento (compito K4).
+     * Nessuna scrittura.
+     */
+    SEDE_ECCEDENZA_ESTRANEA: 'erroreSedeEccedenzaEstranea',
     /** 400 — si chiede di mettere in coda la fattura di un pagamento non ancora `pagato`. */
     PAGAMENTO_NON_SALDATO: 'errorePagamentoNonSaldato',
     /** 400 — accodamento con un intestatario scritto a mano che `validaCessionario` rifiuta (consegna 2b, D1). */
@@ -2998,6 +3030,18 @@ export const CODICI_ERRORE = {
      * Nessuna riga è stata modificata.
      */
     OBIETTIVO_CODICE_DUPLICATO: 'erroreObiettivoCodiceDuplicato',
+    /**
+     * 422 — POST dell'appello primaria con `assenzaOrariaGiustificata: true` su uno
+     * stato che non è `ritardo`/`uscita_anticipata` (compito A3, 2026-09-26). Nessuna
+     * riga scritta.
+     */
+    GIUSTIFICAZIONE_STATO_NON_AMMESSO: 'erroreGiustificazioneStatoNonAmmesso',
+    /**
+     * 422 — POST dell'appello primaria con `assenzaOrariaGiustificata: true` e nota
+     * assente o vuota: il motivo è obbligatorio (CHECK `presenze_giustificata_con_nota`).
+     * Nessuna riga scritta.
+     */
+    GIUSTIFICAZIONE_SENZA_NOTA: 'erroreGiustificazioneSenzaNota',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

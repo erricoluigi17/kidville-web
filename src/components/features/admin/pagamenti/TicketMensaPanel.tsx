@@ -14,9 +14,18 @@ import { cx } from '@/lib/ui/cx';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { STATI_PAGAMENTO as STATI, METODO_LABEL } from './stati';
 import { formatEuro } from '@/lib/format/valuta';
+import { useSediAttive } from '@/lib/context/sede-context';
 
-interface Props { userId: string; scuolaId: string }
-interface Alunno { id: string; nome: string; cognome: string; classe_sezione?: string }
+/**
+ * `scuolaId` è null quando le sedi selezionate sono più di una (2026-09-26): gli
+ * elenchi (alunni, morosi) partono allora SENZA `scuola_id` — mai «undefined» o
+ * «null» nell'URL — e il server li restringe alle sedi attive. La sede si mostra
+ * su ogni riga. Le scritture non cambiano: la POST della ricarica ricava la sede
+ * dall'alunno (`assertAlunnoInScope`).
+ */
+interface Props { userId: string; scuolaId: string | null }
+/** `scuola_id`: la sede dell'ALUNNO. È quella che decide i prezzi dei pacchetti. */
+interface Alunno { id: string; nome: string; cognome: string; classe_sezione?: string; scuola_id: string | null }
 interface Pacchetto { label: string; pezzi: number; costo: number }
 interface Movimento {
     id: string;
@@ -34,9 +43,20 @@ interface Movimento {
  *  riconoscerla: nessun nome, nessuna nota, nessun operatore. */
 interface Precedente { creato_il: string; pezzi: number; importo: number | null }
 interface Storico { saldo_ticket: number; ultimo_carico: string | null; movimenti: Movimento[] }
-interface Moroso { alunno_id: string; nome: string; cognome: string; classe_sezione?: string | null; saldo_ticket: number; ultimo_carico: string | null }
+interface Moroso { alunno_id: string; nome: string; cognome: string; classe_sezione?: string | null; scuola_id?: string | null; scuola_nome?: string | null; saldo_ticket: number; ultimo_carico: string | null }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
+
+/** I valori con cui il pannello si apre: NON sono il prezzo di nessuna sede. */
+const PEZZI_INIZIALI = 10;
+const COSTO_INIZIALE = 50;
+
+/** Gli uuid di sede si confrontano senza badare alle maiuscole (`restringiSedi` fa lo stesso). */
+const stessaSede = (a: string | null | undefined, b: string | null | undefined) =>
+    !!a && !!b && a.toLowerCase() === b.toLowerCase();
+
+/** Esito di una GET `!ok`, già registrata: distinto da un corpo JSON `null`, che è 200. */
+const RISPOSTA_NON_OK = Symbol('risposta-non-ok');
 
 export function TicketMensaPanel({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
@@ -47,9 +67,15 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     const [search, setSearch] = useState('');
     const [sel, setSel] = useState<Alunno | null>(null);
     const [saldo, setSaldo] = useState<number | null>(null);
-    const [pacchetti, setPacchetti] = useState<Pacchetto[]>([]);
-    const [pezzi, setPezzi] = useState(10);
-    const [costo, setCosto] = useState(50);
+    // I pacchetti sono PER SEDE, e si tengono per sede: una risposta che arriva in
+    // ritardo può solo riempire la casella della propria sede, mai quella dell'alunno
+    // scelto nel frattempo in un altro plesso.
+    const [pacchettiPerSede, setPacchettiPerSede] = useState<Record<string, Pacchetto[]>>({});
+    const [pacchettiErrati, setPacchettiErrati] = useState<Record<string, true>>({});
+    // Sedi con una GET dei pacchetti in volo.
+    const pacchettiInVolo = useRef(new Set<string>());
+    const [pezzi, setPezzi] = useState(PEZZI_INIZIALI);
+    const [costo, setCosto] = useState(COSTO_INIZIALE);
     const [metodo, setMetodo] = useState('contanti');
     const [celebra, setCelebra] = useState<string | null>(null);
     const [errore, setErrore] = useState<string | null>(null);
@@ -58,6 +84,26 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     const btnRicaricaRef = useRef<HTMLButtonElement | null>(null);
     const [storico, setStorico] = useState<Storico | null>(null);
     const [morosi, setMorosi] = useState<Moroso[]>([]);
+    const { sedi } = useSediAttive();
+
+    // La sede si dice quando le sedi sono più di una: la pagina lo segnala con
+    // `scuolaId` null. Difesa in più: se l'elenco copre comunque due sedi, la sede
+    // si mostra lo stesso — due «Mario Rossi» di plessi diversi non devono essere
+    // due righe identiche.
+    const mostraSede = scuolaId == null
+        || new Set(alunni.map(a => a.scuola_id?.toLowerCase()).filter(Boolean)).size > 1;
+    /** Il nome della sede, o null se non si risolve (niente uuid a schermo). */
+    const nomeSedeRisolto = (id: string | null | undefined, nomeDallaRiga?: string | null) =>
+        nomeDallaRiga || (sedi.find(s => stessaSede(s.id, id))?.nome ?? null);
+    const nomeSede = (id: string | null | undefined, nomeDallaRiga?: string | null) =>
+        nomeSedeRisolto(id, nomeDallaRiga) ?? t('ticketSedeIgnota');
+    // La sede di cui mostrare i pacchetti: quella dell'ALUNNO. Se la riga non la porta
+    // (un moroso senza sede), vale la sede della pagina solo quando è una sola: lo
+    // scope del server coincide allora con quella sede. Con più sedi non si indovina.
+    const sedeDi = (a: Alunno | null) => (a ? (a.scuola_id ?? scuolaId) : null);
+    const sedeSel = sedeDi(sel);
+    const pacchettiSel = sedeSel ? pacchettiPerSede[sedeSel] : undefined;
+    const pacchetti = pacchettiSel ?? [];
 
     // I due `.catch(() => {})` di prima erano muti nel punto peggiore: qui l'elenco vuoto
     // NON è un'informazione neutra. «Nessun moroso» è una risposta che la segreteria usa per
@@ -66,7 +112,9 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     // questo ramo resterebbe silenzioso), con lo STATO — numero, lista bianca. Nessun nome di
     // alunno e nessun importo lascia il dispositivo.
     const loadMorosi = useCallback(() => {
-        fetch(`/api/pagamenti/ticket/morosi?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) })
+        // Con più sedi (`scuolaId` null) il parametro si OMETTE: `scuola_id=null` nell'URL
+        // sarebbe una stringa, non un'assenza.
+        fetch(`/api/pagamenti/ticket/morosi?userId=${userId}${scuolaId ? `&scuola_id=${encodeURIComponent(scuolaId)}` : ''}`, { headers: hdr(userId) })
             .then(r => {
                 if (!r.ok) {
                     logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-morosi-non-caricati', stato: r.status });
@@ -83,12 +131,82 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
         // famiglia. Senza il parametro l'anagrafica risponde con la sede intera e
         // un archiviato restava selezionabile — vedi la nota gemella in
         // `PrenotazioneSegreteria`, stesso difetto e stessa riparazione.
-        fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`).then(r => r.json())
-            .then(d => { if (Array.isArray(d)) setAlunni(d.map((a: Alunno) => ({ id: a.id, nome: a.nome, cognome: a.cognome, classe_sezione: a.classe_sezione }))); });
-        fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) }).then(r => r.json())
-            .then(d => { if (d.success) setPacchetti(d.data.ticket_pacchetti || []); });
+        // Con più sedi `scuola_id` si omette e la route risponde con le sedi attive;
+        // ogni riga porta la sua `scuola_id`, che qui si CONSERVA: decide i prezzi dei
+        // pacchetti e la sede da mostrare accanto al nome.
+        // Prima questa fetch non aveva né `!r.ok` né `.catch`: un 403 dava un elenco
+        // vuoto — «nessun alunno» — senza traccia.
+        fetch(`/api/admin/students?stato=iscritto&limit=${LIMITE_ELENCO_ALUNNI}${scuolaId ? `&scuola_id=${encodeURIComponent(scuolaId)}` : ''}`)
+            .then(r => {
+                if (!r.ok) {
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-alunni-non-caricati', stato: r.status });
+                    return null;
+                }
+                return r.json();
+            })
+            .then(d => {
+                if (Array.isArray(d)) {
+                    setAlunni(d.map((a: Alunno) => ({ id: a.id, nome: a.nome, cognome: a.cognome, classe_sezione: a.classe_sezione, scuola_id: a.scuola_id ?? null })));
+                }
+            })
+            .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `ticket-mensa-alunni-non-caricati: ${nomeErrore(err)}` }));
+        // I pacchetti NON si caricano più qui: si chiedono con la sede dell'alunno
+        // scelto (`loadPacchetti`). Questa fetch, senza `scuola_id`, con più sedi
+        // prendeva un 400 e lasciava i pacchetti vuoti in silenzio.
         loadMorosi();
-    }, [scuolaId, userId, loadMorosi]);
+    }, [scuolaId, loadMorosi]);
+
+    // I prezzi dei ticket sono della SEDE (`admin_settings.ticket_pacchetti`, una riga
+    // per sede): si chiedono con la sede dell'alunno, mai senza. Proporre il prezzo di
+    // un altro plesso vorrebbe dire incassare la cifra sbagliata.
+    const loadPacchetti = useCallback((sede: string) => {
+        // Una sola richiesta in volo per sede. Due alunni della stessa sede scelti di
+        // fila lanciavano due GET, e l'esito arrivato per ultimo si sommava all'altro:
+        // pacchetti a schermo E l'avviso di caricamento fallito insieme.
+        if (pacchettiInVolo.current.has(sede)) return;
+        pacchettiInVolo.current.add(sede);
+        // L'avviso di un tentativo precedente si toglie all'avvio: con una sola GET in
+        // volo per sede, l'unico esito che può rimetterlo è quello di questa richiesta.
+        setPacchettiErrati(prev => {
+            if (!prev[sede]) return prev;
+            const resto = { ...prev };
+            delete resto[sede];
+            return resto;
+        });
+        const fallito = () => setPacchettiErrati(prev => ({ ...prev, [sede]: true }));
+        fetch(`/api/admin/settings?userId=${userId}&scuola_id=${encodeURIComponent(sede)}`, { headers: hdr(userId) })
+            .then(r => {
+                if (!r.ok) {
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-pacchetti-non-caricati', stato: r.status });
+                    return RISPOSTA_NON_OK;
+                }
+                return r.json();
+            })
+            .then(d => {
+                // Il `!ok` è già registrato, con lo stato. Tutto il resto arriva con 200: anche
+                // un corpo `null`, che prima mostrava l'avviso SENZA lasciare traccia.
+                if (d === RISPOSTA_NON_OK) { fallito(); return; }
+                const lista = d?.data?.ticket_pacchetti ?? [];
+                if (!d?.success || !Array.isArray(lista)) {
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-pacchetti-risposta-inattesa', stato: 200 });
+                    fallito();
+                    return;
+                }
+                // Le impostazioni devono essere QUELLE della sede chiesta. Se il server ne
+                // restituisce un'altra (o non dice di quale), i prezzi non si propongono.
+                if (!stessaSede(d.data.scuola_id, sede)) {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'ticket-mensa-pacchetti-sede-diversa', stato: 200 });
+                    fallito();
+                    return;
+                }
+                setPacchettiPerSede(prev => ({ ...prev, [sede]: lista as Pacchetto[] }));
+            })
+            .catch(err => {
+                logClient({ livello: 'warn', evento: 'fetch', messaggio: `ticket-mensa-pacchetti-non-caricati: ${nomeErrore(err)}` });
+                fallito();
+            })
+            .finally(() => { pacchettiInVolo.current.delete(sede); });
+    }, [userId]);
 
     const loadSaldo = useCallback((alunnoId: string) => {
         // Era l'unica delle tre `fetch` rimasta senza `!r.ok` e senza `.catch`: un 403
@@ -119,7 +237,20 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
             .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `ticket-mensa-storico-non-caricato: ${nomeErrore(err)}` }));
     }, [userId]);
 
-    const select = (a: Alunno) => { setSel(a); setCelebra(null); setErrore(null); setDup(null); setStorico(null); loadSaldo(a.id); loadStorico(a.id); };
+    const select = (a: Alunno) => {
+        const sedeNuova = sedeDi(a);
+        // Passando a un bambino di un'ALTRA sede, ticket e importo scelti con un
+        // pacchetto della sede di prima tornano ai valori iniziali: resterebbero
+        // proposti — e incassati — al prezzo di un altro plesso.
+        if (!stessaSede(sedeDi(sel), sedeNuova)) { setPezzi(PEZZI_INIZIALI); setCosto(COSTO_INIZIALE); }
+        setSel(a); setCelebra(null); setErrore(null); setDup(null); setStorico(null); loadSaldo(a.id); loadStorico(a.id);
+        if (!sedeNuova) {
+            // Più sedi e una riga senza sede: non si indovina quale listino applicare.
+            logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-pacchetti-sede-ignota' });
+        } else if (!pacchettiPerSede[sedeNuova]) {
+            loadPacchetti(sedeNuova);
+        }
+    };
 
     // `conferma` arriva solo dal secondo invio, quello che parte dal dialogo del
     // duplicato. Il campo è NOMINATO: un booleano lo avrebbe reso disattivabile per
@@ -183,9 +314,10 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                     <div className="flex flex-wrap gap-2">
                         {morosi.map(m => (
                             <button key={m.alunno_id}
-                                onClick={() => select({ id: m.alunno_id, nome: m.nome, cognome: m.cognome, classe_sezione: m.classe_sezione ?? undefined })}
+                                onClick={() => select({ id: m.alunno_id, nome: m.nome, cognome: m.cognome, classe_sezione: m.classe_sezione ?? undefined, scuola_id: m.scuola_id ?? null })}
                                 className="px-3 py-1.5 rounded-input bg-kidville-white border border-kidville-error/30 font-maven text-xs text-kidville-error transition-colors hover:border-kidville-error">
                                 {m.nome} {m.cognome} <b>{m.saldo_ticket}</b>{m.classe_sezione ? <span className="opacity-70"> · {m.classe_sezione}</span> : null}
+                                {mostraSede && <span className="opacity-70"> · {nomeSede(m.scuola_id, m.scuola_nome)}</span>}
                             </button>
                         ))}
                     </div>
@@ -202,6 +334,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                             <button key={a.id} onClick={() => select(a)}
                                 className={cx('w-full text-left px-3 py-2 rounded-input font-maven text-sm transition-colors', sel?.id === a.id ? 'bg-kidville-green text-kidville-white' : 'text-kidville-green hover:bg-kidville-cream')}>
                                 {a.nome} {a.cognome} <span className="text-xs opacity-70">{a.classe_sezione}</span>
+                                {mostraSede && <span className="text-xs opacity-70"> · {nomeSede(a.scuola_id)}</span>}
                             </button>
                         ))}
                     </div>
@@ -209,12 +342,46 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
 
                 <div>
                     <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><Ticket size={14} /> {t('ticket_ricarica_titolo')}</h3>
+                    {/* Regione di stato SEMPRE montata (vuota quando non c'è niente da dire):
+                        una regione `aria-live` che nasce insieme al suo testo spesso non viene
+                        annunciata. Chi usa un lettore di schermo deve sapere che i pacchetti
+                        stanno arrivando, o che non arriveranno e ticket e importo vanno
+                        inseriti a mano. L'errore di caricamento resta un `role="alert"` a sé. */}
+                    <div role="status" aria-live="polite" aria-atomic="true">
+                        {sel && !sedeSel && (
+                            <p className="mb-3 rounded-card bg-kidville-white px-3 py-2 font-maven text-xs text-kidville-ink">{t('ticketPacchettiSedeIgnota')}</p>
+                        )}
+                        {sel && sedeSel && !pacchettiSel && !pacchettiErrati[sedeSel] && (
+                            <p className="mb-3 font-maven text-xs text-kidville-sub">{t('ticketPacchettiCaricamento')}</p>
+                        )}
+                    </div>
                     {!sel ? <p className="font-maven text-sm text-kidville-muted">{t('ticket_seleziona_prompt')}</p> : (
                         <div className={cx('rounded-card p-4', (saldo ?? 0) < 0 ? 'bg-kidville-error-soft/50' : 'bg-kidville-cream/60')}>
-                            <div className="flex justify-between mb-3">
-                                <span className="font-maven text-sm text-kidville-green font-bold">{sel.nome} {sel.cognome}</span>
-                                <span className="font-maven text-sm text-kidville-muted">{t('ticket_saldo')} <b className={(saldo ?? 0) < 0 ? 'text-kidville-error' : 'text-kidville-green'}>{saldo ?? '—'}</b> {t('ticket_unit')}</span>
+                            <div className="flex justify-between gap-2 mb-3">
+                                <span data-testid="ticket-alunno-scelto" className="min-w-0 font-maven text-sm text-kidville-green font-bold">
+                                    {sel.nome} {sel.cognome}
+                                    {mostraSede && (
+                                        <span className="block font-normal text-xs text-kidville-sub">
+                                            {(() => {
+                                                // Sede non risolta: «Sede non indicata» da sola, non
+                                                // «Sede: Sede non indicata».
+                                                const nome = nomeSedeRisolto(sel.scuola_id ?? scuolaId, morosi.find(m => m.alunno_id === sel.id)?.scuola_nome);
+                                                return nome ? t('ticketSedeDi', { nome }) : t('ticketSedeIgnota');
+                                            })()}
+                                        </span>
+                                    )}
+                                </span>
+                                <span className="shrink-0 font-maven text-sm text-kidville-muted">{t('ticket_saldo')} <b className={(saldo ?? 0) < 0 ? 'text-kidville-error' : 'text-kidville-green'}>{saldo ?? '—'}</b> {t('ticket_unit')}</span>
                             </div>
+                            {sedeSel && pacchettiErrati[sedeSel] && (
+                                <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">
+                                    <span>{t('ticketPacchettiErrore')}</span>
+                                    <button type="button" onClick={() => loadPacchetti(sedeSel)}
+                                        className={cx(BTN_SECONDARY, 'min-h-[44px] px-3 py-1.5 text-xs')}>
+                                        {t('ticketPacchettiRiprova')}
+                                    </button>
+                                </div>
+                            )}
                             {pacchetti.length > 0 && (
                                 <div className="flex flex-wrap gap-2 mb-3">
                                     {pacchetti.map((p, i) => (

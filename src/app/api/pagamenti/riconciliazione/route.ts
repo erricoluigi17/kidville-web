@@ -4,7 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseData, parseMultipart, parseQuery } from '@/lib/validation/http'
 import { zUuid, zTestoRicerca } from '@/lib/validation/common'
-import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveScuoleAttive, restringiSedi } from '@/lib/auth/scope'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logScrittura } from '@/lib/audit/scrittura'
 import {
   agganciaFuoriSede,
@@ -157,6 +158,26 @@ const mappingSchema = z.object({
 })
 
 /**
+ * LA SEDE DICHIARATA ALL'IMPORT: FACOLTATIVA, e mai ignorata quando c'è.
+ *
+ * Dal 2026-09-26 (K5) l'import non chiede più una sede di scrittura: l'estratto conto è UNO
+ * per i tre plessi e i movimenti nascono senza sede. Il campo resta per chi ha già scelto un
+ * plesso (serve solo al ripiego del DB E2E della CI, vedi la POST), quindi:
+ *  • assente, `null` o stringa vuota → nessuna sede dichiarata;
+ *  • un uuid → dichiarata, e la POST la confronta col perimetro (fuori → 403);
+ *  • il TESTO «undefined» / «null» → ammesso DALLO SCHEMA solo per poterlo respingere con un
+ *    422 che dice cosa è successo. È la forma esatta di un client che fa `String(undefined)`
+ *    o `fd.append('scuola_id', valore)` con un valore mancante: un 400 «Dati non validi» non
+ *    lo direbbe, e trattarlo come «assente» nasconderebbe il difetto del client.
+ *  • qualunque altra stringa → 400 di validazione, come prima.
+ */
+const TESTO_SEDE_FINTO = /^\s*(undefined|null)\s*$/i
+const zScuolaImport = z.preprocess(
+  (v) => (v === '' || v === null ? undefined : v),
+  z.union([zUuid, z.string().regex(TESTO_SEDE_FINTO)]).optional(),
+)
+
+/**
  * IL RAMO JSON — resta, e costa dieci righe.
  *
  * ⚠️ **IL BASE64 NON SI ACCETTA IN NESSUNA FORMA, e non è una preferenza di stile.**
@@ -171,7 +192,7 @@ const postBodySchema = z.object({
   // contenuto CSV in chiaro: PII bancarie → si persistono SOLO i movimenti normalizzati
   contenuto: z.string().min(1).max(2_000_000),
   mapping: mappingSchema.optional(),
-  scuola_id: zUuid.nullish(),
+  scuola_id: zScuolaImport,
 })
 
 /**
@@ -191,11 +212,10 @@ const zMappingMultipart = z.preprocess((v) => {
   }
 }, mappingSchema.optional())
 
-const zScuolaMultipart = z.preprocess((v) => (v === '' || v === null ? undefined : v), zUuid.optional())
 
 const uploadSchema = z.object({
   file: z.instanceof(File, { error: 'Nessun estratto conto ricevuto' }),
-  scuola_id: zScuolaMultipart,
+  scuola_id: zScuolaImport,
   mapping: zMappingMultipart,
 })
 
@@ -440,9 +460,9 @@ function qualitaAperti(aperti: readonly ApertoDaAbbinare[]) {
  * consegna anche la SEDE dichiarata. La SECONDA (`interpretaCorpo`) apre davvero il foglio,
  * ed è la parte cara: 2,1 MB di BIFF8 e 9.004 righe.
  *
- * In mezzo ci sta il passo che decide se questa scrittura è ammessa: `resolveScuolaScrittura`.
- * Interpretare prima vorrebbe dire spendere quel lavoro per poi scoprire che la sede non era
- * stata dichiarata — e con tre plessi quella risposta è un 400 normale, non un caso limite.
+ * In mezzo ci sta il passo che decide se questa scrittura è ammessa: il PERIMETRO
+ * dell'operatore (`resolveScuoleAttive`, e la sede dichiarata se c'è). Interpretare prima
+ * vorrebbe dire spendere quel lavoro per poi scoprire che la richiesta andava respinta.
  */
 type CorpoAperto =
   | { tipo: 'json'; contenuto: string; mapping?: MappingCsv; filename: string | null; scuolaId?: string | null }
@@ -1701,7 +1721,7 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
 // ─── L'ORDINE DEI PASSI, E PERCHÉ NON SI CAMBIA ──────────────────────────────
 //   1. gate di ruolo        chi bussa — PRIMA di leggere il corpo (lock `corpo-letto-dopo-il-gate`)
 //   2. il corpo             multipart o JSON secondo il `content-type`; dimensione, tipo, lettura
-//   3. la sede di scrittura DICHIARATA (arriva col corpo), mai indovinata
+//   3. il PERIMETRO         almeno una sede attiva; la sede dichiarata (facoltativa) deve starci
 //   4. dedup                per FINESTRA DI DATE, paginata
 //   5. suggerimenti         sui pagamenti aperti PREPARATI una volta sola
 //   6. INSERT a blocchi     e l'audit, e il log di successo coi conteggi
@@ -1722,10 +1742,51 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
     if ('response' in aperto) return aperto.response
     const filename = aperto.filename
 
+    // «undefined»/«null» come TESTO: un client che ha perso la sede per strada. Si dice con un
+    // 422, perché trattarlo come «assente» farebbe sparire il difetto del client.
+    // Il codice è `CORPO_NON_VALIDO` (già dichiarato e tradotto: «ricarica la pagina e
+    // riprova», che è esattamente la cosa da fare); a distinguerlo nei log è l'`esito`.
+    const dichiarata = aperto.scuolaId ?? null
+    if (dichiarata !== null && TESTO_SEDE_FINTO.test(dichiarata)) {
+      logEvento('pagamento', 'warn', { operazione: OPERAZIONE_POST, esito: 'import-sede-testo-non-valido' })
+      return NextResponse.json(
+        {
+          error: 'La sede è arrivata come testo «undefined» o «null»: ricarica la pagina e riprova',
+          codice: 'CORPO_NON_VALIDO',
+        },
+        { status: 422 },
+      )
+    }
+
+    // ─── IL PERIMETRO, NON LA SEDE DI SCRITTURA (K5, 2026-09-26) ───────────────────────
+    // Fino a oggi qui c'era `resolveScuolaScrittura`, che con più di una sede accessibile e
+    // nessuna dichiarata risponde 400: la segreteria delle tre sedi non poteva importare
+    // l'estratto conto — che è UNO per tutti e tre i plessi, e i cui movimenti nascono SENZA
+    // sede (la sede si assegna alla conferma). La sede non tocca nessun dato importato, quindi
+    // non si chiede: basta che l'operatore abbia ALMENO UNA sede attiva. Uno scope vuoto NEGA.
     const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(request as NextRequest, supabase, auth.user, aperto.scuolaId ?? undefined)
-    if (sw.response) return sw.response
-    const scuolaId = sw.scuolaId as string
+    const sediAttive = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
+    if (sediAttive.length === 0) {
+      logEvento('pagamento', 'warn', { operazione: OPERAZIONE_POST, esito: 'import-senza-sedi-attive', utente: auth.user.id })
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
+    }
+    // Una sede DICHIARATA resta facoltativa ma non si ignora: se non è fra le attive è un 403,
+    // come in ogni altra lettura che la riceve (`restringiSedi`, confronto senza maiuscole).
+    const perimetro = restringiSedi(sediAttive, dichiarata)
+    if (!perimetro) {
+      logEvento('pagamento', 'warn', {
+        operazione: OPERAZIONE_POST,
+        esito: 'import-sede-non-accessibile',
+        utente: auth.user.id,
+        attive: sediAttive.length,
+      })
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
+    }
+    // La sede del SOLO ripiego per il DB E2E della CI (`scuola_id` ancora NOT NULL → 23502,
+    // più sotto). Lì serve UNA sede qualunque del perimetro dell'operatore: quella dichiarata
+    // se c'è (nella forma canonica di `restringiSedi`), altrimenti la PRIMA delle sedi attive.
+    // In produzione non si usa mai: i movimenti e l'import nascono con `scuola_id` null.
+    const sedeRipiegoCi = perimetro[0]
 
     const corpo = await interpretaCorpo(aperto)
     if ('response' in corpo) return corpo.response
@@ -1768,7 +1829,7 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
      * ⚠️ Sta QUI DENTRO, e non come funzione di modulo, per una ragione precisa: è una query
      * su `riconciliazione_movimenti` DELIBERATAMENTE senza filtro di sede, e il lock
      * `isolamento-sede-coverage` la legge insieme all'handler che la contiene — cioè insieme
-     * al suo `resolveScuolaScrittura`. Portandola fuori diventerebbe una lettura di sede
+     * al suo `resolveScuoleAttive`. Portandola fuori diventerebbe una lettura di sede
      * «di nessuno», e l'unico modo di farla passare sarebbe una voce di allowlist: una
      * protezione spenta per un dettaglio di forma.
      *
@@ -1991,7 +2052,7 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
 
     // Il movimento nasce SENZA sede (scuola_id null): la sede si assegna alla conferma.
     // DEGRADAZIONE CI: sul DB E2E non migrato scuola_id è ancora NOT NULL → 23502; si ritenta
-    // con la sede risolta dell'operatore (`resolveScuolaScrittura`).
+    // con `sedeRipiegoCi` — la sede dichiarata, o la PRIMA delle sedi attive dell'operatore.
     const impBase = { filename: filename, righe_totali: nuovi.length, caricato_da: auth.user.id }
     let { data: imp, error: errImp } = await supabase
       .from('riconciliazione_import')
@@ -2002,7 +2063,7 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
       logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: 'degradazione_scuola_id_import' })
       ;({ data: imp, error: errImp } = await supabase
         .from('riconciliazione_import')
-        .insert({ ...impBase, scuola_id: scuolaId })
+        .insert({ ...impBase, scuola_id: sedeRipiegoCi })
         .select()
         .single())
     }
@@ -2048,7 +2109,7 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         .select('id, hash_movimento')
       if (errIns?.code === '23502') {
         logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: 'degradazione_scuola_id_movimenti' })
-        const bloccoConSede = blocco.map((r) => ({ ...r, scuola_id: scuolaId }))
+        const bloccoConSede = blocco.map((r) => ({ ...r, scuola_id: sedeRipiegoCi }))
         ;({ data: inseriti, error: errIns } = await supabase
           .from('riconciliazione_movimenti')
           .insert(bloccoConSede)
@@ -2074,11 +2135,20 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
     }
 
     await logScrittura(supabase, {
-      attore: auth.user,
+      // Sede NULL di proposito: il registro è unico per i tre plessi e l'import non ha una
+      // sede sua. ⚠️ Passare `scuolaId: null` NON basta: `logScrittura` scrive
+      // `input.scuolaId ?? input.attore.scuola_id ?? null` (in `@/lib/audit/scrittura`), e il
+      // `??` tratta il null esplicito come «assente» → la riga cadrebbe sulla sede PRIMARIA
+      // dell'operatore, dicendo un «dove» che non esiste. Per questo l'attore si passa con
+      // `scuola_id: null`: `logScrittura` dell'attore legge solo `id`, `role` e `scuola_id`,
+      // quindi «chi» resta intatto e il «dove» resta vuoto (la colonna
+      // `audit_scritture_docente.scuola_id` ammette NULL). Il test lo verifica sulla RIGA
+      // scritta, non sull'argomento: `pagamenti-riconciliazione-import-multisede.test.ts`.
+      attore: { ...auth.user, scuola_id: null },
       entitaTipo: 'riconciliazione_import',
       entitaId: (imp as { id: string }).id,
       azione: 'insert',
-      scuolaId,
+      scuolaId: null,
       valoreDopo: { filename: filename, nuovi: righe.length, duplicati },
     })
 

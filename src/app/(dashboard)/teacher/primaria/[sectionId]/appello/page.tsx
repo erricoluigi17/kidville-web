@@ -3,14 +3,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Check, X, Clock, LogIn, LogOut, Users, BarChart2, RotateCcw, EyeOff } from 'lucide-react';
+import { Check, X, Clock, LogIn, LogOut, Users, BarChart2, RotateCcw, EyeOff, ShieldCheck } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
 import { ritiraCambioAppelloInCoda, rimettiCambioAppelloInCoda } from '@/lib/offline/coda-appello-primaria';
 import { DateField } from '@/components/ui/DateField';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
-import { oraDiRomaAdesso } from '@/lib/presenze/orario';
+import { oraDiRoma, oraDiRomaAdesso } from '@/lib/presenze/orario';
 import { OrarioCorreggibile, type CampoOrario } from '@/components/features/presenze/OrarioCorreggibile';
+import {
+  FinestraOrarioAppello,
+  type StatoConOrario,
+  type ValoriFinestraOrario,
+} from '@/components/features/primaria/FinestraOrarioAppello';
 import { orariAmmessi } from '@/lib/presenze/orario-ammesso';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { erroreDaRisposta } from '@/lib/ui/esito-fetch';
@@ -37,6 +42,32 @@ interface Riga {
    * in `PRESA_VISIONE_NON_TUA`, quindi non si offre.
    */
   presa_visione_annullabile: boolean;
+  /** La nota del docente sul giorno (`presenze.note_appello`): è il motivo del ritardo giustificato. */
+  note_appello: string | null;
+  /**
+   * Ritardo / uscita anticipata GIUSTIFICATI (es. terapia): le ore non contano nelle ore
+   * di assenza, ma lo stato resta quello vero. La GET lo dà sempre booleano (contratto A3).
+   */
+  assenza_oraria_giustificata: boolean;
+}
+/**
+ * I campi facoltativi della POST oltre a stato e alunno. Ciò che resta `undefined` non
+ * entra nel corpo, e il server lo conserva; `noteAppello: null` è il comando «togli la
+ * nota». ⚠️ `assenzaOrariaGiustificata` assente vale `false` (contratto A3): chi tocca un
+ * alunno con la giustificazione accesa e vuole tenerla deve RIMANDARLA — la finestra lo fa.
+ */
+interface CampiAppello {
+  orarioEntrata?: string;
+  orarioUscita?: string;
+  noteAppello?: string | null;
+  assenzaOrariaGiustificata?: boolean;
+}
+/** La finestra aperta: per chi, per quale stato, e da quali valori parte. */
+interface FinestraAperta {
+  alunnoId: string;
+  nome: string;
+  stato: StatoConOrario;
+  iniziale: ValoriFinestraOrario;
 }
 interface AlunnoLight { id: string; nome: string; cognome: string }
 interface RiepilogoMateria { nome: string; minutiMancati: number; oreMancate: number }
@@ -137,6 +168,10 @@ export default function AppelloPage() {
   // ancora in volo, con quanti ne hanno. Serve a fermare «Annulla» su QUELLA
   // riga: vedi `setStato`.
   const [salvataggioInCorso, setSalvataggioInCorso] = useState<ReadonlyMap<string, number>>(() => new Map());
+  // La finestra di ritardo / uscita anticipata (A4): `null` = chiusa.
+  const [finestra, setFinestra] = useState<FinestraAperta | null>(null);
+  // Un salvataggio che il server ha RIFIUTATO nel merito (422): si dice a chi, e perché.
+  const [erroreSalvataggio, setErroreSalvataggio] = useState<string | null>(null);
 
   // Riepilogo ore assenze
   const defaultPeriodo = annoScolasticoDefault();
@@ -191,37 +226,124 @@ export default function AppelloPage() {
     return () => window.removeEventListener('online', flush);
   }, [load]);
 
-  // Invia (o riprova offline) lo stato di un alunno, con eventuali orari.
-  const invia = async (alunnoId: string, stato: Stato, orarioEntrata?: string, orarioUscita?: string) => {
+  // Invia (o riprova offline) lo stato di un alunno, con i campi della finestra.
+  const invia = async (alunnoId: string, stato: Stato, campi: CampiAppello = {}) => {
+    // La riga della coda porta GLI STESSI campi della POST: il flush li rispedisce con
+    // `corpoPostAppelloDaCoda`. Senza, un ritardo giustificato salvato offline arriverebbe
+    // al server senza flag — e il contratto A3 lo spegnerebbe. Solo i campi nominati:
+    // un `undefined` qui resta «non nominato» anche dopo il viaggio in IndexedDB.
+    const accoda = () => saveLocalAppello({
+      id: `${alunnoId}|${data}`,
+      section_id: sectionId,
+      alunno_id: alunnoId,
+      data,
+      stato,
+      ...(campi.orarioEntrata !== undefined ? { orario_entrata: campi.orarioEntrata } : {}),
+      ...(campi.orarioUscita !== undefined ? { orario_uscita: campi.orarioUscita } : {}),
+      ...(campi.noteAppello !== undefined ? { note_appello: campi.noteAppello } : {}),
+      ...(campi.assenzaOrariaGiustificata !== undefined ? { assenza_oraria_giustificata: campi.assenzaOrariaGiustificata } : {}),
+      aggiornato_il: new Date().toISOString(),
+    });
     // Senza identità risolta si accoda in locale come da offline (sync poi).
     if (!userId || (typeof navigator !== 'undefined' && !navigator.onLine)) {
-      await saveLocalAppello({ id: `${alunnoId}|${data}`, section_id: sectionId, alunno_id: alunnoId, data, stato, aggiornato_il: new Date().toISOString() });
+      await accoda();
       return;
     }
+    // Lo stato HTTP fuori dal `try`: il `catch` deve poter dire se il server ha risposto
+    // (e con che cosa) o se la fetch non è mai arrivata — come fa `annulla`.
+    let statoHttp: number | undefined;
     try {
       const res = await fetch(`/api/primaria/appello?userId=${userId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify({ sectionId, data, alunnoId, stato, orarioEntrata, orarioUscita }),
+        body: JSON.stringify({ sectionId, data, alunnoId, stato, ...campi }),
       });
+      statoHttp = res.status;
+      if (res.status === 422) {
+        // Rifiuto NEL MERITO (giustificazione senza nota, o su uno stato che non la
+        // ammette): rispedirlo dalla coda darebbe lo stesso 422 per sempre. Si dice a
+        // schermo, a chi, e si rilegge la riga vera dal server — quella ottimistica
+        // racconterebbe un salvataggio mai avvenuto.
+        const esito = await erroreDaRisposta(res, '');
+        const riga = righe.find((r) => r.id === alunnoId);
+        const alunno = riga ? `${riga.cognome} ${riga.nome}` : '';
+        setErroreSalvataggio(
+          esito.codice === 'GIUSTIFICAZIONE_SENZA_NOTA'
+            ? t('appelloNonSalvatoSenzaNota', { alunno })
+            : esito.codice === 'GIUSTIFICAZIONE_STATO_NON_AMMESSO'
+              ? t('appelloNonSalvatoStatoNonAmmesso', { alunno })
+              : t('appelloNonSalvato', { alunno }),
+        );
+        // Del rifiuto esce il codice: la nota (spesso un motivo sanitario) non entra nei log.
+        logClient({
+          livello: 'warn',
+          evento: 'fetch',
+          messaggio: 'appello-primaria-salvataggio-rifiutato',
+          route: '/teacher/primaria/appello',
+          stato: 422,
+          campi: { error_code: esito.codice ?? 'senza-codice' },
+        });
+        try {
+          await load();
+        } catch (err) {
+          logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-primaria-rilettura-dopo-rifiuto-fallita: ${nomeErrore(err)}`, route: '/teacher/primaria/appello' });
+        }
+        return;
+      }
       if (!res.ok) throw new Error('save failed');
-    } catch {
-      await saveLocalAppello({ id: `${alunnoId}|${data}`, section_id: sectionId, alunno_id: alunnoId, data, stato, aggiornato_il: new Date().toISOString() });
+    } catch (err) {
+      // Accodare senza dirlo farebbe sparire il motivo: un 400 sui campi della finestra,
+      // un 403, un 500 o la rete finirebbero in coda muti, e il flush li scarterebbe muti.
+      // `error` se la fetch non è partita o il server è guasto (>= 500: un dato su un minore
+      // resta non scritto — stessa convenzione di `annulla` e `annullaPresaVisione`), `warn`
+      // per un 4xx diverso da 422. Solo nome dell'errore e stato: né nota, né orario, né nome.
+      logClient({
+        livello: statoHttp === undefined || statoHttp >= 500 ? 'error' : 'warn',
+        evento: 'fetch',
+        messaggio: `appello-primaria-salvataggio-accodato: ${statoHttp === undefined ? nomeErrore(err) : 'risposta-non-ok'}`,
+        route: '/teacher/primaria/appello',
+        ...(statoHttp === undefined ? {} : { stato: statoHttp }),
+      });
+      await accoda();
     }
   };
 
-  const setStato = async (alunnoId: string, stato: Stato) => {
-    // Per ritardo/uscita anticipata propone l'ora corrente come default modificabile.
-    const oraEntrata = stato === 'ritardo' ? oraCorrente() : '';
-    const oraUscita = stato === 'uscita_anticipata' ? oraCorrente() : '';
+  /**
+   * Segna lo stato di un alunno. «Presente» e «Assente» arrivano qui dal tocco; «Ritardo»
+   * e «Uscita anticipata» dalla finestra (`salvaFinestra`), con l'ora scelta, la spunta e
+   * la nota in `dettagli`.
+   */
+  const setStato = async (alunnoId: string, stato: Stato, dettagli?: ValoriFinestraOrario) => {
+    const giustificabile = stato === 'ritardo' || stato === 'uscita_anticipata';
+    // L'ora della finestra; senza finestra (non dovrebbe capitare per questi due stati)
+    // si propone l'ora corrente, come prima.
+    const ora = giustificabile ? (dettagli?.ora ?? oraCorrente()) : undefined;
+    const orarioEntrata = stato === 'ritardo' ? ora : undefined;
+    const orarioUscita = stato === 'uscita_anticipata' ? ora : undefined;
+    const giustificato = giustificabile && dettagli?.giustificato === true;
+    // La finestra MOSTRA la nota del giorno e la rimanda com'è: vuota diventa `null`
+    // («togli la nota»), che è ciò che il docente ha visto a schermo. Senza finestra la
+    // nota non si nomina e il server la conserva.
+    const nota = dettagli ? (dettagli.nota.trim() || null) : undefined;
     // In stato locale si tiene `HH:MM` NUDO, che `oraDiRoma` legge benissimo. Prima
     // qui si componeva `${data}T${ora}:00`: la forma ISO naïve, senza fuso — la stessa
     // stringa per le 08:45 di settembre e quelle di gennaio. Il formato canonico in
     // colonna lo scrive il SERVER, con `aOrarioIso`, che il fuso lo conosce.
+    // L'orario che il corpo NON nomina resta quello che c'era: è ciò che fa il server
+    // (un assente invece non ne ha nessuno, anche lì).
     // `appello_fatto: true`: la riga ora la scrive il docente (subito, o dalla coda
     // offline), quindi «Annulla» ha di nuovo qualcosa da togliere.
+    setErroreSalvataggio(null);
     setRighe((prev) => prev.map((r) => (r.id === alunnoId
-      ? { ...r, stato, orario_entrata: oraEntrata || null, orario_uscita: oraUscita || null, appello_fatto: true }
+      ? {
+        ...r,
+        stato,
+        orario_entrata: stato === 'assente' ? null : (orarioEntrata ?? r.orario_entrata),
+        orario_uscita: stato === 'assente' ? null : (orarioUscita ?? r.orario_uscita),
+        note_appello: nota === undefined ? r.note_appello : nota,
+        assenza_oraria_giustificata: giustificato,
+        appello_fatto: true,
+      }
       : r)));
     // Finché questo salvataggio è in volo, «Annulla» di questa riga è fermo. La
     // riga qui sopra accende subito `appello_fatto`, quindi il bottone comparirebbe
@@ -239,7 +361,13 @@ export default function AppelloPage() {
     // seconda è ancora in volo.
     setSalvataggioInCorso((prev) => new Map(prev).set(alunnoId, (prev.get(alunnoId) ?? 0) + 1));
     try {
-      await invia(alunnoId, stato, oraEntrata || undefined, oraUscita || undefined);
+      await invia(alunnoId, stato, {
+        orarioEntrata,
+        orarioUscita,
+        noteAppello: nota,
+        // Solo dove ha senso: su presente/assente il campo non si nomina (vale `false`).
+        assenzaOrariaGiustificata: giustificabile ? giustificato : undefined,
+      });
     } finally {
       setSalvataggioInCorso((prev) => {
         const next = new Map(prev);
@@ -249,6 +377,36 @@ export default function AppelloPage() {
         return next;
       });
     }
+  };
+
+  /**
+   * «Ritardo» e «Uscita anticipata» aprono la finestra invece di salvare (A4).
+   *
+   * Se la riga è GIÀ in quello stato, la finestra riparte dai valori salvati (dalla GET):
+   * l'ora registrata, la spunta, la nota. Altrimenti dall'ora di Roma di adesso e senza
+   * spunta. La nota del giorno si mostra in entrambi i casi: la finestra la rimanda, e
+   * rimandarla vuota senza averla fatta vedere la cancellerebbe.
+   */
+  const apriFinestra = (r: Riga, stato: StatoConOrario) => {
+    const giaInStato = r.stato === stato;
+    const salvata = oraDiRoma(stato === 'ritardo' ? r.orario_entrata : r.orario_uscita);
+    setFinestra({
+      alunnoId: r.id,
+      nome: `${r.cognome} ${r.nome}`,
+      stato,
+      iniziale: {
+        ora: giaInStato && salvata ? salvata : oraCorrente(),
+        giustificato: giaInStato && r.assenza_oraria_giustificata === true,
+        nota: r.note_appello ?? '',
+      },
+    });
+  };
+
+  const salvaFinestra = (valori: ValoriFinestraOrario) => {
+    if (!finestra) return;
+    const { alunnoId, stato } = finestra;
+    setFinestra(null);
+    void setStato(alunnoId, stato, valori);
   };
 
   /**
@@ -282,6 +440,8 @@ export default function AppelloPage() {
     if (!window.confirm(t('appelloAnnullaConferma', { alunno: nome }))) return;
 
     setAvvisoAnnulla(null);
+    // Il rifiuto di un salvataggio precedente non riguarda l'annullamento che parte ora.
+    setErroreSalvataggio(null);
     setAnnullaInCorso(alunnoId);
     let statoHttp: number | undefined;
     // PRIMA si ritira dalla coda offline il cambio ancora in attesa per questo
@@ -330,14 +490,22 @@ export default function AppelloPage() {
         giust_vista_il: null,
         appello_fatto: false,
         presa_visione_annullabile: false,
+        // La riga non c'è più: con lei la nota del giorno e la giustificazione oraria.
+        note_appello: null,
+        assenza_oraria_giustificata: false,
       }
       : r)));
 
     // La riga torna alla sola assenza comunicata dal genitore: assente, senza
     // orari, `appello_fatto` falso. Si FONDE sulla riga: giustifica, motivo e
-    // presa visione non viaggiano nella risposta e restano quelli già letti.
+    // presa visione del GENITORE non viaggiano nella risposta e restano quelli già
+    // letti. La nota del DOCENTE (`note_appello`) invece si azzera, come la azzera il
+    // ripristino sul server (`annullaAppelloAlunno`): lasciarla a schermo la farebbe
+    // riproporre dalla finestra di ritardo/uscita, e «Salva» riscriverebbe una nota —
+    // spesso un dato sanitario — che l'annullamento aveva tolto.
     // Serve a due esiti che dicono la stessa cosa: il 2xx `ripristinata-comunicazione`
-    // e il 409 NIENTE_DA_ANNULLARE dopo aver ritirato un cambio dalla coda.
+    // e il 409 NIENTE_DA_ANNULLARE dopo aver ritirato un cambio dalla coda (lì la nota
+    // a schermo veniva dal cambio in coda, che il server non ha mai avuto).
     const tornaAllaComunicazione = (presenzaId?: string) => setRighe((prev) => prev.map((r) => (r.id === alunnoId
       ? {
         ...r,
@@ -346,6 +514,9 @@ export default function AppelloPage() {
         orario_entrata: null,
         orario_uscita: null,
         appello_fatto: false,
+        note_appello: null,
+        // Un assente non ha ritardo né uscita da giustificare (il trigger del DB lo spegne).
+        assenza_oraria_giustificata: false,
       }
       : r)));
 
@@ -604,7 +775,12 @@ export default function AppelloPage() {
     // `appello_fatto: true` su ogni riga: l'appello in blocco lo scrive il docente,
     // e ogni alunno si può di nuovo annullare singolarmente — anche quello che un
     // annullamento aveva appena riportato alla sola comunicazione del genitore.
-    setRighe((prev) => prev.map((r) => ({ ...r, stato: 'presente', orario_entrata: null, orario_uscita: null, appello_fatto: true })));
+    // `assenza_oraria_giustificata: false`: un presente non ha ore da giustificare, e la
+    // POST in blocco non nomina il flag — che per contratto (A3) vale `false`. È l'unico
+    // valore coerente: il server rifiuterebbe (422) un flag acceso su «presente». La nota
+    // del giorno invece non si nomina, e il server la conserva.
+    setErroreSalvataggio(null);
+    setRighe((prev) => prev.map((r) => ({ ...r, stato: 'presente', orario_entrata: null, orario_uscita: null, appello_fatto: true, assenza_oraria_giustificata: false })));
     // `finally`: ora `saving` ferma anche ogni «Annulla»; se la POST lanciasse, un
     // `saving` rimasto acceso li bloccherebbe fino al ricaricamento della pagina.
     try {
@@ -630,8 +806,10 @@ export default function AppelloPage() {
         <div className="flex items-center gap-2">
           <DateField
             value={data}
-            // L'esito di un annullamento riguarda il giorno su cui è avvenuto.
-            onChange={(v) => { setAvvisoAnnulla(null); setData(v); }}
+            // L'esito di un annullamento, un salvataggio rifiutato (422) e un orario
+            // non salvato riguardano il giorno su cui sono avvenuti: sull'elenco di un
+            // altro giorno direbbero il falso, e con `role=alert`.
+            onChange={(v) => { setAvvisoAnnulla(null); setErroreSalvataggio(null); setErroreOrario(null); setData(v); }}
             // Fermo mentre una DELETE è in volo: cambiando giorno, `load()` porterebbe
             // le righe del giorno nuovo e l'esito in arrivo (`svuotaRiga`, o la fusione
             // di `ripristinata-comunicazione`), che cerca la riga per SOLO `alunnoId`,
@@ -664,6 +842,14 @@ export default function AppelloPage() {
         </p>
       )}
 
+      {/* Un salvataggio rifiutato nel merito (422): la riga è già stata riletta dal
+            server, e va detto a chi rifare il gesto e perché. */}
+      {erroreSalvataggio && (
+        <p role="alert" className="kv-appello-avviso font-maven mb-2 rounded-xl bg-kidville-error-soft px-3 py-2 text-xs text-kidville-error-strong">
+          {erroreSalvataggio}
+        </p>
+      )}
+
       {/* L'esito dell'annullamento, riuscito o no: il bambino a schermo cambia
             riga (o non la cambia), e va detto perché. */}
       {avvisoAnnulla && (
@@ -693,10 +879,15 @@ export default function AppelloPage() {
                       arrivasse dopo il server avrebbe quello stato mentre la schermata,
                       svuotata dall'esito dell'annullamento, direbbe «da registrare».
                       Come nell'appello 0-6 (`isLoading` sulla riga). */}
+                {/* «Ritardo» e «Uscita» aprono la finestra dell'ora (A4): `aria-haspopup`
+                      lo annuncia prima del tocco. «Presente» e «Assente» salvano subito. */}
                 {STATI.map((s) => (
                   <button
                     key={s.key}
-                    onClick={() => setStato(r.id, s.key)}
+                    onClick={() => (s.key === 'ritardo' || s.key === 'uscita_anticipata'
+                      ? apriFinestra(r, s.key)
+                      : setStato(r.id, s.key))}
+                    aria-haspopup={s.key === 'ritardo' || s.key === 'uscita_anticipata' ? 'dialog' : undefined}
                     disabled={annullaInCorso === r.id}
                     title={t(`appelloStato_${s.key}`)}
                     className={`font-maven inline-flex items-center gap-1 rounded-pill px-2.5 py-1 text-xs transition disabled:opacity-50 ${
@@ -738,6 +929,20 @@ export default function AppelloPage() {
                     inCorso={annullaInCorso === r.id}
                     onSalva={(ora) => setOrario(r.id, 'uscita', ora)}
                   />
+                )}
+                {/* RITARDO / USCITA GIUSTIFICATI (A4): le ore non contano nelle assenze, e
+                      la riga lo dice insieme al motivo. La nota è troncata a schermo ma
+                      intera nel `title` e per lo screen reader. */}
+                {r.assenza_oraria_giustificata && (r.stato === 'ritardo' || r.stato === 'uscita_anticipata') && (
+                  <span
+                    title={r.note_appello ?? undefined}
+                    className="font-maven inline-flex max-w-[16rem] items-center gap-1 rounded-pill bg-kidville-success-soft px-2.5 py-1 text-[11px] text-kidville-success-strong"
+                  >
+                    <ShieldCheck size={11} aria-hidden="true" className="shrink-0" />
+                    <span className="truncate">
+                      {r.note_appello ? t('appelloGiustificatoConNota', { nota: r.note_appello }) : t('appelloGiustificato')}
+                    </span>
+                  </span>
                 )}
                 {/* ANNULLA — solo oggi (data di Roma) e solo dove l'appello l'ha fatto
                       la scuola (`appello_fatto`): su una riga con la sola comunicazione
@@ -800,6 +1005,18 @@ export default function AppelloPage() {
           ))}
           {righe.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">{t('appelloNessunAlunno')}</li>}
         </ul>
+      )}
+
+      {/* La `key` per alunno e stato: ogni apertura riparte dai valori iniziali. */}
+      {finestra && (
+        <FinestraOrarioAppello
+          key={`${finestra.alunnoId}|${finestra.stato}`}
+          stato={finestra.stato}
+          nomeAlunno={finestra.nome}
+          iniziale={finestra.iniziale}
+          onSalva={salvaFinestra}
+          onAnnulla={() => setFinestra(null)}
+        />
       )}
     </div>
 

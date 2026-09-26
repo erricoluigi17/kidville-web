@@ -2,6 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TicketMensaPanel } from '@/components/features/admin/pagamenti/TicketMensaPanel';
 
+// Il pannello legge i NOMI delle sedi da `useSediAttive` (2026-09-26, multi-sede):
+// qui una sede sola, quella della pagina. I casi con più sedi stanno in
+// `TicketMensaPanel-multisede.test.tsx`.
+vi.mock('@/lib/context/sede-context', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/context/sede-context')>()),
+  useSediAttive: () => ({ sedi: [{ id: 'sc-1', nome: 'Sede Uno' }], effettive: ['sc-1'] }),
+}));
+
 // Il pannello «Ticket mensa» dopo due correzioni:
 //  · la conferma del salvataggio è un overlay animato che si chiude da sé, non
 //    più un paragrafino inline che restava a schermo fino al cambio di bambino;
@@ -32,7 +40,7 @@ function installFetch(opts: MockOpts = {}) {
       return jsonRes(r.body, r.status);
     }
     if (u.includes('/api/admin/students')) return jsonRes([AL]);
-    if (u.includes('/api/admin/settings')) return jsonRes({ success: true, data: { ticket_pacchetti: [] } });
+    if (u.includes('/api/admin/settings')) return jsonRes({ success: true, data: { scuola_id: 'sc-1', ticket_pacchetti: [] } });
     if (u.includes('/ticket/storico')) return jsonRes({ success: true, data: { saldo_ticket: 2, ultimo_carico: null, movimenti: [] } });
     if (u.includes('/ticket/morosi')) return jsonRes({ success: true, data: [] });
     if (u.includes('/api/pagamenti/ticket?')) return jsonRes({ success: true, data: { saldo_ticket: 2 } });
@@ -72,7 +80,7 @@ describe('la conferma del salvataggio si vede', () => {
       const u = String(url);
       if (init?.method === 'POST' && u.includes('/api/pagamenti/ticket')) return attesa;
       if (u.includes('/api/admin/students')) return jsonRes([AL]);
-      if (u.includes('/api/admin/settings')) return jsonRes({ success: true, data: { ticket_pacchetti: [] } });
+      if (u.includes('/api/admin/settings')) return jsonRes({ success: true, data: { scuola_id: 'sc-1', ticket_pacchetti: [] } });
       if (u.includes('/ticket/storico')) return jsonRes({ success: true, data: { saldo_ticket: 2, ultimo_carico: null, movimenti: [] } });
       if (u.includes('/ticket/morosi')) return jsonRes({ success: true, data: [] });
       return jsonRes({ success: true, data: { saldo_ticket: 2 } });
@@ -174,7 +182,7 @@ describe('gli errori si vedono a schermo, non in un alert del browser', () => {
       const u = String(url);
       if (init?.method === 'POST' && u.includes('/api/pagamenti/ticket')) throw new TypeError('Failed to fetch');
       if (u.includes('/api/admin/students')) return jsonRes([AL]);
-      if (u.includes('/api/admin/settings')) return jsonRes({ success: true, data: { ticket_pacchetti: [] } });
+      if (u.includes('/api/admin/settings')) return jsonRes({ success: true, data: { scuola_id: 'sc-1', ticket_pacchetti: [] } });
       if (u.includes('/ticket/storico')) return jsonRes({ success: true, data: { saldo_ticket: 2, ultimo_carico: null, movimenti: [] } });
       if (u.includes('/ticket/morosi')) return jsonRes({ success: true, data: [] });
       return jsonRes({ success: true, data: { saldo_ticket: 2 } });

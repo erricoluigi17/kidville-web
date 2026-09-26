@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { BottoneEliminaRegistrazione } from '@/components/features/teacher/diary/BottoneEliminaRegistrazione';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, ChevronDown, CheckCircle } from 'lucide-react';
+import { oraAttivitaValida } from '@/lib/diary/attivita';
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,27 @@ export interface ActivityItem {
     descrizione: string;
     /** studentId → livello partecipazione */
     studentPartecipazione: Record<string, string | null>;
+    /**
+     * Orario PROPRIO di questa attività (dal 2026-09-26), "HH:MM" come lo dà un
+     * `<input type="time">`; `''` o assente = non inserito. Entrambi facoltativi,
+     * ciascuno per conto suo. Nel jsonb diventano `ora_inizio` / `ora_fine`, e un
+     * campo vuoto NON si scrive (vedi `dettagliDi` in `DiaryEventEditor`).
+     * Contratto: docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/contratti/D1.md
+     */
+    oraInizio?: string;
+    oraFine?: string;
+}
+
+/**
+ * La fine viene prima dell'inizio? Solo se ci sono ENTRAMBI e sono "HH:MM"
+ * validi: è la stessa regola del server (422 `ORARIO_ATTIVITA_INCOERENTE`), e
+ * con lo zero davanti il confronto fra stringhe è un confronto fra orari.
+ * Uguali ammessi. Qui si ferma il salvataggio prima che parta la POST.
+ */
+export function orarioAttivitaIncoerente(a: Pick<ActivityItem, 'oraInizio' | 'oraFine'>): boolean {
+    const inizio = a.oraInizio?.trim();
+    const fine = a.oraFine?.trim();
+    return oraAttivitaValida(inizio) && oraAttivitaValida(fine) && fine < inizio;
 }
 
 // Etichette in teacherDiario.json (chiavi `activity_<value>`); qui restano solo
@@ -96,6 +118,8 @@ function ActivityAccordion({
 }) {
     const t = useTranslations('teacherDiario');
     const [open, setOpen] = useState(true);
+    const idOrario = useId();
+    const incoerente = orarioAttivitaIncoerente(activity);
     const emoji = getActivityEmoji(activity.tipo);
     const label = isKnownActivity(activity.tipo) ? t(`activity_${activity.tipo}`) : activity.tipo;
 
@@ -194,6 +218,51 @@ function ActivityAccordion({
                                     rows={2}
                                     className="w-full px-3 py-2.5 rounded-xl bg-kidville-cream border border-kidville-line font-maven text-sm text-kidville-green placeholder:text-kidville-hint resize-none focus:outline-none focus:ring-2 focus:ring-kidville-info/40 focus:border-kidville-info/60 transition-all duration-200"
                                 />
+                            </div>
+
+                            {/* Orario di QUESTA attività: inizio e fine, entrambi facoltativi.
+                                Niente `step`: il formato resta HH:MM, come vuole il server. */}
+                            <div>
+                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">{t('attivitaOrarioFacoltativo')}</p>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="min-w-0">
+                                        <label htmlFor={`${idOrario}-inizio`} className="block font-maven text-[11px] text-kidville-sub mb-1">
+                                            {t('attivitaOraInizio')}
+                                        </label>
+                                        <input
+                                            id={`${idOrario}-inizio`}
+                                            type="time"
+                                            value={activity.oraInizio ?? ''}
+                                            onChange={e => onChange({ oraInizio: e.target.value })}
+                                            aria-label={t('attivitaOraInizioAria', { n: index + 1 })}
+                                            className="w-full min-w-0 border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-info/40 focus:border-kidville-info/60 transition-all"
+                                        />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <label htmlFor={`${idOrario}-fine`} className="block font-maven text-[11px] text-kidville-sub mb-1">
+                                            {t('attivitaOraFine')}
+                                        </label>
+                                        <input
+                                            id={`${idOrario}-fine`}
+                                            type="time"
+                                            value={activity.oraFine ?? ''}
+                                            onChange={e => onChange({ oraFine: e.target.value })}
+                                            aria-label={t('attivitaOraFineAria', { n: index + 1 })}
+                                            aria-invalid={incoerente || undefined}
+                                            aria-describedby={incoerente ? `${idOrario}-avviso` : undefined}
+                                            className={`w-full min-w-0 border-2 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 transition-all ${
+                                                incoerente
+                                                    ? 'border-kidville-error/60 focus:ring-kidville-error/30'
+                                                    : 'border-kidville-line focus:ring-kidville-info/40 focus:border-kidville-info/60'
+                                            }`}
+                                        />
+                                    </div>
+                                </div>
+                                {incoerente && (
+                                    <p id={`${idOrario}-avviso`} role="alert" className="mt-1.5 font-maven text-xs text-kidville-error">
+                                        {t('attivitaOrarioIncoerente')}
+                                    </p>
+                                )}
                             </div>
 
                             {/* Partecipazione per studente */}

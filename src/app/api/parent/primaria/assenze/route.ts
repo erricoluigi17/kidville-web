@@ -107,7 +107,7 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
     const { data: presenze, error: presenzeErr } = await limitaAiFatti(
       supabase
         .from('presenze')
-        .select('id, data, stato, orario_entrata, orario_uscita, giustificata, giustificazione_testo, giustificata_il, note_appello')
+        .select('id, data, stato, orario_entrata, orario_uscita, giustificata, giustificazione_testo, giustificata_il, note_appello, assenza_oraria_giustificata')
         .eq('alunno_id', studentId)
         .in('stato', ['assente', 'ritardo', 'uscita_anticipata']),
       'data',
@@ -168,9 +168,26 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
     // sul DB E2E non migrato): anche quello va dichiarato, perché quattro zeri
     // sono una frase, non l'assenza di una frase.
     const riepilogoLetto = conteggi.every((c) => !c.error)
+
+    // ═══ RITARDO / USCITA GIUSTIFICATI (A5, 2026-09-26) ══════════════════════
+    //
+    // Il docente può segnare un ritardo o un'uscita anticipata come giustificati
+    // (es. terapia): lo stato resta quello vero, ma quelle ore non contano. La
+    // pagina del genitore lo dice accanto alla nota (`note_appello`, già
+    // restituita). Il flag esce SEMPRE booleano — `null` o una colonna assente
+    // non diventano `undefined` — e vero solo su `ritardo`/`uscita_anticipata`,
+    // lo stesso vincolo che il trigger impone nel DB: il client non deve
+    // ripetere la regola per non dire «giustificato» di un'assenza piena.
+    const righe = (presenze ?? []).map((r) => ({
+      ...r,
+      assenza_oraria_giustificata:
+        (r as { assenza_oraria_giustificata?: boolean | null }).assenza_oraria_giustificata === true &&
+        (r.stato === 'ritardo' || r.stato === 'uscita_anticipata'),
+    }))
+
     return NextResponse.json({
       success: true,
-      data: presenze ?? [],
+      data: righe,
       letto: !presenzeErr,
       riepilogo,
       riepilogoLetto,

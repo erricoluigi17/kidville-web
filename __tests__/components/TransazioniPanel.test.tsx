@@ -7,6 +7,12 @@ vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
   FatturaButton: () => <span data-testid="fattura-button" />,
 }));
 
+// Il pannello legge i nomi delle sedi attive (badge sui paganti): una sede sola.
+vi.mock('@/lib/context/sede-context', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/context/sede-context')>()),
+  useSediAttive: () => ({ sedi: [{ id: 's1', nome: 'Sede Uno' }], effettive: ['s1'] }),
+}));
+
 const famiglia = {
   parent: { id: 'genitore-1', nome: 'Genitore Uno' },
   figli: [

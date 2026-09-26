@@ -31,7 +31,13 @@ vi.mock('@/lib/auth/require-staff', () => ({
     return Promise.resolve({ user: { id: 'a1', role: h.role, scuola_id: SC } })
   },
 }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuolaScrittura: (...a: unknown[]) => h.scuola(...a) }))
+// POST: `resolveScuolaScrittura` (lo svuotamento è per sede). GET: dal 2026-09-26
+// (K3) le sedi attive + la `restringiSedi` VERA (lettura unita: lettura-multisede.test.ts).
+vi.mock('@/lib/auth/scope', async (importActual) => ({
+  restringiSedi: (await importActual<typeof import('@/lib/auth/scope')>()).restringiSedi,
+  resolveScuoleAttive: async () => [SEDE_A],
+  resolveScuolaScrittura: (...a: unknown[]) => h.scuola(...a),
+}))
 vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: () => Promise.resolve(h.config) }))
 vi.mock('@/lib/cassa/saldo', () => ({
   caricaSaldoCassa: () => Promise.resolve(h.saldo),
@@ -53,6 +59,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
+      b.in = () => b
       b.order = () => b
       b.insert = (row: unknown) => { h.audits.push(row); return b }
       b.then = (resolve: (v: unknown) => unknown) =>

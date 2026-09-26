@@ -98,10 +98,11 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
   logEvento: (...a: unknown[]) => h.logEvento(...a),
   logErrore: (...a: unknown[]) => h.logErrore(...a),
 }))
-vi.mock('@/lib/auth/scope', () => ({
-  // La sede di SCRITTURA dell'operatore: una sola, e NON è il perimetro su cui lavora
-  // l'automatismo. È esattamente la deroga che questo file misura.
-  resolveScuolaScrittura: async () => ({ scuolaId: 'sc-operatore' }),
+vi.mock('@/lib/auth/scope', async (orig) => ({
+  // Il PERIMETRO dell'operatore: una sola sede, e NON è il perimetro su cui lavora
+  // l'automatismo. È esattamente la deroga che questo file misura. (Dal 2026-09-26, K5,
+  // l'import non chiede più una sede di scrittura: `resolveScuolaScrittura` non c'è più.)
+  restringiSedi: (await orig<typeof import('@/lib/auth/scope')>()).restringiSedi,
   resolveScuoleAttive: async () => ['sc-operatore'],
 }))
 

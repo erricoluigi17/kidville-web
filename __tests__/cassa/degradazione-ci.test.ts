@@ -71,7 +71,10 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }))
 
 // Scoping deterministico su un'unica sede.
-vi.mock('@/lib/auth/scope', () => ({
+// `restringiSedi` vera: dal 2026-09-26 (K3) le GET leggono le sedi attive e la
+// usano per restringere a quella chiesta.
+vi.mock('@/lib/auth/scope', async (importActual) => ({
+  restringiSedi: (await importActual<typeof import('@/lib/auth/scope')>()).restringiSedi,
   resolveScuoleAttive: async () => [h.SC],
   resolveScuolaScrittura: async () => h.SC,
 }))

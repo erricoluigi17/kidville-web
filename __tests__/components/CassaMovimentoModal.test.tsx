@@ -55,7 +55,7 @@ describe('CassaMovimentoModal — uscita/entrata + foto facoltativa', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('un\'uscita senza categoria è bloccata lato client con un messaggio', async () => {
-    render(<CassaMovimentoModal userId="u1" scuolaId="sc-1" tipoIniziale="uscita" onClose={() => {}} onDone={() => {}} />);
+    render(<CassaMovimentoModal userId="u1" sedi={[{ id: 'sc-1', nome: 'Sede' }]} sedeIniziale={null} tipoIniziale="uscita" onClose={() => {}} onDone={() => {}} />);
     fireEvent.change(await screen.findByLabelText(/Importo/), { target: { value: '20' } });
     fireEvent.click(screen.getByRole('button', { name: /Salva/ }));
     const alert = await screen.findByRole('alert');
@@ -66,7 +66,7 @@ describe('CassaMovimentoModal — uscita/entrata + foto facoltativa', () => {
 
   it('un\'entrata manuale non richiede la categoria e salva', async () => {
     const onDone = vi.fn();
-    render(<CassaMovimentoModal userId="u1" scuolaId="sc-1" tipoIniziale="entrata" onClose={() => {}} onDone={onDone} />);
+    render(<CassaMovimentoModal userId="u1" sedi={[{ id: 'sc-1', nome: 'Sede' }]} sedeIniziale={null} tipoIniziale="entrata" onClose={() => {}} onDone={onDone} />);
     fireEvent.change(await screen.findByLabelText(/Importo/), { target: { value: '15' } });
     fireEvent.click(screen.getByRole('button', { name: /Salva/ }));
     await waitFor(() => expect(calls.movimenti).toHaveLength(1));
@@ -93,7 +93,7 @@ describe('CassaMovimentoModal — un 400 con details nomina il campo in errore (
 
   it('con details path=note il messaggio d\'errore contiene «Note» (non solo «Dati non validi»)', async () => {
     vi.stubGlobal('fetch', mockFetch400([{ path: 'note', message: 'Invalid input' }]));
-    render(<CassaMovimentoModal userId="u1" scuolaId="sc-1" tipoIniziale="entrata" onClose={() => {}} onDone={() => {}} />);
+    render(<CassaMovimentoModal userId="u1" sedi={[{ id: 'sc-1', nome: 'Sede' }]} sedeIniziale={null} tipoIniziale="entrata" onClose={() => {}} onDone={() => {}} />);
     fireEvent.change(await screen.findByLabelText(/Importo/), { target: { value: '9.99' } });
     fireEvent.click(screen.getByRole('button', { name: /Salva/ }));
     const alert = await screen.findByRole('alert');
@@ -106,7 +106,7 @@ describe('CassaMovimentoModal — un 400 con details nomina il campo in errore (
 
   it('con details su descrizione E importo il messaggio nomina entrambi i campi', async () => {
     vi.stubGlobal('fetch', mockFetch400([{ path: 'descrizione' }, { path: 'importo' }]));
-    render(<CassaMovimentoModal userId="u1" scuolaId="sc-1" tipoIniziale="entrata" onClose={() => {}} onDone={() => {}} />);
+    render(<CassaMovimentoModal userId="u1" sedi={[{ id: 'sc-1', nome: 'Sede' }]} sedeIniziale={null} tipoIniziale="entrata" onClose={() => {}} onDone={() => {}} />);
     fireEvent.change(await screen.findByLabelText(/Importo/), { target: { value: '5' } });
     fireEvent.click(screen.getByRole('button', { name: /Salva/ }));
     const alert = await screen.findByRole('alert');
@@ -120,7 +120,7 @@ describe('CassaMovimentoModal — la foto facoltativa non blocca il salvataggio'
     const m = mockFetch({ uploadOk: false });
     vi.stubGlobal('fetch', m.fn);
     const onDone = vi.fn();
-    render(<CassaMovimentoModal userId="u1" scuolaId="sc-1" tipoIniziale="entrata" onClose={() => {}} onDone={onDone} />);
+    render(<CassaMovimentoModal userId="u1" sedi={[{ id: 'sc-1', nome: 'Sede' }]} sedeIniziale={null} tipoIniziale="entrata" onClose={() => {}} onDone={onDone} />);
 
     fireEvent.change(await screen.findByLabelText(/Importo/), { target: { value: '30' } });
     const file = new File(['x'], 'scontrino.jpg', { type: 'image/jpeg' });

@@ -10,8 +10,12 @@ import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton, type EsitoAccodamento } from './FatturaButton';
 import { FatturaChip } from './FatturaChip';
 import { LinkDocumento, MIME_XLSX } from './LinkDocumento';
-import { PagamentoCardMobile } from './PagamentoCardMobile';
+import { PagamentoCardMobile, BadgeSede } from './PagamentoCardMobile';
 import { PagamentoDrawer } from './PagamentoDrawer';
+import { FiltroClassiContabilita } from './FiltroClassiContabilita';
+import { classiDaAlunni, filtraPerClassi } from '@/lib/pagamenti/filtro-classi';
+import { useSediAttive } from '@/lib/context/sede-context';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { SospensioneToggle } from './SospensioneToggle';
 import { QuickAcquistoModal } from './QuickAcquistoModal';
 import { ModificaPagamentoModal } from './ModificaPagamentoModal';
@@ -43,7 +47,8 @@ function EmptyRiga({ emoji, testo }: { emoji: string; testo: string }) {
     );
 }
 
-interface Categoria { id: string; nome: string; slug: string; colore?: string; icona?: string }
+/** `scuola_id` null = categoria globale (K2: con più sedi arrivano anche quelle di ogni sede). */
+interface Categoria { id: string; nome: string; slug: string; colore?: string; icona?: string; scuola_id?: string | null }
 interface Pagamento extends PagamentoRow {
     alunno_id: string;
     scadenza: string;
@@ -51,11 +56,62 @@ interface Pagamento extends PagamentoRow {
     categoria_id?: string | null;
     periodo_competenza?: string | null;
     payment_categories?: { nome?: string; colore?: string; icona?: string } | null;
+    /** Sede della voce e suo nome: `GET /api/pagamenti` li manda su OGNI riga (K1). */
+    scuola_id?: string | null;
+    scuola_nome?: string | null;
+    alunni?: {
+        nome?: string; cognome?: string;
+        classe_sezione?: string | null;
+        /** K1: la chiave del filtro classi (`null` = alunno senza sezione). */
+        section_id?: string | null;
+        sospeso?: boolean | null;
+    };
 }
 interface Alunno {
     id: string; nome?: string; cognome?: string;
     classe_sezione?: string | null; section_id?: string | null;
+    /** Sede del bambino (`GET /api/admin/students` la manda sempre). */
+    scuola_id?: string | null;
     stato?: string; importo_retta_mensile?: number | null;
+}
+
+/** Esito della lettura della configurazione Aruba di UNA sede. */
+type EsitoAruba = 'attiva' | 'non-attiva' | 'errore';
+
+/** Esito di una GET del cruscotto: `ok` solo con risposta 2xx E corpo leggibile. */
+interface EsitoLettura<T> { ok: boolean; corpo: T | null }
+
+/**
+ * GET di un elenco del cruscotto. Ogni guasto è LOGGATO — rete giù, corpo illeggibile e
+ * risposta 4xx/5xx — perché un `catch` muto qui è una tabella vuota che sembra «nessun
+ * pagamento» o «nessun alunno». Il corpo si restituisce anche sul rifiuto: porta il
+ * messaggio del server (`error`). Nel `messaggio` del log solo l'etichetta e la classe
+ * d'errore: l'URL porta uuid e filtri.
+ */
+async function leggiJson<T>(url: string, userId: string, etichetta: string): Promise<EsitoLettura<T>> {
+    try {
+        const r = await fetch(url, { headers: { 'x-user-id': userId } });
+        let leggibile = true;
+        const corpo = (await r.json().catch((e: unknown) => {
+            leggibile = false;
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `${etichetta}-corpo-illeggibile: ${nomeErrore(e)}`, route: '/admin/pagamenti', stato: r.status });
+            return null;
+        })) as T | null;
+        if (!r.ok) {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `${etichetta}-rifiutato`, route: '/admin/pagamenti', stato: r.status });
+        }
+        return { ok: r.ok && leggibile, corpo };
+    } catch (e) {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `${etichetta}-non-caricato: ${nomeErrore(e)}`, route: '/admin/pagamenti', stato: 0 });
+        return { ok: false, corpo: null };
+    }
+}
+
+/** Elenco di nomi in una frase («A, B e C»), nella lingua corrente. */
+function elencoNomi(nomi: string[], locale: string): string {
+    // `Intl.ListFormat` assente (browser molto vecchio): la virgola basta, e non è un guasto.
+    if (typeof Intl.ListFormat !== 'function') return nomi.join(', ');
+    return new Intl.ListFormat(locale, { type: 'conjunction' }).format(nomi);
 }
 
 // Mese abbreviato localizzato con iniziale maiuscola. In IT riproduce ESATTAMENTE
@@ -75,7 +131,15 @@ function periodiAnno(annoInizio: number, locale: string): { periodo: string; lab
     return out;
 }
 
-interface Props { userId: string; scuolaId: string }
+/**
+ * `scuolaId`: la sede dichiarata, oppure `null` quando le sedi selezionate sono più di una
+ * (P1). Con `null` le GET NON portano `scuola_id` — la route restringe già alle sedi attive
+ * dell'utente — e mai «undefined»/«null» nell'URL: le route lo validano come uuid (400).
+ * Le sedi davvero visibili arrivano da `useSediAttive().effettive` (MAI da `selezionate`,
+ * dove vuoto vuol dire «tutte»). Il ricaricamento al cambio di sede lo fa `SedeScopeBoundary`
+ * del layout admin, che rimonta il contenuto.
+ */
+interface Props { userId: string; scuolaId: string | null }
 
 export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
@@ -110,10 +174,28 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const [rateizza, setRateizza] = useState<{ alunno: Alunno; pagamento: Pagamento } | null>(null);
     const [drawer, setDrawer] = useState<Pagamento | null>(null);
     const [agendaFiltro, setAgendaFiltro] = useState<AgingBucketId | null>(null);
-    const [quick, setQuick] = useState<{ alunno: Alunno; categoria: Categoria } | null>(null);
+    const [quick, setQuick] = useState<{ alunno: Alunno; categoria: Categoria; scuolaId?: string } | null>(null);
     const [generando, setGenerando] = useState(false);
-    const [arubaGated, setArubaGated] = useState(false);
+    /** Configurazione Aruba PER SEDE; `chiave` = le sedi a cui si riferisce (niente esiti stantii). */
+    const [aruba, setAruba] = useState<{ chiave: string; esiti: Record<string, EsitoAruba> } | null>(null);
     const [error, setError] = useState<string | null>(null);
+    /** La GET degli iscritti è fallita: la vista Rette, i mancanti e l'acquisto non sono affidabili. */
+    const [erroreAlunni, setErroreAlunni] = useState(false);
+    /** `section_id` scelti nel filtro classi (K6). Si scartano in lettura, mai azzerati. */
+    const [classiScelte, setClassiScelte] = useState<string[]>([]);
+    /** Sede scelta per «Genera mancanti» e per il nuovo acquisto, quando le sedi sono più d'una. */
+    const [sedeGenera, setSedeGenera] = useState('');
+    const [sedeAcquistoScelta, setSedeAcquistoScelta] = useState('');
+
+    // ── Le sedi ───────────────────────────────────────────────────────────────────────────
+    const { sedi, effettive } = useSediAttive();
+    const chiaveSedi = scuolaId ?? effettive.join(',');
+    /** Le sedi che questa schermata mostra: quella dichiarata, o le effettive del contesto. */
+    const sediVisibili = useMemo(() => (chiaveSedi ? chiaveSedi.split(',') : []), [chiaveSedi]);
+    const mostraSede = sediVisibili.length > 1;
+    const sedeUnica = sediVisibili.length === 1 ? sediVisibili[0] : null;
+    /** `&scuola_id=…` solo con una sede dichiarata: con più sedi si OMETTE. */
+    const sedeQs = scuolaId ? `&scuola_id=${encodeURIComponent(scuolaId)}` : '';
 
     // Anno scolastico corrente (set->ago = anno corrente, gen->giu = anno-1)
     const now = new Date();
@@ -131,17 +213,28 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const load = useCallback(async () => {
         try {
             const [pagRes, alRes] = await Promise.all([
-                fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()).catch(() => null),
-                fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()).catch(() => null),
+                leggiJson<{ success?: boolean; data?: Pagamento[]; error?: string }>(`/api/pagamenti?userId=${userId}${sedeQs}`, userId, 'scadenzario-pagamenti'),
+                leggiJson<Alunno[] | { data?: Alunno[] }>(`/api/admin/students?stato=iscritto${sedeQs}&limit=${LIMITE_ELENCO_ALUNNI}`, userId, 'scadenzario-alunni'),
             ]);
-            if (pagRes?.success) { setPagamenti(pagRes.data); setError(null); }
-            else setError((pagRes && pagRes.error) || t('dashErrCaricamento'));
-            const lista: Alunno[] = Array.isArray(alRes) ? alRes : (alRes?.data || []);
-            setAlunni(lista.filter((a) => a.classe_sezione != null || a.section_id != null));
+            const pag = pagRes.corpo;
+            if (pagRes.ok && pag?.success) { setPagamenti(pag.data ?? []); setError(null); }
+            else setError(pag?.error || t('dashErrCaricamento'));
+            // Gli alunni: un rifiuto NON è «nessun alunno». Si svuota la lista (niente dati di
+            // prima spacciati per attuali) e lo si dice a schermo; il guasto l'ha loggato `leggiJson`.
+            const al = alRes.corpo;
+            const lista: Alunno[] | null = !alRes.ok ? null : Array.isArray(al) ? al : Array.isArray(al?.data) ? al.data : null;
+            if (lista === null) {
+                if (alRes.ok) logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-alunni-forma-inattesa', route: '/admin/pagamenti' });
+                setAlunni([]);
+                setErroreAlunni(true);
+            } else {
+                setAlunni(lista.filter((a) => a.classe_sezione != null || a.section_id != null));
+                setErroreAlunni(false);
+            }
         } finally {
             setLoading(false);
         }
-    }, [userId, scuolaId, t]);
+    }, [userId, sedeQs, t]);
 
     // D12: dopo un accodamento il chip deve comparire subito. `load()` sono due GET (tutti i pagamenti
     // della sede e gli iscritti): con `nuova` lo stato è noto per costruzione (la RPC ha appena scritto
@@ -156,30 +249,103 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     }, [load]);
 
     useEffect(() => { load(); }, [load]);
+    // Categorie: con più sedi (nessuna dichiarata) la GET è multi-sede (K2): globali + quelle
+    // di ogni sede attiva. Prima rispondeva 400, e il `.catch` muto lasciava il select vuoto.
     useEffect(() => {
-        fetch(`/api/admin/settings/categorie?userId=${userId}`, { headers: { 'x-user-id': userId } })
-            .then((r) => r.json())
-            .then((d) => {
-                if (d.success) {
-                    setCategorie(d.data);
-                    const retta = d.data.find((c: Categoria) => c.slug === 'retta');
-                    setFCategoria((cur) => cur || retta?.id || d.data[0]?.id || '');
+        void leggiJson<{ success?: boolean; data?: Categoria[] }>(`/api/admin/settings/categorie?userId=${userId}${sedeQs}`, userId, 'scadenzario-categorie')
+            .then(({ ok, corpo: d }) => {
+                if (ok && d?.success && Array.isArray(d.data)) {
+                    const lista = d.data;
+                    setCategorie(lista);
+                    const retta = lista.find((c) => c.slug === 'retta');
+                    setFCategoria((cur) => cur || retta?.id || lista[0]?.id || '');
+                } else if (ok) {
+                    // 2xx ma senza elenco (il rifiuto, il corpo illeggibile e la rete giù li ha
+                    // già loggati `leggiJson`): il select vuoto non deve sembrare «nessuna categoria».
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-categorie-forma-inattesa', route: '/admin/pagamenti' });
                 }
-            }).catch(() => {});
-    }, [userId]);
+            });
+    }, [userId, sedeQs]);
 
-    // Gating Aruba/SDI visibile (M2.4): l'integrazione non configurata non deve
-    // restare invisibile alla Segreteria.
+    // Gating Aruba/SDI visibile (M2.4), PER SEDE: la configurazione è di ogni plesso, e la
+    // route vuole UNA sede (`resolveScuolaScrittura`: senza `scuola_id` e con più sedi
+    // risponde 400, che il vecchio `.catch` muto trasformava in «tutto a posto»). Una GET per
+    // sede visibile; un esito non leggibile è «da verificare», detto a schermo e loggato.
     useEffect(() => {
-        fetch(`/api/admin/settings/aruba?userId=${userId}&scuola_id=${scuolaId}`, { headers: { 'x-user-id': userId } })
-            .then((r) => r.json())
-            .then((d) => { if (d.success) setArubaGated(!d.data?.abilitato); })
-            .catch(() => {});
-    }, [userId, scuolaId]);
+        if (!chiaveSedi) return;
+        let annullato = false;
+        const ids = chiaveSedi.split(',');
+        void Promise.all(ids.map(async (id): Promise<[string, EsitoAruba]> => {
+            try {
+                const r = await fetch(`/api/admin/settings/aruba?userId=${userId}&scuola_id=${encodeURIComponent(id)}`, { headers: { 'x-user-id': userId } });
+                // Il corpo illeggibile si logga con la sua CAUSA (SyntaxError…): il log dopo
+                // direbbe soltanto «non letta» con lo stato.
+                const d = (await r.json().catch((e: unknown) => {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: `aruba-config-corpo-illeggibile: ${nomeErrore(e)}`, route: '/admin/pagamenti', stato: r.status, campi: { sedi: ids.length } });
+                    return null;
+                })) as { success?: boolean; data?: { abilitato?: boolean } } | null;
+                if (!r.ok || !d?.success) {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'aruba-config-non-letta', route: '/admin/pagamenti', stato: r.status, campi: { sedi: ids.length } });
+                    return [id, 'errore'];
+                }
+                return [id, d.data?.abilitato ? 'attiva' : 'non-attiva'];
+            } catch (e) {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `aruba-config-non-letta: ${nomeErrore(e)}`, route: '/admin/pagamenti', stato: 0, campi: { sedi: ids.length } });
+                return [id, 'errore'];
+            }
+        })).then((coppie) => {
+            if (!annullato) setAruba({ chiave: chiaveSedi, esiti: Object.fromEntries(coppie) });
+        });
+        return () => { annullato = true; };
+    }, [userId, chiaveSedi]);
+
+    // ── Nomi delle sedi: dal contesto, e in ripiego dalle righe (`scuola_nome`, K1) ────────
+    const nomiSedi = useMemo(() => {
+        const m: Record<string, string> = {};
+        for (const p of pagamenti) if (p.scuola_id && p.scuola_nome) m[p.scuola_id] = p.scuola_nome;
+        for (const s of sedi) m[s.id] = s.nome;
+        return m;
+    }, [pagamenti, sedi]);
+    /** Il nome della sede, o stringa vuota se ignoto (mai un nome inventato). */
+    const nomeSede = useCallback((id: string | null | undefined) => (id ? nomiSedi[id] ?? '' : ''), [nomiSedi]);
+    /** Nome da mostrare in una frase o in un'opzione: il ripiego è il testo «Sede non indicata». */
+    const nomeSedeTesto = (id: string | null | undefined) => nomeSede(id) || t('sedeBadgeNonIndicata');
+
+    // ── Filtro classi (K6) ────────────────────────────────────────────────────────────────
+    // Le classi vengono dalle righe E dagli iscritti: nella vista Rette un bambino senza retta
+    // generata («Non generata») ha comunque una classe. La sede si prende dalla RIGA
+    // (`p.scuola_id`), non dal join `alunni`, che non la porta: con `scuolaId: ''` le omonime
+    // di sedi diverse si fonderebbero in un gruppo solo.
+    const classi = useMemo(
+        () => classiDaAlunni(
+            [
+                ...pagamenti.flatMap((p) => (p.alunni
+                    ? [{ section_id: p.alunni.section_id ?? null, classe_sezione: p.alunni.classe_sezione ?? null, scuola_id: p.scuola_id ?? null }]
+                    : [])),
+                ...alunni.map((a) => ({ section_id: a.section_id ?? null, classe_sezione: a.classe_sezione ?? null, scuola_id: a.scuola_id ?? sedeUnica })),
+            ],
+            nomiSedi,
+        ),
+        [pagamenti, alunni, nomiSedi, sedeUnica],
+    );
+    // Gli id scelti che non corrispondono più a una classe in elenco si SCARTANO in lettura
+    // (e si deduplicano): la stessa lista va a righe, KPI, agenda, componente ed export.
+    const scelteValide = useMemo(
+        () => [...new Set(classiScelte)].filter((id) => classi.some((c) => c.id === id)),
+        [classiScelte, classi],
+    );
+    /** Le righe dopo il filtro classi: base di KPI, agenda e tabelle. */
+    const pagamentiVisibili = useMemo(
+        () => filtraPerClassi(pagamenti, scelteValide, (p) => p.alunni?.section_id ?? null),
+        [pagamenti, scelteValide],
+    );
 
     const rettaCat = useMemo(() => categorie.find((c) => c.slug === 'retta'), [categorie]);
     const categoriaSel = useMemo(() => categorie.find((c) => c.id === fCategoria), [categorie, fCategoria]);
     const isRettaView = !!rettaCat && fCategoria === rettaCat.id;
+    /** Con più sedi due categorie omonime (es. «Gita» di Aversa e di Cesa) si distinguono dalla sede. */
+    const etichettaCategoria = (c: Categoria) =>
+        mostraSede && c.scuola_id ? t('dashMsCategoriaDiSede', { categoria: c.nome, nome: nomeSedeTesto(c.scuola_id) }) : c.nome;
 
     // mappa retta del periodo selezionato: alunno_id -> pagamento
     const rettaByAlunno = useMemo(() => {
@@ -195,7 +361,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
     const alunniFiltrati = useMemo(() => {
         const q = search.trim().toLowerCase();
-        return alunni.filter((a) => {
+        return filtraPerClassi(alunni, scelteValide, (a) => a.section_id ?? null).filter((a) => {
             if (q) {
                 const nome = `${a.nome ?? ''} ${a.cognome ?? ''} ${a.classe_sezione ?? ''}`.toLowerCase();
                 if (!nome.includes(q)) return false;
@@ -206,14 +372,14 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             }
             return true;
         });
-    }, [alunni, search, isRettaView, onlyMorosi, rettaByAlunno, oggiStr]);
+    }, [alunni, scelteValide, search, isRettaView, onlyMorosi, rettaByAlunno, oggiStr]);
 
     // Vista CATEGORIA (non-retta): una riga per pagamento (padre escluso), con
     // ricerca su alunno/sezione, filtro morosi e ordinamento per scadenza.
     const righeCategoria = useMemo(() => {
         if (isRettaView) return [];
         const q = search.trim().toLowerCase();
-        return pagamenti
+        return pagamentiVisibili
             .filter((p) => p.categoria_id === fCategoria && p.tipo !== 'padre')
             .filter((p) => {
                 if (q) {
@@ -227,46 +393,134 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 return true;
             })
             .sort((a, b) => (a.scadenza || '').localeCompare(b.scadenza || ''));
-    }, [pagamenti, fCategoria, isRettaView, search, onlyMorosi, oggiStr, alunnoById]);
+    }, [pagamentiVisibili, fCategoria, isRettaView, search, onlyMorosi, oggiStr, alunnoById]);
 
-    const totals = useMemo(() => calcolaTotaliPagamenti(pagamenti), [pagamenti]);
+    const totals = useMemo(() => calcolaTotaliPagamenti(pagamentiVisibili), [pagamentiVisibili]);
+
+    /**
+     * KPI per sede: le stesse somme delle card, una riga per sede visibile (nell'ordine del
+     * contesto), più «Sede non indicata» se qualche riga non la porta. Solo con più sedi.
+     */
+    const totaliPerSede = useMemo(() => {
+        if (!mostraSede) return [];
+        const gruppi = new Map<string, Pagamento[]>(sediVisibili.map((id) => [id, []]));
+        for (const p of pagamentiVisibili) {
+            const k = p.scuola_id ?? '';
+            const g = gruppi.get(k);
+            if (g) g.push(p); else gruppi.set(k, [p]);
+        }
+        return [...gruppi].map(([id, righe]) => ({ id, totali: calcolaTotaliPagamenti(righe) }));
+    }, [mostraSede, sediVisibili, pagamentiVisibili]);
+
+    // ── «Genera mancanti» ─────────────────────────────────────────────────────────────────
+    // Quanti iscritti non hanno la retta del mese, PER SEDE. Si conta su tutti gli iscritti
+    // della sede (non sulla ricerca né sul filtro classi): la generazione è di sede intera,
+    // e il numero che si legge deve essere quello che il bottone produce.
+    const mancantiPerSede = useMemo(() => {
+        const m = new Map<string, number>();
+        if (!isRettaView) return m;
+        for (const a of alunni) {
+            if (rettaByAlunno.has(a.id)) continue;
+            const k = a.scuola_id ?? sedeUnica ?? '';
+            m.set(k, (m.get(k) ?? 0) + 1);
+        }
+        return m;
+    }, [isRettaView, alunni, rettaByAlunno, sedeUnica]);
+    /** Le sedi fra cui scegliere: le visibili che hanno almeno un mancante. */
+    const sediConMancanti = sediVisibili.filter((id) => (mancantiPerSede.get(id) ?? 0) > 0);
+    const sedeGeneraValida = mostraSede ? (sediConMancanti.includes(sedeGenera) ? sedeGenera : '') : (sedeUnica ?? '');
+    const mancantiTotali = mostraSede
+        ? sediConMancanti.reduce((n, id) => n + (mancantiPerSede.get(id) ?? 0), 0)
+        : [...mancantiPerSede.values()].reduce((n, v) => n + v, 0);
+    const mancantiRette = mostraSede && sedeGeneraValida ? (mancantiPerSede.get(sedeGeneraValida) ?? 0) : mancantiTotali;
 
     // genera la retta del mese selezionato (per chi non ce l'ha ancora), SULLA
-    // SEDE SELEZIONATA: senza `scuola_id` il server emetteva su tutti i plessi.
-    // E la risposta ora si guarda: un rifiuto (sede non dichiarata, sede di
-    // collaudo) restava altrimenti del tutto invisibile all'operatore.
+    // SEDE SCELTA: senza `scuola_id` il server emetteva su tutti i plessi, e con
+    // più sedi visibili la sede la sceglie l'operatore (il bottone è spento finché
+    // non l'ha fatto). La risposta si guarda: un rifiuto (sede non dichiarata, sede
+    // di collaudo) resterebbe altrimenti invisibile all'operatore.
     const generaMese = async () => {
+        if (!sedeGeneraValida) return;
         setGenerando(true);
         try {
             const res = await fetch('/api/pagamenti/genera-rette', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                body: JSON.stringify({ periodo: mese.slice(0, 7), scuola_id: scuolaId }),
+                body: JSON.stringify({ periodo: mese.slice(0, 7), scuola_id: sedeGeneraValida }),
             });
-            const j = await res.json().catch(() => null);
+            const j = await res.json().catch((e: unknown) => {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `genera-rette-corpo-illeggibile: ${nomeErrore(e)}`, route: '/admin/pagamenti', stato: res.status });
+                return null;
+            });
             if (!res.ok || !j?.success) setError(messaggioDaCorpo(j, t('dashErrCaricamento')));
             else setError(null);
             await load();
+        } catch (e) {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `genera-rette-non-partita: ${nomeErrore(e)}`, route: '/admin/pagamenti', stato: 0 });
+            setError(t('dashErrCaricamento'));
         } finally {
             setGenerando(false);
         }
     };
 
-    const mancantiRette = isRettaView ? alunniFiltrati.filter((a) => !rettaByAlunno.has(a.id)).length : 0;
+    // ── Nuovo acquisto: la sede ───────────────────────────────────────────────────────────
+    // Una categoria di sede vale solo per quella sede; una globale per tutte le visibili.
+    const sediAcquisto = categoriaSel?.scuola_id ? sediVisibili.filter((id) => id === categoriaSel.scuola_id) : sediVisibili;
+    const chiedeSedeAcquisto = sediAcquisto.length > 1;
+    const sedeAcquisto = chiedeSedeAcquisto
+        ? (sediAcquisto.includes(sedeAcquistoScelta) ? sedeAcquistoScelta : '')
+        : (sediAcquisto[0] ?? '');
+    // Con più sedi l'elenco dei bambini è SEMPRE quello della sede dell'acquisto, anche quando
+    // non c'è domanda (categoria di una sede sola): la POST ricava la sede dall'ALUNNO e non
+    // guarda la categoria, quindi un bambino di un'altra sede produrrebbe una voce di quella
+    // sede con la categoria sbagliata — mentre il modale mostrerebbe la sede della categoria.
+    const alunniAcquisto = mostraSede
+        ? (sedeAcquisto ? alunniFiltrati.filter((a) => a.scuola_id === sedeAcquisto) : [])
+        : alunniFiltrati;
+    /** L'acquisto non può partire: con più sedi manca la sede (da scegliere, o nessuna ammessa). */
+    const acquistoSenzaSede = mostraSede && !sedeAcquisto;
+    const nuovoAcqValido = alunniAcquisto.some((a) => a.id === nuovoAcqId) ? nuovoAcqId : '';
+
+    // ── Modifica di una voce: le categorie della SUA sede ─────────────────────────────────
+    // Con più sedi la GET porta le categorie di ogni sede (K2), e il modale le elenca per
+    // nome: due «Gita» identiche, e a una voce di Giugliano si potrebbe dare quella di Aversa.
+    // Restano le globali, quelle della sede della voce e — sempre — quella che la voce ha
+    // già (anche se incoerente: toglierla dal select la cambierebbe in silenzio al salvataggio).
+    // Le categorie di sede portano il nome della sede (`etichettaCategoria`, come il filtro).
+    const categorieModifica = editing
+        ? categorie
+            .filter((c) => !c.scuola_id || !editing.scuola_id || c.scuola_id === editing.scuola_id || c.id === editing.categoria_id)
+            .map((c) => ({ ...c, nome: etichettaCategoria(c) }))
+        : [];
+
+    // Export dello scadenzario: la sede solo se dichiarata, le classi solo se scelte (K2).
+    const hrefExport = useMemo(() => {
+        const qs = new URLSearchParams({ tipo: 'scadenzario', userId });
+        if (scuolaId) qs.set('scuola_id', scuolaId);
+        if (scelteValide.length > 0) qs.set('section_ids', scelteValide.join(','));
+        return `/api/pagamenti/export?${qs.toString()}`;
+    }, [userId, scuolaId, scelteValide]);
 
     // Vista agenda: pagamenti aperti del bucket selezionato, per scadenza crescente.
     const agendaItems = useMemo(() => {
         if (!agendaFiltro) return [];
-        return bucketScadenze(pagamenti, oggiStr)[agendaFiltro].items
+        return bucketScadenze(pagamentiVisibili, oggiStr)[agendaFiltro].items
             .slice()
             .sort((a, b) => (a.scadenza || '').localeCompare(b.scadenza || ''));
-    }, [agendaFiltro, pagamenti, oggiStr]);
+    }, [agendaFiltro, pagamentiVisibili, oggiStr]);
 
+    // Badge Aruba: le sedi non configurate e quelle non verificate, solo se l'esito è di
+    // QUESTE sedi (un esito di prima del cambio sede non si mostra).
+    const esitiAruba = aruba && aruba.chiave === chiaveSedi ? aruba.esiti : {};
+    const arubaNonAttive = sediVisibili.filter((id) => esitiAruba[id] === 'non-attiva');
+    const arubaNonVerificate = sediVisibili.filter((id) => esitiAruba[id] === 'errore');
+
+    // Il banner degli scarti resta su TUTTE le righe: è un allarme, non una vista.
     const fattureScartate = pagamenti.filter((p) => p.fattura_stato === 'scartata').length;
     // Mappa alunno → sospeso (DL-021), derivata dal payload pagamenti.
     const sospesoByAlunno = new Map<string, boolean>();
     for (const p of pagamenti) {
-        if (p.alunno_id) sospesoByAlunno.set(p.alunno_id, !!(p as { alunni?: { sospeso?: boolean } }).alunni?.sospeso);
+        if (p.alunno_id) sospesoByAlunno.set(p.alunno_id, !!p.alunni?.sospeso);
     }
 
     return (
@@ -283,12 +537,41 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 </div>
             )}
 
-            {/* Gating Aruba/SDI (M2.4): segnale visibile quando la fatturazione non è configurata */}
-            {arubaGated && (
-                <div className="mb-4 flex items-center gap-2 flex-wrap">
+            {/* Iscritti non caricati: la vista Rette vuota, i mancanti a 0 e l'acquisto senza
+                bambini NON devono sembrare «nessun alunno». */}
+            {erroreAlunni && (
+                <div data-testid="errore-alunni" role="alert" className="mb-4 flex items-center gap-2 rounded-xl border-2 border-kidville-error-soft bg-kidville-error-soft px-4 py-3 text-kidville-error">
+                    <AlertTriangle size={18} />
+                    <span className="flex-1 font-maven text-sm font-bold">{t('dashMsErrAlunni')}</span>
+                    <button onClick={() => { setLoading(true); load(); }}
+                        className="rounded-pill border border-kidville-error/40 bg-kidville-white px-3 py-1 font-maven text-xs font-bold text-kidville-error transition-colors hover:bg-kidville-error-soft">
+                        {t('dashRiprova')}
+                    </button>
+                </div>
+            )}
+
+            {/* Gating Aruba/SDI (M2.4), PER SEDE: segnale visibile quando la fatturazione non è
+                configurata, con il nome delle sedi quando sono più d'una. Il testo è `sub` e non
+                `muted`: dice cosa non funziona, e il contrasto conta. */}
+            {arubaNonAttive.length > 0 && (
+                <div data-testid="aruba-non-attiva" className="mb-4 flex items-center gap-2 flex-wrap">
                     <Badge tone="warn">{t('dashIntegrNonConfig')}</Badge>
-                    <span className="font-maven text-xs text-kidville-muted">
-                        {t('dashArubaNonAttiva')}
+                    <span className="font-maven text-xs text-kidville-sub">
+                        {mostraSede
+                            ? t('dashMsArubaNonAttivaSedi', { elenco: elencoNomi(arubaNonAttive.map(nomeSedeTesto), f.locale), n: arubaNonAttive.length })
+                            : t('dashArubaNonAttiva')}
+                    </span>
+                </div>
+            )}
+            {/* La configurazione di una sede NON letta (errore, rete giù) non è «tutto a posto»:
+                lo si dice, e il guasto è già nel log. */}
+            {arubaNonVerificate.length > 0 && (
+                <div data-testid="aruba-non-verificata" className="mb-4 flex items-center gap-2 flex-wrap">
+                    <Badge tone="warn">{t('dashMsArubaDaVerificare')}</Badge>
+                    <span className="font-maven text-xs text-kidville-sub">
+                        {mostraSede
+                            ? t('dashMsArubaNonVerificataSedi', { elenco: elencoNomi(arubaNonVerificate.map(nomeSedeTesto), f.locale) })
+                            : t('dashMsArubaNonVerificata')}
                     </span>
                 </div>
             )}
@@ -319,10 +602,53 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             </div>
             )}
 
+            {/* KPI PER SEDE: con più sedi accorpate il totale da solo non dice a quale
+                segreteria tocca cosa. Stesse quattro somme, una riga per sede; stesso
+                filtro classi delle card. Anche questi sono totali della Direzione. */}
+            {eDirezione && mostraSede && !loading && (
+                <div data-testid="kpi-per-sede" className={cx('mb-5', TABLE_WRAP)}>
+                    <table className={TABLE}>
+                        <caption className="px-3 pt-3 text-left font-barlow text-sm font-extrabold uppercase text-kidville-green">{t('dashMsKpiTitolo')}</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col" className={TH}>{t('dashMsThSede')}</th>
+                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashIncassato')}</th>
+                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashDaIncassare')}</th>
+                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashScadutoMorosita')}</th>
+                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashDaFatturare')}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {totaliPerSede.map(({ id, totali }) => (
+                                <tr key={id || 'sede-non-indicata'} className={TROW}>
+                                    <th scope="row" className={cx(TD, 'text-left font-semibold text-kidville-green')}>{nomeSedeTesto(id)}</th>
+                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.incassato)}</td>
+                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.daIncassare)}</td>
+                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.scaduto)}</td>
+                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.daFatturare)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {/* Filtro classi (K6): sta SOPRA l'agenda perché vale per KPI, agenda, tabelle
+                ed export — anche in vista agenda, dove la barra dei filtri si nasconde. */}
+            {!loading && (
+                <FiltroClassiContabilita
+                    classi={classi}
+                    selezionate={scelteValide}
+                    onChange={setClassiScelte}
+                    mostraSede={mostraSede}
+                    className="mb-4"
+                />
+            )}
+
             {/* Agenda scadenze / aging: i bucket filtrano la lista sottostante.
                 Alla Segreteria restano i CONTEGGI e il clic — è uno strumento di lavoro,
                 non un cruscotto — e spariscono i soli importi (`mostraImporti`). */}
-            {!loading && <AgendaScadenze pagamenti={pagamenti} attivo={agendaFiltro} onSelect={setAgendaFiltro} mostraImporti={eDirezione} />}
+            {!loading && <AgendaScadenze pagamenti={pagamentiVisibili} attivo={agendaFiltro} onSelect={setAgendaFiltro} mostraImporti={eDirezione} mostraSede={mostraSede} />}
 
             {/* Filtri (nascosti in vista agenda: non filtrerebbero la lista del bucket) */}
             {!agendaFiltro && (
@@ -336,7 +662,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 </div>
                 <select value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}
                     className={FILTER_SELECT}>
-                    {categorie.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                    {categorie.map((c) => <option key={c.id} value={c.id}>{etichettaCategoria(c)}</option>)}
                 </select>
 
                 {/* Filtro mensilità: solo nella vista Rette */}
@@ -363,7 +689,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <button onClick={() => { setLoading(true); load(); }} aria-label={t('dashAggiorna')} title={t('dashAggiorna')} className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                     <RefreshCw size={14} />
                 </button>
-                <LinkDocumento href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title={t('dashEsportaXlsx')} aria-label={t('dashEsportaXlsx')}
+                <LinkDocumento href={hrefExport} title={t('dashEsportaXlsx')} aria-label={t('dashEsportaXlsx')}
                     modo="scarica" nomeFile="scadenzario.xlsx" mime={MIME_XLSX} etichetta="export-scadenzario"
                     className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                     <Download size={14} />
@@ -371,15 +697,30 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             </div>
             )}
 
-            {/* CTA generazione rette mancanti */}
-            {isRettaView && !loading && mancantiRette > 0 && (
-                <div className="flex items-center justify-between gap-2 bg-kidville-warn-soft border border-kidville-warn/30 rounded-card px-3 py-2 mb-3">
-                    <span className="font-maven text-xs text-kidville-warn">
-                        {mancantiRette} {t('dashAlunniSenzaRettaMid')} {periodi.find((p) => p.periodo === mese)?.label}.
+            {/* CTA generazione rette mancanti. Con più sedi la sede si SCEGLIE (il bottone resta
+                spento finché non la si sceglie): la generazione è di UNA sede, e il numero
+                mostrato diventa quello della sede scelta. */}
+            {isRettaView && !loading && mancantiTotali > 0 && (
+                <div data-testid="cta-genera-mancanti" className="flex flex-wrap items-center justify-between gap-2 bg-kidville-warn-soft border border-kidville-warn/30 rounded-card px-3 py-2 mb-3">
+                    <span data-testid="cta-genera-mancanti-frase" className="font-maven text-xs text-kidville-warn-strong">
+                        {t('dashMsAlunniSenzaRetta', { n: mancantiRette, mese: periodi.find((p) => p.periodo === mese)?.label ?? '' })}
                     </span>
-                    <button onClick={generaMese} disabled={generando} className={BTN_PRIMARY_SM}>
-                        {generando ? t('dashGenerando') : t('dashGeneraMancanti')}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                        {mostraSede && (
+                            <label className="flex items-center gap-2 font-maven text-xs text-kidville-warn-strong">
+                                {t('dashMsGeneraSedeLabel')}
+                                <select value={sedeGeneraValida} onChange={(e) => setSedeGenera(e.target.value)} className={FILTER_SELECT}>
+                                    <option value="">{t('dashMsScegliSede')}</option>
+                                    {sediConMancanti.map((id) => (
+                                        <option key={id} value={id}>{t('dashMsGeneraOpzione', { nome: nomeSedeTesto(id), n: mancantiPerSede.get(id) ?? 0 })}</option>
+                                    ))}
+                                </select>
+                            </label>
+                        )}
+                        <button onClick={generaMese} disabled={generando || !sedeGeneraValida} className={BTN_PRIMARY_SM}>
+                            {generando ? t('dashGenerando') : t('dashGeneraMancanti')}
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -407,6 +748,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                             <thead>
                                 <tr>
                                     <th className={TH}>{t('dashThAlunno')}</th>
+                                    {mostraSede && <th className={TH}>{t('dashMsThSede')}</th>}
                                     <th className={TH}>{t('dashThDescrizione')}</th>
                                     <th className={TH}>{t('dashThScadenza')}</th>
                                     <th className={cx(TH, 'text-right')}>{t('dashThResiduo')}</th>
@@ -421,6 +763,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                     return (
                                         <tr key={p.id} className={TROW}>
                                             <td className={cx(TD, 'font-semibold text-kidville-green')}>{p.alunni?.nome} {p.alunni?.cognome}</td>
+                                            {mostraSede && <td className={TD}><BadgeSede nome={p.scuola_nome} /></td>}
                                             <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
                                             <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
                                             <td className={cx(TD, 'text-right font-bold text-kidville-green')}>{formatEuro(residuo)}</td>
@@ -446,6 +789,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 key={p.id}
                                 pagamento={p}
                                 alunnoLabel={`${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || '—'}
+                                mostraSede={mostraSede}
                                 onIncassa={() => setSelected(p)}
                                 onApri={() => setDrawer(p)}
                             />
@@ -457,7 +801,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             ) : isRettaView ? (
                 /* ---- Vista RETTE: tabella su desktop, card-list su mobile ---- */
                 alunniFiltrati.length === 0 ? (
-                <EmptyRiga emoji="🧒" testo={t('dashVuotoAlunni')} />
+                // Con la GET degli iscritti fallita l'elenco vuoto NON è «nessun alunno»: lo
+                // dice il banner d'errore qui sopra, e qui non si afferma il contrario.
+                erroreAlunni ? null : <EmptyRiga emoji="🧒" testo={t('dashVuotoAlunni')} />
                 ) : (
                 <>
                 <div className={cx('hidden lg:block', TABLE_WRAP)}>
@@ -465,6 +811,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         <thead>
                             <tr>
                                 <th className={TH}>{t('dashThAlunno')}</th>
+                                {mostraSede && <th className={TH}>{t('dashMsThSede')}</th>}
                                 <th className={TH}>{t('dashThSezione')}</th>
                                 <th className={cx(TH, 'text-right')}>{t('dashThImporto')}</th>
                                 <th className={cx(TH, 'text-right')}>{t('dashThPagato')}</th>
@@ -485,6 +832,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                 <Badge tone="error" className="ml-1 align-middle">{t('dashSospeso')}</Badge>
                                             )}
                                         </td>
+                                        {mostraSede && <td className={TD}><BadgeSede nome={nomeSede(a.scuola_id)} /></td>}
                                         <td className={cx(TD, 'text-kidville-muted')}>{a.classe_sezione || '—'}</td>
                                         <td className={cx(TD, 'text-right text-kidville-green')}>{p ? formatEuro(p.importo) : '—'}</td>
                                         <td className={cx(TD, 'text-right text-kidville-muted')}>{p ? formatEuro(p.importo_pagato) : '—'}</td>
@@ -527,8 +875,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         const p = rettaByAlunno.get(a.id);
                         if (!p) {
                             return (
-                                <div key={a.id} className="flex items-center justify-between rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
-                                    <p className="font-maven text-sm font-bold text-kidville-green">{a.nome} {a.cognome}</p>
+                                <div key={a.id} className="flex items-center justify-between gap-2 rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
+                                    <div className="min-w-0">
+                                        <p className="font-maven text-sm font-bold text-kidville-green">{a.nome} {a.cognome}</p>
+                                        {mostraSede && <BadgeSede nome={nomeSede(a.scuola_id)} className="mt-1" />}
+                                    </div>
                                     <Badge tone="neutral">{t('dashNonGenerata')}</Badge>
                                 </div>
                             );
@@ -540,6 +891,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 alunnoLabel={`${a.nome ?? ''} ${a.cognome ?? ''}`.trim()}
                                 sezioneLabel={a.classe_sezione}
                                 sospeso={!!sospesoByAlunno.get(a.id)}
+                                mostraSede={mostraSede}
                                 onIncassa={() => setSelected(p)}
                                 onApri={() => setDrawer(p)}
                             />
@@ -553,16 +905,36 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <>
                 {/* Aggiungi acquisto: la tabella per-pagamento non elenca gli alunni senza acquisti */}
                 <div className="flex flex-wrap items-center gap-2 mb-3">
-                    <select value={nuovoAcqId} onChange={(e) => setNuovoAcqId(e.target.value)}
-                        className={FILTER_SELECT}>
-                        <option value="">{t('dashSelezionaAlunno')}</option>
-                        {alunniFiltrati.map((a) => (
+                    {/* Con più sedi l'acquisto CHIEDE la sede prima del bambino: l'elenco dei
+                        bambini diventa quello della sede scelta, e la sede arriva al modale. */}
+                    {chiedeSedeAcquisto && (
+                        <label className="flex items-center gap-2 font-maven text-xs text-kidville-sub">
+                            {t('dashMsAcquistoSedeLabel')}
+                            <select value={sedeAcquisto} onChange={(e) => { setSedeAcquistoScelta(e.target.value); setNuovoAcqId(''); }}
+                                className={FILTER_SELECT}>
+                                <option value="">{t('dashMsScegliSede')}</option>
+                                {sediAcquisto.map((id) => <option key={id} value={id}>{nomeSedeTesto(id)}</option>)}
+                            </select>
+                        </label>
+                    )}
+                    <select value={nuovoAcqValido} onChange={(e) => setNuovoAcqId(e.target.value)}
+                        disabled={acquistoSenzaSede}
+                        aria-label={t('dashSelezionaAlunno')}
+                        className={cx(FILTER_SELECT, 'disabled:cursor-not-allowed disabled:opacity-60')}>
+                        <option value="">{chiedeSedeAcquisto && !sedeAcquisto ? t('dashMsScegliPrimaSede') : t('dashSelezionaAlunno')}</option>
+                        {alunniAcquisto.map((a) => (
                             <option key={a.id} value={a.id}>{a.nome} {a.cognome}{a.classe_sezione ? ` · ${a.classe_sezione}` : ''}</option>
                         ))}
                     </select>
                     <button
-                        disabled={!nuovoAcqId || !categoriaSel}
-                        onClick={() => { const a = alunnoById.get(nuovoAcqId); if (a && categoriaSel) { setQuick({ alunno: a, categoria: categoriaSel }); setNuovoAcqId(''); } }}
+                        disabled={!nuovoAcqValido || !categoriaSel || acquistoSenzaSede}
+                        onClick={() => {
+                            const a = alunnoById.get(nuovoAcqValido);
+                            if (a && categoriaSel) {
+                                setQuick({ alunno: a, categoria: categoriaSel, scuolaId: sedeAcquisto || undefined });
+                                setNuovoAcqId('');
+                            }
+                        }}
                         className="inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-2 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
                         <Plus size={15} /> {t('dashNuovoAcquisto')}
                     </button>
@@ -576,6 +948,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         <thead>
                             <tr>
                                 <th className={TH}>{t('dashThAlunno')}</th>
+                                {mostraSede && <th className={TH}>{t('dashMsThSede')}</th>}
                                 <th className={TH}>{t('dashThDescrizione')}</th>
                                 <th className={TH}>{t('dashThScadenza')}</th>
                                 <th className={cx(TH, 'text-right')}>{t('dashThImporto')}</th>
@@ -597,6 +970,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                 <Badge tone="error" className="ml-1 align-middle">{t('dashSospeso')}</Badge>
                                             )}
                                         </td>
+                                        {mostraSede && <td className={TD}><BadgeSede nome={p.scuola_nome} /></td>}
                                         <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
                                         <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
                                         <td className={cx(TD, 'text-right text-kidville-green')}>{formatEuro(p.importo)}</td>
@@ -638,6 +1012,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                             pagamento={p}
                             alunnoLabel={`${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || '—'}
                             sospeso={!!sospesoByAlunno.get(p.alunno_id)}
+                            mostraSede={mostraSede}
                             onIncassa={() => setSelected(p)}
                             onApri={() => setDrawer(p)}
                         />
@@ -662,7 +1037,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     alunno={quick.alunno}
                     categoria={quick.categoria}
                     userId={userId}
-                    scuolaId={scuolaId}
+                    scuolaId={quick.scuolaId}
+                    sedeNome={mostraSede && quick.scuolaId ? nomeSedeTesto(quick.scuolaId) : undefined}
                     onClose={() => setQuick(null)}
                     onDone={() => { setQuick(null); load(); }}
                 />
@@ -671,7 +1047,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             {editing && (
                 <ModificaPagamentoModal
                     pagamento={editing}
-                    categorie={categorie}
+                    categorie={categorieModifica}
                     userId={userId}
                     onClose={() => setEditing(null)}
                     onDone={() => { setEditing(null); load(); }}
@@ -682,7 +1058,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <RateizzaModal
                     alunno={rateizza.alunno}
                     userId={userId}
-                    scuolaId={scuolaId}
+                    scuolaId={rateizza.pagamento.scuola_id ?? scuolaId ?? undefined}
                     categoriaId={rateizza.pagamento.categoria_id}
                     descrizione={rateizza.pagamento.descrizione}
                     importoTotale={Number(rateizza.pagamento.importo)}
@@ -697,6 +1073,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <PagamentoDrawer
                     pagamento={drawer}
                     userId={userId}
+                    mostraSede={mostraSede}
                     onClose={() => setDrawer(null)}
                     onIncassa={() => { setSelected(drawer); setDrawer(null); }}
                     onModifica={() => { setEditing(drawer); setDrawer(null); }}

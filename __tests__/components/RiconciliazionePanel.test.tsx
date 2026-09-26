@@ -308,7 +308,42 @@ describe('RiconciliazionePanel — l’estratto conto si carica com’è', () =>
     expect(chiavi).toContain('x-user-id');
     const fd = opzioni.body as FormData;
     expect(fd.get('file')).toBeInstanceOf(File);
+    // Caso a UNA sede: la sede scelta viaggia ancora, com'era.
     expect(fd.get('scuola_id')).toBe('s1');
+  });
+
+  /**
+   * ─── PIÙ SEDI (P5b, 2026-09-26): LA SEDE NON SI MANDA, E MAI COME TESTO ─────
+   *
+   * Con più sedi la pagina passa `scuolaId = null`. `corpo.append('scuola_id', null)`
+   * spedirebbe la STRINGA "null" (FormData converte tutto in testo), e un
+   * `String(undefined)` la stringa "undefined": il server le respinge con 422
+   * (contratto K5). Il campo deve semplicemente NON esserci.
+   */
+  it('con più sedi (scuolaId null) il FormData NON porta scuola_id — né "null" né "undefined"', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: { method?: string }) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione') && opts?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { nuovi: 1, duplicati: 0, scartate: 0, suggeriti: 0, da_abbinare: 1 } }) };
+      }
+      if (String(url).includes('/api/pagamenti/riconciliazione')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: movimenti }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId={null} />);
+    await waitFor(() => expect(screen.getByText(/Bonifico retta/)).toBeInTheDocument());
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['x'], 'Conti.xls', { type: 'application/vnd.ms-excel' })] } });
+
+    await waitFor(() => expect(postDi(fetchMock)).toBeTruthy());
+    const fd = (postDi(fetchMock) as [string, { body: FormData }])[1].body;
+    expect(fd.get('file')).toBeInstanceOf(File);
+    expect(fd.has('scuola_id')).toBe(false);
+    const valori = [...fd.values()].filter((v) => typeof v === 'string');
+    expect(valori).not.toContain('undefined');
+    expect(valori).not.toContain('null');
   });
 
   it('oltre il tetto della piattaforma il file NON parte, e lo si dice', async () => {
@@ -331,6 +366,34 @@ describe('RiconciliazionePanel — l’estratto conto si carica com’è', () =>
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     expect(screen.getByRole('alert').textContent).toMatch(/4 MB/);
     expect(postDi(fetchMock)).toBeUndefined();
+  });
+});
+
+describe('RiconciliazionePanel — pagamenti aperti con una o più sedi (P5b)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  const urlAperti = (fetchMock: ReturnType<typeof vi.fn>) =>
+    fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.includes('/api/pagamenti?'));
+
+  it('con una sede il GET dei pagamenti aperti la dichiara', async () => {
+    const fetchMock = stubFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(urlAperti(fetchMock).length).toBeGreaterThan(0));
+    expect(urlAperti(fetchMock)[0]).toContain('scuola_id=s1');
+  });
+
+  it('con più sedi (null) il GET dei pagamenti aperti OMETTE scuola_id: niente "null" nell’indirizzo', async () => {
+    const fetchMock = stubFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId={null} />);
+    await waitFor(() => expect(urlAperti(fetchMock).length).toBeGreaterThan(0));
+    for (const u of urlAperti(fetchMock)) {
+      expect(u).not.toContain('scuola_id');
+      expect(u).not.toContain('null');
+      expect(u).not.toContain('undefined');
+      expect(u).toContain('solo_aperti=true');
+    }
   });
 });
 
@@ -1540,6 +1603,66 @@ describe('RiconciliazionePanel — filtro per sede', () => {
     await screen.findByText(/Mensa/);
 
     expect(f.mock.calls.filter((c) => String(c[0]).includes('/riconciliazione')).length).toBe(prima);
+  });
+
+  /**
+   * ─── LA SEDE SULLA RIGA (P5b, 2026-09-26) ──────────────────────────────────
+   *
+   * Il filtro dice quali sedi ci sono; la riga deve dire DI QUALE è lei, senza
+   * dover filtrare per scoprirlo. Stessa fonte del filtro (`sedeDiRiga`): NOTA
+   * sulla confermata, DEDOTTA sulle altre, e la rossa lo dichiara. Le parole
+   * «nota»/«dedotta» sono diverse di proposito: una sede dedotta presentata come
+   * certa è il falso positivo che la rotta si vieta.
+   */
+  const rigaDi = (testoCausale: string | RegExp) =>
+    screen.getByText(testoCausale).closest('button') as HTMLElement;
+
+  it('con più sedi ogni riga dice la sua: nota, dedotta o non riconosciuta', async () => {
+    render(<RiconciliazionePanel userId="u1" scuolaId={null} />);
+    await screen.findByText(/Bonifico retta/);
+
+    // s4, confermata su Giugliano: sede NOTA
+    const confermata = rigaDi(/Retta saldata/);
+    expect(within(confermata).getByText('Sede: Kidville Giugliano')).toBeTruthy();
+    // s2, dedotta su Cesa: si dice che è DEDOTTA
+    const dedotta = rigaDi(/^Mensa/);
+    expect(within(dedotta).getByText('Sede dedotta: Kidville Cesa')).toBeTruthy();
+    // s1, dedotta su Giugliano
+    expect(within(rigaDi(/Bonifico retta/)).getByText('Sede dedotta: Kidville Giugliano')).toBeTruthy();
+    // s3, nessuna sede: lo dice invece di tacere
+    expect(within(rigaDi('Ignoto')).getByText('Sede non riconosciuta')).toBeTruthy();
+  });
+
+  it('il nome non letto non diventa un uuid: si dice «nome non disponibile»', async () => {
+    vi.stubGlobal('fetch', stubConSedi(conSedi, { sedi: { [GIU]: 'Kidville Giugliano' } }));
+    render(<RiconciliazionePanel userId="u1" scuolaId={null} />);
+    await screen.findByText(/Bonifico retta/);
+    const dedotta = rigaDi(/^Mensa/);
+    // una frase sola, senza la parola «Sede» ripetuta dentro sé stessa
+    expect(within(dedotta).getByText('Sede dedotta, nome non disponibile')).toBeTruthy();
+    expect(dedotta.textContent).not.toContain('Sede senza nome');
+    expect(dedotta.textContent).not.toContain(CESA);
+  });
+
+  it('anche la sede NOTA col nome non letto resta una frase sola, senza uuid', async () => {
+    vi.stubGlobal('fetch', stubConSedi(conSedi, { sedi: { [CESA]: 'Kidville Cesa' } }));
+    render(<RiconciliazionePanel userId="u1" scuolaId={null} />);
+    await screen.findByText(/Bonifico retta/);
+    const confermata = rigaDi(/Retta saldata/);
+    expect(within(confermata).getByText('Sede nota, nome non disponibile')).toBeTruthy();
+    expect(confermata.textContent).not.toContain('Sede senza nome');
+    expect(confermata.textContent).not.toContain(GIU);
+    // e la dedotta sullo stesso uuid lo dice da dedotta
+    expect(within(rigaDi(/Bonifico retta/)).getByText('Sede dedotta, nome non disponibile')).toBeTruthy();
+  });
+
+  it('con UNA sede sola nelle righe la riga non ripete la sede (niente rumore)', async () => {
+    const soloGiugliano = [conSedi[0], conSedi[3]];
+    vi.stubGlobal('fetch', stubConSedi(soloGiugliano));
+    render(<RiconciliazionePanel userId="u1" scuolaId={GIU} />);
+    await screen.findByText(/Bonifico retta/);
+    expect(within(rigaDi(/Retta saldata/)).queryByText(/Sede:/)).toBeNull();
+    expect(within(rigaDi(/Bonifico retta/)).queryByText(/Sede dedotta/)).toBeNull();
   });
 
   it('«mostrate le prime N» conta le righe A SCHERMO, non quelle scaricate', async () => {

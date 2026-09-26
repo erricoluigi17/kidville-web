@@ -20,6 +20,17 @@ vi.mock('@/lib/context/admin-identity', async (orig) => ({
     useRuoloCockpit: () => identita.ruolo,
 }));
 
+/**
+ * Le sedi del cockpit (P2a): il cruscotto le legge da `useSediAttive()`, che fuori dal
+ * `SedeProvider` lancia. Qui UNA sede, `s1` — la stessa `scuolaId` dei casi storici — così
+ * il rendering resta quello di una sede sola (nessuna colonna Sede, nessuna ripartizione).
+ * Il multi-sede ha il suo file: `PaymentsDashboard-multisede.test.tsx`.
+ */
+vi.mock('@/lib/context/sede-context', async (orig) => ({
+    ...(await orig<typeof import('@/lib/context/sede-context')>()),
+    useSediAttive: () => ({ sedi: [{ id: 's1', nome: 'Sede Uno' }], effettive: ['s1'], selezionate: [], sedeCorrente: 's1', reFetchKey: 's1' }),
+}));
+
 import { PaymentsDashboard } from '@/components/features/admin/pagamenti/PaymentsDashboard';
 import { AgendaScadenze } from '@/components/features/admin/pagamenti/AgendaScadenze';
 

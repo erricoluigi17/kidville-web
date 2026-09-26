@@ -12,6 +12,10 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { caricaSaldoCassa, CASSA_SCHEMA_ASSENTE } from '@/lib/cassa/saldo'
 import { verificaSogliaCassa } from '@/lib/cassa/notifiche'
 import type { CassaChiusura } from '@/lib/cassa/tipi'
+import { sediLetturaCassa, nomiSediCassa } from '@/lib/cassa/lettura-multisede'
+
+/** Chiusura con il nome della sede (K3): la colonna «Sede» dello storico. */
+type ChiusuraConSede = CassaChiusura & { scuola_nome: string | null }
 
 const getQuerySchema = z.object({
   scuola_id: z.preprocess((v) => v || undefined, zUuid.optional()),
@@ -33,6 +37,10 @@ function schemaAssente(err: unknown): boolean {
 const round2 = (n: number) => Math.round(n * 100) / 100
 
 // GET /api/pagamenti/cassa/chiusura?scuola_id=  — SOLO DIREZIONE: storico svuotamenti.
+// Dal 2026-09-26 (K3) la lettura è UNITA: senza scuola_id le chiusure di tutte le
+// sedi attive, ciascuna con `scuola_id` e `scuola_nome`; con scuola_id solo quella
+// (403 se non è fra le proprie). Lo svuotamento (POST) resta per sede.
+// Contratto: docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/contratti/K3.md.
 export const GET = withRoute('pagamenti/cassa/chiusura:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request, RUOLI_DIREZIONE)
@@ -42,24 +50,30 @@ export const GET = withRoute('pagamenti/cassa/chiusura:GET', async (request: Nex
     if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
-    if (sw.response) return sw.response
-    const scuolaId = sw.scuolaId as string
+    const scope = await sediLetturaCassa(request, supabase, auth.user, q.data.scuola_id, 'pagamenti/cassa/chiusura:GET')
+    if (scope.response) return scope.response
+    const sedi = scope.sedi
+    if (sedi.length === 0) return NextResponse.json({ disponibile: true, chiusure: [] })
 
     const { data, error } = await supabase
       .from('cassa_chiusure')
       .select('*')
-      .eq('scuola_id', scuolaId)
+      .in('scuola_id', sedi)
       .order('eseguita_il', { ascending: false })
     if (error) {
       if (schemaAssente(error)) {
-        logEvento('cassa', 'info', { operazione: 'chiusura:GET', esito: 'schema-assente', scuola_id: scuolaId })
+        logEvento('cassa', 'info', { operazione: 'chiusura:GET', esito: 'schema-assente', sedi: sedi.length })
         return NextResponse.json({ disponibile: false, chiusure: [] })
       }
       logErrore({ operazione: 'pagamenti/cassa/chiusura:GET', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nel recupero delle chiusure' }, { status: 500 })
     }
-    return NextResponse.json({ disponibile: true, chiusure: (data ?? []) as CassaChiusura[] })
+    const nomi = await nomiSediCassa(supabase, sedi, 'pagamenti/cassa/chiusura:GET')
+    const chiusure: ChiusuraConSede[] = ((data ?? []) as CassaChiusura[]).map((c) => ({
+      ...c,
+      scuola_nome: nomi.get(c.scuola_id) ?? null,
+    }))
+    return NextResponse.json({ disponibile: true, chiusure })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/cassa/chiusura:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

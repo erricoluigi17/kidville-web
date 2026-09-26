@@ -17,7 +17,12 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: (...a: unknown[]) => h.requireStaff(...a) }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuolaScrittura: (...a: unknown[]) => h.scuola(...a) }))
+// Dal 2026-09-26 (K3) la GET legge le sedi attive + la `restringiSedi` VERA
+// (lettura unita e per_sede: lettura-multisede.test.ts).
+vi.mock('@/lib/auth/scope', async (importActual) => ({
+  restringiSedi: (await importActual<typeof import('@/lib/auth/scope')>()).restringiSedi,
+  resolveScuoleAttive: (...a: unknown[]) => h.scuola(...a),
+}))
 vi.mock('@/lib/logging/logger', () => ({
   logEvento: (...a: unknown[]) => h.logEvento(...a),
   logErrore: (...a: unknown[]) => h.logErrore(...a),
@@ -26,9 +31,9 @@ vi.mock('@/lib/logging/logger', () => ({
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
-      const result = table === 'incassi' ? h.incassi : h.movimenti
+      const result = table === 'incassi' ? h.incassi : table === 'schools' ? { data: [], error: null } : h.movimenti
       const b: Record<string, unknown> = {}
-      for (const m of ['select', 'eq', 'gte', 'lte', 'order']) b[m] = () => b
+      for (const m of ['select', 'eq', 'in', 'gte', 'lte', 'order']) b[m] = () => b
       b.then = (resolve: (v: unknown) => unknown) => resolve(result)
       return b
     },
@@ -58,7 +63,7 @@ const req = (qs: string) =>
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'admin-1', role: 'admin', scuola_id: SC } })
-  h.scuola.mockResolvedValue({ scuolaId: SC })
+  h.scuola.mockResolvedValue([SC])
   h.incassi = { data: [], error: null }
   h.movimenti = { data: [], error: null }
 })

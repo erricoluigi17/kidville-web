@@ -7,6 +7,8 @@ import {
   movimentoMultiCf,
   labelPagamentoAperto,
   testoRicercaPagamento,
+  apertiDiPiuSedi,
+  type PagamentoApertoUi,
   riepilogoImport,
   SEMAFORO,
   FILTRI,
@@ -92,6 +94,55 @@ describe('labelPagamentoAperto / testoRicercaPagamento', () => {
     const t = testoRicercaPagamento(p)
     expect(t).toContain('mara bianchi')
     expect(t).toContain('retta ottobre')
+  })
+})
+
+// ─── LA SEDE NELLA RICERCA MANUALE (P5b, 2026-09-26) ─────────────────────────
+// Con tre sedi nella stessa lista, «Mara Bianchi · Retta Ottobre» può essere di
+// Giugliano o di Cesa: la sede si dice nella label, ma SOLO quando serve — con
+// una sede sola è rumore su ogni riga.
+describe('labelPagamentoAperto con la sede / apertiDiPiuSedi', () => {
+  const GIU = '11111111-1111-4111-8111-111111111111'
+  const CESA = '22222222-2222-4222-8222-222222222222'
+  const p: PagamentoApertoUi = {
+    id: 'x', descrizione: 'Retta Ottobre', importo: 150, importo_pagato: 30, tipo: 'singolo',
+    alunni: { nome: 'Mara', cognome: 'Bianchi' }, scuola_id: CESA, scuola_nome: 'Kidville Cesa',
+  }
+
+  it('senza opzioni la label NON nomina la sede, anche se il dato c’è (caso a una sede)', () => {
+    expect(labelPagamentoAperto(p)).not.toContain('Kidville Cesa')
+  })
+  it('con { sede: true } la label nomina la sede, accanto al nome del bambino', () => {
+    const l = labelPagamentoAperto(p, { sede: true })
+    expect(l).toContain('Mara Bianchi · Kidville Cesa · Retta Ottobre')
+    expect(l).toContain('120') // il residuo resta
+  })
+  it('con { sede: true } e il nome non letto usa il ripiego, mai l’uuid', () => {
+    const l = labelPagamentoAperto({ ...p, scuola_nome: null }, { sede: true, senzaNome: 'Sede senza nome' })
+    expect(l).toContain('Sede senza nome')
+    expect(l).not.toContain(CESA)
+  })
+  // Senza `scuola_id` la voce NON ha una sede: dire «Sede senza nome» (= la sede
+  // c'è, il nome non è stato letto) sarebbe falso. Si usa l'altro ripiego.
+  it('con { sede: true } e NESSUNA sede non dice «senza nome»: usa il ripiego «senza sede»', () => {
+    const opz = { sede: true, senzaNome: 'Sede senza nome', senzaSede: 'Sede non riconosciuta' }
+    for (const scuola_id of [null, '', undefined]) {
+      const l = labelPagamentoAperto({ ...p, scuola_id, scuola_nome: null }, opz)
+      expect(l).not.toContain('Sede senza nome')
+      expect(l).toContain('Mara Bianchi · Sede non riconosciuta · Retta Ottobre')
+    }
+  })
+  it('senza sede e senza ripiego «senza sede» non nomina nessuna sede (mai «senza nome»)', () => {
+    const l = labelPagamentoAperto({ ...p, scuola_id: null, scuola_nome: null }, { sede: true, senzaNome: 'Sede senza nome' })
+    expect(l).not.toContain('Sede senza nome')
+    expect(l).toContain('Mara Bianchi · Retta Ottobre')
+  })
+  it('apertiDiPiuSedi: vero solo con almeno due sedi DISTINTE', () => {
+    expect(apertiDiPiuSedi([p, { ...p, id: 'y', scuola_id: GIU }])).toBe(true)
+    expect(apertiDiPiuSedi([p, { ...p, id: 'y' }])).toBe(false)
+    // una riga senza sede non conta come «un'altra sede»
+    expect(apertiDiPiuSedi([p, { ...p, id: 'y', scuola_id: null }])).toBe(false)
+    expect(apertiDiPiuSedi([])).toBe(false)
   })
 })
 

@@ -1,4 +1,43 @@
 
+## 🧩 Changelog — Orario delle attività, appello senza orario per i presenti, ore giustificate, contabilità a più sedi con filtro classi, codici fiscali omocodici — 2026-09-26
+
+Branch `feat/orario-attivita-appello-contabilita-cf`. Quattro richieste del titolare, con ogni decisione confermata in chat. Spec in `docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/design.md`, contratti fra i compiti in `contratti/`. Lavoro diviso in 27 compiti piccoli, ciascuno con un esecutore e un critico dedicato; tutti chiusi con «AAA» (2–8 giri).
+
+**Diario 0-6: orario delle attività.**
+- Ogni attività (`eventi_diario.dettagli.activities[]`) può avere `ora_inizio`/`ora_fine` (`HH:MM`, entrambi facoltativi). Nessuna migrazione: i campi stanno nel jsonb.
+- Li scrivono docenti e segreteria, dallo stesso editor.
+- `POST /api/diary/entries` risponde 422 se l'orario non è valido (`ORARIO_ATTIVITA_NON_VALIDO`) o se la fine precede l'inizio (`ORARIO_ATTIVITA_INCOERENTE`).
+- Il genitore legge «dalle … alle …». A lato della voce vede l'inizio della prima attività, altrimenti l'ora del salvataggio come prima.
+
+**Appello.**
+- **Presenti.** Il genitore non vede più l'orario d'ingresso dei «presenti», né in home né nel diario: `api/diary/checkin` non lo invia nemmeno. Nido e infanzia continuano a salvare l'ora del tocco. Il ritardo mostra l'orario d'ingresso.
+- **Primaria, finestra su ritardo e uscita anticipata.** Toccando «ritardo» o «uscita anticipata» si apre una finestra con l'ora attuale modificabile, la spunta «giustificato» e una nota obbligatoria (es. terapia).
+- **Primaria, ore giustificate.** Colonna nuova `presenze.assenza_oraria_giustificata` (migr. `20260926100000`, con CHECK di nota obbligatoria e un trigger che spegne il flag fuori da ritardo/uscita). Le ore giustificate **non contano** nelle ore di assenza (`src/lib/primaria/oreAssenza.ts`), ma lo stato resta ritardo/uscita: l'alunno risulta comunque non presente in classe.
+- Il genitore vede la nota. La giustifica firmata dal genitore resta com'era e non toglie ore.
+
+**Contabilità a più sedi accorpate.**
+- `SedeRequired` resta solo su **Genera** e **Causali**. Scadenzario, Transazioni, Cassa, Solleciti, Riconciliazione, Fiscale e Ticket funzionano con più sedi, e mostrano la sede sulle righe quando le sedi sono più di una.
+- **Scadenzario.** KPI totali con ripartizione per sede. Badge Aruba per ciascuna sede (prima un 400 lo nascondeva in silenzio). Categorie multi-sede. «Genera mancanti» e «Acquisto rapido» chiedono la sede.
+- **Filtro classi.** Selezione multipla, con le classi omonime separate per sede. Vale in Scadenzario, Rette, viste per categoria ed export (`section_ids`).
+- **Transazioni divise per sede.** Una famiglia con figli in più plessi paga in un'unica operazione, divisa in automatico in una transazione per sede, tutto o niente (RPC `registra_transazioni_per_sede`, migr. `20260926100100`). L'eccedenza va sulla sede scelta dall'operatore.
+- **Cassa.** Lettura unita, con saldo e ultimo svuotamento per sede più il totale. Le scritture chiedono la sede nella finestra.
+- **Fiscale.** Revisione fatture con selettore di sede interno. L'export AdE è un file unico con colonna Sede.
+- **Riconciliazione.** L'import dell'estratto conto accetta più sedi, perché il registro è unico.
+- **Difetti preesistenti corretti:**
+  - `GET /api/pagamenti` era troncata a 1000 righe senza avviso; ora è paginata a blocchi;
+  - «Uscite del mese» in Cassa sommava le uscite di sempre;
+  - le ricariche mensa finivano nella sede della transazione e non in quella dell'alunno;
+  - `GET /api/pagamenti/ticket` non controllava la sede per lo staff.
+
+**Codici fiscali omocodici.**
+- Il modulo d'iscrizione pubblico accetta i CF con lettere al posto delle cifre (omocodia), se il carattere di controllo è corretto.
+- La migrazione `20260926100200` aggiorna il pattern nello schema salvato in `form_models`. Al 26/09 il modello attivo lo conteneva 2 volte: 1 riga.
+- Il pannello «Codici fiscali da verificare» non elenca più un omocodico coerente con l'anagrafica. Per le altre differenze restano l'avviso e «Applica»/«Usa questo».
+
+Le tre migrazioni sono state applicate e verificate sul DB della CI (workflow «DB migrate (CI)»). In produzione le applica l'integrazione al merge. `20260926100000` è dichiarata in `MIGRAZIONI_ATTESE_AL_MERGE`.
+
+Gate locale: tsc 0 errori, eslint 0, vitest `1569 passed` (23.182 test), build ok.
+
 ## 🛠️ Changelog — Caricamento affidabile foto e video — 2026-09-25
 
 Branch `codex/fix-caricamenti-media`. Intervento approvato: errori fotocamera visibili e scelta alternativa sulle shell iOS precedenti; coda foto persistente con ripresa per file, sede esplicita, limite per utente e pubblicazione idempotente; riconciliazione del caricamento video e firme rinnovabili; verifica VFR tramite evidenze temporali. Spec e piano in `docs/superpowers/specs/2026-09-25-caricamenti-media-design.md` e `docs/superpowers/plans/2026-09-25-caricamenti-media.md`. Implementazione e collaudi sono documentati nel piano; gate e rilascio sono tracciati nella [PR #170](https://github.com/erricoluigi17/kidville-web/pull/170). Migrazione additiva `20260925180000_gallery_pubblicazione_idempotente` applicata e verificata in produzione: 716 iscrizioni e 3.687 media prima e dopo, registro `gallery_photo_uploads` inizialmente vuoto; 193 migrazioni registrate. Registro idempotente e destinatari sono transazionali; la chiave sopravvive alla purga del media. Il limite rimane 30 firme/10 minuti ed è per utente; la coda conserva file, tag, percorso e orario di ripresa. La codifica VFR conserva la timebase del filtro e i PTS, evitando l’arrotondamento implicito al frame rate medio; i controlli temporali rimangono invariati. Il messaggio del limite di 50 MB si riferisce correttamente a un file più piccolo anche per le foto. Anche gli originali video sono persistiti in blocchi ArrayBuffer da 6 MiB (WebKit rifiuta i Blob in IndexedDB e i video non partivano): un database per caricamento, una transazione breve per blocco e il manifest scritto per ultimo, così il deposito precedente resta intero fino al cambio, lo spazio sul telefono torna libero a fine caricamento e una scrittura interrotta non resta appesa; i depositi orfani vecchi vengono potati. Nella stessa sessione l’invio legge il file scelto: se il salvataggio locale fallisce (telefono pieno) il video parte comunque e il guasto viene registrato; si perde solo la ripresa dopo la chiusura dell’app. Byte locali rotti chiudono il caricamento come `VIDEO_RIPROVA` senza ritentativi inutili, con il codice nei log; un errore arrivato dopo che il caricamento si è concluso altrove non ne riscrive lo stato, e una lettura fallita non distrugge mai un deposito valido. Riscegliere lo stesso file dopo che il suo intento è finito (video pubblicato e poi cancellato, ritirato, sostituito) apre un intento nuovo: prima diceva «in preparazione» senza caricare niente. Il lettore TUS invia byte anche per i Blob legacy. Le nuove foto vengono conservate come byte e MIME e inviate come ArrayBuffer: collaudi reali WebKit hanno riprodotto errori di persistenza/trasferimento dei Blob; le voci legacy rimangono recuperabili. La prova reale del runner Node 22 ha rilevato la dipendenza `xz` assente: preparazione corretta con installazione condizionale prima del download verificato SHA-256; errore esplicito e arresto in caso di fallimento. App Store Connect verificato il 25/09: iOS 1.1 risulta ora `READY_FOR_SALE`; il percorso alternativo copre le shell precedenti ancora installate. Il rilascio web è tracciato separatamente nella PR. Il collaudo genitore attende la risposta reale della galleria e verifica sia unicità nel JSON sia immagine decodificata, distinguendo il caricamento dal risultato finale. Il collaudo della ripresa foto aspetta l’esito della pubblicazione prima di leggerne l’id: la card può comparire nella griglia prima del 201, che parte dopo l’accodamento delle notifiche.

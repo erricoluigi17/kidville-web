@@ -3,6 +3,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { accodaFotoGalleria, drainGalleryPhotoQueue, type AmbitoCodaFoto } from '@/lib/gallery/coda-foto';
+import { corpoPostAppelloDaCoda } from '@/lib/offline/coda-appello-primaria';
 
 // Motore di sincronizzazione offline: gira NEL CLIENT, quindi dentro la WebView
 // nativa. Per questo qui non c'è (e non deve tornare) nessun `console.*`: nella
@@ -494,7 +495,8 @@ export async function syncPendingAppello() {
                 const res = await fetch(`/api/primaria/appello?userId=${uid}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
-                    body: JSON.stringify({ sectionId: r.section_id, data: r.data, alunnoId: r.alunno_id, stato: r.stato }),
+                    // Orario, nota e giustificazione della finestra (A4): vedi `corpoPostAppelloDaCoda`.
+                    body: JSON.stringify(corpoPostAppelloDaCoda(r)),
                 });
                 if (res.ok) {
                     await db.primaria_appello.update(r.id, { sync_status: 'synced' });

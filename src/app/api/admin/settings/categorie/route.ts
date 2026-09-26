@@ -194,6 +194,41 @@ export const GET = withRoute('admin/settings/categorie:GET', async (request: Nex
         request, supabase, auth.user, q.data.scuola_id ?? undefined, 'admin/settings/categorie:GET',
       )
       if (fuori) return fuori
+
+      // K2 (2026-09-26) — LETTURA MULTI-SEDE. Senza `scuola_id` e con più sedi
+      // attive, fino a ieri `resolveScuolaScrittura` rispondeva 400: giusto per
+      // una scrittura, sbagliato per questa lettura. Lo Scadenzario con due o tre
+      // sedi selezionate restava senza causali, in silenzio. Ora si legge
+      // l'UNIONE: globali (`scuola_id` NULL) + le causali di ogni sede attiva.
+      // Ogni riga porta il proprio `scuola_id` (select '*'), così il client sa
+      // di quale plesso è — e le omonime («Gita» di Aversa e di Cesa) restano
+      // distinguibili. Con una sola sede attiva, o con la sede dichiarata, il
+      // percorso è quello di prima, 403 compresi (cookie manomesso → `[]` qui,
+      // e il 403 lo dà `resolveScuolaScrittura` più sotto).
+      if (!q.data.scuola_id) {
+        const attive = await resolveScuoleAttive(request, supabase, auth.user)
+        if (attive.length > 1) {
+          // `attive` è la forma CANONICA del database (uuid da `scuoleDiUtente`),
+          // mai una stringa del client: l'interpolazione in `.or()` è sicura.
+          const { data, error } = await supabase
+            .from('payment_categories')
+            .select('*')
+            .or(`scuola_id.is.null,scuola_id.in.(${attive.join(',')})`)
+            .order('ordine', { ascending: true })
+          if (error) {
+            logErrore({ operazione: 'admin/settings/categorie:GET', stato: 500, evento: 'db' }, error)
+            return NextResponse.json({ error: 'Errore nel recupero delle categorie', codice: 'LETTURA_FALLITA' }, { status: 500 })
+          }
+          const righe = (data ?? []) as { scuola_id: string | null }[]
+          logEvento('multi_sede', 'info', {
+            tipo: 'categorie-multi-sede', azione: 'admin/settings/categorie:GET',
+            utente: auth.user.id, ruolo: auth.user.role, attive: attive.length,
+            n: righe.length, globali: righe.filter((r) => r.scuola_id == null).length,
+          })
+          return NextResponse.json({ success: true, data: righe })
+        }
+      }
+
       const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
       if (sw.response) return sw.response
       const scuolaId = sw.scuolaId
@@ -204,7 +239,12 @@ export const GET = withRoute('admin/settings/categorie:GET', async (request: Nex
       else query = query.is('scuola_id', null)
 
       const { data, error } = await query
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (error) {
+        // PostgREST non lancia: senza questo log una lettura fallita con la sede
+        // dichiarata non lasciava traccia applicativa. Status e corpo invariati.
+        logErrore({ operazione: 'admin/settings/categorie:GET', stato: 500, evento: 'db' }, error)
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
       return NextResponse.json({ success: true, data })
     } catch (err) {
       logErrore({ operazione: 'admin/settings/categorie:GET', stato: 500 }, err)

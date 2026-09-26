@@ -67,6 +67,19 @@ vi.mock('@/lib/context/admin-identity', async (orig) => ({
     useRuoloCockpit: () => 'admin',
 }));
 
+/**
+ * Le sedi del cockpit (P6): `FiscalePanel` le legge per nominare la sede quando le sedi selezionate
+ * sono più d'una. Di default UNA sede, `sc-1`: è il caso che i test storici qui sotto fissano.
+ * Il finto restituisce il valore corrente, così un caso può passare a due sedi.
+ */
+const sediCtx = vi.hoisted(() => ({
+    valore: { sedi: [{ id: 'sc-1', nome: 'Sede Uno' }], effettive: ['sc-1'], sedeCorrente: 'sc-1' as string | null },
+}));
+vi.mock('@/lib/context/sede-context', async (orig) => ({
+    ...(await orig<typeof import('@/lib/context/sede-context')>()),
+    useSediAttive: () => sediCtx.valore,
+}));
+
 vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
     FatturaButton: () => <span data-testid="fattura-button" />,
 }));
@@ -115,6 +128,7 @@ function spiaNavigazione(e: Event) {
 
 beforeEach(() => {
     nat.nativo = false;
+    sediCtx.valore = { sedi: [{ id: 'sc-1', nome: 'Sede Uno' }], effettive: ['sc-1'], sedeCorrente: 'sc-1' };
     helper.apri.mockReset().mockResolvedValue({ esito: 'nativo-anteprima' });
     helper.scarica.mockReset().mockResolvedValue({ esito: 'nativo-file' });
     clicSeguito = [];
@@ -184,6 +198,37 @@ describe('FiscalePanel — attestazione 730 ed export AdE', () => {
         expect(clicSeguito).toEqual([true, true]);
         expect(helper.apri).not.toHaveBeenCalled();
         expect(helper.scarica).not.toHaveBeenCalled();
+    });
+
+    /*
+     * PIÙ SEDI (P6): la pagina passa `scuolaId: null`. L'export AdE è un FILE UNICO con la colonna
+     * Sede (K2): il link non deve portare `scuola_id`, e tanto meno `scuola_id=null` — la route lo
+     * valida come uuid e risponderebbe 400, cioè niente comunicazione per il commercialista.
+     */
+    it('più sedi, sul web: l\'href dell\'export AdE NON porta scuola_id (file unico)', async () => {
+        sediCtx.valore = { sedi: [{ id: 'sc-1', nome: 'Sede Uno' }, { id: 'sc-2', nome: 'Sede Due' }], effettive: ['sc-1', 'sc-2'], sedeCorrente: null };
+        stubFiscale();
+        render(<FiscalePanel userId="u1" scuolaId={null} />);
+        await screen.findByRole('link', { name: /Scarica attestazione/ });
+        const ade = screen.getByRole('link', { name: /Esporta comunicazione/ });
+        expect(ade.getAttribute('href')).toBe(`/api/pagamenti/export?tipo=ade&anno=${ANNO - 1}&userId=u1`);
+        fireEvent.click(ade);
+        expect(clicSeguito).toEqual([true]);
+    });
+
+    it('più sedi, nell\'app: l\'helper scarica la stessa route SENZA scuola_id', async () => {
+        nat.nativo = true;
+        sediCtx.valore = { sedi: [{ id: 'sc-1', nome: 'Sede Uno' }, { id: 'sc-2', nome: 'Sede Due' }], effettive: ['sc-1', 'sc-2'], sedeCorrente: null };
+        stubFiscale();
+        render(<FiscalePanel userId="u1" scuolaId={null} />);
+        await screen.findByRole('link', { name: /Scarica attestazione/ });
+        fireEvent.click(screen.getByRole('link', { name: /Esporta comunicazione/ }));
+        expect(helper.scarica).toHaveBeenCalledWith({
+            sorgente: `/api/pagamenti/export?tipo=ade&anno=${ANNO - 1}&userId=u1`,
+            nomeFile: `comunicazione-ade-${ANNO - 1}.xlsx`,
+            mime: MIME_XLSX,
+            etichetta: 'export-ade',
+        });
     });
 
     it('binario da aggiornare → avviso «aggiorna l\'app» (e non «riprova»); file consegnato → nessun avviso', async () => {

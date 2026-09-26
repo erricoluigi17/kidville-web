@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, MapPin } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { FatturaChip } from './FatturaChip';
 import { STATI_PAGAMENTO } from './stati';
@@ -9,17 +9,64 @@ import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import type { PagamentoRow } from './RegistraIncassoModal';
 
+/**
+ * Il nome della sede che `GET /api/pagamenti` mette su ogni riga (`scuola_nome`, null se la
+ * sede non ha nome). Opzionale qui e non in `PagamentoRow`: le altre fonti di righe
+ * (modali, dettaglio) non lo portano, e la sede la chiede solo chi accorpa più sedi.
+ */
+export type ConSede = { scuola_nome?: string | null };
+
+/**
+ * Badge discreto della sede di una riga (P2b). Il prefisso «Sede:» è solo per lo screen
+ * reader (messaggio ICU `sedeBadge`, e solo quando il nome c'è): a vista il nome basta, e il
+ * badge resta corto. Una riga senza sede NON sparisce
+ * in silenzio: con più sedi accorpate un vuoto verrebbe letto come «la sede che ho in mente».
+ *
+ * Resta MAIUSCOLO come ogni Badge del design system (`uppercase tracking-[0.06em]`), per
+ * scelta: aggiungere `normal-case tracking-normal` da `className` non lo cambia, perché fra
+ * due utility di pari specificità decide l'ordine nel foglio di stile — `uppercase` vince e
+ * `tracking-normal` no, e ne usciva un maiuscolo senza spaziatura (vedi `inCorso` in Badge.tsx).
+ * Qui si aggiunge solo `max-w-full`, che il Badge non dichiara e quindi non entra in conflitto.
+ */
+export function BadgeSede({ nome, className }: { nome?: string | null; className?: string }) {
+    const t = useTranslations('adminContabilita');
+    const pulito = nome?.trim();
+    return (
+        <Badge tone={pulito ? 'neutral' : 'warn'} className={cx('max-w-full', className)} data-testid="sede-badge">
+            <MapPin size={11} aria-hidden="true" className="shrink-0" />
+            {pulito ? (
+                <>
+                    {/* Letto: «Sede: Kidville Aversa», frase intera dal catalogo (ICU). Visto: il
+                        solo nome, nascosto allo screen reader per non leggerlo due volte. */}
+                    <span className="sr-only">{t('sedeBadge', { nome: pulito })}</span>
+                    <span aria-hidden="true" className="truncate">{pulito}</span>
+                </>
+            ) : (
+                // Senza nome il messaggio dice già «Sede»: nessun prefisso, altrimenti lo screen
+                // reader leggeva «Sede Sede non indicata».
+                <span className="truncate">{t('sedeBadgeNonIndicata')}</span>
+            )}
+        </Badge>
+    );
+}
+
 interface Props {
-    pagamento: PagamentoRow & { scadenza?: string | null };
+    pagamento: PagamentoRow & { scadenza?: string | null } & ConSede;
     alunnoLabel: string;
     sezioneLabel?: string | null;
     sospeso?: boolean;
+    /**
+     * Mostrare la sede della riga? Sì quando le sedi accorpate sono più di una (P2b).
+     * Default `false`: con una sede sola il badge ripeterebbe ovunque la stessa parola,
+     * e ogni richiamante esistente resta identico a prima.
+     */
+    mostraSede?: boolean;
     onIncassa: () => void;
     onApri: () => void;
 }
 
 /** Card compatta per la lista pagamenti su mobile (sotto lg la tabella diventa card-list). */
-export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sospeso, onIncassa, onApri }: Props) {
+export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sospeso, mostraSede = false, onIncassa, onApri }: Props) {
     const t = useTranslations('adminContabilita');
     const st = STATI_PAGAMENTO[pagamento.stato] ?? STATI_PAGAMENTO.da_pagare;
     const residuo = Math.max(0, Number(pagamento.importo) - Number(pagamento.importo_pagato || 0));
@@ -36,6 +83,7 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
                         )}
                     </p>
                     {sezioneLabel && <p className="font-maven text-xs text-kidville-muted">{sezioneLabel}</p>}
+                    {mostraSede && <BadgeSede nome={pagamento.scuola_nome} className="mt-1" />}
                 </div>
                 <Badge tone={st.tone} className="shrink-0">{st.label}</Badge>
             </div>

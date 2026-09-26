@@ -20,11 +20,19 @@ const h = vi.hoisted(() => ({
   // fuori sede: i casi di quadratura qui sotto sono verdi solo se le voci ci sono
   // e sono nella sede della transazione.
   pagamentiRows: [] as { id: string; alunno_id: string; scuola_id?: string }[],
+  // Dal 2026-09-26 anche le ricariche mensa hanno una sede, ed è quella
+  // dell'ALUNNO (`alunni.scuola_id`): prima finivano nella sede dichiarata.
+  alunniRows: [] as { id: string; scuola_id: string }[],
   inserts: [] as { table: string; row: unknown }[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: (...a: unknown[]) => h.scope(...a) }))
+// `formaConfronto` resta quello VERO: la route confronta gli uuid di sede con
+// quello, e un finto che lo sostituisse deciderebbe al posto suo.
+vi.mock('@/lib/auth/scope', async (orig) => ({
+  ...(await orig<typeof import('@/lib/auth/scope')>()),
+  resolveScuoleAttive: (...a: unknown[]) => h.scope(...a),
+}))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: (...a: unknown[]) => h.notifica(...a) }))
 vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: (...a: unknown[]) => h.revoca(...a) }))
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -37,7 +45,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> & { _op?: string } = {}
       b.select = () => b
       b.eq = () => b
-      b.in = async () => (table === 'pagamenti' ? { data: h.pagamentiRows, error: null } : { data: [], error: null })
+      b.in = async () => {
+        if (table === 'pagamenti') return { data: h.pagamentiRows, error: null }
+        if (table === 'alunni') return { data: h.alunniRows, error: null }
+        return { data: [], error: null }
+      }
       b.order = () => b
       b.limit = () => b
       b.maybeSingle = async () => ({ data: null, error: null })
@@ -74,6 +86,10 @@ beforeEach(() => {
     { id: P1, alunno_id: AL1, scuola_id: SC },
     { id: P2, alunno_id: AL2, scuola_id: SC },
   ]
+  h.alunniRows = [
+    { id: AL1, scuola_id: SC },
+    { id: AL2, scuola_id: SC },
+  ]
   h.inserts = []
 })
 
@@ -109,6 +125,16 @@ describe('POST transazioni — quadratura, eccedenza, degradazione', () => {
     ])
     expect(p.ricariche_mensa).toEqual([{ alunno_id: AL1, importo: 50, ticket: 10 }])
     expect(p.eccedenza_a_credito).toBe(0)
+    // Una sede sola: il payload resta quello storico, senza chiavi nuove.
+    expect(Object.keys(p).sort()).toEqual([
+      'data_valuta', 'eccedenza_a_credito', 'importo_totale', 'metodo', 'note', 'pagante_parent_id',
+      'registrato_da', 'ricariche_mensa', 'riferimento', 'scuola_id', 'voci',
+    ])
+    const j = await res.json()
+    expect(j.data.transazione_id).toBe('tx-1')
+    expect(j.data.transazioni).toEqual([
+      { transazione_id: 'tx-1', scuola_id: SC, scuola_nome: null, importo_totale: 250 },
+    ])
   })
 
   it('(b) non quadra (250 dichiarato, 200 allocati) → 400 senza chiamare la RPC', async () => {

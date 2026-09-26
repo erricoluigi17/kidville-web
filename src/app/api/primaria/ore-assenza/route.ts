@@ -96,9 +96,15 @@ export const GET = withRoute('primaria/ore-assenza:GET', async (request: NextReq
     // modulo del genitore: misurate di nuovo 5,25 ore perse per un appello che
     // nessun docente aveva fatto. `limitaAiFatti` aggiunge il secondo asse — la
     // SORGENTE — allo stesso tetto.
+    //
+    // `assenza_oraria_giustificata` (A2, 26/09): ritardo/uscita giustificati (es.
+    // terapia) restano righe di ritardo/uscita ma NON pesano nel monte ore. La
+    // colonna va chiesta QUI e passata al calcolo qui sotto: l'input è
+    // ricostruito campo per campo, e un campo dimenticato non dà errore — dà il
+    // monte ore di prima.
     let presQuery = supabase
       .from('presenze')
-      .select('alunno_id, data, stato, orario_entrata, orario_uscita')
+      .select('alunno_id, data, stato, orario_entrata, orario_uscita, assenza_oraria_giustificata')
       .eq('section_id', sectionId)
       .in('stato', ['assente', 'ritardo', 'uscita_anticipata'])
     if (from) presQuery = presQuery.gte('data', from)
@@ -111,12 +117,18 @@ export const GET = withRoute('primaria/ore-assenza:GET', async (request: NextReq
     const perAlunnoBase = new Map<string, PresenzaInput[]>()
     const perAlunnoConData = new Map<string, PresenzaConData[]>()
     for (const p of presenze ?? []) {
+      const input: PresenzaInput = {
+        stato: p.stato,
+        orario_entrata: p.orario_entrata,
+        orario_uscita: p.orario_uscita,
+        assenza_oraria_giustificata: p.assenza_oraria_giustificata === true,
+      }
       const base = perAlunnoBase.get(p.alunno_id) ?? []
-      base.push({ stato: p.stato, orario_entrata: p.orario_entrata, orario_uscita: p.orario_uscita })
+      base.push(input)
       perAlunnoBase.set(p.alunno_id, base)
 
       const conData = perAlunnoConData.get(p.alunno_id) ?? []
-      conData.push({ stato: p.stato, orario_entrata: p.orario_entrata, orario_uscita: p.orario_uscita, data: p.data })
+      conData.push({ ...input, data: p.data })
       perAlunnoConData.set(p.alunno_id, conData)
     }
 

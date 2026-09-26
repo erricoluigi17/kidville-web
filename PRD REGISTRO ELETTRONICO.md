@@ -1,4 +1,29 @@
 
+## 🧭 Changelog — PR-B dopo la #171: fotografie dalla produzione — 2026-09-26 (branch `chore/dopo-merge-171`)
+
+La #171 è in produzione dal 26/09 alle 18:06 (`be44d743`). CI: E2E 143 passati al primo tentativo, 0 retry.
+
+L'integrazione ha applicato al merge le tre migrazioni `20260926100000`/`100100`/`100200`. Verificato con SELECT in produzione:
+- colonna, vincolo e trigger su `presenze`;
+- RPC `registra_transazioni_per_sede`, non eseguibile da `authenticated`;
+- zero `form_models` con il vecchio pattern CF;
+- `supabase db lint` senza errori.
+
+Le sette fotografie offline sono state rigenerate dalla produzione, tutte con lettura sola:
+
+| Fotografia | Misura |
+|---|---|
+| Migrazioni | 196 |
+| FK verso `utenti` | 58, invariate |
+| Indici unici | 231 |
+| Bucket | 19 |
+| Tabelle con `scuola_id` | 78, 0 senza FK |
+| Policy | 43 |
+
+L'unica differenza di contenuto è `gallery_photo_uploads` (#170), che entra solo ora nell'elenco delle tabelle con `scuola_id`.
+
+`MIGRAZIONI_ATTESE_AL_MERGE` torna vuota.
+
 ## 🧩 Changelog — Orario delle attività, appello senza orario per i presenti, ore giustificate, contabilità a più sedi con filtro classi, codici fiscali omocodici — 2026-09-26
 
 Branch `feat/orario-attivita-appello-contabilita-cf`. Quattro richieste del titolare, con ogni decisione confermata in chat. Spec in `docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/design.md`, contratti fra i compiti in `contratti/`. Lavoro diviso in 27 compiti piccoli, ciascuno con un esecutore e un critico dedicato; tutti chiusi con «AAA» (2–8 giri).

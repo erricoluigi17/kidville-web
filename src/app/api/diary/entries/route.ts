@@ -62,6 +62,10 @@ const entrySchema = z.object({
     // segnale il server conserva il valore già salvato (vedi `tieniPrecedente`), che è la regola
     // giusta quando il client non sa mostrarlo — non quando la maestra l'ha tolto apposta.
     azzera_valore: z.boolean().optional(),
+    // Routine della scuola (quinto giro, 2026-09-28): la maestra ha tolto la SOLA NOTA di un valore
+    // che la routine non prevede più. La riga di oggi, se c'è, perde la nota e tiene il resto; se
+    // non c'è, non si crea. Senza, quella voce (valore vuoto, nessuna nota) era «muta» e si saltava.
+    togli_nota: z.boolean().optional(),
 });
 
 // Il body può essere un singolo evento o un array di eventi.
@@ -359,7 +363,9 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
     // `voceDaMostrare` è la stessa funzione dei cinque lettori: una regola sola,
     // e fail-open sui tipi che non ne hanno una (nessun filtro inventato qui).
     // ─────────────────────────────────────────────────────────────────────────
-    const daScrivere = verificate.filter((e) => voceDaMostrare(
+    // `togli_nota` vale solo per le routine della scuola: sugli altri tipi non apre niente.
+    const togliNota = (e: { tipo_evento: string; togli_nota?: boolean }) => e.togli_nota === true && eRoutinePersonalizzata(e.tipo_evento);
+    const daScrivere = verificate.filter((e) => togliNota(e) || voceDaMostrare(
         e.tipo_evento,
         (e.dettagli ?? null) as Record<string, unknown> | null,
         { conNota: Boolean(String(e.nota_libera ?? '').trim() || String(e.nota_bambino ?? '').trim()) },
@@ -398,6 +404,15 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         if (erroreRicerca) {
             logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, erroreRicerca);
             errors.push({ alunno_id: entry.alunno_id, error: 'Lettura della voce di oggi non riuscita' });
+            continue;
+        }
+
+        // Togliere la sola nota: solo su una riga che c'è, e solo la nota.
+        if (togliNota(entry)) {
+            if (!existing || existing.length === 0) continue;
+            const togli = await admin.from('eventi_diario').update({ nota_bambino: null }).eq('id', existing[0].id).select('id, alunno_id, tipo_evento');
+            if (togli.error) errors.push({ alunno_id: entry.alunno_id, error: togli.error.message });
+            else if (togli.data) results.push(...togli.data);
             continue;
         }
 

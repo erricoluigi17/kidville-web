@@ -248,6 +248,8 @@ export function useDiaryDay(
     /** Salvataggi in volo (un contatore, non un sì/no): la riconciliazione aspetta che siano zero. */
     const salvataggiInVolo = useRef(0);
     const riconciliazioneInSospeso = useRef(false);
+    // Solo per far ripartire l'effetto dei ref dopo una rilettura (vedi `ricaricaConfig`).
+    const [giroRiconciliazione, setGiroRiconciliazione] = useState(0);
     /** La sezione a schermo ADESSO, per chi decide dopo un `await`. */
     const paramClasseRef = useRef<string>('');
     /** Di quale sezione è la lista a schermo (per non tenerla se la lettura della nuova fallisce). */
@@ -386,8 +388,11 @@ export function useDiaryDay(
         // Si riconcilia a salvataggio finito, DOPO che l'archivio (`registrate`) è aggiornato: vedi
         // l'effetto che sincronizza i ref. Niente ripristino dall'archivio, che cancellava i segni
         // non salvati di qualunque tipo (quinto giro, 2026-09-28).
-        if (salvataggiInVolo.current > 0) riconciliazioneInSospeso.current = true;
-        else riconcilia(d);
+        // Sempre dopo un commit (sesto giro): anche fra il `finally` di un salvataggio e il suo
+        // render i ref sono ancora quelli di prima, e il valore appena salvato sembrerebbe un segno
+        // non salvato da togliere. L'effetto dei ref fa girare la riconciliazione quando può.
+        riconciliazioneInSospeso.current = true;
+        setGiroRiconciliazione(n => n + 1);
         chiudiSeNonDisponibile(d);
         return d !== null;
     };
@@ -459,7 +464,7 @@ export function useDiaryDay(
             const cfg = configLettaRef.current?.cfg ?? null;
             queueMicrotask(() => riconcilia(cfg));
         }
-    }, [studentStates, savedStudentIds, registrate, isSaving]);
+    }, [studentStates, savedStudentIds, registrate, isSaving, giroRiconciliazione]);
 
     const eventTypes = (configRoutine === undefined ? [] : tipiAttivi(configRoutine ?? {})) as DiaryEventType[];
     const personalizzate = routinePersonalizzate(configRoutine?.routine_personalizzate).filter(r => r.attiva);
@@ -1015,8 +1020,8 @@ export function useDiaryDay(
     const idsDaTogliere = [...idsSvuotati.filter(id => !svuotatiConNota.has(id)), ...idsSoloNotaSvuotate];
     /**
      * Un valore «non più previsto» con una nota in archivio, e la nota ora tolta: si manda la riga
-     * col valore vuoto e la nota vuota — il server tiene il valore (non lo si cancella senza il
-     * cestino) e toglie la nota. Senza, il pulsante restava spento e la nota restava al genitore.
+     * col segnale `togli_nota` — il server toglie la nota e tiene il valore (non lo si cancella senza
+     * il cestino). Senza segnale era una voce «muta», che il server saltava.
      */
     const noteDaTogliere = new Set(
         selectedEvent !== null && eRoutinePersonalizzata(selectedEvent)
@@ -1131,6 +1136,8 @@ export function useDiaryDay(
                         nota_bambino: noteBambino[student.id]?.trim() || null,
                         // Svuotato con una nota: il valore va tolto davvero (vedi `svuotatiConNota`).
                         ...(svuotatiConNota.has(student.id) ? { azzera_valore: true } : {}),
+                        // Tolta la sola nota di un valore «non più previsto» (vedi `noteDaTogliere`).
+                        ...(noteDaTogliere.has(student.id) ? { togli_nota: true } : {}),
                     };
                 });
 
@@ -1189,7 +1196,10 @@ export function useDiaryDay(
                         .filter(Boolean)
                 );
                 // Se nessuno ha un alunno_id nel result, segna come salvati i soli inviati (upsert silent)
-                const salvatiIds = savedIds.size > 0 || parziale ? savedIds : new Set(targetStudents.map(({ student }) => student.id));
+                // Salvato è chi la rotta dice di aver scritto, e basta (sesto giro, 2026-09-28): prima,
+                // una risposta senza id («upsert silent») segnava salvati TUTTI gli inviati — anche le
+                // voci che il server aveva saltato perché mute.
+                const salvatiIds = savedIds;
                 if (errori.length > 0) {
                     // Solo il conteggio: niente nomi, niente messaggi del server.
                     logClient({ livello: 'warn', evento: 'fetch', messaggio: 'diario-salvataggio-parziale', campi: { non_salvate: errori.length, inviate: targetStudents.length } });

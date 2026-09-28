@@ -48,6 +48,9 @@ let rilasciaPost: (() => void) | null = null
 let bambiniRotti = false
 /** Le POST finiscono davvero in archivio (la GET di dopo le restituisce). */
 let persistiPost = false
+/** La prossima GET della configurazione resta in volo; risponde con `config` com'è AL RILASCIO. */
+let trattieniConfig = false
+let rilasciaConfig: (() => void) | null = null
 
 const BAMBINI = [
   { id: 'a1', nome: 'Ada', cognome: 'Bianchi', note_mediche: null },
@@ -58,6 +61,7 @@ const fetchMock = vi.fn(async (url: string | URL, init?: { method?: string; body
   const u = String(url)
   if (u.includes('/api/diary/config')) {
     if (configRotta) return jsonRes({ error: 'x' }, 503)
+    if (trattieniConfig) { trattieniConfig = false; return new Promise<JsonRes>((ok) => { rilasciaConfig = () => ok(jsonRes(config)) }) }
     const sede = new URL(u, 'http://x').searchParams.get('scuola_id')
     return jsonRes(sede && configPerSede[sede] ? configPerSede[sede] : config)
   }
@@ -97,6 +101,7 @@ beforeEach(() => {
   postBody = null; postRisposta = null; deleteUrl = null; deleteUrls = []; entriesGet = []; presenti = null
   configRotta = false; trattieniBambini = false; rilasciaBambini = null
   trattieniPost = false; rilasciaPost = null; bambiniRotti = false; persistiPost = false
+  trattieniConfig = false; rilasciaConfig = null
   invalidaDiarioConfigCache()
   fetchMock.mockClear(); vi.stubGlobal('fetch', fetchMock)
 })
@@ -644,7 +649,9 @@ describe('quinto giro della revisione — la maestra (2026-09-28)', () => {
     // Ogni salvataggio rimanda anche chi è già salvato (a1): conta che parta b2, con la nota vuota
     // e SENZA `azzera_valore` — il valore «non più previsto» resta in archivio.
     const b2 = (postBody as Array<Record<string, unknown>> | null)?.find((v) => v.alunno_id === 'b2')
-    expect(b2).toMatchObject({ nota_bambino: null })
+    // Col segnale `togli_nota` (quinto giro): senza, il server la trattava come voce muta e la
+    // saltava, e il client la dava per salvata.
+    expect(b2).toMatchObject({ nota_bambino: null, togli_nota: true })
     expect(b2).not.toHaveProperty('azzera_valore')
   })
 
@@ -667,5 +674,44 @@ describe('quinto giro della revisione — la maestra (2026-09-28)', () => {
     await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/diary/config')).length).toBeGreaterThan(1))
     await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
     expect(result.current.segniTolti).toBe(0)
+  })
+})
+
+describe('sesto giro — la risposta del server decide chi è salvato', () => {
+  it('una POST che risponde `[]` (voci saltate dal server) non dà spunte né «Salvato»', async () => {
+    const result = await monta()
+    await apriTipo(result, 'routine:a1b2c3d4')
+    act(() => { result.current.updateStudent('a1', { valore: true }) })
+    postRisposta = { corpo: [], stato: 200 }
+    await act(async () => { await result.current.handleSave() })
+    expect(result.current.savedStudentIds.has('a1')).toBe(false)
+    expect(result.current.showSavedToast).toBe(false)
+  })
+})
+
+describe('sesto giro — la rilettura fra la fine del salvataggio e il suo render', () => {
+  it('il valore appena salvato non diventa «segno tolto» né una DELETE pronta (sonda del revisore)', async () => {
+    const RINOMINATA = { ...BIBERON, opzioni: ['Un po\'', 'Metà', 'Tutto'] }
+    const result = await monta()
+    await apriTipo(result, 'routine:e5f6a7b8')
+    act(() => { result.current.updateStudent('a1', { valore: ['Poco'] }) })
+    trattieniPost = true
+    postRisposta = { corpo: [{ alunno_id: 'a1' }], stato: 200 }
+    let salvataggio: Promise<void> = Promise.resolve()
+    act(() => { salvataggio = result.current.handleSave() })
+    await waitFor(() => expect(rilasciaPost).not.toBeNull())
+    trattieniConfig = true
+    ritornoInPrimoPiano()
+    await waitFor(() => expect(rilasciaConfig).not.toBeNull())
+    // Fuori da `act`: la POST torna e il `finally` gira nei microtask; il render è più tardi.
+    rilasciaPost?.()
+    for (let i = 0; i < 30; i++) await Promise.resolve()
+    config = { routine_attive: null, routine_personalizzate: [RINOMINATA] }
+    rilasciaConfig?.()
+    for (let i = 0; i < 30; i++) await Promise.resolve()
+    await act(async () => { await salvataggio })
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(result.current.daTogliere, 'DELETE pronta sul valore appena salvato').toBe(0)
+    expect(result.current.nonPiuValidi).toHaveProperty('a1')
   })
 })

@@ -60,7 +60,7 @@ const MESSAGGI: Record<CodiceRifiuto, string> = {
     ROUTINE_NON_VERIFICATE: 'Non è stato possibile verificare le routine della sede: nessuna registrazione è stata salvata.',
 };
 
-interface VoceDiario { alunno_id: string; tipo_evento: string; dettagli?: unknown; nota_libera?: unknown; nota_bambino?: unknown }
+interface VoceDiario { alunno_id: string; tipo_evento: string; dettagli?: unknown; nota_libera?: unknown; nota_bambino?: unknown; togli_nota?: boolean }
 
 function eTipoBase(tipo: string): tipo is TipoBase {
     return (TIPI_BASE as readonly string[]).includes(tipo);
@@ -83,7 +83,8 @@ function valoreGrezzo(e: VoceDiario): unknown {
  * una routine che non c'è più non è un tentativo di scriverla.
  */
 function muta(e: VoceDiario): boolean {
-    if (e.tipo_evento.startsWith(PREFISSO)) return valoreRoutineVuoto(valoreGrezzo(e)) && !conNota(e);
+    // `togli_nota` non è muta: chiede di togliere una nota, e passa dai controlli come le altre.
+    if (e.tipo_evento.startsWith(PREFISSO)) return valoreRoutineVuoto(valoreGrezzo(e)) && !conNota(e) && e.togli_nota !== true;
     return !voceDaMostrare(e.tipo_evento, (e.dettagli ?? null) as Record<string, unknown> | null, { conNota: conNota(e) });
 }
 

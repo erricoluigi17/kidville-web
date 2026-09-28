@@ -271,3 +271,27 @@ describe('POST /api/diary/entries — terzo giro della revisione (2026-09-28)', 
         expect(body.errors).toHaveLength(1);
     });
 });
+
+describe('POST /api/diary/entries — togliere la sola nota di un valore «non più previsto» (quinto giro)', () => {
+    it('`togli_nota`: la riga esistente perde la nota e TIENE il valore; niente voce muta saltata', async () => {
+        const salvato = { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Poco'] };
+        h.esistenti[`${A1}|routine:e5f6a7b8`] = { id: 'r1', dettagli: salvato };
+        const { res } = await post([voce(A1, 'routine:e5f6a7b8', { valore: null }, { nota_bambino: null, togli_nota: true })]);
+        expect(res.status).toBeLessThan(300);
+        expect(h.updated).toEqual([{ nota_bambino: null }]);
+        expect(h.logEvento.mock.calls.some((c) => c[2]?.esito === 'voci-mute-saltate')).toBe(false);
+    });
+
+    it('…e senza una riga di oggi non si inventa niente (mai un INSERT)', async () => {
+        await post([voce(A1, 'routine:e5f6a7b8', { valore: null }, { nota_bambino: null, togli_nota: true })]);
+        expect(h.inserted).toHaveLength(0);
+        expect(h.updated).toHaveLength(0);
+    });
+
+    it('su un tipo base `togli_nota` non apre niente: la voce resta muta e si salta', async () => {
+        h.esistenti[`${A1}|bagno`] = { id: 'b1', dettagli: { pipi: 1 } };
+        await post([voce(A1, 'bagno', { pipi: 0, cacca: 0, vasino: 0 }, { togli_nota: true })]);
+        expect(h.updated).toHaveLength(0);
+    });
+});
+

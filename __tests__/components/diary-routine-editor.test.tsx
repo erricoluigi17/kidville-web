@@ -41,6 +41,13 @@ let configRotta = false
 /** La GET dei bambini resta in volo finché il test non la rilascia. */
 let trattieniBambini = false
 let rilasciaBambini: (() => void) | null = null
+/** La prossima POST resta in volo finché il test non la rilascia. */
+let trattieniPost = false
+let rilasciaPost: (() => void) | null = null
+/** La GET dei bambini fallisce (rete). */
+let bambiniRotti = false
+/** Le POST finiscono davvero in archivio (la GET di dopo le restituisce). */
+let persistiPost = false
 
 const BAMBINI = [
   { id: 'a1', nome: 'Ada', cognome: 'Bianchi', note_mediche: null },
@@ -55,6 +62,7 @@ const fetchMock = vi.fn(async (url: string | URL, init?: { method?: string; body
     return jsonRes(sede && configPerSede[sede] ? configPerSede[sede] : config)
   }
   if (u.includes('/api/diary/students')) {
+    if (bambiniRotti) throw new TypeError('Failed to fetch')
     const soloPresenti = u.includes('onlyPresent=true')
     const risposta = jsonRes(soloPresenti && presenti ? BAMBINI.filter((b) => presenti!.includes(b.id)) : BAMBINI)
     if (trattieniBambini) {
@@ -65,7 +73,18 @@ const fetchMock = vi.fn(async (url: string | URL, init?: { method?: string; body
   }
   if (u.includes('/api/diary/entries') && init?.method === 'POST') {
     postBody = JSON.parse(init.body ?? '[]')
-    return postRisposta ? jsonRes(postRisposta.corpo, postRisposta.stato) : jsonRes([])
+    if (persistiPost) {
+      for (const v of postBody ?? []) {
+        entriesGet = (entriesGet as Array<Record<string, unknown>>).filter((e) => !(e.alunno_id === v.alunno_id && e.tipo_evento === v.tipo_evento))
+        entriesGet.push({ alunno_id: v.alunno_id, tipo_evento: v.tipo_evento, orario_inizio: '2026-09-28T10:00:00Z', dettagli: v.dettagli, nota_bambino: v.nota_bambino ?? null })
+      }
+    }
+    const risposta = postRisposta ? jsonRes(postRisposta.corpo, postRisposta.stato) : jsonRes([])
+    if (trattieniPost) {
+      trattieniPost = false
+      return new Promise<JsonRes>((ok) => { rilasciaPost = () => ok(risposta) })
+    }
+    return risposta
   }
   if (u.includes('/api/diary/entries') && init?.method === 'DELETE') { deleteUrl = u; deleteUrls.push(u); return jsonRes({ eliminati: 1 }) }
   if (u.includes('/api/diary/entries')) return jsonRes(entriesGet)
@@ -77,6 +96,7 @@ beforeEach(() => {
   configPerSede = {}
   postBody = null; postRisposta = null; deleteUrl = null; deleteUrls = []; entriesGet = []; presenti = null
   configRotta = false; trattieniBambini = false; rilasciaBambini = null
+  trattieniPost = false; rilasciaPost = null; bambiniRotti = false; persistiPost = false
   invalidaDiarioConfigCache()
   fetchMock.mockClear(); vi.stubGlobal('fetch', fetchMock)
 })
@@ -507,5 +527,80 @@ describe('terzo giro della revisione — la maestra (2026-09-28)', () => {
     postRisposta = { corpo: [{ alunno_id: 'b2' }], stato: 200 }
     await act(async () => { await result.current.handleSave() })
     expect(result.current.nonPiuValidi).not.toHaveProperty('b2')
+  })
+})
+
+describe('quarto giro della revisione — la maestra (2026-09-28)', () => {
+  const RINOMINATA = { ...BIBERON, opzioni: ['Un po\'', 'Metà', 'Tutto'] }
+
+  it('la riconciliazione guarda l\'ARCHIVIO, non la spunta: toccata solo la nota, il valore salvato diventa «non più previsto»', async () => {
+    entriesGet = [voceSalvata('b2', 'routine:e5f6a7b8', { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Poco'] })]
+    const result = await monta()
+    await apriTipo(result, 'routine:e5f6a7b8')
+    act(() => { result.current.updateNotaBambino('b2', 'ha bevuto dal bicchiere') })
+    expect(result.current.savedStudentIds.has('b2')).toBe(false)
+    config = { routine_attive: null, routine_personalizzate: [RINOMINATA] }
+    ritornoInPrimoPiano()
+    await waitFor(() => expect(result.current.nonPiuValidi).toHaveProperty('b2'))
+    expect(result.current.daTogliere, 'niente DELETE di un valore che la maestra non ha toccato').toBe(0)
+  })
+
+  it('un valore NON salvato che non vale più torna a quello d\'archivio (se vale ancora), e lo si dice', async () => {
+    entriesGet = [voceSalvata('b2', 'routine:e5f6a7b8', { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Metà'] })]
+    const result = await monta()
+    await apriTipo(result, 'routine:e5f6a7b8')
+    act(() => { result.current.updateStudent('b2', { valore: ['Poco'] }) })
+    config = { routine_attive: null, routine_personalizzate: [RINOMINATA] }
+    ritornoInPrimoPiano()
+    await waitFor(() => expect(result.current.studentStates.b2?.valore).toEqual(['Metà']))
+    expect(result.current.segniTolti).toBe(1)
+    expect(result.current.nonPiuValidi).not.toHaveProperty('b2')
+  })
+
+  it('207 con errori: nessuna spunta a chi non è stato salvato, e la maestra lo sa', async () => {
+    const avviso = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const result = await monta()
+    await apriTipo(result, 'routine:a1b2c3d4')
+    act(() => { result.current.updateStudent('a1', { valore: true }) })
+    postRisposta = { corpo: { saved: [], errors: [{ alunno_id: 'a1', error: 'x' }] }, stato: 207 }
+    await act(async () => { await result.current.handleSave() })
+    expect(result.current.savedStudentIds.has('a1')).toBe(false)
+    expect(avviso).toHaveBeenCalledWith(expect.stringMatching(/non è stata salvata|non sono state salvate/))
+  })
+
+  it('una rilettura che arriva MENTRE il salvataggio è in volo aspetta la fine: niente DELETE mai chiesta dopo', async () => {
+    const result = await monta()
+    await apriTipo(result, 'routine:e5f6a7b8')
+    act(() => { result.current.updateStudent('a1', { valore: ['Poco'] }) })
+    trattieniPost = true
+    persistiPost = true
+    postRisposta = { corpo: [{ alunno_id: 'a1' }], stato: 200 }
+    let salvataggio: Promise<void> = Promise.resolve()
+    act(() => { salvataggio = result.current.handleSave() })
+    await waitFor(() => expect(rilasciaPost).not.toBeNull())
+    config = { routine_attive: null, routine_personalizzate: [RINOMINATA] }
+    ritornoInPrimoPiano()
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    await act(async () => { rilasciaPost?.(); await salvataggio })
+    await waitFor(() => expect(result.current.nonPiuValidi).toHaveProperty('a1'))
+    expect(result.current.daTogliere).toBe(0)
+  })
+
+  it('una riga di SOLA nota, svuotata la nota, esce dall\'archivio', async () => {
+    entriesGet = [voceSalvata('b2', 'routine:a1b2c3d4', { nome: 'Crema solare', emoji: '🧴', risposta: 'spunta', valore: null }, { nota_bambino: 'domani la crema' })]
+    const result = await monta()
+    await apriTipo(result, 'routine:a1b2c3d4')
+    act(() => { result.current.updateNotaBambino('b2', '') })
+    expect(result.current.daTogliere).toBe(1)
+    await act(async () => { await result.current.handleSave() })
+    expect(deleteUrl).toContain('alunno_id=b2')
+  })
+
+  it('cambiata sezione e fallita la lettura dei bambini, non resta la lista della sezione di prima', async () => {
+    const { result, rerender } = renderHook((p: { sez: string }) => useDiaryDay('u1', p.sez), { initialProps: { sez: 'Girasoli' } })
+    await waitFor(() => expect(result.current.students).toHaveLength(2))
+    bambiniRotti = true
+    rerender({ sez: 'Tulipani' })
+    await waitFor(() => expect(result.current.students).toHaveLength(0))
   })
 })

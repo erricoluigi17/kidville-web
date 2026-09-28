@@ -257,12 +257,19 @@ function valuta(operatore: string, valore: unknown, atteso: unknown): boolean {
     case 'in':
       return comeArray(atteso).some((a) => uguale(valore, a))
     case 'cs':
-    case 'contains':
-      // Con OGGETTI dentro l'atteso vale il contenimento JSONB di Postgres (`@>`): ogni chiave
-      // dell'atteso c'è, con un valore a sua volta contenuto. Aggiunto il 2026-09-28 per l'audit
-      // del diario (`valore_prima @> [{"alunno_id": …}]`); coi soli primitivi resta com'era.
-      if (comeArray(atteso).some((a) => a !== null && typeof a === 'object')) return contieneJsonb(valore, atteso)
+    case 'contains': {
+      // Una STRINGA JSON (`'[{"alunno_id":…}]'`) è ciò che PostgREST riceve come letterale jsonb:
+      // si legge come JSON e vale il contenimento JSONB di Postgres (`@>`). Un ARRAY di oggetti
+      // invece si rifiuta, come farebbe il database: supabase-js lo serializza in
+      // `cs.{[object Object]}` e Postgres risponde 22P02 (2026-09-28, l'audit del diario).
+      if (typeof atteso === 'string' && /^\s*[[{]/.test(atteso)) return contieneJsonb(valore, JSON.parse(atteso))
+      // Un OGGETTO semplice supabase-js lo serializza col suo JSON: contenimento JSONB.
+      if (atteso !== null && typeof atteso === 'object' && !Array.isArray(atteso)) return contieneJsonb(valore, atteso)
+      if (Array.isArray(atteso) && atteso.some((a) => a !== null && typeof a === 'object')) {
+        throw new Error('finto-supabase: `contains` con un array di OGGETTI esce come `cs.{[object Object]}`: passa una stringa JSON (JSON.stringify).')
+      }
       return comeArray(atteso).every((a) => comeArray(valore).some((v) => uguale(v, a)))
+    }
     case 'cd':
     case 'containedby':
       return comeArray(valore).every((v) => comeArray(atteso).some((a) => uguale(a, v)))

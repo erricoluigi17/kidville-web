@@ -162,13 +162,16 @@ export async function bonificaAuditScritture(
  * `valore_prima` è l'elenco delle righe cancellate, ognuna col suo `alunno_id`. Stessa bonifica
  * di `bonificaAuditScritture`: la riga resta, il contenuto no. `false` se non si è potuto fare.
  */
-async function bonificaAuditDiarioSenzaId(supabase: SupabaseClient, alunnoId: string, op: string): Promise<boolean> {
+export async function bonificaAuditDiarioSenzaId(supabase: SupabaseClient, alunnoId: string, op: string): Promise<boolean> {
   const { data, error } = await supabase
     .from('audit_scritture_docente')
     .update({ valore_prima: null, valore_dopo: null })
     .eq('entita_tipo', 'diario')
     .is('entita_id', null)
-    .contains('valore_prima', [{ alunno_id: alunnoId }])
+    // Una STRINGA JSON, non l'array: con un array di oggetti supabase-js scrive `cs.{[object
+    // Object]}`, e Postgres risponde 22P02 su una colonna jsonb (misurato sulla libreria vera,
+    // 2026-09-28: il finto dei test lo lasciava passare). La stringa esce così com'è.
+    .contains('valore_prima', JSON.stringify([{ alunno_id: alunnoId }]))
     .select('id')
   if (error) {
     if (schemaAssente(error)) return true

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { creaFintoSupabase, type DBFinto, type Scrittura } from '../fixtures/finto-supabase'
-import { anonimizzaAlunno } from '@/lib/gdpr/esegui'
+import { createClient } from '@supabase/supabase-js'
+import { anonimizzaAlunno, bonificaAuditDiarioSenzaId } from '@/lib/gdpr/esegui'
 
 // =============================================================================
 // L'OBLIO DEVE ARRIVARE AL TESTO DEL DIARIO (2026-09-28, seconda revisione delle routine)
@@ -152,5 +153,28 @@ describe('anonimizzaAlunno — il registro delle scritture del diario', () => {
     await anonimizzaAlunno(creaFintoSupabase(db), { id: NOSTRO }, AT, 'test')
     expect(db.audit_scritture_docente.find((a) => a.id === 'a-1')!.valore_prima).toBeNull()
     expect(db.audit_scritture_docente.find((a) => a.id === 'a-altro')!.valore_prima).not.toBeNull()
+  })
+})
+
+describe('bonificaAuditDiarioSenzaId — la richiesta VERA che esce verso PostgREST', () => {
+  it('il filtro di contenimento esce come JSON valido, non come «{[object Object]}»', async () => {
+    // Il finto valuta l'array JavaScript; supabase-js invece, con un array di OGGETTI, scrive
+    // `cs.{[object Object]}`, e Postgres risponde 22P02 su una colonna jsonb: la bonifica falliva
+    // a ogni oblio. Qui si guarda l'URL prodotto dalla libreria vera.
+    const urls: string[] = []
+    const client = createClient('http://localhost:54321', 'chiave-finta', {
+      global: {
+        fetch: (async (input: RequestInfo | URL) => {
+          urls.push(String(input))
+          return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } })
+        }) as typeof fetch,
+      },
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    const ok = await bonificaAuditDiarioSenzaId(client, NOSTRO, 'test')
+    expect(ok).toBe(true)
+    const url = decodeURIComponent(urls.find((u) => u.includes('audit_scritture_docente')) ?? '')
+    expect(url).toContain(`valore_prima=cs.[{"alunno_id":"${NOSTRO}"}]`)
+    expect(url).not.toContain('[object Object]')
   })
 })

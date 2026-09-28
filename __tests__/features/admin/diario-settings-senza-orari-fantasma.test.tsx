@@ -298,3 +298,46 @@ describe('Impostazioni → Diario: terzo giro della revisione (2026-09-28)', () 
     expect((screen.getByLabelText(itAdminSettings.diRoutineSonno) as HTMLInputElement).checked).toBe(false);
   });
 });
+
+describe('Impostazioni → Diario: quarto giro della revisione (2026-09-28)', () => {
+  it('una modifica fatta durante il salvataggio non rimanda, al salvataggio dopo, le routine VECCHIE', async () => {
+    // A salva il ritardo; mentre la PATCH è in volo tocca l'umore. Intanto B ha aggiunto «Latte».
+    // La bozza tenuta era una copia INTERA della configurazione vecchia: al Salva dopo ripartiva
+    // la lista di routine senza «Latte», e «Latte» spariva.
+    h.config = { routine_personalizzate: [CREMA], buffer_visibilita_min: 10 };
+    let risolvi: (v: boolean) => void = () => {};
+    h.save.mockImplementationOnce(() => new Promise<boolean>((r) => { risolvi = r; }));
+    const { rerender } = monta();
+    fireEvent.click(screen.getByLabelText(itAdminSettings.diRoutinePasto));
+    salva();
+    await waitFor(() => expect(h.save).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByLabelText(itAdminSettings.diRoutineSonno));
+    // Il server, dopo la PATCH di A, ha anche il «Latte» di B.
+    h.config = { routine_personalizzate: [CREMA, { ...CREMA, id: 'c0c0c0c0', nome: 'Latte' }], buffer_visibilita_min: 10, routine_attive: ['sonno', 'cambio', 'attivita'] };
+    risolvi(true);
+    rerender(<DiarioSettings userId="u1" scuolaId={SEDE_A} />);
+    await waitFor(() => expect(screen.getByRole('status')).toBeInTheDocument());
+    salva();
+    await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
+    const secondo = (h.save.mock.calls[1][0] as { diario_config: Record<string, unknown> }).diario_config;
+    expect(secondo).not.toHaveProperty('routine_personalizzate');
+    expect(secondo.routine_attive).toEqual(['cambio', 'attivita']);
+  });
+
+  it('dopo un salvataggio riuscito, le chiavi salvate seguono il server: il Salva dopo non le rimanda', async () => {
+    h.config = { routine_attive: ['pasto', 'sonno', 'cambio', 'attivita'], buffer_visibilita_min: 10 };
+    const { rerender } = monta();
+    fireEvent.click(screen.getByLabelText(itAdminSettings.diRoutinePasto));
+    salva();
+    await waitFor(() => expect(h.save).toHaveBeenCalledTimes(1));
+    // Dopo la PATCH di A, B riaccende il pasto e spegne il cambio: è ciò che ora dice il server.
+    h.config = { routine_attive: ['pasto', 'sonno', 'attivita'], buffer_visibilita_min: 10 };
+    rerender(<DiarioSettings userId="u1" scuolaId={SEDE_A} />);
+    await waitFor(() => expect((screen.getByLabelText(itAdminSettings.diRoutinePasto) as HTMLInputElement).checked).toBe(true));
+    fireEvent.click(screen.getByLabelText(itAdminSettings.diEsponiPrimaria));
+    salva();
+    await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
+    expect((h.save.mock.calls[1][0] as { diario_config: Record<string, unknown> }).diario_config).toEqual({ diario_primaria_visibile: true });
+  });
+});
+

@@ -77,14 +77,33 @@ function stabile(v: unknown): string {
 export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
     const { settings, save, saving, error, letturaFallita } = useAdminSettings(userId, scuolaId);
-    const [draft, setDraft] = useState<DiarioConfig | null>(null);
+    /**
+     * LE SOLE MODIFICHE, non una copia della configurazione (quarto giro, 2026-09-28). Il pannello
+     * mostra `{ ...salvato, ...modifiche }`: quando la configurazione salvata cambia (un salvataggio
+     * riuscito, un'altra operatrice), le chiavi non toccate seguono il server. Una copia intera,
+     * tenuta dopo un salvataggio con altre modifiche in volo, rimandava la lista di routine VECCHIA.
+     */
+    const [modifiche, setModifiche] = useState<Partial<DiarioConfig>>({});
+    /**
+     * Per ogni chiave modificata, com'era nel salvato quando la si è toccata la prima volta: è ciò
+     * su cui la modifica si basa, e ciò che il server confronta (409) prima di scrivere.
+     */
+    const [basi, setBasi] = useState<Record<string, unknown>>({});
     const [msg, setMsg] = useState('');
     const [problema, setProblema] = useState<Problema | null>(null);
 
     if (!settings) return <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>;
     const salvato = (settings.diario_config ?? {}) as DiarioConfig;
-    const cfg = draft ?? salvato;
-    const set = (patch: Partial<DiarioConfig>) => { setMsg(''); setProblema(null); setDraft({ ...cfg, ...patch }); };
+    const cfg = { ...salvato, ...modifiche } as DiarioConfig;
+    const set = (patch: Partial<DiarioConfig>) => {
+        setMsg(''); setProblema(null);
+        setBasi((b) => {
+            const n = { ...b };
+            for (const k of Object.keys(patch)) if (!(k in n)) n[k] = (salvato as unknown as Record<string, unknown>)[k];
+            return n;
+        });
+        setModifiche((m) => ({ ...m, ...patch }));
+    };
 
     // Le routine base accese: una sede che non ha mai scelto vede quelle di sempre, e non le si
     // scrive finché nessuno le tocca (`routine_attive` resta assente).
@@ -114,21 +133,28 @@ export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId:
         // e se nel frattempo un'altra operatrice ha cambiato una chiave che qui si sta salvando,
         // risponde 409 invece di cancellarle il lavoro.
         // Un numero svuotato (`NaN`, vedi `NumberField`) non si manda: vale «non cambiato».
-        const chiavi = new Set([...Object.keys(cfg), ...Object.keys(salvato)]);
+        const inviate = modifiche;
         const cambiato = Object.fromEntries(
-            [...chiavi]
-                .filter((k) => !Number.isNaN((cfg as unknown as Record<string, unknown>)[k]))
-                .filter((k) => stabile((cfg as unknown as Record<string, unknown>)[k]) !== stabile((salvato as unknown as Record<string, unknown>)[k]))
-                .map((k) => [k, (cfg as unknown as Record<string, unknown>)[k]]),
+            Object.entries(inviate)
+                .filter(([, v]) => !Number.isNaN(v))
+                .filter(([k, v]) => stabile(v) !== stabile((salvato as unknown as Record<string, unknown>)[k])),
         );
-        // La bozza MANDATA: se mentre la PATCH è in volo si cambia ancora qualcosa, la bozza è un
-        // oggetto nuovo, e a salvataggio riuscito non va buttata (prima spariva con «Salvato»).
-        const inviata = draft;
-        const ok = await save({ diario_config: cambiato, diario_config_letto: salvato });
+        // «Com'era quando l'ho letto», chiave per chiave: la base di ciascuna modifica.
+        const letto = { ...(salvato as unknown as Record<string, unknown>), ...basi };
+        const ok = await save({ diario_config: cambiato, diario_config_letto: letto });
         if (ok) {
             // Le maestre (e il cockpit, in questa stessa sessione) rileggono le routine.
             invalidaDiarioConfigCache();
-            setDraft((d) => (d === inviata ? null : d));
+            // Escono le modifiche MANDATE; restano quelle fatte mentre la PATCH era in volo, e la
+            // loro base diventa ciò che si è appena scritto (se la chiave era anche fra le mandate).
+            setModifiche((m) => Object.fromEntries(Object.entries(m).filter(([k, v]) => v !== (inviate as Record<string, unknown>)[k])));
+            setBasi((b) => {
+                const n: Record<string, unknown> = {};
+                for (const [k, v] of Object.entries(b)) {
+                    if (!(k in inviate)) n[k] = v;
+                }
+                return n;
+            });
         }
         setMsg(ok ? t('salvato') : '');
     };

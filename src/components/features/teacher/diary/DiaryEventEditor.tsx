@@ -237,10 +237,24 @@ export function useDiaryDay(
      * valore in archivio. Si mostrano col cestino (vedi il ripristino).
      */
     const [nonPiuValidi, setNonPiuValidi] = useState<Record<string, unknown>>({});
+    /**
+     * Le righe di oggi tenute in piedi dalla SOLA nota (umore e routine della scuola): svuotata anche
+     * la nota, escono dall'archivio (quarto giro, 2026-09-28). Senza, una nota tolta restava al genitore.
+     */
+    const [righeSoloNota, setRigheSoloNota] = useState<{ tipo: DiaryEventType | null; ids: Set<string> }>({ tipo: null, ids: new Set() });
+    /** Quanti segni NON salvati la rilettura della routine ha dovuto togliere (non valgono più). */
+    const [segniTolti, setSegniTolti] = useState(0);
+    const registrateRef = useRef<{ tipo: DiaryEventType | null; righe: Record<string, Record<string, unknown>> }>({ tipo: null, righe: {} });
     useEffect(() => {
         statiRef.current = studentStates;
         salvatiRef.current = savedStudentIds;
-    }, [studentStates, savedStudentIds]);
+        registrateRef.current = registrate;
+    }, [studentStates, savedStudentIds, registrate]);
+    /** Un salvataggio è in volo: la riconciliazione aspetta la sua fine (vedi `handleSave`). */
+    const salvataggioInVolo = useRef(false);
+    const riconciliazioneInSospeso = useRef(false);
+    /** Di quale sezione è la lista a schermo (per non tenerla se la lettura della nuova fallisce). */
+    const sezioneLista = useRef<string | null>(null);
     /**
      * Il numero dell'ULTIMO ripristino chiesto. Ogni cambio di tipo lo incrementa,
      * e un ripristino che torna col numero vecchio non scrive niente: una GET
@@ -335,8 +349,12 @@ export function useDiaryDay(
         if (!userId || scuolaId === null) return;
         let active = true;
         const chiave = scuolaId ?? '';
+        // Anche il primo caricamento partecipa al giro delle riletture: arrivato DOPO una rilettura,
+        // non la sovrascrive; e un suo fallimento non butta una configurazione buona della stessa sede.
+        const mio = ++giroConfig.current;
         void fetchDiarioConfig(userId, scuolaId).then(d => {
-            if (!active) return;
+            if (!active || mio !== giroConfig.current) return;
+            if (d === null && configLettaRef.current?.chiave === chiave && configLettaRef.current.cfg) return;
             setConfigLetta({ chiave, cfg: d });
             chiudiSeNonDisponibile(d);
         });
@@ -366,17 +384,24 @@ export function useDiaryDay(
             return false;
         }
         setConfigLetta({ chiave, cfg: d });
-        riconcilia(d);
+        // Con un salvataggio in volo, la riconciliazione aspetta: la POST che torna rimette in
+        // archivio valori che lo schermo avrebbe appena svuotato, e il Salva dopo li cancellerebbe.
+        // A salvataggio finito si rilegge l'archivio (vedi `handleSave`).
+        if (salvataggioInVolo.current) riconciliazioneInSospeso.current = true;
+        else riconcilia(d);
         chiudiSeNonDisponibile(d);
         return d !== null;
     };
 
     /**
      * Arrivata una definizione nuova della routine APERTA (opzioni rinominate o tolte, «più d'una»
-     * spento): i valori a schermo che non valgono più si tolgono. Quelli già SALVATI diventano «non
-     * più previsti» (col cestino, fuori da ciò che uno svuotamento cancellerebbe); quelli non
-     * salvati si svuotano e basta. Senza, un valore vecchio ripartiva in ogni salvataggio e il
-     * server rifiutava l'intero lotto, ogni volta (terzo giro, 2026-09-28).
+     * spento), i valori che non valgono più si sistemano — guardando l'ARCHIVIO (`registrate`), non
+     * la spunta, che sparisce appena si tocca anche solo la nota (quarto giro, 2026-09-28):
+     *  · valore in ARCHIVIO che non vale più → «non più previsto», col cestino, fuori da ciò che uno
+     *    svuotamento cancellerebbe; lo schermo si svuota, salvo un valore nuovo e valido già scelto;
+     *  · valore NON salvato che non vale più → torna quello d'archivio se vale ancora, altrimenti si
+     *    svuota; e lo si dice (`segniTolti`).
+     * Senza, un valore vecchio ripartiva in ogni salvataggio e il server rifiutava l'intero lotto.
      */
     const riconcilia = (cfg: DiarioConfigRisposta | null) => {
         const tipo = tipoAperto.current;
@@ -384,28 +409,43 @@ export function useDiaryDay(
         if (!tipo || !id) return;
         const def = routinePersonalizzate(cfg?.routine_personalizzate).find(r => r.id === id && r.attiva);
         if (!def) return;
-        const salvati: Record<string, unknown> = {};
-        const daSvuotare: string[] = [];
-        for (const [sid, stato] of Object.entries(statiRef.current)) {
-            const v = stato?.valore;
-            if (v === null || v === undefined || valoreRoutineValido(def, v)) continue;
-            daSvuotare.push(sid);
-            if (salvatiRef.current.has(sid)) salvati[sid] = v;
+        const reg = registrateRef.current.tipo === tipo ? registrateRef.current.righe : {};
+        const vuoto = (v: unknown) => v === null || v === undefined;
+        const nuoviStati: Record<string, unknown> = {};
+        const nonPiu: Record<string, unknown> = {};
+        let tolti = 0;
+        const bambini = new Set([...Object.keys(statiRef.current), ...Object.keys(reg)]);
+        for (const sid of bambini) {
+            const v = statiRef.current[sid]?.valore;
+            const archivio = reg[sid]?.valore;
+            const valeV = !vuoto(v) && valoreRoutineValido(def, v);
+            if (!vuoto(archivio) && !valoreRoutineValido(def, archivio)) {
+                nonPiu[sid] = archivio;
+                if (!valeV) nuoviStati[sid] = null;
+                continue;
+            }
+            if (!vuoto(v) && !valeV) {
+                tolti += 1;
+                nuoviStati[sid] = vuoto(archivio) ? null : archivio;
+            }
         }
-        if (daSvuotare.length === 0) return;
+        if (Object.keys(nuoviStati).length === 0 && Object.keys(nonPiu).length === 0) return;
         setStudentStates(prev => {
             const n = { ...prev };
-            daSvuotare.forEach(sid => { n[sid] = dettagliRoutine(def, null); });
+            for (const [sid, v] of Object.entries(nuoviStati)) n[sid] = dettagliRoutine(def, v);
             return n;
         });
-        setNonPiuValidi(prev => ({ ...prev, ...salvati }));
-        setSavedStudentIds(prev => { const n = new Set(prev); daSvuotare.forEach(sid => n.delete(sid)); return n; });
-        setRegistrate(prev => {
-            if (prev.tipo !== tipo) return prev;
-            const righe = { ...prev.righe };
-            daSvuotare.forEach(sid => { delete righe[sid]; });
-            return { tipo: prev.tipo, righe };
-        });
+        if (Object.keys(nonPiu).length > 0) {
+            setNonPiuValidi(prev => ({ ...prev, ...nonPiu }));
+            setSavedStudentIds(prev => { const n = new Set(prev); Object.keys(nonPiu).forEach(sid => n.delete(sid)); return n; });
+            setRegistrate(prev => {
+                if (prev.tipo !== tipo) return prev;
+                const righe = { ...prev.righe };
+                Object.keys(nonPiu).forEach(sid => { delete righe[sid]; });
+                return { tipo: prev.tipo, righe };
+            });
+        }
+        if (tolti > 0) setSegniTolti(n => n + tolti);
     };
 
     const eventTypes = (configRoutine === undefined ? [] : tipiAttivi(configRoutine ?? {})) as DiaryEventType[];
@@ -414,6 +454,13 @@ export function useDiaryDay(
     const routineDi = (tipo: DiaryEventType | null): RoutinePersonalizzata | null => {
         const id = tipo ? idDiTipo(tipo) : null;
         return id ? personalizzate.find(r => r.id === id) ?? null : null;
+    };
+    /** Come `routineDi`, ma con la configurazione di ADESSO: per chi decide dopo un `await`. */
+    const routineCorrente = (tipo: DiaryEventType | null): RoutinePersonalizzata | null => {
+        const id = tipo ? idDiTipo(tipo) : null;
+        const letta = configLettaRef.current;
+        if (!id || !letta || letta.chiave !== chiaveConfig) return routineDi(tipo);
+        return routinePersonalizzate(letta.cfg?.routine_personalizzate).find(r => r.id === id && r.attiva) ?? null;
     };
     const tipiSpenti = configRoutine === undefined ? [] : tipiSpentiDa(vociDiOggi, eventTypes);
     /** Le voci di oggi di un tipo, l'ultima per bambino. */
@@ -532,11 +579,18 @@ export function useDiaryDay(
         if (!sezione || !userId) return;
         const mio = ++giroBambini.current;
         const soloPresenti = !showAll;
+        const classe = paramClasse;
         void leggiBambini(soloPresenti).then(lista => {
             if (mio !== giroBambini.current) return;
             if (lista) {
+                sezioneLista.current = classe;
                 setStudents(lista);
                 setListaSoloPresenti(soloPresenti);
+            } else if (sezioneLista.current !== classe) {
+                // Cambiata sezione e fallita la lettura: la lista di PRIMA è di altri bambini, e
+                // segnarci il diario scriverebbe sui bambini sbagliati. Meglio vuota.
+                sezioneLista.current = classe;
+                setStudents([]);
             }
             setIsLoading(false);
         });
@@ -550,7 +604,12 @@ export function useDiaryDay(
         // ogni `await` si controlla, e se è superato si esce SENZA scrivere stato.
         const mio = ++ripristinoCorrente.current;
         const superato = () => mio !== ripristinoCorrente.current;
-        const nessuna = () => { setSavedStudentIds(new Set()); setRegistrate({ tipo: eventType, righe: {} }); setNonPiuValidi({}); };
+        // Il giro delle voci si prende alla PARTENZA: vince l'ultima lettura partita.
+        const mioVoci = ++giroVoci.current;
+        const nessuna = () => {
+            setSavedStudentIds(new Set()); setRegistrate({ tipo: eventType, righe: {} }); setNonPiuValidi({});
+            setRigheSoloNota({ tipo: eventType, ids: new Set() });
+        };
         if (list.length === 0 || !sezione) { nessuna(); return; }
         try {
             const today = todayISO();
@@ -559,10 +618,9 @@ export function useDiaryDay(
             const entries = await res.json();
             if (superato()) return;
             if (!Array.isArray(entries)) { nessuna(); return; }
-            // È la stessa lista delle voci di oggi, appena letta: si tiene quella, e le letture più
-            // vecchie ancora in volo non la sovrascrivono.
-            giroVoci.current += 1;
-            setVociDiOggi(entries as VoceDiOggi[]);
+            // È la stessa lista delle voci di oggi, appena letta: si tiene, se nessuna lettura è
+            // partita dopo.
+            if (mioVoci === giroVoci.current) setVociDiOggi(entries as VoceDiOggi[]);
 
             const filtered = entries.filter((e: { tipo_evento: string }) => e.tipo_evento === eventType);
             if (filtered.length === 0) { nessuna(); return; }
@@ -575,12 +633,15 @@ export function useDiaryDay(
                 }
             });
 
-            const routine = routineDi(eventType);
+            // La definizione di ADESSO (dal ref), non quella della chiusura: se la configurazione
+            // è cambiata mentre questa lettura era in volo, i valori si giudicano con quella nuova.
+            const routine = routineCorrente(eventType);
             const newState = buildInitialState(eventType, list, routine);
             const savedIds = new Set<string>();
             const inArchivio: Record<string, Record<string, unknown>> = {};
             const restoredNotes: Record<string, string> = {};
             const nonValidi: Record<string, unknown> = {};
+            const soloNota = new Set<string>();
             Object.entries(latestPerStudent).forEach(([studentId, entry]) => {
                 // Nota per-bambino (E1): la ripopolo SEMPRE (prima dell'early-return
                 // umore), così riaprire lo stesso evento e risalvare non la azzera in
@@ -617,11 +678,14 @@ export function useDiaryDay(
                     // una nota) non l'ha svuotata nessuno, e non la si cancella al
                     // posto suo a un Salva qualsiasi.
                     if (voceDaMostrare(eventType, entry.dettagli)) inArchivio[studentId] = entry.dettagli;
+                    // In piedi per la sola nota del bambino (umore e routine della scuola).
+                    else if (svuotaCancella(eventType) && eventType !== 'nanna_inizio' && eventType !== 'nanna_fine') soloNota.add(studentId);
                 }
             });
             setNoteBambino(restoredNotes);
             setRegistrate({ tipo: eventType, righe: inArchivio });
             setNonPiuValidi(nonValidi);
+            setRigheSoloNota({ tipo: eventType, ids: soloNota });
 
             // Ricostruisce activities[] con partecipazione per-studente dal primo entry trovato
             if (eventType === 'attivita') {
@@ -684,6 +748,8 @@ export function useDiaryDay(
         setSavedStudentIds(new Set());
         setRegistrate({ tipo: null, righe: {} });
         setNonPiuValidi({});
+        setRigheSoloNota({ tipo: null, ids: new Set() });
+        setSegniTolti(0);
         setNotaLibera('');
         setNoteBambino({});
         // Inizializza con una attività vuota, con partecipazione null per ogni studente
@@ -800,7 +866,14 @@ export function useDiaryDay(
             setNonPiuValidi(prev => { const n = { ...prev }; delete n[studentId]; return n; });
             // La voce esce anche dalle voci di oggi: una routine spenta senza più voci sparisce.
             const tipo = selectedEvent;
+            // Le letture delle voci partite prima del cestino non rimettono la voce appena tolta.
+            giroVoci.current += 1;
             setVociDiOggi(vociDiOggiRef.current.filter(v => !(v.alunno_id === studentId && v.tipo_evento === tipo)));
+            setRigheSoloNota(prev => {
+                if (!prev.ids.has(studentId)) return prev;
+                const ids = new Set(prev.ids); ids.delete(studentId);
+                return { tipo: prev.tipo, ids };
+            });
             // Era l'ultima voce di una routine spenta: il riquadro in sola lettura si chiude, invece
             // di tornare modificabile su una routine che il server rifiuterebbe.
             chiudiSeNonDisponibile(configLettaRef.current?.cfg ?? null);
@@ -919,7 +992,13 @@ export function useDiaryDay(
             ? idsSvuotati.filter(id => conNotaDi(id))
             : [],
     );
-    const idsDaTogliere = idsSvuotati.filter(id => !svuotatiConNota.has(id));
+    /** Righe di SOLA nota (umore e routine della scuola) a cui ora è stata tolta anche la nota. */
+    const idsSoloNotaSvuotate: string[] = selectedEvent !== null && righeSoloNota.tipo === selectedEvent
+        ? students
+            .filter(s => righeSoloNota.ids.has(s.id) && !conNotaDi(s.id) && !voceDaMostrare(selectedEvent, dettagliDi(s.id)))
+            .map(s => s.id)
+        : [];
+    const idsDaTogliere = [...idsSvuotati.filter(id => !svuotatiConNota.has(id)), ...idsSoloNotaSvuotate];
     const daTogliere = idsDaTogliere.length;
     const daTogliereSet = new Set(idsDaTogliere);
 
@@ -938,6 +1017,7 @@ export function useDiaryDay(
 
     const handleSave = async () => {
         setIsSaving(true);
+        salvataggioInVolo.current = true;
         try {
             if (!selectedEvent || !userId) return;
             // Fine prima dell'inizio: il pulsante è già spento, questa è la cintura.
@@ -1069,6 +1149,11 @@ export function useDiaryDay(
                 }
 
                 const result = await res.json();
+                // 207 = SALVATAGGIO PARZIALE (quarto giro, 2026-09-28): valgono solo i `saved`, e chi
+                // è negli `errors` non prende la spunta. Prima il ripiego qui sotto («upsert silent»)
+                // segnava salvati TUTTI gli inviati anche con `saved: []`: toast verde, archivio vuoto.
+                const parziale = !Array.isArray(result);
+                const errori: unknown[] = parziale && Array.isArray(result?.errors) ? result.errors : [];
                 // Conta quanti sono stati effettivamente salvati
                 const savedItems = Array.isArray(result) ? result : (result.saved ?? []);
                 const savedIds = new Set<string>(
@@ -1077,7 +1162,12 @@ export function useDiaryDay(
                         .filter(Boolean)
                 );
                 // Se nessuno ha un alunno_id nel result, segna come salvati i soli inviati (upsert silent)
-                const salvatiIds = savedIds.size > 0 ? savedIds : new Set(targetStudents.map(({ student }) => student.id));
+                const salvatiIds = savedIds.size > 0 || parziale ? savedIds : new Set(targetStudents.map(({ student }) => student.id));
+                if (errori.length > 0) {
+                    // Solo il conteggio: niente nomi, niente messaggi del server.
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'diario-salvataggio-parziale', campi: { non_salvate: errori.length, inviate: targetStudents.length } });
+                    alert(t('alertSalvataggioParziale', { count: errori.length }));
+                }
                 // Le ✅ sono del riquadro salvato: su un altro finirebbero su chi non c'entra.
                 if (stessoRiquadro()) setSavedStudentIds(salvatiIds);
                 // Ciò che ora è in archivio: se fra un minuto la maestra svuota uno di
@@ -1098,6 +1188,20 @@ export function useDiaryDay(
                     });
                     return { tipo: prev.tipo, righe };
                 });
+                // Le righe di sola nota: chi è stato salvato senza valore (nota soltanto) lo diventa, chi
+                // ha salvato un valore smette di esserlo.
+                if (svuotaCancella(selectedEvent) && selectedEvent !== 'nanna_inizio' && selectedEvent !== 'nanna_fine') {
+                    setRigheSoloNota(prev => {
+                        if (prev.tipo !== selectedEvent) return prev;
+                        const ids = new Set(prev.ids);
+                        targetStudents.forEach(({ student, dettagli }) => {
+                            if (!salvatiIds.has(student.id)) return;
+                            if (voceDaMostrare(selectedEvent, dettagli)) ids.delete(student.id);
+                            else ids.add(student.id);
+                        });
+                        return { tipo: prev.tipo, ids };
+                    });
+                }
                 // Chi aveva un valore «non più previsto» e ora ne ha salvato uno nuovo: l'avviso se ne
                 // va. Non chi ha salvato solo una nota: lì il server ha tenuto il valore vecchio.
                 const conValoreNuovo = targetStudents
@@ -1129,6 +1233,12 @@ export function useDiaryDay(
                     const righe = { ...prev.righe };
                     tolti.forEach(id => { delete righe[id]; });
                     return { tipo: prev.tipo, righe };
+                });
+                setRigheSoloNota(prev => {
+                    if (prev.tipo !== selectedEvent) return prev;
+                    const ids = new Set(prev.ids);
+                    tolti.forEach(id => ids.delete(id));
+                    return { tipo: prev.tipo, ids };
                 });
                 // Lo schermo si aggiorna solo se mostra ancora il riquadro salvato:
                 // altrimenti il campo vuoto e la ✅ tolta finirebbero su un altro tipo.
@@ -1204,6 +1314,7 @@ export function useDiaryDay(
             if (salvati > 0 || tolti.length > 0) {
                 // Le voci di oggi sono cambiate: una routine spenta con voci può essersi svuotata.
                 void caricaVociDiOggi();
+                setSegniTolti(0);
                 setEsitoSalvataggio({ salvati, tolti: tolti.length, nanna: selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine' });
                 setShowSavedToast(true);
                 setTimeout(() => setShowSavedToast(false), 2500);
@@ -1213,7 +1324,17 @@ export function useDiaryDay(
             logClient({ livello: 'error', evento: 'fetch', messaggio: `diario-salvataggio-fallito: ${nomeErrore(err)}` });
             alert(t('alertErroreSalvataggio'));
         } finally {
+            salvataggioInVolo.current = false;
             setIsSaving(false);
+            // Una rilettura della configurazione è arrivata mentre il salvataggio era in volo: ora
+            // che la POST è tornata, lo schermo si rilegge dall'archivio con la definizione nuova
+            // (vedi `ricaricaConfig`). Riconciliare prima avrebbe svuotato un valore che la POST
+            // rimetteva in archivio, e il Salva dopo l'avrebbe cancellato.
+            if (riconciliazioneInSospeso.current) {
+                riconciliazioneInSospeso.current = false;
+                const tipo = tipoAperto.current;
+                if (tipo) void restoreFromSupabase(tipo);
+            }
         }
     };
 
@@ -1225,6 +1346,7 @@ export function useDiaryDay(
         isLoading,
         showAll,
         listaSoloPresenti,
+        segniTolti,
         toggleShowAll: () => setShowAll(v => !v),
         eventTypes,
         configPronta: configRoutine !== undefined,
@@ -1271,7 +1393,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     const eventLabel = useEventLabel();
     const umoreLabel = useUmoreLabel();
     const {
-        students, eventTypes, configPronta, tipiSpenti, solaLettura, fonteSpenta, ultimeDi, nonPiuValidi, listaSoloPresenti,
+        students, eventTypes, configPronta, tipiSpenti, solaLettura, fonteSpenta, ultimeDi, nonPiuValidi, listaSoloPresenti, segniTolti,
         routineDi, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
         activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
         daSalvare, daTogliere, esitoSalvataggio, orariAttivitaIncoerenti,
@@ -1719,6 +1841,13 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 })}
 
                                 {/* ── ROUTINE DELLA SCUOLA (2026-09-28): il controllo del suo tipo di risposta ── */}
+                                {/* Le opzioni della routine sono cambiate mentre la maestra compilava:
+                                    i segni non salvati che non valgono più sono stati tolti. */}
+                                {!solaLettura && routineAperta && segniTolti > 0 && (
+                                    <p role="status" className="mb-1 rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn text-center">
+                                        {t('routineSegniTolti', { count: segniTolti })}
+                                    </p>
+                                )}
                                 {!solaLettura && routineAperta && (
                                     <RoutinePersonalizzataInline
                                         def={routineAperta}

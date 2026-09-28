@@ -88,6 +88,8 @@
   "routineSpentaFuoriElenco": "{count, plural, one {# registrazione è di un bambino fuori elenco: passa a «Tutti» per vederla.} other {# registrazioni sono di bambini fuori elenco: passa a «Tutti» per vederle.}}",
   "routineSpentaTessera": "Spenta",
   "routineSpentaAria": "{nome}: registrazioni di oggi di una routine spenta",
+  "alertSalvataggioParziale": "{count, plural, one {# registrazione non è stata salvata: riprova.} other {# registrazioni non sono state salvate: riprova.}}",
+  "routineSegniTolti": "{count, plural, one {Le opzioni di questa routine sono cambiate: # segno non ancora salvato è stato tolto.} other {Le opzioni di questa routine sono cambiate: # segni non ancora salvati sono stati tolti.}}",
   "routineTestoPlaceholder": "Scrivi per {nome}…",
   "bagnoAiutoCompilazione": "Si salva solo chi ha almeno una registrazione.",
   "pastoAiutoCompilazione": "Si salva solo chi ha almeno una portata segnata. «Niente» è una portata: dice che non ha mangiato.",

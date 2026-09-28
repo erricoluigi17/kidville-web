@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import * as XLSX from 'xlsx'
 import type { DBFinto, Riga } from '../fixtures/finto-supabase'
+import { ID_PER_QUERY } from '@/lib/db/blocchi'
 import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
 
 // =============================================================================
@@ -22,6 +23,8 @@ const h = vi.hoisted(() => ({
   logEvento: vi.fn(),
   logErrore: vi.fn(),
   errori: {} as Record<string, { code: string }>,
+  /** R8: ogni `.in(colonna, lista)` della richiesta, con la lunghezza della lista. */
+  registroIn: [] as { tabella: string; colonna: string; n: number }[],
   /** K5: un tetto PICCOLO per i test (il vero è 50 blocchi da 1000). `null` = quello vero. */
   tetto: null as { blocco: number; maxBlocchi: number } | null,
 }))
@@ -40,7 +43,23 @@ vi.mock('@/lib/pagamenti/leggi-a-blocchi', async (importActual) => {
 })
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
-  return { createAdminClient: async () => creaFintoSupabase(h.db, [], { maxRighe: 1000, errori: h.errori }) }
+  return {
+    createAdminClient: async () => {
+      const c = creaFintoSupabase(h.db, [], { maxRighe: 1000, errori: h.errori })
+      // R8: si registra ogni `.in()` — il finto client filtra davvero, ma non ha un URL da far
+      // sforare: la lunghezza delle liste la si guarda qui.
+      const from = c.from.bind(c)
+      Object.assign(c, {
+        from: (t: string) => {
+          const q = from(t) as unknown as Record<string, unknown>
+          const inVero = q.in as (colonna: string, v: unknown[]) => unknown
+          q.in = (colonna: string, v: unknown[]) => { h.registroIn.push({ tabella: t, colonna, n: v.length }); return inVero(colonna, v) }
+          return q
+        },
+      })
+      return c
+    },
+  }
 })
 
 import { GET } from '@/app/api/pagamenti/export/route'
@@ -74,6 +93,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.tetto = null
   h.errori = {}
+  h.registroIn = []
   h.db = {
     schools: [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_B, nome: NOME_SEDE_B }],
     scuole: [{ id: SEDE_A, attiva: true }, { id: SEDE_B, attiva: true }],
@@ -289,5 +309,47 @@ describe('K5 — al tetto dei blocchi l’export è un guasto, non un file incom
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('LETTURA_FALLITA')
     expect(erroriDiLog()).toEqual(['logErrore:db:500'])
+  })
+})
+
+// =============================================================================
+// R8 (terza revisione 2026-09-29) — LE LISTE DI ID A BLOCCHI. `.in('alunno_id', ids)` sulle
+// rette dei paganti passava la lista INTERA nell'URL: due id per famiglia, e oltre un centinaio
+// di famiglie la richiesta sfora il limite dei proxy (414, `@/lib/db/blocchi`). Ora a blocchi di
+// `ID_PER_QUERY`, ciascuno letto a sua volta a blocchi di `range`; e tutto-o-niente fra i blocchi.
+// =============================================================================
+describe('R8 — gli id delle rette dei paganti a blocchi', () => {
+  const famiglie = (n: number, retta_: (i: number) => Riga | null) => {
+    for (let i = 0; i < n; i++) {
+      h.db.alunni.push(alunno(uuid('pag', i), SEDE_A), alunno(uuid('fig', i), SEDE_A, { retta_a_carico_di: uuid('pag', i) }))
+      const r = retta_(i)
+      if (r) h.db.pagamenti.push(r)
+    }
+  }
+
+  it('80 famiglie (160 id): nessun `.in(alunno_id)` oltre il blocco, e le righe a carico ci sono TUTTE', async () => {
+    famiglie(80, (i) => retta(uuid('r', i), uuid('pag', i), SEDE_A, 10))
+    const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario'))
+    expect(res.status).toBe(200)
+    const righe = await foglio(res, 'Scadenzario')
+    const aZero = righe.filter((r) => String(r.Stato).startsWith('Paga il fratello'))
+    expect(new Set(aZero.map((r) => r.Alunno)).size).toBe(80)
+    const inAlunno = h.registroIn.filter((x) => x.tabella === 'pagamenti' && x.colonna === 'alunno_id')
+    expect(inAlunno.length).toBeGreaterThanOrEqual(2)
+    expect(Math.max(...inAlunno.map((x) => x.n))).toBeLessThanOrEqual(ID_PER_QUERY)
+  })
+
+  it('un blocco di id al tetto: NESSUNA riga a carico, nemmeno quelle del blocco andato bene', async () => {
+    h.tetto = { blocco: 2, maxBlocchi: 2 }
+    // 60 famiglie = 120 id: il primo blocco (famiglie 0–49) ha UNA retta, il secondo (50–59)
+    // ne ha 10 — oltre il tetto di 4. La lettura principale, filtrata per stato, sta sotto.
+    famiglie(60, (i) => (i === 0
+      ? retta(uuid('r', i), uuid('pag', i), SEDE_A, 10, { stato: 'pagato' })
+      : i >= 50 ? retta(uuid('r', i), uuid('pag', i), SEDE_A, 10) : null))
+    const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario&stato=pagato'))
+    expect(res.status).toBe(200)
+    const righe = await foglio(res, 'Scadenzario')
+    expect(righe.map((r) => r.Alunno)).toEqual([`N${uuid('pag', 0)} Prova`])
+    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'lettura-troncata', tipo: 'export-rette-paganti' }))
   })
 })

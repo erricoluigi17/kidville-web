@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { logEvento } from '@/lib/logging/logger'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { formaConfronto } from '@/lib/auth/scope'
+import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 import { sessoDa, type LegameRetta } from './rette-a-carico'
 
 /**
@@ -160,8 +161,20 @@ export async function caricaLegamiRetta(
   const idPaganti = [...new Set(righe.map((r) => r.retta_a_carico_di).filter((x): x is string => !!x))]
   if (idPaganti.length === 0) return { ok: true, legami: [], nonVisibili: [] }
 
-  const leggiPaganti = (colonne: string) =>
-    supabase.from('alunni').select(colonne).in('id', idPaganti).in('scuola_id', sediPaganti)
+  // A pezzi di `ID_PER_QUERY` (R8, terza revisione 2026-09-29): `.in()` finisce nell'URL, e un
+  // pagante per famiglia a carico, con la lista intera, sfora il limite dei proxy (414) oltre
+  // un centinaio. Tutto-o-niente: il primo pezzo che risponde `{ error }` è l'esito di TUTTA la
+  // lettura — mai i paganti di un pezzo solo spacciati per tutti (gli altri bambini finirebbero
+  // «non visibili», cioè in un'altra sede, che è falso).
+  const leggiPaganti = async (colonne: string): Promise<{ data: unknown[]; error: unknown }> => {
+    const data: unknown[] = []
+    for (const pezzo of aBlocchi(idPaganti, ID_PER_QUERY)) {
+      const r = await supabase.from('alunni').select(colonne).in('id', pezzo).in('scuola_id', sediPaganti)
+      if (r.error) return { data: [], error: r.error }
+      data.push(...((r.data ?? []) as unknown[]))
+    }
+    return { data, error: null }
+  }
   let paganti = sediPaganti.length > 0 ? await leggiPaganti(COLONNE_PAGANTE) : { data: [], error: null }
   if (paganti.error && manca42703(paganti.error, COLONNE_RIPIEGO_PAGANTE)) {
     // DB non migrato: si rilegge senza sesso («A carico di …») e senza archiviazione. Non è un

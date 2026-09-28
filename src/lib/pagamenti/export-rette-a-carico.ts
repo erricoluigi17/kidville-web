@@ -4,6 +4,7 @@ import { formaConfronto } from '@/lib/auth/scope'
 import { caricaLegamiRetta } from './rette-a-carico-server'
 import { testoPaganteIt } from './rette-a-carico'
 import { leggiABlocchi } from './leggi-a-blocchi'
+import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 
 /** Una riga del foglio «Scadenzario»: le chiavi SONO le intestazioni delle colonne. */
 export interface RigaScadenzario {
@@ -84,41 +85,54 @@ export async function righeRetteACarico(supabase: SupabaseClient, o: OpzioniExpo
   if (legami.length === 0) return []
 
   const ids = [...new Set(legami.flatMap((l) => [l.pagante.id, l.alunno_id]))]
-  // `scadenza` e poi `id` (lo aggiunge `leggiABlocchi`): «la prima retta del mese» qui sotto
-  // presuppone l'ordine per scadenza, e fra pari scadenza i blocchi non devono sovrapporsi.
-  const costruisci = () => {
-    let query = supabase
-      .from('pagamenti')
-      .select('alunno_id, descrizione, scadenza, periodo_competenza, stato, tipo, payment_categories!inner ( nome, slug )')
-      .in('alunno_id', ids)
-      .in('scuola_id', o.sediPaganti)
-      .eq('payment_categories.slug', 'retta')
-      .order('scadenza', { ascending: true })
-    // Lo stesso filtro delle righe principali: se la categoria scelta non è una retta, nessuna riga.
-    if (o.categoriaId) query = query.eq('categoria_id', o.categoriaId)
-    return query
-  }
-  const lette = await leggiABlocchi<RigaRetta>(costruisci)
-  if (!lette.ok) {
-    // Al tetto (K5) come per ogni altro guasto di questa informazione accessoria: NESSUNA riga
-    // in più, mai una parte. `leggiABlocchi` non logga (R2, terza revisione): la riga è UNA e
-    // la scrive qui, con `logEvento` e non `logErrore` — l'export risponde 200, non c'è un 5xx
-    // da dichiarare, e la marca anti-doppione di `withRoute` resta giù. Solo conteggi.
-    if (lette.motivo === 'tetto') {
-      logEvento('pagamento', 'error', {
-        operazione: OPERAZIONE, esito: 'lettura-troncata', tipo: 'export-rette-paganti', n: lette.n, blocchi: lette.blocchi,
-        msg: `oltre ${lette.oltre} righe: l’export esce senza le righe dei bambini a carico (nessuna, mai una parte)`,
-      })
-    } else {
-      logEvento('pagamento', 'error', { operazione: OPERAZIONE, esito: 'export-rette-paganti-non-lette', n: ids.length }, lette.error)
+  const righeLette: RigaRetta[] = []
+  // DUE BLOCCHI, uno dentro l'altro (R8, terza revisione 2026-09-29):
+  //  · gli id a pezzi di `ID_PER_QUERY` (`@/lib/db/blocchi`): `.in()` finisce nell'URL, e con
+  //    due id per famiglia la lista intera supera il limite dei proxy (414) già con un centinaio
+  //    di famiglie a carico;
+  //  · ogni pezzo letto a blocchi di `range` (`leggiABlocchi`), perché lo storico delle rette di
+  //    cento alunni passa comunque le 1000 righe di PostgREST.
+  // Unire i pezzi è corretto così come vengono: il calcolo qui sotto è PER ALUNNO, e ogni alunno
+  // sta in un solo pezzo — l'ordine per `scadenza` delle sue rette resta quello della sua lettura.
+  // Tutto-o-niente anche fra i pezzi: uno che fallisce toglie TUTTE le righe in più.
+  for (const pezzo of aBlocchi(ids, ID_PER_QUERY)) {
+    // `scadenza` e poi `id` (lo aggiunge `leggiABlocchi`): «la prima retta del mese» qui sotto
+    // presuppone l'ordine per scadenza, e fra pari scadenza i blocchi non devono sovrapporsi.
+    const costruisci = () => {
+      let query = supabase
+        .from('pagamenti')
+        .select('alunno_id, descrizione, scadenza, periodo_competenza, stato, tipo, payment_categories!inner ( nome, slug )')
+        .in('alunno_id', pezzo)
+        .in('scuola_id', o.sediPaganti)
+        .eq('payment_categories.slug', 'retta')
+        .order('scadenza', { ascending: true })
+      // Lo stesso filtro delle righe principali: se la categoria scelta non è una retta, nessuna riga.
+      if (o.categoriaId) query = query.eq('categoria_id', o.categoriaId)
+      return query
     }
-    return []
+    const lette = await leggiABlocchi<RigaRetta>(costruisci)
+    if (!lette.ok) {
+      // Al tetto (K5) come per ogni altro guasto di questa informazione accessoria: NESSUNA riga
+      // in più, mai una parte. `leggiABlocchi` non logga (R2, terza revisione): la riga è UNA e
+      // la scrive qui, con `logEvento` e non `logErrore` — l'export risponde 200, non c'è un 5xx
+      // da dichiarare, e la marca anti-doppione di `withRoute` resta giù. Solo conteggi.
+      if (lette.motivo === 'tetto') {
+        logEvento('pagamento', 'error', {
+          operazione: OPERAZIONE, esito: 'lettura-troncata', tipo: 'export-rette-paganti', n: lette.n, blocchi: lette.blocchi,
+          msg: `oltre ${lette.oltre} righe: l’export esce senza le righe dei bambini a carico (nessuna, mai una parte)`,
+        })
+      } else {
+        logEvento('pagamento', 'error', { operazione: OPERAZIONE, esito: 'export-rette-paganti-non-lette', n: ids.length }, lette.error)
+      }
+      return []
+    }
+    righeLette.push(...lette.righe)
   }
 
   // Per alunno: i mesi con una retta PROPRIA (D9), e la prima retta di ogni mese per scadenza.
   const mesiPropri = new Map<string, Set<string>>()
   const primaDelMese = new Map<string, Map<string, RigaRetta>>()
-  for (const r of lette.righe) {
+  for (const r of righeLette) {
     if (r.tipo === 'padre' || !r.periodo_competenza) continue
     const mesi = mesiPropri.get(r.alunno_id) ?? new Set<string>()
     mesi.add(r.periodo_competenza)

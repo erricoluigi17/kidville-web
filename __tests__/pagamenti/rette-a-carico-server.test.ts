@@ -11,6 +11,7 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
 
 import { caricaLegamiRetta, sediDeiPaganti } from '@/lib/pagamenti/rette-a-carico-server'
 import { creaFintoSupabase } from '../fixtures/finto-supabase'
+import { ID_PER_QUERY } from '@/lib/db/blocchi'
 
 // K4 (seconda revisione 2026-09-28): le sedi dei paganti = sedi dei bambini ∪ accessibili.
 describe('sediDeiPaganti', () => {
@@ -250,5 +251,86 @@ describe('caricaLegamiRetta — la seconda query (paganti)', () => {
       ['eq', 'stato', 'iscritto'], ['in', 'scuola_id', ['s1', 's2']], ['not', 'retta_a_carico_di', 'is', null],
     ]))
     expect(chiamate).toHaveLength(1)
+  })
+})
+
+// =============================================================================
+// R8 (terza revisione 2026-09-29) — `.in('id', idPaganti)` passava la lista INTERA nell'URL: un
+// pagante per famiglia, e oltre un centinaio la richiesta sfora il limite dei proxy (414,
+// `@/lib/db/blocchi`). Ora a pezzi di `ID_PER_QUERY`, con l'errore di OGNI pezzo guardato.
+// =============================================================================
+describe('caricaLegamiRetta — gli id dei paganti a blocchi (R8)', () => {
+  const N = 160
+  const id = (p: string, i: number) => `${p}-${String(i).padStart(3, '0')}`
+
+  it(`${N} paganti: ogni \`.in('id')\` sta nel blocco, e i legami ci sono TUTTI`, async () => {
+    db = { alunni: [] }
+    for (let i = 0; i < N; i++) db.alunni.push(alunno(id('p', i), {}), alunno(id('f', i), { retta_a_carico_di: id('p', i) }))
+    const registro: { colonna: string; n: number }[] = []
+    const c = client()
+    const from = c.from.bind(c)
+    Object.assign(c, {
+      from: (t: string) => {
+        const q = from(t) as unknown as Record<string, unknown>
+        const inVero = q.in as (colonna: string, v: unknown[]) => unknown
+        q.in = (colonna: string, v: unknown[]) => { registro.push({ colonna, n: v.length }); return inVero(colonna, v) }
+        return q
+      },
+    })
+    const e = await caricaLegamiRetta(c, { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
+    expect(e.ok && e.legami.length).toBe(N)
+    expect(e.ok && e.nonVisibili).toEqual([])
+    const perId = registro.filter((r) => r.colonna === 'id')
+    expect(perId.length).toBeGreaterThanOrEqual(2)
+    expect(Math.max(...perId.map((r) => r.n))).toBeLessThanOrEqual(ID_PER_QUERY)
+    expect(perId.reduce((s, r) => s + r.n, 0)).toBe(N)
+  })
+
+  /** Client a copione (come sopra), con il `.in('id', …)` di ogni lettura registrato. */
+  function copioneIn(risposte: { data: unknown; error: unknown }[]) {
+    const chiamate: { select: string; ids: string[] | null }[] = []
+    const client = {
+      from: () => {
+        const c = { select: '', ids: null as string[] | null }
+        chiamate.push(c)
+        const indice = chiamate.length - 1
+        const b: Record<string, unknown> = {}
+        for (const m of ['eq', 'not']) b[m] = () => b
+        b.in = (col: string, v: string[]) => { if (col === 'id') c.ids = v; return b }
+        b.select = (x: string) => { c.select = x; return b }
+        b.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(risposte[indice]).then(ok, ko)
+        return b
+      },
+    } as unknown as SupabaseClient
+    return { client, chiamate }
+  }
+  const bambini = Array.from({ length: N }, (_, i) => ({
+    id: id('f', i), nome: 'F', cognome: 'X', classe_sezione: null, section_id: null, scuola_id: 's1', retta_a_carico_di: id('p', i),
+  }))
+  const paganti = (da: number, a: number) => Array.from({ length: a - da }, (_, k) => ({
+    id: id('p', da + k), nome: 'P', cognome: 'X', classe_sezione: null, stato: 'iscritto', scuola_id: 's1',
+  }))
+
+  it('il SECONDO pezzo fallisce: guasto (ok=false, error), non i legami del primo spacciati per tutti', async () => {
+    const { client } = copioneIn([
+      { data: bambini, error: null },
+      { data: paganti(0, ID_PER_QUERY), error: null },
+      { data: null, error: { code: '57014', message: 'timeout' } },
+    ])
+    expect(await caricaLegamiRetta(client, { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })).toEqual({ ok: false })
+    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-paganti-non-letti', n: N }), expect.anything())
+  })
+
+  it('42703 su gender al primo pezzo: un log info, e si rileggono TUTTI i pezzi senza gender', async () => {
+    const { client, chiamate } = copioneIn([
+      { data: bambini, error: null },
+      { data: null, error: { code: '42703', message: 'column alunni.gender does not exist' } },
+      { data: paganti(0, ID_PER_QUERY), error: null },
+      { data: paganti(ID_PER_QUERY, N), error: null },
+    ])
+    const e = await caricaLegamiRetta(client, { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
+    expect(e.ok && e.legami.length).toBe(N)
+    expect(chiamate.slice(2).map((c) => [c.select.includes('gender'), c.ids?.length])).toEqual([[false, ID_PER_QUERY], [false, N - ID_PER_QUERY]])
+    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ esito: 'legami-paganti-colonne-assenti' }), expect.anything())
   })
 })

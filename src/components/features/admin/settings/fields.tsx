@@ -64,11 +64,15 @@ export function PillMultiSelect({ options, selected, onChange }: { options: { id
     );
 }
 
-export function SaveRow({ onSave, saving, msg, error }: { onSave: () => void; saving: boolean; msg: string; error: string | null }) {
+export function SaveRow({ onSave, saving, msg, error, bloccato = false }: {
+    onSave: () => void; saving: boolean; msg: string; error: string | null;
+    /** Il salvataggio non si può fare (es. configurazione salvata non letta): il pannello dice perché. */
+    bloccato?: boolean;
+}) {
     const t = useTranslations('adminSettings');
     return (
         <div className="mt-4 flex items-center gap-3">
-            <button onClick={onSave} disabled={saving} className={btnPrimary}>
+            <button onClick={onSave} disabled={saving || bloccato} className={btnPrimary}>
                 <Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}
             </button>
             {msg && <span role="status" className="font-maven text-sm text-kidville-success">{msg}</span>}

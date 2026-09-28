@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card'
 import { useDateFormat } from '@/lib/i18n/date'
 import { voceDaMostrare } from '@/lib/diary/registrazione'
 import { useEventLabel } from '@/components/features/teacher/diary/eventConfig'
+import { eRoutinePersonalizzata, oraRoutine } from '@/lib/diary/routine'
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile'
 import { segnalaDiarioNonLetto } from '@/lib/diary/lettura-genitore'
 
@@ -16,6 +17,10 @@ interface Entry {
   tipo_evento: string
   timestamp_evento: string
   note?: string | null
+  // La nota del SINGOLO bambino (E1): tiene in piedi la voce come quella di sezione. Prima la card
+  // la ignorava, e una routine tenuta in piedi solo da lei compariva nella pagina del diario ma
+  // non qui («nessun aggiornamento») — 2026-09-28.
+  notaBambino?: string | null
   // Serve a `voceDaMostrare`: senza, «Bagno» ricomparirebbe in home anche dopo la
   // correzione, perché qui si stampa il `tipo_evento` grezzo senza guardare cosa
   // c'è dentro. La GET del genitore lo restituisce già.
@@ -84,7 +89,7 @@ export function DiaryTodayCard({ studentId, href }: Props) {
         // l'ora di «aggiornato alle» (che poteva essere quella di una riga vuota)
         // e l'elenco, che stampa il `tipo_evento` grezzo.
         if (Array.isArray(d)) {
-          voci = (d as Entry[]).filter(e => voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.note) }))
+          voci = (d as Entry[]).filter(e => voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.note || e.notaBambino) }))
         }
       } catch {
         // Rete giù o corpo illeggibile: `voci` resta null, e qui sotto diventa l'avviso
@@ -182,17 +187,23 @@ export function DiaryTodayCard({ studentId, href }: Props) {
             </div>
             <div className="min-w-0 flex-1 pt-0.5">
               <div className="flex items-baseline gap-2">
-                <span className="font-barlow text-[13.5px] font-extrabold uppercase tracking-wide text-kidville-green">
+                <span className="min-w-0 break-words font-barlow text-[13.5px] font-extrabold uppercase tracking-wide text-kidville-green">
                   {ev.tipo_evento ? eventLabel(ev.tipo_evento, ev.dettagli) : t('diaryAggiornamentoDefault')}
                 </span>
-                <span className="font-maven text-[11px] text-kidville-muted">{fmtTime(ev.timestamp_evento)}</span>
+                {/* Una routine della scuola a orario: l'ora SEGNATA, non quella del salvataggio. */}
+                <span className="font-maven text-[11px] text-kidville-muted">
+                  {(eRoutinePersonalizzata(ev.tipo_evento) ? oraRoutine(ev.dettagli) : null) ?? fmtTime(ev.timestamp_evento)}
+                </span>
               </div>
               {/* `text-kidville-sub` e non l'hex letterale `#55615c`: stesso colore, ma
                   l'hex scritto a mano resta fuori dall'inventario dei token e dalle
                   rimappature per-superficie dell'Alto Contrasto, che agiscono sul nome
                   della classe. */}
               {ev.note && (
-                <p className="mt-0.5 font-maven text-[12.8px] leading-snug text-kidville-sub">{ev.note}</p>
+                <p className="mt-0.5 break-words font-maven text-[12.8px] leading-snug text-kidville-sub">{ev.note}</p>
+              )}
+              {ev.notaBambino && (
+                <p className="mt-0.5 break-words font-maven text-[12.8px] leading-snug text-kidville-sub">{ev.notaBambino}</p>
               )}
             </div>
           </div>

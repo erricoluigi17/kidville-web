@@ -208,9 +208,10 @@ describe('POST /api/diary/entries — orario delle attività', () => {
 
     it('la regola vale SOLO per le attività: gli altri tipi non vengono toccati', async () => {
         const { POST } = await import('@/app/api/diary/entries/route');
+        // Un bagno (tipo del vocabolario chiuso dal 2026-09-28) che porta per caso `activities`.
         const res = await POST(req([{
-            alunno_id: A1, tipo_evento: 'entrata', orario_inizio: new Date().toISOString(),
-            dettagli: { activities: [{ ora_inizio: '99:99', ora_fine: '00:00' }] },
+            alunno_id: A1, tipo_evento: 'bagno', orario_inizio: new Date().toISOString(),
+            dettagli: { pipi: 1, activities: [{ ora_inizio: '99:99', ora_fine: '00:00' }] },
         }]));
         expect(res.status).toBeLessThan(300);
         expect(h.inserted).toHaveLength(1);

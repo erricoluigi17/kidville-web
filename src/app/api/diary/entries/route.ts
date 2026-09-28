@@ -16,6 +16,7 @@ import { logEvento, logErrore } from '@/lib/logging/logger';
 import { riconciliaRichieste } from '@/lib/armadietto/richieste';
 import { voceDaMostrare } from '@/lib/diary/registrazione';
 import { applicaRoutineAlLotto } from '@/lib/diary/routine-lotto';
+import { TIPI_BASE, TIPO_ROUTINE_RE, eRoutinePersonalizzata, routineCompilata } from '@/lib/diary/routine';
 import { eEventoAttivita, ORA_ATTIVITA_RE, oraAttivitaValida } from '@/lib/diary/attivita';
 
 // Modalità genitore: default from = 14 giorni fa, to = oggi (dinamici, calcolati nel codice).
@@ -41,8 +42,12 @@ const getTeacherQuerySchema = z.object({
 // (il comportamento attuale non impone vincoli su orari/dettagli/nota).
 const entrySchema = z.object({
     alunno_id: zUuid,
-    // Nessun vincolo di non-vuoto: il codice attuale non lo impone su questa route.
-    tipo_evento: z.string(),
+    // UN VOCABOLARIO CHIUSO (2026-09-28, seconda revisione): i tipi base e `routine:<id>`. Era una
+    // stringa libera, e da quando le routine si accendono e si spengono per sede una stringa libera
+    // le aggirava: `BAGNO`, `bagno ` o `Routine:…` si scrivevano senza passare dai controlli (lo
+    // poteva fare solo il personale, ma lo poteva fare). In produzione, misurato lo stesso giorno,
+    // i tipi scritti sono SETTE, tutti in `TIPI_BASE`.
+    tipo_evento: z.union([z.enum(TIPI_BASE), z.string().regex(TIPO_ROUTINE_RE)]),
     // Default dinamico (adesso) calcolato nel codice.
     orario_inizio: z.unknown().optional(),
     orario_fine: z.unknown().optional(),
@@ -375,7 +380,7 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         // Cerca se esiste già un evento per questo alunno+tipo oggi
         const { data: existing } = await admin
             .from('eventi_diario')
-            .select('id')
+            .select('id, dettagli')
             .eq('alunno_id', entry.alunno_id)
             .eq('tipo_evento', entry.tipo_evento)
             .gte('orario_inizio', startOfDay)
@@ -386,8 +391,16 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         if (existing && existing.length > 0) {
             // UPDATE — resiliente alla colonna nota_bambino non ancora migrata (DB E2E CI):
             // PGRST204/42703 → rimuove la colonna mancante e riprova. In prod esiste → 0 retry.
+            // Una routine della scuola che arriva SENZA valore (tenuta in piedi da una nota) non
+            // cancella il valore già salvato (2026-09-28): succede quando la segreteria ha cambiato
+            // le opzioni e il valore di stamattina non vale più per la routine com'è adesso. Il
+            // valore si toglie col cestino, o svuotando e salvando — che mandano una DELETE.
+            const precedente = (existing[0] as { dettagli?: Record<string, unknown> | null }).dettagli ?? null;
+            const tieniPrecedente = eRoutinePersonalizzata(entry.tipo_evento)
+                && !routineCompilata(entry.dettagli as Record<string, unknown> | null)
+                && routineCompilata(precedente);
             const updateRecord: Record<string, unknown> = {
-                dettagli: entry.dettagli ?? null,
+                dettagli: tieniPrecedente ? precedente : entry.dettagli ?? null,
                 orario_fine: entry.orario_fine ?? null,
                 nota_libera: entry.nota_libera ?? null,   // nota di sezione (broadcast a tutti)
                 nota_bambino: entry.nota_bambino ?? null, // nota del singolo bambino (E1)
@@ -583,8 +596,8 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 // L'elenco vive in `@/lib/diary/registrazione` (`TIPI_ELIMINABILI`), insieme a
 // quello dei tipi selettivi: sono due facce della stessa decisione e separarle
 // significherebbe, un domani, renderne uno selettivo e dimenticare la porta.
-// `attivita` è entrata insieme alla sua regola selettiva; `umore` resta fuori
-// per una ragione scritta lì.
+// `attivita` è entrata insieme alla sua regola selettiva; `umore` il 2026-09-28,
+// quando le routine hanno cominciato a spegnersi per sede (la ragione è scritta lì).
 //
 // L'enum si tiene comunque QUI, esplicito e letterale: il gate di una rotta che
 // cancella non si legge da una costante importata.
@@ -603,8 +616,8 @@ const deleteQuerySchema = z.object({
     // nient'altro — il prefisso non è una porta per stringhe libere. Anche per una routine spenta
     // o cancellata: correggere uno sbaglio non dipende da quello.
     tipo_evento: z.union([
-        z.enum(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita']),
-        z.string().regex(/^routine:[a-z0-9]{8}$/),
+        z.enum(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita', 'umore']),
+        z.string().regex(TIPO_ROUTINE_RE),
     ]),
     // Default dinamico (oggi), calcolato nel codice come fa la GET.
     date: zDataYMD.optional(),

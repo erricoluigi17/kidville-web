@@ -39,3 +39,20 @@ describe('card «Oggi a scuola» — le etichette', () => {
         expect(screen.queryByText(/Nanna inizio|Attivita\b|Routine:/)).not.toBeInTheDocument();
     });
 });
+
+describe('card «Oggi a scuola» — seconda revisione critica (2026-09-28)', () => {
+    it('una voce tenuta in piedi dalla sola nota del BAMBINO c\'è, con la sua nota', async () => {
+        voci = [{ id: 'e1', tipo_evento: 'routine:a1b2c3d4', timestamp_evento: ora, dettagli: { nome: 'Crema solare', emoji: '🧴', risposta: 'spunta', valore: null }, note: null, notaBambino: 'Non ha voluto la crema' }];
+        render(<DiaryTodayCard studentId="a1" href="/parent/diary" />);
+        expect(await screen.findByText('Crema solare')).toBeInTheDocument();
+        expect(screen.getByText('Non ha voluto la crema')).toBeInTheDocument();
+    });
+
+    it('per una routine a orario, l\'ora è quella SEGNATA', async () => {
+        const quindici = new Date(); quindici.setHours(15, 47, 0, 0);
+        voci = [{ id: 'e1', tipo_evento: 'routine:b0b0b0b0', timestamp_evento: quindici.toISOString(), dettagli: { nome: 'Latte', emoji: '🥛', risposta: 'orario', valore: '10:30' }, note: null }];
+        render(<DiaryTodayCard studentId="a1" href="/parent/diary" />);
+        expect(await screen.findByText('Latte')).toBeInTheDocument();
+        expect(screen.getByText('10:30')).toBeInTheDocument();
+    });
+});

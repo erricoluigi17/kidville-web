@@ -2214,6 +2214,12 @@ export const CODICI_ERRORE = {
      */
     ROUTINE_RISPOSTA_NON_MODIFICABILE: 'erroreRoutineRispostaNonModificabile',
     /**
+     * 409 — `admin/settings:PATCH`: fra la lettura del pannello e il salvataggio qualcun altro ha
+     * cambiato una delle chiavi di `diario_config` che si stanno salvando (2026-09-28). Niente
+     * scritto: il secondo non cancella il lavoro del primo.
+     */
+    CONFIG_DIARIO_CAMBIATA: 'erroreConfigDiarioCambiata',
+    /**
      * 500 — l'appello della primaria non ha potuto leggere lo stato PRECEDENTE
      * (`primaria/appello:POST`). Da quando la riga si costruisce a partire da ciò che
      * c'era, quella lettura è portante: proseguire senza azzererebbe note e orari in

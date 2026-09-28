@@ -132,6 +132,8 @@ env:
     visible: "Routine e attività"
     timeout: 30000
 - tapOn: "Routine e attività"
+# Il riquadro dell'umore c'è solo se la maestra l'ha segnato (dal 2026-09-28): questo passo regge
+# sulla voce d'umore scritta da `scripts/seed-screenshot-play.mjs`. Senza, scade dopo 60 s.
 - extendedWaitUntil:
     visible: ".*Umore della giornata.*"
     timeout: 60000

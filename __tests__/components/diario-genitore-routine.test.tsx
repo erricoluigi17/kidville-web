@@ -129,3 +129,53 @@ describe('diario del genitore — l\'umore c\'è solo se la maestra l\'ha segnat
         expect(await screen.findByText(new RegExp(itDiario.umoreTitolo))).toBeInTheDocument();
     });
 });
+
+describe('diario del genitore — seconda revisione critica (2026-09-28)', () => {
+    it('ALTA · una routine a spunta NON segnata, tenuta in piedi da una nota, non dice «Fatto ✓»', async () => {
+        // La maestra spunta «Crema solare» a 3 bambini su 20 e scrive la nota di sezione: gli altri
+        // 17 genitori leggevano «Fatto ✓». Con una routine «Farmaco» sarebbe pericoloso.
+        h.risposte.push(ok([
+            { ...routine('a1b2c3d4', 'Crema solare', '🧴', 'spunta', null), note: 'Domani portate la crema' },
+            { ...routine('e5f6a7b8', 'Biberon', '🍼', 'scelta', null), notaBambino: 'Ha preferito il bicchiere' },
+        ]));
+        render(<ParentDiaryPage />);
+        expect(await screen.findByText(/Domani portate la crema/)).toBeInTheDocument();
+        expect(screen.getByText(/Ha preferito il bicchiere/)).toBeInTheDocument();
+        expect(screen.queryByText(itDiario.routineFatto), 'un «Fatto» mai segnato').not.toBeInTheDocument();
+        expect(screen.queryByText(itDiario.eventoGenerico)).not.toBeInTheDocument();
+    });
+
+    it('voci tutte mute e nessun ingresso: lo stato vuoto c\'è, non una pagina bianca', async () => {
+        h.risposte.push(ok([{ id: 'e-n', tipo_evento: 'nanna_inizio', timestamp_evento: oggi(13), dettagli: { orario_inizio: '' }, note: null, notaBambino: null }]));
+        render(<ParentDiaryPage />);
+        expect(await screen.findByText(itDiario.vuotoTitolo)).toBeInTheDocument();
+    });
+
+    it('la nota scritta nel riquadro dell\'umore arriva al genitore', async () => {
+        h.risposte.push(ok([{ id: 'e-umore', tipo_evento: 'umore', timestamp_evento: oggi(9), dettagli: { umore: 'felice' }, note: 'Giornata di sole', notaBambino: 'Ha riso tanto' }]));
+        render(<ParentDiaryPage />);
+        expect(await screen.findByText(/Giornata di sole/)).toBeInTheDocument();
+        expect(screen.getByText(/Ha riso tanto/)).toBeInTheDocument();
+    });
+
+    it('per una routine a orario, a lato c\'è l\'ORA SEGNATA, non quella del salvataggio', async () => {
+        h.risposte.push(ok([{ ...routine('b0b0b0b0', 'Latte', '🥛', 'orario', '10:30'), timestamp_evento: oggi(15) }]));
+        render(<ParentDiaryPage />);
+        expect(await screen.findByText('10:30')).toBeInTheDocument();
+        expect(screen.queryByText('15:00')).not.toBeInTheDocument();
+    });
+
+    it('le routine della scuola vengono dopo quelle base, dalla PIÙ PRESTO alla più tardi', async () => {
+        h.risposte.push(ok([
+            { ...routine('b0b0b0b0', 'Latte', '🥛', 'spunta', true), timestamp_evento: oggi(15) },
+            { ...routine('a1b2c3d4', 'Crema solare', '🧴', 'spunta', true), timestamp_evento: oggi(9) },
+            PRANZO,
+        ]));
+        render(<ParentDiaryPage />);
+        const latte = await screen.findByText('Latte');
+        const crema = screen.getByText('Crema solare');
+        const pranzo = screen.getByText(/Pranzo/i, { selector: 'p.font-barlow' });
+        expect(pranzo.compareDocumentPosition(crema) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(crema.compareDocumentPosition(latte) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+});

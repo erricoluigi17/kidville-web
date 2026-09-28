@@ -362,6 +362,8 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     // e da qui sulla riga della richiesta — perché è la prova che quel testo è
     // stato tolto davvero.
     let presenzeBonificate = 0
+    // Il testo libero del diario (note e routine a testo), tolto dal 2026-09-28: stessa ragione.
+    let diarioBonificate = 0
     // Le notifiche già recapitate che nominavano il minore: la campanella è un
     // archivio, non un rivolo. Arriva fin qui per la stessa ragione delle altre
     // — un oblio si racconta con dei numeri, non con un «fatto».
@@ -390,6 +392,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       segnalazioni += r.segnalazioniBonificate
       sospensioni += r.sospensioniBonificate
       presenzeBonificate += r.presenzeBonificate ?? 0
+      diarioBonificate += r.diarioBonificate ?? 0
       notificheRimosse += r.notificheRimosse ?? 0
       lettureFallite += r.lettureFallite ?? 0
     }
@@ -448,6 +451,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       segnalazioni_bonificate: segnalazioni,
       sospensioni_bonificate: sospensioni,
       presenze_bonificate: presenzeBonificate,
+      diario_bonificate: diarioBonificate,
       notifiche_rimosse: notificheRimosse,
       // L'account di accesso del genitore: chi rilegge la richiesta deve poter
       // sapere se l'email e il nome della persona sono usciti anche da lì.

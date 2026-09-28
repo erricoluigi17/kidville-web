@@ -8,7 +8,7 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
 import { configDiVoce, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
-import { eRoutinePersonalizzata } from '@/lib/diary/routine';
+import { eRoutinePersonalizzata, routineCompilata, oraRoutine } from '@/lib/diary/routine';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { fetchConCache } from '@/lib/offline/read-cache';
@@ -215,26 +215,38 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
     // di oggi: la voce resta leggibile anche a routine rinominata, spenta o cancellata.
     if (eRoutinePersonalizzata(tipo)) {
         const emoji = typeof dettagli?.emoji === 'string' && dettagli.emoji.trim() ? dettagli.emoji.trim() : '📝';
-        return { emoji, lines: [fraseRoutine(dettagli, t)] };
+        const frase = fraseRoutine(dettagli, t);
+        return { emoji, lines: frase ? [frase] : [] };
     }
 
     return { emoji: '📝', lines: [t('eventoGenerico')] };
 }
 
-/** Il valore di una routine della scuola, detto al genitore. Le opzioni e il testo sono dati: non si traducono. */
-function fraseRoutine(dettagli: Record<string, unknown> | null, t: Traduci): string {
+/**
+ * Il valore di una routine della scuola, detto al genitore, o `null` se la maestra non l'ha segnato.
+ * Le opzioni e il testo sono dati: non si traducono.
+ *
+ * ⚠️ `null` e non una frase (seconda revisione, 2026-09-28). Una voce può esistere SENZA valore,
+ * tenuta in piedi da una nota — di sezione, che va a tutti, o del bambino. Prima la spunta diceva
+ * «Fatto ✓» senza guardare il valore: la maestra spuntava la crema a 3 bambini su 20, scriveva
+ * «domani portate la crema», e 17 genitori leggevano «Fatto ✓». Con una routine «Farmaco» sarebbe
+ * stato pericoloso. Gli altri tipi cadevano su «Evento registrato dalla maestra.»: ora la card
+ * mostra la nota e basta.
+ */
+function fraseRoutine(dettagli: Record<string, unknown> | null, t: Traduci): string | null {
+    if (!routineCompilata(dettagli)) return null;
     const valore = dettagli?.valore;
     switch (dettagli?.risposta) {
         case 'spunta':
             return t('routineFatto');
         case 'orario':
-            return typeof valore === 'string' ? t('routineAlle', { ora: valore }) : t('eventoGenerico');
+            return t('routineAlle', { ora: valore as string });
         case 'scelta':
-            return Array.isArray(valore) ? valore.filter((v) => typeof v === 'string').join(', ') : t('eventoGenerico');
+            return (valore as unknown[]).filter((v) => typeof v === 'string' && v.trim()).join(', ');
         case 'testo':
-            return typeof valore === 'string' && valore.trim() ? valore.trim() : t('eventoGenerico');
+            return (valore as string).trim();
         default:
-            return t('eventoGenerico');
+            return null;
     }
 }
 
@@ -276,8 +288,11 @@ function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
         const prev = latest.get(e.tipo_evento);
         if (!prev || e.timestamp_evento > prev.timestamp_evento) latest.set(e.tipo_evento, e);
     });
+    // A parità d'ordine (le routine della scuola, che in `EVENT_ORDER` non ci sono) si va dalla
+    // più presto alla più tardi: prima restavano nell'ordine della GET, cioè dalla più recente.
     return Array.from(latest.values()).sort((a, b) =>
         (EVENT_ORDER[a.tipo_evento] ?? 99) - (EVENT_ORDER[b.tipo_evento] ?? 99)
+        || (a.timestamp_evento < b.timestamp_evento ? -1 : a.timestamp_evento > b.timestamp_evento ? 1 : 0)
     );
 }
 
@@ -298,7 +313,10 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
     // D3 (2026-09-26): a lato della voce «attività» va l'ora di inizio della PRIMA
     // attività (contratto D1, `oraDiLatoAttivita`); se non c'è, l'ora del
     // salvataggio come per tutte le altre voci.
+    // Per una routine della scuola a orario, l'ora di lato è quella SEGNATA (2026-09-28): prima era
+    // quella del primo salvataggio — «Latte 15:47» per un biberon delle 10:30.
     const oraDiLato = (entry.tipo_evento === 'attivita' ? oraDiLatoAttivita(entry.dettagli, entry.timestamp_evento) : null)
+        ?? (eRoutinePersonalizzata(entry.tipo_evento) ? oraRoutine(entry.dettagli) : null)
         ?? formatTime(entry.timestamp_evento, f.locale);
 
     return (
@@ -313,8 +331,8 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
                 <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xl flex-shrink-0 ${config.color}`}>
                     {config.emoji}
                 </div>
-                <div className="flex-1">
-                    <p className={`font-barlow font-black text-sm uppercase tracking-wide ${config.accentColor.split(' ').find(c => c.startsWith('text-')) ?? 'text-kidville-green'}`}>
+                <div className="flex-1 min-w-0">
+                    <p className={`font-barlow font-black text-sm uppercase tracking-wide break-words ${config.accentColor.split(' ').find(c => c.startsWith('text-')) ?? 'text-kidville-green'}`}>
                         {eventLabel(entry.tipo_evento, entry.dettagli)}
                     </p>
                     <p className="font-maven text-[11px] text-kidville-muted">
@@ -327,12 +345,12 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
             {/* Narrazione prima persona */}
             <div className="space-y-1.5 pl-1">
                 {lines.map((line, i) => (
-                    <p key={i} className="font-maven text-sm text-kidville-ink leading-relaxed">
+                    <p key={i} className="font-maven text-sm text-kidville-ink leading-relaxed break-words">
                         {line}
                     </p>
                 ))}
                 {entry.note && (
-                    <p className="font-maven text-sm text-kidville-muted italic mt-2 pt-2 border-t border-kidville-line/60">
+                    <p className={`font-maven text-sm text-kidville-muted italic break-words ${lines.length > 0 ? 'mt-2 pt-2 border-t border-kidville-line/60' : ''}`}>
                         💬 &ldquo;{entry.note}&rdquo;
                     </p>
                 )}
@@ -343,7 +361,7 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
                         <p className="font-barlow font-bold uppercase text-[10px] tracking-wide text-kidville-green">
                             {t('notaPerTe')}
                         </p>
-                        <p className="font-maven text-sm text-kidville-ink leading-relaxed mt-0.5">
+                        <p className="font-maven text-sm text-kidville-ink leading-relaxed mt-0.5 break-words">
                             💬 &ldquo;{entry.notaBambino}&rdquo;
                         </p>
                     </div>
@@ -620,8 +638,14 @@ function ParentDiaryContent() {
     // Umore del giorno (M5.4): entries è già deduplicato all'ultimo evento per
     // tipo, quindi qui c'è al più l'umore più recente del giorno. L'evento vive
     // nel banner giallo, non nella timeline.
-    const umore = umoreFromDettagli(entries.find(e => e.tipo_evento === 'umore')?.dettagli);
+    const voceUmore = entries.find(e => e.tipo_evento === 'umore');
+    const umore = umoreFromDettagli(voceUmore?.dettagli);
     const umoreCfg = umore ? UMORE_CONFIG[umore] : null;
+    // Le note scritte nel riquadro dell'umore (2026-09-28): la timeline esclude l'umore, e il
+    // riquadro non le mostrava — la nota non arrivava mai al genitore.
+    const notaUmore = voceUmore?.note?.trim() || null;
+    const notaUmoreBambino = voceUmore?.notaBambino?.trim() || null;
+    const riquadroUmore = Boolean(umoreCfg) || Boolean(notaUmore || notaUmoreBambino);
     // Fuori dalla timeline: l'umore (vive nel banner, non fra le voci) e le nanne
     // NON COMPILATE.
     //
@@ -645,6 +669,10 @@ function ParentDiaryContent() {
     const timelineEntries = entries.filter(e =>
         e.tipo_evento !== 'umore' && voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.notaBambino || e.note) }),
     );
+    // NIENTE DA MOSTRARE — lo si decide su ciò che si mostrerebbe davvero, non sulle voci arrivate
+    // (2026-09-28). Voci tutte filtrate (nanne vuote, righe mute) e nessun ingresso lasciavano la
+    // pagina con intestazione e piè di pagina e basta: nemmeno «Nessuna voce».
+    const nienteDaMostrare = timelineEntries.length === 0 && !riquadroUmore && !arrivato && photos.length === 0;
 
     const slideVariants = {
         enter: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
@@ -777,8 +805,8 @@ function ParentDiaryContent() {
                         </div>
                     )}
 
-                    {/* Stato vuoto (nessuna voce e nessuna entrata registrata) */}
-                    {!loading && !erroreLettura && entries.length === 0 && !arrivato && (
+                    {/* Stato vuoto (niente da mostrare: vedi `nienteDaMostrare`) */}
+                    {!loading && !erroreLettura && nienteDaMostrare && (
                         <div className="flex flex-col items-center justify-center py-20 text-center">
                             <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
                                 📖
@@ -793,23 +821,36 @@ function ParentDiaryContent() {
                     )}
 
                     {/* Timeline eventi (con "Entrata" in cima, letta dalle Presenze) */}
-                    {!loading && !erroreLettura && (arrivato || entries.length > 0) && (
+                    {!loading && !erroreLettura && !nienteDaMostrare && (
                         <div className="space-y-3">
                             {/* Banner umore (DR mood banner, M5.4): legge l'evento 'umore' più
                                 recente del giorno (dettagli.umore). SOLO se c'è (2026-09-28): senza
                                 voce diceva «Presto la maestra potrà segnalare come è andata», ma
                                 nelle tre sedi vere l'umore è SPENTO — una promessa che la sede non
                                 manteneva, a ogni genitore, ogni giorno. */}
-                            {umore && umoreCfg && (
-                                <div className="flex items-center gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
-                                    <span className="text-[26px] leading-none">{umoreCfg.emoji}</span>
+                            {riquadroUmore && (
+                                <div className="flex items-start gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
+                                    <span className="text-[26px] leading-none">{umoreCfg?.emoji ?? '🌈'}</span>
                                     <div className="min-w-0">
                                         <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
-                                            {t('umoreTitolo')}: {umoreLabel(umore)}
+                                            {umore ? `${t('umoreTitolo')}: ${umoreLabel(umore)}` : t('umoreTitolo')}
                                         </p>
-                                        <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
-                                            {umoreNarrative(umore)}
-                                        </p>
+                                        {umore && (
+                                            <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
+                                                {umoreNarrative(umore)}
+                                            </p>
+                                        )}
+                                        {notaUmore && (
+                                            <p className="mt-1.5 font-maven text-[13px] italic text-kidville-green break-words">
+                                                💬 &ldquo;{notaUmore}&rdquo;
+                                            </p>
+                                        )}
+                                        {notaUmoreBambino && (
+                                            <p className="mt-1.5 font-maven text-[13px] text-kidville-green break-words">
+                                                <span className="font-barlow font-bold uppercase text-[10px] tracking-wide">{t('notaPerTe')}</span>{' '}
+                                                💬 &ldquo;{notaUmoreBambino}&rdquo;
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
                             )}

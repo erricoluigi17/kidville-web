@@ -7,6 +7,7 @@ import { BookOpen, CheckCircle2, Users } from 'lucide-react';
 import { CockpitPage, PageHeader, StatCard, CockpitSelect } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/diary/DiaryEventEditor';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Diario 0-6 nel cockpit (segreteria/direzione): selettore sede/sezione dai
 // plessi consentiti, presenze del giorno in consultazione (l'appello resta
@@ -24,13 +25,18 @@ function AdminDiaryInner() {
   const { userId } = useSessionIdentity();
   const [scuole, setScuole] = useState<ScuolaScoped[]>([]);
   const [scuolaId, setScuolaId] = useState('');
-  const [sezione, setSezione] = useState<string | null>(null);
+  // La sezione si sceglie per UUID (2026-09-28): per nome, due sezioni omonime di due sedi
+  // («Girasoli» esiste in più plessi) si mescolavano — bambini di una sede con le routine
+  // dell'altra, e «Compilato» che contava entrambe.
+  const [sectionId, setSectionId] = useState<string | null>(null);
   const [scopedLoaded, setScopedLoaded] = useState(false);
   const [compilati, setCompilati] = useState<number | null>(null);
 
-  const loadCompilati = (sez: string | null) => {
+  const loadCompilati = (sez: string | null, sede: string) => {
     if (!sez || !userId) return;
-    fetch(`/api/diary/entries?sezione=${encodeURIComponent(sez)}&date=${todayISO()}&userId=${userId}`)
+    const qs = new URLSearchParams({ sectionId: sez, date: todayISO(), userId });
+    if (sede) qs.set('scuola_id', sede);
+    fetch(`/api/diary/entries?${qs.toString()}`)
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (!Array.isArray(d)) return;
@@ -41,12 +47,23 @@ function AdminDiaryInner() {
             .filter(e => voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.nota_libera || e.nota_bambino) }));
         setCompilati(new Set(vere.map(e => e.alunno_id)).size);
       })
-      .catch(() => {});
+      // Il contatore resta «…»: è un numero di consultazione, e la rete che manca la registra già
+      // la fetch strumentata. Lo si dice comunque, perché un catch muto è un bug.
+      .catch((err: unknown) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `diario-compilati-non-letti: ${nomeErrore(err)}` }));
   };
 
+  const scuola = useMemo(() => scuole.find(s => s.scuolaId === scuolaId) ?? null, [scuole, scuolaId]);
+  const sezione = scuola?.sezioni.find(s => s.id === sectionId)?.name ?? null;
+
   // La sede del selettore arriva all'editor (2026-09-28): le routine sono per sede, e la
-  // segreteria che compila il diario di un altro plesso deve vedere le routine di quello.
-  const day = useDiaryDay(userId, sezione, { onSaved: () => loadCompilati(sezione), scuolaId: scuolaId || undefined });
+  // segreteria che compila il diario di un altro plesso deve vedere le routine di quello. Finché
+  // la sede non è scelta (`null`) l'editor non chiede la configurazione: niente lampo delle
+  // routine della sede principale di chi compila.
+  const day = useDiaryDay(userId, sezione, {
+    onSaved: () => loadCompilati(sectionId, scuolaId),
+    sectionId: sectionId ?? undefined,
+    scuolaId: scuolaId || null,
+  });
 
   useEffect(() => {
     if (!userId) return;
@@ -59,30 +76,28 @@ function AdminDiaryInner() {
         setScuole(list);
         const first = list[0];
         setScuolaId(cur => cur || (first?.scuolaId ?? ''));
-        setSezione(cur => cur ?? first?.sezioni[0]?.name ?? null);
+        setSectionId(cur => cur ?? first?.sezioni[0]?.id ?? null);
       })
-      .catch(() => {})
+      .catch((err: unknown) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `diario-sezioni-cockpit-non-lette: ${nomeErrore(err)}` }))
       .finally(() => { if (active) setScopedLoaded(true); });
     return () => { active = false; };
   }, [userId]);
 
   useEffect(() => {
-    loadCompilati(sezione);
+    loadCompilati(sectionId, scuolaId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sezione, userId]);
-
-  const scuola = useMemo(() => scuole.find(s => s.scuolaId === scuolaId) ?? null, [scuole, scuolaId]);
+  }, [sectionId, scuolaId, userId]);
 
   const pickScuola = (id: string) => {
     setScuolaId(id);
     const g = scuole.find(s => s.scuolaId === id);
-    setSezione(g?.sezioni[0]?.name ?? null);
+    setSectionId(g?.sezioni[0]?.id ?? null);
     setCompilati(null);
     day.resetSelection();
   };
 
-  const pickSezione = (name: string) => {
-    setSezione(name);
+  const pickSezione = (id: string) => {
+    setSectionId(id);
     setCompilati(null);
     day.resetSelection();
   };
@@ -119,9 +134,9 @@ function AdminDiaryInner() {
             <label className="flex items-center gap-2">
               <span className="font-maven text-sm text-kidville-ink/70">{t('diaryLabelSezione')}</span>
               <CockpitSelect
-                value={sezione ?? ''}
+                value={sectionId ?? ''}
                 onChange={pickSezione}
-                options={(scuola?.sezioni ?? []).map(s => ({ value: s.name, label: `${s.name} (${s.school_type})` }))}
+                options={(scuola?.sezioni ?? []).map(s => ({ value: s.id, label: `${s.name} (${s.school_type})` }))}
               />
             </label>
             <button

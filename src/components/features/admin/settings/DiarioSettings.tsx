@@ -14,6 +14,7 @@ import {
     zRoutinePersonalizzate,
     type RoutineBase,
 } from '@/lib/diary/routine';
+import { invalidaDiarioConfigCache } from '@/lib/diary/config-cache';
 
 // In questo pannello resta SOLO ciò che il codice applica. Tolti il 2026-09-28, perché non li
 // leggeva nessuno — né una rotta né il database: «Compilazione dalle / fino alle», «Visibile ai
@@ -41,22 +42,44 @@ const ETICHETTE_BASE: Record<RoutineBase, string> = {
 };
 const ORDINE_PANNELLO: readonly RoutineBase[] = ['pasto', 'sonno', 'cambio', 'attivita', 'umore'];
 
-/** Il messaggio del primo problema delle routine della scuola, o `null` se si possono salvare. */
-function problemaRoutine(bozze: RoutineInBozza[]): string | null {
+interface Problema { chiave: string; nome: string }
+
+/**
+ * Il primo problema delle routine della scuola, o `null` se si possono salvare. Dice QUALE routine
+ * (seconda revisione, 2026-09-28): con venti righe, «qualcosa non va» non basta a trovarla.
+ */
+function problemaRoutine(bozze: RoutineInBozza[]): Problema | null {
     const r = zRoutinePersonalizzate.safeParse(bozze);
     if (r.success) return null;
-    const campo = r.error.issues[0]?.path[1];
-    if (campo === 'nome' || campo === 'emoji') return 'diPersErrNome';
-    if (campo === 'opzioni') return 'diPersErrOpzioni';
-    return 'diPersErr';
+    const issue = r.error.issues[0];
+    const indice = issue?.path[0];
+    const campo = issue?.path[1];
+    const nome = typeof indice === 'number' ? (bozze[indice]?.nome ?? '').trim() : '';
+    if (campo === 'nome') return { chiave: issue?.code === 'custom' ? 'diPersErrNomeDoppio' : 'diPersErrNome', nome };
+    if (campo === 'emoji') return { chiave: 'diPersErrIcona', nome };
+    // `[i, 'opzioni', j]` è un'opzione vuota; `[i, 'opzioni']` una scelta con meno di due opzioni.
+    if (campo === 'opzioni') return { chiave: (issue?.path.length ?? 0) > 2 ? 'diPersErrOpzioneVuota' : 'diPersErrOpzioni', nome };
+    return { chiave: 'diPersErr', nome };
+}
+
+/** Un valore JSON in una forma confrontabile: chiavi in ordine. */
+function stabile(v: unknown): string {
+    const ordina = (x: unknown): unknown => {
+        if (Array.isArray(x)) return x.map(ordina);
+        if (x && typeof x === 'object') {
+            return Object.fromEntries(Object.keys(x as Record<string, unknown>).sort().map((k) => [k, ordina((x as Record<string, unknown>)[k])]));
+        }
+        return x ?? null;
+    };
+    return JSON.stringify(ordina(v));
 }
 
 export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
+    const { settings, save, saving, error, letturaFallita } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<DiarioConfig | null>(null);
     const [msg, setMsg] = useState('');
-    const [problema, setProblema] = useState<string | null>(null);
+    const [problema, setProblema] = useState<Problema | null>(null);
 
     if (!settings) return <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>;
     const salvato = (settings.diario_config ?? {}) as DiarioConfig;
@@ -81,9 +104,27 @@ export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId:
     const salvate = new Set(routinePersonalizzate(salvato.routine_personalizzate).map((r) => r.id));
 
     const salva = async () => {
+        // Configurazione salvata non letta: il pannello è partito da `{}`, e salvare riscriverebbe
+        // da zero le routine della scuola. Il pulsante è spento; questa è la cintura.
+        if (letturaFallita) return;
         const errore = problemaRoutine(bozze);
         if (errore) { setMsg(''); setProblema(errore); return; }
-        const ok = await save({ diario_config: cfg });
+        // SOLO CIÒ CHE È CAMBIATO (seconda revisione, 2026-09-28), più com'era quando il pannello
+        // l'ha letto. Il server unisce le chiavi, quindi quelle vecchie e inerti restano dove sono;
+        // e se nel frattempo un'altra operatrice ha cambiato una chiave che qui si sta salvando,
+        // risponde 409 invece di cancellarle il lavoro.
+        const chiavi = new Set([...Object.keys(cfg), ...Object.keys(salvato)]);
+        const cambiato = Object.fromEntries(
+            [...chiavi]
+                .filter((k) => stabile((cfg as unknown as Record<string, unknown>)[k]) !== stabile((salvato as unknown as Record<string, unknown>)[k]))
+                .map((k) => [k, (cfg as unknown as Record<string, unknown>)[k]]),
+        );
+        const ok = await save({ diario_config: cambiato, diario_config_letto: salvato });
+        if (ok) {
+            // Le maestre (e il cockpit, in questa stessa sessione) rileggono le routine.
+            invalidaDiarioConfigCache();
+            setDraft(null);
+        }
         setMsg(ok ? t('salvato') : '');
     };
 
@@ -124,9 +165,12 @@ export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId:
             </div>
 
             {problema && (
-                <p role="alert" className="mt-4 font-maven text-sm text-kidville-error">{t(problema)}</p>
+                <p role="alert" className="mt-4 font-maven text-sm text-kidville-error">{t(problema.chiave, { nome: problema.nome })}</p>
             )}
-            <SaveRow onSave={salva} saving={saving} msg={msg} error={error} />
+            {letturaFallita && (
+                <p className="mt-4 font-maven text-sm text-kidville-error">{t('diLetturaFallitaBlocco')}</p>
+            )}
+            <SaveRow onSave={salva} saving={saving} msg={msg} error={error} bloccato={letturaFallita} />
             <p className={hint}>{t('diHint')}</p>
         </section>
     );

@@ -32,7 +32,7 @@
     "senza quel ramo resta silenzioso esattamente come prima."
   ],
   "aggiornato": "2026-09-28",
-  "totale_occorrenze": 63,
+  "totale_occorrenze": 61,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -45,10 +45,6 @@
     {
       "path": "src/app/(dashboard)/admin/avvisi/page.tsx",
       "n": 1
-    },
-    {
-      "path": "src/app/(dashboard)/admin/diary/page.tsx",
-      "n": 2
     },
     {
       "path": "src/app/(dashboard)/admin/forms/builder/page.tsx",

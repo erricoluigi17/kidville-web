@@ -53,6 +53,24 @@ function eTipoBase(v: unknown): v is TipoBase {
 }
 
 /**
+ * `routine_attive` nel vocabolario delle sedi vere: i CODICI dei tipi (il seed E2E) diventano i
+ * NOMI delle routine, una volta sola, nell'ordine canonico. Ciò che non è né nome né codice resta
+ * in coda com'è: chi valida (la PATCH delle impostazioni) deve poterlo rifiutare, non vederlo
+ * sparire. Un valore che non è una lista passa com'è, per la stessa ragione.
+ */
+export function nomiRoutineBase(raw: unknown): unknown {
+    if (!Array.isArray(raw)) return raw;
+    const accese = new Set<RoutineBase>();
+    const sconosciuti: unknown[] = [];
+    for (const v of raw) {
+        if (eRoutineBase(v)) accese.add(v);
+        else if (eTipoBase(v)) accese.add(ROUTINE_DI_TIPO[v]);
+        else sconosciuti.push(v);
+    }
+    return [...ROUTINE_BASE.filter((r) => accese.has(r)), ...sconosciuti];
+}
+
+/**
  * Le routine base accese, da `diario_config.routine_attive` così com'è salvato.
  *
  *  · ASSENTE (o non una lista) → le routine predefinite. Una sede nuova nasce con
@@ -86,46 +104,84 @@ export const MAX_TESTO = 200;
 /** L'id di una routine della scuola: 8 caratteri minuscoli o cifre, generati dal pannello. */
 export const ID_ROUTINE_RE = /^[a-z0-9]{8}$/;
 
+/**
+ * Il tipo di voce di una routine della scuola, per intero: `routine:` in minuscolo e l'id. Una
+ * regola sola per chi scrive, chi cancella e chi legge — prima la DELETE ne aveva una copia sua.
+ */
+export const TIPO_ROUTINE_RE = /^routine:[a-z0-9]{8}$/;
+
 const PREFISSO = 'routine:';
 const ORA_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const zTesto = (max: number) => z.string().trim().min(1).max(max);
 
+/** Il primo carattere di un'icona: un pittogramma o una bandiera. Poi solo ciò che li compone. */
+const ICONA_RE = /^[\p{Extended_Pictographic}\p{Regional_Indicator}][\p{Extended_Pictographic}\p{Emoji_Component}\u200D\uFE0F\u20E3]*$/u;
+
 /**
- * Una routine aggiunta dalla segreteria. `opzioni` e `multipla` contano solo per la scelta.
+ * L'icona è UN simbolo (2026-09-28, seconda revisione). Prima era una stringa qualunque da 1 a 16
+ * caratteri: «CREMA» finiva scritto in grande dentro una tessera da 92 px e traboccava. Un simbolo
+ * = un grafema, e che sia un'emoji. Dove `Intl.Segmenter` manca (qualche browser vecchio) si
+ * controlla solo la forma: il server, che gira su Node, lo ha sempre.
+ */
+export function iconaValida(v: string): boolean {
+    if (!ICONA_RE.test(v)) return false;
+    const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+    if (!Segmenter) return true;
+    return [...new Segmenter('it', { granularity: 'grapheme' }).segment(v)].length === 1;
+}
+
+/**
+ * Una routine aggiunta dalla segreteria. `opzioni` e `multipla` contano solo per la scelta: per
+ * gli altri tipi si BUTTANO prima di validare. Nel pannello restavano nascoste dopo un cambio di
+ * tipo, e un'opzione vuota rimasta lì faceva rifiutare il salvataggio con un messaggio sulle
+ * «scelte» a una routine a spunta.
  *
  * Il nome e le opzioni sono DATI scritti dalla scuola, non testi dell'app: non si traducono, e non
  * entrano mai nei log (il tipo di voce porta solo l'id).
  */
-export const zRoutinePersonalizzata = z
-    .object({
-        id: z.string().regex(ID_ROUTINE_RE),
-        nome: zTesto(MAX_NOME),
-        emoji: z.string().trim().min(1).max(16),
-        risposta: z.enum(RISPOSTE),
-        opzioni: z.array(zTesto(MAX_OPZIONE)).max(MAX_OPZIONI).default([]),
-        multipla: z.boolean().default(false),
-        attiva: z.boolean().default(true),
-    })
-    .superRefine((r, ctx) => {
-        if (r.risposta !== 'scelta') return;
-        const diverse = new Set(r.opzioni.map((o) => o.toLocaleLowerCase('it')));
-        if (r.opzioni.length < 2 || diverse.size !== r.opzioni.length) {
-            ctx.addIssue({ code: 'custom', path: ['opzioni'], message: 'Una scelta vuole almeno due opzioni, diverse fra loro.' });
-        }
-    });
+export const zRoutinePersonalizzata = z.preprocess(
+    (v) => (v && typeof v === 'object' && !Array.isArray(v) && (v as { risposta?: unknown }).risposta !== 'scelta'
+        ? { ...(v as Record<string, unknown>), opzioni: [], multipla: false }
+        : v),
+    z
+        .object({
+            id: z.string().regex(ID_ROUTINE_RE),
+            nome: zTesto(MAX_NOME),
+            emoji: z.string().trim().min(1).max(16).refine(iconaValida, { message: 'L\'icona è un solo simbolo (un\'emoji).' }),
+            risposta: z.enum(RISPOSTE),
+            opzioni: z.array(zTesto(MAX_OPZIONE)).max(MAX_OPZIONI).default([]),
+            multipla: z.boolean().default(false),
+            attiva: z.boolean().default(true),
+        })
+        .superRefine((r, ctx) => {
+            if (r.risposta !== 'scelta') return;
+            const diverse = new Set(r.opzioni.map((o) => o.toLocaleLowerCase('it')));
+            if (r.opzioni.length < 2 || diverse.size !== r.opzioni.length) {
+                ctx.addIssue({ code: 'custom', path: ['opzioni'], message: 'Una scelta vuole almeno due opzioni, diverse fra loro.' });
+            }
+        }),
+);
 
 export type RoutinePersonalizzata = z.infer<typeof zRoutinePersonalizzata>;
 
-/** La lista intera, com'è validata al salvataggio: ids unici, al massimo 20. */
+/**
+ * La lista intera, com'è validata al salvataggio: ids unici, NOMI unici (senza distinguere
+ * maiuscole e spazi: due tessere «Crema» uguali per la maestra e due card uguali per il genitore
+ * non dicono quale è quale), al massimo 20.
+ */
 export const zRoutinePersonalizzate = z
     .array(zRoutinePersonalizzata)
     .max(MAX_ROUTINE_PERSONALIZZATE)
     .superRefine((lista, ctx) => {
         const visti = new Set<string>();
+        const nomi = new Set<string>();
         lista.forEach((r, i) => {
             if (visti.has(r.id)) ctx.addIssue({ code: 'custom', path: [i, 'id'], message: 'Id di routine ripetuto.' });
             visti.add(r.id);
+            const nome = r.nome.trim().toLocaleLowerCase('it');
+            if (nomi.has(nome)) ctx.addIssue({ code: 'custom', path: [i, 'nome'], message: 'Due routine con lo stesso nome.' });
+            nomi.add(nome);
         });
     });
 
@@ -153,9 +209,7 @@ export function tipoDiRoutine(id: string): string {
 
 /** L'id della routine della scuola dietro un tipo di voce, o `null` se il tipo non è di quelle. */
 export function idDiTipo(tipo: string): string | null {
-    if (!tipo.startsWith(PREFISSO)) return null;
-    const id = tipo.slice(PREFISSO.length);
-    return ID_ROUTINE_RE.test(id) ? id : null;
+    return TIPO_ROUTINE_RE.test(tipo) ? tipo.slice(PREFISSO.length) : null;
 }
 
 /** Questo tipo di voce è di una routine aggiunta dalla scuola? */
@@ -179,6 +233,26 @@ export function tipiAttivi(cfg: { routine_attive?: unknown; routine_personalizza
 // ─── Il valore segnato per un bambino ────────────────────────────────────────
 
 type FormaRisposta = Pick<RoutinePersonalizzata, 'risposta' | 'opzioni' | 'multipla'>;
+
+/**
+ * «Niente» si scrive in un modo solo: `null`. Spunta spenta (`false`), scelta vuota (`[]`), orario
+ * o testo vuoti (`''`, solo spazi) valgono tutti «non segnato». Prima il testo vuoto diventava
+ * `null` e gli altri tre facevano rifiutare l'intero lotto con `ROUTINE_VALORE_NON_VALIDO`.
+ * Il testo esce senza spazi ai bordi. Tutto il resto passa com'è: se è sbagliato, lo si rifiuta.
+ */
+export function normalizzaValoreRoutine(risposta: Risposta, valore: unknown): unknown {
+    if (valore === undefined || valore === null) return null;
+    switch (risposta) {
+        case 'spunta':
+            return valore === false ? null : valore;
+        case 'scelta':
+            return Array.isArray(valore) && valore.length === 0 ? null : valore;
+        case 'orario':
+            return valore === '' ? null : valore;
+        case 'testo':
+            return typeof valore === 'string' ? (valore.trim() || null) : valore;
+    }
+}
 
 /** Ciò che la maestra ha segnato è una risposta valida per questa routine? `null` non lo è. */
 export function valoreRoutineValido(def: FormaRisposta, valore: unknown): boolean {
@@ -206,6 +280,16 @@ export function valoreRoutineValido(def: FormaRisposta, valore: unknown): boolea
  */
 export function dettagliRoutine(def: Pick<RoutinePersonalizzata, 'nome' | 'emoji' | 'risposta'>, valore: unknown): Record<string, unknown> {
     return { nome: def.nome, emoji: def.emoji, risposta: def.risposta, valore: valore ?? null };
+}
+
+/**
+ * L'ora SEGNATA di una routine della scuola a orario, dalla fotografia; `null` per gli altri tipi o
+ * senza un'ora valida. È l'ora da mostrare a lato della voce (genitore, card della home): quella
+ * del salvataggio, per un biberon delle 10:30 salvato alle 15:47, diceva il falso.
+ */
+export function oraRoutine(dettagli: Record<string, unknown> | null | undefined): string | null {
+    const valore = dettagli?.valore;
+    return dettagli?.risposta === 'orario' && typeof valore === 'string' && ORA_RE.test(valore) ? valore : null;
 }
 
 /**

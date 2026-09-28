@@ -169,3 +169,26 @@ describe('/teacher/diary — la rete non si moltiplica al caricamento', () => {
     expect(conta('/api/educator-sections')).toBe(2);
   });
 });
+
+describe('/teacher/diary — le routine della SEDE DELLA SEZIONE (2026-09-28)', () => {
+  it('la sezione è di un\'altra sede: le routine si chiedono per quella, non per la sede principale', async () => {
+    // Una Direzione con sezioni in due sedi apriva una sezione di Aversa con le routine di
+    // Giugliano: bottoni sbagliati, e ogni salvataggio di una routine rifiutato dal server.
+    const ALTRA = 'bbbbbbbb-0000-4000-8000-00000000000b';
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/educator-sections')) {
+        chiamate.push(u);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ sections: [{ id: 's1', name: 'Girasoli', school_type: 'infanzia', scuolaId: ALTRA }] }),
+        });
+      }
+      return base(url);
+    });
+    render(<TeacherDiaryPage />);
+    await waitFor(() => expect(chiamate.some((u) => u.includes('/api/diary/config') && u.includes(`scuola_id=${ALTRA}`))).toBe(true));
+  });
+});

@@ -10,6 +10,12 @@ import {
     valoreRoutineValido,
     routineCompilata,
     dettagliRoutine,
+    zRoutinePersonalizzata,
+    zRoutinePersonalizzate,
+    normalizzaValoreRoutine,
+    nomiRoutineBase,
+    TIPO_ROUTINE_RE,
+    oraRoutine,
     type RoutinePersonalizzata,
 } from '@/lib/diary/routine';
 
@@ -152,5 +158,85 @@ describe('routineCompilata — la voce salvata dice qualcosa?', () => {
 
     it('la fotografia porta nome, icona e tipo: la voce resta leggibile anche se la routine sparisce', () => {
         expect(dettagliRoutine(BIBERON, ['Tutto'])).toEqual({ nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Tutto'] });
+    });
+});
+
+// ─── Seconda revisione critica (2026-09-28) ──────────────────────────────────
+
+describe('zRoutinePersonalizzata — ciò che la segreteria non vede non blocca il salvataggio', () => {
+    it('le opzioni di una routine che NON è a scelta si buttano, anche vuote o sbagliate', () => {
+        // Scelta → «Aggiungi un'opzione» → di nuovo Spunta: l'opzione vuota restava nascosta e
+        // faceva rifiutare il pannello con «una scelta vuole almeno due opzioni».
+        const r = zRoutinePersonalizzata.safeParse({ ...CREMA, opzioni: [''], multipla: true });
+        expect(r.success).toBe(true);
+        expect(r.success && r.data.opzioni).toEqual([]);
+        expect(r.success && r.data.multipla).toBe(false);
+    });
+
+    it('a scelta le opzioni contano ancora: vuote o una sola, no', () => {
+        expect(zRoutinePersonalizzata.safeParse({ ...BIBERON, opzioni: ['Poco', ''] }).success).toBe(false);
+        expect(zRoutinePersonalizzata.safeParse({ ...BIBERON, opzioni: ['Poco'] }).success).toBe(false);
+    });
+});
+
+describe('zRoutinePersonalizzata — l\'icona è UN simbolo', () => {
+    it.each(['🧴', '⭐', '🍼', '👩‍🍳', '🇮🇹', '☀️'])('%s va bene', (emoji) => {
+        expect(zRoutinePersonalizzata.safeParse({ ...CREMA, emoji }).success).toBe(true);
+    });
+    it.each(['CREMA', '12', 'a', '🧴🧴', '🧴 x', '\uD83E'])('%s no: nella tessera della maestra non ci sta', (emoji) => {
+        expect(zRoutinePersonalizzata.safeParse({ ...CREMA, emoji }).success).toBe(false);
+    });
+});
+
+describe('zRoutinePersonalizzate — due routine non si chiamano uguale', () => {
+    it('stesso nome, anche con maiuscole o spazi diversi: rifiutato sul nome della seconda', () => {
+        const r = zRoutinePersonalizzate.safeParse([CREMA, { ...BIBERON, nome: ' crema SOLARE ' }]);
+        expect(r.success).toBe(false);
+        expect(!r.success && r.error.issues[0].path).toEqual([1, 'nome']);
+    });
+});
+
+describe('normalizzaValoreRoutine — «niente» si scrive in un modo solo', () => {
+    it('spunta spenta, scelta vuota, orario o testo vuoti: tutti `null`', () => {
+        expect(normalizzaValoreRoutine('spunta', false)).toBeNull();
+        expect(normalizzaValoreRoutine('scelta', [])).toBeNull();
+        expect(normalizzaValoreRoutine('orario', '')).toBeNull();
+        expect(normalizzaValoreRoutine('testo', '   ')).toBeNull();
+        expect(normalizzaValoreRoutine('testo', undefined)).toBeNull();
+    });
+    it('il resto passa com\'è, e il testo senza spazi ai bordi', () => {
+        expect(normalizzaValoreRoutine('spunta', true)).toBe(true);
+        expect(normalizzaValoreRoutine('testo', '  pomata  ')).toBe('pomata');
+        expect(normalizzaValoreRoutine('scelta', ['Poco'])).toEqual(['Poco']);
+        expect(normalizzaValoreRoutine('orario', 'boh'), 'un valore sbagliato resta, perché lo si rifiuti').toBe('boh');
+    });
+});
+
+describe('nomiRoutineBase — i codici dei tipi diventano nomi, una volta sola', () => {
+    it('codici e nomi mescolati, con doppioni: nomi nell\'ordine canonico', () => {
+        expect(nomiRoutineBase(['nanna_inizio', 'merenda', 'pranzo', 'pasto', 'bagno'])).toEqual(['pasto', 'sonno', 'cambio']);
+    });
+    it('ciò che non è né nome né codice resta, così la validazione lo rifiuta', () => {
+        expect(nomiRoutineBase(['pasto', 'pallone'])).toEqual(['pasto', 'pallone']);
+    });
+    it('non una lista: passa com\'è', () => {
+        expect(nomiRoutineBase(undefined)).toBeUndefined();
+    });
+});
+
+describe('TIPO_ROUTINE_RE — il tipo di voce di una routine della scuola, una regola sola', () => {
+    it('solo `routine:` in minuscolo più gli 8 caratteri dell\'id', () => {
+        expect(TIPO_ROUTINE_RE.test('routine:a1b2c3d4')).toBe(true);
+        expect(TIPO_ROUTINE_RE.test('Routine:a1b2c3d4')).toBe(false);
+        expect(TIPO_ROUTINE_RE.test('routine:a1b2c3d4x')).toBe(false);
+    });
+});
+
+describe('oraRoutine — l\'ora segnata, da mostrare a lato', () => {
+    it('solo per le routine a orario, e solo un\'ora valida', () => {
+        expect(oraRoutine({ risposta: 'orario', valore: '10:30' })).toBe('10:30');
+        expect(oraRoutine({ risposta: 'orario', valore: '' })).toBeNull();
+        expect(oraRoutine({ risposta: 'testo', valore: '10:30' })).toBeNull();
+        expect(oraRoutine(null)).toBeNull();
     });
 });

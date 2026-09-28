@@ -66,6 +66,9 @@ const fetchMock = vi.fn(async (url: string | URL, init?: { method?: string; body
     }
     return esitoDelete(u)
   }
+  // Le voci di oggi per le routine spente (2026-09-28): un'altra GET, che non è il ripristino di
+  // cui questo file controlla i tempi. Risponde subito e non consuma le GET trattenute.
+  if (u.includes('/api/diary/entries') && u.includes('scopo=spente')) return jsonRes(entriesGet)
   if (u.includes('/api/diary/entries')) {
     if (getDaTrattenere > 0) {
       getDaTrattenere -= 1
@@ -147,7 +150,7 @@ describe.each([
     expect(result.current.savedStudentIds.has('b2')).toBe(false)
     expect(result.current.savedStudentIds.has('a1')).toBe(true)
     expect(result.current.studentStates.b2[campo]).toBe('')
-    expect(result.current.esitoSalvataggio).toEqual({ salvati: 1, tolti: 1 })
+    expect(result.current.esitoSalvataggio).toEqual({ salvati: 1, tolti: 1, nanna: true })
     expect(result.current.showSavedToast).toBe(true)
     // E non resta niente da togliere: un secondo Salva non ricancella.
     expect(result.current.daTogliere).toBe(0)
@@ -165,7 +168,7 @@ describe.each([
 
     expect(postBodies).toHaveLength(0)
     expect(deleteParams().map((p) => [p.get('alunno_id'), p.get('tipo_evento')])).toEqual([['b2', evento]])
-    expect(result.current.esitoSalvataggio).toEqual({ salvati: 0, tolti: 1 })
+    expect(result.current.esitoSalvataggio).toEqual({ salvati: 0, tolti: 1, nanna: true })
   })
 
   it('un bambino MAI registrato col campo vuoto non genera nessuna DELETE', async () => {
@@ -240,7 +243,7 @@ describe.each([
     expect(postBodies.flat().map((r) => r.alunno_id)).toEqual(['a1'])
     // La riga è uscita con la sua nota: lo schermo non la mostra più.
     expect(result.current.notaBambino.b2 ?? '').toBe('')
-    expect(result.current.esitoSalvataggio).toEqual({ salvati: 1, tolti: 1 })
+    expect(result.current.esitoSalvataggio).toEqual({ salvati: 1, tolti: 1, nanna: true })
   })
 
   it('la NOTA DI SEZIONE (che vale per tutti) non salva nessuna riga svuotata', async () => {
@@ -479,7 +482,7 @@ describe('useDiaryDay — le risposte fuori ordine', () => {
     expect(result.current.savedStudentIds.has('a1')).toBe(true)
     expect(result.current.daTogliere).toBe(0)
     // L'esito di QUEL salvataggio si dice comunque.
-    expect(result.current.esitoSalvataggio).toEqual({ salvati: 0, tolti: 1 })
+    expect(result.current.esitoSalvataggio).toEqual({ salvati: 0, tolti: 1, nanna: true })
 
     // La maestra compila la Sveglia di b2 e salva: nessuna DELETE di nanna_fine.
     act(() => { result.current.updateStudent('b2', { orario_fine: '15:45' }) })
@@ -570,7 +573,7 @@ describe('useDiaryDay — le risposte fuori ordine', () => {
       expect(result.current.savedStudentIds.has('a1')).toBe(false)
       expect(result.current.daTogliere).toBe(0)
       // b2, col campo pieno, ripartiva nella POST di quel salvataggio (come oggi).
-      expect(result.current.esitoSalvataggio).toEqual({ salvati: b2InArchivio ? 1 : 0, tolti: 1 })
+      expect(result.current.esitoSalvataggio).toEqual({ salvati: b2InArchivio ? 1 : 0, tolti: 1, nanna: true })
       if (b2InArchivio) {
         expect(result.current.studentStates.b2.orario_inizio).toBe('13:10')
         expect(result.current.savedStudentIds.has('b2')).toBe(true)

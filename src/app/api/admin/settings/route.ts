@@ -9,7 +9,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
-import { ROUTINE_BASE, zRoutinePersonalizzate, routinePersonalizzate } from '@/lib/diary/routine'
+import { ROUTINE_BASE, zRoutinePersonalizzate, nomiRoutineBase, tipoDiRoutine, type RoutinePersonalizzata } from '@/lib/diary/routine'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -221,16 +221,26 @@ const zAvvisiConfig = z.looseObject({
  *  · `routine_personalizzate` — la lista della segreteria: ogni voce valida, ids unici, al più 20;
  *  · `buffer_visibilita_min` — gli estremi del pannello (0–120), interi;
  *  · `diario_primaria_visibile` — booleano.
- * APERTO (`looseObject`), come `avvisi_config` e per la stessa ragione: il pannello salva l'oggetto
- * INTERO, e le sedi portano ancora chiavi vecchie e inerti (`visibile_genitori_da`,
- * `orario_compilazione_*`, `note_libere_abilitate`). Chiuderlo vorrebbe dire rifiutare il
- * salvataggio del diario di Giugliano.
+ * APERTO (`looseObject`), come `avvisi_config` e per la stessa ragione: le sedi portano ancora
+ * chiavi vecchie e inerti (`visibile_genitori_da`, `orario_compilazione_*`,
+ * `note_libere_abilitate`), e un client vecchio del pannello le rimanda tutte. Chiuderlo vorrebbe
+ * dire rifiutare il salvataggio del diario di Giugliano.
+ *
+ * Seconda revisione (2026-09-28):
+ *  · `routine_attive` coi CODICI dei tipi (il seed E2E) si salva coi NOMI (`nomiRoutineBase`):
+ *    prima quella sede non poteva salvare nessuna impostazione del diario (400);
+ *  · un ritardo `null` o vuoto vale «non detto», non 0: `z.coerce` lo trasformava in ZERO minuti,
+ *    cioè in genitori che leggono le voci prima che la maestra possa correggerle.
  */
+const vuotoComeAssente = (v: unknown) => (v === null || v === '' ? undefined : v)
 const zDiarioConfig = z.looseObject({
-  routine_attive: z.array(z.enum(ROUTINE_BASE)).max(ROUTINE_BASE.length).optional(),
+  routine_attive: z.preprocess(nomiRoutineBase, z.array(z.enum(ROUTINE_BASE)).max(ROUTINE_BASE.length).optional()),
   routine_personalizzate: zRoutinePersonalizzate.optional(),
-  buffer_visibilita_min: z.coerce.number().int().min(0).max(120).optional(),
-  diario_primaria_visibile: z.boolean().optional(),
+  buffer_visibilita_min: z.preprocess(
+    (v) => { const w = vuotoComeAssente(v); return typeof w === 'string' ? Number(w) : w },
+    z.number().int().min(0).max(120).optional(),
+  ),
+  diario_primaria_visibile: z.preprocess(vuotoComeAssente, z.boolean().optional()),
 })
 
 /**
@@ -238,10 +248,72 @@ const zDiarioConfig = z.looseObject({
  * scritte portano la fotografia del tipo vecchio: una routine a spunta diventata «orario»
  * ritroverebbe nel diario di oggi valori che il pannello della maestra non sa più mostrare, né
  * togliere col cestino. Per cambiarlo si crea una routine nuova.
+ *
+ * Il confronto è con le voci SALVATE così come sono, anche quelle che oggi non passerebbero la
+ * validazione: la lettura «con sospetto» (`routinePersonalizzate`) le scartava, e un cambio di
+ * tipo su di loro passava inosservato (seconda revisione, 2026-09-28).
  */
-function rispostaCambiata(prima: unknown, dopo: unknown): boolean {
-  const vecchie = new Map(routinePersonalizzate(prima).map((r) => [r.id, r.risposta]))
-  return routinePersonalizzate(dopo).some((r) => vecchie.has(r.id) && vecchie.get(r.id) !== r.risposta)
+function risposteSalvate(raw: unknown): Map<string, unknown> {
+  const m = new Map<string, unknown>()
+  if (!Array.isArray(raw)) return m
+  for (const v of raw) {
+    if (v && typeof v === 'object' && typeof (v as { id?: unknown }).id === 'string') {
+      m.set((v as { id: string }).id, (v as { risposta?: unknown }).risposta)
+    }
+  }
+  return m
+}
+
+function rispostaCambiata(prima: unknown, dopo: RoutinePersonalizzata[] | undefined): boolean {
+  const vecchie = risposteSalvate(prima)
+  return (dopo ?? []).some((r) => vecchie.has(r.id) && vecchie.get(r.id) !== r.risposta)
+}
+
+/**
+ * …e non cambia nemmeno TOGLIENDO la routine e rimettendola con lo stesso id in un secondo
+ * salvataggio: per le routine che il pregresso non ha, si guarda se nel diario ci sono già voci
+ * scritte con un tipo di risposta diverso. Il pannello genera id casuali, quindi è un caso da
+ * richiesta costruita a mano; la domanda è una lettura sola per routine NUOVA.
+ *
+ * Se la lettura fallisce si lascia passare, e lo si dice (`warn`): è una cintura contro un gesto
+ * raro, e bloccare per lei il salvataggio di tutte le impostazioni del diario sarebbe peggio.
+ */
+async function rispostaDiversaGiaScritta(
+  supabase: SupabaseClient,
+  nuove: RoutinePersonalizzata[],
+  scuolaId: string,
+): Promise<boolean> {
+  for (const r of nuove) {
+    const { data, error } = await supabase
+      .from('eventi_diario')
+      .select('id')
+      .eq('tipo_evento', tipoDiRoutine(r.id))
+      .neq('dettagli->>risposta', r.risposta)
+      .limit(1)
+    if (error) {
+      logEvento('config', 'warn', {
+        operazione: 'admin/settings:PATCH',
+        esito: 'routine-voci-scritte-non-verificate',
+        error_code: error.code ?? null,
+        scuola_id: scuolaId,
+      }, error)
+      continue
+    }
+    if ((data ?? []).length > 0) return true
+  }
+  return false
+}
+
+/** Un valore JSON in una forma confrontabile: chiavi in ordine, `undefined` come `null`. */
+function stabile(v: unknown): string {
+  const ordina = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(ordina)
+    if (x && typeof x === 'object') {
+      return Object.fromEntries(Object.keys(x as Record<string, unknown>).sort().map((k) => [k, ordina((x as Record<string, unknown>)[k])]))
+    }
+    return x ?? null
+  }
+  return JSON.stringify(ordina(v))
 }
 
 const patchBodySchema = z.object({
@@ -253,6 +325,10 @@ const patchBodySchema = z.object({
   avvisi_config: zAvvisiConfig.optional(),
   // E per `diario_config`, dal giorno in cui le routine hanno effetto (2026-09-28).
   diario_config: zDiarioConfig.optional(),
+  // Il `diario_config` COM'ERA quando il pannello l'ha letto (seconda revisione, 2026-09-28).
+  // Serve a una cosa sola: accorgersi che fra la lettura e il salvataggio qualcun altro ha
+  // cambiato una delle chiavi che si stanno salvando (409). Non si scrive da nessuna parte.
+  diario_config_letto: z.record(z.string(), z.unknown()).optional(),
 })
 
 /**
@@ -400,21 +476,53 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
         }
         for (const k of incomingMerged) {
           const prev = (existingRow[k] ?? {}) as Record<string, unknown>
-          const next = updates[k] as Record<string, unknown>
-          if (k === 'diario_config' && rispostaCambiata(prev.routine_personalizzate, next.routine_personalizzate)) {
-            // Solo codici: il nome della routine è un dato della scuola e non va nel log.
-            logEvento('config', 'warn', {
-              operazione: 'admin/settings:PATCH',
-              esito: 'routine-risposta-non-modificabile',
-              scuola_id: scuolaId,
-            })
-            return NextResponse.json(
-              {
-                error: 'Il tipo di risposta di una routine già salvata non si può cambiare: creane una nuova. Non è stato salvato niente.',
-                codice: 'ROUTINE_RISPOSTA_NON_MODIFICABILE',
-              },
-              { status: 422 },
-            )
+          let next = updates[k] as Record<string, unknown>
+          if (k === 'diario_config') {
+            // Una chiave arrivata vuota (`null`, `''` → `undefined`) non cancella quella salvata.
+            next = Object.fromEntries(Object.entries(next).filter(([, v]) => v !== undefined))
+            updates[k] = next
+
+            // DUE PANNELLI APERTI (2026-09-28): chi salva per secondo non cancella il lavoro del
+            // primo. Si confrontano SOLO le chiavi che si stanno salvando, con com'erano quando il
+            // pannello le ha lette: diverse ⇒ 409, e niente scritto.
+            const letto = body.diario_config_letto as Record<string, unknown> | undefined
+            const cambiate = letto ? Object.keys(next).filter((c) => stabile(prev[c]) !== stabile(letto[c])) : []
+            if (cambiate.length > 0) {
+              logEvento('config', 'warn', {
+                operazione: 'admin/settings:PATCH',
+                esito: 'diario-config-cambiata-nel-frattempo',
+                error_code: 'CONFIG_DIARIO_CAMBIATA',
+                n_chiavi: cambiate.length,
+                scuola_id: scuolaId,
+              })
+              return NextResponse.json(
+                {
+                  error: 'Nel frattempo qualcun altro ha modificato queste impostazioni del diario: ricarica la pagina per vederle. Non è stato salvato niente.',
+                  codice: 'CONFIG_DIARIO_CAMBIATA',
+                },
+                { status: 409 },
+              )
+            }
+
+            const nuove = next.routine_personalizzate as RoutinePersonalizzata[] | undefined
+            const giaSalvate = risposteSalvate(prev.routine_personalizzate)
+            if (rispostaCambiata(prev.routine_personalizzate, nuove)
+              || await rispostaDiversaGiaScritta(supabase, (nuove ?? []).filter((r) => !giaSalvate.has(r.id)), scuolaId)) {
+              // Solo codici: il nome della routine è un dato della scuola e non va nel log.
+              logEvento('config', 'warn', {
+                operazione: 'admin/settings:PATCH',
+                esito: 'routine-risposta-non-modificabile',
+                error_code: 'ROUTINE_RISPOSTA_NON_MODIFICABILE',
+                scuola_id: scuolaId,
+              })
+              return NextResponse.json(
+                {
+                  error: 'Il tipo di risposta di una routine già salvata non si può cambiare: creane una nuova. Non è stato salvato niente.',
+                  codice: 'ROUTINE_RISPOSTA_NON_MODIFICABILE',
+                },
+                { status: 422 },
+              )
+            }
           }
           if (k === 'funzioni_matrice') {
             // merge per-grado: {primaria: {...prev, ...next}, ...}

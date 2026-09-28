@@ -47,8 +47,14 @@ function TeacherDiaryInner() {
 
     // L'uuid della sezione scelta: è l'identità vera, e questa pagina l'aveva
     // già nella risposta di `educator-sections` senza usarla.
-    const sectionId = sezioni.find((s) => s.name === sezione)?.id;
-    const day = useDiaryDay(userId, sezione, { sectionId });
+    const sezioneScelta = sezioni.find((s) => s.name === sezione);
+    const sectionId = sezioneScelta?.id;
+    // Le routine del diario sono della SEDE DELLA SEZIONE (2026-09-28): prima valevano quelle della
+    // sede principale di chi compila. Finché le sezioni non sono arrivate la sede non si sa (`null`:
+    // l'editor aspetta invece di mostrare le routine di un'altra sede); con la risposta vecchia,
+    // senza sede, vale quella dell'utente (`undefined`).
+    const scuolaId = !sezioniLoaded ? null : sezioneScelta?.scuolaId;
+    const day = useDiaryDay(userId, sezione, { sectionId, scuolaId });
 
     useEffect(() => {
         let active = true;

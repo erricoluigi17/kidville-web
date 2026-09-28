@@ -9,7 +9,7 @@ import { routinePersonalizzate } from '@/lib/diary/routine'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -42,7 +42,15 @@ export const GET = withRoute('diary/config:GET', async (request: Request) => {
     if (q.data.scuola_id) {
       const accessibili = await scuoleDiUtente(supabase, auth.user)
       sede = accessibili.find((s) => formaConfronto(s) === formaConfronto(q.data.scuola_id as string))
-      if (!sede) return rifiutoSede('SEDE_NON_ACCESSIBILE')
+      if (!sede) {
+        // `warn` → persistito, come la PATCH delle impostazioni: `withRoute` tiene i 403 a livello
+        // info, che in tabella non arriva. Solo uuid dell'utente, ruolo e un conteggio.
+        logEvento('multi_sede', 'warn', {
+          tipo: 'sede-dichiarata-fuori-scope', azione: 'diary/config:GET',
+          utente: auth.user.id, ruolo: auth.user.role, accessibili: accessibili.length,
+        })
+        return rifiutoSede('SEDE_NON_ACCESSIBILE')
+      }
     }
 
     const cfg = await getModuleConfig<{

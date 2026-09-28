@@ -239,6 +239,10 @@ async function main() {
   const { data: docente } = await db
     .from('utenti').select('id').eq('ruolo', 'docente').eq('scuola_id', SCUOLA).limit(1).maybeSingle();
 
+  // ⚠️ La voce d'UMORE qui sotto è portante per il flow `android-screenshot-playstore.yaml`, che
+  // aspetta «Umore della giornata» sul diario del genitore. Dal 2026-09-28 quel riquadro c'è SOLO se
+  // la maestra ha segnato l'umore (prima prometteva «Presto la maestra potrà…» a ogni genitore):
+  // togliere questa riga fa scadere lo step dopo 60 s, senza un messaggio che dica perché.
   const diario = [
     { id: uid(1), tipo_evento: 'umore', orario_inizio: alle(9, 15), dettagli: { umore: 'sereno' } },
     { id: uid(2), tipo_evento: 'merenda', orario_inizio: alle(10, 0), dettagli: { corsi: { merenda: 'tutto' } } },

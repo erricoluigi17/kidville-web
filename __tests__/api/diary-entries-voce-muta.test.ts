@@ -94,10 +94,14 @@ describe('POST /api/diary/entries — la voce muta non entra in archivio', () =>
         expect(h.inserted).toHaveLength(1);
     });
 
-    it('un tipo senza regola passa comunque: il server non inventa filtri', async () => {
+    it('un tipo che non è del diario non si scrive: il vocabolario è chiuso (2026-09-28)', async () => {
+        // Fino al 2026-09-28 un tipo senza regola passava («il server non inventa filtri»). Da
+        // quando le routine si accendono e si spengono per sede, un tipo libero le aggirava: ora
+        // passano solo i tipi base e `routine:<id>`. `entrata` (storico) in produzione non c'è.
         const { POST } = await import('@/app/api/diary/entries/route');
-        await POST(req([voce(A1, 'entrata', {})]));
-        expect(h.inserted).toHaveLength(1);
+        const res = await POST(req([voce(A1, 'entrata', {})]));
+        expect(res.status).toBe(400);
+        expect(h.inserted).toHaveLength(0);
     });
 
     it('le voci saltate si LOGGANO: «17 righe non scritte» in silenzio sarebbe il guasto opposto', async () => {

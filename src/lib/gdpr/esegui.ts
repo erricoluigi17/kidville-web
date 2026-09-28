@@ -1641,6 +1641,92 @@ export async function anonimizzaParent(
 }
 
 /**
+ * IL TESTO LIBERO DEL DIARIO DI UN BAMBINO, TOLTO (2026-09-28).
+ *
+ * Fino a quella data l'oblio leggeva `eventi_diario` solo per trovare le segnalazioni: le note
+ * (`nota_bambino`, scritta per UN genitore; `nota_libera`, la nota di sezione copiata sulla riga)
+ * restavano leggibili accanto a un `alunno_id` invariato. Le routine della scuola a testo libero
+ * (`routine:<id>`, risposta «testo», fino a 200 caratteri per il singolo bambino) allargavano il
+ * buco: il loro VALORE è testo su un minore come una nota.
+ *
+ * Si toglie il TESTO, non la riga, come per le presenze: che un bambino abbia pranzato è un fatto
+ * del registro. Nome e icona della routine restano: sono della scuola, e tengono la riga leggibile.
+ *
+ * `completo: false` se una lettura o una scrittura non è riuscita: chi risponde alla Direzione non
+ * deve poter scrivere «oblio completo» su un diario che nessuno ha potuto guardare. Il valore
+ * delle routine si riscrive per GRUPPI di righe con la stessa fotografia (una routine = di solito
+ * un gruppo): una scrittura per routine, non una per giorno.
+ */
+async function bonificaDiarioAlunno(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  op: string,
+): Promise<{ bonificate: number; completo: boolean }> {
+  // Una lettura sola, poi si scrive SOLO dove c'è testo (come le presenze): senza, ogni oblio
+  // riscriverebbe tutto il diario del bambino per non togliere niente, e il conteggio mentirebbe.
+  const { data: righe, error: errLettura } = await supabase
+    .from('eventi_diario')
+    .select('id, tipo_evento, dettagli, nota_bambino, nota_libera')
+    .eq('alunno_id', alunnoId)
+  if (errLettura) {
+    if (schemaAssente(errLettura)) return { bonificate: 0, completo: true }
+    logErrore({ operazione: op, evento: 'oblio_diario_select' }, errLettura)
+    return { bonificate: 0, completo: false }
+  }
+
+  type RigaDiario = { id: string; tipo_evento?: unknown; dettagli?: unknown; nota_bambino?: unknown; nota_libera?: unknown }
+  const tutte = (righe ?? []) as RigaDiario[]
+  const pieno = (v: unknown) => typeof v === 'string' && v.trim().length > 0
+  let completo = true
+  const toccate = new Set<string>()
+
+  // a) Le note: del bambino e di sezione.
+  const conNote = tutte.filter((r) => pieno(r.nota_bambino) || pieno(r.nota_libera)).map((r) => r.id)
+  if (conNote.length > 0) {
+    const { data, error } = await supabase
+      .from('eventi_diario')
+      .update({ nota_bambino: null, nota_libera: null })
+      .in('id', conNote)
+      .select('id')
+    if (error) {
+      logErrore({ operazione: op, evento: 'oblio_diario_note' }, error)
+      completo = false
+    } else {
+      for (const r of (data ?? []) as { id: string }[]) toccate.add(r.id)
+    }
+  }
+
+  // b) Il valore delle routine della scuola a testo libero, per gruppi con la stessa fotografia.
+  const gruppi = new Map<string, { dettagli: Record<string, unknown>; ids: string[] }>()
+  for (const r of tutte) {
+    if (typeof r.tipo_evento !== 'string' || !r.tipo_evento.startsWith('routine:')) continue
+    const d = r.dettagli
+    if (!d || typeof d !== 'object' || Array.isArray(d)) continue
+    const det = d as Record<string, unknown>
+    if (det.risposta !== 'testo' || det.valore === null || det.valore === undefined) continue
+    const pulito = { ...det, valore: null }
+    const chiave = JSON.stringify(pulito)
+    const g = gruppi.get(chiave) ?? { dettagli: pulito, ids: [] as string[] }
+    g.ids.push(r.id)
+    gruppi.set(chiave, g)
+  }
+  for (const g of gruppi.values()) {
+    const { data, error } = await supabase
+      .from('eventi_diario')
+      .update({ dettagli: g.dettagli })
+      .in('id', g.ids)
+      .select('id')
+    if (error) {
+      logErrore({ operazione: op, evento: 'oblio_diario_routine' }, error)
+      completo = false
+      continue
+    }
+    for (const r of (data ?? []) as { id: string }[]) toccate.add(r.id)
+  }
+  return { bonificate: toccate.size, completo }
+}
+
+/**
  * Anonimizza UN alunno + bonifica i suoi dati finanziari collegati
  * (riconciliazione/incassi/cassa), con la stessa logica del diritto all'oblio
  * admin (causale/controparte/`suggerimenti.label` e testo libero di cassa che
@@ -1664,6 +1750,8 @@ export async function anonimizzaAlunno(
   fotoRimosse: number
   fotoSganciate: number
   presenzeBonificate: number
+  /** Righe di `eventi_diario` il cui testo libero (note, routine a testo) è stato tolto. */
+  diarioBonificate: number
   /** Righe di `notifiche` che nominavano il bambino, rimosse (art. 17). */
   notificheRimosse: number
   /**
@@ -1724,6 +1812,11 @@ export async function anonimizzaAlunno(
   } else {
     presenzeBonificate = (presBonificate ?? []).length
   }
+
+  // 2-ter. IL TESTO DEL DIARIO (2026-09-28). Il gemello di quello delle presenze: le note
+  //    (`nota_bambino`, `nota_libera`) e il valore delle routine della scuola a testo libero.
+  //    Vedi `bonificaDiarioAlunno`.
+  const diario = await bonificaDiarioAlunno(supabase, alunno.id, op)
 
   // 2-bis. LE NOTIFICHE CHE NOMINANO IL BAMBINO (art. 17).
   //
@@ -2070,6 +2163,7 @@ export async function anonimizzaAlunno(
     fotoRimosse: foto.fotoRimosse,
     fotoSganciate: foto.fotoSganciate,
     presenzeBonificate,
+    diarioBonificate: diario.bonificate,
     notificheRimosse,
     // ── GLI INVENTARI CHE NON SI SONO POTUTI LEGGERE ──
     //
@@ -2087,6 +2181,7 @@ export async function anonimizzaAlunno(
       allegatiChat.letto,
       iscr.letto,
       !threadNonLetti,
+      diario.completo,
     ].filter((l) => l === false).length,
   }
 }

@@ -12,6 +12,7 @@ import {
     MAX_OPZIONE,
     ID_ROUTINE_RE,
     type Risposta,
+    type RoutinePersonalizzata,
 } from '@/lib/diary/routine';
 
 /**
@@ -24,18 +25,23 @@ import {
  *
  * Lo stato è una BOZZA: finché si scrive, una routine può essere incompleta (nome vuoto, una sola
  * opzione). La validazione vera è quella di `zRoutinePersonalizzate`, al salvataggio.
+ *
+ * Seconda revisione (2026-09-28):
+ *  · ogni routine è un GRUPPO col suo nome: «Nome della routine», «Icona», «Attiva» si ripetono
+ *    per ogni riga, e un lettore di schermo non sapeva di quale stesse parlando;
+ *  · cambiare il tipo verso uno che non è «Scelta» butta opzioni e «più d'una»: restavano
+ *    nascoste e bloccavano il salvataggio con un messaggio sulle scelte;
+ *  · eliminare una routine GIÀ SALVATA chiede conferma: l'id non torna, e la via per sospenderla
+ *    senza perderla è «Attiva»;
+ *  · al limite delle opzioni si dice perché il bottone è spento.
  */
 
-/** Una routine in bozza: la forma di quella salvata, ma coi campi ancora da riempire. */
-export interface RoutineInBozza {
-    id: string;
-    nome: string;
-    emoji: string;
-    risposta: Risposta;
-    opzioni: string[];
-    multipla: boolean;
-    attiva: boolean;
-}
+/**
+ * Una routine in bozza: ESATTAMENTE la forma di quella salvata. È il tipo dello schema, non una
+ * copia a mano: un campo aggiunto qui e non allo schema sparirebbe in silenzio al salvataggio
+ * (`z.object` scarta le chiavi che non conosce) — con il tipo dello schema non compila.
+ */
+export type RoutineInBozza = RoutinePersonalizzata;
 
 const ETICHETTA_RISPOSTA: Record<Risposta, string> = {
     spunta: 'diPersRispostaSpunta',
@@ -83,8 +89,9 @@ export function RoutinePersonalizzateEditor({ routine, salvate, onChange }: Prop
             <div className="mt-3 space-y-3">
                 {routine.map((r) => {
                     const bloccata = salvate.has(r.id);
+                    const nomeGruppo = r.nome.trim() || t('diPersNuova');
                     return (
-                        <div key={r.id} data-testid="routine-scuola" className="rounded-2xl border border-kidville-line p-3">
+                        <div key={r.id} role="group" aria-label={nomeGruppo} data-testid="routine-scuola" className="rounded-2xl border border-kidville-line p-3">
                             <div className="flex items-end gap-2">
                                 <div className="w-16 flex-shrink-0">
                                     <span className={label} aria-hidden="true">{t('diPersEmoji')}</span>
@@ -108,8 +115,12 @@ export function RoutinePersonalizzateEditor({ routine, salvate, onChange }: Prop
                                 </div>
                                 <button
                                     type="button"
-                                    aria-label={`${t('diPersElimina')}: ${r.nome || '—'}`}
-                                    onClick={() => onChange(routine.filter((x) => x.id !== r.id))}
+                                    aria-label={`${t('diPersElimina')}: ${nomeGruppo}`}
+                                    onClick={() => {
+                                        // Una routine mai salvata è solo una bozza: via senza domande.
+                                        if (bloccata && !confirm(t('diPersEliminaConferma', { nome: nomeGruppo }))) return;
+                                        onChange(routine.filter((x) => x.id !== r.id));
+                                    }}
                                     className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-kidville-line text-kidville-error"
                                 >
                                     <Trash2 size={15} strokeWidth={1.8} />
@@ -122,7 +133,12 @@ export function RoutinePersonalizzateEditor({ routine, salvate, onChange }: Prop
                                     aria-label={t('diPersRisposta')}
                                     value={r.risposta}
                                     disabled={bloccata}
-                                    onChange={(e) => cambia(r.id, { risposta: e.target.value as Risposta })}
+                                    onChange={(e) => {
+                                        const risposta = e.target.value as Risposta;
+                                        // Opzioni e «più d'una» valgono solo per la scelta: negli altri tipi
+                                        // resterebbero nascoste, e un'opzione vuota bloccherebbe il salvataggio.
+                                        cambia(r.id, risposta === 'scelta' ? { risposta } : { risposta, opzioni: [], multipla: false });
+                                    }}
                                     className={`${input} w-full disabled:opacity-60`}
                                 >
                                     {RISPOSTE.map((v) => (
@@ -161,6 +177,9 @@ export function RoutinePersonalizzateEditor({ routine, salvate, onChange }: Prop
                                     >
                                         <Plus size={14} strokeWidth={2} /> {t('diPersOpzioneAggiungi')}
                                     </button>
+                                    {r.opzioni.length >= MAX_OPZIONI && (
+                                        <p className={hint}>{t('diPersMaxOpzioni', { max: MAX_OPZIONI })}</p>
+                                    )}
                                     <CheckField checked={r.multipla} onChange={(v) => cambia(r.id, { multipla: v })}>
                                         {t('diPersMultipla')}
                                     </CheckField>

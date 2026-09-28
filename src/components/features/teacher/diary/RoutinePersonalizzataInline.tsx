@@ -16,9 +16,30 @@ import { MAX_TESTO, type RoutinePersonalizzata } from '@/lib/diary/routine';
  *  · testo   → una riga scritta a mano (al massimo `MAX_TESTO` caratteri).
  *
  * Il valore «niente» è sempre `null`: spegnere «Fatto», togliere l'ultima opzione, svuotare l'ora
- * o il testo. Con `null` il bambino non finisce nel salvataggio (`voceDaMostrare`), e per togliere
- * una registrazione già salvata c'è il cestino — come per il bagno e i pasti.
+ * o il testo. Con `null` il bambino non finisce nel salvataggio (`voceDaMostrare`); se aveva una
+ * registrazione salvata, il salvataggio la CANCELLA (come la nanna: `svuotaCancella`). E c'è il
+ * cestino.
+ *
+ * Seconda revisione (2026-09-28):
+ *  · ogni riga è un GRUPPO col nome del bambino: «Fatto» e le opzioni non dicevano di chi fossero
+ *    a un lettore di schermo. Via il `data-testid` con l'uuid del bambino, che finiva nell'HTML;
+ *  · un valore salvato che la routine non prevede più si mostra com'è in archivio, col cestino;
+ *  · «Fatto per tutti» solo col filtro «Solo presenti»: con «Tutti» segnerebbe gli assenti.
  */
+
+/**
+ * Un valore di routine della scuola detto in una riga, o `null` se non dice niente. Le opzioni e
+ * il testo sono dati della scuola: non si traducono. `fatto` è la parola per la spunta.
+ */
+export function testoValoreRoutine(valore: unknown, fatto: string): string | null {
+    if (valore === true) return fatto;
+    if (Array.isArray(valore)) {
+        const scelte = valore.filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+        return scelte.length > 0 ? scelte.join(', ') : null;
+    }
+    if (typeof valore === 'string' && valore.trim()) return valore.trim();
+    return null;
+}
 
 interface Studente { id: string; firstName: string; lastName: string }
 
@@ -27,6 +48,10 @@ interface Props {
     students: Studente[];
     studentStates: Record<string, Record<string, unknown>>;
     savedStudentIds: Set<string>;
+    /** Valori salvati oggi che la routine, com'è adesso, non prevede più: alunno_id → valore. */
+    nonPiuValidi: Record<string, unknown>;
+    /** La lista è filtrata ai soli presenti: solo così «Fatto per tutti» non segna gli assenti. */
+    soloPresenti: boolean;
     noteBambino: Record<string, string>;
     onValore: (studentId: string, valore: unknown) => void;
     onTuttiFatto: () => void;
@@ -48,7 +73,7 @@ function scelte(valore: unknown): string[] {
 }
 
 export function RoutinePersonalizzataInline({
-    def, students, studentStates, savedStudentIds, noteBambino, onValore, onTuttiFatto, onElimina,
+    def, students, studentStates, savedStudentIds, nonPiuValidi, soloPresenti, noteBambino, onValore, onTuttiFatto, onElimina,
 }: Props) {
     const t = useTranslations('teacherDiario');
 
@@ -66,7 +91,12 @@ export function RoutinePersonalizzataInline({
 
     return (
         <>
-            {def.risposta === 'spunta' && students.length > 0 && (
+            {def.risposta === 'spunta' && students.length > 0 && !soloPresenti && (
+                <p className="font-maven text-[11px] text-kidville-sub text-center mb-1 px-2">
+                    {t('routineFattoPerTuttiSoloPresenti')}
+                </p>
+            )}
+            {def.risposta === 'spunta' && students.length > 0 && soloPresenti && (
                 <button
                     type="button"
                     onClick={onTuttiFatto}
@@ -86,10 +116,14 @@ export function RoutinePersonalizzataInline({
                 const isSaved = savedStudentIds.has(student.id);
                 const nomeIntero = `${student.firstName} ${student.lastName}`;
                 const etichettaCampo = `${def.nome} — ${nomeIntero}`;
+                const nonPiuValido = student.id in nonPiuValidi
+                    ? testoValoreRoutine(nonPiuValidi[student.id], t('routineFatto')) ?? String(nonPiuValidi[student.id])
+                    : null;
                 return (
                     <motion.div
                         key={student.id}
-                        data-testid={`routine-riga-${student.id}`}
+                        role="group"
+                        aria-label={nomeIntero}
                         custom={idx}
                         variants={itemVariants}
                         initial="hidden"
@@ -100,11 +134,11 @@ export function RoutinePersonalizzataInline({
                             <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
                                 {student.firstName[0]}{student.lastName[0]}
                             </div>
-                            <span className="font-maven font-medium text-sm text-kidville-green flex-1">
+                            <span className="font-maven font-medium text-sm text-kidville-green flex-1 min-w-0 break-words">
                                 {nomeIntero}
                                 {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                             </span>
-                            {isSaved && (
+                            {(isSaved || nonPiuValido !== null) && (
                                 <BottoneEliminaRegistrazione
                                     nome={nomeIntero}
                                     evento={def.nome}
@@ -113,6 +147,12 @@ export function RoutinePersonalizzataInline({
                                 />
                             )}
                         </div>
+
+                        {nonPiuValido !== null && (
+                            <p className="mb-2 rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn break-words">
+                                {t('routineNonPiuValido', { valore: nonPiuValido })}
+                            </p>
+                        )}
 
                         {def.risposta === 'spunta' && (
                             <button

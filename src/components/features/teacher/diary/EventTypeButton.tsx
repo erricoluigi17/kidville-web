@@ -15,9 +15,14 @@ interface EventTypeButtonProps {
      * icona. Senza, la tessera direbbe «Evento» 📝 (2026-09-28).
      */
     fonte?: FonteRoutine | null;
+    /**
+     * Una routine SPENTA (o cancellata) che oggi ha voci (2026-09-28): la tessera apre le voci in
+     * sola lettura, col cestino, e lo dice — sull'etichetta e a chi usa un lettore di schermo.
+     */
+    spenta?: boolean;
 }
 
-export function EventTypeButton({ type, disabled = false, selected = false, onClick, fonte }: EventTypeButtonProps) {
+export function EventTypeButton({ type, disabled = false, selected = false, onClick, fonte, spenta = false }: EventTypeButtonProps) {
     const t = useTranslations('teacherDiario');
     const eventLabel = useEventLabel();
     const config = configDiVoce(type, fonte);
@@ -40,17 +45,21 @@ export function EventTypeButton({ type, disabled = false, selected = false, onCl
                 font-maven font-medium text-sm
                 transition-all duration-150
                 ${config.color} ${accent}
+                ${spenta ? 'border-dashed opacity-80' : ''}
                 ${disabled
                     ? 'opacity-40 cursor-not-allowed'
                     : 'hover:scale-[1.03] hover:shadow-md active:scale-95 cursor-pointer'
                 }
             `}
-            aria-label={`${t('registra')} ${etichetta}`}
+            aria-label={spenta ? t('routineSpentaAria', { nome: etichetta }) : `${t('registra')} ${etichetta}`}
         >
             <span className="text-3xl leading-none">{config.emoji}</span>
-            <span className="font-barlow font-semibold text-[10px] leading-tight px-1 text-center uppercase tracking-wide">
+            <span className="font-barlow font-semibold text-[10px] leading-tight px-1 text-center uppercase tracking-wide break-words">
                 {etichetta}
             </span>
+            {spenta && (
+                <span className="font-maven text-[9px] font-semibold uppercase text-kidville-sub">{t('routineSpentaTessera')}</span>
+            )}
         </button>
     );
 }

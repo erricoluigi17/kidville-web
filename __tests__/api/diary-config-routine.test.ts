@@ -20,7 +20,9 @@ const h = vi.hoisted(() => ({
     configPerSede: {} as Record<string, Record<string, unknown>>,
     sedeLetta: null as string | null,
     sediUtente: [] as string[],
+    logEvento: vi.fn(),
 }));
+vi.mock('@/lib/logging/logger', async (orig) => ({ ...(await orig<Record<string, unknown>>()), logEvento: h.logEvento }));
 
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => ({}) }));
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -40,6 +42,7 @@ beforeEach(() => {
     h.configPerSede = {};
     h.sedeLetta = null;
     h.sediUtente = [SEDE_MIA, SEDE_ALTRA];
+    h.logEvento.mockClear();
 });
 
 describe('GET /api/diary/config — le routine', () => {
@@ -72,5 +75,13 @@ describe('GET /api/diary/config — le routine', () => {
         const res = await GET(req(`?scuola_id=${SEDE_NON_MIA}`));
         expect(res.status).toBe(403);
         expect(h.sedeLetta).toBeNull();
+    });
+
+    it('il 403 si logga (warn, persistito): una sede chiesta e non posseduta è un segnale', async () => {
+        const { GET } = await import('@/app/api/diary/config/route');
+        await GET(req(`?scuola_id=${SEDE_NON_MIA}`));
+        const riga = h.logEvento.mock.calls.find((c) => c[2]?.tipo === 'sede-dichiarata-fuori-scope');
+        expect(riga?.[1]).toBe('warn');
+        expect(riga?.[2]).toMatchObject({ azione: 'diary/config:GET', utente: 'u1' });
     });
 });

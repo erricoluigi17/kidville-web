@@ -9,9 +9,11 @@ import {
     routinePersonalizzate,
     idDiTipo,
     valoreRoutineValido,
+    normalizzaValoreRoutine,
     dettagliRoutine,
     type TipoBase,
 } from '@/lib/diary/routine';
+import { voceDaMostrare } from '@/lib/diary/registrazione';
 
 /**
  * LE ROUTINE VALGONO ANCHE PER CHI SCRIVE (2026-09-28) — il controllo di `POST /api/diary/entries`.
@@ -30,14 +32,25 @@ import {
  * I tipi che non sono di nessuna routine (`entrata`, storici) passano come prima: il server non
  * inventa filtri su ciò che non conosce.
  *
- * CONFIGURAZIONE ILLEGGIBILE: le routine BASE passano (fail-open, com'era prima di oggi: meglio una
- * voce in più che un diario che non si salva); quelle della SCUOLA no, perché senza la definizione
- * non c'è niente da scrivere — rifiuto `ROUTINE_NON_VERIFICATE` (503).
+ * CONFIGURAZIONE (o sede del bambino) ILLEGGIBILE: le routine BASE passano (fail-open, com'era
+ * prima di oggi: meglio una voce in più che un diario che non si salva); quelle della SCUOLA no,
+ * perché senza la definizione non c'è niente da scrivere — rifiuto `ROUTINE_NON_VERIFICATE` (503).
+ *
+ * Seconda revisione (2026-09-28):
+ *  · le voci MUTE non si controllano: la rotta le salta e lo logga (`voci-mute-saltate`). Prima un
+ *    lotto di nanne vuote con il sonno spento prendeva un 422 invece di essere saltato;
+ *  · «niente» si scrive in un modo solo (`normalizzaValoreRoutine`): spunta spenta, scelta vuota,
+ *    orario o testo vuoti sono `null`, non un 422 sull'intero lotto;
+ *  · con rifiuti diversi nello stesso lotto vince il più definitivo (`PRIORITA`), non il primo in
+ *    ordine di voce: la stessa richiesta dà sempre la stessa risposta.
  */
 
 const PREFISSO = 'routine:';
 
 type CodiceRifiuto = 'ROUTINE_SPENTA' | 'ROUTINE_NON_DISPONIBILE' | 'ROUTINE_VALORE_NON_VALIDO' | 'ROUTINE_NON_VERIFICATE';
+
+/** Dal più definitivo (la maestra deve cambiare qualcosa) al più passeggero (riprovare basta). */
+const PRIORITA: readonly CodiceRifiuto[] = ['ROUTINE_SPENTA', 'ROUTINE_NON_DISPONIBILE', 'ROUTINE_VALORE_NON_VALIDO', 'ROUTINE_NON_VERIFICATE'];
 
 const MESSAGGI: Record<CodiceRifiuto, string> = {
     ROUTINE_SPENTA: 'Questa routine è spenta nelle impostazioni della sede: nessuna registrazione è stata salvata.',
@@ -46,10 +59,37 @@ const MESSAGGI: Record<CodiceRifiuto, string> = {
     ROUTINE_NON_VERIFICATE: 'Non è stato possibile verificare le routine della sede: nessuna registrazione è stata salvata.',
 };
 
-interface VoceDiario { alunno_id: string; tipo_evento: string; dettagli?: unknown }
+interface VoceDiario { alunno_id: string; tipo_evento: string; dettagli?: unknown; nota_libera?: unknown; nota_bambino?: unknown }
 
 function eTipoBase(tipo: string): tipo is TipoBase {
     return (TIPI_BASE as readonly string[]).includes(tipo);
+}
+
+function conNota(e: VoceDiario): boolean {
+    return Boolean(String(e.nota_libera ?? '').trim() || String(e.nota_bambino ?? '').trim());
+}
+
+function valoreGrezzo(e: VoceDiario): unknown {
+    return e.dettagli && typeof e.dettagli === 'object' && !Array.isArray(e.dettagli)
+        ? (e.dettagli as Record<string, unknown>).valore
+        : undefined;
+}
+
+/** «Non segnato», qualunque sia il tipo di risposta: si decide senza la definizione. */
+function valoreVuoto(v: unknown): boolean {
+    return v === undefined || v === null || v === false
+        || (typeof v === 'string' && v.trim() === '')
+        || (Array.isArray(v) && v.length === 0);
+}
+
+/**
+ * Una voce che non dice niente: la rotta la SALTA (e lo logga), quindi qui non si controlla. Per
+ * una routine della scuola si decide sul valore grezzo, senza la definizione: una voce vuota di
+ * una routine che non c'è più non è un tentativo di scriverla.
+ */
+function muta(e: VoceDiario): boolean {
+    if (e.tipo_evento.startsWith(PREFISSO)) return valoreVuoto(valoreGrezzo(e)) && !conNota(e);
+    return !voceDaMostrare(e.tipo_evento, (e.dettagli ?? null) as Record<string, unknown> | null, { conNota: conNota(e) });
 }
 
 /** Il rifiuto, con la sua riga di log: codice e conteggi, mai nomi, valori o id di bambini. */
@@ -82,23 +122,21 @@ export async function applicaRoutineAlLotto<T extends VoceDiario>(
     admin: SupabaseClient,
     entries: T[],
 ): Promise<{ voci: T[] } | { response: NextResponse }> {
-    const toccate = entries.filter((e) => eTipoBase(e.tipo_evento) || e.tipo_evento.startsWith(PREFISSO));
+    const toccate = entries.filter((e) => (eTipoBase(e.tipo_evento) || e.tipo_evento.startsWith(PREFISSO)) && !muta(e));
     if (toccate.length === 0) return { voci: entries };
 
-    // La sede di ogni bambino: le routine sono della SUA sede, non di chi scrive.
+    // La sede di ogni bambino: le routine sono della SUA sede, non di chi scrive. Se non si legge,
+    // `sedeDi` resta `null`: le routine base passano, quelle della scuola si rifiutano (503).
     const ids = [...new Set(toccate.map((e) => e.alunno_id))];
     const { data: alunni, error } = await admin.from('alunni').select('id, scuola_id').in('id', ids);
-    if (error) {
-        logErrore({ operazione: 'diary/entries:POST', evento: 'db', stato: 503 }, error);
-        return rifiuta('ROUTINE_NON_VERIFICATE', entries.length, toccate.length);
-    }
-    const sedeDi = new Map<string, string | null>(
+    if (error) logErrore({ operazione: 'diary/entries:POST', evento: 'db', stato: 503 }, error);
+    const sedeDi = error ? null : new Map<string, string | null>(
         ((alunni ?? []) as Array<{ id: string; scuola_id: string | null }>).map((a) => [a.id, a.scuola_id ?? null]),
     );
 
     // Una lettura per sede (di solito una sola). `null` = configurazione illeggibile.
     const configDi = new Map<string, Record<string, unknown> | null>();
-    for (const sede of new Set([...sedeDi.values()].filter((s): s is string => Boolean(s)))) {
+    for (const sede of new Set([...(sedeDi?.values() ?? [])].filter((s): s is string => Boolean(s)))) {
         const esito = await leggiModuleConfig<Record<string, unknown>>(admin, 'diario_config', sede);
         configDi.set(sede, esito.ok ? (esito.config as Record<string, unknown>) : null);
     }
@@ -106,9 +144,10 @@ export async function applicaRoutineAlLotto<T extends VoceDiario>(
     const rifiuti: CodiceRifiuto[] = [];
     const voci = entries.map((e) => {
         if (!toccate.includes(e)) return e;
-        const sede = sedeDi.get(e.alunno_id) ?? null;
-        // Un bambino senza sede non ha impostazioni: valgono le routine predefinite.
-        const cfg = sede ? configDi.get(sede) : {};
+        // Un bambino senza sede non ha impostazioni: valgono le routine predefinite. Sede non letta:
+        // configurazione illeggibile (`null`).
+        const sede = sedeDi ? sedeDi.get(e.alunno_id) ?? null : undefined;
+        const cfg = sede === undefined ? null : sede ? configDi.get(sede) : {};
 
         if (eTipoBase(e.tipo_evento)) {
             if (cfg === null || cfg === undefined) return e; // illeggibile: fail-open sulle routine base
@@ -126,9 +165,8 @@ export async function applicaRoutineAlLotto<T extends VoceDiario>(
             rifiuti.push('ROUTINE_NON_DISPONIBILE');
             return e;
         }
-        const grezzo = e.dettagli && typeof e.dettagli === 'object' ? (e.dettagli as Record<string, unknown>).valore : undefined;
-        // Il testo si salva senza spazi ai bordi; tutto spazi vale «niente».
-        const valore = typeof grezzo === 'string' && def.risposta === 'testo' ? (grezzo.trim() || null) : (grezzo ?? null);
+        // «Niente» in un modo solo, e il testo senza spazi ai bordi (`normalizzaValoreRoutine`).
+        const valore = normalizzaValoreRoutine(def.risposta, valoreGrezzo(e));
         if (valore !== null && !valoreRoutineValido(def, valore)) {
             rifiuti.push('ROUTINE_VALORE_NON_VALIDO');
             return e;
@@ -136,6 +174,9 @@ export async function applicaRoutineAlLotto<T extends VoceDiario>(
         return { ...e, dettagli: dettagliRoutine(def, valore) };
     });
 
-    if (rifiuti.length > 0) return rifiuta(rifiuti[0], entries.length, rifiuti.length);
+    if (rifiuti.length > 0) {
+        const codice = PRIORITA.find((c) => rifiuti.includes(c)) ?? rifiuti[0];
+        return rifiuta(codice, entries.length, rifiuti.length);
+    }
     return { voci };
 }

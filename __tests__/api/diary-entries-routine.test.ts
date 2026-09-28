@@ -26,28 +26,45 @@ const SPENTA = { ...CREMA, id: 'f0f0f0f0', attiva: false };
 
 const h = vi.hoisted(() => ({
     inserted: [] as Array<Record<string, unknown>>,
+    updated: [] as Array<Record<string, unknown>>,
     logEvento: vi.fn(),
     config: {} as Record<string, unknown>,
     sedeDi: {} as Record<string, string | null>,
+    /** Le righe di OGGI già in archivio, per `alunno|tipo`. */
+    esistenti: {} as Record<string, { id: string; dettagli: Record<string, unknown> }>,
+    alunniRotti: false,
 }));
 
 vi.mock('@/lib/supabase/server-client', () => ({
     createAdminClient: async () => ({
         from: (tabella: string) => {
             let ids: string[] = [];
+            const filtri: Record<string, unknown> = {};
+            let aggiornamento: Record<string, unknown> | null = null;
             const chain: Record<string, unknown> = {
-                select: () => chain, eq: () => chain, gte: () => chain, lte: () => chain, is: () => chain,
+                select: () => chain, gte: () => chain, lte: () => chain, is: () => chain,
+                eq: (c: string, v: unknown) => { filtri[c] = v; return chain; },
                 in: (_c: string, v: string[]) => { ids = v; return chain; },
                 order: () => chain, limit: () => chain,
-                then: (r: (v: unknown) => void) => r({
-                    data: tabella === 'alunni' ? ids.map((id) => ({ id, scuola_id: h.sedeDi[id] ?? null })) : [],
-                    error: null,
-                }),
+                then: (r: (v: unknown) => void) => {
+                    if (aggiornamento) {
+                        h.updated.push(aggiornamento);
+                        return r({ data: [{ id: filtri.id, alunno_id: 'a', tipo_evento: 't' }], error: null });
+                    }
+                    if (tabella === 'alunni') {
+                        return r(h.alunniRotti
+                            ? { data: null, error: { message: 'boom', code: '57014' } }
+                            : { data: ids.map((id) => ({ id, scuola_id: h.sedeDi[id] ?? null })), error: null });
+                    }
+                    const esiste = h.esistenti[`${filtri.alunno_id}|${filtri.tipo_evento}`];
+                    return r({ data: esiste ? [esiste] : [], error: null });
+                },
                 insert: (row: Record<string, unknown>) => {
                     h.inserted.push(row);
                     return { select: () => ({ then: (r: (v: unknown) => void) => r({ data: [{ id: 'x', alunno_id: row.alunno_id, tipo_evento: row.tipo_evento }], error: null }) }) };
                 },
-                update: () => chain, maybeSingle: async () => ({ data: null, error: null }),
+                update: (row: Record<string, unknown>) => { aggiornamento = row; return chain; },
+                maybeSingle: async () => ({ data: null, error: null }),
             };
             return chain;
         },
@@ -68,11 +85,12 @@ const req = (body: unknown) => new NextRequest('http://x/api/diary/entries?userI
     method: 'POST', headers: { 'content-type': 'application/json', 'x-user-id': 'u1' },
     body: JSON.stringify(body),
 });
-const voce = (alunno: string, tipo: string, dettagli: Record<string, unknown>) =>
-    ({ alunno_id: alunno, maestra_id: 'u1', tipo_evento: tipo, orario_inizio: new Date().toISOString(), dettagli });
+const voce = (alunno: string, tipo: string, dettagli: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    ({ alunno_id: alunno, maestra_id: 'u1', tipo_evento: tipo, orario_inizio: new Date().toISOString(), dettagli, ...extra });
 
 beforeEach(() => {
-    h.inserted = []; h.logEvento.mockClear();
+    h.inserted = []; h.updated = []; h.logEvento.mockClear();
+    h.esistenti = {}; h.alunniRotti = false;
     h.config = { routine_attive: ['pasto', 'cambio'], routine_personalizzate: [CREMA, BIBERON, APPUNTO, SPENTA] };
     h.sedeDi = { [A1]: SEDE, [B2]: SEDE };
 });
@@ -97,7 +115,7 @@ describe('POST /api/diary/entries — routine della scuola', () => {
     });
 
     it('una routine che la sede non ha, o che ha spento, non si scrive: 422 e nessuna riga', async () => {
-        for (const tipo of ['routine:99999999', 'routine:f0f0f0f0', 'routine:NON-VALIDO']) {
+        for (const tipo of ['routine:99999999', 'routine:f0f0f0f0']) {
             h.inserted = [];
             const { res, body } = await post([voce(A1, 'routine:a1b2c3d4', { valore: true }), voce(B2, tipo, { valore: true })]);
             expect(res.status, tipo).toBe(422);
@@ -148,5 +166,71 @@ describe('POST /api/diary/entries — routine base spente', () => {
         h.config = {};
         expect((await post([voce(A1, 'nanna_inizio', { orario_inizio: '12:30' })])).res.status).toBeLessThan(300);
         expect((await post([voce(A1, 'umore', { umore: 'felice' })])).body.codice).toBe('ROUTINE_SPENTA');
+    });
+});
+
+describe('POST /api/diary/entries — seconda revisione critica (2026-09-28)', () => {
+    it('un lotto di sole voci MUTE di una routine spenta si salta, non si rifiuta', async () => {
+        // Il commento della rotta promette «le mute si SALTANO»: con il sonno spento, un bundle
+        // vecchio che manda nanne vuote prendeva invece un 422 per tutto il lotto.
+        const { res } = await post([voce(A1, 'nanna_inizio', { orario_inizio: '' }), voce(B2, 'routine:f0f0f0f0', { valore: null })]);
+        expect(res.status).toBeLessThan(300);
+        expect(h.inserted).toHaveLength(0);
+        expect(h.logEvento.mock.calls.some((c) => c[2]?.esito === 'routine-rifiutata'), 'rifiutato').toBe(false);
+        expect(h.logEvento.mock.calls.some((c) => c[2]?.esito === 'voci-mute-saltate'), 'saltate senza dirlo').toBe(true);
+    });
+
+    it.each([
+        ['spunta spenta', 'routine:a1b2c3d4', false],
+        ['scelta vuota', 'routine:e5f6a7b8', []],
+        ['testo vuoto', 'routine:d0d0d0d0', '   '],
+    ])('%s con una nota: si salva col valore `null`, non un 422 sul lotto', async (_caso, tipo, valore) => {
+        const { res } = await post([voce(A1, tipo, { valore }, { nota_bambino: 'oggi niente' })]);
+        expect(res.status).toBeLessThan(300);
+        expect(h.inserted).toHaveLength(1);
+        expect((h.inserted[0].dettagli as Record<string, unknown>).valore).toBeNull();
+    });
+
+    it.each(['Routine:a1b2c3d4', 'routine:NON-VALIDO', 'BAGNO', 'bagno ', 'pallone', ''])('il tipo di voce è un vocabolario chiuso: «%s» → 400', async (tipo) => {
+        const { res } = await post([voce(A1, tipo, { pipi: 1 })]);
+        expect(res.status).toBe(400);
+        expect(h.inserted).toHaveLength(0);
+    });
+
+    it('se gli alunni non si leggono, le routine BASE passano (fail-open) e quelle della scuola no (503)', async () => {
+        h.alunniRotti = true;
+        expect((await post([voce(A1, 'bagno', { pipi: 1 })])).res.status).toBeLessThan(300);
+        expect(h.inserted).toHaveLength(1);
+        h.inserted = [];
+        const { res, body } = await post([voce(A1, 'routine:a1b2c3d4', { valore: true })]);
+        expect(res.status).toBe(503);
+        expect(body.codice).toBe('ROUTINE_NON_VERIFICATE');
+        expect(h.inserted).toHaveLength(0);
+    });
+
+    it('con rifiuti diversi nello stesso lotto il codice non dipende dall\'ordine delle voci', async () => {
+        const spenta = voce(A1, 'nanna_inizio', { orario_inizio: '12:30' });
+        const assente = voce(B2, 'routine:99999999', { valore: true });
+        expect((await post([spenta, assente])).body.codice).toBe('ROUTINE_SPENTA');
+        expect((await post([assente, spenta])).body.codice).toBe('ROUTINE_SPENTA');
+    });
+
+    it('una voce col valore `null` (tenuta in piedi da una nota) NON cancella il valore già salvato', async () => {
+        // Il caso vero: la segreteria rinomina un'opzione, la maestra riapre la routine, il valore
+        // salvato non vale più e il campo è vuoto; lei aggiunge una nota e salva. Il valore si
+        // toglie solo col cestino (o svuotando e salvando, che manda una DELETE).
+        const salvato = { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Poco'] };
+        h.esistenti[`${A1}|routine:e5f6a7b8`] = { id: 'r1', dettagli: salvato };
+        const { res } = await post([voce(A1, 'routine:e5f6a7b8', { valore: null }, { nota_bambino: 'ha bevuto dal bicchiere' })]);
+        expect(res.status).toBeLessThan(300);
+        expect(h.updated).toHaveLength(1);
+        expect(h.updated[0].dettagli).toEqual(salvato);
+        expect(h.updated[0].nota_bambino).toBe('ha bevuto dal bicchiere');
+    });
+
+    it('…ma un valore nuovo sì, lo sostituisce', async () => {
+        h.esistenti[`${A1}|routine:e5f6a7b8`] = { id: 'r1', dettagli: { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Poco'] } };
+        await post([voce(A1, 'routine:e5f6a7b8', { valore: ['Tutto'] })]);
+        expect((h.updated[0].dettagli as Record<string, unknown>).valore).toEqual(['Tutto']);
     });
 });

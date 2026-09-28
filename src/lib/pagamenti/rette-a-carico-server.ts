@@ -113,11 +113,22 @@ const codiceDi = (e: unknown): string | undefined => (e as { code?: string } | n
  * («column alunni.retta_a_carico_di does not exist»). Senza messaggio non si indovina.
  */
 const COLONNA_LEGAME = 'retta_a_carico_di'
-function mancaColonnaLegame(e: unknown): boolean {
+/**
+ * Le due colonne che il ripiego dei paganti toglie (`COLONNE_PAGANTE_BASE`). R5 (terza revisione
+ * 2026-09-29): il ripiego scattava su QUALUNQUE 42703, e in silenzio — un refuso nella select o
+ * una `classe_sezione` rinominata sarebbero stati riletti «senza sesso e senza archiviazione» e
+ * sarebbero tornati errore solo alla seconda lettura, con la causa vera persa. Ora vale la
+ * stessa regola della prima query: si ripiega solo se l'errore NOMINA una di queste.
+ */
+const COLONNE_RIPIEGO_PAGANTE = ['gender', 'archiviato_il']
+
+/** `42703` e il messaggio (o `details`) nomina una di `colonne`. Senza messaggio non si indovina. */
+function manca42703(e: unknown, colonne: readonly string[]): boolean {
   if (codiceDi(e) !== '42703') return false
   const { message, details } = (e ?? {}) as { message?: unknown; details?: unknown }
-  return [message, details].some((x) => typeof x === 'string' && x.includes(COLONNA_LEGAME))
+  return [message, details].some((x) => typeof x === 'string' && colonne.some((c) => x.includes(c)))
 }
+const mancaColonnaLegame = (e: unknown) => manca42703(e, [COLONNA_LEGAME])
 
 export async function caricaLegamiRetta(
   supabase: SupabaseClient,
@@ -152,7 +163,15 @@ export async function caricaLegamiRetta(
   const leggiPaganti = (colonne: string) =>
     supabase.from('alunni').select(colonne).in('id', idPaganti).in('scuola_id', sediPaganti)
   let paganti = sediPaganti.length > 0 ? await leggiPaganti(COLONNE_PAGANTE) : { data: [], error: null }
-  if (paganti.error && codiceDi(paganti.error) === '42703') paganti = await leggiPaganti(COLONNE_PAGANTE_BASE)
+  if (paganti.error && manca42703(paganti.error, COLONNE_RIPIEGO_PAGANTE)) {
+    // DB non migrato: si rilegge senza sesso («A carico di …») e senza archiviazione. Non è un
+    // guasto, ma cambia ciò che il cruscotto dice: lo si scrive, a livello info.
+    logEvento('pagamento', 'info', {
+      operazione, esito: 'legami-paganti-colonne-assenti',
+      msg: 'gender/archiviato_il assenti (DB non migrato): i paganti si leggono senza sesso e senza archiviazione',
+    }, paganti.error)
+    paganti = await leggiPaganti(COLONNE_PAGANTE_BASE)
+  }
   if (paganti.error) {
     logEvento('pagamento', 'error', { operazione, esito: 'legami-paganti-non-letti', n: idPaganti.length }, paganti.error)
     return { ok: false }

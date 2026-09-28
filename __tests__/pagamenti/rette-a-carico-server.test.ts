@@ -178,6 +178,62 @@ describe('caricaLegamiRetta — la seconda query (paganti)', () => {
     }
   })
 
+  // R5 (terza revisione 2026-09-29): il ripiego scattava su QUALUNQUE 42703, e in silenzio. Come
+  // per la prima query (C5), solo se il messaggio (o `details`) nomina una delle due colonne che
+  // il ripiego toglie; e lo si dice con un log info. Ogni altro 42703 è un guasto.
+  describe('R5 — il ripiego sul 42703 dei paganti è mirato, e parla', () => {
+    const PAGANTI = { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP }
+    const ripiego = (errore: Record<string, unknown>) => copione([
+      { data: [BAMBINO], error: null },
+      { data: null, error: errore },
+      { data: [PAGANTE_BASE], error: null },
+    ])
+
+    it('gender nel messaggio: ripiego, e un log info che lo dice (niente error)', async () => {
+      const { client, chiamate } = ripiego({ code: '42703', message: 'column alunni.gender does not exist' })
+      expect((await caricaLegamiRetta(client, PAGANTI)).ok).toBe(true)
+      expect(chiamate).toHaveLength(3)
+      expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ operazione: OP, esito: 'legami-paganti-colonne-assenti' }), expect.anything())
+      expect(h.logEvento.mock.calls.filter((c) => c[1] === 'error')).toEqual([])
+    })
+
+    it('archiviato_il nel messaggio: ripiego', async () => {
+      const { client, chiamate } = ripiego({ code: '42703', message: 'column alunni.archiviato_il does not exist' })
+      expect((await caricaLegamiRetta(client, PAGANTI)).ok).toBe(true)
+      expect(chiamate).toHaveLength(3)
+    })
+
+    it('la colonna in `details` e non nel messaggio: ripiego', async () => {
+      const { client, chiamate } = ripiego({ code: '42703', message: '', details: 'column "gender" does not exist' })
+      expect((await caricaLegamiRetta(client, PAGANTI)).ok).toBe(true)
+      expect(chiamate).toHaveLength(3)
+    })
+
+    it('42703 su un’ALTRA colonna: guasto (ok=false, error), nessun ripiego, nessun info', async () => {
+      const { client, chiamate } = ripiego({ code: '42703', message: 'column alunni.classe_sezione does not exist' })
+      expect(await caricaLegamiRetta(client, PAGANTI)).toEqual({ ok: false })
+      expect(chiamate).toHaveLength(2)
+      expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-paganti-non-letti' }), expect.anything())
+      expect(h.logEvento).not.toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ esito: 'legami-paganti-colonne-assenti' }), expect.anything())
+    })
+
+    it('42703 senza messaggio né details: non si indovina, è un guasto', async () => {
+      const { client, chiamate } = ripiego({ code: '42703' })
+      expect(await caricaLegamiRetta(client, PAGANTI)).toEqual({ ok: false })
+      expect(chiamate).toHaveLength(2)
+    })
+
+    it('il ripiego che fallisce a sua volta: guasto (ok=false, error)', async () => {
+      const { client } = copione([
+        { data: [BAMBINO], error: null },
+        { data: null, error: { code: '42703', message: 'column alunni.gender does not exist' } },
+        { data: null, error: { code: '57014', message: 'timeout' } },
+      ])
+      expect(await caricaLegamiRetta(client, PAGANTI)).toEqual({ ok: false })
+      expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-paganti-non-letti' }), expect.anything())
+    })
+  })
+
   it('altro errore sui paganti: ok=false e log error', async () => {
     const { client } = copione([
       { data: [BAMBINO], error: null },

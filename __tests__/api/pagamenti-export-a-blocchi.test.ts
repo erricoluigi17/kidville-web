@@ -63,6 +63,21 @@ vi.mock('@/lib/supabase/server-client', async () => {
 })
 
 import { GET } from '@/app/api/pagamenti/export/route'
+import { rigaEvento } from '@/lib/logging/logger'
+
+/** Ogni riga d'errore della richiesta: i `logEvento(…, 'error')` (anche quello di `withRoute`) e i `logErrore`. */
+const erroriDiLog = () => [
+  ...h.logEvento.mock.calls.filter((c) => c[1] === 'error').map((c) => `${c[0]}:${(c[2] as { esito?: string }).esito ?? '-'}`),
+  ...h.logErrore.mock.calls.map((c) => `logErrore:${(c[0] as { evento?: string }).evento}:${(c[0] as { stato?: number }).stato}`),
+]
+/**
+ * Q2 (quarta revisione 2026-09-29) — LA FORMA del tetto, in tutti e quattro i casi dell'export
+ * (e nel prefisso di `leggiTutte` di `GET /api/pagamenti`): il MESSAGGIO della riga — la colonna
+ * `app_log.messaggio` — comincia con `lettura-troncata: <tipo> oltre <soglia> righe (<n> lette in
+ * <b> blocchi)`. Una ricerca sola, `messaggio like 'lettura-troncata:%'`, le trova tutte; la
+ * colonna `stato_http` distingue il 500 (Scadenzario, AdE) dal 200 (rette dei paganti).
+ */
+const FORMA_TETTO = /^lettura-troncata: (export-scadenzario|export-rette-paganti|export-ade-alunni|export-ade-incassi) oltre \d+ righe \(\d+ lette in \d+ blocchi\)/
 
 const ADMIN_AB = { id: 'admin-1', role: 'admin', scuola_id: SEDE_A }
 const RETTA = { nome: 'Retta', slug: 'retta' }
@@ -124,8 +139,10 @@ describe('export Scadenzario — oltre le 1000 righe (C2)', () => {
     // Ancora ordinate per scadenza.
     const scadenze = righe.map((r) => String(r.Scadenza))
     expect(scadenze).toEqual([...scadenze].sort())
-    // Nessun tetto toccato: nessun allarme.
-    expect(h.logEvento).not.toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'lettura-troncata' }))
+    // Nessun tetto toccato: nessun allarme, in NESSUNA delle due forme (Q9, quarta revisione: qui
+    // si cercava solo un `logEvento` «lettura-troncata», che per lo Scadenzario dal 29/09 non può
+    // più esistere — il suo tetto è un `logErrore` — e l'asserzione era vera per costruzione).
+    expect(erroriDiLog()).toEqual([])
   })
 
   it('le rette dei paganti oltre le 1000 (120 famiglie × 10 mesi): una riga a zero per OGNUNA', async () => {
@@ -230,11 +247,6 @@ describe('K7 — i fogli AdE escono in un ordine leggibile e stabile', () => {
 // Tetto qui: 2 blocchi da 2 righe = 4 righe; la quinta accende la riga di prova.
 // =============================================================================
 describe('K5 — al tetto dei blocchi l’export è un guasto, non un file incompleto', () => {
-  /** Ogni riga d'errore della richiesta: i `logEvento(…, 'error')` (anche quello di `withRoute`) e i `logErrore`. */
-  const erroriDiLog = () => [
-    ...h.logEvento.mock.calls.filter((c) => c[1] === 'error').map((c) => `${c[0]}:${(c[2] as { esito?: string }).esito ?? '-'}`),
-    ...h.logErrore.mock.calls.map((c) => `logErrore:${(c[0] as { evento?: string }).evento}:${(c[0] as { stato?: number }).stato}`),
-  ]
   async function atteso500(qs: string, tipo: string) {
     const res = await GET(new NextRequest(`http://localhost/api/pagamenti/export?${qs}`))
     expect(res.status).toBe(500)
@@ -245,6 +257,11 @@ describe('K5 — al tetto dei blocchi l’export è un guasto, non un file incom
       { operazione: 'pagamenti/export:GET', stato: 500, evento: 'lettura-troncata' },
       expect.objectContaining({ message: expect.stringContaining(tipo) }),
     )
+    // Q2: la forma esatta (tetto di prova: 2 blocchi da 2 → 4 righe lette in 3 letture, la
+    // terza è la riga di prova). È il messaggio che finisce in `app_log.messaggio`.
+    const err = h.logErrore.mock.calls[0][1] as Error
+    expect(err.message).toMatch(FORMA_TETTO)
+    expect(err.message).toBe(`lettura-troncata: ${tipo} oltre 4 righe (4 lette in 3 blocchi), rifiutata per intero`)
   }
 
   it('Scadenzario: 5 righe oltre un tetto di 4 → 500 LETTURA_FALLITA, un log solo', async () => {
@@ -297,8 +314,20 @@ describe('K5 — al tetto dei blocchi l’export è un guasto, non un file incom
     const righe = await foglio(res, 'Scadenzario')
     expect(righe.map((r) => r.Alunno)).toEqual(['Npag Prova'])
     // Qui la risposta è 200: la riga è un `logEvento` error (nessun 5xx da dichiarare), UNA.
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'lettura-troncata', tipo: 'export-rette-paganti' }))
     expect(erroriDiLog()).toEqual(['pagamento:lettura-troncata'])
+    // Q2: tipo e conteggi come CAMPI (qui `logEvento` lo permette), e lo stesso messaggio dei 500.
+    const chiamata = h.logEvento.mock.calls.find((c) => c[1] === 'error')!
+    expect(chiamata).toEqual(['pagamento', 'error', {
+      operazione: 'pagamenti/export:GET', esito: 'lettura-troncata', tipo: 'export-rette-paganti', n: 4, blocchi: 3, oltre: 4,
+      msg: 'lettura-troncata: export-rette-paganti oltre 4 righe (4 lette in 3 blocchi): l’export esce senza le righe dei bambini a carico (nessuna, mai una parte)',
+    }])
+    // La riga che finirebbe in `app_log` (la persistenza è muta sotto vitest: la si compone con la
+    // stessa funzione): messaggio nella forma comune, nessuno `stato_http` (è un 200), e tipo e
+    // conteggi in chiaro nei campi — `tipo` è nella lista bianca di `redact`, i numeri passano.
+    const riga = rigaEvento(...(chiamata as Parameters<typeof rigaEvento>))!
+    expect(riga.messaggio).toMatch(FORMA_TETTO)
+    expect(riga.statoHttp).toBeUndefined()
+    expect(riga.contestoExtra?.campi).toMatchObject({ esito: 'lettura-troncata', tipo: 'export-rette-paganti', n: 4, blocchi: 3, oltre: 4 })
   })
 
   // Il ramo gemello: un blocco che risponde `{ error }`. Una riga, con `stato: 500`.

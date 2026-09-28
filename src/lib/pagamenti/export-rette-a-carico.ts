@@ -3,7 +3,7 @@ import { logEvento } from '@/lib/logging/logger'
 import { formaConfronto } from '@/lib/auth/scope'
 import { caricaLegamiRetta } from './rette-a-carico-server'
 import { testoPaganteIt } from './rette-a-carico'
-import { leggiABlocchi } from './leggi-a-blocchi'
+import { descriviTetto, leggiABlocchi } from './leggi-a-blocchi'
 import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 
 /** Una riga del foglio «Scadenzario»: le chiavi SONO le intestazioni delle colonne. */
@@ -118,10 +118,14 @@ export async function righeRetteACarico(supabase: SupabaseClient, o: OpzioniExpo
       // in più, mai una parte. `leggiABlocchi` non logga (R2, terza revisione): la riga è UNA e
       // la scrive qui, con `logEvento` e non `logErrore` — l'export risponde 200, non c'è un 5xx
       // da dichiarare, e la marca anti-doppione di `withRoute` resta giù. Solo conteggi.
+      // Q2 (quarta revisione 2026-09-29): tipo e conteggi come CAMPI (`tipo` passa la lista bianca
+      // di `redact`, i numeri pure) E, nel messaggio, la stessa forma dei tetti dello Scadenzario
+      // e dell'AdE, che sono `logErrore` e i campi non li possono portare (`descriviTetto`).
       if (lette.motivo === 'tetto') {
+        const tipo = 'export-rette-paganti'
         logEvento('pagamento', 'error', {
-          operazione: OPERAZIONE, esito: 'lettura-troncata', tipo: 'export-rette-paganti', n: lette.n, blocchi: lette.blocchi,
-          msg: `oltre ${lette.oltre} righe: l’export esce senza le righe dei bambini a carico (nessuna, mai una parte)`,
+          operazione: OPERAZIONE, esito: 'lettura-troncata', tipo, n: lette.n, blocchi: lette.blocchi, oltre: lette.oltre,
+          msg: `${descriviTetto(tipo, lette)}: l’export esce senza le righe dei bambini a carico (nessuna, mai una parte)`,
         })
       } else {
         logEvento('pagamento', 'error', { operazione: OPERAZIONE, esito: 'export-rette-paganti-non-lette', n: ids.length }, lette.error)

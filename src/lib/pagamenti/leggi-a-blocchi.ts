@@ -29,16 +29,25 @@
  *  · se risponde 500 (l'export, `letturaFallita` nella route) scrive la riga con `logErrore` e
  *    `stato: 500` — `evento: 'lettura-troncata'` al tetto, `'db'` sull'errore del blocco — e
  *    `logErrore` alza la marca, così `withRoute` non aggiunge una seconda riga più povera.
- *    È esattamente ciò che fa `leggiTutte` (`logErrore({ …, stato: 500, evento:
- *    'lettura-troncata' })`);
+ *    È ciò che fa `leggiTutte` di `GET /api/pagamenti` (K1);
  *  · se risponde 200 senza un pezzo accessorio (le righe dei bambini a carico,
- *    `export-rette-a-carico.ts`) scrive un `logEvento` error, e la marca resta giù: non c'è
- *    nessun 5xx da dichiarare.
+ *    `export-rette-a-carico.ts`) scrive un `logEvento('pagamento', 'error', { esito:
+ *    'lettura-troncata', tipo, n, blocchi, oltre, msg })`, senza `stato`, e la marca resta giù:
+ *    non c'è nessun 5xx da dichiarare.
  * Fino alla terza revisione (R2, 2026-09-29) il tetto lo loggava QUI, con `logEvento` e senza
  * `stato`, e alzava la marca: sul 500 dell'export `withRoute` taceva, e nei log non c'era
  * nessuna riga con `stato: 500` per quella richiesta — fuori dal filtro «dammi i 5xx». Per
  * questo il tetto consegna i conteggi (`n` righe lette, soglia `oltre`): servono al log di chi
  * chiama, e sono solo numeri (AGENTS.md, regola 8).
+ *
+ * UNA FORMA SOLA PER IL TETTO (Q2, quarta revisione 2026-09-29). Le due righe qui sopra non
+ * possono essere identiche: `logErrore` (il 500) accetta solo `operazione`, `stato`, `evento` e
+ * `ms`, quindi tipo e conteggi non li può portare come campi — li porta nel messaggio; `logEvento`
+ * (il 200) sì, e li porta come campi. Ciò che le rende UNA forma interrogabile è il MESSAGGIO, cioè
+ * la colonna `app_log.messaggio`: in entrambe comincia con ciò che `descriviTetto` scrive,
+ * «lettura-troncata: <tipo> oltre <soglia> righe (<n> lette in <b> blocchi)». Una ricerca sola
+ * (`messaggio like 'lettura-troncata:%'`, che prende anche `leggiTutte`) le trova tutte;
+ * `stato_http` = 500 distingue l'export rifiutato da quello uscito senza le righe a carico.
  */
 
 /**
@@ -65,6 +74,16 @@ export type EsitoABlocchi<T> =
    * `n` = le righe lette prima del tetto: un conteggio per il log di chi chiama.
    */
   | { ok: false; motivo: 'tetto'; blocchi: number; n: number; oltre: number }
+
+/**
+ * L'inizio del messaggio di OGNI riga di log del tetto (vedi «UNA FORMA SOLA PER IL TETTO»):
+ * `tipo` dice quale lettura (`export-scadenzario`, `export-rette-paganti`, …), poi soltanto
+ * numeri. Chi chiama aggiunge la conseguenza dopo: «, rifiutata per intero» (500) o «: l'export
+ * esce senza …» (200).
+ */
+export function descriviTetto(tipo: string, t: { oltre: number; n: number; blocchi: number }): string {
+  return `lettura-troncata: ${tipo} oltre ${t.oltre} righe (${t.n} lette in ${t.blocchi} blocchi)`
+}
 
 interface OpzioniABlocchi {
   /** Solo per i test: il blocco e il tetto veri sono le costanti qui sopra. */

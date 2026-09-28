@@ -12,7 +12,7 @@ import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/atte
 import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
 import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { righeRetteACarico, type RigaScadenzario } from '@/lib/pagamenti/export-rette-a-carico'
-import { leggiABlocchi, type EsitoABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
+import { descriviTetto, leggiABlocchi, type EsitoABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
 import { sediDeiPaganti } from '@/lib/pagamenti/rette-a-carico-server'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -115,13 +115,18 @@ async function nomiDelleSedi(
  * `leggiABlocchi` non logga: non sa se il chiamante risponderà 500 o 200 (vedi il modulo).
  * Prima il tetto lo loggava lui con `logEvento`, senza `stato`, e alzava la marca: per questo
  * 500 nei log non c'era nessuna riga con lo stato.
+ *
+ * Q2 (quarta revisione 2026-09-29) — tipo e conteggi stanno nel MESSAGGIO perché `logErrore` non
+ * accetta altri campi; il messaggio lo compone `descriviTetto`, lo stesso del tetto delle righe a
+ * carico (`export-rette-a-carico.ts`, un 200 che li porta anche come campi): una ricerca sola,
+ * `messaggio like 'lettura-troncata:%'`, trova tutti e due (vedi `leggi-a-blocchi.ts`).
  */
 function letturaFallita(esito: Extract<EsitoABlocchi<unknown>, { ok: false }>, messaggio: string, tipo: string): NextResponse {
   if (esito.motivo === 'tetto') {
     // Solo il nome della lettura e dei conteggi: mai dati (AGENTS.md, regola 8).
     logErrore(
       { operazione: 'pagamenti/export:GET', stato: 500, evento: 'lettura-troncata' },
-      new Error(`lettura-troncata: ${tipo} oltre ${esito.oltre} righe (${esito.n} lette in ${esito.blocchi} blocchi), rifiutata per intero`),
+      new Error(`${descriviTetto(tipo, esito)}, rifiutata per intero`),
     )
   } else {
     logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, esito.error)

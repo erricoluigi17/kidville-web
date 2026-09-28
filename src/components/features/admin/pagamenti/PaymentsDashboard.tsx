@@ -250,7 +250,12 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 setLegami(new Map());
                 setErroreLegami(true);
             } else {
-                setLegami(indicizzaLegami(listaLegami));
+                // Voci malformate scartate: quei bambini tornano «Non generata», e senza questo log
+                // nessuno saprebbe perché. Solo il conteggio: mai nomi (AGENTS.md, regola 8).
+                if (listaLegami.scartati > 0) {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-legami-voci-scartate', route: '/admin/pagamenti', campi: { n: listaLegami.scartati } });
+                }
+                setLegami(indicizzaLegami(listaLegami.legami));
                 setErroreLegami(false);
             }
         } finally {

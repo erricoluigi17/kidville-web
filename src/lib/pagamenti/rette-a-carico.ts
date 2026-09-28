@@ -92,17 +92,22 @@ export function indicizzaLegami(legami: readonly LegameRetta[]): Map<string, Leg
   return new Map(legami.map((l) => [l.alunno_id, l]))
 }
 
+function eLegame(x: unknown): x is LegameRetta {
+  if (!x || typeof x !== 'object') return false
+  const l = x as Partial<LegameRetta>
+  const p = l.pagante as Partial<PaganteRetta> | undefined
+  return typeof l.alunno_id === 'string' && !!p && typeof p === 'object'
+    && typeof p.id === 'string' && typeof p.nome === 'string' && typeof p.cognome === 'string'
+}
+
 /**
  * Il corpo della GET, controllato. `null` = forma inattesa: è un GUASTO, non «nessun
- * legame», e il chiamante lo dice a schermo. Le voci malformate si scartano una a una.
+ * legame», e il chiamante lo dice a schermo. Le voci malformate si scartano una a una,
+ * e si CONTANO: uno scarto muto è un bambino che torna «Non generata» senza che nessuno
+ * sappia perché — il cruscotto logga il conteggio (mai chi).
  */
-export function legamiDaRisposta(data: unknown): LegameRetta[] | null {
+export function legamiDaRisposta(data: unknown): { legami: LegameRetta[]; scartati: number } | null {
   if (!Array.isArray(data)) return null
-  return data.filter((x): x is LegameRetta => {
-    if (!x || typeof x !== 'object') return false
-    const l = x as Partial<LegameRetta>
-    const p = l.pagante as Partial<PaganteRetta> | undefined
-    return typeof l.alunno_id === 'string' && !!p && typeof p === 'object'
-      && typeof p.id === 'string' && typeof p.nome === 'string' && typeof p.cognome === 'string'
-  })
+  const legami = data.filter(eLegame)
+  return { legami, scartati: data.length - legami.length }
 }

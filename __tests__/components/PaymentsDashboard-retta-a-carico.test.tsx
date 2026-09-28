@@ -48,10 +48,10 @@ vi.mock('@/lib/context/sede-context', async (orig) => ({
     ...(await orig<typeof import('@/lib/context/sede-context')>()),
     useSediAttive: () => sediCtx.valore,
 }));
-const logSpia = vi.hoisted(() => ({ chiamate: [] as { livello: string; messaggio: string }[] }));
+const logSpia = vi.hoisted(() => ({ chiamate: [] as { livello: string; messaggio: string; campi?: Record<string, unknown> }[] }));
 vi.mock('@/lib/logging/client', async (orig) => ({
     ...(await orig<typeof import('@/lib/logging/client')>()),
-    logClient: (e: { livello: string; messaggio: string }) => { logSpia.chiamate.push(e); },
+    logClient: (e: { livello: string; messaggio: string; campi?: Record<string, unknown> }) => { logSpia.chiamate.push(e); },
 }));
 vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
     FatturaButton: () => <span data-testid="fattura-button" />,
@@ -117,12 +117,12 @@ const LEGAMI = {
 };
 
 let fetchFinta: ReturnType<typeof vi.fn>;
-function stub(opzioni: { legamiStatus?: number } = {}) {
+function stub(opzioni: { legamiStatus?: number; legami?: unknown } = {}) {
     fetchFinta = vi.fn(async (url: string) => {
         const u = String(url);
         if (u.startsWith('/api/pagamenti/rette-a-carico')) {
             const s = opzioni.legamiStatus ?? 200;
-            return { ok: s === 200, status: s, json: async () => (s === 200 ? LEGAMI : { error: 'guasto', codice: 'LETTURA_FALLITA' }) };
+            return { ok: s === 200, status: s, json: async () => (s === 200 ? (opzioni.legami ?? LEGAMI) : { error: 'guasto', codice: 'LETTURA_FALLITA' }) };
         }
         const body = u.startsWith('/api/pagamenti?') ? PAGAMENTI
             : u.startsWith('/api/admin/students') ? STUDENTS
@@ -276,5 +276,21 @@ describe('la GET dei legami', () => {
         expect(within(riga('Luca Rossi')).getByText('Non generata')).toBeInTheDocument();
         expect(screen.queryByTestId('retta-a-carico')).toBeNull();
         expect(logSpia.chiamate.some((c) => c.livello === 'error' && c.messaggio.startsWith('scadenzario-legami'))).toBe(true);
+    });
+    // C4 (revisione 2026-09-28): una voce malformata si scarta — ma NON in silenzio.
+    it('voci malformate: le buone restano, e un log error dice QUANTE (mai chi)', async () => {
+        const malformata = { alunno_id: PIA.id, pagante: { id: 'a-x', nome: 'Zeno' } }; // manca il cognome
+        stub({ legami: { ...LEGAMI, data: [...LEGAMI.data, malformata, 42] } }); await apri();
+        expect(within(riga('Luca Rossi')).getByTestId('retta-a-carico')).toBeInTheDocument();
+        const log = logSpia.chiamate.filter((c) => c.messaggio === 'scadenzario-legami-voci-scartate');
+        expect(log).toHaveLength(1);
+        expect(log[0]).toMatchObject({ livello: 'error', campi: { n: 2 } });
+        expect(JSON.stringify(log[0])).not.toContain('Zeno');
+        // …e nessun banner: le voci buone ci sono, lo schermo non mente su di loro.
+        expect(screen.queryByTestId('errore-legami')).toBeNull();
+    });
+    it('nessuna voce scartata: nessun log', async () => {
+        stub(); await apri();
+        expect(logSpia.chiamate.some((c) => c.messaggio === 'scadenzario-legami-voci-scartate')).toBe(false);
     });
 });

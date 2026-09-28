@@ -75,9 +75,11 @@ describe('indicizzaLegami e legamiDaRisposta', () => {
     expect(legamiDaRisposta(undefined)).toBeNull()
     expect(legamiDaRisposta({})).toBeNull()
   })
-  it('scarta le voci malformate e tiene le buone', () => {
+  it('scarta le voci malformate, tiene le buone e CONTA le scartate (il cruscotto le logga)', () => {
     const buona = legame()
-    expect(legamiDaRisposta([buona, null, { alunno_id: 'x' }, { alunno_id: 'y', pagante: { id: 3 } }])).toEqual([buona])
+    expect(legamiDaRisposta([buona, null, { alunno_id: 'x' }, { alunno_id: 'y', pagante: { id: 3 } }]))
+      .toEqual({ legami: [buona], scartati: 3 })
+    expect(legamiDaRisposta([buona])).toEqual({ legami: [buona], scartati: 0 })
   })
 })
 

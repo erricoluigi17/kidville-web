@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { IntlMessageFormat } from 'intl-messageformat'
 import {
-  anomaliaPagante, componiBadge, indicizzaLegami, legamiDaRisposta, nomeConClasse, nomePagante,
+  anomaliaPagante, componiBadge, indicizzaLegami, legamiDaRisposta, nomeConClasse, nomePagante, nonVisibiliDaRisposta,
   prefissoPaganteIt, sessoDa, testoPaganteIt, valoriPrefisso, SEPARATORE_STATO,
   type LegameRetta, type PaganteRetta,
 } from '@/lib/pagamenti/rette-a-carico'
@@ -83,6 +83,20 @@ describe('indicizzaLegami e legamiDaRisposta', () => {
   })
 })
 
+describe('nonVisibiliDaRisposta (C3: il pagante sta in una sede che l’utente non legge)', () => {
+  it('campo assente (risposta di prima): nessun bambino, nessuno scarto', () => {
+    expect(nonVisibiliDaRisposta(undefined)).toEqual({ ids: [], scartati: 0 })
+    expect(nonVisibiliDaRisposta(null)).toEqual({ ids: [], scartati: 0 })
+  })
+  it('tiene gli uuid e conta il resto', () => {
+    expect(nonVisibiliDaRisposta(['a', '', 3, null, 'b'])).toEqual({ ids: ['a', 'b'], scartati: 3 })
+  })
+  it('un campo che non è un array è UNO scarto, non un crash', () => {
+    expect(nonVisibiliDaRisposta('a')).toEqual({ ids: [], scartati: 1 })
+    expect(nonVisibiliDaRisposta({ a: 1 })).toEqual({ ids: [], scartati: 1 })
+  })
+})
+
 const catalogo = (lingua: string) =>
   JSON.parse(readFileSync(join(process.cwd(), `messages/${lingua}/adminContabilita.json`), 'utf8')) as Record<string, string>
 
@@ -97,15 +111,20 @@ describe('LOCK — schermo (catalogo it) ed Excel (prefissoPaganteIt) dicono la 
       })
     }
   }
+  it('C3: il pagante non leggibile è «di un’altra sede», e in inglese è una location (glossario)', () => {
+    expect(it_.dashACaricoAltraSede).toBe('A carico di un fratello di un’altra sede')
+    expect(catalogo('en').dashACaricoAltraSede).toMatch(/location/)
+    expect(catalogo('en').dashACaricoAltraSede).not.toMatch(/school/i)
+  })
   it('l’avviso D9 usa la stessa forma di nome', () => {
     const p = pagante({ sesso: 'F', nome: 'Anna' })
     expect(String(new IntlMessageFormat(it_.dashACaricoVerifica, 'it').format(valoriPrefisso(p))))
       .toBe('A carico della sorella Anna Rossi (Sez. C): retta da verificare')
   })
-  it('le cinque chiavi esistono in entrambe le lingue', () => {
+  it('le sei chiavi esistono in entrambe le lingue', () => {
     for (const lingua of ['it', 'en']) {
       const c = catalogo(lingua)
-      for (const k of ['dashACarico', 'dashACaricoVerifica', 'dashPaganteNonIscritto', 'dashPaganteAltraSede', 'dashMsErrLegami']) {
+      for (const k of ['dashACarico', 'dashACaricoVerifica', 'dashACaricoAltraSede', 'dashPaganteNonIscritto', 'dashPaganteAltraSede', 'dashMsErrLegami']) {
         expect(typeof c[k], `${lingua}.${k}`).toBe('string')
       }
     }

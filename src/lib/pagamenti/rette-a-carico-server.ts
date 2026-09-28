@@ -16,7 +16,10 @@ import { sessoDa, type LegameRetta } from './rette-a-carico'
  *
  * `sediPaganti` sono le sedi a cui l'utente ha ACCESSO (non solo quelle selezionate):
  * un pagante in un'altra sede accessibile si vede, e accende l'avviso «altra sede»; uno
- * in una sede non accessibile non si rivela — il legame si scarta, contato in un `warn`.
+ * in una sede non accessibile non si rivela — di lui non esce NIENTE, ma il bambino (che è
+ * nella sede dell'utente) finisce in `nonVisibili`, contato in un `warn`. Prima si scartava
+ * e basta: quel bambino tornava «Non generata» e «mancante» per sempre, perché la
+ * generazione lo salta comunque (D6 vale anche quando chi paga non si può leggere).
  */
 
 export interface LegameRettaCompleto extends LegameRetta {
@@ -24,7 +27,15 @@ export interface LegameRettaCompleto extends LegameRetta {
   alunno: { nome: string; cognome: string; classe_sezione: string | null; section_id: string | null }
 }
 
-export type EsitoLegami = { ok: true; legami: LegameRettaCompleto[] } | { ok: false }
+/** Un bambino a carico il cui pagante sta in una sede che l'utente NON legge: solo chi è e dove. */
+export interface BambinoACaricoNonVisibile {
+  alunno_id: string
+  scuola_id: string | null
+}
+
+export type EsitoLegami =
+  | { ok: true; legami: LegameRettaCompleto[]; nonVisibili: BambinoACaricoNonVisibile[] }
+  | { ok: false }
 
 interface OpzioniLegami {
   /** Le sedi dei bambini a carico (il perimetro della schermata o dell'export). */
@@ -82,7 +93,7 @@ export async function caricaLegamiRetta(
   supabase: SupabaseClient,
   { sediBambini, sediPaganti, operazione }: OpzioniLegami,
 ): Promise<EsitoLegami> {
-  if (sediBambini.length === 0) return { ok: true, legami: [] }
+  if (sediBambini.length === 0) return { ok: true, legami: [], nonVisibili: [] }
 
   const bambini = await supabase
     .from('alunni')
@@ -98,7 +109,7 @@ export async function caricaLegamiRetta(
         operazione, esito: 'legami-colonna-assente',
         msg: 'retta_a_carico_di assente (DB non migrato): nessun legame, i bambini restano «Non generata»',
       }, bambini.error)
-      return { ok: true, legami: [] }
+      return { ok: true, legami: [], nonVisibili: [] }
     }
     logEvento('pagamento', 'error', { operazione, esito: 'legami-bambini-non-letti' }, bambini.error)
     return { ok: false }
@@ -106,7 +117,7 @@ export async function caricaLegamiRetta(
 
   const righe = (bambini.data ?? []) as unknown as RigaBambino[]
   const idPaganti = [...new Set(righe.map((r) => r.retta_a_carico_di).filter((x): x is string => !!x))]
-  if (idPaganti.length === 0) return { ok: true, legami: [] }
+  if (idPaganti.length === 0) return { ok: true, legami: [], nonVisibili: [] }
 
   const leggiPaganti = (colonne: string) =>
     supabase.from('alunni').select(colonne).in('id', idPaganti).in('scuola_id', sediPaganti)
@@ -119,11 +130,12 @@ export async function caricaLegamiRetta(
 
   const perId = new Map(((paganti.data ?? []) as unknown as RigaPagante[]).map((p) => [p.id, p]))
   const legami: LegameRettaCompleto[] = []
-  let scartati = 0
+  const nonVisibili: BambinoACaricoNonVisibile[] = []
   for (const r of righe) {
     const p = r.retta_a_carico_di ? perId.get(r.retta_a_carico_di) : undefined
     if (!p) {
-      scartati++
+      // La FK garantisce che il pagante esista: se non torna, sta fuori da `sediPaganti`.
+      nonVisibili.push({ alunno_id: r.id, scuola_id: r.scuola_id ?? null })
       continue
     }
     legami.push({
@@ -141,12 +153,12 @@ export async function caricaLegamiRetta(
       },
     })
   }
-  if (scartati > 0) {
+  if (nonVisibili.length > 0) {
     // Solo il conteggio: mai nomi (AGENTS.md, regola 8).
     logEvento('pagamento', 'warn', {
-      operazione, esito: 'legami-pagante-non-leggibile', n: scartati,
-      msg: 'pagante fuori dalle sedi accessibili o non più presente: quei bambini restano «Non generata»',
+      operazione, esito: 'legami-pagante-non-leggibile', n: nonVisibili.length,
+      msg: 'pagante fuori dalle sedi accessibili: quei bambini risultano «a carico di un fratello di un’altra sede», senza i suoi dati',
     })
   }
-  return { ok: true, legami }
+  return { ok: true, legami, nonVisibili }
 }

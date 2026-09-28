@@ -42,6 +42,7 @@ beforeEach(() => {
       alunno('pb', SEDE_B, { gender: 'F' }), alunno('fb', SEDE_B, { retta_a_carico_di: 'pb' }),
       alunno('pc', SEDE_C), alunno('fc', SEDE_C, { retta_a_carico_di: 'pc' }),     // sede non accessibile
       alunno('fr', SEDE_A, { retta_a_carico_di: 'pa', stato: 'ritirato' }),        // non iscritto
+      alunno('fx', SEDE_A, { retta_a_carico_di: 'pc' }),                           // pagante in sede NON accessibile
     ],
   }
   h.requireStaff.mockResolvedValue({ user: ADMIN_AB })
@@ -63,9 +64,22 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
     expect(JSON.stringify(corpo)).not.toContain('N-fb')
   })
 
+  // C3 (revisione 2026-09-28): il bambino è nella sede dell'utente, il pagante no. Esce il SOLO
+  // uuid del bambino — che il cruscotto ha già — e niente del pagante.
+  it('pagante in una sede non accessibile: il solo uuid del bambino in a_carico_non_visibili', async () => {
+    const corpo = await (await GET(req())).json()
+    expect(corpo.a_carico_non_visibili).toEqual(['fx'])
+    expect(corpo.data.map((l: { alunno_id: string }) => l.alunno_id)).not.toContain('fx')
+    expect(JSON.stringify(corpo)).not.toContain('N-pc')
+    expect(JSON.stringify(corpo)).not.toContain('Sez-pc')
+  })
+
   it('scuola_id restringe a quella sede', async () => {
     const corpo = await (await GET(req(`scuola_id=${SEDE_A}`))).json()
     expect(corpo.data.map((l: { alunno_id: string }) => l.alunno_id)).toEqual(['fa'])
+    expect(corpo.a_carico_non_visibili).toEqual(['fx'])
+    // Con la sola sede B, «fx» (che è della sede A) non c'è.
+    expect((await (await GET(req(`scuola_id=${SEDE_B}`))).json()).a_carico_non_visibili).toEqual([])
   })
 
   it('scuola_id di una sede non accessibile: 403, mai «nessun legame»', async () => {

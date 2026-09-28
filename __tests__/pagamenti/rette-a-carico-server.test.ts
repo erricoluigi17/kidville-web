@@ -51,12 +51,25 @@ describe('caricaLegamiRetta', () => {
       pagante: { id: 'pag', nome: 'Npag', cognome: 'Cpag', sesso: 'M', classe_sezione: 'Sez pag', iscritto: true, scuola_id: 's1' },
     })
     expect(perAlunno.orf.pagante).toMatchObject({ id: 'ex', iscritto: false, sesso: 'F' })
+    // «nas» paga «lon», che sta in s3: fuori da sediPaganti.
+    expect(e.nonVisibili).toEqual([{ alunno_id: 'nas', scuola_id: 's1' }])
   })
 
-  it('pagante in una sede non accessibile: il legame si scarta e si conta in un warn', async () => {
+  // C3 (revisione 2026-09-28): scartare il legame faceva tornare il bambino «Non generata» e
+  // «mancante» PER SEMPRE — la generazione lo salta comunque. Il pagante resta nascosto, ma
+  // il bambino (che è nella sede dell'utente) si sa che è a carico di qualcuno.
+  it('pagante in una sede non accessibile: niente dati del pagante, ma il bambino è fra i nonVisibili (e un warn lo conta)', async () => {
     const e = await caricaLegamiRetta(client(), { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
     expect(e.ok && e.legami.map((l) => l.alunno_id).sort()).toEqual(['fig', 'orf'])
+    expect(e.ok && e.nonVisibili).toEqual([{ alunno_id: 'nas', scuola_id: 's1' }])
+    expect(JSON.stringify(e)).not.toContain('Nlon')
     expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'warn', expect.objectContaining({ operazione: OP, esito: 'legami-pagante-non-leggibile', n: 1 }))
+  })
+
+  it('nessuna sede leggibile per i paganti: tutti i bambini a carico sono nonVisibili', async () => {
+    const e = await caricaLegamiRetta(client(), { sediBambini: ['s1'], sediPaganti: [], operazione: OP })
+    expect(e.ok && e.legami).toEqual([])
+    expect(e.ok && e.nonVisibili.map((b) => b.alunno_id).sort()).toEqual(['fig', 'nas', 'orf'])
   })
 
   it('un pagante archiviato non è iscritto anche se lo stato dice iscritto', async () => {
@@ -67,7 +80,7 @@ describe('caricaLegamiRetta', () => {
 
   it('nessuna sede: zero legami senza toccare il database', async () => {
     const e = await caricaLegamiRetta(client({ alunni: { code: '57014' } }), { sediBambini: [], sediPaganti: ['s1'], operazione: OP })
-    expect(e).toEqual({ ok: true, legami: [] })
+    expect(e).toEqual({ ok: true, legami: [], nonVisibili: [] })
   })
 
   // Il messaggio è quello che Postgres scrive davvero (PostgREST lo passa tale e quale).
@@ -75,7 +88,7 @@ describe('caricaLegamiRetta', () => {
 
   it('DB non migrato (42703 su retta_a_carico_di): zero legami, log info, NON un guasto', async () => {
     const e = await caricaLegamiRetta(client({ alunni: COLONNA_LEGAME_ASSENTE }), { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
-    expect(e).toEqual({ ok: true, legami: [] })
+    expect(e).toEqual({ ok: true, legami: [], nonVisibili: [] })
     expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ esito: 'legami-colonna-assente' }), expect.anything())
     expect(h.logEvento).not.toHaveBeenCalledWith('pagamento', 'error', expect.anything(), expect.anything())
   })

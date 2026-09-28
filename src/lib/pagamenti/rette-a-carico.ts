@@ -111,3 +111,16 @@ export function legamiDaRisposta(data: unknown): { legami: LegameRetta[]; scarta
   const legami = data.filter(eLegame)
   return { legami, scartati: data.length - legami.length }
 }
+
+/**
+ * `a_carico_non_visibili` della GET: i bambini a carico il cui pagante sta in una sede che
+ * l'utente non legge (solo i loro uuid). Campo ASSENTE = risposta di prima del 2026-09-28:
+ * nessun bambino e nessuno scarto, non un guasto. Un valore che non è un uuid si scarta e si
+ * conta come in `legamiDaRisposta`; un campo che non è un array è UNO scarto.
+ */
+export function nonVisibiliDaRisposta(v: unknown): { ids: string[]; scartati: number } {
+  if (v === undefined || v === null) return { ids: [], scartati: 0 }
+  if (!Array.isArray(v)) return { ids: [], scartati: 1 }
+  const ids = v.filter((x): x is string => typeof x === 'string' && x !== '')
+  return { ids, scartati: v.length - ids.length }
+}

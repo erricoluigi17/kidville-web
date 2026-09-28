@@ -13,8 +13,8 @@ import { LinkDocumento, MIME_XLSX } from './LinkDocumento';
 import { PagamentoCardMobile, BadgeSede } from './PagamentoCardMobile';
 import { PagamentoDrawer } from './PagamentoDrawer';
 import { FiltroClassiContabilita } from './FiltroClassiContabilita';
-import { BadgeRettaACarico } from './BadgeRettaACarico';
-import { indicizzaLegami, legamiDaRisposta, nomePagante, type LegameRetta } from '@/lib/pagamenti/rette-a-carico';
+import { BadgeRettaACarico, BadgeRettaACaricoNonVisibile } from './BadgeRettaACarico';
+import { indicizzaLegami, legamiDaRisposta, nomePagante, nonVisibiliDaRisposta, type LegameRetta } from '@/lib/pagamenti/rette-a-carico';
 import { classiDaAlunni, filtraPerClassi } from '@/lib/pagamenti/filtro-classi';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -189,6 +189,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
      * prima, e il banner `errore-legami` lo dice.
      */
     const [legami, setLegami] = useState<Map<string, LegameRetta>>(() => new Map());
+    /**
+     * C3: i bambini a carico il cui pagante sta in una sede che l'utente non legge (solo gli
+     * uuid). Non sono «mancanti» (la generazione li salta) e non sono «Non generata».
+     */
+    const [aCaricoNonVisibili, setACaricoNonVisibili] = useState<Set<string>>(() => new Set());
     const [erroreLegami, setErroreLegami] = useState(false);
     /** `section_id` scelti nel filtro classi (K6). Si scartano in lettura, mai azzerati. */
     const [classiScelte, setClassiScelte] = useState<string[]>([]);
@@ -224,7 +229,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             const [pagRes, alRes, legRes] = await Promise.all([
                 leggiJson<{ success?: boolean; data?: Pagamento[]; error?: string }>(`/api/pagamenti?userId=${userId}${sedeQs}`, userId, 'scadenzario-pagamenti'),
                 leggiJson<Alunno[] | { data?: Alunno[] }>(`/api/admin/students?stato=iscritto${sedeQs}&limit=${LIMITE_ELENCO_ALUNNI}`, userId, 'scadenzario-alunni'),
-                leggiJson<{ success?: boolean; data?: unknown }>(`/api/pagamenti/rette-a-carico?userId=${userId}${sedeQs}`, userId, 'scadenzario-legami'),
+                leggiJson<{ success?: boolean; data?: unknown; a_carico_non_visibili?: unknown }>(`/api/pagamenti/rette-a-carico?userId=${userId}${sedeQs}`, userId, 'scadenzario-legami'),
             ]);
             const pag = pagRes.corpo;
             if (pagRes.ok && pag?.success) { setPagamenti(pag.data ?? []); setError(null); }
@@ -248,14 +253,19 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             if (listaLegami === null) {
                 if (legRes.ok) logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-legami-forma-inattesa', route: '/admin/pagamenti' });
                 setLegami(new Map());
+                setACaricoNonVisibili(new Set());
                 setErroreLegami(true);
             } else {
+                // C3: campo assente (risposta di prima) = nessuno, non un guasto.
+                const nonVisibili = nonVisibiliDaRisposta(legRes.corpo?.a_carico_non_visibili);
                 // Voci malformate scartate: quei bambini tornano «Non generata», e senza questo log
                 // nessuno saprebbe perché. Solo il conteggio: mai nomi (AGENTS.md, regola 8).
-                if (listaLegami.scartati > 0) {
-                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-legami-voci-scartate', route: '/admin/pagamenti', campi: { n: listaLegami.scartati } });
+                const scartati = listaLegami.scartati + nonVisibili.scartati;
+                if (scartati > 0) {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-legami-voci-scartate', route: '/admin/pagamenti', campi: { n: scartati } });
                 }
                 setLegami(indicizzaLegami(listaLegami.legami));
+                setACaricoNonVisibili(new Set(nonVisibili.ids));
                 setErroreLegami(false);
             }
         } finally {
@@ -454,13 +464,14 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         if (!isRettaView) return m;
         for (const a of alunni) {
             // D6: chi ha la retta a carico di un fratello non è «mancante» — la generazione
-            // lo salta, e contarlo teneva il numero sopra zero per sempre.
-            if (rettaByAlunno.has(a.id) || legami.has(a.id)) continue;
+            // lo salta, e contarlo teneva il numero sopra zero per sempre. Anche quando chi
+            // paga sta in una sede che l'utente non legge (C3).
+            if (rettaByAlunno.has(a.id) || legami.has(a.id) || aCaricoNonVisibili.has(a.id)) continue;
             const k = a.scuola_id ?? sedeUnica ?? '';
             m.set(k, (m.get(k) ?? 0) + 1);
         }
         return m;
-    }, [isRettaView, alunni, rettaByAlunno, sedeUnica, legami]);
+    }, [isRettaView, alunni, rettaByAlunno, sedeUnica, legami, aCaricoNonVisibili]);
     /** Le sedi fra cui scegliere: le visibili che hanno almeno un mancante. */
     const sediConMancanti = sediVisibili.filter((id) => (mancantiPerSede.get(id) ?? 0) > 0);
     const sedeGeneraValida = mostraSede ? (sediConMancanti.includes(sedeGenera) ? sedeGenera : '') : (sedeUnica ?? '');
@@ -873,6 +884,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 const st = p ? (STATI[p.stato] ?? STATI.da_pagare) : null;
                                 const moroso = p ? isMoroso(p, oggiStr) : false;
                                 const legame = legami.get(a.id);
+                                const nonVisibile = !legame && aCaricoNonVisibili.has(a.id);
                                 return (
                                     <tr key={a.id} className={cx(TROW, moroso && 'bg-kidville-error-soft/50')}>
                                         <td className={cx(TD, 'font-semibold text-kidville-green')}>
@@ -891,9 +903,12 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                     ? <Badge tone={st.tone}>{st.label}</Badge>
                                                     : legame
                                                         ? <BadgeRettaACarico legame={legame} rettaPagante={rettaByAlunno.get(legame.pagante.id)} sedeCaricata={!!legame.pagante.scuola_id && sediVisibili.includes(legame.pagante.scuola_id)} />
-                                                        : <Badge tone="neutral">{t('dashNonGenerata')}</Badge>}
+                                                        : nonVisibile
+                                                            ? <BadgeRettaACaricoNonVisibile />
+                                                            : <Badge tone="neutral">{t('dashNonGenerata')}</Badge>}
                                                 {/* D9: retta propria E legame col fratello — si mostra, e si segnala. */}
                                                 {p && legame && <BadgeRettaACarico legame={legame} sedeCaricata conRettaPropria />}
+                                                {p && nonVisibile && <BadgeRettaACaricoNonVisibile />}
                                                 {p && moroso && Number(p.importo_pagato) > 0 && (
                                                     <Badge tone="warn">{t('dashAcconto')} {formatEuro(p.importo_pagato)}</Badge>
                                                 )}
@@ -927,6 +942,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     {alunniFiltrati.map((a) => {
                         const p = rettaByAlunno.get(a.id);
                         const legame = legami.get(a.id);
+                        const nonVisibile = !legame && aCaricoNonVisibili.has(a.id);
                         if (!p) {
                             return (
                                 <div key={a.id} className="flex items-center justify-between gap-2 rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
@@ -937,6 +953,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                     {legame ? (
                                         <span className="flex flex-wrap justify-end gap-1">
                                             <BadgeRettaACarico legame={legame} rettaPagante={rettaByAlunno.get(legame.pagante.id)} sedeCaricata={!!legame.pagante.scuola_id && sediVisibili.includes(legame.pagante.scuola_id)} />
+                                        </span>
+                                    ) : nonVisibile ? (
+                                        <span className="flex flex-wrap justify-end gap-1">
+                                            <BadgeRettaACaricoNonVisibile />
                                         </span>
                                     ) : (
                                         <Badge tone="neutral">{t('dashNonGenerata')}</Badge>
@@ -952,7 +972,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 sezioneLabel={a.classe_sezione}
                                 sospeso={!!sospesoByAlunno.get(a.id)}
                                 mostraSede={mostraSede}
-                                avviso={legame ? <BadgeRettaACarico legame={legame} sedeCaricata conRettaPropria /> : undefined}
+                                avviso={legame ? <BadgeRettaACarico legame={legame} sedeCaricata conRettaPropria /> : nonVisibile ? <BadgeRettaACaricoNonVisibile /> : undefined}
                                 onIncassa={() => setSelected(p)}
                                 onApri={() => setDrawer(p)}
                             />

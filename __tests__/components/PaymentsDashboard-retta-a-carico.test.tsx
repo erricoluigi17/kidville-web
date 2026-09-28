@@ -78,8 +78,10 @@ const TEO = B('a-teo', 'Teo', 'Rossi', 'Sez. A');         // a carico di Mario M
 const PIA = B('a-pia', 'Pia', 'Gialli', 'Sez. A');        // nessun legame, nessuna retta
 const RITA = B('a-rita', 'Rita', 'Blu', 'Sez. A');        // pagante non più iscritto
 const UGO = B('a-ugo', 'Ugo', 'Viola', 'Sez. A');         // pagante in un'altra sede
+const IVO = B('a-ivo', 'Ivo', 'Grigi', 'Sez. A');         // pagante in una sede NON leggibile (C3)
+const EVA = B('a-eva', 'Eva', 'Grigi', 'Sez. A');         // idem, ma con una retta propria (C3 + D9)
 
-const STUDENTS = [MARIO, LUCA, ANNA, SARA, PINO, ELIO, NINO, DORA, TEO, PIA, RITA, UGO]
+const STUDENTS = [MARIO, LUCA, ANNA, SARA, PINO, ELIO, NINO, DORA, TEO, PIA, RITA, UGO, IVO, EVA]
     .map((b) => ({ ...b, scuola_id: 's1', stato: 'iscritto' }));
 
 function retta(id: string, b: Bimbo, extra: Record<string, unknown>) {
@@ -98,6 +100,7 @@ const PAGAMENTI = {
         retta('p-anna', ANNA, { stato: 'pagato', importo_pagato: 250 }),
         retta('p-pino', PINO, { stato: 'scaduto', scadenza: '2026-10-05' }),
         retta('p-teo', TEO, { importo: 100 }),
+        retta('p-eva', EVA, { importo: 90 }),
     ],
 };
 
@@ -114,6 +117,8 @@ const LEGAMI = {
         { alunno_id: RITA.id, scuola_id: 's1', pagante: { id: 'a-ex', nome: 'Ex', cognome: 'Blu', sesso: 'M', classe_sezione: 'Sez. F', iscritto: false, scuola_id: 's1' } },
         { alunno_id: UGO.id, scuola_id: 's1', pagante: { id: 'a-lontano', nome: 'Leo', cognome: 'Viola', sesso: 'M', classe_sezione: 'Sez. G', iscritto: true, scuola_id: 's2' } },
     ],
+    // C3: il pagante di Ivo ed Eva sta in una sede che l'utente non legge — di lui non arriva niente.
+    a_carico_non_visibili: [IVO.id, EVA.id],
 };
 
 let fetchFinta: ReturnType<typeof vi.fn>;
@@ -237,6 +242,7 @@ describe('D12 — pagante anomalo', () => {
 });
 
 describe('D6 — «Genera mancanti» non conta i bambini a carico', () => {
+    // Ivo (pagante non leggibile, C3) NON è fra i mancanti: la generazione lo salta comunque.
     it('restano solo Pia e Nino', async () => {
         stub(); await apri();
         expect(await screen.findByTestId('cta-genera-mancanti-frase')).toHaveTextContent('2 alunni senza retta generata');
@@ -261,6 +267,44 @@ describe('D11 — ricerca per nome del pagante', () => {
         await waitFor(() => expect(qualcheRigaContiene('Luca Rossi')).toBe(false));
         expect(riga('Sara Bianchi')).toBeInTheDocument();
         expect(riga('Anna Bianchi')).toBeInTheDocument();
+    });
+});
+
+describe('C3 — pagante in una sede che l’utente non legge', () => {
+    it('badge neutro «di un’altra sede» + avviso rosso; niente «Non generata», niente Incassa (tabella e card)', async () => {
+        stub(); await apri();
+        const r = riga('Ivo Grigi');
+        const b = within(r).getByTestId('retta-a-carico-non-visibile');
+        expect(b).toHaveTextContent('A carico di un fratello di un’altra sede');
+        expect(b).toHaveClass('bg-kidville-neutral-soft');
+        expect(within(r).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga è in un’altra sede: retta da rivedere');
+        expect(within(r).queryByText('Non generata')).toBeNull();
+        expect(within(r).queryByRole('button', { name: 'Incassa' })).toBeNull();
+        expect(within(r).queryByTestId('retta-a-carico')).toBeNull();
+        // Tabella + card mobile, per Ivo ed Eva.
+        expect(screen.getAllByTestId('retta-a-carico-non-visibile')).toHaveLength(4);
+    });
+    it('con una retta propria (D9): la retta resta, più il badge e l’avviso', async () => {
+        stub(); await apri();
+        const r = riga('Eva Grigi');
+        expect(within(r).getByRole('button', { name: 'Incassa' })).toBeInTheDocument();
+        expect(within(r).getByTestId('retta-a-carico-non-visibile')).toBeInTheDocument();
+        expect(within(r).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga è in un’altra sede: retta da rivedere');
+    });
+    it('risposta di prima (senza il campo): Ivo torna «Non generata» e mancante, senza banner né log', async () => {
+        const { a_carico_non_visibili: _vecchio, ...vecchia } = LEGAMI;
+        stub({ legami: vecchia }); await apri();
+        expect(within(riga('Ivo Grigi')).getByText('Non generata')).toBeInTheDocument();
+        expect(await screen.findByTestId('cta-genera-mancanti-frase')).toHaveTextContent('3 alunni senza retta generata');
+        expect(screen.queryByTestId('errore-legami')).toBeNull();
+        expect(logSpia.chiamate.some((c) => c.messaggio === 'scadenzario-legami-voci-scartate')).toBe(false);
+    });
+    it('un uuid malformato nel campo si scarta e si conta nel log', async () => {
+        stub({ legami: { ...LEGAMI, a_carico_non_visibili: [IVO.id, 7] } }); await apri();
+        expect(within(riga('Ivo Grigi')).getByTestId('retta-a-carico-non-visibile')).toBeInTheDocument();
+        const log = logSpia.chiamate.filter((c) => c.messaggio === 'scadenzario-legami-voci-scartate');
+        expect(log).toHaveLength(1);
+        expect(log[0]).toMatchObject({ livello: 'error', campi: { n: 1 } });
     });
 });
 

@@ -20,6 +20,11 @@ import type { LegameRetta } from '@/lib/pagamenti/rette-a-carico'
  * disegna la riga del pagante, così il badge non può divergere da quella riga.
  *
  * Proiezione minima: del bambino esce solo l'uuid (il cruscotto ha già il resto).
+ *
+ * `a_carico_non_visibili` (C3, revisione 2026-09-28): gli uuid dei bambini a carico il cui
+ * pagante sta in una sede che l'utente NON legge. Solo gli uuid dei bambini — che sono nelle
+ * sedi dell'utente — e mai niente del pagante: il cruscotto li toglie dai «mancanti» e dice
+ * «a carico di un fratello di un'altra sede» invece di «Non generata».
  */
 const OPERAZIONE = 'pagamenti/rette-a-carico:GET'
 
@@ -58,9 +63,15 @@ export const GET = withRoute('pagamenti/rette-a-carico:GET', async (request: Nex
       )
     }
     const data: LegameRetta[] = esito.legami.map(({ alunno_id, scuola_id, pagante }) => ({ alunno_id, scuola_id, pagante }))
+    const aCaricoNonVisibili = esito.nonVisibili.map((b) => b.alunno_id)
     // Il conteggio, senza persistere: la GET parte a ogni apertura della Contabilità.
-    logEvento('pagamento', 'info', { operazione: OPERAZIONE, esito: 'letti', n: data.length, sedi: sedi.length }, undefined, { persisti: false })
-    return NextResponse.json({ success: true, data }, { headers: { 'Cache-Control': 'no-store' } })
+    logEvento('pagamento', 'info', {
+      operazione: OPERAZIONE, esito: 'letti', n: data.length, sedi: sedi.length, non_visibili: aCaricoNonVisibili.length,
+    }, undefined, { persisti: false })
+    return NextResponse.json(
+      { success: true, data, a_carico_non_visibili: aCaricoNonVisibili },
+      { headers: { 'Cache-Control': 'no-store' } },
+    )
   } catch (err) {
     logErrore({ operazione: OPERAZIONE, stato: 500 }, err)
     // Con codice anche qui (lock `errori-con-codice`): la route è di sola lettura, quindi

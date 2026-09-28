@@ -54,3 +54,20 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
         </>
     );
 }
+
+/**
+ * C3 (revisione 2026-09-28) — chi paga sta in una sede che l'utente NON legge: di lui la GET
+ * non manda niente (né nome, né classe, né lo stato della sua retta), e qui non si inventa.
+ * Si dice solo che il bambino è a carico di un fratello altrove — così non sembra dimenticato
+ * («Non generata») — più l'avviso rosso già usato per l'altra sede. Vale con e senza una retta
+ * propria del bambino (D9): nessuna azione, come per ogni riga a carico (D8).
+ */
+export function BadgeRettaACaricoNonVisibile() {
+    const t = useTranslations('adminContabilita');
+    return (
+        <>
+            <Badge tone="neutral" data-testid="retta-a-carico-non-visibile">{t('dashACaricoAltraSede')}</Badge>
+            <Badge tone="error" data-testid="retta-a-carico-anomalia">{t('dashPaganteAltraSede')}</Badge>
+        </>
+    );
+}

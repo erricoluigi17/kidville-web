@@ -359,6 +359,29 @@ describe('C1 — i badge lunghi vanno a capo', () => {
         expect(card).toBeDefined();
         expect(within(card!).getByTestId('card-retta-a-carico-badge')).toContainElement(within(card!).getByTestId('retta-a-carico-non-visibile'));
     });
+    // K2 (seconda revisione 2026-09-28): fra 1024 e 1279 px, con `aCapo`, l'algoritmo della
+    // tabella stringeva la colonna Stato fino alla parola più lunga — misurato a 1024 px un
+    // badge di 109×132 px, otto righe, righe della tabella alte 155–198 px. Nella TABELLA ogni
+    // badge delle rette a carico ha una larghezza minima; nella CARD mobile no (a 360 px il
+    // badge ha la sua riga intera, ed è giusto com'è).
+    it('K2 — nella tabella ogni badge a carico ha la larghezza minima; nelle card nessuno', async () => {
+        stub(); await apri();
+        const tabella = screen.getAllByRole('table').find((t) => t.textContent?.includes('Luca Rossi'))!;
+        let inTabella = 0;
+        for (const id of TESTID_BADGE_A_CARICO) {
+            for (const b of screen.getAllByTestId(id)) {
+                if (tabella.contains(b)) { inTabella++; expect(b, id).toHaveClass('min-w-[13rem]'); }
+                else expect(b, id).not.toHaveClass('min-w-[13rem]');
+            }
+        }
+        // Luca, Sara, Elio, Dora, Rita, Ugo (badge) + Teo (verifica) + Rita, Ugo, Ivo×2, Eva×2 (anomalia/non visibile)
+        expect(inTabella).toBe(13);
+        // …e nelle card, per costruzione, i badge ci sono: l'assenza sopra non è vuota.
+        const card = screen.getAllByTestId('card-retta-a-carico').find((c) => c.textContent?.startsWith('Luca Rossi'))!;
+        expect(within(card).getByTestId('retta-a-carico')).not.toHaveClass('min-w-[13rem]');
+        // Il badge di stato di una riga normale resta com'è.
+        expect(within(riga('Anna Bianchi')).getByText('Pagato')).not.toHaveClass('min-w-[13rem]');
+    });
     it('la card «Non generata» senza legame resta com’era', async () => {
         stub(); await apri();
         expect(screen.getAllByTestId('card-retta-a-carico').some((c) => c.textContent?.startsWith('Pia Gialli'))).toBe(false);

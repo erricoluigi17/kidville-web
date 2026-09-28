@@ -5,6 +5,17 @@ import { Badge } from '@/components/ui/Badge';
 import { STATI_PAGAMENTO as STATI } from './stati';
 import { anomaliaPagante, componiBadge, valoriPrefisso, type LegameRetta } from '@/lib/pagamenti/rette-a-carico';
 
+/**
+ * K2 (seconda revisione 2026-09-28) — nella TABELLA desktop ogni badge di questo file ha una
+ * larghezza minima. Con `aCapo` l'algoritmo della tabella stringe la colonna Stato fino alla
+ * larghezza minima del contenuto: misurato fra 1024 e 1279 px, a 1024 un badge di 109×132 px,
+ * otto righe di testo, righe della tabella alte 155–198 px. E con `[overflow-wrap:anywhere]`
+ * (K3, in `Badge.tsx`) quella larghezza minima scende a una lettera. 13rem (208 px) tengono la
+ * frase su due o tre righe. SOLO nella tabella: nella card mobile il badge ha la sua riga
+ * intera, e a 360 px è giusto com'è.
+ */
+const MINIMO_IN_TABELLA = 'min-w-[13rem]';
+
 interface Props {
     legame: LegameRetta;
     /** La retta del PAGANTE per il mese scelto — la stessa che disegna la sua riga — se c'è. */
@@ -16,6 +27,8 @@ interface Props {
     sedeCaricata: boolean;
     /** Il bambino ha anche una retta PROPRIA del mese (D9): solo l'avviso «da verificare». */
     conRettaPropria?: boolean;
+    /** Il badge sta nella tabella desktop: larghezza minima (K2). Mai nella card mobile. */
+    inTabella?: boolean;
 }
 
 /**
@@ -27,12 +40,13 @@ interface Props {
  * non risulta iscritto (ritirato, archiviato, ma anche sospeso: «non più» sarebbe falso) o è
  * in un'altra sede (D12). Nessuna azione: si incassa solo dalla riga del fratello (D8).
  */
-export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRettaPropria = false }: Props) {
+export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRettaPropria = false, inTabella = false }: Props) {
     const t = useTranslations('adminContabilita');
     const valori = valoriPrefisso(legame.pagante);
     const anomalia = anomaliaPagante(legame);
+    const larghezza = inTabella ? MINIMO_IN_TABELLA : undefined;
     const avvisoAnomalia = anomalia ? (
-        <Badge tone="error" aCapo data-testid="retta-a-carico-anomalia">
+        <Badge tone="error" aCapo className={larghezza} data-testid="retta-a-carico-anomalia">
             {anomalia === 'non-iscritto' ? t('dashPaganteNonIscritto') : t('dashPaganteAltraSede')}
         </Badge>
     ) : null;
@@ -40,7 +54,7 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
     if (conRettaPropria) {
         return (
             <>
-                <Badge tone="warn" aCapo data-testid="retta-a-carico-verifica">{t('dashACaricoVerifica', valori)}</Badge>
+                <Badge tone="warn" aCapo className={larghezza} data-testid="retta-a-carico-verifica">{t('dashACaricoVerifica', valori)}</Badge>
                 {avvisoAnomalia}
             </>
         );
@@ -50,7 +64,7 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
     const stato = st ? st.label : sedeCaricata ? t('dashNonGenerata') : null;
     return (
         <>
-            <Badge tone={st?.tone ?? 'neutral'} aCapo data-testid="retta-a-carico">
+            <Badge tone={st?.tone ?? 'neutral'} aCapo className={larghezza} data-testid="retta-a-carico">
                 {componiBadge(t('dashACarico', valori), stato)}
             </Badge>
             {avvisoAnomalia}
@@ -65,12 +79,13 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
  * («Non generata») — più l'avviso rosso già usato per l'altra sede. Vale con e senza una retta
  * propria del bambino (D9): nessuna azione, come per ogni riga a carico (D8).
  */
-export function BadgeRettaACaricoNonVisibile() {
+export function BadgeRettaACaricoNonVisibile({ inTabella = false }: { inTabella?: boolean } = {}) {
     const t = useTranslations('adminContabilita');
+    const larghezza = inTabella ? MINIMO_IN_TABELLA : undefined;
     return (
         <>
-            <Badge tone="neutral" aCapo data-testid="retta-a-carico-non-visibile">{t('dashACaricoAltraSede')}</Badge>
-            <Badge tone="error" aCapo data-testid="retta-a-carico-anomalia">{t('dashPaganteAltraSede')}</Badge>
+            <Badge tone="neutral" aCapo className={larghezza} data-testid="retta-a-carico-non-visibile">{t('dashACaricoAltraSede')}</Badge>
+            <Badge tone="error" aCapo className={larghezza} data-testid="retta-a-carico-anomalia">{t('dashPaganteAltraSede')}</Badge>
         </>
     );
 }

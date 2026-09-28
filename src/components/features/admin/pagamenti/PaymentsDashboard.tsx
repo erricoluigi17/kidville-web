@@ -900,16 +900,17 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         <td className={cx(TD, 'text-right text-kidville-muted')}>{p ? formatEuro(p.importo_pagato) : '—'}</td>
                                         <td className={TD}>
                                             <span className="inline-flex flex-wrap items-center gap-1">
+                                                {/* `inTabella` (K2): qui i badge-frase hanno una larghezza minima, nelle card no. */}
                                                 {st
                                                     ? <Badge tone={st.tone}>{st.label}</Badge>
                                                     : legame
-                                                        ? <BadgeRettaACarico legame={legame} rettaPagante={rettaByAlunno.get(legame.pagante.id)} sedeCaricata={!!legame.pagante.scuola_id && sediVisibili.includes(legame.pagante.scuola_id)} />
+                                                        ? <BadgeRettaACarico legame={legame} rettaPagante={rettaByAlunno.get(legame.pagante.id)} sedeCaricata={!!legame.pagante.scuola_id && sediVisibili.includes(legame.pagante.scuola_id)} inTabella />
                                                         : nonVisibile
-                                                            ? <BadgeRettaACaricoNonVisibile />
+                                                            ? <BadgeRettaACaricoNonVisibile inTabella />
                                                             : <Badge tone="neutral">{t('dashNonGenerata')}</Badge>}
                                                 {/* D9: retta propria E legame col fratello — si mostra, e si segnala. */}
-                                                {p && legame && <BadgeRettaACarico legame={legame} sedeCaricata conRettaPropria />}
-                                                {p && nonVisibile && <BadgeRettaACaricoNonVisibile />}
+                                                {p && legame && <BadgeRettaACarico legame={legame} sedeCaricata conRettaPropria inTabella />}
+                                                {p && nonVisibile && <BadgeRettaACaricoNonVisibile inTabella />}
                                                 {p && moroso && Number(p.importo_pagato) > 0 && (
                                                     <Badge tone="warn">{t('dashAcconto')} {formatEuro(p.importo_pagato)}</Badge>
                                                 )}

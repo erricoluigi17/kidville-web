@@ -34,6 +34,21 @@ describe('Badge — aCapo', () => {
         expect(b).toHaveClass('bg-kidville-neutral-soft');
     });
 
+    // K3 (seconda revisione 2026-09-28): `break-words` è `overflow-wrap: break-word`, che NON
+    // riduce la larghezza minima del contenuto: in un `inline-flex` una parola lunghissima
+    // allargava il badge oltre il contenitore (misurato: 80 caratteri a 360 px → 517 px).
+    // `anywhere` sì. E una sola regola di `overflow-wrap`: con due, deciderebbe il foglio.
+    const regoleOverflowWrap = (el: Element) =>
+        [...el.classList].filter((c) => /^!?(break-words|break-normal|wrap-)|overflow-wrap/.test(c));
+    it('aCapo: una parola lunghissima va a capo anche a metà — `[overflow-wrap:anywhere]` come UNICA regola', () => {
+        render(<Badge tone="neutral" aCapo>{`Paga il fratello ${'X'.repeat(80)}`}</Badge>);
+        expect(regoleOverflowWrap(screen.getByText(/Paga il fratello/))).toEqual(['[overflow-wrap:anywhere]']);
+    });
+    it('predefinito: nessuna regola di overflow-wrap (la pillola non va a capo)', () => {
+        render(<Badge tone="neutral">Pagato</Badge>);
+        expect(regoleOverflowWrap(screen.getByText('Pagato'))).toEqual([]);
+    });
+
     it('la prop non finisce nel DOM come attributo', () => {
         render(<Badge aCapo>x</Badge>);
         expect(screen.getByText('x')).not.toHaveAttribute('acapo');

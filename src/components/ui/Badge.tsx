@@ -59,12 +59,21 @@ const UNA_RIGA =
  * `whitespace-normal` SOSTITUISCE `whitespace-nowrap`: nell'elemento ce n'è una sola.
  *
  * Il resto segue: `text-left` (una frase su due righe non si centra), `max-w-full` (non più
- * largo del contenitore), `break-words` (un cognome lunghissimo non sfonda), e un raggio fisso
- * al posto di `rounded-pill` — su due righe il 9999px arrotonda fino a mangiare gli angoli del
- * testo, mentre su una riga `rounded-xl` resta una pillola a vista.
+ * largo del contenitore), `[overflow-wrap:anywhere]` (un cognome lunghissimo va a capo anche a
+ * metà parola invece di sfondare), e un raggio fisso al posto di `rounded-pill` — su due righe
+ * il 9999px arrotonda fino a mangiare gli angoli del testo, mentre su una riga `rounded-xl`
+ * resta una pillola a vista.
+ *
+ * `anywhere` e NON `break-words` (seconda revisione 2026-09-28, K3): `break-words` è
+ * `overflow-wrap: break-word`, che spezza la parola solo DOPO che la larghezza è decisa e non
+ * abbassa la larghezza minima del contenuto. In un `inline-flex` il testo è un elemento flex
+ * che non scende sotto quella larghezza minima: misurato, una parola di 80 caratteri a 360 px
+ * faceva un badge di 517 px, fuori dalla card. `anywhere` abbassa anche la larghezza minima.
+ * Il rovescio: in una TABELLA la colonna può allora stringersi fino a una lettera — lì chi usa
+ * il badge gli dà una larghezza minima (vedi `BadgeRettaACarico`, `inTabella`).
  */
 const A_CAPO =
-  'inline-flex max-w-full items-center gap-[5px] whitespace-normal break-words rounded-xl px-[11px] py-1 text-left font-barlow text-[11.5px] font-extrabold uppercase leading-[1.35] tracking-[0.06em]'
+  'inline-flex max-w-full items-center gap-[5px] whitespace-normal [overflow-wrap:anywhere] rounded-xl px-[11px] py-1 text-left font-barlow text-[11.5px] font-extrabold uppercase leading-[1.35] tracking-[0.06em]'
 
 /**
  * Le classi del Badge, per chi deve dare la stessa faccia a un elemento che non è uno

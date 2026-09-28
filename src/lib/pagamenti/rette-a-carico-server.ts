@@ -63,6 +63,21 @@ const COLONNE_PAGANTE_BASE = 'id, nome, cognome, classe_sezione, stato, scuola_i
 
 const codiceDi = (e: unknown): string | undefined => (e as { code?: string } | null)?.code
 
+/**
+ * Il `42703` dice «colonna assente», non QUALE. Il DB E2E della CI non migrato manca proprio
+ * di `retta_a_carico_di`, e solo quello si degrada a «nessun legame»: un 42703 su un'altra
+ * colonna (una `section_id` rinominata, un refuso nella select) è un guasto, e degradarlo
+ * lo avrebbe nascosto a livello `info` con i bambini tornati «Non generata». Il nome della
+ * colonna sta nel messaggio di Postgres, che PostgREST passa tale e quale
+ * («column alunni.retta_a_carico_di does not exist»). Senza messaggio non si indovina.
+ */
+const COLONNA_LEGAME = 'retta_a_carico_di'
+function mancaColonnaLegame(e: unknown): boolean {
+  if (codiceDi(e) !== '42703') return false
+  const { message, details } = (e ?? {}) as { message?: unknown; details?: unknown }
+  return [message, details].some((x) => typeof x === 'string' && x.includes(COLONNA_LEGAME))
+}
+
 export async function caricaLegamiRetta(
   supabase: SupabaseClient,
   { sediBambini, sediPaganti, operazione }: OpzioniLegami,
@@ -76,7 +91,7 @@ export async function caricaLegamiRetta(
     .in('scuola_id', sediBambini)
     .not('retta_a_carico_di', 'is', null)
   if (bambini.error) {
-    if (codiceDi(bambini.error) === '42703') {
+    if (mancaColonnaLegame(bambini.error)) {
       // DB E2E della CI, non migrato: la colonna non c'è, quindi non c'è nessun legame.
       // Non è un guasto — il cruscotto resta quello di prima — e lo si dice a livello info.
       logEvento('pagamento', 'info', {

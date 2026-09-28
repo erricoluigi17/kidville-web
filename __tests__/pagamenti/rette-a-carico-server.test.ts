@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { DBFinto } from '../fixtures/finto-supabase'
+import type { DBFinto, ErrorePostgrest } from '../fixtures/finto-supabase'
 
 const h = vi.hoisted(() => ({ logEvento: vi.fn() }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
@@ -19,7 +19,7 @@ const alunno = (id: string, extra: Record<string, unknown>) => ({
 })
 
 let db: DBFinto
-const client = (errori: Record<string, { code: string }> = {}) =>
+const client = (errori: Record<string, ErrorePostgrest> = {}) =>
   creaFintoSupabase(db, [], { errori }) as unknown as SupabaseClient
 
 beforeEach(() => {
@@ -70,10 +70,31 @@ describe('caricaLegamiRetta', () => {
     expect(e).toEqual({ ok: true, legami: [] })
   })
 
-  it('DB non migrato (42703): zero legami, log info, NON un guasto', async () => {
-    const e = await caricaLegamiRetta(client({ alunni: { code: '42703' } }), { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
+  // Il messaggio è quello che Postgres scrive davvero (PostgREST lo passa tale e quale).
+  const COLONNA_LEGAME_ASSENTE = { code: '42703', message: 'column alunni.retta_a_carico_di does not exist' }
+
+  it('DB non migrato (42703 su retta_a_carico_di): zero legami, log info, NON un guasto', async () => {
+    const e = await caricaLegamiRetta(client({ alunni: COLONNA_LEGAME_ASSENTE }), { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
     expect(e).toEqual({ ok: true, legami: [] })
     expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ esito: 'legami-colonna-assente' }), expect.anything())
+    expect(h.logEvento).not.toHaveBeenCalledWith('pagamento', 'error', expect.anything(), expect.anything())
+  })
+
+  // C5 (revisione 2026-09-28): un 42703 su UN'ALTRA colonna non è «DB non migrato per questa
+  // funzione», è un guasto — e degradarlo a «zero legami» lo avrebbe nascosto a livello info.
+  it('42703 su un’altra colonna: ok=false e log error, mai «zero legami»', async () => {
+    const e = await caricaLegamiRetta(
+      client({ alunni: { code: '42703', message: 'column alunni.section_id does not exist' } }),
+      { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP },
+    )
+    expect(e).toEqual({ ok: false })
+    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-bambini-non-letti' }), expect.anything())
+    expect(h.logEvento).not.toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ esito: 'legami-colonna-assente' }), expect.anything())
+  })
+
+  it('42703 senza messaggio: non si indovina la colonna, è un guasto', async () => {
+    const e = await caricaLegamiRetta(client({ alunni: { code: '42703' } }), { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
+    expect(e).toEqual({ ok: false })
   })
 
   it('guasto di lettura: ok=false e log error (PostgREST non lancia)', async () => {

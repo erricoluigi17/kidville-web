@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest, NextResponse } from 'next/server'
-import type { DBFinto } from '../fixtures/finto-supabase'
+import type { DBFinto, ErrorePostgrest } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B, SEDE_C, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   db: {} as DBFinto,
-  errori: {} as Record<string, { code: string }>,
+  errori: {} as Record<string, ErrorePostgrest>,
   logEvento: vi.fn(),
 }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -84,7 +84,7 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
   })
 
   it('DB non migrato (42703): 200 con zero legami', async () => {
-    h.errori = { 'alunni:select': { code: '42703' } }
+    h.errori = { 'alunni:select': { code: '42703', message: 'column alunni.retta_a_carico_di does not exist' } }
     const res = await GET(req())
     expect(res.status).toBe(200)
     expect((await res.json()).data).toEqual([])

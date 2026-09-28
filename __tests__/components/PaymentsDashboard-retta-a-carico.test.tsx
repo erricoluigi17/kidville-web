@@ -549,3 +549,39 @@ describe('R7a — la GET dei legami fallisce al secondo caricamento', () => {
         expect(screen.queryByTestId('retta-a-carico-non-visibile')).toBeNull();
     });
 });
+
+/**
+ * Q5 (quarta revisione 2026-09-29) — il simmetrico di R7a: la GET dei legami fallisce al PRIMO
+ * caricamento e riesce al secondo. Il ramo buono rimette `erroreLegami` a falso, ma nessun test
+ * partiva da un guasto: togliendo quel reset la suite restava verde, e dopo un «Riprova» riuscito
+ * il banner avrebbe continuato a dire «quei bambini risultano Non generata» sopra i badge veri.
+ */
+describe('Q5 — la GET dei legami riesce dopo un guasto', () => {
+    async function apriConGuasto() {
+        const o: { legamiStatus?: number } = { legamiStatus: 500 };
+        stub(o); await apri();
+        // Controllo positivo del guasto: banner, e nessun badge.
+        expect(await screen.findByTestId('errore-legami')).toBeInTheDocument();
+        expect(within(riga('Luca Rossi')).getByText('Non generata')).toBeInTheDocument();
+        expect(screen.queryByTestId('retta-a-carico')).toBeNull();
+        o.legamiStatus = 200;
+    }
+    async function badgeTornati() {
+        // Si aspetta la PRESENZA dei badge (le tre GET di `load()` si applicano insieme): solo
+        // dopo, l'assenza del banner vale qualcosa.
+        await waitFor(() => expect(within(riga('Luca Rossi')).getByTestId('retta-a-carico')).toBeInTheDocument());
+        expect(within(riga('Luca Rossi')).getByTestId('retta-a-carico')).toHaveTextContent('Paga il fratello Mario Rossi (Sez. C) · Da pagare');
+        expect(within(riga('Ivo Grigi')).getByTestId('retta-a-carico-non-visibile')).toBeInTheDocument();
+        expect(screen.queryByTestId('errore-legami')).toBeNull();
+    }
+    it('«Riprova» del banner: il banner sparisce e i badge compaiono', async () => {
+        await apriConGuasto();
+        fireEvent.click(within(screen.getByTestId('errore-legami')).getByRole('button'));
+        await badgeTornati();
+    });
+    it('«Aggiorna» della barra: lo stesso', async () => {
+        await apriConGuasto();
+        fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
+        await badgeTornati();
+    });
+});

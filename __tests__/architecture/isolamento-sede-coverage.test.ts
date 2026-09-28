@@ -2438,7 +2438,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `primaria/allegati/cestino` (GET elenco della classe + POST ripristino), file nuovi.
             // Nessuna esenzione: `allegati_registro` non ha `scuola_id`, ogni handler risale alla
             // lezione (o allo slot d'origine) e passa da `assertSezioneInScope` sulla sua classe.
-            routeConServiceRole: 339,
+            // +1 il 2026-09-28 (retta a carico di un fratello): `pagamenti/rette-a-carico`, file
+            // nuovo con un solo metodo (GET, sola lettura). Nessuna esenzione. La route non ha né
+            // `.from(` né `.rpc(`: le due letture di `alunni` stanno in
+            // `src/lib/pagamenti/rette-a-carico-server.ts` (condiviso con l'export), che questo lock
+            // non audita — ma le sedi le decide la route: `resolveScuoleAttive` + `restringiSedi`
+            // (403 `SEDE_NON_ACCESSIBILE` su una sede non accessibile) per i bambini, e
+            // `scuoleDiUtente` per i paganti; il loader filtra entrambe le query con `.in('scuola_id', …)`.
+            // Misurato rieseguendo il lock: 339 → 340.
+            routeConServiceRole: 340,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2679,7 +2687,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `:POST` (ripristino). Tutti CONTROLLATI, nessuna esenzione: l'allegato si legge per
             // id, poi la sua lezione (o lo slot d'origine) e `assertSezioneInScope` sulla classe,
             // e le scritture ripetono l'id letto. Misurato rieseguendo il lock: 525 → 530.
-            handlerControllati: 530,
+            // +1 il 2026-09-28: `pagamenti/rette-a-carico:GET` (vedi sopra, a `routeConServiceRole`).
+            // CONTROLLATO, `handlerEsentati` fermo. Misurato rieseguendo il lock: 530 → 531.
+            handlerControllati: 531,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -70,6 +70,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.gte = () => b
       b.lte = () => b
       b.order = () => b
+      // `range` dal 2026-09-28: l'export AdE legge alunni e incassi a blocchi (C2). Ogni blocco
+      // restituisce lo stesso elenco corto, e la lettura si ferma al primo.
+      b.range = () => b
       b.maybeSingle = async () => ({
         data: table === 'alunni' ? att.alunno : table === 'admin_settings' ? {} : null,
         error: null,

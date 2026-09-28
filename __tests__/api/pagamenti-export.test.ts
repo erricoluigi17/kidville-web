@@ -26,6 +26,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.eq = () => b
       b.in = () => b
       b.not = () => b
+      // `range` dal 2026-09-28 (C2): l'export legge a blocchi. Qui ogni blocco restituisce lo
+      // stesso elenco corto, quindi la lettura si ferma al primo — la paginazione la prova
+      // `pagamenti-export-a-blocchi.test.ts`, col finto client che taglia a 1000 righe.
+      b.range = () => b
       b.gte = () => b
       b.lte = () => b
       b.maybeSingle = async () => ({ data: table === 'parents' ? h.parentReg : null, error: null })

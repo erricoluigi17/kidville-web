@@ -12,6 +12,7 @@ import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/atte
 import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
 import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { righeRetteACarico, type RigaScadenzario } from '@/lib/pagamenti/export-rette-a-carico'
+import { leggiABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -141,28 +142,35 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     const embedAlunni = sectionIds
       ? 'alunni!inner ( nome, cognome, classe_sezione, section_id )'
       : 'alunni ( nome, cognome, classe_sezione )'
-    let query = supabase
-      .from('pagamenti')
-      .select(`
-        scuola_id, descrizione, importo, importo_pagato, scadenza, periodo_competenza, stato, tipo, fattura_stato,
-        payment_categories ( nome ),
-        ${embedAlunni}
-      `)
-      .in('scuola_id', sediAttive)
-      .order('scadenza', { ascending: true })
-    if (scuolaId && sediAttive.includes(scuolaId)) query = query.eq('scuola_id', scuolaId)
-    if (stato) query = query.eq('stato', stato)
-    if (categoriaId) query = query.eq('categoria_id', categoriaId)
-    if (sectionIds) query = query.in('alunni.section_id', sectionIds)
+    // A blocchi (C2, 2026-09-28): senza `range` PostgREST consegnava le prime 1000 righe e
+    // taceva — il 28/09 le esportabili delle tre sedi erano 1.150. Una query NUOVA per blocco;
+    // `leggiABlocchi` aggiunge `id` dopo `scadenza`, perché fra rette con la stessa scadenza
+    // Postgres non garantisce l'ordine e due blocchi si sovrapporrebbero.
+    const costruisci = () => {
+      let query = supabase
+        .from('pagamenti')
+        .select(`
+          scuola_id, descrizione, importo, importo_pagato, scadenza, periodo_competenza, stato, tipo, fattura_stato,
+          payment_categories ( nome ),
+          ${embedAlunni}
+        `)
+        .in('scuola_id', sediAttive)
+        .order('scadenza', { ascending: true })
+      if (scuolaId && sediAttive.includes(scuolaId)) query = query.eq('scuola_id', scuolaId)
+      if (stato) query = query.eq('stato', stato)
+      if (categoriaId) query = query.eq('categoria_id', categoriaId)
+      if (sectionIds) query = query.in('alunni.section_id', sectionIds)
+      return query
+    }
 
-    const { data, error } = await query
-    if (error) {
-      logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, error)
+    const letti = await leggiABlocchi<RigaPagamento>(costruisci, { operazione: 'pagamenti/export:GET', tipo: 'export-scadenzario' })
+    if (!letti.ok) {
+      logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, letti.error)
       return NextResponse.json({ error: 'Errore nel recupero dei pagamenti' }, { status: 500 })
     }
 
     // I contenitori padre non sono voci esigibili: nell'export contano le rate.
-    const righe: RigaScadenzario[] = ((data || []) as unknown as RigaPagamento[])
+    const righe: RigaScadenzario[] = letti.righe
       .filter((p) => p.tipo !== 'padre')
       .map((p) => ({
         // K2 — prima colonna: con più plessi è la prima cosa che serve sapere.
@@ -256,30 +264,38 @@ async function exportAde(
   anno: number,
   nomiSedi: Map<string, string>,
 ) {
+  // A BLOCCHI anche qui (C2, 2026-09-28), per la stessa ragione dello Scadenzario: gli alunni
+  // sono TUTTI quelli delle sedi (ritirati compresi, vedi `elenchi-operativi-solo-iscritti`) e
+  // gli incassi quelli di un anno intero, e PostgREST avrebbe tagliato l'uno e l'altro a 1000
+  // righe in silenzio — cioè omesso dalla comunicazione all'Agenzia delle Entrate le spese di
+  // chi finiva oltre il taglio. L'ordine stabile (`id`) lo mette `leggiABlocchi`.
   // select('*') sugli alunni: tollera i DB senza opposizione_ade (e2e CI).
-  const { data: alunniRaw, error: errAlunni } = await supabase
-    .from('alunni')
-    .select('*')
-    .in('scuola_id', sediAttive)
-  if (errAlunni) {
+  const alunniLetti = await leggiABlocchi<AlunnoAde>(
+    () => supabase.from('alunni').select('*').in('scuola_id', sediAttive),
+    { operazione: 'pagamenti/export:GET', tipo: 'export-ade-alunni' },
+  )
+  if (!alunniLetti.ok) {
     // `exportAde` è un ramo della stessa route: `operazione` resta quella di `withRoute`.
-    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, errAlunni)
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, alunniLetti.error)
     return NextResponse.json({ error: 'Errore nel recupero degli alunni' }, { status: 500 })
   }
 
-  const { data: incassiRaw, error: errIncassi } = await supabase
-    .from('incassi')
-    .select('importo, metodo, data_incasso, pagamenti!inner ( alunno_id, scuola_id, descrizione, payment_categories ( slug ) )')
-    .gte('data_incasso', `${anno}-01-01`)
-    .lte('data_incasso', `${anno}-12-31`)
-    .in('pagamenti.scuola_id', sediAttive)
-  if (errIncassi) {
-    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, errIncassi)
+  const incassiLetti = await leggiABlocchi<IncassoAde>(
+    () => supabase
+      .from('incassi')
+      .select('importo, metodo, data_incasso, pagamenti!inner ( alunno_id, scuola_id, descrizione, payment_categories ( slug ) )')
+      .gte('data_incasso', `${anno}-01-01`)
+      .lte('data_incasso', `${anno}-12-31`)
+      .in('pagamenti.scuola_id', sediAttive),
+    { operazione: 'pagamenti/export:GET', tipo: 'export-ade-incassi' },
+  )
+  if (!incassiLetti.ok) {
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, incassiLetti.error)
     return NextResponse.json({ error: 'Errore nel recupero degli incassi' }, { status: 500 })
   }
 
   const perAlunno = new Map<string, VoceAttestazione[]>()
-  for (const i of (incassiRaw || []) as unknown as IncassoAde[]) {
+  for (const i of incassiLetti.righe) {
     const alunnoId = i.pagamenti?.alunno_id
     if (!alunnoId) continue
     const arr = perAlunno.get(alunnoId) ?? []
@@ -296,7 +312,7 @@ async function exportAde(
   const daComunicare: Record<string, unknown>[] = []
   const escluse: Record<string, unknown>[] = []
 
-  for (const al of (alunniRaw || []) as unknown as AlunnoAde[]) {
+  for (const al of alunniLetti.righe) {
     const voci = perAlunno.get(al.id) ?? []
     if (voci.length === 0) continue
     const r = calcolaAttestazione(voci)

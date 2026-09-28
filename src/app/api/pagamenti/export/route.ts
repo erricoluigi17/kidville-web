@@ -222,8 +222,11 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
       }))
 
     // D14 — i bambini con la retta a carico di un fratello: una riga a importi zero per ogni
-    // retta del pagante. Si intercalano per scadenza; il sort è STABILE, e le righe senza
-    // scadenza restano in fondo come le mette Postgres (NULLS LAST).
+    // retta del pagante. Si intercalano per scadenza; il sort è STABILE: a pari scadenza restano
+    // prima le righe vere, poi quelle a carico, ciascuna nell'ordine in cui è stata letta.
+    // `pagamenti.scadenza` è NOT NULL (dal baseline): una cella «Scadenza» vuota oggi non può
+    // arrivare. `chiave` la manderebbe comunque in fondo — è una DIFESA, per il giorno in cui la
+    // colonna diventasse nullable, non un caso che accade (R11c, terza revisione 2026-09-29).
     const sediBambini = scuolaId && sediAttive.includes(scuolaId) ? [scuolaId] : sediAttive
     const aCarico = await righeRetteACarico(supabase, {
       sediBambini,

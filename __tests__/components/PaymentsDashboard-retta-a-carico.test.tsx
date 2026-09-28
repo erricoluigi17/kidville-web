@@ -445,10 +445,14 @@ describe('la GET dei legami', () => {
     it('il banner sta solo nella vista Rette: sparisce in Categoria e in Agenda, e torna in Rette', async () => {
         stub({ legamiStatus: 500 }); await apri();
         expect(await screen.findByTestId('errore-legami')).toBeInTheDocument();
-        // Categoria: si aspetta la PRESENZA della vista nuova, poi si guarda l'assenza del banner.
+        // Categoria: si aspetta la PRESENZA di qualcosa che c'è SOLO nella vista Categoria — la
+        // riga vuota «Nessun pagamento in questa categoria.» (qui la Mensa non ha voci) — poi si
+        // guarda l'assenza del banner. (R11d, terza revisione 2026-09-29: il segnaposto della
+        // ricerca che si aspettava prima c'è in ENTRAMBE le viste, e l'attesa vera era quella
+        // su un'assenza, «Luca Rossi» sparito — che passa anche mentre la vista sta cambiando.)
         fireEvent.change(screen.getByDisplayValue('Retta'), { target: { value: 'c-mensa' } });
-        await waitFor(() => expect(screen.queryByPlaceholderText('Cerca alunno o sezione…')).toBeInTheDocument());
-        await waitFor(() => expect(screen.queryByText('Luca Rossi')).toBeNull());
+        expect(await screen.findByText('Nessun pagamento in questa categoria.')).toBeInTheDocument();
+        expect(screen.queryByText('Luca Rossi')).toBeNull();
         expect(screen.queryByTestId('errore-legami')).toBeNull();
         // Di nuovo Rette: torna.
         fireEvent.change(screen.getByDisplayValue('Mensa'), { target: { value: 'c-retta' } });

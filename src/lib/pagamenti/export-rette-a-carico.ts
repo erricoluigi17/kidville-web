@@ -51,7 +51,8 @@ const OPERAZIONE = 'pagamenti/export:GET'
 /**
  * D14 — per ogni retta del fratello che paga, una riga per il bambino a carico: importi a
  * ZERO (i totali dell'Excel non raddoppiano) e, in «Stato», chi paga e come sta la sua
- * retta — la stessa frase del cruscotto.
+ * retta — la stessa frase del cruscotto per i quattro stati noti; per uno stato NULL o
+ * sconosciuto ciascun mezzo segue la propria riga del pagante (vedi `rette-a-carico.ts`).
  *
  * Le rette si leggono con una query A PARTE, ristretta agli uuid dei legami: le righe
  * principali dell'export restano quelle di prima, filtri compresi, e queste non dipendono

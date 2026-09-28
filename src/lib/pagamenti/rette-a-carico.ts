@@ -6,10 +6,23 @@
  * vista Rette lo mostrava comunque come «Non generata», cioè come un bambino dimenticato,
  * e «Genera mancanti» lo contava senza mai poterlo generare.
  *
- * Questo modulo è PURO: tipi, testi, anomalie. Il testo italiano qui sotto è lo stesso
- * del catalogo `it` (`adminContabilita.dashACarico`): lo usa l'export Excel, e un lock
- * (`__tests__/pagamenti/rette-a-carico.test.ts`) verifica che schermo ed Excel dicano
- * la stessa frase.
+ * Questo modulo è PURO: tipi, testi, anomalie. Il PREFISSO italiano qui sotto («Paga il
+ * fratello Mario Rossi (Sez. C)») è lo stesso del catalogo `it` (`adminContabilita.dashACarico`),
+ * e lo usa l'export Excel.
+ *
+ * COSA È GARANTITO, E DA QUALE LOCK (R6, terza revisione 2026-09-29). Fino a qui questo
+ * commento diceva che schermo ed Excel dicono «la stessa frase»: è vero solo in parte.
+ *  · Il PREFISSO è identico per ogni sesso (M, F, assente) e con o senza classe: lo verifica il
+ *    LOCK di `__tests__/pagamenti/rette-a-carico.test.ts`.
+ *  · La parola dello STATO dopo « · » è identica per i QUATTRO stati noti (`da_pagare`,
+ *    `parziale`, `pagato`, `scaduto`): lo verifica C7 in
+ *    `__tests__/api/pagamenti-export-rette-a-carico.test.ts`, che lega `STATI_PAGAMENTO` del
+ *    cruscotto a `STATO_LABEL` dell'export.
+ *  · Per uno stato NULL o sconosciuto i due mezzi DIVERGONO, e nessun lock li lega: il
+ *    cruscotto ripiega su «Da pagare» (`STATI[stato] ?? STATI.da_pagare`), l'Excel scrive la
+ *    frase senza stato (NULL) o lo stato grezzo (sconosciuto). Ciascun mezzo fa esattamente ciò
+ *    che fa, nello STESSO mezzo, sulla riga del fratello che paga — ed è questo che chiede D3:
+ *    il badge segue la riga del pagante, non l'altro mezzo.
  */
 
 export type SessoPagante = 'M' | 'F' | null

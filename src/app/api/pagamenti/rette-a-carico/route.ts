@@ -20,7 +20,8 @@ import type { LegameRetta } from '@/lib/pagamenti/rette-a-carico'
  * della retta del pagante NON viaggia qui: il cruscotto lo prende dalla stessa mappa che
  * disegna la riga del pagante, così il badge non può divergere da quella riga.
  *
- * Proiezione minima: del bambino esce solo l'uuid (il cruscotto ha già il resto).
+ * Proiezione minima: del bambino escono solo l'uuid e la sede (`scuola_id`, che serve
+ * all'avviso «altra sede», D12); nome, cognome e classe no — il cruscotto li ha già.
  *
  * `a_carico_non_visibili` (C3, revisione 2026-09-28): gli uuid dei bambini a carico il cui
  * pagante sta in una sede che l'utente NON legge. Solo gli uuid dei bambini — che sono nelle

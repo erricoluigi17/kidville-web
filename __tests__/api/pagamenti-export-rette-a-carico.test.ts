@@ -195,6 +195,26 @@ describe('export scadenzario — righe dei bambini a carico (D14)', () => {
       expect(di(tutte, 'Nfgb Rossi')).toEqual([])
     })
 
+    // Z1 (quinta revisione 2026-09-29): le rette e il pagante si leggono nelle sedi ACCESSIBILI
+    // (∪ quelle dei bambini), non solo in quella scelta. Sostituendo le accessibili con `[]` nella
+    // route (`sediDeiPaganti(sediBambini, [])`) la suite restava verde: nessun bambino di Alfa
+    // aveva il pagante in Beta. Qui «fab» è di Alfa, si esporta `scuola_id=Alfa`, e chi paga
+    // («pgb») è di Beta: le righe di fab ci sono, con la sede e la sezione di FAB e lo stato della
+    // retta di pgb — che, di Beta, fra le righe principali di un export di Alfa non c'è.
+    it('Z1 — scuola_id = Alfa, pagante in Beta (accessibile, non scelta): le righe del bambino ci sono', async () => {
+      h.db.alunni.push(alunno('fab', { retta_a_carico_di: 'pgb', classe_sezione: 'Sez. A', section_id: SEZ_A }))
+      h.db.pagamenti.find((p) => p.id === 'b-ott')!.stato = 'scaduto'
+      const tutte = await esporta(`&scuola_id=${SEDE_A}`)
+      expect(di(tutte, 'Nfab Rossi')).toEqual([
+        expect.objectContaining({
+          Sede: NOME_SEDE_A, Sezione: 'Sez. A', Descrizione: 'Retta 2026-10', 'Importo €': 0,
+          Stato: 'Paga il fratello Npgb Rossi (Sez. C) · Scaduto',
+        }),
+      ])
+      // La riga del pagante, di Beta, non c'è: quella di fab viene dalla lettura a parte.
+      expect(di(tutte, 'Npgb Rossi')).toEqual([])
+    })
+
     it('scuola_id = Beta: fgb sì, fig e bea (bambini di Alfa) NO', async () => {
       const tutte = await esporta(`&scuola_id=${SEDE_B}`)
       expect(di(tutte, 'Nfgb Rossi')).toHaveLength(1)

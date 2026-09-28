@@ -154,6 +154,23 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
     expect((await (await GET(req(`scuola_id=${SEDE_B}`))).json()).a_carico_non_visibili).toEqual([])
   })
 
+  // Z1 (quinta revisione 2026-09-29): i paganti si leggono nelle sedi ACCESSIBILI (∪ quelle dei
+  // bambini), non solo in quella scelta. Sostituendo le accessibili con `[]` nella route
+  // (`sediDeiPaganti(sedi, [])`) la suite restava verde: nessun test aveva un pagante in una sede
+  // accessibile ma NON selezionata. Qui il bambino è in A, si chiede `scuola_id=A`, e chi paga è
+  // in B: il legame c'è, porta la sede B (così il cruscotto accende l'avviso «altra sede», D12),
+  // e il bambino NON finisce fra i non visibili — che direbbe «di un'altra sede che non leggi».
+  it('Z1 — scuola_id=A, pagante in B (accessibile, non scelta): il legame c’è, e il bambino non è «non visibile»', async () => {
+    h.db.alunni.push(alunno('fab', SEDE_A, { retta_a_carico_di: 'pb' }))
+    const corpo = await (await GET(req(`scuola_id=${SEDE_A}`))).json()
+    const fab = (corpo.data as { alunno_id: string; scuola_id: string; pagante: { id: string; scuola_id: string } }[])
+      .find((l) => l.alunno_id === 'fab')
+    expect(fab).toMatchObject({ alunno_id: 'fab', scuola_id: SEDE_A, pagante: { id: 'pb', scuola_id: SEDE_B } })
+    expect(corpo.a_carico_non_visibili).toEqual(['fx'])
+    // Il bambino di B («fb») resta fuori: `scuola_id=A` restringe i BAMBINI, non i paganti.
+    expect(corpo.data.map((l: { alunno_id: string }) => l.alunno_id).sort()).toEqual(['fa', 'fab'])
+  })
+
   it('scuola_id di una sede non accessibile: 403, mai «nessun legame»', async () => {
     const res = await GET(req(`scuola_id=${SEDE_C}`))
     expect(res.status).toBe(403)

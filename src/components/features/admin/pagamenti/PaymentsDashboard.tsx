@@ -597,8 +597,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             )}
 
             {/* Legami non caricati: i bambini a carico di un fratello tornano «Non generata», e
-                questo NON deve sembrare vero. */}
-            {erroreLegami && (
+                questo NON deve sembrare vero. Solo nella vista Rette (e non in Agenda): altrove
+                «quei bambini risultano Non generata» non corrisponde a niente sullo schermo. */}
+            {erroreLegami && isRettaView && !agendaFiltro && (
                 <div data-testid="errore-legami" role="alert" className="mb-4 flex items-center gap-2 rounded-xl border-2 border-kidville-error-soft bg-kidville-error-soft px-4 py-3 text-kidville-error">
                     <AlertTriangle size={18} />
                     <span className="flex-1 font-maven text-sm font-bold">{t('dashMsErrLegami')}</span>

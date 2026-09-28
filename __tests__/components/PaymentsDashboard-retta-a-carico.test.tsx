@@ -60,7 +60,10 @@ vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
 import { PaymentsDashboard } from '@/components/features/admin/pagamenti/PaymentsDashboard';
 
 const GIORNO_FISSO = '2026-10-10T10:00:00';
-const CATEGORIE = { success: true, data: [{ id: 'c-retta', nome: 'Retta', slug: 'retta', scuola_id: null }] };
+const CATEGORIE = { success: true, data: [
+    { id: 'c-retta', nome: 'Retta', slug: 'retta', scuola_id: null },
+    { id: 'c-mensa', nome: 'Mensa', slug: 'mensa', scuola_id: null },
+] };
 
 type Bimbo = { id: string; nome: string; cognome: string; section_id: string; classe_sezione: string };
 const B = (id: string, nome: string, cognome: string, classe: string): Bimbo =>
@@ -375,6 +378,25 @@ describe('la GET dei legami', () => {
         expect(within(riga('Luca Rossi')).getByText('Non generata')).toBeInTheDocument();
         expect(screen.queryByTestId('retta-a-carico')).toBeNull();
         expect(logSpia.chiamate.some((c) => c.livello === 'error' && c.messaggio.startsWith('scadenzario-legami'))).toBe(true);
+    });
+    // C8a (revisione 2026-09-28): la frase parla dei bambini «Non generata» della vista Rette.
+    // Nelle viste Categoria e Agenda non corrisponde a niente sullo schermo: lì non si mostra.
+    it('il banner sta solo nella vista Rette: sparisce in Categoria e in Agenda, e torna in Rette', async () => {
+        stub({ legamiStatus: 500 }); await apri();
+        expect(await screen.findByTestId('errore-legami')).toBeInTheDocument();
+        // Categoria: si aspetta la PRESENZA della vista nuova, poi si guarda l'assenza del banner.
+        fireEvent.change(screen.getByDisplayValue('Retta'), { target: { value: 'c-mensa' } });
+        await waitFor(() => expect(screen.queryByPlaceholderText('Cerca alunno o sezione…')).toBeInTheDocument());
+        await waitFor(() => expect(screen.queryByText('Luca Rossi')).toBeNull());
+        expect(screen.queryByTestId('errore-legami')).toBeNull();
+        // Di nuovo Rette: torna.
+        fireEvent.change(screen.getByDisplayValue('Mensa'), { target: { value: 'c-retta' } });
+        await waitFor(() => expect(riga('Luca Rossi')).toBeInTheDocument());
+        expect(screen.getByTestId('errore-legami')).toBeInTheDocument();
+        // Agenda (dalla vista Rette): un bucket qualunque.
+        fireEvent.click(screen.getByRole('button', { name: /Prossimi 30gg/ }));
+        await screen.findByRole('button', { name: /Chiudi/ });
+        expect(screen.queryByTestId('errore-legami')).toBeNull();
     });
     // C4 (revisione 2026-09-28): una voce malformata si scarta — ma NON in silenzio.
     it('voci malformate: le buone restano, e un log error dice QUANTE (mai chi)', async () => {

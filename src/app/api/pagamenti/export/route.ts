@@ -206,7 +206,11 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     })
 
     const ws = XLSX.utils.json_to_sheet(tutte)
-    ws['!cols'] = [{ wch: 20 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }]
+    // «Stato» si allarga con la frase più lunga che contiene: «Da pagare» sta in 10 caratteri,
+    // «Paga il fratello Mario Rossi (Sez. C) · Da pagare» ne ha 50–60 (e in 10 si leggeva
+    // «Paga il f»). Tetto a 60: oltre, una colonna larga mezzo schermo non aiuta nessuno.
+    const larghezzaStato = Math.min(60, tutte.reduce((max, r) => Math.max(max, r.Stato.length), 10))
+    ws['!cols'] = [{ wch: 20 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: larghezzaStato }, { wch: 14 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Scadenzario')
     // Nessun dato personale: conteggi e numero di classi filtrate.

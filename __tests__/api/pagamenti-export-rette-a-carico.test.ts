@@ -143,6 +143,32 @@ describe('export scadenzario — righe dei bambini a carico (D14)', () => {
     }
   })
 
+  // C8b (revisione 2026-09-28): la colonna «Stato» era larga 10 caratteri, e la frase del
+  // bambino a carico ne ha 50–60 — nell'Excel si leggeva «Paga il f».
+  describe('C8b — la larghezza della colonna Stato', () => {
+    async function colonnaStato(qs = 'tipo=scadenzario') {
+      const res = await GET(new NextRequest(`http://localhost/api/pagamenti/export?${qs}`))
+      const ws = XLSX.read(Buffer.from(await res.arrayBuffer()), { cellStyles: true }).Sheets.Scadenzario
+      const intestazione = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 })[0]
+      const i = intestazione.indexOf('Stato')
+      const testi = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws).map((r) => String(r.Stato))
+      return { wch: (ws['!cols'] as { wch?: number }[])[i].wch, piuLunga: Math.max(...testi.map((x) => x.length)) }
+    }
+    it('con le righe a carico: larga quanto la frase più lunga', async () => {
+      const { wch, piuLunga } = await colonnaStato()
+      expect(piuLunga).toBeGreaterThan(40)
+      expect(wch).toBe(piuLunga)
+    })
+    it('senza righe a carico: compatta come prima (10)', async () => {
+      for (const a of h.db.alunni) a.retta_a_carico_di = null
+      expect((await colonnaStato()).wch).toBe(10)
+    })
+    it('tetto a 60: un nome lunghissimo non fa una colonna larga mezzo schermo', async () => {
+      h.db.alunni.find((a) => a.id === 'pag')!.cognome = 'X'.repeat(80)
+      expect((await colonnaStato()).wch).toBe(60)
+    })
+  })
+
   it('legami non letti: l’export esce lo stesso, senza righe in più, e il log lo dice', async () => {
     h.errori = { 'alunni:select': { code: '57014' } }
     const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario'))

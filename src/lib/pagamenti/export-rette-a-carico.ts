@@ -95,12 +95,18 @@ export async function righeRetteACarico(supabase: SupabaseClient, o: OpzioniExpo
     if (o.categoriaId) query = query.eq('categoria_id', o.categoriaId)
     return query
   }
-  const lette = await leggiABlocchi<RigaRetta>(costruisci, { operazione: OPERAZIONE, tipo: 'export-rette-paganti' })
+  const lette = await leggiABlocchi<RigaRetta>(costruisci)
   if (!lette.ok) {
     // Al tetto (K5) come per ogni altro guasto di questa informazione accessoria: NESSUNA riga
-    // in più, mai una parte. Il log del tetto (`lettura-troncata`) l'ha già scritto
-    // `leggiABlocchi`: qui si logga solo l'errore del blocco, che lì non si scrive.
-    if (lette.motivo === 'errore') {
+    // in più, mai una parte. `leggiABlocchi` non logga (R2, terza revisione): la riga è UNA e
+    // la scrive qui, con `logEvento` e non `logErrore` — l'export risponde 200, non c'è un 5xx
+    // da dichiarare, e la marca anti-doppione di `withRoute` resta giù. Solo conteggi.
+    if (lette.motivo === 'tetto') {
+      logEvento('pagamento', 'error', {
+        operazione: OPERAZIONE, esito: 'lettura-troncata', tipo: 'export-rette-paganti', n: lette.n, blocchi: lette.blocchi,
+        msg: `oltre ${lette.oltre} righe: l’export esce senza le righe dei bambini a carico (nessuna, mai una parte)`,
+      })
+    } else {
       logEvento('pagamento', 'error', { operazione: OPERAZIONE, esito: 'export-rette-paganti-non-lette', n: ids.length }, lette.error)
     }
     return []

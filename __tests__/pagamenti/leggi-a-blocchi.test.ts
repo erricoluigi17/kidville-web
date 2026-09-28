@@ -8,6 +8,7 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
 })
 
 import { leggiABlocchi, BLOCCO_LETTURA } from '@/lib/pagamenti/leggi-a-blocchi'
+import { conContesto, erroreGiaLoggato } from '@/lib/logging/context'
 
 /**
  * `leggiABlocchi` (revisione 2026-09-28, C2) — l'export leggeva senza `range`, e PostgREST
@@ -39,7 +40,7 @@ function sorgente(totale: number, o: { tetto?: number; erroreAlBlocco?: number }
   return { costruisci, richieste }
 }
 
-const O = { operazione: 'test:GET', tipo: 'prova' }
+const O = {}
 
 beforeEach(() => h.logEvento.mockClear())
 
@@ -83,7 +84,7 @@ describe('leggiABlocchi', () => {
   // `troncata: true`, e NESSUN chiamante lo guardava — nel ramo AdE voleva dire un file per
   // l'Agenzia delle Entrate incompleto e senza un segnale. Ora il tetto è un GUASTO, come un
   // blocco fallito: tutto-o-niente, come dice il modulo.
-  it('al tetto dei blocchi, con altro oltre: GUASTO (motivo «tetto»), nessuna riga consegnata, UN log error (solo conteggi)', async () => {
+  it('al tetto dei blocchi, con altro oltre: GUASTO (motivo «tetto»), nessuna riga consegnata, i conteggi per chi logga', async () => {
     const s = sorgente(7)
     const e = await leggiABlocchi<{ id: string }>(s.costruisci, { ...O, blocco: 2, maxBlocchi: 3 })
     expect(e.ok).toBe(false)
@@ -91,10 +92,23 @@ describe('leggiABlocchi', () => {
     expect('righe' in e).toBe(false)
     // La prova è UNA riga, subito dopo l'ultimo blocco pieno.
     expect(s.richieste.at(-1)?.range).toEqual([6, 6])
-    expect(h.logEvento).toHaveBeenCalledTimes(1)
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({
-      operazione: 'test:GET', esito: 'lettura-troncata', tipo: 'prova', n: 6, blocchi: 4,
-    }))
+    // `n` = righe lette prima del tetto, `oltre` = la soglia: il chiamante le mette nel SUO log.
+    expect(e).toEqual({ ok: false, motivo: 'tetto', blocchi: 4, n: 6, oltre: 6 })
+  })
+
+  // R2 (terza revisione 2026-09-29): al tetto qui si scriveva `lettura-troncata` con
+  // `logEvento` (senza `stato`) e si alzava la marca anti-doppione di `withRoute`: il wrapper
+  // allora taceva, e per un 500 nei log non c'era NESSUNA riga con `stato: 500`. Ma questo
+  // modulo non sa se il chiamante risponderà 500 (l'export) o 200 senza un pezzo accessorio
+  // (le righe dei bambini a carico): la riga la scrive chi risponde, e la marca la alza lui.
+  it('al tetto NON logga e NON alza la marca anti-doppione: lo fa chi risponde', async () => {
+    const s = sorgente(7)
+    const marca = await conContesto({ requestId: 'r', path: '/api/x' }, async () => {
+      await leggiABlocchi(s.costruisci, { ...O, blocco: 2, maxBlocchi: 3 })
+      return erroreGiaLoggato()
+    })
+    expect(marca).toBe(false)
+    expect(h.logEvento).not.toHaveBeenCalled()
   })
 
   it('al tetto, la riga di prova che fallisce: guasto con motivo «errore», non «tetto»', async () => {

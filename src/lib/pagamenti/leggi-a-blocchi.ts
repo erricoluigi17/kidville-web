@@ -1,6 +1,3 @@
-import { logEvento } from '@/lib/logging/logger'
-import { segnalaErroreLoggato } from '@/lib/logging/context'
-
 /**
  * ─── LEGGERE TUTTO, A BLOCCHI (revisione 2026-09-28) ────────────────────────────────
  *
@@ -27,12 +24,21 @@ import { segnalaErroreLoggato } from '@/lib/logging/context'
  * (`motivo: 'tetto'`) fanno fallire la lettura. Una tabella a cui manca un pezzo, presentata
  * come intera, è il difetto che questo modulo toglie.
  *
- * CHI LOGGA COSA — una riga per guasto, mai due:
- *  · `motivo: 'errore'` → NON logga qui: lo fa chi chiama, con `logErrore` e l'errore vero.
- *  · `motivo: 'tetto'`  → logga QUI (`lettura-troncata`, error, solo conteggi) e alza la marca
- *    anti-doppione di `withRoute` (`segnalaErroreLoggato`): senza, sul 500 il wrapper
- *    scriverebbe una seconda riga `route/error`, più povera (la stessa ragione per cui
- *    `leggiTutte` usa `logErrore`). Chi chiama NON ne aggiunge un'altra.
+ * CHI LOGGA COSA — QUESTO MODULO NON LOGGA MAI, e non alza la marca anti-doppione di
+ * `withRoute`. Lo fa chi chiama, UNA riga per guasto, perché solo lui sa che cosa risponderà:
+ *  · se risponde 500 (l'export, `letturaFallita` nella route) scrive la riga con `logErrore` e
+ *    `stato: 500` — `evento: 'lettura-troncata'` al tetto, `'db'` sull'errore del blocco — e
+ *    `logErrore` alza la marca, così `withRoute` non aggiunge una seconda riga più povera.
+ *    È esattamente ciò che fa `leggiTutte` (`logErrore({ …, stato: 500, evento:
+ *    'lettura-troncata' })`);
+ *  · se risponde 200 senza un pezzo accessorio (le righe dei bambini a carico,
+ *    `export-rette-a-carico.ts`) scrive un `logEvento` error, e la marca resta giù: non c'è
+ *    nessun 5xx da dichiarare.
+ * Fino alla terza revisione (R2, 2026-09-29) il tetto lo loggava QUI, con `logEvento` e senza
+ * `stato`, e alzava la marca: sul 500 dell'export `withRoute` taceva, e nei log non c'era
+ * nessuna riga con `stato: 500` per quella richiesta — fuori dal filtro «dammi i 5xx». Per
+ * questo il tetto consegna i conteggi (`n` righe lette, soglia `oltre`): servono al log di chi
+ * chiama, e sono solo numeri (AGENTS.md, regola 8).
  */
 
 /**
@@ -54,14 +60,13 @@ export type EsitoABlocchi<T> =
   | { ok: true; righe: T[]; blocchi: number }
   /** Un blocco (o la riga di prova) ha risposto `{ error }`: lo logga chi chiama. */
   | { ok: false; motivo: 'errore'; error: unknown; blocchi: number }
-  /** Oltre `maxBlocchi × blocco` righe: già loggato qui, nessuna riga consegnata. */
-  | { ok: false; motivo: 'tetto'; blocchi: number }
+  /**
+   * Oltre `oltre` (= `maxBlocchi × blocco`) righe: nessuna riga consegnata, e NON loggato qui.
+   * `n` = le righe lette prima del tetto: un conteggio per il log di chi chiama.
+   */
+  | { ok: false; motivo: 'tetto'; blocchi: number; n: number; oltre: number }
 
 interface OpzioniABlocchi {
-  /** L'operazione che chiama, per il log del tetto (`pagamenti/export:GET`). */
-  operazione: string
-  /** Quale lettura (`export-scadenzario`, `export-ade-incassi`…): un enumerato, mai un dato. */
-  tipo: string
   /** Solo per i test: il blocco e il tetto veri sono le costanti qui sopra. */
   blocco?: number
   maxBlocchi?: number
@@ -71,7 +76,7 @@ interface OpzioniABlocchi {
  * Legge tutte le righe della query che `costruisci` produce — una query NUOVA per ogni blocco,
  * perché il builder di PostgREST si modifica a ogni `.order()`/`.range()`.
  */
-export async function leggiABlocchi<T>(costruisci: () => QueryABlocchi, o: OpzioniABlocchi): Promise<EsitoABlocchi<T>> {
+export async function leggiABlocchi<T>(costruisci: () => QueryABlocchi, o: OpzioniABlocchi = {}): Promise<EsitoABlocchi<T>> {
   const blocco = o.blocco ?? BLOCCO_LETTURA
   const maxBlocchi = o.maxBlocchi ?? MAX_BLOCCHI_LETTURA
   const pagina = (da: number, a: number) => costruisci().order('id', { ascending: true }).range(da, a)
@@ -87,13 +92,8 @@ export async function leggiABlocchi<T>(costruisci: () => QueryABlocchi, o: Opzio
       blocchi++
       if (prova.error) return { ok: false, motivo: 'errore', error: prova.error, blocchi }
       if (((prova.data ?? []) as unknown[]).length === 0) return { ok: true, righe, blocchi }
-      // Solo conteggi: mai dati (AGENTS.md, regola 8).
-      logEvento('pagamento', 'error', {
-        operazione: o.operazione, esito: 'lettura-troncata', tipo: o.tipo, n: righe.length, blocchi,
-        msg: `oltre ${oltre} righe: la lettura è rifiutata per intero, niente file incompleto`,
-      })
-      segnalaErroreLoggato()
-      return { ok: false, motivo: 'tetto', blocchi }
+      // Nessun log qui (vedi «CHI LOGGA COSA»): i conteggi vanno a chi chiama.
+      return { ok: false, motivo: 'tetto', blocchi, n: righe.length, oltre }
     }
     const da = blocchi * blocco
     const { data, error } = await pagina(da, da + blocco - 1)

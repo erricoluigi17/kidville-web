@@ -106,12 +106,26 @@ async function nomiDelleSedi(
 
 /**
  * K5 (seconda revisione 2026-09-28) — una lettura a blocchi fallita, per errore o per il
- * tetto, è un 500 con `LETTURA_FALLITA`: mai un file con un pezzo in meno. Il log è UNO:
- * l'errore del blocco lo scrive qui `logErrore` (con la marca anti-doppione di `withRoute`),
- * il tetto l'ha già scritto `leggiABlocchi` (`lettura-troncata`) e qui non si ripete.
+ * tetto, è un 500 con `LETTURA_FALLITA`: mai un file con un pezzo in meno.
+ *
+ * R2 (terza revisione 2026-09-29) — la riga di log è UNA, la scrive QUI, e porta `stato: 500`:
+ * `logErrore` con `evento: 'lettura-troncata'` al tetto (i conteggi nel messaggio, come
+ * `leggiTutte` di `GET /api/pagamenti`) o `evento: 'db'` con l'errore vero del blocco.
+ * `logErrore` alza la marca anti-doppione, e `withRoute` non aggiunge una seconda riga.
+ * `leggiABlocchi` non logga: non sa se il chiamante risponderà 500 o 200 (vedi il modulo).
+ * Prima il tetto lo loggava lui con `logEvento`, senza `stato`, e alzava la marca: per questo
+ * 500 nei log non c'era nessuna riga con lo stato.
  */
-function letturaFallita(esito: Extract<EsitoABlocchi<unknown>, { ok: false }>, messaggio: string): NextResponse {
-  if (esito.motivo === 'errore') logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, esito.error)
+function letturaFallita(esito: Extract<EsitoABlocchi<unknown>, { ok: false }>, messaggio: string, tipo: string): NextResponse {
+  if (esito.motivo === 'tetto') {
+    // Solo il nome della lettura e dei conteggi: mai dati (AGENTS.md, regola 8).
+    logErrore(
+      { operazione: 'pagamenti/export:GET', stato: 500, evento: 'lettura-troncata' },
+      new Error(`lettura-troncata: ${tipo} oltre ${esito.oltre} righe (${esito.n} lette in ${esito.blocchi} blocchi), rifiutata per intero`),
+    )
+  } else {
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, esito.error)
+  }
   return NextResponse.json({ error: messaggio, codice: 'LETTURA_FALLITA' }, { status: 500 })
 }
 
@@ -186,8 +200,8 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
       return query
     }
 
-    const letti = await leggiABlocchi<RigaPagamento>(costruisci, { operazione: 'pagamenti/export:GET', tipo: 'export-scadenzario' })
-    if (!letti.ok) return letturaFallita(letti, 'Errore nel recupero dei pagamenti')
+    const letti = await leggiABlocchi<RigaPagamento>(costruisci)
+    if (!letti.ok) return letturaFallita(letti, 'Errore nel recupero dei pagamenti', 'export-scadenzario')
 
     // I contenitori padre non sono voci esigibili: nell'export contano le rate.
     const righe: RigaScadenzario[] = letti.righe
@@ -301,12 +315,11 @@ async function exportAde(
   // select('*') sugli alunni: tollera i DB senza opposizione_ade (e2e CI).
   const alunniLetti = await leggiABlocchi<AlunnoAde>(
     () => supabase.from('alunni').select('*').in('scuola_id', sediAttive),
-    { operazione: 'pagamenti/export:GET', tipo: 'export-ade-alunni' },
   )
   // `exportAde` è un ramo della stessa route: `operazione` resta quella di `withRoute`. Al
   // tetto (K5) un 500 e non un file: una comunicazione all'AdE con delle spese in meno non
   // deve poter uscire.
-  if (!alunniLetti.ok) return letturaFallita(alunniLetti, 'Errore nel recupero degli alunni')
+  if (!alunniLetti.ok) return letturaFallita(alunniLetti, 'Errore nel recupero degli alunni', 'export-ade-alunni')
 
   const incassiLetti = await leggiABlocchi<IncassoAde>(
     () => supabase
@@ -315,9 +328,8 @@ async function exportAde(
       .gte('data_incasso', `${anno}-01-01`)
       .lte('data_incasso', `${anno}-12-31`)
       .in('pagamenti.scuola_id', sediAttive),
-    { operazione: 'pagamenti/export:GET', tipo: 'export-ade-incassi' },
   )
-  if (!incassiLetti.ok) return letturaFallita(incassiLetti, 'Errore nel recupero degli incassi')
+  if (!incassiLetti.ok) return letturaFallita(incassiLetti, 'Errore nel recupero degli incassi', 'export-ade-incassi')
 
   const perAlunno = new Map<string, VoceAttestazione[]>()
   for (const i of incassiLetti.righe) {

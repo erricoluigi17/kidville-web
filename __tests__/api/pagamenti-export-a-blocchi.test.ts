@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   db: {} as DBFinto,
   logEvento: vi.fn(),
   logErrore: vi.fn(),
+  errori: {} as Record<string, { code: string }>,
   /** K5: un tetto PICCOLO per i test (il vero è 50 blocchi da 1000). `null` = quello vero. */
   tetto: null as { blocco: number; maxBlocchi: number } | null,
 }))
@@ -39,7 +40,7 @@ vi.mock('@/lib/pagamenti/leggi-a-blocchi', async (importActual) => {
 })
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
-  return { createAdminClient: async () => creaFintoSupabase(h.db, [], { maxRighe: 1000 }) }
+  return { createAdminClient: async () => creaFintoSupabase(h.db, [], { maxRighe: 1000, errori: h.errori }) }
 })
 
 import { GET } from '@/app/api/pagamenti/export/route'
@@ -72,6 +73,7 @@ async function foglio(res: Response, nome: string) {
 beforeEach(() => {
   vi.clearAllMocks()
   h.tetto = null
+  h.errori = {}
   h.db = {
     schools: [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_B, nome: NOME_SEDE_B }],
     scuole: [{ id: SEDE_A, attiva: true }, { id: SEDE_B, attiva: true }],
@@ -199,21 +201,30 @@ describe('K7 — i fogli AdE escono in un ordine leggibile e stabile', () => {
 // K5 (seconda revisione 2026-09-28) — AL TETTO DEI BLOCCHI la lettura consegnava le righe
 // lette con `troncata: true`, e nessun chiamante lo guardava: l'export usciva 200, incompleto,
 // e nel ramo AdE era una comunicazione all'Agenzia delle Entrate con delle spese in meno. Ora
-// il tetto è un GUASTO: 500 con `LETTURA_FALLITA`, e UN solo log error (`lettura-troncata`,
-// che scrive `leggiABlocchi`): la route non ne aggiunge un secondo.
+// il tetto è un GUASTO: 500 con `LETTURA_FALLITA`, e UNA sola riga d'errore.
+//
+// R2 (terza revisione 2026-09-29): quella riga la scriveva `leggiABlocchi` con `logEvento`,
+// SENZA `stato`, e alzava la marca anti-doppione: `withRoute` taceva, e per quel 500 nei log non
+// c'era nessuna riga con `stato: 500` — fuori dal filtro «dammi i 5xx di ieri». Ora la scrive la
+// route, con `logErrore` e `stato: 500`, come `leggiTutte` di `GET /api/pagamenti`.
 // Tetto qui: 2 blocchi da 2 righe = 4 righe; la quinta accende la riga di prova.
 // =============================================================================
 describe('K5 — al tetto dei blocchi l’export è un guasto, non un file incompleto', () => {
+  /** Ogni riga d'errore della richiesta: i `logEvento(…, 'error')` (anche quello di `withRoute`) e i `logErrore`. */
   const erroriDiLog = () => [
-    ...h.logEvento.mock.calls.filter((c) => c[1] === 'error').map((c) => (c[2] as { esito?: string }).esito),
-    ...h.logErrore.mock.calls.map(() => 'logErrore'),
+    ...h.logEvento.mock.calls.filter((c) => c[1] === 'error').map((c) => `${c[0]}:${(c[2] as { esito?: string }).esito ?? '-'}`),
+    ...h.logErrore.mock.calls.map((c) => `logErrore:${(c[0] as { evento?: string }).evento}:${(c[0] as { stato?: number }).stato}`),
   ]
   async function atteso500(qs: string, tipo: string) {
     const res = await GET(new NextRequest(`http://localhost/api/pagamenti/export?${qs}`))
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('LETTURA_FALLITA')
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'lettura-troncata', tipo }))
-    expect(erroriDiLog()).toEqual(['lettura-troncata'])
+    // UNA riga, e porta `stato: 500`; il messaggio dice QUALE lettura e i conteggi (mai dati).
+    expect(erroriDiLog()).toEqual(['logErrore:lettura-troncata:500'])
+    expect(h.logErrore).toHaveBeenCalledWith(
+      { operazione: 'pagamenti/export:GET', stato: 500, evento: 'lettura-troncata' },
+      expect.objectContaining({ message: expect.stringContaining(tipo) }),
+    )
   }
 
   it('Scadenzario: 5 righe oltre un tetto di 4 → 500 LETTURA_FALLITA, un log solo', async () => {
@@ -265,7 +276,18 @@ describe('K5 — al tetto dei blocchi l’export è un guasto, non un file incom
     expect(res.status).toBe(200)
     const righe = await foglio(res, 'Scadenzario')
     expect(righe.map((r) => r.Alunno)).toEqual(['Npag Prova'])
+    // Qui la risposta è 200: la riga è un `logEvento` error (nessun 5xx da dichiarare), UNA.
     expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'lettura-troncata', tipo: 'export-rette-paganti' }))
-    expect(erroriDiLog()).toEqual(['lettura-troncata'])
+    expect(erroriDiLog()).toEqual(['pagamento:lettura-troncata'])
+  })
+
+  // Il ramo gemello: un blocco che risponde `{ error }`. Una riga, con `stato: 500`.
+  it('Scadenzario: un blocco in errore → 500 LETTURA_FALLITA, una riga sola con stato 500', async () => {
+    h.errori = { 'pagamenti:select': { code: '57014' } }
+    h.db.pagamenti.push(retta(uuid('p', 1), 'al-1', SEDE_A, 1))
+    const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario'))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+    expect(erroriDiLog()).toEqual(['logErrore:db:500'])
   })
 })

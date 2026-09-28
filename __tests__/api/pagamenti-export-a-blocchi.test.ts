@@ -25,6 +25,11 @@ const h = vi.hoisted(() => ({
   errori: {} as Record<string, { code: string }>,
   /** R8: ogni `.in(colonna, lista)` della richiesta, con la lunghezza della lista. */
   registroIn: [] as { tabella: string; colonna: string; n: number }[],
+  /**
+   * Q6: ogni lettura (una `from()` = una query: `leggiABlocchi` ne costruisce una NUOVA per
+   * blocco), con la lunghezza delle sue liste `.in()` e il suo `range`.
+   */
+  letture: [] as { tabella: string; inN: Record<string, number>; range: [number, number] | null }[],
   /** K5: un tetto PICCOLO per i test (il vero è 50 blocchi da 1000). `null` = quello vero. */
   tetto: null as { blocco: number; maxBlocchi: number } | null,
 }))
@@ -52,8 +57,16 @@ vi.mock('@/lib/supabase/server-client', async () => {
       Object.assign(c, {
         from: (t: string) => {
           const q = from(t) as unknown as Record<string, unknown>
+          const lettura = { tabella: t, inN: {} as Record<string, number>, range: null as [number, number] | null }
+          h.letture.push(lettura)
           const inVero = q.in as (colonna: string, v: unknown[]) => unknown
-          q.in = (colonna: string, v: unknown[]) => { h.registroIn.push({ tabella: t, colonna, n: v.length }); return inVero(colonna, v) }
+          q.in = (colonna: string, v: unknown[]) => {
+            h.registroIn.push({ tabella: t, colonna, n: v.length })
+            lettura.inN[colonna] = v.length
+            return inVero(colonna, v)
+          }
+          const rangeVero = q.range as (da: number, a: number) => unknown
+          q.range = (da: number, a: number) => { lettura.range = [da, a]; return rangeVero(da, a) }
           return q
         },
       })
@@ -109,6 +122,7 @@ beforeEach(() => {
   h.tetto = null
   h.errori = {}
   h.registroIn = []
+  h.letture = []
   h.db = {
     schools: [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_B, nome: NOME_SEDE_B }],
     scuole: [{ id: SEDE_A, attiva: true }, { id: SEDE_B, attiva: true }],
@@ -145,17 +159,37 @@ describe('export Scadenzario — oltre le 1000 righe (C2)', () => {
     expect(erroriDiLog()).toEqual([])
   })
 
-  it('le rette dei paganti oltre le 1000 (120 famiglie × 10 mesi): una riga a zero per OGNUNA', async () => {
-    for (let i = 0; i < 120; i++) {
+  // Q6 (quarta revisione 2026-09-29): con gli id a pezzi di `ID_PER_QUERY` (R8) il caso di prima
+  // — 120 famiglie × 10 mesi — non portava più NESSUNA lettura delle rette oltre le 1000: un pezzo
+  // ha 100 id, cioè 50 paganti, cioè 500 righe. Togliendo il `range` a quella lettura il test
+  // restava verde. Qui 21 mesi: il primo pezzo (50 paganti) ha 1.050 rette, il secondo 210.
+  it('le rette dei paganti oltre le 1000 in UN pezzo di id (60 famiglie × 21 mesi): una riga a zero per OGNUNA', async () => {
+    const FAMIGLIE = 60
+    const MESI = 21
+    /** Da settembre 2025 a maggio 2027: 21 periodi distinti, e scadenze che si ordinano. */
+    const periodo = (m: number) => new Date(Date.UTC(2025, 8 + m, 1)).toISOString().slice(0, 10)
+    for (let i = 0; i < FAMIGLIE; i++) {
       h.db.alunni.push(alunno(uuid('pag', i), SEDE_A), alunno(uuid('fig', i), SEDE_A, { retta_a_carico_di: uuid('pag', i) }))
-      for (let m = 1; m <= 10; m++) h.db.pagamenti.push(retta(uuid(`r${m}`, i), uuid('pag', i), SEDE_A, m))
+      for (let m = 0; m < MESI; m++) {
+        const p = periodo(m)
+        h.db.pagamenti.push(retta(uuid(`r${m}`, i), uuid('pag', i), SEDE_A, 1, {
+          periodo_competenza: p, scadenza: `${p.slice(0, 8)}05`, descrizione: `Retta ${p.slice(0, 7)}`,
+        }))
+      }
     }
     const righe = await foglio(await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario')), 'Scadenzario')
     const aZero = righe.filter((r) => String(r.Stato).startsWith('Paga il fratello'))
-    expect(aZero).toHaveLength(1200)
+    expect(aZero).toHaveLength(FAMIGLIE * MESI)
     expect(aZero.every((r) => r['Importo €'] === 0)).toBe(true)
+    // Ogni bambino ha TUTTI i suoi mesi (le 50 righe oltre le prime 1000 del pezzo sono di qualcuno).
+    expect(new Set(aZero.map((r) => `${r.Alunno}|${r.Descrizione}`)).size).toBe(FAMIGLIE * MESI)
     // …e le righe vere dei paganti, anche loro oltre le 1000.
-    expect(righe.filter((r) => r['Importo €'] === 250)).toHaveLength(1200)
+    expect(righe.filter((r) => r['Importo €'] === 250)).toHaveLength(FAMIGLIE * MESI)
+    // La prova che è la PAGINAZIONE delle rette ad averle portate: una lettura ristretta a un pezzo
+    // di id (≤ ID_PER_QUERY) ha chiesto il secondo blocco di `range`, cioè il primo era pieno.
+    const rette = h.letture.filter((l) => l.tabella === 'pagamenti' && l.inN.alunno_id != null)
+    expect(Math.max(...rette.map((l) => l.inN.alunno_id))).toBeLessThanOrEqual(ID_PER_QUERY)
+    expect(rette.filter((l) => l.range?.[0] === 1000).map((l) => l.inN.alunno_id)).toEqual([ID_PER_QUERY])
   })
 })
 

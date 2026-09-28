@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   db: {} as DBFinto,
   errori: {} as Record<string, ErrorePostgrest>,
   logEvento: vi.fn(),
+  logErrore: vi.fn(),
   /** K4: la SECONDA lettura di `utenti_scuole` nella richiesta risponde con un errore. */
   guastoSecondaLetturaSedi: false,
 }))
@@ -15,7 +16,8 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
   const vero = await importActual<typeof import('@/lib/logging/logger')>()
   h.logEvento.mockImplementation(vero.logEvento)
-  return { ...vero, logEvento: h.logEvento }
+  h.logErrore.mockImplementation(vero.logErrore)
+  return { ...vero, logEvento: h.logEvento, logErrore: h.logErrore }
 })
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
@@ -158,5 +160,18 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('LETTURA_FALLITA')
     expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ operazione: 'pagamenti/rette-a-carico:GET', esito: 'legami-bambini-non-letti' }), expect.anything())
+  })
+
+  // R3 (terza revisione 2026-09-29): il loader aveva già loggato la causa (error), e sul 500
+  // `withRoute` — che non trovava la marca anti-doppione — ne aggiungeva una seconda, più
+  // povera (`route`, error). Un guasto = UNA riga error.
+  it('R3 — un guasto dei legami è UNA riga error: quella del loader, senza il doppione di withRoute', async () => {
+    h.errori = { 'alunni:select': { code: '57014' } }
+    expect((await GET(req())).status).toBe(500)
+    const errori = [
+      ...h.logEvento.mock.calls.filter((c) => c[1] === 'error').map((c) => `${c[0]}:${(c[2] as { esito?: string }).esito ?? '-'}`),
+      ...h.logErrore.mock.calls.map(() => 'logErrore'),
+    ]
+    expect(errori).toEqual(['pagamento:legami-bambini-non-letti'])
   })
 })

@@ -290,11 +290,15 @@ describe('export scadenzario — righe dei bambini a carico (D14)', () => {
     })
   })
 
-  it('legami non letti: l’export esce lo stesso, senza righe in più, e il log lo dice', async () => {
+  // R3 (terza revisione 2026-09-29): la causa (`legami-bambini-non-letti`, error) la scrive il
+  // loader; qui si dice la CONSEGUENZA, a livello info. Prima erano due righe error per un guasto.
+  it('legami non letti: l’export esce lo stesso, senza righe in più, e UNA riga error (la causa) + una info (la conseguenza)', async () => {
     h.errori = { 'alunni:select': { code: '57014' } }
     const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario'))
     expect(res.status).toBe(200)
     expect((await righe(res)).some((r) => r.Alunno === 'Nfig Rossi')).toBe(false)
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ operazione: 'pagamenti/export:GET', esito: 'export-senza-righe-a-carico' }))
+    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ operazione: 'pagamenti/export:GET', esito: 'export-senza-righe-a-carico' }))
+    const errori = h.logEvento.mock.calls.filter((c) => c[1] === 'error').map((c) => `${c[0]}:${(c[2] as { esito?: string }).esito ?? '-'}`)
+    expect(errori).toEqual(['pagamento:legami-bambini-non-letti'])
   })
 })

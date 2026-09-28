@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { segnalaErroreLoggato } from '@/lib/logging/context'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveScuoleAttive, restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
@@ -60,6 +61,10 @@ export const GET = withRoute('pagamenti/rette-a-carico:GET', async (request: Nex
       operazione: OPERAZIONE,
     })
     if (!esito.ok) {
+      // La causa l'ha già scritta il loader (`legami-*-non-letti`, error, con l'errore vero).
+      // Senza la marca `withRoute` sul 500 ne aggiungerebbe una seconda, più povera: un guasto,
+      // una riga (R3, terza revisione 2026-09-29).
+      segnalaErroreLoggato()
       return NextResponse.json(
         { error: 'Non è stato possibile leggere chi paga la retta per un fratello.', codice: 'LETTURA_FALLITA' },
         { status: 500 },

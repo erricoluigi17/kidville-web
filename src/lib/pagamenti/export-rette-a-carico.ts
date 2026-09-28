@@ -65,9 +65,12 @@ const OPERAZIONE = 'pagamenti/export:GET'
 export async function righeRetteACarico(supabase: SupabaseClient, o: OpzioniExport): Promise<RigaScadenzario[]> {
   const esito = await caricaLegamiRetta(supabase, { sediBambini: o.sediBambini, sediPaganti: o.sediPaganti, operazione: OPERAZIONE })
   if (!esito.ok) {
-    logEvento('pagamento', 'error', {
+    // La CAUSA l'ha già scritta il loader (`legami-*-non-letti`, error, con l'errore vero): qui
+    // si dice la CONSEGUENZA, a livello info. Due righe error per un guasto solo contano doppio
+    // negli allarmi (R3, terza revisione 2026-09-29).
+    logEvento('pagamento', 'info', {
       operazione: OPERAZIONE, esito: 'export-senza-righe-a-carico',
-      msg: 'legami non letti: l’export esce senza le righe dei bambini a carico di un fratello',
+      msg: 'legami non letti (causa già loggata): l’export esce senza le righe dei bambini a carico di un fratello',
     })
     return []
   }

@@ -124,6 +124,24 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
     expect(legamiDaRisposta(ridotto.data)).toEqual({ legami: ridotto.data, scartati: 0 })
   })
 
+  // R7b (terza revisione 2026-09-29): il contratto qui sopra girava solo su paganti con TUTTI i
+  // campi valorizzati. In produzione `classe_sezione` e — per una scheda incompleta — `nome` e
+  // `cognome` possono essere NULL: `legamiDaRisposta` li avrebbe scartati come malformati, e quei
+  // bambini sarebbero tornati «Non generata» con un log di «voci scartate» senza colpa. Il loader
+  // trasforma nome e cognome NULL in stringa vuota (la frase diventa «Paga il fratello (Sez. …)»,
+  // non un crash né uno scarto) e lascia `classe_sezione` NULL, che è valido.
+  it('R7b — paganti con classe NULL e con nome/cognome NULL: zero scarti', async () => {
+    h.db.alunni.push(
+      alunno('pn', SEDE_A, { classe_sezione: null }), alunno('fn', SEDE_A, { retta_a_carico_di: 'pn' }),
+      alunno('pv', SEDE_A, { nome: null, cognome: null }), alunno('fv', SEDE_A, { retta_a_carico_di: 'pv' }),
+    )
+    const corpo = await (await GET(req())).json()
+    const per = Object.fromEntries((corpo.data as { alunno_id: string; pagante: Record<string, unknown> }[]).map((l) => [l.alunno_id, l.pagante]))
+    expect(per.fn).toMatchObject({ id: 'pn', classe_sezione: null })
+    expect(per.fv).toMatchObject({ id: 'pv', nome: '', cognome: '' })
+    expect(legamiDaRisposta(corpo.data)).toEqual({ legami: corpo.data, scartati: 0 })
+  })
+
   it('scuola_id restringe a quella sede', async () => {
     const corpo = await (await GET(req(`scuola_id=${SEDE_A}`))).json()
     expect(corpo.data.map((l: { alunno_id: string }) => l.alunno_id)).toEqual(['fa'])

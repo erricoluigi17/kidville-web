@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { IntlMessageFormat } from 'intl-messageformat'
 import {
   anomaliaPagante, componiBadge, indicizzaLegami, legamiDaRisposta, nomeConClasse, nomePagante, nonVisibiliDaRisposta,
-  prefissoPaganteIt, sessoDa, testoPaganteIt, valoriPrefisso, SEPARATORE_STATO,
+  prefissoPaganteIt, ripulisciFrase, sessoDa, testoPaganteIt, valoriPrefisso, SEPARATORE_STATO,
   type LegameRetta, type PaganteRetta,
 } from '@/lib/pagamenti/rette-a-carico'
 
@@ -32,6 +32,41 @@ describe('rette a carico — i testi (D1, D2, D5)', () => {
     expect(testoPaganteIt(pagante(), 'Da pagare')).toBe('Paga il fratello Mario Rossi (Sez. C) · Da pagare')
     expect(testoPaganteIt(pagante(), null)).toBe('Paga il fratello Mario Rossi (Sez. C)')
     expect(componiBadge('X', '')).toBe('X')
+  })
+  // Q8 (quarta revisione 2026-09-29): con nome e cognome vuoti (il loader mette '' al posto di
+  // NULL) e la classe presente usciva «Paga il fratello␣␣(Sez. C)»: `nomeConClasse` metteva lo
+  // spazio davanti alla parentesi anche senza un nome. E senza nome né classe «Paga il fratello␣».
+  it('Q8 — nome vuoto: nessuno spazio doppio, iniziale o finale', () => {
+    const senzaNome = { nome: '', cognome: '' }
+    expect(nomeConClasse(pagante(senzaNome))).toBe('(Sez. C)')
+    expect(prefissoPaganteIt(pagante(senzaNome))).toBe('Paga il fratello (Sez. C)')
+    expect(testoPaganteIt(pagante(senzaNome), 'Da pagare')).toBe('Paga il fratello (Sez. C) · Da pagare')
+    expect(prefissoPaganteIt(pagante({ ...senzaNome, classe_sezione: null }))).toBe('Paga il fratello')
+    expect(testoPaganteIt(pagante({ ...senzaNome, classe_sezione: null, sesso: null }), 'Pagato')).toBe('A carico di · Pagato')
+  })
+  describe('Q8 — in NESSUNA combinazione uno spazio doppio, iniziale o finale', () => {
+    const NOMI: [string, string][] = [['Mario', 'Rossi'], ['', ''], ['Mario', ''], ['', 'Rossi'], [' ', '  '], [' Mario ', ' De  Luca ']]
+    const CLASSI = ['Sez. C', null, '', '   ', ' Sez.  C ']
+    const STATI = ['Da pagare', null, '']
+    for (const sesso of ['M', 'F', null] as const) {
+      for (const [nome, cognome] of NOMI) {
+        for (const classe of CLASSI) {
+          it(`sesso ${sesso ?? 'assente'}, nome «${nome}|${cognome}», classe «${classe ?? 'null'}»`, () => {
+            const p = pagante({ sesso, nome, cognome, classe_sezione: classe })
+            for (const stato of STATI) {
+              const frase = testoPaganteIt(p, stato)
+              expect(frase, JSON.stringify(frase)).not.toMatch(/\s{2}|^\s|\s$/)
+            }
+            expect(nomeConClasse(p)).not.toMatch(/\s{2}|^\s|\s$/)
+          })
+        }
+      }
+    }
+  })
+  it('ripulisciFrase: spazi ripetuti, iniziali, finali e prima dei due punti', () => {
+    expect(ripulisciFrase('  Paga il fratello  (Sez. C) ')).toBe('Paga il fratello (Sez. C)')
+    expect(ripulisciFrase('A carico del fratello : retta da verificare')).toBe('A carico del fratello: retta da verificare')
+    expect(ripulisciFrase('Paga il fratello ')).toBe('Paga il fratello')
   })
   it('valoriPrefisso: il sesso assente diventa «nd» (ICU vuole una stringa)', () => {
     expect(valoriPrefisso(pagante({ sesso: null }))).toEqual({ sesso: 'nd', nome: 'Mario Rossi (Sez. C)' })
@@ -162,13 +197,26 @@ const catalogo = (lingua: string) =>
 
 describe('LOCK — schermo (catalogo it) ed Excel (prefissoPaganteIt) dicono la stessa frase', () => {
   const it_ = catalogo('it')
+  /**
+   * Ciò che fa `BadgeRettaACarico`: il messaggio ICU formattato, poi `ripulisciFrase` (Q8). Il
+   * catalogo mette uno spazio fra la parola e `{nome}`: con un nome vuoto quello spazio resta in
+   * coda, e con la frase D9 finisce davanti ai due punti.
+   */
+  const schermo = (chiave: string, p: PaganteRetta) =>
+    ripulisciFrase(String(new IntlMessageFormat(it_[chiave], 'it').format(valoriPrefisso(p))))
+  // Q8 (quarta revisione 2026-09-29): anche con nome e cognome VUOTI — il caso del doppio spazio,
+  // che il lock non vedeva perché schermo ed Excel sbagliavano nello stesso modo.
+  const NOMI: [string, string][] = [['Mario', 'Rossi'], ['', '']]
   for (const sesso of ['M', 'F', null] as const) {
     for (const classe of ['Sez. C', null]) {
-      it(`sesso ${sesso ?? 'assente'}, classe ${classe ?? 'assente'}`, () => {
-        const p = pagante({ sesso, classe_sezione: classe })
-        const schermo = String(new IntlMessageFormat(it_.dashACarico, 'it').format(valoriPrefisso(p)))
-        expect(schermo).toBe(prefissoPaganteIt(p))
-      })
+      for (const [nome, cognome] of NOMI) {
+        it(`sesso ${sesso ?? 'assente'}, classe ${classe ?? 'assente'}, nome ${nome ? 'presente' : 'vuoto'}`, () => {
+          const p = pagante({ sesso, classe_sezione: classe, nome, cognome })
+          expect(schermo('dashACarico', p)).toBe(prefissoPaganteIt(p))
+          // La frase D9 (solo a schermo) non ha spazi spuri nemmeno lei.
+          expect(schermo('dashACaricoVerifica', p)).not.toMatch(/\s{2}|^\s|\s$|\s:/)
+        })
+      }
     }
   }
   // C6 (revisione 2026-09-28): `iscritto` è falso anche per un pagante SOSPESO, che per

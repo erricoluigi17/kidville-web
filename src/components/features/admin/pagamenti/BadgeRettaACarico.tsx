@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/Badge';
 import { STATI_PAGAMENTO as STATI } from './stati';
-import { anomaliaPagante, componiBadge, valoriPrefisso, type LegameRetta } from '@/lib/pagamenti/rette-a-carico';
+import { anomaliaPagante, componiBadge, ripulisciFrase, valoriPrefisso, type LegameRetta } from '@/lib/pagamenti/rette-a-carico';
 
 /**
  * K2 (seconda revisione 2026-09-28) — nella TABELLA desktop ogni badge di questo file ha una
@@ -62,7 +62,7 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
     if (conRettaPropria) {
         return (
             <>
-                <Badge tone="warn" aCapo className={larghezza} data-testid="retta-a-carico-verifica">{t('dashACaricoVerifica', valori)}</Badge>
+                <Badge tone="warn" aCapo className={larghezza} data-testid="retta-a-carico-verifica">{ripulisciFrase(t('dashACaricoVerifica', valori))}</Badge>
                 {avvisoAnomalia}
             </>
         );
@@ -73,7 +73,9 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
     return (
         <>
             <Badge tone={st?.tone ?? 'neutral'} aCapo className={larghezza} data-testid="retta-a-carico">
-                {componiBadge(t('dashACarico', valori), stato)}
+                {/* `ripulisciFrase` (Q8): con un nome vuoto il messaggio ICU lascia uno spazio in
+                    coda, e davanti a « · stato» diventavano due. La stessa dell'Excel (lock). */}
+                {componiBadge(ripulisciFrase(t('dashACarico', valori)), stato)}
             </Badge>
             {avvisoAnomalia}
         </>

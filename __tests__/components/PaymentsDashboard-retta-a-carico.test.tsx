@@ -631,3 +631,26 @@ describe('Q7 — il banner dei legami', () => {
         expect(within(bannerAlunni).getByRole('button')).toHaveAccessibleName('Riprova');
     });
 });
+
+/**
+ * Q8 (quarta revisione 2026-09-29) — il pagante senza nome né cognome (il loader mette '' al
+ * posto di NULL). Il badge diceva «Paga il fratello␣␣(Sez. C) · Da pagare». Si guarda il
+ * `textContent` GREZZO: `toHaveTextContent` normalizza gli spazi, e il doppio spazio lo
+ * nasconderebbe.
+ */
+describe('Q8 — pagante senza nome: nessuno spazio spurio nel badge', () => {
+    const senzaNome = (extra: Record<string, unknown> = {}) => ({
+        ...LEGAMI,
+        data: LEGAMI.data.map((l) => (l.pagante.id === MARIO.id ? { ...l, pagante: { ...l.pagante, nome: '', cognome: '', ...extra } } : l)),
+    });
+    it('con la classe: «Paga il fratello (Sez. C) · Da pagare», e l’avviso D9 «A carico del fratello (Sez. C): …»', async () => {
+        stub({ legami: senzaNome() }); await apri();
+        expect(within(riga('Luca Rossi')).getByTestId('retta-a-carico').textContent).toBe('Paga il fratello (Sez. C) · Da pagare');
+        expect(within(riga('Teo Rossi')).getByTestId('retta-a-carico-verifica').textContent).toBe('A carico del fratello (Sez. C): retta da verificare');
+    });
+    it('senza la classe: «Paga il fratello · Da pagare», e «A carico del fratello: …»', async () => {
+        stub({ legami: senzaNome({ classe_sezione: null }) }); await apri();
+        expect(within(riga('Luca Rossi')).getByTestId('retta-a-carico').textContent).toBe('Paga il fratello · Da pagare');
+        expect(within(riga('Teo Rossi')).getByTestId('retta-a-carico-verifica').textContent).toBe('A carico del fratello: retta da verificare');
+    });
+});

@@ -12,8 +12,10 @@
  *
  * COSA È GARANTITO, E DA QUALE LOCK (R6, terza revisione 2026-09-29). Fino a qui questo
  * commento diceva che schermo ed Excel dicono «la stessa frase»: è vero solo in parte.
- *  · Il PREFISSO è identico per ogni sesso (M, F, assente) e con o senza classe: lo verifica il
- *    LOCK di `__tests__/pagamenti/rette-a-carico.test.ts`.
+ *  · Il PREFISSO è identico per ogni sesso (M, F, assente), con o senza classe e — dalla quarta
+ *    revisione (Q8) — con nome e cognome vuoti: lo verifica il LOCK di
+ *    `__tests__/pagamenti/rette-a-carico.test.ts`. Lo schermo passa il messaggio ICU da
+ *    `ripulisciFrase`, come fa qui `prefissoPaganteIt`: nessuno spazio doppio, iniziale o finale.
  *  · La parola dello STATO dopo « · » è identica per i QUATTRO stati noti (`da_pagare`,
  *    `parziale`, `pagato`, `scaduto`): lo verifica C7 in
  *    `__tests__/api/pagamenti-export-rette-a-carico.test.ts`, che lega `STATI_PAGAMENTO` del
@@ -61,11 +63,23 @@ export function nomePagante(p: Pick<PaganteRetta, 'nome' | 'cognome'>): string {
   return `${p.nome ?? ''} ${p.cognome ?? ''}`.replace(/\s+/g, ' ').trim()
 }
 
-/** «Mario Rossi (Sez. C)»; senza classe, solo il nome (D5). */
+/**
+ * Q8 (quarta revisione 2026-09-29) — una frase composta da pezzi che possono essere VUOTI: il
+ * loader mette '' al posto di un nome o di un cognome NULL, e il catalogo ICU ha uno spazio fra
+ * la parola e `{nome}` («Paga il fratello {nome}», «… {nome}}: retta da verificare»). Con un nome
+ * vuoto usciva «Paga il fratello␣␣(Sez. C)», e senza nome né classe «Paga il fratello␣» — e
+ * con « · Da pagare» dietro, di nuovo due spazi. Qui: ogni corsa di spazi diventa uno, via quelli
+ * in testa, in coda e davanti ai due punti. La usano l'Excel (`prefissoPaganteIt`) e lo schermo
+ * (`BadgeRettaACarico`, sul messaggio ICU formattato): il lock schermo = Excel la applica uguale.
+ */
+export function ripulisciFrase(s: string): string {
+  return s.replace(/\s+/g, ' ').replace(/ :/g, ':').trim()
+}
+
+/** «Mario Rossi (Sez. C)»; senza classe, solo il nome (D5); senza nome, solo «(Sez. C)» (Q8). */
 export function nomeConClasse(p: Pick<PaganteRetta, 'nome' | 'cognome' | 'classe_sezione'>): string {
-  const nome = nomePagante(p)
-  const classe = p.classe_sezione?.trim()
-  return classe ? `${nome} (${classe})` : nome
+  const classe = ripulisciFrase(p.classe_sezione ?? '')
+  return [nomePagante(p), classe ? `(${classe})` : ''].filter(Boolean).join(' ')
 }
 
 /** I valori del messaggio ICU `dashACarico`/`dashACaricoVerifica`: ICU vuole una stringa, «nd» = sesso assente. */
@@ -73,12 +87,10 @@ export function valoriPrefisso(p: Pick<PaganteRetta, 'nome' | 'cognome' | 'class
   return { sesso: p.sesso ?? 'nd', nome: nomeConClasse(p) }
 }
 
-/** Il prefisso in italiano (D1): la stessa frase del catalogo `it`. */
+/** Il prefisso in italiano (D1): la stessa frase del catalogo `it`, ripulita come a schermo (Q8). */
 export function prefissoPaganteIt(p: Pick<PaganteRetta, 'nome' | 'cognome' | 'classe_sezione' | 'sesso'>): string {
-  const nome = nomeConClasse(p)
-  if (p.sesso === 'M') return `Paga il fratello ${nome}`
-  if (p.sesso === 'F') return `Paga la sorella ${nome}`
-  return `A carico di ${nome}`
+  const parola = p.sesso === 'M' ? 'Paga il fratello' : p.sesso === 'F' ? 'Paga la sorella' : 'A carico di'
+  return ripulisciFrase(`${parola} ${nomeConClasse(p)}`)
 }
 
 /** Prefisso + « · stato» (D2). Senza stato, il solo prefisso. */

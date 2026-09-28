@@ -38,7 +38,7 @@ vi.mock('@/lib/supabase/server-client', async () => {
 })
 
 import { GET } from '@/app/api/pagamenti/rette-a-carico/route'
-import { legamiDaRisposta } from '@/lib/pagamenti/rette-a-carico'
+import { legamiDaRisposta, prefissoPaganteIt, type PaganteRetta } from '@/lib/pagamenti/rette-a-carico'
 
 const req = (qs = '') => new NextRequest(`http://localhost/api/pagamenti/rette-a-carico${qs ? `?${qs}` : ''}`)
 const ADMIN_AB = { id: 'admin-1', role: 'admin', scuola_id: SEDE_A }
@@ -128,8 +128,10 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
   // campi valorizzati. In produzione `classe_sezione` e — per una scheda incompleta — `nome` e
   // `cognome` possono essere NULL: `legamiDaRisposta` li avrebbe scartati come malformati, e quei
   // bambini sarebbero tornati «Non generata» con un log di «voci scartate» senza colpa. Il loader
-  // trasforma nome e cognome NULL in stringa vuota (la frase diventa «Paga il fratello (Sez. …)»,
-  // non un crash né uno scarto) e lascia `classe_sezione` NULL, che è valido.
+  // trasforma nome e cognome NULL in stringa vuota (non un crash né uno scarto) e lascia
+  // `classe_sezione` NULL, che è valido. La frase che ne esce è «Paga il fratello (Sez. …)» con UNO
+  // spazio: fino alla quarta revisione (Q8, 2026-09-29) questo commento lo diceva, ma il codice ne
+  // metteva due («Paga il fratello␣␣(Sez. …)») — qui sotto ora lo si verifica.
   it('R7b — paganti con classe NULL e con nome/cognome NULL: zero scarti', async () => {
     h.db.alunni.push(
       alunno('pn', SEDE_A, { classe_sezione: null }), alunno('fn', SEDE_A, { retta_a_carico_di: 'pn' }),
@@ -140,6 +142,8 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
     expect(per.fn).toMatchObject({ id: 'pn', classe_sezione: null })
     expect(per.fv).toMatchObject({ id: 'pv', nome: '', cognome: '' })
     expect(legamiDaRisposta(corpo.data)).toEqual({ legami: corpo.data, scartati: 0 })
+    // Q8: la frase di quel pagante, com'è davvero.
+    expect(prefissoPaganteIt(per.fv as unknown as PaganteRetta)).toBe('Paga il fratello (Sez-pv)')
   })
 
   it('scuola_id restringe a quella sede', async () => {

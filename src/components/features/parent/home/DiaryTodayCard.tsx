@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card'
 import { useDateFormat } from '@/lib/i18n/date'
 import { voceDaMostrare } from '@/lib/diary/registrazione'
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile'
+import { segnalaDiarioNonLetto } from '@/lib/diary/lettura-genitore'
 
 interface Entry {
   id: string
@@ -34,41 +35,76 @@ const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(
  * diario di oggi. Dato esistente: GET /api/diary/entries?alunno_id=&from=&to=
  * (sola lettura). Si nasconde se non ci sono eventi oggi.
  */
+/**
+ * Dopo un ritorno nell'app andato a vuoto si riprova una volta dopo questo tempo. Misurato il
+ * 2026-09-28: in 14 giorni la lettura del diario è fallita a stato 0 967 volte, per ~220 utenti.
+ */
+const RITENTA_DOPO_MS = 4_000
+
+/** Ciò che la card mostra, e di quale figlio e di quale giorno è. `entries: null` = non letto. */
+interface Mostrato {
+  studente: string
+  entries: Entry[] | null
+}
+
 export function DiaryTodayCard({ studentId, href }: Props) {
   const t = useTranslations('home')
   const { ora: fmtTime } = useDateFormat()
-  const [entries, setEntries] = useState<Entry[]>([])
-  const [loaded, setLoaded] = useState(false)
-  // Il numero dell'ultima lettura partita: solo lei scrive. Da quando la card si ricarica
-  // anche al ritorno nell'app, una lettura lenta del figlio di prima non deve scrivere
-  // sopra quello di adesso (il vecchio flag `active` copriva solo lo smontaggio).
+  const [mostrato, setMostrato] = useState<Mostrato | null>(null)
+  // Dal 2026-09-28 la card si rilegge anche al ritorno nell'app. Tre regole la tengono vera,
+  // le stesse della pagina del diario:
+  //  · scrive solo l'ultima lettura partita (`ultimaLettura`): una lettura lenta del figlio di
+  //    prima non scrive sopra quello di adesso;
+  //  · un ritorno mentre la stessa lettura è in volo la aspetta (`inVolo`), invece di
+  //    scavalcarla e — se falliva — buttare via la risposta buona che stava arrivando;
+  //  · al ritorno una lettura fallita lascia la card com'è, ma solo se a schermo c'è proprio
+  //    QUEL figlio e QUEL giorno (`aSchermo`): cambiato figlio, o passata la mezzanotte, le
+  //    voci a schermo non sono più «di oggi» di nessuno.
   const ultimaLettura = useRef(0)
+  const aSchermo = useRef<string | null>(null)
+  const inVolo = useRef<{ chiave: string; numero: number; esito: Promise<boolean> } | null>(null)
 
-  const carica = useCallback(() => {
-    if (!studentId) return
-    const questa = ++ultimaLettura.current
+  /** `true` se le voci sono arrivate; `false` se no — il ritorno nell'app allora riprova. */
+  const carica = useCallback(({ ricarica = false }: { ricarica?: boolean } = {}): Promise<boolean> => {
+    if (!studentId) return Promise.resolve(true)
     const today = new Date().toISOString().split('T')[0]
-    fetch(`/api/diary/entries?alunno_id=${studentId}&from=${today}&to=${today}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
+    const chiave = `${studentId}:${today}`
+    if (ricarica && inVolo.current?.chiave === chiave) return inVolo.current.esito
+    const numero = ++ultimaLettura.current
+
+    const esito = (async (): Promise<boolean> => {
+      let voci: Entry[] | null = null
+      try {
+        const r = await fetch(`/api/diary/entries?alunno_id=${studentId}&from=${today}&to=${today}`)
+        const d: unknown = r.ok ? await r.json() : null
         // Si filtra UNA volta sola, appena arrivano: da `entries` dipendono tre
         // cose che altrimenti mentirebbero in tre modi diversi — lo stato vuoto,
         // l'ora di «aggiornato alle» (che poteva essere quella di una riga vuota)
         // e l'elenco, che stampa il `tipo_evento` grezzo.
-        // Una risposta non valida NON svuota la card: al ritorno nell'app la rete
-        // spesso non c'è ancora, e le voci già mostrate restano vere.
-        if (questa === ultimaLettura.current && Array.isArray(d)) {
-          setEntries((d as Entry[]).filter(e => voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.note) })))
+        if (Array.isArray(d)) {
+          voci = (d as Entry[]).filter(e => voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.note) }))
         }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (questa === ultimaLettura.current) setLoaded(true)
-      })
+      } catch {
+        // Rete giù o corpo illeggibile: `voci` resta null, e qui sotto diventa l'avviso
+        // d'errore (o la card tenuta com'è) più la riga di `segnalaDiarioNonLetto`. Il guasto
+        // di rete in sé lo registra già la fetch strumentata.
+      }
+      if (inVolo.current?.numero === numero) inVolo.current = null
+      if (numero !== ultimaLettura.current) return true
+      if (voci === null) {
+        segnalaDiarioNonLetto('card', ricarica ? 'ricarica' : 'apertura')
+        if (ricarica && aSchermo.current === chiave) return false
+      }
+      aSchermo.current = chiave
+      setMostrato({ studente: studentId, entries: voci })
+      return voci !== null
+    })()
+    inVolo.current = { chiave, numero, esito }
+    return esito
   }, [studentId])
 
   useEffect(() => {
-    carica()
+    void carica()
     const letture = ultimaLettura
     // Allo smontaggio (o al cambio di figlio) nessuna lettura in volo scrive più.
     return () => { letture.current++ }
@@ -76,10 +112,34 @@ export function DiaryTodayCard({ studentId, href }: Props) {
 
   // Al ritorno nell'app si rilegge (2026-09-28): aperta al mattino, la card diceva «Ancora
   // nessun aggiornamento del diario per oggi» per tutto il giorno, con le voci già scritte.
-  // `null` = nessun orologio, solo la riapertura.
-  usePollingVisibile(carica, null)
+  // `null` = nessun orologio, solo la riapertura; se non arriva niente si riprova una volta.
+  usePollingVisibile(() => carica({ ricarica: true }), null, { ritentaDopoMs: RITENTA_DOPO_MS })
 
-  if (!loaded) return null
+  // Finché non è arrivata la prima lettura di QUESTO figlio la card non c'è, come prima: mai
+  // le voci del figlio di prima sotto il nome di quello nuovo.
+  if (!mostrato || mostrato.studente !== studentId) return null
+
+  // Il diario non si è letto: lo si dice. Fino al 2026-09-28 qui finiva «Ancora nessun
+  // aggiornamento del diario per oggi», la frase che accusava la maestra.
+  if (mostrato.entries === null) {
+    return (
+      <Card className="flex items-center gap-3 p-4">
+        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[13px] bg-kidville-green-soft text-kidville-green">
+          <BookOpen size={20} strokeWidth={1.8} />
+        </span>
+        <p className="min-w-0 flex-1 font-maven text-[13px] text-kidville-sub">{t('diaryNonLetto')}</p>
+        <button
+          type="button"
+          onClick={() => { void carica({ ricarica: true }) }}
+          className="flex-shrink-0 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green"
+        >
+          {t('diaryRiprova')}
+        </button>
+      </Card>
+    )
+  }
+
+  const entries = mostrato.entries
 
   if (entries.length === 0) {
     return (

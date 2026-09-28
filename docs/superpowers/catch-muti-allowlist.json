@@ -31,8 +31,8 @@
     "Si logga anche il ramo !res.ok, non solo l'eccezione: un 403 è una risposta regolare, e",
     "senza quel ramo resta silenzioso esattamente come prima."
   ],
-  "aggiornato": "2026-09-26",
-  "totale_occorrenze": 64,
+  "aggiornato": "2026-09-28",
+  "totale_occorrenze": 63,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -173,10 +173,6 @@
     {
       "path": "src/components/features/admin/primaria/ScrutinioGiudiziManager.tsx",
       "n": 3
-    },
-    {
-      "path": "src/components/features/parent/home/DiaryTodayCard.tsx",
-      "n": 1
     },
     {
       "path": "src/components/features/parent/home/GalleryTodayCard.tsx",

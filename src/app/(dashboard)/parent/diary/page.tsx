@@ -20,6 +20,15 @@ import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 import { oraDiRoma } from '@/lib/presenze/orario';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
+import { ascoltaNotificaAperta } from '@/lib/notifiche/pagina-aperta-da-notifica';
+import { segnalaDiarioNonLetto } from '@/lib/diary/lettura-genitore';
+
+/**
+ * Dopo un ritorno nell'app andato a vuoto (rete non ancora pronta, o solo la copia salvata) si
+ * riprova una volta dopo questo tempo. Misurato il 2026-09-28: in 14 giorni la lettura del diario
+ * è fallita a stato 0 967 volte, per ~220 utenti.
+ */
+const RITENTA_DOPO_MS = 4_000;
 
 // Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
 // (narrativa, etichetta del giorno) definite fuori dal componente, dove gli
@@ -410,6 +419,9 @@ function ParentDiaryContent() {
     // route manda SOLO sul ritardo — ai presenti il genitore non vede l'ora del tocco.
     const [checkIn, setCheckIn] = useState<string | null>(null);
     const [arrivato, setArrivato] = useState(false);
+    // Le voci del giorno NON si sono lette (rete giù o errore, e nessuna copia salvata). È un
+    // avviso a sé: fino al 2026-09-28 diventava «La maestra non ha ancora compilato il diario».
+    const [erroreLettura, setErroreLettura] = useState(false);
 
     const goDay = (delta: number) => {
         setDirection(delta as 1 | -1);
@@ -422,96 +434,143 @@ function ParentDiaryContent() {
         });
     };
 
-    // Il numero dell'ultimo caricamento partito: solo lui scrive sullo schermo. Serve da
-    // quando la pagina si ricarica anche al ritorno nell'app (2026-09-28): una ricarica
-    // lenta di «oggi» che arriva dopo il tocco su «ieri» scriverebbe le voci di oggi
-    // sotto l'etichetta di ieri.
+    // ─── Il caricamento del giorno ────────────────────────────────────────────
+    //
+    // Dal 2026-09-28 la pagina si ricarica anche al ritorno nell'app, al tocco su una notifica
+    // e con «Riprova». Tre regole tengono lo schermo vero:
+    //  · scrive solo l'ULTIMO caricamento partito (`ultimoCaricamento`): una ricarica lenta di
+    //    «oggi» arrivata dopo il tocco su «ieri» non finisce sotto l'etichetta di ieri;
+    //  · una ricarica mentre lo STESSO giorno sta già arrivando non ne fa partire un'altra:
+    //    aspetta quella (`inVolo`). Prima la scavalcava e, se falliva, lasciava a schermo il
+    //    giorno di prima sotto l'etichetta nuova (rilievo del critico, riprodotto);
+    //  · una ricarica che fallisce lascia com'è ciò che è a schermo. È sicuro per la regola di
+    //    sopra: ogni cambio di giorno o di bambino fa partire un caricamento normale, quindi
+    //    una ricarica che NON trova niente in volo ha a schermo proprio il suo giorno.
+    // Letture prima, scritture tutte insieme alla fine: lo schermo cambia una volta sola.
     const ultimoCaricamento = useRef(0);
+    const inVolo = useRef<{ chiave: string; numero: number; esito: Promise<boolean> } | null>(null);
 
-    const load = useCallback(async (dk: string, { ricarica = false }: { ricarica?: boolean } = {}) => {
-        if (!ready || !alunnoId) return; // identità non risolta: lo spinner resta
-        const questo = ++ultimoCaricamento.current;
-        const superato = () => questo !== ultimoCaricamento.current;
-        try {
-            // Carica eventi diario con cache offline. Il fallback serve l'ultima copia
-            // salvata (entriesOffline=true); rete giù e nessuna cache ⇒ stato vuoto,
-            // come prima. La cache viene isolata in un try/catch interno così un
-            // fallimento totale NON salta le fetch successive (checkin, foto).
-            let entriesData: DiaryEntry[] | null = null;
-            let entriesOffline = false;
-            let entriesLette = false;
+    /**
+     * Carica il giorno `dk`. Risponde `true` se le voci sono arrivate fresche dalla rete, `false`
+     * se non si sono lette o è arrivata solo la copia salvata: è il segnale con cui il ritorno
+     * nell'app decide se riprovare.
+     */
+    const load = useCallback((dk: string, { ricarica = false }: { ricarica?: boolean } = {}): Promise<boolean> => {
+        if (!ready || !alunnoId) return Promise.resolve(true); // identità non risolta: lo spinner resta
+        const chiave = `${alunnoId}:${dk}`;
+        if (ricarica && inVolo.current?.chiave === chiave) return inVolo.current.esito;
+        const numero = ++ultimoCaricamento.current;
+        const superato = () => numero !== ultimoCaricamento.current;
+
+        const esito = (async (): Promise<boolean> => {
             try {
-                const r = await fetchConCache<DiaryEntry[]>(
-                    `diario:${alunnoId}:${dk}:${dk}`,
-                    `/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`,
-                );
-                entriesData = r.data;
-                entriesOffline = r.offline;
-                entriesLette = true;
-            } catch {
-                // Rete assente e nessuna copia in cache: nessuna voce, come prima.
-            }
-            if (superato()) return;
-            // In RICARICA (ritorno nell'app) una lettura fallita non tocca lo schermo:
-            // subito dopo la riapertura la rete del telefono spesso non c'è ancora, e
-            // svuotare la pagina vorrebbe dire rimettere al posto delle voci proprio
-            // «La maestra non ha ancora compilato il diario».
-            if (entriesLette || !ricarica) {
-                setEntries(entriesData ? deduplicateAndSort(entriesData) : []);
-                setOffline(entriesOffline);
-            }
+                // Voci del diario, con la copia offline: se la rete non risponde, `fetchConCache`
+                // serve l'ultima copia salvata (`offline: true`); se non c'è nemmeno quella lancia.
+                let voci: DiaryEntry[] | null = null;
+                let daCopia = false;
+                try {
+                    const r = await fetchConCache<DiaryEntry[]>(
+                        `diario:${alunnoId}:${dk}:${dk}`,
+                        `/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`,
+                    );
+                    voci = r.data;
+                    daCopia = r.offline;
+                } catch {
+                    // Rete giù e nessuna copia: `voci` resta null, e qui sotto diventa l'avviso
+                    // d'errore (o lo schermo tenuto com'è) più la riga di `segnalaDiarioNonLetto`.
+                    // Il guasto di rete in sé lo registra già la fetch strumentata.
+                }
+                if (superato()) return true;
 
-            // "Entrata" dal modulo Presenze (orario di check-in del giorno)
-            const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
-            const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
-            if (superato()) return;
-            // Stessa regola delle voci: in ricarica, senza risposta si tiene l'entrata già mostrata.
-            if (ci !== null || !ricarica) {
-                const orarioRisposta = formatOrarioEntrata(ci?.orario_entrata);
-                // D3: l'ora d'ingresso si mostra SOLO sul ritardo (è l'ora del docente).
-                // La route la manda già solo lì, ma la pagina non si regge sul server.
-                // Si distingue il campo MANCANTE dal campo NULLO:
-                //  - proprietà `stato` assente = risposta di un server precedente al
-                //    2026-09-26, che mandava solo l'orario: l'orario vale come arrivo e
-                //    si mostra, come prima;
-                //  - `stato` presente (anche `null`, appello non fatto) = server nuovo:
-                //    l'arrivo lo decide lo stato e l'ora si mostra solo sul ritardo. Un
-                //    orario rimasto su un presente, un assente o uno stato nullo (route
-                //    regredita, riga passata da presente ad assente) non si vede.
-                const serverPrecedente = !(ci && typeof ci === 'object' && 'stato' in ci);
-                const statoRisposta: unknown = serverPrecedente ? undefined : ci.stato;
-                const arrivatoRisposta = serverPrecedente
-                    ? Boolean(orarioRisposta)
-                    : STATI_ARRIVATO.has(statoRisposta);
-                const mostraOrario = serverPrecedente || statoRisposta === 'ritardo';
-                setCheckIn(mostraOrario ? orarioRisposta : null);
-                setArrivato(arrivatoRisposta);
-            }
+                // "Entrata" dal modulo Presenze (orario di check-in del giorno)
+                const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
+                const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
+                if (superato()) return true;
 
-            // Carica foto reali associate a questo alunno per il giorno selezionato
-            // (GET gated: identità anche via header, oltre alla sessione)
-            let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
-            if (parentId) photosUrl += `&parentId=${parentId}`;
-            const photosRes = await fetch(photosUrl, parentId ? { headers: { 'x-user-id': parentId } } : undefined).catch(() => null);
-            if (photosRes?.ok) {
-                const photosData = await photosRes.json();
-                if (superato()) return;
-                setPhotos(photosData.media ?? []);
-            } else if (!ricarica && !superato()) {
-                setPhotos([]);
+                // Carica foto reali associate a questo alunno per il giorno selezionato
+                // (GET gated: identità anche via header, oltre alla sessione)
+                let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
+                if (parentId) photosUrl += `&parentId=${parentId}`;
+                const photosRes = await fetch(photosUrl, parentId ? { headers: { 'x-user-id': parentId } } : undefined).catch(() => null);
+                const photosData = photosRes?.ok ? await photosRes.json().catch(() => null) : null;
+                if (superato()) return true;
+
+                if (voci === null) segnalaDiarioNonLetto('pagina', ricarica ? 'ricarica' : 'apertura');
+                if (voci !== null || !ricarica) {
+                    setEntries(voci ? deduplicateAndSort(voci) : []);
+                    setOffline(daCopia);
+                    setErroreLettura(voci === null);
+                }
+                if (ci !== null || !ricarica) {
+                    const orarioRisposta = formatOrarioEntrata(ci?.orario_entrata);
+                    // D3: l'ora d'ingresso si mostra SOLO sul ritardo (è l'ora del docente).
+                    // La route la manda già solo lì, ma la pagina non si regge sul server.
+                    // Si distingue il campo MANCANTE dal campo NULLO:
+                    //  - proprietà `stato` assente = risposta di un server precedente al
+                    //    2026-09-26, che mandava solo l'orario: l'orario vale come arrivo e
+                    //    si mostra, come prima;
+                    //  - `stato` presente (anche `null`, appello non fatto) = server nuovo:
+                    //    l'arrivo lo decide lo stato e l'ora si mostra solo sul ritardo. Un
+                    //    orario rimasto su un presente, un assente o uno stato nullo (route
+                    //    regredita, riga passata da presente ad assente) non si vede.
+                    const serverPrecedente = !(ci && typeof ci === 'object' && 'stato' in ci);
+                    const statoRisposta: unknown = serverPrecedente ? undefined : ci.stato;
+                    const arrivatoRisposta = serverPrecedente
+                        ? Boolean(orarioRisposta)
+                        : STATI_ARRIVATO.has(statoRisposta);
+                    const mostraOrario = serverPrecedente || statoRisposta === 'ritardo';
+                    setCheckIn(mostraOrario ? orarioRisposta : null);
+                    setArrivato(arrivatoRisposta);
+                }
+                if (photosData !== null || !ricarica) setPhotos(photosData?.media ?? []);
+                return voci !== null && !daCopia;
+            } finally {
+                if (!superato()) setLoadedKey(dk);
+                if (inVolo.current?.numero === numero) inVolo.current = null;
             }
-        } finally {
-            if (!superato()) setLoadedKey(dk);
-        }
+        })();
+        inVolo.current = { chiave, numero, esito };
+        return esito;
     }, [ready, alunnoId, parentId]);
 
-    useEffect(() => { load(dateKey); }, [dateKey, load]);
+    useEffect(() => { void load(dateKey); }, [dateKey, load]);
+
+    // Il giorno che era «oggi» all'ultimo sguardo. Con l'app rimasta aperta la notte, al ritorno
+    // la pagina che mostrava oggi passa al nuovo oggi, invece di rileggere ieri.
+    const oggiVisto = useRef(dateKey);
 
     // Al ritorno nell'app si ricarica il giorno mostrato. `null` = nessun orologio: le voci
     // cambiano poche volte al giorno, e il momento in cui quelle vecchie mentono è la
     // riapertura (2026-09-28: chi apriva il diario al mattino e tornava nel pomeriggio
-    // leggeva ancora «La maestra non ha ancora compilato», con le voci già scritte).
-    usePollingVisibile(() => load(dateKey, { ricarica: true }), null);
+    // leggeva ancora «La maestra non ha ancora compilato», con le voci già scritte). Se non
+    // arriva niente di fresco si riprova una volta, dopo `RITENTA_DOPO_MS`.
+    usePollingVisibile(() => {
+        const oggi = toDateKey(new Date());
+        if (oggi !== oggiVisto.current) {
+            const mostravaOggi = dateKey === oggiVisto.current;
+            oggiVisto.current = oggi;
+            if (mostravaOggi) {
+                setDirection(1);
+                setDateKey(oggi);
+                return true;
+            }
+        }
+        return load(dateKey, { ricarica: true });
+    }, null, { ritentaDopoMs: RITENTA_DOPO_MS });
+
+    // Il tocco su una notifica che porta al diario, con il diario già aperto (2026-09-28): la
+    // navigazione non rimonta la pagina, quindi è l'avviso a riportarla a oggi e a rileggere.
+    // Se la notifica è di un altro figlio, a cambiarlo ci pensa la navigazione (`?id=`).
+    useEffect(() => ascoltaNotificaAperta('/parent/diary', () => {
+        const oggi = toDateKey(new Date());
+        oggiVisto.current = oggi;
+        if (dateKey !== oggi) {
+            setDirection(1);
+            setDateKey(oggi);
+        } else {
+            void load(oggi, { ricarica: true });
+        }
+    }), [dateKey, load]);
 
     // Carica il nome reale del bambino
     useEffect(() => {
@@ -668,8 +727,31 @@ function ParentDiaryContent() {
                         </div>
                     )}
 
+                    {/* Il diario NON si è letto: lo si dice, con «Riprova». Fino al 2026-09-28
+                        qui finiva nello stato vuoto, cioè «La maestra non ha ancora compilato». */}
+                    {!loading && erroreLettura && (
+                        <div className="flex flex-col items-center justify-center py-20 text-center">
+                            <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
+                                📖
+                            </div>
+                            <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">
+                                {t('erroreTitolo')}
+                            </h2>
+                            <p className="font-maven text-kidville-sub max-w-xs text-sm">
+                                {t('erroreTesto')}
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => { void load(dateKey, { ricarica: true }); }}
+                                className="mt-4 font-maven rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow"
+                            >
+                                {t('riprova')}
+                            </button>
+                        </div>
+                    )}
+
                     {/* Stato vuoto (nessuna voce e nessuna entrata registrata) */}
-                    {!loading && entries.length === 0 && !arrivato && (
+                    {!loading && !erroreLettura && entries.length === 0 && !arrivato && (
                         <div className="flex flex-col items-center justify-center py-20 text-center">
                             <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
                                 📖
@@ -684,7 +766,7 @@ function ParentDiaryContent() {
                     )}
 
                     {/* Timeline eventi (con "Entrata" in cima, letta dalle Presenze) */}
-                    {!loading && (arrivato || entries.length > 0) && (
+                    {!loading && !erroreLettura && (arrivato || entries.length > 0) && (
                         <div className="space-y-3">
                             {/* Banner umore (DR mood banner, M5.4): legge l'evento 'umore' più
                                 recente del giorno (dettagli.umore); senza evento resta il testo

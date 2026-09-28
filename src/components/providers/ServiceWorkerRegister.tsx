@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { logClient, type EventoNome } from '@/lib/logging/client'
 import { richiediAperturaThread } from '@/lib/chat/apertura-thread'
 import { PARAM_THREAD, leggiIdThread, leggiLinkChat } from '@/lib/chat/link-conversazione'
+import { segnalaNotificaAperta } from '@/lib/notifiche/pagina-aperta-da-notifica'
 
 /**
  * Registra il Service Worker (`/sw.js`) su TUTTE le piattaforme — web e nativo
@@ -36,6 +37,8 @@ interface MessaggioSW {
   bucket?: unknown
   /** Solo in `kv-apri-thread`: la conversazione da aprire. */
   threadId?: unknown
+  /** Solo in `kv-notifica-aperta`: l'indirizzo della notifica toccata. */
+  url?: unknown
 }
 
 /**
@@ -114,6 +117,13 @@ export function ServiceWorkerRegister() {
       const m = (ev.data ?? {}) as MessaggioSW
       if (m.tipo === 'kv-apri-thread') {
         apriThreadDalServiceWorker(m.threadId)
+        return
+      }
+      // Il clic su una web push con la finestra GIÀ su quella pagina (2026-09-28): il SW la porta
+      // solo davanti, e la pagina montata va avvisata perché si aggiorni. L'indirizzo lo ricontrolla
+      // `segnalaNotificaAperta`: uno che non è di questa app non avvisa nessuno.
+      if (m.tipo === 'kv-notifica-aperta') {
+        if (typeof m.url === 'string') segnalaNotificaAperta(m.url)
         return
       }
       if (m.tipo !== 'kv-sw-log') return

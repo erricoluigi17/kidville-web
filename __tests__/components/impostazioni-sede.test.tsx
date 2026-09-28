@@ -73,7 +73,7 @@ const impostazioniDi = (scuolaId: string): Record<string, unknown> => ({
   funzioni_matrice: {},
   // Entrambe le sedi hanno le note libere ATTIVE: così, dopo un cambio sede, una
   // casella spenta non può che venire dalla bozza della sede precedente.
-  diario_config: { note_libere_abilitate: true },
+  diario_config: { routine_attive: ['umore'] },
   presenze_config: {},
   note_config: {},
   avvisi_config: {},
@@ -229,17 +229,17 @@ describe('Impostazioni — cambiare sede riparte da capo, senza portarsi dietro 
     paginaConSedi(SEDE_B)
     fireEvent.click(screen.getAllByRole('button', { name: new RegExp(itAdminSettings.voceDiario, 'i') })[0])
 
-    // Sulla sede A l'operatore spegne le note libere, e NON salva.
-    const noteLibere = () => screen.getByLabelText(itAdminSettings.diNoteLibere) as HTMLInputElement
-    await waitFor(() => expect(noteLibere().checked).toBe(true))
-    fireEvent.click(noteLibere())
-    expect(noteLibere().checked).toBe(false)
+    // Sulla sede A l'operatore spegne l'Umore, e NON salva.
+    const umore = () => screen.getByLabelText(itAdminSettings.diUmore) as HTMLInputElement
+    await waitFor(() => expect(umore().checked).toBe(true))
+    fireEvent.click(umore())
+    expect(umore().checked).toBe(false)
 
     // Passa alla sede B: la bozza dell'altra sede non deve sopravvivere, o il
     // prossimo «Salva» scriverebbe su B una scelta fatta guardando A.
     fireEvent.click(screen.getByText('cambia-sede'))
 
-    await waitFor(() => expect(noteLibere().checked).toBe(true))
+    await waitFor(() => expect(umore().checked).toBe(true))
   })
 
   // Il rimontaggio della pagina (`key={sid}`) e la dipendenza dell'effetto sono

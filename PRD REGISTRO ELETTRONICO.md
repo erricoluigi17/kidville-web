@@ -5,27 +5,38 @@
 - **Il diario c'è.** Nella Sez. Abbracci, dal 14 al 25/09, 169 giornate-presenza su 170 hanno almeno una voce. Dal 21/09 sono partite notifiche per ogni bambino con voci.
 - **Il genitore però lo legge prima che ci sia.** In quella sezione le voci arrivano più tardi che negli altri nidi: alle 13:00 è visibile qualcosa solo nel 50% delle giornate, contro il 97–100% delle altre sezioni. Nel frattempo la pagina dice «La maestra non ha ancora compilato il diario per questo giorno».
 - **La pagina del diario e la card «Oggi a scuola» caricavano le voci una sola volta, all'apertura.** Chi le apriva al mattino e tornava nell'app nel pomeriggio leggeva ancora quel messaggio, con le voci già in archivio.
+- **E una lettura fallita diceva la stessa frase.** Rete giù, o sessione scaduta, senza una copia salvata: al posto dell'avviso d'errore compariva «La maestra non ha ancora compilato». Misurato in `app_log`: in 14 giorni la lettura del diario (`GET /api/diary/entries`) è fallita a stato 0 **967 volte, per ~220 utenti** (683 Android, 164 iOS, 120 web).
 
 **Tre interventi, decisi dal titolare.**
 
 1. **Il diario si ricarica quando si torna nell'app.** Vale per la pagina `parent/diary` e per la card `DiaryTodayCard` della home.
    - Il segnale è quello di `usePollingVisibile`, che ora accetta `intervalloMs: null`: solo al ritorno, senza orologio. Le voci cambiano poche volte al giorno, e un polling sarebbe stato volume inutile (il difetto del 7 settembre).
-   - Una ricarica fallita non svuota lo schermo. Subito dopo la riapertura la rete del telefono spesso non c'è ancora: voci, entrata e foto già mostrate restano.
-   - Scrive sullo schermo solo l'ultimo caricamento partito. Una ricarica lenta di «oggi» non finisce sotto il giorno scelto nel frattempo.
+   - Se il ritorno va a vuoto (nessuna risposta, o solo la copia salvata) si riprova **una volta**, 4 secondi dopo: opzione nuova `ritentaDopoMs` dell'hook, annullata se la pagina torna nascosta, se arriva un altro ritorno o allo smontaggio.
+   - Una ricarica fallita non svuota lo schermo: voci, entrata e foto già mostrate restano.
+   - Scrive sullo schermo solo l'ultimo caricamento partito, e una ricarica mentre lo stesso giorno sta già arrivando **aspetta quello** invece di scavalcarlo.
+   - Con l'app rimasta aperta la notte, la pagina che mostrava «oggi» passa al nuovo oggi.
 2. **La notifica «Diario aggiornato» apre il diario di quel figlio.**
    - `enqueueDiarioGenitori` scrive `link = /parent/diary?id=<alunno>`. Prima il link era NULL (10.247 notifiche dal 21/09) e il dispatcher mandava `url: '/'`: il tocco portava alla home, e con due figli sul figlio selezionato l'ultima volta.
    - `?id=` è la convenzione di `withIdentity`, e `useParentIdentity` lo rivalida contro i figli veri del genitore.
    - Da ora il link lo usano anche il centro notifiche in app e la push web. Le notifiche già inviate restano senza link.
-3. **Impostazioni → Diario: tolti «Compilazione dalle», «Compilazione fino alle» e «Visibile ai genitori dalle».**
-   - Venivano salvati in `admin_settings.diario_config` (09:00 nelle tre sedi), ma non li leggeva nessuna rotta, funzione o policy.
-   - L'unica regola applicata è `buffer_visibilita_min`: ogni voce è visibile 10 minuti dopo il salvataggio, a qualunque ora.
-   - Tolte anche le tre traduzioni (it/en). Le chiavi restano salvate nel jsonb delle sedi, ma sono inerti: il salvataggio del pannello fa uno shallow-merge e non le cancella. Nessuna migrazione.
+   - **Con il diario già aperto**, la navigazione non rimonta la pagina (Next 16). Il tocco allora avvisa la pagina con l'evento `kv:notifica-aperta` (`src/lib/notifiche/pagina-aperta-da-notifica.ts`), che la riporta a oggi e la rilegge. Vale per il tocco nativo, la campanella e la web push: il Service Worker, trovata una finestra che mostra già l'indirizzo, oltre a portarla davanti le manda `kv-notifica-aperta`.
+3. **Impostazioni → Diario: resta solo ciò che il codice applica.**
+   - Tolti «Compilazione dalle», «Compilazione fino alle» e «Visibile ai genitori dalle». Venivano salvati in `admin_settings.diario_config` (09:00 nelle tre sedi), ma non li leggeva nessuna rotta, funzione o policy. L'unica regola applicata è `buffer_visibilita_min`: ogni voce è visibile 10 minuti dopo il salvataggio, a qualunque ora.
+   - Tolti per la stessa ragione «Note libere dei docenti abilitate» (`note_libere_abilitate`, nessun lettore) e le routine Pasto, Sonno, Cambio e Attività: di `routine_attive` il codice legge solo `umore` (`umoreAttivo`). Al loro posto c'è l'interruttore «Umore della giornata nel diario», che conserva le altre voci salvate.
+   - Tolto il badge «prossimamente» dal titolo, e riscritta la descrizione: diceva che valeva solo l'Umore, mentre il ritardo di visibilità ed «Esponi ai docenti di primaria» funzionano.
+   - Le chiavi tolte restano salvate nel jsonb delle sedi, ma sono inerti: il salvataggio del pannello fa uno shallow-merge e non le cancella. Nessuna migrazione.
 
-Test nuovi: `diario-genitore-ricarica-al-ritorno`, `diario-oggi-card-ricarica`, `diario-settings-senza-orari-fantasma` e un caso in più in `use-polling-visibile` e `diario-notifiche`. Ogni test è stato visto rosso prima della correzione; quelli della ricarica anche rompendo di proposito il codice in quattro modi.
+**Correzioni emerse dalla revisione dello stesso lavoro** (prima del merge):
+- **Il diario non accusa più la maestra quando non si legge.** Pagina e card mostrano «Diario non caricato» / «Non siamo riusciti a leggere il diario di oggi» con «Riprova», e registrano `diario-genitore: lettura non riuscita (<pagina|card>, <apertura|ricarica>)` in `app_log` (livello `warn`, senza dati personali).
+- **Gara riprodotta prima della correzione:** tocco su «ieri», telefono in tasca, ritorno con la rete giù. La ricarica scavalcava il caricamento in volo e, fallendo, lasciava il pranzo di oggi sotto l'etichetta «ieri». Ora la ricarica aspetta il caricamento dello stesso giorno. La card aveva la stessa gara, corretta allo stesso modo.
+- **Card:** cambiato figlio, le voci dell'altro non si vedono più nemmeno mentre la lettura nuova è in volo; il giorno dopo, una lettura fallita non spaccia le voci di ieri per quelle di oggi. Il suo `.catch(() => {})` è sparito: `DiaryTodayCard.tsx` esce dall'allowlist dei catch muti (tetti 42→41 file, 64→63 occorrenze).
+- **Selettore del figlio:** su una pagina con `?id=` nell'indirizzo (i link della home, e ora la notifica) toccare l'altro figlio ricaricava la pagina sul figlio di prima, perché l'identità legge prima l'indirizzo. Ora `ChildSwitcher` riscrive `id` col figlio scelto prima di ricaricare.
 
-**Resta aperto, non toccato qui:** se il caricamento fallisce (rete, sessione scaduta) senza una copia in cache, la pagina mostra ancora «La maestra non ha ancora compilato il diario», cioè dà la colpa alla maestra. Un caso visto il 24/09: home intera in 401. I 401 non arrivano in `app_log`.
+Test nuovi: `diario-genitore-ricarica-al-ritorno` (9), `diario-oggi-card-ricarica` (7), `diario-settings-senza-orari-fantasma` (3), `notifica-aperta-pagina` (4), `child-switcher-id-nell-indirizzo` (2), più casi in `use-polling-visibile` (11–13), `diario-notifiche`, `sw.test` e `ServiceWorkerRegister`. Ogni test è stato visto rosso prima della correzione; hook, pagina, card e pannello anche rompendo di proposito il codice (3 + 6 + 6 + 2 mutazioni, tutte prese).
 
-Gate locale: eslint 0, tsc 0 errori, vitest `1572 passed` (23.190 test), build ok. E2E in CI.
+Collaudo nel browser non fatto: in locale il middleware rinvia al login. La copertura dell'interfaccia vera è l'E2E in CI.
+
+Gate locale: eslint 0, tsc 0 errori, vitest `1574 passed` (23.213 test), build ok. E2E in CI.
 
 ## 🧭 Changelog — PR-B dopo la #171: fotografie dalla produzione — 2026-09-26 (branch `chore/dopo-merge-171`)
 
@@ -28269,11 +28280,14 @@ _Modulo PRD: Modulo Impostazioni (tutto)_
 - Toggle 'Funzione attiva per grado'
 - Pulsante 'Salva' (Funzioni & moduli)
 - Badge 'Salvato ✓'
-- Selettore 'Routine attive nel diario'
-- Campo 'Ritardo visibilità genitori (min)': è l'unica regola di visibilità del diario che si applica. **Non devono più esserci** 'Compilazione dalle', 'Compilazione fino alle' e 'Visibile ai genitori dalle': sono stati tolti il 2026-09-28 perché nessuno li applicava. Vedi il changelog di quel giorno.
-- Toggle 'Note libere docenti abilitate'
-- Badge 'Coming soon' (Diario)
+- Toggle 'Umore della giornata nel diario': l'unica routine che il codice applica.
+- Campo 'Ritardo visibilità genitori (min)': è l'unica regola di visibilità del diario che si applica.
+- Toggle 'Esponi il diario 0-6 ai docenti di primaria'
 - Pulsante 'Salva' (Diario)
+> **Non devono più esserci** nel pannello Diario: 'Compilazione dalle', 'Compilazione fino alle',
+> 'Visibile ai genitori dalle', 'Note libere docenti abilitate', il selettore 'Routine attive nel
+> diario' con Pasto/Sonno/Cambio/Attività e il badge 'prossimamente'. Tolti il 2026-09-28 perché
+> nessuno li applicava: vedi il changelog di quel giorno.
 - Campo 'Orario cut-off mensa'
 - Selettore 'Giorni mensa attivi'
 - Campo 'Settimane di rotazione menu'

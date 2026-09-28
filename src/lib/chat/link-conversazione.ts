@@ -110,6 +110,16 @@ function interno(link: string): boolean {
 }
 
 /**
+ * Il PERCORSO di un link di questa app (senza query né frammento), letto come lo legge il browser;
+ * `null` se il link non è di questa app. Serve a chi deve dire «il tocco porta qui» senza fidarsi
+ * della stringa grezza (`pagina-aperta-da-notifica.ts`).
+ */
+export function percorsoInterno(link: string): string | null {
+    const pulito = comeLoLeggeIlBrowser(link);
+    return interno(pulito) ? scomponi(pulito).percorso : null;
+}
+
+/**
  * Se il link è una delle due pagine chat — percorso ESATTO, niente `/parent/chatbot` — la sua area e
  * la conversazione che nomina (`null` se non ne nomina una valida). Qualunque altra cosa: `null`.
  */

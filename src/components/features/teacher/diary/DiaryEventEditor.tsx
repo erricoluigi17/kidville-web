@@ -16,7 +16,7 @@ import { orarioAttivita } from '@/lib/diary/attivita';
 import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli } from '@/lib/diary/umore';
 import {
     tipiAttivi, routinePersonalizzate, idDiTipo, dettagliRoutine, valoreRoutineValido, eRoutinePersonalizzata,
-    TIPI_BASE, type RoutinePersonalizzata,
+    valoreRoutineVuoto, TIPI_BASE, type RoutinePersonalizzata,
 } from '@/lib/diary/routine';
 import { voceDaMostrare, eventoSelettivo, eliminabile } from '@/lib/diary/registrazione';
 import { fetchDiarioConfig, invalidaDiarioConfigCache, type DiarioConfigRisposta } from '@/lib/diary/config-cache';
@@ -245,14 +245,11 @@ export function useDiaryDay(
     /** Quanti segni NON salvati la rilettura della routine ha dovuto togliere (non valgono più). */
     const [segniTolti, setSegniTolti] = useState(0);
     const registrateRef = useRef<{ tipo: DiaryEventType | null; righe: Record<string, Record<string, unknown>> }>({ tipo: null, righe: {} });
-    useEffect(() => {
-        statiRef.current = studentStates;
-        salvatiRef.current = savedStudentIds;
-        registrateRef.current = registrate;
-    }, [studentStates, savedStudentIds, registrate]);
-    /** Un salvataggio è in volo: la riconciliazione aspetta la sua fine (vedi `handleSave`). */
-    const salvataggioInVolo = useRef(false);
+    /** Salvataggi in volo (un contatore, non un sì/no): la riconciliazione aspetta che siano zero. */
+    const salvataggiInVolo = useRef(0);
     const riconciliazioneInSospeso = useRef(false);
+    /** La sezione a schermo ADESSO, per chi decide dopo un `await`. */
+    const paramClasseRef = useRef<string>('');
     /** Di quale sezione è la lista a schermo (per non tenerla se la lettura della nuova fallisce). */
     const sezioneLista = useRef<string | null>(null);
     /**
@@ -386,8 +383,10 @@ export function useDiaryDay(
         setConfigLetta({ chiave, cfg: d });
         // Con un salvataggio in volo, la riconciliazione aspetta: la POST che torna rimette in
         // archivio valori che lo schermo avrebbe appena svuotato, e il Salva dopo li cancellerebbe.
-        // A salvataggio finito si rilegge l'archivio (vedi `handleSave`).
-        if (salvataggioInVolo.current) riconciliazioneInSospeso.current = true;
+        // Si riconcilia a salvataggio finito, DOPO che l'archivio (`registrate`) è aggiornato: vedi
+        // l'effetto che sincronizza i ref. Niente ripristino dall'archivio, che cancellava i segni
+        // non salvati di qualunque tipo (quinto giro, 2026-09-28).
+        if (salvataggiInVolo.current > 0) riconciliazioneInSospeso.current = true;
         else riconcilia(d);
         chiudiSeNonDisponibile(d);
         return d !== null;
@@ -410,7 +409,8 @@ export function useDiaryDay(
         const def = routinePersonalizzate(cfg?.routine_personalizzate).find(r => r.id === id && r.attiva);
         if (!def) return;
         const reg = registrateRef.current.tipo === tipo ? registrateRef.current.righe : {};
-        const vuoto = (v: unknown) => v === null || v === undefined;
+        // Vuoto è anche un testo di soli spazi: non è un «segno tolto» a ogni rilettura.
+        const vuoto = (v: unknown) => valoreRoutineVuoto(v);
         const nuoviStati: Record<string, unknown> = {};
         const nonPiu: Record<string, unknown> = {};
         let tolti = 0;
@@ -448,6 +448,19 @@ export function useDiaryDay(
         if (tolti > 0) setSegniTolti(n => n + tolti);
     };
 
+    // I gemelli degli stati, aggiornati dopo ogni commit; e, a salvataggio finito, la riconciliazione
+    // rimandata — qui, perché qui i ref dicono già com'è l'archivio dopo la POST.
+    useEffect(() => {
+        statiRef.current = studentStates;
+        salvatiRef.current = savedStudentIds;
+        registrateRef.current = registrate;
+        if (!isSaving && salvataggiInVolo.current === 0 && riconciliazioneInSospeso.current) {
+            riconciliazioneInSospeso.current = false;
+            const cfg = configLettaRef.current?.cfg ?? null;
+            queueMicrotask(() => riconcilia(cfg));
+        }
+    }, [studentStates, savedStudentIds, registrate, isSaving]);
+
     const eventTypes = (configRoutine === undefined ? [] : tipiAttivi(configRoutine ?? {})) as DiaryEventType[];
     const personalizzate = routinePersonalizzate(configRoutine?.routine_personalizzate).filter(r => r.attiva);
     /** La definizione della routine della scuola dietro un tipo di voce, o `null` (tipi base). */
@@ -482,6 +495,7 @@ export function useDiaryDay(
     // spazio di differenza dal nome della sezione e il diario si apriva senza
     // nessun bambino, con 200 e senza un log.
     const paramClasse = parametroClasse({ id: opts?.sectionId, name: sezione ?? '' });
+    useEffect(() => { paramClasseRef.current = paramClasse; }, [paramClasse]);
 
     /**
      * Le voci di oggi della sezione (vedi `vociDiOggi`). `scopo=spente` non cambia la risposta: la
@@ -604,13 +618,13 @@ export function useDiaryDay(
         // ogni `await` si controlla, e se è superato si esce SENZA scrivere stato.
         const mio = ++ripristinoCorrente.current;
         const superato = () => mio !== ripristinoCorrente.current;
-        // Il giro delle voci si prende alla PARTENZA: vince l'ultima lettura partita.
-        const mioVoci = ++giroVoci.current;
         const nessuna = () => {
             setSavedStudentIds(new Set()); setRegistrate({ tipo: eventType, righe: {} }); setNonPiuValidi({});
             setRigheSoloNota({ tipo: eventType, ids: new Set() });
         };
         if (list.length === 0 || !sezione) { nessuna(); return; }
+        // Il giro delle voci si prende alla PARTENZA della lettura: vince l'ultima partita.
+        const mioVoci = ++giroVoci.current;
         try {
             const today = todayISO();
             const res = await fetch(`/api/diary/entries?${paramClasse}&date=${today}&userId=${userId}`);
@@ -999,6 +1013,18 @@ export function useDiaryDay(
             .map(s => s.id)
         : [];
     const idsDaTogliere = [...idsSvuotati.filter(id => !svuotatiConNota.has(id)), ...idsSoloNotaSvuotate];
+    /**
+     * Un valore «non più previsto» con una nota in archivio, e la nota ora tolta: si manda la riga
+     * col valore vuoto e la nota vuota — il server tiene il valore (non lo si cancella senza il
+     * cestino) e toglie la nota. Senza, il pulsante restava spento e la nota restava al genitore.
+     */
+    const noteDaTogliere = new Set(
+        selectedEvent !== null && eRoutinePersonalizzata(selectedEvent)
+            ? students
+                .filter(s => s.id in nonPiuValidi && !conNotaDi(s.id) && Boolean((ultimeDi(selectedEvent)[s.id]?.nota_bambino ?? '').trim()))
+                .map(s => s.id)
+            : [],
+    );
     const daTogliere = idsDaTogliere.length;
     const daTogliereSet = new Set(idsDaTogliere);
 
@@ -1010,14 +1036,15 @@ export function useDiaryDay(
     const daSalvare = selectedEvent === null
         ? 0
         : eventoSelettivo(selectedEvent)
-            ? students.filter(s => !daTogliereSet.has(s.id) && voceDaMostrare(selectedEvent, dettagliDi(s.id), {
+            ? students.filter(s => !daTogliereSet.has(s.id) && (noteDaTogliere.has(s.id) || voceDaMostrare(selectedEvent, dettagliDi(s.id), {
                 conNota: conNotaDi(s.id),
-              })).length
+              }))).length
             : students.length;
 
     const handleSave = async () => {
         setIsSaving(true);
-        salvataggioInVolo.current = true;
+        salvataggiInVolo.current += 1;
+        const classeAlSalva = paramClasse;
         try {
             if (!selectedEvent || !userId) return;
             // Fine prima dell'inizio: il pulsante è già spento, questa è la cintura.
@@ -1083,7 +1110,7 @@ export function useDiaryDay(
             const targetStudents = students
                 .filter(student => !daTogliereSet.has(student.id))
                 .map(student => ({ student, dettagli: dettagliDi(student.id) }))
-                .filter(({ student, dettagli }) => voceDaMostrare(
+                .filter(({ student, dettagli }) => noteDaTogliere.has(student.id) || voceDaMostrare(
                     selectedEvent, dettagli,
                     { conNota: notaSezione || (noteBambino[student.id]?.trim().length ?? 0) > 0 },
                 ));
@@ -1197,7 +1224,11 @@ export function useDiaryDay(
                         targetStudents.forEach(({ student, dettagli }) => {
                             if (!salvatiIds.has(student.id)) return;
                             if (voceDaMostrare(selectedEvent, dettagli)) ids.delete(student.id);
-                            else ids.add(student.id);
+                            // Di sola nota solo per la nota del BAMBINO (come al ripristino): una riga
+                            // partita per la nota di sezione non la «svuota» nessuno. E non chi ha un
+                            // valore «non più previsto»: lì il server ha tenuto il valore.
+                            else if ((noteBambino[student.id]?.trim() ?? '') !== '' && !(student.id in nonPiuValidi)) ids.add(student.id);
+                            else ids.delete(student.id);
                         });
                         return { tipo: prev.tipo, ids };
                     });
@@ -1240,6 +1271,8 @@ export function useDiaryDay(
                     tolti.forEach(id => ids.delete(id));
                     return { tipo: prev.tipo, ids };
                 });
+                // La riga non c'è più: nemmeno il suo valore «non più previsto».
+                if (stessoRiquadro()) setNonPiuValidi(prev => { const n = { ...prev }; tolti.forEach(id => { delete n[id]; }); return n; });
                 // Lo schermo si aggiorna solo se mostra ancora il riquadro salvato:
                 // altrimenti il campo vuoto e la ✅ tolta finirebbero su un altro tipo.
                 if (stessoRiquadro()) {
@@ -1301,7 +1334,7 @@ export function useDiaryDay(
             // lettura nuova è fresca; il suo `++ripristinoCorrente` scarta qualunque
             // GET della riapertura ancora in volo. Con un tipo DIVERSO aperto (la
             // Sveglia) non si rilegge niente: quel riquadro non l'ha toccato nessuno.
-            if (!stessoRiquadro() && tipoAperto.current === selectedEvent
+            if (!stessoRiquadro() && tipoAperto.current === selectedEvent && paramClasseRef.current === classeAlSalva
                 && (salvati > 0 || tolti.length > 0 || falliti.length > 0)) {
                 // Si riparte da vuoto, come all'apertura: con l'archivio di quel tipo
                 // ormai VUOTO il ripristino non scrive lo stato per bambino, e l'orario
@@ -1324,17 +1357,10 @@ export function useDiaryDay(
             logClient({ livello: 'error', evento: 'fetch', messaggio: `diario-salvataggio-fallito: ${nomeErrore(err)}` });
             alert(t('alertErroreSalvataggio'));
         } finally {
-            salvataggioInVolo.current = false;
+            salvataggiInVolo.current = Math.max(0, salvataggiInVolo.current - 1);
+            // La riconciliazione rimandata (se una rilettura è arrivata durante il volo) la fa
+            // l'effetto dei ref, dopo il commit di questo salvataggio.
             setIsSaving(false);
-            // Una rilettura della configurazione è arrivata mentre il salvataggio era in volo: ora
-            // che la POST è tornata, lo schermo si rilegge dall'archivio con la definizione nuova
-            // (vedi `ricaricaConfig`). Riconciliare prima avrebbe svuotato un valore che la POST
-            // rimetteva in archivio, e il Salva dopo l'avrebbe cancellato.
-            if (riconciliazioneInSospeso.current) {
-                riconciliazioneInSospeso.current = false;
-                const tipo = tipoAperto.current;
-                if (tipo) void restoreFromSupabase(tipo);
-            }
         }
     };
 
@@ -1991,7 +2017,11 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                         ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {t('salvataggio')}</>
                                         : selettivo
                                             ? <><span>{cfg.emoji}</span> {daSalvare > 0
-                                                ? t('salvaConOrario', { count: daSalvare })
+                                                // Umore e routine della scuola: il pulsante dice ANCHE le
+                                                // cancellazioni che partono insieme al salvataggio.
+                                                ? (!eNanna && daTogliere > 0
+                                                    ? t('salvaETogli', { salva: daSalvare, togli: daTogliere })
+                                                    : t('salvaConOrario', { count: daSalvare }))
                                                 : daTogliere > 0
                                                     ? t(eNanna ? 'nannaTogliOrari' : 'routineTogli', { count: daTogliere })
                                                     : nessunaRegistrazione()}</>

@@ -339,5 +339,16 @@ describe('Impostazioni → Diario: quarto giro della revisione (2026-09-28)', ()
     await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
     expect((h.save.mock.calls[1][0] as { diario_config: Record<string, unknown> }).diario_config).toEqual({ diario_primaria_visibile: true });
   });
+
+  it('un ritardo svuotato, dopo «Salvato», torna a mostrare il valore del server', async () => {
+    h.config = { buffer_visibilita_min: 10 };
+    const { container } = monta();
+    const campo = () => container.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(campo(), { target: { value: '' } });
+    fireEvent.click(screen.getByLabelText(itAdminSettings.diEsponiPrimaria));
+    salva();
+    await waitFor(() => expect(screen.getByRole('status')).toBeInTheDocument());
+    expect(campo().value).toBe('10');
+  });
 });
 

@@ -90,6 +90,7 @@
   "routineSpentaAria": "{nome}: today’s entries of a routine that is off",
   "alertSalvataggioParziale": "{count, plural, one {# entry was not saved: try again.} other {# entries were not saved: try again.}}",
   "routineSegniTolti": "{count, plural, one {This routine’s options have changed: # unsaved mark was removed.} other {This routine’s options have changed: # unsaved marks were removed.}}",
+  "salvaETogli": "{salva, plural, one {Save # child} other {Save # children}} · {togli, plural, one {remove # entry} other {remove # entries}}",
   "routineTestoPlaceholder": "Write for {nome}…",
   "bagnoAiutoCompilazione": "Only children with at least one entry are saved.",
   "pastoAiutoCompilazione": "Only children with at least one course marked are saved. “None” is a course: it means they did not eat.",

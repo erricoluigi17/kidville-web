@@ -90,6 +90,7 @@
   "routineSpentaAria": "{nome}: registrazioni di oggi di una routine spenta",
   "alertSalvataggioParziale": "{count, plural, one {# registrazione non è stata salvata: riprova.} other {# registrazioni non sono state salvate: riprova.}}",
   "routineSegniTolti": "{count, plural, one {Le opzioni di questa routine sono cambiate: # segno non ancora salvato è stato tolto.} other {Le opzioni di questa routine sono cambiate: # segni non ancora salvati sono stati tolti.}}",
+  "salvaETogli": "{salva, plural, one {Salva # bambino} other {Salva # bambini}} · {togli, plural, one {togli # registrazione} other {togli # registrazioni}}",
   "routineTestoPlaceholder": "Scrivi per {nome}…",
   "bagnoAiutoCompilazione": "Si salva solo chi ha almeno una registrazione.",
   "pastoAiutoCompilazione": "Si salva solo chi ha almeno una portata segnata. «Niente» è una portata: dice che non ha mangiato.",

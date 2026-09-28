@@ -604,3 +604,68 @@ describe('quarto giro della revisione — la maestra (2026-09-28)', () => {
     await waitFor(() => expect(result.current.students).toHaveLength(0))
   })
 })
+
+describe('quinto giro della revisione — la maestra (2026-09-28)', () => {
+  const RINOMINATA = { ...BIBERON, opzioni: ['Un po\'', 'Metà', 'Tutto'] }
+
+  it('una rilettura durante un salvataggio che FALLISCE non cancella i segni non salvati (pasti compresi)', async () => {
+    vi.spyOn(window, 'alert').mockImplementation(() => {})
+    // Un altro bambino ha il pranzo in archivio: un ripristino dall'archivio riscriverebbe lo stato.
+    entriesGet = [voceSalvata('b2', 'pranzo', { corsi: { primo: 'tutto', secondo: null, contorno: null, frutta: null } })]
+    const result = await monta()
+    await apriTipo(result, 'pranzo')
+    act(() => { result.current.updateMealCourse('a1', 'primo', 'meta') })
+    trattieniPost = true
+    postRisposta = { corpo: { error: 'boom' }, stato: 500 }
+    let salvataggio: Promise<void> = Promise.resolve()
+    act(() => { salvataggio = result.current.handleSave() })
+    await waitFor(() => expect(rilasciaPost).not.toBeNull())
+    ritornoInPrimoPiano()
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    await act(async () => { rilasciaPost?.(); await salvataggio })
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect((result.current.studentStates.a1?.corsi as Record<string, unknown>)?.primo).toBe('meta')
+  })
+
+  it('valore «non più previsto» con una nota: salvare altro e poi togliere la nota NON cancella il valore; la nota se ne va', async () => {
+    entriesGet = [voceSalvata('b2', 'routine:e5f6a7b8', { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Poco'] }, { nota_bambino: 'dal bicchiere' })]
+    const result = await monta()
+    await apriTipo(result, 'routine:e5f6a7b8')
+    config = { routine_attive: null, routine_personalizzate: [RINOMINATA] }
+    ritornoInPrimoPiano()
+    await waitFor(() => expect(result.current.nonPiuValidi).toHaveProperty('b2'))
+    act(() => { result.current.updateStudent('a1', { valore: ['Tutto'] }) })
+    await act(async () => { await result.current.handleSave() })
+    act(() => { result.current.updateNotaBambino('b2', '') })
+    expect(result.current.daTogliere).toBe(0)
+    postBody = null
+    await act(async () => { await result.current.handleSave() })
+    expect(deleteUrls).toEqual([])
+    // Ogni salvataggio rimanda anche chi è già salvato (a1): conta che parta b2, con la nota vuota
+    // e SENZA `azzera_valore` — il valore «non più previsto» resta in archivio.
+    const b2 = (postBody as Array<Record<string, unknown>> | null)?.find((v) => v.alunno_id === 'b2')
+    expect(b2).toMatchObject({ nota_bambino: null })
+    expect(b2).not.toHaveProperty('azzera_valore')
+  })
+
+  it('le righe salvate per la sola nota di SEZIONE non si cancellano svuotando la casella', async () => {
+    config = { routine_attive: ['umore'], routine_personalizzate: [] }
+    const result = await monta()
+    await apriTipo(result, 'umore')
+    act(() => { result.current.setNotaLibera('Oggi festa') })
+    await act(async () => { await result.current.handleSave() })
+    act(() => { result.current.setNotaLibera('') })
+    act(() => { result.current.updateStudent('a1', { umore: 'felice' }) })
+    expect(result.current.daTogliere).toBe(0)
+  })
+
+  it('un testo di soli spazi non conta come «segno tolto» a ogni rilettura', async () => {
+    const result = await monta()
+    await apriTipo(result, 'routine:d0d0d0d0')
+    act(() => { result.current.updateStudent('a1', { valore: '   ' }) })
+    ritornoInPrimoPiano()
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/diary/config')).length).toBeGreaterThan(1))
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(result.current.segniTolti).toBe(0)
+  })
+})

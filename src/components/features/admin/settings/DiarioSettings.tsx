@@ -147,7 +147,8 @@ export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId:
             invalidaDiarioConfigCache();
             // Escono le modifiche MANDATE; restano quelle fatte mentre la PATCH era in volo, e la
             // loro base diventa ciò che si è appena scritto (se la chiave era anche fra le mandate).
-            setModifiche((m) => Object.fromEntries(Object.entries(m).filter(([k, v]) => v !== (inviate as Record<string, unknown>)[k])));
+            // `Object.is` e non `!==`: un numero svuotato è `NaN`, e `NaN !== NaN` lo teneva per sempre.
+            setModifiche((m) => Object.fromEntries(Object.entries(m).filter(([k, v]) => !Object.is(v, (inviate as Record<string, unknown>)[k]))));
             setBasi((b) => {
                 const n: Record<string, unknown> = {};
                 for (const [k, v] of Object.entries(b)) {

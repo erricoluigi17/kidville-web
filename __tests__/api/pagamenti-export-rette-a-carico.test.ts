@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   db: {} as DBFinto,
   errori: {} as Record<string, { code: string }>,
   logEvento: vi.fn(),
+  logErrore: vi.fn(),
   /** K4: la SECONDA lettura di `utenti_scuole` nella richiesta risponde con un errore. */
   guastoSecondaLetturaSedi: false,
 }))
@@ -27,7 +28,8 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
   const vero = await importActual<typeof import('@/lib/logging/logger')>()
   h.logEvento.mockImplementation(vero.logEvento)
-  return { ...vero, logEvento: h.logEvento }
+  h.logErrore.mockImplementation(vero.logErrore)
+  return { ...vero, logEvento: h.logEvento, logErrore: h.logErrore }
 })
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
@@ -290,15 +292,25 @@ describe('export scadenzario — righe dei bambini a carico (D14)', () => {
     })
   })
 
-  // R3 (terza revisione 2026-09-29): la causa (`legami-bambini-non-letti`, error) la scrive il
-  // loader; qui si dice la CONSEGUENZA, a livello info. Prima erano due righe error per un guasto.
-  it('legami non letti: l’export esce lo stesso, senza righe in più, e UNA riga error (la causa) + una info (la conseguenza)', async () => {
+  // R3 (terza revisione 2026-09-29): prima erano due righe error per un guasto. Q1 (quarta
+  // revisione): il loader non logga più il guasto («chi chiama logga»); lo scrive QUI l'export,
+  // UNA riga `logEvento` error con l'esito della lettura fallita e l'errore vero — e senza `stato`
+  // né `logErrore`: l'export risponde 200, non c'è un 5xx da dichiarare, la marca resta giù.
+  it('legami non letti: l’export esce lo stesso, senza righe in più, e UNA riga error con la causa', async () => {
     h.errori = { 'alunni:select': { code: '57014' } }
     const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario'))
     expect(res.status).toBe(200)
     expect((await righe(res)).some((r) => r.Alunno === 'Nfig Rossi')).toBe(false)
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ operazione: 'pagamenti/export:GET', esito: 'export-senza-righe-a-carico' }))
-    const errori = h.logEvento.mock.calls.filter((c) => c[1] === 'error').map((c) => `${c[0]}:${(c[2] as { esito?: string }).esito ?? '-'}`)
-    expect(errori).toEqual(['pagamento:legami-bambini-non-letti'])
+    const errori = h.logEvento.mock.calls.filter((c) => c[1] === 'error')
+    expect(errori).toHaveLength(1)
+    expect(errori[0]).toEqual([
+      'pagamento', 'error',
+      expect.objectContaining({ operazione: 'pagamenti/export:GET', esito: 'legami-bambini-non-letti' }),
+      expect.objectContaining({ code: '57014' }),
+    ])
+    expect((errori[0][2] as { stato?: unknown }).stato).toBeUndefined()
+    expect(h.logErrore).not.toHaveBeenCalled()
+    // La riga `info` della conseguenza non c'è più: la riga error la dice già (operazione = export).
+    expect(h.logEvento).not.toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ esito: 'export-senza-righe-a-carico' }))
   })
 })

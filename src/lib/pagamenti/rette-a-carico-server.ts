@@ -23,6 +23,16 @@ import { sessoDa, type LegameRetta } from './rette-a-carico'
  * nella sede dell'utente) finisce in `nonVisibili`, contato in un `warn`. Prima si scartava
  * e basta: quel bambino tornava «Non generata» e «mancante» per sempre, perché la
  * generazione lo salta comunque (D6 vale anche quando chi paga non si può leggere).
+ *
+ * CHI LOGGA COSA (Q1, quarta revisione 2026-09-29) — la stessa regola di `leggiABlocchi`: un
+ * GUASTO questo modulo non lo logga, lo restituisce (`{ ok: false, esito, errore }`), perché
+ * solo chi chiama sa che cosa risponderà. La route del cruscotto risponde 500 e scrive UNA
+ * riga `logErrore` con `stato: 500`; l'export risponde 200 senza le righe in più e scrive UNA
+ * riga `logEvento` error, senza stato. Fino alla terza revisione la riga error la scriveva QUI,
+ * senza `stato`, e la route alzava la marca anti-doppione: `withRoute` taceva, e quel 500 nei
+ * log non aveva nessuna riga con `stato: 500` — fuori dalla ricerca «dammi i 5xx».
+ * Restano qui le righe che NON sono guasti e che solo il loader vede: i ripieghi sul `42703`
+ * mirato (`info`) e i paganti non leggibili (`warn`, conteggio).
  */
 
 /**
@@ -64,16 +74,27 @@ export interface BambinoACaricoNonVisibile {
   scuola_id: string | null
 }
 
+/** Quale delle due letture è fallita: il nome della riga di log che scrive CHI CHIAMA. */
+export type GuastoLegami = 'legami-bambini-non-letti' | 'legami-paganti-non-letti'
+
 export type EsitoLegami =
   | { ok: true; legami: LegameRettaCompleto[]; nonVisibili: BambinoACaricoNonVisibile[] }
-  | { ok: false }
+  /**
+   * Un guasto, NON loggato qui (vedi «CHI LOGGA COSA» in testa al modulo): `esito` dice quale
+   * lettura, `errore` è l'errore VERO di PostgREST (codice, messaggio, details), `n` quanti
+   * paganti si cercavano (solo per la seconda lettura). Solo uuid e conteggi dietro, mai nomi.
+   */
+  | { ok: false; esito: GuastoLegami; errore: unknown; n?: number }
 
 interface OpzioniLegami {
   /** Le sedi dei bambini a carico (il perimetro della schermata o dell'export). */
   sediBambini: string[]
   /** Le sedi in cui si può leggere il pagante: `sediDeiPaganti(sediBambini, accessibili)`. */
   sediPaganti: string[]
-  /** L'operazione che chiama, per i log (`pagamenti/rette-a-carico:GET`, `pagamenti/export:GET`). */
+  /**
+   * L'operazione che chiama, per i log che restano qui (ripieghi `info`, non leggibili `warn`):
+   * `pagamenti/rette-a-carico:GET`, `pagamenti/export:GET`.
+   */
   operazione: string
 }
 
@@ -153,8 +174,8 @@ export async function caricaLegamiRetta(
       }, bambini.error)
       return { ok: true, legami: [], nonVisibili: [] }
     }
-    logEvento('pagamento', 'error', { operazione, esito: 'legami-bambini-non-letti' }, bambini.error)
-    return { ok: false }
+    // Non si logga qui: lo fa chi chiama, che sa se sarà un 500 o un 200 (vedi in testa).
+    return { ok: false, esito: 'legami-bambini-non-letti', errore: bambini.error }
   }
 
   const righe = (bambini.data ?? []) as unknown as RigaBambino[]
@@ -186,8 +207,7 @@ export async function caricaLegamiRetta(
     paganti = await leggiPaganti(COLONNE_PAGANTE_BASE)
   }
   if (paganti.error) {
-    logEvento('pagamento', 'error', { operazione, esito: 'legami-paganti-non-letti', n: idPaganti.length }, paganti.error)
-    return { ok: false }
+    return { ok: false, esito: 'legami-paganti-non-letti', errore: paganti.error, n: idPaganti.length }
   }
 
   const perId = new Map(((paganti.data ?? []) as unknown as RigaPagante[]).map((p) => [p.id, p]))

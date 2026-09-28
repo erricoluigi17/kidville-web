@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { segnalaErroreLoggato } from '@/lib/logging/context'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveScuoleAttive, restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
@@ -62,10 +61,13 @@ export const GET = withRoute('pagamenti/rette-a-carico:GET', async (request: Nex
       operazione: OPERAZIONE,
     })
     if (!esito.ok) {
-      // La causa l'ha già scritta il loader (`legami-*-non-letti`, error, con l'errore vero).
-      // Senza la marca `withRoute` sul 500 ne aggiungerebbe una seconda, più povera: un guasto,
-      // una riga (R3, terza revisione 2026-09-29).
-      segnalaErroreLoggato()
+      // «Chi chiama logga» (Q1, quarta revisione 2026-09-29): il loader restituisce il guasto e
+      // non lo scrive. La riga è UNA, ed è questa: `logErrore` con l'errore VERO di PostgREST,
+      // `stato: 500` (in `app_log.stato_http`, dove la cerca «dammi i 5xx») e in `evento` QUALE
+      // lettura è fallita. `logErrore` alza da sé la marca anti-doppione: `withRoute` non aggiunge
+      // la sua riga, più povera. Prima la riga la scriveva il loader, senza `stato`, e qui si
+      // alzava la marca a mano: quel 500 non lasciava nessuna riga 5xx.
+      logErrore({ operazione: OPERAZIONE, stato: 500, evento: esito.esito }, esito.errore)
       return NextResponse.json(
         { error: 'Non è stato possibile leggere chi paga la retta per un fratello.', codice: 'LETTURA_FALLITA' },
         { status: 500 },

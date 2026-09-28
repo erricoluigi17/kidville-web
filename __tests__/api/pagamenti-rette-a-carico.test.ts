@@ -172,24 +172,31 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
     expect((await res.json()).data).toEqual([])
   })
 
-  it('guasto di lettura: 500 con LETTURA_FALLITA, e il log dice perché', async () => {
+  it('guasto di lettura: 500 con LETTURA_FALLITA, e il log dice perché (con l’errore VERO)', async () => {
     h.errori = { 'alunni:select': { code: '57014' } }
     const res = await GET(req())
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('LETTURA_FALLITA')
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ operazione: 'pagamenti/rette-a-carico:GET', esito: 'legami-bambini-non-letti' }), expect.anything())
+    expect(h.logErrore).toHaveBeenCalledWith(
+      { operazione: 'pagamenti/rette-a-carico:GET', stato: 500, evento: 'legami-bambini-non-letti' },
+      expect.objectContaining({ code: '57014' }),
+    )
   })
 
-  // R3 (terza revisione 2026-09-29): il loader aveva già loggato la causa (error), e sul 500
-  // `withRoute` — che non trovava la marca anti-doppione — ne aggiungeva una seconda, più
-  // povera (`route`, error). Un guasto = UNA riga error.
-  it('R3 — un guasto dei legami è UNA riga error: quella del loader, senza il doppione di withRoute', async () => {
+  // R3 (terza revisione 2026-09-29) tolse il doppione di `withRoute`, ma lasciò la sola riga del
+  // LOADER — un `logEvento` error senza `stato` — e fece tacere `withRoute` con la marca: quel
+  // 500 non lasciava nessuna riga con `stato: 500`, fuori dalla ricerca «dammi i 5xx». Questo
+  // test fissava proprio quel comportamento.
+  // Q1 (quarta revisione 2026-09-29): «chi chiama logga». Il loader non logga il guasto; la
+  // route scrive UNA riga, `logErrore` con `stato: 500` (che finisce in `app_log.stato_http`) e
+  // il nome della lettura fallita in `evento`; `logErrore` alza la marca, e `withRoute` tace.
+  it('Q1 — un guasto dei legami è UNA riga error, e porta stato 500', async () => {
     h.errori = { 'alunni:select': { code: '57014' } }
     expect((await GET(req())).status).toBe(500)
     const errori = [
       ...h.logEvento.mock.calls.filter((c) => c[1] === 'error').map((c) => `${c[0]}:${(c[2] as { esito?: string }).esito ?? '-'}`),
-      ...h.logErrore.mock.calls.map(() => 'logErrore'),
+      ...h.logErrore.mock.calls.map((c) => `logErrore:${(c[0] as { evento?: string }).evento}:${(c[0] as { stato?: number }).stato}`),
     ]
-    expect(errori).toEqual(['pagamento:legami-bambini-non-letti'])
+    expect(errori).toEqual(['logErrore:legami-bambini-non-letti:500'])
   })
 })

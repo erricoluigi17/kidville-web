@@ -67,13 +67,14 @@ const OPERAZIONE = 'pagamenti/export:GET'
 export async function righeRetteACarico(supabase: SupabaseClient, o: OpzioniExport): Promise<RigaScadenzario[]> {
   const esito = await caricaLegamiRetta(supabase, { sediBambini: o.sediBambini, sediPaganti: o.sediPaganti, operazione: OPERAZIONE })
   if (!esito.ok) {
-    // La CAUSA l'ha già scritta il loader (`legami-*-non-letti`, error, con l'errore vero): qui
-    // si dice la CONSEGUENZA, a livello info. Due righe error per un guasto solo contano doppio
-    // negli allarmi (R3, terza revisione 2026-09-29).
-    logEvento('pagamento', 'info', {
-      operazione: OPERAZIONE, esito: 'export-senza-righe-a-carico',
-      msg: 'legami non letti (causa già loggata): l’export esce senza le righe dei bambini a carico di un fratello',
-    })
+    // «Chi chiama logga» (Q1, quarta revisione 2026-09-29): il loader restituisce il guasto e non
+    // lo scrive. UNA riga, qui, con la causa vera: `logEvento` error e NON `logErrore`, e senza
+    // `stato` — l'export risponde 200 (senza le righe dei bambini a carico), non c'è un 5xx da
+    // dichiarare, e la marca anti-doppione di `withRoute` resta giù. L'`esito` è quello della
+    // lettura fallita, lo stesso che la GET del cruscotto scrive in `evento` sul suo 500.
+    // Fino alla terza revisione la causa la scriveva il loader e qui si aggiungeva una riga `info`
+    // (`export-senza-righe-a-carico`) per la conseguenza: ora la dice `operazione`.
+    logEvento('pagamento', 'error', { operazione: OPERAZIONE, esito: esito.esito, n: esito.n }, esito.errore)
     return []
   }
   // Il filtro classi senza maiuscole (R9, terza revisione): `section_ids` arriva dalla query

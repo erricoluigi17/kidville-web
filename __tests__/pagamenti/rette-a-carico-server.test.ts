@@ -28,6 +28,8 @@ describe('sediDeiPaganti', () => {
 })
 
 const OP = 'test:GET'
+/** Q1: i log `error` scritti dal loader. Devono essere ZERO: il guasto lo logga chi chiama. */
+const righeErrore = () => h.logEvento.mock.calls.filter((c) => c[1] === 'error')
 const alunno = (id: string, extra: Record<string, unknown>) => ({
   id, nome: `N${id}`, cognome: `C${id}`, classe_sezione: `Sez ${id}`, section_id: `sez-${id}`,
   scuola_id: 's1', stato: 'iscritto', gender: 'M', archiviato_il: null, retta_a_carico_di: null, ...extra,
@@ -118,25 +120,29 @@ describe('caricaLegamiRetta', () => {
 
   // C5 (revisione 2026-09-28): un 42703 su UN'ALTRA colonna non è «DB non migrato per questa
   // funzione», è un guasto — e degradarlo a «zero legami» lo avrebbe nascosto a livello info.
-  it('42703 su un’altra colonna: ok=false e log error, mai «zero legami»', async () => {
+  it('42703 su un’altra colonna: ok=false col suo esito, mai «zero legami»', async () => {
     const e = await caricaLegamiRetta(
       client({ alunni: { code: '42703', message: 'column alunni.section_id does not exist' } }),
       { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP },
     )
-    expect(e).toEqual({ ok: false })
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-bambini-non-letti' }), expect.anything())
+    expect(e).toEqual({ ok: false, esito: 'legami-bambini-non-letti', errore: expect.objectContaining({ code: '42703' }) })
     expect(h.logEvento).not.toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ esito: 'legami-colonna-assente' }), expect.anything())
+    expect(righeErrore()).toEqual([])
   })
 
   it('42703 senza messaggio: non si indovina la colonna, è un guasto', async () => {
     const e = await caricaLegamiRetta(client({ alunni: { code: '42703' } }), { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
-    expect(e).toEqual({ ok: false })
+    expect(e).toEqual({ ok: false, esito: 'legami-bambini-non-letti', errore: expect.objectContaining({ code: '42703' }) })
   })
 
-  it('guasto di lettura: ok=false e log error (PostgREST non lancia)', async () => {
+  // Q1 (quarta revisione 2026-09-29) — «chi chiama logga», come `leggiABlocchi`. Il loader non
+  // sa che cosa risponderà il chiamante: la route un 500, l'export un 200 senza le righe in più.
+  // Loggando qui a livello error (senza `stato`) e facendo tacere `withRoute`, il 500 della GET
+  // non lasciava NESSUNA riga con `stato: 500`. Ora il guasto torna al chiamante con l'errore vero.
+  it('guasto di lettura: ok=false con esito ed errore VERO, e NESSUN log error qui (lo scrive chi chiama)', async () => {
     const e = await caricaLegamiRetta(client({ alunni: { code: '57014' } }), { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
-    expect(e).toEqual({ ok: false })
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-bambini-non-letti' }), expect.anything())
+    expect(e).toEqual({ ok: false, esito: 'legami-bambini-non-letti', errore: expect.objectContaining({ code: '57014' }) })
+    expect(righeErrore()).toEqual([])
   })
 })
 
@@ -210,38 +216,41 @@ describe('caricaLegamiRetta — la seconda query (paganti)', () => {
       expect(chiamate).toHaveLength(3)
     })
 
-    it('42703 su un’ALTRA colonna: guasto (ok=false, error), nessun ripiego, nessun info', async () => {
+    it('42703 su un’ALTRA colonna: guasto (ok=false col suo esito), nessun ripiego, nessun info', async () => {
       const { client, chiamate } = ripiego({ code: '42703', message: 'column alunni.classe_sezione does not exist' })
-      expect(await caricaLegamiRetta(client, PAGANTI)).toEqual({ ok: false })
+      expect(await caricaLegamiRetta(client, PAGANTI)).toEqual({
+        ok: false, esito: 'legami-paganti-non-letti', n: 1, errore: expect.objectContaining({ code: '42703', message: expect.stringContaining('classe_sezione') }),
+      })
       expect(chiamate).toHaveLength(2)
-      expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-paganti-non-letti' }), expect.anything())
       expect(h.logEvento).not.toHaveBeenCalledWith('pagamento', 'info', expect.objectContaining({ esito: 'legami-paganti-colonne-assenti' }), expect.anything())
+      expect(righeErrore()).toEqual([])
     })
 
     it('42703 senza messaggio né details: non si indovina, è un guasto', async () => {
       const { client, chiamate } = ripiego({ code: '42703' })
-      expect(await caricaLegamiRetta(client, PAGANTI)).toEqual({ ok: false })
+      expect(await caricaLegamiRetta(client, PAGANTI)).toEqual({ ok: false, esito: 'legami-paganti-non-letti', n: 1, errore: { code: '42703' } })
       expect(chiamate).toHaveLength(2)
     })
 
-    it('il ripiego che fallisce a sua volta: guasto (ok=false, error)', async () => {
+    it('il ripiego che fallisce a sua volta: guasto, con l’errore del RIPIEGO', async () => {
       const { client } = copione([
         { data: [BAMBINO], error: null },
         { data: null, error: { code: '42703', message: 'column alunni.gender does not exist' } },
         { data: null, error: { code: '57014', message: 'timeout' } },
       ])
-      expect(await caricaLegamiRetta(client, PAGANTI)).toEqual({ ok: false })
-      expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-paganti-non-letti' }), expect.anything())
+      expect(await caricaLegamiRetta(client, PAGANTI)).toEqual({ ok: false, esito: 'legami-paganti-non-letti', n: 1, errore: { code: '57014', message: 'timeout' } })
+      expect(righeErrore()).toEqual([])
     })
   })
 
-  it('altro errore sui paganti: ok=false e log error', async () => {
+  it('altro errore sui paganti: ok=false con esito ed errore, nessun log error qui', async () => {
     const { client } = copione([
       { data: [BAMBINO], error: null },
       { data: null, error: { code: '57014', message: 'timeout' } },
     ])
-    expect(await caricaLegamiRetta(client, { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })).toEqual({ ok: false })
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-paganti-non-letti' }), expect.anything())
+    expect(await caricaLegamiRetta(client, { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP }))
+      .toEqual({ ok: false, esito: 'legami-paganti-non-letti', n: 1, errore: { code: '57014', message: 'timeout' } })
+    expect(righeErrore()).toEqual([])
   })
 
   it('la prima query filtra iscritti, sedi e legame valorizzato', async () => {
@@ -311,14 +320,15 @@ describe('caricaLegamiRetta — gli id dei paganti a blocchi (R8)', () => {
     id: id('p', da + k), nome: 'P', cognome: 'X', classe_sezione: null, stato: 'iscritto', scuola_id: 's1',
   }))
 
-  it('il SECONDO pezzo fallisce: guasto (ok=false, error), non i legami del primo spacciati per tutti', async () => {
+  it('il SECONDO pezzo fallisce: guasto (ok=false, con l’errore di quel pezzo), non i legami del primo spacciati per tutti', async () => {
     const { client } = copioneIn([
       { data: bambini, error: null },
       { data: paganti(0, ID_PER_QUERY), error: null },
       { data: null, error: { code: '57014', message: 'timeout' } },
     ])
-    expect(await caricaLegamiRetta(client, { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })).toEqual({ ok: false })
-    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'legami-paganti-non-letti', n: N }), expect.anything())
+    expect(await caricaLegamiRetta(client, { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP }))
+      .toEqual({ ok: false, esito: 'legami-paganti-non-letti', n: N, errore: { code: '57014', message: 'timeout' } })
+    expect(righeErrore()).toEqual([])
   })
 
   it('42703 su gender al primo pezzo: un log info, e si rileggono TUTTI i pezzi senza gender', async () => {

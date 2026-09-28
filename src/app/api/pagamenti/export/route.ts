@@ -273,7 +273,11 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/export:GET', stato: 500 }, err)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    // Con codice anche qui (R4, terza revisione 2026-09-29; lock `errori-con-codice`): la route
+    // LEGGE e basta — l'unica scrittura, la traccia d'accesso di `logScrittura`, non lancia —,
+    // e gli altri suoi 500 portano già `LETTURA_FALLITA`. Un'eccezione imprevista resta «non
+    // sono riuscito a leggere i dati, riprova», come nella GET gemella `rette-a-carico`.
+    return NextResponse.json({ error: 'Internal Server Error', codice: 'LETTURA_FALLITA' }, { status: 500 })
   }
 })
 

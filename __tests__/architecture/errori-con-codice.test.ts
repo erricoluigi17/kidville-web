@@ -204,8 +204,12 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * 🔻 273 → 272 il 2026-09-26, branch `feat/orario-attivita-appello-contabilita-cf` (compito A1).
  * La voce `diary/checkin/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo
  * gemello su `MAX_OCCORRENZE`.
+ *
+ * 🔻 272 → 271 il 2026-09-29, branch `feat/retta-a-carico-fratello` (terza revisione, R4). La
+ * voce `pagamenti/export/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo
+ * gemello su `MAX_OCCORRENZE`.
  */
-const MAX_FILE = 272;
+const MAX_FILE = 271;
 /**
  * ⚠️ 1416 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
  * il 2026-09-10, è **1384**. I due numeri divergono di 32 per le 18 voci stantie dette qui sopra.
@@ -361,8 +365,19 @@ const MAX_FILE = 272;
  * PAGATO: il 500 della SELECT di `pagamenti/ticket/morosi:GET` rispondeva senza codice, mentre
  * lo stesso guasto nella route gemella `pagamenti/ticket:GET` porta `LETTURA_FALLITA`; ora lo
  * porta anche lui. La voce scende da 2 a 1; `MAX_FILE` non si muove, la voce non arriva a zero.
+ *
+ * 🔻 1374 → 1370 il 2026-09-29, branch `feat/retta-a-carico-fratello` (terza revisione, R4).
+ * Debito PAGATO, e in due tempi — il secondo è quello che si dimentica. La seconda revisione del
+ * 28/09 aveva già dato `LETTURA_FALLITA` ai tre 500 di lettura di `pagamenti/export` (i nomi
+ * delle sedi, la lettura a blocchi fallita, il tetto): la misura era scesa da 4 a 1, e voce e
+ * tetti erano rimasti a 4 — cioè tre risposte senza codice potevano tornare con questo lock
+ * verde, la **sesta volta** della storia scritta qui sopra, trovata dalla revisione e non dal
+ * lock. Ora anche il `catch` porta `LETTURA_FALLITA` (la route legge e basta, e i suoi altri
+ * 500 dicono già così): la voce scende da 4 a 0 ed esce dall'elenco, e `MAX_FILE` scende di
+ * uno insieme a lei. Misurato: `jq '.totale_occorrenze'` dice **1370**, e il lock su questo
+ * albero trova zero risposte senza codice in quel file.
  */
-const MAX_OCCORRENZE = 1374;
+const MAX_OCCORRENZE = 1370;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

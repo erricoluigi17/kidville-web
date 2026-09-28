@@ -278,14 +278,24 @@ describe('POST /api/diary/entries — togliere la sola nota di un valore «non p
         h.esistenti[`${A1}|routine:e5f6a7b8`] = { id: 'r1', dettagli: salvato };
         const { res } = await post([voce(A1, 'routine:e5f6a7b8', { valore: null }, { nota_bambino: null, togli_nota: true })]);
         expect(res.status).toBeLessThan(300);
-        expect(h.updated).toEqual([{ nota_bambino: null }]);
+        expect(h.updated).toHaveLength(1);
+        expect(h.updated[0]).toMatchObject({ nota_bambino: null, dettagli: salvato });
         expect(h.logEvento.mock.calls.some((c) => c[2]?.esito === 'voci-mute-saltate')).toBe(false);
     });
 
-    it('…e senza una riga di oggi non si inventa niente (mai un INSERT)', async () => {
+    it('`togli_nota` con un valore NUOVO e valido: si scrive il valore nuovo, non solo la nota (sesto giro)', async () => {
+        h.esistenti[`${A1}|routine:e5f6a7b8`] = { id: 'r1', dettagli: { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Doppio'] } };
+        await post([voce(A1, 'routine:e5f6a7b8', { valore: ['Tutto'] }, { nota_bambino: null, togli_nota: true })]);
+        expect((h.updated[0].dettagli as Record<string, unknown>).valore).toEqual(['Tutto']);
+        expect(h.updated[0].nota_bambino).toBeNull();
+    });
+
+    it('…e senza una riga di oggi non si inventa niente (mai un INSERT), e lo si dice nel log', async () => {
         await post([voce(A1, 'routine:e5f6a7b8', { valore: null }, { nota_bambino: null, togli_nota: true })]);
         expect(h.inserted).toHaveLength(0);
         expect(h.updated).toHaveLength(0);
+        const riga = h.logEvento.mock.calls.find((c) => c[2]?.esito === 'togli-nota-senza-riga');
+        expect(riga?.[2]).toMatchObject({ n_saltate: 1 });
     });
 
     it('su un tipo base `togli_nota` non apre niente: la voce resta muta e si salta', async () => {

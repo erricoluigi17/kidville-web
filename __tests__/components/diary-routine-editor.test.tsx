@@ -715,3 +715,29 @@ describe('sesto giro — la rilettura fra la fine del salvataggio e il suo rende
     expect(result.current.nonPiuValidi).toHaveProperty('a1')
   })
 })
+
+describe('settimo giro — valore nuovo e nota tolta insieme', () => {
+  it('scelto un valore NUOVO e valido e tolta la nota: niente `togli_nota`, il valore nuovo si salva', async () => {
+    entriesGet = [voceSalvata('b2', 'routine:e5f6a7b8', { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Doppio'] }, { nota_bambino: 'dal bicchiere' })]
+    const result = await monta()
+    await apriTipo(result, 'routine:e5f6a7b8')
+    expect(result.current.nonPiuValidi).toHaveProperty('b2')
+    act(() => { result.current.updateStudent('b2', { valore: ['Tutto'] }) })
+    act(() => { result.current.updateNotaBambino('b2', '') })
+    await act(async () => { await result.current.handleSave() })
+    const b2 = (postBody as Array<Record<string, unknown>> | null)?.find((v) => v.alunno_id === 'b2')
+    expect(b2).not.toHaveProperty('togli_nota')
+    expect(b2).toMatchObject({ dettagli: expect.objectContaining({ valore: ['Tutto'] }), nota_bambino: null })
+  })
+
+  it('tolta la sola nota di un valore «non più previsto», la ✅ non torna accanto all\'avviso', async () => {
+    entriesGet = [voceSalvata('b2', 'routine:e5f6a7b8', { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Doppio'] }, { nota_bambino: 'dal bicchiere' })]
+    const result = await monta()
+    await apriTipo(result, 'routine:e5f6a7b8')
+    act(() => { result.current.updateNotaBambino('b2', '') })
+    postRisposta = { corpo: [{ alunno_id: 'b2' }], stato: 200 }
+    await act(async () => { await result.current.handleSave() })
+    expect(result.current.nonPiuValidi).toHaveProperty('b2')
+    expect(result.current.savedStudentIds.has('b2')).toBe(false)
+  })
+})

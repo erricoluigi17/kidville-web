@@ -385,6 +385,8 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 
     const results = [];
     const errors = [];
+    // `togli_nota` senza una riga di oggi: non si crea niente, e lo si conta per il log qui sotto.
+    let togliNotaSenzaRiga = 0;
 
     for (const entry of daScrivere) {
         // Cerca se esiste già un evento per questo alunno+tipo oggi
@@ -407,12 +409,12 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
             continue;
         }
 
-        // Togliere la sola nota: solo su una riga che c'è, e solo la nota.
-        if (togliNota(entry)) {
-            if (!existing || existing.length === 0) continue;
-            const togli = await admin.from('eventi_diario').update({ nota_bambino: null }).eq('id', existing[0].id).select('id, alunno_id, tipo_evento');
-            if (togli.error) errors.push({ alunno_id: entry.alunno_id, error: togli.error.message });
-            else if (togli.data) results.push(...togli.data);
+        // `togli_nota` su una riga che non c'è: niente da togliere, e mai un INSERT. Con la riga,
+        // si passa dall'UPDATE normale qui sotto: col valore vuoto `tieniPrecedente` tiene quello
+        // salvato e la nota si azzera; con un valore nuovo e valido si scrive il valore nuovo
+        // (sesto giro, 2026-09-28: un ramo a parte scriveva solo la nota e perdeva il valore).
+        if (togliNota(entry) && (!existing || existing.length === 0)) {
+            togliNotaSenzaRiga += 1;
             continue;
         }
 
@@ -561,6 +563,15 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
                 }, e);
             }
         }
+    }
+
+    if (togliNotaSenzaRiga > 0) {
+        logEvento('diary', 'warn', {
+            operazione: 'diary/entries:POST',
+            esito: 'togli-nota-senza-riga',
+            n_ricevute: entries.length,
+            n_saltate: togliNotaSenzaRiga,
+        });
     }
 
     // Audit (diff) + notifica al docente titolare se scrive segreteria/direzione.

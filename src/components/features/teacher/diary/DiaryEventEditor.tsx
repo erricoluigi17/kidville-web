@@ -1026,7 +1026,10 @@ export function useDiaryDay(
     const noteDaTogliere = new Set(
         selectedEvent !== null && eRoutinePersonalizzata(selectedEvent)
             ? students
-                .filter(s => s.id in nonPiuValidi && !conNotaDi(s.id) && Boolean((ultimeDi(selectedEvent)[s.id]?.nota_bambino ?? '').trim()))
+                .filter(s => s.id in nonPiuValidi && !conNotaDi(s.id) && Boolean((ultimeDi(selectedEvent)[s.id]?.nota_bambino ?? '').trim())
+                    // Con un valore nuovo e valido a schermo non è «togliere la nota»: è un salvataggio
+                    // normale, che scrive il valore nuovo (settimo giro).
+                    && !voceDaMostrare(selectedEvent, dettagliDi(s.id)))
                 .map(s => s.id)
             : [],
     );
@@ -1195,7 +1198,6 @@ export function useDiaryDay(
                         .map((r: { alunno_id?: string }) => r.alunno_id)
                         .filter(Boolean)
                 );
-                // Se nessuno ha un alunno_id nel result, segna come salvati i soli inviati (upsert silent)
                 // Salvato è chi la rotta dice di aver scritto, e basta (sesto giro, 2026-09-28): prima,
                 // una risposta senza id («upsert silent») segnava salvati TUTTI gli inviati — anche le
                 // voci che il server aveva saltato perché mute.
@@ -1205,8 +1207,10 @@ export function useDiaryDay(
                     logClient({ livello: 'warn', evento: 'fetch', messaggio: 'diario-salvataggio-parziale', campi: { non_salvate: errori.length, inviate: targetStudents.length } });
                     alert(t('alertSalvataggioParziale', { count: errori.length }));
                 }
-                // Le ✅ sono del riquadro salvato: su un altro finirebbero su chi non c'entra.
-                if (stessoRiquadro()) setSavedStudentIds(salvatiIds);
+                // Le ✅ sono del riquadro salvato: su un altro finirebbero su chi non c'entra. E non a
+                // chi ha tolto la sola nota di un valore «non più previsto»: a schermo c'è l'avviso,
+                // non ciò che è in archivio.
+                if (stessoRiquadro()) setSavedStudentIds(new Set([...salvatiIds].filter(id => !noteDaTogliere.has(id))));
                 // Ciò che ora è in archivio: se fra un minuto la maestra svuota uno di
                 // questi campi, il salvataggio deve sapere che c'è una riga da togliere.
                 // Solo chi ha il CAMPO PIENO (niente `conNota`, come al ripristino): una
@@ -1354,9 +1358,10 @@ export function useDiaryDay(
                 await restoreFromSupabase(selectedEvent);
             }
 
+            // Le voci di oggi si rileggono sempre dopo un salvataggio partito: anche a zero salvati
+            // (voci saltate dal server) lo schermo deve tornare a ciò che l'archivio contiene.
+            if (targetStudents.length > 0 || daCancellare.length > 0) void caricaVociDiOggi();
             if (salvati > 0 || tolti.length > 0) {
-                // Le voci di oggi sono cambiate: una routine spenta con voci può essersi svuotata.
-                void caricaVociDiOggi();
                 setSegniTolti(0);
                 setEsitoSalvataggio({ salvati, tolti: tolti.length, nanna: selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine' });
                 setShowSavedToast(true);

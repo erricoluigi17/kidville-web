@@ -395,6 +395,26 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         return m;
     }, [pagamenti, rettaCat, mese]);
 
+    /**
+     * Per ogni bambino A CARICO di un fratello: il legame e ciò che il suo badge sa del PAGANTE —
+     * la retta del mese (la stessa che disegna la riga del pagante, D3) e se la sede del pagante
+     * è fra le caricate (se no, lo stato non si conosce e non si inventa). Calcolato UNA volta
+     * qui, per tabella e card (Z2, quinta revisione 2026-09-29): prima era la stessa espressione
+     * scritta due volte, e quella della card poteva divergere senza che un test se ne accorgesse.
+     */
+    const aCaricoPerAlunno = useMemo(() => {
+        const m = new Map<string, { legame: LegameRetta; rettaPagante: Pagamento | undefined; sedeCaricata: boolean }>();
+        for (const [alunnoId, legame] of legami) {
+            const sedePagante = legame.pagante.scuola_id;
+            m.set(alunnoId, {
+                legame,
+                rettaPagante: rettaByAlunno.get(legame.pagante.id),
+                sedeCaricata: !!sedePagante && sediVisibili.includes(sedePagante),
+            });
+        }
+        return m;
+    }, [legami, rettaByAlunno, sediVisibili]);
+
     // mappa alunno per id: usata dalla tabella-categoria (ricerca e label)
     const alunnoById = useMemo(() => new Map(alunni.map((a) => [a.id, a])), [alunni]);
 
@@ -889,7 +909,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 const p = rettaByAlunno.get(a.id);
                                 const st = p ? (STATI[p.stato] ?? STATI.da_pagare) : null;
                                 const moroso = p ? isMoroso(p, oggiStr) : false;
-                                const legame = legami.get(a.id);
+                                const aCarico = aCaricoPerAlunno.get(a.id);
+                                const legame = aCarico?.legame;
                                 const nonVisibile = !legame && aCaricoNonVisibili.has(a.id);
                                 return (
                                     <tr key={a.id} className={cx(TROW, moroso && 'bg-kidville-error-soft/50')}>
@@ -908,13 +929,13 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                 {/* `inTabella` (K2): qui i badge-frase hanno una larghezza minima, nelle card no. */}
                                                 {st
                                                     ? <Badge tone={st.tone}>{st.label}</Badge>
-                                                    : legame
-                                                        ? <BadgeRettaACarico legame={legame} rettaPagante={rettaByAlunno.get(legame.pagante.id)} sedeCaricata={!!legame.pagante.scuola_id && sediVisibili.includes(legame.pagante.scuola_id)} inTabella />
+                                                    : aCarico
+                                                        ? <BadgeRettaACarico {...aCarico} inTabella />
                                                         : nonVisibile
                                                             ? <BadgeRettaACaricoNonVisibile inTabella />
                                                             : <Badge tone="neutral">{t('dashNonGenerata')}</Badge>}
                                                 {/* D9: retta propria E legame col fratello — si mostra, e si segnala. */}
-                                                {p && legame && <BadgeRettaACarico legame={legame} sedeCaricata conRettaPropria inTabella />}
+                                                {p && legame && <BadgeRettaACarico legame={legame} conRettaPropria inTabella />}
                                                 {p && nonVisibile && <BadgeRettaACaricoNonVisibile inTabella />}
                                                 {p && moroso && Number(p.importo_pagato) > 0 && (
                                                     <Badge tone="warn">{t('dashAcconto')} {formatEuro(p.importo_pagato)}</Badge>
@@ -948,9 +969,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <div className="space-y-2 lg:hidden">
                     {alunniFiltrati.map((a) => {
                         const p = rettaByAlunno.get(a.id);
-                        const legame = legami.get(a.id);
+                        const aCarico = aCaricoPerAlunno.get(a.id);
+                        const legame = aCarico?.legame;
                         const nonVisibile = !legame && aCaricoNonVisibili.has(a.id);
-                        if (!p && (legame || nonVisibile)) {
+                        if (!p && (aCarico || nonVisibile)) {
                             // Il badge SOTTO il nome, non accanto: è una frase (fino a ~430 px col
                             // font vero, ~251 px di spazio a 360 px di schermo). Accanto al nome lo
                             // schiacciava e faceva scorrere la pagina in orizzontale; qui la card
@@ -960,8 +982,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                     <p className="font-maven text-sm font-bold text-kidville-green">{a.nome} {a.cognome}</p>
                                     {mostraSede && <BadgeSede nome={nomeSede(a.scuola_id)} className="mt-1" />}
                                     <div data-testid="card-retta-a-carico-badge" className="mt-2 flex flex-wrap gap-1">
-                                        {legame
-                                            ? <BadgeRettaACarico legame={legame} rettaPagante={rettaByAlunno.get(legame.pagante.id)} sedeCaricata={!!legame.pagante.scuola_id && sediVisibili.includes(legame.pagante.scuola_id)} />
+                                        {aCarico
+                                            ? <BadgeRettaACarico {...aCarico} />
                                             : <BadgeRettaACaricoNonVisibile />}
                                     </div>
                                 </div>
@@ -986,7 +1008,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 sezioneLabel={a.classe_sezione}
                                 sospeso={!!sospesoByAlunno.get(a.id)}
                                 mostraSede={mostraSede}
-                                avviso={legame ? <BadgeRettaACarico legame={legame} sedeCaricata conRettaPropria /> : nonVisibile ? <BadgeRettaACaricoNonVisibile /> : undefined}
+                                avviso={legame ? <BadgeRettaACarico legame={legame} conRettaPropria /> : nonVisibile ? <BadgeRettaACaricoNonVisibile /> : undefined}
                                 onIncassa={() => setSelected(p)}
                                 onApri={() => setDrawer(p)}
                             />

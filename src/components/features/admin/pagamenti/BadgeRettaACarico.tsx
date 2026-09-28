@@ -24,8 +24,15 @@ import { anomaliaPagante, componiBadge, ripulisciFrase, valoriPrefisso, type Leg
  */
 const MINIMO_IN_TABELLA = 'min-w-[10rem]';
 
-interface Props {
+interface PropsComuni {
     legame: LegameRetta;
+    /** Il badge sta nella tabella desktop: larghezza minima (K2). Mai nella card mobile. */
+    inTabella?: boolean;
+}
+
+/** La riga SENZA retta propria: il badge al posto di «Non generata», con lo stato del pagante. */
+interface PropsSenzaRettaPropria extends PropsComuni {
+    conRettaPropria?: false;
     /** La retta del PAGANTE per il mese scelto — la stessa che disegna la sua riga — se c'è. */
     rettaPagante?: { stato: string } | null;
     /**
@@ -33,11 +40,21 @@ interface Props {
      * «Non generata» (D4). Se non lo sono, lo stato NON si conosce e non si inventa.
      */
     sedeCaricata: boolean;
-    /** Il bambino ha anche una retta PROPRIA del mese (D9): solo l'avviso «da verificare». */
-    conRettaPropria?: boolean;
-    /** Il badge sta nella tabella desktop: larghezza minima (K2). Mai nella card mobile. */
-    inTabella?: boolean;
 }
+
+/**
+ * Il bambino ha anche una retta PROPRIA del mese (D9): solo l'avviso «da verificare». Lo stato
+ * del pagante qui non si mostra, quindi né la sua retta né la sua sede servono — e il tipo lo
+ * dice (Z3d, quinta revisione 2026-09-29): prima `sedeCaricata` era obbligatoria anche qui, e
+ * il cruscotto passava un `sedeCaricata` che non significava niente.
+ */
+interface PropsConRettaPropria extends PropsComuni {
+    conRettaPropria: true;
+    rettaPagante?: never;
+    sedeCaricata?: never;
+}
+
+type Props = PropsSenzaRettaPropria | PropsConRettaPropria;
 
 /**
  * Tutti i badge di questo file sono `aCapo`: sono FRASI (fino a ~430 px col font vero), e con
@@ -48,7 +65,8 @@ interface Props {
  * non risulta iscritto (ritirato, archiviato, ma anche sospeso: «non più» sarebbe falso) o è
  * in un'altra sede (D12). Nessuna azione: si incassa solo dalla riga del fratello (D8).
  */
-export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRettaPropria = false, inTabella = false }: Props) {
+export function BadgeRettaACarico(props: Props) {
+    const { legame, inTabella = false } = props;
     const t = useTranslations('adminContabilita');
     const valori = valoriPrefisso(legame.pagante);
     const anomalia = anomaliaPagante(legame);
@@ -59,7 +77,7 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
         </Badge>
     ) : null;
 
-    if (conRettaPropria) {
+    if (props.conRettaPropria) {
         return (
             <>
                 <Badge tone="warn" aCapo className={larghezza} data-testid="retta-a-carico-verifica">{ripulisciFrase(t('dashACaricoVerifica', valori))}</Badge>
@@ -68,6 +86,7 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
         );
     }
 
+    const { rettaPagante, sedeCaricata } = props;
     const st = rettaPagante ? (STATI[rettaPagante.stato] ?? STATI.da_pagare) : null;
     const stato = st ? st.label : sedeCaricata ? t('dashNonGenerata') : null;
     return (

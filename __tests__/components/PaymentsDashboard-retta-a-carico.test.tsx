@@ -248,6 +248,15 @@ describe('D12 — pagante anomalo', () => {
         const r = riga('Ugo Viola');
         expect(within(r).getByTestId('retta-a-carico')).toHaveTextContent(/^Paga il fratello Leo Viola \(Sez\. G\)$/);
         expect(within(r).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga è in un’altra sede: retta da rivedere');
+        // Z2 (quinta revisione 2026-09-29): anche la CARD mobile. Lì nessun test guardava la sede
+        // non caricata, e con `sedeCaricata` sempre vero la card diceva «· Non generata» — uno
+        // stato inventato — mentre la tabella taceva.
+        const card = screen.getAllByTestId('card-retta-a-carico').find((c) => c.textContent?.startsWith('Ugo Viola'));
+        expect(card).toBeDefined();
+        const badgeCard = within(card!).getByTestId('retta-a-carico');
+        expect(badgeCard).toHaveTextContent(/^Paga il fratello Leo Viola \(Sez\. G\)$/);
+        expect(badgeCard).toHaveClass('bg-kidville-neutral-soft');
+        expect(within(card!).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga è in un’altra sede: retta da rivedere');
     });
     // K8a (seconda revisione 2026-09-28): la vista a PIÙ sedi. Il pagante sta in un'altra sede,
     // ma quella sede è fra le caricate: allora il suo stato SI conosce e si mostra, col suo

@@ -370,17 +370,17 @@ describe('C1 — i badge lunghi vanno a capo', () => {
         let inTabella = 0;
         for (const id of TESTID_BADGE_A_CARICO) {
             for (const b of screen.getAllByTestId(id)) {
-                if (tabella.contains(b)) { inTabella++; expect(b, id).toHaveClass('min-w-[13rem]'); }
-                else expect(b, id).not.toHaveClass('min-w-[13rem]');
+                if (tabella.contains(b)) { inTabella++; expect(b, id).toHaveClass('min-w-[10rem]'); }
+                else expect(b, id).not.toHaveClass('min-w-[10rem]');
             }
         }
         // Luca, Sara, Elio, Dora, Rita, Ugo (badge) + Teo (verifica) + Rita, Ugo, Ivo×2, Eva×2 (anomalia/non visibile)
         expect(inTabella).toBe(13);
         // …e nelle card, per costruzione, i badge ci sono: l'assenza sopra non è vuota.
         const card = screen.getAllByTestId('card-retta-a-carico').find((c) => c.textContent?.startsWith('Luca Rossi'))!;
-        expect(within(card).getByTestId('retta-a-carico')).not.toHaveClass('min-w-[13rem]');
+        expect(within(card).getByTestId('retta-a-carico')).not.toHaveClass('min-w-[10rem]');
         // Il badge di stato di una riga normale resta com'è.
-        expect(within(riga('Anna Bianchi')).getByText('Pagato')).not.toHaveClass('min-w-[13rem]');
+        expect(within(riga('Anna Bianchi')).getByText('Pagato')).not.toHaveClass('min-w-[10rem]');
     });
     it('la card «Non generata» senza legame resta com’era', async () => {
         stub(); await apri();

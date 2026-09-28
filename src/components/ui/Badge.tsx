@@ -65,12 +65,14 @@ const UNA_RIGA =
  * resta una pillola a vista.
  *
  * `anywhere` e NON `break-words` (seconda revisione 2026-09-28, K3): `break-words` è
- * `overflow-wrap: break-word`, che spezza la parola solo DOPO che la larghezza è decisa e non
- * abbassa la larghezza minima del contenuto. In un `inline-flex` il testo è un elemento flex
- * che non scende sotto quella larghezza minima: misurato, una parola di 80 caratteri a 360 px
- * faceva un badge di 517 px, fuori dalla card. `anywhere` abbassa anche la larghezza minima.
- * Il rovescio: in una TABELLA la colonna può allora stringersi fino a una lettera — lì chi usa
- * il badge gli dà una larghezza minima (vedi `BadgeRettaACarico`, `inTabella`).
+ * `overflow-wrap: break-word`, che spezza la parola solo quando la larghezza è già decisa e non
+ * abbassa la larghezza MINIMA del contenuto. Dove la larghezza la decide il contenuto (una
+ * cella di tabella, un `inline-flex` senza larghezza propria) una parola lunghissima allarga
+ * tutto: misurato col CSS della build, un cognome di 80 caratteri portava la colonna «Stato»
+ * della tabella Rette a 552 px, e la tabella a 1225 px in 704. `anywhere` abbassa anche la
+ * larghezza minima. Il rovescio: la colonna può allora stringersi fino a una lettera — in
+ * tabella chi usa il badge gli dà una larghezza minima (vedi `BadgeRettaACarico`, `inTabella`).
+ * Dove la larghezza è data (la card mobile, a 360 px) le due regole si equivalgono.
  */
 const A_CAPO =
   'inline-flex max-w-full items-center gap-[5px] whitespace-normal [overflow-wrap:anywhere] rounded-xl px-[11px] py-1 text-left font-barlow text-[11.5px] font-extrabold uppercase leading-[1.35] tracking-[0.06em]'

@@ -35,9 +35,10 @@ describe('Badge — aCapo', () => {
     });
 
     // K3 (seconda revisione 2026-09-28): `break-words` è `overflow-wrap: break-word`, che NON
-    // riduce la larghezza minima del contenuto: in un `inline-flex` una parola lunghissima
-    // allargava il badge oltre il contenitore (misurato: 80 caratteri a 360 px → 517 px).
-    // `anywhere` sì. E una sola regola di `overflow-wrap`: con due, deciderebbe il foglio.
+    // riduce la larghezza minima del contenuto: dove la decide il contenuto una parola
+    // lunghissima allargava tutto (misurato: un cognome di 80 caratteri portava la colonna
+    // «Stato» della tabella Rette a 552 px a 1024 px di schermo). `anywhere` sì. E una sola
+    // regola di `overflow-wrap`: con due, deciderebbe l'ordine nel foglio di stile.
     const regoleOverflowWrap = (el: Element) =>
         [...el.classList].filter((c) => /^!?(break-words|break-normal|wrap-)|overflow-wrap/.test(c));
     it('aCapo: una parola lunghissima va a capo anche a metà — `[overflow-wrap:anywhere]` come UNICA regola', () => {

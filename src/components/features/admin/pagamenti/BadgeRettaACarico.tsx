@@ -10,11 +10,19 @@ import { anomaliaPagante, componiBadge, valoriPrefisso, type LegameRetta } from 
  * larghezza minima. Con `aCapo` l'algoritmo della tabella stringe la colonna Stato fino alla
  * larghezza minima del contenuto: misurato fra 1024 e 1279 px, a 1024 un badge di 109×132 px,
  * otto righe di testo, righe della tabella alte 155–198 px. E con `[overflow-wrap:anywhere]`
- * (K3, in `Badge.tsx`) quella larghezza minima scende a una lettera. 13rem (208 px) tengono la
- * frase su due o tre righe. SOLO nella tabella: nella card mobile il badge ha la sua riga
- * intera, e a 360 px è giusto com'è.
+ * (K3, in `Badge.tsx`) quella larghezza minima scende a una lettera. SOLO nella tabella: nella
+ * card mobile il badge ha la sua riga intera, e a 360 px è giusto com'è.
+ *
+ * PERCHÉ 10rem E NON DI PIÙ — misurato a 1024 px col CSS della build e il font vero, con nomi
+ * lunghi apposta («Mario Francesco Santamaria Esposito (Sezione Primavera C)»):
+ *   · vista a UNA sede: senza minimo la tabella entra (704 su 704 px); con 10rem entra ancora
+ *     (righe al più 136 px, badge 164 px); con 11rem sfora di 10 px, con 13rem di 42 — cioè
+ *     il bottone «Incassa» finirebbe oltre il bordo, dietro uno scorrimento che prima non c'era;
+ *   · vista a PIÙ sedi (la colonna Sede in più): la tabella scorre già senza minimo (805 su 704);
+ *     con 10rem le righe scendono da 152–198 px a 105–136, con 13rem a 105–133. Il guadagno è
+ *     quasi tutto nei primi 10rem.
  */
-const MINIMO_IN_TABELLA = 'min-w-[13rem]';
+const MINIMO_IN_TABELLA = 'min-w-[10rem]';
 
 interface Props {
     legame: LegameRetta;

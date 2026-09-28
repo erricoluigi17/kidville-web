@@ -1,4 +1,18 @@
 
+## 👪 Changelog — Retta a carico di un fratello: «Paga il fratello …» al posto di «Non generata» — 2026-09-28 (branch `feat/retta-a-carico-fratello`)
+
+**Il difetto.** Dal 16/08 un bambino può avere la retta a carico di un fratello (`alunni.retta_a_carico_di`): la generazione lo salta, e la vista Rette lo mostrava **«Non generata»**, come un bambino dimenticato. «Genera mancanti» lo contava senza poterlo generare: il numero non scendeva mai a zero. Misurato il 28/09: **47 iscritti** in questa situazione (39 Giugliano, 5 Aversa, 3 Cesa).
+
+**Cosa cambia** (decisioni del titolare, spec `docs/superpowers/specs/2026-09-28-retta-a-carico-fratello-design.md`):
+- Vista Rette (tabella e card): «**Paga il fratello** Mario Rossi (Sez. C) · Da pagare» / «**Paga la sorella** …» / «**A carico di** …» se il sesso manca; il badge ha il **colore della retta del fratello** per quel mese, e «· Non generata» se nemmeno lui ce l'ha. Nessun «Incassa» sulla riga: si incassa dal fratello.
+- «Genera mancanti» non conta più i bambini a carico.
+- Filtro **Morosi**: compare anche il bambino il cui fratello pagante è moroso. **Ricerca**: il nome del pagante trova anche il bambino.
+- Avvisi: arancio «retta da verificare» se il bambino a carico ha comunque una retta sua (3 casi a settembre); rosso se chi paga **non è più iscritto** o è **in un'altra sede**.
+- **Export Excel**: per ogni retta del pagante, una riga in più per il bambino a carico, a importi 0 e con «Paga il fratello … · stato», ordinata per scadenza con le altre. Il filtro classi guarda il **bambino**; i filtri `stato` e `categoria_id` guardano la retta del pagante (un export «solo Mensa» non riceve righe di retta). Il bambino con una retta **sua** in quel mese non riceve la riga in più.
+- Nuova GET di sola lettura `/api/pagamenti/rette-a-carico` (staff, per sede); loader condiviso `src/lib/pagamenti/rette-a-carico-server.ts`. Nessuna migrazione.
+
+**Log.** `pagamento` · `legami-colonna-assente` (info, DB non migrato) · `legami-bambini-non-letti` / `legami-paganti-non-letti` (error) · `legami-pagante-non-leggibile` (warn, conteggio) · `export-senza-righe-a-carico` / `export-rette-paganti-non-lette` (error: l'export esce lo stesso, senza le righe in più) · `export-scadenzario` porta anche `a_carico` (quante righe in più); lato client `scadenzario-legami-*`. Solo conteggi e uuid.
+
 ## 🧩 Changelog — Le routine del diario funzionano, e la segreteria ne aggiunge di sue — 2026-09-28 (branch `chore/dopo-merge-171`)
 
 **Richiesta del titolare.** «Le routine del diario voglio che funzionino: pasto, sonno, cambio e attività. E dammi la possibilità di aggiungere altre cose dalle impostazioni.» Fino a oggi `admin_settings.diario_config.routine_attive` si salvava e il codice ne leggeva solo `umore`: spegnere «Pasto» non toglieva il pasto a nessuno. Questo intervento **sostituisce** il punto 3 del changelog qui sotto per la parte routine (quello le aveva tolte dal pannello perché inerti; ora hanno effetto).

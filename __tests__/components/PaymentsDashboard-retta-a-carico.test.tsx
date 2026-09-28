@@ -124,12 +124,16 @@ const LEGAMI = {
 };
 
 let fetchFinta: ReturnType<typeof vi.fn>;
-function stub(opzioni: { legamiStatus?: number; legami?: unknown; pagamenti?: unknown } = {}) {
+function stub(opzioni: { legamiStatus?: number; legami?: unknown; pagamenti?: unknown; studentsStatus?: number } = {}) {
     fetchFinta = vi.fn(async (url: string) => {
         const u = String(url);
         if (u.startsWith('/api/pagamenti/rette-a-carico')) {
             const s = opzioni.legamiStatus ?? 200;
             return { ok: s === 200, status: s, json: async () => (s === 200 ? (opzioni.legami ?? LEGAMI) : { error: 'guasto', codice: 'LETTURA_FALLITA' }) };
+        }
+        const sAlunni = opzioni.studentsStatus ?? 200;
+        if (u.startsWith('/api/admin/students') && sAlunni !== 200) {
+            return { ok: false, status: sAlunni, json: async () => ({ error: 'Errore interno' }) };
         }
         const body = u.startsWith('/api/pagamenti?') ? (opzioni.pagamenti ?? PAGAMENTI)
             : u.startsWith('/api/admin/students') ? STUDENTS
@@ -583,5 +587,47 @@ describe('Q5 — la GET dei legami riesce dopo un guasto', () => {
         await apriConGuasto();
         fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
         await badgeTornati();
+    });
+});
+
+/**
+ * Q7 (quarta revisione 2026-09-29) — i banner d'errore, per chi usa un lettore di schermo.
+ *  · Il «Riprova» del banner dei legami si chiamava come quello degli altri banner: con due
+ *    banner a schermo, due bottoni «Riprova» indistinguibili.
+ *  · Con gli iscritti non caricati il banner dei legami parlava di bambini «Non generata» che a
+ *    schermo non c'erano: la vista Rette è vuota, e il banner degli alunni dice già tutto.
+ */
+describe('Q7 — il banner dei legami', () => {
+    const RIPROVA_LEGAMI = 'Riprova a caricare chi paga per un fratello';
+    it('il suo «Riprova» ha un nome accessibile suo, e nessun altro bottone lo porta', async () => {
+        stub({ legamiStatus: 500 }); await apri();
+        const banner = await screen.findByTestId('errore-legami');
+        const bottone = within(banner).getByRole('button');
+        expect(bottone).toHaveAccessibleName(RIPROVA_LEGAMI);
+        // Il testo visibile resta «Riprova», come negli altri banner.
+        expect(bottone).toHaveTextContent('Riprova');
+        expect(screen.getAllByRole('button', { name: RIPROVA_LEGAMI })).toEqual([bottone]);
+    });
+    it('con due banner (alunni poi legami): due «Riprova» con due nomi diversi', async () => {
+        const o: { legamiStatus?: number; studentsStatus?: number } = { legamiStatus: 500, studentsStatus: 500 };
+        stub(o);
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        const bannerAlunni = await screen.findByTestId('errore-alunni');
+        // Iscritti non caricati: il banner dei legami NON c'è (parlerebbe di bambini che non ci sono).
+        expect(screen.queryByTestId('errore-legami')).toBeNull();
+        expect(screen.queryByRole('button', { name: RIPROVA_LEGAMI })).toBeNull();
+        // Controllo positivo: tornati gli iscritti, con i legami ancora in errore, il banner c'è.
+        o.studentsStatus = 200;
+        fireEvent.click(within(bannerAlunni).getByRole('button'));
+        await waitFor(() => expect(riga('Luca Rossi')).toBeInTheDocument());
+        expect(screen.getByTestId('errore-legami')).toBeInTheDocument();
+        expect(screen.queryByTestId('errore-alunni')).toBeNull();
+        expect(screen.getByRole('button', { name: RIPROVA_LEGAMI })).toBeInTheDocument();
+    });
+    it('il nome del bottone degli iscritti resta «Riprova» (i banner preesistenti non si toccano)', async () => {
+        stub({ legamiStatus: 500, studentsStatus: 500 });
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        const bannerAlunni = await screen.findByTestId('errore-alunni');
+        expect(within(bannerAlunni).getByRole('button')).toHaveAccessibleName('Riprova');
     });
 });

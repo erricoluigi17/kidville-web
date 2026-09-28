@@ -263,6 +263,7 @@
   "dashPaganteNonIscritto": "Chi paga non risulta iscritto: retta da rivedere",
   "dashPaganteAltraSede": "Chi paga è in un’altra sede: retta da rivedere",
   "dashMsErrLegami": "Impossibile sapere chi paga la retta per un fratello: quei bambini risultano «Non generata». Riprova.",
+  "dashRiprovaLegami": "Riprova a caricare chi paga per un fratello",
   "dashNuovoAcquisto": "Nuovo acquisto",
   "dashPagamentiApertiPlur": "pagamenti aperti",
   "dashPagamentiPlur": "pagamenti",

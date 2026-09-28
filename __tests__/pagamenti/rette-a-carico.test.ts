@@ -188,10 +188,11 @@ describe('LOCK — schermo (catalogo it) ed Excel (prefissoPaganteIt) dicono la 
     expect(String(new IntlMessageFormat(it_.dashACaricoVerifica, 'it').format(valoriPrefisso(p))))
       .toBe('A carico della sorella Anna Rossi (Sez. C): retta da verificare')
   })
-  it('le sei chiavi esistono in entrambe le lingue', () => {
+  // Q7 (quarta revisione 2026-09-29): più il nome accessibile del «Riprova» del banner dei legami.
+  it('le sette chiavi esistono in entrambe le lingue', () => {
     for (const lingua of ['it', 'en']) {
       const c = catalogo(lingua)
-      for (const k of ['dashACarico', 'dashACaricoVerifica', 'dashACaricoAltraSede', 'dashPaganteNonIscritto', 'dashPaganteAltraSede', 'dashMsErrLegami']) {
+      for (const k of ['dashACarico', 'dashACaricoVerifica', 'dashACaricoAltraSede', 'dashPaganteNonIscritto', 'dashPaganteAltraSede', 'dashMsErrLegami', 'dashRiprovaLegami']) {
         expect(typeof c[k], `${lingua}.${k}`).toBe('string')
       }
     }

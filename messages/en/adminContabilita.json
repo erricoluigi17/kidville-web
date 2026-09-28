@@ -263,6 +263,7 @@
   "dashPaganteNonIscritto": "The payer is not enrolled: review the fee",
   "dashPaganteAltraSede": "The payer is at another location: review the fee",
   "dashMsErrLegami": "Could not load who pays the fee for a sibling: those children show as “Not generated”. Try again.",
+  "dashRiprovaLegami": "Retry loading who pays for a sibling",
   "dashNuovoAcquisto": "New purchase",
   "dashPagamentiApertiPlur": "open payments",
   "dashPagamentiPlur": "payments",

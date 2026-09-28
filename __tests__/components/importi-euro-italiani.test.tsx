@@ -109,6 +109,9 @@ function stubFetch() {
         const u = String(url);
         const body =
             u.startsWith('/api/pagamenti?') ? PAGAMENTI
+                // La GET dei legami nella sua forma: senza `a_carico_non_visibili` il cruscotto
+                // mostrerebbe il banner d'errore dei legami (Q4, 2026-09-29).
+                : u.startsWith('/api/pagamenti/rette-a-carico') ? { success: true, data: [], a_carico_non_visibili: [] }
                 : u.startsWith('/api/admin/students') ? STUDENTS
                     : u.includes('/settings/categorie') ? CATEGORIE
                         : u.includes('/settings/aruba') ? ARUBA
@@ -318,6 +321,7 @@ describe('PaymentsDashboard — il chip della coda fatture sta sulla riga della 
             const u = String(url);
             const body =
                 u.startsWith('/api/pagamenti?') ? PAGAMENTI_CODA
+                    : u.startsWith('/api/pagamenti/rette-a-carico') ? { success: true, data: [], a_carico_non_visibili: [] }
                     : u.startsWith('/api/admin/students') ? STUDENTS
                         : u.includes('/settings/categorie') ? CATEGORIE_CODA
                             : u.includes('/settings/aruba') ? ARUBA

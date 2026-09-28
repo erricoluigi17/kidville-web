@@ -143,18 +143,21 @@ export function legamiDaRisposta(data: unknown): { legami: LegameRetta[]; scarta
 
 /**
  * `a_carico_non_visibili` della GET: i bambini a carico il cui pagante sta in una sede che
- * l'utente non legge (solo i loro id). Campo ASSENTE (o `null`) = risposta di prima del
- * 2026-09-28: nessun bambino e nessuno scarto, non un guasto. Un valore che non è una stringa
- * non vuota si scarta e si conta come in `legamiDaRisposta` (l'id si confronta con quelli del
- * cruscotto, non si valida come uuid).
+ * l'utente non legge (solo i loro id). «Nessuno» è l'array vuoto, e solo quello. Un valore che
+ * non è una stringa non vuota si scarta e si conta come in `legamiDaRisposta` (l'id si confronta
+ * con quelli del cruscotto, non si valida come uuid).
  *
- * `null` = campo PRESENTE che non è un array: una forma inattesa, cioè un GUASTO come `data`
- * non array in `legamiDaRisposta`, e il chiamante lo dice a schermo. Fino alla terza revisione
- * (R10, 2026-09-29) era «uno scarto», e il cruscotto mostrava come veri i legami di una
- * risposta che per metà non capiva.
+ * `null` = il campo non è un array — ASSENTE, `null` o altro: una forma inattesa, cioè un GUASTO
+ * come `data` non array in `legamiDaRisposta`, e il chiamante lo dice a schermo senza usare
+ * niente di quella risposta.
+ *  · R10 (terza revisione 2026-09-29): un campo presente e non array era «uno scarto», e il
+ *    cruscotto mostrava come veri i legami di una risposta che per metà non capiva.
+ *  · Q4 (quarta revisione 2026-09-29): il campo ASSENTE (o `null`) valeva «nessuno», giustificato
+ *    come «risposta di prima del 28/09». Quella risposta non esiste: la route nasce con questa
+ *    funzionalità e ha sempre avuto il campo. Senza, i bambini non visibili tornavano «Non
+ *    generata» e mancanti sotto legami mostrati come veri, e senza un segnale.
  */
 export function nonVisibiliDaRisposta(v: unknown): { ids: string[]; scartati: number } | null {
-  if (v === undefined || v === null) return { ids: [], scartati: 0 }
   if (!Array.isArray(v)) return null
   const ids = v.filter((x): x is string => typeof x === 'string' && x !== '')
   return { ids, scartati: v.length - ids.length }

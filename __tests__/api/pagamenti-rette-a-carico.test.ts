@@ -165,11 +165,16 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
     expect((await GET(req())).status).toBe(401)
   })
 
-  it('DB non migrato (42703): 200 con zero legami', async () => {
+  // Q4 (quarta revisione 2026-09-29): il cruscotto tratta un `a_carico_non_visibili` assente come
+  // forma inattesa (banner). Il contratto che lo rende sicuro è questo: la route lo manda SEMPRE,
+  // array, anche quando non c'è niente da dire — compreso il DB non migrato della CI (E2E).
+  it('DB non migrato (42703): 200 con zero legami, e `a_carico_non_visibili` c’è lo stesso (vuoto)', async () => {
     h.errori = { 'alunni:select': { code: '42703', message: 'column alunni.retta_a_carico_di does not exist' } }
     const res = await GET(req())
     expect(res.status).toBe(200)
-    expect((await res.json()).data).toEqual([])
+    const corpo = await res.json()
+    expect(corpo.data).toEqual([])
+    expect(corpo.a_carico_non_visibili).toEqual([])
   })
 
   it('guasto di lettura: 500 con LETTURA_FALLITA, e il log dice perché (con l’errore VERO)', async () => {

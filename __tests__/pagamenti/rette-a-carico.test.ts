@@ -133,9 +133,16 @@ describe('indicizzaLegami e legamiDaRisposta', () => {
 })
 
 describe('nonVisibiliDaRisposta (C3: il pagante sta in una sede che l’utente non legge)', () => {
-  it('campo assente (risposta di prima): nessun bambino, nessuno scarto', () => {
-    expect(nonVisibiliDaRisposta(undefined)).toEqual({ ids: [], scartati: 0 })
-    expect(nonVisibiliDaRisposta(null)).toEqual({ ids: [], scartati: 0 })
+  // Q4 (quarta revisione 2026-09-29): il campo assente era «la risposta di prima del 28/09», cioè
+  // nessuno. Ma la route nasce in questo branch e ha SEMPRE avuto il campo: una «risposta di prima»
+  // non esiste. Una risposta senza il campo è una risposta che non si capisce, come `data` non
+  // array: forma inattesa (null), e il cruscotto lo dice a schermo invece di mostrare mezzi dati.
+  it('campo assente o null: forma inattesa (null), non «nessuno»', () => {
+    expect(nonVisibiliDaRisposta(undefined)).toBeNull()
+    expect(nonVisibiliDaRisposta(null)).toBeNull()
+  })
+  it('un array vuoto è «nessuno»: l’unica forma di «nessun bambino non visibile»', () => {
+    expect(nonVisibiliDaRisposta([])).toEqual({ ids: [], scartati: 0 })
   })
   it('tiene le stringhe non vuote e conta il resto (l’id si confronta, non si valida come uuid)', () => {
     expect(nonVisibiliDaRisposta(['a', '', 3, null, 'b'])).toEqual({ ids: ['a', 'b'], scartati: 3 })

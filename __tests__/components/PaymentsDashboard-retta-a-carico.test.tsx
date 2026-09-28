@@ -409,15 +409,24 @@ describe('C3 — pagante in una sede che l’utente non legge', () => {
         expect(within(r).getByTestId('retta-a-carico-non-visibile')).toBeInTheDocument();
         expect(within(r).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga è in un’altra sede: retta da rivedere');
     });
-    it('risposta di prima (senza il campo): Ivo torna «Non generata» e mancante, senza banner né log', async () => {
-        const vecchia: Record<string, unknown> = { ...LEGAMI };
-        delete vecchia.a_carico_non_visibili;
-        stub({ legami: vecchia }); await apri();
-        expect(within(riga('Ivo Grigi')).getByText('Non generata')).toBeInTheDocument();
-        expect(await screen.findByTestId('cta-genera-mancanti-frase')).toHaveTextContent('3 alunni senza retta generata');
-        expect(screen.queryByTestId('errore-legami')).toBeNull();
-        expect(logSpia.chiamate.some((c) => c.messaggio === 'scadenzario-legami-voci-scartate')).toBe(false);
-    });
+    // Q4 (quarta revisione 2026-09-29): questo test fissava «campo assente = risposta di prima del
+    // 28/09 = nessuno». Ma la route nasce in questo branch e il campo l'ha sempre avuto: una
+    // risposta senza è una forma inattesa, come `a_carico_non_visibili` non array (R10) o `data`
+    // non array. Banner, e niente dati parziali: né i badge dei legami di quella risposta, né i
+    // non visibili spacciati per «Non generata» e mancanti.
+    for (const [caso, valore] of [['assente', undefined], ['null', null]] as const) {
+        it(`Q4 — campo ${caso}: banner, e nessun badge di quella risposta`, async () => {
+            const corpo: Record<string, unknown> = { ...LEGAMI };
+            if (valore === undefined) delete corpo.a_carico_non_visibili;
+            else corpo.a_carico_non_visibili = valore;
+            stub({ legami: corpo }); await apri();
+            expect(await screen.findByTestId('errore-legami')).toBeInTheDocument();
+            expect(within(riga('Luca Rossi')).getByText('Non generata')).toBeInTheDocument();
+            expect(screen.queryByTestId('retta-a-carico')).toBeNull();
+            expect(screen.queryByTestId('retta-a-carico-non-visibile')).toBeNull();
+            expect(logSpia.chiamate.some((c) => c.livello === 'error' && c.messaggio === 'scadenzario-legami-forma-inattesa')).toBe(true);
+        });
+    }
     it('un valore che non è una stringa nel campo si scarta e si conta nel log', async () => {
         stub({ legami: { ...LEGAMI, a_carico_non_visibili: [IVO.id, 7] } }); await apri();
         expect(within(riga('Ivo Grigi')).getByTestId('retta-a-carico-non-visibile')).toBeInTheDocument();
@@ -499,8 +508,8 @@ describe('la GET dei legami', () => {
     });
     // R10 (terza revisione 2026-09-29): `a_carico_non_visibili` presente ma non un array finiva
     // solo in un log, e i legami di quella stessa risposta si mostravano come veri. È la stessa
-    // forma inattesa dei legami: banner, e niente dati parziali. (Campo ASSENTE = risposta di
-    // prima = nessuno: lo prova «risposta di prima (senza il campo)» qui sopra.)
+    // forma inattesa dei legami: banner, e niente dati parziali. (Dalla quarta revisione, Q4,
+    // anche il campo ASSENTE o `null`: vedi i due test «Q4 — campo …» qui sopra.)
     it('R10 — `a_carico_non_visibili` che non è un array: banner, e nessun badge di quella risposta', async () => {
         stub({ legami: { ...LEGAMI, a_carico_non_visibili: IVO.id } }); await apri();
         expect(await screen.findByTestId('errore-legami')).toBeInTheDocument();

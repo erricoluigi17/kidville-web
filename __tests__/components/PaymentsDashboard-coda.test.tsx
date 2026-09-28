@@ -191,7 +191,8 @@ describe('PaymentsDashboard — la coda fatture sul pulsante e dopo un accodamen
             const body =
                 u.startsWith('/api/pagamenti?') ? PAGAMENTI
                     // Prima del ramo generico: il dettaglio qui sarebbe una forma inattesa (banner + log `error`).
-                    : u.startsWith('/api/pagamenti/rette-a-carico') ? { success: true, data: [] }
+                    // Col campo `a_carico_non_visibili`: senza, anche questa è una forma inattesa (Q4).
+                    : u.startsWith('/api/pagamenti/rette-a-carico') ? { success: true, data: [], a_carico_non_visibili: [] }
                     : u.startsWith('/api/pagamenti/') ? DETTAGLIO
                         : u.startsWith('/api/admin/students') ? STUDENTS
                             : u.includes('/settings/categorie') ? CATEGORIE

@@ -250,8 +250,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             // prima spacciati per attuali) e lo si dice a schermo; il rifiuto l'ha loggato `leggiJson`.
             // (`listaLegami` e non `lista`: nel blocco degli alunni qui sopra c'è già una `lista`.)
             const listaLegami = legRes.ok && legRes.corpo?.success ? legamiDaRisposta(legRes.corpo.data) : null;
-            // C3: campo assente (risposta di prima) = nessuno, non un guasto. R10: presente ma non
-            // un array = forma inattesa, come `data` non array — la risposta intera non si usa.
+            // C3/R10/Q4: `a_carico_non_visibili` che non è un array — anche ASSENTE o `null` (la
+            // route l'ha sempre mandato: non c'è una «risposta di prima») — è una forma inattesa,
+            // come `data` non array: la risposta intera non si usa.
             const nonVisibili = listaLegami === null ? null : nonVisibiliDaRisposta(legRes.corpo?.a_carico_non_visibili);
             if (listaLegami === null || nonVisibili === null) {
                 if (legRes.ok) logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-legami-forma-inattesa', route: '/admin/pagamenti' });

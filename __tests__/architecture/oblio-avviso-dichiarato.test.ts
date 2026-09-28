@@ -137,6 +137,7 @@ function clienteFinto(dati: DatiFinti) {
       b.in = () => b
       b.is = () => b
       b.or = () => b
+      b.like = () => b
       b.ilike = () => b
       b.contains = () => b
       b.limit = () => b

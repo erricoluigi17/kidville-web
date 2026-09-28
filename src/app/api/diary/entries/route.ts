@@ -15,6 +15,8 @@ import { withRoute } from '@/lib/logging/with-route';
 import { logEvento, logErrore } from '@/lib/logging/logger';
 import { riconciliaRichieste } from '@/lib/armadietto/richieste';
 import { voceDaMostrare } from '@/lib/diary/registrazione';
+import { applicaRoutineAlLotto } from '@/lib/diary/routine-lotto';
+import { TIPI_BASE, TIPO_ROUTINE_RE, eRoutinePersonalizzata, routineCompilata } from '@/lib/diary/routine';
 import { eEventoAttivita, ORA_ATTIVITA_RE, oraAttivitaValida } from '@/lib/diary/attivita';
 
 // Modalità genitore: default from = 14 giorni fa, to = oggi (dinamici, calcolati nel codice).
@@ -40,8 +42,12 @@ const getTeacherQuerySchema = z.object({
 // (il comportamento attuale non impone vincoli su orari/dettagli/nota).
 const entrySchema = z.object({
     alunno_id: zUuid,
-    // Nessun vincolo di non-vuoto: il codice attuale non lo impone su questa route.
-    tipo_evento: z.string(),
+    // UN VOCABOLARIO CHIUSO (2026-09-28, seconda revisione): i tipi base e `routine:<id>`. Era una
+    // stringa libera, e da quando le routine si accendono e si spengono per sede una stringa libera
+    // le aggirava: `BAGNO`, `bagno ` o `Routine:…` si scrivevano senza passare dai controlli (lo
+    // poteva fare solo il personale, ma lo poteva fare). In produzione, misurato lo stesso giorno,
+    // i tipi scritti sono SETTE, tutti in `TIPI_BASE`.
+    tipo_evento: z.union([z.enum(TIPI_BASE), z.string().regex(TIPO_ROUTINE_RE)]),
     // Default dinamico (adesso) calcolato nel codice.
     orario_inizio: z.unknown().optional(),
     orario_fine: z.unknown().optional(),
@@ -52,6 +58,15 @@ const entrySchema = z.object({
     // Colonna dedicata `nota_bambino`, distinta da nota_libera (per non essere
     // sovrascritta dalla nota di sezione). Senza questo campo zod la scarterebbe.
     nota_bambino: z.unknown().optional(),
+    // Routine della scuola (2026-09-28): la maestra ha TOLTO il valore e tiene la nota. Senza questo
+    // segnale il server conserva il valore già salvato (vedi `tieniPrecedente`), che è la regola
+    // giusta quando il client non sa mostrarlo — non quando la maestra l'ha tolto apposta.
+    azzera_valore: z.boolean().optional(),
+    // Routine della scuola (quinto giro, 2026-09-28): la maestra ha tolto la SOLA NOTA di un valore
+    // che la routine non prevede più. La riga di oggi, se c'è, perde la nota del bambino e tiene il
+    // valore (e la nota di sezione, se a schermo non ce n'è una nuova); se non c'è, non si crea.
+    // Senza, quella voce (valore vuoto, nessuna nota) era «muta» e si saltava.
+    togli_nota: z.boolean().optional(),
 });
 
 // Il body può essere un singolo evento o un array di eventi.
@@ -324,6 +339,13 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         if (scopeErr) return scopeErr;
     }
 
+    // Le routine della SEDE DEL BAMBINO (2026-09-28): spente, inesistenti o con un valore che non
+    // vale non si scrivono (422, tutto-o-niente); quelle della scuola escono con la fotografia
+    // scritta dal server. Vedi `applicaRoutineAlLotto`.
+    const routine = await applicaRoutineAlLotto(admin, entries);
+    if ('response' in routine) return routine.response;
+    const verificate = routine.voci;
+
     // ─────────────────────────────────────────────────────────────────────────
     // LA VOCE MUTA NON ENTRA IN ARCHIVIO, E LA REGOLA STA ANCHE QUI.
     //
@@ -342,7 +364,9 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
     // `voceDaMostrare` è la stessa funzione dei cinque lettori: una regola sola,
     // e fail-open sui tipi che non ne hanno una (nessun filtro inventato qui).
     // ─────────────────────────────────────────────────────────────────────────
-    const daScrivere = entries.filter((e) => voceDaMostrare(
+    // `togli_nota` vale solo per le routine della scuola: sugli altri tipi non apre niente.
+    const togliNota = (e: { tipo_evento: string; togli_nota?: boolean }) => e.togli_nota === true && eRoutinePersonalizzata(e.tipo_evento);
+    const daScrivere = verificate.filter((e) => togliNota(e) || voceDaMostrare(
         e.tipo_evento,
         (e.dettagli ?? null) as Record<string, unknown> | null,
         { conNota: Boolean(String(e.nota_libera ?? '').trim() || String(e.nota_bambino ?? '').trim()) },
@@ -362,12 +386,14 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 
     const results = [];
     const errors = [];
+    // `togli_nota` senza una riga di oggi: non si crea niente, e lo si conta per il log qui sotto.
+    let togliNotaSenzaRiga = 0;
 
     for (const entry of daScrivere) {
         // Cerca se esiste già un evento per questo alunno+tipo oggi
-        const { data: existing } = await admin
+        const { data: existing, error: erroreRicerca } = await admin
             .from('eventi_diario')
-            .select('id')
+            .select('id, dettagli')
             .eq('alunno_id', entry.alunno_id)
             .eq('tipo_evento', entry.tipo_evento)
             .gte('orario_inizio', startOfDay)
@@ -375,16 +401,50 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
             .order('orario_inizio', { ascending: false })
             .limit(1);
 
+        // PostgREST non lancia: senza questo controllo una ricerca fallita diventava «non c'è» e si
+        // scriveva una SECONDA riga — col valore vuoto, se era una nota: il genitore, che legge
+        // l'ultima voce per tipo, avrebbe visto sparire il valore (terzo giro, 2026-09-28).
+        if (erroreRicerca) {
+            logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, erroreRicerca);
+            errors.push({ alunno_id: entry.alunno_id, error: 'Lettura della voce di oggi non riuscita' });
+            continue;
+        }
+
+        // `togli_nota` su una riga che non c'è: niente da togliere, e mai un INSERT. Con la riga,
+        // si passa dall'UPDATE normale qui sotto: col valore vuoto `tieniPrecedente` tiene quello
+        // salvato e la nota si azzera; con un valore nuovo e valido si scrive il valore nuovo
+        // (sesto giro, 2026-09-28: un ramo a parte scriveva solo la nota e perdeva il valore).
+        if (togliNota(entry) && (!existing || existing.length === 0)
+            && !routineCompilata(entry.dettagli as Record<string, unknown> | null)) {
+            togliNotaSenzaRiga += 1;
+            continue;
+        }
+
         if (existing && existing.length > 0) {
             // UPDATE — resiliente alla colonna nota_bambino non ancora migrata (DB E2E CI):
             // PGRST204/42703 → rimuove la colonna mancante e riprova. In prod esiste → 0 retry.
+            // Una routine della scuola che arriva SENZA valore (tenuta in piedi da una nota) non
+            // cancella il valore già salvato (2026-09-28): succede quando la segreteria ha cambiato
+            // le opzioni e il valore di stamattina non vale più per la routine com'è adesso. Il
+            // valore si toglie col cestino, o svuotando e salvando — che mandano una DELETE.
+            const precedente = (existing[0] as { dettagli?: Record<string, unknown> | null }).dettagli ?? null;
+            const tieniPrecedente = eRoutinePersonalizzata(entry.tipo_evento)
+                && entry.azzera_valore !== true
+                && !routineCompilata(entry.dettagli as Record<string, unknown> | null)
+                && routineCompilata(precedente);
             const updateRecord: Record<string, unknown> = {
-                dettagli: entry.dettagli ?? null,
+                // Si tiene il VALORE, non la fotografia vecchia: nome e icona sono quelli di oggi.
+                dettagli: tieniPrecedente
+                    ? { ...(entry.dettagli as Record<string, unknown>), valore: precedente?.valore }
+                    : entry.dettagli ?? null,
                 orario_fine: entry.orario_fine ?? null,
                 nota_libera: entry.nota_libera ?? null,   // nota di sezione (broadcast a tutti)
                 nota_bambino: entry.nota_bambino ?? null, // nota del singolo bambino (E1)
                 // activity_description escluso: colonna non ancora migrata
             };
+            // Togliendo la sola nota del bambino, una nota di sezione vuota a schermo non cancella
+            // quella salvata sulla riga (l'editor non la ripristina mai: vuota non vuol dire tolta).
+            if (togliNota(entry) && !String(entry.nota_libera ?? '').trim()) delete updateRecord.nota_libera;
             let updRes = await admin.from('eventi_diario').update(updateRecord).eq('id', existing[0].id).select('id, alunno_id, tipo_evento');
             let uAttempts = 0;
             while (updRes.error && ['PGRST204', '42703'].includes((updRes.error as { code?: string }).code ?? '') && uAttempts < 4) {
@@ -510,6 +570,15 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         }
     }
 
+    if (togliNotaSenzaRiga > 0) {
+        logEvento('diary', 'warn', {
+            operazione: 'diary/entries:POST',
+            esito: 'togli-nota-senza-riga',
+            n_ricevute: entries.length,
+            n_saltate: togliNotaSenzaRiga,
+        });
+    }
+
     // Audit (diff) + notifica al docente titolare se scrive segreteria/direzione.
     if (results.length > 0) {
         const { data: al } = await admin.from('alunni').select('section_id, scuola_id').eq('id', results[0].alunno_id).maybeSingle();
@@ -575,8 +644,8 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 // L'elenco vive in `@/lib/diary/registrazione` (`TIPI_ELIMINABILI`), insieme a
 // quello dei tipi selettivi: sono due facce della stessa decisione e separarle
 // significherebbe, un domani, renderne uno selettivo e dimenticare la porta.
-// `attivita` è entrata insieme alla sua regola selettiva; `umore` resta fuori
-// per una ragione scritta lì.
+// `attivita` è entrata insieme alla sua regola selettiva; `umore` il 2026-09-28,
+// quando le routine hanno cominciato a spegnersi per sede (la ragione è scritta lì).
 //
 // L'enum si tiene comunque QUI, esplicito e letterale: il gate di una rotta che
 // cancella non si legge da una costante importata.
@@ -591,7 +660,13 @@ const deleteQuerySchema = z.object({
     alunno_id: zUuid,
     // Nanna, bagno e pasti: vedi «perimetro stretto» qui sopra. Deve restare
     // allineato a `TIPI_ELIMINABILI` — c'è un lock che lo verifica.
-    tipo_evento: z.enum(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita']),
+    // Più le routine aggiunte dalla scuola (2026-09-28): `routine:` + gli 8 caratteri dell'id, e
+    // nient'altro — il prefisso non è una porta per stringhe libere. Anche per una routine spenta
+    // o cancellata: correggere uno sbaglio non dipende da quello.
+    tipo_evento: z.union([
+        z.enum(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita', 'umore']),
+        z.string().regex(TIPO_ROUTINE_RE),
+    ]),
     // Default dinamico (oggi), calcolato nel codice come fa la GET.
     date: zDataYMD.optional(),
 });
@@ -658,8 +733,10 @@ export const DELETE = withRoute('diary/entries:DELETE', async (request: NextRequ
         .eq('id', q.data.alunno_id)
         .maybeSingle();
 
+    // `entitaId` = il BAMBINO (2026-09-28): il valore di prima porta la sua nota e il testo delle
+    // routine, e l'oblio GDPR ritrova le righe d'audit per `entita_id`. Senza, restavano per sempre.
     await logScrittura(admin, {
-        attore: auth.user, entitaTipo: 'diario', azione: 'delete',
+        attore: auth.user, entitaTipo: 'diario', entitaId: q.data.alunno_id, azione: 'delete',
         scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null,
         valorePrima: righe, valoreDopo: null,
     });

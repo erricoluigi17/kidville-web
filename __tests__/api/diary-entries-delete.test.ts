@@ -40,7 +40,7 @@ vi.mock('@/lib/primaria/notifiche', () => ({
   notificaTitolariScrittura: h.notificaTitolariScrittura,
   enqueueDiarioGenitori: h.enqueueDiarioGenitori,
 }))
-vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}) }))
+vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}), leggiModuleConfig: async () => ({ ok: true, config: {} }) }))
 vi.mock('@/lib/armadietto/richieste', () => ({ riconciliaRichieste: vi.fn() }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
@@ -115,12 +115,11 @@ describe('DELETE /api/diary/entries', () => {
     expect(h.deleteChiamata).toBe(false)
   })
 
-  it('il perimetro resta un ENUM: `umore` è 400, non una cancellazione', async () => {
-    // Il gesto è «ho sbagliato a segnare», non «cancella una riga qualunque del
-    // diario». `umore` è l'eccezione dichiarata: un umore sbagliato si corregge
-    // SCEGLIENDONE un altro, che è un update vero e riesce — non degrada in una
-    // frase falsa nel diario di un bambino.
-    const res = await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=umore&date=2026-09-07`))
+  it('il perimetro resta un ENUM: un tipo che non è del diario (`entrata`) è 400, non una cancellazione', async () => {
+    // Il gesto è «ho sbagliato a segnare», non «cancella una riga qualunque del diario». `umore`
+    // era l'eccezione dichiarata fino al 2026-09-28: da quando le routine si spengono per sede, un
+    // umore sbagliato non si corregge più «scegliendone un altro», ed è entrato fra i cancellabili.
+    const res = await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=entrata&date=2026-09-07`))
     expect(res.status).toBe(400)
     expect(h.deleteChiamata).toBe(false)
   })
@@ -131,7 +130,21 @@ describe('DELETE /api/diary/entries', () => {
     expect(h.deleteChiamata).toBe(false)
   })
 
-  it.each(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita'])(
+  it('le routine della scuola hanno la loro porta d\'uscita; il prefisso non apre nient\'altro', async () => {
+    // 2026-09-28: le routine aggiunte dalla segreteria sono selettive come il bagno, quindi
+    // senza cestino «spegni e risalva» lascerebbe la riga in archivio. La porta resta aperta
+    // anche per una routine SPENTA o cancellata: correggere uno sbaglio non dipende da quello.
+    h.deleteChiamata = false
+    expect((await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=routine:a1b2c3d4&date=2026-09-07`))).status).not.toBe(400)
+    for (const falso of ['routine:', 'routine:NON-VALIDO', 'routine:a1b2c3d4x', 'routine:../../x']) {
+      h.deleteChiamata = false
+      const res = await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=${encodeURIComponent(falso)}&date=2026-09-07`))
+      expect(res.status, falso).toBe(400)
+      expect(h.deleteChiamata, falso).toBe(false)
+    }
+  })
+
+  it.each(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita', 'umore'])(
     'ogni evento a salvataggio selettivo ha la sua porta d\'uscita: %s', async (tipo) => {
       // Dal 2026-09-08 bagno, pasti e attività sono selettivi come la nanna. Con il filtro,
       // «azzera i contatori e risalva» non cancella più niente: la riga resta in
@@ -149,6 +162,9 @@ describe('DELETE /api/diary/entries', () => {
     expect(arg.azione).toBe('delete')
     expect(arg.entitaTipo).toBe('diario')
     expect(arg.valorePrima).toBeTruthy()
+    // …e porta l'uuid del BAMBINO (2026-09-28): il valore di prima contiene la nota del bambino e il
+    // testo delle routine, e senza `entita_id` l'oblio GDPR (`bonificaAuditScritture`) non lo trova.
+    expect(arg.entitaId).toBe(ALUNNO)
   })
 
   it('NON avvisa il genitore: con dieci minuti di buffer quella riga non l\'ha mai vista', async () => {

@@ -80,6 +80,17 @@ interface Opzioni {
     intervalloNascostoMs?: number;
     /** `false` non arma niente. Serve ai punti che hanno già un gate proprio (es. una media query). */
     attivo?: boolean;
+    /**
+     * Se la callback eseguita AL RITORNO risponde `false` («non ce l'ho fatta»), la si riprova
+     * UNA volta dopo questi millisecondi — solo se la pagina è ancora visibile e montata, e se
+     * nel frattempo non è arrivato un altro ritorno. Omesso: nessun secondo tentativo.
+     *
+     * Perché: misurato il 2026-09-28 in `app_log`, in 14 giorni la sola lettura del diario è
+     * fallita a stato 0 («Failed to fetch» / «Load failed») 967 volte, per ~220 utenti. Senza
+     * ritorni con un orologio (`intervalloMs: null`) quella prova andata a vuoto era l'unica:
+     * il genitore restava sulla pagina vecchia fino alla riapertura successiva.
+     */
+    ritentaDopoMs?: number;
 }
 
 /**
@@ -90,11 +101,16 @@ interface Opzioni {
  *
  * Al ritorno in primo piano esegue **subito**, senza aspettare il tick: chi riapre l'app deve
  * trovare i dati freschi.
+ *
+ * `intervalloMs: null` = **solo al ritorno**, nessun orologio. Serve dove il dato cambia poche
+ * volte al giorno e il momento in cui il vecchio mente è la riapertura, non il minuto che passa:
+ * il diario del genitore (2026-09-28) restava fermo a «la maestra non ha ancora compilato» con le
+ * voci già in archivio, e un orologio lì sarebbe stato volume senza bisogno.
  */
 export function usePollingVisibile(
-    callback: () => void | Promise<void>,
-    intervalloMs: number,
-    { intervalloNascostoMs, attivo = true }: Opzioni = {},
+    callback: () => void | boolean | Promise<void | boolean>,
+    intervalloMs: number | null,
+    { intervalloNascostoMs, attivo = true, ritentaDopoMs }: Opzioni = {},
 ): void {
     /**
      * La callback vive in un ref, e l'orologio NON dipende da lei.
@@ -119,9 +135,38 @@ export function usePollingVisibile(
         let inPrimoPiano = !document.hidden;
         let ultimaRipresa = 0;
         let smontato = false;
+        // Il secondo tentativo in attesa, e il numero del ritorno a cui appartiene: un ritorno
+        // nuovo, o la pagina che torna nascosta, lo rendono inutile.
+        let ritentativo: ReturnType<typeof setTimeout> | null = null;
+        let ritorno = 0;
 
         const esegui = () => {
             void cb.current();
+        };
+
+        const annullaRitentativo = () => {
+            if (ritentativo !== null) {
+                clearTimeout(ritentativo);
+                ritentativo = null;
+            }
+        };
+
+        /** Il ritorno in primo piano: subito, e — se chiesto — una seconda volta se è andata male. */
+        const eseguiAlRitorno = () => {
+            annullaRitentativo();
+            const questo = ++ritorno;
+            const esito = cb.current();
+            if (ritentaDopoMs === undefined) return;
+            // Nessun gestore del rifiuto, apposta: una callback che lancia resta un rifiuto non
+            // gestito, come con `esegui`, e lo raccoglie il logger globale.
+            void Promise.resolve(esito).then((riuscito) => {
+                if (riuscito !== false || smontato || !inPrimoPiano || questo !== ritorno) return;
+                // Un ritorno nuovo, la pagina che torna nascosta e lo smontaggio lo annullano.
+                ritentativo = setTimeout(() => {
+                    ritentativo = null;
+                    esegui();
+                }, ritentaDopoMs);
+            });
         };
 
         const arma = () => {
@@ -131,7 +176,9 @@ export function usePollingVisibile(
             }
             const ritmo = inPrimoPiano ? intervalloMs : intervalloNascostoMs;
             // Nascosto e nessun ritmo lento richiesto: l'orologio resta fermo. È il caso normale.
-            if (ritmo === undefined) return;
+            // `null` a pagina visibile = «solo al ritorno»: nemmeno lì si arma niente. Va escluso
+            // qui e non lasciato a `setInterval`, che con `null` spara a raffica.
+            if (ritmo === undefined || ritmo === null) return;
             rif.timer = setInterval(esegui, ritmo);
         };
 
@@ -145,8 +192,10 @@ export function usePollingVisibile(
                 const ora = Date.now();
                 if (ora - ultimaRipresa >= FINESTRA_COALESCENZA_MS) {
                     ultimaRipresa = ora;
-                    esegui();
+                    eseguiAlRitorno();
                 }
+            } else {
+                annullaRitentativo();
             }
             arma();
         };
@@ -183,8 +232,9 @@ export function usePollingVisibile(
         return () => {
             smontato = true;
             if (rif.timer !== null) clearInterval(rif.timer);
+            annullaRitentativo();
             document.removeEventListener('visibilitychange', suVisibilita);
             void rif.nativoAgganciato?.remove();
         };
-    }, [attivo, intervalloMs, intervalloNascostoMs]);
+    }, [attivo, intervalloMs, intervalloNascostoMs, ritentaDopoMs]);
 }

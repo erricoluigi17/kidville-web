@@ -311,6 +311,8 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       // toccava. Sta nella risposta perché è la parte che si racconta alla
       // famiglia: «quante righe del registro portavano ancora un suo testo».
       presenze_bonificate: esitoAlunno.presenzeBonificate,
+      // Il testo libero del diario (note e routine a testo), tolto dal 2026-09-28.
+      diario_bonificate: esitoAlunno.diarioBonificate,
       news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
       consensi_prova_bonificati: consensiProvaBonificati,
       // I dispositivi che smettono di ricevere le notifiche della scuola. Sta

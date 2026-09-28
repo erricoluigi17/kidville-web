@@ -181,8 +181,9 @@ describe('voceDaMostrare — il dispatcher, e perché è fail-OPEN', () => {
 import { TIPI_ELIMINABILI, eliminabile } from '@/lib/diary/registrazione';
 
 /** Eccezioni dichiarate: selettivi SENZA cestino, e la ragione per cui va bene. */
+// `umore` NON è più un'eccezione dal 2026-09-28: con le routine che si spengono per sede, un umore
+// sbagliato su una sede che l'ha appena spento non si correggerebbe più «scegliendone un altro».
 const ECCEZIONI: Record<string, string> = {
-    umore: 'si corregge scegliendone un altro (update vero), non degrada in una frase falsa',
     // `nanna` senza suffisso non lo scrive più nessuna schermata: `ALL_EVENT_TYPES`
     // elenca attivita/merenda/pranzo/nanna_inizio/nanna_fine/bagno (+umore), e in
     // produzione le righe con questo tipo sono ZERO (misurato il 2026-09-08). Sta

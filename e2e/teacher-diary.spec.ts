@@ -62,9 +62,12 @@ async function apriEventoEAttendiRipristino(
   page: import('@playwright/test').Page,
   evento: string,
 ) {
+  // `scopo=spente` è l'ALTRA GET delle voci di oggi (dal 2026-09-28): la schermata la fa al carico
+  // e dopo ogni salvataggio, per trovare le routine spente che oggi hanno voci. Non è il ripristino
+  // del tipo appena aperto, e prenderla al suo posto farebbe guardare `aria-pressed` troppo presto.
   const [res] = await Promise.all([
     page.waitForResponse(
-      (r) => r.url().includes('/api/diary/entries') && r.request().method() === 'GET',
+      (r) => r.url().includes('/api/diary/entries') && r.request().method() === 'GET' && !r.url().includes('scopo=spente'),
       { timeout: 30_000 },
     ),
     page.getByRole('button', { name: evento }).click(),

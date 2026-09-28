@@ -1,4 +1,5 @@
 import { logClient } from '@/lib/logging/client';
+import { segnalaNotificaAperta } from '@/lib/notifiche/pagina-aperta-da-notifica';
 import { instradaLinkNotifica, leggiIdThread } from './link-conversazione';
 
 /**
@@ -83,4 +84,6 @@ export function apriLinkNotifica(link: string, naviga: (url: string) => void): v
     }
     if (esito.tipo === 'apri-thread' && richiediAperturaThread(esito.threadId)) return;
     naviga(esito.url);
+    // La pagina di destinazione, se è già montata, non si rimonta: l'avviso le dice di aggiornarsi.
+    segnalaNotificaAperta(esito.url);
 }

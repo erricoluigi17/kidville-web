@@ -43,6 +43,13 @@ export function useAdminSettings(userId: string, scuolaId: string) {
     const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
     const [saving, setSaving] = useState(false);
     const [errore, setErrore] = useState<Errore>(null);
+    /**
+     * La configurazione salvata NON si è letta (2026-09-28). `settings` diventa `{}` per non
+     * lasciare il pannello su «Caricamento…», ma chi salva le chiavi di un oggetto intero (le
+     * routine della scuola) partirebbe da zero e cancellerebbe quelle vere. L'avviso d'errore si
+     * spegne al primo salvataggio; questo segnale resta, finché la pagina non si ricarica.
+     */
+    const [letturaFallita, setLetturaFallita] = useState(false);
 
     // La sede è una DIPENDENZA: cambiarla ricarica la configurazione di quella
     // sede. Non azzera però lo stato locale del pannello (la bozza di modifica),
@@ -54,12 +61,13 @@ export function useAdminSettings(userId: string, scuolaId: string) {
             .then(r => r.json())
             .then(d => {
                 if (!active) return;
-                if (d?.success) { setSettings(d.data as Record<string, unknown>); return; }
+                if (d?.success) { setSettings(d.data as Record<string, unknown>); setLetturaFallita(false); return; }
                 // Il server ha risposto NO (403 sede fuori scope, 400 sede non
                 // risolvibile). Senza questo ramo il pannello restava su
                 // «Caricamento…» per sempre: il modo silenzioso di non funzionare.
                 // Si rende con i valori di default e si DICE che la lettura è fallita.
                 setSettings({});
+                setLetturaFallita(true);
                 setErrore({ chiave: 'erroreCaricamentoDati' });
                 logClient({
                     livello: 'warn',
@@ -70,6 +78,7 @@ export function useAdminSettings(userId: string, scuolaId: string) {
             .catch((err: unknown) => {
                 if (!active) return;
                 setSettings({});
+                setLetturaFallita(true);
                 setErrore({ chiave: 'erroreCaricamentoDati' });
                 logClient({
                     livello: 'warn',
@@ -124,5 +133,5 @@ export function useAdminSettings(userId: string, scuolaId: string) {
 
     const error = errore === null ? null : 'testo' in errore ? errore.testo : t(errore.chiave);
 
-    return { settings, save, saving, error };
+    return { settings, save, saving, error, letturaFallita };
 }

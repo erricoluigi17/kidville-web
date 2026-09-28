@@ -120,6 +120,13 @@ export interface OpzioniFinto {
   scritture?: Scrittura[]
   /** Implementazioni di `rpc(nome, args)`. Senza, `rpc()` lancia. */
   rpc?: Record<string, (args: Riga) => RispostaRpc | Promise<RispostaRpc>>
+  /**
+   * Il `max_rows` di PostgREST (1000 in `supabase/config.toml` e sul cloud): una LETTURA non
+   * restituisce mai più di tante righe, e il troncamento è MUTO — nessun errore, nessun segnale.
+   * Omesso: nessun tetto, come prima. Aggiunto il 2026-09-28 per provare che l'oblio del diario
+   * legge a pagine: senza tetto, una lettura sola sembrava bastare anche su 2.500 righe.
+   */
+  maxRighe?: number
 }
 
 // -----------------------------------------------------------------------------
@@ -141,6 +148,19 @@ function uguale(a: unknown, b: unknown): boolean {
   if (x === null || y === null) return false
   if (!primitivo(x) || !primitivo(y)) return false
   return String(x) === String(y)
+}
+
+/** Il contenimento JSONB di Postgres (`a @> b`): array per elemento, oggetti per chiave. */
+function contieneJsonb(a: unknown, b: unknown): boolean {
+  if (Array.isArray(b)) {
+    if (!Array.isArray(a)) return false
+    return b.every((eb) => a.some((ea) => contieneJsonb(ea, eb)))
+  }
+  if (b !== null && typeof b === 'object') {
+    if (a === null || typeof a !== 'object' || Array.isArray(a)) return false
+    return Object.entries(b as Record<string, unknown>).every(([k, v]) => k in (a as Record<string, unknown>) && contieneJsonb((a as Record<string, unknown>)[k], v))
+  }
+  return uguale(a, b)
 }
 
 /** −1 / 0 / 1, oppure `null` se il confronto non è definito (NULL in SQL). */
@@ -237,8 +257,19 @@ function valuta(operatore: string, valore: unknown, atteso: unknown): boolean {
     case 'in':
       return comeArray(atteso).some((a) => uguale(valore, a))
     case 'cs':
-    case 'contains':
+    case 'contains': {
+      // Una STRINGA JSON (`'[{"alunno_id":…}]'`) è ciò che PostgREST riceve come letterale jsonb:
+      // si legge come JSON e vale il contenimento JSONB di Postgres (`@>`). Un ARRAY di oggetti
+      // invece si rifiuta, come farebbe il database: supabase-js lo serializza in
+      // `cs.{[object Object]}` e Postgres risponde 22P02 (2026-09-28, l'audit del diario).
+      if (typeof atteso === 'string' && /^\s*[[{]/.test(atteso)) return contieneJsonb(valore, JSON.parse(atteso))
+      // Un OGGETTO semplice supabase-js lo serializza col suo JSON: contenimento JSONB.
+      if (atteso !== null && typeof atteso === 'object' && !Array.isArray(atteso)) return contieneJsonb(valore, atteso)
+      if (Array.isArray(atteso) && atteso.some((a) => a !== null && typeof a === 'object')) {
+        throw new Error('finto-supabase: `contains` con un array di OGGETTI esce come `cs.{[object Object]}`: passa una stringa JSON (JSON.stringify).')
+      }
       return comeArray(atteso).every((a) => comeArray(valore).some((v) => uguale(v, a)))
+    }
     case 'cd':
     case 'containedby':
       return comeArray(valore).every((v) => comeArray(atteso).some((a) => uguale(a, v)))
@@ -647,6 +678,7 @@ export function creaFintoSupabase(
         const base = ordina(filtrate(db[tabella] ?? []))
         totale = conteggio ? base.length : null
         righe = taglia(base).map((r) => ({ ...r }))
+        if (opzioni.maxRighe != null) righe = righe.slice(0, opzioni.maxRighe)
       } else if (operazione === 'insert') {
         const tab = tabellaScrivibile()
         const inserite = payload.map(conId)

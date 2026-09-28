@@ -1,4 +1,113 @@
 
+## 🧩 Changelog — Le routine del diario funzionano, e la segreteria ne aggiunge di sue — 2026-09-28 (branch `chore/dopo-merge-171`)
+
+**Richiesta del titolare.** «Le routine del diario voglio che funzionino: pasto, sonno, cambio e attività. E dammi la possibilità di aggiungere altre cose dalle impostazioni.» Fino a oggi `admin_settings.diario_config.routine_attive` si salvava e il codice ne leggeva solo `umore`: spegnere «Pasto» non toglieva il pasto a nessuno. Questo intervento **sostituisce** il punto 3 del changelog qui sotto per la parte routine (quello le aveva tolte dal pannello perché inerti; ora hanno effetto).
+
+**Decisioni del titolare** (28/09): la risposta di una routine della scuola la sceglie la segreteria fra quattro tipi — spunta «fatto», scelta fra opzioni (una o più d'una), orario, testo libero; le routine spente o cancellate **restano visibili** nelle voci già scritte; le routine nuove mandano la notifica «Diario aggiornato» come le altre; e, dopo la revisione critica, **svuota e salva = cancella** anche per le routine e l'umore, «Fatto per tutti» solo sui presenti, routine spente con voci di oggi **in sola lettura col cestino**, l'oblio GDPR toglie anche il testo del diario.
+
+**Cosa c'è ora.**
+- **Routine base per sede** (`@/lib/diary/routine`, una regola sola): Pasto → pranzo e merenda, Sonno → nanna e sveglia, Cambio → bagno, Attività, Umore. Spenta una routine, la maestra non vede il bottone e il server rifiuta la scrittura (`422 ROUTINE_SPENTA`). Configurazione assente = quelle di sempre (umore spento); lista vuota = tutto spento. Si accettano i nomi (sedi vere) e i codici dei tipi (seed E2E), e il salvataggio scrive sempre i nomi. Misurato il 28/09 con `SELECT`: le tre sedi vere hanno pasto, sonno, cambio e attività accese, umore spento — accendere il filtro non toglie niente a nessuno.
+- **Routine della scuola** (`diario_config.routine_personalizzate`, al più 20): nome (unico), icona (un solo simbolo), tipo di risposta (non modificabile dopo il salvataggio: `422 ROUTINE_RISPOSTA_NON_MODIFICABILE`, anche togliendola e rimettendola), opzioni (2–10, solo per la scelta), «più d'una», attiva. Tipo di voce `routine:<id>`; i `dettagli` li scrive il SERVER: fotografia di nome, icona e tipo più il valore, così la voce resta leggibile a routine rinominata, spenta o cancellata.
+- **Maestra** (pagina docente e cockpit): un pannello per tipo di risposta, con cestino e «Fatto per tutti» (solo col filtro «Solo presenti»). Le routine sono quelle della **sede della sezione**; il cockpit sceglie la sezione per uuid. La configurazione si rilegge al ritorno nell'app, ogni 10 minuti a schermo acceso e dopo un rifiuto del server. Un valore salvato che la routine non prevede più (opzione rinominata) si mostra col cestino invece di sparire; le routine spente con voci di oggi compaiono in coda, in sola lettura.
+- **Genitore**: ogni routine col suo nome e il suo valore; una voce senza valore tenuta in piedi da una nota mostra la nota e basta (mai «Fatto ✓» non segnato); ora segnata a lato per le routine a orario; il riquadro dell'umore c'è solo se la maestra l'ha segnato, con le sue note; stato vuoto quando non c'è niente da mostrare.
+- **Server**: `tipo_evento` è un vocabolario chiuso (i sette tipi base più `routine:<id>`; in produzione i tipi scritti sono sette); voci mute saltate prima dei controlli; «niente» normalizzato a `null`; un valore già salvato non si sovrascrive con `null`; `umore` entra fra i tipi cancellabili.
+- **Impostazioni → Diario**: cinque interruttori delle routine base e l'editor delle routine della scuola. Il pannello manda **solo le chiavi cambiate** insieme a com'erano quando le ha lette (`diario_config_letto`): se nel frattempo un'altra operatrice le ha cambiate, `409 CONFIG_DIARIO_CAMBIATA` e niente scritto. Salvataggio bloccato se la lettura iniziale è fallita. Un ritardo di visibilità vuoto non diventa più zero minuti.
+- **Oblio GDPR**: `anonimizzaAlunno` toglie dal diario del bambino `nota_bambino`, `nota_libera` e il valore delle routine a testo libero (`diario_bonificate` nell'esito); una lettura fallita conta fra le `letture_fallite`.
+
+**Log** (senza dati personali): `diary/entries:POST` `routine-rifiutata` con `error_code` e conteggi; `admin/settings:PATCH` `routine-risposta-non-modificabile` e `diario-config-cambiata-nel-frattempo` con `error_code`; `diary/config:GET` `sede-dichiarata-fuori-scope` (warn); client `diario-voci-di-oggi-non-lette`, `diario-compilati-non-letti`, `diario-sezioni-cockpit-non-lette`. Il cockpit esce dall'allowlist dei catch muti (tetti 41→40 file, 63→61 occorrenze).
+
+**Revisione critica** (tre revisori indipendenti più la rilettura, 30 difetti, 2 gravi): tutti corretti in questo stesso lavoro. I due gravi: il genitore leggeva «Fatto ✓» su una routine non segnata tenuta in piedi da una nota; un bambino comparso con «Tutti» dopo l'apertura risultava «Fatto» a schermo ma non veniva salvato.
+
+**Seconda revisione, sulle correzioni** (due revisori indipendenti: server e dati, interfacce; 1 difetto grave, 6 medi, ~20 minori, tutti corretti tranne uno dichiarato qui sotto):
+- **Grave:** al risveglio del tablet, una rilettura fallita della configurazione (Wi-Fi che si riconnette) sostituiva quella buona con le routine di sempre: spariva la routine aperta, il riquadro si chiudeva coi segni non salvati. Ora una rilettura fallita non tocca la configurazione già letta (log `diario-routine-rilettura-fallita`) e si riprova una volta dopo 4 secondi.
+- **Oblio GDPR:** il diario si legge a pagine (PostgREST tronca in silenzio a 1.000 righe, e un bambino del nido le supera in un anno) e si scrive a blocchi; le note si tolgono con un update filtrato, con ripiego se manca `nota_bambino` (DB E2E). Il **registro delle scritture** conservava note e testi delle voci cancellate senza l'id del bambino (79 righe in produzione il 28/09, una con una nota): la DELETE ora scrive `entita_id`, e l'oblio ritrova anche le righe vecchie per contenuto (`valore_prima @> [{"alunno_id": …}]`).
+- **Maestra:** «Fatto per tutti» guarda il filtro con cui è stata caricata la lista a schermo, non quello appena toccato; rinominata un'opzione a riquadro aperto, i valori che non valgono più diventano «non più previsti» invece di far rifiutare ogni salvataggio; tolto il valore e lasciata la nota, **la nota resta** (umore e routine della scuola: POST con `azzera_valore`; la nanna resta com'era); l'ultimo cestino di una routine spenta chiude il riquadro; letture di bambini, voci e configurazione in ordine di partenza; la pagina della maestra sceglie la sezione per uuid.
+- **Server:** lapidi delle routine eliminate in `diario_config.routine_eliminate` (scritte solo dal server) al posto di una scansione di `eventi_diario` a ogni salvataggio; «vuoto» con una regola sola (orari di soli spazi, scelte di stringhe vuote); icona anche a tastierina (1️⃣); nomi confrontati in forma Unicode normale e spazi ridotti; una routine con un'icona non più valida si legge con un'icona di ripiego invece di sparire; il valore conservato prende nome e icona di oggi; la ricerca della voce di oggi fallita va fra gli errori (207) invece di scrivere un doppione; `GET /api/diary/config` risponde 503 `ROUTINE_NON_VERIFICATE` su un guasto invece delle routine predefinite.
+- **Impostazioni e genitore:** un ritardo svuotato non diventa 0; una modifica fatta mentre il salvataggio è in volo non si perde; il testo del 409 non accusa «qualcun altro»; le routine del genitore e della card si ordinano per l'ora mostrata.
+- **Terza revisione, sulle correzioni della seconda** (un revisore; 1 grave, 4 medi, 3 minori, tutti corretti):
+  - **Grave:** la nuova bonifica dell'audit nell'oblio avrebbe fallito SEMPRE in produzione: con un array di oggetti supabase-js scrive `cs.{[object Object]}` e Postgres risponde 22P02. Ora il filtro esce come stringa JSON; un test guarda l'URL prodotto dalla libreria vera, e il finto dei test rifiuta l'array di oggetti come fa il database.
+  - La riconciliazione dopo una rilettura guarda l'ARCHIVIO e non la spunta; un segno non salvato che non vale più torna al valore d'archivio, e la maestra legge quanti segni sono stati tolti; con un salvataggio in volo, la riconciliazione aspetta la fine e rilegge l'archivio.
+  - Un salvataggio parziale (207) non dà più la spunta a chi non è stato salvato, e la maestra lo legge (`diario-salvataggio-parziale` nei log, solo conteggi).
+  - Pannello impostazioni: la bozza è l'elenco delle SOLE modifiche, con la loro base per il 409 — una copia intera tenuta dopo un salvataggio rimandava la lista di routine vecchia.
+  - Una riga di sola nota (umore, routine della scuola), svuotata la nota, esce dall'archivio; cambiata sezione con la lettura dei bambini fallita, non resta a schermo la lista della sezione di prima; il cestino e il ripristino rispettano l'ordine delle letture delle voci di oggi; il primo caricamento della configurazione partecipa al giro delle riletture.
+- **Quarta revisione, sulle correzioni della terza** (un revisore; nessun difetto grave, 3 medi, 3 minori, tutti corretti):
+  - Il ripristino dall'archivio a fine salvataggio (quando una rilettura arrivava durante il volo) cancellava i segni non salvati di QUALUNQUE tipo, pasti compresi, anche con la POST fallita: tolto. La riconciliazione rimandata ora gira dopo il commit del salvataggio, sui soli valori della routine che non valgono più.
+  - Un valore «non più previsto» con una nota: toglierne la nota la toglie davvero (la riga riparte con la nota vuota, il valore resta in archivio) invece di cancellare anche il valore; una riga cancellata non resta fra i «non più previsti».
+  - Le righe salvate per la sola nota di SEZIONE non si cancellano svuotando la casella (di «sola nota» è solo la nota del bambino); per umore e routine il pulsante dice anche le cancellazioni che partono col salvataggio («Salva 1 bambino · togli 2 registrazioni»).
+  - Minori: il riquadro chiuso e riaperto durante il salvataggio si rilegge solo se la sezione è la stessa; testo di soli spazi non contato fra i segni tolti; salvataggi in volo contati; un ritardo svuotato torna al valore del server dopo «Salvato».
+- **Quinta revisione** (un revisore; 1 medio, 1 minore, corretti): togliere la sola nota di un valore «non più previsto» mandava una voce che il server considerava muta e saltava, mentre il client la dava per salvata. Ora c'è il segnale `togli_nota` (solo per le routine della scuola: la riga di oggi perde la nota e tiene il resto, e non si crea mai), e il client considera salvato **solo chi la rotta dice di aver scritto** — via il vecchio ripiego «upsert silent» che segnava salvati tutti gli inviati. La riconciliazione dopo una rilettura gira sempre dopo un commit, anche nell'istante fra la fine di un salvataggio e il suo render.
+- **Sesta revisione** (1 medio, 3 minori, corretti): con `togli_nota` e un valore NUOVO scelto insieme, il ramo a parte scriveva solo la nota e perdeva il valore, col toast verde. Ora `togli_nota` serve solo a non scartare la riga e a non crearne una: la riga passa dall'aggiornamento normale (valore vuoto ⇒ `tieniPrecedente` tiene quello salvato; valore nuovo ⇒ si scrive), e il client non lo manda quando a schermo c'è un valore valido. Minori: niente ✅ accanto all'avviso «non più previsto», log `togli-nota-senza-riga`, voci di oggi rilette dopo ogni salvataggio partito.
+- **Settima revisione:** nessun difetto medio o grave; tre minori corretti — `togli_nota` non cancella la nota di sezione salvata sulla riga quando a schermo è vuota; con un valore valido e nessuna riga si scrive come un salvataggio normale; la rilettura delle voci dopo un salvataggio parte solo se la sezione a schermo è ancora quella.
+- **Residuo dichiarato:** il controllo di concorrenza (409) non è atomico — lettura, confronto e scrittura sono tre passi. Due salvataggi partiti nello stesso istante passano entrambi. Chiuderlo vuole una RPC che scriva solo se la configurazione è ancora quella letta.
+
+Test nuovi o estesi: `diario-routine` (lib), `diario-routine-registrazione`, `diary-entries-routine`, `settings-diario-config`, `diary-config-routine`, `gdpr-oblio-diario`, `diary-routine-editor`, `diario-settings-senza-orari-fantasma`, `diario-genitore-routine`, `diario-oggi-card-etichette`, `teacher-diary-rete-duplicata`, `admin-diary-sezione-per-uuid`, `diary-entries-delete`, più i finti dei test GDPR (`like`/`order`/`range`) e il finto Supabase condiviso, che ora emula il tetto `max_rows` (`maxRighe`) e il contenimento JSONB (`@>`). Ogni correzione vista rossa prima; 15 + 20 + 8 + 5 + 6 + 4 + 2 mutazioni mirate sulle correzioni dei sette giri, tutte prese dai test (una sfuggita al primo colpo ha fatto rinforzare il test del pannello). E2E `teacher-diary`: il ripristino atteso esclude la nuova GET delle voci di oggi (`scopo=spente`).
+
+Gate locale: eslint 0, tsc 0 errori, vitest `1584 passed` (23.424 test; `galleria-sede-pagina` è caduto una volta sotto il carico della suite intera e passa da solo e nel suo gruppo: non toccato da questo lavoro), build ok. E2E in CI.
+
+## 📖 Changelog — Diario del genitore: si ricarica al ritorno nell'app, la notifica apre il diario del figlio, via gli orari che nessuno applicava — 2026-09-28 (branch `chore/dopo-merge-171`)
+
+**Segnalazione.** Una maestra di nido compila il diario, ma i genitori della sua sezione lo trovano vuoto. Verificato solo con `SELECT` in produzione:
+- **Il diario c'è.** Nella Sez. Abbracci, dal 14 al 25/09, 169 giornate-presenza su 170 hanno almeno una voce. Dal 21/09 sono partite notifiche per ogni bambino con voci.
+- **Il genitore però lo legge prima che ci sia.** In quella sezione le voci arrivano più tardi che negli altri nidi: alle 13:00 è visibile qualcosa solo nel 50% delle giornate, contro il 97–100% delle altre sezioni. Nel frattempo la pagina dice «La maestra non ha ancora compilato il diario per questo giorno».
+- **La pagina del diario e la card «Oggi a scuola» caricavano le voci una sola volta, all'apertura.** Chi le apriva al mattino e tornava nell'app nel pomeriggio leggeva ancora quel messaggio, con le voci già in archivio.
+- **E una lettura fallita diceva la stessa frase.** Rete giù, o sessione scaduta, senza una copia salvata: al posto dell'avviso d'errore compariva «La maestra non ha ancora compilato». Misurato in `app_log`: in 14 giorni la lettura del diario (`GET /api/diary/entries`) è fallita a stato 0 **967 volte, per ~220 utenti** (683 Android, 164 iOS, 120 web).
+
+**Tre interventi, decisi dal titolare.**
+
+1. **Il diario si ricarica quando si torna nell'app.** Vale per la pagina `parent/diary` e per la card `DiaryTodayCard` della home.
+   - Il segnale è quello di `usePollingVisibile`, che ora accetta `intervalloMs: null`: solo al ritorno, senza orologio. Le voci cambiano poche volte al giorno, e un polling sarebbe stato volume inutile (il difetto del 7 settembre).
+   - Se il ritorno va a vuoto (nessuna risposta, o solo la copia salvata) si riprova **una volta**, 4 secondi dopo: opzione nuova `ritentaDopoMs` dell'hook, annullata se la pagina torna nascosta, se arriva un altro ritorno o allo smontaggio.
+   - Una ricarica fallita non svuota lo schermo: voci, entrata e foto già mostrate restano.
+   - Scrive sullo schermo solo l'ultimo caricamento partito, e una ricarica mentre lo stesso giorno sta già arrivando **aspetta quello** invece di scavalcarlo.
+   - Con l'app rimasta aperta la notte, la pagina che mostrava «oggi» passa al nuovo oggi.
+2. **La notifica «Diario aggiornato» apre il diario di quel figlio.**
+   - `enqueueDiarioGenitori` scrive `link = /parent/diary?id=<alunno>`. Prima il link era NULL (10.247 notifiche dal 21/09) e il dispatcher mandava `url: '/'`: il tocco portava alla home, e con due figli sul figlio selezionato l'ultima volta.
+   - `?id=` è la convenzione di `withIdentity`, e `useParentIdentity` lo rivalida contro i figli veri del genitore.
+   - Da ora il link lo usano anche il centro notifiche in app e la push web. Le notifiche già inviate restano senza link.
+   - **Con il diario già aperto**, la navigazione non rimonta la pagina (Next 16). Il tocco allora avvisa la pagina con l'evento `kv:notifica-aperta` (`src/lib/notifiche/pagina-aperta-da-notifica.ts`), che la riporta a oggi e la rilegge. Vale per il tocco nativo, la campanella e la web push: il Service Worker, trovata una finestra che mostra già l'indirizzo, oltre a portarla davanti le manda `kv-notifica-aperta`.
+3. **Impostazioni → Diario: resta solo ciò che il codice applica.**
+   - Tolti «Compilazione dalle», «Compilazione fino alle» e «Visibile ai genitori dalle». Venivano salvati in `admin_settings.diario_config` (09:00 nelle tre sedi), ma non li leggeva nessuna rotta, funzione o policy. L'unica regola applicata è `buffer_visibilita_min`: ogni voce è visibile 10 minuti dopo il salvataggio, a qualunque ora.
+   - Tolti per la stessa ragione «Note libere dei docenti abilitate» (`note_libere_abilitate`, nessun lettore) e le routine Pasto, Sonno, Cambio e Attività: di `routine_attive` il codice legge solo `umore` (`umoreAttivo`). Al loro posto c'è l'interruttore «Umore della giornata nel diario», che conserva le altre voci salvate.
+   - Tolto il badge «prossimamente» dal titolo, e riscritta la descrizione: diceva che valeva solo l'Umore, mentre il ritardo di visibilità ed «Esponi ai docenti di primaria» funzionano.
+   - Le chiavi tolte restano salvate nel jsonb delle sedi, ma sono inerti: il salvataggio del pannello fa uno shallow-merge e non le cancella. Nessuna migrazione.
+
+**Correzioni emerse dalla revisione dello stesso lavoro** (prima del merge):
+- **Il diario non accusa più la maestra quando non si legge.** Pagina e card mostrano «Diario non caricato» / «Non siamo riusciti a leggere il diario di oggi» con «Riprova», e registrano `diario-genitore: lettura non riuscita (<pagina|card>, <apertura|ricarica>)` in `app_log` (livello `warn`, senza dati personali).
+- **Gara riprodotta prima della correzione:** tocco su «ieri», telefono in tasca, ritorno con la rete giù. La ricarica scavalcava il caricamento in volo e, fallendo, lasciava il pranzo di oggi sotto l'etichetta «ieri». Ora la ricarica aspetta il caricamento dello stesso giorno. La card aveva la stessa gara, corretta allo stesso modo.
+- **Card:** cambiato figlio, le voci dell'altro non si vedono più nemmeno mentre la lettura nuova è in volo; il giorno dopo, una lettura fallita non spaccia le voci di ieri per quelle di oggi. Il suo `.catch(() => {})` è sparito: `DiaryTodayCard.tsx` esce dall'allowlist dei catch muti (tetti 42→41 file, 64→63 occorrenze).
+- **Selettore del figlio:** su una pagina con `?id=` nell'indirizzo (i link della home, e ora la notifica) toccare l'altro figlio ricaricava la pagina sul figlio di prima, perché l'identità legge prima l'indirizzo. Ora `ChildSwitcher` riscrive `id` col figlio scelto prima di ricaricare.
+
+Test nuovi: `diario-genitore-ricarica-al-ritorno` (9), `diario-oggi-card-ricarica` (7), `diario-settings-senza-orari-fantasma` (3), `notifica-aperta-pagina` (4), `child-switcher-id-nell-indirizzo` (2), più casi in `use-polling-visibile` (11–13), `diario-notifiche`, `sw.test` e `ServiceWorkerRegister`. Ogni test è stato visto rosso prima della correzione; hook, pagina, card e pannello anche rompendo di proposito il codice (3 + 6 + 6 + 2 mutazioni, tutte prese).
+
+Collaudo nel browser non fatto: in locale il middleware rinvia al login. La copertura dell'interfaccia vera è l'E2E in CI.
+
+Gate locale: eslint 0, tsc 0 errori, vitest `1574 passed` (23.213 test), build ok. E2E in CI.
+
+## 🧭 Changelog — PR-B dopo la #171: fotografie dalla produzione — 2026-09-26 (branch `chore/dopo-merge-171`)
+
+La #171 è in produzione dal 26/09 alle 18:06 (`be44d743`). CI: E2E 143 passati al primo tentativo, 0 retry.
+
+L'integrazione ha applicato al merge le tre migrazioni `20260926100000`/`100100`/`100200`. Verificato con SELECT in produzione:
+- colonna, vincolo e trigger su `presenze`;
+- RPC `registra_transazioni_per_sede`, non eseguibile da `authenticated`;
+- zero `form_models` con il vecchio pattern CF;
+- `supabase db lint` senza errori.
+
+Le sette fotografie offline sono state rigenerate dalla produzione, tutte con lettura sola:
+
+| Fotografia | Misura |
+|---|---|
+| Migrazioni | 196 |
+| FK verso `utenti` | 58, invariate |
+| Indici unici | 231 |
+| Bucket | 19 |
+| Tabelle con `scuola_id` | 78, 0 senza FK |
+| Policy | 43 |
+
+L'unica differenza di contenuto è `gallery_photo_uploads` (#170), che entra solo ora nell'elenco delle tabelle con `scuola_id`.
+
+`MIGRAZIONI_ATTESE_AL_MERGE` torna vuota.
+
 ## 🧩 Changelog — Orario delle attività, appello senza orario per i presenti, ore giustificate, contabilità a più sedi con filtro classi, codici fiscali omocodici — 2026-09-26
 
 Branch `feat/orario-attivita-appello-contabilita-cf`. Quattro richieste del titolare, con ogni decisione confermata in chat. Spec in `docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/design.md`, contratti fra i compiti in `contratti/`. Lavoro diviso in 27 compiti piccoli, ciascuno con un esecutore e un critico dedicato; tutti chiusi con «AAA» (2–8 giri).
@@ -25544,6 +25653,7 @@ Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori
 - **Nanna (Inizio):** evento con **pulsante dedicato e distinto**; campo orario d'inizio del riposo pomeridiano per ogni bambino. *(Decisione definitiva — incongruenza #6: Nanna e Sveglia restano DUE pulsanti separati, non un pulsante unico.)*
 - **Sveglia (Fine Nanna):** evento con **pulsante dedicato e distinto** dalla Nanna; campo orario di fine riposo per ogni bambino. La coppia Nanna→Sveglia documenta il riposo nella forma "dalle … alle …".
 - **Bagno/Igiene:** Tre contatori cumulativi per bambino — **Pipì** (💧), **Cacca** (💩) e **Vasino** (🚽, potty training) — con pulsanti + e − per incrementare/decrementare il conteggio. Il valore viene salvato come numero intero (es. "Pipì: 2, Cacca: 1, Vasino: 1"). *(Decisione definitiva — incongruenza #7: il Vasino è un controllo previsto e implementato.)* Ogni evento Bagno scala 1 pannolino dall'Armadietto solo per i bambini con flag "Usa pannolino" (vedi Anagrafica §2.1 e Armadietto §2.2; incongruenza #9).
+- **Routine della scuola** *(dal 2026-09-28)*: la segreteria ne aggiunge fino a 20 da Impostazioni → Diario, con nome, icona e tipo di risposta — spunta «fatto», scelta fra opzioni (una sola o più d'una), orario, testo libero. La maestra le trova dopo le routine base, con un controllo per bambino; il genitore le legge col loro nome. Spenta o eliminata una routine, le voci già scritte restano visibili; quelle di oggi la maestra le vede in sola lettura, col cestino.
 
 
 ### 3.2 Sicurezza e Validazione
@@ -25563,7 +25673,7 @@ Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori
 
 ## 5. Amministrazione e Monitoraggio (Segreteria)
 ### 5.1 Configurazione e Controllo
-• Customizzazione per Classe: La Segreteria può abilitare o disabilitare specifiche categorie di routine in base alla classe (es. disabilitare "Bagno/Cambio" per le classi dell'Infanzia che non ne necessitano).
+• Customizzazione per Sede *(implementata il 2026-09-28 per SEDE, non per classe)*: la Segreteria accende o spegne le routine base (Pasto, Sonno, Cambio, Attività, Umore) e aggiunge routine della scuola. Spenta una routine, la maestra non la vede più e il server ne rifiuta la scrittura.
 • Dashboard di Monitoraggio: Uno strumento dedicato permette alla Segreteria di vedere in tempo reale quali classi stanno compilando il diario e quali sono inattive, facilitando il coordinamento didattico.
 • Archiviazione e Storico:
   • I dati del diario oltre i 14 giorni non sono più consultabili dal genitore per ottimizzare le performance, ma rimangono accessibili alla Segreteria per controlli o audit.
@@ -28216,12 +28326,14 @@ _Modulo PRD: Modulo Impostazioni (tutto)_
 - Toggle 'Funzione attiva per grado'
 - Pulsante 'Salva' (Funzioni & moduli)
 - Badge 'Salvato ✓'
-- Selettore 'Routine attive nel diario'
-- Campo 'Compilazione diario dalle/alle'
-- Campo 'Diario visibile ai genitori dalle'
-- Toggle 'Note libere docenti abilitate'
-- Badge 'Coming soon' (Diario)
+- Toggle 'Umore della giornata nel diario': l'unica routine che il codice applica.
+- Campo 'Ritardo visibilità genitori (min)': è l'unica regola di visibilità del diario che si applica.
+- Toggle 'Esponi il diario 0-6 ai docenti di primaria'
 - Pulsante 'Salva' (Diario)
+> **Non devono più esserci** nel pannello Diario: 'Compilazione dalle', 'Compilazione fino alle',
+> 'Visibile ai genitori dalle', 'Note libere docenti abilitate', il selettore 'Routine attive nel
+> diario' con Pasto/Sonno/Cambio/Attività e il badge 'prossimamente'. Tolti il 2026-09-28 perché
+> nessuno li applicava: vedi il changelog di quel giorno.
 - Campo 'Orario cut-off mensa'
 - Selettore 'Giorni mensa attivi'
 - Campo 'Settimane di rotazione menu'

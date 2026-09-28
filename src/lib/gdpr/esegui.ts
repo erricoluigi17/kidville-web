@@ -156,6 +156,32 @@ export async function bonificaAuditScritture(
   return n
 }
 
+/**
+ * Le righe d'audit delle cancellazioni del diario scritte senza `entita_id` (la DELETE di
+ * `diary/entries` non lo passava fino al 2026-09-28), ritrovate per CONTENUTO: il loro
+ * `valore_prima` è l'elenco delle righe cancellate, ognuna col suo `alunno_id`. Stessa bonifica
+ * di `bonificaAuditScritture`: la riga resta, il contenuto no. `false` se non si è potuto fare.
+ */
+export async function bonificaAuditDiarioSenzaId(supabase: SupabaseClient, alunnoId: string, op: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('audit_scritture_docente')
+    .update({ valore_prima: null, valore_dopo: null })
+    .eq('entita_tipo', 'diario')
+    .is('entita_id', null)
+    // Una STRINGA JSON, non l'array: con un array di oggetti supabase-js scrive `cs.{[object
+    // Object]}`, e Postgres risponde 22P02 su una colonna jsonb (misurato sulla libreria vera,
+    // 2026-09-28: il finto dei test lo lasciava passare). La stringa esce così com'è.
+    .contains('valore_prima', JSON.stringify([{ alunno_id: alunnoId }]))
+    .select('id')
+  if (error) {
+    if (schemaAssente(error)) return true
+    logErrore({ operazione: op, evento: 'oblio_audit_diario_senza_id' }, error)
+    return false
+  }
+  logEvento('gdpr', 'info', { operazione: op, esito: 'audit-diario-senza-id-bonificato', n_righe: (data ?? []).length })
+  return true
+}
+
 /** Riga alunno minima necessaria all'anonimizzazione + bonifica finanziaria. */
 export interface AlunnoOblio {
   id: string
@@ -1641,6 +1667,114 @@ export async function anonimizzaParent(
 }
 
 /**
+ * IL TESTO LIBERO DEL DIARIO DI UN BAMBINO, TOLTO (2026-09-28).
+ *
+ * Fino a quella data l'oblio leggeva `eventi_diario` solo per trovare le segnalazioni: le note
+ * (`nota_bambino`, scritta per UN genitore; `nota_libera`, la nota di sezione copiata sulla riga)
+ * restavano leggibili accanto a un `alunno_id` invariato. Le routine della scuola a testo libero
+ * (`routine:<id>`, risposta «testo», fino a 200 caratteri per il singolo bambino) allargavano il
+ * buco: il loro VALORE è testo su un minore come una nota.
+ *
+ * Si toglie il TESTO, non la riga, come per le presenze: che un bambino abbia pranzato è un fatto
+ * del registro. Nome e icona della routine restano: sono della scuola, e tengono la riga leggibile.
+ *
+ * `completo: false` se una lettura o una scrittura non è riuscita: chi risponde alla Direzione non
+ * deve poter scrivere «oblio completo» su un diario che nessuno ha potuto guardare. Il valore
+ * delle routine si riscrive per GRUPPI di righe con la stessa fotografia (una routine = di solito
+ * un gruppo), a blocchi di cento id: poche scritture, e URL che restano corte.
+ */
+async function bonificaDiarioAlunno(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  op: string,
+): Promise<{ bonificate: number; completo: boolean }> {
+  let completo = true
+  const toccate = new Set<string>()
+
+  // a) Le note, con UN update filtrato come per le presenze: si scrive solo dove c'è testo, e
+  //    nessun elenco di id finisce nell'URL (la nota di sezione è su centinaia di righe).
+  //    Sul DB E2E non migrato `nota_bambino` non c'è (42703/PGRST204): si ritenta con la sola
+  //    nota di sezione invece di saltare tutto — prima la bonifica si arrendeva e diceva «completo».
+  const note = await supabase
+    .from('eventi_diario')
+    .update({ nota_bambino: null, nota_libera: null })
+    .eq('alunno_id', alunnoId)
+    .or('nota_bambino.not.is.null,nota_libera.not.is.null')
+    .select('id')
+  let esitoNote: { data: unknown; error: unknown } = note
+  if (note.error && ['42703', 'PGRST204'].includes((note.error as { code?: string }).code ?? '')) {
+    logEvento('gdpr', 'info', { operazione: op, esito: 'oblio-diario-senza-nota-bambino' })
+    esitoNote = await supabase
+      .from('eventi_diario')
+      .update({ nota_libera: null })
+      .eq('alunno_id', alunnoId)
+      .not('nota_libera', 'is', null)
+      .select('id')
+  }
+  if (esitoNote.error) {
+    if (!schemaAssente(esitoNote.error)) {
+      logErrore({ operazione: op, evento: 'oblio_diario_note' }, esitoNote.error)
+      completo = false
+    }
+  } else {
+    for (const r of (esitoNote.data ?? []) as { id: string }[]) toccate.add(r.id)
+  }
+
+  // b) Il valore delle routine della scuola a testo libero. Si legge A PAGINE: PostgREST tronca
+  //    in silenzio a `max_rows` (1000), e un bambino del nido supera le 1.000 righe di diario in
+  //    un anno. Una lettura sola ne vedeva mille e diceva «completo».
+  const PAGINA = 1000
+  const gruppi = new Map<string, { dettagli: Record<string, unknown>; ids: string[] }>()
+  for (let da = 0; ; da += PAGINA) {
+    const { data, error } = await supabase
+      .from('eventi_diario')
+      .select('id, dettagli')
+      .eq('alunno_id', alunnoId)
+      .like('tipo_evento', 'routine:%')
+      .order('id')
+      .range(da, da + PAGINA - 1)
+    if (error) {
+      if (!schemaAssente(error)) {
+        logErrore({ operazione: op, evento: 'oblio_diario_routine_select' }, error)
+        completo = false
+      }
+      break
+    }
+    const righe = (data ?? []) as { id: string; dettagli?: unknown }[]
+    for (const r of righe) {
+      const d = r.dettagli
+      if (!d || typeof d !== 'object' || Array.isArray(d)) continue
+      const det = d as Record<string, unknown>
+      if (det.risposta !== 'testo' || det.valore === null || det.valore === undefined) continue
+      const pulito = { ...det, valore: null }
+      const chiave = JSON.stringify(pulito)
+      const g = gruppi.get(chiave) ?? { dettagli: pulito, ids: [] as string[] }
+      g.ids.push(r.id)
+      gruppi.set(chiave, g)
+    }
+    if (righe.length < PAGINA) break
+  }
+  // Gli id a blocchi: ~39 caratteri di URL ciascuno, e un anno di routine non ci starebbe.
+  const BLOCCO = 100
+  for (const g of gruppi.values()) {
+    for (let i = 0; i < g.ids.length; i += BLOCCO) {
+      const { data, error } = await supabase
+        .from('eventi_diario')
+        .update({ dettagli: g.dettagli })
+        .in('id', g.ids.slice(i, i + BLOCCO))
+        .select('id')
+      if (error) {
+        logErrore({ operazione: op, evento: 'oblio_diario_routine' }, error)
+        completo = false
+        continue
+      }
+      for (const r of (data ?? []) as { id: string }[]) toccate.add(r.id)
+    }
+  }
+  return { bonificate: toccate.size, completo }
+}
+
+/**
  * Anonimizza UN alunno + bonifica i suoi dati finanziari collegati
  * (riconciliazione/incassi/cassa), con la stessa logica del diritto all'oblio
  * admin (causale/controparte/`suggerimenti.label` e testo libero di cassa che
@@ -1664,6 +1798,8 @@ export async function anonimizzaAlunno(
   fotoRimosse: number
   fotoSganciate: number
   presenzeBonificate: number
+  /** Righe di `eventi_diario` il cui testo libero (note, routine a testo) è stato tolto. */
+  diarioBonificate: number
   /** Righe di `notifiche` che nominavano il bambino, rimosse (art. 17). */
   notificheRimosse: number
   /**
@@ -1724,6 +1860,11 @@ export async function anonimizzaAlunno(
   } else {
     presenzeBonificate = (presBonificate ?? []).length
   }
+
+  // 2-ter. IL TESTO DEL DIARIO (2026-09-28). Il gemello di quello delle presenze: le note
+  //    (`nota_bambino`, `nota_libera`) e il valore delle routine della scuola a testo libero.
+  //    Vedi `bonificaDiarioAlunno`.
+  const diario = await bonificaDiarioAlunno(supabase, alunno.id, op)
 
   // 2-bis. LE NOTIFICHE CHE NOMINANO IL BAMBINO (art. 17).
   //
@@ -2040,6 +2181,10 @@ export async function anonimizzaAlunno(
   //    record integrale al momento dell'importazione. La riga resta (dice chi ha
   //    fatto cosa e quando), il contenuto no.
   await bonificaAuditScritture(supabase, [alunno.id], op)
+  // …e le cancellazioni di voci del diario registrate SENZA `entita_id` (fino al 2026-09-28): il
+  // loro valore di prima porta la nota del bambino e il testo delle routine. Si ritrovano per
+  // contenuto (`valore_prima @> [{"alunno_id": …}]`). Misurate il 28/09: 79 righe, una con una nota.
+  const auditDiario = await bonificaAuditDiarioSenzaId(supabase, alunno.id, op)
 
   // I conteggi dei file sono UNA somma su tutti i bucket toccati: chi legge la
   // risposta deve poter chiedere «è uscito tutto?» una volta sola. Il dettaglio
@@ -2070,6 +2215,7 @@ export async function anonimizzaAlunno(
     fotoRimosse: foto.fotoRimosse,
     fotoSganciate: foto.fotoSganciate,
     presenzeBonificate,
+    diarioBonificate: diario.bonificate,
     notificheRimosse,
     // ── GLI INVENTARI CHE NON SI SONO POTUTI LEGGERE ──
     //
@@ -2087,6 +2233,8 @@ export async function anonimizzaAlunno(
       allegatiChat.letto,
       iscr.letto,
       !threadNonLetti,
+      diario.completo,
+      auditDiario,
     ].filter((l) => l === false).length,
   }
 }

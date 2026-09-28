@@ -3,6 +3,7 @@ import { render, waitFor } from '@testing-library/react';
 import { ServiceWorkerRegister } from '@/components/providers/ServiceWorkerRegister';
 import { logClient } from '@/lib/logging/client';
 import { ascoltaAperturaThread } from '@/lib/chat/apertura-thread';
+import { ascoltaNotificaAperta } from '@/lib/notifiche/pagina-aperta-da-notifica';
 
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn() }));
 const mockLog = vi.mocked(logClient);
@@ -225,5 +226,23 @@ describe('ServiceWorkerRegister — il clic su una web push di chat', () => {
       messaggio: 'chat-apertura-da-notifica: nessuna-pagina-chat (sw)',
     });
     expect(JSON.stringify(mockLog.mock.calls)).not.toContain(T);
+  });
+
+  it('la finestra era già sulla pagina della notifica: il ponte avvisa quella pagina (2026-09-28)', () => {
+    // Il Service Worker, trovata una finestra che mostra già l'indirizzo della notifica, la porta
+    // solo davanti: senza questo avviso il diario già aperto non rileggeva niente.
+    suPagina(`/parent/diary?id=a1&userId=${U}`);
+    const diario = vi.fn();
+    pagineMontate.push(ascoltaNotificaAperta('/parent/diary', diario));
+    const consegna = ponte();
+
+    consegna({ tipo: 'kv-notifica-aperta', url: '/parent/diary?id=a1' });
+    // Presidio: un indirizzo che non è di questa app, o che non è una stringa, non avvisa nessuno.
+    consegna({ tipo: 'kv-notifica-aperta', url: '//evil.example/parent/diary' });
+    consegna({ tipo: 'kv-notifica-aperta', url: 42 });
+
+    expect(diario).toHaveBeenCalledTimes(1);
+    expect(mockLog).not.toHaveBeenCalled();
+    expect(dove()).toBe(`/parent/diary?id=a1&userId=${U}`);
   });
 });

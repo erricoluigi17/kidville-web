@@ -83,6 +83,15 @@ export function ChildSwitcher() {
     // Invalidare qui è la differenza fra "riparte dal backend" e "riparte da
     // ciò che era vero per il figlio precedente".
     invalidaFigliCache();
+    // L'identità legge PRIMA l'indirizzo: su una pagina aperta con `?id=` (i link della home,
+    // la notifica «Diario aggiornato») il ricaricamento riportava al figlio di prima, e il tocco
+    // sembrava non fare niente (2026-09-28). Si riscrive `id` col figlio scelto; il resto
+    // dell'indirizzo, e lo stato della cronologia di Next, restano quelli.
+    const indirizzo = new URL(window.location.href);
+    if (indirizzo.searchParams.has('id')) {
+      indirizzo.searchParams.set('id', id);
+      window.history.replaceState(window.history.state, '', indirizzo.toString());
+    }
     // Ricarico così ogni hook/identità rilegge il nuovo figlio.
     window.location.reload();
   };

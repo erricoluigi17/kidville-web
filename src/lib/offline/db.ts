@@ -1,6 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie';
 
-export type DiaryEventType =
+/** I tipi di voce base del diario: quelli con un pannello, una narrativa e un'etichetta propri. */
+export type DiaryEventTypeBase =
     | 'attivita'
     | 'merenda'
     | 'pranzo'
@@ -8,6 +9,12 @@ export type DiaryEventType =
     | 'nanna_fine'
     | 'bagno'
     | 'umore';
+
+/**
+ * Un tipo di voce del diario: uno base, oppure una routine aggiunta dalla scuola
+ * (`routine:<id>`, 2026-09-28 — vedi `@/lib/diary/routine`).
+ */
+export type DiaryEventType = DiaryEventTypeBase | `routine:${string}`;
 
 /** Include 'entrata' per compatibilità con dati storici */
 export type DiaryEventTypeLegacy = DiaryEventType | 'entrata';

@@ -935,6 +935,23 @@ describe('service worker — il click su una notifica apre ciò che indica', () 
         expect(s.openWindow).not.toHaveBeenCalled();
     });
 
+    it('finestra già sul diario del figlio: oltre al fuoco riceve `kv-notifica-aperta`, perché si aggiorni', async () => {
+        // 2026-09-28: senza il messaggio, una finestra già visibile sul diario prendeva solo il
+        // fuoco — nessun `visibilitychange`, nessuna ricarica — e «Diario aggiornato» non
+        // aggiornava niente. Il percorso basta: la pagina sa da sé quale figlio sta mostrando.
+        const diario = finestra(`/parent/diary?id=a1&userId=${U}`);
+        conFinestre(diario);
+
+        await clicca({ url: '/parent/diary?id=a1' });
+
+        expect(diario.focus).toHaveBeenCalledTimes(1);
+        expect(diario.navigate).not.toHaveBeenCalled();
+        expect(diario.ricevuti.filter((m) => m.tipo === 'kv-notifica-aperta')).toEqual([
+            { tipo: 'kv-notifica-aperta', url: '/parent/diary?id=a1' },
+        ]);
+        expect(s.openWindow).not.toHaveBeenCalled();
+    });
+
     it('navigate che rigetta (finestra non controllata) o che manca: si apre una finestra, e lo si riferisce senza URL', async () => {
         for (const modo of ['rifiuta', 'assente'] as const) {
             s = creaScopeSW();

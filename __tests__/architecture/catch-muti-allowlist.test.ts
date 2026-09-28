@@ -159,8 +159,16 @@ const ESENTE = 'src/lib/logging/';
 // due `.catch(() => {})` stavano sulle categorie e sulla configurazione Aruba: con più sedi la
 // GET Aruba senza `scuola_id` rispondeva 400 e il badge «integrazione non configurata» spariva
 // in silenzio. Ora la configurazione si legge per sede e ogni guasto logga (`logClient`).
-const MAX_FILE = 42;
-const MAX_OCCORRENZE = 64;
+// 🔻 42 → 41 e 64 → 63 il 2026-09-28: `DiaryTodayCard.tsx` esce dall'allowlist. Il suo
+// `.catch(() => {})` faceva dire alla card «Ancora nessun aggiornamento del diario per oggi»
+// quando la lettura falliva — la frase che accusava la maestra. Ora la card dice che il diario
+// non si è letto, con «Riprova», e logga (`segnalaDiarioNonLetto`).
+// 🔻 41 → 40 e 63 → 61 il 2026-09-28 (routine del diario, seconda revisione): il cockpit
+// `admin/diary/page.tsx` esce dall'allowlist. I suoi due `.catch(() => {})` stavano sul contatore
+// «Compilato» e sull'elenco di sedi e sezioni: un guasto lasciava «…» o il cockpit vuoto senza
+// traccia. Ora loggano (`diario-compilati-non-letti`, `diario-sezioni-cockpit-non-lette`).
+const MAX_FILE = 40;
+const MAX_OCCORRENZE = 61;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

@@ -9,6 +9,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
+import { ROUTINE_BASE, zRoutinePersonalizzate, nomiRoutineBase, type RoutinePersonalizzata } from '@/lib/diary/routine'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -212,6 +213,92 @@ const zAvvisiConfig = z.looseObject({
   promemoria_giorni_prima: z.coerce.number().int().min(0).max(30).optional(),
 })
 
+/**
+ * `diario_config` — dal 2026-09-28 le routine del diario FUNZIONANO: spengono bottoni, rifiutano
+ * scritture, compaiono nel diario dei genitori. Fino a ieri passava come `z.unknown()`, perché
+ * niente di quello che conteneva aveva effetto. Si validano le chiavi che ne hanno:
+ *  · `routine_attive` — solo nomi di routine base (`@/lib/diary/routine`);
+ *  · `routine_personalizzate` — la lista della segreteria: ogni voce valida, ids unici, al più 20;
+ *  · `buffer_visibilita_min` — gli estremi del pannello (0–120), interi;
+ *  · `diario_primaria_visibile` — booleano.
+ * APERTO (`looseObject`), come `avvisi_config` e per la stessa ragione: le sedi portano ancora
+ * chiavi vecchie e inerti (`visibile_genitori_da`, `orario_compilazione_*`,
+ * `note_libere_abilitate`), e un client vecchio del pannello le rimanda tutte. Chiuderlo vorrebbe
+ * dire rifiutare il salvataggio del diario di Giugliano.
+ *
+ * Seconda revisione (2026-09-28):
+ *  · `routine_attive` coi CODICI dei tipi (il seed E2E) si salva coi NOMI (`nomiRoutineBase`):
+ *    prima quella sede non poteva salvare nessuna impostazione del diario (400);
+ *  · un ritardo `null` o vuoto vale «non detto», non 0: `z.coerce` lo trasformava in ZERO minuti,
+ *    cioè in genitori che leggono le voci prima che la maestra possa correggerle.
+ */
+const vuotoComeAssente = (v: unknown) => (v === null || (typeof v === 'string' && v.trim() === '') ? undefined : v)
+const zDiarioConfig = z.looseObject({
+  routine_attive: z.preprocess(nomiRoutineBase, z.array(z.enum(ROUTINE_BASE)).max(ROUTINE_BASE.length).optional()),
+  routine_personalizzate: zRoutinePersonalizzate.optional(),
+  buffer_visibilita_min: z.preprocess(
+    (v) => { const w = vuotoComeAssente(v); return typeof w === 'string' ? Number(w) : w },
+    z.number().int().min(0).max(120).optional(),
+  ),
+  diario_primaria_visibile: z.preprocess(vuotoComeAssente, z.boolean().optional()),
+})
+
+/**
+ * Il TIPO DI RISPOSTA di una routine della scuola già salvata non cambia (2026-09-28). Le voci già
+ * scritte portano la fotografia del tipo vecchio: una routine a spunta diventata «orario»
+ * ritroverebbe nel diario di oggi valori che il pannello della maestra non sa più mostrare, né
+ * togliere col cestino. Per cambiarlo si crea una routine nuova.
+ *
+ * Il confronto è con le voci SALVATE così come sono, anche quelle che oggi non passerebbero la
+ * validazione: la lettura «con sospetto» (`routinePersonalizzate`) le scartava, e un cambio di
+ * tipo su di loro passava inosservato (seconda revisione, 2026-09-28).
+ */
+function risposteSalvate(raw: unknown): Map<string, unknown> {
+  const m = new Map<string, unknown>()
+  if (!Array.isArray(raw)) return m
+  for (const v of raw) {
+    if (v && typeof v === 'object' && typeof (v as { id?: unknown }).id === 'string') {
+      m.set((v as { id: string }).id, (v as { risposta?: unknown }).risposta)
+    }
+  }
+  return m
+}
+
+function rispostaCambiata(prima: unknown, dopo: RoutinePersonalizzata[] | undefined): boolean {
+  const vecchie = risposteSalvate(prima)
+  return (dopo ?? []).some((r) => vecchie.has(r.id) && vecchie.get(r.id) !== r.risposta)
+}
+
+/**
+ * …e non cambia nemmeno TOGLIENDO la routine e rimettendola con lo stesso id in un secondo
+ * salvataggio. Per questo, quando una routine esce dalla lista, il server ne tiene la LAPIDE in
+ * `diario_config.routine_eliminate` (id e tipo di risposta): una routine nuova con l'id di una
+ * lapide e un tipo diverso si rifiuta. Le lapidi le scrive SOLO il server — quelle mandate dal
+ * client si ignorano. Prima questo controllo interrogava `eventi_diario` a ogni routine nuova,
+ * senza indice su `tipo_evento`: una scansione dell'intera tabella per salvataggio (terzo giro).
+ */
+interface Lapide { id: string; risposta: string }
+const MAX_LAPIDI = 200
+
+function lapidiSalvate(raw: unknown): Lapide[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((v): v is Lapide =>
+    Boolean(v) && typeof v === 'object' && typeof (v as Lapide).id === 'string' && typeof (v as Lapide).risposta === 'string')
+    .map((v) => ({ id: v.id, risposta: v.risposta }))
+}
+
+/** Un valore JSON in una forma confrontabile: chiavi in ordine, `undefined` come `null`. */
+function stabile(v: unknown): string {
+  const ordina = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(ordina)
+    if (x && typeof x === 'object') {
+      return Object.fromEntries(Object.keys(x as Record<string, unknown>).sort().map((k) => [k, ordina((x as Record<string, unknown>)[k])]))
+    }
+    return x ?? null
+  }
+  return JSON.stringify(ordina(v))
+}
+
 const patchBodySchema = z.object({
   scuola_id: zScuolaId,
   ...Object.fromEntries(ALLOWED_FIELDS.map((f) => [f, z.unknown().optional()])),
@@ -219,6 +306,12 @@ const patchBodySchema = z.object({
   rette_config: zRetteConfig.optional(),
   // Idem per `avvisi_config`, ma solo sulla chiave con effetto lato server.
   avvisi_config: zAvvisiConfig.optional(),
+  // E per `diario_config`, dal giorno in cui le routine hanno effetto (2026-09-28).
+  diario_config: zDiarioConfig.optional(),
+  // Il `diario_config` COM'ERA quando il pannello l'ha letto (seconda revisione, 2026-09-28).
+  // Serve a una cosa sola: accorgersi che fra la lettura e il salvataggio qualcun altro ha
+  // cambiato una delle chiavi che si stanno salvando (409). Non si scrive da nessuna parte.
+  diario_config_letto: z.record(z.string(), z.unknown()).optional(),
 })
 
 /**
@@ -366,7 +459,68 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
         }
         for (const k of incomingMerged) {
           const prev = (existingRow[k] ?? {}) as Record<string, unknown>
-          const next = updates[k] as Record<string, unknown>
+          let next = updates[k] as Record<string, unknown>
+          if (k === 'diario_config') {
+            // Una chiave arrivata vuota (`null`, `''` → `undefined`) non cancella quella salvata; e
+            // le lapidi le scrive solo il server (vedi `lapidiSalvate`).
+            next = Object.fromEntries(Object.entries(next).filter(([c, v]) => v !== undefined && c !== 'routine_eliminate'))
+            updates[k] = next
+
+            // DUE PANNELLI APERTI (2026-09-28): chi salva per secondo non cancella il lavoro del
+            // primo. Si confrontano SOLO le chiavi che si stanno salvando, con com'erano quando il
+            // pannello le ha lette: diverse ⇒ 409, e niente scritto.
+            const letto = body.diario_config_letto as Record<string, unknown> | undefined
+            const cambiate = letto ? Object.keys(next).filter((c) => stabile(prev[c]) !== stabile(letto[c])) : []
+            if (cambiate.length > 0) {
+              logEvento('config', 'warn', {
+                operazione: 'admin/settings:PATCH',
+                esito: 'diario-config-cambiata-nel-frattempo',
+                error_code: 'CONFIG_DIARIO_CAMBIATA',
+                n_chiavi: cambiate.length,
+                scuola_id: scuolaId,
+              })
+              return NextResponse.json(
+                {
+                  error: 'Queste impostazioni del diario sono cambiate da quando la pagina le ha lette: ricarica la pagina per vederle. Non è stato salvato niente.',
+                  codice: 'CONFIG_DIARIO_CAMBIATA',
+                },
+                { status: 409 },
+              )
+            }
+
+            const nuove = next.routine_personalizzate as RoutinePersonalizzata[] | undefined
+            const giaSalvate = risposteSalvate(prev.routine_personalizzate)
+            const lapidi = lapidiSalvate(prev.routine_eliminate)
+            const tipoDaLapide = new Map(lapidi.map((l) => [l.id, l.risposta]))
+            const risorta = (nuove ?? []).some((r) => !giaSalvate.has(r.id) && tipoDaLapide.has(r.id) && tipoDaLapide.get(r.id) !== r.risposta)
+            if (rispostaCambiata(prev.routine_personalizzate, nuove) || risorta) {
+              // Solo codici: il nome della routine è un dato della scuola e non va nel log.
+              logEvento('config', 'warn', {
+                operazione: 'admin/settings:PATCH',
+                esito: 'routine-risposta-non-modificabile',
+                error_code: 'ROUTINE_RISPOSTA_NON_MODIFICABILE',
+                scuola_id: scuolaId,
+              })
+              return NextResponse.json(
+                {
+                  error: 'Il tipo di risposta di una routine già salvata non si può cambiare: creane una nuova. Non è stato salvato niente.',
+                  codice: 'ROUTINE_RISPOSTA_NON_MODIFICABILE',
+                },
+                { status: 422 },
+              )
+            }
+            // Le routine che escono dalla lista lasciano la loro lapide (la più recente in coda).
+            if (nuove) {
+              const restano = new Set(nuove.map((r) => r.id))
+              const uscite: Lapide[] = [...giaSalvate.entries()]
+                .filter(([id, risposta]) => !restano.has(id) && typeof risposta === 'string')
+                .map(([id, risposta]) => ({ id, risposta: risposta as string }))
+              if (uscite.length > 0) {
+                const tutte = [...lapidi.filter((l) => !uscite.some((u) => u.id === l.id)), ...uscite]
+                next.routine_eliminate = tutte.slice(-MAX_LAPIDI)
+              }
+            }
+          }
           if (k === 'funzioni_matrice') {
             // merge per-grado: {primaria: {...prev, ...next}, ...}
             const merged: Record<string, unknown> = { ...prev }

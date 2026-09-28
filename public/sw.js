@@ -826,8 +826,12 @@ self.addEventListener('push', function (event) {
 //  3. la radice: basta portare davanti la finestra più recente dell'app (era ciò che
 //     faceva `includes('/')`, e le notifiche senza indirizzo arrivano qui);
 //  4. una finestra sulla stessa pagina che mostra già la query della notifica (anche
-//     con un `?userId=` in più) → solo il fuoco. Navigarla la ricaricherebbe per
-//     portarla dove già si trova, e a una docente che scrive toglierebbe la bozza;
+//     con un `?userId=` in più) → il fuoco, e il messaggio `kv-notifica-aperta` con
+//     l'indirizzo. Navigarla la ricaricherebbe per portarla dove già si trova, e a una
+//     docente che scrive toglierebbe la bozza; ma senza il messaggio una finestra già
+//     visibile non si aggiornava affatto (2026-09-28: «Diario aggiornato» toccato col
+//     diario aperto lasciava il diario com'era). `ServiceWorkerRegister` lo gira alla
+//     pagina, che decide da sé cosa vuol dire aggiornarsi;
 //  5. una finestra sulla stessa pagina con un'altra query → fuoco e `navigate`. Su una
 //     finestra che questo Service Worker non controlla `navigate` rigetta, e un browser
 //     può non esporlo affatto: allora si apre una finestra nuova, e lo si riferisce;
@@ -927,7 +931,10 @@ async function apriDaNotifica(grezzo) {
   const giaLi = stessaPagina.find(function (f) {
     return mostraGiaLaQuery(f.indirizzo, dest);
   });
-  if (giaLi) return giaLi.client.focus();
+  if (giaLi) {
+    giaLi.client.postMessage({ tipo: 'kv-notifica-aperta', url: dest.pathname + dest.search });
+    return giaLi.client.focus();
+  }
 
   if (stessaPagina.length > 0) {
     const client = stessaPagina[0].client;

@@ -98,6 +98,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
         return b
       }
       b.or = () => b
+      b.like = () => b
+      b.order = () => b
+      b.range = () => b
       b.ilike = () => b
       // Dal 2026-08-01 l'oblio interroga anche `enrollment_submissions` e
       // `galleria_media_v2` con l'operatore di contenimento (`@>`): senza questo
@@ -385,6 +388,8 @@ describe('POST /api/admin/gdpr/erase', () => {
         'incassi_bonificati',
         'cassa_bonificati',
         'presenze_bonificate',
+        // Il testo libero del diario (note e routine a testo), tolto dal 2026-09-28.
+        'diario_bonificate',
         'news_visualizzazioni_rimosse',
         'consensi_prova_bonificati',
         'push_subscriptions_rimosse',

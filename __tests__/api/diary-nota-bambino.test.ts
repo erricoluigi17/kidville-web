@@ -34,7 +34,7 @@ vi.mock('@/lib/primaria/notifiche', () => ({
   notificaTitolariScrittura: vi.fn(),
   enqueueDiarioGenitori: vi.fn(),
 }))
-vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}) }))
+vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}), leggiModuleConfig: async () => ({ ok: true, config: {} }) }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from(table: string) {

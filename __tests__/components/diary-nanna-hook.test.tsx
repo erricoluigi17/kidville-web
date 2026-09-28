@@ -27,7 +27,7 @@ let esitoDelete: JsonRes = jsonRes({ eliminati: 1 })
 
 const fetchMock = vi.fn(async (url: string | URL, init?: { method?: string; body?: string }) => {
   const u = String(url)
-  if (u.includes('/api/diary/config')) return jsonRes({ routine_attive: [] })
+  if (u.includes('/api/diary/config')) return jsonRes({ routine_attive: null })
   if (u.includes('/api/diary/students')) {
     return jsonRes([
       { id: 'a1', nome: 'Bruna', cognome: 'Bianchi', note_mediche: null },

@@ -36,6 +36,7 @@ import { umoreFromDettagli } from '@/lib/diary/umore';
 import { eEventoBagno, bagnoCompilato } from '@/lib/diary/bagno';
 import { eEventoPasto, pastoCompilato } from '@/lib/diary/pasto';
 import { eEventoAttivita, attivitaCompilata } from '@/lib/diary/attivita';
+import { eRoutinePersonalizzata, routineCompilata } from '@/lib/diary/routine';
 
 /**
  * I tipi evento che si salvano SOLO a chi li ha davvero.
@@ -53,9 +54,13 @@ export const TIPI_SELETTIVI: readonly string[] = [
     'umore', 'nanna', 'nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita',
 ];
 
-/** Questo tipo evento si salva solo a chi lo ha davvero? */
+/**
+ * Questo tipo evento si salva solo a chi lo ha davvero? Le routine aggiunte dalla scuola
+ * (`routine:<id>`, 2026-09-28) sì, tutte: il loro elenco non è fisso, quindi non stanno in
+ * `TIPI_SELETTIVI` ma si riconoscono dal tipo.
+ */
 export function eventoSelettivo(tipo: string): boolean {
-    return TIPI_SELETTIVI.includes(tipo);
+    return TIPI_SELETTIVI.includes(tipo) || eRoutinePersonalizzata(tipo);
 }
 
 /**
@@ -88,6 +93,9 @@ export function voceDaMostrare(
     // ⚠️ L'attività è di CLASSE: basta una descrizione perché valga per tutti, e la
     // partecipazione del singolo non è mai un requisito. Vedi `attivita.ts`.
     if (eEventoAttivita(tipo)) return attivitaCompilata(dettagli);
+    // Le routine della scuola: senza questa riga il fail-open qui sotto le avrebbe salvate a
+    // TUTTI i bambini, anche a chi la maestra non ha toccato (2026-09-28).
+    if (eRoutinePersonalizzata(tipo)) return routineCompilata(dettagli);
     return true;
 }
 
@@ -105,11 +113,11 @@ export function voceDaMostrare(
  * non la rende inerte, e il genitore continua a leggere «Ho fatto pipì 2 volte»
  * del figlio di un altro. Per sempre.
  *
- * ⚠️ `umore` NON è qui, ed è una decisione, non una dimenticanza. Un umore
- * sbagliato si corregge SCEGLIENDONE UN ALTRO, che è un update vero e riesce.
- * L'unico caso irreparabile è «volevo toglierlo del tutto», che degrada al banner
- * d'attesa — non a una frase falsa nel diario di un bambino. Resta un buco noto,
- * e sta scritto qui perché si veda.
+ * `umore` è entrato il 2026-09-28. Fino ad allora restava fuori per una ragione
+ * scritta qui: un umore sbagliato si correggeva SCEGLIENDONE UN ALTRO. Da quando le
+ * routine si spengono per sede, quella via si chiude insieme alla routine: un umore
+ * segnato al bambino sbagliato alle 10 e spento alle 11 restava per sempre. Il
+ * buco noto che questo commento dichiarava è chiuso.
  *
  * `attivita` è entrata il 2026-09-08 INSIEME al suo salvataggio selettivo, non
  * dopo: renderla selettiva senza darle la porta d'uscita avrebbe armato la stessa
@@ -117,10 +125,13 @@ export function voceDaMostrare(
  * soltanto dal payload — e il genitore continua a leggere l'attività di ieri.
  */
 export const TIPI_ELIMINABILI: readonly string[] = [
-    'nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita',
+    'nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita', 'umore',
 ];
 
-/** Questa registrazione si può cancellare dalla schermata del docente? */
+/**
+ * Questa registrazione si può cancellare dalla schermata del docente? Le routine della scuola
+ * sì: sono selettive, e il salvataggio selettivo senza cestino è la trappola descritta qui sopra.
+ */
 export function eliminabile(tipo: string): boolean {
-    return TIPI_ELIMINABILI.includes(tipo);
+    return TIPI_ELIMINABILI.includes(tipo) || eRoutinePersonalizzata(tipo);
 }

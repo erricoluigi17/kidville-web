@@ -29,6 +29,13 @@ export interface SezioneDocente {
   id?: string;
   name: string;
   school_type: string | null;
+  /**
+   * La SEDE della sezione (2026-09-28). `/api/educator-sections` la manda da sempre; serve al diario,
+   * perché le routine sono della sede della sezione, non di quella principale di chi compila (una
+   * Direzione su più sedi apriva una sezione di Aversa con le routine di Giugliano). Facoltativa
+   * per la forma vecchia della risposta.
+   */
+  scuolaId?: string;
 }
 
 export interface EducatorSectionsRisposta {

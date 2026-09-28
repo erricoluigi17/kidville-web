@@ -24,11 +24,16 @@ export function TimeField({ value, onChange, children }: { value: string; onChan
     );
 }
 
-export function NumberField({ value, onChange, min, max, children }: { value: number; onChange: (v: number) => void; min?: number; max?: number; children: React.ReactNode }) {
+/**
+ * `vuotoNonZero` (2026-09-28): il campo svuotato vale `NaN` («non detto»), non 0. `Number('')` è
+ * 0, e per il ritardo di visibilità del diario 0 vuol dire «nessuna finestra di correzione». Chi lo
+ * usa decide cosa fare del vuoto; senza la prop resta com'era, per gli altri pannelli.
+ */
+export function NumberField({ value, onChange, min, max, children, vuotoNonZero = false }: { value: number; onChange: (v: number) => void; min?: number; max?: number; children: React.ReactNode; vuotoNonZero?: boolean }) {
     return (
         <div>
             <label className={label}>{children}</label>
-            <input type="number" value={Number.isFinite(value) ? value : ''} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} className={`${input} w-full`} />
+            <input type="number" value={Number.isFinite(value) ? value : ''} min={min} max={max} onChange={(e) => onChange(vuotoNonZero && e.target.value.trim() === '' ? Number.NaN : Number(e.target.value))} className={`${input} w-full`} />
         </div>
     );
 }
@@ -64,11 +69,15 @@ export function PillMultiSelect({ options, selected, onChange }: { options: { id
     );
 }
 
-export function SaveRow({ onSave, saving, msg, error }: { onSave: () => void; saving: boolean; msg: string; error: string | null }) {
+export function SaveRow({ onSave, saving, msg, error, bloccato = false }: {
+    onSave: () => void; saving: boolean; msg: string; error: string | null;
+    /** Il salvataggio non si può fare (es. configurazione salvata non letta): il pannello dice perché. */
+    bloccato?: boolean;
+}) {
     const t = useTranslations('adminSettings');
     return (
         <div className="mt-4 flex items-center gap-3">
-            <button onClick={onSave} disabled={saving} className={btnPrimary}>
+            <button onClick={onSave} disabled={saving || bloccato} className={btnPrimary}>
                 <Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}
             </button>
             {msg && <span role="status" className="font-maven text-sm text-kidville-success">{msg}</span>}

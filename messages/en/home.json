@@ -37,6 +37,8 @@
   "agendaOre": " · at {ora}",
 
   "diaryVuoto": "No diary updates for today yet.",
+  "diaryNonLetto": "We couldn’t load today’s diary.",
+  "diaryRiprova": "Try again",
   "diaryAggiornato": "Updated · {ora}",
   "diaryAggiornamentoDefault": "Update",
   "diaryApriCompleto": "Open the full diary",

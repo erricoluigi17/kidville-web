@@ -16,6 +16,9 @@ import { fetchEducatorSections, sezioniDallaRisposta, type SezioneDocente } from
 // Pagina mobile del docente: chrome (header, selettore sezione, filtri) attorno
 // alla compilazione condivisa in DiaryEventEditor (usata anche da /admin/diary).
 
+/** La chiave di una sezione: l'uuid, o il nome con la risposta vecchia di `educator-sections`. */
+const chiaveDi = (s: SezioneDocente): string => s.id ?? `nome:${s.name}`;
+
 function TeacherDiaryInner() {
     const t = useTranslations('teacherDiario');
     const f = useDateFormat();
@@ -38,7 +41,10 @@ function TeacherDiaryInner() {
     // Sezioni assegnate al docente (utenti_sezioni via /api/educator-sections):
     // niente più sezione hardcoded; con più sezioni compare il selettore a pill.
     const [sezioni, setSezioni] = useState<SezioneDocente[]>([]);
-    const [sezione, setSezione] = useState<string | null>(null);
+    // La sezione scelta si ricorda per CHIAVE: l'uuid quando c'è, il nome solo con la risposta
+    // vecchia. Per nome, due «Girasoli» di due sedi (una Direzione su più plessi) aprivano entrambe
+    // la prima — bambini e routine della sede sbagliata (terzo giro, 2026-09-28).
+    const [chiaveSezione, setChiaveSezione] = useState<string | null>(null);
     const [sezioniLoaded, setSezioniLoaded] = useState(false);
     // true se il docente ha SOLO sezioni primaria e l'admin ha disattivato
     // l'esposizione del diario 0-6 alla primaria (empty-state dedicato).
@@ -47,8 +53,15 @@ function TeacherDiaryInner() {
 
     // L'uuid della sezione scelta: è l'identità vera, e questa pagina l'aveva
     // già nella risposta di `educator-sections` senza usarla.
-    const sectionId = sezioni.find((s) => s.name === sezione)?.id;
-    const day = useDiaryDay(userId, sezione, { sectionId });
+    const sezioneScelta = sezioni.find((s) => chiaveDi(s) === chiaveSezione);
+    const sezione = sezioneScelta?.name ?? null;
+    const sectionId = sezioneScelta?.id;
+    // Le routine del diario sono della SEDE DELLA SEZIONE (2026-09-28): prima valevano quelle della
+    // sede principale di chi compila. Finché le sezioni non sono arrivate la sede non si sa (`null`:
+    // l'editor aspetta invece di mostrare le routine di un'altra sede); con la risposta vecchia,
+    // senza sede, vale quella dell'utente (`undefined`).
+    const scuolaId = !sezioniLoaded ? null : sezioneScelta?.scuolaId;
+    const day = useDiaryDay(userId, sezione, { sectionId, scuolaId });
 
     useEffect(() => {
         let active = true;
@@ -67,7 +80,7 @@ function TeacherDiaryInner() {
                 const primariaVisibile = conf?.diario_primaria_visibile === true; // fail-closed: primaria esposta solo se attivata dall'admin
                 const filtered = primariaVisibile ? raw : raw.filter(s => s.school_type !== 'primaria');
                 setSezioni(filtered);
-                setSezione(cur => cur ?? filtered[0]?.name ?? null);
+                setChiaveSezione(cur => cur ?? (filtered[0] ? chiaveDi(filtered[0]) : null));
                 setSoloPrimariaNascosta(!primariaVisibile && raw.length > 0 && filtered.length === 0);
             })
             .finally(() => { if (active) setSezioniLoaded(true); });
@@ -86,8 +99,8 @@ function TeacherDiaryInner() {
     // Cambio sezione manuale: la selezione evento e i "salvati" riguardavano la
     // sezione precedente, quindi si azzerano insieme (reset nell'handler, non in
     // un effect: react-hooks/set-state-in-effect).
-    const switchSezione = (name: string) => {
-        setSezione(name);
+    const switchSezione = (chiave: string) => {
+        setChiaveSezione(chiave);
         day.resetSelection();
     };
 
@@ -138,14 +151,14 @@ function TeacherDiaryInner() {
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                     {sezioni.map(sez => (
                         <button
-                            key={sez.id ?? sez.name}
-                            onClick={() => switchSezione(sez.name)}
+                            key={chiaveDi(sez)}
+                            onClick={() => switchSezione(chiaveDi(sez))}
                             className={`rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
-                                sezione === sez.name
+                                chiaveSezione === chiaveDi(sez)
                                     ? 'border-kidville-green/20 bg-kidville-green text-kidville-yellow'
                                     : 'border-kidville-line bg-white text-kidville-muted'
                             }`}
-                            aria-pressed={sezione === sez.name}
+                            aria-pressed={chiaveSezione === chiaveDi(sez)}
                         >
                             {sez.name}
                         </button>

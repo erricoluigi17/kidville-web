@@ -50,6 +50,9 @@ function makeFake(cfg: Cfg) {
       b.in = (col: string, val: unknown) => { filtri.push({ col, val }); return b }
       b.is = () => b
       b.or = () => b
+      b.like = () => b
+      b.order = () => b
+      b.range = () => b
       b.ilike = () => b
       b.contains = () => b
       b.delete = () => { cancella = true; return b }

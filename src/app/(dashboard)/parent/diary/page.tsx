@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
-import { getEventConfig, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
+import { configDiVoce, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
+import { eRoutinePersonalizzata, routineCompilata, oraRoutine } from '@/lib/diary/routine';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { fetchConCache } from '@/lib/offline/read-cache';
@@ -19,6 +20,16 @@ import { orarioAttivita, oraDiLatoAttivita } from '@/lib/diary/attivita';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 import { oraDiRoma } from '@/lib/presenze/orario';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
+import { ascoltaNotificaAperta } from '@/lib/notifiche/pagina-aperta-da-notifica';
+import { segnalaDiarioNonLetto } from '@/lib/diary/lettura-genitore';
+
+/**
+ * Dopo un ritorno nell'app andato a vuoto (rete non ancora pronta, o solo la copia salvata) si
+ * riprova una volta dopo questo tempo. Misurato il 2026-09-28: in 14 giorni la lettura del diario
+ * è fallita a stato 0 967 volte, per ~220 utenti.
+ */
+const RITENTA_DOPO_MS = 4_000;
 
 // Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
 // (narrativa, etichetta del giorno) definite fuori dal componente, dove gli
@@ -199,7 +210,44 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         return { emoji: '🚿', lines };
     }
 
+    // Le routine aggiunte dalla scuola (2026-09-28): il NOME sta nel titolo della card, qui va il
+    // valore. Nome e icona vengono dalla fotografia salvata nella voce, non dalla configurazione
+    // di oggi: la voce resta leggibile anche a routine rinominata, spenta o cancellata.
+    if (eRoutinePersonalizzata(tipo)) {
+        const emoji = typeof dettagli?.emoji === 'string' && dettagli.emoji.trim() ? dettagli.emoji.trim() : '📝';
+        const frase = fraseRoutine(dettagli, t);
+        return { emoji, lines: frase ? [frase] : [] };
+    }
+
     return { emoji: '📝', lines: [t('eventoGenerico')] };
+}
+
+/**
+ * Il valore di una routine della scuola, detto al genitore, o `null` se la maestra non l'ha segnato.
+ * Le opzioni e il testo sono dati: non si traducono.
+ *
+ * ⚠️ `null` e non una frase (seconda revisione, 2026-09-28). Una voce può esistere SENZA valore,
+ * tenuta in piedi da una nota — di sezione, che va a tutti, o del bambino. Prima la spunta diceva
+ * «Fatto ✓» senza guardare il valore: la maestra spuntava la crema a 3 bambini su 20, scriveva
+ * «domani portate la crema», e 17 genitori leggevano «Fatto ✓». Con una routine «Farmaco» sarebbe
+ * stato pericoloso. Gli altri tipi cadevano su «Evento registrato dalla maestra.»: ora la card
+ * mostra la nota e basta.
+ */
+function fraseRoutine(dettagli: Record<string, unknown> | null, t: Traduci): string | null {
+    if (!routineCompilata(dettagli)) return null;
+    const valore = dettagli?.valore;
+    switch (dettagli?.risposta) {
+        case 'spunta':
+            return t('routineFatto');
+        case 'orario':
+            return t('routineAlle', { ora: valore as string });
+        case 'scelta':
+            return (valore as unknown[]).filter((v) => typeof v === 'string' && v.trim()).join(', ');
+        case 'testo':
+            return (valore as string).trim();
+        default:
+            return null;
+    }
 }
 
 // ─── Utilities data ────────────────────────────────────────────────────────────
@@ -240,8 +288,15 @@ function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
         const prev = latest.get(e.tipo_evento);
         if (!prev || e.timestamp_evento > prev.timestamp_evento) latest.set(e.tipo_evento, e);
     });
+    // A parità d'ordine (le routine della scuola, che in `EVENT_ORDER` non ci sono) si va dalla
+    // più presto alla più tardi, per l'ora MOSTRATA a lato: quella segnata per le routine a orario,
+    // quella del salvataggio per le altre. Prima restavano nell'ordine della GET (la più recente in
+    // cima), e poi per ora di salvataggio: «Crema 11:00» sopra «Latte 10:30».
+    const ora = (e: DiaryEntry) => (eRoutinePersonalizzata(e.tipo_evento) ? oraRoutine(e.dettagli) : null) ?? oraDiRoma(e.timestamp_evento) ?? '';
     return Array.from(latest.values()).sort((a, b) =>
         (EVENT_ORDER[a.tipo_evento] ?? 99) - (EVENT_ORDER[b.tipo_evento] ?? 99)
+        || ora(a).localeCompare(ora(b))
+        || (a.timestamp_evento < b.timestamp_evento ? -1 : a.timestamp_evento > b.timestamp_evento ? 1 : 0)
     );
 }
 
@@ -251,7 +306,8 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
     const t = useTranslations('diario');
     const f = useDateFormat();
     const eventLabel = useEventLabel();
-    const config = getEventConfig(entry.tipo_evento);
+    // Per una routine della scuola nome e icona vengono dalla fotografia nella voce (`dettagli`).
+    const config = configDiVoce(entry.tipo_evento, entry.dettagli);
     const { lines, emoji } = buildFirstPersonNarrative(
         entry.tipo_evento,
         entry.dettagli,
@@ -261,7 +317,10 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
     // D3 (2026-09-26): a lato della voce «attività» va l'ora di inizio della PRIMA
     // attività (contratto D1, `oraDiLatoAttivita`); se non c'è, l'ora del
     // salvataggio come per tutte le altre voci.
+    // Per una routine della scuola a orario, l'ora di lato è quella SEGNATA (2026-09-28): prima era
+    // quella del primo salvataggio — «Latte 15:47» per un biberon delle 10:30.
     const oraDiLato = (entry.tipo_evento === 'attivita' ? oraDiLatoAttivita(entry.dettagli, entry.timestamp_evento) : null)
+        ?? (eRoutinePersonalizzata(entry.tipo_evento) ? oraRoutine(entry.dettagli) : null)
         ?? formatTime(entry.timestamp_evento, f.locale);
 
     return (
@@ -276,9 +335,9 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
                 <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xl flex-shrink-0 ${config.color}`}>
                     {config.emoji}
                 </div>
-                <div className="flex-1">
-                    <p className={`font-barlow font-black text-sm uppercase tracking-wide ${config.accentColor.split(' ').find(c => c.startsWith('text-')) ?? 'text-kidville-green'}`}>
-                        {eventLabel(entry.tipo_evento)}
+                <div className="flex-1 min-w-0">
+                    <p className={`font-barlow font-black text-sm uppercase tracking-wide break-words ${config.accentColor.split(' ').find(c => c.startsWith('text-')) ?? 'text-kidville-green'}`}>
+                        {eventLabel(entry.tipo_evento, entry.dettagli)}
                     </p>
                     <p className="font-maven text-[11px] text-kidville-muted">
                         {oraDiLato}
@@ -290,12 +349,12 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
             {/* Narrazione prima persona */}
             <div className="space-y-1.5 pl-1">
                 {lines.map((line, i) => (
-                    <p key={i} className="font-maven text-sm text-kidville-ink leading-relaxed">
+                    <p key={i} className="font-maven text-sm text-kidville-ink leading-relaxed break-words">
                         {line}
                     </p>
                 ))}
                 {entry.note && (
-                    <p className="font-maven text-sm text-kidville-muted italic mt-2 pt-2 border-t border-kidville-line/60">
+                    <p className={`font-maven text-sm text-kidville-muted italic break-words ${lines.length > 0 ? 'mt-2 pt-2 border-t border-kidville-line/60' : ''}`}>
                         💬 &ldquo;{entry.note}&rdquo;
                     </p>
                 )}
@@ -306,7 +365,7 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
                         <p className="font-barlow font-bold uppercase text-[10px] tracking-wide text-kidville-green">
                             {t('notaPerTe')}
                         </p>
-                        <p className="font-maven text-sm text-kidville-ink leading-relaxed mt-0.5">
+                        <p className="font-maven text-sm text-kidville-ink leading-relaxed mt-0.5 break-words">
                             💬 &ldquo;{entry.notaBambino}&rdquo;
                         </p>
                     </div>
@@ -409,6 +468,9 @@ function ParentDiaryContent() {
     // route manda SOLO sul ritardo — ai presenti il genitore non vede l'ora del tocco.
     const [checkIn, setCheckIn] = useState<string | null>(null);
     const [arrivato, setArrivato] = useState(false);
+    // Le voci del giorno NON si sono lette (rete giù o errore, e nessuna copia salvata). È un
+    // avviso a sé: fino al 2026-09-28 diventava «La maestra non ha ancora compilato il diario».
+    const [erroreLettura, setErroreLettura] = useState(false);
 
     const goDay = (delta: number) => {
         setDirection(delta as 1 | -1);
@@ -421,68 +483,143 @@ function ParentDiaryContent() {
         });
     };
 
-    const load = useCallback(async (dk: string) => {
-        if (!ready || !alunnoId) return; // identità non risolta: lo spinner resta
-        try {
-            // Carica eventi diario con cache offline. Il fallback serve l'ultima copia
-            // salvata (entriesOffline=true); rete giù e nessuna cache ⇒ stato vuoto,
-            // come prima. La cache viene isolata in un try/catch interno così un
-            // fallimento totale NON salta le fetch successive (checkin, foto).
-            let entriesData: DiaryEntry[] | null = null;
-            let entriesOffline = false;
+    // ─── Il caricamento del giorno ────────────────────────────────────────────
+    //
+    // Dal 2026-09-28 la pagina si ricarica anche al ritorno nell'app, al tocco su una notifica
+    // e con «Riprova». Tre regole tengono lo schermo vero:
+    //  · scrive solo l'ULTIMO caricamento partito (`ultimoCaricamento`): una ricarica lenta di
+    //    «oggi» arrivata dopo il tocco su «ieri» non finisce sotto l'etichetta di ieri;
+    //  · una ricarica mentre lo STESSO giorno sta già arrivando non ne fa partire un'altra:
+    //    aspetta quella (`inVolo`). Prima la scavalcava e, se falliva, lasciava a schermo il
+    //    giorno di prima sotto l'etichetta nuova (rilievo del critico, riprodotto);
+    //  · una ricarica che fallisce lascia com'è ciò che è a schermo. È sicuro per la regola di
+    //    sopra: ogni cambio di giorno o di bambino fa partire un caricamento normale, quindi
+    //    una ricarica che NON trova niente in volo ha a schermo proprio il suo giorno.
+    // Letture prima, scritture tutte insieme alla fine: lo schermo cambia una volta sola.
+    const ultimoCaricamento = useRef(0);
+    const inVolo = useRef<{ chiave: string; numero: number; esito: Promise<boolean> } | null>(null);
+
+    /**
+     * Carica il giorno `dk`. Risponde `true` se le voci sono arrivate fresche dalla rete, `false`
+     * se non si sono lette o è arrivata solo la copia salvata: è il segnale con cui il ritorno
+     * nell'app decide se riprovare.
+     */
+    const load = useCallback((dk: string, { ricarica = false }: { ricarica?: boolean } = {}): Promise<boolean> => {
+        if (!ready || !alunnoId) return Promise.resolve(true); // identità non risolta: lo spinner resta
+        const chiave = `${alunnoId}:${dk}`;
+        if (ricarica && inVolo.current?.chiave === chiave) return inVolo.current.esito;
+        const numero = ++ultimoCaricamento.current;
+        const superato = () => numero !== ultimoCaricamento.current;
+
+        const esito = (async (): Promise<boolean> => {
             try {
-                const r = await fetchConCache<DiaryEntry[]>(
-                    `diario:${alunnoId}:${dk}:${dk}`,
-                    `/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`,
-                );
-                entriesData = r.data;
-                entriesOffline = r.offline;
-            } catch {
-                // Rete assente e nessuna copia in cache: nessuna voce, come prima.
-            }
-            setEntries(entriesData ? deduplicateAndSort(entriesData) : []);
-            setOffline(entriesOffline);
+                // Voci del diario, con la copia offline: se la rete non risponde, `fetchConCache`
+                // serve l'ultima copia salvata (`offline: true`); se non c'è nemmeno quella lancia.
+                let voci: DiaryEntry[] | null = null;
+                let daCopia = false;
+                try {
+                    const r = await fetchConCache<DiaryEntry[]>(
+                        `diario:${alunnoId}:${dk}:${dk}`,
+                        `/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`,
+                    );
+                    voci = r.data;
+                    daCopia = r.offline;
+                } catch {
+                    // Rete giù e nessuna copia: `voci` resta null, e qui sotto diventa l'avviso
+                    // d'errore (o lo schermo tenuto com'è) più la riga di `segnalaDiarioNonLetto`.
+                    // Il guasto di rete in sé lo registra già la fetch strumentata.
+                }
+                if (superato()) return true;
 
-            // "Entrata" dal modulo Presenze (orario di check-in del giorno)
-            const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
-            const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
-            const orarioRisposta = formatOrarioEntrata(ci?.orario_entrata);
-            // D3: l'ora d'ingresso si mostra SOLO sul ritardo (è l'ora del docente).
-            // La route la manda già solo lì, ma la pagina non si regge sul server.
-            // Si distingue il campo MANCANTE dal campo NULLO:
-            //  - proprietà `stato` assente = risposta di un server precedente al
-            //    2026-09-26, che mandava solo l'orario: l'orario vale come arrivo e
-            //    si mostra, come prima;
-            //  - `stato` presente (anche `null`, appello non fatto) = server nuovo:
-            //    l'arrivo lo decide lo stato e l'ora si mostra solo sul ritardo. Un
-            //    orario rimasto su un presente, un assente o uno stato nullo (route
-            //    regredita, riga passata da presente ad assente) non si vede.
-            const serverPrecedente = !(ci && typeof ci === 'object' && 'stato' in ci);
-            const statoRisposta: unknown = serverPrecedente ? undefined : ci.stato;
-            const arrivatoRisposta = serverPrecedente
-                ? Boolean(orarioRisposta)
-                : STATI_ARRIVATO.has(statoRisposta);
-            const mostraOrario = serverPrecedente || statoRisposta === 'ritardo';
-            setCheckIn(mostraOrario ? orarioRisposta : null);
-            setArrivato(arrivatoRisposta);
+                // "Entrata" dal modulo Presenze (orario di check-in del giorno)
+                const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
+                const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
+                if (superato()) return true;
 
-            // Carica foto reali associate a questo alunno per il giorno selezionato
-            // (GET gated: identità anche via header, oltre alla sessione)
-            let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
-            if (parentId) photosUrl += `&parentId=${parentId}`;
-            const photosRes = await fetch(photosUrl, parentId ? { headers: { 'x-user-id': parentId } } : undefined).catch(() => null);
-            if (photosRes?.ok) {
-                const photosData = await photosRes.json();
-                setPhotos(photosData.media ?? []);
-            } else {
-                setPhotos([]);
+                // Carica foto reali associate a questo alunno per il giorno selezionato
+                // (GET gated: identità anche via header, oltre alla sessione)
+                let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
+                if (parentId) photosUrl += `&parentId=${parentId}`;
+                const photosRes = await fetch(photosUrl, parentId ? { headers: { 'x-user-id': parentId } } : undefined).catch(() => null);
+                const photosData = photosRes?.ok ? await photosRes.json().catch(() => null) : null;
+                if (superato()) return true;
+
+                if (voci === null) segnalaDiarioNonLetto('pagina', ricarica ? 'ricarica' : 'apertura');
+                if (voci !== null || !ricarica) {
+                    setEntries(voci ? deduplicateAndSort(voci) : []);
+                    setOffline(daCopia);
+                    setErroreLettura(voci === null);
+                }
+                if (ci !== null || !ricarica) {
+                    const orarioRisposta = formatOrarioEntrata(ci?.orario_entrata);
+                    // D3: l'ora d'ingresso si mostra SOLO sul ritardo (è l'ora del docente).
+                    // La route la manda già solo lì, ma la pagina non si regge sul server.
+                    // Si distingue il campo MANCANTE dal campo NULLO:
+                    //  - proprietà `stato` assente = risposta di un server precedente al
+                    //    2026-09-26, che mandava solo l'orario: l'orario vale come arrivo e
+                    //    si mostra, come prima;
+                    //  - `stato` presente (anche `null`, appello non fatto) = server nuovo:
+                    //    l'arrivo lo decide lo stato e l'ora si mostra solo sul ritardo. Un
+                    //    orario rimasto su un presente, un assente o uno stato nullo (route
+                    //    regredita, riga passata da presente ad assente) non si vede.
+                    const serverPrecedente = !(ci && typeof ci === 'object' && 'stato' in ci);
+                    const statoRisposta: unknown = serverPrecedente ? undefined : ci.stato;
+                    const arrivatoRisposta = serverPrecedente
+                        ? Boolean(orarioRisposta)
+                        : STATI_ARRIVATO.has(statoRisposta);
+                    const mostraOrario = serverPrecedente || statoRisposta === 'ritardo';
+                    setCheckIn(mostraOrario ? orarioRisposta : null);
+                    setArrivato(arrivatoRisposta);
+                }
+                if (photosData !== null || !ricarica) setPhotos(photosData?.media ?? []);
+                return voci !== null && !daCopia;
+            } finally {
+                if (!superato()) setLoadedKey(dk);
+                if (inVolo.current?.numero === numero) inVolo.current = null;
             }
-        } finally {
-            setLoadedKey(dk);
-        }
+        })();
+        inVolo.current = { chiave, numero, esito };
+        return esito;
     }, [ready, alunnoId, parentId]);
 
-    useEffect(() => { load(dateKey); }, [dateKey, load]);
+    useEffect(() => { void load(dateKey); }, [dateKey, load]);
+
+    // Il giorno che era «oggi» all'ultimo sguardo. Con l'app rimasta aperta la notte, al ritorno
+    // la pagina che mostrava oggi passa al nuovo oggi, invece di rileggere ieri.
+    const oggiVisto = useRef(dateKey);
+
+    // Al ritorno nell'app si ricarica il giorno mostrato. `null` = nessun orologio: le voci
+    // cambiano poche volte al giorno, e il momento in cui quelle vecchie mentono è la
+    // riapertura (2026-09-28: chi apriva il diario al mattino e tornava nel pomeriggio
+    // leggeva ancora «La maestra non ha ancora compilato», con le voci già scritte). Se non
+    // arriva niente di fresco si riprova una volta, dopo `RITENTA_DOPO_MS`.
+    usePollingVisibile(() => {
+        const oggi = toDateKey(new Date());
+        if (oggi !== oggiVisto.current) {
+            const mostravaOggi = dateKey === oggiVisto.current;
+            oggiVisto.current = oggi;
+            if (mostravaOggi) {
+                setDirection(1);
+                setDateKey(oggi);
+                return true;
+            }
+        }
+        return load(dateKey, { ricarica: true });
+    }, null, { ritentaDopoMs: RITENTA_DOPO_MS });
+
+    // Il tocco su una notifica che porta al diario, con il diario già aperto (2026-09-28): la
+    // navigazione non rimonta la pagina, quindi è l'avviso a riportarla a oggi e a rileggere.
+    // Se la notifica è di un altro figlio, a cambiarlo ci pensa la navigazione (`?id=`).
+    useEffect(() => ascoltaNotificaAperta('/parent/diary', () => {
+        const oggi = toDateKey(new Date());
+        oggiVisto.current = oggi;
+        if (dateKey !== oggi) {
+            setDirection(1);
+            setDateKey(oggi);
+        } else {
+            void load(oggi, { ricarica: true });
+        }
+    }), [dateKey, load]);
 
     // Carica il nome reale del bambino
     useEffect(() => {
@@ -505,8 +642,14 @@ function ParentDiaryContent() {
     // Umore del giorno (M5.4): entries è già deduplicato all'ultimo evento per
     // tipo, quindi qui c'è al più l'umore più recente del giorno. L'evento vive
     // nel banner giallo, non nella timeline.
-    const umore = umoreFromDettagli(entries.find(e => e.tipo_evento === 'umore')?.dettagli);
+    const voceUmore = entries.find(e => e.tipo_evento === 'umore');
+    const umore = umoreFromDettagli(voceUmore?.dettagli);
     const umoreCfg = umore ? UMORE_CONFIG[umore] : null;
+    // Le note scritte nel riquadro dell'umore (2026-09-28): la timeline esclude l'umore, e il
+    // riquadro non le mostrava — la nota non arrivava mai al genitore.
+    const notaUmore = voceUmore?.note?.trim() || null;
+    const notaUmoreBambino = voceUmore?.notaBambino?.trim() || null;
+    const riquadroUmore = Boolean(umoreCfg) || Boolean(notaUmore || notaUmoreBambino);
     // Fuori dalla timeline: l'umore (vive nel banner, non fra le voci) e le nanne
     // NON COMPILATE.
     //
@@ -530,6 +673,10 @@ function ParentDiaryContent() {
     const timelineEntries = entries.filter(e =>
         e.tipo_evento !== 'umore' && voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.notaBambino || e.note) }),
     );
+    // NIENTE DA MOSTRARE — lo si decide su ciò che si mostrerebbe davvero, non sulle voci arrivate
+    // (2026-09-28). Voci tutte filtrate (nanne vuote, righe mute) e nessun ingresso lasciavano la
+    // pagina con intestazione e piè di pagina e basta: nemmeno «Nessuna voce».
+    const nienteDaMostrare = timelineEntries.length === 0 && !riquadroUmore && !arrivato && photos.length === 0;
 
     const slideVariants = {
         enter: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
@@ -639,8 +786,31 @@ function ParentDiaryContent() {
                         </div>
                     )}
 
-                    {/* Stato vuoto (nessuna voce e nessuna entrata registrata) */}
-                    {!loading && entries.length === 0 && !arrivato && (
+                    {/* Il diario NON si è letto: lo si dice, con «Riprova». Fino al 2026-09-28
+                        qui finiva nello stato vuoto, cioè «La maestra non ha ancora compilato». */}
+                    {!loading && erroreLettura && (
+                        <div className="flex flex-col items-center justify-center py-20 text-center">
+                            <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
+                                📖
+                            </div>
+                            <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">
+                                {t('erroreTitolo')}
+                            </h2>
+                            <p className="font-maven text-kidville-sub max-w-xs text-sm">
+                                {t('erroreTesto')}
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => { void load(dateKey, { ricarica: true }); }}
+                                className="mt-4 font-maven rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow"
+                            >
+                                {t('riprova')}
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Stato vuoto (niente da mostrare: vedi `nienteDaMostrare`) */}
+                    {!loading && !erroreLettura && nienteDaMostrare && (
                         <div className="flex flex-col items-center justify-center py-20 text-center">
                             <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
                                 📖
@@ -655,26 +825,39 @@ function ParentDiaryContent() {
                     )}
 
                     {/* Timeline eventi (con "Entrata" in cima, letta dalle Presenze) */}
-                    {!loading && (arrivato || entries.length > 0) && (
+                    {!loading && !erroreLettura && !nienteDaMostrare && (
                         <div className="space-y-3">
                             {/* Banner umore (DR mood banner, M5.4): legge l'evento 'umore' più
-                                recente del giorno (dettagli.umore); senza evento resta il testo
-                                di attesa. */}
-                            <div className="flex items-center gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
-                                <span className="text-[26px] leading-none">{umoreCfg?.emoji ?? '🙂'}</span>
-                                <div className="min-w-0">
-                                    <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
-                                        {t('umoreTitolo')}{umoreCfg ? `: ${umoreLabel(umore ?? '')}` : ''}
-                                    </p>
-                                    <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
-                                        {umore
-                                            ? umoreNarrative(umore)
-                                            : studentName
-                                                ? t('umoreAttesaPer', { nome: studentName.split(' ')[0] })
-                                                : t('umoreAttesa')}
-                                    </p>
+                                recente del giorno (dettagli.umore). SOLO se c'è (2026-09-28): senza
+                                voce diceva «Presto la maestra potrà segnalare come è andata», ma
+                                nelle tre sedi vere l'umore è SPENTO — una promessa che la sede non
+                                manteneva, a ogni genitore, ogni giorno. */}
+                            {riquadroUmore && (
+                                <div className="flex items-start gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
+                                    <span className="text-[26px] leading-none">{umoreCfg?.emoji ?? '🌈'}</span>
+                                    <div className="min-w-0">
+                                        <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
+                                            {umore ? `${t('umoreTitolo')}: ${umoreLabel(umore)}` : t('umoreTitolo')}
+                                        </p>
+                                        {umore && (
+                                            <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
+                                                {umoreNarrative(umore)}
+                                            </p>
+                                        )}
+                                        {notaUmore && (
+                                            <p className="mt-1.5 font-maven text-[13px] italic text-kidville-green break-words">
+                                                💬 &ldquo;{notaUmore}&rdquo;
+                                            </p>
+                                        )}
+                                        {notaUmoreBambino && (
+                                            <p className="mt-1.5 font-maven text-[13px] text-kidville-green break-words">
+                                                <span className="font-barlow font-bold uppercase text-[10px] tracking-wide">{t('notaPerTe')}</span>{' '}
+                                                💬 &ldquo;{notaUmoreBambino}&rdquo;
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                             {arrivato && (
                                 <motion.div
                                     initial={{ opacity: 0, y: 14 }}

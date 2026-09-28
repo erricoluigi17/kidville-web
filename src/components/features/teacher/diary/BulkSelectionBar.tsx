@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { X, Zap } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
-import { EVENT_CONFIG, useEventLabel } from './eventConfig';
+import { getEventConfig, useEventLabel } from './eventConfig';
 
 interface BulkSelectionBarProps {
     selectedCount: number;
@@ -43,7 +43,7 @@ export function BulkSelectionBar({ selectedCount, onClearSelection, onEventSelec
                 {/* Bottoni azione rapida */}
                 <div className="flex gap-2 overflow-x-auto pb-1">
                     {QUICK_EVENTS.map(type => {
-                        const cfg = EVENT_CONFIG[type];
+                        const cfg = getEventConfig(type);
                         return (
                             <button
                                 key={type}

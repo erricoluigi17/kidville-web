@@ -272,4 +272,86 @@ describe('usePollingVisibile', () => {
         act(() => { visibilita(false); visibilita(true); statoApp(true); statoApp(false); });
         expect(logClient, 'la sonda si ripete a ogni evento').toHaveBeenCalledTimes(2);
     });
+
+    it('11. `intervalloMs: null` = SOLO al ritorno: nessun orologio, ma chi riapre trova i dati freschi', async () => {
+        // È il caso del diario del genitore (2026-09-28). La pagina caricava le voci una volta sola,
+        // all'apertura: chi la lasciava aperta al mattino e riapriva l'app nel pomeriggio leggeva
+        // ancora «La maestra non ha ancora compilato il diario», con le voci già in archivio. Un
+        // orologio lì sarebbe volume senza bisogno — il difetto del 7 settembre —, il ritorno invece
+        // è proprio il momento in cui il dato vecchio mente.
+        // ROSSO SE: `null` arma comunque un timer (con un `setInterval(fn, null)` il browser spara a
+        // raffica), oppure se il ritorno non esegue più la callback.
+        nativo.è = true;
+        const tic = vi.fn();
+        renderHook(() => usePollingVisibile(tic, null));
+        await lasciaRegistrare();
+
+        avanza(3_600_000);
+        expect(tic, 'con `null` è partito un orologio a pagina visibile').not.toHaveBeenCalled();
+
+        act(() => { visibilita(true); statoApp(false); });
+        avanza(3_600_000);
+        expect(tic, 'con `null` è partito un orologio a pagina nascosta').not.toHaveBeenCalled();
+
+        act(() => { visibilita(false); statoApp(true); });
+        expect(tic, 'il ritorno non ha ricaricato, o i due segnali hanno ricaricato due volte').toHaveBeenCalledTimes(1);
+
+        avanza(3_600_000);
+        expect(tic, 'dopo il ritorno è partito un orologio').toHaveBeenCalledTimes(1);
+    });
+
+    it('12. `ritentaDopoMs`: un ritorno FALLITO si riprova UNA volta, e basta', async () => {
+        // Misurato il 2026-09-28 in `app_log`: in 14 giorni la sola lettura del diario è
+        // fallita a stato 0 («Failed to fetch» / «Load failed») 967 volte, per ~220 utenti. Un
+        // ritorno nell'app con una prova sola lascia quel genitore sulla pagina vecchia fino
+        // alla riapertura dopo.
+        // ROSSO SE: una callback che risponde `false` non viene riprovata, se viene riprovata
+        // prima del tempo, o se il secondo `false` innesca un terzo giro.
+        const tic = vi.fn(async () => false);
+        renderHook(() => usePollingVisibile(tic, null, { ritentaDopoMs: 4_000 }));
+
+        act(() => visibilita(true));
+        act(() => visibilita(false));
+        await act(async () => { await Promise.resolve(); });
+        expect(tic).toHaveBeenCalledTimes(1);
+
+        avanza(3_999);
+        expect(tic, 'il secondo tentativo è partito prima del tempo').toHaveBeenCalledTimes(1);
+        avanza(1);
+        expect(tic, 'il ritorno fallito non è stato riprovato').toHaveBeenCalledTimes(2);
+
+        await act(async () => { await Promise.resolve(); });
+        avanza(60_000);
+        expect(tic, 'dopo il secondo fallimento è partito un terzo giro').toHaveBeenCalledTimes(2);
+    });
+
+    it('13. `ritentaDopoMs`: niente secondo tentativo se è andata bene, se la pagina è tornata nascosta o se è smontata', async () => {
+        // ROSSO SE: si riprova anche dopo un successo (volume senza bisogno), a telefono in tasca,
+        // o dopo lo smontaggio (una lettura che scrive su un componente che non c'è più).
+        const riuscita = vi.fn(async () => true);
+        const { unmount: smontaRiuscita } = renderHook(() => usePollingVisibile(riuscita, null, { ritentaDopoMs: 4_000 }));
+        act(() => { visibilita(true); visibilita(false); });
+        await act(async () => { await Promise.resolve(); });
+        avanza(10_000);
+        expect(riuscita, 'è stato riprovato un ritorno andato bene').toHaveBeenCalledTimes(1);
+        smontaRiuscita();
+
+        const nascosta = vi.fn(async () => false);
+        const { unmount: smontaNascosta } = renderHook(() => usePollingVisibile(nascosta, null, { ritentaDopoMs: 4_000 }));
+        act(() => { visibilita(true); visibilita(false); });
+        await act(async () => { await Promise.resolve(); });
+        act(() => visibilita(true));
+        avanza(10_000);
+        expect(nascosta, 'il secondo tentativo è partito a pagina nascosta').toHaveBeenCalledTimes(1);
+        smontaNascosta();
+
+        act(() => visibilita(false));
+        const smontata = vi.fn(async () => false);
+        const { unmount } = renderHook(() => usePollingVisibile(smontata, null, { ritentaDopoMs: 4_000 }));
+        act(() => { visibilita(true); visibilita(false); });
+        await act(async () => { await Promise.resolve(); });
+        unmount();
+        avanza(10_000);
+        expect(smontata, 'il secondo tentativo è partito dopo lo smontaggio').toHaveBeenCalledTimes(1);
+    });
 });

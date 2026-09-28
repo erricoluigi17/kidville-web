@@ -155,6 +155,11 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
 
     const supabase = await createAdminClient()
     const sediAttive = await resolveScuoleAttive(request, supabase, user)
+    // Il perimetro dell'export: la sede dichiarata, se è fra le attive; altrimenti tutte le attive.
+    // Calcolato UNA volta (Z3e, quinta revisione 2026-09-29): la stessa condizione era scritta tre
+    // volte — traccia d'accesso, righe principali, sedi dei bambini a carico — e le righe principali
+    // e quelle a carico potevano finire su perimetri diversi senza che niente lo dicesse.
+    const sediPerimetro = scuolaId && sediAttive.includes(scuolaId) ? [scuolaId] : sediAttive
 
     // Accountability GDPR: gli export contengono PII (nomi, sezioni, importi; il
     // ramo AdE anche i codici fiscali). Registra chi esporta cosa e quando.
@@ -162,7 +167,8 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
       attore: user,
       entitaTipo: 'export_pagamenti',
       azione: 'insert',
-      scuolaId: scuolaId && sediAttive.includes(scuolaId) ? scuolaId : sediAttive[0] ?? null,
+      // La sede dichiarata, o la prima attiva.
+      scuolaId: sediPerimetro[0] ?? null,
       valoreDopo: {
         tipo: q.data.tipo, anno: q.data.anno ?? null, sedi: sediAttive,
         classi: sectionIds ?? null,
@@ -196,9 +202,8 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
           payment_categories ( nome ),
           ${embedAlunni}
         `)
-        .in('scuola_id', sediAttive)
+        .in('scuola_id', sediPerimetro)
         .order('scadenza', { ascending: true })
-      if (scuolaId && sediAttive.includes(scuolaId)) query = query.eq('scuola_id', scuolaId)
       if (stato) query = query.eq('stato', stato)
       if (categoriaId) query = query.eq('categoria_id', categoriaId)
       if (sectionIds) query = query.in('alunni.section_id', sectionIds)
@@ -232,12 +237,12 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     // `pagamenti.scadenza` è NOT NULL (dal baseline): una cella «Scadenza» vuota oggi non può
     // arrivare. `chiave` la manderebbe comunque in fondo — è una DIFESA, per il giorno in cui la
     // colonna diventasse nullable, non un caso che accade (R11c, terza revisione 2026-09-29).
-    const sediBambini = scuolaId && sediAttive.includes(scuolaId) ? [scuolaId] : sediAttive
     const aCarico = await righeRetteACarico(supabase, {
-      sediBambini,
+      // I bambini a carico: lo STESSO perimetro delle righe principali.
+      sediBambini: sediPerimetro,
       // K4: unite alle sedi dei bambini — da sola questa seconda `scuoleDiUtente`, su un errore,
       // dà `[]` e le righe dei bambini sparirebbero anche col pagante nella loro sede.
-      sediPaganti: sediDeiPaganti(sediBambini, await scuoleDiUtente(supabase, user)),
+      sediPaganti: sediDeiPaganti(sediPerimetro, await scuoleDiUtente(supabase, user)),
       sectionIds,
       stato,
       categoriaId,

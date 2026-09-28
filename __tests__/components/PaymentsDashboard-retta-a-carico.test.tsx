@@ -350,7 +350,8 @@ describe('C3 — pagante in una sede che l’utente non legge', () => {
         expect(within(r).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga è in un’altra sede: retta da rivedere');
     });
     it('risposta di prima (senza il campo): Ivo torna «Non generata» e mancante, senza banner né log', async () => {
-        const { a_carico_non_visibili: _vecchio, ...vecchia } = LEGAMI;
+        const vecchia: Record<string, unknown> = { ...LEGAMI };
+        delete vecchia.a_carico_non_visibili;
         stub({ legami: vecchia }); await apri();
         expect(within(riga('Ivo Grigi')).getByText('Non generata')).toBeInTheDocument();
         expect(await screen.findByTestId('cta-genera-mancanti-frase')).toHaveTextContent('3 alunni senza retta generata');

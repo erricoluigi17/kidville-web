@@ -943,6 +943,23 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         const p = rettaByAlunno.get(a.id);
                         const legame = legami.get(a.id);
                         const nonVisibile = !legame && aCaricoNonVisibili.has(a.id);
+                        if (!p && (legame || nonVisibile)) {
+                            // Il badge SOTTO il nome, non accanto: è una frase (fino a ~430 px col
+                            // font vero, ~251 px di spazio a 360 px di schermo). Accanto al nome lo
+                            // schiacciava e faceva scorrere la pagina in orizzontale; qui la card
+                            // è un blocco, e il badge va a capo nella sua riga intera.
+                            return (
+                                <div key={a.id} data-testid="card-retta-a-carico" className="rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
+                                    <p className="font-maven text-sm font-bold text-kidville-green">{a.nome} {a.cognome}</p>
+                                    {mostraSede && <BadgeSede nome={nomeSede(a.scuola_id)} className="mt-1" />}
+                                    <div data-testid="card-retta-a-carico-badge" className="mt-2 flex flex-wrap gap-1">
+                                        {legame
+                                            ? <BadgeRettaACarico legame={legame} rettaPagante={rettaByAlunno.get(legame.pagante.id)} sedeCaricata={!!legame.pagante.scuola_id && sediVisibili.includes(legame.pagante.scuola_id)} />
+                                            : <BadgeRettaACaricoNonVisibile />}
+                                    </div>
+                                </div>
+                            );
+                        }
                         if (!p) {
                             return (
                                 <div key={a.id} className="flex items-center justify-between gap-2 rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
@@ -950,17 +967,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         <p className="font-maven text-sm font-bold text-kidville-green">{a.nome} {a.cognome}</p>
                                         {mostraSede && <BadgeSede nome={nomeSede(a.scuola_id)} className="mt-1" />}
                                     </div>
-                                    {legame ? (
-                                        <span className="flex flex-wrap justify-end gap-1">
-                                            <BadgeRettaACarico legame={legame} rettaPagante={rettaByAlunno.get(legame.pagante.id)} sedeCaricata={!!legame.pagante.scuola_id && sediVisibili.includes(legame.pagante.scuola_id)} />
-                                        </span>
-                                    ) : nonVisibile ? (
-                                        <span className="flex flex-wrap justify-end gap-1">
-                                            <BadgeRettaACaricoNonVisibile />
-                                        </span>
-                                    ) : (
-                                        <Badge tone="neutral">{t('dashNonGenerata')}</Badge>
-                                    )}
+                                    <Badge tone="neutral">{t('dashNonGenerata')}</Badge>
                                 </div>
                             );
                         }

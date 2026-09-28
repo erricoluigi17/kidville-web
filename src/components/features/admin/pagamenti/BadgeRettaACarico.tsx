@@ -19,6 +19,9 @@ interface Props {
 }
 
 /**
+ * Tutti i badge di questo file sono `aCapo`: sono FRASI (fino a ~430 px col font vero), e con
+ * il `whitespace-nowrap` del Badge uscivano dalla card mobile e allargavano la tabella.
+ *
  * «Paga il fratello Mario Rossi (Sez. C) · Da pagare» al posto di «Non generata» (D1–D5),
  * del colore della retta del fratello (D3). Più, se serve, l'avviso rosso quando chi paga
  * non risulta iscritto (ritirato, archiviato, ma anche sospeso: «non più» sarebbe falso) o è
@@ -29,7 +32,7 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
     const valori = valoriPrefisso(legame.pagante);
     const anomalia = anomaliaPagante(legame);
     const avvisoAnomalia = anomalia ? (
-        <Badge tone="error" data-testid="retta-a-carico-anomalia">
+        <Badge tone="error" aCapo data-testid="retta-a-carico-anomalia">
             {anomalia === 'non-iscritto' ? t('dashPaganteNonIscritto') : t('dashPaganteAltraSede')}
         </Badge>
     ) : null;
@@ -37,7 +40,7 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
     if (conRettaPropria) {
         return (
             <>
-                <Badge tone="warn" data-testid="retta-a-carico-verifica">{t('dashACaricoVerifica', valori)}</Badge>
+                <Badge tone="warn" aCapo data-testid="retta-a-carico-verifica">{t('dashACaricoVerifica', valori)}</Badge>
                 {avvisoAnomalia}
             </>
         );
@@ -47,7 +50,7 @@ export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRetta
     const stato = st ? st.label : sedeCaricata ? t('dashNonGenerata') : null;
     return (
         <>
-            <Badge tone={st?.tone ?? 'neutral'} data-testid="retta-a-carico">
+            <Badge tone={st?.tone ?? 'neutral'} aCapo data-testid="retta-a-carico">
                 {componiBadge(t('dashACarico', valori), stato)}
             </Badge>
             {avvisoAnomalia}
@@ -66,8 +69,8 @@ export function BadgeRettaACaricoNonVisibile() {
     const t = useTranslations('adminContabilita');
     return (
         <>
-            <Badge tone="neutral" data-testid="retta-a-carico-non-visibile">{t('dashACaricoAltraSede')}</Badge>
-            <Badge tone="error" data-testid="retta-a-carico-anomalia">{t('dashPaganteAltraSede')}</Badge>
+            <Badge tone="neutral" aCapo data-testid="retta-a-carico-non-visibile">{t('dashACaricoAltraSede')}</Badge>
+            <Badge tone="error" aCapo data-testid="retta-a-carico-anomalia">{t('dashPaganteAltraSede')}</Badge>
         </>
     );
 }

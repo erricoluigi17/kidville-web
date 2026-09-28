@@ -39,26 +39,47 @@ const TONES: Record<BadgeTone, string> = {
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   tone?: BadgeTone
+  /** Il testo può andare a capo: vedi `A_CAPO`. Default `false`, cioè la pillola di sempre. */
+  aCapo?: boolean
 }
+
+/** Il Badge di sempre: una riga, pillola. */
+const UNA_RIGA =
+  'inline-flex items-center gap-[5px] whitespace-nowrap rounded-pill px-[11px] py-1 font-barlow text-[11.5px] font-extrabold uppercase leading-[1.35] tracking-[0.06em]'
+
+/**
+ * `aCapo` (2026-09-28) — per le FRASI dentro un badge («Paga il fratello Mario Rossi (Sez. C)
+ * · Non generata», 355 px col font vero, contro ~251 px di card a 360 px di schermo). Con
+ * `whitespace-nowrap` un testo così schiacciava il nome accanto e faceva scorrere la pagina in
+ * orizzontale.
+ *
+ * È una PROP e non un `className="whitespace-normal"` per la stessa ragione di `inCorso` qui
+ * sopra: `cx` concatena, e fra `whitespace-nowrap` e `whitespace-normal` avrebbe vinto quella
+ * che il foglio di stile dichiara per ULTIMA, non quella scritta dopo nell'attributo. Qui
+ * `whitespace-normal` SOSTITUISCE `whitespace-nowrap`: nell'elemento ce n'è una sola.
+ *
+ * Il resto segue: `text-left` (una frase su due righe non si centra), `max-w-full` (non più
+ * largo del contenitore), `break-words` (un cognome lunghissimo non sfonda), e un raggio fisso
+ * al posto di `rounded-pill` — su due righe il 9999px arrotonda fino a mangiare gli angoli del
+ * testo, mentre su una riga `rounded-xl` resta una pillola a vista.
+ */
+const A_CAPO =
+  'inline-flex max-w-full items-center gap-[5px] whitespace-normal break-words rounded-xl px-[11px] py-1 text-left font-barlow text-[11.5px] font-extrabold uppercase leading-[1.35] tracking-[0.06em]'
 
 /**
  * Le classi del Badge, per chi deve dare la stessa faccia a un elemento che non è uno
  * `span` — il collegamento «Errore in coda» di `FatturaChip` (consegna 2b, D7), che non
  * può annidare uno `span` dentro l'`a` e restare un bersaglio solo.
  */
-export function classiBadge(tone: BadgeTone = 'info', className?: string): string {
-  return cx(
-    'inline-flex items-center gap-[5px] whitespace-nowrap rounded-pill px-[11px] py-1 font-barlow text-[11.5px] font-extrabold uppercase leading-[1.35] tracking-[0.06em]',
-    TONES[tone],
-    className,
-  )
+export function classiBadge(tone: BadgeTone = 'info', className?: string, opzioni?: { aCapo?: boolean }): string {
+  return cx(opzioni?.aCapo ? A_CAPO : UNA_RIGA, TONES[tone], className)
 }
 
 /** Badge/pill di stato del design (DR `.kv-badge`). */
-export function Badge({ tone = 'info', className, children, ...rest }: BadgeProps) {
+export function Badge({ tone = 'info', aCapo = false, className, children, ...rest }: BadgeProps) {
   return (
     <span
-      className={classiBadge(tone, className)}
+      className={classiBadge(tone, className, { aCapo })}
       {...rest}
     >
       {children}

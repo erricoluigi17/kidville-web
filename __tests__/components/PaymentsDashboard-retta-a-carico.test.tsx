@@ -272,6 +272,59 @@ describe('D11 — ricerca per nome del pagante', () => {
     });
 });
 
+/**
+ * C1 (revisione 2026-09-28) — i badge LUNGHI vanno a capo. Misurati col font vero: «Paga il
+ * fratello Mario Rossi (Sez. C) · Non generata» 355 px, l'avviso D9 428 px, contro ~251 px di
+ * card a 360 px di schermo: col `whitespace-nowrap` del Badge il nome veniva schiacciato e la
+ * pagina scorreva in orizzontale. jsdom non misura: qui si guarda che la regola che VINCE sia
+ * `whitespace-normal` — cioè che sia l'UNICA regola di white-space dell'elemento — e che nella
+ * card il badge stia SOTTO il nome e non accanto.
+ */
+const regoleWhitespace = (el: Element) =>
+    [...el.classList].filter((c) => /^!?whitespace-/.test(c) || /^whitespace-.*!$/.test(c));
+const TESTID_BADGE_A_CARICO = ['retta-a-carico', 'retta-a-carico-verifica', 'retta-a-carico-anomalia', 'retta-a-carico-non-visibile'];
+
+describe('C1 — i badge lunghi vanno a capo', () => {
+    it('ogni badge delle rette a carico (tabella e card) ha whitespace-normal come UNICA regola', async () => {
+        stub(); await apri();
+        for (const id of TESTID_BADGE_A_CARICO) {
+            const badge = screen.getAllByTestId(id);
+            expect(badge.length, id).toBeGreaterThan(0);
+            for (const b of badge) expect(regoleWhitespace(b), id).toEqual(['whitespace-normal']);
+        }
+    });
+    it('il badge di stato di una riga normale resta su una riga (default invariato)', async () => {
+        stub(); await apri();
+        const pagato = within(riga('Anna Bianchi')).getByText('Pagato');
+        expect(regoleWhitespace(pagato)).toEqual(['whitespace-nowrap']);
+    });
+    it('card mobile senza retta propria: il badge sta SOTTO il nome, non accanto', async () => {
+        stub(); await apri();
+        const card = screen.getAllByTestId('card-retta-a-carico').find((c) => c.textContent?.startsWith('Luca Rossi'));
+        expect(card).toBeDefined();
+        // La card non è più una riga flex «nome | badge»: i suoi figli si impilano.
+        expect(card).not.toHaveClass('flex');
+        expect(card).not.toHaveClass('justify-between');
+        const nome = within(card!).getByText('Luca Rossi');
+        const badge = within(card!).getByTestId('retta-a-carico');
+        const contenitore = within(card!).getByTestId('card-retta-a-carico-badge');
+        expect(contenitore.parentElement).toBe(card);
+        expect(contenitore).toContainElement(badge);
+        expect(nome.compareDocumentPosition(contenitore) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(nome.contains(contenitore)).toBe(false);
+    });
+    it('anche la card del pagante non leggibile (C3) mette il badge sotto il nome', async () => {
+        stub(); await apri();
+        const card = screen.getAllByTestId('card-retta-a-carico').find((c) => c.textContent?.startsWith('Ivo Grigi'));
+        expect(card).toBeDefined();
+        expect(within(card!).getByTestId('card-retta-a-carico-badge')).toContainElement(within(card!).getByTestId('retta-a-carico-non-visibile'));
+    });
+    it('la card «Non generata» senza legame resta com’era', async () => {
+        stub(); await apri();
+        expect(screen.getAllByTestId('card-retta-a-carico').some((c) => c.textContent?.startsWith('Pia Gialli'))).toBe(false);
+    });
+});
+
 describe('C3 — pagante in una sede che l’utente non legge', () => {
     it('badge neutro «di un’altra sede» + avviso rosso; niente «Non generata», niente Incassa (tabella e card)', async () => {
         stub(); await apri();

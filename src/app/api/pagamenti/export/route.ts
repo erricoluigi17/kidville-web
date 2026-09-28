@@ -333,7 +333,20 @@ async function exportAde(
   const daComunicare: Record<string, unknown>[] = []
   const escluse: Record<string, unknown>[] = []
 
-  for (const al of alunniLetti.righe) {
+  // K7 (seconda revisione 2026-09-28) — l'ordine dei due fogli. Prima della lettura a blocchi
+  // gli alunni si leggevano senza `order` (nessun ordine garantito) e nessuno li riordinava; ora
+  // `leggiABlocchi` li consegna per `id`, cioè per uuid: a caso, per chi legge. Si ordina qui
+  // per sede (la prima colonna), cognome, nome e — fra omonimi — `id`, così due export dello
+  // stesso anno escono identici. Solo l'ordine: le righe sono le stesse.
+  const collatore = new Intl.Collator('it')
+  const sedeDi = (a: AlunnoAde) => (a.scuola_id ? (nomiSedi.get(a.scuola_id) ?? '') : '')
+  const alunniOrdinati = [...alunniLetti.righe].sort((a, b) =>
+    collatore.compare(sedeDi(a), sedeDi(b))
+    || collatore.compare(a.cognome ?? '', b.cognome ?? '')
+    || collatore.compare(a.nome ?? '', b.nome ?? '')
+    || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+  for (const al of alunniOrdinati) {
     const voci = perAlunno.get(al.id) ?? []
     if (voci.length === 0) continue
     const r = calcolaAttestazione(voci)

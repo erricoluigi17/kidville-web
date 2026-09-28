@@ -142,6 +142,60 @@ describe('export AdE — oltre le 1000 righe (C2)', () => {
 })
 
 // =============================================================================
+// K7 (seconda revisione 2026-09-28) — L'ORDINE DEI FOGLI AdE. Prima di C2 gli alunni si
+// leggevano senza `order` (nessun ordine garantito) e nessuno li riordinava; con la lettura a
+// blocchi escono per `id`, cioè per uuid: a caso, per chi legge. Ora sede, cognome, nome e —
+// a parità — `id`. Il finto client ORDINA davvero per `id`: gli uuid qui sotto sono scelti
+// perché quell'ordine sia diverso da quello atteso.
+// =============================================================================
+describe('K7 — i fogli AdE escono in un ordine leggibile e stabile', () => {
+  it('per sede, cognome, nome e poi id — in entrambi i fogli', async () => {
+    const persone: [string, string, string, string][] = [
+      // [id, sede, nome, cognome] — in ordine di id
+      ['al-1', SEDE_B, 'Anna', 'Bianchi'],
+      ['al-2', SEDE_A, 'Zoe', 'Rossi'],
+      ['al-3', SEDE_A, 'Ada', 'Rossi'],
+      ['al-4', SEDE_A, 'Ugo', 'Bianchi'],
+      ['al-5', SEDE_B, 'Anna', 'Bianchi'], // omonima di al-1 nella stessa sede: decide l'id
+      ['al-6', SEDE_A, 'Eva', 'de Luca'],   // minuscola: il confronto non la manda in fondo
+    ]
+    for (const [id, sede, nome, cognome] of persone) {
+      h.db.alunni.push(alunno(id, sede, { nome, cognome, codice_fiscale: null, opposizione_ade: false, intestatario_fatture: null }))
+      h.db.incassi.push({
+        id: `inc-${id}`, importo: 100, metodo: 'bonifico', data_incasso: '2026-02-10',
+        pagamenti: { alunno_id: id, scuola_id: sede, descrizione: 'Retta', payment_categories: { slug: 'retta' } },
+      })
+    }
+    const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=ade&anno=2026'))
+    expect(res.status).toBe(200)
+    // Senza intestatario tutte vanno in «Escluse» (CF del pagatore mancante), una riga ciascuno.
+    const escluse = await foglio(res, 'Escluse')
+    expect(escluse.map((r) => `${r.Sede}|${r.Alunno}`)).toEqual([
+      `${NOME_SEDE_A}|Ugo Bianchi`,
+      `${NOME_SEDE_A}|Eva de Luca`,
+      `${NOME_SEDE_A}|Ada Rossi`,
+      `${NOME_SEDE_A}|Zoe Rossi`,
+      `${NOME_SEDE_B}|Anna Bianchi`,
+      `${NOME_SEDE_B}|Anna Bianchi`,
+    ])
+  })
+
+  it('«Da comunicare» segue lo stesso ordine', async () => {
+    h.db.parents = [{ id: 'gen-1', first_name: 'G', last_name: 'F', fiscal_code: 'CFPAGATOREPROVA1' }]
+    for (const [id, nome, cognome] of [['al-1', 'Zoe', 'Verdi'], ['al-2', 'Ada', 'Verdi'], ['al-3', 'Ugo', 'Alti']]) {
+      h.db.alunni.push(alunno(id, SEDE_A, { nome, cognome, codice_fiscale: null, opposizione_ade: false, intestatario_fatture: { adult_id: 'gen-1' } }))
+      h.db.incassi.push({
+        id: `inc-${id}`, importo: 100, metodo: 'bonifico', data_incasso: '2026-02-10',
+        pagamenti: { alunno_id: id, scuola_id: SEDE_A, descrizione: 'Retta', payment_categories: { slug: 'retta' } },
+      })
+    }
+    const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=ade&anno=2026'))
+    expect(res.status).toBe(200)
+    expect((await foglio(res, 'Da comunicare')).map((r) => r.Alunno)).toEqual(['Ugo Alti', 'Ada Verdi', 'Zoe Verdi'])
+  })
+})
+
+// =============================================================================
 // K5 (seconda revisione 2026-09-28) — AL TETTO DEI BLOCCHI la lettura consegnava le righe
 // lette con `troncata: true`, e nessun chiamante lo guardava: l'export usciva 200, incompleto,
 // e nel ramo AdE era una comunicazione all'Agenzia delle Entrate con delle spese in meno. Ora

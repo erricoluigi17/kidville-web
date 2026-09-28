@@ -41,9 +41,8 @@ vi.mock('@/lib/context/admin-identity', async (orig) => ({
     ...(await orig<typeof import('@/lib/context/admin-identity')>()),
     useRuoloCockpit: () => 'admin',
 }));
-const sediCtx = vi.hoisted(() => ({
-    valore: { sedi: [{ id: 's1', nome: 'Kidville Uno' }], effettive: ['s1'], selezionate: [] as string[], sedeCorrente: 's1' as string | null, reFetchKey: 's1' },
-}));
+const SEDE_UNICA = { sedi: [{ id: 's1', nome: 'Kidville Uno' }], effettive: ['s1'], selezionate: [] as string[], sedeCorrente: 's1' as string | null, reFetchKey: 's1' };
+const sediCtx = vi.hoisted(() => ({ valore: null as unknown }));
 vi.mock('@/lib/context/sede-context', async (orig) => ({
     ...(await orig<typeof import('@/lib/context/sede-context')>()),
     useSediAttive: () => sediCtx.valore,
@@ -125,14 +124,14 @@ const LEGAMI = {
 };
 
 let fetchFinta: ReturnType<typeof vi.fn>;
-function stub(opzioni: { legamiStatus?: number; legami?: unknown } = {}) {
+function stub(opzioni: { legamiStatus?: number; legami?: unknown; pagamenti?: unknown } = {}) {
     fetchFinta = vi.fn(async (url: string) => {
         const u = String(url);
         if (u.startsWith('/api/pagamenti/rette-a-carico')) {
             const s = opzioni.legamiStatus ?? 200;
             return { ok: s === 200, status: s, json: async () => (s === 200 ? (opzioni.legami ?? LEGAMI) : { error: 'guasto', codice: 'LETTURA_FALLITA' }) };
         }
-        const body = u.startsWith('/api/pagamenti?') ? PAGAMENTI
+        const body = u.startsWith('/api/pagamenti?') ? (opzioni.pagamenti ?? PAGAMENTI)
             : u.startsWith('/api/admin/students') ? STUDENTS
                 : u.includes('/settings/categorie') ? CATEGORIE
                     : u.includes('/settings/aruba') ? { success: true, data: { abilitato: true } }
@@ -160,6 +159,8 @@ async function apri() {
 }
 
 beforeEach(() => {
+    // Una sede sola, salvo i test che ne dichiarano due (K8a): si rimette a ogni test.
+    sediCtx.valore = SEDE_UNICA;
     logSpia.chiamate.length = 0;
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date(GIORNO_FISSO));
@@ -243,6 +244,42 @@ describe('D12 — pagante anomalo', () => {
         const r = riga('Ugo Viola');
         expect(within(r).getByTestId('retta-a-carico')).toHaveTextContent(/^Paga il fratello Leo Viola \(Sez\. G\)$/);
         expect(within(r).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga è in un’altra sede: retta da rivedere');
+    });
+    // K8a (seconda revisione 2026-09-28): la vista a PIÙ sedi. Il pagante sta in un'altra sede,
+    // ma quella sede è fra le caricate: allora il suo stato SI conosce e si mostra, col suo
+    // colore — e l'avviso rosso resta, perché la retta è comunque da rivedere.
+    it('K8a — in un’altra sede CARICATA (vista a più sedi): lo stato del fratello, col suo tono, E l’avviso rosso', async () => {
+        sediCtx.valore = {
+            sedi: [{ id: 's1', nome: 'Kidville Uno' }, { id: 's2', nome: 'Kidville Due' }],
+            effettive: ['s1', 's2'], selezionate: [], sedeCorrente: null, reFetchKey: 's1,s2',
+        };
+        const LEO = B('a-lontano', 'Leo', 'Viola', 'Sez. G');
+        stub({ pagamenti: { ...PAGAMENTI, data: [...PAGAMENTI.data, retta('p-leo', LEO, { stato: 'parziale', importo_pagato: 100, scuola_id: 's2', scuola_nome: 'Kidville Due' })] } });
+        render(<PaymentsDashboard userId="u1" scuolaId={null} />);
+        await waitFor(() => expect(riga('Ugo Viola')).toBeInTheDocument());
+        const r = riga('Ugo Viola');
+        const b = within(r).getByTestId('retta-a-carico');
+        expect(b).toHaveTextContent('Paga il fratello Leo Viola (Sez. G) · Parziale');
+        expect(b).toHaveClass('bg-kidville-warn-soft');
+        expect(within(r).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga è in un’altra sede: retta da rivedere');
+        // Senza scuola_id: con più sedi la GET dei legami non restringe.
+        const u = fetchFinta.mock.calls.map(([x]) => String(x)).find((x) => x.startsWith('/api/pagamenti/rette-a-carico'));
+        expect(u).toBe('/api/pagamenti/rette-a-carico?userId=u1');
+    });
+    // K8b: D9 e D12 insieme — il bambino ha una retta PROPRIA e chi paga è anomalo.
+    it('K8b — retta propria (D9) e pagante non iscritto: l’avviso arancio «da verificare» E quello rosso', async () => {
+        const data = LEGAMI.data.map((l) => (l.alunno_id === TEO.id ? { ...l, pagante: { ...l.pagante, iscritto: false } } : l));
+        stub({ legami: { ...LEGAMI, data } }); await apri();
+        const r = riga('Teo Rossi');
+        expect(within(r).getByRole('button', { name: 'Incassa' })).toBeInTheDocument();
+        const verifica = within(r).getByTestId('retta-a-carico-verifica');
+        expect(verifica).toHaveTextContent('A carico del fratello Mario Rossi (Sez. C): retta da verificare');
+        expect(verifica).toHaveClass('bg-kidville-warn-soft');
+        const anomalia = within(r).getByTestId('retta-a-carico-anomalia');
+        expect(anomalia).toHaveTextContent('Chi paga non risulta iscritto: retta da rivedere');
+        expect(anomalia).toHaveClass('bg-kidville-error-soft');
+        // Il badge del pagante NON c'è: la riga ha la sua retta.
+        expect(within(r).queryByTestId('retta-a-carico')).toBeNull();
     });
 });
 

@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { IntlMessageFormat } from 'intl-messageformat'
 import {
   anomaliaPagante, componiBadge, indicizzaLegami, legamiDaRisposta, nomeConClasse, nomePagante,
   prefissoPaganteIt, sessoDa, testoPaganteIt, valoriPrefisso, SEPARATORE_STATO,
@@ -75,5 +78,34 @@ describe('indicizzaLegami e legamiDaRisposta', () => {
   it('scarta le voci malformate e tiene le buone', () => {
     const buona = legame()
     expect(legamiDaRisposta([buona, null, { alunno_id: 'x' }, { alunno_id: 'y', pagante: { id: 3 } }])).toEqual([buona])
+  })
+})
+
+const catalogo = (lingua: string) =>
+  JSON.parse(readFileSync(join(process.cwd(), `messages/${lingua}/adminContabilita.json`), 'utf8')) as Record<string, string>
+
+describe('LOCK — schermo (catalogo it) ed Excel (prefissoPaganteIt) dicono la stessa frase', () => {
+  const it_ = catalogo('it')
+  for (const sesso of ['M', 'F', null] as const) {
+    for (const classe of ['Sez. C', null]) {
+      it(`sesso ${sesso ?? 'assente'}, classe ${classe ?? 'assente'}`, () => {
+        const p = pagante({ sesso, classe_sezione: classe })
+        const schermo = String(new IntlMessageFormat(it_.dashACarico, 'it').format(valoriPrefisso(p)))
+        expect(schermo).toBe(prefissoPaganteIt(p))
+      })
+    }
+  }
+  it('l’avviso D9 usa la stessa forma di nome', () => {
+    const p = pagante({ sesso: 'F', nome: 'Anna' })
+    expect(String(new IntlMessageFormat(it_.dashACaricoVerifica, 'it').format(valoriPrefisso(p))))
+      .toBe('A carico della sorella Anna Rossi (Sez. C): retta da verificare')
+  })
+  it('le cinque chiavi esistono in entrambe le lingue', () => {
+    for (const lingua of ['it', 'en']) {
+      const c = catalogo(lingua)
+      for (const k of ['dashACarico', 'dashACaricoVerifica', 'dashPaganteNonIscritto', 'dashPaganteAltraSede', 'dashMsErrLegami']) {
+        expect(typeof c[k], `${lingua}.${k}`).toBe('string')
+      }
+    }
   })
 })

@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { ChevronRight, MapPin } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { FatturaChip } from './FatturaChip';
@@ -61,12 +62,14 @@ interface Props {
      * e ogni richiamante esistente resta identico a prima.
      */
     mostraSede?: boolean;
+    /** Un avviso sotto la descrizione (es. retta generata a un bambino a carico di un fratello, D9). */
+    avviso?: ReactNode;
     onIncassa: () => void;
     onApri: () => void;
 }
 
 /** Card compatta per la lista pagamenti su mobile (sotto lg la tabella diventa card-list). */
-export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sospeso, mostraSede = false, onIncassa, onApri }: Props) {
+export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sospeso, mostraSede = false, avviso, onIncassa, onApri }: Props) {
     const t = useTranslations('adminContabilita');
     const st = STATI_PAGAMENTO[pagamento.stato] ?? STATI_PAGAMENTO.da_pagare;
     const residuo = Math.max(0, Number(pagamento.importo) - Number(pagamento.importo_pagato || 0));
@@ -89,6 +92,7 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
             </div>
 
             <p className="mt-1 truncate font-maven text-xs text-kidville-ink">{pagamento.descrizione}</p>
+            {avviso && <div className="mt-1 flex flex-wrap gap-1">{avviso}</div>}
 
             <div className="mt-2 flex items-center justify-between font-maven text-xs">
                 <span className="text-kidville-muted">

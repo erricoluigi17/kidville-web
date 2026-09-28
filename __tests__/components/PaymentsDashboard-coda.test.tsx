@@ -190,6 +190,8 @@ describe('PaymentsDashboard — la coda fatture sul pulsante e dopo un accodamen
             const u = String(url);
             const body =
                 u.startsWith('/api/pagamenti?') ? PAGAMENTI
+                    // Prima del ramo generico: il dettaglio qui sarebbe una forma inattesa (banner + log `error`).
+                    : u.startsWith('/api/pagamenti/rette-a-carico') ? { success: true, data: [] }
                     : u.startsWith('/api/pagamenti/') ? DETTAGLIO
                         : u.startsWith('/api/admin/students') ? STUDENTS
                             : u.includes('/settings/categorie') ? CATEGORIE
@@ -208,6 +210,9 @@ describe('PaymentsDashboard — la coda fatture sul pulsante e dopo un accodamen
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
         // Presenza prima: la riga in errore ha già il suo chip.
         await waitFor(() => expect(within(rigaTabella('Ada Bianchi')).getByTestId('coda-chip')).toHaveTextContent('Errore in coda'));
+        // Dopo la presenza (le tre GET di `load()` si applicano insieme): la GET dei legami ha
+        // avuto la sua forma, quindi niente banner d'errore a fare rumore in questo file.
+        expect(screen.queryByTestId('errore-legami')).toBeNull();
         expect(propsDi('p-errore').codaStato).toBe('errore');
         // `null`, non assente: `toHaveProperty` distingue la prop passata a null da quella dimenticata.
         expect(propsDi('p-libera')).toHaveProperty('codaStato', null);

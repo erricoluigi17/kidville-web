@@ -92,19 +92,35 @@ export function indicizzaLegami(legami: readonly LegameRetta[]): Map<string, Leg
   return new Map(legami.map((l) => [l.alunno_id, l]))
 }
 
+const eIdValido = (v: unknown): v is string => typeof v === 'string' && v !== ''
+const eSedeValida = (v: unknown): v is string | null => v === null || eIdValido(v)
+
+/**
+ * K6 (seconda revisione 2026-09-28) — si valida OGNI campo che il cruscotto usa, non solo
+ * quelli del nome: una `classe_sezione` numerica faceva lanciare `.trim()` (in `nomeConClasse`)
+ * e cadere tutta la Contabilità; un `iscritto` assente accendeva il falso avviso rosso «Chi
+ * paga non risulta iscritto». Gli id e le sedi sono stringhe NON vuote (o `null` per le sedi):
+ * si confrontano con quelli del cruscotto, non si validano come uuid — le fixture e l'uuid
+ * canonico del database passano allo stesso modo.
+ */
 function eLegame(x: unknown): x is LegameRetta {
   if (!x || typeof x !== 'object') return false
-  const l = x as Partial<LegameRetta>
-  const p = l.pagante as Partial<PaganteRetta> | undefined
-  return typeof l.alunno_id === 'string' && !!p && typeof p === 'object'
-    && typeof p.id === 'string' && typeof p.nome === 'string' && typeof p.cognome === 'string'
+  const l = x as Record<string, unknown>
+  const p = l.pagante as Record<string, unknown> | null | undefined
+  if (!p || typeof p !== 'object') return false
+  return eIdValido(l.alunno_id) && eSedeValida(l.scuola_id)
+    && eIdValido(p.id) && typeof p.nome === 'string' && typeof p.cognome === 'string'
+    && (p.sesso === 'M' || p.sesso === 'F' || p.sesso === null)
+    && (p.classe_sezione === null || typeof p.classe_sezione === 'string')
+    && typeof p.iscritto === 'boolean'
+    && eSedeValida(p.scuola_id)
 }
 
 /**
  * Il corpo della GET, controllato. `null` = forma inattesa: è un GUASTO, non «nessun
- * legame», e il chiamante lo dice a schermo. Le voci malformate si scartano una a una,
- * e si CONTANO: uno scarto muto è un bambino che torna «Non generata» senza che nessuno
- * sappia perché — il cruscotto logga il conteggio (mai chi).
+ * legame», e il chiamante lo dice a schermo. Le voci malformate (vedi `eLegame`) si scartano
+ * una a una, e si CONTANO: uno scarto muto è un bambino che torna «Non generata» senza che
+ * nessuno sappia perché — il cruscotto logga il conteggio (mai chi).
  */
 export function legamiDaRisposta(data: unknown): { legami: LegameRetta[]; scartati: number } | null {
   if (!Array.isArray(data)) return null
@@ -114,9 +130,10 @@ export function legamiDaRisposta(data: unknown): { legami: LegameRetta[]; scarta
 
 /**
  * `a_carico_non_visibili` della GET: i bambini a carico il cui pagante sta in una sede che
- * l'utente non legge (solo i loro uuid). Campo ASSENTE = risposta di prima del 2026-09-28:
- * nessun bambino e nessuno scarto, non un guasto. Un valore che non è un uuid si scarta e si
- * conta come in `legamiDaRisposta`; un campo che non è un array è UNO scarto.
+ * l'utente non legge (solo i loro id). Campo ASSENTE = risposta di prima del 2026-09-28:
+ * nessun bambino e nessuno scarto, non un guasto. Un valore che non è una stringa non vuota si
+ * scarta e si conta come in `legamiDaRisposta` (l'id si confronta con quelli del cruscotto,
+ * non si valida come uuid); un campo che non è un array è UNO scarto.
  */
 export function nonVisibiliDaRisposta(v: unknown): { ids: string[]; scartati: number } {
   if (v === undefined || v === null) return { ids: [], scartati: 0 }

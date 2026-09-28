@@ -81,6 +81,55 @@ describe('indicizzaLegami e legamiDaRisposta', () => {
       .toEqual({ legami: [buona], scartati: 3 })
     expect(legamiDaRisposta([buona])).toEqual({ legami: [buona], scartati: 0 })
   })
+
+  // K6 (seconda revisione 2026-09-28): si validavano solo `alunno_id`, `id`, `nome` e
+  // `cognome`, ma il cruscotto USA anche gli altri campi. Una `classe_sezione` numerica faceva
+  // lanciare `.trim()` e cadere il cruscotto; un `iscritto` assente accendeva il falso avviso
+  // rosso «Chi paga non risulta iscritto». Ogni voce che non passa si scarta e si CONTA.
+  describe('K6 — ogni campo che il cruscotto usa è validato', () => {
+    const conPagante = (extra: Record<string, unknown>) => ({ ...legame(), pagante: { ...pagante(), ...extra } })
+    const conLegame = (extra: Record<string, unknown>) => ({ ...legame(), ...extra })
+    const scartata = (voce: unknown) => expect(legamiDaRisposta([legame(), voce])).toEqual({ legami: [legame()], scartati: 1 })
+    const tenuta = (voce: unknown) => expect(legamiDaRisposta([voce])?.legami).toHaveLength(1)
+
+    it('classe_sezione: stringa o null; un numero si scarta (prima: `.trim()` lanciava)', () => {
+      tenuta(conPagante({ classe_sezione: null }))
+      scartata(conPagante({ classe_sezione: 42 }))
+      scartata(conPagante({ classe_sezione: undefined }))
+    })
+    it('iscritto: booleano; assente o stringa si scarta (prima: falso avviso rosso)', () => {
+      tenuta(conPagante({ iscritto: false }))
+      scartata(conPagante({ iscritto: undefined }))
+      scartata(conPagante({ iscritto: 'true' }))
+    })
+    it('sesso: M, F o null; qualunque altra cosa si scarta', () => {
+      tenuta(conPagante({ sesso: 'F' }))
+      tenuta(conPagante({ sesso: null }))
+      scartata(conPagante({ sesso: 'X' }))
+      scartata(conPagante({ sesso: 'm' }))
+      scartata(conPagante({ sesso: undefined }))
+    })
+    it('scuola_id del pagante: stringa non vuota o null', () => {
+      tenuta(conPagante({ scuola_id: null }))
+      scartata(conPagante({ scuola_id: 5 }))
+      scartata(conPagante({ scuola_id: '' }))
+      scartata(conPagante({ scuola_id: undefined }))
+    })
+    it('scuola_id del legame (la sede del bambino): stringa non vuota o null', () => {
+      tenuta(conLegame({ scuola_id: null }))
+      scartata(conLegame({ scuola_id: 5 }))
+      scartata(conLegame({ scuola_id: '' }))
+      scartata(conLegame({ scuola_id: undefined }))
+    })
+    it('gli id: stringhe NON vuote (un id vuoto non indicizza nessun bambino)', () => {
+      scartata(conLegame({ alunno_id: '' }))
+      scartata(conPagante({ id: '' }))
+    })
+    it('nome e cognome restano stringhe obbligatorie (anche vuote: il loader le mette così)', () => {
+      tenuta(conPagante({ nome: '', cognome: '' }))
+      scartata(conPagante({ cognome: null }))
+    })
+  })
 })
 
 describe('nonVisibiliDaRisposta (C3: il pagante sta in una sede che l’utente non legge)', () => {
@@ -88,7 +137,7 @@ describe('nonVisibiliDaRisposta (C3: il pagante sta in una sede che l’utente n
     expect(nonVisibiliDaRisposta(undefined)).toEqual({ ids: [], scartati: 0 })
     expect(nonVisibiliDaRisposta(null)).toEqual({ ids: [], scartati: 0 })
   })
-  it('tiene gli uuid e conta il resto', () => {
+  it('tiene le stringhe non vuote e conta il resto (l’id si confronta, non si valida come uuid)', () => {
     expect(nonVisibiliDaRisposta(['a', '', 3, null, 'b'])).toEqual({ ids: ['a', 'b'], scartati: 3 })
   })
   it('un campo che non è un array è UNO scarto, non un crash', () => {

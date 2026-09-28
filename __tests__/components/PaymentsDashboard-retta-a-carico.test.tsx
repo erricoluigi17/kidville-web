@@ -358,7 +358,7 @@ describe('C3 — pagante in una sede che l’utente non legge', () => {
         expect(screen.queryByTestId('errore-legami')).toBeNull();
         expect(logSpia.chiamate.some((c) => c.messaggio === 'scadenzario-legami-voci-scartate')).toBe(false);
     });
-    it('un uuid malformato nel campo si scarta e si conta nel log', async () => {
+    it('un valore che non è una stringa nel campo si scarta e si conta nel log', async () => {
         stub({ legami: { ...LEGAMI, a_carico_non_visibili: [IVO.id, 7] } }); await apri();
         expect(within(riga('Ivo Grigi')).getByTestId('retta-a-carico-non-visibile')).toBeInTheDocument();
         const log = logSpia.chiamate.filter((c) => c.messaggio === 'scadenzario-legami-voci-scartate');
@@ -410,6 +410,24 @@ describe('la GET dei legami', () => {
         expect(JSON.stringify(log[0])).not.toContain('Zeno');
         // …e nessun banner: le voci buone ci sono, lo schermo non mente su di loro.
         expect(screen.queryByTestId('errore-legami')).toBeNull();
+    });
+    // K6 (seconda revisione 2026-09-28): la validazione guardava solo id, nome e cognome.
+    it('K6 — una classe non stringa non fa cadere il cruscotto: la voce si scarta e si conta', async () => {
+        const rotta = { alunno_id: PIA.id, scuola_id: 's1', pagante: { ...pag(MARIO, 'M'), classe_sezione: 42 } };
+        stub({ legami: { ...LEGAMI, data: [...LEGAMI.data, rotta] } }); await apri();
+        expect(within(riga('Luca Rossi')).getByTestId('retta-a-carico')).toBeInTheDocument();
+        expect(within(riga('Pia Gialli')).getByText('Non generata')).toBeInTheDocument();
+        const log = logSpia.chiamate.filter((c) => c.messaggio === 'scadenzario-legami-voci-scartate');
+        expect(log).toHaveLength(1);
+        expect(log[0]).toMatchObject({ livello: 'error', campi: { n: 1 } });
+    });
+    it('K6 — `iscritto` assente non accende il falso avviso «non risulta iscritto»', async () => {
+        const { iscritto: _tolto, ...senza } = pag(MARIO, 'M');
+        void _tolto;
+        stub({ legami: { ...LEGAMI, data: [...LEGAMI.data, { alunno_id: PIA.id, scuola_id: 's1', pagante: senza }] } }); await apri();
+        expect(within(riga('Pia Gialli')).getByText('Non generata')).toBeInTheDocument();
+        expect(within(riga('Pia Gialli')).queryByTestId('retta-a-carico-anomalia')).toBeNull();
+        expect(logSpia.chiamate.filter((c) => c.messaggio === 'scadenzario-legami-voci-scartate')[0]).toMatchObject({ campi: { n: 1 } });
     });
     it('nessuna voce scartata: nessun log', async () => {
         stub(); await apri();

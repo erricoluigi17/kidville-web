@@ -36,6 +36,7 @@ vi.mock('@/lib/supabase/server-client', async () => {
 })
 
 import { GET } from '@/app/api/pagamenti/rette-a-carico/route'
+import { legamiDaRisposta } from '@/lib/pagamenti/rette-a-carico'
 
 const req = (qs = '') => new NextRequest(`http://localhost/api/pagamenti/rette-a-carico${qs ? `?${qs}` : ''}`)
 const ADMIN_AB = { id: 'admin-1', role: 'admin', scuola_id: SEDE_A }
@@ -103,6 +104,22 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
     // Il pagante in una sede davvero non accessibile resta non leggibile, come prima.
     expect(corpo.a_carico_non_visibili).toEqual(['fx'])
     expect(JSON.stringify(corpo)).not.toContain('N-pc')
+  })
+
+  // K6: il cruscotto ora valida OGNI campo. Il contratto: ciò che questa route produce passa
+  // quella validazione per intero — anche senza `gender`/`archiviato_il`, le due colonne che il
+  // ripiego sul 42703 toglie (il ripiego in sé lo prova `rette-a-carico-server.test.ts`: il
+  // client finto non emette 42703 per una colonna assente, la restituisce vuota).
+  it('K6 — il corpo della route passa `legamiDaRisposta` con zero scarti (anche senza gender)', async () => {
+    const pieno = await (await GET(req())).json()
+    expect(pieno.data.length).toBeGreaterThan(0)
+    expect(legamiDaRisposta(pieno.data)).toEqual({ legami: pieno.data, scartati: 0 })
+    // Senza `gender` il pagante esce con `sesso: null`, che è valido.
+    h.db.alunni = h.db.alunni.map(({ gender: _g, archiviato_il: _a, ...resto }) => { void _g; void _a; return resto })
+    const ridotto = await (await GET(req())).json()
+    expect(ridotto.data.length).toBeGreaterThan(0)
+    expect(ridotto.data.every((l: { pagante: { sesso: unknown } }) => l.pagante.sesso === null)).toBe(true)
+    expect(legamiDaRisposta(ridotto.data)).toEqual({ legami: ridotto.data, scartati: 0 })
   })
 
   it('scuola_id restringe a quella sede', async () => {

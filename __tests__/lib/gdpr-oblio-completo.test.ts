@@ -224,6 +224,7 @@ function makeFake(cfg: Cfg) {
       }
       b.is = () => b
       b.or = () => b
+      b.like = () => b
       b.ilike = () => b
       b.contains = () => b
       b.limit = () => b
@@ -402,6 +403,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.range = () => b
       b.is = () => b
       b.or = () => b
+      b.like = () => b
       b.ilike = () => b
       b.contains = () => b
       b.limit = () => b
@@ -598,6 +600,7 @@ function makeFakeBucket(cfg: CfgB) {
       }
       b.is = () => b
       b.or = () => b
+      b.like = () => b
       b.ilike = () => b
       b.contains = () => b
       b.limit = () => b

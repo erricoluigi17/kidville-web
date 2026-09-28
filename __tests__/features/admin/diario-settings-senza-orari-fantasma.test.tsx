@@ -272,3 +272,29 @@ describe('Impostazioni → Diario: seconda revisione critica (2026-09-28)', () =
     await waitFor(() => expect(h.invalida).toHaveBeenCalledTimes(1));
   });
 });
+
+describe('Impostazioni → Diario: terzo giro della revisione (2026-09-28)', () => {
+  it('svuotare il ritardo di visibilità e salvare NON manda 0 minuti', async () => {
+    // `Number('')` vale 0: il campo vuoto diventava «nessuna finestra di correzione».
+    h.config = { buffer_visibilita_min: 10 };
+    const { container } = monta();
+    const campo = container.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(campo, { target: { value: '' } });
+    salva();
+    await waitFor(() => expect(h.save).toHaveBeenCalledTimes(1));
+    expect(salvato().buffer_visibilita_min ?? null).toBeNull();
+  });
+
+  it('una modifica fatta MENTRE il salvataggio è in volo non si perde', async () => {
+    let risolvi: (v: boolean) => void = () => {};
+    h.save.mockImplementationOnce(() => new Promise<boolean>((r) => { risolvi = r; }));
+    monta();
+    fireEvent.click(screen.getByLabelText(itAdminSettings.diRoutinePasto));
+    salva();
+    await waitFor(() => expect(h.save).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByLabelText(itAdminSettings.diRoutineSonno));
+    risolvi(true);
+    await waitFor(() => expect(screen.getByRole('status')).toBeInTheDocument());
+    expect((screen.getByLabelText(itAdminSettings.diRoutineSonno) as HTMLInputElement).checked).toBe(false);
+  });
+});

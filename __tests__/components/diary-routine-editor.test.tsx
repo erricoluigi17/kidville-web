@@ -36,6 +36,11 @@ let deleteUrls: string[] = []
 let entriesGet: unknown[] = []
 /** `null` = tutti presenti. Altrimenti gli id dei presenti (il filtro «Solo presenti»). */
 let presenti: string[] | null = null
+/** La GET della configurazione fallisce (rete che si riconnette al risveglio). */
+let configRotta = false
+/** La GET dei bambini resta in volo finché il test non la rilascia. */
+let trattieniBambini = false
+let rilasciaBambini: (() => void) | null = null
 
 const BAMBINI = [
   { id: 'a1', nome: 'Ada', cognome: 'Bianchi', note_mediche: null },
@@ -45,12 +50,18 @@ const BAMBINI = [
 const fetchMock = vi.fn(async (url: string | URL, init?: { method?: string; body?: string }) => {
   const u = String(url)
   if (u.includes('/api/diary/config')) {
+    if (configRotta) return jsonRes({ error: 'x' }, 503)
     const sede = new URL(u, 'http://x').searchParams.get('scuola_id')
     return jsonRes(sede && configPerSede[sede] ? configPerSede[sede] : config)
   }
   if (u.includes('/api/diary/students')) {
     const soloPresenti = u.includes('onlyPresent=true')
-    return jsonRes(soloPresenti && presenti ? BAMBINI.filter((b) => presenti!.includes(b.id)) : BAMBINI)
+    const risposta = jsonRes(soloPresenti && presenti ? BAMBINI.filter((b) => presenti!.includes(b.id)) : BAMBINI)
+    if (trattieniBambini) {
+      trattieniBambini = false
+      return new Promise<JsonRes>((ok) => { rilasciaBambini = () => ok(risposta) })
+    }
+    return risposta
   }
   if (u.includes('/api/diary/entries') && init?.method === 'POST') {
     postBody = JSON.parse(init.body ?? '[]')
@@ -65,6 +76,7 @@ beforeEach(() => {
   config = { routine_attive: null, routine_personalizzate: [CREMA, BIBERON, MERENDE, BIBERON_ORA, APPUNTO, SPENTA] }
   configPerSede = {}
   postBody = null; postRisposta = null; deleteUrl = null; deleteUrls = []; entriesGet = []; presenti = null
+  configRotta = false; trattieniBambini = false; rilasciaBambini = null
   invalidaDiarioConfigCache()
   fetchMock.mockClear(); vi.stubGlobal('fetch', fetchMock)
 })
@@ -241,13 +253,21 @@ describe('seconda revisione critica — la maestra (2026-09-28)', () => {
     expect(postBody).toBeNull()
   })
 
-  it('…anche con una nota: la riga esce con la sua nota, e l\'orario svuotato idem', async () => {
-    entriesGet = [voceSalvata('a1', 'routine:b0b0b0b0', { nome: 'Latte', emoji: '🥛', risposta: 'orario', valore: '10:30' }, { nota_bambino: 'ha bevuto tutto' })]
+  it('…l\'orario svuotato idem; e con una nota la riga resta, col valore tolto (terzo giro)', async () => {
+    // Fino al terzo giro la riga usciva con la sua nota, come per la nanna. Per umore e routine
+    // della scuola la nota resta: la maestra ha tolto il valore, non quello che ha scritto.
+    entriesGet = [
+      voceSalvata('a1', 'routine:b0b0b0b0', { nome: 'Latte', emoji: '🥛', risposta: 'orario', valore: '10:30' }, { nota_bambino: 'ha bevuto tutto' }),
+      voceSalvata('b2', 'routine:b0b0b0b0', { nome: 'Latte', emoji: '🥛', risposta: 'orario', valore: '11:00' }),
+    ]
     const result = await monta()
     await apriTipo(result, 'routine:b0b0b0b0')
     act(() => { result.current.updateStudent('a1', { valore: null }) })
+    act(() => { result.current.updateStudent('b2', { valore: null }) })
     await act(async () => { await result.current.handleSave() })
-    expect(deleteUrl).toContain('alunno_id=a1')
+    expect(deleteUrls).toHaveLength(1)
+    expect(deleteUrl).toContain('alunno_id=b2')
+    expect(postBody).toEqual([expect.objectContaining({ alunno_id: 'a1', azzera_valore: true, nota_bambino: 'ha bevuto tutto' })])
   })
 
   it('un valore salvato che la routine non prevede più NON sparisce: si vede, col cestino, e non si cancella da solo', async () => {
@@ -284,7 +304,8 @@ describe('seconda revisione critica — la maestra (2026-09-28)', () => {
     const result = await monta()
     await apriTipo(result, 'routine:a1b2c3d4')
     act(() => { result.current.toggleShowAll() })
-    await waitFor(() => expect(result.current.showAll).toBe(true))
+    // Si aspetta la LISTA di «Tutti», non il filtro: è la lista a schermo che decide (terzo giro).
+    await waitFor(() => expect(result.current.listaSoloPresenti).toBe(false))
     act(() => { result.current.segnaTuttiFatto() })
     expect(result.current.daSalvare).toBe(0)
   })
@@ -389,5 +410,102 @@ describe('seconda revisione critica — routine spente con voci di oggi: sola le
     render(<Editor />)
     await screen.findByRole('button', { name: /Registra Pranzo/ })
     expect(screen.queryByRole('button', { name: /spenta/i })).not.toBeInTheDocument()
+  })
+})
+
+/** Nasconde e rimostra la pagina: il «ritorno in primo piano» di `usePollingVisibile`. */
+function ritornoInPrimoPiano() {
+  const nascosta = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden')
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+  act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+  act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+  if (nascosta) Object.defineProperty(document, 'hidden', nascosta)
+  else delete (document as unknown as Record<string, unknown>).hidden
+}
+
+describe('terzo giro della revisione — la maestra (2026-09-28)', () => {
+  it('ALTA · una rilettura FALLITA al risveglio non butta la configurazione buona: il riquadro resta aperto, coi segni', async () => {
+    const result = await monta()
+    await apriTipo(result, 'routine:a1b2c3d4')
+    act(() => { result.current.updateStudent('a1', { valore: true }) })
+    configRotta = true
+    ritornoInPrimoPiano()
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/diary/config')).length).toBeGreaterThan(1))
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(result.current.selectedEvent).toBe('routine:a1b2c3d4')
+    expect(result.current.eventTypes).toContain('routine:a1b2c3d4')
+    expect(result.current.daSalvare).toBe(1)
+  })
+
+  it('«Fatto per tutti» non segna gli assenti nemmeno mentre la lista dei presenti sta arrivando', async () => {
+    presenti = ['a1']
+    const { result } = renderHook(() => useDiaryDay('u1', 'Girasoli'))
+    await waitFor(() => expect(result.current.students).toHaveLength(1))
+    act(() => { result.current.toggleShowAll() })
+    await waitFor(() => expect(result.current.students).toHaveLength(2))
+    await apriTipo(result, 'routine:a1b2c3d4')
+    // Torna a «Solo presenti»: la lista nuova resta in volo, a schermo c'è ancora «Tutti».
+    trattieniBambini = true
+    act(() => { result.current.toggleShowAll() })
+    act(() => { result.current.segnaTuttiFatto() })
+    expect(result.current.daSalvare, 'ha segnato anche l\'assente').toBe(0)
+    act(() => { rilasciaBambini?.() })
+    await waitFor(() => expect(result.current.students).toHaveLength(1))
+    act(() => { result.current.segnaTuttiFatto() })
+    expect(result.current.daSalvare).toBe(1)
+  })
+
+  it('rinominata un\'opzione a riquadro aperto, il valore vecchio non blocca più ogni salvataggio', async () => {
+    entriesGet = [voceSalvata('b2', 'routine:e5f6a7b8', { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Poco'] })]
+    vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const result = await monta()
+    await apriTipo(result, 'routine:e5f6a7b8')
+    expect(result.current.savedStudentIds.has('b2')).toBe(true)
+    // La segreteria rinomina «Poco»: il server rifiuta il lotto che contiene ancora ['Poco'].
+    config = { routine_attive: null, routine_personalizzate: [{ ...BIBERON, opzioni: ['Un po\'', 'Metà', 'Tutto'] }] }
+    act(() => { result.current.updateStudent('a1', { valore: ['Tutto'] }) })
+    postRisposta = { corpo: { error: 'x', codice: 'ROUTINE_VALORE_NON_VALIDO' }, stato: 422 }
+    await act(async () => { await result.current.handleSave() })
+    // Riletta la configurazione, il valore di Bruno diventa «non più previsto» (col cestino), e il
+    // salvataggio dopo non lo rimanda.
+    await waitFor(() => expect(result.current.nonPiuValidi).toHaveProperty('b2'))
+    postRisposta = null
+    await act(async () => { await result.current.handleSave() })
+    expect(postBody?.map((v) => v.alunno_id)).toEqual(['a1'])
+    expect(deleteUrls, 'il valore non più previsto non si cancella da solo').toEqual([])
+  })
+
+  it('tolto il valore ma lasciata la nota: la nota resta, e il valore se ne va (niente DELETE)', async () => {
+    entriesGet = [voceSalvata('b2', 'routine:a1b2c3d4', CREMA_FATTA, { nota_bambino: 'ha la pelle arrossata' })]
+    const result = await monta()
+    await apriTipo(result, 'routine:a1b2c3d4')
+    act(() => { result.current.updateStudent('b2', { valore: null }) })
+    await act(async () => { await result.current.handleSave() })
+    expect(deleteUrls).toEqual([])
+    expect(postBody).toEqual([expect.objectContaining({ alunno_id: 'b2', nota_bambino: 'ha la pelle arrossata', azzera_valore: true, dettagli: expect.objectContaining({ valore: null }) })])
+  })
+
+  it('cancellata l\'ultima voce di una routine spenta, il riquadro in sola lettura si chiude', async () => {
+    config = { routine_attive: ['pasto'], routine_personalizzate: [] }
+    entriesGet = [voceSalvata('b2', 'bagno', { pipi: 2 })]
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const { result } = renderHook(() => useDiaryDay('u1', 'Girasoli'))
+    await waitFor(() => expect(result.current.tipiSpenti).toContain('bagno'))
+    await act(async () => { await result.current.handleEventSelect('bagno') })
+    entriesGet = []
+    await act(async () => { await result.current.eliminaRegistrazione('b2') })
+    await waitFor(() => expect(result.current.selectedEvent).toBeNull())
+  })
+
+  it('salvato un valore nuovo a chi aveva un valore «non più previsto», l\'avviso se ne va', async () => {
+    entriesGet = [voceSalvata('b2', 'routine:e5f6a7b8', { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Doppio'] })]
+    const result = await monta()
+    await apriTipo(result, 'routine:e5f6a7b8')
+    expect(result.current.nonPiuValidi).toHaveProperty('b2')
+    act(() => { result.current.updateStudent('b2', { valore: ['Tutto'] }) })
+    postRisposta = { corpo: [{ alunno_id: 'b2' }], stato: 200 }
+    await act(async () => { await result.current.handleSave() })
+    expect(result.current.nonPiuValidi).not.toHaveProperty('b2')
   })
 })

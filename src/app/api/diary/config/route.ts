@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { scuoleDiUtente, formaConfronto } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
-import { getModuleConfig } from '@/lib/settings/module-config'
+import { leggiModuleConfig } from '@/lib/settings/module-config'
 import { routinePersonalizzate } from '@/lib/diary/routine'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -53,11 +53,23 @@ export const GET = withRoute('diary/config:GET', async (request: Request) => {
       }
     }
 
-    const cfg = await getModuleConfig<{
+    // `leggiModuleConfig` e non `getModuleConfig` (terzo giro, 2026-09-28): la seconda, su un
+    // guasto, restituisce la configurazione predefinita — cioè le routine di sempre e NESSUNA della
+    // scuola, senza dirlo. La maestra le vedeva sparire, e il client le teneva in cache. Un 503 non
+    // si tiene in cache, e l'editor ripiega sulle routine di sempre sapendo che è un ripiego.
+    const esito = await leggiModuleConfig<{
       routine_attive?: unknown
       routine_personalizzate?: unknown
       diario_primaria_visibile?: unknown
     }>(supabase, 'diario_config', sede)
+    if (!esito.ok) {
+      // Il `warn` con la colonna e la sede lo scrive già `leggiModuleConfig`.
+      return NextResponse.json(
+        { error: 'Non è stato possibile leggere le routine della sede.', codice: 'ROUTINE_NON_VERIFICATE' },
+        { status: 503 },
+      )
+    }
+    const cfg = esito.config
     return NextResponse.json({
       routine_attive: Array.isArray(cfg.routine_attive) ? cfg.routine_attive : null,
       routine_personalizzate: routinePersonalizzate(cfg.routine_personalizzate).filter((r) => r.attiva),

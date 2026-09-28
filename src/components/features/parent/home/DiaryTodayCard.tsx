@@ -159,7 +159,10 @@ export function DiaryTodayCard({ studentId, href }: Props) {
     )
   }
 
-  const items = entries.slice(0, 3)
+  // Le tre voci aggiornate per ultime, messe in ordine per l'ora MOSTRATA (quella segnata, per le
+  // routine a orario): la più tarda in cima, come il resto della card.
+  const oraMostrata = (e: Entry) => (eRoutinePersonalizzata(e.tipo_evento) ? oraRoutine(e.dettagli) : null) ?? fmtTime(e.timestamp_evento) ?? ''
+  const items = entries.slice(0, 3).sort((a, b) => oraMostrata(b).localeCompare(oraMostrata(a)))
   const updated = fmtTime(entries[0].timestamp_evento)
 
   return (
@@ -191,9 +194,7 @@ export function DiaryTodayCard({ studentId, href }: Props) {
                   {ev.tipo_evento ? eventLabel(ev.tipo_evento, ev.dettagli) : t('diaryAggiornamentoDefault')}
                 </span>
                 {/* Una routine della scuola a orario: l'ora SEGNATA, non quella del salvataggio. */}
-                <span className="font-maven text-[11px] text-kidville-muted">
-                  {(eRoutinePersonalizzata(ev.tipo_evento) ? oraRoutine(ev.dettagli) : null) ?? fmtTime(ev.timestamp_evento)}
-                </span>
+                <span className="font-maven text-[11px] text-kidville-muted">{oraMostrata(ev)}</span>
               </div>
               {/* `text-kidville-sub` e non l'hex letterale `#55615c`: stesso colore, ma
                   l'hex scritto a mano resta fuori dall'inventario dei token e dalle

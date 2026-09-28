@@ -10,6 +10,7 @@ import {
     idDiTipo,
     valoreRoutineValido,
     normalizzaValoreRoutine,
+    valoreRoutineVuoto,
     dettagliRoutine,
     type TipoBase,
 } from '@/lib/diary/routine';
@@ -75,12 +76,6 @@ function valoreGrezzo(e: VoceDiario): unknown {
         : undefined;
 }
 
-/** «Non segnato», qualunque sia il tipo di risposta: si decide senza la definizione. */
-function valoreVuoto(v: unknown): boolean {
-    return v === undefined || v === null || v === false
-        || (typeof v === 'string' && v.trim() === '')
-        || (Array.isArray(v) && v.length === 0);
-}
 
 /**
  * Una voce che non dice niente: la rotta la SALTA (e lo logga), quindi qui non si controlla. Per
@@ -88,7 +83,7 @@ function valoreVuoto(v: unknown): boolean {
  * una routine che non c'è più non è un tentativo di scriverla.
  */
 function muta(e: VoceDiario): boolean {
-    if (e.tipo_evento.startsWith(PREFISSO)) return valoreVuoto(valoreGrezzo(e)) && !conNota(e);
+    if (e.tipo_evento.startsWith(PREFISSO)) return valoreRoutineVuoto(valoreGrezzo(e)) && !conNota(e);
     return !voceDaMostrare(e.tipo_evento, (e.dettagli ?? null) as Record<string, unknown> | null, { conNota: conNota(e) });
 }
 
@@ -129,7 +124,8 @@ export async function applicaRoutineAlLotto<T extends VoceDiario>(
     // `sedeDi` resta `null`: le routine base passano, quelle della scuola si rifiutano (503).
     const ids = [...new Set(toccate.map((e) => e.alunno_id))];
     const { data: alunni, error } = await admin.from('alunni').select('id, scuola_id').in('id', ids);
-    if (error) logErrore({ operazione: 'diary/entries:POST', evento: 'db', stato: 503 }, error);
+    // Senza `stato`: la richiesta può finire 200 (le routine base passano) o 503 (quelle della scuola).
+    if (error) logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, error);
     const sedeDi = error ? null : new Map<string, string | null>(
         ((alunni ?? []) as Array<{ id: string; scuola_id: string | null }>).map((a) => [a.id, a.scuola_id ?? null]),
     );

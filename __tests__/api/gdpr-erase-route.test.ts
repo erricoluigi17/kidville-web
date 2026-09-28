@@ -98,6 +98,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
         return b
       }
       b.or = () => b
+      b.like = () => b
+      b.order = () => b
+      b.range = () => b
       b.ilike = () => b
       // Dal 2026-08-01 l'oblio interroga anche `enrollment_submissions` e
       // `galleria_media_v2` con l'operatore di contenimento (`@>`): senza questo

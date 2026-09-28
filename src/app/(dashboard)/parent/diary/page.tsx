@@ -289,9 +289,13 @@ function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
         if (!prev || e.timestamp_evento > prev.timestamp_evento) latest.set(e.tipo_evento, e);
     });
     // A parità d'ordine (le routine della scuola, che in `EVENT_ORDER` non ci sono) si va dalla
-    // più presto alla più tardi: prima restavano nell'ordine della GET, cioè dalla più recente.
+    // più presto alla più tardi, per l'ora MOSTRATA a lato: quella segnata per le routine a orario,
+    // quella del salvataggio per le altre. Prima restavano nell'ordine della GET (la più recente in
+    // cima), e poi per ora di salvataggio: «Crema 11:00» sopra «Latte 10:30».
+    const ora = (e: DiaryEntry) => (eRoutinePersonalizzata(e.tipo_evento) ? oraRoutine(e.dettagli) : null) ?? oraDiRoma(e.timestamp_evento) ?? '';
     return Array.from(latest.values()).sort((a, b) =>
         (EVENT_ORDER[a.tipo_evento] ?? 99) - (EVENT_ORDER[b.tipo_evento] ?? 99)
+        || ora(a).localeCompare(ora(b))
         || (a.timestamp_evento < b.timestamp_evento ? -1 : a.timestamp_evento > b.timestamp_evento ? 1 : 0)
     );
 }

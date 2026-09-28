@@ -58,6 +58,10 @@ const entrySchema = z.object({
     // Colonna dedicata `nota_bambino`, distinta da nota_libera (per non essere
     // sovrascritta dalla nota di sezione). Senza questo campo zod la scarterebbe.
     nota_bambino: z.unknown().optional(),
+    // Routine della scuola (2026-09-28): la maestra ha TOLTO il valore e tiene la nota. Senza questo
+    // segnale il server conserva il valore già salvato (vedi `tieniPrecedente`), che è la regola
+    // giusta quando il client non sa mostrarlo — non quando la maestra l'ha tolto apposta.
+    azzera_valore: z.boolean().optional(),
 });
 
 // Il body può essere un singolo evento o un array di eventi.
@@ -378,7 +382,7 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 
     for (const entry of daScrivere) {
         // Cerca se esiste già un evento per questo alunno+tipo oggi
-        const { data: existing } = await admin
+        const { data: existing, error: erroreRicerca } = await admin
             .from('eventi_diario')
             .select('id, dettagli')
             .eq('alunno_id', entry.alunno_id)
@@ -387,6 +391,15 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
             .lte('orario_inizio', endOfDay)
             .order('orario_inizio', { ascending: false })
             .limit(1);
+
+        // PostgREST non lancia: senza questo controllo una ricerca fallita diventava «non c'è» e si
+        // scriveva una SECONDA riga — col valore vuoto, se era una nota: il genitore, che legge
+        // l'ultima voce per tipo, avrebbe visto sparire il valore (terzo giro, 2026-09-28).
+        if (erroreRicerca) {
+            logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, erroreRicerca);
+            errors.push({ alunno_id: entry.alunno_id, error: 'Lettura della voce di oggi non riuscita' });
+            continue;
+        }
 
         if (existing && existing.length > 0) {
             // UPDATE — resiliente alla colonna nota_bambino non ancora migrata (DB E2E CI):
@@ -397,10 +410,14 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
             // valore si toglie col cestino, o svuotando e salvando — che mandano una DELETE.
             const precedente = (existing[0] as { dettagli?: Record<string, unknown> | null }).dettagli ?? null;
             const tieniPrecedente = eRoutinePersonalizzata(entry.tipo_evento)
+                && entry.azzera_valore !== true
                 && !routineCompilata(entry.dettagli as Record<string, unknown> | null)
                 && routineCompilata(precedente);
             const updateRecord: Record<string, unknown> = {
-                dettagli: tieniPrecedente ? precedente : entry.dettagli ?? null,
+                // Si tiene il VALORE, non la fotografia vecchia: nome e icona sono quelli di oggi.
+                dettagli: tieniPrecedente
+                    ? { ...(entry.dettagli as Record<string, unknown>), valore: precedente?.valore }
+                    : entry.dettagli ?? null,
                 orario_fine: entry.orario_fine ?? null,
                 nota_libera: entry.nota_libera ?? null,   // nota di sezione (broadcast a tutti)
                 nota_bambino: entry.nota_bambino ?? null, // nota del singolo bambino (E1)
@@ -685,8 +702,10 @@ export const DELETE = withRoute('diary/entries:DELETE', async (request: NextRequ
         .eq('id', q.data.alunno_id)
         .maybeSingle();
 
+    // `entitaId` = il BAMBINO (2026-09-28): il valore di prima porta la sua nota e il testo delle
+    // routine, e l'oblio GDPR ritrova le righe d'audit per `entita_id`. Senza, restavano per sempre.
     await logScrittura(admin, {
-        attore: auth.user, entitaTipo: 'diario', azione: 'delete',
+        attore: auth.user, entitaTipo: 'diario', entitaId: q.data.alunno_id, azione: 'delete',
         scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null,
         valorePrima: righe, valoreDopo: null,
     });

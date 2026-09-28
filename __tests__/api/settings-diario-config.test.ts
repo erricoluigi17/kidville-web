@@ -171,18 +171,35 @@ describe('PATCH /api/admin/settings — `diario_config`, seconda revisione (2026
     expect(h.upserted).toBeNull()
   })
 
-  it('…né togliendola e rimettendola: le voci già scritte portano il tipo vecchio', async () => {
-    h.existing = { diario_config: { routine_personalizzate: [] } }
-    h.vociScritte = [{ tipo_evento: 'routine:a1b2c3d4', risposta: 'spunta' }]
+  it('togliendo una routine, il server ne tiene la LAPIDE (id e tipo di risposta)', async () => {
+    h.existing = { diario_config: { routine_personalizzate: [CREMA, BIBERON] } }
+    await salva({ routine_personalizzate: [BIBERON] })
+    expect((h.upserted?.diario_config as Record<string, unknown>).routine_eliminate).toEqual([{ id: 'a1b2c3d4', risposta: 'spunta' }])
+  })
+
+  it('…e rimetterla con un tipo di risposta DIVERSO si rifiuta: le voci già scritte portano il tipo vecchio', async () => {
+    h.existing = { diario_config: { routine_personalizzate: [], routine_eliminate: [{ id: 'a1b2c3d4', risposta: 'spunta' }] } }
     const res = await salva({ routine_personalizzate: [{ ...CREMA, risposta: 'orario' }] })
     expect(res.status).toBe(422)
     expect((await res.json()).codice).toBe('ROUTINE_RISPOSTA_NON_MODIFICABILE')
     expect(h.upserted).toBeNull()
   })
 
-  it('…mentre una routine nuova, o rimessa con lo stesso tipo, si salva', async () => {
-    h.vociScritte = [{ tipo_evento: 'routine:a1b2c3d4', risposta: 'spunta' }]
+  it('…mentre rimetterla con lo stesso tipo, o crearne una nuova, si salva', async () => {
+    h.existing = { diario_config: { routine_personalizzate: [], routine_eliminate: [{ id: 'a1b2c3d4', risposta: 'spunta' }] } }
     expect((await salva({ routine_personalizzate: [CREMA, BIBERON] })).status).toBe(200)
+  })
+
+  it('le lapidi le scrive SOLO il server: una lista mandata dal client si ignora', async () => {
+    h.existing = { diario_config: { routine_personalizzate: [CREMA], routine_eliminate: [{ id: 'f0f0f0f0', risposta: 'testo' }] } }
+    await salva({ routine_eliminate: [], buffer_visibilita_min: 5 })
+    expect((h.upserted?.diario_config as Record<string, unknown>).routine_eliminate).toEqual([{ id: 'f0f0f0f0', risposta: 'testo' }])
+  })
+
+  it('un ritardo di soli spazi non diventa 0 minuti', async () => {
+    const res = await salva({ buffer_visibilita_min: ' ' })
+    expect(res.status).toBe(200)
+    expect((h.upserted?.diario_config as Record<string, unknown>).buffer_visibilita_min).toBeUndefined()
   })
 
   it('il rifiuto del tipo di risposta si logga col suo codice', async () => {

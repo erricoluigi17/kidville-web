@@ -162,6 +162,9 @@ describe('DELETE /api/diary/entries', () => {
     expect(arg.azione).toBe('delete')
     expect(arg.entitaTipo).toBe('diario')
     expect(arg.valorePrima).toBeTruthy()
+    // …e porta l'uuid del BAMBINO (2026-09-28): il valore di prima contiene la nota del bambino e il
+    // testo delle routine, e senza `entita_id` l'oblio GDPR (`bonificaAuditScritture`) non lo trova.
+    expect(arg.entitaId).toBe(ALUNNO)
   })
 
   it('NON avvisa il genitore: con dieci minuti di buffer quella riga non l\'ha mai vista', async () => {

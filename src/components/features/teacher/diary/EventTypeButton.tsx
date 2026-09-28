@@ -45,7 +45,7 @@ export function EventTypeButton({ type, disabled = false, selected = false, onCl
                 font-maven font-medium text-sm
                 transition-all duration-150
                 ${config.color} ${accent}
-                ${spenta ? 'border-dashed opacity-80' : ''}
+                ${spenta ? 'border-dashed' : ''}
                 ${disabled
                     ? 'opacity-40 cursor-not-allowed'
                     : 'hover:scale-[1.03] hover:shadow-md active:scale-95 cursor-pointer'
@@ -58,7 +58,7 @@ export function EventTypeButton({ type, disabled = false, selected = false, onCl
                 {etichetta}
             </span>
             {spenta && (
-                <span className="font-maven text-[9px] font-semibold uppercase text-kidville-sub">{t('routineSpentaTessera')}</span>
+                <span className="font-maven text-[10px] font-semibold uppercase text-kidville-sub">{t('routineSpentaTessera')}</span>
             )}
         </button>
     );

@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
-import { configDiVoce, BATHROOM_TYPES, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
+import { configDiVoce, BATHROOM_TYPES, MEAL_QUANTITIES, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
 import { RoutinePersonalizzataInline, testoValoreRoutine } from '@/components/features/teacher/diary/RoutinePersonalizzataInline';
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
 import { BottoneEliminaRegistrazione } from '@/components/features/teacher/diary/BottoneEliminaRegistrazione';
@@ -203,6 +203,10 @@ export function useDiaryDay(
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [savedStudentIds, setSavedStudentIds] = useState<Set<string>>(new Set());
+    // Gemelli di `studentStates` e `savedStudentIds` per chi li legge dopo un `await` (la
+    // riconciliazione con una configurazione riletta). Aggiornati in un effetto, mai nel render.
+    const statiRef = useRef<Record<string, Record<string, unknown>>>({});
+    const salvatiRef = useRef<Set<string>>(new Set());
     /**
      * CHI HA UNA REGISTRAZIONE IN ARCHIVIO OGGI, per il tipo aperto, con i
      * `dettagli` che l'archivio contiene: alunno_id → dettagli.
@@ -233,6 +237,10 @@ export function useDiaryDay(
      * valore in archivio. Si mostrano col cestino (vedi il ripristino).
      */
     const [nonPiuValidi, setNonPiuValidi] = useState<Record<string, unknown>>({});
+    useEffect(() => {
+        statiRef.current = studentStates;
+        salvatiRef.current = savedStudentIds;
+    }, [studentStates, savedStudentIds]);
     /**
      * Il numero dell'ULTIMO ripristino chiesto. Ogni cambio di tipo lo incrementa,
      * e un ripristino che torna col numero vecchio non scrive niente: una GET
@@ -260,13 +268,25 @@ export function useDiaryDay(
     const [noteBambino, setNoteBambino] = useState<Record<string, string>>({});
     // Filtro presenze (incongruenza #7): default = solo presenti; toggle per mostrare tutti.
     const [showAll, setShowAll] = useState(false);
+    /**
+     * Con QUALE filtro è stata caricata la lista che è a schermo (2026-09-28). `showAll` cambia al
+     * tocco, la lista solo quando la GET torna: nel mezzo «Fatto per tutti» guardava il filtro
+     * nuovo e segnava la lista vecchia — assenti compresi.
+     */
+    const [listaSoloPresenti, setListaSoloPresenti] = useState(true);
+    const giroBambini = useRef(0);
     // Le routine della sede (2026-09-28): quali bottoni, e le routine della scuola. La risposta si
     // tiene con la CHIAVE (la sede) per cui è arrivata: cambiata la sede, quella vecchia non vale
     // più, e finché la nuova non arriva non si mostra nessun bottone — non quelli dell'altra sede.
     //  · `undefined` = non ancora arrivata (o sede non ancora nota);
     //  · `null` = non arrivata affatto (rete, errore): valgono le routine di sempre, e la maestra
     //    può comunque lavorare.
-    const [configLetta, setConfigLetta] = useState<{ chiave: string; cfg: DiarioConfigRisposta | null } | null>(null);
+    const [configLetta, setConfigLettaStato] = useState<{ chiave: string; cfg: DiarioConfigRisposta | null } | null>(null);
+    // Gemello per chi legge dopo un `await` (la rilettura che fallisce deve sapere cosa c'era).
+    const configLettaRef = useRef<{ chiave: string; cfg: DiarioConfigRisposta | null } | null>(null);
+    const setConfigLetta = (v: { chiave: string; cfg: DiarioConfigRisposta | null }) => { configLettaRef.current = v; setConfigLettaStato(v); };
+    // Le riletture in volo: vince l'ultima partita, non l'ultima arrivata.
+    const giroConfig = useRef(0);
     const scuolaId = opts?.scuolaId;
     const chiaveConfig = scuolaId ?? '';
     const configRoutine: DiarioConfigRisposta | null | undefined =
@@ -280,6 +300,9 @@ export function useDiaryDay(
     const [vociDiOggi, setVociDiOggiStato] = useState<VoceDiOggi[]>([]);
     const vociDiOggiRef = useRef<VoceDiOggi[]>([]);
     const setVociDiOggi = (voci: VoceDiOggi[]) => { vociDiOggiRef.current = voci; setVociDiOggiStato(voci); };
+    // Le letture delle voci di oggi in volo: scrive solo l'ultima partita (una risposta vecchia
+    // rimetterebbe una voce appena cancellata, o le tessere spente della sezione di prima).
+    const giroVoci = useRef(0);
 
     /** I tipi spenti che oggi hanno voci vere, date le voci e i tipi accesi. */
     const tipiSpentiDa = (voci: VoceDiOggi[], accesi: readonly string[]): DiaryEventType[] => [...new Set(
@@ -327,13 +350,62 @@ export function useDiaryDay(
      * tablet aperto dal mattino non vedeva le routine nuove, e dopo uno spegnimento ogni Salva
      * prendeva 422 finché la maestra non chiudeva l'app.
      */
-    const ricaricaConfig = async () => {
-        if (!userId || scuolaId === null) return;
+    const ricaricaConfig = async (): Promise<boolean> => {
+        if (!userId || scuolaId === null) return true;
         const chiave = scuolaId ?? '';
+        const mio = ++giroConfig.current;
         invalidaDiarioConfigCache(userId, scuolaId);
         const d = await fetchDiarioConfig(userId, scuolaId);
+        if (mio !== giroConfig.current) return true;
+        // UNA RILETTURA FALLITA NON BUTTA QUELLA BUONA (terzo giro, 2026-09-28). `null` vuol dire
+        // «routine di sempre»: al risveglio del tablet, col Wi-Fi che si riconnette, sparivano
+        // umore e routine della scuola, e il riquadro aperto si chiudeva coi segni non salvati.
+        // Il ripiego su `null` vale solo quando non c'è niente di meglio (il primo caricamento).
+        if (d === null && configLettaRef.current?.chiave === chiave && configLettaRef.current.cfg) {
+            logClient({ livello: 'warn', evento: 'fetch', messaggio: 'diario-routine-rilettura-fallita' });
+            return false;
+        }
         setConfigLetta({ chiave, cfg: d });
+        riconcilia(d);
         chiudiSeNonDisponibile(d);
+        return d !== null;
+    };
+
+    /**
+     * Arrivata una definizione nuova della routine APERTA (opzioni rinominate o tolte, «più d'una»
+     * spento): i valori a schermo che non valgono più si tolgono. Quelli già SALVATI diventano «non
+     * più previsti» (col cestino, fuori da ciò che uno svuotamento cancellerebbe); quelli non
+     * salvati si svuotano e basta. Senza, un valore vecchio ripartiva in ogni salvataggio e il
+     * server rifiutava l'intero lotto, ogni volta (terzo giro, 2026-09-28).
+     */
+    const riconcilia = (cfg: DiarioConfigRisposta | null) => {
+        const tipo = tipoAperto.current;
+        const id = tipo ? idDiTipo(tipo) : null;
+        if (!tipo || !id) return;
+        const def = routinePersonalizzate(cfg?.routine_personalizzate).find(r => r.id === id && r.attiva);
+        if (!def) return;
+        const salvati: Record<string, unknown> = {};
+        const daSvuotare: string[] = [];
+        for (const [sid, stato] of Object.entries(statiRef.current)) {
+            const v = stato?.valore;
+            if (v === null || v === undefined || valoreRoutineValido(def, v)) continue;
+            daSvuotare.push(sid);
+            if (salvatiRef.current.has(sid)) salvati[sid] = v;
+        }
+        if (daSvuotare.length === 0) return;
+        setStudentStates(prev => {
+            const n = { ...prev };
+            daSvuotare.forEach(sid => { n[sid] = dettagliRoutine(def, null); });
+            return n;
+        });
+        setNonPiuValidi(prev => ({ ...prev, ...salvati }));
+        setSavedStudentIds(prev => { const n = new Set(prev); daSvuotare.forEach(sid => n.delete(sid)); return n; });
+        setRegistrate(prev => {
+            if (prev.tipo !== tipo) return prev;
+            const righe = { ...prev.righe };
+            daSvuotare.forEach(sid => { delete righe[sid]; });
+            return { tipo: prev.tipo, righe };
+        });
     };
 
     const eventTypes = (configRoutine === undefined ? [] : tipiAttivi(configRoutine ?? {})) as DiaryEventType[];
@@ -381,30 +453,33 @@ export function useDiaryDay(
         }
     };
     const caricaVociDiOggi = async () => {
+        const mio = ++giroVoci.current;
         const voci = await leggiVociDiOggi();
-        if (voci) setVociDiOggi(voci);
+        if (voci && mio === giroVoci.current) setVociDiOggi(voci);
     };
 
     // Le voci di oggi si leggono per SEZIONE: il filtro delle presenze non le cambia. Cambiata la
     // sezione, una risposta arrivata tardi di quella vecchia non scrive più.
     useEffect(() => {
         let active = true;
-        void leggiVociDiOggi().then(voci => { if (active && voci) setVociDiOggi(voci); });
+        const mio = ++giroVoci.current;
+        void leggiVociDiOggi().then(voci => { if (active && voci && mio === giroVoci.current) setVociDiOggi(voci); });
         return () => { active = false; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [paramClasse, userId]);
 
     // Al ritorno in primo piano, e ogni dieci minuti a schermo acceso: routine della sede e voci
-    // di oggi, rilette.
+    // di oggi, rilette. Se la rilettura delle routine non riesce (la rete che si riconnette) si
+    // riprova una volta, quattro secondi dopo.
     usePollingVisibile(() => {
-        void ricaricaConfig();
         void caricaVociDiOggi();
-    }, RILEGGI_ROUTINE_MS);
+        return ricaricaConfig();
+    }, RILEGGI_ROUTINE_MS, { ritentaDopoMs: 4_000 });
 
-    const fetchStudents = async () => {
-        if (!sezione || !userId) return;
+    /** La lista dei bambini della sezione, col filtro dato; `null` se non si è letta. */
+    const leggiBambini = async (soloPresenti: boolean): Promise<DiaryStudent[] | null> => {
         try {
-            const res = await fetch(`/api/diary/students?${paramClasse}&onlyPresent=${showAll ? 'false' : 'true'}&userId=${userId}`);
+            const res = await fetch(`/api/diary/students?${paramClasse}&onlyPresent=${soloPresenti ? 'true' : 'false'}&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 // ── LE ALLERGIE VENGONO DALLE ALLERGIE ─────────────────────────
@@ -437,19 +512,34 @@ export function useDiaryDay(
                     allergie: etichetteAllergie({ allergeni: a.allergeni, allergies: a.allergies }, etichettaAllergene),
                     notaMedica: notaDaMostrare(a.note_mediche),
                 }));
-                setStudents(mapped);
+                return mapped;
             }
-        } finally {
-            setIsLoading(false);
+            return null;
+        } catch (err) {
+            // La lista resta quella di prima, col SUO filtro (`listaSoloPresenti`): è ciò che conta
+            // per «Fatto per tutti». Del guasto esce la classe dell'errore, mai un nome.
+            logClient({ livello: 'warn', evento: 'fetch', messaggio: `diario-bambini-non-letti: ${nomeErrore(err)}` });
+            return null;
         }
     };
 
     // Carica studenti: di default solo i presenti; rifa il fetch al toggle o al cambio sezione.
     // Il cambio sezione si riconosce da `paramClasse` (uuid quando c'è), non dal nome: due sezioni
     // omonime di due sedi hanno lo stesso nome, e cambiando sede nel cockpit la lista restava
-    // quella della sede di prima (2026-09-28).
+    // quella della sede di prima (2026-09-28). Scrive solo l'ultima lettura partita: due tocchi sul
+    // filtro non devono lasciare a schermo la lista del primo.
     useEffect(() => {
-        fetchStudents();
+        if (!sezione || !userId) return;
+        const mio = ++giroBambini.current;
+        const soloPresenti = !showAll;
+        void leggiBambini(soloPresenti).then(lista => {
+            if (mio !== giroBambini.current) return;
+            if (lista) {
+                setStudents(lista);
+                setListaSoloPresenti(soloPresenti);
+            }
+            setIsLoading(false);
+        });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showAll, paramClasse, userId]);
 
@@ -469,7 +559,9 @@ export function useDiaryDay(
             const entries = await res.json();
             if (superato()) return;
             if (!Array.isArray(entries)) { nessuna(); return; }
-            // È la stessa lista delle voci di oggi, appena letta: si tiene quella.
+            // È la stessa lista delle voci di oggi, appena letta: si tiene quella, e le letture più
+            // vecchie ancora in volo non la sovrascrivono.
+            giroVoci.current += 1;
             setVociDiOggi(entries as VoceDiOggi[]);
 
             const filtered = entries.filter((e: { tipo_evento: string }) => e.tipo_evento === eventType);
@@ -634,7 +726,7 @@ export function useDiaryDay(
         // Solo col filtro «Solo presenti»: con «Tutti» segnerebbe anche gli assenti, e il loro
         // genitore leggerebbe «Crema solare: Fatto» di un giorno a casa. Il bottone lì non c'è;
         // questa è la cintura.
-        if (showAll) return;
+        if (!listaSoloPresenti) return;
         setStudentStates(prev => {
             const next = { ...prev };
             students.forEach(s => { next[s.id] = { ...next[s.id], valore: true }; });
@@ -709,6 +801,9 @@ export function useDiaryDay(
             // La voce esce anche dalle voci di oggi: una routine spenta senza più voci sparisce.
             const tipo = selectedEvent;
             setVociDiOggi(vociDiOggiRef.current.filter(v => !(v.alunno_id === studentId && v.tipo_evento === tipo)));
+            // Era l'ultima voce di una routine spenta: il riquadro in sola lettura si chiude, invece
+            // di tornare modificabile su una routine che il server rifiuterebbe.
+            chiudiSeNonDisponibile(configLettaRef.current?.cfg ?? null);
             // Lo stato torna a com'è fatto un evento VUOTO di quel tipo, chiedendolo
             // a `buildInitialState` invece di cablare qui il campo da azzerare: era
             // `{ [campo]: '' }`, cioè la forma della sola nanna. Con cinque famiglie
@@ -805,13 +900,26 @@ export function useDiaryDay(
      * ritardo, un salvataggio finito dopo un cambio di riquadro) non decidono
      * nessuna cancellazione.
      */
-    const idsDaTogliere: string[] = selectedEvent !== null && svuotaCancella(selectedEvent)
+    const idsSvuotati: string[] = selectedEvent !== null && svuotaCancella(selectedEvent)
         && registrate.tipo === selectedEvent
         ? students
             .filter(s => registrate.righe[s.id] !== undefined
                 && !voceDaMostrare(selectedEvent, dettagliDi(s.id)))
             .map(s => s.id)
         : [];
+    /**
+     * …MA PER UMORE E ROUTINE DELLA SCUOLA LA NOTA RESTA (terzo giro, 2026-09-28). Tolto il valore
+     * e lasciata «ha la pelle arrossata», la maestra vuole togliere il valore, non la nota: quei
+     * bambini non ricevono la DELETE, ripartono nella POST col valore vuoto e `azzera_valore`
+     * (senza, il server terrebbe il valore già salvato). Per la nanna resta la regola del 24/09:
+     * la riga esce con la sua nota. Il genitore non legge «Fatto» su una voce di sola nota.
+     */
+    const svuotatiConNota = new Set(
+        selectedEvent !== null && selectedEvent !== 'nanna_inizio' && selectedEvent !== 'nanna_fine'
+            ? idsSvuotati.filter(id => conNotaDi(id))
+            : [],
+    );
+    const idsDaTogliere = idsSvuotati.filter(id => !svuotatiConNota.has(id));
     const daTogliere = idsDaTogliere.length;
     const daTogliereSet = new Set(idsDaTogliere);
 
@@ -914,6 +1022,8 @@ export function useDiaryDay(
                         nota_libera: notaLibera.trim() || null,
                         // Nota per-bambino: solo di questo bambino, altrimenti null (E1).
                         nota_bambino: noteBambino[student.id]?.trim() || null,
+                        // Svuotato con una nota: il valore va tolto davvero (vedi `svuotatiConNota`).
+                        ...(svuotatiConNota.has(student.id) ? { azzera_valore: true } : {}),
                     };
                 });
 
@@ -981,10 +1091,21 @@ export function useDiaryDay(
                     if (prev.tipo !== selectedEvent) return prev;
                     const righe = { ...prev.righe };
                     targetStudents.forEach(({ student, dettagli }) => {
-                        if (salvatiIds.has(student.id) && voceDaMostrare(selectedEvent, dettagli)) righe[student.id] = dettagli;
+                        if (!salvatiIds.has(student.id)) return;
+                        if (voceDaMostrare(selectedEvent, dettagli)) righe[student.id] = dettagli;
+                        // Svuotato e salvato con la sola nota: in archivio il valore non c'è più.
+                        else delete righe[student.id];
                     });
                     return { tipo: prev.tipo, righe };
                 });
+                // Chi aveva un valore «non più previsto» e ora ne ha salvato uno nuovo: l'avviso se ne
+                // va. Non chi ha salvato solo una nota: lì il server ha tenuto il valore vecchio.
+                const conValoreNuovo = targetStudents
+                    .filter(({ student, dettagli }) => salvatiIds.has(student.id) && voceDaMostrare(selectedEvent, dettagli))
+                    .map(({ student }) => student.id);
+                if (conValoreNuovo.length > 0 && stessoRiquadro()) {
+                    setNonPiuValidi(prev => { const n = { ...prev }; conValoreNuovo.forEach(id => { delete n[id]; }); return n; });
+                }
                 salvati = salvatiIds.size;
             }
 
@@ -1103,6 +1224,7 @@ export function useDiaryDay(
         students,
         isLoading,
         showAll,
+        listaSoloPresenti,
         toggleShowAll: () => setShowAll(v => !v),
         eventTypes,
         configPronta: configRoutine !== undefined,
@@ -1149,7 +1271,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     const eventLabel = useEventLabel();
     const umoreLabel = useUmoreLabel();
     const {
-        students, eventTypes, configPronta, tipiSpenti, solaLettura, fonteSpenta, ultimeDi, nonPiuValidi, showAll,
+        students, eventTypes, configPronta, tipiSpenti, solaLettura, fonteSpenta, ultimeDi, nonPiuValidi, listaSoloPresenti,
         routineDi, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
         activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
         daSalvare, daTogliere, esitoSalvataggio, orariAttivitaIncoerenti,
@@ -1181,9 +1303,14 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
             return pezzi.length > 0 ? pezzi.join('  ') : '—';
         }
         if (tipo === 'pranzo' || tipo === 'merenda') {
+            // Icona della portata e simbolo della quantità (✗ ¼ ½ ¾ ★), come nel pannello: niente
+            // codici grezzi («primo: meta»), e niente parole da tradurre.
+            const ICONE: Record<string, string> = { primo: '🍝', secondo: '🍖', contorno: '🥗', frutta: '🍎', merenda: '🍪' };
             const corsi = (d?.corsi ?? {}) as Record<string, unknown>;
-            const pezzi = Object.entries(corsi).filter(([, v]) => typeof v === 'string' && v).map(([k, v]) => `${k}: ${v}`);
-            return pezzi.length > 0 ? pezzi.join(', ') : '—';
+            const pezzi = Object.entries(corsi)
+                .filter(([, v]) => typeof v === 'string' && v)
+                .map(([k, v]) => `${ICONE[k] ?? '🍽️'} ${MEAL_QUANTITIES.find(q => q.value === v)?.short ?? String(v)}`);
+            return pezzi.length > 0 ? pezzi.join('  ') : '—';
         }
         if (tipo === 'attivita') {
             const voci = Array.isArray(d?.activities) ? (d.activities as Array<{ descrizione?: unknown }>) : [];
@@ -1599,7 +1726,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                         studentStates={studentStates}
                                         savedStudentIds={savedStudentIds}
                                         nonPiuValidi={nonPiuValidi}
-                                        soloPresenti={!showAll}
+                                        soloPresenti={listaSoloPresenti}
                                         noteBambino={notaBambino}
                                         onValore={(studentId, valore) => updateStudent(studentId, { valore })}
                                         onTuttiFatto={segnaTuttiFatto}
@@ -1614,6 +1741,8 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                     return (
                                         <motion.div
                                             key={student.id}
+                                            role="group"
+                                            aria-label={`${student.firstName} ${student.lastName}`}
                                             custom={idx}
                                             variants={itemVariants}
                                             initial="hidden"

@@ -16,6 +16,7 @@ import {
     nomiRoutineBase,
     TIPO_ROUTINE_RE,
     oraRoutine,
+    valoreRoutineVuoto,
     type RoutinePersonalizzata,
 } from '@/lib/diary/routine';
 
@@ -238,5 +239,34 @@ describe('oraRoutine — l\'ora segnata, da mostrare a lato', () => {
         expect(oraRoutine({ risposta: 'orario', valore: '' })).toBeNull();
         expect(oraRoutine({ risposta: 'testo', valore: '10:30' })).toBeNull();
         expect(oraRoutine(null)).toBeNull();
+    });
+});
+
+describe('terzo giro della revisione (2026-09-28)', () => {
+    it.each(['1️⃣', '#️⃣', '*️⃣'])('la tastierina %s è un\'icona valida', (emoji) => {
+        expect(zRoutinePersonalizzata.safeParse({ ...CREMA, emoji }).success).toBe(true);
+    });
+
+    it('nomi uguali anche se scritti con accenti composti diversamente o spazi doppi', () => {
+        const composto = 'Caff\u00e8';
+        const scomposto = 'Caffe\u0300';
+        expect(zRoutinePersonalizzate.safeParse([{ ...CREMA, nome: composto }, { ...BIBERON, nome: scomposto }]).success).toBe(false);
+        expect(zRoutinePersonalizzate.safeParse([{ ...CREMA, nome: 'Crema  solare' }, { ...BIBERON, nome: 'Crema solare' }]).success).toBe(false);
+    });
+
+    it('«vuoto» è uno solo: orario di soli spazi, scelta di stringhe vuote', () => {
+        expect(normalizzaValoreRoutine('orario', '  ')).toBeNull();
+        expect(normalizzaValoreRoutine('orario', ' 10:30 ')).toBe('10:30');
+        expect(normalizzaValoreRoutine('scelta', ['', ' '])).toBeNull();
+        expect(normalizzaValoreRoutine('scelta', [' Poco', ''])).toEqual(['Poco']);
+        expect(valoreRoutineVuoto(['', ' '])).toBe(true);
+        expect(valoreRoutineVuoto('  ')).toBe(true);
+        expect(valoreRoutineVuoto(false)).toBe(true);
+        expect(valoreRoutineVuoto(['Poco'])).toBe(false);
+    });
+
+    it('una routine salvata con un\'icona che oggi non passerebbe NON sparisce in lettura: prende un\'icona di ripiego', () => {
+        const [letta] = routinePersonalizzate([{ ...CREMA, emoji: 'CREMA' }]);
+        expect(letta).toMatchObject({ id: 'a1b2c3d4', nome: 'Crema solare', emoji: '📝' });
     });
 });

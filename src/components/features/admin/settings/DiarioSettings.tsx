@@ -113,17 +113,22 @@ export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId:
         // l'ha letto. Il server unisce le chiavi, quindi quelle vecchie e inerti restano dove sono;
         // e se nel frattempo un'altra operatrice ha cambiato una chiave che qui si sta salvando,
         // risponde 409 invece di cancellarle il lavoro.
+        // Un numero svuotato (`NaN`, vedi `NumberField`) non si manda: vale «non cambiato».
         const chiavi = new Set([...Object.keys(cfg), ...Object.keys(salvato)]);
         const cambiato = Object.fromEntries(
             [...chiavi]
+                .filter((k) => !Number.isNaN((cfg as unknown as Record<string, unknown>)[k]))
                 .filter((k) => stabile((cfg as unknown as Record<string, unknown>)[k]) !== stabile((salvato as unknown as Record<string, unknown>)[k]))
                 .map((k) => [k, (cfg as unknown as Record<string, unknown>)[k]]),
         );
+        // La bozza MANDATA: se mentre la PATCH è in volo si cambia ancora qualcosa, la bozza è un
+        // oggetto nuovo, e a salvataggio riuscito non va buttata (prima spariva con «Salvato»).
+        const inviata = draft;
         const ok = await save({ diario_config: cambiato, diario_config_letto: salvato });
         if (ok) {
             // Le maestre (e il cockpit, in questa stessa sessione) rileggono le routine.
             invalidaDiarioConfigCache();
-            setDraft(null);
+            setDraft((d) => (d === inviata ? null : d));
         }
         setMsg(ok ? t('salvato') : '');
     };
@@ -151,7 +156,7 @@ export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId:
             />
 
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-5">
-                <NumberField value={cfg.buffer_visibilita_min ?? 10} min={0} max={120} onChange={(v) => set({ buffer_visibilita_min: v })}>
+                <NumberField vuotoNonZero value={cfg.buffer_visibilita_min ?? 10} min={0} max={120} onChange={(v) => set({ buffer_visibilita_min: v })}>
                     {t('diRitardoVisibilita')}
                 </NumberField>
             </div>

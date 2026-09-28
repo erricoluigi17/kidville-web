@@ -33,6 +33,8 @@ const h = vi.hoisted(() => ({
     /** Le righe di OGGI già in archivio, per `alunno|tipo`. */
     esistenti: {} as Record<string, { id: string; dettagli: Record<string, unknown> }>,
     alunniRotti: false,
+    /** La SELECT della riga di oggi (prima dell'upsert) fallisce. */
+    rotturaRicerca: false,
 }));
 
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -56,6 +58,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
                             ? { data: null, error: { message: 'boom', code: '57014' } }
                             : { data: ids.map((id) => ({ id, scuola_id: h.sedeDi[id] ?? null })), error: null });
                     }
+                    if (h.rotturaRicerca) return r({ data: null, error: { message: 'timeout', code: '57014' } });
                     const esiste = h.esistenti[`${filtri.alunno_id}|${filtri.tipo_evento}`];
                     return r({ data: esiste ? [esiste] : [], error: null });
                 },
@@ -90,7 +93,7 @@ const voce = (alunno: string, tipo: string, dettagli: Record<string, unknown>, e
 
 beforeEach(() => {
     h.inserted = []; h.updated = []; h.logEvento.mockClear();
-    h.esistenti = {}; h.alunniRotti = false;
+    h.esistenti = {}; h.alunniRotti = false; h.rotturaRicerca = false;
     h.config = { routine_attive: ['pasto', 'cambio'], routine_personalizzate: [CREMA, BIBERON, APPUNTO, SPENTA] };
     h.sedeDi = { [A1]: SEDE, [B2]: SEDE };
 });
@@ -232,5 +235,39 @@ describe('POST /api/diary/entries — seconda revisione critica (2026-09-28)', (
         h.esistenti[`${A1}|routine:e5f6a7b8`] = { id: 'r1', dettagli: { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Poco'] } };
         await post([voce(A1, 'routine:e5f6a7b8', { valore: ['Tutto'] })]);
         expect((h.updated[0].dettagli as Record<string, unknown>).valore).toEqual(['Tutto']);
+    });
+});
+
+describe('POST /api/diary/entries — terzo giro della revisione (2026-09-28)', () => {
+    it('orario di soli spazi con una nota: `null`, non un 422 sul lotto; un orario con spazi ai bordi si salva pulito', async () => {
+        const LATTE = { id: 'b0b0b0b0', nome: 'Latte', emoji: '🥛', risposta: 'orario', opzioni: [], multipla: false, attiva: true };
+        h.config = { ...h.config, routine_personalizzate: [LATTE] };
+        const { res } = await post([
+            voce(A1, 'routine:b0b0b0b0', { valore: '  ' }, { nota_bambino: 'n' }),
+            voce(B2, 'routine:b0b0b0b0', { valore: ' 10:30 ' }),
+        ]);
+        expect(res.status).toBeLessThan(300);
+        expect(h.inserted.map((r) => (r.dettagli as Record<string, unknown>).valore)).toEqual([null, '10:30']);
+    });
+
+    it('il valore già salvato si tiene, ma col NOME e l\'icona di oggi (la routine può essere stata rinominata)', async () => {
+        h.esistenti[`${A1}|routine:e5f6a7b8`] = { id: 'r1', dettagli: { nome: 'Biberon vecchio', emoji: '🥛', risposta: 'scelta', valore: ['Poco'] } };
+        await post([voce(A1, 'routine:e5f6a7b8', { valore: null }, { nota_bambino: 'x' })]);
+        expect(h.updated[0].dettagli).toEqual({ nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Poco'] });
+    });
+
+    it('`azzera_valore`: la maestra ha tolto il valore e tiene la nota — il valore se ne va davvero', async () => {
+        h.esistenti[`${A1}|routine:e5f6a7b8`] = { id: 'r1', dettagli: { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Poco'] } };
+        await post([voce(A1, 'routine:e5f6a7b8', { valore: null }, { nota_bambino: 'ha la pelle arrossata', azzera_valore: true })]);
+        expect((h.updated[0].dettagli as Record<string, unknown>).valore).toBeNull();
+        expect(h.updated[0].nota_bambino).toBe('ha la pelle arrossata');
+    });
+
+    it('se la ricerca della riga di oggi fallisce, non si scrive alla cieca un doppione: la voce va fra gli errori (207)', async () => {
+        h.rotturaRicerca = true;
+        const { res, body } = await post([voce(A1, 'bagno', { pipi: 1 })]);
+        expect(res.status).toBe(207);
+        expect(h.inserted).toHaveLength(0);
+        expect(body.errors).toHaveLength(1);
     });
 });

@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
     sedeLetta: null as string | null,
     sediUtente: [] as string[],
     logEvento: vi.fn(),
+    rotta: false,
 }));
 vi.mock('@/lib/logging/logger', async (orig) => ({ ...(await orig<Record<string, unknown>>()), logEvento: h.logEvento }));
 
@@ -31,6 +32,10 @@ vi.mock('@/lib/auth/require-staff', () => ({
 vi.mock('@/lib/auth/scope', async (orig) => ({ ...(await orig<Record<string, unknown>>()), scuoleDiUtente: async () => h.sediUtente }));
 vi.mock('@/lib/settings/module-config', () => ({
     getModuleConfig: async (_s: unknown, _k: string, sede: string) => { h.sedeLetta = sede; return h.configPerSede[sede] ?? {}; },
+    leggiModuleConfig: async (_s: unknown, _k: string, sede: string) => {
+        h.sedeLetta = sede;
+        return h.rotta ? { ok: false } : { ok: true, config: h.configPerSede[sede] ?? {} };
+    },
 }));
 
 const CREMA = { id: 'a1b2c3d4', nome: 'Crema solare', emoji: '🧴', risposta: 'spunta', opzioni: [], multipla: false, attiva: true };
@@ -43,6 +48,7 @@ beforeEach(() => {
     h.sedeLetta = null;
     h.sediUtente = [SEDE_MIA, SEDE_ALTRA];
     h.logEvento.mockClear();
+    h.rotta = false;
 });
 
 describe('GET /api/diary/config — le routine', () => {
@@ -83,5 +89,15 @@ describe('GET /api/diary/config — le routine', () => {
         const riga = h.logEvento.mock.calls.find((c) => c[2]?.tipo === 'sede-dichiarata-fuori-scope');
         expect(riga?.[1]).toBe('warn');
         expect(riga?.[2]).toMatchObject({ azione: 'diary/config:GET', utente: 'u1' });
+    });
+});
+
+describe('GET /api/diary/config — un guasto non si traveste da «la sede non ha mai scelto»', () => {
+    it('configurazione illeggibile: 503 `ROUTINE_NON_VERIFICATE`, non le routine predefinite senza quelle della scuola', async () => {
+        h.rotta = true;
+        const { GET } = await import('@/app/api/diary/config/route');
+        const res = await GET(req());
+        expect(res.status).toBe(503);
+        expect((await res.json()).codice).toBe('ROUTINE_NON_VERIFICATE');
     });
 });

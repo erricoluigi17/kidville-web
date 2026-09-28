@@ -89,6 +89,9 @@ function fakeArchivio(cfg: ArchivioCfg) {
       }
       b.is = () => b
       b.or = () => b
+      b.like = () => b
+      b.order = () => b
+      b.range = () => b
       b.ilike = () => b
       b.contains = () => b
       b.limit = () => b

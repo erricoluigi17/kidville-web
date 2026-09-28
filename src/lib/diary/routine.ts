@@ -111,6 +111,8 @@ export const ID_ROUTINE_RE = /^[a-z0-9]{8}$/;
 export const TIPO_ROUTINE_RE = /^routine:[a-z0-9]{8}$/;
 
 const PREFISSO = 'routine:';
+/** L'icona di una routine quando la sua non si può mostrare. */
+export const ICONA_DI_RIPIEGO = '📝';
 const ORA_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const zTesto = (max: number) => z.string().trim().min(1).max(max);
@@ -125,7 +127,8 @@ const zTesto = (max: number) => z.string().trim().min(1).max(max);
  */
 const ICONA_RE: RegExp | null = (() => {
     try {
-        return new RegExp('^[\\p{Extended_Pictographic}\\p{Regional_Indicator}][\\p{Extended_Pictographic}\\p{Emoji_Component}\\u200D\\uFE0F\\u20E3]*$', 'u');
+        // Una tastierina (1️⃣ #️⃣ *️⃣), oppure un pittogramma o una bandiera con ciò che li compone.
+        return new RegExp('^(?:[0-9#*]\\uFE0F?\\u20E3|[\\p{Extended_Pictographic}\\p{Regional_Indicator}][\\p{Extended_Pictographic}\\p{Emoji_Component}\\u200D\\uFE0F\\u20E3]*)$', 'u');
     } catch {
         // Nessun log qui: è il caricamento di un modulo condiviso, e l'esito è dichiarato (`null`).
         return null;
@@ -181,6 +184,14 @@ export const zRoutinePersonalizzata = z.preprocess(
 export type RoutinePersonalizzata = z.infer<typeof zRoutinePersonalizzata>;
 
 /**
+ * La forma su cui si confrontano due nomi: stessa forma Unicode (una «è» composta o scomposta è la
+ * stessa lettera), spazi interni ridotti a uno, senza maiuscole.
+ */
+function chiaveNome(nome: string): string {
+    return nome.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('it');
+}
+
+/**
  * La lista intera, com'è validata al salvataggio: ids unici, NOMI unici (senza distinguere
  * maiuscole e spazi: due tessere «Crema» uguali per la maestra e due card uguali per il genitore
  * non dicono quale è quale), al massimo 20.
@@ -194,7 +205,7 @@ export const zRoutinePersonalizzate = z
         lista.forEach((r, i) => {
             if (visti.has(r.id)) ctx.addIssue({ code: 'custom', path: [i, 'id'], message: 'Id di routine ripetuto.' });
             visti.add(r.id);
-            const nome = r.nome.trim().toLocaleLowerCase('it');
+            const nome = chiaveNome(r.nome);
             if (nomi.has(nome)) ctx.addIssue({ code: 'custom', path: [i, 'nome'], message: 'Due routine con lo stesso nome.' });
             nomi.add(nome);
         });
@@ -209,7 +220,13 @@ export function routinePersonalizzate(raw: unknown): RoutinePersonalizzata[] {
     const viste = new Set<string>();
     const lette: RoutinePersonalizzata[] = [];
     for (const voce of raw) {
-        const r = zRoutinePersonalizzata.safeParse(voce);
+        let r = zRoutinePersonalizzata.safeParse(voce);
+        // L'icona è solo estetica: una routine salvata con un'icona che oggi non passerebbe (regole
+        // più strette arrivate dopo) non sparisce — prende l'icona di ripiego. Sparire vorrebbe dire
+        // niente bottone per la maestra e un 422 su ogni salvataggio.
+        if (!r.success && r.error.issues.every((i) => i.path[0] === 'emoji') && voce && typeof voce === 'object') {
+            r = zRoutinePersonalizzata.safeParse({ ...(voce as Record<string, unknown>), emoji: ICONA_DI_RIPIEGO });
+        }
         if (!r.success || viste.has(r.data.id)) continue;
         viste.add(r.data.id);
         lette.push(r.data);
@@ -256,17 +273,32 @@ type FormaRisposta = Pick<RoutinePersonalizzata, 'risposta' | 'opzioni' | 'multi
  * Il testo esce senza spazi ai bordi. Tutto il resto passa com'è: se è sbagliato, lo si rifiuta.
  */
 export function normalizzaValoreRoutine(risposta: Risposta, valore: unknown): unknown {
-    if (valore === undefined || valore === null) return null;
+    if (valoreRoutineVuoto(valore)) return null;
     switch (risposta) {
         case 'spunta':
-            return valore === false ? null : valore;
+            return valore;
         case 'scelta':
-            return Array.isArray(valore) && valore.length === 0 ? null : valore;
+            // Le opzioni senza spazi ai bordi, e via quelle vuote: `['']` vale «niente» (sopra).
+            return Array.isArray(valore)
+                ? valore.map((v) => (typeof v === 'string' ? v.trim() : v)).filter((v) => v !== '')
+                : valore;
         case 'orario':
-            return valore === '' ? null : valore;
         case 'testo':
-            return typeof valore === 'string' ? (valore.trim() || null) : valore;
+            return typeof valore === 'string' ? valore.trim() : valore;
     }
+}
+
+/**
+ * «Non segnato», qualunque sia il tipo di risposta — si decide SENZA la definizione, ed è la stessa
+ * regola di `normalizzaValoreRoutine`: `null`, `false`, una stringa di soli spazi, una lista senza
+ * nemmeno un'opzione scritta. Prima il lotto e la normalizzazione la pensavano in due modi, e un
+ * orario di soli spazi con una nota faceva cadere l'intero lotto (terzo giro, 2026-09-28).
+ */
+export function valoreRoutineVuoto(valore: unknown): boolean {
+    if (valore === undefined || valore === null || valore === false) return true;
+    if (typeof valore === 'string') return valore.trim() === '';
+    if (Array.isArray(valore)) return !valore.some((v) => typeof v === 'string' && v.trim() !== '');
+    return false;
 }
 
 /** Ciò che la maestra ha segnato è una risposta valida per questa routine? `null` non lo è. */

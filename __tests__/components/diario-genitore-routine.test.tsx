@@ -179,3 +179,16 @@ describe('diario del genitore — seconda revisione critica (2026-09-28)', () =>
         expect(crema.compareDocumentPosition(latte) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 });
+
+describe('diario del genitore — terzo giro (2026-09-28)', () => {
+    it('le routine si ordinano per l\'ora MOSTRATA: un biberon segnato alle 10:30 (salvato alle 15) viene prima della crema delle 11', async () => {
+        h.risposte.push(ok([
+            { ...routine('a1b2c3d4', 'Crema solare', '🧴', 'spunta', true), timestamp_evento: oggi(11) },
+            { ...routine('b0b0b0b0', 'Latte', '🥛', 'orario', '10:30'), timestamp_evento: oggi(15) },
+        ]));
+        render(<ParentDiaryPage />);
+        const crema = await screen.findByText('Crema solare');
+        const latte = screen.getByText('Latte');
+        expect(latte.compareDocumentPosition(crema) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+});

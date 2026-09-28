@@ -120,6 +120,13 @@ export interface OpzioniFinto {
   scritture?: Scrittura[]
   /** Implementazioni di `rpc(nome, args)`. Senza, `rpc()` lancia. */
   rpc?: Record<string, (args: Riga) => RispostaRpc | Promise<RispostaRpc>>
+  /**
+   * Il `max_rows` di PostgREST (1000 in `supabase/config.toml` e sul cloud): una LETTURA non
+   * restituisce mai più di tante righe, e il troncamento è MUTO — nessun errore, nessun segnale.
+   * Omesso: nessun tetto, come prima. Aggiunto il 2026-09-28 per provare che l'oblio del diario
+   * legge a pagine: senza tetto, una lettura sola sembrava bastare anche su 2.500 righe.
+   */
+  maxRighe?: number
 }
 
 // -----------------------------------------------------------------------------
@@ -141,6 +148,19 @@ function uguale(a: unknown, b: unknown): boolean {
   if (x === null || y === null) return false
   if (!primitivo(x) || !primitivo(y)) return false
   return String(x) === String(y)
+}
+
+/** Il contenimento JSONB di Postgres (`a @> b`): array per elemento, oggetti per chiave. */
+function contieneJsonb(a: unknown, b: unknown): boolean {
+  if (Array.isArray(b)) {
+    if (!Array.isArray(a)) return false
+    return b.every((eb) => a.some((ea) => contieneJsonb(ea, eb)))
+  }
+  if (b !== null && typeof b === 'object') {
+    if (a === null || typeof a !== 'object' || Array.isArray(a)) return false
+    return Object.entries(b as Record<string, unknown>).every(([k, v]) => k in (a as Record<string, unknown>) && contieneJsonb((a as Record<string, unknown>)[k], v))
+  }
+  return uguale(a, b)
 }
 
 /** −1 / 0 / 1, oppure `null` se il confronto non è definito (NULL in SQL). */
@@ -238,6 +258,10 @@ function valuta(operatore: string, valore: unknown, atteso: unknown): boolean {
       return comeArray(atteso).some((a) => uguale(valore, a))
     case 'cs':
     case 'contains':
+      // Con OGGETTI dentro l'atteso vale il contenimento JSONB di Postgres (`@>`): ogni chiave
+      // dell'atteso c'è, con un valore a sua volta contenuto. Aggiunto il 2026-09-28 per l'audit
+      // del diario (`valore_prima @> [{"alunno_id": …}]`); coi soli primitivi resta com'era.
+      if (comeArray(atteso).some((a) => a !== null && typeof a === 'object')) return contieneJsonb(valore, atteso)
       return comeArray(atteso).every((a) => comeArray(valore).some((v) => uguale(v, a)))
     case 'cd':
     case 'containedby':
@@ -647,6 +671,7 @@ export function creaFintoSupabase(
         const base = ordina(filtrate(db[tabella] ?? []))
         totale = conteggio ? base.length : null
         righe = taglia(base).map((r) => ({ ...r }))
+        if (opzioni.maxRighe != null) righe = righe.slice(0, opzioni.maxRighe)
       } else if (operazione === 'insert') {
         const tab = tabellaScrivibile()
         const inserite = payload.map(conId)

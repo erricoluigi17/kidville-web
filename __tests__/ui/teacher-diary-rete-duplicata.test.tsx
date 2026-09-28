@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { StrictMode } from 'react';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 
 /**
  * /teacher/diary: la stessa configurazione NON si chiede quattro volte.
@@ -190,5 +190,35 @@ describe('/teacher/diary — le routine della SEDE DELLA SEZIONE (2026-09-28)', 
     });
     render(<TeacherDiaryPage />);
     await waitFor(() => expect(chiamate.some((u) => u.includes('/api/diary/config') && u.includes(`scuola_id=${ALTRA}`))).toBe(true));
+  });
+});
+
+describe('/teacher/diary — due sezioni con lo STESSO NOME in due sedi (terzo giro, 2026-09-28)', () => {
+  it('la seconda pill apre la seconda sezione, con la sua sede: non la prima col nome uguale', async () => {
+    const G = 'aaaaaaaa-0000-4000-8000-00000000000a';
+    const A = 'bbbbbbbb-0000-4000-8000-00000000000b';
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/educator-sections')) {
+        chiamate.push(u);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ sections: [
+            { id: 's-g', name: 'Girasoli', school_type: 'infanzia', scuolaId: G },
+            { id: 's-a', name: 'Girasoli', school_type: 'infanzia', scuolaId: A },
+          ] }),
+        });
+      }
+      return base(url);
+    });
+    render(<TeacherDiaryPage />);
+    const pills = await screen.findAllByRole('button', { name: 'Girasoli' });
+    expect(pills).toHaveLength(2);
+    fireEvent.click(pills[1]);
+    await waitFor(() => expect(chiamate.some((u) => u.includes('/api/diary/students') && u.includes('sectionId=s-a'))).toBe(true));
+    await waitFor(() => expect(chiamate.some((u) => u.includes('/api/diary/config') && u.includes(`scuola_id=${A}`))).toBe(true));
+    expect(screen.getAllByRole('button', { name: 'Girasoli' })[1]).toHaveAttribute('aria-pressed', 'true');
   });
 });

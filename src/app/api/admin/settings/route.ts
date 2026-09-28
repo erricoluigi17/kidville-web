@@ -9,7 +9,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
-import { ROUTINE_BASE, zRoutinePersonalizzate, nomiRoutineBase, tipoDiRoutine, type RoutinePersonalizzata } from '@/lib/diary/routine'
+import { ROUTINE_BASE, zRoutinePersonalizzate, nomiRoutineBase, type RoutinePersonalizzata } from '@/lib/diary/routine'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -232,7 +232,7 @@ const zAvvisiConfig = z.looseObject({
  *  · un ritardo `null` o vuoto vale «non detto», non 0: `z.coerce` lo trasformava in ZERO minuti,
  *    cioè in genitori che leggono le voci prima che la maestra possa correggerle.
  */
-const vuotoComeAssente = (v: unknown) => (v === null || v === '' ? undefined : v)
+const vuotoComeAssente = (v: unknown) => (v === null || (typeof v === 'string' && v.trim() === '') ? undefined : v)
 const zDiarioConfig = z.looseObject({
   routine_attive: z.preprocess(nomiRoutineBase, z.array(z.enum(ROUTINE_BASE)).max(ROUTINE_BASE.length).optional()),
   routine_personalizzate: zRoutinePersonalizzate.optional(),
@@ -271,37 +271,20 @@ function rispostaCambiata(prima: unknown, dopo: RoutinePersonalizzata[] | undefi
 
 /**
  * …e non cambia nemmeno TOGLIENDO la routine e rimettendola con lo stesso id in un secondo
- * salvataggio: per le routine che il pregresso non ha, si guarda se nel diario ci sono già voci
- * scritte con un tipo di risposta diverso. Il pannello genera id casuali, quindi è un caso da
- * richiesta costruita a mano; la domanda è una lettura sola per routine NUOVA.
- *
- * Se la lettura fallisce si lascia passare, e lo si dice (`warn`): è una cintura contro un gesto
- * raro, e bloccare per lei il salvataggio di tutte le impostazioni del diario sarebbe peggio.
+ * salvataggio. Per questo, quando una routine esce dalla lista, il server ne tiene la LAPIDE in
+ * `diario_config.routine_eliminate` (id e tipo di risposta): una routine nuova con l'id di una
+ * lapide e un tipo diverso si rifiuta. Le lapidi le scrive SOLO il server — quelle mandate dal
+ * client si ignorano. Prima questo controllo interrogava `eventi_diario` a ogni routine nuova,
+ * senza indice su `tipo_evento`: una scansione dell'intera tabella per salvataggio (terzo giro).
  */
-async function rispostaDiversaGiaScritta(
-  supabase: SupabaseClient,
-  nuove: RoutinePersonalizzata[],
-  scuolaId: string,
-): Promise<boolean> {
-  for (const r of nuove) {
-    const { data, error } = await supabase
-      .from('eventi_diario')
-      .select('id')
-      .eq('tipo_evento', tipoDiRoutine(r.id))
-      .neq('dettagli->>risposta', r.risposta)
-      .limit(1)
-    if (error) {
-      logEvento('config', 'warn', {
-        operazione: 'admin/settings:PATCH',
-        esito: 'routine-voci-scritte-non-verificate',
-        error_code: error.code ?? null,
-        scuola_id: scuolaId,
-      }, error)
-      continue
-    }
-    if ((data ?? []).length > 0) return true
-  }
-  return false
+interface Lapide { id: string; risposta: string }
+const MAX_LAPIDI = 200
+
+function lapidiSalvate(raw: unknown): Lapide[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((v): v is Lapide =>
+    Boolean(v) && typeof v === 'object' && typeof (v as Lapide).id === 'string' && typeof (v as Lapide).risposta === 'string')
+    .map((v) => ({ id: v.id, risposta: v.risposta }))
 }
 
 /** Un valore JSON in una forma confrontabile: chiavi in ordine, `undefined` come `null`. */
@@ -478,8 +461,9 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
           const prev = (existingRow[k] ?? {}) as Record<string, unknown>
           let next = updates[k] as Record<string, unknown>
           if (k === 'diario_config') {
-            // Una chiave arrivata vuota (`null`, `''` → `undefined`) non cancella quella salvata.
-            next = Object.fromEntries(Object.entries(next).filter(([, v]) => v !== undefined))
+            // Una chiave arrivata vuota (`null`, `''` → `undefined`) non cancella quella salvata; e
+            // le lapidi le scrive solo il server (vedi `lapidiSalvate`).
+            next = Object.fromEntries(Object.entries(next).filter(([c, v]) => v !== undefined && c !== 'routine_eliminate'))
             updates[k] = next
 
             // DUE PANNELLI APERTI (2026-09-28): chi salva per secondo non cancella il lavoro del
@@ -497,7 +481,7 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
               })
               return NextResponse.json(
                 {
-                  error: 'Nel frattempo qualcun altro ha modificato queste impostazioni del diario: ricarica la pagina per vederle. Non è stato salvato niente.',
+                  error: 'Queste impostazioni del diario sono cambiate da quando la pagina le ha lette: ricarica la pagina per vederle. Non è stato salvato niente.',
                   codice: 'CONFIG_DIARIO_CAMBIATA',
                 },
                 { status: 409 },
@@ -506,8 +490,10 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
 
             const nuove = next.routine_personalizzate as RoutinePersonalizzata[] | undefined
             const giaSalvate = risposteSalvate(prev.routine_personalizzate)
-            if (rispostaCambiata(prev.routine_personalizzate, nuove)
-              || await rispostaDiversaGiaScritta(supabase, (nuove ?? []).filter((r) => !giaSalvate.has(r.id)), scuolaId)) {
+            const lapidi = lapidiSalvate(prev.routine_eliminate)
+            const tipoDaLapide = new Map(lapidi.map((l) => [l.id, l.risposta]))
+            const risorta = (nuove ?? []).some((r) => !giaSalvate.has(r.id) && tipoDaLapide.has(r.id) && tipoDaLapide.get(r.id) !== r.risposta)
+            if (rispostaCambiata(prev.routine_personalizzate, nuove) || risorta) {
               // Solo codici: il nome della routine è un dato della scuola e non va nel log.
               logEvento('config', 'warn', {
                 operazione: 'admin/settings:PATCH',
@@ -522,6 +508,17 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
                 },
                 { status: 422 },
               )
+            }
+            // Le routine che escono dalla lista lasciano la loro lapide (la più recente in coda).
+            if (nuove) {
+              const restano = new Set(nuove.map((r) => r.id))
+              const uscite: Lapide[] = [...giaSalvate.entries()]
+                .filter(([id, risposta]) => !restano.has(id) && typeof risposta === 'string')
+                .map(([id, risposta]) => ({ id, risposta: risposta as string }))
+              if (uscite.length > 0) {
+                const tutte = [...lapidi.filter((l) => !uscite.some((u) => u.id === l.id)), ...uscite]
+                next.routine_eliminate = tutte.slice(-MAX_LAPIDI)
+              }
             }
           }
           if (k === 'funzioni_matrice') {

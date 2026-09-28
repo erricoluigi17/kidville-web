@@ -1,4 +1,32 @@
 
+## 📖 Changelog — Diario del genitore: si ricarica al ritorno nell'app, la notifica apre il diario del figlio, via gli orari che nessuno applicava — 2026-09-28 (branch `chore/dopo-merge-171`)
+
+**Segnalazione.** Una maestra di nido compila il diario, ma i genitori della sua sezione lo trovano vuoto. Verificato solo con `SELECT` in produzione:
+- **Il diario c'è.** Nella Sez. Abbracci, dal 14 al 25/09, 169 giornate-presenza su 170 hanno almeno una voce. Dal 21/09 sono partite notifiche per ogni bambino con voci.
+- **Il genitore però lo legge prima che ci sia.** In quella sezione le voci arrivano più tardi che negli altri nidi: alle 13:00 è visibile qualcosa solo nel 50% delle giornate, contro il 97–100% delle altre sezioni. Nel frattempo la pagina dice «La maestra non ha ancora compilato il diario per questo giorno».
+- **La pagina del diario e la card «Oggi a scuola» caricavano le voci una sola volta, all'apertura.** Chi le apriva al mattino e tornava nell'app nel pomeriggio leggeva ancora quel messaggio, con le voci già in archivio.
+
+**Tre interventi, decisi dal titolare.**
+
+1. **Il diario si ricarica quando si torna nell'app.** Vale per la pagina `parent/diary` e per la card `DiaryTodayCard` della home.
+   - Il segnale è quello di `usePollingVisibile`, che ora accetta `intervalloMs: null`: solo al ritorno, senza orologio. Le voci cambiano poche volte al giorno, e un polling sarebbe stato volume inutile (il difetto del 7 settembre).
+   - Una ricarica fallita non svuota lo schermo. Subito dopo la riapertura la rete del telefono spesso non c'è ancora: voci, entrata e foto già mostrate restano.
+   - Scrive sullo schermo solo l'ultimo caricamento partito. Una ricarica lenta di «oggi» non finisce sotto il giorno scelto nel frattempo.
+2. **La notifica «Diario aggiornato» apre il diario di quel figlio.**
+   - `enqueueDiarioGenitori` scrive `link = /parent/diary?id=<alunno>`. Prima il link era NULL (10.247 notifiche dal 21/09) e il dispatcher mandava `url: '/'`: il tocco portava alla home, e con due figli sul figlio selezionato l'ultima volta.
+   - `?id=` è la convenzione di `withIdentity`, e `useParentIdentity` lo rivalida contro i figli veri del genitore.
+   - Da ora il link lo usano anche il centro notifiche in app e la push web. Le notifiche già inviate restano senza link.
+3. **Impostazioni → Diario: tolti «Compilazione dalle», «Compilazione fino alle» e «Visibile ai genitori dalle».**
+   - Venivano salvati in `admin_settings.diario_config` (09:00 nelle tre sedi), ma non li leggeva nessuna rotta, funzione o policy.
+   - L'unica regola applicata è `buffer_visibilita_min`: ogni voce è visibile 10 minuti dopo il salvataggio, a qualunque ora.
+   - Tolte anche le tre traduzioni (it/en). Le chiavi restano salvate nel jsonb delle sedi, ma sono inerti: il salvataggio del pannello fa uno shallow-merge e non le cancella. Nessuna migrazione.
+
+Test nuovi: `diario-genitore-ricarica-al-ritorno`, `diario-oggi-card-ricarica`, `diario-settings-senza-orari-fantasma` e un caso in più in `use-polling-visibile` e `diario-notifiche`. Ogni test è stato visto rosso prima della correzione; quelli della ricarica anche rompendo di proposito il codice in quattro modi.
+
+**Resta aperto, non toccato qui:** se il caricamento fallisce (rete, sessione scaduta) senza una copia in cache, la pagina mostra ancora «La maestra non ha ancora compilato il diario», cioè dà la colpa alla maestra. Un caso visto il 24/09: home intera in 401. I 401 non arrivano in `app_log`.
+
+Gate locale: eslint 0, tsc 0 errori, vitest `1572 passed` (23.190 test), build ok. E2E in CI.
+
 ## 🧭 Changelog — PR-B dopo la #171: fotografie dalla produzione — 2026-09-26 (branch `chore/dopo-merge-171`)
 
 La #171 è in produzione dal 26/09 alle 18:06 (`be44d743`). CI: E2E 143 passati al primo tentativo, 0 retry.
@@ -28242,8 +28270,7 @@ _Modulo PRD: Modulo Impostazioni (tutto)_
 - Pulsante 'Salva' (Funzioni & moduli)
 - Badge 'Salvato ✓'
 - Selettore 'Routine attive nel diario'
-- Campo 'Compilazione diario dalle/alle'
-- Campo 'Diario visibile ai genitori dalle'
+- Campo 'Ritardo visibilità genitori (min)': è l'unica regola di visibilità del diario che si applica. **Non devono più esserci** 'Compilazione dalle', 'Compilazione fino alle' e 'Visibile ai genitori dalle': sono stati tolti il 2026-09-28 perché nessuno li applicava. Vedi il changelog di quel giorno.
 - Toggle 'Note libere docenti abilitate'
 - Badge 'Coming soon' (Diario)
 - Pulsante 'Salva' (Diario)

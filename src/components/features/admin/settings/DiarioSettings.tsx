@@ -5,13 +5,14 @@ import { useTranslations } from 'next-intl';
 import { NotebookPen } from 'lucide-react';
 import { useAdminSettings } from './useAdminSettings';
 import { card, h3, label, hint } from './ui';
-import { CheckField, TimeField, NumberField, PillMultiSelect, SaveRow, ComingSoonBadge } from './fields';
+import { CheckField, NumberField, PillMultiSelect, SaveRow, ComingSoonBadge } from './fields';
 
+// Niente «Compilazione dalle / fino alle» né «Visibile ai genitori dalle»: tolti il
+// 2026-09-28 perché non li leggeva nessuno (né una rotta né il database). L'unica regola
+// di visibilità che si applica è `buffer_visibilita_min`. Nelle sedi le tre chiavi possono
+// essere ancora salvate in `diario_config`: sono inerti.
 interface DiarioConfig {
     routine_attive: string[];
-    orario_compilazione_da: string;
-    orario_compilazione_a: string;
-    visibile_genitori_da: string;
     buffer_visibilita_min: number;
     note_libere_abilitate: boolean;
     diario_primaria_visibile: boolean;
@@ -47,12 +48,6 @@ export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId:
 
             <label className={label}>{t('diRoutineAttive')}</label>
             <PillMultiSelect options={ROUTINE} selected={cfg.routine_attive ?? []} onChange={(v) => set({ routine_attive: v })} />
-
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4">
-                <TimeField value={cfg.orario_compilazione_da ?? '08:00'} onChange={(v) => set({ orario_compilazione_da: v })}>{t('diCompilazioneDalle')}</TimeField>
-                <TimeField value={cfg.orario_compilazione_a ?? '18:00'} onChange={(v) => set({ orario_compilazione_a: v })}>{t('diCompilazioneFinoAlle')}</TimeField>
-                <TimeField value={cfg.visibile_genitori_da ?? '16:00'} onChange={(v) => set({ visibile_genitori_da: v })}>{t('diVisibileGenitoriDalle')}</TimeField>
-            </div>
 
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4">
                 <NumberField value={cfg.buffer_visibilita_min ?? 10} min={0} max={120} onChange={(v) => set({ buffer_visibilita_min: v })}>

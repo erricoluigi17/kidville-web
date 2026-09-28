@@ -90,10 +90,15 @@ interface Opzioni {
  *
  * Al ritorno in primo piano esegue **subito**, senza aspettare il tick: chi riapre l'app deve
  * trovare i dati freschi.
+ *
+ * `intervalloMs: null` = **solo al ritorno**, nessun orologio. Serve dove il dato cambia poche
+ * volte al giorno e il momento in cui il vecchio mente è la riapertura, non il minuto che passa:
+ * il diario del genitore (2026-09-28) restava fermo a «la maestra non ha ancora compilato» con le
+ * voci già in archivio, e un orologio lì sarebbe stato volume senza bisogno.
  */
 export function usePollingVisibile(
     callback: () => void | Promise<void>,
-    intervalloMs: number,
+    intervalloMs: number | null,
     { intervalloNascostoMs, attivo = true }: Opzioni = {},
 ): void {
     /**
@@ -131,7 +136,9 @@ export function usePollingVisibile(
             }
             const ritmo = inPrimoPiano ? intervalloMs : intervalloNascostoMs;
             // Nascosto e nessun ritmo lento richiesto: l'orologio resta fermo. È il caso normale.
-            if (ritmo === undefined) return;
+            // `null` a pagina visibile = «solo al ritorno»: nemmeno lì si arma niente. Va escluso
+            // qui e non lasciato a `setInterval`, che con `null` spara a raffica.
+            if (ritmo === undefined || ritmo === null) return;
             rif.timer = setInterval(esegui, ritmo);
         };
 

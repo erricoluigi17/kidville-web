@@ -272,4 +272,31 @@ describe('usePollingVisibile', () => {
         act(() => { visibilita(false); visibilita(true); statoApp(true); statoApp(false); });
         expect(logClient, 'la sonda si ripete a ogni evento').toHaveBeenCalledTimes(2);
     });
+
+    it('11. `intervalloMs: null` = SOLO al ritorno: nessun orologio, ma chi riapre trova i dati freschi', async () => {
+        // È il caso del diario del genitore (2026-09-28). La pagina caricava le voci una volta sola,
+        // all'apertura: chi la lasciava aperta al mattino e riapriva l'app nel pomeriggio leggeva
+        // ancora «La maestra non ha ancora compilato il diario», con le voci già in archivio. Un
+        // orologio lì sarebbe volume senza bisogno — il difetto del 7 settembre —, il ritorno invece
+        // è proprio il momento in cui il dato vecchio mente.
+        // ROSSO SE: `null` arma comunque un timer (con un `setInterval(fn, null)` il browser spara a
+        // raffica), oppure se il ritorno non esegue più la callback.
+        nativo.è = true;
+        const tic = vi.fn();
+        renderHook(() => usePollingVisibile(tic, null));
+        await lasciaRegistrare();
+
+        avanza(3_600_000);
+        expect(tic, 'con `null` è partito un orologio a pagina visibile').not.toHaveBeenCalled();
+
+        act(() => { visibilita(true); statoApp(false); });
+        avanza(3_600_000);
+        expect(tic, 'con `null` è partito un orologio a pagina nascosta').not.toHaveBeenCalled();
+
+        act(() => { visibilita(false); statoApp(true); });
+        expect(tic, 'il ritorno non ha ricaricato, o i due segnali hanno ricaricato due volte').toHaveBeenCalledTimes(1);
+
+        avanza(3_600_000);
+        expect(tic, 'dopo il ritorno è partito un orologio').toHaveBeenCalledTimes(1);
+    });
 });

@@ -52,6 +52,17 @@ describe('enqueueDiarioGenitori', () => {
     expect(programmato).toBeLessThanOrEqual(before + 11 * 60_000)
   })
 
+  it('il tocco sulla notifica apre il diario DI QUEL figlio, non la home', async () => {
+    // 2026-09-28: le 10.247 notifiche diario dal 21/09 avevano tutte `link` NULL, e il
+    // dispatcher manda allora `url: '/'`. Il genitore finiva sulla home, e con due figli
+    // sulla pagina di quello selezionato l'ultima volta — magari l'altro.
+    // `?id=` è la convenzione di `withIdentity`: `useParentIdentity` lo rivalida contro i
+    // figli veri del genitore, quindi un id non suo non apre niente di altrui.
+    await enqueueDiarioGenitori(makeClient() as never, { alunnoId: 'a1', nome: 'Sofia' })
+    expect(h.inserts).toHaveLength(1)
+    expect(h.inserts[0].link).toBe('/parent/diary?id=a1')
+  })
+
   it('nessun genitore collegato → nessun insert (ma debounce comunque tentato)', async () => {
     h.legami = []
     await enqueueDiarioGenitori(makeClient() as never, { alunnoId: 'a1', nome: 'Sofia' })

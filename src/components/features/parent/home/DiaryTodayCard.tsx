@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import { BookOpen, ChevronRight } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { useDateFormat } from '@/lib/i18n/date'
 import { voceDaMostrare } from '@/lib/diary/registrazione'
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile'
 
 interface Entry {
   id: string
@@ -38,10 +39,14 @@ export function DiaryTodayCard({ studentId, href }: Props) {
   const { ora: fmtTime } = useDateFormat()
   const [entries, setEntries] = useState<Entry[]>([])
   const [loaded, setLoaded] = useState(false)
+  // Il numero dell'ultima lettura partita: solo lei scrive. Da quando la card si ricarica
+  // anche al ritorno nell'app, una lettura lenta del figlio di prima non deve scrivere
+  // sopra quello di adesso (il vecchio flag `active` copriva solo lo smontaggio).
+  const ultimaLettura = useRef(0)
 
-  useEffect(() => {
+  const carica = useCallback(() => {
     if (!studentId) return
-    let active = true
+    const questa = ++ultimaLettura.current
     const today = new Date().toISOString().split('T')[0]
     fetch(`/api/diary/entries?alunno_id=${studentId}&from=${today}&to=${today}`)
       .then((r) => (r.ok ? r.json() : null))
@@ -50,18 +55,29 @@ export function DiaryTodayCard({ studentId, href }: Props) {
         // cose che altrimenti mentirebbero in tre modi diversi — lo stato vuoto,
         // l'ora di «aggiornato alle» (che poteva essere quella di una riga vuota)
         // e l'elenco, che stampa il `tipo_evento` grezzo.
-        if (active && Array.isArray(d)) {
+        // Una risposta non valida NON svuota la card: al ritorno nell'app la rete
+        // spesso non c'è ancora, e le voci già mostrate restano vere.
+        if (questa === ultimaLettura.current && Array.isArray(d)) {
           setEntries((d as Entry[]).filter(e => voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.note) })))
         }
       })
       .catch(() => {})
       .finally(() => {
-        if (active) setLoaded(true)
+        if (questa === ultimaLettura.current) setLoaded(true)
       })
-    return () => {
-      active = false
-    }
   }, [studentId])
+
+  useEffect(() => {
+    carica()
+    const letture = ultimaLettura
+    // Allo smontaggio (o al cambio di figlio) nessuna lettura in volo scrive più.
+    return () => { letture.current++ }
+  }, [carica])
+
+  // Al ritorno nell'app si rilegge (2026-09-28): aperta al mattino, la card diceva «Ancora
+  // nessun aggiornamento del diario per oggi» per tutto il giorno, con le voci già scritte.
+  // `null` = nessun orologio, solo la riapertura.
+  usePollingVisibile(carica, null)
 
   if (!loaded) return null
 

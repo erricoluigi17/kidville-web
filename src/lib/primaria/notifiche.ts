@@ -101,6 +101,11 @@ export async function enqueueDiarioGenitori(
     tipo: 'diario',
     titolo: 'Diario aggiornato',
     corpo: `Nuovo aggiornamento nel diario di ${nome ?? 'tuo figlio'}`,
+    // Il diario DI QUEL figlio. Senza link il dispatcher manda `url: '/'`: fino al
+    // 2026-09-28 il tocco portava alla home, e con due figli su quello selezionato
+    // l'ultima volta. `?id=` è la convenzione di `withIdentity`, e `useParentIdentity`
+    // lo rivalida contro i figli veri del genitore.
+    link: `/parent/diary?id=${encodeURIComponent(alunnoId)}`,
     entitaTipo: 'diario',
     entitaId: alunnoId,
     bufferMin,

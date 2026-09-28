@@ -37,6 +37,13 @@ settembre 2026 generata; **2** hanno il legame con un importo ≠ 0 (già segnal
 | D14 | Export | Per ogni retta del pagante, **una riga in più** per il bambino a carico: importi a 0 (i totali non raddoppiano), Stato «Paga il fratello Mario Rossi (Sez. C) · Da pagare». |
 | D15 | Fine lavoro | Fino al **deploy in produzione**. |
 
+> **Nota (quarta revisione, 29/09) — la tabella resta com'è stata decisa; due punti si leggono
+> così nel codice.** D12: il testo è «Chi paga **non risulta** iscritto: retta da rivedere» (C6,
+> 28/09 — un pagante *sospeso* è ancora iscritto, e «non è più» era falso). D6 e D12 valgono anche
+> per il bambino il cui pagante sta in una sede che l'utente **non legge** (C3, 28/09): fuori dai
+> mancanti, con il badge «A carico di un fratello di un'altra sede» e l'avviso rosso dell'altra
+> sede (vedi §2–§4).
+
 ## Approccio scelto (fra tre)
 
 1. **Scelto — route di sola lettura dedicata + modulo puro condiviso.**
@@ -89,16 +96,22 @@ Funzioni (tutte pure, testate con vitest):
 ### 2. `src/lib/pagamenti/rette-a-carico-server.ts` — il caricamento condiviso
 
 `caricaLegamiRetta(supabase, { sediBambini, sediPaganti, operazione })` →
-`{ ok: true, legami } | { ok: false }`. **Due query semplici, niente embed** della self-FK (la
-sintassi dell'embed su una FK verso la stessa tabella è fragile, e il client finto dei test non
-costruisce join: due query le verifica davvero):
+`{ ok: true, legami, nonVisibili } | { ok: false, esito, errore, n? }`. **Due query semplici,
+niente embed** della self-FK (la sintassi dell'embed su una FK verso la stessa tabella è fragile,
+e il client finto dei test non costruisce join: due query le verifica davvero):
 
 1. i bambini: `alunni` con `stato = 'iscritto'`, `scuola_id IN sediBambini`,
    `retta_a_carico_di IS NOT NULL`;
-2. i paganti: `alunni` con `id IN (…)` **e** `scuola_id IN sediPaganti` (le sedi a cui l'utente ha
-   accesso, non solo quelle selezionate: così un pagante in un'altra sede *accessibile* si vede e
-   accende l'anomalia D12; uno in una sede **non** accessibile non si rivela — il legame si scarta
-   e si conta in un `warn`).
+2. i paganti: `alunni` con `id IN (…)` **e** `scuola_id IN sediPaganti`. `sediPaganti` =
+   `sediDeiPaganti(sediBambini, accessibili)`: le sedi a cui l'utente ha accesso, non solo quelle
+   selezionate, **unite** a quelle dei bambini (seconda revisione, K4: se la lettura delle
+   accessibili fallisce restituisce `[]`, e da sola avrebbe reso «di un'altra sede» anche il
+   pagante della stessa sede). Così un pagante in un'altra sede *accessibile* si vede e accende
+   l'anomalia D12; uno in una sede **non** accessibile non si rivela — di lui non esce niente — ma
+   il bambino, che è nella sede dell'utente, **non** si scarta: finisce in `nonVisibili` (solo
+   `alunno_id` e `scuola_id`), contato in un `warn` `legami-pagante-non-leggibile` (revisione del
+   28/09, C3: scartarlo lo faceva tornare «Non generata» e mancante per sempre, perché la
+   generazione lo salta comunque).
 
 - **`42703`** sulla prima query (DB E2E della CI non migrato) → `ok: true` con **zero legami**,
   loggato a livello `info` spiegando perché (AGENTS.md, regola 6): il comportamento resta quello
@@ -107,8 +120,12 @@ costruisce join: due query le verifica davvero):
   `gender` e `archiviato_il`, con un log `info` (`legami-paganti-colonne-assenti`), **solo se**
   il messaggio (o `details`) nomina una di quelle due (terza revisione, R5, 29/09);
 - ogni altro `{ error }` — compreso un `42703` su un'altra colonna o senza messaggio →
-  `ok: false`, loggato a livello `error` (PostgREST non lancia). Nessun ripiego su `PGRST200`:
-  le due query non usano embed;
+  `ok: false` con `esito` (`legami-bambini-non-letti` o `legami-paganti-non-letti`), l'`errore`
+  vero di PostgREST (PostgREST non lancia) e, per i paganti, `n` = quanti se ne cercavano. **Il
+  loader non lo logga** (quarta revisione, Q1): lo fa chi chiama, che sa se risponderà 500 o 200
+  — la stessa regola di `leggiABlocchi`. Nel loader restano solo le righe che non sono guasti: i
+  ripieghi `info` e il `warn` dei non leggibili. Nessun ripiego su `PGRST200`: le due query non
+  usano embed;
 - gli id dei paganti vanno nell'`.in()` a pezzi di `ID_PER_QUERY` (`@/lib/db/blocchi`): la lista
   finisce nell'URL (terza revisione, R8);
 - mai nomi nei log: solo conteggi, uuid ed errori.
@@ -120,15 +137,39 @@ costruisce join: due query le verifica davvero):
 `resolveScuoleAttive` (ristrette a `scuola_id` se dichiarata e accessibile, come
 `/api/pagamenti`, ma con `restringiSedi` + `rifiutoSede('SEDE_NON_ACCESSIBILE')` come le route
 più recenti: un uuid di sede non accessibile è un 403, non un «nessun legame»). Risponde
-`{ success: true, data: LegameRetta[] }` (del bambino solo uuid e sede: nome, cognome e classe
-il cruscotto li ha già — proiezione minima); su `ok: false` → 500 con `{ error, codice: 'LETTURA_FALLITA' }` (codice già
-nel catalogo). Log di successo con il conteggio.
+
+```ts
+{ success: true, data: LegameRetta[], a_carico_non_visibili: string[] }
+```
+
+`data`: del bambino solo uuid e sede (nome, cognome e classe il cruscotto li ha già — proiezione
+minima). `a_carico_non_visibili`: gli uuid dei bambini in `nonVisibili` (§2) — dei bambini, che
+sono nelle sedi dell'utente, e **mai** niente del pagante. Il campo c'è **sempre**, array, anche
+vuoto e anche sul DB non migrato della CI: il cruscotto tratta un campo assente come forma
+inattesa (quarta revisione, Q4). Su `ok: false` → 500 con `{ error, codice: 'LETTURA_FALLITA' }`
+(codice già nel catalogo) e **una** riga di log: `logErrore({ operazione, stato: 500, evento:
+esito })` con l'errore vero — `stato` finisce in `app_log.stato_http`, e `logErrore` alza la marca
+anti-doppione di `withRoute`. Log di successo con i conteggi (`n`, `sedi`, `non_visibili`).
 
 ### 4. `PaymentsDashboard.tsx` — il cruscotto
 
 - `load()` fa **tre** GET in parallelo; la terza è i legami. Un guasto dei legami **non** svuota
   le rette: si mostra un banner d'errore (`data-testid="errore-legami"`, con «Riprova») e si
-  torna al comportamento di oggi («Non generata»), loggato da `leggiJson`.
+  torna al comportamento di oggi («Non generata»), loggato da `leggiJson`. I legami e i non
+  visibili di prima si **svuotano** (niente badge vecchi sotto un banner che dice il contrario).
+  Il banner sta solo nella vista Rette (non in Categoria né in Agenda), **non** si mostra quando
+  sono già falliti gli iscritti (il loro banner dice già tutto, e la vista è vuota), e il suo
+  «Riprova» ha un nome accessibile suo, «Riprova a caricare chi paga per un fratello» (Q7).
+- **Forma della risposta** (`legamiDaRisposta`, `nonVisibiliDaRisposta`): `data` che non è un
+  array, o `a_carico_non_visibili` che non è un array — **anche assente o `null`** (Q4) — è una
+  forma inattesa: banner, log client `scadenzario-legami-forma-inattesa`, e niente di quella
+  risposta. Le singole voci malformate (ogni campo usato è validato) si scartano e si contano
+  (`scadenzario-legami-voci-scartate`, solo `n`).
+- **Bambino a carico di un pagante non leggibile** (in `a_carico_non_visibili`, C3): al posto di
+  «Non generata» il badge neutro «**A carico di un fratello di un'altra sede**» più l'avviso rosso
+  «Chi paga è in un'altra sede: retta da rivedere»; nessuno stato (non si conosce), nessun
+  Incassa. Con una retta propria (D9): la retta resta, più badge e avviso. È **escluso dai
+  mancanti** come ogni bambino a carico (D6).
 - **Riga senza retta propria + legame** (desktop e mobile, D1–D5, D8, D12):
   badge unico col testo `dashACarico` + ` · stato`; tono = `STATI[pRettaPagante.stato].tone`,
   oppure neutro con stato «Non generata» (D4). Se la sede del pagante **non** è fra quelle
@@ -137,10 +178,13 @@ nel catalogo). Log di successo con il conteggio.
   Colonne Importo/Pagato «—», nessun Incassa/dettaglio/modifica (D8), Sospensione invariata.
 - **Riga con retta propria + legame** (D9): tutto come oggi, più il badge arancio
   «… : retta da verificare».
-- **Genera mancanti** (D6): `mancantiPerSede` salta chi ha un legame.
+- **Genera mancanti** (D6): `mancantiPerSede` salta chi ha un legame **e** chi è fra i non
+  visibili.
 - **Morosi** (D10): passa anche chi, senza retta propria, ha il pagante moroso sul mese.
 - **Ricerca** (D11): la stringa cercata include nome e cognome del pagante.
-- i18n: chiavi nuove in `messages/{it,en}/adminContabilita.json`, con `select` ICU sul sesso.
+- i18n: chiavi nuove in `messages/{it,en}/adminContabilita.json`, con `select` ICU sul sesso. Il
+  messaggio formattato passa da `ripulisciFrase` (Q8): con un pagante senza nome lo spazio fra la
+  parola e `{nome}` restava (doppio o in coda); l'Excel usa la stessa funzione.
 
 ### 5. Export scadenzario (`/api/pagamenti/export`, `tipo=scadenzario`)
 
@@ -161,14 +205,21 @@ Fattura vuota. Le righe restano ordinate per scadenza.
 - Il bambino che ha **anche** una retta propria di quel mese (D9) **non** riceve la riga in più:
   la sua riga vera c'è già.
 - Guasto nella lettura dei legami → l'export esce **senza** le righe in più ma non fallisce (un
-  export che salta per un'informazione accessoria sarebbe peggio). La causa la logga il loader a
-  livello `error`, la conseguenza (`export-senza-righe-a-carico`) l'export a livello `info`: un
-  guasto, una riga `error` (terza revisione, R3).
+  export che salta per un'informazione accessoria sarebbe peggio). Una riga sola, scritta
+  dall'export: `logEvento('pagamento', 'error', { operazione, esito, n })` con l'errore vero e
+  **senza** `stato` (è un 200). Fino alla terza revisione la causa la scriveva il loader e l'export
+  aggiungeva un `info` `export-senza-righe-a-carico`, che non esiste più (Q1).
 
 ## Errori e osservabilità
 
 - Route nuova avvolta in `withRoute`, log di successo col conteggio dei legami, errori PostgREST
   gestiti dal valore di ritorno.
+- **Chi chiama logga** (Q1): il guasto dei legami è UNA riga, di chi risponde — `logErrore` con
+  `stato: 500` nella GET del cruscotto, `logEvento` error senza stato nell'export (200).
+- Il tetto delle letture a blocchi dell'export ha **un messaggio solo** (`descriviTetto`, Q2):
+  «lettura-troncata: <tipo> oltre <soglia> righe (<n> lette in <b> blocchi)», in `logErrore` sui
+  500 (Scadenzario, AdE) e in `logEvento` — con `tipo`, `n`, `blocchi`, `oltre` anche come campi —
+  sul 200 delle rette dei paganti.
 - Nel cruscotto: legami non caricati = banner visibile + `logClient` livello `error`.
 - Nessun nome, nessun codice fiscale nei log: solo conteggi e uuid.
 
@@ -176,17 +227,22 @@ Fattura vuota. Le righe restano ordinate per scadenza.
 
 - **Unit** del modulo puro: tutte le forme del testo (M, F, null, con/senza classe, con/senza
   stato), `sessoDa`, `anomaliaPagante` (precedenza), `indicizzaLegami`.
-- **Lock di coerenza**: il testo della UI in italiano (catalogo `it` + `createTranslator`) è
-  identico a `testoPaganteIt` per gli stessi ingressi — così Excel e schermo non divergono.
+- **Lock di coerenza**: il testo della UI in italiano (catalogo `it` + `createTranslator`, poi
+  `ripulisciFrase` come nel badge) è identico a `prefissoPaganteIt` per gli stessi ingressi —
+  anche con nome e cognome vuoti (Q8) — così Excel e schermo non divergono.
 - **Loader server**: ok; `42703` che nomina `retta_a_carico_di` → zero legami + log `info`;
   `42703` sui paganti che nomina `gender`/`archiviato_il` → ripiego + log `info`; ogni altro
-  errore (anche un `42703` su un'altra colonna) → `ok: false` + log `error`; pagante non
-  leggibile → fra i `nonVisibili`; liste di id oltre `ID_PER_QUERY` a pezzi.
-- **Route**: 401/403 senza staff, 400 su `scuola_id` non uuid, 200 con i legami, 500 con codice.
+  errore (anche un `42703` su un'altra colonna) → `ok: false` con `esito` ed errore vero, e
+  **nessun** log `error` nel loader (Q1); pagante non leggibile → fra i `nonVisibili`; liste di id
+  oltre `ID_PER_QUERY` a pezzi.
+- **Route**: 401/403 senza staff, 400 su `scuola_id` non uuid, 200 con i legami e
+  `a_carico_non_visibili` (sempre, anche sul DB non migrato), 500 con codice e UNA riga
+  `logErrore` con `stato: 500`.
 - **Componente** (`PaymentsDashboard`): badge al posto di «Non generata» con testo e tono giusti
   (M, F, sesso assente, pagante non generato, pagante pagato/scaduto), avviso D9, anomalia D12,
   niente Incassa sulla riga a carico, mancanti esclusi, filtro Morosi, ricerca per nome del
-  pagante, banner d'errore quando la GET dei legami fallisce.
+  pagante, banner d'errore quando la GET dei legami fallisce (e che sparisce quando riesce, Q5),
+  non visibili, forme inattese, nomi accessibili dei banner.
 - **Export**: righe in più a importi 0, filtro classi sul bambino, niente riga in più se il bambino
   ha la sua retta, guasto dei legami → export senza righe in più ma riuscito.
 - **Rompere il codice e guardare il test diventare rosso** su almeno: esclusione dai mancanti,

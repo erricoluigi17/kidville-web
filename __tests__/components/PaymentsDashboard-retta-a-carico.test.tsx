@@ -227,11 +227,13 @@ describe('D9 — retta generata a un bambino a carico', () => {
 });
 
 describe('D12 — pagante anomalo', () => {
-    it('non più iscritto: badge + avviso rosso', async () => {
+    it('non iscritto: badge + avviso rosso', async () => {
         stub(); await apri();
         const r = riga('Rita Blu');
         expect(within(r).getByTestId('retta-a-carico')).toHaveTextContent('Paga il fratello Ex Blu (Sez. F) · Non generata');
-        expect(within(r).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga non è più iscritto: retta da rivedere');
+        // C6: «non risulta iscritto», non «non è più iscritto» — un pagante SOSPESO è ancora
+        // iscritto (`src/lib/alunni/stato.ts`), e dirgli «non più» era falso.
+        expect(within(r).getByTestId('retta-a-carico-anomalia')).toHaveTextContent('Chi paga non risulta iscritto: retta da rivedere');
     });
     it('in un’altra sede non caricata: niente stato inventato, avviso rosso', async () => {
         stub(); await apri();

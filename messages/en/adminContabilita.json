@@ -260,7 +260,7 @@
   "dashACarico": "{sesso, select, M {Paid by brother {nome}} F {Paid by sister {nome}} other {Paid by {nome}}}",
   "dashACaricoVerifica": "{sesso, select, M {Brother {nome} pays} F {Sister {nome} pays} other {{nome} pays}}: fee to be checked",
   "dashACaricoAltraSede": "Paid by a sibling at another location",
-  "dashPaganteNonIscritto": "The payer is no longer enrolled: review the fee",
+  "dashPaganteNonIscritto": "The payer is not enrolled: review the fee",
   "dashPaganteAltraSede": "The payer is at another location: review the fee",
   "dashMsErrLegami": "Could not load who pays the fee for a sibling: those children show as “Not generated”. Try again.",
   "dashNuovoAcquisto": "New purchase",

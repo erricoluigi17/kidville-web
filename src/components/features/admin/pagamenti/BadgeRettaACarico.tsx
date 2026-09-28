@@ -21,8 +21,8 @@ interface Props {
 /**
  * «Paga il fratello Mario Rossi (Sez. C) · Da pagare» al posto di «Non generata» (D1–D5),
  * del colore della retta del fratello (D3). Più, se serve, l'avviso rosso quando chi paga
- * non è più iscritto o è in un'altra sede (D12). Nessuna azione: si incassa solo dalla
- * riga del fratello (D8).
+ * non risulta iscritto (ritirato, archiviato, ma anche sospeso: «non più» sarebbe falso) o è
+ * in un'altra sede (D12). Nessuna azione: si incassa solo dalla riga del fratello (D8).
  */
 export function BadgeRettaACarico({ legame, rettaPagante, sedeCaricata, conRettaPropria = false }: Props) {
     const t = useTranslations('adminContabilita');

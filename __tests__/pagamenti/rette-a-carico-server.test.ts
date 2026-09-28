@@ -78,6 +78,14 @@ describe('caricaLegamiRetta', () => {
     expect(e.ok && e.legami.find((l) => l.alunno_id === 'fig')?.pagante.iscritto).toBe(false)
   })
 
+  // C6: un pagante SOSPESO è «ancora iscritto» per `stato.ts`, ma non è `iscritto`: l'avviso
+  // si accende — ed è per questo che il testo dice «non risulta iscritto», non «non più».
+  it('un pagante sospeso accende l’avviso (iscritto=false)', async () => {
+    db.alunni.find((a) => a.id === 'pag')!.stato = 'sospeso'
+    const e = await caricaLegamiRetta(client(), { sediBambini: ['s1'], sediPaganti: ['s1'], operazione: OP })
+    expect(e.ok && e.legami.find((l) => l.alunno_id === 'fig')?.pagante.iscritto).toBe(false)
+  })
+
   it('nessuna sede: zero legami senza toccare il database', async () => {
     const e = await caricaLegamiRetta(client({ alunni: { code: '57014' } }), { sediBambini: [], sediPaganti: ['s1'], operazione: OP })
     expect(e).toEqual({ ok: true, legami: [], nonVisibili: [] })

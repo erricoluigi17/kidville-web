@@ -111,6 +111,13 @@ describe('LOCK — schermo (catalogo it) ed Excel (prefissoPaganteIt) dicono la 
       })
     }
   }
+  // C6 (revisione 2026-09-28): `iscritto` è falso anche per un pagante SOSPESO, che per
+  // `src/lib/alunni/stato.ts` è «ancora iscritto»: «non è più iscritto» gli attribuiva un'uscita
+  // che non c'è stata. «Non risulta iscritto» è vero in tutti i casi che accendono l'avviso.
+  it('C6: l’avviso dice «non risulta iscritto», in entrambe le lingue', () => {
+    expect(it_.dashPaganteNonIscritto).toBe('Chi paga non risulta iscritto: retta da rivedere')
+    expect(catalogo('en').dashPaganteNonIscritto).toBe('The payer is not enrolled: review the fee')
+  })
   it('C3: il pagante non leggibile è «di un’altra sede», e in inglese è una location (glossario)', () => {
     expect(it_.dashACaricoAltraSede).toBe('A carico di un fratello di un’altra sede')
     expect(catalogo('en').dashACaricoAltraSede).toMatch(/location/)

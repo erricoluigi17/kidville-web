@@ -88,26 +88,34 @@ Funzioni (tutte pure, testate con vitest):
 
 ### 2. `src/lib/pagamenti/rette-a-carico-server.ts` — il caricamento condiviso
 
-`caricaLegamiRetta(supabase, sedi: string[])` → `{ ok: true, legami } | { ok: false, errore }`:
+`caricaLegamiRetta(supabase, { sediBambini, sediPaganti, operazione })` →
+`{ ok: true, legami } | { ok: false }`. **Due query semplici, niente embed** della self-FK (la
+sintassi dell'embed su una FK verso la stessa tabella è fragile, e il client finto dei test non
+costruisce join: due query le verifica davvero):
 
-- legge `alunni` con `stato = 'iscritto'`, `scuola_id IN sedi`, `retta_a_carico_di IS NOT NULL`,
-  con l'embed del pagante tramite la self-FK (`pagante:retta_a_carico_di (id, nome, cognome,
-  gender, classe_sezione, stato, archiviato_il, scuola_id)`);
-- **`42703`/`PGRST200`** (DB E2E della CI non migrato: colonna o relazione assente) → `ok: true`
-  con **zero legami**, loggato a livello `info` spiegando perché (AGENTS.md, regola 6): il
-  comportamento resta quello di oggi, non diventa un 500;
+1. i bambini: `alunni` con `stato = 'iscritto'`, `scuola_id IN sediBambini`,
+   `retta_a_carico_di IS NOT NULL`;
+2. i paganti: `alunni` con `id IN (…)` **e** `scuola_id IN sediPaganti` (le sedi a cui l'utente ha
+   accesso, non solo quelle selezionate: così un pagante in un'altra sede *accessibile* si vede e
+   accende l'anomalia D12; uno in una sede **non** accessibile non si rivela — il legame si scarta
+   e si conta in un `warn`).
+
+- **`42703`** sulla prima query (DB E2E della CI non migrato) → `ok: true` con **zero legami**,
+  loggato a livello `info` spiegando perché (AGENTS.md, regola 6): il comportamento resta quello
+  di oggi, non diventa un 500. Sulla seconda, `42703` → si riprova senza `gender` e `archiviato_il`;
 - ogni altro `{ error }` → `ok: false`, loggato a livello `error` (PostgREST non lancia);
-- pagante che torna `null` dall'embed (riga non leggibile) → il legame si scarta e si conta in un
-  `warn` con i soli conteggi;
-- mai nomi nei log: solo conteggi e uuid.
+- mai nomi nei log: solo conteggi, uuid ed errori.
 
 ### 3. `GET /api/pagamenti/rette-a-carico` — la route
 
 `withRoute('pagamenti/rette-a-carico:GET', …)`, `requireStaff`, `zod` sulla query
 (`scuola_id` uuid opzionale, `userId` opzionale come le altre GET del cruscotto), sedi da
 `resolveScuoleAttive` (ristrette a `scuola_id` se dichiarata e accessibile, come
-`/api/pagamenti`). Risponde `{ success: true, data: LegameRetta[] }`; su `ok: false` → 500 con
-`{ error, codice: 'LEGAMI_RETTA_NON_LETTI' }`. Log di successo con il conteggio.
+`/api/pagamenti`, ma con `restringiSedi` + `rifiutoSede('SEDE_NON_ACCESSIBILE')` come le route
+più recenti: un uuid di sede non accessibile è un 403, non un «nessun legame»). Risponde
+`{ success: true, data: LegameRetta[] }` (senza i dati del bambino, che il cruscotto ha già:
+proiezione minima); su `ok: false` → 500 con `{ error, codice: 'LETTURA_FALLITA' }` (codice già
+nel catalogo). Log di successo con il conteggio.
 
 ### 4. `PaymentsDashboard.tsx` — il cruscotto
 
@@ -136,9 +144,11 @@ una riga: Sede e Sezione **del bambino**, Alunno il bambino, Categoria/Descrizio
 retta del pagante, Importo/Pagato/Residuo **0**, Stato = `testoPaganteIt(pagante, stato)`,
 Fattura vuota. Le righe restano ordinate per scadenza.
 
+- **Le rette dei paganti** (e quelle proprie dei bambini, per D9) si leggono **sempre** con una
+  query a parte, ristretta agli uuid dei legami: le righe principali dell'export restano quelle di
+  oggi, filtri compresi, e le righe in più non dipendono da quali di esse sono passate.
 - **Filtro classi**: la riga del bambino c'è se è **il bambino** a stare nelle classi scelte, anche
-  se il pagante no (come nel cruscotto, dove il filtro guarda il bambino). Le rette dei paganti
-  fuori filtro si leggono con una query a parte, ristretta a quegli uuid.
+  se il pagante no (come nel cruscotto, dove il filtro guarda il bambino).
 - **Filtro `stato`** (parametro della route, oggi non usato dal cruscotto): la riga del bambino
   segue lo stato della retta del pagante.
 - Il bambino che ha **anche** una retta propria di quel mese (D9) **non** riceve la riga in più:

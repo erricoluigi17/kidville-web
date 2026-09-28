@@ -92,7 +92,12 @@ export async function righeRetteACarico(supabase: SupabaseClient, o: OpzioniExpo
   }
   const lette = await leggiABlocchi<RigaRetta>(costruisci, { operazione: OPERAZIONE, tipo: 'export-rette-paganti' })
   if (!lette.ok) {
-    logEvento('pagamento', 'error', { operazione: OPERAZIONE, esito: 'export-rette-paganti-non-lette', n: ids.length }, lette.error)
+    // Al tetto (K5) come per ogni altro guasto di questa informazione accessoria: NESSUNA riga
+    // in più, mai una parte. Il log del tetto (`lettura-troncata`) l'ha già scritto
+    // `leggiABlocchi`: qui si logga solo l'errore del blocco, che lì non si scrive.
+    if (lette.motivo === 'errore') {
+      logEvento('pagamento', 'error', { operazione: OPERAZIONE, esito: 'export-rette-paganti-non-lette', n: ids.length }, lette.error)
+    }
     return []
   }
 

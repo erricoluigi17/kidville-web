@@ -20,12 +20,22 @@ const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   db: {} as DBFinto,
   logEvento: vi.fn(),
+  logErrore: vi.fn(),
+  /** K5: un tetto PICCOLO per i test (il vero è 50 blocchi da 1000). `null` = quello vero. */
+  tetto: null as { blocco: number; maxBlocchi: number } | null,
 }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
   const vero = await importActual<typeof import('@/lib/logging/logger')>()
   h.logEvento.mockImplementation(vero.logEvento)
-  return { ...vero, logEvento: h.logEvento }
+  h.logErrore.mockImplementation(vero.logErrore)
+  return { ...vero, logEvento: h.logEvento, logErrore: h.logErrore }
+})
+// Il modulo VERO, con il tetto iniettato dalle opzioni che già accetta (`blocco`, `maxBlocchi`).
+vi.mock('@/lib/pagamenti/leggi-a-blocchi', async (importActual) => {
+  const vero = await importActual<typeof import('@/lib/pagamenti/leggi-a-blocchi')>()
+  type Args = Parameters<typeof vero.leggiABlocchi>
+  return { ...vero, leggiABlocchi: (c: Args[0], o: Args[1]) => vero.leggiABlocchi(c, h.tetto ? { ...o, ...h.tetto } : o) }
 })
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
@@ -61,6 +71,7 @@ async function foglio(res: Response, nome: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  h.tetto = null
   h.db = {
     schools: [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_B, nome: NOME_SEDE_B }],
     scuole: [{ id: SEDE_A, attiva: true }, { id: SEDE_B, attiva: true }],
@@ -127,5 +138,80 @@ describe('export AdE — oltre le 1000 righe (C2)', () => {
     const escluse = await foglio(res, 'Escluse')
     expect(escluse).toHaveLength(1100)
     expect(new Set(escluse.map((r) => r.Alunno)).size).toBe(1100)
+  })
+})
+
+// =============================================================================
+// K5 (seconda revisione 2026-09-28) — AL TETTO DEI BLOCCHI la lettura consegnava le righe
+// lette con `troncata: true`, e nessun chiamante lo guardava: l'export usciva 200, incompleto,
+// e nel ramo AdE era una comunicazione all'Agenzia delle Entrate con delle spese in meno. Ora
+// il tetto è un GUASTO: 500 con `LETTURA_FALLITA`, e UN solo log error (`lettura-troncata`,
+// che scrive `leggiABlocchi`): la route non ne aggiunge un secondo.
+// Tetto qui: 2 blocchi da 2 righe = 4 righe; la quinta accende la riga di prova.
+// =============================================================================
+describe('K5 — al tetto dei blocchi l’export è un guasto, non un file incompleto', () => {
+  const erroriDiLog = () => [
+    ...h.logEvento.mock.calls.filter((c) => c[1] === 'error').map((c) => (c[2] as { esito?: string }).esito),
+    ...h.logErrore.mock.calls.map(() => 'logErrore'),
+  ]
+  async function atteso500(qs: string, tipo: string) {
+    const res = await GET(new NextRequest(`http://localhost/api/pagamenti/export?${qs}`))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'lettura-troncata', tipo }))
+    expect(erroriDiLog()).toEqual(['lettura-troncata'])
+  }
+
+  it('Scadenzario: 5 righe oltre un tetto di 4 → 500 LETTURA_FALLITA, un log solo', async () => {
+    h.tetto = { blocco: 2, maxBlocchi: 2 }
+    for (let m = 1; m <= 5; m++) h.db.pagamenti.push(retta(uuid('p', m), 'al-1', SEDE_A, m))
+    await atteso500('tipo=scadenzario', 'export-scadenzario')
+  })
+
+  it('Scadenzario: esattamente 4 righe (il tetto pieno) → 200, tutte, nessun allarme falso', async () => {
+    h.tetto = { blocco: 2, maxBlocchi: 2 }
+    for (let m = 1; m <= 4; m++) h.db.pagamenti.push(retta(uuid('p', m), 'al-1', SEDE_A, m))
+    const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario'))
+    expect(res.status).toBe(200)
+    expect(await foglio(res, 'Scadenzario')).toHaveLength(4)
+    expect(erroriDiLog()).toEqual([])
+  })
+
+  const incasso = (i: number, alunnoId: string) => ({
+    id: uuid('inc', i), importo: 100, metodo: 'bonifico', data_incasso: '2026-02-10',
+    pagamenti: { alunno_id: alunnoId, scuola_id: SEDE_A, descrizione: `Retta ${i}`, payment_categories: { slug: 'retta' } },
+  })
+
+  it('AdE, alunni oltre il tetto → 500 LETTURA_FALLITA (niente comunicazione all’AdE con spese in meno)', async () => {
+    h.tetto = { blocco: 2, maxBlocchi: 2 }
+    for (let i = 0; i < 5; i++) {
+      h.db.alunni.push(alunno(uuid('al', i), SEDE_A, { opposizione_ade: false, intestatario_fatture: null }))
+      h.db.incassi.push(incasso(i, uuid('al', i)))
+    }
+    await atteso500('tipo=ade&anno=2026', 'export-ade-alunni')
+  })
+
+  it('AdE, incassi oltre il tetto (alunni sotto) → 500 LETTURA_FALLITA', async () => {
+    h.tetto = { blocco: 2, maxBlocchi: 2 }
+    h.db.alunni.push(alunno('al-1', SEDE_A, { opposizione_ade: false, intestatario_fatture: null }))
+    for (let i = 0; i < 5; i++) h.db.incassi.push(incasso(i, 'al-1'))
+    await atteso500('tipo=ade&anno=2026', 'export-ade-incassi')
+  })
+
+  // Le righe dei bambini a carico sono un'informazione ACCESSORIA (spec, D14): un loro guasto
+  // non fa fallire l'export, che esce senza di esse. Al tetto vale lo stesso — ma TUTTE o
+  // nessuna, mai una parte — e il log resta quello solo del tetto.
+  it('rette dei paganti oltre il tetto: l’export esce 200 SENZA righe a carico (nessuna, mai una parte), un log solo', async () => {
+    h.tetto = { blocco: 2, maxBlocchi: 2 }
+    h.db.alunni.push(alunno('pag', SEDE_A), alunno('fig', SEDE_A, { retta_a_carico_di: 'pag' }))
+    // Una sola retta «pagato» (la lettura principale, filtrata per stato, sta sotto il tetto);
+    // cinque rette del pagante in tutto (la lettura delle rette dei paganti lo supera).
+    for (let m = 1; m <= 5; m++) h.db.pagamenti.push(retta(uuid('r', m), 'pag', SEDE_A, m, m === 1 ? { stato: 'pagato' } : {}))
+    const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario&stato=pagato'))
+    expect(res.status).toBe(200)
+    const righe = await foglio(res, 'Scadenzario')
+    expect(righe.map((r) => r.Alunno)).toEqual(['Npag Prova'])
+    expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({ esito: 'lettura-troncata', tipo: 'export-rette-paganti' }))
+    expect(erroriDiLog()).toEqual(['lettura-troncata'])
   })
 })

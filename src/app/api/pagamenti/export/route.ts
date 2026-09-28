@@ -12,7 +12,7 @@ import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/atte
 import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
 import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { righeRetteACarico, type RigaScadenzario } from '@/lib/pagamenti/export-rette-a-carico'
-import { leggiABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
+import { leggiABlocchi, type EsitoABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -103,6 +103,17 @@ async function nomiDelleSedi(
   return { nomi }
 }
 
+/**
+ * K5 (seconda revisione 2026-09-28) — una lettura a blocchi fallita, per errore o per il
+ * tetto, è un 500 con `LETTURA_FALLITA`: mai un file con un pezzo in meno. Il log è UNO:
+ * l'errore del blocco lo scrive qui `logErrore` (con la marca anti-doppione di `withRoute`),
+ * il tetto l'ha già scritto `leggiABlocchi` (`lettura-troncata`) e qui non si ripete.
+ */
+function letturaFallita(esito: Extract<EsitoABlocchi<unknown>, { ok: false }>, messaggio: string): NextResponse {
+  if (esito.motivo === 'errore') logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, esito.error)
+  return NextResponse.json({ error: messaggio, codice: 'LETTURA_FALLITA' }, { status: 500 })
+}
+
 // GET /api/pagamenti/export?tipo=scadenzario — XLSX per la segreteria/commercialista
 export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest) => {
   try {
@@ -175,10 +186,7 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     }
 
     const letti = await leggiABlocchi<RigaPagamento>(costruisci, { operazione: 'pagamenti/export:GET', tipo: 'export-scadenzario' })
-    if (!letti.ok) {
-      logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, letti.error)
-      return NextResponse.json({ error: 'Errore nel recupero dei pagamenti' }, { status: 500 })
-    }
+    if (!letti.ok) return letturaFallita(letti, 'Errore nel recupero dei pagamenti')
 
     // I contenitori padre non sono voci esigibili: nell'export contano le rate.
     const righe: RigaScadenzario[] = letti.righe
@@ -291,11 +299,10 @@ async function exportAde(
     () => supabase.from('alunni').select('*').in('scuola_id', sediAttive),
     { operazione: 'pagamenti/export:GET', tipo: 'export-ade-alunni' },
   )
-  if (!alunniLetti.ok) {
-    // `exportAde` è un ramo della stessa route: `operazione` resta quella di `withRoute`.
-    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, alunniLetti.error)
-    return NextResponse.json({ error: 'Errore nel recupero degli alunni' }, { status: 500 })
-  }
+  // `exportAde` è un ramo della stessa route: `operazione` resta quella di `withRoute`. Al
+  // tetto (K5) un 500 e non un file: una comunicazione all'AdE con delle spese in meno non
+  // deve poter uscire.
+  if (!alunniLetti.ok) return letturaFallita(alunniLetti, 'Errore nel recupero degli alunni')
 
   const incassiLetti = await leggiABlocchi<IncassoAde>(
     () => supabase
@@ -306,10 +313,7 @@ async function exportAde(
       .in('pagamenti.scuola_id', sediAttive),
     { operazione: 'pagamenti/export:GET', tipo: 'export-ade-incassi' },
   )
-  if (!incassiLetti.ok) {
-    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, incassiLetti.error)
-    return NextResponse.json({ error: 'Errore nel recupero degli incassi' }, { status: 500 })
-  }
+  if (!incassiLetti.ok) return letturaFallita(incassiLetti, 'Errore nel recupero degli incassi')
 
   const perAlunno = new Map<string, VoceAttestazione[]>()
   for (const i of incassiLetti.righe) {

@@ -54,7 +54,6 @@ describe('leggiABlocchi', () => {
     expect(e.ok && e.righe.length).toBe(2500)
     expect(e.ok && new Set(e.righe.map((r) => r.id)).size).toBe(2500)
     expect(s.richieste.map((r) => r.range)).toEqual([[0, 999], [1000, 1999], [2000, 2999]])
-    expect(e.ok && e.troncata).toBe(false)
   })
 
   it('un multiplo esatto del blocco: un blocco vuoto in più, e basta', async () => {
@@ -74,26 +73,41 @@ describe('leggiABlocchi', () => {
     const s = sorgente(2500, { tetto: 1000, erroreAlBlocco: 1 })
     const e = await leggiABlocchi(s.costruisci, O)
     expect(e.ok).toBe(false)
-    expect(!e.ok && e.error).toMatchObject({ code: '57014' })
+    expect(!e.ok && e.motivo).toBe('errore')
+    expect(!e.ok && e.motivo === 'errore' && e.error).toMatchObject({ code: '57014' })
+    // L'errore del blocco lo logga chi chiama (con il suo `logErrore`): qui nessun doppione.
+    expect(h.logEvento).not.toHaveBeenCalled()
   })
 
-  it('al tetto dei blocchi, con altro oltre: esce ciò che ha letto, troncata=true e un log ERROR (solo conteggi)', async () => {
+  // K5 (seconda revisione 2026-09-28): al tetto la lettura consegnava le righe lette con
+  // `troncata: true`, e NESSUN chiamante lo guardava — nel ramo AdE voleva dire un file per
+  // l'Agenzia delle Entrate incompleto e senza un segnale. Ora il tetto è un GUASTO, come un
+  // blocco fallito: tutto-o-niente, come dice il modulo.
+  it('al tetto dei blocchi, con altro oltre: GUASTO (motivo «tetto»), nessuna riga consegnata, UN log error (solo conteggi)', async () => {
     const s = sorgente(7)
     const e = await leggiABlocchi<{ id: string }>(s.costruisci, { ...O, blocco: 2, maxBlocchi: 3 })
-    expect(e.ok && e.righe.length).toBe(6)
-    expect(e.ok && e.troncata).toBe(true)
+    expect(e.ok).toBe(false)
+    expect(!e.ok && e.motivo).toBe('tetto')
+    expect('righe' in e).toBe(false)
     // La prova è UNA riga, subito dopo l'ultimo blocco pieno.
     expect(s.richieste.at(-1)?.range).toEqual([6, 6])
+    expect(h.logEvento).toHaveBeenCalledTimes(1)
     expect(h.logEvento).toHaveBeenCalledWith('pagamento', 'error', expect.objectContaining({
       operazione: 'test:GET', esito: 'lettura-troncata', tipo: 'prova', n: 6, blocchi: 4,
     }))
+  })
+
+  it('al tetto, la riga di prova che fallisce: guasto con motivo «errore», non «tetto»', async () => {
+    const s = sorgente(7, { erroreAlBlocco: 3 })
+    const e = await leggiABlocchi(s.costruisci, { ...O, blocco: 2, maxBlocchi: 3 })
+    expect(!e.ok && e.motivo).toBe('errore')
+    expect(h.logEvento).not.toHaveBeenCalled()
   })
 
   it('al tetto dei blocchi, ma esattamente pieno: completa, nessun allarme falso', async () => {
     const s = sorgente(6)
     const e = await leggiABlocchi(s.costruisci, { ...O, blocco: 2, maxBlocchi: 3 })
     expect(e.ok && e.righe.length).toBe(6)
-    expect(e.ok && e.troncata).toBe(false)
     expect(h.logEvento).not.toHaveBeenCalled()
   })
 })

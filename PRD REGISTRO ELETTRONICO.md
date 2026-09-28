@@ -49,6 +49,10 @@
 - **Frase del pagante senza nome.** «Paga il fratello␣␣(Sez. C)» con nome e cognome vuoti, e uno spazio in coda senza classe: ora mai spazi doppi, iniziali o finali, a schermo come nell'Excel (lock esteso al nome vuoto).
 - **Test.** Il caso «oltre le 1000» delle rette dei paganti non superava più le 1000 righe in nessuna lettura (id a pezzi da 100): ora un pezzo ne ha 1.050, e togliendo il `range` a quella lettura il test è rosso. Spec allineata sui bambini non visibili (loader, risposta, cruscotto).
 
+**Dopo la quinta revisione (29/09).** Nessun cambiamento di comportamento.
+- **Test.** Il pagante in una sede accessibile ma **non scelta** (bambino in A, chi paga in B, `scuola_id=A`) non era provato: svuotando le sedi accessibili nel calcolo di chi paga, GET dei legami ed export restavano verdi. Ora il legame c'è con la sede B e il bambino non è «non visibile»; nell'export le sue righe ci sono, con lo stato della retta del pagante di B. Il pagante in una sede non caricata si guarda anche nella **card** mobile. Visti rossi i mutanti.
+- **Codice.** La retta del pagante e «sede caricata» si calcolano una volta per bambino, per tabella e card (erano scritte due volte); il badge ha tipi onesti (con la retta propria, D9, la sede del pagante non si passa); l'export calcola una volta il perimetro delle sedi, per la traccia d'accesso, le righe principali e quelle a carico. Commenti e spec allineati al codice (`IntlMessageFormat` nel lock, sedi dei paganti, il 414 dell'`.in()` a pezzi).
+
 ## 🧩 Changelog — Le routine del diario funzionano, e la segreteria ne aggiunge di sue — 2026-09-28 (branch `chore/dopo-merge-171`)
 
 **Richiesta del titolare.** «Le routine del diario voglio che funzionino: pasto, sonno, cambio e attività. E dammi la possibilità di aggiungere altre cose dalle impostazioni.» Fino a oggi `admin_settings.diario_config.routine_attive` si salvava e il codice ne leggeva solo `umore`: spegnere «Pasto» non toglieva il pasto a nessuno. Questo intervento **sostituisce** il punto 3 del changelog qui sotto per la parte routine (quello le aveva tolte dal pannello perché inerti; ora hanno effetto).

@@ -52,6 +52,16 @@ const getQuerySchema = z
 const STATO_LABEL: Record<string, string> = {
   da_pagare: 'Da pagare', parziale: 'Parziale', pagato: 'Pagato', scaduto: 'Scaduto',
 }
+
+/**
+ * K1 (seconda revisione 2026-09-28) — l'etichetta è SEMPRE una stringa. `pagamenti.stato` in
+ * produzione è nullable: `STATO_LABEL[null] ?? null` dava `null`, che prima diventava una cella
+ * vuota e con la larghezza della colonna (`.length`) faceva rispondere 500 a tutto l'export.
+ * Uno stato sconosciuto resta com'è, come prima.
+ */
+function etichettaStato(stato: string | null | undefined): string {
+  return stato ? (STATO_LABEL[stato] ?? stato) : ''
+}
 const FATTURA_LABEL: Record<string, string> = {
   non_richiesta: 'Da fatturare', in_attesa: 'In attesa SDI', emessa: 'Fatturata', scartata: 'Scartata',
 }
@@ -63,7 +73,8 @@ interface RigaPagamento {
   importo_pagato: number | null
   scadenza: string | null
   periodo_competenza: string | null
-  stato: string
+  /** Nullable in produzione (K1): mai usarlo senza `etichettaStato`. */
+  stato: string | null
   tipo: string
   fattura_stato: string | null
   alunni?: { nome?: string; cognome?: string; classe_sezione?: string | null } | null
@@ -183,7 +194,7 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
         'Importo €': Number(p.importo),
         'Pagato €': Number(p.importo_pagato || 0),
         'Residuo €': Math.max(0, Number(p.importo) - Number(p.importo_pagato || 0)),
-        Stato: STATO_LABEL[p.stato] ?? p.stato,
+        Stato: etichettaStato(p.stato),
         Fattura: p.stato === 'pagato' ? (FATTURA_LABEL[p.fattura_stato ?? 'non_richiesta'] ?? '') : '',
       }))
 
@@ -197,7 +208,7 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
       stato,
       categoriaId,
       nomiSedi,
-      etichettaStato: (s) => STATO_LABEL[s] ?? s,
+      etichettaStato,
     })
     const chiave = (s: string) => s || '￿'
     const tutte = [...righe, ...aCarico].sort((a, b) => {
@@ -209,7 +220,9 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     // «Stato» si allarga con la frase più lunga che contiene: «Da pagare» sta in 10 caratteri,
     // «Paga il fratello Mario Rossi (Sez. C) · Da pagare» ne ha 50–60 (e in 10 si leggeva
     // «Paga il f»). Tetto a 60: oltre, una colonna larga mezzo schermo non aiuta nessuno.
-    const larghezzaStato = Math.min(60, tutte.reduce((max, r) => Math.max(max, r.Stato.length), 10))
+    // `String(… ?? '')` anche se `Stato` nasce già stringa (K1): una colonna più stretta è un
+    // difetto estetico, un export in 500 per una cella è un difetto vero.
+    const larghezzaStato = Math.min(60, tutte.reduce((max, r) => Math.max(max, String(r.Stato ?? '').length), 10))
     ws['!cols'] = [{ wch: 20 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: larghezzaStato }, { wch: 14 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Scadenzario')

@@ -76,6 +76,30 @@ describe('GET /api/pagamenti/export', () => {
     const buf = await res.arrayBuffer()
     expect(buf.byteLength).toBeGreaterThan(0)
   })
+
+  // K1 (seconda revisione 2026-09-28): `pagamenti.stato` in produzione è NULLABLE. Prima di
+  // questo branch una riga a stato NULL usciva con la cella «Stato» vuota; col calcolo della
+  // larghezza della colonna (`r.Stato.length`) faceva rispondere 500 a TUTTO l'export.
+  it('una riga con stato NULL: 200, cella «Stato» vuota, e le altre righe ci sono tutte', async () => {
+    h.pagamenti.push({
+      id: 'p2', descrizione: 'Gita', importo: 10, importo_pagato: null, stato: null,
+      tipo: 'singolo', scadenza: '2026-10-05', periodo_competenza: null, fattura_stato: null,
+      alunni: { nome: 'Lia', cognome: 'Bianchi', classe_sezione: 'Girasoli' },
+      payment_categories: { nome: 'Gita' },
+    })
+    const res = await GET(url('tipo=scadenzario'))
+    expect(res.status).toBe(200)
+    const ws = XLSX.read(Buffer.from(await res.arrayBuffer()), { cellStyles: true }).Sheets.Scadenzario
+    const righe = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null })
+    expect(righe.map((r) => r.Alunno)).toEqual(['Mario Rossi', 'Lia Bianchi'])
+    const lia = righe.find((r) => r.Alunno === 'Lia Bianchi')!
+    // Stringa vuota, non «null» scritto nella cella.
+    expect(lia.Stato ?? '').toBe('')
+    expect(lia.Fattura ?? '').toBe('')
+    // La colonna si misura lo stesso: «Pagato» sta nel minimo di 10.
+    const intestazione = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 })[0]
+    expect((ws['!cols'] as { wch?: number }[])[intestazione.indexOf('Stato')].wch).toBe(10)
+  })
 })
 
 describe('GET /api/pagamenti/export?tipo=ade', () => {

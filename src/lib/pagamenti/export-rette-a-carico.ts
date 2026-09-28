@@ -29,7 +29,8 @@ interface OpzioniExport {
   /** Il filtro categoria dell'export: «solo Mensa» non deve ricevere righe di retta. */
   categoriaId?: string
   nomiSedi: Map<string, string>
-  etichettaStato: (stato: string) => string
+  /** Sempre una stringa, anche per lo stato NULL (K1): vuota = la frase senza « · stato». */
+  etichettaStato: (stato: string | null) => string
 }
 
 interface RigaRetta {
@@ -37,7 +38,8 @@ interface RigaRetta {
   descrizione: string
   scadenza: string | null
   periodo_competenza: string | null
-  stato: string
+  /** Nullable in produzione (K1). */
+  stato: string | null
   tipo: string | null
   payment_categories: { nome?: string | null; slug?: string | null } | null
 }

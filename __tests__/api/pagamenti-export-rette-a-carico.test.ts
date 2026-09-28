@@ -167,6 +167,19 @@ describe('export scadenzario — righe dei bambini a carico (D14)', () => {
       h.db.alunni.find((a) => a.id === 'pag')!.cognome = 'X'.repeat(80)
       expect((await colonnaStato()).wch).toBe(60)
     })
+    // K1 (seconda revisione): `pagamenti.stato` è nullable in produzione. La riga del pagante a
+    // stato NULL esce con la cella vuota, quella del bambino con la frase SENZA « · stato» — e
+    // l'export non va in 500.
+    it('retta del pagante a stato NULL: 200, la frase senza lo stato, la colonna misurata', async () => {
+      h.db.pagamenti = [voce('p-nov', 'pag', '2026-11-01', { stato: null })]
+      const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario'))
+      expect(res.status).toBe(200)
+      const tutte = await righe(res)
+      expect(tutte.find((r) => r.Alunno === 'Nfig Rossi')?.Stato).toBe('Paga il fratello Npag Rossi (Sez. C)')
+      expect(tutte.find((r) => r.Alunno === 'Npag Rossi')?.Stato ?? '').toBe('')
+      const { wch } = await colonnaStato()
+      expect(wch).toBe('Paga il fratello Npag Rossi (Sez. C)'.length)
+    })
   })
 
   it('legami non letti: l’export esce lo stesso, senza righe in più, e il log lo dice', async () => {

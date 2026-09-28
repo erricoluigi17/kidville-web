@@ -63,8 +63,9 @@ const entrySchema = z.object({
     // giusta quando il client non sa mostrarlo — non quando la maestra l'ha tolto apposta.
     azzera_valore: z.boolean().optional(),
     // Routine della scuola (quinto giro, 2026-09-28): la maestra ha tolto la SOLA NOTA di un valore
-    // che la routine non prevede più. La riga di oggi, se c'è, perde la nota e tiene il resto; se
-    // non c'è, non si crea. Senza, quella voce (valore vuoto, nessuna nota) era «muta» e si saltava.
+    // che la routine non prevede più. La riga di oggi, se c'è, perde la nota del bambino e tiene il
+    // valore (e la nota di sezione, se a schermo non ce n'è una nuova); se non c'è, non si crea.
+    // Senza, quella voce (valore vuoto, nessuna nota) era «muta» e si saltava.
     togli_nota: z.boolean().optional(),
 });
 
@@ -413,7 +414,8 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         // si passa dall'UPDATE normale qui sotto: col valore vuoto `tieniPrecedente` tiene quello
         // salvato e la nota si azzera; con un valore nuovo e valido si scrive il valore nuovo
         // (sesto giro, 2026-09-28: un ramo a parte scriveva solo la nota e perdeva il valore).
-        if (togliNota(entry) && (!existing || existing.length === 0)) {
+        if (togliNota(entry) && (!existing || existing.length === 0)
+            && !routineCompilata(entry.dettagli as Record<string, unknown> | null)) {
             togliNotaSenzaRiga += 1;
             continue;
         }
@@ -440,6 +442,9 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
                 nota_bambino: entry.nota_bambino ?? null, // nota del singolo bambino (E1)
                 // activity_description escluso: colonna non ancora migrata
             };
+            // Togliendo la sola nota del bambino, una nota di sezione vuota a schermo non cancella
+            // quella salvata sulla riga (l'editor non la ripristina mai: vuota non vuol dire tolta).
+            if (togliNota(entry) && !String(entry.nota_libera ?? '').trim()) delete updateRecord.nota_libera;
             let updRes = await admin.from('eventi_diario').update(updateRecord).eq('id', existing[0].id).select('id, alunno_id, tipo_evento');
             let uAttempts = 0;
             while (updRes.error && ['PGRST204', '42703'].includes((updRes.error as { code?: string }).code ?? '') && uAttempts < 4) {

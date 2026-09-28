@@ -1358,9 +1358,10 @@ export function useDiaryDay(
                 await restoreFromSupabase(selectedEvent);
             }
 
-            // Le voci di oggi si rileggono sempre dopo un salvataggio partito: anche a zero salvati
-            // (voci saltate dal server) lo schermo deve tornare a ciò che l'archivio contiene.
-            if (targetStudents.length > 0 || daCancellare.length > 0) void caricaVociDiOggi();
+            // Le voci di oggi (tessere delle routine spente, note in archivio) si rileggono dopo ogni
+            // salvataggio, anche a zero salvati (voci saltate dal server) — ma solo se la sezione a
+            // schermo è ancora quella salvata: altrimenti scavalcherebbero le voci della nuova.
+            if (paramClasseRef.current === classeAlSalva) void caricaVociDiOggi();
             if (salvati > 0 || tolti.length > 0) {
                 setSegniTolti(0);
                 setEsitoSalvataggio({ salvati, tolti: tolti.length, nanna: selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine' });

@@ -303,5 +303,17 @@ describe('POST /api/diary/entries — togliere la sola nota di un valore «non p
         await post([voce(A1, 'bagno', { pipi: 0, cacca: 0, vasino: 0 }, { togli_nota: true })]);
         expect(h.updated).toHaveLength(0);
     });
+
+    it('`togli_nota` con la nota di sezione vuota a schermo NON cancella quella salvata sulla riga (settimo giro)', async () => {
+        h.esistenti[`${A1}|routine:e5f6a7b8`] = { id: 'r1', dettagli: { nome: 'Biberon', emoji: '🍼', risposta: 'scelta', valore: ['Doppio'] } };
+        await post([voce(A1, 'routine:e5f6a7b8', { valore: null }, { nota_bambino: null, nota_libera: null, togli_nota: true })]);
+        expect(h.updated[0]).not.toHaveProperty('nota_libera');
+        expect(h.updated[0].nota_bambino).toBeNull();
+    });
+
+    it('`togli_nota` con un valore valido e nessuna riga: si scrive la riga, come un salvataggio normale', async () => {
+        await post([voce(A1, 'routine:e5f6a7b8', { valore: ['Tutto'] }, { togli_nota: true })]);
+        expect(h.inserted).toHaveLength(1);
+    });
 });
 

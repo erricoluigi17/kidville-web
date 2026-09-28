@@ -24,7 +24,11 @@ export interface RigaScadenzario {
 interface OpzioniExport {
   /** Il perimetro dell'export: la sede dichiarata, o le sedi attive. */
   sediBambini: string[]
-  /** Le sedi accessibili all'utente (dove si possono leggere pagante e rette). */
+  /**
+   * Dove si possono leggere pagante e rette: `sediDeiPaganti(sediBambini, accessibili)`, cioè le
+   * sedi dei bambini ∪ quelle accessibili all'utente — non le sole accessibili (K4: se la loro
+   * lettura fallisce sono `[]`, e le sedi dei bambini restano).
+   */
   sediPaganti: string[]
   sectionIds?: string[]
   stato?: string
@@ -89,9 +93,10 @@ export async function righeRetteACarico(supabase: SupabaseClient, o: OpzioniExpo
   const ids = [...new Set(legami.flatMap((l) => [l.pagante.id, l.alunno_id]))]
   const righeLette: RigaRetta[] = []
   // DUE BLOCCHI, uno dentro l'altro (R8, terza revisione 2026-09-29):
-  //  · gli id a pezzi di `ID_PER_QUERY` (`@/lib/db/blocchi`): `.in()` finisce nell'URL, e con
-  //    due id per famiglia la lista intera supera il limite dei proxy (414) già con un centinaio
-  //    di famiglie a carico;
+  //  · gli id a pezzi di `ID_PER_QUERY` (`@/lib/db/blocchi`): `.in()` finisce nell'URL, e la
+  //    lista intera cresce di due id per famiglia a carico. Cento uuid (~3.800 caratteri) stanno
+  //    comodi sotto il limite di riga dei proxy, mille (~38 kB) prenderebbero un 414: il tetto
+  //    impedisce che la lettura si rompa da sola il giorno in cui l'elenco cresce;
   //  · ogni pezzo letto a blocchi di `range` (`leggiABlocchi`), perché lo storico delle rette di
   //    cento alunni passa comunque le 1000 righe di PostgREST.
   // Unire i pezzi è corretto così come vengono: il calcolo qui sotto è PER ALUNNO, e ogni alunno

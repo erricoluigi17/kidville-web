@@ -182,11 +182,13 @@ export async function caricaLegamiRetta(
   const idPaganti = [...new Set(righe.map((r) => r.retta_a_carico_di).filter((x): x is string => !!x))]
   if (idPaganti.length === 0) return { ok: true, legami: [], nonVisibili: [] }
 
-  // A pezzi di `ID_PER_QUERY` (R8, terza revisione 2026-09-29): `.in()` finisce nell'URL, e un
-  // pagante per famiglia a carico, con la lista intera, sfora il limite dei proxy (414) oltre
-  // un centinaio. Tutto-o-niente: il primo pezzo che risponde `{ error }` è l'esito di TUTTA la
-  // lettura — mai i paganti di un pezzo solo spacciati per tutti (gli altri bambini finirebbero
-  // «non visibili», cioè in un'altra sede, che è falso).
+  // A pezzi di `ID_PER_QUERY` (R8, terza revisione 2026-09-29): `.in()` finisce nell'URL, e la
+  // lista intera cresce con le famiglie a carico. Cento uuid (~3.800 caratteri) stanno comodi
+  // sotto il limite di riga di qualunque proxy; mille (~38 kB) prenderebbero un 414. Oggi sono
+  // decine: il tetto è ciò che impedisce alla lettura di rompersi da sola il giorno in cui
+  // l'elenco cresce (vedi `@/lib/db/blocchi`). Tutto-o-niente: il primo pezzo che risponde
+  // `{ error }` è l'esito di TUTTA la lettura — mai i paganti di un pezzo solo spacciati per
+  // tutti (gli altri bambini finirebbero «non visibili», cioè in un'altra sede, che è falso).
   const leggiPaganti = async (colonne: string): Promise<{ data: unknown[]; error: unknown }> => {
     const data: unknown[] = []
     for (const pezzo of aBlocchi(idPaganti, ID_PER_QUERY)) {
@@ -210,7 +212,7 @@ export async function caricaLegamiRetta(
     return { ok: false, esito: 'legami-paganti-non-letti', errore: paganti.error, n: idPaganti.length }
   }
 
-  const perId = new Map(((paganti.data ?? []) as unknown as RigaPagante[]).map((p) => [p.id, p]))
+  const perId = new Map((paganti.data as RigaPagante[]).map((p) => [p.id, p]))
   const legami: LegameRettaCompleto[] = []
   const nonVisibili: BambinoACaricoNonVisibile[] = []
   for (const r of righe) {

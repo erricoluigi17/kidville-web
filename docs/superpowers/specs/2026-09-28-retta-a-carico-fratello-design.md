@@ -227,9 +227,10 @@ Fattura vuota. Le righe restano ordinate per scadenza.
 
 - **Unit** del modulo puro: tutte le forme del testo (M, F, null, con/senza classe, con/senza
   stato), `sessoDa`, `anomaliaPagante` (precedenza), `indicizzaLegami`.
-- **Lock di coerenza**: il testo della UI in italiano (catalogo `it` + `createTranslator`, poi
-  `ripulisciFrase` come nel badge) è identico a `prefissoPaganteIt` per gli stessi ingressi —
-  anche con nome e cognome vuoti (Q8) — così Excel e schermo non divergono.
+- **Lock di coerenza**: il testo della UI in italiano (catalogo `it` formattato con
+  `IntlMessageFormat` di `intl-messageformat`, poi `ripulisciFrase` come nel badge) è identico a
+  `prefissoPaganteIt` per gli stessi ingressi — anche con nome e cognome vuoti (Q8) — così Excel e
+  schermo non divergono.
 - **Loader server**: ok; `42703` che nomina `retta_a_carico_di` → zero legami + log `info`;
   `42703` sui paganti che nomina `gender`/`archiviato_il` → ripiego + log `info`; ogni altro
   errore (anche un `42703` su un'altra colonna) → `ok: false` con `esito` ed errore vero, e

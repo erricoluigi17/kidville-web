@@ -173,6 +173,14 @@ describe('export scadenzario — righe dei bambini a carico (D14)', () => {
       expect(di(tutte, 'Nfgb Rossi')).toEqual([])
     })
 
+    // R9: in Postgres `uuid` è un TIPO, e PostgREST trova la riga anche con l'uuid in maiuscolo;
+    // `Array.includes` no. Con `section_ids` in maiuscolo le righe a carico sparivano.
+    it('section_ids in MAIUSCOLO: le righe a carico ci sono lo stesso (e le altre restano fuori)', async () => {
+      const tutte = await esporta(`&section_ids=${SEZ_A.toUpperCase()}`)
+      expect(di(tutte, 'Nfig Rossi')).toHaveLength(2)
+      expect(di(tutte, 'Nbea Rossi')).toEqual([])
+    })
+
     it('section_ids = Sez. B: bea sì, fig NO', async () => {
       const tutte = await esporta(`&section_ids=${SEZ_B}`)
       expect(di(tutte, 'Nbea Rossi').map((r) => r.Descrizione)).toEqual(['Retta 2026-09', 'Retta 2026-10'])

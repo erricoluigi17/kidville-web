@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logEvento } from '@/lib/logging/logger'
+import { formaConfronto } from '@/lib/auth/scope'
 import { caricaLegamiRetta } from './rette-a-carico-server'
 import { testoPaganteIt } from './rette-a-carico'
 import { leggiABlocchi } from './leggi-a-blocchi'
@@ -70,8 +71,12 @@ export async function righeRetteACarico(supabase: SupabaseClient, o: OpzioniExpo
     })
     return []
   }
-  const legami = o.sectionIds
-    ? esito.legami.filter((l) => l.alunno.section_id != null && o.sectionIds!.includes(l.alunno.section_id))
+  // Il filtro classi senza maiuscole (R9, terza revisione): `section_ids` arriva dalla query
+  // così come l'ha scritto il client, e PostgREST — che confronta `uuid`, un TIPO — trova la
+  // riga anche in maiuscolo. Con `includes` le righe principali c'erano e queste sparivano.
+  const sezioni = o.sectionIds ? new Set(o.sectionIds.map(formaConfronto)) : null
+  const legami = sezioni
+    ? esito.legami.filter((l) => l.alunno.section_id != null && sezioni.has(formaConfronto(l.alunno.section_id)))
     : esito.legami
   if (legami.length === 0) return []
 

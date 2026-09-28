@@ -115,8 +115,22 @@ const ORA_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const zTesto = (max: number) => z.string().trim().min(1).max(max);
 
-/** Il primo carattere di un'icona: un pittogramma o una bandiera. Poi solo ciò che li compone. */
-const ICONA_RE = /^[\p{Extended_Pictographic}\p{Regional_Indicator}][\p{Extended_Pictographic}\p{Emoji_Component}\u200D\uFE0F\u20E3]*$/u;
+/**
+ * Il primo carattere di un'icona: un pittogramma o una bandiera. Poi solo ciò che li compone.
+ *
+ * Costruita a runtime e non come letterale: questo modulo lo carica anche il WebView dell'app, e
+ * un motore che non conosce una proprietà Unicode rifiuterebbe il LETTERALE al caricamento —
+ * cioè l'intero modulo, e con lui il diario. Così, al peggio, qui non si controlla la forma
+ * (`null`) e resta il controllo del server, che gira su Node.
+ */
+const ICONA_RE: RegExp | null = (() => {
+    try {
+        return new RegExp('^[\\p{Extended_Pictographic}\\p{Regional_Indicator}][\\p{Extended_Pictographic}\\p{Emoji_Component}\\u200D\\uFE0F\\u20E3]*$', 'u');
+    } catch {
+        // Nessun log qui: è il caricamento di un modulo condiviso, e l'esito è dichiarato (`null`).
+        return null;
+    }
+})();
 
 /**
  * L'icona è UN simbolo (2026-09-28, seconda revisione). Prima era una stringa qualunque da 1 a 16
@@ -125,6 +139,7 @@ const ICONA_RE = /^[\p{Extended_Pictographic}\p{Regional_Indicator}][\p{Extended
  * controlla solo la forma: il server, che gira su Node, lo ha sempre.
  */
 export function iconaValida(v: string): boolean {
+    if (ICONA_RE === null) return v.trim().length > 0;
     if (!ICONA_RE.test(v)) return false;
     const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
     if (!Segmenter) return true;

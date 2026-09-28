@@ -1,4 +1,27 @@
 
+## 🧩 Changelog — Le routine del diario funzionano, e la segreteria ne aggiunge di sue — 2026-09-28 (branch `chore/dopo-merge-171`)
+
+**Richiesta del titolare.** «Le routine del diario voglio che funzionino: pasto, sonno, cambio e attività. E dammi la possibilità di aggiungere altre cose dalle impostazioni.» Fino a oggi `admin_settings.diario_config.routine_attive` si salvava e il codice ne leggeva solo `umore`: spegnere «Pasto» non toglieva il pasto a nessuno. Questo intervento **sostituisce** il punto 3 del changelog qui sotto per la parte routine (quello le aveva tolte dal pannello perché inerti; ora hanno effetto).
+
+**Decisioni del titolare** (28/09): la risposta di una routine della scuola la sceglie la segreteria fra quattro tipi — spunta «fatto», scelta fra opzioni (una o più d'una), orario, testo libero; le routine spente o cancellate **restano visibili** nelle voci già scritte; le routine nuove mandano la notifica «Diario aggiornato» come le altre; e, dopo la revisione critica, **svuota e salva = cancella** anche per le routine e l'umore, «Fatto per tutti» solo sui presenti, routine spente con voci di oggi **in sola lettura col cestino**, l'oblio GDPR toglie anche il testo del diario.
+
+**Cosa c'è ora.**
+- **Routine base per sede** (`@/lib/diary/routine`, una regola sola): Pasto → pranzo e merenda, Sonno → nanna e sveglia, Cambio → bagno, Attività, Umore. Spenta una routine, la maestra non vede il bottone e il server rifiuta la scrittura (`422 ROUTINE_SPENTA`). Configurazione assente = quelle di sempre (umore spento); lista vuota = tutto spento. Si accettano i nomi (sedi vere) e i codici dei tipi (seed E2E), e il salvataggio scrive sempre i nomi. Misurato il 28/09 con `SELECT`: le tre sedi vere hanno pasto, sonno, cambio e attività accese, umore spento — accendere il filtro non toglie niente a nessuno.
+- **Routine della scuola** (`diario_config.routine_personalizzate`, al più 20): nome (unico), icona (un solo simbolo), tipo di risposta (non modificabile dopo il salvataggio: `422 ROUTINE_RISPOSTA_NON_MODIFICABILE`, anche togliendola e rimettendola), opzioni (2–10, solo per la scelta), «più d'una», attiva. Tipo di voce `routine:<id>`; i `dettagli` li scrive il SERVER: fotografia di nome, icona e tipo più il valore, così la voce resta leggibile a routine rinominata, spenta o cancellata.
+- **Maestra** (pagina docente e cockpit): un pannello per tipo di risposta, con cestino e «Fatto per tutti» (solo col filtro «Solo presenti»). Le routine sono quelle della **sede della sezione**; il cockpit sceglie la sezione per uuid. La configurazione si rilegge al ritorno nell'app, ogni 10 minuti a schermo acceso e dopo un rifiuto del server. Un valore salvato che la routine non prevede più (opzione rinominata) si mostra col cestino invece di sparire; le routine spente con voci di oggi compaiono in coda, in sola lettura.
+- **Genitore**: ogni routine col suo nome e il suo valore; una voce senza valore tenuta in piedi da una nota mostra la nota e basta (mai «Fatto ✓» non segnato); ora segnata a lato per le routine a orario; il riquadro dell'umore c'è solo se la maestra l'ha segnato, con le sue note; stato vuoto quando non c'è niente da mostrare.
+- **Server**: `tipo_evento` è un vocabolario chiuso (i sette tipi base più `routine:<id>`; in produzione i tipi scritti sono sette); voci mute saltate prima dei controlli; «niente» normalizzato a `null`; un valore già salvato non si sovrascrive con `null`; `umore` entra fra i tipi cancellabili.
+- **Impostazioni → Diario**: cinque interruttori delle routine base e l'editor delle routine della scuola. Il pannello manda **solo le chiavi cambiate** insieme a com'erano quando le ha lette (`diario_config_letto`): se nel frattempo un'altra operatrice le ha cambiate, `409 CONFIG_DIARIO_CAMBIATA` e niente scritto. Salvataggio bloccato se la lettura iniziale è fallita. Un ritardo di visibilità vuoto non diventa più zero minuti.
+- **Oblio GDPR**: `anonimizzaAlunno` toglie dal diario del bambino `nota_bambino`, `nota_libera` e il valore delle routine a testo libero (`diario_bonificate` nell'esito); una lettura fallita conta fra le `letture_fallite`.
+
+**Log** (senza dati personali): `diary/entries:POST` `routine-rifiutata` con `error_code` e conteggi; `admin/settings:PATCH` `routine-risposta-non-modificabile` e `diario-config-cambiata-nel-frattempo` con `error_code`; `diary/config:GET` `sede-dichiarata-fuori-scope` (warn); client `diario-voci-di-oggi-non-lette`, `diario-compilati-non-letti`, `diario-sezioni-cockpit-non-lette`. Il cockpit esce dall'allowlist dei catch muti (tetti 41→40 file, 63→61 occorrenze).
+
+**Revisione critica** (tre revisori indipendenti più la rilettura, 30 difetti, 2 gravi): tutti corretti in questo stesso lavoro. I due gravi: il genitore leggeva «Fatto ✓» su una routine non segnata tenuta in piedi da una nota; un bambino comparso con «Tutti» dopo l'apertura risultava «Fatto» a schermo ma non veniva salvato.
+
+Test nuovi o estesi: `diario-routine` (lib), `diario-routine-registrazione`, `diary-entries-routine`, `settings-diario-config`, `diary-config-routine`, `gdpr-oblio-diario`, `diary-routine-editor`, `diario-settings-senza-orari-fantasma`, `diario-genitore-routine`, `diario-oggi-card-etichette`, `teacher-diary-rete-duplicata`, `admin-diary-sezione-per-uuid`. Ogni correzione vista rossa prima; 15 mutazioni mirate sulle correzioni, tutte prese dai test. E2E `teacher-diary`: il ripristino atteso esclude la nuova GET delle voci di oggi (`scopo=spente`).
+
+Gate locale: eslint 0, tsc 0 errori, vitest `1584 passed` (23.373 test), build ok. E2E in CI.
+
 ## 📖 Changelog — Diario del genitore: si ricarica al ritorno nell'app, la notifica apre il diario del figlio, via gli orari che nessuno applicava — 2026-09-28 (branch `chore/dopo-merge-171`)
 
 **Segnalazione.** Una maestra di nido compila il diario, ma i genitori della sua sezione lo trovano vuoto. Verificato solo con `SELECT` in produzione:
@@ -25608,6 +25631,7 @@ Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori
 - **Nanna (Inizio):** evento con **pulsante dedicato e distinto**; campo orario d'inizio del riposo pomeridiano per ogni bambino. *(Decisione definitiva — incongruenza #6: Nanna e Sveglia restano DUE pulsanti separati, non un pulsante unico.)*
 - **Sveglia (Fine Nanna):** evento con **pulsante dedicato e distinto** dalla Nanna; campo orario di fine riposo per ogni bambino. La coppia Nanna→Sveglia documenta il riposo nella forma "dalle … alle …".
 - **Bagno/Igiene:** Tre contatori cumulativi per bambino — **Pipì** (💧), **Cacca** (💩) e **Vasino** (🚽, potty training) — con pulsanti + e − per incrementare/decrementare il conteggio. Il valore viene salvato come numero intero (es. "Pipì: 2, Cacca: 1, Vasino: 1"). *(Decisione definitiva — incongruenza #7: il Vasino è un controllo previsto e implementato.)* Ogni evento Bagno scala 1 pannolino dall'Armadietto solo per i bambini con flag "Usa pannolino" (vedi Anagrafica §2.1 e Armadietto §2.2; incongruenza #9).
+- **Routine della scuola** *(dal 2026-09-28)*: la segreteria ne aggiunge fino a 20 da Impostazioni → Diario, con nome, icona e tipo di risposta — spunta «fatto», scelta fra opzioni (una sola o più d'una), orario, testo libero. La maestra le trova dopo le routine base, con un controllo per bambino; il genitore le legge col loro nome. Spenta o eliminata una routine, le voci già scritte restano visibili; quelle di oggi la maestra le vede in sola lettura, col cestino.
 
 
 ### 3.2 Sicurezza e Validazione
@@ -25627,7 +25651,7 @@ Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori
 
 ## 5. Amministrazione e Monitoraggio (Segreteria)
 ### 5.1 Configurazione e Controllo
-• Customizzazione per Classe: La Segreteria può abilitare o disabilitare specifiche categorie di routine in base alla classe (es. disabilitare "Bagno/Cambio" per le classi dell'Infanzia che non ne necessitano).
+• Customizzazione per Sede *(implementata il 2026-09-28 per SEDE, non per classe)*: la Segreteria accende o spegne le routine base (Pasto, Sonno, Cambio, Attività, Umore) e aggiunge routine della scuola. Spenta una routine, la maestra non la vede più e il server ne rifiuta la scrittura.
 • Dashboard di Monitoraggio: Uno strumento dedicato permette alla Segreteria di vedere in tempo reale quali classi stanno compilando il diario e quali sono inattive, facilitando il coordinamento didattico.
 • Archiviazione e Storico:
   • I dati del diario oltre i 14 giorni non sono più consultabili dal genitore per ottimizzare le performance, ma rimangono accessibili alla Segreteria per controlli o audit.

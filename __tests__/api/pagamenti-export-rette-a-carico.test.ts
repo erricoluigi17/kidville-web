@@ -3,6 +3,8 @@ import { NextRequest } from 'next/server'
 import * as XLSX from 'xlsx'
 import type { DBFinto } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
+import { STATI_PAGAMENTO } from '@/components/features/admin/pagamenti/stati'
+import { SEPARATORE_STATO } from '@/lib/pagamenti/rette-a-carico'
 
 // =============================================================================
 // D14 (2026-09-28) — export dello Scadenzario: il bambino con la retta a carico di
@@ -120,6 +122,25 @@ describe('export scadenzario — righe dei bambini a carico (D14)', () => {
     expect(mensa).toEqual([])
     const retta = await righe(await GET(new NextRequest(`http://localhost/api/pagamenti/export?tipo=scadenzario&categoria_id=${CAT_RETTA}`)))
     expect(retta.filter((r) => r.Alunno === 'Nfig Rossi').map((r) => r.Descrizione)).toEqual(['Retta 2026-09', 'Retta 2026-10'])
+  })
+
+  // C7 (revisione 2026-09-28): il lock «schermo = Excel» di `rette-a-carico.test.ts` copre il
+  // PREFISSO («Paga il fratello …»). Lo STATO, dopo il separatore, a schermo viene da
+  // `STATI_PAGAMENTO` e nell'Excel da `STATO_LABEL` della route: due mappe, e nulla le legava.
+  describe('C7 — lo stato dopo « · » è la stessa parola del cruscotto', () => {
+    const STATI = ['da_pagare', 'parziale', 'pagato', 'scaduto']
+    it('gli stati del cruscotto sono questi quattro (uno nuovo va aggiunto qui)', () => {
+      expect(Object.keys(STATI_PAGAMENTO).sort()).toEqual([...STATI].sort())
+    })
+    for (const stato of STATI) {
+      it(`retta del pagante «${stato}» → «… · ${STATI_PAGAMENTO[stato].label}»`, async () => {
+        h.db.pagamenti = [voce('p-nov', 'pag', '2026-11-01', { stato })]
+        const fig = (await righe(await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario'))))
+          .filter((r) => r.Alunno === 'Nfig Rossi')
+        expect(fig).toHaveLength(1)
+        expect(fig[0].Stato).toBe(`Paga il fratello Npag Rossi (Sez. C)${SEPARATORE_STATO}${STATI_PAGAMENTO[stato].label}`)
+      })
+    }
   })
 
   it('legami non letti: l’export esce lo stesso, senza righe in più, e il log lo dice', async () => {

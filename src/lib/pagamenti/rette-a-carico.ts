@@ -130,14 +130,19 @@ export function legamiDaRisposta(data: unknown): { legami: LegameRetta[]; scarta
 
 /**
  * `a_carico_non_visibili` della GET: i bambini a carico il cui pagante sta in una sede che
- * l'utente non legge (solo i loro id). Campo ASSENTE = risposta di prima del 2026-09-28:
- * nessun bambino e nessuno scarto, non un guasto. Un valore che non è una stringa non vuota si
- * scarta e si conta come in `legamiDaRisposta` (l'id si confronta con quelli del cruscotto,
- * non si valida come uuid); un campo che non è un array è UNO scarto.
+ * l'utente non legge (solo i loro id). Campo ASSENTE (o `null`) = risposta di prima del
+ * 2026-09-28: nessun bambino e nessuno scarto, non un guasto. Un valore che non è una stringa
+ * non vuota si scarta e si conta come in `legamiDaRisposta` (l'id si confronta con quelli del
+ * cruscotto, non si valida come uuid).
+ *
+ * `null` = campo PRESENTE che non è un array: una forma inattesa, cioè un GUASTO come `data`
+ * non array in `legamiDaRisposta`, e il chiamante lo dice a schermo. Fino alla terza revisione
+ * (R10, 2026-09-29) era «uno scarto», e il cruscotto mostrava come veri i legami di una
+ * risposta che per metà non capiva.
  */
-export function nonVisibiliDaRisposta(v: unknown): { ids: string[]; scartati: number } {
+export function nonVisibiliDaRisposta(v: unknown): { ids: string[]; scartati: number } | null {
   if (v === undefined || v === null) return { ids: [], scartati: 0 }
-  if (!Array.isArray(v)) return { ids: [], scartati: 1 }
+  if (!Array.isArray(v)) return null
   const ids = v.filter((x): x is string => typeof x === 'string' && x !== '')
   return { ids, scartati: v.length - ids.length }
 }

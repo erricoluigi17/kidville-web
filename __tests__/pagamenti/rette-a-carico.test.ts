@@ -140,9 +140,13 @@ describe('nonVisibiliDaRisposta (C3: il pagante sta in una sede che l’utente n
   it('tiene le stringhe non vuote e conta il resto (l’id si confronta, non si valida come uuid)', () => {
     expect(nonVisibiliDaRisposta(['a', '', 3, null, 'b'])).toEqual({ ids: ['a', 'b'], scartati: 3 })
   })
-  it('un campo che non è un array è UNO scarto, non un crash', () => {
-    expect(nonVisibiliDaRisposta('a')).toEqual({ ids: [], scartati: 1 })
-    expect(nonVisibiliDaRisposta({ a: 1 })).toEqual({ ids: [], scartati: 1 })
+  // R10 (terza revisione 2026-09-29): era «uno scarto», e il cruscotto mostrava lo stesso i
+  // legami di quella risposta. Un campo presente che non è un array è una FORMA INATTESA, come
+  // `data` non array in `legamiDaRisposta`: `null`, e il chiamante lo dice a schermo.
+  it('un campo presente che non è un array è una forma inattesa (null), non un crash', () => {
+    expect(nonVisibiliDaRisposta('a')).toBeNull()
+    expect(nonVisibiliDaRisposta({ a: 1 })).toBeNull()
+    expect(nonVisibiliDaRisposta(7)).toBeNull()
   })
 })
 

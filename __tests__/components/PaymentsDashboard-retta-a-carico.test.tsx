@@ -493,4 +493,46 @@ describe('la GET dei legami', () => {
         stub(); await apri();
         expect(logSpia.chiamate.some((c) => c.messaggio === 'scadenzario-legami-voci-scartate')).toBe(false);
     });
+    // R10 (terza revisione 2026-09-29): `a_carico_non_visibili` presente ma non un array finiva
+    // solo in un log, e i legami di quella stessa risposta si mostravano come veri. È la stessa
+    // forma inattesa dei legami: banner, e niente dati parziali. (Campo ASSENTE = risposta di
+    // prima = nessuno: lo prova «risposta di prima (senza il campo)» qui sopra.)
+    it('R10 — `a_carico_non_visibili` che non è un array: banner, e nessun badge di quella risposta', async () => {
+        stub({ legami: { ...LEGAMI, a_carico_non_visibili: IVO.id } }); await apri();
+        expect(await screen.findByTestId('errore-legami')).toBeInTheDocument();
+        expect(within(riga('Luca Rossi')).getByText('Non generata')).toBeInTheDocument();
+        expect(screen.queryByTestId('retta-a-carico')).toBeNull();
+        expect(screen.queryByTestId('retta-a-carico-non-visibile')).toBeNull();
+        expect(logSpia.chiamate.some((c) => c.livello === 'error' && c.messaggio === 'scadenzario-legami-forma-inattesa')).toBe(true);
+    });
+});
+
+/**
+ * R7a (terza revisione 2026-09-29) — i legami che falliscono DOPO una lettura riuscita. Il ramo
+ * del guasto svuota i legami e i non visibili, ma nessun test partiva con dei badge già a
+ * schermo: togliendo lo svuotamento la suite restava verde, e un «Aggiorna» fallito avrebbe
+ * lasciato i badge di prima spacciati per attuali, sotto un banner che dice il contrario.
+ */
+describe('R7a — la GET dei legami fallisce al secondo caricamento', () => {
+    async function apriPoiGuasto() {
+        const o: { legamiStatus?: number } = {};
+        stub(o); await apri();
+        // Controllo positivo: prima del guasto i badge ci sono.
+        expect(within(riga('Luca Rossi')).getByTestId('retta-a-carico')).toBeInTheDocument();
+        expect(within(riga('Ivo Grigi')).getByTestId('retta-a-carico-non-visibile')).toBeInTheDocument();
+        o.legamiStatus = 500;
+        fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
+        expect(await screen.findByTestId('errore-legami')).toBeInTheDocument();
+        await waitFor(() => expect(riga('Luca Rossi')).toBeInTheDocument());
+    }
+    it('i badge «Paga il fratello …» di prima NON restano: tornano «Non generata», col banner', async () => {
+        await apriPoiGuasto();
+        expect(within(riga('Luca Rossi')).getByText('Non generata')).toBeInTheDocument();
+        expect(screen.queryByTestId('retta-a-carico')).toBeNull();
+    });
+    it('lo stesso per i non visibili: Ivo torna «Non generata», niente «di un’altra sede»', async () => {
+        await apriPoiGuasto();
+        expect(within(riga('Ivo Grigi')).getByText('Non generata')).toBeInTheDocument();
+        expect(screen.queryByTestId('retta-a-carico-non-visibile')).toBeNull();
+    });
 });

@@ -49,7 +49,10 @@ vi.mock('@/lib/supabase/server-client', async () => {
 import { GET } from '@/app/api/pagamenti/export/route'
 
 const SEZ_A = '10000000-0000-4000-8000-00000000000a'
+const SEZ_B = '10000000-0000-4000-8000-00000000000b'
 const SEZ_C = '10000000-0000-4000-8000-00000000000c'
+/** Una sezione della SECONDA sede (terza revisione: il filtro di sede non era provato). */
+const SEZ_BETA = '10000000-0000-4000-8000-0000000000b1'
 const ADMIN_AB = { id: 'admin-1', role: 'admin', scuola_id: SEDE_A }
 
 const alunno = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -82,11 +85,19 @@ beforeEach(() => {
       alunno('pag'),                                                                            // paga
       alunno('fig', { retta_a_carico_di: 'pag', classe_sezione: 'Sez. A', section_id: SEZ_A }), // a carico
       alunno('teo', { retta_a_carico_di: 'pag', classe_sezione: 'Sez. A', section_id: SEZ_A }), // a carico, ma con retta di ottobre
+      alunno('bea', { retta_a_carico_di: 'pag', classe_sezione: 'Sez. B', section_id: SEZ_B }), // a carico, in un'ALTRA sezione
+      // La seconda sede: un pagante e il suo bambino a carico, entrambi di Beta.
+      alunno('pgb', { scuola_id: SEDE_B, classe_sezione: 'Sez. C', section_id: SEZ_BETA }),
+      alunno('fgb', { scuola_id: SEDE_B, retta_a_carico_di: 'pgb', classe_sezione: 'Sez. Beta', section_id: SEZ_BETA }),
     ],
     pagamenti: [
       voce('p-set', 'pag', '2026-09-01', { stato: 'pagato', importo_pagato: 250 }),
       voce('p-ott', 'pag', '2026-10-01'),
       voce('t-ott', 'teo', '2026-10-01', { importo: 100 }),
+      voce('b-ott', 'pgb', '2026-10-01', {
+        scuola_id: SEDE_B,
+        alunni: { nome: 'Npgb', cognome: 'Rossi', classe_sezione: 'Sez. C', section_id: SEZ_BETA, scuola_id: SEDE_B },
+      }),
     ],
     registro_modifiche: [],
   }
@@ -132,6 +143,68 @@ describe('export scadenzario — righe dei bambini a carico (D14)', () => {
     const tutte = await righe(await GET(new NextRequest(`http://localhost/api/pagamenti/export?tipo=scadenzario&section_ids=${SEZ_A}`)))
     expect(tutte.some((r) => r.Alunno === 'Npag Rossi')).toBe(false)
     expect(tutte.filter((r) => r.Alunno === 'Nfig Rossi')).toHaveLength(2)
+  })
+
+  // ===========================================================================
+  // Terza revisione (2026-09-29) — i due filtri dell'export sulle righe a carico NON erano
+  // protetti da nessun test: tutti i bambini a carico stavano nella stessa sezione e nella
+  // stessa sede, e togliendo il filtro classi (`export-rette-a-carico.ts`) o la restrizione
+  // `sediBambini` alla sede dichiarata (`export/route.ts`) la suite restava verde. Qui ci sono
+  // un bambino in un'ALTRA sezione («bea», Sez. B) e uno nella SECONDA sede («fgb», Beta), e
+  // si guarda che restino FUORI — accanto a quelli che devono esserci, perché un'assenza da
+  // sola passa anche quando non esce niente.
+  // ===========================================================================
+  describe('i filtri dell’export tengono fuori le righe a carico che non c’entrano', () => {
+    const esporta = async (qs = '') =>
+      righe(await GET(new NextRequest(`http://localhost/api/pagamenti/export?tipo=scadenzario${qs}`)))
+    const di = (tutte: Record<string, unknown>[], nome: string) => tutte.filter((r) => r.Alunno === nome)
+
+    it('senza filtri (controllo positivo): ci sono le righe di fig, bea e fgb', async () => {
+      const tutte = await esporta()
+      expect(di(tutte, 'Nfig Rossi')).toHaveLength(2)
+      expect(di(tutte, 'Nbea Rossi')).toHaveLength(2)
+      expect(di(tutte, 'Nfgb Rossi').map((r) => [r.Sede, r.Stato])).toEqual([[NOME_SEDE_B, 'Paga il fratello Npgb Rossi (Sez. C) · Da pagare']])
+    })
+
+    it('section_ids = Sez. A: fig sì, bea (Sez. B) e fgb (sezione di Beta) NO', async () => {
+      const tutte = await esporta(`&section_ids=${SEZ_A}`)
+      expect(di(tutte, 'Nfig Rossi')).toHaveLength(2)
+      expect(di(tutte, 'Nbea Rossi')).toEqual([])
+      expect(di(tutte, 'Nfgb Rossi')).toEqual([])
+    })
+
+    it('section_ids = Sez. B: bea sì, fig NO', async () => {
+      const tutte = await esporta(`&section_ids=${SEZ_B}`)
+      expect(di(tutte, 'Nbea Rossi').map((r) => r.Descrizione)).toEqual(['Retta 2026-09', 'Retta 2026-10'])
+      expect(di(tutte, 'Nfig Rossi')).toEqual([])
+    })
+
+    it('scuola_id = Alfa: fig sì, fgb (bambino di Beta) NO', async () => {
+      const tutte = await esporta(`&scuola_id=${SEDE_A}`)
+      expect(di(tutte, 'Nfig Rossi')).toHaveLength(2)
+      expect(di(tutte, 'Nfgb Rossi')).toEqual([])
+    })
+
+    it('scuola_id = Beta: fgb sì, fig e bea (bambini di Alfa) NO', async () => {
+      const tutte = await esporta(`&scuola_id=${SEDE_B}`)
+      expect(di(tutte, 'Nfgb Rossi')).toHaveLength(1)
+      expect(di(tutte, 'Nfig Rossi')).toEqual([])
+      expect(di(tutte, 'Nbea Rossi')).toEqual([])
+    })
+
+    it('una voce `padre` del pagante non produce una riga in più', async () => {
+      h.db.pagamenti.push(voce('p-pad', 'pag', '2026-11-01', { tipo: 'padre', descrizione: 'Contenitore rateale' }))
+      const fig = di(await esporta(), 'Nfig Rossi')
+      expect(fig.map((r) => r.Descrizione)).toEqual(['Retta 2026-09', 'Retta 2026-10'])
+    })
+
+    it('una retta del pagante senza `periodo_competenza` non produce una riga in più', async () => {
+      h.db.pagamenti.push(voce('p-nul', 'pag', '2026-12-01', { periodo_competenza: null, descrizione: 'Retta senza periodo' }))
+      const tutte = await esporta()
+      // Controllo positivo: la voce c'è, nella riga del pagante.
+      expect(di(tutte, 'Npag Rossi').map((r) => r.Descrizione)).toContain('Retta senza periodo')
+      expect(di(tutte, 'Nfig Rossi').map((r) => r.Descrizione)).toEqual(['Retta 2026-09', 'Retta 2026-10'])
+    })
   })
 
   it('filtro stato: la riga del bambino segue lo stato della retta del pagante', async () => {

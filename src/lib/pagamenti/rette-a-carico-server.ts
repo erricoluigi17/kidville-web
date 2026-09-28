@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logEvento } from '@/lib/logging/logger'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
+import { formaConfronto } from '@/lib/auth/scope'
 import { sessoDa, type LegameRetta } from './rette-a-carico'
 
 /**
@@ -14,13 +15,42 @@ import { sessoDa, type LegameRetta } from './rette-a-carico'
  * verso la stessa tabella è fragile, e il client finto dei test non costruisce join —
  * con due query i filtri li verifica davvero.
  *
- * `sediPaganti` sono le sedi a cui l'utente ha ACCESSO (non solo quelle selezionate):
+ * `sediPaganti` sono le sedi a cui l'utente ha ACCESSO (non solo quelle selezionate), unite a
+ * quelle dei bambini perché una lettura andata storta non le svuoti (`sediDeiPaganti`, K4):
  * un pagante in un'altra sede accessibile si vede, e accende l'avviso «altra sede»; uno
  * in una sede non accessibile non si rivela — di lui non esce NIENTE, ma il bambino (che è
  * nella sede dell'utente) finisce in `nonVisibili`, contato in un `warn`. Prima si scartava
  * e basta: quel bambino tornava «Non generata» e «mancante» per sempre, perché la
  * generazione lo salta comunque (D6 vale anche quando chi paga non si può leggere).
  */
+
+/**
+ * K4 (seconda revisione 2026-09-28) — le sedi in cui si legge chi paga: quelle dei bambini ∪
+ * quelle accessibili, senza doppioni (confronto senza maiuscole, come `scope.ts`; esce la
+ * prima forma incontrata, cioè quella dei bambini).
+ *
+ * PERCHÉ L'UNIONE. Le route prendono le accessibili da una SECONDA chiamata a
+ * `scuoleDiUtente` (la prima è dentro `resolveScuoleAttive`), e quella funzione non lancia
+ * mai: per un utente non-Direzione restituisce la sua sede senza leggere niente; per la
+ * Direzione legge `utenti_scuole`, e se la tabella MANCA (`42P01`/`PGRST205`) logga un `warn`
+ * e restituisce la sola sede propria, mentre su ogni ALTRO errore logga
+ * `sedi-utente-non-risolte` (error) e restituisce `[]`. Con `[]` qui ogni pagante — anche
+ * quello nella STESSA sede del bambino — risultava non leggibile, e il cruscotto diceva il
+ * falso «Chi paga è in un'altra sede». Le sedi dei bambini sono già validate (vengono da
+ * `resolveScuoleAttive`), quindi l'unione non allarga niente: nel caso buono coincide con le
+ * accessibili, nel caso guasto si perde solo il pagante di un'ALTRA sede accessibile.
+ */
+export function sediDeiPaganti(sediBambini: readonly string[], accessibili: readonly string[]): string[] {
+  const viste = new Set<string>()
+  const out: string[] = []
+  for (const s of [...sediBambini, ...accessibili]) {
+    const k = formaConfronto(s)
+    if (viste.has(k)) continue
+    viste.add(k)
+    out.push(s)
+  }
+  return out
+}
 
 export interface LegameRettaCompleto extends LegameRetta {
   /** Il bambino a carico: serve all'export, NON esce dalla route del cruscotto. */
@@ -40,7 +70,7 @@ export type EsitoLegami =
 interface OpzioniLegami {
   /** Le sedi dei bambini a carico (il perimetro della schermata o dell'export). */
   sediBambini: string[]
-  /** Le sedi in cui si può leggere il pagante: quelle accessibili all'utente. */
+  /** Le sedi in cui si può leggere il pagante: `sediDeiPaganti(sediBambini, accessibili)`. */
   sediPaganti: string[]
   /** L'operazione che chiama, per i log (`pagamenti/rette-a-carico:GET`, `pagamenti/export:GET`). */
   operazione: string

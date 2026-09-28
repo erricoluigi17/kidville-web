@@ -13,7 +13,9 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 // `scuoleDiUtente` e `.not()` dal 2026-09-28: lo Scadenzario legge anche i legami
 // «retta a carico di un fratello» (D14) sulle sedi ACCESSIBILI, con `retta_a_carico_di IS NOT NULL`.
-vi.mock('@/lib/auth/scope', () => ({
+// Il resto del modulo VERO: dal K4 le sedi dei paganti si deduplicano con `formaConfronto`.
+vi.mock('@/lib/auth/scope', async (importActual) => ({
+  ...(await importActual<typeof import('@/lib/auth/scope')>()),
   resolveScuoleAttive: vi.fn(async () => ['sc-1']),
   scuoleDiUtente: vi.fn(async () => ['sc-1']),
 }))

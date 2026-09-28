@@ -9,8 +9,22 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
   return { ...vero, logEvento: h.logEvento }
 })
 
-import { caricaLegamiRetta } from '@/lib/pagamenti/rette-a-carico-server'
+import { caricaLegamiRetta, sediDeiPaganti } from '@/lib/pagamenti/rette-a-carico-server'
 import { creaFintoSupabase } from '../fixtures/finto-supabase'
+
+// K4 (seconda revisione 2026-09-28): le sedi dei paganti = sedi dei bambini ∪ accessibili.
+describe('sediDeiPaganti', () => {
+  it('l’unione, senza doppioni, nell’ordine: prima le sedi dei bambini', () => {
+    expect(sediDeiPaganti(['s1'], ['s1', 's2'])).toEqual(['s1', 's2'])
+    expect(sediDeiPaganti(['s1', 's2'], ['s3'])).toEqual(['s1', 's2', 's3'])
+  })
+  it('accessibili vuote (la seconda `scuoleDiUtente` fallita): restano le sedi dei bambini', () => {
+    expect(sediDeiPaganti(['s1', 's2'], [])).toEqual(['s1', 's2'])
+  })
+  it('lo stesso uuid scritto in maiuscolo non è un doppione (in Postgres è lo stesso valore)', () => {
+    expect(sediDeiPaganti(['aaaa-bbbb'], ['AAAA-BBBB', 's2'])).toEqual(['aaaa-bbbb', 's2'])
+  })
+})
 
 const OP = 'test:GET'
 const alunno = (id: string, extra: Record<string, unknown>) => ({

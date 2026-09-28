@@ -8,6 +8,8 @@ const h = vi.hoisted(() => ({
   db: {} as DBFinto,
   errori: {} as Record<string, ErrorePostgrest>,
   logEvento: vi.fn(),
+  /** K4: la SECONDA lettura di `utenti_scuole` nella richiesta risponde con un errore. */
+  guastoSecondaLetturaSedi: false,
 }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
@@ -17,7 +19,20 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
 })
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
-  return { createAdminClient: async () => creaFintoSupabase(h.db, [], { errori: h.errori }) }
+  return {
+    createAdminClient: async () => {
+      const c = creaFintoSupabase(h.db, [], { errori: h.errori })
+      if (!h.guastoSecondaLetturaSedi) return c
+      // La prima lettura (dentro `resolveScuoleAttive`) va bene; la seconda — quella da cui la
+      // route prende le sedi dei paganti — risponde `{ error }`, e `scuoleDiUtente` VERO la
+      // trasforma in `[]` (loggando `sedi-utente-non-risolte`).
+      const guasto = creaFintoSupabase(h.db, [], { errori: { utenti_scuole: { code: '57014' } } })
+      const from = c.from.bind(c)
+      let letture = 0
+      Object.assign(c, { from: (t: string) => (t === 'utenti_scuole' && ++letture === 2 ? guasto.from(t) : from(t)) })
+      return c
+    },
+  }
 })
 
 import { GET } from '@/app/api/pagamenti/rette-a-carico/route'
@@ -33,6 +48,7 @@ const alunno = (id: string, sede: string, extra: Record<string, unknown> = {}) =
 beforeEach(() => {
   vi.clearAllMocks()
   h.errori = {}
+  h.guastoSecondaLetturaSedi = false
   h.db = {
     schools: [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_B, nome: NOME_SEDE_B }, { id: SEDE_C, nome: 'Terza' }],
     scuole: [{ id: SEDE_A, attiva: true }, { id: SEDE_B, attiva: true }, { id: SEDE_C, attiva: true }],
@@ -72,6 +88,21 @@ describe('GET /api/pagamenti/rette-a-carico', () => {
     expect(corpo.data.map((l: { alunno_id: string }) => l.alunno_id)).not.toContain('fx')
     expect(JSON.stringify(corpo)).not.toContain('N-pc')
     expect(JSON.stringify(corpo)).not.toContain('Sez-pc')
+  })
+
+  // K4 (seconda revisione 2026-09-28): le sedi dei paganti venivano SOLO da una seconda
+  // chiamata a `scuoleDiUtente`, che su un errore restituisce `[]`. Allora anche il pagante
+  // della STESSA sede del bambino risultava «non leggibile», e il cruscotto diceva il falso
+  // «Chi paga è in un'altra sede». Ora sono l'unione con le sedi dei bambini.
+  it('K4 — la seconda lettura delle sedi fallisce: i paganti della sede del bambino restano leggibili', async () => {
+    h.guastoSecondaLetturaSedi = true
+    const corpo = await (await GET(req())).json()
+    // La prova che il guasto è scattato davvero: `scuoleDiUtente` l'ha loggato.
+    expect(h.logEvento).toHaveBeenCalledWith('auth', 'error', expect.objectContaining({ tipo: 'sedi-utente-non-risolte' }), expect.anything())
+    expect(corpo.data.map((l: { alunno_id: string }) => l.alunno_id).sort()).toEqual(['fa', 'fb'])
+    // Il pagante in una sede davvero non accessibile resta non leggibile, come prima.
+    expect(corpo.a_carico_non_visibili).toEqual(['fx'])
+    expect(JSON.stringify(corpo)).not.toContain('N-pc')
   })
 
   it('scuola_id restringe a quella sede', async () => {

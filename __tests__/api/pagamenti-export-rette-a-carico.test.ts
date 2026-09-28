@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
   db: {} as DBFinto,
   errori: {} as Record<string, { code: string }>,
   logEvento: vi.fn(),
+  /** K4: la SECONDA lettura di `utenti_scuole` nella richiesta risponde con un errore. */
+  guastoSecondaLetturaSedi: false,
 }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
@@ -29,7 +31,19 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
 })
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
-  return { createAdminClient: async () => creaFintoSupabase(h.db, [], { errori: h.errori }) }
+  return {
+    createAdminClient: async () => {
+      const c = creaFintoSupabase(h.db, [], { errori: h.errori })
+      if (!h.guastoSecondaLetturaSedi) return c
+      // La prima lettura (dentro `resolveScuoleAttive`) va bene; la seconda — le sedi dei
+      // paganti — risponde `{ error }`, e `scuoleDiUtente` VERO la trasforma in `[]`.
+      const guasto = creaFintoSupabase(h.db, [], { errori: { utenti_scuole: { code: '57014' } } })
+      const from = c.from.bind(c)
+      let letture = 0
+      Object.assign(c, { from: (t: string) => (t === 'utenti_scuole' && ++letture === 2 ? guasto.from(t) : from(t)) })
+      return c
+    },
+  }
 })
 
 import { GET } from '@/app/api/pagamenti/export/route'
@@ -59,6 +73,7 @@ async function righe(res: Response) {
 beforeEach(() => {
   vi.clearAllMocks()
   h.errori = {}
+  h.guastoSecondaLetturaSedi = false
   h.db = {
     schools: [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_B, nome: NOME_SEDE_B }],
     scuole: [{ id: SEDE_A, attiva: true }, { id: SEDE_B, attiva: true }],
@@ -87,6 +102,18 @@ describe('export scadenzario — righe dei bambini a carico (D14)', () => {
       expect.objectContaining({ Sede: NOME_SEDE_A, Sezione: 'Sez. A', Categoria: 'Retta', Descrizione: 'Retta 2026-09', Scadenza: '2026-09-05', 'Importo €': 0, 'Pagato €': 0, 'Residuo €': 0, Stato: 'Paga il fratello Npag Rossi (Sez. C) · Pagato' }),
       expect.objectContaining({ Descrizione: 'Retta 2026-10', Scadenza: '2026-10-05', 'Importo €': 0, Stato: 'Paga il fratello Npag Rossi (Sez. C) · Da pagare' }),
     ])
+  })
+
+  // K4 (seconda revisione 2026-09-28): le sedi dei paganti venivano SOLO da una seconda
+  // `scuoleDiUtente`, che su un errore restituisce `[]`: il pagante della stessa sede del
+  // bambino diventava «non leggibile» e le righe del bambino sparivano dall'Excel.
+  it('K4 — la seconda lettura delle sedi fallisce: le righe del bambino (pagante nella sua sede) ci sono', async () => {
+    h.guastoSecondaLetturaSedi = true
+    const res = await GET(new NextRequest('http://localhost/api/pagamenti/export?tipo=scadenzario'))
+    expect(res.status).toBe(200)
+    expect(h.logEvento).toHaveBeenCalledWith('auth', 'error', expect.objectContaining({ tipo: 'sedi-utente-non-risolte' }), expect.anything())
+    const fig = (await righe(res)).filter((r) => r.Alunno === 'Nfig Rossi')
+    expect(fig.map((r) => r.Stato)).toEqual(['Paga il fratello Npag Rossi (Sez. C) · Pagato', 'Paga il fratello Npag Rossi (Sez. C) · Da pagare'])
   })
 
   it('D9: il bambino con la sua retta del mese non riceve la riga in più per quel mese', async () => {

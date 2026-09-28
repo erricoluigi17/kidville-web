@@ -8,7 +8,7 @@ import { resolveScuoleAttive, restringiSedi, scuoleDiUtente } from '@/lib/auth/s
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { caricaLegamiRetta } from '@/lib/pagamenti/rette-a-carico-server'
+import { caricaLegamiRetta, sediDeiPaganti } from '@/lib/pagamenti/rette-a-carico-server'
 import type { LegameRetta } from '@/lib/pagamenti/rette-a-carico'
 
 /**
@@ -53,7 +53,10 @@ export const GET = withRoute('pagamenti/rette-a-carico:GET', async (request: Nex
 
     const esito = await caricaLegamiRetta(supabase, {
       sediBambini: sedi,
-      sediPaganti: await scuoleDiUtente(supabase, user),
+      // K4: unite alle sedi dei bambini. Da sola, questa seconda `scuoleDiUtente` su un errore
+      // di `utenti_scuole` dà `[]`, e ogni pagante — anche della stessa sede — risultava «in
+      // un'altra sede» (vedi `sediDeiPaganti`).
+      sediPaganti: sediDeiPaganti(sedi, await scuoleDiUtente(supabase, user)),
       operazione: OPERAZIONE,
     })
     if (!esito.ok) {

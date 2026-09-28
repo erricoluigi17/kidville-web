@@ -13,6 +13,7 @@ import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/inte
 import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { righeRetteACarico, type RigaScadenzario } from '@/lib/pagamenti/export-rette-a-carico'
 import { leggiABlocchi, type EsitoABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
+import { sediDeiPaganti } from '@/lib/pagamenti/rette-a-carico-server'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -209,9 +210,12 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     // D14 — i bambini con la retta a carico di un fratello: una riga a importi zero per ogni
     // retta del pagante. Si intercalano per scadenza; il sort è STABILE, e le righe senza
     // scadenza restano in fondo come le mette Postgres (NULLS LAST).
+    const sediBambini = scuolaId && sediAttive.includes(scuolaId) ? [scuolaId] : sediAttive
     const aCarico = await righeRetteACarico(supabase, {
-      sediBambini: scuolaId && sediAttive.includes(scuolaId) ? [scuolaId] : sediAttive,
-      sediPaganti: await scuoleDiUtente(supabase, user),
+      sediBambini,
+      // K4: unite alle sedi dei bambini — da sola questa seconda `scuoleDiUtente`, su un errore,
+      // dà `[]` e le righe dei bambini sparirebbero anche col pagante nella loro sede.
+      sediPaganti: sediDeiPaganti(sediBambini, await scuoleDiUtente(supabase, user)),
       sectionIds,
       stato,
       categoriaId,

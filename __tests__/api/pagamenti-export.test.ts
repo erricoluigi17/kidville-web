@@ -11,7 +11,12 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: vi.fn(async () => ['sc-1']) }))
+// `scuoleDiUtente` e `.not()` dal 2026-09-28: lo Scadenzario legge anche i legami
+// «retta a carico di un fratello» (D14) sulle sedi ACCESSIBILI, con `retta_a_carico_di IS NOT NULL`.
+vi.mock('@/lib/auth/scope', () => ({
+  resolveScuoleAttive: vi.fn(async () => ['sc-1']),
+  scuoleDiUtente: vi.fn(async () => ['sc-1']),
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -20,6 +25,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.order = () => b
       b.eq = () => b
       b.in = () => b
+      b.not = () => b
       b.gte = () => b
       b.lte = () => b
       b.maybeSingle = async () => ({ data: table === 'parents' ? h.parentReg : null, error: null })

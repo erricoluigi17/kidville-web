@@ -226,8 +226,10 @@ describe('GET /api/pagamenti/export?tipo=scadenzario — section_ids', () => {
     )
     expect(chiamate).toHaveLength(1)
     const ctx = chiamate[0][2] as Record<string, unknown>
-    expect(ctx).toEqual(expect.objectContaining({ attive: 2, classi: 2, n: 2 }))
-    expect(Object.keys(ctx).sort()).toEqual(['attive', 'azione', 'classi', 'n', 'ruolo', 'tipo', 'utente'])
+    expect(ctx).toEqual(expect.objectContaining({ attive: 2, classi: 2, n: 2, a_carico: 0 }))
+    // `a_carico` dal 2026-09-28 (D14): QUANTE righe a importi zero dei bambini con la retta a
+    // carico di un fratello — un conteggio, come `n`, mai chi sono.
+    expect(Object.keys(ctx).sort()).toEqual(['a_carico', 'attive', 'azione', 'classi', 'n', 'ruolo', 'tipo', 'utente'])
   })
 
   it('parametro RIPETUTO (`section_ids=a&section_ids=b`, che parseQuery consegna come array): accettato', async () => {

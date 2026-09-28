@@ -5,12 +5,13 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/attestazione'
 import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
 import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
+import { righeRetteACarico, type RigaScadenzario } from '@/lib/pagamenti/export-rette-a-carico'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -161,7 +162,7 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     }
 
     // I contenitori padre non sono voci esigibili: nell'export contano le rate.
-    const righe = ((data || []) as unknown as RigaPagamento[])
+    const righe: RigaScadenzario[] = ((data || []) as unknown as RigaPagamento[])
       .filter((p) => p.tipo !== 'padre')
       .map((p) => ({
         // K2 — prima colonna: con più plessi è la prima cosa che serve sapere.
@@ -178,7 +179,25 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
         Fattura: p.stato === 'pagato' ? (FATTURA_LABEL[p.fattura_stato ?? 'non_richiesta'] ?? '') : '',
       }))
 
-    const ws = XLSX.utils.json_to_sheet(righe)
+    // D14 — i bambini con la retta a carico di un fratello: una riga a importi zero per ogni
+    // retta del pagante. Si intercalano per scadenza; il sort è STABILE, e le righe senza
+    // scadenza restano in fondo come le mette Postgres (NULLS LAST).
+    const aCarico = await righeRetteACarico(supabase, {
+      sediBambini: scuolaId && sediAttive.includes(scuolaId) ? [scuolaId] : sediAttive,
+      sediPaganti: await scuoleDiUtente(supabase, user),
+      sectionIds,
+      stato,
+      categoriaId,
+      nomiSedi,
+      etichettaStato: (s) => STATO_LABEL[s] ?? s,
+    })
+    const chiave = (s: string) => s || '￿'
+    const tutte = [...righe, ...aCarico].sort((a, b) => {
+      const x = chiave(a.Scadenza), y = chiave(b.Scadenza)
+      return x < y ? -1 : x > y ? 1 : 0
+    })
+
+    const ws = XLSX.utils.json_to_sheet(tutte)
     ws['!cols'] = [{ wch: 20 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Scadenzario')
@@ -186,7 +205,7 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     logEvento('pagamento', 'info', {
       tipo: 'export-scadenzario', azione: 'pagamenti/export:GET',
       utente: user.id, ruolo: user.role, attive: sediAttive.length,
-      classi: sectionIds?.length ?? 0, n: righe.length,
+      classi: sectionIds?.length ?? 0, n: tutte.length, a_carico: aCarico.length,
     })
 
     // SheetJS ritorna Buffer in Node: cast ad ArrayBuffer per NextResponse

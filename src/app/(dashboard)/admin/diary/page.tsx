@@ -44,7 +44,9 @@ function AdminDiaryInner() {
       .catch(() => {});
   };
 
-  const day = useDiaryDay(userId, sezione, { onSaved: () => loadCompilati(sezione) });
+  // La sede del selettore arriva all'editor (2026-09-28): le routine sono per sede, e la
+  // segreteria che compila il diario di un altro plesso deve vedere le routine di quello.
+  const day = useDiaryDay(userId, sezione, { onSaved: () => loadCompilati(sezione), scuolaId: scuolaId || undefined });
 
   useEffect(() => {
     if (!userId) return;

@@ -40,7 +40,7 @@ vi.mock('@/lib/primaria/notifiche', () => ({
   notificaTitolariScrittura: h.notificaTitolariScrittura,
   enqueueDiarioGenitori: h.enqueueDiarioGenitori,
 }))
-vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}) }))
+vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}), leggiModuleConfig: async () => ({ ok: true, config: {} }) }))
 vi.mock('@/lib/armadietto/richieste', () => ({ riconciliaRichieste: vi.fn() }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
@@ -129,6 +129,20 @@ describe('DELETE /api/diary/entries', () => {
     const res = await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=qualunque&date=2026-09-07`))
     expect(res.status).toBe(400)
     expect(h.deleteChiamata).toBe(false)
+  })
+
+  it('le routine della scuola hanno la loro porta d\'uscita; il prefisso non apre nient\'altro', async () => {
+    // 2026-09-28: le routine aggiunte dalla segreteria sono selettive come il bagno, quindi
+    // senza cestino «spegni e risalva» lascerebbe la riga in archivio. La porta resta aperta
+    // anche per una routine SPENTA o cancellata: correggere uno sbaglio non dipende da quello.
+    h.deleteChiamata = false
+    expect((await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=routine:a1b2c3d4&date=2026-09-07`))).status).not.toBe(400)
+    for (const falso of ['routine:', 'routine:NON-VALIDO', 'routine:a1b2c3d4x', 'routine:../../x']) {
+      h.deleteChiamata = false
+      const res = await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=${encodeURIComponent(falso)}&date=2026-09-07`))
+      expect(res.status, falso).toBe(400)
+      expect(h.deleteChiamata, falso).toBe(false)
+    }
   })
 
   it.each(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita'])(

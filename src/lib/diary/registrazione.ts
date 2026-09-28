@@ -36,6 +36,7 @@ import { umoreFromDettagli } from '@/lib/diary/umore';
 import { eEventoBagno, bagnoCompilato } from '@/lib/diary/bagno';
 import { eEventoPasto, pastoCompilato } from '@/lib/diary/pasto';
 import { eEventoAttivita, attivitaCompilata } from '@/lib/diary/attivita';
+import { eRoutinePersonalizzata, routineCompilata } from '@/lib/diary/routine';
 
 /**
  * I tipi evento che si salvano SOLO a chi li ha davvero.
@@ -53,9 +54,13 @@ export const TIPI_SELETTIVI: readonly string[] = [
     'umore', 'nanna', 'nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita',
 ];
 
-/** Questo tipo evento si salva solo a chi lo ha davvero? */
+/**
+ * Questo tipo evento si salva solo a chi lo ha davvero? Le routine aggiunte dalla scuola
+ * (`routine:<id>`, 2026-09-28) sì, tutte: il loro elenco non è fisso, quindi non stanno in
+ * `TIPI_SELETTIVI` ma si riconoscono dal tipo.
+ */
 export function eventoSelettivo(tipo: string): boolean {
-    return TIPI_SELETTIVI.includes(tipo);
+    return TIPI_SELETTIVI.includes(tipo) || eRoutinePersonalizzata(tipo);
 }
 
 /**
@@ -88,6 +93,9 @@ export function voceDaMostrare(
     // ⚠️ L'attività è di CLASSE: basta una descrizione perché valga per tutti, e la
     // partecipazione del singolo non è mai un requisito. Vedi `attivita.ts`.
     if (eEventoAttivita(tipo)) return attivitaCompilata(dettagli);
+    // Le routine della scuola: senza questa riga il fail-open qui sotto le avrebbe salvate a
+    // TUTTI i bambini, anche a chi la maestra non ha toccato (2026-09-28).
+    if (eRoutinePersonalizzata(tipo)) return routineCompilata(dettagli);
     return true;
 }
 
@@ -120,7 +128,10 @@ export const TIPI_ELIMINABILI: readonly string[] = [
     'nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita',
 ];
 
-/** Questa registrazione si può cancellare dalla schermata del docente? */
+/**
+ * Questa registrazione si può cancellare dalla schermata del docente? Le routine della scuola
+ * sì: sono selettive, e il salvataggio selettivo senza cestino è la trappola descritta qui sopra.
+ */
 export function eliminabile(tipo: string): boolean {
-    return TIPI_ELIMINABILI.includes(tipo);
+    return TIPI_ELIMINABILI.includes(tipo) || eRoutinePersonalizzata(tipo);
 }

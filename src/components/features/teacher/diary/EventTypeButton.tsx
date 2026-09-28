@@ -2,7 +2,7 @@
 
 import { useTranslations } from 'next-intl';
 import { DiaryEventType } from '@/lib/offline/db';
-import { EVENT_CONFIG, useEventLabel } from './eventConfig';
+import { configDiVoce, useEventLabel, type FonteRoutine } from './eventConfig';
 
 interface EventTypeButtonProps {
     type: DiaryEventType;
@@ -10,12 +10,18 @@ interface EventTypeButtonProps {
     /** Tessera attualmente selezionata: bordo pieno + aria-pressed. */
     selected?: boolean;
     onClick: (type: DiaryEventType) => void;
+    /**
+     * Per una routine della scuola (`routine:<id>`): la sua definizione, da cui vengono nome e
+     * icona. Senza, la tessera direbbe «Evento» 📝 (2026-09-28).
+     */
+    fonte?: FonteRoutine | null;
 }
 
-export function EventTypeButton({ type, disabled = false, selected = false, onClick }: EventTypeButtonProps) {
+export function EventTypeButton({ type, disabled = false, selected = false, onClick, fonte }: EventTypeButtonProps) {
     const t = useTranslations('teacherDiario');
     const eventLabel = useEventLabel();
-    const config = EVENT_CONFIG[type];
+    const config = configDiVoce(type, fonte);
+    const etichetta = eventLabel(type, fonte);
     // Selezione: bordo pieno green al posto del border-…/25 di config — un anello
     // sul wrapper verrebbe coperto dallo sfondo opaco del bottone, mentre il bordo
     // resta visibile anche in alto contrasto (dove gli sfondi -soft diventano neri).
@@ -39,11 +45,11 @@ export function EventTypeButton({ type, disabled = false, selected = false, onCl
                     : 'hover:scale-[1.03] hover:shadow-md active:scale-95 cursor-pointer'
                 }
             `}
-            aria-label={`${t('registra')} ${eventLabel(type)}`}
+            aria-label={`${t('registra')} ${etichetta}`}
         >
             <span className="text-3xl leading-none">{config.emoji}</span>
             <span className="font-barlow font-semibold text-[10px] leading-tight px-1 text-center uppercase tracking-wide">
-                {eventLabel(type)}
+                {etichetta}
             </span>
         </button>
     );

@@ -6,13 +6,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
-import { EVENT_CONFIG, BATHROOM_TYPES, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
+import { configDiVoce, BATHROOM_TYPES, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
+import { RoutinePersonalizzataInline } from '@/components/features/teacher/diary/RoutinePersonalizzataInline';
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
 import { BottoneEliminaRegistrazione } from '@/components/features/teacher/diary/BottoneEliminaRegistrazione';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { ActivityDetailInline, ActivityItem, orarioAttivitaIncoerente } from '@/components/features/teacher/diary/ActivityDetailInline';
 import { orarioAttivita } from '@/lib/diary/attivita';
-import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
+import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli } from '@/lib/diary/umore';
+import { tipiAttivi, routinePersonalizzate, idDiTipo, dettagliRoutine, valoreRoutineValido, type RoutinePersonalizzata } from '@/lib/diary/routine';
 import { voceDaMostrare, eventoSelettivo, eliminabile } from '@/lib/diary/registrazione';
 import { fetchDiarioConfig } from '@/lib/diary/config-cache';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
@@ -55,8 +57,8 @@ function notaDaMostrare(nota?: string | null): string | null {
 
 // Entrata rimossa — gestita dal modulo Presenze
 // Nanna e Sveglia sono DUE pulsanti distinti (PRD §3.1.1): Nanna = orario inizio, Sveglia = orario fine.
-// 'umore' (M5.4) si aggiunge in coda solo se attivo in diario_config.routine_attive.
-const ALL_EVENT_TYPES: DiaryEventType[] = ['attivita', 'merenda', 'pranzo', 'nanna_inizio', 'nanna_fine', 'bagno'];
+// Quali bottoni vede la maestra lo decide la SEDE (2026-09-28): `tipiAttivi` in `@/lib/diary/routine`
+// accende i tipi delle routine base attive e aggiunge le routine della scuola.
 
 function now() {
     const d = new Date();
@@ -73,10 +75,13 @@ function bathroomLabel(value: string): string {
     return BATHROOM_TYPES.find(b => b.value === value)?.label ?? value;
 }
 
-function buildInitialState(type: DiaryEventType, students: DiaryStudent[]) {
+function buildInitialState(type: DiaryEventType, students: DiaryStudent[], routine?: RoutinePersonalizzata | null) {
     const state: Record<string, Record<string, unknown>> = {};
     students.forEach(s => {
-        if (type === 'attivita') state[s.id] = { partecipazione: null };
+        // Una routine della scuola nasce con la sua fotografia (nome, icona, tipo di risposta) e
+        // il valore «niente»: è la forma che `voceDaMostrare` sa leggere.
+        if (routine) state[s.id] = dettagliRoutine(routine, null);
+        else if (type === 'attivita') state[s.id] = { partecipazione: null };
         else if (type === 'pranzo') {
             const corsi: Record<string, string | null> = {};
             ['primo', 'secondo', 'contorno', 'frutta'].forEach(c => { corsi[c] = null; });
@@ -143,6 +148,11 @@ export function useDiaryDay(
          * accettano entrambe le strade e le fanno finire sullo stesso filtro.
          */
         sectionId?: string;
+        /**
+         * La SEDE di cui si compila il diario, quando non è quella dell'utente: il cockpit di
+         * segreteria la sceglie dal selettore. Le routine sono per sede (2026-09-28).
+         */
+        scuolaId?: string;
     },
 ) {
     const t = useTranslations('teacherDiario');
@@ -205,8 +215,11 @@ export function useDiaryDay(
     const [noteBambino, setNoteBambino] = useState<Record<string, string>>({});
     // Filtro presenze (incongruenza #7): default = solo presenti; toggle per mostrare tutti.
     const [showAll, setShowAll] = useState(false);
-    // 'umore' visibile solo se attivo in diario_config.routine_attive (M5.4).
-    const [umoreEnabled, setUmoreEnabled] = useState(false);
+    // Le routine della sede (2026-09-28): quali bottoni, e le routine della scuola. `null` finché
+    // la configurazione non arriva — o se non arriva: allora valgono le routine di sempre, e la
+    // maestra può comunque lavorare.
+    const [configRoutine, setConfigRoutine] = useState<{ routine_attive?: unknown; routine_personalizzate?: unknown } | null>(null);
+    const scuolaId = opts?.scuolaId;
 
     // Config dalla cache di modulo: è la STESSA GET che il chrome della pagina
     // /teacher/diary fa per sapere se mostrare le sezioni primaria. Farne una
@@ -214,13 +227,19 @@ export function useDiaryDay(
     useEffect(() => {
         if (!userId) return;
         let active = true;
-        void fetchDiarioConfig(userId).then(d => {
-            if (active && d) setUmoreEnabled(umoreAttivo(d.routine_attive));
+        void fetchDiarioConfig(userId, scuolaId).then(d => {
+            if (active) setConfigRoutine(d);
         });
         return () => { active = false; };
-    }, [userId]);
+    }, [userId, scuolaId]);
 
-    const eventTypes: DiaryEventType[] = umoreEnabled ? [...ALL_EVENT_TYPES, 'umore'] : ALL_EVENT_TYPES;
+    const eventTypes = tipiAttivi(configRoutine ?? {}) as DiaryEventType[];
+    const personalizzate = routinePersonalizzate(configRoutine?.routine_personalizzate).filter(r => r.attiva);
+    /** La definizione della routine della scuola dietro un tipo di voce, o `null` (tipi base). */
+    const routineDi = (tipo: DiaryEventType | null): RoutinePersonalizzata | null => {
+        const id = tipo ? idDiTipo(tipo) : null;
+        return id ? personalizzate.find(r => r.id === id) ?? null : null;
+    };
 
     // L'uuid quando c'è, il nome quando no. Prima si mandava sempre il nome, e
     // le route filtravano `alunni.classe_sezione` per uguaglianza esatta: uno
@@ -305,7 +324,8 @@ export function useDiaryDay(
                 }
             });
 
-            const newState = buildInitialState(eventType, list);
+            const routine = routineDi(eventType);
+            const newState = buildInitialState(eventType, list, routine);
             const savedIds = new Set<string>();
             const inArchivio: Record<string, Record<string, unknown>> = {};
             const restoredNotes: Record<string, string> = {};
@@ -316,6 +336,13 @@ export function useDiaryDay(
                 const nb = (entry as { nota_bambino?: string | null }).nota_bambino;
                 if (typeof nb === 'string' && nb.length > 0) restoredNotes[studentId] = nb;
                 if (entry.dettagli && typeof entry.dettagli === 'object') {
+                    // Una routine della scuola si ripristina con la fotografia di OGGI e il valore
+                    // salvato, ma solo se quel valore vale ancora per la routine com'è adesso
+                    // (le opzioni possono essere cambiate): altrimenti il campo resta vuoto e senza ✅.
+                    if (routine) {
+                        const valore = (entry.dettagli as Record<string, unknown>).valore;
+                        entry.dettagli = dettagliRoutine(routine, valoreRoutineValido(routine, valore) ? valore : null);
+                    }
                     // Una riga vuota già in archivio non ripristina lo stato e NON
                     // mette la ✅ — e questa è la riga che rende inerti, in un solo
                     // istante e senza nessuna migrazione, le 323 righe di bagno e le
@@ -403,7 +430,7 @@ export function useDiaryDay(
         students.forEach(s => { initPart[s.id] = null; });
         setActivities([{ tipo: 'pittura', descrizione: '', studentPartecipazione: initPart }]);
         // Poi carica da Supabase (await per evitare race condition)
-        const initialState = buildInitialState(type, students);
+        const initialState = buildInitialState(type, students, routineDi(type));
         setStudentStates(initialState);
         await restoreFromSupabase(type);
     };
@@ -428,6 +455,19 @@ export function useDiaryDay(
     const counter = (id: string, field: 'pipi' | 'cacca' | 'vasino', delta: number) => {
         const cur = (studentStates[id]?.[field] as number) ?? 0;
         updateStudent(id, { [field]: Math.max(0, cur + delta) });
+    };
+
+    /**
+     * «Fatto per tutti» di una routine della scuola a spunta: segna l'intera classe in un tocco,
+     * come «Tutti a nanna ora». Chi non l'ha fatta si spegne a mano prima di salvare.
+     */
+    const segnaTuttiFatto = () => {
+        setStudentStates(prev => {
+            const next = { ...prev };
+            students.forEach(s => { next[s.id] = { ...next[s.id], valore: true }; });
+            return next;
+        });
+        setSavedStudentIds(new Set());
     };
 
     // Bulk "Nanna per tutti": imposta l'orario di inizio nanna = ora per ogni bambino in elenco.
@@ -497,7 +537,7 @@ export function useDiaryDay(
             // `{ [campo]: '' }`, cioè la forma della sola nanna. Con cinque famiglie
             // di evento, «com'è fatto un evento vuoto» deve restare scritto in un
             // posto solo — quello che lo scrive all'apertura della schermata.
-            setStudentStates(prev => ({ ...prev, [studentId]: buildInitialState(selectedEvent, students)[studentId] ?? {} }));
+            setStudentStates(prev => ({ ...prev, [studentId]: buildInitialState(selectedEvent, students, routineDi(selectedEvent))[studentId] ?? {} }));
         } catch (err) {
             // Del guasto esce il codice e basta: il diario è il posto con i dati più
             // delicati dell'app, e il nome del bambino non entra in nessun log.
@@ -720,6 +760,16 @@ export function useDiaryDay(
                             : t('attivitaOrarioNonValido'));
                         return;
                     }
+                    // La routine spenta, cambiata o cancellata dalla segreteria mentre la maestra
+                    // compilava (2026-09-28): il server non ha scritto niente, e lei deve sapere perché.
+                    if (res.status === 422 && (codice === 'ROUTINE_NON_DISPONIBILE' || codice === 'ROUTINE_SPENTA')) {
+                        alert(t('routineNonDisponibile'));
+                        return;
+                    }
+                    if (res.status === 422 && codice === 'ROUTINE_VALORE_NON_VALIDO') {
+                        alert(t('routineValoreNonValido'));
+                        return;
+                    }
                     throw new Error(typeof err?.error === 'string' && err.error ? err.error : 'Errore salvataggio');
                 }
 
@@ -778,7 +828,7 @@ export function useDiaryDay(
                 // altrimenti il campo vuoto e la ✅ tolta finirebbero su un altro tipo.
                 if (stessoRiquadro()) {
                     setSavedStudentIds(prev => { const n = new Set(prev); tolti.forEach(id => n.delete(id)); return n; });
-                    const vuoto = buildInitialState(selectedEvent, students);
+                    const vuoto = buildInitialState(selectedEvent, students, routineDi(selectedEvent));
                     setStudentStates(prev => {
                         const n = { ...prev };
                         tolti.forEach(id => { n[id] = vuoto[id] ?? {}; });
@@ -838,7 +888,7 @@ export function useDiaryDay(
                 // Si riparte da vuoto, come all'apertura: con l'archivio di quel tipo
                 // ormai VUOTO il ripristino non scrive lo stato per bambino, e l'orario
                 // tolto resterebbe nel campo senza ✅, pronto per la POST dopo.
-                setStudentStates(buildInitialState(selectedEvent, students));
+                setStudentStates(buildInitialState(selectedEvent, students, routineDi(selectedEvent)));
                 setNoteBambino({});
                 await restoreFromSupabase(selectedEvent);
             }
@@ -863,6 +913,7 @@ export function useDiaryDay(
         showAll,
         toggleShowAll: () => setShowAll(v => !v),
         eventTypes,
+        routineDi,
         selectedEvent,
         setSelectedEvent,
         studentStates,
@@ -880,6 +931,7 @@ export function useDiaryDay(
         updateMealCourse,
         counter,
         bulkNannaOra,
+        segnaTuttiFatto,
         handleSave,
         daSalvare,
         daTogliere,
@@ -899,15 +951,17 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     const eventLabel = useEventLabel();
     const umoreLabel = useUmoreLabel();
     const {
-        students, eventTypes, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
+        students, eventTypes, routineDi, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
         activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
         daSalvare, daTogliere, esitoSalvataggio, orariAttivitaIncoerenti,
         isSaving, showSavedToast,
-        handleEventSelect, updateStudent, updateMealCourse, counter, bulkNannaOra, handleSave,
+        handleEventSelect, updateStudent, updateMealCourse, counter, bulkNannaOra, segnaTuttiFatto, handleSave,
         eliminaRegistrazione,
     } = day;
 
-    const cfg = selectedEvent ? EVENT_CONFIG[selectedEvent] : null;
+    // La routine della scuola aperta, se è una di quelle: da lei vengono nome, icona e pannello.
+    const routineAperta = routineDi(selectedEvent);
+    const cfg = selectedEvent ? configDiVoce(selectedEvent, routineAperta) : null;
 
     // QUANTI FINIRANNO IN ARCHIVIO. Per la nanna il salvataggio è selettivo, quindi
     // «Salva Nanna per tutti» sarebbe una frase falsa sul pulsante che la esegue —
@@ -930,6 +984,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
         if (selectedEvent === 'pranzo' || selectedEvent === 'merenda') return t('pastoNessunaPortata');
         if (selectedEvent === 'umore') return t('umoreNessunaScelta');
         if (selectedEvent === 'attivita') return t('attivitaNessunaRegistrazione');
+        if (routineAperta) return t('routineNessunaRegistrazione');
         return t('nannaNessunOrario');
     };
 
@@ -959,7 +1014,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                     selected ? 'shadow-md' : ''
                                 }`}
                             >
-                                <EventTypeButton type={type} disabled={false} selected={selected} onClick={handleEventSelect} />
+                                <EventTypeButton type={type} disabled={false} selected={selected} onClick={handleEventSelect} fonte={routineDi(type)} />
                             </div>
                         );
                     })}
@@ -986,7 +1041,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                         {cfg.emoji}
                                     </div>
                                     <div>
-                                        <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{eventLabel(selectedEvent ?? '')}</h2>
+                                        <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{eventLabel(selectedEvent ?? '', routineAperta)}</h2>
                                         <p className="font-maven text-[11px] text-kidville-muted">{t('numBambini', { count: students.length })} • {todayISO()}</p>
                                     </div>
                                 </div>
@@ -1237,6 +1292,20 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                     );
                                 })}
 
+                                {/* ── ROUTINE DELLA SCUOLA (2026-09-28): il controllo del suo tipo di risposta ── */}
+                                {routineAperta && (
+                                    <RoutinePersonalizzataInline
+                                        def={routineAperta}
+                                        students={students}
+                                        studentStates={studentStates}
+                                        savedStudentIds={savedStudentIds}
+                                        noteBambino={notaBambino}
+                                        onValore={(studentId, valore) => updateStudent(studentId, { valore })}
+                                        onTuttiFatto={segnaTuttiFatto}
+                                        onElimina={(studentId) => void eliminaRegistrazione(studentId)}
+                                    />
+                                )}
+
                                 {/* ── UMORE (M5.4): picker 5 valori per alunno → dettagli.umore ── */}
                                 {selectedEvent === 'umore' && students.map((student, idx) => {
                                     const sel = umoreFromDettagli(studentStates[student.id]);
@@ -1356,7 +1425,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                 : daTogliere > 0
                                                     ? t('nannaTogliOrari', { count: daTogliere })
                                                     : nessunaRegistrazione()}</>
-                                            : <><span>{cfg.emoji}</span> {t('salvaPerTutti', { evento: eventLabel(selectedEvent ?? '') })}</>
+                                            : <><span>{cfg.emoji}</span> {t('salvaPerTutti', { evento: eventLabel(selectedEvent ?? '', routineAperta) })}</>
                                     }
                                 </button>
                             </div>

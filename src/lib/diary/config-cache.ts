@@ -19,13 +19,31 @@ import { creaCachePromesse } from '@/lib/rete/cache-promesse';
  * riceverne due diverse e non devono mai leggere quella dell'altro.
  */
 export interface DiarioConfigRisposta {
+  /** `null` = la sede non ha mai scelto: valgono le routine predefinite (`@/lib/diary/routine`). */
   routine_attive?: unknown;
+  /** Le routine aggiunte dalla segreteria, già filtrate alle ATTIVE (2026-09-28). */
+  routine_personalizzate?: unknown;
   diario_primaria_visibile?: boolean;
 }
 
-async function caricaDiarioConfig(userId: string): Promise<DiarioConfigRisposta | null> {
+/**
+ * La chiave è `utente|sede`. La sede entra dal 2026-09-28: con le routine che funzionano, il
+ * cockpit di segreteria che compila il diario di un'ALTRA sede deve vedere le routine di quella,
+ * non della propria (prima la GET usava sempre la sede primaria dell'utente).
+ */
+function chiave(userId: string, scuolaId?: string | null): string {
+  return `${userId}|${scuolaId ?? ''}`;
+}
+
+async function caricaDiarioConfig(k: string): Promise<DiarioConfigRisposta | null> {
+  const [userId, scuolaId] = k.split('|');
+  const qs = new URLSearchParams();
+  if (userId) qs.set('userId', userId);
+  if (scuolaId) qs.set('scuola_id', scuolaId);
   try {
-    const res = await fetch(`/api/diary/config${userId ? `?userId=${userId}` : ''}`);
+    // `qs.toString()` e non `qs.size`: `size` manca nei WebView iOS più vecchi, dove l'app gira.
+    const query = qs.toString();
+    const res = await fetch(`/api/diary/config${query ? `?${query}` : ''}`);
     if (!res.ok) return null;
     return (await res.json()) as DiarioConfigRisposta;
   } catch {
@@ -37,12 +55,15 @@ async function caricaDiarioConfig(userId: string): Promise<DiarioConfigRisposta 
 
 const cache = creaCachePromesse(caricaDiarioConfig);
 
-/** Config del diario per il docente indicato. `null` = non determinabile. */
-export function fetchDiarioConfig(userId: string | null): Promise<DiarioConfigRisposta | null> {
-  return cache.leggi(userId ?? '');
+/**
+ * Config del diario per il docente indicato, della sede indicata (assente = la sua sede).
+ * `null` = non determinabile.
+ */
+export function fetchDiarioConfig(userId: string | null, scuolaId?: string | null): Promise<DiarioConfigRisposta | null> {
+  return cache.leggi(chiave(userId ?? '', scuolaId));
 }
 
-/** Svuota la cache (cambio identità, e fra un test e l'altro). */
-export function invalidaDiarioConfigCache(userId?: string): void {
-  cache.invalida(userId);
+/** Svuota la cache (cambio identità, e fra un test e l'altro). Senza argomenti: tutta. */
+export function invalidaDiarioConfigCache(userId?: string, scuolaId?: string | null): void {
+  cache.invalida(userId === undefined ? undefined : chiave(userId, scuolaId));
 }

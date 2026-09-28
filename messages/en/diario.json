@@ -11,8 +11,6 @@
   "erroreTesto": "We couldn’t load the diary for this day. Check your connection and try again.",
   "riprova": "Try again",
   "umoreTitolo": "Mood of the day",
-  "umoreAttesa": "The teacher will soon be able to note how it went.",
-  "umoreAttesaPer": "The teacher will soon be able to note how it went for {nome}.",
   "entrataLabel": "Arrival",
   "notaPerTe": "A note for you",
   "segnalaVoce": "Report",
@@ -67,6 +65,8 @@
   "bagnoVasino": "🚽 I used the potty {count, plural, one {once} other {# times}}",
   "bagnoGenerico": "I went to the bathroom today!",
   "eventoGenerico": "Event recorded by the teacher.",
+  "routineFatto": "Done ✓",
+  "routineAlle": "At {ora}",
   "giornoPrecedente": "Previous day",
   "giornoSuccessivo": "Next day"
 }

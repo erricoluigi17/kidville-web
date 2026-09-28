@@ -53,14 +53,16 @@ import ParentDiaryPage from '@/app/(dashboard)/parent/diary/page';
 const ORARIO = /\b\d{1,2}:\d{2}\b/;
 
 describe('Diario del genitore — l\'arrivo senza orario per i presenti (A1)', () => {
-    it('presente: card «Entrata» SENZA ora, niente «Nessuna voce», banner dell\'umore presente', async () => {
+    it('presente: card «Entrata» SENZA ora, niente «Nessuna voce»', async () => {
         checkin = { orario_entrata: null, stato: 'presente' };
         render(<ParentDiaryPage />);
         // Ancora POSITIVA: la frase d'arrivo senza orario deve comparire.
         const frase = await screen.findByText(itDiario.narrativaEntrataSenzaOrario);
         expect(frase).toBeTruthy();
         expect(screen.getByText(itDiario.entrataLabel)).toBeTruthy();
-        expect(screen.getByText(itDiario.umoreTitolo)).toBeTruthy();
+        // Il riquadro dell'umore NON c'è più senza una voce d'umore (2026-09-28): prometteva un
+        // umore che nelle sedi vere è spento. Vedi `diario-genitore-routine.test.tsx`.
+        expect(screen.queryByText(itDiario.umoreTitolo)).toBeNull();
         // Solo dopo averla vista si può dire che lo stato vuoto non c'è.
         expect(screen.queryByText(itDiario.vuotoTitolo)).toBeNull();
         // E nessun orario scritto nella card.

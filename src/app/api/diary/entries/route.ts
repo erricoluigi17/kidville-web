@@ -15,6 +15,7 @@ import { withRoute } from '@/lib/logging/with-route';
 import { logEvento, logErrore } from '@/lib/logging/logger';
 import { riconciliaRichieste } from '@/lib/armadietto/richieste';
 import { voceDaMostrare } from '@/lib/diary/registrazione';
+import { applicaRoutineAlLotto } from '@/lib/diary/routine-lotto';
 import { eEventoAttivita, ORA_ATTIVITA_RE, oraAttivitaValida } from '@/lib/diary/attivita';
 
 // Modalità genitore: default from = 14 giorni fa, to = oggi (dinamici, calcolati nel codice).
@@ -324,6 +325,13 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         if (scopeErr) return scopeErr;
     }
 
+    // Le routine della SEDE DEL BAMBINO (2026-09-28): spente, inesistenti o con un valore che non
+    // vale non si scrivono (422, tutto-o-niente); quelle della scuola escono con la fotografia
+    // scritta dal server. Vedi `applicaRoutineAlLotto`.
+    const routine = await applicaRoutineAlLotto(admin, entries);
+    if ('response' in routine) return routine.response;
+    const verificate = routine.voci;
+
     // ─────────────────────────────────────────────────────────────────────────
     // LA VOCE MUTA NON ENTRA IN ARCHIVIO, E LA REGOLA STA ANCHE QUI.
     //
@@ -342,7 +350,7 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
     // `voceDaMostrare` è la stessa funzione dei cinque lettori: una regola sola,
     // e fail-open sui tipi che non ne hanno una (nessun filtro inventato qui).
     // ─────────────────────────────────────────────────────────────────────────
-    const daScrivere = entries.filter((e) => voceDaMostrare(
+    const daScrivere = verificate.filter((e) => voceDaMostrare(
         e.tipo_evento,
         (e.dettagli ?? null) as Record<string, unknown> | null,
         { conNota: Boolean(String(e.nota_libera ?? '').trim() || String(e.nota_bambino ?? '').trim()) },
@@ -591,7 +599,13 @@ const deleteQuerySchema = z.object({
     alunno_id: zUuid,
     // Nanna, bagno e pasti: vedi «perimetro stretto» qui sopra. Deve restare
     // allineato a `TIPI_ELIMINABILI` — c'è un lock che lo verifica.
-    tipo_evento: z.enum(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita']),
+    // Più le routine aggiunte dalla scuola (2026-09-28): `routine:` + gli 8 caratteri dell'id, e
+    // nient'altro — il prefisso non è una porta per stringhe libere. Anche per una routine spenta
+    // o cancellata: correggere uno sbaglio non dipende da quello.
+    tipo_evento: z.union([
+        z.enum(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita']),
+        z.string().regex(/^routine:[a-z0-9]{8}$/),
+    ]),
     // Default dinamico (oggi), calcolato nel codice come fa la GET.
     date: zDataYMD.optional(),
 });

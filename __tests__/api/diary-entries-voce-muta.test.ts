@@ -47,7 +47,7 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }));
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }));
 vi.mock('@/lib/primaria/notifiche', () => ({ notificaTitolariScrittura: vi.fn(), enqueueDiarioGenitori: vi.fn() }));
-vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}) }));
+vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}), leggiModuleConfig: async () => ({ ok: true, config: {} }) }));
 vi.mock('@/lib/armadietto/richieste', () => ({ riconciliaRichieste: vi.fn() }));
 vi.mock('@/lib/auth/scope', () => ({
     assertAlunnoInScope: async () => null,

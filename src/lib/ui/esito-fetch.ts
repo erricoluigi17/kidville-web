@@ -2192,6 +2192,28 @@ export const CODICI_ERRORE = {
      */
     ORARIO_ATTIVITA_INCOERENTE: 'erroreOrarioAttivitaIncoerente',
     /**
+     * 422 — `diary/entries:POST`: il tipo di voce è di una routine base SPENTA per la sede del
+     * bambino (2026-09-28, le routine del diario funzionano). Nessuna riga del lotto scritta.
+     */
+    ROUTINE_SPENTA: 'erroreRoutineSpenta',
+    /**
+     * 422 — `diary/entries:POST`: routine della scuola che la sede del bambino non ha, o ha
+     * spento (2026-09-28). Nessuna riga del lotto scritta.
+     */
+    ROUTINE_NON_DISPONIBILE: 'erroreRoutineNonDisponibile',
+    /** 422 — `diary/entries:POST`: valore che non vale per quella routine della scuola. */
+    ROUTINE_VALORE_NON_VALIDO: 'erroreRoutineValoreNonValido',
+    /**
+     * 503 — `diary/entries:POST`: la configurazione della sede non si è letta, e senza non si
+     * può scrivere una routine della scuola (la fotografia viene dalla definizione).
+     */
+    ROUTINE_NON_VERIFICATE: 'erroreRoutineNonVerificate',
+    /**
+     * 422 — `admin/settings:PATCH`: cambiato il tipo di risposta di una routine della scuola già
+     * salvata (2026-09-28). Le voci scritte portano il tipo vecchio: se ne crea una nuova.
+     */
+    ROUTINE_RISPOSTA_NON_MODIFICABILE: 'erroreRoutineRispostaNonModificabile',
+    /**
      * 500 — l'appello della primaria non ha potuto leggere lo stato PRECEDENTE
      * (`primaria/appello:POST`). Da quando la riga si costruisce a partire da ciò che
      * c'era, quella lettura è portante: proseguire senza azzererebbe note e orari in

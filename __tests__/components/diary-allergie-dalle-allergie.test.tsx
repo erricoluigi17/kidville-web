@@ -52,7 +52,7 @@ const ALUNNI = [
 
 const fetchMock = vi.fn(async (url: string | URL) => {
   const u = String(url)
-  if (u.includes('/api/diary/config')) return jsonRes({ routine_attive: [] })
+  if (u.includes('/api/diary/config')) return jsonRes({ routine_attive: null })
   if (u.includes('/api/diary/students')) return jsonRes(ALUNNI)
   if (u.includes('/api/diary/entries')) return jsonRes([])
   return jsonRes(null)

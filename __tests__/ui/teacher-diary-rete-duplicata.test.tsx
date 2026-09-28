@@ -133,7 +133,7 @@ describe('/teacher/diary — la rete non si moltiplica al caricamento', () => {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: async () => ({ routine_attive: [], diario_primaria_visibile: true }),
+          json: async () => ({ routine_attive: null, diario_primaria_visibile: true }),
         });
       }
       if (u.includes('/api/educator-sections')) {

@@ -11,8 +11,6 @@
   "erroreTesto": "Non siamo riusciti a leggere il diario di questo giorno. Controlla la connessione e riprova.",
   "riprova": "Riprova",
   "umoreTitolo": "Umore della giornata",
-  "umoreAttesa": "Presto la maestra potrà segnalare come è andata.",
-  "umoreAttesaPer": "Presto la maestra potrà segnalare come è andata per {nome}.",
   "entrataLabel": "Entrata",
   "notaPerTe": "Nota per te",
   "segnalaVoce": "Segnala",
@@ -67,6 +65,8 @@
   "bagnoVasino": "🚽 Ho usato il vasino {count, plural, one {una volta} other {# volte}}",
   "bagnoGenerico": "Sono stato/a al bagno oggi!",
   "eventoGenerico": "Evento registrato dalla maestra.",
+  "routineFatto": "Fatto ✓",
+  "routineAlle": "Alle {ora}",
   "giornoPrecedente": "Giorno precedente",
   "giornoSuccessivo": "Giorno successivo"
 }

@@ -7,7 +7,8 @@ import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
-import { getEventConfig, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
+import { configDiVoce, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
+import { eRoutinePersonalizzata } from '@/lib/diary/routine';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { fetchConCache } from '@/lib/offline/read-cache';
@@ -209,7 +210,32 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         return { emoji: '🚿', lines };
     }
 
+    // Le routine aggiunte dalla scuola (2026-09-28): il NOME sta nel titolo della card, qui va il
+    // valore. Nome e icona vengono dalla fotografia salvata nella voce, non dalla configurazione
+    // di oggi: la voce resta leggibile anche a routine rinominata, spenta o cancellata.
+    if (eRoutinePersonalizzata(tipo)) {
+        const emoji = typeof dettagli?.emoji === 'string' && dettagli.emoji.trim() ? dettagli.emoji.trim() : '📝';
+        return { emoji, lines: [fraseRoutine(dettagli, t)] };
+    }
+
     return { emoji: '📝', lines: [t('eventoGenerico')] };
+}
+
+/** Il valore di una routine della scuola, detto al genitore. Le opzioni e il testo sono dati: non si traducono. */
+function fraseRoutine(dettagli: Record<string, unknown> | null, t: Traduci): string {
+    const valore = dettagli?.valore;
+    switch (dettagli?.risposta) {
+        case 'spunta':
+            return t('routineFatto');
+        case 'orario':
+            return typeof valore === 'string' ? t('routineAlle', { ora: valore }) : t('eventoGenerico');
+        case 'scelta':
+            return Array.isArray(valore) ? valore.filter((v) => typeof v === 'string').join(', ') : t('eventoGenerico');
+        case 'testo':
+            return typeof valore === 'string' && valore.trim() ? valore.trim() : t('eventoGenerico');
+        default:
+            return t('eventoGenerico');
+    }
 }
 
 // ─── Utilities data ────────────────────────────────────────────────────────────
@@ -261,7 +287,8 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
     const t = useTranslations('diario');
     const f = useDateFormat();
     const eventLabel = useEventLabel();
-    const config = getEventConfig(entry.tipo_evento);
+    // Per una routine della scuola nome e icona vengono dalla fotografia nella voce (`dettagli`).
+    const config = configDiVoce(entry.tipo_evento, entry.dettagli);
     const { lines, emoji } = buildFirstPersonNarrative(
         entry.tipo_evento,
         entry.dettagli,
@@ -288,7 +315,7 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
                 </div>
                 <div className="flex-1">
                     <p className={`font-barlow font-black text-sm uppercase tracking-wide ${config.accentColor.split(' ').find(c => c.startsWith('text-')) ?? 'text-kidville-green'}`}>
-                        {eventLabel(entry.tipo_evento)}
+                        {eventLabel(entry.tipo_evento, entry.dettagli)}
                     </p>
                     <p className="font-maven text-[11px] text-kidville-muted">
                         {oraDiLato}
@@ -769,23 +796,23 @@ function ParentDiaryContent() {
                     {!loading && !erroreLettura && (arrivato || entries.length > 0) && (
                         <div className="space-y-3">
                             {/* Banner umore (DR mood banner, M5.4): legge l'evento 'umore' più
-                                recente del giorno (dettagli.umore); senza evento resta il testo
-                                di attesa. */}
-                            <div className="flex items-center gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
-                                <span className="text-[26px] leading-none">{umoreCfg?.emoji ?? '🙂'}</span>
-                                <div className="min-w-0">
-                                    <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
-                                        {t('umoreTitolo')}{umoreCfg ? `: ${umoreLabel(umore ?? '')}` : ''}
-                                    </p>
-                                    <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
-                                        {umore
-                                            ? umoreNarrative(umore)
-                                            : studentName
-                                                ? t('umoreAttesaPer', { nome: studentName.split(' ')[0] })
-                                                : t('umoreAttesa')}
-                                    </p>
+                                recente del giorno (dettagli.umore). SOLO se c'è (2026-09-28): senza
+                                voce diceva «Presto la maestra potrà segnalare come è andata», ma
+                                nelle tre sedi vere l'umore è SPENTO — una promessa che la sede non
+                                manteneva, a ogni genitore, ogni giorno. */}
+                            {umore && umoreCfg && (
+                                <div className="flex items-center gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
+                                    <span className="text-[26px] leading-none">{umoreCfg.emoji}</span>
+                                    <div className="min-w-0">
+                                        <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
+                                            {t('umoreTitolo')}: {umoreLabel(umore)}
+                                        </p>
+                                        <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
+                                            {umoreNarrative(umore)}
+                                        </p>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                             {arrivato && (
                                 <motion.div
                                     initial={{ opacity: 0, y: 14 }}

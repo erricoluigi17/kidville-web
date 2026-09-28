@@ -1,5 +1,6 @@
 import { useTranslations } from 'next-intl';
-import { DiaryEventType, DiaryEventTypeLegacy } from '@/lib/offline/db';
+import { DiaryEventTypeBase, DiaryEventTypeLegacy } from '@/lib/offline/db';
+import { eRoutinePersonalizzata } from '@/lib/diary/routine';
 
 interface EventConfig {
     label: string;
@@ -10,7 +11,7 @@ interface EventConfig {
 
 // Colori on-token (brand/semantici Kidville) — sostituiscono i pastelli off-token
 // (purple/orange/sky/amber) per coerenza con il redesign DR.
-export const EVENT_CONFIG: Record<DiaryEventType, EventConfig> = {
+export const EVENT_CONFIG: Record<DiaryEventTypeBase, EventConfig> = {
     attivita: {
         label: 'Attività',
         emoji: '🎨',
@@ -78,8 +79,41 @@ const LEGACY_EVENT_CONFIG: Partial<Record<string, EventConfig>> = {
  * Sicuro per eventi storici che non sono più nel tipo DiaryEventType attivo.
  */
 export function getEventConfig(type: DiaryEventTypeLegacy | string): EventConfig {
-    if (type in EVENT_CONFIG) return EVENT_CONFIG[type as DiaryEventType];
+    if (type in EVENT_CONFIG) return EVENT_CONFIG[type as DiaryEventTypeBase];
     return LEGACY_EVENT_CONFIG[type] ?? LEGACY_FALLBACK;
+}
+
+/**
+ * Da dove si prendono nome e icona di una routine della SCUOLA: la sua definizione (la maestra,
+ * mentre compila) oppure la fotografia salvata nella voce (il genitore, anche a routine cancellata).
+ */
+export interface FonteRoutine { nome?: unknown; emoji?: unknown }
+
+/**
+ * Il colore delle routine della scuola: uno solo per tutte, on-token, diverso da quelli base. Sono
+ * dati scritti dalla segreteria, e un colore per ciascuna sarebbe una scelta in più da fare.
+ */
+const ASPETTO_ROUTINE_SCUOLA = {
+    color: 'bg-kidville-cream',
+    accentColor: 'text-kidville-green border-kidville-green/25',
+};
+
+function testoPieno(v: unknown): string | null {
+    return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
+}
+
+/**
+ * L'aspetto di una voce, per QUALUNQUE tipo: per i base la config fissa, per una routine della
+ * scuola (`routine:<id>`, 2026-09-28) nome e icona dalla `fonte`. Senza fonte ricade su «Evento» 📝,
+ * come i tipi legacy: mai il codice grezzo `routine:…` a schermo.
+ */
+export function configDiVoce(type: string, fonte?: FonteRoutine | null): EventConfig {
+    if (!eRoutinePersonalizzata(type)) return getEventConfig(type);
+    return {
+        label: testoPieno(fonte?.nome) ?? LEGACY_FALLBACK.label,
+        emoji: testoPieno(fonte?.emoji) ?? LEGACY_FALLBACK.emoji,
+        ...ASPETTO_ROUTINE_SCUOLA,
+    };
 }
 
 /**
@@ -89,9 +123,16 @@ export function getEventConfig(type: DiaryEventTypeLegacy | string): EventConfig
  * `getEventConfig` (config pura, non tradotta). Chiave assente → fallback alla
  * label pura, MAI la chiave i18n.
  */
-export function useEventLabel(): (type: DiaryEventTypeLegacy | string) => string {
+export function useEventLabel(): (type: DiaryEventTypeLegacy | string, fonte?: FonteRoutine | null) => string {
     const t = useTranslations('etichette');
-    return (type) => {
+    return (type, fonte) => {
+        // Una routine della scuola si chiama come l'ha chiamata la segreteria: è un dato, non un
+        // testo dell'app, e non si traduce. Senza nome, «Evento» come i tipi legacy.
+        if (eRoutinePersonalizzata(type)) {
+            const nome = testoPieno(fonte?.nome);
+            if (nome) return nome;
+            return t.has('evento_legacy') ? t('evento_legacy') : LEGACY_FALLBACK.label;
+        }
         const specific = `evento_${type}`;
         if (t.has(specific)) return t(specific);
         if (t.has('evento_legacy')) return t('evento_legacy');

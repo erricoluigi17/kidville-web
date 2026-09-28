@@ -9,6 +9,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
+import { ROUTINE_BASE, zRoutinePersonalizzate, routinePersonalizzate } from '@/lib/diary/routine'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -212,6 +213,37 @@ const zAvvisiConfig = z.looseObject({
   promemoria_giorni_prima: z.coerce.number().int().min(0).max(30).optional(),
 })
 
+/**
+ * `diario_config` — dal 2026-09-28 le routine del diario FUNZIONANO: spengono bottoni, rifiutano
+ * scritture, compaiono nel diario dei genitori. Fino a ieri passava come `z.unknown()`, perché
+ * niente di quello che conteneva aveva effetto. Si validano le chiavi che ne hanno:
+ *  · `routine_attive` — solo nomi di routine base (`@/lib/diary/routine`);
+ *  · `routine_personalizzate` — la lista della segreteria: ogni voce valida, ids unici, al più 20;
+ *  · `buffer_visibilita_min` — gli estremi del pannello (0–120), interi;
+ *  · `diario_primaria_visibile` — booleano.
+ * APERTO (`looseObject`), come `avvisi_config` e per la stessa ragione: il pannello salva l'oggetto
+ * INTERO, e le sedi portano ancora chiavi vecchie e inerti (`visibile_genitori_da`,
+ * `orario_compilazione_*`, `note_libere_abilitate`). Chiuderlo vorrebbe dire rifiutare il
+ * salvataggio del diario di Giugliano.
+ */
+const zDiarioConfig = z.looseObject({
+  routine_attive: z.array(z.enum(ROUTINE_BASE)).max(ROUTINE_BASE.length).optional(),
+  routine_personalizzate: zRoutinePersonalizzate.optional(),
+  buffer_visibilita_min: z.coerce.number().int().min(0).max(120).optional(),
+  diario_primaria_visibile: z.boolean().optional(),
+})
+
+/**
+ * Il TIPO DI RISPOSTA di una routine della scuola già salvata non cambia (2026-09-28). Le voci già
+ * scritte portano la fotografia del tipo vecchio: una routine a spunta diventata «orario»
+ * ritroverebbe nel diario di oggi valori che il pannello della maestra non sa più mostrare, né
+ * togliere col cestino. Per cambiarlo si crea una routine nuova.
+ */
+function rispostaCambiata(prima: unknown, dopo: unknown): boolean {
+  const vecchie = new Map(routinePersonalizzate(prima).map((r) => [r.id, r.risposta]))
+  return routinePersonalizzate(dopo).some((r) => vecchie.has(r.id) && vecchie.get(r.id) !== r.risposta)
+}
+
 const patchBodySchema = z.object({
   scuola_id: zScuolaId,
   ...Object.fromEntries(ALLOWED_FIELDS.map((f) => [f, z.unknown().optional()])),
@@ -219,6 +251,8 @@ const patchBodySchema = z.object({
   rette_config: zRetteConfig.optional(),
   // Idem per `avvisi_config`, ma solo sulla chiave con effetto lato server.
   avvisi_config: zAvvisiConfig.optional(),
+  // E per `diario_config`, dal giorno in cui le routine hanno effetto (2026-09-28).
+  diario_config: zDiarioConfig.optional(),
 })
 
 /**
@@ -367,6 +401,21 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
         for (const k of incomingMerged) {
           const prev = (existingRow[k] ?? {}) as Record<string, unknown>
           const next = updates[k] as Record<string, unknown>
+          if (k === 'diario_config' && rispostaCambiata(prev.routine_personalizzate, next.routine_personalizzate)) {
+            // Solo codici: il nome della routine è un dato della scuola e non va nel log.
+            logEvento('config', 'warn', {
+              operazione: 'admin/settings:PATCH',
+              esito: 'routine-risposta-non-modificabile',
+              scuola_id: scuolaId,
+            })
+            return NextResponse.json(
+              {
+                error: 'Il tipo di risposta di una routine già salvata non si può cambiare: creane una nuova. Non è stato salvato niente.',
+                codice: 'ROUTINE_RISPOSTA_NON_MODIFICABILE',
+              },
+              { status: 422 },
+            )
+          }
           if (k === 'funzioni_matrice') {
             // merge per-grado: {primaria: {...prev, ...next}, ...}
             const merged: Record<string, unknown> = { ...prev }

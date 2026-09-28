@@ -7,6 +7,7 @@ import { BookOpen, ChevronRight } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { useDateFormat } from '@/lib/i18n/date'
 import { voceDaMostrare } from '@/lib/diary/registrazione'
+import { useEventLabel } from '@/components/features/teacher/diary/eventConfig'
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile'
 import { segnalaDiarioNonLetto } from '@/lib/diary/lettura-genitore'
 
@@ -25,10 +26,6 @@ interface Props {
   studentId: string
   href: string
 }
-
-// Formatta il codice `tipo_evento` (dato) in etichetta leggibile. Il fallback UI
-// per codice vuoto è gestito al call site con la stringa tradotta.
-const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ')
 
 /**
  * "Oggi a scuola" del design (DR DiaryToday). Mostra gli ultimi aggiornamenti del
@@ -49,6 +46,11 @@ interface Mostrato {
 
 export function DiaryTodayCard({ studentId, href }: Props) {
   const t = useTranslations('home')
+  // L'etichetta di ogni voce è quella della pagina del diario (2026-09-28). Qui si maiuscolava il
+  // codice del tipo (`titleCase`): «Nanna inizio», «Attivita» senza accento, e per le routine
+  // della scuola sarebbe uscito «Routine:a1b2c3d4». Le routine della scuola si chiamano col nome
+  // salvato nella voce.
+  const eventLabel = useEventLabel()
   const { ora: fmtTime } = useDateFormat()
   const [mostrato, setMostrato] = useState<Mostrato | null>(null)
   // Dal 2026-09-28 la card si rilegge anche al ritorno nell'app. Tre regole la tengono vera,
@@ -181,7 +183,7 @@ export function DiaryTodayCard({ studentId, href }: Props) {
             <div className="min-w-0 flex-1 pt-0.5">
               <div className="flex items-baseline gap-2">
                 <span className="font-barlow text-[13.5px] font-extrabold uppercase tracking-wide text-kidville-green">
-                  {ev.tipo_evento ? titleCase(ev.tipo_evento) : t('diaryAggiornamentoDefault')}
+                  {ev.tipo_evento ? eventLabel(ev.tipo_evento, ev.dettagli) : t('diaryAggiornamentoDefault')}
                 </span>
                 <span className="font-maven text-[11px] text-kidville-muted">{fmtTime(ev.timestamp_evento)}</span>
               </div>

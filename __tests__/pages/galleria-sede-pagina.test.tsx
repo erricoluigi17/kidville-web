@@ -11,6 +11,7 @@ import enShared from '../../messages/en/shared.json';
 import itEtichette from '../../messages/it/etichette.json';
 import enEtichette from '../../messages/en/etichette.json';
 import { NAV_GROUPS } from '@/components/features/admin/admin-nav-config';
+import { GIORNI_CESTINO_GALLERIA } from '@/lib/gallery/cestino';
 import {
     raggruppaPerGiornata,
     alunniDellaPagina,
@@ -1184,11 +1185,17 @@ describe('(H) il cestino della segreteria', () => {
         });
         await apriCestino();
 
-        // 30 giorni di custodia, 5 trascorsi ⇒ 25. Il numero si calcola qui invece di
-        // scriverlo: se la custodia cambiasse, questo test seguirebbe la regola e non
-        // una costante copiata (e il lock `cestino-giorni-un-numero-solo` tiene legati
-        // i due punti in cui il 30 è scritto).
-        expect(await screen.findByText(/25/)).toBeInTheDocument();
+        // Custodia meno i 5 giorni trascorsi. Il numero si calcola dalla costante del
+        // server invece di scriverlo: se la custodia cambiasse, questo test seguirebbe la
+        // regola e non una costante copiata (e il lock `cestino-giorni-un-numero-solo`
+        // tiene legati i due punti in cui il 30 è scritto).
+        //
+        // E si cerca la FRASE intera del catalogo, non la sola cifra: il 30 di ogni mese
+        // «5 giorni fa» è il 25, e `/25/` pescava anche «Eliminata il 25 settembre» —
+        // due elementi, test rosso senza che la pagina avesse niente di sbagliato.
+        const restano = String(new IntlMessageFormat(itAdminAltro.galSedeCestinoRestanoGiorni, 'it')
+            .format({ n: GIORNI_CESTINO_GALLERIA - 5 }));
+        expect(await screen.findByText(restano)).toBeInTheDocument();
         expect(screen.getByRole('button', { name: new RegExp(itAdminAltro.galSedeCestinoRipristina, 'i') })).toBeInTheDocument();
     });
 

@@ -188,6 +188,9 @@ function stub(pagamenti: unknown, students: unknown, opzioni: OpzioniStub = {}) 
         const body =
             u.startsWith('/api/pagamenti/genera-rette') && init?.method === 'POST' ? { success: true, data: { generate: 1 } }
                 : u.startsWith('/api/pagamenti?') ? pagamenti
+                    // La GET dei legami (rette a carico) nella sua forma: senza `a_carico_non_visibili`
+                    // il cruscotto mostrerebbe il banner d'errore dei legami (Q4, 2026-09-29).
+                    : u.startsWith('/api/pagamenti/rette-a-carico') ? { success: true, data: [], a_carico_non_visibili: [] }
                     : u.startsWith('/api/admin/students') ? students
                         : u.includes('/settings/categorie') ? (opzioni.categorie ?? CATEGORIE)
                             : { success: true, data: [] };

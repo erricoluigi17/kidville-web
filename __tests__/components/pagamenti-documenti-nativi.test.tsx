@@ -394,6 +394,9 @@ describe('TransazioniPanel — ricevuta della transazione', () => {
 describe('PaymentsDashboard — export dello scadenzario', () => {
     function stubDashboard() {
         return stubFetch([
+            // La GET dei legami nella sua forma: senza `a_carico_non_visibili` il cruscotto
+            // mostrerebbe il banner d'errore dei legami (Q4, 2026-09-29).
+            ['/api/pagamenti/rette-a-carico', () => jsonRes({ success: true, data: [], a_carico_non_visibili: [] })],
             ['/api/pagamenti?', () => jsonRes({ success: true, data: [] })],
             ['/api/admin/students', () => jsonRes([])],
             ['/settings/categorie', () => jsonRes({ success: true, data: [{ id: 'c1', nome: 'Retta', slug: 'retta' }] })],

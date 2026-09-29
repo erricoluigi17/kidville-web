@@ -1,0 +1,92 @@
+import { NextResponse, type NextRequest } from 'next/server'
+import { z } from 'zod'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { requireStaff } from '@/lib/auth/require-staff'
+import { createAdminClient } from '@/lib/supabase/server-client'
+import { resolveScuoleAttive, restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+import { caricaLegamiRetta, sediDeiPaganti } from '@/lib/pagamenti/rette-a-carico-server'
+import type { LegameRetta } from '@/lib/pagamenti/rette-a-carico'
+
+/**
+ * GET /api/pagamenti/rette-a-carico — chi paga la retta di chi, per la vista Rette.
+ *
+ * Il bambino con `retta_a_carico_di` non riceve la retta (la paga un fratello), e il
+ * cruscotto lo mostrava «Non generata». Questa GET gli dà il nome di chi paga. Lo stato
+ * della retta del pagante NON viaggia qui: il cruscotto lo prende dalla stessa mappa che
+ * disegna la riga del pagante, così il badge non può divergere da quella riga.
+ *
+ * Proiezione minima: del bambino escono solo l'uuid e la sede (`scuola_id`, che serve
+ * all'avviso «altra sede», D12); nome, cognome e classe no — il cruscotto li ha già.
+ *
+ * `a_carico_non_visibili` (C3, revisione 2026-09-28): gli uuid dei bambini a carico il cui
+ * pagante sta in una sede che l'utente NON legge. Solo gli uuid dei bambini — che sono nelle
+ * sedi dell'utente — e mai niente del pagante: il cruscotto li toglie dai «mancanti» e dice
+ * «a carico di un fratello di un'altra sede» invece di «Non generata».
+ */
+const OPERAZIONE = 'pagamenti/rette-a-carico:GET'
+
+const zUuidQueryOpzionale = z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional())
+const getQuerySchema = z.object({
+  scuola_id: zUuidQueryOpzionale,
+  /** Lo manda il cruscotto su tutte le sue GET; qui non serve a niente. */
+  userId: z.string().optional(),
+})
+
+// Il nome si scrive per esteso e non come `OPERAZIONE`: `logging-coverage` lo legge dal
+// sorgente per verificare che dica davvero quale route è, e una costante non la vedrebbe.
+export const GET = withRoute('pagamenti/rette-a-carico:GET', async (request: NextRequest) => {
+  try {
+    const auth = await requireStaff(request)
+    if (auth.response) return auth.response
+    const { user } = auth
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+
+    const supabase = await createAdminClient()
+    const attive = await resolveScuoleAttive(request, supabase, user)
+    const sedi = restringiSedi(attive, q.data.scuola_id)
+    if (!sedi) return rifiutoSede('SEDE_NON_ACCESSIBILE')
+
+    const esito = await caricaLegamiRetta(supabase, {
+      sediBambini: sedi,
+      // K4: unite alle sedi dei bambini. Da sola, questa seconda `scuoleDiUtente` su un errore
+      // di `utenti_scuole` dà `[]`, e ogni pagante — anche della stessa sede — risultava «in
+      // un'altra sede» (vedi `sediDeiPaganti`).
+      sediPaganti: sediDeiPaganti(sedi, await scuoleDiUtente(supabase, user)),
+      operazione: OPERAZIONE,
+    })
+    if (!esito.ok) {
+      // «Chi chiama logga» (Q1, quarta revisione 2026-09-29): il loader restituisce il guasto e
+      // non lo scrive. La riga è UNA, ed è questa: `logErrore` con l'errore VERO di PostgREST,
+      // `stato: 500` (in `app_log.stato_http`, dove la cerca «dammi i 5xx») e in `evento` QUALE
+      // lettura è fallita. `logErrore` alza da sé la marca anti-doppione: `withRoute` non aggiunge
+      // la sua riga, più povera. Prima la riga la scriveva il loader, senza `stato`, e qui si
+      // alzava la marca a mano: quel 500 non lasciava nessuna riga 5xx.
+      logErrore({ operazione: OPERAZIONE, stato: 500, evento: esito.esito }, esito.errore)
+      return NextResponse.json(
+        { error: 'Non è stato possibile leggere chi paga la retta per un fratello.', codice: 'LETTURA_FALLITA' },
+        { status: 500 },
+      )
+    }
+    const data: LegameRetta[] = esito.legami.map(({ alunno_id, scuola_id, pagante }) => ({ alunno_id, scuola_id, pagante }))
+    const aCaricoNonVisibili = esito.nonVisibili.map((b) => b.alunno_id)
+    // Il conteggio, senza persistere: la GET parte a ogni apertura della Contabilità.
+    logEvento('pagamento', 'info', {
+      operazione: OPERAZIONE, esito: 'letti', n: data.length, sedi: sedi.length, non_visibili: aCaricoNonVisibili.length,
+    }, undefined, { persisti: false })
+    return NextResponse.json(
+      { success: true, data, a_carico_non_visibili: aCaricoNonVisibili },
+      { headers: { 'Cache-Control': 'no-store' } },
+    )
+  } catch (err) {
+    logErrore({ operazione: OPERAZIONE, stato: 500 }, err)
+    // Con codice anche qui (lock `errori-con-codice`): la route è di sola lettura, quindi
+    // un'eccezione imprevista significa comunque «non sono riuscito a leggere, riprova».
+    return NextResponse.json({ error: 'Internal Server Error', codice: 'LETTURA_FALLITA' }, { status: 500 })
+  }
+})

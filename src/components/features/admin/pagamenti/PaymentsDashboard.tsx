@@ -13,6 +13,8 @@ import { LinkDocumento, MIME_XLSX } from './LinkDocumento';
 import { PagamentoCardMobile, BadgeSede } from './PagamentoCardMobile';
 import { PagamentoDrawer } from './PagamentoDrawer';
 import { FiltroClassiContabilita } from './FiltroClassiContabilita';
+import { BadgeRettaACarico, BadgeRettaACaricoNonVisibile } from './BadgeRettaACarico';
+import { indicizzaLegami, legamiDaRisposta, nomePagante, nonVisibiliDaRisposta, type LegameRetta } from '@/lib/pagamenti/rette-a-carico';
 import { classiDaAlunni, filtraPerClassi } from '@/lib/pagamenti/filtro-classi';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -181,6 +183,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const [error, setError] = useState<string | null>(null);
     /** La GET degli iscritti è fallita: la vista Rette, i mancanti e l'acquisto non sono affidabili. */
     const [erroreAlunni, setErroreAlunni] = useState(false);
+    /**
+     * Chi paga la retta di chi (`alunni.retta_a_carico_di`), per alunno A CARICO. Vuota finché
+     * non arriva, e vuota se la GET fallisce: allora quei bambini restano «Non generata» come
+     * prima, e il banner `errore-legami` lo dice.
+     */
+    const [legami, setLegami] = useState<Map<string, LegameRetta>>(() => new Map());
+    /**
+     * C3: i bambini a carico il cui pagante sta in una sede che l'utente non legge (solo gli
+     * uuid). Non sono «mancanti» (la generazione li salta) e non sono «Non generata».
+     */
+    const [aCaricoNonVisibili, setACaricoNonVisibili] = useState<Set<string>>(() => new Set());
+    const [erroreLegami, setErroreLegami] = useState(false);
     /** `section_id` scelti nel filtro classi (K6). Si scartano in lettura, mai azzerati. */
     const [classiScelte, setClassiScelte] = useState<string[]>([]);
     /** Sede scelta per «Genera mancanti» e per il nuovo acquisto, quando le sedi sono più d'una. */
@@ -212,9 +226,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     // al mount loading parte già true; il refresh manuale lo imposta nel suo handler.
     const load = useCallback(async () => {
         try {
-            const [pagRes, alRes] = await Promise.all([
+            const [pagRes, alRes, legRes] = await Promise.all([
                 leggiJson<{ success?: boolean; data?: Pagamento[]; error?: string }>(`/api/pagamenti?userId=${userId}${sedeQs}`, userId, 'scadenzario-pagamenti'),
                 leggiJson<Alunno[] | { data?: Alunno[] }>(`/api/admin/students?stato=iscritto${sedeQs}&limit=${LIMITE_ELENCO_ALUNNI}`, userId, 'scadenzario-alunni'),
+                leggiJson<{ success?: boolean; data?: unknown; a_carico_non_visibili?: unknown }>(`/api/pagamenti/rette-a-carico?userId=${userId}${sedeQs}`, userId, 'scadenzario-legami'),
             ]);
             const pag = pagRes.corpo;
             if (pagRes.ok && pag?.success) { setPagamenti(pag.data ?? []); setError(null); }
@@ -231,13 +246,37 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 setAlunni(lista.filter((a) => a.classe_sezione != null || a.section_id != null));
                 setErroreAlunni(false);
             }
+            // I legami: un guasto NON è «nessun fratello paga». Si svuotano (niente badge di
+            // prima spacciati per attuali) e lo si dice a schermo; il rifiuto l'ha loggato `leggiJson`.
+            // (`listaLegami` e non `lista`: nel blocco degli alunni qui sopra c'è già una `lista`.)
+            const listaLegami = legRes.ok && legRes.corpo?.success ? legamiDaRisposta(legRes.corpo.data) : null;
+            // C3/R10/Q4: `a_carico_non_visibili` che non è un array — anche ASSENTE o `null` (la
+            // route l'ha sempre mandato: non c'è una «risposta di prima») — è una forma inattesa,
+            // come `data` non array: la risposta intera non si usa.
+            const nonVisibili = listaLegami === null ? null : nonVisibiliDaRisposta(legRes.corpo?.a_carico_non_visibili);
+            if (listaLegami === null || nonVisibili === null) {
+                if (legRes.ok) logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-legami-forma-inattesa', route: '/admin/pagamenti' });
+                setLegami(new Map());
+                setACaricoNonVisibili(new Set());
+                setErroreLegami(true);
+            } else {
+                // Voci malformate scartate: quei bambini tornano «Non generata», e senza questo log
+                // nessuno saprebbe perché. Solo il conteggio: mai nomi (AGENTS.md, regola 8).
+                const scartati = listaLegami.scartati + nonVisibili.scartati;
+                if (scartati > 0) {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-legami-voci-scartate', route: '/admin/pagamenti', campi: { n: scartati } });
+                }
+                setLegami(indicizzaLegami(listaLegami.legami));
+                setACaricoNonVisibili(new Set(nonVisibili.ids));
+                setErroreLegami(false);
+            }
         } finally {
             setLoading(false);
         }
     }, [userId, sedeQs, t]);
 
-    // D12: dopo un accodamento il chip deve comparire subito. `load()` sono due GET (tutti i pagamenti
-    // della sede e gli iscritti): con `nuova` lo stato è noto per costruzione (la RPC ha appena scritto
+    // D12: dopo un accodamento il chip deve comparire subito. `load()` sono tre GET (tutti i pagamenti
+    // della sede, gli iscritti e i legami delle rette a carico di un fratello): con `nuova` lo stato è noto per costruzione (la RPC ha appena scritto
     // `in_coda`) e basta la riga; con `gia`, o senza esito, può essere `in_invio` o `errore`, e si
     // rilegge. Fotografia dichiarata: il lavoratore può prenderla un attimo dopo.
     const dopoAccodamento = useCallback((pagamentoId: string, esito?: EsitoAccodamento) => {
@@ -356,23 +395,49 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         return m;
     }, [pagamenti, rettaCat, mese]);
 
+    /**
+     * Per ogni bambino A CARICO di un fratello: il legame e ciò che il suo badge sa del PAGANTE —
+     * la retta del mese (la stessa che disegna la riga del pagante, D3) e se la sede del pagante
+     * è fra le caricate (se no, lo stato non si conosce e non si inventa). Calcolato UNA volta
+     * qui, per tabella e card (Z2, quinta revisione 2026-09-29): prima era la stessa espressione
+     * scritta due volte, e quella della card poteva divergere senza che un test se ne accorgesse.
+     */
+    const aCaricoPerAlunno = useMemo(() => {
+        const m = new Map<string, { legame: LegameRetta; rettaPagante: Pagamento | undefined; sedeCaricata: boolean }>();
+        for (const [alunnoId, legame] of legami) {
+            const sedePagante = legame.pagante.scuola_id;
+            m.set(alunnoId, {
+                legame,
+                rettaPagante: rettaByAlunno.get(legame.pagante.id),
+                sedeCaricata: !!sedePagante && sediVisibili.includes(sedePagante),
+            });
+        }
+        return m;
+    }, [legami, rettaByAlunno, sediVisibili]);
+
     // mappa alunno per id: usata dalla tabella-categoria (ricerca e label)
     const alunnoById = useMemo(() => new Map(alunni.map((a) => [a.id, a])), [alunni]);
 
     const alunniFiltrati = useMemo(() => {
         const q = search.trim().toLowerCase();
         return filtraPerClassi(alunni, scelteValide, (a) => a.section_id ?? null).filter((a) => {
+            const legame = legami.get(a.id);
             if (q) {
-                const nome = `${a.nome ?? ''} ${a.cognome ?? ''} ${a.classe_sezione ?? ''}`.toLowerCase();
+                // D11: chi cerca il fratello che paga trova anche il bambino a suo carico.
+                const pagante = legame ? nomePagante(legame.pagante) : '';
+                const nome = `${a.nome ?? ''} ${a.cognome ?? ''} ${a.classe_sezione ?? ''} ${pagante}`.toLowerCase();
                 if (!nome.includes(q)) return false;
             }
             if (isRettaView && onlyMorosi) {
                 const p = rettaByAlunno.get(a.id);
-                if (!p || !isMoroso(p, oggiStr)) return false;
+                // D10: senza retta propria, conta la retta del fratello che paga.
+                const pPagante = !p && legame ? rettaByAlunno.get(legame.pagante.id) : undefined;
+                const riferimento = p ?? pPagante;
+                if (!riferimento || !isMoroso(riferimento, oggiStr)) return false;
             }
             return true;
         });
-    }, [alunni, scelteValide, search, isRettaView, onlyMorosi, rettaByAlunno, oggiStr]);
+    }, [alunni, scelteValide, search, isRettaView, onlyMorosi, rettaByAlunno, oggiStr, legami]);
 
     // Vista CATEGORIA (non-retta): una riga per pagamento (padre escluso), con
     // ricerca su alunno/sezione, filtro morosi e ordinamento per scadenza.
@@ -420,12 +485,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         const m = new Map<string, number>();
         if (!isRettaView) return m;
         for (const a of alunni) {
-            if (rettaByAlunno.has(a.id)) continue;
+            // D6: chi ha la retta a carico di un fratello non è «mancante» — la generazione
+            // lo salta, e contarlo teneva il numero sopra zero per sempre. Anche quando chi
+            // paga sta in una sede che l'utente non legge (C3).
+            if (rettaByAlunno.has(a.id) || legami.has(a.id) || aCaricoNonVisibili.has(a.id)) continue;
             const k = a.scuola_id ?? sedeUnica ?? '';
             m.set(k, (m.get(k) ?? 0) + 1);
         }
         return m;
-    }, [isRettaView, alunni, rettaByAlunno, sedeUnica]);
+    }, [isRettaView, alunni, rettaByAlunno, sedeUnica, legami, aCaricoNonVisibili]);
     /** Le sedi fra cui scegliere: le visibili che hanno almeno un mancante. */
     const sediConMancanti = sediVisibili.filter((id) => (mancantiPerSede.get(id) ?? 0) > 0);
     const sedeGeneraValida = mostraSede ? (sediConMancanti.includes(sedeGenera) ? sedeGenera : '') : (sedeUnica ?? '');
@@ -544,6 +612,23 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     <AlertTriangle size={18} />
                     <span className="flex-1 font-maven text-sm font-bold">{t('dashMsErrAlunni')}</span>
                     <button onClick={() => { setLoading(true); load(); }}
+                        className="rounded-pill border border-kidville-error/40 bg-kidville-white px-3 py-1 font-maven text-xs font-bold text-kidville-error transition-colors hover:bg-kidville-error-soft">
+                        {t('dashRiprova')}
+                    </button>
+                </div>
+            )}
+
+            {/* Legami non caricati: i bambini a carico di un fratello tornano «Non generata», e
+                questo NON deve sembrare vero. Solo nella vista Rette (e non in Agenda): altrove
+                «quei bambini risultano Non generata» non corrisponde a niente sullo schermo.
+                Q7 (quarta revisione 2026-09-29): nemmeno senza gli iscritti — la vista Rette è
+                vuota e il banner degli alunni dice già tutto — e il «Riprova» ha un nome
+                accessibile suo: con due banner, due «Riprova» uguali non si distinguevano. */}
+            {erroreLegami && !erroreAlunni && isRettaView && !agendaFiltro && (
+                <div data-testid="errore-legami" role="alert" className="mb-4 flex items-center gap-2 rounded-xl border-2 border-kidville-error-soft bg-kidville-error-soft px-4 py-3 text-kidville-error">
+                    <AlertTriangle size={18} />
+                    <span className="flex-1 font-maven text-sm font-bold">{t('dashMsErrLegami')}</span>
+                    <button onClick={() => { setLoading(true); load(); }} aria-label={t('dashRiprovaLegami')}
                         className="rounded-pill border border-kidville-error/40 bg-kidville-white px-3 py-1 font-maven text-xs font-bold text-kidville-error transition-colors hover:bg-kidville-error-soft">
                         {t('dashRiprova')}
                     </button>
@@ -824,6 +909,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 const p = rettaByAlunno.get(a.id);
                                 const st = p ? (STATI[p.stato] ?? STATI.da_pagare) : null;
                                 const moroso = p ? isMoroso(p, oggiStr) : false;
+                                const aCarico = aCaricoPerAlunno.get(a.id);
+                                const legame = aCarico?.legame;
+                                const nonVisibile = !legame && aCaricoNonVisibili.has(a.id);
                                 return (
                                     <tr key={a.id} className={cx(TROW, moroso && 'bg-kidville-error-soft/50')}>
                                         <td className={cx(TD, 'font-semibold text-kidville-green')}>
@@ -838,9 +926,17 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         <td className={cx(TD, 'text-right text-kidville-muted')}>{p ? formatEuro(p.importo_pagato) : '—'}</td>
                                         <td className={TD}>
                                             <span className="inline-flex flex-wrap items-center gap-1">
+                                                {/* `inTabella` (K2): qui i badge-frase hanno una larghezza minima, nelle card no. */}
                                                 {st
                                                     ? <Badge tone={st.tone}>{st.label}</Badge>
-                                                    : <Badge tone="neutral">{t('dashNonGenerata')}</Badge>}
+                                                    : aCarico
+                                                        ? <BadgeRettaACarico {...aCarico} inTabella />
+                                                        : nonVisibile
+                                                            ? <BadgeRettaACaricoNonVisibile inTabella />
+                                                            : <Badge tone="neutral">{t('dashNonGenerata')}</Badge>}
+                                                {/* D9: retta propria E legame col fratello — si mostra, e si segnala. */}
+                                                {p && legame && <BadgeRettaACarico legame={legame} conRettaPropria inTabella />}
+                                                {p && nonVisibile && <BadgeRettaACaricoNonVisibile inTabella />}
                                                 {p && moroso && Number(p.importo_pagato) > 0 && (
                                                     <Badge tone="warn">{t('dashAcconto')} {formatEuro(p.importo_pagato)}</Badge>
                                                 )}
@@ -873,6 +969,26 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <div className="space-y-2 lg:hidden">
                     {alunniFiltrati.map((a) => {
                         const p = rettaByAlunno.get(a.id);
+                        const aCarico = aCaricoPerAlunno.get(a.id);
+                        const legame = aCarico?.legame;
+                        const nonVisibile = !legame && aCaricoNonVisibili.has(a.id);
+                        if (!p && (aCarico || nonVisibile)) {
+                            // Il badge SOTTO il nome, non accanto: è una frase (fino a ~430 px col
+                            // font vero, ~251 px di spazio a 360 px di schermo). Accanto al nome lo
+                            // schiacciava e faceva scorrere la pagina in orizzontale; qui la card
+                            // è un blocco, e il badge va a capo nella sua riga intera.
+                            return (
+                                <div key={a.id} data-testid="card-retta-a-carico" className="rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
+                                    <p className="font-maven text-sm font-bold text-kidville-green">{a.nome} {a.cognome}</p>
+                                    {mostraSede && <BadgeSede nome={nomeSede(a.scuola_id)} className="mt-1" />}
+                                    <div data-testid="card-retta-a-carico-badge" className="mt-2 flex flex-wrap gap-1">
+                                        {aCarico
+                                            ? <BadgeRettaACarico {...aCarico} />
+                                            : <BadgeRettaACaricoNonVisibile />}
+                                    </div>
+                                </div>
+                            );
+                        }
                         if (!p) {
                             return (
                                 <div key={a.id} className="flex items-center justify-between gap-2 rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
@@ -892,6 +1008,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 sezioneLabel={a.classe_sezione}
                                 sospeso={!!sospesoByAlunno.get(a.id)}
                                 mostraSede={mostraSede}
+                                avviso={legame ? <BadgeRettaACarico legame={legame} conRettaPropria /> : nonVisibile ? <BadgeRettaACaricoNonVisibile /> : undefined}
                                 onIncassa={() => setSelected(p)}
                                 onApri={() => setDrawer(p)}
                             />

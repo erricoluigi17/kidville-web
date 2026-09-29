@@ -5,12 +5,15 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/attestazione'
 import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
 import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
+import { righeRetteACarico, type RigaScadenzario } from '@/lib/pagamenti/export-rette-a-carico'
+import { descriviTetto, leggiABlocchi, type EsitoABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
+import { sediDeiPaganti } from '@/lib/pagamenti/rette-a-carico-server'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -50,6 +53,16 @@ const getQuerySchema = z
 const STATO_LABEL: Record<string, string> = {
   da_pagare: 'Da pagare', parziale: 'Parziale', pagato: 'Pagato', scaduto: 'Scaduto',
 }
+
+/**
+ * K1 (seconda revisione 2026-09-28) — l'etichetta è SEMPRE una stringa. `pagamenti.stato` in
+ * produzione è nullable: `STATO_LABEL[null] ?? null` dava `null`, che prima diventava una cella
+ * vuota e con la larghezza della colonna (`.length`) faceva rispondere 500 a tutto l'export.
+ * Uno stato sconosciuto resta com'è, come prima.
+ */
+function etichettaStato(stato: string | null | undefined): string {
+  return stato ? (STATO_LABEL[stato] ?? stato) : ''
+}
 const FATTURA_LABEL: Record<string, string> = {
   non_richiesta: 'Da fatturare', in_attesa: 'In attesa SDI', emessa: 'Fatturata', scartata: 'Scartata',
 }
@@ -61,7 +74,8 @@ interface RigaPagamento {
   importo_pagato: number | null
   scadenza: string | null
   periodo_competenza: string | null
-  stato: string
+  /** Nullable in produzione (K1): mai usarlo senza `etichettaStato`. */
+  stato: string | null
   tipo: string
   fattura_stato: string | null
   alunni?: { nome?: string; cognome?: string; classe_sezione?: string | null } | null
@@ -90,6 +104,36 @@ async function nomiDelleSedi(
   return { nomi }
 }
 
+/**
+ * K5 (seconda revisione 2026-09-28) — una lettura a blocchi fallita, per errore o per il
+ * tetto, è un 500 con `LETTURA_FALLITA`: mai un file con un pezzo in meno.
+ *
+ * R2 (terza revisione 2026-09-29) — la riga di log è UNA, la scrive QUI, e porta `stato: 500`:
+ * `logErrore` con `evento: 'lettura-troncata'` al tetto (i conteggi nel messaggio, come
+ * `leggiTutte` di `GET /api/pagamenti`) o `evento: 'db'` con l'errore vero del blocco.
+ * `logErrore` alza la marca anti-doppione, e `withRoute` non aggiunge una seconda riga.
+ * `leggiABlocchi` non logga: non sa se il chiamante risponderà 500 o 200 (vedi il modulo).
+ * Prima il tetto lo loggava lui con `logEvento`, senza `stato`, e alzava la marca: per questo
+ * 500 nei log non c'era nessuna riga con lo stato.
+ *
+ * Q2 (quarta revisione 2026-09-29) — tipo e conteggi stanno nel MESSAGGIO perché `logErrore` non
+ * accetta altri campi; il messaggio lo compone `descriviTetto`, lo stesso del tetto delle righe a
+ * carico (`export-rette-a-carico.ts`, un 200 che li porta anche come campi): una ricerca sola,
+ * `messaggio like 'lettura-troncata:%'`, trova tutti e due (vedi `leggi-a-blocchi.ts`).
+ */
+function letturaFallita(esito: Extract<EsitoABlocchi<unknown>, { ok: false }>, messaggio: string, tipo: string): NextResponse {
+  if (esito.motivo === 'tetto') {
+    // Solo il nome della lettura e dei conteggi: mai dati (AGENTS.md, regola 8).
+    logErrore(
+      { operazione: 'pagamenti/export:GET', stato: 500, evento: 'lettura-troncata' },
+      new Error(`${descriviTetto(tipo, esito)}, rifiutata per intero`),
+    )
+  } else {
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, esito.error)
+  }
+  return NextResponse.json({ error: messaggio, codice: 'LETTURA_FALLITA' }, { status: 500 })
+}
+
 // GET /api/pagamenti/export?tipo=scadenzario — XLSX per la segreteria/commercialista
 export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest) => {
   try {
@@ -111,6 +155,11 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
 
     const supabase = await createAdminClient()
     const sediAttive = await resolveScuoleAttive(request, supabase, user)
+    // Il perimetro dell'export: la sede dichiarata, se è fra le attive; altrimenti tutte le attive.
+    // Calcolato UNA volta (Z3e, quinta revisione 2026-09-29): la stessa condizione era scritta tre
+    // volte — traccia d'accesso, righe principali, sedi dei bambini a carico — e le righe principali
+    // e quelle a carico potevano finire su perimetri diversi senza che niente lo dicesse.
+    const sediPerimetro = scuolaId && sediAttive.includes(scuolaId) ? [scuolaId] : sediAttive
 
     // Accountability GDPR: gli export contengono PII (nomi, sezioni, importi; il
     // ramo AdE anche i codici fiscali). Registra chi esporta cosa e quando.
@@ -118,7 +167,8 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
       attore: user,
       entitaTipo: 'export_pagamenti',
       azione: 'insert',
-      scuolaId: scuolaId && sediAttive.includes(scuolaId) ? scuolaId : sediAttive[0] ?? null,
+      // La sede dichiarata, o la prima attiva.
+      scuolaId: sediPerimetro[0] ?? null,
       valoreDopo: {
         tipo: q.data.tipo, anno: q.data.anno ?? null, sedi: sediAttive,
         classi: sectionIds ?? null,
@@ -140,28 +190,31 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     const embedAlunni = sectionIds
       ? 'alunni!inner ( nome, cognome, classe_sezione, section_id )'
       : 'alunni ( nome, cognome, classe_sezione )'
-    let query = supabase
-      .from('pagamenti')
-      .select(`
-        scuola_id, descrizione, importo, importo_pagato, scadenza, periodo_competenza, stato, tipo, fattura_stato,
-        payment_categories ( nome ),
-        ${embedAlunni}
-      `)
-      .in('scuola_id', sediAttive)
-      .order('scadenza', { ascending: true })
-    if (scuolaId && sediAttive.includes(scuolaId)) query = query.eq('scuola_id', scuolaId)
-    if (stato) query = query.eq('stato', stato)
-    if (categoriaId) query = query.eq('categoria_id', categoriaId)
-    if (sectionIds) query = query.in('alunni.section_id', sectionIds)
-
-    const { data, error } = await query
-    if (error) {
-      logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, error)
-      return NextResponse.json({ error: 'Errore nel recupero dei pagamenti' }, { status: 500 })
+    // A blocchi (C2, 2026-09-28): senza `range` PostgREST consegnava le prime 1000 righe e
+    // taceva — il 28/09 le esportabili delle tre sedi erano 1.150. Una query NUOVA per blocco;
+    // `leggiABlocchi` aggiunge `id` dopo `scadenza`, perché fra rette con la stessa scadenza
+    // Postgres non garantisce l'ordine e due blocchi si sovrapporrebbero.
+    const costruisci = () => {
+      let query = supabase
+        .from('pagamenti')
+        .select(`
+          scuola_id, descrizione, importo, importo_pagato, scadenza, periodo_competenza, stato, tipo, fattura_stato,
+          payment_categories ( nome ),
+          ${embedAlunni}
+        `)
+        .in('scuola_id', sediPerimetro)
+        .order('scadenza', { ascending: true })
+      if (stato) query = query.eq('stato', stato)
+      if (categoriaId) query = query.eq('categoria_id', categoriaId)
+      if (sectionIds) query = query.in('alunni.section_id', sectionIds)
+      return query
     }
 
+    const letti = await leggiABlocchi<RigaPagamento>(costruisci)
+    if (!letti.ok) return letturaFallita(letti, 'Errore nel recupero dei pagamenti', 'export-scadenzario')
+
     // I contenitori padre non sono voci esigibili: nell'export contano le rate.
-    const righe = ((data || []) as unknown as RigaPagamento[])
+    const righe: RigaScadenzario[] = letti.righe
       .filter((p) => p.tipo !== 'padre')
       .map((p) => ({
         // K2 — prima colonna: con più plessi è la prima cosa che serve sapere.
@@ -174,19 +227,49 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
         'Importo €': Number(p.importo),
         'Pagato €': Number(p.importo_pagato || 0),
         'Residuo €': Math.max(0, Number(p.importo) - Number(p.importo_pagato || 0)),
-        Stato: STATO_LABEL[p.stato] ?? p.stato,
+        Stato: etichettaStato(p.stato),
         Fattura: p.stato === 'pagato' ? (FATTURA_LABEL[p.fattura_stato ?? 'non_richiesta'] ?? '') : '',
       }))
 
-    const ws = XLSX.utils.json_to_sheet(righe)
-    ws['!cols'] = [{ wch: 20 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }]
+    // D14 — i bambini con la retta a carico di un fratello: una riga a importi zero per ogni
+    // retta del pagante. Si intercalano per scadenza; il sort è STABILE: a pari scadenza restano
+    // prima le righe vere, poi quelle a carico, ciascuna nell'ordine in cui è stata letta.
+    // `pagamenti.scadenza` è NOT NULL (dal baseline): una cella «Scadenza» vuota oggi non può
+    // arrivare. `chiave` la manderebbe comunque in fondo — è una DIFESA, per il giorno in cui la
+    // colonna diventasse nullable, non un caso che accade (R11c, terza revisione 2026-09-29).
+    const aCarico = await righeRetteACarico(supabase, {
+      // I bambini a carico: lo STESSO perimetro delle righe principali.
+      sediBambini: sediPerimetro,
+      // K4: unite alle sedi dei bambini — da sola questa seconda `scuoleDiUtente`, su un errore,
+      // dà `[]` e le righe dei bambini sparirebbero anche col pagante nella loro sede.
+      sediPaganti: sediDeiPaganti(sediPerimetro, await scuoleDiUtente(supabase, user)),
+      sectionIds,
+      stato,
+      categoriaId,
+      nomiSedi,
+      etichettaStato,
+    })
+    const chiave = (s: string) => s || '￿'
+    const tutte = [...righe, ...aCarico].sort((a, b) => {
+      const x = chiave(a.Scadenza), y = chiave(b.Scadenza)
+      return x < y ? -1 : x > y ? 1 : 0
+    })
+
+    const ws = XLSX.utils.json_to_sheet(tutte)
+    // «Stato» si allarga con la frase più lunga che contiene: «Da pagare» sta in 10 caratteri,
+    // «Paga il fratello Mario Rossi (Sez. C) · Da pagare» ne ha 50–60 (e in 10 si leggeva
+    // «Paga il f»). Tetto a 60: oltre, una colonna larga mezzo schermo non aiuta nessuno.
+    // `String(… ?? '')` anche se `Stato` nasce già stringa (K1): una colonna più stretta è un
+    // difetto estetico, un export in 500 per una cella è un difetto vero.
+    const larghezzaStato = Math.min(60, tutte.reduce((max, r) => Math.max(max, String(r.Stato ?? '').length), 10))
+    ws['!cols'] = [{ wch: 20 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: larghezzaStato }, { wch: 14 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Scadenzario')
     // Nessun dato personale: conteggi e numero di classi filtrate.
     logEvento('pagamento', 'info', {
       tipo: 'export-scadenzario', azione: 'pagamenti/export:GET',
       utente: user.id, ruolo: user.role, attive: sediAttive.length,
-      classi: sectionIds?.length ?? 0, n: righe.length,
+      classi: sectionIds?.length ?? 0, n: tutte.length, a_carico: aCarico.length,
     })
 
     // SheetJS ritorna Buffer in Node: cast ad ArrayBuffer per NextResponse
@@ -203,7 +286,11 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
     })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/export:GET', stato: 500 }, err)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    // Con codice anche qui (R4, terza revisione 2026-09-29; lock `errori-con-codice`): la route
+    // LEGGE e basta — l'unica scrittura, la traccia d'accesso di `logScrittura`, non lancia —,
+    // e gli altri suoi 500 portano già `LETTURA_FALLITA`. Un'eccezione imprevista resta «non
+    // sono riuscito a leggere i dati, riprova», come nella GET gemella `rette-a-carico`.
+    return NextResponse.json({ error: 'Internal Server Error', codice: 'LETTURA_FALLITA' }, { status: 500 })
   }
 })
 
@@ -237,30 +324,32 @@ async function exportAde(
   anno: number,
   nomiSedi: Map<string, string>,
 ) {
+  // A BLOCCHI anche qui (C2, 2026-09-28), per la stessa ragione dello Scadenzario: gli alunni
+  // sono TUTTI quelli delle sedi (ritirati compresi, vedi `elenchi-operativi-solo-iscritti`) e
+  // gli incassi quelli di un anno intero, e PostgREST avrebbe tagliato l'uno e l'altro a 1000
+  // righe in silenzio — cioè omesso dalla comunicazione all'Agenzia delle Entrate le spese di
+  // chi finiva oltre il taglio. L'ordine stabile (`id`) lo mette `leggiABlocchi`.
   // select('*') sugli alunni: tollera i DB senza opposizione_ade (e2e CI).
-  const { data: alunniRaw, error: errAlunni } = await supabase
-    .from('alunni')
-    .select('*')
-    .in('scuola_id', sediAttive)
-  if (errAlunni) {
-    // `exportAde` è un ramo della stessa route: `operazione` resta quella di `withRoute`.
-    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, errAlunni)
-    return NextResponse.json({ error: 'Errore nel recupero degli alunni' }, { status: 500 })
-  }
+  const alunniLetti = await leggiABlocchi<AlunnoAde>(
+    () => supabase.from('alunni').select('*').in('scuola_id', sediAttive),
+  )
+  // `exportAde` è un ramo della stessa route: `operazione` resta quella di `withRoute`. Al
+  // tetto (K5) un 500 e non un file: una comunicazione all'AdE con delle spese in meno non
+  // deve poter uscire.
+  if (!alunniLetti.ok) return letturaFallita(alunniLetti, 'Errore nel recupero degli alunni', 'export-ade-alunni')
 
-  const { data: incassiRaw, error: errIncassi } = await supabase
-    .from('incassi')
-    .select('importo, metodo, data_incasso, pagamenti!inner ( alunno_id, scuola_id, descrizione, payment_categories ( slug ) )')
-    .gte('data_incasso', `${anno}-01-01`)
-    .lte('data_incasso', `${anno}-12-31`)
-    .in('pagamenti.scuola_id', sediAttive)
-  if (errIncassi) {
-    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, errIncassi)
-    return NextResponse.json({ error: 'Errore nel recupero degli incassi' }, { status: 500 })
-  }
+  const incassiLetti = await leggiABlocchi<IncassoAde>(
+    () => supabase
+      .from('incassi')
+      .select('importo, metodo, data_incasso, pagamenti!inner ( alunno_id, scuola_id, descrizione, payment_categories ( slug ) )')
+      .gte('data_incasso', `${anno}-01-01`)
+      .lte('data_incasso', `${anno}-12-31`)
+      .in('pagamenti.scuola_id', sediAttive),
+  )
+  if (!incassiLetti.ok) return letturaFallita(incassiLetti, 'Errore nel recupero degli incassi', 'export-ade-incassi')
 
   const perAlunno = new Map<string, VoceAttestazione[]>()
-  for (const i of (incassiRaw || []) as unknown as IncassoAde[]) {
+  for (const i of incassiLetti.righe) {
     const alunnoId = i.pagamenti?.alunno_id
     if (!alunnoId) continue
     const arr = perAlunno.get(alunnoId) ?? []
@@ -277,7 +366,20 @@ async function exportAde(
   const daComunicare: Record<string, unknown>[] = []
   const escluse: Record<string, unknown>[] = []
 
-  for (const al of (alunniRaw || []) as unknown as AlunnoAde[]) {
+  // K7 (seconda revisione 2026-09-28) — l'ordine dei due fogli. Prima della lettura a blocchi
+  // gli alunni si leggevano senza `order` (nessun ordine garantito) e nessuno li riordinava; ora
+  // `leggiABlocchi` li consegna per `id`, cioè per uuid: a caso, per chi legge. Si ordina qui
+  // per sede (la prima colonna), cognome, nome e — fra omonimi — `id`, così due export dello
+  // stesso anno escono identici. Solo l'ordine: le righe sono le stesse.
+  const collatore = new Intl.Collator('it')
+  const sedeDi = (a: AlunnoAde) => (a.scuola_id ? (nomiSedi.get(a.scuola_id) ?? '') : '')
+  const alunniOrdinati = [...alunniLetti.righe].sort((a, b) =>
+    collatore.compare(sedeDi(a), sedeDi(b))
+    || collatore.compare(a.cognome ?? '', b.cognome ?? '')
+    || collatore.compare(a.nome ?? '', b.nome ?? '')
+    || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+  for (const al of alunniOrdinati) {
     const voci = perAlunno.get(al.id) ?? []
     if (voci.length === 0) continue
     const r = calcolaAttestazione(voci)

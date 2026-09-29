@@ -4,6 +4,7 @@ import { sendPush, vapidConfigured } from '@/lib/push/web-push'
 import { sendNativePush, fcmConfigured, type NativePushPayload } from '@/lib/push/native-push'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { TIPI_AVVISO_CODA } from '@/lib/fatture-coda/avvisi-testi'
+import { TIPI_NOTIFICA_CHAT } from '@/lib/chat/notifiche-chat'
 import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 
 // =============================================================================
@@ -122,8 +123,15 @@ export const LIMITE_LETTURA = 500
  * «sei interventi», §3 Notifiche): la chat verso Segreteria, Direzione e Cuoca va in push, con il
  * mittente come per tutti — il titolo e il corpo sono quelli della riga, identici a quelli che
  * riceve un genitore o un docente.
+ *
+ * I DUE NOMI VIVONO ORA IN `@/lib/chat/notifiche-chat`, che è anche chi li usa per SPEGNERE le
+ * notifiche quando la conversazione viene letta. Non sono due elenchi da tenere allineati a
+ * memoria: un terzo tipo di chat aggiunto in uno solo dei due resterebbe fuori dall'altro, e da
+ * quello dello spegnimento non si vedrebbe — la campanella tornerebbe a gonfiarsi in silenzio.
+ * Il nome esportato resta `TIPI_CHAT` perché è quello che il lock del dispatch confronta con la
+ * route dei messaggi (`__tests__/lib/push-dispatch-presa.test.ts`).
  */
-export const TIPI_CHAT: readonly string[] = ['chat_genitore', 'chat_docente']
+export const TIPI_CHAT: readonly string[] = TIPI_NOTIFICA_CHAT
 
 /**
  * ALLO STAFF LA PUSH PORTA SOLO GLI AVVISI DELLA CODA FATTURE, LO SCARTO SDI E LA CHAT (consegna

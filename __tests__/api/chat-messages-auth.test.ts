@@ -34,6 +34,10 @@ const h = vi.hoisted(() => ({
   insertedMessage: null as Record<string, unknown> | null,
   insertErr: null as unknown,
   readUpdateRuns: [] as Array<{ row: Record<string, unknown>; filters: Record<string, unknown> }>,
+  // Gli UPDATE su `notifiche`: lo spegnimento della campanella dopo il mark-read. Qui
+  // interessa solo che parta con l'identità del GATE; i filtri per intero stanno in
+  // `__tests__/api/chat-messages-read-notifiche.test.ts`.
+  notificheUpdateRuns: [] as Array<{ row: Record<string, unknown>; filters: Record<string, unknown> }>,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
@@ -83,11 +87,17 @@ const adminClient = {
       if (table === 'chat_messages' && 'read_at' in row) {
         h.readUpdateRuns.push({ row, filters: state.filters })
       }
+      if (table === 'notifiche') h.notificheUpdateRuns.push({ row, filters: state.filters })
       const ub: Record<string, unknown> = {}
-      ub.eq = () => ub
+      ub.eq = (col: string, val: unknown) => { state.filters[col] = val; return ub }
       ub.neq = () => ub
-      ub.is = () => ub
+      ub.is = (col: string, val: unknown) => { state.filters[`is:${col}`] = val; return ub }
       ub.in = (col: string, val: unknown) => { state.filters[col] = val; return ub }
+      // `.select()` chiude la catena e RESTITUISCE le righe toccate: è così che lo
+      // spegnimento delle notifiche di chat le conta. Senza questo ramo il finto lanciava
+      // «ub.select is not a function», l'eccezione finiva nel catch del modulo e il test
+      // restava verde su un percorso che nel finto non funzionava mai.
+      ub.select = () => Promise.resolve({ data: [], error: null })
       ub.then = (res: (v: unknown) => void) => res({ error: null })
       return ub
     }
@@ -140,6 +150,7 @@ beforeEach(() => {
   h.insertedMessage = null
   h.insertErr = null
   h.readUpdateRuns = []
+  h.notificheUpdateRuns = []
 })
 
 describe('GET /api/chat/messages — gate identità + verifica partecipante SEMPRE', () => {
@@ -192,6 +203,10 @@ describe('GET /api/chat/messages — gate identità + verifica partecipante SEMP
     expect(h.readUpdateRuns.length).toBe(1)
     expect(h.readUpdateRuns[0].row).toHaveProperty('read_at')
     expect(h.readUpdateRuns[0].row).not.toHaveProperty('delivered_at')
+    // E la campanella del thread si spegne, per l'utente del gate: prima di questo passo la
+    // notifica restava accesa anche dopo la lettura (il perché sta in `src/lib/chat/notifiche-chat.ts`).
+    expect(h.notificheUpdateRuns.length).toBe(1)
+    expect(h.notificheUpdateRuns[0].filters).toMatchObject({ utente_id: PARENT })
   })
 })
 
@@ -248,6 +263,14 @@ describe('PATCH /api/chat/messages/read — userId dal gate + anti-IDOR sui thre
       expect.anything(),
       expect.objectContaining({ userId: PARENT, messageIds: [M1] }),
     )
+    // Lo spegnimento della campanella parte con l'identità del GATE, non col body, e non
+    // degrada in silenzio: un `warn` qui significherebbe che la query non è nemmeno partita.
+    expect(h.notificheUpdateRuns.length).toBe(1)
+    expect(h.notificheUpdateRuns[0].filters).toMatchObject({ utente_id: PARENT })
+    expect(
+      h.logEvento.mock.calls.filter((c) => c[1] === 'warn'),
+      'lo spegnimento delle notifiche di chat è caduto in un warn',
+    ).toEqual([])
   })
 
   it('anti-IDOR: messageIds di un thread NON dell\'utente → updated 0, nessun UPDATE', async () => {

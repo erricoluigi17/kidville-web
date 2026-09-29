@@ -197,6 +197,32 @@ describe('shell nativa — il pannello dei chunk mancanti è MONTATO, non solo s
   })
 })
 
+describe('shell nativa — il pop-up «Aggiorna l’app» è MONTATO, e dentro il gate biometrico', () => {
+  /**
+   * Stessa lezione del `ChunkErrorBoundary`: `AvvisoAggiornamentoApp` ha i suoi test, che lo
+   * montano da soli — e passerebbero anche se nessuna pagina lo rendesse. Montato in
+   * `RootProviders` copre ogni area e il login. E va DENTRO `<BiometricGate>`: è da lì che legge
+   * `useBloccoBiometrico()`, e fuori leggerebbe sempre «libero» — la `Modal` si aprirebbe sopra lo
+   * sblocco e lo renderebbe inerte, schermo congelato.
+   *
+   * I commenti si tolgono prima di cercare: un lock che legge il file come testo si
+   * immunizzerebbe da solo se il tag comparisse in una spiegazione.
+   */
+  it('RootProviders lo importa e lo renderizza fra i figli del gate biometrico', () => {
+    const sorgente = leggi('src/components/providers/RootProviders.tsx')
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+    expect(sorgente, 'AvvisoAggiornamentoApp non è importato da RootProviders').toContain(
+      "from '@/components/providers/AvvisoAggiornamentoApp'",
+    )
+    expect(
+      sorgente,
+      'AvvisoAggiornamentoApp non è renderizzato dentro <BiometricGate>…</BiometricGate>',
+    ).toMatch(/<BiometricGate\b[^>]*>[\s\S]*<AvvisoAggiornamentoApp\s*\/>[\s\S]*<\/BiometricGate>/)
+  })
+})
+
 describe('shell nativa — chi prescrive un sync di sviluppo dice anche come si torna indietro', () => {
   const RADICI = ['.claude/agents', '.claude/maestro-flows', '.codex/agents', 'docs/collaudo/prompt', 'docs/mobile.md']
   const PRESCRIZIONE_DI_SVILUPPO = /CAP_SERVER_URL="http:\/\/[^"]+"\s+npx cap sync/

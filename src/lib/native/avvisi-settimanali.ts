@@ -1,20 +1,21 @@
 import { Capacitor } from '@capacitor/core'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { isNativeApp, statoPermessoPush } from '@/lib/push/native-register'
-import { URL_APP_STORE, URL_PLAY_STORE } from '@/lib/email/tema'
+import { appDaAggiornare } from '@/lib/native/aggiornamento-app'
 
 /**
  * GLI AVVISI SETTIMANALI DELL'APP NATIVA (spec 2026-09-24, compito AV1).
  *
- * Due avvisi, ciascuno AL MASSIMO UNA VOLTA A SETTIMANA per installazione:
- *  - `aggiorna-app`: il binario è il vecchio 1.0 — lo si riconosce perché il plugin
- *    `FileTransfer`, arrivato con la 1.1, non c'è. Su quel binario i download ripiegano
- *    (misurato: 1.941 ripieghi e 0 scarichi nativi riusciti in 30 giorni), e l'unico rimedio è
- *    aggiornare dallo store — ma solo quando la 1.1 C'È, sullo store di quella piattaforma
- *    (`APP_1_1_PUBBLICATA`, spento finché non la si vede pubblicata);
+ * Ne resta uno, AL MASSIMO UNA VOLTA A SETTIMANA per installazione:
  *  - `notifiche-disattivate`: il permesso delle notifiche è `denied` (`statoPermessoPush`, che
  *    usa `checkPermissions` e non fa MAI comparire il dialogo di sistema). Misurato: 26 utenti
  *    in 7 giorni avevano il permesso negato.
+ *
+ * L'avviso `aggiorna-app` che stava qui (binario 1.0 riconosciuto dall'assenza di `FileTransfer`,
+ * una volta a settimana, spento dall'interruttore `APP_1_1_PUBBLICATA`) è diventato il 2026-09-29
+ * un pop-up a ogni apertura, deciso dalla VERSIONE del binario: `@/lib/native/aggiornamento-app`
+ * e `AvvisoAggiornamentoApp`. Qui resta la sua precedenza: su un binario da aggiornare l'avviso
+ * delle notifiche tace e non consuma la sua settimana.
  *
  * LA DATA DELL'ULTIMA COMPARSA sta nel `localStorage` dell'installazione, come `kv_push_token`:
  * non è identità, è un orario sul telefono, e resta fuori da `LOCAL_KEYS` di `logout.ts` (chi
@@ -29,39 +30,17 @@ import { URL_APP_STORE, URL_PLAY_STORE } from '@/lib/email/tema'
 /** Sette giorni: la cadenza massima di ciascun avviso. */
 export const INTERVALLO_AVVISO_MS = 7 * 24 * 60 * 60 * 1000
 
-export type AvvisoSettimanale = 'aggiorna-app' | 'notifiche-disattivate'
+export type AvvisoSettimanale = 'notifiche-disattivate'
 
-/** Una chiave per avviso: ciascuno ha la sua settimana. */
+/**
+ * Una chiave per avviso: ciascuno ha la sua settimana. (`kv_avviso_aggiorna_app_ultima`, la
+ * settimana del vecchio avviso «aggiorna», può restare nel `localStorage` dei telefoni che la
+ * scrissero: non la legge più nessuno, e non è identità.)
+ */
 export const CHIAVI_ULTIMA_COMPARSA: Readonly<Record<AvvisoSettimanale, string>> = Object.freeze({
-  'aggiorna-app': 'kv_avviso_aggiorna_app_ultima',
   'notifiche-disattivate': 'kv_avviso_notifiche_ultima',
 })
 
-export type PiattaformaStore = 'ios' | 'android'
-
-/**
- * LA 1.1 È GIÀ SULLO STORE? Un interruttore per piattaforma, e resta SPENTO finché qualcuno non
- * ha VISTO la 1.1 pubblicata sullo store di quella piattaforma: su iOS approvata da Apple e
- * scaricabile dalla scheda dell'App Store, su Android uscita in PRODUZIONE su Google Play (non nel
- * test chiuso, dove la scheda pubblica risponde 404).
- *
- * Perché esiste: il deploy web arriva PRIMA dei binari 1.1 (spec, «Fine»: passo 4 il deploy, passo
- * 6 build, revisione iOS e pubblicazione Android). Senza l'interruttore, dal merge in poi tutti
- * gli utenti 1.0 — cioè tutti — leggerebbero «È disponibile una nuova versione» mentre lo store
- * offre ancora la 1.0 (o una pagina 404), e l'avviso brucerebbe la sua settimana su un
- * aggiornamento che non esiste. Con l'interruttore spento la data NON si scrive: la settimana
- * resta intatta per quando la 1.1 ci sarà davvero.
- *
- * Si accende UNA piattaforma alla volta, con un commit che dice quando la si è vista sullo store,
- * e si aggiorna il test che fotografa questo valore (`__tests__/lib/avvisi-settimanali.test.ts`).
- */
-export const APP_1_1_PUBBLICATA: Readonly<Record<PiattaformaStore, boolean>> = Object.freeze({
-  ios: false,
-  android: false,
-})
-
-/** Il plugin arrivato con la 1.1: la sua assenza è la firma del binario 1.0. */
-const PLUGIN_APP_1_1 = 'FileTransfer'
 /** Il plugin che apre le impostazioni del sistema (`capacitor-native-settings`). */
 const PLUGIN_IMPOSTAZIONI = 'NativeSettings'
 
@@ -134,60 +113,21 @@ function pluginPresente(nome: string): boolean | null {
   }
 }
 
-/** `true` se l'app gira nella shell nativa del binario 1.0 (niente `FileTransfer`). */
-export function binarioDaAggiornare(): boolean {
-  if (!isNativeApp()) return false
-  return pluginPresente(PLUGIN_APP_1_1) === false
-}
-
-/**
- * `true` se la 1.1 è pubblicata sullo store della piattaforma corrente (vedi
- * `APP_1_1_PUBBLICATA`). Una piattaforma illeggibile o diversa da iOS/Android vale `false`: nel
- * dubbio non si promette un aggiornamento.
- */
-function aggiornamentoPubblicato(pubblicata: Readonly<Record<PiattaformaStore, boolean>>): boolean {
-  let piattaforma: string
-  try {
-    piattaforma = Capacitor.getPlatform()
-  } catch (e) {
-    logClient({
-      livello: 'warn',
-      evento: 'avvio',
-      messaggio: `avviso-aggiorna-app-piattaforma-illeggibile: ${nomeErrore(e)}`,
-    })
-    return false
-  }
-  if (piattaforma !== 'ios' && piattaforma !== 'android') return false
-  return pubblicata[piattaforma] === true
-}
-
 /**
  * Quale avviso mostrare ADESSO, già segnato come comparso; `null` per nessuno.
  *
- * Uno alla volta, e l'aggiornamento prima: sul binario 1.0 manca anche il plugin delle
- * impostazioni, e l'aggiornamento risolve download e bottone insieme. L'avviso delle notifiche,
- * se è dovuto anch'esso, non viene segnato: comparirà a un avvio successivo, con la sua
- * settimana intatta. Due riquadri insieme sopra la barra di navigazione coprirebbero la pagina.
+ * Uno alla volta, e l'aggiornamento prima: su un binario sotto la versione minima dello store
+ * (`appDaAggiornare`) compare il pop-up «Aggiorna l'app», e l'aggiornamento porta anche il bottone
+ * delle impostazioni. L'avviso delle notifiche allora non viene segnato: comparirà al primo avvio
+ * dopo l'aggiornamento, con la sua settimana intatta.
  *
- * «Aggiorna» parte solo se la 1.1 è davvero sullo store di QUESTA piattaforma
- * (`APP_1_1_PUBBLICATA`), e lo si controlla PRIMA di leggere o scrivere la data: con
- * l'interruttore spento la settimana non si consuma. Finché è spento, un binario 1.0 con le
- * notifiche negate vede l'avviso delle notifiche, col percorso a parole.
- *
- * La data si controlla PRIMA di chiedere il permesso al plugin: in sei giorni su sette non si
- * tocca il bridge.
- *
- * `pubblicata` si passa solo dai test; in produzione vale `APP_1_1_PUBBLICATA`.
+ * La data si controlla PRIMA di chiedere versione e permesso al bridge: in sei giorni su sette non
+ * lo si tocca.
  */
-export async function avvisoDaMostrare(
-  ora: number = Date.now(),
-  pubblicata: Readonly<Record<PiattaformaStore, boolean>> = APP_1_1_PUBBLICATA,
-): Promise<AvvisoSettimanale | null> {
+export async function avvisoDaMostrare(ora: number = Date.now()): Promise<AvvisoSettimanale | null> {
   if (!isNativeApp()) return null
-  if (binarioDaAggiornare() && aggiornamentoPubblicato(pubblicata) && avvisoScaduto('aggiorna-app', ora)) {
-    return segnaComparsa('aggiorna-app', ora) ? 'aggiorna-app' : null
-  }
   if (!avvisoScaduto('notifiche-disattivate', ora)) return null
+  if ((await appDaAggiornare()) !== null) return null
   if ((await statoPermessoPush()) !== 'denied') return null
   return segnaComparsa('notifiche-disattivate', ora) ? 'notifiche-disattivate' : null
 }
@@ -233,36 +173,4 @@ export async function apriImpostazioniNotifiche(): Promise<EsitoImpostazioni> {
     })
     return 'errore'
   }
-}
-
-/** La scheda dello store per la piattaforma; `null` fuori da iOS e Android. */
-export function urlSchedaStore(piattaforma: string): string | null {
-  if (piattaforma === 'ios') return URL_APP_STORE
-  if (piattaforma === 'android') return URL_PLAY_STORE
-  return null
-}
-
-/**
- * Apre la scheda dello store. Una navigazione della pagina, e non `window.open`: nella shell
- * Capacitor una navigazione verso un host esterno viene annullata e consegnata al sistema
- * (`UIApplication.open` su iOS, `Intent.ACTION_VIEW` su Android), che la apre nell'App Store o
- * in Google Play. La pagina resta dov'è. `window.open` su iOS non fa niente.
- */
-export function apriSchedaStore(
-  apri: (url: string) => void = (url) => window.location.assign(url),
-): string | null {
-  let piattaforma: string
-  try {
-    piattaforma = Capacitor.getPlatform()
-  } catch (e) {
-    logClient({
-      livello: 'error',
-      evento: 'avvio',
-      messaggio: `avviso-aggiorna-app-piattaforma-illeggibile: ${nomeErrore(e)}`,
-    })
-    return null
-  }
-  const url = urlSchedaStore(piattaforma)
-  if (url) apri(url)
-  return url
 }

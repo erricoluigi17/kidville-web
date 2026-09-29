@@ -7,6 +7,7 @@ import { ServiceWorkerRegister } from '@/components/providers/ServiceWorkerRegis
 import { PuliziaCacheOffline } from '@/components/providers/PuliziaCacheOffline'
 import { ChunkErrorBoundary } from '@/components/providers/ChunkErrorBoundary'
 import { BiometricGate } from '@/components/providers/BiometricGate'
+import { AvvisoAggiornamentoApp } from '@/components/providers/AvvisoAggiornamentoApp'
 
 /** Compositore dei provider globali client-side (accessibilità, shell nativa). */
 export function RootProviders({
@@ -44,8 +45,16 @@ export function RootProviders({
           `__tests__/architecture/gate-shell-nativa.test.ts`. */}
       <ChunkErrorBoundary />
       {/* Sblocco biometrico opt-in: passthrough puro su web, a opt-in spento e
-          senza sessione; l'overlay scatta solo in useEffect (hydration-safe). */}
-      <BiometricGate autenticato={autenticato}>{children}</BiometricGate>
+          senza sessione; l'overlay scatta solo in useEffect (hydration-safe).
+          Il pop-up «Aggiorna l'app» (solo sul binario sotto la versione minima dello
+          store) sta FRA I FIGLI del gate, non accanto: legge `useBloccoBiometrico()`
+          e non si apre sopra lo sblocco, che la sua Modal renderebbe inerte. Qui, e
+          non nei layout, copre genitore, docente, segreteria e login. Il lock è in
+          `__tests__/architecture/gate-shell-nativa.test.ts`. */}
+      <BiometricGate autenticato={autenticato}>
+        {children}
+        <AvvisoAggiornamentoApp />
+      </BiometricGate>
     </AccessibilityProvider>
   )
 }

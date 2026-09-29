@@ -7,7 +7,6 @@ import { Capacitor } from '@capacitor/core'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import {
   apriImpostazioniNotifiche,
-  apriSchedaStore,
   avvisoDaMostrare,
   impostazioniApribili,
   type AvvisoSettimanale,
@@ -15,10 +14,11 @@ import {
 
 /**
  * Gli avvisi settimanali dell'app nativa (compito AV1): «Notifiche disattivate — Apri
- * Impostazioni» e «È disponibile una nuova versione di Kidville». La decisione (quale, e se
- * questa settimana è già comparso) sta in `@/lib/native/avvisi-settimanali`; qui c'è solo il
- * riquadro. Montato accanto a `NativePushAutoRegister` nei layout del genitore e del docente.
- * Sul web e sul server non rende niente.
+ * Impostazioni». La decisione (se, e se questa settimana è già comparso) sta in
+ * `@/lib/native/avvisi-settimanali`; qui c'è solo il riquadro. Montato accanto a
+ * `NativePushAutoRegister` nei layout del genitore e del docente. Sul web e sul server non rende
+ * niente. «È disponibile una nuova versione di Kidville» stava qui fino al 2026-09-29: ora è il
+ * pop-up `AvvisoAggiornamentoApp`, montato in `RootProviders`.
  *
  * LA DECISIONE È UNA PER SESSIONE, di modulo come `attempted` in `NativePushAutoRegister`. Con
  * lo stato nel componente, il doppio montaggio di React (StrictMode, o un layout che si rimonta)
@@ -29,7 +29,7 @@ import {
  * rimontaggio del layout (Profilo → «Privacy» fuori da `(dashboard)/parent` → Indietro): se la
  * chiusura stesse solo nello stato del componente, il rimontaggio riceverebbe la stessa promise
  * già risolta e rimostrerebbe un riquadro che il genitore aveva chiuso — e il log «mostrato»
- * conterebbe due volte. Per questo `chiusoInSessione` (X, impostazioni aperte, store richiesto)
+ * conterebbe due volte. Per questo `chiusoInSessione` (X, impostazioni aperte)
  * e `comparsaRegistrata` (un solo log «mostrato» anche se il riquadro aperto si rimonta).
  *
  * I LOG. Il canale del client accetta solo `warn` ed `error`: la comparsa e i tocchi escono
@@ -68,15 +68,10 @@ function piattaforma(): string {
   }
 }
 
-const EVENTO: Record<AvvisoSettimanale, 'push' | 'avvio'> = {
-  'notifiche-disattivate': 'push',
-  'aggiorna-app': 'avvio',
-}
-
 function logAvviso(avviso: AvvisoSettimanale, azione: string, esito?: string): void {
   logClient({
     livello: 'warn',
-    evento: EVENTO[avviso],
+    evento: 'push',
     messaggio: `avviso-${avviso}-${azione}`,
     campi: { piattaforma: piattaforma(), ...(esito ? { esito } : {}) },
   })
@@ -85,14 +80,15 @@ function logAvviso(avviso: AvvisoSettimanale, azione: string, esito?: string): v
 export function AvvisiSettimanaliApp() {
   const t = useTranslations('shared')
   const [avviso, setAvviso] = useState<AvvisoSettimanale | null>(null)
-  // Sulla 1.0 (o se l'apertura fallisce) il bottone lascia il posto al percorso a parole.
+  // Senza il plugin delle impostazioni (o se l'apertura fallisce) il bottone lascia il posto al
+  // percorso a parole.
   const [percorsoManuale, setPercorsoManuale] = useState(false)
 
   useEffect(() => {
     let attivo = true
     void decidiUnaVolta().then((deciso) => {
       if (!attivo || !deciso || chiusoInSessione) return
-      const manuale = deciso === 'notifiche-disattivate' && !impostazioniApribili()
+      const manuale = !impostazioniApribili()
       setPercorsoManuale(manuale)
       setAvviso(deciso)
       if (!comparsaRegistrata) {
@@ -122,19 +118,6 @@ export function AvvisiSettimanaliApp() {
     } else setPercorsoManuale(true)
   }
 
-  const apriStore = () => {
-    const url = apriSchedaStore()
-    // «navigazione-richiesta», non «aperto»: il codice chiede al sistema di aprire la scheda, ma
-    // non sa se lo store si è aperto davvero (né se la scheda risponde). Il log dice solo questo.
-    logAvviso('aggiorna-app', 'tocco-store', url ? 'navigazione-richiesta' : 'piattaforma-sconosciuta')
-    if (url) {
-      chiusoInSessione = true
-      setAvviso(null)
-    }
-  }
-
-  const titolo = avviso === 'aggiorna-app' ? t('avvisoAggiornaTitolo') : t('avvisoNotificheTitolo')
-  const corpo = avviso === 'aggiorna-app' ? t('avvisoAggiornaCorpo') : t('avvisoNotificheCorpo')
 
   return (
     <div
@@ -154,17 +137,17 @@ export function AvvisiSettimanaliApp() {
         >
           <X aria-hidden="true" className="h-5 w-5" />
         </button>
-        <p className="font-barlow text-base font-extrabold uppercase text-kidville-green">{titolo}</p>
-        <p className="mt-1 font-maven text-[14px] text-kidville-sub">{corpo}</p>
-        {avviso === 'notifiche-disattivate' && percorsoManuale ? (
+        <p className="font-barlow text-base font-extrabold uppercase text-kidville-green">{t('avvisoNotificheTitolo')}</p>
+        <p className="mt-1 font-maven text-[14px] text-kidville-sub">{t('avvisoNotificheCorpo')}</p>
+        {percorsoManuale ? (
           <p className="mt-2 font-maven text-[14px] font-bold text-kidville-sub">{t('avvisoNotifichePercorso')}</p>
         ) : (
           <button
             type="button"
-            onClick={avviso === 'aggiorna-app' ? apriStore : () => void apriImpostazioni()}
+            onClick={() => void apriImpostazioni()}
             className="mt-3 min-h-[44px] rounded-full bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase text-kidville-white transition-colors hover:bg-kidville-green-dark"
           >
-            {avviso === 'aggiorna-app' ? t('avvisoAggiornaBottone') : t('avvisoNotificheApri')}
+            {t('avvisoNotificheApri')}
           </button>
         )}
       </div>

@@ -94,6 +94,16 @@ function messaggiLog(): string[] {
   return logClient.mock.calls.map(([e]) => (e as { messaggio: string }).messaggio)
 }
 
+/**
+ * Il messaggio porta PIATTAFORMA E VERSIONE, e non per ornamento: `app_log` accorpa le righe per
+ * impronta, e l'impronta contiene il messaggio ma NON la piattaforma né i `campi`. Col solo
+ * «avviso-aggiorna-app-mostrato», senza utente (pagina di login), tutte le comparse del giorno
+ * finivano in UNA riga con piattaforma e versione della prima: una comparsa sulla 1.1 sarebbe
+ * stata contata sotto la «1.0» senza lasciare traccia (misurato il 29/09, dopo il deploy #174).
+ */
+const M = (azione: string, piattaforma = 'android', versione = '1.0') =>
+  `avviso-aggiorna-app-${azione}: ${piattaforma} ${versione}`
+
 const dialogo = () => screen.queryByRole('dialog')
 
 beforeEach(() => {
@@ -147,7 +157,7 @@ describe('AvvisoAggiornamentoApp — a chi compare', () => {
     fireEvent.click(screen.getByRole('button', { name: T.avvisoAggiornaBottone }))
     expect(apriUrl).toHaveBeenCalledWith(url)
     expect(dialogo()).toBeNull()
-    expect(messaggiLog()).toEqual(['avviso-aggiorna-app-mostrato', 'avviso-aggiorna-app-tocco-store'])
+    expect(messaggiLog()).toEqual([M('mostrato', piattaforma), M('tocco-store', piattaforma)])
     expect(logClient).toHaveBeenLastCalledWith(
       expect.objectContaining({
         livello: 'warn',
@@ -157,12 +167,20 @@ describe('AvvisoAggiornamentoApp — a chi compare', () => {
     )
   })
 
+  it('il messaggio distingue piattaforma e versione (una riga di app_log per versione)', async () => {
+    stato.piattaforma = 'ios'
+    stato.versione = '1.0.3'
+    await monta()
+    await screen.findByRole('dialog')
+    expect(messaggiLog()).toEqual(['avviso-aggiorna-app-mostrato: ios 1.0.3'])
+  })
+
   it('«Più tardi» chiude e lo registra; non si naviga', async () => {
     await monta()
     fireEvent.click(await screen.findByRole('button', { name: T.avvisoAggiornaPiuTardi }))
     expect(dialogo()).toBeNull()
     expect(apriUrl).not.toHaveBeenCalled()
-    expect(messaggiLog()).toEqual(['avviso-aggiorna-app-mostrato', 'avviso-aggiorna-app-rimandato'])
+    expect(messaggiLog()).toEqual([M('mostrato'), M('rimandato')])
     expect(logClient).toHaveBeenLastCalledWith(expect.objectContaining({ campi: { piattaforma: 'android' } }))
   })
 
@@ -171,7 +189,7 @@ describe('AvvisoAggiornamentoApp — a chi compare', () => {
     await screen.findByRole('dialog')
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(dialogo()).toBeNull()
-    expect(messaggiLog()).toContain('avviso-aggiorna-app-rimandato')
+    expect(messaggiLog()).toContain(M('rimandato'))
   })
 
   it('non si chiude toccando fuori: si sceglie uno dei due bottoni', async () => {
@@ -192,7 +210,7 @@ describe('AvvisoAggiornamentoApp — «a ogni apertura»', () => {
     stato.ora += 30 * MINUTO
     cambiaVisibilita('visible')
     expect(await screen.findByRole('dialog', { name: T.avvisoAggiornaTitolo })).toBeTruthy()
-    expect(messaggiLog().filter((m) => m === 'avviso-aggiorna-app-mostrato')).toHaveLength(2)
+    expect(messaggiLog().filter((m) => m === M('mostrato'))).toHaveLength(2)
   })
 
   it('un passaggio lampo a un\'altra app (5 minuti) non lo ripropone', async () => {
@@ -204,7 +222,7 @@ describe('AvvisoAggiornamentoApp — «a ogni apertura»', () => {
     cambiaVisibilita('visible')
     await lasciaDecidere()
     expect(dialogo()).toBeNull()
-    expect(messaggiLog().filter((m) => m === 'avviso-aggiorna-app-mostrato')).toHaveLength(1)
+    expect(messaggiLog().filter((m) => m === M('mostrato'))).toHaveLength(1)
   })
 
   it('anche dopo «Aggiorna ora» senza aggiornare, al ritorno dopo 30 minuti ricompare', async () => {
@@ -238,7 +256,7 @@ describe('AvvisoAggiornamentoApp — «a ogni apertura»', () => {
     render(albero(Avviso))
     await lasciaDecidere()
     expect(screen.getByRole('dialog')).toBeTruthy()
-    expect(messaggiLog().filter((m) => m === 'avviso-aggiorna-app-mostrato')).toHaveLength(1)
+    expect(messaggiLog().filter((m) => m === M('mostrato'))).toHaveLength(1)
   })
 
   it('rimandato, smontato e rimontato nella stessa sessione non ricompare', async () => {
@@ -259,12 +277,12 @@ describe('AvvisoAggiornamentoApp — gate biometrico e doppio montaggio', () => 
     await waitFor(() => expect(getInfo).toHaveBeenCalled())
     await lasciaDecidere()
     expect(dialogo()).toBeNull()
-    expect(messaggiLog()).not.toContain('avviso-aggiorna-app-mostrato')
+    expect(messaggiLog()).not.toContain(M('mostrato'))
 
     stato.bloccato = false
     rerender(albero(Avviso))
     expect(await screen.findByRole('dialog', { name: T.avvisoAggiornaTitolo })).toBeTruthy()
-    expect(messaggiLog()).toEqual(['avviso-aggiorna-app-mostrato'])
+    expect(messaggiLog()).toEqual([M('mostrato')])
   })
 
   it('StrictMode: la versione si legge una volta, il pop-up compare, un solo log «mostrato»', async () => {
@@ -272,6 +290,6 @@ describe('AvvisoAggiornamentoApp — gate biometrico e doppio montaggio', () => 
     expect(await screen.findByRole('dialog')).toBeTruthy()
     await lasciaDecidere()
     expect(getInfo).toHaveBeenCalledTimes(1)
-    expect(messaggiLog().filter((m) => m === 'avviso-aggiorna-app-mostrato')).toHaveLength(1)
+    expect(messaggiLog().filter((m) => m === M('mostrato'))).toHaveLength(1)
   })
 })

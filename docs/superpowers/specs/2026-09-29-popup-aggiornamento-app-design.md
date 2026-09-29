@@ -57,7 +57,9 @@ Chi usa ancora un binario nativo vecchio vede un pop-up che lo porta ad App Stor
 - Su un binario da aggiornare `avvisoDaMostrare` restituisce `null` senza consumare la settimana (uno alla volta, prima l'aggiornamento).
 - Tolti `APP_1_1_PUBBLICATA` e `binarioDaAggiornare()`.
 
-**Log** (client, `warn`, evento `avvio`): `avviso-aggiorna-app-mostrato`, `-rimandato`, `-tocco-store` (esito), `-versione-illeggibile: <motivo>`; più `-decisione-fallita` (error).
+**Log** (client, `warn`, evento `avvio`): `avviso-aggiorna-app-mostrato: <piattaforma> <versione>`, `-rimandato: …`, `-tocco-store: …` (esito), `-versione-illeggibile: <motivo>`; più `-decisione-fallita` (error).
+- Piattaforma e versione stanno **nel messaggio** dal 29/09 (branch `fix/log-aggiorna-app-per-versione`).
+- Il motivo: `app_log` accorpa per impronta, e l'impronta non contiene né la piattaforma né i `campi`. Col messaggio fisso tutte le comparse senza utente cadevano in una riga con la versione della prima.
 
 ## Verifica
 
@@ -67,7 +69,7 @@ Chi usa ancora un binario nativo vecchio vede un pop-up che lo porta ad App Stor
 - la soglia dei 30 minuti tolta.
 
 **Dopo il deploy, la prova sui telefoni veri**, con una query di sola lettura su `app_log`:
-- le righe `avviso-aggiorna-app-%` devono avere solo `versione_app` `1.0+*`, mai `1.1+*`;
+- raggruppando `app_log` per `messaggio` su `avviso-aggiorna-app-%`, non deve esserci nessuna riga `… 1.1` (la colonna `contesto.campi.versione_app` di una riga accorpata è quella della prima occorrenza e non prova niente);
 - gli utenti visti solo con la 1.0 devono calare nei giorni successivi.
 
 ## Per la prossima release

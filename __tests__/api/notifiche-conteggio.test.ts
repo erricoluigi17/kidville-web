@@ -21,7 +21,11 @@ const h = vi.hoisted(() => {
       from(table: string) {
         const qb: Record<string, unknown> = {}
         const rec = (m: string) => (...args: unknown[]) => { state.calls.push({ table, m, args }); return qb }
-        for (const m of ['select', 'is', 'or', 'order', 'limit', 'in', 'update', 'delete', 'eq']) qb[m] = rec(m)
+        // `neq` è entrato il 2026-09-29 con il conteggio della chat: senza, la catena
+        // `select().in().neq().is()` di `leggiChatNonLetti` alza un TypeError, che il suo
+        // `catch` inghiotte restituendo `null`. Lo prenderebbe soltanto il caso della chat più
+        // in basso: gli altri non hanno thread in coda e non arrivano mai a `neq`.
+        for (const m of ['select', 'is', 'or', 'order', 'limit', 'in', 'neq', 'update', 'delete', 'eq']) qb[m] = rec(m)
         qb.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
           Promise.resolve(take(table)).then(res, rej)
         return qb
@@ -58,7 +62,14 @@ beforeEach(() => {
   h.state.queues = {}
   h.state.used = {}
   h.state.calls = []
-  auth.requireUser.mockResolvedValue({ response: null, user: { id: 'u1' } })
+  // Un UUID, non più `'u1'`: dal 2026-09-29 `leggiChatNonLetti` rifiuta un `utenteId` che non
+  // sia un uuid (quella stringa entra in un filtro PostgREST interpolato), e con `'u1'` la
+  // chat tornava `null` senza toccare il database. Il gate in produzione dà sempre un uuid:
+  // la finzione si allinea alla realtà, non il codice alla finzione.
+  auth.requireUser.mockResolvedValue({
+    response: null,
+    user: { id: 'aaaaaaaa-0000-4000-8000-000000000001' },
+  })
 })
 
 /**
@@ -105,6 +116,36 @@ describe('GET /api/notifiche — il conteggio non è la lunghezza della lista', 
     // Il secondo porta le opzioni della head-query: senza `head: true` il conteggio
     // trasferirebbe l'archivio intero a ogni poll (60 s).
     expect(select[1].args[1]).toMatchObject({ count: 'exact', head: true })
+  })
+
+  /**
+   * L'UNICO CASO DI QUESTO FILE CHE PERCORRE DAVVERO LA CATENA DELLA CHAT.
+   *
+   * Dal 2026-09-29 la GET conta anche i messaggi di chat non letti. I tre casi qui sopra non
+   * mettono thread in coda: `chat_threads` risponde con l'elenco vuoto del default, la
+   * funzione prende la scorciatoia («nessuna conversazione → 0») e non arriva mai a
+   * `chat_messages`. Sono verdi, ma della chat non provano niente — e non si accorgerebbero
+   * nemmeno che al builder finto mancava `neq`.
+   *
+   * Questo caso invece i thread ce li mette: pretende il numero E l'assenza di qualunque
+   * `warn` sul canale `chat`, che è il segno di una catena caduta nel `catch`. È la lezione
+   * del passo precedente, dove `chat-messages-auth.test.ts` restò verde su un finto senza `.or`.
+   */
+  it('il percorso felice porta anche `chat_non_letti`, senza un solo warn della chat', async () => {
+    h.state.queues = {
+      notifiche: [{ data: elenco(5), error: null }, { count: 5, error: null }],
+      chat_threads: [{ data: [{ id: 'th-1' }], error: null }],
+      chat_messages: [{ count: 2, error: null }],
+    }
+    const res = await GET(req())
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.chat_non_letti).toBe(2)
+    expect(
+      log.logEvento.mock.calls.filter((c) => c[0] === 'chat' && c[1] === 'warn'),
+      'un warn della chat su un percorso felice: la catena finta non regge quella vera',
+    ).toEqual([])
   })
 
   it('conteggio fallito → 500 con codice, e MAI il messaggio grezzo del database', async () => {

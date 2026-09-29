@@ -6,6 +6,7 @@ import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { leggiChatNonLetti } from '@/lib/chat/non-letti'
 
 /**
  * Quante notifiche torna l'ELENCO. La campanella ne mostra 20; il tetto esiste
@@ -39,7 +40,19 @@ const patchBodySchema = z.object({
   id: z.preprocess(vuotoComeAssente, zUuid.nullish()),
 })
 
-// GET /api/notifiche?userId=&solo_non_lette=  — notifiche dell'utente corrente
+/**
+ * GET /api/notifiche?solo_non_lette= — le notifiche di chi chiede, il loro conteggio, e
+ * `chat_non_letti`: quanti MESSAGGI DI CHAT non letti ha (il numero per il badge su «Messaggi»).
+ *
+ * CONTRATTO di `chat_non_letti`:
+ *  · `number | null`. `null` è «non lo so» — il client tiene l'ultimo valore noto, non 0;
+ *  · ASSENTE nelle risposte d'errore (i due 500 qui sotto non lo portano);
+ *  · questa GET non risponde MAI 500 per colpa della chat: è un contorno, le notifiche no;
+ *  · calcolato in PARALLELO alle due query delle notifiche, atteso solo alla composizione
+ *    della risposta: non aggiunge un round-trip a un poll che gira ogni 60 s.
+ *
+ * Il perché del numero, i filtri, gli indici e la storia stanno in `@/lib/chat/non-letti`.
+ */
 export const GET = withRoute('notifiche:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
@@ -49,6 +62,18 @@ export const GET = withRoute('notifiche:GET', async (request: Request) => {
     const soloNonLette = q.data.solo_non_lette === 'true'
 
     const supabase = await createAdminClient()
+
+    // IN PARALLELO, non in serie: la promise parte QUI — prima delle due query delle notifiche
+    // — e si attende solo alla composizione della risposta. Spostarla più in basso la
+    // rimetterebbe in serie: fino a quattro giri di database dove ne bastano due (tre, se
+    // partisse appena dopo il controllo d'errore dell'elenco). Che sui due ritorni 500 il
+    // conteggio venga fatto e buttato è lavoro sprecato su un percorso d'errore, e va bene così.
+    //
+    // L'identità è quella restituita dal GATE, `auth.user.id`: la sola che questa route usa
+    // per leggere. Il modulo ne controlla la FORMA (rifiuta ciò che non è un uuid), non a chi
+    // appartiene: che sia la persona giusta lo garantisce soltanto il fatto che venga dal gate.
+    const chatNonLetti = leggiChatNonLetti(supabase, auth.user.id, 'notifiche:GET')
+
     let query = supabase
       .from('notifiche')
       .select('id, tipo, titolo, corpo, link, entita_tipo, entita_id, letta_il, creato_il')
@@ -85,7 +110,20 @@ export const GET = withRoute('notifiche:GET', async (request: Request) => {
       )
     }
 
-    return NextResponse.json({ success: true, data, non_lette: count ?? 0 })
+    // Attesa QUI, dove la risposta si compone: la promise è in volo da prima delle due query
+    // sopra, quindi non aggiunge attesa. Non lancia, quindi niente try/catch attorno.
+    //
+    // Del risultato la risposta prende solo il `totale`: i `threadIds` che il modulo riporta
+    // servono a chi gira dentro questa stessa GET (la consegna «delivered»), non al client, e
+    // la forma del JSON resta quella di prima. `?.totale ?? null` regge entrambi i casi —
+    // `null` (non lo so) e `totale: 0` (letto tutto), che restano due cose diverse.
+    const chat = await chatNonLetti
+    return NextResponse.json({
+      success: true,
+      data,
+      non_lette: count ?? 0,
+      chat_non_letti: chat?.totale ?? null,
+    })
   } catch (err) {
     logErrore({ operazione: 'notifiche:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

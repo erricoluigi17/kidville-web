@@ -1,4 +1,32 @@
 
+## 🔎 Changelog — Log del pop-up «Aggiorna l'app»: una riga per piattaforma e versione — 2026-09-29 (branch `fix/log-aggiorna-app-per-versione`)
+
+**Il difetto** (misurato dopo il deploy della #174, `18c4bd59`). `app_log` accorpa le righe per impronta. L'impronta contiene il messaggio ma **non** la piattaforma né i `campi` (`impronta()` in `src/lib/logging/app-log.ts`).
+
+Con il messaggio fisso `avviso-aggiorna-app-mostrato`, senza utente (pagina di login), tutte le comparse del giorno finivano in **una** riga: piattaforma e `versione_app` erano quelle della **prima** comparsa. Entro 3 minuti c'erano 5 comparse: la riga diceva «iOS 1.0+4», ma una era dell'emulatore Android. Una comparsa sulla 1.1 sarebbe stata sommata alla riga «1.0» senza lasciare traccia. La verifica «solo `1.0+*`, mai `1.1+*`» scritta nella voce qui sotto **non poteva dimostrare niente**.
+
+**La correzione.** Piattaforma e versione entrano nel **messaggio**:
+- `avviso-aggiorna-app-mostrato: ios 1.0`
+- `avviso-aggiorna-app-rimandato: android 1.0`
+- `avviso-aggiorna-app-tocco-store: ios 1.0`
+
+`campi.piattaforma` ed `esito` restano. Le versioni in circolazione sono poche, quindi la deduplica regge. La versione è quella di `getInfo`, già controllata da `confrontaVersioni` (solo cifre e punti).
+
+**Verificato:**
+- la catena vera di `/api/logs` (`redigiPathNelTesto` + `descriviErrore`) lascia il messaggio intatto;
+- test del componente aggiornati, più un caso `ios 1.0.3`.
+
+Nessun cambiamento di comportamento del pop-up.
+
+**Query di verifica corretta**, una riga per piattaforma e versione:
+
+```sql
+SELECT messaggio, sum(occorrenze) FROM app_log
+WHERE messaggio LIKE 'avviso-aggiorna-app-%' GROUP BY 1;
+```
+
+Atteso: nessuna riga `… 1.1`.
+
 ## 📲 Changelog — Pop-up «Aggiorna l'app» a chi è rimasto sulla 1.0 — 2026-09-29 (branch `feat/popup-aggiornamento-app`)
 
 **Perché.** La 1.1 è pubblicata su **entrambi gli store**. Verificato il 29/09 su due fonti:

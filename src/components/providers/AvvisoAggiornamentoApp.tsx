@@ -59,12 +59,21 @@ function decidiUnaVolta(): Promise<Decisione> {
   return decisioneSessione
 }
 
-function logAvviso(azione: string, piattaforma: PiattaformaStore, esito?: string): void {
+/**
+ * PIATTAFORMA E VERSIONE STANNO NEL MESSAGGIO, oltre che nei `campi`. `app_log` accorpa le righe
+ * per impronta (`impronta()` in `@/lib/logging/app-log`), e l'impronta contiene il messaggio ma
+ * NON la piattaforma né i `campi`: con un messaggio fisso, senza utente (la pagina di login), tutte
+ * le comparse del giorno cadevano in UNA riga con piattaforma e versione della PRIMA — e una
+ * comparsa sulla 1.1 sarebbe stata sommata alla riga «1.0» senza lasciare traccia (misurato il
+ * 29/09 dopo il deploy della #174). Le versioni in circolazione sono poche: la deduplica regge.
+ * La versione è quella di `getInfo`, già passata da `confrontaVersioni` (solo cifre e punti).
+ */
+function logAvviso(azione: string, decisione: NonNullable<Decisione>, esito?: string): void {
   logClient({
     livello: 'warn',
     evento: 'avvio',
-    messaggio: `avviso-aggiorna-app-${azione}`,
-    campi: { piattaforma, ...(esito ? { esito } : {}) },
+    messaggio: `avviso-aggiorna-app-${azione}: ${decisione.piattaforma} ${decisione.versione}`,
+    campi: { piattaforma: decisione.piattaforma, ...(esito ? { esito } : {}) },
   })
 }
 
@@ -111,13 +120,13 @@ export function AvvisoAggiornamentoApp() {
   useEffect(() => {
     if (!visibile || !decisione || comparsaRegistrata) return
     comparsaRegistrata = true
-    logAvviso('mostrato', decisione.piattaforma)
+    logAvviso('mostrato', decisione)
   }, [visibile, decisione])
 
   if (!decisione) return null
 
   const rimanda = () => {
-    logAvviso('rimandato', decisione.piattaforma)
+    logAvviso('rimandato', decisione)
     chiusoInSessione = true
     setAperto(false)
   }
@@ -126,7 +135,7 @@ export function AvvisoAggiornamentoApp() {
     const url = apriSchedaStore()
     // «navigazione-richiesta», non «aperto»: il codice chiede al sistema di aprire la scheda, ma
     // non sa se lo store si è aperto davvero. Il log dice solo questo.
-    logAvviso('tocco-store', decisione.piattaforma, url ? 'navigazione-richiesta' : 'piattaforma-sconosciuta')
+    logAvviso('tocco-store', decisione, url ? 'navigazione-richiesta' : 'piattaforma-sconosciuta')
     if (url) {
       chiusoInSessione = true
       setAperto(false)

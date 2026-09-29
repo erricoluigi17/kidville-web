@@ -1,4 +1,48 @@
 
+## 📲 Changelog — Pop-up «Aggiorna l'app» a chi è rimasto sulla 1.0 — 2026-09-29 (branch `feat/popup-aggiornamento-app`)
+
+**Perché.** La 1.1 è pubblicata su **entrambi gli store**. Verificato il 29/09 su due fonti:
+- `itunes.apple.com/lookup?id=6794883055&country=it` risponde `version 1.1`, rilascio del 25/09 alle 19:51Z;
+- la scheda Google Play di `it.kidville.app` risponde `1.1`.
+
+Il sistema minimo non è cambiato (iOS 15.0, Android API 24), quindi chi ha la 1.0 può aggiornare. Misurato in `app_log` negli ultimi 2 giorni: **58 utenti iOS e 33 Android** visti solo con la 1.0. È un limite inferiore, perché il client registra solo `warn` ed `error`.
+
+**Il pop-up.** Il riquadro «aggiorna» della #166 era spento (`APP_1_1_PUBBLICATA`) e compariva al massimo una volta a settimana. Da oggi c'è una **finestra al centro**, scelta dal titolare:
+- titolo «È disponibile una nuova versione di Kidville»;
+- «**Aggiorna ora**» apre la scheda App Store o Google Play;
+- «**Più tardi**» la chiude, e così anche Esc e Indietro su Android. Toccare fuori non la chiude.
+
+**Quando compare:**
+- a ogni avvio dell'app;
+- quando si torna nell'app dopo **almeno 30 minuti** in background. Un passaggio lampo a un'altra app non la fa ricomparire.
+
+**Chi la vede.** Solo il binario **sotto la versione minima dello store**. La versione si legge con `App.getInfo().version`: `@capacitor/app` c'è anche nel binario 1.0.
+- Minima `VERSIONE_MINIMA_STORE = { ios: '1.1', android: '1.1' }` in `src/lib/native/aggiornamento-app.ts`. Si alza solo dopo aver **visto** la versione nuova sullo store; `null` spegne una piattaforma.
+- Mai sul web, mai sulla 1.1.
+- Versione illeggibile, plugin assente o `getInfo` che rifiuta o non risponde entro 3 s: niente pop-up, con una riga di log.
+- Montata in `RootProviders`: copre genitore, docente, segreteria e login.
+
+**Gate biometrico.** La `Modal` rende inerte tutto ciò che sta fuori da lei. Aperta sopra lo sblocco biometrico già a schermo avrebbe congelato l'app. Il gate ora espone `useBloccoBiometrico()`: il pop-up sta fra i figli del gate e si apre solo a sblocco avvenuto.
+
+**Cosa cambia altrove.**
+- Il riquadro settimanale resta **solo per «notifiche disattivate»**. Su un binario da aggiornare tace, senza consumare la sua settimana.
+- Via `APP_1_1_PUBBLICATA` e `binarioDaAggiornare()` di `avvisi-settimanali.ts`. Il campo `binarioDaAggiornare` dei download (`scarica.ts`) resta com'è.
+- Testi: `avvisoAggiornaBottone` diventa «Aggiorna ora» / «Update now»; nuova chiave in coda `avvisoAggiornaPiuTardi` («Più tardi» / «Later»).
+- Nessuna migrazione, nessuna build nativa: arriva ai telefoni col deploy web.
+
+**Log** (client, `warn`, evento `avvio`; campi `piattaforma` ed `esito`, più `versione_app` del logger; nessun dato personale):
+- `avviso-aggiorna-app-mostrato`, a ogni comparsa;
+- `avviso-aggiorna-app-rimandato`;
+- `avviso-aggiorna-app-tocco-store`, con `navigazione-richiesta` o `piattaforma-sconosciuta`;
+- `avviso-aggiorna-app-versione-illeggibile: <motivo>`, dove il motivo è `timeout`, `formato`, `plugin-assente` o il nome dell'errore;
+- `avviso-aggiorna-app-decisione-fallita` (error).
+
+**Test.**
+- Test nuovi: `__tests__/lib/aggiornamento-app.test.ts` e `__tests__/components/AvvisoAggiornamentoApp.test.tsx`. Il plugin finto è un Proxy fedele che risponde anche a `then`: restituendo il plugin da una promise, 9 test diventano rossi.
+- Lock di montaggio in `gate-shell-nativa.test.ts`, che toglie i commenti prima di cercare: rosso se il pop-up esce da `<BiometricGate>`.
+- Visti rossi i mutanti: senza l'attesa del gate e senza la soglia dei 30 minuti.
+- Spec: `docs/superpowers/specs/2026-09-29-popup-aggiornamento-app-design.md`.
+
 ## 👪 Changelog — Retta a carico di un fratello: «Paga il fratello …» al posto di «Non generata» — 2026-09-28 (branch `feat/retta-a-carico-fratello`)
 
 **Il difetto.** Dal 16/08 un bambino può avere la retta a carico di un fratello (`alunni.retta_a_carico_di`): la generazione lo salta, e la vista Rette lo mostrava **«Non generata»**, come un bambino dimenticato. «Genera mancanti» lo contava senza poterlo generare: il numero non scendeva mai a zero. Misurato il 28/09: **47 iscritti** in questa situazione (39 Giugliano, 5 Aversa, 3 Cesa).

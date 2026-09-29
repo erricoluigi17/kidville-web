@@ -6,12 +6,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
  * Cosa inchiodano questi test, e come diventerebbero rossi:
  *  - la cadenza: al massimo UNA comparsa ogni sette giorni per avviso — togliere il controllo
  *    della data fa comparire l'avviso a ogni chiamata;
- *  - il binario 1.0 si riconosce dall'ASSENZA di `FileTransfer`, e solo nella shell nativa;
  *  - l'avviso delle notifiche solo con permesso `denied` — non con `prompt`, non con `granted`;
+ *  - uno alla volta, l'aggiornamento prima: su un binario da aggiornare (lo decide
+ *    `@/lib/native/aggiornamento-app`, dal 2026-09-29 col suo pop-up) l'avviso delle notifiche
+ *    non compare e la sua settimana resta intatta;
  *  - uno storage che non scrive SPEGNE l'avviso (altrimenti comparirebbe a ogni avvio);
  *  - il plugin delle impostazioni si chiede al bridge PRIMA di chiamarlo, e si apre la pagina
- *    giusta per piattaforma;
- *  - la scheda dello store è quella dell'app, su entrambi gli store.
+ *    giusta per piattaforma.
  */
 
 const stato = vi.hoisted(() => ({
@@ -49,6 +50,13 @@ vi.mock('capacitor-native-settings', () => ({
   IOSSettings: { App: 'app', AppNotification: 'appNotification' },
 }))
 
+// Chi deve aggiornare lo verifica `__tests__/lib/aggiornamento-app.test.ts`: qui conta solo la
+// risposta, e QUANDO la si chiede.
+const appDaAggiornare = vi.hoisted(() =>
+  vi.fn<() => Promise<{ piattaforma: 'ios' | 'android'; versione: string } | null>>(async () => null),
+)
+vi.mock('@/lib/native/aggiornamento-app', () => ({ appDaAggiornare }))
+
 const logClient = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/logging/client', () => ({
   logClient,
@@ -56,22 +64,16 @@ vi.mock('@/lib/logging/client', () => ({
 }))
 
 import {
-  APP_1_1_PUBBLICATA,
   CHIAVI_ULTIMA_COMPARSA,
   INTERVALLO_AVVISO_MS,
   apriImpostazioniNotifiche,
-  apriSchedaStore,
   avvisoDaMostrare,
   avvisoScaduto,
-  binarioDaAggiornare,
-  urlSchedaStore,
+  impostazioniApribili,
 } from '@/lib/native/avvisi-settimanali'
 
 const ORA = Date.UTC(2026, 8, 25, 8, 0, 0)
 const GIORNO = 24 * 60 * 60 * 1000
-/** La 1.1 pubblicata su entrambi gli store: i test del ramo «aggiorna» la dichiarano. */
-const ACCESI = { ios: true, android: true } as const
-const SPENTI = { ios: false, android: false } as const
 
 beforeEach(() => {
   stato.nativo = true
@@ -81,6 +83,8 @@ beforeEach(() => {
   stato.piattaformaRotta = false
   statoPermessoPush.mockReset()
   statoPermessoPush.mockResolvedValue('denied')
+  appDaAggiornare.mockReset()
+  appDaAggiornare.mockResolvedValue(null)
   apriSettings.mockReset()
   apriSettings.mockResolvedValue({ status: true })
   logClient.mockReset()
@@ -97,7 +101,6 @@ describe('avvisoDaMostrare — la cadenza settimanale', () => {
     stato.plugin = new Set()
     expect(await avvisoDaMostrare(ORA)).toBeNull()
     expect(statoPermessoPush).not.toHaveBeenCalled()
-    expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['aggiorna-app'])).toBeNull()
     expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['notifiche-disattivate'])).toBeNull()
   })
 
@@ -107,8 +110,9 @@ describe('avvisoDaMostrare — la cadenza settimanale', () => {
 
     expect(await avvisoDaMostrare(ORA + 60_000)).toBeNull()
     expect(await avvisoDaMostrare(ORA + 6 * GIORNO + 23 * 60 * 60 * 1000)).toBeNull()
-    // Nei giorni in cui non è dovuto, il bridge non si tocca.
+    // Nei giorni in cui non è dovuto, il bridge non si tocca: né il permesso né la versione.
     expect(statoPermessoPush).toHaveBeenCalledTimes(1)
+    expect(appDaAggiornare).toHaveBeenCalledTimes(1)
 
     expect(await avvisoDaMostrare(ORA + INTERVALLO_AVVISO_MS)).toBe('notifiche-disattivate')
     expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['notifiche-disattivate'])).toBe(
@@ -125,91 +129,28 @@ describe('avvisoDaMostrare — la cadenza settimanale', () => {
     },
   )
 
-  it('binario 1.0 (niente FileTransfer) con la 1.1 sullo store: compare «aggiorna», una volta a settimana', async () => {
-    stato.plugin = new Set(['PushNotifications'])
-    statoPermessoPush.mockResolvedValue('granted')
-    expect(await avvisoDaMostrare(ORA, ACCESI)).toBe('aggiorna-app')
-    expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['aggiorna-app'])).toBe(String(ORA))
-    expect(await avvisoDaMostrare(ORA + 3 * GIORNO, ACCESI)).toBeNull()
-    expect(await avvisoDaMostrare(ORA + 7 * GIORNO, ACCESI)).toBe('aggiorna-app')
-  })
-
-  it('1.0 con le notifiche negate: prima «aggiorna»; le notifiche al giro dopo, con la loro settimana intatta', async () => {
-    stato.plugin = new Set(['PushNotifications'])
-    expect(await avvisoDaMostrare(ORA, ACCESI)).toBe('aggiorna-app')
-    // Non segnato: l'avviso delle notifiche non ha consumato la sua settimana.
-    expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['notifiche-disattivate'])).toBeNull()
-    expect(await avvisoDaMostrare(ORA + 60_000, ACCESI)).toBe('notifiche-disattivate')
-    expect(await avvisoDaMostrare(ORA + 120_000, ACCESI)).toBeNull()
-  })
-
-  it('sul binario 1.1 l\'avviso «aggiorna» non compare mai, nemmeno con la 1.1 sullo store', async () => {
-    statoPermessoPush.mockResolvedValue('granted')
-    expect(binarioDaAggiornare()).toBe(false)
-    expect(await avvisoDaMostrare(ORA, ACCESI)).toBeNull()
-    expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['aggiorna-app'])).toBeNull()
-  })
-})
-
-describe('avvisoDaMostrare — «aggiorna» solo quando la 1.1 è sullo store', () => {
-  it('il valore spedito: spento su entrambe le piattaforme finché la 1.1 non è pubblicata', () => {
-    // Chi accende una piattaforma aggiorna QUESTA riga, dopo aver visto la 1.1 sullo store.
-    expect(APP_1_1_PUBBLICATA).toEqual({ ios: false, android: false })
-    expect(Object.isFrozen(APP_1_1_PUBBLICATA)).toBe(true)
-  })
-
-  it.each(['ios', 'android'])(
-    'binario 1.0 su %s con l\'interruttore spento: niente avviso, e la settimana NON si consuma',
+  it.each(['ios', 'android'] as const)(
+    'binario da aggiornare su %s con le notifiche negate: niente avviso, il permesso non si chiede, la settimana resta intatta',
     async (piattaforma) => {
-      stato.piattaforma = piattaforma
-      stato.plugin = new Set(['PushNotifications'])
-      statoPermessoPush.mockResolvedValue('granted')
-      expect(binarioDaAggiornare()).toBe(true)
-      expect(await avvisoDaMostrare(ORA, SPENTI)).toBeNull()
-      expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['aggiorna-app'])).toBeNull()
-      // Anche col valore spedito (nessun secondo argomento), finché è spento.
+      // Il pop-up «Aggiorna l'app» ha la precedenza, e l'aggiornamento porta anche il bottone
+      // delle impostazioni: due richieste insieme coprirebbero la pagina.
+      appDaAggiornare.mockResolvedValue({ piattaforma, versione: '1.0' })
       expect(await avvisoDaMostrare(ORA)).toBeNull()
-      expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['aggiorna-app'])).toBeNull()
+      expect(statoPermessoPush).not.toHaveBeenCalled()
+      expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['notifiche-disattivate'])).toBeNull()
+
+      // Aggiornato, al primo avvio l'avviso delle notifiche arriva con la sua settimana intatta.
+      appDaAggiornare.mockResolvedValue(null)
+      expect(await avvisoDaMostrare(ORA + 60_000)).toBe('notifiche-disattivate')
     },
   )
-
-  it('iOS acceso e Android spento: «aggiorna» compare solo su iOS', async () => {
-    const SOLO_IOS = { ios: true, android: false }
-    stato.plugin = new Set(['PushNotifications'])
-    statoPermessoPush.mockResolvedValue('granted')
-
-    stato.piattaforma = 'android'
-    expect(await avvisoDaMostrare(ORA, SOLO_IOS)).toBeNull()
-    expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['aggiorna-app'])).toBeNull()
-
-    stato.piattaforma = 'ios'
-    expect(await avvisoDaMostrare(ORA, SOLO_IOS)).toBe('aggiorna-app')
-    expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['aggiorna-app'])).toBe(String(ORA))
-  })
-
-  it('1.0 con le notifiche negate e l\'interruttore spento: compare l\'avviso delle notifiche, non «aggiorna»', async () => {
-    stato.plugin = new Set(['PushNotifications'])
-    expect(await avvisoDaMostrare(ORA, SPENTI)).toBe('notifiche-disattivate')
-    expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['aggiorna-app'])).toBeNull()
-  })
-
-  it('una piattaforma illeggibile non promette l\'aggiornamento: niente «aggiorna», una riga di log', async () => {
-    stato.plugin = new Set(['PushNotifications'])
-    stato.piattaformaRotta = true
-    statoPermessoPush.mockResolvedValue('granted')
-    expect(await avvisoDaMostrare(ORA, ACCESI)).toBeNull()
-    expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['aggiorna-app'])).toBeNull()
-    expect(logClient).toHaveBeenCalledWith(
-      expect.objectContaining({ livello: 'warn', messaggio: 'avviso-aggiorna-app-piattaforma-illeggibile: TypeError' }),
-    )
-  })
 })
 
 describe('avvisoDaMostrare — bridge, orologio e storage', () => {
 
-  it('un bridge che lancia NON è un binario 1.0: niente «aggiorna», e una riga di log', () => {
+  it('un bridge che lancia non apre le impostazioni: percorso a parole, e una riga di log', () => {
     stato.bridgeRotto = true
-    expect(binarioDaAggiornare()).toBe(false)
+    expect(impostazioniApribili()).toBe(false)
     expect(logClient).toHaveBeenCalledWith(
       expect.objectContaining({ livello: 'warn', messaggio: expect.stringContaining('avviso-settimanale-bridge-illeggibile') }),
     )
@@ -272,28 +213,5 @@ describe('apriImpostazioniNotifiche', () => {
   it('il sistema che risponde status=false: «errore»', async () => {
     apriSettings.mockResolvedValue({ status: false })
     expect(await apriImpostazioniNotifiche()).toBe('errore')
-  })
-})
-
-describe('la scheda dello store', () => {
-  it('iOS → App Store con l\'id dell\'app; Android → Google Play col pacchetto; altrove niente', () => {
-    expect(urlSchedaStore('ios')).toBe('https://apps.apple.com/it/app/kidville/id6794883055')
-    expect(urlSchedaStore('android')).toBe('https://play.google.com/store/apps/details?id=it.kidville.app')
-    expect(urlSchedaStore('web')).toBeNull()
-  })
-
-  it('apriSchedaStore naviga verso la scheda della piattaforma corrente', () => {
-    const apri = vi.fn()
-    stato.piattaforma = 'ios'
-    expect(apriSchedaStore(apri)).toContain('apps.apple.com')
-    stato.piattaforma = 'android'
-    apriSchedaStore(apri)
-    expect(apri.mock.calls).toEqual([
-      ['https://apps.apple.com/it/app/kidville/id6794883055'],
-      ['https://play.google.com/store/apps/details?id=it.kidville.app'],
-    ])
-    stato.piattaforma = 'web'
-    expect(apriSchedaStore(apri)).toBeNull()
-    expect(apri).toHaveBeenCalledTimes(2)
   })
 })

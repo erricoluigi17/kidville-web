@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act, render, screen, waitFor, cleanup } from '@testing-library/react'
-import { BiometricGate } from '@/components/providers/BiometricGate'
+import { BiometricGate, useBloccoBiometrico } from '@/components/providers/BiometricGate'
 import { isNativeApp } from '@/lib/push/native-register'
 import {
   biometriaAttiva,
@@ -248,5 +248,47 @@ describe('BiometricGate — accessibilità del contenuto coperto', () => {
     const { container } = montaGate()
     await waitFor(() => expect(overlay()).not.toBeNull())
     expect(container.querySelector('[inert]')).not.toBeNull()
+  })
+})
+
+describe('BiometricGate — il blocco si legge dall’albero (useBloccoBiometrico)', () => {
+  // Il pop-up «Aggiorna l'app» si apre da solo all'avvio. La `Modal` rende inerte tutto ciò che
+  // sta fuori da lei, overlay del gate compreso: aperta SOPRA un gate già bloccato, lascerebbe lo
+  // sblocco senza tocchi possibili. Per questo il gate dice ai suoi figli se sta bloccando.
+  function Spia() {
+    return <p data-testid="spia">{useBloccoBiometrico() ? 'bloccato' : 'libero'}</p>
+  }
+  function montaConSpia() {
+    return render(
+      <BiometricGate autenticato>
+        <Spia />
+      </BiometricGate>,
+    )
+  }
+
+  it('fuori da un gate vale «libero»', () => {
+    render(<Spia />)
+    expect(screen.getByTestId('spia').textContent).toBe('libero')
+  })
+
+  it('col gate bloccato vale «bloccato»', async () => {
+    mockVerifica.mockResolvedValue({ ok: false, codice: 'userCancel' })
+    montaConSpia()
+    await waitFor(() => expect(overlay()).not.toBeNull())
+    expect(screen.getByTestId('spia').textContent).toBe('bloccato')
+  })
+
+  it('dopo lo sblocco torna «libero»', async () => {
+    montaConSpia()
+    await waitFor(() => expect(mockVerifica).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(overlay()).toBeNull())
+    expect(screen.getByTestId('spia').textContent).toBe('libero')
+  })
+
+  it('sul web (gate passthrough) vale «libero»', async () => {
+    mockNativo.mockReturnValue(false)
+    montaConSpia()
+    await respira()
+    expect(screen.getByTestId('spia').textContent).toBe('libero')
   })
 })

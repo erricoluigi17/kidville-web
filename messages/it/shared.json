@@ -88,7 +88,7 @@
   "avvisoNotifichePercorso": "Per riattivarle: Impostazioni → App → Kidville → Notifiche.",
   "avvisoAggiornaTitolo": "È disponibile una nuova versione di Kidville",
   "avvisoAggiornaCorpo": "Aggiorna l’app per salvare foto, video e documenti direttamente sul telefono.",
-  "avvisoAggiornaBottone": "Aggiorna l’app",
+  "avvisoAggiornaBottone": "Aggiorna ora",
   "avvisoChiudiAria": "Chiudi l’avviso",
   "salvato": "Salvato",
   "sediPlurale": "{n, plural, one {# sede} other {# sedi}}",
@@ -614,5 +614,6 @@
   "erroreSedeEccedenzaMancante": "Il pagamento riguarda più sedi: scegli su quale sede registrare il credito famiglia. Nessun pagamento è stato registrato.",
   "erroreSedeEccedenzaEstranea": "La sede del credito famiglia deve essere una delle sedi di questo pagamento. Nessun pagamento è stato registrato.",
   "erroreIntestatarioDigitatoIncompleto": "L’intestatario scritto a mano è incompleto o non valido: controlla codice fiscale, nome, cognome, indirizzo, CAP e comune. Nessuna fattura è stata messa in coda.",
-  "erroreObiettivoCodiceDuplicato": "Questo codice è già usato da un altro obiettivo della stessa materia e classe: scegline uno diverso. L’obiettivo non è stato modificato."
+  "erroreObiettivoCodiceDuplicato": "Questo codice è già usato da un altro obiettivo della stessa materia e classe: scegline uno diverso. L’obiettivo non è stato modificato.",
+  "avvisoAggiornaPiuTardi": "Più tardi"
 }

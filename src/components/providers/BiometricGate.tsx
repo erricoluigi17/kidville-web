@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { usePathname } from 'next/navigation'
 import { Fingerprint, Lock, Loader2 } from 'lucide-react'
@@ -67,6 +67,19 @@ const GRAZIA_MS = 1500
 
 /** Oltre questa soglia i `resume` senza `pause` diventano un canarino loggato. */
 const RESUME_ANOMALI_SOGLIA = 3
+
+const BloccoBiometricoContext = createContext(false)
+
+/**
+ * `true` mentre l'overlay di sblocco copre l'app. Serve a chi apre una `Modal` DA SOLO (senza un
+ * tocco dell'utente), come il pop-up «Aggiorna l'app»: la `Modal` rende `inert` tutto ciò che sta
+ * fuori da lei risalendo fino al `body`, overlay del gate compreso. Aperta sopra un gate già
+ * bloccato lascerebbe lo sblocco senza tocchi possibili — schermo congelato. Chi la apre aspetta
+ * che questo torni `false`. Fuori da un gate vale `false`.
+ */
+export function useBloccoBiometrico(): boolean {
+  return useContext(BloccoBiometricoContext)
+}
 
 export function BiometricGate({
   autenticato,
@@ -246,7 +259,9 @@ export function BiometricGate({
           il problema vero, cioè l'accesso da tastiera e screen reader al
           contenuto coperto. `|| undefined` e non `false`: l'attributo non deve
           finire nel DOM quando il gate è sbloccato. */}
-      <div inert={mostraBlocco || undefined}>{children}</div>
+      <BloccoBiometricoContext.Provider value={mostraBlocco}>
+        <div inert={mostraBlocco || undefined}>{children}</div>
+      </BloccoBiometricoContext.Provider>
       {mostraBlocco && (
         <div
           role="dialog"

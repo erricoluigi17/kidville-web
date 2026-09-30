@@ -117,6 +117,8 @@ let impreparati: ImpreparatoRecente[] = [];
 let statoVociDisponibile = true;
 let ruolo = 'educator';
 let rispostaMutazione: { status: number; corpo: unknown } = { status: 200, corpo: { success: true } };
+/** La lettura della classe: `null` = la risposta normale, con due materie. */
+let rispostaClasse: (() => Promise<unknown>) | null = null;
 /**
  * Le GET delle «recenti» dell'alunno B passano da qui quando è impostata: il test
  * decide se restano in volo, falliscono o rispondono, e quando.
@@ -152,8 +154,10 @@ beforeEach(() => {
   ruolo = 'educator';
   rispostaMutazione = { status: 200, corpo: { success: true } };
   letturaB = null;
+  rispostaClasse = null;
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
     const metodo = init?.method ?? 'GET';
+    if (url.startsWith('/api/primaria/classe/') && rispostaClasse) return rispostaClasse();
     if (url.startsWith('/api/primaria/classe/')) {
       return risposta(200, {
         success: true,
@@ -677,5 +681,72 @@ describe('voce bloccata', () => {
     const post = chiamate('POST', '/api/primaria/sblocca');
     expect(corpoDi(post[0]!)).toEqual({ entitaTipo: 'valutazione', entitaId: VAL_ID, motivazione: 'Errore di trascrizione' });
     expect(await screen.findByRole('button', { name: 'Modifica la valutazione del 20/09/2026 (Le tabelline)' })).toBeTruthy();
+  });
+});
+
+/**
+ * (l) PERCHÉ NON SI PUÒ VALUTARE — detto a schermo e nei log (2026-09-30).
+ *
+ * Misurato in produzione: a Giugliano, nelle classi I-III, una maestra per classe
+ * firma le lezioni senza avere materie assegnate. Per un docente la classe
+ * restituisce SOLO le sue materie, e la tendina restava vuota: nessun messaggio,
+ * nessun log. Nello stesso punto la lettura della classe non guardava `ok`, e un
+ * salvataggio che lanciava lasciava il bottone su «Salvataggio…» per sempre.
+ */
+describe('classe senza materie, classe non letta, salvataggio che non va', () => {
+  it('nessuna materia: al posto della tendina vuota la frase che dice cosa fare, più un warn', async () => {
+    rispostaClasse = async () => risposta(200, { success: true, data: { alunni: [ALUNNO], materie: [] } });
+    render(<ValutazioniPage />);
+    // PRESENZA prima dell'assenza: la frase c'è, quindi la classe è stata letta.
+    expect(await screen.findByText(/Non hai materie da valutare in questa classe/)).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Materia…' })).toBeNull();
+    // L'alunno resta sceglibile: «Segna impreparato» funziona anche senza materia.
+    expect(screen.getByRole('option', { name: 'Rossi Mario' })).toBeTruthy();
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'warn', messaggio: 'valutazioni-nessuna-materia' }));
+  });
+
+  it('classe non letta (500): lo dice, logga, e «Riprova» la rilegge', async () => {
+    let tentativi = 0;
+    rispostaClasse = async () => {
+      tentativi += 1;
+      return tentativi === 1
+        ? risposta(500, { error: 'Errore interno' })
+        : risposta(200, { success: true, data: { alunni: [ALUNNO], materie: [{ id: MATERIA, nome: 'Matematica' }] } });
+    };
+    render(<ValutazioniPage />);
+    const avviso = await screen.findByRole('alert');
+    expect(avviso.textContent).toContain('Non è stato possibile caricare la classe');
+    // Non è «nessuna materia»: sono due cose diverse, e dirle uguali manderebbe in segreteria per un guasto.
+    expect(screen.queryByText(/Non hai materie da valutare/)).toBeNull();
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'valutazioni-classe-non-caricata', stato: 500 }));
+    fireEvent.click(within(avviso).getByRole('button', { name: 'Riprova' }));
+    expect(await screen.findByRole('option', { name: 'Matematica' })).toBeTruthy();
+    expect(tentativi).toBe(2);
+  });
+
+  it('salvataggio respinto (423): il motivo a schermo, una riga di log con lo stato, il bottone torna attivo', async () => {
+    rispostaMutazione = { status: 423, corpo: { error: 'Inserimento bloccato: superato il termine di 2 giorni.', locked: true } };
+    await montaEScegli();
+    fireEvent.change(screen.getByPlaceholderText('Es. Le tabelline del 7, La comprensione del testo…'), { target: { value: 'Le frazioni' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
+    expect(await screen.findByText('Inserimento bloccato: superato il termine di 2 giorni.')).toBeTruthy();
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'valutazione-salva-rifiutata', stato: 423 }));
+    // Il corpo non entra nel log: può portare testo sul minore.
+    expect(JSON.stringify(h.logClient.mock.calls)).not.toContain('superato il termine');
+    expect((screen.getByRole('button', { name: 'Salva valutazione' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('salvataggio che non parte (rete giù): la frase di rete e il bottone NON resta bloccato', async () => {
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/primaria/valutazioni') && init?.method === 'POST') return Promise.reject(new TypeError('Failed to fetch'));
+      return base(url, init);
+    });
+    await montaEScegli();
+    fireEvent.change(screen.getByPlaceholderText('Es. Le tabelline del 7, La comprensione del testo…'), { target: { value: 'Le frazioni' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
+    expect(await screen.findByText('Operazione non inviata: controlla la connessione e riprova.')).toBeTruthy();
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ messaggio: expect.stringContaining('valutazione-salva-non-inviata') }));
+    expect((screen.getByRole('button', { name: 'Salva valutazione' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

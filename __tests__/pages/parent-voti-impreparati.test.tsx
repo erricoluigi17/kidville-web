@@ -48,8 +48,11 @@ vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: () 
 
 const GENITORE = 'aaaabbbb-1111-4111-8111-eeeeeeeeeeee'
 const ALUNNO = 'ccccdddd-2222-4222-8222-ffffffffffff'
+// I figli del genitore, dalla cache condivisa dell'identità: `null` = elenco non leggibile.
+const figli = vi.hoisted(() => ({ elenco: null as null | Array<{ id: string; nome: string; cognome: string; classe_sezione: string | null }> }))
 vi.mock('@/lib/auth/use-parent-identity', () => ({
   useParentIdentity: () => ({ parentId: GENITORE, studentId: ALUNNO, ready: true }),
+  fetchFigli: async () => figli.elenco,
 }))
 
 import ValutazioniGenitorePage from '@/app/(dashboard)/parent/primaria/valutazioni/page'
@@ -122,6 +125,10 @@ beforeEach(() => {
       ],
     },
   }
+  figli.elenco = [
+    { id: ALUNNO, nome: 'Marco', cognome: 'Prova', classe_sezione: 'II' },
+    { id: 'eeeeffff-3333-4333-8333-000000000000', nome: 'Giulia', cognome: 'Prova', classe_sezione: '3 ANNI' },
+  ]
   esitoPost = { ok: true, status: 201, body: { success: true } }
   esitoPatch = { ok: true, status: 200, body: { success: true } }
   esitoDelete = { ok: true, status: 200, body: { success: true } }
@@ -236,6 +243,31 @@ describe('impreparati tra i voti', () => {
     expect(screen.queryByText(t.valutazioniVuoto)).toBeNull()
     expect(screen.queryByText('PROSA-DEL-SERVER')).toBeNull()
     expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', evento: 'fetch', stato: 500 }))
+  })
+})
+
+// ── Lo stato vuoto dice DI CHI (2026-09-30). Misurato quel giorno: 109 alunni della
+// primaria su 165 non avevano ancora nessun voto, e 34 account genitore su 65 hanno più
+// figli. «Nessuna valutazione disponibile» non distingueva «non ne ha ancora» da «stai
+// guardando l'altro figlio».
+describe('nessuna valutazione ancora', () => {
+  const vuota = () => {
+    esitoGet = { ok: true, status: 200, body: { success: true, data: [], impreparati: [], materieClasse: [] } }
+  }
+
+  it('nomina il figlio che si sta guardando, e non l’altro', async () => {
+    vuota()
+    render(<ValutazioniGenitorePage />)
+    expect(await screen.findByText(t.valutazioniVuotoFiglio.replace('{nome}', 'Marco'))).toBeTruthy()
+    expect(screen.queryByText(t.valutazioniVuoto)).toBeNull()
+    expect(screen.queryByText(/Giulia/)).toBeNull()
+  })
+
+  it('senza l’elenco dei figli resta la frase generica', async () => {
+    vuota()
+    figli.elenco = null
+    render(<ValutazioniGenitorePage />)
+    expect(await screen.findByText(t.valutazioniVuoto)).toBeTruthy()
   })
 })
 

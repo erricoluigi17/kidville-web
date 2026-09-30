@@ -53,9 +53,17 @@ vi.mock('@/lib/audit/valutatore', () => ({
 }))
 vi.mock('@/lib/primaria/timelock', () => ({ isOltreScadenza: vi.fn().mockResolvedValue({ locked: false }) }))
 vi.mock('@/lib/primaria/giudizio', () => ({ renderGiudizioDescrittivo: vi.fn().mockResolvedValue('Giudizio auto') }))
+const notif = vi.hoisted(() => ({
+  enqueueNotifichePerAlunni: vi.fn(),
+  logEvento: vi.fn(),
+}))
 vi.mock('@/lib/primaria/notifiche', () => ({
-  enqueueNotifichePerAlunni: vi.fn().mockResolvedValue(undefined),
+  enqueueNotifichePerAlunni: notif.enqueueNotifichePerAlunni,
   notificaTitolariScrittura: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('@/lib/logging/logger', async (orig) => ({
+  ...(await orig<typeof import('@/lib/logging/logger')>()),
+  logEvento: notif.logEvento,
 }))
 
 import { POST } from '@/app/api/primaria/valutazioni/route'
@@ -79,6 +87,7 @@ beforeEach(() => {
   h.state.queues = {}
   h.state.used = {}
   h.state.captured = { insert: [], update: [], upsert: [] }
+  notif.enqueueNotifichePerAlunni.mockResolvedValue(undefined)
   authMock.requireDocente.mockResolvedValue({
     user: { id: 'doc-1', role: 'educator', scuola_id: 'sc-1' }, response: null,
   })
@@ -126,5 +135,61 @@ describe('POST /api/primaria/valutazioni — collegamento obiettivo (DL-015)', (
     const res = await POST(req({ ...BASE })) // niente obiettiviIds, ma nessun obiettivo configurato
     expect(res.status).toBe(201)
     expect((h.state.captured.insert as Array<{ table: string }>).some((c) => c.table === 'valutazione_obiettivi')).toBe(false)
+  })
+})
+
+// ── La notifica al genitore porta al FIGLIO giusto (2026-09-30). ──
+// Con due figli, un link senza `?id=` apriva la pagina Voti del figlio
+// selezionato l'ultima volta: 34 account genitore su 65 ne hanno più d'uno.
+describe('POST /api/primaria/valutazioni — notifica al genitore', () => {
+  const ALUNNO = BASE.alunnoId
+
+  function notificaAccodata() {
+    expect(notif.enqueueNotifichePerAlunni).toHaveBeenCalledTimes(1)
+    return notif.enqueueNotifichePerAlunni.mock.calls[0][1] as { link: string; titolo: string; alunnoIds: string[] }
+  }
+
+  it('il link apre la pagina Voti DI QUEL figlio e il titolo lo nomina', async () => {
+    seedMateriaAndInsert()
+    h.state.queues.obiettivi_apprendimento = [{ data: [], error: null }]
+    h.state.queues.alunni = [{ data: { nome: 'Marco' }, error: null }]
+    const res = await POST(req({ ...BASE }))
+    expect(res.status).toBe(201)
+    const n = notificaAccodata()
+    expect(n.alunnoIds).toEqual([ALUNNO])
+    expect(n.link).toBe(`/parent/primaria/valutazioni?id=${ALUNNO}`)
+    expect(n.titolo).toBe('Nuova valutazione di Matematica per Marco')
+  })
+
+  it('nome illeggibile: la notifica parte lo stesso, senza nome, e il guasto lascia un warn', async () => {
+    seedMateriaAndInsert()
+    h.state.queues.obiettivi_apprendimento = [{ data: [], error: null }]
+    h.state.queues.alunni = [{ data: null, error: { code: '57014', message: 'timeout' } }]
+    const res = await POST(req({ ...BASE }))
+    expect(res.status).toBe(201)
+    const n = notificaAccodata()
+    expect(n.link).toBe(`/parent/primaria/valutazioni?id=${ALUNNO}`)
+    expect(n.titolo).toBe('Nuova valutazione di Matematica')
+    expect(notif.logEvento).toHaveBeenCalledWith(
+      'notifica',
+      'warn',
+      expect.objectContaining({ esito: 'nome-alunno-non-letto' }),
+      expect.anything(),
+    )
+  })
+
+  it('una notifica che non si accoda NON è muta: resta la valutazione e un log error', async () => {
+    seedMateriaAndInsert()
+    h.state.queues.obiettivi_apprendimento = [{ data: [], error: null }]
+    h.state.queues.alunni = [{ data: { nome: 'Marco' }, error: null }]
+    notif.enqueueNotifichePerAlunni.mockRejectedValue(new Error('coda giù'))
+    const res = await POST(req({ ...BASE }))
+    expect(res.status).toBe(201)
+    expect(notif.logEvento).toHaveBeenCalledWith(
+      'notifica',
+      'error',
+      expect.objectContaining({ esito: 'notifica-valutazione-non-accodata', valutazione_id: 'v-1' }),
+      expect.any(Error),
+    )
   })
 })

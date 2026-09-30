@@ -6,7 +6,7 @@ import { ChevronDown } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { ImpreparatoForm, type MateriaOpzione } from '@/components/features/parent/ImpreparatoForm';
-import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { fetchFigli, useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useDateFormat } from '@/lib/i18n/date';
 import { erroreDaRisposta } from '@/lib/ui/esito-fetch';
 import { logClient } from '@/lib/logging/client';
@@ -169,6 +169,22 @@ function ValutazioniGenitore() {
   const [daAnnullare, setDaAnnullare] = useState<string | null>(null);
   const [annullando, setAnnullando] = useState<string | null>(null);
   const [esito, setEsito] = useState<Esito | null>(null);
+  /**
+   * Il nome del figlio che si sta guardando, per lo stato vuoto. Misurato il
+   * 2026-09-30: 34 account genitore su 65 hanno più figli, e «Nessuna valutazione
+   * disponibile» non distingueva «non ne ha ancora» da «stai guardando l'altro».
+   * Dalla cache condivisa dell'identità: nessuna richiesta in più.
+   */
+  const [nomeFiglio, setNomeFiglio] = useState<string | null>(null);
+  useEffect(() => {
+    if (!parentId || !studentId) return;
+    let annullato = false;
+    void fetchFigli(parentId).then((lista) => {
+      const nome = lista?.find((x) => x.id === studentId)?.nome?.trim();
+      if (!annullato) setNomeFiglio(nome || null);
+    });
+    return () => { annullato = true; };
+  }, [parentId, studentId]);
 
   /**
    * IL FUOCO (WCAG 2.4.3). «Modifica», «Annulla», «No, tienila», «Chiudi» e
@@ -468,7 +484,9 @@ function ValutazioniGenitore() {
           <Btn size="sm" variant="secondary" onClick={caricaSegnalando}>{t('valutazioniRiprova')}</Btn>
         </div>
       ) : gruppi.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">{t('valutazioniVuoto')}</p>
+        <p className="font-maven text-sm text-kidville-muted">
+          {nomeFiglio ? t('valutazioniVuotoFiglio', { nome: nomeFiglio }) : t('valutazioniVuoto')}
+        </p>
       ) : (
         <div className="space-y-3">
           {gruppi.map((g) => {

@@ -40,6 +40,12 @@ export default function ValutazioniPage() {
 
   const [alunni, setAlunni] = useState<Alunno[]>([]);
   const [materie, setMaterie] = useState<Materia[]>([]);
+  /**
+   * La lettura della classe: TRE esiti, non due. «Non letta» non è «nessuna
+   * materia»: dirli uguali manderebbe in segreteria per un guasto di rete, o
+   * lascerebbe credere a un guasto chi le materie non le ha mai avute.
+   */
+  const [classe, setClasse] = useState<'caricamento' | 'ok' | 'errore'>('caricamento');
   const [alunnoId, setAlunnoId] = useState('');
   const [materiaId, setMateriaId] = useState('');
   const [scala, setScala] = useState<string[]>([]);
@@ -89,16 +95,49 @@ export default function ValutazioniPage() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
-  useEffect(() => {
-    fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.success) {
-          setAlunni(d.data.alunni ?? []);
-          setMaterie(d.data.materie ?? []);
-        }
-      });
+  // Alunni e materie della classe. Fino al 2026-09-30 la lettura non guardava
+  // `ok` e non aveva `catch`: un guasto lasciava le tendine vuote in silenzio.
+  // E per un docente la classe restituisce SOLO le sue materie: misurato quel
+  // giorno, a Giugliano una maestra per classe (I-III) firmava lezioni senza
+  // materie assegnate, e qui trovava una tendina vuota senza una parola.
+  // `try/finally` e non `try/catch`: è la forma che `react-hooks/set-state-in-effect`
+  // accetta; l'eccezione la raccoglie `caricaClasseSegnalando`.
+  const caricaClasse = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`);
+      const d = r.ok ? await r.json().catch(() => null) : null;
+      if (!r.ok || !d?.success) {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: 'valutazioni-classe-non-caricata', route: paginaCorrente(), stato: r.status });
+        setClasse('errore');
+        return;
+      }
+      const materieLette: Materia[] = Array.isArray(d.data?.materie) ? d.data.materie : [];
+      setAlunni(Array.isArray(d.data?.alunni) ? d.data.alunni : []);
+      setMaterie(materieLette);
+      setClasse('ok');
+      if (materieLette.length === 0) {
+        // `warn` e senza `stato`: finisce in `app_log` con l'utente e la pagina
+        // (che porta la classe). È il segnale che mancava per sapere CHI non può valutare.
+        logClient({ livello: 'warn', evento: 'react', messaggio: 'valutazioni-nessuna-materia', route: paginaCorrente() });
+      }
+    } finally {
+      // nessuno stato di caricamento da azzerare: lo decide ciascun ramo
+    }
   }, [sectionId, userId]);
+
+  const caricaClasseSegnalando = useCallback(() => {
+    void caricaClasse().catch((err: unknown) => {
+      logClient({
+        livello: 'warn',
+        evento: 'fetch',
+        messaggio: `valutazioni-classe-non-caricata: ${err instanceof Error ? err.name : 'errore'}`,
+        route: paginaCorrente(),
+      });
+      setClasse('errore');
+    });
+  }, [caricaClasse]);
+
+  useEffect(() => { caricaClasseSegnalando(); }, [caricaClasseSegnalando]);
 
   // Carica la scala dei giudizi sintetici per la materia/livello.
   const loadScala = useCallback(async () => {
@@ -296,29 +335,47 @@ export default function ValutazioniPage() {
     // Collegamento obiettivo obbligatorio quando la materia/livello ne ha di configurati (DL-015).
     if (obiettivi.length > 0 && obiettiviSel.length === 0) { setMsg(t('valutazioniCollegaObiettivo')); return; }
     setSaving(true);
-    const r = await fetch(`/api/primaria/valutazioni?userId=${userId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-      body: JSON.stringify({
-        alunnoId, sectionId, materiaId, tipoProva, modalita,
-        dims: modalita === 'dimensioni' ? { autonomia, continuita, tipologia, risorse } : undefined,
-        giudizioSintetico: modalita === 'sintetico' ? giudizioSintetico : undefined,
-        giudizioTesto: giudizioTesto || undefined,
-        annotazioneNumerica: annotazioneNumerica.trim() ? annotazioneNumerica.replace(',', '.') : undefined,
-        argomento: argomento.trim(),
-        obiettiviIds: obiettiviSel,
-      }),
-    });
-    const d = await r.json();
-    setSaving(false);
-    if (!r.ok) setMsg(d.error || t('comuneErrore'));
-    else {
+    // Fino al 2026-09-30: nessun `try`, e una fetch che lanciava lasciava il
+    // bottone su «Salvataggio…» per sempre; un rifiuto si mostrava ma non si
+    // registrava. Ora il rifiuto va a `logClient` con lo stato (la politica dei
+    // livelli decide se partire: un 4xx lo classifica il server), il corpo no —
+    // può contenere testo su un minore.
+    try {
+      const r = await fetch(`/api/primaria/valutazioni?userId=${userId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({
+          alunnoId, sectionId, materiaId, tipoProva, modalita,
+          dims: modalita === 'dimensioni' ? { autonomia, continuita, tipologia, risorse } : undefined,
+          giudizioSintetico: modalita === 'sintetico' ? giudizioSintetico : undefined,
+          giudizioTesto: giudizioTesto || undefined,
+          annotazioneNumerica: annotazioneNumerica.trim() ? annotazioneNumerica.replace(',', '.') : undefined,
+          argomento: argomento.trim(),
+          obiettiviIds: obiettiviSel,
+        }),
+      });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: 'valutazione-salva-rifiutata', route: paginaCorrente(), stato: r.status });
+        setMsg(messaggioDaCorpo(d, t('comuneErrore')));
+        return;
+      }
       setMsg(t('valutazioniSalvata'));
       setGiudizioTesto('');
       setAnnotazioneNumerica('');
       setArgomento('');
       setObiettiviSel([]);
       ricaricaSelezioneAttuale();
+    } catch (err) {
+      logClient({
+        livello: 'warn',
+        evento: 'fetch',
+        messaggio: `valutazione-salva-non-inviata: ${err instanceof Error ? err.name : 'errore'}`,
+        route: paginaCorrente(),
+      });
+      setMsg(t('valutazioniErroreRete'));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -345,16 +402,38 @@ export default function ValutazioniPage() {
           <Star size={18} className="text-kidville-yellow-strong" /> {t('valutazioniTitolo')}
         </h2>
 
-        <div className="grid grid-cols-2 gap-2 mb-3">
+        {classe === 'errore' && (
+          <div role="alert" className="mb-3 flex flex-wrap items-center gap-3 rounded-card border border-kidville-error/25 bg-kidville-error-soft px-3.5 py-3">
+            <p className="font-maven text-sm text-kidville-error">{t('valutazioniClasseNonCaricata')}</p>
+            <button
+              type="button"
+              onClick={() => { setClasse('caricamento'); caricaClasseSegnalando(); }}
+              className="font-maven rounded-pill bg-white px-3 py-1 text-xs text-kidville-ink border border-kidville-line"
+            >
+              {t('valutazioniRiprova')}
+            </button>
+          </div>
+        )}
+
+        {/* Letta bene e senza materie: la frase che dice COSA FARE, al posto di una tendina vuota. */}
+        {classe === 'ok' && materie.length === 0 && (
+          <p role="status" className="mb-3 rounded-card border border-kidville-warn/25 bg-kidville-warn-soft px-3.5 py-3 font-maven text-sm text-kidville-warn">
+            {t('valutazioniNessunaMateria')}
+          </p>
+        )}
+
+        <div className={`grid gap-2 mb-3 ${classe === 'ok' && materie.length === 0 ? 'grid-cols-1' : 'grid-cols-2'}`}>
           {/* min-w-0: senza, il min-content delle option lunghe sfonda la grid a 320px */}
           <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="w-full min-w-0 font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
             <option value="">{t('comuneAlunnoPlaceholder')}</option>
             {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
           </select>
-          <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="w-full min-w-0 font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
-            <option value="">{t('valutazioniMateriaPlaceholder')}</option>
-            {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
-          </select>
+          {!(classe === 'ok' && materie.length === 0) && (
+            <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="w-full min-w-0 font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
+              <option value="">{t('valutazioniMateriaPlaceholder')}</option>
+              {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
+            </select>
+          )}
         </div>
 
         {obiettivi.length > 0 && (

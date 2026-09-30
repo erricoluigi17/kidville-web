@@ -1,4 +1,42 @@
 
+## 📊 Changelog — «I genitori della primaria non vedono i voti»: la vista era sana, mancavano i voti; tre silenzi corretti — 2026-09-30 (branch `fix/voti-primaria-genitori`)
+
+**La segnalazione (30/09), generica.** «I genitori non riescono a vedere i voti dei figli, scuola primaria.» Misurato sul DB di produzione, in sola lettura (conteggi e uuid).
+
+**La lettura del genitore FUNZIONA. È l'ipotesi smentita, e va scritta perché tornerà a sembrare vera.**
+- 106 valutazioni reali (Cesa 97, Giugliano 9): **106 su 106** passano i filtri di `GET /api/parent/primaria/valutazioni` (materia attiva della classe attuale, buffer di 10', legame, alunno attivo). Le 3 che la route scarta sono dati della sede Demo.
+- Log PostgREST delle 24 ore precedenti: la route ha interrogato 11 bambini, e **ognuno ha ricevuto esattamente i voti che ha nel DB** (`content-range` contro `count(*)`). I 4 «vuoti» sono alunni con **zero** voti.
+- Nessun 403/500; `notif_buffer_valutazioni_min` = 10 in tutte le sedi; i 56 bambini valutati sono iscritti, con classe e account genitore; 106 notifiche su 106 create e spedite.
+
+**Mancano i voti, non la vista.** 165 alunni della primaria, **109 senza nessun voto**:
+
+| Sede | Classi con voti | Classi a zero voti |
+|---|---|---|
+| Cesa | II, III, IV, V | I (24 alunni) |
+| Giugliano | V (9 voti) | **I, II, III, IV** (70 alunni), con le lezioni firmate ogni giorno |
+
+Chi prova a inserire ci riesce: 31 tentativi e 30 inserimenti il 28-29/09 (edge log). L'audit torna al centesimo: a Cesa 97 insert = 97 righe, a Giugliano 18 insert − 9 delete = 9.
+
+**⏳ Dato aperto per la segreteria (nessuna scrittura fatta, decisione del titolare).** A Giugliano 5-8 materie per classe non hanno un docente in `utenti_sezioni_materie`:
+- I: inglese, spagnolo, scienze motorie, religione, informatica;
+- II e III: Inglese, Musica, Educazione Fisica, Tecnologia, Religione/Alternativa, Educazione Civica, Mensa, Spagnolo;
+- IV: Scienze, Musica, Educazione Fisica, Educazione Civica, Mensa, Spagnolo;
+- V: Musica, Educazione Fisica, Educazione Civica, Mensa, Spagnolo.
+
+Nelle classi I-III una maestra per classe firma lezioni **senza alcuna materia assegnata**. Chi insegna quelle materie oggi non può mettere voti. Si assegnano dalla gestione docenti-materie (`DocentiMaterieManager`). A Cesa le materie assegnate sono 12 su 13 per classe.
+
+**I tre silenzi corretti**
+- **A — La notifica porta al FIGLIO giusto.** Il link era `/parent/primaria/valutazioni`, senza `?id=`: con due figli il tocco apriva i voti di quello selezionato l'ultima volta (34 account genitore su 65 ne hanno più d'uno). Il diario era stato corretto il 28/09, i voti no.
+  - Nuovo modulo `src/lib/primaria/notifica-voti-genitore.ts`: `linkVotiGenitore(alunnoId)` e `nomeAlunnoPerNotifica` (solo il nome, mai il cognome, come il diario). Una lettura del nome fallita non ferma la notifica: parte senza nome e lascia un `warn` `nome-alunno-non-letto`.
+  - `POST /api/primaria/valutazioni`: link con `?id=`, titolo «Nuova valutazione di <materia> per <nome>». Il `catch { /* non bloccare */ }` ora logga `error` `notifica-valutazione-non-accodata`.
+  - `giustifiche-didattiche` (impreparato): link con `?id=`, titolo «Impreparato in <materia> · <nome>». La PATCH, che riallinea il titolo della notifica ancora in coda, rilegge il nome invece di toglierlo.
+- **B — Pagina Voti del docente: dice perché non si può valutare.** Per un docente `GET /api/primaria/classe/[sectionId]` restituisce solo le sue materie, e senza materie la tendina restava vuota, senza una parola.
+  - La lettura della classe ha tre esiti: caricamento, **non letta** (avviso con «Riprova», `logClient` `valutazioni-classe-non-caricata`) e **nessuna materia** (al posto della tendina: «chiedi alla segreteria di assegnartele», più `logClient` **warn** `valutazioni-nessuna-materia`, persistito con utente e pagina).
+  - `salva()`: prima un'eccezione di rete lasciava il bottone su «Salvataggio…» per sempre. Ora ha `try/catch/finally`; un rifiuto va a `logClient` con lo stato (la politica dei livelli decide: i 4xx li classifica il server e restano su Vercel), il corpo no.
+- **C — Lo stato vuoto del genitore nomina il figlio.** «{nome} non ha ancora valutazioni. Compaiono qui appena il docente le inserisce.» Il nome arriva da `fetchFigli` (cache condivisa: nessuna richiesta in più). Senza nome resta la frase generica. `NON_CONTATORI` sale da 41 a 42, con il motivo scritto accanto al tetto.
+
+**Test.** `primaria-valutazioni` (+3), `primaria-impreparati-docente` (link, titolo e PATCH col nome), `teacher-primaria-valutazioni-voci` (+4), `parent-voti-impreparati` (+2). Tutti visti rossi prima della correzione; la PATCH anche rompendo il codice di proposito.
+
 ## 💬 Changelog — Chat: i messaggi non letti si vedono fuori dalla chat, la campanella si spegne leggendo, «Consegnato» quando il messaggio arriva, avviso alle maestre senza notifiche — 2026-09-30 (branch `feat/chat-non-letti-e-consegna`)
 
 **✅ IN PRODUZIONE dal 2026-09-30.** PR [#176](https://github.com/erricoluigi17/kidville-web/pull/176), merge `b15cd18e` alle 09:21 UTC, deploy Vercel pronto alle 09:24 UTC.

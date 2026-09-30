@@ -799,6 +799,7 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['pagamenti.restaImporto', 'importo in euro, già formattato'],
         ['parentChat.outOfHoursFallback', 'orari di apertura'],
         ['parentServizi.galleryInfoPrivacy', 'nome del bambino'],
+        ['parentPrimaria.valutazioniVuotoFiglio', 'nome del bambino di cui si guardano i voti'],
         ['parentServizi.sospensioneScaduto', 'importo in euro, già formattato'],
         ['teacherDiario.descriviAttivita', 'tipo di attività'],
         ['teacherDiario.salvaPerTutti', 'nome dell’evento'],
@@ -958,7 +959,15 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // `diario.nannaDurata`: i segnaposti sono ORE «HH:MM», e «alle»/«to» sono
         // preposizioni, non sostantivi da accordare. Scrivere «{inizio}–{fine}» avrebbe
         // schivato l'euristica, ma è la frase piegata al lock già scartata sopra.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(41)
+        //
+        // 2026-09-30 · 41 → 42. `parentPrimaria.valutazioniVuotoFiglio` («{nome} non ha
+        // ancora valutazioni» / «{nome} has no grades yet») è lo stato vuoto della
+        // pagina Voti del genitore, che ora dice DI QUALE figlio: misurato quel
+        // giorno, 34 account genitore su 65 hanno più figli, e «Nessuna valutazione
+        // disponibile» non distingueva «non ne ha ancora» da «stai guardando l'altro».
+        // Categoria (a), gemella di `parentServizi.galleryInfoPrivacy`: `{nome}` è il
+        // nome del bambino, e il verbo che segue concorda con lui, non con un numero.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(42)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

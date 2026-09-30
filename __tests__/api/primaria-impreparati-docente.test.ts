@@ -247,6 +247,7 @@ describe('POST /api/primaria/giustifiche-didattiche', () => {
 
   it('tipo predefinito «impreparato», il testo fisso storico NON si scrive come motivo, audit e notifica al genitore dopo 10′', async () => {
     coda('giustifiche_didattiche:insert', { data: { id: IMP, ...CORPO, tipo: 'impreparato', origine: 'docente' }, error: null })
+    coda('alunni:select', { data: { nome: 'Marco' }, error: null })
     const res = await POST(conCorpo('POST', { ...CORPO, motivo: 'Impreparato giustificato' }))
     expect(res.status).toBe(201)
 
@@ -269,14 +270,19 @@ describe('POST /api/primaria/giustifiche-didattiche', () => {
     expect(notif).toMatchObject({
       alunnoIds: [ALU],
       tipo: 'impreparato_segnato',
-      link: '/parent/primaria/valutazioni',
+      // Il FIGLIO: con due figli, senza `?id=` il tocco apriva l'altro (2026-09-30).
+      link: `/parent/primaria/valutazioni?id=${ALU}`,
       entitaTipo: 'impreparato',
       entitaId: IMP,
       bufferMin: 10,
       // L'interruttore per sede si decide su QUESTA sede.
       scuolaId: SEDE,
-      titolo: 'Impreparato in Matematica',
+      titolo: 'Impreparato in Matematica · Marco',
     })
+    // Solo il nome, letto per QUEL bambino: mai il cognome in una notifica.
+    const [alu] = chiamate('alunni', 'select')
+    expect(alu.cols).toBe('nome')
+    expect(filtro(alu, 'eq', 'id')?.[2]).toBe(ALU)
     // Il buffer si legge dalla sede della classe.
     const [buf] = chiamate('admin_settings', 'select')
     expect(filtro(buf, 'eq', 'scuola_id')?.[2]).toBe(SEDE)
@@ -294,7 +300,9 @@ describe('POST /api/primaria/giustifiche-didattiche', () => {
     expect(ins.payload).toMatchObject({ tipo: 'giustificato', motivo: 'ha dimenticato il quaderno' })
 
     const [, notif] = m.enqueueNotifichePerAlunni.mock.calls[0]
+    // Nessun nome letto (riga assente): il titolo resta quello di sempre, e il link porta comunque al figlio.
     expect(notif.titolo).toBe('Impreparato giustificato in Matematica')
+    expect(notif.link).toBe(`/parent/primaria/valutazioni?id=${ALU}`)
     expect(notif.bufferMin).toBe(15)
     expect(JSON.stringify(notif)).not.toContain('quaderno')
   })
@@ -345,6 +353,7 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
     const ieri = giorniFa(1)
     coda('giustifiche_didattiche:select', { data: riga(), error: null })
     coda('giustifiche_didattiche:update', { data: [riga({ tipo: 'giustificato', motivo: 'visita', data: ieri })], error: null })
+    coda('alunni:select', { data: { nome: 'Marco' }, error: null })
 
     const res = await PATCH(conCorpo('PATCH', { id: IMP, tipo: 'giustificato', motivo: '  visita  ', data: ieri }))
     expect(res.status).toBe(200)
@@ -356,7 +365,8 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
     expect(filtro(upd, 'eq', 'section_id')?.[2]).toBe(SEZ)
 
     const [notif] = chiamate('notifiche', 'update')
-    expect(notif.payload).toMatchObject({ titolo: 'Impreparato giustificato in Matematica' })
+    // Il nome del bambino resta: riallineare il titolo non deve toglierlo.
+    expect(notif.payload).toMatchObject({ titolo: 'Impreparato giustificato in Matematica · Marco' })
     expect(JSON.stringify(notif.payload)).not.toContain('visita')
     expect(filtro(notif, 'eq', 'tipo')?.[2]).toBe('impreparato_segnato')
     expect(filtro(notif, 'eq', 'entita_id')?.[2]).toBe(IMP)

@@ -119,6 +119,15 @@ function programmaDispatchChat(threadId: string): void {
                 fallite: esito.data.fallite,
                 gia_prese: esito.data.gia_prese,
                 rimesse_in_coda: esito.data.rimesse_in_coda,
+                // Le doppie spunte del giro (D1, passo 7bis di `@/lib/push/dispatch`). ⚠️ Sono
+                // dell'INTERO giro, non di questa conversazione: `eseguiDispatch` spedisce tutta la
+                // coda pendente, e un giro partito da un messaggio può accendere le spunte di altre
+                // venti conversazioni (o di nessuna, se questa notifica l'aveva già presa il cron).
+                // `consegne_chat` sono gli UPDATE riusciti, `consegne_chat_righe` le spunte accese
+                // davvero: coppie e righe, mai un uuid, mai un testo.
+                consegne_chat: esito.data.consegne_chat,
+                consegne_chat_righe: esito.data.consegne_chat_righe,
+                consegne_chat_saltate: esito.data.consegne_chat_saltate,
                 msg: `${operazione}: dispatch anticipato della chat concluso`,
             });
         } catch (err) {

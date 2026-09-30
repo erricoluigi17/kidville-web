@@ -4,7 +4,8 @@ import { sendPush, vapidConfigured } from '@/lib/push/web-push'
 import { sendNativePush, fcmConfigured, type NativePushPayload } from '@/lib/push/native-push'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { TIPI_AVVISO_CODA } from '@/lib/fatture-coda/avvisi-testi'
-import { TIPI_NOTIFICA_CHAT } from '@/lib/chat/notifiche-chat'
+import { ENTITA_CHAT_THREAD, TIPI_NOTIFICA_CHAT } from '@/lib/chat/notifiche-chat'
+import { marcaConsegnati } from '@/lib/chat/delivered'
 import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 
 // =============================================================================
@@ -67,6 +68,25 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 // programmata). Dopo ci si arrende: resta marcata e una riga `error` lo dice. Basta UN
 // dispositivo che l'ha ricevuta, invece, e resta marcata: rispedirla vorrebbe dire un doppione
 // su quel telefono.
+//
+// LA DOPPIA SPUNTA DELLA CHAT — D1 (30/09). Una mamma ha visto per cinque ore una spunta sola e ha
+// creduto che il messaggio non fosse arrivato. Il titolare ha deciso che «Consegnato» vuol dire
+// QUANDO IL MESSAGGIO ARRIVA, e le strade sono due: D2, l'app di chi riceve è aperta e la
+// campanella consegna (`consegnaSeInAttesa` in `@/lib/chat/delivered`); e D1, qui — con l'app
+// chiusa, il dispatcher manda la push e il PROVIDER LA ACCETTA. Da quel momento i messaggi di
+// quella conversazione, nati fino alla notifica, sono consegnati (passo 7bis).
+//
+// ⚠️ UN 200 DI FCM, O IL 201 DEL WEB-PUSH, VUOL DIRE «CONSEGNATO AD APPLE, GOOGLE O AL SERVIZIO
+// DEL BROWSER»: NON è la conferma del telefono. Un iPhone spento da tre giorni ha la sua notifica
+// in attesa presso APNs, e qui risulterà consegnata. È l'approssimazione che fa qualunque app di
+// messaggistica, ed è scritta qui perché chi legge il codice non debba dedurla — né crederla più
+// forte di quello che è. La conferma vera del dispositivo vorrebbe una ricevuta dall'app, che oggi
+// non esiste e non è in questo perimetro.
+//
+// PERCHÉ LA DIPENDENZA VA IN QUESTA DIREZIONE. Il dispatcher importa dalla chat
+// (`@/lib/chat/delivered`, `@/lib/chat/notifiche-chat`); la chat NON importa il dispatcher, salvo
+// l'`eseguiDispatch` del giro anticipato in `chat/messages/route.ts`. Il dispatch conosce la chat,
+// la chat non conosce la push: è la stessa regola già scritta in `@/lib/chat/notifiche-chat`.
 // =============================================================================
 
 /**
@@ -109,6 +129,30 @@ export const TETTO_GIRO_MS = 40_000
  * postgrest-js non ritenta) è `GIRO_LENTO_PRIMA_DEL_CICLO_MS` in `./durata-dispatch.ts`.
  */
 export const SOGLIA_PRESA_MS = TETTO_GIRO_MS
+
+/**
+ * Dopo quanti millisecondi di giro NON SI COMINCIA più una coppia (destinatario, thread) della
+ * consegna della chat (passo 7bis). Le rimanenti si contano in `consegne_chat_saltate`, con la sua
+ * riga `warn`, e la doppia spunta si accenderà quando chi riceve APRE l'app: la accende D2
+ * (`consegnaSeInAttesa`, dalla campanella) o la GET del thread. Finché l'app resta chiusa, quei
+ * messaggi restano a una spunta — nessuno li ritenta, ed è per questo che le coppie saltate si
+ * chiamano saltate e non rinviate.
+ *
+ * Vale il DOPPIO di `TETTO_GIRO_MS`, che è il punto oltre cui il giro non comincia nemmeno una
+ * notifica nuova. Arrivare qui con il doppio di quel tempo consumato vuol dire un provider o un
+ * database in affanno, e in quel caso l'ultima cosa utile è aggiungere UPDATE: la consegna è un
+ * contorno, le notifiche prese e da salvare non lo sono.
+ * ⚠️ Non è vero che a questa soglia si arrivi solo dopo aver sforato `TETTO_GIRO_MS`: il tetto si
+ * guarda PRIMA di cominciare una notifica, quindi un'ultima notifica lunga (fino a 60 s di
+ * ritentativi per dispositivo) porta il giro oltre gli 80 s senza che la riga `tetto-di-tempo`
+ * venga scritta. Per questo il salto ha una riga tutta sua.
+ *
+ * Il suo costo entra nel caso peggiore del giro (`CONSEGNA_CHAT_MS` in `./durata-dispatch.ts`):
+ * con i valori di oggi resta ben sotto gli altri tre scenari, quindi non alza il `maxDuration`
+ * di nessuna route. Chi la alza oltre quel margine alza `DURATA_MINIMA_FUNZIONE_S`, e il lock in
+ * `__tests__/lib/push-dispatch-durata.test.ts` lo pretende dalle route.
+ */
+export const SOGLIA_CONSEGNA_CHAT_MS = 2 * TETTO_GIRO_MS
 
 /**
  * Quante notifiche al massimo per giro (la lettura pesca sempre le più vecchie). Esportata perché
@@ -195,6 +239,27 @@ export interface DatiDispatch {
   arrese: number
   /** Prese e non tentate perché il giro ha superato `TETTO_GIRO_MS`: di nuovo in coda. */
   rinviate_per_tempo: number
+  /**
+   * Coppie (destinatario, thread) per cui la consegna è stata eseguita, perché il provider ha
+   * accettato la push di chat (D1, passo 7bis). È un conteggio di UPDATE andati a buon fine, non
+   * di spunte accese: quelle sono `consegne_chat_righe`, e i due numeri sono diversi ogni volta
+   * che qualcun altro ha consegnato prima.
+   */
+  consegne_chat: number
+  /**
+   * Le RIGHE di `chat_messages` su cui `delivered_at` si è appena acceso — la doppia spunta vera.
+   * È questo il numero che distingue D1 vivo da D1 rotto: nel caso normale con l'app aperta, D2 o
+   * la GET del thread consegnano per primi e l'UPDATE tocca ZERO righe, quindi un contatore di
+   * chiamate direbbe «acceso» per sempre anche con D1 guasto.
+   */
+  consegne_chat_righe: number
+  /**
+   * Coppie rimaste senza consegna: quelle non tentate perché il giro ha superato
+   * `SOGLIA_CONSEGNA_CHAT_MS` o perché il passo si è interrotto, più quella il cui UPDATE ha
+   * risposto `fermati`. «Saltate» e non «rinviate»: nessuno le ritenta — la loro spunta la accende
+   * D2 alla prossima apertura dell'app, non un giro successivo.
+   */
+  consegne_chat_saltate: number
 }
 
 export type EsitoDispatch =
@@ -211,6 +276,9 @@ interface RigaNotifica {
   link: string | null
   creato_il?: string | null
   invio_programmato_il?: string | null
+  /** L'entità a cui la notifica si riferisce: per la chat `chat_thread` + l'uuid del thread. */
+  entita_tipo?: string | null
+  entita_id?: string | null
   utenti?: unknown
 }
 
@@ -360,7 +428,10 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
     const nowIso = new Date().toISOString()
     const { data: lette, error: errPendenti } = await supabase
       .from('notifiche')
-      .select('id, utente_id, tipo, titolo, corpo, link, creato_il, invio_programmato_il, utenti(role, ruolo)')
+      // `entita_tipo, entita_id` servono alla consegna della chat (passo 7bis): sono le due
+      // colonne che dicono QUALE conversazione la notifica annunciava. Nella stessa lettura e non
+      // in una query a parte: una seconda query che fallisse fermerebbe anche le push.
+      .select('id, utente_id, tipo, titolo, corpo, link, creato_il, invio_programmato_il, entita_tipo, entita_id, utenti(role, ruolo)')
       .is('push_inviata_il', null)
       .or(`invio_programmato_il.is.null,invio_programmato_il.lte.${nowIso}`)
       .order('creato_il', { ascending: true })
@@ -379,6 +450,9 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
       rimesse_in_coda: 0,
       arrese: 0,
       rinviate_per_tempo: 0,
+      consegne_chat: 0,
+      consegne_chat_righe: 0,
+      consegne_chat_saltate: 0,
     }
     if (pendenti.length === 0) {
       // Il caso normale della stragrande maggioranza dei giri: niente da spedire. Ha comunque
@@ -523,6 +597,23 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
     const toRemove: string[] = []
     const daRimettere: string[] = []
 
+    /**
+     * LE COPPIE DA CONSEGNARE (D1): chiave `<destinatario>|<thread>`, e il `finoA` è il
+     * `creato_il` della notifica che il provider ha accettato.
+     *
+     * UNA CHIAMATA PER COPPIA, e non una per destinatario col `finoA` più alto: quella sarebbe
+     * sbagliata, e in modo invisibile. Chi ha due conversazioni con due notifiche di istanti
+     * diversi si vedrebbe consegnare, nel thread annunciato PRIMA, anche i messaggi nati dopo —
+     * messaggi che hanno una notifica loro, ancora da spedire: la doppia spunta su qualcosa che
+     * non è arrivato da nessuna parte, cioè lo stesso genere di bugia che questo lavoro esiste
+     * per togliere di mezzo, soltanto rovesciata.
+     *
+     * Due notifiche della STESSA coppia nello stesso giro (il debounce le sostituisce, ma un
+     * secondo giro può trovarne due) tengono il `finoA` più RECENTE: consegnare fino all'istante
+     * più avanzato di cui il provider ha accettato l'annuncio è vero per entrambe.
+     */
+    const consegneChat = new Map<string, { userId: string; threadId: string; finoA: string; ms: number }>()
+
     for (const n of prese) {
       if (Date.now() - t0 > TETTO_GIRO_MS) {
         // Tetto di tempo: la notifica è presa ma non tentata. Torna in coda, non si perde.
@@ -599,6 +690,26 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
         d.arrese++
       }
       d.notifiche++
+
+      // LA DOPPIA SPUNTA (D1). `ricevute > 0` è la condizione, e non «nessun errore»: la consegna
+      // è dell'ACCETTAZIONE da parte del provider, e un rifiuto definitivo, un dispositivo morto
+      // o un destinatario senza dispositivi non hanno consegnato niente a nessuno. Le notifiche
+      // rimesse in coda non arrivano nemmeno qui: hanno già fatto `continue` sopra.
+      // Un tipo che non è di chat, un'entità che non è un thread, un `entita_id` assente: niente
+      // da consegnare — non è un errore, è una notifica di altro genere.
+      if (ricevute > 0 && TIPI_CHAT.includes(n.tipo) && n.entita_tipo === ENTITA_CHAT_THREAD && n.entita_id) {
+        // Senza un `creato_il` leggibile NON si consegna. `marcaConsegnati` senza `creatiFinoA`
+        // non filtra per tempo, cioè consegnerebbe il thread INTERO, compresi i messaggi nati
+        // dopo questa notifica: meglio una spunta in ritardo (la accende D2, o l'apertura della
+        // lista) che una spunta bugiarda.
+        const finoA = String(n.creato_il ?? '')
+        const ms = Date.parse(finoA)
+        if (Number.isFinite(ms)) {
+          const chiave = `${n.utente_id}|${n.entita_id}`
+          const gia = consegneChat.get(chiave)
+          if (!gia || ms > gia.ms) consegneChat.set(chiave, { userId: n.utente_id, threadId: n.entita_id, finoA, ms })
+        }
+      }
     }
 
     // ── 7. IL RITORNO IN CODA ────────────────────────────────────────────────────────────
@@ -628,6 +739,72 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
       } else d.subs_rimosse += blocco.length
     }
     if (errRimozione !== null) scrittureFallite.push({ azione: 'rimozione push_subscriptions', error: errRimozione })
+
+    // ── 7bis. LA CONSEGNA DELLA CHAT (D1) ────────────────────────────────────────────────
+    // La doppia spunta si accende sui messaggi che la push accettata annunciava: una chiamata per
+    // COPPIA (destinatario, thread), col `finoA` della sua notifica.
+    //
+    // STA QUI, DOPO IL RITORNO IN CODA E LA RIMOZIONE, non prima: quelle due scritture sono ciò
+    // che impedisce di PERDERE una notifica presa e non consegnata («IL PREZZO DELLA PRESA») e di
+    // lasciare un dispositivo morto a ricevere per sempre una push che non arriverà. La doppia
+    // spunta è un contorno — se andasse prima, un `chat_messages` lento ruberebbe il tempo che
+    // serve a salvare le notifiche, e una Function troncata in mezzo le lascerebbe marcate e mai
+    // spedite. Nessuna di queste consegne, invece, si perde se salta: la accende D2 all'apertura
+    // dell'app.
+    //
+    // SI FA ANCHE QUANDO IL GIRO CHIUDERÀ IN 500. Le push sono partite e i provider le hanno
+    // accettate: le spunte vanno accese, qualunque cosa sia andata storta DOPO sulle righe di
+    // `notifiche`. Saltare il passo lascerebbe spente delle spunte per un guasto che non le
+    // riguarda, e i contatori finiscono comunque nella riga d'errore del passo 8.
+    //
+    // NON ENTRA IN `scrittureFallite` e NON cambia lo stato del giro: un giro che ha spedito le
+    // push e non ha accesa una spunta non è un giro fallito. `marcaConsegnati` non lancia per
+    // contratto e scrive i propri log; il `try` qui è la difesa contro l'imprevisto (un client
+    // sostituito, un builder che cambia forma), e un catch che non logga è un bug: la riga si
+    // scrive una sola volta a fine ciclo, col conteggio e l'ultimo errore, perché N righe identiche
+    // in un giro da 500 notifiche sarebbero rumore e in `app_log`, che deduplica per giorno,
+    // resterebbe comunque la prima.
+    //
+    // SI CONTANO LE RIGHE, NON LE CHIAMATE (`consegne_chat_righe`), e si CHIEDE il conteggio: un
+    // contatore di chiamate salirebbe anche quando l'UPDATE non tocca niente — il caso normale con
+    // l'app aperta, dove D2 ha già consegnato — e un D1 rotto mostrerebbe `consegne_chat > 0` per
+    // sempre. Una misura che conferma sé stessa è peggio di nessuna misura.
+    //
+    // E SI FERMA AL PRIMO `fermati`: un database che ha appena risposto male non va interrogato
+    // altre cinquanta volte, e ogni tentativo in più aggiunge un `logErrore`, cioè un'altra
+    // scrittura. Le coppie senza consegna — per l'arresto o per il tempo — si contano tutte in
+    // `consegne_chat_saltate`. Il conto torna come coppie totali = consegnate + saltate + ROTTE:
+    // le eccezioni impreviste finiscono in `consegneRotte`, dette dalla riga `warn`
+    // `consegna-chat-non-riuscita`, non nel battito.
+    const coppie = [...consegneChat.values()]
+    let consegneRotte = 0
+    let errConsegna: unknown = null
+    for (let i = 0; i < coppie.length; i++) {
+      const c = coppie[i]
+      if (Date.now() - t0 > SOGLIA_CONSEGNA_CHAT_MS) {
+        // Il tempo non torna indietro: le rimanenti sono saltate tutte, e si esce.
+        d.consegne_chat_saltate += coppie.length - i
+        break
+      }
+      try {
+        const { esito, n } = await marcaConsegnati(supabase, {
+          userId: c.userId,
+          threadIds: [c.threadId],
+          creatiFinoA: c.finoA,
+          conteggia: true,
+        })
+        // Il parziale di una coppia fermata è comunque scritto sul database: si conta.
+        d.consegne_chat_righe += n
+        if (esito !== 'ok') {
+          d.consegne_chat_saltate += coppie.length - i
+          break
+        }
+        d.consegne_chat++
+      } catch (err) {
+        consegneRotte++
+        errConsegna = err
+      }
+    }
 
     // ── 8. LE RIGHE CHE ALZANO LA VOCE, separate dal battito ────────────────────────────
     // I rifiuti: `warn`, perché molti sono transitori e il giro degrada con un 200. Il `msg`
@@ -668,6 +845,44 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
         msg: `${operazione}: giro oltre ${TETTO_GIRO_MS} ms, ${d.rinviate_per_tempo} notifiche prese e non tentate tornano in coda`,
       })
     }
+    // Le coppie SALTATE, per tempo o per un `fermati` del database: `warn`, perché sono doppie
+    // spunte che questo giro non ha accese. Non è una perdita — le accende D2 alla prossima
+    // apertura dell'app — ma va vista, e non basta la riga `tetto-di-tempo` a dirlo: alla soglia
+    // della consegna si arriva ANCHE senza sforare il tetto del giro (un'ultima notifica lunga, un
+    // arretrato di coppie), e un `fermati` del database non ha niente a che fare col tempo.
+    if (d.consegne_chat_saltate > 0) {
+      riga(origine, 'warn', {
+        operazione,
+        esito: 'consegna-chat-saltata',
+        consegne_chat_saltate: d.consegne_chat_saltate,
+        consegne_chat: d.consegne_chat,
+        consegne_chat_righe: d.consegne_chat_righe,
+        ms: Date.now() - t0,
+        msg:
+          `${operazione}: ${d.consegne_chat_saltate} conversazioni senza la doppia spunta in questo giro ` +
+          `(oltre ${SOGLIA_CONSEGNA_CHAT_MS} ms, o database fermo); si accenderà all'apertura dell'app`,
+      })
+    }
+    // La consegna della chat che ha lanciato: `warn`, perché la conseguenza è una doppia spunta
+    // in ritardo (la accende D2) e non una notifica persa — ma il contratto dice «non lancia mai»,
+    // quindi se succede è un bug e va visto.
+    if (consegneRotte > 0) {
+      riga(
+        origine,
+        'warn',
+        {
+          operazione,
+          esito: 'consegna-chat-non-riuscita',
+          consegne_chat_rotte: consegneRotte,
+          consegne_chat: d.consegne_chat,
+          ms: Date.now() - t0,
+          msg:
+            `${operazione}: ${consegneRotte} consegne di chat interrotte da un'eccezione ` +
+            '(`marcaConsegnati` non dovrebbe lanciare); la doppia spunta si accenderà all\'apertura dell\'app',
+        },
+        errConsegna,
+      )
+    }
     // Il canale spento (vedi `segnalaCanaleSpento`).
     segnalaCanaleSpento(d.notifiche)
 
@@ -684,6 +899,11 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
           rimesse_in_coda: d.rimesse_in_coda,
           arrese: d.arrese,
           subs_rimosse: d.subs_rimosse,
+          // In un giro che chiude in 500 non c'è il battito «ok»: se i contatori della consegna
+          // non fossero qui, le spunte accese da questo giro non sarebbero scritte in nessun log.
+          consegne_chat: d.consegne_chat,
+          consegne_chat_righe: d.consegne_chat_righe,
+          consegne_chat_saltate: d.consegne_chat_saltate,
         })
       }
       return { stato: 500 }
@@ -706,6 +926,16 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
       rimesse_in_coda: d.rimesse_in_coda,
       arrese: d.arrese,
       rinviate_per_tempo: d.rinviate_per_tempo,
+      // Le doppie spunte di questo giro: senza questi numeri, «la consegna funziona» resterebbe
+      // un'opinione, verificabile solo interrogando il database a mano — cioè da nessuno, che è
+      // esattamente come le spunte sono rimaste spente per cinque ore.
+      // I due primi sono DIVERSI di proposito: `consegne_chat` sono gli UPDATE riusciti,
+      // `consegne_chat_righe` le spunte accese davvero. Un giro con `consegne_chat > 0` e
+      // `consegne_chat_righe = 0` non è un guasto: vuol dire che l'app era aperta e D2 ha fatto
+      // prima. Un giro con `consegne_chat_righe` sempre a zero, su molti giri, è D1 rotto.
+      consegne_chat: d.consegne_chat,
+      consegne_chat_righe: d.consegne_chat_righe,
+      consegne_chat_saltate: d.consegne_chat_saltate,
       msg: `${operazione}: ok`,
     })
     return { stato: 200, data: d }

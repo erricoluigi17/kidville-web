@@ -87,6 +87,19 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi';
  * l'indice parziale giusto per l'UPDATE: filtra per thread su `delivered_at IS NULL`,
  * escludendo il proprio `sender_id`.
  *
+ * ─── IL VALORE DI RITORNO: `{ esito, n }`, NON `void` ───────────────────────────────────
+ *
+ * `marcaConsegnati` dice quante righe ha accese e se si può continuare. Serve a chi CONTA le
+ * doppie spunte — il dispatcher delle push (D1) — perché contare le proprie chiamate è una misura
+ * che conferma sé stessa: nel caso normale con l'app aperta, D2 o la GET del thread consegnano
+ * per primi e l'UPDATE di D1 tocca ZERO righe, quindi un contatore di chiamate direbbe «acceso»
+ * per sempre anche con D1 rotto. Il conteggio (`count: 'exact'`) è FACOLTATIVO: lo chiede chi lo
+ * legge, e i chiamanti della chat non lo pagano.
+ * I chiamanti che ignorano il ritorno non cambiano di una virgola — un valore non usato è lecito.
+ *
+ * ⚠️ `EsitoConsegna` è un TIPO, non un valore: sparisce alla compilazione, quindi non entra fra i
+ * nomi che i `vi.mock` di questo modulo devono esporre (vedi il riquadro qui sotto).
+ *
  * ⚠️ CHI AGGIUNGE UN EXPORT QUI guardi prima chi sostituisce questo modulo per intero:
  * `grep -rln "vi.mock('@/lib/chat/delivered'" __tests__/` trova una decina di file con una
  * factory che espone SOLO `marcaConsegnati`. Un nome nuovo importato da un modulo che quei
@@ -151,8 +164,9 @@ async function consegnaBlocco(
         const tabella = supabase.from('chat_messages');
         const payload = { delivered_at: new Date().toISOString() };
 
-        // `count: 'exact'` solo a chi logga quante righe ha scritto: `marcaConsegnati` non lo
-        // chiede, perché non logga il successo e un conteggio che nessuno legge è solo un header.
+        // `count: 'exact'` solo a chi usa quante righe ha scritto (`consegnaSeInAttesa` per il suo
+        // log, il dispatcher per il battito, con `conteggia`): i chiamanti della chat non lo
+        // chiedono, e un conteggio che nessuno legge è solo un header.
         let query = (conteggia ? tabella.update(payload, { count: 'exact' }) : tabella.update(payload))
             .neq('sender_id', userId)
             .is('delivered_at', null);
@@ -186,26 +200,57 @@ interface MarcaConsegnatiParams {
      * Vedi «PERCHÉ ESISTE `creatiFinoA`» in testata.
      */
     creatiFinoA?: string;
+    /**
+     * Chiede a PostgREST QUANTE righe ha toccato (`count: 'exact'`), che finisce nell'`n` del
+     * ritorno. Facoltativo perché costa un header e i chiamanti della chat non lo leggono: lo
+     * chiede solo chi CONTA le spunte accese (il dispatcher delle push, D1).
+     */
+    conteggia?: boolean;
+}
+
+/**
+ * Esito di `marcaConsegnati`: `n` sono le righe accese (0 senza `conteggia`), `esito` dice se si
+ * può continuare.
+ *
+ * PERCHÉ NON È `void`. Chi conta le doppie spunte deve contare le RIGHE, non le proprie chiamate:
+ * nel caso normale con l'app aperta D2 (`consegnaSeInAttesa`) o la GET del thread consegnano per
+ * primi, e l'UPDATE di D1 tocca ZERO righe. Un contatore di chiamate direbbe «acceso» per sempre,
+ * anche con D1 rotto — una misura che conferma sé stessa, che è peggio di nessuna misura.
+ * E l'`esito` serve a FERMARSI: un database che ha appena risposto male non va interrogato altre
+ * cinquanta volte, e ogni tentativo in più aggiunge un `logErrore`, cioè un'altra scrittura.
+ */
+export interface EsitoConsegna {
+    esito: 'ok' | 'fermati';
+    /** Righe con `delivered_at` appena valorizzato. Zero se il conteggio non è stato chiesto. */
+    n: number;
 }
 
 export async function marcaConsegnati(
     supabase: SupabaseClient,
-    { userId, threadIds, messageIds, creatiFinoA }: MarcaConsegnatiParams,
-): Promise<void> {
+    { userId, threadIds, messageIds, creatiFinoA, conteggia }: MarcaConsegnatiParams,
+): Promise<EsitoConsegna> {
     const perId = Array.isArray(messageIds) && messageIds.length > 0;
     const perThread = Array.isArray(threadIds) && threadIds.length > 0;
 
-    // Nessun bersaglio → nessuna query (niente scritture a vuoto sul DB di produzione).
-    if (!perId && !perThread) return;
+    // Nessun bersaglio → nessuna query (niente scritture a vuoto sul DB di produzione). Non è un
+    // guasto: `ok` con zero righe.
+    if (!perId && !perThread) return { esito: 'ok', n: 0 };
 
     // `messageIds` ha la precedenza: è il caso "dopo il read, consegna gli stessi id".
     const colonna = perId ? 'id' : 'thread_id';
     const ids = (perId ? messageIds : threadIds) as string[];
 
+    let accese = 0;
     for (const blocco of aBlocchi(ids, ID_PER_QUERY)) {
-        const { esito } = await consegnaBlocco(supabase, OP_MARCA, colonna, blocco, userId, creatiFinoA);
-        if (esito !== 'ok') return;
+        const { esito, n } = await consegnaBlocco(
+            supabase, OP_MARCA, colonna, blocco, userId, creatiFinoA, conteggia === true,
+        );
+        // Il PARZIALE si restituisce anche quando ci si ferma: quelle righe sono scritte per
+        // davvero, e tacerle nasconderebbe una consegna avvenuta (vedi «I LOG» in testata).
+        accese += n;
+        if (esito !== 'ok') return { esito: 'fermati', n: accese };
     }
+    return { esito: 'ok', n: accese };
 }
 
 interface ConsegnaSeInAttesaParams {

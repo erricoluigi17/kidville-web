@@ -1,5 +1,11 @@
 import { ATTESA_MAX_MS, ATTESE_RITENTATIVO_MS } from '@/lib/push/native-push'
-import { BUDGET_RITENTATIVI_MS, LIMITE_LETTURA, SOGLIA_PRESA_MS, TETTO_GIRO_MS } from '@/lib/push/dispatch'
+import {
+  BUDGET_RITENTATIVI_MS,
+  LIMITE_LETTURA,
+  SOGLIA_CONSEGNA_CHAT_MS,
+  SOGLIA_PRESA_MS,
+  TETTO_GIRO_MS,
+} from '@/lib/push/dispatch'
 import { ID_PER_QUERY } from '@/lib/db/blocchi'
 import { tettoMs } from '@/lib/logging/external'
 import { tettoMsArea } from '@/lib/logging/supabase-fetch'
@@ -112,7 +118,26 @@ export const GIRO_LENTO_PRIMA_DEL_CICLO_MS =
   SOGLIA_PRESA_MS + BLOCCHI * TETTO_DB_MS + TETTO_RPC_MS + BLOCCHI * TETTO_DB_MS
 
 /**
- * Il caso peggiore di un giro, in millisecondi: il più lungo di tre scenari.
+ * LA CONSEGNA DELLA CHAT (D1, passo 7bis di `./dispatch.ts`), in millisecondi.
+ *
+ * Il passo guarda l'orologio prima di OGNI coppia (destinatario, thread): l'ultima che comincia lo
+ * fa un attimo prima di `SOGLIA_CONSEGNA_CHAT_MS` e paga un UPDATE su `chat_messages` — area
+ * `'db'`, un blocco solo, perché `marcaConsegnati` riceve un thread per volta. Il passo finisce
+ * quindi entro `soglia + un tetto`, e questo è il suo contributo al caso peggiore, contato da `t0`
+ * come gli altri.
+ *
+ * Non si SOMMA agli scenari degli invii: la consegna sta DOPO di loro, e la fine del giro è il più
+ * lungo fra «lo scenario che ci ha portati fin qui» e «la soglia della consegna più un tetto» —
+ * oltre la soglia, infatti, non parte più nessuna coppia. Perciò entra in `Math.max` come quarto
+ * scenario. Con i valori di oggi: 80 + 15 = 95 s, ben sotto i 250 s del primo scenario, quindi
+ * `DURATA_MINIMA_FUNZIONE_S` non cambia e nessun `maxDuration` va toccato. Chi alza la soglia oltre
+ * quel margine fa salire la durata minima, e il lock pretende route più lunghe invece di lasciare
+ * una Function troncata mentre accende le doppie spunte.
+ */
+export const CONSEGNA_CHAT_MS = SOGLIA_CONSEGNA_CHAT_MS + TETTO_DB_MS
+
+/**
+ * Il caso peggiore di un giro, in millisecondi: il più lungo di quattro scenari.
  *
  *  · La notifica comincia un attimo prima del BUDGET: il primo dispositivo ha tutti i
  *    ritentativi, gli altri `DISPOSITIVI_PER_DESTINATARIO − 1` nessuno; poi la chiusura. Con i
@@ -120,6 +145,9 @@ export const GIRO_LENTO_PRIMA_DEL_CICLO_MS =
  *  · La notifica comincia un attimo prima del TETTO: nessun ritentativo, ma tutti i dispositivi;
  *    poi la chiusura. Con i valori di oggi: 40 + 5 × 20 + 90 = 230 s.
  *  · Il giro è lento PRIMA del ciclo (`GIRO_LENTO_PRIMA_DEL_CICLO_MS`): 205 s.
+ *  · La consegna della chat comincia l'ultima coppia un attimo prima della sua soglia
+ *    (`CONSEGNA_CHAT_MS`): 80 + 15 = 95 s. Non si somma agli altri: sta dopo, e oltre la soglia
+ *    non comincia più niente — vedi la sua nota.
  *
  * I primi due si contano da `t0`, quindi comprendono già le fasi prima del ciclo che ci sono
  * state: un ciclo che comincia prima del budget o del tetto ha avuto letture più brevi di così.
@@ -135,6 +163,7 @@ export const CASO_PEGGIORE_GIRO_MS = Math.max(
     CHIUSURA_MS,
   TETTO_GIRO_MS + DISPOSITIVI_PER_DESTINATARIO * INVIO_SENZA_RITENTATIVI_MS + CHIUSURA_MS,
   GIRO_LENTO_PRIMA_DEL_CICLO_MS,
+  CONSEGNA_CHAT_MS,
 )
 
 /**

@@ -181,9 +181,11 @@ describe('marcaConsegnati — a blocchi (PostgREST mette `.in()` in query string
         const err = { code: '23505', message: 'boom' };
         const c = makeClient([{ error: null }, { error: err }, { error: null }]);
 
+        // Si ferma, e lo DICE: `fermati` è ciò che permette al chiamante (il dispatcher, D1) di non
+        // interrogare altre cinquanta volte un database che ha appena risposto male.
         await expect(
             marcaConsegnati(c.client as never, { userId: UTENTE, threadIds: ids }),
-        ).resolves.toBeUndefined();
+        ).resolves.toEqual({ esito: 'fermati', n: 0 });
 
         // Due blocchi partiti, il terzo NO: continuare dopo un errore vero significa insistere
         // su un database che ha appena detto no.
@@ -432,7 +434,7 @@ describe('consegnaSeInAttesa — un UPDATE per blocco, e il log di quello che ha
 
         await expect(
             marcaConsegnati(c.client as never, { userId: UTENTE, threadIds: ['t1'] }),
-        ).resolves.toBeUndefined();
+        ).resolves.toEqual({ esito: 'fermati', n: 0 });
 
         expect(logErrore).toHaveBeenCalledWith(
             expect.objectContaining({ operazione: 'chat/delivered:marcaConsegnati', evento: 'db' }),

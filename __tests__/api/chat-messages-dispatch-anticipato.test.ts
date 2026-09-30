@@ -100,6 +100,9 @@ const DATI_OK = {
   rimesse_in_coda: 0,
   arrese: 0,
   rinviate_per_tempo: 0,
+  consegne_chat: 1,
+  consegne_chat_righe: 3,
+  consegne_chat_saltate: 0,
 }
 
 /** Le righe di log del dispatch anticipato, per esito. */
@@ -174,6 +177,10 @@ describe('POST /api/chat/messages — la push parte 30 s dopo il messaggio', () 
     expect(ok[0]).toBe('push')
     expect(ok[1]).toBe('info')
     expect(ok[2]).toMatchObject({ threadId: THREAD, notifiche: 1, inviate: 1, native_inviate: 2, gia_prese: 0 })
+    // Le doppie spunte del giro (D1). Sono dell'INTERO giro, non della conversazione appena
+    // scritta: `eseguiDispatch` svuota tutta la coda pendente. Le coppie (`consegne_chat`) e le
+    // righe accese (`consegne_chat_righe`) sono numeri DIVERSI, e devono restare distinti.
+    expect(ok[2]).toMatchObject({ consegne_chat: 1, consegne_chat_righe: 3, consegne_chat_saltate: 0 })
     // L'avvio viene prima dell'esito.
     const indice = (r: unknown) => h.logEvento.mock.calls.indexOf(r as never)
     expect(indice(avvio)).toBeLessThan(indice(ok))

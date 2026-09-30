@@ -2,12 +2,13 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { MessageCircle, Users, Send, Loader2, Eye, Search, ScrollText } from 'lucide-react';
+import { MessageCircle, Users, Send, Loader2, Eye, Search, ScrollText, BellOff } from 'lucide-react';
 import { CockpitPage, CockpitSelect, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { ThreadSospensioneBanner, type SospensioneInfo } from '@/components/features/admin/messaggi/ThreadSospensioneBanner';
 import { RegistroVigilanza } from '@/components/features/admin/messaggi/RegistroVigilanza';
+import { DocentiSenzaNotifiche } from '@/components/features/admin/messaggi/DocentiSenzaNotifiche';
 import { segnalaChatLetta } from '@/components/features/chat/contatore-non-letti';
 import { formattaIstante } from '@/i18n/config';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -42,9 +43,10 @@ function MessaggiInner() {
   const t = useTranslations('adminComunicazioni');
   const locale = useLocale();
   const { userId, role } = useSessionIdentity();
-  // Un solo predicato per «Direzione»: riapre le conversazioni sospese E vede il
-  // registro degli accessi. Il gate vero sta nelle API — qui si decide solo cosa
-  // mostrare, e una scheda che darebbe 403 è peggio di una scheda assente.
+  // Un solo predicato per «Direzione»: riapre le conversazioni sospese, vede il
+  // registro degli accessi E l'elenco delle maestre senza notifiche. Il gate
+  // vero sta nelle API — qui si decide solo cosa mostrare, e una scheda che
+  // darebbe 403 è peggio di una scheda assente.
   const direzione = role === 'admin' || role === 'coordinator';
   // Etichetta risolta fuori dal `.map(t => …)` dei thread, dove `t` è ombreggiato
   // dalla variabile del thread (non è più la funzione di traduzione).
@@ -59,7 +61,7 @@ function MessaggiInner() {
   const piuSedi = sedi.length > 1;
   const nomeSede = (scuolaId: string | null) =>
     sedi.find((s) => s.id === scuolaId)?.nome ?? t('messaggiSedeSconosciuta');
-  const [tab, setTab] = useState<'genitori' | 'tutti' | 'registro'>('genitori');
+  const [tab, setTab] = useState<'genitori' | 'tutti' | 'registro' | 'notifiche'>('genitori');
 
   // ── Tab "Tutti i messaggi" (supervisione, sola lettura) ──
   const [threads, setThreads] = useState<OversightThread[]>([]);
@@ -310,11 +312,19 @@ function MessaggiInner() {
 
       <Tabs
         value={tab}
-        onChange={(v) => setTab(v as 'genitori' | 'tutti' | 'registro')}
+        onChange={(v) => setTab(v as 'genitori' | 'tutti' | 'registro' | 'notifiche')}
         options={[
           { id: 'genitori', label: t('messaggiTabGenitori'), icon: Users },
           { id: 'tutti', label: t('messaggiTabTutti'), icon: Eye },
-          ...(direzione ? [{ id: 'registro', label: t('messaggiTabRegistro'), icon: ScrollText }] : []),
+          ...(direzione
+            ? [
+                { id: 'registro', label: t('messaggiTabRegistro'), icon: ScrollText },
+                // «Chi non riceve le notifiche»: come il registro, è della
+                // Direzione. Aprirla alla segreteria è una decisione del
+                // titolare — l'elenco misura il lavoro di una collega.
+                { id: 'notifiche', label: t('messaggiTabNotificheDocenti'), icon: BellOff },
+              ]
+            : []),
         ]}
       />
 
@@ -390,8 +400,14 @@ function MessaggiInner() {
             )}
           </div>
         </div>
-      ) : tab === 'registro' ? (
-        <RegistroVigilanza />
+      ) : tab === 'registro' || tab === 'notifiche' ? (
+        // `direzione` decide le linguette; qui si ripete la condizione perché
+        // uno stato residuo — la scheda scelta prima di un cambio di veste —
+        // non possa montare a chi non deve vederla. Vale per ENTRAMBE le schede
+        // della Direzione: il registro degli accessi non è meno riservato
+        // dell'elenco delle notifiche, e lasciarne una scoperta avrebbe reso la
+        // difesa un caso particolare invece di una regola.
+        direzione ? tab === 'registro' ? <RegistroVigilanza /> : <DocentiSenzaNotifiche /> : null
       ) : (
         <>
           {/* Filtri */}

@@ -261,7 +261,7 @@
   "messaggiConversazioneNonAperta": "The conversation could not be opened.",
 
   "registroTitolo": "Who consulted the conversations",
-  "registroSottotitolo": "Every time someone opens a conversation they are not part of, or runs a search, a row is written here. No exceptions: this includes the management.",
+  "registroSottotitolo": "Every time someone opens a conversation that is not theirs, runs a search, or looks at the counts, a row lands here. No exceptions: this includes management.",
   "registroVuoto": "No access recorded for the selected filters.",
   "registroNonDisponibile": "The log is not available in this environment.",
   "registroErrore": "The log could not be read. Please try again shortly.",
@@ -292,5 +292,20 @@
   "videoAnnulla": "Call off",
   "videoTogli": "Remove",
   "videoRiapertura": "These clips were still being prepared when you closed the page: they carry on by themselves.",
-  "videoSoloNelTesto": "Clips are attached to the text, not to the cover image: the cover stays a photograph."
+  "videoSoloNelTesto": "Clips are attached to the text, not to the cover image: the cover stays a photograph.",
+
+  "messaggiTabNotificheDocenti": "Notifications off",
+  "docentiSenzaPushTitolo": "Teachers who get no notifications",
+  "docentiSenzaPushSottotitolo": "No device is registered for these teachers: messages from parents do reach the app, but nothing tells them one has arrived.",
+  "docentiSenzaPushNota": "A notice on their home page explains how to turn notifications on from the app on their phone. They cannot be enabled from a computer: on a shared PC they would reach whoever sits down next. If the notice stays, they need help on their phone.",
+  "docentiSenzaPushConteggio": "{n, plural, =0 {No teacher without notifications, out of {totale}} one {One teacher out of {totale} gets no notifications} other {# teachers out of {totale} get no notifications}}",
+  "docentiSenzaPushVuoto": "Every teacher has at least one registered device.",
+  "docentiSenzaPushNessunaDocente": "No teacher is currently in service at these locations.",
+  "docentiSenzaPushNonTracciabile": "The consultation could not be written to the audit log, so the list was not shown. Please try again in a few minutes.",
+  "docentiSenzaPushErrore": "The list could not be loaded. Try again shortly.",
+  "docentiSenzaPushColChi": "Teacher",
+  "docentiSenzaPushColRicevuti": "{giorni, plural, one {Messages from parents (# day)} other {Messages from parents (# days)}}",
+  "docentiSenzaPushColNonLetti": "Unread (all time)",
+  "registroAzioneElencoNotifiche": "Looked at the list of teachers without notifications (counts only)",
+  "registroQuantiConteggiati": "{n, plural, one {# message counted} other {# messages counted}}"
 }

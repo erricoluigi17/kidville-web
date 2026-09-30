@@ -1,4 +1,85 @@
 
+## 💬 Changelog — Chat: i messaggi non letti si vedono fuori dalla chat, la campanella si spegne leggendo, «Consegnato» quando il messaggio arriva, avviso alle maestre senza notifiche — 2026-09-30 (branch `feat/chat-non-letti-e-consegna`)
+
+**La segnalazione (29/09).** «I messaggi dei genitori non arrivano alle maestre.» Misurato sul DB di produzione, in sola lettura: i messaggi **arrivano**. Sono salvati, e la push viene accettata dal provider in pochi secondi. Nel caso segnalato la maestra li ha visti 5 ore e 22 minuti dopo. Nessun messaggio perso: il difetto è che nessuno se ne accorge.
+
+**Le quattro cause:**
+1. **Nessun contatore fuori dalla chat.** Le barre in basso di maestre e genitori non avevano un numero. Il contatore esisteva solo dentro la pagina chat, dal 23/05.
+2. **Leggere una conversazione non spegneva le sue notifiche.** Al 29/09 alle 15:49 UTC, 1.582 notifiche di chat non lette su 2.178 riguardavano conversazioni già lette. Il numero sulla campanella arrivava a 661 per una sola maestra: veniva ignorato, o azzerato in blocco con «Segna tutte lette».
+3. **«Consegnato» (la doppia spunta) si accendeva solo quando chi riceve apriva la LISTA chat.** La mamma ha visto per 5 ore una spunta sola.
+4. **Chi ha negato il permesso delle notifiche non riceve niente, e nessuno lo sa.** Una maestra su Android ha ricevuto 137 messaggi in 30 giorni senza nessuna push.
+
+**Le correzioni** (decise dal titolare il 29/09: A, B, C, D; il promemoria automatico è escluso)
+
+- **A — Il numero dei non letti su «Messaggi» (maestre) e «Chat» (genitori), da qualunque schermata.**
+  - Viaggia in `GET /api/notifiche` come `chat_non_letti` (`src/lib/chat/non-letti.ts`), dentro il giro da 60 s che la campanella fa già. Nessuna richiesta in più.
+  - `null` vuol dire «non lo so»: il client tiene l'ultimo valore noto e non mostra mai uno 0 di ripiego.
+  - Store di modulo `src/components/features/chat/contatore-non-letti.ts`.
+  - Il badge è `BadgeChatNonLetti`, con `9+` oltre 9. Il nome accessibile della voce non cambia (`aria-describedby`), così i flussi Maestro e gli E2E continuano a trovarla.
+  - Fonte unica dal server. L'apertura di un thread non tocca più il totale: prima veniva sottratto due volte. Lo store si azzera quando la campanella si smonta o cambia persona.
+- **B — Leggere una conversazione spegne le sue notifiche in campanella.**
+  - Lo fa `segnaLetteNotificheChat` in `src/lib/chat/notifiche-chat.ts`, chiamata dalla PATCH di lettura e dalla GET con `markRead`.
+  - Regola: basta un messaggio letto. Il numero vero dei non letti lo porta A.
+  - La campanella si ricarica sull'evento `kv:chat-letta`.
+  - **Migrazione solo dati** `20260929180303_notifiche_chat_lette_su_conversazioni_lette.sql`: spegne l'arretrato delle conversazioni senza più non letti dell'altra parte. È volutamente più prudente della regola del codice. La applica l'integrazione al merge.
+- **D — «Consegnato» quando il messaggio arriva.** Due strade:
+  - **D2, app aperta:** la GET della campanella, con `after()` dopo la risposta, consegna i messaggi nati fino all'inizio della GET (`consegnaSeInAttesa`). Log `chat-consegnati-app-aperta` con il numero.
+  - **D1, app chiusa:** quando il dispatcher manda la push di un messaggio e il provider la accetta, i messaggi di quella conversazione nati fino alla notifica diventano consegnati (passo 7bis di `dispatch.ts`).
+    - Contatori nel battito: `consegne_chat`, `consegne_chat_righe`, `consegne_chat_saltate`.
+    - Il caso peggiore del giro resta 250 s.
+    - ⚠️ Un 200 di FCM, o il 201 del web-push, vuol dire **consegnato ad Apple, Google o al servizio del browser**, non la conferma del telefono.
+- **C — Maestre senza notifiche.**
+  - **C1:** nella home della docente compare un avviso fisso, solo se ha zero dispositivi (`GET /api/push/subscribe`) oppure se questo telefono ha il permesso negato.
+    - Nell'app: «Apri Impostazioni» / «Attiva» / «aggiorna l'app».
+    - ⚠️ **Sul web niente attivazione**, per privacy. Il logout web non annulla l'iscrizione del browser, quindi su un PC condiviso le notifiche arriverebbero a chi si siede dopo, comprese quelle della mensa con le allergie dei bambini. L'avviso rimanda all'app sul telefono.
+    - `PushOptIn` non dice più «attive» su una registrazione fallita.
+  - **C2:** la scheda «Maestre senza notifiche» in `admin/messaggi`, solo per la Direzione (`GET /api/admin/chat/docenti-senza-push`).
+    - Mostra le educator non archiviate senza dispositivi, con i messaggi dei genitori ricevuti in 30 giorni e i non letti in tutto.
+    - Ogni apertura è tracciata nel registro di vigilanza: una riga per sede letta, con la sua
+      etichetta, «Ha consultato l'elenco delle maestre senza notifiche (solo conteggi)».
+    - Conta i non letti con una head-query per maestra: nessuna riga dei messaggi viene trasferita.
+
+**Limiti noti, dichiarati:**
+- Una notifica creata dopo la lettura in diretta, con una corsa di qualche centinaio di ms, resta accesa fino alla lettura successiva, e la sua push parte comunque.
+- Nell'app nativa, con il permesso negato, l'avviso fisso e il riquadro settimanale (`AvvisiSettimanaliApp`) dicono la stessa cosa.
+- Nel registro di vigilanza l'apertura della scheda C2 si scrive come azione `lettura` senza conversazione. Il registro le dà un'etichetta propria, ma il FILTRO per azione ha ancora due voci. Una voce `conteggio` a sé richiederebbe una migrazione del vincolo.
+
+**Fuori perimetro, segnalati a parte:**
+- la push parte anche per conversazioni già lette;
+- il logout web non annulla l'iscrizione, e questo riguarda già genitori e segreteria;
+- la DELETE di `push/subscribe` non controlla `{ error }`, e la POST espone il messaggio di PostgREST;
+- `tokenNonRegistrato` sui 400;
+- il `MessagingDelegate` iOS;
+- la deroga `notifica` di `eventi-log`, che è stantia;
+- l'N+1 della lista chat;
+- il realtime su `alunni` del banner di sospensione;
+- le ricerche multi-sede invisibili nel registro;
+- il punto cieco della sonda di contrasto.
+
+**Verifica dopo il deploy** (le misure di partenza sono del 29/09, 17:14 ora italiana):
+
+| misura | 29/09 | atteso |
+|---|---|---|
+| notifiche di chat non lette | 2.178 | cala di ~1.580 con la migrazione |
+| … di cui su conversazioni già lette | 1.582 | vicino a 0 (resta il residuo della corsa) |
+| mediana «Consegnato» genitore → docente, messaggi dopo il deploy | 10,5 min | < 1 min per chi ha un dispositivo |
+| messaggi non letti dalle docenti da oltre 24 h | 62 | in calo nei giorni seguenti |
+
+```sql
+-- notifiche di chat non lette su conversazioni senza non letti dell'altra parte (deve tornare vicino a 0)
+SELECT count(*) FROM notifiche n
+ WHERE n.tipo IN ('chat_docente','chat_genitore') AND n.entita_tipo = 'chat_thread'
+   AND n.entita_id IS NOT NULL AND n.letta_il IS NULL
+   AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.thread_id = n.entita_id
+                    AND m.sender_id <> n.utente_id AND m.read_at IS NULL);
+-- «Consegnato» in minuti, messaggi del genitore alla docente dopo il deploy
+SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM m.delivered_at - m.created_at)) / 60
+  FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id
+ WHERE m.sender_id = t.parent_id AND m.delivered_at IS NOT NULL AND m.created_at > '<istante del deploy>';
+```
+
+**Nel giro:** il test `galleria-sede-pagina` («quanto le resta») non cade più il 30 di ogni mese. Cercava `/25/`, che il 30 pescava anche la data di eliminazione.
+
 ## 🔎 Changelog — Log del pop-up «Aggiorna l'app»: una riga per piattaforma e versione — 2026-09-29 (branch `fix/log-aggiorna-app-per-versione`)
 
 **Il difetto** (misurato dopo il deploy della #174, `18c4bd59`). `app_log` accorpa le righe per impronta. L'impronta contiene il messaggio ma **non** la piattaforma né i `campi` (`impronta()` in `src/lib/logging/app-log.ts`).

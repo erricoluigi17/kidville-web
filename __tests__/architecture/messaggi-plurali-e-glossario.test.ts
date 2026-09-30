@@ -353,6 +353,29 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     // righe lo stringono di due.
     { ns: 'teacherNav', chiave: 'ariaTabMessaggiNonLetti', variabile: 'n' },
     { ns: 'nav', chiave: 'ariaTabChatNonLetti', variabile: 'n' },
+    // ── 2026-09-30 · LA SCHEDA «MAESTRE SENZA NOTIFICHE» (Direzione) ─────────
+    // Nate ICU, quindi invisibili al RICONOSCITORE DI FORMA in fondo a questo
+    // file, che salta per costruzione ogni stringa che apre un blocco `plural`.
+    //  · `docentiSenzaPushConteggio` è la frase che dice quante maestre non
+    //    ricevono le notifiche e su quante: «1 maestre su 12 non ricevono» a una
+    //    Direzione che legge un elenco di una riga sarebbe un refuso dentro il
+    //    numero su cui deve decidere se intervenire.
+    //  · `docentiSenzaPushColRicevuti` porta la FINESTRA nell'intestazione di
+    //    colonna («Messaggi dei genitori (30 giorni)»): il numero di giorni
+    //    arriva dalla route (`GIORNI_FINESTRA`), non è cablato nel catalogo, e
+    //    lasciarlo implicito renderebbe la colonna un conteggio senza periodo.
+    // `totale: 12` come valore fisso: non contiene un «2» isolato, che il
+    // confronto d'invarianza di questo lock sostituirebbe con un «1».
+    { ns: 'adminComunicazioni', chiave: 'docentiSenzaPushConteggio', variabile: 'n', extra: { totale: 12 } },
+    { ns: 'adminComunicazioni', chiave: 'docentiSenzaPushColRicevuti', variabile: 'giorni' },
+    // ── 2026-09-30 · I «QUANTI» DELLA RIGA DI SOLI CONTEGGI NEL REGISTRO ────
+    // Nel registro di vigilanza una riga scritta dalla scheda «Maestre senza
+    // notifiche» dice quanti messaggi sono stati CONTEGGIATI, non aperti: senza
+    // il plurale, la riga di una sede con un messaggio solo direbbe «1 messaggi
+    // conteggiati» dentro il registro che la Direzione legge per capire chi ha
+    // guardato cosa. Il RICONOSCITORE DI FORMA in fondo a questo file l'ha
+    // trovata piatta al primo giro — è servito, ed è la ragione per cui esiste.
+    { ns: 'adminComunicazioni', chiave: 'registroQuantiConteggiati', variabile: 'n' },
 ]
 
 /**

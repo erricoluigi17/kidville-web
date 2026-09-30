@@ -9,6 +9,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
+import { linkVotiGenitore, nomeAlunnoPerNotifica } from '@/lib/primaria/notifica-voti-genitore'
 import { leggiBufferVisibilita } from '@/lib/primaria/visibilita-genitore'
 import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
 import {
@@ -49,8 +50,6 @@ const TIPO_NOTIFICA = 'impreparato_segnato'
 const ENTITA_NOTIFICA = 'impreparato'
 /** La notifica ai docenti di una dichiarazione del GENITORE (`parent/giustifiche-didattiche`). */
 const ENTITA_NOTIFICA_GENITORE = 'giustifica_didattica'
-/** La pagina Voti del genitore: lì compaiono gli impreparati, accanto alle valutazioni. */
-const LINK_VOTI_GENITORE = '/parent/primaria/valutazioni'
 
 /**
  * Il testo fisso che la pagina del docente scriveva come «motivo» fino al
@@ -133,9 +132,16 @@ function dataLeggibile(data: string): string | null {
  * notifica push finisce sulla schermata di blocco di un telefono. Né il nome
  * dell'alunno: la notifica arriva al suo genitore, che sa di chi si parla.
  */
-function testoNotifica(tipo: TipoImpreparato, materiaNome: string | null, data: string): { titolo: string; corpo: string } {
+function testoNotifica(
+  tipo: TipoImpreparato,
+  materiaNome: string | null,
+  data: string,
+  nomeAlunno: string | null,
+): { titolo: string; corpo: string } {
   const cosa = tipo === 'giustificato' ? 'Impreparato giustificato' : 'Impreparato'
-  const titolo = materiaNome ? `${cosa} in ${materiaNome}` : cosa
+  const base = materiaNome ? `${cosa} in ${materiaNome}` : cosa
+  // Il nome del bambino: con due figli il titolo non diceva di chi (2026-09-30).
+  const titolo = nomeAlunno ? `${base} · ${nomeAlunno}` : base
   const giorno = dataLeggibile(data)
   const corpo = `Il docente ha segnato un ${cosa.toLowerCase()}${giorno ? ` per il ${giorno}` : ''}. Lo trovi nella pagina Voti.`
   return { titolo, corpo }
@@ -493,13 +499,15 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
     let notificaAccodata = false
     try {
       const bufferMin = await leggiBufferVisibilita(supabase, scuolaId, operazione)
-      const { titolo, corpo } = testoNotifica(salvatoTipo, materiaNome, data)
+      const nome = await nomeAlunnoPerNotifica(supabase, alunnoId, operazione)
+      const { titolo, corpo } = testoNotifica(salvatoTipo, materiaNome, data, nome)
       await enqueueNotifichePerAlunni(supabase, {
         alunnoIds: [alunnoId],
         tipo: TIPO_NOTIFICA,
         titolo,
         corpo,
-        link: LINK_VOTI_GENITORE,
+        // La pagina Voti DI QUEL figlio: lì compaiono gli impreparati, accanto alle valutazioni.
+        link: linkVotiGenitore(alunnoId),
         entitaTipo: ENTITA_NOTIFICA,
         entitaId: inserted.id,
         bufferMin,
@@ -632,7 +640,9 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
     // nuovi. Solo per le voci del docente: quelle del genitore non ne hanno una.
     let notificaAllineata = true
     if (voce.origine === 'docente') {
-      const { titolo, corpo } = testoNotifica(tipoDopo, materiaNome, String(dopo.data ?? ''))
+      // Il nome si rilegge: la notifica in coda lo porta nel titolo, e riscriverlo senza lo toglierebbe.
+      const nome = await nomeAlunnoPerNotifica(supabase, voce.alunno_id, operazione)
+      const { titolo, corpo } = testoNotifica(tipoDopo, materiaNome, String(dopo.data ?? ''), nome)
       const { error: notifErr } = await supabase
         .from('notifiche')
         .update({ titolo, corpo })

@@ -118,6 +118,7 @@
 
   "valutazioniTitolo": "Valutazioni",
   "valutazioniVuoto": "Nessuna valutazione disponibile.",
+  "valutazioniVuotoFiglio": "{nome} non ha ancora valutazioni. Compaiono qui appena il docente le inserisce.",
   "valutazioniConteggio": "{count, plural, one {# valutazione} other {# valutazioni}}",
 
   "viewPagelleTitolo": "Pagelle",

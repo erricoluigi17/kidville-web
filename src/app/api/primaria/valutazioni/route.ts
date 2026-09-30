@@ -9,6 +9,7 @@ import { isOltreScadenza } from '@/lib/primaria/timelock'
 import { renderGiudizioDescrittivo, type Dimensioni } from '@/lib/primaria/giudizio'
 import { leggiObiettiviDisponibili, obiettiviDisponibili } from '@/lib/primaria/obiettivi'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
+import { linkVotiGenitore, nomeAlunnoPerNotifica } from '@/lib/primaria/notifica-voti-genitore'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -465,24 +466,37 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     })
     await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, scuolaId: materia.scuola_id, area: 'valutazioni', link: `/teacher/primaria/${sectionId}/valutazioni` })
 
-    // Notifica valutazione con buffer (default 10 min). Best-effort.
+    // Notifica valutazione con buffer (default 10 min). Best-effort: la
+    // valutazione è salvata, un guasto qui non la disfa — ma si dice.
     try {
       const { data: settings } = await supabase
         .from('admin_settings')
         .select('notif_buffer_valutazioni_min')
         .eq('scuola_id', materia.scuola_id)
         .maybeSingle()
+      // Il FIGLIO, nel link e nel titolo: con due figli il tocco apriva i voti
+      // di quello selezionato l'ultima volta (vedi `notifica-voti-genitore`).
+      const nome = await nomeAlunnoPerNotifica(supabase, alunnoId, 'primaria/valutazioni:POST')
       await enqueueNotifichePerAlunni(supabase, {
         alunnoIds: [alunnoId],
         tipo: 'valutazione',
-        titolo: `Nuova valutazione di ${materia.nome}`,
+        titolo: nome ? `Nuova valutazione di ${materia.nome} per ${nome}` : `Nuova valutazione di ${materia.nome}`,
         corpo: giudizioSintetico || testo || undefined,
-        link: '/parent/primaria/valutazioni',
+        link: linkVotiGenitore(alunnoId),
         entitaTipo: 'valutazione',
         entitaId: val.id,
         bufferMin: settings?.notif_buffer_valutazioni_min ?? 10,
       })
-    } catch { /* non bloccare */ }
+    } catch (e) {
+      // Era `catch { /* non bloccare */ }`: una notifica mai accodata non
+      // lasciava niente, e il genitore semplicemente non sapeva del voto.
+      logEvento('notifica', 'error', {
+        operazione: 'primaria/valutazioni:POST',
+        esito: 'notifica-valutazione-non-accodata',
+        tipo: 'valutazione',
+        valutazione_id: val.id,
+      }, e)
+    }
 
     return NextResponse.json({ success: true, data: val }, { status: 201 })
   } catch (err) {

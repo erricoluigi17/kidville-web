@@ -118,6 +118,7 @@
 
   "valutazioniTitolo": "Grades",
   "valutazioniVuoto": "No grades available.",
+  "valutazioniVuotoFiglio": "{nome} has no grades yet. They will appear here as soon as the teacher adds them.",
   "valutazioniConteggio": "{count, plural, one {# grade} other {# grades}}",
 
   "viewPagelleTitolo": "Report cards",

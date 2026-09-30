@@ -117,5 +117,6 @@
   "allergieConta": "{count, plural, one {# with an allergy} other {# with allergies}}",
   "noteMedicheConta": "{count, plural, one {# with a medical note} other {# with medical notes}}",
   "allergieGruppoClasse": "class {sezione}",
-  "allergieGruppoSezione": "section {sezione}"
+  "allergieGruppoSezione": "section {sezione}",
+  "ariaTabMessaggiNonLetti": "{n, plural, one {# unread message} other {# unread messages}}"
 }

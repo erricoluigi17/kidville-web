@@ -325,6 +325,34 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     { ns: 'adminContabilita', chiave: 'reconComposizioneRegistrata', variabile: 'voci', extra: { ticket: 3, totale: '€ 75,50' } },
     { ns: 'adminContabilita', chiave: 'reconComponiEsitoRigheRiaperte', variabile: 'n' },
     { ns: 'adminContabilita', chiave: 'reconComponiEsitoIncassiStornati', variabile: 'n' },
+    // ── 2026-09-29 · IL NUMERO SULLE VOCI «MESSAGGI» E «CHAT» DELLA BARRA IN BASSO ──
+    // Sono la DESCRIZIONE accessibile (`aria-describedby`) del badge dei messaggi di chat non
+    // letti: `TeacherBottomNav` e `parent/BottomNav` mostrano la cifra, e queste due chiavi sono
+    // l'unica forma in cui quella cifra arriva a chi non la vede. Stessa cecità delle due
+    // dell'IBAN e delle quattro delle pillole di fatturazione: nate ICU, quindi il RICONOSCITORE
+    // DI FORMA in fondo a questo file le salta per costruzione, e nessun collaudo a vista può
+    // trovarle rotte — nessuno le legge a schermo, le pronuncia solo uno screen reader.
+    //
+    // ⚠️ IL BADGE NON PUÒ COPRIRLE. Il numero visibile è `<span aria-hidden="true">` e oltre il 9
+    // diventa «9+»: la frase con il plurale è l'unico posto in cui quel numero è detto per intero,
+    // e «3 messaggi non letto» lo sentirebbe solo la persona che già fa più fatica a leggere.
+    //
+    // NESSUN CONTEGGIO SCRITTO QUI, e non per pigrizia: i numeri delle righe datate qui sopra sono
+    // stati trovati sbagliati due volte, e la seconda proprio dentro una riga intitolata «contato
+    // oggi». Un rapporto «voci sorvegliate su chiavi ICU» invecchia al primo catalogo che cresce, e
+    // invecchia in SILENZIO — mentre chi legge lo prende per vero. Sta scritta la REGOLA, che non
+    // invecchia: le voci di questo array sono il perimetro a mano, le chiavi che aprono un blocco
+    // `plural`/`selectordinal` in `messages/it` sono l'insieme che il RICONOSCITORE DI FORMA salta
+    // per costruzione, e la differenza fra i due è il buco. Chi ha bisogno del numero lo RIFÀ:
+    //   · le voci, contando le righe di questo array che cominciano con `{ ns: '` (un `grep "{ ns: "`
+    //     ne conta una in più, perché aggancia anche la firma del tipo in cima);
+    //   · le chiavi, scorrendo `messages/it` con LA STESSA regex `APRE_BLOCCO_ICU` di questo file —
+    //     e ricordando che una voce dell'array può NON essere ICU (`adminPrimaria.orarioAttivo` è il
+    //     contatore a stringa piatta del difetto F3 originale, e sta qui proprio per quello).
+    // Il buco non si sta chiudendo: il catalogo cresce più in fretta di questo elenco. Queste due
+    // righe lo stringono di due.
+    { ns: 'teacherNav', chiave: 'ariaTabMessaggiNonLetti', variabile: 'n' },
+    { ns: 'nav', chiave: 'ariaTabChatNonLetti', variabile: 'n' },
 ]
 
 /**

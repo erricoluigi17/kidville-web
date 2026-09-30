@@ -16,6 +16,7 @@ import { diarioVisibile, visibileDocente, type GradoVoce } from '@/lib/auth/teac
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
 import { tintaFunzione } from '@/lib/ui/tinte-funzioni';
+import { useBadgeChatNonLetti } from '@/components/features/chat/BadgeChatNonLetti';
 
 // ============================================================================
 // TeacherBottomNav — bottom bar persistente del design (DR ins/screen-home.jsx
@@ -52,7 +53,11 @@ interface MenuGroup {
 // `text-kidville-sub` vale 6,46:1. Il fondo del pill attivo lascia
 // `animate={{ backgroundColor }}` e diventa una classe: la molla resta sulla
 // scala, il colore lo fa il token (stesso schema di `AdminBottomNav`).
-const PILL = 'w-10 h-[30px] rounded-full flex items-center justify-center transition-colors duration-200';
+// `relative`: la pillola è l'ancora del badge dei messaggi non letti (`BadgeChatNonLetti`). Non
+// sul `<Link>`, che è alto quanto icona + etichetta: il numero finirebbe accanto alla parola invece
+// che sull'icona. `position: relative` senza `z-index` non crea un contesto di impilamento, quindi
+// non tocca lo strato della barra (`z-50`) né il visore dei media che le passa sopra.
+const PILL = 'relative w-10 h-[30px] rounded-full flex items-center justify-center transition-colors duration-200';
 const ICONA = 'w-[18px] h-[18px] transition-colors duration-200';
 const ETICHETTA = 'text-[9px] font-barlow font-bold uppercase tracking-wider transition-colors duration-200';
 
@@ -79,6 +84,12 @@ export default function TeacherBottomNav() {
   // finché l'uuid non è risolto, così l'HTML del server e il primo render del
   // client coincidono e nessun href porta mai la stringa «null».
   const { userId, pronta, withUser } = useTeacherIdentity(search);
+
+  // I messaggi di chat non letti sulla voce «Messaggi»: badge, descrizione accessibile e ordine dei
+  // figli stanno in `useBadgeChatNonLetti`, che è lo stesso della barra del genitore. La chiave
+  // i18n resta qui: il namespace è di quest'area, e il lock delle chiavi orfane la cerca nel
+  // sorgente che la usa.
+  const nonLetti = useBadgeChatNonLetti((n) => t('ariaTabMessaggiNonLetti', { n }));
 
   // Gradi del docente (utenti.gradi): pilotano quali voci esistono. Finché il
   // dato non è pronto — o per staff senza gradi — non si filtra nulla.
@@ -217,18 +228,28 @@ export default function TeacherBottomNav() {
                 );
               }
 
+              // Il badge vale solo per «Messaggi». I suoi pezzi vanno in due genitori diversi, e
+              // l'ORDINE conta: vedi `useBadgeChatNonLetti`.
+              const conBadge = tab.id === 'messaggi';
+
               return (
                 <Link
                   key={tab.id}
                   href={withUser(tab.href!)}
                   aria-current={active ? 'page' : undefined}
+                  // `aria-describedby` e MAI `aria-label`: il perché sta in `useBadgeChatNonLetti`.
+                  aria-describedby={conBadge ? nonLetti.descrittoDa : undefined}
                   className="flex flex-col items-center justify-center gap-[3px] flex-1 py-1 relative"
                 >
+                  {/* PRIMO figlio del Link, prima della pillola: mai dopo l'etichetta. */}
+                  {conBadge && nonLetti.descrizione}
                   <motion.div
                     animate={{ scale: active ? 1.05 : 1 }}
                     transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                     className={`${PILL} ${active ? 'bg-kidville-green' : ''}`}
                   >
+                    {/* PRIMO figlio della pillola, prima dell'icona. */}
+                    {conBadge && nonLetti.badge}
                     <Icon
                       className={`${ICONA} ${active ? 'text-kidville-yellow' : 'text-kidville-sub'}`}
                       strokeWidth={2}

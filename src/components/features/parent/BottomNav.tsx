@@ -14,6 +14,7 @@ import {
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
+import { useBadgeChatNonLetti } from '@/components/features/chat/BadgeChatNonLetti';
 
 import { tintaFunzione } from '@/lib/ui/tinte-funzioni';
 
@@ -44,7 +45,11 @@ interface MenuGroup {
 // `text-kidville-sub` vale 6,46:1. Il fondo del pill attivo lascia
 // `animate={{ backgroundColor }}` e diventa una classe: la molla resta sulla
 // scala, il colore lo fa il token (stesso schema di `AdminBottomNav`).
-const PILL = 'w-10 h-[30px] rounded-full flex items-center justify-center transition-colors duration-200';
+// `relative`: la pillola è l'ancora del badge dei messaggi non letti (`BadgeChatNonLetti`). Non
+// sul `<Link>`, che è alto quanto icona + etichetta: il numero finirebbe accanto alla parola invece
+// che sull'icona. `position: relative` senza `z-index` non crea un contesto di impilamento, quindi
+// non tocca lo strato della barra (`z-50`) né il visore dei media che le passa sopra.
+const PILL = 'relative w-10 h-[30px] rounded-full flex items-center justify-center transition-colors duration-200';
 const ICONA = 'w-[18px] h-[18px] transition-colors duration-200';
 const ETICHETTA = 'text-[9px] font-barlow font-bold uppercase tracking-wider transition-colors duration-200';
 
@@ -75,6 +80,12 @@ export default function BottomNav() {
   // Testi della navigazione dal namespace i18n «nav» (label tab, gruppi e voci
   // del menu, aria-label). I dati (rotte, tint, icone) restano nel codice.
   const t = useTranslations('nav');
+
+  // I messaggi di chat non letti sulla voce «Chat»: badge, descrizione accessibile e ordine dei
+  // figli stanno in `useBadgeChatNonLetti`, che è lo stesso della barra docente. La chiave i18n
+  // resta qui: il namespace è di quest'area, e il lock delle chiavi orfane la cerca nel sorgente
+  // che la usa.
+  const nonLetti = useBadgeChatNonLetti((n) => t('ariaTabChatNonLetti', { n }));
 
   const visibile = (g: Grado) => g === 'comune' || (isPrimaria ? g === 'primaria' : g === 'infanzia');
 
@@ -207,18 +218,28 @@ export default function BottomNav() {
                 );
               }
 
+              // Il badge vale solo per «Chat». I suoi pezzi vanno in due genitori diversi, e
+              // l'ORDINE conta: vedi `useBadgeChatNonLetti`.
+              const conBadge = tab.id === 'chat';
+
               return (
                 <Link
                   key={tab.id}
                   href={tab.href!}
                   aria-current={active ? 'page' : undefined}
+                  // `aria-describedby` e MAI `aria-label`: il perché sta in `useBadgeChatNonLetti`.
+                  aria-describedby={conBadge ? nonLetti.descrittoDa : undefined}
                   className="flex flex-col items-center justify-center gap-[3px] flex-1 py-1 relative"
                 >
+                  {/* PRIMO figlio del Link, prima della pillola: mai dopo l'etichetta. */}
+                  {conBadge && nonLetti.descrizione}
                   <motion.div
                     animate={{ scale: active ? 1.05 : 1 }}
                     transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                     className={`${PILL} ${active ? 'bg-kidville-green' : ''}`}
                   >
+                    {/* PRIMO figlio della pillola, prima dell'icona. */}
+                    {conBadge && nonLetti.badge}
                     <Icon
                       className={`${ICONA} ${active ? 'text-kidville-yellow' : 'text-kidville-sub'}`}
                       strokeWidth={2}

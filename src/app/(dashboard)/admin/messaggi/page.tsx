@@ -8,6 +8,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { ThreadSospensioneBanner, type SospensioneInfo } from '@/components/features/admin/messaggi/ThreadSospensioneBanner';
 import { RegistroVigilanza } from '@/components/features/admin/messaggi/RegistroVigilanza';
+import { segnalaChatLetta } from '@/components/features/chat/contatore-non-letti';
 import { formattaIstante } from '@/i18n/config';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
@@ -208,10 +209,42 @@ function MessaggiInner() {
       .finally(() => setLoadingContatti(false));
   }, [tab]);
 
-  const loadChatMessages = useCallback((threadId: string, uid: string) => {
+  /**
+   * La conversazione con una famiglia, e la LETTURA che la accompagna (`markRead`).
+   *
+   * ⚠️ QUELLA GET SPEGNE ANCHE LE NOTIFICHE del thread (passo 1 del lavoro sui non letti, 2026-09-29),
+   * ma la sua risposta non dice quante: la forma del corpo (`{ messages, total, precedenti }`) la
+   * blocca `__tests__/api/chat-messages-read-notifiche.test.ts`. Qui quindi non si sa *quanto* è
+   * scesa la campanella — si sa che la lettura è stata registrata, e `segnalaChatLetta` fa rileggere
+   * il numero vero a chi lo mostra. Senza, resterebbe quello del giro precedente per un minuto.
+   *
+   * ⚠️ `annunciaLettura` SOLO DAL PERCORSO DI APERTURA, e non è un dettaglio: questa funzione è
+   * richiamata anche dopo OGNI messaggio inviato dalla segreteria (`invia`, qui sotto), e da lì
+   * l'evento costerebbe una GET a `/api/notifiche` per ogni messaggio scritto. Chi scrive non sta
+   * leggendo niente di nuovo: la conversazione l'ha aperta prima, e quella apertura ha già annunciato
+   * la sua lettura.
+   *
+   * ⚠️ IL COSTO, DICHIARATO: aprire una conversazione costa UNA GET a `/api/notifiche` **anche
+   * quando non c'era niente da leggere**. La risposta di questa GET non dice quante notifiche si
+   * sono spente — potrebbero essere zero — e qui non c'è modo di saperlo: `unread_count` non arriva
+   * mai a questa schermata (`/api/admin/chat/contacts` porta solo l'anagrafica del contatto), e le
+   * righe restituite hanno già `read_at` scritto da questa stessa richiesta. È accettato perché il
+   * prezzo è piccolo e il rischio opposto è grosso: una richiesta rimandata di 600 ms per contatto
+   * aperto — pochi gesti per sessione di segreteria, e la raffica si fonde in un giro solo — contro
+   * una campanella che resta gonfia per un minuto. Chi un giorno volesse renderla condizionale deve
+   * portare `unread_count` fin qui, non indovinarlo dalle righe.
+   *
+   * L'annuncio parte solo su `res.ok`: una lettura non registrata non ha spento niente. Il `.catch`
+   * muto resta com'era — è nel debito dichiarato di `docs/superpowers/catch-muti-allowlist.json` per
+   * questo file, e non lo si allarga.
+   */
+  const loadChatMessages = useCallback((threadId: string, uid: string, annunciaLettura = false) => {
     fetch(`/api/chat/messages?threadId=${threadId}&markRead=${uid}`)
-      .then(r => r.json())
-      .then(j => setChatMsgs(j.messages ?? []))
+      .then(async r => ({ ok: r.ok, corpo: (await r.json()) as { messages?: Msg[] } }))
+      .then(({ ok, corpo }) => {
+        setChatMsgs(corpo.messages ?? []);
+        if (ok && annunciaLettura) segnalaChatLetta();
+      })
       .catch(() => {});
   }, []);
 
@@ -227,7 +260,9 @@ function MessaggiInner() {
         body: JSON.stringify({ teacher_id: userId, parent_id: c.parentUserId, student_id: c.studentId }),
       });
       const thread = await res.json();
-      if (thread?.id) { setChatThreadId(thread.id); loadChatMessages(thread.id, userId); }
+      // `true`: è QUESTO il gesto che legge la conversazione, e quindi il solo che annuncia la
+      // lettura alla campanella. Dopo un invio no — vedi `loadChatMessages`.
+      if (thread?.id) { setChatThreadId(thread.id); loadChatMessages(thread.id, userId, true); }
     } catch { /* no-op */ }
   };
 

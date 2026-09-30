@@ -1305,16 +1305,41 @@ const NUDI_DICHIARATI = ['src/components/features/admin/forms/builder/Properties
 
 /**
  * INDECIDIBILI: il `className` arriva da un helper e il sorgente, da solo, non
- * può dire che inchiostro contenga. L'unico caso è `ChunkErrorBoundary`, che usa
- * `btnClass('secondary', 'lg')`. Aperto a mano: quella variante è
- * `bg-kidville-yellow text-kidville-green-ink` (`src/components/ui/Btn.tsx:80`),
- * cioè non solo dichiara il proprio inchiostro — si ridipinge pure la carta
- * chiara sotto, quindi sul verde non ci sta nemmeno. Resta qui perché la SONDA
- * non lo sa, non perché il codice sia dubbio: segnalarlo come difetto sarebbe un
- * falso positivo, e un lock che segnala chi ha fatto la cosa giusta viene
- * disattivato nel giro di un ciclo.
+ * può dire che inchiostro contenga.
+ *
+ * 1. `ChunkErrorBoundary`, che usa `btnClass('secondary', 'lg')`. Aperto a mano:
+ *    quella variante è `bg-kidville-yellow text-kidville-green-ink`
+ *    (`src/components/ui/Btn.tsx:80`), cioè non solo dichiara il proprio
+ *    inchiostro — si ridipinge pure la carta chiara sotto, quindi sul verde non
+ *    ci sta nemmeno. Resta qui perché la SONDA non lo sa, non perché il codice
+ *    sia dubbio: segnalarlo come difetto sarebbe un falso positivo, e un lock
+ *    che segnala chi ha fatto la cosa giusta viene disattivato nel giro di un
+ *    ciclo.
+ *
+ * 2. e 3. LE DUE BOTTOM-NAV (2026-09-30), dove dentro la pillola attiva —
+ *    `bg-kidville-green` — compare `{conBadge && nonLetti.badge}`: il badge dei
+ *    messaggi di chat non letti. La sonda vede un'espressione e si ferma, perché
+ *    l'elemento nasce in un altro modulo (`useBadgeChatNonLetti`,
+ *    `src/components/features/chat/BadgeChatNonLetti.tsx`) — ed è giusto che si
+ *    fermi: da qui non si può leggere.
+ *
+ *    ⚠️ Ma questa volta la verifica «a mano» non è una parola data: il badge
+ *    porta `text-kidville-white` sul PROPRIO `bg-kidville-green`, e quel numero
+ *    lo MISURA `__tests__/a11y/contrasto-cascata.test.tsx` §3 sull'elemento vero
+ *    dentro la barra vera, in luce normale E in Alto Contrasto (≥ 4,5:1, con il
+ *    controllo positivo che col nero sarebbe 3,23:1). Le due voci qui sotto non
+ *    spengono una sorveglianza: la spostano dove la misura si fa davvero.
+ *    Prima dell'estrazione del badge in un modulo suo il markup stava inline, in
+ *    un `{x && <span>…</span>}` senza parentesi: una forma che la sonda NON
+ *    segue (vede solo il JSX fra parentesi), quindi non lo classificava affatto.
+ *    Il codice non è cambiato: è cambiato ciò che questo file riesce a vedere —
+ *    e va detto così, invece di lasciar credere che sia comparso un dubbio nuovo.
  */
-const IGNOTI_DICHIARATI = ['src/components/providers/ChunkErrorBoundary.tsx · bg-kidville-green × 1']
+const IGNOTI_DICHIARATI = [
+  'src/components/features/parent/BottomNav.tsx · bg-kidville-green × 1',
+  'src/components/features/teacher/TeacherBottomNav.tsx · bg-kidville-green × 1',
+  'src/components/providers/ChunkErrorBoundary.tsx · bg-kidville-green × 1',
+]
 
 describe('§5 · RISERVA 2 — le UTILITY che dipingono scuro, censite e sorvegliate', () => {
   it('5.1 il censimento si CALCOLA dai token e combacia con quello dichiarato', () => {

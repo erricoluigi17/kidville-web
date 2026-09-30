@@ -18,6 +18,7 @@ import {
 import type { ChatThread, SospensioneInfo } from './ChatThreadList';
 import { useChatRealtime } from './useChatRealtime';
 import { useUnreadNotifications } from './useUnreadNotifications';
+import { segnalaChatLetta, variaChatNonLetti } from './contatore-non-letti';
 
 /**
  * LA CONVERSAZIONE DELLA CHAT — thread, messaggi, polling, realtime, invio e segna-letti, UNA volta.
@@ -217,6 +218,22 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         onThreadsCaricatiRef.current = onThreadsCaricati;
     }, [onThreadsCaricati]);
 
+    /**
+     * ⚠️ QUESTO TOTALE RESTA DENTRO LA PAGINA CHAT, e NON va nello store della barra in basso.
+     *
+     * La tentazione c'era, perché il numero è lo stesso: `useUnreadNotifications` somma
+     * `unread_count` di tutte le conversazioni di `chat/threads:GET`, con lo stesso `or` e lo stesso
+     * «messaggi altrui con `read_at` nullo» di `@/lib/chat/non-letti`. Ma quella route trasforma
+     * l'errore del conteggio di UN thread in uno zero (`unread_count: unreadCount ?? 0`): un guasto
+     * parziale non si distingue da «quella conversazione è tutta letta», e finirebbe nello store come
+     * un totale sbagliato PER DIFETTO — cioè come la bugia «hai letto tutto», che è esattamente ciò
+     * che questo lavoro esiste per togliere di mezzo.
+     *
+     * La fonte di verità dal server è quindi UNA: `chat_non_letti` di `GET /api/notifiche`, che su
+     * qualunque errore risponde `null` («non lo so») invece di un numero incompleto. Fra un giro e
+     * l'altro della campanella il contatore si muove con le VARIAZIONI locali — la PATCH dei letti
+     * qui sotto, il `+1` del realtime — e con l'evento che fa ricaricare la campanella.
+     */
     // Notifiche non letti + badge titolo pagina (mantenuto come fallback)
     useUnreadNotifications({
         userId: userId ?? '', // il hook ignora gli id falsy
@@ -418,7 +435,36 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
                 }
                 dispatch({ tipo: 'letti', threadId, ids: nuovi, at: new Date().toISOString() });
                 impostaThreads((prev) => azzeraNonLettiThread(prev, threadId));
-                if (opz?.contaNelBadge !== false) setNonLetti((prev) => Math.max(0, prev - nuovi.length));
+                if (opz?.contaNelBadge !== false) {
+                    setNonLetti((prev) => Math.max(0, prev - nuovi.length));
+                    // La STESSA variazione sul contatore della barra in basso, che vive fuori da
+                    // questa pagina: la maestra vede il numero scendere anche da un'altra schermata.
+                    variaChatNonLetti(-nuovi.length);
+                }
+                /**
+                 * E LA CAMPANELLA. Dal passo 1 la PATCH spegne anche le NOTIFICHE dei thread letti e
+                 * dice quante nel corpo (`notifiche_lette`). Se almeno una si è spenta, il numero
+                 * sulla campanella a schermo è vecchio: l'evento lo fa ricaricare ai pannelli
+                 * montati. A zero non parte niente — sarebbe una richiesta per nulla.
+                 *
+                 * Il corpo si legge DOPO aver applicato la lettura: un corpo illeggibile (una 200
+                 * con HTML davanti, un proxy di mezzo) non è un guasto della lettura, che il server
+                 * ha registrato. Non lancia, non ritenta — e non tace: un catch che non logga è un
+                 * bug (AGENTS.md regola 6). Nel log solo il NOME della classe dell'errore: il
+                 * `message` di una chat riecheggia il testo dei messaggi fra famiglia e maestra.
+                 */
+                const corpo = (await res.json().catch((errCorpo: unknown) => {
+                    logClient({
+                        livello: 'warn',
+                        evento: 'fetch',
+                        messaggio: `chat-segna-letti-corpo-illeggibile: ${nomeErrore(errCorpo)}`,
+                        route: rotta,
+                    });
+                    return null;
+                })) as { notifiche_lette?: unknown } | null;
+                if (typeof corpo?.notifiche_lette === 'number' && corpo.notifiche_lette > 0) {
+                    segnalaChatLetta();
+                }
             } catch (err) {
                 rendiRitentabili();
                 logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-segna-letti-fallito: ${nomeErrore(err)}`, route: rotta });
@@ -466,7 +512,25 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         (_threadId: string, msg: ChatMessage) => {
             const esito = applicaMessaggioAThread(threadsRef.current, msg, userId ?? '', { inBackground: true });
             impostaThreads(esito.threads);
-            if (esito.incrementoNonLetti) setNonLetti((prev) => prev + 1);
+            if (esito.incrementoNonLetti) {
+                setNonLetti((prev) => prev + 1);
+                /**
+                 * La STESSA variazione sulla barra in basso, e non «per chi non è sulla pagina chat»:
+                 * il realtime vive SOLO qui, dentro la pagina chat, quindi questo `+1` lo vede
+                 * soltanto chi è già lì. Serve comunque per due motivi.
+                 *
+                 *  · la barra in basso è a schermo ANCHE nella pagina chat, e il badge su «Messaggi»
+                 *    deve salire insieme al numero nell'intestazione: due contatori sulla stessa
+                 *    schermata che dicono cose diverse è il modo più rapido di non far credere più a
+                 *    nessuno dei due;
+                 *  · e il valore RESTA GIUSTO quando si esce dalla chat: senza questo `+1` uscendo si
+                 *    troverebbe un badge più basso del vero fino al giro successivo della campanella.
+                 *
+                 * Per chi la chat non l'ha aperta il numero arriva dall'altra strada, quella che non
+                 * dipende dal realtime: `chat_non_letti` nella risposta della campanella, ogni 60 s.
+                 */
+                variaChatNonLetti(1);
+            }
         },
         [userId, impostaThreads],
     );
@@ -572,10 +636,24 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     const apri = useCallback(
         (thread: ChatThread) => {
             selezioneRef.current++;
-            // Azzeramento ottimistico immediato del badge
-            const nonLettiDelThread = threadsRef.current.find((t) => t.id === thread.id)?.unread_count ?? 0;
+            /**
+             * ⚠️ APRIRE UNA CONVERSAZIONE NON TOCCA IL TOTALE — solo il badge di QUESTO thread.
+             *
+             * Fino al 2026-09-29 qui c'era anche `setNonLetti(prev => prev - unread_count)`, e il
+             * totale veniva sottratto DUE VOLTE: una qui, all'apertura, e una subito dopo da
+             * `segnaLetti`, quando l'IntersectionObserver manda la PATCH degli stessi messaggi
+             * (`contaNelBadge` lì non è `false`). Con due conversazioni da 2 e 3 messaggi, aprire
+             * quella da 2 portava il totale a 1 invece di 3: il numero mostrato era più basso del
+             * vero, cioè la direzione peggiore in cui sbagliare — «non hai niente da leggere» detto a
+             * chi ha ancora tre messaggi di una famiglia. Il difetto era già nell'hook, e portarlo
+             * nello store lo avrebbe reso visibile su ogni schermata.
+             *
+             * Il totale scende quindi SOLO quando la lettura è registrata, cioè con la PATCH — meno
+             * di un secondo dopo, appena le bolle entrano nel viewport. L'azzeramento ottimistico del
+             * badge del singolo thread nella lista RESTA: è l'unico effetto che l'apertura può
+             * garantire da sé, e non entra nell'aritmetica del totale.
+             */
             impostaThreads((prev) => azzeraNonLettiThread(prev, thread.id));
-            if (nonLettiDelThread > 0) setNonLetti((prev) => Math.max(0, prev - nonLettiDelThread));
 
             if (threadApertoIdRef.current === thread.id) {
                 // IDEMPOTENTE: la conversazione già aperta non si svuota e non si copre con lo spinner.

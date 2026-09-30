@@ -1,6 +1,15 @@
 
 ## 💬 Changelog — Chat: i messaggi non letti si vedono fuori dalla chat, la campanella si spegne leggendo, «Consegnato» quando il messaggio arriva, avviso alle maestre senza notifiche — 2026-09-30 (branch `feat/chat-non-letti-e-consegna`)
 
+**✅ IN PRODUZIONE dal 2026-09-30.** PR [#176](https://github.com/erricoluigi17/kidville-web/pull/176), merge `b15cd18e` alle 09:21 UTC, deploy Vercel pronto alle 09:24 UTC.
+- **Migrazione.** L'ha applicata l'integrazione alle 09:22 UTC, registrata col nome del file. Le notifiche di chat non lette sono scese da 2.225 a 655: 1.570 spente, e nessuna resta accesa su una conversazione già letta.
+- **Advisor di sicurezza:** 0 ERROR. La fotografia delle migrazioni è stata rigenerata: 197 applicate, 197 file nel repo.
+- **Prime prove dal vivo, nei primi 5 minuti:**
+  - D2: un messaggio delle 07:25, ancora non letto, passa a «Consegnato» alle 09:25:23, e `app_log` registra `chat-consegnati-app-aperta` nello stesso istante.
+  - D1: il primo messaggio di un genitore dopo il deploy è consegnato in 40 s (prima: mediana 10,8 min). Il giro di push della chat logga `consegne_chat_righe=1`.
+  - C1: la home delle maestre chiama `GET /api/push/subscribe` (200).
+  - Nessuna risposta 5xx.
+
 **La segnalazione (29/09).** «I messaggi dei genitori non arrivano alle maestre.» Misurato sul DB di produzione, in sola lettura: i messaggi **arrivano**. Sono salvati, e la push viene accettata dal provider in pochi secondi. Nel caso segnalato la maestra li ha visti 5 ore e 22 minuti dopo. Nessun messaggio perso: il difetto è che nessuno se ne accorge.
 
 **Le quattro cause:**
@@ -61,12 +70,12 @@
 
 **Verifica dopo il deploy.** Le misure di partenza sono tre: 29/09 alle 15:14 UTC (consegna e non letti da oltre 24 h), 29/09 alle 15:49 UTC e 30/09 alle 05:51 UTC (notifiche). Al 30/09 esistono solo i due tipi `chat_docente` (1.722) e `chat_genitore` (464), entrambi con `entita_tipo = 'chat_thread'`: nessuna notifica di chat con altri tipi resta fuori dalla migrazione o dal codice.
 
-| misura | 29/09 | 30/09 05:51 UTC | atteso |
-|---|---|---|---|
-| notifiche di chat non lette | 2.178 (15:49 UTC) | 2.186 | cala di ~1.720 con la migrazione |
-| … su conversazioni senza non letti dell'altra parte | 1.582 (15:49 UTC) | 1.724 | vicino a 0 (resta il residuo della corsa) |
-| mediana «Consegnato», messaggi dei genitori alle maestre (7 giorni) | 10,5 min (15:14 UTC) | 10,8 min, 22 su 1.107 non consegnati dopo 10 min | < 1 min per chi ha un dispositivo |
-| messaggi dei genitori non letti dalle maestre da oltre 24 h | 62 (15:14 UTC) | 68 | in calo nei giorni seguenti |
+| misura | 29/09 | 30/09 05:51 UTC | 30/09 dopo il deploy | atteso |
+|---|---|---|---|---|
+| notifiche di chat non lette | 2.178 (15:49 UTC) | 2.186 | 2.225 alle 09:21 UTC → 655 alle 09:22 UTC | cala di ~1.720 con la migrazione. Ne sono calate 1.570: la stessa query, un minuto prima del merge, ne contava 1.568 |
+| … su conversazioni senza non letti dell'altra parte | 1.582 (15:49 UTC) | 1.724 | 1.568 → **0** | vicino a 0 (resta il residuo della corsa) |
+| mediana «Consegnato», messaggi dei genitori alle maestre (7 giorni) | 10,5 min (15:14 UTC) | 10,8 min, 22 su 1.107 non consegnati dopo 10 min | primo messaggio: 40 s. La mediana va rimisurata su una giornata intera | < 1 min per chi ha un dispositivo |
+| messaggi dei genitori non letti dalle maestre da oltre 24 h | 62 (15:14 UTC) | 68 | 70 (09:27 UTC) | in calo nei giorni seguenti |
 
 ```sql
 -- notifiche di chat non lette su conversazioni senza non letti dell'altra parte (deve tornare vicino a 0)
@@ -80,7 +89,7 @@ SELECT count(*) FROM notifiche n
 SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM coalesce(m.delivered_at, now()) - m.created_at)) / 60 AS mediana_min,
        count(*) FILTER (WHERE m.delivered_at IS NULL AND m.created_at < now() - interval '10 minutes') AS non_consegnati_dopo_10_min
   FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id JOIN utenti u ON u.id = t.teacher_id
- WHERE m.sender_id = t.parent_id AND u.ruolo = 'educator' AND m.created_at > '<istante del deploy>';
+ WHERE m.sender_id = t.parent_id AND u.ruolo = 'educator' AND m.created_at > '2026-09-30 09:24:00+00';
 -- messaggi dei genitori non letti dalle maestre da oltre 24 h
 SELECT count(*) FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id JOIN utenti u ON u.id = t.teacher_id
  WHERE m.sender_id = t.parent_id AND u.ruolo = 'educator' AND m.read_at IS NULL
@@ -90,7 +99,9 @@ SELECT messaggio, sum(occorrenze) FROM app_log
  WHERE messaggio LIKE 'avviso-notifiche-docente-mostrato:%' GROUP BY 1;
 ```
 
-In `app_log` si guardano anche le righe con esito `chat-consegnati-app-aperta` (D2) e il battito del dispatch con `consegne_chat_righe` maggiore di 0 (D1). Se sono vive, la doppia spunta si accende davvero, per strada di rete e per app aperta.
+Per D2 si guarda in `app_log` la riga `chat-consegnati-app-aperta`. Per D1 invece si guarda **nei log di Vercel**: `vercel logs --environment production --query consegne_chat`, cercando un `consegne_chat_righe` maggiore di 0 nelle righe `push-dispatch-chat: ok`. Se le due cose sono vive, la doppia spunta si accende davvero, sia per la strada di rete sia per l'app aperta.
+
+⚠️ **Corretto dopo il deploy.** Qui prima c'era scritto di cercare `consegne_chat_righe` nel battito del dispatch in `app_log`, ma quel battito accorpa le righe per impronta e ne conserva il contesto della **prima** occorrenza del giorno. Il 30/09 quel contesto era anteriore al deploy e i campi non c'erano; dal giorno dopo sarebbe stato quello del giro di mezzanotte, con uno 0 che non dimostra niente.
 
 **Nel giro:** il test `galleria-sede-pagina` («quanto le resta») non cade più il 30 di ogni mese. Cercava `/25/`, che il 30 pescava anche la data di eliminazione.
 

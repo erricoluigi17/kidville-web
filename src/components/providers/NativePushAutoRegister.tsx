@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useSessionIdentity } from '@/lib/auth/use-session-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { isNativeApp, registerNativePush, statoPermessoPush } from '@/lib/push/native-register'
+import { esitoPushRitentabile } from '@/lib/push/esiti-ritentabili'
 
 // Auto-registrazione della push NATIVA al primo accesso autenticato nella
 // shell Capacitor: chiede il permesso di sistema e registra il token FCM/APNs
@@ -42,8 +43,9 @@ import { isNativeApp, registerNativePush, statoPermessoPush } from '@/lib/push/n
 export const INTERVALLO_RIPRESA_MS = 60_000
 export const TENTATIVI_RIPRESA_MAX = 5
 
-/** Gli errori di `registerNativePush` che possono guarire da soli. Il resto è definitivo. */
-const ERRORI_RITENTABILI = new Set(['plugin_error', 'registration_timeout', 'subscribe_failed'])
+// Gli errori che possono guarire da soli stanno in UN elenco condiviso
+// (`@/lib/push/esiti-ritentabili`): la copia locale che stava qui diceva la stessa cosa di
+// `PushOptIn` per caso, e il 2026-09-30 non la diceva più.
 
 type UltimoEsito = 'mai' | 'riuscito' | 'ritentabile' | 'negato' | 'definitivo'
 
@@ -68,7 +70,7 @@ const stato: {
 function classifica(esito: { ok: boolean; error?: string }): UltimoEsito {
   if (esito.ok) return 'riuscito'
   if (esito.error === 'permission_denied') return 'negato'
-  if (esito.error !== undefined && ERRORI_RITENTABILI.has(esito.error)) return 'ritentabile'
+  if (esitoPushRitentabile(esito.error)) return 'ritentabile'
   return 'definitivo'
 }
 

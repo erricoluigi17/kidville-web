@@ -118,5 +118,16 @@
   "noteMedicheConta": "{count, plural, one {# with a medical note} other {# with medical notes}}",
   "allergieGruppoClasse": "class {sezione}",
   "allergieGruppoSezione": "section {sezione}",
-  "ariaTabMessaggiNonLetti": "{n, plural, one {# unread message} other {# unread messages}}"
+  "ariaTabMessaggiNonLetti": "{n, plural, one {# unread message} other {# unread messages}}",
+  "avvisoNotificheDocenteTitolo": "Notifications are off",
+  "avvisoNotificheDocenteCorpo": "This device receives no notifications: parents’ messages and notices stay inside the app, and you only see them when you open it.",
+  "avvisoNotificheDocenteApri": "Open Settings",
+  "avvisoNotificheDocenteAttiva": "Turn on notifications",
+  "avvisoNotificheDocenteErrore": "Could not turn them on: please try again in a moment.",
+  "avvisoNotificheDocentePercorso": "Open your phone settings, find Kidville among the apps and allow notifications.",
+  "avvisoNotificheDocenteCorpoTelefono": "Kidville notifications are off on this phone: parents’ messages and notices stay inside the app, and you only see them when you open it.",
+  "avvisoNotificheDocenteAttivazione": "Turning on…",
+  "avvisoNotificheDocenteErroreDefinitivo": "They could not be turned on for this phone.",
+  "avvisoNotificheDocenteAggiornaApp": "This version of the app cannot receive notifications: update it from the store and reopen Kidville.",
+  "avvisoNotificheDocenteUsaApp": "Notifications cannot be turned on from a browser: on a computer shared with other people they would reach whoever sits down after you. To receive them, install the Kidville app on your phone and sign in there."
 }

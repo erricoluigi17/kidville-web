@@ -79,5 +79,7 @@
   "copiaFallitaIban": "Copy failed: select the IBAN above and copy it manually.",
   "copiaFallitaCausale": "Copy failed: select the reference above and copy it manually.",
   "fatture": "Invoices",
-  "fatturaApriBrowserSalvare": "Open in browser to save"
+  "fatturaApriBrowserSalvare": "Open in browser to save",
+  "pushAttivazioneNonRiuscita": "Could not turn them on: please try again in a moment.",
+  "pushAttivazioneNonPossibile": "They could not be turned on for this device."
 }

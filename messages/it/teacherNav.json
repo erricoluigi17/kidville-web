@@ -118,5 +118,16 @@
   "noteMedicheConta": "{count, plural, one {# con nota medica} other {# con note mediche}}",
   "allergieGruppoClasse": "classe {sezione}",
   "allergieGruppoSezione": "sezione {sezione}",
-  "ariaTabMessaggiNonLetti": "{n, plural, one {# messaggio non letto} other {# messaggi non letti}}"
+  "ariaTabMessaggiNonLetti": "{n, plural, one {# messaggio non letto} other {# messaggi non letti}}",
+  "avvisoNotificheDocenteTitolo": "Le notifiche sono spente",
+  "avvisoNotificheDocenteCorpo": "Su questo dispositivo non arriva nessuna notifica: i messaggi dei genitori e gli avvisi restano dentro l’app, e li vedi solo quando la apri.",
+  "avvisoNotificheDocenteApri": "Apri Impostazioni",
+  "avvisoNotificheDocenteAttiva": "Attiva le notifiche",
+  "avvisoNotificheDocenteErrore": "Attivazione non riuscita: riprova fra qualche istante.",
+  "avvisoNotificheDocentePercorso": "Apri le impostazioni del telefono, cerca Kidville fra le app e consenti le notifiche.",
+  "avvisoNotificheDocenteCorpoTelefono": "Su questo telefono le notifiche di Kidville sono disattivate: i messaggi dei genitori e gli avvisi restano dentro l’app, e li vedi solo quando la apri.",
+  "avvisoNotificheDocenteAttivazione": "Attivazione…",
+  "avvisoNotificheDocenteErroreDefinitivo": "Non è stato possibile attivarle su questo telefono.",
+  "avvisoNotificheDocenteAggiornaApp": "Questa versione dell’app non sa ricevere le notifiche: aggiornala dallo store e riapri Kidville.",
+  "avvisoNotificheDocenteUsaApp": "Dal browser le notifiche non si attivano: su un computer usato da più persone arriverebbero a chi si siede dopo di te. Per riceverle, installa l’app Kidville sul tuo telefono e accedi da lì."
 }

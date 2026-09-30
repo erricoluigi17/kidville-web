@@ -79,5 +79,7 @@
   "copiaFallitaIban": "Copia non riuscita: seleziona l’IBAN qui sopra e copialo a mano.",
   "copiaFallitaCausale": "Copia non riuscita: seleziona la causale qui sopra e copiala a mano.",
   "fatture": "Fatture",
-  "fatturaApriBrowserSalvare": "Apri nel browser per salvare"
+  "fatturaApriBrowserSalvare": "Apri nel browser per salvare",
+  "pushAttivazioneNonRiuscita": "Attivazione non riuscita: riprova fra qualche istante.",
+  "pushAttivazioneNonPossibile": "Non è stato possibile attivarle su questo dispositivo."
 }

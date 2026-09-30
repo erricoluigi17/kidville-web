@@ -3070,6 +3070,17 @@ export const CODICI_ERRORE = {
      * Nessuna riga scritta.
      */
     GIUSTIFICAZIONE_SENZA_NOTA: 'erroreGiustificazioneSenzaNota',
+    /**
+     * 500 — `GET /api/push/subscribe` non ha potuto contare i dispositivi iscritti
+     * alle notifiche (compito C1, 2026-09-30). Il `message` di PostgREST NON esce:
+     * riecheggia il filtro, cioè l'uuid dell'utente.
+     *
+     * Chi lo riceve (`AvvisoNotificheDocente`) non mostra niente: «non lo so» non
+     * vale «non ne hai», e un avviso mostrato su un guasto di lettura direbbe a una
+     * maestra che le notifiche sono spente quando magari funzionano. La frase del
+     * catalogo serve a chi lo riusa da una schermata che invece l'errore lo mostra.
+     */
+    PUSH_STATO_NON_LETTO: 'errorePushStatoNonLetto',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -2689,7 +2689,18 @@ describe('coverage-lock isolamento fra sedi', () => {
             // e le scritture ripetono l'id letto. Misurato rieseguendo il lock: 525 → 530.
             // +1 il 2026-09-28: `pagamenti/rette-a-carico:GET` (vedi sopra, a `routeConServiceRole`).
             // CONTROLLATO, `handlerEsentati` fermo. Misurato rieseguendo il lock: 530 → 531.
-            handlerControllati: 531,
+            // +1 il 2026-09-30 (compito C1): `push/subscribe:GET`, il conteggio dei dispositivi
+            // iscritti alle notifiche — la lettura che dice a una docente che non riceverà
+            // niente (137 messaggi in 30 giorni senza una push, segnalazione del 29/09).
+            // `routeConServiceRole` NON cresce e resta 340: il file era già contato, il
+            // `createAdminClient()` della POST c'era da prima — qui è un HANDLER in più, non
+            // una route (il passo dei due numeri non coincide, come già il 2026-08-14).
+            // `handlerEsentati` FERMO a 113, e non per fortuna: il perimetro di questa lettura
+            // è l'identità stessa (`.eq('utente_id', auth.user.id)` con l'uid del gate, mai
+            // quello della query), e `push_subscriptions` non ha `scuola_id` — un dispositivo
+            // appartiene a una persona, non a un plesso. Nessuna voce in AMMESSE.
+            // Misurato rieseguendo il lock: 531 → 532.
+            handlerControllati: 532,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

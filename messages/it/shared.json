@@ -615,5 +615,6 @@
   "erroreSedeEccedenzaEstranea": "La sede del credito famiglia deve essere una delle sedi di questo pagamento. Nessun pagamento è stato registrato.",
   "erroreIntestatarioDigitatoIncompleto": "L’intestatario scritto a mano è incompleto o non valido: controlla codice fiscale, nome, cognome, indirizzo, CAP e comune. Nessuna fattura è stata messa in coda.",
   "erroreObiettivoCodiceDuplicato": "Questo codice è già usato da un altro obiettivo della stessa materia e classe: scegline uno diverso. L’obiettivo non è stato modificato.",
-  "avvisoAggiornaPiuTardi": "Più tardi"
+  "avvisoAggiornaPiuTardi": "Più tardi",
+  "errorePushStatoNonLetto": "Non è stato possibile verificare se le notifiche sono attive su questo dispositivo: riprova fra qualche istante"
 }

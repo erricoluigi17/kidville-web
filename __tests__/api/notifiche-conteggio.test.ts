@@ -35,6 +35,17 @@ const h = vi.hoisted(() => {
   return { state, makeClient }
 })
 
+// `after` è l'UNICA cosa sostituita di `next/server` (`NextResponse` resta quello vero).
+// Non è un finto di comodo: con `chat_non_letti > 0` la route programma DOPO la risposta la
+// consegna «delivered» della chat, e in vitest — fuori da un contesto di richiesta — `after()`
+// LANCIA. Senza questa riga il suo warn comparirebbe fra i `logEvento('chat','warn',…)` del
+// caso felice qui sotto, che pretende zero warn: un guasto d'AMBIENTE dentro il file che parla
+// del conteggio. Qui il giro viene solo registrato e mai eseguito; la consegna ha i suoi test
+// in `notifiche-consegna-chat.test.ts`, compreso il caso di `after()` indisponibile.
+vi.mock('next/server', async (orig) => ({
+  ...(await orig<typeof import('next/server')>()),
+  after: vi.fn(),
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))

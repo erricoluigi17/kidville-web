@@ -135,8 +135,10 @@ export async function leggiChatNonLetti(
             .select('id')
             .or(`teacher_id.eq.${utenteId},parent_id.eq.${utenteId}`);
 
-        // PostgREST NON lancia: ritorna `{ error }`. Il `try` qui attorno copre solo il
-        // trasporto — si controlla SEMPRE il valore di ritorno.
+        // PostgREST NON lancia: ritorna `{ error }`, e lo fa ANCHE quando il fetch cade —
+        // in quel caso l'errore ha `code: ''` e `status: 0` (postgrest-js 2.112,
+        // `dist/index.mjs`). Si controlla quindi SEMPRE il valore di ritorno; il `try` qui
+        // attorno è per l'imprevisto, non per la rete. Vedi il `catch` in fondo.
         if (error) {
             logEvento('chat', 'warn', { operazione, esito: 'chat-non-letti-non-contati' }, error);
             return null;
@@ -189,8 +191,10 @@ export async function leggiChatNonLetti(
 
         return { totale, threadIds };
     } catch (e) {
-        // Guasto di TRASPORTO (il fetch caduto, non una risposta di PostgREST). Non tace: un
-        // catch che non logga è un bug.
+        // L'IMPREVISTO, non il fetch caduto: quello arriva in `{ error }` con `code: ''` e lo
+        // gestiscono i due rami sopra. Qui finisce ciò che nessuno ha previsto — un client
+        // sostituito, un builder che cambia forma, un bug del logger — e non deve uscire da
+        // questo modulo, che promette di non lanciare. Non tace: un catch che non logga è un bug.
         logEvento('chat', 'warn', { operazione, esito: 'chat-non-letti-non-contati' }, e);
         return null;
     }

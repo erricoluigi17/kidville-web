@@ -534,6 +534,11 @@ vi.mock('@/lib/context/sede-context', () => ({
 import BottomNavGenitore from '@/components/features/parent/BottomNav'
 import BottomNavDocente from '@/components/features/teacher/TeacherBottomNav'
 import { AdminBottomNav } from '@/components/features/admin/AdminBottomNav'
+import {
+  azzeraChatNonLetti,
+  impostaChatNonLettiDalServer,
+  sequenzaChatNonLetti,
+} from '@/components/features/chat/contatore-non-letti'
 
 const NAV = [
   ['genitore', BottomNavGenitore, '/parent'],
@@ -569,6 +574,63 @@ describe('S18 §3 · bottom-nav — le voci inattive stanno nei token, non in un
     for (const v of inattive) {
       expect(v.innerHTML, `${nome}: voce inattiva senza token di testo`).toContain('text-kidville-sub')
     }
+  })
+
+  /**
+   * IL BADGE DEI MESSAGGI DI CHAT NON LETTI — la cifra su «Messaggi» e «Chat» (2026-09-30).
+   *
+   * ⚠️ QUESTO BLOCCO NASCE DA UN COMMENTO CHE DICEVA IL FALSO. Nel codice del badge c'era scritto
+   * che in Alto Contrasto i due token si invertono e la cifra diventa nera su bianco a 21:1. Non è
+   * vero, e il motivo è quello di sempre: `@theme inline` INLINA l'hex dentro l'utility, quindi
+   * ridefinire `--color-kidville-green` e `--color-kidville-white` sotto `[data-contrast="high"]`
+   * non tocca `.bg-kidville-green` né `.text-kidville-white` — lo dichiara `globals.css` stesso, e
+   * lo misura §0 («le utility dei token sono INLINATE»). Un tema scuro, poi, non esiste.
+   *
+   * La conseguenza è che in Alto Contrasto il badge NON migliora e non peggiora: resta bianco su
+   * #006A5F. Che regga AA non è quindi un corollario del ribaltamento — è un fatto da misurare, e
+   * da misurare sul badge VERO dentro la barra vera, dove la cascata di `globals.css` può ancora
+   * dire la sua (una regola di guscio che ridipinge l'inchiostro ereditato passerebbe da qui).
+   *
+   * Un numero in un commento invecchia in silenzio. Questo lo fa fallire.
+   */
+  describe('il badge dei non letti regge AA nelle due modalità', () => {
+    afterEach(() => {
+      // Il contatore è stato di MODULO: senza questo, il badge resterebbe acceso negli altri test.
+      azzeraChatNonLetti()
+    })
+
+    it.each([
+      ['genitore', BottomNavGenitore, '/parent'],
+      ['docente', BottomNavDocente, '/teacher'],
+    ] as const)('%s: la cifra bianca sul fondo verde del badge, in luce normale e in Alto Contrasto', (nome, Comp, pathname) => {
+      for (const hc of [false, true]) {
+        stub.pathname = pathname
+        impostaChatNonLettiDalServer(3, sequenzaChatNonLetti())
+        document.documentElement.setAttribute('data-contrast', hc ? 'high' : 'normal')
+        // Dentro il guscio vero (`data-kv-shell`), come in produzione: una regola limitata al guscio
+        // che ridipingesse l'inchiostro ereditato deve poter toccare il badge, o la misura non la vede.
+        const { container, unmount } = render(<div data-kv-shell><Comp /></div>)
+        const badge = container.querySelector('[data-testid="badge-chat-non-letti"]')
+        expect(badge, `${nome}: il badge è a schermo (hc=${hc})`).toBeTruthy()
+
+        const m = misuraEl(badge!, hc)
+        expect(m.rapporto, `${nome} hc=${hc}: ${m.fg} su ${m.bg}`).toBeGreaterThanOrEqual(4.5)
+        // E il fondo è davvero il verde di marchio, in ENTRAMBE le modalità: se un giorno una
+        // regola dell'Alto Contrasto ridipingesse `.bg-kidville-green`, questo numero cambierebbe e
+        // il commento del badge andrebbe riscritto insieme.
+        expect(m.bg, `${nome} hc=${hc}: il fondo del badge`).toBe(T.green)
+        expect(m.fg, `${nome} hc=${hc}: l'inchiostro del badge`).toBe('#FFFFFF')
+        unmount()
+      }
+    })
+
+    it('CONTROLLO POSITIVO: col NERO al posto del bianco lo stesso badge sarebbe sotto AA', () => {
+      // 3,23:1 su #006A5F — è la coppia che si otterrebbe lasciando l'inchiostro all'EREDITÀ dentro
+      // un guscio dell'Alto Contrasto, cioè il difetto che `globals.css` descrive per i riempimenti
+      // verdi. La sonda deve saperlo distinguere, altrimenti il test sopra non misura niente.
+      expect(contrasto('#000000', T.green)).toBeLessThan(4.5)
+      expect(contrasto('#FFFFFF', T.green)).toBeGreaterThanOrEqual(4.5)
+    })
   })
 
   it.each(NAV)('%s: la voce ATTIVA resta verde su bianco (6,51:1) con icona gialla sul pill verde', (nome, Comp, pathname) => {

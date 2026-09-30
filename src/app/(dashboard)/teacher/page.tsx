@@ -18,6 +18,7 @@ import {
 } from '@/lib/mensa/allergeni';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 import { HeroCard } from '@/components/features/shell/HeroCard';
+import { AvvisoNotificheDocente } from '@/components/features/teacher/AvvisoNotificheDocente';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 import { TeacherAgendaCard } from '@/components/features/teacher/TeacherAgendaCard';
 
@@ -266,6 +267,15 @@ function TeacherDashboardInner() {
           ? t(isPrimariaOnly ? 'heroSottotitoloClasse' : 'heroSottotitoloSezione', { sezione: nomeSezione, count: studentCount })
           : t(isPrimariaOnly ? 'heroVuotoClasse' : 'heroVuotoSezione')}
       />
+
+      {/* ── «LE NOTIFICHE SONO SPENTE» (compito C1, 2026-09-30) ─────────
+          Subito sotto il saluto, perché è la prima cosa da sapere: una maestra
+          che non riceve nessuna push non riceve NIENTE, e fino al 29/09 non
+          c'era una sola schermata che lo dicesse. Si mostra da sé; in
+          caricamento, su errore e a notifiche funzionanti non rende nulla.
+          `userId` arriva da qui: dentro monterebbe una seconda
+          `useSessionIdentity` per un dato che questa pagina ha già. */}
+      <AvvisoNotificheDocente userId={userId} />
 
       {/* ── GRADE WORLD SWITCH (solo docenti misti) ─────── */}
       <div className="mt-4">

@@ -54,5 +54,6 @@
   "voceModulisticaLabel": "Modulistica",
   "voceModulisticaSub": "Firme e certificati",
   "voceProfiloLabel": "Profilo e deleghe",
-  "voceProfiloSub": "Account, privacy e cancellazione"
+  "voceProfiloSub": "Account, privacy e cancellazione",
+  "ariaTabChatNonLetti": "{n, plural, one {# messaggio non letto} other {# messaggi non letti}}"
 }

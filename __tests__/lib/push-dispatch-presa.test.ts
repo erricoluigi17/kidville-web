@@ -205,6 +205,7 @@ import {
   TIPI_CHAT,
   type DatiDispatch,
 } from '@/lib/push/dispatch'
+import { TIPI_NOTIFICA_CHAT } from '@/lib/chat/notifiche-chat'
 
 const MIN = 60_000
 /** Il sorgente senza commenti (blocco e riga intera): un lock non si immunizza col proprio commento. */
@@ -476,6 +477,15 @@ describe('la chat arriva in push anche allo staff (eccezione a RUOLI_PUSH_SOLO_C
     // Almeno una corrispondenza: se la regex non trovasse più niente il lock non resta verde a vuoto.
     expect(scritti.size).toBeGreaterThan(0)
     expect([...scritti].sort()).toEqual([...TIPI_CHAT].sort())
+  })
+
+  it('`TIPI_CHAT` del dispatch e `TIPI_NOTIFICA_CHAT` della chat sono lo STESSO oggetto', () => {
+    // Il dispatch non tiene una propria copia: importa la costante da `@/lib/chat/notifiche-chat`
+    // e la ri-espone col suo nome storico. Due elenchi separati, anche identici oggi, si
+    // sgancerebbero al primo tipo di chat aggiunto a uno solo dei due — e dal lato dello
+    // spegnimento non si vedrebbe: la campanella tornerebbe a gonfiarsi in silenzio.
+    // `toBe` e non `toEqual`: è l'identità a essere il contratto, non l'uguaglianza.
+    expect(TIPI_CHAT).toBe(TIPI_NOTIFICA_CHAT)
   })
 })
 

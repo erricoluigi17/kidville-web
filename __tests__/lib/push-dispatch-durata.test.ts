@@ -2,7 +2,13 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { ATTESA_MAX_MS, ATTESE_RITENTATIVO_MS } from '@/lib/push/native-push'
-import { BUDGET_RITENTATIVI_MS, LIMITE_LETTURA, SOGLIA_PRESA_MS, TETTO_GIRO_MS } from '@/lib/push/dispatch'
+import {
+  BUDGET_RITENTATIVI_MS,
+  LIMITE_LETTURA,
+  SOGLIA_CONSEGNA_CHAT_MS,
+  SOGLIA_PRESA_MS,
+  TETTO_GIRO_MS,
+} from '@/lib/push/dispatch'
 import { ID_PER_QUERY } from '@/lib/db/blocchi'
 import { tettoMs } from '@/lib/logging/external'
 import { tettoMsArea } from '@/lib/logging/supabase-fetch'
@@ -10,6 +16,7 @@ import {
   BLOCCHI,
   CASO_PEGGIORE_GIRO_MS,
   CHIUSURA_MS,
+  CONSEGNA_CHAT_MS,
   DISPOSITIVI_PER_DESTINATARIO,
   DURATA_MINIMA_FUNZIONE_S,
   GIRO_LENTO_PRIMA_DEL_CICLO_MS,
@@ -94,6 +101,24 @@ describe('le fasi su Supabase: blocchi e tetti delle aree vere', () => {
     // Il conto sottostimato del giro 4 (190 s) non passa più.
     expect(DURATA_MINIMA_FUNZIONE_S).toBeGreaterThan(190)
   })
+
+  it('la consegna della chat (D1): la soglia più UN update al tetto di `db`, ed entra nel caso peggiore', () => {
+    // La consegna della chat (fase 7bis di `@/lib/push/dispatch`) guarda l'orologio prima di
+    // ogni coppia (destinatario, thread): l'ULTIMA
+    // comincia un attimo prima della soglia e paga un UPDATE su `chat_messages` (area `db`, un
+    // blocco: un thread solo). Il giro finisce quindi entro `soglia + tetto`, ed è questo che il
+    // caso peggiore deve comprendere — altrimenti il `maxDuration` delle route coprirebbe un giro
+    // che non esiste più.
+    expect(CONSEGNA_CHAT_MS).toBe(SOGLIA_CONSEGNA_CHAT_MS + db)
+    expect(CASO_PEGGIORE_GIRO_MS).toBeGreaterThanOrEqual(CONSEGNA_CHAT_MS)
+    // Con i valori di oggi la consegna NON alza la soglia: gli altri scenari sono più lunghi, e il
+    // `maxDuration` di 300 s delle route resta valido senza toccarlo. Se un domani la soglia
+    // salisse oltre quel margine, `DURATA_MINIMA_FUNZIONE_S` salirebbe con lei e il lock in fondo
+    // a questo file pretenderebbe route più lunghe: è il caso del test qui sotto.
+    expect(CONSEGNA_CHAT_MS).toBeLessThan(
+      BUDGET_RITENTATIVI_MS + INVIO_CON_RITENTATIVI_MS + (DISPOSITIVI_PER_DESTINATARIO - 1) * INVIO_SENZA_RITENTATIVI_MS + CHIUSURA_MS,
+    )
+  })
 })
 
 describe('la soglia SEGUE i parametri da cui dipende (modulo ricaricato con valori diversi)', () => {
@@ -118,6 +143,10 @@ describe('la soglia SEGUE i parametri da cui dipende (modulo ricaricato con valo
     const m = await import('@/lib/push/durata-dispatch')
     expect(m.CHIUSURA_MS).toBe((m.BLOCCHI + 1) * 17_000)
     expect(m.GIRO_LENTO_PRIMA_DEL_CICLO_MS).toBe(SOGLIA_PRESA_MS + m.BLOCCHI * 17_000 + 13_000 + m.BLOCCHI * 17_000)
+    // Anche la consegna della chat: il suo UPDATE è su `chat_messages`, area `db`. Con i valori
+    // veri `db` e `rpc` coincidono (15 s) e un'area sbagliata darebbe lo stesso numero: solo un
+    // tetto finto che DISTINGUE le aree fa diventare rosso `TETTO_RPC_MS` al posto di `TETTO_DB_MS`.
+    expect(m.CONSEGNA_CHAT_MS).toBe(SOGLIA_CONSEGNA_CHAT_MS + 17_000)
   })
 
   it('ID_PER_QUERY che scende alza la soglia', async () => {
@@ -143,6 +172,22 @@ describe('la soglia SEGUE i parametri da cui dipende (modulo ricaricato con valo
     }))
     const m = await import('@/lib/push/durata-dispatch')
     expect(m.GIRO_LENTO_PRIMA_DEL_CICLO_MS).toBe(GIRO_LENTO_PRIMA_DEL_CICLO_MS + 60_000)
+  })
+
+  it('una SOGLIA_CONSEGNA_CHAT_MS oltre il margine di oggi alza la soglia della funzione', async () => {
+    // La consegna della chat entra nel conto per davvero: oggi sta dentro gli altri scenari e non
+    // alza niente, ma non perché sia stata dimenticata. Una soglia spinta oltre il caso peggiore
+    // deve far salire `DURATA_MINIMA_FUNZIONE_S` — e quindi diventare rosso il lock sul
+    // `maxDuration` delle route, invece di lasciare una Function troncata durante la consegna.
+    vi.resetModules()
+    vi.doMock('@/lib/push/dispatch', async (orig) => ({
+      ...(await orig<typeof import('@/lib/push/dispatch')>()),
+      SOGLIA_CONSEGNA_CHAT_MS: CASO_PEGGIORE_GIRO_MS + 60_000,
+    }))
+    const m = await import('@/lib/push/durata-dispatch')
+    expect(m.CONSEGNA_CHAT_MS).toBe(CASO_PEGGIORE_GIRO_MS + 60_000 + tettoMsArea('db'))
+    expect(m.CASO_PEGGIORE_GIRO_MS).toBe(m.CONSEGNA_CHAT_MS)
+    expect(m.DURATA_MINIMA_FUNZIONE_S).toBeGreaterThan(DURATA_MINIMA_FUNZIONE_S)
   })
 
   it('LIMITE_LETTURA che sale alza la soglia', async () => {

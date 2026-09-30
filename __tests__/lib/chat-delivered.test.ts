@@ -21,25 +21,47 @@ import { ChatMessageArea, type ChatMessage } from '@/components/features/chat/Ch
 interface Calls {
     table: string | null;
     update: Record<string, unknown> | null;
+    /** Il secondo argomento di `.update()`: `{ count: 'exact' }` solo a chi chiede il conteggio. */
+    opzioni: Array<unknown>;
     neq: Array<[string, unknown]>;
     is: Array<[string, unknown]>;
     in: Array<[string, unknown]>;
+    lte: Array<[string, unknown]>;
 }
 
-function makeClient(result: { error: unknown } = { error: null }) {
-    const calls: Calls = { table: null, update: null, neq: [], is: [], in: [] };
+type Risposta = { error: unknown; count?: number | null };
+
+/**
+ * Il finto del builder. `risultati` può essere UNA risposta (sempre quella) oppure un ELENCO,
+ * servito in ordine: serve ai casi a più blocchi, dove il secondo fallisce dopo che il primo ha
+ * già scritto righe — il parziale che `marcaConsegnati` deve restituire invece di tacere.
+ */
+function makeClient(risultati: Risposta | Risposta[] = { error: null }) {
+    const coda = Array.isArray(risultati) ? [...risultati] : null;
+    const calls: Calls = { table: null, update: null, opzioni: [], neq: [], is: [], in: [], lte: [] };
     const builder: Record<string, unknown> = {
         neq(col: string, val: unknown) { calls.neq.push([col, val]); return builder; },
         is(col: string, val: unknown) { calls.is.push([col, val]); return builder; },
         in(col: string, val: unknown) { calls.in.push([col, val]); return builder; },
-        // Thenable: `await query` risolve col risultato configurato.
-        then(resolve: (v: unknown) => void) { resolve(result); },
+        lte(col: string, val: unknown) { calls.lte.push([col, val]); return builder; },
+        // Thenable: `await query` risolve col risultato configurato. Il `count` arriva SOLO se è
+        // stato chiesto, come fa PostgREST: un finto che lo restituisce sempre farebbe passare un
+        // codice che legge un conteggio mai richiesto.
+        then(resolve: (v: unknown) => void) {
+            const r = coda ? (coda.shift() ?? { error: null }) : (risultati as Risposta);
+            const chiesto = (calls.opzioni.at(-1) as { count?: string } | undefined)?.count === 'exact';
+            resolve(chiesto ? r : { ...r, count: null });
+        },
     };
     const client = {
         from(table: string) {
             calls.table = table;
             return {
-                update(payload: Record<string, unknown>) { calls.update = payload; return builder; },
+                update(payload: Record<string, unknown>, opzioni?: unknown) {
+                    calls.update = payload;
+                    calls.opzioni.push(opzioni);
+                    return builder;
+                },
             };
         },
     };
@@ -100,7 +122,7 @@ describe('marcaConsegnati — UPDATE separato di delivered_at', () => {
 
         await expect(
             marcaConsegnati(client as never, { userId: 'u1', threadIds: ['t1'] }),
-        ).resolves.toBeUndefined();
+        ).resolves.toEqual({ esito: 'fermati', n: 0 });
 
         expect(logErrore).not.toHaveBeenCalled();
         expect(logEvento).toHaveBeenCalledWith(
@@ -130,6 +152,88 @@ describe('marcaConsegnati — UPDATE separato di delivered_at', () => {
             err,
         );
         expect(logEvento).not.toHaveBeenCalled();
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IL VALORE DI RITORNO: `{ esito, n }` — CHI CONTA LE SPUNTE DEVE CONTARE LE RIGHE.
+//
+// Serve al dispatcher delle push (D1): il suo contatore diceva «quante volte ho CHIAMATO la
+// consegna», non «quante spunte ho accese». Nel caso normale con l'app aperta, D2 (o la GET del
+// thread) consegna per primo: l'UPDATE di D1 tocca ZERO righe e il contatore saliva comunque. Un
+// D1 rotto avrebbe continuato a mostrare `consegne_chat > 0` per sempre — la misura che conferma
+// sé stessa, cioè l'unica cosa peggiore di nessuna misura.
+//
+// E serve l'`esito`: un errore del database su una coppia vuol dire che le altre andranno
+// probabilmente allo stesso modo, e ogni tentativo in più aggiunge un `logErrore` — cioè altre
+// scritture su un database che ha appena risposto male.
+//
+// IL CONTEGGIO È FACOLTATIVO: `count: 'exact'` costa un header a PostgREST, e i chiamanti della
+// chat (la GET del thread, il mark-read, la lista) non lo leggono. Lo chiede solo chi lo usa.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('marcaConsegnati — il valore di ritorno', () => {
+    it('senza bersagli: `{ esito: \'ok\', n: 0 }` (niente da fare non è un guasto)', async () => {
+        const { client } = makeClient();
+        await expect(marcaConsegnati(client as never, { userId: 'u1' })).resolves.toEqual({ esito: 'ok', n: 0 });
+    });
+
+    it('senza `conteggia` NON chiede `count: \'exact\'`, e `n` resta 0', async () => {
+        // I chiamanti della chat ignorano il ritorno: non devono pagare un conteggio che nessuno legge.
+        const { client, calls } = makeClient({ error: null, count: 40 });
+
+        const r = await marcaConsegnati(client as never, { userId: 'u1', threadIds: ['t1'] });
+
+        expect(calls.opzioni).toEqual([undefined]);
+        expect(r).toEqual({ esito: 'ok', n: 0 });
+    });
+
+    it('con `conteggia` chiede `count: \'exact\'` e restituisce le righe accese', async () => {
+        const { client, calls } = makeClient({ error: null, count: 3 });
+
+        const r = await marcaConsegnati(client as never, { userId: 'u1', threadIds: ['t1'], conteggia: true });
+
+        expect(calls.opzioni).toEqual([{ count: 'exact' }]);
+        expect(r).toEqual({ esito: 'ok', n: 3 });
+    });
+
+    it('ZERO righe toccate è un esito legittimo: `ok` con `n: 0` (qualcun altro ha già consegnato)', async () => {
+        // Il caso normale quando l'app è aperta: D2 ha consegnato prima. Non è un errore, e la
+        // differenza fra «zero righe» e «una riga» è tutto ciò che distingue D1 vivo da D1 rotto.
+        const { client } = makeClient({ error: null, count: 0 });
+
+        const r = await marcaConsegnati(client as never, { userId: 'u1', threadIds: ['t1'], conteggia: true });
+
+        expect(r).toEqual({ esito: 'ok', n: 0 });
+        expect(logErrore).not.toHaveBeenCalled();
+    });
+
+    it('errore reale → `fermati`, col PARZIALE già scritto dai blocchi precedenti', async () => {
+        // Due blocchi: il primo scrive 2 righe, il secondo fallisce. Le 2 righe sono scritte per
+        // davvero — tacerle nasconderebbe una consegna avvenuta.
+        const molti = Array.from({ length: 150 }, (_, i) => `t${i}`);
+        const { client } = makeClient([
+            { error: null, count: 2 },
+            { error: { code: '57014', message: 'canceling statement due to statement timeout' } },
+        ]);
+
+        const r = await marcaConsegnati(client as never, { userId: 'u1', threadIds: molti, conteggia: true });
+
+        expect(r).toEqual({ esito: 'fermati', n: 2 });
+        expect(logErrore).toHaveBeenCalledTimes(1);
+    });
+
+    it('`creatiFinoA` si traduce in `lte(created_at, …)`, e senza il parametro non c\'è filtro', async () => {
+        const istante = '2026-09-30T10:00:00.567891+00:00';
+        const a = makeClient({ error: null });
+        await marcaConsegnati(a.client as never, { userId: 'u1', threadIds: ['t1'], creatiFinoA: istante });
+        // L'istante arriva TALE E QUALE: il formato di PostgREST ha i microsecondi, e troncarlo al
+        // millisecondo sposterebbe la linea del tempo di una frazione indietro — il lato sicuro,
+        // ma non più la linea vera.
+        expect(a.calls.lte).toEqual([['created_at', istante]]);
+
+        const b = makeClient({ error: null });
+        await marcaConsegnati(b.client as never, { userId: 'u1', threadIds: ['t1'] });
+        expect(b.calls.lte).toEqual([]);
     });
 });
 

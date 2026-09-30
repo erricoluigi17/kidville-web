@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { Loader2, Eye, Search } from 'lucide-react';
+import { Loader2, Eye, Search, ListChecks } from 'lucide-react';
 import { CockpitSelect } from '@/components/ui/cockpit';
 import { formattaIstante } from '@/i18n/config';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -32,6 +32,29 @@ interface RigaRegistro {
   ip: string | null;
 }
 
+/**
+ * UNA RIGA CHE NON È UNA CONVERSAZIONE APERTA.
+ *
+ * `chat_vigilanza_accessi.azione` ammette due valori — `CHECK (azione IN
+ * ('lettura','ricerca'))` — quindi anche chi guarda soltanto dei CONTEGGI scrive
+ * `lettura`. Senza distinguerla, quella riga si leggeva «Ha aperto una
+ * conversazione · Su che cosa: — · Quanti: 137»: tre righe per apertura con tre
+ * sedi, e l'impressione che qualcuno avesse letto centotrentasette messaggi di
+ * famiglie. Un registro che racconta più di quello che è successo è peggio di un
+ * registro muto — perché gli si crede.
+ *
+ * ⚠️ IL CRITERIO È `azione === 'lettura'` SENZA `threadId`, e sta in piedi su un
+ * fatto verificabile: chi legge una conversazione passa SEMPRE il `thread_id`
+ * (`admin/chat/messages:GET`, che lo riceve in query e lo scrive nella riga,
+ * anche sul ramo «fuori-scope»). L'unica strada che scrive `lettura` senza
+ * thread è `admin/chat/docenti-senza-push:GET`, che conta e non legge niente. Se
+ * un domani nascesse una seconda lettura senza thread, la cosa giusta è
+ * distinguerle con un valore proprio di `azione` — una migrazione sul `CHECK`,
+ * il tipo `AzioneVigilanza`, questa etichetta e il filtro — non allargare questo
+ * ripiego a significare «tutto ciò che non ha un thread».
+ */
+const soloConteggi = (r: RigaRegistro) => r.azione === 'lettura' && !r.threadId;
+
 export function RegistroVigilanza() {
   const t = useTranslations('adminComunicazioni');
   const locale = useLocale();
@@ -44,6 +67,21 @@ export function RegistroVigilanza() {
   const [fDa, setFDa] = useState('');
   const [fA, setFA] = useState('');
 
+  /**
+   * ⚠️ L'ETICHETTA SI RISOLVE QUI, FUORI DA `carica`.
+   *
+   * `useTranslations` non promette un'identità stabile fra i render: con `t`
+   * nelle dipendenze, `carica` cambia a ogni render e `useEffect` lo rivede
+   * nuovo, quindi la richiesta riparte. Misurato mentre si collaudava questa
+   * scheda dalla pagina (`__tests__/pages/admin-messaggi-scheda-notifiche`): un
+   * solo click produceva centinaia di GET a `/api/admin/chat/vigilanza`, tutte
+   * in un turno di render. In produzione next-intl memoizza `t` e il ciclo non
+   * parte — cioè è un difetto LATENTE che dipende dall'implementazione di una
+   * libreria, ed è esattamente il genere di cosa che si scopre il giorno in cui
+   * quella libreria cambia. La stringa invece è stabile.
+   */
+  const erroreLabel = t('registroErrore');
+
   const carica = useCallback(() => {
     const p = new URLSearchParams();
     if (fAzione) p.set('azione', fAzione);
@@ -53,7 +91,7 @@ export function RegistroVigilanza() {
       .then(async (r) => ({ ok: r.ok, corpo: await r.json() }))
       .then(({ ok, corpo }) => {
         if (!ok || !corpo.success) {
-          setErrore(t('registroErrore'));
+          setErrore(erroreLabel);
           return;
         }
         setErrore('');
@@ -71,10 +109,10 @@ export function RegistroVigilanza() {
           messaggio: `registro-vigilanza-lettura-fallita: ${nomeErrore(e)}`,
           route: '/admin/messaggi',
         });
-        setErrore(t('registroErrore'));
+        setErrore(erroreLabel);
       })
       .finally(() => setCaricamento(false));
-  }, [fAzione, fDa, fA, t]);
+  }, [fAzione, fDa, fA, erroreLabel]);
 
   useEffect(() => { carica(); }, [carica]);
 
@@ -155,8 +193,12 @@ export function RegistroVigilanza() {
                     </td>
                     <td className="px-2 py-2 font-maven text-xs text-kidville-ink">
                       <span className="inline-flex items-center gap-1">
-                        {r.azione === 'ricerca' ? <Search size={12} /> : <Eye size={12} />}
-                        {r.azione === 'ricerca' ? t('registroAzioneRicerca') : t('registroAzioneLettura')}
+                        {r.azione === 'ricerca' ? <Search size={12} /> : soloConteggi(r) ? <ListChecks size={12} /> : <Eye size={12} />}
+                        {r.azione === 'ricerca'
+                          ? t('registroAzioneRicerca')
+                          : soloConteggi(r)
+                            ? t('registroAzioneElencoNotifiche')
+                            : t('registroAzioneLettura')}
                       </span>
                       {r.esito === 'fuori-scope' && (
                         <span className="ml-1 inline-flex items-center rounded-full bg-kidville-warn-soft px-2 py-0.5 font-barlow text-[9px] font-bold uppercase tracking-wide text-kidville-warn">
@@ -168,7 +210,13 @@ export function RegistroVigilanza() {
                       {r.alunno ? `${r.alunno.nome}${r.alunno.classe ? ` · ${r.alunno.classe}` : ''}` : '—'}
                       {r.termine && <span className="block text-kidville-sub">{t('registroTermine', { termine: r.termine })}</span>}
                     </td>
-                    <td className="px-2 py-2 font-maven text-xs text-kidville-ink">{r.nMessaggi ?? '—'}</td>
+                    <td className="px-2 py-2 font-maven text-xs text-kidville-ink">
+                      {r.nMessaggi == null
+                        ? '—'
+                        : soloConteggi(r)
+                          ? t('registroQuantiConteggiati', { n: r.nMessaggi })
+                          : r.nMessaggi}
+                    </td>
                     <td className="whitespace-nowrap px-2 py-2 font-maven text-[11px] text-kidville-sub">{r.ip ?? '—'}</td>
                   </tr>
                 ))}

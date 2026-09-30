@@ -19,6 +19,7 @@ import { Bell, BellOff } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
 import { linkEffettivoNotifica } from '@/lib/chat/link-conversazione';
 import { apriLinkNotifica } from '@/lib/chat/apertura-thread';
+import { useRicaricaSuChatLetta } from '@/components/features/chat/contatore-non-letti';
 
 interface Notifica {
   id: string;
@@ -105,6 +106,20 @@ export function AdminNotificationsPanel({
   // Il gate `attivo` della media query RESTA (il pannello è montato due volte, desktop e
   // mobile): qui si aggiunge la visibilità, non la si sostituisce.
   usePollingVisibile(load, 60_000, { attivo });
+
+  /**
+   * UNA CONVERSAZIONE È STATA LETTA: anche la campanella della segreteria scende subito.
+   *
+   * Lo staff non ha (in questo passo) il numero sulla barra in basso, ma legge le conversazioni
+   * dalla scheda «Con i genitori» di `/admin/messaggi`, e leggerle spegne le notifiche di quel
+   * thread: senza questa ricarica il suo numero resta gonfio fino al giro successivo.
+   *
+   * Il gate `attivo` della media query RESTA, e si passa all'hook: il pannello è montato DUE volte
+   * (topbar desktop e mobile) e senza il gate UNA lettura costerebbe DUE richieste — lo stesso
+   * difetto che il gate già evita sul polling. Il rimando e il timer stanno in
+   * `useRicaricaSuChatLetta`, accanto allo store: nessun orologio nuovo.
+   */
+  useRicaricaSuChatLetta(load, attivo);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };

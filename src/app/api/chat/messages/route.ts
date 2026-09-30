@@ -13,6 +13,11 @@ import { zUuid, zLimite } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { marcaConsegnati } from '@/lib/chat/delivered';
+// Dal modulo NEUTRO della chat, non da `@/lib/chat/delivered`: parecchi file di test
+// sostituiscono quest'ultimo per intero con una factory `vi.mock` che espone solo
+// `marcaConsegnati` (si trovano con `grep -rln "vi.mock('@/lib/chat/delivered'"
+// __tests__/`), e un nome nuovo importato di lì li farebbe esplodere tutti.
+import { segnaLetteNotificheChat, ENTITA_CHAT_THREAD } from '@/lib/chat/notifiche-chat';
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
 import { assertConversazioneNonSospesa } from '@/lib/chat/sospensione-conversazione';
 import { assertTerminiAccettatiSeGenitore } from '@/lib/onboarding/consensi';
@@ -114,6 +119,15 @@ function programmaDispatchChat(threadId: string): void {
                 fallite: esito.data.fallite,
                 gia_prese: esito.data.gia_prese,
                 rimesse_in_coda: esito.data.rimesse_in_coda,
+                // Le doppie spunte del giro (D1, passo 7bis di `@/lib/push/dispatch`). ⚠️ Sono
+                // dell'INTERO giro, non di questa conversazione: `eseguiDispatch` spedisce tutta la
+                // coda pendente, e un giro partito da un messaggio può accendere le spunte di altre
+                // venti conversazioni (o di nessuna, se questa notifica l'aveva già presa il cron).
+                // `consegne_chat` sono gli UPDATE riusciti, `consegne_chat_righe` le spunte accese
+                // davvero: coppie e righe, mai un uuid, mai un testo.
+                consegne_chat: esito.data.consegne_chat,
+                consegne_chat_righe: esito.data.consegne_chat_righe,
+                consegne_chat_saltate: esito.data.consegne_chat_saltate,
                 msg: `${operazione}: dispatch anticipato della chat concluso`,
             });
         } catch (err) {
@@ -266,6 +280,19 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
                     operazione: 'chat/messages:GET',
                     esito: 'mark-read-fallito',
                 }, readErr);
+            } else {
+                // SOLO se il mark-read è riuscito: la campanella segue la lettura REGISTRATA.
+                // Se `read_at` non è stato scritto, per il database quei messaggi non sono
+                // letti e la notifica resta coerente con loro; la prossima lettura riuscita la
+                // spegne. Fino a questo passo non la spegneva NESSUNO: la regola, la misura
+                // che l'ha aperta e il limite noto stanno in `@/lib/chat/notifiche-chat`.
+                // Best-effort come il mark-read: non lancia, non tocca la risposta, e il
+                // guasto lo logga da sé.
+                await segnaLetteNotificheChat(supabase, {
+                    utenteId: uid,
+                    threadIds: [threadId],
+                    operazione: 'chat/messages:GET',
+                });
             }
         }
 
@@ -599,7 +626,14 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
                     // telefono: per chi ha due profili la riscrive il client (`instradaLinkNotifica`).
                     // La push nativa (`data.url`) e il dispatch web (`url: n.link`) lo portano com'è.
                     link: linkConversazione(controparte.versoGenitore ? 'parent' : 'teacher', thread_id),
-                    entitaTipo: 'chat_thread',
+                    // Dalla costante: è lo STESSO valore su cui `segnaLetteNotificheChat`
+                    // filtra per spegnere la campanella. Scritti a mano nei due posti, il
+                    // giorno in cui uno cambia le notifiche smettono di spegnersi in
+                    // silenzio — nessun errore, nessun log, solo un contatore che risale.
+                    // I due letterali del `tipo:` qui sopra restano tali apposta: il lock
+                    // `__tests__/lib/push-dispatch-presa.test.ts` li estrae da questo
+                    // sorgente e pretende di trovarne almeno uno.
+                    entitaTipo: ENTITA_CHAT_THREAD,
                     entitaId: thread_id,
                     bufferMin: 0,
                     debounce: true,

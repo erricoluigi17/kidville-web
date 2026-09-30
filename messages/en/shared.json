@@ -615,5 +615,6 @@
   "erroreSedeEccedenzaEstranea": "The family credit location must be one of this payment’s locations. No payment was recorded.",
   "erroreIntestatarioDigitatoIncompleto": "The billed-to details typed by hand are incomplete or invalid: check tax code, first name, last name, address, postcode and town. No invoice was queued.",
   "erroreObiettivoCodiceDuplicato": "This code is already used by another objective for the same subject and class: choose a different one. The objective was not changed.",
-  "avvisoAggiornaPiuTardi": "Later"
+  "avvisoAggiornaPiuTardi": "Later",
+  "errorePushStatoNonLetto": "Whether notifications are on for this device could not be checked: please try again in a moment"
 }

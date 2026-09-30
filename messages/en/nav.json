@@ -54,5 +54,6 @@
   "voceModulisticaLabel": "Forms",
   "voceModulisticaSub": "Signatures and certificates",
   "voceProfiloLabel": "Profile & pickups",
-  "voceProfiloSub": "Account, privacy and deletion"
+  "voceProfiloSub": "Account, privacy and deletion",
+  "ariaTabChatNonLetti": "{n, plural, one {# unread message} other {# unread messages}}"
 }

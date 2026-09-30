@@ -261,7 +261,7 @@
   "messaggiConversazioneNonAperta": "La conversazione non si è potuta aprire.",
 
   "registroTitolo": "Chi ha consultato le conversazioni",
-  "registroSottotitolo": "Ogni apertura di una conversazione altrui e ogni ricerca lasciano una riga qui. Nessuna esclusione: valgono anche per la Direzione.",
+  "registroSottotitolo": "Ogni apertura di una conversazione altrui, ogni ricerca e ogni consultazione dei conteggi lasciano una riga qui. Nessuna esclusione: valgono anche per la Direzione.",
   "registroVuoto": "Nessun accesso registrato per i filtri scelti.",
   "registroNonDisponibile": "Il registro non è disponibile su questo ambiente.",
   "registroErrore": "Il registro non si è potuto leggere. Riprova fra poco.",
@@ -292,5 +292,20 @@
   "videoAnnulla": "Annulla",
   "videoTogli": "Togli",
   "videoRiapertura": "Questi filmati erano ancora in preparazione quando hai chiuso la pagina: riprendono da soli.",
-  "videoSoloNelTesto": "I filmati si allegano al testo, non alla copertina: la copertina resta una fotografia."
+  "videoSoloNelTesto": "I filmati si allegano al testo, non alla copertina: la copertina resta una fotografia.",
+
+  "messaggiTabNotificheDocenti": "Notifiche spente",
+  "docentiSenzaPushTitolo": "Maestre che non ricevono le notifiche",
+  "docentiSenzaPushSottotitolo": "Per queste maestre non risulta iscritto nessun dispositivo: i messaggi dei genitori arrivano nell’app, ma nessuna notifica avvisa che sono arrivati.",
+  "docentiSenzaPushNota": "Nella loro home compare un avviso che spiega come attivarle dall’app sul telefono. Dal computer non si accendono: su un PC condiviso le notifiche arriverebbero a chi si siede dopo. Se l’avviso resta, vanno aiutate dal telefono.",
+  "docentiSenzaPushConteggio": "{n, plural, =0 {Nessuna maestra senza notifiche, su {totale}} one {Una maestra su {totale} non riceve le notifiche} other {# maestre su {totale} non ricevono le notifiche}}",
+  "docentiSenzaPushVuoto": "Tutte le maestre hanno almeno un dispositivo registrato.",
+  "docentiSenzaPushNessunaDocente": "In queste sedi non risulta nessuna maestra in servizio.",
+  "docentiSenzaPushNonTracciabile": "La consultazione non si è potuta registrare nel registro degli accessi, e per questo l’elenco non è stato mostrato. Riprova fra qualche minuto.",
+  "docentiSenzaPushErrore": "L’elenco non si è potuto leggere. Riprova fra poco.",
+  "docentiSenzaPushColChi": "Maestra",
+  "docentiSenzaPushColRicevuti": "{giorni, plural, one {Messaggi dei genitori (# giorno)} other {Messaggi dei genitori (# giorni)}}",
+  "docentiSenzaPushColNonLetti": "Da leggere (in tutto)",
+  "registroAzioneElencoNotifiche": "Ha consultato l’elenco delle maestre senza notifiche (solo conteggi)",
+  "registroQuantiConteggiati": "{n, plural, one {# messaggio conteggiato} other {# messaggi conteggiati}}"
 }

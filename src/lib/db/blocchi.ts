@@ -21,6 +21,27 @@
 /** Quanti id entrano in un solo `.in(...)`. Vedi il 414 qui sopra. */
 export const ID_PER_QUERY = 100;
 
+/**
+ * QUANTE RIGHE PostgREST RESTITUISCE AL MASSIMO, se nessuno gli dice altro.
+ *
+ * È `db-max-rows`, che su Supabase vale **1000**: oltre quella soglia la risposta viene
+ * TRONCATA e non c'è nessun errore, nessun `error`, nessun avviso — la query «è andata
+ * bene» e i dati sono metà. È il difetto più silenzioso di questo client, e in questo repo
+ * ha già morso (routine del diario, export delle rette, statistiche degli avvisi: ognuno se
+ * l'è ritrovato per conto suo).
+ *
+ * Sta QUI, accanto a `ID_PER_QUERY`, per la stessa ragione per cui ci sta quello: è una
+ * proprietà di PostgREST, non del dominio che la incontra. Chi deve *paginare* oltre il tetto
+ * legge a pagine di `.range()` di questa dimensione; e serve anche a chi vuole solo
+ * ACCORGERSI di essere al limite e dirlo in un log, invece di restituire un numero sbagliato
+ * per difetto.
+ *
+ * ⚠️ È una riga di CONFIGURAZIONE del server, non una costante del protocollo: se un giorno
+ * `db-max-rows` cambiasse su Supabase, questo numero smetterebbe di coincidere e nessun test
+ * lo direbbe. Per questo chi lo usa lo usa come SOGLIA DI SOSPETTO (`>=`), non come verità.
+ */
+export const RIGHE_MASSIME_POSTGREST = 1000;
+
 /** Divide un elenco in blocchi di dimensione fissa (l'ultimo può essere più corto). */
 export function aBlocchi<T>(elementi: readonly T[], dimensione: number): T[][] {
     if (dimensione < 1) return elementi.length > 0 ? [[...elementi]] : [];

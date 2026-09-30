@@ -7,6 +7,7 @@ import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
 import { marcaConsegnati } from '@/lib/chat/delivered';
+import { segnaLetteNotificheChat } from '@/lib/chat/notifiche-chat';
 
 const patchBodySchema = z.object({
     messageIds: z.array(zUuid).min(1, 'messageIds è obbligatorio e non può essere vuoto'),
@@ -53,6 +54,12 @@ export const PATCH = withRoute('chat/messages/read:PATCH', async (request: Reque
 
         const threadIds = [...new Set((msgs ?? []).map((m) => m.thread_id).filter(Boolean))];
         let allowedIds: string[] = [];
+        // I thread di cui l'utente è partecipante, cioè quelli la cui campanella si spegne.
+        // Sono anche, per costruzione, i thread dei messaggi ammessi: `threadIds` nasce dagli
+        // stessi `msgs` da cui esce `allowedIds`, quindi un thread finisce qui dentro se e
+        // solo se almeno un messaggio passato nel body gli appartiene. Non serve un secondo
+        // insieme — servirebbe se un domani i thread arrivassero da un'altra parte.
+        let threadDiMe = new Set<string>();
         if (threadIds.length > 0) {
             const { data: threads, error: thErr } = await supabase
                 .from('chat_threads')
@@ -62,10 +69,10 @@ export const PATCH = withRoute('chat/messages/read:PATCH', async (request: Reque
                 logErrore({ operazione: 'chat/messages/read:PATCH', stato: 500, evento: 'db' }, thErr);
                 return NextResponse.json({ error: thErr.message }, { status: 500 });
             }
-            const threadDiMe = new Set(
+            threadDiMe = new Set(
                 (threads ?? [])
                     .filter((t) => t.teacher_id === userId || t.parent_id === userId)
-                    .map((t) => t.id),
+                    .map((t) => String(t.id)),
             );
             allowedIds = (msgs ?? [])
                 .filter((m) => threadDiMe.has(m.thread_id))
@@ -74,8 +81,10 @@ export const PATCH = withRoute('chat/messages/read:PATCH', async (request: Reque
 
         // Nessun messaggio di cui l'utente sia partecipante: niente da fare. Non è un
         // errore (id altrui/inesistenti vengono semplicemente ignorati) → 200, updated 0.
+        // `notifiche_lette` c'è anche qui: la forma della risposta è UNA, così il client non
+        // deve distinguere due contratti per lo stesso 200.
         if (allowedIds.length === 0) {
-            return NextResponse.json({ success: true, updated: 0 });
+            return NextResponse.json({ success: true, updated: 0, notifiche_lette: 0 });
         }
 
         // Aggiorna solo i messaggi non inviati dall'utente corrente e ancora non letti
@@ -96,7 +105,26 @@ export const PATCH = withRoute('chat/messages/read:PATCH', async (request: Reque
         // best-effort: degrada da sola se la colonna non esiste sul DB E2E.
         await marcaConsegnati(supabase, { userId, messageIds: allowedIds });
 
-        return NextResponse.json({ success: true, updated: allowedIds.length });
+        // E SI SPEGNE LA CAMPANELLA. Fin qui il mark-read toccava solo `chat_messages`: la
+        // riga in `notifiche` restava accesa per sempre, perché niente la scriveva fuori
+        // dalla campanella stessa. La regola — un messaggio letto spegne le notifiche di
+        // TUTTO quel thread, per chi legge — e i suoi perché stanno in
+        // `@/lib/chat/notifiche-chat`, insieme al limite noto.
+        //
+        // DOPO il mark-read e mai prima: se l'UPDATE di `read_at` fallisce si è già usciti
+        // 500 qui sopra, e la campanella non si tocca. Un fallimento di QUESTO passo invece
+        // non cambia la risposta (resta 200): il warn lo scrive la funzione, che non lancia.
+        const notificheLette = await segnaLetteNotificheChat(supabase, {
+            utenteId: userId,
+            threadIds: [...threadDiMe],
+            operazione: 'chat/messages/read:PATCH',
+        });
+
+        return NextResponse.json({
+            success: true,
+            updated: allowedIds.length,
+            notifiche_lette: notificheLette,
+        });
     } catch (error) {
         logErrore({ operazione: 'chat/messages/read:PATCH', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

@@ -120,7 +120,7 @@ describe('DocentiSenzaNotifiche', () => {
   })
 
   it('la nota manda al TELEFONO, e non promette un pulsante sul web', async () => {
-    // ⚠️ Segue il passo 7, che è cambiato per una ragione di privacy: sul web
+    // ⚠️ Segue `AvvisoNotificheDocente`, cambiato per una ragione di privacy: sul web
     // l'avviso alla maestra NON offre più l'attivazione, perché il logout web
     // non annulla l'iscrizione e su un PC condiviso le notifiche arriverebbero a
     // chi si siede dopo. La nota qui diceva «con il pulsante per attivarle»:

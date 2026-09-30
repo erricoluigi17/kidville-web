@@ -142,7 +142,8 @@ export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent
   /**
    * UNA CONVERSAZIONE È STATA LETTA: la campanella scende subito, non al prossimo minuto.
    *
-   * Dal passo 1 la lettura spegne anche le NOTIFICHE di quel thread (misurato in produzione: il
+   * La lettura spegne anche le NOTIFICHE di quel thread (`segnaLetteNotificheChat`; misurato in
+   * produzione: il
    * 73% delle notifiche di chat non lette riguardava conversazioni già lette). Il numero in
    * tabella è già giusto; quello a schermo è dell'ultimo giro, e senza questa ricarica resta
    * gonfio fino a 60 s — cioè il contatore che le maestre avevano imparato a ignorare.

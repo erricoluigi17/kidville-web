@@ -214,7 +214,7 @@ function MessaggiInner() {
   /**
    * La conversazione con una famiglia, e la LETTURA che la accompagna (`markRead`).
    *
-   * ⚠️ QUELLA GET SPEGNE ANCHE LE NOTIFICHE del thread (passo 1 del lavoro sui non letti, 2026-09-29),
+   * ⚠️ QUELLA GET SPEGNE ANCHE LE NOTIFICHE del thread (`segnaLetteNotificheChat`, 2026-09-29),
    * ma la sua risposta non dice quante: la forma del corpo (`{ messages, total, precedenti }`) la
    * blocca `__tests__/api/chat-messages-read-notifiche.test.ts`. Qui quindi non si sa *quanto* è
    * scesa la campanella — si sa che la lettura è stata registrata, e `segnalaChatLetta` fa rileggere

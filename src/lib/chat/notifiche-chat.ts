@@ -32,14 +32,15 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi';
  *    tre messaggi»: dice «vai a guardare questa conversazione». Una volta che ci sei
  *    andato ha finito il suo lavoro, ed è il comportamento di qualunque app di
  *    messaggistica;
- *  · il numero VERO dei non letti non sta nella campanella: lo porta `unread_count` nella
- *    lista delle conversazioni e, dai passi successivi, il contatore su «Messaggi». La
+ *  · il numero VERO dei non letti non sta nella campanella: lo portano `unread_count` nella
+ *    lista delle conversazioni e il contatore su «Messaggi» (`BadgeChatNonLetti`). La
  *    campanella segnala che è successo qualcosa, non quanto;
  *  · l'IntersectionObserver di `ChatMessageArea` manda solo le bolle VISIBILI, quindi una
  *    raffica di foto scorsa a metà spegne comunque la campanella del thread. È voluto: il
  *    thread è stato aperto, e ciò che resta da leggere lo dice `unread_count`.
  *
- * LA MIGRAZIONE DI PULIZIA DEL PASSATO (passo successivo) È PIÙ PRUDENTE, ed è coerente:
+ * LA MIGRAZIONE DI PULIZIA DEL PASSATO — quella che spegne le notifiche delle conversazioni
+ * già lette prima che questo codice esistesse — È PIÙ PRUDENTE, ed è coerente:
  * sulle righe vecchie non si sa se la conversazione sia stata aperta dopo la notifica, lo
  * si sa solo quando non resta nessun messaggio non letto dell'altra parte. Le due regole
  * convergono da sole — la prossima lettura spegne anche quello che la migrazione ha
@@ -130,9 +131,9 @@ export async function segnaLetteNotificheChat(
     try {
         // A BLOCCHI, perché PostgREST mette `.in()` in QUERY STRING e non nel corpo (vedi
         // `@/lib/db/blocchi`: oltre il tetto la richiesta torna 414). Qui i thread sono
-        // quelli di una schermata sola, ma il tetto non è cosmetico — è ciò che impedisce
-        // a questa correzione di rompersi da sé il giorno in cui un client manda l'intera
-        // rubrica in un colpo.
+        // quelli di una schermata sola, ma il tetto non è cosmetico — è ciò che impedisce a
+        // questo UPDATE di rompersi da sé il giorno in cui un client manda l'intera rubrica
+        // in un colpo.
         for (const blocco of aBlocchi(ids, ID_PER_QUERY)) {
             // `.select('id')` per CONTARE le righe toccate, ed è l'idioma già in uso sulla
             // stessa tabella (`@/lib/notifiche/triggers.ts`). Va per ULTIMO: dopo

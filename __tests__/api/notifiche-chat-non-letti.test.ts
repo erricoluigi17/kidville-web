@@ -114,7 +114,7 @@ describe('GET /api/notifiche — `chat_non_letti` accanto a `non_lette`', () => 
     expect(body.chat_non_letti).toBe(4)
     // PERCORSO FELICE: nessun warn della chat. Senza questa riga il file resterebbe verde
     // anche se la catena della chat esplodesse nel `catch` del modulo — che è esattamente
-    // com'è successo al passo precedente con un finto senza `.or`.
+    // com'è successo in `chat-messages-auth.test.ts` con un finto senza `.or`.
     expect(warnChat()).toEqual([])
   })
 

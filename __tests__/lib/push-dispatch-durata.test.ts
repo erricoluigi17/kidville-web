@@ -103,7 +103,8 @@ describe('le fasi su Supabase: blocchi e tetti delle aree vere', () => {
   })
 
   it('la consegna della chat (D1): la soglia più UN update al tetto di `db`, ed entra nel caso peggiore', () => {
-    // Il passo 7bis guarda l'orologio prima di ogni coppia (destinatario, thread): l'ULTIMA
+    // La consegna della chat (fase 7bis di `@/lib/push/dispatch`) guarda l'orologio prima di
+    // ogni coppia (destinatario, thread): l'ULTIMA
     // comincia un attimo prima della soglia e paga un UPDATE su `chat_messages` (area `db`, un
     // blocco: un thread solo). Il giro finisce quindi entro `soglia + tetto`, ed è questo che il
     // caso peggiore deve comprendere — altrimenti il `maxDuration` delle route coprirebbe un giro

@@ -140,7 +140,7 @@ describe('GET /api/notifiche — il conteggio non è la lunghezza della lista', 
    *
    * Questo caso invece i thread ce li mette: pretende il numero E l'assenza di qualunque
    * `warn` sul canale `chat`, che è il segno di una catena caduta nel `catch`. È la lezione
-   * del passo precedente, dove `chat-messages-auth.test.ts` restò verde su un finto senza `.or`.
+   * già visto in `chat-messages-auth.test.ts`, che restò verde su un finto senza `.or`.
    */
   it('il percorso felice porta anche `chat_non_letti`, senza un solo warn della chat', async () => {
     h.state.queues = {

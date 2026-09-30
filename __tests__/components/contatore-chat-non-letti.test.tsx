@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { renderToString } from 'react-dom/server';
 
 /**
- * LO STORE DEL CONTATORE DEI MESSAGGI DI CHAT NON LETTI (passo 4, 2026-09-29).
+ * LO STORE DEL CONTATORE DEI MESSAGGI DI CHAT NON LETTI (2026-09-29).
  *
  * Il numero che la barra in basso mostra su «Messaggi» (maestre) e «Chat» (genitori) non è uno
  * stato di React: lo scrive la campanella (che vive nell'AppBar), lo mostrano le barre e lo

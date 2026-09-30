@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
- * D1 — «CONSEGNATO» QUANDO IL PROVIDER DELLE PUSH ACCETTA LA NOTIFICA (passo 6).
+ * D1 — «CONSEGNATO» QUANDO IL PROVIDER DELLE PUSH ACCETTA LA NOTIFICA.
  *
  * Una mamma ha visto per cinque ore una spunta sola e ha creduto che il messaggio non fosse
  * arrivato. Le strade della consegna sono due: D2 (l'app di chi riceve è aperta, e la campanella
@@ -309,7 +309,7 @@ describe('il provider ha accettato la push di chat: i messaggi di quel thread so
     })
 
     it('il contatore delle RIGHE è quello che `marcaConsegnati` dice, non il numero di chiamate', async () => {
-        // Il difetto che questa correzione toglie: con l'app aperta D2 consegna per primo, l'UPDATE
+        // Il difetto che il contatore di RIGHE evita: con l'app aperta D2 consegna per primo, l'UPDATE
         // di D1 tocca ZERO righe e un contatore di chiamate direbbe «acceso» per sempre, anche con
         // D1 rotto. Qui le due coppie accendono 4 e 0 righe: i numeri devono essere diversi.
         mem.st.notifiche = [chat('n1', 'u-mamma', TH1), chat('n2', 'u-papa', TH2)]

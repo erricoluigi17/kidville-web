@@ -12,10 +12,13 @@
 **Le correzioni** (decise dal titolare il 29/09: A, B, C, D; il promemoria automatico è escluso)
 
 - **A — Il numero dei non letti su «Messaggi» (maestre) e «Chat» (genitori), da qualunque schermata.**
-  - Viaggia in `GET /api/notifiche` come `chat_non_letti` (`src/lib/chat/non-letti.ts`), dentro il giro da 60 s che la campanella fa già. Nessuna richiesta in più.
+  - Viaggia in `GET /api/notifiche` come `chat_non_letti` (`src/lib/chat/non-letti.ts`), dentro il giro da 60 s che la campanella fa già.
+    - Nessuna richiesta HTTP in più, e nessuna chiamata in più all'autenticazione.
+    - Al database il giro passa da 5 a 6-8 richieste: +1 per le conversazioni, +1 ogni 100 conversazioni per i non letti e, solo quando ce ne sono, +1 ogni 100 conversazioni per la consegna D2 dopo la risposta.
+    - Da rimisurare dopo il deploy, come nel changelog del 07/09.
   - `null` vuol dire «non lo so»: il client tiene l'ultimo valore noto e non mostra mai uno 0 di ripiego.
   - Store di modulo `src/components/features/chat/contatore-non-letti.ts`.
-  - Il badge è `BadgeChatNonLetti`, con `9+` oltre 9. Il nome accessibile della voce non cambia (`aria-describedby`), così i flussi Maestro e gli E2E continuano a trovarla.
+  - Il badge viene da `useBadgeChatNonLetti` (`BadgeChatNonLetti.tsx`), con `9+` oltre 9. Il nome accessibile della voce non cambia (`aria-describedby`), così i flussi Maestro e gli E2E continuano a trovarla.
   - Fonte unica dal server. L'apertura di un thread non tocca più il totale: prima veniva sottratto due volte. Lo store si azzera quando la campanella si smonta o cambia persona.
 - **B — Leggere una conversazione spegne le sue notifiche in campanella.**
   - Lo fa `segnaLetteNotificheChat` in `src/lib/chat/notifiche-chat.ts`, chiamata dalla PATCH di lettura e dalla GET con `markRead`.
@@ -23,7 +26,7 @@
   - La campanella si ricarica sull'evento `kv:chat-letta`.
   - **Migrazione solo dati** `20260929180303_notifiche_chat_lette_su_conversazioni_lette.sql`: spegne l'arretrato delle conversazioni senza più non letti dell'altra parte. È volutamente più prudente della regola del codice. La applica l'integrazione al merge.
 - **D — «Consegnato» quando il messaggio arriva.** Due strade:
-  - **D2, app aperta:** la GET della campanella, con `after()` dopo la risposta, consegna i messaggi nati fino all'inizio della GET (`consegnaSeInAttesa`). Log `chat-consegnati-app-aperta` con il numero.
+  - **D2, app aperta:** quando ci sono non letti (`chat_non_letti > 0`), la GET della campanella, con `after()` dopo la risposta, consegna i messaggi nati fino all'inizio della GET (`consegnaSeInAttesa`). Log `chat-consegnati-app-aperta` con il numero.
   - **D1, app chiusa:** quando il dispatcher manda la push di un messaggio e il provider la accetta, i messaggi di quella conversazione nati fino alla notifica diventano consegnati (passo 7bis di `dispatch.ts`).
     - Contatori nel battito: `consegne_chat`, `consegne_chat_righe`, `consegne_chat_saltate`.
     - Il caso peggiore del giro resta 250 s.
@@ -31,13 +34,13 @@
 - **C — Maestre senza notifiche.**
   - **C1:** nella home della docente compare un avviso fisso, solo se ha zero dispositivi (`GET /api/push/subscribe`) oppure se questo telefono ha il permesso negato.
     - Nell'app: «Apri Impostazioni» / «Attiva» / «aggiorna l'app».
+    - Si ricontrolla al ritorno in primo piano (i due segnali: `visibilitychange` e il ritorno nativo), con una soglia di 30 s. La soglia si salta dopo «Apri Impostazioni», perché su iOS il plugin risolve alla partenza. Si ricontrolla subito anche dopo una registrazione riuscita (`kv:push-registrata`, emesso da `NativePushAutoRegister`), così l'avviso sparisce appena la maestra tocca «Consenti».
     - ⚠️ **Sul web niente attivazione**, per privacy. Il logout web non annulla l'iscrizione del browser, quindi su un PC condiviso le notifiche arriverebbero a chi si siede dopo, comprese quelle della mensa con le allergie dei bambini. L'avviso rimanda all'app sul telefono.
     - `PushOptIn` non dice più «attive» su una registrazione fallita.
-  - **C2:** la scheda «Maestre senza notifiche» in `admin/messaggi`, solo per la Direzione (`GET /api/admin/chat/docenti-senza-push`).
+  - **C2:** la scheda «Notifiche spente» in `admin/messaggi`, solo per la Direzione (`GET /api/admin/chat/docenti-senza-push`).
     - Mostra le educator non archiviate senza dispositivi, con i messaggi dei genitori ricevuti in 30 giorni e i non letti in tutto.
-    - Ogni apertura è tracciata nel registro di vigilanza: una riga per sede letta, con la sua
-      etichetta, «Ha consultato l'elenco delle maestre senza notifiche (solo conteggi)».
-    - Conta i non letti con una head-query per maestra: nessuna riga dei messaggi viene trasferita.
+    - Ogni apertura che attraversa almeno una conversazione è tracciata nel registro di vigilanza: una riga per sede letta, con la sua etichetta, «Ha consultato l'elenco delle maestre senza notifiche (solo conteggi)».
+    - I non letti si contano con una head-query per maestra, senza trasferire righe. Dei ricevuti in 30 giorni si leggono solo `thread_id` e `sender_id`, mai il contenuto.
 
 **Limiti noti, dichiarati:**
 - Una notifica creata dopo la lettura in diretta, con una corsa di qualche centinaio di ms, resta accesa fino alla lettura successiva, e la sua push parte comunque.
@@ -56,14 +59,14 @@
 - le ricerche multi-sede invisibili nel registro;
 - il punto cieco della sonda di contrasto.
 
-**Verifica dopo il deploy** (le misure di partenza sono del 29/09, 17:14 ora italiana):
+**Verifica dopo il deploy.** Le misure di partenza sono tre: 29/09 alle 15:14 UTC (consegna e non letti da oltre 24 h), 29/09 alle 15:49 UTC e 30/09 alle 05:51 UTC (notifiche). Al 30/09 esistono solo i due tipi `chat_docente` (1.722) e `chat_genitore` (464), entrambi con `entita_tipo = 'chat_thread'`: nessuna notifica di chat con altri tipi resta fuori dalla migrazione o dal codice.
 
-| misura | 29/09 | atteso |
-|---|---|---|
-| notifiche di chat non lette | 2.178 | cala di ~1.580 con la migrazione |
-| … di cui su conversazioni già lette | 1.582 | vicino a 0 (resta il residuo della corsa) |
-| mediana «Consegnato» genitore → docente, messaggi dopo il deploy | 10,5 min | < 1 min per chi ha un dispositivo |
-| messaggi non letti dalle docenti da oltre 24 h | 62 | in calo nei giorni seguenti |
+| misura | 29/09 | 30/09 05:51 UTC | atteso |
+|---|---|---|---|
+| notifiche di chat non lette | 2.178 (15:49 UTC) | 2.186 | cala di ~1.720 con la migrazione |
+| … su conversazioni senza non letti dell'altra parte | 1.582 (15:49 UTC) | 1.724 | vicino a 0 (resta il residuo della corsa) |
+| mediana «Consegnato», messaggi dei genitori alle maestre (7 giorni) | 10,5 min (15:14 UTC) | 10,8 min, 22 su 1.107 non consegnati dopo 10 min | < 1 min per chi ha un dispositivo |
+| messaggi dei genitori non letti dalle maestre da oltre 24 h | 62 (15:14 UTC) | 68 | in calo nei giorni seguenti |
 
 ```sql
 -- notifiche di chat non lette su conversazioni senza non letti dell'altra parte (deve tornare vicino a 0)
@@ -72,11 +75,22 @@ SELECT count(*) FROM notifiche n
    AND n.entita_id IS NOT NULL AND n.letta_il IS NULL
    AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.thread_id = n.entita_id
                     AND m.sender_id <> n.utente_id AND m.read_at IS NULL);
--- «Consegnato» in minuti, messaggi del genitore alla docente dopo il deploy
-SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM m.delivered_at - m.created_at)) / 60
-  FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id
- WHERE m.sender_id = t.parent_id AND m.delivered_at IS NOT NULL AND m.created_at > '<istante del deploy>';
+-- «Consegnato» in minuti, messaggi dei genitori alle MAESTRE nati dopo il deploy. I mai consegnati
+-- contano fino a adesso (coalesce): filtrarli via farebbe confermare la mediana da sola.
+SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM coalesce(m.delivered_at, now()) - m.created_at)) / 60 AS mediana_min,
+       count(*) FILTER (WHERE m.delivered_at IS NULL AND m.created_at < now() - interval '10 minutes') AS non_consegnati_dopo_10_min
+  FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id JOIN utenti u ON u.id = t.teacher_id
+ WHERE m.sender_id = t.parent_id AND u.ruolo = 'educator' AND m.created_at > '<istante del deploy>';
+-- messaggi dei genitori non letti dalle maestre da oltre 24 h
+SELECT count(*) FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id JOIN utenti u ON u.id = t.teacher_id
+ WHERE m.sender_id = t.parent_id AND u.ruolo = 'educator' AND m.read_at IS NULL
+   AND m.created_at < now() - interval '24 hours';
+-- avvisi mostrati alle maestre senza notifiche, per variante (C1)
+SELECT messaggio, sum(occorrenze) FROM app_log
+ WHERE messaggio LIKE 'avviso-notifiche-docente-mostrato:%' GROUP BY 1;
 ```
+
+In `app_log` si guardano anche le righe con esito `chat-consegnati-app-aperta` (D2) e il battito del dispatch con `consegne_chat_righe` maggiore di 0 (D1). Se sono vive, la doppia spunta si accende davvero, per strada di rete e per app aperta.
 
 **Nel giro:** il test `galleria-sede-pagina` («quanto le resta») non cade più il 30 di ogni mese. Cercava `/25/`, che il 30 pescava anche la data di eliminazione.
 

@@ -166,7 +166,7 @@ export function useChatNonLetti(): number | null {
 /**
  * «UNA CONVERSAZIONE È STATA LETTA, E LA CAMPANELLA NON LO SA ANCORA.»
  *
- * Dal passo 1 leggere una conversazione spegne anche le sue NOTIFICHE (`segnaLetteNotificheChat`):
+ * Leggere una conversazione spegne anche le sue NOTIFICHE (`segnaLetteNotificheChat`):
  * il numero sulla campanella scende in tabella, ma il pannello che lo mostra lo ha in mano dal suo
  * ultimo giro e non se ne accorge fino al successivo — fino a 60 s dopo. L'evento avvisa i
  * pannelli montati, che ricaricano; se nessuno ascolta, non succede niente e il giro normale

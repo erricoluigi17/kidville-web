@@ -4,10 +4,11 @@ import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi';
 
 /**
  * ANCHE LA SEGRETERIA LEGGE LE CONVERSAZIONI, E ANCHE LA SUA CAMPANELLA DEVE SCENDERE
- * (passo 4, 2026-09-29).
+ * (2026-09-29).
  *
  * La scheda «Con i genitori» di `/admin/messaggi` apre la conversazione con la GET
- * `chat/messages:GET?markRead=…`, che dal passo 1 spegne anche le NOTIFICHE di quel thread. La
+ * `chat/messages:GET?markRead=…`, che spegne anche le NOTIFICHE di quel thread
+ * (`segnaLetteNotificheChat`). La
  * risposta di quella GET NON porta nessun conteggio — la sua forma è bloccata da
  * `__tests__/api/chat-messages-read-notifiche.test.ts` — quindi qui non si può sapere *quante*
  * notifiche si sono spente: si sa solo che la lettura è stata registrata. L'evento parte su quel

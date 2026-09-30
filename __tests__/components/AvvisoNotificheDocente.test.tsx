@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { StrictMode } from 'react'
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react'
 import teacherNavIt from '../../messages/it/teacherNav.json'
+import { EVENTO_PUSH_REGISTRATA } from '@/lib/push/registrazione-riuscita'
 
 /**
  * `AvvisoNotificheDocente` — «LE NOTIFICHE NON ARRIVANO, E NESSUNO TE LO DICE» (compito C1).
@@ -57,6 +58,7 @@ const h = vi.hoisted(() => ({
   apriImpostazioniNotifiche: vi.fn(async () => 'aperte' as string),
   impostazioniApribili: vi.fn(() => true),
   logClient: vi.fn(),
+  appStateChange: null as null | ((s: { isActive: boolean }) => void),
 }))
 
 vi.mock('@/lib/push/native-register', () => ({
@@ -70,6 +72,21 @@ vi.mock('@/lib/native/avvisi-settimanali', () => ({
   impostazioniApribili: h.impostazioniApribili,
 }))
 vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: () => 'TypeError' }))
+
+/**
+ * Il bridge nativo del ritorno in primo piano. `usePollingVisibile` — l'helper dei due segnali
+ * — importa `@capacitor/app` a runtime e si aggancia ad `appStateChange`: è il segnale che
+ * nell'app arriva insieme (o al posto) di `visibilitychange`, ed è metà della regola dei due
+ * segnali del repo. Qui si tiene il gestore per poterlo chiamare dal test.
+ */
+vi.mock('@capacitor/app', () => ({
+  App: {
+    addListener: (evento: string, gestore: (s: { isActive: boolean }) => void) => {
+      if (evento === 'appStateChange') h.appStateChange = gestore
+      return Promise.resolve({ remove: async () => undefined })
+    },
+  },
+}))
 
 const T = teacherNavIt as Record<string, string>
 const UTENTE = 'aaaaaaaa-1111-4000-8000-000000000001'
@@ -136,16 +153,25 @@ function messaggiLog(): string[] {
 const titolo = () => screen.queryByRole('heading', { level: 2, name: T.avvisoNotificheDocenteTitolo })
 const attendiTitolo = () => screen.findByRole('heading', { level: 2, name: T.avvisoNotificheDocenteTitolo })
 
-/** Il ritorno visibile della pagina: il gesto «vado nelle Impostazioni e torno». */
-function tornaVisibile() {
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+/**
+ * Il cambio di visibilità della pagina: il gesto «vado nelle Impostazioni e torno».
+ *
+ * ⚠️ SI MUOVONO ENTRAMBI I VALORI, `visibilityState` **e** `hidden`. Nel browser vanno insieme,
+ * e `usePollingVisibile` — l'helper dei due segnali che questo componente usa — legge
+ * `document.hidden`: toccando il solo `visibilityState` non vedrebbe nessuna transizione e il
+ * ritorno non eseguirebbe niente. Un test che simula metà del segnale misura metà del codice.
+ */
+function visibilita(nascosta: boolean) {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => nascosta })
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => (nascosta ? 'hidden' : 'visible'),
+  })
   document.dispatchEvent(new Event('visibilitychange'))
 }
 
-function vaiInBackground() {
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
-  document.dispatchEvent(new Event('visibilitychange'))
-}
+const tornaVisibile = () => visibilita(false)
+const vaiInBackground = () => visibilita(true)
 
 beforeEach(() => {
   stato.userId = UTENTE
@@ -160,7 +186,9 @@ beforeEach(() => {
   h.impostazioniApribili.mockReset()
   h.impostazioniApribili.mockReturnValue(true)
   h.logClient.mockReset()
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+  h.appStateChange = null
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
   vi.useRealTimers()
 })
 
@@ -701,6 +729,59 @@ describe('AvvisoNotificheDocente — il ricontrollo', () => {
       await new Promise((r) => setTimeout(r, 50))
     })
     expect(fatte).toBe(3)
+  })
+
+  it('🔴 il RITORNO NATIVO (`appStateChange`) fa ricontrollare, non solo `visibilitychange`', async () => {
+    // Nell'app i due segnali arrivano insieme, ma su parte dei dispositivi il primo a farsi
+    // sentire è quello del bridge: con il solo `visibilitychange` il rientro si perdeva. È la
+    // regola dei due segnali che il repo applica in `NativePushAutoRegister` e nel polling.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    stato.nativo = true
+    stato.piattaforma = 'android'
+    h.statoPermessoPush.mockResolvedValue('denied')
+    const finto = contaDispositivi([
+      { stato: 200, dispositivi: 0 },
+      { stato: 200, dispositivi: 0 },
+    ])
+    await monta()
+    await attendiTitolo()
+    await waitFor(() => expect(h.appStateChange).not.toBeNull())
+    expect(finto).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      vi.advanceTimersByTime(31_000)
+    })
+    // Solo il segnale nativo: la pagina non emette `visibilitychange`.
+    await act(async () => {
+      h.appStateChange?.({ isActive: false })
+      h.appStateChange?.({ isActive: true })
+    })
+    await waitFor(() => expect(finto).toHaveBeenCalledTimes(2))
+  })
+
+  it('🔴 la REGISTRAZIONE RIUSCITA altrove nella pagina fa ricontrollare, anche entro 30 s', async () => {
+    // La corsa del primo accesso: `NativePushAutoRegister` registra il token mentre questo
+    // riquadro ha già letto «zero dispositivi». Senza l'ascolto dell'evento l'avviso resterebbe
+    // a dire «spente» col permesso appena concesso — la soglia scarta anche un rientro immediato.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    stato.nativo = true
+    stato.piattaforma = 'android'
+    h.statoPermessoPush.mockResolvedValue('prompt')
+    const finto = contaDispositivi([
+      { stato: 200, dispositivi: 0 },
+      { stato: 200, dispositivi: 1 },
+    ])
+    await monta()
+    expect(await screen.findByRole('button', { name: T.avvisoNotificheDocenteAttiva })).toBeTruthy()
+    expect(finto).toHaveBeenCalledTimes(1)
+
+    // Nessun tempo passato: siamo dentro la soglia dei 30 s.
+    h.statoPermessoPush.mockResolvedValue('granted')
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(EVENTO_PUSH_REGISTRATA))
+    })
+    await waitFor(() => expect(finto).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(titolo()).toBeNull())
   })
 
   it('nessun polling periodico: passati due minuti senza toccare niente, il controllo resta uno', async () => {

@@ -7,6 +7,8 @@ import { isNativeApp, registerNativePush, statoPermessoPush } from '@/lib/push/n
 import { apriImpostazioniNotifiche, impostazioniApribili } from '@/lib/native/avvisi-settimanali'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { esitoPushRitentabile } from '@/lib/push/esiti-ritentabili'
+import { ascoltaPushRegistrata } from '@/lib/push/registrazione-riuscita'
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile'
 import { Card } from '@/components/ui/Card'
 import { Btn } from '@/components/ui/Btn'
 
@@ -226,20 +228,40 @@ export function AvvisoNotificheDocente({ userId }: Props) {
     controlla().catch(riportaGuasto)
   }, [userId, controlla, riportaGuasto])
 
-  useEffect(() => {
-    const alRitorno = () => {
-      if (typeof document === 'undefined' || document.visibilityState !== 'visible') return
-      // Il rientro ATTESO (si è appena toccato «Apri Impostazioni») passa una volta sola e
-      // senza guardare la soglia: è il solo momento in cui il permesso può essere cambiato
-      // fuori dall'app, e su iOS il ricontrollo del gesto è arrivato troppo presto per vederlo.
-      const atteso = rientroDaControllare.current
-      if (atteso) rientroDaControllare.current = false
-      else if (Date.now() - ultimoControllo.current < INTERVALLO_RICONTROLLO_MS) return
-      controlla(atteso).catch(riportaGuasto)
-    }
-    document.addEventListener('visibilitychange', alRitorno)
-    return () => document.removeEventListener('visibilitychange', alRitorno)
+  /**
+   * IL RITORNO IN PRIMO PIANO, DA ENTRAMBI I SEGNALI.
+   *
+   * `usePollingVisibile` con `intervalloMs: null` è «solo al ritorno, nessun orologio»: ascolta
+   * `visibilitychange` **e** `appStateChange` del bridge nativo, e li coalesce (nell'app arrivano
+   * entrambi, a distanza di pochi millisecondi). Con il solo `visibilitychange` il rientro
+   * dall'app in background si perdeva su parte dei dispositivi — è la regola dei due segnali
+   * che il repo applica già in `NativePushAutoRegister` e in tutto il polling.
+   */
+  const alRitorno = useCallback(() => {
+    // Il rientro ATTESO (si è appena toccato «Apri Impostazioni») passa una volta sola e senza
+    // guardare la soglia: è il solo momento in cui il permesso può essere cambiato fuori
+    // dall'app, e su iOS il ricontrollo del gesto è arrivato troppo presto per vederlo.
+    const atteso = rientroDaControllare.current
+    if (atteso) rientroDaControllare.current = false
+    else if (Date.now() - ultimoControllo.current < INTERVALLO_RICONTROLLO_MS) return
+    controlla(atteso).catch(riportaGuasto)
   }, [controlla, riportaGuasto])
+
+  usePollingVisibile(alRitorno, null)
+
+  /**
+   * LA REGISTRAZIONE RIUSCITA ALTROVE NELLA PAGINA.
+   *
+   * `NativePushAutoRegister` vive nel layout e registra il token al primo accesso, mentre
+   * questo riquadro sta già leggendo il conteggio: la sua risposta arriva prima, dice «zero
+   * dispositivi» e mostra «Attiva». Poi la maestra tocca «Consenti», la registrazione riesce, e
+   * senza questo ascolto l'avviso resterebbe a dire il falso — la soglia scarterebbe anche un
+   * `visibilitychange` immediato. Si ricontrolla come per un GESTO: niente soglia, e se un
+   * controllo è in volo quello nuovo si accoda invece di perdersi.
+   */
+  useEffect(() => ascoltaPushRegistrata(() => {
+    controlla(true).catch(riportaGuasto)
+  }), [controlla, riportaGuasto])
 
   const variante = stato.fase === 'mostro' ? stato.variante : null
 

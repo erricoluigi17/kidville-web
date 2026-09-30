@@ -14,8 +14,9 @@ import { zUuid } from '@/lib/validation/common';
  * 10:52, ha usato l'app tre volte e li ha visti alle 16:14.
  *
  * Il numero viaggia nella risposta di `GET /api/notifiche`, che la campanella interroga già
- * all'apertura e ogni 60 s: nessuna richiesta HTTP in più, nessun poll nuovo da spegnere. Il
- * client (store e badge) è un passo a sé.
+ * all'apertura e ogni 60 s: nessuna richiesta HTTP in più, nessun poll nuovo da spegnere. Chi
+ * lo mostra sta altrove: lo store `@/components/features/chat/contatore-non-letti` e il badge
+ * `BadgeChatNonLetti`.
  *
  * ─── IL PERIMETRO: L'IDENTITÀ DEL GATE, MAI UN INPUT ───────────────────────────────────
  *
@@ -49,9 +50,9 @@ import { zUuid } from '@/lib/validation/common';
  * ─── PERCHÉ RESTITUISCE ANCHE `threadIds` ───────────────────────────────────────────────
  *
  * Gli id delle conversazioni sono il prodotto della prima query: leggerli e buttarli
- * costringerebbe il prossimo chiamante a rifare la stessa query. E il prossimo chiamante è
- * deciso: la consegna «delivered» (`consegnaSeInAttesa`) girerà in questa stessa GET, sugli
- * stessi thread e con la stessa identità. Un giro in più sulla route che esiste per non
+ * costringerebbe il chiamante a rifare la stessa query. E il chiamante li usa: la consegna
+ * «delivered» (`consegnaSeInAttesa`) gira in questa stessa GET, sugli stessi thread e con la
+ * stessa identità. Un giro in più sulla route che esiste per non
  * aggiungere giri sarebbe un controsenso. `threadIds` sono i thread LETTI dalla prima query —
  * con o senza messaggi non letti — e con nessuna conversazione è `[]`.
  *

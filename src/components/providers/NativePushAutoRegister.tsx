@@ -5,6 +5,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { isNativeApp, registerNativePush, statoPermessoPush } from '@/lib/push/native-register'
 import { esitoPushRitentabile } from '@/lib/push/esiti-ritentabili'
+import { segnalaPushRegistrata } from '@/lib/push/registrazione-riuscita'
 
 // Auto-registrazione della push NATIVA al primo accesso autenticato nella
 // shell Capacitor: chiede il permesso di sistema e registra il token FCM/APNs
@@ -86,6 +87,13 @@ async function tenta(userId: string, daRipresa: boolean): Promise<UltimoEsito> {
   try {
     const esito = await registerNativePush(userId)
     stato.ultimoEsito = classifica(esito)
+    if (esito.ok) {
+      // Il token è sul server: chi mostra lo stato delle notifiche rilegga. Serve a chiudere
+      // una corsa, non a informare: `AvvisoNotificheDocente` legge il conteggio mentre questa
+      // registrazione è ancora in corso, e senza questo evento resterebbe a dire «spente»
+      // con il permesso appena concesso. Vedi `@/lib/push/registrazione-riuscita`.
+      segnalaPushRegistrata()
+    }
     if (daRipresa && esito.ok) {
       // Il SUCCESSO del recupero si scrive (regola 5 di AGENTS.md): è la prova che il tentativo al
       // ritorno in primo piano serve, e dopo quanti giri. `warn` perché il canale del client non ha

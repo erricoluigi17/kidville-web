@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act, waitFor } from '@testing-library/react';
 
 /**
- * LA CAMPANELLA PORTA IL NUMERO DELLA CHAT, E SCENDE QUANDO SI LEGGE (passo 4, 2026-09-29).
+ * LA CAMPANELLA PORTA IL NUMERO DELLA CHAT, E SCENDE QUANDO SI LEGGE (2026-09-29).
  *
  * Due cose distinte, in un file solo perché vivono nella stessa `load()`:
  *
@@ -11,7 +11,8 @@ import { render, act, waitFor } from '@testing-library/react';
  *     toccare il valore noto. Un `?? 0` qui rimetterebbe in piedi la bugia «hai letto tutto» —
  *     ed è il mutante che questo file esiste per uccidere.
  *  2. quando una conversazione viene letta (evento `kv:chat-letta`), la campanella ricarica: dal
- *     passo 1 la lettura spegne anche le NOTIFICHE di quel thread, e senza questa ricarica il
+ *     `segnaLetteNotificheChat` la lettura spegne anche le NOTIFICHE di quel thread, e senza
+ *     questa ricarica il
  *     numero sulla campanella resta quello del giro precedente per un minuto intero.
  *     UNA ricarica per raffica, con un rimando di ~600 ms: l'IntersectionObserver della chat manda
  *     più PATCH ravvicinate, e una ricarica per ciascuna sarebbe volume inutile.

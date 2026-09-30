@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 
 /**
- * IL NUMERO DEI MESSAGGI NON LETTI SU «MESSAGGI» E «CHAT» (passo 4, 2026-09-29).
+ * IL NUMERO DEI MESSAGGI NON LETTI SU «MESSAGGI» E «CHAT» (2026-09-29).
  *
  * Una maestra ha ricevuto due messaggi alle 10:52, ha usato l'app tre volte senza aprire la chat e
  * li ha visti alle 16:14: fuori dalla pagina «Messaggi» non esisteva nessun contatore, e la

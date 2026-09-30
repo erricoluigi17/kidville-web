@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 /**
- * LA PAGINA CHAT MUOVE IL CONTATORE DELLA BARRA IN BASSO (passo 4, 2026-09-29).
+ * LA PAGINA CHAT MUOVE IL CONTATORE DELLA BARRA IN BASSO (2026-09-29).
  *
  * `useConversazioneChat` ha già la sua aritmetica dei non letti (`nonLetti`), che serve alla
  * pagina: −n quando si segnano letti dei messaggi, +1 quando ne arriva uno altrui in un thread non

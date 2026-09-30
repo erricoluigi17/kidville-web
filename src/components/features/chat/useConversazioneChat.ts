@@ -442,7 +442,7 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
                     variaChatNonLetti(-nuovi.length);
                 }
                 /**
-                 * E LA CAMPANELLA. Dal passo 1 la PATCH spegne anche le NOTIFICHE dei thread letti e
+                 * E LA CAMPANELLA. La PATCH spegne anche le NOTIFICHE dei thread letti e
                  * dice quante nel corpo (`notifiche_lette`). Se almeno una si è spenta, il numero
                  * sulla campanella a schermo è vecchio: l'evento lo fa ricaricare ai pannelli
                  * montati. A zero non parte niente — sarebbe una richiesta per nulla.

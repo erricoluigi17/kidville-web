@@ -12,7 +12,7 @@ import { SEDE_A, SEDE_B, SEDE_C } from '../fixtures/sedi'
 // delle notifiche non ricevono NESSUNA push, e nessuno lo sa. Una maestra su
 // Android ha ricevuto 137 messaggi in 30 giorni senza una sola notifica.
 //
-// Il passo 7 mostra l'avviso alla maestra nella sua home; questa route lo dice
+// `AvvisoNotificheDocente` lo mostra alla maestra nella sua home; questa route lo dice
 // alla DIREZIONE, che può intervenire di persona. Ciò che si collauda qui è
 // quello che il difetto originale ha insegnato: un elenco che sbaglia PER
 // DIFETTO (esclude chi doveva comparire) o PER ECCESSO (include chi ha già i

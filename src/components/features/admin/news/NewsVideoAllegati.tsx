@@ -34,18 +34,20 @@ import {
 import {
   accodaCaricamentoVideo,
   caricaVideo,
+  concludiCaricamentoVideo,
   creaArchivioCaricamenti,
   potaArchivioCaricamenti,
   type ArchivioCaricamentiVideo,
-  type DipendenzeCaricamentoVideo,
 } from '@/lib/media/video/upload';
 import { caricamentoNelContesto } from '@/lib/media/video/upload/stato';
 import { cx } from '@/lib/ui/cx';
 
 import { urlAllegatoBozzaVideo } from './video/allegato-bozza';
+import { dipendenzeCaricamentoNews } from './video/firma';
 import {
   ACCEPT_VIDEO_NEWS,
   apriIntentoVideoNews,
+  codiceDelJobFallito,
   completaVideoNews,
   leggiStatoIntentoVideoNews,
   preflightVideoNews,
@@ -337,26 +339,35 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
           fase: 'conversione', pct: 0, codice: null, riprova: false, collegato: false, riaperto: true }]);
         const fallisci = (codice: CodiceMostratoVideo) => { if (ancora()) aggiorna(prec => prec.map(a => a.jobId === riga.jobId ? { ...a, fase: 'errore', codice } : a)); };
         if (!apertura.ok) { fallisci(apertura.codice); continue; }
-        if (apertura.jobId !== riga.jobId || apertura.intentId !== riga.intentId || ['cancelled', 'superseded'].includes(apertura.statoIntent)
-            || ['failed', 'rejected', 'cancelled'].includes(apertura.statoJob)) { fallisci('VIDEO_RIPROVA'); continue; }
+        const stessaIdentita = apertura.jobId === riga.jobId && apertura.intentId === riga.intentId;
+        const intentoChiuso = ['cancelled', 'superseded'].includes(apertura.statoIntent);
+        // IL JOB CHE IL SERVER HA CHIUSO MALE DICE PERCHÉ (secondario #39). Prima qui c'era
+        // sempre `VIDEO_RIPROVA`, «ricarica e riprova», anche per un guasto NOSTRO che il runner
+        // aveva ritentato fino in fondo: il codice vero — `VIDEO_GUASTO_NOSTRO` per un job
+        // ritentato, il difetto del file per un rifiutato — lo conosce il server, e si legge.
+        if (stessaIdentita && !intentoChiuso && ['failed', 'rejected'].includes(apertura.statoJob)) {
+          fallisci(await codiceDelJobFallito(dipFlusso, riga.intentId, riga.jobId));
+          continue;
+        }
+        if (!stessaIdentita || intentoChiuso || apertura.statoJob === 'cancelled') { fallisci('VIDEO_RIPROVA'); continue; }
         if (apertura.needsUpload) {
           if (riga.stato === 'caricato') { fallisci('VIDEO_RIPROVA'); continue; }
-          let firma = apertura.firma; let scade = Date.parse(apertura.expiresAt ?? '') || 0;
-          const dip: DipendenzeCaricamentoVideo = { archivio, intestazioni: async () => {
-            if (!ancora()) throw new Error('ContestoCambiato');
-            if (scade <= Date.now() + 15_000) {
+          const dip = dipendenzeCaricamentoNews({
+            archivio, ancora, jobId: riga.jobId,
+            iniziale: { firma: apertura.firma, scadeIl: apertura.expiresAt },
+            rinnova: async () => {
               const rinnovo = await riapri();
-              if (!ancora() || !rinnovo.ok || rinnovo.jobId !== riga.jobId || !rinnovo.needsUpload) throw new Error('FirmaNonDisponibile');
-              firma = rinnovo.firma; scade = Date.parse(rinnovo.expiresAt ?? '') || 0;
-            }
-            return { 'x-signature': firma };
-          } };
+              return rinnovo.ok && rinnovo.jobId === riga.jobId && rinnovo.needsUpload
+                ? { firma: rinnovo.firma, scadeIl: rinnovo.expiresAt } : null;
+            },
+          });
           const caricato = await caricaVideo(dip, riga.jobId);
           if (!ancora()) return;
           if (caricato.esito !== 'caricato') { fallisci('codice' in caricato && caricato.codice || 'VIDEO_RIPROVA'); continue; }
         } else if (riga.stato !== 'caricato') {
-          await archivio.aggiorna(riga.jobId, { stato: 'caricato', offsetByte: riga.dimensioneByte });
-          await archivio.eliminaByte(riga.jobId);
+          // I byte sono già sul server: la copia locale — che qui non c'è, ma che in un giro nuovo
+          // parte in background — si ferma prima di liberare il peso.
+          await concludiCaricamentoVideo({ archivio }, riga.jobId);
         }
         const completo = await completaVideoNews(dipFlusso, apertura, { byte: riga.dimensioneByte, mime: riga.mime }, ancora);
         if (!completo.ok) fallisci(completo.codice);
@@ -423,18 +434,20 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
       const archivio = archivioRif.current ?? (await creaArchivioCaricamenti());
       archivioRif.current = archivio;
       // La firma è di QUESTO job e scade: si chiede al momento di spedire, e non
-      // si conserva accanto ai byte (sarebbe una credenziale su IndexedDB).
-      let firma = apertura.firma; let scade = Date.parse(apertura.expiresAt ?? '') || 0;
-      const dip: DipendenzeCaricamentoVideo = { archivio, intestazioni: async () => {
-        if (!ancora()) throw new Error('ContestoCambiato');
-        if (scade <= Date.now() + 15_000) {
+      // si conserva accanto ai byte (sarebbe una credenziale su IndexedDB). Si rinnova da
+      // sola prima della scadenza, e la libreria la rinnova di nuovo se lo Storage la rifiuta
+      // a metà trasferimento (`rinnovaFirma`): per le News il rinnovo è la riapertura
+      // dell'intento con la stessa chiave.
+      const dip = dipendenzeCaricamentoNews({
+        archivio, ancora, jobId: apertura.jobId,
+        iniziale: { firma: apertura.firma, scadeIl: apertura.expiresAt },
+        rinnova: async () => {
           const rinnovo = await apriIntentoVideoNews(dipFlusso, { scuolaId: tuttiSedi ? null : scuolaId, ambitoGlobale: tuttiSedi,
             chiaveIdempotenza: apertura.chiaveIdempotenza, file, mime: pre.mime, durataSecondi: durata });
-          if (!ancora() || !rinnovo.ok || rinnovo.jobId !== apertura.jobId || !rinnovo.needsUpload) throw new Error('FirmaNonDisponibile');
-          firma = rinnovo.firma; scade = Date.parse(rinnovo.expiresAt ?? '') || 0;
-        }
-        return { 'x-signature': firma };
-      } };
+          return rinnovo.ok && rinnovo.jobId === apertura.jobId && rinnovo.needsUpload
+            ? { firma: rinnovo.firma, scadeIl: rinnovo.expiresAt } : null;
+        },
+      });
 
       const messo = await accodaCaricamentoVideo(dip, {
         jobId: apertura.jobId,
@@ -467,10 +480,10 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
         },
       }) : { esito: 'caricato' as const };
       if (!ancora()) return;
-      if (!apertura.needsUpload) {
-        await archivio.aggiorna(apertura.jobId, { stato: 'caricato', offsetByte: file.size });
-        await archivio.eliminaByte(apertura.jobId);
-      }
+      // I byte sono già sul server: la copia locale che `accodaCaricamentoVideo` ha avviato in
+      // background si ferma prima di liberare il peso (e non lo si fa a mano con `eliminaByte`,
+      // che sull'archivio vero aspetterebbe la fine della copia per cancellarla).
+      if (!apertura.needsUpload) await concludiCaricamentoVideo(dip, apertura.jobId);
 
       if (esito.esito !== 'caricato') {
         // `interrotto` non è un fallimento: i byte restano sul dispositivo e la

@@ -221,7 +221,7 @@ regione `dub1` vale già per `src/app/api/video-uploads/**` (`vercel.json`).
 
 | Route | Gate e sede | Ingresso → uscita | Tetto |
 |---|---|---|---|
-| `POST /api/video-uploads` (esteso) | `requireDocente` → `resolveScuolaScrittura` **nel corpo dell'handler** → `cancelliDestinatariGalleria` (modulo nuovo condiviso con `/api/gallery`, T4) | Campi nuovi: `destinatari:{tagAlunni, broadcast, classi}`, `trasporto: 'tus' \| 'put-nativo'` (predefinito `tus`), `sha256` **per file** (`file[i].sha256`, hex 64: ammesso solo con `put-nativo` e **obbligatorio** con `put-nativo`). **Canale galleria senza `destinatari` → 409 `VIDEO_APP_DA_AGGIORNARE`** (client vecchio) + log `apertura-flusso-vecchio-rifiutata`. Con `destinatari`: solo galleria, un file, `azione: 'publish'`, almeno un tag **oppure** broadcast (`DESTINATARI_MANCANTI` 400). Errori **identici** a `/api/gallery`: 403 `TAG_FUORI_SEDE`, 403 `BROADCAST_NON_CONSENTITO`, 400 `BROADCAST_CON_TAG`, **422 `LIBERATORIA_MANCANTE` con `nomi` e `ids`, stesso testo di oggi**. Uscita: `tus` come oggi, oppure `{protocollo:'put', url, metodo:'PUT', intestazioni:{'content-type'}}` (URL firmato **senza upsert**) + `rinnovo:{token, scadeIl}`. Le News restano come oggi (nessun destinatario). | 30/10' per utente (invariato) |
+| `POST /api/video-uploads` (esteso) | `requireDocente` → `resolveScuolaScrittura` **nel corpo dell'handler** → `cancelliDestinatariGalleria` (modulo nuovo condiviso con `/api/gallery`, T4) | Campi nuovi: `destinatari:{tagAlunni, broadcast, classi}`, `trasporto: 'tus' \| 'put-nativo'` (predefinito `tus`), `sha256` **per file** (`file[i].sha256`, hex 64: ammesso solo con `put-nativo` e **obbligatorio** con `put-nativo`). **Canale galleria senza `destinatari` → 409 `VIDEO_APP_DA_AGGIORNARE`** (client vecchio) + log `apertura-flusso-vecchio-rifiutata`. Con `destinatari`: solo galleria, un file, `azione: 'publish'`, almeno un tag **oppure** broadcast (`DESTINATARI_MANCANTI` 400). Errori **identici** a `/api/gallery`, prodotti dallo stesso modulo `cancelliDestinatariGalleria` (T4): 403 `TAG_FUORI_SEDE` (l'unico con un `codice`), 403 broadcast non consentito, 400 broadcast con tag, **422 liberatoria mancante con `nomi` e `ids`, stesso testo di oggi**. Questi ultimi tre oggi **non** hanno un campo `codice` e restano così (i nomi `BROADCAST_NON_CONSENTITO`, `BROADCAST_CON_TAG`, `LIBERATORIA_MANCANTE` sono solo etichette di questa spec; il debito «errori senza codice» è dichiarato in testa a `cancelli-destinatari.ts`). Uscita: `tus` come oggi, oppure `{protocollo:'put', url, metodo:'PUT', intestazioni:{'content-type'}}` (URL firmato **senza upsert**) + `rinnovo:{token, scadeIl}`. Le News restano come oggi (nessun destinatario). | 30/10' per utente (invariato) |
 | `GET /api/video-uploads` (nuovo) | `requireDocente`, `scuoleDiUtente` + `.in('scuola_id', sedi)` (o la sede richiesta, solo se è fra le proprie), `owner_id = utente` | `?canale=gallery&scuolaId=…` → `{voci:[VoceVideo]}` (§6.1): intenti non terminali più quelli terminali degli ultimi 7 giorni, al massimo **50**, per `updated_at` decrescente. | 120/10' per utente |
 | `POST /api/video-uploads/[id]/firma` (nuovo; `[id]` = intento) | `requireDocente` → `leggiIntento` + `sedeAncoraPropria` (`cancello.ts`) | `{jobId}` → nuova firma TUS per il percorso del job, **solo** se il job è in `awaiting_upload`. Sostituisce la «riapertura per firmare» (190 aperture per 44 job). | 60/10' per utente |
 | `PATCH /api/video-uploads/[id]` | come oggi | Restano `caricato` (che ora chiama anche `video_runner_kick`), `conferma`, `annulla`, `annulla-job`. Nuova azione **`riprova-pubblicazione`** → `video_intent_pubblicazione_riprova` (409 `RIPROVA_NON_POSSIBILE`). **Nessuna** azione `destinatari`. | — |
@@ -273,12 +273,18 @@ guasto nostro esaurito, qualunque fosse l'ultimo codice tecnico (secondario #37)
 
 Libreria `pubblicaVideoGalleria(supabase, intentId)` in `src/lib/gallery/pubblicazione-video-automatica.ts`, chiamata
 **solo** dal destinatario dell'outbox `gallery.auto_publish`. Il registro dei destinatari esce da `retention-video` in
-`src/lib/media/video/outbox/` (T3) e ha due consumatori: il runner (subito dopo il `ready` e a ogni giro, al massimo 5
-eventi) e la retention (ogni 10'). Il claim con lease (`video_outbox_claim`) impedisce il doppio lavoro; l'idempotenza
-della RPC impedisce i doppioni. I file si toccano solo dalla Storage API. Il runner consuma **solo**
-`gallery.auto_publish`: il filtro va fatto **nel claim** (overload `video_outbox_claim(uuid, integer, integer, text[])`
-con `event_type = ANY(p_tipi)`, file C), non dopo, altrimenti il runner terrebbe in lease gli eventi altrui fino alla
-quarantena. Lease e limite della retention vanno ridimensionati ora che consegna anche pubblicazioni (T7, T13).
+`src/lib/media/video/outbox/` (T3) ed è **unico**; i consumatori si dividono i tipi **nel claim** (overload
+`video_outbox_claim(uuid, integer, integer, text[])` con `event_type = ANY(p_tipi)`, file C — filtrare dopo il claim
+terrebbe in lease gli eventi altrui fino alla quarantena):
+
+- il **runner** consuma **solo** `gallery.auto_publish` (subito dopo il `ready` e a ogni giro, al massimo 5 eventi);
+- la **retention** (ogni 10') consuma **tutti gli altri** tipi, con i numeri di oggi (25 eventi, lease 120 s, pensati per
+  ricevute da millisecondi). **Decisione dell'orchestratore (02/10, dopo l'ondata B):** la retention **non** pubblica
+  video, così una raffica di pubblicazioni non sfora la sua lease. Se il runner è fermo non si converte niente, quindi
+  una terza rete per le sole pubblicazioni non aggiungerebbe nulla: il giro del runner ogni 5' è la rete.
+
+Il claim con lease impedisce il doppio lavoro; l'idempotenza della RPC impedisce i doppioni. I file si toccano solo dalla
+Storage API.
 
 ### 8.2 Riverifiche al momento della pubblicazione (TypeScript, prima della copia)
 
@@ -402,7 +408,9 @@ restano rosse.
 - **Libreria** (`src/lib/media/video/upload/*`, T10): `accodaCaricamentoVideo` scrive solo la riga e la sorgente
   viva; il deposito locale parte **in background** e non è atteso; prima si controlla la quota
   (`navigator.storage.estimate`); `scriviByte` riceve un `AbortSignal` e a caricamento finito si annulla il deposito
-  ancora in corso; un `AbortController` per job, così «Rimuovi» ferma davvero il trasferimento; TUS uno alla volta.
+  ancora in corso; un `AbortController` per job, così «Rimuovi» ferma davvero il trasferimento. **TUS uno alla volta:**
+  la libreria garantisce la serie solo nella ripresa; nel client della galleria (T11) i trasferimenti di una scelta
+  partono **in serie** (ora che l'accodamento non aspetta più la copia, partirebbero tutti insieme).
 - **Ripresa automatica:** `usePollingVisibile` (coalizza `visibilitychange` e `appStateChange`) più `online`, più un
   backoff (5, 15, 30, 60 s) finché ci sono righe interrotte e la pagina è visibile; la firma si rinnova con `/firma`,
   mai riaprendo l'intento.
@@ -514,7 +522,8 @@ righe trattenute ⇒ 500.
 4. Spazzata degli orfani **anche** su `video_processing`, con 24 h di grazia, più gli originali «risorti» (riga
    timbrata ma file presente: si toglie il file).
 5. `video_intenti_minimizza(7)`.
-6. Consumo dell'outbox `gallery.auto_publish` (destinatario registrato da T7) e scansione degli esiti.
+6. Consumo dell'outbox per **tutti i tipi tranne** `gallery.auto_publish` (che consuma solo il runner, §8.1) con
+   l'overload filtrato, e scansione degli esiti di conversione (marca + notifica, §8.5).
 7. Contatori nuovi nel battito; si toglie il «BUCO DICHIARATO».
 
 **Registro GDPR** (`src/lib/gdpr/esegui.ts`): `video_processing` passa da `escluso` (lacuna aperta) a coperto, con le

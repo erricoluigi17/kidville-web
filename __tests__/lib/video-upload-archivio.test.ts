@@ -19,7 +19,7 @@ import type { CoordinateCaricamentoVideo } from '@/lib/media/video/contratto'
  * dell'app.
  *
  * Il criterio d'accettazione di V10 non è «il codice chiama `resume()`»: è che un
- * genitore che chiude l'app dopo aver spedito 180 secondi di video, al rientro
+ * genitore che chiude l'app dopo aver spedito 5 minuti di video, al rientro
  * ritrovi il LAVORO invece di ricominciarlo. Quel «ritrovare» è possibile solo se
  * lo stato sta su un supporto che sopravvive al processo, e qui si collauda che
  * cosa ci sta dentro, chi si ripesca e chi si butta.
@@ -218,6 +218,53 @@ describe('l’archivio in memoria', () => {
   it('aggiornare una riga che non c’è non la inventa', async () => {
     await archivio.aggiorna('inesistente', { stato: 'caricato' })
     expect(await archivio.leggi('inesistente')).toBeUndefined()
+  })
+
+  /**
+   * LA COPIA CHE SI PUÒ FERMARE. Dal 2026-10-02 la copia dei byte parte in background e
+   * può diventare inutile prima di finire — il trasferimento arriva in fondo prima di lei,
+   * o la persona toglie il video —, perciò `scriviByte` riceve un `AbortSignal`. L'archivio
+   * in memoria «copia» tenendo un riferimento, quindi l'unico punto in cui il segnale conta
+   * è l'ingresso; quello su IndexedDB lo guarda a ogni blocco (collaudato in
+   * `e2e/video-archivio.spec.ts`, che ha il motore vero).
+   */
+  it('un segnale già annullato non scrive niente e rigetta col codice dell’annullamento', async () => {
+    const r = riga()
+    await archivio.scrivi(r)
+    const controllore = new AbortController()
+    controllore.abort()
+
+    await expect(
+      archivio.scriviByte(r.jobId, new Blob([new Uint8Array(1024)]), controllore.signal),
+    ).rejects.toMatchObject({ name: 'VIDEO_COPIA_ANNULLATA' })
+
+    expect(await archivio.leggiByte(r.jobId)).toBeUndefined()
+  })
+
+  it('un segnale vivo, o assente, lascia scrivere come prima', async () => {
+    const r = riga()
+    await archivio.scrivi(r)
+    const controllore = new AbortController()
+
+    await archivio.scriviByte(r.jobId, new Blob([new Uint8Array(1024)]), controllore.signal)
+    expect((await archivio.leggiByte(r.jobId))?.size).toBe(1024)
+
+    await archivio.scriviByte(r.jobId, new Blob([new Uint8Array(2048)]))
+    expect((await archivio.leggiByte(r.jobId))?.size).toBe(2048)
+  })
+
+  it('una copia fermata non tocca il deposito intero che c’era già', async () => {
+    const r = riga()
+    await archivio.scrivi(r)
+    await archivio.scriviByte(r.jobId, new Blob([new Uint8Array(1024)]))
+    const controllore = new AbortController()
+    controllore.abort()
+
+    await expect(
+      archivio.scriviByte(r.jobId, new Blob([new Uint8Array(4096)]), controllore.signal),
+    ).rejects.toMatchObject({ name: 'VIDEO_COPIA_ANNULLATA' })
+
+    expect((await archivio.leggiByte(r.jobId))?.size).toBe(1024)
   })
 })
 

@@ -468,18 +468,6 @@ export const CODICI_ERRORE = {
      */
     MODULO_NON_TROVATO: 'erroreModuloNonTrovato',
     /**
-     * 415 — il video non è riproducibile ovunque (HEVC/QuickTime) e va convertito
-     * prima del caricamento (`src/lib/media/codec-sniff.ts`).
-     *
-     * La prosa che il server manda accanto è `MESSAGGIO_VIDEO_NON_CONVERTIBILE`,
-     * che vive in una libreria condivisa client+server e per costruzione nasce
-     * italiana: era l'ultimo testo lungo che una maestra con l'interfaccia in
-     * inglese leggeva in italiano. Il codice la traduce; il dettaglio operativo
-     * (il percorso nelle impostazioni dell'iPhone) resta nella prosa e nella
-     * frase che la pagina mostra quando la conversione fallisce sul dispositivo.
-     */
-    VIDEO_NON_CONVERTIBILE: 'erroreVideoNonConvertibile',
-    /**
      * 503 — la segnalazione non è stata registrata perché non si è riusciti ad
      * attribuirla a un plesso (`POST /api/segnalazioni`).
      *

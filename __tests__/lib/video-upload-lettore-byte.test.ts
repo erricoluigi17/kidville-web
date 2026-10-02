@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Blob as NodeBlob } from 'node:buffer'
 import { LettoreBlob } from '@/lib/media/video/upload/lettore-blob'
-import { ErroreByteVideo, LETTURA_VIDEO_MASSIMA, leggiBloccoBlob } from '@/lib/media/video/upload/byte-video'
+import {
+  ErroreByteVideo,
+  LETTURA_VIDEO_MASSIMA,
+  eCopiaAnnullata,
+  fermaSeAnnullata,
+  leggiBloccoBlob,
+} from '@/lib/media/video/upload/byte-video'
 import { DIMENSIONE_BLOCCO_TUS_BYTE } from '@/lib/media/video/contratto'
 
 describe('corpo TUS indipendente dai Blob WebKit', () => {
@@ -90,5 +96,32 @@ describe('leggiBloccoBlob', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('l’annullamento di una copia dei byte', () => {
+  it('fermaSeAnnullata lancia solo a segnale annullato, e con l’errore che dice «non è un guasto»', () => {
+    const controllore = new AbortController()
+    expect(() => fermaSeAnnullata(controllore.signal)).not.toThrow()
+    expect(() => fermaSeAnnullata(undefined)).not.toThrow()
+
+    controllore.abort()
+    let lanciato: unknown
+    try {
+      fermaSeAnnullata(controllore.signal)
+    } catch (err) {
+      lanciato = err
+    }
+    expect(lanciato).toBeInstanceOf(ErroreByteVideo)
+    // Il nome è il codice: `nomeErrore` trasmette solo quello, e nei log deve leggersi «annullata».
+    expect(lanciato).toMatchObject({ name: 'VIDEO_COPIA_ANNULLATA', codice: 'VIDEO_COPIA_ANNULLATA' })
+    expect(eCopiaAnnullata(lanciato)).toBe(true)
+  })
+
+  it('eCopiaAnnullata non scambia un difetto vero dei byte per un annullamento', () => {
+    expect(eCopiaAnnullata(new ErroreByteVideo('VIDEO_BLOCCO_INCOMPLETO'))).toBe(false)
+    expect(eCopiaAnnullata(new ErroreByteVideo('VIDEO_ARCHIVIO_NON_VALIDO'))).toBe(false)
+    expect(eCopiaAnnullata(Object.assign(new Error('x'), { name: 'AbortError' }))).toBe(false)
+    expect(eCopiaAnnullata(null)).toBe(false)
   })
 })

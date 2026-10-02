@@ -6,6 +6,19 @@ import { EMAILS, IDS, STORAGE, login } from './fixtures';
 // Il percorso usa davvero UI, API, Storage e lettura del genitore: nessuna API
 // viene sostituita con una risposta finta. I replay successivi verificano il caso
 // in cui il salvataggio sia riuscito ma il telefono non abbia ricevuto la risposta.
+//
+// LA SCHEDA SI RICONOSCE DAL FILE, NON DAL NOME. Decisione del titolare del 02/10/2026:
+// nessun contenuto NUOVO ha una didascalia, quindi la POST archivia sempre NULL qualunque
+// cosa mandi il client, e la scheda della galleria si chiama soltanto «Foto» — non più
+// «Foto: <nome del file>». Il nome del file non arriva più al server, quindi nella galleria
+// non compare più: cercare per nome una scheda non la troverebbe mai, e cercare per nome
+// l'ASSENZA di una scheda passerebbe sempre. Ciò che identifica la foto di QUESTA
+// esecuzione è il percorso nel bucket (`uploads/<utente>/<file>`, diverso a ogni
+// caricamento): lo si legge dal corpo della POST intercettata e lo si cerca nell'`src`
+// della miniatura, che è l'indirizzo firmato di quello stesso percorso. Per lo stesso
+// motivo il replay con una didascalia diversa NON è più un conflitto (la didascalia si
+// ignora, l'impronta non cambia): il conflitto vero si prova su un campo che l'impronta
+// copre davvero.
 test.describe.configure({ retries: 0 });
 test.use({ storageState: STORAGE.docente, serviceWorkers: 'block' });
 
@@ -83,12 +96,26 @@ test(`foto docente → genitore e ripresa: ${interruzione}`, async ({ page, brow
     // Ricrea React e legge IndexedDB: la ripresa non può dipendere dalla memoria.
     await page.reload();
   }
-  await expect(page.getByRole('button', { name: `Foto: ${nome}`, exact: true })).toBeVisible({ timeout: 60_000 });
-  // La card può arrivare dalla GET della griglia dopo il reload mentre la POST è
-  // ancora nel server: la riga è già scritta, ma il 201 parte solo dopo
-  // l'accodamento delle notifiche. Si aspetta l'esito, poi si legge l'id.
-  await expect.poll(() => esitiPubblicazione, { timeout: 30_000 }).toEqual(interruzione === 'risposta pubblicazione' ? [201, 200] : [201]);
+  // PRIMA l'esito della POST, POI la scheda: la scheda si riconosce dal percorso del file
+  // (vedi la testata), e il percorso sta nel corpo della POST. I 60 s sono quelli che
+  // prima spettavano all'attesa della scheda: da qui passano il caricamento, l'eventuale
+  // ripresa dopo il reload e la pubblicazione. Inoltre la scheda può arrivare dalla GET
+  // della griglia dopo il reload mentre la POST è ancora nel server: la riga è già
+  // scritta, ma il 201 parte solo dopo l'accodamento delle notifiche. Si aspetta
+  // l'esito, poi si legge l'id.
+  await expect.poll(() => esitiPubblicazione, { timeout: 60_000 }).toEqual(interruzione === 'risposta pubblicazione' ? [201, 200] : [201]);
   const payload = pubblicazione as Record<string, unknown> | null;
+  const percorso = String(payload?.file_url ?? '');
+  expect(percorso).toMatch(/^uploads\//);
+  // Il percorso si ritrova nell'`src` della miniatura, che è l'indirizzo firmato di quel
+  // file: è così che la scheda di questa esecuzione si distingue da tutte le altre.
+  const miniatura = page.locator(`[data-testid="griglia-media"] img[src*="${percorso}"]`);
+  await expect(miniatura).toHaveCount(1, { timeout: 60_000 });
+  // Prova a schermo che la didascalia è nulla: con una didascalia il nome della scheda
+  // sarebbe «Foto: <didascalia>» (`etichettaCard`), con la didascalia nulla è «Foto».
+  await expect(
+    page.locator('[data-testid="griglia-media"] [role="button"]', { has: page.locator(`img[src*="${percorso}"]`) }),
+  ).toHaveAccessibleName('Foto');
   expect(payload?.upload_id).toMatch(/^[0-9a-f-]{36}$/i);
   expect(payload?.scuola_id).toBe(IDS.SCUOLA);
   expect(mediaId).toMatch(/^[0-9a-f-]{36}$/i);
@@ -102,8 +129,23 @@ test(`foto docente → genitore e ripresa: ${interruzione}`, async ({ page, brow
     expect(data.id).toBe(mediaId);
     expect(data.replayed).toBe(true);
   }
-  const conflitto = await page.request.post('/api/gallery', { data: { ...payload, caption: `${nome}-diversa` } });
+  // La didascalia NON è un campo che conta: il server la ignora (nessun contenuto nuovo ne
+  // ha una) e non la manda alla RPC, quindi l'impronta non cambia. Un replay con una
+  // didascalia diversa è lo STESSO caricamento — 200, stesso id, didascalia ancora nulla —
+  // e non più un conflitto.
+  const didascaliaDiversa = await page.request.post('/api/gallery', { data: { ...payload, caption: `${nome}-diversa` } });
+  expect(didascaliaDiversa.status()).toBe(200);
+  const ignorata = await didascaliaDiversa.json();
+  expect(ignorata.id).toBe(mediaId);
+  expect(ignorata.replayed).toBe(true);
+  expect(ignorata.caption).toBeNull();
+  // Il conflitto vero si prova su un campo che l'impronta copre e che supera i cancelli: i
+  // bambini taggati. Nessun tag e nessun broadcast vuol dire «tutta la sede», e non c'è
+  // niente da verificare, quindi la richiesta arriva fino alla RPC, che la rifiuta perché
+  // lo stesso `upload_id` era stato usato per un'altra foto.
+  const conflitto = await page.request.post('/api/gallery', { data: { ...payload, tag_students: [] } });
   expect(conflitto.status()).toBe(409);
+  expect((await conflitto.json()).codice).toBe('CARICAMENTO_IN_CONFLITTO');
 
   const genitore = await browser.newContext({ storageState: STORAGE.genitore, serviceWorkers: 'block' });
   const famiglia = await genitore.newPage();
@@ -118,10 +160,11 @@ test(`foto docente → genitore e ripresa: ${interruzione}`, async ({ page, brow
     expect(response.ok()).toBe(true);
     const data = await response.json() as { media: Array<{ id: string }> };
     expect(data.media.filter(media => media.id === mediaId)).toHaveLength(1);
-    const card = famiglia.getByRole('button', { name: `Foto: ${nome}`, exact: true });
-    await expect(card).toHaveCount(1, { timeout: 30_000 });
-    await expect(card).toBeVisible();
-    await expect.poll(() => card.locator('img').evaluate(image => (image as HTMLImageElement).naturalWidth), { timeout: 30_000 }).toBeGreaterThan(0);
+    // La scheda si riconosce dal file (vedi la testata): la miniatura col percorso pubblicato.
+    const miniaturaFamiglia = famiglia.locator(`[data-testid="griglia-media"] img[src*="${percorso}"]`);
+    await expect(miniaturaFamiglia).toHaveCount(1, { timeout: 30_000 });
+    await expect(miniaturaFamiglia).toBeVisible();
+    await expect.poll(() => miniaturaFamiglia.evaluate(image => (image as HTMLImageElement).naturalWidth), { timeout: 30_000 }).toBeGreaterThan(0);
   } finally {
     await genitore.close();
   }
@@ -138,7 +181,10 @@ test(`foto docente → genitore e ripresa: ${interruzione}`, async ({ page, brow
     const data = await response.json() as { media: Array<{ id: string }> };
     expect(data.media.some(media => media.id === mediaId)).toBe(false);
     await expect(altraFamiglia.getByText('Caricamento foto…', { exact: true })).toHaveCount(0);
-    await expect(altraFamiglia.getByRole('button', { name: `Foto: ${nome}`, exact: true })).toHaveCount(0);
+    // Per file e non per nome: nessuna scheda può più chiamarsi «Foto: <nome del file>»,
+    // quindi quel controllo sarebbe sempre verde. Il percorso, invece, esiste in questa pagina
+    // solo se la foto è stata consegnata a chi non doveva vederla.
+    await expect(altraFamiglia.locator(`[data-testid="griglia-media"] img[src*="${percorso}"]`)).toHaveCount(0);
   } finally {
     await estraneo.close();
   }

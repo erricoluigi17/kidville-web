@@ -14,25 +14,18 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 import { assertTagStudentsInScope } from '@/lib/gallery/tag-scope';
+import { cancelliBroadcastGalleria, cancelliSedeGalleria } from '@/lib/gallery/cancelli-destinatari';
+import { notificaGenitoriGalleria } from '@/lib/gallery/notifica-genitori';
 import { firmaMediaGalleria, percorsoNelBucket } from '@/lib/gallery/storage';
 import { percorsoUploadProprio, pubblicaFotoIdempotente } from '@/lib/gallery/pubblicazione-foto';
-import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte';
-// ─── V08 · LA PUBBLICAZIONE DI UN VIDEO ──────────────────────────────────────
-// La metà «Storage» sta in un modulo suo (copia + compensazione); la metà
-// «risposta» si prende da dove vive già per tutta la pipeline video, invece di
-// riscriverla qui: `rispostaVideo` è uno switch di quindici letterali che
-// `errori-con-codice.test.ts` LEGGE, e una seconda traduzione codice→HTTP
-// divergerebbe dalla prima entro un mese — è la ragione per cui quel modulo
-// esiste, scritta nella sua testata.
-import { annullaCopiaVideoInGalleria, copiaVideoInGalleria } from '@/lib/gallery/video-pubblicazione';
-import { codiceMessaggioVideo, type CodiceInternoVideo } from '@/lib/media/video/contratto';
-import {
-    logVideo,
-    pipelineAssente,
-    rispostaPipelineAssente,
-    rispostaVideo,
-    statoHttpVideo,
-} from '@/app/api/video-uploads/risposte';
+// ─── UN VIDEO NON SI PUBBLICA DA QUI (PR 2 video, 2026-10-02) ────────────────
+// La risposta ai client del flusso vecchio si prende da dove vive già per tutta la
+// pipeline video, invece di riscriverla qui: `rispostaVideo` è uno switch di
+// letterali che `errori-con-codice.test.ts` LEGGE, e una seconda traduzione
+// codice→HTTP divergerebbe dalla prima entro un mese — è la ragione per cui quel
+// modulo esiste, scritta nella sua testata.
+import { codiceMessaggioVideo } from '@/lib/media/video/contratto';
+import { rispostaVideo, statoHttpVideo } from '@/app/api/video-uploads/risposte';
 import { alunniTaggatiDellaSede, assertAlunnoNellaSede, risolviSedeDellaVista } from '@/lib/gallery/vista-sede';
 import { proiettaPerGenitore } from './proiezione';
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede';
@@ -44,11 +37,9 @@ import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 // sarebbe la sesta copia di una condizione di visibilità in una rotta che ne ha
 // già perse due per strada (il filtro di sede nella POST, poi nel PATCH).
 import { ancheNelCestino, colonnaCestinoAssente, soloNelCestino, soloVive } from '@/lib/gallery/cestino';
-import { notificaEvento } from '@/lib/notifiche/triggers';
-import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore, logEvento, type Valore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -150,12 +141,20 @@ const postBodySchema = z.object({
     //
     // ⚠️ `optional()` dal 2026-09-18, e NON è un allentamento: lo rende
     // obbligatorio `postBodySchemaCoerente` qui sotto ogni volta che non c'è un
-    // `video_intent_id`. Un video convertito dalla pipeline un `file_url` non ce
-    // l'ha e non deve averlo — il percorso nel bucket lo decide il server dopo la
-    // copia, mai il client.
+    // `video_intent_id`. Chi porta un `video_intent_id` è un client del flusso vecchio
+    // dei video: non ha mai mandato un `file_url`, e deve poter arrivare al 409 che
+    // gli dice di aggiornarsi invece di fermarsi su un 400 che non spiega niente.
     file_url: z.string().min(1, 'file_url è obbligatorio').optional(),
     file_type: z.string().nullish(),
     upload_id: zUuid.optional(),
+    // ⚠️ ACCETTATA E MAI SCRITTA (2026-10-02, decisione del titolare). Nessun contenuto
+    // nuovo ha una didascalia: la POST archivia sempre NULL, qualunque cosa mandi il
+    // client — e il valore non si logga, perché la didascalia di una foto è stata per
+    // anni il nome del file («Marco al parco.jpg»: il nome di un bambino). Resta nello
+    // schema solo perché i client già in giro (e le righe già accodate sul telefono) la
+    // mandano ancora, e un campo tolto da un `z.object` non strict si scarta in silenzio:
+    // qui invece si dichiara che la si scarta. Le 4.195 didascalie esistenti non si
+    // toccano, e la modifica esplicita (`PATCH`) resta com'è.
     caption: z.string().nullish(),
     // `zUuid` e non `z.string()` (2026-08-03). Era «lasco: oggi nessun vincolo
     // uuid sugli id taggati», e la conseguenza non era estetica: un id
@@ -173,97 +172,39 @@ const postBodySchema = z.object({
     // renderla obbligatoria — e a rispondere 400 — quando i plessi sono più
     // d'uno e nessuno è indicato né selezionato nel SedeSelector.
     scuola_id: zUuid.nullish(),
-    // ─── V08 · LA PUBBLICAZIONE DI UN VIDEO GIÀ CONVERTITO ────────────────────
-    // L'impegno aperto da `POST /api/video-uploads` e confermato dalla `PATCH`.
-    // Quando c'è, il file NON arriva dal client: arriva dal bucket di lavorazione,
-    // e il suo percorso lo decide questo server dopo la copia.
+    // ─── IL FLUSSO VECCHIO DEI VIDEO (fino al 2026-10-02) ─────────────────────
+    // Fino alla PR 2 un video convertito si pubblicava da qui, con l'impegno aperto da
+    // `POST /api/video-uploads`. Ora lo pubblica il server da solo, appena la conversione
+    // finisce (`pubblicaVideoGalleria`), e questa rotta non conclude più nessun video.
+    // Il campo resta nello schema per UN motivo: un client col JS vecchio ancora aperto
+    // lo manda, e deve ricevere il 409 che gli dice di aggiornarsi. Tolto dallo schema,
+    // lo scarterebbe un `z.object` non strict e la richiesta cadrebbe su un 400
+    // («file_url è obbligatorio») che non spiega niente. Non si legge altro che questo:
+    // nemmeno la revisione, che un tempo lo accompagnava, serve a rispondere 409.
     video_intent_id: zUuid.nullish(),
-    // La revisione che il client CREDE corrente. Non è un di più: fra la conferma
-    // e questa richiesta l'intento può essere stato superato da una modifica, e
-    // pubblicare la revisione vecchia vorrebbe dire mettere in galleria il video
-    // che l'insegnante ha appena sostituito. La confronta anche la RPC, sotto
-    // lock (`REVISION_MISMATCH`); qui si risparmia una copia inutile.
-    video_revisione: z.number().int().min(1).nullish(),
 });
 
 /**
- * LA SORGENTE DEL FILE È UNA SOLA, e lo dice il 400.
+ * `file_url` È OBBLIGATORIO PER LE FOTO, e lo dice il 400.
  *
  * ⚠️ `z.object` NON è strict: i campi fuori schema — e le combinazioni che lo
  * schema non vieta — passano in silenzio, ed è già costato tre incidenti in questo
- * repository. Qui le combinazioni mute sarebbero tre, tutte brutte:
+ * repository. Le combinazioni mute qui sono due:
  *
- *  · `video_intent_id` senza `video_revisione`: la revisione non si può dedurre
- *    («prendo quella corrente» significa «pubblico qualunque cosa ci sia adesso»,
- *    cioè l'esatto contrario di ciò per cui la revisione esiste);
- *  · `video_intent_id` INSIEME a `file_url`: due sorgenti per un file solo. Una
- *    delle due verrebbe ignorata, e chi pubblica non saprebbe quale — sarebbe la
- *    stessa bugia dello `scuolaId` scartato in silenzio nella GET, un parametro
- *    in meno;
- *  · nessuno dei due: il caso storico, dove `file_url` è e resta obbligatorio.
+ *  · `upload_id` su un contenuto che non è una foto: l'idempotenza per `upload_id`
+ *    (RPC `gallery_publish_photo`) è solo delle foto;
+ *  · nessun `file_url` e nessun `video_intent_id`: il caso storico, dove `file_url` è e
+ *    resta obbligatorio. Con un `video_intent_id` non si chiede, perché a quella
+ *    richiesta risponde il 409 del flusso vecchio prima di guardare il file.
  */
 const postBodySchemaCoerente = postBodySchema.superRefine((b, ctx) => {
-    if (b.upload_id && (b.video_intent_id || (b.file_type != null && b.file_type !== 'foto'))) {
+    if (b.upload_id && b.file_type != null && b.file_type !== 'foto') {
         ctx.addIssue({ code: 'custom', path: ['upload_id'], message: 'upload_id si usa solo per le foto' });
     }
-    if (b.video_intent_id) {
-        if (b.video_revisione == null) {
-            ctx.addIssue({
-                code: 'custom',
-                path: ['video_revisione'],
-                message: 'Con video_intent_id la revisione va dichiarata: manca video_revisione',
-            });
-        }
-        if (b.file_url) {
-            ctx.addIssue({
-                code: 'custom',
-                path: ['file_url'],
-                message: 'file_url non si usa con video_intent_id: il percorso lo decide il server',
-            });
-        }
-        return;
-    }
-    if (b.video_revisione != null) {
-        ctx.addIssue({
-            code: 'custom',
-            path: ['video_intent_id'],
-            message: 'video_revisione si usa solo con video_intent_id',
-        });
-    }
-    if (!b.file_url) {
+    if (!b.video_intent_id && !b.file_url) {
         ctx.addIssue({ code: 'custom', path: ['file_url'], message: 'file_url è obbligatorio' });
     }
 });
-
-/**
- * Un rifiuto della pubblicazione video: il codice INTERNO resta nel log, quello
- * MOSTRABILE esce nella risposta.
- *
- * Sono due pubblici diversi, e non si scambiano fra loro: `JOBS_NOT_READY` a
- * un'insegnante non dice niente, `VIDEO_NON_ANCORA_PRONTO` a chi indaga non dice
- * quale dei quindici rifiuti è scattato. È la stessa divisione — e la stessa
- * tabella `codice → stato HTTP` — che la pipeline usa in `rispostaEsitoRpc`:
- * scriverne una seconda qui vorrebbe dire due numeri diversi per lo stesso
- * rifiuto entro un mese.
- *
- * `warn` e non `error` sotto il 500: un `REVISION_MISMATCH` è il protocollo che
- * funziona, non un guasto. Ma va visto — «nessuna riga» non deve significare
- * insieme «non succede mai» e «succede e non lo sappiamo».
- */
-function rifiutoVideoGalleria(
-    codice: CodiceInternoVideo,
-    contesto: Record<string, Valore>,
-): NextResponse {
-    const stato = statoHttpVideo(codice);
-    logVideo('gallery', stato >= 500 ? 'error' : 'warn', {
-        operazione: 'gallery:POST',
-        esito: 'video-non-pubblicabile',
-        error_code: codice,
-        stato,
-        ...contesto,
-    });
-    return rispostaVideo(codiceMessaggioVideo(codice), stato);
-}
 
 const deleteQuerySchema = z.object({
     id: zUuid,
@@ -811,18 +752,29 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
 // POST /api/gallery
 // Body: { uploaded_by, file_url, file_type?, caption?, tag_students?, is_broadcast?, target_classes? }
 //
-// ─── E DAL 2026-09-18 ANCHE LA PUBBLICAZIONE DI UN VIDEO CONVERTITO (V08) ────
-// Con `video_intent_id` + `video_revisione` al posto di `file_url`, questa stessa
-// rotta conclude un impegno della pipeline video: copia l'uscita dentro `gallery`,
-// scrive la riga e chiama `video_intent_finalize` NELLA STESSA RICHIESTA.
+// ─── PUBBLICA SOLO FOTO (dal 2026-10-02) ─────────────────────────────────────
+// Dal 2026-09-18 al 2026-10-02 questa rotta pubblicava anche un video già convertito
+// (`video_intent_id` + `video_revisione` al posto di `file_url`): copiava l'uscita dentro
+// `gallery`, scriveva la riga e chiamava `video_intent_finalize` nella stessa richiesta,
+// compensando a mano se la RPC rifiutava. Ora il lavoro lo fa il server da solo, appena
+// la conversione finisce: la RPC `video_galleria_pubblica` scrive la riga e chiude
+// l'intento nella STESSA transazione, quindi la compensazione non serve più. A chi chiede
+// ancora questa strada — un client col JS vecchio, rimasto aperto — si risponde 409
+// `VIDEO_APP_DA_AGGIORNARE`, e basta.
 //
-// ⚠️ NON è una seconda porta, ed è la decisione che conta di tutta V08. I gate
-// della Galleria — ruolo, sede DICHIARATA, tag nel perimetro, liberatoria
-// fotografica — vivono qui e sono quattro. Una rotta nuova sarebbe stata la loro
-// seconda copia, e in questo repository la seconda copia è già costata: il gate
-// dei tag scritto dentro questo handler lasciò scoperta la PATCH per tre giorni,
-// ed è il motivo per cui oggi sta in `@/lib/gallery/tag-scope`. Il ramo video
-// entra DOPO quei quattro gate, non accanto.
+// ─── I CANCELLI DEI DESTINATARI NON SONO PIÙ SCRITTI QUI ─────────────────────
+// Broadcast riservato alla Direzione, broadcast senza tag, tag nella sede del contenuto e
+// liberatoria fotografica stanno in `@/lib/gallery/cancelli-destinatari`, perché li
+// attraversa anche `POST /api/video-uploads`: una seconda copia delle quattro regole
+// sarebbe la seconda occasione di correggerne una e dimenticare l'altra — il gate dei tag
+// scritto dentro questo handler lasciò scoperto il PATCH per tre giorni. Qui si chiamano
+// nell'ordine di sempre: la prima metà prima di qualunque lettura, la seconda dopo aver
+// risolto la sede. Le risposte sono identiche a quelle di prima, parola per parola.
+//
+// ─── NESSUNA DIDASCALIA, E UN AVVISO CHE NON NOMINA NIENTE (2026-10-02) ──────
+// La riga nasce SEMPRE con `caption` NULL, qualunque cosa mandi il client, e l'avviso ai
+// genitori ha un testo fisso (`@/lib/gallery/notifica-genitori`). La didascalia di una foto
+// era il nome del file scelto da chi carica, e finiva fra virgolette nella notifica push.
 export const POST = withRoute('gallery:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
@@ -830,61 +782,67 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
 
         const b = await parseBody(request, postBodySchemaCoerente);
         if ('response' in b) return b.response;
+        // ⚠️ `caption` NON si destruttura, e non è una dimenticanza: il valore del client si
+        // ignora e non deve poter arrivare nemmeno a un log. Vedi lo schema.
         const {
             file_url,
             file_type,
-            caption,
             tag_students,
             is_broadcast,
             target_classes,
             scuola_id,
             video_intent_id,
-            video_revisione,
             upload_id,
         } = b.data;
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // IL FLUSSO VECCHIO DEI VIDEO: 409, e prima di ogni altra cosa
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // Dopo il gate di ruolo (un anonimo non deve poter sapere niente) ma PRIMA dei
+        // cancelli dei destinatari e di qualunque lettura: la risposta non dipende da cosa
+        // i cancelli direbbero, perché il client non può farci niente — la sua strada è
+        // chiusa, e un 422 «manca la liberatoria» su una strada chiusa lo manderebbe a
+        // correggere la cosa sbagliata. Nessun database, nessun file, nessuna notifica.
+        //
+        // ⚠️ `warn` e non muto: il giorno del rilascio bisogna poter dire quanti client
+        // parlano ancora la lingua vecchia, altrimenti «non si è lamentato nessuno» vuol
+        // dire insieme «hanno aggiornato tutti» e «non lo sappiamo». Solo uuid: l'intento
+        // (e `distingui`, perché `app_log` conserva il contesto della PRIMA occorrenza del
+        // giorno e qui ogni video rifiutato è una storia a sé, da ricaricare). Mai la
+        // didascalia, mai un nome di file.
+        if (video_intent_id) {
+            logEvento('galleria', 'warn', {
+                operazione: 'gallery:POST',
+                esito: 'pubblicazione-video-legacy-rifiutata',
+                error_code: 'CLIENT_UPDATE_REQUIRED',
+                intento: video_intent_id,
+            }, undefined, { distingui: ['intento'] });
+            return rispostaVideo(
+                codiceMessaggioVideo('CLIENT_UPDATE_REQUIRED'),
+                statoHttpVideo('CLIENT_UPDATE_REQUIRED'),
+            );
+        }
 
         // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
         const uploaded_by = auth.user.id;
 
+        // LA PRIMA METÀ DEI CANCELLI DEI DESTINATARI — prima di qualunque lettura.
         // Broadcast = comunicazione istituzionale: riservata alla Direzione
-        // (admin/coordinatore). La UI lo nasconde già agli educatori; qui lo
-        // impone anche il server.
-        if (is_broadcast === true && !['admin', 'coordinator'].includes(auth.user.role)) {
-            return NextResponse.json(
-                { error: 'Solo la Direzione (admin o coordinatore) può pubblicare in broadcast.' },
-                { status: 403 }
-            );
-        }
-
-        // BROADCAST ⇒ NESSUN TAG, e ora lo dice il server.
-        // `tag_students` sono i bambini RITRATTI; il broadcast manda la foto a
-        // un'intera classe o all'intera sede. La regola esisteva già, ma viveva
-        // SOLO nel client (`teacher/gallery/page.tsx:304` e `:345`, che mandano
-        // `tag_students: []` quando il broadcast è attivo): chi chiamava questa
-        // rotta direttamente la scavalcava, e il Privacy Lock qui sotto non lo
-        // fermava perché in broadcast usciva prima ancora di leggere
-        // l'anagrafica. Risultato misurato dal collaudo privacy del 2026-07-31
-        // (rilievo F5): `is_broadcast:true` + tre bambini senza liberatoria →
-        // 201, foto di gruppo pubblicata a tutta la sede.
-        // Una regola di privacy applicata dal client non è una regola.
-        const tagUnici = [...new Set((tag_students ?? []) as string[])];
-        if (is_broadcast === true && tagUnici.length > 0) {
-            // `warn`: non è un errore del sistema, è una richiesta respinta — ma
-            // va vista, perché l'interfaccia questa combinazione non la produce.
-            // Solo conteggi: gli id sono di minori.
-            logEvento('galleria', 'warn', {
-                operazione: 'gallery:POST',
-                esito: 'broadcast-con-tag',
-                tipo: 'broadcast-con-tag',
-                taggati: tagUnici.length,
-            });
-            return NextResponse.json(
-                {
-                    error: 'Una foto in broadcast non può taggare bambini: va a tutta la classe o a tutta la sede. Pubblicala senza tag, oppure togli il broadcast e tagga solo chi ha la liberatoria foto.',
-                },
-                { status: 400 }
-            );
-        }
+        // (admin/coordinatore), e mai insieme a dei bambini taggati (`tag_students` sono i
+        // bambini RITRATTI; il broadcast manda il contenuto a un'intera classe o all'intera
+        // sede). La UI lo nasconde già agli educatori e non produce quella combinazione: qui
+        // lo impone il server, perché una regola di privacy applicata dal client non è una
+        // regola (collaudo privacy del 2026-07-31, rilievo F5: `is_broadcast:true` più tre
+        // bambini senza liberatoria ⇒ 201, foto di gruppo a tutta la sede).
+        const cancelloBroadcast = cancelliBroadcastGalleria({
+            ruolo: auth.user.role,
+            tagAlunni: tag_students,
+            broadcast: is_broadcast,
+            classi: target_classes,
+            operazione: 'gallery:POST',
+        });
+        if (!cancelloBroadcast.ok) return cancelloBroadcast.response;
 
         const supabase = await createAdminClient();
 
@@ -903,214 +861,26 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // ⚠️ E SI RISOLVE QUI, PRIMA DEI TAG (2026-08-03). Stava dopo, ed è la
         // ragione per cui il gate dei tag guardava la cosa sbagliata: non avendo
         // ancora la sede del media, poteva solo confrontare i tag con TUTTI i
-        // plessi di chi opera. Vedi il blocco qui sotto.
+        // plessi di chi opera. Vedi `cancelliSedeGalleria`.
         const sw = await resolveScuolaScrittura(request as NextRequest, supabase, auth.user, scuola_id ?? undefined);
         if (sw.response) return sw.response;
         const scuolaId = sw.scuolaId as string;
 
-        // LO SCOPE DI SEDE VIENE PRIMA DEL PRIVACY LOCK, e non è un dettaglio
-        // d'ordine. Fino al 2026-07-31 `alunniSenzaConsenso` interrogava `alunni`
-        // con `.in('id', ids)` senza filtro di sede, e il 422 che ne usciva
-        // portava NOMI E COGNOMI dei minori taggati più l'informazione che a loro
-        // manca la liberatoria fotografica. Il collaudo privacy l'ha misurato con
-        // la controprova su tre sedi: la risposta era IDENTICA per la segreteria
-        // che ne aveva titolo e per quella di un altro plesso. Bastava conoscere
-        // gli uuid — e un uuid non è un segreto.
-        //
-        // ⚠️ Il gate NON è più scritto qui dentro (2026-08-03). Vent'anni di
-        // buone intenzioni non fanno quello che fa una funzione sola: la copia
-        // che stava in questo handler proteggeva la POST e lasciava scoperto il
-        // PATCH, che i tag li accetta esattamente allo stesso modo. Ora la regola
-        // vive in `@/lib/gallery/tag-scope` ed è chiamata da entrambi.
-        //
-        // ⚠️ E LA SEDE CHE SI DICHIARA È QUELLA DEL MEDIA, NON I PLESSI DI CHI
-        // OPERA (2026-08-03, rilievo W4/W3 del verificatore adversariale). Qui
-        // c'era `resolveScuoleAttive(...)`, cioè «tutte le sedi selezionate
-        // dall'utente», e per un admin di due plessi quell'elenco ne conteneva
-        // due. Misurato: admin con le sedi A+B attive,
-        // `POST {"scuola_id":"<A>","tag_students":["<uuid di un minore di B>"]}`
-        // ⇒ **201**, riga con `scuola_id: A` e dentro `tag_students` l'uuid di un
-        // bambino di B. Nessuno eccede il proprio titolo — le due sedi le ha
-        // entrambe — ma l'identificatore di un minore finisce nella galleria di
-        // un plesso il cui personale su quel bambino titolo non ne ha, e da lì lo
-        // vede chiunque legga quella sede (`proiettaPerGenitore` nasconde
-        // `tag_students` ai GENITORI, non ai colleghi).
-        // La proprietà giusta è una sola: **i tag appartengono alla sede DEL
-        // MEDIA**. La sede del media è `scuolaId`, ed è appena stata risolta.
-        const plessi = [scuolaId];
-        const fuoriSede = await assertTagStudentsInScope(supabase, tagUnici, plessi, 'gallery:POST');
-        if (fuoriSede) return fuoriSede;
-
-        // Privacy Lock (DL-041): inibisce il tagging di alunni senza consenso
-        // privacy (liberatoria foto) sulle foto di GRUPPO. Il canale non lo
-        // spegne più: `alunniSenzaConsenso` non accetta nemmeno l'argomento con
-        // cui prima lo si spegneva (vedi la nota in `@/lib/gallery/privacy`), e
-        // le sedi ora gliele si DICHIARA — la sede del media, per la stessa
-        // ragione del gate qui sopra: con l'elenco dei plessi dell'operatore il
-        // 422 potrebbe pronunciare il nome di un bambino di un ALTRO plesso su
-        // una foto che in quel plesso non finirà mai.
-        const senza = await alunniSenzaConsenso(supabase, tag_students, plessi);
-        if (senza.length > 0) {
-            // Privacy Lock scattato: nel log SOLO conteggi (mai nomi/id dei bambini,
-            // che restano nel corpo della risposta per la UI dell'insegnante).
-            logEvento('galleria', 'info', {
-                operazione: 'gallery:POST',
-                esito: 'liberatoria-mancante',
-                taggati: new Set(tag_students ?? []).size,
-                senzaConsenso: senza.length,
-            });
-            return NextResponse.json(
-                {
-                    error: 'Foto di gruppo non pubblicabile: alcuni bambini taggati non hanno la liberatoria foto. Rimuovili dai tag oppure pubblica per ognuno una foto singola (visibile solo ai suoi genitori).',
-                    nomi: senza.map((s) => s.nome),
-                    ids: senza.map((s) => s.id),
-                },
-                { status: 422 }
-            );
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // V08 · IL RAMO VIDEO — e l'ordine è il punto, non un dettaglio
-        // ═══════════════════════════════════════════════════════════════════════
-        //
-        // Si arriva qui DOPO i quattro gate applicativi: ruolo (`requireDocente`),
-        // sede dichiarata (`resolveScuolaScrittura`), tag nel perimetro
-        // (`assertTagStudentsInScope`) e liberatoria fotografica
-        // (`alunniSenzaConsenso`). Non è una preferenza di lettura: è ciò che
-        // rende vero il criterio d'accettazione del piano — **consenso revocato
-        // fra la conferma e la pubblicazione ⇒ 422, e nessun file resta in
-        // `gallery`**. Con il Privacy Lock PRIMA della copia quella seconda metà è
-        // vera per costruzione, non per compensazione: non c'è niente da
-        // ripulire perché non è stato copiato niente. Spostare la copia più su la
-        // renderebbe una promessa da mantenere invece che un fatto.
-        //
-        // Quello che resta scoperto, detto per intero: il consenso può essere
-        // revocato fra questo gate e la RPC, che distano una copia di file. È una
-        // finestra che nessuna richiesta singola può chiudere — la RPC i consensi
-        // non li conosce, e non deve conoscerli (due verità che invecchiano
-        // separatamente sono il difetto che questo repository ha già pagato). La
-        // riduzione, non la chiusura, è che la finestra sia l'ULTIMA cosa prima
-        // della scrittura invece che la prima.
-        let percorsoVideoCopiato: string | null = null;
-        if (video_intent_id) {
-            // ── L'INTENTO, letto col perimetro DENTRO la query ──────────────────
-            // `owner_id` e `scuola_id` sono filtri, non confronti dopo: così un
-            // intento di un'altra persona o di un altro plesso risponde **404**
-            // invece di 403. Gli uuid non si indovinano, e un 403 direbbe a chi
-            // prova che quell'id esiste — è la stessa scelta di
-            // `video-uploads/[id]`, e qui vale di più perché la sede è l'unica
-            // cosa che separa tre plessi di bambini.
-            const { data: intento, error: errIntento } = await supabase
-                .from('video_intents')
-                .select('id, owner_id, scuola_id, channel, revision, status')
-                .eq('id', video_intent_id)
-                .eq('owner_id', uploaded_by)
-                .eq('scuola_id', scuolaId)
-                .eq('channel', 'gallery')
-                .maybeSingle();
-
-            // PostgREST non lancia: ritorna `{ error }`. Sul DB E2E della CI — e
-            // in produzione finché le migrazioni video non sono applicate — quelle
-            // tabelle non esistono: 503 con un `error` di configurazione, non un
-            // 500 con lo stack di un guasto che non c'è.
-            if (errIntento) {
-                if (pipelineAssente(errIntento)) {
-                    return rispostaPipelineAssente('gallery:POST', 'video_intents', errIntento);
-                }
-                // `logErrore` di suo: `withRoute` non vede le eccezioni CATTURATE, e
-                // qui non c'è nemmeno un'eccezione — PostgREST non lancia, ritorna
-                // `{ error }`. Senza questa riga un guasto di lettura uscirebbe come
-                // un 500 muto. E la risposta porta un CODICE: «Internal Server Error»
-                // non è una frase, è l'assenza di una frase.
-                logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, errIntento);
-                return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500);
-            }
-            if (!intento) return rifiutoVideoGalleria('NOT_FOUND', {});
-
-            // Lo stato dell'intento, tradotto nel codice che dice PERCHÉ. Sono
-            // tutte e tre condizioni che la RPC ricontrolla sotto lock: qui si
-            // risparmia una copia di file che verrebbe buttata un istante dopo.
-            const stato = String(intento.status ?? '');
-            if (stato !== 'confirmed') {
-                return rifiutoVideoGalleria(
-                    stato === 'published'
-                        ? 'INTENT_PUBLISHED'
-                        : stato === 'cancelled' || stato === 'superseded'
-                            ? 'INTENT_REVOKED'
-                            : 'NOT_CONFIRMED',
-                    { intento: String(intento.id) },
-                );
-            }
-            if (Number(intento.revision) !== video_revisione) {
-                return rifiutoVideoGalleria('REVISION_MISMATCH', { intento: String(intento.id) });
-            }
-
-            // ── I JOB, con la sede ancora addosso ───────────────────────────────
-            const { data: jobs, error: errJob } = await supabase
-                .from('video_jobs')
-                .select('id, status, verified_at, output_bucket, output_path, output_size')
-                .eq('intent_id', video_intent_id)
-                .eq('scuola_id', scuolaId);
-            if (errJob) {
-                if (pipelineAssente(errJob)) {
-                    return rispostaPipelineAssente('gallery:POST', 'video_jobs', errJob);
-                }
-                logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, errJob);
-                return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500);
-            }
-            const elenco = (jobs ?? []) as Array<Record<string, unknown>>;
-            if (elenco.length === 0) return rifiutoVideoGalleria('NO_JOBS', {});
-            // Una Galleria collega UN solo job (lo impone `video_intent_add_job`
-            // con `SINGLE_JOB_CHANNEL`). Trovarne due qui non è una richiesta
-            // arrivata tardi: è un difetto nostro, e 500 lo dice.
-            if (elenco.length > 1) return rifiutoVideoGalleria('SINGLE_JOB_CHANNEL', { n: elenco.length });
-
-            const job = elenco[0];
-            const percorsoUscita = typeof job.output_path === 'string' ? job.output_path : '';
-            const bucketUscita = typeof job.output_bucket === 'string' ? job.output_bucket : '';
-            // `verified_at` e non il solo `status = 'ready'`: è la data in cui
-            // l'uscita è stata RILETTA e verificata. Uno stato pronto senza
-            // verifica è una promessa senza prova — e la RPC pretende la stessa
-            // cosa (`JOBS_NOT_READY`).
-            if (job.status !== 'ready' || !job.verified_at || !percorsoUscita || !bucketUscita) {
-                return rifiutoVideoGalleria('JOBS_NOT_READY', { job: String(job.id) });
-            }
-
-            // ⚠️ `output_size` È UN `bigint`, e questa riga era `typeof === 'number'`
-            // — cioè una guardia che, davanti a una stringa, non diventava rossa ma
-            // **saltava**: `byte: null`, tetto non confrontato, pubblicazione
-            // riuscita. PostgREST oggi serializza `bigint` come numero e quindi il
-            // caso non si presenta; ma basta un `numeric`, una vista, un cast nel
-            // `select` o una versione diversa perché arrivi come stringa, e il
-            // controllo si spegnerebbe senza lasciare traccia. Le due forme si
-            // accettano entrambe, e tutto il resto vale `null` — che non autorizza
-            // niente: fa solo saltare il confronto, e lo Storage resta l'ultima rete.
-            const byteUscita =
-                typeof job.output_size === 'number'
-                    ? job.output_size
-                    : typeof job.output_size === 'string' && /^\d+$/.test(job.output_size)
-                        ? Number(job.output_size)
-                        : null;
-
-            const copia = await copiaVideoInGalleria(supabase, {
-                bucketSorgente: bucketUscita,
-                percorsoSorgente: percorsoUscita,
-                byte: byteUscita,
-                ownerId: uploaded_by,
-                operazione: 'gallery:POST',
-            });
-            if (!copia.ok) {
-                // `OUTPUT_TOO_LARGE` è un rifiuto della pipeline e ha già il suo
-                // 422; una copia non riuscita è invece un guasto di trasporto, e
-                // la Galleria ha da sempre una risposta per quello — col corpo
-                // dell'errore del fornitore rimasto nel log, mai nel corpo HTTP.
-                if (copia.codice === 'OUTPUT_TOO_LARGE') {
-                    return rifiutoVideoGalleria('OUTPUT_TOO_LARGE', { job: String(job.id) });
-                }
-                return rispostaAllegatoNonCaricato();
-            }
-            percorsoVideoCopiato = copia.percorso;
-        }
+        // LA SECONDA METÀ — bambini nella sede del media, poi Privacy Lock (DL-041).
+        // L'ordine è la correzione: il 422 del Privacy Lock porta NOMI E COGNOMI dei
+        // minori taggati, più l'informazione che a loro manca la liberatoria, e non deve
+        // pronunciarli su bambini che chi chiama non ha titolo di conoscere (collaudo
+        // privacy del 2026-07-31, rilievo F3: la risposta era IDENTICA per la segreteria
+        // di un altro plesso, bastava conoscere gli uuid). E la sede che si dichiara è
+        // quella DEL MEDIA, non l'elenco dei plessi di chi opera (2026-08-03): con
+        // `resolveScuoleAttive` un admin di due plessi poteva mettere l'uuid di un minore
+        // di B nella galleria di A. Il PATCH passa dallo stesso gate (`@/lib/gallery/tag-scope`).
+        const cancelloSede = await cancelliSedeGalleria(supabase, {
+            sedeId: scuolaId,
+            tagAlunni: cancelloBroadcast.destinatari.tagAlunni,
+            operazione: 'gallery:POST',
+        });
+        if (!cancelloSede.ok) return cancelloSede.response;
 
         // In tabella si archivia il PERCORSO nel bucket, mai un indirizzo.
         // `gallery/upload` ormai restituisce già il percorso, ma un client
@@ -1120,11 +890,7 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // che nessuna firma successiva saprebbe recuperare. Ciò che NON
         // appartiene a questo bucket resta invece intatto: non si riscrive un
         // dato che non si è certi di saper interpretare.
-        //
-        // Per un video il percorso NON viene dal client e non passa di qui: lo ha
-        // appena scelto il server dentro `copiaVideoInGalleria`, ed è già la
-        // forma canonica.
-        const fileUrlDaSalvare = percorsoVideoCopiato ?? percorsoNelBucket(file_url ?? '') ?? (file_url ?? '');
+        const fileUrlDaSalvare = percorsoNelBucket(file_url ?? '') ?? (file_url ?? '');
 
         if (upload_id && !percorsoUploadProprio(fileUrlDaSalvare, uploaded_by)) {
             logEvento('galleria', 'warn', { operazione: 'gallery:POST', esito: 'upload-percorso-non-autorizzato' });
@@ -1134,12 +900,10 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         const baseRecord: Record<string, unknown> = {
             uploaded_by,
             file_url: fileUrlDaSalvare,
-            // Un video convertito è un video, e non lo decide un campo del client:
-            // `file_type` comanda l'icona, il visore e la parola del dialogo di
-            // eliminazione (`MediaGrid`, `DialogoEliminaMedia`). Un `'foto'`
-            // spedito per sbaglio metterebbe un MP4 dentro un `<img>`.
-            file_type: percorsoVideoCopiato ? 'video' : (file_type ?? 'foto'),
-            caption: caption ?? null,
+            file_type: file_type ?? 'foto',
+            // SEMPRE NULL alla creazione (decisione del titolare, 2026-10-02): il valore
+            // del client si ignora. Vedi lo schema.
+            caption: null,
             tag_students: tag_students ?? [],
             is_broadcast: is_broadcast ?? false,
             target_classes: target_classes ?? null,
@@ -1187,143 +951,24 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
 
         if (error) {
             logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, error);
-            // La riga non c'è, quindi il file copiato un istante fa non lo nomina
-            // più nessuno: si toglie. Senza questa riga sarebbe l'esatto difetto
-            // W1-bis delle News preso dal lato della Galleria — un video di un
-            // minore dentro il bucket, invisibile all'oblio e alla retention, che
-            // partono entrambi dalla riga.
-            if (percorsoVideoCopiato) {
-                await annullaCopiaVideoInGalleria(supabase, [percorsoVideoCopiato], 'gallery:POST');
-            }
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        // ═══════════════════════════════════════════════════════════════════════
-        // V08 · IL CANCELLO TRANSAZIONALE — nella stessa richiesta dei gate
-        // ═══════════════════════════════════════════════════════════════════════
+        // Avviso ai genitori interessati (best-effort): alunni taggati → classi target →
+        // tutta la sede. Buffer 30' + debounce per destinatario e per uploader: gli upload
+        // a raffica collassano in un avviso solo per famiglia. Il testo è fisso e non
+        // nomina niente (`@/lib/gallery/notifica-genitori`).
         //
-        // `video_intent_finalize` lega il target all'intento, lo porta a
-        // `published` e accoda l'evento di outbox: o tutt'e tre, o niente. Quello
-        // che NON fa è rivalutare i permessi — ruolo, sede, consenso sono appena
-        // stati attraversati qui sopra, e duplicarli in SQL significherebbe due
-        // verità che invecchiano separatamente. Riverifica solo ciò che un
-        // TypeScript non può sapere: che sotto lock la revisione sia ancora quella,
-        // che nessun altro abbia già vinto, che lo scope non sia cambiato.
-        //
-        // ⚠️ La sede che le si passa è quella appena risolta da
-        // `resolveScuolaScrittura`, NON quella riletta dall'intento: il confronto
-        // che la RPC fa (`SCOPE_CHANGED`) ha senso solo se i due valori vengono da
-        // due strade diverse. Passarle la sede dell'intento sarebbe un confronto
-        // con sé stesso, cioè un controllo che non può fallire mai.
-        if (video_intent_id && data) {
-            const idMedia = String((data as { id?: unknown }).id ?? '');
-            const { data: esitoRpc, error: erroreRpc } = await supabase.rpc('video_intent_finalize', {
-                p_intent_id: video_intent_id,
-                p_owner_id: uploaded_by,
-                p_revision: video_revisione,
-                p_scuola_id: scuolaId,
-                p_channel: 'gallery',
-                p_target_id: idMedia,
-                p_event_type: 'gallery.published',
-                // Nel payload dell'outbox solo uuid e numeri: la didascalia la
-                // scrive una maestra e può contenere il nome di un bambino.
-                p_payload: { media_id: idMedia, scuola_id: scuolaId, revision: video_revisione },
-            });
-
-            const ok = !erroreRpc && (esitoRpc as { ok?: unknown } | null)?.ok === true;
-            if (!ok) {
-                // ── LA COMPENSAZIONE, e l'ordine fra le due metà non è arbitrario.
-                // Prima la RIGA, poi il FILE: se la riga resta e il file no, in
-                // galleria compare un riquadro rotto — un guasto visibile alle
-                // famiglie e non più recuperabile. Se invece il file resta e la
-                // riga no, il rimedio esiste (e lo si grida). Fra i due mali si
-                // sceglie quello reversibile.
-                // ⚠️ `.eq('scuola_id', scuolaId)` ACCANTO all'id, e non è ridondanza
-                // per il lock. Questa è l'unica `delete` non reversibile di questo
-                // handler, e l'id da solo la renderebbe una cancellazione per
-                // identificatore su una tabella che contiene tre plessi di foto di
-                // bambini. La sede è quella appena risolta e appena SCRITTA su
-                // quella stessa riga: se le due non combaciano, la riga non è
-                // quella che credo di aver appena creato, e allora non si tocca.
-                const { error: erroreAnnullo } = await ancheNelCestino(
-                    supabase
-                        .from('galleria_media_v2')
-                        .delete()
-                        .eq('id', idMedia)
-                        .eq('scuola_id', scuolaId),
-                    'annullo di una riga nata un istante fa e mai stata visibile: non c-e nessun cestino da consultare, e dirlo è il modo di non confondere questa scrittura con una a cui il filtro è stato dimenticato',
-                );
-                if (erroreAnnullo) {
-                    // `withRoute` non vede questo ramo: la richiesta risponde 4xx e
-                    // l'eccezione non c'è. Senza questa riga resterebbe in galleria
-                    // un video che nessun intento dichiara pubblicato — e un
-                    // secondo tentativo ne creerebbe un doppione.
-                    logEvento('galleria', 'error', {
-                        operazione: 'gallery:POST',
-                        esito: 'video-riga-non-annullata',
-                        sede_id: scuolaId,
-                        media: idMedia,
-                        msg: 'gallery:POST: la riga di un video non pubblicato è rimasta in galleria e il suo file con lei',
-                    }, erroreAnnullo);
-                } else if (percorsoVideoCopiato) {
-                    await annullaCopiaVideoInGalleria(supabase, [percorsoVideoCopiato], 'gallery:POST');
-                }
-
-                if (erroreRpc) {
-                    if (pipelineAssente(erroreRpc)) {
-                        return rispostaPipelineAssente('gallery:POST', 'video_intent_finalize', erroreRpc);
-                    }
-                    logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'rpc' }, erroreRpc);
-                    return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500);
-                }
-                const codice = (esitoRpc as { code?: unknown } | null)?.code;
-                return rifiutoVideoGalleria(
-                    (typeof codice === 'string' ? codice : 'INVALID_STATE') as CodiceInternoVideo,
-                    { intento: video_intent_id, media: idMedia },
-                );
-            }
-        }
-
-        // Notifica ai genitori interessati (best-effort): alunni taggati →
-        // classi target → broadcast a tutta la scuola. Buffer 30' + debounce
-        // per uploader: gli upload a raffica collassano in una notifica sola.
-        //
-        // Il conteggio dei destinatari si tiene FUORI dal try perché è il dato del
-        // log di successo qui sotto. `null` significa «non si è arrivati a
-        // calcolarlo»: in quel caso la riga `error` del catch dice già perché.
-        let nDestinatari: number | null = null;
-        try {
-            // Riusa la sede risolta sopra (rispetta il SedeSelector), invece di
-            // ricadere sempre sulla sede primaria dell'utente.
-            const tagged = (tag_students ?? []) as string[];
-            const classi = Array.isArray(target_classes) ? (target_classes as string[]).filter(Boolean) : [];
-            const destinatari = tagged.length > 0
-                ? await genitoriDiAlunni(supabase, tagged)
-                : classi.length > 0
-                    ? await genitoriDiClassi(supabase, scuolaId, classi)
-                    : await genitoriDiScuola(supabase, scuolaId);
-            nDestinatari = destinatari.length;
-            await notificaEvento(supabase, {
-                tipo: 'galleria',
-                scuolaId,
-                utenteIds: destinatari,
-                titolo: 'Nuove foto in galleria',
-                corpo: caption ? `«${caption}»` : 'Sono state pubblicate nuove foto.',
-                link: '/parent/gallery',
-                entitaTipo: 'galleria',
-                entitaId: uploaded_by,
-                bufferMin: 30,
-                debounce: true,
-            });
-        } catch (e) {
-            // `error` benché il media sia pubblicato (201): la notifica non è mai stata accodata,
-            // quindi i genitori non sapranno delle foto nuove. Il contenuto è salvo, il suo
-            // annuncio è perso — e nessuno se ne accorgerebbe senza questa riga.
-            logEvento('notifica', 'error', {
-                operazione: 'gallery:POST',
-                esito: 'notifica-genitori-non-accodata',
-            }, e);
-        }
+        // Il numero dei destinatari è il dato del log di successo qui sotto: `null`
+        // significa «la preparazione dell'avviso è fallita», e la riga `error` della
+        // funzione dice già perché.
+        const nDestinatari = await notificaGenitoriGalleria(supabase, {
+            scuolaId,
+            uploadedBy: uploaded_by,
+            tagAlunni: tag_students,
+            classi: target_classes,
+            operazione: 'gallery:POST',
+        });
 
         // Evento critico → si logga anche il SUCCESSO (solo conteggi/flag, nessun
         // dato personale): senza, "nessun log" non distinguerebbe "pubblicata" da
@@ -1342,12 +987,6 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             nTag: (tag_students ?? []).length,
             broadcast: is_broadcast ?? false,
             n_destinatari: nDestinatari,
-            // I due percorsi non costano lo stesso e non falliscono allo stesso
-            // modo: un video è passato da una conversione di minuti, da una copia
-            // fra bucket e da una RPC che poteva rifiutare. Senza questo flag le
-            // due storie finiscono nella stessa riga, e la domanda «ieri quanti
-            // video sono davvero usciti?» non ha più risposta.
-            video: Boolean(percorsoVideoCopiato),
         });
 
         return NextResponse.json(data, { status: 201 });
@@ -1756,7 +1395,8 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
         // ─── QUANTE NOTIFICHE RESTANO IN VOLO ────────────────────────────────
         //
         // Si CONTANO, non si cancellano — e la differenza è una decisione presa,
-        // non una pigrizia. `gallery:POST` accoda le notifiche con
+        // non una pigrizia. `gallery:POST` accoda le notifiche (oggi da
+        // `@/lib/gallery/notifica-genitori`) con
         // `entitaId: uploaded_by` (l'INSEGNANTE, non il media): è la chiave del
         // debounce per insegnante, corretta il 07-08/09 dopo che 168 notifiche su
         // 298 erano andate perse e 153 genitori non erano mai stati avvisati.
@@ -1766,7 +1406,8 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
         // prodotto l'incidente, sarebbe peggiore del buco.
         //
         // Il costo del non ritirare è misurato e accettato: la notifica dice
-        // «Nuove foto in galleria» e non nomina nessun media, quindi il
+        // «Nuovi contenuti in galleria» (dal 2026-10-02; prima «Nuove foto in
+        // galleria») e non nomina nessun media, quindi il
         // collegamento continua a funzionare e mostra le foto rimaste. Ma il
         // NUMERO va saputo, perché è l'unica cosa che dice quanti annunci
         // sopravvivono alla foto che li ha generati.

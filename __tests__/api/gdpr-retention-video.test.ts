@@ -72,8 +72,11 @@ function gruppoBilanciato(sql: string, inizio: number): string {
  * `…`) e letterali regex: `'http://…'` non è un commento, e `/['"]/` non apre una
  * stringa. Ogni commento diventa uno spazio (o l'a capo resta), così le righe e le
  * parole restano separate. È un'approssimazione (nessun `${…}` annidato con un
- * backtick dentro): se sbaglia su `src/app/api/gallery/route.ts`, l'anti-cecità
- * qui sotto diventa ROSSA, che è la direzione giusta in cui sbagliare.
+ * backtick dentro): se sbaglia, di norma raccoglie un tipo di troppo e il test del suo
+ * destinatario diventa ROSSO, che è la direzione giusta in cui sbagliare. (Fino al 2026-10-02
+ * l'anti-cecità copriva anche questa forma, perché `POST /api/gallery` scriveva
+ * `gallery.published` da `src/`. Da allora quel tipo lo scrive solo una migrazione, e la prova
+ * che la forma (i) legge davvero il codice e non i commenti sta nel caso in memoria qui sotto.)
  */
 function senzaCommentiTs(testo: string): string {
     let fuori = ''
@@ -141,6 +144,104 @@ function scrittureDaSorgenti(sorgenti: { percorso: string; testo: string }[]): S
     return fuori
 }
 
+/**
+ * Gli argomenti di PRIMO LIVELLO di un gruppo `( … )` SQL: si divide alle virgole che stanno
+ * subito dentro la parentesi che apre, rispettando gli apici e le parentesi annidate. Un
+ * letterale dentro `jsonb_build_object(…)` o dentro un'altra funzione NON è un argomento del
+ * gruppo: è un nome di chiave, e non un tipo di evento.
+ */
+function argomentiDiPrimoLivello(gruppo: string): string[] {
+    const fuori: string[] = []
+    let profondita = 0
+    let inApice = false
+    let corrente = ''
+    for (const c of gruppo) {
+        if (inApice) {
+            corrente += c
+            if (c === "'") inApice = false
+            continue
+        }
+        if (c === "'") {
+            inApice = true
+            corrente += c
+            continue
+        }
+        if (c === '(') {
+            profondita += 1
+            // La parentesi che apre il gruppo non è parte di nessun argomento.
+            if (profondita === 1) continue
+        } else if (c === ')') {
+            profondita -= 1
+            if (profondita === 0) {
+                fuori.push(corrente)
+                return fuori
+            }
+        } else if (c === ',' && profondita === 1) {
+            fuori.push(corrente)
+            corrente = ''
+            continue
+        }
+        corrente += c
+    }
+    return fuori
+}
+
+/**
+ * Forme (ii) e (iii), PURE: chi scrive un tipo in `video_outbox` DENTRO una migrazione. Riceve i
+ * sorgenti già letti (come la forma (i)), così un caso in memoria prova ciascuna forma — e prova
+ * che il lock diventa rosso — senza toccare file che questo compito non possiede.
+ *
+ *  · (ii) il letterale col punto dentro il VALUES di un `INSERT INTO [public.]video_outbox`;
+ *  · (iii) il letterale col punto passato come argomento a `video_intent_finalize(…)`: dal
+ *    2026-10-02 è l'UNICO scrittore di `gallery.published`. Prima lo scriveva `POST /api/gallery`
+ *    (forma (i), `p_event_type: 'gallery.published'`); tolto quel ramo, il tipo lo passa come
+ *    letterale la RPC `video_galleria_pubblica`, che è SQL — e `video_intent_finalize` lo
+ *    inserisce in `video_outbox` da una VARIABILE, quindi la forma (ii) non lo vede. Senza la
+ *    terza forma `gallery.published` uscirebbe dall'elenco dei tipi scritti, il test che lo
+ *    esercita (`it.each`) non nascerebbe più, e il lock resterebbe VERDE: l'esatta cecità che
+ *    questo lock esiste per impedire. Solo gli argomenti di primo livello contano: un letterale
+ *    col punto dentro un `jsonb_build_object` è una chiave.
+ *
+ * Tutte e due leggono SQL senza commenti: una frase esplicativa che cita la forma immunizzerebbe
+ * il lock. Forma NON coperta: un tipo passato da una VARIABILE o da una costante (`v_tipo`) invece
+ * che da un letterale — chi la introduce aggiunga qui la quarta forma.
+ */
+function scrittureDaMigrazioni(migrazioni: { percorso: string; testo: string }[]): Scrittura[] {
+    const fuori: Scrittura[] = []
+    for (const { percorso, testo } of migrazioni) {
+        const sql = senzaCommenti(testo)
+        // (ii) il VALUES di un `INSERT INTO video_outbox`.
+        for (const m of sql.matchAll(/insert\s+into\s+(?:public\.)?video_outbox\b[^;]*?\bvalues\s*\(/gi)) {
+            const valori = gruppoBilanciato(sql, (m.index ?? 0) + m[0].length - 1)
+            for (const l of valori.matchAll(/'([a-z][a-z0-9_]*\.[a-z0-9_.-]+)'/g)) {
+                fuori.push({ tipo: l[1], percorso })
+            }
+        }
+        // (iii) gli argomenti di primo livello di una chiamata a `video_intent_finalize(…)`. Anche la
+        // sua definizione e i suoi `REVOKE`/`GRANT` hanno un gruppo con lo stesso nome davanti, ma
+        // lì ci sono nomi di parametro e tipi: nessuno è un letterale con un punto dentro.
+        for (const m of sql.matchAll(/\bvideo_intent_finalize\s*\(/gi)) {
+            const argomenti = gruppoBilanciato(sql, (m.index ?? 0) + m[0].length - 1)
+            for (const argomento of argomentiDiPrimoLivello(argomenti)) {
+                const l = argomento.trim().match(/^'([a-z][a-z0-9_]*\.[a-z0-9_.-]+)'$/)
+                if (l) fuori.push({ tipo: l[1], percorso })
+            }
+        }
+    }
+    return fuori
+}
+
+/** Le migrazioni lette dal disco, col percorso relativo alla radice. */
+function migrazioniSuDisco(): { percorso: string; testo: string }[] {
+    const cartella = join(RADICE, 'supabase', 'migrations')
+    return readdirSync(cartella)
+        .filter((f) => f.endsWith('.sql'))
+        .map((nome) => ({
+            percorso: `supabase/migrations/${nome}`,
+            testo: readFileSync(join(cartella, nome), 'utf8'),
+        }))
+}
+
 function scrittureInOutbox(): Scrittura[] {
     // (i) `src/**/*.{ts,tsx}`, percorso relativo alla radice con `/`.
     const fuori = scrittureDaSorgenti(
@@ -149,18 +250,8 @@ function scrittureInOutbox(): Scrittura[] {
             testo: readFileSync(file, 'utf8'),
         })),
     )
-    // (ii) le migrazioni, senza commenti: i letterali col punto dentro il VALUES di
-    // un `INSERT INTO [public.]video_outbox`.
-    const cartella = join(RADICE, 'supabase', 'migrations')
-    for (const nome of readdirSync(cartella).filter((f) => f.endsWith('.sql'))) {
-        const sql = senzaCommenti(readFileSync(join(cartella, nome), 'utf8'))
-        for (const m of sql.matchAll(/insert\s+into\s+(?:public\.)?video_outbox\b[^;]*?\bvalues\s*\(/gi)) {
-            const valori = gruppoBilanciato(sql, (m.index ?? 0) + m[0].length - 1)
-            for (const l of valori.matchAll(/'([a-z][a-z0-9_]*\.[a-z0-9_.-]+)'/g)) {
-                fuori.push({ tipo: l[1], percorso: `supabase/migrations/${nome}` })
-            }
-        }
-    }
+    // (ii) e (iii) le migrazioni, senza commenti.
+    fuori.push(...scrittureDaMigrazioni(migrazioniSuDisco()))
     return fuori
 }
 
@@ -813,26 +904,103 @@ describe('la coda delle notifiche: svuotata con le RPC che esistono già', () =>
 
     // ── LOCK DI FAMIGLIA: ogni tipo che qualcuno scrive in `video_outbox` ha un
     // destinatario. I tipi si raccolgono dal CODICE, non da un elenco scritto qui,
-    // in due forme: (i) il letterale passato come `p_event_type:` in `src/`; (ii) il
+    // in TRE forme: (i) il letterale passato come `p_event_type:` in `src/`; (ii) il
     // letterale dentro `INSERT INTO [public.]video_outbox … VALUES (…)` nelle
-    // migrazioni, lette SENZA commenti. ENTRAMBE le forme leggono il codice senza
-    // commenti: una frase esplicativa che cita la forma (la route della retention lo
-    // fa) immunizzerebbe il lock. Forma NON coperta: un tipo passato da una costante
-    // TS invece che da un letterale — chi la introduce aggiunga qui la terza forma;
-    // l'anti-cecità qui sotto diventa rossa appena la galleria smette di usare il
-    // letterale, perché pretende anche il FILE da cui il tipo arriva.
+    // migrazioni; (iii) il letterale passato come argomento a `video_intent_finalize(…)`
+    // nelle migrazioni (dal 2026-10-02 l'unico scrittore di `gallery.published`: vedi
+    // `scrittureDaMigrazioni`). Tutte le forme leggono il codice senza commenti: una
+    // frase esplicativa che cita la forma (la route della retention lo fa) immunizzerebbe
+    // il lock. Forma NON coperta: un tipo passato da una VARIABILE o da una costante
+    // invece che da un letterale — chi la introduce aggiunga qui la quarta forma;
+    // l'anti-cecità qui sotto diventa rossa appena lo scrittore di un tipo noto smette di
+    // usare il letterale, perché pretende anche il FILE da cui il tipo arriva.
     it('il lock di famiglia vede i tre tipi noti, ciascuno dal suo scrittore (anti-cecità)', () => {
         expect(TIPI_SCRITTI_IN_OUTBOX).toEqual(
             expect.arrayContaining(['gallery.published', 'intent.revoked', 'intent.superseded']),
         )
+        // `gallery.published`: dal 2026-10-02 `POST /api/gallery` non lo scrive più (il ramo
+        // video è stato tolto), e lo scrive SOLO la RPC `video_galleria_pubblica`, cioè una
+        // migrazione. Il nome del file non si cabla: la migrazione si rinomina all'istante vero
+        // del rilascio. Si pretende invece che gli scrittori siano TUTTI migrazioni e che ce ne
+        // sia almeno uno: un tipo con nessuno scrittore visibile esce dall'elenco, il test che lo
+        // esercita non nasce più, e il lock resterebbe verde senza guardare niente.
+        const scrittoriDiPubblicato = SCRITTURE_IN_OUTBOX.filter((s) => s.tipo === 'gallery.published').map(
+            (s) => s.percorso,
+        )
+        expect(scrittoriDiPubblicato.length).toBeGreaterThan(0)
         expect(
-            SCRITTURE_IN_OUTBOX.filter((s) => s.tipo === 'gallery.published').map((s) => s.percorso),
-        ).toEqual(['src/app/api/gallery/route.ts'])
+            scrittoriDiPubblicato.every((p) => p.startsWith('supabase/migrations/')),
+            `qualcosa in src/ scrive di nuovo \`gallery.published\`: ${scrittoriDiPubblicato.join(', ')}`,
+        ).toBe(true)
         for (const tipo of ['intent.revoked', 'intent.superseded']) {
             const percorsi = SCRITTURE_IN_OUTBOX.filter((s) => s.tipo === tipo).map((s) => s.percorso)
             expect(percorsi.length).toBeGreaterThan(0)
             expect(percorsi.every((p) => p.startsWith('supabase/migrations/'))).toBe(true)
         }
+    })
+
+    it('la forma (iii) raccoglie il letterale passato a `video_intent_finalize`, e NON commenti, chiavi o tipi', () => {
+        const scritture = scrittureDaMigrazioni([
+            {
+                percorso: 'finto/chiamata.sql',
+                testo: [
+                    'v_esito := public.video_intent_finalize(',
+                    "  p_intent_id, p_owner_id, p_revision, p_scuola_id, 'gallery', v_media_id,",
+                    "  'gallery.published',",
+                    // Una chiave col punto DENTRO un argomento annidato non è un tipo di evento.
+                    "  pg_catalog.jsonb_build_object('media_id', v_media_id, 'a.chiave', 1)",
+                    ');',
+                    // Un apice raddoppiato dentro un argomento non rompe la divisione.
+                    "PERFORM public.video_intent_finalize(a, b, c, d, 'it''s', e, 'x.dopo_apice', f);",
+                ].join('\n'),
+            },
+            {
+                percorso: 'finto/commenti_definizione_e_grant.sql',
+                testo: [
+                    "-- v_x := public.video_intent_finalize(a, b, c, d, e, f, 'x.riga', g);",
+                    "/* public.video_intent_finalize(a, b, c, d, e, f, 'x.blocco', g) */",
+                    // La DEFINIZIONE e i `REVOKE`/`GRANT` hanno lo stesso nome davanti, ma dentro il
+                    // gruppo ci sono nomi di parametro e tipi, e un valore di default senza punto.
+                    "CREATE OR REPLACE FUNCTION public.video_intent_finalize(p_event_type text, p_payload jsonb DEFAULT '{}'::jsonb)",
+                    'REVOKE ALL ON FUNCTION public.video_intent_finalize(uuid, uuid, integer, uuid, text, uuid, text, jsonb) FROM PUBLIC;',
+                ].join('\n'),
+            },
+            {
+                // La FORMA NON COPERTA, dichiarata: un tipo che arriva da una variabile non si vede.
+                percorso: 'finto/variabile.sql',
+                testo: 'PERFORM public.video_intent_finalize(a, b, c, d, e, f, v_tipo, g);',
+            },
+        ])
+        expect(scritture).toEqual([
+            { tipo: 'gallery.published', percorso: 'finto/chiamata.sql' },
+            { tipo: 'x.dopo_apice', percorso: 'finto/chiamata.sql' },
+        ])
+    })
+
+    it('la forma (iii) vede lo scrittore REALE di `gallery.published`, e senza il letterale diventa cieca (l’anti-cecità può diventare rossa)', () => {
+        // La prova che la terza forma non è decorazione. CONTROLLO POSITIVO: sulle migrazioni vere,
+        // la raccolta trova `gallery.published` dall'unico file che lo scrive. MUTAZIONE IN
+        // MEMORIA: se in quel file il letterale diventasse una variabile — la forma non coperta —
+        // la raccolta non lo vedrebbe più, e l'asserzione dell'anti-cecità qui sopra (che pretende
+        // almeno uno scrittore) diventerebbe rossa invece di tacere.
+        const scrittori = [
+            ...new Set(SCRITTURE_IN_OUTBOX.filter((s) => s.tipo === 'gallery.published').map((s) => s.percorso)),
+        ]
+        expect(scrittori.length).toBeGreaterThan(0)
+        const migrazioni = migrazioniSuDisco().filter((m) => scrittori.includes(m.percorso))
+        expect(migrazioni).toHaveLength(scrittori.length)
+
+        expect(scrittureDaMigrazioni(migrazioni).filter((s) => s.tipo === 'gallery.published')).not.toHaveLength(0)
+
+        const cieche = migrazioni.map((m) => ({
+            ...m,
+            testo: m.testo.replace(/'gallery\.published'/g, 'v_tipo_evento'),
+        }))
+        expect(
+            cieche.some((m, i) => m.testo !== migrazioni[i].testo),
+            'la mutazione non ha cambiato niente: il letterale non c’era',
+        ).toBe(true)
+        expect(scrittureDaMigrazioni(cieche).filter((s) => s.tipo === 'gallery.published')).toHaveLength(0)
     })
 
     it('la forma (i) raccoglie il codice e NON i commenti che la citano', () => {

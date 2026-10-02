@@ -1,18 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextResponse } from 'next/server';
-import { MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
+import itShared from '../../messages/it/shared.json';
 
-// P10 — difesa in profondità server-side sull'upload della galleria.
-// Il client converte HEVC/.mov PRIMA di caricare; ma un client vecchio (o una POST
-// diretta) potrebbe spedire comunque un video non riproducibile da Chrome/Android.
-// Lo STESSO sniff del client, sui primi 64KB, lo RIFIUTA con 415 + messaggio azionabile.
-// Il log porta mime + size + motivo, MAI il nome del file (può contenere PII di minori).
+// P10 (2026-07) — difesa in profondità server-side sull'upload della galleria.
+//
+// Un tempo questa porta guardava i primi 64KB di ogni video (lo sniff del codec) e rifiutava con
+// 415 un HEVC o un `.mov`, perché il client «convertiva prima di caricare» e un client vecchio
+// poteva sfuggire. Dal 2026-10-02 il percorso vecchio dei video è CHIUSO: ogni `video/*` riceve un
+// 409 `VIDEO_APP_DA_AGGIORNARE`, qualunque sia il codec, e nessun byte raggiunge lo Storage
+// (`@/lib/media/blocco-legacy-video`, senza interruttori: lo misura
+// `__tests__/architecture/blocco-legacy-video.test.ts`). Il test gemello su tutte e tre le porte è
+// `__tests__/api/video-legacy-blocco.test.ts`; qui resta la porta multipart delle shell native, con
+// i casi che un tempo erano il suo mestiere: l'HEVC e il QuickTime non prendono più il 415 — prendono
+// lo STESSO 409 di un H.264 — e la foto continua a passare.
+// Il log porta mime + size + codice, MAI il nome del file (può contenere PII di minori).
 
 // Il bucket `gallery` è PRIVATO dal 2026-07-31: l'upload non risponde più con
 // un indirizzo pubblico ma con il PERCORSO nel bucket (da salvare) e un link
 // firmato per l'anteprima. `getPublicUrl` qui esplode di proposito: se il
 // codice tornasse a chiamarlo, questo test lo direbbe.
-const SIGNED_URL = 'https://firmato.test/uploads/ed1/x.mp4?token=abc';
+const SIGNED_URL = 'https://firmato.test/uploads/ed1/x.jpg?token=abc';
+
+/** La frase che la maestra legge davvero (catalogo condiviso): dice di aggiornare l'app. */
+const FRASE_AGGIORNA = (itShared as Record<string, string>).erroreVideoAppDaAggiornare;
 
 const h = vi.hoisted(() => ({
     requireDocente: vi.fn(),
@@ -59,7 +69,7 @@ function ascii(s: string): Uint8Array {
     return a;
 }
 
-function fileVideo(bytes: Uint8Array, type: string, name: string): File {
+function fileDi(bytes: Uint8Array, type: string, name: string): File {
     return new File([bytes as unknown as BlobPart], name, { type });
 }
 
@@ -82,22 +92,47 @@ beforeEach(() => {
     h.requireDocente.mockResolvedValue({ user: { id: 'ed1', role: 'educator', scuola_id: 'sc-1' } });
 });
 
-describe('POST /api/gallery/upload — HEVC rifiutato con 415', () => {
+describe('POST /api/gallery/upload — ogni video riceve il 409, HEVC compreso', () => {
     // Nome file con "PII" fittizia: deve NON comparire da nessuna parte nel log.
     const NOME_FILE = 'video-di-mario-rossi-al-parco.mp4';
 
-    it('fourcc hvc1 (mime video/mp4) → 415 con messaggio azionabile', async () => {
-        const file = fileVideo(ascii('\x00\x00\x00\x20ftyphvc1\x00\x00mdat'), 'video/mp4', NOME_FILE);
+    it('fourcc hvc1 (mime video/mp4) → 409 con la frase di aggiornamento, NON più 415', async () => {
+        const file = fileDi(ascii('\x00\x00\x00\x20ftyphvc1\x00\x00mdat'), 'video/mp4', NOME_FILE);
         const res = await POST(req(file));
-        expect(res.status).toBe(415);
+        expect(res.status).toBe(409);
         const j = await res.json();
-        expect(j.error).toBe(MESSAGGIO_VIDEO_NON_CONVERTIBILE);
+        expect(j.codice).toBe('VIDEO_APP_DA_AGGIORNARE');
+        expect(j.error).toBe(FRASE_AGGIORNA);
         // Rifiutato PRIMA di toccare lo storage: nessun upload.
         expect(h.uploadCalls).toBe(0);
     });
 
-    it('logga mime + size + motivo, MAI il nome del file', async () => {
-        const file = fileVideo(ascii('\x00\x00\x00\x20ftyphvc1\x00\x00mdat'), 'video/mp4', NOME_FILE);
+    it('un H.264 (fourcc avc1) riceve lo STESSO 409: il blocco non guarda il codec', async () => {
+        // Un tempo questo era il caso «mp4 H.264 prosegue» → 200. Ora un video buono e uno
+        // cattivo ricevono la stessa risposta, perché nessuno dei due lo convertirebbe.
+        const hevc = await POST(req(fileDi(ascii('\x00\x00\x00\x20ftyphvc1\x00\x00mdat'), 'video/mp4', 'a.mp4')));
+        const avc = await POST(req(fileDi(ascii('\x00\x00\x00\x20ftypavc1\x00\x00mdat'), 'video/mp4', 'b.mp4')));
+        expect(avc.status).toBe(409);
+        expect(await avc.json()).toEqual(await hevc.json());
+        expect(h.uploadCalls).toBe(0);
+    });
+
+    it('container QuickTime dichiarato dal MIME (.mov) → 409 «aggiorna l\'app», non «formato non ammesso»', async () => {
+        const mov = fileDi(ascii('\x00\x00\x00\x14ftypqt  \x00\x00mdat'), 'video/quicktime', 'clip.mov');
+        const res = await POST(req(mov));
+        expect(res.status).toBe(409);
+        expect((await res.json()).codice).toBe('VIDEO_APP_DA_AGGIORNARE');
+        expect(h.uploadCalls).toBe(0);
+    });
+
+    it('un file che non è nemmeno un video ma dichiara `video/mp4` → lo stesso 409 (si guarda il tipo, non i byte)', async () => {
+        const res = await POST(req(fileDi(ascii('questo-non-e-un-video'), 'video/mp4', 'x.mp4')));
+        expect(res.status).toBe(409);
+        expect(h.uploadCalls).toBe(0);
+    });
+
+    it('logga mime + size + codice, MAI il nome del file', async () => {
+        const file = fileDi(ascii('\x00\x00\x00\x20ftyphvc1\x00\x00mdat'), 'video/mp4', NOME_FILE);
         await POST(req(file));
 
         const ev = eventiGallery();
@@ -105,11 +140,14 @@ describe('POST /api/gallery/upload — HEVC rifiutato con 415', () => {
         expect(ev[0][1]).toBe('warn');
         expect(ev[0][2]).toMatchObject({
             operazione: 'gallery/upload:POST',
-            esito: 'video-non-riproducibile',
+            esito: 'legacy-video-bloccato',
             mime: 'video/mp4',
             size: file.size,
-            motivo: 'codec-hevc-hvc1',
+            error_code: 'CLIENT_UPDATE_REQUIRED',
         });
+        // Lo sniff non c'è più: nessun evento «video-non-riproducibile», nessun `motivo` di codec.
+        expect(JSON.stringify(ev[0][2])).not.toContain('video-non-riproducibile');
+        expect(Object.keys(ev[0][2] as object)).not.toContain('motivo');
         // Privacy: nessun frammento del nome file (né la chiave) nel payload del log.
         const payload = JSON.stringify(ev[0][2]);
         expect(payload).not.toContain('mario');
@@ -120,18 +158,11 @@ describe('POST /api/gallery/upload — HEVC rifiutato con 415', () => {
         expect(chiavi).not.toContain('nome');
         expect(chiavi).not.toContain('file');
     });
-
-    it('container QuickTime dichiarato dal MIME (.mov) → 415', async () => {
-        const mov = fileVideo(ascii('\x00\x00\x00\x14ftypqt  \x00\x00mdat'), 'video/quicktime', 'clip.mov');
-        const res = await POST(req(mov));
-        expect(res.status).toBe(415);
-        expect(h.uploadCalls).toBe(0);
-    });
 });
 
-describe('POST /api/gallery/upload — mp4 H.264 prosegue', () => {
-    it('fourcc avc1 (mime video/mp4) → 200 con percorso + anteprima firmata, nessun 415, upload effettuato', async () => {
-        const file = fileVideo(ascii('\x00\x00\x00\x20ftypavc1\x00\x00mdat'), 'video/mp4', 'clip.mp4');
+describe('POST /api/gallery/upload — la foto prosegue', () => {
+    it('image/jpeg → 200 con percorso + anteprima firmata, nessun 409, upload effettuato', async () => {
+        const file = fileDi(ascii('\xff\xd8\xff\xe0jpeg'), 'image/jpeg', 'foto.jpg');
         const res = await POST(req(file));
         expect(res.status).toBe(200);
         const j = await res.json();
@@ -139,18 +170,20 @@ describe('POST /api/gallery/upload — mp4 H.264 prosegue', () => {
         expect(j.path).toBe(h.uploadPath);
         expect(j.fileUrl).toBe(h.uploadPath);
         expect(j.previewUrl).toBe(SIGNED_URL);
-        // Nessun evento di rifiuto video-non-riproducibile.
+        // Nessun evento di blocco: il blocco è sui video, non sulla porta.
         expect(eventiGallery()).toHaveLength(0);
         expect(h.uploadCalls).toBe(1);
     });
 });
 
 describe('POST /api/gallery/upload — gate di ruolo preservato', () => {
-    it('403 se il gate docente nega (niente sniff, niente upload)', async () => {
+    it('403 se il gate docente nega (niente blocco, niente upload)', async () => {
         h.requireDocente.mockResolvedValue({ response: NextResponse.json({ error: 'x' }, { status: 403 }) });
-        const file = fileVideo(ascii('ftyphvc1'), 'video/mp4', 'clip.mp4');
+        const file = fileDi(ascii('ftyphvc1'), 'video/mp4', 'clip.mp4');
         const res = await POST(req(file));
         expect(res.status).toBe(403);
         expect(h.uploadCalls).toBe(0);
+        // Senza un docente la porta non rivela nemmeno cosa risponde ai video.
+        expect(eventiGallery()).toHaveLength(0);
     });
 });

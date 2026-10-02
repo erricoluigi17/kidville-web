@@ -4,25 +4,21 @@ import { NextResponse } from 'next/server'
 // =============================================================================
 // /api/news/upload (POST) e /api/news/instagram/valida (POST).
 //
-// upload: pattern gallery/upload — requireDocente, sniff video sui primi 64KB →
-//   415 se non riproducibile, bucket «news» garantito a runtime, mai il nome
-//   file nei log. valida: parseInstagramUrl → 400 se invalido → health-check
-//   via externalFetch('instagram', …) → {valido, shortcode, embed_url, raggiungibile}.
+// upload: pattern gallery/upload — requireDocente, ogni video → 409 (il percorso
+//   vecchio dei video è chiuso: passano solo da /api/video-uploads), bucket «news»
+//   garantito a runtime, mai il nome file nei log. valida: parseInstagramUrl → 400 se
+//   invalido → health-check via externalFetch('instagram', …) →
+//   {valido, shortcode, embed_url, raggiungibile}.
 // =============================================================================
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
-  analizzaContenutoVideo: vi.fn(),
   externalFetch: vi.fn(),
   uploadError: null as { message: string } | null,
   lastUploadPath: null as string | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: (...a: unknown[]) => h.requireDocente(...a) }))
-vi.mock('@/lib/media/codec-sniff', () => ({
-  analizzaContenutoVideo: (...a: unknown[]) => h.analizzaContenutoVideo(...a),
-  MESSAGGIO_VIDEO_NON_CONVERTIBILE: 'video-non-convertibile',
-}))
 vi.mock('@/lib/logging/external', () => ({ externalFetch: (...a: unknown[]) => h.externalFetch(...a) }))
 
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -65,7 +61,6 @@ beforeEach(() => {
   h.uploadError = null
   h.lastUploadPath = null
   h.requireDocente.mockResolvedValue({ user: { id: 'edu-1', role: 'educator', scuola_id: 'sc-1' } })
-  h.analizzaContenutoVideo.mockReturnValue({ daConvertire: false, motivo: 'ok' })
   h.externalFetch.mockResolvedValue({ ok: true, stato: 200, corpo: '', res: new Response('<meta property="og:image" content="x">') })
 })
 
@@ -89,10 +84,17 @@ describe('POST /api/news/upload', () => {
     expect(h.lastUploadPath).toContain('edu-1')
   })
 
-  it('video non riproducibile → 415', async () => {
-    h.analizzaContenutoVideo.mockReturnValue({ daConvertire: true, motivo: 'container-quicktime-mime' })
-    const res = await UPLOAD(uploadReq(new File(['xxxxx'], 'clip.mov', { type: 'video/quicktime' })))
-    expect(res.status).toBe(415)
+  it('ogni video → 409 «aggiorna l\'app», e nessun byte tocca lo Storage', async () => {
+    // Prima di questo giorno un `.mov` prendeva il 415 dello sniff e un mp4 H.264 passava: ora il
+    // percorso vecchio è chiuso, e il blocco guarda il tipo, non il contenuto. Anche un
+    // `video/quicktime` deve sentirsi dire «aggiorna l'app» e non «formato non ammesso».
+    for (const tipo of ['video/quicktime', 'video/mp4', 'video/webm']) {
+      h.lastUploadPath = null
+      const res = await UPLOAD(uploadReq(new File(['xxxxx'], 'clip.mov', { type: tipo })))
+      expect(res.status, tipo).toBe(409)
+      expect((await res.json()).codice, tipo).toBe('VIDEO_APP_DA_AGGIORNARE')
+      expect(h.lastUploadPath, `${tipo}: rifiutato PRIMA dello Storage`).toBeNull()
+    }
   })
 
   it('errore storage → 500', async () => {

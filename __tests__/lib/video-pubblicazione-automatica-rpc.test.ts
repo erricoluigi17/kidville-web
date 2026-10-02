@@ -2209,6 +2209,17 @@ describe('video_job_diagnosi · solo numeri ed enumerati', () => {
     ['una stringa di 65 caratteri', `{"k": "${'a'.repeat(65)}"}`],
     ['testo libero nascosto dentro una lista annidata', '{"a": {"b": [1, "ok", "no no"]}}'],
     ['più di 2048 byte (anche di soli numeri)', `{${Array.from({ length: 300 }, (_, i) => `"k${i}": 123456`).join(', ')}}`],
+    // Secondario #30: la stessa regola vale per le CHIAVI. Un nome di file può entrare come chiave, e una chiave
+    // non è un valore stringa: il primo controllo, da solo, non la vedeva.
+    ['un nome di file usato come CHIAVE (ha un punto)', '{"recita.mov": 1}'],
+    ['testo libero con degli spazi come CHIAVE', '{"mario rossi": 1}'],
+    ['una CHIAVE annidata in un oggetto', '{"a": {"b c": 1}}'],
+    ['una CHIAVE dentro un oggetto in una lista', '{"a": [1, {"nome file.mov": 2}]}'],
+    ['una CHIAVE non valida accanto a valori validi', '{"frame": 264, "hdr": false, "file.mp4": null}'],
+    ['una chiave vuota', '{"": 1}'],
+    ['una chiave che comincia per cifra', '{"1chiave": 1}'],
+    ['una chiave con lettere accentate', '{"città": 1}'],
+    ['una chiave di 65 caratteri', `{"${'a'.repeat(65)}": 1}`],
   ]
 
   it.each(RIFIUTATE)('BAD_INPUT per %s, e non scrive', async (_d, json) => {
@@ -2223,6 +2234,15 @@ describe('video_job_diagnosi · solo numeri ed enumerati', () => {
     const limite = `a${'b'.repeat(63)}`
     expect(await diagnosi(jobId, `{"a": "x", "b": "${limite}", "c": "arib-std-b67", "d": "A_B-c9"}`)).toEqual({ ok: true })
     expect(limite).toHaveLength(64)
+  })
+
+  it('accetta le CHIAVI ai limiti, a ogni profondità: una lettera, 64 caratteri, trattini e sottolineati (#30)', async () => {
+    const { jobId } = await inLavorazione('d6-chiavi')
+    const limite = `a${'b'.repeat(63)}`
+    expect(limite).toHaveLength(64)
+    const json = `{"a": 1, "${limite}": {"x-y_z9": [1, {"B": true}]}, "nota": null}`
+    expect(await diagnosi(jobId, json)).toEqual({ ok: true })
+    expect(await letta(jobId)).toEqual({ a: 1, [limite]: { 'x-y_z9': [1, { B: true }] }, nota: null })
   })
 
   it('rifiuta argomenti nulli', async () => {
@@ -2318,6 +2338,114 @@ describe('video_runner_kick · senza pg_net (il database della CI, PGlite)', () 
       await conn.close()
     }
   }, 60_000)
+})
+
+/**
+ * Secondario #32 — il LIVELLO della riga PG_NET_ASSENTE dipende da dove si è. Con l'URL del runner
+ * configurato l'ambiente è quello vero e doveva avere pg_net: un pg_net sparito in produzione deve
+ * vedersi (`error`, AGENTS.md regola 4). Senza URL è un ambiente che pg_net non l'ha mai avuto (la CI, PGlite)
+ * e resta `info`. Qui il database ha `cron_config` ma NON `pg_net`.
+ */
+describe('video_runner_kick · senza pg_net ma con la configurazione del cron (#32)', () => {
+  let conn: PGlite
+
+  beforeAll(async () => {
+    conn = await costruisci()
+    await conn.exec(`
+      CREATE TABLE public.cron_finto (nome text PRIMARY KEY, valore text);
+      CREATE FUNCTION public.cron_config(p_nome text) RETURNS text LANGUAGE sql AS $$
+        SELECT valore FROM public.cron_finto WHERE nome = p_nome
+      $$;
+    `)
+  }, 60_000)
+
+  afterAll(async () => {
+    await conn.close()
+  })
+
+  beforeEach(async () => {
+    await svuota(conn)
+    await conn.exec(`TRUNCATE public.cron_finto`)
+  })
+
+  const logKick = (conn2: PGlite) =>
+    righe<{ livello: string; code: string; url_configurato: boolean | null }>(`
+      SELECT payload -> 0 ->> 'livello' AS livello, payload -> 0 -> 'contesto' ->> 'code' AS code,
+             (payload -> 0 -> 'contesto' ->> 'url_configurato')::boolean AS url_configurato
+      FROM public.log_migrazioni WHERE payload -> 0 ->> 'evento' = 'video-runner-kick' ORDER BY ctid
+    `, conn2)
+  const RISPOSTA_SENZA_NET = { ok: true, inviato: false, motivo: 'pg-net-assente' }
+
+  it('URL del runner configurato → PG_NET_ASSENTE a livello ERROR (l’ambiente doveva avere pg_net)', async () => {
+    await configura(conn, { 'app.push_dispatch_url': 'https://app.esempio.test/api/push/dispatch' })
+    const { jobId } = await inCoda('k-url', conn)
+    // La risposta non cambia: il chiamante (il trigger d'arrivo) continua come prima.
+    expect(await rpc(`public.video_runner_kick('${jobId}')`, conn)).toEqual(RISPOSTA_SENZA_NET)
+    expect(await logKick(conn)).toEqual([{ livello: 'error', code: 'PG_NET_ASSENTE', url_configurato: true }])
+  })
+
+  it('vale per ciascuna delle tre configurazioni che il ramo che spedisce cerca, da sola', async () => {
+    const { jobId } = await inCoda('k-tre', conn)
+    for (const nome of ['app.push_dispatch_url', 'app.notifiche_promemoria_url', 'app.retention_iscrizioni_url']) {
+      await conn.exec(`TRUNCATE public.cron_finto; TRUNCATE public.log_migrazioni`)
+      await configura(conn, { [nome]: 'https://app.esempio.test/api/qualunque' })
+      expect(await rpc(`public.video_runner_kick('${jobId}')`, conn), nome).toEqual(RISPOSTA_SENZA_NET)
+      expect((await logKick(conn)).map((l) => l.livello), nome).toEqual(['error'])
+    }
+  })
+
+  it('nessun URL configurato → PG_NET_ASSENTE a livello INFO (la CI e PGlite non hanno mai avuto pg_net)', async () => {
+    const { jobId } = await inCoda('k-nessuno', conn)
+    expect(await rpc(`public.video_runner_kick('${jobId}')`, conn)).toEqual(RISPOSTA_SENZA_NET)
+    expect(await logKick(conn)).toEqual([{ livello: 'info', code: 'PG_NET_ASSENTE', url_configurato: false }])
+  })
+
+  it('un valore che non è un indirizzo (nessuno schema://host) o vuoto conta come URL non configurato → info', async () => {
+    const { jobId } = await inCoda('k-valore', conn)
+    for (const valore of ['non-un-indirizzo', '']) {
+      await conn.exec(`TRUNCATE public.cron_finto; TRUNCATE public.log_migrazioni`)
+      await configura(conn, { 'app.push_dispatch_url': valore })
+      await rpc(`public.video_runner_kick('${jobId}')`, conn)
+      expect((await logKick(conn)).map((l) => l.livello), JSON.stringify(valore)).toEqual(['info'])
+    }
+  })
+
+  it('il fallback è quello di sempre: un valore vuoto nella prima configurazione lascia vincere la seconda', async () => {
+    await configura(conn, { 'app.push_dispatch_url': '', 'app.notifiche_promemoria_url': 'https://app.esempio.test/x' })
+    const { jobId } = await inCoda('k-fallback', conn)
+    await rpc(`public.video_runner_kick('${jobId}')`, conn)
+    expect((await logKick(conn)).map((l) => l.livello)).toEqual(['error'])
+  })
+
+  it('cron_config che SOLLEVA (il Vault non risponde) non fa sollevare il calcio: non si sa se è configurato, si resta a info', async () => {
+    await conn.exec(`
+      CREATE OR REPLACE FUNCTION public.cron_config(p_nome text) RETURNS text LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'vault irraggiungibile'; END $$;
+    `)
+    try {
+      const { jobId } = await inCoda('k-vault', conn)
+      expect(await rpc(`public.video_runner_kick('${jobId}')`, conn)).toEqual(RISPOSTA_SENZA_NET)
+      expect(await logKick(conn)).toEqual([{ livello: 'info', code: 'PG_NET_ASSENTE', url_configurato: false }])
+    } finally {
+      await conn.exec(`
+        CREATE OR REPLACE FUNCTION public.cron_config(p_nome text) RETURNS text LANGUAGE sql AS $$
+          SELECT valore FROM public.cron_finto WHERE nome = p_nome
+        $$;
+      `)
+    }
+  })
+
+  it('nel log non finisce né l’indirizzo né il segreto, in nessuno dei due livelli', async () => {
+    await configura(conn, {
+      'app.push_dispatch_url': 'https://app.esempio.test/api/push/dispatch',
+      'app.cron_secret': 'segreto-di-prova-123',
+    })
+    const { jobId } = await inCoda('k-segreti', conn)
+    await rpc(`public.video_runner_kick('${jobId}')`, conn)
+    const log = await tuttoIlLog(conn)
+    expect(log).not.toContain('segreto-di-prova-123')
+    expect(log).not.toContain('esempio.test')
+  })
 })
 
 describe('video_runner_kick · con pg_net', () => {

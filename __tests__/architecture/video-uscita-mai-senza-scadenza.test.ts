@@ -45,7 +45,8 @@ import { versioneDelFile } from './soglia-fotografia'
  * viene dopo — le tre migrazioni della PR 2 e quelle che seguiranno — ricade nella regola.
  * Le funzioni vecchie (`video_job_fail`, `video_job_cancel`, `video_intent_revoke`, …) non
  * sono nel perimetro: la rete che copre le loro uscite è `video_retention_scadenze`, che il
- * file C (T2c) estende, e che andrà in `FUNZIONI_CHE_LA_SCRIVONO` appena lo fa.
+ * file C (T2c) ha esteso, e che ha la sua prova dedicata (`reteDelleUsciteDi`) e le sue
+ * esenzioni dichiarate (`SENZA_USCITA_GIUSTIFICATE`).
  *
  * ⚠️ Il lock legge SQL SENZA commenti, anche dentro i corpi `$$ … $$` (dove un `--` è un
  * commento vero): una regola citata in un commento non è codice, e un lock può immunizzarsi
@@ -229,6 +230,55 @@ export function rilieviDi(file: string, sqlGrezzo: string): Rilievo[] {
     return rilievi
 }
 
+/**
+ * LA RETE DELLE USCITE di una funzione: il testo che sceglie i candidati di ogni suo
+ * `UPDATE public.video_jobs` che scrive la scadenza dell'uscita SENZA toccare lo stato — cioè
+ * un'annotazione, non una transizione. Un elemento per ogni UPDATE di quella forma; vuoto se non ce ne
+ * sono (la rete non c'è, o è tutta in un commento).
+ *
+ * Esiste per una ragione precisa: le due mappe qui sopra ragionano per FUNZIONE, e
+ * `video_retention_scadenze` è una funzione sola con due nature — i suoi `UPDATE` di STATO (un upload
+ * abbandonato, una coda incagliata) non hanno un'uscita e sono esenti, e la RETE sì, e non tocca lo
+ * stato. Un'esenzione per funzione non vede la rete tolta: la regola generale resterebbe verde. Qui
+ * si cerca, per `UPDATE`, quello che scrive la scadenza dell'uscita senza toccare lo stato.
+ *
+ * I candidati sono il tratto fra l'ultimo `WITH` e l'`UPDATE`: la selezione dei job. Pura: la usano la
+ * prova sul repo e quelle su testi scritti qui.
+ */
+export function reteDelleUsciteDi(sqlGrezzo: string, nome: string): string[] {
+    const sql = senzaCommentiSql(sqlGrezzo)
+    const funzione = funzioniDi(sql).find((f) => f.nome === nome)
+    if (!funzione) return []
+    const reti: string[] = []
+    const inizio = /UPDATE\s+public\.video_jobs\b/gi
+    let m: RegExpExecArray | null
+    while ((m = inizio.exec(sql)) !== null) {
+        if (m.index < funzione.inizio || m.index >= funzione.fine) continue
+        const posSet = /\bSET\b/i.exec(sql.slice(m.index))
+        if (!posSet) continue
+        const set = clausolaSet(sql, m.index + posSet.index + posSet[0].length)
+        if (!daLaScadenzaDellUscita(set) || toccaLoStato(set)) continue
+        const cte = sql.lastIndexOf('WITH', m.index)
+        reti.push(cte >= funzione.inizio ? sql.slice(cte, m.index) : '')
+    }
+    return reti
+}
+
+/** Ciò che i candidati della rete devono nominare: i tre stati conclusi, l'intento pubblicato, l'uscita e l'assenza della scadenza. */
+const SENTINELLE_DELLA_RETE = [
+    "'failed'",
+    "'rejected'",
+    "'cancelled'",
+    "'published'",
+    'output_path IS NOT NULL',
+    'output_deleted_at IS NULL',
+    'output_delete_after IS NULL',
+] as const
+
+/** Quali sentinelle mancano ai candidati di una rete. */
+export const sentinelleMancanti = (candidati: string): string[] =>
+    SENTINELLE_DELLA_RETE.filter((s) => !candidati.includes(s))
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LE DICHIARAZIONI
 // ─────────────────────────────────────────────────────────────────────────────
@@ -246,11 +296,15 @@ export function rilieviDi(file: string, sqlGrezzo: string): Rilievo[] {
  * `rejected` o `cancelled` e PUÒ avere un'uscita (un `ready` ripudiato, un job annullato dopo la
  * conversione), questa non è la lista giusta — è la scadenza che manca.
  *
- * VUOTA dal 2026-10-02: il file A scrive la scadenza dove serve (`video_job_ready`,
+ * VUOTA dal 2026-10-02 al file C: il file A scrive la scadenza dove serve (`video_job_ready`,
  * `video_galleria_pubblica`). I file B (trigger d'arrivo) e C (conservazione) aggiungono le loro
- * voci qui solo se un loro aggiornamento di stato non può avere un'uscita.
+ * voci qui solo se un loro aggiornamento di stato non può avere un'uscita. Il file C ne ha una:
+ * i due passi vecchi di `video_retention_scadenze`.
  */
-const SENZA_USCITA_GIUSTIFICATE: Record<string, string> = {}
+const SENZA_USCITA_GIUSTIFICATE: Record<string, string> = {
+    video_retention_scadenze:
+        'I passi (a) e (b), un upload abbandonato e una coda incagliata, portano a `failed` un job che non è mai arrivato a `ready`: `output_path` lo scrive solo `video_job_ready`, quindi su quella riga un’uscita NON esiste e non c’è una data da scrivere (il file che un Sandbox morto avesse lasciato in video_processing senza che nessuna riga lo nomini lo toglie la spazzata degli orfani). Il passo (c) non cambia lo stato: lo LEGGE, dentro un `CASE` della scadenza dell’originale (`j.status = \'cancelled\'`), e il rilevatore non distingue una lettura da una scrittura. Le uscite dei job conclusi o di intenti pubblicati le data il passo (d), un `UPDATE` che non tocca `status` e che ha la sua prova dedicata, `reteDelleUsciteDi`, rossa se la rete sparisce: l’esenzione è per funzione e non vedrebbe un passo (d) tolto.',
+}
 
 /**
  * Le funzioni che DEVONO scrivere la scadenza dell'uscita, per nome: la prova che la regola
@@ -258,9 +312,14 @@ const SENZA_USCITA_GIUSTIFICATE: Record<string, string> = {}
  * generale le segnalerebbe lo stesso; ma se togliesse la funzione, o la rinominasse, il lock
  * verrebbe verde su un perimetro che non contiene più ciò che deve proteggere.
  *
- * T2c (file C) aggiunge qui `video_retention_scadenze`: è la RETE sotto tutti, quella che da
- * `output_delete_after = now` a ogni job concluso o di intento pubblicato che ha un'uscita e
- * nessuna scadenza. Un `UPDATE` che non tocca `status`, quindi la regola generale non la vede.
+ * ⚠️ `video_retention_scadenze` NON è qui, ed è una scelta (T2c, file C). La funzione è la RETE sotto
+ * tutti — dà `output_delete_after = adesso` a ogni job concluso o di intento pubblicato che ha
+ * un'uscita e nessuna scadenza, con un `UPDATE` che non tocca `status` — ma ha anche i suoi due
+ * `UPDATE` di STATO (un upload abbandonato, una coda incagliata) che l'uscita non ce l'hanno, e
+ * sono dichiarati in `SENZA_USCITA_GIUSTIFICATE`: le due liste non si sovrappongono (una funzione o è
+ * esente o deve scriverla), e l'esenzione è per FUNZIONE, quindi non vedrebbe il passo (d) tolto. La
+ * rete ha la sua prova dedicata, che ragiona per `UPDATE` e non per funzione: `reteDelleUsciteDi`,
+ * più sotto, rossa se la rete sparisce.
  */
 const FUNZIONI_CHE_LA_SCRIVONO: Record<string, string> = {
     video_job_ready:
@@ -334,6 +393,28 @@ describe('lock architettura · nessuna uscita video resta senza una scadenza', (
                 `\`${nome}\` non scrive \`output_delete_after\` in nessun \`UPDATE public.video_jobs\`. ${ragione}`,
             ).toBeGreaterThan(0)
         }
+    })
+
+    it('🔴 la RETE delle uscite di video_retention_scadenze c’è: un UPDATE che scrive la scadenza SENZA toccare lo stato, su concluso o pubblicato', () => {
+        // Il file C (T2c) la scrive. Le altre due prove di questo file ragionano per FUNZIONE: la regola generale
+        // dà gli stessi rilievi con e senza la rete (l'esenzione di `video_retention_scadenze` copre i passi di
+        // stato), e `FUNZIONI_CHE_LA_SCRIVONO` non nomina questa funzione. Qui si cerca, per UPDATE, quello che
+        // scrive la scadenza dell'uscita senza toccare lo stato, e si pretende che scelga i candidati giusti.
+        const reti = FILE_NEL_PERIMETRO.flatMap((f) =>
+            reteDelleUsciteDi(CONTENUTO.get(f) ?? '', 'video_retention_scadenze').map((candidati) => ({ file: f, candidati })),
+        )
+        expect(
+            reti.length,
+            '`video_retention_scadenze` non ha più la rete delle uscite: nessun `UPDATE public.video_jobs` che scriva ' +
+                '`output_delete_after` senza toccare `status`. Senza, le uscite dei job conclusi e degli intenti pubblicati ' +
+                'senza scadenza (le 39 «copie doppie» e le 11 di job annullati del 01/10, e ogni annullamento futuro) ' +
+                'restano per sempre in `video_processing`, fuori da `video_jobs_uscite_da_togliere_idx`.',
+        ).toBe(1)
+        expect(
+            sentinelleMancanti(reti[0].candidati),
+            `La rete in ${reti[0].file} non sceglie più tutti i candidati giusti: i tre stati conclusi, un intento ` +
+                'pubblicato, un\'uscita presente e non ancora tolta, e la scadenza assente.',
+        ).toEqual([])
     })
 
     it('le voci dichiarate sono VIVE e portano una ragione (un’esenzione morta è un buco dimenticato)', () => {
@@ -447,6 +528,82 @@ BEGIN
   UPDATE public.video_intents SET status = 'published', published_at = v_now WHERE id = p_intent;
 END $$;`
         expect(rilieviDi('finto.sql', DIRETTO).map((r) => r.perche)).toEqual(['pubblica-senza-uscita'])
+    })
+
+    // La rete di video_retention_scadenze, nella forma del file C: un UPDATE di STATO senza uscita (un upload
+    // abbandonato: il job non è mai arrivato a `ready`) e, per ultimo, l'UPDATE che scrive la scadenza dell'uscita
+    // SENZA toccare lo stato, con i suoi candidati.
+    const CON_RETE = `
+CREATE OR REPLACE FUNCTION public.video_retention_scadenze(a integer)
+RETURNS jsonb LANGUAGE plpgsql AS $$
+BEGIN
+  WITH candidati AS (
+    SELECT j.id FROM public.video_jobs AS j WHERE j.status = 'awaiting_upload'
+  ), aggiornati AS (
+    UPDATE public.video_jobs AS j
+    SET status = 'failed', fence_epoch = j.fence_epoch + 1
+    FROM candidati AS c WHERE j.id = c.id RETURNING j.id
+  )
+  SELECT count(*) INTO v_a FROM aggiornati;
+
+  WITH candidati AS (
+    SELECT j.id
+    FROM public.video_jobs AS j
+    INNER JOIN public.video_intents AS i ON i.id = j.intent_id
+    WHERE j.output_path IS NOT NULL
+      AND j.output_deleted_at IS NULL
+      AND j.output_delete_after IS NULL
+      AND (j.status IN ('failed', 'rejected', 'cancelled') OR i.status = 'published')
+  ), aggiornati AS (
+    UPDATE public.video_jobs AS j
+    SET output_delete_after = v_now, updated_at = v_now
+    FROM candidati AS c WHERE j.id = c.id RETURNING j.id
+  )
+  SELECT count(*) INTO v_b FROM aggiornati;
+END $$;`
+
+    it('POSITIVO — la rete di video_retention_scadenze viene riconosciuta, con tutti i suoi candidati', () => {
+        const reti = reteDelleUsciteDi(CON_RETE, 'video_retention_scadenze')
+        expect(reti).toHaveLength(1)
+        expect(sentinelleMancanti(reti[0])).toEqual([])
+        // L'UPDATE di stato senza uscita resta un rilievo della regola generale: è quello che l'esenzione dichiara.
+        expect(rilieviDi('finto.sql', CON_RETE).map((r) => r.funzione)).toEqual(['video_retention_scadenze'])
+    })
+
+    it('NEGATIVO — senza l’UPDATE che non tocca lo stato la rete NON c’è, e l’esenzione per funzione non lo vedrebbe', () => {
+        // Il difetto che questa prova esiste per vedere: la regola generale dà gli STESSI rilievi con e senza la
+        // rete (l'esenzione è per funzione, e copre i passi di stato), quindi da sola non si accorge che la rete
+        // è sparita. Solo `reteDelleUsciteDi`, che ragiona per UPDATE, lo vede.
+        const SENZA_RETE = CON_RETE.slice(0, CON_RETE.indexOf('  WITH candidati AS (\n    SELECT j.id\n    FROM public.video_jobs')) + 'END $$;'
+        expect(reteDelleUsciteDi(SENZA_RETE, 'video_retention_scadenze')).toEqual([])
+        expect(rilieviDi('finto.sql', SENZA_RETE), 'la regola generale NON distingue la rete sparita').toEqual(
+            rilieviDi('finto.sql', CON_RETE),
+        )
+    })
+
+    it('NEGATIVO — una rete a cui manca un candidato (i pubblicati, o i rifiutati) è riconosciuta ma incompleta', () => {
+        const senzaPubblicati = CON_RETE.replace(" OR i.status = 'published'", '')
+        const [rete] = reteDelleUsciteDi(senzaPubblicati, 'video_retention_scadenze')
+        expect(sentinelleMancanti(rete)).toEqual(["'published'"])
+        const senzaRifiutati = CON_RETE.replace("'failed', 'rejected', 'cancelled'", "'failed', 'cancelled'")
+        expect(sentinelleMancanti(reteDelleUsciteDi(senzaRifiutati, 'video_retention_scadenze')[0])).toEqual(["'rejected'"])
+        const senzaAssenza = CON_RETE.replace('AND j.output_delete_after IS NULL', 'AND j.output_delete_after IS NOT NULL')
+        expect(sentinelleMancanti(reteDelleUsciteDi(senzaAssenza, 'video_retention_scadenze')[0])).toEqual(['output_delete_after IS NULL'])
+    })
+
+    it('NEGATIVO — la rete scritta in un COMMENTO non c’è, e la rete di un’altra funzione non vale per questa', () => {
+        const da = CON_RETE.indexOf('  WITH candidati AS (\n    SELECT j.id\n    FROM public.video_jobs')
+        const a = CON_RETE.indexOf('END $$;')
+        const COMMENTATA =
+            CON_RETE.slice(0, da) +
+            CON_RETE.slice(da, a)
+                .split('\n')
+                .map((riga) => (riga.trim() === '' ? riga : `  -- ${riga.trim()}`))
+                .join('\n') +
+            CON_RETE.slice(a)
+        expect(COMMENTATA).toContain('-- UPDATE public.video_jobs AS j')
+        expect(reteDelleUsciteDi(COMMENTATA, 'video_retention_scadenze')).toEqual([])
+        expect(reteDelleUsciteDi(CON_RETE, 'video_un_altra_funzione')).toEqual([])
     })
 
     it('un UPDATE di job che NON tocca lo stato non è un rilievo (la sorveglianza, il token)', () => {

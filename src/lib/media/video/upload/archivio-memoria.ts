@@ -1,5 +1,5 @@
 import type { ArchivioCaricamentiVideo } from './archivio'
-import type { ByteVideo } from './byte-video'
+import { fermaSeAnnullata, type ByteVideo } from './byte-video'
 import type { CaricamentoVideoLocale } from './stato'
 
 /**
@@ -54,7 +54,11 @@ export class ArchivioCaricamentiInMemoria implements ArchivioCaricamentiVideo {
     return this.byte.get(jobId)
   }
 
-  async scriviByte(jobId: string, byte: Blob): Promise<void> {
+  async scriviByte(jobId: string, byte: Blob, segnale?: AbortSignal): Promise<void> {
+    // «Copiare» qui è tenere un riferimento: non c'è un blocco a metà da fermare, e
+    // l'unico punto in cui il segnale conta è l'ingresso. Un segnale già annullato
+    // non scrive niente — come l'archivio su IndexedDB.
+    fermaSeAnnullata(segnale)
     this.byte.set(jobId, byte)
   }
 

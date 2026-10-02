@@ -403,6 +403,44 @@ export async function leggiStatoIntentoVideoNews(
   return { ok: true, job, statoIntent: intento?.statoIntent ?? 'pending', revisione: intento?.revisione ?? 1 }
 }
 
+/** Il codice di un job finito male di cui il server non dice il perché: «ricarica e riprova». */
+const CODICE_RIPIEGO_RIENTRO: CodiceMostratoVideo = 'VIDEO_RIPROVA'
+
+/**
+ * IL CODICE VERO DI UN JOB CHE È FINITO MALE, letto dal server (secondario #39).
+ *
+ * Al rientro nella pagina, un job `failed` o `rejected` si raccontava con `VIDEO_RIPROVA`
+ * — «qualcosa è cambiato, ricarica e riprova» —, scelto qui perché il client, riaprendo
+ * l'intento, non riceve altro che lo stato. Per un job che il runner aveva ritentato quattro
+ * volte per un guasto NOSTRO era una frase falsa: diceva a chi aveva allegato il filmato che
+ * toccava a lui rifare qualcosa, quando il problema stava sui nostri server.
+ *
+ * Il server sa perché è finito male, e lo dice con il codice MOSTRABILE: `GET
+ * /api/video-uploads/[id]` lo calcola con `codiceMostrabileDelJob` (contratto), che per un
+ * `failed` ritentato legge sempre `VIDEO_GUASTO_NOSTRO` e per un `rejected` dà il difetto del
+ * file (`VIDEO_TROPPO_LUNGO`, …). Il client non può ripetere quella regola — non ha `attempt`
+ * né `error_code`, che sono il «perché» tecnico e restano nel log — quindi la LEGGE, come fa la
+ * galleria. Il canale News e quello della galleria mostrano così lo stesso guasto con la stessa frase.
+ *
+ * `VIDEO_RIPROVA` resta il ripiego, ed è onesto solo lì: quando lo stato non si riesce a leggere
+ * (la rete, o un rifiuto già scritto nel log da `chiama`) o il job non compare nell'elenco, il
+ * client non sa PERCHÉ è finito male e può dire soltanto che conviene ricaricarlo.
+ */
+export async function codiceDelJobFallito(
+  dip: DipendenzeFlussoVideoNews,
+  intentId: string,
+  jobId: string,
+): Promise<CodiceMostratoVideo> {
+  const letto = await leggiStatoIntentoVideoNews(dip, intentId)
+  if (!letto.ok) return CODICE_RIPIEGO_RIENTRO
+  const codice = letto.job.find((j) => j.jobId === jobId)?.codice
+  if (!codice) {
+    segnala('warn', 'video-news-codice-fallito-assente', { n_job: letto.job.length }, 0)
+    return CODICE_RIPIEGO_RIENTRO
+  }
+  return codice
+}
+
 /** Riconcilia le due scritture dopo il trasferimento, anche se la risposta è persa. */
 export async function completaVideoNews(
   dip: DipendenzeFlussoVideoNews,

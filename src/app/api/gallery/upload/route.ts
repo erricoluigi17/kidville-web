@@ -6,8 +6,7 @@ import { parseData, parseMultipart } from '@/lib/validation/http';
 import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
-import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
-import { rifiutoLegacyVideo, videoLegacyDaFermare } from '@/lib/media/blocco-legacy-video';
+import { eVideoLegacy, rifiutoLegacyVideo } from '@/lib/media/blocco-legacy-video';
 import { BUCKET_GALLERIA, TTL_FIRMA_GALLERIA_S } from '@/lib/gallery/storage';
 
 const postFormSchema = z.object({
@@ -32,48 +31,23 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
         // `video/webm;codecs=vp9`): si normalizza al solo tipo base.
         const contentType = (file.type || 'application/octet-stream').split(';')[0].trim();
 
-        // ── IL PERCORSO VECCHIO DEI VIDEO, quando sarà ora, si chiude qui ──────────
+        // ── IL PERCORSO VECCHIO DEI VIDEO È CHIUSO, e si chiude qui ───────────────
         // Questa è LA porta delle shell native col bundle in cache: il telefono
-        // comprime il filmato da sé e lo spedisce come un file qualunque. Con la
+        // comprimeva il filmato da sé e lo spediva come un file qualunque. Con la
         // pipeline nuova viva quel file non lo convertirebbe nessuno — resterebbe in
         // archivio come un video che la maestra crede caricato e che nessun genitore
         // vedrà mai. Il rifiuto arriva PRIMA di `arrayBuffer()`: non ha senso tirarsi
         // in memoria quaranta megabyte per poi buttarli.
         //
-        // ⚠️ OGGI QUESTO RAMO È SPENTO, e l'interruttore è uno solo:
-        // `src/lib/media/interruttore-legacy-video.ts`. Accenderlo prima che la
-        // pipeline nuova funzioni lascerebbe tutti senza NESSUN modo di caricare un
-        // video. Le immagini non passano di qui: `videoLegacyDaFermare` guarda il mime.
-        if (videoLegacyDaFermare(contentType)) {
+        // OGNI `video/*`, senza condizioni e senza guardare i byte: un H.264 e un HEVC
+        // ricevono lo stesso 409, perché i video passano solo da `POST /api/video-uploads`
+        // (decisione e motivi in `src/lib/media/blocco-legacy-video.ts`, che non ha
+        // interruttori). Le immagini non passano di qui: `eVideoLegacy` guarda il mime.
+        if (eVideoLegacy(contentType)) {
             return rifiutoLegacyVideo('galleria', 'gallery/upload:POST', contentType, file.size);
         }
 
         const fileBuffer = await file.arrayBuffer();
-
-        // DIFESA IN PROFONDITÀ. Il client converte HEVC/.mov prima di caricare; ma un client
-        // vecchio (o una POST diretta) potrebbe spedire comunque un video non riproducibile da
-        // Chrome/Android. Lo stesso sniff del client, sui primi 64KB, lo RIFIUTA con 415.
-        if (contentType.startsWith('video/')) {
-            const testa = new Uint8Array(fileBuffer.slice(0, 65536));
-            const analisi = analizzaContenutoVideo(testa, contentType);
-            if (analisi.daConvertire) {
-                // MAI il nome del file nei log: può contenere PII. Solo mime, size e motivo.
-                logEvento('galleria', 'warn', {
-                    operazione: 'gallery/upload:POST',
-                    esito: 'video-non-riproducibile',
-                    mime: contentType,
-                    size: file.size,
-                    motivo: analisi.motivo,
-                });
-                // `codice` accanto alla prosa: quel testo nasce in una libreria condivisa
-                // client+server, dove il locale non esiste, ed è quindi italiano. Il codice
-                // lo fa tradurre a chi la lingua ce l'ha (`src/lib/ui/esito-fetch.ts`).
-                return NextResponse.json(
-                    { error: MESSAGGIO_VIDEO_NON_CONVERTIBILE, codice: 'VIDEO_NON_CONVERTIBILE' },
-                    { status: 415 }
-                );
-            }
-        }
 
         const supabase = await createAdminClient();
 
@@ -134,8 +108,10 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                         // un formato che si vede da una parte sola è metà dei genitori
                         // davanti a un riquadro nero.
                         //  · niente QuickTime (.mov) né Matroska (.mkv): Android non li
-                        //    riproduce. Il telefono converte prima di caricare, e ciò che
-                        //    sfugge lo ferma il 415 qui sopra — questa è la terza rete;
+                        //    riproduce. Da questa porta i video non entrano più (409 qui
+                        //    sopra) e quelli che il server pubblica escono dalla pipeline
+                        //    sempre in mp4 H.264: l'elenco resta comunque l'ultima rete,
+                        //    che vale anche per chi scrive con la chiave di servizio;
                         //  · niente `image/gif`: il client ridisegna OGNI immagine su
                         //    canvas e la riesporta in JPEG, quindi una GIF al bucket non
                         //    arriva. Elencarla descriveva una cosa che non accade;
@@ -148,12 +124,12 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                         // di ciò che passa da questa porta. Sono due numeri diversi e
                         // dicono due cose diverse:
                         //  · 2.000.000.000 è quanto l'OGGETTO può pesare, ed esiste
-                        //    per il video convertito che il finalizer della Galleria
-                        //    (`POST /api/gallery` con `video_intent_id`) copia dentro
-                        //    con la chiave di servizio — mai un browser;
+                        //    per il video convertito che la pubblicazione lato server
+                        //    copia dentro con la chiave di servizio — mai un browser;
                         //  · i 50 MiB di `TETTO_GALLERIA_BYTE` restano il tetto di ciò
-                        //    che il BROWSER spedisce da sé, e vivono nello `z.max()`
-                        //    di `gallery/upload-url` e nel `MAX_SIZE` del client.
+                        //    che il BROWSER spedisce da sé (le foto), e vivono nello
+                        //    `z.max()` di `gallery/upload-url` e nel confronto di
+                        //    `caricaMediaGalleria`.
                         // Questo numero deve coincidere con quello della migrazione
                         // `20260918104500_bucket_gallery_tetto_video.sql`: è la ricetta
                         // con cui il bucket NASCEREBBE in un ambiente nuovo, e se

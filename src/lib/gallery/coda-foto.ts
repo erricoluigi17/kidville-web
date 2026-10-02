@@ -211,9 +211,12 @@ async function drain(scope: AmbitoCodaFoto): Promise<void> {
                 response = await fetch(endpoint, conTetto(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-user-id': scope.ownerId },
+                    // `caption: null` e non `row.caption`: la riga locale tiene il nome del file per
+                    // mostrarlo sul dispositivo (CodaFoto), ma al server non parte più — nessun
+                    // contenuto nuovo ha una didascalia, e quel nome è spesso il nome di un bambino.
                     body: JSON.stringify({
                         uploaded_by: scope.ownerId, scuola_id: scope.schoolId,
-                        upload_id: uploadId, file_url: path, file_type: 'foto', caption: row.caption,
+                        upload_id: uploadId, file_url: path, file_type: 'foto', caption: null,
                         tag_students: row.tag_students, is_broadcast: row.is_broadcast,
                         target_classes: row.target_classes,
                     }),

@@ -25,14 +25,39 @@ export const LETTURA_VIDEO_MASSIMA = 64 * 1024 * 1024
  * I difetti dei byte LOCALI: definitivi, non una rete che cade. Il `name` è il
  * codice perché `nomeErrore` trasmette solo il nome: con un `Error` generico nei
  * log arriverebbe «Error» e la causa resterebbe sul telefono.
+ *
+ * `VIDEO_COPIA_ANNULLATA` è l'eccezione, e non è un difetto: è la risposta a un
+ * `AbortSignal` — chi aveva chiesto la copia dei byte (`scriviByte`) ha cambiato
+ * idea, perché il trasferimento è già finito o perché la persona ha tolto il video.
+ * Sta nello stesso elenco solo perché `scriviByte` ha bisogno di un errore tipato
+ * con cui dire «mi sono fermato», distinto da ogni guasto vero: chi lo riceve non
+ * deve scriverlo fra gli errori.
  */
-export type CodiceByteVideo = 'VIDEO_BLOCCO_INCOMPLETO' | 'VIDEO_INTERVALLO_NON_VALIDO' | 'VIDEO_ARCHIVIO_NON_VALIDO'
+export type CodiceByteVideo =
+  | 'VIDEO_BLOCCO_INCOMPLETO'
+  | 'VIDEO_INTERVALLO_NON_VALIDO'
+  | 'VIDEO_ARCHIVIO_NON_VALIDO'
+  | 'VIDEO_COPIA_ANNULLATA'
 
 export class ErroreByteVideo extends Error {
   constructor(readonly codice: CodiceByteVideo) {
     super(codice)
     this.name = codice
   }
+}
+
+/** Questo errore è «mi sono fermato perché me l'hanno chiesto», non un guasto. */
+export function eCopiaAnnullata(err: unknown): boolean {
+  return err instanceof ErroreByteVideo && err.codice === 'VIDEO_COPIA_ANNULLATA'
+}
+
+/**
+ * Il punto in cui una copia controlla se può continuare. Si lancia l'errore tipato
+ * invece di tornare un booleano perché chi copia ha comunque da ripulire (`catch`) e
+ * ripulire è lo stesso lavoro per un guasto e per un annullamento.
+ */
+export function fermaSeAnnullata(segnale: AbortSignal | undefined): void {
+  if (segnale?.aborted) throw new ErroreByteVideo('VIDEO_COPIA_ANNULLATA')
 }
 
 /** FileReader copre anche le WebView che non espongono Blob.arrayBuffer. */

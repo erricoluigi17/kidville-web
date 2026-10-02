@@ -628,3 +628,162 @@ test('video: una lettura fallita del manifest prima della copia non distrugge il
   expect(esito.errore).not.toBe('')
   expect(esito.letti).toEqual([7, 6, 5])
 })
+
+/* ─── PR 2 · T10: la copia in background si può fermare (`AbortSignal`) ─── */
+
+/**
+ * Dal 2026-10-02 la copia dei byte parte in background mentre il trasferimento è già in
+ * corso, e può diventare inutile prima di finire: il trasferimento arriva in fondo prima di
+ * lei, oppure la persona toglie il video. `scriviByte` riceve un `AbortSignal`, lo guarda a
+ * ogni blocco e prima del manifest, e fermandosi non lascia niente: i blocchi di questa copia
+ * se ne vanno, un deposito intero che c'era già resta com'era, e l'annullamento non finisce
+ * fra gli errori. Qui lo si misura sul vero IndexedDB, su WebKit e Chromium (jsdom non ce l'ha).
+ */
+
+test('video: un segnale annullato a metà copia si ferma al confine del blocco, senza lasciare niente e senza essere un errore', async ({ page }) => {
+  const jobId = 'f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1'
+  const esito = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
+    const controllore = new AbortController()
+    let inPausa: () => void = () => {}
+    let sblocca: () => void = () => {}
+    const pausa = new Promise<void>(r => { inPausa = r })
+    const attesa = new Promise<void>(r => { sblocca = r })
+    let terzaLetta = false
+    // Il secondo blocco resta a mezzo: il segnale si annulla mentre la copia lo aspetta.
+    class SecondaSospesa extends Blob {
+      async arrayBuffer(): Promise<ArrayBuffer> { inPausa(); await attesa; return new ArrayBuffer(blocco) }
+    }
+    class FileSospeso extends Blob {
+      slice(inizio = 0, fine = this.size, tipo?: string) {
+        if (inizio === blocco) return new SecondaSospesa()
+        if (inizio > blocco) terzaLetta = true
+        return super.slice(inizio, fine, tipo)
+      }
+    }
+    const a = new ArchivioCaricamentiDexie()
+    const copia = a.scriviByte(jobId, new FileSospeso([new Uint8Array(blocco * 2 + 3)]), controllore.signal)
+      .then(() => 'riuscita', (e: Error) => e.name)
+    await pausa
+    controllore.abort()
+    sblocca()
+    return { errore: await copia, terzaLetta, manifest: !!(await a.leggiByte(jobId)), log: window.videoArchivioQA.log.map(e => e.messaggio) }
+  }, jobId)
+  expect(esito.errore).toBe('VIDEO_COPIA_ANNULLATA')
+  // Si ferma al confine: il blocco in scrittura finisce, il successivo non si legge nemmeno.
+  expect(esito.terzaLetta).toBe(false)
+  expect(esito.manifest).toBe(false)
+  // Non è «il telefono ha perso la ripresa»: l'abbiamo buttata noi.
+  expect(esito.log.some(m => m.includes('video-upload-persistenza-fallita'))).toBe(false)
+  // Senza un deposito precedente da conservare il database del job se ne va intero.
+  expect((await depositi(page)).nomi).toEqual([])
+})
+
+test('video: un segnale annullato mentre scrive l\'ultimo blocco non fa diventare deposito la copia', async ({ page }) => {
+  const jobId = 'f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2'
+  const esito = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
+    const controllore = new AbortController()
+    let inPausa: () => void = () => {}
+    let sblocca: () => void = () => {}
+    const pausa = new Promise<void>(r => { inPausa = r })
+    const attesa = new Promise<void>(r => { sblocca = r })
+    class UltimaSospesa extends Blob {
+      async arrayBuffer(): Promise<ArrayBuffer> { inPausa(); await attesa; return new ArrayBuffer(3) }
+    }
+    class FileSospeso extends Blob {
+      slice(inizio = 0, fine = this.size, tipo?: string) {
+        return inizio >= blocco ? new UltimaSospesa() : super.slice(inizio, fine, tipo)
+      }
+    }
+    const a = new ArchivioCaricamentiDexie()
+    const copia = a.scriviByte(jobId, new FileSospeso([new Uint8Array(blocco + 3)]), controllore.signal)
+      .then(() => 'riuscita', (e: Error) => e.name)
+    await pausa
+    controllore.abort()
+    sblocca()
+    return { errore: await copia, manifest: !!(await a.leggiByte(jobId)) }
+  }, jobId)
+  // Tutti i blocchi sono stati scritti, ma senza manifest non li nomina nessuno: devono sparire.
+  expect(esito.errore).toBe('VIDEO_COPIA_ANNULLATA')
+  expect(esito.manifest).toBe(false)
+  expect((await depositi(page)).nomi).toEqual([])
+})
+
+test('video: una copia fermata conserva intero il deposito che c\'era già', async ({ page }) => {
+  const jobId = 'f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f3f3'
+  const risultato = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, LettoreBlob, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    await a.scriviByte(jobId, new Blob([new Uint8Array([3, 2, 1])]))
+    const controllore = new AbortController()
+    let inPausa: () => void = () => {}
+    let sblocca: () => void = () => {}
+    const pausa = new Promise<void>(r => { inPausa = r })
+    const attesa = new Promise<void>(r => { sblocca = r })
+    class SecondaSospesa extends Blob {
+      async arrayBuffer(): Promise<ArrayBuffer> { inPausa(); await attesa; return new ArrayBuffer(blocco) }
+    }
+    class FileSospeso extends Blob {
+      slice(inizio = 0, fine = this.size, tipo?: string) {
+        return inizio === blocco ? new SecondaSospesa() : super.slice(inizio, fine, tipo)
+      }
+    }
+    const copia = a.scriviByte(jobId, new FileSospeso([new Uint8Array(blocco * 2 + 3)]), controllore.signal)
+      .then(() => 'riuscita', (e: Error) => e.name)
+    await pausa
+    controllore.abort()
+    sblocca()
+    const errore = await copia
+    const byte = await a.leggiByte(jobId)
+    const letti = byte ? Array.from((await (await new LettoreBlob().openFile(byte)).slice(0, 3)).value) : null
+    await a.eliminaByte(jobId)
+    return { errore, letti, log: window.videoArchivioQA.log.map(e => e.messaggio) }
+  }, jobId)
+  expect(risultato.errore).toBe('VIDEO_COPIA_ANNULLATA')
+  expect(risultato.letti).toEqual([3, 2, 1])
+  expect(risultato.log.some(m => m.includes('video-upload-persistenza-fallita'))).toBe(false)
+})
+
+test('video: un segnale già annullato non apre nemmeno il database del job', async ({ page }) => {
+  const jobId = 'f4f4f4f4-f4f4-4f4f-8f4f-f4f4f4f4f4f4'
+  const esito = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, PREFISSO_DEPOSITO_VIDEO: prefisso } = window.videoArchivioQA
+    const a = new ArchivioCaricamentiDexie()
+    const controllore = new AbortController()
+    controllore.abort()
+    // Si guarda ciò che si APRE, non lo stato finale: la pulizia dopo un'apertura inutile
+    // lascerebbe lo stesso «nessun database», avendo già creato e cancellato il deposito.
+    const aperti: string[] = []
+    const open = IDBFactory.prototype.open
+    IDBFactory.prototype.open = function (nome: string, versione?: number) {
+      aperti.push(String(nome))
+      return open.call(this, nome, versione)
+    }
+    let errore = ''
+    try { await a.scriviByte(jobId, new Blob([new Uint8Array([1, 2, 3])]), controllore.signal) }
+    catch (e) { errore = (e as Error).name }
+    finally { IDBFactory.prototype.open = open }
+    return { errore, depositiAperti: aperti.filter(n => n.startsWith(prefisso)), manifest: !!(await a.leggiByte(jobId)) }
+  }, jobId)
+  expect(esito).toEqual({ errore: 'VIDEO_COPIA_ANNULLATA', depositiAperti: [], manifest: false })
+  expect((await depositi(page)).nomi).toEqual([])
+})
+
+test('video: con un segnale vivo la copia riesce come senza', async ({ page }) => {
+  const jobId = 'f5f5f5f5-f5f5-4f5f-8f5f-f5f5f5f5f5f5'
+  const letto = await page.evaluate(async jobId => {
+    const { ArchivioCaricamentiDexie, LettoreBlob, BLOCCO_VIDEO_LOCALE: blocco } = window.videoArchivioQA
+    const dati = new Uint8Array(blocco + 5)
+    for (let i = 0; i < dati.length; i++) dati[i] = i % 251
+    const a = new ArchivioCaricamentiDexie()
+    await a.scriviByte(jobId, new Blob([dati], { type: 'video/mp4' }), new AbortController().signal)
+    const byte = await a.leggiByte(jobId)
+    if (!byte) throw Error('Deposito assente')
+    const fetta = await (await new LettoreBlob().openFile(byte)).slice(blocco, blocco + 5)
+    await a.eliminaByte(jobId)
+    return { size: byte.size, fetta: Array.from(fetta.value), attesa: Array.from({ length: 5 }, (_, i) => (blocco + i) % 251) }
+  }, jobId)
+  expect(letto.size).toBe(6 * 1024 * 1024 + 5)
+  expect(letto.fetta).toEqual(letto.attesa)
+})

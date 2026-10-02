@@ -280,15 +280,17 @@ const daTutteLeFonti = (): string[] =>
  *
  * Alla chiusura della PR (T16) questa mappa va svuotata e il tetto portato a zero: le tre voci
  * sotto sono quelle che nessuna fonte leggibile produceva ancora al momento di scriverla.
+ *
+ * ⚠️ T2b (2026-10-02) ha tolto `ORIGINALE_DIVERSO` e `ORIGINALE_SOSTITUITO`: la sua migrazione
+ * (`…_video_arrivo_originale.sql`) li scrive come `error_code` del job respinto, quindi ora hanno una
+ * fonte leggibile (`codiciDelleMigrazioni`) e passano dalla regola normale. Il tetto è sceso da 3 a 1
+ * per questo, non perché qualcuno abbia ceduto: resta una sola voce, quella di T7.
  */
 const DICHIARATI_IN_ANTICIPO: Record<string, string> = {
-  ORIGINALE_DIVERSO:
-    'T2b (il trigger d’arrivo scrive `rejected` con questo codice) e T8 (lo script nel Sandbox lo ricava dallo sha256)',
-  ORIGINALE_SOSTITUITO: 'T2b (il trigger d’arrivo, quando l’oggetto cambia dopo l’arrivo)',
   PUBBLICAZIONE_NON_RIUSCITA:
     'T7 (il pubblicatore, in TypeScript, lo passa a `video_intent_pubblicazione_fallita` dopo 60 minuti)',
 }
-const TETTO_DICHIARATI_IN_ANTICIPO = 3
+const TETTO_DICHIARATI_IN_ANTICIPO = 1
 
 describe('contratto video · i codici d’errore sono ESAUSTIVI per costruzione', () => {
   it('la misura vede davvero le fonti (controllo positivo dell’estrattore)', () => {
@@ -366,8 +368,9 @@ describe('contratto video · i codici d’errore sono ESAUSTIVI per costruzione'
       expect(produttore.trim().length, `${codice}: manca chi lo produrrà`).toBeGreaterThan(20)
     }
     // Il tetto SCENDE e basta, e va a zero quando le fonti esistono (T16). Se scende, si scrive qui
-    // accanto perché: oggi sono le tre voci che nessuna fonte leggibile produce ancora (il trigger
-    // d’arrivo di T2b, il pubblicatore di T7).
+    // accanto perché: era 3 (il trigger d’arrivo di T2b per due codici, il pubblicatore di T7 per
+    // uno); T2b ha scritto la sua migrazione e ora ne resta UNA, quella che nessuna fonte leggibile
+    // produce ancora (il pubblicatore di T7).
     expect(
       voci.length,
       'la deroga dei codici in anticipo è cresciuta: è il buco che la regola dei codici inventati ' +

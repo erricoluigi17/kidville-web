@@ -163,18 +163,23 @@
 --  9. video_job_diagnosi(p_job_id uuid, p_fence_epoch bigint, p_lease_owner uuid, p_diagnosi jsonb)
 --     → {ok:true}. Scrive `diagnosi_verifica` solo con fence e lease coincidenti e job
 --     `processing`. SOLO numeri, booleani, null e stringhe-enumerato (`^[A-Za-z][A-Za-z0-9_-]{0,63}$`:
---     `preserve`, `TERMINAL_COVERAGE_MISMATCH`, `arib-std-b67`), al massimo 2048 byte. Testo libero,
---     nomi di file (hanno un punto) o orari → BAD_INPUT; un frame rate frazionario si scrive come
---     NUMERO, non come `30000/1001`. È una rete: la garanzia è che il runner scriva solo numeri ed
---     enumerati, e un nome di file senza punto né spazi passerebbe lo stesso.
+--     `preserve`, `TERMINAL_COVERAGE_MISMATCH`, `arib-std-b67`), al massimo 2048 byte. La stessa
+--     regola vale per le CHIAVI degli oggetti, a qualunque profondità (secondario #30, T2c): un nome
+--     di file non entra nemmeno come chiave. Testo libero, nomi di file (hanno un punto) o orari →
+--     BAD_INPUT; un frame rate frazionario si scrive come NUMERO, non come `30000/1001`. È una rete:
+--     la garanzia è che il runner scriva solo numeri ed enumerati con chiavi fisse, e un nome di file
+--     senza punto né spazi passerebbe lo stesso.
 --
 -- 10. video_runner_kick(p_job_id uuid)
 --     → {ok:true, inviato:true} | {ok:true, inviato:false, motivo:'pg-net-assente'} |
 --       {ok:false, code:'URL_ASSENTE'|'POST_FALLITO'|'BAD_INPUT'}
 --     Come `video_runner_tick_http`, ma con `{job_id}` nel corpo. Non solleva MAI: è
 --     chiamata dal trigger d'arrivo (T2b) dentro un blocco fail-open e dal PATCH `caricato`.
---     Se `pg_net` non esiste (database E2E della CI, PGlite) non fa niente e lascia una
---     riga di log; se manca l'URL, una riga `error`.
+--     Se `pg_net` non esiste non fa niente e lascia una riga di log `PG_NET_ASSENTE`: di livello
+--     `error` se l'URL del runner è configurato (l'ambiente doveva avere pg_net: un pg_net sparito
+--     in produzione non deve vedersi poco), di livello `info` altrimenti (database E2E della CI,
+--     PGlite: ambienti che pg_net non l'hanno mai avuto) — secondario #32, T2c. Se manca l'URL con
+--     pg_net presente, una riga `error` (URL_ASSENTE).
 --     video_runner_ventaglio(p_tetto integer, p_escludi uuid)
 --     → {ok:true, candidati:int, calciati:int, in_lavorazione:int, liberi:int}
 --     Calcia i job che hanno bisogno di un'invocazione: `processing` con lease viva e non
@@ -207,7 +212,9 @@
 -- (c) I VINCOLI NASCONO DENTRO UN `DO` CON GUARDIA su `pg_constraint`, e gli indici UNIQUE
 --     parziali si verificano su `pg_indexes` (un indice parziale non è un vincolo: guardare
 --     `pg_constraint` direbbe «non esiste»). `video_jobs_probe_chk` si toglie e si ricrea a
---     300 solo se non è già a 300: le righe esistenti (≤ 180) lo soddisfano.
+--     300 SOLO se la sua definizione è quella a 180 (secondario #33, T2c): un tetto diverso — 300
+--     già applicato, o uno futuro — resta com'è, e la riapplicazione di questo file non lo riporta
+--     indietro. Le righe esistenti (≤ 180) soddisfano il vincolo nuovo.
 --
 -- (d) `video_job_prendi` / `video_job_prossimo` DELEGANO, non copiano: un candidato scelto
 --     e poi rifiutato da `video_job_claim` esce con il SUO codice. Che la delega sia vera lo
@@ -263,7 +270,9 @@
 --        'video_job_sorveglianza_prendi', 'video_job_sorveglianza_rilascia', 'video_job_prendi',
 --        'video_job_prossimo', 'video_job_diagnosi', 'video_runner_kick', 'video_runner_ventaglio')
 --    ORDER BY 1;
---   -- il vincolo di durata è a 300 e l'indice del token esiste (si guarda pg_indexes):
+--   -- il vincolo di durata è a 300 e l'indice del token esiste (si guarda pg_indexes). PRIMA di
+--   -- applicare lo stesso comando deve rispondere `… <= (180)::numeric …`: il blocco $probe$ toglie il
+--   -- vincolo SOLO se riconosce quella forma (secondario #33), e un tetto già diverso non lo tocca:
 --   SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'video_jobs_probe_chk';
 --   SELECT indexname FROM pg_indexes WHERE indexname = 'video_jobs_rinnovo_token_unico_idx';
 --   -- nessun intento è ancora automatico (0), finché non gira il codice nuovo:
@@ -536,8 +545,11 @@ END
 $vincoli$;
 
 -- Il tetto di durata passa da 180 a 300 secondi (decisione del titolare). Il vincolo si toglie e
--- si ricrea SOLO se non e' gia' a 300: alla seconda applicazione non fa niente. Le righe esistenti
--- (tutte <= 180) lo soddisfano.
+-- si ricrea SOLO se la sua definizione e' quella a 180 (secondario #33): alla seconda applicazione
+-- non fa niente, e un tetto diverso — gia' a 300, o uno futuro — non viene riportato a 300 da una
+-- riapplicazione di questo file. Il riconoscimento guarda il limite superiore nella definizione
+-- (`<= (180)::numeric`), non la presenza di un numero qualunque nel testo. Le righe esistenti
+-- (tutte <= 180) soddisfano il vincolo nuovo.
 DO $probe$
 BEGIN
   IF EXISTS (
@@ -545,7 +557,7 @@ BEGIN
     FROM pg_catalog.pg_constraint
     WHERE conrelid = 'public.video_jobs'::pg_catalog.regclass
       AND conname = 'video_jobs_probe_chk'
-      AND pg_catalog.pg_get_constraintdef(oid) NOT LIKE '%300%'
+      AND pg_catalog.pg_get_constraintdef(oid) ~ '<=\s*\(?180\)?(::numeric)?\)'
   ) THEN
     ALTER TABLE public.video_jobs DROP CONSTRAINT video_jobs_probe_chk;
   END IF;
@@ -2087,6 +2099,13 @@ GRANT EXECUTE ON FUNCTION public.video_job_prossimo(uuid, integer, integer)
 -- 1 a 64 caratteri, che comincia per lettera): un nome di file (ha un punto) o un metadato del
 -- telefono (posizione compresa) e' testo libero e qui non entra. La regola sta nella RPC, che e'
 -- l'unica porta di scrittura: il vincolo della colonna controlla solo forma e dimensione.
+--
+-- LA STESSA REGOLA VALE PER LE CHIAVI (secondario #30). Il primo controllo guarda i VALORI stringa;
+-- un nome di file puo' pero' entrare come CHIAVE (`{"recita.mov": 1}`), e le chiavi non sono
+-- valori. Il secondo controllo applica la stessa espressione a ogni chiave di ogni oggetto, a
+-- qualunque profondita' (anche dentro una lista): `.keyvalue()` si applica solo agli oggetti, e il
+-- filtro `@.type() == "object"` li sceglie prima, perche' su un valore che non e' un oggetto il
+-- metodo solleverebbe un errore invece di dire «no».
 CREATE OR REPLACE FUNCTION public.video_job_diagnosi(
   p_job_id uuid,
   p_fence_epoch bigint,
@@ -2110,6 +2129,10 @@ BEGIN
     OR pg_catalog.jsonb_path_exists(
       p_diagnosi,
       '$.** ? (@.type() == "string" && !(@ like_regex "^[A-Za-z][A-Za-z0-9_-]{0,63}$"))'
+    )
+    OR pg_catalog.jsonb_path_exists(
+      p_diagnosi,
+      '$.** ? (@.type() == "object").keyvalue() ? (!(@.key like_regex "^[A-Za-z][A-Za-z0-9_-]{0,63}$"))'
     )
   THEN
     PERFORM public._video_job_transition_log(
@@ -2195,6 +2218,7 @@ DECLARE
   v_base text;
   v_secret text;
   v_origine text;
+  v_url_configurato boolean := false;
 BEGIN
   IF p_job_id IS NULL THEN
     PERFORM public._video_job_transition_log(
@@ -2203,7 +2227,14 @@ BEGIN
     RETURN pg_catalog.jsonb_build_object('ok', false, 'code', 'BAD_INPUT');
   END IF;
 
-  -- pg_net non c'e' (database E2E della CI, PGlite): nessun effetto, e una riga che lo dice.
+  -- pg_net non c'e': nessun effetto, e una riga che lo dice. Il LIVELLO della riga dipende da dove
+  -- si e' (secondario #32): se l'URL del runner e' configurato l'ambiente e' quello vero e doveva
+  -- avere pg_net, quindi un pg_net sparito e' un guasto e si scrive a livello `error` (AGENTS.md,
+  -- regola 4: «un pg_net sparito in produzione si vedrebbe poco» e' il difetto); se non lo e'
+  -- (database E2E della CI, PGlite) e' solo un ambiente che pg_net non l'ha mai avuto, e la riga
+  -- resta `info`. L'URL si cerca nelle STESSE tre configurazioni, nello stesso ordine, del ramo
+  -- che spedisce; se la configurazione non si legge (il Vault non risponde) il calcio non deve
+  -- sollevare, e non si sa se e' configurata: si resta a `info`.
   IF NOT EXISTS (
     SELECT 1
     FROM pg_catalog.pg_proc AS p
@@ -2211,8 +2242,26 @@ BEGIN
     WHERE n.nspname = 'net'
       AND p.proname = 'http_post'
   ) THEN
+    BEGIN
+      IF pg_catalog.to_regprocedure('public.cron_config(text)') IS NOT NULL THEN
+        v_base := public.cron_config('app.push_dispatch_url');
+        IF v_base IS NULL OR v_base = '' THEN
+          v_base := public.cron_config('app.notifiche_promemoria_url');
+        END IF;
+        IF v_base IS NULL OR v_base = '' THEN
+          v_base := public.cron_config('app.retention_iscrizioni_url');
+        END IF;
+        v_url_configurato := COALESCE(substring(COALESCE(v_base, '') FROM '^https?://[^/]+'), '') <> '';
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      v_url_configurato := false;
+    END;
+
     PERFORM public._video_job_transition_log(
-      'video-runner-kick', 'info', p_job_id, NULL, 'PG_NET_ASSENTE'
+      'video-runner-kick',
+      CASE WHEN v_url_configurato THEN 'error' ELSE 'info' END,
+      p_job_id, NULL, 'PG_NET_ASSENTE',
+      pg_catalog.jsonb_build_object('url_configurato', v_url_configurato)
     );
     RETURN pg_catalog.jsonb_build_object(
       'ok', true, 'inviato', false, 'motivo', 'pg-net-assente'
@@ -2276,7 +2325,7 @@ GRANT EXECUTE ON FUNCTION public.video_runner_kick(uuid)
   TO service_role;
 
 COMMENT ON FUNCTION public.video_runner_kick(uuid) IS
-  'Chiama POST /api/video/runner con {job_id} per far partire SUBITO la conversione di un job (arrivo del file). Senza pg_net (database E2E della CI) non fa niente e lo scrive nel log; non solleva mai. Il cron ogni cinque minuti resta la rete.';
+  'Chiama POST /api/video/runner con {job_id} per far partire SUBITO la conversione di un job (arrivo del file). Senza pg_net non fa niente e lo scrive nel log (PG_NET_ASSENTE): a livello error se l''URL del runner e'' configurato, info altrimenti (database E2E della CI, PGlite); non solleva mai. Il cron ogni cinque minuti resta la rete.';
 
 CREATE OR REPLACE FUNCTION public.video_runner_ventaglio(
   p_tetto integer,

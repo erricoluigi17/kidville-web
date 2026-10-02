@@ -71,10 +71,13 @@ import { DEFAULT_LOCALE, isLocale, type Locale } from '@/i18n/config';
  */
 export const CODICI_ERRORE = {
     /**
-     * I QUATTORDICI CODICI DELLA PIPELINE VIDEO, innestati invece che ribattuti.
+     * I CODICI DELLA PIPELINE VIDEO CHE UNA FAMIGLIA LEGGE, innestati invece che ribattuti. Il
+     * numero non sta scritto qui: era «quattordici» e «sessantadue» e sono invecchiati due
+     * volte — lo dice `CODICI_MOSTRATI_VIDEO`, e a ogni codice mostrato nuovo la sua voce
+     * arriva da sola, insieme alla frase nei due cataloghi (che il lock pretende).
      *
      * `src/lib/media/video/contratto.ts` li dichiara insieme alla mappa che li ricava dai
-     * sessantadue codici INTERNI della pipeline. Una seconda copia qui divergerebbe dalla
+     * codici INTERNI della pipeline. Una seconda copia qui divergerebbe dalla
      * prima il giorno in cui `verifyVideoOutput` aggiunge un ramo o una RPC un `code` — ed
      * è il modo in cui un catalogo smette di dire la verità senza che nessun test lo noti.
      *

@@ -268,24 +268,35 @@ function videoFilters(probe: VideoProbe): string[] {
  * per cui sta scritto qui invece di finire in una costante nuda:
  *
  *   tetto           2.000.000.000 byte × 8            = 16.000.000.000 bit
- *   − audio         192.000 bit/s × 180 s             =     34.560.000 bit
+ *   − audio         192.000 bit/s × 300 s             =     57.600.000 bit
  *                                                       ───────────────
- *                                                       15.965.440.000 bit
- *   − 1% contenitore (moov, tabelle, interleaving)    = 15.805.785.600 bit
- *   ÷ finestra VBV  180 s di durata + 2 s di buffer   =            182 s
+ *                                                       15.942.400.000 bit
+ *   − 1% contenitore (moov, tabelle, interleaving)    = 15.782.976.000 bit
+ *   ÷ finestra VBV  300 s di durata + 2 s di buffer   =            302 s
  *                                                       ───────────────
- *   -maxrate:v                                          86.844.975 bit/s
- *   -bufsize:v      = 2 × maxrate                      173.689.950 bit
+ *   -maxrate:v                                          52.261.509 bit/s
+ *   -bufsize:v      = 2 × maxrate                      104.523.018 bit
  *
  * Il VBV garantisce che in una finestra di T secondi i bit non superino
- * `maxrate × T + bufsize`: nel caso peggiore ammesso l'uscita pesa 1.980.043.181
+ * `maxrate × T + bufsize`: nel caso peggiore ammesso l'uscita pesa 1.980.071.964
  * byte, cioè 19,9 MB sotto il tetto. `OUTPUT_TOO_LARGE` resta in `verify.ts` come
  * rete: qui si evita che il caso patologico accada, là si continua a misurarlo.
  *
+ * ⚠️ QUESTI NUMERI SONO DERIVATI, non scelti, e il 2026-10-02 sono cambiati: la durata
+ * massima è passata da 180 a 300 secondi (`MAX_VIDEO_DURATION_SECONDS`) e il tetto è sceso
+ * da 86.844.975 a 52.261.509 bit/s, perché lo stesso numero di byte ora deve bastare per
+ * più secondi. Il codice si è adeguato da solo; il commento no, e un conto scritto con la
+ * durata di ieri è esattamente il modo in cui questo blocco ha smesso di dire la verità.
+ * Per questo `__tests__/lib/video-encode.test.ts` ricava maxrate, bufsize e peso del caso
+ * peggiore dagli ARGOMENTI che questa funzione emette e pretende di ritrovarli qui sopra:
+ * se la costante si muove ancora, il test diventa rosso e il conto va riscritto.
+ *
  * NON È UN DEGRADO DELLA QUALITÀ. Resta CRF 18 a decidere il bitrate: il tetto è
- * un tetto, non un target (`-b:v` non compare). A 86,8 Mbit/s morde solo su
- * sorgenti che a Full HD non esistono nella pratica — cioè esattamente il caso
- * patologico che ha prodotto quei 2,07 GB.
+ * un tetto, non un target (`-b:v` non compare). A 52,3 Mbit/s dovrebbe mordere solo
+ * su sorgenti che a Full HD non esistono nella pratica — cioè esattamente il caso
+ * patologico che ha prodotto quei 2,07 GB — ma «dovrebbe» è una stima: non è stato
+ * misurato su un filmato di cinque minuti, e lo dirà la prova 1080p di 300 s della
+ * spec (§10.3), non questa riga.
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
 /** Lo stesso `192k` che finisce in `-b:a`: se cambia lì, cambia il conto qui. */
@@ -314,8 +325,9 @@ function requirePath(value: string, name: string): string {
 
 /**
  * Genera soltanto gli argomenti FFmpeg, senza eseguire processi e senza imporre
- * una durata. Il limite di 180 secondi appartiene al probe: qui non compare `-t`
- * e un video accettato viene codificato per intero.
+ * una durata. Il limite di durata (`MAX_VIDEO_DURATION_SECONDS`, oggi cinque minuti)
+ * appartiene al probe: qui non compare `-t` e un video accettato viene codificato per
+ * intero — è il tetto VBV a essere calcolato su quel limite, non un taglio del filmato.
  *
  * FFmpeg ha `-autorotate` attivo per default; lo rendiamo esplicito e non
  * aggiungiamo `transpose`/`rotate`. In questo modo la matrice di display viene

@@ -33,7 +33,7 @@ import {
  * `codice: unaVariabile` non lo sa verificare contro `CODICI_ERRORE` né contro i
  * due cataloghi, e la regola che lo scopre («un `codice` che il lock non sa
  * LEGGERE non passa inosservato») è nata proprio da un valore diventato invisibile.
- * Uno `switch` di sedici rami è il prezzo per restare dentro quella misura, e si
+ * Uno `switch` di ventuno rami è il prezzo per restare dentro quella misura, e si
  * paga volentieri: l'alternativa è una funzione elegante che nessun lock guarda.
  *
  * ⚠️ `SEDE_DA_SPECIFICARE` NON è un codice di questo modulo: è quello che
@@ -176,6 +176,69 @@ const STATO_HTTP_VIDEO: Record<CodiceInternoVideo, number> = {
   OUTPUT_UPLOAD_FAILED: 500,
   CONVERSION_TIMEOUT: 500,
 
+  // ── I due `error_code` che SQL scrive da solo su un job (la retention). Come i dieci del
+  //    runner non escono come stato di una risposta — finiscono in `video_jobs.error_code` e si
+  //    leggono dentro un 200 — ma la tabella è totale, e il numero decide se la riga di
+  //    `withRoute` che ne seguirebbe è un guasto da guardare o un rifiuto da contare.
+  /** Il caricamento scaduto è, per chi lo cerca, un caricamento che non c'è più: come `NOT_FOUND`. */
+  UPLOAD_ABBANDONATO: 404,
+  /** La coda ferma da una settimana è un guasto NOSTRO: 500, e la riga che ne segue si vuole vedere. */
+  CONVERSIONE_INCAGLIATA: 500,
+
+  // ── PR 2 «server e web»: il file arrivato, i destinatari, la pubblicazione, il rinnovo.
+  /** Peso o impronta diversi da quelli dichiarati: la richiesta era ben formata, il file no. Come le verifiche. */
+  ORIGINALE_DIVERSO: 422,
+  /** L'originale è stato riscritto dopo l'arrivo: due processi si sono incrociati, 409 come ogni conflitto. */
+  ORIGINALE_SOSTITUITO: 409,
+  /**
+   * «Non ora». Parla una RPC al runner, non a una persona, e un tetto pieno è il sistema che
+   * funziona come deve: un 409 come `RETRY_NOT_DUE`, che resta una riga `warn` e non fa partire
+   * nessuna segnalazione notturna per qualcosa di normale.
+   */
+  CAPACITA_PIENA: 409,
+  /**
+   * 404 UNIFORME, deciso dalla spec del rinnovo: token assente, sconosciuto, scaduto o revocato
+   * non si distinguono da fuori. Un 401 o un 403 direbbero a chi indovina che il token è esistito.
+   */
+  TOKEN_NON_VALIDO: 404,
+  /** Un video di Galleria senza bambini e senza broadcast: 400, una richiesta incompleta. */
+  DESTINATARI_MANCANTI: 400,
+  /** Nessuno dei bambini scelti è più nella sede: la richiesta era giusta, il risultato non è pubblicabile. */
+  NESSUN_DESTINATARIO: 422,
+  /** La pubblicazione è fallita: un guasto NOSTRO, e la notifica col «Riprova» è già partita. */
+  PUBBLICAZIONE_NON_RIUSCITA: 500,
+  /** Il «Riprova» arriva tardi (già pubblicato, ritirato, scaduto) o da chi non è l'autore: 409, un rifiuto ordinario. */
+  RIPROVA_NON_POSSIBILE: 409,
+  /**
+   * Un bambino che l'intento non nominava è arrivato alla RPC di pubblicazione: la persona non
+   * può averlo causato né può correggerlo. È un difetto NOSTRO e il guardiano della privacy che
+   * lo ferma deve fare rumore: 500, e la riga `error` che ne segue.
+   */
+  TAG_NON_DELL_INTENTO: 500,
+
+  // ── Gli altri sette delle RPC di `video_pubblicazione_automatica`. Il numero è quello che
+  //    deciderebbe il tipo di riga di `withRoute` se uno finisse in una risposta: 4xx e `warn`
+  //    per un rifiuto ordinario, 5xx e `error` per un difetto nostro o una configurazione che
+  //    manca (AGENTS §4: mai `info`).
+  /**
+   * Il cancello della Galleria risponde per primo, con il suo 400 e la sua frase; se la RPC lo
+   * ripete è perché qualcuno l'ha chiamata senza passare di là. 400 come `/api/gallery`, che è
+   * lo stesso rifiuto, e `warn`: va visto, ma non è un guasto del server.
+   */
+  BROADCAST_CON_TAG: 400,
+  /** Il pubblicatore ha composto un percorso che la RPC non accetta: un difetto NOSTRO. */
+  FILE_URL_NON_VALIDO: 500,
+  /** Un rifiuto di `video_intent_finalize` senza codice non dovrebbe esistere: se esiste, fa rumore. */
+  FINALIZE_RIFIUTATO: 500,
+  /** Come `LEASE_ACTIVE`: due invocazioni si sono incrociate sullo stesso job, e una ha rinunciato. */
+  GIA_SORVEGLIATO: 409,
+  /** Come `INVALID_STATE`: l'intento non è nello stato che la richiesta pretende. */
+  NON_AUTOMATICA: 409,
+  /** La rete fra il database e il runner: passa da sola, e il cron di rete la ripesca. 503 come `SANDBOX_UNAVAILABLE`. */
+  POST_FALLITO: 503,
+  /** Configurazione mancante: un incidente, non una nota a piè di pagina. */
+  URL_ASSENTE: 500,
+
   // ── Il bordo HTTP: l'app installata non sa parlare con questa pipeline.
   CLIENT_UPDATE_REQUIRED: 409,
 }
@@ -190,7 +253,7 @@ export function statoHttpVideo(codice: string | null | undefined): number {
 /**
  * La risposta da mostrare, a partire da un codice MOSTRABILE già deciso.
  *
- * Sedici rami e non una riga sola: vedi la testata. Il `default` non esiste —
+ * Ventuno rami e non una riga sola: vedi la testata. Il `default` non esiste —
  * `CodiceMostratoVideo` è un'unione chiusa, e TypeScript non lascia dimenticarne
  * uno.
  */
@@ -226,6 +289,16 @@ export function rispostaVideo(codice: CodiceMostratoVideo, stato: number): NextR
       return NextResponse.json({ error: prosa('VIDEO_APP_DA_AGGIORNARE'), codice: 'VIDEO_APP_DA_AGGIORNARE' }, { status: stato })
     case 'VIDEO_OPERAZIONE_NON_RIUSCITA':
       return NextResponse.json({ error: prosa('VIDEO_OPERAZIONE_NON_RIUSCITA'), codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }, { status: stato })
+    case 'VIDEO_ORIGINALE_NON_COINCIDE':
+      return NextResponse.json({ error: prosa('VIDEO_ORIGINALE_NON_COINCIDE'), codice: 'VIDEO_ORIGINALE_NON_COINCIDE' }, { status: stato })
+    case 'VIDEO_DESTINATARI_MANCANTI':
+      return NextResponse.json({ error: prosa('VIDEO_DESTINATARI_MANCANTI'), codice: 'VIDEO_DESTINATARI_MANCANTI' }, { status: stato })
+    case 'VIDEO_NESSUN_DESTINATARIO':
+      return NextResponse.json({ error: prosa('VIDEO_NESSUN_DESTINATARIO'), codice: 'VIDEO_NESSUN_DESTINATARIO' }, { status: stato })
+    case 'VIDEO_PUBBLICAZIONE_NON_RIUSCITA':
+      return NextResponse.json({ error: prosa('VIDEO_PUBBLICAZIONE_NON_RIUSCITA'), codice: 'VIDEO_PUBBLICAZIONE_NON_RIUSCITA' }, { status: stato })
+    case 'VIDEO_RIPROVA_NON_POSSIBILE':
+      return NextResponse.json({ error: prosa('VIDEO_RIPROVA_NON_POSSIBILE'), codice: 'VIDEO_RIPROVA_NON_POSSIBILE' }, { status: stato })
     case 'SEDE_DA_SPECIFICARE':
       // La frase del diniego di sede nasce in un posto solo, e non è questo.
       return rifiutoSede('SEDE_DA_SPECIFICARE')

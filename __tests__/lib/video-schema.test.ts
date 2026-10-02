@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
@@ -9,6 +9,17 @@ const MIGRAZIONE = readFileSync(
   join(process.cwd(), 'supabase/migrations/20260916190000_video_jobs.sql'),
   'utf8',
 )
+
+// Il file A della PR 2 (colonne nuove, tetto di durata a 300 secondi). Si trova per SUFFISSO: nasce con un
+// timestamp provvisorio e T16 lo rinomina con l'istante vero dell'applicazione. Lo schema vero della
+// produzione è questo file PIÙ quello: il tetto di 180 secondi del primo non vale più.
+const FILE_A = readdirSync(join(process.cwd(), 'supabase/migrations')).filter((f) =>
+  f.endsWith('_video_pubblicazione_automatica.sql'),
+)
+if (FILE_A.length !== 1) {
+  throw new Error(`Cerco UN file *_video_pubblicazione_automatica.sql in supabase/migrations e ne trovo ${FILE_A.length}`)
+}
+const MIGRAZIONE_A = readFileSync(join(process.cwd(), 'supabase/migrations', FILE_A[0]), 'utf8')
 
 const SEDE = '10000000-0000-4000-8000-000000000001'
 const ALTRA_SEDE = '11000000-0000-4000-8000-000000000001'
@@ -89,6 +100,7 @@ async function preparaDatabase() {
       ('news_bozze', 'news_bozze', false, 52428800, ARRAY['image/jpeg', 'video/mp4']);
   `)
   await db.exec(MIGRAZIONE)
+  await db.exec(MIGRAZIONE_A)
 }
 
 beforeAll(async () => {
@@ -288,11 +300,23 @@ describe('migrazione video · job, intent, outbox e bucket', () => {
   })
 
   it('rende ready solo un output verificato e programma l’originale a +7 giorni', async () => {
+    // Il tetto di durata è 300 secondi (il file A lo ha portato da 180: cinque minuti, decisione del titolare).
+    await expect(db.exec(`
+      UPDATE public.video_jobs
+      SET probe_json = '{"durationSeconds":300.001}'
+      WHERE id = '${JOB}'
+    `)).rejects.toThrow(/video_jobs_probe_chk/i)
+    // Ciò che prima si rifiutava (oltre i 180 secondi) ora passa, fino a 300 compresi.
     await expect(db.exec(`
       UPDATE public.video_jobs
       SET probe_json = '{"durationSeconds":180.001}'
       WHERE id = '${JOB}'
-    `)).rejects.toThrow(/video_jobs_probe_chk/i)
+    `)).resolves.toBeDefined()
+    await expect(db.exec(`
+      UPDATE public.video_jobs
+      SET probe_json = '{"durationSeconds":300}'
+      WHERE id = '${JOB}'
+    `)).resolves.toBeDefined()
 
     await expect(db.exec(`
       UPDATE public.video_jobs
@@ -418,6 +442,53 @@ describe('migrazione video · job, intent, outbox e bucket', () => {
     `)).rejects.toThrow(/video_outbox_payload_minimo_chk/i)
   })
 
+  it('le colonne del file A hanno i default che lasciano il flusso vecchio com’è, e i vincoli della spec', async () => {
+    // Le righe già scritte (un intento di galleria «attach_private», il suo job) portano i default.
+    expect(await db.query(`
+      SELECT pubblicazione_automatica, tag_alunni, broadcast, classi_destinatarie, n_tag, trasporto,
+             esito_notificato, esito_notificato_il, pubblicazione_errore, minimizzato_il
+      FROM public.video_intents WHERE id = '${INTENT}'
+    `).then(({ rows }) => rows[0])).toEqual({
+      pubblicazione_automatica: false, tag_alunni: [], broadcast: false, classi_destinatarie: null, n_tag: 0,
+      trasporto: 'tus', esito_notificato: null, esito_notificato_il: null, pubblicazione_errore: null, minimizzato_il: null,
+    })
+
+    // «Automatico» vale solo per una galleria «publish»: questo intento è «attach_private».
+    await expect(db.exec(`
+      UPDATE public.video_intents SET pubblicazione_automatica = true WHERE id = '${INTENT}'
+    `)).rejects.toThrow(/video_intents_pubblicazione_automatica_chk/i)
+    await expect(db.exec(`
+      UPDATE public.video_intents SET broadcast = true, tag_alunni = ARRAY['${UTENTE}']::uuid[] WHERE id = '${INTENT}'
+    `)).rejects.toThrow(/video_intents_broadcast_chk/i)
+    await expect(db.exec(`
+      UPDATE public.video_intents SET esito_notificato = 'pubblicato' WHERE id = '${INTENT}'
+    `)).rejects.toThrow(/video_intents_esito_coppia_chk/i)
+    await expect(db.exec(`
+      UPDATE public.video_intents SET trasporto = 'ftp' WHERE id = '${INTENT}'
+    `)).rejects.toThrow(/video_intents_trasporto_chk/i)
+
+    // Sul job: la durata dichiarata a 300 sì, a 300,001 no; il token è sempre una coppia hash + scadenza.
+    await expect(db.exec(`
+      UPDATE public.video_jobs SET durata_dichiarata_s = 300 WHERE id = '${JOB}'
+    `)).resolves.toBeDefined()
+    await expect(db.exec(`
+      UPDATE public.video_jobs SET durata_dichiarata_s = 300.001 WHERE id = '${JOB}'
+    `)).rejects.toThrow(/video_jobs_durata_dichiarata_chk/i)
+    await expect(db.exec(`
+      UPDATE public.video_jobs SET rinnovo_token_hash = sha256('x'::bytea) WHERE id = '${JOB}'
+    `)).rejects.toThrow(/video_jobs_rinnovo_coppia_chk/i)
+    await expect(db.exec(`
+      UPDATE public.video_jobs SET output_deleted_at = now() WHERE id = '${JOB}'
+    `)).rejects.toThrow(/video_jobs_output_scadenza_chk/i)
+    await expect(db.exec(`
+      UPDATE public.video_jobs SET sorvegliato_da = '${UTENTE}' WHERE id = '${JOB}'
+    `)).rejects.toThrow(/video_jobs_sorveglianza_chk/i)
+    await expect(db.exec(`
+      UPDATE public.video_jobs SET diagnosi_verifica = '[1]'::jsonb WHERE id = '${JOB}'
+    `)).rejects.toThrow(/video_jobs_diagnosi_chk/i)
+    await db.exec(`UPDATE public.video_jobs SET durata_dichiarata_s = NULL WHERE id = '${JOB}'`)
+  })
+
   /**
    * I due bucket NUOVI nascono a 2 GB; i tre di DOMINIO non vengono sfiorati.
    *
@@ -458,7 +529,7 @@ describe('migrazione video · job, intent, outbox e bucket', () => {
 
   it('è riapplicabile senza perdere righe e registra il successo con log fail-open', async () => {
     const primoLog = await valore<{ evento: string; contesto: { limite_byte: number } }>(`
-      SELECT payload -> 0 FROM public.log_migrazioni LIMIT 1
+      SELECT payload -> 0 FROM public.log_migrazioni WHERE payload -> 0 ->> 'evento' = 'video-schema-migration'
     `)
     expect(primoLog).toMatchObject({
       evento: 'video-schema-migration',
@@ -470,12 +541,16 @@ describe('migrazione video · job, intent, outbox e bucket', () => {
       RETURNS int LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'logger guasto'; END $$;
     `)
     await expect(db.exec(MIGRAZIONE)).resolves.toBeDefined()
+    // Anche il file A è fail-open sul log, e riapplicabile sopra uno schema che l'ha già.
+    await expect(db.exec(MIGRAZIONE_A)).resolves.toBeDefined()
 
     expect(await valore<number>(
       `SELECT count(*)::int FROM public.video_jobs WHERE id = '${JOB}'`,
     )).toBe(1)
+    // Due righe di log, quelle delle due applicazioni riuscite con un logger sano (lo schema e il file A):
+    // le riapplicazioni col logger guasto non ne hanno aggiunte, e non sono fallite.
     expect(await valore<number>(
       `SELECT count(*)::int FROM public.log_migrazioni`,
-    )).toBe(1)
+    )).toBe(2)
   })
 })

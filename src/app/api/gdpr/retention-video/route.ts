@@ -5,10 +5,22 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
+import {
+    codiceDi,
+    consumaOutbox,
+    OUTBOX_NON_ESEGUITO,
+    schemaAssente,
+    type EsitoOutbox,
+    type EsitoRpc,
+} from '@/lib/media/video/outbox'
 
 /**
  * LA CONSERVAZIONE DEGLI ORIGINALI VIDEO, LA RICONCILIAZIONE E LA CODA DELLE
  * NOTIFICHE — un giro solo, ogni dieci minuti.
+ *
+ * (La coda delle notifiche, `video_outbox`, non si consuma qui: il motore e il registro dei
+ * destinatari stanno in `@/lib/media/video/outbox`, condivisi con il runner. Questa route
+ * chiama il motore con i propri numeri e riporta nel battito quanto ha fatto.)
  *
  * ─── PERCHÉ ESISTE: UN ORIGINALE CHE NESSUNA QUERY VEDE ─────────────────────
  *
@@ -189,29 +201,12 @@ const NIENTE_DA_TOGLIERE: EsitoRimozione = {
     erroreRimozione: false,
 }
 
-/**
- * I codici PostgREST che dicono «questo schema qui non c'è».
- *
- * Il database E2E della CI è un progetto separato e **non migrato**, e le quattro
- * migrazioni video sono dichiarate in `IN_CODA`: là dentro `video_jobs` non esiste
- * e le RPC nemmeno. Un `500` racconterebbe un guasto; un `200` racconterebbe «non
- * c'era niente da fare», che è un altro fatto. Si dichiara e si esce con un `503`.
- */
-const CODICI_SCHEMA_ASSENTE = new Set(['42P01', '42883', 'PGRST202', 'PGRST205'])
-
-function codiceDi(errore: unknown): string {
-    const c = (errore as { code?: unknown } | null)?.code
-    return typeof c === 'string' && c.length > 0 ? c : 'sconosciuto'
-}
-
-function schemaAssente(errore: unknown): boolean {
-    return CODICI_SCHEMA_ASSENTE.has(codiceDi(errore))
-}
+// `codiceDi`, `schemaAssente` (i codici PostgREST che dicono «questo schema qui non c'è»: il
+// database E2E della CI non è migrato, e qui si risponde `503` invece di un `200` che
+// direbbe «niente da fare») ed `EsitoRpc` stanno in `@/lib/media/video/outbox/rpc`: li usa
+// anche il consumo della coda, e una copia sola dell'insieme di codici non diverge.
 
 type Supa = Awaited<ReturnType<typeof createAdminClient>>
-
-/** Il risultato di una RPC del gruppo video: `{ ok }` più i suoi conteggi. */
-type EsitoRpc = { ok?: boolean; code?: string } & Record<string, unknown>
 
 function numero(esito: EsitoRpc | null, chiave: string): number {
     const v = esito?.[chiave]
@@ -380,252 +375,6 @@ async function spazzaOriginaliOrfani(supabase: Supa, adesso: Date): Promise<Esit
         troncato,
         profonditaTroncata,
     }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// LA CODA DELLE NOTIFICHE — `video_outbox`, e chi la consuma
-// ═══════════════════════════════════════════════════════════════════════════════
-
-type EventoOutbox = {
-    id: string
-    intent_id: string
-    revision: number
-    event_type: string
-    attempts: number
-}
-
-type EsitoConsegna = { consegnato: boolean; codice?: string }
-
-/**
- * I DESTINATARI DEGLI EVENTI, uno per tipo.
- *
- * ─── PERCHÉ UN REGISTRO E NON UNO `switch` ─────────────────────────────────
- *
- * Perché il caso che conta non è quello noto: è il tipo SENZA destinatario. La
- * testata di `video_outbox_fail`
- * (`20260916190200_video_intent_lifecycle.sql:1430-1448`) racconta la misura che
- * l'ha scritta: venticinque tentativi bruciati in sedici millisecondi, e l'evento
- * che dice «aggancia questo video alla sua News» non riprovato mai più. Qui un tipo
- * sconosciuto viene messo in attesa con il suo backoff e **gridato** (`error`), non
- * cancellato e non dichiarato inviato. Poi, a venticinque tentativi, va in
- * quarantena — e `video_riconciliazione` la conta, così «nessuno lo consegnerà mai»
- * è un numero e non una scoperta.
- *
- * ─── I TRE TIPI CHE ESISTONO OGGI ──────────────────────────────────────────
- *
- * `intent.superseded` e `intent.revoked` li emette il database
- * (`20260916190200_video_intent_lifecycle.sql`, gli INSERT in `video_outbox` di
- * `:1093` e `:1242`), e il loro effetto POST-COMMIT è scritto accanto
- * all'emissione: «la revisione superata porta con sé i propri originali, che nessuno
- * pubblicherà più: **la retention deve saperlo**, o quei file restano sette giorni
- * in più di quanto serva». Il destinatario di quei due eventi, quindi, è questo
- * stesso giro — e la consegna è la RICEVUTA: si verifica che ogni job di
- * quell'intent abbia davvero una scadenza, cioè che l'effetto dichiarato dentro la
- * transazione sia sopravvissuto al commit. Se non ce l'ha, l'evento NON è
- * consegnato: si riprova, e il codice dice cosa cercare.
- *
- * `gallery.published` lo scrive `POST /api/gallery` (V08) attraverso
- * `video_intent_finalize`. Fino al 2026-09-24 qui non aveva un destinatario: dal
- * 18 al 23/09 tredici eventi hanno gridato `outbox-senza-destinatario` a ogni giro
- * e sono finiti in quarantena (`attempts` 25) con `DESTINATARIO_ASSENTE`. La
- * sessione che rilascia questa correzione li rimette in circolo una volta, a mano
- * (consegna 2b, D14).
- *
- * ⚠️ QUANDO V09 AGGIUNGERÀ `news.published` E GLI ALTRI, il posto in cui scrivere il
- * loro destinatario è questo oggetto, una riga per tipo. Finché non c'è, quel tipo
- * grida a ogni giro invece di essere consegnato per finta — e il lock di famiglia in
- * `__tests__/api/gdpr-retention-video.test.ts` diventa rosso appena qualcuno lo
- * scrive in `video_outbox` con un letterale.
- */
-const DESTINATARI: Record<string, (supabase: Supa, evento: EventoOutbox) => Promise<EsitoConsegna>> = {
-    'intent.superseded': ricevutaRetention,
-    'intent.revoked': ricevutaRetention,
-    // V08 (`src/app/api/gallery/route.ts`, la RPC che accoda questo tipo). La
-    // notifica ai genitori parte già SINCRONA in quella richiesta: un secondo avviso
-    // da qui sarebbe un doppione. L'effetto dopo il commit che resta è la retention:
-    // `video_intent_finalize` pubblica solo con tutti i job `ready` e verificati, e
-    // un job `ready` ha per vincolo la scadenza dell'originale
-    // (`video_jobs_ready_chk`). La ricevuta lo verifica.
-    'gallery.published': ricevutaRetention,
-}
-
-/**
- * La ricevuta della retention: ogni job dell'intent dell'evento ha una scadenza, o
- * è già uscito.
- *
- * `head: true` con `count: 'exact'`: si chiede un NUMERO, non le righe. Da questa
- * query non esce nessun percorso e nessun mime — sono video di minori, e un elenco
- * che non serve è un elenco che può finire in un log.
- */
-async function ricevutaRetention(supabase: Supa, evento: EventoOutbox): Promise<EsitoConsegna> {
-    const { count, error } = await supabase
-        .from('video_jobs')
-        .select('id', { count: 'exact', head: true })
-        .eq('intent_id', evento.intent_id)
-        .is('original_delete_after', null)
-        .is('original_deleted_at', null)
-
-    if (error) {
-        logEvento(
-            'cron',
-            'error',
-            { operazione: JOB, esito: 'outbox-ricevuta-fallita', error_code: codiceDi(error) },
-            error,
-        )
-        return { consegnato: false, codice: 'RICEVUTA_NON_LETTA' }
-    }
-    if ((count ?? 0) > 0) {
-        // L'effetto dichiarato dentro la transazione non c'è: quei job sono
-        // invisibili all'indice della retention. Non si consegna, e il giro
-        // successivo — dopo `video_retention_scadenze` — troverà la rete già tesa.
-        logEvento('cron', 'error', {
-            operazione: JOB,
-            esito: 'outbox-originali-senza-scadenza',
-            intent_id: evento.intent_id,
-            n_righe: count ?? 0,
-            msg: `${JOB}: l'intent dell'evento ha ancora job senza scadenza dell'originale`,
-        })
-        return { consegnato: false, codice: 'ORIGINALI_SENZA_SCADENZA' }
-    }
-    return { consegnato: true }
-}
-
-type EsitoOutbox = {
-    esito: string
-    presi: number
-    inviati: number
-    falliti: number
-    senzaDestinatario: number
-}
-
-const OUTBOX_NON_ESEGUITO: EsitoOutbox = {
-    esito: 'non-eseguito',
-    presi: 0,
-    inviati: 0,
-    falliti: 0,
-    senzaDestinatario: 0,
-}
-
-/**
- * Svuota `video_outbox` chiamando le tre RPC che esistono già —
- * `video_outbox_claim`, `video_outbox_sent`, `video_outbox_fail` — senza
- * riscriverne nessuna: la lease, il backoff e la quarantena sono decisioni del
- * database, e due copie della stessa decisione divergono il giorno in cui qualcuno
- * ne corregge una sola.
- *
- * Non lancia mai: ogni ramo cattura e riferisce.
- */
-async function svuotaOutbox(supabase: Supa): Promise<EsitoOutbox> {
-    const proprietario = crypto.randomUUID()
-    const { data, error } = await supabase.rpc('video_outbox_claim', {
-        p_lease_owner: proprietario,
-        p_lease_seconds: LEASE_OUTBOX_SECONDI,
-        p_limite: LOTTO_OUTBOX,
-    })
-
-    if (error) {
-        logEvento(
-            'cron',
-            schemaAssente(error) ? 'warn' : 'error',
-            { operazione: JOB, esito: 'outbox-claim-fallito', error_code: codiceDi(error) },
-            error,
-        )
-        return { ...OUTBOX_NON_ESEGUITO, esito: schemaAssente(error) ? 'schema-assente' : 'claim-fallito' }
-    }
-
-    const risposta = (data ?? null) as EsitoRpc | null
-    if (risposta?.ok !== true) {
-        logEvento('cron', 'error', {
-            operazione: JOB,
-            esito: 'outbox-claim-rifiutato',
-            error_code: typeof risposta?.code === 'string' ? risposta.code : 'sconosciuto',
-            msg: `${JOB}: video_outbox_claim ha rifiutato la richiesta`,
-        })
-        return { ...OUTBOX_NON_ESEGUITO, esito: 'claim-rifiutato' }
-    }
-
-    const eventi = Array.isArray(risposta.eventi) ? (risposta.eventi as EventoOutbox[]) : []
-    let inviati = 0
-    let falliti = 0
-    let senzaDestinatario = 0
-
-    for (const evento of eventi) {
-        const destinatario = DESTINATARI[evento.event_type]
-        let consegna: EsitoConsegna
-        if (destinatario === undefined) {
-            senzaDestinatario += 1
-            // Configurazione mancante = livello `error`, mai `info` (AGENTS.md,
-            // regola 4). Un evento che nessuno sa consegnare è esattamente questo:
-            // un pezzo di configurazione che manca, e che a venticinque tentativi
-            // porterà l'evento in quarantena per sempre.
-            logEvento('cron', 'error', {
-                operazione: JOB,
-                esito: 'outbox-senza-destinatario',
-                intent_id: evento.intent_id,
-                n_tentativi: evento.attempts,
-                msg: `${JOB}: nessun destinatario per un evento di video_outbox; alla venticinquesima prova finirà in quarantena`,
-            })
-            consegna = { consegnato: false, codice: 'DESTINATARIO_ASSENTE' }
-        } else {
-            consegna = await destinatario(supabase, evento)
-        }
-
-        const rpc = consegna.consegnato ? 'video_outbox_sent' : 'video_outbox_fail'
-        const argomenti = consegna.consegnato
-            ? { p_evento_id: evento.id, p_lease_owner: proprietario }
-            : {
-                  p_evento_id: evento.id,
-                  p_lease_owner: proprietario,
-                  p_error_code: consegna.codice ?? 'CONSEGNA_FALLITA',
-              }
-        const { data: esitoRpc, error: erroreRpc } = await supabase.rpc(rpc, argomenti)
-
-        if (erroreRpc) {
-            logEvento(
-                'cron',
-                'error',
-                {
-                    operazione: JOB,
-                    esito: 'outbox-chiusura-fallita',
-                    error_code: codiceDi(erroreRpc),
-                    intent_id: evento.intent_id,
-                },
-                erroreRpc,
-            )
-            falliti += 1
-            continue
-        }
-        if ((esitoRpc as EsitoRpc | null)?.ok !== true) {
-            logEvento('cron', 'error', {
-                operazione: JOB,
-                esito: 'outbox-chiusura-rifiutata',
-                error_code:
-                    typeof (esitoRpc as EsitoRpc | null)?.code === 'string'
-                        ? ((esitoRpc as EsitoRpc).code as string)
-                        : 'sconosciuto',
-                intent_id: evento.intent_id,
-                msg: `${JOB}: la RPC di chiusura dell'evento ha rifiutato`,
-            })
-            falliti += 1
-            continue
-        }
-
-        if (consegna.consegnato) inviati += 1
-        else falliti += 1
-    }
-
-    // Gli eventi critici loggano anche il SUCCESSO: a zero, questo `info` è la sola
-    // differenza fra «coda vuota» e «non si drena più».
-    logEvento('cron', 'info', {
-        operazione: JOB,
-        esito: 'outbox-svuotato',
-        n_righe: eventi.length,
-        n_inviati: inviati,
-        n_falliti: falliti,
-        n_senza_destinatario: senzaDestinatario,
-    })
-
-    return { esito: 'ok', presi: eventi.length, inviati, falliti, senzaDestinatario }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -953,7 +702,13 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
         }
 
         // ── 5. LA CODA DELLE NOTIFICHE ──────────────────────────────────────
-        outbox = await svuotaOutbox(supabase)
+        // Tutti i tipi, come sempre: nessun filtro. Il motore non lancia, quindi non serve
+        // un `try` attorno.
+        outbox = await consumaOutbox(supabase, {
+            operazione: JOB,
+            limite: LOTTO_OUTBOX,
+            leaseSecondi: LEASE_OUTBOX_SECONDI,
+        })
 
         return NextResponse.json({
             ok: true,

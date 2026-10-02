@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -277,6 +278,83 @@ describe('buildVideoEncodeArgs', () => {
     // La qualità continua a decidere il bitrate: il tetto è un tetto, non un target.
     expect(args).toEqual(expect.arrayContaining(['-crf', '18']))
     expect(args).not.toContain('-b:v')
+  })
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * IL CONTO SCRITTO NEL COMMENTO È QUELLO CHE IL CODICE CALCOLA.
+   *
+   * Il 2026-10-02 la durata massima è passata da 180 a 300 secondi: il tetto VBV si è
+   * ricalcolato da solo (derivava già da `MAX_VIDEO_DURATION_SECONDS`, e il caso qui sopra è
+   * una PROPRIETÀ che resta vera a qualunque durata), ma il conto in chiaro nella testata di
+   * `encode.ts` — 86.844.975 bit/s, finestra di 182 secondi — è rimasto quello di ieri, con
+   * tutto verde. Un commento col numero vecchio è peggio di nessun commento: chi lo legge per
+   * tarare un tetto di Sandbox si fida.
+   *
+   * Questo caso ricava maxrate, bufsize e peso del caso peggiore dagli ARGOMENTI che
+   * `buildVideoEncodeArgs` emette (non dalla formula: sarebbe una tautologia) e pretende di
+   * ritrovarli, scritti all'italiana, nel sorgente. Se la costante si muove ancora, diventa
+   * rosso e il conto va riscritto.
+   * ────────────────────────────────────────────────────────────────────────── */
+  it('il conto in chiaro nella testata di `encode.ts` riporta i numeri che il codice emette adesso', () => {
+    const args = buildVideoEncodeArgs(probeBase, {
+      channel: 'news',
+      inputPath: '/tmp/in.mov',
+      outputPath: '/tmp/out.mp4',
+    })
+    const maxrate = Number(valoreDi(args, '-maxrate:v'))
+    const bufsize = Number(valoreDi(args, '-bufsize:v'))
+    const bpsAudio = Number(valoreDi(args, '-b:a').slice(0, -1)) * 1000
+
+    const sorgente = readFileSync(join(process.cwd(), 'src/lib/media/video/encode.ts'), 'utf8')
+    /** Un numero scritto all'italiana, con i punti: `15.942.400.000` → 15942400000. */
+    const numero = (testo: string): number => Number(testo.replace(/\./g, ''))
+    /** La riga della tabella che comincia con `etichetta`: SOLO la tabella, non la prosa che la commenta. */
+    const riga = (etichetta: RegExp, descrizione: string): RegExpMatchArray => {
+      const trovata = sorgente.match(etichetta)
+      expect(trovata, `nella tabella di encode.ts non si trova più «${descrizione}»`).not.toBeNull()
+      return trovata as RegExpMatchArray
+    }
+
+    // Le righe della tabella, lette dal commento. La prosa sotto la tabella RIPETE questi numeri
+    // (ricorda anche quello di ieri): un `toContain` nudo si accontenterebbe di lei e lascerebbe
+    // la tabella invecchiare. Per questo si legge riga per riga e si fa tornare l'aritmetica.
+    const tetto = riga(/\* {3}tetto +([\d.]+) byte × 8 +=\s+([\d.]+) bit/, 'la riga del tetto')
+    const audio = riga(/\* {3}− audio +([\d.]+) bit\/s × (\d+) s +=\s+([\d.]+) bit/, 'la riga dell’audio')
+    const dopoAudio = riga(/─+\n \* +([\d.]+) bit\n/, 'il totale dopo l’audio')
+    const contenitore = riga(/\* {3}− (\d+)% contenitore[^\n]*=\s+([\d.]+) bit/, 'la riga del contenitore')
+    const finestra = riga(
+      /\* {3}÷ finestra VBV +(\d+) s di durata \+ (\d+) s di buffer +=\s+(\d+) s/,
+      'la finestra VBV',
+    )
+    const maxrateScritto = riga(/\* {3}-maxrate:v +([\d.]+) bit\/s/, 'il -maxrate:v')
+    const bufsizeScritto = riga(/\* {3}-bufsize:v +=\s*2 × maxrate +([\d.]+) bit/, 'il -bufsize:v')
+    const pesoScritto = riga(/l'uscita pesa ([\d.]+)\s+\* byte/, 'il peso del caso peggiore')
+
+    // Il tetto, l'audio e la durata sono quelli di adesso…
+    expect(numero(tetto[1])).toBe(MAX_VIDEO_INPUT_BYTES)
+    expect(numero(tetto[2])).toBe(MAX_VIDEO_INPUT_BYTES * 8)
+    expect(numero(audio[1]), 'il bitrate audio della tabella non è quello di `-b:a`').toBe(bpsAudio)
+    expect(numero(audio[2]), 'la durata della tabella non è `MAX_VIDEO_DURATION_SECONDS`').toBe(MAX_VIDEO_DURATION_SECONDS)
+    expect(numero(audio[3])).toBe(bpsAudio * MAX_VIDEO_DURATION_SECONDS)
+    // …le sottrazioni tornano…
+    expect(numero(dopoAudio[1])).toBe(MAX_VIDEO_INPUT_BYTES * 8 - bpsAudio * MAX_VIDEO_DURATION_SECONDS)
+    const percentuale = Number(contenitore[1])
+    expect(numero(contenitore[2])).toBe(Math.floor((numero(dopoAudio[1]) * (100 - percentuale)) / 100))
+    // …la finestra è la durata più il buffer, e il buffer è quello che gli argomenti emettono…
+    expect(Number(finestra[1])).toBe(MAX_VIDEO_DURATION_SECONDS)
+    expect(Number(finestra[3])).toBe(Number(finestra[1]) + Number(finestra[2]))
+    expect(Number(finestra[2])).toBe(bufsize / maxrate)
+    // …e i tre numeri che CONTANO sono quelli che il codice scrive negli argomenti di FFmpeg.
+    expect(numero(maxrateScritto[1]), 'il -maxrate:v della tabella non è quello emesso').toBe(maxrate)
+    expect(numero(bufsizeScritto[1]), 'il -bufsize:v della tabella non è quello emesso').toBe(bufsize)
+    expect(Math.floor(numero(contenitore[2]) / Number(finestra[3])), 'la divisione della tabella non dà il maxrate').toBe(maxrate)
+    const bitPeggiori = maxrate * MAX_VIDEO_DURATION_SECONDS + bufsize + bpsAudio * MAX_VIDEO_DURATION_SECONDS
+    expect(numero(pesoScritto[1]), 'il peso del caso peggiore scritto non è quello che il VBV garantisce').toBe(
+      Math.floor(bitPeggiori / 8),
+    )
+    // Il 180 di ieri non è un DATO della tabella (è citato solo come storia nella prosa).
+    expect(sorgente).not.toContain('× 180 s')
+    expect(sorgente).not.toContain('180 s di durata')
   })
 
   it('non interpola metadati colore non fidati nel filtergraph', () => {

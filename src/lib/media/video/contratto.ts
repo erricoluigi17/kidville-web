@@ -25,8 +25,9 @@ import type { VideoOutputVerificationErrorCode } from './verify'
  *
  * ─── LA REGOLA CHE VALE PIÙ DI TUTTE: COSA ESCE VERSO UNA FAMIGLIA ──────────
  *
- * La pipeline produce SETTANTACINQUE codici d'errore diversi (conteggio del
- * 2026-10-02: lo rimisura il test, non questo commento), e quasi nessuno di
+ * La pipeline produce quasi cento codici d'errore diversi (erano settantacinque
+ * prima della PR 2 «server e web» del 2026-10-02, e novantatré subito dopo: il
+ * numero preciso lo rimisura il test, non questo commento), e quasi nessuno di
  * loro è un'informazione per chi ha caricato il video della recita.
  * `INTENT_CHANGED_RETRY` è il vocabolario del protocollo di coda;
  * `OUTPUT_DURATION_MISMATCH` è il verdetto di `verifyVideoOutput`;
@@ -53,7 +54,10 @@ import type { VideoOutputVerificationErrorCode } from './verify'
  *  1. `./limiti.ts`  → `VideoInputSizeErrorCode` (3)
  *  2. `./probe.ts`   → `VideoProbeErrorCode` (10, più i 3 dei limiti)
  *  3. `./verify.ts`  → `VideoOutputVerificationErrorCode` (18)
- *  4. `supabase/migrations/*_video_*.sql` → i `code` delle RPC (34)
+ *  4. `supabase/migrations/*_video_*.sql` → ogni codice che SQL scrive: i `code` che le RPC
+ *     rispondono, gli `error_code` che SQL mette da solo su un job (la retention) e le
+ *     RAISE che portano un codice (cresce con le migrazioni: lo conta il test)
+ *  5. `./runner/codici.ts` → `CODICI_RUNNER_VIDEO` (10)
  *
  * L'elenco qui sotto è la loro unione, e il test la RIMISURA leggendo quelle
  * fonti: se qualcuno aggiunge un ramo a `verifyVideoOutput` o un `code` a una
@@ -61,6 +65,48 @@ import type { VideoOutputVerificationErrorCode } from './verify'
  * che cosa la famiglia ne legge. Le due cose insieme, perché separate la
  * seconda si dimentica — e un codice senza messaggio, a schermo, è
  * indistinguibile dal silenzio.
+ *
+ * ─── LA PR 2 «SERVER E WEB»: COSA C'È DI NUOVO, E DOVE STA ──────────────────
+ *
+ * Questo modulo è anche il contratto della pubblicazione lato server: i bambini si
+ * scelgono PRIMA dell'invio e il video esce da solo. I nomi sono scelti qui, una volta,
+ * e chi scrive le route e i client li prende da qui invece di inventarne di suoi:
+ *
+ *  · apertura — `TRASPORTI_VIDEO`, `MAX_BAMBINI_PER_VIDEO`, `MAX_CLASSI_PER_VIDEO`,
+ *    `schemaDestinatariVideo`, e i campi nuovi di `schemaAperturaIntentVideo`
+ *    (`destinatari`, `trasporto`) e di `schemaFileVideoDichiarato` (`sha256`, PER FILE:
+ *    descrive i byte di quel file, come `byte` e `mime`);
+ *  · risposta di apertura — `schemaRispostaAperturaVideo` (`caricamento` è l'unione
+ *    discriminata su `protocollo`, `schemaCaricamentoVideo`: `tus` come oggi, `put` con
+ *    `schemaCoordinatePutVideo` e, accanto, il `rinnovo` di `schemaRinnovoVideo`);
+ *    `schemaEsitoAperturaIntentVideo` resta la forma di oggi, solo TUS, per le News e per
+ *    chi non conosce il PUT;
+ *  · rinnovo e firma — `INTESTAZIONE_TOKEN_RINNOVO`, `PREFISSO_TOKEN_RINNOVO`,
+ *    `BYTE_CASUALI_TOKEN_RINNOVO`, `schemaTokenRinnovoVideo`, `schemaRispostaRinnovoVideo`,
+ *    `schemaCorpoFirmaVideo`, `schemaRispostaFirmaVideo`;
+ *  · azioni e runner — `schemaAzioneRiprovaPubblicazioneVideo`, `schemaCorpoRunnerVideo`;
+ *  · elenco — `FASI_VOCE_VIDEO`, `schemaVoceVideo` (`VoceVideo`), `schemaQueryElencoVideo`,
+ *    `schemaRispostaElencoVideo`, `MAX_VOCI_ELENCO_VIDEO`;
+ *  · il codice da mostrare per un job — `codiceMostrabileDelJob` (e `JobVideoGrezzo`): la
+ *    regola del secondario #37, che usano l'elenco, lo stato e le notifiche; la soglia dei
+ *    tentativi che la regge è `ATTEMPT_DELLA_PRIMA_PRESA` / `ATTEMPT_DEL_PRIMO_RITENTATIVO`,
+ *    la stessa di `riprovaAutomaticaInCorso`.
+ *
+ * I CODICI NUOVI stanno in `CODICI_ESITO_VIDEO` (sezione «PR 2», più i due `error_code` della
+ * retention), con la loro destinazione in `MAPPA_MESSAGGIO_VIDEO` e il loro numero HTTP in
+ * `src/app/api/video-uploads/risposte.ts`. Le cinque frasi nuove sono i codici mostrati
+ * `VIDEO_ORIGINALE_NON_COINCIDE`, `VIDEO_DESTINATARI_MANCANTI`, `VIDEO_NESSUN_DESTINATARIO`,
+ * `VIDEO_PUBBLICAZIONE_NON_RIUSCITA` e `VIDEO_RIPROVA_NON_POSSIBILE`; `VIDEO_APP_DA_AGGIORNARE`
+ * esisteva già e si riusa.
+ *
+ * Gli errori dei cancelli della Galleria (`TAG_FUORI_SEDE`, il broadcast riservato alla
+ * Direzione, il broadcast con tag, la liberatoria mancante col 422 che porta `nomi` e `ids`)
+ * NON sono codici di questo modulo: li costruisce il modulo condiviso dei cancelli, con lo
+ * stesso corpo di `POST /api/gallery`, e `POST /api/video-uploads` li restituisce com'è.
+ * Dichiararli qui vorrebbe dire due definizioni dello stesso rifiuto. L'unico nome che si
+ * incrocia è `BROADCAST_CON_TAG`, perché la RPC di apertura lo risponde davvero (è la rete
+ * sotto il cancello): il contratto lo dichiara per poterlo tradurre, ma a chi guarda arriva la
+ * frase del cancello, non quella del ripiego.
  */
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -101,6 +147,36 @@ export const BUCKET_ORIGINALI_VIDEO = 'video_originals'
  * serve a non far partire cinquanta conversioni con un tocco.
  */
 export const MAX_VIDEO_PER_INTENT_NEWS = 10
+
+/**
+ * Come i byte dell'originale arrivano allo Storage. È una colonna dell'INTENTO
+ * (`video_intents.trasporto`, con il suo `CHECK`), e il vocabolario è chiuso:
+ *
+ *  · `tus` — il caricamento a blocchi che fanno il browser e le app 1.0/1.1, firmato con
+ *    `x-signature`. È il predefinito, e l'unico delle News;
+ *  · `put-nativo` — una PUT sola su un URL firmato SENZA upsert, che l'app 1.2 manda dal
+ *    sistema operativo anche a app chiusa. Porta con sé un token di rinnovo e lo `sha256`
+ *    dichiarato, che il Sandbox riverifica prima di convertire.
+ */
+export const TRASPORTI_VIDEO = ['tus', 'put-nativo'] as const
+export type TrasportoVideo = (typeof TRASPORTI_VIDEO)[number]
+
+/**
+ * Quanti bambini può nominare UN video della Galleria, e quante classi. Sono i `CHECK` di
+ * `video_intents.tag_alunni` (cardinalità ≤ 200) e di `classi_destinatarie` (≤ 20): lo schema
+ * del bordo li respinge prima di scrivere una riga che il database rifiuterebbe con un
+ * `23514` anonimo, cioè con un 500 al posto di un 400 leggibile.
+ */
+export const MAX_BAMBINI_PER_VIDEO = 200
+export const MAX_CLASSI_PER_VIDEO = 20
+
+/**
+ * Quante voci porta al massimo l'elenco dei video dell'insegnante (`GET /api/video-uploads`):
+ * gli intenti non conclusi più quelli conclusi da poco, i più recenti per primi. Il tetto è
+ * una promessa del server (la query ha il suo `limit`) e lo schema della risposta la fa
+ * rispettare anche a chi la legge.
+ */
+export const MAX_VOCI_ELENCO_VIDEO = 50
 
 /* ────────────────────────────────────────────────────────────────────────────
  * I CODICI DELLA PIPELINE — l'unione misurata delle quattro fonti
@@ -188,6 +264,14 @@ export const CODICI_ESITO_VIDEO = [
   // da solo appena la migrazione è comparsa nell'albero.
   'NON_ANCORA_SCADUTO',
   'SENZA_SCADENZA',
+  // I due `error_code` che SQL scrive DA SOLO su un job, senza passare dal runner:
+  // `video_retention_scadenze` (`20260918110000_video_retention_riconciliazione.sql`) chiude
+  // `failed` un caricamento rimasto a metà per 48 ore e una coda ferma da una settimana.
+  // La retention li scrive dal 2026-09-18 e il contratto non li dichiarava, perché il lock
+  // leggeva solo i `code` delle RPC: `codiceMessaggioVideo()` ripiegava sul messaggio generico,
+  // e nessun test lo diceva. Ora il lock legge anche gli `error_code` letterali, e li trova.
+  'UPLOAD_ABBANDONATO',
+  'CONVERSIONE_INCAGLIATA',
 
   // ── La QUINTA fonte: il runner (`runner/codici.ts`), nata dopo le altre quattro.
   // Fino al 2026-09-18 questo elenco non la conosceva, e il lock non la scandiva:
@@ -206,6 +290,47 @@ export const CODICI_ESITO_VIDEO = [
   'ENCODE_FAILED',
   'OUTPUT_UPLOAD_FAILED',
   'CONVERSION_TIMEOUT',
+
+  // ── PR 2 «server e web» (2026-10-02): il file arrivato, i destinatari, la pubblicazione.
+  // Dichiarati QUI, dal compito del contratto, prima delle fonti che li produrranno (le RPC
+  // e il trigger d'arrivo in SQL, il pubblicatore e la route in TypeScript): chi li scrive
+  // trova il nome, la frase e il numero HTTP già decisi. Il lock sulle fonti li tollera
+  // finché la fonte non esiste, con una mappa dichiarata e un tetto che può solo scendere.
+  /** Il file arrivato pesa diversamente da quanto dichiarato all'apertura (o ha uno `sha256` diverso). */
+  'ORIGINALE_DIVERSO',
+  /** L'originale è stato riscritto dopo il suo arrivo: non è più il file che si era verificato. */
+  'ORIGINALE_SOSTITUITO',
+  /** I Sandbox in lavorazione sono già quanti ne ammette il tetto: «non ora», non un guasto. */
+  'CAPACITA_PIENA',
+  /** Il token di rinnovo è assente, sconosciuto, scaduto o revocato: per fuori è sempre lo stesso 404. */
+  'TOKEN_NON_VALIDO',
+  /** L'apertura di un video di Galleria senza bambini e senza broadcast. */
+  'DESTINATARI_MANCANTI',
+  /** Alla pubblicazione nessuno dei bambini scelti è più nella sede: il video non esce. */
+  'NESSUN_DESTINATARIO',
+  /** La pubblicazione è fallita in modo definitivo: ne parte la notifica col «Riprova». */
+  'PUBBLICAZIONE_NON_RIUSCITA',
+  /** Il «Riprova» non è più possibile: già pubblicato, ritirato, scaduto o non è dell'autore. */
+  'RIPROVA_NON_POSSIBILE',
+  /** La RPC di pubblicazione ha ricevuto fra i bambini effettivi uno che l'intento non nominava. */
+  'TAG_NON_DELL_INTENTO',
+  // Gli altri sette codici che le RPC di `20261002150000_video_pubblicazione_automatica.sql`
+  // rispondono e che la spec non nominava uno per uno: il lock li ha trovati nel testo della
+  // migrazione scritta dal compito T2a, e qui hanno la loro destinazione.
+  /** Un broadcast che porta bambini: i due vanno insieme solo nella testa di chi chiama. */
+  'BROADCAST_CON_TAG',
+  /** Il percorso della copia in galleria non ha la forma `uploads/<autore>/<un-segmento>.<ext>`. */
+  'FILE_URL_NON_VALIDO',
+  /** `video_intent_finalize` ha rifiutato senza dire perché: il ripiego di un rifiuto muto. */
+  'FINALIZE_RIFIUTATO',
+  /** Un'altra invocazione sorveglia già questo job: «non ora», un esito tranquillo. */
+  'GIA_SORVEGLIATO',
+  /** L'intento è del flusso vecchio: nessun server lo pubblica da solo. */
+  'NON_AUTOMATICA',
+  /** `video_runner_kick`: la richiesta al runner non è partita (la rete di `pg_net`). */
+  'POST_FALLITO',
+  /** `video_runner_kick`: nella configurazione del cron non c'è l'indirizzo del runner. */
+  'URL_ASSENTE',
 ] as const
 export type CodiceEsitoVideo = (typeof CODICI_ESITO_VIDEO)[number]
 
@@ -296,6 +421,22 @@ export const CODICI_MOSTRATI_VIDEO = [
   'VIDEO_APP_DA_AGGIORNARE',
   /** Il ripiego: qualcosa non ha funzionato e non c'è altro di utile da dire. */
   'VIDEO_OPERAZIONE_NON_RIUSCITA',
+  // ── PR 2 «server e web»: cinque frasi nuove, ciascuna perché cambia ciò che la persona fa.
+  /**
+   * Il file arrivato da noi non è quello che si era scelto (peso o impronta diversi, oppure
+   * riscritto dopo l'arrivo): il video non è stato usato e va caricato di nuovo. Due codici
+   * interni (`ORIGINALE_DIVERSO`, `ORIGINALE_SOSTITUITO`) e una frase sola, perché l'azione
+   * è la stessa: ricaricare.
+   */
+  'VIDEO_ORIGINALE_NON_COINCIDE',
+  /** Un video di Galleria senza bambini: serve sceglierne almeno uno prima di inviarlo. */
+  'VIDEO_DESTINATARI_MANCANTI',
+  /** Il video è pronto ma nessuno dei bambini scelti è più nella sede: non è stato pubblicato. */
+  'VIDEO_NESSUN_DESTINATARIO',
+  /** Il video è pronto e la pubblicazione non è riuscita: si può riprovare dalla galleria. */
+  'VIDEO_PUBBLICAZIONE_NON_RIUSCITA',
+  /** Il «Riprova» è stato rifiutato: il video va cercato in galleria o ricaricato. */
+  'VIDEO_RIPROVA_NON_POSSIBILE',
   /**
    * Più sedi accessibili e nessuna indicata. NON è un codice nuovo: è quello che
    * `rifiutoSede` manda già da 137 route (`src/lib/auth/rifiuto-sede.ts`), con la
@@ -336,6 +477,11 @@ export const CHIAVI_MESSAGGIO_VIDEO: Record<CodiceMostratoVideo, string> = {
   VIDEO_NON_AUTORIZZATO: 'erroreVideoNonAutorizzato',
   VIDEO_APP_DA_AGGIORNARE: 'erroreVideoAppDaAggiornare',
   VIDEO_OPERAZIONE_NON_RIUSCITA: 'erroreVideoOperazioneNonRiuscita',
+  VIDEO_ORIGINALE_NON_COINCIDE: 'erroreVideoOriginaleNonCoincide',
+  VIDEO_DESTINATARI_MANCANTI: 'erroreVideoDestinatariMancanti',
+  VIDEO_NESSUN_DESTINATARIO: 'erroreVideoNessunDestinatario',
+  VIDEO_PUBBLICAZIONE_NON_RIUSCITA: 'erroreVideoPubblicazioneNonRiuscita',
+  VIDEO_RIPROVA_NON_POSSIBILE: 'erroreVideoRiprovaNonPossibile',
   SEDE_DA_SPECIFICARE: 'erroreSedeDaSpecificare',
 }
 
@@ -483,13 +629,84 @@ export const MAPPA_MESSAGGIO_VIDEO: Record<CodiceInternoVideo, CodiceMostratoVid
    * `ffprobe` non è partito o non ha stampato niente — diverso da «il JSON è sbagliato»,
    * che è del video. Invariato: il runner lo ritenta solo quando lo stderr mostra un errore
    * di rete; senza rete in mezzo è un file che non si lascia aprire, e si dice così.
+   *
+   * ⚠️ Questa riga dice cosa legge chi ha UN SOLO tentativo alle spalle. A tentativi esauriti
+   * (job `failed` con `attempt > 1`) il guasto che si è ritentato era nostro, qualunque codice
+   * abbia chiuso l'ultimo giro: lo decide `codiceMostrabileDelJob`, non questa mappa.
    */
   PROBE_COMMAND_FAILED: 'VIDEO_NON_LEGGIBILE',
-  /** Invariato: `ffmpeg` è uscito con un errore, e quasi sempre la ragione sta nel file. */
+  /**
+   * Invariato: `ffmpeg` è uscito con un errore, e quasi sempre la ragione sta nel file. Stessa
+   * avvertenza di `PROBE_COMMAND_FAILED`: dopo i ritentativi il codice mostrato è quello del
+   * guasto nostro (`codiceMostrabileDelJob`).
+   */
   ENCODE_FAILED: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
   OUTPUT_UPLOAD_FAILED: 'VIDEO_GUASTO_NOSTRO',
   /** Invariato: la conversione non è finita entro il tetto di tempo della sorveglianza. */
   CONVERSION_TIMEOUT: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
+
+  // ── I due `error_code` che SQL scrive da solo (la retention).
+  /**
+   * Il telefono non ha mai detto «ho finito» e dopo 48 ore il job è stato chiuso. Per chi ha
+   * caricato è un caricamento «scaduto»: la frase di `VIDEO_NON_TROVATO` dice già la cosa che
+   * serve («ricomincia dall'inizio»), e una frase nuova per lo stesso gesto sarebbe un secondo
+   * modo di dire la stessa cosa.
+   */
+  UPLOAD_ABBANDONATO: 'VIDEO_NON_TROVATO',
+  /**
+   * La coda è rimasta ferma una settimana con la lease scaduta: il filmato non c'entra, ed è
+   * esattamente il caso per cui esiste la frase del «problema nostro».
+   */
+  CONVERSIONE_INCAGLIATA: 'VIDEO_GUASTO_NOSTRO',
+
+  // ── PR 2 «server e web»: il file arrivato, i destinatari, la pubblicazione, il rinnovo.
+  //    ⚠️ Per ciascuno vale la domanda del contratto intero: cambia ciò che la persona può FARE?
+  //    Se sì ha la frase sua; se non lo cambia, cade su una frase che esiste già.
+  /** Il file non è quello dichiarato: l'unica cosa da fare è caricarlo di nuovo. */
+  ORIGINALE_DIVERSO: 'VIDEO_ORIGINALE_NON_COINCIDE',
+  /** Come `ORIGINALE_DIVERSO`: stessa azione, quindi stessa frase. */
+  ORIGINALE_SOSTITUITO: 'VIDEO_ORIGINALE_NON_COINCIDE',
+  /**
+   * «Non ora»: i Sandbox in lavorazione sono già quanti ne ammette il tetto. Lo sente il runner,
+   * non una persona — come `RETRY_NOT_DUE`, di cui è parente stretto — e se mai finisse in una
+   * risposta l'unica cosa vera da dire è «riprova».
+   */
+  CAPACITA_PIENA: 'VIDEO_RIPROVA',
+  /**
+   * Token di rinnovo assente, sconosciuto, scaduto o revocato. Per fuori è sempre e solo
+   * «non esiste»: distinguere i quattro casi direbbe a chi indovina che quel token è esistito.
+   * Per questo il 404 uniforme del rinnovo porta proprio `VIDEO_NON_TROVATO`.
+   */
+  TOKEN_NON_VALIDO: 'VIDEO_NON_TROVATO',
+  /** Un video di Galleria senza bambini e senza broadcast: ne serve almeno uno. */
+  DESTINATARI_MANCANTI: 'VIDEO_DESTINATARI_MANCANTI',
+  /** Nessuno dei bambini scelti è più nella sede: il video non esce, e il perché va detto. */
+  NESSUN_DESTINATARIO: 'VIDEO_NESSUN_DESTINATARIO',
+  /** Il video è pronto e la pubblicazione non è riuscita: la frase manda al «Riprova». */
+  PUBBLICAZIONE_NON_RIUSCITA: 'VIDEO_PUBBLICAZIONE_NON_RIUSCITA',
+  /** Il «Riprova» non è più possibile: la frase manda a controllare la galleria o a ricaricare. */
+  RIPROVA_NON_POSSIBILE: 'VIDEO_RIPROVA_NON_POSSIBILE',
+  /**
+   * La RPC di pubblicazione ha rifiutato un bambino che l'intento non nominava. Non è una
+   * situazione che una persona possa causare né correggere: è un difetto NOSTRO, e il guardiano
+   * che lo ferma (la pubblicazione non esce mai verso chi non è stato scelto) vuole un 500
+   * e una riga `error`, non una frase che sembri una richiesta sbagliata.
+   */
+  TAG_NON_DELL_INTENTO: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
+
+  // ── Gli altri sette delle RPC di `video_pubblicazione_automatica`. Nessuno è una cosa che la
+  //    persona possa correggere: o è un difetto di chi chiama la RPC (la frase del ripiego, e il
+  //    motivo vero nel log), o è un «non ora» che sente il runner.
+  /** Il cancello della Galleria lo ferma prima (con la sua frase, identica a `POST /api/gallery`): qui è la rete. */
+  BROADCAST_CON_TAG: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
+  FILE_URL_NON_VALIDO: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
+  FINALIZE_RIFIUTATO: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
+  /** «Non ora», come `LEASE_ACTIVE`: lo sente il runner, e l'unica cosa vera da dire è «riprova». */
+  GIA_SORVEGLIATO: 'VIDEO_RIPROVA',
+  /** Una variante di `INVALID_STATE`: l'intento non è nello stato che la richiesta pretende. */
+  NON_AUTOMATICA: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
+  POST_FALLITO: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
+  URL_ASSENTE: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
 
   // ── Il bordo HTTP.
   CLIENT_UPDATE_REQUIRED: 'VIDEO_APP_DA_AGGIORNARE',
@@ -546,6 +763,43 @@ const schemaEndpointSicuro = z
   .max(2048)
   .regex(/^https:\/\/[^\s]+$/)
 
+/**
+ * A CHI È DESTINATO UN VIDEO DELLA GALLERIA — scelto PRIMA dell'invio, e conosciuto dal server.
+ *
+ * Fino alla PR 2 i bambini vivevano solo nella memoria della pagina: il server non li
+ * conosceva, la pubblicazione la faceva il browser quando il job era pronto, e un video
+ * convertito con la pagina chiusa restava lì, mai pubblicato (11 casi misurati il 2026-10-01).
+ * Adesso viaggiano con l'apertura, si scrivono sull'intento (`video_intents.tag_alunni`,
+ * `broadcast`, `classi_destinatarie`) e il server pubblica da solo quando il video è pronto.
+ *
+ * ⚠️ LO SCHEMA VALIDA LA FORMA, NON LE REGOLE. Che un bambino sia della sede, che il broadcast
+ * sia riservato alla Direzione e non porti bambini, che la liberatoria ci sia: sono i cancelli
+ * della Galleria, e la risposta di ciascuno è quella di `POST /api/gallery`, identica. Se questo
+ * schema ne respingesse uno, il client riceverebbe un 400 di validazione al posto del 403/422
+ * con i nomi che oggi sa leggere. Per lo stesso motivo `{}` è un `destinatari` valido: è la
+ * route a dire `DESTINATARI_MANCANTI`, con la sua frase.
+ *
+ *  · `tagAlunni` — uuid dei bambini ritratti, in minuscolo e senza doppioni. `z.guid()` e non
+ *    `z.uuid()`: sono identificatori di un'altra tabella, e lo strict RFC rifiuterebbe gli id
+ *    seedati in dev (stessa ragione di `zUuid`, che qui non si importa per non trascinare un
+ *    modulo di validazione nel bundle del client);
+ *  · `broadcast` — la comunicazione a un'intera classe o sede: riservata alla Direzione e senza
+ *    bambini, ma queste due regole stanno nei cancelli;
+ *  · `classi` — i NOMI delle classi destinatarie di un broadcast: è lo stesso tipo di
+ *    `galleria_media_v2.target_classes` e di `target_classes` in `POST /api/gallery` (`text[]`,
+ *    confrontato per nome).
+ */
+export const schemaDestinatariVideo = z.object({
+  tagAlunni: z
+    .array(z.guid().transform((id) => id.toLowerCase()))
+    .max(MAX_BAMBINI_PER_VIDEO)
+    .transform((ids) => [...new Set(ids)])
+    .default([]),
+  broadcast: z.boolean().default(false),
+  classi: z.array(z.string().min(1).max(255)).max(MAX_CLASSI_PER_VIDEO).default([]),
+})
+export type DestinatariVideo = z.infer<typeof schemaDestinatariVideo>
+
 /** Un file che il client dichiara di voler caricare. */
 export const schemaFileVideoDichiarato = z.object({
   /**
@@ -564,6 +818,22 @@ export const schemaFileVideoDichiarato = z.object({
    * il browser non sa dire quanto dura sarebbe un rifiuto ingiusto.
    */
   durataSecondi: z.number().positive().max(MAX_VIDEO_DURATION_SECONDS).nullable(),
+  /**
+   * L'impronta SHA-256 dei byte del file, in esadecimale (64 caratteri), dichiarata dall'app 1.2
+   * con il trasporto `put-nativo`: il Sandbox la ricalcola sull'originale scaricato PRIMA di
+   * convertire, e se non torna il job è respinto (`ORIGINALE_DIVERSO`, mai ritentato). È la prova
+   * che i byte arrivati sono quelli scelti, per una PUT che non si può riprendere a metà.
+   *
+   * PER FILE e non per intento, come `byte` e `mime`: descrive il contenuto di QUEL file (sul job
+   * è `video_jobs.sha256_dichiarato`). Ammessa solo con `put-nativo`, e il controllo sta in
+   * `schemaAperturaIntentVideo`; il web, che carica in TUS, non la manda. Si normalizza in
+   * minuscolo, com'è scritta dal Sandbox.
+   */
+  sha256: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/)
+    .transform((impronta) => impronta.toLowerCase())
+    .optional(),
 })
 export type FileVideoDichiarato = z.infer<typeof schemaFileVideoDichiarato>
 
@@ -575,6 +845,14 @@ export type FileVideoDichiarato = z.infer<typeof schemaFileVideoDichiarato>
  * del database (`video_intents_scuola_scope_chk`). Una Galleria senza sede
  * archivierebbe il video nel plesso sbagliato **in silenzio**, che è il difetto
  * per cui esiste `resolveScuolaScrittura`.
+ *
+ * ─── DAL 2026-10-02: DESTINATARI E TRASPORTO ────────────────────────────────
+ * `destinatari` porta i bambini scelti PRIMA dell'invio (vedi `schemaDestinatariVideo`) ed è
+ * facoltativo nello schema, perché la sua ASSENZA è un'informazione: una Galleria che apre un
+ * intento senza destinatari è un client vecchio (una pagina non ricaricata, un client col JS di
+ * prima del rilascio), e la route risponde 409 `VIDEO_APP_DA_AGGIORNARE` invece di scrivere un video
+ * che nessuno potrebbe più pubblicare. Le News non ne hanno mai.
+ * `trasporto` è `tus` se manca: chi non lo conosce continua a funzionare.
  */
 export const schemaAperturaIntentVideo = z
   .object({
@@ -587,6 +865,10 @@ export const schemaAperturaIntentVideo = z
     /** `updated_at` visto dal client: serve a non sovrascrivere modifiche altrui. */
     versioneTargetAttesa: z.string().datetime().nullable(),
     file: z.array(schemaFileVideoDichiarato).min(1).max(MAX_VIDEO_PER_INTENT_NEWS),
+    /** A chi si mostra il video: solo Galleria, solo `publish`, un file. Vedi la testata. */
+    destinatari: schemaDestinatariVideo.optional(),
+    /** Come arrivano i byte. `put-nativo` è solo della Galleria e porta lo `sha256` del file. */
+    trasporto: z.enum(TRASPORTI_VIDEO).default('tus'),
   })
   .superRefine((richiesta, ctx) => {
     if (richiesta.canale === 'gallery' && richiesta.file.length !== 1) {
@@ -621,6 +903,49 @@ export const schemaAperturaIntentVideo = z
         message: 'indicare la sede a cui si riferisce questo caricamento',
       })
     }
+
+    // I destinatari sono della Galleria: una News è un testo con degli allegati, non ha
+    // bambini a cui mostrarsi. E un video con destinatari si PUBBLICA: nessun'altra azione
+    // ha senso, e nessuna sa che farsene. (Che ce ne sia almeno uno, o il broadcast, non lo
+    // dice questo schema: lo dice la route, con `DESTINATARI_MANCANTI`.)
+    if (richiesta.destinatari !== undefined) {
+      if (richiesta.canale !== 'gallery') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['destinatari'],
+          message: 'i destinatari esistono solo per la Galleria',
+        })
+      }
+      if (richiesta.azione !== 'publish') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['azione'],
+          message: 'un video con destinatari si pubblica: l’azione è `publish`',
+        })
+      }
+    }
+
+    // Il trasporto nativo è della Galleria (le News si allegano da una pagina, in TUS), e lo
+    // `sha256` si dichiara solo con lui: è il trasporto che non può riprendere a metà, e per
+    // questo si fa dire l'impronta dei byte prima di fidarsene. Il web, in TUS, non la manda
+    // e il Sandbox salta quel controllo: una promessa fatta con l'altro trasporto resterebbe
+    // una frase che nessuno rilegge.
+    if (richiesta.trasporto === 'put-nativo' && richiesta.canale !== 'gallery') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['trasporto'],
+        message: 'il trasporto nativo esiste solo per la Galleria',
+      })
+    }
+    richiesta.file.forEach((file, indice) => {
+      if (file.sha256 !== undefined && richiesta.trasporto !== 'put-nativo') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['file', indice, 'sha256'],
+          message: 'lo sha256 si dichiara solo con il trasporto nativo',
+        })
+      }
+    })
   })
 export type AperturaIntentVideo = z.infer<typeof schemaAperturaIntentVideo>
 
@@ -659,46 +984,63 @@ export const schemaCoordinateCaricamentoVideo = z.object({
 })
 export type CoordinateCaricamentoVideo = z.infer<typeof schemaCoordinateCaricamentoVideo>
 
-/** La risposta all'apertura: un job per file, con le sue coordinate d'upload. */
-export const schemaEsitoAperturaIntentVideo = z.object({
+/**
+ * I campi di un job aperto che NON dipendono da come arrivano i byte: gli stessi per il TUS di
+ * oggi (`schemaEsitoAperturaIntentVideo`) e per la risposta estesa che conosce anche il PUT
+ * (`schemaRispostaAperturaVideo`, in fondo al modulo). Una definizione sola: la risposta
+ * all'apertura è il confine su cui la route e due client si fidano l'uno dell'altro, e due
+ * copie dello stesso elenco di campi divergono alla prima modifica.
+ */
+const campiJobAperto = {
+  jobId: z.string().uuid(),
+  chiaveIdempotenza: z.string().min(1).max(128),
+  /**
+   * La firma con cui il browser autentica l'upload allo Storage, da presentare
+   * come intestazione `x-signature`. Senza, il client ha un indirizzo e nessuna
+   * chiave: le coordinate da sole non aprono niente.
+   *
+   * La conia la route con la CHIAVE DI SERVIZIO, non il browser: e' il motivo per
+   * cui nessuna policy su `storage.objects` serve — quella strada non attraversa
+   * RLS. E scade insieme a `scadenzaCaricamentoIl`, quindi alla ripresa di un
+   * upload interrotto se ne chiede una nuova — dal 2026-10-02 con `POST
+   * /api/video-uploads/[id]/firma` (`schemaCorpoFirmaVideo`), che non riapre l'intento: la
+   * riapertura restituiva lo STESSO job con una firma nuova, ma costava un'apertura intera
+   * (190 aperture per 44 job, misurate prima della PR 2).
+   *
+   * Solo del TUS: un URL di PUT è già firmato, e `firma` resta vuota.
+   *
+   * Dichiarata qui il 2026-09-18: la route la restituiva gia', ma il contratto non
+   * la nominava, e `z.object` scarta in silenzio cio' che non dichiara. Un campo che
+   * il client deve usare e che lo schema non conosce e' una dipendenza che nessun
+   * test regge.
+   */
+  firma: z.string().default(''),
+  status: z.enum(STATI_JOB_VIDEO).default('awaiting_upload'),
+  needs_upload: z.boolean().default(true),
+  expires_at: z.string().datetime().nullable().default(null),
+}
+
+/** I campi della risposta all'apertura che non riguardano i singoli job. */
+const campiEsitoApertura = {
   intent: z.object({ status: z.string() }).default({ status: 'pending' }),
   intentId: z.string().uuid(),
   revisione: z.number().int().min(1),
   canale: z.enum(CANALI_VIDEO),
   /** Oltre questo istante le coordinate non valgono più e l'intento va riaperto. */
   scadenzaCaricamentoIl: z.string().datetime(),
-  job: z
-    .array(
-      z.object({
-        jobId: z.string().uuid(),
-        chiaveIdempotenza: z.string().min(1).max(128),
-        caricamento: schemaCoordinateCaricamentoVideo,
-        /**
-         * La firma con cui il browser autentica l'upload allo Storage, da presentare
-         * come intestazione `x-signature`. Senza, il client ha un indirizzo e nessuna
-         * chiave: le coordinate da sole non aprono niente.
-         *
-         * La conia la route con la CHIAVE DI SERVIZIO, non il browser: e' il motivo per
-         * cui nessuna policy su `storage.objects` serve — quella strada non attraversa
-         * RLS. E scade insieme a `scadenzaCaricamentoIl`, quindi alla ripresa di un
-         * upload interrotto se ne chiede una nuova riaprendo l'intento con le stesse
-         * chiavi di idempotenza, che restituisce lo STESSO job.
-         *
-         * Dichiarata qui il 2026-09-18: la route la restituiva gia', ma il contratto non
-         * la nominava, e `z.object` scarta in silenzio cio' che non dichiara. Un campo che
-         * il client deve usare e che lo schema non conosce e' una dipendenza che nessun
-         * test regge.
-         */
-        firma: z.string().default(''),
-        status: z.enum(STATI_JOB_VIDEO).default('awaiting_upload'),
-        needs_upload: z.boolean().default(true),
-        expires_at: z.string().datetime().nullable().default(null),
-      }).superRefine((job, ctx) => {
-        if (job.needs_upload && !job.firma) ctx.addIssue({ code: 'custom', path: ['firma'], message: 'Firma necessaria per il trasferimento' })
-      }),
-    )
-    .min(1)
-    .max(MAX_VIDEO_PER_INTENT_NEWS),
+}
+
+/** Un job aperto in TUS: coordinate a blocchi più la firma da presentare come `x-signature`. */
+const schemaJobApertoTus = z
+  .object({ ...campiJobAperto, caricamento: schemaCoordinateCaricamentoVideo })
+  .superRefine((job, ctx) => {
+    if (job.needs_upload && !job.firma) ctx.addIssue({ code: 'custom', path: ['firma'], message: 'Firma necessaria per il trasferimento' })
+  })
+
+/** La risposta all'apertura: un job per file, con le sue coordinate d'upload. */
+export const schemaEsitoAperturaIntentVideo = z.object({
+  ...campiEsitoApertura,
+  job: z.array(schemaJobApertoTus).min(1).max(MAX_VIDEO_PER_INTENT_NEWS),
 })
 export type EsitoAperturaIntentVideo = z.infer<typeof schemaEsitoAperturaIntentVideo>
 
@@ -783,6 +1125,18 @@ export function avanzamentoDaStatoVideo(stato: StatoJobVideo): number | null {
 }
 
 /**
+ * Il numero del tentativo della PRIMA presa in carico, e di quello che viene dopo.
+ *
+ * `video_job_claim` conta alla presa, quindi un job mai preso ha `attempt = 0`, il primo giro
+ * è `attempt = 1` e ogni valore più grande è un RITENTATIVO — dopo un guasto nostro rimesso in
+ * coda da `video_job_retry`, oppure dopo una lease scaduta. È la soglia su cui si accordano,
+ * senza copiarla, `riprovaAutomaticaInCorso` (il job che si sta ritentando adesso) e
+ * `codiceMostrabileDelJob` (il job che si è ritentato ed è finito male, più sotto).
+ */
+export const ATTEMPT_DELLA_PRIMA_PRESA = 1
+export const ATTEMPT_DEL_PRIMO_RITENTATIVO = ATTEMPT_DELLA_PRIMA_PRESA + 1
+
+/**
  * Il job si sta ritentando da solo dopo un guasto nostro? È la domanda a cui risponde
  * la scheda «lo stiamo riprovando in automatico», e la route la calcola con questa
  * funzione sola: due copie della regola — una nella route, una nello schermo —
@@ -806,5 +1160,402 @@ export function riprovaAutomaticaInCorso(
   attempt: number | null | undefined,
 ): boolean {
   const tentativo = typeof attempt === 'number' && Number.isFinite(attempt) ? attempt : 0
-  return (stato === 'queued' && tentativo >= 1) || (stato === 'processing' && tentativo >= 2)
+  return (
+    (stato === 'queued' && tentativo >= ATTEMPT_DELLA_PRIMA_PRESA) ||
+    (stato === 'processing' && tentativo >= ATTEMPT_DEL_PRIMO_RITENTATIVO)
+  )
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * PR 2 «SERVER E WEB» · il codice da mostrare per un job, il rinnovo, la firma, l'elenco
+ *
+ * I nomi di questo blocco sono elencati nella testata del modulo. Le prime quattro cose
+ * (apertura con i destinatari, vocabolari, codici nuovi, `sha256`) stanno più su, vicino agli
+ * schemi che estendono; qui c'è tutto ciò che nasce con la PR 2 e non estende niente.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Ciò che serve di un job per decidere che cosa leggerà chi lo ha caricato. Le chiavi sono
+ * quelle delle colonne di `video_jobs` perché è così che il dato arriva da PostgREST: non
+ * tipizzato, quindi con `status` come stringa qualunque e `error_code`/`attempt` che possono
+ * mancare.
+ */
+export interface JobVideoGrezzo {
+  status: string
+  error_code?: string | null
+  attempt?: number | null
+}
+
+/**
+ * IL CODICE DA MOSTRARE PER UN JOB — e la regola del secondario #37 (PR 1).
+ *
+ * `null` per un job che non è finito male: la persona legge lo stato (in coda, in
+ * conversione, «lo stiamo riprovando»), non un errore. È la stessa regola di
+ * `schemaStatoJobVideo`, che rifiuta un codice su un job vivo.
+ *
+ * Per un job finito male il codice è quello che la mappa dà al suo `error_code`, con UNA
+ * eccezione: **un job `failed` con `attempt > 1` è un job che si è ritentato, quindi il guasto
+ * che ha esaurito i tentativi era NOSTRO**, e legge sempre `VIDEO_GUASTO_NOSTRO` — qualunque
+ * fosse il codice tecnico dell'ultimo giro. Prima di questa regola l'ultimo codice parlava per
+ * tutto il percorso: `PROBE_COMMAND_FAILED` (ffprobe su un URL che la rete non ha servito) e
+ * `ENCODE_FAILED` (gli argomenti che la MicroVM non è riuscita a scrivere) sono guasti nostri
+ * ritentati quattro volte, e a chi aspettava dicevano «il file sembra rovinato» e «la
+ * conversione non è riuscita», cioè che la colpa era del suo telefono. Durante i ritentativi il
+ * messaggio era giusto (`riprovaAutomatica`); era a tentativi esauriti che mentiva.
+ *
+ * COME SI ACCORDA CON «IN RIPROVA» E CON «ESAURITO». Un job che sta aspettando o rieseguendo
+ * un ritentativo (`riprovaAutomaticaInCorso`) non è fallito: stato `queued`/`processing`, quindi
+ * qui `null`, e la scheda dice «lo stiamo riprovando». Quando i tentativi finiscono il job
+ * diventa `failed` con `attempt` rimasto a quello dell'ultimo giro (≥ 2): da quel momento
+ * «esaurito» è proprio questa funzione a dirlo, con `VIDEO_GUASTO_NOSTRO`. Le due metà usano
+ * la stessa soglia (`ATTEMPT_DELLA_PRIMA_PRESA`), e il test le confronta su tutta la tabella.
+ *
+ * `rejected` NON si tocca mai: è il file che non va bene (probe, verifiche, l'originale che non
+ * coincide), e il codice del suo difetto è l'unica cosa utile da dire — anche a `attempt > 1`.
+ *
+ * ⚠️ IL CASO CHE LA REGOLA SBAGLIA, detto per intero. Un job ritentato per un guasto nostro e poi
+ * caduto, al secondo o terzo giro, su un guasto che era DEL FILE e non si ritenta (FFmpeg che
+ * esce con un errore: `failed`, non `rejected`) legge «problema nostro» invece di «conversione
+ * non riuscita». Il database non ha un campo che dica «esaurito» e `last_error_code` non è
+ * affidabile per questo (il runner di oggi non lo allinea all'ultimo codice); la regola messa
+ * per iscritto nella spec §6.1 preferisce quell'errore al suo opposto: dire a un'insegnante che
+ * il video è rovinato quando il guasto era una release sparita dal server di un terzo. Il
+ * dettaglio vero resta in `app_log`, con la coda dell'errore.
+ *
+ * Accetta una stringa qualunque come `status` (non un `StatoJobVideo`): ciò che torna dal
+ * database non è tipizzato, e uno stato che non si riconosce vale «niente da mostrare», mai un
+ * errore inventato.
+ */
+export function codiceMostrabileDelJob(job: JobVideoGrezzo): CodiceMostratoVideo | null {
+  if (job.status !== 'failed' && job.status !== 'rejected') return null
+  const tentativo =
+    typeof job.attempt === 'number' && Number.isFinite(job.attempt) ? job.attempt : 0
+  if (job.status === 'failed' && tentativo >= ATTEMPT_DEL_PRIMO_RITENTATIVO) {
+    return 'VIDEO_GUASTO_NOSTRO'
+  }
+  return codiceMessaggioVideo(job.error_code)
+}
+
+/**
+ * L'URL di una PUT diretta allo Storage, con cui l'app 1.2 manda l'originale dal sistema
+ * operativo anche a app chiusa. È firmato SENZA upsert (una seconda PUT sullo stesso percorso
+ * prende 409, e la 1.2 lo legge come «chiedi il rinnovo», che risponde `arrivato`): la firma sta
+ * nell'URL, quindi non c'è un'intestazione `x-signature` come nel TUS. Solo `https`, perché ci
+ * passa il video di un bambino. Il `content-type` è quello dichiarato all'apertura: lo Storage
+ * lo registra sull'oggetto.
+ */
+export const schemaCoordinatePutVideo = z.object({
+  protocollo: z.literal('put'),
+  url: schemaEndpointSicuro,
+  metodo: z.literal('PUT'),
+  intestazioni: z.object({
+    'content-type': z.string().min(3).max(255).regex(MIME_DICHIARABILE),
+  }),
+})
+export type CoordinatePutVideo = z.infer<typeof schemaCoordinatePutVideo>
+
+/**
+ * Come si spedisce un originale, in una forma sola: l'UNIONE DISCRIMINATA su `protocollo`.
+ * `tus` è la forma di oggi (`schemaCoordinateCaricamentoVideo`, invariata); `put` è la nuova.
+ * Chi riceve un `caricamento` guarda il `protocollo` e sa quale delle due ha davanti, senza
+ * indovinarlo dai campi presenti.
+ */
+export const schemaCaricamentoVideo = z.discriminatedUnion('protocollo', [
+  schemaCoordinateCaricamentoVideo,
+  schemaCoordinatePutVideo,
+])
+export type CaricamentoVideo = z.infer<typeof schemaCaricamentoVideo>
+
+/**
+ * IL TOKEN DI RINNOVO, e perché ha una forma controllata.
+ *
+ * `kvr_` più 32 byte casuali in base64url (43 caratteri, senza padding): 256 bit, quindi non si
+ * indovina. Lo schema ne descrive la forma perché è parte del contratto fra il server che lo
+ * conia e l'app che lo tiene nel Keychain: un token di un'altra forma è un token che nessuno
+ * ha coniato.
+ *
+ * ⚠️ Il token viaggia SOLO nell'intestazione `INTESTAZIONE_TOKEN_RINNOVO`, mai in un URL, e non
+ * entra MAI in un log (la redazione e un lock dedicato lo garantiscono). Del server si conserva
+ * soltanto il suo SHA-256.
+ */
+export const PREFISSO_TOKEN_RINNOVO = 'kvr_'
+export const BYTE_CASUALI_TOKEN_RINNOVO = 32
+export const INTESTAZIONE_TOKEN_RINNOVO = 'x-kidville-rinnovo'
+export const schemaTokenRinnovoVideo = z
+  .string()
+  .regex(
+    new RegExp(
+      `^${PREFISSO_TOKEN_RINNOVO}[A-Za-z0-9_-]{${Math.ceil((BYTE_CASUALI_TOKEN_RINNOVO * 4) / 3)}}$`,
+    ),
+  )
+
+/**
+ * Ciò che l'app tiene per tornare a chiedere un URL quando quello firmato scade o la PUT prende
+ * 400/403: il token e l'istante oltre il quale non si può più rinnovare (`scadeIl`, 48 ore
+ * dall'apertura: lo stesso orizzonte dell'upload abbandonato). Il rinnovo NON lo allunga.
+ */
+export const schemaRinnovoVideo = z.object({
+  token: schemaTokenRinnovoVideo,
+  scadeIl: z.string().datetime(),
+})
+export type RinnovoVideo = z.infer<typeof schemaRinnovoVideo>
+
+/**
+ * Un job aperto, in TUS o in PUT. Le due metà si ricavano dal `protocollo` di `caricamento`:
+ *
+ *  · `tus` — come oggi: serve la `firma` (`x-signature`) se c'è ancora da caricare, e non c'è
+ *    nessun token di rinnovo (la firma si rinnova con `POST /api/video-uploads/[id]/firma`);
+ *  · `put` — l'URL è già firmato, quindi `firma` resta vuota, e finché c'è da caricare serve il
+ *    `rinnovo`. A caricamento finito (`needs_upload: false`) il token è già revocato: averlo
+ *    ancora è un difetto del server, e lo schema lo dice.
+ */
+const schemaJobApertoEsteso = z
+  .object({
+    ...campiJobAperto,
+    caricamento: schemaCaricamentoVideo,
+    rinnovo: schemaRinnovoVideo.optional(),
+  })
+  .superRefine((job, ctx) => {
+    if (job.caricamento.protocollo === 'tus') {
+      if (job.needs_upload && !job.firma) {
+        ctx.addIssue({ code: 'custom', path: ['firma'], message: 'Firma necessaria per il trasferimento' })
+      }
+      if (job.rinnovo !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['rinnovo'],
+          message: 'il caricamento a blocchi non ha un token di rinnovo: si rinnova con la firma',
+        })
+      }
+      return
+    }
+    if (job.needs_upload && job.rinnovo === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['rinnovo'],
+        message: 'un caricamento nativo ancora da fare porta il token di rinnovo',
+      })
+    }
+    if (!job.needs_upload && job.rinnovo !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['rinnovo'],
+        message: 'il token si revoca all’arrivo del file: a caricamento finito non c’è più',
+      })
+    }
+  })
+
+/**
+ * La risposta all'apertura, quando può essere TUS o PUT. `schemaEsitoAperturaIntentVideo` resta
+ * la forma di oggi — solo TUS — per le News e per chi non conosce il PUT; questa ne è il
+ * sovrainsieme, con gli stessi campi (`campiJobAperto`, `campiEsitoApertura`) e in più il ramo
+ * `put` e il `rinnovo`. Chi chiede `trasporto: 'put-nativo'` la legge con questa.
+ */
+export const schemaRispostaAperturaVideo = z.object({
+  ...campiEsitoApertura,
+  job: z.array(schemaJobApertoEsteso).min(1).max(MAX_VIDEO_PER_INTENT_NEWS),
+})
+export type RispostaAperturaVideo = z.infer<typeof schemaRispostaAperturaVideo>
+
+/**
+ * La risposta di `POST /api/video-uploads/rinnovo` (gate: il token nell'intestazione, nessuna
+ * sessione). Tre stati, e per tutto il resto un 404 uniforme (`VIDEO_NON_TROVATO`): token
+ * assente, sconosciuto, scaduto o revocato non si distinguono da fuori.
+ *
+ *  · `da-caricare` — l'originale non è ancora arrivato: un URL di PUT firmato di nuovo
+ *    (`caricamento`, sempre `put`) e `scadeIl`, l'istante oltre il quale il TOKEN non vale più
+ *    (immutato dal rinnovo: serve all'app per smettere di insistere);
+ *  · `arrivato` — i byte ci sono già (la PUT ha preso 409, oppure era riuscita e la risposta si
+ *    è persa): l'app non deve fare altro;
+ *  · `annullato` — l'insegnante ha ritirato il video: l'app si ferma e cancella la copia locale.
+ */
+export const schemaRispostaRinnovoVideo = z.discriminatedUnion('stato', [
+  z.object({
+    stato: z.literal('da-caricare'),
+    caricamento: schemaCoordinatePutVideo,
+    scadeIl: z.string().datetime(),
+  }),
+  z.object({ stato: z.literal('arrivato') }),
+  z.object({ stato: z.literal('annullato') }),
+])
+export type RispostaRinnovoVideo = z.infer<typeof schemaRispostaRinnovoVideo>
+
+/**
+ * `POST /api/video-uploads/[id]/firma` — una firma TUS nuova per il percorso di un job che sta
+ * ancora aspettando i suoi byte, senza riaprire l'intento. `[id]` è l'intento; il corpo nomina
+ * il job. La route risponde solo se il job è in `awaiting_upload`: dopo, non c'è più niente da
+ * firmare.
+ */
+export const schemaCorpoFirmaVideo = z.object({ jobId: z.string().uuid() })
+export type CorpoFirmaVideo = z.infer<typeof schemaCorpoFirmaVideo>
+
+/**
+ * La risposta di `/firma`: le coordinate TUS del job, la firma nuova (`x-signature`) e il suo
+ * istante di scadenza. Gli stessi pezzi che l'apertura mette in ogni job, senza il resto.
+ */
+export const schemaRispostaFirmaVideo = z.object({
+  jobId: z.string().uuid(),
+  caricamento: schemaCoordinateCaricamentoVideo,
+  firma: z.string().min(1),
+  scadeIl: z.string().datetime(),
+})
+export type RispostaFirmaVideo = z.infer<typeof schemaRispostaFirmaVideo>
+
+/**
+ * La nuova azione di `PATCH /api/video-uploads/[id]`: l'insegnante preme «Riprova» su un video
+ * che non è stato pubblicato. Nessun altro campo: l'intento è quello dell'URL, i job sono
+ * «tutti i `ready`», e il server decide se si può (`RIPROVA_NON_POSSIBILE`, 409, se non si può
+ * più). Si aggiunge all'unione delle altre azioni della route, che resta chiusa: la pubblicazione
+ * non si chiede mai da fuori, e per questo non esiste un'azione «pubblica».
+ */
+export const schemaAzioneRiprovaPubblicazioneVideo = z.object({
+  azione: z.literal('riprova-pubblicazione'),
+})
+export type AzioneRiprovaPubblicazioneVideo = z.infer<typeof schemaAzioneRiprovaPubblicazioneVideo>
+
+/**
+ * Il corpo di `POST /api/video/runner`: `{ job_id?: uuid }`. Il cron senza corpo fa il giro
+ * intero; il `video_runner_kick` di SQL (trigger d'arrivo, `PATCH caricato`) nomina il job che
+ * ha bisogno di sorveglianza subito. Il corpo VUOTO è ammesso — `parseBody` risponderebbe 400 —
+ * ed è la route a leggerlo dopo il gate con `request.text()` e a passare `{}` a questo schema.
+ * La chiave è `job_id` e non `jobId`, come la manda `pg_net`.
+ */
+export const schemaCorpoRunnerVideo = z.object({
+  job_id: z.string().uuid().optional(),
+})
+export type CorpoRunnerVideo = z.infer<typeof schemaCorpoRunnerVideo>
+
+/**
+ * LE FASI DI UNA VOCE DELL'ELENCO, dal punto di vista di chi ha caricato.
+ *
+ *  · `da-caricare` — i byte non sono ancora tutti sullo Storage (da un altro dispositivo, o
+ *    interrotto: il client lo fonde con la riga locale per l'avanzamento);
+ *  · `in-coda` — arrivato, aspetta il suo turno (`queued` alla prima presa);
+ *  · `in-conversione` — il Sandbox ci sta lavorando (`processing` al primo giro);
+ *  · `in-riprova` — un guasto nostro, e il runner ritenta da solo (`riprovaAutomaticaInCorso`);
+ *  · `pronto` — convertito, in attesa che il server lo pubblichi;
+ *  · `pubblicato` — in galleria (`mediaId`);
+ *  · `non-pubblicato` — convertito ma NON pubblicato, in modo definitivo: nessun bambino scelto
+ *    è più nella sede, o la pubblicazione è fallita (da lì il «Riprova», `riprovaPossibile`);
+ *  · `fallito` — la conversione non è riuscita (`failed`/`rejected`, con il codice da mostrare);
+ *  · `annullato` — l'insegnante l'ha ritirato;
+ *  · `da-ricaricare` — un intento del flusso vecchio, revocato perché non ha bambini: «questo
+ *    video va ricaricato».
+ */
+export const FASI_VOCE_VIDEO = [
+  'da-caricare',
+  'in-coda',
+  'in-conversione',
+  'in-riprova',
+  'pronto',
+  'pubblicato',
+  'non-pubblicato',
+  'fallito',
+  'annullato',
+  'da-ricaricare',
+] as const
+export type FaseVoceVideo = (typeof FASI_VOCE_VIDEO)[number]
+
+/**
+ * UNA VOCE DELL'ELENCO (`GET /api/video-uploads?canale=gallery&scuolaId=…`): un video
+ * dell'insegnante, qualunque sia il dispositivo da cui l'ha mandato.
+ *
+ * Porta SOLO numeri, stati, uuid e il codice da mostrare: nessun nome di bambino, nessun nome
+ * di file, nessun percorso. `nBambini` è un conteggio (sopravvive alla minimizzazione dei
+ * `tag_alunni`, che dopo sette giorni si svuotano) e `codice` è un codice MOSTRABILE, mai uno
+ * interno — per un job `failed` ritentato è quello del guasto nostro (`codiceMostrabileDelJob`).
+ *
+ * Le regole di coerenza sono quelle che separano uno stato vero da una bugia a schermo, e le
+ * fa rispettare lo schema invece della memoria di chi scrive la route:
+ *
+ *  · si legge un `codice` solo se il video è andato male (`fallito`, `non-pubblicato`), e in
+ *    quel caso c'è sempre: una scheda di errore senza una frase è il silenzio di prima;
+ *  · `mediaId` esiste solo per un `pubblicato` (il contrario non è detto: se la foto è stata
+ *    tolta dalla galleria il video resta pubblicato e il collegamento no);
+ *  · «Riprova» si offre solo su un `non-pubblicato`;
+ *  · il broadcast non ha bambini (`video_intents_broadcast_chk`);
+ *  · `da-ricaricare` è del flusso vecchio, quindi non è una pubblicazione automatica.
+ */
+export const schemaVoceVideo = z
+  .object({
+    intentId: z.string().uuid(),
+    jobId: z.string().uuid(),
+    fase: z.enum(FASI_VOCE_VIDEO),
+    codice: z.enum(CODICI_MOSTRATI_VIDEO).nullable(),
+    creatoIl: z.string().datetime(),
+    aggiornatoIl: z.string().datetime(),
+    trasporto: z.enum(TRASPORTI_VIDEO),
+    /** I byte dichiarati all'apertura: `null` per un video del flusso vecchio, che non li dichiarava. */
+    byte: z.number().int().min(1).max(MAX_VIDEO_INPUT_BYTES).nullable(),
+    /** La durata dichiarata, se il telefono la conosceva. */
+    durataS: z.number().positive().max(MAX_VIDEO_DURATION_SECONDS).nullable(),
+    nBambini: z.number().int().min(0).max(MAX_BAMBINI_PER_VIDEO),
+    broadcast: z.boolean(),
+    /** Identificatore di `galleria_media_v2`: di un'altra tabella, quindi `guid` e non `uuid`. */
+    mediaId: z.guid().nullable(),
+    pubblicazioneAutomatica: z.boolean(),
+    riprovaPossibile: z.boolean(),
+  })
+  .superRefine((voce, ctx) => {
+    const conErrore = voce.fase === 'fallito' || voce.fase === 'non-pubblicato'
+    if (conErrore && voce.codice === null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['codice'],
+        message: 'un video andato male senza codice lascia la scheda senza niente da dire',
+      })
+    }
+    if (!conErrore && voce.codice !== null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['codice'],
+        message: 'un video che non è andato male non porta un codice d’errore',
+      })
+    }
+    if (voce.mediaId !== null && voce.fase !== 'pubblicato') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['mediaId'],
+        message: 'solo un video pubblicato ha un elemento di galleria',
+      })
+    }
+    if (voce.riprovaPossibile && voce.fase !== 'non-pubblicato') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['riprovaPossibile'],
+        message: 'il «Riprova» si offre solo su un video non pubblicato',
+      })
+    }
+    if (voce.broadcast && voce.nBambini > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['nBambini'],
+        message: 'un video in broadcast non ha bambini',
+      })
+    }
+    if (voce.fase === 'da-ricaricare' && voce.pubblicazioneAutomatica) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['pubblicazioneAutomatica'],
+        message: 'da ricaricare è un intento del flusso vecchio: non è una pubblicazione automatica',
+      })
+    }
+  })
+export type VoceVideo = z.infer<typeof schemaVoceVideo>
+
+/**
+ * La query di `GET /api/video-uploads`: il canale (oggi si chiede `gallery`) e, facoltativa, la
+ * sede. Senza sede l'elenco copre le sedi dell'utente; con la sede ne copre una sola, e la route
+ * risponde 403 se non è fra le proprie.
+ */
+export const schemaQueryElencoVideo = z.object({
+  canale: z.enum(CANALI_VIDEO),
+  scuolaId: z.string().uuid().optional(),
+})
+export type QueryElencoVideo = z.infer<typeof schemaQueryElencoVideo>
+
+/** La risposta di `GET /api/video-uploads`: al più `MAX_VOCI_ELENCO_VIDEO` voci, le più recenti prima. */
+export const schemaRispostaElencoVideo = z.object({
+  voci: z.array(schemaVoceVideo).max(MAX_VOCI_ELENCO_VIDEO),
+})
+export type RispostaElencoVideo = z.infer<typeof schemaRispostaElencoVideo>

@@ -171,7 +171,22 @@ export function posterioriCheContengono(
 // al merge, e le sette fotografie sono state rigenerate dalla produzione (196 migrazioni,
 // 58 FK verso `utenti` — invariate, 231 indici unici, 78 tabelle con `scuola_id`, fra cui
 // `gallery_photo_uploads` della #170, entrata nella fotografia solo ora).
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// RIAPERTA il 2026-10-02 dalla PR 2 dei video («server e web»): le tre migrazioni della PR
+// entrano qui SE E SOLO SE una guardia le segnalerebbe (la prova gemella 5 boccia le voci che
+// nessuna guardia vedrebbe). Il file A (T2a) crea un indice UNIQUE parziale e ricrea un CHECK
+// con DROP/ADD CONSTRAINT, quindi due guardie su tre lo vedono. Le voci si tolgono nella PR-B
+// (T16), insieme alla rigenerazione delle fotografie: la prova gemella 2 diventa rossa da sola.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261002150000_video_pubblicazione_automatica.sql':
+        'Video PR 2, file A (T2a): crea l’indice UNIQUE parziale del token di rinnovo ' +
+        '(video_jobs_rinnovo_token_unico_idx) e ricrea video_jobs_probe_chk con DROP/ADD CONSTRAINT, ' +
+        'quindi le guardie degli indici unici e delle FK verso utenti la segnalerebbero. Non è ancora ' +
+        'in produzione: la applica T16 con `supabase db push --linked` prima del merge (l’integrazione ' +
+        'Supabase al merge la trova già registrata, come le due migrazioni della PR 1) e la voce si ' +
+        'toglie nella PR-B/T16, che rigenera le fotografie dalla produzione. Se il file viene ' +
+        'rinominato con l’istante vero, la chiave segue il nome.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

@@ -281,7 +281,7 @@
 
   "videoAllegatiTitolo": "Video",
   "videoAggiungi": "Add a video",
-  "videoNota": "Up to three minutes. Once uploaded, the clip is prepared on our servers: it takes a few minutes, and you can close the page meanwhile.",
+  "videoNota": "Up to 5 minutes. Keep the page open until the upload has finished: then the clip is prepared on our servers, it takes a few minutes and you can close the page.",
   "videoStatoPreparazione": "Getting the upload ready…",
   "videoStatoCaricamento": "Uploading: {pct}%",
   "videoStatoInCoda": "The clip has arrived and is waiting to be prepared.",

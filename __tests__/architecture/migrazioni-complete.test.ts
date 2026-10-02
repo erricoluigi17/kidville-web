@@ -96,6 +96,14 @@ const IN_CODA: Record<string, string> = {
     // (`20261002065852_video_build_bucket.sql`, `20261002065952_video_job_ritentativi.sql`).
     // Cosi' la `version` registrata e' quella del file, e l'integrazione Supabase al merge
     // le trova gia' applicate invece di applicarle una seconda volta.
+    //
+    // RIAPERTA il 2026-10-02 con le voci della PR 2 «video: server e web». Il lock vieta le
+    // voci senza un file su disco, quindi ogni compito che scrive una migrazione aggiunge la
+    // SUA voce (T2a il file A; T2b e T2c i file B e C). Si svuota in T16, dopo l'applicazione.
+    '20261002150000_video_pubblicazione_automatica.sql':
+        'Video PR 2, file A (T2a): colonne di intenti e job, RPC della pubblicazione automatica e ' +
+        'di sorveglianza, video_job_ready a 300 secondi. Scritta e NON ancora applicata: la applica ' +
+        'T16 con `supabase db push --linked`, dopo averla mostrata e rinominata all’istante vero.',
 }
 
 const RADICE = process.cwd()

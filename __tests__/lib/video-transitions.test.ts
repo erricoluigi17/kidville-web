@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
@@ -13,6 +13,17 @@ const TRANSIZIONI = readFileSync(
   join(process.cwd(), 'supabase/migrations/20260916190100_video_job_transitions.sql'),
   'utf8',
 )
+
+// Il file A della PR 2 sostituisce `video_job_ready` (tetto di durata a 300 secondi, scadenza dell'uscita
+// delle News, evento della pubblicazione automatica). Si trova per SUFFISSO: nasce con un timestamp
+// provvisorio e T16 lo rinomina. Le transizioni «vere» della produzione sono queste più quella.
+const FILE_A = readdirSync(join(process.cwd(), 'supabase/migrations')).filter((f) =>
+  f.endsWith('_video_pubblicazione_automatica.sql'),
+)
+if (FILE_A.length !== 1) {
+  throw new Error(`Cerco UN file *_video_pubblicazione_automatica.sql in supabase/migrations e ne trovo ${FILE_A.length}`)
+}
+const MIGRAZIONE_A = readFileSync(join(process.cwd(), 'supabase/migrations', FILE_A[0]), 'utf8')
 
 const SEDE = '10000000-0000-4000-8000-000000000001'
 const OWNER = '20000000-0000-4000-8000-000000000002'
@@ -87,6 +98,7 @@ async function preparaDatabase() {
 
   await db.exec(SCHEMA)
   await db.exec(TRANSIZIONI)
+  await db.exec(MIGRAZIONE_A)
   await db.exec(`
     INSERT INTO public.video_intents(
       id, owner_id, scuola_id, channel, requested_action, payload
@@ -264,20 +276,21 @@ describe('RPC lifecycle job video', () => {
     )`)).toEqual({ ok: false, code: 'BAD_INPUT' })
     expect(await rpc(`public.video_job_ready(
       '${JOB}', 1, '${LEASE_A}', 'outputs/${JOB}/stringa.mp4', 900,
-      '{"durationSeconds":"180"}'::jsonb
+      '{"durationSeconds":"300"}'::jsonb
     )`)).toEqual({ ok: false, code: 'BAD_INPUT' })
+    // Il tetto di durata è 300 secondi (il file A lo ha portato da 180: cinque minuti, decisione del titolare).
     expect(await rpc(`public.video_job_ready(
       '${JOB}', 1, '${LEASE_A}', 'outputs/${JOB}/oltre.mp4', 900,
-      '{"durationSeconds":180.001}'::jsonb
+      '{"durationSeconds":300.001}'::jsonb
     )`)).toEqual({ ok: false, code: 'BAD_INPUT' })
 
     const prima = await rpc(`public.video_job_ready(
       '${JOB}', 1, '${LEASE_A}', 'outputs/${JOB}/final.mp4', 2000000000,
-      '{"durationSeconds":180}'::jsonb
+      '{"durationSeconds":300}'::jsonb
     )`)
     const seconda = await rpc(`public.video_job_ready(
       '${JOB}', 1, '${LEASE_A}', 'outputs/${JOB}/final.mp4', 2000000000,
-      '{"durationSeconds":180}'::jsonb
+      '{"durationSeconds":300}'::jsonb
     )`)
 
     expect(prima).toMatchObject({
@@ -292,6 +305,11 @@ describe('RPC lifecycle job video', () => {
     expect(seconda).toMatchObject({ ok: true, job: { status: 'ready' } })
     expect(await db.query<{ esatto: boolean }>(`
       SELECT original_delete_after = verified_at + interval '7 days' AS esatto
+      FROM public.video_jobs WHERE id = '${JOB}'
+    `).then(({ rows }) => rows[0].esatto)).toBe(true)
+    // Un job di una News ha anche la scadenza dell'USCITA, verifica + 7 giorni (la scrive il file A).
+    expect(await db.query<{ esatto: boolean }>(`
+      SELECT output_delete_after = verified_at + interval '7 days' AS esatto
       FROM public.video_jobs WHERE id = '${JOB}'
     `).then(({ rows }) => rows[0].esatto)).toBe(true)
   })

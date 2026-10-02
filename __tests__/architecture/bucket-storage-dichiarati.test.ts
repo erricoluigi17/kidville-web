@@ -249,6 +249,17 @@ const RISERVATI = [
   // LACUNA APERTA invece di fingere una copertura.
   'video_originals',
   'video_processing',
+  // Il bucket dei BINARI di FFmpeg (2026-10-02, PR 1 «hotfix video»): `ffmpeg.gz`,
+  // `ffprobe.gz` e l’archivio di provenienza da cui sono stati estratti. Privato e senza
+  // nessuna policy su `storage.objects`, quindi lo legge solo la chiave di servizio: il
+  // runner la usa per firmare un indirizzo di sola lettura che passa alla MicroVM. Dentro
+  // non c’è nessun dato personale — sono i due binari pubblici di FFmpeg — ed è per questo
+  // che `REGISTRO_BUCKET_OBLIO` lo dichiara escluso, con la ragione scritta.
+  // ⚠️ Nasce da una migrazione scritta e NON ancora applicata: finché la fotografia dello
+  // Storage non lo contiene, la prova «esiste in produzione ed è privato» è rossa per lui
+  // soltanto, ed è voluto. Si spegne rigenerando la fotografia dopo l’apply, mai
+  // togliendolo da qui.
+  'video_build',
   // ⚠️ TROVATO, NON CREATO da questo lavoro. È comparso in produzione fra la
   // fotografia dell'11/08 e quella del 16/08, e nel repository non c'è nessuna
   // migrazione che lo dichiari né nessuna route che lo nomini: è nato dalla

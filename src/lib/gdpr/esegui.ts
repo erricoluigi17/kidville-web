@@ -435,6 +435,16 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
     motivo:
       '\ud83d\udd34 NON \u00c8 UNA DECISIONE, \u00c8 UNA LACUNA APERTA, e sta scritta qui perch\u00e9 non sparisca. Il bucket conserva l\u2019USCITA convertita di ogni tentativo, ed \u00e8 video di minori. Misurato il 2026-09-18, subito dopo l\u2019applicazione: NESSUN codice cancella mai da qui \u2014 la spazzata di `/api/gdpr/retention-video` guarda solo `video_originals`, e lo schema non ha un `output_delete_after` perch\u00e9 le colonne della conservazione sono sull\u2019intento, non sul job. Oggi il bucket \u00e8 VUOTO (nessuna conversione \u00e8 ancora girata), quindi la lacuna non sta facendo danno: \u00e8 il momento giusto per chiuderla, non per scoprirla. PERCH\u00c9 NON L\u2019HO CHIUSA SUBITO: la regola ovvia \u2014 \u00abcancella l\u2019uscita dei job conclusi\u00bb \u2014 distruggerebbe l\u2019uscita di un job `ready` che il finalizer deve ancora copiare, e fra la conversione e la pubblicazione possono passare giorni. Un bucket che cresce si svuota domani; un video cancellato mentre un\u2019insegnante stava per pubblicarlo non torna. IL NUMERO ESCE GI\u00c0: `video_riconciliazione.output_di_job_conclusi` lo conta a ogni giro, quindi la decisione parte da una misura invece che da un\u2019ipotesi.',
   },
+  // Nominato il 2026-10-02 insieme al bucket (PR 1 «hotfix video»: FFmpeg nel nostro
+  // Storage invece che scaricato da Internet a ogni conversione). Dentro non c’è niente di
+  // nessuno, quindi l’oblio non ha niente da svuotare: «escluso» dice «qui dentro non c’è
+  // niente di quella famiglia», e per questo bucket è VERO — a differenza di
+  // `video_processing`, che è una lacuna aperta.
+  video_build: {
+    stato: 'escluso',
+    motivo:
+      'Nessun dato personale: contiene soltanto i due binari pubblici di FFmpeg (`ffmpeg.gz` e `ffprobe.gz`, licenza GPL) e l’archivio di provenienza da cui sono stati estratti. Non ci entra mai un file di una famiglia, di un bambino o di un adulto: lo scrive soltanto `scripts/ffmpeg-nel-bucket.mjs`, a mano, con la chiave di servizio, e lo legge soltanto il runner dei video con un indirizzo firmato di sola lettura. Un’istanza di oblio non ha quindi niente da cercare qui dentro, e svuotarlo romperebbe la conversione di tutti i video.',
+  },
 
   // ── esclusi, con la ragione scritta ────────────────────────────────────────
   fatture: {

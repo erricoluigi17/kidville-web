@@ -81,12 +81,31 @@ type Fotografia = {
 // tolta. Una dichiarazione che sopravvive al suo motivo è un'allowlist che marcisce.
 // ─────────────────────────────────────────────────────────────────────────────
 const IN_CODA: Record<string, string> = {
-    // VUOTA dal 2026-09-18. Le dieci migrazioni della pipeline video — schema, RPC,
-    // ciclo di vita degli intent, presa in carico dalla coda, i cinque bucket pinnati,
-    // i tetti di Galleria e News, retention e i due cron — sono state APPLICATE, e la
-    // fotografia qui accanto le contiene. La prova gemella, quella che boccia le voci
-    // morte, e' diventata rossa su tutte e dieci nel momento esatto in cui il push e'
-    // finito: e' cosi' che questa mappa si e' svuotata, non per diligenza di qualcuno.
+    // VUOTA dal 2026-09-18 al 2026-10-02. Le dieci migrazioni della pipeline video —
+    // schema, RPC, ciclo di vita degli intent, presa in carico dalla coda, i cinque
+    // bucket pinnati, i tetti di Galleria e News, retention e i due cron — sono state
+    // APPLICATE, e la fotografia qui accanto le contiene. La prova gemella, quella che
+    // boccia le voci morte, e' diventata rossa su tutte e dieci nel momento esatto in
+    // cui il push e' finito: e' cosi' che questa mappa si e' svuotata, non per
+    // diligenza di qualcuno.
+    //
+    // RIAPERTA il 2026-10-02 con due voci, quelle della PR 1 «hotfix video» (FFmpeg nel
+    // nostro bucket, ritentativi dei job). Il timestamp e' PROVVISORIO: le due si
+    // applicano a mano prima del merge, dopo averle mostrate, e il file passa alla
+    // `version` registrata (`git mv`). Quel giorno la prova gemella qui sotto diventa
+    // rossa su tutte e due — il nome vecchio non esiste piu' — e la mappa si svuota di
+    // nuovo, insieme alla rigenerazione delle fotografie.
+    '20261002120000_video_build_bucket.sql':
+        'Scritta il 2026-10-02 per la PR 1 «hotfix video» e NON ancora applicata: dichiara il bucket ' +
+        'privato `video_build`, dove stanno i binari di FFmpeg che il runner scarica con un indirizzo ' +
+        'firmato (prima li prendeva da GitHub e dai mirror di pacchetti, e il 29/09 quell’indirizzo ' +
+        'ha smesso di rispondere). Va applicata PRIMA del codice che la usa, e i tre oggetti ' +
+        'caricati subito dopo.',
+    '20261002120100_video_job_ritentativi.sql':
+        'Scritta il 2026-10-02 per la PR 1 «hotfix video» e NON ancora applicata: aggiunge a ' +
+        '`video_jobs` le colonne `next_attempt_at` e `last_error_code`, la RPC `video_job_retry` e ' +
+        'riscrive `video_job_next` e `video_job_claim` perché un job in attesa non si riprenda ' +
+        'prima della sua ora. Retrocompatibile: applicata prima del codice nuovo non cambia niente.',
 }
 
 const RADICE = process.cwd()

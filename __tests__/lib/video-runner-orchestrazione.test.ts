@@ -353,7 +353,14 @@ describe('runner video · gli script e i loro lettori', () => {
 
   it('l’apparecchio verifica la build prima di usarla, e legge il probe SENZA scaricare il video', () => {
     const script = scriptApparecchio()
-    expect(script.indexOf('sha256sum')).toBeLessThan(script.indexOf('tar '))
+    // La build non si scarica più da Internet né si estrae da un archivio: i due `.gz` del
+    // nostro bucket si verificano PRIMA di essere decompressi. L'ordine completo (curl, sha dei
+    // `.gz`, `gzip -dc`, sha dei binari, chmod) lo prova `video-runner-preparazione.test.ts`;
+    // qui basta che la verifica ci sia e preceda la decompressione, anche dentro l'apparecchio.
+    expect(script.indexOf('sha256sum')).toBeGreaterThanOrEqual(0)
+    expect(script.indexOf('gzip -dc')).toBeGreaterThanOrEqual(0)
+    expect(script.indexOf('sha256sum')).toBeLessThan(script.indexOf('gzip -dc'))
+    expect(script).not.toContain('tar ')
     // ffprobe sull'URL firmato: legge le intestazioni con richieste di intervallo,
     // non i 2 GB. Se scaricasse, l'apparecchio non starebbe in un'invocazione.
     expect(script).toContain('$KV_URL_INGRESSO')

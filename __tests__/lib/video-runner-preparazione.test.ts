@@ -5,11 +5,18 @@ import {
   ARCHIVIO_FFMPEG_URL,
   DECODER_RICHIESTI,
   ENCODER_RICHIESTI,
-  FFMPEG_NELL_ARCHIVIO,
-  FFPROBE_NELL_ARCHIVIO,
+  FFMPEG_GZ_SHA256,
+  FFMPEG_SHA256,
+  FFPROBE_GZ_SHA256,
+  FFPROBE_SHA256,
   FILTRI_RICHIESTI,
 } from '@/lib/media/video/build'
 import {
+  CARTELLA_BUILD,
+  ENV_URL_FFMPEG,
+  ENV_URL_FFPROBE,
+  FFMPEG,
+  FFPROBE,
   USCITE_PREPARAZIONE,
   codiceDaUscitaPreparazione,
   inventarioDellaBuild,
@@ -76,28 +83,100 @@ describe('runner video · il percorso dell’uscita', () => {
 
 describe('runner video · lo script che scarica e verifica FFmpeg', () => {
   const script = scriptPreparazioneBuild()
+  const righe = script.split('\n')
 
-  it('usa la build PINNATA, con il suo sha256, senza copiarne i valori', () => {
-    expect(script).toContain(ARCHIVIO_FFMPEG_URL)
-    expect(script).toContain(ARCHIVIO_FFMPEG_SHA256)
-    expect(script).toContain(FFMPEG_NELL_ARCHIVIO)
-    expect(script).toContain(FFPROBE_NELL_ARCHIVIO)
-    // `latest` è il tag mobile: la build cambierebbe sotto i piedi e lo sha non
-    // tornerebbe più. Vale la pena che il test lo dica.
-    expect(script).not.toContain('autobuild-latest')
+  /** Gli indici delle righe che soddisfano il criterio: l'ordine si prova sulle righe, non sui caratteri. */
+  const indici = (cerca: (riga: string) => boolean): number[] =>
+    righe.flatMap((riga, i) => (cerca(riga) ? [i] : []))
+
+  it('NON TOCCA INTERNET: nessun indirizzo, nessun gestore di pacchetti, nessun tar né xz', () => {
+    // Il 29/09/2026 la conversione si è fermata per due download esterni a runtime: la
+    // release BtbN cancellata, e prima ancora i mirror di `dnf` per installare `xz`.
+    // Lo script non può dipendere da nessuno dei due: gli URL arrivano dall'ambiente.
+    expect(script).not.toMatch(/https?:\/\//)
+    for (const vietato of ['dnf', 'sudo', 'xz', 'tar ', 'autobuild', 'github']) {
+      expect(script, `lo script nomina «${vietato}»`).not.toContain(vietato)
+    }
+    // L'archivio è la PROVENIENZA, non una fonte: né il suo indirizzo né la sua impronta.
+    expect(script).not.toContain(ARCHIVIO_FFMPEG_URL)
+    expect(script).not.toContain(ARCHIVIO_FFMPEG_SHA256)
   })
 
-  it('VERIFICA PRIMA DI ESTRARRE, e non è un dettaglio di ordine', () => {
-    const scarica = script.indexOf('curl')
-    const verifica = script.indexOf('sha256sum')
-    const estrai = script.indexOf('tar ')
-    expect(scarica).toBeGreaterThanOrEqual(0)
-    expect(verifica).toBeGreaterThan(scarica)
-    expect(estrai).toBeGreaterThan(verifica)
+  it('prende gli URL dall’ambiente, e ciascun URL va nel SUO file', () => {
+    expect(ENV_URL_FFMPEG).toBe('KV_URL_FFMPEG')
+    expect(ENV_URL_FFPROBE).toBe('KV_URL_FFPROBE')
+    expect(script).toContain('"$KV_URL_FFMPEG"')
+    expect(script).toContain('"$KV_URL_FFPROBE"')
+    // L'accoppiamento sta nella stessa riga: uno scambio lascerebbe verdi i due
+    // `toContain` qui sopra, e farebbe verificare al binario sbagliato lo SHA dell'altro.
+    expect(script).toContain(`-o ${CARTELLA_BUILD}/ffmpeg.gz "$KV_URL_FFMPEG"`)
+    expect(script).toContain(`-o ${CARTELLA_BUILD}/ffprobe.gz "$KV_URL_FFPROBE"`)
+    // Una variabile non passata ferma tutto PRIMA del primo `curl`, con il suo nome nel messaggio.
+    const controllo = indici((riga) => riga.startsWith(': "${KV_URL_FFMPEG:?}"'))
+    expect(controllo).toHaveLength(1)
+    expect(righe[controllo[0]]).toContain('"${KV_URL_FFPROBE:?}"')
+    expect(controllo[0]).toBeLessThan(Math.min(...indici((riga) => riga.startsWith('curl '))))
+  })
+
+  it('verifica le QUATTRO impronte, ciascuna accanto al file a cui appartiene', () => {
+    // Quattro stringhe da 64 caratteri, tutte diverse: la stessa due volte sarebbe un copia-incolla.
+    const impronte = [FFMPEG_GZ_SHA256, FFPROBE_GZ_SHA256, FFMPEG_SHA256, FFPROBE_SHA256]
+    for (const impronta of impronte) expect(impronta).toMatch(/^[0-9a-f]{64}$/)
+    expect(new Set([...impronte, ARCHIVIO_FFMPEG_SHA256]).size).toBe(5)
+    // `printf 'impronta  percorso'` in coppia: scambiare due impronte lascerebbe `toContain`
+    // sulle singole stringhe verde, e il controllo confronterebbe il file con l'impronta dell'altro.
+    expect(script).toContain(`'${FFMPEG_GZ_SHA256}' ${CARTELLA_BUILD}/ffmpeg.gz '${FFPROBE_GZ_SHA256}' ${CARTELLA_BUILD}/ffprobe.gz`)
+    expect(script).toContain(`'${FFMPEG_SHA256}' ${FFMPEG} '${FFPROBE_SHA256}' ${FFPROBE}`)
+    // Due verifiche, entrambe con `sha256sum -c -`, e l'uscita della verifica è la 22.
+    const verifiche = indici((riga) => riga.includes('sha256sum -c -'))
+    expect(verifiche).toHaveLength(2)
+    for (const i of verifiche) expect(righe[i]).toContain(`>&2 || exit ${USCITE_PREPARAZIONE.impronta}`)
+  })
+
+  it('L’ORDINE È LA SOSTANZA: curl → sha256 dei .gz → gzip -dc → sha256 dei binari → chmod', () => {
+    const curl = indici((riga) => riga.startsWith('curl '))
+    const shaGz = indici((riga) => riga.includes('sha256sum -c -') && riga.includes(FFMPEG_GZ_SHA256))
+    const gunzip = indici((riga) => riga.startsWith('gzip -dc '))
+    const shaBin = indici((riga) => riga.includes('sha256sum -c -') && riga.includes(FFMPEG_SHA256))
+    const chmod = indici((riga) => riga.startsWith('chmod '))
+
+    // Ciascun passo c'è, e il numero giusto di volte: un passo mancante renderebbe
+    // vuote le disuguaglianze qui sotto (`Math.max()` di niente è `-Infinity`).
+    expect(curl).toHaveLength(2)
+    expect(shaGz).toHaveLength(1)
+    expect(gunzip).toHaveLength(2)
+    expect(shaBin).toHaveLength(1)
+    expect(chmod).toHaveLength(1)
+
+    expect(Math.max(...curl)).toBeLessThan(shaGz[0])
+    // Il punto di tutto: ciò che arriva dalla rete si verifica PRIMA di decomprimerlo.
+    expect(shaGz[0]).toBeLessThan(Math.min(...gunzip))
+    expect(Math.max(...gunzip)).toBeLessThan(shaBin[0])
+    // E il binario diventa eseguibile solo dopo la seconda verifica: un binario che non
+    // ha superato entrambe le impronte non è mai eseguibile.
+    expect(shaBin[0]).toBeLessThan(chmod[0])
+  })
+
+  it('ogni download ha il suo tetto di tempo e ripete un trasporto che cade', () => {
+    const curl = indici((riga) => riga.startsWith('curl '))
+    for (const i of curl) {
+      expect(righe[i]).toContain('-fsS')
+      expect(righe[i]).toContain('--retry 3 --retry-all-errors')
+      expect(righe[i]).toContain('--connect-timeout 10 --max-time 60')
+      // Nessun `-L`: un URL firmato dello Storage non fa redirect, e seguirne uno
+      // vorrebbe dire uscire dal nostro bucket.
+      expect(righe[i]).not.toMatch(/\s-\w*L\b/)
+    }
   })
 
   it('si ferma al primo comando che fallisce e non usa variabili non definite', () => {
-    expect(script).toMatch(/set -eu/)
+    expect(righe[0]).toBe('set -eu')
+  })
+
+  it('i binari stanno in percorsi assoluti sotto /tmp/kv-ffmpeg', () => {
+    expect(CARTELLA_BUILD).toBe('/tmp/kv-ffmpeg')
+    expect(FFMPEG).toBe('/tmp/kv-ffmpeg/ffmpeg')
+    expect(FFPROBE).toBe('/tmp/kv-ffmpeg/ffprobe')
   })
 
   it('distingue i tre modi di fallire con tre uscite diverse', () => {

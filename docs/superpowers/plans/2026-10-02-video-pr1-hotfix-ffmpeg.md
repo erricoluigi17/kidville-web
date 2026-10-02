@@ -1,8 +1,11 @@
 # PR 1 — Hotfix video FFmpeg: piano d'implementazione
 
-> **Per gli agenti:** ogni compito si esegue con un ciclo **esecutore (Sonnet 5.5) → critico (Opus 5.5)**,
-> al massimo **3 giri**; se il critico non dà **AAA**, un esecutore **nuovo** riceve il suo brief di
-> correzione. Spec vincolante: `docs/superpowers/specs/2026-10-02-video-pr1-hotfix-ffmpeg-design.md`.
+> **Per gli agenti:** ogni compito si esegue con un ciclo **esecutore (Sonnet 5.5) → critico (Opus 5.5)**.
+> **Regola del titolare dal 02/10/2026:** il critico **chiude il compito se non trova difetti bloccanti**
+> (non serve più la tripla A); i difetti secondari si **annotano** in
+> `docs/superpowers/plans/2026-10-02-video-pr1-difetti-secondari.md`. Solo con un bloccante un esecutore
+> **nuovo** riceve il brief di correzione, al massimo **3 giri**; dopo, ci si ferma e si scrive al titolare.
+> Spec vincolante: `docs/superpowers/specs/2026-10-02-video-pr1-hotfix-ffmpeg-design.md`.
 
 **Obiettivo:** la conversione dei video riparte e non dipende più da download esterni a runtime; i guasti
 nostri si ritentano da soli (4 tentativi in un'ora); l'insegnante legge un messaggio chiaro; il log
@@ -37,10 +40,11 @@ scarica con URL firmati e due impronte; classificazione dei guasti in TypeScript
 - **Almeno una mutazione**: rompi il codice del compito e verifica che un test diventi rosso. Prima
   `cp <file> <file>.bak-critico`, dopo `cp` indietro e `cmp` per provare il ripristino. **Mai** `git
   checkout`/`git stash`/`git restore` (cancellano il lavoro degli altri compiti in volo).
-- Verdetto **AAA** solo se: criteri di accettazione tutti provati, test che falliscono quando il codice
-  è rotto, nessuna regressione nei lock, logging e privacy a posto, fedeltà alla spec (niente fuori
-  scopo), codice coerente con quello intorno. Altrimenti brief di correzione **eseguibile da un
-  esecutore nuovo senza contesto**.
+- Verdetto **OK** se non c'è nessun difetto bloccante: il **funzionamento** va verificato con severità
+  (criteri di accettazione provati, test che falliscono quando il codice è rotto, nessuna regressione
+  nei lock, logging e privacy a posto, fedeltà alla spec). Ogni altro rilievo è **secondario** e si
+  elenca per l'annotazione. Con un bloccante: verdetto **BLOCCANTE** e brief di correzione
+  **eseguibile da un esecutore nuovo senza contesto**.
 - **Bloccante** (decisione del titolare): non funziona · rischio su dati di minori · perdita di dati ·
   gate rosso · log obbligatori mancanti. Tutto il resto è una miglioria.
 - Rossi attesi fino all'O2 (fotografie della produzione): **solo** le asserzioni di

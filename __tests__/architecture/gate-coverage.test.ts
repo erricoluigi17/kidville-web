@@ -6,6 +6,9 @@ import { mascheraSorgente, fineParentesi, fileSorgente, riga } from '../fixtures
 // all'ultimo test di questo file, che confronta il numero DICHIARATO nella motivazione
 // di `PUBBLICHE` con quello che la rotta applica davvero.
 import { TETTO_UPLOAD_CANDIDATURE } from '@/lib/upload/allegati-pubblici'
+// Idem per la porta del rinnovo del caricamento nativo: i due tetti dichiarati nella motivazione di
+// `PUBBLICHE` si confrontano con le costanti che la rotta applica davvero.
+import { TETTO_RINNOVO_PER_IP, TETTO_RINNOVO_PER_TOKEN } from '@/lib/media/video/token-rinnovo'
 
 /**
  * COVERAGE-LOCK dei GATE DI AUTENTICAZIONE — per HANDLER e per RAMO.
@@ -541,6 +544,50 @@ const PUBBLICHE: Record<string, string> = {
     // aggira importando la tabella da un componente `'use client'`: compila, passa
     // i test, e ogni famiglia scarica 294 KB dalla rete mobile.
     'anagrafiche/comuni:GET': "tabella Belfiore (comuni italiani e stati esteri): dato APERTO, uguale per tutti, letto da un file del repo — nessun dato di famiglie e nessuna query applicativa. L'unico accesso al database è la scrittura sul contatore del tetto (`rateLimit` → `rpc('tetto_frequenza_consuma')`, client service-role), provocabile da un anonimo una volta per richiesta. La chiama un anonimo dal wizard pubblico d'iscrizione, che un account non ce l'ha ancora. Perimetro: tetto 60/10 min per IP. È anche l'unica risposta del progetto in cache CONDIVISA — e solo per le richieste senza cookie di sessione, perché il middleware può attaccare un `Set-Cookie` alla risposta di una route API (misurato)",
+
+    // ── Il RINNOVO del caricamento nativo (2026-10-02, PR 2 video) ───────────
+    // Il gate qui NON è assente e NON è un'altra sessione: è un TOKEN, `kvr_` più 256 bit casuali,
+    // nell'intestazione `x-kidville-rinnovo`. La porta è dell'app 1.2, che manda l'originale con una
+    // PUT sola dal sistema operativo, anche ad app chiusa: quando l'URL firmato scade (due ore) o la
+    // PUT prende 400/403, a rinnovarlo è un processo che l'insegnante non sta guidando, e una
+    // sessione da presentare non c'è. Un gate di sessione qui sarebbe impossibile, non scomodo.
+    //
+    // COSA OTTIENE UN ANONIMO CHE PASSA, che è la domanda che decide: con un token VALIDO, un URL di
+    // caricamento per UN percorso — quello del job che il token identifica — e solo finché
+    // l'originale non è arrivato. Non legge niente, non scrive niente per conto suo, non vede altre
+    // famiglie: la risposta è uno stato (`da-caricare`, `arrivato`, `annullato`) e, per il primo, un
+    // URL che l'insegnante aveva già ricevuto all'apertura. Con un token falso, scaduto o revocato:
+    // un 404 UNIFORME, identico per tutti i casi, perché distinguerli direbbe a chi prova che quel
+    // token è esistito.
+    //
+    // COME SI LIMITA UN TOKEN RUBATO (e perché la voce è difendibile): l'URL è firmato SENZA upsert
+    // (una seconda PUT sullo stesso percorso prende 409, e l'originale arrivato non si sovrascrive);
+    // il trigger d'arrivo rifiuta una dimensione diversa da quella dichiarata e una riscrittura
+    // successiva; lo `sha256` dichiarato all'apertura e riverificato nel Sandbox rende impossibile
+    // sostituire il contenuto; un token REVOCATO — il file è arrivato o il video è stato ritirato —
+    // non dà MAI un URL, dà lo stato. Vale 48 ore e il rinnovo non le allunga.
+    //
+    // IL PERIMETRO, quando la sessione non c'è: 256 bit (non si indovina), due tetti — 30 richieste
+    // ogni 10 minuti per IP e 20 per impronta del token, importati da `token-rinnovo.ts` accanto alla
+    // forma del token — applicati a OGNI richiesta ben formata, esista il token o no, così il 429 non
+    // dice niente; il token si legge dall'intestazione PRIMA di tutto e il corpo non si legge mai;
+    // il token (e il suo hash) non compare in nessun log, e un test esegue la route col logger vero.
+    //
+    // ⚠️ DUE COSE DA NON NASCONDERE. (1) Nessun tetto per IP regge dietro un NAT che condivide un IP fra
+    // più telefoni del personale: 30 ogni 10 minuti è largo per un upload (un rinnovo con backoff ne
+    // consuma pochissimi), ma il numero è una scelta e non una misura — la spec dice «per IP» e il
+    // collaudo sul campo lo dirà. (2) L'hash del token sta nella chiave del tetto (la tabella
+    // `tetto_frequenza`, con RLS): non è un log, ma è il solo dato che un attaccante userebbe per sapere
+    // se un token esiste, e la tabella si pota da sola ogni dieci minuti.
+    //
+    // Ciò che tiene ferme queste affermazioni sta in `__tests__/api/video-uploads-rinnovo.test.ts` (404
+    // uniforme in tutti i casi, il token revocato risponde lo stato e MAI un URL, l'URL è firmato con
+    // `upsert: false`, i due tetti, nessun log col token o con il suo hash — col logger VERO) e in
+    // `__tests__/lib/video-token-rinnovo.test.ts` (256 bit, SHA-256 vero, lettura solo
+    // dall'intestazione). Il giorno in cui una risposta cominciasse a portare un URL a un token revocato,
+    // o un log nominasse il token, questa voce non sarebbe più difendibile.
+    'video-uploads/rinnovo:POST':
+        "porta dell'app nativa 1.2, che rinnova un URL di caricamento scaduto dal sistema operativo, anche ad app chiusa, senza nessuna sessione da presentare. Il gate è un TOKEN (`kvr_` + 256 bit) nell'intestazione `x-kidville-rinnovo`, letto prima di ogni altra cosa; se ne conserva solo lo SHA-256 (indice unico) e vale 48 ore. Un anonimo con un token valido ottiene al massimo UN URL di caricamento per UN percorso, firmato senza upsert, finché l'originale non è arrivato: poi solo lo stato (`arrivato`/`annullato`), mai un URL. Token assente, malformato, sconosciuto, scaduto o revocato = 404 UNIFORME. Perimetro: tetto 30/10 min per IP + 20/10 min per impronta del token (importati da `@/lib/media/video/token-rinnovo`), il token e il suo hash mai in un log (test col logger vero), il corpo non si legge mai",
 }
 
 function scopertiDelRepo(): { chiave: string; dettaglio: string }[] {
@@ -796,12 +843,34 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // cancellata insieme alla sua rotta. La ragione per esteso sta lassù, al posto
         // della voce; qui basta il verso, che è quello giusto — un handler pubblico in
         // meno, e non un'esenzione riscritta meglio.
+        //
+        // 🔺 19 → 20 il 2026-10-02, SALITA: `video-uploads/rinnovo:POST`, il rinnovo di un URL di
+        // caricamento per l'app nativa 1.2 (PR 2 «video: server e web»). Mi sono fermato, come chiede
+        // la riga qui sotto, e la domanda l'ho fatta: «cosa ottiene un anonimo che passa?». Con un
+        // token VALIDO — `kvr_` più 256 bit, nell'intestazione `x-kidville-rinnovo` — un URL di
+        // caricamento per UN percorso, firmato senza upsert, e solo finché l'originale non è arrivato;
+        // dopo, solo lo stato. Con un token qualunque altro, un 404 uniforme. Non legge niente, non
+        // scrive niente per conto suo.
+        //
+        // Perché il gate qui non è dimenticato ma IMPOSSIBILE, e perché NON si è usato un altro gate
+        // di questo elenco: la porta è dell'app che l'insegnante non sta guidando — il sistema operativo
+        // la risveglia a app chiusa quando l'URL scade — quindi una sessione da presentare non c'è, e
+        // nessuno dei `require*` ha qualcuno a cui chiedere un'identità. Il token È il gate: come il
+        // ticket HMAC di `public/cancellazione-account/conferma` e il token del modello di
+        // `public/forms/[token]/submit`, solo più lungo e a scadenza (48 ore), a un solo scopo.
+        //
+        // Il perimetro che resta quando la sessione non c'è (due tetti, 404 uniforme, il corpo mai
+        // letto, il token mai nei log) e le prove che lo tengono sono nella voce e in
+        // `__tests__/api/video-uploads-rinnovo.test.ts`. Il numero dei tetti scritto nella voce è
+        // confrontato con le costanti vere dal test qui sotto: è la lezione di
+        // `iscrizione/personale:POST`, una motivazione che dichiarava «3 invii/ora» per un giro intero
+        // dopo che la rotta era passata a 20.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(19)
+        ).toBe(20)
     })
 
     it('la motivazione di `iscrizione/insegnanti/upload:POST` dichiara il tetto VERO', () => {
@@ -824,6 +893,20 @@ describe('coverage-lock dei gate di autenticazione', () => {
             'cambiata, si rimette il numero. Una voce di allowlist che descrive un perimetro ' +
             'che non esiste è peggio di nessuna voce: spegne il sospetto su una porta anonima.',
         ).toContain(`tetto ${TETTO_UPLOAD_CANDIDATURE} caricamenti/10 min per IP`)
+    })
+
+    it('la motivazione di `video-uploads/rinnovo:POST` dichiara i tetti VERI', () => {
+        // La stessa lezione del test qui sopra: una motivazione di questa mappa è PROSA, e una prosa può
+        // mentire restando verde. I due numeri che la voce scrive si confrontano con le costanti che la
+        // rotta usa davvero (importate da `@/lib/media/video/token-rinnovo`, non scritte nella rotta:
+        // lo vuole `upload-pubblico-con-tetto.test.ts`). Chi cambia un tetto cambia anche la frase.
+        expect(
+            PUBBLICHE['video-uploads/rinnovo:POST'],
+            `La motivazione non dichiara più i tetti veri (${TETTO_RINNOVO_PER_IP}/10 min per IP, ` +
+            `${TETTO_RINNOVO_PER_TOKEN}/10 min per impronta del token). Se un tetto è cambiato si ` +
+            'aggiorna la frase; se la frase è cambiata si rimette il numero. Una voce che descrive un ' +
+            'perimetro che non esiste spegne il sospetto su una porta senza sessione.',
+        ).toContain(`tetto ${TETTO_RINNOVO_PER_IP}/10 min per IP + ${TETTO_RINNOVO_PER_TOKEN}/10 min per impronta del token`)
     })
 
     /**
@@ -889,6 +972,13 @@ describe('coverage-lock dei gate di autenticazione', () => {
             'repository. È la sola porta di questo elenco per cui «nessuna `fetch` in `src/`» è la ' +
             'forma corretta e non il sintomo di un pannello cancellato — una pagina che si chiedesse ' +
             'da sola se sta bene risponderebbe di sì proprio quando è caduta.',
+        'video-uploads/rinnovo:POST':
+            "a bussare sarà l'app nativa 1.2 (PR 3): il sistema operativo la risveglia a app chiusa per rinnovare " +
+            'l\'URL di caricamento scaduto di una PUT in background, con codice nativo (Swift e Kotlin) che non vive in ' +
+            "`src/` e che nessuna WebView chiama. ⚠️ Oggi non ha ancora nessun chiamante, e va scritto: la PR 2 prepara " +
+            'il contratto lato server (spec §12) e deve uscire PRIMA della PR 3, perché un\'app 1.2 non può chiamare ' +
+            "una porta che non esiste. Se la PR 3 non arriva, questa voce va tolta con la rotta e con la sua voce in " +
+            '`PUBBLICHE`: una porta anonima senza padrone è esattamente ciò che questa rete esiste per fermare.',
     }
 
     it('ogni porta senza gate ha ancora qualcuno che la chiama', () => {
@@ -942,12 +1032,21 @@ describe('coverage-lock dei gate di autenticazione', () => {
 
         // Il tetto delle deroghe, che è una fotografia come quello di PUBBLICHE: se sale,
         // qualcuno ha appena spiegato una porta orfana invece di chiuderla.
+        //
+        // 🔺 1 → 2 il 2026-10-02, SALITA, e va letta per quello che è: `video-uploads/rinnovo:POST`.
+        // Mi sono fermato, come chiede la riga qui sotto, e la domanda che questa rete fa è «chi
+        // bussa, se non l'app?». Qui la risposta è precisa — l'app nativa 1.2, dal sistema operativo,
+        // con codice che non sta in `src/` — ma NON è la stessa di `health:GET`: quel monitoraggio
+        // esiste e bussa da anni, mentre questo chiamante non esiste ancora (è la PR 3). La voce è
+        // ammessa perché la PR 2 e la PR 3 sono due metà dello stesso contratto (spec §12) e la
+        // seconda non può uscire prima della prima; ed è l'unica deroga che porta la sua scadenza
+        // scritta nel testo: se la PR 3 non arriva, la porta va chiusa.
         expect(
             Object.keys(CHIAMATA_DA_FUORI).length,
             'Il numero di porte «chiamate da fuori» è cambiato. Se è SALITO, fermati: la ' +
             'risposta facile a questa rete è aggiungere una riga qui, ed è la risposta ' +
             'sbagliata in tutti i casi tranne quello del monitoraggio.',
-        ).toBe(1)
+        ).toBe(2)
     })
 
     it('la rete riconosce una porta orfana anche quando la sua voce è impeccabile', () => {

@@ -3,11 +3,19 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { logEvento } from '@/lib/logging/logger'
 
+import {
+  ENV_SNAPSHOT_SANDBOX,
+  apriLaMicroVm,
+  leggiSnapshotConfigurato,
+  type OrigineMicroVm,
+} from './ambiente'
 import type {
   ArchivioVideo,
   CodaVideo,
   ComandoSandbox,
+  EsitoBattito,
   EsitoComando,
+  EsitoConteggi,
   EsitoRpcVideo,
   JobVideo,
   MacchinaSandbox,
@@ -31,6 +39,12 @@ import type {
  * `battito.ts`, `preparazione.ts` e `script.ts`, che girano senza rete e hanno i
  * loro collaudi. Quando M12 aprirà un Sandbox vero, ciò che può essere sbagliato è
  * qui dentro, e si vede in un colpo d'occhio.
+ *
+ * Dalla PR 2 anche la scelta di COME aprire la MicroVM (riaggancio, snapshot, ripiego sul
+ * runtime della PR 1) è fuori da qui: sta in `apriLaMicroVm` (`./ambiente.ts`), che non
+ * importa l'SDK e si prova con uno finto che lancia dove si vuole. A `macchinaVercel` restano
+ * due righe di cablaggio, che `video-runner-ambiente.test.ts` prova con l'SDK sostituito da
+ * un doppio; le FIRME dell'SDK vero le controlla `tsc`, che compila questo file contro i suoi tipi.
  * ═════════════════════════════════════════════════════════════════════════════
  */
 
@@ -41,9 +55,16 @@ import type {
 /**
  * ⚠️ POSTGREST NON LANCIA: RITORNA `{ error }` (AGENTS, regola 7). Un `try/catch`
  * attorno a una `rpc()` non scatta mai, e il valore di ritorno va guardato sempre —
- * è la ragione per cui ogni funzione qui sotto passa da `esitoRpc`.
+ * è la ragione per cui ogni funzione qui sotto passa da `esitoRpc`, `esitoSemplice` o
+ * `esitoConteggi`, che condividono questo pezzo.
+ *
+ * Restituisce il corpo della risposta se è un OGGETTO, o `null` — con la riga che lo dice — se la
+ * chiamata non è riuscita (trasporto, funzione che non c'è) o la risposta non si legge.
  */
-function esitoRpc(operazione: string, risposta: { data: unknown; error: unknown }): EsitoRpcVideo {
+function corpoDellaRisposta(
+  operazione: string,
+  risposta: { data: unknown; error: unknown },
+): Record<string, unknown> | null {
   if (risposta.error) {
     logEvento(
       'rpc',
@@ -51,7 +72,7 @@ function esitoRpc(operazione: string, risposta: { data: unknown; error: unknown 
       { operazione: `video-runner:${operazione}`, esito: 'rpc-non-riuscita' },
       risposta.error,
     )
-    return { ok: false, code: 'RPC_ERROR' }
+    return null
   }
   const corpo = risposta.data
   if (corpo === null || typeof corpo !== 'object') {
@@ -59,13 +80,60 @@ function esitoRpc(operazione: string, risposta: { data: unknown; error: unknown 
       operazione: `video-runner:${operazione}`,
       esito: 'rpc-risposta-illeggibile',
     })
-    return { ok: false, code: 'RPC_ERROR' }
+    return null
   }
-  const letto = corpo as { ok?: unknown; code?: unknown; job?: unknown }
+  return corpo as Record<string, unknown>
+}
+
+/** Le RPC che portano un JOB: `{"ok":true,"job":…}` o `{"ok":false,"code":…}`. */
+function esitoRpc(operazione: string, risposta: { data: unknown; error: unknown }): EsitoRpcVideo {
+  const letto = corpoDellaRisposta(operazione, risposta)
+  if (letto === null) return { ok: false, code: 'RPC_ERROR' }
   if (letto.ok === true && letto.job !== null && typeof letto.job === 'object') {
     return { ok: true, job: letto.job as JobVideo }
   }
   return { ok: false, code: typeof letto.code === 'string' ? letto.code : 'RPC_ERROR' }
+}
+
+/**
+ * Le RPC di coordinamento che NON portano un job: `{"ok":true,…}` o `{"ok":false,"code":…}`.
+ *
+ * ⚠️ NON si fanno passare da `esitoRpc`, ed è il motivo per cui questa funzione esiste: `esitoRpc` vuole
+ * un `job` dentro il corpo, e senza lo legge come «RPC_ERROR» anche una risposta riuscita. Per la
+ * sorveglianza sarebbe un disastro silenzioso — ogni invocazione crederebbe di non aver ottenuto la
+ * sorveglianza che il database le ha appena dato.
+ */
+function esitoSemplice(
+  operazione: string,
+  risposta: { data: unknown; error: unknown },
+): EsitoBattito {
+  const corpo = corpoDellaRisposta(operazione, risposta)
+  if (corpo === null) return { ok: false, code: 'RPC_ERROR' }
+  if (corpo.ok === true) return { ok: true }
+  return { ok: false, code: typeof corpo.code === 'string' ? corpo.code : 'RPC_ERROR' }
+}
+
+/**
+ * Le RPC che rispondono con dei CONTEGGI (`candidati`, `calciati`, `arrivati`…): dalla risposta
+ * passano SOLO i valori numerici. Il resto — una stringa `motivo`, una riga che un domani una RPC
+ * decidesse di restituire — non entra nel runner, e quindi non può finire in un log o in un
+ * messaggio (le righe di `video_jobs` e `video_intents` portano ormai `tag_alunni`, l'hash del
+ * token di rinnovo e lo `sha256`: secondario #37).
+ */
+function esitoConteggi(
+  operazione: string,
+  risposta: { data: unknown; error: unknown },
+): EsitoConteggi {
+  const corpo = corpoDellaRisposta(operazione, risposta)
+  if (corpo === null) return { ok: false, code: 'RPC_ERROR' }
+  if (corpo.ok !== true) {
+    return { ok: false, code: typeof corpo.code === 'string' ? corpo.code : 'RPC_ERROR' }
+  }
+  const conteggi: Record<string, number> = {}
+  for (const [chiave, valore] of Object.entries(corpo)) {
+    if (typeof valore === 'number' && Number.isFinite(valore)) conteggi[chiave] = valore
+  }
+  return { ok: true, conteggi }
 }
 
 export function codaSupabase(supabase: SupabaseClient): CodaVideo {
@@ -85,24 +153,61 @@ export function codaSupabase(supabase: SupabaseClient): CodaVideo {
       return { ok: true, jobs: (data ?? []) as unknown as JobVideo[] }
     },
 
-    async prossimo(leaseOwner, leaseSeconds) {
+    async prossimo(leaseOwner, leaseSeconds, tetto) {
       return esitoRpc(
-        'next',
-        await supabase.rpc('video_job_next', {
+        'prossimo',
+        await supabase.rpc('video_job_prossimo', {
           p_lease_owner: leaseOwner,
           p_lease_seconds: leaseSeconds,
+          p_tetto: tetto,
         }),
       )
     },
 
-    async riprendi(jobId, leaseOwner, leaseSeconds) {
+    async prendi(jobId, leaseOwner, leaseSeconds, tetto) {
       return esitoRpc(
-        'claim',
-        await supabase.rpc('video_job_claim', {
+        'prendi',
+        await supabase.rpc('video_job_prendi', {
           p_job_id: jobId,
           p_lease_owner: leaseOwner,
           p_lease_seconds: leaseSeconds,
+          p_tetto: tetto,
         }),
+      )
+    },
+
+    async sorveglianzaPrendi(jobId, invocazione, secondi) {
+      return esitoSemplice(
+        'sorveglianza-prendi',
+        await supabase.rpc('video_job_sorveglianza_prendi', {
+          p_job_id: jobId,
+          p_invocazione: invocazione,
+          p_secondi: secondi,
+        }),
+      )
+    },
+
+    async sorveglianzaRilascia(jobId, invocazione) {
+      return esitoSemplice(
+        'sorveglianza-rilascia',
+        await supabase.rpc('video_job_sorveglianza_rilascia', {
+          p_job_id: jobId,
+          p_invocazione: invocazione,
+        }),
+      )
+    },
+
+    async arriviRecupera(limite) {
+      return esitoConteggi(
+        'arrivi-recupera',
+        await supabase.rpc('video_arrivi_recupera', { p_limite: limite }),
+      )
+    },
+
+    async ventaglio(tetto, escludi) {
+      return esitoConteggi(
+        'ventaglio',
+        await supabase.rpc('video_runner_ventaglio', { p_tetto: tetto, p_escludi: escludi }),
       )
     },
 
@@ -140,6 +245,20 @@ export function codaSupabase(supabase: SupabaseClient): CodaVideo {
           p_lease_owner: p.leaseOwner,
           p_error_code: p.codice,
           p_rejected: p.rifiutato,
+        }),
+      )
+    },
+
+    async diagnosi(p) {
+      // Come la sorveglianza, la RPC risponde `{ok:true}` SENZA un job: passata da `esitoRpc` ogni
+      // scrittura riuscita si leggerebbe «RPC_ERROR». `esitoSemplice` esiste per questo.
+      return esitoSemplice(
+        'diagnosi',
+        await supabase.rpc('video_job_diagnosi', {
+          p_job_id: p.jobId,
+          p_fence_epoch: p.fenceEpoch,
+          p_lease_owner: p.leaseOwner,
+          p_diagnosi: p.diagnosi,
         }),
       )
     },
@@ -233,49 +352,41 @@ function assoluto(supabase: SupabaseClient, url: string): string {
  * LA MICROVM
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * La MicroVM di Vercel. Qui si CABLANO due righe e basta: la scelta (riaggancio, snapshot, ripiego)
+ * sta in `apriLaMicroVm` (`./ambiente.ts`), che non importa l'SDK e si prova con un SDK finto.
+ *
+ * ⚠️ La variabile `VIDEO_SANDBOX_SNAPSHOT_ID` si legge QUI e a ogni apertura, non una volta al caricamento
+ * del modulo: lo snapshot si ricostruisce (scade, o si rifà con un FFmpeg nuovo) e il valore su Vercel
+ * cambia senza che l'istanza calda venga rimpiazzata; il costo di leggerla è una lookup su `process.env`.
+ *
+ * Il ripiego — il percorso della PR 1, `runtime: 'node22'` — resta ESATTAMENTE com'era, per costruzione:
+ * lo prova `video-runner-ambiente.test.ts` parametro per parametro. Il rischio che quel percorso lascia
+ * aperto è dichiarato (spec §10.2): se Vercel togliesse il runtime `node22` E lo snapshot mancasse, ogni
+ * apertura fallirebbe con `SANDBOX_UNAVAILABLE` e i ritentativi non basterebbero. Il battito lo mostra.
+ */
 export function macchinaVercel(): MacchinaSandbox {
   return {
     async apri({ nome, regione, vcpus, tettoMs }) {
-      // Prima si prova a RIAGGANCIARE. È il cuore della durevolezza: la MicroVM che
-      // sta convertendo ha questo nome, e `Sandbox.get` la ritrova da un processo
-      // che non è quello che l'ha creata.
-      try {
-        const esistente = await Sandbox.get({ name: nome, resume: true })
-        return sessione(esistente, false)
-      } catch (err) {
-        // Non è un guasto: il caso normale è «non c'è ancora». Si logga a `info`
-        // perché senza questa riga «creata» e «riagganciata» sarebbero
-        // indistinguibili — cioè non si potrebbe misurare se la ripresa funziona.
-        logEvento(
-          'cron',
-          'info',
-          { operazione: 'video-runner:sandbox', esito: 'riaggancio-non-riuscito' },
-          err,
-        )
-      }
-
-      // ⚠️ `node22` RESTA in questa PR (decisione D7 della spec del 2026-10-02): lo cambia la
-      // PR 2, che passa a uno snapshot costruito su `node:24` e con i binari di FFmpeg già
-      // dentro — due cose che oggi si pagano a ogni MicroVM nuova (il download dei due `.gz`
-      // dal nostro bucket, ~134 MB). Il rischio che questa riga lascia aperto è dichiarato:
-      // se Vercel togliesse il runtime `node22`, ogni apertura fallirebbe con
-      // `SANDBOX_UNAVAILABLE` e i ritentativi non basterebbero, perché il guasto non passerebbe.
-      const creata = await Sandbox.create({
-        runtime: 'node22',
-        name: nome,
-        region: regione,
-        resources: { vcpus },
-        timeout: tettoMs,
-        persistent: false,
-      })
-      return sessione(creata, true)
+      const aperta = await apriLaMicroVm<Sandbox>(
+        {
+          // Il riaggancio è il cuore della durevolezza: la MicroVM che sta convertendo ha questo nome, e
+          // `Sandbox.get` la ritrova da un processo che non è quello che l'ha creata.
+          riaggancia: (nomeSandbox) => Sandbox.get({ name: nomeSandbox, resume: true }),
+          crea: (parametri) => Sandbox.create(parametri),
+        },
+        { nome, regione, vcpus, tettoMs },
+        leggiSnapshotConfigurato(process.env[ENV_SNAPSHOT_SANDBOX]),
+      )
+      return sessione(aperta.sandbox, aperta.nuova, aperta.origine)
     },
   }
 }
 
-function sessione(sandbox: Sandbox, nuova: boolean): SessioneSandbox {
+function sessione(sandbox: Sandbox, nuova: boolean, origine: OrigineMicroVm | undefined): SessioneSandbox {
   return {
     nuova,
+    ...(origine === undefined ? {} : { origine }),
     async esegui(comando: ComandoSandbox): Promise<EsitoComando> {
       const finito = await sandbox.runCommand({
         cmd: comando.cmd,

@@ -430,10 +430,44 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
       'scadenza del suo termine — al più 365 giorni dal caricamento più un giro di purga. Vale solo ' +
       'per il registro: i documenti del fascicolo (`sensitive_documents`) non hanno questo termine.',
   },
+  // Nominato il 2026-09-18 come LACUNA APERTA — `escluso`, «nessun codice cancella mai da qui» — e chiuso il
+  // 2026-10-02 dalla PR 2 «server e web» dei video, che ha dato all'uscita il suo termine
+  // (`video_jobs.output_delete_after`) e alla purga i passi che la tolgono. Da qui `coperto-fuori-oblio`, lo
+  // stato dei bucket che svuota la CONSERVAZIONE e non un canale d'oblio (come `video_originals`). La prova
+  // sta accanto al meccanismo: `__tests__/api/gdpr-retention-video.test.ts` (i passi della purga),
+  // `__tests__/lib/video-conservazione-rpc.test.ts` (le RPC) e `__tests__/lib/gdpr-oblio-video-intenti.test.ts`
+  // (l'oblio sugli intenti); questo registro dichiara chi svuota il magazzino, non verifica che lo svuoti.
   video_processing: {
-    stato: 'escluso',
-    motivo:
-      '\ud83d\udd34 NON \u00c8 UNA DECISIONE, \u00c8 UNA LACUNA APERTA, e sta scritta qui perch\u00e9 non sparisca. Il bucket conserva l\u2019USCITA convertita di ogni tentativo, ed \u00e8 video di minori. Misurato il 2026-09-18, subito dopo l\u2019applicazione: NESSUN codice cancella mai da qui \u2014 la spazzata di `/api/gdpr/retention-video` guarda solo `video_originals`, e lo schema non ha un `output_delete_after` perch\u00e9 le colonne della conservazione sono sull\u2019intento, non sul job. Oggi il bucket \u00e8 VUOTO (nessuna conversione \u00e8 ancora girata), quindi la lacuna non sta facendo danno: \u00e8 il momento giusto per chiuderla, non per scoprirla. PERCH\u00c9 NON L\u2019HO CHIUSA SUBITO: la regola ovvia \u2014 \u00abcancella l\u2019uscita dei job conclusi\u00bb \u2014 distruggerebbe l\u2019uscita di un job `ready` che il finalizer deve ancora copiare, e fra la conversione e la pubblicazione possono passare giorni. Un bucket che cresce si svuota domani; un video cancellato mentre un\u2019insegnante stava per pubblicarlo non torna. IL NUMERO ESCE GI\u00c0: `video_riconciliazione.output_di_job_conclusi` lo conta a ogni giro, quindi la decisione parte da una misura invece che da un\u2019ipotesi.',
+    stato: 'coperto-fuori-oblio',
+    come:
+      'L’USCITA convertita (Full HD) di ogni tentativo di conversione, scritta dal runner: video di minori. ' +
+      'Non la tocca nessun canale di oblio, e non per dimenticanza: l’oggetto è indicizzato per chi ha caricato e ' +
+      'per job (`video_jobs.output_path`, `<chi carica>/<job>/<tentativo>.mp4`), non per il bambino ripreso, ' +
+      'quindi una cancellazione per alunno non saprebbe quale file guardare. A svuotarlo è la CONSERVAZIONE: ' +
+      'ogni uscita ha il suo termine (`video_jobs.output_delete_after`) e `POST /api/gdpr/retention-video` (job ' +
+      '`video-retention`, ogni dieci minuti, sorvegliato da /api/health) toglie il file PRIMA e timbra la riga ' +
+      'POI (`video_retention_uscita_rimossa`, che rilegge la scadenza sotto lock), per riga: un file che non ' +
+      'esce trattiene la sua riga e la route risponde 500. ' +
+      'LE REGOLE DEL TERMINE. (1) Video pubblicato: l’uscita è una copia doppia — la copia vive in `gallery` — ' +
+      'e scade nel momento della pubblicazione. (2) Job concluso male o annullato: scade subito. (3) Video ' +
+      'convertito che nessuno ha pubblicato: si tiene 7 giorni dalla verifica (`GIORNI_CONVERTITO_NON_PUBBLICATO`), ' +
+      'poi l’intento si revoca e l’uscita scade. (4) Invio del flusso vecchio, senza pubblicazione automatica: ' +
+      'revocato al primo giro dopo il rilascio. (5) News: scade 7 giorni dopo la verifica. (6) Un oggetto che ' +
+      'nessuna riga nomina — l’uscita di un tentativo precedente, un file scritto da un Sandbox morto — si toglie ' +
+      'dopo 24 ore di grazia, e così un file tornato dopo il timbro di rimozione. Una rete (`video_retention_scadenze`) ' +
+      'dà la scadenza a ogni uscita di un job concluso o di un intento pubblicato che ne fosse rimasta senza. ' +
+      'L’OBLIO ACCORCIA IL TERMINE, non lo sostituisce: `anonimizzaAlunno` chiama `video_intent_oblio_alunno`, che ' +
+      'toglie il bambino da `video_intents.tag_alunni` di tutti gli intenti (l’archivio nuovo di identificativi di ' +
+      'minori, che si svuota comunque alla pubblicazione e dopo 7 giorni dalla conclusione), e un intento non ' +
+      'pubblicato che resta senza bambini e non è broadcast si revoca: la sua uscita scade subito e esce al giro ' +
+      'successivo della purga. ' +
+      '⚠️ FINESTRA RESIDUA DICHIARATA: per un video con quel solo bambino, dalla richiesta di cancellazione alla ' +
+      'rimozione del file passa un giro della purga (circa dieci minuti, di più se Storage non risponde: la riga ' +
+      'resta trattenuta e la route risponde 500). Per un video di GRUPPO non ancora pubblicato — restano altri ' +
+      'bambini, quindi l’intento non si revoca — il file resta fino al suo termine, cioè fino a 7 giorni dalla ' +
+      'verifica: è la scelta della galleria («foto di gruppo: si toglie il tag e il file resta, perché dentro c’è ' +
+      'l’immagine di altri bambini»). Il video già pubblicato non sta qui: vive in `gallery`, e lì lo raggiunge ' +
+      '`obliaFotoAlunno`. Il numero dei giorni sta in un posto solo, e un test lo tiene allineato a questa frase.',
   },
   // Nominato il 2026-10-02 insieme al bucket (PR 1 «hotfix video»: FFmpeg nel nostro
   // Storage invece che scaricato da Internet a ogni conversione). Dentro non c’è niente di
@@ -1785,6 +1819,69 @@ async function bonificaDiarioAlunno(
 }
 
 /**
+ * I VIDEO IN VOLO — `video_intents.tag_alunni`, l'archivio NUOVO di identificativi di minori
+ * (PR 2 «server e web» dei video, 2026-10-02).
+ *
+ * Il bambino che l'insegnante sceglie PRIMA di caricare un video vive sull'intento fino alla
+ * pubblicazione, che lo toglie, e comunque fino a sette giorni dalla conclusione
+ * (`video_intenti_minimizza`, nella purga `/api/gdpr/retention-video`). È un luogo nuovo con uuid di
+ * bambini, in una tabella che non è `galleria_media_v2`: `obliaFotoAlunno` non ci arriva, e senza questo
+ * passo l'identificativo di un bambino da dimenticare resterebbe lì fino a sette giorni dopo la richiesta.
+ *
+ * Il lavoro lo fa `video_intent_oblio_alunno`, una RPC, perché vuole i lock nell'ordine intento → job e
+ * una transazione sola: toglie il bambino da TUTTI gli intenti e, se un intento non terminale resta
+ * senza bambini e non è broadcast, lo revoca e dà alla sua uscita la scadenza (il file esce al giro
+ * successivo della purga). Qui si chiama e si CONTROLLA IL VALORE DI RITORNO: PostgREST non lancia,
+ * ritorna `{ error }`, e una RPC che risponde `{ ok: false }` ha rifiutato. Un oblio che non è riuscito
+ * non è «zero intenti»: è `letto: false`, che `anonimizzaAlunno` somma a `lettureFallite` — chi risponde
+ * alla Direzione non deve poter scrivere «oblio completo» su un archivio che non si è potuto svuotare.
+ *
+ * Sul database E2E della CI, che non è migrato, la funzione non esiste (`PGRST202`): non c'è niente da
+ * obliare, e si degrada in silenzio come gli altri rami.
+ *
+ * Il bambino NON entra nei log, e la RPC non lo scrive nemmeno nel proprio: da qui escono solo conteggi.
+ */
+export async function obliaIntentiVideoAlunno(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  op: string,
+): Promise<{ intenti: number; revocati: number; letto: boolean }> {
+  const { data, error } = await supabase.rpc('video_intent_oblio_alunno', { p_alunno: alunnoId })
+  if (error) {
+    if (schemaAssente(error)) {
+      // La RPC non c'è (database non ancora migrato): non c'è niente da obliare, ma si dice (secondario #113).
+      logEvento('gdpr', 'warn', { operazione: op, esito: 'oblio-video-intenti-rpc-assente' })
+      return { intenti: 0, revocati: 0, letto: true }
+    }
+    logErrore({ operazione: op, evento: 'oblio_video_intenti' }, error)
+    return { intenti: 0, revocati: 0, letto: false }
+  }
+
+  const esito = (data ?? null) as { ok?: unknown; code?: unknown; intenti?: unknown; revocati?: unknown } | null
+  if (esito?.ok !== true) {
+    logEvento('gdpr', 'error', {
+      operazione: op,
+      esito: 'oblio-video-intenti-rifiutato',
+      error_code: typeof esito?.code === 'string' ? esito.code : 'sconosciuto',
+      msg: `${op}: video_intent_oblio_alunno ha rifiutato la richiesta: il bambino può essere ancora nominato dagli intenti dei video`,
+    })
+    return { intenti: 0, revocati: 0, letto: false }
+  }
+
+  const intenti = typeof esito.intenti === 'number' ? esito.intenti : 0
+  const revocati = typeof esito.revocati === 'number' ? esito.revocati : 0
+  // Gli eventi critici loggano anche il SUCCESSO: a zero, questa riga è la sola differenza fra «il bambino
+  // non era su nessun intento» e «il passo non è mai partito».
+  logEvento('gdpr', 'info', {
+    operazione: op,
+    esito: 'oblio-video-intenti',
+    n_intenti: intenti,
+    n_revocati: revocati,
+  })
+  return { intenti, revocati, letto: true }
+}
+
+/**
  * Anonimizza UN alunno + bonifica i suoi dati finanziari collegati
  * (riconciliazione/incassi/cassa), con la stessa logica del diritto all'oblio
  * admin (causale/controparte/`suggerimenti.label` e testo libero di cassa che
@@ -1812,6 +1909,10 @@ export async function anonimizzaAlunno(
   diarioBonificate: number
   /** Righe di `notifiche` che nominavano il bambino, rimosse (art. 17). */
   notificheRimosse: number
+  /** Intenti di video che nominavano il bambino, da cui è stato tolto (`video_intents.tag_alunni`). */
+  videoIntentiTrattati: number
+  /** Fra questi, gli intenti rimasti senza nessun bambino e revocati: il loro video esce al giro successivo della purga. */
+  videoIntentiRevocati: number
   /**
    * Quanti MAGAZZINI non si è riusciti nemmeno a guardare (aggiunto il 2026-08-16).
    *
@@ -2143,6 +2244,14 @@ export async function anonimizzaAlunno(
   //     è più l'unica cosa.
   const fotoNews = await obliaFotoNewsAlunno(supabase, alunno.id, op)
 
+  // 3g-ter. I VIDEO IN VOLO (2026-10-02). I bambini scelti per un video vivono sull'intento
+  //     (`video_intents.tag_alunni`) fino alla pubblicazione e, se non si pubblica, fino a sette giorni
+  //     dalla conclusione: un archivio di identificativi di minori che nessuno dei passi qui sopra
+  //     raggiunge. Vedi `obliaIntentiVideoAlunno`: toglie il bambino da tutti gli intenti e revoca quelli
+  //     che restano senza nessuno. Il file della sua uscita non esce da qui — esce dalla purga
+  //     (`REGISTRO_BUCKET_OBLIO`, `video_processing`).
+  const videoIntenti = await obliaIntentiVideoAlunno(supabase, alunno.id, op)
+
   // 3h. GLI ALTRI MAGAZZINI (privacy #2 del 2026-08-02). Le pagelle, i
   //     certificati medici e gli allegati scambiati in chat: tre bucket che
   //     nessun canale di oblio aveva mai toccato. Vedi `REGISTRO_BUCKET_OBLIO`
@@ -2227,6 +2336,8 @@ export async function anonimizzaAlunno(
     presenzeBonificate,
     diarioBonificate: diario.bonificate,
     notificheRimosse,
+    videoIntentiTrattati: videoIntenti.intenti,
+    videoIntentiRevocati: videoIntenti.revocati,
     // ── GLI INVENTARI CHE NON SI SONO POTUTI LEGGERE ──
     //
     // Un elenco esplicito e non una somma di flag sparsi, così chi aggiunge un
@@ -2245,6 +2356,9 @@ export async function anonimizzaAlunno(
       !threadNonLetti,
       diario.completo,
       auditDiario,
+      // Dal 2026-10-02: l'oblio dei video in volo. `false` = la RPC non ha risposto o ha rifiutato, e il
+      // bambino può essere ancora nominato da `video_intents.tag_alunni`.
+      videoIntenti.letto,
     ].filter((l) => l === false).length,
   }
 }

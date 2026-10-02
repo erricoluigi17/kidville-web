@@ -1,5 +1,18 @@
 export const MAX_VIDEO_INPUT_BYTES = 2_000_000_000
-export const MAX_VIDEO_DURATION_SECONDS = 180
+
+/**
+ * La durata massima di un video accettato: CINQUE minuti.
+ *
+ * Era 180 secondi fino al 2026-10-02, quando il titolare ha portato il tetto a 5 minuti
+ * (PR 2 «video: server e web», decisione del titolare: peso e uscita restano quelli di
+ * prima). È il numero da cui DERIVA ogni tetto di durata del repository — il probe, la
+ * dichiarazione del client (`schemaFileVideoDichiarato`), i controlli prima di caricare, il
+ * tetto VBV di `encode.ts` — e nessun altro posto deve riscriverlo: un secondo «180» cablato
+ * in un modulo diventa il tetto che rifiuta un filmato di quattro minuti con la sicurezza di
+ * chi sta applicando la regola. Lo stesso vale per i testi dei cataloghi («5 minuti»), che il
+ * lock `__tests__/lib/video-contratto.test.ts` confronta con questa costante.
+ */
+export const MAX_VIDEO_DURATION_SECONDS = 300
 
 /** Nomi restituiti da `ffprobe format.format_name`, non estensioni del file. */
 export const SUPPORTED_VIDEO_CONTAINERS = [

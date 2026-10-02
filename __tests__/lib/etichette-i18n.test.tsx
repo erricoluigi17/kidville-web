@@ -13,6 +13,8 @@ import { allergeneLabel, useAllergeneLabel } from '@/lib/mensa/allergeni';
 import { AGING_LABEL, useAgingLabel } from '@/lib/pagamenti/aging';
 import { UMORE_CONFIG, useUmoreLabel } from '@/lib/diary/umore';
 import { TIPI_NOTIFICA, useTipoNotifica } from '@/lib/notifiche/tipi';
+import etichetteIt from '../../messages/it/etichette.json';
+import etichetteEn from '../../messages/en/etichette.json';
 import { getEventConfig, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
 
 describe('etichette i18n — ruoli', () => {
@@ -72,6 +74,35 @@ describe('etichette i18n — tipi notifica', () => {
     const avviso = result.current('avviso');
     expect(avviso.label).toBe('Avvisi e circolari');
     expect(avviso.descrizione).toBe('Quando la scuola pubblica un avviso destinato alla famiglia');
+  });
+});
+
+describe('etichette i18n — i tipi notifica dei video (PR 2, T7)', () => {
+  // `etichette.json` VINCE sul catalogo (`useTipoNotifica` guarda prima la chiave i18n): se le due sorgenti dicono cose diverse il pannello
+  // mostra quella del JSON e il catalogo resta una bugia. Qui si tengono uguali, per ciascuno dei tre tipi toccati dal 02/10.
+  const TIPI = ['galleria', 'video_esito', 'video_liberatoria_revocata'] as const
+
+  it('l’etichetta del tipo `galleria` dice «contenuti»: lo stesso tipo annuncia anche i video', () => {
+    expect(TIPI_NOTIFICA.galleria.label).toBe('Nuovi contenuti in galleria');
+    const { result } = renderHook(() => useTipoNotifica());
+    expect(result.current('galleria').label).toBe('Nuovi contenuti in galleria');
+    expect(result.current('galleria').descrizione).toBe('Quando vengono pubblicate foto o video della sezione del figlio');
+  });
+
+  it('i due tipi nuovi: l’esito è del docente, l’avviso di liberatoria è dello staff e di sicurezza', () => {
+    expect(TIPI_NOTIFICA.video_esito).toMatchObject({ gruppo: 'docente' });
+    expect(TIPI_NOTIFICA.video_liberatoria_revocata).toMatchObject({ gruppo: 'staff', sicurezza: true });
+  });
+
+  it.each(TIPI)('`%s`: la chiave i18n (it) è uguale al catalogo, e quella inglese esiste', (tipo) => {
+    const it = etichetteIt as Record<string, string>;
+    const en = etichetteEn as Record<string, string>;
+    expect(it[`notifica_${tipo}_label`]).toBe(TIPI_NOTIFICA[tipo].label);
+    expect(it[`notifica_${tipo}_desc`]).toBe(TIPI_NOTIFICA[tipo].descrizione);
+    expect(en[`notifica_${tipo}_label`], 'manca l’etichetta inglese').toBeTruthy();
+    expect(en[`notifica_${tipo}_desc`], 'manca la descrizione inglese').toBeTruthy();
+    const { result } = renderHook(() => useTipoNotifica());
+    expect(result.current(tipo)).toEqual({ label: TIPI_NOTIFICA[tipo].label, descrizione: TIPI_NOTIFICA[tipo].descrizione });
   });
 });
 

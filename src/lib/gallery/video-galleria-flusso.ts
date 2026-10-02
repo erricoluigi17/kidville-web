@@ -15,25 +15,36 @@
  * in jsdom si collaudano male e che comunque vanno guardate su un telefono vero.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * I QUATTRO PASSI, E PERCHÉ SONO QUATTRO.
+ * I TRE PASSI DEL CLIENT, E CHI FA IL QUARTO.
  *
- *  1. `POST /api/video-uploads` apre l'INTENTO e conia le coordinate TUS. Non
- *     riceve un byte: il corpo di una Function su Vercel si ferma a ~4,5 MB, e
- *     questi originali arrivano a 2.000.000.000.
+ *  1. `POST /api/video-uploads` apre l'INTENTO **con i bambini già scelti**
+ *     (`destinatari`) e conia le coordinate TUS. Non riceve un byte: il corpo di
+ *     una Function su Vercel si ferma a ~4,5 MB, e questi originali arrivano a
+ *     2.000.000.000. L'intento nasce confermato: «Invia» è l'impegno, e da lì il
+ *     SERVER sa a chi va il video. Attraversa gli stessi cancelli di
+ *     `POST /api/gallery` (sede, bambini della sede, liberatoria fotografica): un
+ *     422 che nomina i bambini senza liberatoria torna QUI, prima che parta un
+ *     solo byte.
  *  2. i byte partono col protocollo TUS (`@/lib/media/video/upload`), che è
  *     ripartibile: è il pezzo che sopravvive alla galleria della metropolitana.
- *  3. `PATCH … {azione:'caricato'}` mette il job in coda, `PATCH … {azione:'conferma'}`
- *     è l'istante in cui chi carica SI IMPEGNA — da lì in poi può chiudere l'app.
- *  4. quando il job è `ready`, `POST /api/gallery` con `video_intent_id` copia
- *     l'uscita dentro il bucket e scrive la riga, attraversando i quattro cancelli
- *     del dominio (ruolo, sede, tag nel perimetro, liberatoria fotografica).
+ *     Il rinnovo della firma NON riapre l'intento: `POST …/[id]/firma`.
+ *  3. `PATCH … {azione:'caricato'}` dice che i byte sono tutti sullo Storage
+ *     (rete di sicurezza: il server se ne accorge anche da solo).
  *
- * ⚠️ Fra il 3 e il 4 possono passare MINUTI. È il motivo per cui l'interfaccia ha
- * uno stato «in preparazione» invece di una rotellina: se dicesse «caricamento»
- * per otto minuti, qualcuno ricaricherebbe e caricherebbe due volte.
+ *  4. Non è del client. Quando la conversione finisce, a pubblicare è il server,
+ *     anche a pagina chiusa, e avvisa chi ha caricato. Il client non ha più
+ *     nessun ramo di pubblicazione (`POST /api/gallery` con `video_intent_id`
+ *     risponde 409 a chi lo prova ancora) e non richiede più i bambini al rientro:
+ *     li ha già scelti, una volta, prima dell'invio.
+ *
+ * ⚠️ Fra il 3 e la pubblicazione possono passare MINUTI. È il motivo per cui
+ * l'interfaccia ha uno stato «in preparazione» invece di una rotellina: se dicesse
+ * «caricamento» per otto minuti, qualcuno ricaricherebbe e caricherebbe due volte.
+ * Lo stato di ogni video lo racconta `GET /api/video-uploads` (l'elenco), da
+ * qualunque dispositivo l'abbia mandato.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * DUE REGOLE CHE QUESTO FILE NON PUÒ PERMETTERSI DI DIMENTICARE.
+ * TRE REGOLE CHE QUESTO FILE NON PUÒ PERMETTERSI DI DIMENTICARE.
  *
  * **Il MIME porta il suffisso del codec.** `MediaRecorder` consegna
  * `video/mp4;codecs=avc1.42E01E,mp4a.40.2`, e un confronto per uguaglianza lo
@@ -44,18 +55,28 @@
  * **Niente nome di file nei log.** `recita-bambina-rossi.mov` è anagrafica di un
  * minore e in `app_log` resterebbe trenta giorni interrogabile in SQL. Nei log di
  * questo modulo escono uuid, byte e codici: struttura, mai contenuto.
+ *
+ * **I bambini scelti non restano in tabella, nemmeno come impronta.** La chiave di
+ * idempotenza finisce in chiaro in `video_jobs.idempotency_key`, che sopravvive alla
+ * minimizzazione dei destinatari: un'impronta senza sale si ricostruisce provando i
+ * sottoinsiemi dei bambini della sede. Le impronte della chiave sono salate con un
+ * valore casuale del dispositivo (`saleDelDispositivo`), che non viaggia mai.
  */
 
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import {
   codiceMessaggioVideo,
   schemaStatoJobVideo,
+  schemaVoceVideo,
   type CodiceMostratoVideo,
   type CoordinateCaricamentoVideo,
+  type DestinatariVideo,
   type StatoJobVideo,
   type StatoJobVideoLetto,
+  type VoceVideo as VoceElencoVideo,
 } from '@/lib/media/video/contratto'
 import { MAX_VIDEO_DURATION_SECONDS, validateVideoInputSize } from '@/lib/media/video/limiti'
+import type { NomeTrasportoVideo } from '@/lib/media/video/trasporto'
 import { messaggioDaCorpo, soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch'
 
 import { mimeBase } from './limiti'
@@ -180,10 +201,10 @@ const TETTO_METADATI_MS = 4_000;
 /**
  * Quanto dura questo video, secondo il browser — e `null` quando non lo sa.
  *
- * ⚠️ PERCHÉ VALE LA PENA CHIEDERGLIELO. Il tetto di tre minuti lo applica ffprobe
- * DOPO il caricamento: un video da 2 GB e quattro minuti verrebbe spedito per
- * intero su rete mobile, messo in coda, e rifiutato. Qui costa qualche decina di
- * millisecondi e chiude il caso prima che parta un byte.
+ * ⚠️ PERCHÉ VALE LA PENA CHIEDERGLIELO. Il tetto di durata (`MAX_VIDEO_DURATION_SECONDS`,
+ * cinque minuti) lo applica ffprobe DOPO il caricamento: un video da 2 GB e sei
+ * minuti verrebbe spedito per intero su rete mobile, messo in coda, e rifiutato.
+ * Qui costa qualche decina di millisecondi e chiude il caso prima che parta un byte.
  *
  * ⚠️ E PERCHÉ NON CI SI PUÒ FIDARE. `preload="metadata"` è un SUGGERIMENTO che il
  * browser può ignorare — su Safari/iOS in Risparmio Energetico o su rete
@@ -259,32 +280,304 @@ export async function durataVideoDalFile(
  * LA CHIAVE DI IDEMPOTENZA
  * ──────────────────────────────────────────────────────────────────────────── */
 
-/** FNV-1a a 32 bit: serve a distinguere due file, non a nascondere un segreto. */
-function improntaBreve(testo: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < testo.length; i++) {
-    h ^= testo.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
+/**
+ * SHA-256 (FIPS 180-4) SINCRONO sui byte UTF-8 del testo, in esadecimale.
+ *
+ * Esiste perché la chiave di idempotenza si calcola dentro `avviaVideo` e il browser non ha un
+ * SHA-256 sincrono (`crypto.subtle.digest` è asincrono e vuole un contesto sicuro). È l'algoritmo
+ * standard, non un'invenzione: `__tests__/lib/gallery-video-flusso.test.ts` lo confronta con i
+ * vettori del NIST e con `node:crypto` su input di ogni lunghezza intorno al confine dei blocchi.
+ * Si esporta per quel confronto, non perché serva altrove.
+ *
+ * ⚠️ Perché non un FNV col sale davanti: un FNV consuma il sale byte per byte e resta con uno stato
+ * di 32 bit, quindi il sale varrebbe 32 bit e non 128 — e lo stato si ricava dall'impronta e da un
+ * candidato, perché ogni passo di FNV si inverte. Una funzione di hash vera non ha questa scorciatoia.
+ */
+const K_SHA256 = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]
+
+export function sha256Esadecimale(testo: string): string {
+  const messaggio = new TextEncoder().encode(testo)
+  const lunghezza = messaggio.length
+  // Il riempimento: un bit a 1, tanti 0, e la lunghezza in bit su 64 bit. Il totale è un multiplo di 64 byte.
+  const totale = (((lunghezza + 8) >> 6) + 1) << 6
+  const blocchi = new Uint8Array(totale)
+  blocchi.set(messaggio)
+  blocchi[lunghezza] = 0x80
+  const vista = new DataView(blocchi.buffer)
+  vista.setUint32(totale - 8, Math.floor((lunghezza * 8) / 0x1_0000_0000))
+  vista.setUint32(totale - 4, (lunghezza * 8) >>> 0)
+
+  const h = Uint32Array.of(0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19)
+  const w = new Uint32Array(64)
+  const ruota = (x: number, n: number) => (x >>> n) | (x << (32 - n))
+  for (let inizio = 0; inizio < totale; inizio += 64) {
+    for (let t = 0; t < 16; t++) w[t] = vista.getUint32(inizio + t * 4)
+    for (let t = 16; t < 64; t++) {
+      const s0 = ruota(w[t - 15], 7) ^ ruota(w[t - 15], 18) ^ (w[t - 15] >>> 3)
+      const s1 = ruota(w[t - 2], 17) ^ ruota(w[t - 2], 19) ^ (w[t - 2] >>> 10)
+      w[t] = w[t - 16] + s0 + w[t - 7] + s1
+    }
+    let [a, b, c, d, e, f, g, k] = h
+    for (let t = 0; t < 64; t++) {
+      const t1 = (k + (ruota(e, 6) ^ ruota(e, 11) ^ ruota(e, 25)) + ((e & f) ^ (~e & g)) + K_SHA256[t] + w[t]) >>> 0
+      const t2 = ((ruota(a, 2) ^ ruota(a, 13) ^ ruota(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0
+      k = g
+      g = f
+      f = e
+      e = (d + t1) >>> 0
+      d = c
+      c = b
+      b = a
+      a = (t1 + t2) >>> 0
+    }
+    h[0] += a
+    h[1] += b
+    h[2] += c
+    h[3] += d
+    h[4] += e
+    h[5] += f
+    h[6] += g
+    h[7] += k
   }
-  return (h >>> 0).toString(16).padStart(8, '0')
+  return Array.from(h, (parola) => parola.toString(16).padStart(8, '0')).join('')
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * IL SALE DEL DISPOSITIVO — perché la chiave non lasci in tabella i bambini scelti
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Dove il sale sta nel `localStorage`. Non porta l'utente: è del dispositivo, e basta. */
+const CHIAVE_SALE = 'kv:video-galleria-sale'
+
+/** 128 bit: sedici byte casuali, trentadue cifre esadecimali. */
+const BYTE_SALE = 16
+
+/** Un sale valido: esadecimale, almeno 128 bit. Qualunque altra cosa nel deposito si butta e si rifà. */
+const FORMA_SALE = /^[0-9a-f]{32,128}$/
+
+/** La parte di `Storage` che serve: iniettabile, perché il collaudo non deve toccare quello vero. */
+export interface DepositoSale {
+  getItem(chiave: string): string | null
+  setItem(chiave: string, valore: string): void
+}
+
+export interface DipendenzeSale {
+  /** Il deposito durevole del dispositivo, o `null` quando non c'è. L'accesso stesso può lanciare (siti bloccati). */
+  deposito?: () => DepositoSale | null
+  /** Byte da una fonte crittografica, o `null` quando il browser non ne ha una. */
+  casuali?: (quanti: number) => Uint8Array | null
+}
+
+function depositoDelBrowser(): DepositoSale | null {
+  return typeof window === 'undefined' ? null : window.localStorage
+}
+
+function casualiDelBrowser(quanti: number): Uint8Array | null {
+  if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') return null
+  return crypto.getRandomValues(new Uint8Array(quanti))
 }
 
 /**
- * LA CHIAVE CON CUI IL CLIENT RICONOSCE IL PROPRIO FILE FRA UN TENTATIVO E L'ALTRO.
+ * Il fornitore del sale di UN dispositivo, con la sua memoria di sessione.
  *
- * Deve essere DETERMINISTICA: `video_jobs_owner_channel_idempotency_key_key` la
- * usa per non creare due job quando la rete cade a metà della `POST`, e una
- * chiave casuale trasformerebbe ogni ritentativo in un secondo caricamento —
- * cioè in un secondo video da convertire e pagare.
+ * ═══ PERCHÉ ESISTE: il secondario #131 di T11a ═════════════════════════════════════════════════════
+ * La chiave di idempotenza porta un'impronta dei bambini scelti, e la chiave finisce IN CHIARO in
+ * `video_jobs.idempotency_key`. Quando `video_intents.tag_alunni` si minimizza (sette giorni) quella
+ * colonna è l'unico posto in cui resta qualcosa dei destinatari, e un'impronta senza sale si
+ * ricostruisce per enumerazione: chi legge la tabella conosce gli uuid di tutti i bambini della sede,
+ * sa quanti ne erano stati scelti (`n_tag`) e la classe, e prova i sottoinsiemi finché l'impronta torna.
+ * Con un sale casuale che non esce mai dal dispositivo l'impronta resta un segno di
+ * «questo dispositivo ha mandato la stessa scelta», e non si può confrontare con nessun candidato.
  *
- * ⚠️ E NON PUÒ CONTENERE IL NOME DEL FILE. La chiave viaggia al server, viene
- * scritta in chiaro in `video_jobs.idempotency_key` e compare nel contesto di log
- * della route: `recita-bambina-rossi.mov` è anagrafica di un minore. Del nome
- * resta un'impronta a 32 bit, che distingue due file senza dire quali siano.
+ * ═══ COME FUNZIONA ═══════════════════════════════════════════════════════════════════════════════════
+ *  · il sale è di 128 bit, da `crypto.getRandomValues`, scelto UNA volta e tenuto in `localStorage`:
+ *    stesso dispositivo + stesso file + stessi bambini → stessa chiave, quindi un ritentativo (la
+ *    risposta si è persa) ritrova il suo intento, che è ciò che l'idempotenza deve fare;
+ *  · senza `localStorage` (siti bloccati, navigazione privata, quota piena) il sale vive in memoria
+ *    per la sessione: i ritentativi della sessione si ritrovano, quelli dopo un ricaricamento no — un
+ *    video potrebbe partire due volte, ma i bambini restano al sicuro. Il guasto si dice una volta
+ *    (`warn`, solo un codice);
+ *  · un valore illeggibile o troppo corto nel deposito non si usa: si butta e si rifà (un sale
+ *    debole varrebbe quanto nessun sale);
+ *  · se un browser non avesse una fonte crittografica (non succede dove l'app gira) si ripiega su
+ *    `Math.random`, e si dice: un sale che nessuno vede mai uscire dal telefono resta un sale, ma lo
+ *    si vuole sapere. Il ripiego non è silenzioso.
+ *
+ * Il sale NON viaggia: nel corpo della POST e nei log non c'è, e la chiave ne contiene soltanto
+ * un SHA-256 troncato mescolato ai dati.
  */
-export function chiaveIdempotenzaVideo(file: { name: string; size: number; lastModified?: number }): string {
-  const quando = Number.isFinite(file.lastModified) ? Number(file.lastModified) : 0
-  return `g-${file.size}-${quando}-${improntaBreve(file.name)}`
+export function creaSaleDelDispositivo(dip: DipendenzeSale = {}): () => string {
+  const deposito = dip.deposito ?? depositoDelBrowser
+  const casuali = dip.casuali ?? casualiDelBrowser
+  let inMemoria: string | null = null
+  let segnalato = false
+
+  /** Un guasto si dice una volta per sessione: ripeterlo a ogni invio sarebbe rumore. */
+  const segnala = (motivo: string, err?: unknown) => {
+    if (segnalato) return
+    segnalato = true
+    const campi: Record<string, string> = { motivo }
+    if (err !== undefined) campi.error_code = nomeErrore(err)
+    logClient({ livello: 'warn', evento: 'offline', messaggio: 'video-galleria-sale-non-disponibile', campi })
+  }
+
+  const genera = (): string => {
+    let byte: Uint8Array | null = null
+    try {
+      byte = casuali(BYTE_SALE)
+    } catch (err) {
+      segnala('casuali', err)
+    }
+    if (!byte || byte.length < BYTE_SALE) {
+      segnala('senza-crypto')
+      byte = Uint8Array.from({ length: BYTE_SALE }, () => Math.floor(Math.random() * 256))
+    }
+    return Array.from(byte.subarray(0, BYTE_SALE), (b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  return () => {
+    let archivio: DepositoSale | null = null
+    try {
+      archivio = deposito()
+    } catch (err) {
+      segnala('accesso', err)
+    }
+    if (archivio) {
+      try {
+        const salvato = archivio.getItem(CHIAVE_SALE)
+        if (salvato !== null && FORMA_SALE.test(salvato)) {
+          // Il sale di questo dispositivo è quello del deposito: lo si tiene anche in memoria, così un deposito
+          // svuotato a metà sessione (l'utente cancella i dati) non cambia la chiave dei ritentativi in corso.
+          inMemoria = salvato
+          return salvato
+        }
+      } catch (err) {
+        segnala('lettura', err)
+      }
+    }
+    // Nessun sale (primo invio, deposito svuotato) o deposito inutilizzabile: quello della sessione, se
+    // c'è già, altrimenti uno nuovo — e si prova a metterlo al sicuro.
+    inMemoria ??= genera()
+    if (archivio) {
+      try {
+        archivio.setItem(CHIAVE_SALE, inMemoria)
+      } catch (err) {
+        segnala('scrittura', err)
+      }
+    }
+    return inMemoria
+  }
+}
+
+/** Il sale di questo dispositivo, come lo usa `chiaveIdempotenzaVideo` quando nessuno gliene dà un altro. */
+export const saleDelDispositivo: () => string = creaSaleDelDispositivo()
+
+/** Quante cifre esadecimali dell'SHA-256 restano nell'impronta: 48 bit, che distinguono due invii. */
+const CIFRE_IMPRONTA = 12
+
+/**
+ * L'impronta SALATA di un testo: SHA-256 di `sale:dominio:testo`, troncato. Il `dominio` separa le
+ * impronte (del nome, dei bambini) fra loro; il sale e il dominio non contengono mai `:`, quindi il
+ * prefisso non è ambiguo.
+ */
+function improntaSalata(sale: string, dominio: 'nome' | 'bambini', testo: string): string {
+  return sha256Esadecimale(`${sale}:${dominio}:${testo}`).slice(0, CIFRE_IMPRONTA)
+}
+
+/**
+ * I destinatari come partono DAVVERO verso il server: in broadcast i tag non partono (il server
+ * risponde 400 alla combinazione) e le classi sono quelle della scelta; altrimenti partono i tag e
+ * nessuna classe. È la forma che `apriIntentoVideoGalleria` mette nel corpo, ed è la STESSA su cui
+ * `chiaveIdempotenzaVideo` costruisce l'impronta: chiave e corpo non possono raccontare due scelte.
+ */
+export function destinatariDaInviare(d: DestinatariVideo): DestinatariVideo {
+  return {
+    tagAlunni: d.broadcast ? [] : d.tagAlunni,
+    broadcast: d.broadcast,
+    classi: d.broadcast ? d.classi : [],
+  }
+}
+
+/**
+ * LA CHIAVE CON CUI IL CLIENT RICONOSCE IL PROPRIO INVIO FRA UN TENTATIVO E L'ALTRO.
+ *
+ * ═══ LA FORMA: `gv2-<byte>-<data>-<impronta del nome>-<impronta dei destinatari>` ═══════════════
+ *
+ * Deve essere DETERMINISTICA: `video_jobs_owner_channel_idempotency_key_key` la usa per non creare
+ * due job quando la rete cade a metà della `POST`, e una chiave casuale trasformerebbe ogni
+ * ritentativo in un secondo caricamento — cioè in un secondo video da convertire e pagare. Lo STESSO
+ * invio ripetuto (la risposta si è persa) ritrova il suo intento.
+ *
+ * ⚠️ PERCHÉ PORTA I DESTINATARI, E PERCHÉ COMINCIA PER `gv2-`.
+ * `video_galleria_intent_apri` (spec §5.3) legge la chiave così: stessi destinatari, trasporto e
+ * byte → una ripetizione, ritorna lo stesso intento; STESSA chiave con valori diversi →
+ * `IDEMPOTENCY_CONFLICT`; chiave già usata da un intento del flusso VECCHIO → `IDEMPOTENCY_CONFLICT`,
+ * perché quell'intento non ha i bambini e non si adotta. La route lo traduce in 409 `VIDEO_RIPROVA`,
+ * e a schermo esce «Ricarica la pagina e riprova»: una frase che non può riuscire, se il client
+ * rimanda sempre la stessa chiave. La chiave di prima (`g-<byte>-<data>-<impronta del nome>`, senza
+ * i destinatari, identica a quella del client in produzione) prendeva quel 409:
+ *  · per ogni file già mandato col client in produzione — compresi i video che la scheda dice
+ *    «questo video va ricaricato: scegli di nuovo il file e invialo», cioè il gesto che la scheda
+ *    CHIEDE: dove nome, peso e data restano gli stessi (un browser da PC, Android) falliva sempre;
+ *  · per lo stesso file rimandato con altri bambini, per esempio dopo «Rimuovi».
+ * Il prefisso `gv2-` non può ritrovare una chiave del flusso vecchio (`g-…`), e l'impronta dei
+ * destinatari fa aprire un intento NUOVO quando i bambini cambiano. NON tornare a `g-`, e non
+ * togliere i destinatari: i server finti di una volta rispondevano 201 a qualunque chiave e non
+ * l'avrebbero visto. Lo vedono `video-galleria-chiave-rpc.test.ts`, che parla con la funzione SQL
+ * vera, e il server finto con la semantica del §5.3 di `video-galleria-recupero.test.tsx`.
+ *
+ * I destinatari entrano come INSIEMI (ordine e doppioni non contano, come li legge la RPC; la grafia
+ * dell'uuid nemmeno: il contratto li porta in minuscolo) e nella forma in cui partono
+ * (`destinatariDaInviare`): in broadcast contano le classi e non i tag, altrimenti il contrario.
+ *
+ * ⚠️ NON PUÒ CONTENERE IL NOME DEL FILE NÉ UN UUID DI BAMBINO, e un'impronta non basta se si può
+ * enumerare. La chiave viaggia al server, viene scritta in chiaro in `video_jobs.idempotency_key` — che
+ * dopo la minimizzazione di `video_intents.tag_alunni` è l'unico posto in cui resta qualcosa dei
+ * destinatari — e compare nel contesto di log della route: `recita-bambina-rossi.mov` è anagrafica di
+ * un minore, e un uuid di bambino ne è l'identificativo. Un'impronta senza sale (era un FNV a 32 bit)
+ * si ricostruisce provando i sottoinsiemi dei bambini della sede, che chi legge la tabella conosce:
+ * era il secondario #131. Per questo le due impronte sono SALATE (`saleDelDispositivo`: 128 bit casuali
+ * per dispositivo, mai in rete) e passano da SHA-256: dicono «lo stesso dispositivo ha mandato la stessa
+ * cosa» e basta, e senza il sale non si confrontano con nessun candidato. Il prezzo è dichiarato: lo
+ * stesso file con gli stessi bambini mandato da DUE dispositivi apre due intenti, non uno.
+ * L'impronta dei destinatari porta dentro anche il FILE (byte, data, nome): senza, lo stesso gruppo di
+ * bambini dava la stessa impronta per video DIVERSI dello stesso dispositivo, e chi legge la tabella
+ * col service role poteva legare un intento già minimizzato a un altro i cui bambini sono ancora noti
+ * (secondario #183). Così due video diversi non si somigliano in niente; lo stesso video con gli
+ * stessi bambini resta la stessa chiave, che è ciò che l'idempotenza chiede.
+ *
+ * ⚠️ NEL LIMITE DEI 128 CARATTERI (zod `chiaveIdempotenza`, e `video_intent_open`) anche col
+ * suffisso `-<uuid>` che `avviaVideo` aggiunge quando l'intento ritrovato è già concluso: il caso
+ * peggiore — due gigabyte, una data a 13 cifre — fa 54 caratteri, più 37 del suffisso.
+ *
+ * `sale` è l'ultimo parametro per i collaudi, che ne danno uno proprio; chi chiama dalla schermata non
+ * lo passa e prende quello del dispositivo. Un sale che non ha la forma di quelli veri (esadecimale,
+ * almeno 128 bit) si rifiuta: uno vuoto o corto farebbe tornare l'impronta enumerabile in silenzio.
+ */
+export function chiaveIdempotenzaVideo(
+  file: { name: string; size: number; lastModified?: number },
+  destinatari: DestinatariVideo,
+  sale: string = saleDelDispositivo(),
+): string {
+  if (!FORMA_SALE.test(sale)) throw new Error('SaleNonValido')
+  // Una data intera in millisecondi: `File.lastModified` lo è, ma una cifra decimale o un esponente
+  // metterebbero un carattere fuori da `[a-z0-9-]` dentro una chiave che finisce in tabella e nei log.
+  const data = Math.trunc(Number(file.lastModified))
+  const quando = Number.isSafeInteger(data) ? data : 0
+  const inviati = destinatariDaInviare(destinatari)
+  const tag = [...new Set(inviati.tagAlunni.map((id) => id.toLowerCase()))].sort()
+  const classi = [...new Set(inviati.classi)].sort()
+  const bambini = improntaSalata(sale, 'bambini', JSON.stringify([file.size, quando, file.name, tag, inviati.broadcast, classi]))
+  return `gv2-${file.size}-${quando}-${improntaSalata(sale, 'nome', file.name)}-${bambini}`
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -316,13 +609,13 @@ export type EsitoFlusso<T> =
  * togliere dai tag — non può rileggerlo. Perciò il corpo si legge qui e si passa
  * intero al traduttore.
  *
- * `traduci` è un parametro perché le due porte hanno due regole diverse, e la
+ * `traduci` è un parametro perché le chiamate hanno due regole diverse, e la
  * differenza è misurata:
  *  · le route video mandano SEMPRE un `codice` dichiarato, e la loro prosa nasce
  *    italiana dentro una route dove il locale non esiste → `soloCatalogoDaCorpo`;
- *  · `POST /api/gallery` manda anche rifiuti SENZA codice cui la prosa aggiunge
- *    l'unica cosa utile (i nomi dei bambini senza liberatoria) → `messaggioDaCorpo`,
- *    che è la scelta già in vigore su questa schermata dal 2026-08-03.
+ *  · l'apertura con i bambini attraversa i cancelli di `POST /api/gallery`, che
+ *    mandano anche rifiuti SENZA codice cui la prosa aggiunge l'unica cosa utile
+ *    (i nomi dei bambini senza liberatoria) → `traduciRifiutoApertura`.
  */
 async function chiama<T>(
   rete: Rete,
@@ -410,13 +703,38 @@ export interface IntentoApertoVideo {
 }
 
 /**
- * ⚠️ `file` è una FORMA, non un `File`, e serve alla RIPRESA.
+ * Il testo di un rifiuto dell'APERTURA: il catalogo, e la prosa del server per UN caso solo.
  *
- * Un caricamento interrotto tre giorni fa riparte da una riga di IndexedDB, non
- * da un `File`: quello muore con la pagina che l'ha scelto. La riga conserva nome,
- * byte e MIME — tutto ciò che serve a riaprire lo stesso intento con la stessa
- * chiave di idempotenza e ottenere una firma fresca, che è l'unico modo di
- * riprendere invece di ricominciare.
+ * Le route video mandano sempre un `codice` dichiarato e la loro prosa nasce italiana in una
+ * route dove il locale non esiste, quindi di norma si legge il catalogo (`soloCatalogoDaCorpo`).
+ * Ma l'apertura con i bambini attraversa i cancelli di `POST /api/gallery`, e il rifiuto del
+ * Privacy Lock — il 422 — non porta un `codice`: porta `nomi`, e la sua prosa dice QUALI bambini
+ * togliere dalla scelta. Il catalogo non può conoscerli, e senza di loro la persona leggerebbe
+ * «non è riuscito» senza sapere che cosa correggere. È la scelta che questa schermata fa dal
+ * 2026-08-03 (`messaggioDaCorpo`); si limita al corpo che i nomi li porta davvero, così un 400 di
+ * validazione o un 502 dell'infrastruttura non fanno comparire prosa italiana in un'interfaccia
+ * inglese.
+ */
+function traduciRifiutoApertura(corpo: unknown, ripiego: string): string {
+  const nomi = (corpo as { nomi?: unknown } | null)?.nomi
+  if (Array.isArray(nomi) && nomi.length > 0) return messaggioDaCorpo(corpo, ripiego)
+  return soloCatalogoDaCorpo(corpo, ripiego)
+}
+
+/**
+ * ⚠️ `file` è una FORMA, non un `File`: nome, byte e MIME bastano all'apertura, e la schermata
+ * la chiama con il `File` appena scelto.
+ *
+ * `destinatari` è il motivo per cui questa funzione esiste nella forma di oggi: i bambini si
+ * scelgono PRIMA dell'invio e viaggiano con l'apertura, e il server pubblica da solo quando il
+ * video è pronto. In broadcast i tag non partono (il server risponde 400 alla combinazione) e le
+ * classi sono quelle della scelta. Senza destinatari il server risponde 409
+ * `VIDEO_APP_DA_AGGIORNARE`: è un client col JS vecchio.
+ *
+ * `trasporto` dichiara come arriveranno i byte (`scegliTrasporto().nome`): oggi sempre `tus`.
+ *
+ * ⚠️ `chiaveIdempotenza` è quella di `chiaveIdempotenzaVideo` calcolata su QUESTI STESSI destinatari:
+ * il server rifiuta (`IDEMPOTENCY_CONFLICT`, 409 `VIDEO_RIPROVA`) la stessa chiave con bambini diversi.
  */
 export async function apriIntentoVideoGalleria(
   rete: Rete,
@@ -425,6 +743,8 @@ export async function apriIntentoVideoGalleria(
     scuolaId: string
     durataSecondi: number | null
     chiaveIdempotenza: string
+    destinatari: DestinatariVideo
+    trasporto: NomeTrasportoVideo
     ripiego: string
   },
 ): Promise<EsitoFlusso<IntentoApertoVideo>> {
@@ -432,6 +752,7 @@ export async function apriIntentoVideoGalleria(
     typeof dati.durataSecondi === 'number' && Number.isFinite(dati.durataSecondi) && dati.durataSecondi > 0
       ? dati.durataSecondi
       : null
+  const destinatari = destinatariDaInviare(dati.destinatari)
 
   const esito = await chiama<{
     intentId?: unknown
@@ -450,6 +771,8 @@ export async function apriIntentoVideoGalleria(
       ambitoGlobale: false,
       targetId: null,
       versioneTargetAttesa: null,
+      destinatari,
+      trasporto: dati.trasporto,
       file: [
         {
           chiaveIdempotenza: dati.chiaveIdempotenza,
@@ -463,8 +786,9 @@ export async function apriIntentoVideoGalleria(
     {
       ripiego: dati.ripiego,
       operazione: 'apertura',
-      traduci: soloCatalogoDaCorpo,
-      campi: { byte: dati.file.size },
+      traduci: traduciRifiutoApertura,
+      // Conteggi e un booleano: mai un identificativo di bambino (il 422 li porta a schermo e basta).
+      campi: { byte: dati.file.size, n_tag: destinatari.tagAlunni.length, broadcast: destinatari.broadcast },
     },
   )
   if (!esito.ok) return esito
@@ -475,8 +799,14 @@ export async function apriIntentoVideoGalleria(
   const jobId = typeof primo?.jobId === 'string' ? primo.jobId : ''
   const firma = typeof primo?.firma === 'string' ? primo.firma : ''
   const needsUpload = primo?.needs_upload !== false
+  // Si è chiesto `tus`: se la risposta porta un altro protocollo il server e il client non si
+  // capiscono, e spedire i byte con le coordinate di un'altra strada non finirebbe da nessuna parte.
+  const protocollo = (primo?.caricamento as { protocollo?: unknown } | undefined)?.protocollo
 
-  if (!intentId || !jobId || (needsUpload && !firma) || !Number.isInteger(revisione) || revisione < 1) {
+  if (
+    !intentId || !jobId || (needsUpload && !firma) || !Number.isInteger(revisione) || revisione < 1
+    || (protocollo !== undefined && protocollo !== 'tus')
+  ) {
     // La porta ha risposto 201 e non ha restituito ciò che promette: è un difetto
     // NOSTRO, e va visto — senza questa riga il caricamento morirebbe dopo, dentro
     // tus, con un errore che la causa non la nomina.
@@ -485,7 +815,7 @@ export async function apriIntentoVideoGalleria(
       evento: 'fetch',
       route: '/teacher/gallery',
       messaggio: 'video-galleria-apertura-incompleta',
-      campi: { con_intento: Boolean(intentId), con_job: Boolean(jobId), con_firma: Boolean(firma) },
+      campi: { con_intento: Boolean(intentId), con_job: Boolean(jobId), con_firma: Boolean(firma), protocollo_tus: protocollo === undefined || protocollo === 'tus' },
     })
     return { ok: false, codice: null, messaggio: dati.ripiego, stato: null }
   }
@@ -604,16 +934,21 @@ export function segnalaVideoCaricato(
   )
 }
 
-/** L'istante in cui chi carica si impegna: da qui in poi può chiudere l'app. */
-export function confermaIntentoVideo(
+/**
+ * Il «Riprova» di una pubblicazione fallita in modo definitivo: solo l'autore, solo se il video è
+ * ancora pronto e l'uscita c'è. Il server decide (409 `VIDEO_RIPROVA_NON_POSSIBILE` se non si può
+ * più) e riporta l'intento a «da pubblicare»: a pubblicare di nuovo è lui, non il client. Non porta
+ * nient'altro: l'intento è quello dell'URL e i job sono «tutti i pronti».
+ */
+export function riprovaPubblicazioneVideo(
   rete: Rete,
-  dati: { intentId: string; revisione: number; ripiego: string },
+  dati: { intentId: string; ripiego: string },
 ): Promise<EsitoFlusso<StatoIntentoVideo>> {
   return azione(
     rete,
     dati.intentId,
-    { azione: 'conferma', revisione: dati.revisione },
-    { ripiego: dati.ripiego, operazione: 'conferma' },
+    { azione: 'riprova-pubblicazione' },
+    { ripiego: dati.ripiego, operazione: 'riprova-pubblicazione' },
   )
 }
 
@@ -653,87 +988,58 @@ export async function leggiStatoIntentoVideo(
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
- * 3 · PUBBLICARE
+ * 3 · L'ELENCO — i miei video, da qualunque dispositivo
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Conclude l'impegno: `POST /api/gallery` copia l'uscita convertita dentro il
- * bucket, scrive la riga e chiama `video_intent_finalize` nella stessa richiesta.
+ * L'elenco dei video dell'insegnante nella sede indicata: `GET /api/video-uploads?canale=gallery&scuolaId=…`.
  *
- * ⚠️ NESSUN `file_url`. Il percorso nel bucket lo decide il server dopo la copia,
- * e mandarne uno qui è un 400 di validazione (`postBodySchemaCoerente`): due
- * sorgenti per un file solo, con una delle due ignorata in silenzio.
+ * ⚠️ OGNI VOCE SI VERIFICA DA SOLA, e una voce che non rispetta il contratto non fa cadere le
+ * altre: l'elenco è l'unico posto in cui un'insegnante vede un video mandato da un altro
+ * dispositivo, e buttarlo intero per una voce storta vorrebbe dire non vederne nessuno. Le
+ * scartate si CONTANO e si loggano (un difetto del server non deve passare in silenzio), senza
+ * un solo valore: sono identificativi.
  *
- * ⚠️ E LA SEDE SI DICHIARA, la stessa con cui l'intento è stato aperto: la route
- * rilegge l'intento con `scuola_id` DENTRO la query, quindi una sede diversa non
- * è un rifiuto leggibile ma un 404 «non trovato».
+ * Il server manda solo numeri, stati, uuid e il codice mostrabile — mai nomi di file né di
+ * bambini — quindi dell'elenco nessun dato personale finisce in un log.
  */
-export async function pubblicaVideoInGalleria(
+export async function leggiElencoVideoGalleria(
   rete: Rete,
-  dati: {
-    intentId: string
-    revisione: number
-    utenteId: string
-    didascalia: string
-    tagAlunni: string[]
-    broadcast: boolean
-    classi: string[]
-    scuolaId: string | null
-    ripiego: string
-  },
-): Promise<EsitoFlusso<unknown>> {
-  return chiama<unknown>(
+  dati: { scuolaId: string; ripiego: string },
+): Promise<EsitoFlusso<{ voci: VoceElencoVideo[] }>> {
+  const esito = await chiama<{ voci?: unknown }>(
     rete,
-    '/api/gallery',
-    json(
-      {
-        uploaded_by: dati.utenteId,
-        file_type: 'video',
-        caption: dati.didascalia,
-        // In broadcast i tag non partono: la foto (o il video) va a tutta la
-        // classe, e il server rifiuta la combinazione con un 400 dedicato.
-        tag_students: dati.broadcast ? [] : dati.tagAlunni,
-        is_broadcast: dati.broadcast,
-        target_classes: dati.broadcast ? dati.classi : null,
-        ...(dati.scuolaId ? { scuola_id: dati.scuolaId } : {}),
-        video_intent_id: dati.intentId,
-        video_revisione: dati.revisione,
-      },
-      { 'x-user-id': dati.utenteId },
-    ),
-    {
-      ripiego: dati.ripiego,
-      operazione: 'pubblicazione',
-      // `messaggioDaCorpo` e non `soloCatalogoDaCorpo`: il 422 del Privacy Lock
-      // non porta un codice, e la sua prosa dice QUALI bambini togliere dai tag.
-      traduci: messaggioDaCorpo,
-    },
+    `/api/video-uploads?canale=gallery&scuolaId=${encodeURIComponent(dati.scuolaId)}`,
+    undefined,
+    { ripiego: dati.ripiego, operazione: 'elenco', traduci: soloCatalogoDaCorpo },
   )
-}
+  if (!esito.ok) return esito
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 4 · LE FASI — ciò che una persona legge mentre aspetta
- * ──────────────────────────────────────────────────────────────────────────── */
+  const grezze = esito.dati?.voci
+  if (!Array.isArray(grezze)) {
+    logClient({
+      livello: 'error',
+      evento: 'fetch',
+      route: '/teacher/gallery',
+      messaggio: 'video-galleria-elenco-fuori-contratto',
+      campi: { forma: typeof grezze },
+    })
+    return { ok: false, codice: null, messaggio: dati.ripiego, stato: null }
+  }
 
-/**
- * Le fasi mostrabili. Sono meno degli stati del database di proposito: `rejected`
- * e `failed` sono due diagnosi diverse per chi indaga e la stessa notizia per chi
- * guarda lo schermo («non è riuscita»), mentre `queued` e `processing` sono la
- * stessa notizia per il database e due attese diverse per una persona — la prima
- * dura secondi, la seconda minuti.
- */
-export type FaseVideo = 'caricamento' | 'in-coda' | 'conversione' | 'pronto' | 'fallito' | 'annullato'
-
-const FASE_PER_STATO: Record<StatoJobVideo, FaseVideo> = {
-  awaiting_upload: 'caricamento',
-  queued: 'in-coda',
-  processing: 'conversione',
-  ready: 'pronto',
-  rejected: 'fallito',
-  failed: 'fallito',
-  cancelled: 'annullato',
-}
-
-export function faseDelJob(stato: StatoJobVideo): FaseVideo {
-  return FASE_PER_STATO[stato]
+  const voci: VoceElencoVideo[] = []
+  for (const grezza of grezze) {
+    const letta = schemaVoceVideo.safeParse(grezza)
+    if (letta.success) voci.push(letta.data)
+  }
+  if (voci.length !== grezze.length) {
+    logClient({
+      livello: 'error',
+      evento: 'fetch',
+      route: '/teacher/gallery',
+      messaggio: 'video-galleria-voci-fuori-contratto',
+      campi: { ricevute: grezze.length, scartate: grezze.length - voci.length },
+    })
+  }
+  return { ok: true, dati: { voci } }
 }

@@ -281,7 +281,7 @@
 
   "videoAllegatiTitolo": "Video",
   "videoAggiungi": "Aggiungi un video",
-  "videoNota": "Fino a tre minuti. Dopo il caricamento il filmato viene preparato sui nostri server: ci vogliono alcuni minuti, e nel frattempo puoi chiudere la pagina.",
+  "videoNota": "Fino a 5 minuti. Tieni aperta la pagina finché il caricamento non è finito: poi il filmato viene preparato sui nostri server, ci vogliono alcuni minuti e puoi chiudere la pagina.",
   "videoStatoPreparazione": "Preparazione del caricamento…",
   "videoStatoCaricamento": "Caricamento in corso: {pct}%",
   "videoStatoInCoda": "Il filmato è arrivato ed è in attesa di essere preparato.",

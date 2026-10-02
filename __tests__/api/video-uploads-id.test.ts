@@ -18,12 +18,19 @@ import { NextResponse } from 'next/server'
  * al bordo — non «per convenzione», ma perché lo schema rifiuterebbe il contrario.
  *
  * ─── LE AZIONI, E IL CANCELLO CHE LE PRECEDE ─────────────────────────────────
- * `caricato`, `conferma`, `annulla`, `annulla-job`. Il cancello **applicativo**
- * (chi sei, e questa sede è ancora tua) sta qui in TypeScript; il cancello
- * **transazionale** (revisione corrente, un solo vincitore, stato ammesso) sta
+ * `caricato`, `conferma`, `annulla`, `annulla-job` e, dal 2026-10-02, `riprova-pubblicazione`.
+ * Il cancello **applicativo** (chi sei, e questa sede è ancora tua) sta in TypeScript; il
+ * cancello **transazionale** (revisione corrente, un solo vincitore, stato ammesso) sta
  * nelle RPC. La lezione che questo file custodisce è che il cancello applicativo
  * è UNO SOLO e vale per TUTTI i verbi: una copia nel `GET` che lasciasse scoperta
  * la `PATCH` è il difetto che il piano cita per nome.
+ *
+ * ─── DAL 2026-10-02: IL CALCIO AL RUNNER, E L'ARRIVO GIÀ REGISTRATO ──────────
+ * `caricato` mette il job in coda e CALCIA il runner subito (`video_runner_kick`), senza aspettare
+ * il cron: è la rete del trigger d'arrivo, e non deve mai far fallire la risposta. E un
+ * `SOURCE_CONFLICT` su un job che il trigger ha già portato in coda (`arrivato_il` scritto) è un
+ * successo: il file c'è, e dire «riprova» a un client che ha solo un `mime` scritto in un altro modo
+ * vorrebbe dire farlo ripetere all'infinito.
  */
 
 const h = vi.hoisted(() => ({
@@ -39,6 +46,15 @@ const h = vi.hoisted(() => ({
   /** L'elenco di colonne chiesto a ogni tabella: `.select('a, b, c')`. */
   colonneChieste: {} as Record<string, string>,
   corpoLetto: 0,
+  logEvento: vi.fn(),
+  logErrore: vi.fn(),
+}))
+
+// Si spiano SOLO i due logger di dominio (il resto resta reale e silenzioso sotto VITEST).
+vi.mock('@/lib/logging/logger', async (originale) => ({
+  ...(await originale<typeof import('@/lib/logging/logger')>()),
+  logEvento: h.logEvento,
+  logErrore: h.logErrore,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -68,6 +84,11 @@ vi.mock('@/lib/auth/scope', () => ({
 function tabella(nome: string) {
   h.tabelleLette.push(nome)
   let colonne: string[] | null = null
+  // I filtri `.eq()` si APPLICANO alle righe, come fa PostgREST: un finto che li ignorasse restituirebbe l'intento
+  // di un'altra persona anche se la route dimenticasse `owner_id`, ed è esattamente il difetto da provare.
+  const filtri: [string, unknown][] = []
+  const passa = (riga: unknown) =>
+    riga !== null && typeof riga === 'object' && filtri.every(([c, v]) => (riga as Record<string, unknown>)[c] === v)
   const proietta = (riga: unknown): unknown => {
     if (colonne === null || riga === null || typeof riga !== 'object') return riga
     const scelte = colonne
@@ -75,15 +96,18 @@ function tabella(nome: string) {
   }
   const risposta = () =>
     nome === 'video_intents'
-      ? { data: proietta(h.intent), error: h.intentError }
-      : { data: Array.isArray(h.job) ? h.job.map(proietta) : h.job, error: h.jobError }
+      ? { data: proietta(passa(h.intent) ? h.intent : null), error: h.intentError }
+      : { data: Array.isArray(h.job) ? h.job.filter(passa).map(proietta) : h.job, error: h.jobError }
   const catena: Record<string, unknown> = {
     select: (elenco?: string) => {
       h.colonneChieste[nome] = elenco ?? ''
       colonne = elenco ? elenco.split(',').map((c) => c.trim()) : null
       return catena
     },
-    eq: () => catena,
+    eq: (colonna: string, valore: unknown) => {
+      filtri.push([colonna, valore])
+      return catena
+    },
     in: () => catena,
     order: async () => risposta(),
     maybeSingle: async () => risposta(),
@@ -111,6 +135,9 @@ const JOB_1 = '40000000-0000-4000-8000-000000000004'
 const JOB_ESTRANEO = '40000000-0000-4000-8000-00000000000f'
 
 const params = { params: Promise.resolve({ id: INTENT }) }
+
+/** Gli eventi di dominio della Galleria o delle News (via il rumore di `route` di `withRoute`). */
+const eventi = (area: 'galleria' | 'news' = 'galleria') => h.logEvento.mock.calls.filter((c) => c[0] === area)
 
 const richiestaGet = () =>
   ({
@@ -158,6 +185,12 @@ const rigaJob = (extra: Record<string, unknown> = {}) => ({
   last_error_code: null,
   next_attempt_at: null,
   updated_at: '2026-09-18T10:01:00.000Z',
+  created_at: '2026-09-18T10:00:00.000Z',
+  // Le colonne della PR 2: il percorso dell'originale (porta l'uuid di chi ha caricato, e non esce mai), il tipo
+  // dichiarato all'apertura e l'arrivo del file (lo scrive il trigger).
+  original_path: `${DOCENTE}/0123456789abcdef0123456789abcdef.mov`,
+  mime_dichiarato: 'video/quicktime',
+  arrivato_il: null,
   ...extra,
 })
 
@@ -225,6 +258,26 @@ describe('GET /api/video-uploads/[id] — lo stato in polling', () => {
     const res = await GET(richiestaGet(), params)
     expect(res.status).toBe(404)
     expect((await res.json()).codice).toBe('VIDEO_NON_TROVATO')
+  })
+
+  it('il filtro di PROPRIETÀ sta dentro la query: l’intento di una collega risponde 404 (non 403) e nessuna RPC parte', async () => {
+    // Qui il finto APPLICA i `.eq()`: se `leggiIntento` dimenticasse `owner_id`, la riga della collega tornerebbe e la
+    // risposta sarebbe 200 (GET) o l'azione partirebbe (PATCH). Un confronto DOPO la lettura darebbe 403, e un 403 direbbe
+    // a chi prova che quell'id esiste.
+    h.intent = rigaIntent({ owner_id: '99999999-0000-4000-8000-000000000009' })
+    const lettura = await GET(richiestaGet(), params)
+    expect(lettura.status).toBe(404)
+    expect((await lettura.json()).codice).toBe('VIDEO_NON_TROVATO')
+
+    const azione = await PATCH(richiestaPatch({ azione: 'conferma', revisione: 1 }), params)
+    expect(azione.status).toBe(404)
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('i job si leggono PER INTENTO: quelli di un altro intento non finiscono nello stato', async () => {
+    h.job = [rigaJob(), rigaJob({ id: JOB_ESTRANEO, intent_id: '30000000-0000-4000-8000-0000000000ff' })]
+    const corpo = await (await GET(richiestaGet(), params)).json()
+    expect(corpo.job.map((j: { jobId: string }) => j.jobId)).toEqual([JOB_1])
   })
 
   it('la sede dell’intento non è più fra le proprie ⇒ 403', async () => {
@@ -436,6 +489,23 @@ describe('PATCH /api/video-uploads/[id] — le azioni sull’intento', () => {
     })
   })
 
+  it('la risposta di un’azione porta lo stato RILETTO dopo di lei, non quello letto prima', async () => {
+    // Dopo `annulla-job` il job cambia stato: restituire ciò che si era letto PRIMA manderebbe il client a mostrare una
+    // schermata già falsa. Il finto cambia le righe nel momento in cui la RPC gira, e la route deve rileggerle.
+    h.job = [rigaJob({ status: 'processing' })]
+    h.rpc.mockImplementation(async () => {
+      h.job = [rigaJob({ status: 'cancelled' })]
+      h.intent = rigaIntent({ status: 'cancelled', updated_at: '2026-09-18T10:05:00.000Z' })
+      return { data: { ok: true }, error: null }
+    })
+    const res = await PATCH(richiestaPatch({ azione: 'annulla-job', jobId: JOB_1 }), params)
+    expect(res.status).toBe(200)
+    const corpo = await res.json()
+    expect(corpo.job[0].stato).toBe('cancelled')
+    expect(corpo.statoIntent).toBe('cancelled')
+    expect(corpo.aggiornatoIl).toBe('2026-09-18T10:05:00.000Z')
+  })
+
   it('un intento già concluso ⇒ 409 con il codice che lo dice', async () => {
     h.rpc.mockResolvedValue({ data: { ok: false, code: 'INTENT_REVOKED' }, error: null })
     const res = await PATCH(richiestaPatch({ azione: 'conferma', revisione: 1 }), params)
@@ -516,5 +586,353 @@ describe('PATCH /api/video-uploads/[id] — le azioni sull’intento', () => {
     expect(corpo.error).toBe(itShared.erroreVideoGuastoNostro)
     expect(corpo.error.length).toBeGreaterThan(40)
     expect(JSON.stringify(corpo)).not.toContain('SANDBOX_UNAVAILABLE')
+  })
+})
+
+/**
+ * IL CALCIO AL RUNNER — `caricato` non aspetta il cron.
+ *
+ * Il trigger che vede il file arrivare nello Storage porta il job in coda e calcia il runner da sé.
+ * Il `PATCH caricato` del web è la RETE di quel trigger: idempotente (il runner risponde
+ * «già sorvegliato» se c'è chi lavora) e, soprattutto, mai bloccante. Un calcio perso non deve costare
+ * un arrivo: il job è in coda, il cron ogni cinque minuti lo ripesca.
+ */
+describe('PATCH /api/video-uploads/[id] — `caricato` calcia il runner', () => {
+  const caricato = () =>
+    richiestaPatch({ azione: 'caricato', jobId: JOB_1, byte: 812_345_678, mime: 'video/quicktime' })
+
+  /** Risponde a ciascuna RPC per nome: la principale `ok`, il calcio come si decide nel test. */
+  const rpcCon = (calcio: () => unknown) =>
+    h.rpc.mockImplementation(async (nome: string) => {
+      if (nome === 'video_runner_kick') return calcio()
+      return { data: { ok: true }, error: null }
+    })
+
+  it('dopo `video_job_uploaded` chiama `video_runner_kick` con il job, e in quest’ordine', async () => {
+    const res = await PATCH(caricato(), params)
+    expect(res.status).toBe(200)
+    expect(h.rpc.mock.calls.map(([nome]) => nome)).toEqual(['video_job_uploaded', 'video_runner_kick'])
+    expect(h.rpc).toHaveBeenLastCalledWith('video_runner_kick', { p_job_id: JOB_1 })
+    // Il successo si logga, col fatto che il runner è partito (solo uuid e un enumerato).
+    const ev = eventi().find((c) => c[2]?.esito === 'azione-eseguita')
+    expect(ev?.[2]).toMatchObject({ azione: 'caricato', intento: INTENT, runner: 'calciato' })
+  })
+
+  it('NON si calcia se il job non è entrato in coda (la RPC ha rifiutato): niente da sorvegliare', async () => {
+    h.rpc.mockResolvedValue({ data: { ok: false, code: 'INTENT_INACTIVE' }, error: null })
+    const res = await PATCH(caricato(), params)
+    expect(res.status).toBe(409)
+    expect(h.rpc.mock.calls.map(([nome]) => nome)).toEqual(['video_job_uploaded'])
+  })
+
+  it.each([
+    ['conferma', { azione: 'conferma', revisione: 1 }],
+    ['annulla', { azione: 'annulla', revisione: 1 }],
+    ['annulla-job', { azione: 'annulla-job', jobId: JOB_1 }],
+    ['riprova-pubblicazione', { azione: 'riprova-pubblicazione' }],
+  ])('l’azione `%s` NON calcia il runner: è solo del `caricato`', async (_nome, corpo) => {
+    h.intent = rigaIntent({ status: 'confirmed' })
+    const res = await PATCH(richiestaPatch(corpo), params)
+    expect(res.status).toBe(200)
+    expect(h.rpc.mock.calls.map(([nome]) => nome)).not.toContain('video_runner_kick')
+  })
+
+  it.each([
+    ['la funzione non c’è (DB non migrato)', () => ({ data: null, error: { code: 'PGRST202', message: 'x' } }), 'warn', 'PGRST202'],
+    ['manca l’URL del runner (configurazione)', () => ({ data: { ok: false, code: 'URL_ASSENTE' }, error: null }), 'error', 'URL_ASSENTE'],
+    ['la POST non è partita', () => ({ data: { ok: false, code: 'POST_FALLITO' }, error: null }), 'error', 'POST_FALLITO'],
+    ['un rifiuto qualunque', () => ({ data: { ok: false, code: 'BAD_INPUT' }, error: null }), 'warn', 'BAD_INPUT'],
+  ] as const)('un calcio che fallisce — %s — NON fa fallire la risposta, e lascia un log', async (_perche, calcio, livello, codice) => {
+    rpcCon(calcio)
+    const res = await PATCH(caricato(), params)
+    expect(res.status).toBe(200)
+    expect((await res.json()).job[0].jobId).toBe(JOB_1)
+    const fallito = eventi().filter((c) => c[2]?.esito === 'calcio-runner-non-riuscito')
+    expect(fallito).toHaveLength(1)
+    // Configurazione mancante è un incidente (`error`), mai una nota a piè di pagina (AGENTS §4).
+    expect(fallito[0][1]).toBe(livello)
+    expect(fallito[0][2]).toMatchObject({ error_code: codice, job: JOB_1 })
+    expect(eventi().find((c) => c[2]?.esito === 'azione-eseguita')?.[2]).toMatchObject({ runner: 'fallito' })
+  })
+
+  it('un’eccezione dal calcio (la rete cade) NON solleva: 200, e due righe — quella aggregabile e quella con lo stack', async () => {
+    rpcCon(() => {
+      throw new Error('socket hang up')
+    })
+    const res = await PATCH(caricato(), params)
+    expect(res.status).toBe(200)
+    expect(eventi().filter((c) => c[2]?.esito === 'calcio-runner-non-riuscito')[0][2]).toMatchObject({ error_code: 'ECCEZIONE' })
+    // L'errore VERO, con il suo stack, arriva a `logErrore` (un `Error` non si serializza con JSON: si legge il messaggio).
+    expect(h.logErrore.mock.calls.some(([, e]) => e instanceof Error && e.message === 'socket hang up')).toBe(true)
+  })
+
+  it('`pg_net` assente (il DB della CI): non è un guasto, il corpo è quello di sempre e il log dice «non inviato»', async () => {
+    rpcCon(() => ({ data: { ok: true, inviato: false, motivo: 'pg-net-assente' }, error: null }))
+    const res = await PATCH(caricato(), params)
+    expect(res.status).toBe(200)
+    expect(eventi().some((c) => c[2]?.esito === 'calcio-runner-non-riuscito')).toBe(false)
+    expect(eventi().find((c) => c[2]?.esito === 'azione-eseguita')?.[2]).toMatchObject({ runner: 'non-inviato' })
+  })
+})
+
+/**
+ * `SOURCE_CONFLICT` DOPO IL TRIGGER D'ARRIVO È UN SUCCESSO (secondario #69).
+ *
+ * `video_job_uploaded` su un job già in coda confronta `source_mime` con quello che il client manda ora:
+ * il trigger ha scritto il tipo che ha letto dallo Storage, il `caricato` del web porta il `mime` del
+ * suo `File` — spesso con il suffisso dei codec — e i due non coincidono carattere per carattere. Il
+ * file però c'è, e il server lo sa: `arrivato_il`.
+ */
+describe('PATCH /api/video-uploads/[id] — `caricato` dopo il trigger d’arrivo', () => {
+  const caricato = () =>
+    richiestaPatch({ azione: 'caricato', jobId: JOB_1, byte: 812_345_678, mime: 'video/mp4;codecs=avc1.42E01E,mp4a.40.2' })
+
+  const conflitto = () =>
+    h.rpc.mockImplementation(async (nome: string) =>
+      nome === 'video_job_uploaded' ? { data: { ok: false, code: 'SOURCE_CONFLICT' }, error: null } : { data: { ok: true }, error: null },
+    )
+
+  it('con `arrivato_il` già scritto è un SUCCESSO: 200 con lo stato, il runner calciato, e il motivo nel log', async () => {
+    h.intent = rigaIntent({ status: 'confirmed' })
+    h.job = [rigaJob({ status: 'queued', attempt: 0, arrivato_il: '2026-10-02T10:00:00.000Z' })]
+    conflitto()
+    const res = await PATCH(caricato(), params)
+    expect(res.status).toBe(200)
+    const corpo = await res.json()
+    expect(corpo.job[0]).toMatchObject({ jobId: JOB_1, stato: 'queued' })
+    // Il calcio parte comunque: se quello del trigger si fosse perso, questa è la rete.
+    expect(h.rpc.mock.calls.map(([nome]) => nome)).toEqual(['video_job_uploaded', 'video_runner_kick'])
+    expect(eventi().find((c) => c[2]?.esito === 'azione-eseguita')?.[2]).toMatchObject({
+      azione: 'caricato',
+      tipo: 'arrivo-gia-registrato',
+    })
+    // Non è stato un «rifiuto»: nessuna riga `rpc-rifiutata`.
+    expect(eventi().some((c) => c[2]?.esito === 'rpc-rifiutata')).toBe(false)
+  })
+
+  it('SENZA `arrivato_il` è un conflitto VERO: 409 «riprova», e nessun calcio', async () => {
+    h.intent = rigaIntent({ status: 'confirmed' })
+    h.job = [rigaJob({ status: 'queued', attempt: 0, arrivato_il: null })]
+    conflitto()
+    const res = await PATCH(caricato(), params)
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('VIDEO_RIPROVA')
+    expect(h.rpc.mock.calls.map(([nome]) => nome)).toEqual(['video_job_uploaded'])
+    expect(eventi().find((c) => c[2]?.esito === 'rpc-rifiutata')?.[2]).toMatchObject({ error_code: 'SOURCE_CONFLICT' })
+  })
+
+  it('l’arrivo di UN ALTRO job dell’intento non basta: conta quello nominato dal `caricato`', async () => {
+    // Un job proprio ma di un altro intento è già un 404; qui è un job dello STESSO intento con un arrivo
+    // che non è quello nominato (una News con più allegati: gli arrivi sono per job).
+    const ALTRO = '40000000-0000-4000-8000-0000000000bb'
+    h.intent = rigaIntent({ status: 'confirmed' })
+    h.job = [
+      rigaJob({ status: 'queued', attempt: 0, arrivato_il: null }),
+      rigaJob({ id: ALTRO, status: 'queued', attempt: 0, arrivato_il: '2026-10-02T10:00:00.000Z' }),
+    ]
+    conflitto()
+    const res = await PATCH(caricato(), params)
+    expect(res.status).toBe(409)
+  })
+
+  it('un conflitto su un’ALTRA azione, o con un altro codice, non cambia: resta un rifiuto', async () => {
+    h.intent = rigaIntent({ status: 'confirmed' })
+    h.job = [rigaJob({ status: 'queued', attempt: 0, arrivato_il: '2026-10-02T10:00:00.000Z' })]
+    h.rpc.mockResolvedValue({ data: { ok: false, code: 'INTENT_INACTIVE' }, error: null })
+    expect((await PATCH(caricato(), params)).status).toBe(409)
+    h.rpc.mockResolvedValue({ data: { ok: false, code: 'SOURCE_CONFLICT' }, error: null })
+    expect((await PATCH(richiestaPatch({ azione: 'conferma', revisione: 1 }), params)).status).toBe(409)
+    // E anche un'azione che NOMINA un job (`annulla-job`) sul job che ha l'arrivo registrato: la regola è del solo
+    // `caricato`, e la «riuscita» non si estende a un rifiuto che con l'arrivo del file non c'entra.
+    expect((await PATCH(richiestaPatch({ azione: 'annulla-job', jobId: JOB_1 }), params)).status).toBe(409)
+  })
+
+  it('la rilettura dello stato rispetta il cancello: una sede non più propria nel frattempo ⇒ 403, e nessun calcio', async () => {
+    h.intent = rigaIntent({ status: 'confirmed' })
+    h.job = [rigaJob({ status: 'queued', attempt: 0, arrivato_il: '2026-10-02T10:00:00.000Z' })]
+    // La prima lettura passa, la seconda (dopo il conflitto) trova la sede cambiata. Un contatore e non una
+    // coda di `mockResolvedValueOnce`: una coda non consumata (un codice che non rilegge più) resterebbe nel
+    // mock e farebbe cadere il test DOPO, con un rosso che non è il suo.
+    let letture = 0
+    h.scuoleDiUtente.mockImplementation(async () => (++letture === 1 ? [SEDE] : [ALTRA_SEDE]))
+    conflitto()
+    const res = await PATCH(caricato(), params)
+    expect(res.status).toBe(403)
+    expect(h.rpc.mock.calls.map(([nome]) => nome)).toEqual(['video_job_uploaded'])
+  })
+})
+
+/**
+ * IL «RIPROVA» DI UNA PUBBLICAZIONE FALLITA — solo l'autore, solo se la RPC dice che si può.
+ */
+describe('PATCH /api/video-uploads/[id] — `riprova-pubblicazione`', () => {
+  const riprova = () => richiestaPatch({ azione: 'riprova-pubblicazione' })
+
+  it('chiama `video_intent_pubblicazione_riprova` con l’intento dell’URL e il proprietario del GATE', async () => {
+    h.intent = rigaIntent({ status: 'confirmed' })
+    h.rpc.mockResolvedValue({ data: { ok: true, intent: { id: INTENT, status: 'confirmed' } }, error: null })
+    const res = await PATCH(riprova(), params)
+    expect(res.status).toBe(200)
+    expect(h.rpc).toHaveBeenCalledWith('video_intent_pubblicazione_riprova', { p_intent_id: INTENT, p_owner_id: DOCENTE })
+    // Risponde con lo stato rilevato DOPO: il client ha un parser solo.
+    const corpo = await res.json()
+    expect(corpo.statoIntent).toBe('confirmed')
+    expect(corpo.job).toHaveLength(1)
+    // E il successo ha il suo evento, quello del «Riprova».
+    const ev = eventi().filter((c) => c[2]?.esito === 'pubblicazione-riprovata')
+    expect(ev).toHaveLength(1)
+    expect(ev[0][1]).toBe('info')
+    expect(ev[0][2]).toMatchObject({ azione: 'riprova-pubblicazione', utente: DOCENTE, intento: INTENT })
+  })
+
+  it.each(['non-automatica', 'stato', 'minimizzato', 'job-non-pronti', 'uscita-rimossa', 'scaduto'])(
+    '`RIPROVA_NON_POSSIBILE` (%s) ⇒ 409 con la frase «va cercato in galleria o ricaricato», e il motivo SOLO nel log',
+    async (motivo) => {
+      h.rpc.mockResolvedValue({ data: { ok: false, code: 'RIPROVA_NON_POSSIBILE', motivo }, error: null })
+      const res = await PATCH(riprova(), params)
+      expect(res.status).toBe(409)
+      const corpo = await res.json()
+      expect(corpo.codice).toBe('VIDEO_RIPROVA_NON_POSSIBILE')
+      expect(JSON.stringify(corpo)).not.toContain(motivo)
+      // Il codice INTERNO non esce come valore (`VIDEO_RIPROVA_NON_POSSIBILE` è quello mostrabile, e lo contiene come pezzo).
+      expect(JSON.stringify(corpo)).not.toContain('"RIPROVA_NON_POSSIBILE"')
+      const riga = eventi().find((c) => c[2]?.esito === 'rpc-rifiutata')
+      expect(riga?.[1]).toBe('warn')
+      expect(riga?.[2]).toMatchObject({ error_code: 'RIPROVA_NON_POSSIBILE', motivo, azione: 'riprova-pubblicazione' })
+      // Nessun successo: il «Riprova» non è partito.
+      expect(eventi().some((c) => c[2]?.esito === 'pubblicazione-riprovata')).toBe(false)
+    },
+  )
+
+  it('un intento che non è mio ⇒ 404, e la RPC non si chiama nemmeno', async () => {
+    h.intent = null
+    const res = await PATCH(riprova(), params)
+    expect(res.status).toBe(404)
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('la sede non è più propria ⇒ 403: il cancello vale anche per il «Riprova»', async () => {
+    h.scuoleDiUtente.mockResolvedValue([ALTRA_SEDE])
+    const res = await PATCH(riprova(), params)
+    expect(res.status).toBe(403)
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('`OWNER_MISMATCH` della RPC (l’autore non è chi chiama) ⇒ 403', async () => {
+    h.rpc.mockResolvedValue({ data: { ok: false, code: 'OWNER_MISMATCH' }, error: null })
+    const res = await PATCH(riprova(), params)
+    expect(res.status).toBe(403)
+    expect((await res.json()).codice).toBe('VIDEO_NON_AUTORIZZATO')
+  })
+
+  it('il corpo non ha altri campi: l’intento è quello dell’URL, e un `jobId` in più è respinto o ignorato, mai usato', async () => {
+    h.rpc.mockResolvedValue({ data: { ok: true }, error: null })
+    await PATCH(richiestaPatch({ azione: 'riprova-pubblicazione', jobId: JOB_ESTRANEO, p_owner_id: 'altro' }), params)
+    expect(h.rpc).toHaveBeenCalledWith('video_intent_pubblicazione_riprova', { p_intent_id: INTENT, p_owner_id: DOCENTE })
+    expect(JSON.stringify(h.rpc.mock.calls)).not.toContain(JOB_ESTRANEO)
+  })
+
+  it('NON esiste un’azione per cambiare i destinatari: i bambini si scelgono all’apertura', async () => {
+    for (const corpo of [
+      { azione: 'destinatari', tagAlunni: [] },
+      { azione: 'tag', tagAlunni: [] },
+    ]) {
+      const res = await PATCH(richiestaPatch(corpo), params)
+      expect(res.status).toBe(400)
+    }
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * IL CODICE DA MOSTRARE DI UN JOB FALLITO — la regola #37, per Galleria e per News (secondari #28 e #54).
+ *
+ * Un job `failed` che si è ritentato (`attempt > 1`) è un guasto NOSTRO esaurito: legge «problema nostro»
+ * qualunque fosse il codice tecnico dell'ultimo giro. Prima di questa regola `statoJob()` mandava il codice
+ * dell'ultimo giro, e a chi aspettava un video dicevano «il file sembra rovinato» quando il guasto era la
+ * rete fra noi e lo Storage. La regola sta in UN posto (`codiceMostrabileDelJob`) e la usano l'elenco, lo
+ * stato e le notifiche: qui si prova che lo STATO la usi davvero, anche per un intento News (che al rientro
+ * leggeva `VIDEO_RIPROVA` invece del codice vero: secondario #39).
+ */
+describe('GET /api/video-uploads/[id] — il codice di un job fallito passa dalla regola del contratto', () => {
+  const stato = async (canale: 'gallery' | 'news', riga: Record<string, unknown>) => {
+    h.intent = rigaIntent({ channel: canale, scuola_id: canale === 'news' ? SEDE : SEDE })
+    h.job = [rigaJob({ channel: canale, ...riga })]
+    const res = await GET(richiestaGet(), params)
+    expect(res.status).toBe(200)
+    return (await res.json()).job[0]
+  }
+
+  it.each(['gallery', 'news'] as const)(
+    '%s: failed, ritentato (attempt 3), con il codice di un difetto del FILE ⇒ «problema nostro»',
+    async (canale) => {
+      for (const error_code of ['PROBE_COMMAND_FAILED', 'ENCODE_FAILED', 'CONVERSION_TIMEOUT', 'OUTPUT_DURATION_MISMATCH']) {
+        const job = await stato(canale, { status: 'failed', attempt: 3, error_code })
+        expect(job.codice, `${canale} ${error_code}`).toBe('VIDEO_GUASTO_NOSTRO')
+        expect(JSON.stringify(job)).not.toContain(error_code)
+      }
+    },
+  )
+
+  it('lo stesso codice con UN SOLO tentativo resta quello del file: la regola scatta dal secondo giro', async () => {
+    expect((await stato('news', { status: 'failed', attempt: 1, error_code: 'ENCODE_FAILED' })).codice).toBe(
+      'VIDEO_CONVERSIONE_NON_RIUSCITA',
+    )
+    expect((await stato('news', { status: 'failed', attempt: 1, error_code: 'PROBE_COMMAND_FAILED' })).codice).toBe(
+      'VIDEO_NON_LEGGIBILE',
+    )
+  })
+
+  it('`rejected` NON si tocca mai, nemmeno ritentato: è il file, e il codice del suo difetto è l’unica cosa utile', async () => {
+    expect((await stato('news', { status: 'rejected', attempt: 3, error_code: 'UNSUPPORTED_CONTAINER' })).codice).toBe(
+      'VIDEO_FORMATO_NON_SUPPORTATO',
+    )
+    expect((await stato('gallery', { status: 'rejected', attempt: 2, error_code: 'ORIGINALE_DIVERSO' })).codice).toBe(
+      'VIDEO_ORIGINALE_NON_COINCIDE',
+    )
+  })
+
+  it('un job che non è fallito non porta un codice, qualunque cosa ci sia in `error_code`', async () => {
+    for (const status of ['awaiting_upload', 'queued', 'processing', 'ready', 'cancelled']) {
+      expect((await stato('news', { status, attempt: 3, error_code: 'ENCODE_FAILED' })).codice, status).toBeNull()
+    }
+  })
+
+  it('anche la PATCH risponde col codice della regola: GET e PATCH hanno lo stesso corpo', async () => {
+    h.intent = rigaIntent({ channel: 'news', status: 'confirmed' })
+    h.job = [rigaJob({ channel: 'news', status: 'failed', attempt: 4, error_code: 'ENCODE_FAILED' })]
+    const res = await PATCH(richiestaPatch({ azione: 'conferma', revisione: 1 }), params)
+    expect((await res.json()).job[0].codice).toBe('VIDEO_GUASTO_NOSTRO')
+  })
+})
+
+/**
+ * COSA SI LEGGE E COSA ESCE — le colonne nuove servono alle azioni, non al corpo.
+ */
+describe('GET /api/video-uploads/[id] — le colonne della PR 2 non escono mai', () => {
+  it('chiede il percorso, il tipo dichiarato e l’arrivo (servono alle azioni) e NON l’elenco dei bambini', async () => {
+    await GET(richiestaGet(), params)
+    const job = (h.colonneChieste.video_jobs ?? '').split(',').map((c) => c.trim())
+    expect(job).toEqual(expect.arrayContaining(['original_path', 'mime_dichiarato', 'arrivato_il']))
+    const intento = (h.colonneChieste.video_intents ?? '').split(',').map((c) => c.trim())
+    // `tag_alunni` sono identificativi di minori: servono al pubblicatore, non a chi legge lo stato.
+    expect(intento).not.toContain('tag_alunni')
+    // Né l'hash del token di rinnovo né l'impronta dichiarata: non servono a nessuna azione di questa route.
+    for (const c of ['rinnovo_token_hash', 'sha256_dichiarato', 'tag_alunni']) {
+      expect([...job, ...intento]).not.toContain(c)
+    }
+  })
+
+  it('il corpo di GET e di PATCH è costruito a mano: né il percorso dell’originale né il tipo dichiarato', async () => {
+    const letto = JSON.stringify(await (await GET(richiestaGet(), params)).json())
+    h.rpc.mockResolvedValue({ data: { ok: true }, error: null })
+    const scritto = JSON.stringify(await (await PATCH(richiestaPatch({ azione: 'conferma', revisione: 1 }), params)).json())
+    for (const corpo of [letto, scritto]) {
+      expect(corpo).not.toContain('original_path')
+      expect(corpo).not.toContain('0123456789abcdef')
+      expect(corpo).not.toContain(DOCENTE)
+      expect(corpo).not.toContain('mime_dichiarato')
+      expect(corpo).not.toContain('arrivato_il')
+    }
   })
 })

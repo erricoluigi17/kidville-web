@@ -71,10 +71,13 @@ import { DEFAULT_LOCALE, isLocale, type Locale } from '@/i18n/config';
  */
 export const CODICI_ERRORE = {
     /**
-     * I QUATTORDICI CODICI DELLA PIPELINE VIDEO, innestati invece che ribattuti.
+     * I CODICI DELLA PIPELINE VIDEO CHE UNA FAMIGLIA LEGGE, innestati invece che ribattuti. Il
+     * numero non sta scritto qui: era «quattordici» e «sessantadue» e sono invecchiati due
+     * volte — lo dice `CODICI_MOSTRATI_VIDEO`, e a ogni codice mostrato nuovo la sua voce
+     * arriva da sola, insieme alla frase nei due cataloghi (che il lock pretende).
      *
      * `src/lib/media/video/contratto.ts` li dichiara insieme alla mappa che li ricava dai
-     * sessantadue codici INTERNI della pipeline. Una seconda copia qui divergerebbe dalla
+     * codici INTERNI della pipeline. Una seconda copia qui divergerebbe dalla
      * prima il giorno in cui `verifyVideoOutput` aggiunge un ramo o una RPC un `code` — ed
      * è il modo in cui un catalogo smette di dire la verità senza che nessun test lo noti.
      *
@@ -464,18 +467,6 @@ export const CODICI_ERRORE = {
      * il pubblico per cui la lingua dell'interfaccia non è detto che sia l'italiano.
      */
     MODULO_NON_TROVATO: 'erroreModuloNonTrovato',
-    /**
-     * 415 — il video non è riproducibile ovunque (HEVC/QuickTime) e va convertito
-     * prima del caricamento (`src/lib/media/codec-sniff.ts`).
-     *
-     * La prosa che il server manda accanto è `MESSAGGIO_VIDEO_NON_CONVERTIBILE`,
-     * che vive in una libreria condivisa client+server e per costruzione nasce
-     * italiana: era l'ultimo testo lungo che una maestra con l'interfaccia in
-     * inglese leggeva in italiano. Il codice la traduce; il dettaglio operativo
-     * (il percorso nelle impostazioni dell'iPhone) resta nella prosa e nella
-     * frase che la pagina mostra quando la conversione fallisce sul dispositivo.
-     */
-    VIDEO_NON_CONVERTIBILE: 'erroreVideoNonConvertibile',
     /**
      * 503 — la segnalazione non è stata registrata perché non si è riusciti ad
      * attribuirla a un plesso (`POST /api/segnalazioni`).

@@ -84,9 +84,13 @@ import { sondaImpaginazione, type EsitoImpaginazione } from './lib/sonda-impagin
  * SOLO da: nome del tag, `data-testid`, classi CSS, numeri. Mai `textContent`,
  * mai `alt`, mai `title`, mai `aria-label`, mai `src`. Le ragioni sono due e
  * valgono entrambe:
- *  · il nome accessibile di una card di galleria è `etichettaCard()`, cioè
- *    «Foto: <didascalia>» — e la didascalia di una foto in questo prodotto è il
- *    nome del file, che spesso contiene il nome di un bambino;
+ *  · il nome accessibile di una card di galleria è `etichettaCard()`: «Foto: <didascalia>»
+ *    (o «Video: <didascalia>») per le righe che HANNO una didascalia, e soltanto «Foto» o
+ *    «Video» per quelle che non ce l'hanno. Dal 02/10/2026 (decisione del titolare) nessun
+ *    contenuto NUOVO ne ha una, ma le righe già in archivio sì — 4.195 al momento della
+ *    decisione — e per le foto di prima la didascalia era il nome del file, che spesso
+ *    contiene il nome di un bambino. Il rapporto non può sapere di quale delle due specie
+ *    sia la card che descrive, quindi non stampa nessun nome accessibile;
  *  · il `src` di un media è un URL FIRMATO a tempo sul bucket privato: è una
  *    credenziale, e i log della CI di un repository pubblico si leggono da fuori.
  * Classi e `data-testid` sono codice, e stanno già nel repo.

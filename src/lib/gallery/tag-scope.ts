@@ -55,8 +55,16 @@ import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 import { eNonPiuIscritto } from '@/lib/alunni/stato'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
-/** L'handler che sta chiedendo: finisce nel log, mai nella risposta. */
-export type OperazioneGalleria = 'gallery:POST' | 'gallery:PATCH'
+/**
+ * L'handler che sta chiedendo: finisce nel log, mai nella risposta.
+ *
+ * Le due route della galleria che accettano dei tag, più `POST /api/video-uploads`, che dal
+ * 2026-10-02 sceglie i bambini PRIMA dell'invio e attraversa gli stessi cancelli (vedi
+ * `./cancelli-destinatari`). Chi aggiunge una strada nuova che accetta dei tag la aggiunge qui:
+ * il valore serve soltanto a etichettare le righe di log, ma un'unione che non la nomina
+ * obbligherebbe chi chiama a un cast.
+ */
+export type OperazioneGalleria = 'gallery:POST' | 'gallery:PATCH' | 'video-uploads:POST'
 
 /**
  * Verifica che OGNI bambino taggato appartenga a una delle `sedi` indicate.

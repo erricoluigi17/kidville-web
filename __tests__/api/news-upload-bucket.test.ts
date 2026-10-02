@@ -21,7 +21,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
-  analizzaContenutoVideo: vi.fn(),
   logEvento: vi.fn(),
   logErrore: vi.fn(),
   // Ogni tentativo di TOCCARE la configurazione dei bucket viene registrato qui.
@@ -32,10 +31,6 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: (...a: unknown[]) => h.requireDocente(...a) }))
-vi.mock('@/lib/media/codec-sniff', () => ({
-  analizzaContenutoVideo: (...a: unknown[]) => h.analizzaContenutoVideo(...a),
-  MESSAGGIO_VIDEO_NON_CONVERTIBILE: 'video-non-convertibile',
-}))
 vi.mock('@/lib/logging/logger', async (orig) => ({
   ...(await orig<typeof import('@/lib/logging/logger')>()),
   logEvento: (...a: unknown[]) => h.logEvento(...a),
@@ -97,7 +92,6 @@ beforeEach(() => {
   h.ultimoPath = null
   h.bucketCaricato = null
   h.requireDocente.mockResolvedValue({ user: { id: 'edu-1', role: 'educator', scuola_id: 'sc-1' } })
-  h.analizzaContenutoVideo.mockReturnValue({ daConvertire: false, motivo: 'ok' })
 })
 
 describe('POST /api/news/upload · il bucket è dichiarato in migrazione, non creato dall’upload', () => {

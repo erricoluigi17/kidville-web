@@ -41,8 +41,9 @@ import { useClientValue } from '@/lib/hooks/use-client-value';
 // (o da `messaggioDaCorpo`, quando il corpo serve anche per altro: il 422 del
 // Privacy Lock porta `nomi`, e un corpo si legge una volta sola). Gli `alert`
 // che NON leggono una risposta — «Tag aggiornati», «Media eliminato», gli errori
-// di rete, i limiti dei video — restano `t(…)`: sono già nella lingua giusta, e
-// farli passare da qui non avrebbe senso perché non c'è nessuna `Response`.
+// di rete — restano `t(…)`: sono già nella lingua giusta, e farli passare da qui
+// non avrebbe senso perché non c'è nessuna `Response`. (L'invio di foto e video,
+// invece, non usa più nessun `alert`: vedi `handleConfirmUpload`.)
 // =============================================================================
 
 interface Student {
@@ -54,6 +55,13 @@ interface Student {
 }
 
 type Step = 'gallery' | 'upload' | 'tag';
+
+/** Un avviso a schermo: `ok` per un esito, `errore` per ciò che la persona deve correggere. */
+interface AvvisoPagina {
+    id: number;
+    tono: 'ok' | 'errore';
+    testo: string;
+}
 
 function TeacherGalleryContent() {
     const t = useTranslations('teacherServizi');
@@ -67,14 +75,14 @@ function TeacherGalleryContent() {
     // V11 · I VIDEO NON PASSANO PIÙ DALLA PORTA DELLE FOTO.
     //
     // Fino al 2026-09-18 un video di galleria veniva convertito DENTRO il
-    // browser del telefono (`processVideoWithWatermark`, watermark su `<canvas>`)
-    // e poi spedito come una foto qualunque, con un tetto di 50 MiB scritto a
-    // mano proprio qui — cinquanta mebibyte come prodotto di tre numeri, che nel
+    // browser del telefono (con il watermark disegnato su una `<canvas>`) e poi
+    // spedito come una foto qualunque, con un tetto di 50 MiB scritto a mano
+    // proprio qui — cinquanta mebibyte come prodotto di tre numeri, che nel
     // sorgente erano tre letterali. Tre limiti veri:
     //
-    //  · un iPhone che converte tre minuti di filmato impiega minuti, e a volte
-    //    non ci riesce affatto (la frase «questo video non può essere convertito
-    //    su questo dispositivo» esiste perché succedeva);
+    //  · un iPhone che converte un filmato di qualche minuto impiega minuti, e a
+    //    volte non ci riesce affatto (la frase «questo video non può essere
+    //    convertito su questo dispositivo» esiste perché succedeva);
     //  · 50 MiB sono pochi per un telefono moderno;
     //  · e finché la conversione gira nel browser, chiudere l'app butta via tutto.
     //
@@ -84,6 +92,12 @@ function TeacherGalleryContent() {
     // applica `rifiutoLocaleVideo` PRIMA che parta un byte. Il tetto delle FOTO —
     // `TETTO_GALLERIA_BYTE`, che resta 50 MiB e deve restarci — lo applica
     // `caricaMediaGalleria`, che è la sola porta che il browser usa da sé.
+    //
+    // E dal 2026-10-02 (PR 2 «server e web») i BAMBINI si scelgono qui, nel passo 2,
+    // UNA volta: «Pubblica» manda subito l'apertura di ogni video con i destinatari
+    // (`POST /api/video-uploads`), e quando la conversione finisce a pubblicare è il
+    // server, anche a pagina chiusa. Questa pagina non ha più nessun ramo di
+    // pubblicazione dei video, e non li richiede più al rientro.
     // =========================================================================
     const [media, setMedia] = useState<MediaItem[]>([]);
     const [students, setStudents] = useState<Student[]>([]);
@@ -100,7 +114,28 @@ function TeacherGalleryContent() {
     const [queueRows, setQueueRows] = useState<LocalGalleryMedia[]>([]);
     const [queueNow, setQueueNow] = useState(0);
     const [readError, setReadError] = useState(false);
-    const [uploadError, setUploadError] = useState<string | null>(null);
+    // ── GLI AVVISI DELLA PAGINA: una regione viva SEMPRE montata (secondario #36).
+    // Prima gli esiti dell'invio uscivano con `alert()` (modale, non annunciato, e su iOS
+    // in WKWebView con i pulsanti in inglese) e gli errori con un paragrafo `role="alert"`
+    // montato a condizione. VoiceOver spesso non annuncia una regione viva che entra nel
+    // documento già piena: l'elemento resta nel DOM, e cambia solo ciò che contiene.
+    const [avvisi, setAvvisi] = useState<AvvisoPagina[]>([]);
+    const avvisoSeq = useRef(0);
+    const regioneAvvisi = useRef<HTMLDivElement>(null);
+    const mostraAvvisi = useCallback((nuovi: Omit<AvvisoPagina, 'id'>[]) => {
+        setAvvisi(nuovi.map(a => ({ ...a, id: ++avvisoSeq.current })));
+    }, []);
+    const mostraErrore = useCallback((testo: string) => {
+        const id = ++avvisoSeq.current;
+        setAvvisi(prec => [...prec.filter(a => a.testo !== testo), { id, tono: 'errore', testo }]);
+    }, []);
+    const svuotaAvvisi = useCallback(() => setAvvisi([]), []);
+    // Un avviso fuori dallo schermo non esiste: la pagina dei bambini è lunga, e il pulsante
+    // «Pubblica» sta in fondo. Quando arriva qualcosa lo si porta in vista (jsdom non ha
+    // `scrollIntoView`, e un browser vecchio nemmeno: chi non ce l'ha resta dov'è).
+    useEffect(() => {
+        if (avvisi.length > 0) regioneAvvisi.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    }, [avvisi]);
     const [userRole, setUserRole] = useState<string>('educator');
     // SSR-safe (niente hydration mismatch né setState-in-effect).
     const isOnline = useOnlineStatus();
@@ -234,10 +269,10 @@ function TeacherGalleryContent() {
             if (isOnline) await loadMedia();
         } catch {
             logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-sincronizzazione-fallita' });
-            setUploadError(t('galleryErrCaricamentoGenerico'));
+            mostraErrore(t('galleryErrCaricamentoGenerico'));
             await aggiornaCoda();
         }
-    }, [teacherId, sedeVideo, isOnline, aggiornaCoda, loadMedia, t, ambitoCorrente]);
+    }, [teacherId, sedeVideo, isOnline, aggiornaCoda, loadMedia, t, ambitoCorrente, mostraErrore]);
 
     // Quando è (ri)online, sincronizza solo la sede e l'account correnti.
     useEffect(() => {
@@ -319,13 +354,21 @@ function TeacherGalleryContent() {
     }, [loadMedia, loadStudents]);
 
     /**
-     * I VIDEO IN LAVORAZIONE — la parte di questa schermata che vive più a lungo
-     * della schermata stessa.
+     * I VIDEO IN LAVORAZIONE.
      *
-     * L'hook si occupa di tre cose che la pagina non può fare: riprendere al
-     * rientro i caricamenti rimasti a metà, tornare a interrogare i job che il
-     * server sta convertendo, e pubblicare quando sono pronti. Vedi la testata di
-     * `use-video-galleria.ts` per il perché.
+     * L'hook si occupa di tre cose che la pagina non può fare: far partire i
+     * trasferimenti dei byte (uno alla volta) e riprenderli da soli quando la rete li
+     * interrompe e al rientro nella pagina; raccontare a che punto è ogni video,
+     * fondendo le righe di questo dispositivo con l'elenco del server; e offrire i
+     * gesti che restano (riprendere, riprovare una pubblicazione fallita, togliere).
+     * NON pubblica: quando la conversione finisce a pubblicare è il server, anche a
+     * pagina chiusa.
+     *
+     * ⚠️ Vive quanto questa pagina soltanto il TRASFERIMENTO dei byte: uscendo dalla
+     * Galleria si ferma al blocco successivo, e rientrandoci riprende da solo. Per
+     * questo i testi dicono «finché resti in Galleria», e non «finché l'app è aperta».
+     * Conversione e pubblicazione, dopo, non hanno bisogno di nessuno. Vedi la testata
+     * di `use-video-galleria.ts`.
      */
     const videoGalleria = useVideoGalleria({
         utenteId: teacherId,
@@ -472,16 +515,38 @@ function TeacherGalleryContent() {
     const activeTags = activeFile ? activeFile.tag_students : [];
     const activeIsBroadcast = activeFile ? activeFile.is_broadcast : false;
 
+    /**
+     * «PUBBLICA» — l'invio di tutto ciò che si è scelto, e dove va a finire ogni cosa.
+     *
+     * ─── I VIDEO PARTONO SUBITO, CON I LORO BAMBINI ──────────────────────────────
+     * Dal 2026-10-02 l'apertura di ogni video porta già i destinatari (`avviaVideo`): il server
+     * li conosce, e pubblica da solo quando la conversione finisce. Il passo dei bambini è
+     * quindi anche il punto in cui un video può essere RIFIUTATO — il 422 del Privacy Lock
+     * nomina i bambini senza liberatoria — e un rifiuto resta QUI, con i file ancora nell'elenco
+     * e i nomi a schermo, prima che parta un solo byte verso lo Storage.
+     *
+     * ─── NESSUN `alert()` NEL RAMO DI INVIO ──────────────────────────────────────
+     * Esiti ed errori escono nella regione viva degli avvisi (sempre montata, secondario #36):
+     * un `alert` è modale, non si annuncia a chi usa uno screen reader, e in WKWebView mostra i
+     * propri pulsanti in inglese su un prodotto che parla solo italiano. Gli avvisi di un giro si
+     * raccolgono e si mostrano insieme alla fine, così un secondo giro non ne lascia di vecchi.
+     *
+     * ─── OFFLINE ─────────────────────────────────────────────────────────────────
+     * Un video non si può inviare senza rete (l'apertura è una richiesta). Il file resta
+     * nell'elenco, e il messaggio lo dice: riprovare è un tocco, riscegliere un video da un
+     * gigabyte no. Le foto, invece, si salvano in locale e partono da sole.
+     */
     const handleConfirmUpload = async () => {
         if (!teacherId || uploading) return;
+        svuotaAvvisi();
         if (uploadedFiles.some(f => !f.file.type.startsWith('video/')) && !sedeVideo) {
-            setUploadError(t('galleryCodaSedeRichiesta'));
+            mostraErrore(t('galleryCodaSedeRichiesta'));
             return;
         }
         setUploading(true);
-        setUploadError(null);
         const completati = new Set<number>();
         const accodati = new Set<string>();
+        const avvisiDelGiro: Omit<AvvisoPagina, 'id'>[] = [];
         let fotoAccodate = 0;
         let videoAvviati = 0;
         try {
@@ -492,7 +557,7 @@ function TeacherGalleryContent() {
                 if (f.file.type.startsWith('video/')) {
                     // La pipeline video ha il suo intento e il proprio TUS riprendibile.
                     if (!isOnline) {
-                        alert(t('galleryAlertVideoOffline', { nome: f.file.name }));
+                        avvisiDelGiro.push({ tono: 'errore', testo: t('galleryAlertVideoOffline', { nome: f.file.name }) });
                         continue;
                     }
                     const durata = await durataVideoDalFile(f.file);
@@ -502,7 +567,24 @@ function TeacherGalleryContent() {
                         durataSecondi: durata,
                     });
                     if (!avvio.ok) {
-                        alert(avvio.messaggio);
+                        // Il file resta nell'elenco (non entra in `completati`) e la schermata resta
+                        // al passo dei bambini. I NOMI dei bambini senza liberatoria stanno a schermo
+                        // e basta: nei log passano solo i conteggi.
+                        const dettaglio = avvio.nomi?.length ? ` (${avvio.nomi.join(', ')})` : '';
+                        const testo = `${avvio.messaggio}${dettaglio}`;
+                        // «Troppe richieste»: anche i file che seguono riceverebbero lo stesso rifiuto, e
+                        // trenta righe uguali non dicono niente di più di una. Si dice una volta, senza
+                        // nome (non riguarda questo file), e ci si ferma: i file restano dove sono.
+                        if (avvio.riprovaPiuTardi) {
+                            avvisiDelGiro.push({ tono: 'errore', testo });
+                            break;
+                        }
+                        avvisiDelGiro.push({
+                            tono: 'errore',
+                            testo: uploadedFiles.length > 1
+                                ? t('galleryAvvisoVideoConNome', { nome: f.file.name, messaggio: testo })
+                                : testo,
+                        });
                         continue;
                     }
                     videoAvviati++;
@@ -543,7 +625,7 @@ function TeacherGalleryContent() {
                     // Quota IndexedDB o altro guasto locale: il file non è in coda,
                     // quindi resta nello step dei tag finché l'utente non riprova.
                     logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-foto-accodamento-fallito', route: '/teacher/gallery' });
-                    setUploadError(t(error instanceof FotoTroppoGrandeError ? 'galleryErrTroppoGrande' : 'galleryCodaSalvataggioFallito'));
+                    avvisiDelGiro.push({ tono: 'errore', testo: t(error instanceof FotoTroppoGrandeError ? 'galleryErrTroppoGrande' : 'galleryCodaSalvataggioFallito') });
                 }
             }
             if (fotoAccodate > 0 && isOnline && sedeVideo) {
@@ -559,12 +641,16 @@ function TeacherGalleryContent() {
             }
             const inCoda = rows.filter(row => accodati.has(row.id)).length;
             const pubblicate = Math.max(0, fotoAccodate - inCoda);
-            if (fotoAccodate > 0) alert(t('galleryCodaEsito', { pubblicate, inCoda }));
-            if (videoAvviati > 0) alert(t('galleryVideoAvviato'));
+            if (fotoAccodate > 0) avvisiDelGiro.push({ tono: 'ok', testo: t('galleryCodaEsito', { pubblicate, inCoda }) });
+            // «Il caricamento continua finché resti in Galleria»: con TUS dire «puoi chiudere l'app»
+            // sarebbe falso. Uscendo dalla Galleria (o chiudendo l'app) il trasferimento si ferma al
+            // blocco successivo e riprende da solo al rientro.
+            if (videoAvviati > 0) avvisiDelGiro.push({ tono: 'ok', testo: t('galleryVideoAvviato', { count: videoAvviati }) });
+            mostraAvvisi(avvisiDelGiro);
             if (isOnline && (fotoAccodate > 0 || videoAvviati > 0)) await loadMedia();
         } catch (error) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `gallery-pubblicazione-fallita: ${nomeErrore(error)}`, route: '/teacher/gallery' });
-            setUploadError(t('galleryErrCaricamentoGenerico'));
+            mostraAvvisi([...avvisiDelGiro, { tono: 'errore', testo: t('galleryErrCaricamentoGenerico') }]);
         } finally {
             if ((fotoAccodate === 0 || ambitoCorrente()) && completati.size > 0) {
                 const rimanenti = uploadedFiles.filter((_, i) => !completati.has(i));
@@ -583,7 +669,7 @@ function TeacherGalleryContent() {
             await sincronizzaCoda();
         } catch {
             logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-riprova-fallita', route: '/teacher/gallery' });
-            setUploadError(t('galleryErrCaricamentoGenerico'));
+            mostraErrore(t('galleryErrCaricamentoGenerico'));
         }
     };
 
@@ -594,7 +680,7 @@ function TeacherGalleryContent() {
             await sincronizzaCoda();
         } catch {
             logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-sede-assegnazione-fallita', route: '/teacher/gallery' });
-            setUploadError(t('galleryErrCaricamentoGenerico'));
+            mostraErrore(t('galleryErrCaricamentoGenerico'));
         }
     };
 
@@ -602,11 +688,11 @@ function TeacherGalleryContent() {
         if (!teacherId || !sedeVideo || !confirm(t('galleryCodaConfermaScarta'))) return;
         try {
             const scartata = await scartaFotoInCoda({ ownerId: teacherId, schoolId: sedeVideo }, id);
-            if (!scartata) setUploadError(t('galleryCodaScartoBloccato'));
+            if (!scartata) mostraErrore(t('galleryCodaScartoBloccato'));
             await aggiornaCoda();
         } catch {
             logClient({ livello: 'error', evento: 'offline', messaggio: 'gallery-coda-scarto-fallito', route: '/teacher/gallery' });
-            setUploadError(t('galleryErrCaricamentoGenerico'));
+            mostraErrore(t('galleryErrCaricamentoGenerico'));
         }
     };
 
@@ -708,7 +794,33 @@ function TeacherGalleryContent() {
                 subtitle={t('gallerySottotitolo', { sezione: sezione || '…' })}
             />
 
-            {uploadError && <p role="alert" className="mt-3 rounded-xl border border-kidville-warn/30 bg-kidville-warn-soft p-3 font-maven text-sm text-kidville-ink">{uploadError}</p>}
+            {/*
+              LA REGIONE DEGLI AVVISI STA SEMPRE NEL DOCUMENTO (secondario #36), e cambia solo ciò
+              che contiene. `aria-atomic="false"`: chi ascolta sente l'avviso che è comparso, non
+              tutti quelli che c'erano già. Vuota non lascia nessuno spazio: il margine sta sul
+              contenitore solo quando c'è qualcosa da dire.
+            */}
+            <div
+                ref={regioneAvvisi}
+                role="status"
+                aria-live="polite"
+                aria-atomic="false"
+                data-testid="avvisi-invio"
+                className={avvisi.length > 0 ? 'mt-3 space-y-2' : undefined}
+            >
+                {avvisi.map(a => (
+                    <p
+                        key={a.id}
+                        className={`rounded-xl border p-3 font-maven text-sm text-kidville-ink ${
+                            a.tono === 'errore'
+                                ? 'border-kidville-warn/30 bg-kidville-warn-soft'
+                                : 'border-kidville-green/20 bg-kidville-cream/50'
+                        }`}
+                    >
+                        {a.testo}
+                    </p>
+                ))}
+            </div>
             {readError && (
                 <div role="alert" className="mt-3 rounded-xl border border-kidville-warn/30 bg-kidville-warn-soft p-3 font-maven text-sm text-kidville-ink">
                     <p>{t('galleryLetturaFallita')}</p>
@@ -743,12 +855,12 @@ function TeacherGalleryContent() {
 
                 <div className="ml-auto flex items-center gap-2">
                     {step === 'gallery' && (
-                        <Btn variant="primary" size="sm" onClick={() => setStep('upload')}>
+                        <Btn variant="primary" size="sm" onClick={() => { svuotaAvvisi(); setStep('upload'); }}>
                             <Upload size={16} strokeWidth={1.5} /> {t('galleryCarica')}
                         </Btn>
                     )}
                     {step !== 'gallery' && (
-                        <Btn variant="ghost" size="sm" onClick={() => { setStep('gallery'); setUploadedFiles([]); setActiveFileIndex(0); }}>
+                        <Btn variant="ghost" size="sm" onClick={() => { svuotaAvvisi(); setStep('gallery'); setUploadedFiles([]); setActiveFileIndex(0); }}>
                             {t('galleryAnnulla')}
                         </Btn>
                     )}
@@ -765,36 +877,21 @@ function TeacherGalleryContent() {
                           galleria: metterlo dentro la griglia lo farebbe sembrare
                           pubblicato — cioè già visto dalle famiglie — mentre è ancora
                           niente. Sopra, e con la sua scheda, dice le due cose che
-                          servono: a che punto è, e che si può chiudere l'app.
+                          servono: a che punto è, e cosa deve fare chi ha caricato. Finché
+                          i byte partono, restare in Galleria (la scheda lo dice); quando
+                          sono arrivati, niente: conversione e pubblicazione sono del
+                          server, e l'app si può chiudere.
 
                           Sta nello step «galleria» perché è lì che si torna dopo aver
-                          premuto «Pubblica», ed è lì che si rientra riaprendo l'app.
+                          premuto «Pubblica», ed è lì che si rientra riaprendo l'app. Non
+                          chiede più i bambini e non ha più un pulsante «Pubblica»: li hai
+                          scelti prima, e a pubblicare è il server.
                         */}
                         <VideoInLavorazione
                             righe={videoGalleria.righe}
-                            onPubblica={videoGalleria.pubblica}
                             onRiprendi={videoGalleria.riprendi}
                             onRimuovi={videoGalleria.rimuovi}
-                            renderTagger={(jobId) => (
-                                <StudentTagger
-                                    students={students}
-                                    selectedIds={videoGalleria.tagDi(jobId)}
-                                    onToggle={(studentId) => videoGalleria.cambiaTag(jobId, studentId)}
-                                    onSelectAll={() => {
-                                        // «Tutti» = tutti quelli CON liberatoria: la stessa
-                                        // regola dello step 2, e la stessa di `StudentTagger`,
-                                        // che senza consenso apre il ramo della foto privata.
-                                        for (const s of students) {
-                                            if (s.consenso_privacy && !videoGalleria.tagDi(jobId).includes(s.id)) {
-                                                videoGalleria.cambiaTag(jobId, s.id);
-                                            }
-                                        }
-                                    }}
-                                    onDeselectAll={() => {
-                                        for (const id of videoGalleria.tagDi(jobId)) videoGalleria.cambiaTag(jobId, id);
-                                    }}
-                                />
-                            )}
+                            onRiprova={videoGalleria.riprova}
                         />
                         {loading ? (
                             <div className="flex flex-col items-center justify-center py-20 gap-3">

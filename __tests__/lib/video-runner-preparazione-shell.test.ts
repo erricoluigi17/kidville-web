@@ -3,7 +3,13 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, sym
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { FFMPEG_GZ_SHA256, FFMPEG_SHA256, FFPROBE_GZ_SHA256, FFPROBE_SHA256 } from '@/lib/media/video/build'
+import {
+  CARTELLA_BINARI_NELLO_SNAPSHOT,
+  FFMPEG_GZ_SHA256,
+  FFMPEG_SHA256,
+  FFPROBE_GZ_SHA256,
+  FFPROBE_SHA256,
+} from '@/lib/media/video/build'
 import {
   CARTELLA_BUILD,
   ENV_URL_FFMPEG,
@@ -157,7 +163,12 @@ ${guasti.chmod === 'fallisce' ? 'exit 1' : guasti.chmod === 'inefficace' ? 'exit
     /** Le righe «impronta  percorso» che `sha256sum -c -` ha ricevuto, nell'ordine. */
     verifiche: (): string[] =>
       existsSync(verificheFile) ? readFileSync(verificheFile, 'utf8').trim().split('\n') : [],
-    esegui: (variabili: Record<string, string | undefined> = {}) => {
+    /**
+     * Lancia lo script di provvista. `cartella` è quella che lo script nomina (il predefinito è `/tmp/kv-ffmpeg`, la PR 1; lo
+     * snapshot la costruisce in `/opt/kv-ffmpeg`): in entrambi i casi si sostituisce con la cartella di prova, così il test non
+     * scrive mai fuori dalla sua cartella temporanea.
+     */
+    esegui: (variabili: Record<string, string | undefined> = {}, cartella: string = CARTELLA_BUILD) => {
       const env: NodeJS.ProcessEnv = {
         PATH: dir,
         NODE_ENV: 'test',
@@ -168,7 +179,7 @@ ${guasti.chmod === 'fallisce' ? 'exit 1' : guasti.chmod === 'inefficace' ? 'exit
         if (valore === undefined) delete env[nome]
         else env[nome] = valore
       }
-      const esito = spawnSync(SHELL, ['-c', scriptPreparazioneBuild().replaceAll(CARTELLA_BUILD, build)], {
+      const esito = spawnSync(SHELL, ['-c', scriptPreparazioneBuild(cartella).replaceAll(cartella, build)], {
         env,
         encoding: 'utf8',
       })
@@ -329,6 +340,51 @@ describe('runner · preparazione della build, eseguita da sh con i comandi di re
       expect(qa.eventi()).toEqual([])
       // E la diagnosi dice QUALE variabile manca.
       expect(esito.stderr).toContain(nome)
+    })
+  })
+
+  describe('la STESSA provvista nella cartella dello snapshot (`/opt/kv-ffmpeg`), come la esegue `scripts/video-sandbox-ambiente.mjs`', () => {
+    it('percorso felice: gli stessi sette passi nello stesso ordine, e i binari verificati sono eseguibili solo alla fine', () => {
+      const qa = ambiente()
+      const esito = qa.esegui({}, CARTELLA_BINARI_NELLO_SNAPSHOT)
+
+      expect(esito.stato).toBe(0)
+      expect(qa.eventi()).toEqual([
+        'download-ffmpeg',
+        'download-ffprobe',
+        'verifica-gz',
+        'gunzip-ffmpeg',
+        'gunzip-ffprobe',
+        'verifica-binari',
+        'chmod',
+      ])
+      expect(qa.vietati()).toEqual([])
+      expect(qa.eventi()).not.toContain('ESEGUIBILE-PRIMA-DELLA-VERIFICA')
+      expect(eseguibile(join(qa.build, 'ffmpeg'))).toBe(true)
+      expect(eseguibile(join(qa.build, 'ffprobe'))).toBe(true)
+      expect(existsSync(join(qa.build, 'ffmpeg.gz'))).toBe(false)
+    })
+
+    it('le quattro impronte si verificano accanto ai file giusti (la cartella cambia, l’accoppiamento no)', () => {
+      const qa = ambiente()
+      qa.esegui({}, CARTELLA_BINARI_NELLO_SNAPSHOT)
+
+      expect(qa.verifiche()).toEqual([
+        `${FFMPEG_GZ_SHA256}  ${qa.build}/ffmpeg.gz`,
+        `${FFPROBE_GZ_SHA256}  ${qa.build}/ffprobe.gz`,
+        `${FFMPEG_SHA256}  ${qa.build}/ffmpeg`,
+        `${FFPROBE_SHA256}  ${qa.build}/ffprobe`,
+      ])
+    })
+
+    it('un’impronta dei binari che non torna: 22, e il binario NON diventa eseguibile — anche costruendo lo snapshot', () => {
+      const qa = ambiente({ sha: 'binari' })
+      const esito = qa.esegui({}, CARTELLA_BINARI_NELLO_SNAPSHOT)
+
+      expect(esito.stato).toBe(USCITE_PREPARAZIONE.impronta)
+      expect(qa.eventi()).not.toContain('chmod')
+      expect(eseguibile(join(qa.build, 'ffmpeg'))).toBe(false)
+      expect(eseguibile(join(qa.build, 'ffprobe'))).toBe(false)
     })
   })
 

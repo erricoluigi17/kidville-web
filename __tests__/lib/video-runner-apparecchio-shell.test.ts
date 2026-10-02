@@ -1,13 +1,16 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { CARTELLA_BINARI_NELLO_SNAPSHOT, FFMPEG_SHA256, FFPROBE_SHA256 } from '@/lib/media/video/build'
 import { CARTELLA_BUILD, ENV_URL_FFMPEG, ENV_URL_FFPROBE } from '@/lib/media/video/runner/preparazione'
 import { classeDaUscitaApparecchio, classeDaUscitaConversione } from '@/lib/media/video/runner/ritentativi'
 import {
   CARTELLA_LAVORO,
+  ENV_SHA256_ATTESO,
   ENV_URL_INGRESSO,
   ENV_URL_WATERMARK,
   USCITE_APPARECCHIO,
@@ -18,6 +21,7 @@ import {
   leggiEsitoConversione,
   scriptApparecchio,
   scriptConversione,
+  scriptVerificaBinari,
 } from '@/lib/media/video/runner/script'
 
 /**
@@ -81,11 +85,13 @@ afterEach(() => {
  * assoluti degli script (`/tmp/kv-ffmpeg`, `/tmp/kv-video`) si sostituiscono con questi, così il
  * test non scrive mai in `/tmp` e due test non si pestano.
  */
-function ambiente() {
+function ambiente(opzioni: { shaVero?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'kv-apparecchio-shell-'))
   cartelle.push(dir)
   const binDir = join(dir, 'bin')
   const build = join(dir, 'build')
+  // La cartella dei binari DELLO SNAPSHOT: vuota finché un test non ci mette i suoi finti (`mettiBinariNelloSnapshot`).
+  const snapshot = join(dir, 'snapshot')
   const lavoro = join(dir, 'lavoro')
   const eventiFile = join(dir, 'eventi')
   mkdirSync(binDir)
@@ -164,7 +170,37 @@ echo "download" >> '${eventiFile}'
 printf '%s' "$url" > "$destinazione"`,
   )
 
-  comando('sha256sum', `cat > /dev/null\nexit 0`)
+  if (opzioni.shaVero) {
+    // Un `sha256sum -c -` che VERIFICA davvero (legge «impronta  percorso», calcola lo SHA-256 del file, risponde `OK`
+    // o `FAILED` con l'uscita 1 come il vero). Serve a provare l'ACCOPPIAMENTO impronta/file e il confronto vero, che un finto
+    // che dice sempre sì non vedrebbe mai. Scritto in Node (la macchina di sviluppo è un Mac, dove `sha256sum` non c'è) e
+    // chiamato da un involucro `sh`, perché un percorso di Node con spazi romperebbe uno shebang.
+    const verificatore = join(dir, 'sha256sum.cjs')
+    writeFileSync(
+      verificatore,
+      `const { createHash } = require('node:crypto'); const { readFileSync } = require('node:fs');
+let fallite = 0, valide = 0;
+for (const riga of readFileSync(0, 'utf8').split('\\n')) {
+  const m = /^([0-9a-f]{64})  (.+)$/.exec(riga); if (!m) continue;
+  valide += 1;
+  let torna = false;
+  try { torna = createHash('sha256').update(readFileSync(m[2])).digest('hex') === m[1]; } catch { torna = false; }
+  console.log(m[2] + ': ' + (torna ? 'OK' : 'FAILED'));
+  if (!torna) fallite += 1;
+}
+// Come GNU sha256sum: nessuna riga ben formata NON è «tutto a posto», è un errore (uscita 1).
+if (valide === 0) { console.error('sha256sum: -: no properly formatted SHA256 checksum lines found'); process.exit(1); }
+if (fallite > 0) { console.error('sha256sum: WARNING: ' + fallite + ' computed checksum did NOT match'); process.exit(1); }
+`,
+    )
+    comando('sha256sum', `echo verifica-sha >> '${eventiFile}'\nexec '${process.execPath}' '${verificatore}'`)
+  } else {
+    comando('sha256sum', `cat > /dev/null\nexit 0`)
+  }
+
+  // `xargs` finto: nell'ambiente di prova non c'è, e la conversione ci arriva solo dopo la verifica dello `sha256`.
+  // Registra di essere stato chiamato (la codifica è PARTITA) e fa fallire la codifica: l'uscita è 32.
+  comando('xargs', `echo codifica >> '${eventiFile}'\nexit 99`)
 
   comando(
     'gzip',
@@ -186,7 +222,13 @@ esac`,
   const lanciaScript = (script: string, variabili: Record<string, string>) => {
     const esito = spawnSync(
       SHELL,
-      ['-c', script.replaceAll(CARTELLA_BUILD, build).replaceAll(CARTELLA_LAVORO, lavoro)],
+      [
+        '-c',
+        script
+          .replaceAll(CARTELLA_BUILD, build)
+          .replaceAll(CARTELLA_BINARI_NELLO_SNAPSHOT, snapshot)
+          .replaceAll(CARTELLA_LAVORO, lavoro),
+      ],
       {
         env: {
           PATH: binDir,
@@ -203,14 +245,70 @@ esac`,
     return { stato: esito.status, stdout: esito.stdout, stderr: esito.stderr }
   }
 
+  /** I due «binari» dentro la cartella dello snapshot, eseguibili: ciò che lo snapshot porta già. */
+  const mettiBinariNelloSnapshot = () => {
+    mkdirSync(snapshot, { recursive: true })
+    for (const [nome, sorgente] of [
+      ['ffmpeg', ffmpegFinto],
+      ['ffprobe', ffprobeFinto],
+    ] as const) {
+      writeFileSync(join(snapshot, nome), readFileSync(sorgente))
+      chmodSync(join(snapshot, nome), 0o755)
+    }
+  }
+  /** Lo SHA-256 VERO di un file dello snapshot: l'impronta con cui uno script di prova lo verifica. */
+  const improntaNelloSnapshot = (nome: 'ffmpeg' | 'ffprobe') =>
+    createHash('sha256').update(readFileSync(join(snapshot, nome))).digest('hex')
+
   return {
     dir,
+    build,
+    snapshot,
+    mettiBinariNelloSnapshot,
+    improntaNelloSnapshot,
     lavoro,
     eventi,
     /** Gli eventi di un comando vietato: devono essere sempre zero. */
     vietati: () => eventi().filter((evento) => evento.startsWith('VIETATO-')),
     /** Lancia lo script dell'apparecchio. */
     apparecchio: (variabili: Record<string, string> = {}) => lanciaScript(scriptApparecchio(), variabili),
+    /**
+     * Lancia l'apparecchio di una MicroVM nata dallo SNAPSHOT (`binariGiaPresenti`), con le impronte dei binari sostituite da quelle
+     * dei finti (`impronte`): le costanti di `build.ts` sono quelle dei binari VERI, che qui non ci sono.
+     */
+    apparecchioSnapshot: (
+      variabili: Record<string, string> = {},
+      impronte: { ffmpeg: string; ffprobe: string } | null = null,
+    ) => {
+      let script = scriptApparecchio({ cartella: CARTELLA_BINARI_NELLO_SNAPSHOT, binariGiaPresenti: true })
+      if (impronte) script = script.replaceAll(FFMPEG_SHA256, impronte.ffmpeg).replaceAll(FFPROBE_SHA256, impronte.ffprobe)
+      return lanciaScript(script, variabili)
+    },
+    /** Lancia la sola verifica dei binari dello snapshot (come l'apparecchio la comincia). */
+    verificaSnapshot: (impronte: { ffmpeg: string; ffprobe: string } | null = null) => {
+      let script = scriptVerificaBinari(CARTELLA_BINARI_NELLO_SNAPSHOT)
+      if (impronte) script = script.replaceAll(FFMPEG_SHA256, impronte.ffmpeg).replaceAll(FFPROBE_SHA256, impronte.ffprobe)
+      return lanciaScript(script, {})
+    },
+    /** Lancia la conversione di un job con lo `sha256` dichiarato, con un curl che SCARICA (scrive l'URL nel file) e il `sha256sum` che verifica davvero. */
+    conversioneConSha: (sha256Atteso: string, opzioni: { conWatermark?: boolean } = {}) => {
+      const esito = lanciaScript(
+        scriptConversione({
+          conWatermark: opzioni.conWatermark ?? false,
+          videoIndex: 0,
+          audioIndex: null,
+          sourceFps: 30,
+          verificaSha256: true,
+        }),
+        { [ENV_SHA256_ATTESO]: sha256Atteso },
+      )
+      const marcatore = join(lavoro, 'esito.txt')
+      return {
+        stato: esito.stato,
+        marcatoreScritto: existsSync(marcatore),
+        letto: leggiEsitoConversione(existsSync(marcatore) ? readFileSync(marcatore, 'utf8') : ''),
+      }
+    },
     /**
      * Lancia lo script della conversione con un `curl` che FALLISCE subito (uscita 22 → lo script
      * esce 31) scrivendo su stderr `diario`: è ciò che finisce nel diario della MicroVM, e il
@@ -425,5 +523,238 @@ describe('conversione · la coda del diario nel marcatore, scritta dal trap con 
     // Buttare la «prima riga» qui vorrebbe dire buttare tutto. Di un errore illeggibile resta
     // almeno la fine, che è la parte che serve.
     expect(letto.diagnosi).toBe('z'.repeat(1999))
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 3. I BINARI DELLO SNAPSHOT: si VERIFICANO, non si scaricano (T8, spec §10.1)
+ *
+ * Con `sha256sum` che verifica DAVVERO (non uno che dice sempre sì) e le impronte dello script sostituite
+ * da quelle dei finti: è l'unico modo di provare, con una shell vera, che ogni impronta è accoppiata al SUO file e che
+ * un binario toccato dopo la costruzione dello snapshot non passa.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('snapshot · la verifica dei binari, eseguita da sh', () => {
+  /** Lo scenario: i due finti dentro lo snapshot, e le loro impronte vere. */
+  function conBinari() {
+    const qa = ambiente({ shaVero: true })
+    qa.mettiBinariNelloSnapshot()
+    const impronte = { ffmpeg: qa.improntaNelloSnapshot('ffmpeg'), ffprobe: qa.improntaNelloSnapshot('ffprobe') }
+    // I due finti sono contenuti DIVERSI: se non lo fossero, uno scambio fra le impronte passerebbe inosservato.
+    expect(impronte.ffmpeg).not.toBe(impronte.ffprobe)
+    return { qa, impronte }
+  }
+
+  it('i binari ci sono e le impronte tornano: uscita 0, e NESSUN comando di rete o di decompressione', () => {
+    const { qa, impronte } = conBinari()
+    const esito = qa.verificaSnapshot(impronte)
+
+    expect(esito.stato).toBe(0)
+    expect(qa.eventi()).toEqual(['verifica-sha'])
+    expect(qa.vietati()).toEqual([])
+    // `>&2`: le righe «OK» di `sha256sum` non sporcano lo stdout.
+    expect(esito.stdout).toBe('')
+  })
+
+  it('un’impronta che NON torna: uscita 26, e la riga `FAILED` — con il file giusto — arriva nella diagnosi', () => {
+    const { qa, impronte } = conBinari()
+    // Si tocca il binario DOPO che le impronte sono state prese: è la sostituzione che la verifica esiste per vedere.
+    writeFileSync(join(qa.snapshot, 'ffprobe'), '#!/bin/sh\necho binario-sostituito\n')
+    chmodSync(join(qa.snapshot, 'ffprobe'), 0o755)
+
+    const esito = qa.verificaSnapshot(impronte)
+
+    expect(esito.stato).toBe(USCITE_APPARECCHIO.binari)
+    expect(codiceDaUscitaApparecchio(esito.stato as number)).toBe('BUILD_HASH_MISMATCH')
+    expect(esito.stderr).toContain(`${qa.snapshot}/ffprobe: FAILED`)
+    // L'altro binario torna, e si legge anche questo: la diagnosi dice QUALE dei due non va.
+    expect(esito.stderr).toContain(`${qa.snapshot}/ffmpeg: OK`)
+  })
+
+  it('le impronte sono accoppiate al file giusto: scambiarle fa fallire ENTRAMBI (non solo uno)', () => {
+    const { qa, impronte } = conBinari()
+    const esito = qa.verificaSnapshot({ ffmpeg: impronte.ffprobe, ffprobe: impronte.ffmpeg })
+
+    expect(esito.stato).toBe(USCITE_APPARECCHIO.binari)
+    expect(esito.stderr).toContain(`${qa.snapshot}/ffmpeg: FAILED`)
+    expect(esito.stderr).toContain(`${qa.snapshot}/ffprobe: FAILED`)
+  })
+
+  it.each<['ffmpeg' | 'ffprobe']>([['ffmpeg'], ['ffprobe']])(
+    'il file %s MANCA: uscita 26 SENZA nemmeno chiamare `sha256sum` (un’assenza dice «manca», non «No such file»)',
+    (quale) => {
+      const { qa, impronte } = conBinari()
+      rmSync(join(qa.snapshot, quale))
+
+      const esito = qa.verificaSnapshot(impronte)
+
+      expect(esito.stato).toBe(USCITE_APPARECCHIO.binari)
+      expect(qa.eventi(), 'sha256sum non deve partire').toEqual([])
+    },
+  )
+
+  it('un binario che c’è ma NON è eseguibile (volume `noexec`, permessi persi): uscita 26', () => {
+    const { qa, impronte } = conBinari()
+    chmodSync(join(qa.snapshot, 'ffmpeg'), 0o644)
+
+    expect(qa.verificaSnapshot(impronte).stato).toBe(USCITE_APPARECCHIO.binari)
+  })
+
+  it('la cartella dello snapshot non esiste: uscita 26 (lo snapshot non è quello che doveva essere)', () => {
+    const qa = ambiente({ shaVero: true })
+    expect(qa.verificaSnapshot().stato).toBe(USCITE_APPARECCHIO.binari)
+  })
+})
+
+describe('snapshot · l’apparecchio completo con i binari già presenti, eseguito da sh', () => {
+  function conBinari() {
+    const qa = ambiente({ shaVero: true })
+    qa.mettiBinariNelloSnapshot()
+    return { qa, impronte: { ffmpeg: qa.improntaNelloSnapshot('ffmpeg'), ffprobe: qa.improntaNelloSnapshot('ffprobe') } }
+  }
+
+  it('percorso felice: verifica, inventario, HEAD, probe — e NESSUN download della build, nessuna decompressione', () => {
+    const { qa, impronte } = conBinari()
+    const esito = qa.apparecchioSnapshot({}, impronte)
+
+    expect(esito.stato).toBe(0)
+    // Gli eventi, nell'ordine: la verifica delle impronte, la HEAD, ffprobe. Niente `download`, niente `gunzip`, niente `chmod`.
+    expect(qa.eventi()).toEqual(['verifica-sha', 'head', 'ffprobe'])
+    expect(qa.vietati()).toEqual([])
+    const letto = leggiApparecchio(esito.stdout)
+    expect(letto.byte).toBe(20_000_000)
+    expect(letto.inventario.filtri.has('zscale')).toBe(true)
+    expect(JSON.parse(letto.probeGrezzo).format.format_name).toBe('mov,mp4')
+  })
+
+  it('non ha bisogno degli URL della build: senza `KV_URL_FFMPEG` e `KV_URL_FFPROBE` parte lo stesso (lo script della PR 1 si fermerebbe)', () => {
+    const { qa, impronte } = conBinari()
+    // Le due variabili tolte dall'ambiente: lo snapshot esiste perché a runtime il bucket non serva.
+    const esito = qa.apparecchioSnapshot({ [ENV_URL_FFMPEG]: '', [ENV_URL_FFPROBE]: '' }, impronte)
+    expect(esito.stato).toBe(0)
+
+    // …mentre quello della PR 1, senza, si ferma PRIMA del primo comando (`${KV_URL_FFMPEG:?}`): è la differenza che si compra.
+    const dellaPr1 = ambiente().apparecchio({ [ENV_URL_FFMPEG]: '', [ENV_URL_FFPROBE]: '' })
+    expect(dellaPr1.stato).not.toBe(0)
+  })
+
+  it('un binario sostituito: esce 26 PRIMA della HEAD e del probe (nessun comando ha toccato né i binari né l’originale)', () => {
+    const { qa, impronte } = conBinari()
+    writeFileSync(join(qa.snapshot, 'ffmpeg'), '#!/bin/sh\necho altro\n')
+    chmodSync(join(qa.snapshot, 'ffmpeg'), 0o755)
+
+    const esito = qa.apparecchioSnapshot({}, impronte)
+
+    expect(esito.stato).toBe(USCITE_APPARECCHIO.binari)
+    expect(qa.eventi()).toEqual(['verifica-sha'])
+    expect(esito.stdout).not.toContain('===INVENTARIO===')
+    expect(esito.stderr).toContain('FAILED')
+  })
+
+  it('le uscite che seguono la verifica sono quelle di sempre: la HEAD che dà 404 esce 24, e ffprobe non parte', () => {
+    const { qa, impronte } = conBinari()
+    const esito = qa.apparecchioSnapshot({ KV_FINTO_HEAD: 'errore-404' }, impronte)
+
+    expect(esito.stato).toBe(USCITE_APPARECCHIO.dimensione)
+    expect(qa.eventi()).not.toContain('ffprobe')
+    expect(classeDaUscitaApparecchio(esito.stato as number, esito.stderr)).toBe('infra-permanente')
+  })
+
+  it('i `curl` e i `gzip` dello script della PR 1 NON compaiono mai fra gli eventi, in nessun modo di finire', () => {
+    const scenari: Record<string, string>[] = [{}, { KV_FINTO_HEAD: 'errore-400' }, { KV_FINTO_FFPROBE_ESCE: '1' }]
+    for (const variabili of scenari) {
+      const { qa, impronte } = conBinari()
+      qa.apparecchioSnapshot(variabili, impronte)
+      expect(qa.eventi().filter((e) => e === 'download' || e.startsWith('gunzip')), JSON.stringify(variabili)).toEqual([])
+    }
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 4. LO `sha256` DICHIARATO, DENTRO LA CONVERSIONE (T8, spec §10.4)
+ *
+ * `curl` finto SCARICA (scrive l'URL nel file `ingresso`) e `sha256sum` verifica davvero: l'impronta vera dell'originale è
+ * quella di quella stringa. Con la corrispondente la conversione prosegue (fino alla codifica, che il finto fa fallire: uscita
+ * 32); con una diversa esce 35 PRIMA di ogni altra cosa — e il marcatore si scrive comunque.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('conversione · lo `sha256` dichiarato si verifica dopo lo scarico e prima di convertire, con una shell vera', () => {
+  /** Lo SHA-256 dell'«originale» che il `curl` finto scarica: l'URL, scritto nel file. */
+  const IMPRONTA_DELL_ORIGINALE = createHash('sha256').update(URL_ORIGINALE).digest('hex')
+  const IMPRONTA_DIVERSA = createHash('sha256').update('un altro contenuto').digest('hex')
+
+  it('l’impronta TORNA: la conversione prosegue — la codifica PARTE (il finto la fa fallire con 32)', () => {
+    const qa = ambiente({ shaVero: true })
+    const { stato, marcatoreScritto, letto } = qa.conversioneConSha(IMPRONTA_DELL_ORIGINALE)
+
+    expect(qa.eventi()).toEqual(['download', 'verifica-sha', 'codifica'])
+    expect(stato).toBe(USCITE_CONVERSIONE.codifica)
+    expect(marcatoreScritto).toBe(true)
+    expect(letto.uscita).toBe(32)
+    expect(codiceDaUscitaConversione(letto.uscita)).toBe('ENCODE_FAILED')
+  })
+
+  it('l’impronta NON torna: esce 35 DOPO lo scarico e PRIMA di tutto il resto — la codifica non parte', () => {
+    const qa = ambiente({ shaVero: true })
+    const { stato, marcatoreScritto, letto } = qa.conversioneConSha(IMPRONTA_DIVERSA)
+
+    expect(stato).toBe(USCITE_CONVERSIONE.impronta)
+    // Lo scarico c'è stato, la verifica pure, e NIENTE dopo: né la codifica né il resto.
+    expect(qa.eventi()).toEqual(['download', 'verifica-sha'])
+    expect(qa.eventi()).not.toContain('codifica')
+    // Il marcatore si scrive comunque (`trap … EXIT`): senza, la sorveglianza girerebbe fino al tetto su un job già morto.
+    expect(marcatoreScritto).toBe(true)
+    expect(letto.uscita).toBe(35)
+    expect(codiceDaUscitaConversione(letto.uscita)).toBe('ORIGINALE_DIVERSO')
+    // `file`: rifiutato e mai ritentato. E il diario porta la riga `FAILED` di `sha256sum` (la prova del fatto).
+    expect(classeDaUscitaConversione(letto.uscita, letto.diagnosi)).toBe('file')
+    expect(letto.diagnosi).toContain('FAILED')
+  })
+
+  it('il diario NON porta l’impronta attesa né quella calcolata: `sha256sum -c` scrive solo `<file>: FAILED`', () => {
+    const qa = ambiente({ shaVero: true })
+    const { letto } = qa.conversioneConSha(IMPRONTA_DIVERSA)
+
+    expect(letto.diagnosi).not.toContain(IMPRONTA_DIVERSA)
+    expect(letto.diagnosi).not.toContain(IMPRONTA_DELL_ORIGINALE)
+  })
+
+  it('con il watermark la verifica sta comunque PRIMA: un originale diverso non scarica nemmeno il watermark', () => {
+    const qa = ambiente({ shaVero: true })
+    qa.conversioneConSha(IMPRONTA_DIVERSA, { conWatermark: true })
+
+    // Un solo `download` (l'originale): il watermark non è stato richiesto.
+    expect(qa.eventi().filter((e) => e === 'download')).toHaveLength(1)
+    expect(qa.eventi()).not.toContain('codifica')
+  })
+
+  it.each([
+    ['vuota', ''],
+    ['non esadecimale', 'z'.repeat(64)],
+    ['troppo corta', 'ab12'],
+  ])('un valore atteso %s (un difetto nostro: il chiamante passa sempre 64 cifre) esce comunque 35 e non converte', (_nome, valore) => {
+    // Fail-closed anche qui: `sha256sum -c` non trova una riga ben formata e fallisce, quindi lo script non prosegue.
+    const qa = ambiente({ shaVero: true })
+    const { stato } = qa.conversioneConSha(valore)
+
+    expect(stato).toBe(USCITE_CONVERSIONE.impronta)
+    expect(qa.eventi()).not.toContain('codifica')
+  })
+
+  it('senza `verificaSha256` il passo non c’è: nessun `sha256sum` e la codifica parte subito dopo lo scarico', () => {
+    const qa = ambiente({ shaVero: true })
+    const marcatore = join(qa.lavoro, 'esito.txt')
+    const esito = qa.conversioneConDiario === undefined ? null : null
+    expect(esito).toBeNull()
+    // Si lancia la conversione di sempre con un `curl` che scarica: eventi `download`, `codifica` e nessuna `verifica-sha`.
+    const lancia = (script: string) =>
+      spawnSync(SHELL, ['-c', script.replaceAll(CARTELLA_BUILD, qa.build).replaceAll(CARTELLA_LAVORO, qa.lavoro)], {
+        env: { PATH: join(qa.dir, 'bin'), NODE_ENV: 'test', [ENV_URL_INGRESSO]: URL_ORIGINALE },
+        encoding: 'utf8',
+      })
+    lancia(scriptConversione({ conWatermark: false, videoIndex: 0, audioIndex: null, sourceFps: 30 }))
+
+    expect(qa.eventi()).toEqual(['download', 'codifica'])
+    expect(existsSync(marcatore)).toBe(true)
   })
 })

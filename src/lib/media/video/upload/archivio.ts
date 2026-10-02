@@ -36,7 +36,26 @@ export interface ArchivioCaricamentiVideo {
   elimina(jobId: string): Promise<void>
 
   leggiByte(jobId: string): Promise<ByteVideo | undefined>
-  scriviByte(jobId: string, byte: Blob): Promise<void>
+  /**
+   * Copia i byte sul dispositivo, perché la ripresa dopo la chiusura dell'app abbia
+   * qualcosa da spedire.
+   *
+   * ─── IL SEGNALE, E PERCHÉ LA COPIA NON È PIÙ DOVUTA ──────────────────────────
+   *
+   * Dal 2026-10-02 la copia parte IN BACKGROUND, mentre il trasferimento è già in
+   * corso (`caricamento.ts`): non è più il cancello d'ingresso del video, ed è
+   * quindi un lavoro che può diventare inutile prima di finire. Succede in due modi
+   * — il trasferimento arriva in fondo prima della copia (rete veloce, disco lento),
+   * oppure la persona toglie il video — e in entrambi continuare vorrebbe dire
+   * scrivere gigabyte che un attimo dopo si cancellano, su un telefono che magari
+   * non ne ha.
+   *
+   * Un segnale già annullato, o annullato a metà, ferma la copia al confine del
+   * blocco successivo, toglie ciò che questa copia aveva scritto e rigetta con
+   * `ErroreByteVideo('VIDEO_COPIA_ANNULLATA')`: non è un guasto, e chi lo riceve non
+   * lo scrive fra gli errori. Un deposito PRECEDENTE e intero resta com'era.
+   */
+  scriviByte(jobId: string, byte: Blob, segnale?: AbortSignal): Promise<void>
   /** Libera il peso lasciando la riga: è ciò che succede a caricamento finito. */
   eliminaByte(jobId: string): Promise<void>
   /**

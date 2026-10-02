@@ -4,6 +4,13 @@ import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 // Verifica il WIRING della fotocamera nativa nei due uploader immagine:
 // su nativo il trigger deve instradare il File della fotocamera nello STESSO
 // handler di upload dell'input (flusso invariato).
+//
+// ⚠️ DAL 02/10/2026 (spec video PR 2 §11.1) NELL'APP IL TRIGGER DI `MediaUploader` NON È PIÙ IL
+// RIQUADRO GRANDE: il riquadro apre il selettore di foto e video (l'`<input>`), e la fotocamera
+// nativa è il pulsante secondario «Scatta una foto». I quattro casi qui sotto provano lo stesso
+// wiring di prima — foto nativa → anteprime, errore → avviso, annullamento → niente avviso — dal
+// pulsante giusto. Il riquadro e i log del selettore hanno il loro file:
+// `MediaUploader-selettore.test.tsx`.
 
 vi.mock('@/lib/native/camera', () => ({
   fotocameraNativaDisponibile: vi.fn(() => true),
@@ -42,10 +49,10 @@ afterEach(() => {
 })
 
 describe('MediaUploader — fotocamera nativa', () => {
-  it('il click sulla drop-zone aggiunge la foto nativa alle anteprime', async () => {
+  it('«Scatta una foto» aggiunge la foto nativa alle anteprime', async () => {
     scegliMock.mockResolvedValue([new File(['x'], 'foto-1.jpg', { type: 'image/jpeg' })])
     render(<MediaUploader onUpload={vi.fn()} />)
-    fireEvent.click(screen.getByText(/Trascina foto o video/i))
+    fireEvent.click(screen.getByRole('button', { name: /scatta una foto/i }))
     // A foto acquisita compare il pulsante che porta allo step dei tag, col
     // conteggio. ⚠️ Diceva «Carica 1 file» — e non caricava niente: il caricamento
     // vero parte solo dopo lo step 2. L'etichetta è stata corretta il 2026-09-11
@@ -65,15 +72,16 @@ describe('MediaUploader — fotocamera nativa', () => {
     )
   })
 
-  it('dopo uno scatto riuscito offre ancora un gesto separato per scegliere un video dal dispositivo', async () => {
+  it('dopo uno scatto riuscito il riquadro grande resta il gesto per scegliere un video dal dispositivo', async () => {
     scegliMock.mockResolvedValue([new File(['foto'], 'scatto.jpg', { type: 'image/jpeg' })])
     const { container } = render(<MediaUploader onUpload={vi.fn()} />)
-    fireEvent.click(screen.getByText(/Trascina foto o video/i))
+    fireEvent.click(screen.getByRole('button', { name: /scatta una foto/i }))
     await screen.findByRole('button', { name: /1 file/i })
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
     expect(input.accept).toContain('video/*')
     const clickInput = vi.spyOn(input, 'click')
-    fireEvent.click(screen.getByRole('button', { name: /scegli.*file/i }))
+    // Il riquadro grande dell'app (ora «Scegli foto e video») apre l'input: è il gesto per i VIDEO.
+    fireEvent.click(screen.getByText(/Scegli foto e video/i))
     expect(clickInput).toHaveBeenCalledTimes(1)
     expect(scegliMock, 'la scelta file non riapre la fotocamera').toHaveBeenCalledTimes(1)
   })
@@ -86,10 +94,10 @@ describe('MediaUploader — fotocamera nativa', () => {
     const { container } = render(<MediaUploader onUpload={vi.fn()} />)
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
     const clickInput = vi.spyOn(input, 'click')
-    fireEvent.click(screen.getByText(/Trascina foto o video/i))
+    fireEvent.click(screen.getByRole('button', { name: /scatta una foto/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/configurazione/i)
     expect(clickInput).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: /scegli.*file/i }))
+    fireEvent.click(screen.getByText(/Scegli foto e video/i))
     expect(clickInput).toHaveBeenCalledTimes(1)
     expect(scegliMock, 'il click DOM dell’input non deve risalire e riaprire la fotocamera').toHaveBeenCalledTimes(1)
   })
@@ -100,9 +108,9 @@ describe('MediaUploader — fotocamera nativa', () => {
       return []
     }).mockResolvedValueOnce([])
     render(<MediaUploader onUpload={vi.fn()} />)
-    fireEvent.click(screen.getByText(/Trascina foto o video/i))
+    fireEvent.click(screen.getByRole('button', { name: /scatta una foto/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/permesso/i)
-    fireEvent.click(screen.getByText(/Trascina foto o video/i))
+    fireEvent.click(screen.getByRole('button', { name: /scatta una foto/i }))
     await waitFor(() => expect(scegliMock).toHaveBeenCalledTimes(2))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })

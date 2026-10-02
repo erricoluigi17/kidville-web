@@ -121,7 +121,8 @@ const ESENTE = 'src/lib/logging/';
 // prendere il minore dei due tetti. Prendere 49 o 50 avrebbe lasciato il lock più largo del
 // vero, cioè decorativo.
 //
-// 🔻 48 → 47 e 76 → 71 il 2026-09-12: bonificato `src/lib/media/video-mediarecorder.ts`, e la
+// 🔻 48 → 47 e 76 → 71 il 2026-09-12: bonificato il file della conversione dei video nel browser
+// (poi eliminato il 2026-10-02: vedi la nota più sotto), e la
 // bonifica non è un ripulisci-log, è la riscrittura per cui quel file esisteva. I suoi CINQUE
 // `.catch(() => {})` erano cinque chiusure diverse, ognuna con la sua copia della pulizia:
 // `play()` che rigettava chiamava il fallimento DOPO che `start()` era partito, `onstop`
@@ -167,6 +168,14 @@ const ESENTE = 'src/lib/logging/';
 // `admin/diary/page.tsx` esce dall'allowlist. I suoi due `.catch(() => {})` stavano sul contatore
 // «Compilato» e sull'elenco di sedi e sezioni: un guasto lasciava «…» o il cockpit vuoto senza
 // traccia. Ora loggano (`diario-compilati-non-letti`, `diario-sezioni-cockpit-non-lette`).
+//
+// ➖ 40 e 61 INVARIATI il 2026-10-02, e va scritto perché non scendono: con la chiusura del percorso
+// vecchio dei video sono stati eliminati tre moduli di `src/lib/media/` — la conversione nel browser di
+// cui la voce del 2026-09-12 qui sopra racconta la bonifica, il suo verificatore e lo sniff del codec
+// (più l'interruttore del blocco, che di catch non ne aveva). Nessuno era in allowlist — il primo ne era
+// uscito proprio il 2026-09-12 — e nessuno aveva un `catch { /* … */ }` con soli commenti: misurato
+// prima e dopo, né i due tetti qui sopra né quelli della metà scoperta (`MAX_SOLO_COMMENTI`,
+// `MAX_FILE_SOLO_COMMENTI`) hanno credito da restituire per questo intervento.
 const MAX_FILE = 40;
 const MAX_OCCORRENZE = 61;
 

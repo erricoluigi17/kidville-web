@@ -6,6 +6,8 @@ import {
   BLOCCO_VIDEO_LOCALE,
   ErroreByteVideo,
   LETTURA_VIDEO_MASSIMA,
+  eCopiaAnnullata,
+  fermaSeAnnullata,
   leggiBloccoBlob,
   type ByteVideo,
   type ByteVideoPersistenti,
@@ -70,6 +72,16 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
  *    in un colpo solo il deposito precedente: finché non c'è, chi legge vede ancora
  *    la generazione vecchia, intera. Un'interruzione lascia al massimo blocchi di
  *    una generazione mai pubblicata, che la potatura trova e cancella.
+ *
+ * ─── LA COPIA SI PUÒ FERMARE (PR 2, 2026-10-02) ────────────────────────────
+ *
+ * La copia parte in background mentre il trasferimento è già in corso, e può diventare
+ * inutile prima di finire: per questo `scriviByte` riceve un `AbortSignal`. Lo guarda
+ * all'ingresso, al confine di ogni blocco e un'ultima volta prima del manifest; fermarsi
+ * è una pulizia come quella di un guasto — se non c'era un deposito da conservare il
+ * database del job se ne va intero, altrimenti si tolgono solo i blocchi di questa copia e
+ * il deposito intero di prima resta com'era — ma NON è un guasto: rigetta con
+ * `VIDEO_COPIA_ANNULLATA` e non scrive `video-upload-persistenza-fallita`.
  */
 
 /**
@@ -290,8 +302,12 @@ export class ArchivioCaricamentiDexie implements ArchivioCaricamentiVideo {
     return sorgenteDeposito(jobId, riga)
   }
 
-  async scriviByte(jobId: string, byte: Blob): Promise<void> {
+  async scriviByte(jobId: string, byte: Blob, segnale?: AbortSignal): Promise<void> {
     await inFila(jobId, async () => {
+      // Questa copia può aver aspettato in fila dietro un'altra operazione sullo
+      // stesso job, e nel frattempo il lavoro può essere stato annullato: allora non
+      // si tocca niente, nemmeno `scrittureInCorso`.
+      fermaSeAnnullata(segnale)
       scrittureInCorso.add(jobId)
       let generazione: string | null = null
       let deposito: DbDeposito | null = null
@@ -312,6 +328,10 @@ export class ArchivioCaricamentiDexie implements ArchivioCaricamentiVideo {
         // Una fetta alla volta, ciascuna nella propria transazione: in memoria c'è
         // al massimo un blocco, e ogni commit libera ciò che ha scritto.
         for (let indice = 0, offset = 0; offset < byte.size; indice++, offset += BLOCCO_VIDEO_LOCALE) {
+          // Il confine di un blocco è l'unico punto in cui ci si può fermare senza
+          // lasciare un blocco a metà: un segnale annullato mentre il blocco è in
+          // scrittura lo ferma qui, al giro dopo.
+          fermaSeAnnullata(segnale)
           const fine = Math.min(offset + BLOCCO_VIDEO_LOCALE, byte.size)
           const buffer = await leggiBloccoBlob(byte.slice(offset, fine))
           if (buffer.byteLength !== fine - offset) throw new ErroreByteVideo('VIDEO_BLOCCO_INCOMPLETO')
@@ -320,15 +340,24 @@ export class ArchivioCaricamentiDexie implements ArchivioCaricamentiVideo {
         const manifest: ManifestBlocchi = {
           jobId, formato: 'blocchi-v2', generazione, size: byte.size, type: byte.type, dimensioneBlocco: BLOCCO_VIDEO_LOCALE,
         }
+        // Anche l'ultimo blocco può essere stato scritto mentre il segnale si
+        // annullava: senza manifest quei blocchi non li nomina nessuno, e si tolgono
+        // qui sotto come quelli di una copia interrotta.
+        fermaSeAnnullata(segnale)
         // Il momento in cui il deposito nuovo esiste: prima di qui, chi legge vede
         // ancora quello vecchio, intero.
         await apri().byte.put(manifest)
       } catch (err) {
-        segnalaDeposito('error', 'video-upload-persistenza-fallita', jobId, {
-          byte: byte.size,
-          error_code: nomeErrore(err),
-          ...(causaInterna(err) ? { causa: causaInterna(err)! } : {}),
-        })
+        // Un annullamento non è un guasto: chi l'ha chiesto lo sa, e un `error` qui
+        // direbbe che il telefono ha perso la ripresa quando invece l'abbiamo buttata
+        // noi. La pulizia, invece, è identica.
+        if (!eCopiaAnnullata(err)) {
+          segnalaDeposito('error', 'video-upload-persistenza-fallita', jobId, {
+            byte: byte.size,
+            error_code: nomeErrore(err),
+            ...(causaInterna(err) ? { causa: causaInterna(err)! } : {}),
+          })
+        }
         // Senza un deposito precedente da conservare il database del job se ne va
         // INTERO: su WebKit togliere le righe non libera il disco, e con il telefono
         // pieno anche la riga del caricamento — che in memoria non ci sta — non

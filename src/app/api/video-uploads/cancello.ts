@@ -3,9 +3,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { scuoleDiUtente } from '@/lib/auth/scope'
-import type { CanaleVideo } from '@/lib/media/video/contratto'
+import { logErrore } from '@/lib/logging/logger'
+import { CANALI_VIDEO, type CanaleVideo } from '@/lib/media/video/contratto'
 
-import { logVideo, rispostaVideo } from './risposte'
+import { logVideo, pipelineAssente, rispostaPipelineAssente, rispostaVideo } from './risposte'
 
 /**
  * IL CANCELLO APPLICATIVO DELLA PIPELINE VIDEO — chi sei, dove stai scrivendo,
@@ -37,7 +38,12 @@ import { logVideo, rispostaVideo } from './risposte'
  * repository: una copia del gate scritta dentro un handler proteggeva la `POST`
  * e lasciava scoperta la `PATCH` accanto — due strade, e su una non c'era
  * nessuno. `sedeAncoraPropria` è chiamata da un punto solo (`leggiIntento`) e
- * vale quindi per il `GET` e per tutte e quattro le azioni del `PATCH`.
+ * vale quindi per il `GET`, per tutte le azioni del `PATCH` e — dal 2026-10-02 —
+ * per la `POST` che rinnova la firma (`[id]/firma`): `leggiIntento` vive QUI,
+ * e non più dentro `[id]/route.ts`, proprio perché le strade che leggono
+ * l'intento di una persona sono diventate tre, e una copia della lettura in una
+ * delle tre sarebbe la prossima `PATCH` scoperta. (Un file di route può esportare
+ * solo i metodi HTTP: una funzione condivisa fra due route sta in un modulo accanto.)
  *
  * ⚠️ CHE COSA *NON* STA QUI, e perché. La risoluzione della sede di una SCRITTURA
  * NUOVA (`resolveScuolaScrittura`) resta scritta dentro l'handler della `POST`.
@@ -140,4 +146,134 @@ export async function sedeAncoraPropria(opzioni: {
     accessibili: proprie.length,
   })
   return { response: rispostaVideo('VIDEO_NON_AUTORIZZATO', 403) }
+}
+
+/**
+ * Le colonne che servono a raccontare lo stato di un intento, e nessuna di più.
+ *
+ * ⚠️ MAI `tag_alunni`. Sono identificativi di minori: servono al pubblicatore (il server, quando il
+ * video è pronto), non a chi legge lo stato — che dei bambini conosce il numero (`n_tag`, che
+ * sopravvive alla minimizzazione) e basta.
+ */
+const COLONNE_INTENTO = 'id, owner_id, scuola_id, channel, revision, status, updated_at'
+
+/**
+ * Le colonne dei job.
+ *
+ * `attempt` c'è perché da solo — con lo stato — dice se il job si sta ritentando
+ * (`riprovaAutomaticaInCorso`). Senza questa colonna PostgREST non la restituirebbe e
+ * la scheda non direbbe mai «lo stiamo riprovando», senza nessun errore da nessuna
+ * parte: il test legge la lista delle colonne chieste, non solo il corpo che torna.
+ * `last_error_code` NON c'è, e non deve esserci: è il nome interno della causa.
+ *
+ * Le tre in coda (PR 2, 2026-10-02) servono alle azioni, non al corpo: `original_path` e
+ * `mime_dichiarato` alla firma nuova (`[id]/firma`: il percorso del job e il tipo che l'apertura
+ * aveva dichiarato), `arrivato_il` al `PATCH caricato` (un `SOURCE_CONFLICT` su un job che il
+ * trigger d'arrivo ha già portato in coda vale un successo). Il corpo di GET e PATCH si costruisce
+ * A MANO da `statoJob` — mai restituendo la riga — quindi chiederle non le fa uscire, e un test
+ * lo tiene fermo (il percorso di un originale porta l'uuid di chi l'ha caricato).
+ */
+const COLONNE_JOB =
+  'id, intent_id, channel, status, error_code, attempt, updated_at, created_at, original_path, mime_dichiarato, arrivato_il'
+
+export type RigaIntento = {
+  id: string
+  owner_id: string
+  scuola_id: string | null
+  channel: string
+  revision: number
+  status: string
+  updated_at: string
+}
+
+export type RigaJob = {
+  id: string
+  intent_id: string
+  channel: string
+  status: string
+  error_code: string | null
+  /** Il numero del tentativo: 0 prima della prima presa in carico, +1 a ogni `video_job_claim`. */
+  attempt: number
+  updated_at: string
+  created_at: string
+  /** Dove sta l'originale nel bucket privato: serve a firmare di nuovo, e non esce mai verso il client. */
+  original_path: string
+  /** Il tipo dichiarato all'apertura (solo i video di Galleria con destinatari lo scrivono). */
+  mime_dichiarato: string | null
+  /** Quando il file è arrivato (lo scrive il trigger d'arrivo): `null` finché non è arrivato. */
+  arrivato_il: string | null
+}
+
+export type Letto =
+  | { intento: RigaIntento; job: RigaJob[]; response?: undefined }
+  | { intento?: undefined; job?: undefined; response: NextResponse }
+
+/** Il canale della riga, ricondotto al vocabolario chiuso del contratto. */
+export function canaleDi(valore: string): CanaleVideo {
+  return (CANALI_VIDEO as readonly string[]).includes(valore) ? (valore as CanaleVideo) : 'gallery'
+}
+
+/**
+ * Legge l'intento e i suoi job, applicando il cancello applicativo.
+ *
+ * Lo chiamano il `GET` e il `PATCH` di `[id]` e la `POST` di `[id]/firma`: tre strade, un cancello.
+ *
+ * ⚠️ IL FILTRO `owner_id` È DENTRO LA QUERY, non un confronto dopo. Così un
+ * intento di un'altra persona risponde **404** invece di 403: gli uuid non si
+ * indovinano, e un 403 direbbe a chi prova che quell'id esiste. Il 403 resta per
+ * la SEDE, che è l'unico caso in cui la riga è davvero tua e il perimetro no.
+ */
+export async function leggiIntento(
+  supabase: SupabaseClient,
+  user: AppUser,
+  intentId: string,
+  operazione: string,
+): Promise<Letto> {
+  const { data: intento, error: erroreIntento } = await supabase
+    .from('video_intents')
+    .select(COLONNE_INTENTO)
+    .eq('id', intentId)
+    .eq('owner_id', user.id)
+    .maybeSingle()
+
+  // PostgREST non lancia: l'errore è nel valore di ritorno, e un `try` attorno a
+  // questa `await` non scatterebbe mai.
+  if (erroreIntento) {
+    if (pipelineAssente(erroreIntento)) {
+      return { response: rispostaPipelineAssente(operazione, 'video_intents', erroreIntento) }
+    }
+    logErrore({ operazione, stato: 500, evento: 'db' }, erroreIntento)
+    return { response: rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500) }
+  }
+  if (!intento) {
+    return { response: rispostaVideo('VIDEO_NON_TROVATO', 404) }
+  }
+
+  const riga = intento as unknown as RigaIntento
+  const canale = canaleDi(riga.channel)
+
+  const sede = await sedeAncoraPropria({
+    supabase,
+    user,
+    canale,
+    scuolaIdIntento: riga.scuola_id,
+    operazione,
+  })
+  if (sede.response) return { response: sede.response }
+
+  const { data: job, error: erroreJob } = await supabase
+    .from('video_jobs')
+    .select(COLONNE_JOB)
+    .eq('intent_id', intentId)
+    .order('created_at', { ascending: true })
+
+  if (erroreJob) {
+    if (pipelineAssente(erroreJob)) {
+      return { response: rispostaPipelineAssente(operazione, 'video_jobs', erroreJob) }
+    }
+    logErrore({ operazione, stato: 500, evento: 'db' }, erroreJob)
+    return { response: rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500) }
+  }
+
+  return { intento: riga, job: (job ?? []) as unknown as RigaJob[] }
 }

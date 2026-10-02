@@ -1,5 +1,19 @@
 import { spawnSync } from 'node:child_process'
-import { videoTemporalProgram, type VideoTemporalEvidence } from '@/lib/media/video/temporale'
+import {
+  VIDEO_TEMPORAL_REASONS,
+  compareVideoTimelines,
+  videoTemporalProgram,
+  type VideoTemporalEvidence,
+} from '@/lib/media/video/temporale'
+import {
+  FPS_MEDIO,
+  SORGENTE,
+  USCITA,
+  coperturaSecondi,
+  framesDi,
+  leggiTimeline,
+  type TimelineFixture,
+} from '../fixtures/video/falso-scarto-2026-09-28'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -14,8 +28,9 @@ import {
   type BinariVideo,
 } from '../fixtures/ffmpeg'
 import { buildVideoEncodeArgs } from '@/lib/media/video/encode'
+import { MAX_VIDEO_DURATION_SECONDS } from '@/lib/media/video/limiti'
 import { parseVideoProbe, type VideoProbe } from '@/lib/media/video/probe'
-import { verifyVideoOutput } from '@/lib/media/video/verify'
+import { diagnosiVerifica, verifyVideoOutput } from '@/lib/media/video/verify'
 
 const source: VideoProbe = {
   durationSeconds: 10,
@@ -184,21 +199,25 @@ describe('verifyVideoOutput — casi sintetici', () => {
     expect(verifyVideoOutput(unknownAudioDuration, raw, 1, decoded)).toMatchObject({ ok: true })
   })
 
-  it('accetta i millisecondi oltre 180 secondi introdotti dal padding AAC', () => {
+  it('accetta i millisecondi oltre il tetto di durata introdotti dal padding AAC', () => {
+    // Il tetto è la COSTANTE (T1 l'ha portata da 180 a 300 s): la verifica dell'uscita non usa il parser
+    // degli ingressi proprio perché l'AAC può superarlo di pochi millisecondi.
+    const conPadding = (MAX_VIDEO_DURATION_SECONDS + 0.021333).toFixed(6)
+    const frames = MAX_VIDEO_DURATION_SECONDS * 30
     const longSource = {
       ...source,
-      durationSeconds: 180,
-      videoDurationSeconds: 180,
-      audioDurationSeconds: 180,
+      durationSeconds: MAX_VIDEO_DURATION_SECONDS,
+      videoDurationSeconds: MAX_VIDEO_DURATION_SECONDS,
+      audioDurationSeconds: MAX_VIDEO_DURATION_SECONDS,
     }
     const raw = outputProbe()
-    raw.streams[0].duration = '180.000000'
-    raw.streams[1].duration = '180.021333'
-    raw.format.duration = '180.021333'
+    raw.streams[0].duration = `${MAX_VIDEO_DURATION_SECONDS}.000000`
+    raw.streams[1].duration = conPadding
+    raw.format.duration = conPadding
 
-    expect(verifyVideoOutput(longSource, raw, 1, { exitCode: 0, decodedFrames: 5_400, temporal: { ...decoded.temporal, sourceFrames: 5_400, outputFrames: 5_400 } })).toMatchObject({
+    expect(verifyVideoOutput(longSource, raw, 1, { exitCode: 0, decodedFrames: frames, temporal: { ...decoded.temporal, sourceFrames: frames, outputFrames: frames } })).toMatchObject({
       ok: true,
-      output: { durationSeconds: 180.021333 },
+      output: { durationSeconds: Number(conPadding) },
     })
   })
 
@@ -1147,4 +1166,474 @@ describe('regressione media VFR e attestazione della timeline', () => {
       ...decoded, temporal: { ...timeline, ok: false },
     })).toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
   })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * LA DURATA E L'ULTIMO CAMPIONE DELLA SORGENTE (02/10/2026)
+ *
+ * Il muxer non conserva la durata dell'ultimo campione video: la sceglie lui. Con i PTS identici
+ * fotogramma per fotogramma — la prova che `compareVideoTimelines` già dà — quella durata è l'UNICO
+ * grado di libertà rimasto, e quando la sorgente tiene l'ultimo campione più a lungo di un frame (una
+ * schermata ferma fino alla fine) l'uscita risulta più corta di tutta la differenza. La tolleranza sulla
+ * durata diventa `max(1 frame, ultimo campione della sorgente)` + padding AAC, e SOLO se conteggio
+ * e PTS coincidono: un frame mancante fa già fallire il conteggio, e in `reduce60` non c'entra.
+ * ════════════════════════════════════════════════════════════════════════════ */
+describe('verifyVideoOutput — l’ultimo campione della sorgente allarga la durata, e solo quella', () => {
+  const misure = (sourceLastSample: number) => ({
+    sourceLastSample, outputLastSample: 1 / 30, sourceCoverage: 10, outputCoverage: 10, epsilon: 1e-6,
+  })
+  /** L'evidenza di `decoded` più le misure della prova temporale (e, se serve, altri campi). */
+  const conMisure = (sourceLastSample: number, extra: Record<string, unknown> = {}) => ({
+    ...decoded,
+    temporal: { ...decoded.temporal, measures: misure(sourceLastSample), ...extra } as VideoTemporalEvidence,
+  })
+  /** Una sorgente il cui VIDEO dura `video` secondi, ultimo campione compreso: audio e container restano a 10 s. */
+  const sorgenteConVideo = (video: number): VideoProbe => ({
+    ...source, videoDurationSeconds: video, durationSeconds: Math.max(video, 10),
+  })
+  /** Uscita con il video lungo `video` secondi (l'audio a 10,021333 come sempre). */
+  const uscitaConVideo = (video: string) => {
+    const raw = outputProbe()
+    raw.streams[0].duration = video
+    return raw
+  }
+  const MISMATCH = { ok: false, code: 'OUTPUT_DURATION_MISMATCH' } as const
+
+  it('una sorgente con l’ultimo campione di 200 ms: l’uscita da 10 s non è un troncamento, ma senza la misura sì', () => {
+    // Video sorgente 10,2 s, uscita 10,0 s: Δ 0,2 s. Un frame (33 ms) + AAC (21 ms) non bastano.
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('10.000000'), 1, decoded)).toEqual(MISMATCH)
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('10.000000'), 1, conMisure(0.2))).toMatchObject({ ok: true })
+  })
+
+  it('la tolleranza è esattamente max(1 frame, ultimo campione) + padding AAC: 0,2213 s, ai due lati', () => {
+    // 0,2 + 1024/48000 = 0,221333. Δ 0,22 dentro, Δ 0,225 fuori.
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('9.980000'), 1, conMisure(0.2))).toMatchObject({ ok: true })
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('9.975000'), 1, conMisure(0.2))).toEqual(MISMATCH)
+  })
+
+  it('un ultimo campione più CORTO di un frame non stringe niente: il frame resta la tolleranza minima', () => {
+    // Misura 3 ms, sorgente 10,0 s, uscita 9,946 s (Δ 54 ms < 33 + 21): passa come prima di questa correzione.
+    expect(verifyVideoOutput(source, uscitaConVideo('9.946000'), 1, conMisure(0.003))).toMatchObject({ ok: true })
+    // E il limite non scende: Δ 60 ms resta fuori.
+    expect(verifyVideoOutput(source, uscitaConVideo('9.940000'), 1, conMisure(0.003))).toEqual(MISMATCH)
+  })
+
+  it('in reduce60 non vale: conteggio e PTS NON coincidono, la tolleranza resta un frame d’uscita più l’AAC', () => {
+    const sorgente120: VideoProbe = { ...sorgenteConVideo(10.2), fps: 120 }
+    const sessanta = uscitaConVideo('10.000000')
+    sessanta.streams[0].avg_frame_rate = '60/1'
+    const riduzione = conMisure(0.2, { mode: 'reduce60', sourceFps: 120, outputFps: 60, sourceFrames: 1_224, outputFrames: 300 })
+    expect(verifyVideoOutput(sorgente120, sessanta, 1, riduzione)).toEqual(MISMATCH)
+    // Il termine di paragone: stessa differenza, conversione 1:1 a 30 fps, passa.
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('10.000000'), 1, conMisure(0.2))).toMatchObject({ ok: true })
+  })
+
+  it('non vale per la durata della traccia AUDIO, che ha il suo padding AAC e nient’altro', () => {
+    // Audio sorgente 10,3 s, uscita 10,021 s: Δ 0,279. Il video e il totale passerebbero con la
+    // tolleranza allargata (10,0 ≈ 10,0 e 0,279 < 0,3 + 0,021): a farlo cadere è il solo confronto audio.
+    const sorgenteAudioLungo: VideoProbe = { ...source, audioDurationSeconds: 10.3, durationSeconds: 10.3 }
+    expect(verifyVideoOutput(sorgenteAudioLungo, outputProbe(), 1, conMisure(0.3))).toEqual(MISMATCH)
+    // Con un audio sorgente coerente lo stesso scenario passa: l'unica differenza è quel confronto.
+    expect(verifyVideoOutput({ ...source, durationSeconds: 10.3 }, outputProbe(), 1, conMisure(0.3))).toMatchObject({ ok: true })
+  })
+
+  it.each([
+    ['assente', undefined],
+    ['non finita', Number.NaN],
+    ['infinita', Number.POSITIVE_INFINITY],
+    ['negativa', -0.2],
+    ['zero', 0],
+    ['una stringa', '0.2'],
+    ['nulla', null],
+    ['più lunga della traccia stessa (incoerente)', 11],
+  ])('una misura %s non allarga niente', (_nome, valore) => {
+    const prova = conMisure(0.2)
+    ;(prova.temporal.measures as unknown as Record<string, unknown>).sourceLastSample = valore
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('10.000000'), 1, prova)).toEqual(MISMATCH)
+  })
+
+  it('la prova senza `measures` (un marcatore di prima del 02/10) si comporta come prima', () => {
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('10.000000'), 1, decoded)).toEqual(MISMATCH)
+    expect(verifyVideoOutput(source, outputProbe(), 1, decoded)).toMatchObject({ ok: true })
+  })
+
+  it('le controprove restano rosse: coda spuria, troncamento vero, frame persi, prova negativa', () => {
+    // Una coda spuria: l'uscita dura un secondo PIÙ della sorgente, e la sorgente non aveva un ultimo
+    // campione lungo. Prima era la copertura terminale a respingerla: ora è la durata.
+    expect(verifyVideoOutput(source, uscitaConVideo('11.000000'), 1, conMisure(1 / 30))).toEqual(MISMATCH)
+    // Un troncamento vero NON si nasconde dietro l'ultimo campione: Δ 0,5 s contro 0,2213 s.
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('9.700000'), 1, conMisure(0.2))).toEqual(MISMATCH)
+    // Un frame in meno (conteggi diversi): fallisce PRIMA, sul frame rate, e la durata non è nemmeno guardata.
+    const unoInMeno = conMisure(0.2, { sourceFrames: 301 })
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('10.000000'), 1, unoInMeno))
+      .toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
+    // La prova che dice no non apre niente.
+    const negativa = conMisure(0.2, { ok: false, reason: 'TIMESTAMP_MISMATCH' })
+    expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('10.000000'), 1, negativa))
+      .toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
+  })
+})
+
+/**
+ * I due probe (sorgente e uscita) coerenti con le timeline del 28/09: le durate dei flussi sono le loro
+ * coperture, le dimensioni e il colore quelli di un Full HD SDR qualunque (la fixture porta solo le
+ * timeline, e nient'altro che è del file vero).
+ */
+function probiCoerenti(sorgente: TimelineFixture, uscita: TimelineFixture) {
+  const videoIn = coperturaSecondi(sorgente, SORGENTE.video), audioIn = coperturaSecondi(sorgente, SORGENTE.audio)
+  const videoOut = coperturaSecondi(uscita, USCITA.video), audioOut = coperturaSecondi(uscita, USCITA.audio)
+  const probeSorgente: VideoProbe = {
+    ...source, fps: FPS_MEDIO,
+    durationSeconds: Math.max(videoIn, audioIn), videoDurationSeconds: videoIn, audioDurationSeconds: audioIn,
+    videoStreamIndex: SORGENTE.video, audioStreamIndex: SORGENTE.audio,
+  }
+  const sondaUscita = outputProbe()
+  sondaUscita.streams[0].avg_frame_rate = '44000000/1456517'
+  sondaUscita.streams[0].duration = videoOut.toFixed(6)
+  sondaUscita.streams[1].sample_rate = '44100'
+  sondaUscita.streams[1].duration = audioOut.toFixed(6)
+  sondaUscita.format.duration = Math.max(videoOut, audioOut).toFixed(6)
+  return { probeSorgente, sondaUscita }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * IL FALSO SCARTO DEL 28/09, dalle timeline vere alla verifica dell'uscita
+ *
+ * `compareVideoTimelines` sulle due timeline misurate (come farebbe la Sandbox) e `verifyVideoOutput` sul
+ * suo verdetto. I probe di sorgente e uscita sono costruiti attorno alle timeline: le durate dei flussi
+ * sono le loro coperture, le dimensioni e il colore quelli di un Full HD SDR qualunque (la fixture porta
+ * solo le timeline). Col controllo di prima il primo caso era `OUTPUT_FPS_INVALID`.
+ * ════════════════════════════════════════════════════════════════════════════ */
+describe('verifyVideoOutput — le timeline del 28/09/2026', () => {
+  const BYTE_USCITA = 8_853_997
+
+  const evidenzaDi = (sorgente: TimelineFixture, uscita: TimelineFixture) =>
+    compareVideoTimelines(sorgente, uscita, SORGENTE.video, SORGENTE.audio, FPS_MEDIO, MAX_VIDEO_DURATION_SECONDS)
+
+  function verificaFixture(sorgente: TimelineFixture, uscita: TimelineFixture, prova: VideoTemporalEvidence = evidenzaDi(sorgente, uscita)) {
+    const { probeSorgente, sondaUscita } = probiCoerenti(sorgente, uscita)
+    return verifyVideoOutput(probeSorgente, sondaUscita, BYTE_USCITA, { exitCode: 0, decodedFrames: prova.outputFrames, temporal: prova })
+  }
+
+  it('la conversione perfetta del 28/09 adesso passa: 264 frame, PTS identici, ultimo campione 3 ms contro 33 ms', () => {
+    const sorgente = leggiTimeline('sorgente'), uscita = leggiTimeline('uscita')
+    expect(evidenzaDi(sorgente, uscita)).toMatchObject({ ok: true, sourceFrames: 264, outputFrames: 264 })
+    expect(verificaFixture(sorgente, uscita)).toMatchObject({ ok: true, output: { decodedFrames: 264, hasAudio: true } })
+  })
+
+  it('un frame perso, e il verdetto è lo stesso di sempre: OUTPUT_FPS_INVALID', () => {
+    const sorgente = leggiTimeline('sorgente'), uscita = leggiTimeline('uscita')
+    uscita.frames.splice(uscita.frames.indexOf(framesDi(uscita, USCITA.video)[100]), 1)
+    expect(verificaFixture(sorgente, uscita)).toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
+  })
+
+  it('con un ultimo campione di 100 ms in ingresso passa SOLO perché la tolleranza sulla durata lo conosce', () => {
+    const sorgente = leggiTimeline('sorgente'), uscita = leggiTimeline('uscita')
+    framesDi(sorgente, SORGENTE.video).at(-1)!.duration = 100_000
+    const prova = evidenzaDi(sorgente, uscita)
+    expect(prova).toMatchObject({ ok: true })
+    expect(prova.measures!.sourceLastSample).toBeCloseTo(0.1, 9)
+    expect(verificaFixture(sorgente, uscita, prova)).toMatchObject({ ok: true })
+    // Senza le misure: Δ 66,7 ms contro 33,1 + 23,2 = 56,3 ms.
+    expect(verificaFixture(sorgente, uscita, { ...prova, measures: undefined })).toEqual({ ok: false, code: 'OUTPUT_DURATION_MISMATCH' })
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * LA DIAGNOSI: i numeri di una verifica, non solo il codice
+ * ════════════════════════════════════════════════════════════════════════════ */
+describe('diagnosiVerifica', () => {
+  const sorgenteFixture = () => leggiTimeline('sorgente')
+  const uscitaConFramePerso = () => {
+    const uscita = leggiTimeline('uscita')
+    uscita.frames.splice(uscita.frames.indexOf(framesDi(uscita, USCITA.video)[100]), 1)
+    return uscita
+  }
+  const caso = (sorgente: TimelineFixture, uscita: TimelineFixture) => {
+    const prova = compareVideoTimelines(sorgente, uscita, SORGENTE.video, SORGENTE.audio, FPS_MEDIO, MAX_VIDEO_DURATION_SECONDS)
+    const { probeSorgente, sondaUscita } = probiCoerenti(sorgente, uscita)
+    const evidenza = { exitCode: 0, decodedFrames: prova.outputFrames, temporal: prova }
+    return { probeSorgente: { ...probeSorgente, ignoredAudioTracks: 2 }, sondaUscita, evidenza }
+  }
+
+  it('un rifiuto per frame persi porta i numeri: frame, fps, coperture, ultimo campione, tolleranze', () => {
+    const { probeSorgente, sondaUscita, evidenza } = caso(sorgenteFixture(), uscitaConFramePerso())
+    const diagnosi = diagnosiVerifica(probeSorgente, sondaUscita, evidenza, 'OUTPUT_FPS_INVALID')
+    expect(diagnosi).toMatchObject({
+      v: 1, esito: 'OUTPUT_FPS_INVALID', modo: 'preserve', motivo: 'FRAME_COUNT_MISMATCH',
+      frame_sorgente: 264, frame_uscita: 263, frame_decodificati: 263, tracce_audio_ignorate: 2,
+    })
+    expect(diagnosi.fps_sorgente).toBeCloseTo(30.2611, 3)
+    expect(diagnosi.fps_uscita).toBeCloseTo(30.2091, 3)
+    expect(diagnosi.copertura_sorgente_ms).toBeCloseTo(8724.06, 2)
+    expect(diagnosi.copertura_uscita_ms).toBeCloseTo(8754.358, 2)
+    expect(diagnosi.ultimo_campione_sorgente_ms).toBeCloseTo(3.035, 3)
+    expect(diagnosi.ultimo_campione_uscita_ms).toBeCloseTo(33.333, 3)
+    expect(diagnosi.durata_video_sorgente_ms).toBeCloseTo(8724.06, 2)
+    expect(diagnosi.durata_video_uscita_ms).toBeCloseTo(8754.358, 2)
+    expect(diagnosi.durata_audio_sorgente_ms).toBeCloseTo(8731.678, 2)
+    expect(diagnosi.durata_audio_uscita_ms).toBeCloseTo(8731.678, 2)
+    // Un frame (1/30,2091) + AAC (1024/44100): la prova non è 1:1, quindi nessun ultimo campione allarga.
+    expect(diagnosi.tolleranza_durata_ms).toBeCloseTo(1000 / 30.2091 + (1024 / 44100) * 1000, 2)
+    expect(diagnosi.tolleranza_pts_ms).toBeCloseTo(0.001, 3)
+  })
+
+  it('la tolleranza sulla durata riportata è quella che la verifica USA, ultimo campione compreso', () => {
+    const sorgente = sorgenteFixture(), uscita = leggiTimeline('uscita')
+    framesDi(sorgente, SORGENTE.video).at(-1)!.duration = 100_000
+    const { probeSorgente, sondaUscita, evidenza } = caso(sorgente, uscita)
+    expect(verifyVideoOutput(probeSorgente, sondaUscita, 1, evidenza)).toMatchObject({ ok: true })
+    const diagnosi = diagnosiVerifica(probeSorgente, sondaUscita, evidenza, 'ok')
+    expect(diagnosi.esito).toBe('ok')
+    expect(diagnosi.motivo).toBeUndefined()
+    expect(diagnosi.tolleranza_durata_ms).toBeCloseTo(100 + (1024 / 44100) * 1000, 2)
+  })
+
+  it('contiene SOLO numeri ed enumerati: nessuna stringa che arrivi dal file, né un nome, né un percorso', () => {
+    const { probeSorgente, sondaUscita, evidenza } = caso(sorgenteFixture(), uscitaConFramePerso())
+    // L'uscita del probe porta dei campi di testo che NON devono comparire: tag, nome file, percorsi.
+    const sporca = structuredClone(sondaUscita) as Record<string, unknown>
+    ;(sporca.format as Record<string, unknown>).filename = '/tmp/cartella-di-prova/nome-di-prova.mp4'
+    ;(sporca.format as Record<string, unknown>).tags = { title: 'titolo-di-prova', location: '+00.0000+000.0000/' }
+    const diagnosi = diagnosiVerifica(probeSorgente, sporca, evidenza, 'OUTPUT_FPS_INVALID')
+    const testo = JSON.stringify(diagnosi)
+    for (const vietata of ['cartella-di-prova', 'nome-di-prova', 'titolo-di-prova', '+00.0000', 'mp4', 'tmp']) expect(testo).not.toContain(vietata)
+    const MOTIVI = [...VIDEO_TEMPORAL_REASONS, 'SCONOSCIUTO'] as string[]
+    for (const [chiave, valore] of Object.entries(diagnosi)) {
+      if (typeof valore === 'number') expect(Number.isFinite(valore), chiave).toBe(true)
+      else if (chiave === 'esito') expect(valore).toBe('OUTPUT_FPS_INVALID')
+      else if (chiave === 'modo') expect(['preserve', 'reduce60']).toContain(valore)
+      else if (chiave === 'motivo') expect(MOTIVI).toContain(valore)
+      else throw new Error(`campo non numerico e non enumerato: ${chiave}`)
+    }
+  })
+
+  it('una stringa che non è nell’elenco chiuso non passa: diventa SCONOSCIUTO, e non si porta dietro il testo', () => {
+    const { probeSorgente, sondaUscita, evidenza } = caso(sorgenteFixture(), uscitaConFramePerso())
+    const inquinata = {
+      ...evidenza,
+      temporal: { ...evidenza.temporal, mode: 'inventato', reason: 'DROP TABLE video_jobs; '.repeat(200) } as unknown as VideoTemporalEvidence,
+    }
+    const diagnosi = diagnosiVerifica(probeSorgente, sondaUscita, inquinata, 'NON_UN_CODICE' as never)
+    expect(diagnosi).toMatchObject({ esito: 'SCONOSCIUTO', motivo: 'SCONOSCIUTO' })
+    expect(diagnosi.modo).toBeUndefined()
+    expect(JSON.stringify(diagnosi)).not.toContain('DROP TABLE')
+  })
+
+  it('sta nei 2048 byte della colonna anche col caso peggiore: tutti i campi presenti, tutti i numeri enormi', () => {
+    const enorme = 9e300
+    const evidenza = {
+      exitCode: 0, decodedFrames: enorme,
+      temporal: {
+        version: 1, ok: false, mode: 'reduce60', reason: 'AUDIO_TIMELINE_MISMATCH',
+        sourceFrames: enorme, outputFrames: enorme, sourceFps: enorme, outputFps: enorme,
+        measures: { sourceLastSample: enorme, outputLastSample: enorme, sourceCoverage: enorme, outputCoverage: enorme, epsilon: enorme },
+      },
+    } as unknown as Parameters<typeof diagnosiVerifica>[2]
+    const probeEnorme = { ...source, fps: enorme, durationSeconds: enorme, videoDurationSeconds: enorme, audioDurationSeconds: enorme, ignoredAudioTracks: enorme }
+    const sonda = outputProbe()
+    sonda.streams[0].duration = '9'.repeat(40)
+    sonda.streams[1].duration = '9'.repeat(40)
+    const diagnosi = diagnosiVerifica(probeEnorme, sonda, evidenza, 'OUTPUT_AUDIO_UNEXPECTED')
+    // Il caso peggiore è davvero «tutto presente»: v, esito, modo, motivo e i sedici numeri.
+    expect(Object.keys(diagnosi)).toHaveLength(20)
+    expect(JSON.stringify(diagnosi).length).toBeLessThanOrEqual(2048)
+    for (const valore of Object.values(diagnosi)) if (typeof valore === 'number') expect(Math.abs(valore)).toBeLessThanOrEqual(1e9)
+  })
+
+  it('i valori negativi, non finiti o non numerici spariscono invece di sporcare la colonna', () => {
+    const { probeSorgente, sondaUscita, evidenza } = caso(sorgenteFixture(), uscitaConFramePerso())
+    const rotta = {
+      ...evidenza,
+      decodedFrames: Number.NaN,
+      temporal: {
+        ...evidenza.temporal,
+        sourceFrames: '264', outputFrames: Number.POSITIVE_INFINITY,
+        measures: { sourceLastSample: '0.003', outputLastSample: null, sourceCoverage: Number.NaN, outputCoverage: undefined, epsilon: { x: 1 } },
+      },
+    } as unknown as Parameters<typeof diagnosiVerifica>[2]
+    const diagnosi = diagnosiVerifica({ ...probeSorgente, fps: Number.NaN }, sondaUscita, rotta, 'OUTPUT_FPS_INVALID')
+    for (const chiave of ['frame_sorgente', 'frame_uscita', 'frame_decodificati', 'fps_sorgente', 'copertura_sorgente_ms',
+      'copertura_uscita_ms', 'ultimo_campione_sorgente_ms', 'ultimo_campione_uscita_ms', 'tolleranza_pts_ms']) {
+      expect(diagnosi, chiave).not.toHaveProperty(chiave)
+    }
+    expect(diagnosi).toMatchObject({ v: 1, esito: 'OUTPUT_FPS_INVALID' })
+  })
+
+  it('è TOTALE: probe nulli, JSON rotto, evidenza assente o sorgente senza campi — mai un’eccezione, solo meno campi', () => {
+    expect(diagnosiVerifica(source, null, null, 'INVALID_OUTPUT_PROBE')).toMatchObject({ v: 1, esito: 'INVALID_OUTPUT_PROBE', fps_sorgente: 30 })
+    expect(diagnosiVerifica(source, '{rotto', undefined, 'INVALID_OUTPUT_PROBE')).toMatchObject({ esito: 'INVALID_OUTPUT_PROBE' })
+    expect(diagnosiVerifica(source, { streams: 'no', format: null }, null, 'OUTPUT_VIDEO_INVALID')).toMatchObject({ esito: 'OUTPUT_VIDEO_INVALID' })
+    expect(diagnosiVerifica(source, { streams: [null, 3, 'x', []] }, { exitCode: 0, decodedFrames: 3 }, 'OUTPUT_VIDEO_INVALID')).toMatchObject({ frame_decodificati: 3 })
+    expect(diagnosiVerifica({} as unknown as VideoProbe, outputProbe(), decoded, 'ok')).toMatchObject({ v: 1, esito: 'ok' })
+    expect(diagnosiVerifica(null as unknown as VideoProbe, undefined, undefined, 'ok')).toEqual({ v: 1, esito: 'ok' })
+  })
+
+  it('l’uscita con più video o più audio non inventa una traccia: i numeri dell’uscita mancano, quelli della sorgente no', () => {
+    const doppio = outputProbe()
+    doppio.streams.push({ ...doppio.streams[1], index: 2 })
+    const diagnosi = diagnosiVerifica(source, doppio, decoded, 'OUTPUT_AUDIO_INVALID')
+    expect(diagnosi).not.toHaveProperty('durata_audio_uscita_ms')
+    expect(diagnosi).toMatchObject({ durata_video_uscita_ms: 10000, durata_video_sorgente_ms: 10000 })
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * ULTIMO CAMPIONE CORTO E TRACCE AUDIO, CON FFMPEG VERO
+ *
+ * Le due fixture del 28/09 sono timeline MISURATE, con attorno dei probe costruiti; queste famiglie di
+ * caso fanno lavorare un encoder. Stesse regole di sempre: `binariVideo(contesto)` fallisce in CI se
+ * manca la build pinnata, e fuori da CI si dichiara non disponibile — niente salti statici.
+ *
+ * ⚠️ LA FIXTURE RESTA UNA FIXTURE. La sorgente del 28/09 aveva l'ultimo campione video più corto di un
+ * frame (3 ms); qui lo si accorcia a 3 ms rimuxando i pacchetti con `-bsf:v setts` (nessuna
+ * ricodifica). Ciò che rende il caso un caso e non un decoro è la PREMESSA, che si asserisce: l'uscita
+ * deve aver scritto un ultimo campione molto più lungo di quello della sorgente. Se la build pinnata un
+ * giorno lo conservasse, il caso diventerebbe rosso e lo direbbe, invece di passare a vuoto.
+ * Misurato il 02/10/2026 con ffmpeg 8.1.2 (Homebrew): i sei casi qui sotto passano, e col codice di
+ * prima i due dell'ultimo campione cadono su `TERMINAL_COVERAGE_MISMATCH`. Sulla build pinnata girano
+ * soltanto in CI.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Rimuxa `base` senza ricodificare, portando l'ultimo pacchetto video (il suo indice, da 0) alla durata
+ * `secondi`. Misurato il 02/10/2026 con ffmpeg 8.1.2: l'ultimo campione della sorgente diventa
+ * 3,035 ms e quello della conversione di produzione torna di un frame intero.
+ */
+function conUltimoCampioneCorto(binari: BinariVideo, base: string, uscita: string, ultimoPacchetto: number, secondi: number): void {
+  generaFixture(binari, [
+    '-i', base, '-c', 'copy',
+    '-bsf:v', `setts=duration='if(eq(N\\,${ultimoPacchetto})\\,${secondi}/TB\\,DURATION)'`,
+    uscita,
+  ], 'fixture con l’ultimo campione video accorciato')
+}
+
+/** Video sintetico a `fps` e audio AAC, con la timebase del video a 1/1.000.000 come quella della sorgente del 28/09. */
+function baseConAudio(binari: BinariVideo, percorso: string, fps: number): void {
+  generaFixture(binari, [
+    '-f', 'lavfi', '-i', `testsrc2=size=320x240:rate=${fps}:duration=2`,
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=2.05',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-video_track_timescale', '1000000', percorso,
+  ], `base a ${fps} fps con audio`)
+}
+
+describe('verifyVideoOutput — ultimo campione corto e tracce audio, con ffmpeg vero', () => {
+  for (const { nome, fps, modo } of [
+    { nome: '30 fps, conversione 1:1', fps: 30, modo: 'preserve' },
+    { nome: '120 fps, riduzione a 60', fps: 120, modo: 'reduce60' },
+  ] as const) it(`ultimo campione video di 3 ms in ingresso (${nome}): l’uscita ne scrive uno intero e passa lo stesso`, contesto => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-ultimo-campione-', cartella => {
+      const base = join(cartella, 'base.mov')
+      const ingresso = join(cartella, 'sorgente.mov')
+      const uscita = join(cartella, 'uscita.mp4')
+      baseConAudio(binari, base, fps)
+      conUltimoCampioneCorto(binari, base, ingresso, fps * 2 - 1, 0.003035)
+      const probe = probeDiIngresso(binari, ingresso)
+      converti(binari, probe, ingresso, uscita)
+
+      const prova = provaTemporale(binari, probe, ingresso, uscita)
+      // La PREMESSA: se non regge, il caso non misura niente.
+      expect(prova.measures?.sourceLastSample).toBeCloseTo(0.003035, 5)
+      expect(prova.measures!.outputLastSample).toBeGreaterThan(prova.measures!.sourceLastSample * 4)
+      expect(prova).toMatchObject({ ok: true, mode: modo, sourceFrames: fps * 2 })
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({ ok: true })
+    })
+  }, 60_000)
+
+  it('un frame in meno resta rosso anche con l’ultimo campione corto: il troncamento non si nasconde dietro la correzione', contesto => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-ultimo-campione-tronco-', cartella => {
+      const base = join(cartella, 'base.mov')
+      const ingresso = join(cartella, 'sorgente.mov')
+      const mutilata = join(cartella, 'ultimo-frame-perso.mp4')
+      baseConAudio(binari, base, 30)
+      conUltimoCampioneCorto(binari, base, ingresso, 59, 0.003035)
+      const probe = probeDiIngresso(binari, ingresso)
+      const args = buildVideoEncodeArgs(probe, { channel: 'news', inputPath: ingresso, outputPath: mutilata })
+      args[args.indexOf('-filter_complex') + 1] = args[args.indexOf('-filter_complex') + 1].replace('[vout]', ",select='not(eq(n,59))'[vout]")
+      eseguiFfmpeg(binari, args, 'mutazione: l’ultimo frame rimosso')
+
+      expect(provaTemporale(binari, probe, ingresso, mutilata)).toMatchObject({ ok: false, reason: 'FRAME_COUNT_MISMATCH', sourceFrames: 60, outputFrames: 59 })
+      expect(verifica(binari, probe, mutilata, ingresso)).toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
+    })
+  }, 60_000)
+
+  it('a 120 fps, tre frame in meno in coda restano rossi (l’arco della riduzione)', contesto => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-riduzione-tronca-', cartella => {
+      const base = join(cartella, 'base.mov')
+      const ingresso = join(cartella, 'sorgente.mov')
+      const mutilata = join(cartella, 'tre-frame-persi.mp4')
+      baseConAudio(binari, base, 120)
+      conUltimoCampioneCorto(binari, base, ingresso, 239, 0.003035)
+      const probe = probeDiIngresso(binari, ingresso)
+      const args = buildVideoEncodeArgs(probe, { channel: 'news', inputPath: ingresso, outputPath: mutilata })
+      // L'uscita ha 120 frame (2 s a 60 fps): se ne tengono 117.
+      args[args.indexOf('-filter_complex') + 1] = args[args.indexOf('-filter_complex') + 1].replace('[vout]', ",select='lt(n,117)'[vout]")
+      eseguiFfmpeg(binari, args, 'mutazione: tre frame rimossi in coda')
+
+      expect(provaTemporale(binari, probe, ingresso, mutilata)).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT' })
+      expect(verifica(binari, probe, mutilata, ingresso)).toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
+    })
+  }, 60_000)
+
+  /**
+   * Una traccia audio con un FourCC inventato (`xyzw`) PRIMA della AAC, e predefinita: ffprobe non le dà
+   * il `codec_name`. Prima del 02/10/2026 tutto il video finiva in `UNKNOWN_AUDIO_CODEC`. L'FourCC si
+   * scrive con `-strict unofficial` (altrimenti il muxer lo rifiuta) e su PCM, che non porta un
+   * descrittore del codec dentro: con l'AAC l'`esds` rivelerebbe comunque il codec.
+   */
+  function conAudioIgnotoPrimaDellAac(binari: BinariVideo, percorso: string): void {
+    generaFixture(binari, [
+      '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=30:duration=2',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=2',
+      '-f', 'lavfi', '-i', 'sine=frequency=880:sample_rate=44100:duration=2',
+      '-map', '0:v', '-map', '1:a', '-map', '2:a',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+      '-c:a:0', 'pcm_s16le', '-tag:a:0', 'xyzw', '-c:a:1', 'aac',
+      '-disposition:a:0', 'default', '-disposition:a:1', '0',
+      '-strict', 'unofficial', percorso,
+    ], 'fixture MOV con una traccia audio dal codec ignoto prima dell’AAC')
+  }
+
+  it('la predefinita ha un codec ignoto e accanto c’è un’AAC: si converte l’AAC, l’uscita ha UNA traccia audio e passa', contesto => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-audio-ignoto-', cartella => {
+      const ingresso = join(cartella, 'sorgente.mov')
+      const uscita = join(cartella, 'uscita.mp4')
+      conAudioIgnotoPrimaDellAac(binari, ingresso)
+
+      // La PREMESSA, sul JSON vero di ffprobe: la prima traccia audio non ha `codec_name`.
+      const sonda = sondaFfprobe(binari, ingresso) as { streams: Array<Record<string, unknown>> }
+      const audio = sonda.streams.filter(stream => stream.codec_type === 'audio')
+      expect(audio).toHaveLength(2)
+      expect(audio[0].codec_name).toBeUndefined()
+      expect(audio[1].codec_name).toBe('aac')
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe).toMatchObject({ hasAudio: true, audioCodec: 'aac', audioStreamIndex: audio[1].index, ignoredAudioTracks: 1 })
+      converti(binari, probe, ingresso, uscita)
+      const tracceAudioInUscita = (sondaFfprobe(binari, uscita) as { streams: Array<Record<string, unknown>> }).streams
+        .filter(stream => stream.codec_type === 'audio')
+      expect(tracceAudioInUscita).toHaveLength(1)
+      expect(verifica(binari, probe, uscita, ingresso)).toMatchObject({ ok: true, output: { hasAudio: true, audioCodec: 'aac' } })
+    })
+  }, 60_000)
+
+  it('se la SOLA traccia audio ha il codec ignoto il video resta respinto: UNKNOWN_AUDIO_CODEC non è sparito', contesto => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-solo-audio-ignoto-', cartella => {
+      const ingresso = join(cartella, 'sorgente.mov')
+      generaFixture(binari, [
+        '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=30:duration=2',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=2',
+        '-map', '0:v', '-map', '1:a',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+        '-c:a', 'pcm_s16le', '-tag:a', 'xyzw', '-strict', 'unofficial', ingresso,
+      ], 'fixture MOV con la sola traccia audio dal codec ignoto')
+      expect(parseVideoProbe(sondaFfprobe(binari, ingresso), statSync(ingresso).size)).toEqual({ ok: false, code: 'UNKNOWN_AUDIO_CODEC' })
+    })
+  }, 30_000)
 })

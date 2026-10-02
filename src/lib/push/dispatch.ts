@@ -178,9 +178,17 @@ export const LIMITE_LETTURA = 500
 export const TIPI_CHAT: readonly string[] = TIPI_NOTIFICA_CHAT
 
 /**
- * ALLO STAFF LA PUSH PORTA SOLO GLI AVVISI DELLA CODA FATTURE, LO SCARTO SDI E LA CHAT (consegna
- * 2c della coda fatture; decisione 21 del titolare: la push entro 5 minuti, e mai un nome — più
- * l'eccezione della chat del 24/09, vedi `TIPI_CHAT`).
+ * ALLO STAFF LA PUSH PORTA SOLO GLI AVVISI DELLA CODA FATTURE, LO SCARTO SDI, LA CHAT E I DUE AVVISI DEI
+ * VIDEO (consegna 2c della coda fatture; decisione 21 del titolare: la push entro 5 minuti, e mai un nome —
+ * più l'eccezione della chat del 24/09, vedi `TIPI_CHAT`, e quella dei video del 02/10).
+ *
+ * I DUE AVVISI DEI VIDEO (PR 2 «server e web», decisione del titolare del 02/10, spec §7): `video_esito`, l'esito
+ * di un video caricato in galleria — a chi ha caricato, che può essere anche la Direzione o la segreteria —, e
+ * `video_liberatoria_revocata`, l'avviso di sicurezza di un video pubblicato con bambini rimasti senza liberatoria.
+ * Entrano per la ragione per cui entra lo scarto SDI: il testo non contiene MAI un nome (né di un bambino né di un
+ * file), solo un numero o una frase fissa, quindi sulla schermata di blocco non c'è niente da proteggere. Senza questa
+ * riga la segreteria che carica un video e la Direzione che deve sapere di una liberatoria persa non riceverebbero la
+ * push, per il solo fatto di essere staff: l'esito resterebbe in campanella finché qualcuno non la apre.
  *
  * Fino alla 2c nessuno dello staff aveva un dispositivo iscritto. Il pulsante della «Coda
  * fatture» iscrive la PERSONA, non un tipo: senza questo filtro le porterebbe anche tutte le
@@ -205,6 +213,8 @@ export const TIPI_PUSH_STAFF: ReadonlySet<string> = new Set<string>([
   ...TIPI_AVVISO_CODA,
   'fattura_scartata',
   ...TIPI_CHAT,
+  'video_esito',
+  'video_liberatoria_revocata',
 ])
 
 /**

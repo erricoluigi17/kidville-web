@@ -96,6 +96,13 @@ const IN_CODA: Record<string, string> = {
     // (`20261002065852_video_build_bucket.sql`, `20261002065952_video_job_ritentativi.sql`).
     // Cosi' la `version` registrata e' quella del file, e l'integrazione Supabase al merge
     // le trova gia' applicate invece di applicarle una seconda volta.
+    //
+    // RIAPERTA il 2026-10-02 con le tre voci della PR 2 «video: server e web» e SVUOTATA il
+    // 03/10 (02/10 22:3x UTC): le tre sono state rinominate all'istante del rilascio
+    // (`20261002215600_video_pubblicazione_automatica.sql`, `20261002215700_video_arrivo_originale.sql`,
+    // `20261002215800_video_conservazione_uscite.sql`) e applicate in produzione PRIMA del merge con
+    // `supabase db push --linked`, dopo essere state mostrate; la fotografia qui accanto le contiene
+    // (202 migrazioni). L'integrazione Supabase al merge le trova gia' registrate.
 }
 
 const RADICE = process.cwd()

@@ -6,8 +6,7 @@ import { rateLimit } from '@/lib/security/rate-limit';
 import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
-import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
-import { rifiutoLegacyVideo, videoLegacyDaFermare } from '@/lib/media/blocco-legacy-video';
+import { eVideoLegacy, rifiutoLegacyVideo } from '@/lib/media/blocco-legacy-video';
 import { BUCKET_GALLERIA, MIME_GALLERIA, TETTO_GALLERIA_BYTE, estensioneDaMime, mimeBase } from '@/lib/gallery/limiti';
 import { percorsoUploadProprio } from '@/lib/gallery/pubblicazione-foto';
 
@@ -32,31 +31,32 @@ import { percorsoUploadProprio } from '@/lib/gallery/pubblicazione-foto';
 // client chiede una firma, poi fa `PUT` del file direttamente sullo Storage. Il tetto
 // torna a essere quello vero del bucket, 50 MB.
 //
-// ─── COSA SI PERDE, DETTO SENZA ABBELLIRLO ───────────────────────────────────
-// Il server non vede più tutti i byte, quindi lo sniff del codec — la terza rete contro
-// un HEVC che su Android mostrerebbe a un genitore un riquadro nero — non può più
-// girare sul file intero. Qui i primi 64 KB viaggiano nel corpo di QUESTA richiesta e
-// lo sniff gira lo stesso, sul server, con la STESSA `analizzaContenutoVideo`: zero
-// divergenze fra client e server, che è la ragione per cui quel modulo esiste. In più
-// la maestra scopre il rifiuto prima di spedire quaranta megabyte su rete mobile.
+// ─── ORA DI QUI PASSANO SOLO LE FOTO ─────────────────────────────────────────
+// Il difetto di partenza erano i video, e dal 2026-10-02 i video di qui non passano
+// più: ogni `video/*` riceve un 409 `VIDEO_APP_DA_AGGIORNARE` (decisione in
+// `@/lib/media/blocco-legacy-video`, senza interruttori) e va caricato dalla pipeline
+// nuova, `POST /api/video-uploads`. Un file firmato qui resterebbe in archivio senza
+// che nessuno lo converta né lo pubblichi.
 //
-// ⚠️ RESTA SCOPERTO un client che manda una testa pulita e poi PUTta un altro file.
-// È un indebolimento vero rispetto a prima, non un pareggio: le sole reti rimaste sono
-// la lista mime del bucket e i 50 MB. Il costo di un errore è un riquadro nero, non un
-// dato esposto, ed è per questo che si accetta. La strada per chiuderlo, se un giorno
-// in `gallery` comparirà un HEVC vero, è uno sniff a POSTERIORI dei byte archiviati,
-// come audit notturno FUORI dal percorso critico — mai un secondo giro di rete su ogni
-// caricamento.
+// I TIPI VIDEO RESTANO NELLO `z.enum`, ed è voluto: un client vecchio che manda
+// `video/mp4` deve ricevere il 409 che gli dice di aggiornarsi, non un 400 «formato non
+// ammesso» che lo manderebbe a riprovare per sempre — il difetto del 2026-09-08 rifatto
+// al contrario. Per lo stesso motivo non c'è più lo sniff del codec sui primi 64 KB
+// (`testa_b64`): fermava un HEVC prima che partisse la `PUT`, e ora non c'è nessuna
+// `PUT` di video da proteggere. Un `testa_b64` mandato da un client vecchio è un campo
+// in più, che lo schema scarta in silenzio.
 //
-// ⚠️ `/api/gallery/upload` RESTA VIVA E INVARIATA: è la porta delle shell native col
-// bundle in cache, che continueranno a mandare multipart per settimane, e il lock
-// `bucket-storage-dichiarati` legge da quel file la configurazione del bucket. Per quei
-// client la terza rete è ancora intera — vedono tutti i byte.
+// ⚠️ `/api/gallery/upload` RESTA VIVA: è la porta delle shell native col bundle in
+// cache, che continueranno a mandare multipart per settimane, e il lock
+// `bucket-storage-dichiarati` legge da quel file la configurazione del bucket. Rifiuta
+// i video con lo stesso 409, dallo stesso modulo.
 // =============================================================================
 
 const postBodySchema = z.object({
     // La stessa lista del bucket. Un mime fuori elenco qui è un 400: firmare un
     // caricamento che lo Storage poi rifiuta sposta solo il guasto più in là.
+    // I tipi video ci restano di proposito: un client vecchio deve ricevere il 409 del
+    // blocco (più sotto), non un 400 che non gli dice cosa fare.
     //
     // ⚠️ IL `preprocess` NON È COSMESI, è il difetto del 2026-09-08. `z.enum` confronta
     // per UGUAGLIANZA, e il client non manda `video/mp4`: manda `video/mp4;codecs=avc1`,
@@ -80,11 +80,6 @@ const postBodySchema = z.object({
         z.enum(MIME_GALLERIA, { error: 'Formato non ammesso' }),
     ),
     size: z.coerce.number().int().min(1).max(TETTO_GALLERIA_BYTE, 'File troppo grande'),
-    // I primi 64 KB del file, in base64, per lo sniff del codec. Obbligatori per i
-    // video (vedi il fail-closed più sotto), inutili per le immagini. 64 KB in base64
-    // ≈ 87.400 caratteri: il corpo di questa richiesta resta due ordini di grandezza
-    // sotto il tetto della piattaforma, che è il punto di tutto l'esercizio.
-    testa_b64: z.string().max(120_000).optional(),
     resume_path: z.string().min(1).max(300).optional(),
     // NESSUN `nome`, ed è una deviazione deliberata dai due modelli (Protocolli e
     // Cassa lo accettano). Un file di galleria si chiama `IMG_bambina-rossi.mov`: è
@@ -100,61 +95,33 @@ export const POST = withRoute('gallery/upload-url:POST', async (request: Request
 
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
-        const { mime, size, testa_b64, resume_path } = b.data;
-        if (resume_path && (!mime.startsWith('image/') || !percorsoUploadProprio(resume_path, auth.user.id))) {
-            logEvento('galleria', 'warn', { operazione: 'gallery/upload-url:POST', esito: 'ripresa-percorso-invalido' });
-            return NextResponse.json({ error: 'Percorso del caricamento non valido.', codice: 'ALLEGATO_NON_VALIDO' }, { status: 400 });
-        }
+        const { mime, size, resume_path } = b.data;
 
-        // ── IL PERCORSO VECCHIO DEI VIDEO, quando sarà ora, si chiude qui ──────────
-        // Di qui passano il browser dell'insegnante e la coda offline Dexie
-        // (`syncPendingGalleryMedia` → `caricaMediaGalleria`): il filmato è già stato
-        // compresso dal client e questa route si limita a firmare la `PUT`. Con la
+        // ── IL PERCORSO VECCHIO DEI VIDEO È CHIUSO, e si chiude qui ────────────────
+        // Di qui passavano il browser dell'insegnante e la coda offline Dexie
+        // (`syncPendingGalleryMedia` → `caricaMediaGalleria`): il filmato era già stato
+        // compresso dal client e questa route si limitava a firmare la `PUT`. Con la
         // pipeline nuova viva, un file firmato così resterebbe in archivio senza che
-        // nessuno lo converta. Il rifiuto arriva PRIMA della firma: firmare e poi
-        // pentirsi vorrebbe dire lasciare una `PUT` autorizzata in mano al client.
+        // nessuno lo converta. Il rifiuto arriva PRIMA della firma — firmare e poi
+        // pentirsi vorrebbe dire lasciare una `PUT` autorizzata in mano al client — e
+        // PRIMA del contatore, perché un rifiuto non deve consumare una delle 30 firme
+        // di una persona. Sta anche prima del controllo di `resume_path`: la ripresa è
+        // solo per le foto, ma a un video con un `resume_path` di troppo va detto lo
+        // stesso «aggiorna l'app», non un 400 sul percorso.
         //
-        // ⚠️ OGGI SPENTO, interruttore unico in
-        // `src/lib/media/interruttore-legacy-video.ts`. La riga in coda NON si perde:
-        // resta in Dexie con `sync_status: 'error'`, e `syncPendingGalleryMedia`
-        // ripesca le righe `pending` **e** `error` — che è il motivo per cui la frase
-        // del catalogo può promettere che i filmati in attesa ripartono da soli.
-        if (videoLegacyDaFermare(mime)) {
+        // OGNI `video/*`, senza condizioni e senza guardare i byte (nessuna testa del
+        // file, nessuno sniff): un H.264 e un HEVC ricevono lo stesso 409. L'unica
+        // decisione e i suoi motivi stanno in `@/lib/media/blocco-legacy-video`, che non
+        // ha interruttori. Le immagini non passano di qui: `eVideoLegacy` guarda il mime.
+        // Un `video/quicktime` non arriva a questo punto: non è nello `z.enum` e prende
+        // il 400 di sempre.
+        if (eVideoLegacy(mime)) {
             return rifiutoLegacyVideo('galleria', 'gallery/upload-url:POST', mime, size);
         }
 
-        // ── LO SNIFF, che con l'upload diretto è l'ultima cosa che il server vede ──
-        if (mime.startsWith('video/')) {
-            // Fail-closed: senza la testa non si firma. È la stessa scelta del client,
-            // che su un header illeggibile dichiara `daConvertire: true`.
-            if (!testa_b64) {
-                logEvento('galleria', 'warn', {
-                    operazione: 'gallery/upload-url:POST',
-                    esito: 'video-senza-testa',
-                    mime,
-                    size,
-                });
-                return NextResponse.json(
-                    { error: MESSAGGIO_VIDEO_NON_CONVERTIBILE, codice: 'VIDEO_NON_CONVERTIBILE' },
-                    { status: 415 },
-                );
-            }
-            const testa = new Uint8Array(Buffer.from(testa_b64, 'base64'));
-            const analisi = analizzaContenutoVideo(testa, mime);
-            if (analisi.daConvertire) {
-                // MAI il nome del file nei log: può contenere PII. Solo mime, size e motivo.
-                logEvento('galleria', 'warn', {
-                    operazione: 'gallery/upload-url:POST',
-                    esito: 'video-non-riproducibile',
-                    mime,
-                    size,
-                    motivo: analisi.motivo,
-                });
-                return NextResponse.json(
-                    { error: MESSAGGIO_VIDEO_NON_CONVERTIBILE, codice: 'VIDEO_NON_CONVERTIBILE' },
-                    { status: 415 },
-                );
-            }
+        if (resume_path && (!mime.startsWith('image/') || !percorsoUploadProprio(resume_path, auth.user.id))) {
+            logEvento('galleria', 'warn', { operazione: 'gallery/upload-url:POST', esito: 'ripresa-percorso-invalido' });
+            return NextResponse.json({ error: 'Percorso del caricamento non valido.', codice: 'ALLEGATO_NON_VALIDO' }, { status: 400 });
         }
 
         const supabase = await createAdminClient();

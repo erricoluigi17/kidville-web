@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { HttpRequest, HttpResponse, HttpStack } from 'tus-js-client'
 
 import { SEDE_A } from '../fixtures/sedi'
@@ -17,7 +17,9 @@ vi.mock('@/lib/logging/client', async () => {
 const {
   accodaCaricamentoVideo,
   annullaCaricamentoVideo,
+  attendiDepositoVideo,
   caricaVideo,
+  concludiCaricamentoVideo,
   jobDaSeguire,
   potaArchivioCaricamenti,
   riprendiCaricamentiVideo,
@@ -185,6 +187,14 @@ class ServerTusFinto implements HttpStack {
   interrompiLaProssimaPatchDopo: number | null = null
   /** La prossima PATCH risponde con questo stato invece di accettare byte. */
   statoForzatoSullaProssimaPatch: number | null = null
+  /** Il corpo con cui la PATCH forzata risponde: lo Storage lo scrive, e `eRifiutoDiFirma` lo legge. */
+  corpoDelRifiuto = ''
+  /** OGNI PATCH risponde con questo stato, finché non lo si toglie: un rifiuto che nessun rinnovo risolve. */
+  rifiutaSempreConStato: number | null = null
+  /** Le prossime N PATCH non arrivano mai a destinazione (rete assente), senza accettare un byte. */
+  perdiLeProssimePatch = 0
+  /** Finché non si risolve, la DELETE che chiude la sessione resta in attesa: un annullamento che finisce di chiudersi con calma. */
+  bloccaLaDelete: Promise<void> | null = null
   /** Gancio per agire nel mezzo di un caricamento (annullamento in volo). */
   dopoLaRichiesta: ((v: Vista) => void) | null = null
 
@@ -248,6 +258,7 @@ class ServerTusFinto implements HttpStack {
     const oggetto = this.oggetti.get(id)
 
     if (metodo === 'DELETE') {
+      if (this.bloccaLaDelete) await this.bloccaLaDelete
       this.oggetti.delete(id)
       this.avvisa(annota(null, 0))
       return new RispostaFinta(204)
@@ -269,11 +280,23 @@ class ServerTusFinto implements HttpStack {
     if (metodo === 'PATCH') {
       const offset = Number(intestazioni['Upload-Offset'])
 
+      if (this.perdiLeProssimePatch > 0) {
+        this.perdiLeProssimePatch--
+        this.avvisa(annota(offset, 0))
+        // Nessuna risposta, come una rete che non c'è: è il caso che tus ritenta.
+        throw new TypeError('rete assente')
+      }
+
+      if (this.rifiutaSempreConStato != null) {
+        this.avvisa(annota(offset, 0))
+        return new RispostaFinta(this.rifiutaSempreConStato)
+      }
+
       if (this.statoForzatoSullaProssimaPatch != null) {
         const stato = this.statoForzatoSullaProssimaPatch
         this.statoForzatoSullaProssimaPatch = null
         this.avvisa(annota(offset, 0))
-        return new RispostaFinta(stato)
+        return new RispostaFinta(stato, {}, this.corpoDelRifiuto)
       }
 
       if (offset !== oggetto.scritti) {
@@ -334,7 +357,11 @@ function banco(ritardiRitentativo: number[] = []) {
   }
 }
 
-async function accoda(
+/**
+ * Accoda SENZA aspettare la copia locale: è ciò che fa `accodaCaricamentoVideo`, e i
+ * collaudi della partenza immediata (sezione 9) lo vogliono così.
+ */
+function accodaSenzaAttendere(
   dip: Parameters<typeof accodaCaricamentoVideo>[0],
   tipoFile = 'video/mp4',
 ) {
@@ -347,6 +374,24 @@ async function accoda(
     coordinate: COORDINATE,
     file,
   })
+}
+
+/**
+ * Accoda e ASPETTA che la copia in background sia finita (o fermata).
+ *
+ * Dal 2026-10-02 la copia parte per conto suo e `accodaCaricamentoVideo` non la aspetta.
+ * Quasi tutti i collaudi di questo file guardano però il deposito subito dopo (la
+ * ripresa, il riuso, la quota): lì un deposito che «arriva presto» a causa dell'ordine
+ * dei microtask sarebbe un verde che dipende dal caso, quindi lo si aspetta in modo
+ * esplicito. Chi vuole provare il contrario usa `accodaSenzaAttendere`.
+ */
+async function accoda(
+  dip: Parameters<typeof accodaCaricamentoVideo>[0],
+  tipoFile = 'video/mp4',
+) {
+  const esito = await accodaSenzaAttendere(dip, tipoFile)
+  await attendiDepositoVideo(dip.archivio, JOB)
+  return esito
 }
 
 beforeEach(() => {
@@ -424,7 +469,7 @@ describe('il caricamento completo', () => {
 
 describe('la ripresa di un caricamento interrotto', () => {
   /**
-   * CRITERIO 2: «chi carica un video di 180 secondi da un telefono chiude l'app, e
+   * CRITERIO 2: «chi carica un video di 5 minuti da un telefono chiude l'app, e
    * al ritorno deve ritrovare il lavoro, non ricominciarlo».
    *
    * La prima corsa viene tagliata a 300.000 byte — in mezzo al primo blocco, non a
@@ -1225,5 +1270,594 @@ describe('terza critica indipendente (2026-09-26)', () => {
 
     expect((await caricaVideo({ ...dip, archivio: riaperto }, JOB)).esito).toBe('caricato')
     expect((await riaperto.leggi(JOB))?.stato).toBe('caricato')
+  })
+})
+
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 9. LA PARTENZA NON ASPETTA LA COPIA LOCALE (PR 2, T10)
+ *
+ * Fino al 2026-10-02 `accodaCaricamentoVideo` copiava l'originale intero in IndexedDB
+ * prima di far partire qualunque cosa: due gigabyte, minuti di «preparazione», e solo
+ * dopo il primo byte in rete. Ora la copia parte per conto suo, e il trasferimento
+ * legge dal `File` scelto.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * UNA COPIA LOCALE CHE NON FINISCE DA SOLA, e che si comporta come l'archivio vero.
+ *
+ * `scriviByte` resta in attesa finché il collaudo non la libera, e quando il segnale che
+ * riceve si annulla rigetta con `VIDEO_COPIA_ANNULLATA`, come fa `ArchivioCaricamentiDexie`.
+ * Un doppio che ignorasse il segnale sarebbe verde anche con la libreria che il segnale
+ * non lo annulla mai: qui lo si guarda.
+ */
+function copiaTenutaAperta(archivio: ArchivioCaricamentiInMemoria) {
+  const copia = {
+    iniziata: false,
+    finita: false,
+    fermata: false,
+    segnale: undefined as AbortSignal | undefined,
+    /** Ciò che è successo, nell'ordine: serve a provare che la copia si ferma PRIMA di liberare i byte. */
+    eventi: [] as string[],
+  }
+  let libera: () => void = () => {}
+  archivio.scriviByte = (_jobId, _byte, segnale) => {
+    copia.iniziata = true
+    copia.segnale = segnale
+    return new Promise<void>((resolve, reject) => {
+      libera = () => {
+        copia.finita = true
+        resolve()
+      }
+      segnale?.addEventListener(
+        'abort',
+        () => {
+          copia.fermata = true
+          copia.eventi.push('copia-fermata')
+          reject(new ErroreByteVideo('VIDEO_COPIA_ANNULLATA'))
+        },
+        { once: true },
+      )
+    })
+  }
+  const eliminaByteVero = archivio.eliminaByte.bind(archivio)
+  archivio.eliminaByte = async (jobId) => {
+    copia.eventi.push('byte-eliminati')
+    await eliminaByteVero(jobId)
+  }
+  return { copia, libera: () => libera() }
+}
+
+/** Una pausa che, se scatta, dice «bloccato»: per provare che una promessa NON resta appesa. */
+function entroMs<T>(promessa: Promise<T>, ms: number): Promise<T | 'BLOCCATO'> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const scaduto = new Promise<'BLOCCATO'>((risolvi) => {
+    timer = setTimeout(() => risolvi('BLOCCATO'), ms)
+  })
+  return Promise.race([promessa, scaduto]).finally(() => clearTimeout(timer))
+}
+
+describe('la partenza non aspetta la copia locale', () => {
+  it('accodare torna subito, e la prima PATCH parte mentre la copia è ancora in corso', async () => {
+    const { server, archivio, dip } = banco()
+    const { copia } = copiaTenutaAperta(archivio)
+
+    // La copia è tenuta aperta: se `accodaCaricamentoVideo` la aspettasse, qui non si
+    // tornerebbe mai. È il difetto che questa modifica toglie, e il collaudo lo misura
+    // così — con una copia che non finisce — perché con una copia istantanea ordine e
+    // microtask darebbero un verde anche con il vecchio codice.
+    const accodato = await entroMs(accodaSenzaAttendere(dip), 500)
+    expect(accodato).toMatchObject({ ok: true })
+    expect((await archivio.leggi(JOB))?.stato).toBe('da_caricare')
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+    expect(copia.finita).toBe(false)
+
+    let copiaFinitaAllaPrimaPatch: boolean | null = null
+    server.dopoLaRichiesta = (v) => {
+      if (v.metodo === 'PATCH' && copiaFinitaAllaPrimaPatch === null) copiaFinitaAllaPrimaPatch = copia.finita
+    }
+    const esito = await caricaVideo(dip, JOB)
+
+    expect(esito).toEqual({ esito: 'caricato', jobId: JOB, byteCaricati: DIMENSIONE })
+    // LA PRIMA PATCH È PARTITA CON LA COPIA ANCORA IN CORSO — e i byte che sono arrivati
+    // sono quelli del file scelto, letto dalla sorgente viva e non dal deposito.
+    expect(copiaFinitaAllaPrimaPatch).toBe(false)
+    expect(Buffer.from(server.unicoOggetto()!.byte).equals(Buffer.from(byteOriginali()))).toBe(true)
+  })
+
+  it('a caricamento finito la copia ancora in corso si ferma PRIMA di liberare i byte, e non è un errore', async () => {
+    const { archivio, dip } = banco()
+    const { copia } = copiaTenutaAperta(archivio)
+    await accodaSenzaAttendere(dip)
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+
+    expect((await caricaVideo(dip, JOB)).esito).toBe('caricato')
+    // Ora la copia si può aspettare, perché è stata fermata: se non lo fosse, qui si resterebbe appesi.
+    expect(await entroMs(attendiDepositoVideo(archivio, JOB), 500)).not.toBe('BLOCCATO')
+
+    expect(copia.segnale?.aborted).toBe(true)
+    // L'ordine conta: sull'archivio vero `eliminaByte` va in fila dietro la copia, e
+    // aspetterebbe due gigabyte per cancellarli subito dopo.
+    expect(copia.eventi).toEqual(['copia-fermata', 'byte-eliminati'])
+    // Fermata di proposito non è «il telefono ha perso la ripresa»: nessun error di archivio degradato.
+    expect(logCon('video-upload-archivio-degradato')).toBeUndefined()
+    expect((await archivio.leggi(JOB))?.stato).toBe('caricato')
+  })
+
+  it('una scelta ripetuta con la copia in corso non ne affianca una seconda', async () => {
+    const { archivio, dip } = banco()
+    const { copia } = copiaTenutaAperta(archivio)
+    const avviate: number[] = []
+    const scriviCopia = archivio.scriviByte
+    archivio.scriviByte = (...a) => {
+      avviate.push(1)
+      return scriviCopia.call(archivio, ...a)
+    }
+
+    await accodaSenzaAttendere(dip)
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+    await accodaSenzaAttendere(dip)
+    await accodaSenzaAttendere(dip)
+
+    expect(avviate).toHaveLength(1)
+    await annullaCaricamentoVideo(dip, JOB)
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 10. LO SPAZIO SUL DISPOSITIVO, PRIMA DI COPIARE
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('lo spazio sul dispositivo, prima di copiare', () => {
+  function conStorage(estimate: () => Promise<{ quota?: number; usage?: number }>) {
+    Object.defineProperty(globalThis.navigator, 'storage', { configurable: true, value: { estimate } })
+  }
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis.navigator, 'storage')
+  })
+
+  /** Quante volte la libreria ha chiesto all'archivio di scrivere i byte. */
+  function contaCopie(archivio: ArchivioCaricamentiInMemoria) {
+    const conta = { copie: 0 }
+    const vera = archivio.scriviByte.bind(archivio)
+    archivio.scriviByte = async (jobId, byte, segnale) => {
+      conta.copie++
+      await vera(jobId, byte, segnale)
+    }
+    return conta
+  }
+
+  it('se lo spazio non basta la copia non parte, il video parte lo stesso e il log dice i soli byte', async () => {
+    const { server, archivio, dip } = banco()
+    conStorage(async () => ({ quota: 1_000_000, usage: 900_000 }))
+    const conta = contaCopie(archivio)
+
+    expect((await accoda(dip)).ok).toBe(true)
+
+    // PRIMA la presenza del log, poi l'assenza della copia: un'assenza controllata prima che
+    // la decisione sia presa è vera anche con il codice rotto.
+    expect(logCon('video-deposito-saltato-spazio')).toMatchObject({
+      livello: 'warn',
+      messaggio: `video-deposito-saltato-spazio: job=${JOB}`,
+      campi: { byte: DIMENSIONE, liberi: 100_000 },
+    })
+    expect(conta.copie).toBe(0)
+    expect(await archivio.leggiByte(JOB)).toBeUndefined()
+
+    // Il video parte lo stesso, dalla sorgente viva: manca solo la ripresa dopo la chiusura dell'app.
+    expect((await caricaVideo(dip, JOB)).esito).toBe('caricato')
+    expect(Buffer.from(server.unicoOggetto()!.byte).equals(Buffer.from(byteOriginali()))).toBe(true)
+    // Solo uuid e byte: il nome del file è anagrafica di un minore.
+    expect(JSON.stringify(logClient.mock.calls)).not.toContain('recita-di-natale')
+  })
+
+  it('con lo spazio esatto la copia si fa, con un byte in meno no', async () => {
+    const giusto = banco()
+    conStorage(async () => ({ quota: DIMENSIONE, usage: 0 }))
+    const contaGiusto = contaCopie(giusto.archivio)
+    await accoda(giusto.dip)
+    expect(contaGiusto.copie).toBe(1)
+    expect(logCon('video-deposito-saltato-spazio')).toBeUndefined()
+
+    logClient.mockClear()
+    const corto = banco()
+    conStorage(async () => ({ quota: DIMENSIONE - 1, usage: 0 }))
+    const contaCorto = contaCopie(corto.archivio)
+    await accoda(corto.dip)
+    expect(logCon('video-deposito-saltato-spazio')).toMatchObject({ campi: { liberi: DIMENSIONE - 1 } })
+    expect(contaCorto.copie).toBe(0)
+  })
+
+  it('se la misura dello spazio fallisce si prova lo stesso, e resta scritto che non si è letta', async () => {
+    const { archivio, dip } = banco()
+    conStorage(() => Promise.reject(Object.assign(new Error('negato'), { name: 'SecurityError' })))
+    const conta = contaCopie(archivio)
+
+    await accoda(dip)
+
+    expect(logCon('video-upload-quota-non-letta')).toMatchObject({
+      livello: 'warn',
+      campi: { error_code: 'SecurityError' },
+    })
+    expect(conta.copie).toBe(1)
+    expect((await archivio.leggiByte(JOB))?.size).toBe(DIMENSIONE)
+  })
+
+  it('una misura senza numeri leggibili non blocca la copia', async () => {
+    const { archivio, dip } = banco()
+    conStorage(async () => ({}))
+    const conta = contaCopie(archivio)
+
+    await accoda(dip)
+
+    expect(conta.copie).toBe(1)
+    expect(logCon('video-deposito-saltato-spazio')).toBeUndefined()
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 11. ANNULLARE FERMA INSIEME TRASFERIMENTO E COPIA (un AbortController per job)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('annullare un caricamento ferma insieme trasferimento e copia', () => {
+  it('«Rimuovi» ferma la PATCH in volo e la copia, anche senza il segnale di chi aveva avviato il trasferimento', async () => {
+    const { server, archivio, dip } = banco()
+    const { copia } = copiaTenutaAperta(archivio)
+    await accodaSenzaAttendere(dip)
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+
+    // Chi annulla (la schermata, da un elenco) non ha in mano il segnale: `caricaVideo` è
+    // partito altrove, senza `segnale`. Deve bastare il job.
+    let annullata: Promise<void> | null = null
+    server.dopoLaRichiesta = (v) => {
+      if (v.metodo === 'PATCH' && annullata === null) annullata = annullaCaricamentoVideo(dip, JOB)
+    }
+    const esito = await caricaVideo(dip, JOB)
+    await annullata
+
+    expect(esito).toEqual({ esito: 'annullato', jobId: JOB })
+    // TRASFERIMENTO fermato: la sessione chiusa con UNA delete (non due), e con la firma.
+    const cancellazioni = server.viste.filter((v) => v.metodo === 'DELETE')
+    expect(cancellazioni).toHaveLength(1)
+    expect(cancellazioni[0].intestazioni.authorization).toBe(`Bearer ${TOKEN}`)
+    expect(server.oggetti.size).toBe(0)
+    // COPIA fermata, prima di liberare i byte.
+    expect(copia.segnale?.aborted).toBe(true)
+    expect(copia.eventi).toEqual(['copia-fermata', 'byte-eliminati'])
+    // E la riga è chiusa, senza peso, e non torna a galla alla prossima riapertura.
+    expect((await archivio.leggi(JOB))?.stato).toBe('annullato')
+    expect(await archivio.leggiByte(JOB)).toBeUndefined()
+    expect(await riprendiCaricamentiVideo(dip)).toEqual([])
+    // Il log dice che cosa girava: solo il job e due sì/no, mai il nome del file.
+    expect(logCon('video-upload-annullato-in-volo')).toMatchObject({
+      livello: 'warn',
+      messaggio: `video-upload-annullato-in-volo: job=${JOB}`,
+      campi: { trasferimento: true, deposito: true },
+    })
+    expect(JSON.stringify(logClient.mock.calls)).not.toContain('recita-di-natale')
+  })
+
+  it('con la sola copia in corso (il trasferimento non è partito) si ferma la copia e si chiude la riga', async () => {
+    const { server, archivio, dip } = banco()
+    const { copia } = copiaTenutaAperta(archivio)
+    await accodaSenzaAttendere(dip)
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+
+    await annullaCaricamentoVideo(dip, JOB)
+
+    expect(copia.fermata).toBe(true)
+    expect(server.viste).toHaveLength(0)
+    expect((await archivio.leggi(JOB))?.stato).toBe('annullato')
+    expect(logCon('video-upload-annullato-in-volo')?.campi).toMatchObject({ trasferimento: false, deposito: true })
+  })
+
+  it('un caricamento fermo, senza niente in volo, non scrive «in volo»', async () => {
+    const { archivio, dip } = banco()
+    await accoda(dip)
+
+    await annullaCaricamentoVideo(dip, JOB)
+
+    // PRIMA la presenza dell'annullamento, poi l'assenza del log «in volo».
+    expect(logCon('video-upload-annullato')).toBeDefined()
+    expect(logCon('video-upload-annullato-in-volo')).toBeUndefined()
+    expect((await archivio.leggi(JOB))?.stato).toBe('annullato')
+  })
+
+  it('un lavoro annullato non si riusa: riselezionare lo stesso file riparte con una copia nuova', async () => {
+    const { archivio, dip } = banco()
+    const { copia } = copiaTenutaAperta(archivio)
+    await accodaSenzaAttendere(dip)
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+    const segnaleVecchio = copia.segnale
+    await annullaCaricamentoVideo(dip, JOB)
+    expect(segnaleVecchio?.aborted).toBe(true)
+
+    // La persona sceglie di nuovo lo stesso file: stesso job, riga `annullato` che si sovrascrive.
+    copia.iniziata = false
+    await accodaSenzaAttendere(dip)
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+
+    // Con il controllore vecchio — già annullato — la copia nuova nascerebbe ferma.
+    expect(copia.segnale).not.toBe(segnaleVecchio)
+    expect(copia.segnale?.aborted).toBe(false)
+    await annullaCaricamentoVideo(dip, JOB)
+  })
+
+  it('se il trasferimento annullato si chiude male, annullare non resta appeso: lo scrive a log e chiude la riga da sé', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    // La riga si rifiuta di passare ad «annullato» la PRIMA volta (IndexedDB che si chiude a metà).
+    const aggiorna = archivio.aggiorna.bind(archivio)
+    let fallita = false
+    archivio.aggiorna = async (jobId, modifiche) => {
+      if (modifiche.stato === 'annullato' && !fallita) {
+        fallita = true
+        throw Object.assign(new Error('chiuso'), { name: 'DatabaseClosedError' })
+      }
+      await aggiorna(jobId, modifiche)
+    }
+    let annullata: Promise<void> | null = null
+    server.dopoLaRichiesta = (v) => {
+      if (v.metodo === 'PATCH' && annullata === null) annullata = annullaCaricamentoVideo(dip, JOB)
+    }
+
+    // Prima il trasferimento (che porta `annullata` con sé al primo PATCH), poi l'annullamento.
+    const trasferimento = await caricaVideo(dip, JOB).catch((err: unknown) => (err as Error).name)
+    await annullata
+
+    // Il trasferimento rigetta con la sua causa vera; l'annullamento non eredita il guasto, lo scrive…
+    expect(trasferimento).toBe('DatabaseClosedError')
+    expect(logCon('video-upload-annullamento-non-atteso')).toMatchObject({
+      livello: 'warn',
+      campi: { error_code: 'DatabaseClosedError' },
+    })
+    // …e porta a termine ciò che il trasferimento non ha fatto.
+    expect((await archivio.leggi(JOB))?.stato).toBe('annullato')
+    expect(await archivio.leggiByte(JOB)).toBeUndefined()
+  })
+
+  it('un annullamento che sta ancora finendo di chiudersi non condanna la copia della scelta dopo', async () => {
+    const { server, archivio, dip } = banco()
+    const { copia } = copiaTenutaAperta(archivio)
+    await accodaSenzaAttendere(dip)
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+    const segnaleVecchio = copia.segnale
+
+    // La persona annulla col segnale con cui il trasferimento era partito, e la `DELETE` che
+    // chiude la sessione sullo Storage ci mette un po': per quel po' la riga è ancora «in corso».
+    let chiudi: () => void = () => {}
+    server.bloccaLaDelete = new Promise<void>((risolvi) => {
+      chiudi = risolvi
+    })
+    const controllore = new AbortController()
+    let abortita = false
+    server.dopoLaRichiesta = (v) => {
+      if (v.metodo === 'PATCH' && !abortita) {
+        abortita = true
+        controllore.abort()
+      }
+    }
+    const trasferimento = caricaVideo(dip, JOB, { segnale: controllore.signal })
+    await vi.waitFor(() => expect(segnaleVecchio?.aborted).toBe(true))
+
+    // Nella finestra la persona riseleziona lo stesso file: stesso job, riga ancora viva.
+    copia.iniziata = false
+    await accodaSenzaAttendere(dip)
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+
+    // Il lavoro annullato non si riusa: la copia nuova ha un segnale suo, e vivo. Con il
+    // controllore vecchio — già annullato — non partirebbe nemmeno.
+    expect(copia.segnale).not.toBe(segnaleVecchio)
+    expect(copia.segnale?.aborted).toBe(false)
+
+    chiudi()
+    expect(await trasferimento).toEqual({ esito: 'annullato', jobId: JOB })
+    // E la chiusura del lavoro vecchio non ferma quello nuovo.
+    expect(copia.segnale?.aborted).toBe(false)
+    await annullaCaricamentoVideo(dip, JOB)
+  })
+
+  it('annullato mentre il trasferimento si sta preparando, non parte nemmeno un byte', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    let annullata: Promise<void> | null = null
+    // `intestazioni()` è l'ultimo `await` prima che tus parta: è il momento in cui la persona preme «Rimuovi».
+    let chiamate = 0
+    const intestazioni = async () => {
+      if (++chiamate === 1) annullata = annullaCaricamentoVideo(dip, JOB)
+      return { authorization: `Bearer ${TOKEN}` }
+    }
+
+    const esito = await caricaVideo({ ...dip, intestazioni }, JOB)
+    await annullata
+
+    expect(esito).toEqual({ esito: 'annullato', jobId: JOB })
+    // L'evento di annullamento era già scattato quando il trasferimento si è messo in moto: senza
+    // il controllo prima dello `start()` il video partirebbe lo stesso, già tolto dall'elenco.
+    expect(server.viste).toHaveLength(0)
+    expect((await archivio.leggi(JOB))?.stato).toBe('annullato')
+    expect(await archivio.leggiByte(JOB)).toBeUndefined()
+  })
+
+  it('un job già caricato che si chiude come tale ferma la copia che gira ancora', async () => {
+    const { archivio, dip } = banco()
+    const { copia } = copiaTenutaAperta(archivio)
+    await accodaSenzaAttendere(dip)
+    await vi.waitFor(() => expect(copia.iniziata).toBe(true))
+
+    // L'apertura ha risposto «non c'è niente da caricare»: i byte sono già sullo Storage.
+    await concludiCaricamentoVideo(dip, JOB)
+
+    expect(copia.segnale?.aborted).toBe(true)
+    expect(copia.eventi).toEqual(['copia-fermata', 'byte-eliminati'])
+    const riga = await archivio.leggi(JOB)
+    expect(riga).toMatchObject({ stato: 'caricato', offsetByte: DIMENSIONE })
+    expect(await archivio.leggiByte(JOB)).toBeUndefined()
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 12. LA FIRMA SI RINNOVA SENZA RIAPRIRE L'INTENTO
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('la firma rifiutata a metà strada si rinnova e il trasferimento prosegue', () => {
+  const firmaVecchia = () => ({ 'x-signature': 'firma-vecchia' })
+
+  it('401/403 a metà: si chiede la firma nuova, si riparte dalla STESSA sessione e dallo stesso offset', async () => {
+    const { server, dip } = banco()
+    await accoda(dip)
+    const rinnovaFirma = vi.fn<(jobId: string) => Promise<Record<string, string>>>(async () => ({ 'x-signature': 'firma-nuova' }))
+    // La prima PATCH passa intera (1 MiB), la seconda prende 403: la firma è scaduta mentre si caricava.
+    let patch = 0
+    server.dopoLaRichiesta = (v) => {
+      if (v.metodo === 'PATCH' && ++patch === 1) server.statoForzatoSullaProssimaPatch = 403
+    }
+
+    const esito = await caricaVideo({ ...dip, intestazioni: firmaVecchia, rinnovaFirma }, JOB)
+
+    expect(esito).toEqual({ esito: 'caricato', jobId: JOB, byteCaricati: DIMENSIONE })
+    expect(rinnovaFirma).toHaveBeenCalledTimes(1)
+    expect(rinnovaFirma).toHaveBeenCalledWith(JOB)
+    // Una sola sessione, nessuna ripartenza da zero: i byte accettati in tutto sono quelli del file.
+    expect(server.metodi().filter((m) => m === 'POST')).toHaveLength(1)
+    expect(server.viste.reduce((s, v) => s + v.byteAccettati, 0)).toBe(DIMENSIONE)
+    expect(Buffer.from(server.unicoOggetto()!.byte).equals(Buffer.from(byteOriginali()))).toBe(true)
+    // Fino al rifiuto la firma è la vecchia; da lì in poi (HEAD compresa) è la nuova.
+    const rifiuto = server.viste.findIndex((v) => v.metodo === 'PATCH' && v.byteAccettati === 0)
+    expect(rifiuto).toBeGreaterThan(0)
+    for (const v of server.viste.slice(0, rifiuto + 1)) expect(v.intestazioni['x-signature']).toBe('firma-vecchia')
+    const dopo = server.viste.slice(rifiuto + 1)
+    expect(dopo.length).toBeGreaterThan(0)
+    for (const v of dopo) expect(v.intestazioni['x-signature']).toBe('firma-nuova')
+    // E la riga non ha mai contenuto la firma.
+    expect(logCon('video-upload-firma-rinnovata')).toMatchObject({
+      livello: 'warn',
+      campi: { rinnovi: 1, offset: 1024 * 1024 },
+    })
+    expect(JSON.stringify(logClient.mock.calls)).not.toContain('firma-nuova')
+  })
+
+  it('se il rinnovo non riesce si ricade nel rifiuto di sempre, ripescabile e con i byte al loro posto', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    server.statoForzatoSullaProssimaPatch = 403
+    const rinnovaFirma = vi.fn(async () => {
+      throw Object.assign(new Error('sessione scaduta'), { name: 'FirmaNonDisponibile' })
+    })
+
+    const esito = await caricaVideo({ ...dip, intestazioni: firmaVecchia, rinnovaFirma }, JOB)
+
+    expect(esito).toEqual({ esito: 'interrotto', jobId: JOB, offsetByte: 0, codice: 'VIDEO_NON_AUTORIZZATO' })
+    expect(rinnovaFirma).toHaveBeenCalledTimes(1)
+    expect(logCon('video-upload-firma-non-rinnovata')).toMatchObject({
+      livello: 'warn',
+      campi: { error_code: 'FirmaNonDisponibile' },
+    })
+    expect((await archivio.leggi(JOB))?.stato).toBe('in_corso')
+    expect((await archivio.leggiByte(JOB))?.size).toBe(DIMENSIONE)
+  })
+
+  it('un 403 che il rinnovo non toglie non si insegue: una chiamata, poi il rifiuto di sempre', async () => {
+    const { server, dip } = banco()
+    await accoda(dip)
+    server.rifiutaSempreConStato = 403
+    const rinnovaFirma = vi.fn(async () => ({ 'x-signature': 'firma-nuova' }))
+
+    const esito = await caricaVideo({ ...dip, intestazioni: firmaVecchia, rinnovaFirma }, JOB)
+
+    expect(esito).toEqual({ esito: 'interrotto', jobId: JOB, offsetByte: 0, codice: 'VIDEO_NON_AUTORIZZATO' })
+    // Ogni rinnovo deve essere seguito da byte accettati: qui non ne passa nemmeno uno.
+    expect(rinnovaFirma).toHaveBeenCalledTimes(1)
+  })
+
+  // Lo Storage risponde 400 «Invalid Compact JWS» a una firma che non va (misurato sulla POST senza
+  // credenziali): la scadenza a metà trasferimento NON è stata misurata, quindi la libreria guarda anche il CORPO.
+  const CORPO_FIRMA = '{"statusCode":"400","error":"Unauthorized","message":"Invalid Compact JWS"}'
+
+  it('un 400 che nomina la firma nel corpo si rinnova come un 403', async () => {
+    const { server, dip } = banco()
+    await accoda(dip)
+    server.statoForzatoSullaProssimaPatch = 400
+    server.corpoDelRifiuto = CORPO_FIRMA
+    const rinnovaFirma = vi.fn(async () => ({ 'x-signature': 'firma-nuova' }))
+
+    const esito = await caricaVideo({ ...dip, intestazioni: firmaVecchia, rinnovaFirma }, JOB)
+
+    expect(esito).toEqual({ esito: 'caricato', jobId: JOB, byteCaricati: DIMENSIONE })
+    expect(rinnovaFirma).toHaveBeenCalledTimes(1)
+    expect(Buffer.from(server.unicoOggetto()!.byte).equals(Buffer.from(byteOriginali()))).toBe(true)
+  })
+
+  it('senza il rinnovo, un 400 di firma è «interrotto» e ripescabile, non «fallito» con i byte buttati', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    server.statoForzatoSullaProssimaPatch = 400
+    server.corpoDelRifiuto = '{"statusCode":"400","message":"jwt expired"}'
+
+    const esito = await caricaVideo(dip, JOB)
+
+    expect(esito).toEqual({ esito: 'interrotto', jobId: JOB, offsetByte: 0, codice: 'VIDEO_NON_AUTORIZZATO' })
+    expect((await archivio.leggi(JOB))?.stato).toBe('in_corso')
+    expect((await archivio.leggiByte(JOB))?.size).toBe(DIMENSIONE)
+  })
+
+  it('un 400 che NON riguarda la firma (tipo MIME rifiutato) resta definitivo e non chiede nessun rinnovo', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    server.statoForzatoSullaProssimaPatch = 400
+    server.corpoDelRifiuto = '{"statusCode":"400","error":"invalid_mime_type","message":"mime type not supported"}'
+    const rinnovaFirma = vi.fn(async () => ({ 'x-signature': 'firma-nuova' }))
+
+    const esito = await caricaVideo({ ...dip, intestazioni: firmaVecchia, rinnovaFirma }, JOB)
+
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' })
+    expect(rinnovaFirma).not.toHaveBeenCalled()
+    expect(await archivio.leggiByte(JOB)).toBeUndefined()
+  })
+
+  it('un rifiuto che non riguarda la firma (413) non chiede nessun rinnovo', async () => {
+    const { server, dip } = banco()
+    await accoda(dip)
+    server.statoForzatoSullaProssimaPatch = 413
+    const rinnovaFirma = vi.fn(async () => ({ 'x-signature': 'firma-nuova' }))
+
+    const esito = await caricaVideo({ ...dip, intestazioni: firmaVecchia, rinnovaFirma }, JOB)
+
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB, codice: 'VIDEO_TROPPO_GRANDE' })
+    expect(rinnovaFirma).not.toHaveBeenCalled()
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 13. LA RETE CHE MANCA PIÙ A LUNGO DI NOVE SECONDI
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('i ritentativi di default coprono più di nove secondi di rete assente', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('sei tentativi persi di fila non fermano il trasferimento', async () => {
+    const { server, archivio, dip } = banco()
+    await accoda(dip)
+    // Solo i timer: `Date.now()` serve ancora ai tempi che la libreria scrive nei log.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    server.perdiLeProssimePatch = 6
+
+    // Niente `ritardiRitentativo`: vale il default della libreria, cioè ciò che si prova.
+    const corsa = caricaVideo({ ...dip, ritardiRitentativo: undefined }, JOB)
+    let esito: Awaited<typeof corsa> | undefined
+    void corsa.then((e) => { esito = e })
+    // 0 + 1 + 3 + 5 + 10 + 20 secondi di attesa fra i sei tentativi persi e il settimo. Si
+    // avanza a passi finché la corsa non finisce, con un tetto: se non finisse mai, il collaudo
+    // fallisce invece di restare appeso.
+    for (let giro = 0; giro < 20 && esito === undefined; giro++) await vi.advanceTimersByTimeAsync(10_000)
+
+    // Con i quattro ritardi di prima (9 secondi in tutto) il quinto tentativo perso era
+    // l'ultimo, e qui si leggerebbe «interrotto».
+    expect(esito).toEqual({ esito: 'caricato', jobId: JOB, byteCaricati: DIMENSIONE })
+    expect(server.viste.filter((v) => v.metodo === 'PATCH' && v.byteAccettati === 0)).toHaveLength(6)
+    expect(Buffer.from(server.unicoOggetto()!.byte).equals(Buffer.from(byteOriginali()))).toBe(true)
+    expect((await archivio.leggi(JOB))?.stato).toBe('caricato')
   })
 })

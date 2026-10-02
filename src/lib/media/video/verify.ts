@@ -1,7 +1,7 @@
 import { MAX_VIDEO_INPUT_BYTES } from './limiti'
 import { outputVideoColorMetadata } from './encode'
 import type { VideoProbe } from './probe'
-import type { VideoTemporalEvidence } from './temporale'
+import { VIDEO_TEMPORAL_REASONS, type VideoTemporalEvidence } from './temporale'
 
 const AAC_SAMPLES_PER_FRAME = 1024
 const MAX_LANDSCAPE = { width: 1920, height: 1080 } as const
@@ -281,37 +281,80 @@ function dimensionsMatch(source: VideoProbe, width: number, height: number): boo
   return widthLoss >= 0 && widthLoss < 4 && heightLoss >= 0 && heightLoss < 4
 }
 
-function fpsMatches(sourceFps: number, outputFps: number, evidence: VideoDecodeEvidence): boolean {
+/**
+ * La prova temporale è ben formata, dice `ok` e descrive proprio i frame che la decodifica ha contato.
+ * Il resto (modo, frame rate, uguaglianza dei conteggi) lo decide chi la usa.
+ */
+function provaTemporaleValida(evidence: VideoDecodeEvidence): VideoTemporalEvidence | null {
   const temporal = evidence.temporal
+  if (!temporal || temporal.version !== 1 || temporal.ok !== true ||
+      !Number.isSafeInteger(temporal.sourceFrames) || temporal.sourceFrames <= 0 ||
+      temporal.outputFrames !== evidence.decodedFrames) return null
+  return temporal
+}
+
+function fpsMatches(sourceFps: number, outputFps: number, evidence: VideoDecodeEvidence): boolean {
   // Fail-closed: media o r_frame_rate, da soli, non dimostrano una conversione
   // temporale corretta. L'attestazione proviene dalla decodifica nella Sandbox.
-  if (!temporal || temporal.version !== 1 || temporal.ok !== true ||
-      temporal.sourceFps !== sourceFps || temporal.outputFps !== outputFps ||
-      !Number.isSafeInteger(temporal.sourceFrames) || temporal.sourceFrames <= 0 ||
-      temporal.outputFrames !== evidence.decodedFrames) return false
+  const temporal = provaTemporaleValida(evidence)
+  if (!temporal || temporal.sourceFps !== sourceFps || temporal.outputFps !== outputFps) return false
   return sourceFps > 60
     ? temporal.mode === 'reduce60' && Math.abs(outputFps - 60) <= 0.01
     : temporal.mode === 'preserve' && temporal.sourceFrames === temporal.outputFrames
 }
 
-function durationMatches(
-  sourceDuration: number,
-  outputDuration: number,
+/**
+ * Quanto dura l'ultimo campione video della sorgente, SE e solo se la conversione è 1:1 — cioè conteggio
+ * dei frame e PTS coincidono, ed è la stessa prova che `fpsMatches` pretende dal ramo `preserve`.
+ *
+ * Perché serve. Il muxer non conserva la durata dell'ultimo campione: la sceglie lui (misurato il
+ * 28/09/2026: 3,035 ms in ingresso, 33,333 ms in uscita, con i 264 PTS identici). Quando la sorgente ha un
+ * ultimo campione più lungo di un frame — un'inquadratura ferma tenuta fino alla fine, una registrazione
+ * di schermo — l'uscita risulta più CORTA di tutta la differenza, e un frame di tolleranza la scartava
+ * come troncata. Con i PTS identici fotogramma per fotogramma quella differenza non può essere altro che
+ * la durata dell'ultimo campione: è il solo grado di libertà che resta.
+ *
+ * Perché non apre un varco al troncamento: un frame mancante fa già fallire il conteggio (prima di
+ * arrivare qui), e in `reduce60` — dove conteggio e PTS NON coincidono — la tolleranza resta quella di
+ * sempre. Una misura assente, non positiva o più lunga della traccia stessa (incoerente: un campione
+ * non dura più del video che lo contiene) non allarga niente.
+ */
+function ultimoCampioneConservato(evidence: VideoDecodeEvidence, durataTracciaSorgente: number): number | null {
+  const temporal = provaTemporaleValida(evidence)
+  if (!temporal || temporal.mode !== 'preserve' || temporal.sourceFrames !== temporal.outputFrames) return null
+  const campione = temporal.measures?.sourceLastSample
+  if (typeof campione !== 'number' || !Number.isFinite(campione) || campione <= 0) return null
+  return campione <= durataTracciaSorgente ? campione : null
+}
+
+/**
+ * Di quanto possono differire due durate: `max(1 frame, ultimo campione della sorgente)` più il padding
+ * AAC. Senza un ultimo campione da far valere (`null`) è il frame di prima, né più né meno.
+ *
+ * L'unico punto che la calcola: la verifica e la diagnosi leggono lo stesso numero.
+ */
+function durationTolerance(
   outputFps: number,
   audioSampleRate: number | null,
-): boolean {
-  if (!Number.isFinite(sourceDuration) || sourceDuration <= 0) return false
+  ultimoCampione: number | null,
+): number {
   const oneFrame = 1 / outputFps
   const aacPadding = audioSampleRate === null ? 0 : AAC_SAMPLES_PER_FRAME / audioSampleRate
+  return Math.max(oneFrame, ultimoCampione ?? 0) + aacPadding
+}
+
+function durationMatches(sourceDuration: number, outputDuration: number, tolerance: number): boolean {
+  if (!Number.isFinite(sourceDuration) || sourceDuration <= 0) return false
   // Limite aperto: perdere esattamente l'intera tolleranza non è considerato
   // una conversione completa. Lo stesso margine impedisce code spurie estese.
-  return Math.abs(outputDuration - sourceDuration) < oneFrame + aacPadding
+  return Math.abs(outputDuration - sourceDuration) < tolerance
 }
 
 /**
  * Verifica i metadati dell'output e l'esito della decodifica completa eseguita
  * dal runner con `ffmpeg -xerror -err_detect explode`. Non usa il parser degli
- * input: l'output AAC può legittimamente superare di pochi millisecondi i 180 s.
+ * input: l'output AAC può legittimamente superare di pochi millisecondi il tetto
+ * di durata dell'ingresso.
  */
 export function verifyVideoOutput(
   source: VideoProbe,
@@ -442,12 +485,21 @@ export function verifyVideoOutput(
   // espone la durata: in quel caso usiamo la timeline massima del contenitore.
   const sourceVideoDuration = source.videoDurationSeconds ?? source.durationSeconds
   const sourceAudioDuration = source.audioDurationSeconds
+  // L'ultimo campione della sorgente allarga la tolleranza di tutto ciò che contiene la traccia
+  // VIDEO (la sua durata e quella complessiva); la durata della traccia AUDIO non c'entra, e ha il
+  // suo padding AAC e nient'altro.
+  const toleranzaVideo = durationTolerance(
+    fps,
+    audioSampleRate,
+    ultimoCampioneConservato(decodeEvidence, sourceVideoDuration),
+  )
+  const toleranzaAudio = durationTolerance(fps, audioSampleRate, null)
   if (
-    !durationMatches(sourceVideoDuration, videoDurationSeconds, fps, audioSampleRate) ||
+    !durationMatches(sourceVideoDuration, videoDurationSeconds, toleranzaVideo) ||
     (audioDurationSeconds !== null &&
       sourceAudioDuration !== undefined &&
       sourceAudioDuration !== null &&
-      !durationMatches(sourceAudioDuration, audioDurationSeconds, fps, audioSampleRate))
+      !durationMatches(sourceAudioDuration, audioDurationSeconds, toleranzaAudio))
   ) {
     return { ok: false, code: 'OUTPUT_DURATION_MISMATCH' }
   }
@@ -458,7 +510,7 @@ export function verifyVideoOutput(
     audioDurationSeconds ?? 0,
     formatDuration ?? 0,
   )
-  if (!durationMatches(source.durationSeconds, durationSeconds, fps, audioSampleRate)) {
+  if (!durationMatches(source.durationSeconds, durationSeconds, toleranzaVideo)) {
     return { ok: false, code: 'OUTPUT_DURATION_MISMATCH' }
   }
 
@@ -484,4 +536,164 @@ export function verifyVideoOutput(
       decodedFrames: decodeEvidence.decodedFrames,
     },
   }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * La diagnosi di una verifica: i numeri, non solo il codice
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * I codici dell'esito, come elenco a runtime. Un `Record` e non un array: se
+ * `VideoOutputVerificationErrorCode` cresce, il file smette di compilare finché non c'è anche qui, quindi
+ * la lista bianca della diagnosi non può restare indietro in silenzio.
+ */
+const CODICI_ESITO_DIAGNOSI: Record<VideoOutputVerificationErrorCode, true> = {
+  INVALID_OUTPUT_SIZE: true,
+  OUTPUT_TOO_LARGE: true,
+  INVALID_DECODE_EVIDENCE: true,
+  OUTPUT_DECODE_FAILED: true,
+  OUTPUT_NO_DECODED_FRAMES: true,
+  INVALID_OUTPUT_PROBE: true,
+  OUTPUT_FFPROBE_ERROR: true,
+  OUTPUT_CONTAINER_INVALID: true,
+  OUTPUT_VIDEO_INVALID: true,
+  OUTPUT_ROTATION_INVALID: true,
+  OUTPUT_DIMENSIONS_INVALID: true,
+  OUTPUT_FPS_INVALID: true,
+  OUTPUT_DURATION_UNKNOWN: true,
+  OUTPUT_DURATION_MISMATCH: true,
+  OUTPUT_AUDIO_MISSING: true,
+  OUTPUT_AUDIO_UNEXPECTED: true,
+  OUTPUT_AUDIO_INVALID: true,
+  OUTPUT_NOT_SDR: true,
+}
+
+type ChiaveNumericaDiagnosi =
+  | 'frame_sorgente'
+  | 'frame_uscita'
+  | 'frame_decodificati'
+  | 'fps_sorgente'
+  | 'fps_uscita'
+  | 'copertura_sorgente_ms'
+  | 'copertura_uscita_ms'
+  | 'ultimo_campione_sorgente_ms'
+  | 'ultimo_campione_uscita_ms'
+  | 'durata_video_sorgente_ms'
+  | 'durata_video_uscita_ms'
+  | 'durata_audio_sorgente_ms'
+  | 'durata_audio_uscita_ms'
+  | 'tolleranza_durata_ms'
+  | 'tolleranza_pts_ms'
+  | 'tracce_audio_ignorate'
+
+/**
+ * Ciò che finisce in `video_jobs.diagnosi_verifica` (jsonb, ≤ 2048 byte): SOLO numeri ed enumerati.
+ * Nessun nome, nessun percorso, nessuna stringa che arrivi dal file: le uniche stringhe sono `esito`,
+ * `modo` e `motivo`, e ciascuna esce da un elenco chiuso. Tempi in millisecondi, frame come interi.
+ */
+export type DiagnosiVerifica = Partial<Record<ChiaveNumericaDiagnosi, number>> & {
+  /** Versione dello schema, per chi legge la colonna fra sei mesi. */
+  v: 1
+  esito: VideoOutputVerificationErrorCode | 'ok' | 'SCONOSCIUTO'
+  modo?: VideoTemporalEvidence['mode']
+  motivo?: (typeof VIDEO_TEMPORAL_REASONS)[number] | 'SCONOSCIUTO'
+}
+
+/** Nessun numero della diagnosi esce da qui: undici giorni in millisecondi, o un miliardo di frame. */
+const LIMITE_NUMERO_DIAGNOSI = 1e9
+
+function numeroDiagnosi(value: unknown, decimali: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const limitato = Math.max(-LIMITE_NUMERO_DIAGNOSI, Math.min(LIMITE_NUMERO_DIAGNOSI, value))
+  const fattore = 10 ** decimali
+  return Math.round(limitato * fattore) / fattore
+}
+
+/** Secondi in millisecondi. Il controllo sul tipo viene PRIMA della moltiplicazione: `'12' * 1000` è 12000. */
+function millisecondiDiagnosi(secondi: unknown): number | undefined {
+  return typeof secondi === 'number' ? numeroDiagnosi(secondi * 1000, 3) : undefined
+}
+
+/**
+ * Costruisce l'oggetto di `diagnosi_verifica`: i numeri con cui un rifiuto (o un'accettazione) si legge
+ * dopo, invece del solo codice. Funzione pura e TOTALE: qualunque input malformato dà meno campi, mai
+ * un'eccezione — gira sul percorso di un fallimento e non deve mascherarlo.
+ *
+ * I numeri della prova temporale (copertura, ultimo campione, tolleranza sui PTS) arrivano dalla
+ * Sandbox, e quindi da un marcatore che questo modulo non controlla: ogni valore passa per
+ * `numeroDiagnosi` (finito, limitato, arrotondato) e ogni stringa per un elenco chiuso. Il limite dei
+ * 2048 byte vale PER COSTRUZIONE: venti chiavi in tutto, ciascuna con un numero di al più ~15 caratteri
+ * (il caso peggiore, tutti i campi presenti e tutti i numeri al limite, misura 614 byte).
+ *
+ * La tolleranza sulla durata è calcolata da `durationTolerance`, la stessa funzione che decide: la
+ * diagnosi non può raccontare un numero diverso da quello usato.
+ *
+ * Il cablaggio nel runner (scrivere questo oggetto con `video_job_diagnosi`) non sta qui.
+ */
+export function diagnosiVerifica(
+  source: VideoProbe,
+  rawOutputProbe: unknown,
+  decodeEvidence: VideoDecodeEvidence | null | undefined,
+  esito: VideoOutputVerificationErrorCode | 'ok',
+): DiagnosiVerifica {
+  const diagnosi: DiagnosiVerifica = {
+    v: 1,
+    esito: esito === 'ok' || Object.hasOwn(CODICI_ESITO_DIAGNOSI, esito) ? esito : 'SCONOSCIUTO',
+  }
+
+  const temporal = decodeEvidence?.temporal ?? null
+  if (temporal?.mode === 'preserve' || temporal?.mode === 'reduce60') diagnosi.modo = temporal.mode
+  if (typeof temporal?.reason === 'string') {
+    diagnosi.motivo = (VIDEO_TEMPORAL_REASONS as readonly string[]).includes(temporal.reason)
+      ? temporal.reason
+      : 'SCONOSCIUTO'
+  }
+  const misure = temporal?.measures
+
+  // L'uscita come l'ha vista ffprobe: lo stesso modo di leggerla di `verifyVideoOutput`.
+  const root = asObject(parseRaw(rawOutputProbe))
+  const streams = (Array.isArray(root?.streams) ? root.streams : [])
+    .map(asObject)
+    .filter((stream): stream is JsonObject => stream !== null)
+  const videos = streams.filter(
+    (stream) => stream.codec_type === 'video' && !dispositionFlag(stream, 'attached_pic'),
+  )
+  const audios = streams.filter((stream) => stream.codec_type === 'audio')
+  const video = videos.length === 1 ? videos[0] : null
+  const audio = audios.length === 1 ? audios[0] : null
+  const fpsUscita = (video ? (rational(video.avg_frame_rate) ?? rational(video.r_frame_rate)) : null) ?? null
+  const sampleRateUscita = audio ? positiveInteger(audio.sample_rate) : null
+
+  const durataVideoSorgente = source?.videoDurationSeconds ?? source?.durationSeconds
+  let tolleranzaDurata: number | undefined
+  if (fpsUscita !== null && typeof durataVideoSorgente === 'number' && decodeEvidence) {
+    tolleranzaDurata = durationTolerance(
+      fpsUscita,
+      sampleRateUscita,
+      ultimoCampioneConservato(decodeEvidence, durataVideoSorgente),
+    )
+  }
+
+  const numeri: Array<[ChiaveNumericaDiagnosi, number | undefined]> = [
+    ['frame_sorgente', numeroDiagnosi(temporal?.sourceFrames, 0)],
+    ['frame_uscita', numeroDiagnosi(temporal?.outputFrames, 0)],
+    ['frame_decodificati', numeroDiagnosi(decodeEvidence?.decodedFrames, 0)],
+    ['fps_sorgente', numeroDiagnosi(source?.fps, 4)],
+    ['fps_uscita', numeroDiagnosi(fpsUscita ?? temporal?.outputFps, 4)],
+    ['copertura_sorgente_ms', millisecondiDiagnosi(misure?.sourceCoverage)],
+    ['copertura_uscita_ms', millisecondiDiagnosi(misure?.outputCoverage)],
+    ['ultimo_campione_sorgente_ms', millisecondiDiagnosi(misure?.sourceLastSample)],
+    ['ultimo_campione_uscita_ms', millisecondiDiagnosi(misure?.outputLastSample)],
+    ['durata_video_sorgente_ms', millisecondiDiagnosi(durataVideoSorgente)],
+    ['durata_video_uscita_ms', millisecondiDiagnosi(video ? traceDuration(video) : null)],
+    ['durata_audio_sorgente_ms', millisecondiDiagnosi(source?.audioDurationSeconds)],
+    ['durata_audio_uscita_ms', millisecondiDiagnosi(audio ? traceDuration(audio) : null)],
+    ['tolleranza_durata_ms', millisecondiDiagnosi(tolleranzaDurata)],
+    ['tolleranza_pts_ms', millisecondiDiagnosi(misure?.epsilon)],
+    ['tracce_audio_ignorate', numeroDiagnosi(source?.ignoredAudioTracks, 0)],
+  ]
+  for (const [chiave, valore] of numeri) {
+    if (valore !== undefined) diagnosi[chiave] = valore
+  }
+  return diagnosi
 }

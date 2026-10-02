@@ -51,7 +51,7 @@ import { leggiByteFoto } from '@/lib/gallery/byte-foto';
 
 export type EsitoCarica =
     | { ok: true; path: string }
-    | { ok: false; motivo: 'troppo-grande' | 'formato' | 'formato-non-ammesso'; stato: number | null }
+    | { ok: false; motivo: 'troppo-grande' | 'formato-non-ammesso'; stato: number | null }
     | { ok: false; motivo: 'firma' | 'trasferimento' | 'rete' | 'app-da-aggiornare' | 'persistenza' | 'ambito-cambiato'; stato: number | null; retryAfterMs?: number };
 
 export interface OpzioniCaricamentoGalleria {
@@ -102,32 +102,18 @@ export async function caricaMediaGalleria(file: File, mime: string, opzioni?: Op
         return { ok: false, motivo: 'troppo-grande', stato: null };
     }
 
-    // ── 2. la firma, con i primi 64 KB per lo sniff del codec ───────────────
-    // Il server rifiuta un HEVC PRIMA che il file parta: su rete mobile è la
-    // differenza fra scoprirlo subito e scoprirlo dopo quaranta megabyte.
-    let testa_b64: string | undefined;
-    if (tipo.startsWith('video/')) {
-        try {
-            const testa = await file.slice(0, 65536).arrayBuffer();
-            let bin = '';
-            const bytes = new Uint8Array(testa);
-            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-            testa_b64 = btoa(bin);
-        } catch {
-            // Header illeggibile: si lascia decidere al server, che è fail-closed.
-            // Non è un ramo muto — il 415 che seguirà ha il suo messaggio.
-            segnala('gallery-video-intestazione-illeggibile', null, 'warn');
-            testa_b64 = undefined;
-        }
-    }
-
+    // ── 2. la firma ─────────────────────────────────────────────────────────
+    // Nel corpo viaggiano solo il tipo e la taglia (e il percorso, se si riprende):
+    // i primi 64 KB del file per lo sniff del codec non ci sono più (`testa_b64`), perché
+    // il server non fa più nessuno sniff — un video, qualunque sia il codec, riceve il 409
+    // del ramo qui sotto, e le foto non ne hanno bisogno.
     if (opzioni?.canContinue?.() === false) return { ok: false, motivo: 'ambito-cambiato', stato: null };
     let firma: Response;
     try {
         firma = await fetch('/api/gallery/upload-url', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mime: tipo, size: file.size, testa_b64, ...(opzioni?.resumePath ? { resume_path: opzioni.resumePath } : {}) }),
+            body: JSON.stringify({ mime: tipo, size: file.size, ...(opzioni?.resumePath ? { resume_path: opzioni.resumePath } : {}) }),
         });
     } catch (err) {
         segnala(`gallery-firma-non-emessa: ${nomeErrore(err)}`, null);
@@ -157,9 +143,9 @@ export async function caricaMediaGalleria(file: File, mime: string, opzioni?: Op
             if (corpo409?.codice === 'VIDEO_APP_DA_AGGIORNARE') {
                 // `warn` e non `error`: è il protocollo che funziona come previsto, un
                 // client vecchio fermato apposta. Ma con un messaggio SUO, perché la
-                // chiave di dedup di `logClient` è `evento|messaggio|stato` e il giorno
-                // dell'accensione bisogna poter contare quanti telefoni parlano ancora
-                // la lingua vecchia — separatamente dai guasti veri della firma.
+                // chiave di dedup di `logClient` è `evento|messaggio|stato` e bisogna
+                // poter contare quanti telefoni parlano ancora la lingua vecchia —
+                // separatamente dai guasti veri della firma.
                 segnala('gallery-app-da-aggiornare', firma.status, 'warn');
                 return { ok: false, motivo: 'app-da-aggiornare', stato: firma.status };
             }
@@ -168,7 +154,7 @@ export async function caricaMediaGalleria(file: File, mime: string, opzioni?: Op
         // `res.ok` PRIMA di `res.json()`, sempre: su un 413 il corpo è `text/plain` e
         // il parse lancia, seppellendo l'unica informazione utile.
         //
-        // I TRE RAMI SONO TRE GUASTI DIVERSI, e il 2026-09-08 ha dimostrato che
+        // I DUE RAMI RIMASTI SONO DUE GUASTI DIVERSI, e il 2026-09-08 ha dimostrato che
         // confonderli costa. Il 400 (mime fuori lista, o corpo che il nostro stesso schema
         // rifiuta) cadeva nel ramo generico `firma`, cioè «Riprova fra qualche minuto»:
         // otto insegnanti hanno riprovato 33 volte e due sono finite nel 429. Il messaggio
@@ -180,18 +166,19 @@ export async function caricaMediaGalleria(file: File, mime: string, opzioni?: Op
         // l'altra causa possibile di 400 — è già filtrata sopra contro la stessa costante,
         // e perché la verità resta comunque nel log del server, che porta il mime in chiaro.
         // Il 429 invece resta `firma`, e lì «riprova fra qualche minuto» è la frase giusta.
-        const formato = firma.status === 415;
+        //
+        // Un 415 non lo manda più nessuna delle nostre porte (era lo sniff del codec,
+        // tolto con la chiusura del percorso vecchio dei video): se mai arrivasse, verrebbe
+        // dalla piattaforma, e cade qui sotto nel ramo generico, che lo registra a `error`.
         const nonAmmesso = firma.status === 400;
         segnala(
-            formato ? 'gallery-video-non-convertibile'
-                : nonAmmesso ? 'gallery-formato-rifiutato'
-                : 'gallery-firma-non-emessa',
+            nonAmmesso ? 'gallery-formato-rifiutato' : 'gallery-firma-non-emessa',
             firma.status,
-            formato || nonAmmesso ? 'warn' : 'error',
+            nonAmmesso ? 'warn' : 'error',
         );
         return {
             ok: false,
-            motivo: formato ? 'formato' : nonAmmesso ? 'formato-non-ammesso' : 'firma',
+            motivo: nonAmmesso ? 'formato-non-ammesso' : 'firma',
             stato: firma.status,
             ...(firma.status === 429 && retryAfterMs(firma) !== null ? { retryAfterMs: retryAfterMs(firma)! } : {}),
         };
@@ -228,7 +215,8 @@ export async function caricaMediaGalleria(file: File, mime: string, opzioni?: Op
     try {
         // Una File ricostruita da IndexedDB può fallire nel processo di rete
         // WebKit pur essendo leggibile. Trasferiamo i byte delle sole foto
-        // (massimo 50 MiB); i video continuano a usare il proprio trasporto.
+        // (massimo 50 MiB); un file che non è una foto resta com'è — e i video qui
+        // non arrivano: la firma li ha già respinti con il 409.
         const body = tipo.startsWith('image/') ? await leggiByteFoto(file) : file;
         if (opzioni?.canContinue?.() === false) return { ok: false, motivo: 'ambito-cambiato', stato: null };
         put = await fetch(signedUrl, {
@@ -265,9 +253,9 @@ export async function caricaMediaGalleria(file: File, mime: string, opzioni?: Op
  * chi rende ha il suo `useTranslations` e il suo tono. È la stessa separazione che
  * `@/lib/upload/carica-file` dichiara nella propria testata.
  *
- * `formato` non ha una frase sua: il testo di `MESSAGGIO_VIDEO_NON_CONVERTIBILE` è già
- * nel catalogo (`galleryAlertVideoNonConvertibile`) e spiega cosa fare sull'iPhone —
- * scriverne una seconda le farebbe divergere al primo ritocco.
+ * Il motivo `formato` (il 415 dello sniff del codec, con la frase su cosa fare
+ * sull'iPhone) non c'è più: il server non fa più nessuno sniff, e i video di qui non
+ * passano — li ferma il 409, che ha la frase sua più sotto.
  */
 export function messaggioCaricamento(
     esito: Extract<EsitoCarica, { ok: false }>,
@@ -275,7 +263,6 @@ export function messaggioCaricamento(
 ): string {
     switch (esito.motivo) {
         case 'troppo-grande': return t('galleryErrTroppoGrande');
-        case 'formato': return t('galleryAlertVideoNonConvertibile');
         // La frase NON viene da `teacherServizi` e non è scritta qui: è quella del
         // codice `VIDEO_APP_DA_AGGIORNARE`, che esiste già nel catalogo condiviso in
         // italiano e in inglese ed è la stessa che il server manda nel corpo del 409.
@@ -286,8 +273,9 @@ export function messaggioCaricamento(
         // sparisse dal catalogo, si legge una frase imperfetta invece del silenzio.
         case 'app-da-aggiornare':
             return soloCatalogoDaCorpo({ codice: 'VIDEO_APP_DA_AGGIORNARE' }, t('galleryErrFirma'));
-        // Frase SUA, e non quella qui sopra: `galleryAlertVideoNonConvertibile` parla di
-        // iPhone e di conversione, che per un `image/heic` respinto non vuol dire niente.
+        // Frase SUA, e non quella dell'aggiornamento qui sopra: un `image/heic` respinto
+        // non si risolve aggiornando l'app, e dirlo manderebbe la persona a fare una
+        // cosa che non serve.
         case 'formato-non-ammesso': return t('galleryErrFormatoNonAmmesso');
         case 'rete': return t('galleryErrRete');
         case 'persistenza': return t('galleryErrFirma');

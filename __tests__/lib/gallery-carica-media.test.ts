@@ -13,12 +13,14 @@ import { TETTO_GALLERIA_BYTE } from '@/lib/gallery/limiti'
  * funzione ha smesso di caricare video per OTTO insegnanti in TRE sedi — 33 tentativi
  * fra le 08:26 e le 16:56 del 2026-09-08 — e nessun test era rosso.
  *
- * IL DIFETTO, in una riga: `MediaRecorder` non produce `video/mp4`, produce
- * `video/mp4;codecs=avc1` (`processing.ts:293-300`), quel tipo finisce nel `File`
- * convertito e da lì, GREZZO, in due posti che non tollerano parametri — il nostro
- * `z.enum` (400) e `allowed_mime_types` del bucket. Il repo sapeva normalizzare e lo
- * fa in tre punti (`gallery/upload/route.ts:32`, `news/upload/route.ts:55`,
- * `processing.ts:131`): la porta nuova era l'unica che non lo faceva.
+ * IL DIFETTO, in una riga: `MediaRecorder` non produceva `video/mp4`, produceva
+ * `video/mp4;codecs=avc1`, quel tipo finiva nel `File` convertito e da lì, GREZZO, in
+ * due posti che non tollerano parametri — il nostro `z.enum` (400) e
+ * `allowed_mime_types` del bucket. Il repo sapeva normalizzare e lo faceva in tre
+ * punti (le due route multipart e la conversione stessa): la porta nuova era l'unica
+ * che non lo faceva. (La conversione nel browser non esiste più dal 2026-10-02 e i
+ * video di qui non passano — li ferma il 409 — ma la normalizzazione resta, perché è
+ * lei a far arrivare un tipo decorato al blocco invece che a un 400.)
  *
  * ⚠️ ERA LA SECONDA VOLTA: il PRD registra la stessa lezione al 2026-07-13 (DL-051/052,
  * «MIME video normalizzato — codec suffix vs allow-list bucket»). Imparata, e riperduta
@@ -130,10 +132,15 @@ describe('caricaMediaGalleria · i rami di fallimento restano distinguibili', ()
     expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'gallery-formato-rifiutato', stato: 400 }))
   })
 
-  it('415 ⇒ «formato»: il video non convertibile resta un caso suo', async () => {
+  it('415 ⇒ «firma», registrato a `error`: nessuna nostra porta lo manda più (era lo sniff del codec)', async () => {
+    // Il ramo `formato` è sparito con lo sniff: se un 415 arrivasse, verrebbe dalla piattaforma, e
+    // non c'è una frase sul «video da convertire» che gli si addica.
     fetchFinta({ firma: { status: 415 } })
     const esito = await caricaMediaGalleria(fileDa(9_000_000, 'video/mp4'), 'video/mp4')
-    expect(esito).toEqual({ ok: false, motivo: 'formato', stato: 415 })
+    expect(esito).toEqual({ ok: false, motivo: 'firma', stato: 415 })
+    expect(h.logClient).toHaveBeenCalledWith(
+      expect.objectContaining({ messaggio: 'gallery-firma-non-emessa', stato: 415, livello: 'error' }),
+    )
   })
 
   it('429 ⇒ «firma», e lì «riprova fra qualche minuto» è la frase GIUSTA', async () => {
@@ -231,11 +238,36 @@ describe('caricaMediaGalleria · ciò che non deve MAI finire nei log', () => {
   })
 })
 
+describe('caricaMediaGalleria · la firma non porta più la testa del file', () => {
+  it('il corpo ha solo tipo e taglia: nessun `testa_b64`, né per un video né per una foto', async () => {
+    // La testa (i primi 64 KB in base64) serviva allo sniff del codec sul server: lo sniff non c'è
+    // più. Un client che continuasse a mandarla spedirebbe ottantasettemila caratteri per niente, e
+    // soprattutto rimetterebbe in piedi un secondo giudice del contenuto accanto al blocco.
+    for (const [tipo, byte] of [['video/mp4', 9_000_000], ['video/webm;codecs=vp9', 9_000_000], ['image/jpeg', 800_000]] as const) {
+      const chiamate = fetchFinta()
+      await caricaMediaGalleria(fileDa(byte, tipo), tipo)
+      expect(Object.keys(corpoFirma(chiamate)).sort(), tipo).toEqual(['mime', 'size'])
+    }
+  })
+
+  it('con una ripresa il corpo porta in più SOLO il `resume_path`', async () => {
+    const chiamate = fetchFinta()
+    await caricaMediaGalleria(fileDa(100, 'image/jpeg'), 'image/jpeg', { resumePath: 'uploads/ed-1/precedente.jpg' })
+    expect(Object.keys(corpoFirma(chiamate)).sort()).toEqual(['mime', 'resume_path', 'size'])
+  })
+
+  it('non legge nemmeno i byte del file per la firma: nessuna `slice` sul `File`', async () => {
+    fetchFinta()
+    const file = fileDa(9_000_000, 'video/mp4')
+    const slice = vi.spyOn(file, 'slice')
+    await caricaMediaGalleria(file, 'video/mp4')
+    expect(slice).not.toHaveBeenCalled()
+  })
+})
+
 describe('messaggioCaricamento', () => {
-  it('il formato non ammesso ha una frase sua, non quella del video da convertire', () => {
+  it('il formato non ammesso ha una frase sua, non quella dell\'aggiornamento dell\'app', () => {
     expect(messaggioCaricamento({ ok: false, motivo: 'formato-non-ammesso', stato: 400 }, (k) => k))
       .toBe('galleryErrFormatoNonAmmesso')
-    expect(messaggioCaricamento({ ok: false, motivo: 'formato', stato: 415 }, (k) => k))
-      .toBe('galleryAlertVideoNonConvertibile')
   })
 })

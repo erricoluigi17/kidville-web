@@ -1006,6 +1006,117 @@ async function seminaRiconciliazione() {
   console.log('  🏦 riconciliazione: 1 import + 3 movimenti (rosso · giallo · verde, senza la marca automatica)');
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ * I VIDEO DEGLI UTENTI E2E — ciò che gli spec video lasciano dietro, tolto a ogni run.
+ *
+ * ─── PERCHÉ ESISTE (PR 2 dei video, 2026-10-02) ───────────────────────────────
+ * Quattro spec (`video-invio-bambini-prima`, `video-ripresa-automatica`, `video-rinnovo-token`,
+ * `video-destinatari`) aprono intenti VERI sul database della CI, caricano byte veri sullo Storage
+ * e — l'ultimo — fanno pubblicare un video dal server. Ognuno ripulisce da sé quello che sa di aver
+ * fatto (annulla l'intento, toglie i suoi oggetti, mette la riga di galleria nel cestino), ma un test
+ * che muore a metà non arriva al proprio `finally`, e senza una rete questo è ciò che resterebbe:
+ *
+ *  1. un intento vivo (`awaiting_upload`, `queued`) resta nell'elenco della docente PER SEMPRE
+ *     (`GET /api/video-uploads` elenca gli intenti non terminali di qualunque età) e compare come
+ *     scheda «In caricamento da un altro dispositivo» nella galleria di ogni run successivo, sotto le
+ *     misure di `impaginazione-media` e sotto gli occhi degli altri spec che aprono quella pagina;
+ *  2. il giro del runner che `video-destinatari` fa girare pescherebbe quei job dalla coda (e
+ *     proverebbe ad aprire un Sandbox per ciascuno, senza le credenziali di Vercel che il server di
+ *     sviluppo della CI non ha): il test non ne dipende, ma ci spenderebbe tempo e lascerebbe
+ *     tentativi bruciati su righe che nessuno guarda;
+ *  3. i byte: l'originale di `video-ripresa-automatica` pesa 13 MiB a ogni giro, e il progetto
+ *     Supabase della CI ha una quota che nessuno rilegge finché non finisce.
+ *
+ * ─── COSA TOGLIE, E IN CHE ORDINE ──────────────────────────────────────────────
+ * Per gli intenti degli utenti E2E (`UTENTI_E2E`, sede 2 compresa): prima gli OGGETTI (originali e
+ * uscite in `video_originals`/`video_processing`, la copia in `gallery`), poi le righe nell'ordine delle
+ * chiavi esterne — outbox, riga di galleria (`upload_id` = intento), job, intento: tutte `ON DELETE
+ * RESTRICT` verso l'intento, e nessuna tabella punta alla riga di galleria. Gli oggetti prima delle
+ * righe, perché è dalle righe che si ricavano i percorsi: toglierle per prime vorrebbe dire non sapere
+ * più quali file cercare.
+ *
+ * ⚠️ NON USA `must()`, ed è l'unica eccezione deliberata insieme a `ensureBuckets` e a
+ * `ripulisciModuliPersonale`. Un database senza la pipeline video (le tabelle sono di una migrazione
+ * post-baseline: `PGRST205`/`42P01`) non deve far morire l'INTERA suite prima del primo test per la
+ * pulizia di una funzionalità che là non esiste: si avvisa NOMINANDO il passo, e si prosegue. Lo stesso
+ * vale per ogni errore di cancellazione — un reset che non riesce lascia al massimo un test rosso
+ * leggibile, mentre un `throw` qui spegne tutto.
+ *
+ * Il perimetro è quello degli utenti E2E e nient'altro: nessuna riga di un altro proprietario, nessun
+ * percorso che non sia stato ricavato da una riga di questi intenti.
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/** Quanti id per volta: PostgREST mette `.in()` in query string, e una riga di richiesta ha un tetto. */
+const ID_PER_BLOCCO = 50;
+
+function aBlocchi(elenco, dimensione) {
+  const blocchi = [];
+  for (let i = 0; i < elenco.length; i += dimensione) blocchi.push(elenco.slice(i, i + dimensione));
+  return blocchi;
+}
+
+async function ripulisciVideoE2E() {
+  const assente = (e) => /PGRST205|42P01|42703|does not exist|schema cache/i.test(
+    `${e?.code ?? ''} ${e?.message ?? ''}`,
+  );
+  const avvisa = (passo, e) => console.warn(
+    `↷ reset video E2E (${passo}): ${e?.code ?? ''} ${e?.message ?? JSON.stringify(e)}`,
+  );
+  /** Toglie degli oggetti da un bucket, a blocchi; un errore si dice e non ferma il resto. */
+  const togli = async (bucket, percorsi) => {
+    const distinti = [...new Set(percorsi.filter((p) => typeof p === 'string' && p.length > 0))];
+    for (const blocco of aBlocchi(distinti, 100)) {
+      const { error } = await db.storage.from(bucket).remove(blocco);
+      if (error) avvisa(`oggetti di ${bucket}`, error);
+    }
+    return distinti.length;
+  };
+
+  try {
+    const letti = await db.from('video_intents').select('id, owner_id').in('owner_id', UTENTI_E2E);
+    if (letti.error) {
+      if (assente(letti.error)) console.warn('↷ reset video saltato: la pipeline video non c\'è su questo database');
+      else avvisa('lettura degli intenti', letti.error);
+      return;
+    }
+    const intenti = letti.data ?? [];
+    if (intenti.length === 0) return;
+
+    let oggetti = 0;
+    for (const blocco of aBlocchi(intenti, ID_PER_BLOCCO)) {
+      const ids = blocco.map((i) => i.id);
+
+      // 1. gli OGGETTI, dai percorsi che le righe dicono
+      const job = await db.from('video_jobs')
+        .select('original_bucket, original_path, output_bucket, output_path').in('intent_id', ids);
+      if (job.error) {
+        avvisa('lettura dei job', job.error);
+        continue; // senza i percorsi non si tocca niente di quel blocco: né oggetti né righe
+      }
+      const per = (campoBucket, campoPercorso, bucket) => (job.data ?? [])
+        .filter((j) => j[campoBucket] === bucket).map((j) => j[campoPercorso]);
+      oggetti += await togli('video_originals', per('original_bucket', 'original_path', 'video_originals'));
+      oggetti += await togli('video_processing', per('output_bucket', 'output_path', 'video_processing'));
+      // La copia in galleria ha un percorso deterministico (`uploads/<proprietario>/v-<intento>.mp4`).
+      oggetti += await togli('gallery', blocco.map((i) => `uploads/${i.owner_id}/v-${i.id}.mp4`));
+
+      // 2. le RIGHE, nell'ordine delle chiavi esterne
+      for (const [tabella, colonna] of [
+        ['video_outbox', 'intent_id'],
+        ['galleria_media_v2', 'upload_id'],
+        ['video_jobs', 'intent_id'],
+        ['video_intents', 'id'],
+      ]) {
+        const { error } = await db.from(tabella).delete().in(colonna, ids);
+        if (error) avvisa(`righe di ${tabella}`, error);
+      }
+    }
+    console.log(`  🎬 video E2E: ${intenti.length} intenti dei run precedenti tolti (${oggetti} oggetti dallo Storage)`);
+  } catch (errore) {
+    avvisa('eccezione', errore);
+  }
+}
+
 async function main() {
   console.log('🌱 Seed E2E — sedi dedicate', IDS.SCUOLA, '+', IDS.SCUOLA2,
     '· sede visibile ai moduli pubblici', IDS.SCUOLA_COLLAUDO);
@@ -1159,6 +1270,25 @@ async function main() {
     { id: IDS.B2, scuola_id: IDS.SCUOLA2, nome: 'Gigi', cognome: 'Girandola-E2E', data_nascita: '2021-09-27', section_id: IDS.SEC2_MARGHERITE, classe_sezione: 'Margherite', stato: 'iscritto' },
   ], { onConflict: 'id' }));
 
+  // ── LA LIBERATORIA FOTOGRAFICA DEI DUE BAMBINI DELLA GIRASOLI: spenta, e dichiarata.
+  //
+  // Fino a oggi nessuna riga qui sopra nominava `consenso_privacy`, e il suo valore era quello che la
+  // colonna ha per default (falso): una verità implicita, che nessuno spec muoveva. Da PR 2 dei video lo
+  // muove uno: `video-invio-bambini-prima` accende la liberatoria di Aurora e Bruno, apre la pagina,
+  // la REVOCA a Bruno mentre l'insegnante sta scegliendo i bambini, e prova che il server risponde 422 col
+  // nome di Bruno e prima che parta un solo byte (la sequenza vera di una liberatoria tolta a pagina
+  // aperta: la pagina impedisce da sola di mettere nello stesso gruppo un bambino senza liberatoria, quindi
+  // l'unico modo di arrivare al 422 dalla pagina è che il dato cambi sotto i suoi piedi). Lo spec rimette
+  // il valore com'era in `afterEach`; questa riga è la rete di quella: un test morto a metà non può
+  // lasciare la liberatoria accesa per i run successivi, perché il seed la riscrive a ogni giro.
+  //
+  // Non usa `must()`: se la colonna non ci fosse, la pagina dei bambini non si aprirebbe nemmeno e il
+  // difetto sarebbe già visibile altrove — qui basta dirlo, senza spegnere la suite intera.
+  const liberatorie = await db.from('alunni').update({ consenso_privacy: false }).in('id', [IDS.A1, IDS.A2]);
+  if (liberatorie.error) {
+    console.warn('↷ consenso_privacy di Aurora e Bruno non riscritto:', liberatorie.error.code ?? '', liberatorie.error.message ?? '');
+  }
+
   /* ═══════════════════════════════════════════════════════════════════════════
    * I LEGAMI DI FAMIGLIA — e il legame che è stato TOLTO, che è la parte da leggere.
    *
@@ -1231,6 +1361,9 @@ async function main() {
   must('reset diario', await db.from('eventi_diario').delete().in('alunno_id', ALUNNI_E2E));
   must('reset agenda', await db.from('eventi_agenda').delete().in('scuola_id', [IDS.SCUOLA, IDS.SCUOLA2]));
   must('reset notifiche', await db.from('notifiche').delete().in('utente_id', UTENTI_E2E));
+  // I video lasciati dai run precedenti (intenti, job, byte, la riga di galleria del video pubblicato):
+  // vedi `ripulisciVideoE2E`. Non usa `must()` — la pipeline video può non esserci su questo database.
+  await ripulisciVideoE2E();
 
   // Avvisi: prima le RISPOSTE (FK avvisi_risposte.avviso_id → avvisi.id), poi
   // gli avvisi creati dai test. Fino al 2026-07-31 si cancellavano solo le

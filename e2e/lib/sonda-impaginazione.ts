@@ -160,10 +160,12 @@ export interface EsitoImpaginazione {
  * ─── NIENTE DATI PERSONALI, MAI ─────────────────────────────────────────────
  * `firma()` compone SOLO tag, `data-testid` e le prime quattro classi. Mai
  * `textContent`, `alt`, `title`, `aria-label`, `src`: il nome accessibile di una
- * tessera di galleria è «Foto: <didascalia>» e la didascalia, in questo prodotto, è
- * il nome del file — che spesso contiene il nome di un bambino; il `src` è un URL
- * firmato su un bucket privato, cioè una credenziale. `playwright-report/` finisce
- * fra gli artefatti di una CI **pubblica**.
+ * tessera di galleria è «Foto: <didascalia>» (o «Video: <didascalia>») per le righe che
+ * hanno una didascalia, e soltanto «Foto» o «Video» per quelle che non ce l'hanno — dal
+ * 02/10/2026 i contenuti NUOVI non ne hanno, ma quelle già in archivio sì, e per le foto
+ * di prima la didascalia era il nome del file, che spesso contiene il nome di un
+ * bambino; il `src` è un URL firmato su un bucket privato, cioè una credenziale.
+ * `playwright-report/` finisce fra gli artefatti di una CI **pubblica**.
  */
 export function sondaImpaginazione({ tolleranza }: OpzioniSonda): EsitoImpaginazione {
     const firma = (el: Element): string => {

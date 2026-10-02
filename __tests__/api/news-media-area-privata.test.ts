@@ -30,7 +30,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
-  analizzaContenutoVideo: vi.fn(),
   logEvento: vi.fn(),
   logErrore: vi.fn(),
   resolveScuoleAttive: vi.fn(),
@@ -56,10 +55,6 @@ vi.mock('@/lib/auth/scope', () => ({
 }))
 vi.mock('@/lib/news/sanitizza', () => ({ sanificaContenuto: (...a: unknown[]) => h.sanificaContenuto(...a) }))
 vi.mock('@/lib/news/notifiche', () => ({ notificaNewsPubblicata: (...a: unknown[]) => h.notificaNewsPubblicata(...a) }))
-vi.mock('@/lib/media/codec-sniff', () => ({
-  analizzaContenutoVideo: (...a: unknown[]) => h.analizzaContenutoVideo(...a),
-  MESSAGGIO_VIDEO_NON_CONVERTIBILE: 'video-non-convertibile',
-}))
 vi.mock('@/lib/logging/logger', async (orig) => ({
   ...(await orig<typeof import('@/lib/logging/logger')>()),
   logEvento: (...a: unknown[]) => h.logEvento(...a),
@@ -166,7 +161,6 @@ beforeEach(() => {
   h.alunni = []
   h.lastInsert = null
   h.requireDocente.mockResolvedValue({ user: { id: 'edu-1', role: 'educator', scuola_id: 'sc-1' } })
-  h.analizzaContenutoVideo.mockReturnValue({ daConvertire: false, motivo: 'ok' })
   h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
   h.resolveScuolaScrittura.mockResolvedValue({ scuolaId: 'sc-1' })
   h.sanificaContenuto.mockReturnValue({ html: '<p>x</p>', testo: 'x' })

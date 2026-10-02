@@ -73,6 +73,46 @@ test (prima le risposte, poi gli avvisi: c'è una FK), e gli artefatti del fluss
 d'iscrizione (submission con CF `TSTBNE20A01H501X`, anagrafiche e account
 `iscrizione.e2e@kidville.test` creati dall'import admin). Eseguibile N volte.
 
+Dal 2026-10-02 il reset comprende anche **i video** degli utenti E2E (`ripulisciVideoE2E` nel seed): gli intenti
+di `video_intents` dei run precedenti con i loro job, l'outbox, la riga di galleria del video pubblicato
+(`galleria_media_v2.upload_id` = intento) e gli oggetti nello Storage (`video_originals`, `video_processing`, la copia
+`uploads/<utente>/v-<intento>.mp4` in `gallery`). Non usa `must()`: su un database senza la pipeline video avvisa e
+prosegue. E riscrive `consenso_privacy = false` per Aurora e Bruno (vedi sotto: uno spec lo accende e lo spegne).
+
+## Gli spec dei video (PR 2 «server e web», dal 2026-10-02)
+
+Quattro spec scrivono davvero sul database e sullo Storage della CI. Girano **solo in CI** (`CI` impostata) e rifiutano di
+partire contro un progetto che non sia quello della CI (`e2e/helpers/database-ci.ts`, stessa guardia dell'host del seed):
+la chiave di servizio che usano per simulare e rileggere lo stato scavalca ogni RLS, e `.env.local` punta alla produzione.
+
+| Spec | Progetti | Cosa prova | Cosa lascia dietro |
+| --- | --- | --- | --- |
+| `video-invio-bambini-prima` | chromium + webkit | «Pubblica» con un bambino senza liberatoria → **422 col suo nome nel passo dei bambini, zero richieste a `/storage/v1/upload/resumable`, nessun intento in tabella**; tolto il bambino → apertura 201, **TUS vero**, scheda «In attesa di essere preparato», job `queued`, originale lungo quanto il file, elenco del server `in-coda` | l'intento è annullato e i byte tolti; le due liberatorie tornano al valore di prima (`afterEach`) |
+| `video-ripresa-automatica` | chromium | file di 13 MiB (3 blocchi TUS): al secondo blocco `context.setOffline(true)` + abort, la scheda dice «Caricamento interrotto», poi `setOffline(false)` e **nessun clic** → arriva in coda, **una sola sessione, un solo PATCH a offset 0, ripresa dal secondo blocco** | intento annullato, originale (13 MiB) tolto |
+| `video-rinnovo-token` | chromium (solo API) | apertura `put-nativo` (con `sha256`) → PUT sull'URL firmato → il **trigger d'arrivo** porta il job in coda e revoca il token → `POST /api/video-uploads/rinnovo` risponde `arrivato`; **seconda PUT rifiutata come duplicato** (HTTP 400 con `statusCode "409"` nel corpo; niente upsert); token falso/malformato/assente → **404 uniforme**; rinnovo prima dell'arrivo → URL nuovo; dopo il ritiro → `annullato` | intenti annullati e byte tolti |
+| `video-destinatari` | chromium | intento con [Aurora] → conversione **simulata** col service role (`video_job_claim` + uscita + `video_job_ready`) → un giro del runner come staff → il video è in galleria, **lo vede e ne ha l'avviso solo il genitore di Aurora**; il genitore di un bambino non taggato della stessa sede (il profilo doppio, in veste di genitore) no; l'insegnante riceve `video_esito` | la riga di galleria va nel **cestino** (`DELETE /api/gallery`), la copia e l'uscita si tolgono; resta l'intento `published` (il seed lo toglie al run dopo) |
+
+**Prerequisiti sul database della CI** (non sono nel seed, che non crea tabelle): le migrazioni della PR 1
+(`*_video_build_bucket.sql`, `*_video_job_ritentativi.sql`) e le tre della PR 2 (`*_video_pubblicazione_automatica.sql`,
+`*_video_arrivo_originale.sql`, `*_video_conservazione_uscite.sql`) vanno applicate **prima** della suite con il workflow
+«DB migrate (CI)» (`migrate-ci.yml`, a mano), insieme a quelle del 18/09 senza `pg_cron`. Sul database della CI **non ci
+sono `pg_net` né `pg_cron`**: il runner non parte da solo, e l'arrivo di un originale lo vedono il trigger su `storage.objects`
+e il `PATCH caricato` del web. Un database senza lo schema fa fermare ogni spec con una frase che dice cosa applicare
+(`richiediPipelineVideo`), invece di un 500 che sembra un difetto del codice.
+
+**`VIDEO_RUNNER_OWNER_ID`** è impostata dal `webServer` di `playwright.config.ts` (un uuid finto, `e2e00000-…`): senza,
+`POST /api/video/runner` risponde 503 `CONFIGURAZIONE_ASSENTE` e non pubblica niente. L'identità con cui `video-destinatari`
+simula la conversione è un'altra (`LAVORATORE_SIMULATO`, in `e2e/helpers/video-ci.ts`): devono restare diverse.
+
+**La liberatoria che cambia.** Il tagger della pagina non lascia mettere nello stesso video un bambino senza liberatoria
+insieme ad altri, quindi dalla pagina il 422 si raggiunge solo se il dato cambia mentre l'insegnante sceglie. Lo spec accende
+la liberatoria di Aurora e Bruno, apre la pagina, la toglie a Bruno dopo aver scelto i due bambini e prima di premere
+«Pubblica». Non si aggiunge nessun bambino alla Girasoli (il suo conteggio è esatto per altri spec) né una docente nuova (un
+nono account cambierebbe gli elenchi di personale): gli spec sono seriali (`workers: 1`) e `afterEach` rimette il valore.
+
+**Spec a `retries: 0`**, tutti e quattro: scrivono su un database condiviso e un ripescaggio partirebbe da uno stato sporcato
+dal primo tentativo. Non ripetono i controlli di `gallery-caricamento` (le foto): i video hanno la loro pipeline.
+
 ## Note e gotcha
 
 - **`utenti.role` live è colonna generata** da `ruolo`: il seed scrive solo `ruolo`.

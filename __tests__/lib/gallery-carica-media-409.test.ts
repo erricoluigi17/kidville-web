@@ -6,9 +6,10 @@ import itShared from '../../messages/it/shared.json'
  * IL 409 CHE CHIUDE IL PERCORSO VECCHIO, VISTO DA CHI CARICA.
  *
  * ─── PERCHÉ NON BASTA CHE LA PORTA RISPONDA 409 ─────────────────────────────
- * Un rifiuto che il client non sa leggere è un rifiuto muto. Fino a oggi
- * `caricaMediaGalleria` aveva tre rami sul fallimento della firma — 415, 400 e
- * «tutto il resto» — e il 409 finiva nel terzo: `motivo: 'firma'`, cioè la frase
+ * Un rifiuto che il client non sa leggere è un rifiuto muto. Quando è nato il
+ * blocco `caricaMediaGalleria` aveva tre rami sul fallimento della firma — 415, 400 e
+ * «tutto il resto» (il 415 dello sniff non c'è più) — e il 409 finiva nel
+ * terzo: `motivo: 'firma'`, cioè la frase
  * «Non è stato possibile preparare il caricamento. Riprova fra qualche minuto.»
  *
  * Quella frase, davanti a un blocco che NON passa riprovando, è il difetto del
@@ -20,13 +21,16 @@ import itShared from '../../messages/it/shared.json'
  * carica: aggiornare l'app. Una frase che dice «riprova fra qualche minuto» lo
  * nasconde, e chi legge riprova finché non si arrende.
  *
- * ─── LA CODA OFFLINE ────────────────────────────────────────────────────────
- * `syncPendingGalleryMedia` passa da questa stessa funzione. Un esito `ok:false`
- * lascia la riga in Dexie con `sync_status: 'error'`, e la sincronizzazione
- * ripesca `pending` **e** `error`: il filmato NON si perde, e riparte da solo il
- * giorno in cui l'app aggiornata lo adotta. È ciò che la frase del catalogo
- * promette («i filmati già in attesa ripartono da soli»), ed è il motivo per cui
- * il 409 non deve mai diventare un abbandono.
+ * ─── CHI ARRIVA FIN QUI, E COSA SUCCEDE AL VIDEO ────────────────────────────
+ * `caricaMediaGalleria` è oggi la porta delle FOTO (la coda foto, `drainGalleryPhotoQueue`,
+ * le passa da qui): una coda di VIDEO che riparta da sola dopo l'aggiornamento non
+ * esiste. Un video scelto con il JS vecchio e rifiutato col 409 va scelto e caricato
+ * di NUOVO, ed è ciò che la frase del catalogo dice («un video scelto prima
+ * dell'aggiornamento va caricato di nuovo»): la promessa di una ripartenza automatica
+ * dei filmati già in attesa, che la frase aveva un tempo, era falsa, e il test di
+ * contratto (`video-contratto.test.ts`) pretende che non torni. Proprio per questo il 409 non
+ * deve mai diventare un «riprova»: chi legge la frase giusta sa cosa fare, e chi legge
+ * quella sbagliata aspetta un'attesa che non finisce.
  */
 
 const h = vi.hoisted(() => ({ logClient: vi.fn() }))
@@ -110,8 +114,10 @@ describe('caricaMediaGalleria · il 409 del percorso vecchio ha un ramo suo', ()
   })
 
   it('gli altri stati non cambiano di una virgola', async () => {
+    // Il 415 non ha più un ramo suo: era lo sniff del codec, che non esiste più. Se arrivasse,
+    // verrebbe dalla piattaforma e prenderebbe il ramo generico, come un 429 o un 500.
     for (const [stato, atteso] of [
-      [415, 'formato'],
+      [415, 'firma'],
       [400, 'formato-non-ammesso'],
       [429, 'firma'],
     ] as const) {
@@ -138,7 +144,7 @@ describe('messaggioCaricamento · quel che una persona legge davvero', () => {
 
   it('le altre frasi restano quelle di prima', () => {
     expect(messaggioCaricamento({ ok: false, motivo: 'firma', stato: 429 }, (k) => k)).toBe('galleryErrFirma')
-    expect(messaggioCaricamento({ ok: false, motivo: 'formato', stato: 415 }, (k) => k))
-      .toBe('galleryAlertVideoNonConvertibile')
+    expect(messaggioCaricamento({ ok: false, motivo: 'formato-non-ammesso', stato: 400 }, (k) => k))
+      .toBe('galleryErrFormatoNonAmmesso')
   })
 })

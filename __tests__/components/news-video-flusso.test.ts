@@ -12,6 +12,7 @@ import {
   ACCEPT_VIDEO_NEWS,
   annullaJobVideoNews,
   apriIntentoVideoNews,
+  codiceDelJobFallito,
   codiceMostrato,
   confermaIntentoVideoNews,
   leggiStatoIntentoVideoNews,
@@ -372,5 +373,80 @@ describe('la lettura dello stato, che è ciò che l’operatore guarda', () => {
     if (!esito.ok) return
     expect(esito.job).toHaveLength(0)
     expect(vi.mocked(logClient)).toHaveBeenCalled()
+  })
+})
+
+/**
+ * IL CODICE VERO DI UN JOB FINITO MALE (secondario #39).
+ *
+ * Al rientro nella pagina un job `failed`/`rejected` si raccontava sempre con `VIDEO_RIPROVA`,
+ * «ricarica e riprova»: per un guasto NOSTRO che il runner aveva ritentato fino in fondo era
+ * una frase falsa, che dava a chi aveva allegato il filmato un compito che non era suo. Il
+ * server sa perché è finito male (`codiceMostrabileDelJob`, nella route di stato) e lo dice:
+ * il client lo LEGGE. Il ripiego `VIDEO_RIPROVA` resta solo dove il perché non si può sapere.
+ */
+describe('il codice vero di un job finito male, letto dal server', () => {
+  const stato = (job: Array<Record<string, unknown>>) => ({
+    ok: true,
+    status: 200,
+    corpo: {
+      intentId: INTENTO,
+      revisione: 1,
+      canale: 'news',
+      statoIntent: 'confirmed',
+      aggiornatoIl: '2026-09-18T10:00:00.000Z',
+      job,
+    },
+  })
+  const jobFinito = (stato: 'failed' | 'rejected', codice: string, jobId = JOB) => ({
+    jobId,
+    intentId: INTENTO,
+    canale: 'news',
+    stato,
+    avanzamento: null,
+    codice,
+    riprovaAutomatica: false,
+    aggiornatoIl: '2026-09-18T10:00:00.000Z',
+  })
+
+  it('un job `failed` che il runner ha ritentato legge il guasto NOSTRO, non «ricarica e riprova»', async () => {
+    const { chiamate, dip } = finestra([stato([jobFinito('failed', 'VIDEO_GUASTO_NOSTRO')])])
+
+    const codice = await codiceDelJobFallito(dip, INTENTO, JOB)
+
+    expect(codice).toBe('VIDEO_GUASTO_NOSTRO')
+    // È una LETTURA dello stato, non una riapertura dell'intento: nessuna scrittura per sapere perché.
+    expect(chiamate).toHaveLength(1)
+    expect(chiamate[0].init?.method).toBe('GET')
+    expect(chiamate[0].url).toContain(`/api/video-uploads/${INTENTO}`)
+  })
+
+  it('un job `rejected` legge il difetto del suo file', async () => {
+    const { dip } = finestra([stato([jobFinito('rejected', 'VIDEO_TROPPO_LUNGO')])])
+    expect(await codiceDelJobFallito(dip, INTENTO, JOB)).toBe('VIDEO_TROPPO_LUNGO')
+  })
+
+  it('fra più job dell’intento sceglie quello chiesto', async () => {
+    const altro = '44444444-4444-4444-8444-444444444444'
+    const { dip } = finestra([
+      stato([jobFinito('failed', 'VIDEO_FILE_ILLEGGIBILE', altro), jobFinito('failed', 'VIDEO_GUASTO_NOSTRO')]),
+    ])
+    expect(await codiceDelJobFallito(dip, INTENTO, JOB)).toBe('VIDEO_GUASTO_NOSTRO')
+  })
+
+  it('se lo stato non si legge il ripiego è «ricarica e riprova», e il guasto è già nel log', async () => {
+    const { dip } = finestra([{ ok: false, status: 500, corpo: { codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' } }])
+
+    expect(await codiceDelJobFallito(dip, INTENTO, JOB)).toBe('VIDEO_RIPROVA')
+    // PRIMA la presenza del log del rifiuto (scritto da `chiama`), poi si può fidare del ripiego.
+    expect(vi.mocked(logClient).mock.calls.some(([e]) => String(e.messaggio).includes('video-news-rifiutato'))).toBe(true)
+  })
+
+  it('se il job non compare nell’elenco il ripiego è lo stesso, e lo dice a log', async () => {
+    const { dip } = finestra([stato([])])
+
+    expect(await codiceDelJobFallito(dip, INTENTO, JOB)).toBe('VIDEO_RIPROVA')
+    const riga = vi.mocked(logClient).mock.calls.find(([e]) => String(e.messaggio) === 'video-news-codice-fallito-assente')
+    expect(riga?.[0]).toMatchObject({ livello: 'warn', campi: { n_job: 0 } })
   })
 })

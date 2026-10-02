@@ -171,6 +171,14 @@ export function posterioriCheContengono(
 // al merge, e le sette fotografie sono state rigenerate dalla produzione (196 migrazioni,
 // 58 FK verso `utenti` — invariate, 231 indici unici, 78 tabelle con `scuola_id`, fra cui
 // `gallery_photo_uploads` della #170, entrata nella fotografia solo ora).
+//
+// RIAPERTA il 2026-10-02 dalla PR 2 dei video («server e web»): le tre migrazioni della PR
+// entrano qui SE E SOLO SE una guardia le segnalerebbe (la prova gemella 5 boccia le voci che
+// nessuna guardia vedrebbe). Il file A (T2a) crea un indice UNIQUE parziale e ricrea un CHECK
+// con DROP/ADD CONSTRAINT, quindi due guardie su tre lo vedono. Le voci si tolgono nella PR-B
+// (T16), insieme alla rigenerazione delle fotografie: la prova gemella 2 diventa rossa da sola.
+// SVUOTATA il 03/10 (02/10 22:3x UTC): il file A, rinominato `20261002215600_…`, e' applicato in produzione
+// e le fotografie sono rigenerate dalla produzione (202 migrazioni, 232 indici unici).
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**

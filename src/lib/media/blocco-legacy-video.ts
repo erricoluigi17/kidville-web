@@ -3,26 +3,38 @@ import type { NextResponse } from 'next/server'
 import { rispostaVideo, statoHttpVideo } from '@/app/api/video-uploads/risposte'
 import { mimeBase } from '@/lib/gallery/limiti'
 import { logEvento } from '@/lib/logging/logger'
-import { BLOCCO_LEGACY_VIDEO_ATTIVO } from '@/lib/media/interruttore-legacy-video'
 import { codiceMessaggioVideo, type CodiceBordoVideo } from '@/lib/media/video/contratto'
 
 /**
- * IL BLOCCO DEL PERCORSO VECCHIO DEI VIDEO — la decisione, in un posto solo.
+ * IL BLOCCO DEL PERCORSO VECCHIO DEI VIDEO — la decisione, in un posto solo, e senza interruttore.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * Le tre porte storiche (`gallery/upload`, `gallery/upload-url`, `news/upload`)
- * ricevono un filmato già compresso dal browser e lo archiviano come un file
- * qualsiasi. Quando la pipeline nuova sarà viva, quel file resterà lì senza che
- * nessuno lo converta: un video che una maestra crede caricato e che nessun
- * genitore vedrà mai. Perciò la porta si chiude, con un rifiuto che dice cosa
- * fare invece di limitarsi a dire di no.
+ * ricevevano un filmato già compresso dal browser e lo archiviavano come un file
+ * qualsiasi. Con la pipeline nuova quel file resterebbe lì senza che nessuno lo
+ * converta e lo pubblichi: un video che una maestra crede caricato e che nessun
+ * genitore vedrà mai. Perciò le tre porte rifiutano OGNI `video/*`, con un 409 che
+ * dice cosa fare — aggiornare l'app o ricaricare la pagina — invece di limitarsi a
+ * dire di no. I video passano solo da `POST /api/video-uploads`.
  *
- * ⚠️ L'INTERRUTTORE NON STA QUI: sta in `./interruttore-legacy-video`, che
- * contiene quel valore e nient'altro. La separazione serve a poterlo sostituire
- * nei test — in ESM una funzione che chiamasse un export del proprio modulo non
- * vedrebbe mai il sostituto, e «da spento non cambia niente» resterebbe
- * indimostrato. Un interruttore che nessuno ha mai visto scattare non è un
- * interruttore.
+ * ⚠️ NON C'È PIÙ UN INTERRUTTORE, ed è una scelta. Fino al 2026-10-02 il rifiuto
+ * stava dietro una costante spenta, in un file suo di una riga: si scriveva
+ * presto e si sarebbe acceso il giorno in cui la pipeline nuova fosse stata in
+ * aria, perché chiuderlo prima avrebbe lasciato maestre e genitori senza nessun
+ * modo di caricare un video. Quel giorno è questo: la pipeline gira, e un blocco
+ * che si può spegnere è un blocco che qualcuno spegne per sbaglio — e con lui
+ * si riapre la strada da cui un video entra in archivio e non esce più. Che qui
+ * non ci sia una condizione, e che nessuna delle tre porte si sottragga, lo
+ * misura `__tests__/architecture/blocco-legacy-video.test.ts`; che il rifiuto
+ * scatti davvero su tutte e tre lo dimostra `__tests__/api/video-legacy-blocco.test.ts`.
+ *
+ * ⚠️ NIENTE SNIFF DEL CONTENUTO. Il rifiuto guarda il tipo dichiarato e basta:
+ * un video H.264 «buono» e un HEVC ricevono la stessa risposta. Il vecchio
+ * controllo sui primi 64 KB (lo sniff del codec) era una difesa in profondità contro
+ * un HEVC sfuggito alla conversione del browser; ora il browser non converte più
+ * niente, ogni video lo sonda e lo converte la pipeline nuova, e tenere quel
+ * controllo avrebbe voluto dire un secondo posto in cui decidere cosa è un video
+ * «buono».
  *
  * ─── PERCHÉ NÉ IL NUMERO NÉ LA FRASE SONO SCRITTI IN QUESTO FILE ────────────
  * `CLIENT_UPDATE_REQUIRED` è un codice DI BORDO già dichiarato nel contratto
@@ -34,11 +46,12 @@ import { codiceMessaggioVideo, type CodiceBordoVideo } from '@/lib/media/video/c
  * diverse — ed è per evitarlo che `src/app/api/video-uploads/risposte.ts` esiste.
  *
  * ⚠️ IL LOG NON È UN DI PIÙ. Un rifiuto muto è indistinguibile dal caso in cui
- * nessuno ha provato a caricare: il giorno dell'accensione bisogna poter dire
- * quanti telefoni parlano ancora la lingua vecchia, altrimenti «non si è
- * lamentato nessuno» significherà insieme «hanno aggiornato tutti» e «non lo
- * sappiamo». Livello `warn` e non `error`: è il protocollo che funziona come
- * previsto, non un guasto — ma va visto.
+ * nessuno ha provato a caricare: bisogna poter dire quanti telefoni parlano
+ * ancora la lingua vecchia, altrimenti «non si è lamentato nessuno» significherà
+ * insieme «hanno aggiornato tutti» e «non lo sappiamo». È anche la misura che dirà
+ * quando le tre porte si potranno smontare del tutto. Livello `warn` e non
+ * `error`: è il protocollo che funziona come previsto, non un guasto — ma va
+ * visto.
  *
  * ⚠️ MAI IL NOME DEL FILE. Un video di galleria si chiama `recita-di-mario.mp4`:
  * è anagrafica di un minore, e in `app_log` resterebbe trenta giorni,
@@ -51,22 +64,22 @@ import { codiceMessaggioVideo, type CodiceBordoVideo } from '@/lib/media/video/c
 const CODICE_LEGACY: CodiceBordoVideo = 'CLIENT_UPDATE_REQUIRED'
 
 /**
- * Questo caricamento va fermato?
+ * Questo caricamento è un video, cioè va fermato?
  *
- * Vero solo se l'interruttore è acceso **e** si sta caricando un video: le foto
- * non c'entrano niente con la pipeline video e devono continuare a passare dalla
- * stessa porta anche il giorno dell'accensione. Il controllo sul tipo sta QUI e
- * non nelle tre route, perché scritto tre volte sarebbe sbagliato in uno dei tre
- * entro un mese — ed è già successo, con lo stesso `split` a mano ribattuto in
- * tre punti.
+ * Vero per ogni `video/*`, senza altre condizioni: le foto non c'entrano niente
+ * con la pipeline video e devono continuare a passare dalle stesse porte. Il
+ * controllo sul tipo sta QUI e non nelle tre route, perché scritto tre volte
+ * sarebbe sbagliato in uno dei tre entro un mese — ed è già successo, con lo
+ * stesso `split` a mano ribattuto in tre punti.
  *
- * `mimeBase` e non un confronto diretto: `MediaRecorder` consegna
- * `video/mp4;codecs=avc1`, che è la forma che arriva davvero da un telefono. Il
- * 2026-09-08 un confronto per uguaglianza su quella stessa stringa ha respinto 33
- * caricamenti validi in un giorno, 8 insegnanti, 3 sedi.
+ * `mimeBase` e non un confronto diretto: un telefono può consegnare
+ * `video/mp4;codecs=avc1`, e una porta che confrontasse per uguaglianza lascerebbe
+ * passare (o, all'opposto, respingerebbe con la frase sbagliata) proprio la forma
+ * che arriva davvero. Il 2026-09-08 un confronto per uguaglianza su quella stessa
+ * stringa ha respinto 33 caricamenti validi in un giorno, 8 insegnanti, 3 sedi.
  */
-export function videoLegacyDaFermare(mime: string): boolean {
-    return BLOCCO_LEGACY_VIDEO_ATTIVO && mimeBase(mime).startsWith('video/')
+export function eVideoLegacy(mime: string): boolean {
+    return mimeBase(mime).startsWith('video/')
 }
 
 /**

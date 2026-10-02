@@ -7,6 +7,10 @@ import {
 } from './limiti'
 
 export interface VideoProbe {
+  /**
+   * Il massimo fra la durata del contenitore, delle tracce video e della traccia audio SCELTA. Le tracce audio
+   * ignorate (`ignoredAudioTracks`) non ci entrano: non finiscono nell'uscita.
+   */
   durationSeconds: number
   /** Durata della traccia video selezionata; assente solo nelle fixture legacy. */
   videoDurationSeconds?: number | null
@@ -28,6 +32,11 @@ export interface VideoProbe {
   isHdr: boolean
   videoStreamIndex: number
   audioStreamIndex: number | null
+  /**
+   * Quante tracce audio c'erano oltre a quella scelta: il codec che ffprobe non riconosce, o una seconda
+   * traccia decodificabile. Si contano e non si convertono. Assente solo nelle fixture legacy.
+   */
+  ignoredAudioTracks?: number
 }
 
 export type VideoProbeErrorCode =
@@ -122,6 +131,45 @@ function preferredStream(streams: JsonObject[], type: 'video' | 'audio'): JsonOb
     (stream) => stream.codec_type === type && (type !== 'video' || !dispositionFlag(stream, 'attached_pic')),
   )
   return candidates.find((stream) => dispositionFlag(stream, 'default')) ?? candidates[0] ?? null
+}
+
+/**
+ * Le forme con cui ffprobe dice «questo codec non lo conosco». Quella che conta è la PRIMA: in JSON il
+ * campo `codec_name` di una traccia dal codec ignoto manca del tutto (misurato il 02/10/2026 con un
+ * FourCC audio inventato in un MOV: `codec_tag_string: 'xyzw'`, nessun `codec_name`), ed è la forma che
+ * `nullableString` già riduce a `null`. I tre nomi qui sotto sono quelli che libavcodec usa per un id senza
+ * descrittore: non li abbiamo visti nel JSON, ma una versione o un writer diverso potrebbe scriverli al
+ * posto del silenzio, e un codec «unknown» non è un codec decodificabile.
+ */
+const NOMI_CODEC_NON_RICONOSCIUTI: readonly string[] = ['unknown', 'none', 'unknown_codec']
+
+/** Il nome del codec, se ffprobe lo ha riconosciuto; `null` per un campo assente, `N/A` o uno dei nomi di sopra. */
+function recognizedCodec(value: unknown): string | null {
+  const name = nullableString(value)
+  return name !== null && !NOMI_CODEC_NON_RICONOSCIUTI.includes(name) ? name : null
+}
+
+/**
+ * La traccia audio da convertire: fra quelle DECODIFICABILI — il codec è riconosciuto — la predefinita, e in
+ * mancanza la prima. Le altre non si convertono e si contano (`total` meno quella scelta).
+ *
+ * Fino al 02/10/2026 si prendeva la predefinita e basta, e se il suo codec era ignoto tutto il video
+ * finiva in `UNKNOWN_AUDIO_CODEC` anche con, accanto, una traccia AAC perfetta: è il caso di una
+ * registrazione che porta una seconda traccia dal formato proprietario (spec della PR 2, §10.5).
+ * Adesso quel codice esce solo quando NESSUNA traccia è decodificabile; un video senza audio resta
+ * valido.
+ *
+ * `-map 0:<indice>` in `encode.ts` prende UNA traccia: l'uscita ne ha una sola, AAC.
+ */
+function chooseAudioTrack(streams: JsonObject[]): {
+  stream: JsonObject | null
+  codec: string | null
+  total: number
+} {
+  const all = streams.filter((stream) => stream.codec_type === 'audio')
+  const decodable = all.filter((stream) => recognizedCodec(stream.codec_name) !== null)
+  const stream = decodable.find((candidate) => dispositionFlag(candidate, 'default')) ?? decodable[0] ?? null
+  return { stream, codec: stream ? recognizedCodec(stream.codec_name) : null, total: all.length }
 }
 
 function rotationFrom(stream: JsonObject): number | null {
@@ -291,24 +339,41 @@ export function parseVideoProbe(raw: unknown, bytes: number): VideoProbeResult {
     return { ok: false, code: 'INVALID_PROBE' }
   }
 
-  const audio = preferredStream(streams, 'audio')
+  const audioTracks = chooseAudioTrack(streams)
+  // Ci sono tracce audio e nessuna si sa decodificare: l'unico caso di `UNKNOWN_AUDIO_CODEC`.
+  if (audioTracks.total > 0 && audioTracks.stream === null) {
+    return { ok: false, code: 'UNKNOWN_AUDIO_CODEC' }
+  }
+  const audio = audioTracks.stream
   const audioStreamIndex = audio ? nonNegativeInteger(audio.index) : null
   if (audio && audioStreamIndex === null) return { ok: false, code: 'INVALID_PROBE' }
-  const audioCodec = audio ? nullableString(audio.codec_name) : null
-  if (audio && !audioCodec) return { ok: false, code: 'UNKNOWN_AUDIO_CODEC' }
+  const audioCodec = audioTracks.codec
+  const ignoredAudioTracks = audioTracks.total - (audio ? 1 : 0)
   if (audioStreamIndex !== null && audioStreamIndex === videoStreamIndex) {
     return { ok: false, code: 'DUPLICATE_STREAM_INDEX' }
   }
 
   // Non stimiamo mai la durata dalla dimensione. Il massimo delle fonti credibili
   // evita che una coda audio o una timeline container più lunga aggiri il tetto.
+  //
+  // Le fonti sono il contenitore, le tracce VIDEO e la traccia audio SCELTA — non le tracce audio ignorate
+  // (secondario #13, PR 2). Una traccia che non si converte non finisce nell'uscita, e una più lunga delle
+  // altre non deve decidere né il tetto dei 300 secondi né la durata che `video_job_ready` registra: l'uscita
+  // dura quanto video e audio scelto, e un massimo che include il resto la farebbe sembrare più corta del
+  // suo ingresso (e, oltre il tetto, scarterebbe come `VIDEO_TOO_LONG` un filmato che si convertirebbe).
+  //
+  // ⚠️ Il LIMITE che resta, dichiarato: `format.duration` è la durata che ffprobe dà al contenitore, e per un MP4
+  // o un MOV è quella del filmato intero — il massimo di TUTTE le tracce, anche delle ignorate. Se il contenitore
+  // la porta più lunga, il massimo qui la porta con sé. Escludere le tracce ignorate vale dove il contenitore non
+  // le conta o non dice niente; togliere anche il contenitore sarebbe un'altra decisione (si perderebbe il
+  // tetto su un filmato dai flussi che mentono), e non è di questo difetto.
   const videoDurationSeconds = traceDuration(video)
   const audioDurationSeconds = audio ? traceDuration(audio) : null
   const durationCandidates = [
     finitePositive(format.duration),
     ...taggedDurations(format),
     ...streams
-      .filter((stream) => stream.codec_type === 'video' || stream.codec_type === 'audio')
+      .filter((stream) => stream.codec_type === 'video' || stream === audio)
       .flatMap((stream) => [streamDuration(stream), ...taggedDurations(stream)]),
   ].filter((duration): duration is number => duration !== null)
   if (durationCandidates.length === 0) return { ok: false, code: 'UNKNOWN_DURATION' }
@@ -373,6 +438,7 @@ export function parseVideoProbe(raw: unknown, bytes: number): VideoProbeResult {
         hasHdrSideData(video),
       videoStreamIndex,
       audioStreamIndex,
+      ignoredAudioTracks,
     },
   }
 }

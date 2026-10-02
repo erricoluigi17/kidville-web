@@ -21,7 +21,7 @@ import type { CanaleVideo, CoordinateCaricamentoVideo } from '../contratto'
  *
  * ─── IL CRITERIO CHE HA DECISO IL DISEGNO ───────────────────────────────────
  *
- * «Chi carica un video di 180 secondi da un telefono chiude l'app, e al ritorno
+ * «Chi carica un video di 5 minuti da un telefono chiude l'app, e al ritorno
  * deve ritrovare il lavoro, non ricominciarlo.» Perché sia vero servono tre
  * cose su un supporto che sopravvive al processo:
  *

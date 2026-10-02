@@ -66,10 +66,15 @@ export const BATTITI_TOLLERATI =
  * Il tetto assoluto della MicroVM: si passa a `Sandbox.create({ timeout })` e a
  * spegnerla è la PIATTAFORMA, non questo codice.
  *
- * 30 minuti. La misura peggiore del piano (2026-09-17, rumore sintetico da 2,13 GB
- * convertito a 2 thread) è di **709 secondi di wall**; su 4 vCPU in `dub1` il caso
- * tipico sta fra 212 e 353 secondi. Il tetto vale 2,5 volte il peggio misurato, e
- * ci stanno dentro anche lo scarico dell'originale e il caricamento dell'uscita.
+ * 60 minuti (dal 03/10/2026, misura T16 della PR 2; prima 30). La durata massima è salita a
+ * 5 minuti, e il caso peggiore misurato sul Sandbox vero dallo snapshot (`dub1`) è il 4K a
+ * 60 fps HDR (HLG 10 bit): **364 s di conversione per 60 s di video a 8 vCPU** (513 s a 4
+ * vCPU), cioè circa **30 minuti per un video da 5 minuti**. Col tetto di 30 un video valido
+ * sarebbe stato spento a metà. 60 è il massimo che il lock (`video-runner-battito.test.ts`)
+ * ammette: sta due volte sopra il peggio misurato, con dentro lo scarico dell'originale e il
+ * caricamento dell'uscita. Il caso tipico (4K a 30 fps, 40 secondi) sta sotto i 3 minuti.
+ * Per guadagnare margine vero, la mossa è ridurre a 1080p PRIMA della catena HDR→SDR
+ * (secondario #206), non alzare ancora questo numero.
  *
  * Esiste perché un `ffmpeg` che non finisce mai è un conto che non finisce mai: la
  * fatturazione del Sandbox è a `GB × ore` e nessuno se ne accorgerebbe guardando i
@@ -77,7 +82,7 @@ export const BATTITI_TOLLERATI =
  * invece che nel nostro ciclo per la ragione che regge tutto questo modulo: il
  * nostro ciclo muore con l'invocazione, il `timeout` del Sandbox no.
  */
-export const TETTO_SANDBOX_MS = 1_800_000
+export const TETTO_SANDBOX_MS = 3_600_000
 
 /**
  * Quanto sorveglia UNA invocazione, prima di andarsene lasciando il lavoro acceso.

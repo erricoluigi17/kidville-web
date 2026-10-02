@@ -88,7 +88,17 @@ export function percorsoUscitaVideo(job: {
  * LO SCRIPT DI PROVVISTA
  * ──────────────────────────────────────────────────────────────────────────── */
 
-/** Dove vivono i binari dentro la MicroVM. Assoluti: nessun comando dipende dal `cwd`. */
+/**
+ * Dove vivono i binari dentro la MicroVM quando li porta la provvista dal bucket. Assoluti:
+ * nessun comando dipende dal `cwd`.
+ *
+ * ⚠️ È la cartella del RIPIEGO, e dalla PR 2 non è più l'unica: in una MicroVM nata dallo
+ * snapshot i binari ci sono già, in `CARTELLA_BINARI_NELLO_SNAPSHOT` (`../build.ts`), e il
+ * runner li verifica invece di scaricarli (`./ambiente.ts`). Per questo gli script che nominano
+ * i binari (la provvista, l'inventario, l'apparecchio, la conversione) prendono la cartella come
+ * PARAMETRO, con questa come predefinita: chi non ne passa una ottiene esattamente lo script
+ * della PR 1.
+ */
 export const CARTELLA_BUILD = '/tmp/kv-ffmpeg'
 export const FFMPEG = `${CARTELLA_BUILD}/ffmpeg`
 export const FFPROBE = `${CARTELLA_BUILD}/ffprobe`
@@ -168,24 +178,34 @@ export const USCITE_PREPARAZIONE = {
  * `--connect-timeout 10 --max-time 60` fissano il tetto di OGNI tentativo, perché un
  * download appeso non deve consumare l'invocazione. Non c'è `-L`: un URL firmato dello
  * Storage non fa redirect.
+ *
+ * ─── LA CARTELLA È UN PARAMETRO, e ne esistono DUE USI ───────────────────────────────────
+ *
+ * Senza argomenti è lo script del runtime, come nella PR 1: provvista in `/tmp/kv-ffmpeg`. Con
+ * `CARTELLA_BINARI_NELLO_SNAPSHOT` è lo script con cui `scripts/video-sandbox-ambiente.mjs`
+ * riempie lo snapshot — **lo stesso testo**, non una copia: chi costruisce lo snapshot e chi lo
+ * ripiega a runtime eseguono le stesse due verifiche nello stesso ordine, e un binario che non le ha
+ * superate non diventa mai eseguibile né nell'uno né nell'altro caso.
  */
-export function scriptPreparazioneBuild(): string {
-  const ffmpegGz = `${CARTELLA_BUILD}/ffmpeg.gz`
-  const ffprobeGz = `${CARTELLA_BUILD}/ffprobe.gz`
+export function scriptPreparazioneBuild(cartella: string = CARTELLA_BUILD): string {
+  const ffmpegGz = `${cartella}/ffmpeg.gz`
+  const ffprobeGz = `${cartella}/ffprobe.gz`
+  const ffmpeg = `${cartella}/ffmpeg`
+  const ffprobe = `${cartella}/ffprobe`
   const opzioniCurl = '-fsS --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60'
   return [
     'set -eu',
     `: "\${${ENV_URL_FFMPEG}:?}" "\${${ENV_URL_FFPROBE}:?}"`,
-    `mkdir -p ${CARTELLA_BUILD}`,
+    `mkdir -p ${cartella}`,
     `curl ${opzioniCurl} -o ${ffmpegGz} "$${ENV_URL_FFMPEG}" || exit ${USCITE_PREPARAZIONE.scarico}`,
     `curl ${opzioniCurl} -o ${ffprobeGz} "$${ENV_URL_FFPROBE}" || exit ${USCITE_PREPARAZIONE.scarico}`,
     `printf '%s  %s\\n%s  %s\\n' '${FFMPEG_GZ_SHA256}' ${ffmpegGz} '${FFPROBE_GZ_SHA256}' ${ffprobeGz} | sha256sum -c - >&2 || exit ${USCITE_PREPARAZIONE.impronta}`,
-    `gzip -dc ${ffmpegGz} > ${FFMPEG} || exit ${USCITE_PREPARAZIONE.estrazione}`,
-    `gzip -dc ${ffprobeGz} > ${FFPROBE} || exit ${USCITE_PREPARAZIONE.estrazione}`,
-    `printf '%s  %s\\n%s  %s\\n' '${FFMPEG_SHA256}' ${FFMPEG} '${FFPROBE_SHA256}' ${FFPROBE} | sha256sum -c - >&2 || exit ${USCITE_PREPARAZIONE.impronta}`,
-    `rm -f ${CARTELLA_BUILD}/*.gz`,
-    `chmod 0755 ${FFMPEG} ${FFPROBE} || exit ${USCITE_PREPARAZIONE.estrazione}`,
-    `test -x ${FFMPEG} && test -x ${FFPROBE} || exit ${USCITE_PREPARAZIONE.estrazione}`,
+    `gzip -dc ${ffmpegGz} > ${ffmpeg} || exit ${USCITE_PREPARAZIONE.estrazione}`,
+    `gzip -dc ${ffprobeGz} > ${ffprobe} || exit ${USCITE_PREPARAZIONE.estrazione}`,
+    `printf '%s  %s\\n%s  %s\\n' '${FFMPEG_SHA256}' ${ffmpeg} '${FFPROBE_SHA256}' ${ffprobe} | sha256sum -c - >&2 || exit ${USCITE_PREPARAZIONE.impronta}`,
+    `rm -f ${cartella}/*.gz`,
+    `chmod 0755 ${ffmpeg} ${ffprobe} || exit ${USCITE_PREPARAZIONE.estrazione}`,
+    `test -x ${ffmpeg} && test -x ${ffprobe} || exit ${USCITE_PREPARAZIONE.estrazione}`,
   ].join('\n')
 }
 
@@ -222,15 +242,20 @@ export const SEPARATORE_INVENTARIO = '---SEZIONE---'
 /**
  * Il comando che chiede alla build di raccontarsi. Una chiamata sola invece di tre:
  * ogni giro verso la MicroVM costa, e qui non c'è niente da guadagnare a separarli.
+ *
+ * `cartella` è dove stanno i binari (vedi `scriptPreparazioneBuild`): l'inventario si chiede
+ * SEMPRE, anche a una build uscita da uno snapshot — le impronte dicono che i binari sono quelli
+ * attesi, non che sappiano fare ciò che serve.
  */
-export function comandoInventarioBuild(): string {
+export function comandoInventarioBuild(cartella: string = CARTELLA_BUILD): string {
+  const ffmpeg = `${cartella}/ffmpeg`
   return [
     'set -eu',
-    `${FFMPEG} -hide_banner -filters`,
+    `${ffmpeg} -hide_banner -filters`,
     `echo '${SEPARATORE_INVENTARIO}'`,
-    `${FFMPEG} -hide_banner -decoders`,
+    `${ffmpeg} -hide_banner -decoders`,
     `echo '${SEPARATORE_INVENTARIO}'`,
-    `${FFMPEG} -hide_banner -encoders`,
+    `${ffmpeg} -hide_banner -encoders`,
   ].join('\n')
 }
 

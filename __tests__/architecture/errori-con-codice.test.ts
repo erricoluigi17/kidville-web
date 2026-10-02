@@ -376,8 +376,23 @@ const MAX_FILE = 271;
  * 500 dicono già così): la voce scende da 4 a 0 ed esce dall'elenco, e `MAX_FILE` scende di
  * uno insieme a lei. Misurato: `jq '.totale_occorrenze'` dice **1370**, e il lock su questo
  * albero trova zero risposte senza codice in quel file.
+ *
+ * 🔻 1370 → 1363 il 2026-10-02, branch `feat/video-pubblicazione-server` (PR 2 «video: server e
+ * web», compito T5, secondario #47). Il tetto era LARGO DI SETTE: i due compiti dell'ondata B che
+ * hanno pagato debito prima — T4 (i tre rifiuti dei destinatari di `gallery/route.ts`, spostati in
+ * `cancelli-destinatari.ts`: −3) e T12 (la chiusura del legacy video in `gallery/upload`,
+ * `gallery/upload-url` e `news/upload`: −4) — hanno abbassato l'allowlist a 1363 e il tetto è
+ * rimasto a 1370: sette risposte potevano tornare senza codice con questo lock verde, la **settima
+ * volta** della storia scritta qui sopra. Qui si stringe FINO ALLA MISURA, che è l'unica forma in
+ * cui un tetto smette di mentire: `jq '.totale_occorrenze'` e la somma delle voci dicono entrambi
+ * **1363**. Le route video che T5 ha scritto o esteso (`video-uploads`, `[id]`, `[id]/firma`,
+ * `rinnovo`, e i moduli accanto: `cancello.ts`, `firme.ts`, `elenco.ts`, `risposte.ts`) NON
+ * aggiungono né tolgono niente: ogni risposta d'errore porta il suo `codice` (le frasi vengono da
+ * `rispostaVideo`, che le legge dal catalogo, e dal 429 di `rispostaTroppeRichieste`), quindi
+ * l'allowlist non ha una voce per loro e non ne ha bisogno. `MAX_FILE` non si muove: 271 voci,
+ * nessuna arriva a zero.
  */
-const MAX_OCCORRENZE = 1370;
+const MAX_OCCORRENZE = 1363;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

@@ -6,16 +6,16 @@ import { parseData, parseMultipart } from '@/lib/validation/http'
 import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff'
-import { rifiutoLegacyVideo, videoLegacyDaFermare } from '@/lib/media/blocco-legacy-video'
+import { eVideoLegacy, rifiutoLegacyVideo } from '@/lib/media/blocco-legacy-video'
 import { NEWS_BUCKET } from '@/lib/news/tipi'
 import { NEWS_BUCKET_BOZZE, SCADENZA_ANTEPRIMA_SECONDI } from '@/lib/news/media-bozza'
 
 // =============================================================================
-// POST /api/news/upload — carica un media (immagine/video) nel bucket «news».
-// Pattern ESATTO di gallery/upload: requireDocente, sniff video sui primi 64KB
-// → 415 se non riproducibile, MAI il nome file nei log (può contenere PII),
-// path namespaced sull'utente del gate.
+// POST /api/news/upload — carica un'immagine delle comunicazioni (area di sosta
+// `news_bozze`, poi bucket «news»).
+// Pattern ESATTO di gallery/upload: requireDocente, ogni video → 409 (il percorso
+// vecchio dei video è chiuso: passano solo da /api/video-uploads), MAI il nome file
+// nei log (può contenere PII), path namespaced sull'utente del gate.
 //
 // IL BUCKET NON SI CREA DA QUI (2026-07-31). Fino a oggi questa route creava
 // «news» al volo — e PUBBLICO — al primo caricamento: limite di dimensione,
@@ -29,8 +29,11 @@ import { NEWS_BUCKET_BOZZE, SCADENZA_ANTEPRIMA_SECONDI } from '@/lib/news/media-
 
 const MIME_AMMESSI = [
   'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-  // niente QuickTime (.mov) né Matroska (.mkv): HEVC/.mov si convertono (o si
-  // rifiutano con 415), il bucket accetta solo formati riproducibili in WebView.
+  // niente QuickTime (.mov) né Matroska (.mkv): il bucket accetta solo formati
+  // riproducibili in WebView. mp4 e webm restano in elenco perché li dichiara il
+  // bucket (lo verifica `bucket-storage-dichiarati`): un video arriva in `news_bozze`,
+  // e da lì in `news`, dalla pipeline nuova, con la chiave di servizio. Da QUESTA
+  // route non passa più: `eVideoLegacy` lo ferma con un 409 prima di questo gate.
   'video/mp4', 'video/webm',
 ]
 
@@ -55,17 +58,18 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
     // Il tipo del File può portare un suffisso codec (`video/webm;codecs=vp9`).
     const contentType = (file.type || 'application/octet-stream').split(';')[0].trim()
 
-    // ── IL PERCORSO VECCHIO DEI VIDEO, quando sarà ora, si chiude qui ────────
-    // Terza e ultima porta che riceve un filmato già compresso dal browser. Il
-    // rifiuto sta PRIMA del gate sui tipi apposta: con il blocco acceso anche un
-    // `video/quicktime` deve sentirsi dire «aggiorna l'app» e non «formato non
-    // ammesso», perché col client nuovo quel formato la pipeline lo accetta — un
-    // messaggio che manda l'utente contro un muro è peggio di nessun messaggio.
+    // ── IL PERCORSO VECCHIO DEI VIDEO È CHIUSO, e si chiude qui ──────────────
+    // Terza e ultima porta che riceveva un filmato già compresso dal browser. Il
+    // rifiuto sta PRIMA del gate sui tipi apposta: anche un `video/quicktime` deve
+    // sentirsi dire «aggiorna l'app» e non «formato non ammesso», perché col
+    // client nuovo quel formato la pipeline lo accetta — un messaggio che manda
+    // l'utente contro un muro è peggio di nessun messaggio.
     //
-    // ⚠️ OGGI SPENTO, interruttore unico in
-    // `src/lib/media/interruttore-legacy-video.ts`. Le immagini — che qui sono la
-    // quasi totalità dei caricamenti — non toccano questo ramo.
-    if (videoLegacyDaFermare(contentType)) {
+    // OGNI `video/*`, senza condizioni e senza guardare i byte: i video passano
+    // solo da `POST /api/video-uploads` (decisione in
+    // `src/lib/media/blocco-legacy-video.ts`, che non ha interruttori). Le
+    // immagini — che qui sono la totalità dei caricamenti — non toccano questo ramo.
+    if (eVideoLegacy(contentType)) {
       return rifiutoLegacyVideo('news', 'news/upload:POST', contentType, file.size)
     }
 
@@ -84,29 +88,6 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
     }
 
     const fileBuffer = await file.arrayBuffer()
-
-    // DIFESA IN PROFONDITÀ: un client vecchio (o una POST diretta) potrebbe spedire
-    // un video non riproducibile da Chrome/Android. Lo sniff sui primi 64KB lo rifiuta.
-    if (contentType.startsWith('video/')) {
-      const testa = new Uint8Array(fileBuffer.slice(0, 65536))
-      const analisi = analizzaContenutoVideo(testa, contentType)
-      if (analisi.daConvertire) {
-        // MAI il nome del file nei log (PII). Solo mime, size e motivo.
-        logEvento('news', 'warn', {
-          operazione: 'news/upload:POST',
-          esito: 'video-non-riproducibile',
-          mime: contentType,
-          size: file.size,
-          motivo: analisi.motivo,
-        })
-        // `codice` accanto alla prosa (gemello di `gallery/upload`): il testo nasce
-        // italiano in una libreria condivisa, il codice lo fa tradurre nel client.
-        return NextResponse.json(
-          { error: MESSAGGIO_VIDEO_NON_CONVERTIBILE, codice: 'VIDEO_NON_CONVERTIBILE' },
-          { status: 415 },
-        )
-      }
-    }
 
     const supabase = await createAdminClient()
 

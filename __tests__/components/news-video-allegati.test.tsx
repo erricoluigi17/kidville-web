@@ -17,10 +17,12 @@ const carica = vi.fn()
 const daSeguire = vi.fn()
 const pota = vi.fn()
 const annullaLocale = vi.fn()
+const concludi = vi.fn()
 
 vi.mock('@/lib/media/video/upload', () => ({
   creaArchivioCaricamenti: () => Promise.resolve({ elenca: () => daSeguire(), aggiorna: vi.fn(), eliminaByte: vi.fn(), elimina: vi.fn() }),
   accodaCaricamentoVideo: (...a: unknown[]) => accoda(...a),
+  concludiCaricamentoVideo: (...a: unknown[]) => concludi(...a),
   caricaVideo: (...a: unknown[]) => carica(...a),
   jobDaSeguire: (...a: unknown[]) => daSeguire(...a),
   potaArchivioCaricamenti: (...a: unknown[]) => pota(...a),
@@ -138,6 +140,8 @@ beforeEach(() => {
   carica.mockReset()
   daSeguire.mockReset()
   pota.mockReset()
+  concludi.mockReset()
+  concludi.mockResolvedValue(undefined)
   accoda.mockResolvedValue({ ok: true, riga: { jobId: JOB } })
   carica.mockImplementation((_dip: unknown, jobId: string, opz: { alProgresso?: (a: number, b: number) => void }) => {
     opz?.alProgresso?.(50, 100)
@@ -529,5 +533,226 @@ describe('NewsVideoAllegati · un ritentativo automatico dopo un guasto nostro',
     expect(await screen.findByText(itAdmin.videoRiapertura)).toBeInTheDocument()
     expect(await screen.findByText(itAdmin.videoStatoRiprovaAutomatica)).toBeInTheDocument()
     expect(carica, 'i byte erano già arrivati: non si rispediscono').not.toHaveBeenCalled()
+  })
+})
+
+/** La riga che l'archivio locale conserva per un filmato già (in parte) caricato. */
+const rigaLocale = (stato: 'caricato' | 'in_corso' = 'caricato') => ({
+  jobId: JOB, intentId: INTENTO, canale: 'news', ownerId: UTENTE, scuolaId: SEDE_A,
+  stato, nome: 'sintetico.mp4', dimensioneByte: 3, mime: 'video/mp4', chiaveIdempotenza: 'k',
+})
+
+/** La risposta dell'apertura di un intento che il server ha già portato avanti: niente da caricare. */
+const aperturaGiaAvanti = (statoJob: string, statoIntent = 'confirmed') => ({
+  ...APERTURA,
+  intent: { status: statoIntent },
+  job: [{ ...APERTURA.job[0], status: statoJob, needs_upload: false, firma: '', expires_at: null }],
+})
+
+/**
+ * IL JOB CHE IL SERVER HA CHIUSO MALE, AL RIENTRO — e dice perché (secondario #39).
+ *
+ * Riaprendo la pagina, un filmato che il runner aveva ritentato fino in fondo per un guasto
+ * NOSTRO si leggeva «ricarica la pagina e riprova: non è andato perso niente» — una frase che
+ * dà a chi aveva allegato il filmato un compito che non era suo. Il codice vero lo conosce il
+ * server (`codiceMostrabileDelJob`) e il client lo legge, come fa la galleria. Ogni ASSENZA è
+ * provata DOPO una presenza: un `waitFor` su un'assenza passa prima che i dati arrivino.
+ */
+describe('NewsVideoAllegati · al rientro un job finito male dice perché', () => {
+  const giro = (statoJob: 'failed' | 'rejected' | 'cancelled', letto: () => Response) => {
+    daSeguire.mockResolvedValue([rigaLocale()])
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) =>
+      init?.method === 'POST' ? risposta(200, aperturaGiaAvanti(statoJob)) : letto())
+  }
+
+  it('`failed` dopo i ritentativi: la frase del guasto nostro, non «ricarica e riprova»', async () => {
+    giro('failed', () => risposta(200, statoJob('failed', 'VIDEO_GUASTO_NOSTRO')))
+
+    monta()
+
+    // PRESENZA: il guasto nostro, annunciato come errore.
+    const frase = await screen.findByText(itShared.erroreVideoGuastoNostro)
+    expect(frase).toHaveAttribute('role', 'alert')
+    // E solo dopo l'assenza della frase generica di prima.
+    expect(screen.queryByText(itShared.erroreVideoRiprova)).toBeNull()
+    expect(carica, 'i byte erano già arrivati: non si rispediscono').not.toHaveBeenCalled()
+    // Il codice interno non è mai a schermo.
+    expect(screen.queryByText('VIDEO_GUASTO_NOSTRO')).toBeNull()
+  })
+
+  it('`rejected`: il difetto del suo file, col testo del catalogo', async () => {
+    giro('rejected', () => risposta(200, statoJob('rejected', 'VIDEO_TROPPO_LUNGO')))
+
+    monta()
+
+    expect(await screen.findByText(itShared.erroreVideoTroppoLungo)).toBeInTheDocument()
+    expect(screen.queryByText(itShared.erroreVideoRiprova)).toBeNull()
+  })
+
+  it('se lo stato non si legge il ripiego è «ricarica e riprova»', async () => {
+    giro('failed', () => risposta(500, { error: 'x', codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }))
+
+    monta()
+
+    expect(await screen.findByText(itShared.erroreVideoRiprova)).toBeInTheDocument()
+    expect(screen.queryByText(itShared.erroreVideoGuastoNostro)).toBeNull()
+  })
+
+  it('un job annullato resta «ricarica e riprova» e non chiede nessun codice al server', async () => {
+    giro('cancelled', () => risposta(200, statoJob('cancelled')))
+
+    monta()
+
+    expect(await screen.findByText(itShared.erroreVideoRiprova)).toBeInTheDocument()
+    // Nessuna lettura dello stato: l'unica richiesta è la riapertura.
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method === 'POST')).toBe(true)
+  })
+})
+
+/**
+ * I BYTE GIÀ SUL SERVER — e la copia in background che `accodaCaricamentoVideo` ha avviato.
+ *
+ * Quando l'apertura risponde «non c'è niente da caricare», il lavoro locale non serve più. Chiudere
+ * la riga a mano (`aggiorna` + `eliminaByte`) metterebbe l'`eliminaByte` in fila dietro una copia
+ * di due gigabyte, che sull'archivio vero dovrebbe finire prima di essere cancellata: qui si passa
+ * da `concludiCaricamentoVideo`, che prima la ferma.
+ */
+describe('NewsVideoAllegati · i byte sono già sul server', () => {
+  it('un video nuovo il cui intento non ha niente da caricare chiude il lavoro locale e non rispedisce niente', async () => {
+    fetchMock
+      .mockResolvedValueOnce(risposta(200, aperturaGiaAvanti('queued', 'pending')))
+      .mockImplementation(async () => risposta(200, statoJob('queued')))
+    const { container } = monta()
+    scegliVideo(container)
+
+    await waitFor(() => expect(concludi).toHaveBeenCalledTimes(1))
+    expect(concludi.mock.calls[0][1]).toBe(JOB)
+    expect(carica, 'non c’è niente da caricare').not.toHaveBeenCalled()
+  })
+
+  it('al rientro, una riga non ancora «caricato» il cui job ha già i byte si chiude con la stessa funzione', async () => {
+    daSeguire.mockResolvedValue([rigaLocale('in_corso')])
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+      ? risposta(200, aperturaGiaAvanti('queued'))
+      : risposta(200, statoJob('queued')))
+
+    monta()
+
+    await waitFor(() => expect(concludi).toHaveBeenCalledTimes(1))
+    expect(concludi.mock.calls[0][1]).toBe(JOB)
+    expect(carica).not.toHaveBeenCalled()
+  })
+
+  it('una riga già «caricato» non la tocca nessuno: i byte erano già stati liberati', async () => {
+    daSeguire.mockResolvedValue([rigaLocale('caricato')])
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+      ? risposta(200, aperturaGiaAvanti('queued'))
+      : risposta(200, statoJob('queued')))
+
+    monta()
+
+    // PRIMA la presenza (la riga è tornata a schermo), poi l'assenza della chiusura.
+    expect(await screen.findByText(itAdmin.videoRiapertura)).toBeInTheDocument()
+    expect(concludi).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * LA FIRMA CHE SI RINNOVA — `POST /api/video-uploads/[id]/firma`, collegato alla libreria.
+ *
+ * Una firma vale due ore, e un originale da un gigabyte su rete mobile ne dura di più. La libreria,
+ * se lo Storage la rifiuta a metà trasferimento, chiama `rinnovaFirma`; per le News il rinnovo (secondario
+ * #55) non è più la riapertura dell'intento con la stessa chiave — un'apertura intera per ogni firma, 190
+ * aperture per 44 job misurate prima della PR 2 — ma la route che firma di nuovo il percorso del job. Il test
+ * prende le dipendenze che il componente passa alla libreria e le usa come farebbe lei.
+ */
+describe('NewsVideoAllegati · la firma si rinnova su richiesta della libreria', () => {
+  const futura = () => new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
+  /** L'apertura di un intento: una POST su `/api/video-uploads` (le News ci aggiungono `?userId=`). */
+  const eAperturaNews = ([url, init]: unknown[]) =>
+    String(url).startsWith('/api/video-uploads?') && (init as { method?: string } | undefined)?.method === 'POST'
+  const rispostaFirma = (firma: string) => risposta(200, { jobId: JOB, caricamento: APERTURA.job[0].caricamento, firma, scadeIl: futura() })
+
+  it('`rinnovaFirma` chiama `/firma` col job — NON riapre l’intento — e da quel momento le intestazioni sono quelle nuove', async () => {
+    const aperturaConScadenza = { ...APERTURA, job: [{ ...APERTURA.job[0], expires_at: futura() }] }
+    fetchMock
+      .mockResolvedValueOnce(risposta(200, aperturaConScadenza))
+      .mockImplementation(async () => risposta(200, statoJob('queued')))
+    caricamentoSospeso()
+    const { container } = monta()
+    scegliVideo(container)
+    await waitFor(() => expect(accoda).toHaveBeenCalled())
+    const dip = accoda.mock.calls[0][0] as {
+      intestazioni: () => Promise<Record<string, string>>
+      rinnovaFirma?: (jobId: string) => Promise<Record<string, string>>
+    }
+
+    // La libreria deve avere il rinnovo: senza, il rifiuto dello Storage resterebbe «interrotto».
+    expect(dip.rinnovaFirma).toBeTypeOf('function')
+    // Finché la firma vale, le intestazioni non costano una richiesta.
+    const dopoApertura = fetchMock.mock.calls.length
+    expect(await dip.intestazioni()).toEqual({ 'x-signature': 'firma-finta' })
+    expect(fetchMock.mock.calls.length).toBe(dopoApertura)
+
+    // Il rinnovo: `POST /api/video-uploads/<intento>/firma` col job nel corpo.
+    fetchMock.mockImplementationOnce(async () => rispostaFirma('firma-nuova'))
+    expect(await dip.rinnovaFirma!(JOB)).toEqual({ 'x-signature': 'firma-nuova' })
+    const [url, init] = fetchMock.mock.calls[dopoApertura]
+    expect(url).toBe(`/api/video-uploads/${INTENTO}/firma`)
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ jobId: JOB })
+    // ⚠️ L'apertura resta UNA: la vecchia strada ne faceva una per ogni firma, con la stessa chiave.
+    expect(fetchMock.mock.calls.filter(eAperturaNews)).toHaveLength(1)
+
+    // Da ora la firma è la nuova, e anche quella costa una sola richiesta.
+    expect(await dip.intestazioni()).toEqual({ 'x-signature': 'firma-nuova' })
+    expect(fetchMock.mock.calls.length).toBe(dopoApertura + 1)
+    // Un rinnovo chiesto per un altro job non si consegna a questo.
+    await expect(dip.rinnovaFirma!('99999999-9999-4999-8999-999999999999')).rejects.toThrow('JobDiverso')
+
+    await act(async () => {
+      sblocca?.(null)
+      await Promise.resolve()
+    })
+  })
+
+  it('anche il RIENTRO nella pagina (la ripresa di una riga rimasta a metà) rinnova da `/firma`, senza riaprire', async () => {
+    daSeguire.mockResolvedValue([rigaLocale('in_corso')])
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+      ? risposta(200, { ...APERTURA, job: [{ ...APERTURA.job[0], expires_at: futura() }] })
+      : risposta(200, statoJob('queued')))
+    carica.mockResolvedValue({ esito: 'interrotto', jobId: JOB, offsetByte: 0, codice: null })
+
+    monta()
+    await waitFor(() => expect(carica).toHaveBeenCalled())
+    const dip = carica.mock.calls[0][0] as { rinnovaFirma: (jobId: string) => Promise<Record<string, string>> }
+    const aperture = () => fetchMock.mock.calls.filter(eAperturaNews).length
+    const prima = aperture()
+
+    fetchMock.mockImplementationOnce(async () => rispostaFirma('firma-di-ripresa'))
+    expect(await dip.rinnovaFirma(JOB)).toEqual({ 'x-signature': 'firma-di-ripresa' })
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe(`/api/video-uploads/${INTENTO}/firma`)
+    expect(aperture(), 'il rinnovo ha riaperto l’intento').toBe(prima)
+  })
+
+  it('se il job non aspetta più i byte (`/firma` risponde 409) il rinnovo rifiuta, e la libreria ricade nel rifiuto di sempre', async () => {
+    const aperturaConScadenza = { ...APERTURA, job: [{ ...APERTURA.job[0], expires_at: futura() }] }
+    fetchMock
+      .mockResolvedValueOnce(risposta(200, aperturaConScadenza))
+      .mockImplementation(async () => risposta(200, statoJob('queued')))
+    caricamentoSospeso()
+    const { container } = monta()
+    scegliVideo(container)
+    await waitFor(() => expect(accoda).toHaveBeenCalled())
+    const dip = accoda.mock.calls[0][0] as { rinnovaFirma: (jobId: string) => Promise<Record<string, string>> }
+
+    // Il job non aspetta più i byte: non c'è una firma da dare.
+    fetchMock.mockImplementationOnce(async () => risposta(409, { error: 'x', codice: 'VIDEO_GIA_CONCLUSO' }))
+    await expect(dip.rinnovaFirma(JOB)).rejects.toThrow('FirmaNonDisponibile')
+
+    await act(async () => {
+      sblocca?.(null)
+      await Promise.resolve()
+    })
   })
 })

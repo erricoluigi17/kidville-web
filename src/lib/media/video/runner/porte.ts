@@ -1,4 +1,5 @@
 import type { CanaleVideo } from '../contratto'
+import type { OrigineMicroVm } from './ambiente'
 
 /**
  * LE PORTE DEL RUNNER — tutto ciò che il runner non sa fare da sé.
@@ -50,6 +51,17 @@ export interface JobVideo {
   source_mime: string | null
   attempt: number
   fence_epoch: number
+  /**
+   * Lo SHA-256 che l'app ha dichiarato all'apertura (caricamento nativo, PR 2, spec §10.4): un `bytea` di
+   * 32 byte che nel `to_jsonb(riga)` delle RPC di presa (`video_job_prendi`, `video_job_prossimo`) è la
+   * stringa `\x<64 cifre>`. `null` per chi non l'ha dichiarato (web e TUS, le News); assente nelle righe
+   * che il runner legge con una `SELECT` a colonne scelte (`miei`), che non servono a convertire.
+   *
+   * ⚠️ È l'impronta del filmato di un bambino: il runner la passa alla MicroVM e BASTA. Non entra in un log,
+   * in un messaggio d'errore, in un campo di battito. Si legge con `leggiSha256Dichiarato` (`./script.ts`),
+   * che dice anche quando il valore non è un'impronta.
+   */
+  sha256_dichiarato?: string | null
 }
 
 /** La forma di risposta comune a tutte le RPC di `*_video_*.sql`. */
@@ -63,23 +75,40 @@ export type EsitoRpcVideo =
  * Più stretto di `EsitoRpcVideo` di proposito. La sorveglianza non ha niente da
  * fare con la riga del job, e chiederla costringerebbe ogni doppio a fabbricarne
  * una — cioè a scrivere venti campi irrilevanti per provare un contatore.
+ *
+ * Lo usano anche le due RPC della SORVEGLIANZA ESCLUSIVA (`video_job_sorveglianza_prendi` e
+ * `_rilascia`), che rispondono `{ok:true, …}` senza nessuna riga di job.
  */
 export type EsitoBattito = { ok: true } | { ok: false; code: string }
+
+/**
+ * La risposta delle RPC che non portano un job ma dei CONTEGGI: `video_arrivi_recupera` e
+ * `video_runner_ventaglio`. Dei conteggi passano SOLO i numeri: è la stessa regola dei log (uuid,
+ * numeri, codici), applicata dove la risposta entra nel runner invece che dove ne esce.
+ */
+export type EsitoConteggi =
+  | { ok: true; conteggi: Readonly<Record<string, number>> }
+  | { ok: false; code: string }
 
 /* ────────────────────────────────────────────────────────────────────────────
  * LA CODA — le RPC di coordinamento
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Le sei RPC che il runner chiama, e nessun'altra.
+ * Le undici RPC che il runner chiama (più una `SELECT`), e nessun'altra.
  *
  * `video_job_uploaded` e `video_job_cancel` non sono qui: la prima appartiene al
  * bordo dell'upload, la seconda alla persona che cambia idea. Un worker che
  * potesse chiamarle avrebbe più potere di quanto il suo mestiere richieda.
  *
- * La sesta, `video_job_retry`, è dal 2026-10-02 la risposta a un guasto NOSTRO: invece di
- * rendere il job definitivo (`video_job_fail`) lo rimette in coda con un'attesa
- * (`./ritentativi.ts` decide quando e quanto).
+ * Il tetto delle conversioni in parallelo e la sorveglianza esclusiva (PR 2) stanno DENTRO le
+ * RPC: `video_job_prossimo` e `video_job_prendi` rispondono `CAPACITA_PIENA` quando i `processing`
+ * con la lease viva sono già `tetto`, altrimenti DELEGANO a `video_job_next` e `video_job_claim`
+ * (nessuna copia della disciplina dei tentativi). Il runner non chiama più le due della PR 1.
+ *
+ * La `video_job_retry`, dal 2026-10-02, è la risposta a un guasto NOSTRO: invece di rendere il job
+ * definitivo (`video_job_fail`) lo rimette in coda con un'attesa (`./ritentativi.ts` decide
+ * quando e quanto); a tentativi esauriti delega essa stessa a `video_job_fail`.
  */
 export interface CodaVideo {
   /**
@@ -87,24 +116,54 @@ export interface CodaVideo {
    *
    * È il pezzo che rende durevole il disegno. Una conversione può durare più di
    * un'invocazione; quando il tetto dell'invocazione scade, il job resta
-   * `processing` con la lease viva, e `video_job_next` — che pesca solo i `queued` e
+   * `processing` con la lease viva, e `video_job_prossimo` — che pesca solo i `queued` e
    * i `processing` con lease SCADUTA — non lo restituirebbe mai. Senza questa
    * lettura, il lavoro andrebbe avanti nella MicroVM fino in fondo e nessuno
    * scriverebbe mai l'esito: alla scadenza della lease il job verrebbe ripreso da
    * capo, con un fence nuovo, e la conversione appena finita buttata via.
+   *
+   * ⚠️ Dal 2026-10-02 (PR 2) ne escono anche i job che un'ALTRA invocazione sta già
+   * sorvegliando: il `lease_owner` è uno solo per tutte (è stabile apposta), quindi la lista non
+   * distingue. A distinguerli è `sorveglianzaPrendi`, che il runner chiede per ciascuno.
    */
   miei(leaseOwner: string): Promise<{ ok: true; jobs: JobVideo[] } | { ok: false; motivo: string }>
-  /** `video_job_next(p_lease_owner, p_lease_seconds)`. */
-  prossimo(leaseOwner: string, leaseSeconds: number): Promise<EsitoRpcVideo>
   /**
-   * `video_job_claim(p_job_id, p_lease_owner, p_lease_seconds)`, usata solo per RIPRENDERE.
-   *
-   * Con lo stesso `lease_owner` e la lease ancora viva la RPC è idempotente: non
-   * incrementa `attempt` né `fence_epoch` e restituisce la fotografia della prima
-   * acquisizione. È esattamente ciò che serve — stesso fence ⇒ stesso nome di
-   * Sandbox ⇒ `Sandbox.get` riaggancia la MicroVM che sta già convertendo.
+   * `video_job_prossimo(p_lease_owner, p_lease_seconds, p_tetto)`: prende il prossimo job dovuto,
+   * se i `processing` con la lease viva sono meno di `tetto`; altrimenti `CAPACITA_PIENA`.
    */
-  riprendi(jobId: string, leaseOwner: string, leaseSeconds: number): Promise<EsitoRpcVideo>
+  prossimo(leaseOwner: string, leaseSeconds: number, tetto: number): Promise<EsitoRpcVideo>
+  /**
+   * `video_job_prendi(p_job_id, p_lease_owner, p_lease_seconds, p_tetto)`: prende QUEL job (il
+   * `job_id` di un calcio, o uno dei `miei`). Stesso tetto di `prossimo`, con un'eccezione: un job
+   * che è GIÀ mio e con la lease viva non occupa un posto in più.
+   *
+   * Con lo stesso `lease_owner` e la lease ancora viva la RPC è idempotente: non incrementa
+   * `attempt` né `fence_epoch` e restituisce la fotografia della prima acquisizione. È
+   * esattamente ciò che serve per RIPRENDERE — stesso fence ⇒ stesso nome di Sandbox ⇒
+   * `Sandbox.get` riaggancia la MicroVM che sta già convertendo.
+   */
+  prendi(jobId: string, leaseOwner: string, leaseSeconds: number, tetto: number): Promise<EsitoRpcVideo>
+  /**
+   * `video_job_sorveglianza_prendi(p_job_id, p_invocazione, p_secondi)`: la lease di SORVEGLIANZA, una
+   * per job. Due invocazioni che riagganciano lo stesso Sandbox leggerebbero entrambe il marcatore e
+   * chiamerebbero entrambe `video_job_ready`: la seconda prenderebbe un `OUTPUT_CONFLICT` su una
+   * conversione riuscita (il falso allarme noto). `GIA_SORVEGLIATO` è un esito TRANQUILLO: è il
+   * caso normale di due calci sullo stesso job.
+   */
+  sorveglianzaPrendi(jobId: string, invocazione: string, secondi: number): Promise<EsitoBattito>
+  /** `video_job_sorveglianza_rilascia(p_job_id, p_invocazione)`: rilasciare una lease non propria non fa niente. */
+  sorveglianzaRilascia(jobId: string, invocazione: string): Promise<EsitoBattito>
+  /**
+   * `video_arrivi_recupera(p_limite)`: la rete del trigger d'arrivo. Porta in coda i job
+   * `awaiting_upload` il cui oggetto esiste già (il trigger non li ha visti).
+   */
+  arriviRecupera(limite: number): Promise<EsitoConteggi>
+  /**
+   * `video_runner_ventaglio(p_tetto, p_escludi)`: fa partire un'invocazione (`video_runner_kick`) per
+   * ogni job che ha bisogno di sorveglianza. `escludi` è un JOB (non un'invocazione): quello che
+   * questa invocazione sorveglia già.
+   */
+  ventaglio(tetto: number, escludi: string | null): Promise<EsitoConteggi>
   /** `video_job_heartbeat(p_job_id, p_fence_epoch, p_lease_owner)`. */
   battito(jobId: string, fenceEpoch: number, leaseOwner: string): Promise<EsitoRpcVideo>
   /** `video_job_ready(p_job_id, p_fence_epoch, p_lease_owner, p_output_path, p_output_size, p_probe_json)`. */
@@ -125,13 +184,33 @@ export interface CodaVideo {
     rifiutato: boolean
   }): Promise<EsitoRpcVideo>
   /**
+   * `video_job_diagnosi(p_job_id, p_fence_epoch, p_lease_owner, p_diagnosi)`: i NUMERI di una verifica
+   * fallita (frame, coperture, ultimo campione, tolleranze, fps: `diagnosiVerifica` in `../verify`),
+   * per capire un rifiuto senza riaprire il video (secondario #10, PR 2).
+   *
+   * La RPC accetta solo `processing` con fence e lease giusti, quindi va chiamata PRIMA di `fallito`, che
+   * chiude il job. Risponde `{ok:true}` o `{ok:false, code}` senza una riga di job (come la sorveglianza):
+   * `EsitoBattito`. Un rifiuto, o una chiamata che non arriva, non cambia l'esito del job: chi chiama lo
+   * logga e va avanti. `diagnosi` è solo numeri ed enumerati, e la RPC lo rifà verificare (forma chiusa,
+   * 2048 byte, nessuna stringa libera).
+   */
+  diagnosi(p: {
+    jobId: string
+    fenceEpoch: number
+    leaseOwner: string
+    diagnosi: unknown
+  }): Promise<EsitoBattito>
+  /**
    * `video_job_retry(p_job_id, p_fence_epoch, p_lease_owner, p_error_code,
    * p_tentativi_massimi, p_attesa_secondi)`: rimette in coda un job il cui guasto è NOSTRO.
    *
    * La risposta ha quattro significati, e il runner li legge diversamente (`esegui.ts`):
    *  · `ok` con il job `queued` — è in attesa del prossimo tentativo;
    *  · `ok` con il job `failed` — il database ha riconosciuto i tentativi finiti (o il job
-   *    già chiuso) e ha delegato a `video_job_fail`: è un fallimento definitivo;
+   *    già chiuso) e ha delegato a `video_job_fail`: è un fallimento definitivo. Dal PR 2 è la
+   *    risposta NORMALE all'ULTIMO tentativo (secondario #23): il runner chiama `riprova` anche
+   *    lì, perché la RPC annota `last_error_code` col codice dell'ultimo guasto prima di
+   *    delegare — chiamando `video_job_fail` direttamente restava quello del ritentativo prima;
    *  · `RPC_ERROR` — la chiamata non è arrivata o la funzione non c'è (la migrazione non è
    *    applicata): niente è stato scritto, e il runner ripiega su `fallito`;
    *  · qualunque altro codice (`FENCE_MISMATCH`, `LEASE_*`, `INVALID_STATE`…) — un VERDETTO:
@@ -287,6 +366,13 @@ export interface SessioneSandbox {
   ferma(): Promise<void>
   /** Vero se la MicroVM è stata appena creata; falso se è stata riagganciata per nome. */
   readonly nuova: boolean
+  /**
+   * Da dove è nata una MicroVM CREATA (PR 2, `./ambiente.ts`): `snapshot` (i binari di FFmpeg ci sono già e
+   * si verificano) o `runtime` (la MicroVM vuota della PR 1, a cui si portano dal bucket). Assente — e
+   * vale `runtime` — per una MicroVM riagganciata, che l'apparecchio non lo rifà, e per ogni sessione che
+   * non lo dichiara: l'assenza è il percorso della PR 1, parola per parola.
+   */
+  readonly origine?: OrigineMicroVm
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

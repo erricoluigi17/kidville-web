@@ -25,6 +25,12 @@ import { anonimizzaAlunno } from '@/lib/gdpr/esegui'
 // di essere invocata).
 // =============================================================================
 
+// L'oblio dei video in volo (`video_intent_oblio_alunno`, 2026-10-02): `anonimizzaAlunno` la chiama sempre, e
+// il finto client non emula le RPC che non gli si dicono (lancia). Qui non c'è niente da togliere.
+const RPC_OBLIO_VIDEO = {
+  video_intent_oblio_alunno: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
+}
+
 const AT = '2026-08-07T09:00:00Z'
 const NOSTRO = 'aaaaaaaa-0000-4000-8000-00000000000a'
 const ALTRO = 'bbbbbbbb-0000-4000-8000-00000000000b'
@@ -71,7 +77,7 @@ function dbConPresenze(): DBFinto {
 describe('anonimizzaAlunno — il motivo dell’assenza e le note dell’appello', () => {
   it('azzera `giustificazione_testo` e `note_appello` dell’alunno, e SOLO le sue righe', async () => {
     const db = dbConPresenze()
-    const client = creaFintoSupabase(db)
+    const client = creaFintoSupabase(db, [], { rpc: RPC_OBLIO_VIDEO })
 
     const r = await anonimizzaAlunno(client, { id: NOSTRO }, AT, 'test')
 
@@ -92,7 +98,7 @@ describe('anonimizzaAlunno — il motivo dell’assenza e le note dell’appello
 
   it('la RIGA di presenza resta: si toglie il testo, non il fatto della frequenza', async () => {
     const db = dbConPresenze()
-    const client = creaFintoSupabase(db)
+    const client = creaFintoSupabase(db, [], { rpc: RPC_OBLIO_VIDEO })
 
     await anonimizzaAlunno(client, { id: NOSTRO }, AT, 'test')
 
@@ -114,7 +120,7 @@ describe('anonimizzaAlunno — il motivo dell’assenza e le note dell’appello
         { id: 'p-1', alunno_id: NOSTRO, data: '2026-07-20', stato: 'presente', giustificazione_testo: null, note_appello: null },
       ],
     }
-    const client = creaFintoSupabase(db, [], { scritture })
+    const client = creaFintoSupabase(db, [], { scritture, rpc: RPC_OBLIO_VIDEO })
 
     const r = await anonimizzaAlunno(client, { id: NOSTRO }, AT, 'test')
 
@@ -127,7 +133,7 @@ describe('anonimizzaAlunno — il motivo dell’assenza e le note dell’appello
 
   it('degrada in silenzio se la colonna non esiste (DB E2E della CI, non migrato)', async () => {
     const db = dbConPresenze()
-    const client = creaFintoSupabase(db, [], { errori: { presenze: { code: '42703' } } })
+    const client = creaFintoSupabase(db, [], { errori: { presenze: { code: '42703' } }, rpc: RPC_OBLIO_VIDEO })
 
     const r = await anonimizzaAlunno(client, { id: NOSTRO }, AT, 'test')
 

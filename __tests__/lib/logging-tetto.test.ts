@@ -279,8 +279,9 @@ const PRIMITIVE_DI_TETTO: ReadonlyArray<readonly [string, Primitiva]> = [
  */
 const FETCH_SENZA_TETTO = new Map<string, string>([
     ['src/lib/gallery/carica-media.ts',
-        'BROWSER, e la deroga è sulla SOLA `PUT` verso lo Storage: un video di galleria arriva a '
-        + '50 MB, e su rete mobile ci mette più di 30 s — cioè più di `TETTO_UPLOAD_MS`, che è il '
+        'BROWSER, e la deroga è sulla SOLA `PUT` verso lo Storage: un file di galleria può arrivare '
+        + 'a 50 MB (`TETTO_GALLERIA_BYTE`; oggi sono foto, perché i video di qui non passano più: '
+        + 'li ferma il 409), e su rete mobile ci mette più di 30 s — cioè più di `TETTO_UPLOAD_MS`, che è il '
         + 'massimo che questo lock ammette. Un tetto qui interromperebbe un caricamento CHE STA '
         + 'FUNZIONANDO, ed è il gemello in salita di `native/scarica.ts`, che porta la stessa '
         + 'deroga per la stessa ragione. La chiamata a `/api/gallery/upload-url`, che è una nostra '
@@ -444,7 +445,7 @@ const TETTI_DICHIARATI = new Map<string, string>([
     ['src/components/features/admin/news/NewsVideoAllegati.tsx',
         'quanto il browser aspetta i METADATI di un filmato prima di rinunciare a misurarne la '
         + 'durata (2026-09-18). Un secondo e mezzo, che e\' poco di proposito: la durata serve a '
-        + 'rifiutare SUBITO un video oltre i tre minuti invece di far caricare due gigabyte per '
+        + 'rifiutare SUBITO un video oltre i cinque minuti invece di far caricare due gigabyte per '
         + 'poi dire di no, ma non e\' l\'unica difesa — se scade si prosegue senza, e il rifiuto '
         + 'arriva dal probe dopo l\'upload. Cioe\' questo tetto non decide se un video passa: '
         + 'decide solo quanto presto lo sappiamo. Un numero alto bloccherebbe la scelta del file '
@@ -497,54 +498,30 @@ const TETTI_DICHIARATI = new Map<string, string>([
         + 'silenzio. I due MECCANISMI non stanno qui: sono presi da `tetto.ts` '
         + '(`segnaleConTetto`) e da `errore-accesso.ts` (`conTettoDiTempo`) — la prima stesura li '
         + 'aveva riscritti a mano ed è questo lock ad averla respinta.'],
-    ['src/lib/media/video-mediarecorder.ts',
-        'quanto si aspetta il PRIMO FOTOGRAMMA di un video prima di dichiarare la conversione '
-        + 'impossibile (`ATTESA_PRIMO_FOTOGRAMMA_MS`, 10 s — 2026-09-12). Non limita una `fetch`: '
-        + 'limita un\'ATTESA DI EVENTO dentro il browser, `requestVideoFrameCallback` (o, dove '
-        + 'manca, il primo fra `loadeddata`/`seeked`/`timeupdate`), che se non arriva non arriva '
-        + 'mai — e la conversione è una `Promise` che resterebbe appesa per sempre, con '
-        + 'l\'insegnante davanti a una rotellina eterna. È lo stesso guasto di `carica-file.ts`, '
-        + 'su un evento invece che su una richiesta. Il numero è largo di proposito: a questo '
-        + 'punto i metadati sono già letti e `play()` ha già risolto, quindi il decoder ha solo '
-        + 'da consegnare un fotogramma — un tetto stretto rifiuterebbe video sani su telefoni '
-        + 'lenti, e un cancello che rifiuta il lavoro buono viene disattivato in due giorni. '
-        + '⚠️ NON è un tetto sulla DURATA del video: quello non esiste per decisione del '
-        + 'titolare («il video deve caricarsi sempre»), e il resto del file sorveglia il '
-        + 'PROGRESSO (`STALLO_MS`, niente disegni o `currentTime` fermo da 3 s) invece del '
-        + 'totale. Ogni scadenza lascia in `app_log` una riga con il proprio `punto` '
-        + '(`primo-fotogramma-mancante`, `canvas-congelato`) apposta per essere contata: se 10 s '
-        + 'fossero pochi lo direbbe il conteggio, non chi carica. '
-        + '⚠️ DAL 2026-09-12 LE ATTESE SONO CINQUE, e non è raffinamento: erano state MISURATE '
-        + 'tre strade in cui la `Promise` restava appesa per sempre, cioè l\'insegnante davanti a '
-        + 'una rotellina eterna. `ATTESA_WATERMARK_MS` (10 s) copre `new Image()`, che non ha '
-        + 'nessun tetto di suo — scaduta si converte SENZA logo, non si rigetta, perché un logo '
-        + 'mancante non è un video perso; `ATTESA_METADATI_MS` (20 s) copre il tratto fra '
-        + '`el.src` e `loadedmetadata`, dove un HEVC che il decoder non apre non emette NIENTE e '
-        + 'l\'unica uscita era `el.onerror` → `metadati-mancanti`; `ATTESA_PREPARAZIONE_MS` '
-        + '(15 s) copre il grafo Web Audio, `audioCtx.resume()` e `el.play()`, tre `Promise` che '
-        + 'su iOS possono restare pendenti invece di rigettare → `preparazione-in-stallo`; '
-        + '`ATTESA_ONSTOP_MS` (15 s) copre l\'ULTIMO anello, fra `registratore.stop()` e '
-        + '`onstop`, che nessuna delle quattro chiusure sorvegliava → '
-        + '`registratore-stop-senza-onstop`. I due tetti a 15 s e quello a 20 s sono larghi di '
-        + 'proposito e nella direzione prudente: là un falso scatto butterebbe via una '
-        + 'conversione RIUSCITA, mentre ciò che prevengono è un\'attesa che non finisce comunque. '
-        + 'E ognuno dei cinque ha un CASO nella suite che lo prova pendente un passo prima della '
-        + 'scadenza e rigettato subito dopo: questo lock pretende la dichiarazione del tetto, non '
-        + 'la sua prova, e un tetto che SEMBRA coperto da un lock è peggio di uno scoperto.'],
+    // ⚠️ Il file della conversione dei video nel browser (con `MediaRecorder`) dichiarava CINQUE attese
+    // di evento — `ATTESA_PRIMO_FOTOGRAMMA_MS` 10 s, `ATTESA_WATERMARK_MS` 10 s, `ATTESA_METADATI_MS`
+    // 20 s, `ATTESA_PREPARAZIONE_MS` 15 s, `ATTESA_ONSTOP_MS` 15 s — ed è uscito da questo inventario il
+    // 2 ottobre 2026 perché il file non esiste più (la conversione la fa il server), non perché un
+    // tetto sia stato allentato: il lock confronta i file che dichiarano un tetto con questo elenco, e
+    // lasciare qui una voce senza il file la renderebbe una riga che nessuno rilegge. Nessuno dei
+    // cinque è passato in un altro file.
     ['src/lib/gallery/video-galleria-flusso.ts',
         'quanto si aspettano i METADATI di un video scelto dall\'insegnante prima di dichiarare '
         + '«la durata non si sa» e caricarlo lo stesso (`TETTO_METADATI_MS`, 4 s — 2026-09-18). '
         + 'Non limita una `fetch`: limita un\'ATTESA DI EVENTO nel browser, il `loadedmetadata` di '
         + 'un `<video>` a cui si è dato l\'objectURL del file. È lo stesso guasto di '
-        + '`video-mediarecorder.ts` — `preload="metadata"` è un SUGGERIMENTO che il browser può '
+        + '`carica-file.ts`, su un evento invece che su una richiesta — `preload="metadata"` è un '
+        + 'SUGGERIMENTO che il browser può '
         + 'ignorare (Safari/iOS in Risparmio Energetico, rete cellulare), e un elemento che non '
         + 'emette né `loadedmetadata` né `error` lascerebbe la `Promise` appesa per sempre, col '
         + 'caricamento fermo dietro di lei e l\'insegnante davanti a una rotellina eterna. '
-        + '⚠️ IL NUMERO È CORTO DI PROPOSITO, all\'opposto dei cinque tetti qui sopra: là una '
-        + 'scadenza butterebbe via una conversione RIUSCITA, qui scaduto il tempo non si rifiuta '
-        + 'niente — si carica con `durataSecondi: null` e la misura vera la fa ffprobe sul server. '
+        + '⚠️ IL NUMERO È CORTO DI PROPOSITO: scaduto il tempo non si rifiuta '
+        + 'niente — si carica con `durataSecondi: null` e la misura vera la fa ffprobe sul server '
+        + '(le cinque attese della vecchia conversione nel browser, uscite da questo inventario il '
+        + '2026-10-02, erano larghe per il motivo opposto: là una scadenza avrebbe buttato via una '
+        + 'conversione RIUSCITA). '
         + 'Sbagliare per difetto costa un controllo anticipato in meno, non un video perso: '
-        + 'l\'unico effetto è che un video di quattro minuti verrà fermato DOPO il caricamento '
+        + 'l\'unico effetto è che un video di sei minuti verrà fermato DOPO il caricamento '
         + 'invece che prima. Quattro secondi sono già molti per leggere l\'intestazione di un file '
         + 'che sta sul telefono. '
         + 'La scadenza NON lascia una riga sua, ed è una decisione: su un browser che ignora '

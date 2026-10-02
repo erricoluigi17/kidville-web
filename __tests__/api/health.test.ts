@@ -32,6 +32,9 @@ import {
     VARIABILI_CRITICHE,
     JOB_CRON,
     SOGLIA_IMPRONTE_ERRORE,
+    ESITI_BATTITO,
+    ESITI_BATTITO_PER_OPERAZIONE,
+    valeComeBattito,
     type Salute,
     type Controllo,
 } from '@/lib/health/controlli'
@@ -393,6 +396,213 @@ describe('GET /api/health', () => {
 
         expect(corpo.stato).toBe('degraded')
         expect(controllo(corpo, 'cron-battito').dettaglio).toContain('fattura-sync')
+    })
+
+    /* ═══════════════════════════════════════════════════════════════════════
+     * IL FALSO ALLARME DI `video-runner-tick` — chiuso dalla PR 2 (T6)
+     *
+     * Il runner dei video batte ogni cinque minuti dal 2026-09-18, ma non scrive
+     * mai `esito: 'ok'`: scrive l'esito di ciò che ha fatto (`coda-vuota`,
+     * `in-corso`, `pronto`, `in-riprova`, e dalla PR 2 `gia-sorvegliato` e
+     * `capacita-piena`). Per il controllo erano tutti «muti», e `/api/health`
+     * rispondeva «job senza battito: video-runner-tick» a ogni chiamata su un
+     * lavoro che girava benissimo: un allarme che suona da solo, cioè un allarme
+     * che prima o poi qualcuno spegne.
+     *
+     * La correzione NON allarga `ESITI_BATTITO` (che vale per OGNI lavoro): è una
+     * mappa per OPERAZIONE. Le prove tengono ferme le tre metà: che il runner
+     * non sia più muto quando batte, che LO SIA ancora quando non batte, e che
+     * quegli esiti non valgano per nessun altro lavoro.
+     * ═══════════════════════════════════════════════════════════════════════ */
+
+    /** La riga di battito del runner COM'È SCRITTA dalla route: livello e campi veri, `ok` escluso. */
+    function battitoRunner(esito: string, livello: 'info' | 'warn' | 'error', quandoMs: number, operazione = 'video-runner-tick') {
+        return {
+            id: `log-${operazione}-${esito}-${livello}`,
+            evento: 'cron',
+            livello,
+            ambiente: 'production',
+            creato_il: fa(quandoMs),
+            visto_l_ultima: fa(quandoMs),
+            contesto: {
+                campi: { operazione, esito, canale: 'cron', ms: 1200, tetto_invocazione_ms: 240_000 },
+            },
+        }
+    }
+
+    /** Il database sano, ma con il battito di `video-runner-tick` (o nessuno) deciso dal test. */
+    function dbConRunner(...righe: Riga[]): DBFinto {
+        const db = dbSano()
+        db.app_log = db.app_log.filter((r) => jobDi(r) !== 'video-runner-tick')
+        db.app_log.push(...righe)
+        return db
+    }
+
+    // I sei esiti e il livello con cui la route li scrive (`info` per i tranquilli, `warn` per `in-riprova`).
+    const ESITI_DEL_RUNNER: [string, 'info' | 'warn'][] = [
+        ['coda-vuota', 'info'],
+        ['in-corso', 'info'],
+        ['pronto', 'info'],
+        ['in-riprova', 'warn'],
+        ['gia-sorvegliato', 'info'],
+        ['capacita-piena', 'info'],
+    ]
+
+    it.each(ESITI_DEL_RUNNER)(
+        "il battito «%s» (livello %s) di video-runner-tick vale come battito: il runner NON è più muto",
+        async (esito, livello) => {
+            montaDb(dbConRunner(battitoRunner(esito, livello, 3 * MIN)))
+
+            const { stato, corpo } = await chiama()
+
+            // Prima della correzione questo era `degraded` con «job senza battito: video-runner-tick».
+            expect(stato).toBe(200)
+            expect(corpo.stato).toBe('ok')
+            expect(controllo(corpo, 'cron-battito').esito).toBe('ok')
+            expect(controllo(corpo, 'cron-battito').dettaglio).not.toContain('video-runner-tick')
+            expect(controllo(corpo, 'cron-battito').dettaglio).not.toContain('job senza battito')
+        },
+    )
+
+    it('un battito deduplicato del runner (riga di ieri, ultima occorrenza adesso) vale come fresco', async () => {
+        // `coda-vuota` è il caso di 288 volte al giorno: la riga è UNA al giorno, con `creato_il` a mezzanotte.
+        montaDb(dbConRunner({ ...battitoRunner('coda-vuota', 'info', 2 * MIN), creato_il: fa(20 * ORA) }))
+
+        const { corpo } = await chiama()
+
+        expect(controllo(corpo, 'cron-battito').esito).toBe('ok')
+    })
+
+    describe('…e il runner che NON batte continua ad allarmare, col suo nome', () => {
+        it('nessuna riga del runner: degradato, e il nome è nel dettaglio', async () => {
+            montaDb(dbConRunner())
+
+            const { stato, corpo } = await chiama()
+
+            expect(stato).toBe(200)
+            expect(corpo.stato).toBe('degraded')
+            expect(controllo(corpo, 'cron-battito').esito).toBe('degradato')
+            expect(controllo(corpo, 'cron-battito').dettaglio).toContain('video-runner-tick')
+            // …e SOLO lui: gli altri lavori battono.
+            expect(controllo(corpo, 'cron-battito').dettaglio).not.toContain('push-dispatch')
+        })
+
+        it.each(ESITI_DEL_RUNNER)('un «%s» (%s) VECCHIO — oltre la finestra di 20 minuti — non basta', async (esito, livello) => {
+            // Un controllo che si limitasse a «esiste una riga con un esito vivo?» sarebbe verde con il runner
+            // fermo da un'ora. Fuori finestra (20 minuti) non vale.
+            montaDb(dbConRunner(battitoRunner(esito, livello, 21 * MIN)))
+
+            const { corpo } = await chiama()
+
+            expect(controllo(corpo, 'cron-battito').esito).toBe('degradato')
+            expect(controllo(corpo, 'cron-battito').dettaglio).toContain('video-runner-tick')
+        })
+
+        it.each([
+            ['fallito', 'error'],
+            ['lease-persa', 'error'],
+            ['esito-non-scritto', 'error'],
+            ['presa-rifiutata', 'error'],
+            ['non-eseguito', 'error'],
+            ['non-autorizzato', 'error'],
+            ['corpo-non-valido', 'error'],
+        ] as const)('un «%s» (livello error) NON vale come battito: il giro è partito e FALLITO', async (esito, livello) => {
+            // Un runner che esplode a ogni tick deve continuare a comparire come muto: sono righe `error`, che il
+            // controllo non legge, e nessuno di questi esiti è nella mappa.
+            montaDb(dbConRunner(battitoRunner(esito, livello, 1 * MIN)))
+
+            const { corpo } = await chiama()
+
+            expect(controllo(corpo, 'cron-battito').esito).toBe('degradato')
+            expect(controllo(corpo, 'cron-battito').dettaglio).toContain('video-runner-tick')
+        })
+
+        it('anche con un esito della mappa, se la riga è a livello `error` non conta (il livello filtra prima dell’esito)', async () => {
+            montaDb(dbConRunner(battitoRunner('coda-vuota', 'error', 1 * MIN)))
+
+            const { corpo } = await chiama()
+
+            expect(controllo(corpo, 'cron-battito').dettaglio).toContain('video-runner-tick')
+        })
+
+        it('il battito INTERNO del runner (`operazione: video-runner`) non vale per il giro: è un altro lavoro', async () => {
+            // `esegui.ts` scrive la sua `coda-vuota` con `operazione: 'video-runner'` (e la route scrive la propria con
+            // `video-runner-tick`, ora con un'impronta distinta: vedi `video-runner-tick.test`). Questa riga NON è
+            // il battito del cron: se contasse, un giro che non arriva più alla route (il segreto, il gate) sarebbe
+            // coperto dalla riga interna di un giro di ieri.
+            montaDb(dbConRunner(battitoRunner('coda-vuota', 'info', 1 * MIN, 'video-runner')))
+
+            const { corpo } = await chiama()
+
+            expect(controllo(corpo, 'cron-battito').esito).toBe('degradato')
+            expect(controllo(corpo, 'cron-battito').dettaglio).toContain('video-runner-tick')
+        })
+
+        it('un esito che nessuno ha dichiarato (`avviato`) non vale nemmeno per il runner', async () => {
+            montaDb(dbConRunner(battitoRunner('avviato', 'info', 1 * MIN)))
+
+            const { corpo } = await chiama()
+
+            expect(controllo(corpo, 'cron-battito').dettaglio).toContain('video-runner-tick')
+        })
+    })
+
+    describe('gli esiti del runner non valgono per NESSUN ALTRO lavoro', () => {
+        it.each(['coda-vuota', 'in-corso', 'pronto', 'in-riprova', 'gia-sorvegliato', 'capacita-piena'])(
+            'un «%s» scritto da push-dispatch non lo salva: il suo battito è ancora muto',
+            async (esito) => {
+                const db = dbSano()
+                db.app_log = db.app_log.filter((r) => jobDi(r) !== 'push-dispatch')
+                db.app_log.push(battitoRunner(esito, 'info', 1 * MIN, 'push-dispatch'))
+                montaDb(db)
+
+                const { corpo } = await chiama()
+
+                // Aggiungere questi esiti a `ESITI_BATTITO` (globale) farebbe passare per vivo un lavoro che si ferma
+                // a metà e dice «in corso» ogni notte: il difetto che la mappa per operazione evita.
+                expect(controllo(corpo, 'cron-battito').esito).toBe('degradato')
+                expect(controllo(corpo, 'cron-battito').dettaglio).toContain('push-dispatch')
+            },
+        )
+
+        it('`ESITI_BATTITO` (globale) è ancora `ok` e `ok-parziale`, e basta', () => {
+            expect([...ESITI_BATTITO].sort()).toEqual(['ok', 'ok-parziale'])
+        })
+
+        it('la mappa per operazione ha UNA voce, il runner dei video, con i sei esiti — e il lavoro è sorvegliato', () => {
+            expect([...ESITI_BATTITO_PER_OPERAZIONE.keys()]).toEqual(['video-runner-tick'])
+            expect([...(ESITI_BATTITO_PER_OPERAZIONE.get('video-runner-tick') ?? [])].sort()).toEqual(
+                ['capacita-piena', 'coda-vuota', 'gia-sorvegliato', 'in-corso', 'in-riprova', 'pronto'].sort(),
+            )
+            // Una chiave che nessun `JOB_CRON` sorveglia è una regola che non si applica mai.
+            const sorvegliati = new Set(JOB_CRON.map((j) => j.nome))
+            for (const nome of ESITI_BATTITO_PER_OPERAZIONE.keys()) expect(sorvegliati.has(nome)).toBe(true)
+        })
+
+        it('`valeComeBattito`: `ok` per tutti, gli esiti del runner solo per il runner', () => {
+            expect(valeComeBattito('push-dispatch', 'ok')).toBe(true)
+            expect(valeComeBattito('video-runner-tick', 'ok')).toBe(true)
+            expect(valeComeBattito('video-runner-tick', 'ok-parziale')).toBe(true)
+            expect(valeComeBattito('video-runner-tick', 'coda-vuota')).toBe(true)
+            expect(valeComeBattito('push-dispatch', 'coda-vuota')).toBe(false)
+            expect(valeComeBattito('video-runner-tick', 'fallito')).toBe(false)
+            expect(valeComeBattito('video-runner-tick', '')).toBe(false)
+        })
+
+        it.each(['constructor', '__proto__', 'toString', 'hasOwnProperty'])(
+            'il nome di un lavoro è un DATO letto da una riga di log: «%s» non trova niente e non fa lanciare il controllo',
+            async (nome) => {
+                // Su un oggetto `{}` questi nomi trovano una proprietà EREDITATA (una funzione): `.has` non
+                // esisterebbe e l'endpoint di salute risponderebbe 500. Con una `Map` non trova niente.
+                expect(valeComeBattito(nome, 'coda-vuota')).toBe(false)
+                montaDb(dbConRunner(battitoRunner('coda-vuota', 'info', 1 * MIN), battitoRunner('coda-vuota', 'info', 1 * MIN, nome)))
+
+                const { stato, corpo } = await chiama()
+
+                expect(stato).toBe(200)
+                expect(controllo(corpo, 'cron-battito').esito).toBe('ok')
+            },
+        )
     })
 
     /* ═══════════════════════════════════════════════════════════════════════

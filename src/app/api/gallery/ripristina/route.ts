@@ -403,7 +403,8 @@ export const POST = withRoute('gallery/ripristina:POST', async (request: Request
 
         // ─── LA NOTIFICA NON SI RIFÀ, ED È UNA DECISIONE ──────────────────────
         //
-        // `gallery:POST` annuncia le foto nuove con «Nuove foto in galleria»: un
+        // `gallery:POST` annuncia i contenuti nuovi — foto, e dal 2026-10-02 anche
+        // i video, che escono da soli — con «Nuovi contenuti in galleria»: un
         // testo che non nomina nessun media, con un collegamento a
         // `/parent/gallery` che mostra le foto vive in quel momento. Quell'annuncio
         // per questa foto è già arrivato (o arriverà comunque, dal buffer di 30'), e

@@ -151,6 +151,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
         list: async () => ({ data: [] as { name: string }[], error: null }),
       }),
     },
+    // L'oblio dei video in volo (`video_intent_oblio_alunno`, 2026-10-02): `anonimizzaAlunno` la chiama sempre; qui non c'è niente da togliere.
+    rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
   }),
 }))
 

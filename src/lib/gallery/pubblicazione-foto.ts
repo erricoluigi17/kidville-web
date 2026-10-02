@@ -25,7 +25,12 @@ export async function pubblicaFotoIdempotente(
     p_payload: {
       file_url: record.file_url,
       file_type: 'foto',
-      caption: record.caption ?? null,
+      // MAI una didascalia (decisione del titolare, 2026-10-02): nessun contenuto nuovo ne ha
+      // una, e quella che arrivava era il nome del file scelto da chi carica — cioè, nella
+      // pratica, il nome di un bambino. Si ignora anche `record.caption`: il payload è
+      // coperto dall'impronta della RPC (`UPLOAD_CONFLICT`), e deve essere lo stesso a
+      // ogni replay qualunque cosa mandi il client.
+      caption: null,
       tag_students: insieme(record.tag_students),
       is_broadcast: record.is_broadcast ?? false,
       target_classes: classi.length ? classi : null,

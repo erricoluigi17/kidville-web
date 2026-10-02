@@ -7,6 +7,7 @@ import {
   scrubSanitariDomanda,
 } from '@/lib/gdpr/anonimizza'
 import { anonimizzaParent, anonimizzaAlunno, REGISTRO_BUCKET_OBLIO } from '@/lib/gdpr/esegui'
+import { JOB_CRON } from '@/lib/health/controlli'
 
 // =============================================================================
 // S22 — L'OBLIO SEGUE IL DATO, NON LA RIGA.
@@ -257,6 +258,8 @@ function makeFake(cfg: Cfg) {
         list: async () => ({ data: [] as { name: string }[], error: null }),
       }),
     },
+    // L'oblio dei video in volo (`video_intent_oblio_alunno`): niente da togliere. Vedi `makeFakeBucket`.
+    rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
   }
   return { client, updates, deleted, removed }
 }
@@ -441,6 +444,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
         list: async () => ({ data: [] as { name: string }[], error: null }),
       }),
     },
+    // L'oblio dei video in volo (`video_intent_oblio_alunno`): niente da togliere.
+    rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
   }),
 }))
 
@@ -571,6 +576,7 @@ function makeFakeBucket(cfg: CfgB) {
   const deleted: { table: string; ids: unknown }[] = []
   const removed: { bucket: string; paths: string[] }[] = []
   const listati: { bucket: string; prefisso: string }[] = []
+  const rpcChiamate: { nome: string; argomenti: Record<string, unknown> }[] = []
   const client = {
     from(table: string) {
       const st: {
@@ -664,8 +670,15 @@ function makeFakeBucket(cfg: CfgB) {
         },
       }),
     },
+    // L'oblio dei VIDEO IN VOLO (2026-10-02): una RPC, `video_intent_oblio_alunno`. Il finto la registra e
+    // risponde come il database quando non c'è niente da togliere; `__tests__/lib/gdpr-oblio-video-intenti.test.ts`
+    // prova il passo per intero, con la funzione vera.
+    rpc: async (nome: string, argomenti: Record<string, unknown>) => {
+      rpcChiamate.push({ nome, argomenti })
+      return { data: { ok: true, intenti: 0, revocati: 0 }, error: null }
+    },
   }
-  return { client, updates, deleted, removed, listati }
+  return { client, updates, deleted, removed, listati, rpcChiamate }
 }
 
 const bucketToccati = (removed: { bucket: string; paths: string[] }[]) =>
@@ -1372,5 +1385,142 @@ describe('lock · l’oblio conosce OGNI magazzino dello Storage', () => {
     // Controllo positivo: se il fake non facesse toccare NIENTE, la riga qui
     // sopra sarebbe verde su un oblio che non è mai partito.
     expect(toccati.length, 'il client finto non ha prodotto nessuna rimozione').toBeGreaterThan(3)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `video_processing` — la LACUNA APERTA del 2026-09-18, chiusa il 2026-10-02
+//
+// Per due settimane la voce dichiarava `escluso` con un motivo che si diceva da solo «LACUNA APERTA»: il bucket
+// conserva l'USCITA convertita di ogni tentativo, è video di minori, e NESSUN codice cancellava mai da lì. La PR 2
+// «server e web» dei video ha dato all'uscita il suo termine e alla purga i passi che la tolgono; la voce è
+// diventata `coperto-fuori-oblio`, lo stato dei bucket che svuota la CONSERVAZIONE (come `video_originals`).
+//
+// Il registro dichiara chi svuota il magazzino, non verifica che lo svuoti. Queste prove tengono la dichiarazione
+// AGGANCIATA al meccanismo: se la purga perde un passo, se il termine cambia e la frase no, se l'oblio smette di
+// toccare gli intenti, la voce diventa falsa e qui è rosso. La prova che il meccanismo funzioni sta accanto a lui:
+// `__tests__/api/gdpr-retention-video.test.ts` (i passi), `__tests__/lib/video-conservazione-rpc.test.ts` (le RPC)
+// e `__tests__/lib/gdpr-oblio-video-intenti.test.ts` (l'oblio sugli intenti).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('registro dell’oblio · `video_processing` non è più una lacuna aperta', () => {
+  const voce = REGISTRO_BUCKET_OBLIO.video_processing
+  const come = voce?.stato === 'coperto-fuori-oblio' ? voce.come : ''
+  const leggi = (rel: string) => readFileSync(join(RADICE, rel), 'utf8')
+  const ROUTE = 'src/app/api/gdpr/retention-video/route.ts'
+
+  it('la voce c\'è, e NON è più `escluso`: una lacuna dichiarata e poi chiusa deve cambiare stato', () => {
+    expect(voce, '`REGISTRO_BUCKET_OBLIO` non nomina più `video_processing`').toBeDefined()
+    expect(
+      voce.stato,
+      'dal 2026-10-02 le uscite hanno un termine e la purga le toglie: `escluso` direbbe «qui dentro non c\'è ' +
+        'niente di quella famiglia», che per un bucket di video di minori è falso',
+    ).toBe('coperto-fuori-oblio')
+    expect(esclusi).not.toContain('video_processing')
+  })
+
+  it('la motivazione NON si dichiara più «lacuna aperta», e dice che cosa lo svuota, con quali regole', () => {
+    expect(come.length).toBeGreaterThan(500)
+    expect(come).not.toMatch(/LACUNA APERTA/)
+    expect(come).not.toMatch(/NESSUN codice cancella/)
+    // Il meccanismo, nominato per nome: la route, il job, il timbro, la colonna del termine.
+    expect(come).toContain('POST /api/gdpr/retention-video')
+    expect(come).toContain('`video_jobs.output_delete_after`')
+    expect(come).toContain('`video_retention_uscita_rimossa`')
+    // «Prima il file, poi la riga», e le righe trattenute.
+    expect(come).toMatch(/toglie il file PRIMA e timbra la riga\s+POI/)
+    expect(come).toMatch(/risponde 500/)
+    // Le regole del termine, una per una (il numero e la sua costante stanno nel test dei giorni).
+    expect(come).toMatch(/LE REGOLE DEL TERMINE/)
+    expect(come).toContain('`GIORNI_CONVERTITO_NON_PUBBLICATO`')
+    expect(come).toMatch(/flusso vecchio/)
+    expect(come).toMatch(/24 ore di grazia/)
+  })
+
+  it('la FINESTRA RESIDUA è scritta, ed è quella vera: un giro di purga, e fino al termine per un video di gruppo', () => {
+    expect(come).toMatch(/FINESTRA RESIDUA DICHIARATA/)
+    expect(come).toMatch(/un giro della purga/)
+    expect(come).toMatch(/video di GRUPPO/)
+    // L'oblio accorcia il termine, non lo sostituisce, e la voce dice da dove passa.
+    expect(come).toContain('`anonimizzaAlunno`')
+    expect(come).toContain('`video_intent_oblio_alunno`')
+    expect(come).toContain('`video_intents.tag_alunni`')
+    expect(come).toContain('`obliaFotoAlunno`')
+  })
+
+  it('i GIORNI scritti in prosa sono quelli che la purga applica (se la costante cambia e la frase no, la voce mente)', () => {
+    const route = leggi(ROUTE)
+    const giorniNonPubblicato = Number(/const GIORNI_CONVERTITO_NON_PUBBLICATO = (\d+)/.exec(route)?.[1])
+    const giorniMinimizzazione = Number(/const GIORNI_MINIMIZZAZIONE_INTENTI = (\d+)/.exec(route)?.[1])
+    expect(Number.isInteger(giorniNonPubblicato), 'la route non dichiara più `GIORNI_CONVERTITO_NON_PUBBLICATO`').toBe(true)
+    expect(Number.isInteger(giorniMinimizzazione), 'la route non dichiara più `GIORNI_MINIMIZZAZIONE_INTENTI`').toBe(true)
+
+    // «si tiene 7 giorni dalla verifica (`GIORNI_CONVERTITO_NON_PUBBLICATO`)»
+    const tenuti = [...come.matchAll(/(\d+)\s+giorni\s+dalla verifica\s+\(`GIORNI_CONVERTITO_NON_PUBBLICATO`\)/g)].map((m) => Number(m[1]))
+    expect(tenuti.length, 'la motivazione non dichiara più «N giorni dalla verifica (`GIORNI_CONVERTITO_NON_PUBBLICATO`)»').toBe(1)
+    expect(tenuti[0]).toBe(giorniNonPubblicato)
+
+    // «dopo 7 giorni dalla conclusione» (la minimizzazione dei bambini sull'intento)
+    const minimizzati = [...come.matchAll(/(\d+)\s+giorni\s+dalla conclusione/g)].map((m) => Number(m[1]))
+    expect(minimizzati.length, 'la motivazione non dichiara più «N giorni dalla conclusione»').toBeGreaterThan(0)
+    for (const n of minimizzati) expect(n).toBe(giorniMinimizzazione)
+
+    // La grazia sugli orfani: 24 ore, come `ORE_GRAZIA_ORFANI` della route.
+    expect(Number(/const ORE_GRAZIA_ORFANI = (\d+)/.exec(route)?.[1])).toBe(24)
+  })
+
+  it('la route fa DAVVERO ciò che la voce promette: i passi nominati ci sono, sul bucket giusto', () => {
+    const route = leggi(ROUTE)
+    expect(route, 'la route non nomina più il bucket delle uscite').toMatch(/const BUCKET_USCITE = 'video_processing'/)
+    for (const rpc of [
+      'video_retention_uscita_rimossa',
+      'video_retention_scadenze',
+      'video_intent_scadi_non_pubblicato',
+      'video_galleria_flusso_vecchio_revoca',
+      'video_intenti_minimizza',
+    ]) {
+      expect(route, `la voce descrive un passo che la route non chiama più: ${rpc}`).toContain(`'${rpc}'`)
+    }
+    // L'oblio, dal lato opposto: è `anonimizzaAlunno` che chiama la RPC degli intenti.
+    expect(leggi('src/lib/gdpr/esegui.ts')).toContain(`'video_intent_oblio_alunno'`)
+  })
+
+  it('il job che la voce nomina è quello della route, ed è sorvegliato da /api/health', () => {
+    const job = leggi(ROUTE).match(/const JOB = '([^']+)'/)?.[1]
+    expect(job).toBeTruthy()
+    expect(come).toContain(`\`${job}\``)
+    expect(
+      JOB_CRON.some((j) => j.nome === job),
+      `\`${job}\` non è in \`JOB_CRON\`: la voce dice «sorvegliato da /api/health» e non lo è più`,
+    ).toBe(true)
+  })
+
+  it('nessun oblio manda una `remove()` su `video_processing`: lo svuota la purga, e dirlo `coperto` sarebbe una promessa falsa', async () => {
+    // Il verso opposto del lock dei bucket «coperti»: se l'oblio cominciasse a togliere file da qui, lo stato
+    // giusto sarebbe `coperto` (con i suoi canali) e la purga non sarebbe più l'unico meccanismo.
+    const fa = fakePieno()
+    await anonimizzaAlunno(fa.client as never, { id: 'al-1', documento_path: 'anagrafica/doc.pdf' }, AT, 'test')
+    const fg = fakePieno()
+    await anonimizzaParent(fg.client as never, 'p-1', AT, 'test')
+
+    const toccati = [...new Set([...bucketToccati(fa.removed), ...bucketToccati(fg.removed)])]
+    expect(toccati).not.toContain('video_processing')
+    expect(toccati.length, 'il client finto non ha prodotto nessuna rimozione').toBeGreaterThan(3)
+  })
+
+  it('l\'oblio di un ALUNNO chiama l\'oblio dei video in volo, col solo uuid del bambino', async () => {
+    const f = fakePieno()
+    await anonimizzaAlunno(f.client as never, { id: 'al-1', documento_path: null }, AT, 'test')
+
+    const chiamate = f.rpcChiamate.filter((c) => c.nome === 'video_intent_oblio_alunno')
+    expect(chiamate, 'anonimizzaAlunno non chiama più `video_intent_oblio_alunno`').toHaveLength(1)
+    expect(chiamate[0].argomenti).toEqual({ p_alunno: 'al-1' })
+  })
+
+  it('l\'oblio di un GENITORE non lo chiama: i bambini di un intento non sono del genitore', async () => {
+    const f = fakePieno()
+    await anonimizzaParent(f.client as never, 'p-1', AT, 'test')
+
+    expect(f.rpcChiamate.filter((c) => c.nome === 'video_intent_oblio_alunno')).toEqual([])
   })
 })

@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
 
 /**
- * `POST /api/gallery/upload-url` — il video non passa più dalla nostra route.
+ * `POST /api/gallery/upload-url` — il file va dal telefono allo Storage, senza passare di qui;
+ * e dal 2026-10-02 di qui passano solo le foto.
  *
  * ─── IL DIFETTO, MISURATO IN PRODUZIONE, NON IPOTIZZATO ───────────────────────
  * `app_log` del 2026-09-07 contiene `POST /api/gallery/upload → 413` SEI volte in un
@@ -20,14 +21,15 @@ import { NextResponse } from 'next/server'
  * e l'aveva applicato a otto percorsi di upload — lasciando fuori proprio l'unico che
  * carica video.
  *
- * ─── COSA SI PERDE, E VA DETTO SENZA ABBELLIRLO ───────────────────────────────
- * Con l'upload diretto il server non vede più tutti i byte, quindi lo sniff del codec —
- * la terza rete contro un HEVC che su Android mostrerebbe un riquadro nero — non può più
- * girare sul file intero. Qui i primi 64 KB viaggiano nel corpo della richiesta di firma
- * e lo sniff gira lo stesso, SUL SERVER, con la stessa funzione: un client vecchio che
- * non convertisse riceve 415 PRIMA di spedire quaranta megabyte su rete mobile.
- * Resta scoperto un client che manda una testa pulita e poi PUTta un altro file: è un
- * indebolimento vero, e il costo di un errore è un riquadro nero, non un dato esposto.
+ * ─── COSA È CAMBIATO IL 2026-10-02 ────────────────────────────────────────────
+ * I video non passano più da questa porta: ogni `video/*` riceve il 409 del blocco
+ * (`@/lib/media/blocco-legacy-video`) e va caricato dalla pipeline nuova. Per questo non
+ * c'è più lo sniff del codec sui primi 64 KB (`testa_b64`): fermava un HEVC prima che
+ * partisse la `PUT`, e ora non c'è nessuna `PUT` di video da proteggere. I tipi video
+ * restano nello `z.enum` apposta — un client vecchio deve ricevere il 409, non un 400 —
+ * e il blocco sta PRIMA del contatore delle firme: un rifiuto non ne consuma nessuna.
+ * Il test sui tre canali insieme è `__tests__/api/video-legacy-blocco.test.ts`; qui
+ * restano le foto (e il confine fra ciò che il blocco ferma e ciò che lo schema rifiuta).
  */
 
 const h = vi.hoisted(() => ({
@@ -67,7 +69,7 @@ const richiesta = (corpo: unknown) =>
     cookies: { get: () => undefined },
   }) as never
 
-/** Un `ftyp` MP4 con brand `avc1`: H.264, riproducibile ovunque. */
+/** Un `ftyp` MP4 con brand `avc1`: la testa che un client vecchio mandava per un video «buono». */
 const testaAvc1 = () => {
   const b = new Uint8Array(64)
   b.set([0, 0, 0, 32], 0)
@@ -76,7 +78,7 @@ const testaAvc1 = () => {
   return Buffer.from(b).toString('base64')
 }
 
-/** Lo stesso, ma brand `hvc1`: HEVC, che Chrome/Android non decodifica. */
+/** Lo stesso, ma brand `hvc1`: HEVC. Un tempo prendeva 415; ora la testa non la legge nessuno. */
 const testaHevc = () => {
   const b = new Uint8Array(64)
   b.set([0, 0, 0, 32], 0)
@@ -85,18 +87,11 @@ const testaHevc = () => {
   return Buffer.from(b).toString('base64')
 }
 
-/** La firma EBML (0x1A45DFA3) in testa: è così che si riconosce un webm. */
-const testaWebm = () => {
-  const b = new Uint8Array(64)
-  b.set([0x1a, 0x45, 0xdf, 0xa3], 0)
-  return Buffer.from(b).toString('base64')
-}
+/** Una foto da 12 MB: la taglia che il vecchio percorso (corpo della funzione, ~4,5 MB) non poteva accettare. */
+const CORPO_FOTO = { mime: 'image/jpeg', size: 12_000_000 }
 
-/** La testa giusta per un mime della lista: i video ne hanno bisogno, le immagini no. */
-const testaPer = (mime: string) =>
-  mime === 'video/webm' ? testaWebm() : mime.startsWith('video/') ? testaAvc1() : undefined
-
-const CORPO_OK = { mime: 'video/mp4', size: 12_000_000, testa_b64: testaAvc1() }
+/** Il corpo di un client VECCHIO che carica un video, con la testa che mandava per lo sniff. */
+const CORPO_VIDEO_VECCHIO = { mime: 'video/mp4', size: 12_000_000, testa_b64: testaAvc1() }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -109,15 +104,15 @@ beforeEach(() => {
 
 describe('POST /api/gallery/upload-url', () => {
   it('firma un caricamento da 12 MB: la taglia che il vecchio percorso non poteva accettare', async () => {
-    const res = await POST(richiesta(CORPO_OK))
+    const res = await POST(richiesta(CORPO_FOTO))
     expect(res.status).toBe(200)
     const j = await res.json()
     expect(j).toMatchObject({ signedUrl: 'https://storage/firmato', token: 'tok' })
-    expect(String(j.path)).toMatch(/\.mp4$/)
+    expect(String(j.path)).toMatch(/\.jpg$/)
   })
 
   it('il percorso è intestato all\'utente DEL GATE, mai a un campo del client', async () => {
-    await POST(richiesta({ ...CORPO_OK, path: 'uploads/qualcun-altro/rubata.mp4', userId: 'altro' }))
+    await POST(richiesta({ ...CORPO_FOTO, path: 'uploads/qualcun-altro/rubata.jpg', userId: 'altro' }))
     expect(h.pathFirmato.startsWith('uploads/ed-1/')).toBe(true)
     expect(h.pathFirmato).not.toContain('qualcun-altro')
   })
@@ -126,52 +121,68 @@ describe('POST /api/gallery/upload-url', () => {
     // Un file di galleria si chiama `IMG_bambina-rossi.mov`: è PII di un minore, e
     // finirebbe nella chiave dell'oggetto — quindi in `app_log` ogni volta che
     // qualcosa logga un percorso. L'estensione si deriva dal mime VALIDATO.
-    await POST(richiesta({ ...CORPO_OK, nome: 'IMG_bambina-rossi.mp4' }))
+    await POST(richiesta({ ...CORPO_FOTO, nome: 'IMG_bambina-rossi.jpg' }))
     expect(h.pathFirmato).not.toContain('bambina')
     expect(h.pathFirmato).not.toContain('rossi')
   })
 
   it('gate negato ⇒ nessuna firma emessa', async () => {
     h.requireDocente.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
-    const res = await POST(richiesta(CORPO_OK))
+    const res = await POST(richiesta(CORPO_FOTO))
     expect(res.status).toBe(403)
     expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
   })
 
   it('un mime fuori dalla lista del bucket ⇒ 400, non una firma che lo Storage rifiuterà', async () => {
-    const res = await POST(richiesta({ ...CORPO_OK, mime: 'video/quicktime' }))
+    // Il CONFINE del blocco: `video/quicktime` non è nello `z.enum` (è la lista del bucket) e
+    // prende il 400 di sempre; sono i tipi video che stanno nella lista — mp4 e webm — ad
+    // arrivare al 409.
+    const res = await POST(richiesta({ ...CORPO_VIDEO_VECCHIO, mime: 'video/quicktime' }))
     expect(res.status).toBe(400)
     expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+    // E un'immagine fuori lista (qui un HEIC) ha lo stesso trattamento.
+    expect((await POST(richiesta({ ...CORPO_FOTO, mime: 'image/heic' }))).status).toBe(400)
   })
 
   it('oltre il tetto VERO del bucket (50 MB) ⇒ 400', async () => {
-    const res = await POST(richiesta({ ...CORPO_OK, size: 52_428_801 }))
+    const res = await POST(richiesta({ ...CORPO_FOTO, size: 52_428_801 }))
     expect(res.status).toBe(400)
     expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
   })
 
   it('troppe richieste ⇒ 429 e nessuna firma', async () => {
     h.rateLimit.mockResolvedValue({ ok: false, retryAfterMs: 60_000 })
-    const res = await POST(richiesta(CORPO_OK))
+    const res = await POST(richiesta(CORPO_FOTO))
     expect(res.status).toBe(429)
     expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
   })
 
-  describe('lo sniff del codec resta sul SERVER', () => {
-    it('una testa HEVC ⇒ 415, e nessuna firma: il rifiuto arriva PRIMA di spedire il file', async () => {
-      const res = await POST(richiesta({ ...CORPO_OK, testa_b64: testaHevc() }))
-      expect(res.status).toBe(415)
-      expect((await res.json()).codice).toBe('VIDEO_NON_CONVERTIBILE')
+  describe('i video non passano più da qui: 409, qualunque sia il codec e comunque sia mandata la testa', () => {
+    it('un video con la testa H.264 ⇒ 409 `VIDEO_APP_DA_AGGIORNARE`, e nessuna firma', async () => {
+      const res = await POST(richiesta(CORPO_VIDEO_VECCHIO))
+      expect(res.status).toBe(409)
+      expect((await res.json()).codice).toBe('VIDEO_APP_DA_AGGIORNARE')
+      expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+      // Né il contatore delle firme né lo Storage: il rifiuto arriva prima di tutto il lavoro.
+      expect(h.rateLimit).not.toHaveBeenCalled()
+      expect(h.info).not.toHaveBeenCalled()
+    })
+
+    it('una testa HEVC ⇒ lo STESSO 409, non più il 415 dello sniff: la testa non la legge nessuno', async () => {
+      const hevc = await POST(richiesta({ ...CORPO_VIDEO_VECCHIO, testa_b64: testaHevc() }))
+      const avc = await POST(richiesta(CORPO_VIDEO_VECCHIO))
+      expect(hevc.status).toBe(409)
+      expect(await hevc.json()).toEqual(await avc.json())
       expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
     })
 
-    it('un video SENZA la testa ⇒ 415: fail-closed, come il client che non riesce a leggerla', async () => {
-      const res = await POST(richiesta({ mime: CORPO_OK.mime, size: CORPO_OK.size }))
-      expect(res.status).toBe(415)
+    it('un video SENZA la testa ⇒ 409, non più il 415 «fail-closed» dello sniff', async () => {
+      const res = await POST(richiesta({ mime: CORPO_VIDEO_VECCHIO.mime, size: CORPO_VIDEO_VECCHIO.size }))
+      expect(res.status).toBe(409)
       expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
     })
 
-    it('un\'IMMAGINE non ha bisogno della testa: lo sniff è solo per i video', async () => {
+    it('un\'IMMAGINE non ha bisogno di niente: il blocco è solo per i video', async () => {
       const res = await POST(richiesta({ mime: 'image/jpeg', size: 800_000 }))
       expect(res.status).toBe(200)
       expect(String((await res.json()).path)).toMatch(/\.jpg$/)
@@ -180,7 +191,7 @@ describe('POST /api/gallery/upload-url', () => {
 
   it('se lo Storage non emette la firma è un 500 col suo codice, e il corpo del fornitore resta nei log', async () => {
     h.createSignedUploadUrl.mockResolvedValue({ data: null, error: { message: 'bucket not found' } })
-    const res = await POST(richiesta(CORPO_OK))
+    const res = await POST(richiesta(CORPO_FOTO))
     expect(res.status).toBe(500)
     const j = await res.json()
     expect(j.codice).toBe('ALLEGATO_NON_CARICATO')
@@ -192,51 +203,60 @@ describe('POST /api/gallery/upload-url', () => {
   // ══════════════════════════════════════════════════════════════════════════
   // IL SUFFISSO CODEC — il difetto misurato il 2026-09-08.
   //
-  // `MediaRecorder` non produce `video/mp4`: produce `video/mp4;codecs=avc1`, ed è
-  // il tipo che finisce dentro il `File` convertito (`processing.ts:330-335`) e da
-  // lì nel corpo di QUESTA richiesta. `z.enum` confronta per uguaglianza, quindi
-  // rispondeva 400 — e in `app_log` di quel giorno ci sono **33 tentativi** da
-  // 8 insegnanti in 3 sedi, fra le 08:26 e le 16:56, mentre nel bucket i video
-  // fermi a 3 in tutto, l'ultimo del 07/09 alle 17:52. Le foto passavano dalla
-  // stessa porta: `processImageWithWatermark` consegna un `image/jpeg` pulito.
+  // `MediaRecorder` non produceva `video/mp4`: produceva `video/mp4;codecs=avc1`, ed era
+  // il tipo che finiva dentro il `File` convertito e da lì nel corpo di QUESTA richiesta.
+  // `z.enum` confronta per uguaglianza, quindi rispondeva 400 — e in `app_log` di quel
+  // giorno ci sono **33 tentativi** da 8 insegnanti in 3 sedi, fra le 08:26 e le 16:56,
+  // mentre nel bucket i video fermi a 3 in tutto, l'ultimo del 07/09 alle 17:52. Le foto
+  // passavano dalla stessa porta: `processImageWithWatermark` consegna un `image/jpeg` pulito.
   //
   // ⚠️ È LA SECONDA VOLTA. Il PRD registra la stessa lezione al 2026-07-13
   // (DL-051/052, «MIME video normalizzato — codec suffix vs allow-list bucket»):
   // era stata imparata, ed è andata persa il giorno in cui è nata una porta nuova.
-  describe('il mime col suffisso codec, che è ciò che il client produce davvero', () => {
-    it('`video/mp4;codecs=avc1` ⇒ 200 e un path .mp4, non 400', async () => {
-      const res = await POST(richiesta({ ...CORPO_OK, mime: 'video/mp4;codecs=avc1' }))
-      expect(res.status).toBe(200)
-      expect(String((await res.json()).path)).toMatch(/\.mp4$/)
+  //
+  // Dal 2026-10-02 quel tipo non porta più a una firma ma al 409, e proprio per questo la
+  // normalizzazione conta ancora: se `video/mp4;codecs=avc1` prendesse di nuovo il 400, un
+  // client vecchio leggerebbe «formato non supportato» invece di «aggiorna l'app», e
+  // riproverebbe — il guasto del 2026-09-08, rifatto con un altro messaggio.
+  describe('il mime col suffisso codec, che è ciò che un client vecchio produce davvero', () => {
+    it('`video/mp4;codecs=avc1` ⇒ 409, non 400: arriva al blocco, non si ferma allo schema', async () => {
+      const res = await POST(richiesta({ ...CORPO_VIDEO_VECCHIO, mime: 'video/mp4;codecs=avc1' }))
+      expect(res.status).toBe(409)
+      expect((await res.json()).codice).toBe('VIDEO_APP_DA_AGGIORNARE')
     })
 
-    it('`video/webm;codecs=vp9` ⇒ 200 e un path .webm: lo sniff gira sul tipo normalizzato', async () => {
-      const res = await POST(richiesta({ mime: 'video/webm;codecs=vp9', size: 9_000_000, testa_b64: testaWebm() }))
-      expect(res.status).toBe(200)
-      expect(String((await res.json()).path)).toMatch(/\.webm$/)
+    it('`video/webm;codecs=vp9` ⇒ 409, non 400', async () => {
+      const res = await POST(richiesta({ mime: 'video/webm;codecs=vp9', size: 9_000_000 }))
+      expect(res.status).toBe(409)
+      expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
     })
 
     // Legato alla costante CONDIVISA, non a una lista copiata qui: se domani
     // `MIME_GALLERIA` cambia, questo test cambia con lei invece di marcire.
-    it.each([...MIME_GALLERIA])('«%s» è accettato anche decorato, con la stessa estensione', async (base) => {
-      const decorato = base.startsWith('video/') ? `${base};codecs=xyz1` : base.toUpperCase()
-      const corpo = { size: 900_000, testa_b64: testaPer(base) }
+    it.each([...MIME_GALLERIA])('«%s» vale quanto il tipo base anche decorato: stessa risposta, stessa estensione', async (base) => {
+      const eVideo = base.startsWith('video/')
+      const decorato = eVideo ? `${base};codecs=xyz1` : base.toUpperCase()
+      const corpo = { size: 900_000 }
 
       const nudo = await POST(richiesta({ ...corpo, mime: base }))
       const conSuffisso = await POST(richiesta({ ...corpo, mime: decorato }))
 
       expect(conSuffisso.status, `«${decorato}» deve valere «${base}»`).toBe(nudo.status)
-      expect(nudo.status).toBe(200)
-      expect(String((await conSuffisso.json()).path)).toMatch(
-        new RegExp(`\\.${estensioneDaMime(base)}$`),
-      )
+      // I video si fermano al blocco, le foto si firmano: due risposte diverse per due tipi
+      // diversi, e per ciascun tipo la stessa col suffisso e senza.
+      expect(nudo.status).toBe(eVideo ? 409 : 200)
+      if (!eVideo) {
+        expect(String((await conSuffisso.json()).path)).toMatch(
+          new RegExp(`\\.${estensioneDaMime(base)}$`),
+        )
+      }
     })
 
     // Normalizzare non è accettare: tolto il parametro, quel che resta deve ancora
     // passare dalla lista del bucket. Senza questo, la correzione potrebbe essere
-    // «accetto tutto» e i due test qui sopra resterebbero verdi lo stesso.
+    // «accetto tutto» e i test qui sopra resterebbero verdi lo stesso.
     it('`video/quicktime;codecs=avc1` ⇒ ancora 400 e NESSUNA firma', async () => {
-      const res = await POST(richiesta({ ...CORPO_OK, mime: 'video/quicktime;codecs=avc1' }))
+      const res = await POST(richiesta({ ...CORPO_VIDEO_VECCHIO, mime: 'video/quicktime;codecs=avc1' }))
       expect(res.status).toBe(400)
       expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
     })

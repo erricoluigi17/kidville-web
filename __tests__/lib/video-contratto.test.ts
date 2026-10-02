@@ -18,6 +18,7 @@ import {
   STATI_JOB_VIDEO,
   avanzamentoDaStatoVideo,
   codiceMessaggioVideo,
+  riprovaAutomaticaInCorso,
   schemaAperturaIntentVideo,
   schemaEsitoAperturaIntentVideo,
   schemaStatoJobVideo,
@@ -25,6 +26,10 @@ import {
 import { MAX_VIDEO_DURATION_SECONDS, MAX_VIDEO_INPUT_BYTES } from '@/lib/media/video/limiti'
 import itShared from '../../messages/it/shared.json'
 import enShared from '../../messages/en/shared.json'
+import itServizi from '../../messages/it/teacherServizi.json'
+import enServizi from '../../messages/en/teacherServizi.json'
+import itComunicazioni from '../../messages/it/adminComunicazioni.json'
+import enComunicazioni from '../../messages/en/adminComunicazioni.json'
 
 /**
  * IL CONTRATTO CONDIVISO DELLA PIPELINE VIDEO — e il motivo per cui questo test
@@ -245,6 +250,9 @@ describe('contratto video · che cosa legge una famiglia, e che cosa resta inter
       'IDEMPOTENCY_CONFLICT',
       'REVISION_TAKEN',
       'ORIGINAL_PATH_TAKEN',
+      // Il «non ancora» di `video_job_claim` su un job che aspetta il ritentativo: parla un
+      // runner, e se mai arrivasse a uno schermo l'unica cosa vera da dire è «riprova».
+      'RETRY_NOT_DUE',
     ]
     const mappa = MAPPA_MESSAGGIO_VIDEO as Record<string, string>
     for (const codice of tecnici) {
@@ -292,6 +300,212 @@ describe('contratto video · che cosa legge una famiglia, e che cosa resta inter
     // ripiego che risponde sempre sarebbe verde).
     expect(codiceMessaggioVideo('FILE_TOO_LARGE')).toBe('VIDEO_TROPPO_GRANDE')
     expect(codiceMessaggioVideo('ENCRYPTED_VIDEO')).toBe('VIDEO_PROTETTO')
+  })
+})
+
+/**
+ * I GUASTI NOSTRI, E CHE COSA LEGGE CHI ASPETTA MENTRE SI RITENTA.
+ *
+ * Dal 29/09/2026 nessun video si convertiva, e a chi caricava il filmato la schermata non
+ * diceva niente di vero: «il file sembra rovinato», oppure «riprova» — due frasi che
+ * mettevano la colpa sul suo telefono quando il guasto era una release di FFmpeg sparita dal
+ * server di un terzo. Qui si tiene ferma la distinzione che manca: i codici in cui il
+ * filmato NON c'entra dicono «problema nostro», quelli in cui c'entra restano com'erano.
+ */
+const GUASTI_DI_INFRASTRUTTURA = [
+  'BUILD_DOWNLOAD_FAILED',
+  'BUILD_HASH_MISMATCH',
+  'BUILD_EXTRACT_FAILED',
+  'BUILD_INCOMPLETE',
+  'SANDBOX_UNAVAILABLE',
+  'SOURCE_DOWNLOAD_FAILED',
+  'OUTPUT_UPLOAD_FAILED',
+] as const
+
+/** I tre che restano com'erano: il file c'entra, o riprovare non cambierebbe niente. */
+const CODICI_RUNNER_DEL_FILE = {
+  PROBE_COMMAND_FAILED: 'VIDEO_NON_LEGGIBILE',
+  ENCODE_FAILED: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
+  CONVERSION_TIMEOUT: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
+} as const
+
+describe('contratto video · i guasti NOSTRI dicono «problema nostro», non «il file è rovinato»', () => {
+  it('i sette codici di infrastruttura del runner portano a VIDEO_GUASTO_NOSTRO', () => {
+    const mappa = MAPPA_MESSAGGIO_VIDEO as Record<string, string>
+    for (const codice of GUASTI_DI_INFRASTRUTTURA) {
+      expect(
+        mappa[codice],
+        `${codice} è un guasto dell'infrastruttura: il filmato non c'entra, e la frase deve dirlo`,
+      ).toBe('VIDEO_GUASTO_NOSTRO')
+      // …e `codiceMessaggioVideo` lo traduce davvero (senza questa riga una mappa ignorata
+      // dal traduttore sarebbe verde).
+      expect(codiceMessaggioVideo(codice)).toBe('VIDEO_GUASTO_NOSTRO')
+    }
+  })
+
+  it('i tre codici in cui il file c’entra restano quelli di prima', () => {
+    const mappa = MAPPA_MESSAGGIO_VIDEO as Record<string, string>
+    for (const [codice, atteso] of Object.entries(CODICI_RUNNER_DEL_FILE)) {
+      expect(mappa[codice], `${codice} non è un guasto nostro`).toBe(atteso)
+    }
+  })
+
+  it('OGNI codice del runner è dichiarato «nostro» o «del file»: uno nuovo obbliga a deciderlo', () => {
+    // Il lock di esaustività sa già che un codice del runner NON dichiarato rende rosso il
+    // contratto. Questo sa l'altra metà: che chi lo dichiara decida anche di CHI è la colpa —
+    // altrimenti il nome nuovo finirebbe sulla frase del file per inerzia, che è l'errore
+    // da cui nasce questa distinzione.
+    const dalRunner = membriElencoLetterale(
+      readFileSync(join(VIDEO, 'runner', 'codici.ts'), 'utf8'),
+      'CODICI_RUNNER_VIDEO',
+    )
+    const dichiarati = new Set<string>([
+      ...GUASTI_DI_INFRASTRUTTURA,
+      ...Object.keys(CODICI_RUNNER_DEL_FILE),
+    ])
+    expect(dalRunner.length, 'l’estrattore non vede più i codici del runner').toBeGreaterThanOrEqual(10)
+    expect(
+      dalRunner.filter((codice) => !dichiarati.has(codice)),
+      'Codici del runner senza una decisione «guasto nostro / guasto del file»: aggiungili a ' +
+        '`GUASTI_DI_INFRASTRUTTURA` o a `CODICI_RUNNER_DEL_FILE` qui sopra, e dai loro la ' +
+        'destinazione giusta in `MAPPA_MESSAGGIO_VIDEO`.',
+    ).toEqual([])
+    expect([...dichiarati].filter((codice) => !dalRunner.includes(codice))).toEqual([])
+  })
+
+  it('VIDEO_GUASTO_NOSTRO è un codice mostrabile, con la sua chiave e la sua frase', () => {
+    expect(CODICI_MOSTRATI_VIDEO).toContain('VIDEO_GUASTO_NOSTRO')
+    expect(CHIAVI_MESSAGGIO_VIDEO.VIDEO_GUASTO_NOSTRO).toBe('erroreVideoGuastoNostro')
+    // Il codice interno non si confonde con la frase a schermo: lo schema dello stato lo
+    // accetta SOLO perché è fra i mostrabili.
+    expect(
+      schemaStatoJobVideo.safeParse({
+        jobId: '40000000-0000-4000-8000-000000000004',
+        intentId: '30000000-0000-4000-8000-000000000003',
+        canale: 'gallery',
+        stato: 'failed',
+        avanzamento: null,
+        codice: 'VIDEO_GUASTO_NOSTRO',
+        aggiornatoIl: '2026-10-02T10:00:00.000Z',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('RETRY_NOT_DUE è quello della migrazione dei ritentativi, e il lock lo VEDE', () => {
+    // La migrazione si chiama `…_video_job_ritentativi.sql` apposta: il lock di esaustività
+    // legge solo i file `*_video_*.sql`, e un nome che perdesse quel pezzo lo renderebbe cieco
+    // — con tutto verde. Qui si prova che la fonte esiste, che dice proprio questo nome, e che
+    // l'estrattore lo trova.
+    const migrazione = readdirSync(MIGRAZIONI).find((n) => /_video_job_ritentativi\.sql$/.test(n))
+    expect(migrazione, 'la migrazione dei ritentativi non è più fra quelle che il lock legge').toBeTruthy()
+    const sql = readFileSync(join(MIGRAZIONI, migrazione as string), 'utf8')
+    expect(sql).toMatch(/'code'\s*,\s*'RETRY_NOT_DUE'/)
+    expect(codiciDelleMigrazioni()).toContain('RETRY_NOT_DUE')
+    expect(CODICI_ESITO_VIDEO as readonly string[]).toContain('RETRY_NOT_DUE')
+    expect((MAPPA_MESSAGGIO_VIDEO as Record<string, string>).RETRY_NOT_DUE).toBe('VIDEO_RIPROVA')
+  })
+})
+
+describe('contratto video · «lo stiamo riprovando» (riprovaAutomatica)', () => {
+  const base = {
+    jobId: '40000000-0000-4000-8000-000000000004',
+    intentId: '30000000-0000-4000-8000-000000000003',
+    canale: 'gallery' as const,
+    stato: 'queued' as string,
+    avanzamento: 25 as number | null,
+    codice: null as string | null,
+    aggiornatoIl: '2026-10-02T10:00:00.000Z',
+  }
+
+  it('manca nel corpo? vale false: un server più vecchio del client non rompe la scheda', () => {
+    const esito = schemaStatoJobVideo.safeParse(base)
+    expect(esito.success).toBe(true)
+    expect(esito.data?.riprovaAutomatica).toBe(false)
+  })
+
+  it('un job in coda o in lavorazione può essere in ritentativo', () => {
+    for (const stato of ['queued', 'processing']) {
+      const esito = schemaStatoJobVideo.safeParse({ ...base, stato, riprovaAutomatica: true })
+      expect(esito.success, `${stato}: ${JSON.stringify(esito.error?.issues ?? [])}`).toBe(true)
+      expect(esito.data?.riprovaAutomatica).toBe(true)
+    }
+  })
+
+  it('in ogni altro stato è una bugia, e lo schema la rifiuta', () => {
+    // «Lo stiamo riprovando» su un video già pronto, già fallito o ritirato direbbe che
+    // qualcosa sta ancora succedendo. Si controllano TUTTI gli altri stati, non uno solo.
+    for (const stato of STATI_JOB_VIDEO.filter((s) => s !== 'queued' && s !== 'processing')) {
+      const fallito = stato === 'failed' || stato === 'rejected'
+      const esito = schemaStatoJobVideo.safeParse({
+        ...base,
+        stato,
+        avanzamento: avanzamentoDaStatoVideo(stato),
+        codice: fallito ? 'VIDEO_GUASTO_NOSTRO' : null,
+        riprovaAutomatica: true,
+      })
+      expect(esito.success, `${stato} ha accettato riprovaAutomatica: true`).toBe(false)
+    }
+  })
+
+  it('un job che si sta ritentando non porta un codice d’errore: non è ancora fallito', () => {
+    expect(
+      schemaStatoJobVideo.safeParse({
+        ...base,
+        riprovaAutomatica: true,
+        codice: 'VIDEO_GUASTO_NOSTRO',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('il nome interno della causa NON esce: lo schema scarta `last_error_code`', () => {
+    // La persona legge «è un problema nostro»; `BUILD_DOWNLOAD_FAILED` resta in `app_log`.
+    const esito = schemaStatoJobVideo.safeParse({
+      ...base,
+      riprovaAutomatica: true,
+      last_error_code: 'BUILD_DOWNLOAD_FAILED',
+      next_attempt_at: '2026-10-02T10:05:00.000Z',
+    })
+    expect(esito.success).toBe(true)
+    expect(JSON.stringify(esito.data)).not.toContain('BUILD_DOWNLOAD_FAILED')
+    expect(Object.keys(esito.data as object)).not.toContain('last_error_code')
+  })
+
+  describe('riprovaAutomaticaInCorso(stato, attempt)', () => {
+    // La tabella è scritta per ESTESO, non ricavata con la stessa regola del codice: un test
+    // che ricalcola la formula è verde anche quando la formula è sbagliata.
+    const VERI = new Set([
+      'queued:1',
+      'queued:2',
+      'queued:3',
+      'queued:4',
+      'processing:2',
+      'processing:3',
+      'processing:4',
+    ])
+
+    it.each(STATI_JOB_VIDEO.flatMap((stato) => [0, 1, 2, 3, 4].map((attempt) => [stato, attempt] as const)))(
+      '%s con attempt %i',
+      (stato, attempt) => {
+        expect(riprovaAutomaticaInCorso(stato, attempt)).toBe(VERI.has(`${stato}:${attempt}`))
+      },
+    )
+
+    it('un caricamento appena arrivato NON è un ritentativo: `queued` con attempt 0', () => {
+      // È l'unico modo in cui `video_job_uploaded` mette un job in coda. Promettere
+      // «lo stiamo riprovando» a chi ha appena premuto «carica» sarebbe falso.
+      expect(riprovaAutomaticaInCorso('queued', 0)).toBe(false)
+      // Il primo giro del runner è `processing` con attempt 1: ancora il primo tentativo.
+      expect(riprovaAutomaticaInCorso('processing', 1)).toBe(false)
+    })
+
+    it('un attempt assente, non numerico o negativo non promette niente', () => {
+      // Una riga letta male vale 0, e 0 non è un ritentativo: nel dubbio non si promette
+      // un lavoro che potrebbe non esserci. `Infinity` è non finito, quindi anche lui.
+      for (const attempt of [null, undefined, Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+        expect(riprovaAutomaticaInCorso('queued', attempt), `queued con ${String(attempt)}`).toBe(false)
+        expect(riprovaAutomaticaInCorso('processing', attempt), `processing con ${String(attempt)}`).toBe(false)
+      }
+    })
   })
 })
 
@@ -348,6 +562,66 @@ describe('contratto video · i messaggi esistono nelle due lingue e parlano alle
       }
     }
     expect(guasti, 'Un messaggio per le famiglie non nomina i meccanismi interni.').toEqual([])
+  })
+
+  describe('i tre testi del guasto nostro sono quelli decisi dal titolare', () => {
+    // Si confrontano con la stringa SCRITTA QUI e non con il catalogo importato: un test che
+    // legge il catalogo e lo confronta con sé stesso è verde anche con la frase sbagliata.
+    const TESTI = [
+      {
+        dove: 'shared.erroreVideoGuastoNostro',
+        it: catIt.erroreVideoGuastoNostro,
+        en: catEn.erroreVideoGuastoNostro,
+        attesoIt:
+          'Non siamo riusciti a preparare questo video per un problema nostro, non del filmato. Caricalo di nuovo più tardi: se non va ancora, avvisa la segreteria.',
+        attesoEn:
+          'We could not prepare this video because of a problem on our side, not with the clip. Please upload it again later: if it still does not work, let the office know.',
+      },
+      {
+        dove: 'teacherServizi.galleryVideoRiprovaAutomatica',
+        it: itServizi.galleryVideoRiprovaAutomatica,
+        en: enServizi.galleryVideoRiprovaAutomatica,
+        attesoIt:
+          'Il problema è nostro, non del video: lo stiamo riprovando in automatico. Non serve caricarlo di nuovo, e puoi chiudere l’app.',
+        attesoEn:
+          'The problem is on our side, not with the video: we are retrying automatically. There is no need to upload it again, and you can close the app.',
+      },
+      {
+        dove: 'adminComunicazioni.videoStatoRiprovaAutomatica',
+        it: itComunicazioni.videoStatoRiprovaAutomatica,
+        en: enComunicazioni.videoStatoRiprovaAutomatica,
+        attesoIt: 'Problema nostro, non del video: riproviamo in automatico.',
+        attesoEn: 'A problem on our side, not with the video: retrying automatically.',
+      },
+    ] as const
+
+    it('italiano e inglese, parola per parola', () => {
+      for (const t of TESTI) {
+        expect(t.it, `${t.dove} (it)`).toBe(t.attesoIt)
+        expect(t.en, `${t.dove} (en)`).toBe(t.attesoEn)
+      }
+    })
+
+    it('apostrofo tipografico in italiano, nessuna contrazione in inglese', () => {
+      // `l’app` con U+2019: l'apostrofo dritto è vietato dal lock dei cataloghi, ma qui si
+      // prova che il testo nuovo lo rispetta DAVVERO (e non solo che il lock è verde).
+      expect(itServizi.galleryVideoRiprovaAutomatica).toContain('l’app')
+      for (const t of TESTI) {
+        expect(t.it, `${t.dove} (it) ha un apostrofo dritto`).not.toContain("'")
+        expect(t.en, `${t.dove} (en) ha una contrazione`).not.toMatch(/\w['’]\w/)
+      }
+    })
+
+    it('nessuno dei tre nomina i meccanismi interni (anche i due che non stanno in `shared`)', () => {
+      const tecnicismi =
+        /\b(ffmpeg|ffprobe|bucket|lease|fence|intent|job|payload|rpc|postgrest|codec|uuid|null|token|tus|runner|sandbox|microvm|server)\b/i
+      for (const t of TESTI) {
+        for (const [lingua, testo] of [['it', t.it], ['en', t.en]] as const) {
+          expect(testo.match(tecnicismi), `${t.dove} (${lingua}) nomina un meccanismo interno`).toBeNull()
+          expect(/[A-Z]{3,}_[A-Z]/.test(testo), `${t.dove} (${lingua}) mostra un codice`).toBe(false)
+        }
+      }
+    })
   })
 })
 

@@ -127,8 +127,9 @@ function coreDelSandbox(): number {
 
 /**
  * Porta avanti un job della coda video. Non converte un video: fa un pezzo di lavoro
- * e torna. Va chiamata a ripetizione — il cron ogni minuto — e il disegno è scritto
- * per intero nella testata di `./esegui.ts`.
+ * e torna. Va chiamata a ripetizione — il cron ogni cinque minuti — e il disegno è
+ * scritto per intero nella testata di `./esegui.ts`, compreso ciò che si fa di un guasto
+ * nostro: il job si rimette in coda e si ritenta (classi e attese in `./ritentativi.ts`).
  *
  * ⚠️ NON è una route: non c'è `withRoute` qui, e non ci va. Chi la espone su HTTP la
  * avvolge nella propria route, con il proprio gate e la propria validazione.

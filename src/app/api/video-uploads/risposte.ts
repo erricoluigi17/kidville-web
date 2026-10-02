@@ -33,7 +33,7 @@ import {
  * `codice: unaVariabile` non lo sa verificare contro `CODICI_ERRORE` né contro i
  * due cataloghi, e la regola che lo scopre («un `codice` che il lock non sa
  * LEGGERE non passa inosservato») è nata proprio da un valore diventato invisibile.
- * Uno `switch` di quindici rami è il prezzo per restare dentro quella misura, e si
+ * Uno `switch` di sedici rami è il prezzo per restare dentro quella misura, e si
  * paga volentieri: l'alternativa è una funzione elegante che nessun lock guarda.
  *
  * ⚠️ `SEDE_DA_SPECIFICARE` NON è un codice di questo modulo: è quello che
@@ -120,6 +120,10 @@ const STATO_HTTP_VIDEO: Record<CodiceInternoVideo, number> = {
   ORIGINAL_PATH_TAKEN: 409,
   TARGET_CONFLICT: 409,
   SCOPE_CHANGED: 409,
+  // Il «non ancora» di `video_job_claim` su un job che aspetta il suo ritentativo. Non esce
+  // da queste due route — lo sente il runner — ma se ci finisse sarebbe un rifiuto
+  // ordinario, non un guasto: 409, e niente riga `error` per qualcosa che ha funzionato.
+  RETRY_NOT_DUE: 409,
 
   // ── L'intento è finito, in un modo o nell'altro: la richiesta arriva tardi.
   INTENT_PUBLISHED: 409,
@@ -186,7 +190,7 @@ export function statoHttpVideo(codice: string | null | undefined): number {
 /**
  * La risposta da mostrare, a partire da un codice MOSTRABILE già deciso.
  *
- * Quindici rami e non una riga sola: vedi la testata. Il `default` non esiste —
+ * Sedici rami e non una riga sola: vedi la testata. Il `default` non esiste —
  * `CodiceMostratoVideo` è un'unione chiusa, e TypeScript non lascia dimenticarne
  * uno.
  */
@@ -206,6 +210,8 @@ export function rispostaVideo(codice: CodiceMostratoVideo, stato: number): NextR
       return NextResponse.json({ error: prosa('VIDEO_NON_LEGGIBILE'), codice: 'VIDEO_NON_LEGGIBILE' }, { status: stato })
     case 'VIDEO_CONVERSIONE_NON_RIUSCITA':
       return NextResponse.json({ error: prosa('VIDEO_CONVERSIONE_NON_RIUSCITA'), codice: 'VIDEO_CONVERSIONE_NON_RIUSCITA' }, { status: stato })
+    case 'VIDEO_GUASTO_NOSTRO':
+      return NextResponse.json({ error: prosa('VIDEO_GUASTO_NOSTRO'), codice: 'VIDEO_GUASTO_NOSTRO' }, { status: stato })
     case 'VIDEO_RIPROVA':
       return NextResponse.json({ error: prosa('VIDEO_RIPROVA'), codice: 'VIDEO_RIPROVA' }, { status: stato })
     case 'VIDEO_GIA_CONCLUSO':

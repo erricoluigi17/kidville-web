@@ -480,6 +480,81 @@ describe('le azioni sull’intento parlano il vocabolario chiuso della route', (
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
+// IL RITENTATIVO AUTOMATICO — «il problema è nostro, lo stiamo riprovando»
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('lo stato porta `riprovaAutomatica`, e solo dove ha senso', () => {
+  const statoCon = (job: Record<string, unknown>) => ({
+    intentId: INTENTO,
+    revisione: 1,
+    canale: 'gallery',
+    statoIntent: 'confirmed',
+    aggiornatoIl: '2026-10-02T10:00:00.000Z',
+    job: [
+      {
+        jobId: JOB,
+        intentId: INTENTO,
+        canale: 'gallery',
+        stato: 'queued',
+        avanzamento: 25,
+        codice: null,
+        aggiornatoIl: '2026-10-02T10:00:00.000Z',
+        ...job,
+      },
+    ],
+  })
+
+  it('un job in coda che il runner sta ritentando arriva con il flag acceso', async () => {
+    const rete = vi.fn(async () => risposta(200, statoCon({ riprovaAutomatica: true })))
+    const esito = await leggiStatoIntentoVideo(rete, { intentId: INTENTO, ripiego: 'ripiego' })
+    expect(esito.ok).toBe(true)
+    if (esito.ok) expect(esito.dati.job[0].riprovaAutomatica).toBe(true)
+  })
+
+  it('un server più vecchio del client non manda il campo: vale false, e la scheda è quella di prima', async () => {
+    const rete = vi.fn(async () => risposta(200, statoCon({})))
+    const esito = await leggiStatoIntentoVideo(rete, { intentId: INTENTO, ripiego: 'ripiego' })
+    expect(esito.ok).toBe(true)
+    if (esito.ok) expect(esito.dati.job[0].riprovaAutomatica).toBe(false)
+  })
+
+  it('il flag su un job che non aspetta né lavora è un dato fuori contratto: non diventa una schermata', async () => {
+    // «Lo stiamo riprovando» su un video pronto direbbe che qualcosa sta ancora succedendo.
+    // Si scarta lo stato intero e lo si LOGGA (un difetto del server non deve passare in silenzio).
+    const rete = vi.fn(async () => risposta(200, statoCon({ stato: 'ready', avanzamento: 100, riprovaAutomatica: true })))
+    const esito = await leggiStatoIntentoVideo(rete, { intentId: INTENTO, ripiego: 'ripiego' })
+    expect(esito.ok).toBe(false)
+    expect(
+      h.logClient.mock.calls.some(([voce]) => String((voce as { messaggio?: string }).messaggio).includes('video-galleria-job-fuori-contratto')),
+      'uno stato fuori contratto non è stato loggato',
+    ).toBe(true)
+  })
+
+  it('un job fallito per un guasto nostro porta il codice mostrabile, non quello interno', async () => {
+    const rete = vi.fn(async () =>
+      risposta(200, statoCon({ stato: 'failed', avanzamento: null, codice: 'VIDEO_GUASTO_NOSTRO' })),
+    )
+    const esito = await leggiStatoIntentoVideo(rete, { intentId: INTENTO, ripiego: 'ripiego' })
+    expect(esito.ok).toBe(true)
+    if (esito.ok) {
+      expect(esito.dati.job[0].codice).toBe('VIDEO_GUASTO_NOSTRO')
+      expect(esito.dati.job[0].riprovaAutomatica).toBe(false)
+    }
+    // Un codice INTERNO che provasse a uscire non passa lo schema (è il confine che protegge le famiglie).
+    const interno = vi.fn(async () =>
+      risposta(200, statoCon({ stato: 'failed', avanzamento: null, codice: 'BUILD_DOWNLOAD_FAILED' })),
+    )
+    expect((await leggiStatoIntentoVideo(interno, { intentId: INTENTO, ripiego: 'ripiego' })).ok).toBe(false)
+  })
+
+  it('«in coda» e «in lavorazione» restano attese diverse anche mentre si ritenta', () => {
+    // Il flag NON cambia la fase: la scheda sotto dice ancora in quale delle due si trova.
+    expect(faseDelJob('queued')).toBe('in-coda')
+    expect(faseDelJob('processing')).toBe('conversione')
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LA PUBBLICAZIONE
 // ═══════════════════════════════════════════════════════════════════════════
 

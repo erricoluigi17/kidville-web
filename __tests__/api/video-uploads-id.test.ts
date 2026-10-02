@@ -36,6 +36,8 @@ const h = vi.hoisted(() => ({
   job: [] as Record<string, unknown>[],
   jobError: null as { code?: string; message?: string } | null,
   tabelleLette: [] as string[],
+  /** L'elenco di colonne chiesto a ogni tabella: `.select('a, b, c')`. */
+  colonneChieste: {} as Record<string, string>,
   corpoLetto: 0,
 }))
 
@@ -56,15 +58,31 @@ vi.mock('@/lib/auth/scope', () => ({
  * `.select().eq().order()`. Sta qui e non in una fixture perché deve restituire
  * `{ data, error }` — cioè la forma che NON lancia, che è tutto il motivo per cui
  * la route deve guardare il valore di ritorno invece di avvolgere in un `try`.
+ *
+ * ⚠️ PROIETTA SULLE COLONNE CHIESTE, come fa PostgREST. Un finto che restituisce la riga
+ * intera è verde anche quando la route dimentica di chiedere una colonna: il campo
+ * `attempt` arriverebbe lo stesso al codice, nei test, e in produzione non arriverebbe
+ * mai — e `riprovaAutomatica` resterebbe `false` per sempre senza un solo errore. È la
+ * forma di silenzio che questo repository combatte: la colonna non chiesta si vede qui.
  */
 function tabella(nome: string) {
   h.tabelleLette.push(nome)
+  let colonne: string[] | null = null
+  const proietta = (riga: unknown): unknown => {
+    if (colonne === null || riga === null || typeof riga !== 'object') return riga
+    const scelte = colonne
+    return Object.fromEntries(Object.entries(riga as Record<string, unknown>).filter(([k]) => scelte.includes(k)))
+  }
   const risposta = () =>
     nome === 'video_intents'
-      ? { data: h.intent, error: h.intentError }
-      : { data: h.job, error: h.jobError }
+      ? { data: proietta(h.intent), error: h.intentError }
+      : { data: Array.isArray(h.job) ? h.job.map(proietta) : h.job, error: h.jobError }
   const catena: Record<string, unknown> = {
-    select: () => catena,
+    select: (elenco?: string) => {
+      h.colonneChieste[nome] = elenco ?? ''
+      colonne = elenco ? elenco.split(',').map((c) => c.trim()) : null
+      return catena
+    },
     eq: () => catena,
     in: () => catena,
     order: async () => risposta(),
@@ -83,6 +101,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { GET, PATCH } from '@/app/api/video-uploads/[id]/route'
+import itShared from '../../messages/it/shared.json'
 
 const SEDE = '10000000-0000-4000-8000-000000000001'
 const ALTRA_SEDE = 'aaaaaaaa-0000-4000-8000-00000000000a'
@@ -132,6 +151,12 @@ const rigaJob = (extra: Record<string, unknown> = {}) => ({
   channel: 'gallery',
   status: 'processing',
   error_code: null,
+  // Le colonne della migrazione dei ritentativi, com'è fatta la tabella vera: la route chiede
+  // `attempt` e NON `last_error_code` (la causa interna) né `next_attempt_at`. Il primo giro del
+  // runner è `attempt = 1`: un job `processing` di default non si sta ritentando.
+  attempt: 1,
+  last_error_code: null,
+  next_attempt_at: null,
   updated_at: '2026-09-18T10:01:00.000Z',
   ...extra,
 })
@@ -139,6 +164,7 @@ const rigaJob = (extra: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks()
   h.tabelleLette = []
+  h.colonneChieste = {}
   h.corpoLetto = 0
   h.intent = rigaIntent()
   h.intentError = null
@@ -229,6 +255,116 @@ describe('GET /api/video-uploads/[id] — lo stato in polling', () => {
     const res = await GET(richiestaGet(), params)
     expect(res.status).toBe(503)
     expect((await res.json()).codice).toBe('VIDEO_OPERAZIONE_NON_RIUSCITA')
+  })
+})
+
+/**
+ * IL RITENTATIVO AUTOMATICO, COME LO LEGGE CHI ASPETTA.
+ *
+ * Dal 29/09/2026 nessun video si convertiva, e a chi aveva caricato il filmato lo schermo
+ * non diceva niente di vero. Da quando il runner ritenta da solo i guasti NOSTRI (quattro
+ * tentativi in un'ora), il job passa da `processing` a `queued` con `attempt` che cresce:
+ * la route lo traduce in `riprovaAutomatica`, e la scheda dice «lo stiamo riprovando» invece
+ * di sembrare una coda ferma. Qui si tiene fermo che il flag nasce dalla riga GIUSTA, che la
+ * colonna da cui nasce viene davvero CHIESTA, e che la causa interna non esce.
+ */
+describe('GET /api/video-uploads/[id] — il ritentativo automatico dopo un guasto nostro', () => {
+  const GUASTI_DI_INFRASTRUTTURA = [
+    'BUILD_DOWNLOAD_FAILED',
+    'BUILD_HASH_MISMATCH',
+    'BUILD_EXTRACT_FAILED',
+    'BUILD_INCOMPLETE',
+    'SANDBOX_UNAVAILABLE',
+    'SOURCE_DOWNLOAD_FAILED',
+    'OUTPUT_UPLOAD_FAILED',
+  ]
+
+  it('un job rimesso in coda dopo un guasto nostro dice «lo stiamo riprovando», senza codice', async () => {
+    // Com'è lasciato da `video_job_retry`: `queued`, `attempt` invariato, la causa in
+    // `last_error_code` e l'orario del prossimo tentativo nel futuro.
+    h.job = [
+      rigaJob({
+        status: 'queued',
+        attempt: 1,
+        last_error_code: 'BUILD_DOWNLOAD_FAILED',
+        next_attempt_at: '2026-10-02T10:05:00.000Z',
+      }),
+    ]
+    const res = await GET(richiestaGet(), params)
+    expect(res.status).toBe(200)
+    const corpo = await res.json()
+    expect(corpo.job[0]).toMatchObject({
+      stato: 'queued',
+      avanzamento: 25,
+      codice: null,
+      riprovaAutomatica: true,
+    })
+    // La persona legge «è un problema nostro»: il NOME della causa resta nel log.
+    const testo = JSON.stringify(corpo)
+    expect(testo).not.toContain('BUILD_DOWNLOAD_FAILED')
+    expect(testo).not.toContain('last_error_code')
+    expect(testo).not.toContain('next_attempt_at')
+  })
+
+  it.each([
+    // [stato del database, attempt, riprovaAutomatica attesa]
+    ['queued', 0, false], // il caricamento appena arrivato: l'unica strada di `video_job_uploaded`
+    ['queued', 1, true], // rimesso in coda dopo il primo giro
+    ['queued', 3, true], // …dopo il terzo
+    ['processing', 1, false], // il primo giro del runner non è un ritentativo
+    ['processing', 2, true], // il primo ritentativo è partito
+    ['processing', 4, true], // l'ultimo
+    ['ready', 3, false], // finito bene dopo i ritentativi: non c'è più niente da riprovare
+    ['cancelled', 2, false], // ritirato: nessuno sta riprovando niente
+    ['awaiting_upload', 0, false],
+  ] as const)('stato %s con attempt %i ⇒ riprovaAutomatica %s', async (status, attempt, atteso) => {
+    h.job = [rigaJob({ status, attempt })]
+    const res = await GET(richiestaGet(), params)
+    expect(res.status).toBe(200)
+    expect((await res.json()).job[0].riprovaAutomatica).toBe(atteso)
+  })
+
+  it('un attempt che manca dalla riga non promette un ritentativo che potrebbe non esserci', async () => {
+    h.job = [rigaJob({ status: 'queued', attempt: undefined })]
+    const res = await GET(richiestaGet(), params)
+    expect(res.status).toBe(200)
+    expect((await res.json()).job[0].riprovaAutomatica).toBe(false)
+  })
+
+  it('CHIEDE la colonna `attempt` (e solo quella dei ritentativi), non la causa interna', async () => {
+    await GET(richiestaGet(), params)
+    const colonne = (h.colonneChieste.video_jobs ?? '').split(',').map((c) => c.trim())
+    // Il finto proietta sulle colonne chieste, come PostgREST: senza `attempt` qui sotto il
+    // flag resterebbe `false` anche con la riga giusta — ed è esattamente il guasto muto.
+    expect(colonne, 'la route non chiede più `attempt`: «lo stiamo riprovando» non comparirebbe mai').toContain('attempt')
+    expect(colonne, '`last_error_code` è il nome interno della causa: non deve uscire').not.toContain('last_error_code')
+    expect(colonne).not.toContain('next_attempt_at')
+  })
+
+  it.each(GUASTI_DI_INFRASTRUTTURA)('%s a tentativi esauriti ⇒ «problema nostro», e il nome interno resta fuori', async (codice) => {
+    // `failed` dopo quattro tentativi: la scheda non ritenta più, e la frase è quella del
+    // guasto nostro — non «il file sembra rovinato», non «riprova».
+    h.job = [rigaJob({ status: 'failed', attempt: 4, error_code: codice, last_error_code: codice })]
+    const res = await GET(richiestaGet(), params)
+    expect(res.status).toBe(200)
+    const corpo = await res.json()
+    expect(corpo.job[0]).toMatchObject({
+      stato: 'failed',
+      avanzamento: null,
+      codice: 'VIDEO_GUASTO_NOSTRO',
+      riprovaAutomatica: false,
+    })
+    expect(JSON.stringify(corpo)).not.toContain(codice)
+  })
+
+  it.each([
+    ['PROBE_COMMAND_FAILED', 'VIDEO_NON_LEGGIBILE'],
+    ['ENCODE_FAILED', 'VIDEO_CONVERSIONE_NON_RIUSCITA'],
+    ['CONVERSION_TIMEOUT', 'VIDEO_CONVERSIONE_NON_RIUSCITA'],
+  ])('%s resta quello di prima: il file c’entra (%s)', async (codice, atteso) => {
+    h.job = [rigaJob({ status: 'failed', attempt: 1, error_code: codice })]
+    const res = await GET(richiestaGet(), params)
+    expect((await res.json()).job[0].codice).toBe(atteso)
   })
 })
 
@@ -345,5 +481,40 @@ describe('PATCH /api/video-uploads/[id] — le azioni sull’intento', () => {
     const res = await PATCH(richiestaPatch({ azione: 'conferma', revisione: 1 }), params)
     expect(res.status).toBe(503)
     expect((await res.json()).codice).toBe('VIDEO_OPERAZIONE_NON_RIUSCITA')
+  })
+
+  it('GET e PATCH restituiscono lo STESSO corpo: anche la PATCH porta `riprovaAutomatica`', async () => {
+    // La conferma può arrivare mentre il job è già stato rimesso in coda dal runner: la
+    // risposta rilegge lo stato e non deve tornare a una schermata che non conosce il ritentativo.
+    h.intent = rigaIntent({ status: 'confirmed' })
+    h.job = [rigaJob({ status: 'queued', attempt: 2 })]
+    const res = await PATCH(richiestaPatch({ azione: 'conferma', revisione: 1 }), params)
+    expect(res.status).toBe(200)
+    expect((await res.json()).job[0].riprovaAutomatica).toBe(true)
+  })
+
+  it('RETRY_NOT_DUE ⇒ 409 e «riprova»: un rifiuto ordinario, senza il nome della RPC', async () => {
+    // È ciò che `video_job_claim` risponde al runner per un job che aspetta il suo turno: non
+    // raggiunge una persona, ma la tabella dei numeri è totale e questo ne decide uno.
+    h.rpc.mockResolvedValue({ data: { ok: false, code: 'RETRY_NOT_DUE' }, error: null })
+    const res = await PATCH(richiestaPatch({ azione: 'conferma', revisione: 1 }), params)
+    expect(res.status).toBe(409)
+    const corpo = await res.json()
+    expect(corpo.codice).toBe('VIDEO_RIPROVA')
+    expect(JSON.stringify(corpo)).not.toContain('RETRY_NOT_DUE')
+  })
+
+  it('un guasto di infrastruttura arrivato fin qui parla col catalogo, mai col codice', async () => {
+    // Non succede con le RPC di oggi (lo dice il runner, non la route), ma `rispostaVideo` ha
+    // un ramo per `VIDEO_GUASTO_NOSTRO` e deve rispondere con la frase del catalogo: un ramo
+    // che manca non compila, un ramo che legge la chiave sbagliata risponderebbe a stringa vuota.
+    h.rpc.mockResolvedValue({ data: { ok: false, code: 'SANDBOX_UNAVAILABLE' }, error: null })
+    const res = await PATCH(richiestaPatch({ azione: 'conferma', revisione: 1 }), params)
+    expect(res.status).toBe(503)
+    const corpo = await res.json()
+    expect(corpo.codice).toBe('VIDEO_GUASTO_NOSTRO')
+    expect(corpo.error).toBe(itShared.erroreVideoGuastoNostro)
+    expect(corpo.error.length).toBeGreaterThan(40)
+    expect(JSON.stringify(corpo)).not.toContain('SANDBOX_UNAVAILABLE')
   })
 })

@@ -60,7 +60,12 @@ const APERTURA = {
   ],
 }
 
-const statoJob = (stato: string, codice: string | null = null) => ({
+/**
+ * Lo stato di un job come lo restituisce la route. `riprovaAutomatica` è il flag che la route
+ * calcola da stato e `attempt`: il runner ha avuto un guasto NOSTRO e il job si sta ritentando
+ * da solo. Falso per default, com'è per la maggior parte della vita di un job.
+ */
+const statoJob = (stato: string, codice: string | null = null, riprovaAutomatica = false) => ({
   intentId: INTENTO,
   revisione: 1,
   canale: 'news',
@@ -74,6 +79,7 @@ const statoJob = (stato: string, codice: string | null = null) => ({
       stato,
       avanzamento: stato === 'ready' ? 100 : 60,
       codice,
+      riprovaAutomatica,
       aggiornatoIl: '2026-09-18T10:00:00.000Z',
     },
   ],
@@ -406,5 +412,122 @@ describe('NewsVideoAllegati · al rientro nella pagina', () => {
 
     await waitFor(() => expect(pota).toHaveBeenCalled())
     expect(screen.queryByText(itAdmin.videoRiapertura)).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * «PROBLEMA NOSTRO, NON DEL VIDEO: RIPROVIAMO IN AUTOMATICO» — la riga di una comunicazione.
+ *
+ * Dal 29/09/2026 nessun video si convertiva, e a chi lo allegava a una comunicazione la riga
+ * restava su «il filmato è in attesa» per sempre. Da quando il runner ritenta da solo i guasti
+ * NOSTRI, il server dice `riprovaAutomatica` e la riga lo racconta al posto della frase di
+ * fase. Ogni ASSENZA è provata DOPO una presenza (la frase giusta a schermo): un `waitFor` su
+ * un'assenza passa prima che i dati arrivino, ed è verde con e senza il difetto.
+ */
+describe('NewsVideoAllegati · un ritentativo automatico dopo un guasto nostro', () => {
+  it('la riga lo dice finché il server ritenta, e torna normale quando il filmato è pronto', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    fetchMock
+      .mockResolvedValueOnce(risposta(200, APERTURA))                              // POST apertura
+      .mockResolvedValueOnce(risposta(200, statoJob('queued')))                    // PATCH caricato
+      .mockResolvedValueOnce(risposta(200, statoJob('queued')))                    // PATCH conferma
+      .mockResolvedValueOnce(risposta(200, statoJob('queued', null, true)))        // GET: rimesso in coda
+      .mockResolvedValueOnce(risposta(200, statoJob('processing', null, true)))    // GET: il ritentativo è partito
+      .mockResolvedValue(risposta(200, statoJob('ready')))                         // GET successivi: riuscito
+    const { container, onPronto } = monta()
+    scegliVideo(container)
+
+    // PRESENZA: il messaggio del ritentativo, al posto della frase di fase.
+    const riga = await screen.findByText(itAdmin.videoStatoRiprovaAutomatica)
+    expect(riga).toBeInTheDocument()
+    expect(screen.queryByText(itAdmin.videoStatoInCoda)).toBeNull()
+    expect(screen.queryByText(itAdmin.videoStatoConversione)).toBeNull()
+    // Annunciato senza interrompere: la riga di avanzamento è uno `status`, non un `alert`.
+    expect(riga).toHaveAttribute('role', 'status')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(onPronto).not.toHaveBeenCalled()
+
+    // Il ritentativo parte: il messaggio resta, e la barra è quella del server (60).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000)
+    })
+    expect(await screen.findByText(itAdmin.videoStatoRiprovaAutomatica)).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('60'),
+    )
+
+    // Riesce: il filmato è pronto, il collegamento va nell'articolo, il messaggio sparisce.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000)
+    })
+    await waitFor(() => expect(onPronto).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText(itAdmin.videoStatoPronto)).toBeInTheDocument()
+    expect(screen.queryByText(itAdmin.videoStatoRiprovaAutomatica)).toBeNull()
+  })
+
+  it('senza il flag la riga dice la frase di fase di sempre', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    fetchMock
+      .mockResolvedValueOnce(risposta(200, APERTURA))
+      .mockResolvedValueOnce(risposta(200, statoJob('queued')))
+      .mockResolvedValueOnce(risposta(200, statoJob('queued')))
+      .mockResolvedValue(risposta(200, statoJob('processing')))
+    const { container } = monta()
+    scegliVideo(container)
+
+    // Prima la PRESENZA della frase di fase, poi l'assenza del messaggio.
+    expect(await screen.findByText(itAdmin.videoStatoConversione)).toBeInTheDocument()
+    expect(screen.queryByText(itAdmin.videoStatoRiprovaAutomatica)).toBeNull()
+  })
+
+  it('esauriti i tentativi la riga legge la frase FINALE del guasto nostro, non «riproviamo»', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    fetchMock
+      .mockResolvedValueOnce(risposta(200, APERTURA))
+      .mockResolvedValueOnce(risposta(200, statoJob('queued')))
+      .mockResolvedValueOnce(risposta(200, statoJob('queued')))
+      .mockResolvedValue(risposta(200, statoJob('failed', 'VIDEO_GUASTO_NOSTRO')))
+    const { container, onPronto } = monta()
+    scegliVideo(container)
+
+    // Qui sì un errore, e annunciato come tale: il filmato non c'è e va ricaricato più tardi.
+    const frase = await screen.findByText(itShared.erroreVideoGuastoNostro)
+    expect(frase).toHaveAttribute('role', 'alert')
+    expect(screen.queryByText(itAdmin.videoStatoRiprovaAutomatica)).toBeNull()
+    expect(onPronto, 'un filmato non convertito non entra nell’articolo').not.toHaveBeenCalled()
+    // Il codice interno non è mai a schermo.
+    expect(screen.queryByText('VIDEO_GUASTO_NOSTRO')).toBeNull()
+  })
+
+  it('un intento ritirato mentre si ritentava NON lascia «riproviamo»: la riga è un errore, non un’attesa', async () => {
+    // Per un giro lo stato può essere incoerente: job ancora `queued` col flag, intento già
+    // `cancelled`. La riga diventa errore (com'era già) e non promette un lavoro che non c'è.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    fetchMock
+      .mockResolvedValueOnce(risposta(200, APERTURA))
+      .mockResolvedValueOnce(risposta(200, statoJob('queued')))
+      .mockResolvedValueOnce(risposta(200, statoJob('queued')))
+      .mockResolvedValue(risposta(200, { ...statoJob('queued', null, true), statoIntent: 'cancelled' }))
+    const { container } = monta()
+    scegliVideo(container)
+
+    // PRESENZA: l'errore generico di sempre per un intento ritirato…
+    expect(await screen.findByRole('alert')).toHaveTextContent(itShared.erroreVideoOperazioneNonRiuscita)
+    // …e nessuna promessa di ritentativo.
+    expect(screen.queryByText(itAdmin.videoStatoRiprovaAutomatica)).toBeNull()
+  })
+
+  it('al rientro nella pagina a metà di un ritentativo la riga lo dice, senza ricaricare il filmato', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    daSeguire.mockResolvedValue([{ jobId: JOB, intentId: INTENTO, canale: 'news', ownerId: UTENTE, scuolaId: SEDE_A, stato: 'caricato', nome: 'sintetico.mp4', dimensioneByte: 3, mime: 'video/mp4', chiaveIdempotenza: 'k' }])
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+      ? risposta(200, { ...APERTURA, intent: { status: 'confirmed' }, job: [{ ...APERTURA.job[0], status: 'queued', needs_upload: false, firma: '', expires_at: null }] })
+      : risposta(200, statoJob('queued', null, true)))
+
+    monta()
+
+    expect(await screen.findByText(itAdmin.videoRiapertura)).toBeInTheDocument()
+    expect(await screen.findByText(itAdmin.videoStatoRiprovaAutomatica)).toBeInTheDocument()
+    expect(carica, 'i byte erano già arrivati: non si rispediscono').not.toHaveBeenCalled()
   })
 })

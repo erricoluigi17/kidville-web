@@ -35,8 +35,9 @@ import { join } from 'node:path'
  * dominio: **ogni `UPDATE` di `video_jobs` che tocca `status` tocca anche
  * `original_delete_after`**, oppure sta nell'elenco qui sotto con la sua ragione.
  * Le eccezioni legittime ci sono e sono poche — le transizioni che NON concludono
- * niente (`awaiting_upload → queued`, `queued → processing`) — e dichiararle una
- * per una è ciò che distingue «lasciato fuori apposta» da «dimenticato».
+ * niente (`awaiting_upload → queued`, `queued → processing` e, dal 2026-10-02, il
+ * ritentativo `processing → queued`) — e dichiararle una per una è ciò che
+ * distingue «lasciato fuori apposta» da «dimenticato».
  *
  * ⚠️ Il lock guarda il SET, non lo stato finale, ed è deliberato: `video_job_fail`
  * scrive `status = v_status`, dove `v_status` vale `'failed'` o `'rejected'`
@@ -118,6 +119,8 @@ const SENZA_SCADENZA_GIUSTIFICATE: Record<string, string> = {
         'awaiting_upload → queued. Non conclude niente: dichiara che i byte sono arrivati e che il job può essere convertito. L’originale serve ancora, ed è proprio adesso che serve di più — dargli una scadenza qui significherebbe mettere una data di distruzione sulla sorgente prima di averla letta.',
     video_job_claim:
         'queued → processing. Un worker ha preso in carico il job e sta leggendo l’originale in questo istante. La scadenza arriva a conclusione avvenuta, e ci pensano `video_job_ready` (verified_at + 7 giorni) o `video_job_fail` (now + 7 giorni).',
+    video_job_retry:
+        'processing → queued: non conclude. Il guasto era dell’infrastruttura e non del file, quindi il job aspetta il suo ritentativo (`next_attempt_at`) e l’originale serve ancora per il tentativo dopo. La scadenza la scrive `video_job_fail` quando i tentativi finiscono, e `video_job_retry` stessa lo chiama proprio a quel punto (il suo UPDATE di esaurimento annota solo `last_error_code`, non tocca lo stato).',
 }
 
 /**

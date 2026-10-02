@@ -1,10 +1,10 @@
 import {
-  ARCHIVIO_FFMPEG_SHA256,
-  ARCHIVIO_FFMPEG_URL,
   DECODER_RICHIESTI,
   ENCODER_RICHIESTI,
-  FFMPEG_NELL_ARCHIVIO,
-  FFPROBE_NELL_ARCHIVIO,
+  FFMPEG_GZ_SHA256,
+  FFMPEG_SHA256,
+  FFPROBE_GZ_SHA256,
+  FFPROBE_SHA256,
   FILTRI_RICHIESTI,
 } from '../build'
 import type { CodiceRunnerVideo } from './codici'
@@ -90,8 +90,18 @@ export function percorsoUscitaVideo(job: {
 
 /** Dove vivono i binari dentro la MicroVM. Assoluti: nessun comando dipende dal `cwd`. */
 export const CARTELLA_BUILD = '/tmp/kv-ffmpeg'
-export const FFMPEG = `${CARTELLA_BUILD}/${FFMPEG_NELL_ARCHIVIO}`
-export const FFPROBE = `${CARTELLA_BUILD}/${FFPROBE_NELL_ARCHIVIO}`
+export const FFMPEG = `${CARTELLA_BUILD}/ffmpeg`
+export const FFPROBE = `${CARTELLA_BUILD}/ffprobe`
+
+/**
+ * I nomi delle variabili d'ambiente con cui gli URL firmati dei due `.gz` entrano nella
+ * MicroVM. Gli URL stanno SOLO lì: nell'`env` del comando di preparazione, mai negli
+ * argomenti di un processo (finirebbero in `ps` e in ogni log che stampa la riga di
+ * comando) e mai nell'`env` della conversione, dove i binari ci sono già e un URL
+ * firmato in più sarebbe soltanto un segreto in più da tenere fuori dai log.
+ */
+export const ENV_URL_FFMPEG = 'KV_URL_FFMPEG'
+export const ENV_URL_FFPROBE = 'KV_URL_FFPROBE'
 
 /**
  * Le tre uscite dello script, una per modo di fallire.
@@ -99,6 +109,10 @@ export const FFPROBE = `${CARTELLA_BUILD}/${FFPROBE_NELL_ARCHIVIO}`
  * Numeri alti e distinti di proposito: 1 e 2 li usa già mezza `coreutils`, e una
  * collisione farebbe leggere «lo sha non torna» dove invece `sh` non ha trovato un
  * comando. Restano sotto 125, che è dove cominciano i codici riservati alla shell.
+ *
+ * Una variabile d'ambiente non passata NON ha un'uscita sua: `${VAR:?}` esce con 1 (bash)
+ * o con 2 (dash), e `codiceDaUscitaPreparazione` la legge come ogni uscita che non
+ * conosce — cioè chiude, invece di proseguire.
  */
 export const USCITE_PREPARAZIONE = {
   scarico: 21,
@@ -107,42 +121,70 @@ export const USCITE_PREPARAZIONE = {
 } as const
 
 /**
- * Scarica la build pinnata, ne verifica lo SHA-256, e SOLO ALLORA la estrae.
+ * Scarica i due `.gz` della build dal NOSTRO bucket, ne verifica le impronte, li
+ * decomprime, verifica le impronte dei binari, e SOLO ALLORA li rende eseguibili.
+ *
+ * ─── NIENTE INTERNET, NIENTE GESTORI DI PACCHETTI ────────────────────────────
+ *
+ * Lo script non contiene un solo indirizzo: i due URL firmati di sola lettura
+ * (`urlLettura` su `video_build`) entrano dall'ambiente del comando, in `KV_URL_FFMPEG`
+ * e `KV_URL_FFPROBE`. E non contiene `dnf`, `sudo`, `xz` né `tar`. Il 29/09/2026 la
+ * conversione si è fermata perché la release BtbN è stata cancellata (404); a ogni
+ * MicroVM nuova, prima ancora, `dnf` scaricava ~76 MB di metadati dai mirror di Amazon
+ * per installare `xz`: due download esterni a runtime, entrambi punti di rottura fuori
+ * dal nostro controllo. `gzip` invece c'è su ogni immagine (Amazon Linux 2023, Ubuntu)
+ * senza installare niente.
  *
  * ─── L'ORDINE È LA SOSTANZA DI QUESTA FUNZIONE ───────────────────────────────
  *
- * Quello che sta per entrare nella MicroVM è codice preso da una release pubblica
- * su Internet, e fra poco leggerà il video che un genitore ha caricato. `tar` che
- * gira su un archivio non verificato è già l'esecuzione di codice altrui: scrive
- * percorsi decisi dall'archivio. Perciò `sha256sum -c` sta **prima** di `tar`, e
- * `set -e` fa il resto — se l'impronta non torna, la riga successiva non parte.
+ *     curl  →  sha256 dei `.gz`  →  `gzip -dc`  →  sha256 dei binari  →  `chmod`
  *
- * E se non torna, non si riprova. `curl` ha `--retry` perché un TCP che cade è un
- * incidente di trasporto; un'impronta sbagliata non lo è: o la release è cambiata
- * sotto i piedi (allora `build.ts` va aggiornato da una persona, dopo aver guardato
- * cosa è cambiato), o qualcuno sta servendo un archivio diverso. In entrambi i casi
- * riscaricare vuol dire soltanto sbagliare più in fretta.
+ * Quello che sta per entrare nella MicroVM è codice che fra poco leggerà il video
+ * che un'insegnante ha caricato. Perciò **un binario non verificato non è mai
+ * eseguibile**: `gzip -dc >` lo scrive coi permessi di default, senza il bit di
+ * esecuzione, e il `chmod 0755` sta DOPO la seconda verifica. Se un'impronta non torna
+ * `set -e` fa il resto: la riga successiva non parte. Le due verifiche non sono
+ * ridondanti — la prima prova che il file arrivato dalla rete è quello che abbiamo
+ * caricato (prima ancora di decomprimerlo), la seconda che ciò che è uscito dal `.gz` è
+ * il binario collaudato.
  *
- * Gli argomenti di `curl`, uno per uno: `-f` fa fallire su 4xx/5xx invece di
- * salvare la pagina d'errore dentro il file; `-sS` tace il progresso ma NON gli
- * errori, che sono l'unica cosa che poi si legge nel log; `-L` segue il redirect
- * con cui GitHub serve gli asset delle release.
+ * Il `>&2` sulle verifiche porta la riga `FAILED` di `sha256sum` nella diagnosi: sullo
+ * stdout resterebbe un «OK» che nessuno legge, sullo stderr si legge QUALE dei due file
+ * non torna.
  *
- * Dall'archivio si estraggono **solo i due binari nominati da `build.ts`**, non
- * tutto: `tar` con i percorsi espliciti non scrive niente che non abbiamo chiesto.
+ * ─── SE NON TORNA, IL JOB SI RITENTA: MA NON SI ESEGUE MAI ───────────────────
+ *
+ * Fino al 2026-10-02 qui c'era scritto «se non torna, non si riprova»: l'archivio veniva
+ * da una release pubblica che poteva cambiare sotto i piedi, e riscaricarlo voleva dire
+ * soltanto sbagliare più in fretta. Adesso la fonte è nostra e non cambia (si carica con
+ * `upsert: false`): un'impronta che non torna è un trasferimento troncato o un guasto
+ * nostro, e il job si ritenta riscaricando e riverificando (`./ritentativi.ts`). In
+ * nessun caso si esegue un binario che non abbia superato entrambe le verifiche.
+ *
+ * Gli argomenti di `curl`, uno per uno: `-f` fa fallire su 4xx/5xx invece di salvare la
+ * pagina d'errore dentro il file — è così che nella diagnosi si legge `returned error:
+ * 404`; `-sS` tace il progresso ma NON gli errori, che sono l'unica cosa che poi si
+ * legge nel log; `--retry 3 --retry-all-errors` ripete un trasporto che cade;
+ * `--connect-timeout 10 --max-time 60` fissano il tetto di OGNI tentativo, perché un
+ * download appeso non deve consumare l'invocazione. Non c'è `-L`: un URL firmato dello
+ * Storage non fa redirect.
  */
 export function scriptPreparazioneBuild(): string {
-  const archivio = `${CARTELLA_BUILD}.tar.xz`
+  const ffmpegGz = `${CARTELLA_BUILD}/ffmpeg.gz`
+  const ffprobeGz = `${CARTELLA_BUILD}/ffprobe.gz`
+  const opzioniCurl = '-fsS --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60'
   return [
     'set -eu',
-    // Il runtime node22 di Sandbox non include xz. La dipendenza viene
-    // installata soltanto quando manca; un errore interrompe la preparazione.
-    `if ! command -v xz >/dev/null 2>&1; then sudo -n dnf -y install xz >&2 || exit ${USCITE_PREPARAZIONE.estrazione}; fi`,
+    `: "\${${ENV_URL_FFMPEG}:?}" "\${${ENV_URL_FFPROBE}:?}"`,
     `mkdir -p ${CARTELLA_BUILD}`,
-    `curl -fsSL --retry 3 --retry-all-errors -o ${archivio} '${ARCHIVIO_FFMPEG_URL}' || exit ${USCITE_PREPARAZIONE.scarico}`,
-    `echo '${ARCHIVIO_FFMPEG_SHA256}  ${archivio}' | sha256sum -c - || exit ${USCITE_PREPARAZIONE.impronta}`,
-    `tar -xJf ${archivio} -C ${CARTELLA_BUILD} '${FFMPEG_NELL_ARCHIVIO}' '${FFPROBE_NELL_ARCHIVIO}' || exit ${USCITE_PREPARAZIONE.estrazione}`,
-    `rm -f ${archivio}`,
+    `curl ${opzioniCurl} -o ${ffmpegGz} "$${ENV_URL_FFMPEG}" || exit ${USCITE_PREPARAZIONE.scarico}`,
+    `curl ${opzioniCurl} -o ${ffprobeGz} "$${ENV_URL_FFPROBE}" || exit ${USCITE_PREPARAZIONE.scarico}`,
+    `printf '%s  %s\\n%s  %s\\n' '${FFMPEG_GZ_SHA256}' ${ffmpegGz} '${FFPROBE_GZ_SHA256}' ${ffprobeGz} | sha256sum -c - >&2 || exit ${USCITE_PREPARAZIONE.impronta}`,
+    `gzip -dc ${ffmpegGz} > ${FFMPEG} || exit ${USCITE_PREPARAZIONE.estrazione}`,
+    `gzip -dc ${ffprobeGz} > ${FFPROBE} || exit ${USCITE_PREPARAZIONE.estrazione}`,
+    `printf '%s  %s\\n%s  %s\\n' '${FFMPEG_SHA256}' ${FFMPEG} '${FFPROBE_SHA256}' ${FFPROBE} | sha256sum -c - >&2 || exit ${USCITE_PREPARAZIONE.impronta}`,
+    `rm -f ${CARTELLA_BUILD}/*.gz`,
+    `chmod 0755 ${FFMPEG} ${FFPROBE} || exit ${USCITE_PREPARAZIONE.estrazione}`,
     `test -x ${FFMPEG} && test -x ${FFPROBE} || exit ${USCITE_PREPARAZIONE.estrazione}`,
   ].join('\n')
 }
@@ -152,9 +194,10 @@ export function scriptPreparazioneBuild(): string {
  *
  * FAIL-CLOSED su tutto il resto, e vale la pena dire perché: un 137 è il SIGKILL di
  * un tetto di tempo, un 127 è «comando non trovato», un 1 è un `set -e` su qualcosa
- * che non abbiamo previsto. Nessuno di loro è «è andata bene», e farli ricadere su
- * `null` significherebbe proseguire verso `ffmpeg` con una cartella vuota — cioè
- * scoprire il guasto tre passi più in là, dove la diagnosi non c'è più.
+ * che non abbiamo previsto (o una variabile d'ambiente che nessuno ha passato).
+ * Nessuno di loro è «è andata bene», e farli ricadere su `null` significherebbe
+ * proseguire verso `ffmpeg` con una cartella vuota — cioè scoprire il guasto tre passi
+ * più in là, dove la diagnosi non c'è più.
  */
 export function codiceDaUscitaPreparazione(uscita: number): CodiceRunnerVideo | null {
   if (uscita === 0) return null
@@ -230,15 +273,18 @@ export function inventarioDellaBuild(stdout: string): InventarioBuild {
 /**
  * Che cosa manca, rispetto a ciò che `build.ts` dichiara indispensabile.
  *
- * ─── PERCHÉ SI CONTROLLA, INVECE DI FIDARSI DELLO SHA ────────────────────────
+ * ─── PERCHÉ SI CONTROLLA, INVECE DI FIDARSI DELLE IMPRONTE ───────────────────
  *
- * Lo SHA-256 dimostra che l'archivio è quello atteso; non dimostra che l'archivio
- * atteso sappia fare ciò che serve. Sono due domande diverse e la seconda ha già
- * avuto la sua risposta sbagliata in questo repo: `brew install ffmpeg` produce un
- * binario che passa qualunque verifica di integrità e **non ha `zscale`**, perché
- * Homebrew non compila libzimg — e `zscale` è il primo filtro della catena HDR→SDR.
- * Il guasto non si vede all'installazione: si vede al primo video HDR di un
- * genitore, con un «No such filter» dentro uno stderr che nessuno guarda.
+ * Dal 2026-10-02 le impronte SHA-256 che lo script verifica sono quattro: quelle dei
+ * due `.gz` scaricati dal nostro bucket e quelle dei due binari che ne escono (non più
+ * quella dell'archivio, che è soltanto la provenienza). Dimostrano che i binari sono
+ * quelli attesi; non dimostrano che i binari attesi sappiano fare ciò che serve. Sono
+ * due domande diverse e la seconda ha già avuto la sua risposta sbagliata in questo
+ * repo: `brew install ffmpeg` produce un binario che passa qualunque verifica di
+ * integrità e **non ha `zscale`**, perché Homebrew non compila libzimg — e `zscale` è
+ * il primo filtro della catena HDR→SDR. Il guasto non si vede all'installazione: si
+ * vede al primo video HDR di un genitore, con un «No such filter» dentro uno stderr
+ * che nessuno guarda.
  *
  * La testata di `build.ts` lo mette per iscritto: «chi risolve un binario verifica
  * questa lista e si rifiuta di partire se manca qualcosa, invece di scoprirlo per

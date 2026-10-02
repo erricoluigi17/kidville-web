@@ -87,6 +87,19 @@ export const maxDuration = 300
  */
 const ESITI_TRANQUILLI = new Set(['coda-vuota', 'in-corso', 'pronto'])
 
+/**
+ * `in-riprova` — un guasto NOSTRO che il runner ha già preso in carico: il job è stato
+ * rimesso in coda e riparte da sé (5, 10, 15 minuti, quattro tentativi in tutto).
+ *
+ * Né «tranquillo» né un guasto da gridare. Non è tranquillo perché qualcosa non ha funzionato
+ * e va visto — se la build non si scarica, ogni video in coda farà lo stesso, e il battito
+ * deve poterlo mostrare — ma non è nemmeno un `error`: il job non è perso, il runner ha fatto
+ * ciò che doveva, e un allarme che suona a ogni ritentativo viene spento. `warn`: la riga
+ * resta in `app_log` per trenta giorni, e l'`error` si riserva a ciò che è definitivo
+ * (`fallito`) o rotto (`lease-persa`, `esito-non-scritto`, `presa-rifiutata`).
+ */
+const ESITI_DA_SEGUIRE = new Set(['in-riprova'])
+
 // ⚠️ Il nome della rotta è un LETTERALE e non `` `video/${JOB}:POST` ``, che sarebbe
 // stato più asciutto. `logging-coverage` legge questo file come TESTO e confronta il
 // nome con la posizione del file: un nome costruito da una variabile gli è invisibile,
@@ -157,7 +170,12 @@ export const POST = withRoute(
       // quando il giro è esploso. Con i soli errori, «nessun log» non distingue
       // «nessuno ha caricato video» da «il cron non chiama più»: sono due fatti
       // diversi e uno dei due è un guasto.
-      logEvento('cron', ESITI_TRANQUILLI.has(esitoBattito) ? 'info' : 'error', {
+      const livello = ESITI_TRANQUILLI.has(esitoBattito)
+        ? 'info'
+        : ESITI_DA_SEGUIRE.has(esitoBattito)
+          ? 'warn'
+          : 'error'
+      logEvento('cron', livello, {
         operazione: JOB,
         esito: esitoBattito,
         canale,

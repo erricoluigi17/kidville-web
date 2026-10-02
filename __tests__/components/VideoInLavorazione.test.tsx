@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 
 import itServizi from '../../messages/it/teacherServizi.json'
+import itShared from '../../messages/it/shared.json'
 
 /**
  * V11 · CHE COSA VEDE UNA PERSONA MENTRE IL VIDEO SI PREPARA.
@@ -157,6 +158,72 @@ describe('un fallimento dice che cosa fare, e si può togliere di mezzo', () => 
     expect(screen.getByText('Questo video dura più di 3 minuti.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: itServizi.galleryVideoRimuovi }))
     expect(azioni.onRimuovi).toHaveBeenCalledWith(JOB_A)
+  })
+})
+
+/**
+ * «IL PROBLEMA È NOSTRO: LO STIAMO RIPROVANDO» — la scheda che racconta un ritentativo.
+ *
+ * La scheda non DECIDE niente: riceve il messaggio già tradotto da chi la monta (l'hook
+ * `useVideoGalleria`, che lo sceglie dal flag `riprovaAutomatica` del server) e lo mostra
+ * come un messaggio su una fase che NON è un fallimento. Quello che qui si tiene fermo è la
+ * FORMA: sotto la fase, non rosso (non è un errore: non c'è niente che la persona debba
+ * fare), e ANNUNCIATO — compare minuti dopo, da solo, e senza `aria-live` chi usa uno
+ * screen reader resta convinto che la coda sia ferma.
+ * Che il messaggio compaia SOLO mentre si ritenta lo provano i test dell'hook e della pagina.
+ */
+describe('un ritentativo automatico si legge, e si sente', () => {
+  it.each([
+    ['in-coda', itServizi.galleryVideoFaseInCoda],
+    ['conversione', itServizi.galleryVideoFaseConversione],
+  ] as const)('in fase %s il messaggio sta SOTTO la fase, che resta', (fase, testoFase) => {
+    montaggio([riga({ fase, messaggio: itServizi.galleryVideoRiprovaAutomatica })])
+    // La fase non sparisce: «in attesa» / «preparazione in corso» è ancora vero.
+    expect(screen.getByText(testoFase)).toBeInTheDocument()
+    const messaggio = screen.getByText(itServizi.galleryVideoRiprovaAutomatica)
+    expect(messaggio).toBeInTheDocument()
+    // Sotto la fase, non al suo posto: i due paragrafi sono fratelli e il messaggio viene dopo.
+    const fasePar = screen.getByText(testoFase)
+    expect(fasePar.compareDocumentPosition(messaggio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('il messaggio è ANNUNCIATO: `aria-live="polite"`, come la fase', () => {
+    const { container } = montaggio([riga({ fase: 'conversione', messaggio: itServizi.galleryVideoRiprovaAutomatica })])
+    const messaggio = screen.getByText(itServizi.galleryVideoRiprovaAutomatica)
+    expect(
+      messaggio,
+      'compare da solo, minuti dopo: senza `aria-live` chi non guarda lo schermo non lo sa',
+    ).toHaveAttribute('aria-live', 'polite')
+    // Le regioni vive sono DUE (fase e messaggio) e nessuna è `assertive`: «lo stiamo
+    // riprovando» non deve interrompere ciò che la persona sta facendo.
+    expect(container.querySelectorAll('[aria-live="polite"]')).toHaveLength(2)
+    expect(container.querySelector('[aria-live="assertive"]')).toBeNull()
+  })
+
+  it('non è un errore rosso: non c’è niente che la persona debba fare', () => {
+    montaggio([riga({ fase: 'in-coda', messaggio: itServizi.galleryVideoRiprovaAutomatica })])
+    const messaggio = screen.getByText(itServizi.galleryVideoRiprovaAutomatica)
+    expect(messaggio.className).toContain('text-kidville-sub')
+    expect(messaggio.className).not.toContain('text-kidville-error')
+    // E nessuna barra di errore o percentuale inventata: la barra resta quella delle fasi.
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('senza messaggio la scheda non ha né il paragrafo né la seconda regione viva', () => {
+    // L'assenza è vera solo se la presenza lo è: si controlla PRIMA che la fase sia a schermo.
+    const { container } = montaggio([riga({ fase: 'in-coda', messaggio: null })])
+    expect(screen.getByText(itServizi.galleryVideoFaseInCoda)).toBeInTheDocument()
+    expect(screen.queryByText(itServizi.galleryVideoRiprovaAutomatica)).toBeNull()
+    expect(container.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
+  })
+
+  it('un fallimento nostro mostra la frase finale UNA volta, nel paragrafo di fase, in rosso', () => {
+    // Esauriti i tentativi il job è `failed`: la frase è quella del guasto nostro e NON si
+    // aggiunge il messaggio «lo stiamo riprovando», che non è più vero.
+    montaggio([riga({ fase: 'fallito', messaggio: itShared.erroreVideoGuastoNostro })])
+    expect(screen.getAllByText(itShared.erroreVideoGuastoNostro)).toHaveLength(1)
+    expect(screen.getByText(itShared.erroreVideoGuastoNostro).className).toContain('text-kidville-error')
+    expect(screen.queryByText(itServizi.galleryVideoRiprovaAutomatica)).toBeNull()
   })
 })
 

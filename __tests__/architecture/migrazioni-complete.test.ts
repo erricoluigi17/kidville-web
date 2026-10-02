@@ -81,12 +81,21 @@ type Fotografia = {
 // tolta. Una dichiarazione che sopravvive al suo motivo è un'allowlist che marcisce.
 // ─────────────────────────────────────────────────────────────────────────────
 const IN_CODA: Record<string, string> = {
-    // VUOTA dal 2026-09-18. Le dieci migrazioni della pipeline video — schema, RPC,
-    // ciclo di vita degli intent, presa in carico dalla coda, i cinque bucket pinnati,
-    // i tetti di Galleria e News, retention e i due cron — sono state APPLICATE, e la
-    // fotografia qui accanto le contiene. La prova gemella, quella che boccia le voci
-    // morte, e' diventata rossa su tutte e dieci nel momento esatto in cui il push e'
-    // finito: e' cosi' che questa mappa si e' svuotata, non per diligenza di qualcuno.
+    // VUOTA dal 2026-09-18 al 2026-10-02. Le dieci migrazioni della pipeline video —
+    // schema, RPC, ciclo di vita degli intent, presa in carico dalla coda, i cinque
+    // bucket pinnati, i tetti di Galleria e News, retention e i due cron — sono state
+    // APPLICATE, e la fotografia qui accanto le contiene. La prova gemella, quella che
+    // boccia le voci morte, e' diventata rossa su tutte e dieci nel momento esatto in
+    // cui il push e' finito: e' cosi' che questa mappa si e' svuotata, non per
+    // diligenza di qualcuno.
+    //
+    // RIAPERTA il 2026-10-02 con due voci, quelle della PR 1 «hotfix video» (FFmpeg nel
+    // nostro bucket, ritentativi dei job), e SVUOTATA lo stesso giorno: le due sono state
+    // applicate in produzione prima del merge con `supabase db push --linked`, dopo essere
+    // state mostrate, con il file gia' rinominato all'istante dell'applicazione
+    // (`20261002065852_video_build_bucket.sql`, `20261002065952_video_job_ritentativi.sql`).
+    // Cosi' la `version` registrata e' quella del file, e l'integrazione Supabase al merge
+    // le trova gia' applicate invece di applicarle una seconda volta.
 }
 
 const RADICE = process.cwd()

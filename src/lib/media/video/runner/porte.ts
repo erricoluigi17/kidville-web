@@ -71,11 +71,15 @@ export type EsitoBattito = { ok: true } | { ok: false; code: string }
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Le cinque RPC che il runner chiama, e nessun'altra.
+ * Le sei RPC che il runner chiama, e nessun'altra.
  *
  * `video_job_uploaded` e `video_job_cancel` non sono qui: la prima appartiene al
  * bordo dell'upload, la seconda alla persona che cambia idea. Un worker che
  * potesse chiamarle avrebbe più potere di quanto il suo mestiere richieda.
+ *
+ * La sesta, `video_job_retry`, è dal 2026-10-02 la risposta a un guasto NOSTRO: invece di
+ * rendere il job definitivo (`video_job_fail`) lo rimette in coda con un'attesa
+ * (`./ritentativi.ts` decide quando e quanto).
  */
 export interface CodaVideo {
   /**
@@ -120,18 +124,50 @@ export interface CodaVideo {
     codice: string
     rifiutato: boolean
   }): Promise<EsitoRpcVideo>
+  /**
+   * `video_job_retry(p_job_id, p_fence_epoch, p_lease_owner, p_error_code,
+   * p_tentativi_massimi, p_attesa_secondi)`: rimette in coda un job il cui guasto è NOSTRO.
+   *
+   * La risposta ha quattro significati, e il runner li legge diversamente (`esegui.ts`):
+   *  · `ok` con il job `queued` — è in attesa del prossimo tentativo;
+   *  · `ok` con il job `failed` — il database ha riconosciuto i tentativi finiti (o il job
+   *    già chiuso) e ha delegato a `video_job_fail`: è un fallimento definitivo;
+   *  · `RPC_ERROR` — la chiamata non è arrivata o la funzione non c'è (la migrazione non è
+   *    applicata): niente è stato scritto, e il runner ripiega su `fallito`;
+   *  · qualunque altro codice (`FENCE_MISMATCH`, `LEASE_*`, `INVALID_STATE`…) — un VERDETTO:
+   *    il job non è più nostro.
+   */
+  riprova(p: {
+    jobId: string
+    fenceEpoch: number
+    leaseOwner: string
+    codice: string
+    tentativiMassimi: number
+    attesaSecondi: number
+  }): Promise<EsitoRpcVideo>
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
  * L'ARCHIVIO — lo Storage privato
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * L'esito di una firma. Quando lo Storage la rifiuta porta, oltre al motivo, i due fatti da
+ * cui il runner decide se il guasto passa da solo:
+ *
+ *  · `stato` — lo stato HTTP della risposta (`StorageApiError.status`);
+ *  · `codiceStorage` — il codice dello Storage nel corpo (`StorageApiError.code`:
+ *    `NoSuchKey`, `AccessDenied`…).
+ *
+ * Entrambi facoltativi: un errore di rete o un guasto del client non ha né l'uno né
+ * l'altro, e allora il guasto è «transitorio» (`classeDelDownload`, in `./ritentativi.ts`).
+ */
 export type EsitoArchivio =
   | { ok: true; url: string }
-  | { ok: false; motivo: string }
+  | { ok: false; motivo: string; stato?: number; codiceStorage?: string }
 
 /**
- * Lo Storage, visto dal runner: due indirizzi firmati, e nient'altro.
+ * Lo Storage, visto dal runner: indirizzi firmati, e nient'altro.
  *
  * ⚠️ NON si legge né si scrive il file DA QUI. Un originale arriva a 2 GB e
  * un'uscita pure: farli passare per la lambda vorrebbe dire tenerli in memoria, e
@@ -148,7 +184,10 @@ export type EsitoArchivio =
  * l'URL interpolato.
  */
 export interface ArchivioVideo {
-  /** Indirizzo firmato in LETTURA dell'originale, valido `secondi`. */
+  /**
+   * Indirizzo firmato in LETTURA, valido `secondi`: dell'originale (due ore) e, a ogni MicroVM
+   * nuova, dei due `.gz` della build nel bucket privato `video_build` (quindici minuti).
+   */
   urlLettura(bucket: string, percorso: string, secondi: number): Promise<EsitoArchivio>
   /** Indirizzo firmato in SCRITTURA per l'uscita di questo tentativo. */
   urlScrittura(bucket: string, percorso: string): Promise<EsitoArchivio>

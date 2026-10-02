@@ -571,6 +571,7 @@
   "erroreVideoNonAutorizzato": "This upload belongs to someone else, or to another location: nothing has been changed.",
   "erroreVideoAppDaAggiornare": "Uploading videos needs the latest version: update the app, or reload the page if you are on a browser. Clips already waiting will resume by themselves.",
   "erroreVideoOperazioneNonRiuscita": "The operation on this video did not succeed: please try again shortly. If it keeps happening, report it to the office.",
+  "erroreVideoGuastoNostro": "We could not prepare this video because of a problem on our side, not with the clip. Please upload it again later: if it still does not work, let the office know.",
   "errorePeriodoTroppoLungo": "That date range is too long: the register is read one stretch at a time. Please narrow the range, for example to a single term.",
   "errorePeriodoRovesciato": "The end date comes before the start date: please check the range.",
   "erroreScadenzaAvvisoMancante": "Check when the notice should stop showing on the board: if that date and time is missing or not valid, the notice cannot be saved.",

@@ -4,7 +4,7 @@
  * ─────────────────────────────────────────────────────────────────────────────────
  * PERCHÉ ESISTE QUESTO FILE, e perché non basta scrivere «ffmpeg» da qualche parte.
  *
- * La conversione gira dentro un Vercel Sandbox, su una build scaricata da Internet.
+ * La conversione gira dentro un Vercel Sandbox, su UNA build precisa di FFmpeg.
  * Se il collaudo in CI usa una build DIVERSA da quella del Sandbox, un test verde non
  * dice niente sul comportamento in produzione: dice che *una* certa FFmpeg fa *una*
  * certa cosa. Non è un'ipotesi — è la misura del 2026-09-17, e sta scritta qui perché
@@ -17,22 +17,56 @@
  *     stanno misurando la nostra conversione: stanno misurando il pacchettizzatore.
  *
  * Perciò la build è **pinnata alla release datata**, non al tag mobile `latest`, e si
- * verifica con lo SHA-256 prima di essere eseguita. Lo stesso numero sta in tre posti
- * — qui, in `.github/workflows/ci.yml` e nella spec — e il lock
+ * verifica con lo SHA-256 prima di essere eseguita.
+ *
+ * ─── DAL 2026-10-02 NON SI SCARICA PIÙ DA INTERNET ──────────────────────────────
+ *
+ * Fino al 29/09/2026 il runner prendeva l'archivio dalla release BtbN a OGNI MicroVM
+ * nuova (dopo aver installato `xz` dai mirror di Amazon). Quel giorno BtbN ha
+ * cancellato la release datata — conserva le build giornaliere 14 giorni — e da
+ * allora ogni conversione è fallita con `BUILD_DOWNLOAD_FAILED`: 17 job su 17. Due
+ * download esterni a runtime erano due punti di rottura fuori dal nostro controllo, e
+ * uno è scattato.
+ *
+ * La catena adesso è questa, e ogni anello ha la sua impronta:
+ *
+ *     archivio BtbN (`adb2…`)  →  i due binari estratti  →  due `.gz` nel nostro bucket privato
+ *
+ *   · l'ARCHIVIO è la provenienza. Sta nel bucket accanto ai binari e nelle costanti
+ *     qui sotto, ma nessun codice lo scarica più: né il runner, né la CI.
+ *   · i BINARI sono `ffmpeg` e `ffprobe`, estratti da `<radice>/bin/` dell'archivio.
+ *   · i `.gz` (`gzip -9 -n`) sono ciò che si scarica davvero, dal bucket `video_build`
+ *     con URL firmati di sola lettura. Il runner verifica DUE impronte per ciascun
+ *     binario: quella del `.gz` prima di decomprimerlo, quella del binario dopo.
+ *
+ * Le cinque impronte — archivio, due `.gz`, due binari — stanno in tre posti: qui, in
+ * `.github/workflows/ci.yml` (le quattro che la CI verifica) e nella spec. Il lock
  * `__tests__/architecture/fixture-video-reali.test.ts` fallisce se divergono.
  * ─────────────────────────────────────────────────────────────────────────────────
  *
- * Provenienza e misura: `docs/superpowers/specs/2026-09-16-video-build-verificata.md`.
+ * Provenienza e misura: `docs/superpowers/specs/2026-09-16-video-build-verificata.md`
+ * (sezione «Dal 2026-10-02: la build vive nel nostro Storage»).
  */
 
-/** FFmpeg n9.0.1-30-g9258bacca5, Linux x86_64 GPL, pacchetto BtbN del 2026-09-15. */
+/* ────────────────────────────────────────────────────────────────────────────
+ * LA PROVENIENZA — nessun codice scarica più da qui
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * FFmpeg n9.0.1-30-g9258bacca5, Linux x86_64 GPL, pacchetto BtbN del 2026-09-15.
+ *
+ * PROVENIENZA, non una fonte: dal 2026-10-02 nessuno scarica da questo indirizzo. È
+ * qui per dire da dove sono venuti i binari, e perché il lock sui provider esterni
+ * lo conosce come host «non chiamato».
+ */
 export const ARCHIVIO_FFMPEG_URL =
   'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-15-13-18/ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0.tar.xz'
 
 /**
- * SHA-256 pubblicato da BtbN e verificato due volte: sul download locale e dentro il
- * Sandbox. Si controlla PRIMA di estrarre: un archivio scaricato da una release
- * pubblica è codice che sta per girare con i nostri file dentro.
+ * SHA-256 pubblicato da BtbN, verificato sul download locale e dentro il Sandbox, e
+ * rimisurato il 2026-10-02 sull'archivio recuperato dalla cache della CI (150.157.000
+ * byte). È l'impronta del primo anello della catena: da qui sono stati estratti i
+ * due binari.
  */
 export const ARCHIVIO_FFMPEG_SHA256 =
   'adb2d107287cdace0c5d00dd986cd3674c1e86776501640bff3b5cf7d2cf2e71'
@@ -40,8 +74,49 @@ export const ARCHIVIO_FFMPEG_SHA256 =
 /** La cartella radice dentro il tarball: i binari stanno sotto `<radice>/bin/`. */
 export const RADICE_ARCHIVIO_FFMPEG = 'ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0'
 
+/** Dove stanno i due binari dentro l'archivio originale: il percorso con cui sono stati estratti. */
 export const FFMPEG_NELL_ARCHIVIO = `${RADICE_ARCHIVIO_FFMPEG}/bin/ffmpeg`
 export const FFPROBE_NELL_ARCHIVIO = `${RADICE_ARCHIVIO_FFMPEG}/bin/ffprobe`
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * LA BUILD NEL NOSTRO STORAGE — ciò che il runner e la CI scaricano davvero
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Il bucket privato che custodisce la build. Nessuna policy su `storage.objects`: lo
+ * legge solo la chiave di servizio, e chiunque altro passa da un URL firmato. Non c'è
+ * nessun dato personale: due binari pubblici (GPL) e l'archivio da cui vengono.
+ */
+export const BUCKET_BUILD_VIDEO = 'video_build'
+
+/** La cartella dentro il bucket: porta il nome della versione, così una build nuova non ne sovrascrive una vecchia. */
+export const CARTELLA_BUILD_NEL_BUCKET = 'ffmpeg-n9.0.1-30-g9258bacca5'
+
+export const PERCORSO_FFMPEG_GZ = `${CARTELLA_BUILD_NEL_BUCKET}/ffmpeg.gz`
+export const PERCORSO_FFPROBE_GZ = `${CARTELLA_BUILD_NEL_BUCKET}/ffprobe.gz`
+/** L'archivio originale, conservato nel bucket come provenienza: il runner non lo legge. */
+export const PERCORSO_ARCHIVIO_ORIGINALE = `${CARTELLA_BUILD_NEL_BUCKET}/ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0.tar.xz`
+
+/**
+ * Le impronte dei due `.gz`, prodotti in CI con `gzip -9 -n`. Si verificano PRIMA di
+ * decomprimere: un file che arriva da una rete è codice che sta per girare con i
+ * nostri file dentro.
+ *
+ * ⚠️ Sono i `.gz` prodotti in CI quelli canonici. Rigenerarli su macOS cambierebbe lo
+ * SHA: un `gzip` diverso da quello di CI può produrre byte diversi dallo stesso
+ * binario. Perciò i `.gz` non si rigenerano a mano — si carica nel bucket ciò che è
+ * stato verificato, e a restare invariate sono le impronte dei BINARI.
+ */
+export const FFMPEG_GZ_SHA256 = 'f019aabcb3940d3ddf61554cc96086eb95f98a1978877196b9e6320b52a2a790'
+export const FFPROBE_GZ_SHA256 = 'a3cb017c28ce55d622e3328fc4003acf7daa1b05ca63ca7b826f97807f3333a9'
+
+/**
+ * Le impronte dei due binari decompressi. Si verificano DOPO `gzip -dc`: provano che
+ * ciò che è uscito dal `.gz` è il binario che è stato collaudato, e solo allora il
+ * file diventa eseguibile.
+ */
+export const FFMPEG_SHA256 = '341447cfff51ff528cf530eb111542306cffc1f1f6a51726e6327b655d6860be'
+export const FFPROBE_SHA256 = '09c3b0595ea6dd648e0cf1b462d97303792b31cb81c0359b65d072c0d7254063'
 
 /**
  * I FILTRI CHE IL FILTERGRAPH DI PRODUZIONE NOMINA, uno per uno.

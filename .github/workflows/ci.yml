@@ -32,44 +32,83 @@ jobs:
       # ─────────────────────────────────────────────────────────────────────────
       # FFMPEG PINNATO — non `apt-get install ffmpeg`, e non è pignoleria.
       #
-      # La conversione video gira in un Vercel Sandbox su una build scaricata da
-      # BtbN e FISSATA alla release datata del 2026-09-15. Se qui girasse la build
-      # di Ubuntu, un test verde direbbe che *una certa* FFmpeg fa una certa cosa —
-      # non che la faccia quella che convertirà i video dei bambini. Che due build
-      # della stessa famiglia divergano non è un'ipotesi: misurato il 2026-09-17,
-      # `brew install ffmpeg` 8.1.2 NON ha il filtro `zscale`, e senza `zscale`
-      # l'intero ramo HDR→SDR di `src/lib/media/video/encode.ts` non esiste. Un
-      # collaudo su quella build non sta misurando la nostra conversione.
+      # La conversione video gira in un Vercel Sandbox su UNA build precisa di
+      # FFmpeg. Se qui girasse la build di Ubuntu, un test verde direbbe che *una
+      # certa* FFmpeg fa una certa cosa — non che la faccia quella che convertirà i
+      # video dei bambini. Che due build della stessa famiglia divergano non è
+      # un'ipotesi: misurato il 2026-09-17, `brew install ffmpeg` 8.1.2 NON ha il
+      # filtro `zscale`, e senza `zscale` l'intero ramo HDR→SDR di
+      # `src/lib/media/video/encode.ts` non esiste. Un collaudo su quella build non
+      # sta misurando la nostra conversione.
       #
-      # Lo sha256 qui sotto è lo STESSO numero di `src/lib/media/video/build.ts` e
-      # della spec `docs/superpowers/specs/2026-09-16-video-build-verificata.md`:
-      # un numero, tre posti, e il lock `__tests__/architecture/fixture-video-reali`
-      # fallisce se divergono. Si verifica PRIMA di estrarre — è codice preso da
-      # Internet che sta per girare sui nostri file.
+      # DAL 2026-10-02 LA BUILD NON SI SCARICA PIÙ DA INTERNET. Il 29/09/2026 BtbN
+      # ha cancellato la release datata da cui questo passo la prendeva (404), e
+      # l'unica copia rimasta era nella cache di GitHub Actions, che elimina una
+      # cache dopo 7 giorni senza accessi. I due binari — `ffmpeg.gz` e `ffprobe.gz`,
+      # compressi con `gzip -9 -n` — vivono adesso nel NOSTRO bucket privato
+      # `video_build` (Supabase Storage), insieme all'archivio originale come
+      # provenienza. Sono gli stessi file che usa il runner di produzione.
+      #
+      # DA DOVE LI PRENDE QUESTO PASSO
+      #   1. dalla cache `~/.cache/kidville-ffmpeg-bin`, la cui chiave porta le
+      #      impronte dei due binari: cambiare build cambia chiave;
+      #   2. a cache vuota, dai due URL firmati nei segreti `CI_FFMPEG_GZ_URL` e
+      #      `CI_FFPROBE_GZ_URL`, dichiarati SOLO in questo passo.
+      # In entrambi i casi poi si verificano le impronte: quelle dei `.gz` PRIMA di
+      # decomprimerli, quelle dei binari DOPO. Sono le stesse quattro di
+      # `src/lib/media/video/build.ts` e della spec
+      # `docs/superpowers/specs/2026-09-16-video-build-verificata.md`, e il lock
+      # `__tests__/architecture/fixture-video-reali` fallisce se divergono.
+      #
+      # ⚠️ GLI URL FIRMATI SCADONO. Valgono 365 giorni dalla firma: quelli attuali
+      # sono stati firmati il 2026-10-02 e scadono il 2027-10-02. Servono solo a
+      # cache vuota — cioè dopo una settimana senza run — ma quel giorno un passo
+      # rosso senza spiegazioni costerebbe ore: il messaggio d'errore qui sotto
+      # rimanda a questo commento. Si rinnovano da una persona che abbia accesso al
+      # progetto Supabase e al repository, con la CLI già autenticata:
+      #
+      #   supabase projects api-keys --project-ref uimulkjyekgemjakmepp -o json \
+      #     | node scripts/ffmpeg-nel-bucket.mjs --firma-ci ffmpeg | gh secret set CI_FFMPEG_GZ_URL
+      #   supabase projects api-keys --project-ref uimulkjyekgemjakmepp -o json \
+      #     | node scripts/ffmpeg-nel-bucket.mjs --firma-ci ffprobe | gh secret set CI_FFPROBE_GZ_URL
+      #
+      # Lo script scrive l'URL SOLO se stdout non è un terminale, così non finisce a
+      # schermo né nella cronologia. Dopo il rinnovo, aggiornare qui la data.
       # ─────────────────────────────────────────────────────────────────────────
-      - name: Cache dell'archivio FFmpeg pinnato
+      - name: Cache dei binari FFmpeg pinnati
         uses: actions/cache@v4
         with:
-          path: ~/.cache/kidville-ffmpeg
-          key: ffmpeg-btbn-adb2d107287cdace0c5d00dd986cd3674c1e86776501640bff3b5cf7d2cf2e71
+          path: ~/.cache/kidville-ffmpeg-bin
+          key: ffmpeg-bin-341447cfff51ff528cf530eb111542306cffc1f1f6a51726e6327b655d6860be-09c3b0595ea6dd648e0cf1b462d97303792b31cb81c0359b65d072c0d7254063
       - name: FFmpeg pinnato (la build del Sandbox di produzione, non quella della distro)
         env:
-          ARCHIVIO_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-15-13-18/ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0.tar.xz
-          ARCHIVIO_SHA256: adb2d107287cdace0c5d00dd986cd3674c1e86776501640bff3b5cf7d2cf2e71
-          RADICE_ARCHIVIO: ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0
+          # Gli URL firmati: dichiarati qui e in nessun altro punto del workflow.
+          CI_FFMPEG_GZ_URL: ${{ secrets.CI_FFMPEG_GZ_URL }}
+          CI_FFPROBE_GZ_URL: ${{ secrets.CI_FFPROBE_GZ_URL }}
         run: |
           set -euo pipefail
-          CACHE="$HOME/.cache/kidville-ffmpeg"
+          CACHE="$HOME/.cache/kidville-ffmpeg-bin"
           DEST="$HOME/.local/kidville-ffmpeg"
           mkdir -p "$CACHE" "$DEST"
-          ARCHIVIO="$CACHE/ffmpeg-pinnato.tar.xz"
-          if [ ! -f "$ARCHIVIO" ]; then
-            echo "::notice::archivio non in cache, lo scarico"
-            curl -fsSL --retry 3 --retry-delay 5 -o "$ARCHIVIO" "$ARCHIVIO_URL"
+          if [ ! -f "$CACHE/ffmpeg.gz" ] || [ ! -f "$CACHE/ffprobe.gz" ]; then
+            if [ -z "${CI_FFMPEG_GZ_URL:-}" ] || [ -z "${CI_FFPROBE_GZ_URL:-}" ]; then
+              echo "::error::binari FFmpeg non in cache e segreti CI_FFMPEG_GZ_URL / CI_FFPROBE_GZ_URL assenti o vuoti: vedi il commento sopra a questo passo"
+              exit 1
+            fi
+            echo "::notice::binari non in cache, li scarico dal nostro bucket video_build"
+            scarica() {
+              curl -fsS --retry 3 --retry-all-errors --retry-delay 5 --connect-timeout 10 --max-time 300 -o "$2" "$1" \
+                || { echo "::error::download di $(basename "$2") dal bucket video_build fallito: URL firmato scaduto o revocato? Si rinnova come scritto nel commento sopra a questo passo"; exit 1; }
+            }
+            scarica "$CI_FFMPEG_GZ_URL" "$CACHE/ffmpeg.gz"
+            scarica "$CI_FFPROBE_GZ_URL" "$CACHE/ffprobe.gz"
           fi
-          echo "$ARCHIVIO_SHA256  $ARCHIVIO" | sha256sum -c -
-          tar -xJf "$ARCHIVIO" --strip-components=2 -C "$DEST" \
-            "$RADICE_ARCHIVIO/bin/ffmpeg" "$RADICE_ARCHIVIO/bin/ffprobe"
+          # Le impronte si verificano SEMPRE, anche con la cache calda: una cache
+          # corrotta o avvelenata non deve arrivare a un binario eseguibile.
+          printf '%s  %s\n%s  %s\n' 'f019aabcb3940d3ddf61554cc96086eb95f98a1978877196b9e6320b52a2a790' "$CACHE/ffmpeg.gz" 'a3cb017c28ce55d622e3328fc4003acf7daa1b05ca63ca7b826f97807f3333a9' "$CACHE/ffprobe.gz" | sha256sum -c -
+          gzip -dc "$CACHE/ffmpeg.gz" > "$DEST/ffmpeg"
+          gzip -dc "$CACHE/ffprobe.gz" > "$DEST/ffprobe"
+          printf '%s  %s\n%s  %s\n' '341447cfff51ff528cf530eb111542306cffc1f1f6a51726e6327b655d6860be' "$DEST/ffmpeg" '09c3b0595ea6dd648e0cf1b462d97303792b31cb81c0359b65d072c0d7254063' "$DEST/ffprobe" | sha256sum -c -
           chmod +x "$DEST/ffmpeg" "$DEST/ffprobe"
           "$DEST/ffmpeg" -version | head -1
           # Meglio saperlo qui, in una riga, che dal rosso di dieci casi fra due minuti.

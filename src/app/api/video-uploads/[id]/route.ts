@@ -10,6 +10,7 @@ import {
   avanzamentoDaStatoVideo,
   CANALI_VIDEO,
   codiceMessaggioVideo,
+  riprovaAutomaticaInCorso,
   schemaStatoJobVideo,
   type CanaleVideo,
   type StatoJobVideo,
@@ -83,9 +84,17 @@ const schemaAzioneVideo = z.discriminatedUnion('azione', [
   }),
 ])
 
-/** Le colonne che servono a raccontare lo stato, e nessuna di più. */
+/**
+ * Le colonne che servono a raccontare lo stato, e nessuna di più.
+ *
+ * `attempt` c'è perché da solo — con lo stato — dice se il job si sta ritentando
+ * (`riprovaAutomaticaInCorso`). Senza questa colonna PostgREST non la restituirebbe e
+ * la scheda non direbbe mai «lo stiamo riprovando», senza nessun errore da nessuna
+ * parte: il test legge la lista delle colonne chieste, non solo il corpo che torna.
+ * `last_error_code` NON c'è, e non deve esserci: è il nome interno della causa.
+ */
 const COLONNE_INTENTO = 'id, owner_id, scuola_id, channel, revision, status, updated_at'
-const COLONNE_JOB = 'id, intent_id, channel, status, error_code, updated_at, created_at'
+const COLONNE_JOB = 'id, intent_id, channel, status, error_code, attempt, updated_at, created_at'
 
 type RigaIntento = {
   id: string
@@ -103,6 +112,8 @@ type RigaJob = {
   channel: string
   status: string
   error_code: string | null
+  /** Il numero del tentativo: 0 prima della prima presa in carico, +1 a ogni `video_job_claim`. */
+  attempt: number
   updated_at: string
 }
 
@@ -187,6 +198,13 @@ function canaleDi(valore: string): CanaleVideo {
  * E il codice esce SOLO se il job è fallito — una barra piena su un fallimento è
  * una bugia, un codice d'errore su un job vivo è un allarme falso. Lo pretende
  * anche `schemaStatoJobVideo`, che qui riverifica il risultato invece di fidarsi.
+ *
+ * `riprovaAutomatica` è la metà «non ancora un errore» della stessa regola: il job che
+ * il runner ha rimesso in coda dopo un guasto nostro, o che sta girando un ritentativo,
+ * dice «lo stiamo riprovando» invece di sembrare una coda ferma. Lo calcola
+ * `riprovaAutomaticaInCorso` — la stessa funzione che il contratto esporta, non una
+ * copia — e il codice della causa non esce: la persona legge solo che il problema è
+ * nostro. Un job non in coda e non in lavorazione non lo porta mai.
  */
 function statoJob(riga: RigaJob, intentId: string): StatoJobVideoLetto | null {
   const stato = riga.status as StatoJobVideo
@@ -198,6 +216,7 @@ function statoJob(riga: RigaJob, intentId: string): StatoJobVideoLetto | null {
     stato,
     avanzamento: avanzamentoDaStatoVideo(stato) ?? null,
     codice: fallito ? codiceMessaggioVideo(riga.error_code) : null,
+    riprovaAutomatica: riprovaAutomaticaInCorso(stato, riga.attempt),
     aggiornatoIl: new Date(riga.updated_at).toISOString(),
   }
   const esito = schemaStatoJobVideo.safeParse(letto)

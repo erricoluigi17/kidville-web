@@ -5,11 +5,15 @@ import { join } from 'node:path'
 import {
   ARCHIVIO_FFMPEG_SHA256,
   ARCHIVIO_FFMPEG_URL,
+  FFMPEG_GZ_SHA256,
+  FFMPEG_SHA256,
+  FFPROBE_GZ_SHA256,
+  FFPROBE_SHA256,
   FILTRI_RICHIESTI,
-  RADICE_ARCHIVIO_FFMPEG,
 } from '@/lib/media/video/build'
 import { buildVideoEncodeArgs } from '@/lib/media/video/encode'
 import type { VideoProbe } from '@/lib/media/video/probe'
+import { scriptPreparazioneBuild } from '@/lib/media/video/runner/preparazione'
 import { VARIABILE_CARTELLA, VARIABILE_RINUNCIA, rinunciaDichiarata } from '../fixtures/ffmpeg'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,10 +44,18 @@ import { VARIABILE_CARTELLA, VARIABILE_RINUNCIA, rinunciaDichiarata } from '../f
 //      rinuncia per vedere che in CI lanci davvero — la sua descrizione a parole
 //      non è una prova (2026-09-02: un riquadro di CLAUDE.md dichiarava armata una
 //      protezione che non lo era).
-//  (c) UN NUMERO, TRE POSTI. Lo sha256 della build pinnata sta in `build.ts`, in
-//      `ci.yml` e nella spec. Se divergono, in CI gira una build diversa da quella
-//      di produzione e un verde non dice più niente sul comportamento reale — che
-//      è esattamente il difetto che tutto questo lavoro chiude.
+//  (c) LE IMPRONTE, TRE POSTI. Dal 2026-10-02 la build non si scarica più da
+//      Internet: sta nel nostro bucket `video_build`, e la catena ha CINQUE
+//      impronte — l'archivio BtbN da cui viene (provenienza), i due `.gz` che si
+//      scaricano, i due binari che ne escono. Stanno in `build.ts` e nella spec
+//      (tutte e cinque) e in `ci.yml` (le quattro che la CI verifica: l'archivio
+//      non lo scarica più nessuno). Se divergono, in CI gira una build diversa da
+//      quella di produzione e un verde non dice più niente sul comportamento
+//      reale — che è esattamente il difetto che tutto questo lavoro chiude.
+//
+//      E nessuno dei due percorsi — lo script che gira nel Sandbox, il workflow —
+//      può rimettere un indirizzo esterno: il 29/09/2026 la release BtbN è stata
+//      cancellata e la conversione si è fermata (17 job su 17).
 //
 // I file si leggono senza i commenti: un lock che cerca `runIf` come TESTO
 // troverebbe anche questa riga, e sarebbe un lock che fallisce sulla propria
@@ -287,29 +299,98 @@ describe('fixture video reali', () => {
     }
   })
 
-  it('lo sha256 della build pinnata è lo stesso numero in tre posti', () => {
-    for (const percorso of [BUILD, WORKFLOW, SPEC]) {
-      expect(
-        impronteIn(percorso),
-        `${percorso} non dichiara esattamente lo sha256 della build pinnata: ` +
-          'una build diversa in CI rende il verde muto sul comportamento reale.',
-      ).toEqual(new Set([ARCHIVIO_FFMPEG_SHA256]))
-    }
+  /* ──────────────────────────────────────────────────────────────────────────
+   * LE IMPRONTE, TRE POSTI (dal 2026-10-02).
+   *
+   * La catena ha cinque impronte: l'archivio BtbN (provenienza), i due `.gz` che si
+   * scaricano dal nostro bucket, i due binari che ne escono. `build.ts` e la spec le
+   * hanno tutte; la CI verifica le quattro della catena, perché l'archivio non lo
+   * scarica più nessuno.
+   * ────────────────────────────────────────────────────────────────────────── */
+  const IMPRONTE_DELLA_CATENA = [FFMPEG_GZ_SHA256, FFPROBE_GZ_SHA256, FFMPEG_SHA256, FFPROBE_SHA256]
+  const TUTTE_LE_IMPRONTE = [ARCHIVIO_FFMPEG_SHA256, ...IMPRONTE_DELLA_CATENA]
+
+  it('le cinque impronte sono sha256 veri e tutte diverse', () => {
+    for (const impronta of TUTTE_LE_IMPRONTE) expect(impronta).toMatch(/^[0-9a-f]{64}$/)
+    // Una impronta incollata due volte (il `.gz` al posto del binario) renderebbe le due
+    // verifiche la stessa verifica.
+    expect(new Set(TUTTE_LE_IMPRONTE).size).toBe(5)
   })
 
-  it('anche l’archivio e la sua radice sono dichiarati una volta sola, uguali ovunque', () => {
-    const workflow = leggi(WORKFLOW)
-    const spec = leggi(SPEC)
+  it('le impronte della build sono le stesse in tre posti: build.ts e spec le cinque, la CI le quattro che verifica', () => {
+    for (const percorso of [BUILD, SPEC]) {
+      expect(
+        impronteIn(percorso),
+        `${percorso} non dichiara ESATTAMENTE le cinque impronte della build pinnata ` +
+          '(archivio, due .gz, due binari): una build diversa in CI rende il verde muto ' +
+          'sul comportamento reale.',
+      ).toEqual(new Set(TUTTE_LE_IMPRONTE))
+    }
+    expect(
+      impronteIn(WORKFLOW),
+      `${WORKFLOW} non dichiara ESATTAMENTE le quattro impronte che la CI verifica ` +
+        '(due .gz, due binari): niente archivio, che non scarica più.',
+    ).toEqual(new Set(IMPRONTE_DELLA_CATENA))
+  })
 
-    expect(workflow).toContain(ARCHIVIO_FFMPEG_URL)
-    expect(spec).toContain(ARCHIVIO_FFMPEG_URL)
-    // La radice serve al `tar --strip-components`: se cambia solo lì, l'estrazione
-    // non trova niente e il passo fallisce con un messaggio che non dice il perché.
-    expect(workflow).toContain(RADICE_ARCHIVIO_FFMPEG)
+  it('l’archivio BtbN è la PROVENIENZA: la spec lo dichiara, e nessuno lo scarica più', () => {
+    expect(leggi(SPEC)).toContain(ARCHIVIO_FFMPEG_URL)
     // Il collegamento è alla release DATATA, non al tag mobile `latest`: quello
     // cambierebbe build sotto i piedi senza che nessun file del repo se ne accorga.
     expect(ARCHIVIO_FFMPEG_URL).not.toContain('/latest/')
+
+    // Il workflow, senza i commenti che raccontano la storia, non nomina più BtbN: la
+    // release datata è stata cancellata il 29/09/2026 e la conversione si è fermata.
+    const workflow = senzaCommentiYaml(leggi(WORKFLOW))
+    expect(workflow).not.toContain('github.com/BtbN')
+    expect(workflow).not.toContain(ARCHIVIO_FFMPEG_URL)
   })
+
+  it('la CI prende i binari dal NOSTRO bucket: due segreti con gli URL firmati, dichiarati in un solo punto', () => {
+    const workflow = senzaCommentiYaml(leggi(WORKFLOW))
+    for (const segreto of ['CI_FFMPEG_GZ_URL', 'CI_FFPROBE_GZ_URL']) {
+      expect(workflow, `il workflow non usa più il segreto ${segreto}`).toContain(segreto)
+      // «Dichiarati solo nel passo che li usa»: un solo `secrets.X`, quello dell'`env` del passo.
+      // A livello di job o di workflow finirebbero nell'ambiente di ogni passo, `npm ci` compreso.
+      expect([...workflow.matchAll(new RegExp(`secrets\\.${segreto}\\b`, 'g'))]).toHaveLength(1)
+    }
+  })
+
+  it('la cache dei binari ha per chiave le impronte dei due binari: cambiare build cambia chiave', () => {
+    expect(senzaCommentiYaml(leggi(WORKFLOW))).toContain(
+      `key: ffmpeg-bin-${FFMPEG_SHA256}-${FFPROBE_SHA256}`,
+    )
+  })
+
+  it('nessun indirizzo esterno nello script del Sandbox: gli URL arrivano dall’ambiente', () => {
+    const script = scriptPreparazioneBuild()
+    expect(script).not.toMatch(/https?:\/\//)
+    expect(script).not.toContain(ARCHIVIO_FFMPEG_URL)
+    expect(script).not.toContain('github.com')
+  })
+
+  it.each([
+    ['lo script di preparazione del runner', () => scriptPreparazioneBuild()],
+    ['il passo FFmpeg della CI', () => senzaCommentiYaml(leggi(WORKFLOW))],
+  ] as [string, () => string][])(
+    '%s verifica DUE volte, e decomprime FRA le due verifiche',
+    (_nome, testo) => {
+      const codice = testo()
+      const verifiche = [...codice.matchAll(/sha256sum -c -/g)].map((m) => m.index)
+      const decompressioni = [...codice.matchAll(/gzip -dc/g)].map((m) => m.index)
+      // Una verifica prima (i `.gz`, appena arrivati dalla rete) e una dopo (i binari, appena
+      // usciti dal `.gz`): senza la prima si decomprime ciò che non si è verificato, senza la
+      // seconda non si prova che il `.gz` contenga il binario collaudato.
+      expect(verifiche.length).toBeGreaterThanOrEqual(2)
+      expect(decompressioni.length).toBeGreaterThanOrEqual(1)
+      const prima = verifiche[0] as number
+      const ultima = verifiche[verifiche.length - 1] as number
+      for (const posizione of decompressioni) {
+        expect(posizione as number).toBeGreaterThan(prima)
+        expect(posizione as number).toBeLessThan(ultima)
+      }
+    },
+  )
 
   it('il workflow prepara FFmpeg prima del gate, e lo passa alla suite', () => {
     const workflow = senzaCommentiYaml(leggi(WORKFLOW))

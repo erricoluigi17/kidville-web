@@ -169,13 +169,11 @@ const HOST_NON_CHIAMATI = new Map<string, string>([
     ['apps.apple.com', 'la scheda dell\'app sull\'App Store, `<a href>` dentro l\'HTML delle email transazionali (`src/lib/email/tema.ts`): la apre il telefono di chi legge, il nostro server non contatta Apple. Stesso caso dell\'iframe di YouTube qui sopra.'],
     ['play.google.com', 'la scheda dell\'app su Google Play, `<a href>` dentro l\'HTML delle email (`src/lib/email/tema.ts`): la apre il telefono di chi legge. ⚠️ Al 2026-08-15 questo indirizzo risponde 404 perché l\'app è ancora nel canale di test chiuso — il bottone c\'è per decisione esplicita del titolare, che conosceva il 404 quando ha scelto. È un link che non funziona ancora, non un provider che chiamiamo.'],
     ['github.com',
-        'l\'archivio della build FFmpeg pinnata (`src/lib/media/video/build.ts`): una costante, '
-        + 'con lo sha256 accanto. A scaricarla è il passo «FFmpeg pinnato» di `.github/workflows/ci.yml`, '
-        + 'che gira su un runner e non dentro l\'applicazione: da `src/` non parte nessuna richiesta. '
-        + '⚠️ QUESTA VOCE HA UNA SCADENZA. Quando il runner Sandbox (V06) scaricherà l\'archivio da '
-        + 'codice, l\'host va spostato fra i PROVIDER_ESTERNI con il suo chiamante, e quella chiamata '
-        + 'deve passare da `externalFetch`: è un download da un terzo, e uno sha256 che non torna va '
-        + 'letto per intero, non ridotto a un numero di stato.'],
+        'la PROVENIENZA della build FFmpeg pinnata (`src/lib/media/video/build.ts`): un letterale con '
+        + 'lo sha256 accanto, che dice da dove sono venuti i due binari. NESSUNO LO SCARICA PIÙ: dal '
+        + '2026-10-02 né il runner Sandbox né la CI prendono niente da GitHub — la release datata è '
+        + 'stata cancellata da BtbN il 29/09/2026 (404) e i binari vivono nel nostro bucket privato '
+        + '`video_build`. Da `src/` non parte nessuna richiesta verso questo host.'],
 ]);
 
 /**
@@ -428,6 +426,14 @@ describe('lock — le chiamate ai provider esterni passano da externalFetch', ()
             'è tornato il messaggio col solo status: «Aruba … fallita (HTTP 401)» non dice se è una '
             + 'password ruotata o un 5xx del provider.',
         ).toBe(false);
+    });
+
+    it('5. la provenienza di FFmpeg resta un letterale: github.com compare in `build.ts` e in nessun altro file', () => {
+        // «Nessuno lo scarica più» scritto in HOST_NON_CHIAMATI è una frase; questa è la misura.
+        // Un indirizzo di GitHub che ricomparisse nello script del Sandbox, o in qualunque altro
+        // file di `src/`, sarebbe di nuovo un download esterno a runtime — la rottura del
+        // 29/09/2026 — e la regola 1 lo lascerebbe passare, perché l'host è già dichiarato.
+        expect(HOST_TROVATI.get('github.com')).toEqual(['src/lib/media/video/build.ts']);
     });
 
     it('ogni deroga è motivata, viva e non contraddittoria', () => {

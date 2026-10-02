@@ -41,29 +41,27 @@
 // ─── È LO SCHEMA DI `promuoviMediaBozza`, CON UNA DIFFERENZA MISURATA ─────────
 //
 // Per le News il media si SPOSTA da `news_bozze` a `news`, e l'annullamento lo
-// sposta indietro. Qui si COPIA, e l'annullamento RIMUOVE. La ragione non è di
+// sposta indietro. Qui si COPIA, e un annullamento non c'è. La ragione non è di
 // gusto: `video_jobs.output_bucket`/`output_path` continuano a nominare l'uscita
 // dentro il bucket di lavorazione — è la riga su cui si basano l'idempotenza del
 // finalize, la riconciliazione e la retention. Spostare quel file renderebbe
 // quella riga una promessa su un oggetto che non esiste più, e un secondo
 // tentativo di pubblicazione non troverebbe niente da copiare.
 //
-// ─── E LA RIMOZIONE PASSA DA `rimuoviEVerifica`, MAI DA UN `remove()` MUTO ────
+// ─── E LA COPIA CHE UNA PUBBLICAZIONE FALLITA LASCIA NON SI TOGLIE DA QUI ─────
 //
-// `remove()` non fallisce sui percorsi che non esistono e restituisce solo quelli
-// che ha davvero tolto: guardare il solo `error` fa passare «zero file rimossi su
-// uno» per un successo. `rimuoviEVerifica` verifica lo STATO — «uscito adesso»,
-// «non c'era più», «c'è ancora», «non si sa» — ed è l'unica forma che sa dire la
-// differenza. Qui serve tutta: un file di un minore rimasto in `gallery` senza
-// nessuna riga che lo nomini è invisibile all'oblio (che parte dalla riga), alla
-// retention (idem) e alla revoca del consenso, cioè resta archiviato per sempre e
-// nessun percorso del prodotto lo può più raggiungere. Quello si GRIDA.
+// Fino al 2026-10-02 questo modulo aveva anche l'annullamento (`annullaCopiaVideoInGalleria`):
+// la route che pubblicava, se la RPC rifiutava, toglieva la copia appena fatta. Dalla PR 2 la
+// pubblicazione gira sul server e riprova da sola, e il percorso deterministico fa il resto: la
+// copia di un tentativo fallito è esattamente quella che il tentativo dopo riusa (il 409 con la
+// stessa dimensione). Se la pubblicazione fallisce in modo DEFINITIVO la copia resta in `gallery`
+// senza che nessuna riga la nomini, e la porta via la spazzata degli orfani di `retention-galleria`
+// dopo 24 ore (spec §8.3). Toglierla subito da qui sarebbe una `remove` sul percorso di un video
+// che la RPC potrebbe aver già pubblicato con la risposta persa per strada: il rischio vero non è
+// l'orfano per un giorno, è il file di un minore cancellato sotto una riga che lo mostra.
 // =============================================================================
 
-import type { SupabaseClient } from '@supabase/supabase-js'
-
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { bloccanti, rimuoviEVerifica } from '@/lib/storage/rimozione-verificata'
 
 import { BUCKET_GALLERIA, TETTO_VIDEO_GALLERIA_BYTE } from './limiti'
 
@@ -347,71 +345,4 @@ async function verificaDestinazioneGiaPresente(
         byte: trovato.byte,
     })
     return { ok: true, percorso, giaPresente: true }
-}
-
-/**
- * Toglie da `gallery` le copie che una pubblicazione mancata ha lasciato lì.
- *
- * È la gemella di `riportaMediaInBozza` per le News, e ne condivide la ragione
- * d'essere: la copia avviene PRIMA della scrittura, e deve essere così — la riga
- * deve nominare un oggetto che esiste. Ma se poi la riga non si scrive (vincolo
- * violato, RPC che rifiuta perché nel frattempo l'intento è cambiato, database
- * irraggiungibile), quel file è già dentro il bucket delle foto dei bambini e
- * nessuna riga lo nomina.
- *
- * Si RIMUOVE invece di riportare indietro perché l'originale in lavorazione non è
- * mai stato toccato: la sorgente è ancora al suo posto, e un secondo tentativo
- * ricopia. Cancellare qui non perde niente.
- *
- * Se nemmeno la rimozione riesce, il file resta e si GRIDA: non c'è niente di
- * meglio da fare, ma è l'unico modo perché qualcuno possa ripulirlo.
- */
-export async function annullaCopiaVideoInGalleria(
-    supabase: SupabaseClient,
-    percorsi: string[],
-    operazione: string,
-): Promise<{ rimossi: number; rimasti: number }> {
-    const unici = [...new Set(percorsi.filter((p) => typeof p === 'string' && p.trim() !== ''))]
-    if (unici.length === 0) return { rimossi: 0, rimasti: 0 }
-
-    const esito = await rimuoviEVerifica(supabase, BUCKET_GALLERIA, unici, operazione)
-    // «Non so se c'è ancora» vale «c'è»: è la regola di `rimuoviEVerifica`, e qui
-    // conta più che altrove, perché l'alternativa è dichiarare ripulito un file di
-    // un minore che potrebbe essere ancora lì.
-    //
-    // ⚠️ `erroreRimozione` VA GUARDATO A PARTE, e la prima stesura di questa riga
-    // non lo faceva. Quando `remove()` risponde con un errore la funzione esce
-    // subito con l'esito VUOTO: `ancoraPresenti` e `incerti` sono entrambi vuoti,
-    // quindi `bloccanti()` vale `[]` — cioè «tutto a posto», su una chiamata in
-    // cui **nessun file è uscito**. Con il solo `bloccanti()` questa funzione
-    // scriveva la riga di successo su un file rimasto dentro `gallery`: il guasto
-    // silenzioso che il modulo intero esiste per impedire, riaperto dalla porta di
-    // servizio. Lo stesso confronto lo fanno già `permanenza-consenso.ts:756`,
-    // `retention-galleria:532` e `anagrafica-personale/scansione:773`.
-    const rimasti = esito.erroreRimozione ? unici.length : bloccanti(esito).length
-    // `giaAssenti` NON è un guasto: l'esito voluto è già raggiunto (un tentativo
-    // precedente l'aveva tolto, o la copia non era mai arrivata in fondo).
-    const rimossi = esito.rimossi.length + esito.giaAssenti.length
-
-    if (rimasti > 0) {
-        logEvento('galleria', 'error', {
-            operazione,
-            esito: 'video-copia-rimasta-in-galleria',
-            bucket: BUCKET_GALLERIA,
-            n_file: rimasti,
-            msg:
-                `${operazione}: ${rimasti} file sono rimasti nel bucket gallery e nessuna riga ` +
-                'li nomina — oblio, retention e revoca del consenso partono dalla riga e non ci arrivano',
-        })
-    } else {
-        // Evento critico ⇒ anche il successo: «nessun log» non deve poter
-        // significare insieme «annullato» e «l'annullamento non è mai partito».
-        logEvento('galleria', 'info', {
-            operazione,
-            esito: 'video-copia-annullata',
-            bucket: BUCKET_GALLERIA,
-            n_file: rimossi,
-        })
-    }
-    return { rimossi, rimasti }
 }

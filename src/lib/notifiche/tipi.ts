@@ -136,10 +136,12 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     gruppo: 'genitore',
     descrizione: 'Quando viene creato un evento visibile alle famiglie',
   },
+  // L'etichetta dice «contenuti» e non «foto» dal 2026-10-02: lo stesso tipo annuncia anche i VIDEO, che si pubblicano da soli
+  // appena la conversione finisce, e un interruttore che dicesse «foto» spegnerebbe in silenzio anche quelli.
   galleria: {
-    label: 'Nuove foto in galleria',
+    label: 'Nuovi contenuti in galleria',
     gruppo: 'genitore',
-    descrizione: 'Quando vengono pubblicate foto della sezione del figlio',
+    descrizione: 'Quando vengono pubblicate foto o video della sezione del figlio',
   },
   news: {
     label: 'News della scuola',
@@ -249,6 +251,15 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     gruppo: 'docente',
     descrizione: 'Quando il materiale della sezione scende sotto la soglia',
   },
+  // L'esito di un VIDEO caricato in galleria (PR 2 «server e web», 2026-10-02): il video esce da solo quando la conversione finisce,
+  // anche a pagina o app chiusa, e chi l'ha caricato deve sapere com'è andata — pubblicato, pubblicato senza qualche bambino, non
+  // pubblicato (con il «Riprova» quando serve). Tipo PROPRIO e non `galleria`: quello è dei genitori, e spegnerlo non deve zittire
+  // l'insegnante. Testi senza nomi: solo numeri.
+  video_esito: {
+    label: 'Esito dei video caricati',
+    gruppo: 'docente',
+    descrizione: 'Quando un video che hai caricato in galleria viene pubblicato, oppure non si riesce a pubblicarlo',
+  },
 
   // ── Staff / Segreteria ────────────────────────────────────────────────────
   mensa_allergia: {
@@ -337,6 +348,15 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     label: 'Cassa: uscita registrata dalla segreteria',
     gruppo: 'staff',
     descrizione: 'Quando un membro dello staff non amministratore registra una spesa',
+  },
+  // L'avviso di sicurezza dei video (PR 2, 2026-10-02): alla scelta dei bambini la liberatoria fotografica BLOCCA come per le foto (422),
+  // ma se viene tolta fra l'invio e la pubblicazione il video esce comunque — decisione del titolare — e la Direzione, il coordinamento
+  // e la segreteria della sede lo devono sapere. Il testo porta il solo NUMERO dei bambini, mai un nome: per questo può viaggiare in push.
+  video_liberatoria_revocata: {
+    label: 'Video pubblicato senza liberatoria',
+    gruppo: 'staff',
+    descrizione: 'Quando viene pubblicato un video con bambini che nel frattempo hanno perso la liberatoria fotografica',
+    sicurezza: true,
   },
 }
 

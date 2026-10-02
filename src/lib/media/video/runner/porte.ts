@@ -1,4 +1,5 @@
 import type { CanaleVideo } from '../contratto'
+import type { OrigineMicroVm } from './ambiente'
 
 /**
  * LE PORTE DEL RUNNER — tutto ciò che il runner non sa fare da sé.
@@ -50,6 +51,17 @@ export interface JobVideo {
   source_mime: string | null
   attempt: number
   fence_epoch: number
+  /**
+   * Lo SHA-256 che l'app ha dichiarato all'apertura (caricamento nativo, PR 2, spec §10.4): un `bytea` di
+   * 32 byte che nel `to_jsonb(riga)` delle RPC di presa (`video_job_prendi`, `video_job_prossimo`) è la
+   * stringa `\x<64 cifre>`. `null` per chi non l'ha dichiarato (web e TUS, le News); assente nelle righe
+   * che il runner legge con una `SELECT` a colonne scelte (`miei`), che non servono a convertire.
+   *
+   * ⚠️ È l'impronta del filmato di un bambino: il runner la passa alla MicroVM e BASTA. Non entra in un log,
+   * in un messaggio d'errore, in un campo di battito. Si legge con `leggiSha256Dichiarato` (`./script.ts`),
+   * che dice anche quando il valore non è un'impronta.
+   */
+  sha256_dichiarato?: string | null
 }
 
 /** La forma di risposta comune a tutte le RPC di `*_video_*.sql`. */
@@ -83,7 +95,7 @@ export type EsitoConteggi =
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Le dieci RPC che il runner chiama (più una `SELECT`), e nessun'altra.
+ * Le undici RPC che il runner chiama (più una `SELECT`), e nessun'altra.
  *
  * `video_job_uploaded` e `video_job_cancel` non sono qui: la prima appartiene al
  * bordo dell'upload, la seconda alla persona che cambia idea. Un worker che
@@ -171,6 +183,23 @@ export interface CodaVideo {
     codice: string
     rifiutato: boolean
   }): Promise<EsitoRpcVideo>
+  /**
+   * `video_job_diagnosi(p_job_id, p_fence_epoch, p_lease_owner, p_diagnosi)`: i NUMERI di una verifica
+   * fallita (frame, coperture, ultimo campione, tolleranze, fps: `diagnosiVerifica` in `../verify`),
+   * per capire un rifiuto senza riaprire il video (secondario #10, PR 2).
+   *
+   * La RPC accetta solo `processing` con fence e lease giusti, quindi va chiamata PRIMA di `fallito`, che
+   * chiude il job. Risponde `{ok:true}` o `{ok:false, code}` senza una riga di job (come la sorveglianza):
+   * `EsitoBattito`. Un rifiuto, o una chiamata che non arriva, non cambia l'esito del job: chi chiama lo
+   * logga e va avanti. `diagnosi` è solo numeri ed enumerati, e la RPC lo rifà verificare (forma chiusa,
+   * 2048 byte, nessuna stringa libera).
+   */
+  diagnosi(p: {
+    jobId: string
+    fenceEpoch: number
+    leaseOwner: string
+    diagnosi: unknown
+  }): Promise<EsitoBattito>
   /**
    * `video_job_retry(p_job_id, p_fence_epoch, p_lease_owner, p_error_code,
    * p_tentativi_massimi, p_attesa_secondi)`: rimette in coda un job il cui guasto è NOSTRO.
@@ -337,6 +366,13 @@ export interface SessioneSandbox {
   ferma(): Promise<void>
   /** Vero se la MicroVM è stata appena creata; falso se è stata riagganciata per nome. */
   readonly nuova: boolean
+  /**
+   * Da dove è nata una MicroVM CREATA (PR 2, `./ambiente.ts`): `snapshot` (i binari di FFmpeg ci sono già e
+   * si verificano) o `runtime` (la MicroVM vuota della PR 1, a cui si portano dal bucket). Assente — e
+   * vale `runtime` — per una MicroVM riagganciata, che l'apparecchio non lo rifà, e per ogni sessione che
+   * non lo dichiara: l'assenza è il percorso della PR 1, parola per parola.
+   */
+  readonly origine?: OrigineMicroVm
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   ARCHIVIO_FFMPEG_SHA256,
   ARCHIVIO_FFMPEG_URL,
+  CARTELLA_BINARI_NELLO_SNAPSHOT,
   FFMPEG_GZ_SHA256,
   FFMPEG_SHA256,
   FFPROBE_GZ_SHA256,
@@ -13,7 +14,8 @@ import {
 } from '@/lib/media/video/build'
 import { buildVideoEncodeArgs } from '@/lib/media/video/encode'
 import type { VideoProbe } from '@/lib/media/video/probe'
-import { scriptPreparazioneBuild } from '@/lib/media/video/runner/preparazione'
+import { CARTELLA_BUILD, scriptPreparazioneBuild } from '@/lib/media/video/runner/preparazione'
+import { scriptApparecchio, scriptVerificaBinari } from '@/lib/media/video/runner/script'
 import { VARIABILE_CARTELLA, VARIABILE_RINUNCIA, rinunciaDichiarata } from '../fixtures/ffmpeg'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -402,5 +404,93 @@ describe('fixture video reali', () => {
     // `apt-get install ffmpeg` prenderebbe la build della distro, che non è quella
     // che converte i video in produzione: è la sostituzione silenziosa da impedire.
     expect(workflow).not.toContain('apt-get install ffmpeg')
+  })
+})
+
+/* ──────────────────────────────────────────────────────────────────────────────
+ * LO SNAPSHOT DEL SANDBOX (PR 2, spec §10.1): le STESSE impronte, nessun posto nuovo.
+ *
+ * Dalla PR 2 i binari possono stare già dentro uno snapshot (`/opt/kv-ffmpeg`), e il runner li VERIFICA a ogni avvio
+ * invece di scaricarli. La fiducia non cambia, ed è ciò che questo gruppo tiene fermo: la verifica dello snapshot usa le due
+ * impronte dei BINARI di `build.ts` — le stesse della provvista e della CI — e quelle impronte restano in TRE posti (le
+ * conta il lock qui sopra). Un valore copiato in uno script, in un `.mjs` o nella costante di un altro modulo sarebbe una
+ * quarta fonte: la build dello snapshot potrebbe divergere da quella che il runner accetta, e il rifiuto arriverebbe a runtime,
+ * su ogni video, con il ripiego a coprirlo — cioè in silenzio.
+ * ────────────────────────────────────────────────────────────────────────────── */
+
+describe('fixture video reali · lo snapshot usa le impronte di build.ts, e nessuna nuova', () => {
+  const SNAPSHOT = CARTELLA_BINARI_NELLO_SNAPSHOT
+  const SORGENTI_DELLO_SNAPSHOT = [
+    'src/lib/media/video/runner/ambiente.ts',
+    'src/lib/media/video/runner/preparazione.ts',
+    'src/lib/media/video/runner/script.ts',
+    'scripts/video-sandbox-ambiente.mjs',
+  ]
+
+  it('la verifica dello snapshot controlla le due impronte dei BINARI (non quelle dei `.gz`), ciascuna accanto al suo file', () => {
+    const script = scriptVerificaBinari(SNAPSHOT)
+    expect(script).toContain(`'${FFMPEG_SHA256}' ${SNAPSHOT}/ffmpeg '${FFPROBE_SHA256}' ${SNAPSHOT}/ffprobe`)
+    expect(script.match(/sha256sum -c -/g)).toHaveLength(1)
+    for (const gz of [FFMPEG_GZ_SHA256, FFPROBE_GZ_SHA256, ARCHIVIO_FFMPEG_SHA256]) expect(script).not.toContain(gz)
+  })
+
+  it('le uniche sequenze di 64 cifre in ogni script di shell sono quelle di build.ts', () => {
+    const attese = new Set([ARCHIVIO_FFMPEG_SHA256, FFMPEG_GZ_SHA256, FFPROBE_GZ_SHA256, FFMPEG_SHA256, FFPROBE_SHA256])
+    for (const [nome, script] of [
+      ['la verifica dello snapshot', scriptVerificaBinari(SNAPSHOT)],
+      ['la provvista nella cartella dello snapshot', scriptPreparazioneBuild(SNAPSHOT)],
+      ['l’apparecchio dello snapshot', scriptApparecchio({ cartella: SNAPSHOT, binariGiaPresenti: true })],
+      ['l’apparecchio del ripiego', scriptApparecchio()],
+    ] as [string, string][]) {
+      const trovate = script.match(/\b[0-9a-f]{64}\b/g) ?? []
+      expect(trovate.length, `${nome} non verifica niente`).toBeGreaterThan(0)
+      for (const impronta of trovate) expect(attese.has(impronta), `${nome}: ${impronta} non è di build.ts`).toBe(true)
+    }
+  })
+
+  it('nessun sorgente dello snapshot porta un’impronta scritta a mano: stanno in build.ts, e basta', () => {
+    for (const percorso of SORGENTI_DELLO_SNAPSHOT) {
+      const codice = senzaCommenti(leggi(join(RADICE, percorso)))
+      expect(codice.match(/\b[0-9a-f]{64}\b/g), `${percorso} ha una copia di un’impronta`).toBeNull()
+    }
+  })
+
+  it('i sorgenti dello snapshot importano le impronte dei binari da `build.ts`, non le ridefiniscono', () => {
+    const script = senzaCommenti(leggi(join(RADICE, 'src/lib/media/video/runner/script.ts')))
+    expect(script).toMatch(/import\s*\{[^}]*FFMPEG_SHA256[^}]*\}\s*from\s*'\.\.\/build'/)
+    expect(script).toMatch(/import\s*\{[^}]*FFPROBE_SHA256[^}]*\}\s*from\s*'\.\.\/build'/)
+    // Nessuna costante di impronta ridefinita qui con un valore letterale (l'`FORMA_SHA256_DICHIARATO` di `script.ts` è
+    // un'espressione regolare, non un'impronta: la forma di un valore, non il valore).
+    expect(script).not.toMatch(/(?:const|let|var)\s+\w*SHA256\w*\s*=\s*['"`][0-9a-f]{64}/)
+    const costruzione = senzaCommenti(leggi(join(RADICE, 'scripts/video-sandbox-ambiente.mjs')))
+    expect(costruzione).toMatch(/FFMPEG_SHA256/)
+    expect(costruzione).toMatch(/FFPROBE_SHA256/)
+  })
+
+  it('la verifica precede ogni esecuzione dei binari: nell’apparecchio dello snapshot `sha256sum` viene prima dell’inventario', () => {
+    const script = scriptApparecchio({ cartella: SNAPSHOT, binariGiaPresenti: true })
+    // L'inventario ESEGUE `ffmpeg`: un binario non verificato non deve mai arrivare lì.
+    expect(script.indexOf('sha256sum -c -')).toBeGreaterThanOrEqual(0)
+    expect(script.indexOf('sha256sum -c -')).toBeLessThan(script.indexOf(`${SNAPSHOT}/ffmpeg -hide_banner`))
+    expect(script.indexOf('sha256sum -c -')).toBeLessThan(script.indexOf(`${SNAPSHOT}/ffprobe -v error`))
+  })
+
+  it('i binari dello snapshot stanno sotto `/opt`, e NON dove li mette la provvista (`/tmp`): due cartelle, due provenienze, mai confuse', () => {
+    expect(SNAPSHOT.startsWith('/opt/')).toBe(true)
+    expect(SNAPSHOT).not.toBe(CARTELLA_BUILD)
+    expect(CARTELLA_BUILD.startsWith('/tmp/')).toBe(true)
+  })
+
+  it('nessun indirizzo esterno negli script dello snapshot, né l’archivio BtbN: la sola fonte è il nostro bucket, con URL firmati dall’ambiente', () => {
+    for (const script of [scriptVerificaBinari(SNAPSHOT), scriptPreparazioneBuild(SNAPSHOT)]) {
+      expect(script).not.toMatch(/https?:\/\//)
+      expect(script).not.toContain('github.com')
+    }
+    const costruzione = senzaCommenti(leggi(join(RADICE, 'scripts/video-sandbox-ambiente.mjs')))
+    expect(costruzione).not.toContain('github.com')
+    expect(costruzione).not.toContain(ARCHIVIO_FFMPEG_URL)
+    // L'unico indirizzo che lo script nomina è il progetto Supabase che è già nostro (per firmare gli URL di lettura).
+    const indirizzi = costruzione.match(/https?:\/\/[^\s'"`)]+/g) ?? []
+    for (const indirizzo of indirizzi) expect(indirizzo, indirizzo).toMatch(/supabase\.co|\$\{/)
   })
 })

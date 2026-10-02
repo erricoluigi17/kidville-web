@@ -3,6 +3,12 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { logEvento } from '@/lib/logging/logger'
 
+import {
+  ENV_SNAPSHOT_SANDBOX,
+  apriLaMicroVm,
+  leggiSnapshotConfigurato,
+  type OrigineMicroVm,
+} from './ambiente'
 import type {
   ArchivioVideo,
   CodaVideo,
@@ -33,6 +39,12 @@ import type {
  * `battito.ts`, `preparazione.ts` e `script.ts`, che girano senza rete e hanno i
  * loro collaudi. Quando M12 aprirà un Sandbox vero, ciò che può essere sbagliato è
  * qui dentro, e si vede in un colpo d'occhio.
+ *
+ * Dalla PR 2 anche la scelta di COME aprire la MicroVM (riaggancio, snapshot, ripiego sul
+ * runtime della PR 1) è fuori da qui: sta in `apriLaMicroVm` (`./ambiente.ts`), che non
+ * importa l'SDK e si prova con uno finto che lancia dove si vuole. A `macchinaVercel` restano
+ * due righe di cablaggio, che `video-runner-ambiente.test.ts` prova con l'SDK sostituito da
+ * un doppio; le FIRME dell'SDK vero le controlla `tsc`, che compila questo file contro i suoi tipi.
  * ═════════════════════════════════════════════════════════════════════════════
  */
 
@@ -237,6 +249,20 @@ export function codaSupabase(supabase: SupabaseClient): CodaVideo {
       )
     },
 
+    async diagnosi(p) {
+      // Come la sorveglianza, la RPC risponde `{ok:true}` SENZA un job: passata da `esitoRpc` ogni
+      // scrittura riuscita si leggerebbe «RPC_ERROR». `esitoSemplice` esiste per questo.
+      return esitoSemplice(
+        'diagnosi',
+        await supabase.rpc('video_job_diagnosi', {
+          p_job_id: p.jobId,
+          p_fence_epoch: p.fenceEpoch,
+          p_lease_owner: p.leaseOwner,
+          p_diagnosi: p.diagnosi,
+        }),
+      )
+    },
+
     async riprova(p) {
       // ⚠️ Se la migrazione `…_video_job_ritentativi.sql` non fosse applicata, PostgREST
       // risponde «funzione non trovata»: `esitoRpc` lo traduce in `RPC_ERROR`, che è
@@ -326,49 +352,41 @@ function assoluto(supabase: SupabaseClient, url: string): string {
  * LA MICROVM
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * La MicroVM di Vercel. Qui si CABLANO due righe e basta: la scelta (riaggancio, snapshot, ripiego)
+ * sta in `apriLaMicroVm` (`./ambiente.ts`), che non importa l'SDK e si prova con un SDK finto.
+ *
+ * ⚠️ La variabile `VIDEO_SANDBOX_SNAPSHOT_ID` si legge QUI e a ogni apertura, non una volta al caricamento
+ * del modulo: lo snapshot si ricostruisce (scade, o si rifà con un FFmpeg nuovo) e il valore su Vercel
+ * cambia senza che l'istanza calda venga rimpiazzata; il costo di leggerla è una lookup su `process.env`.
+ *
+ * Il ripiego — il percorso della PR 1, `runtime: 'node22'` — resta ESATTAMENTE com'era, per costruzione:
+ * lo prova `video-runner-ambiente.test.ts` parametro per parametro. Il rischio che quel percorso lascia
+ * aperto è dichiarato (spec §10.2): se Vercel togliesse il runtime `node22` E lo snapshot mancasse, ogni
+ * apertura fallirebbe con `SANDBOX_UNAVAILABLE` e i ritentativi non basterebbero. Il battito lo mostra.
+ */
 export function macchinaVercel(): MacchinaSandbox {
   return {
     async apri({ nome, regione, vcpus, tettoMs }) {
-      // Prima si prova a RIAGGANCIARE. È il cuore della durevolezza: la MicroVM che
-      // sta convertendo ha questo nome, e `Sandbox.get` la ritrova da un processo
-      // che non è quello che l'ha creata.
-      try {
-        const esistente = await Sandbox.get({ name: nome, resume: true })
-        return sessione(esistente, false)
-      } catch (err) {
-        // Non è un guasto: il caso normale è «non c'è ancora». Si logga a `info`
-        // perché senza questa riga «creata» e «riagganciata» sarebbero
-        // indistinguibili — cioè non si potrebbe misurare se la ripresa funziona.
-        logEvento(
-          'cron',
-          'info',
-          { operazione: 'video-runner:sandbox', esito: 'riaggancio-non-riuscito' },
-          err,
-        )
-      }
-
-      // ⚠️ `node22` RESTA in questa PR (decisione D7 della spec del 2026-10-02): lo cambia la
-      // PR 2, che passa a uno snapshot costruito su `node:24` e con i binari di FFmpeg già
-      // dentro — due cose che oggi si pagano a ogni MicroVM nuova (il download dei due `.gz`
-      // dal nostro bucket, ~134 MB). Il rischio che questa riga lascia aperto è dichiarato:
-      // se Vercel togliesse il runtime `node22`, ogni apertura fallirebbe con
-      // `SANDBOX_UNAVAILABLE` e i ritentativi non basterebbero, perché il guasto non passerebbe.
-      const creata = await Sandbox.create({
-        runtime: 'node22',
-        name: nome,
-        region: regione,
-        resources: { vcpus },
-        timeout: tettoMs,
-        persistent: false,
-      })
-      return sessione(creata, true)
+      const aperta = await apriLaMicroVm<Sandbox>(
+        {
+          // Il riaggancio è il cuore della durevolezza: la MicroVM che sta convertendo ha questo nome, e
+          // `Sandbox.get` la ritrova da un processo che non è quello che l'ha creata.
+          riaggancia: (nomeSandbox) => Sandbox.get({ name: nomeSandbox, resume: true }),
+          crea: (parametri) => Sandbox.create(parametri),
+        },
+        { nome, regione, vcpus, tettoMs },
+        leggiSnapshotConfigurato(process.env[ENV_SNAPSHOT_SANDBOX]),
+      )
+      return sessione(aperta.sandbox, aperta.nuova, aperta.origine)
     },
   }
 }
 
-function sessione(sandbox: Sandbox, nuova: boolean): SessioneSandbox {
+function sessione(sandbox: Sandbox, nuova: boolean, origine: OrigineMicroVm | undefined): SessioneSandbox {
   return {
     nuova,
+    ...(origine === undefined ? {} : { origine }),
     async esegui(comando: ComandoSandbox): Promise<EsitoComando> {
       const finito = await sandbox.runCommand({
         cmd: comando.cmd,

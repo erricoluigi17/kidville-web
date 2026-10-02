@@ -108,7 +108,7 @@ dettagli in `docs/e2e.md`.
 
 ## Conversione video (pipeline HEVC / Full HD)
 
-Le tre qui sotto si impostano **a mano su Vercel**, in produzione e in preview. Le credenziali
+Le cinque qui sotto si impostano **a mano su Vercel**, in produzione e in preview. Le credenziali
 del Sandbox non sono fra queste: arrivano dal token OIDC di piattaforma.
 
 | Variabile | Dove | Se manca o e' sbagliata |
@@ -116,6 +116,26 @@ del Sandbox non sono fra queste: arrivano dal token OIDC di piattaforma.
 | `VIDEO_RUNNER_OWNER_ID` | solo server | Uuid del worker. **Deve restare STABILE fra le invocazioni**, e non e' un dettaglio: la durevolezza del runner poggia sul riprendere la propria lease con lo stesso owner, che ridà lo stesso `fence_epoch` e quindi lo stesso nome di MicroVM da riagganciare. Con un uuid casuale a ogni invocazione, **ogni conversione lunga ricomincerebbe da capo all'infinito, senza un solo errore nei log**. Assente → il runner non parte, riga `config`/`error`. |
 | `VIDEO_SANDBOX_REGION` | solo server | Regione della MicroVM. Assente → `dub1`, dove sta lo Storage: convertire altrove significherebbe far attraversare l'Atlantico a un originale da 2 GB, due volte. Valore che non e' una regione → riga `config`/`error` e ripiego. |
 | `VIDEO_SANDBOX_VCPUS` | solo server | Core della MicroVM. Assente → 4 (misurato: 1,85× piu' veloce di 2 vCPU a +8 % di costo). Fuori da 1–8 → riga `config`/`error` e ripiego. |
+| `VIDEO_SANDBOX_SNAPSHOT_ID` | solo server | Identificativo (`snap_…`) dello **snapshot del Sandbox** da cui nasce ogni MicroVM di conversione: un'immagine `node:24` (Ubuntu) con `curl` e con i due binari di FFmpeg già in `/opt/kv-ffmpeg`, costruita **una volta** con `scripts/video-sandbox-ambiente.mjs` (vedi sotto). A ogni avvio il runner rifà `sha256sum` dei due binari con le impronte di `src/lib/media/video/build.ts` — le stesse della provvista dal bucket: nessuna fiducia nuova. **Non è un segreto** (è l'id di una risorsa del nostro progetto Vercel). Assente, non valida, o con uno snapshot **mancante, scaduto, in un'altra regione, o la cui creazione fallisce per qualunque motivo** → il runner **ripiega** sul percorso della PR 1, invariato (MicroVM `node22` vuota e provvista dei binari dal bucket con doppia impronta) e scrive una riga `config`/`error` `ambiente-pronto-assente` con il motivo (`VARIABILE_ASSENTE`, `VARIABILE_NON_VALIDA`, o il codice dell'SDK, per es. `snapshot_not_found`): i video si convertono lo stesso, solo piu' lentamente, e **il numero di ripiegamenti si legge in `app_log`**. Se i binari dello snapshot non tornano (`sha256sum`) si ripiega **nella stessa MicroVM** (`ambiente-pronto-assente` col motivo `BINARI_NON_VERIFICATI`). Come si e' arrivati all'avvio lo dice ogni conversione: `ambiente-pronto` con `ambiente` = `snapshot` · `ripiego-vm` · `ripiego-runtime` e i millisecondi (`ms` dell'apparecchio, `apertura_ms` della MicroVM). **Rischio dichiarato:** se Vercel togliesse il runtime `node22` **e** lo snapshot mancasse, ogni apertura fallirebbe (`SANDBOX_UNAVAILABLE`, quattro tentativi) e il battito del runner lo mostrerebbe. |
+| `VIDEO_CONVERSIONI_PARALLELE` | solo server | Quante conversioni possono girare **insieme** (ognuna e' una MicroVM). Assente o vuota → **3** (picco misurato: 8 video in 15', p90 di 2). **Valida da 1 a 10**: un valore fuori intervallo (o non intero) → riga `config`/`error` `config-non-valida` e ripiego sul 3. Il tetto lo conta il **database** (`video_job_prossimo` e `video_job_prendi` rispondono `CAPACITA_PIENA` quando le conversioni con la lease viva sono gia' quante dice la variabile; il job resta in coda e lo riprende il giro dopo, un esito tranquillo): questa variabile e' solo il numero che gli si passa. Il limite reale dei Sandbox concorrenti non e' documentato da Vercel e lo misura T16 aprendone tre insieme: se fosse piu' basso del tetto, **si abbassa qui**, non nel codice. |
+
+### Costruire (o ricostruire) lo snapshot
+
+`scripts/video-sandbox-ambiente.mjs` lo fabbrica. Lo esegue **chi rilascia**, non l'app, e crea un Sandbox vero su Vercel (pochi
+minuti di una MicroVM) e uno snapshot **senza scadenza**: per vedere che cosa farebbe senza spendere niente, `--a-secco`.
+
+```
+supabase projects api-keys --project-ref uimulkjyekgemjakmepp -o json | node scripts/video-sandbox-ambiente.mjs
+```
+
+La chiave di servizio arriva da **stdin** (non da `.env.local`, che non e' del progetto, e mai da riga di comando); le credenziali
+Vercel sono quelle della CLI gia' autenticata (`auth.json`, o `VERCEL_TOKEN`) e `.vercel/project.json`. Lo script crea il Sandbox da
+`vercel/sandbox/node:24` in `dub1`, installa `curl` e `ca-certificates` con `apt-get` (una volta), fa la provvista dei binari dal bucket
+con lo **stesso** script del runtime (`scriptPreparazioneBuild`, importato da `src/`), controlla l'inventario e la verifica che il runner
+rifara' a ogni avvio, e solo allora chiama `snapshot({ expiration: 0 })`. Stampa `VIDEO_SANDBOX_SNAPSHOT_ID=<id>`: e' il valore da
+impostare qui sopra, su Production **e** Preview, **prima del merge**. Se un passo fallisce il Sandbox si ferma e **non** si crea nessuno
+snapshot. Non stampa mai chiavi, token o URL. Uno snapshot nuovo non toglie il vecchio: quando la variabile punta al nuovo e `app_log`
+mostra `ambiente-pronto` con `ambiente = snapshot`, il vecchio si puo' cancellare.
 
 - Le route con dipendenze d'ambiente usano `src/lib/security/require-env.ts`
   (fail esplicito a runtime, non a import-time).

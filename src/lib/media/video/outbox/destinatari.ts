@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { pubblicaVideoGalleria } from '@/lib/gallery/pubblicazione-video-automatica'
 import { logEvento } from '@/lib/logging/logger'
 
 import { codiceDi } from './rpc'
@@ -9,10 +10,10 @@ import type { ContestoConsegna, Destinatario, EsitoConsegna, EventoOutbox, Regis
  * I DESTINATARI DEGLI EVENTI DI `video_outbox`, uno per tipo — e L'UNICO POSTO in cui si
  * registra un tipo nuovo.
  *
- * Il registro è condiviso da chiunque consumi la coda (`consumo.ts`): oggi la retention
- * (`/api/gdpr/retention-video`, ogni dieci minuti, tutti i tipi) e, appena avrà un tipo
- * suo, il runner (a ogni giro, solo i tipi che gli competono). Un tipo si dichiara una
- * volta qui, e qualunque consumatore lo sa consegnare: la lease del claim
+ * Il registro è condiviso da chiunque consumi la coda (`consumo.ts`): la retention
+ * (`/api/gdpr/retention-video`, ogni dieci minuti, tutti i tipi tranne quelli del runner) e
+ * il runner (a ogni giro e dopo ogni esito, solo `gallery.auto_publish`). Un tipo si
+ * dichiara una volta qui, e qualunque consumatore lo sa consegnare: la lease del claim
  * (`video_outbox_claim`) impedisce che due lo facciano insieme.
  *
  * ─── PERCHÉ UN REGISTRO E NON UNO `switch` ─────────────────────────────────
@@ -27,7 +28,7 @@ import type { ContestoConsegna, Destinatario, EsitoConsegna, EventoOutbox, Regis
  * `video_riconciliazione` la conta, così «nessuno lo consegnerà mai» è un numero e non una
  * scoperta.
  *
- * ─── I TRE TIPI CHE ESISTONO OGGI ──────────────────────────────────────────
+ * ─── I QUATTRO TIPI CHE ESISTONO OGGI ───────────────────────────────────────
  *
  * `intent.superseded` e `intent.revoked` li emette il database
  * (`20260916190200_video_intent_lifecycle.sql`, gli INSERT in `video_outbox` di
@@ -45,6 +46,13 @@ import type { ContestoConsegna, Destinatario, EsitoConsegna, EventoOutbox, Regis
  * in quarantena (`attempts` 25) con `DESTINATARIO_ASSENTE`. La sessione che rilascia
  * questa correzione li rimette in circolo una volta, a mano (consegna 2b, D14).
  *
+ * `gallery.auto_publish` lo accoda `video_job_ready` nella stessa transazione del `ready` di un
+ * intento di galleria «automatico» (e lo riarma il «Riprova»): il suo destinatario è la
+ * PUBBLICAZIONE (`pubblicaVideoGalleria`, PR 2 «server e web», spec §8). A differenza degli altri
+ * tre non è una ricevuta da millisecondi — copia un video, scrive la riga di galleria, avvisa le
+ * famiglie — e per questo lo consuma SOLO il runner (`TIPI_SOLO_DEL_RUNNER`, in `./consumo.ts`): la
+ * retention, con i suoi 25 eventi e i suoi 120 secondi di lease, non lo prende mai.
+ *
  * ⚠️ PER UN TIPO NUOVO il posto in cui scrivere il destinatario è questo oggetto, una riga
  * per tipo. Finché non c'è, quel tipo grida a ogni giro invece di essere consegnato per
  * finta — e il lock di famiglia in `__tests__/api/gdpr-retention-video.test.ts` diventa
@@ -61,6 +69,17 @@ export const DESTINATARI: RegistroDestinatari = {
   // un job `ready` ha per vincolo la scadenza dell'originale
   // (`video_jobs_ready_chk`). La ricevuta lo verifica.
   'gallery.published': ricevutaRetention,
+  // La pubblicazione automatica dei video (spec §8). Lo consegna il runner, mai la retention.
+  'gallery.auto_publish': consegnaPubblicazioneAutomatica,
+}
+
+/**
+ * Tutti i tipi che il registro sa consegnare, di qualunque consumatore. È la domanda a cui risponde chi vuole
+ * sapere quali eventi della coda NON ha un destinatario (la retention li conta e li grida, spec §8.1): non si
+ * ricava da `tipiDellaRetention()` perché quella toglie proprio i tipi del runner.
+ */
+export function tipiRegistrati(registro: RegistroDestinatari = DESTINATARI): string[] {
+  return Object.keys(registro)
 }
 
 /**
@@ -74,6 +93,27 @@ export const DESTINATARI: RegistroDestinatari = {
  */
 export function destinatarioDi(registro: RegistroDestinatari, tipo: string): Destinatario | undefined {
   return Object.hasOwn(registro, tipo) ? registro[tipo] : undefined
+}
+
+/**
+ * La consegna di `gallery.auto_publish`: pubblica il video dell'intento dell'evento (spec §8).
+ *
+ * L'esito della pubblicazione si traduce in due soli fatti per l'outbox: l'evento è CONSEGNATO (il video è in galleria, oppure
+ * non si pubblicherà mai e l'insegnante lo sa, oppure l'intento non è più pubblicabile) oppure va RIPROVATO col suo backoff, con
+ * il codice dell'ultimo guasto. Sessanta minuti dopo la nascita dell'evento il guasto diventa definitivo DENTRO la pubblicazione
+ * (`PUBBLICAZIONE_NON_RIUSCITA`, con la notifica e il «Riprova»), e da qui esce come consegnato: l'evento è chiuso.
+ */
+export async function consegnaPubblicazioneAutomatica(
+  supabase: SupabaseClient,
+  evento: EventoOutbox,
+  contesto: ContestoConsegna,
+): Promise<EsitoConsegna> {
+  const esito = await pubblicaVideoGalleria(supabase, evento.intent_id, {
+    eventoCreatoIl: evento.created_at,
+    tentativi: evento.attempts,
+    operazione: contesto.operazione,
+  })
+  return esito.esito === 'da-ripetere' ? { consegnato: false, codice: esito.codice } : { consegnato: true }
 }
 
 /**

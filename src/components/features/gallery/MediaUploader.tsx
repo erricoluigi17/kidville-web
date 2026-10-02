@@ -3,30 +3,49 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslations } from 'next-intl';
-import { ArrowRight, X, Image as ImageIcon, Images } from 'lucide-react';
+import { ArrowRight, Camera, X, Image as ImageIcon } from 'lucide-react';
 import { useImagePicker } from '@/lib/native/use-image-picker';
 import { fotocameraNativaDisponibile } from '@/lib/native/camera';
 import type { CodiceFotocamera } from '@/lib/native/camera';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { classificaFileGalleria } from '@/lib/gallery/classifica-file';
+import { MAX_ELEMENTI_PER_SCELTA, limitaElementi } from '@/lib/gallery/selettore-media';
 import { logClient } from '@/lib/logging/client';
 import { AnteprimaMedia } from './AnteprimaMedia';
+import { useTracciaSelettore } from './use-traccia-selettore';
 
 interface Props {
     onUpload: (files: { file: File; preview: string }[]) => void;
 }
 
+type Anteprima = { file: File; preview: string };
+
 export function MediaUploader({ onUpload }: Props) {
     const t = useTranslations('shared');
-    const [previews, setPreviews] = useState<{ file: File; preview: string }[]>([]);
+    const [previews, setPreviews] = useState<Anteprima[]>([]);
+    // La COPIA su cui si ragiona, aggiornata a ogni modifica insieme allo stato (`aggiornaPreviews`):
+    // `addFiles` è asincrona, e il tetto dei 50 si decide su quanti file ci sono ORA, non su quanti ce
+    // n'erano al render che l'ha creata. Lo stato resta ciò che si disegna; il ref ciò che si conta.
+    const previewsRef = useRef<Anteprima[]>([]);
     const [dragOver, setDragOver] = useState(false);
     const [errore, setErrore] = useState<'permesso' | 'configurazione' | 'fotocamera' | 'file' | null>(null);
+    // Una scelta ha superato il tetto di MAX_ELEMENTI_PER_SCELTA: l'avviso in linea (non è un errore).
+    const [oltreIlMassimo, setOltreIlMassimo] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const montatoRef = useRef(true);
+    // Le tre righe di log del selettore (aperto, file ricevuti, chiuso senza file): vedi
+    // `@/lib/gallery/selettore-media`. Mai il nome del file: qui si passano i File, lì si contano.
+    const traccia = useTracciaSelettore(inputRef);
 
     useEffect(() => {
         montatoRef.current = true;
         return () => { montatoRef.current = false; };
+    }, []);
+
+    const aggiornaPreviews = useCallback((modifica: (prev: Anteprima[]) => Anteprima[]) => {
+        const prossime = modifica(previewsRef.current);
+        previewsRef.current = prossime;
+        setPreviews(prossime);
     }, []);
 
     const addFiles = useCallback(async (fileList: FileList | File[]) => {
@@ -45,32 +64,69 @@ export function MediaUploader({ onUpload }: Props) {
         } else {
             setErrore(null);
         }
-        if (validi.length > 0) {
-            const nuovi = validi.map(file => ({ file, preview: URL.createObjectURL(file) }));
-            setPreviews(prev => [...prev, ...nuovi]);
+        // IL TETTO: al massimo MAX_ELEMENTI_PER_SCELTA (50) foto e video fra quelli già scelti e quelli
+        // nuovi. Si tengono i primi nell'ordine in cui il selettore li ha consegnati, gli altri non
+        // entrano e l'insegnante lo vede in linea. Nel log solo il CONTEGGIO: mai un nome di file.
+        const { tenuti, scartati } = limitaElementi(validi, previewsRef.current.length);
+        setOltreIlMassimo(scartati > 0);
+        if (scartati > 0) {
+            logClient({
+                livello: 'warn', evento: 'js', messaggio: 'gallery-selezione-oltre-il-massimo',
+                campi: { scelti: files.length, aggiunti: tenuti.length, massimo: MAX_ELEMENTI_PER_SCELTA },
+            });
         }
-    }, []);
+        if (tenuti.length > 0) {
+            const nuovi = tenuti.map(file => ({ file, preview: URL.createObjectURL(file) }));
+            aggiornaPreviews(prev => [...prev, ...nuovi]);
+        }
+    }, [aggiornaPreviews]);
 
     const onErroreFotocamera = useCallback((codice: 'permesso_negato' | 'errore', dettaglio?: CodiceFotocamera) => {
         setErrore(codice === 'permesso_negato' ? 'permesso' : dettaglio?.startsWith('plist_') ? 'configurazione' : 'fotocamera');
     }, []);
 
-    // Nativo: la foto arriva dalla fotocamera Capacitor; web: click sull'input.
-    // In entrambi i casi i file confluiscono in addFiles → flusso identico.
-    const { apri } = useImagePicker({ inputRef, onFiles: files => { void addFiles(files); }, multiplo: true, onErrore: onErroreFotocamera });
+    // La fotocamera nativa: dal 02/10/2026 NON è più il riquadro grande, ma «Scatta una foto»
+    // (opzione secondaria, solo nell'app). Mostra solo foto, una alla volta, e `scegliFotoNativa` ha
+    // già i suoi log. La foto scattata confluisce in `addFiles` come un file qualunque.
+    const { apri: apriFotocamera } = useImagePicker({
+        inputRef,
+        onFiles: files => { traccia.fileRicevuti(files); void addFiles(files); },
+        multiplo: true,
+        onErrore: onErroreFotocamera,
+        onAnnullato: () => traccia.annullatoFotocamera(),
+    });
 
-    // Su nativo il drop-zone apre la fotocamera (solo scatto foto). Per caricare un
-    // VIDEO (o scegliere dalla libreria) serve l'<input> — che accetta già
-    // image+video e, nella WebView, offre la galleria coi video. Affordance
-    // secondaria native-only che clicca direttamente l'input. Web-safe/SSR-safe via
-    // useClientValue (nessun hydration mismatch: false finché non idrata il client).
+    // Nell'app il riquadro grande apre il SELETTORE con foto E video (l'<input> con
+    // `accept="image/*,video/*"`), non la fotocamera: la fotocamera nativa mostra solo foto, una alla
+    // volta, e i video stavano dietro un link piccolo (spec video PR 2 §11.1). ⚠️ Non è la correzione
+    // del video da 73 MB che sull'iPhone non è mai arrivato alla pagina — il selettore è lo stesso
+    // `<input>`, e la causa è ancora da distinguere: sono le tre righe di log di `useTracciaSelettore`
+    // a doverlo dire. Sul web il riquadro apriva già l'input.
+    // Web-safe/SSR-safe via useClientValue (nessun hydration mismatch: false finché non idrata il client).
     const nativo = useClientValue(() => fotocameraNativaDisponibile(), false);
+    const ambiente = (): 'app' | 'web' => (fotocameraNativaDisponibile() ? 'app' : 'web');
+
+    const apriSelettore = () => {
+        setErrore(null);
+        setOltreIlMassimo(false);
+        traccia.apri('selettore-file', ambiente());
+        inputRef.current?.click();
+    };
+
+    const scattaFoto = () => {
+        setErrore(null);
+        setOltreIlMassimo(false);
+        traccia.apri('fotocamera-nativa', ambiente());
+        void apriFotocamera();
+    };
 
     const removeFile = (idx: number) => {
-        setPreviews(prev => {
-            URL.revokeObjectURL(prev[idx].preview);
-            return prev.filter((_, i) => i !== idx);
-        });
+        const daTogliere = previewsRef.current[idx];
+        if (!daTogliere) return;
+        URL.revokeObjectURL(daTogliere.preview);
+        aggiornaPreviews(prev => prev.filter((_, i) => i !== idx));
+        // Un posto si è liberato: l'avviso del tetto non descrive più la situazione.
+        setOltreIlMassimo(false);
     };
 
     const handleSubmit = () => {
@@ -80,28 +136,40 @@ export function MediaUploader({ onUpload }: Props) {
 
     return (
         <div className="space-y-4">
-            {/* Drop zone */}
+            {/* Il riquadro grande. Web: trascina o clicca per scegliere (come prima). App: tocca per
+                aprire il selettore di FOTO E VIDEO; la fotocamera è il pulsante secondario qui sotto.
+                In entrambi i casi il click apre l'`<input>`: cambia solo ciò che il riquadro dice. */}
             <div
+                data-testid="gallery-selettore-riquadro"
                 className={`relative border-2 border-dashed rounded-3xl p-8 text-center transition-all cursor-pointer ${
                     dragOver ? 'border-kidville-green bg-kidville-cream/50 scale-[1.01]' : 'border-kidville-line hover:border-kidville-green/50 hover:bg-kidville-cream/20'
                 }`}
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={e => { e.preventDefault(); setDragOver(false); void addFiles(e.dataTransfer.files); }}
-                onClick={() => { setErrore(null); void apri(); }}
+                onClick={apriSelettore}
             >
                 <input ref={inputRef} type="file" accept="image/*,video/*" multiple className="hidden"
                     onClick={e => e.stopPropagation()}
-                    onChange={e => { if (e.target.files) void addFiles(e.target.files); e.target.value = ''; }} />
+                    onChange={e => {
+                        const scelti = e.target.files;
+                        // I file sono ARRIVATI: la riga di log si scrive qui, sul gesto dell'input e non dentro
+                        // `addFiles` (che serve anche al trascinamento, dove nessun selettore si è aperto).
+                        if (scelti && scelti.length > 0) traccia.fileRicevuti(Array.from(scelti));
+                        if (scelti) void addFiles(scelti);
+                        e.target.value = '';
+                    }} />
                 <div className="flex flex-col items-center gap-3">
                     <div className="w-14 h-14 rounded-2xl bg-kidville-cream flex items-center justify-center">
                         <ImageIcon size={24} className="text-kidville-green" strokeWidth={1.5} />
                     </div>
                     <div>
                         <p className="font-barlow font-bold text-sm text-kidville-green uppercase">
-                            {dragOver ? t('mediaRilasciaQui') : t('mediaTrascinaFotoVideo')}
+                            {dragOver ? t('mediaRilasciaQui') : nativo ? t('mediaScegliFotoVideo') : t('mediaTrascinaFotoVideo')}
                         </p>
-                        <p className="font-maven text-xs text-kidville-sub mt-1">{t('mediaOppureClicca')}</p>
+                        <p className="font-maven text-xs text-kidville-sub mt-1">
+                            {nativo ? t('mediaScegliFotoVideoDettaglio', { max: MAX_ELEMENTI_PER_SCELTA }) : t('mediaOppureClicca')}
+                        </p>
                     </div>
                 </div>
             </div>
@@ -112,16 +180,27 @@ export function MediaUploader({ onUpload }: Props) {
                 </p>
             )}
 
-            {/* Nativo: link secondario per aprire la galleria (foto E video). Su web
-                non compare — il drop-zone apre già l'input. */}
+            {/* L'avviso del tetto dei 50. SEMPRE montato, e non è un vezzo: una regione viva che entra nel DOM
+                già piena spesso non viene annunciata da VoiceOver (e le insegnanti sono su iOS) — è il difetto
+                n. 36 della PR 1 (`VideoInLavorazione`). Vuota è `sr-only`: non occupa spazio e non si vede. */}
+            <p
+                role="status"
+                className={oltreIlMassimo ? 'rounded-xl border border-kidville-line p-3 font-maven text-sm text-kidville-ink' : 'sr-only'}
+            >
+                {oltreIlMassimo ? t('mediaErroreTroppiElementi', { max: MAX_ELEMENTI_PER_SCELTA }) : ''}
+            </p>
+
+            {/* Nell'app: «Scatta una foto», l'opzione SECONDARIA (la fotocamera nativa). Il riquadro grande
+                apre già il selettore di foto e video. Su web non compare. */}
             {nativo && (
                 <button
                     type="button"
-                    onClick={() => inputRef.current?.click()}
-                    className="mx-auto flex items-center gap-2 rounded-pill px-4 py-2 font-maven text-xs font-bold text-kidville-green underline underline-offset-2 transition-opacity hover:opacity-80"
+                    data-testid="gallery-selettore-scatta-foto"
+                    onClick={scattaFoto}
+                    className="mx-auto flex min-h-11 items-center gap-2 rounded-pill px-4 py-2 font-maven text-xs font-bold text-kidville-green underline underline-offset-2 transition-opacity hover:opacity-80"
                 >
-                    <Images size={15} strokeWidth={1.75} aria-hidden="true" />
-                    {t('mediaScegliFile')}
+                    <Camera size={15} strokeWidth={1.75} aria-hidden="true" />
+                    {t('mediaScattaUnaFoto')}
                 </button>
             )}
 

@@ -3,31 +3,31 @@ import { render, screen, fireEvent, within } from '@testing-library/react'
 
 import itServizi from '../../messages/it/teacherServizi.json'
 import itShared from '../../messages/it/shared.json'
+import { formatData } from '@/lib/i18n/date'
 
 /**
  * V11 · CHE COSA VEDE UNA PERSONA MENTRE IL VIDEO SI PREPARA.
  *
  * ─── IL CRITERIO, PRIMA DEI TEST ────────────────────────────────────────────
  *
- * Una conversione può durare minuti: nel campione misurato il 2026-09-17, 180
- * secondi a 1080p sono costati 709 secondi di wall su due vCPU. In quei minuti
+ * Una conversione può durare minuti: in un campione misurato il 2026-09-17, un filmato di 180
+ * secondi a 1080p è costato 709 secondi di wall su due vCPU. In quei minuti
  * l'interfaccia non può dire «caricamento», e non per eleganza: **se dice
  * caricamento per otto minuti, qualcuno ricarica e carica due volte** — e allora
  * due conversioni, due video in galleria, due notifiche alle famiglie.
  *
  * Quindi le fasi qui sono distinte e lo dicono a parole:
- *  · il CARICAMENTO ha una percentuale, perché i byte si contano;
- *  · la PREPARAZIONE non ce l'ha davvero (l'avanzamento del server è a scalini:
- *     25 in coda, 60 in conversione) e dice la cosa che serve sapere — che si può
- *     chiudere l'app;
- *  · il PRONTO non è pubblicato: manca un gesto, e lo si vede.
+ *  · il CARICAMENTO ha una percentuale, perché i byte si contano, e dice la verità sul TUS: continua
+ *    finché l'app è aperta, e riprende da solo alla riapertura;
+ *  · la PREPARAZIONE non ce l'ha davvero (l'avanzamento del server è a scalini) e dice la cosa che
+ *    serve sapere — che si può chiudere l'app;
+ *  · il PRONTO non chiede più niente: i bambini li ha scelti prima, e a pubblicare è il server.
  *
- * ─── E COSA SUCCEDE SE CHIUDE L'APP ─────────────────────────────────────────
+ * ─── DUE REGIONI VIVE, SEMPRE NEL DOM ───────────────────────────────────────
  *
- * I byte riprendono da soli (lo fa l'uploader TUS). I TAG no: vivono nella
- * memoria della pagina, e una pagina chiusa li perde. Perciò al rientro la scheda
- * di un video pronto CHIEDE i bambini invece di pubblicare a vuoto o di buttare
- * via il video: è la sola forma onesta, e questo file la tiene ferma.
+ * Secondario #36: VoiceOver spesso non annuncia una regione `aria-live` che entra nel documento già
+ * piena, e le insegnanti dell'incidente erano su iOS. Il paragrafo del messaggio c'è SEMPRE, e cambia
+ * solo il suo testo: è la forma robusta, e questo file la tiene ferma.
  */
 
 vi.mock('next/navigation', () => ({
@@ -45,25 +45,25 @@ function riga(sovrascrivi: Partial<RigaVideoLavorazione> = {}): RigaVideoLavoraz
   return {
     jobId: JOB_A,
     nome: 'recita.mp4',
+    creatoIl: '2026-10-02T10:00:00.000Z',
     fase: 'conversione',
     percentuale: null,
     messaggio: null,
-    chiedeTag: false,
-    tagScelti: 0,
+    riprovaPossibile: false,
     ...sovrascrivi,
   }
 }
 
 const azioni = {
-  onPubblica: vi.fn(),
   onRiprendi: vi.fn(),
   onRimuovi: vi.fn(),
+  onRiprova: vi.fn(),
 }
 
 beforeEach(() => vi.clearAllMocks())
 
-function montaggio(righe: RigaVideoLavorazione[], extra: Record<string, unknown> = {}) {
-  return render(<VideoInLavorazione righe={righe} {...azioni} {...extra} />)
+function montaggio(righe: RigaVideoLavorazione[]) {
+  return render(<VideoInLavorazione righe={righe} {...azioni} />)
 }
 
 describe('l’attesa ha un nome, e non è «caricamento»', () => {
@@ -81,11 +81,85 @@ describe('l’attesa ha un nome, e non è «caricamento»', () => {
     expect(itServizi.galleryVideoFaseInCoda).not.toBe(itServizi.galleryVideoFaseConversione)
   })
 
+  it.each([
+    ['caricamento', itServizi.galleryVideoFaseCaricamento],
+    ['in-fila', itServizi.galleryVideoFaseInFila],
+    ['interrotto', itServizi.galleryVideoFaseInterrotto],
+    ['altro-dispositivo', itServizi.galleryVideoFaseAltroDispositivo],
+    ['in-coda', itServizi.galleryVideoFaseInCoda],
+    ['conversione', itServizi.galleryVideoFaseConversione],
+    ['in-riprova', itServizi.galleryVideoRiprovaAutomatica],
+    ['pronto', itServizi.galleryVideoFasePronto],
+    ['non-pubblicato', itServizi.galleryVideoNonPubblicato],
+    ['fallito', itServizi.galleryVideoNonPubblicato],
+    ['da-ricaricare', itServizi.galleryVideoDaRicaricare],
+    ['annullato', itServizi.galleryVideoFaseAnnullato],
+  ] as const)('la fase %s si legge con la sua frase', (fase, testo) => {
+    montaggio([riga({ fase })])
+    expect(screen.getByText(testo)).toBeInTheDocument()
+  })
+
+  it('un video pronto NON chiede niente: né i bambini né un pulsante «Pubblica»', () => {
+    montaggio([riga({ fase: 'pronto' })])
+    expect(screen.getByText(itServizi.galleryVideoFasePronto)).toBeInTheDocument()
+    // I bambini li ha scelti prima, e a pubblicare è il server: l'unico gesto che resta è ritirare.
+    expect(screen.queryByRole('button', { name: /pubblica/i })).toBeNull()
+    expect(screen.getAllByRole('button')).toHaveLength(1)
+  })
+
+  it('il testo del TUS è onesto: continua finché l’app è aperta, e non promette ciò che non fa', () => {
+    expect(itServizi.galleryVideoCaricamentoTus).toMatch(/finché l’app è aperta/)
+    expect(itServizi.galleryVideoCaricamentoTus).toMatch(/riprende da solo/)
+    // «Puoi chiudere l'app» a trasferimento in corso sarebbe falso con TUS: il testo dell'invio non lo dice.
+    expect(itServizi.galleryVideoAvviato).not.toMatch(/puoi chiudere/i)
+  })
+})
+
+describe('le regioni vive stanno SEMPRE nel DOM (secondario #36)', () => {
+  it('ogni scheda ha due regioni `polite`, anche senza nessun messaggio', () => {
+    const { container } = montaggio([riga({ fase: 'in-coda', messaggio: null })])
+    expect(screen.getByText(itServizi.galleryVideoFaseInCoda)).toBeInTheDocument()
+    const vive = container.querySelectorAll('[aria-live]')
+    expect(vive).toHaveLength(2)
+    expect([...vive].every((v) => v.getAttribute('aria-live') === 'polite')).toBe(true)
+    // La seconda è vuota: c'è, e non dice niente.
+    expect(vive[1].textContent).toBe('')
+  })
+
+  it('il messaggio compare DENTRO la regione che c’era già: lo stesso nodo, non uno nuovo', () => {
+    const { container, rerender } = montaggio([riga({ fase: 'caricamento', percentuale: 10 })])
+    const prima = container.querySelectorAll('[aria-live]')[1]
+    expect(prima.textContent).toBe('')
+
+    rerender(
+      <VideoInLavorazione
+        righe={[riga({ fase: 'caricamento', percentuale: 10, messaggio: itServizi.galleryVideoCaricamentoTus })]}
+        {...azioni}
+      />,
+    )
+    const dopo = container.querySelectorAll('[aria-live]')[1]
+    // ⚠️ È QUESTO IL PUNTO: un elemento montato a condizione «entra nel DOM già pieno», e VoiceOver
+    // spesso non lo annuncia. Lo stesso nodo che cambia testo, sì.
+    expect(dopo).toBe(prima)
+    expect(dopo.textContent).toBe(itServizi.galleryVideoCaricamentoTus)
+  })
+
   it('la fase è annunciata a chi non guarda lo schermo', () => {
     const { container } = montaggio([riga({ fase: 'conversione' })])
     const vivo = container.querySelector('[aria-live="polite"]')
     expect(vivo, 'la fase cambia da sola: senza `aria-live` uno screen reader non lo sa').toBeTruthy()
     expect(vivo!.textContent).toContain(itServizi.galleryVideoFaseConversione)
+    expect(container.querySelector('[aria-live="assertive"]')).toBeNull()
+  })
+
+  it('un messaggio su una fase che NON è un fallimento è sotto la fase, non rosso, e non è un errore', () => {
+    montaggio([riga({ fase: 'in-coda', messaggio: 'Una nota' })])
+    const messaggio = screen.getByText('Una nota')
+    const fasePar = screen.getByText(itServizi.galleryVideoFaseInCoda)
+    expect(fasePar.compareDocumentPosition(messaggio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(messaggio.className).toContain('text-kidville-sub')
+    expect(messaggio.className).not.toContain('text-kidville-error')
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
 
@@ -106,43 +180,11 @@ describe('la percentuale c’è solo quando significa qualcosa', () => {
   })
 })
 
-describe('pronto non è pubblicato', () => {
-  it('offre il gesto che manca', () => {
-    montaggio([riga({ fase: 'pronto' })])
-    expect(screen.getByText(itServizi.galleryVideoFasePronto)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: itServizi.galleryVideoPubblica }))
-    expect(azioni.onPubblica).toHaveBeenCalledWith(JOB_A)
-  })
-
-  it('al rientro nell’app chiede i bambini, perché i tag non sopravvivono alla chiusura', () => {
-    const tagger = vi.fn((jobId: string) => <div data-testid={`tagger-${jobId}`}>tagger</div>)
-    montaggio([riga({ fase: 'pronto', chiedeTag: true, tagScelti: 0 })], { renderTagger: tagger })
-
-    expect(screen.getByTestId(`tagger-${JOB_A}`)).toBeInTheDocument()
-    expect(screen.getByText(itServizi.galleryVideoChiediTag)).toBeInTheDocument()
-    // Senza nemmeno un bambino scelto non si pubblica: è la stessa regola del
-    // passo 2, dove il bottone resta spento finché ogni file non ha i suoi tag.
-    expect(screen.getByRole('button', { name: itServizi.galleryVideoPubblica })).toBeDisabled()
-  })
-
-  it('con almeno un bambino scelto il gesto si sblocca', () => {
-    const tagger = vi.fn(() => <div>tagger</div>)
-    montaggio([riga({ fase: 'pronto', chiedeTag: true, tagScelti: 2 })], { renderTagger: tagger })
-    expect(screen.getByRole('button', { name: itServizi.galleryVideoPubblica })).toBeEnabled()
-  })
-
-  it('quando i tag ci sono già il tagger NON compare: non si chiede due volte', () => {
-    const tagger = vi.fn(() => <div data-testid="tagger">tagger</div>)
-    montaggio([riga({ fase: 'pronto', chiedeTag: false })], { renderTagger: tagger })
-    expect(screen.queryByTestId('tagger')).toBeNull()
-  })
-})
-
 describe('il caricamento interrotto si riprende, non si ricomincia', () => {
   it('il pulsante «Riprendi» agisce sulla riga giusta anche quando ce ne sono due', () => {
     montaggio([
-      riga({ jobId: JOB_A, fase: 'interrotto', percentuale: 30, nome: 'uno.mp4' }),
-      riga({ jobId: JOB_B, fase: 'interrotto', percentuale: 70, nome: 'due.mp4' }),
+      riga({ jobId: JOB_A, fase: 'interrotto', nome: 'uno.mp4' }),
+      riga({ jobId: JOB_B, fase: 'interrotto', nome: 'due.mp4' }),
     ])
     const schede = screen.getAllByRole('listitem')
     expect(schede).toHaveLength(2)
@@ -150,80 +192,90 @@ describe('il caricamento interrotto si riprende, non si ricomincia', () => {
     expect(azioni.onRiprendi).toHaveBeenCalledWith(JOB_B)
     expect(azioni.onRiprendi).not.toHaveBeenCalledWith(JOB_A)
   })
-})
 
-describe('un fallimento dice che cosa fare, e si può togliere di mezzo', () => {
-  it('mostra il messaggio già tradotto che gli arriva, non un codice', () => {
-    montaggio([riga({ fase: 'fallito', messaggio: 'Questo video dura più di 3 minuti.' })])
-    expect(screen.getByText('Questo video dura più di 3 minuti.')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: itServizi.galleryVideoRimuovi }))
-    expect(azioni.onRimuovi).toHaveBeenCalledWith(JOB_A)
+  it('«Riprendi» c’è SOLO sul caricamento fermo', () => {
+    montaggio([riga({ fase: 'caricamento', percentuale: 5 })])
+    expect(screen.queryByRole('button', { name: itServizi.galleryVideoRiprendi })).toBeNull()
   })
 })
 
-/**
- * «IL PROBLEMA È NOSTRO: LO STIAMO RIPROVANDO» — la scheda che racconta un ritentativo.
- *
- * La scheda non DECIDE niente: riceve il messaggio già tradotto da chi la monta (l'hook
- * `useVideoGalleria`, che lo sceglie dal flag `riprovaAutomatica` del server) e lo mostra
- * come un messaggio su una fase che NON è un fallimento. Quello che qui si tiene fermo è la
- * FORMA: sotto la fase, non rosso (non è un errore: non c'è niente che la persona debba
- * fare), e ANNUNCIATO — compare minuti dopo, da solo, e senza `aria-live` chi usa uno
- * screen reader resta convinto che la coda sia ferma.
- * Che il messaggio compaia SOLO mentre si ritenta lo provano i test dell'hook e della pagina.
- */
-describe('un ritentativo automatico si legge, e si sente', () => {
-  it.each([
-    ['in-coda', itServizi.galleryVideoFaseInCoda],
-    ['conversione', itServizi.galleryVideoFaseConversione],
-  ] as const)('in fase %s il messaggio sta SOTTO la fase, che resta', (fase, testoFase) => {
-    montaggio([riga({ fase, messaggio: itServizi.galleryVideoRiprovaAutomatica })])
-    // La fase non sparisce: «in attesa» / «preparazione in corso» è ancora vero.
-    expect(screen.getByText(testoFase)).toBeInTheDocument()
-    const messaggio = screen.getByText(itServizi.galleryVideoRiprovaAutomatica)
-    expect(messaggio).toBeInTheDocument()
-    // Sotto la fase, non al suo posto: i due paragrafi sono fratelli e il messaggio viene dopo.
-    const fasePar = screen.getByText(testoFase)
-    expect(fasePar.compareDocumentPosition(messaggio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+describe('«Riprova»: solo se il server, premuto, direbbe di sì', () => {
+  it('su un non pubblicato che il server riprenderebbe offre «Riprova», sulla riga giusta', () => {
+    montaggio([
+      riga({ jobId: JOB_A, fase: 'non-pubblicato', messaggio: itShared.erroreVideoPubblicazioneNonRiuscita, riprovaPossibile: true }),
+      riga({ jobId: JOB_B, fase: 'non-pubblicato', messaggio: itShared.erroreVideoPubblicazioneNonRiuscita, riprovaPossibile: true }),
+    ])
+    const schede = screen.getAllByRole('listitem')
+    fireEvent.click(within(schede[1]).getByRole('button', { name: itServizi.galleryVideoRiprova }))
+    expect(azioni.onRiprova).toHaveBeenCalledTimes(1)
+    expect(azioni.onRiprova).toHaveBeenCalledWith(JOB_B)
   })
 
-  it('il messaggio è ANNUNCIATO: `aria-live="polite"`, come la fase', () => {
-    const { container } = montaggio([riga({ fase: 'conversione', messaggio: itServizi.galleryVideoRiprovaAutomatica })])
-    const messaggio = screen.getByText(itServizi.galleryVideoRiprovaAutomatica)
-    expect(
-      messaggio,
-      'compare da solo, minuti dopo: senza `aria-live` chi non guarda lo schermo non lo sa',
-    ).toHaveAttribute('aria-live', 'polite')
-    // Le regioni vive sono DUE (fase e messaggio) e nessuna è `assertive`: «lo stiamo
-    // riprovando» non deve interrompere ciò che la persona sta facendo.
-    expect(container.querySelectorAll('[aria-live="polite"]')).toHaveLength(2)
-    expect(container.querySelector('[aria-live="assertive"]')).toBeNull()
+  it('senza `riprovaPossibile` il pulsante non c’è: un «Riprova» che risponde 409 è un pulsante che mente', () => {
+    montaggio([riga({ fase: 'non-pubblicato', messaggio: itShared.erroreVideoNessunDestinatario, riprovaPossibile: false })])
+    expect(screen.getByText(itShared.erroreVideoNessunDestinatario)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: itServizi.galleryVideoRiprova })).toBeNull()
   })
 
-  it('non è un errore rosso: non c’è niente che la persona debba fare', () => {
-    montaggio([riga({ fase: 'in-coda', messaggio: itServizi.galleryVideoRiprovaAutomatica })])
-    const messaggio = screen.getByText(itServizi.galleryVideoRiprovaAutomatica)
-    expect(messaggio.className).toContain('text-kidville-sub')
-    expect(messaggio.className).not.toContain('text-kidville-error')
-    // E nessuna barra di errore o percentuale inventata: la barra resta quella delle fasi.
-    expect(screen.queryByRole('alert')).toBeNull()
+  it('il pulsante c’è solo su un NON PUBBLICATO, anche se la riga arrivasse con il flag acceso', () => {
+    montaggio([riga({ fase: 'pronto', riprovaPossibile: true })])
+    expect(screen.queryByRole('button', { name: itServizi.galleryVideoRiprova })).toBeNull()
   })
+})
 
-  it('senza messaggio la scheda non ha né il paragrafo né la seconda regione viva', () => {
-    // L'assenza è vera solo se la presenza lo è: si controlla PRIMA che la fase sia a schermo.
-    const { container } = montaggio([riga({ fase: 'in-coda', messaggio: null })])
-    expect(screen.getByText(itServizi.galleryVideoFaseInCoda)).toBeInTheDocument()
-    expect(screen.queryByText(itServizi.galleryVideoRiprovaAutomatica)).toBeNull()
-    expect(container.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
-  })
+describe('ciò che è andato male dice perché, e si toglie di mezzo', () => {
+  it.each(['non-pubblicato', 'fallito', 'da-ricaricare', 'annullato'] as const)(
+    'in fase %s il gesto si chiama «Togli», non «Rimuovi»',
+    (fase) => {
+      montaggio([riga({ fase, messaggio: 'Perché' })])
+      fireEvent.click(screen.getByRole('button', { name: itServizi.galleryVideoTogli }))
+      expect(azioni.onRimuovi).toHaveBeenCalledWith(JOB_A)
+      expect(screen.queryByRole('button', { name: itServizi.galleryVideoRimuovi })).toBeNull()
+    },
+  )
 
-  it('un fallimento nostro mostra la frase finale UNA volta, nel paragrafo di fase, in rosso', () => {
-    // Esauriti i tentativi il job è `failed`: la frase è quella del guasto nostro e NON si
-    // aggiunge il messaggio «lo stiamo riprovando», che non è più vero.
+  it.each(['caricamento', 'in-fila', 'interrotto', 'altro-dispositivo', 'in-coda', 'conversione', 'in-riprova', 'pronto'] as const)(
+    'in fase %s si può ancora «Rimuovere»: chi ha caricato il filmato sbagliato lo ritira prima che esca',
+    (fase) => {
+      montaggio([riga({ fase })])
+      fireEvent.click(screen.getByRole('button', { name: itServizi.galleryVideoRimuovi }))
+      expect(azioni.onRimuovi).toHaveBeenCalledWith(JOB_A)
+    },
+  )
+
+  it('un fallimento dice «non pubblicato» e il MOTIVO una volta sola, in rosso', () => {
     montaggio([riga({ fase: 'fallito', messaggio: itShared.erroreVideoGuastoNostro })])
+    expect(screen.getByText(itServizi.galleryVideoNonPubblicato)).toBeInTheDocument()
     expect(screen.getAllByText(itShared.erroreVideoGuastoNostro)).toHaveLength(1)
     expect(screen.getByText(itShared.erroreVideoGuastoNostro).className).toContain('text-kidville-error')
-    expect(screen.queryByText(itServizi.galleryVideoRiprovaAutomatica)).toBeNull()
+    expect(screen.getByText(itServizi.galleryVideoNonPubblicato).className).toContain('text-kidville-error')
+  })
+
+  it('un fallimento senza una frase non lascia una scheda muta: il ripiego generico', () => {
+    montaggio([riga({ fase: 'fallito', messaggio: null })])
+    expect(screen.getByText(itServizi.galleryErrCaricamentoGenerico)).toBeInTheDocument()
+  })
+
+  it('«da ricaricare» non porta un motivo inventato: la frase di fase basta', () => {
+    const { container } = montaggio([riga({ fase: 'da-ricaricare', messaggio: null })])
+    expect(screen.getByText(itServizi.galleryVideoDaRicaricare)).toBeInTheDocument()
+    expect(screen.queryByText(itServizi.galleryErrCaricamentoGenerico)).toBeNull()
+    expect(container.querySelectorAll('[aria-live]')[1].textContent).toBe('')
+  })
+})
+
+describe('il nome del video', () => {
+  it('si vede (serve a riconoscerlo)', () => {
+    montaggio([riga({ nome: 'recita.mp4' })])
+    expect(screen.getByText('recita.mp4')).toBeInTheDocument()
+  })
+
+  it('un video mandato da un altro dispositivo non ha nome: la scheda dice quando è stato inviato', () => {
+    montaggio([riga({ nome: null, creatoIl: '2026-10-02T10:00:00.000Z', fase: 'altro-dispositivo' })])
+    const quando = formatData('2026-10-02T10:00:00.000Z', 'it', 'dataOra')
+    expect(quando).toContain('2026')
+    expect(screen.getByText(`Video inviato il ${quando}`)).toBeInTheDocument()
+    expect(screen.getByText(itServizi.galleryVideoFaseAltroDispositivo)).toBeInTheDocument()
   })
 })
 
@@ -233,9 +285,8 @@ describe('le regole di casa', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('il nome del file si vede (serve a riconoscerlo) e nessun testo usa il grigio a 2,51:1', () => {
-    const { container } = montaggio([riga({ nome: 'recita.mp4' })])
-    expect(screen.getByText('recita.mp4')).toBeInTheDocument()
+  it('nessun testo usa il grigio a 2,51:1', () => {
+    const { container } = montaggio([riga({ fase: 'in-coda', messaggio: 'x' }), riga({ jobId: JOB_B, fase: 'fallito', messaggio: 'y' })])
     expect(
       container.innerHTML.includes('text-kidville-muted'),
       '`text-kidville-muted` vale 2,51:1 su bianco: il token del testo secondario è `text-kidville-sub`',

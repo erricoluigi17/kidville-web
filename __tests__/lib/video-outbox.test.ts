@@ -96,6 +96,7 @@ import {
   type EventoOutbox,
   type RegistroDestinatari,
 } from '@/lib/media/video/outbox'
+import { consegnaPubblicazioneAutomatica, tipiRegistrati } from '@/lib/media/video/outbox/destinatari'
 
 const INTENT = '30000000-0000-4000-8000-000000000003'
 
@@ -621,6 +622,23 @@ describe('il registro dei destinatari', () => {
     for (const tipo of ['intent.superseded', 'intent.revoked', 'gallery.published']) {
       expect(typeof DESTINATARI[tipo]).toBe('function')
     }
+  })
+
+  it('`gallery.auto_publish` (PR 2) ha il SUO destinatario — la pubblicazione, non una ricevuta — e `tipiRegistrati` li nomina TUTTI, anche i tipi del runner', () => {
+    expect(typeof DESTINATARI['gallery.auto_publish']).toBe('function')
+    // La ricevuta della retention è la forma dei tre tipi vecchi: la pubblicazione è un'altra cosa, e un tipo scritto col destinatario
+    // sbagliato dichiarerebbe «consegnato» un video che nessuno ha pubblicato.
+    expect(DESTINATARI['gallery.auto_publish']).not.toBe(ricevutaRetention)
+    expect(DESTINATARI['gallery.auto_publish']).toBe(consegnaPubblicazioneAutomatica)
+
+    expect(tipiRegistrati()).toEqual(
+      expect.arrayContaining(['intent.superseded', 'intent.revoked', 'gallery.published', 'gallery.auto_publish']),
+    )
+    // Tutti e soli i tipi del registro, di QUALUNQUE consumatore: è la domanda a cui risponde chi cerca gli eventi senza destinatario (#115).
+    expect([...tipiRegistrati()].sort()).toEqual(Object.keys(DESTINATARI).sort())
+    // `tipiDellaRetention` ne toglie quelli del runner: non si può ricavare l'uno dall'altro senza perdere `gallery.auto_publish`.
+    expect(tipiDellaRetention()).not.toContain('gallery.auto_publish')
+    expect(tipiRegistrati()).toContain('gallery.auto_publish')
   })
 
   it('un tipo nuovo si registra con UNA riga e il motore lo consegna, con payload, età e operazione del chiamante', async () => {

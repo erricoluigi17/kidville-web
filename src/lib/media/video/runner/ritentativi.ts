@@ -27,8 +27,9 @@ import { USCITE_APPARECCHIO, USCITE_CONVERSIONE } from './script'
  * ═════════════════════════════════════════════════════════════════════════════
  * LE QUATTRO CLASSI
  *
- *  · `file` — il filmato non va bene (probe e verifiche del file). Il job è RIFIUTATO e
- *    non si ritenta mai.
+ *  · `file` — il filmato non va bene (probe e verifiche del file, e dalla PR 2 lo `sha256`
+ *    dichiarato che non coincide con l'originale: uscita 35 della conversione). Il job è
+ *    RIFIUTATO e non si ritenta mai.
  *  · `non-ritentabile` — non è provato che il file c'entri, ma non si ritenta lo
  *    stesso: FFmpeg uscito con errore, probe dell'uscita, ffprobe sull'originale senza
  *    segni di rete. Il job FALLISCE e non si ritenta mai.
@@ -328,6 +329,8 @@ function classeDiUnUrlFirmato(http: number | null): ClasseGuasto {
  *   25 → ffprobe sull'URL (PROBE_COMMAND_FAILED): `infra-transitoria` SOLO se lo stderr, senza
  *        le righe di curl, mostra un errore di rete o HTTP, altrimenti `non-ritentabile` (D3:
  *        non si ritenta un file illeggibile);
+ *   26 → i binari dello snapshot non tornano (BUILD_HASH_MISMATCH, PR 2): `infra-permanente`, come
+ *        un'impronta che non torna. Il runner la intercetta PRIMA e ripiega nella stessa MicroVM;
  *   qualunque altra (1, 126, 127, 137, 255…) → `infra-transitoria`: si fallisce chiusi.
  *
  * ⚠️ Lo stderr è quello di TUTTO l'apparecchio — i due curl della build, sha256sum, la HEAD,
@@ -350,6 +353,10 @@ export function classeDaUscitaApparecchio(uscita: number, diagnosi: string): Cla
       return classeDelDownload(statoDellUltimoCurl(diagnosi))
     case USCITE_PREPARAZIONE.impronta:
     case USCITE_PREPARAZIONE.estrazione:
+    // 26 — i binari dello snapshot non tornano (PR 2): come un'impronta che non torna, un guasto NOSTRO
+    // che da solo non passa. Il runner lo intercetta prima (il ripiego è nella stessa MicroVM): qui sta
+    // perché ogni uscita che l'apparecchio può produrre ha una classe, e non ricade sul «non lo so».
+    case USCITE_APPARECCHIO.binari:
       return 'infra-permanente'
     case USCITE_APPARECCHIO.dimensione:
       return classeDiUnUrlFirmato(statoDellUltimoCurl(diagnosi))
@@ -368,7 +375,9 @@ export function classeDaUscitaApparecchio(uscita: number, diagnosi: string): Cla
  *   31 → scarico dell'originale (SOURCE_DOWNLOAD_FAILED) e 34 → caricamento dell'uscita
  *        (OUTPUT_UPLOAD_FAILED): 404 `infra-permanente`, altrimenti `infra-transitoria`;
  *   32 → FFmpeg (ENCODE_FAILED), 33 → ffprobe sull'uscita (PROBE_COMMAND_FAILED) e
- *        qualunque uscita che non conosciamo, compreso un 137: `non-ritentabile` (D3).
+ *        qualunque uscita che non conosciamo, compreso un 137: `non-ritentabile` (D3);
+ *   35 → lo `sha256` dichiarato non coincide con l'originale scaricato (ORIGINALE_DIVERSO, PR 2):
+ *        `file`, cioè RIFIUTATO e mai ritentato — il guasto è del filmato, non dell'infrastruttura.
  *
  * Per 31 e 34 lo stato è quello dell'ultima riga «curl: (» del diario: il diario raccoglie
  * anche i curl di prima (l'originale, il watermark), e un tentativo recuperato lì non è l'esito
@@ -384,6 +393,12 @@ export function classeDaUscitaConversione(uscita: number, diagnosi: string): Cla
     case USCITE_CONVERSIONE.scarico:
     case USCITE_CONVERSIONE.caricamento:
       return classeDiUnUrlFirmato(statoDellUltimoCurl(diagnosi))
+    case USCITE_CONVERSIONE.impronta:
+      // 35 (PR 2, spec §10.4): lo `sha256` dichiarato non è quello dell'originale scaricato. Il guasto è
+      // del FILE — non è la rete, non è la MicroVM, e il tentativo dopo scaricherebbe gli stessi byte e
+      // darebbe lo stesso verdetto — quindi `file`: il job è RIFIUTATO e non si ritenta MAI, a qualunque
+      // `attempt`. Non dipende dalla diagnosi: né un 404 né un timeout recuperati nel diario lo cambiano.
+      return 'file'
     default:
       return 'non-ritentabile'
   }

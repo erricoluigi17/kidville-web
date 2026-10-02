@@ -5,6 +5,8 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
+import { scansionaEsitiDiConversione } from '@/lib/media/video/esiti'
+import { tipiRegistrati } from '@/lib/media/video/outbox/destinatari'
 import {
     codiceDi,
     consumaOutbox,
@@ -47,9 +49,12 @@ import {
  *     tolta (due casi misurati il 01/10 sugli originali). Si toglie il file.
  *  7. LA MINIMIZZAZIONE — `video_intenti_minimizza`. Gli identificativi dei bambini scelti non
  *     restano sull'intento oltre i sette giorni dalla conclusione: resta il solo numero.
- *  8. LA CODA DELLE NOTIFICHE — `consumaOutbox`, coi numeri di sempre (25 eventi, lease 120 s).
- *  9. LA SCANSIONE DEGLI ESITI DI CONVERSIONE (§8.5) — PUNTO D'AGGANCIO, non ancora collegato:
- *     vedi `scansionaEsitiConversione`.
+ *  8. LA CODA DELLE NOTIFICHE — `consumaOutbox`, coi numeri di sempre (25 eventi, lease 120 s), e il
+ *     CONTO dei tipi di evento che nessun destinatario conosce (`segnalaTipiSenzaDestinatario`).
+ *  9. LA SCANSIONE DEGLI ESITI DI CONVERSIONE (§8.5) — gli intenti automatici con un job `failed` o
+ *     `rejected` e nessuna marca: marca `fallito` e, solo con la marca vinta, la notifica a chi ha caricato
+ *     (`@/lib/media/video/esiti`). Il runner fa lo stesso subito dopo ogni esito definitivo: la marca decide
+ *     chi vince.
  * 10. LA RICONCILIAZIONE — sola lettura, in coda: i conteggi che dicono se il resto ha lavorato.
  *
  * Un passo che non riesce NON ferma, di norma, quelli che non dipendono da lui: il guasto arriva in
@@ -700,48 +705,100 @@ async function spazzaMagazzino(supabase: Supa, adesso: Date, m: Magazzino): Prom
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// LA SCANSIONE DEGLI ESITI DI CONVERSIONE — il punto d'aggancio (spec §8.5)
+// LA SCANSIONE DEGLI ESITI DI CONVERSIONE (spec §8.5) E I TIPI SENZA DESTINATARIO
 // ═══════════════════════════════════════════════════════════════════════════════
 
 type EsitoScansioneEsiti = {
-    /** `non-collegata` finché la libreria degli esiti non è agganciata qui; poi `ok` o il motivo per cui non è partita. */
+    /** `non-eseguita` finché il passo non gira; poi `ok` o il motivo per cui non è partita (`schema-assente`, `lettura-fallita`). */
     esito: string
     /** Quanti intenti ha marcato `fallito` e notificato. */
     notificati: number
 }
 
 /** Il valore di chi non ha girato. Congelato: è condiviso fra le richieste. */
-const SCANSIONE_ESITI_NON_COLLEGATA: EsitoScansioneEsiti = Object.freeze({
-    esito: 'non-collegata',
+const SCANSIONE_ESITI_NON_ESEGUITA: EsitoScansioneEsiti = Object.freeze({
+    esito: 'non-eseguita',
     notificati: 0,
 })
 
 /**
- * ⚠️ PUNTO D'AGGANCIO, NON COLLEGATO. Qui non c'è la scansione: c'è il posto in cui andrà.
+ * La scansione, nel punto del giro che le spetta: DOPO la coda (le notifiche d'esito usano le stesse tabelle e non devono far aspettare le
+ * ricevute) e PRIMA della riconciliazione (che conta `esiti_da_notificare` dopo che la scansione ha lavorato).
  *
- * La spec (§8.5, §15 passo 6) vuole che la retention, a ogni giro, scansioni gli intenti con la
- * pubblicazione automatica che hanno un job `failed` o `rejected` e `esito_notificato IS NULL`: li marca
- * `fallito` con `video_intent_esito_segna` e, SOLO se la marca è andata, notifica l'insegnante («non
- * pubblicato»). Lo stesso giro lo fa il runner subito dopo ogni conversione fallita. La logica è
- * dell'altra consegna della PR — T7: `src/lib/media/video/esiti.ts`, la libreria degli esiti con le
- * notifiche e i testi — e questa non la riscrive: due copie della regola «una sola marca, una sola
- * notifica» divergono il giorno in cui qualcuno ne corregge una.
+ * La logica non è qui: è `@/lib/media/video/esiti`, la libreria che usa anche il runner. Due copie della regola «una sola marca, una sola
+ * notifica» divergono il giorno in cui qualcuno ne corregge una. Questa funzione la chiama col nome del lavoro e riporta il conto.
  *
- * COME SI COLLEGA, quando la libreria c'è:
- *  1. importarla qui, e far fare a questa funzione ciò che il runner fa dopo `fallisci`:
- *     chiamare la scansione con `supabase`, e riportare `{ esito, notificati }`;
- *  2. cambiare i due test di `__tests__/api/gdpr-retention-video.test.ts` che fissano il valore
- *     `non-collegata` (il caso «il punto d'aggancio degli esiti»): sono lì apposta per obbligare chi
- *     collega a farlo di proposito, e a provarlo;
- *  3. il passo resta DOPO la coda (le notifiche d'esito usano le stesse tabelle e non devono far
- *     aspettare le ricevute) e PRIMA della riconciliazione (che conta `esiti_da_notificare` dopo che la
- *     scansione ha lavorato).
- *
- * Finché non è collegata, `esiti_da_notificare` della riconciliazione è il numero che lo dice: sta nel
- * battito, e un valore che non scende vuol dire che nessuno li notifica.
+ * Non lancia e non fa fallire il giro: un guasto della scansione si dice nei log (`error`) e nel battito (`esiti_eseguita`, `n_esiti_da_notificare`
+ * della riconciliazione resta alto), e il resto della conservazione gira lo stesso.
  */
-async function scansionaEsitiConversione(): Promise<EsitoScansioneEsiti> {
-    return SCANSIONE_ESITI_NON_COLLEGATA
+async function scansionaEsitiConversione(supabase: Supa): Promise<EsitoScansioneEsiti> {
+    const scansione = await scansionaEsitiDiConversione(supabase, { operazione: JOB })
+    return { esito: scansione.esito, notificati: scansione.notificati }
+}
+
+/** Quante righe di `video_outbox` si leggono per contare i tipi senza destinatario: un campione, non l'archivio. */
+const TETTO_LETTURA_TIPI_SENZA_DESTINATARIO = 200
+
+/**
+ * GLI EVENTI CHE NESSUNO SA CONSEGNARE (secondario #115): un tipo di evento nella coda che il registro dei destinatari non conosce.
+ *
+ * Col filtro NEL claim un tipo non registrato non lo prende più nessuno: né la retention (prende i registrati tranne quelli del runner) né il
+ * runner (prende solo i suoi). Prima la retention lo prendeva e lo gridava a ogni giro, e bruciava i suoi venticinque tentativi; ora resta
+ * fermo e INTATTO — e fermo non fa rumore. Rimaneva solo un `warn` aggregato di `video_riconciliazione` (`outbox-in-ritardo`), che dice che
+ * qualcosa è fermo da un'ora ma non che cosa né perché. Questo è il grido che mancava: una riga `error` per TIPO, col suo conteggio, perché
+ * un tipo scritto nella coda e mai registrato è una configurazione mancante, e la configurazione mancante è `error` (AGENTS, regola 4) e mai `info`.
+ *
+ * Si guarda `video_outbox` per ciò che non è stato consegnato e il cui tipo non sta nel registro (`tipiRegistrati`, TUTTI i tipi di TUTTI i
+ * consumatori: ricavarli dai tipi della retention scambierebbe quelli del runner per «senza destinatario»). Legge il solo tipo: nessun
+ * identificativo, nessun payload. Il conteggio è su un campione (`TETTO_LETTURA_TIPI_SENZA_DESTINATARIO` righe), e `troncato` lo dice.
+ *
+ * Non fa fallire il giro e non lancia: una lettura che non riesce lascia una riga `warn` e vale zero.
+ */
+async function segnalaTipiSenzaDestinatario(supabase: Supa, canale: string): Promise<number> {
+    const { data, error } = await supabase
+        .from('video_outbox')
+        .select('event_type')
+        .is('sent_at', null)
+        .not('event_type', 'in', `(${tipiRegistrati().join(',')})`)
+        .limit(TETTO_LETTURA_TIPI_SENZA_DESTINATARIO)
+    // PostgREST non lancia: l'errore è nel valore di ritorno.
+    if (error) {
+        logEvento(
+            'cron',
+            'warn',
+            { operazione: JOB, esito: 'outbox-tipi-non-letti', canale, error_code: codiceDi(error) },
+            error,
+        )
+        return 0
+    }
+
+    const righe = (data ?? []) as { event_type?: unknown }[]
+    const perTipo = new Map<string, number>()
+    for (const riga of righe) {
+        if (typeof riga.event_type !== 'string') continue
+        perTipo.set(riga.event_type, (perTipo.get(riga.event_type) ?? 0) + 1)
+    }
+    const troncato = righe.length >= TETTO_LETTURA_TIPI_SENZA_DESTINATARIO
+    let totale = 0
+    for (const [tipo, n] of perTipo) {
+        totale += n
+        logEvento(
+            'cron',
+            'error',
+            {
+                operazione: JOB,
+                esito: 'outbox-senza-destinatario',
+                canale,
+                tipo,
+                n_righe: n,
+                troncato,
+                msg: `${JOB}: eventi di video_outbox di un tipo che nessun destinatario sa consegnare: nessuno li consegnerà finché il tipo non è registrato`,
+            },
+            undefined,
+            { distingui: ['tipo'] },
+        )
+    }
+    return totale
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -780,7 +837,8 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
     let spazzataUscite: EsitoSpazzata = SPAZZATA_NON_ESEGUITA
     let nIntentiMinimizzati = 0
     let outbox: EsitoOutbox = OUTBOX_NON_ESEGUITO
-    let esiti: EsitoScansioneEsiti = SCANSIONE_ESITI_NON_COLLEGATA
+    let nOutboxNonRegistrati = 0
+    let esiti: EsitoScansioneEsiti = SCANSIONE_ESITI_NON_ESEGUITA
     let conti: EsitoRpc | null = null
 
     /**
@@ -1202,10 +1260,16 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
             leaseSecondi: LEASE_OUTBOX_SECONDI,
             tipi: tipiDellaRetention(),
         })
+        // I tipi che il filtro del claim lascia a nessuno: si contano e si gridano (#115).
+        nOutboxNonRegistrati = await segnalaTipiSenzaDestinatario(supabase, canale)
 
         // ── 9. LA SCANSIONE DEGLI ESITI DI CONVERSIONE ──────────────────────
-        // Punto d'aggancio: vedi `scansionaEsitiConversione`.
-        esiti = await scansionaEsitiConversione()
+        // Dopo la coda e prima della riconciliazione: vedi `scansionaEsitiConversione`.
+        esiti = await scansionaEsitiConversione(supabase)
+        // Una scansione che non è riuscita (lettura fallita, schema assente) ha già lasciato la sua riga: qui si rende visibile al battito. Non
+        // ferma niente — la riconciliazione che segue conta proprio gli esiti ancora da notificare —, ma un giro in cui nessuno sa se i video
+        // falliti sono stati notificati non è un «ok».
+        if (esiti.esito !== 'ok') segnalaGuasto('esiti-fallito', 'esiti-fallito')
 
         // ── 10. LA RICONCILIAZIONE ──────────────────────────────────────────
         // Sola lettura: conta, e non aggiusta. Un conteggio che sistema quel che
@@ -1304,6 +1368,7 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
             outbox_falliti: outbox.falliti,
             outbox_senza_destinatario: outbox.senzaDestinatario,
             outbox_saltati: outbox.saltati,
+            outbox_non_registrati: nOutboxNonRegistrati,
             esiti_esito: esiti.esito,
             esiti_notificati: esiti.notificati,
             riconciliazione: conti ?? null,
@@ -1379,9 +1444,12 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
             n_outbox_presi: outbox.presi,
             n_outbox_inviati: outbox.inviati,
             n_outbox_senza_destinatario: outbox.senzaDestinatario,
+            // I tipi di evento che nessuno sa consegnare: gli eventi fermi nella coda, contati sul campione (#115).
+            n_outbox_non_registrati: nOutboxNonRegistrati,
             // Un booleano e non l'`esito`: la redazione dei log è a lista bianca, e una stringa sotto una
-            // chiave che non ci sta (`esiti_esito`) uscirebbe in `app_log` come «[redatto:str/13]».
-            esiti_collegata: esiti.esito !== SCANSIONE_ESITI_NON_COLLEGATA.esito,
+            // chiave che non ci sta (`esiti_esito`) uscirebbe in `app_log` come «[redatto:str/13]». Vero se la
+            // scansione è girata in questo giro (anche a zero notifiche): falso solo se il giro si è fermato prima.
+            esiti_eseguita: esiti.esito !== SCANSIONE_ESITI_NON_ESEGUITA.esito,
             n_esiti_notificati: esiti.notificati,
             // ── I CONTEGGI DELLA RICONCILIAZIONE ──
             // Stanno nel battito perché è l'unico posto che resta interrogabile in SQL per trenta

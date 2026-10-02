@@ -1,107 +1,101 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 
 import {
     accodaCaricamentoVideo,
     annullaCaricamentoVideo,
     caricaVideo,
+    concludiCaricamentoVideo,
     creaArchivioCaricamenti,
     potaArchivioCaricamenti,
     type ArchivioCaricamentiVideo,
+    type CaricamentoVideoLocale,
     type DipendenzeCaricamentoVideo,
 } from '@/lib/media/video/upload';
 import {
     annullaIntentoVideo,
     apriIntentoVideoGalleria,
     chiaveIdempotenzaVideo,
-    confermaIntentoVideo,
-    faseDelJob,
+    leggiElencoVideoGalleria,
     leggiStatoIntentoVideo,
-    pubblicaVideoInGalleria,
     rifiutoLocaleVideo,
+    riprovaPubblicazioneVideo,
     segnalaVideoCaricato,
-    type StatoIntentoVideo,
+    type EsitoFlusso,
 } from '@/lib/gallery/video-galleria-flusso';
-import type { StatoJobVideoLetto } from '@/lib/media/video/contratto';
+import {
+    CODICI_MOSTRATI_VIDEO,
+    type CodiceMostratoVideo,
+    type VoceVideo as VoceElencoVideo,
+} from '@/lib/media/video/contratto';
+import { scegliTrasporto, trasportoTus, type TrasportoVideo } from '@/lib/media/video/trasporto';
 import { caricamentoNelContesto } from '@/lib/media/video/upload/stato';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
+import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { logClient } from '@/lib/logging/client';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
-import type { FaseVideoUI, RigaVideoLavorazione } from './VideoInLavorazione';
+import type { RigaVideoLavorazione } from './VideoInLavorazione';
+import { leggiNascosti, nascondiIntento } from './video-galleria-nascosti';
+import { FASI_UI_ATTIVE, fondiRighe, type RigaComposta, type StatoLocale } from './video-galleria-righe';
+import { useRipresaAutomatica, type MotivoRipresa } from './use-ripresa-automatica';
 
 /**
  * V11 · LA MACCHINA A STATI DI UN VIDEO DI GALLERIA, DAL LATO DELLA SCHERMATA.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * PERCHÉ UN HOOK, E NON CODICE DENTRO `page.tsx`
+ * CHE COSA FA QUESTO HOOK, DOPO LA PR 2 «SERVER E WEB»
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Perché questa roba ha una VITA PROPRIA, più lunga della schermata che l'ha
- * avviata: un caricamento riprende al rientro nell'app, una conversione prosegue
- * mentre il telefono è in tasca, un job pronto aspetta un gesto che forse arriverà
- * domani. Tenerla dentro la pagina vorrebbe dire mescolarla ai passi «scegli /
- * tagga / pubblica», che invece durano quanto una sessione.
+ * I bambini si scelgono UNA volta, prima dell'invio, e non si richiedono più. «Invia» apre subito
+ * l'intento **con i destinatari** (`POST /api/video-uploads`): il server li conosce, e quando la
+ * conversione finisce pubblica da solo — anche a pagina chiusa — e avvisa chi ha caricato. Quindi
+ * qui non c'è più nessun ramo di pubblicazione, nessun tag in memoria e nessun «chiedi i bambini
+ * al rientro»: la vita di un video, per questa schermata, è soltanto il suo trasferimento e il suo
+ * racconto.
+ *
+ * Tre cose, e nessun'altra:
+ *
+ *  1. **inviare** — apre l'intento (un 422 che nomina i bambini senza liberatoria torna alla
+ *     schermata PRIMA che parta un byte), scrive la riga locale e accoda il trasferimento;
+ *  2. **trasferire e riprendere** — i byte partono in TUS UNO ALLA VOLTA (due gigabyte insieme si
+ *     rubano la banda a vicenda), e quando la rete li interrompe ripartono da soli, senza un clic:
+ *     al ritorno in primo piano, quando torna la rete, e con un'attesa crescente di 5, 15, 30, 60
+ *     secondi finché la pagina è visibile (`useRipresaAutomatica`). La firma si rinnova con
+ *     `POST /api/video-uploads/[id]/firma`, mai riaprendo l'intento;
+ *  3. **raccontare** — fonde le righe di QUESTO dispositivo (nome, byte spediti) con l'elenco del
+ *     server (`GET /api/video-uploads`, ogni 10 secondi solo mentre c'è qualcosa di attivo e la
+ *     pagina è visibile; senza nulla di attivo, una volta sola al ritorno in primo piano), così un
+ *     video mandato da un altro dispositivo si vede, una pubblicazione fallita offre «Riprova», e
+ *     un invio del flusso vecchio dice «questo video va ricaricato».
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * LE TRE COSE CHE SOPRAVVIVONO ALLA CHIUSURA DELL'APP, E LA QUARTA CHE NO
+ * LE REGOLE CHE NON SI DEROGANO
  * ═══════════════════════════════════════════════════════════════════════════
  *
- *  1. **i byte non ancora spediti** — stanno in IndexedDB insieme all'URL della
- *     sessione TUS, e ripartono dall'offset che il server ha contato;
- *  2. **il riferimento al job** — `jobDaSeguire()` lo restituisce al rientro, ed è
- *     l'unico modo perché la schermata sappia che cosa tornare a interrogare;
- *  3. **la conversione**, che gira su una macchina lontana e non sa nemmeno che
- *     l'app si è chiusa.
+ *  · **«Rimuovi» ferma prima i byte, poi ritira l'intento.** `annullaCaricamentoVideo` (TUS e
+ *    copia locale) viene PRIMA di `annullaIntentoVideo`: il contrario lasciava il trasferimento
+ *    in volo su un intento già revocato.
+ *  · **I byte già sul server non si rispediscono.** Se l'apertura dice `needs_upload: false`
+ *    si passa da `concludiCaricamentoVideo` (che ferma la copia in background): chiudere la riga
+ *    a mano metterebbe l'`eliminaByte` dietro una copia di due gigabyte.
+ *  · **I byte spariti sono un invio da rifare.** Un'app chiusa a metà copia lascia la riga e non i
+ *    byte: la scheda dice «questo video va ricaricato» e l'intento si annulla, invece di restare
+ *    in attesa dei suoi byte fino alla ritenzione.
+ *  · **Nei log, mai il nome di un file né di un bambino**: uuid, conteggi e codici. Il nome sta
+ *    sullo schermo di chi ha scelto il file, e basta.
+ *  · **Una credenziale arrivata tardi non si consegna.** Dopo un logout, un cambio di sede o lo
+ *    smontaggio, nessuna firma arriva a TUS (`ancora()` nelle dipendenze del trasporto).
  *
- * E la quarta, che **non** sopravvive: **i bambini taggati**. Vivono nella memoria
- * di questa pagina, e non possono andare su disco «per comodità» — sono
- * identificativi di minori, e l'archivio dei caricamenti ha un elenco chiuso di
- * chiavi (`CHIAVI_RIGA_CARICAMENTO`) proprio per impedire che ci finisca dentro
- * roba del genere. Perciò un job ritrovato al rientro porta `chiedeTag: true` e la
- * scheda chiede i bambini prima di pubblicare, invece di pubblicare a vuoto.
- *
- * ═══════════════════════════════════════════════════════════════════════════
- * LA FIRMA SCADE, E ALLA RIPRESA NE SERVE UNA NUOVA
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * L'upload TUS si autentica con una firma coniata dalla route con la chiave di
- * servizio (`x-signature`), non con il token di sessione: `storage.objects` ha RLS
- * accesa e zero policy, e un upload col JWT dell'utente prenderebbe 403 al primo
- * byte. Quella firma vale due ore. Alla ripresa — che può avvenire tre giorni dopo
- * — se ne chiede una nuova RIAPRENDO l'intento con la stessa chiave di
- * idempotenza: `video_intent_open` ritrova lo stesso job e restituisce una firma
- * fresca. È il percorso deterministico su cui le due metà della pipeline si
- * incontrano, ed è il motivo per cui `intestazioni` è una funzione e non un valore.
+ * ⚠️ Il trasferimento vive finché questa pagina è montata: lasciare la Galleria lo ferma al blocco
+ * successivo, e rientrarvi lo riprende dallo stesso punto (il `File` scelto resta nell'archivio
+ * condiviso). Il testo «continua finché l'app è aperta» vale per l'app, non per ogni pagina.
  */
 
-/** Ciò che si sa di un video in lavorazione, dentro questa pagina. */
-interface VoceVideo {
-    jobId: string;
-    ownerId: string;
-    scuolaId: string;
-    intentId: string;
-    revisione: number;
-    /** Il nome del file: resta a schermo, non entra in nessun log. */
-    nome: string;
-    fase: FaseVideoUI;
-    /** Solo durante il caricamento: i byte si contano, la conversione no. */
-    percentuale: number | null;
-    messaggio: string | null;
-    /** Ritrovato al rientro: i tag non ci sono più e vanno richiesti. */
-    chiedeTag: boolean;
-}
-
-/** I bambini scelti per un video, e se va a tutta la classe. */
-interface SceltaTag {
-    tag: string[];
-    broadcast: boolean;
-}
-
 export interface OpzioniVideoGalleria {
-    /** L'insegnante che carica: serve a `POST /api/gallery` come `x-user-id`. */
+    /** L'insegnante che carica. */
     utenteId: string | null;
     /**
      * La sede su cui si sta pubblicando, o `null` quando non si può sapere.
@@ -115,462 +109,641 @@ export interface OpzioniVideoGalleria {
     onPubblicato: () => void | Promise<void>;
 }
 
-export interface ApiVideoGalleria {
-    righe: RigaVideoLavorazione[];
-    /** I bambini scelti per un job ritrovato al rientro. */
-    tagDi: (jobId: string) => string[];
-    cambiaTag: (jobId: string, alunnoId: string) => void;
-    avviaVideo: (
-        file: File,
-        scelta: { tag: string[]; broadcast: boolean; durataSecondi: number | null },
-    ) => Promise<{ ok: true } | { ok: false; messaggio: string }>;
-    riprendi: (jobId: string) => void;
-    rimuovi: (jobId: string) => void;
-    pubblica: (jobId: string) => void;
+/** I bambini scelti per un video, e se va a tutta la classe. */
+export interface SceltaVideo {
+    tag: string[];
+    broadcast: boolean;
+    durataSecondi: number | null;
 }
 
-/** Ogni quanto si ri-chiede lo stato mentre qualcuno guarda lo schermo. */
-const RITMO_POLLING_MS = 5_000;
+export type EsitoAvvio =
+    | { ok: true }
+    /**
+     * Il video NON è partito, e il file resta dov'è (nel passo dei bambini): `messaggio` è già
+     * tradotto, e `nomi` — quando c'è — sono i bambini senza liberatoria del 422, da mostrare a
+     * schermo e mai da loggare.
+     */
+    | {
+        ok: false;
+        messaggio: string;
+        nomi?: string[];
+        /**
+         * Il server ha detto «troppe richieste» (429): anche i video che seguono riceverebbero lo stesso
+         * rifiuto, e riprovare subito non serve. Chi invia più file si ferma qui, e li lascia dov'erano.
+         */
+        riprovaPiuTardi?: boolean;
+    };
 
-/** Le fasi in cui il server sta ancora lavorando: sono le sole da interrogare. */
-const DA_INTERROGARE: ReadonlySet<FaseVideoUI> = new Set<FaseVideoUI>(['in-coda', 'conversione']);
+export interface ApiVideoGalleria {
+    righe: RigaVideoLavorazione[];
+    avviaVideo: (file: File, scelta: SceltaVideo) => Promise<EsitoAvvio>;
+    /** Riprende un caricamento fermo a mano: di norma lo fa da solo (`useRipresaAutomatica`). */
+    riprendi: (jobId: string) => void;
+    /** «Rimuovi» / «Togli»: ferma i byte, ritira l'intento, toglie la scheda. */
+    rimuovi: (jobId: string) => void;
+    /** «Riprova» su una pubblicazione fallita in modo definitivo. */
+    riprova: (jobId: string) => void;
+}
+
+/** Ogni quanto si rilegge l'elenco mentre qualcosa è attivo e qualcuno guarda lo schermo. */
+const RITMO_ELENCO_MS = 10_000;
+
+/** Un `string` qualunque (la colonna `codice` di una riga) come codice mostrabile, o `null`. */
+function comeCodiceMostrato(codice: string | null | undefined): CodiceMostratoVideo | null {
+    return typeof codice === 'string' && (CODICI_MOSTRATI_VIDEO as readonly string[]).includes(codice)
+        ? (codice as CodiceMostratoVideo)
+        : null;
+}
+
+/** Lo stato di un video su QUESTO dispositivo, a partire dalla sua riga nell'archivio. `null` = non si mostra. */
+function statoDaRiga(riga: CaricamentoVideoLocale): StatoLocale | null {
+    const base = {
+        jobId: riga.jobId,
+        intentId: riga.intentId,
+        nome: riga.nome,
+        creatoIl: riga.creatoIl,
+        percentuale: null,
+    };
+    switch (riga.stato) {
+        // Una riga con byte ancora da spedire, al rientro, è un trasferimento fermo: il codice di
+        // un'altra sessione (una firma rifiutata ieri) non dice niente di quello di adesso.
+        case 'da_caricare':
+        case 'in_corso':
+            return { ...base, trasferimento: 'interrotto', codice: null };
+        case 'caricato':
+            return { ...base, trasferimento: 'concluso', codice: null };
+        // Un fallito di un'altra sessione la persona può non averlo visto: si mostra. Un annullato
+        // l'ha chiesto lei, e non c'è niente da raccontare.
+        case 'fallito':
+            return { ...base, trasferimento: 'fallito', codice: comeCodiceMostrato(riga.codice) };
+        default:
+            return null;
+    }
+}
 
 export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleria {
     const t = useTranslations('teacherServizi');
+    const online = useOnlineStatus();
 
-    const [voci, setVoci] = useState<VoceVideo[]>([]);
-    const [tagPerJob, setTagPerJob] = useState<Record<string, SceltaTag>>({});
-
-    const archivioRef = useRef<ArchivioCaricamentiVideo | null>(null);
-    const montatoRef = useRef(false);
-    useEffect(() => { montatoRef.current = true; return () => { montatoRef.current = false; }; }, []);
-    /** Le firme valide di questa sessione: alla ripresa se ne chiede una nuova. */
-    const firmeRef = useRef<Map<string, { token: string; scade: number }>>(new Map());
-    /** Le pubblicazioni IN VOLO: un secondo tocco non ne fa partire una seconda. */
-    const seguendoRef = useRef<Map<string, Promise<void>>>(new Map());
-    const annullatiRef = useRef<Set<string>>(new Set());
-    const pubblicandoRef = useRef<Set<string>>(new Set());
-    /**
-     * I job per cui la pubblicazione AUTOMATICA è già stata tentata una volta.
-     *
-     * ⚠️ NON È UN DOPPIONE DI `pubblicandoRef`, e la differenza è un difetto vero
-     * misurato il 2026-09-18 con la prima stesura di questo file: il rifiuto del
-     * Privacy Lock riportava la scheda a «pronto», l'effetto qui sotto la vedeva
-     * pronta di nuovo e ripubblicava. **992 richieste a `/api/gallery` in 120
-     * millisecondi**, ognuna con dentro gli id dei bambini taggati, finché la
-     * pagina restava aperta. Questo insieme non si svuota mai: il tentativo
-     * automatico è UNO, e dopo tocca a una persona — che il pulsante «Pubblica»
-     * glielo lascia fare, perché quello guarda solo `pubblicandoRef`.
-     */
-    const autoTentatoRef = useRef<Set<string>>(new Set());
+    const [locali, setLocali] = useState<Record<string, StatoLocale>>({});
+    const [voci, setVoci] = useState<VoceElencoVideo[] | null>(null);
+    const [nascosti, setNascosti] = useState<ReadonlySet<string>>(() => new Set<string>());
+    const [messaggiAzione, setMessaggiAzione] = useState<Record<string, string>>({});
 
     /**
-     * LO SPECCHIO DEI VALORI DI ADESSO, e perché serve.
+     * LO STATO DI ADESSO, LETTO DA CHI VIVE PIÙ A LUNGO DI UN RENDER.
      *
-     * Le callback qui sotto vivono più a lungo di un render: una conversione dura
-     * minuti, e la funzione che la sorveglia è partita all'inizio. Leggendo la
-     * CHIUSURA vedrebbe la sede di quando è partita, non quella di adesso — e su
-     * un admin che nel frattempo ha cambiato plesso nel cockpit, sarebbe il video
-     * archiviato nella sede sbagliata.
-     *
-     * L'aggiornamento sta in un effetto SENZA elenco di dipendenze (gira dopo
-     * ogni render) e non in corpo di funzione: scrivere un ref durante il render
-     * è vietato da `react-hooks/refs`, ed è la stessa forma che usa
-     * `usePollingVisibile` per la sua callback.
+     * Un trasferimento dura minuti, e la funzione che lo segue è partita all'inizio: leggendo la
+     * CHIUSURA vedrebbe la sede di quando è partita, non quella di adesso — e su un admin che nel
+     * frattempo ha cambiato plesso, sarebbe il video archiviato nella sede sbagliata. Le due fonti
+     * dello stato visibile (`locali`, `voci`) sono SCRITTE nel ref nello stesso istante in cui si
+     * scrivono nello stato: un ref aggiornato solo dopo il render darebbe, a chi gira subito dopo
+     * una `setState`, il valore di prima — e un trasferimento accodato un attimo dopo la riga
+     * non la troverebbe.
      */
     const opzioniRef = useRef(opzioni);
-    const vociRef = useRef<VoceVideo[]>([]);
-    const tagRef = useRef<Record<string, SceltaTag>>({});
+    const localiRef = useRef<Record<string, StatoLocale>>({});
+    const vociRef = useRef<VoceElencoVideo[] | null>(null);
+    const archivioRef = useRef<ArchivioCaricamentiVideo | null>(null);
+    const montatoRef = useRef(false);
+    useEffect(() => {
+        montatoRef.current = true;
+        return () => {
+            montatoRef.current = false;
+        };
+    }, []);
+
+    /** Le dipendenze di trasferimento di ogni job (con la firma in memoria), e il trasporto che le ha prodotte. */
+    const dipRef = useRef<Map<string, DipendenzeCaricamentoVideo>>(new Map());
+    const trasportiRef = useRef<Map<string, TrasportoVideo>>(new Map());
+    /** La firma con cui il server ha aperto un job: vale solo per il primo trasferimento. */
+    const firmeRef = useRef<Map<string, { firma: string; scadeIl: string | null }>>(new Map());
+    /** La coda dei trasferimenti: UNO alla volta. */
+    const codaRef = useRef<Promise<void>>(Promise.resolve());
+    /** I job accodati o in volo: un secondo tocco, o un segnale doppio, non ne fa partire un secondo. */
+    const inCodaRef = useRef<Set<string>>(new Set());
+    const annullatiRef = useRef<Set<string>>(new Set());
+    /** I job per cui «caricato» è già stato segnalato in questa sessione. */
+    const segnalatiRef = useRef<Set<string>>(new Set());
+    const riprovaInCorsoRef = useRef<Set<string>>(new Set());
+    const elencoInVoloRef = useRef<Promise<void> | null>(null);
+    /** Gli intenti visti in una fase attiva: solo per loro, una pubblicazione è una NOVITÀ che ricarica la galleria. */
+    const attiviVistiRef = useRef<Set<string>>(new Set());
+    const pubblicatiRef = useRef<Set<string>>(new Set());
+    const ultimaPercentualeRef = useRef<Map<string, number | null>>(new Map());
+    /** Azzera l'attesa della ripresa automatica: la chiama un trasferimento arrivato in fondo (`useRipresaAutomatica`). */
+    const azzeraRipresaRef = useRef<() => void>(() => undefined);
 
     /** Il ripiego di ogni messaggio: mai la stringa vuota, che a schermo è silenzio. */
     const ripiego = t('galleryErrCaricamentoGenerico');
     const ripiegoRef = useRef(ripiego);
-    /**
-     * «Il problema è nostro: lo stiamo riprovando». Sta in un ref per la stessa ragione del
-     * ripiego: la leggono `applicaStato` e `segui`, che vivono più a lungo di un render e
-     * non devono ricrearsi a ogni cambio di lingua.
-     */
-    const testoRiprova = t('galleryVideoRiprovaAutomatica');
-    const testoRiprovaRef = useRef(testoRiprova);
-
+    const testoRete = t('galleryErrRete');
+    const testoReteRef = useRef(testoRete);
     useEffect(() => {
         opzioniRef.current = opzioni;
-        vociRef.current = voci;
-        tagRef.current = tagPerJob;
         ripiegoRef.current = ripiego;
-        testoRiprovaRef.current = testoRiprova;
+        testoReteRef.current = testoRete;
     });
 
     /** La frase del catalogo per un codice della pipeline, nella lingua a schermo. */
-    const frase = useCallback((codice: string | null): string => {
-        return soloCatalogoDaCorpo({ codice }, ripiegoRef.current);
+    const frase = useCallback((codice: string | null): string => soloCatalogoDaCorpo({ codice }, ripiego), [ripiego]);
+    const fraseRef = useRef(frase);
+    useEffect(() => {
+        fraseRef.current = frase;
+    });
+
+    /* ────────────────────────────────────────────────────────────────────────
+     * LO STATO: scrittura nel ref E nello stato, nello stesso istante
+     * ──────────────────────────────────────────────────────────────────────── */
+
+    const scriviLocali = useCallback((f: (prec: Record<string, StatoLocale>) => Record<string, StatoLocale>) => {
+        const dopo = f(localiRef.current);
+        if (dopo === localiRef.current) return;
+        localiRef.current = dopo;
+        setLocali(dopo);
     }, []);
 
-    /**
-     * Il messaggio di una scheda che NON è fallita: «lo stiamo riprovando», e solo se il
-     * server dice che il job si sta ritentando (`riprovaAutomatica`, calcolato dalla route).
-     *
-     * ⚠️ La fase conta quanto il flag. Lo schema già vieta il flag fuori da `queued` e
-     * `processing`, ma la fase può essere `annullato` anche con un job ancora in coda (un
-     * intento ritirato mentre il polling era in volo): «lo stiamo riprovando» sopra una
-     * scheda annullata direbbe che qualcosa sta ancora succedendo. Le fasi in cui il server
-     * lavora sono esattamente quelle che si interrogano.
-     */
-    const messaggioRiprova = useCallback(
-        (fase: FaseVideoUI, job: StatoJobVideoLetto): string | null =>
-            job.riprovaAutomatica && DA_INTERROGARE.has(fase) ? testoRiprovaRef.current : null,
+    const aggiornaLocale = useCallback(
+        (jobId: string, modifiche: Partial<StatoLocale>) =>
+            scriviLocali((prec) => (prec[jobId] ? { ...prec, [jobId]: { ...prec[jobId], ...modifiche } } : prec)),
+        [scriviLocali],
+    );
+
+    const togliLocale = useCallback(
+        (jobId: string) =>
+            scriviLocali((prec) =>
+                jobId in prec ? Object.fromEntries(Object.entries(prec).filter(([id]) => id !== jobId)) : prec,
+            ),
+        [scriviLocali],
+    );
+
+    const scriviVoci = useCallback((dopo: VoceElencoVideo[] | null) => {
+        vociRef.current = dopo;
+        setVoci(dopo);
+    }, []);
+
+    const segnalaMessaggioAzione = useCallback((jobId: string, messaggio: string | null) => {
+        setMessaggiAzione((prec) => {
+            if (messaggio === null) {
+                if (!(jobId in prec)) return prec;
+                return Object.fromEntries(Object.entries(prec).filter(([id]) => id !== jobId));
+            }
+            return { ...prec, [jobId]: messaggio };
+        });
+    }, []);
+
+    /** Il contesto di chi ha avviato un giro: finché è lo stesso, ciò che il giro scrive è ancora vero. */
+    const contesto = useCallback(
+        () => ({ owner: opzioniRef.current.utenteId, sede: opzioniRef.current.sede }),
+        [],
+    );
+    const stessoContesto = useCallback(
+        (c: { owner: string | null; sede: string | null }) =>
+            montatoRef.current && c.owner === opzioniRef.current.utenteId && c.sede === opzioniRef.current.sede,
         [],
     );
 
-    const aggiorna = useCallback((jobId: string, modifiche: Partial<VoceVideo>) => {
-        setVoci((prev) => prev.map((v) => (v.jobId === jobId ? { ...v, ...modifiche } : v)));
-    }, []);
-
-    const metti = useCallback((voce: VoceVideo) => {
-        setVoci((prev) =>
-            prev.some((v) => v.jobId === voce.jobId)
-                ? prev.map((v) => (v.jobId === voce.jobId ? { ...v, ...voce } : v))
-                : [...prev, voce],
-        );
-    }, []);
-
-    const togli = useCallback((jobId: string) => {
-        setVoci((prev) => prev.filter((v) => v.jobId !== jobId));
-    }, []);
-
-    const firmaPerJob = useCallback(async (jobId: string): Promise<string | null> => {
-        const corrente = opzioniRef.current;
-        const riga = await archivioRef.current?.leggi(jobId);
-        if (!montatoRef.current || !riga || !corrente.utenteId || !corrente.sede
-            || corrente.utenteId !== opzioniRef.current.utenteId || corrente.sede !== opzioniRef.current.sede
-            || !caricamentoNelContesto(riga, corrente.utenteId, corrente.sede, 'gallery')) return null;
-        const gia = firmeRef.current.get(jobId);
-        if (gia && gia.scade > Date.now() + 15_000) return gia.token;
-        const esito = await apriIntentoVideoGalleria(fetch, {
-            file: { name: riga.nome, size: riga.dimensioneByte, type: riga.mime },
-            scuolaId: riga.scuolaId!, durataSecondi: null, chiaveIdempotenza: riga.chiaveIdempotenza, ripiego: ripiegoRef.current,
+    const logErroreAzione = useCallback((messaggio: string, err: unknown) => {
+        logClient({
+            livello: 'error',
+            evento: 'offline',
+            messaggio,
+            campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' },
         });
-        if (!montatoRef.current || !esito.ok || !esito.dati.needsUpload || esito.dati.jobId !== jobId
-            || opzioniRef.current.utenteId !== corrente.utenteId || opzioniRef.current.sede !== corrente.sede) return null;
-        firmeRef.current.set(jobId, { token: esito.dati.firma, scade: Date.parse(esito.dati.expiresAt ?? '') || 0 });
-        return esito.dati.firma;
     }, []);
-
-    const dipendenze = useCallback(
-        (jobId: string): DipendenzeCaricamentoVideo => ({
-            archivio: archivioRef.current as ArchivioCaricamentiVideo,
-            intestazioni: async () => {
-                const firma = await firmaPerJob(jobId);
-                // Il `throw` NON è un guasto muto: `caricaVideo` lo cattura, scrive
-                // `video-upload-sessione-non-risolta` e restituisce «interrotto» —
-                // cioè i byte restano sul dispositivo e una persona può rimediare.
-                if (!firma) throw new Error('FirmaNonDisponibile');
-                return { 'x-signature': firma };
-            },
-        }),
-        [firmaPerJob],
-    );
 
     /* ────────────────────────────────────────────────────────────────────────
-     * LO STATO CHE ARRIVA DAL SERVER
+     * IL TRASPORTO DI UN JOB
      * ──────────────────────────────────────────────────────────────────────── */
 
-    const applicaStato = useCallback(
-        (stato: StatoIntentoVideo) => {
-            // La Galleria collega UN solo job per intento: lo impone
-            // `video_intent_add_job` con `SINGLE_JOB_CHANNEL`.
-            const job = stato.job[0];
-            if (!job) return;
+    const dipendenzePer = useCallback(
+        (jobId: string, intentId: string): DipendenzeCaricamentoVideo | null => {
+            const gia = dipRef.current.get(jobId);
+            if (gia) return gia;
+            const archivio = archivioRef.current;
+            if (!archivio) return null;
+            const c = contesto();
+            const trasporto = trasportiRef.current.get(jobId) ?? trasportoTus;
+            const dip = trasporto.dipendenze({
+                archivio,
+                jobId,
+                intentId,
+                iniziale: firmeRef.current.get(jobId) ?? null,
+                ancora: () => stessoContesto(c),
+                rete: (url, init) => fetch(url, init),
+            });
+            dipRef.current.set(jobId, dip);
+            return dip;
+        },
+        [contesto, stessoContesto],
+    );
 
-            if (!vociRef.current.some(v => v.jobId === job.jobId && v.ownerId === opzioniRef.current.utenteId && v.scuolaId === opzioniRef.current.sede)) return;
-            if (stato.statoIntent === 'published') {
-                togli(job.jobId);
-                void archivioRef.current?.elimina(job.jobId).catch(err => logClient({ livello: 'warn', evento: 'offline', messaggio: 'video-riferimento-non-rimosso', campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' } }));
-                return;
+    /** Dimentica tutto ciò che il dispositivo teneva in memoria per un job. */
+    const dimenticaJob = useCallback((jobId: string) => {
+        dipRef.current.delete(jobId);
+        trasportiRef.current.delete(jobId);
+        firmeRef.current.delete(jobId);
+        ultimaPercentualeRef.current.delete(jobId);
+    }, []);
+
+    /* ────────────────────────────────────────────────────────────────────────
+     * IL RITIRO DI UN INTENTO
+     * ──────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * Ritira un intento: legge lo stato per avere la revisione di ADESSO (cambia a ogni passo del
+     * ciclo, e indovinarla vuol dire un `REVISION_MISMATCH` che nessuno vede) e lo annulla. Un
+     * intento già concluso non si tocca. Non lancia: chi chiama l'ha già tolto dallo schermo.
+     */
+    const ritiraIntento = useCallback(async (intentId: string): Promise<void> => {
+        for (let tentativo = 0; tentativo < 2; tentativo++) {
+            const letto = await leggiStatoIntentoVideo(fetch, { intentId, ripiego: ripiegoRef.current });
+            if (!letto.ok) return;
+            if (['published', 'cancelled', 'superseded'].includes(letto.dati.statoIntent)) return;
+            const esito = await annullaIntentoVideo(fetch, {
+                intentId,
+                revisione: letto.dati.revisione,
+                ripiego: ripiegoRef.current,
+            });
+            // 409 = qualcosa è cambiato fra la lettura e il ritiro: si rilegge e si riprova UNA volta.
+            if (esito.ok || esito.stato !== 409) return;
+        }
+    }, []);
+
+    /* ────────────────────────────────────────────────────────────────────────
+     * L'ELENCO DAL SERVER
+     * ──────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * Ciò che l'elenco dice e questo dispositivo ancora non sa, messo a posto:
+     *
+     *  · un video **pubblicato** si toglie dallo schermo, la riga locale si butta, e se lo si era
+     *    visto in lavorazione la galleria si ricarica (`onPubblicato`): è la notizia che c'è un
+     *    video nuovo;
+     *  · un trasferimento fermo il cui job ha già i byte sul server (arrivati da un altro tentativo,
+     *    o dall'ultimo blocco di un tentativo la cui risposta si è persa) non si rispedisce: si
+     *    conclude;
+     *  · un trasferimento finito per cui il server dice ancora «da caricare» riceve la rete di
+     *    sicurezza (`PATCH caricato`) una volta sola: il server se ne accorge anche da sé, ma non
+     *    è detto che l'abbia già fatto.
+     */
+    const riconcilia = useCallback(
+        async (lista: readonly VoceElencoVideo[], c: { owner: string | null; sede: string | null }) => {
+            const archivio = archivioRef.current;
+            for (const voce of lista) {
+                if (!stessoContesto(c)) return;
+                const locale = localiRef.current[voce.jobId];
+
+                if (voce.fase === 'pubblicato') {
+                    if (locale) {
+                        togliLocale(voce.jobId);
+                        dimenticaJob(voce.jobId);
+                        await archivio?.elimina(voce.jobId).catch((err: unknown) => {
+                            logClient({
+                                livello: 'warn',
+                                evento: 'offline',
+                                messaggio: 'video-riferimento-non-rimosso',
+                                campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' },
+                            });
+                        });
+                    }
+                    if (!pubblicatiRef.current.has(voce.intentId)) {
+                        pubblicatiRef.current.add(voce.intentId);
+                        if (attiviVistiRef.current.has(voce.intentId)) await opzioniRef.current.onPubblicato();
+                    }
+                    continue;
+                }
+
+                if (!locale) continue;
+
+                if (
+                    voce.fase !== 'da-caricare'
+                    && (locale.trasferimento === 'interrotto' || locale.trasferimento === 'in-fila')
+                ) {
+                    if (archivio) {
+                        await concludiCaricamentoVideo({ archivio }, voce.jobId).catch((err: unknown) =>
+                            logErroreAzione('video-conclusione-locale-fallita', err),
+                        );
+                    }
+                    aggiornaLocale(voce.jobId, { trasferimento: 'concluso', percentuale: null, codice: null });
+                } else if (
+                    voce.fase === 'da-caricare'
+                    && locale.trasferimento === 'concluso'
+                    && !segnalatiRef.current.has(voce.jobId)
+                ) {
+                    segnalatiRef.current.add(voce.jobId);
+                    const riga = await archivio?.leggi(voce.jobId);
+                    if (riga) {
+                        await segnalaVideoCaricato(fetch, {
+                            intentId: voce.intentId,
+                            jobId: voce.jobId,
+                            byte: riga.dimensioneByte,
+                            mime: riga.mime,
+                            ripiego: ripiegoRef.current,
+                        });
+                    }
+                }
             }
-            const fase = ['cancelled', 'superseded'].includes(stato.statoIntent) ? 'annullato' : faseDelJob(job.stato);
-            setVoci((prev) =>
-                prev.map((v) => {
-                    if (v.jobId !== job.jobId) return v;
-                    // Una pubblicazione in volo non si fa sovrascrivere da un polling
-                    // che vede ancora `ready`: sarebbe la scheda che torna indietro.
-                    if (v.fase === 'pubblicazione') return { ...v, revisione: stato.revisione };
-                    return {
-                        ...v,
-                        revisione: stato.revisione,
-                        fase,
-                        // La percentuale esiste solo dove i byte si contano. In coda e
-                        // in conversione il server dà un avanzamento a scalini (25, 60):
-                        // disegnarlo come una barra vorrebbe dire promettere una misura
-                        // che non c'è.
-                        percentuale: null,
-                        // Un fallimento dice che cosa fare; un job che il runner sta
-                        // ritentando dice che il problema è nostro e che non serve fare
-                        // niente; tutto il resto non ha un messaggio.
-                        messaggio: fase === 'fallito' ? frase(job.codice) : messaggioRiprova(fase, job),
-                    };
-                }),
+        },
+        [aggiornaLocale, dimenticaJob, logErroreAzione, stessoContesto, togliLocale],
+    );
+
+    const caricaElenco = useCallback((): Promise<void> => {
+        if (elencoInVoloRef.current) return elencoInVoloRef.current;
+        const c = contesto();
+        if (!c.owner || !c.sede) return Promise.resolve();
+        // Senza rete non si chiede: ogni giro a vuoto lascerebbe una riga `error` e non direbbe niente.
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve();
+        const sede = c.sede;
+        const giro = (async () => {
+            const esito = await leggiElencoVideoGalleria(fetch, { scuolaId: sede, ripiego: ripiegoRef.current });
+            if (!stessoContesto(c) || !esito.ok) return;
+            scriviVoci(esito.dati.voci);
+            await riconcilia(esito.dati.voci, c);
+        })()
+            .catch((err: unknown) => logErroreAzione('video-elenco-interrotto', err))
+            .finally(() => {
+                elencoInVoloRef.current = null;
+            });
+        elencoInVoloRef.current = giro;
+        return giro;
+    }, [contesto, logErroreAzione, riconcilia, scriviVoci, stessoContesto]);
+    const caricaElencoRef = useRef(caricaElenco);
+    useEffect(() => {
+        caricaElencoRef.current = caricaElenco;
+    });
+
+    /* ────────────────────────────────────────────────────────────────────────
+     * IL TRASFERIMENTO (che è anche la RIPRESA)
+     * ──────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * I byte sono tutti sullo Storage: si dice al server («rete di sicurezza», idempotente: il
+     * trigger d'arrivo se ne accorge da solo) e si rilegge l'elenco. Un rifiuto qui NON è un
+     * problema per chi ha caricato — i byte ci sono — e `chiama` lo registra già nei log.
+     */
+    const dopoTrasferimento = useCallback(
+        async (jobId: string, byte: number, mime: string, c: { owner: string | null; sede: string | null }) => {
+            aggiornaLocale(jobId, { trasferimento: 'concluso', percentuale: null, codice: null });
+            const locale = localiRef.current[jobId];
+            if (!locale) return;
+            segnalatiRef.current.add(jobId);
+            await segnalaVideoCaricato(fetch, {
+                intentId: locale.intentId,
+                jobId,
+                byte,
+                mime,
+                ripiego: ripiegoRef.current,
+            });
+            if (!stessoContesto(c)) return;
+            await caricaElenco();
+        },
+        [aggiornaLocale, caricaElenco, stessoContesto],
+    );
+
+    /**
+     * «Caricato» FUORI dalla coda dei trasferimenti: la coda aspetta i byte, non la risposta di una
+     * richiesta che su una rete mobile può restare appesa minuti — il video dopo non deve aspettarla.
+     */
+    const segnalaCaricato = useCallback(
+        (jobId: string, byte: number, mime: string, c: { owner: string | null; sede: string | null }) => {
+            void dopoTrasferimento(jobId, byte, mime, c).catch((err: unknown) =>
+                logErroreAzione('video-caricato-non-segnalato', err),
             );
         },
-        [frase, messaggioRiprova, togli],
+        [dopoTrasferimento, logErroreAzione],
     );
 
-    /* ────────────────────────────────────────────────────────────────────────
-     * PUBBLICARE
-     * ──────────────────────────────────────────────────────────────────────── */
-
-    const pubblica = useCallback(
-        (jobId: string) => {
-            if (pubblicandoRef.current.has(jobId)) return;
-            const voce = vociRef.current.find((v) => v.jobId === jobId);
-            const utenteId = opzioniRef.current.utenteId;
-            if (!voce || !utenteId || voce.ownerId !== utenteId || voce.scuolaId !== opzioniRef.current.sede
-                || voce.fase !== 'pronto' || (voce.chiedeTag && !(tagRef.current[jobId]?.tag.length))) return;
-
-            pubblicandoRef.current.add(jobId);
-            aggiorna(jobId, { fase: 'pubblicazione', messaggio: null });
-
-            void (async () => {
-                const scelta = tagRef.current[jobId] ?? { tag: [], broadcast: false };
-                const esito = await pubblicaVideoInGalleria(fetch, {
-                    intentId: voce.intentId,
-                    revisione: voce.revisione,
-                    utenteId,
-                    didascalia: voce.nome,
-                    tagAlunni: scelta.tag,
-                    broadcast: scelta.broadcast,
-                    classi: opzioniRef.current.classi,
-                    scuolaId: voce.scuolaId,
-                    ripiego: ripiegoRef.current,
-                });
-
-                pubblicandoRef.current.delete(jobId);
-                if (!montatoRef.current || opzioniRef.current.utenteId !== voce.ownerId || opzioniRef.current.sede !== voce.scuolaId) return;
-                if (!esito.ok) {
-                    const stato = await leggiStatoIntentoVideo(fetch, { intentId: voce.intentId, ripiego: ripiegoRef.current });
-                    if (!montatoRef.current || opzioniRef.current.utenteId !== voce.ownerId || opzioniRef.current.sede !== voce.scuolaId) return;
-                    if (stato.ok && stato.dati.statoIntent === 'published') {
-                        await archivioRef.current?.elimina(jobId);
-                        togli(jobId);
-                        await opzioniRef.current.onPubblicato();
-                        return;
-                    }
-                    // Si torna a «pronto»: il video è ancora lì, e il rifiuto dice che
-                    // cosa fare (togliere un bambino senza liberatoria, per esempio —
-                    // e in quel caso il corpo porta i nomi, che restano a schermo).
-                    const dettaglio = esito.nomi?.length ? ` (${esito.nomi.join(', ')})` : '';
-                    aggiorna(jobId, { fase: 'pronto', messaggio: `${esito.messaggio}${dettaglio}` });
-                    return;
-                }
-
-                // Pubblicato: la riga locale non serve più, e con lei se ne va il
-                // riferimento al job — altrimenti al prossimo rientro la scheda
-                // ricomparirebbe per un video che è già in galleria.
-                await archivioRef.current?.elimina(jobId).catch((err: unknown) => {
-                    logClient({
-                        livello: 'warn',
-                        evento: 'offline',
-                        route: '/teacher/gallery',
-                        messaggio: `video-galleria-riga-locale-non-rimossa: job=${jobId}`,
-                        campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' },
-                    });
-                });
-                togli(jobId);
-                await opzioniRef.current.onPubblicato();
-            })().catch((err: unknown) => {
-                pubblicandoRef.current.delete(jobId);
-                logClient({ livello: 'error', evento: 'fetch', messaggio: 'video-pubblicazione-interrotta', campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' } });
-                if (montatoRef.current && opzioniRef.current.utenteId === voce.ownerId && opzioniRef.current.sede === voce.scuolaId) aggiorna(jobId, { fase: 'pronto', messaggio: ripiegoRef.current });
-            });
-        },
-        [aggiorna, togli],
-    );
-
-    /* ────────────────────────────────────────────────────────────────────────
-     * CARICARE (che è anche RIPRENDERE)
-     * ──────────────────────────────────────────────────────────────────────── */
-
-    const segui = useCallback((jobId: string, intentId: string, revisione: number): Promise<void> => {
-        const contesto = { owner: opzioniRef.current.utenteId, sede: opzioniRef.current.sede };
-        const chiave = `${contesto.owner}:${contesto.sede}:${jobId}`;
-        const gia = seguendoRef.current.get(chiave);
-        if (gia) return gia;
-        const ancora = () => montatoRef.current && contesto.owner === opzioniRef.current.utenteId && contesto.sede === opzioniRef.current.sede && !annullatiRef.current.has(jobId);
-        const esegui = async () => {
+    const trasferisci = useCallback(
+        async (jobId: string): Promise<void> => {
+            const c = contesto();
+            const ancora = () => stessoContesto(c) && !annullatiRef.current.has(jobId);
             const archivio = archivioRef.current;
-            const riga = await archivio?.leggi(jobId);
-            if (!archivio || !riga || !contesto.owner || !contesto.sede || !ancora()
-                || !caricamentoNelContesto(riga, contesto.owner, contesto.sede, 'gallery')) return;
-            const apertura = await apriIntentoVideoGalleria(fetch, {
-                file: { name: riga.nome, size: riga.dimensioneByte, type: riga.mime },
-                scuolaId: riga.scuolaId!, durataSecondi: null, chiaveIdempotenza: riga.chiaveIdempotenza, ripiego: ripiegoRef.current,
+            const locale = localiRef.current[jobId];
+            if (!archivio || !locale || !c.owner || !c.sede || !ancora()) return;
+            // Il lavoro è già stato fatto (o disfatto) da un'altra strada mentre aspettava il suo turno.
+            if (!['in-fila', 'interrotto'].includes(locale.trasferimento)) return;
+
+            const riga = await archivio.leggi(jobId);
+            if (!ancora() || !riga || !caricamentoNelContesto(riga, c.owner, c.sede, 'gallery')) return;
+            if (riga.stato === 'annullato') {
+                aggiornaLocale(jobId, { trasferimento: 'annullato' });
+                return;
+            }
+            if (riga.stato === 'fallito') {
+                aggiornaLocale(jobId, { trasferimento: 'fallito', codice: comeCodiceMostrato(riga.codice) });
+                return;
+            }
+            if (riga.stato === 'caricato') {
+                segnalaCaricato(jobId, riga.dimensioneByte, riga.mime, c);
+                return;
+            }
+
+            const dip = dipendenzePer(jobId, locale.intentId);
+            if (!dip) return;
+            aggiornaLocale(jobId, {
+                trasferimento: 'in-corso',
+                codice: null,
+                percentuale: riga.dimensioneByte > 0 ? Math.min(100, Math.round((riga.offsetByte / riga.dimensioneByte) * 100)) : null,
             });
-            if (!ancora()) return;
-            if (!apertura.ok) { aggiorna(jobId, { fase: 'interrotto', messaggio: apertura.messaggio }); return; }
-            const aperto = apertura.dati;
-            if (aperto.jobId !== jobId || aperto.intentId !== intentId) {
-                logClient({ livello: 'error', evento: 'fetch', messaggio: 'video-ripresa-identita-diversa' });
-                aggiorna(jobId, { fase: 'interrotto', messaggio: frase('VIDEO_NON_AUTORIZZATO') }); return;
-            }
-            if (aperto.statoIntent === 'published') { await archivio.elimina(jobId); if (ancora()) togli(jobId); return; }
-            if (['cancelled', 'superseded'].includes(aperto.statoIntent) || aperto.statoJob === 'cancelled') {
-                aggiorna(jobId, { fase: 'annullato', percentuale: null }); return;
-            }
-            if (['failed', 'rejected'].includes(aperto.statoJob)) {
-                const stato = await leggiStatoIntentoVideo(fetch, { intentId, ripiego: ripiegoRef.current });
-                if (ancora()) aggiorna(jobId, { fase: 'fallito', percentuale: null, messaggio: frase(stato.ok ? stato.dati.job.find(j => j.jobId === jobId)?.codice ?? 'VIDEO_RIPROVA' : 'VIDEO_RIPROVA') }); return;
-            }
-            let trasferito = !aperto.needsUpload;
-            let byteCaricati = riga.dimensioneByte;
-            if (aperto.needsUpload) {
-                if (riga.stato === 'caricato') { aggiorna(jobId, { fase: 'interrotto', messaggio: frase('VIDEO_RIPROVA') }); return; }
-                firmeRef.current.set(jobId, { token: aperto.firma, scade: Date.parse(aperto.expiresAt ?? '') || 0 });
-                aggiorna(jobId, { fase: 'caricamento', messaggio: null });
-                const esito = await caricaVideo(dipendenze(jobId), jobId, { alProgresso: (fatti, totali) => {
-                    if (ancora()) aggiorna(jobId, { percentuale: totali > 0 ? Math.min(100, Math.round(fatti / totali * 100)) : null });
-                } });
-                if (!ancora()) return;
-                if (esito.esito !== 'caricato') {
-                    aggiorna(jobId, { fase: esito.esito === 'fallito' ? 'fallito' : esito.esito === 'annullato' ? 'annullato' : 'interrotto', messaggio: 'codice' in esito && esito.codice ? frase(esito.codice) : null }); return;
-                }
-                trasferito = true;
-                byteCaricati = esito.byteCaricati;
-            } else if (riga.stato !== 'caricato') {
-                await archivio.aggiorna(jobId, { stato: 'caricato', offsetByte: riga.dimensioneByte, aggiornatoIl: new Date().toISOString() });
-                await archivio.eliminaByte(jobId);
-            }
-            if (!ancora() || !trasferito) return;
-            let stato: StatoIntentoVideo | null = null;
-            if (aperto.statoJob === 'awaiting_upload') {
-                const caricato = await segnalaVideoCaricato(fetch, { intentId, jobId, byte: byteCaricati, mime: riga.mime, ripiego: ripiegoRef.current });
-                if (!ancora()) return;
-                if (caricato.ok) stato = caricato.dati;
-                else {
-                    const letto = await leggiStatoIntentoVideo(fetch, { intentId, ripiego: ripiegoRef.current });
+
+            const esito = await caricaVideo(dip, jobId, {
+                alProgresso: (fatti, totali) => {
                     if (!ancora()) return;
-                    if (!letto.ok || letto.dati.job.find(j => j.jobId === jobId)?.stato === 'awaiting_upload') {
-                        aggiorna(jobId, { fase: 'interrotto', messaggio: caricato.messaggio }); return;
-                    }
-                    stato = letto.dati;
-                }
-            } else {
-                const letto = await leggiStatoIntentoVideo(fetch, { intentId, ripiego: ripiegoRef.current });
-                if (!ancora()) return;
-                if (!letto.ok) { aggiorna(jobId, { fase: 'interrotto', messaggio: letto.messaggio }); return; }
-                stato = letto.dati;
+                    const percentuale = totali > 0 ? Math.min(100, Math.round((fatti / totali) * 100)) : null;
+                    // Un numero uguale non rifà il disegno: tus avvisa a ogni blocco, la barra si muove per interi.
+                    if (ultimaPercentualeRef.current.get(jobId) === percentuale) return;
+                    ultimaPercentualeRef.current.set(jobId, percentuale);
+                    aggiornaLocale(jobId, { percentuale });
+                },
+            });
+            if (!stessoContesto(c)) return;
+
+            switch (esito.esito) {
+                case 'caricato':
+                    // I byte sono arrivati: la rete funziona. Se altri video sono fermi, riprovano fra 5
+                    // secondi e non dopo i 60 accumulati dai tentativi a vuoto.
+                    azzeraRipresaRef.current();
+                    segnalaCaricato(jobId, esito.byteCaricati, riga.mime, c);
+                    return;
+                case 'interrotto':
+                    // Non è un fallimento: i byte restano sul dispositivo e la ripresa è automatica.
+                    aggiornaLocale(jobId, { trasferimento: 'interrotto', percentuale: null, codice: esito.codice });
+                    return;
+                case 'annullato':
+                    // L'ha chiesto una persona (`rimuovi`), che si occupa anche del resto.
+                    return;
+                case 'fallito':
+                    // Riprovare gli stessi byte non può funzionare: la scheda lo dice, e l'intento si
+                    // ritira — altrimenti resterebbe un job in attesa di byte che non arriveranno, e
+                    // dopo due giorni un avviso di «video non riuscito» per un invio già abbandonato.
+                    aggiornaLocale(jobId, { trasferimento: 'fallito', percentuale: null, codice: esito.codice });
+                    void ritiraIntento(locale.intentId).catch((err: unknown) => logErroreAzione('video-annullamento-interrotto', err));
+                    return;
             }
-            if (stato.statoIntent === 'pending') {
-                const confermato = await confermaIntentoVideo(fetch, { intentId, revisione: stato.revisione || revisione, ripiego: ripiegoRef.current });
-                if (!ancora()) return;
-                if (confermato.ok) stato = confermato.dati;
-                else {
-                    const letto = await leggiStatoIntentoVideo(fetch, { intentId, ripiego: ripiegoRef.current });
-                    if (!ancora()) return;
-                    if (!letto.ok || letto.dati.statoIntent === 'pending') { aggiorna(jobId, { fase: 'interrotto', messaggio: confermato.messaggio }); return; }
-                    stato = letto.dati;
-                }
-            }
-            if (stato.statoIntent === 'published') { await archivio.elimina(jobId); if (ancora()) togli(jobId); return; }
-            const job = stato.job.find(j => j.jobId === jobId);
-            if (job && ancora()) {
-                const fase = ['cancelled', 'superseded'].includes(stato.statoIntent) ? 'annullato' : faseDelJob(job.stato);
-                // Anche qui, al rientro: chi riapre l'app a metà di un ritentativo deve leggere
-                // «lo stiamo riprovando» subito, non cinque secondi dopo al primo giro di polling.
-                aggiorna(jobId, { revisione: stato.revisione, fase, percentuale: null, messaggio: job.codice ? frase(job.codice) : messaggioRiprova(fase, job) });
-            }
-        };
-        const promessa = esegui().catch((err: unknown) => {
-            logClient({ livello: 'error', evento: 'offline', messaggio: 'video-ripresa-interrotta', campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' } });
-            if (ancora()) aggiorna(jobId, { fase: 'interrotto', messaggio: ripiegoRef.current });
-        }).finally(() => { seguendoRef.current.delete(chiave); });
-        seguendoRef.current.set(chiave, promessa);
-        return promessa;
-    }, [aggiorna, dipendenze, frase, messaggioRiprova, togli]);
+        },
+        [aggiornaLocale, contesto, dipendenzePer, logErroreAzione, ritiraIntento, segnalaCaricato, stessoContesto],
+    );
+
+    /** Mette un trasferimento in coda: ne parte UNO alla volta, nell'ordine in cui sono stati accodati. */
+    const accodaTrasferimento = useCallback(
+        (jobId: string) => {
+            if (inCodaRef.current.has(jobId)) return;
+            inCodaRef.current.add(jobId);
+            codaRef.current = codaRef.current
+                .then(() => trasferisci(jobId))
+                .catch((err: unknown) => logErroreAzione('video-trasferimento-interrotto', err))
+                .finally(() => {
+                    inCodaRef.current.delete(jobId);
+                });
+        },
+        [logErroreAzione, trasferisci],
+    );
 
     /* ────────────────────────────────────────────────────────────────────────
-     * AVVIARE
+     * INVIARE
      * ──────────────────────────────────────────────────────────────────────── */
 
     const avviaVideo = useCallback<ApiVideoGalleria['avviaVideo']>(
         async (file, scelta) => {
-            const sede = opzioniRef.current.sede;
-            if (!sede || !opzioniRef.current.utenteId) {
+            const c = contesto();
+            if (!c.sede || !c.owner) {
                 // NON si indovina il plesso. `SEDE_DA_SPECIFICARE` è il codice che
                 // `rifiutoSede` manda già da 137 route, con la sua voce di catalogo:
                 // inventarne un secondo per i video vorrebbe dire due frasi diverse
                 // per lo stesso rifiuto.
-                return { ok: false, messaggio: frase('SEDE_DA_SPECIFICARE') };
+                return { ok: false, messaggio: fraseRef.current('SEDE_DA_SPECIFICARE') };
             }
+            const sede = c.sede;
+            const owner = c.owner;
             const archivio = archivioRef.current;
             if (!archivio) return { ok: false, messaggio: ripiegoRef.current };
 
             const rifiuto = rifiutoLocaleVideo(file, scelta.durataSecondi);
-            if (rifiuto) return { ok: false, messaggio: frase(rifiuto) };
+            if (rifiuto) return { ok: false, messaggio: fraseRef.current(rifiuto) };
 
-            const owner = opzioniRef.current.utenteId!;
-            let chiave = chiaveIdempotenzaVideo(file);
-            let apertura = await apriIntentoVideoGalleria(fetch, {
-                file,
-                scuolaId: sede,
-                durataSecondi: scelta.durataSecondi,
-                chiaveIdempotenza: chiave,
-                ripiego: ripiegoRef.current,
+            const trasporto = scegliTrasporto();
+            // I bambini di QUESTO invio, fissati una volta: sono nel corpo della POST e sono nella chiave.
+            const destinatari = {
+                tagAlunni: scelta.tag,
+                broadcast: scelta.broadcast,
+                classi: opzioniRef.current.classi,
+            };
+            const apri = (chiaveIdempotenza: string) =>
+                apriIntentoVideoGalleria(fetch, {
+                    file,
+                    scuolaId: sede,
+                    durataSecondi: scelta.durataSecondi,
+                    chiaveIdempotenza,
+                    destinatari,
+                    trasporto: trasporto.nome,
+                    ripiego: ripiegoRef.current,
+                });
+            /** Il rifiuto dell'apertura, per la schermata: una rete caduta dice che il file non è partito. */
+            const rifiutato = (esito: Extract<EsitoFlusso<unknown>, { ok: false }>): EsitoAvvio => ({
+                ok: false,
+                messaggio: esito.stato === null ? testoReteRef.current : esito.messaggio,
+                ...(esito.nomi ? { nomi: esito.nomi } : {}),
+                ...(esito.stato === 429 ? { riprovaPiuTardi: true } : {}),
             });
-            if (!apertura.ok) return { ok: false, messaggio: apertura.messaggio };
 
-            if (opzioniRef.current.utenteId !== owner || opzioniRef.current.sede !== sede) return { ok: false, messaggio: frase('VIDEO_NON_AUTORIZZATO') };
-            // Una scelta NUOVA dello stesso file (stesso nome, peso e data) ritrova
-            // l'intento di prima. Se quello è già finito — pubblicato e magari poi
-            // cancellato, ritirato, sostituito, fallito — riaprirlo non porta da
-            // nessuna parte: prima diceva «in preparazione» senza caricare niente, o
-            // «riprova» all'infinito. È un caricamento nuovo, con un intento nuovo.
+            // ⚠️ La chiave porta i bambini: per il server la stessa chiave con bambini diversi è un
+            // `IDEMPOTENCY_CONFLICT` (409 `VIDEO_RIPROVA`), cioè «ricarica e riprova» per un gesto che
+            // non può riuscire — lo stesso file rimandato dopo «Rimuovi» con altri bambini, o già
+            // mandato col client di prima. Vedi `chiaveIdempotenzaVideo`.
+            let chiave = chiaveIdempotenzaVideo(file, destinatari);
+            let apertura = await apri(chiave);
+            if (!apertura.ok) return rifiutato(apertura);
+            if (!stessoContesto(c)) return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
+
+            // Una scelta NUOVA dello stesso file (stesso nome, peso e data) CON GLI STESSI BAMBINI
+            // ritrova l'intento di prima. Se quello è già finito — pubblicato e magari poi cancellato,
+            // ritirato, sostituito, fallito — riaprirlo non porta da nessuna parte: è un caricamento
+            // nuovo, con un intento nuovo.
             const concluso = ['published', 'cancelled', 'superseded'].includes(apertura.dati.statoIntent)
                 || ['failed', 'rejected'].includes(apertura.dati.statoJob);
             if (concluso) {
-                logClient({ livello: 'warn', evento: 'fetch', messaggio: `video-nuovo-intento-dopo-concluso: job=${apertura.dati.jobId}`, campi: { stato_intento: apertura.dati.statoIntent, stato_job: apertura.dati.statoJob } });
+                logClient({
+                    livello: 'warn',
+                    evento: 'fetch',
+                    messaggio: `video-nuovo-intento-dopo-concluso: job=${apertura.dati.jobId}`,
+                    campi: { stato_intento: apertura.dati.statoIntent, stato_job: apertura.dati.statoJob },
+                });
                 chiave = `${chiave}-${crypto.randomUUID()}`;
-                apertura = await apriIntentoVideoGalleria(fetch, { file, scuolaId: sede, durataSecondi: scelta.durataSecondi, chiaveIdempotenza: chiave, ripiego: ripiegoRef.current });
-                if (!apertura.ok) return { ok: false, messaggio: apertura.messaggio };
-                if (opzioniRef.current.utenteId !== owner || opzioniRef.current.sede !== sede) return { ok: false, messaggio: frase('VIDEO_NON_AUTORIZZATO') };
+                apertura = await apri(chiave);
+                if (!apertura.ok) return rifiutato(apertura);
+                if (!stessoContesto(c)) return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
             }
-            const { jobId, intentId, revisione, coordinate, firma, chiaveIdempotenza } = apertura.dati;
-            firmeRef.current.set(jobId, { token: firma, scade: Date.parse(apertura.dati.expiresAt ?? '') || 0 });
 
-            const messo = await accodaCaricamentoVideo(dipendenze(jobId), {
+            const { jobId, intentId, coordinate, firma, chiaveIdempotenza, needsUpload, expiresAt } = apertura.dati;
+            if (firma) firmeRef.current.set(jobId, { firma, scadeIl: expiresAt });
+            trasportiRef.current.set(jobId, trasporto);
+            const dip = dipendenzePer(jobId, intentId);
+            if (!dip) return { ok: false, messaggio: ripiegoRef.current };
+
+            // La riga locale e il `File` vivo: il trasferimento comincia subito, la copia in IndexedDB
+            // (che serve alla ripresa dopo la chiusura dell'app) parte per conto suo e non si aspetta.
+            const messo = await accodaCaricamentoVideo(dip, {
                 jobId,
                 intentId,
                 canale: 'gallery',
-                ownerId: owner, scuolaId: sede,
+                ownerId: owner,
+                scuolaId: sede,
                 chiaveIdempotenza,
                 coordinate,
                 file,
             });
-            if (!messo.ok) return { ok: false, messaggio: frase(messo.codice) };
-            if (!montatoRef.current || opzioniRef.current.utenteId !== owner || opzioniRef.current.sede !== sede) return { ok: false, messaggio: frase('VIDEO_NON_AUTORIZZATO') };
+            if (!messo.ok) {
+                // L'intento esiste già sul server, confermato e in attesa di byte che non partiranno:
+                // si ritira, o aspetterebbe la ritenzione e poi avviserebbe di un video fallito.
+                dimenticaJob(jobId);
+                void ritiraIntento(intentId);
+                return { ok: false, messaggio: fraseRef.current(messo.codice) };
+            }
+            if (!stessoContesto(c)) return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
 
-            // I tag si ricordano QUI, in memoria: sono identificativi di minori e su
-            // disco non ci vanno. Se l'app si chiude prima che il video sia pronto,
-            // al rientro la scheda li richiede — vedi la testata.
-            setTagPerJob((prev) => ({ ...prev, [jobId]: { tag: scelta.tag, broadcast: scelta.broadcast } }));
-            metti({
-                jobId, ownerId: owner, scuolaId: sede,
-                intentId,
-                revisione,
-                nome: file.name,
-                fase: 'caricamento',
-                percentuale: 0,
-                messaggio: null,
-                chiedeTag: false,
-            });
+            annullatiRef.current.delete(jobId);
+            segnalatiRef.current.delete(jobId);
+            scriviLocali((prec) => ({
+                ...prec,
+                [jobId]: {
+                    jobId,
+                    intentId,
+                    nome: file.name,
+                    creatoIl: messo.riga.creatoIl,
+                    trasferimento: needsUpload ? 'in-fila' : 'concluso',
+                    percentuale: null,
+                    codice: null,
+                },
+            }));
 
-            // NON si aspetta: da qui in poi il caricamento vive per conto suo e la
-            // schermata torna alla galleria, dove la scheda racconta a che punto è.
-            // Aspettarlo terrebbe l'insegnante ferma davanti a una rotellina per
-            // tutto il tempo del trasferimento.
-            void segui(jobId, intentId, revisione);
+            if (needsUpload) {
+                // NON si aspetta: da qui in poi il caricamento vive per conto suo e la schermata
+                // torna alla galleria, dove la scheda racconta a che punto è.
+                accodaTrasferimento(jobId);
+            } else {
+                // I byte sono già sul server: si ferma la copia in background e si lascia l'archivio
+                // com'è — niente da rispedire — poi si dice al server («caricato», idempotente).
+                void (async () => {
+                    await concludiCaricamentoVideo(dip, jobId);
+                    await dopoTrasferimento(jobId, messo.riga.dimensioneByte, messo.riga.mime, c);
+                })().catch((err: unknown) => logErroreAzione('video-conclusione-locale-fallita', err));
+            }
+            void caricaElenco();
             return { ok: true };
         },
-        [dipendenze, frase, metti, segui],
+        [
+            accodaTrasferimento,
+            caricaElenco,
+            contesto,
+            dimenticaJob,
+            dipendenzePer,
+            dopoTrasferimento,
+            logErroreAzione,
+            ritiraIntento,
+            scriviLocali,
+            stessoContesto,
+        ],
     );
 
     /* ────────────────────────────────────────────────────────────────────────
@@ -579,60 +752,110 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
 
     const riprendi = useCallback(
         (jobId: string) => {
-            const voce = vociRef.current.find((v) => v.jobId === jobId);
-            if (!voce) return;
-            void segui(jobId, voce.intentId, voce.revisione);
+            if (localiRef.current[jobId]?.trasferimento === 'interrotto') accodaTrasferimento(jobId);
         },
-        [segui],
+        [accodaTrasferimento],
     );
 
+    /**
+     * «RIMUOVI» / «TOGLI».
+     *
+     * L'ORDINE È LA CORREZIONE (#58): PRIMA si ferma il trasferimento — `annullaCaricamentoVideo`
+     * chiude la sessione TUS e la copia in background — e DOPO si ritira l'intento. Col verso
+     * opposto il server avrebbe un intento revocato mentre il telefono continuava a spedirgli
+     * byte, e il trigger d'arrivo li avrebbe visti comparire su un job che non li voleva più.
+     *
+     * La scheda sparisce SUBITO e non torna: l'intento si ricorda fra quelli tolti (il server lo
+     * riporta ancora per una settimana, e un intento del flusso vecchio resta «da ricaricare»
+     * qualunque sia il suo stato).
+     */
     const rimuovi = useCallback(
         (jobId: string) => {
-            const voce = vociRef.current.find((v) => v.jobId === jobId);
-            if (!voce || voce.ownerId !== opzioniRef.current.utenteId || voce.scuolaId !== opzioniRef.current.sede) return;
+            const c = contesto();
+            if (!c.owner || !c.sede) return;
+            const locale = localiRef.current[jobId];
+            const voce = vociRef.current?.find((v) => v.jobId === jobId);
+            const intentId = locale?.intentId ?? voce?.intentId;
+            if (!intentId) return;
+
             annullatiRef.current.add(jobId);
-            togli(jobId);
+            setNascosti(nascondiIntento(c.owner, intentId));
+            togliLocale(jobId);
+            const archivio = archivioRef.current;
+            const dip = locale ? dipendenzePer(jobId, intentId) : null;
+
             void (async () => {
-                if (voce) {
-                    // Il ritiro dell'intento è anche ciò che libera l'originale dal
-                    // bucket privato: senza, resterebbe lì fino alla scadenza dei sette
-                    // giorni della retention.
-                    await annullaIntentoVideo(fetch, {
-                        intentId: voce.intentId,
-                        revisione: voce.revisione,
-                        ripiego: ripiegoRef.current,
-                    });
+                if (archivio && dip) {
+                    // Chiude il lato CLIENT: ferma TUS e copia, e termina la sessione TUS se è aperta,
+                    // così nel bucket non resta un troncone che nessuno cerca.
+                    await annullaCaricamentoVideo(dip, jobId);
                 }
-                if (archivioRef.current) {
-                    // Chiude il lato CLIENT: termina la sessione TUS se è aperta, così
-                    // nel bucket non resta un troncone che nessuno cerca.
-                    await annullaCaricamentoVideo(dipendenze(jobId), jobId);
-                    await archivioRef.current.elimina(jobId);
-                }
-            })().catch((err: unknown) => logClient({ livello: 'error', evento: 'offline', messaggio: 'video-annullamento-interrotto', campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' } }));
+                await ritiraIntento(intentId);
+                if (archivio && locale) await archivio.elimina(jobId);
+                dimenticaJob(jobId);
+            })().catch((err: unknown) => logErroreAzione('video-annullamento-interrotto', err));
         },
-        [dipendenze, togli],
+        [contesto, dimenticaJob, dipendenzePer, logErroreAzione, ritiraIntento, togliLocale],
     );
 
-    const cambiaTag = useCallback((jobId: string, alunnoId: string) => {
-        setTagPerJob((prev) => {
-            const corrente = prev[jobId] ?? { tag: [], broadcast: false };
-            const gia = corrente.tag.includes(alunnoId);
-            return {
-                ...prev,
-                [jobId]: {
-                    ...corrente,
-                    tag: gia ? corrente.tag.filter((id) => id !== alunnoId) : [...corrente.tag, alunnoId],
-                },
-            };
-        });
-    }, []);
-
-    const tagDi = useCallback((jobId: string) => tagPerJob[jobId]?.tag ?? [], [tagPerJob]);
+    const riprova = useCallback(
+        (jobId: string) => {
+            const voce = vociRef.current?.find((v) => v.jobId === jobId);
+            if (!voce?.riprovaPossibile || riprovaInCorsoRef.current.has(jobId)) return;
+            const c = contesto();
+            riprovaInCorsoRef.current.add(jobId);
+            segnalaMessaggioAzione(jobId, null);
+            void (async () => {
+                const esito = await riprovaPubblicazioneVideo(fetch, {
+                    intentId: voce.intentId,
+                    ripiego: ripiegoRef.current,
+                });
+                if (!stessoContesto(c)) return;
+                // Un rifiuto dice perché («potrebbe essere già in galleria, oppure è passato troppo
+                // tempo»): è l'unica risposta utile, e sta nella scheda finché non si rilegge l'elenco.
+                if (!esito.ok) segnalaMessaggioAzione(jobId, esito.messaggio);
+                await caricaElenco();
+            })()
+                .catch((err: unknown) => logErroreAzione('video-riprova-interrotta', err))
+                .finally(() => {
+                    riprovaInCorsoRef.current.delete(jobId);
+                });
+        },
+        [caricaElenco, contesto, logErroreAzione, segnalaMessaggioAzione, stessoContesto],
+    );
 
     /* ────────────────────────────────────────────────────────────────────────
-     * IL RIENTRO NELL'APP
+     * IL RIENTRO NELLA PAGINA
      * ──────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * Riprende, uno alla volta, ciò che è fermo. Risolve quando la coda si è svuotata: l'attesa
+     * successiva della ripresa automatica conta da lì.
+     */
+    const riprendiInterrotti = useCallback(
+        async (motivo: MotivoRipresa): Promise<void> => {
+            // Senza rete non si tenta: ogni ripresa a vuoto lascerebbe una riga `error` (la firma che non
+            // si riesce a chiedere) e un conto che non dice niente. Quando la rete torna lo dice `online`.
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+            const daRiprendere = Object.values(localiRef.current).filter(
+                (l) => l.trasferimento === 'interrotto' && !inCodaRef.current.has(l.jobId),
+            );
+            for (const locale of daRiprendere) {
+                // Il motivo sta nel MESSAGGIO (e non solo nei campi): `app_log` conserva i campi della
+                // prima occorrenza del giorno, e ciò che distingue un'occorrenza dall'altra deve stare
+                // nell'impronta. Mai il nome del file.
+                logClient({
+                    livello: 'warn',
+                    evento: 'offline',
+                    messaggio: `video-ripresa-automatica: job=${locale.jobId} motivo=${motivo}`,
+                    campi: { motivo },
+                });
+                accodaTrasferimento(locale.jobId);
+            }
+            await codaRef.current;
+        },
+        [accodaTrasferimento],
+    );
 
     useEffect(() => {
         let vivo = true;
@@ -641,81 +864,89 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
         void (async () => {
             await Promise.resolve();
             if (!vivo) return;
-            setVoci([]); setTagPerJob({}); firmeRef.current.clear();
+            scriviLocali(() => ({}));
+            scriviVoci(null);
+            setMessaggiAzione({});
+            dipRef.current.clear();
+            trasportiRef.current.clear();
+            firmeRef.current.clear();
+            ultimaPercentualeRef.current.clear();
+            attiviVistiRef.current.clear();
+            pubblicatiRef.current.clear();
+            segnalatiRef.current.clear();
+            annullatiRef.current.clear();
             if (!owner || !sede) return;
+            setNascosti(leggiNascosti(owner));
             const archivio = await creaArchivioCaricamenti();
             if (!vivo) return;
             archivioRef.current = archivio;
             await potaArchivioCaricamenti({ archivio, intestazioni: () => ({}) });
-            const righe = (await archivio.elenca()).filter(r => caricamentoNelContesto(r, owner, sede, 'gallery'));
+            const righe = (await archivio.elenca()).filter((r) => caricamentoNelContesto(r, owner, sede, 'gallery'));
             if (!vivo) return;
+            const iniziali: Record<string, StatoLocale> = {};
             for (const riga of righe) {
-                if (!['caricato', 'in_corso', 'da_caricare'].includes(riga.stato)) continue;
-                metti({ jobId: riga.jobId, ownerId: owner, scuolaId: sede, intentId: riga.intentId, revisione: 1,
-                    nome: riga.nome, fase: 'interrotto', percentuale: null, messaggio: null, chiedeTag: true });
-                void segui(riga.jobId, riga.intentId, 1);
+                const stato = statoDaRiga(riga);
+                if (stato) iniziali[riga.jobId] = stato;
             }
+            scriviLocali(() => iniziali);
+            // Prima l'elenco (che dice a che punto è ciò che il server già sa), poi la ripresa.
+            await caricaElenco();
+            if (!vivo) return;
+            void riprendiInterrotti('rientro');
         })().catch((err: unknown) => {
-            logClient({ livello: 'error', evento: 'offline', messaggio: 'video-archivio-non-disponibile', campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' } });
+            logClient({
+                livello: 'error',
+                evento: 'offline',
+                messaggio: 'video-archivio-non-disponibile',
+                campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' },
+            });
         });
-        return () => { vivo = false; };
-    }, [opzioni.utenteId, opzioni.sede, metti, segui]);
+        return () => {
+            vivo = false;
+        };
+    }, [opzioni.utenteId, opzioni.sede, caricaElenco, riprendiInterrotti, scriviLocali, scriviVoci]);
 
     /* ────────────────────────────────────────────────────────────────────────
-     * IL POLLING — solo mentre qualcuno guarda
+     * LE RIGHE, E I DUE OROLOGI
      * ──────────────────────────────────────────────────────────────────────── */
 
-    const daInterrogare = voci.filter((v) => DA_INTERROGARE.has(v.fase));
-
-    usePollingVisibile(
-        async () => {
-            // Un intento per volta e una richiesta per intento: dieci richieste per
-            // giro di polling su rete mobile sono il difetto misurato il 2026-09-07,
-            // 2,23 milioni di richieste al giorno.
-            const intenti = [...new Set(vociRef.current.filter((v) => DA_INTERROGARE.has(v.fase)).map((v) => v.intentId))];
-            for (const intentId of intenti) {
-                const stato = await leggiStatoIntentoVideo(fetch, { intentId, ripiego: ripiegoRef.current });
-                if (stato.ok) applicaStato(stato.dati);
-            }
-        },
-        RITMO_POLLING_MS,
-        { attivo: daInterrogare.length > 0 },
+    const notaCaricamento = t('galleryVideoCaricamentoTus');
+    const composte: RigaComposta[] = useMemo(
+        () => fondiRighe({ locali, voci, nascosti, messaggiAzione, frase, notaCaricamento, offline: !online }),
+        [locali, voci, nascosti, messaggiAzione, frase, notaCaricamento, online],
     );
 
-    /* ────────────────────────────────────────────────────────────────────────
-     * LA PUBBLICAZIONE AUTOMATICA DI CHI È RIMASTO A GUARDARE
-     * ──────────────────────────────────────────────────────────────────────── */
-
+    // Gli intenti visti in una fase attiva: una pubblicazione di uno di questi è una NOVITÀ. Si
+    // scrive solo un ref, quindi niente `setState` in un effetto.
     useEffect(() => {
-        for (const voce of voci) {
-            // Chi ha aspettato non deve premere niente: i bambini li ha già scelti al
-            // passo 2, e chiederglieli di nuovo sarebbe lavoro rifatto. Chi invece è
-            // rientrato dopo aver chiuso l'app li ha persi, e la scheda glieli chiede.
-            //
-            // ⚠️ UNA VOLTA SOLA. Il guardiano è `autoTentatoRef` e non «sta
-            // pubblicando adesso»: un rifiuto riporta la scheda a «pronto», e con il
-            // secondo guardiano questo effetto ripartiva all'infinito — 992 richieste
-            // in 120 ms nel caso misurato.
-            if (
-                voce.fase === 'pronto'
-                && !voce.chiedeTag
-                && !autoTentatoRef.current.has(voce.jobId)
-            ) {
-                autoTentatoRef.current.add(voce.jobId);
-                pubblica(voce.jobId);
-            }
+        for (const riga of composte) {
+            if (FASI_UI_ATTIVE.has(riga.fase)) attiviVistiRef.current.add(riga.intentId);
         }
-    }, [voci, pubblica]);
+    }, [composte]);
 
-    const righe: RigaVideoLavorazione[] = voci.map((v) => ({
-        jobId: v.jobId,
-        nome: v.nome,
-        fase: v.fase,
-        percentuale: v.percentuale,
-        messaggio: v.messaggio,
-        chiedeTag: v.chiedeTag,
-        tagScelti: tagPerJob[v.jobId]?.tag.length ?? 0,
-    }));
+    const attivo = composte.some((r) => FASI_UI_ATTIVE.has(r.fase));
+    const contestoNoto = Boolean(opzioni.utenteId && opzioni.sede);
 
-    return { righe, tagDi, cambiaTag, avviaVideo, riprendi, rimuovi, pubblica };
+    // L'ELENCO: ogni 10 secondi mentre c'è qualcosa di attivo, e comunque al ritorno in primo piano
+    // (`intervalloMs: null` = «solo al ritorno»): chi riapre l'app deve trovare i dati freschi, e
+    // vedere un video mandato da un altro dispositivo. Mai a pagina nascosta.
+    usePollingVisibile(() => caricaElencoRef.current(), attivo ? RITMO_ELENCO_MS : null, { attivo: contestoNoto });
+
+    // LA RIPRESA: finché c'è un trasferimento fermo, da sola — ritorno in primo piano, rete che
+    // torna, e un'attesa crescente di 5, 15, 30, 60 secondi. Ogni tentativo porta la riga a
+    // «caricamento» e poi di nuovo a «interrotto»: il conto dei tentativi sta nell'hook della ripresa
+    // e non riparte da capo a ogni giro; lo azzerano le notizie (rete tornata, ritorno in primo
+    // piano, un trasferimento arrivato in fondo: `azzeraRipresaRef`).
+    const ripresa = useRipresaAutomatica({
+        attiva: composte.some((r) => r.fase === 'interrotto'),
+        riprendi: riprendiInterrotti,
+    });
+    useEffect(() => {
+        azzeraRipresaRef.current = ripresa.azzera;
+    }, [ripresa.azzera]);
+
+    const righe: RigaVideoLavorazione[] = composte;
+
+    return { righe, avviaVideo, riprendi, rimuovi, riprova };
 }
+

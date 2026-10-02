@@ -663,6 +663,83 @@ describe('la traccia audio da convertire', () => {
     expect(parseVideoProbe(raw, 1)).toMatchObject({ ok: true, probe: { audioStreamIndex: 2, audioDurationSeconds: 11.25 } })
   })
 
+  describe('la durata del filmato NON conta le tracce audio ignorate (secondario #13, PR 2)', () => {
+    // La traccia ignorata non finisce nell'uscita: se una più lunga decidesse il massimo, una registrazione di 12 s con una seconda traccia
+    // dal formato proprietario di 400 s sarebbe scartata come `VIDEO_TOO_LONG` — un video che si convertirebbe benissimo — e, sotto il
+    // tetto, `video_job_ready` registrerebbe una durata che l'uscita non ha (l'uscita risulterebbe più corta del suo ingresso).
+    const DURATA_VIDEO = 12.5125
+
+    it('un audio ignorato di 400 s (oltre il tetto di 300) NON scarta il video: la durata è quella di contenitore, video e audio scelto', () => {
+      const raw = conTracceAudio(
+        tracciaAudio(1, undefined, 1, { duration: '400' }),
+        tracciaAudio(2, 'aac', 0, { duration: '11.25' }),
+      )
+      const esito = parseVideoProbe(raw, 1)
+
+      expect(esito).toMatchObject({ ok: true, probe: { durationSeconds: DURATA_VIDEO, audioStreamIndex: 2, ignoredAudioTracks: 1 } })
+    })
+
+    it('una traccia ignorata più lunga delle altre non allunga la durata, nemmeno SOTTO il tetto', () => {
+      const raw = conTracceAudio(
+        tracciaAudio(1, undefined, 1, { duration: '120' }),
+        tracciaAudio(2, 'aac', 0, { duration: '11.25' }),
+      )
+      expect(parseVideoProbe(raw, 1)).toMatchObject({ ok: true, probe: { durationSeconds: DURATA_VIDEO } })
+    })
+
+    it('la traccia audio SCELTA conta eccome: se è più lunga del video, la durata è la sua', () => {
+      const raw = conTracceAudio(
+        tracciaAudio(1, undefined, 1, { duration: '400' }),
+        tracciaAudio(2, 'aac', 0, { duration: '14.5' }),
+      )
+      expect(parseVideoProbe(raw, 1)).toMatchObject({ ok: true, probe: { durationSeconds: 14.5, audioDurationSeconds: 14.5 } })
+    })
+
+    it('anche il tag `DURATION` (Matroska) di una traccia ignorata resta fuori dal massimo', () => {
+      const raw = conTracceAudio(
+        tracciaAudio(1, undefined, 1, { duration: undefined, tags: { DURATION: tagDurataOrologio(400) } }),
+        tracciaAudio(2, 'aac', 0, { duration: '11.25' }),
+      )
+      expect(parseVideoProbe(raw, 1)).toMatchObject({ ok: true, probe: { durationSeconds: DURATA_VIDEO } })
+    })
+
+    it('la stessa traccia, se NON è ignorata (è la sola, ed è decodificabile), conta e scarta il video oltre il tetto: la regola non cambia, cambia chi è ignorato', () => {
+      const raw = conTracceAudio(tracciaAudio(1, 'aac', 1, { duration: '400' }))
+      expect(parseVideoProbe(raw, 1)).toEqual({ ok: false, code: 'VIDEO_TOO_LONG' })
+    })
+
+    it('il LIMITE dichiarato: il contenitore conta ancora. Se `format.duration` porta già i 400 s, il video è scartato lo stesso', () => {
+      // `format.duration` per un MP4 o un MOV è il massimo di TUTTE le tracce, ignorate comprese: escluderle dalla lista delle tracce non
+      // lo cambia. Togliere anche il contenitore sarebbe un'altra decisione (si perderebbe il tetto sui flussi che mentono).
+      const raw = conTracceAudio(
+        tracciaAudio(1, undefined, 1, { duration: '400' }),
+        tracciaAudio(2, 'aac', 0, { duration: '11.25' }),
+      )
+      raw.format.duration = '400'
+      expect(parseVideoProbe(raw, 1)).toEqual({ ok: false, code: 'VIDEO_TOO_LONG' })
+    })
+
+    it('con più tracce ignorate, nessuna di loro conta', () => {
+      const raw = conTracceAudio(
+        tracciaAudio(1, undefined, 1, { duration: '999' }),
+        tracciaAudio(2, 'mp3', 0, { duration: '600' }),
+        tracciaAudio(3, 'aac', 0, { duration: '11.25' }),
+      )
+      // La predefinita è ignota (non decodificabile): fra le decodificabili vince la prima, `mp3` a 600 s — che quindi È la scelta e conta.
+      expect(parseVideoProbe(raw, 1)).toEqual({ ok: false, code: 'VIDEO_TOO_LONG' })
+
+      const conPredefinitaDecodificabile = conTracceAudio(
+        tracciaAudio(1, 'aac', 1, { duration: '11.25' }),
+        tracciaAudio(2, 'mp3', 0, { duration: '600' }),
+        tracciaAudio(3, undefined, 0, { duration: '999' }),
+      )
+      expect(parseVideoProbe(conPredefinitaDecodificabile, 1)).toMatchObject({
+        ok: true,
+        probe: { durationSeconds: DURATA_VIDEO, audioStreamIndex: 1, ignoredAudioTracks: 2 },
+      })
+    })
+  })
+
   it('encode.ts mappa UNA traccia, la scelta: l’uscita nasce con un solo audio e non con la predefinita ignota', () => {
     const esito = parseVideoProbe(FFPROBE_MOV_AUDIO_IGNOTO, 1)
     if (!esito.ok) throw new Error(`il probe doveva riuscire: ${esito.code}`)

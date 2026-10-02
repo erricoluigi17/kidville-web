@@ -7,6 +7,10 @@ import {
 } from './limiti'
 
 export interface VideoProbe {
+  /**
+   * Il massimo fra la durata del contenitore, delle tracce video e della traccia audio SCELTA. Le tracce audio
+   * ignorate (`ignoredAudioTracks`) non ci entrano: non finiscono nell'uscita.
+   */
   durationSeconds: number
   /** Durata della traccia video selezionata; assente solo nelle fixture legacy. */
   videoDurationSeconds?: number | null
@@ -351,13 +355,25 @@ export function parseVideoProbe(raw: unknown, bytes: number): VideoProbeResult {
 
   // Non stimiamo mai la durata dalla dimensione. Il massimo delle fonti credibili
   // evita che una coda audio o una timeline container più lunga aggiri il tetto.
+  //
+  // Le fonti sono il contenitore, le tracce VIDEO e la traccia audio SCELTA — non le tracce audio ignorate
+  // (secondario #13, PR 2). Una traccia che non si converte non finisce nell'uscita, e una più lunga delle
+  // altre non deve decidere né il tetto dei 300 secondi né la durata che `video_job_ready` registra: l'uscita
+  // dura quanto video e audio scelto, e un massimo che include il resto la farebbe sembrare più corta del
+  // suo ingresso (e, oltre il tetto, scarterebbe come `VIDEO_TOO_LONG` un filmato che si convertirebbe).
+  //
+  // ⚠️ Il LIMITE che resta, dichiarato: `format.duration` è la durata che ffprobe dà al contenitore, e per un MP4
+  // o un MOV è quella del filmato intero — il massimo di TUTTE le tracce, anche delle ignorate. Se il contenitore
+  // la porta più lunga, il massimo qui la porta con sé. Escludere le tracce ignorate vale dove il contenitore non
+  // le conta o non dice niente; togliere anche il contenitore sarebbe un'altra decisione (si perderebbe il
+  // tetto su un filmato dai flussi che mentono), e non è di questo difetto.
   const videoDurationSeconds = traceDuration(video)
   const audioDurationSeconds = audio ? traceDuration(audio) : null
   const durationCandidates = [
     finitePositive(format.duration),
     ...taggedDurations(format),
     ...streams
-      .filter((stream) => stream.codec_type === 'video' || stream.codec_type === 'audio')
+      .filter((stream) => stream.codec_type === 'video' || stream === audio)
       .flatMap((stream) => [streamDuration(stream), ...taggedDurations(stream)]),
   ].filter((duration): duration is number => duration !== null)
   if (durationCandidates.length === 0) return { ok: false, code: 'UNKNOWN_DURATION' }

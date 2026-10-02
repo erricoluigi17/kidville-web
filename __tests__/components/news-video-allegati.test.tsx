@@ -658,18 +658,22 @@ describe('NewsVideoAllegati · i byte sono già sul server', () => {
 })
 
 /**
- * LA FIRMA CHE SI RINNOVA — il percorso attuale delle News, collegato alla libreria.
+ * LA FIRMA CHE SI RINNOVA — `POST /api/video-uploads/[id]/firma`, collegato alla libreria.
  *
  * Una firma vale due ore, e un originale da un gigabyte su rete mobile ne dura di più. La libreria,
- * se lo Storage la rifiuta a metà trasferimento, chiama `rinnovaFirma`; per le News il rinnovo è la
- * riapertura dell'intento con la STESSA chiave di idempotenza, che restituisce lo stesso job con una
- * firma nuova. Il test prende le dipendenze che il componente passa alla libreria e le usa come
- * farebbe lei.
+ * se lo Storage la rifiuta a metà trasferimento, chiama `rinnovaFirma`; per le News il rinnovo (secondario
+ * #55) non è più la riapertura dell'intento con la stessa chiave — un'apertura intera per ogni firma, 190
+ * aperture per 44 job misurate prima della PR 2 — ma la route che firma di nuovo il percorso del job. Il test
+ * prende le dipendenze che il componente passa alla libreria e le usa come farebbe lei.
  */
 describe('NewsVideoAllegati · la firma si rinnova su richiesta della libreria', () => {
   const futura = () => new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
+  /** L'apertura di un intento: una POST su `/api/video-uploads` (le News ci aggiungono `?userId=`). */
+  const eAperturaNews = ([url, init]: unknown[]) =>
+    String(url).startsWith('/api/video-uploads?') && (init as { method?: string } | undefined)?.method === 'POST'
+  const rispostaFirma = (firma: string) => risposta(200, { jobId: JOB, caricamento: APERTURA.job[0].caricamento, firma, scadeIl: futura() })
 
-  it('`rinnovaFirma` riapre l’intento con la stessa chiave e da quel momento le intestazioni sono quelle nuove', async () => {
+  it('`rinnovaFirma` chiama `/firma` col job — NON riapre l’intento — e da quel momento le intestazioni sono quelle nuove', async () => {
     const aperturaConScadenza = { ...APERTURA, job: [{ ...APERTURA.job[0], expires_at: futura() }] }
     fetchMock
       .mockResolvedValueOnce(risposta(200, aperturaConScadenza))
@@ -690,15 +694,15 @@ describe('NewsVideoAllegati · la firma si rinnova su richiesta della libreria',
     expect(await dip.intestazioni()).toEqual({ 'x-signature': 'firma-finta' })
     expect(fetchMock.mock.calls.length).toBe(dopoApertura)
 
-    // Il rinnovo: la riapertura dell'intento, con la chiave dell'apertura.
-    fetchMock.mockImplementationOnce(async () =>
-      risposta(200, { ...APERTURA, job: [{ ...APERTURA.job[0], firma: 'firma-nuova', expires_at: futura() }] }))
+    // Il rinnovo: `POST /api/video-uploads/<intento>/firma` col job nel corpo.
+    fetchMock.mockImplementationOnce(async () => rispostaFirma('firma-nuova'))
     expect(await dip.rinnovaFirma!(JOB)).toEqual({ 'x-signature': 'firma-nuova' })
-    const riapertura = fetchMock.mock.calls[dopoApertura]
-    expect(riapertura[1].method).toBe('POST')
-    // La chiave è quella che l'apertura ha restituito per il job (`k` nella fixture; in produzione è
-    // la stessa che il client aveva mandato): con un'altra, la riapertura creerebbe un secondo job.
-    expect(JSON.parse(String(riapertura[1].body)).file[0].chiaveIdempotenza).toBe(APERTURA.job[0].chiaveIdempotenza)
+    const [url, init] = fetchMock.mock.calls[dopoApertura]
+    expect(url).toBe(`/api/video-uploads/${INTENTO}/firma`)
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ jobId: JOB })
+    // ⚠️ L'apertura resta UNA: la vecchia strada ne faceva una per ogni firma, con la stessa chiave.
+    expect(fetchMock.mock.calls.filter(eAperturaNews)).toHaveLength(1)
 
     // Da ora la firma è la nuova, e anche quella costa una sola richiesta.
     expect(await dip.intestazioni()).toEqual({ 'x-signature': 'firma-nuova' })
@@ -712,7 +716,26 @@ describe('NewsVideoAllegati · la firma si rinnova su richiesta della libreria',
     })
   })
 
-  it('se l’intento non ha più niente da firmare il rinnovo rifiuta, e la libreria ricade nel rifiuto di sempre', async () => {
+  it('anche il RIENTRO nella pagina (la ripresa di una riga rimasta a metà) rinnova da `/firma`, senza riaprire', async () => {
+    daSeguire.mockResolvedValue([rigaLocale('in_corso')])
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+      ? risposta(200, { ...APERTURA, job: [{ ...APERTURA.job[0], expires_at: futura() }] })
+      : risposta(200, statoJob('queued')))
+    carica.mockResolvedValue({ esito: 'interrotto', jobId: JOB, offsetByte: 0, codice: null })
+
+    monta()
+    await waitFor(() => expect(carica).toHaveBeenCalled())
+    const dip = carica.mock.calls[0][0] as { rinnovaFirma: (jobId: string) => Promise<Record<string, string>> }
+    const aperture = () => fetchMock.mock.calls.filter(eAperturaNews).length
+    const prima = aperture()
+
+    fetchMock.mockImplementationOnce(async () => rispostaFirma('firma-di-ripresa'))
+    expect(await dip.rinnovaFirma(JOB)).toEqual({ 'x-signature': 'firma-di-ripresa' })
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe(`/api/video-uploads/${INTENTO}/firma`)
+    expect(aperture(), 'il rinnovo ha riaperto l’intento').toBe(prima)
+  })
+
+  it('se il job non aspetta più i byte (`/firma` risponde 409) il rinnovo rifiuta, e la libreria ricade nel rifiuto di sempre', async () => {
     const aperturaConScadenza = { ...APERTURA, job: [{ ...APERTURA.job[0], expires_at: futura() }] }
     fetchMock
       .mockResolvedValueOnce(risposta(200, aperturaConScadenza))
@@ -723,9 +746,8 @@ describe('NewsVideoAllegati · la firma si rinnova su richiesta della libreria',
     await waitFor(() => expect(accoda).toHaveBeenCalled())
     const dip = accoda.mock.calls[0][0] as { rinnovaFirma: (jobId: string) => Promise<Record<string, string>> }
 
-    // Il job non aspetta più i byte (`needs_upload: false`): non c'è una firma da dare.
-    fetchMock.mockImplementationOnce(async () =>
-      risposta(200, { ...APERTURA, job: [{ ...APERTURA.job[0], status: 'queued', needs_upload: false, firma: '', expires_at: null }] }))
+    // Il job non aspetta più i byte: non c'è una firma da dare.
+    fetchMock.mockImplementationOnce(async () => risposta(409, { error: 'x', codice: 'VIDEO_GIA_CONCLUSO' }))
     await expect(dip.rinnovaFirma(JOB)).rejects.toThrow('FirmaNonDisponibile')
 
     await act(async () => {

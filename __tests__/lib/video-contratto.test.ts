@@ -257,6 +257,21 @@ const FONTI: { nome: string; minimo: number; codici: () => string[] }[] = [
         'CODICI_RUNNER_VIDEO',
       ),
   },
+  {
+    // LA SESTA FONTE (T7, 2026-10-02, secondario #23). Il pubblicatore lato server è TypeScript e scrive da sé nel database un codice
+    // che nessuna migrazione scrive: `PUBBLICAZIONE_NON_RIUSCITA`, che passa a `video_intent_pubblicazione_fallita` quando un guasto
+    // dura oltre i sessanta minuti. Fino a T7 nessuna fonte leggibile lo produceva, e stava in `DICHIARATI_IN_ANTICIPO`: una deroga
+    // che aspettava il suo produttore. Ora il produttore dichiara i suoi codici come elenco (`satisfies` fa sì che un nome che il
+    // contratto non conosce non compili), e questa fonte li legge dal SORGENTE come le altre — non da un import, che seguirebbe una
+    // rinomina in silenzio.
+    nome: 'src/lib/gallery/pubblicazione-video-automatica.ts → CODICI_PUBBLICAZIONE_VIDEO',
+    minimo: 2,
+    codici: () =>
+      membriElencoLetterale(
+        readFileSync(join(RADICE, 'src/lib/gallery/pubblicazione-video-automatica.ts'), 'utf8'),
+        'CODICI_PUBBLICAZIONE_VIDEO',
+      ),
+  },
 ]
 
 const daTutteLeFonti = (): string[] =>
@@ -278,19 +293,21 @@ const daTutteLeFonti = (): string[] =>
  *  · NON è una scorciatoia per i codici di SQL: quelli li rimisura `codiciDelleMigrazioni` e,
  *    appena una migrazione li scrive, passano dalla regola normale — con o senza questa voce.
  *
- * Alla chiusura della PR (T16) questa mappa va svuotata e il tetto portato a zero: le tre voci
- * sotto sono quelle che nessuna fonte leggibile produceva ancora al momento di scriverla.
+ * Alla chiusura della PR questa mappa doveva essere vuota e il tetto a zero: LO È, dal compito T7. Le tre voci
+ * che c'erano erano quelle che nessuna fonte leggibile produceva ancora al momento di scriverla, e sono
+ * state tolte una per volta quando la fonte è nata.
  *
  * ⚠️ T2b (2026-10-02) ha tolto `ORIGINALE_DIVERSO` e `ORIGINALE_SOSTITUITO`: la sua migrazione
- * (`…_video_arrivo_originale.sql`) li scrive come `error_code` del job respinto, quindi ora hanno una
- * fonte leggibile (`codiciDelleMigrazioni`) e passano dalla regola normale. Il tetto è sceso da 3 a 1
- * per questo, non perché qualcuno abbia ceduto: resta una sola voce, quella di T7.
+ * (`…_video_arrivo_originale.sql`) li scrive come `error_code` del job respinto, quindi hanno una
+ * fonte leggibile (`codiciDelleMigrazioni`) e passano dalla regola normale.
+ *
+ * ⚠️ T7 (2026-10-02) ha tolto `PUBBLICAZIONE_NON_RIUSCITA`: il pubblicatore lato server dichiara i codici che scrive da sé
+ * (`CODICI_PUBBLICAZIONE_VIDEO`) e quell'elenco è la sesta fonte di `FONTI`. La deroga è a ZERO voci, e la mappa resta
+ * (vuota) perché i vincoli qui sotto — chi produce, il tetto che non sale — valgano il giorno in cui un'altra PR dichiarasse
+ * un codice prima della sua fonte.
  */
-const DICHIARATI_IN_ANTICIPO: Record<string, string> = {
-  PUBBLICAZIONE_NON_RIUSCITA:
-    'T7 (il pubblicatore, in TypeScript, lo passa a `video_intent_pubblicazione_fallita` dopo 60 minuti)',
-}
-const TETTO_DICHIARATI_IN_ANTICIPO = 1
+const DICHIARATI_IN_ANTICIPO: Record<string, string> = {}
+const TETTO_DICHIARATI_IN_ANTICIPO = 0
 
 describe('contratto video · i codici d’errore sono ESAUSTIVI per costruzione', () => {
   it('la misura vede davvero le fonti (controllo positivo dell’estrattore)', () => {
@@ -367,10 +384,10 @@ describe('contratto video · i codici d’errore sono ESAUSTIVI per costruzione'
       // …e dice chi lo produrrà: una deroga senza un responsabile è un debito senza creditore.
       expect(produttore.trim().length, `${codice}: manca chi lo produrrà`).toBeGreaterThan(20)
     }
-    // Il tetto SCENDE e basta, e va a zero quando le fonti esistono (T16). Se scende, si scrive qui
-    // accanto perché: era 3 (il trigger d’arrivo di T2b per due codici, il pubblicatore di T7 per
-    // uno); T2b ha scritto la sua migrazione e ora ne resta UNA, quella che nessuna fonte leggibile
-    // produce ancora (il pubblicatore di T7).
+    // Il tetto SCENDE e basta, e a zero è arrivato. Si scrive qui accanto perché è sceso: era 3 (il trigger d’arrivo
+    // di T2b per due codici, il pubblicatore di T7 per uno); T2b ha scritto la sua migrazione (3 → 1) e T7 ha
+    // dichiarato i codici del pubblicatore come fonte leggibile (1 → 0). Non è una resa: è la deroga che ha
+    // fatto il suo lavoro ed è finita.
     expect(
       voci.length,
       'la deroga dei codici in anticipo è cresciuta: è il buco che la regola dei codici inventati ' +

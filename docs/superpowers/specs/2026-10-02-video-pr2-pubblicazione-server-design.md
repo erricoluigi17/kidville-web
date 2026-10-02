@@ -264,7 +264,7 @@ guasto nostro esaurito, qualunque fosse l'ultimo codice tecnico (secondario #37)
 | Destinatari | Tipo | Quando | Testo (italiano, nessun nome, nessun nome di file) |
 |---|---|---|---|
 | Genitori dei bambini taggati (o della classe/sede per broadcast, come oggi) | `galleria` (esistente) | Pubblicazione riuscita (foto **e** video) | Titolo **«Nuovi contenuti in galleria»**, corpo «Ci sono nuovi contenuti nella galleria.» Helper estratto da `gallery/route.ts`, stesso `entitaId = uploaded_by`, `bufferMin 30`, debounce per destinatario della #131. |
-| Chi ha caricato | `video_esito` (nuovo, gruppo `docente`, `bufferMin 0`, `entitaId = intento`) | pubblicato · pubblicato senza N bambini · non pubblicato (nessun destinatario) · pubblicazione fallita (con «Riprova») · conversione fallita | «Il tuo video è stato pubblicato in galleria.» · «… N bambini non sono più nella sede e non lo vedranno.» · «Il video non è stato pubblicato: nessuno dei bambini scelti è ancora nella sede.» · «Non siamo riusciti a pubblicare il video: apri la galleria e premi «Riprova».» · testo della PR 1 per il guasto nostro / per il file. Link `/teacher/gallery` (o `/admin/gallery` per Direzione e segreteria, se è da lì che caricano). |
+| Chi ha caricato | `video_esito` (nuovo, gruppo `docente`, `bufferMin 0`, `entitaId = intento`) | pubblicato · pubblicato senza N bambini · non pubblicato (nessun destinatario) · pubblicazione fallita (con «Riprova») · conversione fallita | «Il tuo video è stato pubblicato in galleria.» · «… N bambini non sono più nella sede e non lo vedranno.» · «Il video non è stato pubblicato: nessuno dei bambini scelti è ancora nella sede.» · «Non siamo riusciti a pubblicare il video: apri la galleria e premi «Riprova».» · testo della PR 1 per il guasto nostro / per il file. Link **sempre** `/teacher/gallery` (è l'unica pagina col flusso video e il «Riprova», anche per lo staff che carica). |
 | Chi ha caricato + `admin`, `coordinator`, `segreteria` della sede | `video_liberatoria_revocata` (nuovo, `staff`, `sicurezza: true`) | Pubblicato con N bambini che hanno perso la liberatoria | «Un video è stato pubblicato in galleria con N bambini senza liberatoria fotografica.» |
 
 - I due tipi nuovi entrano in `TIPI_NOTIFICA` (`src/lib/notifiche/tipi.ts`), in **entrambi** gli `etichette.json`
@@ -389,7 +389,8 @@ lo giustifica) e se spostare `scale` prima della catena HDR→SDR.
 
 Se il job ha `sha256_dichiarato`, lo script nel Sandbox calcola lo SHA-256 dell'originale scaricato **prima** di
 convertire; se diverso esce con un codice d'uscita nuovo mappato su `ORIGINALE_DIVERSO`, classe `file` (mai
-ritentato). Senza `sha256_dichiarato` (web, TUS) il passo si salta.
+ritentato). Senza `sha256_dichiarato` (web, TUS) il passo si salta. Un `sha256_dichiarato` **illeggibile** (non 32 byte
+in esadecimale) fa rifiutare il job con `ORIGINALE_DIVERSO` prima di aprire la MicroVM (fail-closed).
 
 ### 10.5 Verifiche senza falsi scarti (T9, moduli puri)
 
@@ -427,9 +428,14 @@ restano rosse.
 - **Elenco dal server:** polling ogni 10 s solo con voci attive e pagina visibile, fuso con le righe locali per
   avanzamento e ripresa. Chi carica da un altro dispositivo vede «In caricamento da un altro dispositivo». «Riprova»
   sulle pubblicazioni fallite (`riprovaPossibile`). Le righe locali del flusso vecchio → «Questo video va ricaricato».
-- **Testi veritieri:** TUS: «Il caricamento continua finché l'app è aperta; se la chiudi riprende da solo quando la
-  riapri». Il testo `galleryVideoAvviato` («Puoi chiudere l'app») è falso con TUS e si corregge; così
-  `erroreVideoAppDaAggiornare` se dice «ripartono da soli».
+- **Testi veritieri:** il trasferimento TUS vive finché la pagina **Galleria** è aperta (uscendo dalla Galleria si ferma
+  al blocco successivo e riprende da solo al rientro): il testo lo dice così («finché resti in Galleria»), non «finché
+  l'app è aperta». Il testo `galleryVideoAvviato` («Puoi chiudere l'app») è falso con TUS e si corregge. Un caricatore a
+  livello di layout è una miglioria per dopo (nell'app lo rende superfluo l'invio nativo della 1.2).
+- **Chiave d'idempotenza del web** (T11a, ondata D): `gv2-<byte>-<data>-<impronta del nome>-<impronta dei destinatari>`,
+  così lo stesso file rimandato ad altri bambini apre un intento nuovo invece di un 409. L'impronta dei destinatari è
+  **salata** con un valore casuale per dispositivo (in `localStorage`): senza sale, l'impronta resterebbe in
+  `video_jobs.idempotency_key` dopo la minimizzazione di `tag_alunni` e i bambini si ricostruirebbero per enumerazione.
 - **Trasporto:** interfaccia `TrasportoVideo` in `src/lib/media/video/trasporto/` con il solo `trasportoTus`;
   `scegliTrasporto()` risponde `put-nativo` solo se un trasporto registrato (PR 3) dice di essere disponibile. In questa
   PR **non** c'è alcun ramo nativo mezzo fatto.
@@ -456,7 +462,8 @@ tempo), e i numeri esatti nei `campi`. Fasce di tempo: `<1s`, `1-5s`, `5-30s`, `
 1. **Selettore aperto** — `gallery-selettore-aperto strada=<selettore-file|fotocamera-nativa> ambiente=<app|web>`.
 2. **File ricevuti** — `gallery-selettore-file-ricevuti mime=<image|video|misto> attesa=<fascia> tardivo=<si|no>`, con
    `campi` `{n, n_video, n_foto, byte_totali, ms_da_apertura, ms_da_ritorno}` (`ms_da_ritorno` = dal ritorno della pagina
-   in primo piano, `null` se non c'è stato; `tardivo=si` se il log del punto 3 era già partito).
+   in primo piano, **assente** se non c'è stato — il client scarterebbe un `null` contandolo come campo guasto; in SQL
+   `contesto->'campi'->>'ms_da_ritorno'` è NULL lo stesso; `tardivo=si` se il log del punto 3 era già partito).
 3. **Selettore chiuso senza file** — `gallery-selettore-chiuso-senza-file motivo=<cancel|ritorno-senza-file|annullato-fotocamera> attesa=<fascia>`,
    con `campi` `{ms_da_apertura}`. L'evento `cancel` dell'input dove il telefono lo supporta; altrimenti, quando la
    pagina torna visibile, un timer di **15 s** (costante documentata): se nel frattempo non è arrivato niente, si
@@ -613,7 +620,7 @@ compito; un bloccante ancora aperto al terzo giro ferma il lavoro e si scrive al
 | T7 | Pubblicazione automatica ed esiti | `src/lib/gallery/pubblicazione-video-automatica.ts`, `src/lib/media/video/esiti.ts`, `src/lib/notifiche/tipi.ts`, `messages/{it,en}/etichette.json`, `src/lib/push/dispatch.ts`, `outbox/destinatari.ts`, due righe in `runner/index.ts` | notifiche solo con la marca; avviso senza nomi; fallito dopo 60'; bambino uscito e nessun destinatario come §8.2 |
 | T13 | Conservazione e GDPR | `retention-video/route.ts` (passi), `src/lib/gdpr/esegui.ts`, oblio, test | righe trattenute ⇒ 500; registro coerente con la fotografia dello Storage |
 | T8 | Ambiente pronto + sha256 | `runner/adattatori.ts` (parte macchina), `runner/ambiente.ts`, `preparazione.ts`, `script.ts`, `build.ts`, `ritentativi.ts` (codice d'uscita nuovo), `scripts/video-sandbox-ambiente.mjs`, `docs/env.md`, test | ripiego provato con snapshot assente; impronte nel lock; sha256 diverso → `ORIGINALE_DIVERSO` non ritentato |
-| T11 | Client galleria + selettore (§11.1) | `src/components/features/gallery/**` (video e `MediaUploader.tsx`), `src/app/(dashboard)/teacher/gallery/page.tsx`, `src/lib/gallery/video-galleria-flusso.ts`, `src/lib/media/video/trasporto/*`, `src/lib/native/use-image-picker.ts` e `camera.ts` (solo se servono ai log della fotocamera), `messages/{it,en}/teacherServizi.json` e `shared.json` (chiavi del selettore), test | nessun `alert` nel ramo di invio; 422 nel passo dei bambini; ripresa senza clic; «Riprova»; «va ricaricato»; 50 elementi; #36; **§11.1**: nell'app il riquadro grande apre il selettore foto e video e «Scatta una foto» è secondaria; i tre log (aperto, ricevuti, chiuso senza file) con un test ciascuno visto rosso rompendo il codice; mai il nome del file nei log |
+| T11 | Client galleria + selettore (§11.1) — eseguito come **T11a** (flusso: hook, pagina, schede, elenco, ripresa, «Riprova», News su `/firma`) e **T11b** (`MediaUploader`, selettore e i suoi tre log, 50 elementi), su file disgiunti | `src/components/features/gallery/**` (video e `MediaUploader.tsx`), `src/app/(dashboard)/teacher/gallery/page.tsx`, `src/lib/gallery/video-galleria-flusso.ts`, `src/lib/media/video/trasporto/*`, `src/lib/native/use-image-picker.ts` e `camera.ts` (solo se servono ai log della fotocamera), `messages/{it,en}/teacherServizi.json` e `shared.json` (chiavi del selettore), test | nessun `alert` nel ramo di invio; 422 nel passo dei bambini; ripresa senza clic; «Riprova»; «va ricaricato»; 50 elementi; #36; **§11.1**: nell'app il riquadro grande apre il selettore foto e video e «Scatta una foto» è secondaria; i tre log (aperto, ricevuti, chiuso senza file) con un test ciascuno visto rosso rompendo il codice; mai il nome del file nei log |
 | T14 | Pop-up 1.2 per il personale, **spento** (`null`) | `aggiornamento-app.ts`, `AvvisoAggiornamentoApp.tsx`, test | con `null` nessun effetto; con `'1.2'` compare solo al personale sotto la 1.2 |
 | T15 | E2E | 3 spec + destinatari, `scripts/seed-e2e.mjs`, `playwright.config.ts` | verde senza ritentativi |
 | T16 | Orchestratore | misure, snapshot e variabili, collaudo reale sul DB della CI, PRD, gate intero, PR, migrazioni, merge, verifiche, fotografie | §19 |

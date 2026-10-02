@@ -40,6 +40,7 @@ import {
   type ArchivioCaricamentiVideo,
 } from '@/lib/media/video/upload';
 import { caricamentoNelContesto } from '@/lib/media/video/upload/stato';
+import { rinnovaFirmaTus } from '@/lib/media/video/trasporto';
 import { cx } from '@/lib/ui/cx';
 
 import { urlAllegatoBozzaVideo } from './video/allegato-bozza';
@@ -355,11 +356,9 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
           const dip = dipendenzeCaricamentoNews({
             archivio, ancora, jobId: riga.jobId,
             iniziale: { firma: apertura.firma, scadeIl: apertura.expiresAt },
-            rinnova: async () => {
-              const rinnovo = await riapri();
-              return rinnovo.ok && rinnovo.jobId === riga.jobId && rinnovo.needsUpload
-                ? { firma: rinnovo.firma, scadeIl: rinnovo.expiresAt } : null;
-            },
+            // Il rinnovo NON riapre l'intento: `POST /api/video-uploads/[id]/firma` firma di nuovo
+            // il percorso di QUESTO job, e risponde `null` quando non c'è più niente da firmare.
+            rinnova: () => rinnovaFirmaTus(dipFlusso.fetch, { intentId: apertura.intentId, jobId: riga.jobId }),
           });
           const caricato = await caricaVideo(dip, riga.jobId);
           if (!ancora()) return;
@@ -436,17 +435,12 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
       // La firma è di QUESTO job e scade: si chiede al momento di spedire, e non
       // si conserva accanto ai byte (sarebbe una credenziale su IndexedDB). Si rinnova da
       // sola prima della scadenza, e la libreria la rinnova di nuovo se lo Storage la rifiuta
-      // a metà trasferimento (`rinnovaFirma`): per le News il rinnovo è la riapertura
-      // dell'intento con la stessa chiave.
+      // a metà trasferimento (`rinnovaFirma`): il rinnovo è `POST /api/video-uploads/[id]/firma`,
+      // che non riapre l'intento (la riapertura costava un'apertura intera per ogni firma).
       const dip = dipendenzeCaricamentoNews({
         archivio, ancora, jobId: apertura.jobId,
         iniziale: { firma: apertura.firma, scadeIl: apertura.expiresAt },
-        rinnova: async () => {
-          const rinnovo = await apriIntentoVideoNews(dipFlusso, { scuolaId: tuttiSedi ? null : scuolaId, ambitoGlobale: tuttiSedi,
-            chiaveIdempotenza: apertura.chiaveIdempotenza, file, mime: pre.mime, durataSecondi: durata });
-          return rinnovo.ok && rinnovo.jobId === apertura.jobId && rinnovo.needsUpload
-            ? { firma: rinnovo.firma, scadeIl: rinnovo.expiresAt } : null;
-        },
+        rinnova: () => rinnovaFirmaTus(dipFlusso.fetch, { intentId: apertura.intentId, jobId: apertura.jobId }),
       });
 
       const messo = await accodaCaricamentoVideo(dip, {

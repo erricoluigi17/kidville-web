@@ -596,8 +596,9 @@ describe('il cablaggio del runner con l’ambiente', () => {
   function clientCheRegistra(risposte: Record<string, unknown> = {}) {
     const rpc: { nome: string; args: Record<string, unknown> }[] = []
     const catena: Record<string, unknown> = {}
-    for (const metodo of ['select', 'eq', 'order']) catena[metodo] = () => catena
-    // `miei()`: nessun job già mio.
+    // `is`, `in` e `not` sono quelli della scansione degli esiti (T7): l'elenco degli intenti in volo, qui, è vuoto.
+    for (const metodo of ['select', 'eq', 'order', 'is', 'in', 'not']) catena[metodo] = () => catena
+    // `miei()`: nessun job già mio. Chiude anche le due letture della scansione degli esiti.
     catena.limit = async () => ({ data: [], error: null })
     h.supabase = {
       rpc: async (nome: string, args: Record<string, unknown>) => {
@@ -634,14 +635,51 @@ describe('il cablaggio del runner con l’ambiente', () => {
     const esito = await esegui()
 
     expect(esito).toEqual({ esito: 'coda-vuota' })
+    // Le pubblicazioni (T7) stanno fra il ventaglio e la presa, come nella testata di `esegui.ts`: `video_outbox_claim` è il loro
+    // consumo. Prima di T7 il punto d'aggancio era vuoto e questo elenco non lo aveva.
     expect(rpc.map((r) => r.nome)).toEqual([
       'video_arrivi_recupera',
       'video_runner_ventaglio',
+      'video_outbox_claim',
       'video_job_prossimo',
     ])
     expect(rpc[0].args).toEqual({ p_limite: 50 })
     expect(rpc[1].args).toEqual({ p_tetto: 2, p_escludi: null })
-    expect(rpc[2].args).toEqual({ p_lease_owner: OWNER_UUID, p_lease_seconds: 300, p_tetto: 2 })
+    expect(rpc[3].args).toEqual({ p_lease_owner: OWNER_UUID, p_lease_seconds: 300, p_tetto: 2 })
+  })
+
+  it('il giro consuma le pubblicazioni del RUNNER: un evento alla volta, SOLO `gallery.auto_publish`, col filtro nel claim', async () => {
+    const rpc = clientCheRegistra({ video_job_prossimo: { ok: false, code: 'EMPTY_QUEUE' } })
+    const esegui = await runnerVero()
+
+    await esegui()
+
+    const claim = rpc.filter((r) => r.nome === 'video_outbox_claim')
+    expect(claim).toHaveLength(1)
+    expect(claim[0].args).toMatchObject({ p_limite: 1, p_lease_seconds: 120, p_tipi: ['gallery.auto_publish'] })
+    // La lease del claim è un uuid, e non è né il `lease_owner` del worker né l'identità dell'invocazione: è del consumo.
+    expect(claim[0].args.p_lease_owner).toMatch(UUID)
+    expect(claim[0].args.p_lease_owner).not.toBe(OWNER_UUID)
+  })
+
+  it('un calcio che non porta a un esito definitivo NON consuma le pubblicazioni (il giro del cron e `dopo-esito` sì)', async () => {
+    const rpc = clientCheRegistra({ video_job_prendi: { ok: false, code: 'CAPACITA_PIENA' } })
+    const esegui = await runnerVero()
+
+    await esegui({ jobId: JOB_UUID })
+
+    expect(rpc.some((r) => r.nome === 'video_outbox_claim')).toBe(false)
+  })
+
+  it('la scansione degli esiti legge gli intenti in volo con il nome del runner, e senza niente da notificare non scrive RPC', async () => {
+    const rpc = clientCheRegistra({ video_job_prossimo: { ok: false, code: 'EMPTY_QUEUE' } })
+    const esegui = await runnerVero()
+
+    await esegui()
+
+    // Nessun intento automatico in volo (la catena risponde `[]`): nessuna marca, nessuna notifica.
+    expect(rpc.some((r) => r.nome === 'video_intent_esito_segna')).toBe(false)
+    expect(h.eventi.some((e) => e.campi.esito === 'esiti-scansione-eccezione')).toBe(false)
   })
 
   it('senza la variabile il tetto è 3 (il predefinito)', async () => {

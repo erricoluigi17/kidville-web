@@ -1,13 +1,18 @@
 import { randomUUID } from 'node:crypto'
 
+import type { SupabaseClient } from '@supabase/supabase-js'
+
 import { logEvento } from '@/lib/logging/logger'
 import { appUrl } from '@/lib/email/tema'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { consegnaVideoInBozzaNews } from '@/lib/news/video-allegato'
+import { scansionaEsitiDiConversione, type EsitoScansioneEsiti } from '@/lib/media/video/esiti'
+import { consumaOutbox, TIPI_SOLO_DEL_RUNNER } from '@/lib/media/video/outbox'
 
 import { archivioSupabase, codaSupabase, macchinaVercel } from './adattatori'
 import {
   eseguiUnJobVideo,
+  type ContestoPubblicazioni,
   type DipendenzeRunner,
   type EsitoRunnerVideo,
   type RichiestaRunner,
@@ -174,6 +179,98 @@ export function conversioniParallele(): number {
   return CONVERSIONI_PARALLELE_PREDEFINITE
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * LE PUBBLICAZIONI DEL RUNNER (spec §8.1 e §9, secondario #105)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Al massimo cinque pubblicazioni per chiamata (spec §9): il resto lo prende il giro dopo. */
+export const PUBBLICAZIONI_PER_CHIAMATA = 5
+
+/**
+ * Quanto si stima che costi UNA pubblicazione — la copia dentro Storage (lato server, senza far passare i byte di qui), la RPC, le
+ * notifiche —: sotto questo margine non se ne comincia un'altra. È una stima, non una misura (la prende T16 dai primi battiti), e
+ * sbaglia dalla parte giusta: un'altra pubblicazione NON iniziata aspetta il giro dopo, una iniziata e tagliata a metà lascia una copia
+ * orfana.
+ */
+export const STIMA_PUBBLICAZIONE_MS = 15_000
+
+/** Quanto serve alla scansione degli esiti: due letture e, per ogni fallimento, una marca e una notifica. */
+export const STIMA_SCANSIONE_ESITI_MS = 5_000
+
+/**
+ * Il tetto di quanto le pubblicazioni di UNA chiamata possono togliere alla sorveglianza (#105).
+ *
+ * Nel giro SENZA `job_id` le pubblicazioni girano PRIMA di riprendere il job che questa invocazione sorveglia, e mentre girano nessuno batte
+ * per quel job: la sua lease dura 300 secondi dall'ultimo battito (`SECONDI_LEASE_BATTITO`), e quando l'invocazione precedente se n'è
+ * andata ne restavano non meno di 240. Un minuto lascia alla lease il margine che le serve, anche se la RPC o lo Storage rallentano.
+ */
+export const TETTO_PUBBLICAZIONI_MS = 60_000
+
+/** La lease di UN evento preso: una pubblicazione sta ampiamente in due minuti, e un evento che resta in lease torna prendibile da solo. */
+export const LEASE_PUBBLICAZIONE_SECONDI = 120
+
+/**
+ * Il punto d'aggancio `DipendenzeRunner.pubblicazioni`: consuma le pubblicazioni accodate e scansiona gli esiti di conversione.
+ *
+ *  · IL CONSUMO è `consumaOutbox` coi soli `TIPI_SOLO_DEL_RUNNER` — il filtro sta nel claim, quindi il runner non prende mai un evento che
+ *    spetta alla retention — e UN evento alla volta: il tempo di una pubblicazione dipende dalla copia, e prenderne cinque insieme vorrebbe
+ *    dire tenerli tutti in lease mentre se ne consegna uno. Prima di ogni claim si guarda quanto tempo resta: se non basta per una
+ *    pubblicazione non si comincia (nessun tentativo bruciato), e l'evento aspetta il giro dopo.
+ *  · LA SCANSIONE (`scansionaEsitiDiConversione`) avvisa chi ha caricato un video la cui conversione è fallita: lo fa dopo ogni esito
+ *    definitivo (`dopo-esito`) e a ogni giro, perché `video_job_fail` non accoda nessun evento.
+ *
+ * Il tempo è il MINORE fra `restanteMs` (ciò che resta dei 240 secondi di questa invocazione) e `TETTO_PUBBLICAZIONI_MS`: chi ha poco
+ * tempo rimanda, invece di farsi tagliare. Non lancia (il wrapper del runner ingoia e logga comunque un'eccezione) e non decide niente:
+ * il giro e la sorveglianza proseguono comunque.
+ *
+ * Esportata per i test: `adesso` è un parametro perché il tempo si fissa, non si congela.
+ */
+export async function eseguiLePubblicazioni(
+  supabase: SupabaseClient,
+  contesto: ContestoPubblicazioni,
+  opzioni: { adesso?: () => number } = {},
+): Promise<{ consumate: number; rimandate: boolean; scansione: EsitoScansioneEsiti | null }> {
+  const adesso = opzioni.adesso ?? Date.now
+  const scadenza = adesso() + Math.min(Math.max(0, contesto.restanteMs), TETTO_PUBBLICAZIONI_MS)
+
+  let consumate = 0
+  let rimandate = false
+  while (consumate < PUBBLICAZIONI_PER_CHIAMATA) {
+    if (scadenza - adesso() < STIMA_PUBBLICAZIONE_MS) {
+      rimandate = true
+      break
+    }
+    const esito = await consumaOutbox(supabase, {
+      operazione: 'video-runner',
+      limite: 1,
+      tipi: TIPI_SOLO_DEL_RUNNER,
+      leaseSecondi: LEASE_PUBBLICAZIONE_SECONDI,
+    })
+    // Coda vuota, o un claim che non è partito (già gridato dal motore): non c'è niente da ripetere.
+    if (esito.presi === 0) break
+    consumate += esito.presi
+  }
+
+  let scansione: EsitoScansioneEsiti | null = null
+  if (scadenza - adesso() >= STIMA_SCANSIONE_ESITI_MS) {
+    scansione = await scansionaEsitiDiConversione(supabase, { operazione: 'video-runner' })
+  } else {
+    rimandate = true
+  }
+
+  if (rimandate) {
+    // Si dice che si è rimandato: un video che aspetta il giro dopo senza una riga che lo spieghi è un ritardo che nessuno sa leggere.
+    logEvento('cron', 'info', {
+      operazione: 'video-runner',
+      esito: 'pubblicazioni-rimandate',
+      azione: contesto.quando,
+      n_pubblicazioni: consumate,
+      restante_ms: Math.max(0, Math.round(contesto.restanteMs)),
+    })
+  }
+  return { consumate, rimandate, scansione }
+}
+
 /**
  * Porta avanti un job della coda video. Non converte un video: fa un pezzo di lavoro
  * e torna. Si chiama in due modi (il disegno è scritto per intero nella testata di `./esegui.ts`,
@@ -231,10 +328,12 @@ export async function eseguiProssimoJobVideo(
       )
       return esito.ok ? { ok: true } : { ok: false, codice: esito.codice }
     },
-    // ⚠️ PUNTO D'AGGANCIO DI T7 (pubblicazione automatica ed esiti). Qui NON c'è ancora niente, di
-    // proposito: il runner chiama `pubblicazioni` nel giro e dopo ogni esito definitivo (vedi
-    // `DipendenzeRunner.pubblicazioni` in `./esegui.ts`), e T7 aggiunge qui la funzione che consuma
-    // `gallery.auto_publish` e scansiona gli esiti.
+    // Le pubblicazioni dei video di galleria e gli avvisi di una conversione fallita (spec §8.1, §8.5, §9): il runner le chiama nel giro e
+    // dopo ogni esito definitivo (`DipendenzeRunner.pubblicazioni` in `./esegui.ts`), e qui si decide che cosa significano. Dentro
+    // `restanteMs` e in poco tempo — vedi `eseguiLePubblicazioni`.
+    pubblicazioni: async (contesto) => {
+      await eseguiLePubblicazioni(supabase, contesto)
+    },
   }
 
   return eseguiUnJobVideo(dipendenze, richiesta)

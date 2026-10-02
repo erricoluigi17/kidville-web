@@ -1,8 +1,9 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { Film, RotateCw, Trash2, Upload } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Film, RotateCw, Trash2 } from 'lucide-react';
+
+import { useDateFormat } from '@/lib/i18n/date';
 
 /**
  * V11 · LA SCHEDA DI UN VIDEO CHE NON È ANCORA IN GALLERIA.
@@ -12,19 +13,20 @@ import type { ReactNode } from 'react';
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Una foto si carica e c'è. Un video no: dopo che i byte sono arrivati comincia
- * una conversione che gira su una macchina lontana e **dura minuti** — nel
- * campione misurato il 2026-09-17, 180 secondi a 1080p sono costati 709 secondi
- * di wall su due vCPU, e il piano dimensiona il caso tipico fra 212 e 653.
+ * una conversione che gira su una macchina lontana e **dura minuti** — in un
+ * campione misurato il 2026-09-17, un filmato di 180 secondi a 1080p è costato 709
+ * secondi di wall su due vCPU, e il piano dimensiona il caso tipico fra 212 e 653.
  *
- * In quei minuti l'interfaccia deve dire la verità, e la verità cambia tre volte:
+ * In quei minuti l'interfaccia deve dire la verità, e la verità cambia:
  *
  *  · **caricamento** — i byte partono dal telefono. Qui una percentuale esiste
- *    davvero, perché i byte si contano;
+ *    davvero, perché i byte si contano. Il caricamento continua finché l'app è
+ *    aperta; se la si chiude riprende da solo alla riapertura;
  *  · **preparazione** (in coda, poi conversione) — il telefono ha finito e non
  *    sta facendo niente. Una barra che avanza qui sarebbe inventata: l'unica cosa
  *    vera da dire è *quanto può durare* e *che si può chiudere l'app*;
- *  · **pronto** — il video esiste, convertito e verificato, e NON è pubblicato.
- *    Manca un gesto, e si vede.
+ *  · **pronto** — il video esiste, convertito e verificato, e il server lo sta per
+ *    pubblicare: non c'è più nessun gesto da fare, i bambini li ha scelti prima.
  *
  * ⚠️ Perché tre e non «caricamento» per tutti: **se l'interfaccia dice
  * “caricamento” per otto minuti, qualcuno ricarica la pagina e carica due volte.**
@@ -32,83 +34,101 @@ import type { ReactNode } from 'react';
  * errore da nessuna parte, perché tecnicamente non è andato storto niente.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * E SE CHIUDE L'APP?
+ * LA SCHEDA NON DECIDE NIENTE, E NON CHIEDE PIÙ I BAMBINI
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * I byte riprendono da soli: lo fa il protocollo TUS, che conserva l'URL della
- * sessione e riparte dall'offset che il server ha contato (`@/lib/media/video/upload`).
- * I TAG no: i bambini scelti al passo 2 vivono nella memoria della pagina, e una
- * pagina chiusa li perde. Non si possono nemmeno mettere su disco «per comodità» —
- * sono identificativi di minori, e l'archivio locale ha un elenco chiuso di chiavi
- * proprio per impedire che ci finisca dentro roba del genere.
- *
- * Quindi al rientro la scheda di un video pronto **richiede i bambini** invece di
- * pubblicare a vuoto (una galleria a cui manca il destinatario) o di buttare via
- * il video (minuti di conversione già pagati). È l'unica forma onesta delle tre,
- * ed è ciò che `chiedeTag` accende.
+ * Fino alla PR 2 i bambini vivevano nella memoria della pagina: al rientro la
+ * scheda di un video pronto li richiedeva, e a pubblicare era un pulsante. Adesso
+ * viaggiano con l'invio, il server li conosce e pubblica da solo: la scheda
+ * racconta soltanto a che punto è il video, e offre i gesti che restano — riprendere
+ * un caricamento fermo, riprovare una pubblicazione fallita, togliere ciò che non
+ * è andato a buon fine. Riceve righe già composte (`useVideoGalleria`, che fonde le
+ * righe di questo dispositivo con l'elenco del server) e messaggi già tradotti.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * IL TAGGER ARRIVA DA FUORI, E NON È PIGRIZIA
+ * LE DUE REGIONI VIVE STANNO SEMPRE NEL DOM (secondario #36)
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `renderTagger` è una funzione del chiamante perché la scelta dei bambini ha già
- * un componente suo (`StudentTagger`), con dentro il Privacy Lock, la ricerca e la
- * regola della foto privata. Riscriverne mezzo qui vorrebbe dire due regole di
- * privacy che invecchiano separatamente — il difetto che questo repository ha già
- * pagato quando una copia del gate proteggeva la POST e lasciava scoperta la PATCH.
+ * VoiceOver spesso non annuncia una regione `aria-live` che entra nel documento già
+ * piena, e le insegnanti dell'incidente erano su iOS: il messaggio sotto la fase
+ * compariva proprio così, montato a condizione. Ora il paragrafo c'è SEMPRE e cambia
+ * solo il suo testo — vuoto quando non c'è niente da dire.
  */
 
 export type FaseVideoUI =
-    /** I byte stanno partendo: la percentuale è vera. */
+    /** I byte stanno partendo da questo dispositivo: la percentuale è vera. */
     | 'caricamento'
-    /** Una sessione di caricamento è aperta ma ferma: si riprende, non si ricomincia. */
+    /** Accodato: il suo caricamento parte quando finisce quello prima (uno alla volta). */
+    | 'in-fila'
+    /** Una sessione di caricamento è aperta ma ferma: riprende da sola, o col pulsante. */
     | 'interrotto'
+    /** Il server aspetta i byte e non li sta mandando questo dispositivo. */
+    | 'altro-dispositivo'
     /** Il server ha il file e aspetta il proprio turno. Secondi, di solito. */
     | 'in-coda'
     /** La conversione è in corso. Minuti. */
     | 'conversione'
-    /** Convertito e verificato: manca la pubblicazione. */
+    /** Un guasto nostro: il server ritenta da solo. Non serve fare niente. */
+    | 'in-riprova'
+    /** Convertito e verificato: il server lo pubblica a momenti. */
     | 'pronto'
-    /** La riga di galleria si sta scrivendo. */
-    | 'pubblicazione'
+    /** Convertito ma NON pubblicato, in modo definitivo: il messaggio dice perché. */
+    | 'non-pubblicato'
     /** Rifiutato o non riuscito: il messaggio dice che cosa fare. */
     | 'fallito'
+    /** Non c'è più niente da fare con questo invio: il video va scelto e mandato di nuovo. */
+    | 'da-ricaricare'
     /** Ritirato da una persona. */
     | 'annullato';
 
 export interface RigaVideoLavorazione {
     jobId: string;
     /**
-     * Il nome scelto da chi ha caricato. Si mostra perché è l'unico modo di sapere
-     * QUALE dei tre video è quello fermo — l'anteprima non c'è più, i byte sono
-     * stati liberati appena il caricamento è finito.
+     * Il nome scelto da chi ha caricato, o `null` quando questo dispositivo non lo sa (un video
+     * mandato da un altro: l'elenco del server non porta nomi). Si mostra perché è l'unico modo
+     * di sapere QUALE dei tre video è quello fermo.
      *
      * ⚠️ Resta sullo schermo di chi ha scelto il file e non entra in nessun log:
      * `recita-bambina-rossi.mov` è anagrafica di un minore, e in `app_log`
      * resterebbe trenta giorni interrogabile in SQL.
      */
-    nome: string;
+    nome: string | null;
+    /** Quando il video è stato inviato (ISO): è ciò che si legge al posto del nome che manca. */
+    creatoIl: string | null;
     fase: FaseVideoUI;
     /** 0–100, oppure `null` quando una percentuale non significherebbe niente. */
     percentuale: number | null;
     /** Già tradotto da chi chiama (catalogo, mai la prosa del server). */
     messaggio: string | null;
-    /** I tag non ci sono più (app chiusa e riaperta): vanno richiesti. */
-    chiedeTag: boolean;
-    /** Quanti bambini sono stati scelti finora: sotto 1 non si pubblica. */
-    tagScelti: number;
+    /** «Riprova» ha senso solo su un non pubblicato che il server riprenderebbe. */
+    riprovaPossibile: boolean;
 }
 
 interface Props {
     righe: RigaVideoLavorazione[];
-    onPubblica: (jobId: string) => void;
     onRiprendi: (jobId: string) => void;
     onRimuovi: (jobId: string) => void;
-    renderTagger?: (jobId: string) => ReactNode;
+    onRiprova: (jobId: string) => void;
 }
 
-export function VideoInLavorazione({ righe, onPubblica, onRiprendi, onRimuovi, renderTagger }: Props) {
+/** Le fasi che finiscono male o in nulla: lì il gesto che resta è «Togli», non «Rimuovi». */
+const FASI_DA_TOGLIERE: ReadonlySet<FaseVideoUI> = new Set<FaseVideoUI>([
+    'non-pubblicato',
+    'fallito',
+    'da-ricaricare',
+    'annullato',
+]);
+
+/** Le fasi in cui c'è una cosa da NON dimenticare, e si legge in rosso. */
+const FASI_ROSSE: ReadonlySet<FaseVideoUI> = new Set<FaseVideoUI>([
+    'non-pubblicato',
+    'fallito',
+    'da-ricaricare',
+]);
+
+export function VideoInLavorazione({ righe, onRiprendi, onRimuovi, onRiprova }: Props) {
     const t = useTranslations('teacherServizi');
+    const { dataOra } = useDateFormat();
 
     // Nessuna riga, nessun riquadro: un contenitore vuoto con un titolo dentro è
     // una promessa che non mantiene niente, e su una schermata che di norma non ha
@@ -118,16 +138,21 @@ export function VideoInLavorazione({ righe, onPubblica, onRiprendi, onRimuovi, r
     const testoFase = (fase: FaseVideoUI): string => {
         switch (fase) {
             case 'caricamento': return t('galleryVideoFaseCaricamento');
+            case 'in-fila': return t('galleryVideoFaseInFila');
             case 'interrotto': return t('galleryVideoFaseInterrotto');
+            case 'altro-dispositivo': return t('galleryVideoFaseAltroDispositivo');
             case 'in-coda': return t('galleryVideoFaseInCoda');
             case 'conversione': return t('galleryVideoFaseConversione');
+            // «Il problema è nostro, lo stiamo riprovando»: è già la frase intera, e dice anche
+            // che non serve ricaricare e che si può chiudere l'app.
+            case 'in-riprova': return t('galleryVideoRiprovaAutomatica');
             case 'pronto': return t('galleryVideoFasePronto');
-            case 'pubblicazione': return t('galleryVideoFasePubblicazione');
-            // Un fallimento NON ha una frase di fase: la sua frase è il messaggio
-            // che arriva dal codice della pipeline (`codiceMessaggioVideo`), che dice
-            // che cosa fare — «accorcialo», «aggiorna l'app», «riprova». Una riga di
-            // fase generica sopra quella sarebbe rumore che fa scorrere l'occhio.
-            case 'fallito': return t('galleryErrCaricamentoGenerico');
+            // Un fallimento e un non pubblicato hanno la stessa etichetta: per chi guarda lo
+            // schermo è la stessa notizia («il video non è uscito»), e il PERCHÉ sta nel messaggio
+            // che arriva dal codice (`codiceMessaggioVideo`): «accorcialo», «ricaricalo», «riprova».
+            case 'non-pubblicato':
+            case 'fallito': return t('galleryVideoNonPubblicato');
+            case 'da-ricaricare': return t('galleryVideoDaRicaricare');
             case 'annullato': return t('galleryVideoFaseAnnullato');
         }
     };
@@ -141,15 +166,17 @@ export function VideoInLavorazione({ righe, onPubblica, onRiprendi, onRimuovi, r
 
             <ul className="space-y-3">
                 {righe.map((r) => {
-                    // Il gesto resta spento finché non c'è almeno un bambino: è la stessa
-                    // regola del passo 2, dove «Pubblica» è disabilitato finché ogni file
-                    // non ha i suoi tag. Un video pubblicato senza destinatari non lo vede
-                    // nessuno, e chi l'ha caricato non ha modo di accorgersene.
-                    const pubblicabile = r.fase === 'pronto' && (!r.chiedeTag || r.tagScelti > 0);
+                    const rossa = FASI_ROSSE.has(r.fase);
+                    // Su un fallimento e su un non pubblicato il messaggio è il MOTIVO (la frase del
+                    // codice); se per un guasto non c'è, resta quello generico: mai una scheda che dice
+                    // «non pubblicato» senza dire perché. Le altre fasi lo lasciano vuoto.
+                    const conMotivo = r.fase === 'fallito' || r.fase === 'non-pubblicato';
+                    const messaggio = r.messaggio ?? (conMotivo ? t('galleryErrCaricamentoGenerico') : '');
+                    const nome = r.nome ?? t('galleryVideoSenzaNome', { quando: dataOra(r.creatoIl) });
                     return (
                         <li key={r.jobId} className="rounded-2xl border border-kidville-green/10 bg-kidville-cream/35 p-3">
-                            <p className="truncate font-maven text-xs font-semibold text-kidville-green" title={r.nome}>
-                                {r.nome}
+                            <p className="truncate font-maven text-xs font-semibold text-kidville-green" title={nome}>
+                                {nome}
                             </p>
 
                             {/*
@@ -162,30 +189,30 @@ export function VideoInLavorazione({ righe, onPubblica, onRiprendi, onRimuovi, r
                             <p
                                 aria-live="polite"
                                 className={`mt-1 font-maven text-[11px] leading-snug ${
-                                    r.fase === 'fallito' ? 'text-kidville-error' : 'text-kidville-sub'
+                                    rossa ? 'font-semibold text-kidville-error' : 'text-kidville-sub'
                                 }`}
                             >
-                                {r.fase === 'fallito' ? (r.messaggio ?? testoFase(r.fase)) : testoFase(r.fase)}
+                                {testoFase(r.fase)}
                             </p>
 
-                            {/* Un messaggio su una fase che NON è un fallimento: il 401 di una
-                                sessione scaduta mentre i byte partivano, per esempio, oppure
-                                «il problema è nostro, lo stiamo riprovando» quando il server
-                                ritenta da solo la conversione. Dice che cosa toglie di mezzo
-                                l'ostacolo — o che non serve fare niente — e non è un errore
-                                rosso.
-                                `aria-live="polite"` perché compare e sparisce da solo, minuti
-                                dopo, senza che nessuno tocchi niente: chi usa uno screen reader
-                                deve sapere che la coda non è ferma, e che il problema non è suo,
-                                senza che il messaggio interrompa ciò che sta facendo. */}
-                            {r.messaggio && r.fase !== 'fallito' && (
-                                <p
-                                    aria-live="polite"
-                                    className="mt-1 font-maven text-[11px] leading-snug text-kidville-sub"
-                                >
-                                    {r.messaggio}
-                                </p>
-                            )}
+                            {/*
+                              LA SECONDA REGIONE VIVA, SEMPRE MONTATA (#36). Su una fase che NON
+                              è un fallimento porta un messaggio che dice che cosa toglie di mezzo
+                              l'ostacolo — il 401 di una sessione scaduta mentre i byte partivano,
+                              «il caricamento continua finché l'app è aperta» — e non è un errore
+                              rosso. Su una scheda rossa porta il MOTIVO: la frase del codice.
+                              Vuota quando non c'è niente da dire, e allora non occupa spazio: il
+                              margine sta sul testo, non sul paragrafo, e l'elemento resta nel DOM
+                              perché VoiceOver lo conosca già quando si riempie.
+                            */}
+                            <p
+                                aria-live="polite"
+                                className={`font-maven text-[11px] leading-snug ${
+                                    rossa ? 'text-kidville-error' : 'text-kidville-sub'
+                                } ${messaggio ? 'mt-1' : ''}`}
+                            >
+                                {messaggio}
+                            </p>
 
                             {/*
                               LA BARRA ESISTE SOLO DOVE LA PERCENTUALE È VERA.
@@ -211,28 +238,7 @@ export function VideoInLavorazione({ righe, onPubblica, onRiprendi, onRimuovi, r
                                 </div>
                             )}
 
-                            {r.fase === 'pronto' && r.chiedeTag && renderTagger && (
-                                <div className="mt-3">
-                                    <p className="mb-2 font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-green">
-                                        {t('galleryVideoChiediTag')}
-                                    </p>
-                                    {renderTagger(r.jobId)}
-                                </div>
-                            )}
-
                             <div className="mt-2 flex flex-wrap items-center gap-2">
-                                {r.fase === 'pronto' && (
-                                    <button
-                                        type="button"
-                                        onClick={() => onPubblica(r.jobId)}
-                                        disabled={!pubblicabile}
-                                        className="flex items-center gap-1.5 rounded-pill bg-kidville-green px-3.5 py-1.5 font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-yellow transition-opacity disabled:opacity-50"
-                                    >
-                                        <Upload size={13} strokeWidth={2} aria-hidden="true" />
-                                        {t('galleryVideoPubblica')}
-                                    </button>
-                                )}
-
                                 {r.fase === 'interrotto' && (
                                     <button
                                         type="button"
@@ -245,22 +251,41 @@ export function VideoInLavorazione({ righe, onPubblica, onRiprendi, onRimuovi, r
                                 )}
 
                                 {/*
+                                  «RIPROVA» C'È SOLO SE IL SERVER, PREMUTO, DIREBBE DI SÌ
+                                  (`riprovaPossibile`: la stessa risposta della RPC). Un pulsante che
+                                  risponde 409 è un pulsante che mente: quando la causa è «nessuno dei
+                                  bambini scelti è più nella sede» ripubblicare darebbe lo stesso
+                                  rifiuto, e il pulsante non si offre.
+                                */}
+                                {r.fase === 'non-pubblicato' && r.riprovaPossibile && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onRiprova(r.jobId)}
+                                        className="flex items-center gap-1.5 rounded-pill bg-kidville-green px-3.5 py-1.5 font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-yellow"
+                                    >
+                                        <RotateCw size={13} strokeWidth={2} aria-hidden="true" />
+                                        {t('galleryVideoRiprova')}
+                                    </button>
+                                )}
+
+                                {/*
                                   «Rimuovi» c'è anche mentre il video è in preparazione, ed è
                                   deliberato: chi ha caricato il filmato sbagliato deve poterlo
                                   ritirare PRIMA che finisca in galleria, non dopo — e il ritiro
                                   dell'intento è anche ciò che libera l'originale dal bucket
-                                  privato invece di lasciarlo scadere in sette giorni.
+                                  privato invece di lasciarlo scadere in sette giorni. Su ciò che è
+                                  andato male il gesto si chiama «Togli»: non c'è più niente da
+                                  ritirare, c'è una scheda da levare di mezzo (e, per un intento che
+                                  il server non ha chiuso, da annullare).
                                 */}
-                                {r.fase !== 'pubblicazione' ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => onRimuovi(r.jobId)}
-                                        className="flex items-center gap-1.5 rounded-pill border border-kidville-line px-3.5 py-1.5 font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-green"
-                                    >
-                                        <Trash2 size={13} strokeWidth={2} aria-hidden="true" />
-                                        {t('galleryVideoRimuovi')}
-                                    </button>
-                                ) : null}
+                                <button
+                                    type="button"
+                                    onClick={() => onRimuovi(r.jobId)}
+                                    className="flex items-center gap-1.5 rounded-pill border border-kidville-line px-3.5 py-1.5 font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-green"
+                                >
+                                    <Trash2 size={13} strokeWidth={2} aria-hidden="true" />
+                                    {FASI_DA_TOGLIERE.has(r.fase) ? t('galleryVideoTogli') : t('galleryVideoRimuovi')}
+                                </button>
                             </div>
                         </li>
                     );

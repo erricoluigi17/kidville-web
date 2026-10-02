@@ -8,8 +8,17 @@ import { SEDE_A } from '../fixtures/sedi'
 
 import { MESSAGGIO_MAX, descriviErrore, sanificaMessaggio } from '@/lib/logging/serialize'
 import { rigaEvento } from '@/lib/logging/logger'
-import { BUCKET_BUILD_VIDEO, PERCORSO_FFMPEG_GZ, PERCORSO_FFPROBE_GZ } from '@/lib/media/video/build'
+import {
+  BUCKET_BUILD_VIDEO,
+  CARTELLA_BINARI_NELLO_SNAPSHOT,
+  FFMPEG_SHA256,
+  FFPROBE_SHA256,
+  PERCORSO_FFMPEG_GZ,
+  PERCORSO_FFPROBE_GZ,
+} from '@/lib/media/video/build'
 import { MAX_VIDEO_DURATION_SECONDS } from '@/lib/media/video/limiti'
+import { parseVideoProbe } from '@/lib/media/video/probe'
+import { diagnosiVerifica } from '@/lib/media/video/verify'
 import { archivioSupabase, codaSupabase } from '@/lib/media/video/runner/adattatori'
 import {
   PERIODO_SONDA_MS,
@@ -28,6 +37,7 @@ import {
   type RichiestaRunner,
 } from '@/lib/media/video/runner/esegui'
 import {
+  CARTELLA_BUILD,
   ENV_URL_FFMPEG,
   ENV_URL_FFPROBE,
   SEPARATORE_INVENTARIO,
@@ -48,10 +58,14 @@ import type {
   SessioneSandbox,
 } from '@/lib/media/video/runner/porte'
 import { ATTESE_FRA_TENTATIVI_S, TENTATIVI_MASSIMI_GUASTO_NOSTRO } from '@/lib/media/video/runner/ritentativi'
-import { SONDA_TEMPORALE, timeoutSondaTemporaleMs } from '@/lib/media/video/temporale'
+import { SONDA_TEMPORALE, VIDEO_TEMPORAL_REASONS, timeoutSondaTemporaleMs } from '@/lib/media/video/temporale'
 import {
+  ENV_SHA256_ATTESO,
+  INGRESSO,
+  MODELLO_PROCESSI_DEI_BINARI,
   USCITE_APPARECCHIO,
   USCITE_CONVERSIONE,
+  WATERMARK,
   codiceDaUscitaApparecchio,
   codiceDaUscitaConversione,
   leggiApparecchio,
@@ -291,6 +305,8 @@ interface Copione {
   /** Risposta a ciascun comando, scelta guardando che cosa è stato chiesto. */
   risposta?: (c: ComandoSandbox, n: number) => EsitoComando | Error
   nuova?: boolean
+  /** Da dove è nata la MicroVM (T8): `snapshot` o `runtime`. Senza, la sessione non lo dichiara (= la PR 1). */
+  origine?: 'snapshot' | 'runtime'
   apriFallisce?: boolean
   /** L'SDK che LANCIA su `avvia` (la conversione staccata): `esegui` lancia restituendo un `Error` da `risposta`. */
   avviaFallisce?: Error
@@ -305,6 +321,7 @@ function sandboxFinta(copione: Copione = {}) {
 
   const sessione: SessioneSandbox = {
     nuova: copione.nuova ?? true,
+    ...(copione.origine === undefined ? {} : { origine: copione.origine }),
     esegui: async (c) => {
       eseguiti.push(c)
       if (c.args.join(' ').includes('esito.txt')) marcatoriLetti += 1
@@ -413,6 +430,8 @@ interface CopioneCoda {
   battito?: EsitoRpcVideo
   pronto?: EsitoRpcVideo | Error
   fallito?: EsitoRpcVideo | ((p: ParametriFallito) => EsitoRpcVideo)
+  /** La risposta di `video_job_diagnosi` (T8). Senza copione la scrittura riesce; un `Error` fa LANCIARE l'adattatore. */
+  diagnosi?: EsitoBattito | Error
   /**
    * La risposta di `video_job_retry`. Senza copione il database dice «ok» e il job è `queued`: la
    * risposta di un ritentativo andato a buon fine.
@@ -428,6 +447,8 @@ interface CopioneCoda {
 
 function codaFinta(copione: CopioneCoda = {}) {
   const pronti: unknown[] = []
+  /** Le diagnosi scritte con `video_job_diagnosi` (T8), tali e quali arrivano all'adattatore. */
+  const diagnosi: Parameters<CodaVideo['diagnosi']>[0][] = []
   const falliti: ParametriFallito[] = []
   const ritentati: ParametriRiprova[] = []
   /** Gli id passati a `video_job_prendi`, e i parametri con cui sono stati passati. */
@@ -521,7 +542,14 @@ function codaFinta(copione: CopioneCoda = {}) {
       if (copione.pronto instanceof Error) throw copione.pronto
       return copione.pronto ?? { ok: true, job: job() }
     },
+    diagnosi: async (p) => {
+      ordine.push('diagnosi')
+      diagnosi.push(p)
+      if (copione.diagnosi instanceof Error) throw copione.diagnosi
+      return copione.diagnosi ?? { ok: true }
+    },
     fallito: async (p) => {
+      ordine.push('fallito')
       falliti.push(p)
       const risposta = copione.fallito
       if (typeof risposta === 'function') return risposta(p)
@@ -542,6 +570,7 @@ function codaFinta(copione: CopioneCoda = {}) {
   return {
     coda,
     pronti,
+    diagnosi,
     falliti,
     ritentati,
     prese,
@@ -1218,6 +1247,8 @@ async function lancia(
     job?: Partial<JobVideo>
     archivio?: ArchivioVideo
     nuova?: boolean
+    /** Da dove è nata la MicroVM (T8). */
+    origine?: 'snapshot' | 'runtime'
     apriFallisce?: boolean
     avviaFallisce?: Error
     risposta?: Copione['risposta']
@@ -1234,6 +1265,7 @@ async function lancia(
   const c = codaFinta({ prossimo: preso, prendi: preso, ...opzioni.coda })
   const s = sandboxFinta({
     nuova: opzioni.nuova,
+    origine: opzioni.origine,
     apriFallisce: opzioni.apriFallisce,
     avviaFallisce: opzioni.avviaFallisce,
     risposta: opzioni.risposta ?? rispostaFelice(),
@@ -1450,6 +1482,9 @@ const PUNTI: Punto[] = [
     aperte: 1,
     spente: 1,
   },
+  // T8: un `sha256` dichiarato che non è un'impronta non si può verificare, e un controllo richiesto e non eseguibile non passa
+  // in silenzio. Si esce PRIMA di firmare e di aprire qualunque cosa (aperte 0).
+  { nome: 'sha256 dichiarato illeggibile (non è un’impronta)', opzioni: { job: { sha256_dichiarato: '\\xnon-un-hash' } }, codice: 'ORIGINALE_DIVERSO', classe: 'file', aperte: 0, spente: 0 },
   { nome: 'probe del file · nessuno stream video', opzioni: { risposta: apparecchioConProbe(JSON.stringify({ streams: [], format: { format_name: 'mp4' } })) }, codice: 'MISSING_VIDEO_STREAM', classe: 'file', aperte: 1, spente: 1 },
   {
     nome: 'geometria impossibile (meno di 2 px una volta rientrati nel Full HD)',
@@ -1483,6 +1518,8 @@ const PUNTI: Punto[] = [
   { nome: 'conversione 32 · FFmpeg esce con un errore', opzioni: CONVERSIONE_CON(32, 'Conversion failed!'), codice: 'ENCODE_FAILED', classe: 'non-ritentabile', aperte: 1, spente: 1 },
   { nome: 'conversione 33 · ffprobe sull’uscita', opzioni: CONVERSIONE_CON(33, 'moov atom not found'), codice: 'PROBE_COMMAND_FAILED', classe: 'non-ritentabile', aperte: 1, spente: 1 },
   { nome: 'conversione 137 · uscita che non conosciamo (un SIGKILL)', opzioni: CONVERSIONE_CON(137, ''), codice: 'ENCODE_FAILED', classe: 'non-ritentabile', aperte: 1, spente: 1 },
+  // T8, §10.4: lo `sha256` dichiarato non è quello dell'originale scaricato. Il guasto è del FILE: rifiutato, mai ritentato.
+  { nome: 'conversione 35 · lo sha256 dichiarato non coincide con l’originale', opzioni: CONVERSIONE_CON(35, '/tmp/kv-video/ingresso: FAILED'), codice: 'ORIGINALE_DIVERSO', classe: 'file', aperte: 1, spente: 1 },
   {
     nome: 'conversione · il probe della sorgente nel marcatore non si legge',
     opzioni: { risposta: rispostaFelice(marcatore({ probeIn: JSON.stringify({ streams: [], format: { format_name: 'mp4' } }) })) },
@@ -2254,20 +2291,30 @@ describe('runner video · gli adattatori nuovi', () => {
     })
   })
 
-  it('il runtime della MicroVM resta `node22` in questa PR (D7), e il commento dice dove cambia', () => {
-    // L'SDK del Sandbox non si può esercitare qui, e un runtime cambiato per distrazione rompe ogni
-    // job in produzione senza un test rosso. È una decisione dell'orchestratore con il suo motivo:
-    // si cambia nella PR 2 (snapshot su `node:24`), non qui.
-    const sorgente = readFileSync(join(process.cwd(), 'src/lib/media/video/runner/adattatori.ts'), 'utf8')
-    const posizione = sorgente.indexOf('Sandbox.create({')
-    expect(posizione, '`Sandbox.create` non si trova più in adattatori.ts').toBeGreaterThan(0)
+  it('il ripiego resta `node22` come nella PR 1 (D7): il runtime sta in `ambiente.ts`, e il rischio è dichiarato', () => {
+    // L'SDK del Sandbox non si può esercitare qui, e un runtime cambiato per distrazione rompe ogni job in
+    // produzione senza un test rosso. Fino alla PR 1 questo test leggeva `adattatori.ts` e cercava
+    // `Sandbox.create({ runtime: 'node22' … })`; dalla PR 2 la scelta (riaggancio, snapshot, ripiego) è di
+    // `apriLaMicroVm`, in `ambiente.ts`, e `adattatori.ts` non nomina più nessun runtime. Il percorso che si
+    // prova CHIAMANDO l'apertura con un SDK finto, parametro per parametro, è in `video-runner-ambiente.test.ts`;
+    // qui resta il lock sul TESTO, perché il runtime cambia in un posto solo e quel posto ha il suo commento.
+    const ambiente = readFileSync(join(process.cwd(), 'src/lib/media/video/runner/ambiente.ts'), 'utf8')
+    expect(ambiente).toContain("export const RUNTIME_DI_RIPIEGO = 'node22'")
+    // Il rischio che il ripiego lascia aperto (spec §10.2) sta scritto accanto alla costante e alla sua decisione.
+    expect(ambiente).toContain('SANDBOX_UNAVAILABLE')
+    expect(ambiente).toContain('node22')
 
-    expect(sorgente.slice(posizione, posizione + 120)).toContain("runtime: 'node22'")
-    // Il commento sta subito sopra la chiamata e rimanda alla PR che cambia il runtime.
-    const commento = sorgente.slice(Math.max(0, posizione - 900), posizione)
-    expect(commento).toContain('PR 2')
-    expect(commento).toContain('node:24')
-    expect(commento).toContain('SANDBOX_UNAVAILABLE')
+    // Né un altro runtime scritto a mano da qualche parte: il ripiego ha UN nome. Si guarda il CODICE e non i
+    // commenti, che il runtime lo nominano apposta (un lock che legge un file come testo legge anche le proprie spiegazioni).
+    const senzaCommenti = (testo: string) =>
+      testo
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .split('\n')
+        .filter((riga) => !riga.trimStart().startsWith('//'))
+        .join('\n')
+    const adattatori = readFileSync(join(process.cwd(), 'src/lib/media/video/runner/adattatori.ts'), 'utf8')
+    expect(senzaCommenti(adattatori)).not.toMatch(/runtime:\s*['"`]/)
+    expect(senzaCommenti(ambiente).match(/runtime:\s*RUNTIME_DI_RIPIEGO/g) ?? []).toHaveLength(1)
   })
 })
 
@@ -2439,7 +2486,22 @@ describe('runner video · il calcio con un job_id', () => {
     },
   )
 
-  it.each(['LEASE_ACTIVE', 'RETRY_NOT_DUE', 'NOT_FOUND', 'RPC_ERROR'])(
+  it('`RETRY_NOT_DUE` — il calcio su un job che aspetta il prossimo tentativo — è «niente da fare ADESSO», NON un `error` (secondario #101)', async () => {
+    // `video_job_claim`, delegato da `video_job_prendi`, risponde `RETRY_NOT_DUE` a un job che un guasto nostro ha
+    // rimesso in coda con la sua attesa (5, 10, 15 minuti). Il calcio c'è stato (il `PATCH caricato`, il ventaglio)
+    // e il job non è ancora dovuto: a riprenderlo ci pensa il giro del cron a scadenza. Prima di T8 questo dava una
+    // `presa-rifiutata` con una riga `error`, cioè un allarme per un funzionamento normale — e un allarme che suona
+    // per niente si impara a ignorare.
+    const { esito, c, s } = await lancia({ richiesta: CALCIO, coda: { prendi: { ok: false, code: 'RETRY_NOT_DUE' } } })
+
+    expect(esito).toEqual({ esito: 'coda-vuota' })
+    nienteDaFare(s, c)
+    expect(c.rilasci).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE }])
+    expect(conEsito('presa-rifiutata')).toEqual([])
+    expect(righeDiLog().filter((r) => r[1] === 'error' || r[1] === 'warn')).toEqual([])
+  })
+
+  it.each(['LEASE_ACTIVE', 'NOT_FOUND', 'RPC_ERROR'])(
     'ogni altro rifiuto della presa (%s) resta una `presa-rifiutata`, a livello `error`, col job',
     async (code) => {
       const { esito, c, s } = await lancia({ richiesta: CALCIO, coda: { prendi: { ok: false, code } } })
@@ -3424,15 +3486,25 @@ describe('runner video · le RIGHE restituite dalle RPC non si loggano né si in
   // I valori sono finti, ma hanno la forma di ciò che le RPC restituiscono ora: `to_jsonb(riga)` di
   // `video_jobs` porta l'hash del token di rinnovo, lo `sha256` dichiarato e la diagnosi; quella di
   // `video_intents` porta i bambini scelti. Le CHIAVI e i VALORI sono marcatori che nessun log innocente contiene.
+  //
+  // ⚠️ DALLA PR 2 lo `sha256` dichiarato è un valore che il runner LEGGE e usa (lo passa alla MicroVM, che lo
+  // verifica prima di convertire): non è più un campo che passa inosservato. Un valore che non fosse un'impronta
+  // — `\x5ECRE70123456789`, com'era qui — fa rifiutare il job prima ancora di aprire una MicroVM
+  // (`sha256-dichiarato-illeggibile`), e gli scenari di questo gruppo non arriverebbero più al punto che vogliono
+  // guardare (la lease persa, la consegna a News…): verdi, e vuoti. Perciò il veleno ha ora la FORMA di
+  // un'impronta vera — `\x` più 64 cifre esadecimali — e continua a essere un marcatore che nessun log innocente
+  // contiene. Che un valore SBAGLIATO non finisca in un log, nemmeno quando il job viene rifiutato per lui, lo prova
+  // `video-runner-orchestrazione` più sotto (sezione sull'`sha256` dichiarato).
+  const IMPRONTA_VELENO = '5ECDE70123456789'.repeat(4)
   const VELENO = {
     tag_alunni: ['aaaaaaaa-0000-4000-8000-00000000f001'],
     rinnovo_token_hash: '\\xDEADBEEFC0FFEE01',
-    sha256_dichiarato: '\\x5ECRE70123456789',
+    sha256_dichiarato: `\\x${IMPRONTA_VELENO}`,
     diagnosi_verifica: { frame_persi: 17 },
   }
   const MARCATORI = [
     'DEADBEEFC0FFEE01',
-    '5ECRE70123456789',
+    '5ECDE70123456789',
     'aaaaaaaa-0000-4000-8000-00000000f001',
     'rinnovo_token_hash',
     'sha256_dichiarato',
@@ -3615,6 +3687,20 @@ describe('runner video · gli adattatori della coda della PR 2', () => {
       chiama: (coda) => coda.arriviRecupera(50),
       attesi: { p_limite: 50 },
     },
+    // T8 (secondario #10): i numeri di una verifica fallita. La RPC è del file A e vuole `processing`, fence e lease.
+    {
+      metodo: 'diagnosi',
+      funzione: 'video_job_diagnosi',
+      file: FILE_A,
+      chiama: (coda) =>
+        coda.diagnosi({ jobId: JOB_ID, fenceEpoch: 5, leaseOwner: WORKER, diagnosi: { v: 1, esito: 'OUTPUT_DIMENSIONS_INVALID' } }),
+      attesi: {
+        p_job_id: JOB_ID,
+        p_fence_epoch: 5,
+        p_lease_owner: WORKER,
+        p_diagnosi: { v: 1, esito: 'OUTPUT_DIMENSIONS_INVALID' },
+      },
+    },
   ]
 
   it.each(RPC)('`$metodo` chiama `$funzione` con ESATTAMENTE gli argomenti che la migrazione dichiara', async (r) => {
@@ -3684,6 +3770,37 @@ describe('runner video · gli adattatori della coda della PR 2', () => {
         code: 'RPC_ERROR',
       })
       expect(righeDiLog().some((r) => r[2].esito === 'rpc-risposta-illeggibile')).toBe(true)
+    })
+  })
+
+  describe('`video_job_diagnosi` NON porta un job, e non per questo è un errore (T8)', () => {
+    it('`{ok:true}` è `{ok:true}` — NON `RPC_ERROR`: passata da `esitoRpc`, ogni scrittura riuscita si leggerebbe come fallita', async () => {
+      const { client } = clienteFinto({ data: { ok: true }, error: null })
+      expect(await codaSupabase(client).diagnosi({ jobId: JOB_ID, fenceEpoch: 5, leaseOwner: WORKER, diagnosi: { v: 1 } })).toEqual({
+        ok: true,
+      })
+    })
+
+    it.each(['BAD_INPUT', 'NOT_FOUND', 'FENCE_MISMATCH', 'INVALID_STATE', 'LEASE_MISMATCH'])('il verdetto %s mantiene il SUO codice', async (code) => {
+      const { client } = clienteFinto({ data: { ok: false, code }, error: null })
+      expect(await codaSupabase(client).diagnosi({ jobId: JOB_ID, fenceEpoch: 5, leaseOwner: WORKER, diagnosi: {} })).toEqual({
+        ok: false,
+        code,
+      })
+    })
+
+    it('«funzione non trovata» (la migrazione non è applicata) è `RPC_ERROR`, e l’adattatore scrive la sua riga', async () => {
+      const { client } = clienteFinto({
+        data: null,
+        error: { code: 'PGRST202', message: 'Could not find the function public.video_job_diagnosi' },
+      })
+      expect(await codaSupabase(client).diagnosi({ jobId: JOB_ID, fenceEpoch: 5, leaseOwner: WORKER, diagnosi: {} })).toEqual({
+        ok: false,
+        code: 'RPC_ERROR',
+      })
+      expect(
+        righeDiLog().some((r) => r[2].esito === 'rpc-non-riuscita' && r[2].operazione === 'video-runner:diagnosi'),
+      ).toBe(true)
     })
   })
 
@@ -3768,5 +3885,783 @@ describe('runner video · gli adattatori della coda della PR 2', () => {
         ).ventaglio(3, null),
       ).toEqual({ ok: false, code: 'RPC_ERROR' })
     })
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 20. L'AMBIENTE PRONTO — SNAPSHOT, RIPIEGO NELLA STESSA MICROVM, RIPIEGO DAL RUNTIME (T8, spec §10.1)
+ *
+ * Una MicroVM nata dallo SNAPSHOT ha i binari di FFmpeg in `/opt/kv-ffmpeg`: l'apparecchio li VERIFICA con
+ * `sha256sum` invece di scaricarli dal bucket. Se non tornano (uscita 26) si ripiega nella stessa MicroVM con la
+ * provvista della PR 1, e si grida. Una MicroVM nata dal runtime (o che non dichiara l'origine) va come sempre
+ * per la provvista. La SCELTA «snapshot o runtime» sta in `apriLaMicroVm` e si prova in
+ * `video-runner-ambiente.test.ts`; qui si prova ciò che `esegui.ts` ne fa.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · l’ambiente pronto: i binari dello snapshot si VERIFICANO, non si scaricano', () => {
+  const SNAPSHOT = CARTELLA_BINARI_NELLO_SNAPSHOT
+  const testoDi = (c: ComandoSandbox): string => c.args.join('\n')
+  /** L'apparecchio che verifica i binari dello snapshot: l'unico il cui script nomina `/opt/kv-ffmpeg`. */
+  const eApparecchioDelloSnapshot = (c: ComandoSandbox): boolean => eApparecchio(c) && testoDi(c).includes(SNAPSHOT)
+  /** L'apparecchio con la provvista dal bucket: l'unico il cui script nomina i `.gz`. */
+  const eApparecchioConProvvista = (c: ComandoSandbox): boolean =>
+    eApparecchio(c) && testoDi(c).includes(`${CARTELLA_BUILD}/ffmpeg.gz`)
+
+  /** I binari dello snapshot non tornano (uscita 26, come lo script, con la riga `FAILED` di `sha256sum`); poi tutto riesce. */
+  const SNAPSHOT_CHE_NON_TORNA = (cmd: ComandoSandbox): EsitoComando =>
+    eApparecchioDelloSnapshot(cmd)
+      ? {
+          exitCode: USCITE_APPARECCHIO.binari,
+          stdout: '',
+          stderr: `${SNAPSHOT}/ffmpeg: FAILED\nsha256sum: WARNING: 1 computed checksum did NOT match`,
+        }
+      : rispostaFelice()(cmd)
+
+  const conErroriOAvvisi = () => righeDiLog().filter((r) => r[1] === 'error' || r[1] === 'warn')
+
+  it('nata dallo snapshot: UN comando di apparecchio, che verifica i binari in `/opt/kv-ffmpeg` e non scarica niente', async () => {
+    const { archivio: a, firme } = archivioFinto()
+    const { esito, s } = await lancia({ origine: 'snapshot', archivio: a })
+
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+    const apparecchi = s.eseguiti.filter(eApparecchio)
+    expect(apparecchi, 'la verifica sta DENTRO l’apparecchio: un solo giro verso la MicroVM').toHaveLength(1)
+    const script = testoDi(apparecchi[0])
+    // Le due impronte dei BINARI (le stesse della provvista), accoppiate ciascuna al suo file DELLO SNAPSHOT.
+    expect(script).toContain(`'${FFMPEG_SHA256}' ${SNAPSHOT}/ffmpeg '${FFPROBE_SHA256}' ${SNAPSHOT}/ffprobe`)
+    expect(script).toContain('sha256sum -c -')
+    // …e NIENTE della provvista: né i `.gz`, né la decompressione, né gli URL della build.
+    expect(script).not.toContain('gzip -dc')
+    expect(script).not.toContain('.gz')
+    expect(script).not.toContain(`$${ENV_URL_FFMPEG}`)
+    // La verifica viene PRIMA di ogni uso dei binari: prima dell'inventario, che li esegue.
+    expect(script.indexOf('sha256sum -c -')).toBeLessThan(script.indexOf('===INVENTARIO==='))
+
+    // Gli URL della build non entrano nell'ambiente e il bucket `video_build` non si firma nemmeno:
+    // lo snapshot esiste perché a runtime il bucket non serva.
+    expect(Object.keys(apparecchi[0].env ?? {})).not.toContain(ENV_URL_FFMPEG)
+    expect(Object.keys(apparecchi[0].env ?? {})).not.toContain(ENV_URL_FFPROBE)
+    expect(firme.filter((f) => f.bucket === BUCKET_BUILD_VIDEO)).toEqual([])
+    expect(firme, 'solo l’originale e l’uscita').toHaveLength(2)
+  })
+
+  it('la conversione staccata chiama i binari DELLO SNAPSHOT, ovunque li nomini (codifica, probe, decodifica, sonda temporale)', async () => {
+    const { s } = await lancia({ origine: 'snapshot' })
+
+    expect(s.avviati).toHaveLength(1)
+    const script = testoDi(s.avviati[0])
+    expect(script).toContain(`xargs -0 -a /tmp/kv-video/argomenti ${SNAPSHOT}/ffmpeg`)
+    expect(script).toContain(`${SNAPSHOT}/ffprobe -v error -print_format json`)
+    expect(script).toContain(`node - ${SNAPSHOT}/ffprobe ${INGRESSO}`)
+    // Nemmeno un riferimento alla cartella del ripiego: una conversione che mescolasse le due userebbe un binario non verificato.
+    expect(script).not.toContain(CARTELLA_BUILD)
+  })
+
+  it('il log dice COME l’ambiente è diventato pronto, e in quanto: `ambiente-pronto`, senza `build-pronta` (non c’è stata nessuna provvista)', async () => {
+    const { esito } = await lancia({ origine: 'snapshot' })
+
+    expect(esito).toMatchObject({ esito: 'pronto' })
+    const pronto = riga('ambiente-pronto')
+    expect(pronto[0]).toBe('galleria')
+    expect(pronto[1]).toBe('info')
+    expect(pronto[2]).toMatchObject({ operazione: 'video-runner', ambiente: 'snapshot', job_id: JOB_ID })
+    expect(typeof pronto[2].ms).toBe('number')
+    expect(typeof pronto[2].apertura_ms).toBe('number')
+    // Una riga al giorno PER MODO: senza, il ripiego che arriva dopo il primo `snapshot` del mattino sarebbe sommato ai primi.
+    expect(pronto[4]).toEqual({ distingui: ['ambiente'] })
+    // Il valore passa dalla lista bianca di `redact`: `ambiente` è fra le chiavi in chiaro, `modalita` non lo sarebbe.
+    expect(comeInTabella(pronto).contestoExtra?.campi).toMatchObject({ ambiente: 'snapshot' })
+
+    // `build-pronta` dice «la provvista dal bucket è riuscita»: con i binari dello snapshot non c'è stata, e dirlo sarebbe una bugia.
+    expect(conEsito('build-pronta')).toEqual([])
+    expect(conErroriOAvvisi()).toEqual([])
+  })
+
+  it('`ms` è il tempo dell’apparecchio e `apertura_ms` quello di `apri`: due numeri misurati, ciascuno col suo orologio', async () => {
+    const orologio = orologioFinto()
+    const preso: EsitoRpcVideo = { ok: true, job: job() }
+    const c = codaFinta({ prossimo: preso, prendi: preso })
+    const s = sandboxFinta({
+      origine: 'snapshot',
+      risposta: (cmd) => {
+        if (eApparecchio(cmd)) orologio.avanza(2_000)
+        return rispostaFelice()(cmd)
+      },
+    })
+    // Un `apri` che impiega 1,5 s (lo snapshot che si ripristina).
+    const macchina: MacchinaSandbox = {
+      apri: async (p) => {
+        orologio.avanza(1_500)
+        return s.macchina.apri(p)
+      },
+    }
+
+    await eseguiUnJobVideo(dipendenze(c.coda, macchina, { orologio }))
+
+    expect(riga('ambiente-pronto')[2]).toMatchObject({ apertura_ms: 1_500, ms: 2_000 })
+  })
+
+  it('i binari dello snapshot NON TORNANO: si ripiega nella STESSA MicroVM con la provvista dal bucket, e si GRIDA', async () => {
+    const { archivio: a, firme } = archivioFinto()
+    const { esito, c, s } = await lancia({ origine: 'snapshot', archivio: a, risposta: SNAPSHOT_CHE_NON_TORNA })
+
+    // Il video si converte lo stesso.
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+    expect(c.falliti).toEqual([])
+    expect(c.ritentati).toEqual([])
+    // Una MicroVM sola: non se ne apre un'altra, e quella aperta si spegne.
+    expect(s.nomi).toHaveLength(1)
+    expect(s.fermate()).toBe(1)
+
+    // Due apparecchi, nell'ordine: prima la verifica dello snapshot, poi la provvista della PR 1.
+    const apparecchi = s.eseguiti.filter(eApparecchio)
+    expect(apparecchi).toHaveLength(2)
+    expect(eApparecchioDelloSnapshot(apparecchi[0])).toBe(true)
+    expect(eApparecchioConProvvista(apparecchi[1])).toBe(true)
+    // Gli URL della build entrano nell'ambiente del SECONDO, e solo lì (il primo non li aveva chiesti).
+    expect(Object.keys(apparecchi[0].env ?? {})).not.toContain(ENV_URL_FFMPEG)
+    expect(apparecchi[1].env?.[ENV_URL_FFMPEG]).toContain(`/video_build/${PERCORSO_FFMPEG_GZ}?token=`)
+    expect(apparecchi[1].env?.[ENV_URL_FFPROBE]).toContain(`/video_build/${PERCORSO_FFPROBE_GZ}?token=`)
+    expect(firme.filter((f) => f.bucket === BUCKET_BUILD_VIDEO)).toHaveLength(2)
+
+    // La conversione usa i binari che la provvista ha VERIFICATO, quelli di `/tmp`: non lo snapshot, che non è tornato.
+    const conversione = testoDi(s.avviati[0])
+    expect(conversione).toContain(`xargs -0 -a /tmp/kv-video/argomenti ${CARTELLA_BUILD}/ffmpeg`)
+    expect(conversione).not.toContain(SNAPSHOT)
+
+    // Il grido: `error`, col MOTIVO e con la riga `FAILED` di `sha256sum` nel messaggio (è lì che si legge QUALE non torna).
+    const assente = riga('ambiente-pronto-assente')
+    expect(assente[1]).toBe('error')
+    expect(assente[2]).toMatchObject({ error_code: 'BINARI_NON_VERIFICATI', uscita: 26, job_id: JOB_ID })
+    expect(comeInTabella(assente).messaggio).toContain(`${SNAPSHOT}/ffmpeg: FAILED`)
+    // …e poi l'ambiente è pronto, ma NON «snapshot»: `ripiego-vm`, con la provvista che è riuscita.
+    expect(riga('ambiente-pronto')[2]).toMatchObject({ ambiente: 'ripiego-vm' })
+    expect(riga('build-pronta')[1]).toBe('info')
+  })
+
+  it.each<[string, 'runtime' | undefined]>([
+    ['nata dal runtime', 'runtime'],
+    ['che non dichiara l’origine (la PR 1, parola per parola)', undefined],
+  ])('una MicroVM %s: la provvista dal bucket di sempre, e `ambiente-pronto` dice `ripiego-runtime`', async (_nome, origine) => {
+    const { archivio: a, firme } = archivioFinto()
+    const { esito, s } = await lancia({ origine, archivio: a })
+
+    expect(esito).toMatchObject({ esito: 'pronto' })
+    // Quattro firme (l'originale, l'uscita, i due `.gz`) e UN apparecchio con la provvista in `/tmp/kv-ffmpeg`.
+    expect(firme).toHaveLength(4)
+    const apparecchi = s.eseguiti.filter(eApparecchio)
+    expect(apparecchi).toHaveLength(1)
+    expect(eApparecchioConProvvista(apparecchi[0])).toBe(true)
+    expect(testoDi(apparecchi[0])).not.toContain(SNAPSHOT)
+    expect(testoDi(s.avviati[0])).toContain(`${CARTELLA_BUILD}/ffmpeg`)
+
+    expect(riga('ambiente-pronto')[2]).toMatchObject({ ambiente: 'ripiego-runtime' })
+    expect(riga('build-pronta')[1]).toBe('info')
+    // Il grido «lo snapshot non c'era» lo scrive `apriLaMicroVm` (che sa il perché), non `esegui.ts`.
+    expect(conEsito('ambiente-pronto-assente')).toEqual([])
+  })
+
+  it('le altre uscite dell’apparecchio di uno snapshot sono guasti come prima: NESSUN ripiego, nessuna firma della build', async () => {
+    // Una HEAD che dà 404 non dice niente dei binari: ripiegare scaricherebbe 134 MB per ottenere lo stesso 404.
+    const { archivio: a, firme } = archivioFinto()
+    const { esito, s } = await lancia({
+      origine: 'snapshot',
+      archivio: a,
+      risposta: apparecchioCheEsce(24, curlConStato(404)),
+    })
+
+    expect(esito).toMatchObject({ esito: 'in-riprova', codice: 'SOURCE_DOWNLOAD_FAILED' })
+    expect(s.eseguiti.filter(eApparecchio)).toHaveLength(1)
+    expect(firme.filter((f) => f.bucket === BUCKET_BUILD_VIDEO)).toEqual([])
+    expect(conEsito('ambiente-pronto-assente')).toEqual([])
+    expect(riga('conversione-da-riprovare')[2].tipo).toBe('infra-permanente')
+  })
+
+  it('un file illeggibile (ffprobe, uscita 25, senza segni di rete) resta `non-ritentabile` anche da uno snapshot', async () => {
+    const { esito, c } = await lancia({ origine: 'snapshot', risposta: apparecchioCheEsce(25, FFPROBE_FILE_ROTTO) })
+
+    expect(esito).toMatchObject({ esito: 'fallito', codice: 'PROBE_COMMAND_FAILED', rifiutato: false })
+    expect(c.ritentati).toEqual([])
+    expect(conEsito('ambiente-pronto-assente')).toEqual([])
+  })
+
+  it('l’inventario si chiede SEMPRE, anche a un binario di cui l’impronta torna: una build senza `zscale` è `BUILD_INCOMPLETE`', async () => {
+    // Le impronte dicono che i binari sono quelli attesi, non che sappiano fare ciò che serve (testata di `build.ts`).
+    const { esito, s } = await lancia({
+      origine: 'snapshot',
+      risposta: (cmd) =>
+        eApparecchio(cmd)
+          ? { exitCode: 0, stdout: uscitaApparecchio().replace(/^ \.\. zscale.*$/m, ''), stderr: '' }
+          : OK,
+    })
+
+    expect(esito).toMatchObject({ esito: 'in-riprova', codice: 'BUILD_INCOMPLETE' })
+    expect(s.avviati).toEqual([])
+    expect(s.eseguiti.filter(eApparecchio)).toHaveLength(1)
+  })
+
+  it('una MicroVM RIAGGANCIATA non rifà niente: né l’apparecchio né i log dell’ambiente, qualunque sia la sua origine', async () => {
+    const { archivio: a, firme } = archivioFinto()
+    const c = codaFinta({ miei: [job()] })
+    const s = sandboxFinta({ nuova: false, origine: 'snapshot', risposta: rispostaFelice() })
+    const esito = await eseguiUnJobVideo(dipendenze(c.coda, s.macchina, { archivio: a }))
+
+    expect(esito).toMatchObject({ esito: 'pronto' })
+    expect(s.eseguiti.filter(eApparecchio)).toEqual([])
+    expect(s.avviati).toEqual([])
+    expect(conEsito('ambiente-pronto')).toEqual([])
+    expect(firme.some((f) => f.bucket === BUCKET_BUILD_VIDEO)).toBe(false)
+  })
+
+  it('se la lease si perde il comando di interruzione ferma `ffmpeg` in ENTRAMBE le cartelle: `/opt` dello snapshot e `/tmp` del ripiego', async () => {
+    // `pkill -f /tmp/kv-ffmpeg` (la PR 1) lascerebbe acceso un ffmpeg che gira da `/opt/kv-ffmpeg` per un job che non è più nostro.
+    const { esito, s } = await lancia({
+      origine: 'snapshot',
+      risposta: rispostaSenzaMarcatore,
+      coda: { battito: { ok: false, code: 'FENCE_MISMATCH' } },
+    })
+
+    expect(esito).toMatchObject({ esito: 'lease-persa' })
+    const interruzioni = s.eseguiti.filter((c) => testoDi(c).includes('pkill'))
+    expect(interruzioni).toHaveLength(1)
+    expect(testoDi(interruzioni[0])).toContain(`pkill -f '${MODELLO_PROCESSI_DEI_BINARI}'`)
+    // Il modello riconosce le righe di comando dei binari di tutte e due le cartelle, e NON il proprio testo
+    // (altrimenti `pkill` ucciderebbe la shell che lo ha lanciato prima del `|| true`).
+    const modello = new RegExp(MODELLO_PROCESSI_DEI_BINARI)
+    expect(modello.test(`${SNAPSHOT}/ffmpeg -i /tmp/kv-video/ingresso`)).toBe(true)
+    expect(modello.test(`${CARTELLA_BUILD}/ffmpeg -i /tmp/kv-video/ingresso`)).toBe(true)
+    expect(modello.test(testoDi(interruzioni[0]))).toBe(false)
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 21. LO `sha256` DICHIARATO — SI VERIFICA NEL SANDBOX, PRIMA DI CONVERTIRE (T8, spec §10.4)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · lo `sha256` dichiarato (caricamento nativo) si verifica prima di convertire', () => {
+  const HEX = 'ab12'.repeat(16)
+  const testoDi = (c: ComandoSandbox): string => c.args.join('\n')
+  /** Il job com'è nella riga che le RPC di presa restituiscono: l'impronta è la stringa `\x<64 cifre>` di un `bytea`. */
+  const conSha = (valore: unknown): Parameters<typeof lancia>[0] => ({
+    job: { sha256_dichiarato: valore as string },
+  })
+
+  it('l’impronta entra nell’AMBIENTE della conversione, e lo script la verifica DOPO lo scarico e PRIMA di tutto il resto', async () => {
+    const { s } = await lancia({ ...conSha(`\\x${HEX}`), risposta: rispostaSenzaMarcatore })
+
+    expect(s.avviati).toHaveLength(1)
+    const avvio = s.avviati[0]
+    expect(avvio.env?.[ENV_SHA256_ATTESO]).toBe(HEX)
+    const script = testoDi(avvio)
+    expect(script).toContain(`printf '%s  %s\\n' "$${ENV_SHA256_ATTESO}" ${INGRESSO} | sha256sum -c -`)
+    // L'ordine è la sostanza: scarico → verifica → watermark → codifica. Un originale che non è quello dichiarato non
+    // merita né il watermark né la codifica.
+    const scarico = script.indexOf(`-o ${INGRESSO}`)
+    const verifica = script.indexOf('sha256sum -c -')
+    const watermark = script.indexOf(`-o ${WATERMARK}`)
+    const codifica = script.indexOf('xargs -0 -a')
+    expect(scarico).toBeGreaterThan(0)
+    expect(verifica).toBeGreaterThan(scarico)
+    expect(watermark).toBeGreaterThan(verifica)
+    expect(codifica).toBeGreaterThan(watermark)
+    expect(script).toContain(`|| exit ${USCITE_CONVERSIONE.impronta}`)
+  })
+
+  it('un’impronta in MAIUSCOLO (un altro serializzatore) arriva in minuscolo, e anche senza il prefisso `\\x`', async () => {
+    for (const valore of [`\\x${HEX.toUpperCase()}`, HEX.toUpperCase(), HEX]) {
+      const { s } = await lancia({ ...conSha(valore), risposta: rispostaSenzaMarcatore })
+      expect(s.avviati[0].env?.[ENV_SHA256_ATTESO], `valore ${valore.slice(0, 6)}…`).toBe(HEX)
+    }
+  })
+
+  it('l’impronta non viaggia MAI fuori dall’ambiente della conversione: non negli argomenti, non nell’apparecchio, non nei log', async () => {
+    // Un valore che non compare in nessun altro posto di un percorso FELICE e di uno che fallisce.
+    for (const opzioni of [
+      { risposta: rispostaFelice() },
+      { risposta: rispostaFelice(marcatore({ uscita: 35, diagnosi: `${INGRESSO}: FAILED` })) },
+      { risposta: apparecchioCheEsce(25, FFPROBE_FILE_ROTTO) },
+    ]) {
+      h.log.length = 0
+      const { s } = await lancia({ ...conSha(`\\x${HEX}`), ...opzioni })
+
+      for (const comando of [...s.eseguiti, ...s.avviati]) {
+        expect(testoDi(comando), 'negli argomenti di un comando').not.toContain(HEX)
+      }
+      for (const comando of s.eseguiti) {
+        expect(Object.values(comando.env ?? {}).join('\n'), 'nell’ambiente di un comando sincrono').not.toContain(HEX)
+      }
+      const nelLog = JSON.stringify(righeDiLog().map((r) => [r[0], r[1], r[2], String(r[3] ?? '')]))
+      expect(nelLog, 'in un log').not.toContain(HEX)
+      expect(JSON.stringify(righeDiLog().map((r) => comeInTabella(r))), 'in `app_log`').not.toContain(HEX)
+    }
+  })
+
+  it.each<[string, Parameters<typeof lancia>[0]]>([
+    ['il campo manca (web, TUS, News)', {}],
+    ['il campo è `null`', conSha(null)],
+  ])('senza `sha256` dichiarato (%s) il passo NON esiste: lo script è quello di prima', async (_nome, opzioni) => {
+    const { s } = await lancia({ ...opzioni, risposta: rispostaSenzaMarcatore })
+
+    const avvio = s.avviati[0]
+    expect(Object.keys(avvio.env ?? {})).not.toContain(ENV_SHA256_ATTESO)
+    expect(testoDi(avvio)).not.toContain(ENV_SHA256_ATTESO)
+    expect(testoDi(avvio)).not.toContain('sha256sum')
+  })
+
+  it.each([1, 2, 3, 4])(
+    'l’uscita 35 è `ORIGINALE_DIVERSO` e NON si ritenta MAI — nemmeno al tentativo %i, dove un guasto nostro si ritenterebbe',
+    async (attempt) => {
+      const { esito, c } = await lancia({
+        job: { attempt, sha256_dichiarato: `\\x${HEX}` },
+        risposta: rispostaFelice(marcatore({ uscita: 35, diagnosi: `${INGRESSO}: FAILED` })),
+      })
+
+      expect(esito).toEqual({ esito: 'fallito', jobId: JOB_ID, codice: 'ORIGINALE_DIVERSO', rifiutato: true })
+      // `file`: `video_job_fail` col job RIFIUTATO. Mai `video_job_retry`.
+      expect(c.ritentati).toEqual([])
+      expect(c.falliti).toHaveLength(1)
+      expect(c.falliti[0]).toMatchObject({ codice: 'ORIGINALE_DIVERSO', rifiutato: true })
+      const log = riga('conversione-fallita')
+      expect(log[2]).toMatchObject({ error_code: 'ORIGINALE_DIVERSO', tipo: 'file', rifiutato: true })
+      // La riga `FAILED` di `sha256sum` sta nella diagnosi (è la prova del fatto), e l'impronta no.
+      expect(comeInTabella(log).messaggio).toContain('FAILED')
+      expect(comeInTabella(log).messaggio).not.toContain(HEX)
+    },
+  )
+
+  it.each<[string, unknown]>([
+    ['una stringa che non è un’impronta', 'non-un-hash'],
+    ['una stringa vuota', ''],
+    ['63 cifre', `\\x${HEX.slice(1)}`],
+    ['65 cifre', `\\x${HEX}a`],
+    ['64 caratteri non esadecimali', `\\x${'zz'.repeat(32)}`],
+    ['un numero', 5],
+    ['un booleano', true],
+    ['un oggetto', { hex: HEX }],
+  ])('un valore ILLEGGIBILE (%s) non passa in silenzio: il job è rifiutato PRIMA di aprire qualunque cosa', async (_nome, valore) => {
+    const { archivio: a, firme } = archivioFinto()
+    const { esito, c, s } = await lancia({ ...conSha(valore), archivio: a })
+
+    // Un controllo di integrità richiesto e non eseguibile non si salta: `ORIGINALE_DIVERSO`, `file`, mai ritentato…
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB_ID, codice: 'ORIGINALE_DIVERSO', rifiutato: true })
+    expect(c.ritentati).toEqual([])
+    expect(c.falliti).toHaveLength(1)
+    // …senza spendere niente: nessuna firma, nessuna MicroVM.
+    expect(firme).toEqual([])
+    expect(s.nomi).toEqual([])
+    // Il log dice che il guaio è il VALORE, non il file, e il valore non c'è.
+    const log = riga('sha256-dichiarato-illeggibile')
+    expect(log[1]).toBe('error')
+    expect(log[2]).toMatchObject({ job_id: JOB_ID })
+    const nelLog = JSON.stringify(righeDiLog().map((r) => [r[0], r[1], r[2], String(r[3] ?? '')]))
+    for (const frammento of [HEX, 'non-un-hash', 'zz'.repeat(8)]) expect(nelLog).not.toContain(frammento)
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 22. LA DIAGNOSI DELLA VERIFICA FALLITA (T8, secondario #10)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · la verifica fallita scrive i NUMERI sul job (`video_job_diagnosi`)', () => {
+  /** Un'uscita a 1280×720 invece del Full HD: `OUTPUT_DIMENSIONS_INVALID`. */
+  const USCITA_FUORI_MISURA = marcatore({ probeOut: probeUscita().replace('"width":1920', '"width":1280') })
+  const VERIFICA_FALLITA = { risposta: rispostaFelice(USCITA_FUORI_MISURA) }
+
+  it('la diagnosi si scrive PRIMA di chiudere il job (la RPC vuole un `processing`), col job, il fence e il worker giusti', async () => {
+    const ordine: string[] = []
+    const { esito, c } = await lancia({ ...VERIFICA_FALLITA, coda: { ordine } })
+
+    expect(esito).toMatchObject({ esito: 'fallito', codice: 'OUTPUT_DIMENSIONS_INVALID', rifiutato: true })
+    expect(c.diagnosi).toHaveLength(1)
+    expect(c.diagnosi[0]).toMatchObject({ jobId: JOB_ID, fenceEpoch: 5, leaseOwner: WORKER })
+    expect(ordine.filter((x) => x === 'diagnosi' || x === 'fallito')).toEqual(['diagnosi', 'fallito'])
+  })
+
+  it('è `diagnosiVerifica` calcolata sugli ingressi GIUSTI: la sorgente nel suo probe, l’uscita com’è, la prova di decodifica', async () => {
+    const { c } = await lancia(VERIFICA_FALLITA)
+
+    // Gli ingressi li ricostruisce il TEST dalle fixture, non li copia dal runner: se quest'ultimo passasse il probe
+    // dell'uscita al posto di quello della sorgente, o la prova sbagliata, i numeri sarebbero altri.
+    const sorgente = parseVideoProbe(probeSorgente(), 20_000_000)
+    if (!sorgente.ok) throw new Error(`la fixture deve essere un probe valido: ${sorgente.code}`)
+    const prova = leggiEsitoConversione(USCITA_FUORI_MISURA).prova
+    const atteso = diagnosiVerifica(sorgente.probe, probeUscita().replace('"width":1920', '"width":1280'), prova, 'OUTPUT_DIMENSIONS_INVALID')
+
+    expect(c.diagnosi[0].diagnosi).toEqual(atteso)
+    // E qualche numero che si legge a occhio: i frame decodificati sono quelli del marcatore, l'esito è il codice del rifiuto.
+    expect(c.diagnosi[0].diagnosi).toMatchObject({ v: 1, esito: 'OUTPUT_DIMENSIONS_INVALID', frame_decodificati: 5391 })
+  })
+
+  it('passa la regola che la RPC applica: solo numeri e stringhe-enumerato, chiavi comprese, entro 2048 byte (letta dalla migrazione)', async () => {
+    // Una diagnosi che la RPC rifiuta (`BAD_INPUT`) non sparisce con un errore: diventa una riga `diagnosi-non-scritta`
+    // che nessuno legge, e il guasto è un job rifiutato senza i suoi numeri per sempre. La regola si LEGGE dalla migrazione.
+    const cartella = join(process.cwd(), 'supabase', 'migrations')
+    const nome = readdirSync(cartella).find((n) => n.endsWith('_video_pubblicazione_automatica.sql')) as string
+    const sql = readFileSync(join(cartella, nome), 'utf8')
+    const corpo = sql.slice(sql.indexOf('CREATE OR REPLACE FUNCTION public.video_job_diagnosi('))
+    const regola = /like_regex "(\^\[A-Za-z\]\[A-Za-z0-9_-\]\{0,63\}\$)"/.exec(corpo)
+    expect(regola, 'la RPC deve avere una regola sulle stringhe').not.toBeNull()
+    const enumerato = new RegExp(regola?.[1] as string)
+    const limite = Number(/octet_length\(p_diagnosi::text\) > (\d+)/.exec(corpo)?.[1])
+    expect(limite).toBe(2048)
+
+    const { c } = await lancia(VERIFICA_FALLITA)
+    const diagnosi = c.diagnosi[0].diagnosi as Record<string, unknown>
+    expect(Object.keys(diagnosi).length).toBeGreaterThan(3)
+    for (const [chiave, valore] of Object.entries(diagnosi)) {
+      expect(chiave, `la chiave «${chiave}»`).toMatch(enumerato)
+      if (typeof valore === 'string') expect(valore, `il valore di «${chiave}»`).toMatch(enumerato)
+      else expect(typeof valore === 'number' && Number.isFinite(valore), `il valore di «${chiave}» è un numero`).toBe(true)
+    }
+    expect(JSON.stringify(diagnosi).length).toBeLessThanOrEqual(limite)
+  })
+
+  it('OGNI motivo della prova temporale e ogni modo passano la stessa regola della RPC: nessuna stringa che la RPC respingerebbe', () => {
+    // Un solo caso (le dimensioni) non basta: `motivo` e `modo` sono le uniche stringhe che arrivano da un elenco, e un nome nuovo che
+    // cominciasse per cifra o avesse uno spazio farebbe respingere (`BAD_INPUT`) la diagnosi proprio dei rifiuti temporali.
+    const cartella = join(process.cwd(), 'supabase', 'migrations')
+    const nome = readdirSync(cartella).find((n) => n.endsWith('_video_pubblicazione_automatica.sql')) as string
+    const sql = readFileSync(join(cartella, nome), 'utf8')
+    const regola = /like_regex "(\^\[A-Za-z\]\[A-Za-z0-9_-\]\{0,63\}\$)"/.exec(sql.slice(sql.indexOf('CREATE OR REPLACE FUNCTION public.video_job_diagnosi(')))
+    const enumerato = new RegExp(regola?.[1] as string)
+
+    const sorgente = parseVideoProbe(probeSorgente(), 20_000_000)
+    if (!sorgente.ok) throw new Error(`la fixture deve essere un probe valido: ${sorgente.code}`)
+    for (const modo of ['preserve', 'reduce60'] as const) {
+      for (const motivo of VIDEO_TEMPORAL_REASONS) {
+        const diagnosi = diagnosiVerifica(
+          sorgente.probe,
+          probeUscita(),
+          {
+            exitCode: 0,
+            decodedFrames: 10,
+            temporal: { version: 1, ok: false, mode: modo, sourceFrames: 10, outputFrames: 9, sourceFps: 30, outputFps: 30, reason: motivo },
+          },
+          'OUTPUT_FPS_INVALID',
+        ) as Record<string, unknown>
+        expect(diagnosi, `${modo}/${motivo}: il motivo deve arrivare nei numeri`).toMatchObject({ modo, motivo })
+        for (const [chiave, valore] of Object.entries(diagnosi)) {
+          expect(chiave, `${modo}/${motivo}: la chiave «${chiave}»`).toMatch(enumerato)
+          if (typeof valore === 'string') expect(valore, `${modo}/${motivo}: «${chiave}»`).toMatch(enumerato)
+        }
+      }
+    }
+    expect(VIDEO_TEMPORAL_REASONS.length).toBeGreaterThanOrEqual(7)
+  })
+
+  it('un job che passa la verifica NON ne scrive una: la diagnosi è del rifiuto', async () => {
+    const { esito, c } = await lancia()
+
+    expect(esito).toMatchObject({ esito: 'pronto' })
+    expect(c.diagnosi).toEqual([])
+  })
+
+  it('un guasto che NON è la verifica (uscita della conversione, probe della sorgente) non scrive nessuna diagnosi', async () => {
+    const { c } = await lancia(CONVERSIONE_CON(32, 'Conversion failed!'))
+    expect(c.diagnosi).toEqual([])
+    expect(c.falliti).toHaveLength(1)
+  })
+
+  it.each<[string, NonNullable<Parameters<typeof lancia>[0]>['coda']]>([
+    ['la RPC dice di no (`FENCE_MISMATCH`)', { diagnosi: { ok: false, code: 'FENCE_MISMATCH' } }],
+    ['la chiamata non arriva (`RPC_ERROR`)', { diagnosi: { ok: false, code: 'RPC_ERROR' } }],
+  ])('%s: l’ESITO non cambia (il job è rifiutato lo stesso) e si logga `warn`', async (_nome, coda) => {
+    const { esito, c } = await lancia({ ...VERIFICA_FALLITA, coda })
+
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB_ID, codice: 'OUTPUT_DIMENSIONS_INVALID', rifiutato: true })
+    expect(c.falliti).toHaveLength(1)
+    const log = riga('diagnosi-non-scritta')
+    expect(log[1]).toBe('warn')
+    expect(log[2]).toMatchObject({ error_code: (coda?.diagnosi as { code: string }).code, job_id: JOB_ID })
+  })
+
+  it('un adattatore che LANCIA non cambia l’esito, e il motivo si legge (un catch che non logga è un bug)', async () => {
+    const { esito, c } = await lancia({ ...VERIFICA_FALLITA, coda: { diagnosi: new Error('rete giù') } })
+
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB_ID, codice: 'OUTPUT_DIMENSIONS_INVALID', rifiutato: true })
+    expect(c.falliti).toHaveLength(1)
+    const log = riga('diagnosi-non-scritta')
+    expect(log[1]).toBe('warn')
+    expect(comeInTabella(log).messaggio).toContain('rete giù')
+  })
+
+  it('anche `OUTPUT_FPS_INVALID` (la prova temporale) scrive i numeri, con modo e motivo della prova', async () => {
+    const marcatoreTemporale = [
+      'KV_ESITO_EXIT=0',
+      'KV_BYTE_SORGENTE=20000000',
+      'KV_BYTE_USCITA=8000000',
+      'KV_DECODE_EXIT=0',
+      'KV_DECODE_FRAMES=5391',
+      `KV_TEMPORAL=${JSON.stringify({ version: 1, ok: false, mode: 'preserve', sourceFrames: 5391, outputFrames: 5390, sourceFps: 30000 / 1001, outputFps: 30000 / 1001, reason: 'FRAME_COUNT_MISMATCH' })}`,
+      '===PROBE_SORGENTE===',
+      probeSorgente(),
+      '===PROBE_USCITA===',
+      probeUscita(),
+      '===DIAGNOSI===',
+      'frame= 5391 fps=120 q=-1.0',
+    ].join('\n')
+    const { esito, c } = await lancia({ risposta: rispostaFelice(marcatoreTemporale) })
+
+    expect(esito).toMatchObject({ esito: 'fallito', codice: 'OUTPUT_FPS_INVALID' })
+    expect(c.diagnosi).toHaveLength(1)
+    expect(c.diagnosi[0].diagnosi).toMatchObject({
+      esito: 'OUTPUT_FPS_INVALID',
+      modo: 'preserve',
+      motivo: 'FRAME_COUNT_MISMATCH',
+      frame_sorgente: 5391,
+      frame_uscita: 5390,
+    })
+  })
+
+  it('le tracce audio IGNORATE si vedono nel log (`info`, solo il conteggio, una riga per job)', async () => {
+    const conDueAudio = JSON.parse(probeSorgente()) as { streams: Record<string, unknown>[] }
+    conDueAudio.streams.push(
+      { index: 1, codec_type: 'audio', codec_name: 'aac', duration: String(DURATA_SORGENTE), disposition: { default: 1 } },
+      // Il codec ignoto: ffprobe NON scrive `codec_name`.
+      { index: 2, codec_type: 'audio', duration: String(DURATA_SORGENTE), disposition: { default: 0 } },
+    )
+    const { esito } = await lancia({
+      risposta: (cmd) =>
+        eApparecchio(cmd)
+          ? { exitCode: 0, stdout: uscitaApparecchio(JSON.stringify(conDueAudio)), stderr: '' }
+          : rispostaFelice()(cmd),
+    })
+
+    // L'audio che non si sa convertire non ferma il video: l'uscita ne ha UNA, la scelta, e il job arriva a `pronto`.
+    expect(esito).toMatchObject({ esito: 'pronto' })
+    const log = riga('tracce-audio-ignorate')
+    expect(log[1]).toBe('info')
+    expect(log[2]).toMatchObject({ tracce_ignorate: 1, job_id: JOB_ID })
+    expect(log[4]).toEqual({ distingui: ['job_id'] })
+  })
+
+  it('senza tracce ignorate (un solo audio, o nessuno) non scrive niente: un caso normale non è una riga', async () => {
+    await lancia()
+    expect(conEsito('tracce-audio-ignorate')).toEqual([])
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 23. L'ECCEZIONE DELL'SDK NON ENTRA NEL LOG COM'È (T8, secondario #104)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · l’eccezione dell’SDK passa dalla sanificazione prima di entrare nel log (secondario #104)', () => {
+  /** Il messaggio di un SDK che fa richieste autenticate e, fallendo, scrive l'indirizzo che chiamava. */
+  const CON_SEGRETI =
+    'Sandbox API 429 su https://api.vercel.com/v1/sandboxes?teamId=team_x&token=eyJhbGciOi.SEGRETO: troppe richieste'
+  const SEGRETI = ['https://', 'api.vercel.com', 'eyJhbGciOi', 'SEGRETO', 'token=']
+
+  /** Un errore come quello dell'SDK di Vercel: `APIError`, con `response.status` e `json.error.code`. */
+  class ErroreApiFinto extends Error {
+    response = { status: 429 }
+    json = { error: { code: 'rate_limited' } }
+    constructor(messaggio: string) {
+      super(messaggio)
+      this.name = 'APIError'
+    }
+  }
+
+  const nessunSegreto = (): void => {
+    const nelLog = JSON.stringify(righeDiLog().map((r) => [r[0], r[1], r[2], String(r[3] ?? '')]))
+    const inTabella = JSON.stringify(righeDiLog().map((r) => comeInTabella(r)))
+    for (const segreto of SEGRETI) {
+      expect(nelLog, `«${segreto}» è finito in un log`).not.toContain(segreto)
+      expect(inTabella, `«${segreto}» è finito in app_log`).not.toContain(segreto)
+    }
+  }
+
+  it.each<[string, (e: Error) => Parameters<typeof lancia>[0], string]>([
+    ['`avvia` della conversione staccata', (e) => ({ avviaFallisce: e }), 'avvia'],
+    [
+      '`esegui` dell’apparecchio',
+      (e) => ({ risposta: (cmd) => (eApparecchio(cmd) ? e : OK) }),
+      'esegui',
+    ],
+  ])('%s lancia con un URL e un token nel messaggio: il log tiene il motivo e perde il segreto', async (_nome, opzioni, azione) => {
+    const { esito } = await lancia(opzioni(new Error(CON_SEGRETI)))
+
+    expect(esito).toMatchObject({ esito: 'in-riprova', codice: 'SANDBOX_UNAVAILABLE' })
+    const log = riga('conversione-da-riprovare')
+    expect(log[2]).toMatchObject({ azione })
+    // La CAUSA resta leggibile (è l'unica cosa che dice «quota finita» e non «regione giù»)…
+    expect(comeInTabella(log).messaggio).toContain('troppe richieste')
+    // …e il segreto no.
+    nessunSegreto()
+  })
+
+  it('l’apertura della MicroVM che lancia (snapshot e ripiego falliti entrambi) passa dalla stessa sanificazione', async () => {
+    const { esito } = await lancia({
+      dipendenze: {
+        macchina: {
+          apri: async () => {
+            throw new Error(CON_SEGRETI)
+          },
+        },
+      },
+    })
+
+    expect(esito).toMatchObject({ esito: 'in-riprova', codice: 'SANDBOX_UNAVAILABLE' })
+    expect(comeInTabella(riga('conversione-da-riprovare')).messaggio).toContain('troppe richieste')
+    nessunSegreto()
+  })
+
+  it('un errore dell’SDK con stato e codice (`APIError`) porta nome, stato HTTP e codice nel messaggio, e lo stato nei campi', async () => {
+    const { esito } = await lancia({
+      dipendenze: {
+        macchina: {
+          apri: async () => {
+            throw new ErroreApiFinto(CON_SEGRETI)
+          },
+        },
+      },
+    })
+
+    expect(esito).toMatchObject({ esito: 'in-riprova', codice: 'SANDBOX_UNAVAILABLE' })
+    const log = riga('conversione-da-riprovare')
+    // Lo stato HTTP in un campo NUMERICO: una query «i 429 di oggi» lo trova senza leggere il testo.
+    expect(log[2]).toMatchObject({ http: 429, error_code: 'SANDBOX_UNAVAILABLE' })
+    const messaggio = comeInTabella(log).messaggio
+    expect(messaggio.startsWith('APIError HTTP 429 rate_limited: ')).toBe(true)
+    expect(messaggio).toContain('troppe richieste')
+    nessunSegreto()
+  })
+
+  it('le altre cause (la geometria che `buildVideoEncodeArgs` rifiuta) passano dallo stesso filtro, e il messaggio resta', async () => {
+    const { esito } = await lancia({
+      risposta: apparecchioConProbe(probeSorgente().replace('"width":1920', '"width":1').replace('"coded_width":1920', '"coded_width":1')),
+    })
+
+    expect(esito).toMatchObject({ esito: 'fallito', codice: 'ENCODE_FAILED', rifiutato: true })
+    // Il messaggio è quello di `buildVideoEncodeArgs`, e c'è: ripulirlo non è cancellarlo.
+    expect(comeInTabella(riga('conversione-fallita')).messaggio.length).toBeGreaterThan(10)
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 24. LA RETE DEGLI ARRIVI: I NUMERI NEL REGISTRO DEL RUNNER (T8, secondario #128)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · la rete degli arrivi porta i suoi numeri nel registro (secondario #128)', () => {
+  const arrivi = (conteggi: Record<string, number>): { coda: CopioneCoda } => ({
+    coda: { arriviRecupera: { ok: true, conteggi } },
+  })
+
+  it('`non_risolti` > 0: una riga `warn` con i QUATTRO numeri, nei campi e nell’impronta', async () => {
+    await lancia(arrivi({ candidati: 4, arrivati: 0, diversi: 0, non_risolti: 4, errori: 0 }))
+
+    const log = riga('arrivi-recuperati')
+    expect(log[0]).toBe('cron')
+    expect(log[1]).toBe('warn')
+    expect(log[2]).toMatchObject({
+      operazione: 'video-runner',
+      candidati: 4,
+      arrivati: 0,
+      diversi: 0,
+      non_risolti: 4,
+      errori: 0,
+    })
+    // Lo stesso giorno con `non_risolti` 2 e con 9 sono due righe: `app_log` somma le occorrenze e tiene il contesto
+    // della PRIMA, quindi senza `distingui` il numero che cresce durante il giorno non si vedrebbe mai.
+    expect(log[4]).toEqual({ distingui: ['arrivati', 'diversi', 'non_risolti', 'errori'] })
+    expect(comeInTabella(log).contestoExtra?.campi).toMatchObject({ non_risolti: 4 })
+  })
+
+  it.each<[string, Record<string, number>]>([
+    ['`arrivati` > 0: il TRIGGER non ha visto un arrivo', { candidati: 1, arrivati: 1 }],
+    ['`diversi` > 0: un file rifiutato per dimensione', { candidati: 1, diversi: 1 }],
+    ['`errori` > 0: un candidato ha fatto esplodere il giro', { candidati: 1, errori: 1 }],
+  ])('%s: una riga, perché è un segno da vedere', async (_nome, conteggi) => {
+    await lancia(arrivi(conteggi))
+    expect(conEsito('arrivi-recuperati')).toHaveLength(1)
+  })
+
+  it('tutto a zero è il funzionamento normale e NON scrive niente (la riga del database c’è già a ogni giro)', async () => {
+    await lancia(arrivi({ candidati: 0, arrivati: 0, diversi: 0, non_risolti: 0, errori: 0 }))
+    expect(conEsito('arrivi-recuperati')).toEqual([])
+    // Nemmeno il caso che il doppio dà di default (solo `candidati` e `arrivati` a zero).
+    h.log.length = 0
+    await lancia()
+    expect(conEsito('arrivi-recuperati')).toEqual([])
+  })
+
+  it('la riga non ferma il giro: il job si converte lo stesso', async () => {
+    const { esito } = await lancia(arrivi({ candidati: 3, non_risolti: 3 }))
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+  })
+
+  it('il commento del limite dice «dal più recente», non «dal più vecchio» (l’ordine l’ha cambiato il database)', () => {
+    const sorgente = readFileSync(join(process.cwd(), 'src/lib/media/video/runner/esegui.ts'), 'utf8')
+    const punto = sorgente.indexOf('const LIMITE_ARRIVI_PER_GIRO')
+    expect(punto).toBeGreaterThan(0)
+    // Il commento che sta SOPRA la costante (i 1500 caratteri precedenti): è proprio quello che è invecchiato.
+    const commento = sorgente.slice(Math.max(0, punto - 1500), punto)
+    expect(commento).toContain('dal più recente')
+    // «dal più vecchio» ricompare solo come ciò che NON si fa (la spiegazione del perché), mai come descrizione dell'ordine.
+    expect(commento).not.toMatch(/guardano al più cinquanta,\s*dal più vecchio/)
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 25. IL TIMEOUT DELLA SONDA NELLO SCRIPT GENERATO (T8, secondario #9: la verifica che T6 l'abbia chiuso)
+ *
+ * Il test di T6 (sezione 15) passa dal runner. Qui si guarda lo script che `scriptConversione` PRODUCE per i
+ * due casi che il titolare ha nominato: un Full HD di 180 s (il caso di oggi) e un 4K di 300 s (il tetto nuovo).
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · il timeout della sonda temporale nello script GENERATO (secondario #9)', () => {
+  const timeoutDi = (script: string): number => {
+    const trovato = /"timeoutMs":(\d+)/.exec(script)
+    expect(trovato, 'lo script non porta il timeout della sonda temporale').not.toBeNull()
+    return Number(trovato?.[1])
+  }
+  const script = (misure: { durationSeconds?: number; width?: number; height?: number; sourceFps: number }) =>
+    scriptConversione({ conWatermark: true, videoIndex: 0, audioIndex: 1, ...misure })
+
+  it('1080p di 180 s a 30 fps: ~254 s, PROPORZIONALE — né il pavimento di prima (120 s) né il tetto (900 s)', () => {
+    const t = timeoutDi(script({ durationSeconds: 180, width: 1920, height: 1080, sourceFps: 30 }))
+
+    expect(t).toBe(timeoutSondaTemporaleMs({ durationSeconds: 180, width: 1920, height: 1080, fps: 30 }))
+    // Il numero a occhio, dalla regola dichiarata (30 s fissi + 20 ms per megapixel decodificato): un Full HD a 30 fps per 180 s
+    // sono ~11.200 megapixel, cioè ~224 s più i 30 di base. Sotto i 250 s non si scende: un video buono verrebbe scartato.
+    expect(t).toBeGreaterThanOrEqual(250_000)
+    expect(t).toBeLessThanOrEqual(258_000)
+    expect(t).toBeGreaterThan(SONDA_TEMPORALE.pavimentoMs)
+    expect(t).toBeLessThan(SONDA_TEMPORALE.tettoMs)
+  })
+
+  it.each([30, 60])('4K di 300 s a %i fps: la stima supera il tetto, e il timeout È il tetto (900 s) — mai di più', (fps) => {
+    const t = timeoutDi(script({ durationSeconds: 300, width: 3840, height: 2160, sourceFps: fps }))
+
+    expect(t).toBe(SONDA_TEMPORALE.tettoMs)
+    // È il tetto PERCHÉ la stima lo supera, non perché mancassero i numeri (con le misure assenti vale lo stesso 900 s: il
+    // 4K breve qui sotto è ciò che distingue i due casi). La stima si riscrive dalla regola dichiarata nelle costanti —
+    // la base fissa più i millisecondi per megapixel decodificato — e non si chiede alla funzione che la limita.
+    const stimaGrezza =
+      SONDA_TEMPORALE.baseMs + ((3840 * 2160) / 1_000_000) * fps * 300 * SONDA_TEMPORALE.msPerMegapixelDecodificato
+    expect(stimaGrezza).toBeGreaterThan(SONDA_TEMPORALE.tettoMs)
+  })
+
+  it('un 4K BREVE (20 s a 30 fps) non è il tetto: i numeri contano, e arrivano fino al programma', () => {
+    const lungo = timeoutDi(script({ durationSeconds: 300, width: 3840, height: 2160, sourceFps: 30 }))
+    const breve = timeoutDi(script({ durationSeconds: 20, width: 3840, height: 2160, sourceFps: 30 }))
+
+    expect(breve).toBeLessThan(lungo)
+    expect(breve).toBeLessThan(SONDA_TEMPORALE.tettoMs)
+    expect(breve).toBeGreaterThan(SONDA_TEMPORALE.pavimentoMs)
+    expect(breve).toBe(timeoutSondaTemporaleMs({ durationSeconds: 20, width: 3840, height: 2160, fps: 30 }))
+  })
+
+  it('senza le tre misure la sonda parte col TETTO (non sapere quanto è grande il file è il caso in cui meno si scarta): è il difetto che il cablaggio chiude', () => {
+    const t = timeoutDi(script({ sourceFps: 30 }))
+    expect(t).toBe(SONDA_TEMPORALE.tettoMs)
+    // Lo stesso Full HD di 180 s CON le misure è molto più corto: la differenza è ciò che `esegui.ts` guadagna passandole.
+    expect(timeoutDi(script({ durationSeconds: 180, width: 1920, height: 1080, sourceFps: 30 }))).toBeLessThan(t / 3)
+  })
+
+  it('il programma porta anche il tetto di durata dell’ingresso (300 s), non quello vecchio', () => {
+    expect(script({ durationSeconds: 180, width: 1920, height: 1080, sourceFps: 30 })).toContain(
+      `"maxDurationSeconds":${MAX_VIDEO_DURATION_SECONDS}`,
+    )
+    expect(MAX_VIDEO_DURATION_SECONDS).toBe(300)
   })
 })

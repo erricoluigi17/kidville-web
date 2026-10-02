@@ -6,11 +6,22 @@ import {
 } from '@/lib/logging/logger'
 import { MESSAGGIO_MAX, sanificaMessaggio } from '@/lib/logging/serialize'
 
-import { BUCKET_BUILD_VIDEO, PERCORSO_FFMPEG_GZ, PERCORSO_FFPROBE_GZ } from '../build'
+import {
+  BUCKET_BUILD_VIDEO,
+  CARTELLA_BINARI_NELLO_SNAPSHOT,
+  PERCORSO_FFMPEG_GZ,
+  PERCORSO_FFPROBE_GZ,
+} from '../build'
 import { BUCKET_ORIGINALI_VIDEO } from '../contratto'
 import { buildVideoEncodeArgs, type VideoEncodeOptions } from '../encode'
-import { parseVideoProbe } from '../probe'
-import { verifyVideoOutput } from '../verify'
+import { parseVideoProbe, type VideoProbe } from '../probe'
+import { diagnosiVerifica, verifyVideoOutput, type VideoOutputVerificationErrorCode } from '../verify'
+import {
+  MOTIVI_AMBIENTE_ASSENTE,
+  erroreSanificatoPerIlLog,
+  fattiDellErrore,
+  type ModalitaAmbiente,
+} from './ambiente'
 import {
   SECONDI_LEASE_PRESA,
   TETTO_INVOCAZIONE_MS,
@@ -20,6 +31,7 @@ import {
 import type { CodiceRunnerVideo } from './codici'
 import { codaDiagnostica } from './diagnosi'
 import {
+  CARTELLA_BUILD,
   ENV_URL_FFMPEG,
   ENV_URL_FFPROBE,
   mancanzeDellaBuild,
@@ -31,6 +43,7 @@ import {
   type ArchivioVideo,
   type CodaVideo,
   type ComandoInCorso,
+  type EsitoComando,
   type JobVideo,
   type MacchinaSandbox,
   type Orologio,
@@ -47,11 +60,13 @@ import {
   type ClasseGuasto,
 } from './ritentativi'
 import {
+  ENV_SHA256_ATTESO,
   ENV_URL_INGRESSO,
   ENV_URL_USCITA,
   ENV_URL_WATERMARK,
   INGRESSO,
   USCITA,
+  USCITE_APPARECCHIO,
   WATERMARK,
   codiceDaUscitaApparecchio,
   codiceDaUscitaConversione,
@@ -60,8 +75,10 @@ import {
   comandoScritturaArgomenti,
   leggiApparecchio,
   leggiEsitoConversione,
+  leggiSha256Dichiarato,
   scriptApparecchio,
   scriptConversione,
+  type LetturaEsitoConversione,
 } from './script'
 
 /**
@@ -119,6 +136,23 @@ import {
  *      o finché non finisce il tempo di QUESTA invocazione: `240 s` meno quello che ne è già stato
  *      speso (il giro prima, l'apertura della MicroVM e l'apparecchio poi).
  *   4. Si verifica l'uscita e solo allora si scrive `video_job_ready`.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════
+ * L'AMBIENTE PRONTO, LO `sha256` DICHIARATO E LA DIAGNOSI (PR 2, compito T8)
+ *
+ *  · **Da dove nasce la MicroVM** (`./ambiente.ts`, spec §10.1). Se esiste uno SNAPSHOT (`VIDEO_SANDBOX_SNAPSHOT_ID`)
+ *    la MicroVM nasce da lì, con `curl` e i due binari di FFmpeg già in `/opt/kv-ffmpeg`: l'apparecchio li VERIFICA con
+ *    `sha256sum` (le impronte di `build.ts`, le stesse della provvista) invece di scaricarli, e NON si firma niente del
+ *    bucket `video_build`. Se i binari non tornano (uscita 26) si ripiega NELLA STESSA MicroVM con la provvista dal bucket
+ *    — `curl` c'è — e si grida (`ambiente-pronto-assente`, motivo `BINARI_NON_VERIFICATI`). Se lo snapshot non c'è si apre
+ *    la MicroVM della PR 1, invariata, e a gridarlo è `apriLaMicroVm`. Il modo in cui l'ambiente è diventato pronto — `snapshot`,
+ *    `ripiego-vm`, `ripiego-runtime` — e il suo tempo sono nel log `ambiente-pronto`.
+ *  · **Lo `sha256` dichiarato** (caricamento nativo, spec §10.4). Se la riga del job porta un'impronta, la conversione la
+ *    riceve nell'AMBIENTE e la verifica sull'originale scaricato PRIMA di convertire: se è diversa esce 35 e il job è
+ *    `ORIGINALE_DIVERSO`, classe `file`, MAI ritentato. Un valore che non è un'impronta non si salta in silenzio: il job è
+ *    rifiutato prima di aprire qualunque cosa. L'impronta non entra in nessun log.
+ *  · **La diagnosi di una verifica fallita** (spec §10.5). Prima di chiudere il job si scrivono i NUMERI del rifiuto
+ *    (`video_job_diagnosi`): se la scrittura non riesce si logga e il rifiuto resta com'è.
  *
  * ═════════════════════════════════════════════════════════════════════════════
  * IL TESTIMONE: perché un'invocazione che se ne va con `in-corso` ne chiama un'altra
@@ -220,7 +254,15 @@ export const SECONDI_SORVEGLIANZA = 270
 /**
  * Quanti arrivi mancati recupera `video_arrivi_recupera` per giro. La RPC accetta da 1 a 200; il
  * caso normale è ZERO (il trigger d'arrivo li ha già portati in coda), e a ogni giro se ne
- * guardano al più cinquanta, dal più vecchio.
+ * guardano al più cinquanta, **dal più recente**.
+ *
+ * ⚠️ DAL PIÙ RECENTE, non dal più vecchio (secondario #71, ondata B, corretto in #128). Un candidato che il
+ * giro non riesce a risolvere — metadati senza dimensione o senza mime, un file vuoto di una News, un'eccezione
+ * sempre uguale — resta candidato a ogni giro finché l'abbandono (48 ore) non lo chiude. Dal più vecchio, una
+ * fila di questi occuperebbe tutta la finestra di cinquanta posti e terrebbe FUORI proprio l'arrivo che il trigger
+ * non ha visto, cioè quello per cui la rete esiste. Il costo, dichiarato dalla RPC: sotto un arretrato più lungo
+ * di cinquanta i più vecchi aspettano il giro dopo. Il segno che il limite sta mordendo è un `non_risolti` alto e
+ * stabile, ed è il numero che `recuperaGliArrivi` porta nel registro.
  */
 const LIMITE_ARRIVI_PER_GIRO = 50
 
@@ -349,11 +391,18 @@ export type EsitoRunnerVideo =
   | { esito: 'capacita-piena'; jobId?: string }
 
 /**
- * I rifiuti che dicono «per questo job non c'è più niente da fare», e che quindi, in un CALCIO, non
- * sono guasti: il job è già finito, o l'insegnante l'ha ritirato fra il calcio e la presa. Un
- * `error` per ognuno riempirebbe il registro di allarmi per un funzionamento normale.
+ * I rifiuti che dicono «per questo job non c'è più niente da fare ADESSO», e che quindi, in un CALCIO, non
+ * sono guasti: il job è già finito, l'insegnante l'ha ritirato fra il calcio e la presa, o — `RETRY_NOT_DUE` —
+ * aspetta il suo prossimo tentativo. Un `error` per ognuno riempirebbe il registro di allarmi per un
+ * funzionamento normale.
+ *
+ * `RETRY_NOT_DUE` (secondario #101) è il rifiuto con cui `video_job_claim`, DELEGATO da `video_job_prendi`,
+ * risponde a un calcio su un job che un guasto nostro ha rimesso in coda con la sua attesa (5, 10, 15 minuti):
+ * il calcio arriva (un `PATCH caricato`, il ventaglio) ma il job non è ancora dovuto, e a riprenderlo ci pensa il
+ * giro del cron quando scade l'attesa. Non è un'anomalia e non c'è niente da gridare: ma NON è nemmeno
+ * «niente da fare» per sempre, ed è la differenza con `INVALID_STATE` — il job resta in coda e riparte.
  */
-const NIENTE_DA_FARE = new Set(['INVALID_STATE', 'INTENT_INACTIVE'])
+const NIENTE_DA_FARE = new Set(['INVALID_STATE', 'INTENT_INACTIVE', 'RETRY_NOT_DUE'])
 
 export async function eseguiUnJobVideo(
   d: DipendenzeRunner,
@@ -494,18 +543,62 @@ async function giroSenzaJob(d: DipendenzeRunner, inizio: number): Promise<EsitoR
 /**
  * La rete del trigger d'arrivo. Non decide niente e non ferma niente: se non riesce, il giro va avanti
  * (al peggio un arrivo mancato aspetta il giro dopo, ed è la ragione per cui questa è una rete).
- * L'esito lo scrive il database (`video-arrivo-recuperato-dal-giro`, a `warn`: vuol dire che il
- * trigger non ha visto quell'arrivo), qui si vede solo ciò che il database non ha potuto dire.
+ * L'esito di ogni arrivo lo scrive il database (`video-arrivo-recuperato-dal-giro`, a `warn`: vuol dire
+ * che il trigger non ha visto quell'arrivo), qui si vede solo ciò che il database non ha potuto dire.
+ *
+ * ─── I NUMERI NEL REGISTRO DEL RUNNER (secondario #128) ──────────────────────────────────────────
+ *
+ * La RPC risponde con quattro conteggi — `arrivati`, `diversi`, `non_risolti`, `errori` — e il database
+ * li scrive anch'esso (`video-arrivi-recupera`, `info`). Ma `app_log` somma le occorrenze di una riga
+ * uguale e tiene il contesto della PRIMA: il `non_risolti` di oggi, se cambia durante il giorno, non si
+ * vede. Per questo il runner scrive i numeri a modo suo, e SOLO quando c'è qualcosa da vedere:
+ *
+ *  · tutto a zero è il funzionamento normale e non scrive niente (la riga del database c'è già a ogni
+ *    giro, ed è ciò che distingue «niente da recuperare» da «la rete non gira più»);
+ *  · `arrivati` > 0 vuol dire che il TRIGGER non sta vedendo gli arrivi (la rete li ha portati in coda al
+ *    posto suo); `diversi` > 0 che un file è stato rifiutato per dimensione; `errori` > 0 che un candidato
+ *    ha fatto esplodere il giro; `non_risolti` > 0 che dei candidati restano bloccati (metadati
+ *    incompleti, un file vuoto) — e un `non_risolti` ALTO E STABILE è il segno che la finestra di cinquanta
+ *    posti sta mordendo (vedi `LIMITE_ARRIVI_PER_GIRO`).
+ *
+ * Una riga a livello `warn`, con i quattro numeri nei campi e nell'impronta (`distingui`): lo stesso giorno
+ * con `non_risolti` 2 e con `non_risolti` 9 sono due righe, non una che mente sul secondo.
  */
 async function recuperaGliArrivi(d: DipendenzeRunner): Promise<void> {
   await senzaFermareIlGiro('arrivi-recupera-eccezione', async () => {
     const esito = await d.coda.arriviRecupera(LIMITE_ARRIVI_PER_GIRO)
-    if (!esito.ok && esito.code !== 'RPC_ERROR') {
-      logEvento('cron', 'warn', {
-        operazione: 'video-runner',
-        esito: 'arrivi-recupera-rifiutata',
-        error_code: esito.code,
-      })
+    if (!esito.ok) {
+      if (esito.code !== 'RPC_ERROR') {
+        logEvento('cron', 'warn', {
+          operazione: 'video-runner',
+          esito: 'arrivi-recupera-rifiutata',
+          error_code: esito.code,
+        })
+      }
+      return
+    }
+
+    const candidati = esito.conteggi.candidati ?? 0
+    const arrivati = esito.conteggi.arrivati ?? 0
+    const diversi = esito.conteggi.diversi ?? 0
+    const nonRisolti = esito.conteggi.non_risolti ?? 0
+    const errori = esito.conteggi.errori ?? 0
+    if (arrivati > 0 || diversi > 0 || nonRisolti > 0 || errori > 0) {
+      logEvento(
+        'cron',
+        'warn',
+        {
+          operazione: 'video-runner',
+          esito: 'arrivi-recuperati',
+          candidati,
+          arrivati,
+          diversi,
+          non_risolti: nonRisolti,
+          errori,
+        },
+        undefined,
+        { distingui: ['arrivati', 'diversi', 'non_risolti', 'errori'] },
+      )
     }
   })
 }
@@ -714,6 +807,18 @@ async function prendiUnJobNuovo(d: DipendenzeRunner, inizio: number): Promise<Es
 async function lavoraSulJob(d: DipendenzeRunner, job: JobVideo, inizio: number): Promise<EsitoRunnerVideo> {
   const percorsoUscita = percorsoUscitaVideo(job)
 
+  // ⚠️ LO `sha256` DICHIARATO si legge PRIMA di firmare e di aprire qualunque cosa. Se c'è, la conversione lo
+  // verifica dentro la MicroVM prima di convertire; se non c'è (web, TUS, News) il passo non esiste. Se c'è
+  // QUALCOSA e non è un'impronta, la verifica che il database ha chiesto non si può fare, e un controllo di
+  // integrità richiesto e non eseguibile NON passa in silenzio: il job è rifiutato (`ORIGINALE_DIVERSO`, `file`,
+  // mai ritentato) e il log dice che il guaio è il valore, non il file. Non costa una MicroVM: si esce qui.
+  // Il valore non entra mai nel log, nemmeno quando è quello sbagliato.
+  const shaDichiarato = leggiSha256Dichiarato(job.sha256_dichiarato)
+  if (shaDichiarato.stato === 'illeggibile') {
+    loggaEsito(job, 'error', { esito: 'sha256-dichiarato-illeggibile' })
+    return await chiudiPerGuasto(d, job, { codice: 'ORIGINALE_DIVERSO', classe: 'file', diagnosi: '' })
+  }
+
   const lettura = await d.archivio.urlLettura(
     job.original_bucket || BUCKET_ORIGINALI_VIDEO,
     job.original_path,
@@ -751,6 +856,7 @@ async function lavoraSulJob(d: DipendenzeRunner, job: JobVideo, inizio: number):
   if (job.channel === 'gallery') ambiente[ENV_URL_WATERMARK] = d.urlWatermark
 
   let aperta: SessioneSandbox
+  const inizioApertura = d.orologio.adesso()
   try {
     aperta = await d.macchina.apri({
       nome: nomeSandboxVideo(job.id, job.fence_epoch),
@@ -763,14 +869,17 @@ async function lavoraSulJob(d: DipendenzeRunner, job: JobVideo, inizio: number):
     // essere una quota finita, una regione giù o un OIDC non configurato, e sono
     // tre riparazioni diverse. Transitoria: se la piattaforma è inciampata, fra cinque
     // minuti si riapre; se è una quota o una configurazione, i quattro tentativi finiscono
-    // e il log ha già detto perché.
+    // e il log ha già detto perché. (L'apertura prova già lo snapshot e poi il ripiego: se l'eccezione
+    // arriva fin qui, sono falliti entrambi.)
     return await chiudiPerGuasto(d, job, {
       codice: 'SANDBOX_UNAVAILABLE',
       classe: 'infra-transitoria',
       diagnosi: '',
       causa: err,
+      http: fattiDellErrore(err).http,
     })
   }
+  const aperturaMs = d.orologio.adesso() - inizioApertura
 
   // Da qui la sessione è quella che lancia `EccezioneDellSdk` (secondario #33); lo spegnimento si
   // chiede alla sessione grezza, che è la stessa cosa ma non ha niente da incapsulare.
@@ -778,7 +887,10 @@ async function lavoraSulJob(d: DipendenzeRunner, job: JobVideo, inizio: number):
   let spegni = true
   try {
     if (sessione.nuova) {
-      const avvio = await apparecchiaEAvvia(d, job, sessione, ambiente)
+      const avvio = await apparecchiaEAvvia(d, job, sessione, ambiente, {
+        aperturaMs,
+        sha256: shaDichiarato.stato === 'ok' ? shaDichiarato.hex : null,
+      })
       if (avvio) return avvio
     }
 
@@ -825,6 +937,7 @@ async function lavoraSulJob(d: DipendenzeRunner, job: JobVideo, inizio: number):
         classe: 'infra-transitoria',
         diagnosi: '',
         causa: err.causa,
+        http: fattiDellErrore(err.causa).http,
         azione: err.azione,
       })
     }
@@ -859,30 +972,81 @@ async function apparecchiaEAvvia(
   job: JobVideo,
   sessione: SessioneSandbox,
   ambiente: Record<string, string>,
+  contesto: { aperturaMs: number; sha256: string | null },
 ): Promise<EsitoRunnerVideo | null> {
-  const firmaFfmpeg = await d.archivio.urlLettura(
-    BUCKET_BUILD_VIDEO,
-    PERCORSO_FFMPEG_GZ,
-    SECONDI_FIRMA_BUILD,
-  )
-  if (!firmaFfmpeg.ok) return await guastoDellaFirmaDellaBuild(d, job, firmaFfmpeg)
-  const firmaFfprobe = await d.archivio.urlLettura(
-    BUCKET_BUILD_VIDEO,
-    PERCORSO_FFPROBE_GZ,
-    SECONDI_FIRMA_BUILD,
-  )
-  if (!firmaFfprobe.ok) return await guastoDellaFirmaDellaBuild(d, job, firmaFfprobe)
-
   const inizioApparecchio = d.orologio.adesso()
-  const apparecchio = await sessione.esegui({
-    ...conShell(scriptApparecchio()),
-    env: {
-      ...ambiente,
-      [ENV_URL_FFMPEG]: firmaFfmpeg.url,
-      [ENV_URL_FFPROBE]: firmaFfprobe.url,
-    },
-    tettoMs: TETTO_APPARECCHIO_MS,
-  })
+
+  // ─── DOVE STANNO I BINARI (PR 2, `./ambiente.ts`) ───────────────────────────────────────────────
+  //
+  // Una MicroVM nata dallo SNAPSHOT li ha già in `/opt/kv-ffmpeg`: l'apparecchio li verifica con `sha256sum`
+  // invece di scaricarli, e in questo caso NON si firma niente del bucket `video_build` — lo snapshot esiste
+  // proprio perché a runtime il bucket non serva (e se il bucket fosse giù, una conversione sana non deve
+  // fermarsi). Se i binari mancano o non tornano (uscita 26) si ripiega NELLA STESSA MicroVM con la provvista
+  // dal bucket, che lo snapshot può fare perché ha `curl`: la MicroVM non si butta e non se ne apre un'altra.
+  // Una MicroVM nata dal runtime (la PR 1, o un'origine non dichiarata) va sempre per la provvista.
+  //
+  // Il ripiego si GRIDA, a livello `error` (`ambiente-pronto-assente`, motivo `BINARI_NON_VERIFICATI`): che i
+  // binari dello snapshot non tornino è un guasto da riparare (lo snapshot si ricostruisce), anche se il video
+  // converte lo stesso. Cosa è tornato e cosa no lo dice la riga `FAILED` di `sha256sum` nello stderr.
+  let modalita: ModalitaAmbiente = 'ripiego-runtime'
+  let apparecchio: EsitoComando | null = null
+  if (sessione.origine === 'snapshot') {
+    apparecchio = await sessione.esegui({
+      ...conShell(
+        scriptApparecchio({ cartella: CARTELLA_BINARI_NELLO_SNAPSHOT, binariGiaPresenti: true }),
+      ),
+      // Senza gli indirizzi della build: non servono, e un segreto che non serve non entra nella MicroVM.
+      env: ambiente,
+      tettoMs: TETTO_APPARECCHIO_MS,
+    })
+    if (apparecchio.exitCode === USCITE_APPARECCHIO.binari) {
+      loggaEsito(
+        job,
+        'error',
+        {
+          esito: 'ambiente-pronto-assente',
+          error_code: MOTIVI_AMBIENTE_ASSENTE.binariNonVerificati,
+          uscita: apparecchio.exitCode,
+        },
+        erroreDiagnostico(codiceDaUscitaApparecchio(apparecchio.exitCode) ?? 'BUILD_HASH_MISMATCH', apparecchio.stderr),
+        DISTINGUI_PER_TENTATIVO,
+      )
+      apparecchio = null
+      modalita = 'ripiego-vm'
+    } else {
+      modalita = 'snapshot'
+    }
+  }
+
+  if (apparecchio === null) {
+    // La provvista dal bucket: i due `.gz` si firmano SOLO qui (e solo se servono).
+    const firmaFfmpeg = await d.archivio.urlLettura(
+      BUCKET_BUILD_VIDEO,
+      PERCORSO_FFMPEG_GZ,
+      SECONDI_FIRMA_BUILD,
+    )
+    if (!firmaFfmpeg.ok) return await guastoDellaFirmaDellaBuild(d, job, firmaFfmpeg)
+    const firmaFfprobe = await d.archivio.urlLettura(
+      BUCKET_BUILD_VIDEO,
+      PERCORSO_FFPROBE_GZ,
+      SECONDI_FIRMA_BUILD,
+    )
+    if (!firmaFfprobe.ok) return await guastoDellaFirmaDellaBuild(d, job, firmaFfprobe)
+
+    apparecchio = await sessione.esegui({
+      ...conShell(scriptApparecchio()),
+      env: {
+        ...ambiente,
+        [ENV_URL_FFMPEG]: firmaFfmpeg.url,
+        [ENV_URL_FFPROBE]: firmaFfprobe.url,
+      },
+      tettoMs: TETTO_APPARECCHIO_MS,
+    })
+  }
+
+  // Dove stanno i binari che il comando ha appena verificato o portato: è la cartella con cui parte la
+  // conversione staccata, e dopo non c'è modo di cambiare idea.
+  const cartellaBuild = modalita === 'snapshot' ? CARTELLA_BINARI_NELLO_SNAPSHOT : CARTELLA_BUILD
 
   const guasto = codiceDaUscitaApparecchio(apparecchio.exitCode)
   if (guasto) {
@@ -918,16 +1082,43 @@ async function apparecchiaEAvvia(
   // `EVENTI_PERSISTITI`: questa riga finisce in `app_log`. `ms` è il tempo dell'apparecchio
   // intero (provvista, inventario, HEAD e probe: un solo comando sincrono), misurato col
   // tetto dei 120 secondi che il piano gli ha dato.
-  loggaEsito(job, 'info', {
-    esito: 'build-pronta',
-    ms: d.orologio.adesso() - inizioApparecchio,
-  })
+  //
+  // `build-pronta` dice che la provvista dal bucket è RIUSCITA: con i binari che uscivano dallo snapshot
+  // non c'è stata nessuna provvista, e dirlo sarebbe una bugia. In quel caso c'è solo la riga qui sotto.
+  const ms = d.orologio.adesso() - inizioApparecchio
+  if (modalita !== 'snapshot') loggaEsito(job, 'info', { esito: 'build-pronta', ms })
+
+  // ⚠️ `ambiente-pronto`: in quale dei tre modi l'ambiente è diventato pronto (`snapshot`, `ripiego-vm`,
+  // `ripiego-runtime`) e in quanto. `ms` è lo stesso numero di `build-pronta` — apparecchio intero — e
+  // `apertura_ms` il tempo di `apri` (la MicroVM che nasce, snapshot o runtime compresi): sono i due numeri
+  // con cui T16 confronta «avvio da snapshot» e «ripiego». `distingui: ambiente` tiene una riga al giorno per
+  // MODO, con il suo contatore: senza, il giorno avrebbe la riga del primo caso e basta, e il ripiego che
+  // arriva dopo il primo `snapshot` del mattino sarebbe sommato ai primi.
+  loggaEsito(
+    job,
+    'info',
+    { esito: 'ambiente-pronto', ambiente: modalita, ms, apertura_ms: contesto.aperturaMs },
+    undefined,
+    { distingui: ['ambiente'] },
+  )
 
   const probe = parseVideoProbe(letto.probeGrezzo, letto.byte ?? -1)
   if (!probe.ok) {
     // `rejected`: il file non va bene. Non è la nostra infrastruttura, e riprovare
     // darebbe lo stesso identico risultato.
     return await chiudiPerGuasto(d, job, { codice: probe.code, classe: 'file', diagnosi: '' })
+  }
+
+  // Le tracce audio che NON si convertono (secondario #10, spec §10.5): il codec che ffprobe non riconosce,
+  // o una seconda traccia decodificabile. L'uscita ne ha UNA, la scelta, e il video esce lo stesso — ma
+  // senza questa riga nessuno saprebbe che un filmato ha perso un audio, e «il video non ha la sua colonna
+  // sonora» è esattamente la segnalazione che arriva da una famiglia e che nei log non ha un posto.
+  // Solo un conteggio: nessun nome di traccia, nessun metadato. Una riga per job.
+  const tracceIgnorate = probe.probe.ignoredAudioTracks ?? 0
+  if (tracceIgnorate > 0) {
+    loggaEsito(job, 'info', { esito: 'tracce-audio-ignorate', tracce_ignorate: tracceIgnorate }, undefined, {
+      distingui: ['job_id'],
+    })
   }
 
   let argomenti: string[]
@@ -973,9 +1164,15 @@ async function apparecchiaEAvvia(
       durationSeconds: probe.probe.durationSeconds,
       width: probe.probe.width,
       height: probe.probe.height,
+      // I binari che l'apparecchio ha appena VERIFICATO: quelli dello snapshot o quelli portati dal bucket.
+      cartellaBuild,
+      // Lo `sha256` dichiarato (caricamento nativo): se c'è, la conversione lo confronta con l'originale
+      // scaricato PRIMA di convertire. Se non c'è, nello script il passo non esiste.
+      verificaSha256: contesto.sha256 !== null,
     })),
-    // ⚠️ `ambiente` e non l'env dell'apparecchio: gli indirizzi della build non entrano qui.
-    env: ambiente,
+    // ⚠️ `ambiente` e non l'env dell'apparecchio: gli indirizzi della build non entrano qui. Lo `sha256`,
+    // quando c'è, viaggia QUI e non negli argomenti, come gli URL firmati: mai in una riga di comando.
+    env: contesto.sha256 === null ? ambiente : { ...ambiente, [ENV_SHA256_ATTESO]: contesto.sha256 },
     // Il tetto lo fa rispettare la MicroVM, non questo processo: è l'unico che
     // sopravvive alla fine dell'invocazione.
     tettoMs: TETTO_SANDBOX_MS,
@@ -1042,6 +1239,9 @@ async function concludi(
         error_code: esito.prova?.temporal?.reason ?? 'INVALID_EVIDENCE',
       })
     }
+    // I numeri del rifiuto, scritti sul job PRIMA di chiuderlo (secondario #10): `video_job_diagnosi` vuole un
+    // job `processing`, e `chiudiPerGuasto` lo rende `rejected`.
+    await scriviLaDiagnosi(d, job, probe.probe, esito, verifica.code)
     return await chiudiPerGuasto(d, job, {
       codice: verifica.code,
       classe: 'file',
@@ -1118,6 +1318,46 @@ async function concludi(
   return { esito: 'pronto', jobId: job.id, byteUscita: verifica.output.bytes }
 }
 
+/**
+ * Scrive su `video_jobs.diagnosi_verifica` i NUMERI di una verifica fallita (`diagnosiVerifica`, spec §10.5):
+ * frame della sorgente e dell'uscita, coperture, ultimo campione, tolleranze, fps. È ciò che permette di
+ * leggere un rifiuto — «`TERMINAL_COVERAGE_MISMATCH` su 264 frame con Δ 30 ms» — senza riaprire il video di
+ * un bambino: il 28/09 un falso scarto si è capito soltanto rifacendo la misura dentro un Sandbox.
+ *
+ * ⚠️ NON CAMBIA L'ESITO, MAI. La diagnosi è un'informazione di contorno e il job è già rifiutato: se la RPC dice
+ * di no (`FENCE_MISMATCH`, `BAD_INPUT`…), se la chiamata non arriva (`RPC_ERROR`), se un adattatore lancia o se
+ * `diagnosiVerifica` stessa esplode, si LOGGA (`warn`, `diagnosi-non-scritta`) e si prosegue col fallimento. Un
+ * catch che non logga è un bug (AGENTS, regola 6): qui il catch c'è, ed è il solo punto in cui un'eccezione si
+ * ingoia, perché ciò che sta sopra — il rifiuto del file — non deve dipendere da lei.
+ *
+ * ⚠️ SOLO NUMERI ED ENUMERATI. La forma la costruisce `diagnosiVerifica` (venti chiavi chiuse, ogni numero
+ * limitato, ogni stringa da un elenco) e la rifà verificare la RPC (forma chiusa, 2048 byte): da qui non esce un
+ * nome di file, un percorso, un metadato. Nel log entra soltanto l'esito della scrittura, mai la diagnosi stessa.
+ *
+ * Non si scrive sul `ready`: la RPC vuole un job `processing`, e una diagnosi di un'accettazione non servirebbe a
+ * niente. Il giro è: verifica fallita → diagnosi → `video_job_fail`.
+ */
+async function scriviLaDiagnosi(
+  d: DipendenzeRunner,
+  job: JobVideo,
+  sorgente: VideoProbe,
+  esito: LetturaEsitoConversione,
+  codice: VideoOutputVerificationErrorCode,
+): Promise<void> {
+  try {
+    const diagnosi = diagnosiVerifica(sorgente, esito.probeUscita, esito.prova, codice)
+    const scritta = await d.coda.diagnosi({
+      jobId: job.id,
+      fenceEpoch: job.fence_epoch,
+      leaseOwner: d.leaseOwner,
+      diagnosi,
+    })
+    if (!scritta.ok) loggaEsito(job, 'warn', { esito: 'diagnosi-non-scritta', error_code: scritta.code })
+  } catch (err) {
+    loggaEsito(job, 'warn', { esito: 'diagnosi-non-scritta' }, erroreSanificatoPerIlLog(err))
+  }
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Utilità
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -1162,6 +1402,9 @@ class EccezioneDellSdk extends Error {
 function senzaEccezioniDellSdk(sessione: SessioneSandbox): SessioneSandbox {
   return {
     nuova: sessione.nuova,
+    // L'origine è un fatto della sessione, non una sua chiamata: passa com'è. Perderla qui farebbe credere
+    // al runner che ogni MicroVM venga dal runtime, cioè scaricherebbe la build anche dallo snapshot.
+    ...(sessione.origine === undefined ? {} : { origine: sessione.origine }),
     esegui: async (comando) => {
       try {
         return await sessione.esegui(comando)
@@ -1257,6 +1500,28 @@ function campiDelGuasto(g: Guasto): Record<string, Valore> {
     ...(http !== null ? { http } : {}),
     ...(g.azione !== undefined ? { azione: g.azione } : {}),
   }
+}
+
+/**
+ * L'errore che accompagna il log di un guasto: ciò che finisce in `app_log.messaggio`.
+ *
+ * Due origini, due trattamenti — ed è la ragione per cui un guasto non si passa mai al logger com'è:
+ *
+ *  · una DIAGNOSI (lo stderr di `curl` e `ffmpeg`): passa da `erroreDiagnostico`, che ne tiene la CODA,
+ *    ripulita (URL, JWT, metadati dei filmati) e sanificata;
+ *  · una CAUSA — un'eccezione: la MicroVM che non si apre, una chiamata dell'SDK che lancia, la geometria
+ *    che `buildVideoEncodeArgs` rifiuta: passa da `erroreSanificatoPerIlLog` (`./ambiente.ts`), che ne tiene
+ *    nome, stato HTTP e codice più il messaggio ripulito allo stesso modo (secondario #104).
+ *
+ * Fino alla PR 2 la causa entrava nel log COM'ERA, col suo messaggio e il suo stack: il logger toglie le email e i
+ * codici fiscali ma non gli URL né i JWT, e l'eccezione di un SDK che fa richieste autenticate è proprio il
+ * posto in cui un indirizzo con un token potrebbe comparire. Il testo resta leggibile («quota finita»,
+ * «regione non disponibile»): sparisce ciò che nei log non deve stare.
+ */
+function erroreDelGuasto(g: Guasto): Error {
+  return g.causa === undefined
+    ? erroreDiagnostico(g.codice, g.diagnosi)
+    : erroreSanificatoPerIlLog(g.causa)
 }
 
 /**
@@ -1361,7 +1626,7 @@ async function riprova(
         tentativi_massimi: decisione.tentativiMassimi,
         attesa_s: decisione.attesaSecondi,
       },
-      g.causa ?? erroreDiagnostico(g.codice, g.diagnosi),
+      erroreDelGuasto(g),
       DISTINGUI_PER_TENTATIVO,
     )
     return {
@@ -1402,7 +1667,7 @@ async function riprova(
     job,
     'warn',
     { esito: 'riprova-rifiutata', error_code: esito.code, tipo: g.classe },
-    g.causa ?? erroreDiagnostico(g.codice, g.diagnosi),
+    erroreDelGuasto(g),
     DISTINGUI_PER_TENTATIVO,
   )
   return { esito: 'lease-persa', jobId: job.id, codice: esito.code }
@@ -1423,7 +1688,7 @@ function registraFallimento(
       rifiutato: esito.rifiutato,
       ...(esito.tentativiEsauriti ? { tentativi_esauriti: true } : {}),
     },
-    g.causa ?? erroreDiagnostico(g.codice, g.diagnosi),
+    erroreDelGuasto(g),
     DISTINGUI_PER_TENTATIVO,
   )
 }

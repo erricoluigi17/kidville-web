@@ -42,6 +42,20 @@
  * Le cinque impronte — archivio, due `.gz`, due binari — stanno in tre posti: qui, in
  * `.github/workflows/ci.yml` (le quattro che la CI verifica) e nella spec. Il lock
  * `__tests__/architecture/fixture-video-reali.test.ts` fallisce se divergono.
+ *
+ * ─── DAL 2026-10-02 (PR 2) I BINARI STANNO ANCHE NELLO SNAPSHOT DEL SANDBOX ─────────
+ *
+ * La catena sopra resta com'è, e resta il ripiego: la provvista dal bucket a ogni MicroVM
+ * nuova (`runner/preparazione.ts`). Ma pagare ~134 MB di download a ogni conversione è un
+ * costo che si può fare UNA volta: `scripts/video-sandbox-ambiente.mjs` costruisce uno
+ * snapshot (immagine `node:24`, con `curl`) che i due binari li ha GIÀ, in
+ * `CARTELLA_BINARI_NELLO_SNAPSHOT`, e il runner lo usa se `VIDEO_SANDBOX_SNAPSHOT_ID` lo
+ * nomina (`runner/ambiente.ts`).
+ *
+ * ⚠️ Lo snapshot NON introduce nessuna impronta nuova e nessuna fiducia nuova: a ogni
+ * avvio il runner rifà `sha256sum` dei due BINARI con le due costanti `FFMPEG_SHA256` e
+ * `FFPROBE_SHA256` qui sotto, le stesse della provvista. Se non tornano, o i file
+ * mancano, si ripiega nella stessa MicroVM scaricando dal bucket — e si grida.
  * ─────────────────────────────────────────────────────────────────────────────────
  *
  * Provenienza e misura: `docs/superpowers/specs/2026-09-16-video-build-verificata.md`
@@ -117,6 +131,17 @@ export const FFPROBE_GZ_SHA256 = 'a3cb017c28ce55d622e3328fc4003acf7daa1b05ca63ca
  */
 export const FFMPEG_SHA256 = '341447cfff51ff528cf530eb111542306cffc1f1f6a51726e6327b655d6860be'
 export const FFPROBE_SHA256 = '09c3b0595ea6dd648e0cf1b462d97303792b31cb81c0359b65d072c0d7254063'
+
+/**
+ * Dove stanno `ffmpeg` e `ffprobe` dentro lo SNAPSHOT del Sandbox (PR 2, spec §10.1).
+ *
+ * Sotto `/opt` e non sotto `/tmp`, dove stanno quando li porta la provvista dal bucket
+ * (`CARTELLA_BUILD`, in `runner/preparazione.ts`): `/tmp` è il posto che un riavvio può
+ * svuotare, `/opt` è quello fatto per il software installato. La cartella la crea e la
+ * affida all'utente del Sandbox `scripts/video-sandbox-ambiente.mjs`, con `sudo`, una volta
+ * sola alla costruzione dello snapshot: a runtime nessun comando ha bisogno di privilegi.
+ */
+export const CARTELLA_BINARI_NELLO_SNAPSHOT = '/opt/kv-ffmpeg'
 
 /**
  * I FILTRI CHE IL FILTERGRAPH DI PRODUZIONE NOMINA, uno per uno.

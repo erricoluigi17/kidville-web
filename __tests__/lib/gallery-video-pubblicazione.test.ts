@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { mascheraSorgente } from '../fixtures/sorgente'
 
 // =============================================================================
 // LA METÀ «STORAGE» DELLA PUBBLICAZIONE VIDEO IN GALLERIA (V08, e PR 2 video).
@@ -24,20 +25,18 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 //     video di un minore non si adotta;
 //   · non si riesce a leggere ⇒ errore: «non so quanto pesa» non vale «pesa giusto».
 //
-// L'annullamento (`annullaCopiaVideoInGalleria`) resta una RIMOZIONE e mai un `remove()`
-// muto: `rimuoviEVerifica` verifica lo STATO, ed è l'unica forma che sa distinguere «non
-// c'è più» da «non so se c'è». Un file di un minore rimasto in `gallery` senza nessuna
-// riga che lo nomini è invisibile all'oblio, alla retention e alla revoca del consenso.
+// UN ANNULLAMENTO NON C'È PIÙ (T7, 2026-10-02). `annullaCopiaVideoInGalleria` non aveva chiamanti: la
+// pubblicazione gira sul server e riprova da sola, la copia di un tentativo fallito è quella che il
+// tentativo dopo riusa (il 409 con la stessa dimensione), e se la pubblicazione fallisce in modo
+// DEFINITIVO la copia orfana la toglie la spazzata di `retention-galleria` dopo 24 ore. Toglierla da qui
+// sarebbe una `remove` sul percorso di un video che la RPC potrebbe aver già pubblicato con la risposta
+// persa per strada: l'ultimo blocco di questo file lo tiene fermo.
 // =============================================================================
 
 const log = vi.hoisted(() => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
 vi.mock('@/lib/logging/logger', () => log)
 
-import {
-    annullaCopiaVideoInGalleria,
-    copiaVideoInGalleria,
-    percorsoVideoInGalleria,
-} from '@/lib/gallery/video-pubblicazione'
+import { copiaVideoInGalleria, percorsoVideoInGalleria } from '@/lib/gallery/video-pubblicazione'
 import { BUCKET_GALLERIA, TETTO_VIDEO_GALLERIA_BYTE } from '@/lib/gallery/limiti'
 import { percorsoUploadProprio } from '@/lib/gallery/pubblicazione-foto'
 
@@ -52,9 +51,9 @@ const BYTE = 12_345_678
 type ChiamataCopy = { bucket: string; da: string; a: string; opzioni: unknown }
 
 /**
- * Uno Storage finto con la sola superficie che questo modulo tocca: `copy`, `info`,
- * `remove`, `list`. `rimuoviEVerifica` resta REALE — è il pezzo il cui verso conta, e
- * mockarlo vorrebbe dire misurare il mock.
+ * Uno Storage finto con la sola superficie che questo modulo tocca: `copy` e `info`. C'è anche
+ * `remove`, ma come CAMPANELLO: il modulo non rimuove mai niente, e `rimozioni` lo prova (un
+ * `remove` che qualcuno aggiungesse un giorno lascerebbe qui la sua traccia).
  *
  * `oggetti` è lo stato VERO del finto bucket (`<bucket>/<percorso>` → byte), e `copy` lo
  * rispetta: copiare su un percorso già occupato risponde 409 come fa lo Storage, invece
@@ -67,11 +66,6 @@ function storageFinto(opzioni: {
     /** Fa fallire `info` per questi `<bucket>/<percorso>` (errore restituito). */
     infoErrore?: Record<string, unknown>
     infoLancia?: boolean
-    /** I percorsi che `remove` dichiara di aver tolto. */
-    rimossi?: string[]
-    /** I percorsi che una `list` successiva trova ANCORA nel bucket. */
-    ancora?: string[]
-    removeError?: unknown
 }) {
     const copie: ChiamataCopy[] = []
     const info: string[] = []
@@ -109,19 +103,8 @@ function storageFinto(opzioni: {
                     },
                     remove: async (percorsi: string[]) => {
                         rimozioni.push(percorsi)
-                        if (opzioni.removeError) return { data: null, error: opzioni.removeError }
-                        return {
-                            data: (opzioni.rimossi ?? percorsi).map((name) => ({ name })),
-                            error: null,
-                        }
+                        return { data: percorsi.map((name) => ({ name })), error: null }
                     },
-                    list: async (cartella: string, o: { search?: string }) => ({
-                        data: (opzioni.ancora ?? [])
-                            .filter((p) => p.startsWith(`${cartella}/`))
-                            .map((p) => ({ name: p.slice(cartella.length + 1) }))
-                            .filter((r) => !o.search || r.name.startsWith(o.search)),
-                        error: null,
-                    }),
                 }
             },
         },
@@ -410,45 +393,36 @@ describe('copiaVideoInGalleria — il client vero soddisfa il tipo', () => {
     })
 })
 
-describe('annullaCopiaVideoInGalleria — se la RPC rifiuta, il file non resta in `gallery`', () => {
-    it('toglie il file e lo dice (successo osservabile)', async () => {
-        const s = storageFinto({})
-        const esito = await annullaCopiaVideoInGalleria(comeClient(s.client), [DESTINAZIONE], OPERAZIONE)
-        expect(esito).toEqual({ rimossi: 1, rimasti: 0 })
-        expect(s.rimozioni).toEqual([[DESTINAZIONE]])
-        const riga = log.logEvento.mock.calls.find((c) => c[2]?.esito === 'video-copia-annullata')
-        expect(riga?.[1]).toBe('info')
+describe('niente rimozione da qui: la copia orfana la toglie la spazzata, non il pubblicatore (spec §8.3)', () => {
+    // Senza commenti: le testate di questi due file NOMINANO `remove` e `annullaCopiaVideoInGalleria` per spiegare perché non ci sono, e
+    // un lock che le contasse come usi sarebbe rosso per il motivo sbagliato (o immunizzato dal proprio commento).
+    const codice = (rel: string) => mascheraSorgente(readFileSync(join(process.cwd(), rel), 'utf8')).senzaCommenti
+    const MODULI = ['src/lib/gallery/video-pubblicazione.ts', 'src/lib/gallery/pubblicazione-video-automatica.ts']
+
+    it.each(MODULI)('`%s` non rimuove niente da `gallery`: né una `remove` né `rimuoviEVerifica`', (rel) => {
+        const sorgente = codice(rel)
+        expect(sorgente, `${rel}: una remove sul percorso di un video che la RPC potrebbe aver già pubblicato`).not.toMatch(/\.remove\s*\(/)
+        expect(sorgente).not.toMatch(/\brimuoviEVerifica\b/)
+        expect(sorgente).not.toMatch(/\bannullaCopiaVideoInGalleria\b/)
     })
 
-    it('un file che NON esce GRIDA: `error`, perché nessuna riga lo nomina più', async () => {
-        // `remove` non lo nomina fra gli usciti e la verifica lo ritrova: «c'è ancora».
-        const s = storageFinto({ rimossi: [], ancora: [DESTINAZIONE] })
-        const esito = await annullaCopiaVideoInGalleria(comeClient(s.client), [DESTINAZIONE], OPERAZIONE)
-
-        expect(esito).toEqual({ rimossi: 0, rimasti: 1 })
-        const grido = log.logEvento.mock.calls.find(
-            (c) => c[2]?.esito === 'video-copia-rimasta-in-galleria',
-        )
-        expect(grido, 'un file di un minore senza riga che lo nomini si grida').toBeTruthy()
-        expect(grido?.[1]).toBe('error')
-        expect(String(grido?.[2]?.msg ?? '')).toContain('gallery')
-        // Nel log solo conteggi: il percorso porta l'uuid di chi ha caricato.
-        expect(JSON.stringify(grido?.[2])).not.toContain(`v-${INTENT}`)
+    it('il controllo vede davvero il sorgente (controllo positivo: la copia e il suo tetto ci sono)', () => {
+        expect(codice('src/lib/gallery/video-pubblicazione.ts')).toMatch(/\.copy\s*\(/)
+        expect(codice('src/lib/gallery/pubblicazione-video-automatica.ts')).toMatch(/copiaVideoInGalleria\s*\(/)
     })
 
-    it('«non so se c’è» vale «c’è»: un `remove` in errore non passa per riuscito', async () => {
-        const s = storageFinto({ removeError: { message: 'bucket not found' } })
-        const esito = await annullaCopiaVideoInGalleria(comeClient(s.client), [DESTINAZIONE], OPERAZIONE)
-        expect(esito).toEqual({ rimossi: 0, rimasti: 1 })
-        expect(
-            log.logEvento.mock.calls.some((c) => c[2]?.esito === 'video-copia-rimasta-in-galleria'),
-        ).toBe(true)
-    })
-
-    it('niente da annullare: lo Storage non si tocca affatto', async () => {
-        const s = storageFinto({})
-        const esito = await annullaCopiaVideoInGalleria(comeClient(s.client), [], OPERAZIONE)
-        expect(esito).toEqual({ rimossi: 0, rimasti: 0 })
-        expect(s.rimozioni).toEqual([])
+    it('e nessun altro file di `src/` chiama più `annullaCopiaVideoInGalleria`', () => {
+        const trovati: string[] = []
+        const visita = (cartella: string) => {
+            for (const voce of readdirSync(cartella, { withFileTypes: true })) {
+                const percorso = join(cartella, voce.name)
+                if (voce.isDirectory()) visita(percorso)
+                else if (/\.(ts|tsx)$/.test(voce.name) && /\bannullaCopiaVideoInGalleria\b/.test(mascheraSorgente(readFileSync(percorso, 'utf8')).senzaCommenti)) {
+                    trovati.push(percorso)
+                }
+            }
+        }
+        visita(join(process.cwd(), 'src'))
+        expect(trovati).toEqual([])
     })
 })

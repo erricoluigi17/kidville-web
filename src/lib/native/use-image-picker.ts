@@ -23,6 +23,13 @@ export interface UseImagePickerOptions {
   multiplo?: boolean
   /** Problema vero (permesso negato o errore), NON l'annullamento dell'utente. */
   onErrore?: (codice: 'permesso_negato' | 'errore', dettaglio?: CodiceFotocamera) => void
+  /**
+   * Il foglio nativo si è chiuso SENZA foto e SENZA errore: l'utente ha cambiato idea (o il plugin
+   * non ha restituito l'immagine). Non è un guasto e `scegliFotoNativa` non lo logga, ma la galleria
+   * vuole saperlo (spec video PR 2 §11.1: `annullato-fotocamera`) per non confondere «ho chiuso io»
+   * con «non è mai arrivato niente». Sul web non scatta mai: lì `apri()` clicca l'`<input>`.
+   */
+  onAnnullato?: () => void
 }
 
 export function useImagePicker({
@@ -30,14 +37,22 @@ export function useImagePicker({
   onFiles,
   multiplo = false,
   onErrore,
+  onAnnullato,
 }: UseImagePickerOptions) {
   const t = useTranslations('shared')
 
   const apri = useCallback(async () => {
     if (fotocameraNativaDisponibile()) {
+      // `scegliFotoNativa` risponde `[]` sia all'annullamento sia all'errore: li separa solo
+      // `onErrore`, che scatta (sincrono, prima del `return []`) per il guasto vero e MAI per
+      // l'annullamento. Si intercetta senza toglierlo al chiamante.
+      let conErrore = false
       const files = await scegliFotoNativa({
         multiplo,
-        onErrore,
+        onErrore: (codice, dettaglio) => {
+          conErrore = true
+          onErrore?.(codice, dettaglio)
+        },
         etichette: {
           intestazione: t('cameraTitolo'),
           scatta: t('cameraScatta'),
@@ -46,10 +61,11 @@ export function useImagePicker({
         },
       })
       if (files.length > 0) onFiles(files)
+      else if (!conErrore) onAnnullato?.()
       return
     }
     inputRef.current?.click()
-  }, [inputRef, onFiles, multiplo, onErrore, t])
+  }, [inputRef, onFiles, multiplo, onErrore, onAnnullato, t])
 
   return { apri }
 }

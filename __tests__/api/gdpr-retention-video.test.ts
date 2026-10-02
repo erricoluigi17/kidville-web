@@ -374,6 +374,15 @@ const h = vi.hoisted(() => ({
     erroreElenco: null as unknown,
     erroreElencoUscite: null as unknown,
 
+    // ── LA SCANSIONE DEGLI ESITI (T7) e i tipi di evento che nessuno consegna (#115) ──
+    /** Ogni chiamata alla scansione: con quale `operazione` e se le è arrivato un client. */
+    scansioni: [] as { operazione: string; haIlClient: boolean }[],
+    /** Ciò che la scansione risponde. Di default «girata e non c'era niente». */
+    esitoScansione: { esito: 'ok', candidati: 0, notificati: 0 } as { esito: string; candidati: number; notificati: number },
+    /** Le righe di `video_outbox` non consegnate e di un tipo che il registro non conosce (solo il tipo). */
+    tipiNonRegistrati: [] as { event_type: string }[],
+    erroreTipi: null as unknown,
+
     eventi: [] as { evento: string; livello: string; campi: Record<string, unknown> }[],
     staffNegato: null as unknown,
 }))
@@ -385,6 +394,21 @@ vi.mock('@/lib/logging/logger', () => ({
     logErrore: () => {},
     logOk: () => {},
 }))
+
+// La scansione degli esiti ha il suo collaudo (`video-esiti.test.ts`). Qui si prova il COLLEGAMENTO: che la route la chiami una volta, nel
+// punto giusto del giro, col nome del suo lavoro, e che riporti ciò che la scansione ha fatto. Il mock è PARZIALE: gli altri export del
+// modulo — che il pubblicatore, registrato nel registro dei destinatari, importa — restano quelli veri.
+vi.mock('@/lib/media/video/esiti', async (originale) => {
+    const vero = await originale<typeof import('@/lib/media/video/esiti')>()
+    return {
+        ...vero,
+        scansionaEsitiDiConversione: async (supabase: unknown, opzioni: { operazione: string }) => {
+            h.scansioni.push({ operazione: opzioni.operazione, haIlClient: supabase !== null && typeof supabase === 'object' })
+            h.sequenza.push({ tipo: 'scansione-esiti', valore: null })
+            return h.esitoScansione
+        },
+    }
+})
 
 vi.mock('@/lib/auth/require-staff', () => ({
     requireStaff: vi.fn(async () =>
@@ -473,6 +497,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
                                   error: null,
                               },
                     ).then(res)
+                }
+                if (colonne === 'event_type') {
+                    // Gli eventi non consegnati di un tipo che il registro non conosce (#115): solo il tipo.
+                    return Promise.resolve({ data: h.tipiNonRegistrati, error: h.erroreTipi }).then(res)
                 }
                 if (colonne === 'id') {
                     // La ricevuta dell'outbox: un CONTEGGIO, non delle righe.
@@ -576,6 +604,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { POST } from '@/app/api/gdpr/retention-video/route'
+import { redact } from '@/lib/logging/redact'
 import { DESTINATARI, destinatarioDi, TIPI_SOLO_DEL_RUNNER } from '@/lib/media/video/outbox'
 
 /** Un istante abbastanza vecchio da superare la grazia di 24 ore. */
@@ -631,6 +660,10 @@ beforeEach(() => {
     h.erroreReclamatiUscite = null
     h.senzaScadenzaPerIntent = 0
     h.erroreRicevuta = null
+    h.scansioni = []
+    h.esitoScansione = { esito: 'ok', candidati: 0, notificati: 0 }
+    h.tipiNonRegistrati = []
+    h.erroreTipi = null
     h.removeRisposta = null
     h.removeRispostaUscite = null
     h.ancoraNelBucket = new Set()
@@ -1596,6 +1629,78 @@ describe('la coda delle notifiche: svuotata con le RPC che esistono già', () =>
         expect(h.eventi.some((e) => e.campi.esito === 'outbox-in-ritardo')).toBe(false)
     })
 
+    // ── #115: un tipo che nessuno registra non lo prende più NESSUNO (il filtro è nel claim) — e il fatto che resti fermo e intatto non
+    // deve renderlo muto. Configurazione mancante = `error`, una riga per TIPO col suo conteggio.
+    describe('i tipi di evento che nessun destinatario conosce (#115)', () => {
+        const tipiGridati = () =>
+            h.eventi.filter((e) => e.campi.esito === 'outbox-senza-destinatario' && e.campi.operazione === 'video-retention')
+
+        it('un tipo non registrato fermo nella coda si grida a livello `error`, una riga per tipo, col tipo e il conteggio', async () => {
+            h.tipiNonRegistrati = [
+                { event_type: 'tipo.inesistente' },
+                { event_type: 'tipo.inesistente' },
+                { event_type: 'altro.mai-registrato' },
+            ]
+
+            const res = await POST(chiamata())
+
+            const righe = tipiGridati()
+            expect(righe.map((r) => r.livello)).toEqual(['error', 'error'])
+            expect(Object.fromEntries(righe.map((r) => [r.campi.tipo, r.campi.n_righe]))).toEqual({
+                'tipo.inesistente': 2,
+                'altro.mai-registrato': 1,
+            })
+            expect(await res.json()).toMatchObject({ ok: true, outbox_non_registrati: 3 })
+            expect(battito()[0].campi.n_outbox_non_registrati).toBe(3)
+        })
+
+        it('chiede gli eventi NON consegnati il cui tipo NON sta fra TUTTI i registrati — anche quelli del runner', async () => {
+            await POST(chiamata())
+
+            const lettura = h.query.find((q) => q.tabella === 'video_outbox' && q.colonne === 'event_type')
+            expect(lettura, 'la route non ha letto i tipi della coda').toBeDefined()
+            // Solo il tipo: nessun identificativo, nessun payload.
+            expect(lettura?.colonne).toBe('event_type')
+            expect(lettura?.clausole).toEqual(expect.arrayContaining([{ metodo: 'is', argomenti: ['sent_at', null] }]))
+            const esclusione = lettura?.clausole.find((c) => c.metodo === 'not')
+            expect(esclusione?.argomenti[0]).toBe('event_type')
+            expect(esclusione?.argomenti[1]).toBe('in')
+            const elenco = String(esclusione?.argomenti[2])
+            // Tutti i tipi del registro, `gallery.auto_publish` compreso: ricavare l'elenco dai soli tipi della retention scambierebbe le
+            // pubblicazioni del runner per eventi «senza destinatario».
+            for (const tipo of Object.keys(DESTINATARI)) expect(elenco, tipo).toContain(tipo)
+            expect(elenco).toContain('gallery.auto_publish')
+        })
+
+        it('a zero non scrive niente, e il battito dice zero', async () => {
+            await POST(chiamata())
+
+            expect(tipiGridati()).toEqual([])
+            expect(battito()[0].campi.n_outbox_non_registrati).toBe(0)
+        })
+
+        it('una lettura che fallisce non ferma il giro: `warn`, zero nel battito', async () => {
+            h.erroreTipi = { code: '57014', message: 'canceled' }
+
+            const res = await POST(chiamata())
+
+            expect(res.status).toBe(200)
+            expect(tipiGridati()).toEqual([])
+            expect(h.eventi.find((e) => e.campi.esito === 'outbox-tipi-non-letti')?.livello).toBe('warn')
+            expect(battito()[0].campi.n_outbox_non_registrati).toBe(0)
+        })
+
+        it('legge solo il tipo: nessun identificativo di intento finisce nella riga', async () => {
+            h.tipiNonRegistrati = [{ event_type: 'tipo.inesistente' }]
+
+            await POST(chiamata())
+
+            const campi = JSON.stringify(tipiGridati().map((r) => r.campi))
+            expect(campi).not.toContain(INTENT)
+            expect(campi).not.toContain('intent_id')
+        })
+    })
+
     it('la retention prende i tipi REGISTRATI tranne quelli del runner, e li passa NEL claim', async () => {
         await POST(chiamata())
 
@@ -2017,6 +2122,21 @@ describe('il battito, e cosa NON esce dai log', () => {
         expect(battito()[0].campi.esito).toBe('lettura-fallita')
     })
 
+    it('il battito sta sotto il tetto di chiavi di `redact` (secondario #117): nessuna chiave raccolta in silenzio, `ms` compreso', async () => {
+        // `redact` tiene 40 chiavi per oggetto e raccoglie le altre in `[…]`: il battito è l'unica riga interrogabile in SQL per trenta giorni,
+        // e chi supera il tetto perde proprio le ULTIME chiavi — `ms` in testa. Il tetto non è esportato: lo si prova guardando che
+        // l'oggetto, passato davvero da `redact`, non perda niente.
+        await POST(chiamata())
+
+        const campi = battito()[0].campi
+        const chiavi = Object.keys(campi)
+        expect(chiavi.length, 'il battito ha più di 40 chiavi: `redact` ne raccoglie in silenzio quelle oltre il tetto').toBeLessThanOrEqual(40)
+        const redatto = redact(campi) as Record<string, unknown>
+        expect('[…]' in redatto, 'redact ha raccolto delle chiavi del battito').toBe(false)
+        expect(Object.keys(redatto).length).toBe(chiavi.length)
+        expect(typeof redatto.ms).toBe('number')
+    })
+
     /**
      * ⚠️ QUESTA PROVA VALE QUANTO I RAMI CHE ATTRAVERSA, e la prima stesura ne
      * attraversava troppo pochi.
@@ -2171,50 +2291,67 @@ describe('il battito, e cosa NON esce dai log', () => {
     )
 })
 
-describe('il punto d’aggancio della scansione degli esiti di conversione (§8.5, T7)', () => {
-    // La scansione è dell'altra consegna della PR (`src/lib/media/video/esiti.ts`): qui c'è solo il POSTO in
-    // cui si collega, dichiarato in `scansionaEsitiConversione`. Queste prove fissano il valore «non
-    // collegata» apposta: chi collega la libreria DEVE cambiarle, e cambiandole prova il collegamento invece
-    // di dimenticarsene — un passo che tutti credono attivo e non lo è mai stato è esattamente ciò che la
-    // spec vuole evitare per gli esiti (un video fallito che nessuno notifica).
+describe('la scansione degli esiti di conversione, collegata alla retention (§8.5, T7)', () => {
+    // Fino a T7 qui c'era solo il POSTO in cui la scansione si sarebbe collegata, e tre prove che fissavano il valore «non collegata»
+    // apposta, perché chi collegava la libreria dovesse cambiarle e provare il collegamento invece di dimenticarsene. T7 le ha cambiate
+    // DI PROPOSITO (secondario #121): ora provano che la route la chiama davvero, dove e come. La scansione stessa — la marca, la
+    // notifica, i testi — la prova `video-esiti.test.ts`; qui è un doppio che registra le chiamate.
 
-    it('la risposta e il battito dichiarano `non-collegata`: nessuno può credere che gli esiti si notifichino', async () => {
+    it('la route chiama la scansione UNA volta, col nome del suo lavoro e il client del giro', async () => {
+        await POST(chiamata())
+
+        expect(h.scansioni).toEqual([{ operazione: 'video-retention', haIlClient: true }])
+    })
+
+    it('la risposta e il battito riportano ciò che la scansione ha fatto: eseguita, e quanti esiti ha notificato', async () => {
+        h.esitoScansione = { esito: 'ok', candidati: 3, notificati: 2 }
+
         const res = await POST(chiamata())
 
-        expect(await res.json()).toMatchObject({ ok: true, esiti_esito: 'non-collegata', esiti_notificati: 0 })
-        // Nel battito un booleano: la redazione dei log è a lista bianca e una stringa sotto una chiave
-        // fuori elenco uscirebbe come «[redatto:str/13]».
-        expect(battito()[0].campi).toMatchObject({ esiti_collegata: false, n_esiti_notificati: 0 })
+        expect(await res.json()).toMatchObject({ ok: true, esiti_esito: 'ok', esiti_notificati: 2 })
+        // Nel battito un booleano: la redazione dei log è a lista bianca e una stringa sotto una chiave fuori elenco uscirebbe come
+        // «[redatto:str/13]». Vero perché la scansione è girata, anche a zero notifiche.
+        expect(battito()[0].campi).toMatchObject({ esiti_eseguita: true, n_esiti_notificati: 2 })
         expect('esiti_esito' in battito()[0].campi).toBe(false)
+        expect('esiti_collegata' in battito()[0].campi).toBe(false)
     })
 
-    it('finché non è collegata non fa NIENTE: nessuna RPC e nessuna query oltre a quelle degli altri passi', async () => {
+    it('gira DOPO la coda delle notifiche e PRIMA della riconciliazione, che conta gli esiti dopo che la scansione ha lavorato', async () => {
         await POST(chiamata())
 
-        // Le RPC del giro, e basta: la scansione non ne aggiunge una (marcare un esito è una RPC, e farlo
-        // dal punto d'aggancio vuoto sarebbe implementarla senza la libreria).
-        expect(h.rpc.map((r) => r.nome)).toEqual([
-            'video_galleria_flusso_vecchio_revoca',
-            'video_intent_scadi_non_pubblicato',
-            'video_retention_scadenze',
-            'video_intenti_minimizza',
-            'video_outbox_claim',
-            'video_riconciliazione',
-        ])
-        // E nessun log suo: a ogni giro, ogni dieci minuti, sarebbe rumore.
-        expect(h.eventi.some((e) => String(e.campi.esito).startsWith('esiti-'))).toBe(false)
+        const passi = h.sequenza.map((s) => s.tipo)
+        const coda = passi.indexOf('rpc:video_outbox_claim')
+        const scansione = passi.indexOf('scansione-esiti')
+        const riconciliazione = passi.indexOf('rpc:video_riconciliazione')
+        expect(coda, 'la coda non è girata').toBeGreaterThanOrEqual(0)
+        expect(scansione, 'la scansione non è girata').toBeGreaterThan(coda)
+        expect(riconciliazione, 'la riconciliazione non è girata').toBeGreaterThan(scansione)
     })
 
-    it('`esiti_da_notificare` della riconciliazione è il segnale che nessuno li notifica: sta nel battito', async () => {
+    it('una scansione che non riesce NON ferma il giro (la riconciliazione gira) ma lo rende un 500: un esito non notificato non è un «ok»', async () => {
+        h.esitoScansione = { esito: 'lettura-fallita', candidati: 0, notificati: 0 }
+
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(await res.json()).toMatchObject({ ok: false, motivo: 'esiti-fallito', esiti_esito: 'lettura-fallita' })
+        expect(battito()[0].campi).toMatchObject({ esito: 'esiti-fallito', esiti_eseguita: true })
+        // Il passo dopo gira lo stesso: la scansione non è uno di quelli su cui si regge tutto il resto.
+        expect(h.rpc.map((r) => r.nome)).toContain('video_riconciliazione')
+    })
+
+    it('`esiti_da_notificare` della riconciliazione resta nel battito accanto a ciò che la scansione ha notificato', async () => {
         h.riconciliazione = { ok: true, conclusi_senza_scadenza: 0, outbox_in_quarantena: 0, esiti_da_notificare: 2 }
+        h.esitoScansione = { esito: 'ok', candidati: 2, notificati: 2 }
+
         await POST(chiamata())
 
-        expect(battito()[0].campi).toMatchObject({ esiti_collegata: false, n_esiti_da_notificare: 2 })
+        expect(battito()[0].campi).toMatchObject({ esiti_eseguita: true, n_esiti_notificati: 2, n_esiti_da_notificare: 2 })
     })
 })
 
 describe('il giro, in ordine (testata del file C, §15)', () => {
-    it('flusso vecchio → non pubblicati → scadenze → originali → uscite → orfani → minimizzazione → coda → riconciliazione', async () => {
+    it('flusso vecchio → non pubblicati → scadenze → originali → uscite → orfani → minimizzazione → coda → esiti → riconciliazione', async () => {
         h.scaduti = [{ id: JOB_A, original_path: PATH_A }]
         h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
         h.albero = { '': [{ name: 'orfano.mov', id: 'o1', created_at: VECCHIO }] }
@@ -2238,6 +2375,7 @@ describe('il giro, in ordine (testata del file C, §15)', () => {
             `remove:${BUCKET_USCITE}`,
             'rpc:video_intenti_minimizza',
             'rpc:video_outbox_claim',
+            'scansione-esiti',
             'rpc:video_riconciliazione',
         ])
     })
@@ -2261,7 +2399,8 @@ describe('il giro, in ordine (testata del file C, §15)', () => {
             orfani_uscite_esito: 'ok',
             intenti_minimizzati: 0,
             outbox_esito: 'ok',
-            esiti_esito: 'non-collegata',
+            outbox_non_registrati: 0,
+            esiti_esito: 'ok',
         })
         expect(battito()[0].campi.esito).toBe('ok')
     })

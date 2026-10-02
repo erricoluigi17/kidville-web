@@ -28,13 +28,19 @@
  * `ritentativi.ts`, non indovina dal nome.
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * PERCHÉ DIECI NOMI E NON UNO SOLO. La tentazione è un `CONVERSION_FAILED` unico:
+ * PERCHÉ UNDICI NOMI E NON UNO SOLO. La tentazione è un `CONVERSION_FAILED` unico:
  * costa meno e dice di meno. Ma `video_jobs.error_code` è la colonna su cui si
- * risponde alla domanda «perché i video non escono più?», e le dieci cause qui
- * sotto si riparano in dieci posti diversi — lo Storage che non rilascia la build, una
+ * risponde alla domanda «perché i video non escono più?», e le undici cause qui
+ * sotto si riparano in undici posti diversi — lo Storage che non rilascia la build, una
  * build che non torna, il Sandbox che non parte, lo Storage che rifiuta. Un
  * codice unico le renderebbe indistinguibili in SQL, che è il modo in cui in questo
  * progetto un `403` è rimasto per mesi senza il suo «the domain is not verified».
+ *
+ * L'undicesimo, `ORIGINALE_DIVERSO`, è dalla PR 2 (spec §10.4) e non nasce qui: lo dichiara
+ * già il contratto (`../contratto.ts`) e lo scrive già SQL, quando la dimensione dell'originale
+ * arrivato non è quella dichiarata. Qui lo produce una SECONDA fonte, il Sandbox: lo
+ * `sha256` dichiarato all'apertura (caricamento nativo) non coincide con quello del file
+ * scaricato. Il guasto è del FILE — la classe è `file`, e non si ritenta mai.
  */
 export const CODICI_RUNNER_VIDEO = [
   /**
@@ -67,6 +73,12 @@ export const CODICI_RUNNER_VIDEO = [
   'OUTPUT_UPLOAD_FAILED',
   /** Il tetto di tempo della sorveglianza è scaduto con la conversione ancora in corso. */
   'CONVERSION_TIMEOUT',
+  /**
+   * Lo SHA-256 dell'originale scaricato nel Sandbox non è quello dichiarato all'apertura
+   * (`video_jobs.sha256_dichiarato`, solo `put-nativo`): il file che è arrivato non è quello che
+   * l'app aveva detto di caricare. Si controlla PRIMA di convertire, e non si ritenta mai.
+   */
+  'ORIGINALE_DIVERSO',
 ] as const
 
 export type CodiceRunnerVideo = (typeof CODICI_RUNNER_VIDEO)[number]

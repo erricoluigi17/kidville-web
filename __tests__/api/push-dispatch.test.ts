@@ -73,6 +73,7 @@ vi.mock('@/lib/push/native-push', () => native)
 
 import { POST } from '@/app/api/push/dispatch/route'
 import { TIPI_AVVISO_CODA } from '@/lib/fatture-coda/avvisi-testi'
+import { TIPI_PUSH_STAFF } from '@/lib/push/dispatch'
 
 function req(secret?: string): Request {
   return new Request('http://localhost/api/push/dispatch', {
@@ -498,6 +499,44 @@ describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fattu
     expect(TIPI_AVVISO_CODA.length).toBeGreaterThan(0)
     expect(push.sendPush).toHaveBeenCalledTimes(TIPI_AVVISO_CODA.length)
     expect(body.data).toMatchObject({ inviate: TIPI_AVVISO_CODA.length, escluse_staff: 0 })
+  })
+
+  // I DUE AVVISI DEI VIDEO (PR 2, T7, spec §7): l'esito a chi ha caricato — che può essere la Direzione o la segreteria — e l'avviso
+  // di una liberatoria persa. Il testo non nomina mai nessuno (solo frasi fisse e numeri), quindi entrano in push anche per lo staff.
+  // Provati per OGNI ruolo dello staff con un dispositivo: togliere un tipo da `TIPI_PUSH_STAFF`, o un ruolo, diventa rosso.
+  it.each(['admin', 'coordinator', 'segreteria'])(
+    '%s con un dispositivo: `video_esito` e `video_liberatoria_revocata` partono in push, un tipo staff qualunque no',
+    async (ruolo) => {
+      const utenti = { role: ruolo, ruolo }
+      h.state.queues = {
+        notifiche: [
+          {
+            data: [
+              riga('n-esito', 'u-staff', 'video_esito', utenti),
+              riga('n-lib', 'u-staff', 'video_liberatoria_revocata', utenti),
+              riga('n-onb', 'u-staff', 'onboarding_completato', utenti),
+            ],
+            error: null,
+          },
+          PRESA, // la presa atomica: prende tutte le candidate
+        ],
+        push_subscriptions: [{ data: [subWeb('s-staff', 'u-staff')], error: null }],
+      }
+      const body = await (await POST(req('test-secret'))).json()
+      const titoli = push.sendPush.mock.calls.map((c) => (c[1] as { title: string }).title).sort()
+      expect(titoli).toEqual(['titolo-n-esito', 'titolo-n-lib'])
+      expect(idsMarcati()).toEqual(['n-esito', 'n-lib', 'n-onb'])
+      expect(body.data).toMatchObject({ inviate: 2, notifiche: 3, escluse_staff: 1 })
+    },
+  )
+
+  it('l’elenco dei tipi dello staff in push nomina i due avvisi dei video', () => {
+    expect(TIPI_PUSH_STAFF.has('video_esito')).toBe(true)
+    expect(TIPI_PUSH_STAFF.has('video_liberatoria_revocata')).toBe(true)
+    // E nessun altro tipo nuovo è entrato per sbaglio: i tipi del repo che mettono un nome nel corpo restano fuori.
+    for (const tipo of ['onboarding_completato', 'credenziali', 'assenza_comunicata', 'allergie_aggiornate']) {
+      expect(TIPI_PUSH_STAFF.has(tipo), tipo).toBe(false)
+    }
   })
 
   it('una segreteria SENZA dispositivi: la riga si marca come sempre e non si conta fra le escluse', async () => {

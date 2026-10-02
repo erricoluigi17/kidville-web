@@ -249,5 +249,6 @@
   "galleryVideoRiprendi": "Riprendi",
   "galleryVideoRimuovi": "Rimuovi",
   "galleryVideoAvanzamento": "Avanzamento del caricamento",
-  "galleryVideoAvviato": "Il video è in preparazione. Puoi chiudere l’app: lo ritrovi qui quando è pronto."
+  "galleryVideoAvviato": "Il video è in preparazione. Puoi chiudere l’app: lo ritrovi qui quando è pronto.",
+  "galleryVideoRiprovaAutomatica": "Il problema è nostro, non del video: lo stiamo riprovando in automatico. Non serve caricarlo di nuovo, e puoi chiudere l’app."
 }

@@ -75,6 +75,12 @@ interface Allegato {
   /** Byte spediti su byte totali, in percentuale. Solo per la barra. */
   pct: number;
   codice: CodiceMostratoVideo | null;
+  /**
+   * Il server sta ritentando la conversione da solo, dopo un guasto NOSTRO: la riga dice
+   * «problema nostro, non del video: riproviamo in automatico» invece di sembrare una
+   * coda ferma. Vale solo mentre il filmato è in coda o in preparazione (`testoFase`).
+   */
+  riprova: boolean;
   /** Il collegamento è già finito nell'articolo? Due righe non le ha chieste nessuno. */
   collegato: boolean;
   /** Veniva da un rientro nella pagina, non da un file scelto adesso. */
@@ -279,6 +285,11 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
                   // messaggio d'errore continuerebbe a promettere qualcosa.
                   pct: job.avanzamento ?? a.pct,
                   codice: fase === 'errore' ? job.codice : null,
+                  // «Lo stiamo riprovando» lo dice il server (`riprovaAutomatica`, calcolato
+                  // dalla route da stato e tentativo). La riga lo mostra solo in coda e in
+                  // preparazione — lo decide `testoFase` — quindi su un intento ritirato
+                  // (`errore`) il flag può restare acceso e nessuno lo legge.
+                  riprova: job.riprovaAutomatica,
                 }
               : a,
           ),
@@ -323,7 +334,7 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
         if (!ancora()) return;
         if (apertura.ok && apertura.statoIntent === 'published') { await archivio.elimina(riga.jobId); continue; }
         aggiorna(prec => [...prec, { chiave: riga.jobId, intentId: riga.intentId, jobId: riga.jobId, revisione: apertura.ok ? apertura.revisione : 1,
-          fase: 'conversione', pct: 0, codice: null, collegato: false, riaperto: true }]);
+          fase: 'conversione', pct: 0, codice: null, riprova: false, collegato: false, riaperto: true }]);
         const fallisci = (codice: CodiceMostratoVideo) => { if (ancora()) aggiorna(prec => prec.map(a => a.jobId === riga.jobId ? { ...a, fase: 'errore', codice } : a)); };
         if (!apertura.ok) { fallisci(apertura.codice); continue; }
         if (apertura.jobId !== riga.jobId || apertura.intentId !== riga.intentId || ['cancelled', 'superseded'].includes(apertura.statoIntent)
@@ -385,6 +396,7 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
           fase: 'preparazione',
           pct: 0,
           codice: null,
+          riprova: false,
           collegato: false,
           riaperto: false,
         },
@@ -511,10 +523,14 @@ export function NewsVideoAllegati({ userId, scuolaId, tuttiSedi, onPronto }: Pro
         return t('videoStatoPreparazione');
       case 'caricamento':
         return t('videoStatoCaricamento', { pct: a.pct });
+      // Mentre il server ritenta da solo dopo un guasto NOSTRO, la riga lo dice al posto della
+      // frase di fase: «il filmato è in attesa» direbbe che la coda scorre, e non scorre — e la
+      // persona non deve capire da sola che il problema non è del suo video. La riga resta un
+      // `role="status"`: il cambio di frase viene annunciato senza interrompere nessuno.
       case 'in_coda':
-        return t('videoStatoInCoda');
+        return a.riprova ? t('videoStatoRiprovaAutomatica') : t('videoStatoInCoda');
       case 'conversione':
-        return t('videoStatoConversione');
+        return a.riprova ? t('videoStatoRiprovaAutomatica') : t('videoStatoConversione');
       case 'pronto':
         return t('videoStatoPronto');
       case 'errore':

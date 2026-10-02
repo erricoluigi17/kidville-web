@@ -28,14 +28,20 @@ import {
 } from '@/lib/media/video/runner/preparazione'
 
 /**
- * LA PREPARAZIONE — il pezzo che decide se un binario preso da Internet può girare
- * sui video dei bambini.
+ * LA PREPARAZIONE — il pezzo che decide se due binari FFmpeg possono girare sui video
+ * dei bambini. Non vengono da Internet: stanno nel nostro bucket privato `video_build`,
+ * e lo script li scarica con due URL firmati e ne verifica le impronte prima di
+ * renderli eseguibili.
  *
  * Qui non c'è nessun doppio, e non è una comodità: sono funzioni pure su stringhe.
  * Un test che passa una stringa e ne guarda un'altra non può essere verde «con e
  * senza la correzione» — è la trappola che in questo repo ha già prodotto un mock
- * piatto verde in entrambe le direzioni. L'unica cosa che qui NON si prova è che
- * `sh` interpreti lo script come noi crediamo: quella misura vive nel Sandbox vero.
+ * piatto verde in entrambe le direzioni. Che `sh` interpreti lo script come noi
+ * crediamo NON si prova qui: con una shell vera e i comandi di rete finti lo prova
+ * `video-runner-preparazione-shell.test.ts`, e che `curl`, `gzip` e `sha256sum` VERI
+ * si comportino come i finti lo ha provato F1 nel Sandbox vero il 02/10/2026
+ * (provvista dal bucket in 8,3 s, uscita 0: sezione F1 di
+ * `docs/superpowers/plans/2026-10-02-video-pr1-hotfix-ffmpeg.md`).
  */
 
 const JOB = '3f2a61b4-1c7d-4e58-9a0b-2d4c6e8f0a12'

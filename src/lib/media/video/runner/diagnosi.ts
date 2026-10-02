@@ -36,9 +36,13 @@ import { senzaUrl } from './script'
  *  · i **metadati del filmato**. Il banner d'ingresso di ffmpeg li stampa tutti, e un
  *    iPhone ci scrive `com.apple.quicktime.location.ISO6709`: le coordinate GPS di dove
  *    sono stati ripresi i bambini. Con loro `creation_time`, `make`, `model`,
- *    `software`, `title`, `comment`, `artist` — testo libero o ciò che identifica un
- *    apparecchio. Spariscono i blocchi `Metadata:` interi e, fuori dai blocchi (la coda
- *    di uno stderr può cominciare a metà), le righe che nominano uno di quei campi.
+ *    `manufacturer`, `software`, `title`, `comment`, `artist` — testo libero o ciò che
+ *    identifica un apparecchio. Spariscono i blocchi `Metadata:` interi e, fuori dai
+ *    blocchi (la coda di uno stderr può cominciare a metà), le righe che nominano uno di
+ *    quei campi. E spariscono le **coordinate per VALORE**, ovunque compaiano: un valore
+ *    può stare dove il nome del tag non c'è (la riga di continuazione di un tag su più
+ *    righe, il resto di una riga tagliata) e la sua forma — due numeri con segno attaccati,
+ *    `+40.8518+014.2681/` — non si confonde con nient'altro che ffmpeg scriva.
  *  · il **progresso** di ffmpeg e di curl, che riscrive la stessa riga con `\r`: di una
  *    riga fatta di cento aggiornamenti si tiene l'ultimo, che è quello che dice a che
  *    punto era arrivato.
@@ -94,18 +98,47 @@ const TRACCIA_METADATO_PERSONALE = /ISO6709|com\.apple\.|creation_time|creationd
  * nel suo JSON. `location` porta anche il suffisso della lingua (`location-eng`).
  *
  * Il nome del tag può avere un prefisso puntato: `com.android.model: …`,
- * `format.tags.location=…`, `TAG:com.android.model=…`. È lo stesso tag col nome per
- * esteso (lo scrivono certi apparecchi Android, e ffprobe in formato `flat` lo prefissa
- * col percorso), e a inizio riga identifica l'apparecchio o il luogo come la chiave nuda.
+ * `com.android.manufacturer: …`, `format.tags.location=…`, `TAG:com.android.model=…`. È lo
+ * stesso tag col nome per esteso (lo scrivono certi apparecchi Android, e ffprobe in
+ * formato `flat` lo prefissa col percorso), e a inizio riga identifica l'apparecchio o il
+ * luogo come la chiave nuda. `manufacturer` è la marca come la scrive Android, accanto a
+ * `model`: l'una senza l'altra dice già che telefono ha ripreso il bambino.
  *
  * In posizione di chiave e non «ovunque nella riga» di proposito: `make`, `model`,
- * `title` o `comment` compaiono in frasi qualunque di un errore, e una riga diagnostica
- * persa per una parola comune è proprio il difetto che questo file esiste per evitare.
- * Per lo stesso motivo il prefisso puntato conta solo a inizio riga: un nome come
- * `x.model` dentro una frase d'errore non è una chiave.
+ * `manufacturer`, `title` o `comment` compaiono in frasi qualunque di un errore, e una
+ * riga diagnostica persa per una parola comune è proprio il difetto che questo file esiste
+ * per evitare. Per lo stesso motivo il prefisso puntato conta solo a inizio riga: un nome
+ * come `x.model` dentro una frase d'errore non è una chiave.
  */
 const TAG_METADATO_PERSONALE =
-  /^\s*(?:TAG:)?["']?(?:[\w-]+\.)*(?:location(?:-\w+)?|make|model|software|title|comment|artist)["']?\s*[:=]/i
+  /^\s*(?:TAG:)?["']?(?:[\w-]+\.)*(?:location(?:-\w+)?|make|model|manufacturer|software|title|comment|artist)["']?\s*[:=]/i
+
+/**
+ * Una coordinata GPS in forma ISO 6709, riconosciuta dal VALORE e non dal nome del tag.
+ *
+ * È l'altra metà della difesa sui metadati. Le righe che NOMINANO il tag (`ISO6709`,
+ * `location`, `com.apple.…`) spariscono per nome, ma un valore può stare dove il nome non
+ * c'è: la riga di continuazione di un tag su più righe, il resto di una riga tagliata a
+ * metà, una riga che uno strumento scrive per conto proprio. Ed è il dato che nei log non
+ * deve stare, perché dice dove sono stati ripresi dei bambini.
+ *
+ * La forma è inconfondibile: due numeri CON SEGNO attaccati — latitudine di due cifre,
+ * longitudine di tre, con decimali facoltativi — poi una quota facoltativa con il suo
+ * segno, un sistema di riferimento facoltativo (`CRSWGS_84`) e la `/` finale:
+ * `+40.8518+014.2681/`, `+47.6543+019.8765+123.456/`, `-33.8688-070.6693-012.500/`.
+ *
+ * Perché non dà falsi positivi sulle righe di ffmpeg: servono DUE segni, a due e a tre
+ * cifre una dopo l'altra, e in `time=00:00:05.00`, `bitrate=3919.6kbits/s`, `speed=1.2x`,
+ * `fps= 49`, `q=-1.0` o `start: -0.023220` ne compare uno solo, o nessuno, e mai con
+ * quelle cifre. In più `senzaCoordinate` maschera solo se il testo trovato ha un punto
+ * decimale o la `/` finale: `+12-345` da solo è un numero qualunque.
+ *
+ * Il flag `g` serve a `replace`, che riparte da zero a ogni chiamata (mai con `test` o
+ * `exec`). Nessun quantificatore annidato su un insieme che si sovrappone: il tempo è
+ * lineare anche su milioni di segni e di cifre.
+ */
+const COORDINATE_ISO6709 =
+  /[+-]\d{2}(?:\.\d+)?[+-]\d{3}(?:\.\d+)?(?:[+-]\d+(?:\.\d+)?)?(?:CRS\w+)?\/?/g
 
 /**
  * Una credenziale in forma di JWT: tre segmenti base64url, e il primo comincia sempre
@@ -170,6 +203,17 @@ function senzaSegreti(riga: string): string {
 }
 
 /**
+ * Sostituisce con `[coordinate]` ogni coordinata GPS in forma ISO 6709 (vedi
+ * `COORDINATE_ISO6709`), in qualunque punto della riga. Maschera solo ciò che ha un punto
+ * decimale o la `/` finale: due numeri con segno e basta non sono un luogo.
+ */
+function senzaCoordinate(riga: string): string {
+  return riga.replace(COORDINATE_ISO6709, (trovata: string) =>
+    trovata.includes('.') || trovata.endsWith('/') ? '[coordinate]' : trovata,
+  )
+}
+
+/**
  * Ripulisce un testo diagnostico e ne restituisce le ULTIME `max` battute.
  *
  * `max` è il tetto del RISULTATO, ellissi compresa: il risultato non lo supera mai.
@@ -190,7 +234,8 @@ function senzaSegreti(riga: string): string {
  *     deve poter far scattare le regole sulle righe;
  *  3. riga per riga: del progresso `\r` resta l'ultimo segmento, le righe vuote
  *     spariscono, i blocchi `Metadata:` e le righe dei metadati personali spariscono;
- *  4. sulle righe rimaste, via JWT e `token=`/`signature=`/`apikey=`;
+ *  4. sulle righe rimaste, via JWT, `token=`/`signature=`/`apikey=` e le coordinate GPS
+ *     (`[coordinate]`, per valore);
  *  5. si tengono le ultime `max` battute, con `…` davanti se si è tagliato.
  */
 export function codaDiagnostica(testo: string, max: number): string {
@@ -219,7 +264,7 @@ export function codaDiagnostica(testo: string, max: number): string {
     }
     if (TRACCIA_METADATO_PERSONALE.test(riga) || TAG_METADATO_PERSONALE.test(riga)) continue
 
-    righe.push(senzaSegreti(riga).trimEnd())
+    righe.push(senzaCoordinate(senzaSegreti(riga)).trimEnd())
   }
 
   const pulito = righe.join('\n').trim()

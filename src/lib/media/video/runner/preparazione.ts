@@ -273,15 +273,18 @@ export function inventarioDellaBuild(stdout: string): InventarioBuild {
 /**
  * Che cosa manca, rispetto a ciò che `build.ts` dichiara indispensabile.
  *
- * ─── PERCHÉ SI CONTROLLA, INVECE DI FIDARSI DELLO SHA ────────────────────────
+ * ─── PERCHÉ SI CONTROLLA, INVECE DI FIDARSI DELLE IMPRONTE ───────────────────
  *
- * Lo SHA-256 dimostra che l'archivio è quello atteso; non dimostra che l'archivio
- * atteso sappia fare ciò che serve. Sono due domande diverse e la seconda ha già
- * avuto la sua risposta sbagliata in questo repo: `brew install ffmpeg` produce un
- * binario che passa qualunque verifica di integrità e **non ha `zscale`**, perché
- * Homebrew non compila libzimg — e `zscale` è il primo filtro della catena HDR→SDR.
- * Il guasto non si vede all'installazione: si vede al primo video HDR di un
- * genitore, con un «No such filter» dentro uno stderr che nessuno guarda.
+ * Dal 2026-10-02 le impronte SHA-256 che lo script verifica sono quattro: quelle dei
+ * due `.gz` scaricati dal nostro bucket e quelle dei due binari che ne escono (non più
+ * quella dell'archivio, che è soltanto la provenienza). Dimostrano che i binari sono
+ * quelli attesi; non dimostrano che i binari attesi sappiano fare ciò che serve. Sono
+ * due domande diverse e la seconda ha già avuto la sua risposta sbagliata in questo
+ * repo: `brew install ffmpeg` produce un binario che passa qualunque verifica di
+ * integrità e **non ha `zscale`**, perché Homebrew non compila libzimg — e `zscale` è
+ * il primo filtro della catena HDR→SDR. Il guasto non si vede all'installazione: si
+ * vede al primo video HDR di un genitore, con un «No such filter» dentro uno stderr
+ * che nessuno guarda.
  *
  * La testata di `build.ts` lo mette per iscritto: «chi risolve un binario verifica
  * questa lista e si rifiuta di partire se manca qualcosa, invece di scoprirlo per

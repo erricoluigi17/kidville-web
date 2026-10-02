@@ -169,10 +169,20 @@ export function VideoInLavorazione({ righe, onPubblica, onRiprendi, onRimuovi, r
                             </p>
 
                             {/* Un messaggio su una fase che NON è un fallimento: il 401 di una
-                                sessione scaduta mentre i byte partivano, per esempio. Dice che
-                                cosa toglie di mezzo l'ostacolo, e non è un errore rosso. */}
+                                sessione scaduta mentre i byte partivano, per esempio, oppure
+                                «il problema è nostro, lo stiamo riprovando» quando il server
+                                ritenta da solo la conversione. Dice che cosa toglie di mezzo
+                                l'ostacolo — o che non serve fare niente — e non è un errore
+                                rosso.
+                                `aria-live="polite"` perché compare e sparisce da solo, minuti
+                                dopo, senza che nessuno tocchi niente: chi usa uno screen reader
+                                deve sapere che la coda non è ferma, e che il problema non è suo,
+                                senza che il messaggio interrompa ciò che sta facendo. */}
                             {r.messaggio && r.fase !== 'fallito' && (
-                                <p className="mt-1 font-maven text-[11px] leading-snug text-kidville-sub">
+                                <p
+                                    aria-live="polite"
+                                    className="mt-1 font-maven text-[11px] leading-snug text-kidville-sub"
+                                >
                                     {r.messaggio}
                                 </p>
                             )}

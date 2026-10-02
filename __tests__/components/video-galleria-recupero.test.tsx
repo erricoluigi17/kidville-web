@@ -16,6 +16,9 @@ vi.mock('@/lib/media/video/upload', () => ({
   potaArchivioCaricamenti: vi.fn(),
 }))
 import { useVideoGalleria } from '@/components/features/gallery/use-video-galleria'
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile'
+import itServizi from '../../messages/it/teacherServizi.json'
+import itShared from '../../messages/it/shared.json'
 const OWNER = '11111111-1111-4111-8111-111111111111'
 const SEDE = '22222222-2222-4222-8222-222222222222'
 const INTENT = '33333333-3333-4333-8333-333333333333'
@@ -27,12 +30,17 @@ let needsUpload: boolean
 let perdeCaricato: boolean
 let perdeConferma: boolean
 let azioni: string[]
+/** Il flag che la route calcola da `attempt`: il job sta riprovando da solo dopo un guasto nostro. */
+let riprovaAutomatica: boolean
+/** Il codice MOSTRABILE di un job fallito (la route traduce quello interno). */
+let codiceJob: string | null
 const stato = () => ({ intentId: INTENT, revisione: 1, statoIntent: intentStatus, aggiornatoIl: new Date().toISOString(),
-  job: [{ jobId: JOB, intentId: INTENT, canale: 'gallery', stato: jobStatus, codice: null, avanzamento: null, aggiornatoIl: new Date().toISOString() }] })
+  job: [{ jobId: JOB, intentId: INTENT, canale: 'gallery', stato: jobStatus, codice: codiceJob, riprovaAutomatica, avanzamento: null, aggiornatoIl: new Date().toISOString() }] })
 const opts = { utenteId: OWNER, sede: SEDE, classi: [], onPubblicato: vi.fn() }
 beforeEach(() => {
   vi.clearAllMocks()
   intentStatus = 'pending'; jobStatus = 'awaiting_upload'; needsUpload = false; perdeCaricato = false; perdeConferma = false; azioni = []
+  riprovaAutomatica = false; codiceJob = null
   h.righe = [{ jobId: JOB, intentId: INTENT, ownerId: OWNER, scuolaId: SEDE, canale: 'gallery', chiaveIdempotenza: 'key', stato: 'caricato', nome: 'sintetico.mp4', dimensioneByte: 3, mime: 'video/mp4', coordinate: COORD }]
   h.carica.mockResolvedValue({ esito: 'caricato', jobId: JOB, byteCaricati: 3 })
   h.elimina.mockImplementation(async (id: string) => { h.righe = h.righe.filter(r => r.jobId !== id) })
@@ -193,4 +201,116 @@ it.each(['unmount', 'logout'])('un rinnovo firma tardivo dopo %s non consegna cr
   expect(intestazioni).toBeNull()
   expect(negato).toBe(true)
   expect(azioni).toEqual([])
+})
+
+/**
+ * «IL PROBLEMA È NOSTRO: LO STIAMO RIPROVANDO» — il messaggio nasce QUI, nell'hook.
+ *
+ * Il server dice `riprovaAutomatica` (la route lo calcola da stato e `attempt`); lo schermo lo
+ * traduce in una frase solo mentre il job sta in coda o in lavorazione. Due strade portano lì:
+ *  · il RIENTRO (`segui`), per chi riapre l'app a metà di un ritentativo e deve leggerlo subito;
+ *  · il POLLING (`applicaStato`), per chi è rimasto a guardare mentre il job passa da
+ *    `processing` a `queued` e ritorna.
+ * Ogni test di ASSENZA aspetta prima una PRESENZA (la fase giusta a schermo): un `waitFor`
+ * su un'assenza passa prima che i dati arrivino, ed è verde con e senza il difetto.
+ */
+describe('ritentativo automatico: la scheda lo dice, e smette quando non c’è più', () => {
+  const RIPROVA = itServizi.galleryVideoRiprovaAutomatica
+
+  /** Lancia UN giro del polling, come farebbe l'orologio: la callback registrata dall'hook. */
+  async function giroDiPolling() {
+    const registrate = vi.mocked(usePollingVisibile).mock.calls
+    const callback = registrate[registrate.length - 1]?.[0]
+    if (!callback) throw new Error('l’hook non ha registrato nessun polling')
+    await act(async () => { await callback() })
+  }
+
+  const polling = () => vi.mocked(usePollingVisibile).mock.calls.at(-1)?.[2]
+
+  it.each([
+    ['queued', 'in-coda'],
+    ['processing', 'conversione'],
+  ] as const)('al rientro con un job %s in ritentativo la scheda lo dice SUBITO (%s)', async (stato, fase) => {
+    intentStatus = 'confirmed'; jobStatus = stato; riprovaAutomatica = true
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe(fase))
+    expect(result.current.righe[0].messaggio).toBe(RIPROVA)
+  })
+
+  it('senza il flag la stessa fase NON porta nessun messaggio', async () => {
+    intentStatus = 'confirmed'; jobStatus = 'queued'; riprovaAutomatica = false
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    // Prima la PRESENZA della fase, poi l'assenza del messaggio.
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('in-coda'))
+    expect(result.current.righe[0].messaggio).toBeNull()
+  })
+
+  it('un video pronto non porta il messaggio, anche se arriva dopo i ritentativi', async () => {
+    intentStatus = 'confirmed'; jobStatus = 'ready'; riprovaAutomatica = false
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('pronto'))
+    expect(result.current.righe[0].messaggio).toBeNull()
+  })
+
+  it('esauriti i tentativi la scheda legge la frase FINALE, non «lo stiamo riprovando»', async () => {
+    intentStatus = 'confirmed'; jobStatus = 'failed'; codiceJob = 'VIDEO_GUASTO_NOSTRO'
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('fallito'))
+    expect(result.current.righe[0].messaggio).toBe(itShared.erroreVideoGuastoNostro)
+    expect(result.current.righe[0].messaggio).not.toBe(RIPROVA)
+  })
+
+  it('MENTRE si guarda: il messaggio compare quando il job torna in coda e sparisce quando finisce', async () => {
+    // Il primo giro (rientro) trova il job in lavorazione e senza problemi…
+    intentStatus = 'confirmed'; jobStatus = 'processing'
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('conversione'))
+    expect(result.current.righe[0].messaggio).toBeNull()
+    expect(polling(), 'durante l’attesa il polling deve restare acceso').toMatchObject({ attivo: true })
+
+    // …il runner ha un guasto nostro e rimette il job in coda: attempt 1, in attesa di 5 minuti.
+    jobStatus = 'queued'; riprovaAutomatica = true
+    await giroDiPolling()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('in-coda'))
+    expect(result.current.righe[0].messaggio).toBe(RIPROVA)
+    expect(polling(), 'durante il ritentativo il polling deve restare acceso, o la scheda non vedrebbe mai la fine').toMatchObject({ attivo: true })
+
+    // Il ritentativo parte: `processing` con attempt 2. Il messaggio resta.
+    jobStatus = 'processing'
+    await giroDiPolling()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('conversione'))
+    expect(result.current.righe[0].messaggio).toBe(RIPROVA)
+
+    // Riesce: il job è pronto e il messaggio sparisce con lui.
+    jobStatus = 'ready'; riprovaAutomatica = false
+    await giroDiPolling()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('pronto'))
+    expect(result.current.righe[0].messaggio).toBeNull()
+  })
+
+  it('MENTRE si guarda: se i tentativi finiscono male il messaggio diventa la frase del guasto nostro', async () => {
+    intentStatus = 'confirmed'; jobStatus = 'queued'; riprovaAutomatica = true
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('in-coda'))
+    expect(result.current.righe[0].messaggio).toBe(RIPROVA)
+
+    jobStatus = 'failed'; riprovaAutomatica = false; codiceJob = 'VIDEO_GUASTO_NOSTRO'
+    await giroDiPolling()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('fallito'))
+    expect(result.current.righe[0].messaggio).toBe(itShared.erroreVideoGuastoNostro)
+  })
+
+  it('una scheda ANNULLATA non dice «lo stiamo riprovando» nemmeno se il job risulta ancora in coda', async () => {
+    // L'intento ritirato mentre il polling era in volo: per un giro lo stato è incoerente (job
+    // ancora `queued` col flag, intento già `cancelled`). La fase è «annullato», e promettere
+    // che qualcosa sta ancora succedendo sopra una scheda annullata sarebbe una bugia.
+    intentStatus = 'confirmed'; jobStatus = 'processing'
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('conversione'))
+
+    intentStatus = 'cancelled'; jobStatus = 'queued'; riprovaAutomatica = true
+    await giroDiPolling()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('annullato'))
+    expect(result.current.righe[0].messaggio).toBeNull()
+  })
 })

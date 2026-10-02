@@ -143,12 +143,45 @@ export function codaSupabase(supabase: SupabaseClient): CodaVideo {
         }),
       )
     },
+
+    async riprova(p) {
+      // ⚠️ Se la migrazione `…_video_job_ritentativi.sql` non fosse applicata, PostgREST
+      // risponde «funzione non trovata»: `esitoRpc` lo traduce in `RPC_ERROR`, che è
+      // ESATTAMENTE il codice con cui il runner sa di dover ripiegare su `video_job_fail`
+      // (vedi `riprova` in `esegui.ts`). Un verdetto del database ha invece un codice suo.
+      return esitoRpc(
+        'retry',
+        await supabase.rpc('video_job_retry', {
+          p_job_id: p.jobId,
+          p_fence_epoch: p.fenceEpoch,
+          p_lease_owner: p.leaseOwner,
+          p_error_code: p.codice,
+          p_tentativi_massimi: p.tentativiMassimi,
+          p_attesa_secondi: p.attesaSecondi,
+        }),
+      )
+    },
   }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
  * L'ARCHIVIO — lo Storage
  * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * I due fatti di un errore dello Storage da cui il runner decide se riprovare: lo stato HTTP
+ * (`StorageApiError.status`) e il codice dello Storage (`StorageApiError.code`, es.
+ * `NoSuchKey`). Si leggono col controllo del tipo e senza fidarsi della classe: un errore di
+ * rete è uno `StorageUnknownError` che né l'uno né l'altro li ha, e allora restano assenti.
+ * Nessuna decisione qui — chi sceglie la classe del guasto è `./ritentativi.ts`.
+ */
+function dettagliStorage(error: unknown): { stato?: number; codiceStorage?: string } {
+  const letto = (error ?? {}) as { status?: unknown; code?: unknown }
+  return {
+    ...(typeof letto.status === 'number' && Number.isInteger(letto.status) ? { stato: letto.status } : {}),
+    ...(typeof letto.code === 'string' && letto.code !== '' ? { codiceStorage: letto.code } : {}),
+  }
+}
 
 export function archivioSupabase(supabase: SupabaseClient): ArchivioVideo {
   return {
@@ -161,7 +194,7 @@ export function archivioSupabase(supabase: SupabaseClient): ArchivioVideo {
           { operazione: 'video-runner:firma-lettura', esito: 'firma-non-rilasciata', bucket },
           error,
         )
-        return { ok: false, motivo: error?.message ?? 'firma-assente' }
+        return { ok: false, motivo: error?.message ?? 'firma-assente', ...dettagliStorage(error) }
       }
       return { ok: true, url: data.signedUrl }
     },
@@ -175,7 +208,7 @@ export function archivioSupabase(supabase: SupabaseClient): ArchivioVideo {
           { operazione: 'video-runner:firma-scrittura', esito: 'firma-non-rilasciata', bucket },
           error,
         )
-        return { ok: false, motivo: error?.message ?? 'firma-assente' }
+        return { ok: false, motivo: error?.message ?? 'firma-assente', ...dettagliStorage(error) }
       }
       // `signedUrl` porta già `?token=…`: dentro la MicroVM basta un `PUT` con `-T`.
       // Non si usa `uploadToSignedUrl` perché il file vive nella MicroVM, non qui —
@@ -221,6 +254,12 @@ export function macchinaVercel(): MacchinaSandbox {
         )
       }
 
+      // ⚠️ `node22` RESTA in questa PR (decisione D7 della spec del 2026-10-02): lo cambia la
+      // PR 2, che passa a uno snapshot costruito su `node:24` e con i binari di FFmpeg già
+      // dentro — due cose che oggi si pagano a ogni MicroVM nuova (il download dei due `.gz`
+      // dal nostro bucket, ~134 MB). Il rischio che questa riga lascia aperto è dichiarato:
+      // se Vercel togliesse il runtime `node22`, ogni apertura fallirebbe con
+      // `SANDBOX_UNAVAILABLE` e i ritentativi non basterebbero, perché il guasto non passerebbe.
       const creata = await Sandbox.create({
         runtime: 'node22',
         name: nome,

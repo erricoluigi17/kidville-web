@@ -288,6 +288,7 @@
   "videoStatoConversione": "Stiamo preparando il filmato. Puoi chiudere la pagina: il lavoro prosegue da solo.",
   "videoStatoPronto": "Pronto: il collegamento al filmato è in fondo al testo.",
   "videoStatoAnnullato": "Caricamento annullato.",
+  "videoStatoRiprovaAutomatica": "Problema nostro, non del video: riproviamo in automatico.",
   "videoEtichettaLink": "Guarda il video",
   "videoAnnulla": "Annulla",
   "videoTogli": "Togli",

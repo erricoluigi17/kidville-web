@@ -137,6 +137,40 @@ MicroVM `node22` in `dub1`; lo script di preparazione **generato dal sorgente de
 sola lettura su `video_build`: uscita 0, inventario senza mancanze, una clip HDR generata nel Sandbox
 convertita con `buildVideoEncodeArgs`.
 
+**Esito (02/10/2026, 07:1x UTC — tutto verde).** MicroVM Amazon Linux 2023 x86_64, 4 vCPU, curl 8.17.0
+con OpenSSL 3.5.7. Moduli del branch impacchettati con `rolldown`; clip sintetiche (`testsrc2`) generate
+nella MicroVM e caricate temporaneamente in `video_build/collaudo-f1/`, l'uscita in
+`video_processing/collaudo-f1/`. Alla fine sono stati tolti tutti gli oggetti temporanei (conteggio 0
+verificato).
+
+| Prova | Risultato |
+|---|---|
+| P1 provvista dal bucket + inventario | uscita 0 in **8,3 s** (tetto dell'apparecchio 120 s), 4 impronte `OK`, `mancanze=[]` |
+| P2 apparecchio su HEVC HLG 10 bit 1080p letto dall'URL firmato | uscita 0 in 6,4 s, probe valido (`arib-std-b67`, `bt2020nc`) |
+| P3 conversione Galleria con `buildVideoEncodeArgs` (zscale + tonemap + watermark), staccata e letta dal marcatore | uscita 0 in 11,9 s; `verifyVideoOutput` ok; H.264 `yuv420p` 1920×1080 `bt709`; 179 fotogrammi decodificati; caricata |
+| P4 MP4 col moov in coda **troncato** (difetto #15) | uscita **25**, `PROBE_COMMAND_FAILED`, classe **non-ritentabile**, nessuna riga `[tls/https @` |
+| P5 MP4 valido col moov in coda | uscita 0, probe valido, nessuna riga di rete |
+| P6 firma della build scaduta | uscita **21**, la coda della diagnosi conserva `returned error: 400` → `infra-permanente` |
+| P7 *misura per T5*: originale sparito dopo la firma | lo Storage risponde **400** (non 404); senza `pipefail` la HEAD fa passare il `Content-Length` del corpo d'errore (**88** byte) e lo script esce **25** → `PROBE_COMMAND_FAILED` *non-ritentabile*. È il difetto #14: deve uscire **24** (`SOURCE_DOWNLOAD_FAILED`) |
+
+## F2 — il runner vero nel Sandbox vero (orchestratore, dopo l'ondata 2)
+
+`eseguiUnJobVideo` del branch caricato dal sorgente con `jiti`, contro lo Storage e il Sandbox veri;
+al posto del database una **coda finta** che registra le chiamate (il DB di produzione non si tocca;
+il logger, fuori da Next e senza chiave, non scrive su `app_log`). La macchina è una copia di
+`macchinaVercel()` con le sole credenziali locali in più. Clip sintetiche generate sul Mac
+(`testsrc2`), caricate in `video_build/collaudo-f2/` e tolte alla fine (conteggio 0 verificato, anche
+delle uscite in `video_processing`). **Esito (02/10/2026, ~08:20 UTC): tutto verde.**
+
+| Scenario | Risultato |
+|---|---|
+| S1 HEVC HLG 10 bit → Galleria | `pronto` in 28,5 s (creazione MicroVM compresa); `coda.pronto` con il percorso `<owner>/<job>/1.mp4`; URL della build **solo** nell'env dell'apparecchio (mai in `avvia`, mai negli args); uscita caricata |
+| S2 originale mancante, tentativo 1 | `in-riprova`: `riprova(SOURCE_DOWNLOAD_FAILED, 4, 300)`, nessuna MicroVM aperta |
+| S3 stesso guasto, tentativo 4 | `fallito` (non rifiutato), nessun `riprova` |
+| S4 MP4 troncato | `fallito` `PROBE_COMMAND_FAILED` non rifiutato, nessun `riprova` |
+| P7' (script nuovi) originale sparito dopo la firma | uscita **24**, `SOURCE_DOWNLOAD_FAILED`, `infra-transitoria` (400), ffprobe mai lanciato — difetto #14 chiuso |
+| P8 (script nuovi) diario di 7.882 byte | uscita 32; coda di 1.909 byte che comincia con una riga **intera**, finisce con l'ultima riga del diario e contiene l'errore; `non-ritentabile` |
+
 ## Ondata 2 (in parallelo)
 
 ### T5 — Integrazione nel runner

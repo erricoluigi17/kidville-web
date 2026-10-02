@@ -443,7 +443,7 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
   video_build: {
     stato: 'escluso',
     motivo:
-      'Nessun dato personale: contiene soltanto i due binari pubblici di FFmpeg (`ffmpeg.gz` e `ffprobe.gz`, licenza GPL) e l’archivio di provenienza da cui sono stati estratti. Non ci entra mai un file di una famiglia, di un bambino o di un adulto: lo scrive soltanto `scripts/ffmpeg-nel-bucket.mjs`, a mano, con la chiave di servizio, e lo legge soltanto il runner dei video con un indirizzo firmato di sola lettura. Un’istanza di oblio non ha quindi niente da cercare qui dentro, e svuotarlo romperebbe la conversione di tutti i video.',
+      'Nessun dato personale: contiene soltanto i due binari pubblici di FFmpeg (`ffmpeg.gz` e `ffprobe.gz`, licenza GPL) e l’archivio di provenienza da cui sono stati estratti. Non ci entra mai un file di una famiglia, di un bambino o di un adulto: lo scrive soltanto `scripts/ffmpeg-nel-bucket.mjs`, a mano, con la chiave di servizio. Ha tre lettori, tutti con un indirizzo firmato di sola lettura: il runner dei video; la CI, a cache vuota (i due indirizzi firmati a 365 giorni che tiene nei segreti `CI_FFMPEG_GZ_URL` e `CI_FFPROBE_GZ_URL`); e lo stesso script di caricamento, che rilegge gli oggetti per verificarne l’impronta. Un’istanza di oblio non ha quindi niente da cercare qui dentro, e svuotarlo romperebbe la conversione di tutti i video e, a cache vuota, la CI.',
   },
 
   // ── esclusi, con la ragione scritta ────────────────────────────────────────

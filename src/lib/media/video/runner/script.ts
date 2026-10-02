@@ -101,6 +101,18 @@ export const USCITE_APPARECCHIO = {
  * `video_jobs.source_size`: quella colonna la riempie il bordo dell'upload con ciò
  * che il client ha dichiarato, e `parseVideoProbe` usa il numero per decidere se il
  * file è troppo grande. Un limite che si fida del dichiarante non è un limite.
+ *
+ * ⚠️ L'USCITA DI CURL SI CATTURA PRIMA DELLA PIPELINE, e non è una finezza. In una
+ * pipeline l'esito è quello dell'ULTIMO comando, e qui l'ultimo è `grep`: con `curl -fsSI`
+ * un 4xx/5xx scrive comunque le intestazioni su stdout — compreso il `Content-Length`
+ * del CORPO D'ERRORE — e `grep` trova la cifra, quindi la pipeline usciva 0 mentre curl
+ * aveva appena detto «returned error: 400». MISURATO il 2026-10-02 sul Sandbox vero
+ * (F1, prova P7): per un URL firmato il cui oggetto non esiste più lo Storage risponde 400
+ * con un corpo JSON di 88 byte, e lo script prendeva 88 per la dimensione del video,
+ * proseguiva verso ffprobe e usciva 25 (`PROBE_COMMAND_FAILED`, non ritentabile) invece
+ * di 24 (`SOURCE_DOWNLOAD_FAILED`). Con `VAR=$(curl …) || exit 24` il guasto di curl
+ * ferma lo script lì, e `pipefail` non serve: non c'è in ogni `sh` (dash non lo ha), e
+ * questa forma regge identica in dash, in bash e nello `sh` della MicroVM.
  */
 export function scriptApparecchio(): string {
   return [
@@ -109,7 +121,9 @@ export function scriptApparecchio(): string {
     "echo '===INVENTARIO==='",
     comandoInventarioBuild(),
     "echo '===BYTE==='",
-    `curl -fsSI --retry 3 --retry-all-errors "$${ENV_URL_INGRESSO}" | tr -d '\\r' ` +
+    `INTESTAZIONI=$(curl -fsSI --retry 3 --retry-all-errors "$${ENV_URL_INGRESSO}") ` +
+      `|| exit ${USCITE_APPARECCHIO.dimensione}`,
+    `printf '%s\\n' "$INTESTAZIONI" | tr -d '\\r' ` +
       `| awk 'tolower($1)=="content-length:"{print $2}' | tail -1 ` +
       `| grep -E '^[0-9]+$' || exit ${USCITE_APPARECCHIO.dimensione}`,
     "echo '===PROBE==='",
@@ -190,6 +204,41 @@ export const USCITE_CONVERSIONE = {
   caricamento: 34,
 } as const
 
+/** Quanto del diario entra nel marcatore: gli ultimi 2000 byte. */
+const BYTE_CODA_DIARIO = 2000
+
+/**
+ * Le righe di shell che mettono nel marcatore la CODA del diario: gli ultimi 2000 byte,
+ * **senza la prima riga quando il diario li supera**.
+ *
+ * ⚠️ `tail -c 2000` taglia dove cade il byte e non dove finisce una riga: la prima riga di
+ * ciò che restituisce è quasi sempre MEZZA. Ed è il caso peggiore per ciò che il diario
+ * porta con sé (lo stderr di ffmpeg e di curl): le regole di `diagnosi.ts` che tolgono i
+ * metadati personali riconoscono un tag dal NOME o da una forma INTERA, e di una riga cui
+ * manca l'inizio — il resto di una coordinata GPS, `8+014.2681+012.345/` — non vedono più
+ * né l'uno né l'altra. Perciò, quando c'è stato un taglio, la prima riga si butta.
+ *
+ * Ma SOLO se c'è stato un taglio: un diario di 300 byte arriva intero, e la sua prima riga è
+ * una riga vera (spesso la più informativa). Il confronto è sulla dimensione del file, con
+ * `wc -c` — non `stat -c`, che è GNU e su macOS non esiste — e il ramo «tieni tutto» è quello
+ * che richiede una risposta esplicita: se `wc` non risponde, `[` fallisce e si ripiega sul
+ * ramo che butta la prima riga, perché perdere una riga è il male minore.
+ *
+ * Con UNA riga sola (un diario che è un unico rigo più lungo di 2000 byte) `awk` la tiene:
+ * buttarla vorrebbe dire non scrivere niente, e di un errore illeggibile resta almeno la
+ * fine, che è la parte che serve.
+ */
+function righeCodaDiario(rientro: string): string[] {
+  const coda = `tail -c ${BYTE_CODA_DIARIO} ${DIARIO} 2>/dev/null`
+  return [
+    `${rientro}if [ "$(wc -c < ${DIARIO} | tr -d ' ')" -le ${BYTE_CODA_DIARIO} ] 2>/dev/null; then`,
+    `${rientro}  ${coda} || true`,
+    `${rientro}else`,
+    `${rientro}  ${coda} | awk '{ r[NR] = $0 } END { for (i = (NR > 1 ? 2 : 1); i <= NR; i++) print r[i] }' || true`,
+    `${rientro}fi`,
+  ]
+}
+
 /**
  * Lo script staccato: scarica, converte, riprova l'uscita, ne prova la decodifica,
  * carica. E scrive il marcatore comunque vada.
@@ -224,7 +273,7 @@ export function scriptConversione(p: { conWatermark: boolean; videoIndex: number
     "    echo '===PROBE_USCITA==='",
     `    cat ${PROBE_USCITA} 2>/dev/null || true`,
     "    echo '===DIAGNOSI==='",
-    `    tail -c 2000 ${DIARIO} 2>/dev/null || true`,
+    ...righeCodaDiario('    '),
     `  } > ${PARZIALE} 2>/dev/null`,
     // `mv` sullo stesso filesystem è atomico: o il marcatore non c'è, o c'è tutto.
     `  mv ${PARZIALE} ${MARCATORE}`,

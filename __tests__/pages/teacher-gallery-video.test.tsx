@@ -117,8 +117,20 @@ const COORDINATE = {
   dimensioneBloccoByte: 6 * 1024 * 1024,
 }
 
-/** Lo stato che la route restituisce per l'intento, con il job nello stadio voluto. */
-function statoIntento(stato: string, avanzamento: number | null, codice: string | null = null, revisione = 1) {
+/**
+ * Lo stato che la route restituisce per l'intento, con il job nello stadio voluto.
+ *
+ * `riprovaAutomatica` è il flag che la route calcola da stato e `attempt`: il runner ha avuto un
+ * guasto NOSTRO e il job si sta ritentando da solo. Falso per default, com'è per la maggior
+ * parte della vita di un job.
+ */
+function statoIntento(
+  stato: string,
+  avanzamento: number | null,
+  codice: string | null = null,
+  revisione = 1,
+  riprovaAutomatica = false,
+) {
   return {
     intentId: INTENTO,
     revisione,
@@ -133,6 +145,7 @@ function statoIntento(stato: string, avanzamento: number | null, codice: string 
         stato,
         avanzamento,
         codice,
+        riprovaAutomatica,
         aggiornatoIl: '2026-09-18T10:00:00.000Z',
       },
     ],
@@ -416,6 +429,97 @@ describe('un fallimento della conversione si legge, e non resta lì per sempre',
 
     expect(await screen.findByText(itShared.erroreVideoTroppoLungo)).toBeInTheDocument()
     expect(screen.queryByText('VIDEO_TROPPO_LUNGO')).toBeNull()
+  })
+})
+
+/**
+ * «IL PROBLEMA È NOSTRO: LO STIAMO RIPROVANDO» — sulla schermata vera, col polling vero.
+ *
+ * Dal 29/09/2026 nessun video si convertiva e la scheda non diceva niente di vero. Qui si
+ * misura il giro intero dal lato di chi aspetta: il server dice `riprovaAutomatica`, l'hook lo
+ * traduce, la scheda lo mostra e lo ANNUNCIA — e sparisce quando il ritentativo finisce, bene
+ * o male. Ogni assenza è provata DOPO una presenza (la fase giusta a schermo): un `waitFor`
+ * su un'assenza passa prima che i dati arrivino, ed è verde con e senza il difetto.
+ */
+describe('un ritentativo automatico si legge sulla scheda, e sparisce quando non c’è più', () => {
+  const RIPROVA = itServizi.galleryVideoRiprovaAutomatica
+  const unJobDaSeguire = () => {
+    h.righeArchivio = [{ jobId: JOB, intentId: INTENTO, canale: 'gallery', ownerId: DOCENTE, scuolaId: SEDE_A, stato: 'caricato', chiaveIdempotenza: 'g-1', nome: 'sintetico.mp4', dimensioneByte: 1234, mime: 'video/mp4', coordinate: COORDINATE }]
+  }
+
+  it('in coda dopo un guasto nostro: la fase resta e, sotto, il messaggio ANNUNCIATO', async () => {
+    unJobDaSeguire()
+    statoCorrente = statoIntento('queued', 25, null, 1, true)
+
+    render(<TeacherGalleryPage />)
+
+    const messaggio = await screen.findByText(RIPROVA)
+    expect(messaggio).toHaveAttribute('aria-live', 'polite')
+    // La fase non sparisce: «in attesa di essere preparato» è ancora vero.
+    expect(screen.getByText(itServizi.galleryVideoFaseInCoda)).toBeInTheDocument()
+    // E non è un errore: nessun `alert`, nessun rosso.
+    expect(messaggio.className).not.toContain('text-kidville-error')
+  })
+
+  it('un ritentativo già ripartito (in lavorazione): la fase di conversione e il messaggio', async () => {
+    unJobDaSeguire()
+    statoCorrente = statoIntento('processing', 60, null, 1, true)
+
+    render(<TeacherGalleryPage />)
+
+    expect(await screen.findByText(RIPROVA)).toBeInTheDocument()
+    expect(screen.getByText(itServizi.galleryVideoFaseConversione)).toBeInTheDocument()
+  })
+
+  it('senza il flag la stessa scheda NON dice «lo stiamo riprovando»', async () => {
+    unJobDaSeguire()
+    statoCorrente = statoIntento('queued', 25)
+
+    render(<TeacherGalleryPage />)
+
+    // Prima la PRESENZA della fase, poi l'assenza del messaggio.
+    expect(await screen.findByText(itServizi.galleryVideoFaseInCoda)).toBeInTheDocument()
+    expect(screen.queryByText(RIPROVA)).toBeNull()
+  })
+
+  it('un video pronto chiede i bambini e non porta il messaggio', async () => {
+    unJobDaSeguire()
+    statoCorrente = statoIntento('ready', 100)
+
+    render(<TeacherGalleryPage />)
+
+    expect(await screen.findByText(itServizi.galleryVideoChiediTag)).toBeInTheDocument()
+    expect(screen.queryByText(RIPROVA)).toBeNull()
+  })
+
+  it('esauriti i tentativi legge la frase FINALE del guasto nostro, non «lo stiamo riprovando»', async () => {
+    unJobDaSeguire()
+    statoCorrente = statoIntento('failed', null, 'VIDEO_GUASTO_NOSTRO')
+
+    render(<TeacherGalleryPage />)
+
+    const frase = await screen.findByText(itShared.erroreVideoGuastoNostro)
+    // Qui sì un errore: il video non c'è e va ricaricato più tardi.
+    expect(frase.className).toContain('text-kidville-error')
+    expect(screen.queryByText(RIPROVA)).toBeNull()
+    // Il codice interno non è mai a schermo.
+    expect(screen.queryByText('VIDEO_GUASTO_NOSTRO')).toBeNull()
+  })
+
+  it('uno stato incoerente (flag su un video pronto) NON diventa una scheda inventata', async () => {
+    // Lo schema vieta `riprovaAutomatica` fuori da `queued`/`processing`: lo stato intero viene
+    // scartato e loggato, e la scheda non dice una cosa falsa — «lo stiamo riprovando» su un
+    // video che è già pronto. Il rientro non sa leggere lo stato e la lascia «interrotta», con
+    // il gesto «Riprendi» a portata di mano: una cosa vera e che la persona può fare.
+    unJobDaSeguire()
+    statoCorrente = statoIntento('ready', 100, null, 1, true)
+
+    render(<TeacherGalleryPage />)
+
+    // La PRESENZA prima: la scheda interrotta, col suo pulsante, e il log del dato scartato.
+    expect(await screen.findByRole('button', { name: itServizi.galleryVideoRiprendi })).toBeInTheDocument()
+    expect(h.logClient.mock.calls.some(([voce]) => String((voce as { messaggio?: string }).messaggio).includes('video-galleria-job-fuori-contratto'))).toBe(true)
+    expect(screen.queryByText(RIPROVA)).toBeNull()
   })
 })
 

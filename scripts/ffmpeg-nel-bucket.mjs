@@ -13,7 +13,7 @@
 // ─── COME SI USA ─────────────────────────────────────────────────────────────
 //
 // La chiave di servizio NON sta in `.env.local` (quella non è del progetto) e non
-// si passa mai da riga di comando: l'script la legge da STDIN, dentro il JSON che la
+// si passa mai da riga di comando: lo script la legge da STDIN, dentro il JSON che la
 // CLI già autenticata stampa. Così non finisce né in `ps` né nella cronologia.
 //
 //   supabase projects api-keys --project-ref uimulkjyekgemjakmepp -o json \
@@ -166,11 +166,16 @@ function leggiArgomenti(argv) {
 /**
  * Le costanti di `src/lib/media/video/build.ts`, lette COME TESTO.
  *
- * Non si importa il file: è TypeScript, e uno script `.mjs` non lo carica senza un
- * trasformatore. Si tiene una sola fonte (`build.ts`) invece di copiare i valori qui,
- * dove divergerebbero in silenzio. Il formato che serve è uno solo — `export const NOME =`
- * seguito da una stringa fra apici o fra backtick, con al massimo `${ALTRA_COSTANTE}`
- * dentro — e se qualcosa non lo rispetta l'errore è alto e subito, non un caricamento sbagliato.
+ * Non si importa il file, benché sia un `.ts` e le Node recenti lo carichino: `.nvmrc`
+ * dice 22, e le Node 22.x prima della 22.18 non importano un `.ts` (lo strip dei tipi è
+ * attivo di default solo dalla 22.18; senza, l'import muore con
+ * `ERR_UNKNOWN_FILE_EXTENSION`). Lo script deve girare con un semplice
+ * `node scripts/ffmpeg-nel-bucket.mjs`, su qualunque 22 e senza flag. Si tiene una sola
+ * fonte (`build.ts`) invece di copiare i valori qui, dove divergerebbero in silenzio.
+ * Il parser resta quello che è, e fallisce in modo esplicito: il formato che serve è uno
+ * solo — `export const NOME =` seguito da una stringa fra apici o fra backtick, con al
+ * massimo `${ALTRA_COSTANTE}` dentro — e se qualcosa non lo rispetta l'errore è alto e
+ * subito, non un caricamento sbagliato.
  */
 function leggiCostantiDiBuild() {
   const sorgente = readFileSync(new URL('../src/lib/media/video/build.ts', import.meta.url), 'utf8')

@@ -571,6 +571,7 @@
   "erroreVideoNonAutorizzato": "Questo caricamento non è tuo, oppure è di un altro plesso: non è stato modificato niente.",
   "erroreVideoAppDaAggiornare": "Per caricare i video serve la versione aggiornata: aggiorna l’app, oppure ricarica la pagina se sei da browser. I filmati già in attesa ripartono da soli.",
   "erroreVideoOperazioneNonRiuscita": "L’operazione sul video non è riuscita: riprova fra poco. Se continua, segnalalo alla segreteria.",
+  "erroreVideoGuastoNostro": "Non siamo riusciti a preparare questo video per un problema nostro, non del filmato. Caricalo di nuovo più tardi: se non va ancora, avvisa la segreteria.",
   "errorePeriodoTroppoLungo": "Il periodo è troppo lungo: il registro si consulta un tratto per volta. Restringi l’intervallo, per esempio a un quadrimestre.",
   "errorePeriodoRovesciato": "La data di fine viene prima della data di inizio: controlla l’intervallo.",
   "erroreScadenzaAvvisoMancante": "Controlla fino a quando l’avviso resta visibile in bacheca: se quella data e ora manca o non è valida, l’avviso non viene salvato.",

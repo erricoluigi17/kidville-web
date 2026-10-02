@@ -494,6 +494,132 @@ describe('diagnosi · i metadati del filmato (GPS, apparecchio, testo libero) no
     const grezzo = `${CURL_404} (https://x.invalid/o/com.apple.quicktime.title/creation_time?token=${JWT_FINTO})`
     expect(codaDiagnostica(grezzo, 500)).toBe(`${CURL_404} ([url-firmato]`)
   })
+
+  /**
+   * «manufacturer» è la marca di un telefono Android (`com.android.manufacturer`), accanto a
+   * `model`: l'una senza l'altra dice già che apparecchio ha ripreso il bambino. Le coordinate e
+   * le marche sono INVENTATE: il repository è pubblico.
+   */
+  it('`manufacturer` sparisce come `model`: dal nome da solo, col prefisso puntato, in ffprobe', () => {
+    const orfane = [
+      '    manufacturer    : MarcaDiProva',
+      '    com.android.manufacturer: MarcaDiProva',
+      'TAG:com.android.manufacturer=MarcaDiProva',
+      'format.tags.manufacturer="MarcaDiProva"',
+      '      "manufacturer": "MarcaDiProva",',
+      'Stream #0:0: Video: h264, 1920x1080',
+    ].join('\n')
+
+    expect(codaDiagnostica(orfane, 500)).toBe('Stream #0:0: Video: h264, 1920x1080')
+  })
+
+  it('…ma la parola in una frase d’errore non fa sparire la riga: sta in posizione di chiave solo nei metadati', () => {
+    for (const frase of [
+      'Error: unknown manufacturer of the encoder',
+      'Error: invalid value for option manufacturer: expected a string',
+      "Unrecognized option 'manufacturer=1'",
+      // Il prefisso puntato conta solo a inizio riga.
+      'TypeError: x.manufacturer is undefined',
+    ]) {
+      expect(codaDiagnostica(frase, 500)).toBe(frase)
+    }
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 4b. LE COORDINATE GPS, PER VALORE
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('diagnosi · le coordinate GPS (ISO 6709) spariscono per VALORE, ovunque compaiano', () => {
+  /**
+   * Le righe che NOMINANO il tag (`ISO6709`, `location`, `com.apple.…`) spariscono per nome. Il
+   * valore però può stare dove il nome non c'è — la riga di continuazione di un tag su più righe,
+   * il resto di una riga tagliata a metà, una riga che uno strumento scrive per conto proprio — e
+   * lì è l'unico modo di riconoscerlo. Tutte le coordinate qui sotto sono INVENTATE.
+   */
+  const CASI_COORDINATE: Array<[string, string, string]> = [
+    ['latitudine e longitudine', '+40.8518+014.2681/', '[coordinate]'],
+    ['con la quota', '+47.6543+019.8765+123.456/', '[coordinate]'],
+    ['a sud e a ovest, con la quota negativa', '-33.8688-070.6693-012.500/', '[coordinate]'],
+    ['con il sistema di riferimento', '+40.8518+014.2681+012.345CRSWGS_84/', '[coordinate]'],
+    ['senza la barra finale, ma con i decimali', '+40.85+014.27', '[coordinate]'],
+    ['gradi interi, con la barra finale', '+40+014/', '[coordinate]'],
+    ['in mezzo a una frase', 'riprese a +40.8518+014.2681/ di sera', 'riprese a [coordinate] di sera'],
+    ['dopo un nome di tag che non è in lista', 'cloud.gps=+40.8518+014.2681/', 'cloud.gps=[coordinate]'],
+    [
+      'la riga di continuazione di un tag, senza il nome',
+      '      +47.6543+019.8765+123.456/',
+      '[coordinate]',
+    ],
+    ['due coordinate nella stessa riga', '+40.8518+014.2681/ e +41.0000+015.0000/', '[coordinate] e [coordinate]'],
+  ]
+
+  it.each(CASI_COORDINATE)('%s', (_nome, ingresso, atteso) => {
+    expect(codaDiagnostica(ingresso, 500)).toBe(atteso)
+  })
+
+  it('il valore non si legge più in nessuna forma, nemmeno spezzando le parti', () => {
+    const r = codaDiagnostica('x +47.6543+019.8765+123.456/ y', 500)
+    for (const parte of ['47.6543', '019.8765', '123.456', '+47', '+019']) expect(r).not.toContain(parte)
+  })
+
+  /**
+   * Il contrario, e conta quanto il primo: mascherare un numero qualunque farebbe sparire la
+   * diagnosi che il modulo esiste per salvare. Sono le righe VERE di ffmpeg e di curl (le stesse
+   * degli altri blocchi) più i numeri con segno che vi compaiono: `q=-1.0`, `start: -0.023220`,
+   * `-2:1080` del filtro di scala, le date con `-` e `+`, le versioni con trattini, gli uuid.
+   */
+  it.each([
+    'frame=  264 fps= 49 q=-1.0 Lsize=    4210kB time=00:00:08.80 bitrate=3919.6kbits/s speed=1.63x',
+    'frame=   10 fps=0.0 q=0.0 size=       0kB time=00:00:00.30 bitrate=   0.0kbits/s speed=0.5x',
+    'time=00:00:05.00 bitrate=1103.8kbits/s speed=1.2x q=-1.0',
+    'Duration: 00:00:05.20, start: -0.023220, bitrate: 17081 kb/s',
+    'ffmpeg version n9.0.1-30-g9258bacca5-20260915 Copyright (c) 2000-2026 the FFmpeg developers',
+    'scale=-2:1080,fps=30000/1001',
+    'overlay=x=(main_w-overlay_w)/2:y=main_h-overlay_h-24',
+    '[libx264 @ 0x55b2c3d4e5f0] using SAR=1/1',
+    'Last metadata expiration check: 0:00:16 ago on Tue Sep 29 16:56:02 2026.',
+    'dnf: 2026-09-30T12:11:12+0200 e 2026-10-02T07:15:00-0100',
+    'job 3f2a61b4-1c7d-4e58-9a0b-2d4c6e8f0a12 attempt 2 fence 00000000-0000-4000-8000-000000000001',
+    CURL_404,
+    // Due numeri con segno, ma senza un punto decimale né la barra: non sono un luogo.
+    'delta -12-345 e +12-345',
+  ])('una riga che non è una coordinata resta com’è: %s', (riga) => {
+    expect(codaDiagnostica(riga, 500)).toBe(riga)
+  })
+
+  it('un progresso di ffmpeg con tutti i suoi numeri passa intatto, riga per riga', () => {
+    const progresso = [
+      'frame=   58 fps= 50 q=28.0 size=     256kB time=00:00:01.90 bitrate=1103.8kbits/s speed=1.63x',
+      'frame=  120 fps= 51 q=-1.0 size=     640kB time=00:00:04.00 bitrate=1310.7kbits/s speed=1.7x',
+      'video:3201kB audio:98kB subtitle:0kB other streams:0kB global headers:0kB muxing overhead: 1.5%',
+    ].join('\n')
+    expect(codaDiagnostica(progresso, 1000)).toBe(progresso.replace(/ +$/gm, ''))
+  })
+
+  it('è idempotente: ripulire un testo già ripulito non cambia niente', () => {
+    const una = codaDiagnostica('prima +40.8518+014.2681/ poi\n    +47.6543+019.8765+123.456/\nfine', 500)
+    // Il rientro di una riga interna resta (si toglie solo ai capi del testo): è la riga di prima, ripulita.
+    expect(una).toBe('prima [coordinate] poi\n    [coordinate]\nfine')
+    expect(codaDiagnostica(una, 500)).toBe(una)
+  })
+
+  it('un ingresso fatto per far soffrire l’espressione regolare si ripulisce in un attimo', () => {
+    // Milioni di segni, di cifre e di coordinate «quasi»: il tempo deve restare lineare. Il tetto non
+    // misura la velocità, separa i due ordini di grandezza (come il test sul progresso).
+    const avversari = [
+      '+11+111'.repeat(100_000),
+      '+'.repeat(1_000_000),
+      '+1'.repeat(500_000),
+      `+12.5+123.5+${'9'.repeat(50)}`.repeat(10_000),
+      `+40.8518+014.2681${'+1'.repeat(200_000)}`,
+    ]
+    const inizio = performance.now()
+    for (const avversario of avversari) {
+      expect(codaDiagnostica(avversario, BUDGET).length).toBeLessThanOrEqual(BUDGET)
+    }
+    expect(performance.now() - inizio).toBeLessThan(2000)
+  })
 })
 
 /* ════════════════════════════════════════════════════════════════════════════

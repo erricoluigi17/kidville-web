@@ -172,6 +172,49 @@ describe('il battito del runner video', () => {
     }
   })
 
+  it('un job rimesso in coda per un guasto NOSTRO (`in-riprova`) è un `warn`: né tranquillo né un guasto', async () => {
+    const { POST } = await import('@/app/api/video/runner/route')
+    h.esito = {
+      esito: 'in-riprova',
+      jobId: '40000000-0000-4000-8000-00000000000a',
+      codice: 'BUILD_DOWNLOAD_FAILED',
+      tentativo: 1,
+      attesaS: 300,
+    }
+
+    const res = await POST(richiesta({ 'x-cron-secret': CRON_SECRET }) as never)
+
+    // La route risponde 200 e lo dice: il giro è riuscito, ha rimesso in coda un job.
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, esito: 'in-riprova' })
+    expect(h.chiamate).toBe(1)
+    // `warn`: non è «tranquillo» (qualcosa non ha funzionato: se la build non si scarica, ogni video
+    // in coda farà lo stesso, e il battito deve poterlo mostrare) e non è un `error` (il job non è
+    // perso, e un allarme che suona a ogni ritentativo viene spento).
+    expect(battito()?.livello).toBe('warn')
+    expect(battito()?.campi.esito).toBe('in-riprova')
+    expect(battito()?.campi.error_code).toBe('BUILD_DOWNLOAD_FAILED')
+    expect(battito()?.campi.job_id).toBe('40000000-0000-4000-8000-00000000000a')
+    // E non c'è nessun'altra riga d'errore: il registro non si riempie di allarmi per un ritentativo.
+    expect(h.eventi.filter((e) => e.livello === 'error')).toEqual([])
+  })
+
+  it.each([
+    [{ esito: 'fallito', jobId: '40000000-0000-4000-8000-00000000000a', codice: 'ENCODE_FAILED', rifiutato: false }],
+    [{ esito: 'lease-persa', jobId: '40000000-0000-4000-8000-00000000000a', codice: 'FENCE_MISMATCH' }],
+    [{ esito: 'esito-non-scritto', jobId: '40000000-0000-4000-8000-00000000000a', codice: 'OUTPUT_CONFLICT' }],
+    [{ esito: 'presa-rifiutata', codice: 'LEASE_ACTIVE' }],
+  ])('il `warn` non si allarga: %o resta un `error`', async (esito) => {
+    const { POST } = await import('@/app/api/video/runner/route')
+    h.esito = esito
+
+    await POST(richiesta({ 'x-cron-secret': CRON_SECRET }) as never)
+
+    // Solo `in-riprova` è un ritentativo già preso in carico. Un fallimento definitivo, una lease
+    // persa, un esito non scritto o una presa rifiutata sono guasti veri, e restano `error`.
+    expect(battito()?.livello, `esito ${esito.esito}`).toBe('error')
+  })
+
   it('una conversione fallita invece è un guasto, e porta il suo codice', async () => {
     const { POST } = await import('@/app/api/video/runner/route')
     h.esito = {

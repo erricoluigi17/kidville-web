@@ -252,6 +252,9 @@ Entrambe le classi `infra-*` si ritentano (la permanente logga a livello **error
   frase(job.codice) : job.riprovaAutomatica ? t('galleryVideoRiprovaAutomatica') : null`.
   `VideoInLavorazione.tsx` (174-178) mostra già il messaggio sulle fasi non fallite: aggiungere
   `aria-live="polite"` a quel paragrafo.
+  *Ratificato dall'orchestratore il 02/10 (difetto secondario #35):* il messaggio di ritentativo
+  compare solo nelle fasi in coda / in conversione — non su una scheda già «annullata» con il job
+  ancora `queued` — e vale anche al rientro nella pagina (`segui`), non solo nel polling.
 - News (D6): `adminComunicazioni.videoStatoRiprovaAutomatica`, campo `riprova` in `Allegato` e in
   `testoFase` di `src/components/features/admin/news/NewsVideoAllegati.tsx:508-523`.
 - Testi (apostrofo tipografico ’; inglese senza contrazioni):

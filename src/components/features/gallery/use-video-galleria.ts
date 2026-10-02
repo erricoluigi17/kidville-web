@@ -24,6 +24,7 @@ import {
     segnalaVideoCaricato,
     type StatoIntentoVideo,
 } from '@/lib/gallery/video-galleria-flusso';
+import type { StatoJobVideoLetto } from '@/lib/media/video/contratto';
 import { caricamentoNelContesto } from '@/lib/media/video/upload/stato';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { logClient } from '@/lib/logging/client';
@@ -184,18 +185,42 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
     /** Il ripiego di ogni messaggio: mai la stringa vuota, che a schermo è silenzio. */
     const ripiego = t('galleryErrCaricamentoGenerico');
     const ripiegoRef = useRef(ripiego);
+    /**
+     * «Il problema è nostro: lo stiamo riprovando». Sta in un ref per la stessa ragione del
+     * ripiego: la leggono `applicaStato` e `segui`, che vivono più a lungo di un render e
+     * non devono ricrearsi a ogni cambio di lingua.
+     */
+    const testoRiprova = t('galleryVideoRiprovaAutomatica');
+    const testoRiprovaRef = useRef(testoRiprova);
 
     useEffect(() => {
         opzioniRef.current = opzioni;
         vociRef.current = voci;
         tagRef.current = tagPerJob;
         ripiegoRef.current = ripiego;
+        testoRiprovaRef.current = testoRiprova;
     });
 
     /** La frase del catalogo per un codice della pipeline, nella lingua a schermo. */
     const frase = useCallback((codice: string | null): string => {
         return soloCatalogoDaCorpo({ codice }, ripiegoRef.current);
     }, []);
+
+    /**
+     * Il messaggio di una scheda che NON è fallita: «lo stiamo riprovando», e solo se il
+     * server dice che il job si sta ritentando (`riprovaAutomatica`, calcolato dalla route).
+     *
+     * ⚠️ La fase conta quanto il flag. Lo schema già vieta il flag fuori da `queued` e
+     * `processing`, ma la fase può essere `annullato` anche con un job ancora in coda (un
+     * intento ritirato mentre il polling era in volo): «lo stiamo riprovando» sopra una
+     * scheda annullata direbbe che qualcosa sta ancora succedendo. Le fasi in cui il server
+     * lavora sono esattamente quelle che si interrogano.
+     */
+    const messaggioRiprova = useCallback(
+        (fase: FaseVideoUI, job: StatoJobVideoLetto): string | null =>
+            job.riprovaAutomatica && DA_INTERROGARE.has(fase) ? testoRiprovaRef.current : null,
+        [],
+    );
 
     const aggiorna = useCallback((jobId: string, modifiche: Partial<VoceVideo>) => {
         setVoci((prev) => prev.map((v) => (v.jobId === jobId ? { ...v, ...modifiche } : v)));
@@ -279,12 +304,15 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                         // disegnarlo come una barra vorrebbe dire promettere una misura
                         // che non c'è.
                         percentuale: null,
-                        messaggio: fase === 'fallito' ? frase(job.codice) : null,
+                        // Un fallimento dice che cosa fare; un job che il runner sta
+                        // ritentando dice che il problema è nostro e che non serve fare
+                        // niente; tutto il resto non ha un messaggio.
+                        messaggio: fase === 'fallito' ? frase(job.codice) : messaggioRiprova(fase, job),
                     };
                 }),
             );
         },
-        [frase, togli],
+        [frase, messaggioRiprova, togli],
     );
 
     /* ────────────────────────────────────────────────────────────────────────
@@ -444,7 +472,12 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             }
             if (stato.statoIntent === 'published') { await archivio.elimina(jobId); if (ancora()) togli(jobId); return; }
             const job = stato.job.find(j => j.jobId === jobId);
-            if (job && ancora()) aggiorna(jobId, { revisione: stato.revisione, fase: ['cancelled', 'superseded'].includes(stato.statoIntent) ? 'annullato' : faseDelJob(job.stato), percentuale: null, messaggio: job.codice ? frase(job.codice) : null });
+            if (job && ancora()) {
+                const fase = ['cancelled', 'superseded'].includes(stato.statoIntent) ? 'annullato' : faseDelJob(job.stato);
+                // Anche qui, al rientro: chi riapre l'app a metà di un ritentativo deve leggere
+                // «lo stiamo riprovando» subito, non cinque secondi dopo al primo giro di polling.
+                aggiorna(jobId, { revisione: stato.revisione, fase, percentuale: null, messaggio: job.codice ? frase(job.codice) : messaggioRiprova(fase, job) });
+            }
         };
         const promessa = esegui().catch((err: unknown) => {
             logClient({ livello: 'error', evento: 'offline', messaggio: 'video-ripresa-interrotta', campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' } });
@@ -452,7 +485,7 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
         }).finally(() => { seguendoRef.current.delete(chiave); });
         seguendoRef.current.set(chiave, promessa);
         return promessa;
-    }, [aggiorna, dipendenze, frase, togli]);
+    }, [aggiorna, dipendenze, frase, messaggioRiprova, togli]);
 
     /* ────────────────────────────────────────────────────────────────────────
      * AVVIARE

@@ -288,6 +288,7 @@
   "videoStatoConversione": "We are preparing the clip. You can close the page: the work carries on by itself.",
   "videoStatoPronto": "Ready: the link to the clip is at the end of the text.",
   "videoStatoAnnullato": "Upload called off.",
+  "videoStatoRiprovaAutomatica": "A problem on our side, not with the video: retrying automatically.",
   "videoEtichettaLink": "Watch the video",
   "videoAnnulla": "Call off",
   "videoTogli": "Remove",

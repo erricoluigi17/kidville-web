@@ -25,7 +25,8 @@ import type { VideoOutputVerificationErrorCode } from './verify'
  *
  * ─── LA REGOLA CHE VALE PIÙ DI TUTTE: COSA ESCE VERSO UNA FAMIGLIA ──────────
  *
- * La pipeline produce SESSANTUNO codici d'errore diversi, e quasi nessuno di
+ * La pipeline produce SETTANTACINQUE codici d'errore diversi (conteggio del
+ * 2026-10-02: lo rimisura il test, non questo commento), e quasi nessuno di
  * loro è un'informazione per chi ha caricato il video della recita.
  * `INTENT_CHANGED_RETRY` è il vocabolario del protocollo di coda;
  * `OUTPUT_DURATION_MISMATCH` è il verdetto di `verifyVideoOutput`;
@@ -52,7 +53,7 @@ import type { VideoOutputVerificationErrorCode } from './verify'
  *  1. `./limiti.ts`  → `VideoInputSizeErrorCode` (3)
  *  2. `./probe.ts`   → `VideoProbeErrorCode` (10, più i 3 dei limiti)
  *  3. `./verify.ts`  → `VideoOutputVerificationErrorCode` (18)
- *  4. `supabase/migrations/*_video_*.sql` → i `code` delle RPC (30)
+ *  4. `supabase/migrations/*_video_*.sql` → i `code` delle RPC (34)
  *
  * L'elenco qui sotto è la loro unione, e il test la RIMISURA leggendo quelle
  * fonti: se qualcuno aggiunge un ramo a `verifyVideoOutput` o un `code` a una
@@ -167,6 +168,11 @@ export const CODICI_ESITO_VIDEO = [
   'ORIGINAL_PATH_TAKEN',
   'OUTPUT_CONFLICT',
   'OWNER_MISMATCH',
+  // La risposta con cui `video_job_claim` RIFIUTA un job che `video_job_retry` ha rimesso in
+  // coda e che sta ancora aspettando il suo turno (`20261002065952_video_job_ritentativi.sql`):
+  // parla una RPC a un runner, non a una persona, e vuol dire «non ancora». Il nome è quello
+  // letterale della migrazione: il lock qui sotto lo rilegge da lì.
+  'RETRY_NOT_DUE',
   'REVISION_MISMATCH',
   'REVISION_TAKEN',
   'SCOPE_CHANGED',
@@ -268,6 +274,14 @@ export const CODICI_MOSTRATI_VIDEO = [
   'VIDEO_NON_LEGGIBILE',
   /** La conversione è partita e non è arrivata a un risultato valido. */
   'VIDEO_CONVERSIONE_NON_RIUSCITA',
+  /**
+   * Il guasto è NOSTRO — la macchina che prepara i video, la rete fra noi e lo Storage —
+   * e il filmato non c'entra. È il messaggio dei tentativi esauriti: mentre il runner
+   * ritenta da solo non è un errore ma un'attesa, e lo dice `riprovaAutomatica`.
+   * Distinto da `VIDEO_CONVERSIONE_NON_RIUSCITA` perché dice la cosa che conta: non è colpa
+   * del file, quindi riscegliere un altro video non serve — basta ricaricare più tardi.
+   */
+  'VIDEO_GUASTO_NOSTRO',
   /** Qualcosa è cambiato mentre si lavorava: ricaricare e riprovare basta. */
   'VIDEO_RIPROVA',
   /** L'intento è già stato pubblicato, ritirato o sostituito: è finita. */
@@ -314,6 +328,7 @@ export const CHIAVI_MESSAGGIO_VIDEO: Record<CodiceMostratoVideo, string> = {
   VIDEO_PROTETTO: 'erroreVideoProtetto',
   VIDEO_NON_LEGGIBILE: 'erroreVideoNonLeggibile',
   VIDEO_CONVERSIONE_NON_RIUSCITA: 'erroreVideoConversioneNonRiuscita',
+  VIDEO_GUASTO_NOSTRO: 'erroreVideoGuastoNostro',
   VIDEO_RIPROVA: 'erroreVideoRiprova',
   VIDEO_GIA_CONCLUSO: 'erroreVideoGiaConcluso',
   VIDEO_NON_ANCORA_PRONTO: 'erroreVideoNonAncoraPronto',
@@ -392,6 +407,12 @@ export const MAPPA_MESSAGGIO_VIDEO: Record<CodiceInternoVideo, CodiceMostratoVid
   ORIGINAL_PATH_TAKEN: 'VIDEO_RIPROVA',
   TARGET_CONFLICT: 'VIDEO_RIPROVA',
   SCOPE_CHANGED: 'VIDEO_RIPROVA',
+  /**
+   * Il «non ancora» di `video_job_claim` su un job in attesa del ritentativo. Non raggiunge
+   * nessuno schermo (lo sente il runner), ma sta qui perché la mappa è totale: se mai
+   * finisse in una risposta, l'unica cosa vera da dire resta «riprova».
+   */
+  RETRY_NOT_DUE: 'VIDEO_RIPROVA',
 
   // ── L'intento è arrivato alla fine, in un modo o nell'altro.
   INTENT_PUBLISHED: 'VIDEO_GIA_CONCLUSO',
@@ -435,25 +456,39 @@ export const MAPPA_MESSAGGIO_VIDEO: Record<CodiceInternoVideo, CodiceMostratoVid
   NON_ANCORA_SCADUTO: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
   SENZA_SCADENZA: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
 
-  // ── Il runner. La ripartizione non e' meccanica: separa cio' che passa da solo
-  // (rete, piattaforma) da cio' che non passera' mai riprovando.
-  /** GitHub irraggiungibile o lento: il prossimo battito riprova, e di solito basta. */
-  BUILD_DOWNLOAD_FAILED: 'VIDEO_RIPROVA',
+  // ── Il runner. La ripartizione separa ciò che è NOSTRO da ciò che è del FILE.
+  //    I sette codici di infrastruttura — la provvista di FFmpeg, la MicroVM, il
+  //    trasferimento dell'originale e dell'uscita — dicono tutti la stessa cosa a chi
+  //    guarda lo schermo: il guasto non è del video. Il runner li RITENTA da solo
+  //    (`runner/ritentativi.ts`: quattro tentativi in un'ora), e questa frase arriva a una
+  //    persona solo a tentativi esauriti, quando il job è `failed`: «caricalo più tardi».
+  //    Finché si ritenta la scheda non legge un errore ma `riprovaAutomatica`
+  //    (`schemaStatoJobVideo`), cioè «lo stiamo riprovando».
+  //    I tre codici che restano fuori sono quelli in cui il file c'entra, o in cui
+  //    riprovare non cambierebbe niente: li commenta ciascuno.
+  /** La provvista dei binari non è andata a buon fine: la rete, o il nostro Storage. */
+  BUILD_DOWNLOAD_FAILED: 'VIDEO_GUASTO_NOSTRO',
   /**
-   * Lo SHA-256 dell'archivio non e' quello atteso. NON e' `VIDEO_RIPROVA`: riprovare a
-   * eseguire un binario che non e' quello misurato e' peggio che fermarsi, e nessun
-   * numero di tentativi lo fara' diventare quello giusto.
+   * Un'impronta SHA-256 dei binari non è quella misurata. Il runner non esegue MAI un
+   * binario non verificato: il job si ritenta riscaricando e riverificando. Il file non
+   * c'entra, quindi la frase è la stessa degli altri guasti nostri.
    */
-  BUILD_HASH_MISMATCH: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
-  BUILD_EXTRACT_FAILED: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
-  BUILD_INCOMPLETE: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
-  /** La MicroVM non si e' aperta: e' la piattaforma, non il video. */
-  SANDBOX_UNAVAILABLE: 'VIDEO_RIPROVA',
-  SOURCE_DOWNLOAD_FAILED: 'VIDEO_RIPROVA',
-  /** `ffprobe` non e' partito — diverso da «il JSON e' sbagliato», che e' del video. */
+  BUILD_HASH_MISMATCH: 'VIDEO_GUASTO_NOSTRO',
+  BUILD_EXTRACT_FAILED: 'VIDEO_GUASTO_NOSTRO',
+  BUILD_INCOMPLETE: 'VIDEO_GUASTO_NOSTRO',
+  /** La MicroVM non si è aperta: è la piattaforma, non il video. */
+  SANDBOX_UNAVAILABLE: 'VIDEO_GUASTO_NOSTRO',
+  SOURCE_DOWNLOAD_FAILED: 'VIDEO_GUASTO_NOSTRO',
+  /**
+   * `ffprobe` non è partito o non ha stampato niente — diverso da «il JSON è sbagliato»,
+   * che è del video. Invariato: il runner lo ritenta solo quando lo stderr mostra un errore
+   * di rete; senza rete in mezzo è un file che non si lascia aprire, e si dice così.
+   */
   PROBE_COMMAND_FAILED: 'VIDEO_NON_LEGGIBILE',
+  /** Invariato: `ffmpeg` è uscito con un errore, e quasi sempre la ragione sta nel file. */
   ENCODE_FAILED: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
-  OUTPUT_UPLOAD_FAILED: 'VIDEO_RIPROVA',
+  OUTPUT_UPLOAD_FAILED: 'VIDEO_GUASTO_NOSTRO',
+  /** Invariato: la conversione non è finita entro il tetto di tempo della sorveglianza. */
   CONVERSION_TIMEOUT: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
 
   // ── Il bordo HTTP.
@@ -674,6 +709,14 @@ export type EsitoAperturaIntentVideo = z.infer<typeof schemaEsitoAperturaIntentV
  * traduzione la fa il bordo con `codiceMessaggioVideo`, e lo schema rifiuta un
  * `OUTPUT_DURATION_MISMATCH` che provasse a uscire. È la stessa idea della
  * redazione dei log: la regola non si affida a chi scrive la prossima route.
+ *
+ * `riprovaAutomatica` è l'altra metà di quella regola, per il caso in cui NON c'è
+ * ancora un errore: dopo un guasto nostro il runner rimette il job in coda e lo
+ * ritenta da solo (quattro tentativi in un'ora), e in quel tempo la persona deve
+ * leggere «lo stiamo riprovando» invece di una coda che sembra ferma. Non porta il
+ * codice interno della causa — resta nel log — e non può esistere su un job che non
+ * sta aspettando né lavorando: «lo stiamo riprovando» su un video già pronto, o già
+ * fallito, sarebbe una bugia a schermo.
  */
 export const schemaStatoJobVideo = z
   .object({
@@ -683,9 +726,22 @@ export const schemaStatoJobVideo = z
     stato: z.enum(STATI_JOB_VIDEO),
     avanzamento: z.number().int().min(0).max(100).nullable(),
     codice: z.enum(CODICI_MOSTRATI_VIDEO).nullable(),
+    /**
+     * `false` per default: un server più vecchio del client non manda il campo, e la
+     * scheda resta quella di prima invece di rompersi. La calcola la route con
+     * `riprovaAutomaticaInCorso`.
+     */
+    riprovaAutomatica: z.boolean().default(false),
     aggiornatoIl: z.string().datetime(),
   })
   .superRefine((stato, ctx) => {
+    if (stato.riprovaAutomatica && stato.stato !== 'queued' && stato.stato !== 'processing') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['riprovaAutomatica'],
+        message: 'solo un job in coda o in lavorazione può essere in ritentativo automatico',
+      })
+    }
     const fallito = stato.stato === 'rejected' || stato.stato === 'failed'
     if (fallito && stato.codice === null) {
       ctx.addIssue({
@@ -724,4 +780,31 @@ const AVANZAMENTO_PER_STATO: Record<StatoJobVideo, number | null> = {
 
 export function avanzamentoDaStatoVideo(stato: StatoJobVideo): number | null {
   return AVANZAMENTO_PER_STATO[stato]
+}
+
+/**
+ * Il job si sta ritentando da solo dopo un guasto nostro? È la domanda a cui risponde
+ * la scheda «lo stiamo riprovando in automatico», e la route la calcola con questa
+ * funzione sola: due copie della regola — una nella route, una nello schermo —
+ * divergerebbero alla prima modifica dei tentativi.
+ *
+ * Si deduce dallo stato e dal NUMERO DEL TENTATIVO, perché il database non ha un campo
+ * che lo dica e il codice della causa (`last_error_code`) non deve uscire:
+ *
+ *  · `queued` con `attempt >= 1` è un job RIMESSO IN CODA da `video_job_retry`, in
+ *    attesa del suo turno (5, 10 o 15 minuti). L'unica altra strada verso `queued` è
+ *    `video_job_uploaded`, e quella lo mette in coda con `attempt = 0`;
+ *  · `processing` con `attempt >= 2` è un ritentativo già ripartito: `video_job_claim`
+ *    conta il tentativo alla presa in carico, quindi il primo giro è `attempt = 1`.
+ *
+ * Ogni altro stato non ritenta mai. Un `attempt` assente o non numerico — una riga
+ * letta male — vale 0: nel dubbio non si promette un ritentativo che potrebbe non
+ * esserci.
+ */
+export function riprovaAutomaticaInCorso(
+  stato: StatoJobVideo,
+  attempt: number | null | undefined,
+): boolean {
+  const tentativo = typeof attempt === 'number' && Number.isFinite(attempt) ? attempt : 0
+  return (stato === 'queued' && tentativo >= 1) || (stato === 'processing' && tentativo >= 2)
 }

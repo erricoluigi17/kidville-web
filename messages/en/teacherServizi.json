@@ -249,5 +249,6 @@
   "galleryVideoRiprendi": "Resume",
   "galleryVideoRimuovi": "Remove",
   "galleryVideoAvanzamento": "Upload progress",
-  "galleryVideoAvviato": "The video is being prepared. You can close the app: you will find it here when it is ready."
+  "galleryVideoAvviato": "The video is being prepared. You can close the app: you will find it here when it is ready.",
+  "galleryVideoRiprovaAutomatica": "The problem is on our side, not with the video: we are retrying automatically. There is no need to upload it again, and you can close the app."
 }

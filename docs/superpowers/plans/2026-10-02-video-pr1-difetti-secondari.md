@@ -66,3 +66,14 @@
 | 38 | `src/lib/media/video/contratto.ts` | Un bundle vecchio (scheda o WebView non ricaricata) che riceve `VIDEO_GUASTO_NOSTRO` scarta lo stato (enum chiuso): la scheda non si aggiorna e ogni 5 s registra `video-galleria-job-fuori-contratto` fino al ricaricamento. Transitorio, nessun dato perso. | annotato + PRD |
 | 39 | `src/components/features/admin/news/NewsVideoAllegati.tsx` | Preesistente: al rientro un job `failed` mostra `VIDEO_RIPROVA` invece del codice vero (ora `VIDEO_GUASTO_NOSTRO`). | PR 2 |
 | 40 | `src/lib/ui/esito-fetch.ts` | Il commento dice «QUATTORDICI codici» e «sessantadue interni»: ora sono 15 e 76. | annotato |
+
+### T9 — PRD (critico g1: OK, zero bloccanti; ogni affermazione sostanziale verificata su codice, migrazioni, CI e produzione in sola lettura)
+
+| # | File | Difetto | Destino |
+|---|---|---|---|
+| 41 | `PRD REGISTRO ELETTRONICO.md` | Numeri presi dalla spec senza ricontarli («17 job su 17», «7 insegnanti», «131 foto», «i 17 job già falliti»): erano l'istantanea della mattina del 01/10. Ricontati il 02/10 alle 08:53 UTC (solo `count`): 23 job `BUILD_DOWNLOAD_FAILED`, tutti al primo tentativo, 9 insegnanti; 300 foto e 0 video nei giorni interi 30/09 e 01/10. | **corretto dall'orchestratore** (istantanea datata + riconto); il totale finale lo scrive il primo commit dopo il deploy |
+| 42 | `PRD REGISTRO ELETTRONICO.md` | Sezione B: «un difetto trovato dalla prova vera, non dedotto» — il #14 l'aveva già dedotto il critico di T4; la P7 di F1 ne ha misurato la forma (400, 88 byte, uscita 25). | **corretto dall'orchestratore** |
+| 43 | `PRD REGISTRO ELETTRONICO.md` | Sezione C: le coordinate ISO 6709 «per valore, ovunque compaiano» promette più del codice: la maschera copre i gradi decimali, non i gradi e primi senza nome del tag (#31). | **corretto dall'orchestratore** |
+| 44 | `PRD REGISTRO ELETTRONICO.md` | Sezione A: `scripts/ffmpeg-nel-bucket.mjs` «unico modo» di caricare la build: nessun vincolo tecnico lo impone (F1 e F2 hanno caricato clip sintetiche per un'altra via, poi tolte). | **corretto dall'orchestratore** («lo strumento previsto») |
+| 45 | `PRD REGISTRO ELETTRONICO.md` | Riga «Foto/Video»: «scaricato a ogni conversione» — il download avveniva a ogni MicroVM nuova. | **corretto dall'orchestratore** |
+| 46 | `PRD REGISTRO ELETTRONICO.md` | Sezione Test: le mutazioni contate (10 + 6) sono solo quelle dei critici dell'ondata 2. | **corretto dall'orchestratore** («dell'ondata 2») |

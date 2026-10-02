@@ -469,15 +469,21 @@ describe('l’oblio dei video in volo: chiamata e controllo del valore di ritorn
     expect(r.lettureFallite).toBe(base.lettureFallite + 1)
   })
 
-  it('lo schema che non c’è (DB E2E della CI non migrato, PGRST202) degrada in silenzio: non c’è niente da obliare', async () => {
+  it('lo schema che non c’è (DB E2E della CI non migrato, PGRST202) non è un guasto: non c’è niente da obliare, ma lo DICE con un warn (secondario #113)', async () => {
     const base = await anonimizzaAlunno(oblioConRisposta(OK_ZERO).client, { id: NOSTRO }, AT, 'test')
     spie.logErrore.mockClear()
+    spie.logEvento.mockClear()
     const { client } = oblioConRisposta({ data: null, error: { code: 'PGRST202', message: 'function not found' } })
 
     const r = await anonimizzaAlunno(client, { id: NOSTRO }, AT, 'test')
 
     expect(r.lettureFallite).toBe(base.lettureFallite)
     expect(spie.logErrore.mock.calls.some((c) => (c[0] as { evento?: string }).evento === 'oblio_video_intenti')).toBe(false)
+    // Un ramo che non logga è un bug (AGENTS, regola 6): la riga c'è, a livello `warn`, e porta solo l'esito.
+    const riga = spie.logEvento.mock.calls.find((c) => (c[2] as { esito?: string })?.esito === 'oblio-video-intenti-rpc-assente')
+    expect(riga, 'nessuna riga per la RPC assente').toBeDefined()
+    expect(riga?.[0]).toBe('gdpr')
+    expect(riga?.[1]).toBe('warn')
   })
 
   it('un guasto della RPC NON ferma il resto dell’oblio: l’anagrafica è anonimizzata lo stesso', async () => {

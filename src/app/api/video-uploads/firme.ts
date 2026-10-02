@@ -148,7 +148,8 @@ export async function firmaTus(supabase: SupabaseClient, percorso: string): Prom
  *
  * ⚠️ `{ upsert: false }` è scritto per esteso anche se oggi è il comportamento di default della
  * libreria: è la proprietà che regge il token di rinnovo — una seconda PUT sullo stesso percorso
- * prende 409 invece di sovrascrivere l'originale già arrivato — e una proprietà di sicurezza non
+ * viene RIFIUTATA invece di sovrascrivere l'originale già arrivato (lo Storage risponde HTTP 400 col
+ * corpo `{"statusCode":"409","error":"Duplicate"}`, non un 409: secondario #193) — e una proprietà di sicurezza non
  * si affida a un default che una versione futura potrebbe cambiare. Lo prova un test (l'argomento
  * passato a `createSignedUploadUrl`).
  *

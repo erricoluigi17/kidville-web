@@ -138,18 +138,41 @@ export function MediaUploader({ onUpload }: Props) {
         <div className="space-y-4">
             {/* Il riquadro grande. Web: trascina o clicca per scegliere (come prima). App: tocca per
                 aprire il selettore di FOTO E VIDEO; la fotocamera è il pulsante secondario qui sotto.
-                In entrambi i casi il click apre l'`<input>`: cambia solo ciò che il riquadro dice. */}
+                In entrambi i casi il click apre l'`<input>`: cambia solo ciò che il riquadro dice.
+
+                ⚠️ È UN VERO COMANDO (secondario #150). Nell'app questo riquadro è la scelta PRINCIPALE, e
+                era un `<div onClick>` nudo: nessun ruolo, nessun `tabIndex`, nessuna tastiera. Da tastiera
+                non si apriva in nessun modo (WCAG 2.1.1, livello A), e VoiceOver o TalkBack non lo
+                annunciavano come azionabile. Adesso ha `role="button"`, entra nell'ordine del Tab, e Invio o
+                Spazio fanno ciò che fa il click. Il NOME accessibile è il suo testo visibile (WCAG 2.5.3,
+                «Label in Name»): «Scegli foto e video…» nell'app, «Trascina foto o video…» sul web. Il
+                comportamento non cambia: apre lo stesso `<input>`, con la stessa riga di log.
+                Lo Spazio su un elemento non nativo farebbe scorrere la pagina: qui la pressione è il gesto.
+                L'`<input>` qui dentro è `display: none` (`hidden`), quindi non è un comando annidato per un
+                lettore di schermo. L'anello di fuoco è FUORI, come negli altri comandi della galleria. */}
             <div
                 data-testid="gallery-selettore-riquadro"
-                className={`relative border-2 border-dashed rounded-3xl p-8 text-center transition-all cursor-pointer ${
+                role="button"
+                tabIndex={0}
+                className={`relative border-2 border-dashed rounded-3xl p-8 text-center transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-kidville-green ${
                     dragOver ? 'border-kidville-green bg-kidville-cream/50 scale-[1.01]' : 'border-kidville-line hover:border-kidville-green/50 hover:bg-kidville-cream/20'
                 }`}
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={e => { e.preventDefault(); setDragOver(false); void addFiles(e.dataTransfer.files); }}
                 onClick={apriSelettore}
+                onKeyDown={e => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        apriSelettore();
+                    }
+                }}
             >
-                <input ref={inputRef} type="file" accept="image/*,video/*" multiple className="hidden"
+                {/* `hidden` (l'attributo, oltre alla classe): senza CSS — in un collaudo, in un lettore — l'input
+                    resterebbe un controllo senza etichetta DENTRO un altro controllo (`nested-interactive`).
+                    Cambia solo come lo vede l'albero di accessibilità: il selettore si apre come prima. */}
+                <input ref={inputRef} type="file" accept="image/*,video/*" multiple hidden className="hidden"
                     onClick={e => e.stopPropagation()}
                     onChange={e => {
                         const scelti = e.target.files;

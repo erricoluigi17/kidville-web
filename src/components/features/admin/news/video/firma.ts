@@ -20,13 +20,16 @@ import type { ArchivioCaricamentiVideo, DipendenzeCaricamentoVideo } from '@/lib
  * Tutte e due fanno lo stesso lavoro, `rinnova()`, e se si incrociano ne parte UNO solo: due
  * rinnovi insieme sarebbero due aperture dell'intento per la stessa firma.
  *
- * ─── COME SI RINNOVA: IL PERCORSO ATTUALE DELLE NEWS ───────────────────────
+ * ─── COME SI RINNOVA: PER LE NEWS COME PER LA GALLERIA ────────────────────
  *
- * Per le News il rinnovo è ancora la riapertura dell'intento con la stessa chiave di
- * idempotenza (`apriIntentoVideoNews`), che restituisce lo STESSO job con una firma nuova.
- * La galleria passa invece da `POST /api/video-uploads/[id]/firma`, che non riapre niente:
- * le News potranno usarla cambiando una funzione sola, `rinnova`, che è l'unica cosa che qui
- * dipende dal canale.
+ * Il rinnovo NON riapre l'intento: è `POST /api/video-uploads/[id]/firma`
+ * (`rinnovaFirmaTus`, in `@/lib/media/video/trasporto`), che verifica soltanto che il job
+ * aspetti ancora i suoi byte e firma di nuovo il SUO percorso. Fino alla PR 2 le News
+ * rinnovavano riaprendo l'intento con la stessa chiave di idempotenza (`apriIntentoVideoNews`):
+ * un'apertura intera, coi suoi cancelli, per ogni firma. Non è più così — `NewsVideoAllegati`
+ * passa a `rinnovaFirmaTus` nei due punti in cui costruisce queste dipendenze —, e la
+ * riapertura resta soltanto il modo di AVERE la prima firma di un giro (all'invio, e alla
+ * ripresa quando la pagina si riapre). `rinnova` è l'unica cosa che qui dipende dal canale.
  *
  * ⚠️ La firma sta in MEMORIA, in questa chiusura, mai nella riga su IndexedDB: sarebbe una
  * credenziale lasciata sul disco (il lock `CHIAVI_RIGA_CARICAMENTO` esiste per impedirlo).

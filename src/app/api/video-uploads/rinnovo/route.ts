@@ -42,15 +42,16 @@ import {
 // arrivato. Non legge niente (la risposta dice uno stato e al massimo un URL che lui stesso
 // aveva già ricevuto all'apertura), non crea niente, non vede un'altra famiglia. Come si limita il
 // danno di un token rubato:
-//  · l'URL è firmato SENZA upsert: una seconda PUT sullo stesso percorso prende 409, e l'originale
-//    già arrivato non si sovrascrive;
+//  · l'URL è firmato SENZA upsert: una seconda PUT sullo stesso percorso è rifiutata (HTTP 400 col
+//    corpo `statusCode: "409"`: lo Storage non risponde mai un 409 vero, secondario #193), e
+//    l'originale già arrivato non si sovrascrive;
 //  · il trigger d'arrivo rifiuta una dimensione diversa da quella dichiarata (`ORIGINALE_DIVERSO`) e
 //    una riscrittura successiva diventa `ORIGINALE_SOSTITUITO`;
 //  · lo `sha256` dichiarato all'apertura e riverificato nel Sandbox rende impossibile sostituire il
 //    contenuto;
 //  · un token revocato — il file è arrivato, o l'intento è stato ritirato — non dà MAI un URL: dà lo
 //    stato (`arrivato`, `annullato`), che serve alla 1.2 per sapere che il file c'è (la sua seconda
-//    PUT ha preso 409) e si ferma lì. Lo decide la RPC (`video_rinnovo_usa`), e qui un test lo tiene fermo.
+//    PUT è stata rifiutata con un 4xx) e si ferma lì. Lo decide la RPC (`video_rinnovo_usa`), e qui un test lo tiene fermo.
 //
 // ─── COME SI DIFENDE UNA PORTA SENZA SESSIONE ────────────────────────────────
 //  · INDOVINARLO: 256 bit, e 404 UNIFORME (`VIDEO_NON_TROVATO`) per token assente, malformato,

@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createHash } from 'node:crypto'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 
@@ -26,6 +27,10 @@ import { SEDE_A, SEDE_B } from '../fixtures/sedi'
  *  3. **Ogni scrittura dichiara la sua sede.** `POST /api/video-uploads` pretende
  *     un uuid: indovinarlo significa archiviare il video nel plesso sbagliato in
  *     silenzio, che è il difetto per cui esiste `resolveScuolaScrittura`.
+ *  4. **(T11c, #131) La chiave non lascia in tabella i bambini scelti, nemmeno come
+ *     impronta.** È salata con 128 bit casuali per dispositivo (`saleDelDispositivo`):
+ *     l'attacco per enumerazione che ritrovava i bambini dall'impronta di prima è
+ *     riprodotto qui, e fallisce contro quella di oggi.
  */
 
 const h = vi.hoisted(() => ({ logClient: vi.fn() }))
@@ -41,6 +46,7 @@ import {
   apriIntentoVideoGalleria,
   annullaIntentoVideo,
   chiaveIdempotenzaVideo,
+  creaSaleDelDispositivo,
   durataVideoDalFile,
   leggiElencoVideoGalleria,
   leggiStatoIntentoVideo,
@@ -49,6 +55,7 @@ import {
   sediDalCookie,
   sedeDelCaricamento,
   segnalaVideoCaricato,
+  sha256Esadecimale,
 } from '@/lib/gallery/video-galleria-flusso'
 import itShared from '../../messages/it/shared.json'
 
@@ -372,6 +379,371 @@ describe('chiaveIdempotenzaVideo', () => {
     for (const lastModified of [undefined, Number.NaN, 1_726_000_000_000.5, 1e21]) {
       const chiave = chiaveIdempotenzaVideo({ name: 'a.mp4', size: 10, lastModified }, conBambini([BAMBINO_A]))
       expect(chiave, String(lastModified)).toMatch(/^[a-z0-9-]+$/)
+    }
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LA CHIAVE È SALATA — i bambini non restano in tabella, nemmeno come impronta (#131)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `video_jobs.idempotency_key` sopravvive alla minimizzazione di `video_intents.tag_alunni` (sette
+// giorni). Con l'impronta di prima — un FNV a 32 bit degli uuid, senza sale — chi legge la tabella
+// (service role) conosce gli uuid di tutti i bambini della sede, sa `n_tag` e la classe, e prova i
+// sottoinsiemi finché l'impronta torna: i bambini scelti si ricostruiscono. Qui il difetto è
+// RIPRODOTTO (l'attacco funziona sull'impronta di prima e non funziona su quella di oggi), e si tengono
+// ferme le due proprietà che il sale deve dare senza togliere la terza:
+//   · senza il sale l'impronta non si confronta con nessun candidato;
+//   · con lo stesso sale (stesso dispositivo) la stessa scelta dà la stessa chiave: i ritentativi
+//     ritrovano il loro intento.
+
+const SALE_A = '0123456789abcdef0123456789abcdef'
+const SALE_B = 'fedcba9876543210fedcba9876543210'
+const CHIAVE_SALE_NEL_DEPOSITO = 'kv:video-galleria-sale'
+
+/** Le due impronte di una chiave `gv2-<byte>-<data>-<nome>-<bambini>`. */
+function impronteDi(chiave: string): { nome: string; bambini: string } {
+  const pezzi = chiave.split('-')
+  expect(pezzi, chiave).toHaveLength(5)
+  return { nome: pezzi[3], bambini: pezzi[4] }
+}
+
+/**
+ * L'impronta di PRIMA, riprodotta SOLO per fare l'attacco: FNV-1a a 32 bit, senza sale, sul JSON dei
+ * bambini ordinati. NON è codice di produzione: è ciò che chi leggeva la tabella sapeva rifare.
+ */
+function improntaDiPrima(testo: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < testo.length; i++) {
+    h ^= testo.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+/** La classe di chi attacca: dieci bambini, i cui uuid chi legge la tabella conosce. */
+const CLASSE_DEL_NIDO = Array.from({ length: 10 }, (_, i) => `66666666-0000-4000-8000-${String(i + 1).padStart(12, '0')}`)
+
+/** Tutte le scelte possibili (2^10 − 1): è ciò che prova chi legge la tabella. */
+function tutteLeScelte(elenco: string[]): string[][] {
+  const scelte: string[][] = []
+  for (let maschera = 1; maschera < 1 << elenco.length; maschera++) {
+    scelte.push(elenco.filter((_, i) => (maschera >> i) & 1))
+  }
+  return scelte
+}
+
+/** L'attacco: quali scelte danno l'impronta che sta in tabella, secondo la funzione che l'attaccante conosce? */
+const scelteCompatibili = (impronta: string, calcola: (tag: string[]) => string): string[][] =>
+  tutteLeScelte(CLASSE_DEL_NIDO).filter((tag) => calcola(tag) === impronta)
+
+describe('chiaveIdempotenzaVideo — il sale del dispositivo (#131)', () => {
+  const SEGRETA = [CLASSE_DEL_NIDO[1], CLASSE_DEL_NIDO[4], CLASSE_DEL_NIDO[7]]
+  const FILE_DEL_TEST = fileVideo({ nome: 'VID_20261002_101500.mp4' })
+
+  /** Ciò che finisce in tabella quando il dispositivo col sale `sale` manda `tag`. */
+  const chiaveCon = (sale: string, tag: string[]) => chiaveIdempotenzaVideo(FILE_DEL_TEST, conBambini(tag), sale)
+
+  it('IL DIFETTO, RIPRODOTTO: l’impronta di prima si enumerava, e ritrovava i bambini scelti', () => {
+    // Il controllo positivo che rende significativo il test dopo: l'attacco FUNZIONA contro l'impronta senza sale.
+    const inTabella = improntaDiPrima(JSON.stringify([[...SEGRETA].sort(), false, []]))
+    const trovate = scelteCompatibili(inTabella, (tag) => improntaDiPrima(JSON.stringify([[...tag].sort(), false, []])))
+    expect(trovate).toEqual([[...SEGRETA]])
+  })
+
+  it('con il sale giusto l’attacco ritroverebbe la scelta: è il sale, e solo lui, a tenerla al sicuro', () => {
+    // Controllo positivo del macchinario: se qui non trovasse niente, il test seguente sarebbe verde a vuoto.
+    const inTabella = impronteDi(chiaveCon(SALE_A, SEGRETA)).bambini
+    const trovate = scelteCompatibili(inTabella, (tag) => impronteDi(chiaveCon(SALE_A, tag)).bambini)
+    expect(trovate).toEqual([SEGRETA])
+  })
+
+  it('SENZA il sale i sottoinsiemi non tornano: né col sale di un altro dispositivo né con la formula di prima', () => {
+    const inTabella = impronteDi(chiaveCon(SALE_A, SEGRETA)).bambini
+    // L'attaccante prova il sale di un altro dispositivo…
+    expect(scelteCompatibili(inTabella, (tag) => impronteDi(chiaveCon(SALE_B, tag)).bambini)).toEqual([])
+    // …o la vecchia impronta (la stessa formula, nessun sale), intera e nel suo prefisso di otto cifre.
+    const vecchia = (tag: string[]) => improntaDiPrima(JSON.stringify([[...tag].sort(), false, []]))
+    expect(scelteCompatibili(inTabella, vecchia)).toEqual([])
+    expect(scelteCompatibili(inTabella.slice(0, 8), vecchia)).toEqual([])
+  })
+
+  it('la stessa scelta con due sali diversi dà due chiavi diverse, in TUTTE e due le impronte', () => {
+    const a = chiaveCon(SALE_A, SEGRETA)
+    const b = chiaveCon(SALE_B, SEGRETA)
+    expect(a).not.toBe(b)
+    // Anche il nome del file è salato: un'impronta del nome senza sale si prova su una lista di nomi.
+    expect(impronteDi(a).bambini).not.toBe(impronteDi(b).bambini)
+    expect(impronteDi(a).nome).not.toBe(impronteDi(b).nome)
+    // La parte che non è personale resta uguale: byte e data.
+    expect(a.split('-').slice(0, 3)).toEqual(b.split('-').slice(0, 3))
+  })
+
+  it('due video DIVERSI con gli STESSI bambini, dallo stesso dispositivo, non hanno niente in comune nell’impronta dei destinatari (#183)', () => {
+    // Senza il file dentro l'impronta, lo stesso gruppo di bambini dava la stessa impronta per ogni video dello
+    // stesso dispositivo: chi legge la tabella poteva legare un intento già minimizzato a un altro, i cui bambini
+    // sono ancora noti, e risalire così ai destinatari del primo.
+    const recita = impronteDi(chiaveIdempotenzaVideo(fileVideo({ nome: 'recita.mp4' }), conBambini(SEGRETA), SALE_A)).bambini
+    const saggio = impronteDi(chiaveIdempotenzaVideo(fileVideo({ nome: 'saggio.mp4' }), conBambini(SEGRETA), SALE_A)).bambini
+    const altroPeso = impronteDi(chiaveIdempotenzaVideo(fileVideo({ byte: 999 }), conBambini(SEGRETA), SALE_A)).bambini
+    const altraData = impronteDi(chiaveIdempotenzaVideo(fileVideo({ modificato: 1_726_000_000_001 }), conBambini(SEGRETA), SALE_A)).bambini
+    expect(new Set([recita, saggio, altroPeso, altraData]).size).toBe(4)
+    // E l'idempotenza resta: lo stesso video con gli stessi bambini dà la stessa impronta.
+    expect(impronteDi(chiaveIdempotenzaVideo(fileVideo({ nome: 'recita.mp4' }), conBambini(SEGRETA), SALE_A)).bambini).toBe(recita)
+  })
+
+  it('le due impronte sono di due DOMINI: un nome uguale al JSON dei bambini non darebbe la stessa impronta', () => {
+    const json = JSON.stringify([[BAMBINO_A], false, []])
+    const { nome, bambini } = impronteDi(chiaveIdempotenzaVideo(fileVideo({ nome: json }), conBambini([BAMBINO_A]), SALE_A))
+    expect(nome).not.toBe(bambini)
+  })
+
+  it('con lo stesso sale la stessa chiave: un ritentativo dello stesso dispositivo ritrova il suo intento', () => {
+    expect(chiaveCon(SALE_A, SEGRETA)).toBe(chiaveCon(SALE_A, SEGRETA))
+    // E restano insiemi: ordine, doppioni e grafia dell'uuid non cambiano la chiave, col sale come senza.
+    expect(chiaveCon(SALE_A, [...SEGRETA].reverse())).toBe(chiaveCon(SALE_A, SEGRETA))
+    expect(chiaveCon(SALE_A, [...SEGRETA, SEGRETA[0].toUpperCase()])).toBe(chiaveCon(SALE_A, SEGRETA))
+  })
+
+  it('la chiave NON contiene l’impronta di prima: né dei bambini né del nome (valori misurati col codice senza sale)', () => {
+    // Misurati prima della correzione, e scritti qui: un test che li ricalcolasse proverebbe la propria copia.
+    const IMPRONTA_BAMBINO_A_SENZA_SALE = 'ebb36d66'
+    const IMPRONTA_NOME_SENZA_SALE = 'afbbf116' // «recita.mp4», il nome di `fileVideo()`
+    const chiave = chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]), SALE_A)
+    expect(chiave).not.toContain(IMPRONTA_BAMBINO_A_SENZA_SALE)
+    expect(chiave).not.toContain(IMPRONTA_NOME_SENZA_SALE)
+    // …e nemmeno la chiave di default, quella che parte davvero dalla schermata.
+    const predefinita = chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]))
+    expect(predefinita).not.toContain(IMPRONTA_BAMBINO_A_SENZA_SALE)
+    expect(predefinita).not.toContain(IMPRONTA_NOME_SENZA_SALE)
+  })
+
+  it('il sale non esce: non è nella chiave, nemmeno a pezzi', () => {
+    const chiave = chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]), SALE_A)
+    expect(chiave).not.toContain(SALE_A)
+    expect(chiave).not.toContain(SALE_A.slice(0, 8))
+    expect(chiave).toMatch(/^gv2-12345678-1726000000000-[0-9a-f]{12}-[0-9a-f]{12}$/)
+  })
+
+  it('un sale che non ha la forma dei veri si RIFIUTA: vuoto o corto farebbe tornare l’impronta enumerabile in silenzio', () => {
+    for (const sale of ['', 'x', 'a'.repeat(31), 'A'.repeat(32), 'g'.repeat(32), `${SALE_A}!`]) {
+      expect(() => chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]), sale), JSON.stringify(sale)).toThrow('SaleNonValido')
+    }
+  })
+
+  describe('senza un sale esplicito la chiave usa quello del DISPOSITIVO, tenuto in localStorage', () => {
+    afterEach(() => localStorage.removeItem(CHIAVE_SALE_NEL_DEPOSITO))
+
+    it('il sale del deposito è quello che entra nella chiave, e cambiarlo cambia la chiave', () => {
+      localStorage.setItem(CHIAVE_SALE_NEL_DEPOSITO, SALE_A)
+      const conA = chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]))
+      expect(conA).toBe(chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]), SALE_A))
+
+      localStorage.setItem(CHIAVE_SALE_NEL_DEPOSITO, SALE_B)
+      const conB = chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]))
+      expect(conB).toBe(chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]), SALE_B))
+      expect(conB).not.toBe(conA)
+    })
+
+    it('il primo invio crea il sale e lo salva: gli invii dopo, e dopo un ricaricamento, ritrovano la stessa chiave', () => {
+      localStorage.removeItem(CHIAVE_SALE_NEL_DEPOSITO)
+      const prima = chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]))
+      const salvato = localStorage.getItem(CHIAVE_SALE_NEL_DEPOSITO)
+      expect(salvato, 'il sale non è stato messo da parte').toMatch(/^[0-9a-f]{32}$/)
+      expect(chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]))).toBe(prima)
+      expect(prima).toBe(chiaveIdempotenzaVideo(fileVideo(), conBambini([BAMBINO_A]), salvato!))
+    })
+  })
+})
+
+describe('creaSaleDelDispositivo — 128 bit casuali, per dispositivo, in localStorage', () => {
+  const CHIAVE = CHIAVE_SALE_NEL_DEPOSITO
+
+  /** Un deposito finto che registra le chiamate. */
+  function depositoFinto(iniziale: Record<string, string> = {}) {
+    const dati = new Map(Object.entries(iniziale))
+    return {
+      dati,
+      getItem: vi.fn((k: string) => dati.get(k) ?? null),
+      setItem: vi.fn((k: string, v: string) => {
+        dati.set(k, v)
+      }),
+    }
+  }
+
+  /** Byte «casuali» che si possono prevedere: `da`, `da + 1`, … */
+  const byteDa = (da = 0) => vi.fn((n: number) => Uint8Array.from({ length: n }, (_, i) => (da + i) & 0xff))
+
+  /** Le righe di log di un guasto del sale. */
+  const guasti = () => h.logClient.mock.calls
+    .map((c) => c[0] as { livello: string; messaggio: string; campi?: Record<string, unknown> })
+    .filter((r) => r.messaggio === 'video-galleria-sale-non-disponibile')
+
+  it('genera sedici byte dalla fonte crittografica, li salva e a ogni invio ritorna lo stesso', () => {
+    const deposito = depositoFinto()
+    const casuali = byteDa()
+    const sale = creaSaleDelDispositivo({ deposito: () => deposito, casuali })
+
+    const primo = sale()
+    expect(primo).toBe('000102030405060708090a0b0c0d0e0f')
+    expect(casuali).toHaveBeenCalledWith(16)
+    expect(deposito.dati.get(CHIAVE)).toBe(primo)
+
+    expect(sale()).toBe(primo)
+    expect(casuali, 'a ogni invio si rigenerava: i ritentativi non si ritroverebbero più').toHaveBeenCalledTimes(1)
+    expect(guasti()).toEqual([])
+  })
+
+  it('un sale già nel deposito (il dispositivo di ieri) si USA: non se ne genera un altro', () => {
+    const deposito = depositoFinto({ [CHIAVE]: SALE_B })
+    const casuali = byteDa()
+    expect(creaSaleDelDispositivo({ deposito: () => deposito, casuali })()).toBe(SALE_B)
+    expect(casuali).not.toHaveBeenCalled()
+    expect(deposito.setItem).not.toHaveBeenCalled()
+  })
+
+  it('un sale LETTO dal deposito resta quello della sessione anche se il deposito si svuota subito dopo', () => {
+    const deposito = depositoFinto({ [CHIAVE]: SALE_B })
+    const casuali = byteDa()
+    const sale = creaSaleDelDispositivo({ deposito: () => deposito, casuali })
+    expect(sale()).toBe(SALE_B)
+    deposito.dati.clear()
+    expect(sale(), 'la chiave dei ritentativi in corso è cambiata a metà sessione').toBe(SALE_B)
+    expect(casuali).not.toHaveBeenCalled()
+    // …e si rimette al sicuro dove l'utente l'aveva cancellato.
+    expect(deposito.dati.get(CHIAVE)).toBe(SALE_B)
+  })
+
+  it('due dispositivi hanno due sali diversi', () => {
+    const uno = creaSaleDelDispositivo({ deposito: () => depositoFinto(), casuali: byteDa(0) })()
+    const due = creaSaleDelDispositivo({ deposito: () => depositoFinto(), casuali: byteDa(100) })()
+    expect(uno).not.toBe(due)
+  })
+
+  it.each([
+    ['vuoto', ''],
+    ['corto (31 cifre)', 'a'.repeat(31)],
+    ['maiuscolo', 'A'.repeat(32)],
+    ['non esadecimale', 'g'.repeat(32)],
+    ['con un suffisso', `${SALE_A}-x`],
+  ])('un valore illeggibile nel deposito (%s) non si usa: si butta e se ne rifà uno', (_nome, guasto) => {
+    const deposito = depositoFinto({ [CHIAVE]: guasto })
+    const sale = creaSaleDelDispositivo({ deposito: () => deposito, casuali: byteDa(7) })()
+    expect(sale).toBe('0708090a0b0c0d0e0f10111213141516')
+    expect(deposito.dati.get(CHIAVE), 'il valore rotto è rimasto nel deposito').toBe(sale)
+  })
+
+  it('il deposito che LANCIA all’accesso (siti bloccati) non rompe l’invio: sale per sessione, e il guasto si dice UNA volta', () => {
+    const casuali = byteDa()
+    const sale = creaSaleDelDispositivo({
+      deposito: () => {
+        throw new Error('bloccato')
+      },
+      casuali,
+    })
+    const primo = sale()
+    expect(primo).toMatch(/^[0-9a-f]{32}$/)
+    expect(sale(), 'senza deposito il sale deve restare quello della sessione').toBe(primo)
+    expect(casuali).toHaveBeenCalledTimes(1)
+    expect(guasti()).toHaveLength(1)
+    expect(guasti()[0]).toMatchObject({ livello: 'warn', campi: { motivo: 'accesso', error_code: 'Error' } })
+    // Nessun segreto nel log: il sale non si registra mai.
+    expect(JSON.stringify(h.logClient.mock.calls)).not.toContain(primo)
+  })
+
+  it('senza deposito (`null`) il sale è della SESSIONE: lo stesso finché dura, un altro alla prossima', () => {
+    const sessione1 = creaSaleDelDispositivo({ deposito: () => null, casuali: byteDa(0) })
+    const sessione2 = creaSaleDelDispositivo({ deposito: () => null, casuali: byteDa(50) })
+    const a = sessione1()
+    expect(sessione1()).toBe(a)
+    expect(sessione2()).not.toBe(a)
+    // `null` è «non c'è un deposito», non un guasto: niente rumore nei log.
+    expect(guasti()).toEqual([])
+  })
+
+  it('una lettura che lancia non impedisce di avere un sale (e di provare a salvarlo)', () => {
+    const deposito = depositoFinto()
+    deposito.getItem.mockImplementation(() => {
+      throw new Error('lettura')
+    })
+    const sale = creaSaleDelDispositivo({ deposito: () => deposito, casuali: byteDa() })
+    const primo = sale()
+    expect(primo).toMatch(/^[0-9a-f]{32}$/)
+    expect(sale()).toBe(primo)
+    expect(deposito.setItem).toHaveBeenCalledWith(CHIAVE, primo)
+    expect(guasti().map((r) => r.campi?.motivo)).toEqual(['lettura'])
+  })
+
+  it('una scrittura che lancia (quota piena) lascia il sale in memoria: stessa chiave per tutta la sessione, guasto detto UNA volta', () => {
+    const deposito = depositoFinto()
+    deposito.setItem.mockImplementation(() => {
+      throw new Error('piena')
+    })
+    const sale = creaSaleDelDispositivo({ deposito: () => deposito, casuali: byteDa() })
+    const primo = sale()
+    expect(sale()).toBe(primo)
+    expect(sale()).toBe(primo)
+    expect(guasti()).toHaveLength(1)
+    expect(guasti()[0].campi).toMatchObject({ motivo: 'scrittura' })
+  })
+
+  it('un deposito svuotato a metà sessione (l’utente cancella i dati) NON cambia il sale della sessione: si rimette al sicuro', () => {
+    const deposito = depositoFinto()
+    const casuali = byteDa()
+    const sale = creaSaleDelDispositivo({ deposito: () => deposito, casuali })
+    const primo = sale()
+    deposito.dati.clear()
+    expect(sale()).toBe(primo)
+    expect(deposito.dati.get(CHIAVE)).toBe(primo)
+    expect(casuali).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['nessuna fonte crittografica', () => null],
+    ['una fonte che dà meno byte del dovuto', () => new Uint8Array(4)],
+  ])('%s: ripiega su un sale comunque di 128 bit, e LO DICE (non è un ripiego silenzioso)', (_nome, casuali) => {
+    const sale = creaSaleDelDispositivo({ deposito: () => null, casuali })()
+    expect(sale).toMatch(/^[0-9a-f]{32}$/)
+    expect(guasti().map((r) => r.campi?.motivo)).toEqual(['senza-crypto'])
+  })
+
+  it('una fonte che lancia non ferma l’invio: ripiego dichiarato', () => {
+    const sale = creaSaleDelDispositivo({
+      deposito: () => null,
+      casuali: () => {
+        throw new Error('crypto')
+      },
+    })()
+    expect(sale).toMatch(/^[0-9a-f]{32}$/)
+    expect(guasti()).toHaveLength(1)
+  })
+
+  it('la fonte di tutti i giorni è `crypto.getRandomValues`: due dispositivi veri non hanno lo stesso sale', () => {
+    const uno = creaSaleDelDispositivo({ deposito: () => null })()
+    const due = creaSaleDelDispositivo({ deposito: () => null })()
+    expect(uno).toMatch(/^[0-9a-f]{32}$/)
+    expect(due).not.toBe(uno)
+    expect(guasti(), 'il browser di prova ha una fonte crittografica: nessun ripiego').toEqual([])
+  })
+})
+
+describe('sha256Esadecimale — è SHA-256, non un’imitazione', () => {
+  it('i vettori del NIST (FIPS 180-4)', () => {
+    expect(sha256Esadecimale('')).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
+    expect(sha256Esadecimale('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+    expect(sha256Esadecimale('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq')).toBe(
+      '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1',
+    )
+  })
+
+  it('coincide con `node:crypto` a ogni lunghezza intorno al confine dei blocchi (55, 56, 63, 64, 65…) e con l’Unicode', () => {
+    const lunghezze = [0, 1, 54, 55, 56, 57, 63, 64, 65, 119, 120, 121, 128, 1000, 100_000]
+    for (const n of lunghezze) {
+      const testo = 'x'.repeat(n)
+      expect(sha256Esadecimale(testo), `lunghezza ${n}`).toBe(createHash('sha256').update(testo, 'utf8').digest('hex'))
+    }
+    for (const testo of ['è ñ 日本語 🙂', 'recita-di-natale-bambina-rossi.mov', '3 ANNI\n4 ANNI', '\u0000\u0001']) {
+      expect(sha256Esadecimale(testo), testo).toBe(createHash('sha256').update(testo, 'utf8').digest('hex'))
     }
   })
 })

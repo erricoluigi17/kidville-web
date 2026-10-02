@@ -803,6 +803,10 @@ async function segnalaTipiSenzaDestinatario(supabase: Supa, canale: string): Pro
 
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Il giro può cancellare fino a 500 oggetti e scansionare esiti e outbox: si dichiara il tetto intero della
+// funzione invece di affidarsi al predefinito della piattaforma (secondario #116).
+export const maxDuration = 300
+
 // POST /api/gdpr/retention-video
 // Auth: header `x-cron-secret` (cron) OPPURE staff (lancio manuale).
 export const POST = withRoute('gdpr/retention-video:POST', async (request: NextRequest) => {

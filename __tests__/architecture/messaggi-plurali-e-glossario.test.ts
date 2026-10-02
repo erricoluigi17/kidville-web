@@ -810,7 +810,6 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['adminAltro.protUploadHint', 'unità di misura (MB)'],
         ['parentForms.fileTroppoPesante', 'unità di misura (MB)'],
         ['adminStudents.staffDocTroppoGrande', 'unità di misura (MB)'],
-        ['teacherServizi.galleryAlertVideoTroppoGrande', 'unità di misura (MB)'],
         ['adminComunicazioni.avvisiAdesioniSiNo', '«sì»/«no»: avverbi, invarianti'],
         ['teacherNav.adesioniSiNo', '«sì»/«no»: avverbi, invarianti'],
         ['parentForms.firmatarioNdi2', 'forma «N di 2»: posizione in una sequenza'],
@@ -967,7 +966,19 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // disponibile» non distingueva «non ne ha ancora» da «stai guardando l'altro».
         // Categoria (a), gemella di `parentServizi.galleryInfoPrivacy`: `{nome}` è il
         // nome del bambino, e il verbo che segue concorda con lui, non con un numero.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(42)
+        //
+        // 2026-10-02 · 42 → 41, e per una volta il tetto SCENDE (PR 2 video «server e web»,
+        // T11c, secondario #140). `teacherServizi.galleryAlertVideoTroppoGrande` («Il video
+        // «{nome}» supera i 50 MB (attuale: {dimensione} MB). Verrà elaborato e compresso…»)
+        // era una chiave MORTA — nessun sorgente di `src/` la nominava — e FALSA: dal 18/09 il
+        // video non si comprime più sul telefono, parte com'è e lo converte il server, e il tetto
+        // non sono più 50 MB (`MAX_VIDEO_INPUT_BYTES`). È stata tolta da entrambi i cataloghi
+        // insieme ad altre sei chiavi morte dello stesso gruppo (i residui della conversione nel
+        // browser e dei vecchi avvisi), e la sua eccezione (categoria (b)) è uscita con lei: il
+        // controllo «punta a una chiave che ESISTE ANCORA», qui sotto, lo pretende. Il lock NON è
+        // stato allentato — la regola è identica e il tetto stringe di una voce —; si è solo
+        // smesso di giustificare una frase che nessuno leggeva.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(41)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

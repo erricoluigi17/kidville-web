@@ -354,13 +354,21 @@ function TeacherGalleryContent() {
     }, [loadMedia, loadStudents]);
 
     /**
-     * I VIDEO IN LAVORAZIONE — la parte di questa schermata che vive più a lungo
-     * della schermata stessa.
+     * I VIDEO IN LAVORAZIONE.
      *
-     * L'hook si occupa di tre cose che la pagina non può fare: riprendere al
-     * rientro i caricamenti rimasti a metà, tornare a interrogare i job che il
-     * server sta convertendo, e pubblicare quando sono pronti. Vedi la testata di
-     * `use-video-galleria.ts` per il perché.
+     * L'hook si occupa di tre cose che la pagina non può fare: far partire i
+     * trasferimenti dei byte (uno alla volta) e riprenderli da soli quando la rete li
+     * interrompe e al rientro nella pagina; raccontare a che punto è ogni video,
+     * fondendo le righe di questo dispositivo con l'elenco del server; e offrire i
+     * gesti che restano (riprendere, riprovare una pubblicazione fallita, togliere).
+     * NON pubblica: quando la conversione finisce a pubblicare è il server, anche a
+     * pagina chiusa.
+     *
+     * ⚠️ Vive quanto questa pagina soltanto il TRASFERIMENTO dei byte: uscendo dalla
+     * Galleria si ferma al blocco successivo, e rientrandoci riprende da solo. Per
+     * questo i testi dicono «finché resti in Galleria», e non «finché l'app è aperta».
+     * Conversione e pubblicazione, dopo, non hanno bisogno di nessuno. Vedi la testata
+     * di `use-video-galleria.ts`.
      */
     const videoGalleria = useVideoGalleria({
         utenteId: teacherId,
@@ -634,8 +642,9 @@ function TeacherGalleryContent() {
             const inCoda = rows.filter(row => accodati.has(row.id)).length;
             const pubblicate = Math.max(0, fotoAccodate - inCoda);
             if (fotoAccodate > 0) avvisiDelGiro.push({ tono: 'ok', testo: t('galleryCodaEsito', { pubblicate, inCoda }) });
-            // «Il caricamento continua finché l'app è aperta»: con TUS dire «puoi chiudere l'app»
-            // sarebbe falso. Chiusa, il trasferimento si ferma e riprende da solo alla riapertura.
+            // «Il caricamento continua finché resti in Galleria»: con TUS dire «puoi chiudere l'app»
+            // sarebbe falso. Uscendo dalla Galleria (o chiudendo l'app) il trasferimento si ferma al
+            // blocco successivo e riprende da solo al rientro.
             if (videoAvviati > 0) avvisiDelGiro.push({ tono: 'ok', testo: t('galleryVideoAvviato', { count: videoAvviati }) });
             mostraAvvisi(avvisiDelGiro);
             if (isOnline && (fotoAccodate > 0 || videoAvviati > 0)) await loadMedia();
@@ -868,7 +877,10 @@ function TeacherGalleryContent() {
                           galleria: metterlo dentro la griglia lo farebbe sembrare
                           pubblicato — cioè già visto dalle famiglie — mentre è ancora
                           niente. Sopra, e con la sua scheda, dice le due cose che
-                          servono: a che punto è, e che si può chiudere l'app.
+                          servono: a che punto è, e cosa deve fare chi ha caricato. Finché
+                          i byte partono, restare in Galleria (la scheda lo dice); quando
+                          sono arrivati, niente: conversione e pubblicazione sono del
+                          server, e l'app si può chiudere.
 
                           Sta nello step «galleria» perché è lì che si torna dopo aver
                           premuto «Pubblica», ed è lì che si rientra riaprendo l'app. Non

@@ -258,7 +258,7 @@ describe('«Pubblica» manda subito l’apertura di ogni video, con i bambini', 
     expect(await screen.findByText(itServizi.galleryVideoLavorazioneTitolo)).toBeInTheDocument()
     expect(screen.getByText('recita.mp4')).toBeInTheDocument()
     expect(screen.getByText(itServizi.galleryVideoFaseCaricamento)).toBeInTheDocument()
-    // «Finché l'app è aperta»: con TUS «puoi chiudere l'app» sarebbe falso, e la scheda non lo dice.
+    // «Finché resti in Galleria»: con TUS «puoi chiudere l'app» sarebbe falso, e la scheda non lo dice.
     expect(screen.getByText(itServizi.galleryVideoCaricamentoTus)).toBeInTheDocument()
     expect(screen.getByRole('progressbar')).toBeInTheDocument()
   })
@@ -409,8 +409,10 @@ describe('nessun `alert()` nel ramo di invio: gli esiti escono in una regione vi
     await finoAlTag(video())
     fireEvent.click(pulsantePubblica())
     const esito = await within(avvisi()).findByText(/stato inviato/)
-    expect(esito.textContent).toMatch(/finché l’app è aperta/)
+    // Il trasferimento vive quanto la pagina Galleria (#133): «finché l'app è aperta» era la promessa falsa di prima.
+    expect(esito.textContent).toMatch(/finché resti in Galleria/)
     expect(esito.textContent).toMatch(/riprende da solo/)
+    expect(esito.textContent).not.toMatch(/app è aperta/)
     expect(esito.textContent).not.toMatch(/puoi chiudere/i)
     expect(alertMock).not.toHaveBeenCalled()
   })

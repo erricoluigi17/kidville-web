@@ -1848,7 +1848,11 @@ export async function obliaIntentiVideoAlunno(
 ): Promise<{ intenti: number; revocati: number; letto: boolean }> {
   const { data, error } = await supabase.rpc('video_intent_oblio_alunno', { p_alunno: alunnoId })
   if (error) {
-    if (schemaAssente(error)) return { intenti: 0, revocati: 0, letto: true }
+    if (schemaAssente(error)) {
+      // La RPC non c'è (database non ancora migrato): non c'è niente da obliare, ma si dice (secondario #113).
+      logEvento('gdpr', 'warn', { operazione: op, esito: 'oblio-video-intenti-rpc-assente' })
+      return { intenti: 0, revocati: 0, letto: true }
+    }
     logErrore({ operazione: op, evento: 'oblio_video_intenti' }, error)
     return { intenti: 0, revocati: 0, letto: false }
   }

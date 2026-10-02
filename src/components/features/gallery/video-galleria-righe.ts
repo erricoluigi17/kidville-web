@@ -84,7 +84,7 @@ export interface IngressoFusione {
   messaggiAzione: Readonly<Record<string, string>>
   /** Il testo di catalogo di un codice mostrabile, mai la prosa del server; mai vuoto. */
   frase: (codice: string | null) => string
-  /** «Il caricamento continua finché l'app è aperta…»: la nota onesta del trasporto a blocchi. */
+  /** «Il caricamento continua finché resti in Galleria…»: la nota onesta del trasporto a blocchi. */
   notaCaricamento: string
   /** Il browser dice di essere senza rete? Un «non autorizzato» in quel momento è solo la rete. */
   offline: boolean

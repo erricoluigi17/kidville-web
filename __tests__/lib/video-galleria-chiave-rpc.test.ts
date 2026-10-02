@@ -409,6 +409,76 @@ describe('perché la chiave porta i destinatari: senza, il server rifiuta', () =
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// (v) IL SALE DEL DISPOSITIVO (#131): IN TABELLA NON RESTANO I BAMBINI, E L'IDEMPOTENZA RESTA
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `video_jobs.idempotency_key` è scritta in chiaro e sopravvive alla minimizzazione di
+// `video_intents.tag_alunni`: un'impronta senza sale dei bambini scelti si ricostruisce provando i
+// sottoinsiemi (l'attacco è riprodotto in `gallery-video-flusso.test.ts`). Qui si prova ciò che
+// conta sulla funzione SQL vera: la chiave salata arriva intera in tabella, senza le impronte di
+// prima, e il sale NON toglie al server la sua idempotenza — lo stesso dispositivo ritrova il suo
+// intento — mentre due dispositivi, due sali, aprono due intenti senza prendere un conflitto.
+
+const SALE_A = '0123456789abcdef0123456789abcdef'
+const SALE_B = 'fedcba9876543210fedcba9876543210'
+
+/** Un invio dal dispositivo che ha il sale `sale`: la chiave che il CLIENT calcola con quel sale. */
+const inviaDa = (sale: string, b: Bambini, file = FILE): Promise<RispostaApri> =>
+  apriConChiave(chiaveIdempotenzaVideo(file, destinatari(b), sale), b, file.size)
+
+describe('il sale del dispositivo: la RPC vera vede chiavi salate, e l’idempotenza regge', () => {
+  it('lo STESSO dispositivo ritrova il suo intento: un ritentativo (risposta persa) non apre un secondo video', async () => {
+    const primo = await inviaDa(SALE_A, { tag: [A1] })
+    const ripetuto = await inviaDa(SALE_A, { tag: [A1] })
+
+    expect(primo.ok).toBe(true)
+    expect(ripetuto.ok, JSON.stringify(ripetuto)).toBe(true)
+    expect(ripetuto.ripetuta).toBe(true)
+    expect(ripetuto.intent!.id).toBe(primo.intent!.id)
+    expect(await conta('public.video_jobs')).toBe(1)
+  })
+
+  it('DUE dispositivi (due sali), stesso file e stessi bambini: due intenti, e nessun IDEMPOTENCY_CONFLICT', async () => {
+    const dalTelefono = await inviaDa(SALE_A, { tag: [A1] })
+    const dalPc = await inviaDa(SALE_B, { tag: [A1] })
+
+    expect(dalTelefono.ok).toBe(true)
+    expect(dalPc.ok, `il secondo dispositivo è stato rifiutato: ${JSON.stringify(dalPc)}`).toBe(true)
+    expect(dalPc.code).toBeUndefined()
+    expect(dalPc.ripetuta).toBe(false)
+    expect(dalPc.intent!.id).not.toBe(dalTelefono.intent!.id)
+    expect(await conta('public.video_intents')).toBe(2)
+  })
+
+  it('la chiave che resta in `video_jobs.idempotency_key` è quella salata, senza le impronte di prima (bambini e nome)', async () => {
+    await inviaDa(SALE_A, { tag: [A1] })
+    const { rows } = await db.query<{ idempotency_key: string }>('SELECT idempotency_key FROM public.video_jobs')
+    expect(rows).toHaveLength(1)
+    const inTabella = rows[0].idempotency_key
+
+    expect(inTabella).toBe(chiaveIdempotenzaVideo(FILE, destinatari({ tag: [A1] }), SALE_A))
+    expect(inTabella).toMatch(/^gv2-5000-1759400000000-[0-9a-f]{12}-[0-9a-f]{12}$/)
+    // Le impronte di prima, misurate col codice senza sale e scritte qui senza ricalcolarle: quella del JSON
+    // dei bambini `[[A1], false, []]` e quella del nome del file (`83ce6643` è anche in `CHIAVE_DEL_CLIENT_VECCHIO`).
+    expect(inTabella).not.toContain('4daa669e')
+    expect(inTabella).not.toContain('83ce6643')
+    // E il sale non c'è, nemmeno a pezzi.
+    expect(inTabella).not.toContain(SALE_A)
+    expect(inTabella).not.toContain(SALE_A.slice(0, 8))
+  })
+
+  it('senza `window` (qui, in Node) il sale è della sessione: due invii dello stesso file e degli stessi bambini si ritrovano', async () => {
+    // È la strada predefinita — nessun sale esplicito —: quella che percorre la schermata. Il deposito durevole
+    // manca (nessun `localStorage`), quindi vale il sale in memoria, che per tutta la sessione è uno solo.
+    const primo = await invia({ tag: [A1] })
+    const ripetuto = await invia({ tag: [A1] })
+    expect(primo.ok).toBe(true)
+    expect(ripetuto.ripetuta).toBe(true)
+    expect(ripetuto.intent!.id).toBe(primo.intent!.id)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // IL PERCORSO DI QUESTO FILE È QUELLO DELLA ROUTE
 // ─────────────────────────────────────────────────────────────────────────────
 

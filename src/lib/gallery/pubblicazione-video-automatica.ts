@@ -164,8 +164,6 @@ type Contesto = {
   eventoCreatoIl: string | undefined
   tentativi: number | null
   adesso: () => number
-  /** Chi ha caricato, letto una volta sola: serve a tre punti diversi della stessa chiamata. */
-  autore?: { ruolo: string | null }
 }
 
 type Letto<T> =
@@ -294,7 +292,7 @@ async function pubblicaDaConfermato(ctx: Contesto, intento: RigaIntento): Promis
     return transitorio(ctx, intento, job.codice, job.errore)
   }
 
-  const autore = await leggiAutore(ctx, intento, true)
+  await riverificaAutore(ctx, intento)
 
   // ── 2. I BAMBINI NEL PERIMETRO, E LA LIBERATORIA ──
   const tag = [...new Set((intento.tag_alunni ?? []).map((id) => id.toLowerCase()))]
@@ -355,7 +353,6 @@ async function pubblicaDaConfermato(ctx: Contesto, intento: RigaIntento): Promis
       intento,
       scuolaId,
       ownerId,
-      ruoloAutore: autore.ruolo,
       destinatari: { tag: effettivi, classi: intento.classi_destinatarie },
       nUsciti,
       senzaLiberatoria,
@@ -392,7 +389,6 @@ async function avvisa(
     intento: RigaIntento
     scuolaId: string
     ownerId: string
-    ruoloAutore: string | null
     /** `null` = non si sa a chi è stato mostrato (recupero senza la riga di galleria): niente avviso alle famiglie. */
     destinatari: { tag: readonly string[]; classi: readonly string[] | null } | null
     nUsciti: number
@@ -414,7 +410,6 @@ async function avvisa(
       intentId: ctx.intentId,
       ownerId: d.ownerId,
       scuolaId: d.scuolaId,
-      ruoloAutore: d.ruoloAutore,
       esito: { tipo: 'pubblicato', nUsciti: d.nUsciti },
       operazione: ctx.operazione,
     })
@@ -432,7 +427,6 @@ async function avvisa(
         intentId: ctx.intentId,
         ownerId: d.ownerId,
         scuolaId: d.scuolaId,
-        ruoloAutore: d.ruoloAutore,
         nSenzaLiberatoria: d.senzaLiberatoria,
         operazione: ctx.operazione,
       })
@@ -465,10 +459,20 @@ async function recuperaPubblicato(ctx: Contesto, intento: RigaIntento): Promise<
   // A chi è stato mostrato lo dice la RIGA di galleria: l'intento ha già svuotato `tag_alunni` (la RPC lo minimizza).
   const media = await leggiMediaPubblicato(ctx, scuolaId, ownerId)
   if (!media.ok) {
-    if (!eVecchio(ctx)) return { esito: 'da-ripetere', codice: media.codice }
-    // Dopo un'ora si smette di aspettare la lettura: si marca e si avvisa l'insegnante, e l'avviso alle famiglie si perde
-    // (si dice, a livello `error`). Un'ora senza poter leggere una riga non è una condizione da assecondare all'infinito.
-    log(ctx, 'error', { esito: 'recupero-media-non-letta', error_code: media.codice }, media.errore)
+    // UNA RIGA DI LOG PROPRIA, SEMPRE (#153), come ogni altro guasto transitorio (`transitorio`): `warn` finché l'evento è giovane e si
+    // ripete, `error` quando smette di esserlo. Prima la riga c'era solo oltre l'ora: una lettura che falliva dentro l'ora tornava
+    // `da-ripetere` senza lasciare niente in `app_log` da parte di questo modulo, e un guasto di quaranta minuti si sarebbe visto soltanto
+    // come un evento dell'outbox con troppi tentativi — senza il codice, senza l'intento.
+    const definitiva = eVecchio(ctx)
+    log(
+      ctx,
+      definitiva ? 'error' : 'warn',
+      { esito: 'recupero-media-non-letta', error_code: media.codice, n_tentativi: ctx.tentativi, definitiva },
+      media.errore,
+    )
+    if (!definitiva) return { esito: 'da-ripetere', codice: media.codice }
+    // Dopo un'ora si smette di aspettare la lettura: si marca e si avvisa l'insegnante, e l'avviso alle famiglie si perde (la riga
+    // `error` qui sopra lo dice). Un'ora senza poter leggere una riga non è una condizione da assecondare all'infinito.
   }
   const letta = media.ok ? media.valore : null
 
@@ -479,7 +483,6 @@ async function recuperaPubblicato(ctx: Contesto, intento: RigaIntento): Promise<
   let nUsciti = 0
   let senzaLiberatoria = 0
   if (marca.segnato) {
-    const autore = await leggiAutore(ctx, intento, false)
     if (letta !== null) {
       nUsciti = letta.broadcast ? 0 : Math.max(0, intento.n_tag - letta.tag.length)
       // La liberatoria si ricalcola sullo stato di OGGI: è la stessa regola, e il numero è ciò che sta a cuore a chi legge l'avviso.
@@ -495,7 +498,6 @@ async function recuperaPubblicato(ctx: Contesto, intento: RigaIntento): Promise<
       intento,
       scuolaId,
       ownerId,
-      ruoloAutore: autore.ruolo,
       destinatari: letta === null ? null : { tag: letta.tag, classi: letta.classi },
       nUsciti,
       senzaLiberatoria,
@@ -645,12 +647,10 @@ async function chiudiConFallimento(
 
   if (marca.segnato) {
     const scuolaId = intento.scuola_id as string
-    const autore = await leggiAutore(ctx, intento, false)
     await notificaEsitoDocente(ctx.supabase, {
       intentId: ctx.intentId,
       ownerId: intento.owner_id.toLowerCase(),
       scuolaId,
-      ruoloAutore: autore.ruolo,
       esito: { tipo: codice === 'NESSUN_DESTINATARIO' ? 'nessun-destinatario' : 'pubblicazione-non-riuscita' },
       operazione: ctx.operazione,
     })
@@ -753,19 +753,16 @@ async function leggiPerimetro(ctx: Contesto, scuolaId: string, tag: string[]): P
 
 /**
  * Chi ha caricato. Se è disattivato o non ha più la sede il video si pubblica COMUNQUE (decisione del titolare): la riverifica
- * serve a dirlo nei log, `autore-non-attivo`, non a fermare niente. Restituisce il ruolo, che sceglie il collegamento delle
- * notifiche. Una lettura che fallisce non ferma niente neppure lei: il ruolo è `null` e il collegamento ripiega sull'area docente.
+ * serve a dirlo nei log, `autore-non-attivo`, non a fermare niente. Una lettura che fallisce non ferma niente neppure lei: `warn`
+ * `autore-non-letto`, e si prosegue.
  *
- * Si legge UNA volta per chiamata (il risultato resta sul contesto): `segnala` conta solo alla prima, ed è il caso normale in
- * cui chi la chiama per primo è la strada di `confirmed`, quella che riverifica.
+ * Non restituisce niente, ed è voluto (#152). Prima restituiva il ruolo, che sceglieva il collegamento delle notifiche
+ * (`/admin/gallery` per lo staff): e lo staff che aveva caricato finiva in una pagina senza il «Riprova». L'esito a chi ha caricato porta
+ * ora sempre all'area docente (`LINK_GALLERIA_DOCENTE`), quindi nessuna notifica deve più sapere CHI ha caricato — e le strade di
+ * recupero (`published`, `action_required`) non leggono più `utenti`: la riverifica la fa solo la strada di `confirmed`, l'unica che
+ * pubblica.
  */
-async function leggiAutore(
-  ctx: Contesto,
-  intento: RigaIntento,
-  segnala: boolean,
-): Promise<{ ruolo: string | null }> {
-  if (ctx.autore !== undefined) return ctx.autore
-
+async function riverificaAutore(ctx: Contesto, intento: RigaIntento): Promise<void> {
   type RigaAutore = {
     id: string
     ruolo?: string | null
@@ -785,15 +782,13 @@ async function leggiAutore(
     if (colonnaSedeAssente(esito.error)) esito = await leggi('id, ruolo, role, scuola_id')
     if (esito.error) {
       log(ctx, 'warn', { esito: 'autore-non-letto', error_code: codiceErrore(esito.error) }, esito.error)
-      return (ctx.autore = { ruolo: null })
+      return
     }
     const riga = esito.data
-    const ruolo = riga?.ruolo ?? riga?.role ?? null
-    if (segnala) await segnalaAutoreNonAttivo(ctx, intento, riga, ruolo)
-    return (ctx.autore = { ruolo })
+    // Il ruolo serve qui e basta: `scuoleDiUtente` calcola le sedi dell'autore secondo il suo ruolo.
+    await segnalaAutoreNonAttivo(ctx, intento, riga, riga?.ruolo ?? riga?.role ?? null)
   } catch (errore) {
     log(ctx, 'warn', { esito: 'autore-non-letto' }, errore)
-    return (ctx.autore = { ruolo: null })
   }
 }
 

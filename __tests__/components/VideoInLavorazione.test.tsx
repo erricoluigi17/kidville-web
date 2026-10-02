@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 
 import itServizi from '../../messages/it/teacherServizi.json'
+import enServizi from '../../messages/en/teacherServizi.json'
 import itShared from '../../messages/it/shared.json'
 import { formatData } from '@/lib/i18n/date'
 
@@ -18,7 +19,7 @@ import { formatData } from '@/lib/i18n/date'
  *
  * Quindi le fasi qui sono distinte e lo dicono a parole:
  *  · il CARICAMENTO ha una percentuale, perché i byte si contano, e dice la verità sul TUS: continua
- *    finché l'app è aperta, e riprende da solo alla riapertura;
+ *    finché si resta in Galleria, e riprende da solo al rientro;
  *  · la PREPARAZIONE non ce l'ha davvero (l'avanzamento del server è a scalini) e dice la cosa che
  *    serve sapere — che si può chiudere l'app;
  *  · il PRONTO non chiede più niente: i bambini li ha scelti prima, e a pubblicare è il server.
@@ -107,11 +108,32 @@ describe('l’attesa ha un nome, e non è «caricamento»', () => {
     expect(screen.getAllByRole('button')).toHaveLength(1)
   })
 
-  it('il testo del TUS è onesto: continua finché l’app è aperta, e non promette ciò che non fa', () => {
-    expect(itServizi.galleryVideoCaricamentoTus).toMatch(/finché l’app è aperta/)
-    expect(itServizi.galleryVideoCaricamentoTus).toMatch(/riprende da solo/)
-    // «Puoi chiudere l'app» a trasferimento in corso sarebbe falso con TUS: il testo dell'invio non lo dice.
-    expect(itServizi.galleryVideoAvviato).not.toMatch(/puoi chiudere/i)
+  it('il testo del TUS è onesto: continua finché si resta in Galleria, e non promette ciò che non fa (#133)', () => {
+    // Il trasferimento vive quanto la pagina Galleria: uscendo si ferma al blocco successivo e riprende da solo al rientro.
+    // «Finché l'app è aperta» era la promessa falsa di prima: l'app aperta su un'altra pagina non spedisce un byte.
+    for (const testo of [itServizi.galleryVideoCaricamentoTus, itServizi.galleryVideoAvviato]) {
+      expect(testo).toMatch(/finché resti in Galleria/)
+      expect(testo).toMatch(/riprende da solo/)
+      expect(testo).not.toMatch(/app è aperta/)
+      // «Puoi chiudere l'app» a trasferimento in corso sarebbe falso con TUS: il testo dell'invio non lo dice.
+      expect(testo).not.toMatch(/puoi chiudere/i)
+    }
+  })
+
+  it('in inglese lo stesso: «while you stay on the Gallery page», mai «while the app is open»', () => {
+    for (const testo of [enServizi.galleryVideoCaricamentoTus, enServizi.galleryVideoAvviato]) {
+      expect(testo).toMatch(/while you stay on the Gallery page/)
+      expect(testo).toMatch(/resumes by itself/)
+      expect(testo).not.toMatch(/app is open/i)
+      expect(testo).not.toMatch(/you can close/i)
+    }
+  })
+
+  it('«Togli» e «Rimuovi» sono due parole diverse in tutte e due le lingue (#143): sono due gesti diversi', () => {
+    // «Rimuovi» ritira un video in preparazione; «Togli» leva di mezzo una scheda che è andata male. In inglese
+    // erano entrambe «Remove»: lo schermo non distingueva due gesti che il codice distingue.
+    expect(itServizi.galleryVideoTogli).not.toBe(itServizi.galleryVideoRimuovi)
+    expect(enServizi.galleryVideoTogli).not.toBe(enServizi.galleryVideoRimuovi)
   })
 })
 

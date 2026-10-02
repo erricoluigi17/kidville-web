@@ -63,7 +63,14 @@ export const CORPO_VIDEO_NESSUN_DESTINATARIO =
 export const CORPO_VIDEO_PUBBLICAZIONE_NON_RIUSCITA =
   'Non siamo riusciti a pubblicare il video: apri la galleria e premi «Riprova».'
 
-/** Dove porta la notifica a chi ha caricato da un'area docente, e dove a chi lavora in segreteria. */
+/**
+ * Dove portano le notifiche (spec §7). L'ESITO a chi ha caricato porta SEMPRE a `LINK_GALLERIA_DOCENTE`, anche quando a caricare è stato
+ * qualcuno dello staff: `/teacher/gallery` è l'unica pagina col flusso dei video (l'elenco, il «Riprova», la scheda «va ricaricato»), e
+ * `/admin/gallery` non ce l'ha. Finché il collegamento seguiva il ruolo di chi aveva caricato, un amministratore o la segreteria leggeva
+ * «apri la galleria e premi Riprova» e arrivava in una pagina dove il «Riprova» non c'è (secondario #152): un avviso che non si può eseguire.
+ * La galleria della segreteria resta SOLO per l'avviso di liberatoria allo staff che NON ha caricato: deve guardare quel video, e non ha
+ * niente da riprovare.
+ */
 export const LINK_GALLERIA_DOCENTE = '/teacher/gallery'
 export const LINK_GALLERIA_SEGRETERIA = '/admin/gallery'
 
@@ -142,13 +149,6 @@ export function testoEsitoDocente(esito: EsitoPerDocente): { titolo: string; cor
     case 'conversione-fallita':
       return { titolo: TITOLO_VIDEO_NON_PUBBLICATO, corpo: corpoConversioneFallita(esito.codice) }
   }
-}
-
-/** La galleria da cui riaprire il video: la Direzione e la segreteria hanno la loro, l'insegnante la sua. */
-export function linkGalleria(ruolo: string | null | undefined): string {
-  return ruolo === 'admin' || ruolo === 'coordinator' || ruolo === 'segreteria'
-    ? LINK_GALLERIA_SEGRETERIA
-    : LINK_GALLERIA_DOCENTE
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -232,6 +232,9 @@ export async function segnaEsito(
  * e questa funzione non la guarda. `entitaId` è l'INTENTO e non il bambino né il file: nessuna chiave di
  * raggruppamento porta un dato personale, e nessun debounce — ogni video ha il suo esito.
  *
+ * Il collegamento è SEMPRE `LINK_GALLERIA_DOCENTE` e non dipende da chi ha caricato (#152, vedi la costante): per questo qui non c'è il
+ * ruolo dell'autore, e chi chiama non deve leggerlo.
+ *
  * Non lancia (`notificaEvento` non lancia mai): un avviso che non parte lascia la sua riga `error` in
  * `notifica`, e il video resta comunque dove deve stare.
  */
@@ -241,8 +244,6 @@ export async function notificaEsitoDocente(
     intentId: string
     ownerId: string
     scuolaId: string
-    /** `utenti.ruolo` di chi ha caricato: sceglie la galleria a cui porta il collegamento. `null` = l'area docente. */
-    ruoloAutore: string | null
     esito: EsitoPerDocente
     operazione: string
   },
@@ -254,7 +255,7 @@ export async function notificaEsitoDocente(
     utenteIds: [input.ownerId],
     titolo,
     corpo,
-    link: linkGalleria(input.ruoloAutore),
+    link: LINK_GALLERIA_DOCENTE,
     entitaTipo: 'video',
     entitaId: input.intentId,
     bufferMin: 0,
@@ -282,8 +283,9 @@ export async function notificaEsitoDocente(
  * `segreteria` della sede. Il testo è SOLO il numero. Risponde quanti destinatari distinti ha cercato di
  * raggiungere. Da chiamare, come l'altra, solo con la marca appena vinta.
  *
- * Chi ha caricato riceve il collegamento della sua galleria, gli altri quello della segreteria: due
- * `notificaEvento` e non una, perché il collegamento è un campo della riga e non del destinatario.
+ * Chi ha caricato riceve il collegamento dell'area docente (lo stesso dell'esito: è lì che ritrova il suo video, anche se è dello staff,
+ * #152), gli altri — lo staff che NON ha caricato — quello della segreteria: due `notificaEvento` e non una, perché il collegamento è un
+ * campo della riga e non del destinatario.
  */
 export async function notificaAvvisoLiberatoria(
   supabase: SupabaseClient,
@@ -291,7 +293,6 @@ export async function notificaAvvisoLiberatoria(
     intentId: string
     ownerId: string
     scuolaId: string
-    ruoloAutore: string | null
     nSenzaLiberatoria: number
     operazione: string
   },
@@ -311,7 +312,7 @@ export async function notificaAvvisoLiberatoria(
   await notificaEvento(supabase, {
     ...base,
     utenteIds: [input.ownerId],
-    link: linkGalleria(input.ruoloAutore),
+    link: LINK_GALLERIA_DOCENTE,
   })
   if (altri.length > 0) {
     await notificaEvento(supabase, { ...base, utenteIds: altri, link: LINK_GALLERIA_SEGRETERIA })
@@ -415,11 +416,33 @@ export async function scansionaEsitiDiConversione(
     const candidati = inVolo.filter((i) => falliti.has(i.id))
     if (candidati.length === 0) return { esito: 'ok', candidati: 0, notificati: 0 }
 
-    const ruoli = await ruoliDegliAutori(supabase, [...new Set(candidati.map((c) => c.owner_id))], operazione)
+    // UN INTENTO SENZA SEDE NON SI PUÒ AVVISARE (`notificaEvento` vuole la sede) e NON DOVREBBE ESISTERE: `pubblicazione_automatica` vale
+    // solo per la galleria (`video_intents_pubblicazione_automatica_chk`), il database vieta una galleria senza sede
+    // (`video_intents_scuola_scope_chk`) e `scuola_id` poi non si modifica. Se ne compare uno, un vincolo è stato tolto o aggirato. Fino al
+    // secondario #154 lo si saltava in silenzio, a ogni giro e per sempre: l'insegnante non sapeva niente e nessuna riga diceva perché. Ora
+    // una riga `error` PER GIRO (non una per intento: i candidati sono al più duecento e il rumore non aiuterebbe), con il conteggio su
+    // TUTTI i candidati — non solo su quelli che il tetto lascia passare — e con il più vecchio, perché lo si trovi subito. Mai un nome:
+    // un uuid e un conteggio.
+    const senzaSede = candidati.filter((c) => c.scuola_id === null)
+    if (senzaSede.length > 0) {
+      logEvento(
+        'cron',
+        'error',
+        {
+          operazione,
+          esito: 'esiti-intento-senza-sede',
+          n_senza_sede: senzaSede.length,
+          intent_id: senzaSede[0].id,
+        },
+        undefined,
+        { distingui: ['intent_id'] },
+      )
+    }
 
     let notificati = 0
     for (const intento of candidati.slice(0, limite)) {
       const job = falliti.get(intento.id)
+      // Senza sede: già detto sopra, e non si avvisa. (`job` assente non può succedere: i candidati sono quelli che ne hanno uno.)
       if (job === undefined || intento.scuola_id === null) continue
 
       const marca = await segnaEsito(supabase, intento.id, 'fallito', operazione)
@@ -433,7 +456,6 @@ export async function scansionaEsitiDiConversione(
         intentId: intento.id,
         ownerId: intento.owner_id,
         scuolaId: intento.scuola_id,
-        ruoloAutore: ruoli.get(intento.owner_id) ?? null,
         esito: { tipo: 'conversione-fallita', codice },
         operazione,
       })
@@ -481,32 +503,4 @@ function scansioneNonRiuscita(operazione: string, tabella: string, errore: unkno
     errore,
   )
   return { esito: 'lettura-fallita', candidati: 0, notificati: 0 }
-}
-
-/**
- * Il ruolo di chi ha caricato, per scegliere il collegamento. Una lettura che fallisce non ferma gli avvisi: il
- * collegamento ripiega sull'area docente, e il guasto lascia la sua riga.
- */
-async function ruoliDegliAutori(
-  supabase: SupabaseClient,
-  ownerIds: string[],
-  operazione: string,
-): Promise<Map<string, string>> {
-  const ruoli = new Map<string, string>()
-  for (const blocco of aBlocchi(ownerIds, ID_PER_QUERY)) {
-    const { data, error } = await supabase.from('utenti').select('id, ruolo').in('id', blocco)
-    if (error) {
-      logEvento(
-        'cron',
-        'warn',
-        { operazione, esito: 'esiti-ruoli-non-letti', error_code: codiceDi(error) },
-        error,
-      )
-      continue
-    }
-    for (const riga of (data ?? []) as unknown as { id: string; ruolo: string | null }[]) {
-      if (typeof riga.ruolo === 'string') ruoli.set(riga.id, riga.ruolo)
-    }
-  }
-  return ruoli
 }

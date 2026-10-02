@@ -65,7 +65,8 @@ describe('formattaMegabyte — la dimensione di un file dentro una frase', () =>
   })
 
   it('`unita: false` per le frasi che il «MB» ce l’hanno già scritto dentro', () => {
-    // `galleryAlertVideoTroppoGrande` dice «(attuale: {dimensione} MB)»: con
+    // Una frase come «(attuale: {dimensione} MB)» — era `galleryAlertVideoTroppoGrande`,
+    // tolta il 2026-10-02 perché orfana e falsa — ha già il «MB» scritto dentro: con
     // l'unità attaccata uscirebbe «52,8 MB MB».
     expect(formattaMegabyte(CINQUANTA_VIRGOLA_TRE_MB, 'it', { unita: false })).toBe('52,8')
     expect(formattaMegabyte(CINQUANTA_VIRGOLA_TRE_MB, 'en', { unita: false })).toBe('52.8')

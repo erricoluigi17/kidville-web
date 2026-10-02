@@ -24,6 +24,7 @@ import {
     riprovaPubblicazioneVideo,
     segnalaVideoCaricato,
     type EsitoFlusso,
+    type IntentoApertoVideo,
 } from '@/lib/gallery/video-galleria-flusso';
 import {
     CODICI_MOSTRATI_VIDEO,
@@ -77,13 +78,30 @@ import { useRipresaAutomatica, type MotivoRipresa } from './use-ripresa-automati
  *
  *  · **«Rimuovi» ferma prima i byte, poi ritira l'intento.** `annullaCaricamentoVideo` (TUS e
  *    copia locale) viene PRIMA di `annullaIntentoVideo`: il contrario lasciava il trasferimento
- *    in volo su un intento già revocato.
+ *    in volo su un intento già revocato. Se il trasferimento è già concluso non c'è nessuna
+ *    sessione TUS da terminare (#136): la riga si marca annullata e si elimina, senza passare dalla
+ *    terminazione che prenderebbe un 409 da `/firma`.
  *  · **I byte già sul server non si rispediscono.** Se l'apertura dice `needs_upload: false`
  *    si passa da `concludiCaricamentoVideo` (che ferma la copia in background): chiudere la riga
  *    a mano metterebbe l'`eliminaByte` dietro una copia di due gigabyte.
+ *  · **Lo stesso file rimandato in volo non riscrive la scheda** (#134): la stessa chiave ritrova lo
+ *    stesso job, che è già in coda o in volo, e lo stato che mostra (la barra, il turno) è già quello
+ *    vero. Solo un job fermo, fuori dalla coda, riparte.
  *  · **I byte spariti sono un invio da rifare.** Un'app chiusa a metà copia lascia la riga e non i
  *    byte: la scheda dice «questo video va ricaricato» e l'intento si annulla, invece di restare
  *    in attesa dei suoi byte fino alla ritenzione.
+ *  · **Un intento aperto per niente si ritira.** Se la risposta dell'apertura arriva quando la
+ *    schermata non c'è più (smontata, altro utente, altra sede) l'intento esiste già sul server,
+ *    confermato e in attesa di byte che nessuno spedirà: senza il ritiro resterebbe lì fino alla
+ *    ritenzione, e al rientro la scheda direbbe «in caricamento da un altro dispositivo» (falso).
+ *    Non si ritira però un intento che questo dispositivo ha già in mano (la stessa chiave ritrova
+ *    l'invio di prima, che ha la sua riga locale): sarebbe un caricamento buono ucciso.
+ *  · **«Togli» si ricorda solo a ritiro riuscito.** La scheda sparisce subito, ma l'intento entra
+ *    fra quelli tolti (`video-galleria-nascosti`) soltanto quando il server ha confermato il
+ *    ritiro: altrimenti resterebbe vivo — e un video in preparazione uscirebbe lo stesso in
+ *    galleria — mentre il telefono lo fa credere sparito. Se il ritiro non riesce la scheda torna.
+ *  · **Ogni ritiro che parte da solo ha il suo `.catch` che logga** (`ritiraSenzaAspettare`): una
+ *    promessa rifiutata che nessuno ascolta è un guasto senza traccia.
  *  · **Nei log, mai il nome di un file né di un bambino**: uuid, conteggi e codici. Il nome sta
  *    sullo schermo di chi ha scelto il file, e basta.
  *  · **Una credenziale arrivata tardi non si consegna.** Dopo un logout, un cambio di sede o lo
@@ -91,7 +109,9 @@ import { useRipresaAutomatica, type MotivoRipresa } from './use-ripresa-automati
  *
  * ⚠️ Il trasferimento vive finché questa pagina è montata: lasciare la Galleria lo ferma al blocco
  * successivo, e rientrarvi lo riprende dallo stesso punto (il `File` scelto resta nell'archivio
- * condiviso). Il testo «continua finché l'app è aperta» vale per l'app, non per ogni pagina.
+ * condiviso). I testi dicono «finché resti in Galleria», non «finché l'app è aperta»: è vero solo del
+ * TRASFERIMENTO. Quando i byte sono arrivati conversione e pubblicazione sono del server, e lì sì,
+ * l'app si può chiudere.
  */
 
 export interface OpzioniVideoGalleria {
@@ -187,7 +207,10 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
 
     const [locali, setLocali] = useState<Record<string, StatoLocale>>({});
     const [voci, setVoci] = useState<VoceElencoVideo[] | null>(null);
+    /** Gli intenti che la persona ha tolto E che il server ha confermato fuori dal gioco: si ricordano sul dispositivo. */
     const [nascosti, setNascosti] = useState<ReadonlySet<string>>(() => new Set<string>());
+    /** Gli intenti tolti a schermo di cui si aspetta ancora il verdetto del server: spariscono subito, e non si ricordano. */
+    const [inRitiro, setInRitiro] = useState<ReadonlySet<string>>(() => new Set<string>());
     const [messaggiAzione, setMessaggiAzione] = useState<Record<string, string>>({});
 
     /**
@@ -353,22 +376,69 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
     /**
      * Ritira un intento: legge lo stato per avere la revisione di ADESSO (cambia a ogni passo del
      * ciclo, e indovinarla vuol dire un `REVISION_MISMATCH` che nessuno vede) e lo annulla. Un
-     * intento già concluso non si tocca. Non lancia: chi chiama l'ha già tolto dallo schermo.
+     * intento già concluso non si tocca.
+     *
+     * Risponde se l'intento è DAVVERO fuori dal gioco: `true` quando il server l'ha annullato o era
+     * già concluso, `false` quando non lo si sa (rete, rifiuto, revisione che continua a cambiare).
+     * È il verdetto su cui si decide se ricordare che la persona l'ha tolto (#141): un intento che
+     * resta vivo non si può far passare per sparito. Non lancia per un guasto di rete (`chiama` lo
+     * registra già); chi lo lancia senza aspettarlo passa da `ritiraSenzaAspettare`.
      */
-    const ritiraIntento = useCallback(async (intentId: string): Promise<void> => {
+    const ritiraIntento = useCallback(async (intentId: string): Promise<boolean> => {
         for (let tentativo = 0; tentativo < 2; tentativo++) {
             const letto = await leggiStatoIntentoVideo(fetch, { intentId, ripiego: ripiegoRef.current });
-            if (!letto.ok) return;
-            if (['published', 'cancelled', 'superseded'].includes(letto.dati.statoIntent)) return;
+            if (!letto.ok) return false;
+            if (['published', 'cancelled', 'superseded'].includes(letto.dati.statoIntent)) return true;
             const esito = await annullaIntentoVideo(fetch, {
                 intentId,
                 revisione: letto.dati.revisione,
                 ripiego: ripiegoRef.current,
             });
+            if (esito.ok) return true;
             // 409 = qualcosa è cambiato fra la lettura e il ritiro: si rilegge e si riprova UNA volta.
-            if (esito.ok || esito.stato !== 409) return;
+            if (esito.stato !== 409) return false;
         }
+        return false;
     }, []);
+
+    /**
+     * Il ritiro di un intento che nessuno aspetta (#137): ogni `void ritiraIntento(…)` del file passa
+     * da qui, così il `.catch` che logga non dipende dalla memoria di chi scrive la chiamata.
+     */
+    const ritiraSenzaAspettare = useCallback(
+        (intentId: string) => {
+            void ritiraIntento(intentId).catch((err: unknown) => logErroreAzione('video-annullamento-interrotto', err));
+        },
+        [logErroreAzione, ritiraIntento],
+    );
+
+    /**
+     * L'apertura è riuscita, ma la schermata che l'aspettava non c'è più (#132): smontata, un altro
+     * utente, un'altra sede. L'intento esiste sul server — confermato, con il suo job in attesa di
+     * byte — e nessuno li spedirà: lo si ritira.
+     *
+     * ⚠️ Solo se è un intento SENZA PADRONE. La stessa chiave di idempotenza ritrova l'intento di un
+     * invio precedente dello stesso file con gli stessi bambini (la risposta si era persa, un secondo
+     * tocco): se quell'invio è di questo dispositivo ha la sua riga nell'archivio, e ritirarlo
+     * ucciderebbe un caricamento buono che riprenderebbe al rientro. Nel dubbio — l'archivio non si
+     * legge — non si ritira: un intento fantasma costa una scheda sbagliata fino alla ritenzione, un
+     * caricamento ucciso costa un video da rimandare.
+     */
+    const ritiraAperturaOrfana = useCallback(
+        (intentId: string, jobId: string) => {
+            void (async () => {
+                const riga = await archivioRef.current?.leggi(jobId);
+                if (riga) return;
+                const ritirato = await ritiraIntento(intentId);
+                logClient({
+                    livello: 'warn',
+                    evento: 'fetch',
+                    messaggio: `${ritirato ? 'video-intento-orfano-ritirato' : 'video-intento-orfano-non-ritirato'}: job=${jobId}`,
+                });
+            })().catch((err: unknown) => logErroreAzione('video-annullamento-interrotto', err));
+        },
+        [logErroreAzione, ritiraIntento],
+    );
 
     /* ────────────────────────────────────────────────────────────────────────
      * L'ELENCO DAL SERVER
@@ -578,11 +648,11 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                     // ritira — altrimenti resterebbe un job in attesa di byte che non arriveranno, e
                     // dopo due giorni un avviso di «video non riuscito» per un invio già abbandonato.
                     aggiornaLocale(jobId, { trasferimento: 'fallito', percentuale: null, codice: esito.codice });
-                    void ritiraIntento(locale.intentId).catch((err: unknown) => logErroreAzione('video-annullamento-interrotto', err));
+                    ritiraSenzaAspettare(locale.intentId);
                     return;
             }
         },
-        [aggiornaLocale, contesto, dipendenzePer, logErroreAzione, ritiraIntento, segnalaCaricato, stessoContesto],
+        [aggiornaLocale, contesto, dipendenzePer, ritiraSenzaAspettare, segnalaCaricato, stessoContesto],
     );
 
     /** Mette un trasferimento in coda: ne parte UNO alla volta, nell'ordine in cui sono stati accodati. */
@@ -650,19 +720,29 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             // ⚠️ La chiave porta i bambini: per il server la stessa chiave con bambini diversi è un
             // `IDEMPOTENCY_CONFLICT` (409 `VIDEO_RIPROVA`), cioè «ricarica e riprova» per un gesto che
             // non può riuscire — lo stesso file rimandato dopo «Rimuovi» con altri bambini, o già
-            // mandato col client di prima. Vedi `chiaveIdempotenzaVideo`.
+            // mandato col client di prima. Vedi `chiaveIdempotenzaVideo` (che porta anche il sale del
+            // dispositivo: i bambini non restano in tabella nemmeno come impronta).
             let chiave = chiaveIdempotenzaVideo(file, destinatari);
             let apertura = await apri(chiave);
             if (!apertura.ok) return rifiutato(apertura);
-            if (!stessoContesto(c)) return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
 
             // Una scelta NUOVA dello stesso file (stesso nome, peso e data) CON GLI STESSI BAMBINI
             // ritrova l'intento di prima. Se quello è già finito — pubblicato e magari poi cancellato,
             // ritirato, sostituito, fallito — riaprirlo non porta da nessuna parte: è un caricamento
             // nuovo, con un intento nuovo.
-            const concluso = ['published', 'cancelled', 'superseded'].includes(apertura.dati.statoIntent)
-                || ['failed', 'rejected'].includes(apertura.dati.statoJob);
-            if (concluso) {
+            const eConcluso = (a: IntentoApertoVideo): boolean =>
+                ['published', 'cancelled', 'superseded'].includes(a.statoIntent)
+                || ['failed', 'rejected'].includes(a.statoJob);
+
+            // La risposta è arrivata a schermata cambiata (smontata, altro utente, altra sede): l'intento
+            // esiste sul server e nessuno spedirà i suoi byte. Un intento già concluso, invece, non è
+            // nostro e non si tocca.
+            if (!stessoContesto(c)) {
+                if (!eConcluso(apertura.dati)) ritiraAperturaOrfana(apertura.dati.intentId, apertura.dati.jobId);
+                return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
+            }
+
+            if (eConcluso(apertura.dati)) {
                 logClient({
                     livello: 'warn',
                     evento: 'fetch',
@@ -672,7 +752,10 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                 chiave = `${chiave}-${crypto.randomUUID()}`;
                 apertura = await apri(chiave);
                 if (!apertura.ok) return rifiutato(apertura);
-                if (!stessoContesto(c)) return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
+                if (!stessoContesto(c)) {
+                    ritiraAperturaOrfana(apertura.dati.intentId, apertura.dati.jobId);
+                    return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
+                }
             }
 
             const { jobId, intentId, coordinate, firma, chiaveIdempotenza, needsUpload, expiresAt } = apertura.dati;
@@ -697,37 +780,47 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                 // L'intento esiste già sul server, confermato e in attesa di byte che non partiranno:
                 // si ritira, o aspetterebbe la ritenzione e poi avviserebbe di un video fallito.
                 dimenticaJob(jobId);
-                void ritiraIntento(intentId);
+                ritiraSenzaAspettare(intentId);
                 return { ok: false, messaggio: fraseRef.current(messo.codice) };
             }
             if (!stessoContesto(c)) return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
 
             annullatiRef.current.delete(jobId);
             segnalatiRef.current.delete(jobId);
-            scriviLocali((prec) => ({
-                ...prec,
-                [jobId]: {
-                    jobId,
-                    intentId,
-                    nome: file.name,
-                    creatoIl: messo.riga.creatoIl,
-                    trasferimento: needsUpload ? 'in-fila' : 'concluso',
-                    percentuale: null,
-                    codice: null,
-                },
-            }));
 
-            if (needsUpload) {
-                // NON si aspetta: da qui in poi il caricamento vive per conto suo e la schermata
-                // torna alla galleria, dove la scheda racconta a che punto è.
-                accodaTrasferimento(jobId);
-            } else {
-                // I byte sono già sul server: si ferma la copia in background e si lascia l'archivio
-                // com'è — niente da rispedire — poi si dice al server («caricato», idempotente).
-                void (async () => {
-                    await concludiCaricamentoVideo(dip, jobId);
-                    await dopoTrasferimento(jobId, messo.riga.dimensioneByte, messo.riga.mime, c);
-                })().catch((err: unknown) => logErroreAzione('video-conclusione-locale-fallita', err));
+            // LO STESSO FILE RIMANDATO MENTRE IL SUO TRASFERIMENTO È IN CODA O IN VOLO (#134). L'apertura
+            // ha ritrovato lo stesso job (stessa chiave, stessi bambini) e `accodaCaricamentoVideo` lo ha
+            // lasciato com'era: la riga locale e il trasferimento sono già quelli giusti, con la loro barra.
+            // Riscrivere lo stato a «in-fila» farebbe tornare la scheda a «in attesa del suo turno», senza
+            // percentuale, mentre i byte corrono. Un job FERMO (`interrotto`, non in coda) invece sì: rimandarlo
+            // è chiedere di riprendere, e riparte.
+            const giaInCoda = inCodaRef.current.has(jobId) && jobId in localiRef.current;
+            if (!giaInCoda) {
+                scriviLocali((prec) => ({
+                    ...prec,
+                    [jobId]: {
+                        jobId,
+                        intentId,
+                        nome: file.name,
+                        creatoIl: messo.riga.creatoIl,
+                        trasferimento: needsUpload ? 'in-fila' : 'concluso',
+                        percentuale: null,
+                        codice: null,
+                    },
+                }));
+
+                if (needsUpload) {
+                    // NON si aspetta: da qui in poi il caricamento vive per conto suo e la schermata
+                    // torna alla galleria, dove la scheda racconta a che punto è.
+                    accodaTrasferimento(jobId);
+                } else {
+                    // I byte sono già sul server: si ferma la copia in background e si lascia l'archivio
+                    // com'è — niente da rispedire — poi si dice al server («caricato», idempotente).
+                    void (async () => {
+                        await concludiCaricamentoVideo(dip, jobId);
+                        await dopoTrasferimento(jobId, messo.riga.dimensioneByte, messo.riga.mime, c);
+                    })().catch((err: unknown) => logErroreAzione('video-conclusione-locale-fallita', err));
+                }
             }
             void caricaElenco();
             return { ok: true };
@@ -740,7 +833,8 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             dipendenzePer,
             dopoTrasferimento,
             logErroreAzione,
-            ritiraIntento,
+            ritiraAperturaOrfana,
+            ritiraSenzaAspettare,
             scriviLocali,
             stessoContesto,
         ],
@@ -765,37 +859,81 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
      * opposto il server avrebbe un intento revocato mentre il telefono continuava a spedirgli
      * byte, e il trigger d'arrivo li avrebbe visti comparire su un job che non li voleva più.
      *
-     * La scheda sparisce SUBITO e non torna: l'intento si ricorda fra quelli tolti (il server lo
-     * riporta ancora per una settimana, e un intento del flusso vecchio resta «da ricaricare»
-     * qualunque sia il suo stato).
+     * I BYTE GIÀ SUL SERVER NON HANNO NIENTE DA TERMINARE (#136): se il trasferimento è concluso la
+     * sessione TUS non esiste più, e `annullaCaricamentoVideo` la «terminerebbe» lo stesso — una
+     * `DELETE` che passa da `/firma`, trova il job fuori da `awaiting_upload`, prende 409 e lascia due
+     * `warn` che non dicono niente. Qui la riga si marca annullata e si elimina, e basta.
+     *
+     * La scheda sparisce SUBITO, ma l'intento si RICORDA fra quelli tolti (il server lo riporta ancora
+     * per una settimana, e un intento del flusso vecchio resta «da ricaricare» qualunque sia il suo
+     * stato) SOLO quando il ritiro è riuscito (#141). Finché il server non ha confermato, la scheda è
+     * nascosta soltanto a schermo; se il ritiro non riesce, o lancia, la scheda TORNA: l'intento è
+     * ancora vivo, e un video in preparazione uscirebbe lo stesso in galleria mentre la persona lo
+     * crede tolto.
      */
     const rimuovi = useCallback(
         (jobId: string) => {
             const c = contesto();
             if (!c.owner || !c.sede) return;
+            const owner = c.owner;
             const locale = localiRef.current[jobId];
             const voce = vociRef.current?.find((v) => v.jobId === jobId);
             const intentId = locale?.intentId ?? voce?.intentId;
             if (!intentId) return;
 
             annullatiRef.current.add(jobId);
-            setNascosti(nascondiIntento(c.owner, intentId));
+            // Sparisce a schermo (`inRitiro`), ma non entra fra i `nascosti` finché il server non conferma: vedi sopra.
+            setInRitiro((prec) => new Set(prec).add(intentId));
             togliLocale(jobId);
             const archivio = archivioRef.current;
             const dip = locale ? dipendenzePer(jobId, intentId) : null;
+            const byteGiaSulServer = locale?.trasferimento === 'concluso';
 
             void (async () => {
-                if (archivio && dip) {
-                    // Chiude il lato CLIENT: ferma TUS e copia, e termina la sessione TUS se è aperta,
-                    // così nel bucket non resta un troncone che nessuno cerca.
-                    await annullaCaricamentoVideo(dip, jobId);
+                let ritirato = false;
+                try {
+                    if (archivio && dip) {
+                        if (byteGiaSulServer) {
+                            // Nessun trasferimento da fermare: se la riga non si marca (archivio che non risponde) il
+                            // ritiro dell'intento — che è ciò che conta — parte lo stesso, e il guasto si registra.
+                            await archivio
+                                .aggiorna(jobId, { stato: 'annullato', codice: null, aggiornatoIl: new Date().toISOString() })
+                                .catch((err: unknown) => logErroreAzione('video-riga-locale-non-annullata', err));
+                        } else {
+                            // Chiude il lato CLIENT: ferma TUS e copia, e termina la sessione TUS se è aperta,
+                            // così nel bucket non resta un troncone che nessuno cerca.
+                            await annullaCaricamentoVideo(dip, jobId);
+                        }
+                    }
+                    ritirato = await ritiraIntento(intentId);
+                    if (archivio && locale) await archivio.elimina(jobId);
+                    dimenticaJob(jobId);
+                } finally {
+                    // Il verdetto c'è: l'attesa finisce comunque. Se il server ha confermato l'intento passa fra i
+                    // `nascosti` (e si ricorda: la scheda non torna, nemmeno dopo un ricaricamento); altrimenti
+                    // esce da `inRitiro` e la scheda TORNA, perché l'intento è ancora vivo.
+                    let ricordati: ReadonlySet<string> = new Set();
+                    if (ritirato) {
+                        ricordati = nascondiIntento(owner, intentId);
+                    } else {
+                        logClient({
+                            livello: 'warn',
+                            evento: 'fetch',
+                            messaggio: `video-ritiro-non-riuscito: job=${jobId}`,
+                        });
+                    }
+                    if (stessoContesto(c)) {
+                        if (ritirato) setNascosti((prec) => new Set([...prec, ...ricordati]));
+                        setInRitiro((prec) => {
+                            const dopo = new Set(prec);
+                            dopo.delete(intentId);
+                            return dopo;
+                        });
+                    }
                 }
-                await ritiraIntento(intentId);
-                if (archivio && locale) await archivio.elimina(jobId);
-                dimenticaJob(jobId);
             })().catch((err: unknown) => logErroreAzione('video-annullamento-interrotto', err));
         },
-        [contesto, dimenticaJob, dipendenzePer, logErroreAzione, ritiraIntento, togliLocale],
+        [contesto, dimenticaJob, dipendenzePer, logErroreAzione, ritiraIntento, stessoContesto, togliLocale],
     );
 
     const riprova = useCallback(
@@ -867,6 +1005,7 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             scriviLocali(() => ({}));
             scriviVoci(null);
             setMessaggiAzione({});
+            setInRitiro(new Set());
             dipRef.current.clear();
             trasportiRef.current.clear();
             firmeRef.current.clear();
@@ -912,8 +1051,17 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
 
     const notaCaricamento = t('galleryVideoCaricamentoTus');
     const composte: RigaComposta[] = useMemo(
-        () => fondiRighe({ locali, voci, nascosti, messaggiAzione, frase, notaCaricamento, offline: !online }),
-        [locali, voci, nascosti, messaggiAzione, frase, notaCaricamento, online],
+        () => fondiRighe({
+            locali,
+            voci,
+            // Le schede tolte e confermate, più quelle tolte di cui si aspetta il verdetto: a schermo sono sparite insieme.
+            nascosti: new Set([...nascosti, ...inRitiro]),
+            messaggiAzione,
+            frase,
+            notaCaricamento,
+            offline: !online,
+        }),
+        [locali, voci, nascosti, inRitiro, messaggiAzione, frase, notaCaricamento, online],
     );
 
     // Gli intenti visti in una fase attiva: una pubblicazione di uno di questi è una NOVITÀ. Si

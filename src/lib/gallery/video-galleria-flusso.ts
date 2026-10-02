@@ -44,7 +44,7 @@
  * qualunque dispositivo l'abbia mandato.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * DUE REGOLE CHE QUESTO FILE NON PUÒ PERMETTERSI DI DIMENTICARE.
+ * TRE REGOLE CHE QUESTO FILE NON PUÒ PERMETTERSI DI DIMENTICARE.
  *
  * **Il MIME porta il suffisso del codec.** `MediaRecorder` consegna
  * `video/mp4;codecs=avc1.42E01E,mp4a.40.2`, e un confronto per uguaglianza lo
@@ -55,6 +55,12 @@
  * **Niente nome di file nei log.** `recita-bambina-rossi.mov` è anagrafica di un
  * minore e in `app_log` resterebbe trenta giorni interrogabile in SQL. Nei log di
  * questo modulo escono uuid, byte e codici: struttura, mai contenuto.
+ *
+ * **I bambini scelti non restano in tabella, nemmeno come impronta.** La chiave di
+ * idempotenza finisce in chiaro in `video_jobs.idempotency_key`, che sopravvive alla
+ * minimizzazione dei destinatari: un'impronta senza sale si ricostruisce provando i
+ * sottoinsiemi dei bambini della sede. Le impronte della chiave sono salate con un
+ * valore casuale del dispositivo (`saleDelDispositivo`), che non viaggia mai.
  */
 
 import { logClient, nomeErrore } from '@/lib/logging/client'
@@ -274,14 +280,217 @@ export async function durataVideoDalFile(
  * LA CHIAVE DI IDEMPOTENZA
  * ──────────────────────────────────────────────────────────────────────────── */
 
-/** FNV-1a a 32 bit: serve a distinguere due file, non a nascondere un segreto. */
-function improntaBreve(testo: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < testo.length; i++) {
-    h ^= testo.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
+/**
+ * SHA-256 (FIPS 180-4) SINCRONO sui byte UTF-8 del testo, in esadecimale.
+ *
+ * Esiste perché la chiave di idempotenza si calcola dentro `avviaVideo` e il browser non ha un
+ * SHA-256 sincrono (`crypto.subtle.digest` è asincrono e vuole un contesto sicuro). È l'algoritmo
+ * standard, non un'invenzione: `__tests__/lib/gallery-video-flusso.test.ts` lo confronta con i
+ * vettori del NIST e con `node:crypto` su input di ogni lunghezza intorno al confine dei blocchi.
+ * Si esporta per quel confronto, non perché serva altrove.
+ *
+ * ⚠️ Perché non un FNV col sale davanti: un FNV consuma il sale byte per byte e resta con uno stato
+ * di 32 bit, quindi il sale varrebbe 32 bit e non 128 — e lo stato si ricava dall'impronta e da un
+ * candidato, perché ogni passo di FNV si inverte. Una funzione di hash vera non ha questa scorciatoia.
+ */
+const K_SHA256 = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]
+
+export function sha256Esadecimale(testo: string): string {
+  const messaggio = new TextEncoder().encode(testo)
+  const lunghezza = messaggio.length
+  // Il riempimento: un bit a 1, tanti 0, e la lunghezza in bit su 64 bit. Il totale è un multiplo di 64 byte.
+  const totale = (((lunghezza + 8) >> 6) + 1) << 6
+  const blocchi = new Uint8Array(totale)
+  blocchi.set(messaggio)
+  blocchi[lunghezza] = 0x80
+  const vista = new DataView(blocchi.buffer)
+  vista.setUint32(totale - 8, Math.floor((lunghezza * 8) / 0x1_0000_0000))
+  vista.setUint32(totale - 4, (lunghezza * 8) >>> 0)
+
+  const h = Uint32Array.of(0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19)
+  const w = new Uint32Array(64)
+  const ruota = (x: number, n: number) => (x >>> n) | (x << (32 - n))
+  for (let inizio = 0; inizio < totale; inizio += 64) {
+    for (let t = 0; t < 16; t++) w[t] = vista.getUint32(inizio + t * 4)
+    for (let t = 16; t < 64; t++) {
+      const s0 = ruota(w[t - 15], 7) ^ ruota(w[t - 15], 18) ^ (w[t - 15] >>> 3)
+      const s1 = ruota(w[t - 2], 17) ^ ruota(w[t - 2], 19) ^ (w[t - 2] >>> 10)
+      w[t] = w[t - 16] + s0 + w[t - 7] + s1
+    }
+    let [a, b, c, d, e, f, g, k] = h
+    for (let t = 0; t < 64; t++) {
+      const t1 = (k + (ruota(e, 6) ^ ruota(e, 11) ^ ruota(e, 25)) + ((e & f) ^ (~e & g)) + K_SHA256[t] + w[t]) >>> 0
+      const t2 = ((ruota(a, 2) ^ ruota(a, 13) ^ ruota(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0
+      k = g
+      g = f
+      f = e
+      e = (d + t1) >>> 0
+      d = c
+      c = b
+      b = a
+      a = (t1 + t2) >>> 0
+    }
+    h[0] += a
+    h[1] += b
+    h[2] += c
+    h[3] += d
+    h[4] += e
+    h[5] += f
+    h[6] += g
+    h[7] += k
   }
-  return (h >>> 0).toString(16).padStart(8, '0')
+  return Array.from(h, (parola) => parola.toString(16).padStart(8, '0')).join('')
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * IL SALE DEL DISPOSITIVO — perché la chiave non lasci in tabella i bambini scelti
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Dove il sale sta nel `localStorage`. Non porta l'utente: è del dispositivo, e basta. */
+const CHIAVE_SALE = 'kv:video-galleria-sale'
+
+/** 128 bit: sedici byte casuali, trentadue cifre esadecimali. */
+const BYTE_SALE = 16
+
+/** Un sale valido: esadecimale, almeno 128 bit. Qualunque altra cosa nel deposito si butta e si rifà. */
+const FORMA_SALE = /^[0-9a-f]{32,128}$/
+
+/** La parte di `Storage` che serve: iniettabile, perché il collaudo non deve toccare quello vero. */
+export interface DepositoSale {
+  getItem(chiave: string): string | null
+  setItem(chiave: string, valore: string): void
+}
+
+export interface DipendenzeSale {
+  /** Il deposito durevole del dispositivo, o `null` quando non c'è. L'accesso stesso può lanciare (siti bloccati). */
+  deposito?: () => DepositoSale | null
+  /** Byte da una fonte crittografica, o `null` quando il browser non ne ha una. */
+  casuali?: (quanti: number) => Uint8Array | null
+}
+
+function depositoDelBrowser(): DepositoSale | null {
+  return typeof window === 'undefined' ? null : window.localStorage
+}
+
+function casualiDelBrowser(quanti: number): Uint8Array | null {
+  if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') return null
+  return crypto.getRandomValues(new Uint8Array(quanti))
+}
+
+/**
+ * Il fornitore del sale di UN dispositivo, con la sua memoria di sessione.
+ *
+ * ═══ PERCHÉ ESISTE: il secondario #131 di T11a ═════════════════════════════════════════════════════
+ * La chiave di idempotenza porta un'impronta dei bambini scelti, e la chiave finisce IN CHIARO in
+ * `video_jobs.idempotency_key`. Quando `video_intents.tag_alunni` si minimizza (sette giorni) quella
+ * colonna è l'unico posto in cui resta qualcosa dei destinatari, e un'impronta senza sale si
+ * ricostruisce per enumerazione: chi legge la tabella conosce gli uuid di tutti i bambini della sede,
+ * sa quanti ne erano stati scelti (`n_tag`) e la classe, e prova i sottoinsiemi finché l'impronta torna.
+ * Con un sale casuale che non esce mai dal dispositivo l'impronta resta un segno di
+ * «questo dispositivo ha mandato la stessa scelta», e non si può confrontare con nessun candidato.
+ *
+ * ═══ COME FUNZIONA ═══════════════════════════════════════════════════════════════════════════════════
+ *  · il sale è di 128 bit, da `crypto.getRandomValues`, scelto UNA volta e tenuto in `localStorage`:
+ *    stesso dispositivo + stesso file + stessi bambini → stessa chiave, quindi un ritentativo (la
+ *    risposta si è persa) ritrova il suo intento, che è ciò che l'idempotenza deve fare;
+ *  · senza `localStorage` (siti bloccati, navigazione privata, quota piena) il sale vive in memoria
+ *    per la sessione: i ritentativi della sessione si ritrovano, quelli dopo un ricaricamento no — un
+ *    video potrebbe partire due volte, ma i bambini restano al sicuro. Il guasto si dice una volta
+ *    (`warn`, solo un codice);
+ *  · un valore illeggibile o troppo corto nel deposito non si usa: si butta e si rifà (un sale
+ *    debole varrebbe quanto nessun sale);
+ *  · se un browser non avesse una fonte crittografica (non succede dove l'app gira) si ripiega su
+ *    `Math.random`, e si dice: un sale che nessuno vede mai uscire dal telefono resta un sale, ma lo
+ *    si vuole sapere. Il ripiego non è silenzioso.
+ *
+ * Il sale NON viaggia: nel corpo della POST e nei log non c'è, e la chiave ne contiene soltanto
+ * un SHA-256 troncato mescolato ai dati.
+ */
+export function creaSaleDelDispositivo(dip: DipendenzeSale = {}): () => string {
+  const deposito = dip.deposito ?? depositoDelBrowser
+  const casuali = dip.casuali ?? casualiDelBrowser
+  let inMemoria: string | null = null
+  let segnalato = false
+
+  /** Un guasto si dice una volta per sessione: ripeterlo a ogni invio sarebbe rumore. */
+  const segnala = (motivo: string, err?: unknown) => {
+    if (segnalato) return
+    segnalato = true
+    const campi: Record<string, string> = { motivo }
+    if (err !== undefined) campi.error_code = nomeErrore(err)
+    logClient({ livello: 'warn', evento: 'offline', messaggio: 'video-galleria-sale-non-disponibile', campi })
+  }
+
+  const genera = (): string => {
+    let byte: Uint8Array | null = null
+    try {
+      byte = casuali(BYTE_SALE)
+    } catch (err) {
+      segnala('casuali', err)
+    }
+    if (!byte || byte.length < BYTE_SALE) {
+      segnala('senza-crypto')
+      byte = Uint8Array.from({ length: BYTE_SALE }, () => Math.floor(Math.random() * 256))
+    }
+    return Array.from(byte.subarray(0, BYTE_SALE), (b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  return () => {
+    let archivio: DepositoSale | null = null
+    try {
+      archivio = deposito()
+    } catch (err) {
+      segnala('accesso', err)
+    }
+    if (archivio) {
+      try {
+        const salvato = archivio.getItem(CHIAVE_SALE)
+        if (salvato !== null && FORMA_SALE.test(salvato)) {
+          // Il sale di questo dispositivo è quello del deposito: lo si tiene anche in memoria, così un deposito
+          // svuotato a metà sessione (l'utente cancella i dati) non cambia la chiave dei ritentativi in corso.
+          inMemoria = salvato
+          return salvato
+        }
+      } catch (err) {
+        segnala('lettura', err)
+      }
+    }
+    // Nessun sale (primo invio, deposito svuotato) o deposito inutilizzabile: quello della sessione, se
+    // c'è già, altrimenti uno nuovo — e si prova a metterlo al sicuro.
+    inMemoria ??= genera()
+    if (archivio) {
+      try {
+        archivio.setItem(CHIAVE_SALE, inMemoria)
+      } catch (err) {
+        segnala('scrittura', err)
+      }
+    }
+    return inMemoria
+  }
+}
+
+/** Il sale di questo dispositivo, come lo usa `chiaveIdempotenzaVideo` quando nessuno gliene dà un altro. */
+export const saleDelDispositivo: () => string = creaSaleDelDispositivo()
+
+/** Quante cifre esadecimali dell'SHA-256 restano nell'impronta: 48 bit, che distinguono due invii. */
+const CIFRE_IMPRONTA = 12
+
+/**
+ * L'impronta SALATA di un testo: SHA-256 di `sale:dominio:testo`, troncato. Il `dominio` separa le
+ * impronte (del nome, dei bambini) fra loro; il sale e il dominio non contengono mai `:`, quindi il
+ * prefisso non è ambiguo.
+ */
+function improntaSalata(sale: string, dominio: 'nome' | 'bambini', testo: string): string {
+  return sha256Esadecimale(`${sale}:${dominio}:${testo}`).slice(0, CIFRE_IMPRONTA)
 }
 
 /**
@@ -330,19 +539,36 @@ export function destinatariDaInviare(d: DestinatariVideo): DestinatariVideo {
  * dell'uuid nemmeno: il contratto li porta in minuscolo) e nella forma in cui partono
  * (`destinatariDaInviare`): in broadcast contano le classi e non i tag, altrimenti il contrario.
  *
- * ⚠️ NON PUÒ CONTENERE IL NOME DEL FILE NÉ UN UUID DI BAMBINO. La chiave viaggia al server, viene
- * scritta in chiaro in `video_jobs.idempotency_key` e compare nel contesto di log della route:
- * `recita-bambina-rossi.mov` è anagrafica di un minore, e un uuid di bambino ne è l'identificativo.
- * Di entrambi restano impronte a 32 bit, che distinguono due invii senza dire quali siano.
+ * ⚠️ NON PUÒ CONTENERE IL NOME DEL FILE NÉ UN UUID DI BAMBINO, e un'impronta non basta se si può
+ * enumerare. La chiave viaggia al server, viene scritta in chiaro in `video_jobs.idempotency_key` — che
+ * dopo la minimizzazione di `video_intents.tag_alunni` è l'unico posto in cui resta qualcosa dei
+ * destinatari — e compare nel contesto di log della route: `recita-bambina-rossi.mov` è anagrafica di
+ * un minore, e un uuid di bambino ne è l'identificativo. Un'impronta senza sale (era un FNV a 32 bit)
+ * si ricostruisce provando i sottoinsiemi dei bambini della sede, che chi legge la tabella conosce:
+ * era il secondario #131. Per questo le due impronte sono SALATE (`saleDelDispositivo`: 128 bit casuali
+ * per dispositivo, mai in rete) e passano da SHA-256: dicono «lo stesso dispositivo ha mandato la stessa
+ * cosa» e basta, e senza il sale non si confrontano con nessun candidato. Il prezzo è dichiarato: lo
+ * stesso file con gli stessi bambini mandato da DUE dispositivi apre due intenti, non uno.
+ * L'impronta dei destinatari porta dentro anche il FILE (byte, data, nome): senza, lo stesso gruppo di
+ * bambini dava la stessa impronta per video DIVERSI dello stesso dispositivo, e chi legge la tabella
+ * col service role poteva legare un intento già minimizzato a un altro i cui bambini sono ancora noti
+ * (secondario #183). Così due video diversi non si somigliano in niente; lo stesso video con gli
+ * stessi bambini resta la stessa chiave, che è ciò che l'idempotenza chiede.
  *
  * ⚠️ NEL LIMITE DEI 128 CARATTERI (zod `chiaveIdempotenza`, e `video_intent_open`) anche col
  * suffisso `-<uuid>` che `avviaVideo` aggiunge quando l'intento ritrovato è già concluso: il caso
- * peggiore — due gigabyte, una data a 13 cifre — fa 46 caratteri, più 37 del suffisso.
+ * peggiore — due gigabyte, una data a 13 cifre — fa 54 caratteri, più 37 del suffisso.
+ *
+ * `sale` è l'ultimo parametro per i collaudi, che ne danno uno proprio; chi chiama dalla schermata non
+ * lo passa e prende quello del dispositivo. Un sale che non ha la forma di quelli veri (esadecimale,
+ * almeno 128 bit) si rifiuta: uno vuoto o corto farebbe tornare l'impronta enumerabile in silenzio.
  */
 export function chiaveIdempotenzaVideo(
   file: { name: string; size: number; lastModified?: number },
   destinatari: DestinatariVideo,
+  sale: string = saleDelDispositivo(),
 ): string {
+  if (!FORMA_SALE.test(sale)) throw new Error('SaleNonValido')
   // Una data intera in millisecondi: `File.lastModified` lo è, ma una cifra decimale o un esponente
   // metterebbero un carattere fuori da `[a-z0-9-]` dentro una chiave che finisce in tabella e nei log.
   const data = Math.trunc(Number(file.lastModified))
@@ -350,8 +576,8 @@ export function chiaveIdempotenzaVideo(
   const inviati = destinatariDaInviare(destinatari)
   const tag = [...new Set(inviati.tagAlunni.map((id) => id.toLowerCase()))].sort()
   const classi = [...new Set(inviati.classi)].sort()
-  const bambini = improntaBreve(JSON.stringify([tag, inviati.broadcast, classi]))
-  return `gv2-${file.size}-${quando}-${improntaBreve(file.name)}-${bambini}`
+  const bambini = improntaSalata(sale, 'bambini', JSON.stringify([file.size, quando, file.name, tag, inviati.broadcast, classi]))
+  return `gv2-${file.size}-${quando}-${improntaSalata(sale, 'nome', file.name)}-${bambini}`
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

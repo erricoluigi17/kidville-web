@@ -86,13 +86,24 @@ const SMOKE_ARTEFATTO = !!process.env.CI || process.env.KV_SMOKE_ARTEFATTO === '
  * naviga, ingrandisce, chiude, riapre e cambia documento. Intercetta soltanto le
  * API del caso e non scrive sul database; anche qui `retries: 0` vive nello spec.
  *
+ * ─── IN PIÙ, dal 2026-10-02: `video-invio-bambini-prima` ─────────────────────
+ * La pagina Galleria dell'insegnante spedisce i video con TUS (`XMLHttpRequest` a blocchi di 6 MiB), legge
+ * il file scelto da un `<input type="file">` e copia i byte in IndexedDB in background: tre cose che i
+ * due motori fanno in modo diverso, e una delle due è la WebView dell'app iOS. Lo spec prova che un
+ * rifiuto del server (422 con i nomi dei bambini senza liberatoria) resta nel passo dei bambini senza che
+ * parta una sola richiesta verso lo Storage, e che poi l'invio vero arriva in coda: il percorso che
+ * un'insegnante fa davvero dall'iPhone. Gira ANCHE su `chromium`, con `retries: 0` dichiarato nello spec.
+ * Gli altri tre spec della stessa PR (`video-ripresa-automatica`, `video-rinnovo-token`,
+ * `video-destinatari`) NON stanno qui: il primo taglia la rete con l'emulazione di Chromium
+ * (`context.setOffline`), gli altri due sono quasi solo API e non dipendono dal motore.
+ *
  * È una **RegExp** e non un glob perché così il lock
  * `__tests__/architecture/e2e-webkit-installato.test.ts` può APPLICARLA agli
  * spec reali e accorgersi se un giorno non seleziona più niente: un `testMatch`
  * che matcha zero file è un progetto verde in un secondo che non prova nulla.
  */
 const SPEC_CRITICI_WEBKIT =
-  /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione|impaginazione-media|gallery-caricamento|video-archivio|chat-precedenti|fatture-pdf)\.spec\.ts$/;
+  /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione|impaginazione-media|gallery-caricamento|video-archivio|video-invio-bambini-prima|chat-precedenti|fatture-pdf)\.spec\.ts$/;
 
 /**
  * Ciò che su WebKit NON si ripete. `public-iscrizione.spec.ts` contiene, oltre
@@ -257,8 +268,27 @@ export default defineConfig({
      * non la sostituisce: PATH, CI e il resto dell'ambiente restano. E Next non sovrascrive una
      * variabile già presente nel processo con quella di `.env.local`, quindi qui il valore
      * vince — anche se un domani qualcuno mettesse `KV_LOG_LEVEL` nel file.
+     *
+     * ─── `VIDEO_RUNNER_OWNER_ID`, dal 2026-10-02 (PR 2 dei video) ───────────────────────────────
+     * Il runner dei video si rifiuta di girare senza un'identità stabile (`identitaDelWorker`: un uuid in
+     * questa variabile, altrimenti risponde `non-configurato` e `POST /api/video/runner` risponde 503
+     * `CONFIGURAZIONE_ASSENTE` PRIMA di fare qualunque cosa — pubblicazioni comprese). In produzione la
+     * variabile sta su Vercel; il job E2E non la porta, e senza questa riga `video-destinatari` si fermerebbe
+     * contro quel 503 senza mai provare la pubblicazione che esiste per provare.
+     *
+     * Il valore è un uuid FINTO e non un segreto (è il nome di un lavoratore, scritto nelle lease dei job): ha
+     * il prefisso `e2e00000` delle altre identità di collaudo, e non coincide con nessuna riga di nessuna
+     * tabella. NON è l'uuid che il runner di produzione usa, e non c'entra con quello con cui lo spec
+     * `video-destinatari` simula la conversione (un altro uuid, scritto lì): le due identità devono restare
+     * diverse, o il giro del runner potrebbe riprendersi come «suo» il job che lo spec sta ancora costruendo.
+     *
+     * Questo server è quello del progetto `chromium`/`webkit`/`contrasto`: il server del solo smoke dell'artefatto
+     * (sopra) non ne ha bisogno e non la riceve.
      */
-      env: { KV_LOG_LEVEL: 'silent' },
+      env: {
+        KV_LOG_LEVEL: 'silent',
+        VIDEO_RUNNER_OWNER_ID: 'e2e00000-0000-4000-8000-00000000f001',
+      },
     },
   ],
 });

@@ -21,9 +21,13 @@ import enShared from '../../messages/en/shared.json'
  *    sta in `__tests__/lib/selettore-media.test.ts`, qui si prova che i gesti veri la guidino
  *    (click, `change`, `cancel`, ritorno della pagina, smontaggio);
  *  · il tetto dei 50 con l'avviso in linea — sempre montato, per VoiceOver — e il suo log di soli conteggi;
- *  · che dai log non esca MAI il nome di un file.
+ *  · che dai log non esca MAI il nome di un file;
+ *  · (T11c, secondario #150) il riquadro grande è un VERO comando: `role="button"`, `tabIndex`, Invio e
+ *    Spazio, nome accessibile, e nessun controllo annidato per axe;
+ *  · (T11c, secondario #145) il ritorno in primo piano parte SOLO dal ritorno vero: con `setInterval` finto e
+ *    sessanta secondi di orologio, senza eventi di visibilità, resta la sola riga «aperto».
  *
- * Ogni caso è stato visto ROSSO rompendo il codice che prova: le mutazioni sono nel rapporto di T11b.
+ * Ogni caso è stato visto ROSSO rompendo il codice che prova: le mutazioni sono nei rapporti di T11b e T11c.
  */
 
 const h = vi.hoisted(() => ({ logClient: vi.fn() }))
@@ -154,7 +158,11 @@ describe('nell’app: il riquadro grande apre il selettore di FOTO E VIDEO, non 
   it('il vecchio link «Scegli file dal dispositivo» non c’è più: lo sostituisce «Scatta una foto»', () => {
     render(<MediaUploader onUpload={vi.fn()} />)
     expect(screen.queryByRole('button', { name: /scegli file dal dispositivo/i })).not.toBeInTheDocument()
-    expect(screen.getAllByRole('button')).toHaveLength(1)
+    // Due comandi, e nessun altro: il riquadro grande — dal #150 un vero pulsante — e «Scatta una foto».
+    expect(screen.getAllByRole('button').map((b) => b.getAttribute('data-testid'))).toEqual([
+      'gallery-selettore-riquadro',
+      'gallery-selettore-scatta-foto',
+    ])
   })
 
   it('il catalogo inglese ha le stesse parole (parità, e la chiave morta è sparita da entrambi)', () => {
@@ -184,6 +192,93 @@ describe('sul web non cambia niente: il riquadro apre l’input, niente fotocame
     fireEvent.click(riquadro())
     expect(clickInput).toHaveBeenCalledTimes(1)
     expect(scegliMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('il riquadro grande è un VERO comando: ruolo, tastiera, nome (#150)', () => {
+  // Nell'app il riquadro è la scelta PRINCIPALE, e era un `<div onClick>` nudo: nessun ruolo, nessun
+  // `tabIndex`, nessuna tastiera — da tastiera (e con VoiceOver o TalkBack) non si apriva in nessun modo.
+  // Vale anche sul web, dove il comportamento non cambia: apre lo stesso `<input>`.
+  const AMBIENTI = [
+    ['nell’app', true, /scegli foto e video/i],
+    ['sul web', false, /trascina foto o video/i],
+  ] as const
+
+  describe.each(AMBIENTI)('%s', (_nome, nativo, nomeAtteso) => {
+    beforeEach(() => nativoMock.mockReturnValue(nativo))
+
+    it('è un pulsante nell’albero di accessibilità, raggiungibile col Tab, col nome del suo testo visibile', () => {
+      render(<MediaUploader onUpload={vi.fn()} />)
+      const r = screen.getByRole('button', { name: nomeAtteso })
+      expect(r).toBe(riquadro())
+      expect(r.getAttribute('role')).toBe('button')
+      expect(r.tabIndex, 'senza `tabIndex` il Tab non lo raggiunge').toBe(0)
+      // WCAG 2.5.3 (Label in Name): il nome accessibile CONTIENE il testo che si legge a schermo.
+      // Il testo visibile sono i due paragrafi, uno sotto l'altro: il nome li legge in fila.
+      const visibile = Array.from(r.querySelectorAll('p')).map((p) => p.textContent).join(' ')
+      expect(visibile).toBeTruthy()
+      expect(r).toHaveAccessibleName(visibile)
+    })
+
+    it('Invio apre il selettore: lo stesso gesto del click (stesso <input>, stessa riga di log, mai la fotocamera)', () => {
+      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+      const clickInput = vi.spyOn(inputDi(container), 'click')
+      riquadro().focus()
+      expect(riquadro()).toHaveFocus()
+
+      fireEvent.keyDown(riquadro(), { key: 'Enter' })
+
+      expect(clickInput).toHaveBeenCalledTimes(1)
+      expect(messaggi()).toEqual([`gallery-selettore-aperto strada=selettore-file ambiente=${nativo ? 'app' : 'web'}`])
+      expect(scegliMock).not.toHaveBeenCalled()
+    })
+
+    it('Spazio fa lo stesso — e NON fa scorrere la pagina (il gesto è annullato)', () => {
+      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+      const clickInput = vi.spyOn(inputDi(container), 'click')
+
+      // `fireEvent` risponde `false` quando l'evento è stato annullato con `preventDefault`.
+      expect(fireEvent.keyDown(riquadro(), { key: ' ' }), 'lo Spazio scorre la pagina invece di aprire il selettore').toBe(false)
+
+      expect(clickInput).toHaveBeenCalledTimes(1)
+    })
+
+    it('un altro tasto non fa niente e non viene annullato: il Tab deve poter passare oltre', () => {
+      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+      const clickInput = vi.spyOn(inputDi(container), 'click')
+      for (const key of ['Tab', 'a', 'ArrowDown', 'Escape']) {
+        expect(fireEvent.keyDown(riquadro(), { key }), key).toBe(true)
+      }
+      expect(clickInput).not.toHaveBeenCalled()
+      expect(messaggi()).toEqual([])
+    })
+
+    it('il click di prima funziona ancora, una volta sola (il click dell’<input> non risale a riaprirlo)', () => {
+      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+      const input = inputDi(container)
+      const clickInput = vi.spyOn(input, 'click')
+      fireEvent.click(riquadro())
+      expect(clickInput).toHaveBeenCalledTimes(1)
+      // Il click che l'input riceve dal programma non deve riaprire il riquadro (si ciclerebbe all'infinito).
+      fireEvent.click(input)
+      expect(messaggi()).toEqual([`gallery-selettore-aperto strada=selettore-file ambiente=${nativo ? 'app' : 'web'}`])
+    })
+
+    it('è accessibile (axe): nessun controllo annidato, nome presente, ruolo ammesso', async () => {
+      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+      const { axe } = await import('jest-axe')
+      const risultato = await axe(container, {
+        rules: { region: { enabled: false }, 'landmark-one-main': { enabled: false }, 'page-has-heading-one': { enabled: false } },
+      })
+      expect(risultato.violations.map((v) => `${v.id}: ${v.help}`)).toEqual([])
+    })
+  })
+
+  it('un tasto premuto su un DISCENDENTE del riquadro non apre niente: conta solo il comando stesso', () => {
+    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const clickInput = vi.spyOn(inputDi(container), 'click')
+    fireEvent.keyDown(container.querySelector('input[type="file"]') as HTMLElement, { key: 'Enter' })
+    expect(clickInput).not.toHaveBeenCalled()
   })
 })
 
@@ -353,6 +448,47 @@ describe('riga di log 3 — chiuso senza file', () => {
     act(() => { vi.advanceTimersByTime(60_000) })
     input.dispatchEvent(new Event('cancel'))
     expect(quelle('gallery-selettore-chiuso-senza-file')).toEqual([])
+  })
+})
+
+describe('il ritorno in primo piano parte SOLO dal ritorno vero, mai da un orologio (#145)', () => {
+  // `useTracciaSelettore` aggancia `traccia.ritorno()` a `usePollingVisibile(…, null)`: «null» è «solo al ritorno»,
+  // nessun intervallo. Con un intervallo al posto di `null` il ritorno scatterebbe a vuoto, la pagina non se
+  // ne sarebbe mai andata, e la riga `ritorno-senza-file` direbbe che il selettore si è chiuso quando è ancora
+  // aperto — cioè la misura che il titolare vuole leggere sarebbe sporcata da un orologio. Il file non lo
+  // provava: la mutazione restava verde perché `setInterval` non era finto e nessun test faceva passare il tempo.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    vi.setSystemTime(new Date('2026-10-02T10:00:00Z'))
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+  })
+
+  it('selettore aperto, pagina SEMPRE in primo piano, sessanta secondi di orologio: resta la sola riga «aperto»', () => {
+    render(<MediaUploader onUpload={vi.fn()} />)
+    fireEvent.click(riquadro())
+    act(() => { vi.advanceTimersByTime(60_000) })
+
+    expect(messaggi()).toEqual(['gallery-selettore-aperto strada=selettore-file ambiente=app'])
+  })
+
+  it('anche senza aprire niente l’orologio non scrive: nessun ritorno, nessun timer dei 15 secondi', () => {
+    render(<MediaUploader onUpload={vi.fn()} />)
+    act(() => { vi.advanceTimersByTime(60_000) })
+    expect(messaggi()).toEqual([])
+    expect(vi.getTimerCount(), 'un orologio o un timer è rimasto armato').toBe(0)
+  })
+
+  it('CONTROLLO POSITIVO: con un ritorno vero (la pagina se ne va e torna) la riga arriva, a 15 secondi', () => {
+    render(<MediaUploader onUpload={vi.fn()} />)
+    fireEvent.click(riquadro())
+    act(() => { vi.advanceTimersByTime(2_000) })
+    paginaVaViaETorna()
+    act(() => { vi.advanceTimersByTime(15_000) })
+
+    expect(messaggi()).toEqual([
+      'gallery-selettore-aperto strada=selettore-file ambiente=app',
+      'gallery-selettore-chiuso-senza-file motivo=ritorno-senza-file attesa=1-5s',
+    ])
   })
 })
 

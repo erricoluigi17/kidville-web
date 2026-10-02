@@ -126,6 +126,14 @@ describe('runner video · il ritmo si ricava dal tetto della lease, non a occhio
     expect(TETTO_SANDBOX_MS).toBeLessThanOrEqual(3_600_000)
   })
 
+  it('ci sta un video da 5 minuti in 4K60 HDR (misura T16 della PR 2, 03/10): il caso peggiore dentro il limite di durata', () => {
+    // Sandbox vero dallo snapshot, `dub1`, 8 vCPU: 364 s di conversione per 60 s di 4K60 HLG 10 bit
+    // (4 vCPU: 513 s). Estrapolato al limite di 300 s: ~1.821 s. Con il tetto di prima (30 minuti) un
+    // video valido di 5 minuti in 4K60 sarebbe finito spento dalla piattaforma a metà conversione.
+    const peggioreMisurato300sMs = (364_290 / 60) * 300
+    expect(TETTO_SANDBOX_MS).toBeGreaterThan(peggioreMisurato300sMs * 1.9)
+  })
+
   it('il tetto di UNA invocazione sta sotto i 300 s della piattaforma, con margine', () => {
     // 300 s è il `maxDuration` massimo delle route di questo repo. Dentro il margine
     // ci stanno l'apertura del Sandbox, l'apparecchio e la scrittura dell'esito.

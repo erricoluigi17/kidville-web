@@ -51,10 +51,14 @@ const h = vi.hoisted(() => ({
   erroriAlunni: [] as unknown[],
   autore: null as Record<string, unknown> | null,
   erroriAutore: [] as unknown[],
+  /** Un guasto di TRASPORTO: la lettura di `utenti` lancia invece di restituire `{ error }`. */
+  eccezioneAutore: false,
   media: null as Record<string, unknown> | null,
   erroreMedia: null as unknown,
   /** Gli errori che le PROSSIME letture di `galleria_media_v2` restituiscono, una per lettura (poi si risponde col dato). */
   erroriMedia: [] as unknown[],
+  /** Un guasto di TRASPORTO: la lettura di `galleria_media_v2` lancia invece di restituire `{ error }`. */
+  eccezioneMedia: false,
   sediAutore: [] as string[],
   degradoLecito: true,
   staff: [] as string[],
@@ -125,11 +129,13 @@ function risposta(q: (typeof h.query)[number]): Risposta {
       return { data: righe, error: null }
     }
     case 'utenti': {
+      if (h.eccezioneAutore) throw new Error('rete caduta')
       const errore = h.erroriAutore.shift()
       if (errore) return { data: null, error: errore }
       return { data: h.autore, error: null }
     }
     case 'galleria_media_v2': {
+      if (h.eccezioneMedia) throw new Error('rete caduta')
       const errore = h.erroriMedia.shift()
       if (errore) return { data: null, error: errore }
       if (h.erroreMedia) return { data: null, error: h.erroreMedia }
@@ -255,9 +261,11 @@ beforeEach(() => {
   h.erroriAlunni = []
   h.autore = { id: AUTORE, ruolo: 'educator', role: 'educator', scuola_id: SEDE, archiviato_il: null }
   h.erroriAutore = []
+  h.eccezioneAutore = false
   h.media = null
   h.erroreMedia = null
   h.erroriMedia = []
+  h.eccezioneMedia = false
   h.sediAutore = [SEDE]
   h.degradoLecito = true
   h.staff = []
@@ -359,7 +367,7 @@ describe('un video pronto, tutti i bambini ancora in sede: si pubblica e si avvi
     })
   })
 
-  it('l’esito a chi ha caricato: testo fisso, collegamento della sua galleria, nessun buffer, `entitaId` = l’intento', async () => {
+  it('l’esito a chi ha caricato: testo fisso, collegamento all’area docente, nessun buffer, `entitaId` = l’intento', async () => {
     await pubblica()
 
     const [esito] = notificheDi('video_esito')
@@ -587,14 +595,24 @@ describe('la liberatoria persa fra l’invio e la pubblicazione: il video esce c
     )
   })
 
-  it('chi ha caricato e fa parte della segreteria riceve UN avviso solo, col suo collegamento', async () => {
-    h.staff = [AUTORE, SEGRETERIA]
+  // #152. Chi ha caricato ed è anche nello staff della sede riceve UN avviso solo, e porta all'area docente — è lì che ritrova il suo video —; la
+  // galleria della segreteria è per lo staff che NON ha caricato. `h.autore` ha davvero il ruolo del caso: con il vecchio codice (il collegamento
+  // seguiva il ruolo di chi aveva caricato) l'avviso di un autore `admin`, `coordinator` o `segreteria` finiva in `/admin/gallery`.
+  it.each(['educator', 'admin', 'coordinator', 'segreteria'])(
+    'chi ha caricato con il ruolo `%s` ed è anche nello staff della sede riceve UN avviso solo, e porta all’area docente (#152)',
+    async (ruolo) => {
+      h.autore = { id: AUTORE, ruolo, role: ruolo, scuola_id: SEDE, archiviato_il: null }
+      h.staff = [AUTORE, SEGRETERIA]
 
-    await pubblica()
+      await pubblica()
 
-    const avvisi = notificheDi('video_liberatoria_revocata')
-    expect(avvisi.map((a) => a.utenteIds)).toEqual([[AUTORE], [SEGRETERIA]])
-  })
+      const avvisi = notificheDi('video_liberatoria_revocata')
+      expect(avvisi.map((a) => [a.utenteIds, a.link])).toEqual([
+        [[AUTORE], '/teacher/gallery'],
+        [[SEGRETERIA], '/admin/gallery'],
+      ])
+    },
+  )
 
   it('un SOLO bambino rimasto senza liberatoria non fa scattare l’avviso: è la regola della «foto privata»', async () => {
     h.intento = intentoDi({ tag_alunni: [BAMBINO_B], n_tag: 1 })
@@ -662,7 +680,7 @@ describe('chi ha caricato: disattivato o senza più la sede, il video si pubblic
     expect(letture[1].colonne).not.toContain('archiviato_il')
   })
 
-  it('una lettura dell’autore che fallisce non ferma la pubblicazione: `warn`, e il collegamento ripiega sull’area docente', async () => {
+  it('una lettura dell’autore che fallisce non ferma la pubblicazione: `warn`, e l’esito arriva comunque all’area docente', async () => {
     h.erroriAutore = [{ code: '57014', message: 'canceled' }]
 
     const esito = await pubblica()
@@ -672,12 +690,82 @@ describe('chi ha caricato: disattivato o senza più la sede, il video si pubblic
     expect(notificheDi('video_esito')[0].link).toBe('/teacher/gallery')
   })
 
-  it('un autore della segreteria riceve il collegamento alla galleria della segreteria', async () => {
-    h.autore = { id: AUTORE, ruolo: 'segreteria', role: 'segreteria', scuola_id: SEDE, archiviato_il: null }
+  it('una lettura dell’autore che LANCIA (guasto di trasporto) vale come un errore restituito: `warn`, e si pubblica', async () => {
+    h.eccezioneAutore = true
+
+    const esito = await pubblica()
+
+    expect(esito).toMatchObject({ esito: 'pubblicato', segnato: true })
+    const [riga] = logDi('autore-non-letto')
+    expect(riga.livello).toBe('warn')
+    expect(riga.errore).toBeInstanceOf(Error)
+    expect(notificheDi('video_esito')).toHaveLength(1)
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 2b. IL COLLEGAMENTO DELL'ESITO (spec §7, secondario #152)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('l’esito a chi ha caricato porta SEMPRE all’area docente, qualunque sia il suo ruolo (#152)', () => {
+  // `/teacher/gallery` è l'unica pagina col flusso dei video e il «Riprova». Fino a #152 il collegamento seguiva il ruolo di chi aveva caricato, e
+  // un amministratore, un coordinatore o la segreteria che leggevano «apri la galleria e premi Riprova» arrivavano in `/admin/gallery`, dove il
+  // «Riprova» non c'è. In ogni caso il finto database serve DAVVERO il ruolo (`h.autore`): è il codice a non doverlo più usare.
+  const comeRuolo = (ruolo: string) => {
+    h.autore = { id: AUTORE, ruolo, role: ruolo, scuola_id: SEDE, archiviato_il: null }
+  }
+  const linkDegliEsiti = () => notificheDi('video_esito').map((n) => n.link)
+  const RUOLI = ['educator', 'admin', 'coordinator', 'segreteria']
+
+  it.each(RUOLI)('«pubblicato», ruolo `%s`', async (ruolo) => {
+    comeRuolo(ruolo)
 
     await pubblica()
 
-    expect(notificheDi('video_esito')[0].link).toBe('/admin/gallery')
+    expect(linkDegliEsiti()).toEqual(['/teacher/gallery'])
+  })
+
+  it.each(RUOLI)('«non pubblicato: nessun destinatario», ruolo `%s`', async (ruolo) => {
+    comeRuolo(ruolo)
+    h.alunni = h.alunni.map((a) => ({ ...a, scuola_id: ALTRA_SEDE }))
+
+    await pubblica()
+
+    expect(notificheDi('video_esito')[0].titolo).toBe('Video non pubblicato')
+    expect(linkDegliEsiti()).toEqual(['/teacher/gallery'])
+  })
+
+  // Il caso che dà il nome al difetto: il testo dice «premi Riprova», e il «Riprova» c'è solo nell'area docente.
+  it.each(RUOLI)('«pubblicazione non riuscita» col «Riprova», ruolo `%s`', async (ruolo) => {
+    comeRuolo(ruolo)
+    h.storageCopy = () => ({ data: null, error: { status: 500, message: 'storage non raggiungibile' } })
+
+    await pubblica({ eventoCreatoIl: new Date(ADESSO - 61 * MINUTI).toISOString() })
+
+    expect(notificheDi('video_esito')[0].corpo).toContain('«Riprova»')
+    expect(linkDegliEsiti()).toEqual(['/teacher/gallery'])
+  })
+
+  // Le due strade di RECUPERO (un processo è morto prima delle notifiche) non leggono più chi ha caricato: il collegamento non lo richiede.
+  it.each(RUOLI)('il recupero di un video già pubblicato, ruolo `%s`', async (ruolo) => {
+    comeRuolo(ruolo)
+    h.intento = intentoDi({ status: 'published', tag_alunni: [] })
+    h.media = { id: 'm', tag_students: [BAMBINO_A, BAMBINO_B], is_broadcast: false, target_classes: null }
+
+    const esito = await pubblica()
+
+    expect(esito).toMatchObject({ esito: 'pubblicato', segnato: true, recupero: true })
+    expect(linkDegliEsiti()).toEqual(['/teacher/gallery'])
+  })
+
+  it.each(RUOLI)('il recupero di una pubblicazione fallita e mai notificata, ruolo `%s`', async (ruolo) => {
+    comeRuolo(ruolo)
+    h.intento = intentoDi({ status: 'action_required', pubblicazione_errore: 'PUBBLICAZIONE_NON_RIUSCITA' })
+
+    const esito = await pubblica()
+
+    expect(esito).toMatchObject({ esito: 'non-pubblicato', codice: 'PUBBLICAZIONE_NON_RIUSCITA', segnato: true })
+    expect(linkDegliEsiti()).toEqual(['/teacher/gallery'])
   })
 })
 
@@ -929,6 +1017,45 @@ describe('il recupero di un processo morto dopo la RPC (#45)', () => {
     expect(rpcDi('video_intent_esito_segna')).toEqual([])
   })
 
+  // #153. «Si ripete» non è «tace»: la lettura della riga di galleria che fallisce DENTRO l'ora restituiva `da-ripetere` senza lasciare una riga di
+  // log da parte di questo modulo (la riga `error` c'era solo oltre l'ora), come ogni altro guasto transitorio lascia invece la sua
+  // (`pubblicazione-automatica-fallita`, `warn`). Con quel `log` tolto questo test cade: nessuna riga.
+  it('la riga di galleria illeggibile lascia UNA riga `warn` propria, col codice e l’errore vero: «si ripete» non è «tace» (#153)', async () => {
+    h.erroreMedia = { code: '57014', message: 'canceled' }
+
+    await pubblica({ tentativi: 3 })
+
+    const righe = logDi('recupero-media-non-letta')
+    expect(righe).toHaveLength(1)
+    expect(righe[0].evento).toBe('galleria')
+    expect(righe[0].livello).toBe('warn')
+    expect(righe[0].campi).toMatchObject({ intent_id: INTENTO, error_code: 'MEDIA_NON_LETTO', n_tentativi: 3, definitiva: false })
+    // L'errore di PostgREST viaggia come ERRORE: la riga di `app_log` porta il codice vero (57014), non solo la nostra etichetta.
+    expect(righe[0].errore).toMatchObject({ code: '57014' })
+  })
+
+  it('un guasto di TRASPORTO (la lettura lancia) è la stessa cosa di un errore restituito: stessa riga `warn`, stesso esito, nessuna marca', async () => {
+    h.eccezioneMedia = true
+
+    const esito = await pubblica()
+
+    expect(esito).toEqual({ esito: 'da-ripetere', codice: 'MEDIA_NON_LETTO' })
+    const righe = logDi('recupero-media-non-letta')
+    expect(righe).toHaveLength(1)
+    expect(righe[0].livello).toBe('warn')
+    expect(righe[0].errore).toBeInstanceOf(Error)
+    expect(rpcDi('video_intent_esito_segna')).toEqual([])
+  })
+
+  it('a 59 minuti la riga è ancora `warn` e si ripete: l’ora non è passata', async () => {
+    h.erroreMedia = { code: '57014', message: 'canceled' }
+
+    const esito = await pubblica({ eventoCreatoIl: new Date(ADESSO - 59 * MINUTI).toISOString() })
+
+    expect(esito).toEqual({ esito: 'da-ripetere', codice: 'MEDIA_NON_LETTO' })
+    expect(logDi('recupero-media-non-letta').map((r) => r.livello)).toEqual(['warn'])
+  })
+
   it('…ma dopo un’ora si smette di aspettare: si marca e si avvisa l’insegnante, e l’avviso alle famiglie si perde (a voce alta)', async () => {
     h.erroreMedia = { code: '57014', message: 'canceled' }
 
@@ -937,7 +1064,11 @@ describe('il recupero di un processo morto dopo la RPC (#45)', () => {
     expect(esito).toMatchObject({ esito: 'pubblicato', segnato: true, recupero: true })
     expect(notificheDi('galleria')).toEqual([])
     expect(notificheDi('video_esito')).toHaveLength(1)
-    expect(logDi('recupero-media-non-letta')[0].livello).toBe('error')
+    // UNA riga sola e `error`: la stessa dei guasti dentro l'ora, ma `definitiva` (#153), non una seconda per lo stesso fatto.
+    const righe = logDi('recupero-media-non-letta')
+    expect(righe).toHaveLength(1)
+    expect(righe[0].livello).toBe('error')
+    expect(righe[0].campi).toMatchObject({ intent_id: INTENTO, error_code: 'MEDIA_NON_LETTO', definitiva: true })
   })
 
   it('la riga di galleria sparita (cestino purgato): si marca e si avvisa l’insegnante, nessuna famiglia', async () => {
@@ -1248,6 +1379,21 @@ describe('nessun identificativo di bambino, nessun nome e nessun percorso in nes
         h.intento = intentoDi({ status: 'published', tag_alunni: [] })
         h.media = { id: 'm', tag_students: [BAMBINO_A, BAMBINO_B], is_broadcast: false, target_classes: null }
       },
+    },
+    {
+      nome: 'recupero con la riga di galleria illeggibile (si ripete)',
+      prepara: () => {
+        h.intento = intentoDi({ status: 'published', tag_alunni: [] })
+        h.erroreMedia = { code: '57014', message: 'canceled' }
+      },
+    },
+    {
+      nome: 'recupero con la riga di galleria illeggibile da oltre un’ora (definitivo)',
+      prepara: () => {
+        h.intento = intentoDi({ status: 'published', tag_alunni: [] })
+        h.erroreMedia = { code: '57014', message: 'canceled' }
+      },
+      opzioni: () => ({ eventoCreatoIl: new Date(ADESSO - 2 * 60 * MINUTI).toISOString() }),
     },
     {
       nome: 'autore archiviato',

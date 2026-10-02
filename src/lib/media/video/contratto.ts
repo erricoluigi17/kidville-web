@@ -1254,8 +1254,9 @@ export function codiceMostrabileDelJob(job: JobVideoGrezzo): CodiceMostratoVideo
 
 /**
  * L'URL di una PUT diretta allo Storage, con cui l'app 1.2 manda l'originale dal sistema
- * operativo anche a app chiusa. È firmato SENZA upsert (una seconda PUT sullo stesso percorso
- * prende 409, e la 1.2 lo legge come «chiedi il rinnovo», che risponde `arrivato`): la firma sta
+ * operativo anche a app chiusa. È firmato SENZA upsert (una seconda PUT sullo stesso percorso è
+ * RIFIUTATA — lo Storage risponde HTTP 400 col corpo `statusCode: "409"`, non un 409 vero (secondario
+ * #193) — e la 1.2 legge qualunque 4xx come «chiedi il rinnovo», che risponde `arrivato`): la firma sta
  * nell'URL, quindi non c'è un'intestazione `x-signature` come nel TUS. Solo `https`, perché ci
  * passa il video di un bambino. Il `content-type` è quello dichiarato all'apertura: lo Storage
  * lo registra sull'oggetto.
@@ -1381,7 +1382,7 @@ export type RispostaAperturaVideo = z.infer<typeof schemaRispostaAperturaVideo>
  *  · `da-caricare` — l'originale non è ancora arrivato: un URL di PUT firmato di nuovo
  *    (`caricamento`, sempre `put`) e `scadeIl`, l'istante oltre il quale il TOKEN non vale più
  *    (immutato dal rinnovo: serve all'app per smettere di insistere);
- *  · `arrivato` — i byte ci sono già (la PUT ha preso 409, oppure era riuscita e la risposta si
+ *  · `arrivato` — i byte ci sono già (la PUT è stata rifiutata con un 4xx, oppure era riuscita e la risposta si
  *    è persa): l'app non deve fare altro;
  *  · `annullato` — l'insegnante ha ritirato il video: l'app si ferma e cancella la copia locale.
  */

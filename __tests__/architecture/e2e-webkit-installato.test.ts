@@ -178,7 +178,7 @@ describe('lock: i motori dichiarati da Playwright sono quelli installati in CI',
     const rx = webkit!.testMatch as RegExp
     const scelti = specDellaSuite().filter((f) => rx.test(f))
 
-    // I quattro percorsi che un genitore su iPhone fa davvero: entrare,
+    // I percorsi che un genitore su iPhone fa davvero: entrare,
     // la home, i pagamenti (denaro) e il modulo pubblico d'iscrizione (che si
     // compila da Safari, non dall'app). Più l'archivio dei video: WebKit rifiuta i
     // Blob in IndexedDB, ed è l'unico motore su cui quelle prove dicono qualcosa.
@@ -188,6 +188,9 @@ describe('lock: i motori dichiarati da Playwright sono quelli installati in CI',
       'parent-pagamenti.spec.ts',
       'public-iscrizione.spec.ts',
       'video-archivio.spec.ts',
+      // La PR 2 video: i bambini si scelgono PRIMA dell'invio, e il 422 non deve far partire nessun byte. È il
+      // percorso che le insegnanti fanno dall'iPhone, quindi gira anche su WebKit (secondario #196).
+      'video-invio-bambini-prima.spec.ts',
     ]) {
       expect(
         scelti.some((f) => f.endsWith(atteso)),

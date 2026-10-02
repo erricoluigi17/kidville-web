@@ -122,8 +122,8 @@ l'applicazione della migrazione e il deploy. Chi sostituisce un corpo (`CREATE O
 | `pubblicazione_automatica` | `boolean NOT NULL DEFAULT false`; CHECK: se vera, `channel = 'gallery' AND requested_action = 'publish'` |
 | `tag_alunni` | `uuid[] NOT NULL DEFAULT '{}'`; CHECK `cardinality ≤ 200` |
 | `broadcast` | `boolean NOT NULL DEFAULT false`; CHECK: se vero, `cardinality(tag_alunni) = 0` |
-| `classi_destinatarie` | stesso tipo di `galleria_media_v2.target_classes` (verificarlo); CHECK `cardinality ≤ 20` |
-| `n_tag` | `integer NOT NULL DEFAULT 0`: sopravvive alla minimizzazione, serve all'elenco e agli avvisi |
+| `classi_destinatarie` | `text[]`, nullable (stesso tipo di `galleria_media_v2.target_classes`, verificato); CHECK `NULL` oppure `cardinality ≤ 20` |
+| `n_tag` | `integer NOT NULL DEFAULT 0`, CHECK 0..200: sopravvive alla minimizzazione, serve all'elenco e agli avvisi |
 | `trasporto` | `text NOT NULL DEFAULT 'tus'`; CHECK `IN ('tus','put-nativo')` |
 | `esito_notificato`, `esito_notificato_il` | `text` CHECK `IN ('pubblicato','fallito')`, `timestamptz`; CHECK di coppia. È la marca «una volta sola». |
 | `pubblicazione_errore` | `text`, ≤ 80 caratteri (solo un codice) |
@@ -152,18 +152,18 @@ Più un indice parziale `(status, updated_at) WHERE status IN ('failed','rejecte
 | RPC | Cosa fa |
 |---|---|
 | `video_job_ready` (REPLACE) | Tetto a **300**. Per le News scrive `output_delete_after = v_now + 7 giorni`. Se l'intento è `pubblicazione_automatica` e `confirmed`, inserisce nella stessa transazione l'evento `gallery.auto_publish` `{intent_id, job_id}` in `video_outbox`; un `unique_violation` vale «già accodato». Tutto il resto identico. |
-| `video_galleria_intent_apri(owner, scuola, chiave, byte, mime, durata, tag[], broadcast, classi[], trasporto, sha256, token_hash, token_scade)` (firma esatta decisa da T2a e scritta qui) | Chiama `video_intent_open` (**nessuna copia** della sua logica), poi scrive i destinatari e `n_tag`, **conferma** l'intento con `pubblicazione_automatica = true`, scrive i dichiarati (e `sha256_dichiarato`) e il token sul job. **Ripetizione** con la stessa chiave: destinatari e trasporto identici → stesso intento; per `put-nativo` con job in `awaiting_upload` **ruota** il token. Valori diversi → `IDEMPOTENCY_CONFLICT`. |
-| `video_rinnovo_usa(p_hash bytea)` | Cerca il job per hash e risponde con lo stato: `da-caricare` (con percorso, mime, byte), `arrivato` o `annullato`. Revoca il token quando lo stato è terminale. Token sconosciuto o scaduto → `{ok:false, code:'TOKEN_NON_VALIDO'}`. **Token revocato** (decisione dell'orchestratore, 02/10, per tenere insieme §6.2 e §12): `TOKEN_NON_VALIDO` finché il job aspetta ancora il file; dopo l'arrivo o l'annullamento risponde lo **stato** (`arrivato`/`annullato`) fino alla scadenza delle 48 h, così la 1.2 che riceve un 409 sulla seconda PUT sa che il file c'è. Non restituisce **mai** un URL a un token revocato. |
+| `video_galleria_intent_apri(p_owner_id uuid, p_scuola_id uuid, p_idempotency_key text, p_original_path text, p_byte bigint, p_mime text, p_durata_s numeric, p_tag_alunni uuid[], p_broadcast boolean, p_classi text[], p_trasporto text, p_sha256 bytea, p_token_hash bytea, p_token_scade_il timestamptz)` (la firma esatta, a quattordici argomenti: `p_original_path` lo calcola la route, deterministico dalla chiave, secondario #38; risponde con l'intento **senza** `tag_alunni`, il job **senza** hash e `sha256`, più `ripetuta` e `token_ruotato`) | Chiama `video_intent_open` (**nessuna copia** della sua logica), poi scrive i destinatari e `n_tag`, **conferma** l'intento con `pubblicazione_automatica = true`, scrive i dichiarati (e `sha256_dichiarato`) e il token sul job. **Ripetizione** con la stessa chiave: destinatari e trasporto identici → stesso intento; per `put-nativo` con job in `awaiting_upload` **ruota** il token. Valori diversi → `IDEMPOTENCY_CONFLICT`. |
+| `video_rinnovo_usa(p_hash bytea)` | Cerca il job per hash e risponde con lo stato: `da-caricare` (con percorso, mime, byte), `arrivato` o `annullato`. Revoca il token quando lo stato è terminale. Token sconosciuto o scaduto → `{ok:false, code:'TOKEN_NON_VALIDO'}`. **Token revocato** (decisione dell'orchestratore, 02/10, per tenere insieme §6.2 e §12): `TOKEN_NON_VALIDO` finché il job aspetta ancora il file; dopo l'arrivo o l'annullamento risponde lo **stato** (`arrivato`/`annullato`) fino alla scadenza delle 48 h, così la 1.2 che dopo una seconda PUT rifiutata (HTTP **400**, non 409: §6.2, secondario #193) chiede il rinnovo sa che il file c'è. Non restituisce **mai** un URL a un token revocato. |
 | `video_galleria_pubblica(intent, revisione, owner, scuola, file_url, tag_effettivi uuid[])` | Sotto lock dell'intento verifica che `tag_effettivi ⊆ tag_alunni` (altrimenti `TAG_NON_DELL_INTENTO`) e che `tag_effettivi` non sia vuoto salvo `broadcast`. Inserisce `galleria_media_v2` con `upload_id = intent_id` (`ON CONFLICT (uploaded_by, scuola_id, upload_id) DO NOTHING`, indice esistente), **`caption` NULL**, e chiama `video_intent_finalize`. Se il finalize rifiuta, un `RAISE` in un sottoblocco annulla l'insert e la RPC risponde col codice (la compensazione di `gallery/route.ts` non serve più). Se va bene scrive `output_delete_after = now` sui job e minimizza l'intento (`tag_alunni = '{}'`). Restituisce `created` (vero solo al vincitore), `media_id`, `n_tag`. **Non** scrive `esito_notificato`. |
 | `video_intent_esito_segna(intent, esito)` | `UPDATE … SET esito_notificato = p_esito, esito_notificato_il = now() WHERE id = p_intent AND esito_notificato IS NULL RETURNING` → `{segnato}` vero **una sola volta**. È l'**unica** marca delle notifiche (§8.4). |
 | `video_intent_pubblicazione_fallita(intent, codice)` | `confirmed` → `action_required`, scrive `pubblicazione_errore`. |
 | `video_intent_pubblicazione_riprova(intent, owner)` | Il «Riprova» (§2): solo l'autore, solo intenti `action_required` con `pubblicazione_automatica`, tutti i job `ready`, uscite non ancora cancellate, entro i 7 giorni. Riporta l'intento a `confirmed`, azzera `pubblicazione_errore` ed `esito_notificato`, accoda `gallery.auto_publish`. Altrimenti `RIPROVA_NON_POSSIBILE`. |
 | `video_job_sorveglianza_prendi(job, invocazione, secondi)` / `video_job_sorveglianza_rilascia(job, invocazione)` | Lease di sorveglianza per job (§9) |
 | `video_job_prendi(job, owner, lease_s, tetto)` / `video_job_prossimo(owner, lease_s, tetto)` | `CAPACITA_PIENA` se i `processing` con lease viva sono ≥ tetto, altrimenti **delegano** a `video_job_claim` / `video_job_next` della PR 1 (nessuna copia della disciplina dei tentativi). |
-| `video_job_diagnosi(job, fence, owner, diagnosi jsonb)` | Scrive `diagnosi_verifica` se fence e owner coincidono |
+| `video_job_diagnosi(job, fence, owner, diagnosi jsonb)` | Scrive `diagnosi_verifica` se fence e owner coincidono e il job è `processing`. Accetta solo numeri, booleani, `null` e stringhe-enumerato, **anche come chiavi** a qualunque profondità (secondario #30: un nome di file non entra nemmeno come chiave), al massimo 2048 byte; altrimenti `BAD_INPUT` |
 | `video_runner_kick(job)` | Come `video_runner_tick_http` (`20260918120000`): origine da `cron_config`, `net.http_post` con `{job_id}` e `x-cron-secret`. Guardia `to_regprocedure('net.http_post(…)')`: se manca (CI, PGlite) **nessun effetto** e una riga di log; se manca l'URL una riga `error`. |
 | `video_runner_ventaglio(tetto, escludi)` | Chiama `video_runner_kick` per i job che hanno bisogno di sorveglianza: `processing` non sorvegliati, più quelli in coda fino ai posti liberi |
-| `video_job_retry` (REPLACE **solo se serve**, secondario #23) | A tentativi esauriti delega a `video_job_fail` **scrivendo anche** `last_error_code` col codice dell'ultimo tentativo. |
+| `video_job_retry` (**NON sostituita**, secondario #23) | Una REPLACE non serviva: misurato sul testo della PR 1, a `attempt >= p_tentativi_massimi` la funzione scrive già `last_error_code` col codice dell'ultimo guasto **prima** di delegare a `video_job_fail` (lo prova `video-job-ritentativi.test.ts` con un massimo di 1). Il difetto era del runner, che a tentativi esauriti chiamava `video_job_fail` direttamente: lo chiude T6 (§9). |
 
 ### 5.4 File B — `video_arrivo_originale`
 
@@ -176,7 +176,9 @@ Più un indice parziale `(status, updated_at) WHERE status IN ('failed','rejecte
      `original_delete_after = now` e `fence + 1`). Altrimenti `video_job_uploaded(job, owner, size, mime_dichiarato
      oppure il mimetype normalizzato)`, scrive `arrivato_il` e `sorgente_etag`, revoca il token e chiama
      `video_runner_kick`;
-  4. job in `queued`, `processing` o `ready` con eTag cambiato → `rejected ORIGINALE_SOSTITUITO` e log `error`.
+  4. job in `queued`, `processing` o `ready` con eTag cambiato → `rejected ORIGINALE_SOSTITUITO` e log `error`, **solo se
+     l'intento è ancora vivo** (`pending`, `confirmed`, `action_required`): con l'intento già `published` l'uscita è stata
+     copiata in galleria, riscrivere il job non protegge niente e si registra solo un `warn`.
 - `CREATE OR REPLACE TRIGGER trg_video_originale_arrivato AFTER INSERT OR UPDATE OF metadata ON storage.objects FOR
   EACH ROW WHEN (NEW.bucket_id = 'video_originals')`, dentro un `DO` con guardia su `to_regclass('storage.objects')` e
   sul privilegio: se manca, logga e **non fallisce** (CI, PGlite).
@@ -252,10 +254,13 @@ guasto nostro esaurito, qualunque fosse l'ultimo codice tecnico (secondario #37)
   rinnovo **non** allunga la vita del token. Viaggia solo nell'intestazione, mai nell'URL; **mai nei log** (redazione
   e lock dedicato).
 - **Indovinarlo:** 256 bit, 404 uniforme, tetto per IP. **Rubarlo:** si ottiene al massimo un URL di caricamento per
-  **quel** percorso finché l'originale non è arrivato; niente upsert (una seconda PUT prende 409, e la 1.2 tratta il
-  409 come «chiedi il rinnovo», che risponde `arrivato`); il trigger rifiuta dimensioni diverse; una sovrascrittura
-  successiva diventa `ORIGINALE_SOSTITUITO`; lo `sha256` dichiarato e verificato nel Sandbox rende impossibile
-  sostituire il contenuto.
+  **quel** percorso finché l'originale non è arrivato; niente upsert, quindi una seconda PUT è rifiutata. ⚠️ **Con HTTP
+  400, non con un 409**: lo Storage risponde col corpo `{"statusCode":"409","error":"Duplicate","message":"The resource
+  already exists"}` (in `StorageBackendError` lo stato per l'utente è 400, salvo 500; secondario #193). Il server non ne
+  dipende: `src/lib/gallery/video-pubblicazione.ts` legge il `statusCode` del corpo e il messaggio. **Per la PR 3:** la
+  PUT nativa è grezza e vede solo il 400, quindi **qualunque 4xx sulla PUT porta al rinnovo**, che risponde `arrivato`
+  quando il file c'è (§12). Il trigger rifiuta dimensioni diverse; una sovrascrittura successiva diventa
+  `ORIGINALE_SOSTITUITO`; lo `sha256` dichiarato e verificato nel Sandbox rende impossibile sostituire il contenuto.
 
 ---
 
@@ -264,12 +269,14 @@ guasto nostro esaurito, qualunque fosse l'ultimo codice tecnico (secondario #37)
 | Destinatari | Tipo | Quando | Testo (italiano, nessun nome, nessun nome di file) |
 |---|---|---|---|
 | Genitori dei bambini taggati (o della classe/sede per broadcast, come oggi) | `galleria` (esistente) | Pubblicazione riuscita (foto **e** video) | Titolo **«Nuovi contenuti in galleria»**, corpo «Ci sono nuovi contenuti nella galleria.» Helper estratto da `gallery/route.ts`, stesso `entitaId = uploaded_by`, `bufferMin 30`, debounce per destinatario della #131. |
-| Chi ha caricato | `video_esito` (nuovo, gruppo `docente`, `bufferMin 0`, `entitaId = intento`) | pubblicato · pubblicato senza N bambini · non pubblicato (nessun destinatario) · pubblicazione fallita (con «Riprova») · conversione fallita | «Il tuo video è stato pubblicato in galleria.» · «… N bambini non sono più nella sede e non lo vedranno.» · «Il video non è stato pubblicato: nessuno dei bambini scelti è ancora nella sede.» · «Non siamo riusciti a pubblicare il video: apri la galleria e premi «Riprova».» · testo della PR 1 per il guasto nostro / per il file. Link **sempre** `/teacher/gallery` (è l'unica pagina col flusso video e il «Riprova», anche per lo staff che carica). |
-| Chi ha caricato + `admin`, `coordinator`, `segreteria` della sede | `video_liberatoria_revocata` (nuovo, `staff`, `sicurezza: true`) | Pubblicato con N bambini che hanno perso la liberatoria | «Un video è stato pubblicato in galleria con N bambini senza liberatoria fotografica.» |
+| Chi ha caricato | `video_esito` (nuovo, gruppo `docente`, `bufferMin 0`, `entitaId = intento`) | pubblicato · pubblicato senza N bambini · non pubblicato (nessun destinatario) · pubblicazione fallita (con «Riprova») · conversione fallita | «Il tuo video è stato pubblicato in galleria.» · «… N bambini non sono più nella sede e non lo vedranno.» · «Il video non è stato pubblicato: nessuno dei bambini scelti è ancora nella sede.» · «Non siamo riusciti a pubblicare il video: apri la galleria e premi «Riprova».» · testo della PR 1 per il guasto nostro / per il file. Link **sempre** `/teacher/gallery` (è l'unica pagina col flusso video e il «Riprova», anche per lo staff che carica: secondario #152; `/admin/gallery` non ce l'ha). |
+| Chi ha caricato + `admin`, `coordinator`, `segreteria` della sede | `video_liberatoria_revocata` (nuovo, `staff`, `sicurezza: true`) | Pubblicato con N bambini che hanno perso la liberatoria | «Un video è stato pubblicato in galleria con N bambini senza liberatoria fotografica.» Link (secondario #172): chi ha caricato → `/teacher/gallery`, come l'esito; lo staff che **non** ha caricato → `/admin/gallery` (due `notificaEvento` e non una: il link è un campo della riga, non del destinatario). |
 
 - I due tipi nuovi entrano in `TIPI_NOTIFICA` (`src/lib/notifiche/tipi.ts`), in **entrambi** gli `etichette.json`
   (it/en: la chiave i18n vince sul catalogo) e in `TIPI_PUSH_STAFF` (`src/lib/push/dispatch.ts`, «mai un nome»).
-- L'etichetta del tipo `galleria` diventa «Nuovi contenuti in galleria» (tipi.ts ed etichette it/en).
+- L'etichetta del tipo `galleria` diventa «Nuovi contenuti in galleria» e la sua descrizione «Quando vengono pubblicate foto o
+  video della sezione del figlio» (tipi.ts ed etichette it/en): un interruttore che dicesse «foto» spegnerebbe in silenzio
+  anche i video.
 
 ---
 
@@ -305,7 +312,9 @@ Storage API.
 ### 8.3 Copia e RPC
 
 Percorso deterministico `uploads/<owner>/v-<intentId>.mp4` nel bucket della galleria (oggi casuale, in
-`src/lib/gallery/video-pubblicazione.ts`). Un 409 «esiste già» con dimensione uguale vale come riuscita. Poi
+`src/lib/gallery/video-pubblicazione.ts`). Un «esiste già» (409) con dimensione uguale vale come riuscita: `destinazioneGiaPresente` lo riconosce dallo stato HTTP, dal
+`statusCode` del corpo **o** dal messaggio «already exists», perché lo Storage manda il duplicato come HTTP 400 col corpo
+`statusCode:"409"` (§6.2, secondario #193). Poi
 `video_galleria_pubblica(…, tag_effettivi)`. Se la RPC fallisce in modo definitivo, la copia orfana la toglie la
 spazzata di `retention-galleria` (24 h).
 
@@ -319,7 +328,12 @@ parte due volte.
 ### 8.5 Fallimenti
 
 - **Pubblicazione:** backoff dell'outbox. Se l'evento ha più di **60 minuti**: `video_intent_pubblicazione_fallita`
-  (`PUBBLICAZIONE_NON_RIUSCITA`), marca `fallito`, notifica con «Riprova», evento chiuso.
+  (`PUBBLICAZIONE_NON_RIUSCITA`), marca `fallito`, notifica con «Riprova», evento chiuso. L'età (dalla **nascita** dell'evento,
+  che il «Riprova» riporta a «adesso») si guarda **dopo** un tentativo fallito e non prima: un evento rimasto fermo un'ora per
+  un runner spento ha comunque diritto a un tentativo (secondario #159). Un job che finisce male **dopo** l'evento
+  (`failed`, `rejected`, `cancelled`; anche `ORIGINALE_SOSTITUITO` su un `ready`) chiude l'evento subito, senza aspettare
+  l'ora: l'esito all'insegnante lo scrive la scansione degli esiti, col difetto vero. Un intento già `action_required` e
+  senza marca (un processo morto fra «fallita» e le notifiche) completa la notifica.
 - **Conversione** (`failed`/`rejected`, §3): scansione degli intenti `pubblicazione_automatica` con un job definitivo
   e `esito_notificato IS NULL` → marca `fallito` → notifica. Gira subito dopo `fallisci` nel runner e a ogni giro di
   runner e retention.
@@ -329,9 +343,12 @@ parte due volte.
 ## 9. Avvio immediato e concorrenza
 
 - **Avvio:** il trigger d'arrivo e il `PATCH caricato` chiamano `video_runner_kick(job)`. Il cron ogni 5' resta la
-  rete e **non si tocca**. Il giro **senza** `job_id` fa, in ordine: `video_arrivi_recupera`, poi
-  `video_runner_ventaglio(tetto, sé stesso)`, poi al massimo 5 eventi `gallery.auto_publish`, poi la scansione degli
-  esiti, e infine sorveglia un job. Il tetto di sorveglianza diventa `240 s − tempo già speso`.
+  rete e **non si tocca**. Il giro **senza** `job_id` fa, in ordine: `video_arrivi_recupera`; un job ancora suo, rimasto a
+  metà da un'invocazione precedente e che nessuno sorveglia, ha la precedenza e se ne prende la sorveglianza **prima** del
+  ventaglio, così il ventaglio non lo calcia (sarebbe un'invocazione sprecata); poi
+  `video_runner_ventaglio(tetto, escludi)`, dove `escludi` è un **job**, quello appena preso, e non un'invocazione
+  (secondario #39); poi al massimo 5 eventi `gallery.auto_publish`, poi la scansione degli esiti, e infine sorveglia un
+  job. Il tetto di sorveglianza diventa `240 s − tempo già speso`.
 - **Sorveglianza esclusiva:** lease di **270 s** (`TETTO_INVOCAZIONE_MS` 240 s più margine). Chi non la ottiene
   risponde `gia-sorvegliato` (esito tranquillo). Toglie il falso `OUTPUT_CONFLICT` di due invocazioni che riagganciano
   lo stesso Sandbox (`riprendiUnJobMio`). Il `lease_owner` stabile (`VIDEO_RUNNER_OWNER_ID`) resta.
@@ -344,11 +361,14 @@ parte due volte.
 - **Secondario #33:** un'eccezione dell'SDK del Sandbox dentro `esegui`/`avvia` si classifica `infra-transitoria` e
   passa da `riprova` (con attesa e tetto dei tentativi), invece di lasciare il job `processing` fino alla scadenza
   della lease.
-- **Secondario #23:** il runner passa da `riprova` anche all'ultimo tentativo (la RPC delega a `video_job_fail`
-  scrivendo `last_error_code`), oppure si corregge il commento della colonna: T6 sceglie e lo scrive.
-- **Battito di salute:** `ESITI_BATTITO` (`src/lib/health/controlli.ts`) riconosce come vivo il battito di
-  `video-runner-tick` con `coda-vuota`, `in-corso`, `pronto`, `in-riprova`, `gia-sorvegliato`, `capacita-piena`.
-  Chiude il falso allarme noto di `/api/health`.
+- **Secondario #23 (chiuso):** il runner passa da `riprova` anche all'ultimo tentativo (`chiudiPerGuasto`, con
+  `tentativi_esauriti` nel log): è la RPC a riconoscere i tentativi finiti, ad annotare `last_error_code` col codice
+  dell'ultimo guasto e a delegare a `video_job_fail`. Nessuna REPLACE di `video_job_retry` (§5.3).
+- **Battito di salute:** una mappa **per operazione**, `ESITI_BATTITO_PER_OPERAZIONE` (`src/lib/health/controlli.ts`,
+  letta da `valeComeBattito`), fa valere come vivo il battito di `video-runner-tick` con `coda-vuota`, `in-corso`, `pronto`,
+  `in-riprova`, `gia-sorvegliato`, `capacita-piena`. La lista globale `ESITI_BATTITO` (`ok`, `ok-parziale`) **non si
+  allarga**: varrebbe per ogni cron, e un `in-corso` scritto da un altro lavoro lo farebbe passare per vivo. Chiude il falso
+  allarme noto di `/api/health`.
 
 ---
 
@@ -357,25 +377,49 @@ parte due volte.
 ### 10.1 Snapshot (percorso principale)
 
 - Nuovo `runner/ambiente.ts`, variabile **`VIDEO_SANDBOX_SNAPSHOT_ID`**. In `macchinaVercel().apri`:
-  1. `Sandbox.get` (riaggancio, come oggi);
+  1. `Sandbox.get` (riaggancio, come oggi), con **due nomi** e in quest'ordine: prima `<nome>-r` (il ripiego dopo uno
+     snapshot fallito, punto 3), poi `<nome>`. L'ordine è la sostanza: una MicroVM col nome principale accanto a una `-r` è il
+     residuo di una creazione parziale, e la conversione sta nella `-r`. Che non ci sia né l'una né l'altra è il caso
+     normale («non c'è ancora»): due righe `cron`/`info`, `riaggancio-ripiego-non-riuscito` e `riaggancio-non-riuscito`
+     (secondario #174);
   2. `Sandbox.create({source:{type:'snapshot', snapshotId}, name, region:'dub1', resources, timeout,
      persistent:false})`;
-  3. se lo snapshot manca, è scaduto o non è in `dub1` → **ripiego** (§10.2) + log `config` `error`
-     `ambiente-pronto-assente`.
+  3. se lo snapshot manca, è scaduto o non è in `dub1`, o se la creazione fallisce per qualunque motivo → **ripiego**
+     (§10.2) + log `config` `error` `ambiente-pronto-assente` (il motivo in `error_code`: `VARIABILE_ASSENTE`,
+     `VARIABILE_NON_VALIDA`, o il codice dell'SDK, per esempio `snapshot_not_found`). Il ripiego dopo uno snapshot
+     **tentato e fallito** nasce con il nome **`<nome>-r`** (`nomeDelRipiego`, secondari #167 e #174): una
+     `Sandbox.create` che lancia può aver lasciato il nome occupato, e il ripiego con lo stesso nome andrebbe in conflitto
+     proprio quando serviva. Senza snapshot configurato non c'è stato nessun tentativo, e il nome resta quello della PR 1.
 - Lo snapshot (Ubuntu 26.04 da `vercel/sandbox/node:24`) contiene `curl` + `ca-certificates` (installati una volta con
   `apt-get` alla costruzione) e i binari in **`/opt/kv-ffmpeg`**. A ogni avvio lo script verifica con `sha256sum` i
   **binari** (costanti in `src/lib/media/video/build.ts` e nel lock `fixture-video-reali`, le stesse della PR 1); se
-  l'impronta non torna si ripiega **nella stessa MicroVM** con la provvista dal bucket (curl c'è) e si grida.
-  L'inventario (`mancanzeDellaBuild`) resta.
+  l'impronta non torna (uscita **26** dell'apparecchio) si ripiega **nella stessa MicroVM** con la provvista dal bucket
+  (curl c'è) e si grida: `error` `ambiente-pronto-assente` col motivo `BINARI_NON_VERIFICATI`, sul canale `galleria`/`news`
+  del job (è il secondo dei «due canali» del secondario #170). L'inventario (`mancanzeDellaBuild`) resta. Ogni conversione
+  dice come è partita con `ambiente-pronto` (`info`): `ambiente` = `snapshot` · `ripiego-vm` · `ripiego-runtime`, `ms`
+  dell'apparecchio e `apertura_ms` della MicroVM.
 - `scripts/video-sandbox-ambiente.mjs` (eseguito dall'orchestratore, credenziali della CLI Vercel): crea il Sandbox in
-  `dub1` da `node:24`, installa `curl`, fa la provvista dal bucket con lo **stesso** script del runtime, verifica
-  impronte e inventario, chiama `snapshot({expiration: 0})`, stampa id e impronte (mai URL né chiavi). Documentato in
-  `docs/env.md` con `VIDEO_CONVERSIONI_PARALLELE`.
+  `dub1` da `node:24`, installa `curl` e `ca-certificates` con `apt-get`, **controlla l'immagine** (secondari #166 e
+  #174: i 17 comandi che gli script del runner danno per scontati — `awk`, `grep`, `xargs`, `stat`, `pkill`… — elencati in
+  `src/lib/media/video/runner/controlli-ambiente.ts`, e la **rete** verso il bucket, cioè una HEAD sull'URL firmato di un
+  oggetto di `video_build`: DNS, TLS, autorizzazione), fa la provvista dal bucket con lo **stesso** script del runtime,
+  verifica impronte e inventario, chiama `snapshot({expiration: 0})`, stampa id e impronte (mai URL né chiavi). Senza i
+  due controlli un'immagine a cui manca un comando costruirebbe uno snapshot che sembra a posto e fa fallire **ogni**
+  conversione senza ripiegare (il ripiego scatta solo con l'uscita 26). I due URL firmati (10') si firmano **dopo**
+  `apt-get` e subito prima della prova di rete e della provvista (#179: firmati prima, dietro due `apt-get` da 5' ciascuno,
+  nel caso peggiore arrivavano scaduti); la prova di rete ha un tetto di **150 s** (`TETTO_RETE_MS`, #178: `curl --retry 3
+  --max-time 30` arriva a ~127 s, e con il tetto di 90 s l'errore diventava un «uscito con 137»). I controlli provano che i
+  comandi **esistono**, non le loro opzioni GNU né il client HTTPS di `ffprobe` (#180): perciò, **prima di impostare la
+  variabile**, T16 fa una **conversione vera da uno snapshot nuovo**. Se manca uno strumento (`pkill`, pacchetto `procps`,
+  non è garantito su Ubuntu: #181) lo script si ferma e lo dice, e il pacchetto si aggiunge alla riga `apt-get`.
+  Documentato in `docs/env.md` con `VIDEO_CONVERSIONI_PARALLELE`.
 
 ### 10.2 Ripiego
 
 Il percorso della PR 1 **invariato** (`runtime: 'node22'`, Amazon Linux con `curl`, provvista dal bucket con doppia
-impronta), già provato in produzione. Rischio dichiarato: il ripiego dipende dal runtime deprecato; se Vercel lo
+impronta), già provato in produzione — con **una sola differenza, e solo dopo uno snapshot tentato e fallito**: la MicroVM
+nasce col nome `<nome>-r` (§10.1, secondario #174). Una MicroVM col nome principale lasciata da una creazione parziale non
+si spegne fino al suo timeout (solo costo, #177). Rischio dichiarato: il ripiego dipende dal runtime deprecato; se Vercel lo
 togliesse **e** lo snapshot mancasse, ogni apertura fallirebbe con un log `error` e il battito lo mostrerebbe.
 
 ### 10.3 Misure obbligatorie (T16, Sandbox vero, fixture sintetiche)
@@ -388,9 +432,11 @@ lo giustifica) e se spostare `scale` prima della catena HDR→SDR.
 ### 10.4 `sha256` dichiarato (per la PR 3)
 
 Se il job ha `sha256_dichiarato`, lo script nel Sandbox calcola lo SHA-256 dell'originale scaricato **prima** di
-convertire; se diverso esce con un codice d'uscita nuovo mappato su `ORIGINALE_DIVERSO`, classe `file` (mai
+convertire; se diverso esce con l'uscita **35** (nuova), mappata su `ORIGINALE_DIVERSO`, classe `file` (mai
 ritentato). Senza `sha256_dichiarato` (web, TUS) il passo si salta. Un `sha256_dichiarato` **illeggibile** (non 32 byte
-in esadecimale) fa rifiutare il job con `ORIGINALE_DIVERSO` prima di aprire la MicroVM (fail-closed).
+in esadecimale) fa rifiutare il job con `ORIGINALE_DIVERSO` prima di aprire la MicroVM (fail-closed; log
+`sha256-dichiarato-illeggibile`, `error`; il valore non entra mai in un log; secondario #168). L'impronta viaggia
+nell'**ambiente** del comando (`KV_SHA256_ATTESO`), mai negli argomenti.
 
 ### 10.5 Verifiche senza falsi scarti (T9, moduli puri)
 
@@ -400,8 +446,8 @@ in esadecimale) fa rifiutare il job con `ORIGINALE_DIVERSO` prima di aprire la M
 | Durata (`verify.ts`) | tolleranza di un frame + padding AAC | `max(1 frame, ultimo campione della sorgente)` + AAC, **solo** se conteggio e PTS coincidono | troncamento: un frame mancante fa già fallire il conteggio |
 | Tetti interni | 180 s e 180 000 frame cablati | da `MAX_VIDEO_DURATION_SECONDS` (300), passato nelle opzioni | file ostili |
 | Sonda temporale | timeout 120 s, buffer 32 MiB | timeout proporzionale a durata e risoluzione (tarato in T16), buffer 64 MiB | sonda fail-closed |
-| Audio (`probe.ts`) | lo stream `default` con codec sconosciuto → `UNKNOWN_AUDIO_CODEC` | **prima traccia audio decodificabile**; le altre ignorate e contate | uscita con una sola traccia AAC |
-| Diagnosi | solo il codice | `video_job_diagnosi` con i numeri (frame, coperture, ultimo campione, tolleranze, fps) | — |
+| Audio (`probe.ts`) | lo stream `default` con codec sconosciuto → `UNKNOWN_AUDIO_CODEC` | **traccia audio decodificabile: la predefinita, altrimenti la prima** (decodificabile = codec riconosciuto da ffprobe; `UNKNOWN_AUDIO_CODEC` solo se nessuna lo è); le altre ignorate e contate (log `tracce-audio-ignorate`, secondario #12) | uscita con una sola traccia AAC |
+| Diagnosi | solo il codice | `video_job_diagnosi` con i numeri (frame, coperture, ultimo campione, tolleranze, fps); se la scrittura non riesce: `warn` `diagnosi-non-scritta`, e il rifiuto resta com'è | — |
 
 Fixture di regressione: le due timeline del falso scarto del 28/09 (§3) in `__tests__/fixtures/video/` — il test
 deve essere **rosso** col controllo di oggi e verde dopo; le controprove (frame persi, accelerazione, audio spostato)
@@ -432,10 +478,25 @@ restano rosse.
   al blocco successivo e riprende da solo al rientro): il testo lo dice così («finché resti in Galleria»), non «finché
   l'app è aperta». Il testo `galleryVideoAvviato` («Puoi chiudere l'app») è falso con TUS e si corregge. Un caricatore a
   livello di layout è una miglioria per dopo (nell'app lo rende superfluo l'invio nativo della 1.2).
-- **Chiave d'idempotenza del web** (T11a, ondata D): `gv2-<byte>-<data>-<impronta del nome>-<impronta dei destinatari>`,
-  così lo stesso file rimandato ad altri bambini apre un intento nuovo invece di un 409. L'impronta dei destinatari è
-  **salata** con un valore casuale per dispositivo (in `localStorage`): senza sale, l'impronta resterebbe in
-  `video_jobs.idempotency_key` dopo la minimizzazione di `tag_alunni` e i bambini si ricostruirebbero per enumerazione.
+- **Chiave d'idempotenza del web** (T11a, ondata D; T11c e T16, ondata E): `gv2-<byte>-<data>-<impronta del nome>-<impronta
+  dei destinatari>`, così lo stesso file rimandato ad altri bambini apre un intento nuovo invece di un 409 (il prefisso
+  `gv2-` non può ritrovare una chiave del flusso vecchio, `g-…`, che la RPC rifiuta con `IDEMPOTENCY_CONFLICT`).
+  **Entrambe le impronte sono salate** con un valore casuale di 128 bit **per dispositivo** — in `localStorage`, chiave
+  `kv:video-galleria-sale`, mai in rete né nei log — e passano da SHA-256 troncato a **12 cifre esadecimali** (secondari #131
+  e #190): senza sale, l'impronta resterebbe in `video_jobs.idempotency_key` dopo la minimizzazione di `tag_alunni` e i
+  bambini si ricostruirebbero per enumerazione (un FNV a 32 bit non basta nemmeno col sale davanti: ogni suo passo si
+  inverte). **L'impronta dei destinatari porta dentro anche byte, data e nome del file** (#183): senza, lo stesso gruppo
+  di bambini dava la stessa impronta per video diversi dello stesso dispositivo, e col service role si poteva legare un
+  intento già minimizzato a uno i cui bambini sono ancora noti. Lo stesso video con gli stessi bambini resta la stessa
+  chiave, che è ciò che l'idempotenza chiede. Il prezzo, dichiarato: lo stesso file con gli stessi bambini mandato da due
+  dispositivi apre due intenti. Senza `localStorage` il sale vive in memoria per la sessione (un ricaricamento potrebbe far
+  partire il video due volte, i bambini restano al sicuro); senza una fonte crittografica ripiega su `Math.random`. Entrambi
+  si dicono, una volta per sessione, con `warn` `video-galleria-sale-non-disponibile` (solo il motivo). La chiave resta nei
+  128 caratteri anche col suffisso `-<uuid>` aggiunto quando l'intento ritrovato è già concluso.
+- **Catalogo dei testi:** sette chiavi di `teacherServizi` (it e en), già orfane o false, sono state tolte (secondari #140 e
+  #190: `galleryConverto`, `galleryConversioneVideo`, `galleryAlertVideoTroppoGrande`, `galleryErrCaricamentoFile`,
+  `galleryErrSalvataggio`, `galleryAlertOffline`, `galleryAlertPubblicati`); il lock `messaggi-plurali-e-glossario` scende da
+  42 a 41 eccezioni (`NON_CONTATORI`), con la ragione scritta accanto al numero.
 - **Trasporto:** interfaccia `TrasportoVideo` in `src/lib/media/video/trasporto/` con il solo `trasportoTus`;
   `scegliTrasporto()` risponde `put-nativo` solo se un trasporto registrato (PR 3) dice di essere disponibile. In questa
   PR **non** c'è alcun ramo nativo mezzo fatto.
@@ -474,6 +535,15 @@ Come si leggono le tre ipotesi: «Aggiungi» non premuto → punto 3 e nient'alt
 punto 2 `tardivo=si` con `ms_da_ritorno` grande; download da iCloud → punto 2 con `ms_da_apertura` grande e
 `ms_da_ritorno` piccolo (l'attesa avviene dentro il selettore).
 
+Due righe di contorno, fuori dalle tre: `gallery-selettore-traccia-fallita` (`warn`: la traccia stessa che lancia — fail-open,
+mai un'eccezione al gesto «scegli un file» —, solo il nome della classe d'errore) e `gallery-selezione-oltre-il-massimo`
+(`warn`, `campi` `{scelti, aggiunti, massimo}`: la scelta ha superato i 50 elementi, e si tengono i primi). **Da verificare
+sul simulatore iPhone (T16, secondari #148 e #149):** col selettore a foglio aperto la pagina potrebbe non ricevere né
+`visibilitychange` né `appStateChange`, e allora `ritorno-senza-file` non parte e la conversione di WebKit non si distingue
+dal download da iCloud; l'evento `cancel` dell'`<input>` c'è su Safari dalla 15.4 secondo il commento del codice e dalla
+16.4 secondo MDN. Il client deduplica per 60 s evento e messaggio uguali (#147): nel collaudo si aspetta più di 60 s fra un
+tentativo e l'altro.
+
 **Test:** uno per ciascuno dei tre casi, ognuno provato rompendo il codice (rosso osservato). Più un test che nessun
 campo e nessun messaggio contenga il nome del file.
 
@@ -483,8 +553,11 @@ campo e nessun messaggio contenga il nome del file.
 
 1. Apertura: POST come §6 con `trasporto:'put-nativo'`, `chiaveIdempotenza` UUID v4 generata all'«Invia», `sha256`.
    In risposta URL PUT senza upsert e token.
-2. PUT nativa in background: 2xx → fatto (il server lo vede da solo); 409 → rinnovo, che risponde `arrivato`; 400/403
-   di firma o URL scaduto → rinnovo e ripetizione; 413 → fallito; rete → backoff.
+2. PUT nativa in background: 2xx → fatto (il server lo vede da solo); 413 → fallito; rete → backoff; **qualunque altro
+   4xx → rinnovo**. ⚠️ La PUT è grezza e vede solo lo stato HTTP, e lo Storage risponde a un duplicato con **400** (corpo
+   `{"statusCode":"409","error":"Duplicate"}`), non con un 409 (secondario #193): un file già arrivato e una firma scaduta o
+   rifiutata (400/403) hanno lo stesso aspetto, e li distingue il rinnovo — `arrivato` (il file c'è: fatto), `da-caricare`
+   (URL nuovo: ripetere la PUT), `annullato`.
 3. Rinnovo: `POST /api/video-uploads/rinnovo` con `x-kidville-rinnovo`; `annullato` → fermarsi e cancellare la copia.
 4. Pubblicazione e notifiche: tutte lato server. Stato: `GET /api/video-uploads` in primo piano.
 5. Persistenza: token e URL in Keychain/Keystore, esclusi dai backup; si salva la risposta **più recente** (la
@@ -545,32 +618,59 @@ dopo (~10').
    l'overload filtrato, e scansione degli esiti di conversione (marca + notifica, §8.5).
 7. Contatori nuovi nel battito; si toglie il «BUCO DICHIARATO».
 
-**Registro GDPR** (`src/lib/gdpr/esegui.ts`): `video_processing` passa da `escluso` (lacuna aperta) a coperto, con le
-regole e la finestra residua scritte. **Oblio:** `anonimizzaAlunno` chiama `video_intent_oblio_alunno`; `tag_alunni`
+**Registro GDPR** (`src/lib/gdpr/esegui.ts`): `video_processing` passa da `escluso` (lacuna aperta) a
+`coperto-fuori-oblio` (lo stato dei bucket che svuota la conservazione e non un canale d'oblio, come `video_originals`), con
+le regole e la **finestra residua** scritte (secondario #112): per un video con quel solo bambino, dalla richiesta di
+cancellazione alla rimozione del file passa un giro della purga (~10', di più se Storage non risponde); per un video di
+**gruppo** non ancora pubblicato restano altri bambini, l'intento non si revoca e il file resta fino al suo termine (7 giorni
+dalla verifica); il video già pubblicato vive in `gallery` e lo raggiunge `obliaFotoAlunno`. **Oblio:** `anonimizzaAlunno` chiama `video_intent_oblio_alunno`; `tag_alunni`
 è un luogo nuovo con identificativi di minori e ha la sua **prova di mutazione**.
 
 ---
 
 ## 16. Logging
 
-Server (canali `galleria`, `news`, `cron`, `config`, `notifica`, `storage`, `rpc`; solo uuid, conteggi e codici):
+Server (canali `galleria`, `news`, `cron`, `config`, `notifica`, `storage`, `rpc`; solo uuid, conteggi e codici). La
+tabella completa, con canale e livello di ogni evento, sta nel PRD (voce «Video, PR 2 …»):
 
 - route: `intento-aperto` (`n_tag`, `broadcast`, `trasporto`), `apertura-flusso-vecchio-rifiutata`,
   `liberatoria-mancante`, `elenco-letto`, `firma-rinnovata` / `firma-negata`, `rinnovo-emesso` / `-arrivato` /
   `-annullato` / `-negato` (motivo come enumerato, **mai il token**), `pubblicazione-riprovata`;
-- runner: `gia-sorvegliato`, `capacita-piena`, `ambiente-pronto` / `ambiente-pronto-assente`;
+- runner: `gia-sorvegliato` e `capacita-piena` (esiti del battito `video-runner-tick`); `ambiente-pronto` (`galleria`/`news`,
+  `info`: `ambiente` = `snapshot` · `ripiego-vm` · `ripiego-runtime`, `ms`, `apertura_ms`) e `ambiente-pronto-assente`
+  (`error`, su **due canali**: `config` quando lo snapshot manca o non si crea, `galleria`/`news` quando i suoi binari non
+  tornano, uscita 26); `riaggancio-ripiego-non-riuscito` e `riaggancio-non-riuscito` (`cron`, `info`); `arrivi-recuperati`
+  (`cron`, `warn`: i quattro conteggi della rete degli arrivi, solo quando c'è qualcosa; è una riga a parte perché la riga
+  del giorno di `app_log` terrebbe i numeri della prima occorrenza, #128); `diagnosi-non-scritta` (`warn`),
+  `tracce-audio-ignorate` (`info`), `sha256-dichiarato-illeggibile` (`error`); uscite nuove dell'apparecchio e della
+  conversione: **26** (binari dello snapshot) e **35** (`sha256` dichiarato diverso) (secondari #170 e #174);
 - pubblicazione: `pubblicazione-automatica-riuscita` / `-fallita`, `pubblicato-senza-liberatoria`,
   `pubblicato-senza-bambini-usciti`, `non-pubblicato-nessun-destinatario`, `esito-docente-accodato`,
-  `pubblicazione-video-legacy-rifiutata`;
-- conservazione: `uscite-rimosse` / `uscite-trattenute`, `originali-risorti-rimossi`, `non-pubblicati-scaduti`,
-  `flusso-vecchio-revocato`, `intenti-minimizzati`;
-- SQL: `video-originale-arrivato` / `-risorto` / `-diverso` / `-sostituito`, `video-arrivo-trigger-eccezione`,
-  `video-runner-kick`.
+  `pubblicazione-video-legacy-rifiutata`; il recupero dopo un processo morto: `recupero-media-non-letta` (**anche `warn`
+  dentro l'ora**, con `n_tentativi` e `definitiva: false`, `error` oltre: una riga propria a ogni guasto, #153 e #172),
+  `recupero-media-assente`, `recupero-liberatoria-non-letta`; `autore-non-attivo` (`info`); `esiti-intento-senza-sede`
+  (`cron`, `error`: un candidato senza sede non dovrebbe esistere, e senza questa riga non verrebbe mai avvisato; una riga per
+  giro, col conteggio e l'uuid del più vecchio, #154 e #172). Il collegamento dell'avviso di liberatoria non dipende più dal
+  ruolo di chi ha caricato (§7): non c'è più nessuna lettura dei ruoli, e l'evento `esiti-ruoli-non-letti` non esiste più;
+- conservazione: `uscite-rimosse` / `uscite-trattenute`, `uscite-dichiarate`, `originali-risorti-rimossi` /
+  `uscite-risorte-rimosse`, `non-pubblicati-scaduti`, `flusso-vecchio-revocato`, `intenti-minimizzati`,
+  `outbox-senza-destinatario` (`error`, una riga per ogni tipo di evento che nessun destinatario sa consegnare);
+- SQL (`app_log.evento` = il nome, `sorgente = 'server'`): `video-originale-arrivato` / `-risorto` / `-diverso` /
+  `-sostituito` / `-riferimento` / `-senza-job` / `-incompleto`, `video-arrivo-trigger-eccezione`,
+  `video-arrivo-giro-eccezione`, `video-arrivo-recuperato-dal-giro` (`warn`: il trigger non l'ha visto),
+  `video-arrivi-recupera` (il riepilogo di ogni giro), `video-runner-kick` (`PG_NET_ASSENTE`: `error` se l'URL del runner è
+  configurato, `info` altrimenti; `URL_ASSENTE` e `POST_FALLITO`: `error`) e un riepilogo di installazione per file
+  (`video-pubblicazione-automatica-migration`, `video-arrivo-originale-migration`, `video-conservazione-uscite-migration`).
 
-Client (solo `warn` ed `error`): `video-ripresa-automatica` (job, motivo), `video-deposito-saltato-spazio`,
-`video-upload-annullato-in-volo`, e i tre del selettore di §11.1 (`gallery-selettore-aperto`,
-`gallery-selettore-file-ricevuti`, `gallery-selettore-chiuso-senza-file`). Successo loggato per gli eventi critici
-(pubblicazione, notifiche, cron).
+Client (solo `warn` ed `error`): `video-ripresa-automatica` (job, motivo) e `video-ripresa-automatica-interrotta`
+(`error`), `video-deposito-saltato-spazio`, `video-upload-annullato-in-volo`; i tre del selettore di §11.1
+(`gallery-selettore-aperto`, `gallery-selettore-file-ricevuti`, `gallery-selettore-chiuso-senza-file`), più
+`gallery-selettore-traccia-fallita` e `gallery-selezione-oltre-il-massimo`; e, per la chiave d'idempotenza e il ritiro
+(secondari #131, #132, #136, #141 e #190): `video-galleria-sale-non-disponibile` (`warn`, solo il `motivo`),
+`video-intento-orfano-ritirato` / `video-intento-orfano-non-ritirato` (`warn`: una risposta d'apertura arrivata quando la
+schermata non c'è più, per un intento senza padrone), `video-ritiro-non-riuscito` (`warn`: il ritiro non è riuscito e la
+scheda torna), `video-riga-locale-non-annullata` (`error`: l'archivio locale non risponde durante «Rimuovi»). Successo
+loggato per gli eventi critici (pubblicazione, notifiche, cron).
 
 ---
 
@@ -590,8 +690,11 @@ Client (solo `warn` ed `error`): `video-ripresa-automatica` (job, motivo), `vide
 - **E2E in CI** (DB della CI dopo `migrate-ci` delle 2 + 3 migrazioni): invio con bambini prima (422 con i nomi e
   **zero** richieste `/upload/resumable`, poi l'invio vero e l'elenco che diventa `in-coda`); ripresa automatica
   (`setOffline` a metà, completamento **senza clic**); rinnovo (PUT sull'URL firmato → `arrivato`, token falso → 404,
-  seconda PUT → 409); **destinatari**: con la conversione simulata dal service role, solo i genitori dei bambini
-  taggati vedono il video e ricevono la notifica, gli altri no. Il seed riceve un bambino **senza** liberatoria.
+  seconda PUT rifiutata come duplicato: HTTP 400 col corpo `statusCode:"409"`, secondario #193); **destinatari**: con la conversione simulata dal service role, solo i genitori dei bambini
+  taggati vedono il video e ricevono la notifica, gli altri no. **Il seed non aggiunge bambini** (il conteggio di una
+  classe serve ad altri spec): per il 422 lo spec accende la liberatoria di due bambini esistenti della sede di prova e la
+  toglie a uno dopo averli scelti, perché dalla pagina un bambino senza liberatoria non si può mettere insieme ad altri
+  (dettaglio e prerequisiti in `docs/e2e.md`). I quattro spec girano a `retries: 0`.
 - **Ogni critico** lancia anche `npx vitest run __tests__/architecture __tests__/a11y
   __tests__/api/zod-coverage.test.ts`, i test che importano i file toccati, `tsc --noEmit`, `eslint` sui file toccati
   e almeno una mutazione vista rossa. Alla fine un giro d'integrazione con la suite intera prima del gate.
@@ -634,8 +737,9 @@ diverse, rileggendo prima di scrivere; poi T5).
 
 ## 19. Rilascio (T16)
 
-1. Prima del merge: misure (§10.3) e costo; snapshot creato e `VIDEO_SANDBOX_SNAPSHOT_ID` +
-   `VIDEO_CONVERSIONI_PARALLELE` su Production e Preview (**mostrati prima**); le 2 + 3 migrazioni sul DB della CI con
+1. Prima del merge: misure (§10.3) e costo; snapshot creato, **una conversione vera da quello snapshot** (secondari #166 e
+   #180) e solo allora `VIDEO_SANDBOX_SNAPSHOT_ID` + `VIDEO_CONVERSIONI_PARALLELE` su Production e Preview (**mostrati
+   prima**); le 2 + 3 migrazioni sul DB della CI con
    `migrate-ci.yml`; E2E verde; collaudo reale sul DB della CI con il Sandbox; **collaudo sul simulatore iPhone** del
    selettore di §11.1 (riquadro grande → selettore foto e video, «Scatta una foto» secondaria, i tre log visti partire).
    Il PRD della PR ha la voce del selettore e dei suoi log.
@@ -663,15 +767,17 @@ diverse, rileggendo prima di scrivere; poi T5).
 - **Nuovo archivio di identificativi di minori** (`tag_alunni`): minimizzato a 7 giorni, coperto dall'oblio con
   prova di mutazione.
 - **PUT singola da 2 GB** (PR 3).
+- **Lo Storage risponde 400, e non 409, a una seconda PUT** (secondario #193): per la PR 3 qualunque 4xx sulla PUT porta al
+  rinnovo (§6.2 e §12).
 
 ---
 
 ## 21. Secondari della PR 1 assegnati qui
 
-| # | Dove | Compito |
-|---|---|---|
-| 23 | `last_error_code` a tentativi esauriti | T6 (+ T2a se serve la REPLACE di `video_job_retry`) |
-| 33 | eccezione dell'SDK non classificata | T6 |
-| 36 | `aria-live` su un paragrafo montato a condizione | T11 |
-| 37 | messaggio «file illeggibile» per un guasto nostro esaurito | T1 (regola), T5 (elenco), T7 (notifica) |
-| 39 | `VIDEO_RIPROVA` al rientro nelle News | T10 |
+| # | Dove | Compito | Esito |
+|---|---|---|---|
+| 23 | `last_error_code` a tentativi esauriti | T6 (+ T2a se serve la REPLACE di `video_job_retry`) | chiuso da T6: il runner passa da `riprova` anche all'ultimo tentativo; nessuna REPLACE (§5.3, §9) |
+| 33 | eccezione dell'SDK non classificata | T6 | chiuso: `infra-transitoria`, passa da `riprova` (§9) |
+| 36 | `aria-live` su un paragrafo montato a condizione | T11 | chiuso: paragrafo sempre montato (anche per l'avviso dei 50 elementi) |
+| 37 | messaggio «file illeggibile» per un guasto nostro esaurito | T1 (regola), T5 (elenco), T7 (notifica) | chiuso: `codiceMostrabileDelJob` |
+| 39 | `VIDEO_RIPROVA` al rientro nelle News | T10 | chiuso: al rientro un job `failed` mostra il codice vero |

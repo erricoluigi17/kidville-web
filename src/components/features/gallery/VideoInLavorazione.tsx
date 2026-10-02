@@ -199,7 +199,7 @@ export function VideoInLavorazione({ righe, onRiprendi, onRimuovi, onRiprova }: 
                               LA SECONDA REGIONE VIVA, SEMPRE MONTATA (#36). Su una fase che NON
                               è un fallimento porta un messaggio che dice che cosa toglie di mezzo
                               l'ostacolo — il 401 di una sessione scaduta mentre i byte partivano,
-                              «il caricamento continua finché l'app è aperta» — e non è un errore
+                              «il caricamento continua finché resti in Galleria» — e non è un errore
                               rosso. Su una scheda rossa porta il MOTIVO: la frase del codice.
                               Vuota quando non c'è niente da dire, e allora non occupa spazio: il
                               margine sta sul testo, non sul paragrafo, e l'elemento resta nel DOM

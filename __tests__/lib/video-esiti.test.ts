@@ -60,13 +60,13 @@ import {
   corpoAvvisoLiberatoria,
   corpoConversioneFallita,
   corpoPubblicatoSenzaBambini,
-  linkGalleria,
   LIMITE_ESITI_PER_GIRO,
   notificaAvvisoLiberatoria,
   notificaEsitoDocente,
   scansionaEsitiDiConversione,
   segnaEsito,
   testoEsitoDocente,
+  type EsitoPerDocente,
 } from '@/lib/media/video/esiti'
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -251,12 +251,6 @@ describe('i testi: la spec §7, italiano, senza nomi né nomi di file', () => {
     }
   })
 
-  it('il collegamento: l’area docente per chi insegna, quella della segreteria per Direzione e segreteria', () => {
-    expect(linkGalleria('educator')).toBe('/teacher/gallery')
-    expect(linkGalleria(null)).toBe('/teacher/gallery')
-    expect(linkGalleria(undefined)).toBe('/teacher/gallery')
-    for (const ruolo of ['admin', 'coordinator', 'segreteria']) expect(linkGalleria(ruolo)).toBe('/admin/gallery')
-  })
 })
 
 describe('il codice che l’outbox accetta (`^[A-Z][A-Z0-9_]{0,79}$`)', () => {
@@ -329,7 +323,6 @@ describe('notificaEsitoDocente', () => {
       intentId: idIntento(1),
       ownerId: AUTORE,
       scuolaId: SEDE,
-      ruoloAutore: 'educator',
       esito: { tipo: 'pubblicato', nUsciti: 0 },
       operazione: 'video-runner',
     })
@@ -351,17 +344,26 @@ describe('notificaEsitoDocente', () => {
     expect('debounce' in h.notifiche[0]).toBe(false)
   })
 
-  it('un autore della segreteria riceve il collegamento della segreteria', async () => {
+  // #152. Il collegamento dell'ESITO è lo stesso per ogni caso della spec §7 — comprese le frasi che dicono «premi Riprova» —: l'area docente,
+  // l'unica pagina che ha il flusso dei video. Che sia così anche per chi ha caricato dallo STAFF lo provano la scansione (qui sotto, con
+  // un autore che nei dati ha davvero il ruolo) e il pubblicatore (`gallery-pubblicazione-video-automatica.test.ts`): la funzione non
+  // riceve più il ruolo di nessuno, quindi qui non c'è modo di chiedergli un altro collegamento.
+  it.each<[string, EsitoPerDocente]>([
+    ['pubblicato', { tipo: 'pubblicato', nUsciti: 0 }],
+    ['pubblicato senza N bambini', { tipo: 'pubblicato', nUsciti: 2 }],
+    ['nessun destinatario', { tipo: 'nessun-destinatario' }],
+    ['pubblicazione non riuscita, col «Riprova»', { tipo: 'pubblicazione-non-riuscita' }],
+    ['conversione fallita', { tipo: 'conversione-fallita', codice: 'VIDEO_GUASTO_NOSTRO' }],
+  ])('%s: porta all’area docente, la sola pagina col flusso dei video (#152)', async (_nome, esito) => {
     await notificaEsitoDocente(client, {
       intentId: idIntento(1),
       ownerId: AUTORE_SEGRETERIA,
       scuolaId: SEDE,
-      ruoloAutore: 'segreteria',
-      esito: { tipo: 'nessun-destinatario' },
+      esito,
       operazione: 'video-runner',
     })
 
-    expect(h.notifiche[0].link).toBe('/admin/gallery')
+    expect(h.notifiche.map((n) => n.link)).toEqual(['/teacher/gallery'])
   })
 
   it('il SUCCESSO si logga: `esito-docente-accodato`, col caso e l’intento, una riga per intento', async () => {
@@ -369,7 +371,6 @@ describe('notificaEsitoDocente', () => {
       intentId: idIntento(1),
       ownerId: AUTORE,
       scuolaId: SEDE,
-      ruoloAutore: 'educator',
       esito: { tipo: 'conversione-fallita', codice: 'VIDEO_GUASTO_NOSTRO' },
       operazione: 'video-retention',
     })
@@ -388,7 +389,7 @@ describe('notificaEsitoDocente', () => {
 })
 
 describe('notificaAvvisoLiberatoria', () => {
-  const base = { intentId: idIntento(1), ownerId: AUTORE, scuolaId: SEDE, ruoloAutore: 'educator', operazione: 'video-runner' }
+  const base = { intentId: idIntento(1), ownerId: AUTORE, scuolaId: SEDE, operazione: 'video-runner' }
 
   it('con zero bambini non fa niente', async () => {
     expect(await notificaAvvisoLiberatoria(client, { ...base, nSenzaLiberatoria: 0 })).toBe(0)
@@ -418,6 +419,9 @@ describe('notificaAvvisoLiberatoria', () => {
     h.staff = [AUTORE, AUTORE, SEGRETERIA]
     expect(await notificaAvvisoLiberatoria(client, { ...base, nSenzaLiberatoria: 1 })).toBe(2)
     expect(h.notifiche.map((n) => n.utenteIds)).toEqual([[AUTORE], [SEGRETERIA]])
+    // #152: chi ha caricato va all'area docente ANCHE se fa parte dello staff (è lì che ritrova il suo video); la galleria della segreteria è
+    // solo per lo staff che NON ha caricato.
+    expect(h.notifiche.map((n) => n.link)).toEqual(['/teacher/gallery', '/admin/gallery'])
 
     h.notifiche = []
     h.staff = []
@@ -446,6 +450,26 @@ describe('la scansione: chi ha una conversione fallita e nessuna marca', () => {
     expect(await scansiona()).toEqual({ esito: 'ok', candidati: 0, notificati: 0 })
     expect(h.rpc).toEqual([])
     expect(h.notifiche).toEqual([])
+  })
+
+  // #161. «Un job `cancelled` non si notifica» (spec §3: l'ha chiesto qualcuno) era protetto solo dalla FORMA della query — il test «le liste»,
+  // più sotto, guarda che il filtro sia `['failed', 'rejected']` — e un filtro riscritto per bene lo fa passare comunque, mentre uno cambiato lo
+  // fa cadere per il motivo sbagliato. Qui è il COMPORTAMENTO, su un finto database che APPLICA il filtro: un intento automatico `confirmed` il cui
+  // job è stato annullato non riceve né marca né notifica, e accanto a lui un intento il cui job è davvero fallito li riceve — quindi la scansione
+  // sta lavorando, non è semplicemente spenta. Con `cancelled` aggiunto alla query questo test cade (candidati 2, notificati 2).
+  it('un job `cancelled` NON si marca e NON si notifica: l’ha chiesto qualcuno (#161)', async () => {
+    h.intenti = [intento(1), intento(2)]
+    h.jobs = [job(1, { status: 'cancelled', error_code: null, attempt: 0 }), job(2)]
+
+    const esito = await scansiona()
+
+    expect(esito).toEqual({ esito: 'ok', candidati: 1, notificati: 1 })
+    // La marca è stata chiesta, e vinta, solo per l'intento del job fallito.
+    expect(h.rpc.map((r) => r.args.p_intent_id)).toEqual([idIntento(2)])
+    expect(h.notifiche.map((n) => n.entitaId)).toEqual([idIntento(2)])
+    // E l'intento del job annullato è com'era: nessuna marca scritta, quindi nessun esito «fallito» per un video che nessuno aspetta.
+    expect(h.marche.has(idIntento(1))).toBe(false)
+    expect(h.intenti[0].esito_notificato).toBeNull()
   })
 
   it('un job `failed` dopo più tentativi è un guasto NOSTRO: la marca è `fallito`, il testo è quello del guasto nostro (#37)', async () => {
@@ -542,18 +566,25 @@ describe('la scansione: chi ha una conversione fallita e nessuna marca', () => {
     expect(h.notifiche.map((n) => n.entitaId)).toEqual([idIntento(2)])
   })
 
-  it('chi ha caricato dalla segreteria riceve il collegamento della segreteria (il ruolo si legge UNA volta per tutti)', async () => {
-    h.intenti = [intento(1, { owner_id: AUTORE_SEGRETERIA }), intento(2)]
-    h.jobs = [job(1), job(2)]
+  // #152. L'esito di una conversione fallita porta all'area docente per CHIUNQUE abbia caricato, staff compreso: è l'unica pagina col flusso dei
+  // video e il «Riprova». Il ruolo ESISTE nei dati (`utenti`, che il finto database serve): è il codice a non guardarlo più. Prima la scansione lo
+  // leggeva e mandava amministratore, coordinamento e segreteria in `/admin/gallery`, dove il «Riprova» non c'è — con il vecchio codice i primi
+  // tre casi cadono, e l'insegnante (`educator`) resta verde.
+  it.each(['admin', 'coordinator', 'segreteria', 'educator'])(
+    'chi ha caricato con il ruolo `%s` riceve il collegamento dell’area docente (#152)',
+    async (ruolo) => {
+      h.utenti = [{ id: AUTORE_SEGRETERIA, ruolo }]
+      h.intenti = [intento(1, { owner_id: AUTORE_SEGRETERIA }), intento(2)]
+      h.jobs = [job(1), job(2)]
 
-    await scansiona()
+      await scansiona()
 
-    expect(h.notifiche.map((n) => [n.entitaId, n.link])).toEqual([
-      [idIntento(1), '/admin/gallery'],
-      [idIntento(2), '/teacher/gallery'],
-    ])
-    expect(h.query.filter((q) => q.tabella === 'utenti')).toHaveLength(1)
-  })
+      expect(h.notifiche.map((n) => [n.entitaId, n.utenteIds, n.link])).toEqual([
+        [idIntento(1), [AUTORE_SEGRETERIA], '/teacher/gallery'],
+        [idIntento(2), [AUTORE], '/teacher/gallery'],
+      ])
+    },
+  )
 
   it('le liste: gli intenti AUTOMATICI, `confirmed`, senza marca — poi, fra loro, i job `failed`/`rejected`', async () => {
     h.intenti = [intento(1)]
@@ -619,6 +650,67 @@ describe('la scansione: chi ha una conversione fallita e nessuna marca', () => {
 
     expect(logDi('esiti-scansionati')).toEqual([])
   })
+
+  // #154. Un intento di galleria senza sede non si può avvisare (`notificaEvento` vuole la sede) e NON DOVREBBE ESISTERE: il database lo vieta
+  // (`video_intents_scuola_scope_chk`), quindi se compare un vincolo è stato tolto. Prima lo si saltava con un `continue` muto, a ogni giro e per
+  // sempre. Ora la scansione grida — `error`, una riga per giro — e non si ferma: chi una sede ce l'ha è avvisato come sempre.
+  describe('un intento senza sede (#154): non dovrebbe esistere, e la scansione non tace più', () => {
+    it('UNA riga `error` per giro col conteggio e il più vecchio; niente marca per loro, e gli altri intenti proseguono', async () => {
+      // L'ordine dell'array è quello della query (`updated_at` crescente): il primo è il più vecchio.
+      h.intenti = [intento(1, { scuola_id: null }), intento(2, { scuola_id: null }), intento(3)]
+      h.jobs = [job(1), job(2), job(3)]
+
+      const esito = await scansiona()
+
+      expect(esito).toEqual({ esito: 'ok', candidati: 3, notificati: 1 })
+      // Né marca né notifica per chi non ha una sede dove avvisare; quello che ce l'ha è avvisato.
+      expect(h.rpc.map((r) => r.args.p_intent_id)).toEqual([idIntento(3)])
+      expect(h.notifiche.map((n) => n.entitaId)).toEqual([idIntento(3)])
+      const righe = logDi('esiti-intento-senza-sede')
+      expect(righe).toHaveLength(1)
+      expect(righe[0].evento).toBe('cron')
+      expect(righe[0].livello).toBe('error')
+      // I campi, TUTTI e solo questi: un uuid dell'intento, un conteggio, due etichette. Nessun proprietario, nessuna sede, nessun nome.
+      expect(righe[0].campi).toEqual({
+        operazione: 'video-runner',
+        esito: 'esiti-intento-senza-sede',
+        n_senza_sede: 2,
+        intent_id: idIntento(1),
+      })
+      expect(righe[0].opzioni).toEqual({ distingui: ['intent_id'] })
+    })
+
+    it('una riga A OGNI GIRO finché lo stato dura: la scansione non lo dà per assodato dopo la prima volta', async () => {
+      h.intenti = [intento(1, { scuola_id: null })]
+      h.jobs = [job(1)]
+
+      await scansiona()
+      await scansiona()
+
+      expect(logDi('esiti-intento-senza-sede')).toHaveLength(2)
+      // E non si marca mai: la marca vuol dire «avvisato», e qui nessuno lo è stato.
+      expect(h.rpc).toEqual([])
+    })
+
+    it('si conta fra TUTTI i candidati, anche oltre il tetto del giro (un intento senza sede non sparisce perché è in coda)', async () => {
+      h.intenti = [intento(1), intento(2, { scuola_id: null })]
+      h.jobs = [job(1), job(2)]
+
+      const esito = await scansiona(1) // il tetto lascia passare un solo candidato: il primo
+
+      expect(esito).toEqual({ esito: 'ok', candidati: 2, notificati: 1 })
+      expect(logDi('esiti-intento-senza-sede')[0].campi).toMatchObject({ n_senza_sede: 1, intent_id: idIntento(2) })
+    })
+
+    it('è un fatto dei CANDIDATI: senza un job fallito la scansione non lo guarda, e con le sedi in ordine non scrive niente', async () => {
+      h.intenti = [intento(1, { scuola_id: null }), intento(2)]
+      h.jobs = [job(1, { status: 'processing' }), job(2)]
+
+      await scansiona()
+
+      expect(logDi('esiti-intento-senza-sede')).toEqual([])
+    })
+  })
 })
 
 describe('la scansione che non riesce: lo schema che non c’è si dichiara, ogni altro guasto si grida, e non lancia mai', () => {
@@ -659,18 +751,6 @@ describe('la scansione che non riesce: lo schema che non c’è si dichiara, ogn
     expect(await scansiona()).toEqual({ esito: 'lettura-fallita', candidati: 0, notificati: 0 })
     expect(logDi('esiti-scansione-eccezione')[0].livello).toBe('error')
   })
-
-  it('la lettura dei ruoli che fallisce non ferma gli avvisi: il collegamento ripiega sull’area docente', async () => {
-    h.intenti = [intento(1, { owner_id: AUTORE_SEGRETERIA })]
-    h.jobs = [job(1)]
-    h.errori.utenti = { code: '57014', message: 'canceled' }
-
-    const esito = await scansiona()
-
-    expect(esito.notificati).toBe(1)
-    expect(h.notifiche[0].link).toBe('/teacher/gallery')
-    expect(logDi('esiti-ruoli-non-letti')[0].livello).toBe('warn')
-  })
 })
 
 describe('cosa non esce mai da qui', () => {
@@ -684,7 +764,6 @@ describe('cosa non esce mai da qui', () => {
       intentId: idIntento(1),
       ownerId: AUTORE,
       scuolaId: SEDE,
-      ruoloAutore: 'educator',
       nSenzaLiberatoria: 2,
       operazione: 'video-runner',
     })

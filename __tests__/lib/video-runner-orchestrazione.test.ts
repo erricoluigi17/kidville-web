@@ -310,6 +310,8 @@ interface Copione {
   apriFallisce?: boolean
   /** L'SDK che LANCIA su `avvia` (la conversione staccata): `esegui` lancia restituendo un `Error` da `risposta`. */
   avviaFallisce?: Error
+  /** L'SDK che LANCIA su `ferma` (`sandbox.stop()`): la MicroVM che non si spegne (secondario #163). */
+  fermaFallisce?: Error
 }
 
 function sandboxFinta(copione: Copione = {}) {
@@ -335,6 +337,7 @@ function sandboxFinta(copione: Copione = {}) {
     },
     ferma: async () => {
       fermata += 1
+      if (copione.fermaFallisce) throw copione.fermaFallisce
     },
   }
 
@@ -1251,6 +1254,8 @@ async function lancia(
     origine?: 'snapshot' | 'runtime'
     apriFallisce?: boolean
     avviaFallisce?: Error
+    /** `stop()` che lancia (secondario #163). */
+    fermaFallisce?: Error
     risposta?: Copione['risposta']
     coda?: CopioneCoda
     orologio?: ReturnType<typeof orologioFinto>
@@ -1268,6 +1273,7 @@ async function lancia(
     origine: opzioni.origine,
     apriFallisce: opzioni.apriFallisce,
     avviaFallisce: opzioni.avviaFallisce,
+    fermaFallisce: opzioni.fermaFallisce,
     risposta: opzioni.risposta ?? rispostaFelice(),
   })
   const esito = await eseguiUnJobVideo(
@@ -4442,10 +4448,10 @@ describe('runner video · la verifica fallita scrive i NUMERI sul job (`video_jo
 })
 
 /* ════════════════════════════════════════════════════════════════════════════
- * 23. L'ECCEZIONE DELL'SDK NON ENTRA NEL LOG COM'È (T8, secondario #104)
+ * 23. L'ECCEZIONE DELL'SDK NON ENTRA NEL LOG COM'È (T8, secondario #104; T8b, secondario #163: anche lo spegnimento)
  * ════════════════════════════════════════════════════════════════════════════ */
 
-describe('runner video · l’eccezione dell’SDK passa dalla sanificazione prima di entrare nel log (secondario #104)', () => {
+describe('runner video · l’eccezione dell’SDK passa dalla sanificazione prima di entrare nel log (secondari #104 e #163)', () => {
   /** Il messaggio di un SDK che fa richieste autenticate e, fallendo, scrive l'indirizzo che chiamava. */
   const CON_SEGRETI =
     'Sandbox API 429 su https://api.vercel.com/v1/sandboxes?teamId=team_x&token=eyJhbGciOi.SEGRETO: troppe richieste'
@@ -4524,6 +4530,47 @@ describe('runner video · l’eccezione dell’SDK passa dalla sanificazione pri
     expect(messaggio.startsWith('APIError HTTP 429 rate_limited: ')).toBe(true)
     expect(messaggio).toContain('troppe richieste')
     nessunSegreto()
+  })
+
+  /** Un JWT di fantasia a tre segmenti (il primo comincia per `eyJ`): quello che un client scrive nell'intestazione di una richiesta. */
+  const JWT_FINTO = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcm92YSJ9.c2lnbmF0dXJhLWZpbnRh'
+
+  it.each<[string, () => Error, string]>([
+    ['un `APIError` (stato e codice) con un URL e un token nel messaggio', () => new ErroreApiFinto(CON_SEGRETI), 'troppe richieste'],
+    ['un errore qualunque con un URL e un token nel messaggio', () => new Error(CON_SEGRETI), 'troppe richieste'],
+    [
+      'un URL firmato dello Storage col JWT nel parametro',
+      () => new Error(`PUT https://esempio.invalid/storage/v1/object/sign/video_originals/x?token=${JWT_FINTO} rifiutato: oggetto assente`),
+      'oggetto assente',
+    ],
+    ['un JWT SENZA indirizzo né `token=` (la coda di un log, un’intestazione)', () => new Error(`sessione rifiutata per ${JWT_FINTO}: scaduta`), 'scaduta'],
+  ])(
+    'lo SPEGNIMENTO che lancia — %s —: `microvm-non-spenta` tiene il motivo e perde il segreto (secondario #163)',
+    async (_nome, errore, motivo) => {
+      const { esito, s } = await lancia({ fermaFallisce: errore() })
+
+      // L'esito del job NON si tocca: la conversione è finita bene, e che la MicroVM non si spenga è un conto a parte…
+      expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+      expect(s.fermate()).toBe(1)
+      // …che si grida a `error` (una MicroVM accesa si paga a `GB × ore`), una volta sola…
+      const log = riga('microvm-non-spenta')
+      expect(log[1]).toBe('error')
+      // …col MOTIVO ancora leggibile (è l'unica cosa che dice «quota finita» e non «piattaforma giù»)…
+      expect(comeInTabella(log).messaggio).toContain(motivo)
+      // …e senza il segreto: né nel messaggio, né nei campi, né fra gli argomenti che il codice passa al logger.
+      nessunSegreto()
+      expect(String(log[3])).not.toContain('SEGRETO')
+      // Nemmeno un pezzo di JWT (la FIRMA è l'ultimo segmento: sola, non autorizza niente, ma «un pezzo» è già una perdita).
+      const nelLog = JSON.stringify(righeDiLog().map((r) => [r[2], String(r[3] ?? ''), comeInTabella(r)]))
+      for (const pezzo of JWT_FINTO.split('.')) expect(nelLog, `un segmento del JWT è finito in un log: ${pezzo}`).not.toContain(pezzo)
+    },
+  )
+
+  it('lo spegnimento che lancia un `APIError` porta nome, stato e codice DAVANTI al testo: è la forma di `erroreSanificatoPerIlLog`, non l’eccezione grezza', async () => {
+    await lancia({ fermaFallisce: new ErroreApiFinto(CON_SEGRETI) })
+
+    const messaggio = comeInTabella(riga('microvm-non-spenta')).messaggio
+    expect(messaggio.startsWith('APIError HTTP 429 rate_limited: ')).toBe(true)
   })
 
   it('le altre cause (la geometria che `buildVideoEncodeArgs` rifiuta) passano dallo stesso filtro, e il messaggio resta', async () => {

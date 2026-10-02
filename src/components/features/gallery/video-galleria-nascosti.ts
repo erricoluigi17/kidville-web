@@ -10,7 +10,10 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
  * **qualunque sia il suo stato** (la fase si decide dal flusso, non dallo stato): annullarlo con
  * «Togli» non lo fa uscire dall'elenco, e una scheda che dice «questo video va ricaricato» a ogni
  * apertura della galleria per una settimana, dopo che la persona l'ha letta e tolta, è rumore.
- * Quindi «Togli» si ricorda QUI, sul dispositivo.
+ * Quindi «Togli» si ricorda QUI, sul dispositivo — ma solo quando il ritiro dell'intento è riuscito
+ * (`useVideoGalleria.rimuovi`, #141): se il server non l'ha confermato l'intento è ancora vivo, e un
+ * video in preparazione uscirebbe in galleria mentre il telefono lo fa credere tolto. Chi chiama
+ * `nascondiIntento` prima della conferma rimette in tabella proprio quel difetto.
  *
  * ─── COSA SI TIENE, E PERCHÉ È LECITO ────────────────────────────────────────────────────────
  * Solo uuid di intenti e l'istante in cui sono stati tolti, per utente: nessun nome di file, nessun

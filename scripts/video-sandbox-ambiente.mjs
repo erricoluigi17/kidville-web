@@ -36,20 +36,31 @@
 //   1. crea un Sandbox da `vercel/sandbox/node:24` nella regione scelta;
 //   2. installa `curl` e `ca-certificates` con `apt-get`, UNA volta, adesso: a runtime nessun comando
 //      installa niente (la MicroVM nata dallo snapshot ha già `curl`, e le serve per il ripiego);
-//   3. prepara `/opt/kv-ffmpeg` (con `sudo`, una volta) e lo affida all'utente dei comandi;
-//   4. fa la provvista dei binari dal bucket con lo STESSO script del runtime — `scriptPreparazioneBuild`,
+//   3. controlla l'IMMAGINE (secondario #166): che ci siano gli STRUMENTI che gli script del runner danno per
+//      scontati — `awk`, `grep`, `xargs`, `stat`, `pkill`… — e che la RETE arrivi al bucket (una HEAD
+//      sull'URL firmato di un oggetto di `video_build`: DNS, TLS, autorizzazione). Elenco e comandi stanno in
+//      `src/lib/media/video/runner/controlli-ambiente.ts`. Un'immagine a cui ne manca uno costruirebbe uno
+//      snapshot che sembra a posto e fa fallire OGNI conversione senza ripiegare (il ripiego scatta solo con
+//      l'uscita 26): qui lo script si ferma, PRIMA di scaricare 134 MB, e dice che cosa manca. I due URL firmati
+//      (validi 10 minuti) nascono qui, DOPO `apt-get` e subito prima della rete e della provvista (secondario #179);
+//   4. prepara `/opt/kv-ffmpeg` (con `sudo`, una volta) e lo affida all'utente dei comandi;
+//   5. fa la provvista dei binari dal bucket con lo STESSO script del runtime — `scriptPreparazioneBuild`,
 //      importato da `src/`, non copiato qui — dentro `/opt/kv-ffmpeg`: scarica, verifica le impronte dei due
 //      `.gz`, decomprime, verifica le impronte dei due binari, e solo allora li rende eseguibili;
-//   5. chiede ai binari l'inventario (filtri, decoder, encoder) e rifiuta lo snapshot se manca qualcosa
+//   6. chiede ai binari l'inventario (filtri, decoder, encoder) e rifiuta lo snapshot se manca qualcosa
 //      (`mancanzeDellaBuild`): le impronte dicono che i binari sono quelli attesi, non che sappiano fare
 //      ciò che serve;
-//   6. esegue la verifica che il runner rifà a OGNI avvio (`scriptVerificaBinari`): se non passa qui, non
+//   7. esegue la verifica che il runner rifà a OGNI avvio (`scriptVerificaBinari`): se non passa qui, non
 //      passerebbe mai laggiù;
-//   7. chiama `snapshot({ expiration: 0 })` (senza scadenza: l'identificativo non deve scadere sotto i piedi
+//   8. chiama `snapshot({ expiration: 0 })` (senza scadenza: l'identificativo non deve scadere sotto i piedi
 //      del runner) e stampa l'id, le impronte e la regione.
 //
 // Se uno qualunque dei passi fallisce, il Sandbox si FERMA (non si lascia una MicroVM accesa a `GB × ore`) e
 // lo script esce 1 senza aver creato nessuno snapshot.
+//
+// Che cosa NON prova: che una MicroVM nata dallo snapshot si comporti come questa (la rete di `ffprobe`, che ha
+// il suo client HTTPS dentro il binario, è l'esempio) — lo prova una conversione vera dallo snapshot nuovo,
+// PRIMA di impostare la variabile (T16 della PR 2).
 //
 // ─── COSA SI FA CON L'ESITO ──────────────────────────────────────────────────
 //
@@ -69,10 +80,11 @@
 // =============================================================================
 
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { register } from 'node:module'
 import { homedir, platform } from 'node:os'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 // ─── Il codice di `src/` che si CONDIVIDE, non si copia ──────────────────────
 //
@@ -81,7 +93,17 @@ import { join, resolve } from 'node:path'
 // di `scripts/anteprima-email.mjs`; richiede una Node che toglie i tipi da sola, 22.18 o superiore). Copiare qui
 // gli script di shell vorrebbe dire due testi destinati a divergere il giorno in cui qualcuno ne ritocca uno solo:
 // uno snapshot costruito con le verifiche di ieri e un runner che ne fa di oggi.
-register('./lib/risolvi-alias.mjs', import.meta.url)
+//
+// ⚠️ L'hook si registra SOLO quando il file è lanciato da `node`. Importato da un test (che costruisce con un Sandbox
+// finto: vedi `costruisci`) ci pensa già il bundler del test a risolvere `src/`, e un secondo risolutore dentro il
+// processo del test non serve a niente. Lo stesso controllo decide, in fondo al file, se far partire `main`.
+function eseguitoDaRigaDiComando() {
+  const lanciato = process.argv[1]
+  if (typeof lanciato !== 'string' || !existsSync(lanciato)) return false
+  return realpathSync(lanciato) === realpathSync(fileURLToPath(import.meta.url))
+}
+const daRigaDiComando = eseguitoDaRigaDiComando()
+if (daRigaDiComando) register('./lib/risolvi-alias.mjs', import.meta.url)
 
 const { BUCKET_BUILD_VIDEO, CARTELLA_BINARI_NELLO_SNAPSHOT, FFMPEG_SHA256, FFPROBE_SHA256, PERCORSO_FFMPEG_GZ, PERCORSO_FFPROBE_GZ } =
   await import('../src/lib/media/video/build.ts')
@@ -94,6 +116,14 @@ const {
   scriptPreparazioneBuild,
 } = await import('../src/lib/media/video/runner/preparazione.ts')
 const { scriptVerificaBinari } = await import('../src/lib/media/video/runner/script.ts')
+const {
+  STRUMENTI_DELL_AMBIENTE,
+  messaggioStrumentiMancanti,
+  scriptControlloRete,
+  scriptControlloStrumenti,
+  spiegaUscitaDellaRete,
+  strumentiMancanti,
+} = await import('../src/lib/media/video/runner/controlli-ambiente.ts')
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Le costanti dello script
@@ -116,15 +146,21 @@ const SECONDI_FIRMA = 10 * 60
 const TETTO_APT_MS = 5 * 60 * 1000
 const TETTO_PROVVISTA_MS = 3 * 60 * 1000
 const TETTO_BREVE_MS = 60 * 1000
+/**
+ * La prova della rete fa fino a quattro tentativi di `curl` (`--max-time 30` ciascuno, più le attese di 1, 2 e 4 s fra
+ * l'uno e l'altro): nel caso peggiore ~127 s. Il tetto sta sopra, perché si legga l'uscita di `curl` (28, tempo scaduto)
+ * e non un 137 del Sandbox che uccide il comando (secondario #178; prima era 90 s).
+ */
+const TETTO_RETE_MS = 150 * 1000
 
 const USO = `Uso:
   <JSON di \`supabase projects api-keys --project-ref ${RIFERIMENTO_PROGETTO_SUPABASE} -o json\`> \\
     | node scripts/video-sandbox-ambiente.mjs [--a-secco] [--regione dub1] [--vcpus 4]`
 
 /** Errore di utilizzo: esce 2. */
-class ErroreUso extends Error {}
+export class ErroreUso extends Error {}
 /** Un controllo che non torna: esce 1, e il messaggio è già scritto per essere letto. */
-class ErroreKO extends Error {}
+export class ErroreKO extends Error {}
 
 /* ────────────────────────────────────────────────────────────────────────────
  * L'USCITA: l'unico posto da cui qualcosa esce, e l'unico che toglie i segreti
@@ -176,7 +212,7 @@ const sha256 = (testo) => createHash('sha256').update(testo).digest('hex')
  * Funzioni pure: argomenti, piano, scelta della chiave
  * ──────────────────────────────────────────────────────────────────────────── */
 
-function leggiArgomenti(argv) {
+export function leggiArgomenti(argv) {
   const opzioni = { aSecco: false, regione: REGIONE_PREDEFINITA, vcpus: VCPUS_PREDEFINITI }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
@@ -195,16 +231,19 @@ function leggiArgomenti(argv) {
 }
 
 /**
- * Gli script di shell che lo snapshot esegue, TUTTI presi dalle funzioni di `src/` che il runner usa a runtime.
+ * Gli script di shell che lo snapshot esegue, TUTTI presi dalle funzioni di `src/` che il runner usa a runtime (la
+ * provvista, l'inventario, la verifica) o che `src/` dichiara accanto a loro (i controlli degli strumenti e della rete).
  * Una funzione sola, usata sia dal piano a secco sia dalla costruzione vera: ciò che `--a-secco` mostra è ciò che
  * la costruzione esegue, e non esiste un secondo posto in cui lo script di provvista sia scritto.
  */
-function piano(cartella = CARTELLA_BINARI_NELLO_SNAPSHOT) {
+export function piano(cartella = CARTELLA_BINARI_NELLO_SNAPSHOT) {
   return {
     cartella,
     provvista: scriptPreparazioneBuild(cartella),
     inventario: comandoInventarioBuild(cartella),
     verifica: scriptVerificaBinari(cartella),
+    controlloStrumenti: scriptControlloStrumenti(),
+    controlloRete: scriptControlloRete(),
   }
 }
 
@@ -332,9 +371,12 @@ async function firma(supabase, percorso) {
   return data.signedUrl
 }
 
-async function costruisci(opzioni, pianoDaEseguire) {
-  const { cartella, provvista, inventario, verifica } = pianoDaEseguire
-
+/**
+ * Le dipendenze VERE della costruzione: le credenziali Vercel, la chiave di servizio letta da stdin e i due SDK. Sono
+ * l'unica parte che tocca il mondo (file della CLI, stdin, rete): `costruisci` le riceve, ed è per questo che un test la
+ * esegue con un Sandbox finto — senza spendere una MicroVM — e vede che cosa fa quando all'immagine manca qualcosa.
+ */
+async function dipendenzeVere() {
   const credenziali = leggiCredenzialiVercel()
   const { chiave } = sceltaDellaChiave(await leggiStdin())
   ricorda(chiave)
@@ -345,8 +387,16 @@ async function costruisci(opzioni, pianoDaEseguire) {
   const supabase = createClient(URL_PROGETTO_SUPABASE, chiave, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   })
-  const urlFfmpeg = await firma(supabase, PERCORSO_FFMPEG_GZ)
-  const urlFfprobe = await firma(supabase, PERCORSO_FFPROBE_GZ)
+  return { credenziali, supabase, Sandbox }
+}
+
+/**
+ * La costruzione. `dipendenze` è `{ credenziali, supabase, Sandbox }`: nello script vero le dà `dipendenzeVere`, in un
+ * test sono doppi (un `Sandbox.create` che restituisce una MicroVM finta, un client Supabase che firma indirizzi inventati).
+ */
+export async function costruisci(opzioni, pianoDaEseguire, dipendenze) {
+  const { cartella, provvista, inventario, verifica, controlloStrumenti, controlloRete } = pianoDaEseguire
+  const { credenziali, supabase, Sandbox } = dipendenze
 
   scrivi(`crea il Sandbox da ${IMMAGINE_DEL_SANDBOX} in ${opzioni.regione} (${opzioni.vcpus} vCPU)…`)
   const sandbox = await Sandbox.create({
@@ -397,7 +447,47 @@ async function costruisci(opzioni, pianoDaEseguire) {
     )
     scrivi(`    ${versione.stdout.split('\n')[0]}`)
 
-    // 3. La cartella dei binari, affidata all'utente che esegue i comandi (non a root): a runtime nessun comando
+    // 3. L'IMMAGINE, prima di spenderci sopra una provvista da 134 MB (secondario #166): gli strumenti che gli script del
+    //    runner danno per scontati, e la rete verso il bucket. Un'immagine a cui ne manca uno costruirebbe uno snapshot che
+    //    sembra a posto e fa fallire ogni conversione senza ripiegare (il ripiego scatta solo con l'uscita 26): si ferma qui,
+    //    senza snapshot, e dice che cosa manca. Fail-closed: un controllo che esce ≠ 0 senza dire quale strumento manca
+    //    non passa lo stesso.
+    const strumenti = await eseguiPasso(sandbox, 'strumenti che gli script del runner chiamano', {
+      cmd: 'sh',
+      args: ['-c', controlloStrumenti],
+      timeoutMs: TETTO_BREVE_MS,
+    })
+    const mancanti = strumentiMancanti(strumenti.stdout)
+    if (strumenti.exitCode !== 0 || mancanti.length > 0) {
+      throw new ErroreKO(
+        mancanti.length > 0
+          ? messaggioStrumentiMancanti(mancanti)
+          : `il controllo degli strumenti non è riuscito (uscita ${strumenti.exitCode}): non si sa se l’immagine li ha`,
+      )
+    }
+    scrivi(`    ${STRUMENTI_DELL_AMBIENTE.length} strumenti presenti`)
+
+    // Gli indirizzi firmati valgono dieci minuti: si firmano QUI, dopo `apt-get` (due tetti da 5 minuti) e subito prima
+    // della rete e della provvista che li usano (secondario #179). Firmati all'inizio, nel caso peggiore arrivavano scaduti.
+    const urlFfmpeg = await firma(supabase, PERCORSO_FFMPEG_GZ)
+    const urlFfprobe = await firma(supabase, PERCORSO_FFPROBE_GZ)
+
+    // L'URL firmato entra nell'AMBIENTE del comando, mai negli argomenti; e non si stampa: `eseguiPasso` dice il titolo e,
+    // se fallisce, la coda dello stderr, che passa da `senzaSegreti`.
+    const reteDelBucket = await eseguiPasso(sandbox, 'rete verso il bucket (DNS, TLS, URL firmato)', {
+      cmd: 'sh',
+      args: ['-c', controlloRete],
+      env: { [ENV_URL_FFPROBE]: urlFfprobe },
+      timeoutMs: TETTO_RETE_MS,
+    })
+    if (reteDelBucket.exitCode !== 0) {
+      throw new ErroreKO(
+        `la rete dell’immagine verso il bucket non funziona: ${spiegaUscitaDellaRete(reteDelBucket.exitCode)}`,
+      )
+    }
+    scrivi('    il bucket risponde: DNS, TLS e URL firmato')
+
+    // 4. La cartella dei binari, affidata all'utente che esegue i comandi (non a root): a runtime nessun comando
     //    ha bisogno di privilegi, e la verifica dei binari legge come lo stesso utente.
     const uid = richiedi(
       await eseguiPasso(sandbox, 'utente dei comandi (uid)', { cmd: 'id', args: ['-u'], timeoutMs: TETTO_BREVE_MS }),
@@ -418,7 +508,7 @@ async function costruisci(opzioni, pianoDaEseguire) {
       `non si prepara ${cartella}`,
     )
 
-    // 4. La provvista dei binari: lo script del RUNTIME, tale e quale, in `/opt/kv-ffmpeg`. Gli URL firmati entrano
+    // 5. La provvista dei binari: lo script del RUNTIME, tale e quale, in `/opt/kv-ffmpeg`. Gli URL firmati entrano
     //    nell'ambiente del comando e in nessun altro posto.
     richiedi(
       await eseguiPasso(sandbox, 'provvista dei binari dal bucket (doppia impronta)', {
@@ -430,7 +520,7 @@ async function costruisci(opzioni, pianoDaEseguire) {
       'la provvista dei binari non è riuscita (le impronte non tornano, o il bucket non risponde)',
     )
 
-    // 5. L'inventario: i binari sanno fare ciò che il filtergraph di produzione nomina?
+    // 6. L'inventario: i binari sanno fare ciò che il filtergraph di produzione nomina?
     const letto = richiedi(
       await eseguiPasso(sandbox, 'inventario dei binari (filtri, decoder, encoder)', {
         cmd: 'sh',
@@ -443,7 +533,7 @@ async function costruisci(opzioni, pianoDaEseguire) {
     if (mancanze.length > 0) throw new ErroreKO(`la build non ha tutto ciò che serve: mancano ${mancanze.join(', ')}`)
     scrivi('    inventario completo: nessuna mancanza')
 
-    // 6. La verifica che il runner rifà a ogni avvio.
+    // 7. La verifica che il runner rifà a ogni avvio.
     richiedi(
       await eseguiPasso(sandbox, 'verifica dei binari (quella che il runner fa a ogni avvio)', {
         cmd: 'sh',
@@ -453,7 +543,7 @@ async function costruisci(opzioni, pianoDaEseguire) {
       'la verifica dei binari non passa: il runner li scarterebbe a ogni avvio',
     )
 
-    // 7. Le impronte, lette dal disco: se non sono quelle di `build.ts` la verifica sopra non sarebbe passata,
+    // 8. Le impronte, lette dal disco: se non sono quelle di `build.ts` la verifica sopra non sarebbe passata,
     //    ma si stampano comunque — è ciò che si mette nel rapporto del rilascio.
     const impronte = richiedi(
       await eseguiPasso(sandbox, 'impronte dei binari nello snapshot', {
@@ -476,7 +566,7 @@ async function costruisci(opzioni, pianoDaEseguire) {
     scrivi(`    ffmpeg   ${lette.get(`${cartella}/ffmpeg`)}`)
     scrivi(`    ffprobe  ${lette.get(`${cartella}/ffprobe`)}`)
 
-    // 8. Lo snapshot. Fermare il Sandbox è parte dell'operazione: la MicroVM si spegne per scattarlo.
+    // 9. Lo snapshot. Fermare il Sandbox è parte dell'operazione: la MicroVM si spegne per scattarlo.
     scrivi('crea lo snapshot (senza scadenza)…')
     const snapshot = await sandbox.snapshot({ expiration: 0 })
     snapshotCreato = true
@@ -527,6 +617,9 @@ async function pianoASecco(opzioni, pianoDaEseguire) {
   scrivi(`script-provvista-sha256: ${sha256(pianoDaEseguire.provvista)}`)
   scrivi(`script-inventario-sha256: ${sha256(pianoDaEseguire.inventario)}`)
   scrivi(`script-verifica-sha256: ${sha256(pianoDaEseguire.verifica)}`)
+  scrivi(`script-controllo-strumenti-sha256: ${sha256(pianoDaEseguire.controlloStrumenti)}`)
+  scrivi(`script-controllo-rete-sha256: ${sha256(pianoDaEseguire.controlloRete)}`)
+  scrivi(`strumenti-richiesti: ${STRUMENTI_DELL_AMBIENTE.map((strumento) => strumento.nome).join(' ')}`)
 
   if (process.stdin.isTTY) {
     scrivi('chiave-di-servizio: stdin è un terminale, non letto')
@@ -542,7 +635,7 @@ async function pianoASecco(opzioni, pianoDaEseguire) {
  * L'INGRESSO
  * ──────────────────────────────────────────────────────────────────────────── */
 
-async function main(argv) {
+export async function main(argv, creaDipendenze = dipendenzeVere) {
   const opzioni = leggiArgomenti(argv)
   const pianoDaEseguire = piano()
 
@@ -551,23 +644,26 @@ async function main(argv) {
   if (process.stdin.isTTY) {
     throw new ErroreUso('manca il JSON delle chiavi: va in pipe, dall’uscita di `supabase projects api-keys`')
   }
-  return costruisci(opzioni, pianoDaEseguire)
+  return costruisci(opzioni, pianoDaEseguire, await creaDipendenze())
 }
 
-main(process.argv.slice(2)).then(
-  (codice) => {
-    process.exitCode = codice
-  },
-  (errore) => {
-    if (errore instanceof ErroreUso) {
-      scriviErrore(`${errore.message}\n\n${USO}`)
-      process.exitCode = 2
-    } else if (errore instanceof ErroreKO) {
-      scriviErrore(`KO  ${errore.message}`)
-      process.exitCode = 1
-    } else {
-      scriviErrore(`KO  errore imprevisto: ${descriviErrore(errore)}`)
-      process.exitCode = 1
-    }
-  },
-)
+// Parte solo se il file è lanciato da `node` (vedi `eseguitoDaRigaDiComando`): importato da un test non fa niente.
+if (daRigaDiComando) {
+  main(process.argv.slice(2)).then(
+    (codice) => {
+      process.exitCode = codice
+    },
+    (errore) => {
+      if (errore instanceof ErroreUso) {
+        scriviErrore(`${errore.message}\n\n${USO}`)
+        process.exitCode = 2
+      } else if (errore instanceof ErroreKO) {
+        scriviErrore(`KO  ${errore.message}`)
+        process.exitCode = 1
+      } else {
+        scriviErrore(`KO  errore imprevisto: ${descriviErrore(errore)}`)
+        process.exitCode = 1
+      }
+    },
+  )
+}

@@ -1721,7 +1721,12 @@ async function fermaSessione(job: JobVideo, sessione: SessioneSandbox): Promise<
   } catch (err) {
     // Una MicroVM che non si spegne si paga a `GB × ore` finché il suo `timeout` non
     // scatta: è mezz'ora di conto che nessuno vedrebbe, se questa riga non ci fosse.
-    loggaEsito(job, 'error', { esito: 'microvm-non-spenta' }, err)
+    //
+    // ⚠️ L'eccezione di `stop()` è un'eccezione dell'SDK come tutte le altre (secondario #163, che chiude
+    // il #104): fa richieste autenticate, e il messaggio di un client HTTP che fallisce scrive volentieri
+    // l'indirizzo che stava chiamando, token compreso. Il logger toglie le email e i codici fiscali, non gli
+    // URL né i JWT: passa da `erroreSanificatoPerIlLog`, che ne tiene nome, stato, codice e il testo ripulito.
+    loggaEsito(job, 'error', { esito: 'microvm-non-spenta' }, erroreSanificatoPerIlLog(err))
   }
 }
 

@@ -2,7 +2,8 @@
 
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { PGlite } from '@electric-sql/pglite'
@@ -13,31 +14,46 @@ import { MESSAGGIO_MAX } from '@/lib/logging/serialize'
 import {
   BUCKET_BUILD_VIDEO,
   CARTELLA_BINARI_NELLO_SNAPSHOT,
+  DECODER_RICHIESTI,
+  ENCODER_RICHIESTI,
   FFMPEG_GZ_SHA256,
   FFMPEG_SHA256,
   FFPROBE_GZ_SHA256,
   FFPROBE_SHA256,
+  FILTRI_RICHIESTI,
 } from '@/lib/media/video/build'
 import { macchinaVercel } from '@/lib/media/video/runner/adattatori'
 import {
   ENV_SNAPSHOT_SANDBOX,
   MOTIVI_AMBIENTE_ASSENTE,
   RUNTIME_DI_RIPIEGO,
+  SUFFISSO_NOME_DI_RIPIEGO,
   apriLaMicroVm,
   erroreSanificatoPerIlLog,
   fattiDellErrore,
   leggiSnapshotConfigurato,
+  nomeDelRipiego,
   type ParametriCreazione,
   type SdkMicroVm,
 } from '@/lib/media/video/runner/ambiente'
 import { CODICI_RUNNER_VIDEO } from '@/lib/media/video/runner/codici'
 import {
+  STRUMENTI_DELL_AMBIENTE,
+  messaggioStrumentiMancanti,
+  scriptControlloRete,
+  scriptControlloStrumenti,
+  spiegaUscitaDellaRete,
+  strumentiMancanti,
+} from '@/lib/media/video/runner/controlli-ambiente'
+import {
   CARTELLA_BUILD,
   ENV_URL_FFMPEG,
   ENV_URL_FFPROBE,
+  SEPARATORE_INVENTARIO,
   USCITE_PREPARAZIONE,
   codiceDaUscitaPreparazione,
   comandoInventarioBuild,
+  nomeSandboxVideo,
   scriptPreparazioneBuild,
 } from '@/lib/media/video/runner/preparazione'
 import { decidiRitentativo, classeDaUscitaApparecchio, classeDaUscitaConversione } from '@/lib/media/video/runner/ritentativi'
@@ -49,11 +65,15 @@ import {
   codiceDaUscitaApparecchio,
   codiceDaUscitaConversione,
   comandoInterruzione,
+  comandoMarcatore,
+  comandoScritturaArgomenti,
   leggiSha256Dichiarato,
   scriptApparecchio,
   scriptConversione,
   scriptVerificaBinari,
 } from '@/lib/media/video/runner/script'
+
+import { ErroreKO, costruisci, main as mainDelloScript, piano } from '../../scripts/video-sandbox-ambiente.mjs'
 
 /**
  * L'AMBIENTE PRONTO — lo snapshot, il ripiego, lo `sha256` dichiarato, e lo script che costruisce lo snapshot.
@@ -61,7 +81,12 @@ import {
  * Che cosa si prova QUI, e che cosa altrove:
  *
  *  · la SCELTA «riaggancia, poi snapshot, poi ripiego» (`apriLaMicroVm`) con un SDK FINTO che lancia dove si vuole:
- *    il test che mancava a un adattatore che in locale non si può eseguire;
+ *    il test che mancava a un adattatore che in locale non si può eseguire. Con una piattaforma finta CON MEMORIA per i nomi,
+ *    dove si vede che il ripiego dopo uno snapshot fallito non va in conflitto di nome e che la sua MicroVM si ritrova
+ *    (secondario #167);
+ *  · i CONTROLLI dell'immagine che lo script di costruzione fa prima dello snapshot — gli strumenti che gli script del
+ *    runner danno per scontati e la rete verso il bucket — dal testo, da una `sh` vera e da `costruisci` con un Sandbox
+ *    finto (sezione 10, secondario #166);
  *  · il cablaggio di `macchinaVercel()` — che cosa chiede davvero a `Sandbox.get` e `Sandbox.create` — con l'SDK
  *    sostituito da un doppio. Le FIRME dell'SDK vero le controlla `tsc` (l'adattatore compila contro i suoi tipi);
  *  · gli script di shell come TESTO e come ESECUZIONE: l'esecuzione con una `sh` vera è in
@@ -283,6 +308,44 @@ describe('ambiente · i fatti di un errore (nome, stato HTTP, codice) e il suo t
       expect(e.message.length).toBeLessThan(MESSAGGIO_MAX)
     })
 
+    describe('un messaggio più lungo del tetto perde la TESTA e tiene la CODA (secondario #165)', () => {
+      // Il commento di `MESSAGGIO_ERRORE_MAX` diceva «quello che serve sta nell'inizio», e il codice faceva il contrario: la
+      // coda. La coda è la scelta giusta (l'SDK di Vercel scrive `Status code 429 is not ok: ` e POI il motivo del server, e lo
+      // stato sta già nell'intestazione): qui si prova che il comportamento è quello, perché il commento ora lo dica a ragione.
+      const TESTA = 'INIZIO-DEL-MESSAGGIO'
+      const CODA = 'MOTIVO-VERO-IN-CODA'
+      const lungo = `${TESTA} ${'x'.repeat(700)} ${CODA}`
+
+      it('la CODA c’è, la TESTA no, e il taglio si vede (`…` davanti al corpo)', () => {
+        const e = erroreSanificatoPerIlLog(new ErroreApiFinto(lungo, 429, 'rate_limited'))
+
+        expect(e.message).toContain(CODA)
+        expect(e.message).not.toContain(TESTA)
+        expect(e.message.startsWith('APIError HTTP 429 rate_limited: …')).toBe(true)
+        // Il corpo sta nel tetto dichiarato (ellissi compresa); l'intestazione è un'altra cosa e non si conta.
+        const corpo = e.message.slice('APIError HTTP 429 rate_limited: '.length)
+        expect(corpo.length).toBeLessThanOrEqual(260)
+      })
+
+      it('un messaggio che sta nel tetto passa INTERO, testa e coda: si taglia solo ciò che avanza', () => {
+        const corto = `${TESTA} ${CODA}`
+        const e = erroreSanificatoPerIlLog(new Error(corto))
+
+        expect(e.message).toBe(corto)
+      })
+
+      it('il commento di `MESSAGGIO_ERRORE_MAX` dice «coda» e non il contrario: il commento e il codice non si separano di nuovo', () => {
+        const sorgente = leggi('src', 'lib', 'media', 'video', 'runner', 'ambiente.ts')
+        const punto = sorgente.indexOf('const MESSAGGIO_ERRORE_MAX')
+        expect(punto).toBeGreaterThan(0)
+        // Il commento che sta SOPRA la costante: è proprio quello che era invecchiato.
+        const commento = sorgente.slice(Math.max(0, punto - 1200), punto)
+        expect(commento).toContain('CODA')
+        expect(commento).toContain('ULTIME')
+        expect(commento).not.toMatch(/sta nell['’]inizio/)
+      })
+    })
+
     it.each<[string, unknown, string]>([
       ['una stringa lanciata (`throw "x"`)', 'qualcosa è andato storto', 'qualcosa è andato storto'],
       ['un valore che non è un errore', 42, 'errore non descrivibile'],
@@ -326,7 +389,8 @@ describe('ambiente · apriLaMicroVm: riaggancio, poi snapshot, poi ripiego — p
 
   /** Un SDK finto: ogni chiamata si registra, e le tre risposte si decidono per scenario. */
   function sdkFinto(copione: {
-    riaggancia?: 'riesce' | Error
+    /** Per tutti i nomi, oppure per nome (`(nome) => 'riesce' | Error`). Senza copione nessuna MicroVM esiste. */
+    riaggancia?: 'riesce' | Error | ((nome: string) => 'riesce' | Error)
     creaDaSnapshot?: 'riesce' | Error
     creaDaRuntime?: 'riesce' | Error
   }) {
@@ -334,7 +398,8 @@ describe('ambiente · apriLaMicroVm: riaggancio, poi snapshot, poi ripiego — p
     const sdk: SdkMicroVm<{ id: string }> = {
       async riaggancia(nome) {
         chiamate.push({ tipo: 'riaggancia', argomento: nome })
-        const risposta = copione.riaggancia ?? new Error('Sandbox non trovato')
+        const perQuestoNome = typeof copione.riaggancia === 'function' ? copione.riaggancia(nome) : copione.riaggancia
+        const risposta = perQuestoNome ?? new Error('Sandbox non trovato')
         if (risposta instanceof Error) throw risposta
         return { id: 'riagganciata' }
       },
@@ -350,12 +415,30 @@ describe('ambiente · apriLaMicroVm: riaggancio, poi snapshot, poi ripiego — p
   }
 
   it('una MicroVM che esiste già (la conversione sta girando) si RIAGGANCIA: nessuna creazione, nessun grido', async () => {
-    const { sdk, chiamate } = sdkFinto({ riaggancia: 'riesce' })
+    const { sdk, chiamate } = sdkFinto({
+      riaggancia: (nome) => (nome === RICHIESTA.nome ? 'riesce' : new Error('Sandbox non trovato')),
+    })
 
     const aperta = await apriLaMicroVm(sdk, RICHIESTA, SNAPSHOT_OK)
 
     expect(aperta).toEqual({ sandbox: { id: 'riagganciata' }, nuova: false, origine: undefined })
-    expect(chiamate).toEqual([{ tipo: 'riaggancia', argomento: 'kv-video-abc-5' }])
+    // Si guarda PRIMA il nome del ripiego (che non c'è), poi quello principale (che c'è): nessuna creazione, e il riaggancio
+    // riuscito non scrive niente — il ripiego «assente» è il caso normale, non un errore (secondario #167).
+    expect(chiamate).toEqual([
+      { tipo: 'riaggancia', argomento: 'kv-video-abc-5-r' },
+      { tipo: 'riaggancia', argomento: 'kv-video-abc-5' },
+    ])
+    expect(righeDiLog()).toEqual([])
+  })
+
+  it('una MicroVM del RIPIEGO che sta convertendo si riaggancia al PRIMO tentativo: il suo nome è il primo che si guarda', async () => {
+    const { sdk, chiamate, creazioni } = sdkFinto({ riaggancia: (nome) => (nome === 'kv-video-abc-5-r' ? 'riesce' : new Error('x')) })
+
+    const aperta = await apriLaMicroVm(sdk, RICHIESTA, SNAPSHOT_OK)
+
+    expect(aperta).toEqual({ sandbox: { id: 'riagganciata' }, nuova: false, origine: undefined })
+    expect(chiamate).toEqual([{ tipo: 'riaggancia', argomento: 'kv-video-abc-5-r' }])
+    expect(creazioni()).toEqual([])
     expect(righeDiLog()).toEqual([])
   })
 
@@ -377,14 +460,20 @@ describe('ambiente · apriLaMicroVm: riaggancio, poi snapshot, poi ripiego — p
       },
     ])
     // Senza questa riga «creata» e «riagganciata» sarebbero indistinguibili: non si misurerebbe mai se la ripresa funziona.
+    // UNA per apertura: conta le creazioni, e il riaggancio del nome del ripiego (che fallisce sempre nel caso normale) ha
+    // un evento suo, così non le raddoppia.
     const riaggancio = conEsito('riaggancio-non-riuscito')
     expect(riaggancio).toHaveLength(1)
     expect(riaggancio[0][0]).toBe('cron')
     expect(riaggancio[0][1]).toBe('info')
+    const riaggancioDelRipiego = conEsito('riaggancio-ripiego-non-riuscito')
+    expect(riaggancioDelRipiego).toHaveLength(1)
+    expect(riaggancioDelRipiego[0][0]).toBe('cron')
+    expect(riaggancioDelRipiego[0][1]).toBe('info')
     expect(conEsito('ambiente-pronto-assente')).toEqual([])
   })
 
-  describe('lo snapshot non si può usare: si ripiega sul percorso della PR 1, INVARIATO, e si grida', () => {
+  describe('lo snapshot non si può usare: si ripiega sul percorso della PR 1, INVARIATO (salvo il nome), e si grida', () => {
     /** I parametri del ripiego, come li dava `macchinaVercel` nella PR 1: parola per parola. */
     const PARAMETRI_DELLA_PR_1 = {
       runtime: 'node22',
@@ -394,6 +483,11 @@ describe('ambiente · apriLaMicroVm: riaggancio, poi snapshot, poi ripiego — p
       timeout: 1_800_000,
       persistent: false,
     }
+    /**
+     * Il ripiego DOPO uno snapshot tentato e fallito: gli stessi parametri, e un nome suo (secondario #167). Senza snapshot
+     * configurato — nessun tentativo — il nome resta quello della PR 1.
+     */
+    const PARAMETRI_DEL_RIPIEGO_DOPO_LO_SNAPSHOT = { ...PARAMETRI_DELLA_PR_1, name: 'kv-video-abc-5-r' }
 
     it('lo snapshot MANCA (l’SDK risponde 410 `snapshot_not_found`): ripiego, con il codice dell’SDK nel grido', async () => {
       const { sdk, creazioni } = sdkFinto({ creaDaSnapshot: new ErroreApi(410, 'snapshot_not_found') })
@@ -404,9 +498,11 @@ describe('ambiente · apriLaMicroVm: riaggancio, poi snapshot, poi ripiego — p
       // Due creazioni, nell'ordine: prima lo snapshot (fallita), poi il percorso della PR 1.
       expect(creazioni()).toHaveLength(2)
       expect('source' in creazioni()[0]).toBe(true)
-      // Il ripiego è IDENTICO alla PR 1, non «simile»: `toEqual` su tutte le chiavi, e nessuna chiave in più.
-      expect(creazioni()[1]).toEqual(PARAMETRI_DELLA_PR_1)
+      // Il ripiego è IDENTICO alla PR 1, non «simile», tranne il nome (la creazione fallita può averlo lasciato occupato):
+      // `toEqual` su tutte le chiavi, e nessuna chiave in più.
+      expect(creazioni()[1]).toEqual(PARAMETRI_DEL_RIPIEGO_DOPO_LO_SNAPSHOT)
       expect(Object.keys(creazioni()[1]).sort()).toEqual(Object.keys(PARAMETRI_DELLA_PR_1).sort())
+      expect(creazioni()[1].name).not.toBe(creazioni()[0].name)
 
       const grido = conEsito('ambiente-pronto-assente')
       expect(grido).toHaveLength(1)
@@ -430,7 +526,7 @@ describe('ambiente · apriLaMicroVm: riaggancio, poi snapshot, poi ripiego — p
       const aperta = await apriLaMicroVm(sdk, RICHIESTA, SNAPSHOT_OK)
 
       expect(aperta.origine).toBe('runtime')
-      expect(creazioni()[1]).toEqual(PARAMETRI_DELLA_PR_1)
+      expect(creazioni()[1]).toEqual(PARAMETRI_DEL_RIPIEGO_DOPO_LO_SNAPSHOT)
       const grido = conEsito('ambiente-pronto-assente')
       expect(grido).toHaveLength(1)
       expect(grido[0][2].error_code).toBe(codice)
@@ -481,6 +577,151 @@ describe('ambiente · apriLaMicroVm: riaggancio, poi snapshot, poi ripiego — p
       await expect(apriLaMicroVm(sdk, RICHIESTA, SNAPSHOT_OK)).rejects.toBe(dalRuntime)
       // Il grido dello snapshot c'è stato lo stesso: dice perché si è provato il ripiego.
       expect(conEsito('ambiente-pronto-assente')).toHaveLength(1)
+    })
+  })
+
+  describe('il ripiego dopo uno snapshot fallito ha un NOME DIVERSO, e la sua MicroVM si ritrova (secondario #167)', () => {
+    /**
+     * Una piattaforma finta CON MEMORIA: i nomi sono unici nel progetto, `crea` registra la MicroVM e `riaggancia` la ritrova
+     * per nome. È il pezzo che il finto piatto di `sdkFinto` non ha: senza memoria un nome occupato non può andare in
+     * conflitto, e il difetto resterebbe invisibile — verde CON e SENZA la correzione.
+     *
+     * ⚠️ Ciò che si assume qui è la documentazione dell'SDK (i nomi sono unici nel progetto: `getOrCreate` li usa per ritrovare
+     * una MicroVM), non una misura: il codice dell'errore di conflitto è di fantasia. Non importa quale sia: importa che un
+     * secondo `crea` con un nome già preso LANCI.
+     */
+    function piattaformaFinta(copione: { creaDaSnapshot?: 'riesce' | 'rifiutata' | 'registrata-poi-persa' } = {}) {
+      const vive = new Map<string, string>()
+      const creazioni: ParametriCreazione[] = []
+      const riagganci: string[] = []
+      const sdk: SdkMicroVm<{ id: string }> = {
+        async riaggancia(nome) {
+          riagganci.push(nome)
+          const id = vive.get(nome)
+          if (id === undefined) throw new ErroreApi(404, 'not_found', 'Sandbox non trovato')
+          return { id }
+        },
+        async crea(parametri) {
+          creazioni.push(parametri)
+          if (vive.has(parametri.name)) throw new ErroreApi(409, 'name_already_used', 'il nome è già preso')
+          const daSnapshot = 'source' in parametri
+          const esito = daSnapshot ? (copione.creaDaSnapshot ?? 'riesce') : 'riesce'
+          if (esito === 'rifiutata') throw new ErroreApi(410, 'snapshot_not_found')
+          const id = `${daSnapshot ? 'dallo-snapshot' : 'dal-runtime'}:${parametri.name}`
+          vive.set(parametri.name, id)
+          // La piattaforma ha creato la MicroVM, ma la risposta si è persa: per chi chiama è un'eccezione.
+          if (esito === 'registrata-poi-persa') throw Object.assign(new TypeError('fetch failed'), { code: 'ECONNRESET' })
+          return { id }
+        },
+      }
+      return { sdk, vive, creazioni, riagganci }
+    }
+
+    it('il finto ha memoria: lo STESSO nome due volte va in conflitto (se non lo facesse, questi test sarebbero verdi anche col difetto)', async () => {
+      const { sdk } = piattaformaFinta()
+      const parametri: ParametriCreazione = { name: 'kv-video-abc-5', region: 'dub1', resources: { vcpus: 4 }, timeout: 1, persistent: false, runtime: RUNTIME_DI_RIPIEGO }
+
+      await sdk.crea(parametri)
+      await expect(sdk.crea(parametri)).rejects.toMatchObject({ response: { status: 409 } })
+    })
+
+    it('una creazione dallo snapshot che LANCIA dopo aver preso il nome (la risposta si perde): il ripiego nasce con un nome DIVERSO e riesce', async () => {
+      const { sdk, creazioni, vive } = piattaformaFinta({ creaDaSnapshot: 'registrata-poi-persa' })
+
+      const aperta = await apriLaMicroVm(sdk, RICHIESTA, SNAPSHOT_OK)
+
+      expect(aperta).toMatchObject({ nuova: true, origine: 'runtime' })
+      // Due creazioni: quella dello snapshot (col nome principale, che la piattaforma ha PRESO) e quella del ripiego.
+      expect(creazioni.map((c) => c.name)).toEqual(['kv-video-abc-5', 'kv-video-abc-5-r'])
+      expect(creazioni[1].name).toBe(nomeDelRipiego(RICHIESTA.nome))
+      expect(creazioni[1].name).not.toBe(creazioni[0].name)
+      // Entrambe le MicroVM esistono: quella dello snapshot è il RESIDUO, l'altra è dove si converte.
+      expect([...vive.keys()].sort()).toEqual(['kv-video-abc-5', 'kv-video-abc-5-r'])
+      // E il grido c'è, col motivo (la rete): il ripiego si grida sempre.
+      expect(conEsito('ambiente-pronto-assente')[0][2]).toMatchObject({ error_code: 'ECONNRESET' })
+    })
+
+    it('il giro dopo, la MicroVM del RIPIEGO si RIAGGANCIA — e quando esiste anche il residuo con il nome principale, vince il ripiego', async () => {
+      const piattaforma = piattaformaFinta({ creaDaSnapshot: 'registrata-poi-persa' })
+      await apriLaMicroVm(piattaforma.sdk, RICHIESTA, SNAPSHOT_OK)
+      // Il punto di partenza è quello pericoloso: ESISTONO tutte e due.
+      expect(piattaforma.vive.size).toBe(2)
+      const creazioniPrima = piattaforma.creazioni.length
+      piattaforma.riagganci.length = 0
+
+      const aperta = await apriLaMicroVm(piattaforma.sdk, RICHIESTA, SNAPSHOT_OK)
+
+      // La conversione sta nella MicroVM del ripiego: è quella che si ritrova, non il residuo dello snapshot.
+      expect(aperta).toEqual({ sandbox: { id: 'dal-runtime:kv-video-abc-5-r' }, nuova: false, origine: undefined })
+      expect(piattaforma.creazioni).toHaveLength(creazioniPrima)
+      // Si è fermato al primo nome: il ripiego si guarda PER PRIMO.
+      expect(piattaforma.riagganci).toEqual(['kv-video-abc-5-r'])
+    })
+
+    it('uno snapshot che non si crea affatto (410, nessun nome preso): il ripiego riesce lo stesso, e si riaggancia lo stesso', async () => {
+      const piattaforma = piattaformaFinta({ creaDaSnapshot: 'rifiutata' })
+
+      const prima = await apriLaMicroVm(piattaforma.sdk, RICHIESTA, SNAPSHOT_OK)
+      const dopo = await apriLaMicroVm(piattaforma.sdk, RICHIESTA, SNAPSHOT_OK)
+
+      expect(prima).toMatchObject({ nuova: true, origine: 'runtime' })
+      expect(dopo).toEqual({ sandbox: prima.sandbox, nuova: false, origine: undefined })
+      expect([...piattaforma.vive.keys()]).toEqual(['kv-video-abc-5-r'])
+    })
+
+    it('una MicroVM nata dallo snapshot (il caso normale) si riaggancia col nome principale, senza creare altro', async () => {
+      const piattaforma = piattaformaFinta()
+
+      const prima = await apriLaMicroVm(piattaforma.sdk, RICHIESTA, SNAPSHOT_OK)
+      const dopo = await apriLaMicroVm(piattaforma.sdk, RICHIESTA, SNAPSHOT_OK)
+
+      expect(prima).toMatchObject({ nuova: true, origine: 'snapshot' })
+      expect(dopo).toEqual({ sandbox: prima.sandbox, nuova: false, origine: undefined })
+      expect(piattaforma.creazioni).toHaveLength(1)
+      expect(piattaforma.creazioni[0].name).toBe('kv-video-abc-5')
+    })
+
+    it('SENZA snapshot configurato non c’è stato nessun tentativo che abbia potuto prendere il nome: il ripiego ha quello della PR 1', async () => {
+      const piattaforma = piattaformaFinta()
+
+      const prima = await apriLaMicroVm(piattaforma.sdk, RICHIESTA, { stato: 'assente' })
+      const dopo = await apriLaMicroVm(piattaforma.sdk, RICHIESTA, { stato: 'assente' })
+
+      expect(prima).toMatchObject({ nuova: true, origine: 'runtime' })
+      expect(piattaforma.creazioni.map((c) => c.name)).toEqual(['kv-video-abc-5'])
+      // …e si ritrova lo stesso: i due nomi si guardano comunque.
+      expect(dopo).toEqual({ sandbox: prima.sandbox, nuova: false, origine: undefined })
+    })
+
+    it('se il ripiego lancia anche col nome nuovo, l’eccezione ESCE (è `SANDBOX_UNAVAILABLE` per chi chiama), e non resta nessun nome del ripiego', async () => {
+      const piattaforma = piattaformaFinta({ creaDaSnapshot: 'rifiutata' })
+      const originale = piattaforma.sdk.crea.bind(piattaforma.sdk)
+      const dalRuntime = new ErroreApi(503, 'unavailable', 'piattaforma giù')
+      piattaforma.sdk.crea = async (parametri) => {
+        if ('runtime' in parametri) throw dalRuntime
+        return originale(parametri)
+      }
+
+      await expect(apriLaMicroVm(piattaforma.sdk, RICHIESTA, SNAPSHOT_OK)).rejects.toBe(dalRuntime)
+      expect(piattaforma.vive.size).toBe(0)
+    })
+
+    it('il nome del ripiego è quello principale più `-r`, sta in un’etichetta DNS anche col `fence_epoch` più lungo, e non collide mai con un nome principale', () => {
+      expect(SUFFISSO_NOME_DI_RIPIEGO).toBe('-r')
+      expect(nomeDelRipiego('kv-video-abc-5')).toBe('kv-video-abc-5-r')
+
+      const job = '3f2a61b4-1c7d-4e58-9a0b-2d4c6e8f0a12'
+      for (const fence of [0, 1, 4, 1234, Number.MAX_SAFE_INTEGER]) {
+        const principale = nomeSandboxVideo(job, fence)
+        const ripiego = nomeDelRipiego(principale)
+        // Un'etichetta DNS è lunga al più 63 caratteri: il nome finisce in un sottodominio se si espone una porta.
+        expect(ripiego.length, `fence ${fence}`).toBeLessThanOrEqual(63)
+        expect(principale).toMatch(/^kv-video-[0-9a-f]{32}-[0-9]+$/)
+        expect(ripiego).toMatch(/^kv-video-[0-9a-f]{32}-[0-9]+-r$/)
+        // Un nome principale finisce sempre con una cifra (il `fence_epoch`): quello del ripiego no, quindi non può essere il
+        // principale di nessun altro tentativo — le due forme non si sovrappongono.
+        expect(ripiego).not.toMatch(/^kv-video-[0-9a-f]{32}-[0-9]+$/)
+      }
     })
   })
 
@@ -539,15 +780,17 @@ describe('ambiente · macchinaVercel cabla la scelta sull’SDK: Sandbox.get, Sa
     return { runCommand, stop: vi.fn(async () => undefined) }
   }
 
-  it('con la variabile impostata e nessuna MicroVM da riagganciare: `Sandbox.get({ name, resume: true })`, poi `create` dallo snapshot', async () => {
+  it('con la variabile impostata e nessuna MicroVM da riagganciare: `Sandbox.get({ name, resume: true })` per i DUE nomi, poi `create` dallo snapshot', async () => {
     vi.stubEnv(ENV_SNAPSHOT_SANDBOX, 'snap_AbCdEf123456')
     h.get.mockRejectedValue(new Error('Sandbox non trovato'))
     h.create.mockResolvedValue(sandboxFinto())
 
     const sessione = await macchinaVercel().apri(RICHIESTA)
 
-    expect(h.get).toHaveBeenCalledTimes(1)
-    expect(h.get).toHaveBeenCalledWith({ name: 'kv-video-abc-5', resume: true })
+    // Il nome del ripiego per primo, poi quello principale (secondario #167).
+    expect(h.get).toHaveBeenCalledTimes(2)
+    expect(h.get).toHaveBeenNthCalledWith(1, { name: 'kv-video-abc-5-r', resume: true })
+    expect(h.get).toHaveBeenNthCalledWith(2, { name: 'kv-video-abc-5', resume: true })
     expect(h.create).toHaveBeenCalledTimes(1)
     expect(h.create).toHaveBeenCalledWith({
       name: 'kv-video-abc-5',
@@ -604,7 +847,9 @@ describe('ambiente · macchinaVercel cabla la scelta sull’SDK: Sandbox.get, Sa
 
     expect(h.create).toHaveBeenCalledTimes(2)
     expect('source' in h.create.mock.calls[0][0]).toBe(true)
-    expect(h.create.mock.calls[1][0]).toMatchObject({ runtime: 'node22' })
+    expect(h.create.mock.calls[0][0]).toMatchObject({ name: 'kv-video-abc-5' })
+    // Il ripiego dopo lo snapshot fallito nasce con un nome suo: la creazione fallita può aver lasciato il primo occupato.
+    expect(h.create.mock.calls[1][0]).toMatchObject({ runtime: 'node22', name: 'kv-video-abc-5-r' })
     expect(sessione.origine).toBe('runtime')
   })
 
@@ -1054,6 +1299,12 @@ describe('scripts/video-sandbox-ambiente.mjs: usa la preparazione CONDIVISA e no
       expect(esito.stdout).toContain(`script-inventario-sha256: ${sha256(comandoInventarioBuild(CARTELLA_BINARI_NELLO_SNAPSHOT))}`)
     })
 
+    it('il piano elenca anche i controlli dell’immagine: le impronte dei due script e gli strumenti richiesti (secondario #166)', () => {
+      expect(esito.stdout).toContain(`script-controllo-strumenti-sha256: ${sha256(scriptControlloStrumenti())}`)
+      expect(esito.stdout).toContain(`script-controllo-rete-sha256: ${sha256(scriptControlloRete())}`)
+      expect(esito.stdout).toContain(`strumenti-richiesti: ${STRUMENTI_DELL_AMBIENTE.map((strumento) => strumento.nome).join(' ')}`)
+    })
+
     it('NON stampa la chiave, il token, né un indirizzo — né su stdout né su stderr', () => {
       expect(esito.tutto).not.toContain(CHIAVE_FINTA)
       expect(esito.tutto).not.toContain(TOKEN_FINTO)
@@ -1126,6 +1377,16 @@ describe('scripts/video-sandbox-ambiente.mjs: usa la preparazione CONDIVISA e no
       expect(codice.match(/\b[0-9a-f]{64}\b/g)).toBeNull()
     })
 
+    it('i controlli dell’immagine sono presi da `src/` e NON scritti qui: nessun `command -v`, nessuna riga `MANCA`, e l’URL firmato entra nell’ambiente (secondario #166)', () => {
+      for (const nome of ['scriptControlloStrumenti', 'scriptControlloRete', 'strumentiMancanti', 'spiegaUscitaDellaRete']) {
+        expect(codice, nome).toContain(nome)
+      }
+      expect(codice).not.toContain('command -v')
+      expect(codice).not.toContain('MANCA')
+      expect(codice).toMatch(/args:\s*\['-c',\s*controlloStrumenti\]/)
+      expect(codice).toMatch(/args:\s*\['-c',\s*controlloRete\],\s*env:\s*\{\s*\[ENV_URL_FFPROBE\]:\s*urlFfprobe\s*\}/)
+    })
+
     it('la costruzione fa quello che la testata promette: apt solo con `sudo`, snapshot senza scadenza, il Sandbox si ferma se qualcosa va storto', () => {
       expect(codice).toMatch(/'apt-get'[\s\S]{0,80}sudo:\s*true/)
       expect(codice).toContain('snapshot({ expiration: 0 })')
@@ -1170,3 +1431,601 @@ describe('ambiente · lock sulle promesse del compito', () => {
     expect(env).toContain('scripts/video-sandbox-ambiente.mjs')
   })
 })
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 10. I CONTROLLI DELL'IMMAGINE: gli strumenti e la rete (secondario #166)
+ *
+ * La costruzione dello snapshot guardava le impronte e l'inventario dei binari, e nient'altro: un'immagine senza `pkill`, senza
+ * `awk` o senza rete verso il bucket costruiva uno snapshot che SEMBRAVA a posto e faceva fallire OGNI conversione — senza
+ * ripiegare, perché il ripiego scatta solo con l'uscita 26. Qui si prova che i controlli ci sono, che sono quelli giusti, e che
+ * un'immagine a cui manca qualcosa NON diventa uno snapshot.
+ *
+ * Tre misure diverse, perché nessuna basta da sola:
+ *  · il TESTO — l'elenco degli strumenti contro gli script veri del runner (un `sed` aggiunto a `script.ts` farebbe cadere il lock);
+ *  · l'ESECUZIONE — i due comandi dati a una `sh` vera, con un `PATH` fatto apposta (uno strumento che manca, uno che c'è ma
+ *    non è eseguibile, `curl` che esce col codice di un DNS giù);
+ *  · il GIRO — `costruisci` con un Sandbox finto, per vedere l'ORDINE (controlli prima della provvista) e che senza strumenti
+ *    nessuno snapshot venga chiesto.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('controlli dell’immagine · l’elenco degli strumenti contro gli script veri del runner (lock)', () => {
+  /**
+   * I comandi esterni che un testo di shell nomina, ricavati con un vocabolario: ogni parola che è il nome di un comando di
+   * sistema comune. Non è un parser — gli script sono generati, e un parser vero sarebbe più fragile degli script che deve
+   * leggere — ma ha il pregio di non dipendere da dove stia il comando (una pipeline, un `$(…)`, dentro un `sh -c '…'`).
+   *
+   * Si saltano le opzioni (`--connect-timeout` non è il comando `timeout`) e il programma Node dell'`here-document`, che è
+   * JavaScript e non shell. Dei percorsi conta l'ultimo pezzo (`/tmp/kv-ffmpeg/ffmpeg` → `ffmpeg`).
+   *
+   * Fuori dal vocabolario per scelta: ciò che è interno a `sh` (`echo`, `printf`, `test`, `trap`, `true`, `exit`…) e `ffmpeg` e
+   * `ffprobe`, che verificano le impronte e l'inventario.
+   */
+  const VOCABOLARIO = new Set([
+    'apt', 'apt-get', 'awk', 'base64', 'basename', 'bash', 'bc', 'cat', 'chgrp', 'chmod', 'chown', 'cmp', 'cp', 'curl', 'cut', 'date',
+    'dd', 'df', 'dig', 'diff', 'dirname', 'dnf', 'du', 'env', 'expr', 'file', 'find', 'fold', 'free', 'gawk', 'getconf', 'grep',
+    'gunzip', 'gzip', 'head', 'hostname', 'id', 'install', 'jq', 'ln', 'ls', 'md5sum', 'mkdir', 'mktemp', 'mv', 'nl', 'node', 'nproc',
+    'od', 'openssl', 'paste', 'perl', 'pgrep', 'ping', 'pkill', 'ps', 'python', 'python3', 'readlink', 'realpath', 'rev', 'rm', 'rmdir',
+    'sed', 'seq', 'sha1sum', 'sha256sum', 'sha512sum', 'sleep', 'sort', 'split', 'stat', 'sudo', 'sync', 'tac', 'tail', 'tar', 'tee',
+    'timeout', 'touch', 'tr', 'uname', 'uniq', 'unzip', 'wc', 'wget', 'which', 'whoami', 'xargs', 'xxd', 'xz', 'yes', 'yum', 'zcat',
+  ])
+
+  function comandiUsati(testi: readonly string[]): Set<string> {
+    const trovati = new Set<string>()
+    for (const testo of testi) {
+      const senzaProgramma = testo.replace(/<<'KV_TEMPORAL_PROGRAM'\n[\s\S]*?\nKV_TEMPORAL_PROGRAM/g, '')
+      for (let token of senzaProgramma.split(/[\s|&;()<>{}$"'`=,]+/)) {
+        if (token === '' || token.startsWith('-')) continue
+        if (token.includes('/')) token = token.slice(token.lastIndexOf('/') + 1)
+        if (VOCABOLARIO.has(token)) trovati.add(token)
+      }
+    }
+    return trovati
+  }
+
+  /** Ogni script e ogni comando che il runner manda alla MicroVM, su tutti i loro rami: con e senza snapshot, watermark, `sha256`. */
+  function scriptDelRunner(): string[] {
+    const snapshot = CARTELLA_BINARI_NELLO_SNAPSHOT
+    const conversione = { videoIndex: 0, sourceFps: 30, durationSeconds: 10, width: 1920, height: 1080 }
+    return [
+      scriptPreparazioneBuild(),
+      scriptPreparazioneBuild(snapshot),
+      scriptVerificaBinari(),
+      scriptVerificaBinari(snapshot),
+      comandoInventarioBuild(),
+      comandoInventarioBuild(snapshot),
+      scriptApparecchio(),
+      scriptApparecchio({ cartella: snapshot, binariGiaPresenti: true }),
+      scriptConversione({ ...conversione, conWatermark: true, audioIndex: 1, verificaSha256: true, cartellaBuild: snapshot }),
+      scriptConversione({ ...conversione, conWatermark: false, audioIndex: null }),
+      ...[comandoMarcatore(), comandoInterruzione(), comandoScritturaArgomenti(['-i', 'x'])].map((c) => c.args.join(' ')),
+    ]
+  }
+
+  const CONTROLLATI = STRUMENTI_DELL_AMBIENTE.map((s) => s.nome)
+
+  it('ogni comando che gli script chiamano è fra gli strumenti controllati: un `sed` nuovo in `script.ts` farebbe fallire ogni conversione e passerebbe lo snapshot', () => {
+    const nonControllati = [...comandiUsati(scriptDelRunner())].filter((nome) => !CONTROLLATI.includes(nome)).sort()
+
+    expect(
+      nonControllati,
+      'questi comandi sono negli script del runner ma non in STRUMENTI_DELL_AMBIENTE (src/lib/media/video/runner/controlli-ambiente.ts): ' +
+        'lo snapshot li darebbe per scontati senza mai controllarli',
+    ).toEqual([])
+  })
+
+  it('e viceversa: ogni strumento dell’elenco è chiamato da almeno uno script (nessuna voce morta)', () => {
+    const usati = comandiUsati(scriptDelRunner())
+
+    expect(CONTROLLATI.filter((nome) => !usati.has(nome))).toEqual([])
+  })
+
+  it('il lock vede qualcosa: i comandi trovati sono QUELLI che si sanno chiamati (e non un insieme vuoto che passa per vuotezza)', () => {
+    const usati = comandiUsati(scriptDelRunner())
+
+    // I tre che il secondario #166 nomina, più uno per ciascun modo di chiamare: pipeline, `$(…)`, `sh -c`, here-document.
+    for (const nome of ['pkill', 'awk', 'grep', 'curl', 'sha256sum', 'gzip', 'stat', 'wc', 'xargs', 'node']) {
+      expect(usati.has(nome), nome).toBe(true)
+    }
+  })
+
+  it('CONTROPROVA: un comando che l’elenco non conosce viene visto (`sed`, `jq`), e un’opzione che somiglia a un comando no (`--connect-timeout`)', () => {
+    const visti = comandiUsati(["sed -n 1p /tmp/x | jq . > /tmp/y", 'curl --connect-timeout 10 --max-time 5 "$URL"'])
+
+    expect([...visti].sort()).toEqual(['curl', 'jq', 'sed'])
+  })
+
+  it('l’elenco è in ordine alfabetico, senza doppioni, e ogni voce ha il suo pacchetto', () => {
+    expect([...CONTROLLATI]).toEqual([...CONTROLLATI].sort())
+    expect(new Set(CONTROLLATI).size).toBe(CONTROLLATI.length)
+    for (const s of STRUMENTI_DELL_AMBIENTE) expect(s.pacchetto, s.nome).not.toBe('')
+  })
+
+  it('dentro `sh` non c’è niente da controllare: nessun interno della shell è nell’elenco (`command -v printf` direbbe «c’è» anche senza il binario)', () => {
+    for (const interno of ['echo', 'printf', 'test', 'trap', 'true', 'exit', 'set', 'sh', 'ffmpeg', 'ffprobe']) {
+      expect(CONTROLLATI, interno).not.toContain(interno)
+    }
+  })
+})
+
+describe('controlli dell’immagine · le funzioni pure di `controlli-ambiente.ts`', () => {
+  it('`strumentiMancanti` legge SOLO le righe `MANCA <nome>`, senza doppioni, nell’ordine in cui sono scritte', () => {
+    expect(strumentiMancanti('MANCA pkill\nMANCA awk\nMANCA pkill\n')).toEqual(['pkill', 'awk'])
+    expect(strumentiMancanti('')).toEqual([])
+    // L'uscita di un comando non è un dato di cui fidarsi: una riga che non ha la forma esatta non conta.
+    expect(strumentiMancanti('manca pkill\nMANCA\nMANCA ; rm -rf /\nqualcosa MANCA grep\nMANCA  sed')).toEqual([])
+    expect(strumentiMancanti(undefined as unknown as string)).toEqual([])
+  })
+
+  it('`scriptControlloStrumenti` rifiuta un nome che non sia un nome di comando: finisce in una riga di shell', () => {
+    for (const nome of ['', 'a b', 'awk; rm -rf /', '$(id)', '-rf', 'x`y`', 'a\nb']) {
+      expect(() => scriptControlloStrumenti([{ nome, pacchetto: 'x' }]), JSON.stringify(nome)).toThrow(TypeError)
+    }
+    expect(() => scriptControlloStrumenti([{ nome: 'sha256sum', pacchetto: 'coreutils' }, { nome: 'g++', pacchetto: 'g++' }])).not.toThrow()
+  })
+
+  it('il comando degli strumenti nomina TUTTI gli strumenti, e nient’altro che `command -v` e la riga `MANCA`', () => {
+    const script = scriptControlloStrumenti()
+
+    for (const { nome } of STRUMENTI_DELL_AMBIENTE) expect(script, nome).toContain(nome)
+    expect(script).toContain('command -v')
+    // Non installa niente e non scarica niente: controlla (`curl` compare solo come NOME nell'elenco, accanto agli altri).
+    for (const vietato of ['apt', 'sudo', 'wget', 'dnf', 'install', 'http']) expect(script, vietato).not.toContain(vietato)
+    expect(script.match(/\bcurl\b/g)).toHaveLength(1)
+  })
+
+  it('il messaggio dice QUALE strumento manca, con il pacchetto che lo porta, e dove si aggiunge', () => {
+    const messaggio = messaggioStrumentiMancanti(['pkill', 'awk'])
+
+    expect(messaggio).toContain('pkill (pacchetto procps)')
+    expect(messaggio).toContain('awk (pacchetto mawk o gawk)')
+    expect(messaggio).toContain('apt-get')
+    // Un nome che l'elenco non conosce si dice com'è, senza inventare un pacchetto.
+    expect(messaggioStrumentiMancanti(['sconosciuto'])).toContain('sconosciuto')
+    expect(messaggioStrumentiMancanti(['sconosciuto'])).not.toContain('sconosciuto (pacchetto')
+  })
+
+  it.each<[number, RegExp]>([
+    [6, /DNS/],
+    [7, /connessione/],
+    [22, /URL firmato/],
+    [28, /tempo scaduto/],
+    [35, /TLS/],
+    [60, /ca-certificates/],
+    [77, /TLS/],
+    [127, /curl non si trova/],
+  ])('l’uscita %i di `curl` si spiega in parole', (uscita, atteso) => {
+    expect(spiegaUscitaDellaRete(uscita)).toMatch(atteso)
+  })
+
+  it('un’uscita che non si conosce si dice com’è', () => {
+    expect(spiegaUscitaDellaRete(99)).toBe('curl è uscito con 99')
+  })
+
+  it('il comando della rete è una HEAD con le opzioni dell’apparecchio, l’URL dall’AMBIENTE e mai fra gli argomenti', () => {
+    const script = scriptControlloRete()
+
+    expect(script).toContain('curl -fsSI --retry 3 --retry-all-errors')
+    expect(script).toContain(`"$${ENV_URL_FFPROBE}"`)
+    expect(script).toContain(`\${${ENV_URL_FFPROBE}:?}`)
+    // Nessun indirizzo scritto qui dentro, e la risposta non si stampa.
+    expect(script).not.toMatch(/https?:\/\//)
+    expect(script).toContain('> /dev/null')
+    // Esce con lo stato di curl, tale e quale: `spiegaUscitaDellaRete` lo legge.
+    expect(script).toContain('|| exit $?')
+  })
+})
+
+describe('controlli dell’immagine · i due comandi eseguiti da una `sh` VERA', () => {
+  const SHELL = process.env.KV_SHELL_DI_PROVA ?? '/bin/sh'
+  const cartelle: string[] = []
+
+  afterEach(() => {
+    for (const dir of cartelle.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** Una cartella che è l'INTERO `PATH`: ci sono solo gli strumenti che si chiedono, ciascuno un eseguibile che non fa niente. */
+  function pathCon(presenti: readonly string[], opzioni: { nonEseguibili?: readonly string[]; corpo?: string } = {}): string {
+    const dir = mkdtempSync(join(tmpdir(), 'kv-controlli-ambiente-'))
+    cartelle.push(dir)
+    for (const nome of presenti) {
+      const file = join(dir, nome)
+      writeFileSync(file, `#!/bin/sh\n${opzioni.corpo ?? 'exit 0'}\n`)
+      chmodSync(file, 0o755)
+    }
+    for (const nome of opzioni.nonEseguibili ?? []) {
+      const file = join(dir, nome)
+      writeFileSync(file, '#!/bin/sh\nexit 0\n')
+      chmodSync(file, 0o644)
+    }
+    return dir
+  }
+
+  function esegui(script: string, dir: string, env: Record<string, string> = {}) {
+    // `PATH` è la sola cartella costruita; la shell si lancia per percorso assoluto, e `command` è un interno.
+    return spawnSync(SHELL, ['-c', script], { env: { PATH: dir, NODE_ENV: 'test', ...env }, encoding: 'utf8', timeout: 20_000 })
+  }
+
+  const TUTTI = STRUMENTI_DELL_AMBIENTE.map((s) => s.nome)
+
+  it('con TUTTI gli strumenti: esce 0 e non scrive niente', () => {
+    const r = esegui(scriptControlloStrumenti(), pathCon(TUTTI))
+
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.stdout).toBe('')
+    expect(strumentiMancanti(r.stdout)).toEqual([])
+  })
+
+  it.each(TUTTI)('manca solo `%s`: esce 1 e scrive esattamente la sua riga «MANCA …»', (nome) => {
+    const r = esegui(scriptControlloStrumenti(), pathCon(TUTTI.filter((t) => t !== nome)))
+
+    expect(r.status, r.stderr).toBe(1)
+    expect(r.stdout).toBe(`MANCA ${nome}\n`)
+    expect(strumentiMancanti(r.stdout)).toEqual([nome])
+  })
+
+  it('manca più di uno strumento: li dice TUTTI, non solo il primo (chi costruisce ne installa tre insieme)', () => {
+    const r = esegui(scriptControlloStrumenti(), pathCon(TUTTI.filter((t) => !['pkill', 'awk', 'xargs'].includes(t))))
+
+    expect(r.status).toBe(1)
+    expect(strumentiMancanti(r.stdout)).toEqual(['awk', 'pkill', 'xargs'])
+  })
+
+  it('un `PATH` vuoto: mancano tutti, nell’ordine dell’elenco', () => {
+    const r = esegui(scriptControlloStrumenti(), pathCon([]))
+
+    expect(r.status).toBe(1)
+    expect(strumentiMancanti(r.stdout)).toEqual(TUTTI)
+  })
+
+  it('uno strumento che c’è ma NON è eseguibile non c’è: `command -v` non lo trova, e il runner non potrebbe lanciarlo', () => {
+    const r = esegui(scriptControlloStrumenti(), pathCon(TUTTI.filter((t) => t !== 'grep'), { nonEseguibili: ['grep'] }))
+
+    expect(r.status).toBe(1)
+    expect(strumentiMancanti(r.stdout)).toEqual(['grep'])
+  })
+
+  it('la rete: l’uscita di `curl` arriva tale e quale, con l’URL dall’ambiente, e l’URL NON compare nell’uscita del comando', () => {
+    const URL_FIRMATO = 'https://esempio.invalid/storage/v1/object/sign/video_build/x.gz?token=SEGRETO-DI-PROVA-0123'
+    const registro = join(mkdtempSync(join(tmpdir(), 'kv-rete-registro-')), 'argomenti')
+    cartelle.push(join(registro, '..'))
+    // Un `curl` finto: scrive gli argomenti che ha ricevuto e esce col codice che gli si chiede.
+    const dir = pathCon(['curl'], { corpo: `printf '%s\\n' "$@" > '${registro}'\nexit "\${KV_CURL_ESCE:-0}"` })
+
+    for (const uscita of [0, 6, 22, 28, 60]) {
+      const r = esegui(scriptControlloRete(), dir, { [ENV_URL_FFPROBE]: URL_FIRMATO, KV_CURL_ESCE: String(uscita) })
+
+      expect(r.status, `curl esce ${uscita}`).toBe(uscita)
+      expect(r.stdout + r.stderr).not.toContain('SEGRETO-DI-PROVA')
+    }
+
+    // Gli argomenti veri: una HEAD silenziosa che fallisce sugli errori HTTP, con i tentativi e i tetti dell'apparecchio, e l'URL per ultimo.
+    const argomenti = readFileSync(registro, 'utf8').trim().split('\n')
+    expect(argomenti.slice(0, -1)).toEqual(['-fsSI', '--retry', '3', '--retry-all-errors', '--connect-timeout', '10', '--max-time', '30'])
+    expect(argomenti[argomenti.length - 1]).toBe(URL_FIRMATO)
+  })
+
+  it('senza l’indirizzo nell’ambiente il comando NON chiama `curl`, e fallisce', () => {
+    const registro = join(mkdtempSync(join(tmpdir(), 'kv-rete-registro-')), 'chiamato')
+    cartelle.push(join(registro, '..'))
+    const dir = pathCon(['curl'], { corpo: `echo si > '${registro}'\nexit 0` })
+
+    const r = esegui(scriptControlloRete(), dir)
+
+    expect(r.status).not.toBe(0)
+    expect(existsSync(registro)).toBe(false)
+  })
+})
+
+describe('scripts/video-sandbox-ambiente.mjs · la costruzione con un Sandbox FINTO: nessuno snapshot se all’immagine manca qualcosa (secondario #166)', () => {
+  const OPZIONI = { aSecco: false, regione: 'dub1', vcpus: 4 }
+  const SEGRETO_FFMPEG = 'SEGRETO-FFMPEG-0123456789'
+  const SEGRETO_FFPROBE = 'SEGRETO-FFPROBE-0123456789'
+  const URL_FFMPEG = `https://esempio.invalid/storage/v1/object/sign/video_build/ffmpeg.gz?token=${SEGRETO_FFMPEG}`
+  const URL_FFPROBE = `https://esempio.invalid/storage/v1/object/sign/video_build/ffprobe.gz?token=${SEGRETO_FFPROBE}`
+
+  const elenco = (nomi: readonly string[], bandierine: string): string => nomi.map((nome) => ` ${bandierine} ${nome}   descrizione`).join('\n')
+  /** L'inventario di una build COMPLETA, nella forma dell'uscita di `ffmpeg -filters/-decoders/-encoders`. */
+  const INVENTARIO = [
+    elenco(FILTRI_RICHIESTI, '..'),
+    elenco(DECODER_RICHIESTI, 'V....D'),
+    elenco(ENCODER_RICHIESTI, 'V....D'),
+  ].join(`\n${SEPARATORE_INVENTARIO}\n`)
+
+  interface ComandoDelSandbox {
+    cmd: string
+    args?: string[]
+    env?: Record<string, string>
+    sudo?: boolean
+    timeoutMs?: number
+  }
+
+  interface Copione {
+    /** Gli strumenti che il comando dice mancanti (`MANCA …`, uscita 1). */
+    strumentiMancanti?: string[]
+    /** Il comando degli strumenti, deciso per intero (per i casi che non somigliano a «manca uno strumento»). */
+    controlloStrumenti?: { exitCode: number; stdout?: string }
+    /** La rete: uscita e stderr del comando di `curl`. */
+    rete?: { exitCode: number; stderr?: string }
+  }
+
+  /**
+   * Un Sandbox che risponde ai comandi guardando CHE COSA gli si chiede: gli script del piano sono riconosciuti per uguaglianza
+   * di testo (sono le stesse funzioni di `src/`, quindi se la costruzione ne eseguisse un altro lo si vedrebbe), tutto il
+   * resto risponde «va bene». `eventi` è l'ORDINE dei passi che interessano, con `SNAPSHOT` e `STOP` dentro.
+   */
+  function costruzioneFinta(copione: Copione = {}) {
+    const p = piano()
+    const eseguiti: ComandoDelSandbox[] = []
+    const eventi: string[] = []
+    /** Come `eventi`, ma con `apt-get` e le FIRME dentro: serve a vedere QUANDO si firmano gli indirizzi (#179). */
+    const cronologia: string[] = []
+    const richiesteDiSnapshot: unknown[] = []
+    const finito = (exitCode: number, stdout = '', stderr = '') => ({ exitCode, stdout: async () => stdout, stderr: async () => stderr })
+
+    function rispondi(comando: ComandoDelSandbox) {
+      const script = comando.cmd === 'sh' ? (comando.args?.[1] ?? '') : ''
+      cronologia.push(comando.cmd === 'apt-get' ? `apt-get ${comando.args?.[0] ?? ''}` : script === p.controlloRete ? 'rete' : script === p.provvista ? 'provvista' : comando.cmd)
+      if (script === p.controlloStrumenti) {
+        eventi.push('strumenti')
+        if (copione.controlloStrumenti) return finito(copione.controlloStrumenti.exitCode, copione.controlloStrumenti.stdout ?? '')
+        const mancano = copione.strumentiMancanti ?? []
+        return mancano.length > 0 ? finito(1, mancano.map((nome) => `MANCA ${nome}\n`).join('')) : finito(0)
+      }
+      if (script === p.controlloRete) {
+        eventi.push('rete')
+        return copione.rete ? finito(copione.rete.exitCode, '', copione.rete.stderr ?? '') : finito(0)
+      }
+      if (script === p.provvista) {
+        eventi.push('provvista')
+        return finito(0)
+      }
+      if (script === p.inventario) {
+        eventi.push('inventario')
+        return finito(0, INVENTARIO)
+      }
+      if (script === p.verifica) {
+        eventi.push('verifica')
+        return finito(0)
+      }
+      if (comando.cmd === 'sha256sum') {
+        eventi.push('impronte')
+        return finito(0, `${FFMPEG_SHA256}  ${p.cartella}/ffmpeg\n${FFPROBE_SHA256}  ${p.cartella}/ffprobe\n`)
+      }
+      if (comando.cmd === 'id') return finito(0, '1000\n')
+      if (comando.cmd === 'curl') return finito(0, 'curl 8.99.0 (finto)\n')
+      if (script.startsWith('. /etc/os-release')) return finito(0, 'Ubuntu 26.04 LTS x86_64\n')
+      return finito(0)
+    }
+
+    const sandbox = {
+      async runCommand(comando: ComandoDelSandbox) {
+        eseguiti.push(comando)
+        return rispondi(comando)
+      },
+      async snapshot(parametri: unknown) {
+        eventi.push('SNAPSHOT')
+        richiesteDiSnapshot.push(parametri)
+        return { snapshotId: 'snap_FINTO0123456789', status: 'created', regions: ['dub1'], sizeBytes: 1234, expiresAt: undefined }
+      },
+      async stop() {
+        eventi.push('STOP')
+      },
+    }
+    const create = vi.fn(async (parametri: unknown) => {
+      void parametri
+      return sandbox
+    })
+    const supabase = {
+      storage: {
+        from: () => ({
+          createSignedUrl: async (percorso: string) => {
+            cronologia.push('firma')
+            return {
+              data: { signedUrl: percorso.endsWith('ffmpeg.gz') ? URL_FFMPEG : URL_FFPROBE },
+              error: null,
+            }
+          },
+        }),
+      },
+    }
+    return {
+      dipendenze: { credenziali: { token: 'FINTO-TOKEN-VERCEL-9876', projectId: 'prj_finto', teamId: 'team_finto' }, supabase, Sandbox: { create } },
+      eseguiti,
+      eventi,
+      cronologia,
+      create,
+      richiesteDiSnapshot,
+    }
+  }
+
+  /** Tutto ciò che la costruzione ha scritto, su stdout e su stderr. */
+  let scritto: string[] = []
+  beforeEach(() => {
+    scritto = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((riga: unknown) => {
+      scritto.push(String(riga))
+      return true
+    })
+    vi.spyOn(process.stderr, 'write').mockImplementation((riga: unknown) => {
+      scritto.push(String(riga))
+      return true
+    })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+  const tuttoCioCheHaScritto = (): string => scritto.join('')
+
+  async function fallisce(promessa: Promise<unknown>): Promise<Error> {
+    const errore = await promessa.then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(errore, 'la costruzione doveva fallire').toBeInstanceOf(ErroreKO)
+    return errore as Error
+  }
+
+  it('un’immagine sana: gli strumenti e la rete si controllano PRIMA della provvista, e lo snapshot è l’ultima cosa', async () => {
+    const { dipendenze, eventi, create, richiesteDiSnapshot } = costruzioneFinta()
+
+    const codice = await costruisci(OPZIONI, piano(), dipendenze)
+
+    expect(codice).toBe(0)
+    expect(eventi).toEqual(['strumenti', 'rete', 'provvista', 'inventario', 'verifica', 'impronte', 'SNAPSHOT'])
+    expect(create).toHaveBeenCalledTimes(1)
+    // Senza scadenza, e il Sandbox non si ferma da sé: è lo snapshot a spegnerlo.
+    expect(richiesteDiSnapshot).toEqual([{ expiration: 0 }])
+    expect(tuttoCioCheHaScritto()).toContain('VIDEO_SANDBOX_SNAPSHOT_ID=snap_FINTO0123456789')
+    expect(tuttoCioCheHaScritto()).toContain(`${STRUMENTI_DELL_AMBIENTE.length} strumenti presenti`)
+  })
+
+  it('gli indirizzi (validi 10 minuti) si firmano DOPO `apt-get` e subito prima della rete e della provvista che li usano (secondario #179)', async () => {
+    const { dipendenze, cronologia } = costruzioneFinta()
+
+    await costruisci(OPZIONI, piano(), dipendenze)
+
+    const primaFirma = cronologia.indexOf('firma')
+    expect(primaFirma, 'nessuna firma').toBeGreaterThanOrEqual(0)
+    expect(cronologia.lastIndexOf('apt-get install'), 'apt-get install dopo la firma').toBeLessThan(primaFirma)
+    expect(cronologia.lastIndexOf('apt-get update'), 'apt-get update dopo la firma').toBeLessThan(primaFirma)
+    // Fra la seconda firma e la rete non c'è nessun altro comando: il tempo che scorre è quello che serve.
+    expect(cronologia.slice(primaFirma, primaFirma + 3)).toEqual(['firma', 'firma', 'rete'])
+    expect(cronologia.indexOf('provvista')).toBeGreaterThan(primaFirma)
+  })
+
+  it('se all’immagine manca uno strumento NON si firma niente: nessun indirizzo nasce per una costruzione che si ferma', async () => {
+    const { dipendenze, cronologia } = costruzioneFinta({ strumentiMancanti: ['pkill'] })
+
+    await fallisce(costruisci(OPZIONI, piano(), dipendenze))
+
+    expect(cronologia).not.toContain('firma')
+  })
+
+  it('il tetto della prova di rete sta sopra il caso peggiore di `curl` (4 × 30 s + 1 + 2 + 4 s), così si legge l’uscita di `curl` e non un 137 (secondario #178)', () => {
+    const codice = readFileSync(join(process.cwd(), 'scripts/video-sandbox-ambiente.mjs'), 'utf8')
+    const tetto = /const TETTO_RETE_MS = (\d+) \* 1000/.exec(codice)
+    expect(tetto, 'TETTO_RETE_MS non trovato nella forma `N * 1000`').not.toBeNull()
+    const rete = scriptControlloRete()
+    const tentativi = Number(/--retry (\d+)/.exec(rete)?.[1]) + 1
+    const perTentativo = Number(/--max-time (\d+)/.exec(rete)?.[1])
+    expect(Number.isFinite(tentativi) && Number.isFinite(perTentativo)).toBe(true)
+    // Le attese di `curl --retry` raddoppiano da 1 s: 1, 2, 4… fra un tentativo e l'altro.
+    const attese = Array.from({ length: tentativi - 1 }, (_, i) => 2 ** i).reduce((a, b) => a + b, 0)
+    expect(Number(tetto?.[1])).toBeGreaterThan(tentativi * perTentativo + attese)
+  })
+
+  it.each<[string, string[]]>([
+    ['uno strumento (`pkill`)', ['pkill']],
+    ['due strumenti (`pkill`, `awk`)', ['pkill', 'awk']],
+  ])('manca %s: NESSUNO snapshot, il Sandbox si ferma, la provvista non parte, e il messaggio dice che cosa manca', async (_nome, mancano) => {
+    const { dipendenze, eventi } = costruzioneFinta({ strumentiMancanti: mancano })
+
+    const errore = await fallisce(costruisci(OPZIONI, piano(), dipendenze))
+
+    // Né la rete, né la provvista da 134 MB, né lo snapshot: si ferma al primo controllo che non torna.
+    expect(eventi).toEqual(['strumenti', 'STOP'])
+    for (const nome of mancano) expect(errore.message).toContain(nome)
+    expect(errore.message).toContain('pkill (pacchetto procps)')
+    expect(errore.message).toContain('apt-get')
+    expect(tuttoCioCheHaScritto()).toContain('KO  strumenti che gli script del runner chiamano: uscita 1')
+  })
+
+  it('un controllo degli strumenti che esce ≠ 0 senza dire quale manca NON passa lo stesso (fail-closed)', async () => {
+    const { dipendenze, eventi } = costruzioneFinta({ controlloStrumenti: { exitCode: 2, stdout: '' } })
+
+    const errore = await fallisce(costruisci(OPZIONI, piano(), dipendenze))
+
+    expect(eventi).toEqual(['strumenti', 'STOP'])
+    expect(errore.message).toContain('non è riuscito')
+    expect(errore.message).toContain('uscita 2')
+  })
+
+  it('e uno che dice «MANCA grep» pur uscendo 0 non passa: conta ciò che dice, non solo l’uscita', async () => {
+    const { dipendenze, eventi } = costruzioneFinta({ controlloStrumenti: { exitCode: 0, stdout: 'MANCA grep\n' } })
+
+    const errore = await fallisce(costruisci(OPZIONI, piano(), dipendenze))
+
+    expect(eventi).toEqual(['strumenti', 'STOP'])
+    expect(errore.message).toContain('grep')
+  })
+
+  it.each<[number, RegExp]>([
+    [6, /DNS/],
+    [60, /TLS/],
+    [22, /URL firmato/],
+    [28, /tempo scaduto/],
+  ])('la rete non funziona (`curl` esce %i): NESSUNO snapshot, il Sandbox si ferma, la provvista non parte, e il messaggio dice perché', async (uscita, atteso) => {
+    const { dipendenze, eventi } = costruzioneFinta({ rete: { exitCode: uscita } })
+
+    const errore = await fallisce(costruisci(OPZIONI, piano(), dipendenze))
+
+    expect(eventi).toEqual(['strumenti', 'rete', 'STOP'])
+    expect(errore.message).toMatch(atteso)
+    expect(errore.message).toContain('la rete dell’immagine verso il bucket non funziona')
+  })
+
+  it('l’URL firmato della rete entra nell’AMBIENTE del comando e MAI negli argomenti; e non esce da nessun canale, nemmeno se il comando lo scrive su stderr', async () => {
+    const { dipendenze, eseguiti } = costruzioneFinta({
+      // Un client che, fallendo, scrive l'indirizzo che chiamava: è esattamente il caso che il filtro deve reggere.
+      rete: { exitCode: 22, stderr: `curl: (22) The requested URL returned error: 403\n${URL_FFPROBE}\n` },
+    })
+
+    await fallisce(costruisci(OPZIONI, piano(), dipendenze))
+
+    const rete = eseguiti.find((c) => c.cmd === 'sh' && c.args?.[1] === piano().controlloRete)
+    expect(rete, 'il comando della rete non è stato eseguito').toBeDefined()
+    expect(rete?.env).toEqual({ [ENV_URL_FFPROBE]: URL_FFPROBE })
+    expect(rete?.args).toEqual(['-c', piano().controlloRete])
+    for (const comando of eseguiti) {
+      const testo = JSON.stringify(comando.args ?? [])
+      for (const segreto of [SEGRETO_FFMPEG, SEGRETO_FFPROBE, 'esempio.invalid']) expect(testo, `${segreto} negli argomenti`).not.toContain(segreto)
+    }
+    // Il motivo del guasto si legge (è l'unica cosa che dice cosa riparare)…
+    expect(tuttoCioCheHaScritto()).toContain('returned error: 403')
+    // …e nessun segreto, nessun indirizzo.
+    for (const segreto of [SEGRETO_FFMPEG, SEGRETO_FFPROBE, 'esempio.invalid', 'https://']) {
+      expect(tuttoCioCheHaScritto(), `«${segreto}» è uscito dallo script`).not.toContain(segreto)
+    }
+  })
+
+  it('nemmeno la provvista di un’immagine sana porta l’indirizzo fuori dall’ambiente: l’uscita intera della costruzione non ne contiene', async () => {
+    const { dipendenze } = costruzioneFinta()
+
+    await costruisci(OPZIONI, piano(), dipendenze)
+
+    for (const segreto of [SEGRETO_FFMPEG, SEGRETO_FFPROBE, 'esempio.invalid', 'https://', 'FINTO-TOKEN-VERCEL']) {
+      expect(tuttoCioCheHaScritto(), segreto).not.toContain(segreto)
+    }
+  })
+
+  it('i comandi dei controlli sono QUELLI di `src/`: la costruzione esegue il testo di `scriptControlloStrumenti()` e `scriptControlloRete()`, non un altro', async () => {
+    const { dipendenze, eseguiti } = costruzioneFinta()
+
+    await costruisci(OPZIONI, piano(), dipendenze)
+
+    const comandiSh = eseguiti.filter((c) => c.cmd === 'sh').map((c) => c.args?.[1])
+    expect(comandiSh).toContain(scriptControlloStrumenti())
+    expect(comandiSh).toContain(scriptControlloRete())
+    // E nessuno dei due si esegue con `sudo`: a runtime il runner non ce l'ha.
+    for (const comando of eseguiti.filter((c) => c.args?.[1] === scriptControlloStrumenti() || c.args?.[1] === scriptControlloRete())) {
+      expect(comando.sudo, JSON.stringify(comando.args)).toBeUndefined()
+    }
+  })
+
+  it('`main` passa le dipendenze a `costruisci` e restituisce il suo codice (il file importato non parte da solo)', async () => {
+    const { dipendenze, eventi } = costruzioneFinta()
+    const stato = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true })
+    try {
+      // `as never`: il tipo che TypeScript ricava dallo script (JS) è quello dei SDK veri, e un doppio non lo soddisfa.
+      expect(await mainDelloScript(['--regione', 'dub1', '--vcpus', '2'], (async () => dipendenze) as never)).toBe(0)
+    } finally {
+      if (stato) Object.defineProperty(process.stdin, 'isTTY', stato)
+      else delete (process.stdin as { isTTY?: boolean }).isTTY
+    }
+
+    expect(eventi[0]).toBe('strumenti')
+    expect(eventi[eventi.length - 1]).toBe('SNAPSHOT')
+  })
+})
+

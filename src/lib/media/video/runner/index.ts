@@ -43,10 +43,11 @@ export { nomeSandboxVideo, percorsoUscitaVideo } from './preparazione'
  * ═════════════════════════════════════════════════════════════════════════════
  * LE VARIABILI D'AMBIENTE, per NOME e mai con un valore
  *
- * Le prime tre sono in `docs/env.md`. La quarta, `VIDEO_CONVERSIONI_PARALLELE`, ce la scrive il compito
- * che documenta l'ambiente del runner in questa PR (T8, spec §10.1): questo modulo non tocca
- * `docs/env.md`, e il lock `env-critiche-documentate` guarda solo il preflight, non i `process.env`
- * sparsi — quindi nessun test diventerebbe rosso se la riga mancasse.
+ * Tutte e quattro sono in `docs/env.md` (la quarta, `VIDEO_CONVERSIONI_PARALLELE`, l'ha scritta T8,
+ * spec §10.1; lì c'è anche `VIDEO_SANDBOX_SNAPSHOT_ID`, che non si legge qui ma in `./adattatori.ts`,
+ * con la sua logica in `./ambiente.ts`). Il lock `env-critiche-documentate` guarda solo il preflight,
+ * non i `process.env` sparsi: nessun test diventerebbe rosso se una riga mancasse, perciò chi
+ * aggiunge una variabile qui la scrive anche in `docs/env.md`.
  *
  *   · `VIDEO_RUNNER_OWNER_ID` — uuid del worker, **critica**. Senza, il runner non
  *     parte affatto: vedi `identitaDelWorker`.

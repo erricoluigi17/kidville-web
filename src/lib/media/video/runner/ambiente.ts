@@ -30,7 +30,13 @@ import { codaDiagnostica } from './diagnosi'
  *    impronta), e si grida. Lo decide `apriLaMicroVm`, qui sotto.
  *
  * ⚠️ IL RIPIEGO È LA STRADA GIÀ PROVATA, NON UN'ALTERNATIVA NUOVA. Non cambia di una virgola
- * rispetto alla PR 1, ed è il motivo per cui si può permettere che lo snapshot sparisca: i video
+ * rispetto alla PR 1 — parametri, runtime, provvista dei binari — con UNA sola differenza, e solo in un caso:
+ * se la creazione dallo SNAPSHOT è stata tentata ed è fallita, il ripiego nasce con un NOME diverso
+ * (`nomeDelRipiego`, secondario #167). Una creazione che lancia può aver lasciato il nome occupato (la risposta
+ * persa dopo che la piattaforma aveva già registrato la MicroVM), e il ripiego con lo stesso nome andrebbe in
+ * conflitto proprio quando serviva. Senza snapshot configurato non c'è stato nessun tentativo e il nome resta
+ * quello della PR 1. Il riaggancio di una MicroVM che sta convertendo guarda entrambi i nomi (vedi `apriLaMicroVm`).
+ * Che il ripiego sia la strada già provata è il motivo per cui si può permettere che lo snapshot sparisca: i video
  * continuano a convertirsi, solo un po' più lenti, e il registro dice ogni volta che non si sta
  * usando ciò che si credeva di usare. Il rischio che resta, dichiarato: se Vercel togliesse il
  * runtime `node22` E lo snapshot mancasse, ogni apertura fallirebbe (`SANDBOX_UNAVAILABLE`, quattro
@@ -61,6 +67,26 @@ export const ENV_SNAPSHOT_SANDBOX = 'VIDEO_SANDBOX_SNAPSHOT_ID'
  * restare ESATTAMENTE il percorso già collaudato in produzione.
  */
 export const RUNTIME_DI_RIPIEGO = 'node22'
+
+/**
+ * Il suffisso del nome con cui nasce la MicroVM di ripiego DOPO una creazione dallo snapshot fallita (secondario
+ * #167).
+ *
+ * Il nome di una MicroVM è unico nel progetto, ed è ciò con cui la ritrova un'altra invocazione (`Sandbox.get`). Una
+ * `Sandbox.create` che LANCIA non garantisce che non abbia creato niente: l'SDK ripete le richieste che cadono per la rete,
+ * per un 429 o per un 5xx, e se la prima era arrivata la seconda trova il nome già preso — mentre la MicroVM esiste. Con lo
+ * stesso nome il ripiego andrebbe in conflitto proprio nel caso in cui doveva salvare l'apertura, e il job perderebbe un
+ * tentativo: cinque minuti di attesa, e uno dei quattro che ha.
+ *
+ * `-r` e non una parola intera: il nome finisce in un'etichetta DNS (al più 63 caratteri) e `nomeSandboxVideo` ne usa fino
+ * a 58, quindi restano 60. Non può collidere con un nome principale, che finisce sempre con le cifre del `fence_epoch`.
+ */
+export const SUFFISSO_NOME_DI_RIPIEGO = '-r'
+
+/** Il nome della MicroVM di ripiego che nasce dopo una creazione dallo snapshot fallita: quello principale più il suffisso. */
+export function nomeDelRipiego(nome: string): string {
+  return `${nome}${SUFFISSO_NOME_DI_RIPIEGO}`
+}
 
 /**
  * Da dove è nata una MicroVM che il runner ha CREATO (una riagganciata non ha un'origine: la sua
@@ -179,9 +205,13 @@ export function fattiDellErrore(err: unknown): FattiDellErrore {
 }
 
 /**
- * Quanto del testo grezzo si guarda, prima di ripulirlo: il messaggio di un errore dell'SDK è una riga
- * o due, e quello che serve sta nell'inizio. Il resto non aggiunge diagnosi e allunga soltanto ciò che
- * poi deve passare dalle maschere.
+ * Quanto del messaggio si tiene, a pulizia fatta: le ULTIME 260 battute (ellissi compresa), perché
+ * `codaDiagnostica` tiene la CODA e non l'inizio (secondario #165: questo commento diceva il contrario).
+ *
+ * È la scelta giusta per l'SDK di Vercel: il suo messaggio comincia con `Status code 429 is not ok: ` e il
+ * motivo vero — quello che il server ha scritto — viene dopo. Lo stato e il codice stanno già nell'intestazione
+ * (`fattiDellErrore`), quindi l'inizio ripeterebbe ciò che c'è già e la coda porta ciò che manca. Un messaggio
+ * più corto del tetto passa intero; solo uno più lungo perde la testa, e allora comincia con `…`.
  */
 const MESSAGGIO_ERRORE_MAX = 260
 
@@ -206,8 +236,9 @@ function messaggioGrezzo(err: unknown): string {
  * in cui il runner passa gli URL firmati di un bucket privato ai comandi della MicroVM.
  *
  * Perciò ciò che entra nel log è: nome, stato HTTP e codice (campi chiusi, vedi `fattiDellErrore`) più il
- * MESSAGGIO ripulito da `codaDiagnostica` (via URL, JWT, `token=…`, metadati dei filmati) e poi riga per
- * riga da `sanificaMessaggio`. Il testo resta leggibile — «quota finita» e «regione non disponibile» sono due
+ * MESSAGGIO ripulito da `codaDiagnostica` (via URL, JWT, `token=…`, metadati dei filmati; se è più lungo di
+ * `MESSAGGIO_ERRORE_MAX` se ne tiene la CODA) e poi riga per riga da `sanificaMessaggio`. Il testo resta leggibile —
+ * «quota finita» e «regione non disponibile» sono due
  * riparazioni diverse — e sparisce solo ciò che nei log non deve stare. Lo stack no: è di
  * un SDK, non dice niente che il nome e il codice non dicano, e non c'è modo di ripulirlo con
  * la stessa sicurezza.
@@ -238,6 +269,10 @@ export function erroreSanificatoPerIlLog(err: unknown): Error {
 
 /** I parametri con cui si chiede una MicroVM nuova. Gli stessi in ogni modo, tranne da dove nasce. */
 export interface RichiestaApertura {
+  /**
+   * Il nome PRINCIPALE (`nomeSandboxVideo`: job e `fence_epoch`). Il ripiego dopo uno snapshot fallito ne deriva uno
+   * suo (`nomeDelRipiego`), e il riaggancio li guarda tutti e due.
+   */
   nome: string
   regione: string
   vcpus: number
@@ -267,7 +302,10 @@ export type ParametriCreazione = {
  * tipo del Sandbox: qui non si guarda dentro, si passa soltanto.
  */
 export interface SdkMicroVm<S> {
-  /** `Sandbox.get({ name, resume: true })`: riaggancia la MicroVM che ha questo nome. Lancia se non c'è. */
+  /**
+   * `Sandbox.get({ name, resume: true })`: riaggancia la MicroVM che ha questo nome. Lancia se non c'è. Si chiama
+   * con più nomi (quello del ripiego e quello principale), uno dopo l'altro, finché una risponde.
+   */
   riaggancia(nome: string): Promise<S>
   /** `Sandbox.create(parametri)`. Lancia se la MicroVM non nasce. */
   crea(parametri: ParametriCreazione): Promise<S>
@@ -328,20 +366,45 @@ function segnalaAmbienteProntoAssente(motivo: string, http: number | null, perch
 }
 
 /**
+ * Il risultato di UN tentativo di riagganciare: la MicroVM, oppure l'errore dell'SDK già in forma da log. Non lancia
+ * mai (`erroreSanificatoPerIlLog` non lancia): chi lo chiama decide che cosa farne, e un errore non resta mai senza riga.
+ */
+type Riaggancio<S> = { riagganciata: true; sandbox: S } | { riagganciata: false; errore: Error }
+
+async function provaARiagganciare<S>(sdk: SdkMicroVm<S>, nome: string): Promise<Riaggancio<S>> {
+  try {
+    return { riagganciata: true, sandbox: await sdk.riaggancia(nome) }
+  } catch (err) {
+    return { riagganciata: false, errore: erroreSanificatoPerIlLog(err) }
+  }
+}
+
+/**
  * Apre la MicroVM che converterà un job: la riaggancia se c'è, altrimenti la crea dallo snapshot, e se lo
  * snapshot non c'è o non va la crea come nella PR 1.
  *
- *  1. **Riaggancio** (`riaggancia`) — è il cuore della durevolezza: la MicroVM che sta convertendo ha questo
- *     nome, e un'altra invocazione la ritrova per nome. Non è un guasto se non c'è (il caso normale è
- *     «non c'è ancora»): si logga a `info`, perché senza questa riga «creata» e «riagganciata» sarebbero
- *     indistinguibili e non si potrebbe misurare se la ripresa funziona.
+ *  1. **Riaggancio** (`riaggancia`) — è il cuore della durevolezza: la MicroVM che sta convertendo ha un nome, e
+ *     un'altra invocazione la ritrova per nome. I nomi possibili sono DUE (secondario #167) e si guardano in
+ *     quest'ordine: prima quello del ripiego (`nomeDelRipiego`), poi quello principale.
+ *     ⚠️ L'ORDINE È LA SOSTANZA. Il nome del ripiego esiste solo se la creazione dallo snapshot è stata tentata ed è
+ *     fallita: in quel caso una MicroVM col nome principale è il RESIDUO di quella creazione parziale — il runner non ci
+ *     ha mai avviato niente — e la conversione sta in quella del ripiego. Guardare per primo il nome principale farebbe
+ *     riagganciare la MicroVM sbagliata: il marcatore non comparirebbe mai, e la conversione vera finirebbe senza che
+ *     nessuno la ritrovi. Il prezzo è una `Sandbox.get` in più a ogni apertura (un 404 di cui non si aspetta il seguito).
+ *     Che non ci sia né l'una né l'altra non è un guasto (il caso normale è «non c'è ancora»): si logga a `info`, perché
+ *     senza queste righe «creata» e «riagganciata» sarebbero indistinguibili e non si potrebbe misurare se la ripresa
+ *     funziona. `riaggancio-non-riuscito` (il nome principale) è UNA per apertura e conta le creazioni; quella del
+ *     ripiego ha un evento suo (`riaggancio-ripiego-non-riuscito`), così non le raddoppia.
  *  2. **Snapshot** — solo se la variabile dice un id valido. Se la creazione LANCIA, per qualunque
  *     motivo, si ripiega: snapshot mancante o scaduto (`snapshot_not_found`), in un'altra regione, quota,
  *     piattaforma in difficoltà, rete. Non si prova a distinguere i casi per ritentare lo snapshot: il
  *     tentativo dopo è un altro job con un'altra MicroVM, e se anche questa volta è andata male la
  *     conversione di QUESTO job non deve aspettare.
- *  3. **Ripiego** — il percorso della PR 1, invariato. Se lancia anche lui, l'eccezione ESCE: è il guasto
- *     che `esegui.ts` classifica `SANDBOX_UNAVAILABLE` e ritenta con le sue attese.
+ *  3. **Ripiego** — il percorso della PR 1, invariato, con una sola differenza: dopo uno snapshot tentato e fallito
+ *     nasce con `nomeDelRipiego(nome)` invece del nome principale, perché la creazione fallita può aver lasciato il nome
+ *     occupato (secondario #167). Senza snapshot configurato non c'è stato nessun tentativo, e il nome è quello della
+ *     PR 1. Se lancia anche lui, l'eccezione ESCE: è il guasto che `esegui.ts` classifica `SANDBOX_UNAVAILABLE` e ritenta
+ *     con le sue attese.
  *
  * ⚠️ NON SI ASPETTA E NON SI RITENTA LA CREAZIONE DALLO SNAPSHOT. Un'apertura dura qualche secondo e il
  * tetto di un'invocazione è 240 s: due aperture in serie costano poco, tre o quattro no, e il ripiego è
@@ -352,16 +415,28 @@ export async function apriLaMicroVm<S>(
   richiesta: RichiestaApertura,
   snapshot: LetturaSnapshot,
 ): Promise<MicroVmAperta<S>> {
-  try {
-    return { sandbox: await sdk.riaggancia(richiesta.nome), nuova: false, origine: undefined }
-  } catch (err) {
-    logEvento(
-      'cron',
-      'info',
-      { operazione: 'video-runner:sandbox', esito: 'riaggancio-non-riuscito' },
-      erroreSanificatoPerIlLog(err),
-    )
-  }
+  const nomeRipiego = nomeDelRipiego(richiesta.nome)
+
+  // Un riaggancio riuscito non scrive niente, com'è sempre stato: il ripiego che «non c'è», davanti a una MicroVM principale
+  // ritrovata, è il caso normale (il ripiego è l'eccezione) e resta senza riga. Se non si trova nessuna delle due, le righe
+  // sono qui sotto.
+  const delRipiego = await provaARiagganciare(sdk, nomeRipiego)
+  if (delRipiego.riagganciata) return { sandbox: delRipiego.sandbox, nuova: false, origine: undefined }
+  const principale = await provaARiagganciare(sdk, richiesta.nome)
+  if (principale.riagganciata) return { sandbox: principale.sandbox, nuova: false, origine: undefined }
+
+  logEvento(
+    'cron',
+    'info',
+    { operazione: 'video-runner:sandbox', esito: 'riaggancio-ripiego-non-riuscito' },
+    delRipiego.errore,
+  )
+  logEvento(
+    'cron',
+    'info',
+    { operazione: 'video-runner:sandbox', esito: 'riaggancio-non-riuscito' },
+    principale.errore,
+  )
 
   const comuni = {
     name: richiesta.nome,
@@ -371,6 +446,10 @@ export async function apriLaMicroVm<S>(
     persistent: false as const,
   }
 
+  // Il nome con cui nascerà il ripiego: quello della PR 1 finché nessuno snapshot è stato tentato; quello del ripiego
+  // dopo un tentativo che non è riuscito, perché può aver lasciato il nome occupato (secondario #167).
+  let nomeDelRipiegoDaCreare = richiesta.nome
+
   if (snapshot.stato === 'ok') {
     try {
       const sandbox = await sdk.crea({
@@ -379,6 +458,7 @@ export async function apriLaMicroVm<S>(
       })
       return { sandbox, nuova: true, origine: 'snapshot' }
     } catch (err) {
+      nomeDelRipiegoDaCreare = nomeRipiego
       const fatti = fattiDellErrore(err)
       segnalaAmbienteProntoAssente(codiceDelFallimentoSdk(fatti), fatti.http, erroreSanificatoPerIlLog(err))
     }
@@ -396,7 +476,8 @@ export async function apriLaMicroVm<S>(
     )
   }
 
-  // Il percorso della PR 1, parola per parola: `runtime`, nome, regione, risorse, tetto, non persistente.
-  const sandbox = await sdk.crea({ ...comuni, runtime: RUNTIME_DI_RIPIEGO })
+  // Il percorso della PR 1, parola per parola — `runtime`, nome, regione, risorse, tetto, non persistente — salvo il
+  // nome dopo uno snapshot fallito (vedi sopra).
+  const sandbox = await sdk.crea({ ...comuni, name: nomeDelRipiegoDaCreare, runtime: RUNTIME_DI_RIPIEGO })
   return { sandbox, nuova: true, origine: 'runtime' }
 }

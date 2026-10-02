@@ -19,7 +19,13 @@ import itShared from '../../messages/it/shared.json'
  *  · «Rimuovi» ferma i byte PRIMA di ritirare l'intento;
  *  · i byte spariti sono un invio da rifare, e l'intento si annulla;
  *  · l'elenco del server si fonde con le righe locali: un video mandato da un altro dispositivo si
- *    vede, una pubblicazione fallita offre «Riprova», un fallimento non resta lì per sempre.
+ *    vede, una pubblicazione fallita offre «Riprova», un fallimento non resta lì per sempre;
+ *  · (T11c) una risposta d'apertura arrivata a schermata cambiata ritira l'intento che ha creato (#132) —
+ *    ma non quello che questo dispositivo ha già in mano —; lo stesso file rimandato in volo non riscrive
+ *    la scheda (#134); «Rimuovi» su un trasferimento concluso non termina nessuna sessione TUS (#136);
+ *    ogni ritiro non atteso ha il suo `.catch` che logga (#137); un intento si ricorda fra i tolti solo a
+ *    ritiro riuscito, altrimenti la scheda torna (#141); la chiave dell'apertura è salata col sale del
+ *    dispositivo (#131).
  *
  * L'uploader TUS è finto ai suoi confini (`@/lib/media/video/upload`) — ha i suoi collaudi, col
  * `tus.Upload` vero — e `fetch` è un server finto che registra ogni richiesta nell'ordine in cui
@@ -32,6 +38,7 @@ const h = vi.hoisted(() => ({
   accoda: vi.fn(),
   annullaLocale: vi.fn(),
   concludi: vi.fn(),
+  aggiorna: vi.fn(),
   elimina: vi.fn(),
   log: vi.fn(),
   ordine: [] as string[],
@@ -42,7 +49,7 @@ vi.mock('@/lib/media/video/upload', () => ({
   creaArchivioCaricamenti: async () => ({
     leggi: async (id: string) => h.righe.find((r) => r.jobId === id),
     elenca: async () => h.righe,
-    aggiorna: async (id: string, mod: object) => Object.assign(h.righe.find((r) => r.jobId === id) ?? {}, mod),
+    aggiorna: h.aggiorna,
     elimina: h.elimina,
     eliminaByte: vi.fn(),
   }),
@@ -61,6 +68,10 @@ const SEDE = '22222222-2222-4222-8222-222222222222'
 const ADA = '55555555-5555-4555-8555-555555555555'
 const COORD = { protocollo: 'tus', endpoint: 'https://example.test/tus', bucket: 'video_originals', percorso: `${OWNER}/a.mp4`, contentType: 'video/mp4', dimensioneBloccoByte: 6291456 }
 const ADESSO = '2026-10-02T10:00:00.000Z'
+
+/** Due sali di dispositivo (128 bit, esadecimale minuscolo): la forma che `saleDelDispositivo` produce. */
+const SALE_A = '0123456789abcdef0123456789abcdef'
+const SALE_B = 'fedcba9876543210fedcba9876543210'
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 const JOB = uuid(100)
@@ -235,6 +246,7 @@ beforeEach(() => {
     if (riga) riga.stato = 'caricato'
     return { esito: 'caricato', jobId, byteCaricati: 3 }
   })
+  h.aggiorna.mockImplementation(async (id: string, mod: object) => Object.assign(h.righe.find((r) => r.jobId === id) ?? {}, mod))
   h.elimina.mockImplementation(async (id: string) => { h.righe = h.righe.filter((r) => r.jobId !== id) })
   h.annullaLocale.mockImplementation(async () => { h.ordine.push('annullaCaricamento') })
   h.concludi.mockResolvedValue(undefined)
@@ -354,6 +366,23 @@ describe('«Invia» apre subito l’intento con i bambini, e poi parte il trasfe
     await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
   })
 
+  it('…e se quel ritiro LANCIA l’errore si registra: nessuna promessa rifiutata che nessuno ascolta (#137)', async () => {
+    h.accoda.mockResolvedValueOnce({ ok: false, codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' })
+    const { result } = await montaAttendendo()
+    // Il GET dello stato risponde con qualcosa che non è una `Response`: `chiama` lancia e `ritiraIntento` rifiuta.
+    const base = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => (
+      /\/api\/video-uploads\/[^/?]+$/.test(url) && (init?.method ?? 'GET') === 'GET'
+        ? ({ ok: true, status: 200 } as unknown as Response)
+        : base(url, init)
+    )))
+    let esito: { ok: boolean; messaggio?: string } | undefined
+    await act(async () => { esito = await result.current.avviaVideo(video(), scelta) })
+    expect(esito).toEqual({ ok: false, messaggio: itShared.erroreVideoOperazioneNonRiuscita })
+    // Senza il `.catch` la promessa restava rifiutata e senza traccia (e vitest la segnala come errore non gestito).
+    await waitFor(() => expect(h.log).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'video-annullamento-interrotto' })))
+  })
+
   it('lo stesso file scelto di nuovo dopo che il suo intento è finito apre un intento NUOVO, con una chiave nuova', async () => {
     server.apertura = (n) => (n === 1
       ? aperturaStandard(1, { intent: 'published', job: { status: 'ready', needs_upload: false, firma: '' } })
@@ -379,7 +408,7 @@ describe('«Invia» apre subito l’intento con i bambini, e poi parte il trasfe
     expect(h.carica).not.toHaveBeenCalled()
   })
 
-  it('una risposta di apertura arrivata dopo un cambio di sede NON accoda niente nella sede sbagliata', async () => {
+  it('una risposta di apertura arrivata dopo un cambio di sede NON accoda niente nella sede sbagliata, e RITIRA l’intento che ha creato', async () => {
     let risolvi!: (r: Response) => void
     server.apertura = () => new Promise<Response>((r) => { risolvi = r })
     const { result, rerender } = await montaAttendendo()
@@ -391,9 +420,12 @@ describe('«Invia» apre subito l’intento con i bambini, e poi parte il trasfe
     await act(async () => { risolvi(aperturaStandard(1)); await promessa })
     expect(h.accoda).not.toHaveBeenCalled()
     expect(h.carica).not.toHaveBeenCalled()
+    // L'intento esiste già sul server, confermato e in attesa di byte che nessuno spedirà (#132): si ritira.
+    await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
+    expect(chiamate.find((c) => c.metodo === 'PATCH')!.url).toBe(`/api/video-uploads/${uuid(201)}`)
   })
 
-  it('dopo lo smontaggio una risposta tardiva non accoda niente', async () => {
+  it('dopo lo smontaggio una risposta tardiva non accoda niente, e RITIRA l’intento: niente intento fantasma (#132)', async () => {
     let risolvi!: (r: Response) => void
     server.apertura = () => new Promise<Response>((r) => { risolvi = r })
     const { result, unmount } = await montaAttendendo()
@@ -403,6 +435,84 @@ describe('«Invia» apre subito l’intento con i bambini, e poi parte il trasfe
     unmount()
     await act(async () => { risolvi(aperturaStandard(1)); await promessa })
     expect(h.accoda).not.toHaveBeenCalled()
+    // Senza il ritiro restava un job `awaiting_upload` che nessuno avrebbe caricato, e al rientro la scheda
+    // diceva «in caricamento da un altro dispositivo»: falso.
+    await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
+    expect(chiamate.find((c) => c.metodo === 'PATCH')!.url).toBe(`/api/video-uploads/${uuid(201)}`)
+    expect(h.log).toHaveBeenCalledWith(expect.objectContaining({ messaggio: `video-intento-orfano-ritirato: job=${uuid(101)}` }))
+  })
+
+  it('anche la SECONDA apertura (il primo intento ritrovato era concluso) ritira il proprio intento se arriva a schermata cambiata', async () => {
+    // Il primo intento ritrovato è pubblicato: non è nostro e non si tocca. Ne nasce uno nuovo, con una chiave nuova:
+    // se la sua risposta arriva a pagina chiusa, è quello il fantasma.
+    let risolvi!: (r: Response) => void
+    server.apertura = (n) => (n === 1
+      ? aperturaStandard(1, { intent: 'published', job: { status: 'ready', needs_upload: false, firma: '' } })
+      : new Promise<Response>((r) => { risolvi = r }))
+    const { result, unmount } = await montaAttendendo()
+    let promessa!: Promise<unknown>
+    act(() => { promessa = result.current.avviaVideo(video(), scelta) })
+    await waitFor(() => expect(aperture()).toHaveLength(2))
+    unmount()
+    await act(async () => { risolvi(aperturaStandard(2)); await promessa })
+
+    await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
+    // Quello del secondo intento (202), e solo quello: l'intento concluso (201) non si tocca.
+    expect(chiamate.filter((c) => c.metodo === 'PATCH').map((c) => c.url)).toEqual([`/api/video-uploads/${uuid(202)}`])
+    expect(h.accoda).not.toHaveBeenCalled()
+  })
+
+  it('un intento RITROVATO già concluso (job fallito) non è nostro: a schermata cambiata non si tocca', async () => {
+    let risolvi!: (r: Response) => void
+    server.apertura = () => new Promise<Response>((r) => { risolvi = r })
+    const { result, unmount } = await montaAttendendo()
+    let promessa!: Promise<unknown>
+    act(() => { promessa = result.current.avviaVideo(video(), scelta) })
+    await waitFor(() => expect(aperture()).toHaveLength(1))
+    unmount()
+    // L'intento è ancora «confermato» ma il suo job è fallito: è un intento morto, e il ritiro lo cambierebbe.
+    await act(async () => { risolvi(aperturaStandard(1, { job: { status: 'failed', needs_upload: false, firma: '' } })); await promessa })
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)) })
+    expect(patchFatti()).toEqual([])
+    expect(aperture()).toHaveLength(1)
+  })
+
+  it('l’intento RITROVATO dalla chiave e già in mano a questo dispositivo NON si ritira: sarebbe un caricamento buono ucciso', async () => {
+    // Lo stesso file con gli stessi bambini, mandato due volte: il server ritrova lo stesso intento. Il primo
+    // invio è in volo (ha la sua riga nell'archivio): se il secondo tocco arriva a schermata cambiata, il
+    // fantasma non esiste — e ritirarlo ucciderebbe l'invio che riprenderebbe al rientro.
+    h.carica.mockImplementation(() => new Promise(() => undefined)) // il primo trasferimento resta in volo
+    const { result, unmount } = await montaAttendendo()
+    await act(async () => { await result.current.avviaVideo(video(), scelta) }) // job 101, intento 201
+    await waitFor(() => expect(h.carica).toHaveBeenCalledTimes(1))
+
+    // Il secondo invio: la risposta resta in sospeso, poi la pagina se ne va e la risposta arriva — con lo
+    // STESSO job del primo, come quando la stessa chiave ritrova lo stesso intento.
+    let risolvi!: (r: Response) => void
+    server.apertura = () => new Promise<Response>((r) => { risolvi = r })
+    let promessa!: Promise<unknown>
+    act(() => { promessa = result.current.avviaVideo(video(), scelta) })
+    await waitFor(() => expect(aperture()).toHaveLength(2))
+    unmount()
+    await act(async () => { risolvi(aperturaStandard(1)); await promessa })
+
+    // Si lascia al ritiro il tempo di partire, se dovesse: poi si guarda che non sia partito.
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)) })
+    expect(patchFatti()).not.toContain('annulla')
+  })
+
+  it('un guasto della RETE durante il ritiro dell’intento fantasma non diventa una promessa rifiutata: si registra', async () => {
+    let risolvi!: (r: Response) => void
+    server.apertura = () => new Promise<Response>((r) => { risolvi = r })
+    const { result, unmount } = await montaAttendendo()
+    let promessa!: Promise<unknown>
+    act(() => { promessa = result.current.avviaVideo(video(), scelta) })
+    await waitFor(() => expect(aperture()).toHaveLength(1))
+    unmount()
+    // Il ritiro non riesce (la rete cade): niente `annulla`, e il mancato ritiro si dice.
+    server.patch = () => json({ error: 'x', codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }, 500)
+    await act(async () => { risolvi(aperturaStandard(1)); await promessa })
+    await waitFor(() => expect(h.log).toHaveBeenCalledWith(expect.objectContaining({ messaggio: `video-intento-orfano-non-ritirato: job=${uuid(101)}` })))
   })
 })
 
@@ -483,6 +593,35 @@ describe('lo stesso file rimandato con altri bambini: il server non lo rifiuta p
     expect(chiave).not.toContain(ADA.slice(0, 8))
   })
 
+  it('la chiave porta il SALE del dispositivo: lo stesso file con gli stessi bambini, da un altro dispositivo, è un’altra chiave (#131)', async () => {
+    // I bambini non restano in tabella nemmeno come impronta: la chiave scritta in `video_jobs.idempotency_key` è
+    // salata con un valore casuale del dispositivo, tenuto in `localStorage` (`kv:video-galleria-sale`).
+    server.apertura = aperturaSecondoIlServer()
+    const { result } = await montaAttendendo()
+    localStorage.setItem('kv:video-galleria-sale', SALE_A)
+    await act(async () => { await result.current.avviaVideo(video(), scelta) })
+    localStorage.setItem('kv:video-galleria-sale', SALE_B) // un altro dispositivo
+    await act(async () => { await result.current.avviaVideo(video(), scelta) })
+    localStorage.setItem('kv:video-galleria-sale', SALE_A) // il primo dispositivo, di nuovo
+    await act(async () => { await result.current.avviaVideo(video(), scelta) })
+
+    expect(chiaveDellApertura(1), 'un altro sale deve dare un’altra chiave').not.toBe(chiaveDellApertura(0))
+    expect(chiaveDellApertura(2), 'lo stesso dispositivo ritrova la sua chiave').toBe(chiaveDellApertura(0))
+  })
+
+  it('la chiave che parte NON porta l’impronta di prima (senza sale) dei bambini né del nome, e non porta il sale', async () => {
+    server.apertura = aperturaSecondoIlServer()
+    const { result } = await montaAttendendo()
+    localStorage.setItem('kv:video-galleria-sale', SALE_A)
+    await act(async () => { await result.current.avviaVideo(video('recita.mp4'), scelta) })
+    const chiave = chiaveDellApertura(0)
+    // Valori misurati col codice senza sale (FNV a 32 bit del JSON dei bambini e del nome), scritti e non ricalcolati.
+    expect(chiave).not.toContain('7014e1f0')
+    expect(chiave).not.toContain('afbbf116')
+    expect(chiave).not.toContain(SALE_A)
+    expect(chiave).toMatch(/^gv2-12345-1726000000000-[0-9a-f]{12}-[0-9a-f]{12}$/)
+  })
+
   it('lo stesso file con gli STESSI bambini, rimandato (la risposta si era persa), non è un conflitto: ritrova il suo intento', async () => {
     server.apertura = aperturaSecondoIlServer()
     const { result } = await montaAttendendo()
@@ -534,6 +673,75 @@ describe('la coda aspetta i byte, non le risposte', () => {
     expect(h.carica.mock.calls.map((c) => c[1])).toEqual([uuid(101), uuid(102)])
     // Il primo PATCH è partito (e resta appeso): la coda non lo ha aspettato.
     expect(patchFatti()[0]).toBe('caricato')
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LO STESSO FILE RIMANDATO MENTRE IL SUO TRASFERIMENTO È IN VOLO (#134)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// La stessa chiave (stesso file, stessi bambini, stesso dispositivo) ritrova lo stesso intento e lo stesso job:
+// `accodaCaricamentoVideo` lo lascia com'era, e anche la scheda deve restare quella vera. Riscriverla a «in-fila»
+// la faceva tornare a «in attesa del suo turno», senza barra, mentre i byte correvano.
+
+describe('lo stesso file rimandato durante il suo trasferimento non ne riscrive lo stato', () => {
+  /** Un trasferimento che non finisce mai, e il suo avanzamento in mano al test. */
+  function trasferimentoInVolo() {
+    const stato: { progresso: (fatti: number, totali: number) => void } = { progresso: () => undefined }
+    h.carica.mockImplementation((_dip: unknown, _jobId: string, opzioni: { alProgresso?: (f: number, t: number) => void }) => {
+      if (opzioni.alProgresso) stato.progresso = opzioni.alProgresso
+      return new Promise(() => undefined)
+    })
+    return stato
+  }
+
+  it('la scheda resta «caricamento» con la sua barra — non torna a «in attesa del suo turno» — e il trasferimento è UNO', async () => {
+    server.apertura = aperturaSecondoIlServer()
+    const volo = trasferimentoInVolo()
+    const { result } = await montaAttendendo()
+    await act(async () => { await result.current.avviaVideo(video(), scelta) })
+    await waitFor(() => expect(h.carica).toHaveBeenCalledTimes(1))
+    act(() => volo.progresso(40, 100))
+    await waitFor(() => expect(result.current.righe[0]).toMatchObject({ fase: 'caricamento', percentuale: 40 }))
+
+    // Lo stesso file con gli stessi bambini: il server ritrova lo stesso intento e lo stesso job.
+    let esito: unknown
+    await act(async () => { esito = await result.current.avviaVideo(video(), scelta) })
+
+    expect(esito).toEqual({ ok: true })
+    expect(aperture()).toHaveLength(2)
+    expect(result.current.righe, 'una scheda sola, non due').toHaveLength(1)
+    expect(result.current.righe[0], 'la scheda è tornata a «in attesa del suo turno», senza barra').toMatchObject({ fase: 'caricamento', percentuale: 40 })
+    expect(h.carica, 'il trasferimento è ripartito da capo').toHaveBeenCalledTimes(1)
+  })
+
+  it('anche in FILA (accodato dietro un altro video) resta in fila: nessun secondo accodamento', async () => {
+    server.apertura = aperturaSecondoIlServer()
+    trasferimentoInVolo()
+    const { result } = await montaAttendendo()
+    await act(async () => { await result.current.avviaVideo(video('uno.mp4', 11), scelta) })
+    await waitFor(() => expect(h.carica).toHaveBeenCalledTimes(1))
+    await act(async () => { await result.current.avviaVideo(video('due.mp4', 22), scelta) })
+    expect(result.current.righe.map((r) => r.fase)).toEqual(['caricamento', 'in-fila'])
+
+    await act(async () => { await result.current.avviaVideo(video('due.mp4', 22), scelta) })
+    expect(result.current.righe.map((r) => r.fase)).toEqual(['caricamento', 'in-fila'])
+    expect(h.carica).toHaveBeenCalledTimes(1)
+  })
+
+  it('un trasferimento FERMO rimandato riparte: rimandare il file è chiedere di riprendere', async () => {
+    // Il guard non deve diventare «mai più»: un job `interrotto` non è in coda, e rimandarlo lo riprende.
+    server.apertura = aperturaSecondoIlServer()
+    h.carica.mockResolvedValueOnce({ esito: 'interrotto', jobId: uuid(101), offsetByte: 0, codice: null })
+    const { result } = await montaAttendendo()
+    await act(async () => { await result.current.avviaVideo(video(), scelta) })
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('interrotto'))
+    expect(h.carica).toHaveBeenCalledTimes(1)
+
+    h.carica.mockImplementationOnce(() => new Promise(() => undefined))
+    await act(async () => { await result.current.avviaVideo(video(), scelta) })
+    await waitFor(() => expect(h.carica).toHaveBeenCalledTimes(2))
+    expect(h.carica.mock.calls[1][1]).toBe(uuid(101))
   })
 })
 
@@ -647,12 +855,87 @@ describe('«Rimuovi» ferma prima il trasferimento e poi ritira l’intento', ()
     expect(patchFatti()).not.toContain('annulla')
   })
 
+  it('un video coi byte GIÀ sul server (trasferimento concluso): niente terminazione TUS — la riga si marca annullata e si elimina (#136)', async () => {
+    // Dopo un trasferimento riuscito la riga conserva l'URL della sessione TUS: `annullaCaricamentoVideo` lo
+    // «terminerebbe» con una `DELETE` che passa da `/firma`, trova il job fuori da `awaiting_upload`, prende 409 e
+    // lascia due `warn` che non dicono niente.
+    h.righe = [rigaArchivio({ urlTus: 'https://example.test/tus/sessione-1' })] // stato `caricato`
+    server.voci = [voce('in-coda')]
+    const { result } = await montaAttendendo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('in-coda'))
+
+    act(() => result.current.rimuovi(JOB))
+    await waitFor(() => expect(h.elimina).toHaveBeenCalledWith(JOB))
+    expect(h.annullaLocale, 'la DELETE TUS di una sessione che non esiste più prende 409 e due warn inutili').not.toHaveBeenCalled()
+    expect(h.aggiorna).toHaveBeenCalledWith(JOB, expect.objectContaining({ stato: 'annullato' }))
+    // Prima si marca annullato, poi si elimina; e l'intento si ritira lo stesso.
+    expect(h.aggiorna.mock.invocationCallOrder[0]).toBeLessThan(h.elimina.mock.invocationCallOrder[0])
+    expect(patchFatti()).toEqual(['annulla'])
+  })
+
+  it('…e se la riga locale non si marca (l’archivio non risponde) il ritiro dell’intento parte lo stesso, e il guasto si registra', async () => {
+    // Non c'è nessun trasferimento da fermare: ciò che conta è che il server sappia che il video non si vuole più.
+    h.righe = [rigaArchivio({ urlTus: 'https://example.test/tus/sessione-1' })]
+    server.voci = [voce('in-coda')]
+    h.aggiorna.mockRejectedValueOnce(new Error('archivio'))
+    const { result } = await montaAttendendo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('in-coda'))
+
+    act(() => result.current.rimuovi(JOB))
+    await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
+    await waitFor(() => expect(h.log).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'video-riga-locale-non-annullata' })))
+    // E il ritiro è riuscito: la scheda resta tolta, anche dopo un ricaricamento.
+    await waitFor(() => expect(localStorage.getItem(`kv:video-galleria-nascosti:${OWNER}`)).toContain(INTENT))
+    expect(result.current.righe).toEqual([])
+  })
+
+  it('un ritiro che FALLISCE non rende la scheda «tolta»: torna, e l’intento NON entra fra i nascosti (#141)', async () => {
+    server.voci = [voce('da-ricaricare')]
+    server.patch = (azione) => (azione === 'annulla' ? json({ error: 'x', codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }, 500) : null)
+    const primo = await montaAttendendo()
+    await waitFor(() => expect(primo.result.current.righe[0]?.fase).toBe('da-ricaricare'))
+
+    act(() => primo.result.current.rimuovi(JOB))
+    // A schermo sparisce subito: l'attesa del server non si vede.
+    expect(primo.result.current.righe).toEqual([])
+    await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
+    // Il server ha rifiutato: l'intento è ancora vivo (e, se fosse in preparazione, uscirebbe in galleria): la scheda TORNA.
+    await waitFor(() => expect(primo.result.current.righe[0]?.fase).toBe('da-ricaricare'))
+    expect(h.log).toHaveBeenCalledWith(expect.objectContaining({ messaggio: `video-ritiro-non-riuscito: job=${JOB}` }))
+    // …e non è stato ricordato: nemmeno dopo un ricaricamento sparisce una scheda che il server non ha tolto.
+    expect(localStorage.getItem(`kv:video-galleria-nascosti:${OWNER}`)).toBeNull()
+    primo.unmount()
+    const secondo = await montaAttendendo()
+    await waitFor(() => expect(secondo.result.current.righe[0]?.fase).toBe('da-ricaricare'))
+  })
+
+  it('un ritiro che LANCIA (la rete cade a metà) si comporta come uno rifiutato: la scheda torna, e il guasto si registra', async () => {
+    server.voci = [voce('da-ricaricare')]
+    const { result } = await montaAttendendo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('da-ricaricare'))
+    // Il GET dello stato risponde con qualcosa che non è una `Response`: `chiama` lancia, e `ritiraIntento` rifiuta.
+    const base = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => (
+      /\/api\/video-uploads\/[^/?]+$/.test(url) && (init?.method ?? 'GET') === 'GET'
+        ? ({ ok: true, status: 200 } as unknown as Response)
+        : base(url, init)
+    )))
+
+    act(() => result.current.rimuovi(JOB))
+    await waitFor(() => expect(h.log).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'video-annullamento-interrotto' })))
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('da-ricaricare'))
+    expect(localStorage.getItem(`kv:video-galleria-nascosti:${OWNER}`)).toBeNull()
+  })
+
   it('una scheda tolta NON torna, nemmeno se il server la riporta ancora (e dopo un ricaricamento)', async () => {
     server.voci = [voce('da-ricaricare')]
     const primo = await montaAttendendo()
     await waitFor(() => expect(primo.result.current.righe[0]?.fase).toBe('da-ricaricare'))
     act(() => primo.result.current.rimuovi(JOB))
     expect(primo.result.current.righe).toEqual([])
+    // Si ricorda solo quando il server ha confermato il ritiro (#141): si aspetta quel momento prima di leggere
+    // l'elenco e prima di ricaricare, altrimenti il test dipenderebbe da quanto è veloce il finto server.
+    await waitFor(() => expect(localStorage.getItem(`kv:video-galleria-nascosti:${OWNER}`)).toContain(INTENT))
     await giroDiElenco()
     expect(primo.result.current.righe, 'la scheda è ricomparsa alla lettura successiva').toEqual([])
     primo.unmount()

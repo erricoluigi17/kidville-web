@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-26",
-  "generato_alle": "2026-09-26T18:38:30Z",
-  "sha256": "b722b5b21e4811850daa76e0bbc4998feefba760e40bf8669743b467a16dba01",
+  "generato_il": "2026-10-02",
+  "generato_alle": "2026-10-02T22:38:08Z",
+  "sha256": "c3cd1cfbac0f3a1ad33912d1b92a5ec938de53b56da39c9a19b933f087386941",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -2620,6 +2620,17 @@
       "ha_colonna_nullable": false,
       "colonne": [
         "id"
+      ]
+    },
+    {
+      "tabella": "video_jobs",
+      "indice": "video_jobs_rinnovo_token_unico_idx",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "rinnovo_token_hash"
       ]
     },
     {

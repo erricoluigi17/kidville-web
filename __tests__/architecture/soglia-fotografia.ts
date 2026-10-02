@@ -177,16 +177,9 @@ export function posterioriCheContengono(
 // nessuna guardia vedrebbe). Il file A (T2a) crea un indice UNIQUE parziale e ricrea un CHECK
 // con DROP/ADD CONSTRAINT, quindi due guardie su tre lo vedono. Le voci si tolgono nella PR-B
 // (T16), insieme alla rigenerazione delle fotografie: la prova gemella 2 diventa rossa da sola.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261002215600_video_pubblicazione_automatica.sql':
-        'Video PR 2, file A (T2a): crea l’indice UNIQUE parziale del token di rinnovo ' +
-        '(video_jobs_rinnovo_token_unico_idx) e ricrea video_jobs_probe_chk con DROP/ADD CONSTRAINT, ' +
-        'quindi le guardie degli indici unici e delle FK verso utenti la segnalerebbero. Non è ancora ' +
-        'in produzione: la applica T16 con `supabase db push --linked` prima del merge (l’integrazione ' +
-        'Supabase al merge la trova già registrata, come le due migrazioni della PR 1) e la voce si ' +
-        'toglie nella PR-B/T16, che rigenera le fotografie dalla produzione. Se il file viene ' +
-        'rinominato con l’istante vero, la chiave segue il nome.',
-}
+// SVUOTATA il 03/10 (02/10 22:3x UTC): il file A, rinominato `20261002215600_…`, e' applicato in produzione
+// e le fotografie sono rigenerate dalla produzione (202 migrazioni, 232 indici unici).
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

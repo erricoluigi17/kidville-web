@@ -1,7 +1,7 @@
 
 ## 🎬 Changelog — Video, PR 2 «server e web»: i bambini si scelgono prima, il video esce da solo dal server, nell'app il riquadro grande apre foto e video — 2026-10-03 (branch `feat/video-pubblicazione-server`)
 
-**Stato.** ⏳ PR [#181](https://github.com/erricoluigi17/kidville-web/pull/181): migrazioni **applicate in produzione** il 02/10 (22:3x UTC), codice non ancora in produzione: gate, misure del Sandbox, collaudo sul simulatore, CI, PR, migrazioni, merge e verifiche in produzione stanno nella sottosezione «Test e collaudo» e, a rilascio fatto, in fondo a questa voce. Viene dopo la PR 1 (la voce qui sotto: FFmpeg nel nostro bucket e ritentativi, in produzione dal 02/10) e prima della PR 3 («app 1.2»: invio nativo in background). Spec: `docs/superpowers/specs/2026-10-02-video-pr2-pubblicazione-server-design.md` · difetti secondari (206): `docs/superpowers/plans/2026-10-02-video-pr2-difetti-secondari.md` · variabili e snapshot: `docs/env.md` · E2E: `docs/e2e.md`.
+**Stato.** ✅ **In produzione** dal 02/10/2026, 23:18 UTC: PR [#181](https://github.com/erricoluigi17/kidville-web/pull/181), merge `06dd1d66`, migrazioni applicate prima del merge (22:36 UTC). L'esito del rilascio e le verifiche sono in fondo a questa voce; resta da vedere dal vivo la prima pubblicazione automatica di un video vero. In origine: gate, misure del Sandbox, collaudo sul simulatore, CI, PR, migrazioni, merge e verifiche in produzione stanno nella sottosezione «Test e collaudo» e, a rilascio fatto, in fondo a questa voce. Viene dopo la PR 1 (la voce qui sotto: FFmpeg nel nostro bucket e ritentativi, in produzione dal 02/10) e prima della PR 3 («app 1.2»: invio nativo in background). Spec: `docs/superpowers/specs/2026-10-02-video-pr2-pubblicazione-server-design.md` · difetti secondari (206): `docs/superpowers/plans/2026-10-02-video-pr2-difetti-secondari.md` · variabili e snapshot: `docs/env.md` · E2E: `docs/e2e.md`.
 
 **Perché.** La PR 1 ha rimesso in moto le conversioni, ma il primo video vero convertito il 02/10 **non è stato pubblicato**: l'insegnante ha tolto la scheda 2 minuti e 43 secondi dopo il `ready` e il job è passato a `cancelled` (verifica della PR 1, punto 4). La falla era strutturale, e questa PR la chiude. Misurato fra il 01 e il 02/10, in sola lettura, solo conteggi e numeri:
 
@@ -295,8 +295,8 @@ I log del client partono al passaggio in background (`visibilitychange`/`pagehid
 | #93 | route | Su un DB **senza** il file A le letture prendono `42703` e la route risponde 500 invece del 503 pulito: perciò il DB della CI si migra prima dell'E2E e la produzione prima del deploy. |
 | #103 | `esegui.ts` | Dopo `pronto` o `fallito` non si rifà il ventaglio: un job fermo per `capacita-piena` aspetta il tick, al più 5 minuti. |
 | #106 | `battito.ts` | Il margine della sorveglianza (270 s) si supera con una lettura del marcatore molto lenta: finestra rara di `OUTPUT_CONFLICT`. Da osservare. |
-| #113 | `gdpr/esegui.ts` | `PGRST202` (funzione assente) vale «niente da obliare» **senza una riga di log**: da fare un `warn`. |
-| #116 | `retention-video` | Nessun `maxDuration` e un giro più lungo di prima: misurare `ms` nei primi battiti e valutare `maxDuration = 300`. |
+| #113 | `gdpr/esegui.ts` | ✅ **Chiuso in T16:** con `PGRST202` (funzione assente) l'oblio vale «niente da obliare» e ora lo dice con un `warn` `oblio-video-intenti-rpc-assente` (test visto rosso togliendo la riga). |
+| #116 | `retention-video` | ✅ **Chiuso in T16:** la route dichiara `maxDuration = 300`. Il primo giro in produzione (02/10 23:23 UTC) è durato ~34 s. |
 | #155 | pubblicatore | `OUTPUT_TOO_LARGE` e `DESTINAZIONE_DIVERSA` sono trattati come transitori: 60 minuti di tentativi, poi un «Riprova» che fallirebbe uguale. |
 | #156 | `esiti.ts` | `esito-docente-accodato` si scrive anche quando `notificaEvento` non ha accodato (interruttore spento, guasto interno): la riga di successo non prova l'arrivo della notifica. |
 | #157, #160 | `esiti.ts`, `runner/index.ts` | `LIMITE_INTENTI_SCANSIONE` = 200 (dai più vecchi) e le stime di tempo (`STIMA_PUBBLICAZIONE_MS` 15 s, `STIMA_SCANSIONE_ESITI_MS` 5 s, `TETTO_PUBBLICAZIONI_MS` 60 s) non sono misure: si tarano dai primi battiti. I claim a 3 e a 4 argomenti e la query `not.in` vanno provati dal vivo. |
@@ -311,6 +311,20 @@ I log del client partono al passaggio in background (`visibilitychange`/`pagehid
 | #84 | `gallery/route.ts` | Preesistente: `POST /api/gallery` accetta ancora `file_type: 'video'` con un `file_url` (il flusso di prima di V08, senza `video_intent_id`). Lo chiudono di fatto le tre porte di upload, che ora rifiutano ogni video. Annotato. |
 
 Deviazioni dalla lettera della spec, **accettate e documentate** (#102, #118, #129, #159): il «testimone» del runner; la retention che non consuma `gallery.auto_publish`; il `500` della purga in fondo al giro; l'età dei 60 minuti guardata dopo un tentativo fallito; un `action_required` senza marca che completa la notifica; un job concluso dopo l'evento che chiude l'evento; `esiti_eseguita` e `n_outbox_non_registrati` nel battito (36 chiavi); `annullaCopiaVideoInGalleria` tolta (la copia orfana la spazza `retention-galleria` dopo 24 ore).
+
+**Esito del rilascio (02-03/10/2026).**
+
+| Passo | Esito |
+|---|---|
+| CI della PR (due giri: prima e dopo le fotografie) | unit **1.645/1.645** file (27.015 test), build ok, E2E **161 verdi senza ripescaggi** (5 saltati condizionali, preesistenti); i quattro spec video nuovi girati e verdi, `video-invio-bambini-prima` anche su WebKit; `gallery-caricamento` 3 + 3 verdi (#43) |
+| Gate locale sull'albero definitivo | `tsc` 0 · `eslint .` 0 · `vitest run` 1.645/1.645 file (26.992 test) · `npm run build` ok (2.927 file JS verificati dal controllo dell'artefatto) |
+| Migrazioni | applicate **prima** del merge (02/10 22:36 UTC), vedi «Rilascio (T16)»; al merge `DB migrate (prod)` approvato dopo il dry-run locale: «**Remote database is up to date**», e il workflow ha detto lo stesso |
+| Merge e deploy | merge a mano `06dd1d66` (squash) alle 23:14 UTC; deploy di produzione Vercel legato al commit, **Ready** in 3 minuti; `POST /api/video-uploads/rinnovo` con un token inventato → **404 JSON `VIDEO_NON_TROVATO`** (la route nuova risponde, senza pagine di sfida); `/api/health` 200 |
+| Il runner nuovo (giro delle 23:21 UTC) | `video-arrivi-recupera` ok (nessun errore di permessi: #70), `video-runner-ventaglio` ok, outbox di `gallery.auto_publish` letta col claim a **4 argomenti** senza ambiguità (#121, #160), coda vuota; nessun errore |
+| La conservazione nuova (giro delle 23:23 UTC) | intenti del flusso vecchio **revocati** (`flusso-vecchio-revocato`), uscite rimosse (`uscite-rimosse`), 2 originali «risorti» tolti (`originali-risorti-rimossi`, warn atteso), minimizzazione, outbox, riconciliazione: tutto `ok` |
+| Numeri dopo il primo giro | `video_processing` da **87 oggetti** (01/10) a **13** (più un file temporaneo della prova S0 della PR 3, tolto a parte); intenti: 42 pubblicati, 97 annullati, **0 aperti**; `video_riconciliazione`: `arrivi_mancati` 0 (non `NULL`: la rete vede `storage.objects`), **0 uscite senza scadenza**, 0 incagliati, 0 outbox in ritardo, 12 uscite e 4 originali in uscita al prossimo giro |
+| Errori server dopo il deploy | **nessuno** sui video; i soli errori client del periodo sono di genitori con binari vecchi (news e home), estranei |
+| ⏳ Da vedere dal vivo | la prima **pubblicazione automatica** di un video vero (`pubblicazione-automatica-riuscita`, notifica ai soli genitori dei bambini scelti, esito all'insegnante), al primo caricamento di un'insegnante; i tempi reali di conversione dallo snapshot (`ambiente-pronto`, `ambiente: snapshot`) |
 
 ## 🎥 Changelog — Video, PR 1 «hotfix»: dal 29/09 nessun video si converte per un 404 su un download esterno; FFmpeg passa nel nostro bucket, i guasti nostri si ritentano da soli, il log tiene la coda dell'errore — 2026-10-02 (branch `fix/video-ffmpeg-bucket`, PR [#179](https://github.com/erricoluigi17/kidville-web/pull/179))
 

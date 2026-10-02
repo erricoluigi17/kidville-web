@@ -90,22 +90,12 @@ const IN_CODA: Record<string, string> = {
     // diligenza di qualcuno.
     //
     // RIAPERTA il 2026-10-02 con due voci, quelle della PR 1 «hotfix video» (FFmpeg nel
-    // nostro bucket, ritentativi dei job). Il timestamp e' PROVVISORIO: le due si
-    // applicano a mano prima del merge, dopo averle mostrate, e il file passa alla
-    // `version` registrata (`git mv`). Quel giorno la prova gemella qui sotto diventa
-    // rossa su tutte e due — il nome vecchio non esiste piu' — e la mappa si svuota di
-    // nuovo, insieme alla rigenerazione delle fotografie.
-    '20261002120000_video_build_bucket.sql':
-        'Scritta il 2026-10-02 per la PR 1 «hotfix video» e NON ancora applicata: dichiara il bucket ' +
-        'privato `video_build`, dove stanno i binari di FFmpeg che il runner scarica con un indirizzo ' +
-        'firmato (prima li prendeva da GitHub e dai mirror di pacchetti, e il 29/09 quell’indirizzo ' +
-        'ha smesso di rispondere). Va applicata PRIMA del codice che la usa, e i tre oggetti ' +
-        'caricati subito dopo.',
-    '20261002120100_video_job_ritentativi.sql':
-        'Scritta il 2026-10-02 per la PR 1 «hotfix video» e NON ancora applicata: aggiunge a ' +
-        '`video_jobs` le colonne `next_attempt_at` e `last_error_code`, la RPC `video_job_retry` e ' +
-        'riscrive `video_job_next` e `video_job_claim` perché un job in attesa non si riprenda ' +
-        'prima della sua ora. Retrocompatibile: applicata prima del codice nuovo non cambia niente.',
+    // nostro bucket, ritentativi dei job), e SVUOTATA lo stesso giorno: le due sono state
+    // applicate in produzione prima del merge con `supabase db push --linked`, dopo essere
+    // state mostrate, con il file gia' rinominato all'istante dell'applicazione
+    // (`20261002065852_video_build_bucket.sql`, `20261002065952_video_job_ritentativi.sql`).
+    // Cosi' la `version` registrata e' quella del file, e l'integrazione Supabase al merge
+    // le trova gia' applicate invece di applicarle una seconda volta.
 }
 
 const RADICE = process.cwd()

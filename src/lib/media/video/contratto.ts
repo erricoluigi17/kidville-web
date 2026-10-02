@@ -314,7 +314,7 @@ export const CODICI_ESITO_VIDEO = [
   'RIPROVA_NON_POSSIBILE',
   /** La RPC di pubblicazione ha ricevuto fra i bambini effettivi uno che l'intento non nominava. */
   'TAG_NON_DELL_INTENTO',
-  // Gli altri sette codici che le RPC di `20261002150000_video_pubblicazione_automatica.sql`
+  // Gli altri sette codici che le RPC di `20261002215600_video_pubblicazione_automatica.sql`
   // rispondono e che la spec non nominava uno per uno: il lock li ha trovati nel testo della
   // migrazione scritta dal compito T2a, e qui hanno la loro destinazione.
   /** Un broadcast che porta bambini: i due vanno insieme solo nella testa di chi chiama. */

@@ -35,10 +35,10 @@ import { versioneDelFile } from './soglia-fotografia'
  *     in un `UPDATE public.video_jobs`: a pubblicazione fatta la copia in galleria esiste e
  *     l'uscita in `video_processing` non serve più. Oppure è dichiarata.
  *
- * ─── IL PERIMETRO, E PERCHÉ NON È «DA 20261002150000 IN POI» ────────────────────────────
+ * ─── IL PERIMETRO, E PERCHÉ NON È «DAL FILE A IN POI» ────────────────────────────
  *
- * Il nome provvisorio del file A (`20261002150000_…`) viene RINOMINATO con l'istante vero
- * dell'applicazione (T16), che può essere ANTERIORE a quello provvisorio: un perimetro
+ * Il file A è nato col nome provvisorio `20261002150000_…` ed è stato RINOMINATO (T16) con l'istante
+ * dell'applicazione, `20261002215600_…`: un nome che può cambiare, e in un altro rilascio essere ANTERIORE a quello provvisorio. Un perimetro
  * espresso con quella data lascerebbe fuori, in silenzio, proprio il file che il lock esiste
  * per guardare — e un lock che scandisce zero file è verde. Il perimetro parte quindi dalla
  * ULTIMA migrazione della PR 1 (`20261002065952`, già in produzione, esclusa): tutto ciò che

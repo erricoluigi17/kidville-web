@@ -178,7 +178,7 @@ export function posterioriCheContengono(
 // con DROP/ADD CONSTRAINT, quindi due guardie su tre lo vedono. Le voci si tolgono nella PR-B
 // (T16), insieme alla rigenerazione delle fotografie: la prova gemella 2 diventa rossa da sola.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261002150000_video_pubblicazione_automatica.sql':
+    '20261002215600_video_pubblicazione_automatica.sql':
         'Video PR 2, file A (T2a): crea l’indice UNIQUE parziale del token di rinnovo ' +
         '(video_jobs_rinnovo_token_unico_idx) e ricrea video_jobs_probe_chk con DROP/ADD CONSTRAINT, ' +
         'quindi le guardie degli indici unici e delle FK verso utenti la segnalerebbero. Non è ancora ' +

@@ -100,16 +100,16 @@ const IN_CODA: Record<string, string> = {
     // RIAPERTA il 2026-10-02 con le voci della PR 2 «video: server e web». Il lock vieta le
     // voci senza un file su disco, quindi ogni compito che scrive una migrazione aggiunge la
     // SUA voce (T2a il file A; T2b e T2c i file B e C). Si svuota in T16, dopo l'applicazione.
-    '20261002150000_video_pubblicazione_automatica.sql':
+    '20261002215600_video_pubblicazione_automatica.sql':
         'Video PR 2, file A (T2a): colonne di intenti e job, RPC della pubblicazione automatica e ' +
         'di sorveglianza, video_job_ready a 300 secondi. Scritta e NON ancora applicata: la applica ' +
         'T16 con `supabase db push --linked`, dopo averla mostrata e rinominata all’istante vero.',
-    '20261002150100_video_arrivo_originale.sql':
+    '20261002215700_video_arrivo_originale.sql':
         'Video PR 2, file B (T2b): il trigger d’arrivo dell’originale su storage.objects (fail-open, solo ' +
         'video_originals), il corpo condiviso e la scansione degli arrivi mancati. Scritta e NON ancora ' +
         'applicata: la applica T16 con `supabase db push --linked`, dopo il file A, mostrata e rinominata ' +
         'all’istante vero.',
-    '20261002150200_video_conservazione_uscite.sql':
+    '20261002215800_video_conservazione_uscite.sql':
         'Video PR 2, file C (T2c): la rete delle uscite in video_retention_scadenze, il timbro dell’uscita, la ' +
         'scadenza dei convertiti non pubblicati, la revoca del flusso vecchio, la minimizzazione e l’oblio dei ' +
         'bambini sugli intenti, i sei conteggi nuovi della riconciliazione e il filtro per tipo di ' +

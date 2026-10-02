@@ -103,9 +103,9 @@ merge. Tutti **idempotenti** (`IF NOT EXISTS`, `CREATE OR REPLACE`, blocchi `DO`
 
 | File provvisorio | Compito |
 |---|---|
-| `supabase/migrations/20261002150000_video_pubblicazione_automatica.sql` | T2a |
-| `supabase/migrations/20261002150100_video_arrivo_originale.sql` | T2b |
-| `supabase/migrations/20261002150200_video_conservazione_uscite.sql` | T2c |
+| `supabase/migrations/20261002215600_video_pubblicazione_automatica.sql` | T2a |
+| `supabase/migrations/20261002215700_video_arrivo_originale.sql` | T2b |
+| `supabase/migrations/20261002215800_video_conservazione_uscite.sql` | T2c |
 
 **Regole comuni a ogni RPC:** `SECURITY DEFINER`, `SET search_path = pg_catalog` (nomi qualificati), `REVOKE … FROM
 PUBLIC, anon, authenticated` e `GRANT EXECUTE … TO service_role`; ordine dei lock sempre **intento → job**;

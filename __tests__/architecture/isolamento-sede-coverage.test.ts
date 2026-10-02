@@ -1310,13 +1310,21 @@ const AMMESSE: Record<string, string> = {
     // verificato prima (staff o genitore)», ma per lo STAFF non era vero — nessun controllo di
     // sede. Ora il ramo staff passa da `assertAlunnoInScope` e il lock la vede coperta da sé.
 
-    // ── Pipeline video (2026-09-18) — emersa il 2026-09-23 ───────────────────
-    // Non è una voce nuova per una rotta nuova: è un punto cieco della fotografia.
-    // `video_jobs` ha `scuola_id` dal 18/09, ma `tabelle-scuola-id.json` era ferma
-    // al 01/09 e il lock non la guardava. Rigenerata la fotografia (PR-B della coda
-    // fatture), l'unica lettura segnalata è questa, ed è già dietro due cancelli.
-    'video-uploads/[id]:<modulo>':
-        "helper `leggiIntento`: i `video_jobs` si leggono per `intent_id` dell'intento appena letto con `owner_id = user.id` IN QUERY (404 se non è tuo) e passato da `sedeAncoraPropria` sulla `scuola_id` dell'intento (403 se la sede non è più tua). Un job non ha altra sede che quella del suo intento",
+    // ── Pipeline video (2026-09-18) — emersa il 2026-09-23, rivista il 2026-10-02 ──
+    // Qui c'era `video-uploads/[id]:<modulo>`, per l'helper `leggiIntento` (i `video_jobs` si
+    // leggevano per `intent_id` dell'intento appena letto con `owner_id = user.id` IN QUERY, e
+    // passato da `sedeAncoraPropria`). La voce è STATA TOLTA e non perché il presidio sia
+    // sparito: la funzione è passata in `src/app/api/video-uploads/cancello.ts` — le strade che
+    // leggono l'intento di una persona sono diventate tre (`[id]` GET e PATCH, `[id]/firma`) e un
+    // file di route può esportare solo i metodi HTTP — e questo lock guarda i `route.ts`, non i
+    // moduli accanto. Il presidio è lo stesso, riga per riga: proprietà in query, sede nel confronto.
+    // Le tre route nuove non ne hanno bisogno: `GET /api/video-uploads` filtra proprietà E sede
+    // dentro ciascuna query (`.eq('owner_id', …)`, `.in('scuola_id', …)` su `video_intents` e su
+    // `video_jobs`), `[id]/firma` non ha query e passa da `leggiIntento`.
+    //
+    // L'UNICA voce nuova della PR 2 è la porta senza sessione del rinnovo, qui sotto.
+    'video-uploads/rinnovo:POST':
+        "la sede NON viene dal chiamante e non c'è una sessione da cui derivarla: viene dal TOKEN di rinnovo. La porta è dell'app 1.2, che quando l'URL firmato scade non ha nessun utente da presentare (la voce in `gate-coverage` dice perché per esteso), e `video_rinnovo_usa` riceve lo SHA-256 del token — mai un uuid scelto dal client: il job lo trova lei, per l'indice unico sull'hash (256 bit, 404 uniforme per ogni token non valido). La sede di quel job è quella dell'intento che l'ha aperto, già attraversata all'apertura da `resolveScuolaScrittura` e dai cancelli dei destinatari: qui non c'è una sede da filtrare perché non c'è un elenco — la risposta è uno stato (`da-caricare`, `arrivato`, `annullato`) e, solo per `da-caricare`, un URL di caricamento per UN percorso, quello del job del token, firmato senza upsert. Nessuna lettura di tabelle (la sola RPC), nessun dato di famiglie nella risposta. Presidi misurati da `__tests__/api/video-uploads-rinnovo.test.ts`: tetti 30/10' per IP e 20/10' per impronta del token, 404 uniforme, un token revocato dopo l'arrivo risponde lo stato e MAI un URL, il token e il suo hash non compaiono in nessun log",
 
     // ── Modulistica: i modelli GLOBALI (scuola_id NULL) esistono per progetto ──
     // Semantica decisa il 2026-07-31: NULL = globale, leggibile da tutti,
@@ -1476,11 +1484,16 @@ const AMMESSE: Record<string, string> = {
     // nessuna didascalia, nessun uuid di famiglia. A leggerle è un cron.
     'gdpr/retention-galleria:<modulo>': "helper `spazzaMediaOrfani` + `reclamiConfrontabili`: chiedono quali percorsi elencati nello STORAGE siano reclamati da una riga, per rimuovere quelli che non lo sono, e quante righe portino un percorso non confrontabile. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI i media reclamati dalle altre due sedi e li cancellerebbe — la foto di un bambino distrutta mentre la sua riga è viva, e un riquadro rotto in galleria per quelle famiglie. Leggono una sola colonna (`file_url`) e solo per i percorsi che hanno già in mano, o un puro conteggio con `head: true`: nessun percorso e nessun nome escono da qui. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
     'gdpr/retention-cestino-registro:<modulo>': "purga a 7 giorni (`GIORNI_CESTINO_REGISTRO`) del cestino di allegati del registro e fascicolo: le tre query di `student_documents` (le scadute, i reclami sul percorso, la `delete` per id) stanno nella tabella `CONTENITORI_CESTINO_REGISTRO` a livello di modulo, scritte col nome della tabella in chiaro perché il lock del cestino del fascicolo le veda. Come la galleria e l'oblio, il termine vale su TUTTE le sedi: un documento messo nel cestino scade lo stesso giorno in ogni plesso, e un `.in('scuola_id', plessi)` lo lascerebbe nell'archivio in silenzio, col battito che dice «ok» — una diagnosi o un PEI di un minore conservato oltre il termine promesso. La `delete` lavora su id già letti dalla prima query e RIPETE le condizioni del cestino (`eliminato_il` non nullo e più vecchio della soglia): non allarga la domanda, e una riga viva non è cancellabile da qui. I reclami leggono solo `id` e la colonna del percorso, e solo per i percorsi già in mano: nessun nome e nessun percorso escono nei log. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret, e il lancio manuale passa da `requireStaff` ma fa lo stesso identico lavoro.",
-    // ── LA CONSERVAZIONE DEGLI ORIGINALI VIDEO (2026-09-18, V14) ────────────
+    // ── LA CONSERVAZIONE DEI VIDEO: ORIGINALI E USCITE (2026-09-18, V14; esteso il 2026-10-02) ──
     //
-    // COSA SEGNALA IL LOCK: tre `rpc()` senza parametro di sede —
-    // `video_retention_scadenze`, `video_retention_originale_rimosso` e
-    // `video_riconciliazione` — più `video_outbox_claim` fuori dagli handler.
+    // COSA SEGNALA IL LOCK: le `rpc()` senza parametro di sede del giro della purga —
+    // `video_retention_scadenze`, `video_retention_originale_rimosso` e `video_riconciliazione` dal
+    // 18/09; dalla PR 2 «server e web» anche `video_galleria_flusso_vecchio_revoca`,
+    // `video_intent_scadi_non_pubblicato`, `video_retention_uscita_rimossa` e
+    // `video_intenti_minimizza` — e le letture di `video_jobs` (gli originali e le uscite scaduti,
+    // chi reclama un percorso). Il consumo di `video_outbox` NON è più qui: il motore e il registro
+    // dei destinatari stanno in `src/lib/media/video/outbox/`, fuori dal perimetro di questo lock (che
+    // scandisce le route), e la route gli passa solo i tipi che le competono.
     //
     // ⚠️ LA SEDE NON MANCA: NON C'È PROPRIO. Nessuna di quelle RPC prende un
     // `p_scuola_id`, e non è una svista di chi le ha scritte: un TERMINE DI
@@ -1488,32 +1501,40 @@ const AMMESSE: Record<string, string> = {
     // Giugliano scade lo stesso giorno di uno di Aversa e di uno di Cesa, e una RPC
     // che accettasse un elenco di plessi lascerebbe indietro — IN SILENZIO, col
     // battito che dice «ok» — proprio i plessi che il job non conosce. È la stessa
-    // ragione, parola per parola, delle tre voci `gdpr/retention-*` qui sopra.
+    // ragione, parola per parola, delle tre voci `gdpr/retention-*` qui sopra. Vale per
+    // la revoca del flusso vecchio e per la scadenza dei convertiti non pubblicati (un
+    // intento vecchio di sette giorni è vecchio in ogni plesso) e per la minimizzazione
+    // dei bambini sugli intenti (un identificativo di minore non ha una sede in cui
+    // restare di più).
     //
     // ⚠️ E QUI IL FILTRO DI SEDE SAREBBE PEGGIO CHE INUTILE, esattamente come sulla
     // galleria: il passo che rimuove gli orfani parte dallo STORAGE
-    // (`list` su `video_originals`), dove un oggetto non ha una sede. La domanda che
-    // `video_jobs.select('original_path').in('original_path', lotto)` pone è «questo
-    // percorso è reclamato da UNA QUALUNQUE riga?», e ciò che nessuno reclama viene
-    // distrutto. Restringere la domanda a un plesso significa rispondere «nessuno»
-    // per gli originali delle altre due sedi, cioè dichiararli orfani e portarli via
-    // — il video di un bambino distrutto mentre il suo job è vivo e in coda per la
-    // conversione.
+    // (`list` su `video_originals` e su `video_processing`), dove un oggetto non ha una
+    // sede. La domanda che `video_jobs.select('original_path, original_deleted_at')
+    // .in('original_path', lotto)` pone — e la sua gemella sulle uscite — è «questo
+    // percorso è reclamato da UNA QUALUNQUE riga, e quella riga lo dichiara già tolto?»,
+    // e ciò che nessuno reclama (o che la riga dichiara già tolto) viene distrutto.
+    // Restringere la domanda a un plesso significa rispondere «nessuno» per gli originali
+    // e per le uscite delle altre due sedi, cioè dichiararli orfani e portarli via — il
+    // video di un bambino distrutto mentre il suo job è vivo, in coda per la conversione
+    // o convertito e in attesa di essere pubblicato.
     //
-    // COSA NON LEGGONO, che è la metà che rende le voci difendibili: le tre RPC
-    // restituiscono CONTEGGI e la riga del solo job nominato; la lettura degli
-    // scaduti prende due colonne (`id`, `original_path`) filtrando sull'indice
-    // parziale della retention; la ricevuta dell'outbox chiede un `count` con
-    // `head: true`, quindi nessun percorso attraversa la funzione. Nessun nome,
-    // nessun `source_mime`, nessun uuid di famiglia. A leggerle è un cron.
+    // COSA NON LEGGONO, che è la metà che rende le voci difendibili: le RPC
+    // restituiscono CONTEGGI e la riga del solo job nominato (il timbro risponde `ok`,
+    // senza riga: porterebbe l'hash del token e lo SHA-256); le letture degli scaduti
+    // prendono due colonne (`id` e il percorso) filtrando sugli indici parziali della
+    // retention; i reclami leggono il percorso e il suo timbro di rimozione, e solo per i
+    // percorsi già in mano. Nessun nome, nessun `source_mime`, nessun identificativo di
+    // bambino (`tag_alunni` non esce mai da `video_intenti_minimizza`: la funzione lo
+    // svuota e risponde un numero). A leggerle è un cron.
     //
     // Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret; il
     // lancio manuale passa da `requireStaff` ma fa lo stesso identico lavoro — la
     // conservazione non è un elenco che cambia a seconda di chi guarda.
     'gdpr/retention-video:POST':
-        "conservazione degli originali video in `video_originals` (sette giorni dalla verifica per i riusciti, sette dalla dichiarazione per falliti e abbandonati, subito per gli annullati) più riconciliazione e svuotamento di `video_outbox`. Le tre RPC — `video_retention_scadenze`, `video_retention_originale_rimosso`, `video_riconciliazione` — NON hanno un parametro di sede, e non per dimenticanza: un termine di conservazione non ha confini di plesso, e un filtro qui lascerebbe in silenzio nell'archivio gli originali dei plessi che il job non conosce, col battito che dice «ok». Restituiscono conteggi e la riga del solo job nominato; la lettura degli scaduti prende `id` e `original_path` dall'indice parziale `video_jobs_retention_originali_idx`. La sede la porta comunque la riga (`video_jobs.scuola_id`): non si perde nulla, semplicemente non si filtra. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
+        "conservazione dei video: gli originali in `video_originals` (sette giorni dalla verifica per i riusciti, sette dalla dichiarazione per falliti e abbandonati, subito per gli annullati) e le USCITE convertite in `video_processing` (`output_delete_after`: subito per i pubblicati, i falliti e gli annullati, sette giorni dalla verifica per i convertiti che nessuno ha pubblicato e per le News), più la revoca degli intenti del flusso vecchio, la minimizzazione dei bambini sugli intenti (`tag_alunni` svuotato sette giorni dopo la conclusione), la riconciliazione e lo svuotamento di `video_outbox` (i tipi che consegna la retention: quelli del runner li prende lui). Le RPC del giro — `video_galleria_flusso_vecchio_revoca`, `video_intent_scadi_non_pubblicato`, `video_retention_scadenze`, `video_retention_originale_rimosso`, `video_retention_uscita_rimossa`, `video_intenti_minimizza`, `video_riconciliazione` — NON hanno un parametro di sede, e non per dimenticanza: un termine di conservazione non ha confini di plesso, e un filtro qui lascerebbe in silenzio nell'archivio i video dei plessi che il job non conosce, col battito che dice «ok». Restituiscono conteggi e (il timbro) un semplice esito; le letture degli scaduti prendono `id` e il percorso dagli indici parziali `video_jobs_retention_originali_idx` e `video_jobs_uscite_da_togliere_idx`. La sede la porta comunque la riga (`video_jobs.scuola_id`, `video_intents.scuola_id`): non si perde nulla, semplicemente non si filtra. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
     'gdpr/retention-video:<modulo>':
-        "helper `spazzaOriginaliOrfani` + `svuotaOutbox` + `ricevutaRetention`: chiedono quali percorsi elencati nello STORAGE siano reclamati da una riga di `video_jobs`, per rimuovere quelli che non lo sono, e drenano `video_outbox` con le tre RPC che il database già espone. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI gli originali reclamati dalle altre due sedi e li cancellerebbe — il video di un bambino distrutto mentre il suo job è vivo e in coda per la conversione. Leggono una sola colonna (`original_path`) e solo per i percorsi che hanno già in mano, o un puro conteggio con `head: true`: nessun percorso e nessun nome escono da qui. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
+        "helper `spazzaMagazzino` (la spazzata degli orfani e dei risorti, uguale per i due bucket `video_originals` e `video_processing`) + `rimuoviPoiTimbra` (prima il file, poi il timbro della riga, per riga) + `chiamaPasso` (le RPC a passo singolo del giro): chiedono quali percorsi elencati nello STORAGE siano reclamati da una riga di `video_jobs`, e se quella riga li dichiara già tolti, per rimuovere gli orfani e i risorti, e timbrano le righe dei file usciti con le RPC che il database già espone. Il consumo di `video_outbox` e le sue ricevute non sono più qui: stanno in `src/lib/media/video/outbox/`, fuori dal perimetro di questo lock. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI gli originali e le uscite reclamati dalle altre due sedi e li cancellerebbe — il video di un bambino distrutto mentre il suo job è vivo, in coda per la conversione o convertito e in attesa di essere pubblicato. Leggono due colonne (il percorso e il suo timbro di rimozione) e solo per i percorsi che hanno già in mano: nessun percorso e nessun nome escono da qui. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
     // `admin/gdpr/erase:POST` NON è più qui, e non perché la regola sia cambiata.
     // Dal 2026-08-02 quella route non interroga più nessuna tabella per conto suo:
     // fa il gate (`assertAlunnoInScope`, che il confine di sede lo verifica eccome,
@@ -2452,7 +2473,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `restringiSedi`, 403 fuori perimetro), le docenti si leggono con `.in('scuola_id', …)`
             // e le conversazioni con il join `alunni!inner(scuola_id)` filtrato sulle stesse sedi.
             // Misurato rieseguendo il lock: 340 → 341.
-            routeConServiceRole: 341,
+            // +2 il 2026-10-02 (PR 2 video, compito T5): `video-uploads/[id]/firma` (POST) e
+            // `video-uploads/rinnovo` (POST), file nuovi. La prima non porta esenzioni: nel proprio
+            // file non ha né `.from(` né `.rpc(` — la lettura dell'intento passa da `leggiIntento`
+            // (`video-uploads/cancello.ts`: proprietà in query, sede nel confronto) e la firma dalla
+            // libreria `firme.ts`. La seconda, la porta SENZA sessione del rinnovo, porta UNA voce in
+            // AMMESSE (`video-uploads/rinnovo:POST`) e sta nel conto di `handlerEsentati`.
+            // Misurato rieseguendo il lock: 341 → 343.
+            routeConServiceRole: 343,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2709,7 +2737,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // +1 il 2026-09-30 (compito C2): `admin/chat/docenti-senza-push:GET` (vedi sopra, a
             // `routeConServiceRole`). CONTROLLATO, `handlerEsentati` fermo a 113.
             // Misurato rieseguendo il lock: 532 → 533.
-            handlerControllati: 533,
+            // +3 il 2026-10-02 (PR 2 video, compito T5): `video-uploads:GET` (l'elenco dei MIEI
+            // video: proprietà e sede dentro OGNI query, `owner_id` + `.in('scuola_id', …)` su
+            // `video_intents` e su `video_jobs`), `video-uploads/[id]/firma:POST` e
+            // `video-uploads/rinnovo:POST` (vedi sopra, a `routeConServiceRole`). I primi due sono
+            // CONTROLLATI, e il lock li vede coperti da sé; il terzo è l'unico esentato.
+            // Misurato rieseguendo il lock: 533 → 536.
+            handlerControllati: 536,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -3071,6 +3105,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `pagamenti/ticket:GET`, che era esentata con «accesso verificato prima (staff o
             // genitore)» — falso per lo STAFF, che leggeva il saldo di un bambino di qualunque
             // plesso. Ora il ramo staff passa da `assertAlunnoInScope` e la voce era morta.
+            // 113 → 113 il 2026-10-02 (PR 2 video, compito T5), e il numero fermo racconta DUE
+            // movimenti opposti che non vanno confusi. ESCE `video-uploads/[id]:<modulo>` (la voce
+            // qui sopra, `leggiIntento`): la funzione è passata in `cancello.ts`, fuori dal perimetro
+            // di questo lock, e il presidio — proprietà in query, sede nel confronto — è lo stesso
+            // riga per riga. ENTRA `video-uploads/rinnovo:POST`, la porta SENZA sessione del rinnovo
+            // del caricamento nativo: la sua RPC riceve un'impronta e non una sede, perché la sede
+            // è del job che quel token identifica. Il saldo è zero, ma la voce nuova è una DECISIONE
+            // e non un adeguamento: è scritta per esteso in AMMESSE e ha il suo gemello in
+            // `gate-coverage` (dove la stessa porta sale da 19 a 20).
             handlerEsentati: 113,
         })
     })

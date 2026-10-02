@@ -67,10 +67,16 @@
 --     `rejected`, `error_code = 'ORIGINALE_SOSTITUITO'`, `fence_epoch + 1` (un runner che stava
 --     convertendo non può più scrivere `ready` né `failed`), lease azzerata, `original_delete_after
 --     = now` e, se il job aveva già un'uscita, anche `output_delete_after`.
+--     Per dirlo serve un RIFERIMENTO, l'eTag scritto sul job (`sorgente_etag`). Se il job è già
+--     avviato ma non ce l'ha — è entrato in coda dal PATCH prima che il trigger lo vedesse, o
+--     l'arrivo non portava l'eTag — il PRIMO evento che ne porta uno lo REGISTRA e non rifiuta
+--     niente (log `info` `video-originale-riferimento`): da lì in poi una sostituzione si vede.
+--     Vedi la scelta (c), più sotto.
 --
 -- Tutto il resto non fa niente: un evento sullo stesso eTag (Storage che tocca i metadati), un
--- job già `failed`/`rejected` col file ancora dentro (lo toglie la scadenza che ha già), un
--- oggetto senza job (log `info`: non è un guasto, lo spazza la retention degli orfani).
+-- evento senza eTag (non c'è niente da confrontare né da registrare), un job già `failed`/`rejected`
+-- col file ancora dentro (lo toglie la scadenza che ha già), un oggetto senza job (log `info`: non è
+-- un guasto, lo spazza la retention degli orfani).
 --
 -- ─── UNA REGOLA CHE NON SI TOCCA: IL TRIGGER NON FA MAI FALLIRE UN UPLOAD ──────
 --
@@ -104,8 +110,12 @@
 -- `DROP TRIGGER` né `ALTER TABLE … DISABLE TRIGGER` gli sono permessi. Lo si NEUTRALIZZA
 -- riscrivendo il CORPO della funzione: il trigger resta, e non fa più niente. L'istruzione
 -- pronta, da incollare così com'è (tiene gli attributi che contano, SECURITY DEFINER e
--- search_path; il `lock_timeout` non serve a un corpo che non prende nessun lock; il test la
--- esegue davvero, leggendola da queste righe):
+-- search_path; il `lock_timeout` non serve a un corpo che non prende nessun lock). Il gestore
+-- `EXCEPTION WHEN OTHERS THEN RETURN NEW` non può scattare — il corpo non fa niente che possa
+-- fallire — ma è la forma che il lock `trigger-storage-fail-open` pretende da OGNI trigger su
+-- `storage.objects`: se un giorno questa istruzione diventasse una migrazione, il lock la
+-- accetterebbe. Due test la usano leggendola da queste righe: uno la esegue davvero (PGlite: l'upload
+-- riesce e il job non si muove), l'altro fa girare su di essa la regola del lock:
 --
 -- >>> INTERRUTTORE: INIZIO
 --   CREATE OR REPLACE FUNCTION public.video_originale_arrivato()
@@ -113,7 +123,7 @@
 --   LANGUAGE plpgsql
 --   SECURITY DEFINER
 --   SET search_path = pg_catalog
---   AS $$ BEGIN RETURN NEW; END $$;
+--   AS $$ BEGIN RETURN NEW; EXCEPTION WHEN OTHERS THEN RETURN NEW; END $$;
 -- >>> INTERRUTTORE: FINE
 --
 -- Da quel momento i video entrano in coda dal PATCH `caricato` del web e dal giro del cron
@@ -127,8 +137,8 @@
 --    → {ok:true, candidati:int, arrivati:int, diversi:int, non_risolti:int, errori:int}
 --    | {ok:true, … tutti a zero, motivo:'storage-assente'}   (database senza storage.objects)
 --    | {ok:false, code:'BAD_INPUT'}                          (p_limite fuori da 1..200)
---    `candidati` = job `awaiting_upload` il cui oggetto esiste, dal più vecchio, al massimo
---    `p_limite`. `arrivati` = entrati in coda; `diversi` = rifiutati per dimensione;
+--    `candidati` = job `awaiting_upload` il cui oggetto esiste, dal PIÙ RECENTE (scelta (g)), al
+--    massimo `p_limite`. `arrivati` = entrati in coda; `diversi` = rifiutati per dimensione;
 --    `non_risolti` = il corpo condiviso non ha prodotto una transizione (metadati incompleti, o
 --    `video_job_uploaded` ha rifiutato: il suo codice è nel log); `errori` = eccezioni, ciascuna
 --    in un sottoblocco suo: un job che esplode non ferma gli altri. Solo `service_role`.
@@ -140,6 +150,7 @@
 --   video-originale-risorto           warn    col timbro; info se il job era annullato e non ancora timbrato
 --   video-originale-diverso           error   dimensione ≠ dichiarata → rejected (atteso, trovato)
 --   video-originale-sostituito        error   eTag cambiato → rejected; warn se l'intento è già chiuso (nessuna transizione)
+--   video-originale-riferimento       info    primo eTag di un job già avviato che non ne aveva: registrato, nessuna transizione
 --   video-originale-senza-job         info    oggetto in video_originals senza job
 --   video-originale-incompleto        warn    metadati senza dimensione o senza mime: il job resta in attesa
 --   video-arrivo-trigger-eccezione    error   un'eccezione nel trigger (SQLSTATE come codice)
@@ -163,28 +174,56 @@
 -- (b) Il token si revoca solo se il job ne ha uno (`rinnovo_token_hash IS NOT NULL`): a un job `tus`
 --     non c'è niente da revocare, e una data di revoca senza token sarebbe un dato che racconta
 --     una cosa che non è successa. Per un job nativo l'effetto è quello della spec.
--- (c) «eTag cambiato» vuol dire: l'eTag dell'evento E quello scritto all'arrivo ci sono entrambi e
---     sono diversi. Senza il riferimento (un job entrato in coda dal PATCH prima che il trigger lo
---     vedesse, o prima di questa migrazione) non si può dire che sia cambiato, e rifiutare un video
---     a posto sarebbe peggio che non accorgersi di una sostituzione.
+-- (c) «eTag cambiato» vuol dire: l'eTag dell'evento E quello scritto sul job ci sono entrambi e sono
+--     diversi. Il riferimento lo scrive l'arrivo regolare (trigger o giro). Un job che non l'ha —
+--     entrato in coda dal PATCH prima che il trigger lo vedesse, o prima di questa migrazione, o
+--     arrivato con metadati senza eTag — lo REGISTRA al primo evento che ne porta uno, e quel primo
+--     evento non rifiuta niente: non si può dire che un file sia cambiato rispetto a un riferimento
+--     che non c'era, e rifiutare un video a posto sarebbe peggio che non accorgersi di una
+--     sostituzione. Da quel momento una sostituzione si vede (prima un job entrato dal PATCH non
+--     registrava mai l'eTag, e ogni sostituzione successiva restava invisibile). Il limite che resta:
+--     un file sostituito PRIMA del primo evento diventa il riferimento. Si scrive solo
+--     `sorgente_etag`: né lo stato, né `updated_at`, né `arrivato_il` (non è un arrivo: l'ha già
+--     dichiarato il PATCH).
 -- (d) La sostituzione si applica solo a intenti vivi. Con l'intento già `published` l'uscita è stata
 --     copiata in galleria: riscrivere il job a `rejected` non protegge niente e lascia un intento
 --     pubblicato con un job respinto. L'evento si registra (warn) e il file lo toglie la retention.
--- (e) Ai job respinti da questo file, che non hanno scritto `source_size`, `video_rinnovo_usa`
---     risponde `annullato` (job chiuso senza che il file sia mai «arrivato» per il job, anche se il
---     token è stato revocato): è ciò che dice alla 1.2 di fermarsi e cancellare la copia. Il motivo
---     vero resta nel job (`error_code`) e nel log.
+-- (e) Che cosa risponde `video_rinnovo_usa` a un job respinto da questo file lo decide `source_size`
+--     (la RPC dice `annullato` a un job `failed`/`rejected` che non l'ha scritto, `arrivato` a uno
+--     che ce l'ha), non il fatto di essere stato respinto:
+--       · ORIGINALE_DIVERSO — il file non è mai «arrivato» per il job (`video_job_uploaded` non è
+--         stata chiamata, `source_size` è vuoto): `annullato`, che dice alla 1.2 di fermarsi e
+--         cancellare la copia;
+--       · ORIGINALE_SOSTITUITO — il job era già in coda o oltre e ha la sua `source_size`: `arrivato`,
+--         il file c'è ed è cambiato dopo l'arrivo, e la 1.2 non ha niente da ripetere.
+--     In entrambi il token è revocato (se il job ne aveva uno) e il motivo vero resta nel job
+--     (`error_code`) e nel log. Provato in PGlite, col caricamento nativo.
 -- (f) AL PRIMO GIRO DOPO IL DEPLOY la rete può accodare job vecchi i cui byte erano arrivati senza
 --     che nessun PATCH l'avesse detto (News abbandonate, galleria del flusso vecchio): una
 --     conversione una tantum ciascuno, poi `video_galleria_flusso_vecchio_revoca` (file C) revoca
 --     quelli della galleria. Non è un difetto, è un costo da sapere.
+-- (g) L'ORDINE DEL GIRO è dal job PIÙ RECENTE. Un candidato che il giro non riesce a risolvere
+--     (metadati senza dimensione o senza mime; un file vuoto di una News, che non ha una dimensione
+--     dichiarata e che `video_job_uploaded` rifiuta con `BAD_INPUT`; un'eccezione sempre uguale)
+--     resta candidato a ogni giro finché l'abbandono (48 ore, `UPLOAD_ABBANDONATO`) non lo chiude.
+--     Con «dal più vecchio» una fila di questi, tutti più vecchi di un arrivo nuovo, riempirebbe la
+--     finestra di `p_limite` posti e terrebbe fuori proprio l'arrivo che il trigger non ha visto, cioè
+--     quello per cui la rete esiste. Dal più recente un arrivo nuovo ha davanti solo candidati ancora
+--     più nuovi di lui, e un candidato bloccato è per definizione più vecchio dei job che nascono
+--     dopo: la regola non ha stato, non aggiunge colonne, non ha numeri da tarare. Il costo è
+--     dichiarato: sotto un arretrato più lungo di `p_limite` i più vecchi aspettano il giro dopo (i
+--     risolti escono dai candidati, quindi l'arretrato si scarica da solo). Il limite che resta:
+--     `p_limite` bloccati ancora PIÙ NUOVI dell'arrivo lo tengono fuori; il segno è un `non_risolti`
+--     alto e stabile nel battito, ed è un guasto da guardare, non da nascondere.
 --
 -- ─── PER GLI ALTRI COMPITI ───────────────────────────────────────────────────
 --
 --  · T5 (route): vedi (a). Il PATCH `caricato` deve chiamare anche `video_runner_kick` (spec §6).
 --  · T6 (runner): chiamare `video_arrivi_recupera` a ogni giro SENZA `job_id`, prima del ventaglio,
---    e riportare `arrivati`, `diversi` e `errori` nel battito. Un `arrivati` > 0 a regime vuol dire
---    che il trigger non sta vedendo gli arrivi: è già nel log come `warn`.
+--    e riportare `arrivati`, `diversi`, `non_risolti` e `errori` nel battito. Un `arrivati` > 0 a
+--    regime vuol dire che il trigger non sta vedendo gli arrivi: è già nel log come `warn`. Un
+--    `non_risolti` alto e stabile vuol dire candidati bloccati (scelta (g)). L'ordine del giro è dal
+--    PIÙ RECENTE: un commento del runner che dica «dal più vecchio» è stantio.
 --  · T7 / T13: un job `rejected` con `ORIGINALE_DIVERSO` o `ORIGINALE_SOSTITUITO` è un fallimento
 --    DEFINITIVO come gli altri (spec §3): la scansione degli esiti lo notifica. Se il job è `ready`
 --    e di un intento `confirmed`, la pubblicazione trova `JOBS_NOT_READY` e non pubblica.
@@ -475,8 +514,29 @@ BEGIN
     RETURN pg_catalog.jsonb_build_object('ok', true, 'esito', 'arrivato', 'job_id', v_job.id);
   END IF;
 
-  -- 4. IL FILE CAMBIA DOPO L'ARRIVO. Solo un job gia' avviato e un riferimento (l'eTag scritto
-  -- all'arrivo) permettono di dirlo: senza riferimento non si rifiuta niente (vedi la testata, c).
+  -- 4. IL FILE DOPO L'ARRIVO. Solo un job gia' avviato e un riferimento (l'eTag scritto sul job)
+  -- permettono di dire che e' cambiato (vedi la testata, c).
+  --
+  -- 4a. SENZA RIFERIMENTO: un job entrato in coda dal PATCH prima che il trigger lo vedesse, o con
+  -- un arrivo senza eTag nei metadati. Il primo evento che ne porta uno lo REGISTRA e non rifiuta
+  -- niente (non c'e' un riferimento con cui dire che il file e' cambiato): da qui in poi una
+  -- sostituzione si vede. Si scrive solo l'eTag, mai lo stato, `updated_at` o `arrivato_il`.
+  IF v_job.status IN ('queued', 'processing', 'ready')
+    AND v_etag IS NOT NULL
+    AND v_job.sorgente_etag IS NULL
+  THEN
+    UPDATE public.video_jobs
+    SET sorgente_etag = v_etag
+    WHERE id = v_job.id;
+
+    PERFORM public._video_job_transition_log(
+      'video-originale-riferimento', 'info', v_job.id, v_intent.id, NULL,
+      pg_catalog.jsonb_build_object('origine', p_origine, 'stato', v_job.status)
+    );
+    RETURN pg_catalog.jsonb_build_object('ok', true, 'esito', 'riferimento-registrato', 'job_id', v_job.id);
+  END IF;
+
+  -- 4b. CON RIFERIMENTO DIVERSO: il file e' stato sostituito dopo l'arrivo.
   IF v_job.status IN ('queued', 'processing', 'ready')
     AND v_etag IS NOT NULL
     AND v_job.sorgente_etag IS NOT NULL
@@ -537,7 +597,7 @@ REVOKE ALL ON FUNCTION public._video_originale_applica(text, jsonb, text)
   FROM PUBLIC, anon, authenticated, service_role;
 
 COMMENT ON FUNCTION public._video_originale_applica(text, jsonb, text) IS
-  'Il corpo condiviso del trigger d''arrivo e del giro: dato il nome di un oggetto di video_originals e i suoi metadati decide che cosa fare del job di quel percorso (arrivo, dimensione diversa, risorto, sostituito). Interna: nessun ruolo client la chiama.';
+  'Il corpo condiviso del trigger d''arrivo e del giro: dato il nome di un oggetto di video_originals e i suoi metadati decide che cosa fare del job di quel percorso (arrivo, dimensione diversa, risorto, sostituito; a un job avviato che non ha l''eTag di riferimento registra quello del primo evento che ne porta uno). Interna: nessun ruolo client la chiama.';
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- video_originale_arrivato — la funzione del trigger
@@ -602,6 +662,12 @@ COMMENT ON FUNCTION public.video_originale_arrivato() IS
 -- arrivo mancato (trigger non installato, eccezione ingoiata, evento perso), e se la rete ne trova
 -- uno lo dice come `warn`. Nessun lock sui job fuori dal corpo condiviso: bloccarli qui, prima degli
 -- intenti, invertirebbe l'ordine INTENTO → JOB di tutto lo schema.
+--
+-- L'ORDINE È DAL PIÙ RECENTE (testata, scelta (g)): i candidati che il giro non riesce mai a
+-- risolvere restano in elenco a ogni giro, e dal più vecchio una fila di loro occuperebbe tutta la
+-- finestra di `p_limite` posti, tenendo fuori un arrivo nuovo che il trigger non ha visto. Un job
+-- bloccato è per definizione più vecchio di quelli che nascono dopo di lui, quindi dal più recente non
+-- passa davanti a nessuno di loro; i bloccati escono da soli all'abbandono (48 ore).
 CREATE OR REPLACE FUNCTION public.video_arrivi_recupera(
   p_limite integer
 )
@@ -650,7 +716,7 @@ BEGIN
      AND o.name = j.original_path
     WHERE j.status = 'awaiting_upload'
       AND j.original_bucket = 'video_originals'
-    ORDER BY j.created_at, j.id
+    ORDER BY j.created_at DESC, j.id DESC
     LIMIT p_limite
   LOOP
     v_candidati := v_candidati + 1;
@@ -718,7 +784,7 @@ GRANT EXECUTE ON FUNCTION public.video_arrivi_recupera(integer)
   TO service_role;
 
 COMMENT ON FUNCTION public.video_arrivi_recupera(integer) IS
-  'La rete del trigger d''arrivo: porta in coda ogni job in awaiting_upload il cui oggetto esiste gia'' in video_originals (al massimo p_limite, dal piu'' vecchio), con lo stesso corpo del trigger, e lo dice come warn perche'' vuol dire che il trigger non l''ha visto. Scrive. Solo service_role.';
+  'La rete del trigger d''arrivo: porta in coda ogni job in awaiting_upload il cui oggetto esiste gia'' in video_originals (al massimo p_limite, dal piu'' recente: i candidati sempre irrisolti non tengono fuori un arrivo nuovo), con lo stesso corpo del trigger, e lo dice come warn perche'' vuol dire che il trigger non l''ha visto. Scrive. Solo service_role.';
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Il trigger su storage.objects

@@ -22,6 +22,12 @@ import { anonimizzaAlunno, bonificaAuditDiarioSenzaId } from '@/lib/gdpr/esegui'
 // registro, come la presenza. Le asserzioni sono sulla MUTAZIONE, mai sul solo conteggio.
 // =============================================================================
 
+// L'oblio dei video in volo (`video_intent_oblio_alunno`, 2026-10-02): `anonimizzaAlunno` la chiama sempre, e
+// il finto client non emula le RPC che non gli si dicono (lancia). Qui non c'è niente da togliere.
+const RPC_OBLIO_VIDEO = {
+  video_intent_oblio_alunno: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
+}
+
 const AT = '2026-09-28T09:00:00Z'
 const NOSTRO = 'aaaaaaaa-0000-4000-8000-00000000000a'
 const ALTRO = 'bbbbbbbb-0000-4000-8000-00000000000b'
@@ -43,7 +49,7 @@ function dbConDiario(): DBFinto {
 describe('anonimizzaAlunno — il testo del diario', () => {
   it('azzera le note e il testo delle routine a testo libero del bambino, e SOLO le sue', async () => {
     const db = dbConDiario()
-    const r = await anonimizzaAlunno(creaFintoSupabase(db), { id: NOSTRO }, AT, 'test')
+    const r = await anonimizzaAlunno(creaFintoSupabase(db, [], { rpc: RPC_OBLIO_VIDEO }), { id: NOSTRO }, AT, 'test')
 
     for (const riga of db.eventi_diario.filter((e) => e.alunno_id === NOSTRO)) {
       expect(riga.nota_bambino, `nota del bambino residua su ${riga.id}`).toBeNull()
@@ -64,7 +70,7 @@ describe('anonimizzaAlunno — il testo del diario', () => {
 
   it('le RIGHE restano, e i valori che non sono testo libero pure', async () => {
     const db = dbConDiario()
-    await anonimizzaAlunno(creaFintoSupabase(db), { id: NOSTRO }, AT, 'test')
+    await anonimizzaAlunno(creaFintoSupabase(db, [], { rpc: RPC_OBLIO_VIDEO }), { id: NOSTRO }, AT, 'test')
     expect(db.eventi_diario).toHaveLength(5)
     expect(db.eventi_diario.find((e) => e.id === 'd-1')!.dettagli).toEqual({ corsi: { primo: 'tutto' } })
     expect((db.eventi_diario.find((e) => e.id === 'd-4')!.dettagli as Record<string, unknown>).valore).toBe(true)
@@ -78,14 +84,14 @@ describe('anonimizzaAlunno — il testo del diario', () => {
         { id: 'd-2', alunno_id: NOSTRO, tipo_evento: 'routine:d0d0d0d0', dettagli: { ...APPUNTO, valore: null }, nota_bambino: null, nota_libera: null },
       ],
     }
-    const r = await anonimizzaAlunno(creaFintoSupabase(db, [], { scritture }), { id: NOSTRO }, AT, 'test')
+    const r = await anonimizzaAlunno(creaFintoSupabase(db, [], { scritture, rpc: RPC_OBLIO_VIDEO }), { id: NOSTRO }, AT, 'test')
     expect(scritture.filter((s) => s.tabella === 'eventi_diario').flatMap((s) => s.colpite)).toEqual([])
     expect(r.diarioBonificate).toBe(0)
   })
 
   it('una lettura fallita del diario si CONTA fra le letture fallite: non è «niente da togliere»', async () => {
     const db = dbConDiario()
-    const r = await anonimizzaAlunno(creaFintoSupabase(db, [], { errori: { eventi_diario: { code: '57014' } } }), { id: NOSTRO }, AT, 'test')
+    const r = await anonimizzaAlunno(creaFintoSupabase(db, [], { errori: { eventi_diario: { code: '57014' } }, rpc: RPC_OBLIO_VIDEO }), { id: NOSTRO }, AT, 'test')
     expect(r.lettureFallite).toBeGreaterThan(0)
   })
 })
@@ -100,7 +106,7 @@ describe('anonimizzaAlunno — il diario di un anno intero, e le colonne che man
       nota_bambino: `NOTA ${i}`, nota_libera: null,
     }))
     const db: DBFinto = { eventi_diario: eventi }
-    const r = await anonimizzaAlunno(creaFintoSupabase(db, [], { maxRighe: 1000 }), { id: NOSTRO }, AT, 'test')
+    const r = await anonimizzaAlunno(creaFintoSupabase(db, [], { maxRighe: 1000, rpc: RPC_OBLIO_VIDEO }), { id: NOSTRO }, AT, 'test')
     expect(db.eventi_diario.filter((e) => e.nota_bambino !== null), 'note residue').toHaveLength(0)
     expect(db.eventi_diario.filter((e) => (e.dettagli as Record<string, unknown>).valore?.toString().startsWith('TESTO')), 'testi residui').toHaveLength(0)
     expect(r.diarioBonificate).toBe(2500)
@@ -132,7 +138,7 @@ describe('anonimizzaAlunno — il diario di un anno intero, e le colonne che man
         upsert: () => catena(() => ({ data: [], error: null })),
       }),
       storage: { from: () => ({ remove: async () => ({ data: [], error: null }), list: async () => ({ data: [], error: null }) }) },
-      rpc: async () => ({ data: null, error: null }),
+      rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
     } as unknown as Parameters<typeof anonimizzaAlunno>[0]
     await anonimizzaAlunno(client, { id: NOSTRO }, AT, 'test')
     expect(riga.nota_libera, 'la nota di sezione è rimasta').toBeNull()
@@ -150,7 +156,7 @@ describe('anonimizzaAlunno — il registro delle scritture del diario', () => {
         { id: 'a-altro', entita_tipo: 'diario', azione: 'delete', entita_id: null, valore_prima: [{ id: 'd-9', alunno_id: ALTRO, nota_bambino: 'NOTA DI UN ALTRO BAMBINO' }], valore_dopo: null },
       ],
     }
-    await anonimizzaAlunno(creaFintoSupabase(db), { id: NOSTRO }, AT, 'test')
+    await anonimizzaAlunno(creaFintoSupabase(db, [], { rpc: RPC_OBLIO_VIDEO }), { id: NOSTRO }, AT, 'test')
     expect(db.audit_scritture_docente.find((a) => a.id === 'a-1')!.valore_prima).toBeNull()
     expect(db.audit_scritture_docente.find((a) => a.id === 'a-altro')!.valore_prima).not.toBeNull()
   })

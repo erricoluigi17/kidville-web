@@ -19,20 +19,27 @@
  * ─── COSA QUESTO FILE PROVA ──────────────────────────────────────────────────────────────
  *
  * I quattro casi della spec §5.4 (arrivo, dimensione diversa, risorto, sostituito) e i loro bordi;
- * che `video_job_uploaded` chiamata due volte (trigger + PATCH del web) resti idempotente; che
- * un'eccezione in QUALUNQUE punto del trigger lasci l'INSERT dell'oggetto riuscito e il job com'era
- * (le scritture del blocco si annullano), senza mai mettere nel log il messaggio di Postgres; la
- * rete (`video_arrivi_recupera`); l'installazione (senza `storage.objects`, senza il privilegio,
- * due volte di fila); e l'INTERRUTTORE D'EMERGENZA, eseguendo davvero le righe che la testata
- * della migrazione dice di incollare.
+ * il RIFERIMENTO dell'eTag (#68): un job entrato in coda dal PATCH prima che il trigger lo vedesse lo
+ * registra al primo evento, e da lì una sostituzione si vede; che `video_job_uploaded` chiamata due
+ * volte (trigger + PATCH del web) resti idempotente; che un'eccezione in QUALUNQUE punto del trigger
+ * lasci l'INSERT dell'oggetto riuscito e il job com'era (le scritture del blocco si annullano), senza
+ * mai mettere nel log il messaggio di Postgres; la rete (`video_arrivi_recupera`), e il suo ORDINE
+ * dal più recente (#71): i candidati sempre irrisolti non tengono fuori un arrivo nuovo;
+ * l'installazione (senza `storage.objects`, senza il privilegio, due volte di fila); l'INTERRUTTORE
+ * D'EMERGENZA, eseguendo davvero le righe che la testata della migrazione dice di incollare (col suo
+ * gestore fail-open, #65); l'ORDINE DEI LOCK intento → job (#64), letto sul codice della funzione; e
+ * che la testata dica ciò che il codice fa (scelte (c), (e), (g)).
  *
  * ─── COSA NON PROVA, detto qui e non in fondo ────────────────────────────────────────────
  *
  * PGlite è a CONNESSIONE SINGOLA: due transazioni davvero simultanee qui non si possono avere. Il
  * lock di riga e il `lock_timeout` si verificano sul TESTO e sugli attributi della funzione
- * (`proconfig`), non su un'attesa vera. E non c'è il vero `supabase_storage_admin`: il fatto che
- * `postgres` abbia il privilegio TRIGGER su `storage.objects` senza esserne il proprietario è una
- * misura fatta sul database della CI (spec §3), che T16 ripete in produzione.
+ * (`proconfig`), non su un'attesa vera: l'ordine dei lock (#64) è una prova sul codice senza i
+ * commenti, vista diventare rossa togliendo i `FOR UPDATE` e scambiandoli. E non c'è il vero
+ * `supabase_storage_admin`: il fatto che `postgres` abbia il privilegio TRIGGER su `storage.objects`
+ * senza esserne il proprietario è una misura fatta sul database della CI (spec §3), che T16 ripete
+ * in produzione. Che la regola del lock `trigger-storage-fail-open` accetti l'istruzione d'emergenza
+ * lo prova quel lock, non questo file.
  *
  * L'OROLOGIO si muove con degli UPDATE sulle colonne, mai con uno `sleep`.
  */
@@ -431,6 +438,135 @@ async function inUnaTransazioneDaButtare(corpo: () => Promise<void>, conn: PGlit
   }
 }
 
+/**
+ * Un job entrato in coda dal PATCH `caricato` del web PRIMA che il trigger vedesse l'oggetto (il
+ * trigger non c'era ancora, o ha ingoiato un'eccezione): `queued`, senza arrivo e senza l'eTag di
+ * riferimento. È il job di cui si occupa il secondario #68.
+ */
+async function entratoDalPatch(chiave: string, conn: PGlite = db): Promise<Aperto> {
+  const aperto = await apriGalleria(chiave, {}, conn)
+  const r = await rpc(`public.video_job_uploaded('${aperto.jobId}', '${OWNER}', 5000, 'video/mp4')`, conn)
+  expect(r.ok, `il PATCH di ${chiave} doveva riuscire: ${JSON.stringify(r)}`).toBe(true)
+  expect(await job(aperto.jobId, conn)).toMatchObject({ status: 'queued', sorgente_etag: null, arrivato: false })
+  return aperto
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LETTURA DEL CODICE E DELLA PROSA DELLA MIGRAZIONE (le prove sul TESTO)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Il testo SQL senza i commenti `--` e `/* … *\/`, con le stringhe `'…'` intatte: un apice dentro un
+ * commento non apre una stringa (i commenti si saltano PRIMA di guardare gli apici), ed è per questo
+ * che i commenti italiani (`l'oggetto`, `piu'`) non rompono niente. Lo stesso lettore dei lock
+ * `trigger-storage-fail-open` e `video-uscita-mai-senza-scadenza`: qui serve a leggere il CODICE di
+ * una funzione e non la sua prosa, perché una regola citata in un commento non è codice — e una prova
+ * sul testo può immunizzarsi da sola, se la stringa che cerca compare nel commento che la spiega.
+ */
+function senzaCommentiSql(sql: string): string {
+  let fuori = ''
+  let i = 0
+  let inStringa = false
+  while (i < sql.length) {
+    const c = sql[i]
+    if (inStringa) {
+      fuori += c
+      if (c === "'") {
+        if (sql[i + 1] === "'") {
+          fuori += "'"
+          i += 2
+          continue
+        }
+        inStringa = false
+      }
+      i += 1
+      continue
+    }
+    if (c === '-' && sql[i + 1] === '-') {
+      const fine = sql.indexOf('\n', i)
+      i = fine < 0 ? sql.length : fine
+      continue
+    }
+    if (c === '/' && sql[i + 1] === '*') {
+      const fine = sql.indexOf('*/', i + 2)
+      i = fine < 0 ? sql.length : fine + 2
+      fuori += ' '
+      continue
+    }
+    if (c === "'") inStringa = true
+    fuori += c
+    i += 1
+  }
+  return fuori
+}
+
+/** Il corpo `AS $$ … $$` di una funzione della migrazione B, SENZA i commenti: ciò che gira. */
+function corpoDi(nome: string): string {
+  const codice = senzaCommentiSql(MIGRAZIONE_B)
+  const testata = new RegExp(`CREATE OR REPLACE FUNCTION public\\.${nome}\\(`).exec(codice)
+  expect(testata, `la funzione ${nome} non è definita nella migrazione`).not.toBeNull()
+  const apertura = codice.indexOf('$$', testata!.index)
+  const chiusura = codice.indexOf('$$', apertura + 2)
+  expect(apertura, `${nome}: manca l'apertura del corpo`).toBeGreaterThan(0)
+  expect(chiusura, `${nome}: manca la chiusura del corpo`).toBeGreaterThan(apertura)
+  return codice.slice(apertura + 2, chiusura)
+}
+
+type TabellaDelDominio = 'video_intents' | 'video_jobs'
+
+/**
+ * I lock di riga di un corpo plpgsql (`… FOR UPDATE …`), nell'ordine in cui compaiono: per ciascuno
+ * la posizione in cui l'istruzione si chiude e quali tabelle del dominio blocca. `FOR UPDATE OF x`
+ * blocca la tabella di cui `x` è l'alias; senza `OF` blocca tutte le tabelle dell'istruzione.
+ */
+function lockDiRiga(corpo: string): Array<{ fine: number; tabelle: TabellaDelDominio[] }> {
+  const trovati: Array<{ fine: number; tabelle: TabellaDelDominio[] }> = []
+  const PAROLE_CHE_NON_SONO_ALIAS = /^(?:INNER|LEFT|RIGHT|FULL|CROSS|JOIN|WHERE|ON|FOR|ORDER|LIMIT|GROUP|USING)$/i
+  let inizio = 0
+  for (const chiusura of [...corpo.matchAll(/;/g)].map((m) => m.index as number)) {
+    const istruzione = corpo.slice(inizio, chiusura)
+    inizio = chiusura + 1
+    const lock = /\bFOR\s+UPDATE\b(?:\s+OF\s+([A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)*))?/i.exec(istruzione)
+    if (!lock) continue
+
+    // alias → tabella, per le due tabelle del dominio nominate in `FROM`/`JOIN`.
+    const alias = new Map<string, TabellaDelDominio>()
+    for (const m of istruzione.matchAll(/\b(?:FROM|JOIN)\s+public\.(video_intents|video_jobs)\b(?:\s+(?:AS\s+)?([A-Za-z_]\w*))?/gi)) {
+      const tabella = m[1].toLowerCase() as TabellaDelDominio
+      alias.set(tabella, tabella)
+      if (m[2] && !PAROLE_CHE_NON_SONO_ALIAS.test(m[2])) alias.set(m[2].toLowerCase(), tabella)
+    }
+    const nominate = lock[1]
+      ? lock[1].split(',').map((x) => alias.get(x.trim().replace(/^public\./i, '').toLowerCase()))
+      : [...new Set(alias.values())]
+    trovati.push({
+      fine: chiusura,
+      tabelle: [...new Set(nominate.filter((t): t is TabellaDelDominio => t !== undefined))],
+    })
+  }
+  return trovati
+}
+
+/**
+ * La prosa della migrazione (le righe di commento, senza il prefisso `--`): quella che T5, T6 e T16
+ * leggono per sapere che cosa il codice fa. Le prove «la testata dice ciò che il codice fa» la
+ * confrontano con il comportamento già provato in PGlite: una testata che invecchia è peggio di
+ * nessuna testata (la scelta (e) diceva `annullato` di un job che risponde `arrivato`).
+ */
+const PROSA_DELLA_MIGRAZIONE = MIGRAZIONE_B.split('\n')
+  .filter((r) => /^\s*--/.test(r))
+  .map((r) => r.replace(/^\s*--\s?/, ''))
+  .join('\n')
+
+/** Un paragrafo della prosa, da `da` (compreso) a `a` (escluso), con gli spazi ridotti a uno. */
+function paragrafoDellaTestata(da: string, a: string): string {
+  const inizio = PROSA_DELLA_MIGRAZIONE.indexOf(da)
+  expect(inizio, `nella testata della migrazione manca «${da}»`).toBeGreaterThanOrEqual(0)
+  const fine = PROSA_DELLA_MIGRAZIONE.indexOf(a, inizio + da.length)
+  expect(fine, `nella testata della migrazione manca «${a}» dopo «${da}»`).toBeGreaterThan(inizio)
+  return PROSA_DELLA_MIGRAZIONE.slice(inizio, fine).replace(/\s+/g, ' ').trim()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 0 · IL FINTO STORAGE È FEDELE (senza questo, «nessuna DELETE» sarebbe verde sul vuoto)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -774,10 +910,17 @@ describe('dimensione diversa · ORIGINALE_DIVERSO', () => {
     expect((await job(jobId)).status).toBe('queued')
   })
 
-  it('caricamento NATIVO: il token si revoca, e `video_rinnovo_usa` risponde «annullato» (il job è chiuso senza arrivo)', async () => {
+  it('caricamento NATIVO: il token si revoca, e `video_rinnovo_usa` risponde «annullato» (il job è chiuso senza arrivo: `source_size` è vuoto)', async () => {
     const { jobId, percorso, hashToken } = await apriGalleria('div-nat', { byte: 5000, trasporto: 'put-nativo' })
     await deposita(percorso, { size: 4000 })
-    expect(await job(jobId)).toMatchObject({ status: 'rejected', error_code: 'ORIGINALE_DIVERSO', token_revocato: true })
+    // È `source_size` vuoto a far dire «annullato» alla RPC (testata, scelta (e)): il file non è mai
+    // «arrivato» per il job, perché `video_job_uploaded` non è stata chiamata.
+    expect(await job(jobId)).toMatchObject({
+      status: 'rejected',
+      error_code: 'ORIGINALE_DIVERSO',
+      token_revocato: true,
+      source_size: null,
+    })
     expect(await rpc(`public.video_rinnovo_usa(${hashToken})`)).toEqual({ ok: true, stato: 'annullato' })
   })
 
@@ -960,6 +1103,22 @@ describe('sostituito · l\'eTag cambia dopo l\'arrivo', () => {
       .toMatchObject({ ok: false, code: 'JOBS_NOT_READY' })
   })
 
+  it('caricamento NATIVO: il token è revocato e `video_rinnovo_usa` risponde «arrivato», NON «annullato» (il job era già in coda: ha la sua `source_size`)', async () => {
+    const { jobId, percorso, hashToken } = await apriGalleria('sost-nat', { trasporto: 'put-nativo' })
+    await deposita(percorso, { size: 5000, etag: '"e1"' })
+    await deposita(percorso, { size: 5000, etag: '"e2"' })
+
+    // A differenza del file DIVERSO (testata, scelta (e)): qui il file è «arrivato» per il job — è
+    // cambiato dopo — e la 1.2 che riceve un 409 sulla seconda PUT non ha niente da ripetere.
+    expect(await job(jobId)).toMatchObject({
+      status: 'rejected',
+      error_code: 'ORIGINALE_SOSTITUITO',
+      token_revocato: true,
+      source_size: 5000,
+    })
+    expect(await rpc(`public.video_rinnovo_usa(${hashToken})`)).toEqual({ ok: true, stato: 'arrivato' })
+  })
+
   it('un job `ready` di una News con l\'uscita che scade fra sette giorni: l\'uscita scade comunque ADESSO (non si tiene un\'uscita senza padrone)', async () => {
     const { jobId, percorso } = await apriNews('sost-news-ready')
     await deposita(percorso, { size: 5000, etag: '"e1"' })
@@ -988,15 +1147,14 @@ describe('sostituito · l\'eTag cambia dopo l\'arrivo', () => {
     expect(await eventi('video-originale-sostituito')).toEqual([])
   })
 
-  it('un eTag NUOVO ma senza riferimento (il job è entrato in coda dal PATCH prima che il trigger lo vedesse): non si rifiuta niente', async () => {
-    const { jobId, percorso } = await apriGalleria('sost-senza-riferimento')
-    // Il PATCH `caricato` del web, prima di qualunque evento dello Storage.
-    expect((await rpc(`public.video_job_uploaded('${jobId}', '${OWNER}', 5000, 'video/mp4')`)).ok).toBe(true)
-    expect((await job(jobId)).sorgente_etag).toBeNull()
+  it('un eTag NUOVO ma senza riferimento (il job è entrato in coda dal PATCH prima che il trigger lo vedesse): non si rifiuta niente, e il primo eTag diventa il riferimento', async () => {
+    const { jobId, percorso } = await entratoDalPatch('sost-senza-riferimento')
 
     await deposita(percorso, { size: 5000, etag: '"qualunque"' })
 
-    expect(await job(jobId)).toMatchObject({ status: 'queued', sorgente_etag: null, arrivato: false })
+    // Niente da rifiutare: non c'era un riferimento con cui dire che il file fosse cambiato. Ma da qui
+    // il riferimento c'è (prima restava vuoto per sempre: vedi «riferimento mancante», più sotto).
+    expect(await job(jobId)).toMatchObject({ status: 'queued', sorgente_etag: '"qualunque"', arrivato: false })
   })
 
   it('un evento SENZA eTag su un job con riferimento non conta come «cambiato»', async () => {
@@ -1053,6 +1211,141 @@ describe('sostituito · l\'eTag cambia dopo l\'arrivo', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 4b · IL RIFERIMENTO MANCANTE (#68): il primo eTag si registra, e da lì una sostituzione si vede
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('riferimento mancante · il primo eTag si registra, e da lì una sostituzione si vede (#68)', () => {
+  type StatoAvviato = 'queued' | 'processing' | 'ready'
+  const STATI_AVVIATI: readonly StatoAvviato[] = ['queued', 'processing', 'ready']
+  /** Porta un job `queued` allo stato dato, come lo farebbe il runner. */
+  const avanza = async (stato: StatoAvviato, jobId: string) => {
+    if (stato === 'processing') await prendi(jobId)
+    if (stato === 'ready') await portaAReady(jobId)
+  }
+
+  it.each(STATI_AVVIATI)('a job %s: il primo evento con un eTag lo REGISTRA, e non si muove altro (stato, fence, lease, scadenze, updated_at, arrivato_il)', async (stato) => {
+    const { jobId, percorso } = await entratoDalPatch(`rif-${stato}`)
+    await avanza(stato, jobId)
+    const prima = await job(jobId)
+    expect(prima).toMatchObject({ status: stato, sorgente_etag: null })
+
+    await deposita(percorso, { size: 5000, etag: '"e1"' })
+
+    // Cambia UNA colonna: ogni altra della fotografia del job (compresi `updated_at` e `arrivato_il`) è com'era.
+    expect(await job(jobId)).toEqual({ ...prima, sorgente_etag: '"e1"' })
+    expect(await eventi('video-originale-riferimento')).toMatchObject([
+      { livello: 'info', contesto: { job_id: jobId, origine: 'trigger', stato } },
+    ])
+  })
+
+  it.each(STATI_AVVIATI)('a job %s: dopo la registrazione una sostituzione si VEDE (prima, un job entrato dal PATCH non la vedeva mai)', async (stato) => {
+    const { jobId, percorso } = await entratoDalPatch(`rif-sost-${stato}`)
+    await avanza(stato, jobId)
+    await deposita(percorso, { size: 5000, etag: '"e1"' }) // il primo evento: registra
+    expect((await job(jobId)).status, 'il primo evento non rifiuta niente').toBe(stato)
+    expect(await eventi('video-originale-sostituito')).toEqual([])
+
+    await deposita(percorso, { size: 5000, etag: '"e2"' }) // il secondo, diverso: sostituzione
+
+    expect(await job(jobId)).toMatchObject({
+      status: 'rejected',
+      error_code: 'ORIGINALE_SOSTITUITO',
+      scadenza_originale_passata: true,
+      lease_owner: null,
+    })
+    expect(await eventi('video-originale-sostituito')).toMatchObject([
+      { livello: 'error', contesto: { job_id: jobId, origine: 'trigger', stato, intento: 'confirmed' } },
+    ])
+  })
+
+  it('l\'esito del corpo condiviso è «riferimento-registrato», anche dal giro (origine `giro`), e il secondo evento sullo stesso eTag è «nessuna-azione»', async () => {
+    const { jobId, percorso } = await entratoDalPatch('rif-esito')
+    const applica = async (m: Meta) =>
+      (
+        await db.query<{ r: Risposta }>(`SELECT public._video_originale_applica($1, $2::jsonb, 'giro') AS r`, [
+          percorso,
+          metadati(m),
+        ])
+      ).rows[0].r
+
+    expect(await applica({ size: 5000, etag: '"e9"' })).toEqual({ ok: true, esito: 'riferimento-registrato', job_id: jobId })
+    expect((await job(jobId)).sorgente_etag).toBe('"e9"')
+    expect(await eventi('video-originale-riferimento')).toMatchObject([{ contesto: { job_id: jobId, origine: 'giro' } }])
+
+    expect(await applica({ size: 5000, etag: '"e9"' })).toEqual({ ok: true, esito: 'nessuna-azione', job_id: jobId })
+    expect(await eventi('video-originale-riferimento'), 'registrato una volta sola').toHaveLength(1)
+  })
+
+  it('un evento SENZA eTag su un job senza riferimento non registra niente e non rifiuta niente', async () => {
+    const { jobId, percorso } = await entratoDalPatch('rif-senza-etag')
+    const prima = await job(jobId)
+    const log = await righeDiLog()
+
+    await deposita(percorso, { size: 5000, etag: null })
+
+    expect(await job(jobId)).toEqual(prima)
+    expect(await eventi('video-originale-riferimento')).toEqual([])
+    expect(await righeDiLog(), 'nemmeno una riga di log: non è successo niente').toBe(log)
+  })
+
+  it('un ARRIVO con metadati senza eTag e poi un evento con l\'eTag: il riferimento si registra lì, e la sostituzione dopo si vede', async () => {
+    const { jobId, percorso } = await apriGalleria('rif-arrivo-senza-etag')
+    await deposita(percorso, { size: 5000, etag: null })
+    expect(await job(jobId)).toMatchObject({ status: 'queued', arrivato: true, sorgente_etag: null })
+
+    await deposita(percorso, { size: 5000, etag: '"e1"' })
+    expect(await job(jobId)).toMatchObject({ status: 'queued', arrivato: true, sorgente_etag: '"e1"' })
+
+    await deposita(percorso, { size: 5000, etag: '"e2"' })
+    expect(await job(jobId)).toMatchObject({ status: 'rejected', error_code: 'ORIGINALE_SOSTITUITO' })
+  })
+
+  it('lo STESSO eTag dopo la registrazione non scrive niente (il job resta com\'era, un solo `riferimento` nel log)', async () => {
+    const { jobId, percorso } = await entratoDalPatch('rif-due-volte')
+    await deposita(percorso, { size: 5000, etag: '"e1"' })
+    const prima = await job(jobId)
+
+    await deposita(percorso, { size: 5000, etag: '"e1"', extra: { lastModified: '2030-01-01T00:00:00.000Z' } })
+
+    expect(await job(jobId)).toEqual(prima)
+    expect(await eventi('video-originale-riferimento')).toHaveLength(1)
+  })
+
+  it('intento PUBBLICATO: il riferimento si registra comunque (è solo un dato), e una sostituzione dopo non cambia il job (warn, come prima)', async () => {
+    const { jobId, intentId, percorso } = await entratoDalPatch('rif-pubblicato')
+    await portaAReady(jobId)
+    expect(
+      await rpc(`public.video_galleria_pubblica('${intentId}', 1, '${OWNER}', '${SEDE}', 'uploads/${OWNER}/v-${intentId}.mp4', ARRAY['${A1}']::uuid[])`),
+    ).toMatchObject({ ok: true, created: true })
+
+    await deposita(percorso, { size: 5000, etag: '"e1"' })
+    expect(await job(jobId)).toMatchObject({ status: 'ready', sorgente_etag: '"e1"' })
+
+    await deposita(percorso, { size: 5000, etag: '"e2"' })
+    expect((await job(jobId)).status, 'un intento pubblicato con un job respinto sarebbe una contraddizione').toBe('ready')
+    expect(await eventi('video-originale-sostituito')).toMatchObject([
+      { livello: 'warn', contesto: { intento: 'published', transizione: false } },
+    ])
+  })
+
+  it('un job in ATTESA (il file non è ancora arrivato) non ha niente da registrare: è l\'arrivo a scrivere il riferimento, una sola volta', async () => {
+    const { jobId, percorso } = await apriGalleria('rif-attesa')
+    await deposita(percorso, { size: 5000, etag: '"e1"' })
+    expect(await job(jobId)).toMatchObject({ status: 'queued', arrivato: true, sorgente_etag: '"e1"' })
+    // L'arrivo l'ha già scritto: il ramo del riferimento non c'entra, e il log non lo dice.
+    expect(await eventi('video-originale-riferimento')).toEqual([])
+  })
+
+  it('il log del riferimento: solo job, intento, origine e stato — mai l\'eTag', async () => {
+    const { percorso } = await entratoDalPatch('rif-log')
+    await deposita(percorso, { size: 5000, etag: '"ETAG-RISERVATO-DEL-RIFERIMENTO"' })
+    const [riga] = await eventi('video-originale-riferimento')
+    expect(Object.keys(riga.contesto).sort()).toEqual(['intent_id', 'job_id', 'origine', 'stato'])
+    expect(await tuttoIlLog()).not.toContain('ETAG-RISERVATO-DEL-RIFERIMENTO')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 5 · video_job_uploaded CHIAMATA DUE VOLTE (trigger + PATCH `caricato`)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1092,12 +1385,15 @@ describe('video_job_uploaded due volte · idempotente, e fragile su un solo punt
     expect(await job(jobId)).toMatchObject({ status: 'queued', source_size: 5000, source_mime: 'video/mp4' })
   })
 
-  it('il PATCH PER PRIMO (il trigger non l\'ha visto) e poi l\'oggetto: il trigger non riscrive il job', async () => {
+  it('il PATCH PER PRIMO (il trigger non l\'ha visto) e poi l\'oggetto: il trigger non riscrive il job, ne registra solo il riferimento (#68)', async () => {
     const { jobId, percorso } = await apriGalleria('idem-patch-prima')
     expect((await uploaded(jobId)).ok).toBe(true)
     const prima = await job(jobId)
     await deposita(percorso, { size: 5000 })
-    expect(await job(jobId)).toEqual(prima)
+    // Cambia una colonna sola: l'eTag dell'evento (quello di prova, `"e1"`) diventa il riferimento. Lo
+    // stato, i byte, il fence, la lease, `arrivato_il` (non è un arrivo: l'ha già dichiarato il PATCH)
+    // e `updated_at` restano com'erano.
+    expect(await job(jobId)).toEqual({ ...prima, sorgente_etag: '"e1"' })
   })
 
   it('il PATCH su un job che il trigger ha RESPINTO (dimensione diversa) prende INVALID_STATE e non lo riporta in coda', async () => {
@@ -1279,19 +1575,51 @@ describe('video_arrivi_recupera · gli arrivi che il trigger non ha visto', () =
     expect(await recupera()).toMatchObject({ candidati: 1, non_risolti: 1 })
   })
 
-  it('rispetta il limite e va dal più vecchio', async () => {
-    const a = await apriGalleria('giro-lim-1')
+  it('rispetta il limite e va dal più RECENTE: il più vecchio aspetta il giro dopo, e il giro dopo lo trova (testata, scelta (g))', async () => {
+    const a = await apriGalleria('giro-lim-1') // il più recente
     const b = await apriGalleria('giro-lim-2')
-    const c = await apriGalleria('giro-lim-3')
+    const c = await apriGalleria('giro-lim-3') // il più vecchio
     await db.exec(`UPDATE public.video_jobs SET created_at = created_at - interval '2 hours' WHERE id = '${c.jobId}'`)
     await db.exec(`UPDATE public.video_jobs SET created_at = created_at - interval '1 hour' WHERE id = '${b.jobId}'`)
     await senzaTrigger()
     for (const x of [a, b, c]) await deposita(x.percorso, { size: 5000 })
 
     expect(await recupera(2)).toMatchObject({ candidati: 2, arrivati: 2 })
-    expect((await job(c.jobId)).status).toBe('queued')
+    expect((await job(a.jobId)).status).toBe('queued')
     expect((await job(b.jobId)).status).toBe('queued')
-    expect((await job(a.jobId)).status, 'il più recente aspetta il giro dopo').toBe('awaiting_upload')
+    expect((await job(c.jobId)).status, 'il più vecchio aspetta il giro dopo').toBe('awaiting_upload')
+
+    // L'arretrato si scarica da solo: i risolti escono dai candidati, e il giro dopo trova il più vecchio.
+    expect(await recupera(2)).toMatchObject({ candidati: 1, arrivati: 1 })
+    expect((await job(c.jobId)).status).toBe('queued')
+  })
+
+  it('i candidati SEMPRE irrisolti non tengono fuori un arrivo nuovo: una fila di bloccati più vecchi riempie la finestra, e il nuovo passa lo stesso (#71)', async () => {
+    // Tre candidati che il giro non può risolvere: restano `awaiting_upload` e candidati a ogni giro,
+    // finché l'abbandono non li chiude. Tutti più vecchi dell'arrivo vero. Due hanno i metadati senza
+    // dimensione; il terzo è il caso della testata (g): il file VUOTO di una News (nessuna dimensione
+    // dichiarata, quindi il confronto non lo ferma) che `video_job_uploaded` rifiuta con BAD_INPUT.
+    const bloccati = [await apriGalleria('giro-bloccato-1'), await apriNews('giro-bloccato-2'), await apriGalleria('giro-bloccato-3')]
+    const dimensioni = [null, 0, null]
+    for (const [i, b] of bloccati.entries()) {
+      await db.exec(`UPDATE public.video_jobs SET created_at = created_at - interval '${i + 1} hours' WHERE id = '${b.jobId}'`)
+      await deposita(b.percorso, { size: dimensioni[i] })
+    }
+    expect(await eventi('video-originale-arrivato')).toMatchObject([
+      { livello: 'error', code: 'BAD_INPUT', contesto: { job_id: bloccati[1].jobId } },
+    ])
+    // …e un arrivo vero che il trigger non ha visto, il più recente di tutti.
+    const nuovo = await apriGalleria('giro-nuovo')
+    await senzaTrigger()
+    await deposita(nuovo.percorso, { size: 5000 })
+
+    // Una finestra di due posti: «dal più vecchio» la riempirebbero due bloccati e il nuovo non passerebbe mai.
+    expect(await recupera(2)).toMatchObject({ candidati: 2, arrivati: 1, non_risolti: 1 })
+    expect((await job(nuovo.jobId)).status, 'l\'arrivo nuovo è passato davanti ai bloccati').toBe('queued')
+    for (const b of bloccati) expect((await job(b.jobId)).status, 'i bloccati restano dove sono').toBe('awaiting_upload')
+
+    // Il giro dopo non trova più il nuovo (è risolto): i candidati sono solo i bloccati, e lo dice (`non_risolti`).
+    expect(await recupera(2)).toMatchObject({ candidati: 2, arrivati: 0, non_risolti: 2 })
   })
 
   it('un job che ESPLODE non ferma gli altri: l\'errore ha il suo sottoblocco, il suo log e il suo conteggio', async () => {
@@ -1353,10 +1681,14 @@ describe('video_arrivi_recupera · gli arrivi che il trigger non ha visto', () =
 // 8 · L'INSTALLAZIONE
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Gli SHA delle tre funzioni: se la riapplicazione cambiasse qualcosa, cambierebbero. */
+/**
+ * L'impronta delle tre funzioni — corpo, attributi (`proconfig`), privilegi (`proacl`) e commento: se la
+ * riapplicazione cambiasse qualcosa, cambierebbe.
+ */
 const impronteFunzioni = (conn: PGlite) =>
-  righe<{ nome: string; h: string; config: string | null }>(
-    `SELECT p.proname AS nome, md5(p.prosrc) AS h, p.proconfig::text AS config
+  righe<{ nome: string; h: string; config: string | null; acl: string | null; commento: string | null }>(
+    `SELECT p.proname AS nome, md5(p.prosrc) AS h, p.proconfig::text AS config,
+            p.proacl::text AS acl, obj_description(p.oid, 'pg_proc') AS commento
      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public'
        AND p.proname IN ('video_originale_arrivato', '_video_originale_applica', 'video_arrivi_recupera')
@@ -1364,15 +1696,27 @@ const impronteFunzioni = (conn: PGlite) =>
     conn,
   )
 
+/** La definizione del trigger com'è nel catalogo: una riapplicazione non può cambiarla. */
+const definizioneDelTrigger = (conn: PGlite) =>
+  righe<{ def: string }>(
+    `SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger
+     WHERE tgrelid = 'storage.objects'::regclass AND NOT tgisinternal AND tgname = 'trg_video_originale_arrivato'`,
+    conn,
+  )
+
 describe('l\'installazione', () => {
-  it('RIAPPLICATA due volte di fila: nessun errore, un solo trigger, le funzioni identiche', async () => {
+  it('RIAPPLICATA due volte di fila: nessun errore, un solo trigger, le funzioni identiche (corpo, attributi, privilegi, commento)', async () => {
     const trigger = () =>
       conta(`pg_trigger WHERE tgrelid = 'storage.objects'::regclass AND NOT tgisinternal AND tgname = 'trg_video_originale_arrivato'`)
     const prima = await impronteFunzioni(db)
+    const triggerPrima = await definizioneDelTrigger(db)
+    expect(prima, 'le tre funzioni ci sono: senza, la prova di identità sarebbe vuota').toHaveLength(3)
+    for (const f of prima) expect(f.commento, `${f.nome}: manca il COMMENT`).toBeTruthy()
     await db.exec(MIGRAZIONE_B)
     await db.exec(MIGRAZIONE_B)
     expect(await trigger()).toBe(1)
     expect(await impronteFunzioni(db)).toEqual(prima)
+    expect(await definizioneDelTrigger(db)).toEqual(triggerPrima)
     // E funziona ancora: la riapplicazione non ha lasciato un trigger doppio che scatti due volte.
     const { jobId, percorso } = await apriGalleria('riapplicata')
     await deposita(percorso, { size: 5000 })
@@ -1466,11 +1810,15 @@ describe('l\'interruttore d\'emergenza della testata', () => {
       .join('\n')
   }
 
-  it('l\'istruzione è SQL vero, tiene SECURITY DEFINER e search_path, e NEUTRALIZZA il trigger: l\'upload riesce e il job non si muove', async () => {
+  it('l\'istruzione è SQL vero, tiene SECURITY DEFINER e search_path, ha il gestore fail-open, e NEUTRALIZZA il trigger: l\'upload riesce e il job non si muove', async () => {
     const istruzione = istruzioneDiEmergenza()
     expect(istruzione).toMatch(/CREATE OR REPLACE FUNCTION public\.video_originale_arrivato\(\)/)
     expect(istruzione).toMatch(/SECURITY DEFINER/)
     expect(istruzione).toMatch(/SET search_path = pg_catalog/)
+    // #65: la forma che il lock `trigger-storage-fail-open` pretende da OGNI trigger su storage.objects.
+    // Senza, applicata come migrazione renderebbe rosso il lock (e un corpo che un domani facesse qualcosa
+    // non sarebbe più fail-open).
+    expect(istruzione, 'manca il gestore fail-open').toMatch(/EXCEPTION\s+WHEN\s+OTHERS\s+THEN\s+RETURN\s+NEW\s*;/i)
     expect(istruzione, 'neutralizzare non vuol dire cancellare: niente DELETE, niente DROP').not.toMatch(/\b(DELETE|DROP)\b/i)
 
     await inUnaTransazioneDaButtare(async () => {
@@ -1499,6 +1847,31 @@ describe('l\'interruttore d\'emergenza della testata', () => {
       expect((await job(jobId)).status).toBe('queued')
     })
   })
+
+  it('il gestore dell\'istruzione è fail-open DAVVERO: con un corpo che esplode l\'upload riesce lo stesso, e senza il gestore no (#65)', async () => {
+    const istruzione = istruzioneDiEmergenza()
+    const GESTORE = /EXCEPTION\s+WHEN\s+OTHERS\s+THEN\s+RETURN\s+NEW\s*;/i
+
+    // Il corpo neutralizzato, con in più un passo che solleva: ciò che il gestore deve tenere in piedi.
+    const esplode = istruzione.replace(/BEGIN\s+RETURN\s+NEW\s*;/i, 'BEGIN PERFORM 1 / 0; RETURN NEW;')
+    expect(esplode, 'la prova non ha toccato il corpo: l\'istruzione della testata non ha più «BEGIN RETURN NEW;»').not.toBe(istruzione)
+    await inUnaTransazioneDaButtare(async () => {
+      await db.exec(esplode)
+      const { percorso } = await apriGalleria('emergenza-gestore')
+      await deposita(percorso, { size: 5000 })
+      expect(await contaOggetti(), 'l\'INSERT dell\'oggetto riesce: il gestore ingoia la divisione per zero').toBe(1)
+    })
+
+    // CONTROPROVA: lo stesso corpo SENZA il gestore (la forma di prima, `BEGIN RETURN NEW; END`) fa
+    // fallire l'INSERT — ed è ciò che il lock vieta, perché sarebbe un upload di un altro bucket che cade.
+    const senzaGestore = esplode.replace(GESTORE, '')
+    expect(senzaGestore, 'la controprova non ha tolto il gestore').not.toBe(esplode)
+    await inUnaTransazioneDaButtare(async () => {
+      await db.exec(senzaGestore)
+      const { percorso } = await apriGalleria('emergenza-senza-gestore')
+      await expect(deposita(percorso, { size: 5000 })).rejects.toThrow(/division by zero/i)
+    })
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1510,10 +1883,12 @@ describe('igiene del log', () => {
     const a = await apriGalleria('igiene-a')
     const b = await apriGalleria('igiene-b', { byte: 5000 })
     const c = await apriGalleria('igiene-c')
+    const d = await entratoDalPatch('igiene-d')
     await deposita(a.percorso, { size: 5000, etag: '"ETAG-A-RISERVATO"' })
     await deposita(b.percorso, { size: 10, etag: '"ETAG-B-RISERVATO"' })
     await deposita(c.percorso, { size: 5000, etag: '"ETAG-C-1"' })
     await deposita(c.percorso, { size: 5000, etag: '"ETAG-C-2"' })
+    await deposita(d.percorso, { size: 5000, etag: '"ETAG-D-RISERVATO"' }) // il riferimento di un job entrato dal PATCH (#68)
     await deposita(`${OWNER}/orfano-riservato.mp4`, { size: 5000 })
 
     const log = await tuttoIlLog()
@@ -1568,6 +1943,113 @@ describe('la testata elenca gli eventi di log che il codice scrive davvero', () 
     ]) {
       expect(eventiNelCodice, `${evento} non è scritto dalla migrazione`).toContain(evento)
     }
+  })
+
+  it('il riferimento dell\'eTag (#68) ha il suo evento, info, ed è elencato nella tabella della testata', () => {
+    expect(eventiNelCodice).toContain('video-originale-riferimento')
+    expect(testata).toMatch(/^--\s+video-originale-riferimento\s+info\b/m)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12 · L'ORDINE DEI LOCK — intento → job, letto sul codice (#64)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ordine dei lock · intento → job, letto sul codice di _video_originale_applica (#64)', () => {
+  // PGlite è a connessione singola: due transazioni davvero simultanee non si possono avere, quindi
+  // l'ORDINE dei lock non si prova con un'attesa vera. Si prova sul CODICE, senza i commenti, e la prova
+  // è stata vista rossa togliendo i `FOR UPDATE` e scambiandoli. Perché conta: ogni altra transizione
+  // dello schema blocca prima l'intento e poi il job (spec §5); un solo punto che li prende al contrario
+  // basta per un deadlock con un PATCH, un runner o la retention — e dentro il trigger l'eccezione di un
+  // deadlock la ingoia il gestore fail-open: l'arrivo salta (resta solo il log `video-arrivo-trigger-
+  // eccezione`) e lo recupera il giro dopo, cinque minuti più tardi invece che subito.
+
+  it('c\'è un lock di riga sull\'intento (e solo su di lui), e viene PRIMA di quello sul job', () => {
+    const lock = lockDiRiga(corpoDi('_video_originale_applica'))
+    const iIntento = lock.findIndex((l) => l.tabelle.length === 1 && l.tabelle[0] === 'video_intents')
+    const iJob = lock.findIndex((l) => l.tabelle.includes('video_jobs'))
+    expect(
+      iIntento,
+      'manca il `FOR UPDATE` sull\'intento — o blocca anche il job nella stessa istruzione (un join con un solo FOR UPDATE non garantisce quale dei due si blocca per primo)',
+    ).toBeGreaterThanOrEqual(0)
+    expect(iJob, 'manca il `FOR UPDATE` sul job').toBeGreaterThanOrEqual(0)
+    expect(iIntento, 'il lock del job viene PRIMA di quello dell\'intento: ordine invertito rispetto a ogni altra transizione').toBeLessThan(iJob)
+    expect(lock[iJob].tabelle, 'il lock del job blocca solo il job').toEqual(['video_jobs'])
+  })
+
+  it('nessuna scrittura, nessuna chiamata che scrive e nessun orologio vengono prima dei due lock (il job si rilegge DOPO, e `clock_timestamp()` pure)', () => {
+    const corpo = corpoDi('_video_originale_applica')
+    const lock = lockDiRiga(corpo)
+    const lockDelJob = lock.find((l) => l.tabelle.includes('video_jobs'))
+    expect(lockDelJob, 'manca il `FOR UPDATE` sul job').toBeDefined()
+    const dopoIDueLock = (nome: string, re: RegExp) => {
+      const m = re.exec(corpo)
+      expect(m, `${nome}: non compare nel corpo (la prova non guarda più niente)`).not.toBeNull()
+      expect(m!.index, `${nome} viene prima del lock del job`).toBeGreaterThan(lockDelJob!.fine)
+    }
+    dopoIDueLock('il primo UPDATE', /\bUPDATE\s+public\./i)
+    dopoIDueLock('video_job_uploaded', /\bpublic\.video_job_uploaded\s*\(/i)
+    dopoIDueLock('video_runner_kick', /\bpublic\.video_runner_kick\s*\(/i)
+    dopoIDueLock('clock_timestamp()', /\bclock_timestamp\s*\(/i)
+  })
+
+  it('fuori dal corpo condiviso nessuna funzione prende lock di riga: la rete e il trigger delegano (un `FOR UPDATE` sui job lì, prima degli intenti, invertirebbe l\'ordine)', () => {
+    // Un `FOR UPDATE SKIP LOCKED` sui candidati della rete sembra un'ottimizzazione innocente (due giri
+    // non si pestano i piedi) ed è l'inversione dell'ordine che questa sezione esiste per impedire.
+    expect(lockDiRiga(corpoDi('video_arrivi_recupera'))).toEqual([])
+    expect(lockDiRiga(corpoDi('video_originale_arrivato'))).toEqual([])
+  })
+
+  it('il lettore dei lock sa vedere: l\'ordine giusto, quello invertito, il join con un solo lock, l\'alias sbagliato e l\'assenza di lock', () => {
+    const lockIntento =
+      'SELECT i.* INTO v_intent FROM public.video_intents AS i INNER JOIN public.video_jobs AS j ON j.intent_id = i.id WHERE j.id = v_job_id FOR UPDATE OF i;'
+    const lockJob = 'SELECT * INTO v_job FROM public.video_jobs WHERE id = v_job_id FOR UPDATE;'
+    const tabelle = (sql: string) => lockDiRiga(sql).map((l) => l.tabelle)
+
+    expect(tabelle(`${lockIntento}\n${lockJob}`)).toEqual([['video_intents'], ['video_jobs']])
+    expect(tabelle(`${lockJob}\n${lockIntento}`), 'invertito').toEqual([['video_jobs'], ['video_intents']])
+    expect(tabelle(lockIntento.replace('FOR UPDATE OF i', 'FOR UPDATE')), 'un join con un solo lock li blocca tutti e due').toEqual([
+      ['video_intents', 'video_jobs'],
+    ])
+    expect(tabelle(lockIntento.replace('FOR UPDATE OF i', 'FOR UPDATE OF j')), 'l\'alias j è il job, non l\'intento').toEqual([['video_jobs']])
+    expect(tabelle('SELECT i.* INTO v_intent FROM public.video_intents AS i WHERE i.id = v_x;'), 'senza FOR UPDATE non è un lock').toEqual([])
+    expect(tabelle(lockJob.replace('FOR UPDATE', 'FOR SHARE')), 'un lock condiviso non è un lock di scrittura').toEqual([])
+    expect(tabelle(lockJob.replace('public.video_jobs', 'public.video_outbox')), 'un\'altra tabella non è del dominio').toEqual([[]])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 13 · LA TESTATA DICE CIÒ CHE IL CODICE FA (#65, #68, #71)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('la testata dice ciò che il codice fa', () => {
+  // Il comportamento è provato più su, in PGlite; qui si prova che la prosa che T5, T6 e T16 leggono lo
+  // racconti. La scelta (e) diceva `annullato` di un job che risponde `arrivato`, ed è così che questa
+  // sezione è nata: una testata che invecchia è peggio di nessuna testata.
+
+  it('(c) il riferimento: il primo evento con un eTag lo registra, senza rifiutare niente', () => {
+    const c = paragrafoDellaTestata('(c) «eTag cambiato»', '(d) La sostituzione')
+    expect(c).toMatch(/REGISTRA/)
+    expect(c).toMatch(/primo evento/)
+    expect(c).toMatch(/non rifiuta niente/)
+  })
+
+  it('(e) `video_rinnovo_usa`: ORIGINALE_DIVERSO → `annullato`, ORIGINALE_SOSTITUITO → `arrivato`', () => {
+    const e = paragrafoDellaTestata('(e) Che cosa risponde', '(f) AL PRIMO GIRO')
+    expect(e).toMatch(/ORIGINALE_DIVERSO[\s\S]*`annullato`[\s\S]*ORIGINALE_SOSTITUITO[\s\S]*`arrivato`/)
+  })
+
+  it('(g) l\'ordine del giro è dal più recente, e la testata spiega perché (i candidati sempre irrisolti) e dove arriva il limite', () => {
+    const g = paragrafoDellaTestata('(g) L\'ORDINE DEL GIRO', 'PER GLI ALTRI COMPITI')
+    expect(g).toMatch(/PIÙ RECENTE/)
+    expect(g).toMatch(/irrisolt|risolvere/i)
+    expect(g).toMatch(/p_limite/)
+    expect(g).toMatch(/limite che resta/i)
+  })
+
+  it('«dal più recente» sta anche nella firma della testata e nel COMMENT della funzione, non solo nel codice', () => {
+    expect(paragrafoDellaTestata('`candidati` = job', '`arrivati` = entrati')).toMatch(/PIÙ RECENTE/)
+    expect(senzaCommentiSql(MIGRAZIONE_B)).toContain("dal piu'' recente")
   })
 })
 

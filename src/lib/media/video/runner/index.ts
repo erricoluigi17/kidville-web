@@ -1,13 +1,26 @@
+import { randomUUID } from 'node:crypto'
+
 import { logEvento } from '@/lib/logging/logger'
 import { appUrl } from '@/lib/email/tema'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { consegnaVideoInBozzaNews } from '@/lib/news/video-allegato'
 
 import { archivioSupabase, codaSupabase, macchinaVercel } from './adattatori'
-import { eseguiUnJobVideo, type EsitoRunnerVideo } from './esegui'
+import {
+  eseguiUnJobVideo,
+  type DipendenzeRunner,
+  type EsitoRunnerVideo,
+  type RichiestaRunner,
+} from './esegui'
 
-export { eseguiUnJobVideo } from './esegui'
-export type { DipendenzeRunner, EsitoRunnerVideo } from './esegui'
+export { SECONDI_SORVEGLIANZA, eseguiUnJobVideo } from './esegui'
+export type {
+  ContestoPubblicazioni,
+  DipendenzeRunner,
+  EsitoRunnerVideo,
+  QuandoPubblicare,
+  RichiestaRunner,
+} from './esegui'
 export { CODICI_RUNNER_VIDEO, type CodiceRunnerVideo } from './codici'
 export {
   BATTITI_TOLLERATI,
@@ -25,11 +38,10 @@ export { nomeSandboxVideo, percorsoUscitaVideo } from './preparazione'
  * ═════════════════════════════════════════════════════════════════════════════
  * LE VARIABILI D'AMBIENTE, per NOME e mai con un valore
  *
- * ⚠️ NESSUNA DELLE TRE È ANCORA IN `docs/env.md`, e non le ha scritte questo
- * modulo: `docs/env.md` e `src/instrumentation.ts` sono fuori dal perimetro del
- * lavoro che ha prodotto il runner. Vanno aggiunte, e finché non lo sono il lock
- * `env-critiche-documentate` resta verde soltanto perché guarda il preflight, non i
- * `process.env` sparsi. Le righe da aggiungere stanno nella consegna.
+ * Le prime tre sono in `docs/env.md`. La quarta, `VIDEO_CONVERSIONI_PARALLELE`, ce la scrive il compito
+ * che documenta l'ambiente del runner in questa PR (T8, spec §10.1): questo modulo non tocca
+ * `docs/env.md`, e il lock `env-critiche-documentate` guarda solo il preflight, non i `process.env`
+ * sparsi — quindi nessun test diventerebbe rosso se la riga mancasse.
  *
  *   · `VIDEO_RUNNER_OWNER_ID` — uuid del worker, **critica**. Senza, il runner non
  *     parte affatto: vedi `identitaDelWorker`.
@@ -40,6 +52,11 @@ export { nomeSandboxVideo, percorsoUscitaVideo } from './preparazione'
  *     `dub1`: a 2 vCPU il caso tipico sta fra 392 e 653 secondi, a 4 fra 212 e 353 —
  *     1,85 volte più veloce a costo praticamente identico (+8 %), perché la
  *     fatturazione è a `GB × ore` e il tempo si accorcia quanto i core aumentano.
+ *   · `VIDEO_CONVERSIONI_PARALLELE` — quante conversioni girano insieme (PR 2). Assente ⇒ 3, valida da
+ *     1 a 10: picco misurato di 8 video in 15 minuti, p90 di 2. Il tetto lo conta il DATABASE
+ *     (`video_job_prossimo` e `video_job_prendi` rispondono `CAPACITA_PIENA`), questa variabile è solo
+ *     il numero che gli si passa. Il limite reale dei Sandbox concorrenti non è documentato da
+ *     Vercel: lo misura T16 aprendone tre insieme.
  *
  * Le credenziali del Sandbox NON sono fra queste: `@vercel/sandbox` le ricava dal
  * token OIDC che la piattaforma inietta da sé. Se OIDC non è abilitato sul progetto,
@@ -51,6 +68,7 @@ export { nomeSandboxVideo, percorsoUscitaVideo } from './preparazione'
 export const ENV_OWNER_RUNNER = 'VIDEO_RUNNER_OWNER_ID'
 export const ENV_REGIONE_SANDBOX = 'VIDEO_SANDBOX_REGION'
 export const ENV_VCPUS_SANDBOX = 'VIDEO_SANDBOX_VCPUS'
+export const ENV_CONVERSIONI_PARALLELE = 'VIDEO_CONVERSIONI_PARALLELE'
 
 /** Dublino: è dove sta il progetto Supabase (eu-west-1). Il video non attraversa oceani. */
 const REGIONE_PREDEFINITA = 'dub1'
@@ -58,6 +76,14 @@ const REGIONE_PREDEFINITA = 'dub1'
 /** Quattro core: la misura del piano, non un numero tondo. Su Pro il massimo è 8. */
 const VCPUS_PREDEFINITI = 4
 const VCPUS_MASSIMI = 8
+
+/**
+ * Tre conversioni insieme: il picco misurato è di 8 video in 15 minuti con p90 di 2 (T0, 2026-10-02).
+ * Il massimo accettato qui è 10 (la RPC arriva a 50, ma più di 10 MicroVM insieme non sono una scelta
+ * da fare per sbaglio con una cifra in più sulla variabile).
+ */
+export const CONVERSIONI_PARALLELE_PREDEFINITE = 3
+export const CONVERSIONI_PARALLELE_MASSIME = 10
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -126,23 +152,50 @@ function coreDelSandbox(): number {
 }
 
 /**
+ * Quante conversioni girano insieme. Fuori intervallo (o non un intero) si torna al predefinito, ma la
+ * riga resta: è configurazione sbagliata, e AGENTS (regola 4) la vuole a livello `error`, mai `info`.
+ * Assente o vuota è invece il caso normale: nessuna riga.
+ *
+ * Esportata per i test: legge `process.env` e logga, quindi si prova con `vi.stubEnv` e il logger finto.
+ */
+export function conversioniParallele(): number {
+  const valore = process.env[ENV_CONVERSIONI_PARALLELE]
+  if (valore === undefined || valore === '') return CONVERSIONI_PARALLELE_PREDEFINITE
+  const n = Number(valore)
+  if (Number.isSafeInteger(n) && n >= 1 && n <= CONVERSIONI_PARALLELE_MASSIME) return n
+  logEvento(
+    'config',
+    'error',
+    { operazione: 'video-runner', esito: 'config-non-valida' },
+    new Error(
+      `${ENV_CONVERSIONI_PARALLELE}: atteso un intero fra 1 e ${CONVERSIONI_PARALLELE_MASSIME}`,
+    ),
+  )
+  return CONVERSIONI_PARALLELE_PREDEFINITE
+}
+
+/**
  * Porta avanti un job della coda video. Non converte un video: fa un pezzo di lavoro
- * e torna. Va chiamata a ripetizione — il cron ogni cinque minuti — e il disegno è
- * scritto per intero nella testata di `./esegui.ts`, compreso ciò che si fa di un guasto
- * nostro: il job si rimette in coda e si ritenta (classi e attese in `./ritentativi.ts`).
+ * e torna. Si chiama in due modi (il disegno è scritto per intero nella testata di `./esegui.ts`,
+ * compreso ciò che si fa di un guasto nostro: il job si rimette in coda e si ritenta, classi e
+ * attese in `./ritentativi.ts`):
+ *
+ *  · CON `richiesta.jobId` — un calcio per UN job (`video_runner_kick`): parte subito, e solo se è
+ *    l'unica invocazione a sorvegliarlo (`gia-sorvegliato` altrimenti);
+ *  · SENZA — il giro del cron, ogni cinque minuti, che resta la rete di sicurezza di tutto.
  *
  * ⚠️ NON è una route: non c'è `withRoute` qui, e non ci va. Chi la espone su HTTP la
  * avvolge nella propria route, con il proprio gate e la propria validazione.
  */
-export async function eseguiProssimoJobVideo(): Promise<
-  EsitoRunnerVideo | { esito: 'non-configurato'; variabile: string }
-> {
+export async function eseguiProssimoJobVideo(
+  richiesta: RichiestaRunner = {},
+): Promise<EsitoRunnerVideo | { esito: 'non-configurato'; variabile: string }> {
   const leaseOwner = identitaDelWorker()
   if (leaseOwner === null) return { esito: 'non-configurato', variabile: ENV_OWNER_RUNNER }
 
   const supabase = await createAdminClient()
 
-  return eseguiUnJobVideo({
+  const dipendenze: DipendenzeRunner = {
     coda: codaSupabase(supabase),
     archivio: archivioSupabase(supabase),
     macchina: macchinaVercel(),
@@ -151,6 +204,10 @@ export async function eseguiProssimoJobVideo(): Promise<
       pausa: (ms) => new Promise((risolvi) => setTimeout(risolvi, ms)),
     },
     leaseOwner,
+    // L'identità di QUESTA invocazione: un uuid nuovo a ogni chiamata, l'esatto contrario del
+    // `leaseOwner` (stabile). È ciò con cui un'invocazione prende e rilascia la sorveglianza di un job.
+    invocazione: randomUUID(),
+    tettoConversioni: conversioniParallele(),
     regione: regioneDelSandbox(),
     vcpus: coreDelSandbox(),
     // Il watermark della Galleria: un file pubblico del nostro stesso dominio, non
@@ -174,5 +231,11 @@ export async function eseguiProssimoJobVideo(): Promise<
       )
       return esito.ok ? { ok: true } : { ok: false, codice: esito.codice }
     },
-  })
+    // ⚠️ PUNTO D'AGGANCIO DI T7 (pubblicazione automatica ed esiti). Qui NON c'è ancora niente, di
+    // proposito: il runner chiama `pubblicazioni` nel giro e dopo ogni esito definitivo (vedi
+    // `DipendenzeRunner.pubblicazioni` in `./esegui.ts`), e T7 aggiunge qui la funzione che consuma
+    // `gallery.auto_publish` e scansiona gli esiti.
+  }
+
+  return eseguiUnJobVideo(dipendenze, richiesta)
 }

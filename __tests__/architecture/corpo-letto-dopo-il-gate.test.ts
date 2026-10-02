@@ -49,6 +49,17 @@ import { mascheraSorgente, fineParentesi, fileSorgente, riga } from '../fixtures
  * questo file sorveglia. Un handler senza gate è già materia di quel lock: o è un bug che
  * lì è rosso, o è una porta pubblica per progetto, motivata lì. Qui si chiede una cosa sola,
  * e verificabile: SE un gate c'è, deve venire prima del corpo.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * R3 (2026-10-02) — IL GATE CHE È UN TOKEN
+ *
+ * Una porta il cui gate è un token in un'intestazione (`video-uploads/rinnovo:POST`,
+ * `x-kidville-rinnovo`) è, per R2, un handler senza gate: `gate-coverage` la esenta con la sua
+ * ragione, e il suo ordine non lo guarderebbe nessuno. Per queste poche porte — che sono
+ * anonime, quindi quelle in cui un corpo letto troppo presto costa di più — R3 pretende lo
+ * stesso ordine scritto per il gate che hanno: se il corpo si legge, il token si è già letto.
+ * Non è una seconda allowlist di `gate-coverage`: è una lista di LETTURE, una regex per porta,
+ * e una voce senza più la sua lettura nel sorgente rende rosso il lock invece di spegnerlo.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -256,6 +267,58 @@ const CORPO_PRIMA_DEL_GATE_AMMESSO: Record<string, string> = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// R3 · il gate A TOKEN si legge prima del corpo
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Le porte il cui gate è un TOKEN in un'intestazione e non una sessione, con la lettura che lo
+ * prende (`<route>:<METODO>` → la regex della sua lettura).
+ *
+ * R2 qui sopra si applica dove il lock RICONOSCE un gate, cioè i `require*` e i loro parenti: una
+ * porta come il rinnovo del caricamento nativo (`video-uploads/rinnovo:POST`), il cui gate è
+ * `x-kidville-rinnovo`, per R2 è un handler senza gate — materia di `gate-coverage`, che infatti la
+ * esenta con la sua ragione — e il suo ordine non verrebbe guardato da nessuno. Ma l'ordine conta
+ * ancora di più che altrove: è una porta ANONIMA, e un corpo letto prima di sapere se il token c'è è
+ * un anonimo che fa bufferizzare e deserializzare ciò che vuole.
+ *
+ * Quindi la regola è la stessa, scritta per il gate che c'è: SE il corpo si legge, il token si è già
+ * letto. (E non si pretende di più: il rinnovo oggi il corpo non lo legge mai, ed è una scelta che la
+ * route dichiara e un suo test tiene ferma; qui si tutela l'ordine il giorno in cui qualcuno lo
+ * leggesse.) Una voce si aggiunge A MANO, con la regex della lettura del suo token.
+ */
+const GATE_A_TOKEN: Record<string, RegExp> = {
+  'video-uploads/rinnovo:POST': /\btokenRinnovoDaRichiesta\s*\(/,
+}
+
+export interface CorpoPrimaDelToken { handler: string; riga: number; motivo: 'corpo-prima-del-token' | 'corpo-senza-token' }
+
+/**
+ * Gli handler di un sorgente che leggono il corpo PRIMA di aver letto il token (o senza averlo letto).
+ * Un handler che il corpo non lo legge è in regola: non c'è niente da ordinare.
+ */
+export function corpoPrimaDelToken(src: string, lettura: RegExp): CorpoPrimaDelToken[] {
+  const { senzaCommenti, struttura } = mascheraSorgente(src)
+  const RE_TOKEN = new RegExp(lettura.source, 'g')
+  const out: CorpoPrimaDelToken[] = []
+
+  EXPORT_HANDLER.lastIndex = 0
+  for (const m of struttura.matchAll(EXPORT_HANDLER)) {
+    const da = m.index
+    const a = fineParentesi(struttura, da + m[0].length - 1)
+
+    LETTURA_CORPO.lastIndex = da
+    const c = LETTURA_CORPO.exec(senzaCommenti)
+    if (!c || c.index >= a) continue
+
+    RE_TOKEN.lastIndex = da
+    const t = RE_TOKEN.exec(senzaCommenti)
+    if (!t || t.index >= a) out.push({ handler: m[1], riga: riga(src, c.index), motivo: 'corpo-senza-token' })
+    else if (c.index < t.index) out.push({ handler: m[1], riga: riga(src, c.index), motivo: 'corpo-prima-del-token' })
+  }
+  return out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe('lock architettura · il corpo si legge dopo il gate, e con la primitiva', () => {
   it('la misura vede davvero il repo (se cade, tutto il resto è verde sul vuoto)', () => {
@@ -309,6 +372,32 @@ describe('lock architettura · il corpo si legge dopo il gate, e con la primitiv
         '`primaria/fascicolo:POST`, che il 2026-08-02 rispondeva 500 a un anonimo sul ' +
         'fascicolo sanitario di un minore. Sposta il gate sopra la lettura: sono due righe, ' +
         'e sono la differenza fra un 401 e un guasto pilotato da fuori.',
+    ).toEqual([])
+  })
+
+  it('R3 · dove il gate è un TOKEN in un\'intestazione, il token si legge PRIMA del corpo', () => {
+    // La voce deve avere ancora una rotta e una lettura da guardare: se la primitiva cambiasse nome, il
+    // lock non deve diventare verde perché non trova più niente — deve diventare rosso QUI.
+    expect(Object.keys(GATE_A_TOKEN).length, 'nessuna porta a token: R3 girerebbe su un elenco vuoto').toBeGreaterThan(0)
+    const fuori: string[] = []
+    for (const [chiave, lettura] of Object.entries(GATE_A_TOKEN)) {
+      const rotta = chiave.slice(0, chiave.lastIndexOf(':'))
+      const metodo = chiave.slice(chiave.lastIndexOf(':') + 1)
+      const file = path.join(API_ROOT, rotta, 'route.ts')
+      expect(fs.existsSync(file), `${chiave}: la rotta non esiste più, la voce è morta`).toBe(true)
+      const src = fs.readFileSync(file, 'utf8')
+      expect(
+        lettura.test(mascheraSorgente(src).senzaCommenti),
+        `${chiave}: la lettura del token non si trova più nel sorgente (la regex di GATE_A_TOKEN è da aggiornare)`,
+      ).toBe(true)
+      expect(src, `${chiave}: l'handler ${metodo} non esiste`).toMatch(new RegExp(`export\\s+const\\s+${metodo}\\s*=\\s*withRoute\\s*\\(`))
+      for (const f of corpoPrimaDelToken(src, lettura)) fuori.push(`${rotta}:${f.handler} (${f.motivo}) ← ${rel(file)}:${f.riga}`)
+    }
+    expect(
+      fuori,
+      'Il corpo viene letto prima del token (o senza averlo letto): su una porta ANONIMA vuol dire far ' +
+        'bufferizzare e deserializzare a chiunque ciò che vuole prima di sapere se ha una credenziale. ' +
+        'Sposta la lettura del token sopra, o non leggere il corpo.',
     ).toEqual([])
   })
 
@@ -435,7 +524,79 @@ describe('il rilevatore riconosce la forma vietata', () => {
   })
 })
 
+describe('il rilevatore di R3 riconosce la forma vietata', () => {
+  const LETTURA = /\btokenRinnovoDaRichiesta\s*\(/
+
+  it('corpo letto sopra il token', () => {
+    const src = `
+      export const POST = withRoute('x/rinnovo:POST', async (request) => {
+        const corpo = await request.json()
+        const t = tokenRinnovoDaRichiesta(request)
+        if (t.esito !== 'ok') return NextResponse.json({}, { status: 404 })
+      })
+    `
+    expect(corpoPrimaDelToken(src, LETTURA)).toEqual([{ handler: 'POST', riga: 3, motivo: 'corpo-prima-del-token' }])
+  })
+
+  it('corpo letto e token mai letto', () => {
+    const src = `
+      export const POST = withRoute('x/rinnovo:POST', async (request) => {
+        const b = await parseBody(request, schema)
+      })
+    `
+    expect(corpoPrimaDelToken(src, LETTURA)).toEqual([{ handler: 'POST', riga: 3, motivo: 'corpo-senza-token' }])
+  })
+
+  it('il corpo letto con una primitiva sopra il token è la stessa forma', () => {
+    const src = `
+      export const POST = withRoute('x/rinnovo:POST', async (request) => {
+        const b = await parseBody(request, schema)
+        const t = tokenRinnovoDaRichiesta(request)
+      })
+    `
+    expect(corpoPrimaDelToken(src, LETTURA).map((s) => s.motivo)).toEqual(['corpo-prima-del-token'])
+  })
+
+  it('un token citato in un COMMENTO non sposta l\'ordine', () => {
+    const src = `
+      export const POST = withRoute('x/rinnovo:POST', async (request) => {
+        // Qui sopra mancava \`tokenRinnovoDaRichiesta(request)\`.
+        const corpo = await request.json()
+        const t = tokenRinnovoDaRichiesta(request)
+      })
+    `
+    expect(corpoPrimaDelToken(src, LETTURA).map((s) => s.handler)).toEqual(['POST'])
+  })
+})
+
 describe('il rilevatore NON segnala le forme corrette', () => {
+  it('R3 · token in testa, corpo dopo — o corpo mai letto', () => {
+    const LETTURA = /\btokenRinnovoDaRichiesta\s*\(/
+    expect(
+      corpoPrimaDelToken(
+        `
+      export const POST = withRoute('x/rinnovo:POST', async (request) => {
+        const t = tokenRinnovoDaRichiesta(request)
+        if (t.esito !== 'ok') return NextResponse.json({}, { status: 404 })
+        const corpo = await request.json()
+      })
+    `,
+        LETTURA,
+      ),
+    ).toEqual([])
+    // Il corpo mai letto è in regola: la regola ordina, non pretende.
+    expect(
+      corpoPrimaDelToken(
+        `
+      export const POST = withRoute('x/rinnovo:POST', async (request) => {
+        const t = tokenRinnovoDaRichiesta(request)
+      })
+    `,
+        LETTURA,
+      ),
+    ).toEqual([])
+  })
+
   it('gate in testa, corpo dopo', () => {
     const src = `
       export const POST = withRoute('x:POST', async (request) => {

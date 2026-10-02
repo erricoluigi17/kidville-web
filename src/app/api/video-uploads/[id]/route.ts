@@ -2,15 +2,14 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { logErrore } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import {
   avanzamentoDaStatoVideo,
-  CANALI_VIDEO,
-  codiceMessaggioVideo,
+  codiceMostrabileDelJob,
   riprovaAutomaticaInCorso,
+  schemaAzioneRiprovaPubblicazioneVideo,
   schemaStatoJobVideo,
   type CanaleVideo,
   type StatoJobVideo,
@@ -21,7 +20,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
-import { sedeAncoraPropria } from '../cancello'
+import { canaleDi, leggiIntento, type RigaIntento, type RigaJob } from '../cancello'
 import { logVideo, pipelineAssente, rispostaEsitoRpc, rispostaPipelineAssente, rispostaVideo } from '../risposte'
 
 // =============================================================================
@@ -39,8 +38,15 @@ import { logVideo, pipelineAssente, rispostaEsitoRpc, rispostaPipelineAssente, r
 // La PUBBLICAZIONE. `video_intent_finalize` è l'unico punto in cui qualcosa
 // diventa visibile a una famiglia, e pretende i gate del dominio — consenso foto,
 // permessi correnti sul target, revisione del target. Esporlo qui come una quinta
-// azione vorrebbe dire pubblicare aggirandoli. Sta in V08 (Galleria) e V09 (News),
-// dove quei gate esistono.
+// azione vorrebbe dire pubblicare aggirandoli. Dal 2026-10-02 per la Galleria la
+// fa il SERVER, da solo, appena la conversione finisce (`video_galleria_pubblica`,
+// consumata dal runner); per le News resta all'editor (V09). Nessuna azione di
+// questa route pubblica: l'unica che riguarda la pubblicazione, `riprova-pubblicazione`,
+// la RIMETTE IN MOTO — e solo se l'autore la chiede e la RPC conferma che si può.
+//
+// ─── DOVE STA LA LETTURA DELL'INTENTO ────────────────────────────────────────
+// In `../cancello`: `leggiIntento` (proprietà + sede) la usano anche `[id]/firma` e il
+// cancello è uno solo. Un file di route non può esportare altro che i metodi HTTP.
 // =============================================================================
 
 const OPERAZIONE_GET = 'video-uploads/[id]:GET'
@@ -56,7 +62,10 @@ interface ParametriRotta {
  * `z.discriminatedUnion` e non un `azione: z.string()` con uno `switch`: un verbo
  * sconosciuto deve essere un 400 di validazione — prima del gate di sede, prima
  * del database — e non un ramo `default` che decide per conto suo. `pubblica` non
- * è fra questi, e il test lo verifica: la sua assenza è una decisione.
+ * è fra questi, e il test lo verifica: la sua assenza è una decisione. E non c'è
+ * un'azione `destinatari`: i bambini si scelgono all'apertura e non si cambiano
+ * dopo (cambiarli a video in volo vorrebbe dire pubblicare per qualcuno che
+ * l'insegnante non ha scelto, o non pubblicare per chi sì).
  */
 const schemaAzioneVideo = z.discriminatedUnion('azione', [
   z.object({
@@ -82,112 +91,12 @@ const schemaAzioneVideo = z.discriminatedUnion('azione', [
     azione: z.literal('annulla-job'),
     jobId: zUuid,
   }),
+  /**
+   * Il «Riprova» di una pubblicazione fallita in modo definitivo (decisione del titolare, 02/10):
+   * solo l'autore, solo se il video è ancora pronto e l'uscita c'è. Lo schema è quello del contratto.
+   */
+  schemaAzioneRiprovaPubblicazioneVideo,
 ])
-
-/**
- * Le colonne che servono a raccontare lo stato, e nessuna di più.
- *
- * `attempt` c'è perché da solo — con lo stato — dice se il job si sta ritentando
- * (`riprovaAutomaticaInCorso`). Senza questa colonna PostgREST non la restituirebbe e
- * la scheda non direbbe mai «lo stiamo riprovando», senza nessun errore da nessuna
- * parte: il test legge la lista delle colonne chieste, non solo il corpo che torna.
- * `last_error_code` NON c'è, e non deve esserci: è il nome interno della causa.
- */
-const COLONNE_INTENTO = 'id, owner_id, scuola_id, channel, revision, status, updated_at'
-const COLONNE_JOB = 'id, intent_id, channel, status, error_code, attempt, updated_at, created_at'
-
-type RigaIntento = {
-  id: string
-  owner_id: string
-  scuola_id: string | null
-  channel: string
-  revision: number
-  status: string
-  updated_at: string
-}
-
-type RigaJob = {
-  id: string
-  intent_id: string
-  channel: string
-  status: string
-  error_code: string | null
-  /** Il numero del tentativo: 0 prima della prima presa in carico, +1 a ogni `video_job_claim`. */
-  attempt: number
-  updated_at: string
-}
-
-type Letto =
-  | { intento: RigaIntento; job: RigaJob[]; response?: undefined }
-  | { intento?: undefined; job?: undefined; response: NextResponse }
-
-/**
- * Legge l'intento e i suoi job, applicando il cancello applicativo.
- *
- * ⚠️ IL FILTRO `owner_id` È DENTRO LA QUERY, non un confronto dopo. Così un
- * intento di un'altra persona risponde **404** invece di 403: gli uuid non si
- * indovinano, e un 403 direbbe a chi prova che quell'id esiste. Il 403 resta per
- * la SEDE, che è l'unico caso in cui la riga è davvero tua e il perimetro no.
- */
-async function leggiIntento(
-  supabase: SupabaseClient,
-  user: AppUser,
-  intentId: string,
-  operazione: string,
-): Promise<Letto> {
-  const { data: intento, error: erroreIntento } = await supabase
-    .from('video_intents')
-    .select(COLONNE_INTENTO)
-    .eq('id', intentId)
-    .eq('owner_id', user.id)
-    .maybeSingle()
-
-  // PostgREST non lancia: l'errore è nel valore di ritorno, e un `try` attorno a
-  // questa `await` non scatterebbe mai.
-  if (erroreIntento) {
-    if (pipelineAssente(erroreIntento)) {
-      return { response: rispostaPipelineAssente(operazione, 'video_intents', erroreIntento) }
-    }
-    logErrore({ operazione, stato: 500, evento: 'db' }, erroreIntento)
-    return { response: rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500) }
-  }
-  if (!intento) {
-    return { response: rispostaVideo('VIDEO_NON_TROVATO', 404) }
-  }
-
-  const riga = intento as unknown as RigaIntento
-  const canale = canaleDi(riga.channel)
-
-  const sede = await sedeAncoraPropria({
-    supabase,
-    user,
-    canale,
-    scuolaIdIntento: riga.scuola_id,
-    operazione,
-  })
-  if (sede.response) return { response: sede.response }
-
-  const { data: job, error: erroreJob } = await supabase
-    .from('video_jobs')
-    .select(COLONNE_JOB)
-    .eq('intent_id', intentId)
-    .order('created_at', { ascending: true })
-
-  if (erroreJob) {
-    if (pipelineAssente(erroreJob)) {
-      return { response: rispostaPipelineAssente(operazione, 'video_jobs', erroreJob) }
-    }
-    logErrore({ operazione, stato: 500, evento: 'db' }, erroreJob)
-    return { response: rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500) }
-  }
-
-  return { intento: riga, job: (job ?? []) as unknown as RigaJob[] }
-}
-
-/** Il canale della riga, ricondotto al vocabolario chiuso del contratto. */
-function canaleDi(valore: string): CanaleVideo {
-  return (CANALI_VIDEO as readonly string[]).includes(valore) ? (valore as CanaleVideo) : 'gallery'
-}
 
 /**
  * Lo stato di un job come lo legge il client.
@@ -199,6 +108,13 @@ function canaleDi(valore: string): CanaleVideo {
  * una bugia, un codice d'errore su un job vivo è un allarme falso. Lo pretende
  * anche `schemaStatoJobVideo`, che qui riverifica il risultato invece di fidarsi.
  *
+ * Il codice lo decide `codiceMostrabileDelJob` del contratto (secondario #28, regola #37), la
+ * STESSA funzione che usano l'elenco e le notifiche: un job `failed` che si è ritentato
+ * (`attempt > 1`) è un guasto NOSTRO esaurito, e legge «problema nostro» qualunque fosse il
+ * codice tecnico dell'ultimo giro — prima di questa regola «il file sembra rovinato» veniva
+ * detto a chi aveva un telefono sano. Vale per Galleria e News: una copia della regola in questa
+ * route mostrerebbe, al rientro di una News, un messaggio diverso da quello dell'elenco.
+ *
  * `riprovaAutomatica` è la metà «non ancora un errore» della stessa regola: il job che
  * il runner ha rimesso in coda dopo un guasto nostro, o che sta girando un ritentativo,
  * dice «lo stiamo riprovando» invece di sembrare una coda ferma. Lo calcola
@@ -208,14 +124,13 @@ function canaleDi(valore: string): CanaleVideo {
  */
 function statoJob(riga: RigaJob, intentId: string): StatoJobVideoLetto | null {
   const stato = riga.status as StatoJobVideo
-  const fallito = stato === 'rejected' || stato === 'failed'
   const letto = {
     jobId: riga.id,
     intentId,
     canale: canaleDi(riga.channel),
     stato,
     avanzamento: avanzamentoDaStatoVideo(stato) ?? null,
-    codice: fallito ? codiceMessaggioVideo(riga.error_code) : null,
+    codice: codiceMostrabileDelJob(riga),
     riprovaAutomatica: riprovaAutomaticaInCorso(stato, riga.attempt),
     aggiornatoIl: new Date(riga.updated_at).toISOString(),
   }
@@ -308,7 +223,7 @@ export const PATCH = withRoute('video-uploads/[id]:PATCH', async (request: NextR
     // ── IL CANCELLO TRANSAZIONALE. Un solo vincitore, revisione corrente, stato
     //    ammesso: cose che si sanno solo sotto lock, e che nessun controllo qui
     //    sopra può garantire — fra la lettura e la scrittura c'è una finestra.
-    const { rpc, argomenti } = chiamata(azione, p.data, auth.user.id)
+    const { rpc, argomenti, dopo } = chiamata(azione, p.data, auth.user.id)
     const { data: esito, error: erroreRpc } = await supabase.rpc(rpc, argomenti)
     if (erroreRpc) {
       if (pipelineAssente(erroreRpc)) {
@@ -318,44 +233,81 @@ export const PATCH = withRoute('video-uploads/[id]:PATCH', async (request: NextR
       return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500)
     }
 
-    const risposta = (esito ?? {}) as { ok?: unknown; code?: unknown }
+    const risposta = (esito ?? {}) as { ok?: unknown; code?: unknown; motivo?: unknown }
+    let arrivoGiaRegistrato = false
     if (risposta.ok !== true) {
-      return rispostaEsitoRpc(canale, OPERAZIONE_PATCH, rpc, typeof risposta.code === 'string' ? risposta.code : null, {
-        utente: auth.user.id,
-        azione: azione.azione,
-      })
+      // ── `SOURCE_CONFLICT` DOPO IL TRIGGER D'ARRIVO È UN SUCCESSO (secondario #69). Il trigger che
+      //    vede il file arrivare porta il job in coda scrivendo il tipo che ha letto dallo Storage
+      //    (o quello dichiarato all'apertura); il `caricato` del web, che arriva dopo, porta il
+      //    `mime` del suo `File` — spesso con il suffisso dei codec, e comunque non lo stesso
+      //    carattere per carattere — e la RPC lo rifiuta come «sorgente diversa» su un job che è già
+      //    in coda. Ma il file C'È, e il server lo sa già da sé (`arrivato_il`): dirgli di riprovare
+      //    manderebbe il client a ripetere un'azione che non può avere un altro esito. Si rilegge lo
+      //    stato (la RPC non lo restituisce) e, se l'arrivo è registrato, si risponde come per
+      //    un `caricato` riuscito. Un `SOURCE_CONFLICT` SENZA arrivo registrato resta un conflitto vero.
+      if (azione.azione === 'caricato' && risposta.code === 'SOURCE_CONFLICT') {
+        const attuale = await leggiIntento(supabase, auth.user, p.data, OPERAZIONE_PATCH)
+        if (attuale.response) return attuale.response
+        arrivoGiaRegistrato = attuale.job.some((j) => j.id === azione.jobId && j.arrivato_il !== null)
+      }
+      if (!arrivoGiaRegistrato) {
+        return rispostaEsitoRpc(canale, OPERAZIONE_PATCH, rpc, typeof risposta.code === 'string' ? risposta.code : null, {
+          utente: auth.user.id,
+          azione: azione.azione,
+          // Il motivo di un «Riprova» negato (un enumerato della RPC): serve a capire perché, e la RPC lo scrive anche in `app_log`.
+          motivo: typeof risposta.motivo === 'string' ? risposta.motivo : undefined,
+        })
+      }
     }
+
+    // ── IL CALCIO AL RUNNER. Dopo un `caricato` il job è in coda: si chiama subito il runner invece
+    //    di aspettare il cron (e il trigger d'arrivo, che l'ha già fatto, è la strada principale —
+    //    questa è la rete: idempotente, il runner risponde `gia-sorvegliato` se c'è già chi lavora).
+    //    NON fa mai fallire la risposta: un calcio perso non deve costare un arrivo, il cron ogni
+    //    cinque minuti è la rete della rete — e il motivo, se c'è, finisce in un log.
+    const runner = dopo ? await calciaRunner(supabase, dopo, canale, azione.azione === 'caricato' ? azione.jobId : null) : undefined
 
     // IL SUCCESSO SI LOGGA: una conferma è l'istante in cui l'utente si impegna,
     // e un annullo è l'istante in cui qualcosa smette di esistere. Con i soli
     // errori, «nessuna riga» direbbe insieme «non succede mai» e «non funziona».
+    // Il «Riprova» ha il suo esito: è l'istante in cui una pubblicazione fallita viene rimessa in moto.
     logVideo(canale, 'info', {
       operazione: OPERAZIONE_PATCH,
-      esito: 'azione-eseguita',
+      esito: azione.azione === 'riprova-pubblicazione' ? 'pubblicazione-riprovata' : 'azione-eseguita',
       azione: azione.azione,
       canale,
       utente: auth.user.id,
       sede: prima.intento.scuola_id ?? undefined,
       intento: prima.intento.id,
+      tipo: arrivoGiaRegistrato ? 'arrivo-gia-registrato' : undefined,
+      runner,
     })
 
     // Si rilegge: dopo `annulla` metà dei job cambia stato, e restituire ciò che
     // si era letto PRIMA manderebbe il client a mostrare una schermata già falsa.
-    const dopo = await leggiIntento(supabase, auth.user, p.data, OPERAZIONE_PATCH)
-    if (dopo.response) return dopo.response
-    return corpoStato(dopo.intento, dopo.job, OPERAZIONE_PATCH)
+    const rilettura = await leggiIntento(supabase, auth.user, p.data, OPERAZIONE_PATCH)
+    if (rilettura.response) return rilettura.response
+    return corpoStato(rilettura.intento, rilettura.job, OPERAZIONE_PATCH)
   } catch (errore) {
     logErrore({ operazione: OPERAZIONE_PATCH, stato: 500 }, errore)
     return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500)
   }
 })
 
+type ChiamataRpc = { rpc: string; argomenti: Record<string, unknown> }
+
 /**
- * Da un'azione validata alla RPC che la esegue.
+ * Da un'azione validata alla RPC che la esegue, e a quella che — se serve — va chiamata DOPO.
  *
- * Una funzione e non quattro rami dentro l'handler: il `switch` è esaustivo su
+ * Una funzione e non cinque rami dentro l'handler: il `switch` è esaustivo su
  * un'unione chiusa, quindi aggiungere un'azione domani senza dire quale RPC la
  * esegue non compila.
+ *
+ * `dopo` è il calcio al runner, e solo per `caricato`: ha la stessa forma della RPC principale
+ * apposta, perché passa dallo stesso cancello (la lettura dell'intento con proprietà e sede viene
+ * PRIMA di entrambe) e dal solo punto in cui l'handler chiama una RPC per nome variabile. Non è
+ * un modo di nascondere una chiamata al lock dell'isolamento fra sedi: è che `video_runner_kick`
+ * prende un job già verificato e non ha un parametro di sede da passare.
  *
  * ⚠️ Vive FUORI dagli handler anche per una ragione di forma: un file di route in
  * App Router può esportare i soli metodi HTTP e le costanti di segmento, quindi
@@ -365,7 +317,7 @@ function chiamata(
   azione: z.infer<typeof schemaAzioneVideo>,
   intentId: string,
   ownerId: string,
-): { rpc: string; argomenti: Record<string, unknown> } {
+): ChiamataRpc & { dopo?: ChiamataRpc } {
   switch (azione.azione) {
     case 'caricato':
       return {
@@ -376,6 +328,7 @@ function chiamata(
           p_source_size: azione.byte,
           p_source_mime: azione.mime,
         },
+        dopo: { rpc: 'video_runner_kick', argomenti: { p_job_id: azione.jobId } },
       }
     case 'conferma':
       return {
@@ -392,5 +345,63 @@ function chiamata(
         rpc: 'video_job_cancel',
         argomenti: { p_job_id: azione.jobId, p_owner_id: ownerId },
       }
+    case 'riprova-pubblicazione':
+      return {
+        rpc: 'video_intent_pubblicazione_riprova',
+        argomenti: { p_intent_id: intentId, p_owner_id: ownerId },
+      }
+  }
+}
+
+/**
+ * Il calcio al runner (`video_runner_kick`), a prova di errore: non solleva mai e non fa mai fallire
+ * la richiesta che l'ha chiamato. Restituisce una parola per il log di successo: `calciato`,
+ * `non-inviato` (la RPC dice che `pg_net` non c'è: la riga la scrive già lei) o `fallito`.
+ *
+ * Un fallimento è un LOG, non una risposta — e il livello dipende da che cosa è mancato: l'URL del
+ * runner assente o la POST non accodata sono guasti (`error`: configurazione mancante non è mai
+ * `info`), mentre il resto — una RPC che non risponde, un'eccezione — è un calcio perso che il cron
+ * recupera (`warn`). Solo uuid del job e codici: mai un nome di file.
+ */
+async function calciaRunner(
+  supabase: SupabaseClient,
+  chiamataRunner: ChiamataRpc,
+  canale: CanaleVideo,
+  jobId: string | null,
+): Promise<'calciato' | 'non-inviato' | 'fallito'> {
+  try {
+    const { data, error } = await supabase.rpc(chiamataRunner.rpc, chiamataRunner.argomenti)
+    if (error) {
+      logVideo(canale, 'warn', {
+        operazione: OPERAZIONE_PATCH,
+        esito: 'calcio-runner-non-riuscito',
+        error_code: (error as { code?: string }).code ?? 'SENZA_CODICE',
+        job: jobId ?? undefined,
+      })
+      return 'fallito'
+    }
+    const esito = (data ?? {}) as { ok?: unknown; code?: unknown; inviato?: unknown }
+    if (esito.ok !== true) {
+      const codice = typeof esito.code === 'string' ? esito.code : 'SENZA_CODICE'
+      logVideo(canale, codice === 'URL_ASSENTE' || codice === 'POST_FALLITO' ? 'error' : 'warn', {
+        operazione: OPERAZIONE_PATCH,
+        esito: 'calcio-runner-non-riuscito',
+        error_code: codice,
+        job: jobId ?? undefined,
+      })
+      return 'fallito'
+    }
+    return esito.inviato === false ? 'non-inviato' : 'calciato'
+  } catch (errore) {
+    // Una rete che cade fra noi e Supabase: il job è già in coda e il cron lo ripesca. Si dice, non si lancia:
+    // una riga aggregabile (`esito`) e quella con lo stack.
+    logVideo(canale, 'warn', {
+      operazione: OPERAZIONE_PATCH,
+      esito: 'calcio-runner-non-riuscito',
+      error_code: 'ECCEZIONE',
+      job: jobId ?? undefined,
+    })
+    logErrore({ operazione: OPERAZIONE_PATCH, evento: 'rpc' }, errore)
+    return 'fallito'
   }
 }

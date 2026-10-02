@@ -9,10 +9,24 @@ import { SEDE_A } from '../fixtures/sedi'
 import { MESSAGGIO_MAX, descriviErrore, sanificaMessaggio } from '@/lib/logging/serialize'
 import { rigaEvento } from '@/lib/logging/logger'
 import { BUCKET_BUILD_VIDEO, PERCORSO_FFMPEG_GZ, PERCORSO_FFPROBE_GZ } from '@/lib/media/video/build'
+import { MAX_VIDEO_DURATION_SECONDS } from '@/lib/media/video/limiti'
 import { archivioSupabase, codaSupabase } from '@/lib/media/video/runner/adattatori'
-import { TETTO_INVOCAZIONE_MS } from '@/lib/media/video/runner/battito'
+import {
+  PERIODO_SONDA_MS,
+  SECONDI_LEASE_PRESA,
+  TETTO_INVOCAZIONE_MS,
+} from '@/lib/media/video/runner/battito'
 import { codaDiagnostica } from '@/lib/media/video/runner/diagnosi'
-import { SECONDI_FIRMA_BUILD, erroreDiagnostico, eseguiUnJobVideo } from '@/lib/media/video/runner/esegui'
+import {
+  SECONDI_FIRMA_BUILD,
+  SECONDI_SORVEGLIANZA,
+  erroreDiagnostico,
+  eseguiUnJobVideo,
+  type ContestoPubblicazioni,
+  type DipendenzeRunner,
+  type EsitoRunnerVideo,
+  type RichiestaRunner,
+} from '@/lib/media/video/runner/esegui'
 import {
   ENV_URL_FFMPEG,
   ENV_URL_FFPROBE,
@@ -25,12 +39,16 @@ import type {
   CodaVideo,
   ComandoSandbox,
   EsitoArchivio,
+  EsitoBattito,
   EsitoComando,
+  EsitoConteggi,
   EsitoRpcVideo,
   JobVideo,
   MacchinaSandbox,
   SessioneSandbox,
 } from '@/lib/media/video/runner/porte'
+import { ATTESE_FRA_TENTATIVI_S, TENTATIVI_MASSIMI_GUASTO_NOSTRO } from '@/lib/media/video/runner/ritentativi'
+import { SONDA_TEMPORALE, timeoutSondaTemporaleMs } from '@/lib/media/video/temporale'
 import {
   USCITE_APPARECCHIO,
   USCITE_CONVERSIONE,
@@ -142,24 +160,38 @@ function job(sovrascritture: Partial<JobVideo> = {}): JobVideo {
   }
 }
 
-/** Durata a ridosso del tetto: serve al caso «il probe_json è la SORGENTE». */
-const DURATA_SORGENTE = 179.9
-const DURATA_USCITA = 179.92
+/**
+ * Durata a ridosso del tetto: serve al caso «il probe_json è la SORGENTE». Il tetto NON è un numero
+ * scritto qui (era 180, e il 2026-10-02 è diventato 300 senza che questa riga se ne accorgesse: secondario
+ * #25): si legge da `MAX_VIDEO_DURATION_SECONDS`, e `a ridosso` vuol dire a un decimo di secondo.
+ */
+const DURATA_SORGENTE = MAX_VIDEO_DURATION_SECONDS - 0.1
+const DURATA_USCITA = MAX_VIDEO_DURATION_SECONDS - 0.08
 
-function probeSorgente(durata = DURATA_SORGENTE): string {
+/** Le misure dell'ingresso che si vedono nel probe (e da cui la sonda temporale ricava il suo timeout). */
+interface MisureProbe {
+  larghezza?: number
+  altezza?: number
+  fps?: string
+}
+
+function probeSorgente(durata = DURATA_SORGENTE, misure: MisureProbe = {}): string {
+  const larghezza = misure.larghezza ?? 1920
+  const altezza = misure.altezza ?? 1080
+  const fps = misure.fps ?? '30000/1001'
   return JSON.stringify({
     streams: [
       {
         index: 0,
         codec_name: 'h264',
         codec_type: 'video',
-        width: 1920,
-        height: 1080,
-        coded_width: 1920,
-        coded_height: 1088,
+        width: larghezza,
+        height: altezza,
+        coded_width: larghezza,
+        coded_height: altezza === 1080 ? 1088 : altezza,
         pix_fmt: 'yuv420p',
-        avg_frame_rate: '30000/1001',
-        r_frame_rate: '30000/1001',
+        avg_frame_rate: fps,
+        r_frame_rate: fps,
         duration: String(durata),
         sample_aspect_ratio: '1:1',
         color_transfer: 'bt709',
@@ -260,6 +292,8 @@ interface Copione {
   risposta?: (c: ComandoSandbox, n: number) => EsitoComando | Error
   nuova?: boolean
   apriFallisce?: boolean
+  /** L'SDK che LANCIA su `avvia` (la conversione staccata): `esegui` lancia restituendo un `Error` da `risposta`. */
+  avviaFallisce?: Error
 }
 
 function sandboxFinta(copione: Copione = {}) {
@@ -280,6 +314,7 @@ function sandboxFinta(copione: Copione = {}) {
     },
     avvia: async (c) => {
       avviati.push(c)
+      if (copione.avviaFallisce) throw copione.avviaFallisce
     },
     ferma: async () => {
       fermata += 1
@@ -298,33 +333,184 @@ function sandboxFinta(copione: Copione = {}) {
 }
 
 type ParametriRiprova = Parameters<CodaVideo['riprova']>[0]
+type ParametriFallito = Parameters<CodaVideo['fallito']>[0]
+
+/**
+ * LA SORVEGLIANZA ESCLUSIVA com'è nel database (`video_job_sorveglianza_prendi` / `_rilascia`), in
+ * memoria: un job ha al più una invocazione che lo sorveglia; chi non è quella la prende `GIA_SORVEGLIATO`;
+ * chi la tiene la riprende (idempotente); un rilascio non proprio non fa niente. Condivisa fra più
+ * `codaFinta`, è ciò che permette di provare DUE invocazioni sullo stesso job senza un database.
+ *
+ * ⚠️ Non modella la scadenza della lease: dentro un test nessuna dura abbastanza da scadere, e la
+ * scadenza è provata dove vive — nel PGlite di `video-pubblicazione-automatica-rpc`.
+ */
+function sorveglianzaInMemoria() {
+  const tenute = new Map<string, string>()
+  return {
+    prendi: (jobId: string, invocazione: string): EsitoBattito => {
+      const chi = tenute.get(jobId)
+      if (chi !== undefined && chi !== invocazione) return { ok: false, code: 'GIA_SORVEGLIATO' }
+      tenute.set(jobId, invocazione)
+      return { ok: true }
+    },
+    rilascia: (jobId: string, invocazione: string): EsitoBattito => {
+      if (tenute.get(jobId) === invocazione) tenute.delete(jobId)
+      return { ok: true }
+    },
+    /** Chi sorveglia che cosa, adesso. */
+    tenute: () => new Map(tenute),
+  }
+}
+
+/**
+ * IL TETTO DELLE CONVERSIONI IN PARALLELO com'è nel database (`video_job_prendi` / `video_job_prossimo`),
+ * in memoria: se i `processing` sono già `tetto`, `CAPACITA_PIENA`; un job che è già mio e vivo non occupa
+ * un posto in più. Come la sorveglianza, è condiviso fra più `codaFinta`.
+ */
+function capacitaInMemoria() {
+  const inLavorazione = new Set<string>()
+  return {
+    prendi: (jobId: string, tetto: number): EsitoRpcVideo => {
+      if (!Number.isInteger(tetto) || tetto < 1) throw new Error(`il tetto non arriva: ${String(tetto)}`)
+      if (!inLavorazione.has(jobId) && inLavorazione.size >= tetto) {
+        return { ok: false, code: 'CAPACITA_PIENA' }
+      }
+      inLavorazione.add(jobId)
+      return { ok: true, job: job({ id: jobId }) }
+    },
+    inLavorazione: () => new Set(inLavorazione),
+  }
+}
+
+/**
+ * Ciò che il database sa di UN job, per i campi che il runner scrive: gli stessi di `video_jobs`. Si può
+ * passare a `codaFinta` per condividerlo fra più giri (i quattro tentativi dello stesso job).
+ */
+interface StatoDelJob {
+  status: string
+  errorCode: string | null
+  /** `last_error_code`: lo scrive SOLO `video_job_retry`, mai `video_job_fail`. */
+  lastErrorCode: string | null
+}
+
+function statoDelJob(): StatoDelJob {
+  return { status: 'processing', errorCode: null, lastErrorCode: null }
+}
 
 interface CopioneCoda {
   prossimo?: EsitoRpcVideo
   miei?: JobVideo[]
+  /**
+   * La risposta di `video_job_prendi`. Senza copione il database prende il job che gli si chiede: il primo
+   * dei `miei` (la ripresa), o un job qualunque.
+   */
+  prendi?: EsitoRpcVideo | ((jobId: string, tetto: number) => EsitoRpcVideo)
+  /** La risposta di `video_job_sorveglianza_prendi`. Senza copione la sorveglianza si ottiene. */
+  sorveglianzaPrendi?: EsitoBattito | ((jobId: string, invocazione: string) => EsitoBattito)
+  sorveglianzaRilascia?: EsitoBattito | Error
+  arriviRecupera?: EsitoConteggi | Error
+  ventaglio?: EsitoConteggi | Error
   battito?: EsitoRpcVideo
-  pronto?: EsitoRpcVideo
-  fallito?: EsitoRpcVideo
+  pronto?: EsitoRpcVideo | Error
+  fallito?: EsitoRpcVideo | ((p: ParametriFallito) => EsitoRpcVideo)
   /**
    * La risposta di `video_job_retry`. Senza copione il database dice «ok» e il job è `queued`: la
    * risposta di un ritentativo andato a buon fine.
    */
   riprova?: EsitoRpcVideo | ((p: ParametriRiprova) => EsitoRpcVideo)
+  /** Dove registrare l'ORDINE delle chiamate, se più doppi (o il punto d'aggancio) devono scriverci insieme. */
+  ordine?: string[]
+  /** La sorveglianza condivisa fra più invocazioni (al posto di quella che sempre riesce). */
+  sorveglianza?: ReturnType<typeof sorveglianzaInMemoria>
+  /** Lo stato del job lato database, se va condiviso fra più giri; altrimenti ne nasce uno per `codaFinta`. */
+  stato?: StatoDelJob
 }
 
 function codaFinta(copione: CopioneCoda = {}) {
   const pronti: unknown[] = []
-  const falliti: { jobId: string; fenceEpoch: number; leaseOwner: string; codice: string; rifiutato: boolean }[] = []
+  const falliti: ParametriFallito[] = []
   const ritentati: ParametriRiprova[] = []
-  const riprese: string[] = []
+  /** Gli id passati a `video_job_prendi`, e i parametri con cui sono stati passati. */
+  const prese: string[] = []
+  const richiestePrese: { jobId: string; leaseOwner: string; leaseSeconds: number; tetto: number }[] = []
+  const richiesteProssimo: { leaseOwner: string; leaseSeconds: number; tetto: number }[] = []
+  const sorveglianze: { jobId: string; invocazione: string; secondi: number }[] = []
+  const rilasci: { jobId: string; invocazione: string }[] = []
+  const arrivi: number[] = []
+  const ventagli: { tetto: number; escludi: string | null }[] = []
+  const ordine = copione.ordine ?? []
+  const stato = copione.stato ?? statoDelJob()
+  /** Il job che il database ha dato per ultimo: è da lui che `video_job_retry` sa a che tentativo è. */
+  let corrente: JobVideo | null = null
   let battiti = 0
 
+  /**
+   * `video_job_retry` com'è scritta (PR 1; il suo test PGlite è `video-job-ritentativi`): annota SEMPRE
+   * `last_error_code`, e se `attempt >= p_tentativi_massimi` delega a `video_job_fail`, che scrive
+   * `error_code` e chiude. Il tentativo lo sa il database dal job; il doppio lo ricorda dall'ultima presa.
+   */
+  const comeVideoJobRetry = (p: ParametriRiprova): EsitoRpcVideo => {
+    const attempt = corrente?.attempt ?? 1
+    stato.lastErrorCode = p.codice
+    if (attempt >= p.tentativiMassimi) {
+      stato.status = 'failed'
+      stato.errorCode = p.codice
+      return { ok: true, job: job({ status: 'failed', attempt }) }
+    }
+    stato.status = 'queued'
+    return { ok: true, job: job({ status: 'queued', attempt }) }
+  }
+
   const coda: CodaVideo = {
-    miei: async () => ({ ok: true, jobs: copione.miei ?? [] }),
-    prossimo: async () => copione.prossimo ?? { ok: false, code: 'EMPTY_QUEUE' },
-    riprendi: async (jobId) => {
-      riprese.push(jobId)
-      return { ok: true, job: (copione.miei ?? [])[0] ?? job() }
+    miei: async () => {
+      ordine.push('miei')
+      return { ok: true, jobs: copione.miei ?? [] }
+    },
+    prossimo: async (leaseOwner, leaseSeconds, tetto) => {
+      ordine.push('prossimo')
+      richiesteProssimo.push({ leaseOwner, leaseSeconds, tetto })
+      const risposta: EsitoRpcVideo = copione.prossimo ?? { ok: false, code: 'EMPTY_QUEUE' }
+      if (risposta.ok) corrente = risposta.job
+      return risposta
+    },
+    prendi: async (jobId, leaseOwner, leaseSeconds, tetto) => {
+      ordine.push(`prendi:${jobId}`)
+      prese.push(jobId)
+      richiestePrese.push({ jobId, leaseOwner, leaseSeconds, tetto })
+      const copiata = copione.prendi
+      const risposta: EsitoRpcVideo =
+        typeof copiata === 'function'
+          ? copiata(jobId, tetto)
+          : (copiata ?? { ok: true, job: (copione.miei ?? []).find((j) => j.id === jobId) ?? (copione.miei ?? [])[0] ?? job({ id: jobId }) })
+      if (risposta.ok) corrente = risposta.job
+      return risposta
+    },
+    sorveglianzaPrendi: async (jobId, invocazione, secondi) => {
+      ordine.push(`sorveglianzaPrendi:${jobId}`)
+      sorveglianze.push({ jobId, invocazione, secondi })
+      const risposta = copione.sorveglianzaPrendi
+      if (typeof risposta === 'function') return risposta(jobId, invocazione)
+      if (risposta) return risposta
+      return copione.sorveglianza ? copione.sorveglianza.prendi(jobId, invocazione) : { ok: true }
+    },
+    sorveglianzaRilascia: async (jobId, invocazione) => {
+      ordine.push(`sorveglianzaRilascia:${jobId}`)
+      rilasci.push({ jobId, invocazione })
+      if (copione.sorveglianzaRilascia instanceof Error) throw copione.sorveglianzaRilascia
+      if (copione.sorveglianzaRilascia) return copione.sorveglianzaRilascia
+      return copione.sorveglianza ? copione.sorveglianza.rilascia(jobId, invocazione) : { ok: true }
+    },
+    arriviRecupera: async (limite) => {
+      ordine.push('arriviRecupera')
+      arrivi.push(limite)
+      if (copione.arriviRecupera instanceof Error) throw copione.arriviRecupera
+      return copione.arriviRecupera ?? { ok: true, conteggi: { candidati: 0, arrivati: 0 } }
+    },
+    ventaglio: async (tetto, escludi) => {
+      ordine.push(`ventaglio:${escludi ?? 'nessuno'}`)
+      ventagli.push({ tetto, escludi })
+      if (copione.ventaglio instanceof Error) throw copione.ventaglio
+      return copione.ventaglio ?? { ok: true, conteggi: { candidati: 0, calciati: 0 } }
     },
     battito: async () => {
       battiti += 1
@@ -332,21 +518,43 @@ function codaFinta(copione: CopioneCoda = {}) {
     },
     pronto: async (p) => {
       pronti.push(p)
+      if (copione.pronto instanceof Error) throw copione.pronto
       return copione.pronto ?? { ok: true, job: job() }
     },
     fallito: async (p) => {
       falliti.push(p)
-      return copione.fallito ?? { ok: true, job: job({ status: 'failed' }) }
+      const risposta = copione.fallito
+      if (typeof risposta === 'function') return risposta(p)
+      if (risposta) return risposta
+      // `video_job_fail` scrive `error_code` e chiude, e NON tocca `last_error_code`: è il difetto #23.
+      stato.status = p.rifiutato ? 'rejected' : 'failed'
+      stato.errorCode = p.codice
+      return { ok: true, job: job({ status: stato.status }) }
     },
     riprova: async (p) => {
       ritentati.push(p)
       const risposta = copione.riprova
       if (typeof risposta === 'function') return risposta(p)
-      return risposta ?? { ok: true, job: job({ status: 'queued' }) }
+      return risposta ?? comeVideoJobRetry(p)
     },
   }
 
-  return { coda, pronti, falliti, ritentati, riprese, battiti: () => battiti }
+  return {
+    coda,
+    pronti,
+    falliti,
+    ritentati,
+    prese,
+    richiestePrese,
+    richiesteProssimo,
+    sorveglianze,
+    rilasci,
+    arrivi,
+    ventagli,
+    ordine,
+    stato,
+    battiti: () => battiti,
+  }
 }
 
 /** Una firma rifiutata: il motivo e, se c'è, ciò da cui si decide la classe (stato HTTP, codice dello Storage). */
@@ -408,23 +616,38 @@ function orologioFinto() {
   }
 }
 
+/** L'identità di QUESTA invocazione: nei test un uuid fisso, per poter dire chi ha preso e chi ha rilasciato. */
+const INVOCAZIONE = '5a1b2c3d-4e5f-4061-8a7b-9c0d1e2f3a4b'
+/** Il tetto delle conversioni in parallelo che i test passano al runner (il predefinito di `index.ts` è 3). */
+const TETTO = 3
+
 function dipendenze(
   coda: CodaVideo,
   macchina: MacchinaSandbox,
-  sovrascritture: Partial<Parameters<typeof eseguiUnJobVideo>[0]> = {},
-) {
+  sovrascritture: Partial<DipendenzeRunner> = {},
+): DipendenzeRunner {
   return {
     coda,
     archivio,
     macchina,
     orologio: orologioFinto(),
     leaseOwner: WORKER,
+    invocazione: INVOCAZIONE,
+    tettoConversioni: TETTO,
     regione: 'dub1',
     vcpus: 4,
     urlWatermark: 'https://app.esempio.invalid/watermark.png',
     tettoInvocazioneMs: TETTO_INVOCAZIONE_MS,
     ...sovrascritture,
   }
+}
+
+/** Il copione di una conversione che NON finisce mai: l'apparecchio riesce, il marcatore non compare. */
+function rispostaSenzaMarcatore(cmd: ComandoSandbox): EsitoComando {
+  const testo = cmd.args.join(' ')
+  if (testo.includes('esito.txt')) return { exitCode: 1, stdout: '', stderr: '' }
+  if (testo.includes('===INVENTARIO===')) return { exitCode: 0, stdout: uscitaApparecchio(), stderr: '' }
+  return OK
 }
 
 /** Il copione del percorso felice: apparecchio ok, args ok, marcatore pronto. */
@@ -576,19 +799,36 @@ describe('runner video · il percorso felice', () => {
 
   it('`video_job_ready` riceve il probe della SORGENTE, non quello dell’uscita', async () => {
     // ⚠️ Il trabocchetto, e costa una conversione intera. `video_jobs_probe_chk`
-    // pretende `durationSeconds <= 180`, che è il limite dell'INGRESSO; l'uscita
+    // pretende `durationSeconds <= MAX_VIDEO_DURATION_SECONDS`, che è il limite dell'INGRESSO; l'uscita
     // AAC può legittimamente superarlo di qualche millisecondo (lo dice
     // `verifyVideoOutput`). Mandare l'uscita farebbe rispondere `BAD_INPUT` DOPO
     // aver pagato la codifica, e solo sui video lunghi — cioè in produzione.
+    //
+    // Il tetto si legge dalla costante (secondario #25: era un `180` che il 2026-10-02 è diventato 300
+    // senza che il test se ne accorgesse). E il caso è quello vero: la SORGENTE sta sotto il tetto di
+    // un centesimo di secondo, l'USCITA lo supera di un centesimo — l'unica forma in cui «quale probe
+    // si manda» cambia l'esito.
+    const sorgenteSottoIlTetto = MAX_VIDEO_DURATION_SECONDS - 0.01
+    const uscitaOltreIlTetto = MAX_VIDEO_DURATION_SECONDS + 0.01
     const c = codaFinta({ prossimo: { ok: true, job: job() } })
-    const s = sandboxFinta({ risposta: rispostaFelice() })
+    const s = sandboxFinta({
+      risposta: rispostaFelice(
+        marcatore({
+          probeIn: probeSorgente(sorgenteSottoIlTetto),
+          probeOut: probeUscita(uscitaOltreIlTetto),
+        }),
+      ),
+    })
 
-    await eseguiUnJobVideo(dipendenze(c.coda, s.macchina))
+    const esito = await eseguiUnJobVideo(dipendenze(c.coda, s.macchina))
 
+    expect(esito.esito, 'la fixture deve arrivare a `pronto`: una tolleranza troppo stretta la farebbe fallire prima').toBe('pronto')
     expect(c.pronti).toHaveLength(1)
     const scritto = c.pronti[0] as { probe: { durationSeconds: number }; percorsoUscita: string }
-    expect(scritto.probe.durationSeconds).toBe(DURATA_SORGENTE)
-    expect(scritto.probe.durationSeconds).toBeLessThanOrEqual(180)
+    expect(scritto.probe.durationSeconds).toBe(sorgenteSottoIlTetto)
+    expect(scritto.probe.durationSeconds).toBeLessThanOrEqual(MAX_VIDEO_DURATION_SECONDS)
+    // …e l'uscita, se fosse stata mandata, il database l'avrebbe respinta.
+    expect(uscitaOltreIlTetto).toBeGreaterThan(MAX_VIDEO_DURATION_SECONDS)
     expect(scritto.percorsoUscita).toBe(
       percorsoUscitaVideo({ id: JOB_ID, owner_id: OWNER, fence_epoch: 5 }),
     )
@@ -682,8 +922,17 @@ describe('runner video · i modi di fallire, uno per uno', () => {
       rifiutato: false,
     })
     expect(s.avviati).toEqual([])
-    expect(c.ritentati).toEqual([])
-    expect(c.falliti).toHaveLength(1)
+    // SECONDARIO #23: anche l'ULTIMO tentativo passa da `video_job_retry`, che è la RPC a riconoscere i
+    // tentativi finiti, ad annotare `last_error_code` e a delegare a `video_job_fail`. Il runner NON chiama
+    // `video_job_fail` da sé: la chiusura è già scritta, e richiamarla darebbe un doppio.
+    expect(c.ritentati).toHaveLength(1)
+    expect(c.ritentati[0]).toMatchObject({ codice: 'BUILD_HASH_MISMATCH', tentativiMassimi: 4 })
+    expect(c.falliti).toEqual([])
+    expect(c.stato).toMatchObject({
+      status: 'failed',
+      errorCode: 'BUILD_HASH_MISMATCH',
+      lastErrorCode: 'BUILD_HASH_MISMATCH',
+    })
   })
 
   it('una build a cui manca `zscale` non parte: il guasto si vedrebbe solo sul primo HDR', async () => {
@@ -837,7 +1086,7 @@ describe('runner video · la conversione che dura più di un’invocazione', () 
     // Stesso fence ⇒ stesso nome ⇒ `Sandbox.get` riaggancia la MicroVM che sta già
     // convertendo. È l'unica ragione per cui il fence sta nel nome.
     expect(s.nomi).toEqual([nomeSandboxVideo(JOB_ID, 5)])
-    expect(c.riprese).toEqual([JOB_ID])
+    expect(c.prese).toEqual([JOB_ID])
     // ⚠️ Non si riapparecchia e non si riavvia: la build c'è già e la conversione
     // sta girando. Rifare l'apparecchio significherebbe riscaricare FFmpeg sopra un
     // `ffmpeg` in esecuzione; riavviare, due codifiche sullo stesso file.
@@ -867,7 +1116,7 @@ describe('runner video · la conversione che dura più di un’invocazione', () 
 
     // Prendere un job nuovo mentre uno è a metà vorrebbe dire due MicroVM aperte e
     // la prima conversione abbandonata a scadere.
-    expect(c.riprese).toEqual([JOB_ID])
+    expect(c.prese).toEqual([JOB_ID])
     expect(s.avviati).toEqual([])
   })
 })
@@ -970,22 +1219,32 @@ async function lancia(
     archivio?: ArchivioVideo
     nuova?: boolean
     apriFallisce?: boolean
+    avviaFallisce?: Error
     risposta?: Copione['risposta']
     coda?: CopioneCoda
     orologio?: ReturnType<typeof orologioFinto>
+    /** Con un `jobId` è un CALCIO; senza è il giro del cron. */
+    richiesta?: RichiestaRunner
+    /** Altre dipendenze (il punto d'aggancio delle pubblicazioni, il tetto delle conversioni…). */
+    dipendenze?: Partial<DipendenzeRunner>
   } = {},
 ) {
-  const c = codaFinta({ prossimo: { ok: true, job: job(opzioni.job) }, ...opzioni.coda })
+  const preso: EsitoRpcVideo = { ok: true, job: job(opzioni.job) }
+  // Il job lo dà `prossimo` (il giro) o `prendi` (il calcio): lo stesso, quello che il test descrive.
+  const c = codaFinta({ prossimo: preso, prendi: preso, ...opzioni.coda })
   const s = sandboxFinta({
     nuova: opzioni.nuova,
     apriFallisce: opzioni.apriFallisce,
+    avviaFallisce: opzioni.avviaFallisce,
     risposta: opzioni.risposta ?? rispostaFelice(),
   })
   const esito = await eseguiUnJobVideo(
     dipendenze(c.coda, s.macchina, {
       archivio: opzioni.archivio ?? archivio,
       ...(opzioni.orologio ? { orologio: opzioni.orologio } : {}),
+      ...opzioni.dipendenze,
     }),
+    opzioni.richiesta,
   )
   return { esito, c, s }
 }
@@ -1338,13 +1597,23 @@ describe('runner video · la scala dei ritentativi: 5, 10, 15 minuti, poi basta'
     expect(riga('conversione-da-riprovare')[2]).toMatchObject({ tentativi_massimi: 4, attesa_s: attesa })
   })
 
-  it.each([4, 5, 12])('al tentativo %i i tentativi sono finiti: `video_job_fail`, mai un altro ritentativo', async (attempt) => {
+  it.each([4, 5, 12])('al tentativo %i i tentativi sono finiti: `video_job_retry` chiude (e annota `last_error_code`), mai un altro ritentativo', async (attempt) => {
     const { esito, c } = await lancia({ job: { attempt }, apriFallisce: true })
 
     expect(esito).toEqual({ esito: 'fallito', jobId: JOB_ID, codice: 'SANDBOX_UNAVAILABLE', rifiutato: false })
-    expect(c.ritentati).toEqual([])
-    expect(c.falliti).toHaveLength(1)
-    expect(c.falliti[0]).toMatchObject({ codice: 'SANDBOX_UNAVAILABLE', rifiutato: false })
+    // L'ULTIMO tentativo passa da `riprova` (secondario #23): è la RPC a decidere che i tentativi sono finiti,
+    // e a delegare a `video_job_fail` DOPO aver annotato `last_error_code`. Con un massimo di 4 e un `attempt`
+    // già a 4 (o oltre) il database non rimette in coda niente.
+    expect(c.ritentati).toHaveLength(1)
+    expect(c.ritentati[0]).toMatchObject({
+      codice: 'SANDBOX_UNAVAILABLE',
+      tentativiMassimi: TENTATIVI_MASSIMI_GUASTO_NOSTRO,
+      // L'attesa qui non serve a niente (la RPC non la legge), ma la RPC la VALIDA: un numero valido ci vuole.
+      attesaSecondi: ATTESE_FRA_TENTATIVI_S[ATTESE_FRA_TENTATIVI_S.length - 1],
+    })
+    // …e il runner NON richiama `video_job_fail`: la chiusura è già scritta, e richiamarla darebbe un doppio.
+    expect(c.falliti).toEqual([])
+    expect(c.stato).toMatchObject({ status: 'failed', errorCode: 'SANDBOX_UNAVAILABLE', lastErrorCode: 'SANDBOX_UNAVAILABLE' })
     // Il log lo dice: è un fallimento DEFINITIVO per tentativi esauriti, di un guasto nostro.
     const log = riga('conversione-fallita')
     expect(log[1]).toBe('error')
@@ -1999,5 +2268,1505 @@ describe('runner video · gli adattatori nuovi', () => {
     expect(commento).toContain('PR 2')
     expect(commento).toContain('node:24')
     expect(commento).toContain('SANDBOX_UNAVAILABLE')
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 10. IL CALCIO: UN `job_id`, UNA INVOCAZIONE (PR 2, spec §9)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+const CALCIO: RichiestaRunner = { jobId: JOB_ID }
+const INVOCAZIONE_B = '6b2c3d4e-5f60-4172-9b8c-0d1e2f3a4b5c'
+const ALTRO_JOB = '7c3d4e5f-6071-4283-8c9d-1e2f3a4b5c6d'
+const TERZO_JOB = '8d4e5f60-7182-4394-8dae-2f3a4b5c6d7e'
+const QUARTO_JOB = '9e5f6071-8293-44a5-8ebf-3a4b5c6d7e8f'
+
+/** Un'invocazione che NON lavora: la MicroVM non si apre e niente si scrive sul job. */
+function nienteDaFare(s: ReturnType<typeof sandboxFinta>, c: ReturnType<typeof codaFinta>) {
+  expect(s.nomi, 'nessuna MicroVM').toEqual([])
+  expect(c.pronti, 'nessun `ready`').toEqual([])
+  expect(c.falliti, 'nessun `fail`').toEqual([])
+  expect(c.ritentati, 'nessun `retry`').toEqual([])
+}
+
+describe('runner video · il calcio con un job_id', () => {
+  it('prende la sorveglianza, poi il job COL TETTO, lavora, rilascia — e NON fa il giro del cron', async () => {
+    const ordine: string[] = []
+    const { esito, c, s } = await lancia({ richiesta: CALCIO, coda: { ordine } })
+
+    expect(esito).toEqual({ esito: 'pronto', jobId: JOB_ID, byteUscita: 8_000_000 })
+    // L'ordine COMPLETO, e proprio perché è completo prova anche ciò che manca: un calcio non recupera
+    // arrivi, non fa il ventaglio, non guarda i `miei` e non pesca dalla coda — quello è il giro del cron.
+    expect(ordine).toEqual([
+      `sorveglianzaPrendi:${JOB_ID}`,
+      `prendi:${JOB_ID}`,
+      `sorveglianzaRilascia:${JOB_ID}`,
+    ])
+    expect(c.sorveglianze).toEqual([
+      { jobId: JOB_ID, invocazione: INVOCAZIONE, secondi: SECONDI_SORVEGLIANZA },
+    ])
+    expect(c.richiestePrese).toEqual([
+      { jobId: JOB_ID, leaseOwner: WORKER, leaseSeconds: SECONDI_LEASE_PRESA, tetto: TETTO },
+    ])
+    // Chi rilascia è CHI HA PRESO: la stessa invocazione, per lo stesso job.
+    expect(c.rilasci).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE }])
+    expect(s.nomi).toEqual([nomeSandboxVideo(JOB_ID, 5)])
+    expect(s.fermate()).toBe(1)
+  })
+
+  it('un’altra invocazione lo sorveglia già: `gia-sorvegliato`, e non si tocca NIENTE — nemmeno la sua sorveglianza', async () => {
+    const { esito, c, s } = await lancia({
+      richiesta: CALCIO,
+      coda: { sorveglianzaPrendi: { ok: false, code: 'GIA_SORVEGLIATO' } },
+    })
+
+    expect(esito).toEqual({ esito: 'gia-sorvegliato', jobId: JOB_ID })
+    nienteDaFare(s, c)
+    // Il job non è suo: né lo prende, né ne rilascia una sorveglianza che non ha (rilasciare quella di
+    // un altro non farebbe niente, ma provarci vorrebbe dire non aver capito di chi è).
+    expect(c.prese).toEqual([])
+    expect(c.rilasci).toEqual([])
+    // Esito TRANQUILLO: è il caso normale di due calci sullo stesso job, e un `error` qui sarebbe il falso
+    // allarme (`OUTPUT_CONFLICT` su una conversione riuscita) che la sorveglianza esclusiva esiste per togliere.
+    expect(righeDiLog().filter((r) => r[1] === 'error' || r[1] === 'warn')).toEqual([])
+  })
+
+  it('due calci sullo STESSO job insieme: una sola invocazione lo sorveglia, e UNA SOLA scrive l’esito', async () => {
+    const sorveglianza = sorveglianzaInMemoria()
+    const a = codaFinta({ sorveglianza })
+    const b = codaFinta({ sorveglianza })
+    const sa = sandboxFinta({ risposta: rispostaFelice() })
+    const sb = sandboxFinta({ risposta: rispostaFelice() })
+
+    const [esitoA, esitoB] = await Promise.all([
+      eseguiUnJobVideo(dipendenze(a.coda, sa.macchina), CALCIO),
+      eseguiUnJobVideo(dipendenze(b.coda, sb.macchina, { invocazione: INVOCAZIONE_B }), CALCIO),
+    ])
+
+    // Chi arriva per prima vince; l'altra se ne va con un esito tranquillo.
+    expect(esitoA).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+    expect(esitoB).toEqual({ esito: 'gia-sorvegliato', jobId: JOB_ID })
+    // ⚠️ I due numeri che contano. Senza la sorveglianza ESCLUSIVA entrambe riagganciavano lo stesso
+    // Sandbox, entrambe leggevano il marcatore e ENTRAMBE chiamavano `video_job_ready`: la seconda
+    // prendeva un `OUTPUT_CONFLICT` su una conversione riuscita.
+    expect(a.pronti.length + b.pronti.length, 'un solo `video_job_ready`').toBe(1)
+    expect(sa.nomi.length + sb.nomi.length, 'una sola MicroVM').toBe(1)
+    expect(b.prese, 'chi ha perso non ha nemmeno preso il job').toEqual([])
+    // E al termine nessuno sorveglia più niente: il rilascio ha liberato il job.
+    expect(sorveglianza.tenute().size).toBe(0)
+  })
+
+  it('chi ha finito rilascia: il calcio dopo, sullo stesso job, trova la sorveglianza libera', async () => {
+    const sorveglianza = sorveglianzaInMemoria()
+    const prima = codaFinta({ sorveglianza })
+    await eseguiUnJobVideo(
+      dipendenze(prima.coda, sandboxFinta({ risposta: rispostaSenzaMarcatore }).macchina),
+      CALCIO,
+    )
+
+    const seconda = codaFinta({ sorveglianza })
+    const esito = await eseguiUnJobVideo(
+      dipendenze(seconda.coda, sandboxFinta({ risposta: rispostaFelice() }).macchina, {
+        invocazione: INVOCAZIONE_B,
+      }),
+      CALCIO,
+    )
+
+    // La prima è uscita con `in-corso` (la conversione continua), ma ha RILASCIATO: chi riaggancia dopo di
+    // lei non aspetta che scada la lease di sorveglianza.
+    expect(esito).toMatchObject({ esito: 'pronto' })
+  })
+
+  it.each<[string, Parameters<typeof lancia>[0], EsitoRunnerVideo['esito']]>([
+    ['la conversione riesce', {}, 'pronto'],
+    [
+      'il file è rifiutato',
+      { risposta: apparecchioConProbe(JSON.stringify({ streams: [], format: { format_name: 'mp4' } })) },
+      'fallito',
+    ],
+    ['un guasto nostro: si ritenta', { apriFallisce: true }, 'in-riprova'],
+    ['la conversione continua oltre l’invocazione', { risposta: rispostaSenzaMarcatore }, 'in-corso'],
+    [
+      'la lease è persa',
+      { risposta: rispostaSenzaMarcatore, coda: { battito: { ok: false, code: 'FENCE_MISMATCH' } } },
+      'lease-persa',
+    ],
+    ['l’esito non si scrive', { coda: { pronto: { ok: false, code: 'OUTPUT_CONFLICT' } } }, 'esito-non-scritto'],
+  ])('comunque vada (%s) la sorveglianza si rilascia, e UNA volta sola', async (_nome, opzioni, atteso) => {
+    const { esito, c } = await lancia({ ...opzioni, richiesta: CALCIO })
+
+    expect(esito.esito).toBe(atteso)
+    expect(c.rilasci).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE }])
+  })
+
+  it('se il lavoro LANCIA (un’eccezione che non è dell’SDK), la sorveglianza si rilascia lo stesso e l’eccezione non si perde', async () => {
+    const c = codaFinta({ pronto: new Error('database non raggiungibile') })
+    const s = sandboxFinta({ risposta: rispostaFelice() })
+
+    await expect(eseguiUnJobVideo(dipendenze(c.coda, s.macchina), CALCIO)).rejects.toThrow(
+      'database non raggiungibile',
+    )
+
+    expect(c.rilasci).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE }])
+    // Non è un guasto dell'SDK: non si trasforma in un ritentativo (un job già `ready` non si riprova).
+    expect(c.ritentati).toEqual([])
+  })
+
+  it('`CAPACITA_PIENA`: `capacita-piena` col job, la MicroVM non si apre, la sorveglianza (che si aveva) si rilascia', async () => {
+    const { esito, c, s } = await lancia({
+      richiesta: CALCIO,
+      coda: { prendi: { ok: false, code: 'CAPACITA_PIENA' } },
+    })
+
+    expect(esito).toEqual({ esito: 'capacita-piena', jobId: JOB_ID })
+    nienteDaFare(s, c)
+    expect(c.rilasci).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE }])
+    // Il tetto che regge non è un guasto: nessuna riga `error` o `warn`, e nessun testimone (non c'è
+    // una conversione che continua).
+    expect(righeDiLog().filter((r) => r[1] === 'error' || r[1] === 'warn')).toEqual([])
+    expect(c.ventagli).toEqual([])
+  })
+
+  it.each(['INVALID_STATE', 'INTENT_INACTIVE'])(
+    'un job già finito o ritirato (%s) non è un guasto: non c’è niente da fare',
+    async (code) => {
+      const { esito, c, s } = await lancia({ richiesta: CALCIO, coda: { prendi: { ok: false, code } } })
+
+      expect(esito).toEqual({ esito: 'coda-vuota' })
+      nienteDaFare(s, c)
+      expect(c.rilasci).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE }])
+      expect(righeDiLog().filter((r) => r[1] === 'error')).toEqual([])
+    },
+  )
+
+  it.each(['LEASE_ACTIVE', 'RETRY_NOT_DUE', 'NOT_FOUND', 'RPC_ERROR'])(
+    'ogni altro rifiuto della presa (%s) resta una `presa-rifiutata`, a livello `error`, col job',
+    async (code) => {
+      const { esito, c, s } = await lancia({ richiesta: CALCIO, coda: { prendi: { ok: false, code } } })
+
+      expect(esito).toEqual({ esito: 'presa-rifiutata', codice: code })
+      nienteDaFare(s, c)
+      expect(c.rilasci).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE }])
+      const log = riga('presa-rifiutata')
+      expect(log[1]).toBe('error')
+      expect(log[2]).toMatchObject({ error_code: code, job_id: JOB_ID })
+    },
+  )
+
+  it('la sorveglianza su un job che non è né in coda né in lavorazione (`INVALID_STATE`): niente da fare, niente da rilasciare', async () => {
+    const { esito, c, s } = await lancia({
+      richiesta: CALCIO,
+      coda: { sorveglianzaPrendi: { ok: false, code: 'INVALID_STATE' } },
+    })
+
+    expect(esito).toEqual({ esito: 'coda-vuota' })
+    nienteDaFare(s, c)
+    expect(c.prese).toEqual([])
+    expect(c.rilasci).toEqual([])
+  })
+
+  it.each(['NOT_FOUND', 'BAD_INPUT', 'RPC_ERROR'])(
+    'la sorveglianza rifiutata per un motivo vero (%s) è una `presa-rifiutata` a `error`, e non si va avanti',
+    async (code) => {
+      const { esito, c, s } = await lancia({
+        richiesta: CALCIO,
+        coda: { sorveglianzaPrendi: { ok: false, code } },
+      })
+
+      expect(esito).toEqual({ esito: 'presa-rifiutata', codice: code })
+      nienteDaFare(s, c)
+      // Senza la sorveglianza non si prende il job: sarebbe lo stato che la sorveglianza esclusiva vieta.
+      expect(c.prese).toEqual([])
+      expect(c.rilasci).toEqual([])
+      const log = riga('sorveglianza-rifiutata')
+      expect(log[1]).toBe('error')
+      expect(log[2]).toMatchObject({ error_code: code, job_id: JOB_ID })
+    },
+  )
+
+  it('un rilascio che non riesce NON cambia l’esito, e si vede (`warn`): la lease scade da sé', async () => {
+    for (const rilascio of [
+      { ok: false, code: 'NOT_FOUND' } as EsitoBattito,
+      new Error('rete giù'),
+    ]) {
+      h.log.length = 0
+      const { esito } = await lancia({ richiesta: CALCIO, coda: { sorveglianzaRilascia: rilascio } })
+
+      // Il video è pronto lo stesso: una sorveglianza non rilasciata è un ritardo per chi viene dopo, non
+      // un guasto di questa conversione.
+      expect(esito.esito).toBe('pronto')
+      const log = riga('sorveglianza-non-rilasciata')
+      expect(log[1]).toBe('warn')
+      expect(log[2]).toMatchObject({ job_id: JOB_ID })
+    }
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 11. IL TETTO DELLE CONVERSIONI IN PARALLELO
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · il tetto delle conversioni in parallelo', () => {
+  /** Un calcio per un job, con un Sandbox la cui conversione non finisce mai: il posto resta occupato. */
+  async function calcia(capacita: ReturnType<typeof capacitaInMemoria>, jobId: string, tetto: number) {
+    const c = codaFinta({ prendi: (id, t) => capacita.prendi(id, t) })
+    const s = sandboxFinta({ risposta: rispostaSenzaMarcatore })
+    const esito = await eseguiUnJobVideo(dipendenze(c.coda, s.macchina, { tettoConversioni: tetto }), { jobId })
+    return { esito, c, s }
+  }
+
+  it('con tetto 3, il quarto job in parallelo trova `capacita-piena`: niente MicroVM, il job resta dov’è', async () => {
+    const capacita = capacitaInMemoria()
+    const esiti: EsitoRunnerVideo[] = []
+    const sandbox: ReturnType<typeof sandboxFinta>[] = []
+
+    for (const id of [JOB_ID, ALTRO_JOB, TERZO_JOB, QUARTO_JOB]) {
+      const r = await calcia(capacita, id, 3)
+      esiti.push(r.esito)
+      sandbox.push(r.s)
+    }
+
+    expect(esiti.map((e) => e.esito)).toEqual(['in-corso', 'in-corso', 'in-corso', 'capacita-piena'])
+    expect(esiti[3]).toEqual({ esito: 'capacita-piena', jobId: QUARTO_JOB })
+    // Tre MicroVM aperte e una no: il tetto è rispettato a livello di PROCESSI veri, non di contatori.
+    expect(sandbox.map((s) => s.nomi.length)).toEqual([1, 1, 1, 0])
+    expect(capacita.inLavorazione().size).toBe(3)
+  })
+
+  it('un job GIÀ mio e vivo (il riaggancio di una conversione lunga) non occupa un posto in più', async () => {
+    const capacita = capacitaInMemoria()
+    for (const id of [JOB_ID, ALTRO_JOB, TERZO_JOB]) await calcia(capacita, id, 3)
+
+    // I tre posti sono occupati; il primo job viene riagganciato dal testimone/dal tick dopo.
+    const { esito } = await calcia(capacita, JOB_ID, 3)
+
+    expect(esito.esito).toBe('in-corso')
+  })
+
+  it('il tetto che si passa è QUELLO delle dipendenze, a ogni presa — del calcio e del giro', async () => {
+    const calcio = await lancia({ richiesta: CALCIO, dipendenze: { tettoConversioni: 2 } })
+    expect(calcio.c.richiestePrese.map((r) => r.tetto)).toEqual([2])
+
+    h.log.length = 0
+    const giro = await lancia({ dipendenze: { tettoConversioni: 7 } })
+    expect(giro.c.richiesteProssimo.map((r) => r.tetto)).toEqual([7])
+    // …e lo stesso numero va al ventaglio, che calcia fino ai posti liberi.
+    expect(giro.c.ventagli.map((v) => v.tetto)).toEqual([7])
+
+    // Anche la RIPRESA di un job mio, dentro il giro, passa da `video_job_prendi` e porta il tetto: è la terza
+    // delle quattro prese (calcio, giro che pesca, giro che riprende, ventaglio) e la sola che nessun'altra
+    // asserzione guardava — con un numero fisso lì, un tetto diverso da 3 varrebbe per tutte le altre e non per lei.
+    h.log.length = 0
+    const ripresa = await lancia({
+      nuova: false,
+      risposta: rispostaSenzaMarcatore,
+      coda: { miei: [job()] },
+      dipendenze: { tettoConversioni: 5 },
+    })
+    expect(ripresa.c.prese, 'il giro doveva RIPRENDERE il suo job, non pescarne uno').toEqual([JOB_ID])
+    expect(ripresa.c.richiestePrese.map((r) => r.tetto)).toEqual([5])
+    expect(ripresa.c.richiesteProssimo).toEqual([])
+  })
+
+  it('nel giro, `CAPACITA_PIENA` da `prossimo` è `capacita-piena` (senza job) e non una presa rifiutata', async () => {
+    const { esito, c, s } = await lancia({ coda: { prossimo: { ok: false, code: 'CAPACITA_PIENA' } } })
+
+    expect(esito).toEqual({ esito: 'capacita-piena' })
+    // Senza la chiave `jobId`: la route la scrive nel battito solo se c'è.
+    expect(Object.keys(esito)).toEqual(['esito'])
+    nienteDaFare(s, c)
+    expect(righeDiLog().filter((r) => r[1] === 'error' || r[1] === 'warn')).toEqual([])
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 12. IL GIRO DEL CRON (senza `job_id`)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · il giro del cron', () => {
+  /** Un punto d'aggancio che scrive il proprio momento nello stesso registro delle chiamate alla coda. */
+  const aggancioCheRegistra =
+    (ordine: string[]) =>
+    async ({ quando }: ContestoPubblicazioni) => {
+      ordine.push(`pubblicazioni:${quando}`)
+    }
+
+  it('un job nuovo: arrivi → `miei` → ventaglio → pubblicazioni → presa → sorveglianza → rilascio → pubblicazioni', async () => {
+    const ordine: string[] = []
+    const { esito, c } = await lancia({
+      coda: { ordine },
+      dipendenze: { pubblicazioni: aggancioCheRegistra(ordine) },
+    })
+
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+    expect(ordine).toEqual([
+      'arriviRecupera',
+      'miei',
+      'ventaglio:nessuno',
+      'pubblicazioni:giro',
+      'prossimo',
+      `sorveglianzaPrendi:${JOB_ID}`,
+      `sorveglianzaRilascia:${JOB_ID}`,
+      'pubblicazioni:dopo-esito',
+    ])
+    // I numeri: gli arrivi si recuperano a cinquanta alla volta, la presa porta il tetto, la sorveglianza dura 270 s.
+    expect(c.arrivi).toEqual([50])
+    expect(c.richiesteProssimo).toEqual([{ leaseOwner: WORKER, leaseSeconds: SECONDI_LEASE_PRESA, tetto: TETTO }])
+    expect(c.sorveglianze).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE, secondi: SECONDI_SORVEGLIANZA }])
+    // Il job di un giro è PRESO prima di essere sorvegliato (solo la presa dice qual è): la presa non
+    // passa da `prendi`, che è del calcio e della ripresa.
+    expect(c.prese).toEqual([])
+  })
+
+  it('un job mio che nessuno sorveglia: se ne prende la sorveglianza PRIMA del ventaglio, che lo ESCLUDE (un JOB, non un’invocazione)', async () => {
+    const ordine: string[] = []
+    const { esito, c, s } = await lancia({
+      nuova: false,
+      coda: { ordine, miei: [job({ fence_epoch: 5 })] },
+      dipendenze: { pubblicazioni: aggancioCheRegistra(ordine) },
+    })
+
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+    expect(ordine).toEqual([
+      'arriviRecupera',
+      'miei',
+      `sorveglianzaPrendi:${JOB_ID}`,
+      `ventaglio:${JOB_ID}`,
+      'pubblicazioni:giro',
+      `prendi:${JOB_ID}`,
+      `sorveglianzaRilascia:${JOB_ID}`,
+      'pubblicazioni:dopo-esito',
+    ])
+    // SECONDARIO #39: `p_escludi` è un JOB. Passare l'id dell'invocazione non avrebbe escluso niente.
+    expect(c.ventagli).toEqual([{ tetto: TETTO, escludi: JOB_ID }])
+    expect(c.ventagli[0].escludi).not.toBe(INVOCAZIONE)
+    // Riprende lo STESSO Sandbox (stesso fence), senza riapparecchiare né riavviare.
+    expect(s.nomi).toEqual([nomeSandboxVideo(JOB_ID, 5)])
+    expect(s.avviati).toEqual([])
+    // Un job mio ha la precedenza: non se ne pesca uno nuovo.
+    expect(c.richiesteProssimo).toEqual([])
+  })
+
+  it('di più job miei: salta quelli che un’altra invocazione sorveglia già e prende il primo libero', async () => {
+    const primo = job({ id: JOB_ID })
+    const secondo = job({ id: ALTRO_JOB })
+    const { c } = await lancia({
+      nuova: false,
+      coda: {
+        miei: [primo, secondo],
+        sorveglianzaPrendi: (jobId) =>
+          jobId === JOB_ID ? { ok: false, code: 'GIA_SORVEGLIATO' } : { ok: true },
+        prendi: (jobId) => ({ ok: true, job: job({ id: jobId }) }),
+      },
+    })
+
+    expect(c.sorveglianze.map((x) => x.jobId)).toEqual([JOB_ID, ALTRO_JOB])
+    expect(c.prese).toEqual([ALTRO_JOB])
+    expect(c.ventagli[0].escludi).toBe(ALTRO_JOB)
+    // Rilascia solo la sua.
+    expect(c.rilasci.map((x) => x.jobId)).toEqual([ALTRO_JOB])
+  })
+
+  it('se TUTTI i miei sono già sorvegliati da altri, il giro pesca un job nuovo (e il ventaglio non esclude niente)', async () => {
+    const { esito, c } = await lancia({
+      coda: {
+        miei: [job({ id: JOB_ID })],
+        prossimo: { ok: true, job: job({ id: ALTRO_JOB }) },
+        sorveglianzaPrendi: (jobId) =>
+          jobId === JOB_ID ? { ok: false, code: 'GIA_SORVEGLIATO' } : { ok: true },
+      },
+    })
+
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: ALTRO_JOB })
+    expect(c.ventagli).toEqual([{ tetto: TETTO, escludi: null }])
+    expect(c.prese).toEqual([])
+    expect(c.richiesteProssimo).toHaveLength(1)
+  })
+
+  it('la sorveglianza di un job mio che non si prende per un motivo VERO (non «già sorvegliato») si vede, e si prosegue', async () => {
+    const { esito } = await lancia({
+      coda: {
+        miei: [job({ id: JOB_ID })],
+        prossimo: { ok: true, job: job({ id: ALTRO_JOB }) },
+        sorveglianzaPrendi: (jobId) =>
+          jobId === JOB_ID ? { ok: false, code: 'RPC_ERROR' } : { ok: true },
+      },
+    })
+
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: ALTRO_JOB })
+    const log = riga('sorveglianza-non-presa')
+    expect(log[1]).toBe('warn')
+    expect(log[2]).toMatchObject({ error_code: 'RPC_ERROR', job_id: JOB_ID })
+  })
+
+  it('`GIA_SORVEGLIATO` e `INVALID_STATE` di un job mio sono il caso normale: nessuna riga', async () => {
+    await lancia({
+      coda: {
+        miei: [job({ id: ALTRO_JOB }), job({ id: TERZO_JOB })],
+        sorveglianzaPrendi: (jobId) =>
+          jobId === ALTRO_JOB ? { ok: false, code: 'GIA_SORVEGLIATO' } : { ok: false, code: 'INVALID_STATE' },
+      },
+    })
+
+    expect(conEsito('sorveglianza-non-presa')).toEqual([])
+  })
+
+  it('`miei` che non si legge: si grida (`error`), perché ogni conversione lunga si rifarebbe da capo, e si pesca un job nuovo', async () => {
+    const c = codaFinta({ prossimo: { ok: true, job: job() } })
+    const s = sandboxFinta({ risposta: rispostaFelice() })
+    const ricerca = c.coda.miei
+    c.coda.miei = async (...a) => {
+      await ricerca(...a)
+      return { ok: false, motivo: 'SELECT_ERROR' }
+    }
+
+    const esito = await eseguiUnJobVideo(dipendenze(c.coda, s.macchina))
+
+    expect(esito).toMatchObject({ esito: 'pronto' })
+    const log = riga('ripresa-non-interrogabile')
+    expect(log[1]).toBe('error')
+    expect(log[2]).toMatchObject({ error_code: 'SELECT_ERROR' })
+  })
+
+  it('una ripresa rifiutata (la lease è scaduta fra la lettura e la presa): `warn`, la sorveglianza si rilascia e si pesca un job nuovo', async () => {
+    const { esito, c } = await lancia({
+      coda: {
+        miei: [job({ id: JOB_ID })],
+        prendi: { ok: false, code: 'LEASE_ACTIVE' },
+        prossimo: { ok: true, job: job({ id: ALTRO_JOB }) },
+      },
+    })
+
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: ALTRO_JOB })
+    const log = riga('ripresa-rifiutata')
+    expect(log[1]).toBe('warn')
+    expect(log[2]).toMatchObject({ error_code: 'LEASE_ACTIVE', job_id: JOB_ID })
+    // Ha rilasciato la sorveglianza del primo PRIMA di prendere l'altro: un giro ne tiene una per volta.
+    expect(c.rilasci.map((x) => x.jobId)).toEqual([JOB_ID, ALTRO_JOB])
+  })
+
+  it('un job mio che la capacità non lascia riprendere: `capacita-piena` col job, e la sorveglianza si rilascia', async () => {
+    const { esito, c, s } = await lancia({
+      coda: { miei: [job({ id: JOB_ID })], prendi: { ok: false, code: 'CAPACITA_PIENA' } },
+    })
+
+    expect(esito).toEqual({ esito: 'capacita-piena', jobId: JOB_ID })
+    nienteDaFare(s, c)
+    expect(c.rilasci).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE }])
+    // Non si pesca un job nuovo: il tetto è pieno anche per lui.
+    expect(c.richiesteProssimo).toEqual([])
+  })
+
+  it('un job nuovo che un calcio ha già in sorveglianza: `gia-sorvegliato` col job, e non si lavora né si rilascia', async () => {
+    const { esito, c, s } = await lancia({
+      coda: { sorveglianzaPrendi: { ok: false, code: 'GIA_SORVEGLIATO' } },
+    })
+
+    expect(esito).toEqual({ esito: 'gia-sorvegliato', jobId: JOB_ID })
+    nienteDaFare(s, c)
+    expect(c.rilasci).toEqual([])
+  })
+
+  it.each([
+    ['`EMPTY_QUEUE` è `coda-vuota`', { ok: false, code: 'EMPTY_QUEUE' } as EsitoRpcVideo, { esito: 'coda-vuota' }],
+    [
+      'un altro rifiuto è `presa-rifiutata`',
+      { ok: false, code: 'LEASE_ACTIVE' } as EsitoRpcVideo,
+      { esito: 'presa-rifiutata', codice: 'LEASE_ACTIVE' },
+    ],
+  ])('la coda: %s, e le pubblicazioni NON si richiamano dopo (non c’è nessun esito definitivo)', async (_nome, prossimo, atteso) => {
+    const chiamate: string[] = []
+    const { esito } = await lancia({
+      coda: { prossimo },
+      dipendenze: { pubblicazioni: async ({ quando }) => void chiamate.push(quando) },
+    })
+
+    expect(esito).toEqual(atteso)
+    expect(chiamate).toEqual(['giro'])
+  })
+
+  describe('la rete e il ventaglio non fermano mai il giro', () => {
+    it.each([
+      ['arrivi: la chiamata non arriva (`RPC_ERROR`)', { arriviRecupera: { ok: false, code: 'RPC_ERROR' } as EsitoConteggi }, null],
+      ['arrivi: un verdetto (`BAD_INPUT`)', { arriviRecupera: { ok: false, code: 'BAD_INPUT' } as EsitoConteggi }, 'arrivi-recupera-rifiutata'],
+      ['arrivi: l’adattatore LANCIA', { arriviRecupera: new Error('rete giù') }, 'arrivi-recupera-eccezione'],
+      ['ventaglio: la chiamata non arriva (`RPC_ERROR`)', { ventaglio: { ok: false, code: 'RPC_ERROR' } as EsitoConteggi }, null],
+      ['ventaglio: un verdetto (`BAD_INPUT`)', { ventaglio: { ok: false, code: 'BAD_INPUT' } as EsitoConteggi }, 'ventaglio-rifiutato'],
+      ['ventaglio: l’adattatore LANCIA', { ventaglio: new Error('rete giù') }, 'ventaglio-eccezione'],
+    ])('%s: il job si converte lo stesso', async (_nome, coda, evento) => {
+      const { esito } = await lancia({ coda })
+
+      expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+      if (evento === null) {
+        // Il trasporto che cade lo scrive già l'adattatore (`rpc-non-riuscita`): qui non si raddoppia.
+        expect(righeDiLog().filter((r) => r[1] === 'error' || r[1] === 'warn')).toEqual([])
+      } else {
+        expect(conEsito(evento)).toHaveLength(1)
+        expect(riga(evento)[1]).toBe(evento.endsWith('-eccezione') ? 'error' : 'warn')
+      }
+    })
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 13. IL PUNTO D'AGGANCIO DELLE PUBBLICAZIONI (T7) E IL TESTIMONE
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · il punto d’aggancio delle pubblicazioni (di T7: qui solo QUANDO si chiama)', () => {
+  /** Lancia con un aggancio che registra ogni chiamata. */
+  async function conAggancio(opzioni: Parameters<typeof lancia>[0] = {}) {
+    const chiamate: ContestoPubblicazioni[] = []
+    const r = await lancia({
+      ...opzioni,
+      dipendenze: {
+        ...opzioni.dipendenze,
+        pubblicazioni: async (contesto) => void chiamate.push(contesto),
+      },
+    })
+    return { ...r, chiamate }
+  }
+
+  it('nel giro si chiama UNA volta PRIMA di sorvegliare, col tempo che resta (`240 s` se non ne è passato)', async () => {
+    const { chiamate } = await conAggancio({ risposta: rispostaSenzaMarcatore })
+
+    // `in-corso`: nessun esito definitivo, quindi solo la chiamata del giro.
+    expect(chiamate).toEqual([{ quando: 'giro', restanteMs: TETTO_INVOCAZIONE_MS }])
+  })
+
+  it.each<[string, Parameters<typeof lancia>[0], EsitoRunnerVideo['esito']]>([
+    ['un job pronto', {}, 'pronto'],
+    [
+      'un job fallito in modo definitivo',
+      { risposta: apparecchioConProbe(JSON.stringify({ streams: [], format: { format_name: 'mp4' } })) },
+      'fallito',
+    ],
+  ])('dopo ogni esito DEFINITIVO si richiama, subito: %s (il calcio e il giro)', async (_nome, opzioni, atteso) => {
+    const calcio = await conAggancio({ ...opzioni, richiesta: CALCIO })
+    expect(calcio.esito.esito).toBe(atteso)
+    // Il calcio non fa il giro: l'unica chiamata è quella dopo l'esito.
+    expect(calcio.chiamate.map((c) => c.quando)).toEqual(['dopo-esito'])
+
+    h.log.length = 0
+    const giro = await conAggancio(opzioni)
+    expect(giro.esito.esito).toBe(atteso)
+    expect(giro.chiamate.map((c) => c.quando)).toEqual(['giro', 'dopo-esito'])
+  })
+
+  it.each<[string, Parameters<typeof lancia>[0], EsitoRunnerVideo['esito']]>([
+    ['la conversione continua', { risposta: rispostaSenzaMarcatore }, 'in-corso'],
+    ['un guasto nostro: si ritenta', { apriFallisce: true }, 'in-riprova'],
+    [
+      'la lease è persa',
+      { risposta: rispostaSenzaMarcatore, coda: { battito: { ok: false, code: 'FENCE_MISMATCH' } } },
+      'lease-persa',
+    ],
+    ['l’esito non si scrive', { coda: { pronto: { ok: false, code: 'OUTPUT_CONFLICT' } } }, 'esito-non-scritto'],
+    ['capacità piena', { coda: { prendi: { ok: false, code: 'CAPACITA_PIENA' } } }, 'capacita-piena'],
+    ['già sorvegliato', { coda: { sorveglianzaPrendi: { ok: false, code: 'GIA_SORVEGLIATO' } } }, 'gia-sorvegliato'],
+  ])('NON si richiama dopo un esito che non è definitivo: %s', async (_nome, opzioni, atteso) => {
+    const { esito, chiamate } = await conAggancio({ ...opzioni, richiesta: CALCIO })
+
+    expect(esito.esito).toBe(atteso)
+    expect(chiamate).toEqual([])
+  })
+
+  it('l’aggancio che LANCIA non ferma il runner e non cambia l’esito: si logga (`error`) e si prosegue', async () => {
+    for (const quando of ['giro', 'dopo-esito'] as const) {
+      h.log.length = 0
+      const { esito, c } = await lancia({
+        dipendenze: {
+          pubblicazioni: async (contesto) => {
+            if (contesto.quando === quando) throw new Error('la pubblicazione è esplosa')
+          },
+        },
+      })
+
+      // Una pubblicazione che esplode non può costare una conversione né un esito già scritto.
+      expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+      expect(c.pronti).toHaveLength(1)
+      const log = riga('pubblicazioni-eccezione')
+      expect(log[1]).toBe('error')
+      expect(log[2]).toMatchObject({ azione: quando })
+      expect(comeInTabella(log).messaggio).toContain('la pubblicazione è esplosa')
+    }
+  })
+
+  it('senza aggancio (T7 non c’è ancora) non succede niente: il runner funziona uguale', async () => {
+    const { esito } = await lancia()
+    expect(esito).toMatchObject({ esito: 'pronto' })
+    expect(conEsito('pubblicazioni-eccezione')).toEqual([])
+  })
+})
+
+describe('runner video · il testimone: chi esce con `in-corso` rifà il ventaglio, DOPO aver rilasciato', () => {
+  it('rilascia la sorveglianza, POI rifà il ventaglio senza escludere niente', async () => {
+    const ordine: string[] = []
+    const { esito, c } = await lancia({
+      richiesta: CALCIO,
+      risposta: rispostaSenzaMarcatore,
+      coda: { ordine, ventaglio: { ok: true, conteggi: { candidati: 1, calciati: 1 } } },
+    })
+
+    expect(esito).toEqual({ esito: 'in-corso', jobId: JOB_ID })
+    // L'ORDINE è la sostanza: un ventaglio PRIMA del rilascio calcerebbe il job mentre questa invocazione lo
+    // sorveglia ancora, e il successore troverebbe `gia-sorvegliato` — cioè nessun successore.
+    expect(ordine).toEqual([
+      `sorveglianzaPrendi:${JOB_ID}`,
+      `prendi:${JOB_ID}`,
+      `sorveglianzaRilascia:${JOB_ID}`,
+      'ventaglio:nessuno',
+    ])
+    expect(c.ventagli).toEqual([{ tetto: TETTO, escludi: null }])
+    const log = riga('testimone-passato')
+    expect(log[1]).toBe('info')
+    expect(log[2]).toMatchObject({ candidati: 1, calciati: 1 })
+  })
+
+  it('il testimone calcia fino ai posti liberi del tetto CONFIGURATO, non di un numero scritto nel codice', async () => {
+    // Con il tetto di default (3) un numero fisso sarebbe invisibile: qui è 6, e il ventaglio deve riceverlo.
+    const { c } = await lancia({
+      richiesta: CALCIO,
+      risposta: rispostaSenzaMarcatore,
+      dipendenze: { tettoConversioni: 6 },
+    })
+
+    expect(c.ventagli).toEqual([{ tetto: 6, escludi: null }])
+  })
+
+  it('anche il giro del cron, se il suo job continua, passa il testimone (dopo aver fatto il proprio ventaglio)', async () => {
+    const ordine: string[] = []
+    const { esito } = await lancia({ risposta: rispostaSenzaMarcatore, coda: { ordine } })
+
+    expect(esito.esito).toBe('in-corso')
+    expect(ordine.filter((x) => x.startsWith('ventaglio:'))).toEqual(['ventaglio:nessuno', 'ventaglio:nessuno'])
+    expect(ordine[ordine.length - 1], 'il testimone è l’ultima cosa').toBe('ventaglio:nessuno')
+    expect(ordine.indexOf(`sorveglianzaRilascia:${JOB_ID}`)).toBeLessThan(ordine.lastIndexOf('ventaglio:nessuno'))
+  })
+
+  it('se nessun calcio parte (`pg_net` assente, URL mancante) lo dice: `warn`, perché la catena torna al cron', async () => {
+    await lancia({
+      richiesta: CALCIO,
+      risposta: rispostaSenzaMarcatore,
+      coda: { ventaglio: { ok: true, conteggi: { candidati: 1, calciati: 0 } } },
+    })
+
+    expect(riga('testimone-passato')[1]).toBe('warn')
+  })
+
+  it('con zero candidati non è un guasto: `info`', async () => {
+    await lancia({
+      richiesta: CALCIO,
+      risposta: rispostaSenzaMarcatore,
+      coda: { ventaglio: { ok: true, conteggi: { candidati: 0, calciati: 0 } } },
+    })
+
+    expect(riga('testimone-passato')[1]).toBe('info')
+  })
+
+  it.each([
+    ['un verdetto', { ventaglio: { ok: false, code: 'BAD_INPUT' } as EsitoConteggi }, 'testimone-rifiutato'],
+    ['l’adattatore che lancia', { ventaglio: new Error('rete giù') }, 'testimone-eccezione'],
+  ])('un ventaglio che non riesce (%s) non cambia l’esito: la conversione continua comunque', async (_nome, coda, evento) => {
+    const { esito, s } = await lancia({ richiesta: CALCIO, risposta: rispostaSenzaMarcatore, coda })
+
+    expect(esito).toEqual({ esito: 'in-corso', jobId: JOB_ID })
+    // La MicroVM resta accesa: è lì che sta girando la conversione.
+    expect(s.fermate()).toBe(0)
+    expect(conEsito(evento)).toHaveLength(1)
+  })
+
+  it('il trasporto che cade (`RPC_ERROR`) lo scrive l’adattatore: qui nessuna riga in più', async () => {
+    await lancia({
+      richiesta: CALCIO,
+      risposta: rispostaSenzaMarcatore,
+      coda: { ventaglio: { ok: false, code: 'RPC_ERROR' } },
+    })
+
+    expect(conEsito('testimone-rifiutato')).toEqual([])
+    expect(conEsito('testimone-passato')).toEqual([])
+  })
+
+  it('NON si passa il testimone se la conversione non continua (pronto, fallito, in riprova, lease persa, rifiuti)', async () => {
+    for (const opzioni of [
+      {},
+      { apriFallisce: true },
+      { risposta: rispostaSenzaMarcatore, coda: { battito: { ok: false, code: 'FENCE_MISMATCH' } } },
+      { coda: { prendi: { ok: false, code: 'CAPACITA_PIENA' } } },
+      { coda: { sorveglianzaPrendi: { ok: false, code: 'GIA_SORVEGLIATO' } } },
+    ] as NonNullable<Parameters<typeof lancia>[0]>[]) {
+      const { c } = await lancia({ ...opzioni, richiesta: CALCIO })
+      // Il calcio non fa il suo ventaglio: se ce n'è uno, è il testimone.
+      expect(c.ventagli, JSON.stringify(Object.keys(opzioni))).toEqual([])
+    }
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 14. IL BUDGET DELLA SORVEGLIANZA: 240 s MENO IL TEMPO GIÀ SPESO
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · il budget della sorveglianza è 240 s meno il tempo già speso', () => {
+  /** Il tempo che questa invocazione ha consumato in tutto, dall'inizio alla fine, secondo l'orologio finto. */
+  async function trascorso(opzioni: Parameters<typeof lancia>[0]) {
+    const orologio = orologioFinto()
+    const inizio = orologio.adesso()
+    const r = await lancia({ ...opzioni, orologio })
+    return { ...r, ms: orologio.adesso() - inizio, orologio }
+  }
+
+  it('senza tempo speso la sorveglianza dura il tetto intero: 240 s (a meno di un periodo di sonda)', async () => {
+    const { esito, ms } = await trascorso({ risposta: rispostaSenzaMarcatore })
+
+    expect(esito.esito).toBe('in-corso')
+    expect(ms).toBeGreaterThanOrEqual(TETTO_INVOCAZIONE_MS - PERIODO_SONDA_MS)
+    expect(ms).toBeLessThanOrEqual(TETTO_INVOCAZIONE_MS + PERIODO_SONDA_MS)
+  })
+
+  it('un giro che spende 100 s PRIMA di sorvegliare (arrivi, ventaglio, pubblicazioni) sorveglia per 140 s, non per 240', async () => {
+    const orologio = orologioFinto()
+    const inizio = orologio.adesso()
+    const { esito } = await lancia({
+      orologio,
+      risposta: rispostaSenzaMarcatore,
+      dipendenze: { pubblicazioni: async () => orologio.avanza(100_000) },
+    })
+
+    expect(esito.esito).toBe('in-corso')
+    const ms = orologio.adesso() - inizio
+    // L'invocazione intera finisce a 240 s DALL'INIZIO, non a 100 + 240: con la misura vecchia (240 s dal
+    // momento in cui si comincia a sorvegliare) sarebbero 340 s, cioè fuori dai 300 della piattaforma.
+    expect(ms).toBeLessThanOrEqual(TETTO_INVOCAZIONE_MS + PERIODO_SONDA_MS)
+    expect(ms).toBeGreaterThanOrEqual(TETTO_INVOCAZIONE_MS - PERIODO_SONDA_MS)
+  })
+
+  it('anche il tempo dell’apertura e dell’apparecchio è «già speso»: 60 s di apparecchio ⇒ 180 s di sorveglianza', async () => {
+    const orologio = orologioFinto()
+    const inizio = orologio.adesso()
+    const { esito } = await lancia({
+      orologio,
+      richiesta: CALCIO,
+      risposta: (cmd) => {
+        if (eApparecchio(cmd)) orologio.avanza(60_000)
+        return rispostaSenzaMarcatore(cmd)
+      },
+    })
+
+    expect(esito.esito).toBe('in-corso')
+    const ms = orologio.adesso() - inizio
+    expect(ms).toBeLessThanOrEqual(TETTO_INVOCAZIONE_MS + PERIODO_SONDA_MS)
+    expect(ms).toBeGreaterThanOrEqual(TETTO_INVOCAZIONE_MS - PERIODO_SONDA_MS)
+  })
+
+  it('con il budget già esaurito non si sorveglia: un solo controllo del marcatore, nessun battito, e si esce subito', async () => {
+    const orologio = orologioFinto()
+    const inizio = orologio.adesso()
+    const { esito, c, s } = await lancia({
+      orologio,
+      risposta: rispostaSenzaMarcatore,
+      // 300 s spesi PRIMA: il budget è 240 − 300 = −60, e non può essere negativo.
+      dipendenze: { pubblicazioni: async () => orologio.avanza(300_000) },
+    })
+
+    expect(esito.esito).toBe('in-corso')
+    expect(s.marcatoriLetti(), 'si guarda comunque se la conversione ha già finito').toBe(1)
+    expect(c.battiti()).toBe(0)
+    // Nessuna pausa: l'invocazione non spende un secondo di più di quello che già ha speso.
+    expect(orologio.adesso() - inizio).toBe(300_000)
+  })
+
+  it('con il budget esaurito una conversione che ha GIÀ finito si conclude comunque (il marcatore si legge una volta)', async () => {
+    const orologio = orologioFinto()
+    const { esito } = await lancia({
+      orologio,
+      nuova: false,
+      risposta: rispostaFelice(),
+      coda: { miei: [job({ fence_epoch: 5 })] },
+      dipendenze: {
+        pubblicazioni: async ({ quando }) => {
+          if (quando === 'giro') orologio.avanza(300_000)
+        },
+      },
+    })
+
+    // La conversione è finita mentre si facevano altre cose: l'esito si scrive, non si rimanda al giro dopo.
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+  })
+
+  it('il tempo che resta passato all’aggancio è `240 s` meno quello speso, e mai negativo', async () => {
+    const orologio = orologioFinto()
+    const viste: number[] = []
+    await lancia({
+      orologio,
+      risposta: rispostaSenzaMarcatore,
+      dipendenze: {
+        pubblicazioni: async ({ restanteMs }) => {
+          viste.push(restanteMs)
+          orologio.avanza(300_000)
+        },
+      },
+    })
+    expect(viste).toEqual([TETTO_INVOCAZIONE_MS])
+
+    // Una seconda chiamata, a budget esaurito, vede 0 e non un numero negativo.
+    const orologio2 = orologioFinto()
+    const viste2: number[] = []
+    await lancia({
+      orologio: orologio2,
+      dipendenze: {
+        pubblicazioni: async ({ restanteMs }) => {
+          viste2.push(restanteMs)
+          orologio2.avanza(300_000)
+        },
+      },
+    })
+    // Giro (240 s) e dopo-esito (budget esaurito: 0).
+    expect(viste2).toEqual([TETTO_INVOCAZIONE_MS, 0])
+  })
+
+  it('il tetto dell’invocazione delle dipendenze è quello che conta (una prova con un tetto corto)', async () => {
+    const orologio = orologioFinto()
+    const inizio = orologio.adesso()
+    await lancia({
+      orologio,
+      richiesta: CALCIO,
+      risposta: rispostaSenzaMarcatore,
+      dipendenze: { tettoInvocazioneMs: 90_000 },
+    })
+
+    expect(orologio.adesso() - inizio).toBeLessThanOrEqual(90_000 + PERIODO_SONDA_MS)
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 15. SECONDARIO #9 — IL TIMEOUT DELLA SONDA TEMPORALE È PROPORZIONALE
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · il timeout della sonda temporale arriva dal probe (secondario #9)', () => {
+  /** Un apparecchio che racconta questo probe, e una conversione che non finisce mai (così si guarda solo l'avvio). */
+  const conProbe =
+    (probe: string) =>
+    (cmd: ComandoSandbox): EsitoComando =>
+      eApparecchio(cmd) ? { exitCode: 0, stdout: uscitaApparecchio(probe), stderr: '' } : rispostaSenzaMarcatore(cmd)
+
+  /** Il `timeoutMs` che lo script STACCATO porta dentro la sonda temporale. */
+  function timeoutNelloScript(s: ReturnType<typeof sandboxFinta>): number {
+    expect(s.avviati, 'la conversione staccata deve essere partita').toHaveLength(1)
+    const script = s.avviati[0].args.join('\n')
+    const trovato = /"timeoutMs":(\d+)/.exec(script)
+    expect(trovato, 'lo script avviato non porta il timeout della sonda temporale').not.toBeNull()
+    return Number(trovato?.[1])
+  }
+
+  it('un Full HD di 180 s: il timeout è nell’ordine dei 250 s (calcolato dal probe), NON il tetto di 900', async () => {
+    const { s } = await lancia({ risposta: conProbe(probeSorgente(180)) })
+
+    const timeoutMs = timeoutNelloScript(s)
+    // Il valore è ESATTAMENTE quello che la funzione dà per le misure di QUEL probe: i tre numeri
+    // (durata, larghezza, altezza) e il frame rate arrivano fin qui.
+    expect(timeoutMs).toBe(
+      timeoutSondaTemporaleMs({ durationSeconds: 180, width: 1920, height: 1080, fps: 30000 / 1001 }),
+    )
+    // ⚠️ Prima di questa correzione `esegui.ts` non passava durata e dimensioni, e OGNI sonda partiva col
+    // tetto (900 s): due sonde in serie sono mezz'ora, cioè tutto `TETTO_SANDBOX_MS`, e un ffprobe
+    // piantato consuma la MicroVM. Qui deve stare fra il pavimento (120 s) e un tempo da Full HD.
+    expect(timeoutMs).not.toBe(SONDA_TEMPORALE.tettoMs)
+    expect(timeoutMs).toBeGreaterThanOrEqual(SONDA_TEMPORALE.pavimentoMs)
+    expect(timeoutMs).toBeLessThan(300_000)
+  })
+
+  it('un 4K a 60 fps di 60 s ha un timeout DIVERSO e più lungo: i numeri vengono dal probe, non da una costante', async () => {
+    const full = await lancia({ risposta: conProbe(probeSorgente(180)) })
+    const quattroK = await lancia({
+      risposta: conProbe(probeSorgente(60, { larghezza: 3840, altezza: 2160, fps: '60/1' })),
+    })
+
+    const timeoutFull = timeoutNelloScript(full.s)
+    const timeout4k = timeoutNelloScript(quattroK.s)
+    expect(timeout4k).toBe(
+      timeoutSondaTemporaleMs({ durationSeconds: 60, width: 3840, height: 2160, fps: 60 }),
+    )
+    expect(timeout4k).toBeGreaterThan(timeoutFull)
+    expect(timeout4k).toBeLessThan(SONDA_TEMPORALE.tettoMs)
+  })
+
+  it('la durata è quella della SORGENTE nel probe dell’apparecchio: cambiarla cambia il timeout', async () => {
+    const breve = await lancia({ risposta: conProbe(probeSorgente(20)) })
+    const lungo = await lancia({ risposta: conProbe(probeSorgente(240)) })
+
+    expect(timeoutNelloScript(breve.s)).toBeLessThan(timeoutNelloScript(lungo.s))
+    // Un video breve non scende sotto il pavimento: un timeout più corto di quello di prima scarterebbe
+    // un video buono (e «sbagliare in basso» è il difetto che la sonda proporzionale esiste per chiudere).
+    expect(timeoutNelloScript(breve.s)).toBe(SONDA_TEMPORALE.pavimentoMs)
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 16. SECONDARIO #23 — `last_error_code` A TENTATIVI ESAURITI È L'ULTIMO
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · `last_error_code` a tentativi esauriti è quello dell’ULTIMO guasto (secondario #23)', () => {
+  it('quattro tentativi con quattro guasti diversi: alla fine `error_code` e `last_error_code` sono entrambi l’ultimo', async () => {
+    // Lo stato di UN job, condiviso fra i quattro giri come lo sarebbe nel database. `video_job_retry` annota
+    // `last_error_code` ogni volta (anche all'esaurimento, prima di delegare); `video_job_fail` NON lo tocca.
+    const stato = statoDelJob()
+    const guasti: { opzioni: Parameters<typeof lancia>[0]; codice: string }[] = [
+      { opzioni: { risposta: apparecchioCheEsce(21, curlConStato(503)) }, codice: 'BUILD_DOWNLOAD_FAILED' },
+      { opzioni: { apriFallisce: true }, codice: 'SANDBOX_UNAVAILABLE' },
+      { opzioni: CONVERSIONE_CON(34, CURL_TIMEOUT), codice: 'OUTPUT_UPLOAD_FAILED' },
+      { opzioni: { risposta: apparecchioCheEsce(22, 'f.gz: FAILED') }, codice: 'BUILD_HASH_MISMATCH' },
+    ]
+
+    const esiti: string[] = []
+    for (const [i, guasto] of guasti.entries()) {
+      const attempt = i + 1
+      const { esito } = await lancia({ ...guasto.opzioni, job: { attempt }, coda: { stato } })
+      esiti.push(esito.esito)
+      expect(stato.lastErrorCode, `dopo il tentativo ${attempt}`).toBe(guasto.codice)
+    }
+
+    expect(esiti).toEqual(['in-riprova', 'in-riprova', 'in-riprova', 'fallito'])
+    // ⚠️ L'asserzione che vale il caso. Con `video_job_fail` chiamata direttamente all'ultimo giro,
+    // `last_error_code` restava `OUTPUT_UPLOAD_FAILED` (quello del terzo) mentre `error_code` diceva
+    // `BUILD_HASH_MISMATCH`: due codici diversi sulla stessa riga, e il commento della colonna dice
+    // «o con cui ha esaurito i tentativi».
+    expect(stato).toEqual({
+      status: 'failed',
+      errorCode: 'BUILD_HASH_MISMATCH',
+      lastErrorCode: 'BUILD_HASH_MISMATCH',
+    })
+  })
+
+  it('l’ULTIMO tentativo di un guasto che non si può chiamare «nostro» (il file, un guasto non ritentabile) resta `video_job_fail` diretta', async () => {
+    // `last_error_code` è «il codice dell'ultimo guasto NOSTRO»: un file rifiutato non lo è, e non passa da
+    // `video_job_retry` a nessun tentativo.
+    const stato = statoDelJob()
+    const { c } = await lancia({
+      job: { attempt: 4 },
+      risposta: apparecchioConProbe(JSON.stringify({ streams: [], format: { format_name: 'mp4' } })),
+      coda: { stato },
+    })
+
+    expect(c.ritentati).toEqual([])
+    expect(c.falliti).toHaveLength(1)
+    expect(stato).toEqual({ status: 'rejected', errorCode: 'MISSING_VIDEO_STREAM', lastErrorCode: null })
+  })
+
+  it('se la chiamata a `video_job_retry` non arriva (`RPC_ERROR`) anche all’ultimo tentativo si ripiega su `video_job_fail`, e il log dice «esauriti»', async () => {
+    const { esito, c } = await lancia({
+      job: { attempt: 4 },
+      apriFallisce: true,
+      coda: { riprova: { ok: false, code: 'RPC_ERROR' } },
+    })
+
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB_ID, codice: 'SANDBOX_UNAVAILABLE', rifiutato: false })
+    expect(c.ritentati).toHaveLength(1)
+    expect(c.falliti).toHaveLength(1)
+    // Il ripiego conserva ciò che il fallimento ESAURITO dice di sé: era `tentativi_esauriti: true` quando
+    // `video_job_fail` si chiamava da subito, e non deve sparire perché ora si prova prima la RPC dei ritentativi.
+    expect(riga('riprova-non-scritta')[1]).toBe('error')
+    expect(riga('conversione-fallita')[2]).toMatchObject({ tentativi_esauriti: true, rifiutato: false })
+  })
+
+  it('un verdetto del database all’ultimo tentativo (il job non è più nostro) è `lease-persa`: non si scrive niente', async () => {
+    const { esito, c } = await lancia({
+      job: { attempt: 4 },
+      apriFallisce: true,
+      coda: { riprova: { ok: false, code: 'FENCE_MISMATCH' } },
+    })
+
+    expect(esito).toEqual({ esito: 'lease-persa', jobId: JOB_ID, codice: 'FENCE_MISMATCH' })
+    expect(c.falliti).toEqual([])
+  })
+
+  it('un `attempt` illeggibile non passa nemmeno dalla RPC: `video_job_retry` non ha un numero su cui decidere', async () => {
+    for (const attempt of [0, -1, Number.NaN]) {
+      const { c } = await lancia({ job: { attempt }, apriFallisce: true })
+      expect(c.ritentati, `attempt ${String(attempt)}`).toEqual([])
+      expect(c.falliti, `attempt ${String(attempt)}`).toHaveLength(1)
+    }
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 17. SECONDARIO #33 — UN'ECCEZIONE DELL'SDK DEL SANDBOX È UN GUASTO NOSTRO
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · un’eccezione dell’SDK del Sandbox passa da `riprova` (secondario #33)', () => {
+  const SDK_GIU = 'sdk: la MicroVM non risponde'
+  const sdk = () => new Error(SDK_GIU)
+  const eMarcatore = (cmd: ComandoSandbox) => cmd.args.join(' ').includes('esito.txt')
+
+  const PUNTI_DELL_SDK: [string, Parameters<typeof lancia>[0], string][] = [
+    ['`esegui` dell’apparecchio', { risposta: (cmd) => (eApparecchio(cmd) ? sdk() : OK) }, 'esegui'],
+    [
+      '`esegui` che scrive gli argomenti di FFmpeg',
+      { risposta: (cmd) => (cmd.args.includes('kv-argomenti') ? sdk() : rispostaFelice()(cmd)) },
+      'esegui',
+    ],
+    ['`avvia` della conversione staccata', { avviaFallisce: sdk() }, 'avvia'],
+    [
+      '`esegui` che legge il marcatore, mentre si sorveglia',
+      { risposta: (cmd) => (eMarcatore(cmd) ? sdk() : rispostaSenzaMarcatore(cmd)) },
+      'esegui',
+    ],
+  ]
+
+  it.each(PUNTI_DELL_SDK)(
+    '%s lancia: il job si rimette in coda con la sua attesa, invece di restare `processing` fino alla scadenza della lease',
+    async (_nome, opzioni, azione) => {
+      const { esito, c, s } = await lancia(opzioni)
+
+      // Classe `infra-transitoria`, codice `SANDBOX_UNAVAILABLE`: la MicroVM che non risponde.
+      expect(esito).toEqual({
+        esito: 'in-riprova',
+        jobId: JOB_ID,
+        codice: 'SANDBOX_UNAVAILABLE',
+        tentativo: 1,
+        attesaS: 300,
+      })
+      expect(c.ritentati).toEqual([
+        {
+          jobId: JOB_ID,
+          fenceEpoch: 5,
+          leaseOwner: WORKER,
+          codice: 'SANDBOX_UNAVAILABLE',
+          tentativiMassimi: 4,
+          attesaSecondi: 300,
+        },
+      ])
+      expect(c.falliti).toEqual([])
+      // La MicroVM si spegne: un guasto dell'SDK non può lasciarne una accesa a `GB × ore`.
+      expect(s.fermate()).toBe(1)
+      // …e il log porta la CAUSA vera (il messaggio dell'SDK), la classe, e quale chiamata è esplosa.
+      const log = riga('conversione-da-riprovare')
+      expect(log[1]).toBe('warn')
+      expect(log[2]).toMatchObject({ tipo: 'infra-transitoria', error_code: 'SANDBOX_UNAVAILABLE', azione })
+      expect(comeInTabella(log).messaggio).toContain(SDK_GIU)
+    },
+  )
+
+  it.each([
+    [1, 300],
+    [2, 600],
+    [3, 900],
+  ])('al tentativo %i l’attesa è %i secondi: la stessa scala di ogni altro guasto nostro', async (attempt, attesa) => {
+    const { esito, c } = await lancia({ avviaFallisce: sdk(), job: { attempt } })
+
+    expect(esito).toMatchObject({ esito: 'in-riprova', tentativo: attempt, attesaS: attesa })
+    expect(c.ritentati[0]).toMatchObject({ tentativiMassimi: 4, attesaSecondi: attesa })
+  })
+
+  it('all’ultimo tentativo passa da `riprova` come ogni guasto nostro: i tentativi sono un TETTO, non un’opzione', async () => {
+    const stato = statoDelJob()
+    const { esito, c } = await lancia({ avviaFallisce: sdk(), job: { attempt: 4 }, coda: { stato } })
+
+    expect(esito).toEqual({ esito: 'fallito', jobId: JOB_ID, codice: 'SANDBOX_UNAVAILABLE', rifiutato: false })
+    expect(c.ritentati).toHaveLength(1)
+    expect(c.falliti).toEqual([])
+    expect(stato.lastErrorCode).toBe('SANDBOX_UNAVAILABLE')
+    expect(riga('conversione-fallita')[2]).toMatchObject({ tentativi_esauriti: true, azione: 'avvia' })
+  })
+
+  it('nel calcio vale lo stesso, e la sorveglianza si rilascia', async () => {
+    const { esito, c } = await lancia({ avviaFallisce: sdk(), richiesta: CALCIO })
+
+    expect(esito).toMatchObject({ esito: 'in-riprova', codice: 'SANDBOX_UNAVAILABLE' })
+    expect(c.rilasci).toEqual([{ jobId: JOB_ID, invocazione: INVOCAZIONE }])
+  })
+
+  it('SOLO le eccezioni dell’SDK: una che arriva da un altro punto (il `ready`, la consegna a News) resta un’eccezione, e non si riprova', async () => {
+    // `pronto` lancia: il job NON è fallito, è in uno stato che il runner non sa — riprovarlo con
+    // `video_job_retry` (che risponderebbe `INVALID_STATE` su un job già `ready`) sarebbe un racconto falso.
+    const dopoIlReady = codaFinta({ prossimo: { ok: true, job: job() }, pronto: new Error('database non raggiungibile') })
+    await expect(
+      eseguiUnJobVideo(dipendenze(dopoIlReady.coda, sandboxFinta({ risposta: rispostaFelice() }).macchina)),
+    ).rejects.toThrow('database non raggiungibile')
+    expect(dopoIlReady.ritentati).toEqual([])
+    expect(dopoIlReady.falliti).toEqual([])
+
+    const news = codaFinta({ prossimo: { ok: true, job: job({ channel: 'news' }) } })
+    await expect(
+      eseguiUnJobVideo(
+        dipendenze(news.coda, sandboxFinta({ risposta: rispostaFelice() }).macchina, {
+          consegnaNews: async () => {
+            throw new Error('lo Storage non risponde')
+          },
+        }),
+      ),
+    ).rejects.toThrow('lo Storage non risponde')
+    expect(news.ritentati).toEqual([])
+    expect(news.falliti).toEqual([])
+  })
+
+  it('una MicroVM che non si spegne (anche lì l’SDK lancia) non toglie l’esito: si grida (`microvm-non-spenta`)', async () => {
+    const c = codaFinta({ prossimo: { ok: true, job: job() } })
+    const s = sandboxFinta({ avviaFallisce: sdk(), risposta: rispostaFelice() })
+    const spenta = vi.fn(async () => {
+      throw new Error('stop non riuscito')
+    })
+    const macchina: MacchinaSandbox = {
+      apri: async (p) => ({ ...(await s.macchina.apri(p)), ferma: spenta }),
+    }
+
+    const esito = await eseguiUnJobVideo(dipendenze(c.coda, macchina))
+
+    expect(esito).toMatchObject({ esito: 'in-riprova', codice: 'SANDBOX_UNAVAILABLE' })
+    expect(spenta).toHaveBeenCalledTimes(1)
+    expect(riga('microvm-non-spenta')[1]).toBe('error')
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 18. SECONDARIO #37 — LE RIGHE DEL DATABASE NON ENTRANO NEI LOG
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('runner video · le RIGHE restituite dalle RPC non si loggano né si inoltrano (secondario #37)', () => {
+  // I valori sono finti, ma hanno la forma di ciò che le RPC restituiscono ora: `to_jsonb(riga)` di
+  // `video_jobs` porta l'hash del token di rinnovo, lo `sha256` dichiarato e la diagnosi; quella di
+  // `video_intents` porta i bambini scelti. Le CHIAVI e i VALORI sono marcatori che nessun log innocente contiene.
+  const VELENO = {
+    tag_alunni: ['aaaaaaaa-0000-4000-8000-00000000f001'],
+    rinnovo_token_hash: '\\xDEADBEEFC0FFEE01',
+    sha256_dichiarato: '\\x5ECRE70123456789',
+    diagnosi_verifica: { frame_persi: 17 },
+  }
+  const MARCATORI = [
+    'DEADBEEFC0FFEE01',
+    '5ECRE70123456789',
+    'aaaaaaaa-0000-4000-8000-00000000f001',
+    'rinnovo_token_hash',
+    'sha256_dichiarato',
+    'tag_alunni',
+    'diagnosi_verifica',
+    'frame_persi',
+  ]
+  const avvelenato = (sovrascritture: Partial<JobVideo> = {}): JobVideo => ({ ...job(sovrascritture), ...VELENO }) as JobVideo
+
+  /**
+   * Ogni scenario riceve la riga avvelenata e dice come lanciare il runner: la riga arriva dalle RPC
+   * (`prossimo`, `prendi`, `miei`), e deve uscirne senza che il runner ne porti niente nei log.
+   */
+  const SCENARI: [string, (riga: JobVideo) => Parameters<typeof lancia>[0]][] = [
+    ['pronto (giro)', (r) => ({ coda: conRiga(r) })],
+    ['pronto (calcio)', (r) => ({ richiesta: CALCIO, coda: conRiga(r) })],
+    [
+      'file rifiutato',
+      (r) => ({
+        coda: conRiga(r),
+        risposta: apparecchioConProbe(JSON.stringify({ streams: [], format: { format_name: 'mp4' } })),
+      }),
+    ],
+    ['guasto nostro, si ritenta', (r) => ({ coda: conRiga(r), apriFallisce: true })],
+    ['guasto nostro, tentativi esauriti', (r) => ({ coda: conRiga({ ...r, attempt: 4 }), apriFallisce: true })],
+    ['eccezione dell’SDK', (r) => ({ coda: conRiga(r), avviaFallisce: new Error('sdk giù') })],
+    [
+      'lease persa',
+      (r) => ({
+        coda: { ...conRiga(r), battito: { ok: false, code: 'FENCE_MISMATCH' } },
+        risposta: rispostaSenzaMarcatore,
+      }),
+    ],
+    ['la conversione continua', (r) => ({ coda: conRiga(r), risposta: rispostaSenzaMarcatore })],
+    ['ripresa di un job mio', (r) => ({ nuova: false, coda: { ...conRiga(r), miei: [r] } })],
+  ]
+
+  /** La riga avvelenata come la danno TUTTE le RPC che portano un job. */
+  const conRiga = (r: JobVideo): CopioneCoda => ({
+    prossimo: { ok: true, job: r },
+    prendi: { ok: true, job: r },
+  })
+
+  it.each(SCENARI)('%s: nei log non entra niente della riga (token, sha256, bambini, diagnosi)', async (_nome, scenario) => {
+    await lancia(scenario(avvelenato()))
+
+    expect(righeDiLog().length, 'lo scenario deve aver scritto qualcosa, o il controllo non guarda niente').toBeGreaterThan(0)
+    // Ciò che il codice PASSA al logger (campi ed errore)…
+    const grezzo = JSON.stringify(righeDiLog().map((r) => [r[0], r[1], r[2], String(r[3] ?? '')]))
+    for (const marcatore of MARCATORI) expect(grezzo, `«${marcatore}» è finito in un log`).not.toContain(marcatore)
+    // …e ciò che ne uscirebbe in `app_log` dopo il serializzatore VERO.
+    const inTabella = righeDiLog().map((r) => JSON.stringify(comeInTabella(r))).join('\n')
+    for (const marcatore of MARCATORI) expect(inTabella, `«${marcatore}» è finito in app_log`).not.toContain(marcatore)
+  })
+
+  it('il veleno VIAGGIA con il job (la prova che non è il test a non guardare): `consegnaNews` lo riceve intero', async () => {
+    // Il canale News passa il job a una porta iniettata: è un percorso dentro il processo, e lì la riga c'è
+    // tutta. Se nei log non compare, è perché il runner sceglie i campi, non perché la riga fosse pulita.
+    let ricevuto: JobVideo | null = null
+    await lancia({
+      coda: conRiga(avvelenato({ channel: 'news' })),
+      dipendenze: {
+        consegnaNews: async (j) => {
+          ricevuto = j
+          return { ok: true }
+        },
+      },
+    })
+
+    expect(ricevuto).not.toBeNull()
+    expect((ricevuto as unknown as typeof VELENO).rinnovo_token_hash).toBe(VELENO.rinnovo_token_hash)
+  })
+
+  it('la risposta di una RPC che porta una riga (ventaglio, arrivi): passano i soli NUMERI', async () => {
+    const client = {
+      rpc: async () => ({
+        data: {
+          ok: true,
+          candidati: 2,
+          calciati: 1,
+          motivo: 'testo libero',
+          riga: { ...VELENO },
+          tag_alunni: VELENO.tag_alunni,
+        },
+        error: null,
+      }),
+    } as unknown as SupabaseClient
+
+    for (const esito of [await codaSupabase(client).ventaglio(3, null), await codaSupabase(client).arriviRecupera(50)]) {
+      expect(esito).toEqual({ ok: true, conteggi: { candidati: 2, calciati: 1 } })
+      for (const marcatore of MARCATORI) expect(JSON.stringify(esito)).not.toContain(marcatore)
+    }
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 19. GLI ADATTATORI DELLA PR 2: sorveglianza, tetto, ventaglio, arrivi
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Come per `video_job_retry` (sezione 9): `adattatori.ts` parla con un database che in locale non c'è, e
+ * un nome di argomento sbagliato non dà un errore di test ma un `RPC_ERROR` in produzione — cioè, per la
+ * sorveglianza, un'invocazione che crede di non averla ottenuta, e per il tetto un runner che non prende
+ * mai niente. I NOMI si leggono dalle migrazioni, non da una copia scritta a mano.
+ */
+describe('runner video · gli adattatori della coda della PR 2', () => {
+  const MIGRAZIONI = join(process.cwd(), 'supabase', 'migrations')
+
+  /** I nomi degli argomenti di una funzione, come li dichiara la migrazione che porta quel suffisso. */
+  function argomentiDi(suffissoFile: string, funzione: string): string[] {
+    const nome = readdirSync(MIGRAZIONI).find((n) => n.endsWith(suffissoFile))
+    expect(nome, `la migrazione «…${suffissoFile}» non si trova (si cerca per suffisso)`).toBeDefined()
+    const sql = readFileSync(join(MIGRAZIONI, nome as string), 'utf8')
+    const inizio = sql.indexOf(`CREATE OR REPLACE FUNCTION public.${funzione}(`)
+    expect(inizio, `la firma di ${funzione} non si trova in ${nome}`).toBeGreaterThanOrEqual(0)
+    const firma = sql.slice(inizio, sql.indexOf(')', inizio))
+    return Array.from(firma.matchAll(/\bp_[a-z_]+/g), (m) => m[0]).sort()
+  }
+
+  function clienteFinto(risposta: { data: unknown; error: unknown }) {
+    const chiamate: { nome: string; args: Record<string, unknown> }[] = []
+    const client = {
+      rpc: async (nome: string, args: Record<string, unknown>) => {
+        chiamate.push({ nome, args })
+        return risposta
+      },
+    } as unknown as SupabaseClient
+    return { client, chiamate }
+  }
+
+  const FILE_A = '_video_pubblicazione_automatica.sql'
+  const FILE_B = '_video_arrivo_originale.sql'
+
+  const RPC: {
+    metodo: string
+    funzione: string
+    file: string
+    chiama: (coda: CodaVideo) => Promise<unknown>
+    attesi: Record<string, unknown>
+  }[] = [
+    {
+      metodo: 'sorveglianzaPrendi',
+      funzione: 'video_job_sorveglianza_prendi',
+      file: FILE_A,
+      chiama: (coda) => coda.sorveglianzaPrendi(JOB_ID, INVOCAZIONE, SECONDI_SORVEGLIANZA),
+      attesi: { p_job_id: JOB_ID, p_invocazione: INVOCAZIONE, p_secondi: 270 },
+    },
+    {
+      metodo: 'sorveglianzaRilascia',
+      funzione: 'video_job_sorveglianza_rilascia',
+      file: FILE_A,
+      chiama: (coda) => coda.sorveglianzaRilascia(JOB_ID, INVOCAZIONE),
+      attesi: { p_job_id: JOB_ID, p_invocazione: INVOCAZIONE },
+    },
+    {
+      metodo: 'prendi',
+      funzione: 'video_job_prendi',
+      file: FILE_A,
+      chiama: (coda) => coda.prendi(JOB_ID, WORKER, SECONDI_LEASE_PRESA, 3),
+      attesi: { p_job_id: JOB_ID, p_lease_owner: WORKER, p_lease_seconds: 300, p_tetto: 3 },
+    },
+    {
+      metodo: 'prossimo',
+      funzione: 'video_job_prossimo',
+      file: FILE_A,
+      chiama: (coda) => coda.prossimo(WORKER, SECONDI_LEASE_PRESA, 3),
+      attesi: { p_lease_owner: WORKER, p_lease_seconds: 300, p_tetto: 3 },
+    },
+    {
+      metodo: 'ventaglio',
+      funzione: 'video_runner_ventaglio',
+      file: FILE_A,
+      chiama: (coda) => coda.ventaglio(3, JOB_ID),
+      attesi: { p_tetto: 3, p_escludi: JOB_ID },
+    },
+    {
+      metodo: 'arriviRecupera',
+      funzione: 'video_arrivi_recupera',
+      file: FILE_B,
+      chiama: (coda) => coda.arriviRecupera(50),
+      attesi: { p_limite: 50 },
+    },
+  ]
+
+  it.each(RPC)('`$metodo` chiama `$funzione` con ESATTAMENTE gli argomenti che la migrazione dichiara', async (r) => {
+    const { client, chiamate } = clienteFinto({ data: { ok: true, job: job() }, error: null })
+
+    await r.chiama(codaSupabase(client))
+
+    expect(chiamate).toHaveLength(1)
+    expect(chiamate[0].nome).toBe(r.funzione)
+    // Né uno in più né uno in meno, e con i nomi della funzione.
+    expect(Object.keys(chiamate[0].args).sort()).toEqual(argomentiDi(r.file, r.funzione))
+    expect(chiamate[0].args).toEqual(r.attesi)
+  })
+
+  it('il tetto della lease di sorveglianza sta dentro il campo che la RPC accetta (1–900 s), letto dalla migrazione', () => {
+    const nome = readdirSync(MIGRAZIONI).find((n) => n.endsWith(FILE_A)) as string
+    const sql = readFileSync(join(MIGRAZIONI, nome), 'utf8')
+    const inizio = sql.indexOf('CREATE OR REPLACE FUNCTION public.video_job_sorveglianza_prendi(')
+    const corpo = sql.slice(inizio, sql.indexOf('$$;', inizio))
+    expect(corpo).toMatch(/p_secondi < 1\s+OR p_secondi > 900/)
+    expect(SECONDI_SORVEGLIANZA).toBeGreaterThanOrEqual(1)
+    expect(SECONDI_SORVEGLIANZA).toBeLessThanOrEqual(900)
+  })
+
+  describe('le due RPC della sorveglianza NON portano un job, e non per questo sono un errore', () => {
+    it('`{ok:true, sorvegliato_fino_a}` è `{ok:true}` — NON `RPC_ERROR`', async () => {
+      // Il difetto che questa prova blocca: passate da `esitoRpc`, che vuole un `job` dentro il corpo, ogni
+      // sorveglianza RIUSCITA si sarebbe letta «RPC_ERROR», e ogni invocazione avrebbe creduto di non averla.
+      const { client } = clienteFinto({
+        data: { ok: true, sorvegliato_fino_a: '2026-10-02T16:00:00Z' },
+        error: null,
+      })
+      expect(await codaSupabase(client).sorveglianzaPrendi(JOB_ID, INVOCAZIONE, 270)).toEqual({ ok: true })
+    })
+
+    it('il rilascio (`{ok:true, rilasciato:false}`: non era la sua) è `{ok:true}`: non è un errore', async () => {
+      const { client } = clienteFinto({ data: { ok: true, rilasciato: false }, error: null })
+      expect(await codaSupabase(client).sorveglianzaRilascia(JOB_ID, INVOCAZIONE)).toEqual({ ok: true })
+    })
+
+    it.each(['GIA_SORVEGLIATO', 'INVALID_STATE', 'NOT_FOUND', 'BAD_INPUT'])('il verdetto %s mantiene il SUO codice', async (code) => {
+      const { client } = clienteFinto({ data: { ok: false, code }, error: null })
+      expect(await codaSupabase(client).sorveglianzaPrendi(JOB_ID, INVOCAZIONE, 270)).toEqual({ ok: false, code })
+    })
+
+    it('«funzione non trovata» (la migrazione non è applicata) è `RPC_ERROR`, e l’adattatore scrive la sua riga', async () => {
+      const { client } = clienteFinto({
+        data: null,
+        error: { code: 'PGRST202', message: 'Could not find the function public.video_job_sorveglianza_prendi' },
+      })
+
+      expect(await codaSupabase(client).sorveglianzaPrendi(JOB_ID, INVOCAZIONE, 270)).toEqual({
+        ok: false,
+        code: 'RPC_ERROR',
+      })
+      expect(
+        righeDiLog().some(
+          (r) => r[2].esito === 'rpc-non-riuscita' && r[2].operazione === 'video-runner:sorveglianza-prendi',
+        ),
+      ).toBe(true)
+    })
+
+    it('una risposta che non è un oggetto è `RPC_ERROR` e si vede (`rpc-risposta-illeggibile`)', async () => {
+      const { client } = clienteFinto({ data: 'ok', error: null })
+      expect(await codaSupabase(client).sorveglianzaRilascia(JOB_ID, INVOCAZIONE)).toEqual({
+        ok: false,
+        code: 'RPC_ERROR',
+      })
+      expect(righeDiLog().some((r) => r[2].esito === 'rpc-risposta-illeggibile')).toBe(true)
+    })
+  })
+
+  describe('il tetto: `video_job_prossimo` e `video_job_prendi` rispondono come le RPC della PR 1, più `CAPACITA_PIENA`', () => {
+    it.each(['prossimo', 'prendi'] as const)('`%s`: `CAPACITA_PIENA` mantiene il suo codice, anche con i campi in più', async (metodo) => {
+      const { client } = clienteFinto({
+        data: { ok: false, code: 'CAPACITA_PIENA', in_lavorazione: 3, tetto: 3 },
+        error: null,
+      })
+      const coda = codaSupabase(client)
+
+      const esito =
+        metodo === 'prossimo'
+          ? await coda.prossimo(WORKER, 300, 3)
+          : await coda.prendi(JOB_ID, WORKER, 300, 3)
+
+      expect(esito).toEqual({ ok: false, code: 'CAPACITA_PIENA' })
+    })
+
+    it.each(['prossimo', 'prendi'] as const)('`%s`: il job preso passa com’è', async (metodo) => {
+      const { client } = clienteFinto({ data: { ok: true, job: job({ status: 'processing' }) }, error: null })
+      const coda = codaSupabase(client)
+
+      const esito =
+        metodo === 'prossimo'
+          ? await coda.prossimo(WORKER, 300, 3)
+          : await coda.prendi(JOB_ID, WORKER, 300, 3)
+
+      expect(esito).toEqual({ ok: true, job: job({ status: 'processing' }) })
+    })
+
+    it('il runner NON chiama più `video_job_next` né `video_job_claim`: le due della PR 1 sono dietro le nuove', async () => {
+      const { client, chiamate } = clienteFinto({ data: { ok: true, job: job() }, error: null })
+      const coda = codaSupabase(client)
+
+      await coda.prossimo(WORKER, 300, 3)
+      await coda.prendi(JOB_ID, WORKER, 300, 3)
+
+      // Il tetto sta nelle RPC nuove, che DELEGANO alle vecchie: chiamare le vecchie direttamente
+      // salterebbe il tetto in silenzio.
+      expect(chiamate.map((c) => c.nome)).toEqual(['video_job_prossimo', 'video_job_prendi'])
+    })
+  })
+
+  describe('i conteggi (ventaglio, arrivi): dalla risposta passano i soli numeri', () => {
+    it('il ventaglio: candidati, calciati, in lavorazione, liberi', async () => {
+      const { client } = clienteFinto({
+        data: { ok: true, candidati: 4, calciati: 3, in_lavorazione: 1, liberi: 2 },
+        error: null,
+      })
+      expect(await codaSupabase(client).ventaglio(3, null)).toEqual({
+        ok: true,
+        conteggi: { candidati: 4, calciati: 3, in_lavorazione: 1, liberi: 2 },
+      })
+    })
+
+    it('`escludi` NULL arriva al database come NULL, non come stringa vuota né come assente', async () => {
+      const { client, chiamate } = clienteFinto({ data: { ok: true }, error: null })
+      await codaSupabase(client).ventaglio(3, null)
+      expect(chiamate[0].args).toEqual({ p_tetto: 3, p_escludi: null })
+      expect(Object.keys(chiamate[0].args)).toContain('p_escludi')
+    })
+
+    it('gli arrivi: le stringhe (`motivo`) e i non numeri restano fuori', async () => {
+      const { client } = clienteFinto({
+        data: { ok: true, candidati: 1, arrivati: 1, motivo: 'storage-assente', errori: Number.NaN },
+        error: null,
+      })
+      expect(await codaSupabase(client).arriviRecupera(50)).toEqual({
+        ok: true,
+        conteggi: { candidati: 1, arrivati: 1 },
+      })
+    })
+
+    it('un verdetto (`BAD_INPUT`) e il trasporto che cade (`RPC_ERROR`)', async () => {
+      expect(
+        await codaSupabase(clienteFinto({ data: { ok: false, code: 'BAD_INPUT' }, error: null }).client).arriviRecupera(0),
+      ).toEqual({ ok: false, code: 'BAD_INPUT' })
+      expect(
+        await codaSupabase(
+          clienteFinto({ data: null, error: { code: 'PGRST202', message: 'non trovata' } }).client,
+        ).ventaglio(3, null),
+      ).toEqual({ ok: false, code: 'RPC_ERROR' })
+    })
   })
 })

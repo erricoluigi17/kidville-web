@@ -22,7 +22,7 @@
  *    backoff, e un mock piatto è verde con e senza.
  */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
@@ -89,6 +89,8 @@ import {
   LEASE_PREDEFINITA_SECONDI,
   OUTBOX_NON_ESEGUITO,
   ricevutaRetention,
+  TIPI_SOLO_DEL_RUNNER,
+  tipiDellaRetention,
   type Destinatario,
   type EsitoConsegna,
   type EventoOutbox,
@@ -190,36 +192,94 @@ beforeEach(() => {
 // 1. IL FILTRO PER TIPO
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('il filtro per tipo: chi consuma solo i propri eventi lascia stare gli altri', () => {
-  it('consegna i tipi richiesti e NON tocca gli altri: né consegnati, né falliti', async () => {
+describe('il filtro per tipo: sta NEL claim, e chi consuma solo i propri eventi non tocca gli altri', () => {
+  it('con un filtro chiama l\'OVERLOAD a quattro argomenti e gli passa i tipi richiesti', async () => {
+    const { supabase, chiamate } = doppio()
+
+    await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, tipi: ['tipo.mio', 'tipo.suo'] })
+
+    const claim = chiamateDi(chiamate, 'video_outbox_claim')
+    expect(claim).toHaveLength(1)
+    // Il filtro è un argomento del claim: il database prende SOLO quei tipi. Con tre argomenti e il filtro
+    // applicato dopo (com'era), gli eventi altrui restavano in lease fino alla quarantena.
+    expect(claim[0].argomenti).toEqual({
+      p_lease_owner: expect.any(String),
+      p_lease_seconds: 120,
+      p_limite: 10,
+      p_tipi: ['tipo.mio', 'tipo.suo'],
+    })
+  })
+
+  it('senza filtro chiama la versione a TRE argomenti: nessun `p_tipi` (con un default, PostgREST direbbe PGRST203)', async () => {
+    const { supabase, chiamate } = doppio()
+
+    await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10 })
+
+    const [claim] = chiamateDi(chiamate, 'video_outbox_claim')
+    expect(Object.keys(claim.argomenti).sort()).toEqual(['p_lease_owner', 'p_lease_seconds', 'p_limite'])
+  })
+
+  it('un tipo ripetuto nel filtro viaggia una volta sola', async () => {
+    const { supabase, chiamate } = doppio()
+
+    await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, tipi: ['tipo.mio', 'tipo.mio'] })
+
+    expect(chiamateDi(chiamate, 'video_outbox_claim')[0].argomenti.p_tipi).toEqual(['tipo.mio'])
+  })
+
+  it('consegna ciò che il claim filtrato restituisce, e chiude solo quegli eventi', async () => {
     const a1 = evento('tipo.mio')
-    const altrui = evento('tipo.altrui')
-    const a2 = evento('tipo.mio')
-    const { supabase, chiamate } = doppio({ claim: preso(a1, altrui, a2) })
+    const a2 = evento('tipo.suo')
+    const { supabase, chiamate } = doppio({ claim: preso(a1, a2) })
     const mio = destinatario({ consegnato: true })
+    const suo = destinatario({ consegnato: true })
+
+    const esito = await consumaOutbox(supabase, {
+      operazione: OPERAZIONE,
+      limite: 10,
+      tipi: ['tipo.mio', 'tipo.suo'],
+      destinatari: { 'tipo.mio': mio.fn, 'tipo.suo': suo.fn },
+    })
+
+    expect(esito).toEqual({ esito: 'ok', presi: 2, inviati: 2, falliti: 0, senzaDestinatario: 0, saltati: 0 })
+    expect(mio.visti.map((e) => e.id)).toEqual([a1.id])
+    expect(suo.visti.map((e) => e.id)).toEqual([a2.id])
+    expect(chiamateDi(chiamate, 'video_outbox_sent').map((c) => c.argomenti.p_evento_id)).toEqual([a1.id, a2.id])
+    expect(chiamateDi(chiamate, 'video_outbox_fail')).toEqual([])
+  })
+
+  it('un evento FUORI dal filtro (un database che non lo applica) non si consegna e non si fallisce, ma SI GRIDA', async () => {
+    // Col claim filtrato non può succedere. Se succede, l'evento è già in lease con un tentativo in più e
+    // tornerà prendibile alla scadenza: senza questa riga il vecchio difetto (eventi altrui tenuti in
+    // lease fino alla quarantena) tornerebbe invisibile.
+    const mio = evento('tipo.mio')
+    const altrui = evento('tipo.altrui', { attempts: 4 })
+    const { supabase, chiamate } = doppio({ claim: preso(mio, altrui) })
+    const dellMio = destinatario({ consegnato: true })
     const dellAltro = destinatario({ consegnato: true })
 
     const esito = await consumaOutbox(supabase, {
       operazione: OPERAZIONE,
       limite: 10,
       tipi: ['tipo.mio'],
-      destinatari: { 'tipo.mio': mio.fn, 'tipo.altrui': dellAltro.fn },
+      destinatari: { 'tipo.mio': dellMio.fn, 'tipo.altrui': dellAltro.fn },
     })
 
-    expect(esito).toEqual({ esito: 'ok', presi: 3, inviati: 2, falliti: 0, senzaDestinatario: 0, saltati: 1 })
-    expect(mio.visti.map((e) => e.id)).toEqual([a1.id, a2.id])
+    expect(esito).toEqual({ esito: 'ok', presi: 2, inviati: 1, falliti: 0, senzaDestinatario: 0, saltati: 1 })
+    expect(dellMio.visti.map((e) => e.id)).toEqual([mio.id])
     expect(dellAltro.visti, 'il destinatario di un tipo fuori filtro è stato chiamato').toEqual([])
-    // Solo i due eventi propri sono stati chiusi, e come consegnati: sull'altro non si è
-    // chiamata nessuna RPC di chiusura.
-    expect(chiamateDi(chiamate, 'video_outbox_sent').map((c) => c.argomenti.p_evento_id)).toEqual([a1.id, a2.id])
+    expect(chiamateDi(chiamate, 'video_outbox_sent').map((c) => c.argomenti.p_evento_id)).toEqual([mio.id])
     expect(chiamateDi(chiamate, 'video_outbox_fail')).toEqual([])
     expect(chiamate.some((c) => c.argomenti.p_evento_id === altrui.id), 'l\'evento altrui è stato chiuso').toBe(false)
+    const grido = logDi('outbox-evento-fuori-filtro')[0]
+    expect(grido.livello).toBe('error')
+    expect(grido.campi).toMatchObject({ operazione: OPERAZIONE, intent_id: INTENT, n_tentativi: 4 })
   })
 
-  it('un tipo fuori filtro senza destinatario NON grida: non è affar suo', async () => {
-    // Il caso che sbaglia chi applica il filtro DOPO la ricerca del destinatario: il runner
-    // si metterebbe a gridare `outbox-senza-destinatario` per eventi che non deve gestire, e
-    // li farebbe fallire con DESTINATARIO_ASSENTE bruciando i loro tentativi.
+  it('un tipo fuori filtro senza destinatario NON grida «senza destinatario»: non è affar suo', async () => {
+    // Il caso che sbaglia chi cerca il destinatario PRIMA del filtro: il consumatore si metterebbe a
+    // gridare `outbox-senza-destinatario` per eventi che non deve gestire, e li farebbe fallire con
+    // DESTINATARIO_ASSENTE bruciando i loro tentativi.
     const { supabase, chiamate } = doppio({ claim: preso(evento('tipo.ignoto')) })
 
     const esito = await consumaOutbox(supabase, {
@@ -259,8 +319,8 @@ describe('il filtro per tipo: chi consuma solo i propri eventi lascia stare gli 
     })
   })
 
-  it('con il filtro la riga del giro dichiara anche quanti eventi ha saltato', async () => {
-    const { supabase } = doppio({ claim: preso(evento('tipo.mio'), evento('tipo.altrui'), evento('tipo.altrui')) })
+  it('con il filtro la riga del giro dichiara anche quanti eventi ha saltato (a regime zero)', async () => {
+    const { supabase } = doppio({ claim: preso(evento('tipo.mio')) })
 
     await consumaOutbox(supabase, {
       operazione: OPERAZIONE,
@@ -269,7 +329,7 @@ describe('il filtro per tipo: chi consuma solo i propri eventi lascia stare gli 
       destinatari: { 'tipo.mio': destinatario({ consegnato: true }).fn },
     })
 
-    expect(logDi('outbox-svuotato')[0].campi).toMatchObject({ n_righe: 3, n_inviati: 1, n_saltati: 2 })
+    expect(logDi('outbox-svuotato')[0].campi).toMatchObject({ n_righe: 1, n_inviati: 1, n_saltati: 0 })
   })
 
   it('un elenco vuoto non prende niente: sarebbe consumare un tentativo a ogni evento per saltarli tutti', async () => {
@@ -634,6 +694,67 @@ describe('il registro dei destinatari', () => {
   })
 })
 
+describe('la divisione dei tipi fra la retention e il runner (§8.1)', () => {
+  const nessuno: Destinatario = async () => ({ consegnato: true })
+
+  it('i tipi del runner sono quelli dichiarati, e sono UNA fonte sola', () => {
+    // Un elenco che la retention e il runner scrivessero ciascuno per conto proprio divergerebbe il giorno
+    // in cui se ne cambia uno solo: un tipo consumato da tutti e due, o da nessuno.
+    expect([...TIPI_SOLO_DEL_RUNNER]).toEqual(['gallery.auto_publish'])
+    expect(Object.isFrozen(TIPI_SOLO_DEL_RUNNER)).toBe(true)
+  })
+
+  it('la retention prende i tipi REGISTRATI tranne quelli del runner, ricavati dal registro', () => {
+    const registro: RegistroDestinatari = {
+      'intent.revoked': nessuno,
+      'gallery.auto_publish': nessuno,
+      'gallery.published': nessuno,
+    }
+
+    expect(tipiDellaRetention(registro)).toEqual(['intent.revoked', 'gallery.published'])
+  })
+
+  it('un tipo NUOVO registrato entra da solo fra quelli della retention: nessun secondo elenco da aggiornare', () => {
+    const prima = tipiDellaRetention({ 'a.uno': nessuno })
+    const dopo = tipiDellaRetention({ 'a.uno': nessuno, 'a.due': nessuno })
+
+    expect(prima).toEqual(['a.uno'])
+    expect(dopo).toEqual(['a.uno', 'a.due'])
+  })
+
+  it('senza argomenti legge il registro VERO: i tre tipi di sempre ci sono, quello delle pubblicazioni no', () => {
+    const tipi = tipiDellaRetention()
+
+    expect(tipi).toEqual(expect.arrayContaining(['intent.superseded', 'intent.revoked', 'gallery.published']))
+    for (const tipo of TIPI_SOLO_DEL_RUNNER) expect(tipi).not.toContain(tipo)
+    expect([...tipi].sort()).toEqual(
+      Object.keys(DESTINATARI)
+        .filter((t) => !TIPI_SOLO_DEL_RUNNER.includes(t))
+        .sort(),
+    )
+  })
+
+  it('l\'elenco sta nei limiti del claim: da 1 a 20 tipi, nel formato che il database accetta', () => {
+    const tipi = tipiDellaRetention()
+
+    // Oltre il tetto il database risponde BAD_INPUT e la retention smetterebbe di consumare la coda.
+    expect(tipi.length).toBeGreaterThanOrEqual(1)
+    expect(tipi.length).toBeLessThanOrEqual(20)
+    for (const tipo of tipi) expect(tipo).toMatch(/^[a-z][a-z0-9_.-]*$/)
+  })
+
+  it('un registro con il SOLO tipo del runner dà un elenco vuoto, e il consumo non parte (si grida)', async () => {
+    const tipi = tipiDellaRetention({ 'gallery.auto_publish': nessuno })
+    const { supabase, chiamate } = doppio()
+
+    const esito = await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, tipi })
+
+    expect(tipi).toEqual([])
+    expect(chiamate).toEqual([])
+    expect(esito.esito).toBe('nessun-tipo')
+  })
+})
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // 7. CONTRO LE RPC VERE — PGlite, e il file di migrazione letto dal disco
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -646,6 +767,26 @@ const CARTELLA_MIGRAZIONI = join(process.cwd(), 'supabase/migrations')
 const SCHEMA = readFileSync(join(CARTELLA_MIGRAZIONI, '20260916190000_video_jobs.sql'), 'utf8')
 const TRANSIZIONI = readFileSync(join(CARTELLA_MIGRAZIONI, '20260916190100_video_job_transitions.sql'), 'utf8')
 const CICLO_DI_VITA = readFileSync(join(CARTELLA_MIGRAZIONI, '20260916190200_video_intent_lifecycle.sql'), 'utf8')
+
+/**
+ * Il file C della PR 2 (la conservazione delle uscite): porta l'OVERLOAD di `video_outbox_claim` col
+ * filtro per tipo, che è la cosa che questa sezione prova. Si trova per SUFFISSO e non per nome: i file di
+ * quella PR nascono con un timestamp provvisorio e T16 li rinomina all'istante vero.
+ *
+ * Si applica sopra le tre migrazioni di sempre e basta: le sue funzioni sono plpgsql, che non controlla
+ * i nomi finché non si eseguono, e il claim non tocca altro che `video_outbox`.
+ */
+const FILE_C = (() => {
+  const trovati = readdirSync(CARTELLA_MIGRAZIONI).filter((f) => f.endsWith('_video_conservazione_uscite.sql'))
+  if (trovati.length !== 1) {
+    throw new Error(
+      `Cerco in supabase/migrations/ UN file che finisce con «_video_conservazione_uscite.sql» e ne trovo ` +
+        `${trovati.length} (${trovati.join(', ') || 'nessuno'}). Se la migrazione è stata rinominata, il suffisso ` +
+        `deve restare lo stesso.`,
+    )
+  }
+  return readFileSync(join(CARTELLA_MIGRAZIONI, trovati[0]), 'utf8')
+})()
 
 const SEDE = '10000000-0000-4000-8000-000000000001'
 const OWNER = '20000000-0000-4000-8000-000000000002'
@@ -703,6 +844,7 @@ async function preparaDatabase() {
   await db.exec(SCHEMA)
   await db.exec(TRANSIZIONI)
   await db.exec(CICLO_DI_VITA)
+  await db.exec(FILE_C)
 }
 
 /**
@@ -804,7 +946,7 @@ describe('contro le RPC vere: ciò che la coda fa davvero', () => {
     expect((await statoCoda()).every((r) => r.inviato)).toBe(true)
   })
 
-  it('il FILTRO lascia intatti gli altri tipi: restano da consegnare e li consegna chi li sa', async () => {
+  it('il FILTRO è NEL claim: gli eventi degli altri tipi restano liberi, con `attempts` invariati e nessuna lease', async () => {
     await accodaEvento('tipo.mio', 40)
     await accodaEvento('tipo.altrui', 30)
     await accodaEvento('tipo.mio', 20)
@@ -814,32 +956,123 @@ describe('contro le RPC vere: ciò che la coda fa davvero', () => {
     const dellAltro = destinatario({ consegnato: true })
     const registro = { 'tipo.mio': mio.fn, 'tipo.altrui': dellAltro.fn }
 
-    // Il consumatore filtrato: due eventi suoi consegnati, due altrui presi e lasciati.
+    // Il consumatore filtrato: due eventi suoi consegnati, e NIENTE degli altri. Prima il claim prendeva i
+    // primi quattro di qualunque tipo e due restavano in lease senza essere né consegnati né falliti.
     const filtrato = await consumaOutbox(supabase, {
       operazione: OPERAZIONE,
       limite: 10,
       tipi: ['tipo.mio'],
       destinatari: registro,
     })
-    expect(filtrato).toMatchObject({ presi: 4, inviati: 2, saltati: 2, falliti: 0 })
+    expect(filtrato).toMatchObject({ presi: 2, inviati: 2, saltati: 0, falliti: 0 })
     expect(dellAltro.visti).toEqual([])
     expect(chiamateDi(chiamate, 'video_outbox_fail')).toEqual([])
+    const stato = await statoCoda()
     expect(
-      (await statoCoda()).map((r) => [r.event_type, r.inviato]),
-      'il filtro ha chiuso (o perso) un evento che non era suo',
+      stato.map((r) => [r.event_type, r.inviato, r.attempts]),
+      'il filtro ha chiuso, o consumato un tentativo di, un evento che non era suo',
     ).toEqual([
-      ['tipo.mio', true],
-      ['tipo.altrui', false],
-      ['tipo.mio', true],
-      ['tipo.altrui', false],
+      ['tipo.mio', true, 1],
+      ['tipo.altrui', false, 0],
+      ['tipo.mio', true, 1],
+      ['tipo.altrui', false, 0],
     ])
+    // Nessuna lease: gli altrui sono liberi ADESSO, non fra centoventi secondi.
+    expect(stato.filter((r) => r.event_type === 'tipo.altrui').map((r) => r.lease_residua_s)).toEqual([null, null])
 
-    // Gli altrui non sono persi né in quarantena: scaduta la lease, li prende chi li sa consegnare.
-    await scadonoLeLease()
+    // E li prende chi li sa consegnare, subito: senza far scadere nessuna lease (prima serviva).
     const completo = await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, destinatari: registro })
     expect(completo).toMatchObject({ presi: 2, inviati: 2, saltati: 0 })
     expect(dellAltro.visti).toHaveLength(2)
     expect((await statoCoda()).every((r) => r.inviato)).toBe(true)
+  })
+
+  it('un consumatore filtrato NON resta dietro gli eventi altrui: il suo, ultimo della coda, esce al primo giro', async () => {
+    // Il difetto di cui il filtro dopo il claim era la causa: con un `limite` di tre e cinque eventi altrui
+    // più vecchi, il claim prendeva i tre più vecchi (tutti altrui) e l'evento del runner aspettava.
+    for (let n = 0; n < 5; n += 1) await accodaEvento('tipo.altrui', 100 - n)
+    await accodaEvento('tipo.mio', 1)
+    const { supabase } = clientPglite()
+    const mio = destinatario({ consegnato: true })
+
+    const giro = await consumaOutbox(supabase, {
+      operazione: OPERAZIONE,
+      limite: 3,
+      tipi: ['tipo.mio'],
+      destinatari: { 'tipo.mio': mio.fn },
+    })
+
+    expect(giro).toMatchObject({ presi: 1, inviati: 1, saltati: 0 })
+    expect(mio.visti).toHaveLength(1)
+    expect((await statoCoda()).filter((r) => r.event_type === 'tipo.altrui').map((r) => r.attempts)).toEqual(
+      new Array(5).fill(0),
+    )
+  })
+
+  it('giri filtrati ripetuti non consumano i tentativi degli altri: nessuna strada porta alla quarantena', async () => {
+    // Prima ogni giro filtrato, a lease scaduta, prendeva gli eventi altrui e ne bruciava un tentativo: in
+    // venticinque giri (circa due ore) un evento sano finiva in quarantena senza che nessuno lo avesse mai
+    // provato a consegnare.
+    await accodaEvento('tipo.altrui', 10)
+    const { supabase } = clientPglite()
+
+    for (let n = 0; n < 30; n += 1) {
+      await scadonoLeLease()
+      const giro = await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, tipi: ['tipo.mio'], destinatari: {} })
+      expect(giro.presi, `al giro ${n + 1} il filtro ha preso un evento altrui`).toBe(0)
+    }
+
+    expect((await statoCoda())[0]).toMatchObject({ event_type: 'tipo.altrui', attempts: 0, inviato: false })
+    expect(logDi('outbox-evento-fuori-filtro')).toEqual([])
+  })
+
+  it('il claim a TRE argomenti non è cambiato: prende ancora tutti i tipi, e il chiamante di sempre non se ne accorge', async () => {
+    await accodaEvento('tipo.a', 30)
+    await accodaEvento('tipo.b', 20)
+    await accodaEvento('tipo.c', 10)
+    const { supabase, chiamate } = clientPglite()
+    const registro = {
+      'tipo.a': destinatario({ consegnato: true }).fn,
+      'tipo.b': destinatario({ consegnato: true }).fn,
+      'tipo.c': destinatario({ consegnato: true }).fn,
+    }
+
+    const giro = await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, destinatari: registro })
+
+    expect(giro).toMatchObject({ presi: 3, inviati: 3, saltati: 0 })
+    // Senza PGRST203 né errori di firma: un solo claim, a tre argomenti.
+    expect(Object.keys(chiamateDi(chiamate, 'video_outbox_claim')[0].argomenti).sort()).toEqual([
+      'p_lease_owner',
+      'p_lease_seconds',
+      'p_limite',
+    ])
+  })
+
+  it('un filtro che non nomina nessun tipo presente non prende niente e non tocca niente', async () => {
+    await accodaEvento('tipo.a', 10)
+    const { supabase } = clientPglite()
+
+    const giro = await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, tipi: ['tipo.nessuno'], destinatari: {} })
+
+    expect(giro).toMatchObject({ esito: 'ok', presi: 0 })
+    expect((await statoCoda())[0]).toMatchObject({ attempts: 0, inviato: false })
+  })
+
+  it('il database rifiuta un filtro fuori dai suoi limiti (più di 20 tipi, o un nome fuori formato) e il modulo lo dice', async () => {
+    // Il tetto di venti è vero, e per questo l'elenco della retention deve restarci sotto (lo prova la
+    // sezione sul registro): se il database non lo imponesse, quel controllo sarebbe decorazione.
+    await accodaEvento('tipo.a', 10)
+    const { supabase } = clientPglite()
+    const troppi = Array.from({ length: 21 }, (_, n) => `tipo.n${n}`)
+
+    const sopra = await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, tipi: troppi })
+    const fuoriFormato = await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, tipi: ['Tipo.Maiuscolo'] })
+    const ventiVa = await consumaOutbox(supabase, { operazione: OPERAZIONE, limite: 10, tipi: troppi.slice(0, 20) })
+
+    expect(sopra).toEqual({ ...OUTBOX_NON_ESEGUITO, esito: 'claim-rifiutato' })
+    expect(fuoriFormato).toEqual({ ...OUTBOX_NON_ESEGUITO, esito: 'claim-rifiutato' })
+    expect(ventiVa.esito).toBe('ok')
+    expect(logDi('outbox-claim-rifiutato').map((r) => r.campi.error_code)).toEqual(['BAD_INPUT', 'BAD_INPUT'])
   })
 
   it('il BACKOFF è del database: un destinatario che fallisce NON brucia i 25 tentativi in un giro solo', async () => {
@@ -960,7 +1193,7 @@ describe('la route della retention collega il motore condiviso senza cambiare i 
       headers: { 'x-cron-secret': CRON_SECRET },
     }) as unknown as Parameters<typeof POST>[0]
 
-  it('prende 25 eventi per giro con una lease di 120 secondi, e nessun filtro per tipo', async () => {
+  it('prende 25 eventi per giro con una lease di 120 secondi, e il filtro: i registrati tranne i tipi del runner', async () => {
     await POST(chiamata())
 
     const claim = h.rpc.filter((r) => r.nome === 'video_outbox_claim')
@@ -968,6 +1201,11 @@ describe('la route della retention collega il motore condiviso senza cambiare i 
     // I numeri di oggi: un cambio qui cambia il carico della retention, e la suite della
     // route non li guarda.
     expect(claim[0].argomenti).toMatchObject({ p_limite: 25, p_lease_seconds: 120 })
+    // Il filtro (§8.1): tutti i tipi registrati MENO le pubblicazioni, che consegna solo il runner. Il
+    // dettaglio — l'elenco dei tipi, l'overload — lo prova `__tests__/api/gdpr-retention-video.test.ts`;
+    // qui basta che la route lo passi, e che sia l'elenco che il modulo ricava dal registro.
+    expect(claim[0].argomenti.p_tipi).toEqual(tipiDellaRetention())
+    expect(claim[0].argomenti.p_tipi).not.toContain('gallery.auto_publish')
   })
 
   it('tutte le righe del consumo portano `operazione: video-retention`, quella che i controlli leggono', async () => {
@@ -975,7 +1213,9 @@ describe('la route della retention collega il motore condiviso senza cambiare i 
       ok: true,
       eventi: [
         { id: 'e1', intent_id: INTENT, revision: 1, event_type: 'intent.superseded', attempts: 1 },
-        { id: 'e2', intent_id: INTENT, revision: 1, event_type: 'tipo.inesistente', attempts: 1 },
+        { id: 'e2', intent_id: INTENT, revision: 1, event_type: 'gallery.published', attempts: 1 },
+        // Fuori dai tipi della retention: un doppio che non applica il filtro (il database lo applica).
+        { id: 'e3', intent_id: INTENT, revision: 1, event_type: 'tipo.inesistente', attempts: 1 },
       ],
     }
 
@@ -983,13 +1223,14 @@ describe('la route della retention collega il motore condiviso senza cambiare i 
 
     // Una PRESENZA prima delle assenze: il giro ha davvero consumato.
     expect(await res.json()).toMatchObject({
-      outbox_presi: 2,
-      outbox_inviati: 1,
-      outbox_falliti: 1,
-      outbox_senza_destinatario: 1,
+      outbox_presi: 3,
+      outbox_inviati: 2,
+      outbox_falliti: 0,
+      outbox_senza_destinatario: 0,
+      outbox_saltati: 1,
     })
     const righe = h.eventi.filter((e) => String(e.campi.esito).startsWith('outbox-'))
-    expect(righe.map((r) => r.campi.esito).sort()).toEqual(['outbox-senza-destinatario', 'outbox-svuotato'])
+    expect(righe.map((r) => r.campi.esito).sort()).toEqual(['outbox-evento-fuori-filtro', 'outbox-svuotato'])
     expect(righe.every((r) => r.campi.operazione === 'video-retention')).toBe(true)
   })
 

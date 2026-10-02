@@ -260,9 +260,17 @@ const TIPI_SCRITTI_IN_OUTBOX = [...new Set(SCRITTURE_IN_OUTBOX.map((s) => s.tipo
 
 const JOB_A = '40000000-0000-4000-8000-00000000000a'
 const JOB_B = '40000000-0000-4000-8000-00000000000b'
+const JOB_C = '40000000-0000-4000-8000-00000000000c'
+const JOB_D = '40000000-0000-4000-8000-00000000000d'
 const INTENT = '30000000-0000-4000-8000-000000000003'
 const PATH_A = 'originals/40000000-0000-4000-8000-00000000000a/source.mov'
 const PATH_B = 'originals/40000000-0000-4000-8000-00000000000b/source.mov'
+/** Le USCITE convertite: `<chi carica>/<job>/<tentativo>.mp4`, nel bucket `video_processing`. */
+const USCITA_C = '20000000-0000-4000-8000-000000000002/40000000-0000-4000-8000-00000000000c/1.mp4'
+const USCITA_D = '20000000-0000-4000-8000-000000000002/40000000-0000-4000-8000-00000000000d/2.mp4'
+
+const BUCKET_ORIGINALI = 'video_originals'
+const BUCKET_USCITE = 'video_processing'
 
 const h = vi.hoisted(() => ({
     /**
@@ -270,8 +278,9 @@ const h = vi.hoisted(() => ({
      * `remove` → `rpc:video_retention_originale_rimosso`. Un doppio che non
      * registrasse l'ordine renderebbe verde una route che timbra la riga e poi prova
      * a togliere il file — cioè il difetto che tutta la famiglia esiste per impedire.
+     * Le `remove` portano anche il bucket: i magazzini sono due e l'ordine vale per entrambi.
      */
-    sequenza: [] as { tipo: string; valore: unknown }[],
+    sequenza: [] as { tipo: string; valore: unknown; bucket?: string }[],
     /** Ogni `rpc()` con i suoi argomenti: le soglie si verificano da qui. */
     rpc: [] as { nome: string; argomenti: Record<string, unknown> }[],
     /** Ogni query con le sue clausole, per poterle asserire PER QUERY. */
@@ -286,12 +295,28 @@ const h = vi.hoisted(() => ({
     nQuery: 0,
 
     // ── LE RISPOSTE DELLE RPC ──
-    scadenze: { ok: true, abbandonati: 0, incagliati: 0, senza_scadenza: 0 } as unknown,
+    flussoVecchio: { ok: true, revocati: 0, rifiutati: 0 } as unknown,
+    erroreFlussoVecchio: null as unknown,
+    nonPubblicati: { ok: true, scaduti: 0, rifiutati: 0 } as unknown,
+    erroreNonPubblicati: null as unknown,
+    scadenze: {
+        ok: true,
+        abbandonati: 0,
+        incagliati: 0,
+        senza_scadenza: 0,
+        uscite_senza_scadenza: 0,
+    } as unknown,
     erroreScadenze: null as unknown,
     timbro: { ok: true } as unknown,
     erroreTimbro: null as unknown,
     /** Fa LANCIARE la RPC del timbro: è l'unico modo di raggiungere il `catch` finale. */
     eccezioneTimbro: null as unknown,
+    timbroUscita: { ok: true } as unknown,
+    erroreTimbroUscita: null as unknown,
+    /** Come `eccezioneTimbro`, per il timbro delle uscite. */
+    eccezioneTimbroUscita: null as unknown,
+    minimizza: { ok: true, minimizzati: 0 } as unknown,
+    erroreMinimizza: null as unknown,
     riconciliazione: {
         ok: true,
         conclusi_senza_scadenza: 0,
@@ -300,32 +325,54 @@ const h = vi.hoisted(() => ({
     erroreRiconciliazione: null as unknown,
     outboxClaim: { ok: true, eventi: [] as unknown[] } as unknown,
     erroreClaim: null as unknown,
+    /**
+     * Il claim che IGNORA il filtro per tipo: lo scenario che col claim filtrato non può succedere —
+     * un database che non applica `p_tipi` —, per provare che il consumo non lo lascia passare in silenzio.
+     * Di default il doppio fa quello che fa il database: con `p_tipi` restituisce solo i tipi richiesti.
+     */
+    claimIgnoraFiltro: false,
     outboxChiusura: { ok: true } as unknown,
 
     // ── IL DATABASE ──
     /** Le righe scadute: `id` + `original_path`. */
     scaduti: [] as { id: string; original_path: string }[],
     erroreScaduti: null as unknown,
-    /** I percorsi che UNA riga di `video_jobs` reclama ancora. */
+    /** Le USCITE scadute: `id` + `output_path`. */
+    usciteScadute: [] as { id: string; output_path: string }[],
+    erroreUscite: null as unknown,
+    /** I percorsi che UNA riga di `video_jobs` reclama ancora (originali) / (uscite). */
     reclamati: [] as string[],
+    reclamatiUscite: [] as string[],
+    /** Fra i reclamati, quelli la cui riga è GIÀ TIMBRATA come tolta: il file è risorto. */
+    risorti: [] as string[],
+    risorteUscite: [] as string[],
     erroreReclamati: null as unknown,
+    erroreReclamatiUscite: null as unknown,
     /** Quanti job dell'intent sono ancora senza scadenza: > 0 ⇒ ricevuta negata. */
     senzaScadenzaPerIntent: 0,
     erroreRicevuta: null as unknown,
 
     // ── LO STORAGE ──
     removeRisposta: null as { data: unknown[] | null; error: unknown } | null,
-    /** I percorsi che, INTERROGANDO lo Storage, risultano ANCORA nel bucket. */
+    removeRispostaUscite: null as { data: unknown[] | null; error: unknown } | null,
+    /** I percorsi che, INTERROGANDO lo Storage, risultano ANCORA nel bucket (di qualunque magazzino). */
     ancoraNelBucket: new Set<string>(),
     erroreVerifica: null as unknown,
-    /** L'albero del bucket: cartella → voci. `''` è la radice. */
+    /** L'albero del bucket degli originali: cartella → voci. `''` è la radice. */
     albero: {} as Record<
         string,
         { name?: string | null; id?: string | null; created_at?: string | null }[]
     >,
-    /** Le elencazioni fatte: cartella e opzioni, come le riceve la Storage API. */
+    /** L'albero del bucket delle uscite (`video_processing`). */
+    alberoUscite: {} as Record<
+        string,
+        { name?: string | null; id?: string | null; created_at?: string | null }[]
+    >,
+    /** Le elencazioni fatte: cartella e opzioni, come le riceve la Storage API. Una lista per magazzino. */
     elencazioni: [] as { cartella: string; opzioni: unknown }[],
+    elencazioniUscite: [] as { cartella: string; opzioni: unknown }[],
     erroreElenco: null as unknown,
+    erroreElencoUscite: null as unknown,
 
     eventi: [] as { evento: string; livello: string; campi: Record<string, unknown> }[],
     staffNegato: null as unknown,
@@ -395,18 +442,34 @@ vi.mock('@/lib/supabase/server-client', () => ({
                     h.sequenza.push({ tipo: 'leggi-scaduti', valore: null })
                     return Promise.resolve({ data: h.scaduti, error: h.erroreScaduti }).then(res)
                 }
-                if (colonne === 'original_path') {
+                if (colonne === 'id, output_path') {
+                    h.sequenza.push({ tipo: 'leggi-uscite-scadute', valore: null })
+                    return Promise.resolve({ data: h.usciteScadute, error: h.erroreUscite }).then(res)
+                }
+                // «Chi reclama questi percorsi, e quella riga li dichiara già tolti?». I due magazzini
+                // hanno le loro colonne, e il doppio le distingue dalla SELECT: una route che chiedesse
+                // le colonne degli originali per le uscite (o viceversa) non troverebbe mai niente.
+                if (colonne === 'original_path, original_deleted_at' || colonne === 'output_path, output_deleted_at') {
+                    const uscite = colonne === 'output_path, output_deleted_at'
+                    const percorso = uscite ? 'output_path' : 'original_path'
+                    const timbro = uscite ? 'output_deleted_at' : 'original_deleted_at'
+                    const errore = uscite ? h.erroreReclamatiUscite : h.erroreReclamati
+                    const reclamati = uscite ? h.reclamatiUscite : h.reclamati
+                    const risorti = new Set(uscite ? h.risorteUscite : h.risorti)
                     // Il doppio risponde SOLO per i percorsi chiesti, come PostgREST: uno
                     // che restituisse tutti i reclamati a ogni lotto renderebbe verde una
                     // route che sbaglia a spezzare i lotti.
                     const lotto = new Set(ids)
                     return Promise.resolve(
-                        h.erroreReclamati
-                            ? { data: null, error: h.erroreReclamati }
+                        errore
+                            ? { data: null, error: errore }
                             : {
-                                  data: h.reclamati
+                                  data: reclamati
                                       .filter((p) => lotto.has(p))
-                                      .map((original_path) => ({ original_path })),
+                                      .map((p) => ({
+                                          [percorso]: p,
+                                          [timbro]: risorti.has(p) ? '2026-09-20T10:00:00.000Z' : null,
+                                      })),
                                   error: null,
                               },
                     ).then(res)
@@ -429,6 +492,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
             rpc: (nome: string, argomenti: Record<string, unknown>) => {
                 h.rpc.push({ nome, argomenti })
                 h.sequenza.push({ tipo: `rpc:${nome}`, valore: argomenti })
+                if (nome === 'video_galleria_flusso_vecchio_revoca') {
+                    return Promise.resolve({ data: h.flussoVecchio, error: h.erroreFlussoVecchio })
+                }
+                if (nome === 'video_intent_scadi_non_pubblicato') {
+                    return Promise.resolve({ data: h.nonPubblicati, error: h.erroreNonPubblicati })
+                }
                 if (nome === 'video_retention_scadenze') {
                     return Promise.resolve({ data: h.scadenze, error: h.erroreScadenze })
                 }
@@ -436,20 +505,44 @@ vi.mock('@/lib/supabase/server-client', () => ({
                     if (h.eccezioneTimbro) throw h.eccezioneTimbro
                     return Promise.resolve({ data: h.timbro, error: h.erroreTimbro })
                 }
+                if (nome === 'video_retention_uscita_rimossa') {
+                    if (h.eccezioneTimbroUscita) throw h.eccezioneTimbroUscita
+                    return Promise.resolve({ data: h.timbroUscita, error: h.erroreTimbroUscita })
+                }
+                if (nome === 'video_intenti_minimizza') {
+                    return Promise.resolve({ data: h.minimizza, error: h.erroreMinimizza })
+                }
                 if (nome === 'video_riconciliazione') {
                     return Promise.resolve({ data: h.riconciliazione, error: h.erroreRiconciliazione })
                 }
                 if (nome === 'video_outbox_claim') {
+                    // Come il database: con `p_tipi` prende SOLO i tipi richiesti. Un doppio che restituisse
+                    // sempre tutto renderebbe verde una route che non passa il filtro, e muta una prova
+                    // sulla DIVISIONE dei tipi (retention / runner) in una prova sul doppio.
+                    const risposta = h.outboxClaim as { ok?: boolean; eventi?: { event_type: string }[] } | null
+                    const tipi = argomenti.p_tipi
+                    if (Array.isArray(tipi) && !h.claimIgnoraFiltro && risposta?.ok === true) {
+                        return Promise.resolve({
+                            data: {
+                                ...risposta,
+                                eventi: (risposta.eventi ?? []).filter((e) => tipi.includes(e.event_type)),
+                            },
+                            error: h.erroreClaim,
+                        })
+                    }
                     return Promise.resolve({ data: h.outboxClaim, error: h.erroreClaim })
                 }
                 return Promise.resolve({ data: h.outboxChiusura, error: null })
             },
             storage: {
-                from: () => ({
+                // Due magazzini, due alberi: un doppio che servisse lo stesso albero a entrambi
+                // renderebbe ogni orfano doppio, e una spazzata che guarda il bucket sbagliato verde.
+                from: (bucket: string) => ({
                     remove: (percorsi: string[]) => {
-                        h.sequenza.push({ tipo: 'remove', valore: percorsi })
+                        h.sequenza.push({ tipo: 'remove', valore: percorsi, bucket })
+                        const risposta = bucket === BUCKET_USCITE ? h.removeRispostaUscite : h.removeRisposta
                         return Promise.resolve(
-                            h.removeRisposta ?? { data: percorsi.map((p) => ({ name: p })), error: null },
+                            risposta ?? { data: percorsi.map((p) => ({ name: p })), error: null },
                         )
                     },
                     // ⚠️ `list()` serve DUE scopi, e confonderli è il modo più facile di
@@ -467,9 +560,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
                                 error: null,
                             })
                         }
-                        h.elencazioni.push({ cartella, opzioni })
-                        if (h.erroreElenco) return Promise.resolve({ data: null, error: h.erroreElenco })
-                        return Promise.resolve({ data: h.albero[cartella] ?? [], error: null })
+                        const uscite = bucket === BUCKET_USCITE
+                        ;(uscite ? h.elencazioniUscite : h.elencazioni).push({ cartella, opzioni })
+                        const errore = uscite ? h.erroreElencoUscite : h.erroreElenco
+                        if (errore) return Promise.resolve({ data: null, error: errore })
+                        return Promise.resolve({
+                            data: (uscite ? h.alberoUscite : h.albero)[cartella] ?? [],
+                            error: null,
+                        })
                     },
                 }),
             },
@@ -478,6 +576,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { POST } from '@/app/api/gdpr/retention-video/route'
+import { DESTINATARI, destinatarioDi, TIPI_SOLO_DEL_RUNNER } from '@/lib/media/video/outbox'
 
 /** Un istante abbastanza vecchio da superare la grazia di 24 ore. */
 const VECCHIO = new Date(Date.now() - 72 * 3_600_000).toISOString()
@@ -500,28 +599,48 @@ beforeEach(() => {
     h.rpc = []
     h.query = []
     h.nQuery = 0
-    h.scadenze = { ok: true, abbandonati: 0, incagliati: 0, senza_scadenza: 0 }
+    h.flussoVecchio = { ok: true, revocati: 0, rifiutati: 0 }
+    h.erroreFlussoVecchio = null
+    h.nonPubblicati = { ok: true, scaduti: 0, rifiutati: 0 }
+    h.erroreNonPubblicati = null
+    h.scadenze = { ok: true, abbandonati: 0, incagliati: 0, senza_scadenza: 0, uscite_senza_scadenza: 0 }
     h.erroreScadenze = null
     h.timbro = { ok: true }
     h.erroreTimbro = null
     h.eccezioneTimbro = null
+    h.timbroUscita = { ok: true }
+    h.erroreTimbroUscita = null
+    h.eccezioneTimbroUscita = null
+    h.minimizza = { ok: true, minimizzati: 0 }
+    h.erroreMinimizza = null
     h.riconciliazione = { ok: true, conclusi_senza_scadenza: 0, outbox_in_quarantena: 0 }
     h.erroreRiconciliazione = null
     h.outboxClaim = { ok: true, eventi: [] }
     h.erroreClaim = null
+    h.claimIgnoraFiltro = false
     h.outboxChiusura = { ok: true }
     h.scaduti = []
     h.erroreScaduti = null
+    h.usciteScadute = []
+    h.erroreUscite = null
     h.reclamati = []
+    h.reclamatiUscite = []
+    h.risorti = []
+    h.risorteUscite = []
     h.erroreReclamati = null
+    h.erroreReclamatiUscite = null
     h.senzaScadenzaPerIntent = 0
     h.erroreRicevuta = null
     h.removeRisposta = null
+    h.removeRispostaUscite = null
     h.ancoraNelBucket = new Set()
     h.erroreVerifica = null
     h.albero = {}
+    h.alberoUscite = {}
     h.elencazioni = []
+    h.elencazioniUscite = []
     h.erroreElenco = null
+    h.erroreElencoUscite = null
     h.eventi = []
     h.staffNegato = null
 })
@@ -556,14 +675,31 @@ describe('lo schema video non applicato: si dichiara, non si finge', () => {
     it('PGRST202 sulla prima RPC ⇒ 503 e battito `schema-assente`, non un 200 che dice «niente da fare»', async () => {
         // Il database E2E della CI è un progetto separato e NON migrato, e le quattro
         // migrazioni video sono in `IN_CODA`. Un `200` qui direbbe «non c'era niente
-        // da togliere», che è un altro fatto.
-        h.erroreScadenze = { code: 'PGRST202', message: 'function not found' }
+        // da togliere», che è un altro fatto. La prima RPC del giro è la revoca del flusso vecchio.
+        h.erroreFlussoVecchio = { code: 'PGRST202', message: 'function not found' }
         const res = await POST(chiamata())
 
         expect(res.status).toBe(503)
         expect(await res.json()).toMatchObject({ ok: false, motivo: 'schema-assente' })
         expect(battito()[0].campi.esito).toBe('schema-assente')
-        // Nessun file toccato: non si spazza un bucket che non esiste.
+        // Nessun file toccato: non si spazza un bucket che non esiste. E nessun altro passo è partito.
+        expect(h.sequenza.filter((s) => s.tipo === 'remove')).toEqual([])
+        expect(h.rpc.map((r) => r.nome)).toEqual(['video_galleria_flusso_vecchio_revoca'])
+    })
+
+    it.each([
+        ['video_intent_scadi_non_pubblicato', 'erroreNonPubblicati'],
+        ['video_retention_scadenze', 'erroreScadenze'],
+    ] as const)('PGRST202 su `%s` è lo stesso 503, e i passi dopo di lui non partono', async (rpc, campo) => {
+        // La funzione che manca non è per forza la prima: uno schema applicato a metà non deve
+        // diventare un 200 né un giro che tocca i file.
+        h[campo] = { code: 'PGRST202', message: 'function not found' }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(503)
+        expect(await res.json()).toMatchObject({ ok: false, motivo: 'schema-assente' })
+        expect(battito()[0].campi.esito).toBe('schema-assente')
+        expect(h.rpc.map((r) => r.nome).at(-1)).toBe(rpc)
         expect(h.sequenza.filter((s) => s.tipo === 'remove')).toEqual([])
     })
 
@@ -589,14 +725,17 @@ describe('le scadenze: le soglie applicate sono quelle dichiarate', () => {
         expect(typeof chiamataRpc?.argomenti.p_limite).toBe('number')
     })
 
-    it('è la PRIMA cosa che fa: un originale senza scadenza non comparirebbe nell’elenco', async () => {
+    it('viene PRIMA di ogni rimozione: un originale (o un’uscita) senza scadenza non comparirebbe nell’elenco', async () => {
         h.scaduti = [{ id: JOB_A, original_path: PATH_A }]
+        h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
         await POST(chiamata())
 
         const iScadenze = h.sequenza.findIndex((s) => s.tipo === 'rpc:video_retention_scadenze')
         const iElenco = h.sequenza.findIndex((s) => s.tipo === 'leggi-scaduti')
+        const iElencoUscite = h.sequenza.findIndex((s) => s.tipo === 'leggi-uscite-scadute')
         expect(iScadenze).toBeGreaterThanOrEqual(0)
         expect(iScadenze).toBeLessThan(iElenco)
+        expect(iScadenze).toBeLessThan(iElencoUscite)
     })
 
     it('se la RETE ha pescato, lo grida: un cammino nuovo chiude i job senza scadenza', async () => {
@@ -606,6 +745,29 @@ describe('le scadenze: le soglie applicate sono quelle dichiarate', () => {
         const grido = h.eventi.find((e) => e.campi.esito === 'conclusi-senza-scadenza')
         expect(grido?.livello).toBe('error')
         expect(grido?.campi.n_righe).toBe(3)
+    })
+
+    it('le USCITE a cui la rete ha dato la scadenza NON sono un guasto: si dicono a livello `info` (#81)', async () => {
+        // A differenza dei conclusi senza scadenza dell'originale. Le RPC che annullano, revocano o
+        // sostituiscono un intento non scrivono la scadenza dell'uscita, e la rete è proprio il loro
+        // meccanismo: «ne ho pescate 50» è lavoro trovato da fare, non un cammino che si è dimenticato.
+        h.scadenze = { ok: true, abbandonati: 0, incagliati: 0, senza_scadenza: 0, uscite_senza_scadenza: 50 }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        const riga = h.eventi.find((e) => e.campi.esito === 'uscite-dichiarate')
+        expect(riga?.livello).toBe('info')
+        expect(riga?.campi.n_righe).toBe(50)
+        expect(await res.json()).toMatchObject({ ok: true, uscite_dichiarate: 50 })
+        expect(battito()[0].campi).toMatchObject({ esito: 'ok', n_uscite_dichiarate: 50 })
+        // E nessuna riga di errore, né con quel nome né con quello dei conclusi senza scadenza.
+        expect(h.eventi.filter((e) => e.livello === 'error')).toEqual([])
+    })
+
+    it('a zero la rete delle uscite non scrive niente: il battito basta', async () => {
+        await POST(chiamata())
+        expect(h.eventi.some((e) => e.campi.esito === 'uscite-dichiarate')).toBe(false)
+        expect(battito()[0].campi.n_uscite_dichiarate).toBe(0)
     })
 
     it('un rifiuto della RPC (argomenti sbagliati) non passa per un giro riuscito', async () => {
@@ -717,6 +879,320 @@ describe('gli originali scaduti: prima il file, poi la riga', () => {
     })
 })
 
+describe('il flusso vecchio e i convertiti che nessuno ha pubblicato (§15 passi 1 e 2)', () => {
+    it('chiama le due RPC col tetto del lotto e con SETTE giorni, nell’ordine della testata del file C', async () => {
+        await POST(chiamata())
+
+        const flusso = h.rpc.find((r) => r.nome === 'video_galleria_flusso_vecchio_revoca')
+        const nonPubblicati = h.rpc.find((r) => r.nome === 'video_intent_scadi_non_pubblicato')
+        expect(flusso?.argomenti).toEqual({ p_limite: 200 })
+        // Il termine è la decisione del titolare (02/10): un convertito non pubblicato si tiene 7 giorni.
+        expect(nonPubblicati?.argomenti).toEqual({ p_giorni: 7, p_limite: 200 })
+        const nomi = h.rpc.map((r) => r.nome)
+        expect(nomi.indexOf('video_galleria_flusso_vecchio_revoca')).toBe(0)
+        expect(nomi.indexOf('video_intent_scadi_non_pubblicato')).toBe(1)
+        expect(nomi.indexOf('video_retention_scadenze')).toBe(2)
+    })
+
+    it('un flusso vecchio revocato si DICE (`info`, solo conteggi), e finisce nel battito e nella risposta', async () => {
+        h.flussoVecchio = { ok: true, revocati: 11, rifiutati: 1 }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        const riga = h.eventi.find((e) => e.campi.esito === 'flusso-vecchio-revocato')
+        expect(riga?.livello).toBe('info')
+        expect(riga?.campi).toMatchObject({ n_righe: 11, n_righe_rifiutate: 1, operazione: 'video-retention' })
+        expect(await res.json()).toMatchObject({ flusso_vecchio_revocati: 11, flusso_vecchio_rifiutati: 1 })
+        expect(battito()[0].campi).toMatchObject({ n_flusso_vecchio_revocati: 11, n_flusso_vecchio_rifiutati: 1 })
+    })
+
+    it('i convertiti scaduti si dicono (`info`), con i giorni, e finiscono nel battito e nella risposta', async () => {
+        h.nonPubblicati = { ok: true, scaduti: 4, rifiutati: 0 }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        const riga = h.eventi.find((e) => e.campi.esito === 'non-pubblicati-scaduti')
+        expect(riga?.livello).toBe('info')
+        expect(riga?.campi).toMatchObject({ n_righe: 4, giorni: 7 })
+        expect(await res.json()).toMatchObject({ non_pubblicati_scaduti: 4, giorni_convertito_non_pubblicato: 7 })
+        expect(battito()[0].campi).toMatchObject({ n_non_pubblicati_scaduti: 4 })
+    })
+
+    it('a zero NON scrivono righe (il battito porta già i conteggi) e non cambiano l’esito', async () => {
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        expect(h.eventi.some((e) => e.campi.esito === 'flusso-vecchio-revocato')).toBe(false)
+        expect(h.eventi.some((e) => e.campi.esito === 'non-pubblicati-scaduti')).toBe(false)
+        expect(battito()[0].campi).toMatchObject({
+            esito: 'ok',
+            n_flusso_vecchio_revocati: 0,
+            n_non_pubblicati_scaduti: 0,
+        })
+    })
+
+    it.each([
+        ['flusso vecchio', 'erroreFlussoVecchio', 'flusso-vecchio-fallito'],
+        ['non pubblicati', 'erroreNonPubblicati', 'non-pubblicati-fallito'],
+    ] as const)(
+        'se il passo «%s» NON risponde è un guasto (500, battito non `ok`) ma il resto del giro gira lo stesso',
+        async (_nome, campo, esito) => {
+            // Un passo che non regge gli altri non li ferma: la conservazione degli originali, delle uscite e
+            // la minimizzazione dei bambini non dipendono da lui.
+            h[campo] = { code: '57014', message: 'canceled' }
+            h.scaduti = [{ id: JOB_A, original_path: PATH_A }]
+            const res = await POST(chiamata())
+
+            expect(res.status).toBe(500)
+            expect(await res.json()).toMatchObject({ ok: false, motivo: esito, error_code: '57014' })
+            expect(battito()[0].campi.esito).toBe(esito)
+            expect(h.rpc.map((r) => r.nome)).toEqual(
+                expect.arrayContaining([
+                    'video_retention_scadenze',
+                    'video_retention_originale_rimosso',
+                    'video_intenti_minimizza',
+                    'video_outbox_claim',
+                    'video_riconciliazione',
+                ]),
+            )
+            const grido = h.eventi.find((e) => e.campi.esito === esito)
+            expect(grido?.livello).toBe('error')
+            expect(grido?.campi.error_code).toBe('57014')
+        },
+    )
+
+    it('una RPC che RIFIUTA (`ok: false`) non passa per un passo riuscito: PostgREST non lancia', async () => {
+        h.flussoVecchio = { ok: false, code: 'BAD_INPUT' }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(await res.json()).toMatchObject({ ok: false, motivo: 'flusso-vecchio-fallito', error_code: 'BAD_INPUT' })
+        const grido = h.eventi.find((e) => e.campi.esito === 'flusso-vecchio-rifiutato')
+        expect(grido?.livello).toBe('error')
+        expect(grido?.campi.error_code).toBe('BAD_INPUT')
+    })
+
+    it('con due guasti il battito dice il PRIMO, e la risposta li conta tutti nei suoi numeri', async () => {
+        h.erroreFlussoVecchio = { code: '57014', message: 'canceled' }
+        h.erroreMinimizza = { code: '57014', message: 'canceled' }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(battito()[0].campi.esito).toBe('flusso-vecchio-fallito')
+        expect(h.eventi.find((e) => e.campi.esito === 'minimizzazione-fallito')?.livello).toBe('error')
+    })
+})
+
+describe('un originale trattenuto non ferma i passi che non dipendono dallo Storage', () => {
+    it('la minimizzazione, la coda e la riconciliazione girano anche se un originale non esce (500 in fondo)', async () => {
+        // Prima la route usciva QUI: con un solo file che lo Storage non rilascia, i bambini restavano
+        // sugli intenti, la coda non si drenava e la riconciliazione non contava, a ogni giro, per sempre.
+        h.scaduti = [{ id: JOB_A, original_path: PATH_A }]
+        h.removeRisposta = { data: [], error: null }
+        h.ancoraNelBucket = new Set([PATH_A])
+
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(await res.json()).toMatchObject({
+            ok: false,
+            motivo: 'file-non-rimossi',
+            originali_trattenuti: 1,
+        })
+        expect(battito()[0].campi.esito).toBe('originali-trattenuti')
+        const nomi = h.rpc.map((r) => r.nome)
+        expect(nomi).toContain('video_intenti_minimizza')
+        expect(nomi).toContain('video_outbox_claim')
+        expect(nomi).toContain('video_riconciliazione')
+    })
+})
+
+describe('le uscite scadute: `video_processing`, prima il file e poi la riga (§15 passo 3)', () => {
+    it('l’elenco esce dall’indice PARZIALE delle uscite e chiede SOLO righe che nominano un file (#77)', async () => {
+        await POST(chiamata())
+        const lettura = h.query.find((q) => q.colonne === 'id, output_path')
+        expect(lettura, 'la route non legge le uscite scadute').toBeDefined()
+
+        const metodi = lettura!.clausole.map((c) => `${c.metodo}:${JSON.stringify(c.argomenti)}`)
+        // Le condizioni dell'indice `video_jobs_uscite_da_togliere_idx`, più il bucket. Senza la `lte`
+        // sulla scadenza si distruggerebbe l'uscita di un video che deve ancora essere pubblicato.
+        expect(metodi).toContain('eq:["output_bucket","video_processing"]')
+        expect(metodi).toContain('is:["output_deleted_at",null]')
+        expect(metodi).toContain('not:["output_delete_after","is",null]')
+        expect(metodi.some((m) => m.startsWith('lte:["output_delete_after"'))).toBe(true)
+        // #77: `video_retention_uscita_rimossa` non verifica `output_path IS NOT NULL`, quindi si passano
+        // solo le righe che hanno un file da togliere.
+        expect(metodi).toContain('not:["output_path","is",null]')
+        // Per scadenza crescente: se il tetto taglia, taglia i meno in ritardo.
+        expect(metodi).toContain('order:["output_delete_after",{"ascending":true}]')
+        expect(metodi).toContain('limit:[200]')
+    })
+
+    it('una riga che NON nomina un file e passa lo stesso la lettura non si timbra mai: niente da togliere, niente timbro (#77)', async () => {
+        // Doppia cintura: la lettura esclude `output_path` nullo, ma se un giorno non lo facesse la RPC del
+        // timbro (che non verifica il percorso) dichiarerebbe «tolta» un'uscita che non è mai esistita.
+        h.usciteScadute = [
+            { id: JOB_C, output_path: null as unknown as string },
+            { id: JOB_D, output_path: USCITA_D },
+        ]
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        const timbrati = h.rpc.filter((r) => r.nome === 'video_retention_uscita_rimossa').map((r) => r.argomenti.p_job_id)
+        expect(timbrati, 'una riga senza percorso è stata timbrata').toEqual([JOB_D])
+        const rimozioni = h.sequenza.filter((s) => s.tipo === 'remove' && s.bucket === BUCKET_USCITE)
+        expect(rimozioni.map((r) => r.valore)).toEqual([[USCITA_D]])
+        expect(await res.json()).toMatchObject({ uscite_scadute: 1, uscite_rimosse: 1 })
+    })
+
+    it('PRIMA il `remove` su `video_processing`, POI il timbro `video_retention_uscita_rimossa`, per riga', async () => {
+        h.usciteScadute = [
+            { id: JOB_C, output_path: USCITA_C },
+            { id: JOB_D, output_path: USCITA_D },
+        ]
+        await POST(chiamata())
+
+        const iRemove = h.sequenza.findIndex((s) => s.tipo === 'remove' && s.bucket === BUCKET_USCITE)
+        const timbri = h.sequenza
+            .map((s, i) => ({ s, i }))
+            .filter(({ s }) => s.tipo === 'rpc:video_retention_uscita_rimossa')
+        expect(iRemove).toBeGreaterThanOrEqual(0)
+        expect(timbri).toHaveLength(2)
+        // Il file esce PRIMA di ogni timbro: la riga non può dichiarare tolto un file che c'è.
+        expect(timbri.every(({ i }) => i > iRemove)).toBe(true)
+        expect(h.sequenza[iRemove].valore).toEqual([USCITA_C, USCITA_D])
+        expect(timbri.map(({ s }) => s.valore)).toEqual([{ p_job_id: JOB_C }, { p_job_id: JOB_D }])
+        // Il timbro passa dalla RPC che rilegge la scadenza sotto lock, non da un `update` della route.
+        expect(h.query.filter((q) => q.operazione === 'update')).toEqual([])
+    })
+
+    it('un’uscita rimossa e timbrata si dice (`info`, conteggio) e finisce nella risposta e nel battito', async () => {
+        h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        expect(await res.json()).toMatchObject({ uscite_scadute: 1, uscite_rimosse: 1, uscite_trattenute: 0 })
+        const riga = h.eventi.find((e) => e.campi.esito === 'uscite-rimosse')
+        expect(riga?.livello).toBe('info')
+        expect(riga?.campi.n_righe).toBe(1)
+        expect(battito()[0].campi).toMatchObject({ esito: 'ok', n_uscite_scadute: 1, n_uscite_rimosse: 1, n_uscite_trattenute: 0 })
+    })
+
+    it('un’uscita che RESTA nel bucket trattiene LA SUA riga: 500, e le altre uscite si timbrano', async () => {
+        h.usciteScadute = [
+            { id: JOB_C, output_path: USCITA_C },
+            { id: JOB_D, output_path: USCITA_D },
+        ]
+        // `remove` dice di aver tolto solo D; C risulta ancora nel bucket.
+        h.removeRispostaUscite = { data: [{ name: USCITA_D }], error: null }
+        h.ancoraNelBucket = new Set([USCITA_C])
+
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(await res.json()).toMatchObject({
+            ok: false,
+            motivo: 'file-non-rimossi',
+            uscite_rimosse: 1,
+            uscite_trattenute: 1,
+        })
+        expect(battito()[0].campi).toMatchObject({ esito: 'uscite-trattenute', n_uscite_rimosse: 1, n_uscite_trattenute: 1 })
+        // D è stato timbrato, C no: il guasto di una non blocca l'altra.
+        const timbrati = h.rpc
+            .filter((r) => r.nome === 'video_retention_uscita_rimossa')
+            .map((r) => r.argomenti.p_job_id)
+        expect(timbrati).toEqual([JOB_D])
+        const grido = h.eventi.find((e) => e.campi.esito === 'uscite-trattenute')
+        expect(grido?.livello).toBe('error')
+        expect(grido?.campi).toMatchObject({ n_righe_trattenute: 1, n_file_ancora_presenti: 1 })
+    })
+
+    it('«non so» vale come «c’è ancora»: una verifica che non risponde trattiene la riga dell’uscita', async () => {
+        h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+        h.removeRispostaUscite = { data: [], error: null }
+        h.erroreVerifica = { code: 'X', message: 'lo storage non risponde' }
+
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(await res.json()).toMatchObject({ motivo: 'verifica-non-riuscita', uscite_trattenute: 1 })
+        expect(h.rpc.filter((r) => r.nome === 'video_retention_uscita_rimossa')).toEqual([])
+    })
+
+    it('un file GIÀ assente NON è un guasto: l’esito voluto era già raggiunto', async () => {
+        h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+        h.removeRispostaUscite = { data: [], error: null }
+        h.ancoraNelBucket = new Set()
+
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        expect(await res.json()).toMatchObject({ uscite_rimosse: 1, uscite_gia_assenti: 1 })
+    })
+
+    it('il file è uscito ma la RPC rifiuta il timbro: si grida e la riga resta trattenuta', async () => {
+        h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+        h.timbroUscita = { ok: false, code: 'NON_ANCORA_SCADUTO' }
+
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        const grido = h.eventi.find((e) => e.campi.esito === 'uscita-timbro-rifiutato')
+        expect(grido?.livello).toBe('error')
+        expect(grido?.campi.error_code).toBe('NON_ANCORA_SCADUTO')
+        expect(grido?.campi.job_id).toBe(JOB_C)
+    })
+
+    it('il timbro che non RISPONDE trattiene la riga e si grida col suo codice (PostgREST non lancia)', async () => {
+        h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+        h.erroreTimbroUscita = { code: '57014', message: 'canceled' }
+
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        const grido = h.eventi.find((e) => e.campi.esito === 'uscita-timbro-fallito')
+        expect(grido?.livello).toBe('error')
+        expect(grido?.campi.error_code).toBe('57014')
+    })
+
+    it('se la LETTURA delle uscite fallisce non si finge «zero scadute»: guasto dichiarato, il giro prosegue', async () => {
+        h.erroreUscite = { code: '57014', message: 'canceled' }
+
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(await res.json()).toMatchObject({ ok: false, motivo: 'uscite-lettura-fallita', error_code: '57014' })
+        expect(battito()[0].campi.esito).toBe('uscite-lettura-fallita')
+        expect(h.eventi.find((e) => e.campi.esito === 'uscite-lettura-fallita')?.livello).toBe('error')
+        // I passi che non dipendono dalla lettura sono girati.
+        expect(h.rpc.map((r) => r.nome)).toContain('video_intenti_minimizza')
+    })
+
+    it('le uscite trattenute NON fermano gli originali (né viceversa): ciascun magazzino ha i suoi numeri', async () => {
+        h.scaduti = [{ id: JOB_A, original_path: PATH_A }]
+        h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+        h.removeRisposta = { data: [{ name: PATH_A }], error: null }
+        h.removeRispostaUscite = { data: [], error: null }
+        h.ancoraNelBucket = new Set([USCITA_C])
+
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(await res.json()).toMatchObject({
+            originali_rimossi: 1,
+            originali_trattenuti: 0,
+            uscite_trattenute: 1,
+        })
+    })
+
+    it('a zero NON scrive righe di rimozione (il battito porta i conteggi)', async () => {
+        await POST(chiamata())
+        expect(h.eventi.some((e) => e.campi.esito === 'uscite-rimosse')).toBe(false)
+        expect(h.eventi.some((e) => e.campi.esito === 'uscite-trattenute')).toBe(false)
+        expect(battito()[0].campi).toMatchObject({ n_uscite_scadute: 0, n_uscite_rimosse: 0, n_uscite_trattenute: 0 })
+    })
+})
+
 describe('gli orfani del bucket: dal magazzino al database, che è la direzione opposta', () => {
     it('scende nelle CARTELLE (`id: null`) invece di trattarle come oggetti', async () => {
         // Il difetto che la galleria ha pagato: `list()` su un prefisso restituisce
@@ -792,6 +1268,262 @@ describe('gli orfani del bucket: dal magazzino al database, che è la direzione 
         const res = await POST(chiamata())
         expect(await res.json()).toMatchObject({ orfani_profondita_troncata: true })
     })
+
+    // ── LA SPAZZATA ESTESA A `video_processing` (§15 passo 4) ────────────────────
+    // Il bucket delle uscite conserva il file di OGNI tentativo, ma la riga nomina solo l'ultimo: gli
+    // altri, e ciò che un Sandbox morto ha lasciato, non li reclama nessuno e restano per sempre.
+
+    it('spazza ANCHE `video_processing`: un’uscita che nessuna riga nomina esce, con la sua grazia di 24 ore', async () => {
+        h.alberoUscite = {
+            '': [{ name: '20000000-0000-4000-8000-000000000002', id: null }],
+            '20000000-0000-4000-8000-000000000002': [{ name: '40000000-0000-4000-8000-00000000000c', id: null }],
+            '20000000-0000-4000-8000-000000000002/40000000-0000-4000-8000-00000000000c': [
+                { name: '1.mp4', id: 'u1', created_at: VECCHIO },
+                { name: '2.mp4', id: 'u2', created_at: GIOVANE },
+            ],
+        }
+
+        const res = await POST(chiamata())
+
+        // Scende fino al terzo livello (`<chi carica>/<job>/<tentativo>.mp4`), come i percorsi veri.
+        expect(h.elencazioniUscite.map((e) => e.cartella)).toEqual([
+            '',
+            '20000000-0000-4000-8000-000000000002',
+            '20000000-0000-4000-8000-000000000002/40000000-0000-4000-8000-00000000000c',
+        ])
+        // Una sola esce: la giovane è dentro la grazia.
+        const rimozioni = h.sequenza.filter((s) => s.tipo === 'remove')
+        expect(rimozioni).toHaveLength(1)
+        expect(rimozioni[0].bucket).toBe(BUCKET_USCITE)
+        expect(rimozioni[0].valore).toEqual([
+            '20000000-0000-4000-8000-000000000002/40000000-0000-4000-8000-00000000000c/1.mp4',
+        ])
+        const corpo = await res.json()
+        expect(corpo).toMatchObject({
+            orfani_uscite_esito: 'ok',
+            orfani_uscite_esaminati: 1,
+            orfani_uscite_rimossi: 1,
+            // I due magazzini sono contati a parte: l'orfano delle uscite non è un orfano degli originali.
+            orfani_rimossi: 0,
+        })
+        expect(battito()[0].campi.n_orfani_uscite_rimossi).toBe(1)
+    })
+
+    it('un’uscita che una riga NOMINA non si tocca, e la domanda al database usa le colonne delle USCITE', async () => {
+        h.alberoUscite = {
+            '': [
+                { name: 'reclamata.mp4', id: 'u1', created_at: VECCHIO },
+                { name: 'orfana.mp4', id: 'u2', created_at: VECCHIO },
+            ],
+        }
+        h.reclamatiUscite = ['reclamata.mp4']
+
+        await POST(chiamata())
+
+        const rimozioni = h.sequenza.filter((s) => s.tipo === 'remove')
+        expect(rimozioni).toHaveLength(1)
+        expect(rimozioni[0]).toMatchObject({ bucket: BUCKET_USCITE, valore: ['orfana.mp4'] })
+        // Non basta che il doppio sappia rispondere: la route deve CHIEDERE le colonne giuste.
+        const domanda = h.query.find((q) => q.colonne === 'output_path, output_deleted_at')
+        expect(domanda, 'la route non ha chiesto chi reclama le uscite').toBeDefined()
+        const metodi = domanda!.clausole.map((c) => c.metodo + ':' + JSON.stringify(c.argomenti[0]))
+        expect(metodi).toContain('eq:"output_bucket"')
+        expect(metodi).toContain('in:"output_path"')
+    })
+
+    it('se la domanda «chi reclama le uscite?» FALLISCE, non si cancella niente da `video_processing`', async () => {
+        h.alberoUscite = { '': [{ name: 'orfana.mp4', id: 'u1', created_at: VECCHIO }] }
+        h.erroreReclamatiUscite = { code: '42P01', message: 'relation does not exist' }
+
+        const res = await POST(chiamata())
+
+        expect(await res.json()).toMatchObject({ orfani_uscite_esito: 'reclami-falliti', orfani_uscite_rimossi: 0 })
+        expect(h.sequenza.filter((s) => s.tipo === 'remove')).toEqual([])
+        expect(h.eventi.find((e) => e.campi.esito === 'orfani-uscite-reclami-falliti')?.livello).toBe('error')
+    })
+
+    it('se l’ELENCO delle uscite fallisce si dichiara, e la spazzata degli originali gira lo stesso', async () => {
+        h.erroreElencoUscite = { code: '500', message: 'storage' }
+        h.albero = { '': [{ name: 'orfano.mov', id: 'o1', created_at: VECCHIO }] }
+
+        const res = await POST(chiamata())
+
+        expect(await res.json()).toMatchObject({ orfani_uscite_esito: 'elenco-fallito', orfani_rimossi: 1 })
+        expect(h.eventi.find((e) => e.campi.esito === 'orfani-uscite-elenco-fallito')?.livello).toBe('error')
+    })
+
+    it('un’uscita orfana che non esce dall’archivio si grida, e la spazzata si dichiara PARZIALE (non `ok`)', async () => {
+        h.alberoUscite = { '': [{ name: 'orfana.mp4', id: 'u1', created_at: VECCHIO }] }
+        h.removeRispostaUscite = { data: [], error: null }
+        h.ancoraNelBucket = new Set(['orfana.mp4'])
+
+        const res = await POST(chiamata())
+
+        expect(await res.json()).toMatchObject({ orfani_uscite_esito: 'parziale', orfani_uscite_rimossi: 0 })
+        expect(h.eventi.find((e) => e.campi.esito === 'orfani-uscite-non-rimossi')?.livello).toBe('error')
+    })
+
+    // ── GLI ORIGINALI RISORTI (§15 passo 4) ──────────────────────────────────────
+    // Due casi misurati il 01/10: il file è ricomparso DOPO il timbro di cancellazione. La riga lo nomina, e
+    // quindi non è un orfano: ma dichiara di averlo già tolto. Si toglie il file, mai la riga.
+
+    it('un originale RISORTO (la riga lo nomina ma è già timbrata) si toglie, e si dice a livello `warn`', async () => {
+        h.albero = {
+            '': [
+                { name: 'risorto.mov', id: 'o1', created_at: VECCHIO },
+                { name: 'vivo.mov', id: 'o2', created_at: VECCHIO },
+            ],
+        }
+        h.reclamati = ['risorto.mov', 'vivo.mov']
+        h.risorti = ['risorto.mov']
+
+        const res = await POST(chiamata())
+
+        // Esce SOLO il risorto: l'originale di un job vivo non si tocca.
+        const rimozioni = h.sequenza.filter((s) => s.tipo === 'remove')
+        expect(rimozioni).toHaveLength(1)
+        expect(rimozioni[0]).toMatchObject({ bucket: BUCKET_ORIGINALI, valore: ['risorto.mov'] })
+        expect(await res.json()).toMatchObject({
+            originali_risorti_rimossi: 1,
+            orfani_rimossi: 0,
+            orfani_esaminati: 2,
+        })
+        expect(battito()[0].campi.n_originali_risorti_rimossi).toBe(1)
+        const riga = h.eventi.find((e) => e.campi.esito === 'originali-risorti-rimossi')
+        expect(riga?.livello).toBe('warn')
+        expect(riga?.campi.n_file).toBe(1)
+        // La riga è già a posto: nessun timbro, nessun `update`.
+        expect(h.rpc.filter((r) => r.nome === 'video_retention_originale_rimosso')).toEqual([])
+        expect(h.query.filter((q) => q.operazione === 'update')).toEqual([])
+    })
+
+    it('orfani e risorti escono INSIEME, e i due conteggi restano distinti', async () => {
+        h.albero = {
+            '': [
+                { name: 'risorto.mov', id: 'o1', created_at: VECCHIO },
+                { name: 'orfano.mov', id: 'o2', created_at: VECCHIO },
+            ],
+        }
+        h.reclamati = ['risorto.mov']
+        h.risorti = ['risorto.mov']
+
+        const res = await POST(chiamata())
+
+        const rimozioni = h.sequenza.filter((s) => s.tipo === 'remove')
+        expect(rimozioni).toHaveLength(1)
+        expect([...(rimozioni[0].valore as string[])].sort()).toEqual(['orfano.mov', 'risorto.mov'])
+        expect(await res.json()).toMatchObject({ orfani_rimossi: 1, originali_risorti_rimossi: 1 })
+    })
+
+    it('un originale che la riga NOMINA e non ha timbrato è vivo: non è un risorto, e non si tocca', async () => {
+        h.albero = { '': [{ name: 'vivo.mov', id: 'o1', created_at: VECCHIO }] }
+        h.reclamati = ['vivo.mov']
+        h.risorti = []
+
+        const res = await POST(chiamata())
+
+        expect(h.sequenza.filter((s) => s.tipo === 'remove')).toEqual([])
+        expect(await res.json()).toMatchObject({ originali_risorti_rimossi: 0, orfani_rimossi: 0 })
+        expect(h.eventi.some((e) => e.campi.esito === 'originali-risorti-rimossi')).toBe(false)
+    })
+
+    it('un risorto che non esce dall’archivio non conta come tolto', async () => {
+        h.albero = { '': [{ name: 'risorto.mov', id: 'o1', created_at: VECCHIO }] }
+        h.reclamati = ['risorto.mov']
+        h.risorti = ['risorto.mov']
+        h.removeRisposta = { data: [], error: null }
+        h.ancoraNelBucket = new Set(['risorto.mov'])
+
+        const res = await POST(chiamata())
+
+        expect(await res.json()).toMatchObject({ orfani_esito: 'parziale', originali_risorti_rimossi: 0 })
+        expect(h.eventi.some((e) => e.campi.esito === 'originali-risorti-rimossi')).toBe(false)
+        expect(h.eventi.find((e) => e.campi.esito === 'orfani-non-rimossi')?.livello).toBe('error')
+    })
+
+    it('la grazia di 24 ore vale anche per un risorto: un file giovane può essere un caricamento in corso', async () => {
+        h.albero = { '': [{ name: 'risorto.mov', id: 'o1', created_at: GIOVANE }] }
+        h.reclamati = ['risorto.mov']
+        h.risorti = ['risorto.mov']
+
+        await POST(chiamata())
+
+        expect(h.sequenza.filter((s) => s.tipo === 'remove')).toEqual([])
+    })
+
+    it('anche un’uscita RISORTA (riga timbrata, file presente) si toglie, con il suo evento', async () => {
+        h.alberoUscite = { '': [{ name: 'risorta.mp4', id: 'u1', created_at: VECCHIO }] }
+        h.reclamatiUscite = ['risorta.mp4']
+        h.risorteUscite = ['risorta.mp4']
+
+        const res = await POST(chiamata())
+
+        expect(h.sequenza.filter((s) => s.tipo === 'remove')).toEqual([
+            { tipo: 'remove', valore: ['risorta.mp4'], bucket: BUCKET_USCITE },
+        ])
+        expect(await res.json()).toMatchObject({ uscite_risorte_rimosse: 1, orfani_uscite_rimossi: 0 })
+        expect(h.eventi.find((e) => e.campi.esito === 'uscite-risorte-rimosse')?.livello).toBe('warn')
+    })
+})
+
+describe('la minimizzazione dei bambini sugli intenti (§15 passo 5)', () => {
+    it('chiama `video_intenti_minimizza` con SETTE giorni e il tetto del lotto', async () => {
+        await POST(chiamata())
+
+        const chiamataRpc = h.rpc.find((r) => r.nome === 'video_intenti_minimizza')
+        expect(chiamataRpc?.argomenti).toEqual({ p_giorni: 7, p_limite: 200 })
+    })
+
+    it('gli intenti minimizzati si dicono (`info`, solo il numero) e finiscono nel battito e nella risposta', async () => {
+        h.minimizza = { ok: true, minimizzati: 6 }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        const riga = h.eventi.find((e) => e.campi.esito === 'intenti-minimizzati')
+        expect(riga?.livello).toBe('info')
+        expect(riga?.campi).toMatchObject({ n_righe: 6, giorni: 7 })
+        expect(await res.json()).toMatchObject({ intenti_minimizzati: 6 })
+        expect(battito()[0].campi.n_intenti_minimizzati).toBe(6)
+    })
+
+    it('a zero non scrive righe; il battito dice zero', async () => {
+        await POST(chiamata())
+        expect(h.eventi.some((e) => e.campi.esito === 'intenti-minimizzati')).toBe(false)
+        expect(battito()[0].campi.n_intenti_minimizzati).toBe(0)
+    })
+
+    it('gira DOPO le rimozioni e PRIMA della coda: i bambini lasciano la tabella anche se lo Storage è in difficoltà', async () => {
+        h.scaduti = [{ id: JOB_A, original_path: PATH_A }]
+        h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+        await POST(chiamata())
+
+        const passi = h.sequenza.map((s) => s.tipo)
+        const iMinimizza = passi.indexOf('rpc:video_intenti_minimizza')
+        expect(iMinimizza).toBeGreaterThan(passi.lastIndexOf('rpc:video_retention_uscita_rimossa'))
+        expect(iMinimizza).toBeGreaterThan(passi.lastIndexOf('rpc:video_retention_originale_rimosso'))
+        expect(iMinimizza).toBeLessThan(passi.indexOf('rpc:video_outbox_claim'))
+    })
+
+    it('se NON risponde è un guasto (`minimizzazione-fallito`, 500) e il battito non è `ok`: i bambini restano sugli intenti', async () => {
+        h.erroreMinimizza = { code: '57014', message: 'canceled' }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(await res.json()).toMatchObject({ ok: false, motivo: 'minimizzazione-fallito', error_code: '57014' })
+        expect(battito()[0].campi.esito).toBe('minimizzazione-fallito')
+        expect(h.eventi.find((e) => e.campi.esito === 'minimizzazione-fallito')?.livello).toBe('error')
+        // La coda e la riconciliazione sono girate lo stesso.
+        expect(h.rpc.map((r) => r.nome)).toEqual(expect.arrayContaining(['video_outbox_claim', 'video_riconciliazione']))
+    })
+
+    it('lo schema che non c’è (PGRST202) lo dice a livello `warn`, ma è comunque un guasto: non si tace', async () => {
+        h.erroreMinimizza = { code: 'PGRST202', message: 'function not found' }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(500)
+        expect(h.eventi.find((e) => e.campi.esito === 'minimizzazione-schema-assente')?.livello).toBe('warn')
+        expect(battito()[0].campi.esito).toBe('minimizzazione-fallito')
+    })
 })
 
 describe('la coda delle notifiche: svuotata con le RPC che esistono già', () => {
@@ -830,25 +1562,90 @@ describe('la coda delle notifiche: svuotata con le RPC che esistono già', () =>
         )
     })
 
-    it('un evento SENZA destinatario si grida e si rimette in attesa: MAI dichiarato inviato', async () => {
-        // È il caso che conta. Dichiararlo inviato lo cancellerebbe dalla coda senza
-        // che nessuno l'abbia consegnato; e bruciarlo subito con 25 tentativi in
-        // sedici millisecondi è la misura che ha scritto il backoff di
-        // `video_outbox_fail`.
-        // `tipo.inesistente` e non `intent.published`: un nome plausibile diventerebbe
-        // falso il giorno in cui arriva un `*.published` vero (è successo con
-        // `gallery.published`, 2b D14).
+    it('un tipo che NESSUNO ha registrato non lo prende la retention (il filtro è nel claim): resta nella coda, intatto', async () => {
+        // Prima lo prendeva, lo gridava e lo rimetteva in attesa a ogni giro, bruciando i suoi 25
+        // tentativi. Con il filtro nel claim non lo vede: `tipo.inesistente` e non `intent.published`,
+        // perché un nome plausibile diventerebbe falso il giorno in cui arriva un `*.published` vero (è
+        // successo con `gallery.published`, 2b D14). Che nessuno lo consegni non è più un grido per ogni
+        // giro: è il ritardo che la riconciliazione conta (`outbox-in-ritardo`, qui sotto) — e il lock di
+        // famiglia più in basso impedisce che il codice lo scriva senza averlo registrato.
         h.outboxClaim = { ok: true, eventi: [evento('tipo.inesistente')] }
 
         const res = await POST(chiamata())
-        expect(await res.json()).toMatchObject({ outbox_senza_destinatario: 1, outbox_inviati: 0 })
-        expect(h.rpc.map((r) => r.nome)).not.toContain('video_outbox_sent')
-        expect(h.rpc.find((r) => r.nome === 'video_outbox_fail')?.argomenti.p_error_code).toBe(
-            'DESTINATARIO_ASSENTE',
+
+        expect(await res.json()).toMatchObject({ outbox_presi: 0, outbox_inviati: 0, outbox_senza_destinatario: 0 })
+        const nomi = h.rpc.map((r) => r.nome)
+        expect(nomi).not.toContain('video_outbox_sent')
+        expect(nomi).not.toContain('video_outbox_fail')
+        expect(h.eventi.some((e) => e.campi.esito === 'outbox-senza-destinatario')).toBe(false)
+    })
+
+    it('il ritardo della coda si grida a livello `warn`: è il sintomo di un tipo che nessuno consuma', async () => {
+        h.riconciliazione = { ok: true, conclusi_senza_scadenza: 0, outbox_in_quarantena: 0, outbox_in_ritardo: 3 }
+        await POST(chiamata())
+
+        const riga = h.eventi.find((e) => e.campi.esito === 'outbox-in-ritardo')
+        expect(riga?.livello).toBe('warn')
+        expect(riga?.campi.n_righe).toBe(3)
+        expect(battito()[0].campi.n_outbox_in_ritardo).toBe(3)
+    })
+
+    it('a zero il ritardo non scrive niente', async () => {
+        h.riconciliazione = { ok: true, conclusi_senza_scadenza: 0, outbox_in_quarantena: 0, outbox_in_ritardo: 0 }
+        await POST(chiamata())
+        expect(h.eventi.some((e) => e.campi.esito === 'outbox-in-ritardo')).toBe(false)
+    })
+
+    it('la retention prende i tipi REGISTRATI tranne quelli del runner, e li passa NEL claim', async () => {
+        await POST(chiamata())
+
+        const claim = h.rpc.filter((r) => r.nome === 'video_outbox_claim')
+        expect(claim).toHaveLength(1)
+        const tipi = claim[0].argomenti.p_tipi as string[]
+        expect(Array.isArray(tipi), 'il claim non porta il filtro per tipo (`p_tipi`): è la versione a tre argomenti').toBe(true)
+        // I tre tipi che esistono dal 2026-09 ci sono: la retention li consegna.
+        expect(tipi).toEqual(expect.arrayContaining(['intent.superseded', 'intent.revoked', 'gallery.published']))
+        // E quello delle pubblicazioni NON c'è, comunque sia registrato: lo consuma solo il runner (§8.1).
+        expect(tipi).not.toContain('gallery.auto_publish')
+        // Sono ricavati dal registro, non scritti a mano: tutti e soli i registrati meno quelli del runner.
+        expect([...tipi].sort()).toEqual(
+            Object.keys(DESTINATARI)
+                .filter((t) => !TIPI_SOLO_DEL_RUNNER.includes(t))
+                .sort(),
         )
-        const grido = h.eventi.find((e) => e.campi.esito === 'outbox-senza-destinatario')
-        // Configurazione mancante = livello `error`, mai `info` (AGENTS.md, regola 4).
+        // Il tetto del database: da 1 a 20 tipi.
+        expect(tipi.length).toBeGreaterThanOrEqual(1)
+        expect(tipi.length).toBeLessThanOrEqual(20)
+    })
+
+    it('un evento delle PUBBLICAZIONI non lo prende la retention nemmeno se è il primo della coda', async () => {
+        // Il doppio fa ciò che fa il database con `p_tipi`: l'evento del runner non esce dal claim, quindi
+        // nessuna lease, nessun tentativo e nessun destinatario chiamato da qui.
+        h.outboxClaim = { ok: true, eventi: [evento('gallery.auto_publish'), evento('intent.revoked')] }
+
+        const res = await POST(chiamata())
+
+        expect(await res.json()).toMatchObject({ outbox_presi: 1, outbox_inviati: 1, outbox_saltati: 0 })
+        const chiusi = h.rpc.filter((r) => r.nome === 'video_outbox_sent')
+        expect(chiusi).toHaveLength(1)
+    })
+
+    it('un claim che IGNORA il filtro non fa consegnare nulla fuori dai tipi: si grida e non si chiude l’evento', async () => {
+        // Lo scenario che col claim filtrato non può succedere — un overload sbagliato, una versione
+        // vecchia della funzione —: l'evento è già in lease con un tentativo in più. Non si consegna e non
+        // si fallisce, ma NON si tace: senza questa riga il vecchio difetto tornerebbe invisibile.
+        h.claimIgnoraFiltro = true
+        h.outboxClaim = { ok: true, eventi: [evento('gallery.auto_publish'), evento('intent.revoked')] }
+
+        const res = await POST(chiamata())
+
+        expect(await res.json()).toMatchObject({ outbox_presi: 2, outbox_inviati: 1, outbox_saltati: 1 })
+        const grido = h.eventi.find((e) => e.campi.esito === 'outbox-evento-fuori-filtro')
         expect(grido?.livello).toBe('error')
+        expect(grido?.campi.operazione).toBe('video-retention')
+        // Un solo evento chiuso (quello dei suoi tipi); l'altro non si tocca.
+        expect(h.rpc.filter((r) => r.nome === 'video_outbox_sent')).toHaveLength(1)
+        expect(h.rpc.filter((r) => r.nome === 'video_outbox_fail')).toEqual([])
     })
 
     // ── D14 (consegna 2b): `gallery.published` ──────────────────────────────────
@@ -1039,6 +1836,22 @@ describe('la coda delle notifiche: svuotata con le RPC che esistono già', () =>
     it.each(TIPI_SCRITTI_IN_OUTBOX)(
         'il tipo `%s`, che qualcuno scrive in `video_outbox`, ha un destinatario',
         async (tipo) => {
+            // 1. IL REGISTRO LO CONOSCE — vale per OGNI tipo, anche per quelli che consuma solo il runner
+            //    (§8.1). Da quando la retention non prende più `gallery.auto_publish` questa è la forma che
+            //    il lock ha per quel tipo, e NON si aggira: resta rosso finché la sua riga non c'è in
+            //    `destinatari.ts` (T7), e torna verde da solo quando c'è. Un tipo scritto nella coda e che
+            //    nessun consumatore sa consegnare è esattamente ciò che questo lock esiste per impedire.
+            expect(
+                destinatarioDi(DESTINATARI, tipo),
+                `il tipo \`${tipo}\` viene scritto in video_outbox ma il registro dei destinatari non lo conosce: ` +
+                    `nessun consumatore saprebbe consegnarlo. Aggiungi la sua riga in ` +
+                    `src/lib/media/video/outbox/destinatari.ts.`,
+            ).toBeDefined()
+
+            // 2. Se è dei tipi della retention, la route lo consegna davvero (la prova di sempre). Quelli del
+            //    runner non passano da qui per costruzione: la loro consegna la prova la suite del runner.
+            if (TIPI_SOLO_DEL_RUNNER.includes(tipo)) return
+
             h.outboxClaim = { ok: true, eventi: [evento(tipo)] }
             h.senzaScadenzaPerIntent = 0
 
@@ -1093,18 +1906,93 @@ describe('la riconciliazione: i due numeri che devono valere zero', () => {
         expect(grido?.livello).toBe('error')
     })
 
-    it('il peso morto di `video_processing` finisce NEL BATTITO, non solo nella risposta', async () => {
-        // La risposta la legge chi lancia il giro a mano; il battito resta
-        // interrogabile in SQL per trenta giorni, ed è l'unico posto da cui si può
-        // sapere quanto pesa un buco che questa consegna dichiara e non chiude.
+    it('i sei conteggi nuovi della riconciliazione finiscono NEL BATTITO, non solo nella risposta', async () => {
+        // La risposta la legge chi lancia il giro a mano; il battito resta interrogabile in SQL per
+        // trenta giorni, ed è l'unico posto da cui si può sapere se le uscite scendono, se gli arrivi
+        // mancano e se le pubblicazioni aspettano. Il «buco dichiarato» del 18/09 (uscite senza termine) è
+        // chiuso: il suo contatore (`n_output_di_job_conclusi`, che contava le righe e non il peso morto)
+        // non c'è più, e al suo posto ci sono i numeri che dicono se la conservazione lavora.
         h.riconciliazione = {
             ok: true,
             conclusi_senza_scadenza: 0,
             outbox_in_quarantena: 0,
             output_di_job_conclusi: 12,
+            uscite_da_togliere: 4,
+            uscite_senza_scadenza: 2,
+            pubblicazioni_in_attesa: 5,
+            esiti_da_notificare: 1,
+            arrivi_mancati: 3,
+            flusso_vecchio_in_volo: 7,
+            outbox_in_ritardo: 0,
         }
         await POST(chiamata())
-        expect(battito()[0].campi.n_output_di_job_conclusi).toBe(12)
+
+        expect(battito()[0].campi).toMatchObject({
+            n_uscite_da_togliere: 4,
+            n_uscite_senza_scadenza: 2,
+            n_pubblicazioni_in_attesa: 5,
+            n_esiti_da_notificare: 1,
+            n_arrivi_mancati: 3,
+            n_flusso_vecchio_in_volo: 7,
+            n_outbox_in_ritardo: 0,
+        })
+        expect('n_output_di_job_conclusi' in battito()[0].campi).toBe(false)
+    })
+
+    it('`arrivi_mancati` NULL resta NULL nel battito: «non so» non è zero (#81)', async () => {
+        // Il conteggio legge `storage.objects`, uno schema gestito: se il proprietario della funzione non
+        // lo può leggere risponde NULL, e la rete degli arrivi non vede niente. Un `0` direbbe «nessun
+        // arrivo mancato» a chi sorveglia una rete cieca.
+        h.riconciliazione = {
+            ok: true,
+            conclusi_senza_scadenza: 0,
+            outbox_in_quarantena: 0,
+            arrivi_mancati: null,
+            uscite_da_togliere: 0,
+        }
+        await POST(chiamata())
+
+        const campi = battito()[0].campi
+        expect(campi.n_arrivi_mancati).toBeNull()
+        // Un zero VERO resta zero: i due casi non si confondono nemmeno nell'altro verso.
+        expect(campi.n_uscite_da_togliere).toBe(0)
+    })
+
+    it('se la riconciliazione NON gira i conteggi sono NULL, non zero: il battito non inventa misure', async () => {
+        h.erroreRiconciliazione = { code: '57014', message: 'canceled' }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        const campi = battito()[0].campi
+        for (const chiave of [
+            'n_uscite_da_togliere',
+            'n_uscite_senza_scadenza',
+            'n_pubblicazioni_in_attesa',
+            'n_esiti_da_notificare',
+            'n_arrivi_mancati',
+            'n_flusso_vecchio_in_volo',
+            'n_outbox_in_ritardo',
+        ]) {
+            expect(campi[chiave], chiave).toBeNull()
+        }
+        expect(h.eventi.find((e) => e.campi.esito === 'riconciliazione-fallita')?.livello).toBe('error')
+    })
+
+    it('`uscite_senza_scadenza` della riconciliazione NON è un guasto: nessuna riga di errore, nemmeno se vale più di zero', async () => {
+        // Dopo il giro deve tendere a zero, ma con più di un lotto di arretrato vale di più per un po':
+        // è il lavoro che aspetta, non un cammino che si è dimenticato di dare la scadenza.
+        h.riconciliazione = {
+            ok: true,
+            conclusi_senza_scadenza: 0,
+            outbox_in_quarantena: 0,
+            uscite_senza_scadenza: 250,
+            uscite_da_togliere: 250,
+        }
+        const res = await POST(chiamata())
+
+        expect(res.status).toBe(200)
+        expect(h.eventi.filter((e) => e.livello === 'error')).toEqual([])
+        expect(battito()[0].campi).toMatchObject({ esito: 'ok', n_uscite_senza_scadenza: 250 })
     })
 
     it('i conteggi tornano nella risposta: chi lancia il giro a mano deve poterli leggere', async () => {
@@ -1185,6 +2073,71 @@ describe('il battito, e cosa NON esce dai log', () => {
                 h.eccezioneTimbro = new Error('la RPC è esplosa')
             },
         },
+        {
+            nome: 'uscite: rimossa, trattenuta, orfana e risorta (video_processing)',
+            prepara: () => {
+                h.usciteScadute = [
+                    { id: JOB_C, output_path: USCITA_C },
+                    { id: JOB_D, output_path: USCITA_D },
+                ]
+                h.removeRispostaUscite = { data: [{ name: USCITA_D }], error: null }
+                h.ancoraNelBucket = new Set([USCITA_C])
+                h.alberoUscite = {
+                    '': [
+                        { name: 'orfana-di-un-bambino.mp4', id: 'u1', created_at: VECCHIO },
+                        { name: 'risorta-di-un-bambino.mp4', id: 'u2', created_at: VECCHIO },
+                    ],
+                }
+                h.reclamatiUscite = ['risorta-di-un-bambino.mp4']
+                h.risorteUscite = ['risorta-di-un-bambino.mp4']
+            },
+        },
+        {
+            nome: 'originale risorto (la riga lo dichiara già tolto)',
+            prepara: () => {
+                h.albero = { '': [{ name: 'risorto-di-un-bambino.mov', id: 'o1', created_at: VECCHIO }] }
+                h.reclamati = ['risorto-di-un-bambino.mov']
+                h.risorti = ['risorto-di-un-bambino.mov']
+            },
+        },
+        {
+            nome: 'eccezione sul timbro di un’uscita (il `catch` finale)',
+            prepara: () => {
+                h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+                h.eccezioneTimbroUscita = new Error('la RPC delle uscite è esplosa')
+            },
+        },
+        // I quattro rami che dicono «il file è uscito e la riga no» — misurato il 2026-10-02 mutando la route:
+        // un percorso infilato nel `msg` di questi log lasciava tutte le prove verdi, perché nessuna le faceva
+        // passare di qui. Sono i log che portano `job_id` e stanno accanto al percorso nel codice.
+        {
+            nome: 'timbro di un originale che non risponde (`timbro-fallito`)',
+            prepara: () => {
+                h.scaduti = [{ id: JOB_A, original_path: PATH_A }]
+                h.erroreTimbro = { code: '57014', message: 'canceled' }
+            },
+        },
+        {
+            nome: 'timbro di un originale rifiutato (`timbro-rifiutato`)',
+            prepara: () => {
+                h.scaduti = [{ id: JOB_A, original_path: PATH_A }]
+                h.timbro = { ok: false, code: 'NON_ANCORA_SCADUTO' }
+            },
+        },
+        {
+            nome: 'timbro di un’uscita che non risponde (`uscita-timbro-fallito`)',
+            prepara: () => {
+                h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+                h.erroreTimbroUscita = { code: '57014', message: 'canceled' }
+            },
+        },
+        {
+            nome: 'timbro di un’uscita rifiutato (`uscita-timbro-rifiutato`)',
+            prepara: () => {
+                h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+                h.timbroUscita = { ok: false, code: 'NON_ANCORA_SCADUTO' }
+            },
+        },
     ]
 
     it.each(RAMI)(
@@ -1206,6 +2159,110 @@ describe('il battito, e cosa NON esce dai log', () => {
             expect(testo).not.toContain(PATH_A)
             expect(testo).not.toContain('source.mov')
             expect(testo).not.toContain('orfano-di-un-bambino')
+            // Lo stesso per le USCITE: il percorso dentro `video_processing` è la chiave con cui si firma il
+            // video convertito di un bambino, e `<chi carica>/<job>/<tentativo>.mp4` non esce mai.
+            expect(testo).not.toContain(USCITA_C)
+            expect(testo).not.toContain(USCITA_D)
+            expect(testo).not.toContain('.mp4')
+            expect(testo).not.toContain('orfana-di-un-bambino')
+            expect(testo).not.toContain('risorta-di-un-bambino')
+            expect(testo).not.toContain('risorto-di-un-bambino')
         },
     )
+})
+
+describe('il punto d’aggancio della scansione degli esiti di conversione (§8.5, T7)', () => {
+    // La scansione è dell'altra consegna della PR (`src/lib/media/video/esiti.ts`): qui c'è solo il POSTO in
+    // cui si collega, dichiarato in `scansionaEsitiConversione`. Queste prove fissano il valore «non
+    // collegata» apposta: chi collega la libreria DEVE cambiarle, e cambiandole prova il collegamento invece
+    // di dimenticarsene — un passo che tutti credono attivo e non lo è mai stato è esattamente ciò che la
+    // spec vuole evitare per gli esiti (un video fallito che nessuno notifica).
+
+    it('la risposta e il battito dichiarano `non-collegata`: nessuno può credere che gli esiti si notifichino', async () => {
+        const res = await POST(chiamata())
+
+        expect(await res.json()).toMatchObject({ ok: true, esiti_esito: 'non-collegata', esiti_notificati: 0 })
+        // Nel battito un booleano: la redazione dei log è a lista bianca e una stringa sotto una chiave
+        // fuori elenco uscirebbe come «[redatto:str/13]».
+        expect(battito()[0].campi).toMatchObject({ esiti_collegata: false, n_esiti_notificati: 0 })
+        expect('esiti_esito' in battito()[0].campi).toBe(false)
+    })
+
+    it('finché non è collegata non fa NIENTE: nessuna RPC e nessuna query oltre a quelle degli altri passi', async () => {
+        await POST(chiamata())
+
+        // Le RPC del giro, e basta: la scansione non ne aggiunge una (marcare un esito è una RPC, e farlo
+        // dal punto d'aggancio vuoto sarebbe implementarla senza la libreria).
+        expect(h.rpc.map((r) => r.nome)).toEqual([
+            'video_galleria_flusso_vecchio_revoca',
+            'video_intent_scadi_non_pubblicato',
+            'video_retention_scadenze',
+            'video_intenti_minimizza',
+            'video_outbox_claim',
+            'video_riconciliazione',
+        ])
+        // E nessun log suo: a ogni giro, ogni dieci minuti, sarebbe rumore.
+        expect(h.eventi.some((e) => String(e.campi.esito).startsWith('esiti-'))).toBe(false)
+    })
+
+    it('`esiti_da_notificare` della riconciliazione è il segnale che nessuno li notifica: sta nel battito', async () => {
+        h.riconciliazione = { ok: true, conclusi_senza_scadenza: 0, outbox_in_quarantena: 0, esiti_da_notificare: 2 }
+        await POST(chiamata())
+
+        expect(battito()[0].campi).toMatchObject({ esiti_collegata: false, n_esiti_da_notificare: 2 })
+    })
+})
+
+describe('il giro, in ordine (testata del file C, §15)', () => {
+    it('flusso vecchio → non pubblicati → scadenze → originali → uscite → orfani → minimizzazione → coda → riconciliazione', async () => {
+        h.scaduti = [{ id: JOB_A, original_path: PATH_A }]
+        h.usciteScadute = [{ id: JOB_C, output_path: USCITA_C }]
+        h.albero = { '': [{ name: 'orfano.mov', id: 'o1', created_at: VECCHIO }] }
+        h.alberoUscite = { '': [{ name: 'orfana.mp4', id: 'u1', created_at: VECCHIO }] }
+
+        await POST(chiamata())
+
+        // Ogni passo con la sua firma, e con il magazzino quando c'è: l'ordine DEI PASSI è la cosa da provare.
+        const passi = h.sequenza.map((s) => (s.bucket ? `${s.tipo}:${s.bucket}` : s.tipo))
+        expect(passi).toEqual([
+            'rpc:video_galleria_flusso_vecchio_revoca',
+            'rpc:video_intent_scadi_non_pubblicato',
+            'rpc:video_retention_scadenze',
+            'leggi-scaduti',
+            `remove:${BUCKET_ORIGINALI}`,
+            'rpc:video_retention_originale_rimosso',
+            'leggi-uscite-scadute',
+            `remove:${BUCKET_USCITE}`,
+            'rpc:video_retention_uscita_rimossa',
+            `remove:${BUCKET_ORIGINALI}`,
+            `remove:${BUCKET_USCITE}`,
+            'rpc:video_intenti_minimizza',
+            'rpc:video_outbox_claim',
+            'rpc:video_riconciliazione',
+        ])
+    })
+
+    it('un giro sano risponde 200 con TUTTI i contatori (nuovi e vecchi), e il battito è `ok`', async () => {
+        const res = await POST(chiamata())
+        const corpo = await res.json()
+
+        expect(res.status).toBe(200)
+        expect(corpo).toMatchObject({
+            ok: true,
+            giorni_ttl: 7,
+            giorni_convertito_non_pubblicato: 7,
+            flusso_vecchio_revocati: 0,
+            non_pubblicati_scaduti: 0,
+            uscite_dichiarate: 0,
+            originali_scaduti: 0,
+            uscite_scadute: 0,
+            uscite_rimosse: 0,
+            uscite_trattenute: 0,
+            orfani_uscite_esito: 'ok',
+            intenti_minimizzati: 0,
+            outbox_esito: 'ok',
+            esiti_esito: 'non-collegata',
+        })
+        expect(battito()[0].campi.esito).toBe('ok')
+    })
 })

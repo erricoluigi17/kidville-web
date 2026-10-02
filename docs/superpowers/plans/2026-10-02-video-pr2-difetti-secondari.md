@@ -102,3 +102,50 @@
 | 86 | T4 | `gallery/ripristina/route.ts`, `notifiche/tipi.ts`, `etichette.json` | Restano testi «Nuove foto in galleria» (commento e etichetta del tipo). | **T7** |
 | 87 | T4 | `src/lib/gallery/video-galleria-flusso.ts` | Il client web dei video chiama ancora `POST /api/gallery` con `video_intent_id`: nel branch intermedio un video dal web prende 409. | **T11** (atteso dentro la PR; nessun rilascio parziale) |
 | 88 | T4 | `e2e/impaginazione-media.spec.ts`, `e2e/lib/sonda-impaginazione.ts` | Commenti: «la didascalia di una foto è il nome del file» (vero solo per le righe esistenti). | **T15/T16** |
+
+## Ondata C (critici: T5 g1, T6 g1, T13 g1, T14 g1, T2d g1 — zero bloccanti)
+
+| # | Compito | File | Difetto | Destino |
+|---|---|---|---|---|
+| 89 | T5 | `src/app/api/video-uploads/elenco.ts` | `da-ricaricare` vale per ogni intento del flusso vecchio non pubblicato (non solo `cancelled`): dopo il rilascio nessuno li pubblica più. Un intento vecchio annullato a mano mostra «va ricaricato» per 7 giorni. | ✅ accettato (spec §6.1) |
+| 90 | T5 | `elenco.ts` | `riprovaPossibile` falso con `NESSUN_DESTINATARIO` (la RPC lo permetterebbe; riprovare darebbe lo stesso rifiuto). | ✅ accettato (spec §6.1) |
+| 91 | T5 | `route.ts`, `[id]/route.ts` | Chiavi di log fuori dalla lista bianca di `redact` (il trasporto sta sotto `tipo`; `motivo`, `runner`, `ambito` escono redatti): solo diagnostica persa. | annotato |
+| 92 | T5 | `src/lib/media/video/token-rinnovo.ts` | `ORE_VALIDITA_TOKEN_RINNOVO = 48` non è legata da un lock a `ORE_UPLOAD_ABBANDONATO` della retention. | annotato |
+| 93 | T5 | `cancello.ts`, elenco | Su un DB senza il file A le letture prendono 42703 → 500 invece del 503 pulito. | **T16** (DB della CI migrato prima dell'E2E, produzione prima del deploy) |
+| 94 | T5 | `isolamento-sede-coverage.test.ts` | `leggiIntento` spostata in `cancello.ts` esce dal perimetro del lock (che guarda solo i `route.ts`); coperta dai test unitari. | annotato |
+| 95 | T5 | `route.ts` | GET con `canale=news` → 400 (nessun consumatore). | annotato |
+| 96 | T5 | `elenco.ts` | Lacuna: un intento automatico con il job `failed`/`rejected` resta `confirmed` per sempre; gli intenti scaduti dalla purga si leggono `annullato`. | **T11** (scheda: «non pubblicato» e azione «togli» che annulla l'intento) |
+| 97 | T5 | `contratto.ts` | Nome di classe 1..255 senza trim contro 1..100 dopo `btrim` nella RPC (caso limite → 500). | annotato |
+| 98 | T5 | `[id]/firma/route.ts` | `/firma` non controlla se l'originale esiste già (la rete lo ripesca in 5'). | annotato |
+| 99 | T5 | `risposte.ts` | Il 429 condiviso dice «Troppi caricamenti» anche per elenco e firma (il client traduce dal codice). | annotato |
+| 100 | T5 | `route.ts`, rinnovo | Da provare dal vivo: `.or(...)` di PostgREST, `createSignedUploadUrl(..., {upsert:false})` + seconda PUT = 409, risposta reale di `video_rinnovo_usa`. | **T15/T16** |
+| 101 | T6 | `runner/esegui.ts` | Un calcio su un job in attesa di ritentativo (`RETRY_NOT_DUE` delegato dal claim) dà `presa-rifiutata` con log `error`: falso allarme raro. | **T8** (trattarlo come «niente da fare adesso») |
+| 102 | T6 | `runner/esegui.ts` | Il «testimone» (`passaIlTestimone`): un'invocazione che esce `in-corso` rifà il ventaglio, così la sorveglianza non perde la lease di conversione nei passaggi di mano. Oltre la lettera di §9, motivato. | ✅ accettato (spec §9 aggiornata) |
+| 103 | T6 | `runner/esegui.ts` | Dopo `pronto`/`fallito` non si rifà il ventaglio: un job fermo per `capacita-piena` aspetta il tick (≤ 5'). | annotato |
+| 104 | T6 | `runner/esegui.ts` | L'eccezione grezza dell'SDK entra nel messaggio di log senza passare dalla sanificazione (oggi senza URL né JWT). | **T8** (passarla da `codaDiagnostica` o loggare solo nome e codice) |
+| 105 | T6 | `runner/esegui.ts` | Durante le pubblicazioni del giro nessuno batte per il job sorvegliato. | **T7** (rispettare `restanteMs`, restare brevi) |
+| 106 | T6 | `runner/battito.ts` | Margine della sorveglianza (270 s) superabile con una lettura del marcatore molto lenta → finestra rara di `OUTPUT_CONFLICT`. | **T16** (osservare) |
+| 107 | T6 | `src/app/api/video/runner/route.ts` | Il motivo di un corpo respinto non va in nessun log (solo nella risposta 400). | annotato |
+| 108 | T6 | `runner/esegui.ts` | `NIENTE_DA_FARE` diventa `coda-vuota` anche per un calcio su un job concluso. | annotato |
+| 109 | T6 | `docs/env.md` | `VIDEO_CONVERSIONI_PARALLELE` non documentata. | **T8** |
+| 110 | T6 | migrazione `20260918120000` | Il COMMENT di `video_runner_tick_http` motiva la cadenza con un conflitto ora impossibile (migrazione già applicata). | PRD (**T16**) |
+| 111 | T13 | `src/lib/gdpr/esegui.ts` | Commento della voce `video_build` («a differenza di `video_processing`, lacuna aperta») ormai falso. | **T16** |
+| 112 | T13 | `src/lib/gdpr/esegui.ts` | Finestra residua di `video_processing`: con un oblio a conversione in corso l'uscita orfana esce dopo 24 h + un giro. | **T16** (dichiararlo nella voce del registro e nel PRD) |
+| 113 | T13 | `src/lib/gdpr/esegui.ts` | `PGRST202` (funzione assente) vale «niente da obliare» senza log. | **T16** (log `warn` in quel ramo) |
+| 114 | T13 | `retention-video/route.ts` | Un risorto che non esce dal bucket lascia solo un log `error` e un 200. | annotato |
+| 115 | T13 | `retention-video/route.ts` | Col filtro nel claim, un tipo di evento non registrato non lo prende nessuno: resta un `warn` aggregato `outbox-in-ritardo` invece dell'`error` per evento (configurazione mancante = error). | **T7** (log `error` `outbox-senza-destinatario` con tipo e conteggio quando esistono eventi di tipi non registrati) |
+| 116 | T13 | `retention-video/route.ts` | Niente `maxDuration` e un giro più lungo di prima. | **T16** (misurare `ms` nei primi battiti; valutare `maxDuration = 300`) |
+| 117 | T13 | `retention-video/route.ts` | Il battito ha 35 chiavi; `redact` ne tiene 40 per oggetto e raccoglie le altre in silenzio. | **T7** (non superare il tetto) |
+| 118 | T13 | `retention-video/route.ts` | Deviazioni: un originale trattenuto non interrompe più il giro (il 500 arriva in fondo); le uscite datate nel giro escono al giro dopo; evento `uscite-risorte-rimosse`. | ✅ accettato (spec §15); PRD (**T16**) |
+| 119 | T13 | `outbox/consumo.ts`, file C, `bucket-storage-dichiarati.test.ts` | Commenti stantii («quattro» registrati, retention sul claim a tre argomenti, «LACUNA APERTA»). | **T16** |
+| 120 | T13 | 9 test GDPR | Stub `rpc` aggiunti ai client finti (fuori elenco, necessari). | annotato |
+| 121 | T13 | `retention-video/route.ts` | Contratto per T7: collegare `scansionaEsitiConversione()` cambiando di proposito i tre test del punto d'aggancio; il runner usa `TIPI_SOLO_DEL_RUNNER`. Da provare dal vivo i claim a 3 e 4 argomenti (niente PGRST203). | **T7** + **T16** |
+| 122 | T14 | `src/lib/native/aggiornamento-app.ts` | «Personale» = chi apre /teacher (educator, admin, coordinator, segreteria): la cuoca è esclusa. | decisione all'accensione (micro-PR dopo la 1.2) |
+| 123 | T14 | `messages/*/shared.json` | Il testo riusato descrive la novità della 1.1, non quella della 1.2 (invio in background). | **titolare**, prima della micro-PR di accensione |
+| 124 | T14 | `AvvisoAggiornamentoApp.tsx` | La decisione vale per la sessione: chi entra dalla pagina d'accesso vede il pop-up solo al riavvio. | decisione all'accensione |
+| 125 | T14 | `avvisi-settimanali.ts` | Con la minima del personale accesa tace anche l'avviso settimanale «notifiche disattivate» (coerente, ma il docblock non lo dice). | all'accensione |
+| 126 | T14 | `__tests__/components/AvvisoAggiornamentoApp.test.tsx` | Test vecchi (#174) con una corsa latente (`messaggiLog()` subito dopo `findByRole`). | **T16** (applicare `attendiMostrato` anche ai vecchi) |
+| 127 | T2d | file B | Il primo evento di un job senza riferimento registra l'eTag senza confrontarlo: una sostituzione prima del primo evento diventa il riferimento. | annotato (miglioria: confrontare la dimensione con `source_size`) |
+| 128 | T2d | `runner/esegui.ts` | Commento di `LIMITE_ARRIVI_PER_GIRO` («dal più vecchio») stantio dopo #71; `non_risolti` non va nel battito. | **T8** |
+| 129 | T2d | spec, PRD | §5.4/§16 non dicono: eTag registrato al primo evento (#68), recupero dal più recente (#71), evento `video-originale-riferimento`; per la PR 3: con `ORIGINALE_SOSTITUITO` il rinnovo risponde `arrivato`. | ✅ spec aggiornata; PRD (**T16**) |
+| 130 | T2d | `__tests__/lib/video-arrivo-originale.test.ts` | `senzaCommentiSql` duplicata; prove ancorate alla prosa della testata; ordine dei lock provato sul testo. | annotato |

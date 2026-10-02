@@ -183,8 +183,13 @@ Più un indice parziale `(status, updated_at) WHERE status IN ('failed','rejecte
 - **Interruttore d'emergenza:** il trigger non si può togliere né disabilitare (`postgres` non è proprietario di
   `storage.objects`): lo si neutralizza riscrivendo il **corpo** della funzione (`CREATE OR REPLACE`). La spec del
   file lo dice in testa, con l'istruzione pronta.
-- `video_arrivi_recupera(p_limite)`: job in `awaiting_upload` il cui oggetto esiste. Applica la stessa logica (corpo
-  interno condiviso) e logga `arrivo-recuperato-dal-giro` come `warn` (vuol dire che il trigger non l'ha visto).
+- `video_arrivi_recupera(p_limite)`: job in `awaiting_upload` il cui oggetto esiste, **dal più recente** (i candidati
+  sempre irrisolti non bloccano i nuovi). Applica la stessa logica (corpo interno condiviso) e logga
+  `video-arrivo-recuperato-dal-giro` come `warn` (vuol dire che il trigger non l'ha visto).
+- Un job già in coda **senza** `sorgente_etag` (accodato dal PATCH prima del trigger) **registra** l'eTag al primo
+  evento (`video-originale-riferimento`, info), così una sostituzione successiva si vede. Gli eventi SQL hanno il
+  prefisso `video-`. Per la PR 3: con `ORIGINALE_SOSTITUITO` il rinnovo risponde `arrivato` (il file c'è), e l'esito
+  all'insegnante arriva dalla scansione degli esiti.
 - `video_job_uploaded` chiamata due volte (trigger + `PATCH caricato` del web) deve restare **idempotente**:
   verificarlo, e provarlo in PGlite.
 
@@ -233,8 +238,9 @@ regione `dub1` vale già per `src/app/api/video-uploads/**` (`vercel.json`).
 
 `{intentId, jobId, fase, codice, creatoIl, aggiornatoIl, trasporto, byte, durataS, nBambini, broadcast, mediaId,
 pubblicazioneAutomatica, riprovaPossibile}` con `fase ∈ 'da-caricare' | 'in-coda' | 'in-conversione' | 'in-riprova' |
-'pronto' | 'pubblicato' | 'non-pubblicato' | 'fallito' | 'annullato' | 'da-ricaricare'` (`da-ricaricare` = intento
-del flusso vecchio revocato: «Questo video va ricaricato»). `codice` è un codice **mostrabile** del contratto. Per un
+'pronto' | 'pubblicato' | 'non-pubblicato' | 'fallito' | 'annullato' | 'da-ricaricare'` (`da-ricaricare` = **ogni**
+intento galleria del flusso vecchio non pubblicato: dopo il rilascio nessuno lo pubblica più. «Questo video va
+ricaricato»). `riprovaPossibile` è falso quando l'errore è `NESSUN_DESTINATARIO` (riprovare darebbe lo stesso rifiuto). `codice` è un codice **mostrabile** del contratto. Per un
 job `failed` con `attempt > 1` (dunque ritentato, dunque un guasto **nostro**) il codice mostrato è sempre quello del
 guasto nostro esaurito, qualunque fosse l'ultimo codice tecnico (secondario #37).
 
@@ -329,6 +335,10 @@ parte due volte.
 - **Sorveglianza esclusiva:** lease di **270 s** (`TETTO_INVOCAZIONE_MS` 240 s più margine). Chi non la ottiene
   risponde `gia-sorvegliato` (esito tranquillo). Toglie il falso `OUTPUT_CONFLICT` di due invocazioni che riagganciano
   lo stesso Sandbox (`riprendiUnJobMio`). Il `lease_owner` stabile (`VIDEO_RUNNER_OWNER_ID`) resta.
+- **Testimone** (T6, accettato): un'invocazione che esce `in-corso` rilascia la sorveglianza e rifà il ventaglio, così
+  il job passa subito a un'altra invocazione invece di aspettare il tick (con i calci la fase non coincide più con il
+  cron, e circa un passaggio su cinque troverebbe la lease di conversione scaduta). Nessuna amplificazione: il ventaglio
+  calcia solo job non sorvegliati e solo fino ai posti liberi.
 - **Tetto parallelo:** `VIDEO_CONVERSIONI_PARALLELE`, predefinito **3** (picco misurato: 8 video in 15', p90 2). Si
   passa a `video_job_prossimo` / `video_job_prendi`; il limite reale dei Sandbox concorrenti si misura in T16.
 - **Secondario #33:** un'eccezione dell'SDK del Sandbox dentro `esegui`/`avvia` si classifica `infra-transitoria` e
@@ -514,7 +524,9 @@ perché scende.
 ## 15. Purga e GDPR (T13)
 
 Passi aggiunti a `src/app/api/gdpr/retention-video/route.ts`; la regola «prima il file, poi la riga» resta, per riga;
-righe trattenute ⇒ 500.
+righe trattenute ⇒ 500 — **in fondo al giro** (T13, accettato): un file che lo Storage non rilascia non deve fermare,
+giro dopo giro, la minimizzazione degli identificativi dei minori e la coda. Le uscite datate nel giro escono al giro
+dopo (~10').
 
 1. `video_galleria_flusso_vecchio_revoca` (§5.5) — conteggio nel battito.
 2. `video_intent_scadi_non_pubblicato(7)`.

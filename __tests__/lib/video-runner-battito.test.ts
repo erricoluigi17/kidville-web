@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -13,6 +13,7 @@ import {
   TETTO_SANDBOX_MS,
   sorvegliaConversione,
 } from '@/lib/media/video/runner/battito'
+import { SECONDI_SORVEGLIANZA } from '@/lib/media/video/runner/esegui'
 import type { ComandoInCorso, EsitoBattito, EsitoComando } from '@/lib/media/video/runner/porte'
 
 /**
@@ -132,6 +133,43 @@ describe('runner video · il ritmo si ricava dal tetto della lease, non a occhio
     expect(300_000 - TETTO_INVOCAZIONE_MS).toBeGreaterThanOrEqual(30_000)
     // E deve comunque contenere qualche battito, altrimenti sorvegliare non serve.
     expect(TETTO_INVOCAZIONE_MS).toBeGreaterThan(PERIODO_BATTITO_MS * 2)
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * La lease di SORVEGLIANZA (PR 2): una invocazione per job
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('runner video · la lease di sorveglianza si ricava dal tetto dell’invocazione, non a occhio', () => {
+  it('dura 270 secondi: i 240 del tetto dell’invocazione più 30 di margine (spec §9)', () => {
+    expect(SECONDI_SORVEGLIANZA).toBe(270)
+    expect(SECONDI_SORVEGLIANZA * 1000 - TETTO_INVOCAZIONE_MS).toBe(30_000)
+  })
+
+  it('sopravvive a TUTTA la sorveglianza di un’invocazione, che non va oltre il tetto', () => {
+    // Se la lease scadesse prima della fine della sorveglianza, una seconda invocazione potrebbe prenderla mentre
+    // la prima sta ancora leggendo il marcatore: il falso `OUTPUT_CONFLICT` che la sorveglianza esclusiva toglie.
+    expect(SECONDI_SORVEGLIANZA * 1000).toBeGreaterThan(TETTO_INVOCAZIONE_MS)
+  })
+
+  it('non è più lunga di una funzione Vercel (300 s): se l’invocazione muore, la lease scade quando sarebbe morta', () => {
+    // Oltre il `maxDuration` della route non ha senso: un'invocazione che non rilascia è morta al più dopo 300 s, e
+    // una lease più lunga tratterrebbe il job per niente (chi viene dopo troverebbe `gia-sorvegliato`).
+    expect(SECONDI_SORVEGLIANZA).toBeLessThanOrEqual(300)
+  })
+
+  it('sta dentro il campo che `video_job_sorveglianza_prendi` accetta (1–900), letto dalla migrazione', () => {
+    const cartella = join(process.cwd(), 'supabase/migrations')
+    const nome = readdirSync(cartella).find((n) => n.endsWith('_video_pubblicazione_automatica.sql'))
+    expect(nome, 'la migrazione della pubblicazione automatica non si trova (si cerca per suffisso)').toBeDefined()
+    const sql = readFileSync(join(cartella, nome as string), 'utf8')
+    const inizio = sql.indexOf('CREATE OR REPLACE FUNCTION public.video_job_sorveglianza_prendi(')
+    expect(inizio).toBeGreaterThan(0)
+    const corpo = sql.slice(inizio, sql.indexOf('$$;', inizio))
+    // Un valore fuori campo risponderebbe `BAD_INPUT` a OGNI presa: nessuna sorveglianza, nessuna conversione.
+    expect(corpo).toMatch(/p_secondi < 1\s+OR p_secondi > 900/)
+    expect(SECONDI_SORVEGLIANZA).toBeGreaterThanOrEqual(1)
+    expect(SECONDI_SORVEGLIANZA).toBeLessThanOrEqual(900)
   })
 })
 

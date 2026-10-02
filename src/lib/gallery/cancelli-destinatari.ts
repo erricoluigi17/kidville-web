@@ -65,11 +65,13 @@ import { assertTagStudentsInScope, type OperazioneGalleria } from './tag-scope'
 /**
  * La route che sta chiedendo il cancello: finisce nei log, mai nella risposta.
  *
- * `OperazioneGalleria` (`./tag-scope`) elenca solo le due route della galleria. Il
- * valore serve soltanto a etichettare le righe di log: chi aggiunge una strada
- * nuova la aggiunge qui.
+ * È la stessa unione di `./tag-scope` (`OperazioneGalleria`): le strade che accettano dei
+ * tag sono tre — `gallery:POST`, `gallery:PATCH` e `video-uploads:POST` — e il valore serve
+ * soltanto a etichettare le righe di log. Chi aggiunge una strada nuova la aggiunge LÀ:
+ * finché stava anche qui, il tipo di `assertTagStudentsInScope` restava più stretto e ogni
+ * chiamata richiedeva un cast.
  */
-export type OperazioneCancelli = OperazioneGalleria | 'video-uploads:POST'
+export type OperazioneCancelli = OperazioneGalleria
 
 /** Quale dei quattro cancelli ha rifiutato: serve a chi logga o prova, mai al client. */
 export type CancelloGalleria =
@@ -186,15 +188,7 @@ export async function cancelliSedeGalleria(
   const tagAlunni = [...new Set(input.tagAlunni ?? [])]
   const sedi = [input.sedeId]
 
-  // `assertTagStudentsInScope` tipizza l'operazione sulle due route della galleria; il
-  // valore serve solo al log, quindi il restringimento è sicuro. Quando quel tipo si
-  // potrà allargare, il cast sparisce.
-  const fuoriSede = await assertTagStudentsInScope(
-    supabase,
-    tagAlunni,
-    sedi,
-    input.operazione as OperazioneGalleria,
-  )
+  const fuoriSede = await assertTagStudentsInScope(supabase, tagAlunni, sedi, input.operazione)
   if (fuoriSede) return { ok: false, cancello: 'tag-in-sede', response: fuoriSede }
 
   const senza = await alunniSenzaConsenso(supabase, tagAlunni, sedi)

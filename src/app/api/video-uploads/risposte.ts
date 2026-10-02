@@ -334,6 +334,26 @@ export function rispostaEsitoRpc(
 }
 
 /**
+ * IL 429 DELLE PORTE VIDEO, in un posto solo.
+ *
+ * La POST di apertura lo scriveva a mano; con l'elenco, la firma e il rinnovo le porte che
+ * possono dire «troppe richieste» sono quattro, e una frase scritta quattro volte diverge alla
+ * prima modifica. Il `codice` è `TROPPE_RICHIESTE`, quello che il client sa già tradurre
+ * (`CODICI_ERRORE`, dichiarato nei due cataloghi), e `Retry-After` dice quanto aspettare: se il
+ * tetto non l'ha saputo dire (un valore non finito) si ripiega su un minuto, mai su `NaN`.
+ *
+ * Vale anche per la porta SENZA sessione (il rinnovo): il 429 si applica a ogni richiesta bene
+ * formata — esista il token o no — quindi non dice nulla su ciò che il token apre.
+ */
+export function rispostaTroppeRichieste(retryAfterMs: number): NextResponse {
+  const secondi = Number.isFinite(retryAfterMs) ? Math.max(1, Math.ceil(retryAfterMs / 1000)) : 60
+  return NextResponse.json(
+    { error: 'Troppi caricamenti. Riprova tra qualche minuto.', codice: 'TROPPE_RICHIESTE' },
+    { status: 429, headers: { 'Retry-After': String(secondi) } },
+  )
+}
+
+/**
  * I DUE CODICI POSTGREST CHE DICONO «QUI LA PIPELINE NON C'È».
  *
  * Le due migrazioni video sono dichiarate `IN_CODA`: sul DB E2E della CI — e in

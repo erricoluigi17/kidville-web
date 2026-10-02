@@ -251,7 +251,22 @@ function righeCodaDiario(rientro: string): string[] {
  * Il caricamento è un `PUT` con `-T`, che *trasmette* il file invece di caricarlo
  * in memoria: è la forma che regge un'uscita da un gigabyte.
  */
-export function scriptConversione(p: { conWatermark: boolean; videoIndex: number; audioIndex: number | null; sourceFps: number }): string {
+export function scriptConversione(p: {
+  conWatermark: boolean
+  videoIndex: number
+  audioIndex: number | null
+  sourceFps: number
+  /**
+   * Durata, larghezza e altezza dell'INGRESSO, dal suo probe: arrivano tali e quali a
+   * `videoTemporalProgram`, che ne ricava il timeout PROPORZIONALE della sonda temporale
+   * (`timeoutSondaTemporaleMs`). Facoltativi per chi non ha un probe (le prove di shell), ma chi ce
+   * l'ha li passa SEMPRE: senza, la sonda parte col tetto di 900 s invece dei 120-250 s che servono a
+   * un Full HD di tre minuti (secondario #9 della PR 2, annotato dal critico di T9 e chiuso in `esegui.ts`).
+   */
+  durationSeconds?: number
+  width?: number
+  height?: number
+}): string {
   const righe = [
     'set -u',
     `mkdir -p ${CARTELLA_LAVORO}`,

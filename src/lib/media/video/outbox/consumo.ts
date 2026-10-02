@@ -9,6 +9,39 @@ import type { ContestoConsegna, EsitoConsegna, EsitoOutbox, EventoOutbox, Regist
 /** Per quanto si tiene la lease degli eventi presi, se il chiamante non dice altro. */
 export const LEASE_PREDEFINITA_SECONDI = 120
 
+/**
+ * I TIPI CHE CONSUMA SOLO IL RUNNER, e che la retention non prende mai (decisione dell'orchestratore,
+ * spec §8.1, 02/10/2026).
+ *
+ * `gallery.auto_publish` accoda una PUBBLICAZIONE: copia di un video in galleria, RPC, notifiche. Non è
+ * una ricevuta da millisecondi come gli altri tipi: se la retention la consegnasse, una raffica di
+ * pubblicazioni sforerebbe i 25 eventi e i 120 secondi di lease con cui gira (lavoro doppio e
+ * `LEASE_MISMATCH`). La consegna è del runner, che gira subito dopo ogni `ready` e a ogni giro; se il
+ * runner è fermo non si converte niente, quindi una seconda rete sulle sole pubblicazioni non
+ * aggiungerebbe nulla.
+ *
+ * È l'UNICO posto in cui si dice quali tipi sono del runner: la retention ricava i suoi da qui e dal
+ * registro, senza elencarli a mano.
+ */
+export const TIPI_SOLO_DEL_RUNNER: readonly string[] = Object.freeze(['gallery.auto_publish'])
+
+/**
+ * I tipi che la retention consuma: TUTTI quelli registrati, meno quelli che consuma solo il runner.
+ *
+ * Si ricava dal registro e non si scrive a mano, così un tipo nuovo registrato in `destinatari.ts` entra
+ * da solo fra quelli della retention e nessuno deve ricordarsi di aggiungerlo a un secondo elenco.
+ * Un tipo NON registrato non è qui, quindi con il filtro nel claim la retention non lo prende più
+ * (prima lo prendeva e lo gridava a ogni giro): lo vede `video_riconciliazione.outbox_in_ritardo`, e
+ * il lock di famiglia di `__tests__/api/gdpr-retention-video.test.ts` impedisce che qualcuno lo scriva
+ * nella coda senza averlo registrato.
+ *
+ * ⚠️ Il database accetta da 1 a 20 tipi (`BAD_INPUT` oltre): i registrati oggi sono quattro, e un test
+ * pretende che restino sotto il tetto.
+ */
+export function tipiDellaRetention(registro: RegistroDestinatari = DESTINATARI): string[] {
+  return Object.keys(registro).filter((tipo) => !TIPI_SOLO_DEL_RUNNER.includes(tipo))
+}
+
 /** Il conto di un giro che non è partito: il punto di partenza di ogni esito, e il valore iniziale di chi lo legge in un `finally`. */
 export const OUTBOX_NON_ESEGUITO: EsitoOutbox = Object.freeze({
   esito: 'non-eseguito',
@@ -32,18 +65,17 @@ export type OpzioniConsumoOutbox = {
    */
   limite: number
   /**
-   * Solo questi tipi. Assente = tutti, come fa la retention.
+   * Solo questi tipi. Assente = tutti.
    *
-   * ⚠️ IL FILTRO È APPLICATO DOPO IL CLAIM, e va saputo. `video_outbox_claim` non conosce i
-   * tipi: prende i `limite` eventi prendibili più vecchi, di qualunque tipo. Quelli fuori dal
-   * filtro restano nelle mani di chi li ha presi — lease di `leaseSecondi` e `attempts` + 1
-   * — senza essere né consegnati né falliti (non si chiamano `video_outbox_sent` né
-   * `video_outbox_fail`, e nessun destinatario li vede). Tornano prendibili alla scadenza
-   * della lease: non si perdono, ma ogni giro filtrato ne consuma un tentativo e può
-   * occupare il posto di un evento che gli compete. Un elenco vuoto non prende niente.
+   * IL FILTRO STA NEL CLAIM (secondario #1 della PR 1, chiuso dal file C della PR 2). Con un elenco si
+   * chiama l'OVERLOAD a quattro argomenti, e il database prende SOLO gli eventi di quei tipi: gli altri
+   * restano liberi, con `attempts` e lease invariati, e li prende chi li sa consegnare. Prima il filtro
+   * si applicava DOPO il claim (che non conosceva i tipi): un consumatore filtrato si trovava in mano
+   * gli eventi altrui, li teneva in lease senza consegnarli né fallirli, e li portava alla quarantena in
+   * circa due ore; un evento suo poteva restare dietro `limite` eventi che non erano suoi.
    *
-   * Per prendere SOLO i propri servirebbe un claim che filtri nel database (un overload di
-   * `video_outbox_claim` con un elenco di tipi): la chiamata qui sotto è l'unico punto da cambiare.
+   * Senza elenco si chiama la versione a tre argomenti, com'è sempre stata. Un elenco vuoto non prende
+   * niente (e si grida: è un errore di chi chiama). Il database accetta da 1 a 20 tipi.
    */
   tipi?: readonly string[]
   /**
@@ -63,10 +95,10 @@ export type OpzioniConsumoOutbox = {
  * destinatario del loro tipo e chiude ciascuno — consegnato (`video_outbox_sent`) oppure
  * rimesso in attesa (`video_outbox_fail`) — con la STESSA lease con cui l'ha preso.
  *
- * Chiama le tre RPC che esistono già, senza riscriverne nessuna: la lease, il backoff e la
- * quarantena sono decisioni del database, e due copie della stessa decisione divergono il
- * giorno in cui qualcuno ne corregge una sola. In particolare, qui NON si calcola né
- * l'attesa né il tetto dei tentativi:
+ * Chiama le RPC che esistono già — il claim (a tre argomenti, o con l'elenco dei tipi a quattro),
+ * `sent` e `fail` — senza riscriverne nessuna: la lease, il backoff e la quarantena sono decisioni del
+ * database, e due copie della stessa decisione divergono il giorno in cui qualcuno ne corregge una
+ * sola. In particolare, qui NON si calcola né l'attesa né il tetto dei tentativi:
  *
  *   · il backoff è di `video_outbox_fail`, che non rilascia la lease ma la sposta avanti
  *     (5 s, poi il doppio a ogni tentativo, fino a 900): un consumatore che ridrena subito
@@ -106,11 +138,19 @@ export async function consumaOutbox(
   const miei = tipi === undefined ? null : new Set(tipi)
 
   const proprietario = crypto.randomUUID()
-  const { data, error } = await supabase.rpc('video_outbox_claim', {
+  // Il filtro passa al database, che lo applica DENTRO il claim: nessun evento altrui viene preso,
+  // quindi nessuno resta in lease senza essere consegnato. Senza filtro i tre argomenti di sempre: due
+  // firme senza default, perché con un default una chiamata a tre argomenti combacerebbe con entrambe e
+  // PostgREST risponderebbe PGRST203 (funzione ambigua).
+  const argomentiClaim = {
     p_lease_owner: proprietario,
     p_lease_seconds: leaseSecondi,
     p_limite: limite,
-  })
+  }
+  const { data, error } = await supabase.rpc(
+    'video_outbox_claim',
+    miei === null ? argomentiClaim : { ...argomentiClaim, p_tipi: [...miei] },
+  )
 
   if (error) {
     logEvento(
@@ -141,9 +181,20 @@ export async function consumaOutbox(
 
   for (const evento of eventi) {
     if (miei !== null && !miei.has(evento.event_type)) {
-      // Non è di questo consumatore: non si consegna, non si fallisce e non si grida. Chi ha
-      // il destinatario lo prenderà quando la lease scade.
+      // NON PUÒ SUCCEDERE: il claim filtrato non consegna eventi fuori dall'elenco. Se succede, il
+      // database che risponde non applica il filtro (un overload sbagliato, una versione vecchia della
+      // funzione), e l'evento è ormai in lease con un tentativo in più. Non si consegna — non è di
+      // questo consumatore — e non si fallisce, ma NON si tace: tornerà prendibile alla scadenza della
+      // lease, e senza questa riga il vecchio difetto (eventi altrui tenuti in lease fino alla
+      // quarantena) tornerebbe invisibile.
       saltati += 1
+      logEvento('cron', 'error', {
+        operazione,
+        esito: 'outbox-evento-fuori-filtro',
+        intent_id: evento.intent_id,
+        n_tentativi: evento.attempts,
+        msg: `${operazione}: il claim filtrato di video_outbox ha restituito un evento fuori dai tipi richiesti: il filtro non è applicato dal database`,
+      })
       continue
     }
 
@@ -232,7 +283,8 @@ export async function consumaOutbox(
 
   // Gli eventi critici loggano anche il SUCCESSO: a zero, questo `info` è la sola
   // differenza fra «coda vuota» e «non si drena più». `n_saltati` c'è solo quando il giro è
-  // filtrato: senza filtro il conto è sempre zero, e la riga resta quella di sempre.
+  // filtrato: senza filtro il conto è sempre zero, e la riga resta quella di sempre. Con il filtro
+  // nel claim vale sempre zero, e se non lo è lo ha già gridato `outbox-evento-fuori-filtro`.
   logEvento('cron', 'info', {
     operazione,
     esito: 'outbox-svuotato',

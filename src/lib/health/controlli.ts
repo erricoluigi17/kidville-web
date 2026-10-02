@@ -167,6 +167,11 @@ export const JOB_CRON: readonly JobCron[] = [
     // `video-runner-tick` (`1,6,11,…,56 * * * *`, OGNI CINQUE MINUTI) è ciò che FA PARTIRE la
     // conversione: se smette, i video caricati restano in coda e nessuno se ne accorge, perché in
     // coda non è uno stato d'errore. La finestra è 20 minuti, cioè tre giri saltati.
+    //
+    // ⚠️ Non scrive mai `ok`: scrive l'esito di ciò che ha fatto (`coda-vuota`, `in-corso`, `pronto`,
+    // `in-riprova`, `gia-sorvegliato`, `capacita-piena`). Quegli esiti valgono come battito PER LUI
+    // (`ESITI_BATTITO_PER_OPERAZIONE`): fino alla PR 2 non valevano, e `/api/health` lo dichiarava
+    // muto a ogni controllo — il falso allarme che qui sotto è chiuso.
     { nome: 'video-runner-tick', finestraMs: 20 * MIN },
     // `video-retention` (`3,13,…,53 * * * *`, OGNI DIECI MINUTI) toglie da `video_originals` gli
     // originali scaduti — video di minori in un bucket privato — e svuota la coda delle notifiche.
@@ -618,6 +623,48 @@ interface RigaBattito {
 export const ESITI_BATTITO: ReadonlySet<string> = new Set(['ok', 'ok-parziale'])
 
 /**
+ * GLI ESITI CHE VALGONO COME BATTITO SOLO PER UN LAVORO — una mappa per OPERAZIONE, non un
+ * allargamento di `ESITI_BATTITO`.
+ *
+ * ⚠️ IL FALSO ALLARME CHE CHIUDE, e perché la lista globale non si tocca. `video-runner-tick` gira
+ * ogni cinque minuti dal 2026-09-18, ma non scrive mai `ok`: scrive l'esito di ciò che ha fatto —
+ * `coda-vuota` (il caso normale, 288 volte al giorno), `in-corso`, `pronto`, `in-riprova`, e dalla
+ * PR 2 `gia-sorvegliato` e `capacita-piena`. Per il controllo erano tutti «muti»: `/api/health`
+ * rispondeva «job senza battito: video-runner-tick» su un runner che lavorava benissimo, cioè un
+ * allarme che suona da solo — e un allarme che suona da solo viene spento.
+ *
+ * Aggiungere quei sei nomi a `ESITI_BATTITO` sarebbe stato peggio del difetto: `ESITI_BATTITO` vale
+ * per OGNI lavoro, e `in-corso` o `coda-vuota` scritti da un altro cron (un lavoro che si ferma
+ * a metà e dice «in corso» ogni notte) lo farebbero passare per vivo. Qui un esito conta solo per il
+ * lavoro che lo dichiara; `ok` e `ok-parziale` continuano a valere per tutti.
+ *
+ * Restano FUORI `fallito`, `lease-persa`, `esito-non-scritto`, `presa-rifiutata`, `non-eseguito`,
+ * `non-autorizzato`: sono righe `error`, che il controllo non legge (vedi sotto), e dicono «il
+ * giro è fallito», non «il giro è partito». Un runner che esplode a ogni tick deve continuare a
+ * comparire come muto.
+ *
+ * La chiave è il valore di `contesto->campi->>operazione`, cioè la costante `JOB` della route, e
+ * deve stare in `JOB_CRON`: il test lo verifica, perché un nome che nessuno sorveglia è una
+ * regola che non si applica mai.
+ */
+export const ESITI_BATTITO_PER_OPERAZIONE: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+    [
+        'video-runner-tick',
+        new Set(['coda-vuota', 'in-corso', 'pronto', 'in-riprova', 'gia-sorvegliato', 'capacita-piena']),
+    ],
+])
+
+/**
+ * Questo esito, scritto da questo lavoro, dice che il giro è partito?
+ *
+ * Una `Map` e non un oggetto: il nome dell'operazione arriva da una riga di `app_log`, e su un oggetto
+ * `constructor` o `__proto__` troverebbero una proprietà ereditata invece di niente.
+ */
+export function valeComeBattito(operazione: string, esito: string): boolean {
+    return ESITI_BATTITO.has(esito) || (ESITI_BATTITO_PER_OPERAZIONE.get(operazione)?.has(esito) ?? false)
+}
+
+/**
  * IL CONTROLLO CHE DISTINGUE «TUTTO TRANQUILLO» DA «NON È MAI PARTITO NIENTE».
  *
  * ────────────────────────────────────────────────────────────────────────────
@@ -677,9 +724,11 @@ async function controlloBattitoCron(
         for (const riga of (data ?? []) as RigaBattito[]) {
             const campi = riga.contesto?.campi
             const esito = typeof campi?.esito === 'string' ? campi.esito : ''
-            if (!ESITI_BATTITO.has(esito)) continue
             const job = campi?.operazione
             if (typeof job !== 'string') continue
+            // L'esito vale per QUESTO lavoro: `ok` e `ok-parziale` per tutti, gli altri solo per chi li
+            // dichiara (`ESITI_BATTITO_PER_OPERAZIONE`). Il nome si legge PRIMA dell'esito, perché ne dipende.
+            if (!valeComeBattito(job, esito)) continue
             const t = Date.parse(String(riga.visto_l_ultima ?? ''))
             if (Number.isNaN(t)) continue
             if (t > (ultimo.get(job) ?? -Infinity)) {

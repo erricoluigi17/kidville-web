@@ -65,6 +65,10 @@ export type EsitoOutbox = {
   falliti: number
   /** Fra i falliti, quelli di un tipo che nessun destinatario sa consegnare. */
   senzaDestinatario: number
-  /** Presi ma fuori dal filtro `tipi`: non toccati, non consegnati, non falliti. */
+  /**
+   * Presi ma fuori dal filtro `tipi`: non consegnati e non falliti. Con il filtro NEL claim vale
+   * sempre zero; se non lo è, il database non lo applica e il consumo l'ha già gridato
+   * (`outbox-evento-fuori-filtro`).
+   */
   saltati: number
 }

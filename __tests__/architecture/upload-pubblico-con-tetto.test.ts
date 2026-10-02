@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import fs from 'node:fs'
+import fs, { readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   ESTENSIONI_ALLEGATO_PUBBLICO,
@@ -8,6 +8,8 @@ import {
   TETTO_UPLOAD_PERSONALE,
   TETTO_UPLOAD_PUBBLICO,
 } from '@/lib/upload/allegati-pubblici'
+import { TETTO_RINNOVO_PER_IP, TETTO_RINNOVO_PER_TOKEN } from '@/lib/media/video/token-rinnovo'
+import { fineParentesi, mascheraSorgente } from '../fixtures/sorgente'
 
 /**
  * LOCK · un handler PUBBLICO che scrive nello Storage ha un tetto per IP e una lista di tipi.
@@ -401,5 +403,119 @@ describe('lock architettura · gli upload da una porta aperta hanno tetto e tipi
       'Il bucket dei documenti d\'iscrizione non ha un `file_size_limit`: il freno vive solo ' +
         'dentro le route, e vale finché ogni route se lo ricorda.',
     ).toBeGreaterThan(0)
+  })
+})
+
+/**
+ * ─── LE PORTE CHE NON CARICANO, MA DANNO IL PERMESSO DI CARICARE (2026-10-02) ──────────────────
+ *
+ * Tutto ciò che sta sopra riconosce le rotte che chiamano `.upload(`: sono LORO a scrivere nello
+ * Storage. Dalla PR 2 «video: server e web» esiste una porta di un'altra forma: il rinnovo del
+ * caricamento nativo (`video-uploads/rinnovo`) non scrive niente, emette un URL FIRMATO — la firma
+ * sta in `firmaPut`/`firmaTus`, che a loro volta chiamano `createSignedUploadUrl` — con cui il
+ * client scriverà. Per chi la passa è la stessa cosa: un permesso di scrivere un oggetto in un
+ * bucket di video di minori, senza avere una sessione. E il rilevatore qui sopra non la vede, perché
+ * nessuna riga della route dice `.upload(`.
+ *
+ * Il rimedio è lo stesso del resto del file, scritto al contrario: nessun elenco da tenere. La
+ * rilevazione parte dal CODICE — ogni `route.ts` che firma un permesso di scrittura e non ha un gate
+ * d'identità — così una porta firmante anonima che nascesse domani entra nel perimetro da sola.
+ *
+ * Che cosa si pretende da una porta così non è identico a ciò che si pretende da un upload (non ha
+ * tipi da verificare né un file da misurare: il tipo e il peso li ha già dichiarati l'apertura, che
+ * aveva una sessione): si pretende il perimetro che le resta quando la sessione non c'è — un tetto
+ * per indirizzo e uno per credenziale, con i numeri in un modulo condiviso, e un token che non entra
+ * mai in un log.
+ */
+describe('lock architettura · le porte anonime che FIRMANO un caricamento hanno i loro tetti', () => {
+  /** Le rotte che coniano un permesso di scrittura: `firmaPut`, `firmaTus` o direttamente `createSignedUploadUrl`. */
+  const FIRMANTI = TUTTE.filter((r) => /\b(?:firmaPut|firmaTus)\s*\(|\bcreateSignedUploadUrl\s*\(/.test(r.src))
+  const FIRMANTI_PUBBLICI = FIRMANTI.filter((r) => !GATE.test(r.src))
+  const RINNOVO = 'src/app/api/video-uploads/rinnovo/route.ts'
+
+  it('la misura vede davvero le rotte che firmano (se cade, tutto il resto è verde su niente)', () => {
+    // Un rilevatore rotto — i nomi delle funzioni di firma cambiati — renderebbe verde ogni prova qui
+    // sotto su un elenco vuoto. Le tre della pipeline video (l'apertura, la firma nuova, il rinnovo) devono
+    // esserci; altre rotte con un gate (`gallery/upload-url`, …) firmano a loro volta, e non sono di qui.
+    expect(FIRMANTI.map((r) => r.rel)).toEqual(
+      expect.arrayContaining([
+        'src/app/api/video-uploads/[id]/firma/route.ts',
+        RINNOVO,
+        'src/app/api/video-uploads/route.ts',
+      ]),
+    )
+    // E le due protette devono restare fuori dal perimetro anonimo: hanno `requireDocente`.
+    const protette = FIRMANTI.filter((r) => GATE.test(r.src)).map((r) => r.rel)
+    expect(protette).toContain('src/app/api/video-uploads/route.ts')
+    expect(protette).toContain('src/app/api/video-uploads/[id]/firma/route.ts')
+  })
+
+  it('le porte firmanti SENZA gate sono queste, ESATTAMENTE queste', () => {
+    expect(
+      FIRMANTI_PUBBLICI.map((r) => r.rel),
+      'Una rotta senza sessione che conia un permesso di scrittura nello Storage è una porta anonima ' +
+        'di caricamento, anche se non chiama `.upload(`. Se ne compare una in più questo punto diventa ' +
+        'rosso apposta: è una decisione, e va aggiunta qui A MANO insieme alla prova del suo perimetro ' +
+        '(le prove qui sotto, più la sua voce in `gate-coverage.test.ts`).',
+    ).toEqual([RINNOVO])
+  })
+
+  it.each(FIRMANTI_PUBBLICI.map((r) => r.rel))('`%s` ha un tetto per indirizzo E uno per credenziale, da un modulo condiviso', (rel) => {
+    const src = FIRMANTI_PUBBLICI.find((r) => r.rel === rel)!.src
+    expect(
+      /rateLimit\s*\(/.test(src) && /clientIp\s*\(/.test(src),
+      `${rel} firma un caricamento senza sapere chi chiama e senza un tetto per indirizzo: chi sonda a ` +
+        'raffica arriva all\'handler tutte le volte che vuole.',
+    ).toBe(true)
+    // Due chiamate a `rateLimit`: una per l'IP, una per l'impronta del token. Una sola lascerebbe un token
+    // noto martellabile da mille indirizzi, o un indirizzo libero di provarne mille.
+    expect((src.match(/rateLimit\s*\(/g) ?? []).length, `${rel}: servono DUE tetti, per IP e per token`).toBeGreaterThanOrEqual(2)
+    // Il numero non si scrive dentro la rotta: arriva da `@/lib/media/video/token-rinnovo`, accanto alla
+    // forma del token, come i tetti degli upload arrivano da `allegati-pubblici`.
+    const usati = [...src.matchAll(/\bTETTO_RINNOVO_[A-Z_]+\b/g)].map((m) => m[0])
+    expect(new Set(usati), `${rel} non usa i due tetti condivisi`).toEqual(new Set(['TETTO_RINNOVO_PER_IP', 'TETTO_RINNOVO_PER_TOKEN']))
+    for (const nome of new Set(usati)) {
+      expect(
+        new RegExp(`import\\s*\\{[^}]*\\b${nome}\\b[^}]*\\}\\s*from\\s*['"]@/lib/media/video/token-rinnovo['"]`, 's').test(src),
+        `${rel} usa \`${nome}\` senza importarlo da @/lib/media/video/token-rinnovo: è un numero locale ` +
+          'travestito da costante condivisa.',
+      ).toBe(true)
+    }
+    // E nessun `limit:` numerico scritto a mano dentro le chiamate: il numero sta nella costante.
+    expect(src, `${rel}: un \`limit:\` scritto come numero dentro la rotta`).not.toMatch(/\blimit:\s*\d/)
+  })
+
+  it.each(FIRMANTI_PUBBLICI.map((r) => r.rel))('`%s` legge il token con la primitiva e non lo consegna mai a un log', (rel) => {
+    const originale = readFileSync(path.join(RADICE, rel), 'utf8')
+    const { struttura } = mascheraSorgente(originale)
+    // 1. La lettura passa da `tokenRinnovoDaRichiesta`, che NON deposita il valore nel contesto di log.
+    //    `parseData`/`parseBody`/`parseQuery` lo farebbero (depositano PRIMA di validare, per poter
+    //    diagnosticare un 400): il token non si diagnostica, non si deposita da nessuna parte.
+    expect(/\btokenRinnovoDaRichiesta\s*\(/.test(struttura), `${rel} non legge il token con la primitiva`).toBe(true)
+    expect(/\bparse(?:Data|Body|Query|Multipart)\s*\(/.test(struttura), `${rel} fa passare un valore da un parse*, che lo deposita nel contesto di log`).toBe(false)
+    // 2. Nessuna chiamata di log nomina il token o il suo hash COME IDENTIFICATORE. Le stringhe sono spente
+    //    nella `struttura`: `tipo: 'token-non-valido'` è un enumerato e non conta, `tipo: token` sì.
+    const chiamate = [...struttura.matchAll(/\b(?:logVideo|logErrore|logEvento|logOk|rispostaEsitoRpc)\s*\(/g)]
+    expect(chiamate.length, `${rel} non logga più niente: il successo di una porta anonima si registra`).toBeGreaterThan(0)
+    for (const c of chiamate) {
+      const dentro = struttura.slice(c.index!, fineParentesi(struttura, c.index! + c[0].length - 1))
+      expect(dentro, `${rel}: una chiamata di log nomina il token o il suo hash: ${dentro.replace(/\s+/g, ' ').slice(0, 120)}`).not.toMatch(
+        /\b(?:token|hash\w*|letto\.token|p_hash)\b/i,
+      )
+    }
+  })
+
+  it('l’aritmetica dei due tetti: abbastanza per un upload vero, non per un sondaggio', () => {
+    // PER TOKEN. Un upload che riprende segue un backoff (5, 15, 30, 60 s): al più cinque rinnovi nella
+    // finestra, più uno. Sotto i sei un caricamento legittimo prenderebbe un 429 a metà. Sopra i venti,
+    // chi tiene un token rubato potrebbe martellarlo più di quanto qualunque upload servirebbe.
+    expect(TETTO_RINNOVO_PER_TOKEN).toBeGreaterThanOrEqual(6)
+    expect(TETTO_RINNOVO_PER_TOKEN).toBeLessThanOrEqual(20)
+    // PER IP. Dietro il NAT di una sede stanno i telefoni del personale: con cinque dispositivi in
+    // difficoltà insieme, ciascuno al suo massimo di rinnovi per token, il tetto non deve fermarli. Sopra i
+    // trenta un tetto per IP smette di essere un tetto.
+    expect(TETTO_RINNOVO_PER_IP).toBeGreaterThanOrEqual(TETTO_RINNOVO_PER_TOKEN)
+    expect(TETTO_RINNOVO_PER_IP).toBeGreaterThanOrEqual(20)
+    expect(TETTO_RINNOVO_PER_IP).toBeLessThanOrEqual(30)
   })
 })

@@ -7,7 +7,9 @@ import type {
   ArchivioVideo,
   CodaVideo,
   ComandoSandbox,
+  EsitoBattito,
   EsitoComando,
+  EsitoConteggi,
   EsitoRpcVideo,
   JobVideo,
   MacchinaSandbox,
@@ -41,9 +43,16 @@ import type {
 /**
  * ⚠️ POSTGREST NON LANCIA: RITORNA `{ error }` (AGENTS, regola 7). Un `try/catch`
  * attorno a una `rpc()` non scatta mai, e il valore di ritorno va guardato sempre —
- * è la ragione per cui ogni funzione qui sotto passa da `esitoRpc`.
+ * è la ragione per cui ogni funzione qui sotto passa da `esitoRpc`, `esitoSemplice` o
+ * `esitoConteggi`, che condividono questo pezzo.
+ *
+ * Restituisce il corpo della risposta se è un OGGETTO, o `null` — con la riga che lo dice — se la
+ * chiamata non è riuscita (trasporto, funzione che non c'è) o la risposta non si legge.
  */
-function esitoRpc(operazione: string, risposta: { data: unknown; error: unknown }): EsitoRpcVideo {
+function corpoDellaRisposta(
+  operazione: string,
+  risposta: { data: unknown; error: unknown },
+): Record<string, unknown> | null {
   if (risposta.error) {
     logEvento(
       'rpc',
@@ -51,7 +60,7 @@ function esitoRpc(operazione: string, risposta: { data: unknown; error: unknown 
       { operazione: `video-runner:${operazione}`, esito: 'rpc-non-riuscita' },
       risposta.error,
     )
-    return { ok: false, code: 'RPC_ERROR' }
+    return null
   }
   const corpo = risposta.data
   if (corpo === null || typeof corpo !== 'object') {
@@ -59,13 +68,60 @@ function esitoRpc(operazione: string, risposta: { data: unknown; error: unknown 
       operazione: `video-runner:${operazione}`,
       esito: 'rpc-risposta-illeggibile',
     })
-    return { ok: false, code: 'RPC_ERROR' }
+    return null
   }
-  const letto = corpo as { ok?: unknown; code?: unknown; job?: unknown }
+  return corpo as Record<string, unknown>
+}
+
+/** Le RPC che portano un JOB: `{"ok":true,"job":…}` o `{"ok":false,"code":…}`. */
+function esitoRpc(operazione: string, risposta: { data: unknown; error: unknown }): EsitoRpcVideo {
+  const letto = corpoDellaRisposta(operazione, risposta)
+  if (letto === null) return { ok: false, code: 'RPC_ERROR' }
   if (letto.ok === true && letto.job !== null && typeof letto.job === 'object') {
     return { ok: true, job: letto.job as JobVideo }
   }
   return { ok: false, code: typeof letto.code === 'string' ? letto.code : 'RPC_ERROR' }
+}
+
+/**
+ * Le RPC di coordinamento che NON portano un job: `{"ok":true,…}` o `{"ok":false,"code":…}`.
+ *
+ * ⚠️ NON si fanno passare da `esitoRpc`, ed è il motivo per cui questa funzione esiste: `esitoRpc` vuole
+ * un `job` dentro il corpo, e senza lo legge come «RPC_ERROR» anche una risposta riuscita. Per la
+ * sorveglianza sarebbe un disastro silenzioso — ogni invocazione crederebbe di non aver ottenuto la
+ * sorveglianza che il database le ha appena dato.
+ */
+function esitoSemplice(
+  operazione: string,
+  risposta: { data: unknown; error: unknown },
+): EsitoBattito {
+  const corpo = corpoDellaRisposta(operazione, risposta)
+  if (corpo === null) return { ok: false, code: 'RPC_ERROR' }
+  if (corpo.ok === true) return { ok: true }
+  return { ok: false, code: typeof corpo.code === 'string' ? corpo.code : 'RPC_ERROR' }
+}
+
+/**
+ * Le RPC che rispondono con dei CONTEGGI (`candidati`, `calciati`, `arrivati`…): dalla risposta
+ * passano SOLO i valori numerici. Il resto — una stringa `motivo`, una riga che un domani una RPC
+ * decidesse di restituire — non entra nel runner, e quindi non può finire in un log o in un
+ * messaggio (le righe di `video_jobs` e `video_intents` portano ormai `tag_alunni`, l'hash del
+ * token di rinnovo e lo `sha256`: secondario #37).
+ */
+function esitoConteggi(
+  operazione: string,
+  risposta: { data: unknown; error: unknown },
+): EsitoConteggi {
+  const corpo = corpoDellaRisposta(operazione, risposta)
+  if (corpo === null) return { ok: false, code: 'RPC_ERROR' }
+  if (corpo.ok !== true) {
+    return { ok: false, code: typeof corpo.code === 'string' ? corpo.code : 'RPC_ERROR' }
+  }
+  const conteggi: Record<string, number> = {}
+  for (const [chiave, valore] of Object.entries(corpo)) {
+    if (typeof valore === 'number' && Number.isFinite(valore)) conteggi[chiave] = valore
+  }
+  return { ok: true, conteggi }
 }
 
 export function codaSupabase(supabase: SupabaseClient): CodaVideo {
@@ -85,24 +141,61 @@ export function codaSupabase(supabase: SupabaseClient): CodaVideo {
       return { ok: true, jobs: (data ?? []) as unknown as JobVideo[] }
     },
 
-    async prossimo(leaseOwner, leaseSeconds) {
+    async prossimo(leaseOwner, leaseSeconds, tetto) {
       return esitoRpc(
-        'next',
-        await supabase.rpc('video_job_next', {
+        'prossimo',
+        await supabase.rpc('video_job_prossimo', {
           p_lease_owner: leaseOwner,
           p_lease_seconds: leaseSeconds,
+          p_tetto: tetto,
         }),
       )
     },
 
-    async riprendi(jobId, leaseOwner, leaseSeconds) {
+    async prendi(jobId, leaseOwner, leaseSeconds, tetto) {
       return esitoRpc(
-        'claim',
-        await supabase.rpc('video_job_claim', {
+        'prendi',
+        await supabase.rpc('video_job_prendi', {
           p_job_id: jobId,
           p_lease_owner: leaseOwner,
           p_lease_seconds: leaseSeconds,
+          p_tetto: tetto,
         }),
+      )
+    },
+
+    async sorveglianzaPrendi(jobId, invocazione, secondi) {
+      return esitoSemplice(
+        'sorveglianza-prendi',
+        await supabase.rpc('video_job_sorveglianza_prendi', {
+          p_job_id: jobId,
+          p_invocazione: invocazione,
+          p_secondi: secondi,
+        }),
+      )
+    },
+
+    async sorveglianzaRilascia(jobId, invocazione) {
+      return esitoSemplice(
+        'sorveglianza-rilascia',
+        await supabase.rpc('video_job_sorveglianza_rilascia', {
+          p_job_id: jobId,
+          p_invocazione: invocazione,
+        }),
+      )
+    },
+
+    async arriviRecupera(limite) {
+      return esitoConteggi(
+        'arrivi-recupera',
+        await supabase.rpc('video_arrivi_recupera', { p_limite: limite }),
+      )
+    },
+
+    async ventaglio(tetto, escludi) {
+      return esitoConteggi(
+        'ventaglio',
+        await supabase.rpc('video_runner_ventaglio', { p_tetto: tetto, p_escludi: escludi }),
       )
     },
 

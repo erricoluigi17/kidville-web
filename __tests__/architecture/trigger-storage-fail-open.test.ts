@@ -45,12 +45,23 @@ import { join } from 'node:path'
  * `BEGIN`/`END`/`CASE`/`IF`/`LOOP` e non con una regex: un gestore dentro un blocco ANNIDATO non
  * protegge il resto del corpo, e una regex non sa la differenza.
  *
+ * ─── L'INTERRUTTORE D'EMERGENZA ──────────────────────────────────────────────────────────
+ *
+ * Il trigger dell'arrivo non si può togliere né disabilitare (`postgres` non è proprietario di
+ * `storage.objects`): lo si neutralizza riscrivendo il CORPO della sua funzione, con un'istruzione
+ * pronta nella testata della migrazione. Sta in un commento, quindi nessun lock la guarda — ma il
+ * giorno in cui qualcuno la incolla in una migrazione (o la applica a mano e poi la committa) questo
+ * lock deve accettarla: se la testata la lasciasse nella forma senza gestore, quel giorno il gate
+ * sarebbe rosso, in piena emergenza. L'ultimo blocco di prove la legge dalla testata e fa girare su di
+ * lei la regola, come ultima migrazione del repo.
+ *
  * ─── COSA NON PROVA ──────────────────────────────────────────────────────────────────────
  *
  * Che il gestore sia ESEGUITO lo prova `__tests__/lib/video-arrivo-originale.test.ts` su PGlite
- * (un'eccezione in ogni punto lascia l'INSERT riuscito); qui si prova solo che la forma c'è, e che il
- * rilevatore la sa riconoscere — le prove in fondo lo mettono alla prova su testi scritti qui, una
- * difesa tolta alla volta. Un lock che non ha mai visto un colpevole non è un lock.
+ * (un'eccezione in ogni punto lascia l'INSERT riuscito, e la stessa istruzione d'emergenza viene
+ * applicata davvero); qui si prova solo che la forma c'è, e che il rilevatore la sa riconoscere — le
+ * prove in fondo lo mettono alla prova su testi scritti qui, una difesa tolta alla volta. Un lock che
+ * non ha mai visto un colpevole non è un lock.
  */
 
 const MIGRAZIONI = join(process.cwd(), 'supabase', 'migrations')
@@ -714,5 +725,50 @@ END`
   it('un corpo che comincia con del codice FUORI dal blocco, o con parentesi che non tornano, è illeggibile e non passa', () => {
     expect(perche(buona({ corpo: `PERFORM 1;\nBEGIN\n  RETURN NEW;\nEXCEPTION WHEN OTHERS THEN\n  RETURN NEW;\nEND` }))).toEqual(['struttura-illeggibile'])
     expect(perche(buona({ corpo: `BEGIN\n  BEGIN\n  RETURN NEW;\nEXCEPTION WHEN OTHERS THEN\n  RETURN NEW;\nEND` }))).toEqual(['struttura-illeggibile'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L'ISTRUZIONE D'EMERGENZA DELLA TESTATA PASSA QUESTO LOCK (#65)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('l\'istruzione d\'emergenza della testata passa questo lock', () => {
+  const ARRIVO = MIGRAZIONI_LETTE.find((m) => m.nome.endsWith('_video_arrivo_originale.sql'))
+  const GESTORE = /EXCEPTION\s+WHEN\s+OTHERS\s+THEN\s+RETURN\s+NEW\s*;/i
+
+  /** Le righe fra i due marcatori della testata, senza il prefisso di commento: ciò che chi è in emergenza incolla. */
+  function istruzioneDiEmergenza(): string {
+    expect(ARRIVO, 'la migrazione dell\'arrivo (`…_video_arrivo_originale.sql`) non è fra quelle lette').toBeDefined()
+    const righeDellaMigrazione = (ARRIVO as { sql: string }).sql.split('\n')
+    const inizio = righeDellaMigrazione.findIndex((r) => r.includes('>>> INTERRUTTORE: INIZIO'))
+    const fine = righeDellaMigrazione.findIndex((r) => r.includes('>>> INTERRUTTORE: FINE'))
+    expect(inizio, 'manca il marcatore di inizio dell\'interruttore nella testata').toBeGreaterThanOrEqual(0)
+    expect(fine, 'manca il marcatore di fine dell\'interruttore nella testata').toBeGreaterThan(inizio)
+    return righeDellaMigrazione
+      .slice(inizio + 1, fine)
+      .map((r) => r.replace(/^--\s?/, ''))
+      .join('\n')
+  }
+
+  /** Il repo com'è, con l'istruzione come ULTIMA migrazione: la sua definizione della funzione è quella effettiva. */
+  const conLEmergenza = (istruzione: string) => [...MIGRAZIONI_LETTE, { nome: 'zz_interruttore_di_emergenza.sql', sql: istruzione }]
+
+  it('applicata come migrazione, la regola del lock non trova rilievi: il trigger dell\'arrivo resta fail-open con il corpo neutralizzato', () => {
+    const istruzione = istruzioneDiEmergenza()
+    // La prova gira sulla definizione EFFETTIVA: l'istruzione sostituisce davvero la funzione di quel trigger.
+    expect(funzioniDi('zz_interruttore_di_emergenza.sql', senzaCommentiSql(istruzione)).map((f) => f.nome)).toEqual([
+      'video_originale_arrivato',
+    ])
+    expect(
+      rilieviDi(conLEmergenza(istruzione)).map((r) => `${r.trigger}  (${r.funzione})  ←  ${SPIEGAZIONE[r.perche]}`),
+      'l\'istruzione d\'emergenza della testata renderebbe rosso questo lock se diventasse una migrazione',
+    ).toEqual([])
+  })
+
+  it('CONTROPROVA — la forma di prima (`BEGIN RETURN NEW; END`, senza il gestore) verrebbe rifiutata: senza-gestore-fail-open', () => {
+    const istruzione = istruzioneDiEmergenza()
+    const senzaGestore = istruzione.replace(GESTORE, '')
+    expect(senzaGestore, 'la controprova non ha tolto il gestore: la testata non ha più «EXCEPTION WHEN OTHERS THEN RETURN NEW;»').not.toBe(istruzione)
+    expect(rilieviDi(conLEmergenza(senzaGestore)).map((r) => r.perche)).toEqual(['senza-gestore-fail-open'])
   })
 })

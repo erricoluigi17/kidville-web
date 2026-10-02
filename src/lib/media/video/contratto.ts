@@ -381,7 +381,7 @@ export type CodiceInternoVideo = CodiceEsitoVideo | CodiceBordoVideo
 /**
  * I soli codici che possono uscire verso il client. Sono pochi di proposito: un
  * messaggio in più ha senso solo se cambia ciò che la persona può FARE. «Il
- * video supera i tre minuti» le dice di accorciarlo; «la revisione non
+ * video supera i cinque minuti» le dice di accorciarlo; «la revisione non
  * corrisponde» non le dice niente che possa usare.
  */
 export const CODICI_MOSTRATI_VIDEO = [
@@ -825,8 +825,9 @@ export const schemaFileVideoDichiarato = z.object({
    * che i byte arrivati sono quelli scelti, per una PUT che non si può riprendere a metà.
    *
    * PER FILE e non per intento, come `byte` e `mime`: descrive il contenuto di QUEL file (sul job
-   * è `video_jobs.sha256_dichiarato`). Ammessa solo con `put-nativo`, e il controllo sta in
-   * `schemaAperturaIntentVideo`; il web, che carica in TUS, non la manda. Si normalizza in
+   * è `video_jobs.sha256_dichiarato`). Ammessa SOLO con `put-nativo` e OBBLIGATORIA con
+   * `put-nativo`: i due controlli stanno in `schemaAperturaIntentVideo`, perché dipendono dal
+   * trasporto e non dal singolo file. Il web, che carica in TUS, non la manda. Si normalizza in
    * minuscolo, com'è scritta dal Sandbox.
    */
   sha256: z
@@ -930,6 +931,14 @@ export const schemaAperturaIntentVideo = z
     // questo si fa dire l'impronta dei byte prima di fidarsene. Il web, in TUS, non la manda
     // e il Sandbox salta quel controllo: una promessa fatta con l'altro trasporto resterebbe
     // una frase che nessuno rilegge.
+    //
+    // ⚠️ E CON IL TRASPORTO NATIVO È OBBLIGATORIA (decisione del titolare, 02/10: «sha256
+    // dichiarato all'apertura e verificato nel Sandbox»). Era facoltativa nello schema, e un
+    // client che la omettesse apriva un caricamento che il Sandbox non avrebbe mai verificato:
+    // la garanzia che il file arrivato è quello scelto — l'unica che regge una PUT da 2 GB che
+    // non si riprende a metà — sarebbe esistita solo per i client che si ricordano di chiederla.
+    // Qui il rifiuto è un 400 di validazione col suo percorso (`file.N.sha256`), non una
+    // conversione che parte senza il controllo.
     if (richiesta.trasporto === 'put-nativo' && richiesta.canale !== 'gallery') {
       ctx.addIssue({
         code: 'custom',
@@ -943,6 +952,13 @@ export const schemaAperturaIntentVideo = z
           code: 'custom',
           path: ['file', indice, 'sha256'],
           message: 'lo sha256 si dichiara solo con il trasporto nativo',
+        })
+      }
+      if (file.sha256 === undefined && richiesta.trasporto === 'put-nativo') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['file', indice, 'sha256'],
+          message: 'il trasporto nativo dichiara lo sha256 di ogni file: il Sandbox lo verifica prima di convertire',
         })
       }
     })
@@ -1419,10 +1435,17 @@ export type AzioneRiprovaPubblicazioneVideo = z.infer<typeof schemaAzioneRiprova
  * ha bisogno di sorveglianza subito. Il corpo VUOTO è ammesso — `parseBody` risponderebbe 400 —
  * ed è la route a leggerlo dopo il gate con `request.text()` e a passare `{}` a questo schema.
  * La chiave è `job_id` e non `jobId`, come la manda `pg_net`.
+ *
+ * `.strict()` (secondario #19 della PR 2): senza, un `{ "jobId": "<uuid>" }` col refuso passava come
+ * `{}` — la chiave sconosciuta veniva scartata in silenzio — e il runner faceva il giro intero del
+ * cron senza dire a nessuno che il calcio non era stato capito. Così prende 400, come ogni altra
+ * chiave che qui non esiste.
  */
-export const schemaCorpoRunnerVideo = z.object({
-  job_id: z.string().uuid().optional(),
-})
+export const schemaCorpoRunnerVideo = z
+  .object({
+    job_id: z.string().uuid().optional(),
+  })
+  .strict()
 export type CorpoRunnerVideo = z.infer<typeof schemaCorpoRunnerVideo>
 
 /**

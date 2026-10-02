@@ -147,6 +147,8 @@ function makeFake(cfg: Cfg) {
     // in chiaro — è elencare il bucket. Un finto client senza `list` non è un
     // client Supabase.
     storage: { from: () => ({ remove: async () => ({ error: null }), list: async () => ({ data: [], error: null }) }) },
+    // L'oblio dei video in volo (`video_intent_oblio_alunno`, 2026-10-02): `anonimizzaAlunno` la chiama sempre; qui non c'è niente da togliere.
+    rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
   }
   return { client, updates, updateIds, deletedTables, orFilters, newsFilter }
 }

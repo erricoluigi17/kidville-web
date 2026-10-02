@@ -3,6 +3,9 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
 import { isNativeApp } from '@/lib/push/native-register'
 import { URL_APP_STORE, URL_PLAY_STORE } from '@/lib/email/tema'
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
+import { areeDeiProfili, type ConRuolo } from '@/lib/auth/active-role'
+import { leggiProfili } from '@/lib/auth/use-profili'
+import { isPublicPath } from '@/lib/auth/middleware-rules'
 
 /**
  * CHI DEVE AGGIORNARE L'APP (spec 2026-09-29, pop-up «Aggiorna l'app»).
@@ -22,9 +25,21 @@ import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
  * o che resta appeso (su iOS un metodo che il binario non ha lascia la promise appesa in silenzio)
  * rispondono `null`, con una riga di log: mai un pop-up che promette un aggiornamento a chi l'ha
  * già fatto.
+ *
+ * DUE MINIME, E LA SECONDA È PER IL PERSONALE (spec 2026-10-02, PR 2 «video», compito T14).
+ * `VERSIONE_MINIMA_STORE` vale per tutti. `VERSIONE_MINIMA_PERSONALE` vale SOLO per chi lavora con
+ * l'app — chi può aprire l'area docente, dove si caricano i video — ed è la via con cui la 1.2
+ * (l'invio dei video in background, PR 3) arriverà a loro senza disturbare le famiglie, che non la
+ * usano. Nasce SPENTA: con `null` questo modulo si comporta esattamente come prima, e non fa nemmeno
+ * una richiesta in più. Il ruolo si chiede solo a chi sta FRA le due minime (sotto quella del
+ * personale, ma non sotto quella dello store): sotto la minima dello store il pop-up compare per
+ * chiunque senza chiedere chi sia, come sempre.
  */
 
 export type PiattaformaStore = 'ios' | 'android'
+
+/** Una versione minima per piattaforma. `null` spegne il controllo su quella piattaforma. */
+export type VersioniMinime = Readonly<Record<PiattaformaStore, string | null>>
 
 /**
  * LA VERSIONE MINIMA, PER PIATTAFORMA. Sotto questa, il pop-up chiede di aggiornare.
@@ -40,13 +55,41 @@ export type PiattaformaStore = 'ios' | 'android'
  * risponde `1.1`. Chi la alza aggiorna anche il test che fotografa questo valore
  * (`__tests__/lib/aggiornamento-app.test.ts`) e scrive nel commit quando l'ha vista sullo store.
  */
-export const VERSIONE_MINIMA_STORE: Readonly<Record<PiattaformaStore, string | null>> = Object.freeze({
+export const VERSIONE_MINIMA_STORE: VersioniMinime = Object.freeze({
   ios: '1.1',
   android: '1.1',
 })
 
+/**
+ * LA VERSIONE MINIMA PER IL PERSONALE, PER PIATTAFORMA. Sotto questa il pop-up compare SOLO a chi
+ * lavora con l'app: docenti, Direzione, segreteria (`haProfiloDelPersonale`). Le famiglie non la
+ * vedono mai: per loro vale `VERSIONE_MINIMA_STORE`, e basta.
+ *
+ * NASCE SPENTA (`null` su entrambe le piattaforme): è costruita prima della 1.2 perché il deploy
+ * web non debba aspettare l'app. Si ACCENDE come l'altra, e alle stesse condizioni: SOLO DOPO AVER
+ * VISTO la 1.2 pubblicata sullo store di quella piattaforma (iOS scaricabile dalla scheda, Android
+ * uscita in PRODUZIONE su Google Play e non nel test chiuso). Poi si scrive `'1.2'` per quella
+ * piattaforma, si aggiorna il test che fotografa questo valore
+ * (`__tests__/lib/aggiornamento-app.test.ts`) e nel commit si scrive quando l'ha vista sullo store.
+ * Niente build e niente altro codice.
+ *
+ * Una minima del personale PIÙ BASSA di quella dello store non cambia niente: chi è sotto la seconda
+ * è già sotto la prima, e per lui il pop-up compare comunque.
+ */
+export const VERSIONE_MINIMA_PERSONALE: VersioniMinime = Object.freeze({
+  ios: null,
+  android: null,
+})
+
 /** Oltre questo tempo un `getInfo` senza risposta vale «versione illeggibile». */
 export const TIMEOUT_VERSIONE_MS = 3000
+
+/**
+ * Oltre questo tempo la lettura del ruolo (`GET /api/me`, già in corso per i menu) vale «ruolo
+ * illeggibile» e il pop-up resta spento: uno che compare con ritardo, mentre si sta già usando
+ * l'app, disturba più di uno che non compare.
+ */
+export const TIMEOUT_RUOLO_MS = 5000
 
 const SEGMENTO = /^\d+$/
 
@@ -93,14 +136,77 @@ async function leggiVersione(): Promise<string | 'timeout'> {
 }
 
 /**
- * Il binario installato è sotto la versione minima della sua piattaforma? Restituisce piattaforma
- * e versione installata, oppure `null` (aggiornato, web, piattaforma senza minima, o versione
- * illeggibile). Non lancia mai.
+ * Fra questi profili c'è un ruolo che lavora con l'app? Cioè uno che può aprire l'area docente
+ * (`educator`, `admin`, `coordinator`, `segreteria`): è la matrice che decide chi apre `/teacher`
+ * (`AREE_PER_RUOLO` in `@/lib/auth/active-role`) e quindi chi carica i video, e si chiede a lei
+ * invece di tenere una terza lista di ruoli da allineare a mano. La cuoca (solo l'area `admin`) e il
+ * genitore no; un ruolo che la matrice non conosce non apre nessuna area, quindi non conta: nel
+ * dubbio non si disturba.
  *
- * `minime` si passa solo dai test; in produzione vale `VERSIONE_MINIMA_STORE`.
+ * Sui ruoli REALI della persona (i `profili` di `/api/me`), non sulla veste che indossa adesso: chi è
+ * docente e anche genitore di un bambino della scuola ha un solo telefono e un solo binario, e il
+ * binario vecchio gli serve da docente anche quando in questo momento guarda l'app da genitore.
+ */
+export function haProfiloDelPersonale(profili: readonly ConRuolo[]): boolean {
+  return areeDeiProfili(profili).includes('teacher')
+}
+
+function ruoloIllegibile(motivo: string): false {
+  // `warn`: l'app funziona, solo il pop-up per il personale resta spento per questa sessione.
+  logClient({
+    livello: 'warn',
+    evento: 'avvio',
+    messaggio: `avviso-aggiorna-app-ruolo-illeggibile: ${motivo}`,
+  })
+  return false
+}
+
+/**
+ * Chi sta usando l'app lavora con l'app? `true` solo se lo si SA. Non lancia mai e non aspetta oltre
+ * `TIMEOUT_RUOLO_MS`: una lettura che rifiuta o che resta appesa vale `false`, con una riga di log.
+ *
+ * I profili si leggono da dove li leggono già i menu e la barra (`leggiProfili`: UNA `GET /api/me`
+ * per sessione, condivisa — per chi è già dentro non costa una richiesta in più). `null` = non lo so
+ * (rete giù, risposta illeggibile): vale `false` anche lui, e la riga di log l'ha già scritta chi ha
+ * fatto la richiesta (`profili-non-letti` in `use-profili.ts`): qui non si ripete.
+ *
+ * SU UNA PAGINA PUBBLICA (l'accesso, i moduli) NON SI CHIEDE NIENTE. È dove si apre l'app chi non è
+ * ancora dentro (il middleware manda al login chi non ha la sessione, e chi è dentro non parte da
+ * una pagina pubblica): lì non c'è un ruolo da leggere, e la `GET /api/me` risponderebbe 401
+ * scrivendo un `profili-non-letti` per un fatto previsto. Quella riga deve restare il segnale di un
+ * `/api/me` che NON risponde a chi è già dentro, non essere sommersa dai telefoni che si aprono
+ * sulla schermata di accesso. Chi parte da lì non ha ancora un ruolo: nel dubbio non si disturba.
+ */
+async function utenteDelPersonale(): Promise<boolean> {
+  if (isPublicPath(window.location.pathname)) return false
+  try {
+    const esito = await conTettoDiTempo(leggiProfili(), TIMEOUT_RUOLO_MS)
+    if (esito.scaduto) return ruoloIllegibile('timeout')
+    return esito.valore !== null && haProfiloDelPersonale(esito.valore)
+  } catch (e) {
+    return ruoloIllegibile(nomeErrore(e))
+  }
+}
+
+/**
+ * Il binario installato è sotto la versione minima che lo riguarda? Restituisce piattaforma e
+ * versione installata, oppure `null` (aggiornato, web, piattaforma senza minima, versione o ruolo
+ * illeggibili, o un genitore su un binario che solo il personale deve aggiornare). Non lancia mai.
+ *
+ * LE DUE MINIME, IN ORDINE:
+ *  1. sotto quella dello store, `minime`: per TUTTI, senza chiedere chi sia;
+ *  2. sotto quella del personale, `minimePersonale`: solo se chi usa l'app lavora con l'app
+ *     (`utenteDelPersonale`). Il ruolo si chiede qui e non prima: con la minima del personale
+ *     spenta, o con un binario già alla pari, non parte nessuna richiesta.
+ *
+ * `minime` e `minimePersonale` si passano solo dai test; in produzione valgono
+ * `VERSIONE_MINIMA_STORE` e `VERSIONE_MINIMA_PERSONALE`. (Anche `avvisoDaMostrare` lo chiama senza
+ * argomenti: dove compare il pop-up, l'avviso settimanale delle notifiche tace, per il personale
+ * come per tutti gli altri.)
  */
 export async function appDaAggiornare(
-  minime: Readonly<Record<PiattaformaStore, string | null>> = VERSIONE_MINIMA_STORE,
+  minime: VersioniMinime = VERSIONE_MINIMA_STORE,
+  minimePersonale: VersioniMinime = VERSIONE_MINIMA_PERSONALE,
 ): Promise<{ piattaforma: PiattaformaStore; versione: string } | null> {
   if (!isNativeApp()) return null
   let piattaforma: string
@@ -111,7 +217,9 @@ export async function appDaAggiornare(
   }
   if (piattaforma !== 'ios' && piattaforma !== 'android') return null
   const minima = minime[piattaforma]
-  if (minima === null) return null
+  const minimaDelPersonale = minimePersonale[piattaforma]
+  // Entrambe spente: il bridge non si tocca.
+  if (minima === null && minimaDelPersonale === null) return null
 
   let versione: string | 'timeout'
   try {
@@ -123,9 +231,17 @@ export async function appDaAggiornare(
   }
   if (versione === 'timeout') return versioneIllegibile('timeout')
 
-  const confronto = confrontaVersioni(versione, minima)
-  if (confronto === null) return versioneIllegibile('formato')
-  return confronto < 0 ? { piattaforma, versione } : null
+  if (minima !== null) {
+    const confronto = confrontaVersioni(versione, minima)
+    if (confronto === null) return versioneIllegibile('formato')
+    if (confronto < 0) return { piattaforma, versione }
+  }
+
+  if (minimaDelPersonale === null) return null
+  const confrontoPersonale = confrontaVersioni(versione, minimaDelPersonale)
+  if (confrontoPersonale === null) return versioneIllegibile('formato')
+  if (confrontoPersonale >= 0) return null
+  return (await utenteDelPersonale()) ? { piattaforma, versione } : null
 }
 
 /** La scheda dello store per la piattaforma; `null` fuori da iOS e Android. */

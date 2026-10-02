@@ -10,10 +10,11 @@ import { apriSchedaStore, appDaAggiornare, type PiattaformaStore } from '@/lib/n
 
 /**
  * IL POP-UP «AGGIORNA L'APP» (spec 2026-09-29). Chi deve aggiornare lo decide
- * `@/lib/native/aggiornamento-app` (versione del binario sotto la minima dello store); qui c'è la
- * finestra. Montato in `RootProviders` DENTRO il gate biometrico, così copre ogni area (genitore,
- * docente, segreteria) e la pagina di login. Sul web, sul server e sulla versione aggiornata non
- * rende niente.
+ * `@/lib/native/aggiornamento-app` (versione del binario sotto la minima dello store, per tutti;
+ * dal 2026-10-02 anche sotto la minima del PERSONALE, per chi lavora con l'app, spenta finché la 1.2
+ * non è sullo store); qui c'è la finestra. Montato in `RootProviders` DENTRO il gate biometrico, così
+ * copre ogni area (genitore, docente, segreteria) e la pagina di login. Sul web, sul server e sulla
+ * versione aggiornata non rende niente. Il testo è uno solo, per tutti.
  *
  * «A OGNI APERTURA» (scelta del titolare, 29/09): compare a ogni avvio a freddo e, se era stato
  * chiuso, di nuovo al ritorno in primo piano dopo almeno `RIPROPONI_DOPO_MS` in background. Un
@@ -26,13 +27,24 @@ import { apriSchedaStore, appDaAggiornare, type PiattaformaStore } from '@/lib/n
  * versione e raddoppierebbero il log. Per lo stesso motivo sono di modulo la chiusura
  * (`chiusoInSessione`) e la comparsa già registrata.
  *
+ * ⚠️ PER IL PERSONALE LA DECISIONE INCLUDE IL RUOLO, e una decisione di sessione lo legge una volta
+ * sola. Chi apre l'app GIÀ DENTRO (il caso normale: la sessione resta sul telefono) ha il ruolo al
+ * primo colpo. Chi parte dalla schermata di accesso non ce l'ha ancora: per lui la decisione è
+ * «niente» per tutta la sessione (nel dubbio non si disturba), e il pop-up della minima del personale
+ * compare dall'avvio a freddo successivo. Il login non rimonta questo componente, e rifare la
+ * decisione a ogni cambio di pagina sarebbe un'altra macchina a stati: si è scelto di non farlo.
+ * Sotto la minima dello store non cambia niente, perché lì il ruolo non serve.
+ *
  * IL GATE BIOMETRICO. La `Modal` rende `inert` tutto ciò che sta fuori da lei risalendo fino al
  * `body`: aperta sopra l'overlay di sblocco già a schermo lo renderebbe intoccabile. Si apre solo
  * quando `useBloccoBiometrico()` è falso; se il gate scatta con la finestra aperta, la finestra si
  * toglie e torna allo sblocco.
  *
  * I LOG. Il canale del client accetta solo `warn` ed `error`: comparsa e tocchi escono `warn`, con
- * la piattaforma e l'esito; `versione_app` la aggiunge il logger. Nessun dato personale.
+ * la piattaforma e l'esito; `versione_app` la aggiunge il logger. Nessun dato personale: il ruolo
+ * non entra nei log, e per il personale i messaggi sono gli stessi di tutti (la fascia si legge
+ * dalla versione: finché la minima dello store resta sotto quella del personale, una comparsa a una
+ * versione che la minima dello store già accetta è per forza del personale).
  */
 
 /** Il background oltre il quale il ritorno in primo piano vale come una nuova apertura. */

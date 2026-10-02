@@ -1752,16 +1752,39 @@ describe('contratto video · l’apertura con i destinatari e il trasporto', () 
 
   it('il trasporto è un elenco CHIUSO, e `put-nativo` è solo della Galleria', () => {
     expect([...TRASPORTI_VIDEO]).toEqual(['tus', 'put-nativo'])
-    expect(schemaAperturaIntentVideo.safeParse({ ...conDestinatari, trasporto: 'put-nativo' }).success).toBe(true)
-    expect(schemaAperturaIntentVideo.safeParse({ ...conDestinatari, trasporto: 'ftp' }).success).toBe(false)
+    // Il trasporto nativo con la sua impronta (obbligatoria, #20) passa; senza no: vedi il test sotto.
+    const conImpronta = { ...conDestinatari, trasporto: 'put-nativo', file: [{ ...galleria.file[0], sha256: impronta }] }
+    expect(schemaAperturaIntentVideo.safeParse(conImpronta).success).toBe(true)
+    expect(schemaAperturaIntentVideo.safeParse({ ...conImpronta, trasporto: 'ftp' }).success).toBe(false)
     const news = schemaAperturaIntentVideo.safeParse({
       ...galleria,
       canale: 'news',
       azione: 'attach_private',
       trasporto: 'put-nativo',
+      file: [{ ...galleria.file[0], sha256: impronta }],
     })
     expect(news.success, 'una News in trasporto nativo è stata accettata').toBe(false)
     expect(news.error?.issues.some((i) => i.path.join('.') === 'trasporto')).toBe(true)
+  })
+
+  it('con `put-nativo` lo `sha256` è OBBLIGATORIO, per ogni file (#20): senza, l’apertura non passa', () => {
+    // Era facoltativo nello schema: un client che lo omettesse apriva un caricamento che il Sandbox
+    // non avrebbe mai verificato — cioè la garanzia «il file arrivato è quello scelto», l'unica che
+    // regge una PUT da 2 GB che non si riprende a metà, valeva solo per chi si ricordava di chiederla.
+    const senza = schemaAperturaIntentVideo.safeParse({ ...conDestinatari, trasporto: 'put-nativo' })
+    expect(senza.success, 'put-nativo senza sha256 è stato accettato').toBe(false)
+    expect(senza.error?.issues.some((i) => i.path.join('.') === 'file.0.sha256')).toBe(true)
+    // E il rifiuto non dipende da un'impronta a metà: con TUS la stessa mancanza è la forma corretta.
+    expect(schemaAperturaIntentVideo.safeParse(conDestinatari).success).toBe(true)
+    expect(schemaAperturaIntentVideo.safeParse({ ...conDestinatari, trasporto: 'tus' }).success).toBe(true)
+    // Con l'impronta passa, ed è quella in minuscolo.
+    const con = schemaAperturaIntentVideo.safeParse({
+      ...conDestinatari,
+      trasporto: 'put-nativo',
+      file: [{ ...galleria.file[0], sha256: impronta }],
+    })
+    expect(con.success, JSON.stringify(con.error?.issues ?? [])).toBe(true)
+    expect(con.data?.file[0].sha256).toBe(impronta.toLowerCase())
   })
 
   it('lo `sha256` si ammette SOLO con `put-nativo`, per file, in esadecimale di 64 caratteri, in minuscolo', () => {
@@ -1982,7 +2005,16 @@ describe('contratto video · rinnovo, firma, azione e corpo del runner', () => {
     expect(job.success).toBe(true)
     expect(job.data?.job_id).toBe('40000000-0000-4000-8000-000000000004')
     expect(schemaCorpoRunnerVideo.safeParse({ job_id: 'non-un-uuid' }).success).toBe(false)
-    expect(schemaCorpoRunnerVideo.safeParse({ jobId: '40000000-0000-4000-8000-000000000004' }).data).toEqual({})
+    // SECONDARIO #19: la chiave col refuso (`jobId`, camelCase) NON passa più come `{}`. Prima lo schema
+    // non era `.strict()`: la chiave sconosciuta veniva scartata, il calcio diventava un giro del cron
+    // senza job e nessuno lo sapeva. Adesso è un 400, e dice QUALE chiave non conosce.
+    const refuso = schemaCorpoRunnerVideo.safeParse({ jobId: '40000000-0000-4000-8000-000000000004' })
+    expect(refuso.success, '`jobId` non è `job_id`: va respinto, non scartato').toBe(false)
+    expect(refuso.error?.issues[0]).toMatchObject({ code: 'unrecognized_keys', keys: ['jobId'] })
+    // …e vale per qualunque altra chiave in più, anche accanto a un `job_id` giusto.
+    expect(
+      schemaCorpoRunnerVideo.safeParse({ job_id: '40000000-0000-4000-8000-000000000004', altro: 1 }).success,
+    ).toBe(false)
   })
 })
 

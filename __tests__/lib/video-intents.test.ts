@@ -1071,14 +1071,26 @@ describe('la decisione su `storage.objects`: nessuna policy, e il motivo', () =>
       ).toContain(bucket)
     }
 
-    // E la lacuna dichiarata resta dichiarata: `video_processing` non è «coperto».
-    // Se qualcuno lo promuovesse senza scrivere chi lo svuota, questo cade.
+    // LA LACUNA È STATA CHIUSA, il 2026-10-02 (PR 2 «server e web» dei video): il filo teso ha fatto il suo
+    // mestiere una seconda volta, ed è diventato rosso nell'istante in cui il registro è cambiato. Fino a
+    // quel giorno qui c'era scritto che `video_processing` restava `escluso` perché NESSUN codice cancellava
+    // mai da lì, con la richiesta di cambiare la riga «insieme al codice che lo svuota». Il codice c'è: la
+    // purga (`POST /api/gdpr/retention-video`) toglie le uscite scadute, le orfane e le risorte, e il
+    // registro le dichiara `coperto-fuori-oblio`. L'asserzione guarda ora dalla parte opposta: la promozione
+    // ha un responsabile SCRITTO nella voce, non solo uno stato nuovo. Che la route faccia ciò che la voce
+    // dice lo prova `gdpr-retention-video.test.ts`; che la voce sia quella giusta, `gdpr-oblio-completo.test.ts`.
+    const voceUscite = /video_processing:\s*\{\s*stato:\s*'coperto-fuori-oblio',\s*come:([\s\S]*?)\n {2}\},/.exec(oblio)
     expect(
-      oblio,
-      '`video_processing` è registrato come lacuna aperta perché NESSUN codice cancella ' +
-        'mai da lì — misurato il 2026-09-18. Se è stato coperto davvero, questa riga va ' +
-        'cambiata insieme al codice che lo svuota; se no, la lacuna resta scritta.',
-    ).toMatch(/video_processing:\s*\{\s*stato:\s*'escluso'/)
+      voceUscite,
+      '`video_processing` non è più registrato come `coperto-fuori-oblio`: se è tornato `escluso` la lacuna ' +
+        'del 2026-09-18 è di nuovo aperta, e va riscritta con la sua ragione (e questo test con lei); se ha ' +
+        'cambiato stato, la prosa che lo dichiara va riletta insieme al codice che lo svuota.',
+    ).not.toBeNull()
+    expect(
+      voceUscite?.[1],
+      'la voce di `video_processing` non dice più chi lo svuota: una promozione senza un responsabile scritto ' +
+        'è una promessa che nessuno mantiene.',
+    ).toContain('/api/gdpr/retention-video')
 
     expect(INTENT).toContain('CHI CARICA')
   })

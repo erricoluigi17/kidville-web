@@ -413,6 +413,42 @@ restano rosse.
   `scegliTrasporto()` risponde `put-nativo` solo se un trasporto registrato (PR 3) dice di essere disponibile. In questa
   PR **non** c'è alcun ramo nativo mezzo fatto.
 
+### 11.1 Il selettore: cosa apre il riquadro grande, e i suoi log (richiesta del titolare, 02/10)
+
+**Perché.** Il titolare ha provato dall'iPhone, nell'app: «Scegli file dal dispositivo» → Libreria foto → un video
+di 73 MB (circa 50 s). Il video non è mai arrivato alla pagina: nessuna miniatura, nessun errore. Quel passaggio oggi
+non lascia log (`MediaUploader` registra solo le selezioni rifiutate, `gallery-file-selezione-rifiutata`). Le ipotesi da
+distinguere sono tre: **«Aggiungi» non premuto** nel selettore multiplo · **conversione di WebKit** lenta o senza segni a
+schermo · **download da iCloud**.
+
+**Il riquadro grande nell'app.** Nell'app (`fotocameraNativaDisponibile()`) il riquadro grande di `MediaUploader` apre
+il **selettore con foto e video** (l'`<input type="file" accept="image/*,video/*" multiple>`), non più la fotocamera
+nativa (che mostra solo foto, una alla volta). **«Scatta una foto»** (la fotocamera nativa di oggi, `useImagePicker`)
+diventa l'opzione **secondaria**, al posto del link «Scegli file dal dispositivo». Il testo del riquadro nell'app parla
+di scegliere foto e video (non di trascinare). Sul web non cambia niente: il riquadro apre già l'input.
+
+**I log, con `logClient`** (livello `warn`: il client spedisce solo `warn` ed `error`). **Mai il nome del file** (può
+contenere il nome di un bambino): solo numeri e codici. L'impronta di `app_log` conserva i `campi` della **prima**
+occorrenza del giorno, quindi ciò che deve distinguere un'occorrenza dall'altra sta nel **messaggio** (codici e fasce di
+tempo), e i numeri esatti nei `campi`. Fasce di tempo: `<1s`, `1-5s`, `5-30s`, `30s-2m`, `>2m`.
+
+1. **Selettore aperto** — `gallery-selettore-aperto strada=<selettore-file|fotocamera-nativa> ambiente=<app|web>`.
+2. **File ricevuti** — `gallery-selettore-file-ricevuti mime=<image|video|misto> attesa=<fascia> tardivo=<si|no>`, con
+   `campi` `{n, n_video, n_foto, byte_totali, ms_da_apertura, ms_da_ritorno}` (`ms_da_ritorno` = dal ritorno della pagina
+   in primo piano, `null` se non c'è stato; `tardivo=si` se il log del punto 3 era già partito).
+3. **Selettore chiuso senza file** — `gallery-selettore-chiuso-senza-file motivo=<cancel|ritorno-senza-file|annullato-fotocamera> attesa=<fascia>`,
+   con `campi` `{ms_da_apertura}`. L'evento `cancel` dell'input dove il telefono lo supporta; altrimenti, quando la
+   pagina torna visibile, un timer di **15 s** (costante documentata): se nel frattempo non è arrivato niente, si
+   registra `ritorno-senza-file`. Se i file arrivano **dopo**, il punto 2 parte con `tardivo=si` (è la firma della
+   conversione di WebKit o del download: il tempo si legge in `ms_da_ritorno` e `ms_da_apertura`).
+
+Come si leggono le tre ipotesi: «Aggiungi» non premuto → punto 3 e nient'altro; conversione di WebKit → punto 3, poi
+punto 2 `tardivo=si` con `ms_da_ritorno` grande; download da iCloud → punto 2 con `ms_da_apertura` grande e
+`ms_da_ritorno` piccolo (l'attesa avviene dentro il selettore).
+
+**Test:** uno per ciascuno dei tre casi, ognuno provato rompendo il codice (rosso osservato). Più un test che nessun
+campo e nessun messaggio contenga il nome del file.
+
 ---
 
 ## 12. Contratto con la PR 3
@@ -501,7 +537,9 @@ Server (canali `galleria`, `news`, `cron`, `config`, `notifica`, `storage`, `rpc
   `video-runner-kick`.
 
 Client (solo `warn` ed `error`): `video-ripresa-automatica` (job, motivo), `video-deposito-saltato-spazio`,
-`video-upload-annullato-in-volo`. Successo loggato per gli eventi critici (pubblicazione, notifiche, cron).
+`video-upload-annullato-in-volo`, e i tre del selettore di §11.1 (`gallery-selettore-aperto`,
+`gallery-selettore-file-ricevuti`, `gallery-selettore-chiuso-senza-file`). Successo loggato per gli eventi critici
+(pubblicazione, notifiche, cron).
 
 ---
 
@@ -551,13 +589,13 @@ compito; un bloccante ancora aperto al terzo giro ferma il lavoro e si scrive al
 | T7 | Pubblicazione automatica ed esiti | `src/lib/gallery/pubblicazione-video-automatica.ts`, `src/lib/media/video/esiti.ts`, `src/lib/notifiche/tipi.ts`, `messages/{it,en}/etichette.json`, `src/lib/push/dispatch.ts`, `outbox/destinatari.ts`, due righe in `runner/index.ts` | notifiche solo con la marca; avviso senza nomi; fallito dopo 60'; bambino uscito e nessun destinatario come §8.2 |
 | T13 | Conservazione e GDPR | `retention-video/route.ts` (passi), `src/lib/gdpr/esegui.ts`, oblio, test | righe trattenute ⇒ 500; registro coerente con la fotografia dello Storage |
 | T8 | Ambiente pronto + sha256 | `runner/adattatori.ts` (parte macchina), `runner/ambiente.ts`, `preparazione.ts`, `script.ts`, `build.ts`, `ritentativi.ts` (codice d'uscita nuovo), `scripts/video-sandbox-ambiente.mjs`, `docs/env.md`, test | ripiego provato con snapshot assente; impronte nel lock; sha256 diverso → `ORIGINALE_DIVERSO` non ritentato |
-| T11 | Client galleria | `src/components/features/gallery/**` (video), `src/app/(dashboard)/teacher/gallery/page.tsx`, `src/lib/gallery/video-galleria-flusso.ts`, `src/lib/media/video/trasporto/*`, `messages/{it,en}/teacherServizi.json`, test | nessun `alert` nel ramo di invio; 422 nel passo dei bambini; ripresa senza clic; «Riprova»; «va ricaricato»; 50 elementi; #36 |
+| T11 | Client galleria + selettore (§11.1) | `src/components/features/gallery/**` (video e `MediaUploader.tsx`), `src/app/(dashboard)/teacher/gallery/page.tsx`, `src/lib/gallery/video-galleria-flusso.ts`, `src/lib/media/video/trasporto/*`, `src/lib/native/use-image-picker.ts` e `camera.ts` (solo se servono ai log della fotocamera), `messages/{it,en}/teacherServizi.json` e `shared.json` (chiavi del selettore), test | nessun `alert` nel ramo di invio; 422 nel passo dei bambini; ripresa senza clic; «Riprova»; «va ricaricato»; 50 elementi; #36; **§11.1**: nell'app il riquadro grande apre il selettore foto e video e «Scatta una foto» è secondaria; i tre log (aperto, ricevuti, chiuso senza file) con un test ciascuno visto rosso rompendo il codice; mai il nome del file nei log |
 | T14 | Pop-up 1.2 per il personale, **spento** (`null`) | `aggiornamento-app.ts`, `AvvisoAggiornamentoApp.tsx`, test | con `null` nessun effetto; con `'1.2'` compare solo al personale sotto la 1.2 |
 | T15 | E2E | 3 spec + destinatari, `scripts/seed-e2e.mjs`, `playwright.config.ts` | verde senza ritentativi |
 | T16 | Orchestratore | misure, snapshot e variabili, collaudo reale sul DB della CI, PRD, gate intero, PR, migrazioni, merge, verifiche, fotografie | §19 |
 
 **Ondate:** 1) T1 ∥ T3 · 2) T2a ∥ T4 ∥ T9 ∥ T10 ∥ T12 · 3) T2b ∥ T2c ∥ T5 ∥ T6 · 4) T7 ∥ T13 ∥ T8 ∥ T11 ∥ T14 ·
-5) T15, poi T16. **File condivisi in serie:** `shared.json` (T1 → T12 → T14); `teacherServizi.json` (T12 → T11);
+5) T15, poi T16. **File condivisi in serie:** `shared.json` (T1 → T12 → T14 → T11); `teacherServizi.json` (T12 → T11);
 runner (T6 → T7, T8 su file diversi); retention (T3 → T13); `errori-senza-codice-allowlist.json` (T4 e T12 su chiavi
 diverse, rileggendo prima di scrivere; poi T5).
 
@@ -567,7 +605,9 @@ diverse, rileggendo prima di scrivere; poi T5).
 
 1. Prima del merge: misure (§10.3) e costo; snapshot creato e `VIDEO_SANDBOX_SNAPSHOT_ID` +
    `VIDEO_CONVERSIONI_PARALLELE` su Production e Preview (**mostrati prima**); le 2 + 3 migrazioni sul DB della CI con
-   `migrate-ci.yml`; E2E verde; collaudo reale sul DB della CI con il Sandbox.
+   `migrate-ci.yml`; E2E verde; collaudo reale sul DB della CI con il Sandbox; **collaudo sul simulatore iPhone** del
+   selettore di §11.1 (riquadro grande → selettore foto e video, «Scatta una foto» secondaria, i tre log visti partire).
+   Il PRD della PR ha la voce del selettore e dei suoi log.
 2. `SELECT count(*) FROM enrollment_submissions;` poi le tre migrazioni in produzione, **mostrate prima**, rinominate
    all'istante vero e applicate con `supabase db push --linked`; `get_advisors` a 0 ERROR.
 3. Merge a mano in un orario tranquillo; deploy collegato al commit; `migrate.yml` approvato solo dopo aver visto

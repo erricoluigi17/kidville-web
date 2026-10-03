@@ -4,17 +4,20 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import it.kidville.app.caricamenti.SegretiCaricamenti.CifrarioKeystore.Verdetto;
 import it.kidville.app.caricamenti.SegretiCaricamenti.Esito;
 import it.kidville.app.caricamenti.SegretiCaricamenti.Lettura;
 import it.kidville.app.caricamenti.SegretiCaricamenti.Segreti;
 
 import android.security.keystore.KeyPermanentlyInvalidatedException;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -22,17 +25,28 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.GeneralSecurityException;
 import java.security.InvalidKeyException;
+import java.security.Key;
+import java.security.KeyStoreSpi;
+import java.security.Provider;
+import java.security.Security;
 import java.security.UnrecoverableKeyException;
+import java.security.cert.Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -44,7 +58,11 @@ import javax.crypto.SecretKey;
 /**
  * I segreti dei caricamenti (spec §2.2, §4.6, §9; compito A2): token e URL firmato cifrati in `segreti/<jobId>.bin`, MAI nel JSON della
  * coda. Il cifrario è quello software dei test, con lo stesso formato di quello del Keystore: si prova tutto tranne la chiave
- * dell'AndroidKeyStore, che esiste solo su un telefono.
+ * dell'AndroidKeyStore, che esiste solo su un telefono. Del cifrario di produzione si prova ciò che non dipende dal sistema: le regole pure
+ * (`eTransitorio`, `eDaEliminare`, con `sdk` e verdetto iniettati) e, con un AndroidKeyStore FINTO registrato come provider di sicurezza
+ * (compito A2d), il cablaggio di `chiave(boolean)`: che cosa si elimina, quando, con quale alias. Non si prova sulla JVM `VerdettoApi33`, che
+ * traduce una `android.security.KeyStoreException` (che qui non si può costruire) nelle due risposte del verdetto, e nemmeno `Build.VERSION.SDK_INT`,
+ * che sulla JVM vale 0.
  */
 public class SegretiCaricamentiTest {
 
@@ -570,7 +588,7 @@ public class SegretiCaricamentiTest {
 
     @Test
     public void iCriteriDelKeystoreSeparanoIlPasseggeroDalDefinitivoEIlDefinitivoVince() {
-        java.util.function.Function<Throwable, Boolean> nessunVerdetto = c -> null;
+        Function<Throwable, Verdetto> nessunVerdetto = c -> null;
         // Passeggeri: l'operazione del provider non è riuscita; un errore di I/O (l'archivio delle chiavi non si apre).
         assertTrue("ProviderException", SegretiCaricamenti.CifrarioKeystore.eTransitorio(new java.security.ProviderException("Keystore operation failed"), 0, nessunVerdetto));
         assertTrue("IOException", SegretiCaricamenti.CifrarioKeystore.eTransitorio(new IOException("archivio non aperto"), 0, nessunVerdetto));
@@ -604,7 +622,7 @@ public class SegretiCaricamentiTest {
     public void daApi33IlVerdettoDelSistemaDecideEVaIlSuoNoAncheSottoUnProviderException() {
         final RuntimeException conVerdettoSi = new RuntimeException("sistema: passeggero");
         final RuntimeException conVerdettoNo = new RuntimeException("sistema: definitivo");
-        java.util.function.Function<Throwable, Boolean> verdetto = c -> c == conVerdettoSi ? Boolean.TRUE : c == conVerdettoNo ? Boolean.FALSE : null;
+        Function<Throwable, Verdetto> verdetto = c -> c == conVerdettoSi ? new Verdetto(true, false) : c == conVerdettoNo ? new Verdetto(false, false) : null;
         assertTrue("il sistema dice «passeggero»", SegretiCaricamenti.CifrarioKeystore.eTransitorio(new GeneralSecurityException("x", conVerdettoSi), 33, verdetto));
         assertFalse("il sistema dice «definitivo»: vale anche con un ProviderException sopra",
                 SegretiCaricamenti.CifrarioKeystore.eTransitorio(new java.security.ProviderException("operazione", conVerdettoNo), 33, verdetto));
@@ -671,25 +689,53 @@ public class SegretiCaricamentiTest {
      * ──────────────────────────────────────────────────────────────────────────── */
 
     /**
-     * Un guasto che il SISTEMA dichiara passeggero: sta al posto di una `android.security.KeyStoreException` con `isTransientFailure()` vero, che
-     * sulla JVM non si può costruire (lo stub di android.jar non ha un costruttore che funzioni). Il verdetto si inietta, come negli altri test.
+     * Un guasto che porta un verdetto del SISTEMA: sta al posto di una `android.security.KeyStoreException`, che sulla JVM non si può costruire
+     * (il suo unico costruttore, nello stub di android.jar, è di pacchetto). Le due risposte, `isTransientFailure()` e `isSystemError()`, sono i
+     * due booleani del {@link Verdetto} che porta; il verdetto si inietta, come negli altri test.
      */
-    private static final class VerdettoSi extends RuntimeException {
+    private abstract static class GuastoConVerdetto extends RuntimeException {
+        final Verdetto verdetto;
+
+        GuastoConVerdetto(String messaggio, boolean passeggero, boolean erroreDiSistema) {
+            super(messaggio);
+            this.verdetto = new Verdetto(passeggero, erroreDiSistema);
+        }
+    }
+
+    /** Il sistema dice «passeggero» e basta: `isTransientFailure()` vero, `isSystemError()` falso. */
+    private static final class VerdettoSi extends GuastoConVerdetto {
         VerdettoSi() {
-            super("sistema: passeggero");
+            super("sistema: passeggero", true, false);
         }
     }
 
-    /** E uno che il sistema dichiara DEFINITIVO (`isTransientFailure()` falso). */
-    private static final class VerdettoNo extends RuntimeException {
+    /** Il sistema dice «della chiave»: né passeggero né di sistema (una chiave corrotta). */
+    private static final class VerdettoNo extends GuastoConVerdetto {
         VerdettoNo() {
-            super("sistema: definitivo");
+            super("sistema: definitivo", false, false);
         }
     }
 
-    /** Il verdetto iniettato: legge i due finti qui sopra e, per tutto il resto, non ha niente da dire (come `VerdettoApi33.su`). */
-    private static final Function<Throwable, Boolean> VERDETTO_DEL_SISTEMA =
-            causa -> causa instanceof VerdettoSi ? Boolean.TRUE : causa instanceof VerdettoNo ? Boolean.FALSE : null;
+    /**
+     * Il sistema dice «errore di sistema» e NON «passeggero»: `isSystemError()` vero, `isTransientFailure()` FALSO. È SYSTEM_ERROR, ciò che esce da
+     * `getKeyEntry` dopo una connessione persa col demone (KeyStore2.java:122-124, KeyStoreException.java:666-668).
+     */
+    private static final class VerdettoSistema extends GuastoConVerdetto {
+        VerdettoSistema() {
+            super("sistema: errore di sistema", false, true);
+        }
+    }
+
+    /** Il sistema dice tutte e due le cose: è la forma di quasi ogni guasto passeggero di AOSP (KM_ERROR_SECURE_HW_BUSY, OUT_OF_KEYS_*...). */
+    private static final class VerdettoSistemaPasseggero extends GuastoConVerdetto {
+        VerdettoSistemaPasseggero() {
+            super("sistema: errore di sistema passeggero", true, true);
+        }
+    }
+
+    /** Il verdetto iniettato: legge i finti qui sopra e, per tutto il resto, non ha niente da dire (come `VerdettoApi33.su`). */
+    private static final Function<Throwable, Verdetto> VERDETTO_DEL_SISTEMA =
+            causa -> causa instanceof GuastoConVerdetto ? ((GuastoConVerdetto) causa).verdetto : null;
 
     /** `guasto` con `causa` sotto: i tipi della JCA non hanno tutti un costruttore con la causa (IllegalBlockSizeException, UnrecoverableKeyException). */
     private static <T extends Throwable> T conCausa(T guasto, Throwable causa) {
@@ -760,13 +806,55 @@ public class SegretiCaricamentiTest {
         }
     }
 
-    /** Un definitivo che nessun verdetto riabilita: da qualunque lato della catena, e con un contenitore in mezzo, anche se il sistema dice «passeggero». */
-    private static void unDefinitivoNonSiRiabilita(java.util.function.Supplier<Throwable> definitivo) {
+    @Test
+    public void daApi33UnErroreDiSistemaValeComePasseggeroAncheSeIlSistemaNonLoDiceTransitorio() {
+        // SYSTEM_ERROR dopo una connessione persa col demone: `isSystemError()` vero e `isTransientFailure()` FALSO (KeyStoreException.java:666-668).
+        // `getKey` lo avvolge in un UnrecoverableKeyException (AndroidKeyStoreProvider.java:414-417): la voce aspetta, non si chiude INTERNO per un
+        // demone che si sta riavviando. Un errore di sistema non è un guasto della chiave.
         for (int sdk : new int[]{33, 34, 36}) {
-            assertFalse("verdetto SOTTO, sdk " + sdk, transitorio(conCausa(definitivo.get(), new VerdettoSi()), sdk));
-            assertFalse("verdetto SOPRA, sdk " + sdk, transitorio(conCausa(new VerdettoSi(), definitivo.get()), sdk));
-            assertFalse("con un contenitore in mezzo, sdk " + sdk,
-                    transitorio(conCausa(new VerdettoSi(), conCausa(new IllegalBlockSizeException("doFinal"), definitivo.get())), sdk));
+            assertTrue("sdk " + sdk + ": da solo", transitorio(new VerdettoSistema(), sdk));
+            assertTrue("sdk " + sdk + ": sotto un UnrecoverableKeyException, il caso vero di getKey",
+                    transitorio(conCausa(new UnrecoverableKeyException("Failed to obtain information about key"), new VerdettoSistema()), sdk));
+            assertTrue("sdk " + sdk + ": sotto un IllegalBlockSizeException, doFinal e updateAAD",
+                    transitorio(conCausa(new IllegalBlockSizeException("doFinal"), new VerdettoSistema()), sdk));
+            assertTrue("sdk " + sdk + ": sotto un InvalidKeyException, l'init",
+                    transitorio(conCausa(new InvalidKeyException("Keystore operation failed"), new VerdettoSistema()), sdk));
+            assertTrue("sdk " + sdk + ": con altri strati in mezzo",
+                    transitorio(conCausa(new UnrecoverableKeyException("avvolge"), stratiSopra(new VerdettoSistema(), 3)), sdk));
+            assertTrue("sdk " + sdk + ": col verdetto SOPRA il contenitore",
+                    transitorio(conCausa(new VerdettoSistema(), new UnrecoverableKeyException("avvolto")), sdk));
+            assertTrue("sdk " + sdk + ": di sistema e passeggero insieme",
+                    transitorio(conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoSistemaPasseggero()), sdk));
+            assertFalse("sdk " + sdk + ": controllo, né di sistema né passeggero è un guasto della chiave: definitivo",
+                    transitorio(conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoNo()), sdk));
+        }
+    }
+
+    @Test
+    public void unErroreDiSistemaSenzaUnaKeyStoreExceptionInCatenaNonCambiaLaRegolaDeiTipi() {
+        // Il verdetto c'è solo se nella catena c'è una KeyStoreException: un UnrecoverableKeyException senza causa resta definitivo (è come
+        // arriva l'invalidazione permanente, AndroidKeyStoreSpi.java:126-127), e prima di API 33 il verdetto non esiste.
+        for (int sdk : new int[]{33, 34, 36}) {
+            assertFalse("sdk " + sdk, transitorio(new UnrecoverableKeyException("User changed or deleted their auth credentials"), sdk));
+        }
+        for (int sdk : new int[]{24, 29, 32}) {
+            assertFalse("sdk " + sdk + ": il verdetto non c'è", transitorio(conCausa(new UnrecoverableKeyException("chiave"), new VerdettoSistema()), sdk));
+            assertFalse("sdk " + sdk + ": nemmeno sopra un IllegalBlockSizeException",
+                    transitorio(conCausa(new IllegalBlockSizeException("doFinal"), new VerdettoSistema()), sdk));
+        }
+    }
+
+    /** Un definitivo che nessun verdetto riabilita: da qualunque lato della catena, e con un contenitore in mezzo, qualunque cosa dica il sistema. */
+    private static void unDefinitivoNonSiRiabilita(java.util.function.Supplier<Throwable> definitivo) {
+        List<java.util.function.Supplier<Throwable>> verdetti = Arrays.asList(VerdettoSi::new, VerdettoSistema::new, VerdettoSistemaPasseggero::new);
+        for (java.util.function.Supplier<Throwable> verdetto : verdetti) {
+            String chi = verdetto.get().getClass().getSimpleName();
+            for (int sdk : new int[]{33, 34, 36}) {
+                assertFalse("verdetto SOTTO, " + chi + ", sdk " + sdk, transitorio(conCausa(definitivo.get(), verdetto.get()), sdk));
+                assertFalse("verdetto SOPRA, " + chi + ", sdk " + sdk, transitorio(conCausa(verdetto.get(), definitivo.get()), sdk));
+                assertFalse("con un contenitore in mezzo, " + chi + ", sdk " + sdk,
+                        transitorio(conCausa(verdetto.get(), conCausa(new IllegalBlockSizeException("doFinal"), definitivo.get())), sdk));
+            }
         }
     }
 
@@ -806,16 +894,19 @@ public class SegretiCaricamentiTest {
     @Test
     public void primaDiApi33IContenitoriRestanoDefinitiviEIlVerdettoNonSiChiedeNemmeno() {
         // «Sulle API 24-32 non cambia niente»: un IllegalBlockSizeException o un UnrecoverableKeyException vale «definitivo» senza appello, e il
-        // verdetto del sistema non si chiede (su quei livelli `KeyStoreException#isTransientFailure` non esiste nemmeno).
+        // verdetto del sistema non si chiede (su quei livelli `KeyStoreException#isTransientFailure` e `#isSystemError` non esistono nemmeno).
         final AtomicInteger richieste = new AtomicInteger();
-        final Function<Throwable, Boolean> contaLeRichieste = causa -> {
+        final Function<Throwable, Verdetto> contaLeRichieste = causa -> {
             richieste.incrementAndGet();
             return VERDETTO_DEL_SISTEMA.apply(causa);
         };
         for (int sdk : new int[]{24, 29, 32}) {
             for (Throwable guasto : new Throwable[]{conCausa(new IllegalBlockSizeException("doFinal"), new VerdettoSi()),
                     conCausa(new UnrecoverableKeyException("chiave"), new VerdettoSi()), conCausa(new InvalidKeyException("init"), new VerdettoSi()),
-                    conCausa(new VerdettoSi(), new IllegalBlockSizeException("doFinal"))}) {
+                    conCausa(new VerdettoSi(), new IllegalBlockSizeException("doFinal")),
+                    conCausa(new IllegalBlockSizeException("doFinal"), new VerdettoSistema()),
+                    conCausa(new UnrecoverableKeyException("chiave"), new VerdettoSistema()),
+                    conCausa(new VerdettoSistema(), new UnrecoverableKeyException("chiave"))}) {
                 assertFalse("sdk " + sdk + ": " + guasto.getClass().getSimpleName(),
                         SegretiCaricamenti.CifrarioKeystore.eTransitorio(guasto, sdk, contaLeRichieste));
             }
@@ -823,14 +914,16 @@ public class SegretiCaricamentiTest {
         assertEquals("prima di API 33 il verdetto non si chiede", 0, richieste.get());
     }
 
-    // ── 154: la chiave si elimina solo per cifrare un segreto nuovo E per un guasto permanente ──
+    // ── 154: la chiave si elimina solo per cifrare un segreto nuovo E per un guasto DELLA CHIAVE (né passeggero né di sistema) ──
 
     @Test
     public void duranteUnaDecifraturaLaChiaveNonSiEliminaMaiSuNessunLivelloENessunVerdetto() {
         Throwable[] guasti = {
                 new UnrecoverableKeyException("invalidata: arriva col solo messaggio, senza causa"),
                 conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoNo()),
-                conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoSi())};
+                conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoSi()),
+                conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoSistema()),
+                conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoSistemaPasseggero())};
         for (int sdk : new int[]{24, 28, 32, 33, 34, 36}) {
             for (Throwable guasto : guasti) {
                 assertFalse("decifrando MAI: sdk " + sdk + ", causa " + DiagnosticaLocale.classe(guasto.getCause()), daEliminare(false, guasto, sdk));
@@ -848,9 +941,23 @@ public class SegretiCaricamentiTest {
     }
 
     @Test
+    public void perCifrareDaApi33UnErroreDiSistemaSalvaLaChiaveAncheSeNonEPasseggero() {
+        // SYSTEM_ERROR dopo una connessione persa col demone: `isSystemError()` vero, `isTransientFailure()` FALSO. Una chiave nuova non lo risolve
+        // (KeyStoreException.java:366-373), e eliminare la vecchia renderebbe illeggibili i segreti di tutte le voci vive.
+        for (int sdk : new int[]{33, 34, 36}) {
+            assertFalse("sdk " + sdk,
+                    daEliminare(true, conCausa(new UnrecoverableKeyException("Failed to obtain information about key"), new VerdettoSistema()), sdk));
+            assertFalse("sdk " + sdk + ": anche con altri strati in mezzo",
+                    daEliminare(true, conCausa(new UnrecoverableKeyException("avvolge"), stratiSopra(new VerdettoSistema(), 3)), sdk));
+            assertFalse("sdk " + sdk + ": di sistema e passeggero insieme",
+                    daEliminare(true, conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoSistemaPasseggero()), sdk));
+        }
+    }
+
+    @Test
     public void perCifrareDaApi33UnVerdettoDefinitivoOLAssenzaDiVerdettoEliminanoLaChiave() {
         for (int sdk : new int[]{33, 34, 36}) {
-            assertTrue("sdk " + sdk + ": il sistema dice «definitivo»",
+            assertTrue("sdk " + sdk + ": il sistema dice «della chiave», né passeggero né di sistema",
                     daEliminare(true, conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoNo()), sdk));
             assertTrue("sdk " + sdk + ": nessun verdetto, l'invalidazione permanente arriva col solo messaggio, senza causa",
                     daEliminare(true, new UnrecoverableKeyException("invalidata"), sdk));
@@ -860,17 +967,27 @@ public class SegretiCaricamentiTest {
     }
 
     @Test
+    public void ilVerdettoDelSistemaDiceDellaChiaveSoloQuandoNonESistemaENonEPasseggero() {
+        // Le quattro combinazioni delle due risposte: solo «né passeggero né di sistema» è un guasto della chiave.
+        assertTrue("né l'uno né l'altro", new Verdetto(false, false).eDellaChiave());
+        assertFalse("passeggero", new Verdetto(true, false).eDellaChiave());
+        assertFalse("di sistema", new Verdetto(false, true).eDellaChiave());
+        assertFalse("di sistema e passeggero", new Verdetto(true, true).eDellaChiave());
+    }
+
+    @Test
     public void perCifrarePrimaDiApi33LaChiaveSiEliminaSempreEIlVerdettoNonSiChiedeNemmeno() {
         // API 24-32: il sistema non dà un verdetto, e vale il comportamento di sempre (si elimina e si ricrea), anche se la catena porta un
-        // «passeggero» che da API 33 la salverebbe.
+        // «passeggero» o un «errore di sistema» che da API 33 la salverebbero.
         final AtomicInteger richieste = new AtomicInteger();
-        final Function<Throwable, Boolean> contaLeRichieste = causa -> {
+        final Function<Throwable, Verdetto> contaLeRichieste = causa -> {
             richieste.incrementAndGet();
             return VERDETTO_DEL_SISTEMA.apply(causa);
         };
         for (int sdk : new int[]{24, 26, 29, 30, 32}) {
             for (Throwable guasto : new Throwable[]{new UnrecoverableKeyException("chiave"),
-                    conCausa(new UnrecoverableKeyException("chiave"), new VerdettoSi()), conCausa(new UnrecoverableKeyException("chiave"), new VerdettoNo())}) {
+                    conCausa(new UnrecoverableKeyException("chiave"), new VerdettoSi()), conCausa(new UnrecoverableKeyException("chiave"), new VerdettoNo()),
+                    conCausa(new UnrecoverableKeyException("chiave"), new VerdettoSistema())}) {
                 assertTrue("sdk " + sdk + ", causa " + DiagnosticaLocale.classe(guasto.getCause()),
                         SegretiCaricamenti.CifrarioKeystore.eDaEliminare(true, guasto, sdk, contaLeRichieste));
             }
@@ -893,9 +1010,11 @@ public class SegretiCaricamentiTest {
 
         int tetto = SegretiCaricamenti.CifrarioKeystore.PROFONDITA_MASSIMA_DELLE_CAUSE;
         // La profondità 0 è la radice: con un tetto di N si vedono le cause 0..N-1, e quella di indice N-1 è l'ultima.
-        Throwable ultimaVista = stratiSopra(new VerdettoSi(), tetto - 1);
+        VerdettoSi fondo = new VerdettoSi();
+        Throwable ultimaVista = stratiSopra(fondo, tetto - 1);
         Throwable primaNonVista = stratiSopra(new VerdettoSi(), tetto);
-        assertEquals(Boolean.TRUE, SegretiCaricamenti.CifrarioKeystore.verdettoNellaCatena(ultimaVista, VERDETTO_DEL_SISTEMA));
+        assertSame("il verdetto è quello della causa trovata", fondo.verdetto,
+                SegretiCaricamenti.CifrarioKeystore.verdettoNellaCatena(ultimaVista, VERDETTO_DEL_SISTEMA));
         assertNull("oltre il tetto non si guarda", SegretiCaricamenti.CifrarioKeystore.verdettoNellaCatena(primaNonVista, VERDETTO_DEL_SISTEMA));
         assertFalse("l'ultima causa vista salva la chiave", daEliminare(true, ultimaVista, 34));
         assertTrue("la prima non vista no: nessun verdetto, guasto permanente", daEliminare(true, primaNonVista, 34));
@@ -934,11 +1053,11 @@ public class SegretiCaricamentiTest {
 
     @Test
     public void unaChiaveInutilizzabileInLetturaSiRilanciaTaleEQualeSenzaEliminarlaMaiEConUnaRigaDiAvviso() {
-        // In lettura la chiave non si elimina MAI, su nessun livello e con nessun verdetto: né se il sistema dice «definitivo», né se non dice niente
-        // (l'invalidazione permanente arriva senza causa), né se dice «passeggero». Sono i guasti PERMANENTI a provare la regola della lettura: un
-        // «passeggero» salverebbe la chiave anche senza.
+        // In lettura la chiave non si elimina MAI, su nessun livello e con nessun verdetto: né se il sistema dice «della chiave», né se non dice
+        // niente (l'invalidazione permanente arriva senza causa), né se dice «passeggero» o «di sistema». Sono i guasti PERMANENTI a provare la
+        // regola della lettura: un «passeggero» o un «di sistema» salverebbero la chiave anche senza.
         for (int sdk : new int[]{24, 30, 32, 33, 34}) {
-            for (Throwable causa : new Throwable[]{null, new VerdettoNo(), new VerdettoSi()}) {
+            for (Throwable causa : new Throwable[]{null, new VerdettoNo(), new VerdettoSi(), new VerdettoSistema(), new VerdettoSistemaPasseggero()}) {
                 UnrecoverableKeyException guasto = new UnrecoverableKeyException("Failed to obtain information about key");
                 if (causa != null) guasto.initCause(causa);
                 EliminazioneFinta elimina = new EliminazioneFinta();
@@ -972,6 +1091,27 @@ public class SegretiCaricamentiTest {
     }
 
     @Test
+    public void unaChiaveInutilizzabileInScritturaConUnErroreDiSistemaSiRilanciaSenzaEliminarlaEConUnaRigaDiAvviso() {
+        // SYSTEM_ERROR dopo una connessione persa col demone: di sistema, NON passeggero. Un errore di sistema si rilancia senza eliminare.
+        for (int sdk : new int[]{33, 34, 36}) {
+            for (GuastoConVerdetto sistema : new GuastoConVerdetto[]{new VerdettoSistema(), new VerdettoSistemaPasseggero()}) {
+                UnrecoverableKeyException guasto = conCausa(new UnrecoverableKeyException("Failed to obtain information about key"), sistema);
+                EliminazioneFinta elimina = new EliminazioneFinta();
+                Throwable[] uscito = new Throwable[1];
+
+                List<String> righe = trattaERaccogli(guasto, true, sdk, elimina, uscito);
+
+                String caso = "sdk " + sdk + ", " + DiagnosticaLocale.classe(sistema);
+                assertSame(caso + ": esce tale e quale: niente chiave nuova sullo stesso alias", guasto, uscito[0]);
+                assertEquals(caso + ": la chiave non si tocca", 0, elimina.volte);
+                assertEquals(caso + ": una riga sola", 1, righe.size());
+                assertEquals(caso, "W KidvilleCaricamenti chiave dei segreti non utilizzabile in scrittura (UnrecoverableKeyException, causa: "
+                        + DiagnosticaLocale.classe(sistema) + ", API " + sdk + "): non si elimina, il guasto torna a chi chiama", righe.get(0));
+            }
+        }
+    }
+
+    @Test
     public void unaChiaveInutilizzabileInScritturaConUnGuastoPermanenteSiEliminaEConUnaRigaDiAvviso() {
         for (UnrecoverableKeyException guasto : new UnrecoverableKeyException[]{conCausa(new UnrecoverableKeyException("avvolge"), new VerdettoNo()),
                 new UnrecoverableKeyException("User changed or deleted their auth credentials")}) {
@@ -984,7 +1124,8 @@ public class SegretiCaricamentiTest {
             assertEquals("la chiave si elimina, una volta", 1, elimina.volte);
             assertEquals("una riga sola", 1, righe.size());
             assertTrue(righe.get(0), righe.get(0).startsWith("W KidvilleCaricamenti chiave dei segreti non utilizzabile in scrittura (UnrecoverableKeyException, causa: "));
-            assertTrue(righe.get(0), righe.get(0).contains(", API 35): guasto permanente, si elimina la chiave"));
+            assertTrue(righe.get(0), righe.get(0).contains(", API 35): guasto permanente, si prova a eliminare la chiave e a crearne una nuova"));
+            assertFalse("la riga è scritta PRIMA dell'eliminazione: non afferma che la chiave si elimina", righe.get(0).contains("si elimina la chiave"));
         }
     }
 
@@ -999,7 +1140,20 @@ public class SegretiCaricamentiTest {
         assertNull(uscito[0]);
         assertEquals("il sistema non dà un verdetto su questi livelli: come sempre, si elimina", 1, elimina.volte);
         assertEquals(1, righe.size());
-        assertTrue(righe.get(0), righe.get(0).contains(", API 32): guasto permanente, si elimina la chiave"));
+        assertTrue(righe.get(0), righe.get(0).contains(", API 32): guasto permanente, si prova a eliminare la chiave e a crearne una nuova"));
+    }
+
+    @Test
+    public void suApi24Fino32UnaChiaveInutilizzabileInScritturaSiEliminaAncheSeLaCatenaPortaUnErroreDiSistema() {
+        // Su questi livelli `KeyStoreException#isSystemError` non esiste: il verdetto non si chiede, e si elimina come sempre.
+        UnrecoverableKeyException guasto = conCausa(new UnrecoverableKeyException("chiave"), new VerdettoSistema());
+        EliminazioneFinta elimina = new EliminazioneFinta();
+        Throwable[] uscito = new Throwable[1];
+
+        trattaERaccogli(guasto, true, 32, elimina, uscito);
+
+        assertNull(uscito[0]);
+        assertEquals(1, elimina.volte);
     }
 
     @Test
@@ -1014,6 +1168,9 @@ public class SegretiCaricamentiTest {
         assertSame("il guasto dell'eliminazione esce, non si inghiotte", elimina.guasto, uscito[0]);
         assertEquals("ci si è provato una volta sola", 1, elimina.volte);
         assertEquals("e la riga che dice perché c'è, scritta PRIMA del tentativo", 1, righe.size());
+        assertTrue("la riga dice che ci si PROVA e che i segreti diventano illeggibili solo SE riesce: l'eliminazione è fallita, e non ha detto il falso",
+                righe.get(0).contains("si prova a eliminare la chiave") && righe.get(0).contains("se riesce, i segreti già salvati diventano illeggibili"));
+        assertFalse("e non afferma che la chiave si elimina", righe.get(0).contains("si elimina la chiave"));
     }
 
     @Test
@@ -1021,13 +1178,13 @@ public class SegretiCaricamentiTest {
         String messaggio = "kvr_" + "A".repeat(43) + " /data/user/0/it.kidville.app/no_backup/caricamenti/segreti/privato " + SegretiCaricamenti.ALIAS_CHIAVE;
         List<String> tutte = new ArrayList<>();
         for (boolean perCifrare : new boolean[]{false, true}) {
-            for (Throwable causa : new Throwable[]{new VerdettoSi(), new VerdettoNo(), new RuntimeException(messaggio), null}) {
+            for (Throwable causa : new Throwable[]{new VerdettoSi(), new VerdettoNo(), new VerdettoSistema(), new RuntimeException(messaggio), null}) {
                 UnrecoverableKeyException guasto = new UnrecoverableKeyException(messaggio);
                 if (causa != null) guasto.initCause(causa);
                 tutte.addAll(trattaERaccogli(guasto, perCifrare, 34, new EliminazioneFinta(), new Throwable[1]));
             }
         }
-        assertEquals("due fasi per quattro cause, una riga ciascuna", 8, tutte.size());
+        assertEquals("due fasi per cinque cause, una riga ciascuna", 10, tutte.size());
         for (String riga : tutte) {
             assertTrue(riga, riga.startsWith("W KidvilleCaricamenti chiave dei segreti non utilizzabile in "));
             assertFalse("niente messaggio d'eccezione: " + riga, riga.contains("kvr_") || riga.contains("privato") || riga.contains("/data/") || riga.contains("sistema:"));
@@ -1079,5 +1236,336 @@ public class SegretiCaricamentiTest {
         assertSame(Esito.OK, l.esito);
         assertEquals(TOKEN, l.segreti.token);
         assertEquals("leggere decifra, e decifrare non può eliminare la chiave", Arrays.asList(Boolean.TRUE, Boolean.FALSE), richieste);
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * COMPITO A2d: IL KEYSTORE IRRAGGIUNGIBILE È UN GUASTO CHE PASSA, E IL CABLAGGIO DELLA CHIAVE È PROVATO CON UN ANDROIDKEYSTORE FINTO
+     * (seguito dei secondari n. 153 e n. 154, critico di A2c)
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    // ── L'IllegalStateException nuda di KeyStore2.getService (KeyStore2.java:148-157) ──
+
+    /** Il messaggio vero di AOSP (KeyStore2.java:154-156): nel sorgente va a capo, ma è una frase sola. */
+    private static final String KEYSTORE_ASSENTE = "Could not connect to Keystore service. Keystore may have crashed or not been initialized";
+
+    @Test
+    public void unIllegalStateExceptionDelKeystoreIrraggiungibileEPasseggeraSuTuttiILivelliDiApi() {
+        for (int sdk : new int[]{0, 24, 29, 32, 33, 34, 36}) {
+            assertTrue("sdk " + sdk, transitorio(new IllegalStateException(KEYSTORE_ASSENTE), sdk));
+            assertTrue("sdk " + sdk + ": sotto un altro guasto",
+                    transitorio(conCausa(new GeneralSecurityException("avvolge"), new IllegalStateException(KEYSTORE_ASSENTE)), sdk));
+            assertTrue("sdk " + sdk + ": sopra un altro guasto",
+                    transitorio(conCausa(new IllegalStateException(KEYSTORE_ASSENTE), new RuntimeException("sotto")), sdk));
+            assertTrue("sdk " + sdk + ": con altri strati sopra", transitorio(stratiSopra(new IllegalStateException(KEYSTORE_ASSENTE), 3), sdk));
+        }
+    }
+
+    @Test
+    public void ilMessaggioDelKeystoreIrraggiungibileSiRiconoscePiccoleVariazioniIncluse() {
+        for (String variante : new String[]{KEYSTORE_ASSENTE, KEYSTORE_ASSENTE.toUpperCase(Locale.ROOT), KEYSTORE_ASSENTE.toLowerCase(Locale.ROOT),
+                "Could not connect to Keystore service", "could not connect to the KeyStore service", "Cannot connect to Keystore daemon",
+                "Unable to connect to keystore", "  Could   not\nconnect to\tKeystore service  "}) {
+            assertTrue("«" + variante + "»", SegretiCaricamenti.CifrarioKeystore.eKeystoreIrraggiungibile(new IllegalStateException(variante)));
+        }
+    }
+
+    @Test
+    public void unIllegalStateExceptionQualunqueRestaDefinitivaESoloQuellaDelKeystoreIrraggiungibilePassa() {
+        for (int sdk : new int[]{0, 24, 33, 36}) {
+            for (String altro : new String[]{null, "", "boom", "sconosciuto", "Cipher not initialized", "Could not connect to database",
+                    "Keystore operation failed", "connect", "keystore"}) {
+                assertFalse("sdk " + sdk + ", «" + altro + "»", transitorio(new IllegalStateException(altro), sdk));
+            }
+            // Il TIPO conta: lo stesso testo in un'eccezione di un altro tipo non è «il servizio non c'è».
+            assertFalse("sdk " + sdk + ": RuntimeException", transitorio(new RuntimeException(KEYSTORE_ASSENTE), sdk));
+            assertFalse("sdk " + sdk + ": GeneralSecurityException", transitorio(new GeneralSecurityException(KEYSTORE_ASSENTE), sdk));
+            assertFalse("sdk " + sdk + ": UnsupportedOperationException", transitorio(new UnsupportedOperationException(KEYSTORE_ASSENTE), sdk));
+        }
+        assertFalse("nessuna causa", SegretiCaricamenti.CifrarioKeystore.eKeystoreIrraggiungibile(null));
+    }
+
+    @Test
+    public void unDefinitivoInCatenaVinceSulKeystoreIrraggiungibile() {
+        for (int sdk : new int[]{0, 24, 33, 36}) {
+            assertFalse("sdk " + sdk + ": contenuto toccato sopra",
+                    transitorio(conCausa(new BadPaddingException("tag"), new IllegalStateException(KEYSTORE_ASSENTE)), sdk));
+            assertFalse("sdk " + sdk + ": chiave invalidata sotto",
+                    transitorio(conCausa(new IllegalStateException(KEYSTORE_ASSENTE), new KeyPermanentlyInvalidatedException()), sdk));
+        }
+    }
+
+    @Test
+    public void daApi33SeIlSistemaHaDettoLaSuaDecideLuiAncheConUnKeystoreIrraggiungibileInCatena() {
+        for (int sdk : new int[]{33, 34, 36}) {
+            assertFalse("sdk " + sdk + ": «della chiave» vale anche con il servizio irraggiungibile in catena",
+                    transitorio(conCausa(new IllegalStateException(KEYSTORE_ASSENTE), new VerdettoNo()), sdk));
+        }
+        assertTrue("prima di API 33 non c'è verdetto: vale la regola del servizio irraggiungibile",
+                transitorio(conCausa(new IllegalStateException(KEYSTORE_ASSENTE), new VerdettoNo()), 32));
+    }
+
+    @Test
+    public void unKeystoreIrraggiungibileNonRendeIlleggibiliISegretiLaVoceAspetta() throws Exception {
+        final SecretKey chiave = chiaveSoftware();
+        final AtomicBoolean servizioGiu = new AtomicBoolean();
+        SegretiCaricamenti s = new SegretiCaricamenti(coda, new SegretiCaricamenti.CifrarioKeystore(perCifrare -> {
+            if (servizioGiu.get()) throw new IllegalStateException(KEYSTORE_ASSENTE);
+            return chiave;
+        }));
+        s.salva(id(1), esempio());
+        byte[] prima = Files.readAllBytes(file(id(1)).toPath());
+
+        servizioGiu.set(true);
+        Lettura l = s.leggi(id(1));
+
+        assertSame("il servizio non risponde: la voce aspetta, i segreti non sono persi", Esito.NON_LEGGIBILE_ORA, l.esito);
+        assertNull(l.segreti);
+        assertArrayEquals("e il file non è stato toccato", prima, Files.readAllBytes(file(id(1)).toPath()));
+        servizioGiu.set(false);
+        Lettura dopo = s.leggi(id(1));
+        assertSame("tornato il servizio, i segreti ci sono tutti", Esito.OK, dopo.esito);
+        assertEquals(TOKEN, dopo.segreti.token);
+    }
+
+    // ── Il cablaggio di `chiave(boolean)`, col codice di produzione vero e un AndroidKeyStore finto ──
+
+    /** Il nome con cui l'AndroidKeyStore si presenta a `KeyStore.getInstance`. */
+    private static final String NOME_ANDROID_KEYSTORE = "AndroidKeyStore";
+
+    /**
+     * Un archivio delle chiavi che fa le veci dell'«AndroidKeyStore» sulla JVM, dove non esiste: `engineGetKey` lancia sempre `guasto` (un
+     * `UnrecoverableKeyException`, come `getKey` quando il sistema non restituisce la chiave) e `engineDeleteEntry` registra gli alias. È per
+     * questo che la prova passa dal metodo `chiave(boolean)` VERO, e non da un fornitore finto della chiave (`FornitoreDellaChiave`): chi lo
+     * cabla male (la chiave che si elimina leggendo, quella che non si elimina scrivendo, l'alias sbagliato) fa diventare rossa la prova.
+     */
+    private static final class ArchivioChiaviFinto extends KeyStoreSpi {
+        final List<String> aliasLetti = Collections.synchronizedList(new ArrayList<>());
+        final List<String> aliasEliminati = Collections.synchronizedList(new ArrayList<>());
+        final UnrecoverableKeyException guasto = new UnrecoverableKeyException("Failed to obtain information about key");
+
+        @Override
+        public Key engineGetKey(String alias, char[] password) throws UnrecoverableKeyException {
+            aliasLetti.add(alias);
+            throw guasto;
+        }
+
+        @Override
+        public void engineDeleteEntry(String alias) {
+            aliasEliminati.add(alias);
+        }
+
+        @Override
+        public void engineLoad(InputStream stream, char[] password) {
+            // niente da caricare: `keystore.load(null)` deve solo riuscire
+        }
+
+        // Il resto non serve a `chiave(boolean)`.
+
+        @Override
+        public Certificate[] engineGetCertificateChain(String alias) {
+            return null;
+        }
+
+        @Override
+        public Certificate engineGetCertificate(String alias) {
+            return null;
+        }
+
+        @Override
+        public Date engineGetCreationDate(String alias) {
+            return null;
+        }
+
+        @Override
+        public void engineSetKeyEntry(String alias, Key key, char[] password, Certificate[] chain) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void engineSetKeyEntry(String alias, byte[] key, Certificate[] chain) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void engineSetCertificateEntry(String alias, Certificate cert) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Enumeration<String> engineAliases() {
+            return Collections.emptyEnumeration();
+        }
+
+        @Override
+        public boolean engineContainsAlias(String alias) {
+            return false;
+        }
+
+        @Override
+        public int engineSize() {
+            return 0;
+        }
+
+        @Override
+        public boolean engineIsKeyEntry(String alias) {
+            return false;
+        }
+
+        @Override
+        public boolean engineIsCertificateEntry(String alias) {
+            return false;
+        }
+
+        @Override
+        public String engineGetCertificateAlias(Certificate cert) {
+            return null;
+        }
+
+        @Override
+        public void engineStore(OutputStream stream, char[] password) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /** Il provider di sicurezza che mette l'archivio finto sotto il nome «AndroidKeyStore»: `KeyStore.getInstance("AndroidKeyStore")` trova lui. */
+    private static final class ProviderFinto extends Provider {
+        ProviderFinto(ArchivioChiaviFinto archivio) {
+            // La versione è un `double` (deprecato dal JDK 9): è il solo costruttore che la compilazione dei test di Gradle risolve, quello
+            // con la stringa dà «String cannot be converted to double» (provato: `--release 8`, e `-source 8` con la bootclasspath di Android).
+            super(NOME_ANDROID_KEYSTORE, 1.0, "archivio delle chiavi finto, solo per le prove sulla JVM");
+            putService(new Provider.Service(this, "KeyStore", NOME_ANDROID_KEYSTORE, ArchivioChiaviFinto.class.getName(), null, null) {
+                @Override
+                public Object newInstance(Object parametro) {
+                    return archivio;
+                }
+            });
+        }
+    }
+
+    /** Installa l'AndroidKeyStore finto per la durata di un blocco `try` e lo toglie sempre, anche se la prova cade a metà. */
+    private static final class AndroidKeyStoreFinto implements AutoCloseable {
+        final ArchivioChiaviFinto archivio = new ArchivioChiaviFinto();
+
+        AndroidKeyStoreFinto() {
+            // Il codice di produzione legge `Build.VERSION.SDK_INT`, che sulla JVM vale 0: le prove di cablaggio contano su questo (sotto API 33 si
+            // elimina come sempre, e le righe dicono «API 0»). Se un giorno non fosse più così, qui si dice perché cadono.
+            assertEquals("le prove di cablaggio presuppongono Build.VERSION.SDK_INT = 0, come sulla JVM", 0, android.os.Build.VERSION.SDK_INT);
+            Security.removeProvider(NOME_ANDROID_KEYSTORE); // un residuo di una prova caduta a metà
+            assertNotEquals("il provider finto non si è installato", -1, Security.addProvider(new ProviderFinto(archivio)));
+        }
+
+        @Override
+        public void close() {
+            Security.removeProvider(NOME_ANDROID_KEYSTORE);
+        }
+    }
+
+    @After
+    public void ilProviderFintoNonRestaInstallato() {
+        Security.removeProvider(NOME_ANDROID_KEYSTORE);
+    }
+
+    /** Un blocco della FORMA di `cifra` (`[12][IV di 12][testo + tag]`): `decifra` lo accetta fino alla chiave, che è ciò che qui si prova. */
+    private static byte[] bloccoDiForma() {
+        byte[] blocco = new byte[1 + 12 + 16 + 1];
+        blocco[0] = 12;
+        return blocco;
+    }
+
+    @Test
+    public void inDecifraturaUnaChiaveInutilizzabileNonSiEliminaMaiELaRilanciaTaleEQuale() throws Exception {
+        try (AndroidKeyStoreFinto finto = new AndroidKeyStoreFinto(); RigheDiLogcat logcat = new RigheDiLogcat()) {
+            SegretiCaricamenti.CifrarioKeystore keystore = new SegretiCaricamenti.CifrarioKeystore();
+
+            try {
+                keystore.decifra(bloccoDiForma(), SegretiCaricamenti.datiAssociati(id(1)));
+                fail("la chiave non si recupera: decifrare doveva lanciare");
+            } catch (UnrecoverableKeyException rilanciato) {
+                assertSame("tale e quale: a decidere è chi chiama (`guastoTransitorio`)", finto.archivio.guasto, rilanciato);
+            }
+
+            assertEquals("si è chiesta la chiave giusta, una volta", Arrays.asList(SegretiCaricamenti.ALIAS_CHIAVE), finto.archivio.aliasLetti);
+            assertEquals("in lettura la chiave NON si elimina: distruggerebbe i segreti di tutte le voci vive", 0, finto.archivio.aliasEliminati.size());
+            assertEquals("una riga sola", 1, logcat.righe.size());
+            assertEquals("W KidvilleCaricamenti chiave dei segreti non utilizzabile in lettura (UnrecoverableKeyException, causa: senza causa, API 0): "
+                    + "non si elimina, il guasto torna a chi chiama", logcat.righe.get(0));
+        }
+        assertNull("il provider finto è stato tolto", Security.getProvider(NOME_ANDROID_KEYSTORE));
+    }
+
+    @Test
+    public void inCifraturaUnaChiaveInutilizzabileSiEliminaUnaVoltaEPoiSiPassaAllaChiaveNuova() throws Exception {
+        try (AndroidKeyStoreFinto finto = new AndroidKeyStoreFinto(); RigheDiLogcat logcat = new RigheDiLogcat()) {
+            SegretiCaricamenti.CifrarioKeystore keystore = new SegretiCaricamenti.CifrarioKeystore();
+            Throwable uscito = null;
+
+            try {
+                keystore.cifra("un segreto qualunque".getBytes(StandardCharsets.UTF_8), SegretiCaricamenti.datiAssociati(id(1)));
+                fail("la chiave nuova non si può generare sulla JVM (l'archivio finto non sa farlo): cifrare doveva lanciare");
+            } catch (GeneralSecurityException | RuntimeException dopoLEliminazione) {
+                uscito = dopoLEliminazione;
+            }
+
+            assertEquals("si è chiesta la chiave giusta, una volta", Arrays.asList(SegretiCaricamenti.ALIAS_CHIAVE), finto.archivio.aliasLetti);
+            assertEquals("scrivendo, la chiave inutilizzabile si elimina: una volta, con l'alias giusto",
+                    Arrays.asList(SegretiCaricamenti.ALIAS_CHIAVE), finto.archivio.aliasEliminati);
+            assertNotSame("ciò che esce non è più il guasto di `getKey`: eliminata la chiave si è passati a generare quella nuova",
+                    finto.archivio.guasto, uscito);
+            assertFalse("e non è un UnrecoverableKeyException: la chiave vecchia non c'è più", uscito instanceof UnrecoverableKeyException);
+            assertEquals("una riga sola, scritta prima dell'eliminazione", 1, logcat.righe.size());
+            assertTrue(logcat.righe.get(0), logcat.righe.get(0).startsWith("W KidvilleCaricamenti chiave dei segreti non utilizzabile in scrittura "
+                    + "(UnrecoverableKeyException, causa: senza causa, API 0): guasto permanente, si prova a eliminare la chiave"));
+        }
+        assertNull("il provider finto è stato tolto", Security.getProvider(NOME_ANDROID_KEYSTORE));
+    }
+
+    @Test
+    public void lAliasDellaChiaveEQuelloDelCifrarioInLetturaEInEliminazione() throws Exception {
+        try (AndroidKeyStoreFinto finto = new AndroidKeyStoreFinto()) {
+            SegretiCaricamenti.CifrarioKeystore conAliasSuo = new SegretiCaricamenti.CifrarioKeystore("alias-di-prova");
+            try {
+                conAliasSuo.decifra(bloccoDiForma(), SegretiCaricamenti.datiAssociati(id(1)));
+                fail("doveva lanciare");
+            } catch (UnrecoverableKeyException atteso) {
+                // rilanciato
+            }
+            try {
+                conAliasSuo.cifra(new byte[]{1, 2, 3}, SegretiCaricamenti.datiAssociati(id(1)));
+                fail("doveva lanciare");
+            } catch (GeneralSecurityException | RuntimeException atteso) {
+                // la chiave nuova non si genera sulla JVM
+            }
+            assertEquals("l'alias chiesto è quello del cifrario, in lettura e in scrittura", Arrays.asList("alias-di-prova", "alias-di-prova"),
+                    finto.archivio.aliasLetti);
+            assertEquals("e quello eliminato anche", Arrays.asList("alias-di-prova"), finto.archivio.aliasEliminati);
+        }
+    }
+
+    @Test
+    public void laClasseDeiSegretiConLaChiaveDiProduzioneLeggendoNonEliminaESalvandoElimina() throws Exception {
+        segreti.salva(id(1), esempio()); // scritto col cifrario software: il blocco ha la stessa forma di quello del Keystore
+        byte[] prima = Files.readAllBytes(file(id(1)).toPath());
+        try (AndroidKeyStoreFinto finto = new AndroidKeyStoreFinto(); RigheDiLogcat logcat = new RigheDiLogcat()) {
+            SegretiCaricamenti diProduzione = SegretiCaricamenti.diProduzione(coda);
+
+            Lettura l = diProduzione.leggi(id(1));
+
+            assertSame("sulla JVM (API 0) un UnrecoverableKeyException è un contenitore definitivo, e senza chiave il segreto non si legge", Esito.ILLEGGIBILE,
+                    l.esito);
+            assertEquals("ma leggere non elimina la chiave", 0, finto.archivio.aliasEliminati.size());
+            assertArrayEquals("e il file non è stato toccato", prima, Files.readAllBytes(file(id(1)).toPath()));
+
+            try {
+                diProduzione.salva(id(2), esempio());
+                fail("con una chiave inutilizzabile e senza poterne generare una nuova, salvare doveva lanciare");
+            } catch (IOException atteso) {
+                assertFalse("il messaggio non porta il contenuto", atteso.getMessage().contains("kvr_"));
+            }
+
+            assertEquals("scrivere, con una chiave inutilizzabile, la elimina: una volta", 1, finto.archivio.aliasEliminati.size());
+            assertFalse("e non resta un file a metà", file(id(2)).exists());
+            assertTrue("e c'è una riga di avviso per ciascuna delle due reazioni alla chiave", logcat.conta("chiave dei segreti non utilizzabile in lettura") == 1
+                    && logcat.conta("chiave dei segreti non utilizzabile in scrittura") == 1);
+        }
     }
 }

@@ -828,8 +828,22 @@ public final class PoliticaCaricamento {
     /** Il sito di produzione: l'unico host del rinnovo e del registro nelle build Release. */
     public static final String HOST_SITO_RELEASE = "app.kidville.it";
 
-    /** Il dominio dello Storage: nelle build Release la PUT va solo a un sottodominio di questo. */
-    public static final String SUFFISSO_HOST_STORAGE = ".supabase.co";
+    /**
+     * L'UNICO host della PUT: lo Storage del progetto Supabase di PRODUZIONE. Fino al 03/10/2026 era ammesso qualunque `*.supabase.co`: una
+     * pagina compromessa avrebbe potuto far spedire il video di un bambino al progetto di un altro (decisione dell'orchestratore dopo il
+     * critico di I2: rischio su dati di minori). Si confronta per UGUAGLIANZA, mai per suffisso. Lo stesso valore sta in
+     * `KVPoliticaCaricamento.hostPut` (Swift); in TS non c'è una copia (un lock di `src/` vuole l'indirizzo di produzione in un file solo):
+     * lì l'host viene da `public-config.ts`, e `caricamenti-nativi-tipi.test.ts` confronta il ripiego di quel file con queste costanti.
+     */
+    public static final String HOST_PUT = "uimulkjyekgemjakmepp.supabase.co";
+
+    /**
+     * SOLO nelle build Debug e SOLO per la PUT: lo Storage del progetto Supabase della CI, che contiene soltanto dati di prova (la sede
+     * fittizia `e2e00000-…`). Serve al collaudo dell'app vera (E1, §11.2): il banco locale (`next dev` sul DB della CI) apre i job su quel
+     * progetto e la PUT va al suo Storage. Una build Release non lo ammette MAI: lì la PUT va solo a {@link #HOST_PUT}. Lo stesso valore sta
+     * in `KVPoliticaCaricamento.hostPutDebug` (Swift).
+     */
+    public static final String HOST_PUT_DEBUG = "azhssawihitkphgnlukl.supabase.co";
 
     /** Gli host in chiaro delle build Debug (emulatore → computer, simulatore, collaudo col server finto). */
     private static final String[] HOST_DEBUG = {"localhost", "127.0.0.1", "10.0.2.2"};
@@ -839,16 +853,18 @@ public final class PoliticaCaricamento {
     private static final Pattern FORMA_HOST = Pattern.compile("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$");
 
     /**
-     * La politica degli host, la riga per riga di §9. Release: la PUT solo a `https://*.supabase.co`, il rinnovo e il registro
-     * solo a `https://app.kidville.it` (porta 443 o assente). Debug, IN PIÙ: `http` o `https` verso `localhost`, `127.0.0.1`,
-     * `10.0.2.2` con qualunque porta (per tutte e tre le destinazioni: il collaudo col server finto manda anche la PUT lì).
+     * La politica degli host, la riga per riga di §9. Release: la PUT solo a `https://uimulkjyekgemjakmepp.supabase.co` (il progetto di
+     * PRODUZIONE e nessun altro `*.supabase.co`), il rinnovo e il registro solo a `https://app.kidville.it` (porta 443 o assente). Debug,
+     * IN PIÙ: `http` o `https` verso `localhost`, `127.0.0.1`, `10.0.2.2` con qualunque porta (per tutte e tre le destinazioni: il
+     * collaudo col server finto, C1, manda anche la PUT lì). In Debug la PUT ammette in più SOLO lo Storage del progetto della CI
+     * ({@link #HOST_PUT_DEBUG}, in `https` sulla 443), per il collaudo dell'app vera (E1, §11.2). Nessun altro progetto Supabase, in nessuna build.
      *
      * È una difesa vera: l'URL arriva dalla pagina, e una pagina compromessa non deve poter far spedire il video di un
      * bambino altrove. Perciò si legge l'indirizzo a mano e in modo severo, senza `java.net.URI` (che perdona
      * `https://evil.com\@x.supabase.co`): solo caratteri ASCII stampabili, nessuna barra rovescia, nessuna credenziale
      * incorporata (`@`), nessun IPv6, nessuna percentuale nell'autorità, host in lettere minuscole e cifre separate da punti,
-     * schema in minuscolo. L'host si confronta per uguaglianza (o per suffisso con il punto: `x.supabase.co`, mai
-     * `supabase.co` né `x.supabase.co.evil.com`), e il percorso, la query e il frammento non contano.
+     * schema in minuscolo. L'host si confronta sempre per uguaglianza (mai per suffisso: né `x.supabase.co` né
+     * `uimulkjyekgemjakmepp.supabase.co.evil.com` sono il nostro progetto), e il percorso, la query e il frammento non contano.
      */
     public static boolean urlAmmesso(String url, Destinazione destinazione, boolean debug) {
         if (url == null || destinazione == null || url.length() > 8192) return false;
@@ -890,7 +906,7 @@ public final class PoliticaCaricamento {
         }
         if (!schema.equals("https")) return false;
         if (porta != -1 && porta != 443) return false;
-        if (destinazione == Destinazione.PUT) return host.endsWith(SUFFISSO_HOST_STORAGE);
+        if (destinazione == Destinazione.PUT) return host.equals(HOST_PUT) || (debug && host.equals(HOST_PUT_DEBUG));
         return host.equals(HOST_SITO_RELEASE);
     }
 }

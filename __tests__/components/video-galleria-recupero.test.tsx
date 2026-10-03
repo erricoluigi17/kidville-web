@@ -1455,7 +1455,8 @@ describe('il polling dell’elenco: ogni 10 secondi, solo se c’è qualcosa di 
 const SHA_NATIVO = createHash('sha256').update('contenuto del video nativo').digest('hex')
 const NOME_PRIVATO = 'filmato-privato-di-ada.mov'
 const INFO_PLUGIN = { protocollo: 1, piattaforma: 'ios', motore: 'urlsession' } as const
-const URL_PUT = 'https://esempio.supabase.co/storage/v1/object/upload/sign/video_originals/percorso.mov?token=TOKEN-FINTO-DELLA-PUT'
+// L'host della PUT è quello del progetto Supabase del SITO (`caricamenti-nativi-tipi.ts`): sotto vitest, il banco locale.
+const URL_PUT = 'https://localhost:54321/storage/v1/object/upload/sign/video_originals/percorso.mov?token=TOKEN-FINTO-DELLA-PUT'
 /** `kvr_` più 43 caratteri base64url: la forma del token che il server conia. */
 const TOKEN_RINNOVO = `kvr_${'Ab1_-'.repeat(8)}Ab1`
 const SCADENZA_URL = '2026-10-03T12:00:00.000Z'

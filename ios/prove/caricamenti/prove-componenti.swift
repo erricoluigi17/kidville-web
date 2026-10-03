@@ -404,7 +404,9 @@ func provaTrasportoPut() {
         seguito = nuova
         consultato = true
     }
-    verificaTutto("un 307 della PUT verso un altro host NON si segue (il video di un bambino non va altrove)", [consultato, seguito == nil], [true, true])
+    // ⚠️ Questa prova è sul METODO del delegato, chiamato a mano su una sessione ephemeral: dice che il rifiuto c'è, dove il sistema lo chiede. Nella sessione IN
+    // BACKGROUND della PUT vera il sistema non lo chiede mai (segue i 3xx da solo): lì la difesa è l'host unico (`KVPoliticaCaricamento.hostPut`), provato altrove.
+    verificaTutto("il delegato rifiuta un 307 verso un altro host (vale dove il sistema lo consulta; NON nella sessione in background della PUT vera, dove la difesa è l'host unico)", [consultato, seguito == nil], [true, true])
     trasporto.urlSessionDidFinishEvents(forBackgroundURLSession: sessioneProva)
     verificaUguali("urlSessionDidFinishEvents arriva al motore", delegato.eventiConsegnati, 1)
     sessioneProva.invalidateAndCancel()

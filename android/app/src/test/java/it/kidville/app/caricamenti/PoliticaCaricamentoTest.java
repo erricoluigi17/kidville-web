@@ -723,7 +723,12 @@ public class PoliticaCaricamentoTest {
      * §4.5 — LA RISPOSTA DEL RINNOVO, RILETTA PER FORMA
      * ──────────────────────────────────────────────────────────────────────────── */
 
-    private static final String URL_STORAGE = "https://abcdwxyzabcdwxyz.supabase.co/storage/v1/object/upload/sign/video_processing/x?token=t";
+    /**
+     * Il progetto Supabase di PRODUZIONE, scritto a mano qui e NON preso da `PoliticaCaricamento.HOST_PUT`: un valore atteso che si ricalcola
+     * col codice che si prova non prova niente. È l'unico host della PUT (decisione del 03/10, dopo il critico di I2).
+     */
+    private static final String HOST_PRODUZIONE = "uimulkjyekgemjakmepp.supabase.co";
+    private static final String URL_STORAGE = "https://" + HOST_PRODUZIONE + "/storage/v1/object/upload/sign/video_processing/x?token=t";
 
     private static String daCaricare(String url, String protocollo, String contentType) {
         return "{\"stato\":\"da-caricare\",\"caricamento\":{\"protocollo\":" + quota(protocollo) + ",\"url\":" + quota(url)
@@ -788,10 +793,24 @@ public class PoliticaCaricamentoTest {
 
     @Test
     public void unUrlDellaNuovaPutFuoriElencoNonDiventaMaiUnaPut() {
-        for (String url : new String[]{"https://evil.example/x", "http://abcd.supabase.co/x", "https://supabase.co/x",
+        for (String voce : new String[]{"https://evil.example/x", "http://abcd.supabase.co/x", "https://supabase.co/x",
                 "https://abcd.supabase.co.evil.example/x", "https://app.kidville.it/x", "ftp://abcd.supabase.co/x",
                 "https://u@abcd.supabase.co/x", "http://10.0.2.2:3101/x", "http://localhost:3101/x", ""}) {
+            // Le voci sono scritte su `abcd.supabase.co`: si riportano sul progetto di produzione, così ognuna è rifiutata per la SUA ragione
+            // (schema, chiocciola, suffisso) e non solo perché l'host è di un altro progetto.
+            String url = voce.replace("abcd.supabase.co", HOST_PRODUZIONE);
             assertSame("Release: " + url, TipoRinnovo.TRANSITORIO_SERVER, rinnovo(200, daCaricare(url, "put", "video/mp4")).tipo);
+        }
+    }
+
+    @Test
+    public void laNuovaPutDelRinnovoVersoUnAltroProgettoSupabaseNonDiventaMaiUnaPut() {
+        // Un rinnovo manipolato (o un sito compromesso) non può portare il video di un bambino in un progetto Supabase che non è il nostro.
+        for (String url : new String[]{"https://abcd.supabase.co/x", "https://abcdwxyzabcdwxyz.supabase.co/storage/v1/object/upload/sign/b/p?token=t",
+                "https://a." + HOST_PRODUZIONE + "/x", "https://x" + HOST_PRODUZIONE + "/x"}) {
+            assertSame("Release: " + url, TipoRinnovo.TRANSITORIO_SERVER, rinnovo(200, daCaricare(url, "put", "video/mp4")).tipo);
+            assertSame("Debug: " + url, TipoRinnovo.TRANSITORIO_SERVER,
+                    PoliticaCaricamento.leggiRispostaRinnovo(200, daCaricare(url, "put", "video/mp4"), 0L, true).tipo);
         }
     }
 
@@ -1024,22 +1043,57 @@ public class PoliticaCaricamentoTest {
     }
 
     @Test
-    public void inReleaseLaPutVaSoloAUnSottodominioDiSupabaseCoInHttps() {
+    public void inReleaseLaPutVaSoloAlProgettoDiProduzioneInHttps() {
         assertTrue(put(URL_STORAGE, false));
-        assertTrue(put("https://abcd.supabase.co", false));
-        assertTrue(put("https://abcd.supabase.co/", false));
-        assertTrue(put("https://abcd.supabase.co?x=1", false));
-        assertTrue(put("https://abcd.supabase.co#x", false));
-        assertTrue("più livelli", put("https://abcd.storage.supabase.co/storage/v1/object/upload/sign/b/o?token=t", false));
-        assertTrue("porta 443 esplicita", put("https://abcd.supabase.co:443/x", false));
-        assertTrue("host in maiuscolo: i nomi di dominio non distinguono", put("https://ABCD.SUPABASE.CO/x", false));
-        assertTrue(put("https://a-b-c.supabase.co/x", false));
-        assertTrue(put("https://a1.supabase.co/x", false));
+        assertTrue(put("https://" + HOST_PRODUZIONE, false));
+        assertTrue(put("https://" + HOST_PRODUZIONE + "/", false));
+        assertTrue(put("https://" + HOST_PRODUZIONE + "?x=1", false));
+        assertTrue(put("https://" + HOST_PRODUZIONE + "#x", false));
+        assertTrue("porta 443 esplicita", put("https://" + HOST_PRODUZIONE + ":443/x", false));
+        assertTrue("host in maiuscolo: i nomi di dominio non distinguono", put("https://UIMULKJYEKGEMJAKMEPP.SUPABASE.CO/x", false));
+        assertEquals("l'host ammesso è quello scritto qui, uno solo", HOST_PRODUZIONE, PoliticaCaricamento.HOST_PUT);
+    }
+
+    @Test
+    public void unAltroProgettoSupabaseNonEAmmessoNeInReleaseNeInDebug() {
+        for (String url : new String[]{
+                "https://abcd.supabase.co/x",
+                "https://abcdwxyzabcdwxyz.supabase.co/storage/v1/object/upload/sign/video_processing/x?token=t",
+                "https://a-b-c.supabase.co/x",
+                "https://a1.supabase.co/x",
+                "https://uimulkjyekgemjakmepq.supabase.co/x",       // una lettera di differenza
+                "https://xuimulkjyekgemjakmepp.supabase.co/x",      // una in più davanti
+                "https://uimulkjyekgemjakmep.supabase.co/x",        // una in meno
+                "https://a.uimulkjyekgemjakmepp.supabase.co/x",     // un sottodominio del nostro: non è il nostro
+                "https://abcd.storage.supabase.co/storage/v1/object/upload/sign/b/o?token=t",
+                "https://supabase.co/x"}) {
+            assertFalse("Release PUT: «" + url + "»", put(url, false));
+            assertFalse("Debug PUT: «" + url + "»", put(url, true));
+        }
+    }
+
+    /**
+     * Il progetto Supabase della CI, scritto a mano qui e NON preso da `PoliticaCaricamento.HOST_PUT_DEBUG`. Ha solo dati di prova e serve al
+     * collaudo dell'app vera (E1, §11.2): si ammette SOLO nelle build Debug e SOLO per la PUT.
+     */
+    private static final String HOST_CI = "azhssawihitkphgnlukl.supabase.co";
+
+    @Test
+    public void ilProgettoDellaCiEAmmessoSoloInDebugESoloPerLaPut() {
+        String url = "https://" + HOST_CI + "/storage/v1/object/upload/sign/video_originals/x/y.mov?token=t";
+        assertTrue("Debug PUT verso la CI", put(url, true));
+        assertTrue("Debug PUT verso la CI con la porta 443 esplicita", put("https://" + HOST_CI + ":443/x", true));
+        assertFalse("Release PUT verso la CI: MAI", put(url, false));
+        assertFalse("Debug PUT verso la CI in chiaro", put("http://" + HOST_CI + "/x", true));
+        assertFalse("Debug PUT verso la CI su un'altra porta", put("https://" + HOST_CI + ":8443/x", true));
+        assertFalse("Debug PUT verso un sottodominio della CI", put("https://a." + HOST_CI + "/x", true));
+        assertFalse("Debug rinnovo e registro verso la CI: vale solo per la PUT", sito(url, true));
+        assertEquals("l'host di Debug è quello scritto qui", HOST_CI, PoliticaCaricamento.HOST_PUT_DEBUG);
     }
 
     @Test
     public void inReleaseLaPutRifiutaOgniAltroIndirizzo() {
-        List<String> rifiutati = new ArrayList<>(Arrays.asList(
+        List<String> daRiportare = new ArrayList<>(Arrays.asList(
                 "http://abcd.supabase.co/x",                    // niente chiaro
                 "https://supabase.co/x",                        // il dominio stesso non è un sottodominio
                 "https://.supabase.co/x",                       // etichetta vuota
@@ -1097,6 +1151,10 @@ public class PoliticaCaricamentoTest {
                 "https://127.0.0.1/x",
                 "https://10.0.2.2/x",
                 "https://app.kidville.it/x"));
+        // Le voci sono scritte su `abcd.supabase.co`: si riportano sul progetto di produzione, così ognuna è rifiutata per la SUA ragione (schema,
+        // chiocciola, porta, suffisso, caratteri) e non solo perché l'host è di un altro progetto.
+        List<String> rifiutati = new ArrayList<>();
+        for (String voce : daRiportare) rifiutati.add(voce.replace("abcd.supabase.co", HOST_PRODUZIONE));
         rifiutati.add("https://" + repeat('a', 9000) + ".supabase.co/x");
         for (String url : rifiutati) {
             assertFalse("Release PUT: «" + url + "»", put(url, false));

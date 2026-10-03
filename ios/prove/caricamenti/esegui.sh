@@ -23,7 +23,11 @@
 #   · `prove-componenti.swift`: Portachiavi (con le chiamate di sistema iniettate), rinnovo (su un
 #     protocollo finto), notifica (con un centro finto), trasporto della PUT (su un protocollo finto e
 #     con task finti che portano i contatori che la rete darebbe), configurazione della sessione in
-#     background.
+#     background;
+#   · `prove-foto.swift` (compito I3, un programma a parte): la riduzione delle foto (una HEIC da 48 MP
+#     generata in prova esce a 1920 px, dritta e senza metadati), la preparazione dei video (un filmato
+#     H.264 vero, rifiuti, annullamento), la sessione del selettore, `creaElementoDiProva` (solo Debug) e
+#     i controlli sui sorgenti della facciata del plugin, della registrazione e della versione 1.2 (6).
 #
 # Si compila e si esegue DUE VOLTE: senza e con `-D DEBUG`, perché `KVAmbienteBuild.corrente` e la politica
 # degli host dipendono da quel simbolo e l'app li ha in entrambe le configurazioni. Si compila con
@@ -93,6 +97,33 @@ for MODO in release debug; do
   echo ""
   mkdir -p "$LAVORO/dati-$MODO"
   TMPDIR="$LAVORO/dati-$MODO" "$LAVORO/prova-$MODO" "$MODO" "$PRODUZIONE" "$TIPI_TS" "$SERVER_FINTO"
+  echo ""
+
+  # I3: il selettore, «Scegli da File», le foto ridotte, la facciata del plugin e la versione. È un PROGRAMMA A PARTE (`@main`, `-parse-as-library`),
+  # indipendente dalla prova principale. Compila i sette file di I1 e I2 (la parte senza Capacitor della facciata nomina i tipi del motore), i tre di
+  # I3 e il suo `prove-foto.swift`. Di `KVCaricamentiPlugin.swift` compila la parte che non ha bisogno di Capacitor (`#if canImport(Capacitor)` taglia
+  # il resto: la classe del plugin la compila `xcodebuild`, e questa prova ne legge il sorgente).
+  echo "· compilo la prova di I3 ($MODO, $BERSAGLIO)"
+  # shellcheck disable=SC2086
+  xcrun --sdk macosx swiftc -target "$BERSAGLIO" -F "$CATALYST_F" -I "$CATALYST_I" \
+    -swift-version 5 $SIMBOLO -parse-as-library \
+    -o "$LAVORO/prova-foto-$MODO" \
+    "$QUI/prove-foto.swift" \
+    "$PRODUZIONE/KVElaborazioneFoto.swift" \
+    "$PRODUZIONE/KVSelettoreMedia.swift" \
+    "$PRODUZIONE/KVCaricamentiPlugin.swift" \
+    "$PRODUZIONE/KVPoliticaCaricamento.swift" \
+    "$PRODUZIONE/KVCodaCaricamenti.swift" \
+    "$PRODUZIONE/KVRegistroNativo.swift" \
+    "$PRODUZIONE/KVSegretiCaricamenti.swift" \
+    "$PRODUZIONE/KVRinnovoFirma.swift" \
+    "$PRODUZIONE/KVNotificaAttesa.swift" \
+    "$PRODUZIONE/KVMotoreCaricamenti.swift"
+
+  echo "· eseguo la prova di I3 ($MODO)"
+  echo ""
+  mkdir -p "$LAVORO/dati-foto-$MODO"
+  TMPDIR="$LAVORO/dati-foto-$MODO" "$LAVORO/prova-foto-$MODO" "$MODO" "$PRODUZIONE" "$TIPI_TS"
   echo ""
 done
 

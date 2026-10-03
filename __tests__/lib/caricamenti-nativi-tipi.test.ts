@@ -18,6 +18,7 @@ import {
   CODICI_RIFIUTO_PONTE,
   EVENTI_LOG_NATIVI,
   EVENTI_PLUGIN_CARICAMENTI,
+  AUTORITA_PUT_AMMESSA_CARICAMENTI,
   HOST_DEBUG_CARICAMENTI,
   LATO_MASSIMO_FOTO,
   LATO_MINIATURA_VIDEO,
@@ -38,6 +39,7 @@ import {
   TRANSIZIONI_STATO_NATIVO,
   VALIDITA_URL_PUT_SECONDI,
   eStatoTerminaleNativo,
+  indirizzoDellaPutAmmesso,
   opzioniScegliMedia,
   schemaCaricamentoNativo,
   schemaElementoScelto,
@@ -156,7 +158,15 @@ const SHA256 = createHash('sha256').update('contenuto di prova').digest('hex')
 const MINIATURA = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ=='
 const ISTANTE = '2026-10-03T12:00:00.000Z'
 const TOKEN = `kvr_${'A'.repeat(43)}`
-const URL_PUT = 'https://esempio.invalid/storage/v1/object/upload/sign/video_originals/prova.mov?token=gettone-di-prova'
+/**
+ * Il progetto Supabase di PRODUZIONE, scritto a mano qui: è l'unico host della PUT in produzione (decisione del 03/10, dopo il critico di I2), e un valore atteso
+ * che si ricalcola con il codice che si prova non prova niente. Nel modulo NON c'è (il lock `nessun-bersaglio-di-produzione` lo vuole in UN file solo di `src/`):
+ * il modulo prende l'autorità del progetto dal sito (`public-config.ts`), che in produzione è questo.
+ */
+const HOST_PRODUZIONE = 'uimulkjyekgemjakmepp.supabase.co'
+/** Sotto vitest il progetto del sito è il banco locale (`vitest.config.ts`, `test.env`): è l'unico host che lo schema, QUI, ammette per la PUT. */
+const AUTORITA_DEL_SITO_NEI_TEST = 'localhost:54321'
+const URL_PUT = `https://${AUTORITA_DEL_SITO_NEI_TEST}/storage/v1/object/upload/sign/video_originals/prova.mov?token=gettone-di-prova`
 
 const foto = (): Oggetto => ({
   id: ID_ELEMENTO,
@@ -859,28 +869,67 @@ describe('caricamenti nativi · accodaVideo(): ogni pezzo e ogni indirizzo', () 
     })
   })
 
-  describe('l’URL della PUT: solo https, mai la forma Debug', () => {
+  describe('l’URL della PUT: solo https, mai la forma Debug, e UN host solo — il progetto Supabase del sito', () => {
     const rifiutati = (url: unknown) => rifiuta(schemaRichiestaAccodaVideo, con(richiestaAccoda(), 'caricamento.url', url), `PUT su ${JSON.stringify(url)}`, 'caricamento.url')
+    const su = (resto: string) => `https://${AUTORITA_DEL_SITO_NEI_TEST}${resto}`
 
-    it('https passa, con o senza porta, con la query del token', () => {
-      for (const url of [URL_PUT, 'https://esempio.invalid/x', 'https://esempio.invalid:8443/x?a=b&token=c']) {
+    it('l’host ammesso è UNO: quello del progetto del sito (qui, sotto vitest, il banco locale), e il modulo non porta l’indirizzo di produzione', () => {
+      expect(AUTORITA_PUT_AMMESSA_CARICAMENTI).toBe(AUTORITA_DEL_SITO_NEI_TEST)
+      const sorgente = readFileSync(join(process.cwd(), 'src/lib/native/caricamenti-nativi-tipi.ts'), 'utf8')
+      expect(sorgente, 'il lock nessun-bersaglio-di-produzione vuole l’indirizzo di produzione in UN file solo').not.toContain(HOST_PRODUZIONE)
+    })
+
+    it('https verso il progetto del sito passa, con la query del token e con o senza percorso', () => {
+      for (const url of [URL_PUT, su('/x'), su(''), su('/x?a=b&token=c')]) {
         accetta(schemaRichiestaAccodaVideo, con(richiestaAccoda(), 'caricamento.url', url), url)
+      }
+    })
+
+    it('un URL di un ALTRO progetto `*.supabase.co` è rifiutato — il progetto di produzione compreso, quando il sito è un altro —: ne basta uno registrato da chiunque per ricevere il video di un bambino', () => {
+      for (const sbagliato of [
+        'https://abcdefghijklmnopqrst.supabase.co/storage/v1/object/upload/sign/video_originals/x?token=t',
+        'https://esempio.supabase.co/x',
+        `https://${HOST_PRODUZIONE}/x`,
+        'https://supabase.co/x',
+        'https://a.b.supabase.co/x',
+        'https://app.kidville.it/x',
+      ]) {
+        rifiutati(sbagliato)
+      }
+    })
+
+    it('l’autorità deve essere esatta: maiuscole, porta diversa o doppia, porta vuota, autorità vuota, il nostro host nominato altrove', () => {
+      for (const sbagliato of [
+        'https://LOCALHOST:54321/x',
+        'https://localhost:8443/x',
+        'https://localhost:443/x',
+        'https://localhost/x',
+        'https://localhost:54321:443/x',
+        'https://localhost:/x',
+        'https://localhost.esempio.invalid:54321/x',
+        'https://xlocalhost:54321/x',
+        'https://esempio.invalid/localhost:54321',
+        'https://esempio.invalid/x?h=localhost:54321',
+        'https:///x',
+        'https://:54321/x',
+      ]) {
+        rifiutati(sbagliato)
       }
     })
 
     it('http è rifiutato — anche verso localhost —, e con lui ogni altro schema e ogni forma che non sia un indirizzo assoluto', () => {
       for (const sbagliato of [
-        'http://esempio.invalid/x',
+        `http://${AUTORITA_DEL_SITO_NEI_TEST}/x`,
         'http://localhost:54321/storage/v1/object/upload/sign/video_originals/x',
         'http://10.0.2.2:3101/x',
-        'ftp://esempio.invalid/x',
+        `ftp://${AUTORITA_DEL_SITO_NEI_TEST}/x`,
         'file:///privato/x.mov',
         'javascript:alert(1)',
         'data:text/plain,ciao',
-        '//esempio.invalid/x',
+        `//${AUTORITA_DEL_SITO_NEI_TEST}/x`,
         '/storage/v1/x',
-        'esempio.invalid/x',
-        'HTTPS://esempio.invalid/x',
+        `${AUTORITA_DEL_SITO_NEI_TEST}/x`,
+        `HTTPS://${AUTORITA_DEL_SITO_NEI_TEST}/x`,
         'https://',
         '',
         null,
@@ -892,16 +941,79 @@ describe('caricamenti nativi · accodaVideo(): ogni pezzo e ogni indirizzo', () 
 
     it('spazi e a capo, credenziali incorporate e lunghezza fuori misura sono rifiutati', () => {
       for (const sbagliato of [
-        'https://esempio.invalid/con spazio',
-        'https://esempio.invalid/x\n',
-        ' https://esempio.invalid/x',
-        'https://utente:segreto@esempio.invalid/x',
-        'https://utente@esempio.invalid/x',
-        'https://@esempio.invalid/x',
-        `https://esempio.invalid/${'x'.repeat(2048)}`,
+        su('/con spazio'),
+        su('/x\n'),
+        ` ${su('/x')}`,
+        `https://utente:segreto@${AUTORITA_DEL_SITO_NEI_TEST}/x`,
+        `https://utente@${AUTORITA_DEL_SITO_NEI_TEST}/x`,
+        `https://@${AUTORITA_DEL_SITO_NEI_TEST}/x`,
+        su(`/${'x'.repeat(2048)}`),
       ]) {
         rifiutati(sbagliato)
       }
+    })
+
+    describe('col progetto di PRODUZIONE passato a mano: la regola, riga per riga', () => {
+      const ammessa = (url: string) => indirizzoDellaPutAmmesso(url, HOST_PRODUZIONE)
+
+      it('https verso il progetto di produzione passa, con porta assente o 443', () => {
+        for (const url of [
+          `https://${HOST_PRODUZIONE}/storage/v1/object/upload/sign/video_originals/prova.mov?token=t`,
+          `https://${HOST_PRODUZIONE}`,
+          `https://${HOST_PRODUZIONE}:443/x?a=b#frammento`,
+        ]) {
+          expect(ammessa(url), url).toBe(true)
+        }
+      })
+
+      it('un altro progetto `*.supabase.co`, una lettera di differenza, un sottodominio del nostro, il nostro host nominato altrove: rifiutati', () => {
+        for (const url of [
+          'https://abcdefghijklmnopqrst.supabase.co/x',
+          'https://uimulkjyekgemjakmepq.supabase.co/x',
+          'https://xuimulkjyekgemjakmepp.supabase.co/x',
+          'https://uimulkjyekgemjakmep.supabase.co/x',
+          'https://a.uimulkjyekgemjakmepp.supabase.co/x',
+          'https://supabase.co/x',
+          'https://a.b.supabase.co/x',
+          `https://${HOST_PRODUZIONE}.esempio.invalid/x`,
+          `https://esempio.invalid/${HOST_PRODUZIONE}`,
+          `https://esempio.invalid/x?h=${HOST_PRODUZIONE}`,
+          `https://${HOST_PRODUZIONE}@esempio.invalid/x`,
+          `https://esempio.invalid@${HOST_PRODUZIONE}/x`,
+          'https://app.kidville.it/x',
+          'https://localhost:54321/x',
+        ]) {
+          expect(ammessa(url), url).toBe(false)
+        }
+      })
+
+      it('porta diversa da 443, porta vuota o doppia, maiuscole, autorità vuota: rifiutati', () => {
+        for (const url of [
+          `https://${HOST_PRODUZIONE}:8443/x`,
+          `https://${HOST_PRODUZIONE}:80/x`,
+          `https://${HOST_PRODUZIONE}:/x`,
+          `https://${HOST_PRODUZIONE}:443:443/x`,
+          `https://${HOST_PRODUZIONE}:0443/x`,
+          `https://${HOST_PRODUZIONE.toUpperCase()}/x`,
+          'https:///x',
+          'https://:443/x',
+          '',
+        ]) {
+          expect(ammessa(url), url).toBe(false)
+        }
+      })
+
+      it('un’autorità ammessa vuota non ammette niente: nemmeno l’indirizzo senza autorità', () => {
+        expect(indirizzoDellaPutAmmesso('https:///x', '')).toBe(false)
+        expect(indirizzoDellaPutAmmesso('https://esempio.invalid/x', '')).toBe(false)
+      })
+
+      it('il loopback di Debug non è una PUT ammessa dal JavaScript, nemmeno in https', () => {
+        for (const host of HOST_DEBUG_CARICAMENTI) {
+          expect(ammessa(`https://${host}:3101/x`), host).toBe(false)
+          expect(ammessa(`http://${host}:3101/x`), host).toBe(false)
+        }
+      })
     })
 
     it('il `content-type` ha la forma delle intestazioni del server, anche col suffisso dei codec', () => {
@@ -1154,7 +1266,7 @@ describe('caricamenti nativi · il contratto vero della PR 2 attraversa gli sche
   })
 
   it('riusare gli schemi del server non li altera: l’URL con credenziali, che qui si rifiuta, per il server resta quello di sempre', () => {
-    const put = { protocollo: 'put', url: 'https://utente@esempio.invalid/x', metodo: 'PUT', intestazioni: { 'content-type': 'video/mp4' } }
+    const put = { protocollo: 'put', url: `https://utente@${AUTORITA_DEL_SITO_NEI_TEST}/x`, metodo: 'PUT', intestazioni: { 'content-type': 'video/mp4' } }
     // Il server non ha mai vietato le credenziali incorporate: se questo diventasse falso, il divieto sarebbe finito nel SUO schema.
     expect(schemaCoordinatePutVideo.safeParse(put).success, 'schema del server').toBe(true)
     rifiuta(schemaRichiestaAccodaVideo, con(richiestaAccoda(), 'caricamento.url', put.url), 'stesso URL nel ponte', 'caricamento.url')
@@ -1223,6 +1335,62 @@ describe('caricamenti nativi · i limiti arrivano da `limiti.ts`', () => {
     const veri = await import('@/lib/native/caricamenti-nativi-tipi')
     accetta(veri.schemaElementoScelto, { ...video(), byte: MAX_VIDEO_INPUT_BYTES }, 'tetto vero')
     rifiuta(veri.schemaElementoScelto, { ...video(), byte: MAX_VIDEO_INPUT_BYTES + 1 }, 'oltre il tetto vero', 'byte')
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 6-bis · IN PRODUZIONE la PUT ammette UN host solo: il progetto di produzione
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('caricamenti nativi · col sito configurato come in produzione la PUT va SOLO al progetto di produzione', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  const IN_PRODUZIONE = `https://${HOST_PRODUZIONE}`
+
+  /** Il modulo rieseguito con il progetto del sito che dice `urlDelSito` (vuoto = variabile assente, quindi il ripiego di `public-config.ts`). */
+  async function moduloCon(urlDelSito: string) {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', urlDelSito)
+    return import('@/lib/native/caricamenti-nativi-tipi')
+  }
+
+  const conPut = (url: unknown) => con(richiestaAccoda(), 'caricamento.url', url)
+
+  it('con la variabile del sito sul progetto di produzione: lo Storage di produzione passa, tutto il resto no', async () => {
+    const produzione = await moduloCon(IN_PRODUZIONE)
+    expect(produzione.AUTORITA_PUT_AMMESSA_CARICAMENTI).toBe(HOST_PRODUZIONE)
+    for (const url of [`${IN_PRODUZIONE}/storage/v1/object/upload/sign/video_originals/prova.mov?token=t`, `${IN_PRODUZIONE}:443/x`]) {
+      accetta(produzione.schemaRichiestaAccodaVideo, conPut(url), url)
+    }
+    for (const sbagliato of [
+      'https://abcdefghijklmnopqrst.supabase.co/storage/v1/object/upload/sign/video_originals/prova.mov?token=t',
+      'https://uimulkjyekgemjakmepq.supabase.co/x',
+      `https://a.${HOST_PRODUZIONE}/x`,
+      `${IN_PRODUZIONE}.esempio.invalid/x`,
+      `${IN_PRODUZIONE}:8443/x`,
+      `http://${HOST_PRODUZIONE}/x`,
+      'https://localhost:54321/x',
+      URL_PUT,
+    ]) {
+      rifiuta(produzione.schemaRichiestaAccodaVideo, conPut(sbagliato), `PUT su ${sbagliato}`, 'caricamento.url')
+    }
+  })
+
+  it('con la variabile ASSENTE vale il ripiego di `public-config.ts`, cioè il progetto di produzione', async () => {
+    const senzaVariabile = await moduloCon('')
+    expect(senzaVariabile.AUTORITA_PUT_AMMESSA_CARICAMENTI).toBe(HOST_PRODUZIONE)
+    accetta(senzaVariabile.schemaRichiestaAccodaVideo, conPut(`${IN_PRODUZIONE}/x`), 'PUT sul progetto di produzione')
+    rifiuta(senzaVariabile.schemaRichiestaAccodaVideo, conPut('https://abcdefghijklmnopqrst.supabase.co/x'), 'PUT su un altro progetto', 'caricamento.url')
+  })
+
+  it('con il sito su un altro progetto la PUT ammessa è quella di quel progetto: la regola segue il sito, e il progetto di produzione non passa', async () => {
+    const altro = await moduloCon('https://abcdefghijklmnopqrst.supabase.co')
+    expect(altro.AUTORITA_PUT_AMMESSA_CARICAMENTI).toBe('abcdefghijklmnopqrst.supabase.co')
+    accetta(altro.schemaRichiestaAccodaVideo, conPut('https://abcdefghijklmnopqrst.supabase.co/x'), 'PUT sul progetto del sito')
+    rifiuta(altro.schemaRichiestaAccodaVideo, conPut(`${IN_PRODUZIONE}/x`), 'PUT sul progetto di produzione', 'caricamento.url')
   })
 })
 
@@ -1351,11 +1519,12 @@ describe('caricamenti nativi · la tabella dei metodi e l’interfaccia del plug
 describe('caricamenti nativi · il modulo è solo client e non si porta dietro niente', () => {
   const sorgente = readFileSync(join(process.cwd(), 'src/lib/native/caricamenti-nativi-tipi.ts'), 'utf8')
 
-  it('importa soltanto zod, il contratto e i limiti dei video, il tetto delle foto e UN TIPO di Capacitor', () => {
+  it('importa soltanto zod, il contratto e i limiti dei video, il tetto delle foto, il progetto del sito e UN TIPO di Capacitor', () => {
     // Le righe `import` cominciano a inizio riga: i commenti di testata (` * …`) non possono ingannare il lock.
     const importati = [...sorgente.matchAll(/^import\s[\s\S]*?\sfrom\s+'([^']+)'/gm)].map((trovato) => trovato[1]).sort()
+    // `public-config` è il progetto Supabase del sito (due costanti, nessun effetto): da lì viene l'host della PUT, e non si riscrive qui (lock di `src/`).
     expect(importati).toEqual(
-      ['@/lib/gallery/limiti', '@/lib/media/video/contratto', '@/lib/media/video/limiti', '@capacitor/core', 'zod'].sort(),
+      ['@/lib/gallery/limiti', '@/lib/media/video/contratto', '@/lib/media/video/limiti', '@/lib/supabase/public-config', '@capacitor/core', 'zod'].sort(),
     )
     // Il plugin vero non entra nel bundle da qui: `import type` si cancella in compilazione.
     expect(sorgente).toMatch(/^import type \{ PluginListenerHandle \} from '@capacitor\/core'$/m)
@@ -1366,5 +1535,48 @@ describe('caricamenti nativi · il modulo è solo client e non si porta dietro n
     for (const vietato of [/\bconsole\./, /\bprocess\./, /\bwindow\./, /\bdocument\./, /\bDate\.now\b/, /\bfetch\(/, /logging\/logger/, /\blogClient\b/]) {
       expect(codice, String(vietato)).not.toMatch(vietato)
     }
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 9 · L'HOST DELLA PUT È UNO SOLO, LO STESSO IN TS, SWIFT E JAVA, ED È QUELLO DI PRODUZIONE
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('caricamenti nativi · l’host della PUT: in Swift e in Java è il progetto di produzione scritto per esteso, in TS quello del sito', () => {
+  const leggi = (percorso: string) => readFileSync(join(process.cwd(), percorso), 'utf8')
+  /** Il codice senza commenti: la testata che spiega «non più `*.supabase.co`» non deve poter far passare il controllo da sola. */
+  const codice = (testo: string) => testo.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  it('è il progetto che il sito stesso usa in produzione (`public-config.ts`): il ripiego di quel file, da cui il TS prende l’host, e le costanti dei nativi sono la stessa cosa', () => {
+    expect(leggi('src/lib/supabase/public-config.ts')).toContain(`'https://${HOST_PRODUZIONE}'`)
+  })
+
+  it('Swift e Java dichiarano lo stesso host, scritto per esteso', () => {
+    expect(codice(leggi('ios/App/App/KVPoliticaCaricamento.swift'))).toContain(`static let hostPut = "${HOST_PRODUZIONE}"`)
+    expect(codice(leggi('android/app/src/main/java/it/kidville/app/caricamenti/PoliticaCaricamento.java'))).toContain(
+      `public static final String HOST_PUT = "${HOST_PRODUZIONE}";`,
+    )
+  })
+
+  it('né Swift né Java confrontano più l’host della PUT per suffisso: un altro progetto `*.supabase.co` non passa', () => {
+    const swift = codice(leggi('ios/App/App/KVPoliticaCaricamento.swift'))
+    const java = codice(leggi('android/app/src/main/java/it/kidville/app/caricamenti/PoliticaCaricamento.java'))
+    expect(swift).not.toMatch(/suffissoHostPut|hasSuffix\([^)]*supabase/)
+    expect(java).not.toMatch(/SUFFISSO_HOST_STORAGE|endsWith\([^)]*supabase/)
+    // E la PUT si confronta per uguaglianza con la costante, nei due nativi; il progetto della CI passa SOLO in Debug.
+    expect(swift).toMatch(/case \.put:\s*guard host == hostPut \|\| \(ambiente == \.debug && host == hostPutDebug\) else/)
+    expect(java).toMatch(/Destinazione\.PUT\) return host\.equals\(HOST_PUT\) \|\| \(debug && host\.equals\(HOST_PUT_DEBUG\)\);/)
+  })
+
+  it('l’unico host della PUT in più è il progetto della CI (solo dati di prova), e vale solo in Debug: il collaudo dell’app vera (E1, §11.2)', () => {
+    const HOST_CI = 'azhssawihitkphgnlukl.supabase.co'
+    const swift = codice(leggi('ios/App/App/KVPoliticaCaricamento.swift'))
+    const java = codice(leggi('android/app/src/main/java/it/kidville/app/caricamenti/PoliticaCaricamento.java'))
+    expect(swift).toContain(`static let hostPutDebug = "${HOST_CI}"`)
+    expect(java).toContain(`public static final String HOST_PUT_DEBUG = "${HOST_CI}";`)
+    // Nel codice dei due file non c'è nessun altro progetto `*.supabase.co`.
+    const progetti = (testo: string) => [...new Set(testo.match(/[a-z0-9-]+\.supabase\.co/g) ?? [])].sort()
+    expect(progetti(swift)).toEqual([HOST_CI, HOST_PRODUZIONE].sort())
+    expect(progetti(java)).toEqual([HOST_CI, HOST_PRODUZIONE].sort())
   })
 })

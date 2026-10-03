@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- FIXTURE del lock `caricamenti-nativi-agganciati` — VERDE per costruzione (regola 7, Android).
+     I permessi e i servizi di §6.4, e NESSUN permesso media. In questo commento compaiono di proposito
+     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" /> e READ_EXTERNAL_STORAGE: un commento non è una dichiarazione. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true" />
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <service
+            android:name=".caricamenti.ServizioCaricamentiUidt"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+    </application>
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.RUN_USER_INITIATED_JOBS" />
+</manifest>

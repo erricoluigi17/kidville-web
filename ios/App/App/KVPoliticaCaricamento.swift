@@ -374,7 +374,17 @@ enum KVPoliticaCaricamento {
 
     /// Gli host di sviluppo ammessi in Debug (§9): gli stessi di `HOST_DEBUG_CARICAMENTI` in TS.
     static let hostDebug = ["localhost", "127.0.0.1", "10.0.2.2"]
-    static let suffissoHostPut = ".supabase.co"
+    /// L'UNICO host della PUT: lo Storage del progetto Supabase di PRODUZIONE. Fino al 03/10/2026 era ammesso qualunque `*.supabase.co`: una pagina
+    /// compromessa avrebbe potuto far spedire il video di un bambino al progetto di un altro (decisione dell'orchestratore dopo il critico di I2:
+    /// rischio su dati di minori). Si confronta per UGUAGLIANZA, mai per suffisso. Lo stesso valore sta in `PoliticaCaricamento.HOST_PUT` (Java); in TS
+    /// non c'è una copia (un lock di `src/` vuole l'indirizzo di produzione in un file solo): lì l'host viene da `public-config.ts`, e
+    /// `caricamenti-nativi-tipi.test.ts` confronta il ripiego di quel file con queste costanti.
+    static let hostPut = "uimulkjyekgemjakmepp.supabase.co"
+    /// SOLO nelle build Debug e SOLO per la PUT: lo Storage del progetto Supabase della CI, che contiene soltanto dati di prova (la sede fittizia
+    /// `e2e00000-…`). Serve al collaudo dell'app vera (E1, §11.2): il banco locale (`next dev` sul DB della CI) apre i job su quel progetto e la
+    /// PUT va al suo Storage. Una build Release non lo ammette MAI: lì la PUT va solo a `hostPut`. Lo stesso valore sta in
+    /// `PoliticaCaricamento.HOST_PUT_DEBUG` (Java).
+    static let hostPutDebug = "azhssawihitkphgnlukl.supabase.co"
     static let hostApplicazione = "app.kidville.it"
     static let lunghezzaMassimaIndirizzo = 2048
 
@@ -710,8 +720,10 @@ enum KVPoliticaCaricamento {
     // MARK: Gli host ammessi (§9)
 
     /// Un indirizzo che il JS dà al nativo (la PUT, il rinnovo, il registro) si usa solo se passa di qui. Release: la PUT solo
-    /// `https://*.supabase.co`, rinnovo e registro solo `https://app.kidville.it`. Debug: in più `http(s)://` verso
-    /// `localhost`, `127.0.0.1`, `10.0.2.2`, con qualunque porta.
+    /// `https://uimulkjyekgemjakmepp.supabase.co` (il progetto di PRODUZIONE e nessun altro `*.supabase.co`), rinnovo e registro solo
+    /// `https://app.kidville.it`. Debug: in più `http(s)://` verso `localhost`, `127.0.0.1`, `10.0.2.2`, con qualunque porta, ANCHE per la PUT: il
+    /// collaudo del motore col server finto (C1, §11.1) la manda lì. In Debug la PUT ammette in più SOLO lo Storage del progetto della CI
+    /// (`hostPutDebug`, in `https` sulla 443), per il collaudo dell'app vera (§11.2). Nessun altro progetto Supabase, in nessuna build.
     ///
     /// L'indirizzo si SCOMPONE a mano e con regole strette (solo ASCII stampabile, nessuna credenziale, nessun `\`, host fatto di
     /// lettere cifre punti e trattini) PRIMA di fidarsi del parser di sistema, e alla fine i due devono concordare sull'host: due
@@ -768,7 +780,7 @@ enum KVPoliticaCaricamento {
             guard schema == "https", porta == nil || porta == 443 else { return nil }
             switch uso {
             case .put:
-                guard host.hasSuffix(suffissoHostPut), host.count > suffissoHostPut.count else { return nil }
+                guard host == hostPut || (ambiente == .debug && host == hostPutDebug) else { return nil }
             case .rinnovo, .registro:
                 guard host == hostApplicazione else { return nil }
             }

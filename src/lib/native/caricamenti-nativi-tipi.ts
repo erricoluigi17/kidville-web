@@ -8,6 +8,7 @@ import {
   schemaTokenRinnovoVideo,
 } from '@/lib/media/video/contratto'
 import { MAX_VIDEO_DURATION_SECONDS, MAX_VIDEO_INPUT_BYTES } from '@/lib/media/video/limiti'
+import { SUPABASE_URL } from '@/lib/supabase/public-config'
 
 /**
  * IL CONTRATTO FRA IL JAVASCRIPT E IL PLUGIN `KidvilleCaricamenti` — una fonte sola.
@@ -56,11 +57,16 @@ import { MAX_VIDEO_DURATION_SECONDS, MAX_VIDEO_INPUT_BYTES } from '@/lib/media/v
  *     collaudo dell'app vera (§11.2) la WebView apre `http://localhost:3101` (iOS) o
  *     `http://10.0.2.2:3101` (Android). Per quei DUE indirizzi si ammette quindi `http` verso
  *     `HOST_DEBUG_CARICAMENTI` (gli stessi host della politica nativa, §9), con qualunque porta.
- *     È una verifica di FORMA, non di sicurezza: la politica degli host (in Release solo
- *     `*.supabase.co` per la PUT e `app.kidville.it` per il resto) è del nativo, che la prova e
- *     rifiuta con `HOST_NON_AMMESSO`; una pagina compromessa non passa da qui, chiama il plugin.
- *     L'URL della PUT NON ha la forma Debug: viene dallo Storage (`schemaCoordinatePutVideo`,
- *     solo `https`) in ogni ambiente, anche nel collaudo.
+ *     È una verifica di FORMA, non di sicurezza: la politica degli host (in Release solo il
+ *     progetto Supabase di produzione per la PUT e `app.kidville.it` per il resto) è del nativo, che la
+ *     prova e rifiuta con `HOST_NON_AMMESSO`; una pagina compromessa non passa da qui, chiama il plugin.
+ *     L'URL della PUT NON ha la forma Debug: viene dallo Storage (`schemaCoordinatePutVideo`, solo
+ *     `https`) in ogni ambiente. Dal 03/10 ha anche UN host solo (deciso dopo il critico di I2): quello del
+ *     progetto Supabase di QUESTO sito (`AUTORITA_PUT_AMMESSA_CARICAMENTI`, da `public-config.ts`), che in
+ *     produzione è il progetto di PRODUZIONE e nessun altro. Un URL di un altro progetto `*.supabase.co` è
+ *     fuori forma già qui, e il nativo (che ha il progetto di produzione scritto per esteso) lo
+ *     rifiuterebbe comunque. L'indirizzo di produzione NON si scrive in questo file: un lock
+ *     (`nessun-bersaglio-di-produzione`, regola 6) lo vuole in UN file solo di `src/`.
  *
  * ─── CHE COSA NON C'È, E PERCHÉ ──────────────────────────────────────────────────────────────
  *  · `creaElementoDiProva`: esiste solo nelle build Debug (`#if DEBUG`, `BuildConfig.DEBUG`) e
@@ -408,12 +414,41 @@ function indirizzoApplicazioneAmmesso(indirizzo: string): boolean {
 }
 
 /**
- * L'URL della PUT: la forma che il server dichiara per un URL firmato (`https`, senza spazi, fino a 2048
- * caratteri: `schemaCoordinatePutVideo`), più il divieto di credenziali incorporate. Mai la forma Debug.
+ * L'autorità (host e porta) ammessa per la PUT: quella del progetto Supabase di QUESTO sito, la stessa di `public-config.ts` da cui il server
+ * firma gli URL (`firme.ts` importa la stessa costante). In produzione è il progetto di PRODUZIONE e nessun altro; in sviluppo, e sotto vitest, è
+ * quello del banco locale. Fino al 03/10/2026 la PUT era ammessa verso qualunque `*.supabase.co`: una pagina compromessa avrebbe potuto far
+ * spedire il video di un bambino al progetto Supabase di un altro (ne basta uno registrato da chiunque; decisione dell'orchestratore dopo il
+ * critico di I2, rischio su dati di minori).
+ *
+ * Il progetto di produzione NON si scrive qui: un lock (`nessun-bersaglio-di-produzione`, regola 6) vuole il suo indirizzo in UN file solo di
+ * `src/`, e il valore giusto, in produzione, è già questo. Il nativo invece lo ha scritto per esteso (`KVPoliticaCaricamento.hostPut`,
+ * `PoliticaCaricamento.HOST_PUT`), ed è lui la difesa vera: qui è una verifica di forma che fa fallire presto, con un log, ciò che il nativo
+ * rifiuterebbe.
  */
-const schemaUrlPut = schemaCoordinatePutVideo.shape.url.refine(senzaCredenziali, {
-  message: 'indirizzo con credenziali incorporate',
-})
+export const AUTORITA_PUT_AMMESSA_CARICAMENTI = autoritaDi(SUPABASE_URL)
+
+/**
+ * L'autorità della PUT è quella ammessa, con la porta assente o 443 come nella politica nativa di Release (§9). Uguaglianza sull'autorità
+ * intera, mai per suffisso: `autoritaDi` include le credenziali e la porta, quindi `utente@host`, `host:8443` e `host.esempio.invalid` non passano,
+ * e nemmeno l'autorità vuota di `https:///x` (che la forma del server lascia passare: secondario 6 di S1). Esportata per la prova, che le passa
+ * il progetto di produzione senza dover rieseguire il modulo.
+ */
+export function indirizzoDellaPutAmmesso(indirizzo: string, autoritaAmmessa: string = AUTORITA_PUT_AMMESSA_CARICAMENTI): boolean {
+  if (autoritaAmmessa === '') return false
+  const autorita = autoritaDi(indirizzo)
+  if (autorita === autoritaAmmessa) return true
+  return !autoritaAmmessa.includes(':') && autorita === `${autoritaAmmessa}:443`
+}
+
+/**
+ * L'URL della PUT: la forma che il server dichiara per un URL firmato (`https`, senza spazi, fino a 2048
+ * caratteri: `schemaCoordinatePutVideo`), più il divieto di credenziali incorporate, più l'host (SOLO il progetto Supabase di questo sito:
+ * in produzione, quello di produzione). Mai la forma Debug: neanche il loopback del collaudo passa di qui (la prova del motore col server finto
+ * salta il JS e chiama il plugin).
+ */
+const schemaUrlPut = schemaCoordinatePutVideo.shape.url
+  .refine(senzaCredenziali, { message: 'indirizzo con credenziali incorporate' })
+  .refine((indirizzo) => indirizzoDellaPutAmmesso(indirizzo), { message: 'la PUT va solo allo Storage del progetto Supabase del sito' })
 
 /** Il `content-type` della PUT: quello che il server mette nell'intestazione. */
 const schemaContentTypePut = schemaCoordinatePutVideo.shape.intestazioni.shape['content-type']

@@ -118,6 +118,10 @@ class KVBridgeViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         super.capacitorDidLoad()
 
+        // Il plugin dei caricamenti nativi in background (PR 3, app 1.2). Subito qui, PRIMA dei `guard` che possono uscire: il filtro delle
+        // navigazioni non deve poter spegnere il plugin. È un plugin locale, non un pacchetto: si registra a mano e non richiede `cap sync`.
+        bridge?.registerPluginInstance(KVCaricamentiPlugin())
+
         guard let webView = webView else {
             // Configurazione mancante = livello error (AGENTS.md regola 4): senza WebView
             // il filtro non esiste e la schermata «non raggiungibile» torna a comparire

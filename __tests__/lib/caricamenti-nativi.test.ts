@@ -255,7 +255,8 @@ const RICHIESTA_ACCODA = {
   intentId: UUID_INTENTO,
   utenteId: UUID_UTENTE,
   scuolaId: UUID_SEDE,
-  caricamento: { url: 'https://progetto.supabase.co/storage/v1/object/upload/sign/b/p?token=t', contentType: 'video/quicktime', scadeIl: '2026-10-03T10:00:00.000Z' },
+  // L'host della PUT è quello del progetto Supabase del SITO (`caricamenti-nativi-tipi.ts`): sotto vitest, il banco locale.
+  caricamento: { url: 'https://localhost:54321/storage/v1/object/upload/sign/b/p?token=t', contentType: 'video/quicktime', scadeIl: '2026-10-03T10:00:00.000Z' },
   // La forma del token del server (`kvr_` + 43 caratteri base64url): qui è una stringa palesemente finta.
   rinnovo: { url: 'https://app.kidville.it/api/video-uploads/rinnovo', token: `kvr_${'x'.repeat(43)}`, scadeIl: '2026-10-05T08:00:00.000Z' },
   registro: { url: 'https://app.kidville.it/api/logs' },
@@ -929,7 +930,7 @@ const RICHIESTE_NON_VALIDE: { nome: string; metodo: string; chiama: (m: Modulo) 
   { nome: 'leggiFoto con un id che esce dalla cartella', metodo: 'leggiFoto', chiama: (m) => m.leggiFoto({ id: '../../etc/passwd' }) },
   { nome: 'leggiFoto con un id vuoto', metodo: 'leggiFoto', chiama: (m) => m.leggiFoto({ id: '' }) },
   { nome: 'scartaScelti con un id con i separatori', metodo: 'scartaScelti', chiama: (m) => m.scartaScelti({ ids: ['a/b'] }) },
-  { nome: 'accodaVideo con la PUT in chiaro (http)', metodo: 'accodaVideo', chiama: (m) => m.accodaVideo({ ...RICHIESTA_ACCODA, caricamento: { ...RICHIESTA_ACCODA.caricamento, url: 'http://progetto.supabase.co/storage/v1/object/upload/sign/b/p?token=t' } }) },
+  { nome: 'accodaVideo con la PUT in chiaro (http)', metodo: 'accodaVideo', chiama: (m) => m.accodaVideo({ ...RICHIESTA_ACCODA, caricamento: { ...RICHIESTA_ACCODA.caricamento, url: 'http://localhost:54321/storage/v1/object/upload/sign/b/p?token=t' } }) },
   { nome: 'accodaVideo con lo sha256 in maiuscolo', metodo: 'accodaVideo', chiama: (m) => m.accodaVideo({ ...RICHIESTA_ACCODA, sha256: SHA.toUpperCase() }) },
   { nome: 'accodaVideo con un token che non ha la forma del server', metodo: 'accodaVideo', chiama: (m) => m.accodaVideo({ ...RICHIESTA_ACCODA, rinnovo: { ...RICHIESTA_ACCODA.rinnovo, token: 'kvr_corto' } }) },
   { nome: 'accodaVideo con credenziali nell\'indirizzo del registro', metodo: 'accodaVideo', chiama: (m) => m.accodaVideo({ ...RICHIESTA_ACCODA, registro: { url: 'https://utente@app.kidville.it/api/logs' } }) },

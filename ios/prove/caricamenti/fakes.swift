@@ -23,7 +23,7 @@ let tokenB = "kvr_bbbbbbbbbbbbbbbbbbbbbbbb"
 
 /// Un URL firmato di PUT in forma di quelli veri, con una «firma» riconoscibile.
 func urlPutProva(_ job: Int, _ firma: String = "a") -> String {
-    return "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/utente/job\(job).mov?token=firma-\(firma)"
+    return "https://uimulkjyekgemjakmepp.supabase.co/storage/v1/object/upload/sign/video_originals/utente/job\(job).mov?token=firma-\(firma)"
 }
 
 func iso(_ data: Date) -> String { KVPoliticaCaricamento.isoZ(data) }
@@ -53,7 +53,17 @@ final class TrasportoPutFinto: KVTrasportoPut {
     private(set) var chiamateTaskVivi = 0
     /// Se `true` `taskVivi` non risponde mai da solo (un sistema che non risponde): il completamento resta in `risposteInSospeso` e lo si dà a mano.
     var nonRispondeATaskVivi = false
-    private var risposteInSospeso: [([KVTaskVivo]) -> Void] = []
+    /// Se `true` (con `nonRispondeATaskVivi`) la risposta in sospeso porta la FOTOGRAFIA dei task presa al momento della RICHIESTA, com'è nel sistema vero: `getAllTasks`
+    /// è asincrono, e quando risponde il motore può aver creato altri task (la rete che torna, un esito che arriva) o visto finire quelli che la fotografia elenca.
+    /// Se `false` la risposta tardiva rilegge i task di ADESSO (un sistema che risponde in fretta, ma tardi per la prova).
+    var fotografiaAllaRichiesta = false
+    private var risposteInSospeso: [(completamento: ([KVTaskVivo]) -> Void, fotografia: [KVTaskVivo])] = []
+
+    /// I task che il sistema ha ora, com'è visto da `getAllTasks`. Chi la chiama tiene la serratura.
+    private func fotografiaDiAdesso() -> [KVTaskVivo] {
+        let propri = vivi.keys.sorted().map { KVTaskVivo(job: vivi[$0]!.job, identificativo: $0, byteInviati: byteSpediti[$0] ?? 0) }
+        return propri + extraVivi
+    }
 
     func taskVivi(completamento: @escaping ([KVTaskVivo]) -> Void) {
         serratura.lock()
@@ -61,10 +71,9 @@ final class TrasportoPutFinto: KVTrasportoPut {
         serratura.unlock()
         primaDiRispondere?()
         serratura.lock()
-        let propri = vivi.keys.sorted().map { KVTaskVivo(job: vivi[$0]!.job, identificativo: $0, byteInviati: byteSpediti[$0] ?? 0) }
-        let tutti = propri + extraVivi
+        let tutti = fotografiaDiAdesso()
         if nonRispondeATaskVivi {
-            risposteInSospeso.append(completamento)
+            risposteInSospeso.append((completamento, tutti))
             serratura.unlock()
             return
         }
@@ -72,14 +81,22 @@ final class TrasportoPutFinto: KVTrasportoPut {
         completamento(tutti)
     }
 
-    /// Risponde adesso alle `taskVivi` rimaste in sospeso (la risposta tardiva di un sistema lento).
+    /// Risponde adesso alle `taskVivi` rimaste in sospeso (la risposta tardiva di un sistema lento): con la fotografia della richiesta se
+    /// `fotografiaAllaRichiesta`, altrimenti coi task di adesso.
     func rispondiATaskViviInSospeso() {
         serratura.lock()
         let pronte = risposteInSospeso
         risposteInSospeso = []
-        let tutti = vivi.keys.sorted().map { KVTaskVivo(job: vivi[$0]!.job, identificativo: $0, byteInviati: byteSpediti[$0] ?? 0) } + extraVivi
+        let adesso = fotografiaDiAdesso()
+        let alla = fotografiaAllaRichiesta
         serratura.unlock()
-        pronte.forEach { $0(tutti) }
+        pronte.forEach { $0.completamento(alla ? $0.fotografia : adesso) }
+    }
+
+    /// Quante `taskVivi` aspettano ancora la loro risposta.
+    var taskViviInSospeso: Int {
+        serratura.lock(); defer { serratura.unlock() }
+        return risposteInSospeso.count
     }
 
     func avvia(_ richiesta: KVRichiestaPut) -> Int? {
@@ -103,10 +120,11 @@ final class TrasportoPutFinto: KVTrasportoPut {
 
     // Dalla prova -----------------------------------------------------------------------------
 
-    /// L'identificativo dell'N-esimo task creato (da 0).
+    /// L'identificativo dell'N-esimo task creato (da 0), o `-1` se il motore non ne ha creati tanti: un `Index out of range` farebbe cadere tutto l'harness e
+    /// si perderebbe l'elenco dei fallimenti; con `-1` la verifica che segue fallisce da sola e dice che cosa mancava.
     func id(_ n: Int) -> Int {
         serratura.lock(); defer { serratura.unlock() }
-        return ordine[n]
+        return ordine.indices.contains(n) ? ordine[n] : -1
     }
 
     /// L'identificativo dell'ultimo task creato.
@@ -120,9 +138,13 @@ final class TrasportoPutFinto: KVTrasportoPut {
         return richieste.count
     }
 
+    /// La richiesta del N-esimo task creato (da 0). Se non c'è, una richiesta SEGNAPOSTO riconoscibile (job nullo, 0 byte, indirizzo `assente:`), mai un crash:
+    /// vedi `id(_:)`.
     func richiesta(_ n: Int) -> KVRichiestaPut {
         serratura.lock(); defer { serratura.unlock() }
-        return richieste[n]
+        if richieste.indices.contains(n) { return richieste[n] }
+        return KVRichiestaPut(job: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!, url: URL(string: "assente:richiesta-\(n)")!, contentType: "",
+                              file: URL(fileURLWithPath: "/assente"), byte: -1, nonPrima: nil)
     }
 
     var identificativiVivi: [Int] {

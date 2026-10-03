@@ -631,7 +631,7 @@ func provaAttese() {
 
 // MARK: - 5. §4.5 — il rinnovo
 
-func corpoRinnovo(url: String = "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/x/y.mov?token=t",
+func corpoRinnovo(url: String = "https://uimulkjyekgemjakmepp.supabase.co/storage/v1/object/upload/sign/video_originals/x/y.mov?token=t",
                   protocollo: String = "put", contentType: Any = "video/quicktime", scadeIl: Any = "2026-10-05T01:15:00.123Z") -> Data {
     let caricamento: [String: Any] = ["protocollo": protocollo, "url": url, "metodo": "PUT", "intestazioni": ["content-type": contentType]]
     return jsonDati(["stato": "da-caricare", "caricamento": caricamento, "scadeIl": scadeIl])
@@ -643,7 +643,7 @@ func provaRinnovo() {
     func leggi(_ stato: Int?, _ corpo: Data = Data(), ra: String? = nil, ambiente: KVAmbienteBuild = .release) -> KVRispostaRinnovo {
         return T.leggiRispostaRinnovo(statoHTTP: stato, corpo: corpo, retryAfter: ra, adesso: t0, ambiente: ambiente)
     }
-    let urlBuono = URL(string: "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/x/y.mov?token=t")!
+    let urlBuono = URL(string: "https://uimulkjyekgemjakmepp.supabase.co/storage/v1/object/upload/sign/video_originals/x/y.mov?token=t")!
     // 200 da-caricare
     let scadenzaToken = T.leggiDataISO("2026-10-05T01:15:00.123Z")
     verificaUguali("200 da-caricare, forma giusta → nuova PUT, content-type e scadenza del TOKEN",
@@ -671,13 +671,17 @@ func provaRinnovo() {
     verificaUguali("200 con corpo vuoto → fuori schema", leggi(200, Data()).esito, fuoriSchema)
     verificaUguali("da-caricare senza `caricamento` → fuori schema", leggi(200, jsonDati(["stato": "da-caricare", "scadeIl": "2026-10-05T01:15:00Z"])).esito, fuoriSchema)
     verificaUguali("da-caricare con protocollo tus → fuori schema", leggi(200, corpoRinnovo(protocollo: "tus")).esito, fuoriSchema)
-    verificaUguali("da-caricare con URL http in Release → fuori schema", leggi(200, corpoRinnovo(url: "http://abcdefghij.supabase.co/x")).esito, fuoriSchema)
+    verificaUguali("da-caricare con URL http in Release → fuori schema", leggi(200, corpoRinnovo(url: "http://uimulkjyekgemjakmepp.supabase.co/x")).esito, fuoriSchema)
     verificaUguali("da-caricare con un host che non è Supabase → fuori schema (una pagina compromessa non sposta il video)",
                    leggi(200, corpoRinnovo(url: "https://evil.example.com/x")).esito, fuoriSchema)
+    verificaUguali("da-caricare con l'URL di un ALTRO progetto Supabase → fuori schema (un rinnovo manipolato non sposta il video in un progetto di altri)",
+                   leggi(200, corpoRinnovo(url: "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/x/y.mov?token=t")).esito, fuoriSchema)
+    verificaUguali("… e anche in Debug",
+                   leggi(200, corpoRinnovo(url: "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/x/y.mov?token=t"), ambiente: .debug).esito, fuoriSchema)
     verificaUguali("da-caricare con l'host dell'applicazione al posto dello Storage → fuori schema",
                    leggi(200, corpoRinnovo(url: "https://app.kidville.it/x")).esito, fuoriSchema)
     verificaUguali("da-caricare con credenziali nell'URL → fuori schema",
-                   leggi(200, corpoRinnovo(url: "https://abcdefghij.supabase.co@evil.com/x")).esito, fuoriSchema)
+                   leggi(200, corpoRinnovo(url: "https://uimulkjyekgemjakmepp.supabase.co@evil.com/x")).esito, fuoriSchema)
     verificaUguali("da-caricare senza `intestazioni` → fuori schema",
                    leggi(200, jsonDati(["stato": "da-caricare", "scadeIl": "2026-10-05T01:15:00Z",
                                         "caricamento": ["protocollo": "put", "url": urlBuono.absoluteString]])).esito, fuoriSchema)
@@ -919,39 +923,57 @@ func provaSoglia() {
 
 func provaHost() {
     let T = KVPoliticaCaricamento.self
-    sezione("§9 — host ammessi in Release: PUT solo https://*.supabase.co, rinnovo e registro solo https://app.kidville.it")
+    sezione("§9 — host ammessi in Release: PUT solo https://uimulkjyekgemjakmepp.supabase.co (il progetto di PRODUZIONE), rinnovo e registro solo https://app.kidville.it")
     func ammesso(_ testo: String, _ uso: KVUsoIndirizzo, _ ambiente: KVAmbienteBuild) -> Bool {
         return T.indirizzoAmmesso(testo, uso: uso, ambiente: ambiente) != nil
     }
     let putBuoni = [
-        "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/a/b.mov?token=eyJhbGciOi.x.y",
-        "https://abcdefghij.supabase.co",
-        "HTTPS://ABCDEFGHIJ.SUPABASE.CO/x",
-        "https://abcdefghij.supabase.co:443/x",
-        "https://a.b.supabase.co/x",
-        "https://abcdefghij.supabase.co/x?a=b&c=d#frammento",
+        "https://uimulkjyekgemjakmepp.supabase.co/storage/v1/object/upload/sign/video_originals/a/b.mov?token=eyJhbGciOi.x.y",
+        "https://uimulkjyekgemjakmepp.supabase.co",
+        "HTTPS://UIMULKJYEKGEMJAKMEPP.SUPABASE.CO/x",
+        "https://uimulkjyekgemjakmepp.supabase.co:443/x",
+        "https://uimulkjyekgemjakmepp.supabase.co/x?a=b&c=d#frammento",
     ]
     for testo in putBuoni { verifica("PUT ammessa in Release: \(testo.prefix(50))", ammesso(testo, .put, .release)) }
+    // Un URL di un ALTRO progetto `*.supabase.co`: ne basta uno registrato da chiunque per ricevere il video di un bambino. Fino al 03/10 passava.
+    let altriProgetti = [
+        "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/a/b.mov?token=eyJhbGciOi.x.y",
+        "https://abcdefghij.supabase.co",
+        "https://a.b.supabase.co/x",
+        "https://uimulkjyekgemjakmepq.supabase.co/x",
+        "https://xuimulkjyekgemjakmepp.supabase.co/x",
+        "https://uimulkjyekgemjakmep.supabase.co/x",
+        "https://a.uimulkjyekgemjakmepp.supabase.co/x",
+        "https://uimulkjyekgemjakmepp.supabase.co.abcdefghij.example/x",
+        "https://abcdefghij.example/uimulkjyekgemjakmepp.supabase.co",
+        "https://abcdefghij.example/x?h=uimulkjyekgemjakmepp.supabase.co",
+        "https://uimulkjyekgemjakmepp.supabase.com/x",
+        "https://uimulkjyekgemjakmepp.supabase.io/x",
+    ]
+    for testo in altriProgetti {
+        verifica("PUT verso un altro progetto respinta in Release: \(testo.prefix(56))", !ammesso(testo, .put, .release))
+        verifica("… e respinta anche in Debug (un altro progetto non è un host di sviluppo): \(testo.prefix(40))", !ammesso(testo, .put, .debug))
+    }
     let putCattivi = [
-        "http://abcdefghij.supabase.co/x",
+        "http://uimulkjyekgemjakmepp.supabase.co/x",
         "https://supabase.co/x",
         "https://.supabase.co/x",
         "https://evilsupabase.co/x",
-        "https://abcdefghij.supabase.co.evil.com/x",
+        "https://uimulkjyekgemjakmepp.supabase.co.evil.com/x",
         "https://evil.com/.supabase.co",
         "https://evil.com/x?h=.supabase.co",
-        "https://abcdefghij.supabase.co@evil.com/x",
-        "https://evil.com@abcdefghij.supabase.co/x",
-        "https://abcdefghij.supabase.co\\@evil.com/x",
-        "https://abcdefghij.supabase.co:8443/x",
-        "https://abcdefghij.supabase.co:0/x",
-        "https://abcdefghij.supabase.co:65536/x",
-        "https://abcdefghij.supabase.co:99999/x",
-        "https://abcdefghij.supabase.co:abc/x",
-        "https://abcdefghij.supabase.co:/x",
-        "https://abcdefghij.supabase.co:443:443/x",
-        "https://abcdefghij.supabase.co%2eevil.com/x",
-        "https://abcdefghij.supabase.co:443@evil.com/x",
+        "https://uimulkjyekgemjakmepp.supabase.co@evil.com/x",
+        "https://evil.com@uimulkjyekgemjakmepp.supabase.co/x",
+        "https://uimulkjyekgemjakmepp.supabase.co\\@evil.com/x",
+        "https://uimulkjyekgemjakmepp.supabase.co:8443/x",
+        "https://uimulkjyekgemjakmepp.supabase.co:0/x",
+        "https://uimulkjyekgemjakmepp.supabase.co:65536/x",
+        "https://uimulkjyekgemjakmepp.supabase.co:99999/x",
+        "https://uimulkjyekgemjakmepp.supabase.co:abc/x",
+        "https://uimulkjyekgemjakmepp.supabase.co:/x",
+        "https://uimulkjyekgemjakmepp.supabase.co:443:443/x",
+        "https://uimulkjyekgemjakmepp.supabase.co%2eevil.com/x",
+        "https://uimulkjyekgemjakmepp.supabase.co:443@evil.com/x",
         "https://-abc.supabase.co/x",
         "https://abc..supabase.co/x",
         "https://app.kidville.it/x",
@@ -960,17 +982,17 @@ func provaHost() {
         "http://localhost:3101/x",
         "http://10.0.2.2:3101/x",
         "https://[::1]/x",
-        "ftp://abcdefghij.supabase.co/x",
-        "//abcdefghij.supabase.co/x",
-        "abcdefghij.supabase.co/x",
+        "ftp://uimulkjyekgemjakmepp.supabase.co/x",
+        "//uimulkjyekgemjakmepp.supabase.co/x",
+        "uimulkjyekgemjakmepp.supabase.co/x",
         "https://",
         "https:///x",
         "",
-        "https://abcdefghij.supabase.co/x y",
-        "https://abcdefghij.supabase.co/x\n",
-        "https://abcdefghij.supabase.co/\u{00E9}",
-        " https://abcdefghij.supabase.co/x",
-        "https://abcdefghij.supabase.co/" + String(repeating: "a", count: 2100),
+        "https://uimulkjyekgemjakmepp.supabase.co/x y",
+        "https://uimulkjyekgemjakmepp.supabase.co/x\n",
+        "https://uimulkjyekgemjakmepp.supabase.co/\u{00E9}",
+        " https://uimulkjyekgemjakmepp.supabase.co/x",
+        "https://uimulkjyekgemjakmepp.supabase.co/" + String(repeating: "a", count: 2100),
     ]
     for testo in putCattivi { verifica("PUT respinta in Release: \(testo.prefix(50).replacingOccurrences(of: "\n", with: "\\n"))", !ammesso(testo, .put, .release)) }
 
@@ -981,7 +1003,8 @@ func provaHost() {
         verifica("registro ammesso in Release: \(testo)", ammesso(testo, .registro, .release))
     }
     let appCattivi = ["http://app.kidville.it/api/logs", "https://kidville.it/api/logs", "https://evil.app.kidville.it/api/logs",
-                      "https://app.kidville.it.evil.com/", "https://abcdefghij.supabase.co/api/logs", "https://app.kidville.it:8080/api/logs",
+                      "https://app.kidville.it.evil.com/", "https://uimulkjyekgemjakmepp.supabase.co/api/logs", "https://abcdefghij.supabase.co/api/logs",
+                      "https://app.kidville.it:8080/api/logs",
                       "http://localhost:3101/api/logs", "http://10.0.2.2:3101/api/logs", "https://app.kidville.it@evil.com/api/logs",
                       "https://evil.com/app.kidville.it", "https://xapp.kidville.it/api/logs", ""]
     for testo in appCattivi {
@@ -999,18 +1022,31 @@ func provaHost() {
         }
     }
     for testo in putBuoni { verifica("Debug ammette ancora la PUT di Release: \(testo.prefix(40))", ammesso(testo, .put, .debug)) }
+    verifica("in Debug lo Storage di produzione non diventa un host del rinnovo né del registro (non è il sito)", !ammesso("https://uimulkjyekgemjakmepp.supabase.co/x", .rinnovo, .debug) && !ammesso("https://uimulkjyekgemjakmepp.supabase.co/x", .registro, .debug))
     for testo in appBuoni { verifica("Debug ammette ancora il rinnovo di Release: \(testo)", ammesso(testo, .rinnovo, .debug)) }
     let sviluppoCattivo = ["http://localhost.evil.com/x", "http://evil.com@localhost/x", "http://localhost@evil.com/x", "http://10.0.2.3/x",
                            "http://10.0.2.2.evil.com/x", "http://192.168.1.5:3101/x", "http://0.0.0.0/x", "http://[::1]:3101/x", "http://[::1]/x",
-                           "http://abcdefghij.supabase.co/x", "http://app.kidville.it/api/logs", "http://localhost:99999/x", "http://localhost:0/x",
+                           "http://uimulkjyekgemjakmepp.supabase.co/x", "http://app.kidville.it/api/logs", "http://localhost:99999/x", "http://localhost:0/x",
                            "http://localhost:abc/x", "http://localhost:/x", "http://127.1/x", "http://2130706433/x", "http://localhost\\@evil.com/x"]
     for testo in sviluppoCattivo {
         verifica("Debug respinge \(testo)", !ammesso(testo, .put, .debug) && !ammesso(testo, .rinnovo, .debug) && !ammesso(testo, .registro, .debug))
     }
     // Il valore restituito è l'URL da usare, con lo stesso host.
-    verificaUguali("l'URL restituito ha l'host letto", T.indirizzoAmmesso("https://ABCDEFGHIJ.supabase.co/x?token=1", uso: .put, ambiente: .release)?.host?.lowercased(), "abcdefghij.supabase.co")
+    verificaUguali("l'URL restituito ha l'host letto", T.indirizzoAmmesso("https://UIMULKJYEKGEMJAKMEPP.supabase.co/x?token=1", uso: .put, ambiente: .release)?.host?.lowercased(), "uimulkjyekgemjakmepp.supabase.co")
+    verificaUguali("l'host della PUT ammesso è UNO, scritto qui a mano e uguale alla costante di produzione", T.hostPut, "uimulkjyekgemjakmepp.supabase.co")
     verificaUguali("in Debug la porta si conserva", T.indirizzoAmmesso("http://10.0.2.2:3101/api/logs", uso: .registro, ambiente: .debug)?.port, 3101)
-    verificaUguali("la query si conserva (è la firma)", T.indirizzoAmmesso("https://abcdefghij.supabase.co/x?token=abc.def", uso: .put, ambiente: .release)?.query, "token=abc.def")
+    verificaUguali("la query si conserva (è la firma)", T.indirizzoAmmesso("https://uimulkjyekgemjakmepp.supabase.co/x?token=abc.def", uso: .put, ambiente: .release)?.query, "token=abc.def")
+    // Il progetto della CI (solo dati di prova): SOLO in Debug e SOLO per la PUT, per il collaudo dell'app vera (E1, §11.2).
+    let hostCI = "azhssawihitkphgnlukl.supabase.co"
+    let urlCI = "https://\(hostCI)/storage/v1/object/upload/sign/video_originals/x/y.mov?token=t"
+    verifica("Debug: la PUT verso lo Storage della CI è ammessa", ammesso(urlCI, .put, .debug))
+    verifica("Debug: … anche con la porta 443 esplicita", ammesso("https://\(hostCI):443/x", .put, .debug))
+    verifica("Release: la PUT verso la CI è respinta, SEMPRE", !ammesso(urlCI, .put, .release))
+    verifica("Debug: la CI in chiaro è respinta", !ammesso("http://\(hostCI)/x", .put, .debug))
+    verifica("Debug: la CI su un'altra porta è respinta", !ammesso("https://\(hostCI):8443/x", .put, .debug))
+    verifica("Debug: un sottodominio della CI è respinto", !ammesso("https://a.\(hostCI)/x", .put, .debug))
+    verifica("Debug: rinnovo e registro verso la CI sono respinti (vale solo per la PUT)", !ammesso(urlCI, .rinnovo, .debug) && !ammesso(urlCI, .registro, .debug))
+    verificaUguali("l'host di Debug della PUT è quello scritto qui a mano", T.hostPutDebug, hostCI)
 }
 
 // MARK: - 8. Il ponte verso il JavaScript
@@ -1882,7 +1918,9 @@ final class TrasportoFinto: KVTrasportoRegistro {
         pronti.forEach { $0() }
     }
 
+    /// Il corpo della N-esima richiesta (da 0); vuoto se non c'è: un `Index out of range` farebbe cadere l'harness e si perderebbe l'elenco dei fallimenti.
     func corpo(_ n: Int) -> [String: Any] {
+        guard richieste.indices.contains(n) else { return [:] }
         return (try? JSONSerialization.jsonObject(with: richieste[n].corpo) as? [String: Any]) ?? [:]
     }
 
@@ -2308,10 +2346,10 @@ func provaRegistro() {
         verificaUguali("evento = caricamento-nativo", Set(eventi.compactMap { $0["evento"] as? String }), ["caricamento-nativo"])
         verificaUguali("livelli", eventi.compactMap { $0["livello"] as? String }, ["warn", "error", "warn"])
         verificaUguali("stato presente dove c'è uno scambio HTTP", eventi.map { $0["stato"] as? Int }, [503, 413, nil])
-        let campi0 = eventi[0]["campi"] as? [String: Any] ?? [:]
+        let campi0 = (eventi.first?["campi"] as? [String: Any]) ?? [:]
         verificaUguali("campi: numeri come numeri JSON", [campi0["tentativo"] as? Int, campi0["attesa_s"] as? Int, campi0["byte_inviati"] as? Int], [1, 30, 9])
         verificaUguali("campi: versione_app come testo", campi0["versione_app"] as? String, "1.2+6")
-        let campi2 = eventi[1]["campi"] as? [String: Any] ?? [:]
+        let campi2 = (eventi.dropFirst().first?["campi"] as? [String: Any]) ?? [:]
         verificaUguali("campi: gli enumerati come testo", [campi2["operazione"] as? String], ["put"])
         let campiAttesa = { () -> [String: Any] in
             let (rr3, _) = nuovoRegistro(trasporto)
@@ -2491,12 +2529,15 @@ func provaRegistro() {
         let (secondo, _) = nuovoRegistro(TrasportoFinto(), cartella: cart)
         verificaUguali("un'altra istanza rilegge TUTTI gli eventi identici, campo per campo", secondo.stato().eventi, scritti)
         let riletti = secondo.stato().eventi
-        verificaUguali("… `in_background` resta un BOOLEANO (vero e falso)", [riletti[0].campi["in_background"], riletti[1].campi["in_background"]], [.booleano(true), .booleano(false)])
-        verificaUguali("… `notifica` e `autorizzata` restano booleani", [riletti[2].campi["notifica"], riletti[2].campi["autorizzata"], riletti[3].campi["notifica"], riletti[3].campi["autorizzata"]],
+        // Un evento che manca fa FALLIRE la verifica che lo nomina, non cadere l'harness con `Index out of range` (si perderebbe l'elenco dei fallimenti).
+        func letto(_ indice: Int, _ chiave: String) -> KVValoreCampo? { riletti.indices.contains(indice) ? riletti[indice].campi[chiave] : nil }
+        verificaUguali("… gli eventi riletti sono sette, tanti quanti ne sono stati scritti", riletti.count, 7)
+        verificaUguali("… `in_background` resta un BOOLEANO (vero e falso)", [letto(0, "in_background"), letto(1, "in_background")], [.booleano(true), .booleano(false)])
+        verificaUguali("… `notifica` e `autorizzata` restano booleani", [letto(2, "notifica"), letto(2, "autorizzata"), letto(3, "notifica"), letto(3, "autorizzata")],
                        [.booleano(true), .booleano(false), .booleano(false), .booleano(true)])
-        verificaUguali("… e i numeri 0 e 1 restano NUMERI, non diventano falso e vero", [riletti[1].campi["ms"], riletti[1].campi["tentativi"], riletti[1].campi["rinnovi"], riletti[4].campi["byte_inviati"], riletti[4].campi["tentativo"]],
+        verificaUguali("… e i numeri 0 e 1 restano NUMERI, non diventano falso e vero", [letto(1, "ms"), letto(1, "tentativi"), letto(1, "rinnovi"), letto(4, "byte_inviati"), letto(4, "tentativo")],
                        [.numero(0), .numero(0), .numero(1), .numero(0), .numero(1)])
-        verificaUguali("… e i testi restano testi", [riletti[0].campi["esito"], riletti[5].campi["error_code"]], [.testo("put"), .testo("InvalidJWT")])
+        verificaUguali("… e i testi restano testi", [letto(0, "esito"), letto(5, "error_code")], [.testo("put"), .testo("InvalidJWT")])
         verificaUguali("… nessuna perdita dichiarata", secondo.stato().scartati, 0)
     }
 
@@ -2937,8 +2978,21 @@ func provaSorgenti() {
              motore.contains("URLSessionConfiguration.background(withIdentifier: identificativo)") && motore.contains("sessionSendsLaunchEvents = true") && motore.contains("isDiscretionary = false")
              && motore.contains("allowsCellularAccess = true") && motore.contains("allowsExpensiveNetworkAccess = true") && motore.contains("allowsConstrainedNetworkAccess = true"))
     verifica("l'identificativo della sessione è it.kidville.app.caricamenti", motore.contains("static let identificativoSessione = \"it.kidville.app.caricamenti\""))
-    verifica("i reindirizzamenti non si seguono né nella PUT né nel rinnovo", motore.contains("willPerformHTTPRedirection") && motore.contains("completionHandler(nil)")
-             && rinnovoSorgente.contains("willPerformHTTPRedirection") && rinnovoSorgente.contains("completionHandler(nil)"))
+    // I reindirizzamenti, con le cose come stanno. Il RINNOVO usa una sessione `.ephemeral`, dove il sistema chiede al delegato: lì il rifiuto è una difesa
+    // vera (e `prove-componenti.swift` la prova sul callback). La PUT usa una sessione IN BACKGROUND, dove `willPerformHTTPRedirection` NON viene chiamato:
+    // il sistema segue i 3xx da solo. Il rifiuto che sta nel trasporto della PUT è una cintura per le sessioni che il sistema consulta (quelle della prova),
+    // e dire che protegge la PUT vera sarebbe falso. La difesa della PUT è l'host UNICO (provato in `provaHost` e nei rifiuti dell'accodamento).
+    let codiceRinnovo = senzaCommenti(rinnovoSorgente)
+    verifica("il rinnovo rifiuta i reindirizzamenti col delegato, ed è una sessione ephemeral (dove il sistema lo consulta)",
+             codiceRinnovo.contains("willPerformHTTPRedirection") && codiceRinnovo.contains("completionHandler(nil)") && codiceRinnovo.contains("URLSessionConfiguration.ephemeral"))
+    verificaUguali("la PUT è una sessione IN BACKGROUND (identificativo fisso): lì il delegato dei reindirizzamenti non viene chiamato, e il rifiuto del trasporto non è la sua difesa",
+                   KVTrasportoPutURLSession.configurazione().identifier, "it.kidville.app.caricamenti")
+    verifica("… e il sorgente non pretende più il contrario: né «I reindirizzamenti NON si seguono» riferito alla PUT, né un 307 «non seguito» come garanzia",
+             !motore.contains("I reindirizzamenti NON si seguono") && !motore.contains("un 3xx lo porterebbe altrove con tutto il video"))
+    verifica("… e dice la verità sul sistema: nel commento del trasporto c'è che in background `willPerformHTTPRedirection` NON viene chiamato",
+             motore.contains("willPerformHTTPRedirection` NON viene chiamato"))
+    verifica("la difesa vera della PUT è nel CODICE: l'host si confronta per uguaglianza con la costante di produzione (e, solo in Debug, con quella della CI), mai per suffisso",
+             senzaCommenti(testo["KVPoliticaCaricamento.swift"]!).contains("guard host == hostPut || (ambiente == .debug && host == hostPutDebug) else { return nil }"))
 
     sezione("I2 — i segreti stanno nel Portachiavi, AfterFirstUnlockThisDeviceOnly, mai nella coda né nel registro")
     let segretiSorgente = testo["KVSegretiCaricamenti.swift"]!

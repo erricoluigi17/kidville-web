@@ -453,3 +453,135 @@ xcrun simctl openurl booted kidville://parent/avvisi
 # Android (emulatore)
 adb shell am start -a android.intent.action.VIEW -d "kidville://parent/avvisi"
 ```
+
+## Il plugin `KidvilleCaricamenti` — l'invio dei video in background (app 1.2)
+
+Dalla **1.2** il trasferimento di un video non è più un TUS in JavaScript che vive finché la pagina Galleria è montata: lo fa il
+**sistema operativo**, con un plugin nostro. L'insegnante può bloccare il telefono o usare altre app e il video arriva lo stesso,
+intero, una volta sola. Spec: `docs/superpowers/specs/2026-10-03-video-pr3-app-1-2-design.md` (le scelte del titolare sono in §2;
+dove spec e codice si contraddicono vale il codice, e gli scostamenti stanno nell'**Appendice A**). Il server non cambia: la PR 2
+ha già spostato destinatari, arrivo e pubblicazione sul server; la 1.2 sposta solo l'ultimo tratto, il trasferimento.
+
+⚠️ **Mai `npx cap sync`, nemmeno «per sicurezza».** Il plugin è **locale all'app**: non è un pacchetto npm, non sta in `package.json`
+né in `Package.swift`, `capacitor.settings.gradle`, `capacitor.build.gradle`, e **non richiede nessun sync** per esistere. Un sync
+nudo, per di più, riscrive i `capacitor.config.json` gitignorati senza `server.url` e l'app si apre **bianca**. Se un collaudo ha
+toccato quei file, si ripristinano le copie fatte prima (vedi «Il collaudo col server finto») e si lancia `npm run rilascio:verifica`.
+
+### Dove sta
+
+| | iOS | Android |
+|---|---|---|
+| Facciata del plugin | `ios/App/App/KVCaricamentiPlugin.swift` (`CAPPlugin, CAPBridgedPlugin`, `jsName = "KidvilleCaricamenti"`) | `…/it/kidville/app/caricamenti/KidvilleCaricamentiPlugin.java` (`@CapacitorPlugin(name = "KidvilleCaricamenti")`) |
+| Registrazione | `KVBridgeViewController.capacitorDidLoad()`, **prima di ogni `guard`** | `MainActivity.onCreate`, `registerPlugin` **prima di `super.onCreate`** |
+| Politica (tabelle di decisione) | `KVPoliticaCaricamento.swift` | `PoliticaCaricamento.java` |
+| Coda e registro dei log | `KVCodaCaricamenti.swift`, `KVRegistroNativo.swift` | `CodaCaricamenti.java`, `RegistroNativo.java` |
+| Segreti (token di rinnovo e URL firmato) | `KVSegretiCaricamenti.swift` (**Portachiavi**, `AfterFirstUnlockThisDeviceOnly`) | `SegretiCaricamenti.java` (AES-GCM con chiave **AndroidKeyStore**) |
+| Rinnovo della firma, notifiche | `KVRinnovoFirma.swift`, `KVNotificaAttesa.swift` | `RinnovoFirma.java`, `NotificheCaricamento.java` |
+| Motore | `KVMotoreCaricamenti.swift` (sessione `URLSession` in background) | `PianificatoreCaricamenti.java`, `EsecutoreCoda.java`, `CaricatorePut.java`, `LavoroCaricamenti.java`, `ServizioCaricamentiUidt.java` |
+| Selettore, foto, miniature | `KVSelettoreMedia.swift`, `KVElaborazioneFoto.swift` | `SelettoreMedia.java`, `ElaborazioneFoto.java`, `MiniaturaVideo.java` |
+| Punti d'ingresso del sistema | `AppDelegate`: `avvia()`, `handleEventsForBackgroundURLSession`, `riprendiInPrimoPiano()`, `notificaSeFermo()` | `MainActivity.onResume` → `PianificatoreCaricamenti.riprendiInPrimoPiano` |
+
+Lato JavaScript: il **contratto** (nome, nove metodi, vocabolari, schemi zod che rileggono ogni risposta del ponte) sta in
+`src/lib/native/caricamenti-nativi-tipi.ts`; l'**involucro** con la rilevazione («questo telefono ha il plugin, completo, del
+protocollo giusto?») in `src/lib/native/caricamenti-nativi.ts`. Un binario 1.0/1.1 non ha il plugin: la Galleria resta com'era
+(TUS dalla pagina) e **nessun log** segnala l'assenza, perché è il caso normale.
+
+### Il motore, per livello di API
+
+| Piattaforma | Motore | Note |
+|---|---|---|
+| iOS 15+ | `URLSession` **in background** (`it.kidville.app.caricamenti`), una `uploadTask(with:fromFile:)` per video | `sessionSendsLaunchEvents = true`, `isDiscretionary = false`, cellulare, rete costosa e «dati ridotti» **ammessi** (decisione del titolare: «qualunque rete»). Nessuna chiave nuova in `Info.plist`, **niente `UIBackgroundModes`** (dichiararlo senza usarlo è un motivo di rigetto, 2.5.4) |
+| Android 14+ (API ≥ 34) | **UIDT** (job «avviato dall'utente» di JobScheduler) | `RUN_USER_INITIATED_JOBS`, con la notifica che il sistema mostra da sé |
+| Android 7-13 (API 24-33) | **WorkManager** con servizio in primo piano `dataSync` | `FOREGROUND_SERVICE` e `FOREGROUND_SERVICE_DATA_SYNC`; su Android 12-13 l'avvio da background può essere negato: la voce va «in pausa» e la notifica dice «tocca per riprendere» (accettato dal titolare) |
+
+Il file parte con **una PUT sola**, anche da 2 GB, su un URL firmato che vale 2 ore e che lo Storage **verifica alla fine**
+del trasferimento: per questo il nativo **rinnova l'URL prima di ogni PUT se è stato firmato da più di 10 minuti**. Il rinnovo è
+`POST /api/video-uploads/rinnovo` col token nell'intestazione `x-kidville-rinnovo` (nessuna sessione, nessun cookie utile). Se
+la rete cade la PUT riparte da zero, e dopo un rifiuto è il rinnovo a dire se il file c'è già. Rischio dichiarato: un trasferimento più lungo di 2 ore
+non può riuscire (un video da 2 GB chiede almeno ~2,3 Mbit/s costanti in salita).
+
+### Cosa NON c'è, di proposito
+
+- **Nessun permesso media** su Android (`READ_MEDIA_*`, `READ_EXTERNAL_STORAGE`, …): il Photo Picker e il SAF lavorano fuori dal
+  processo. Dichiararne uno farebbe entrare un'app con foto di bambini nella policy «Foto e video» di Google Play.
+- **Nessun `creaElementoDiProva` nelle build di rilascio.** È un metodo del plugin che crea «un video di byte casuali del peso
+  chiesto, già preparato»: serve al collaudo del motore e **esiste solo in Debug** (`#if DEBUG` in Swift, un guard
+  `BuildConfig.DEBUG` in Java). Non sta in `METODI_PLUGIN_CARICAMENTI` e la Release non deve definire `DEBUG`.
+- **Nessun nome di file, indirizzo, token o hash nei log.** Le API di `KVRegistroNativo` e `RegistroNativo` accettano solo
+  enumerati, numeri e UUID: è il tipo a garantirlo, non la disciplina. Si leggono in `app_log`, `evento = 'client:caricamento-nativo'`:
+
+  ```sql
+  SELECT messaggio, livello, piattaforma, sum(occorrenze)
+  FROM app_log
+  WHERE evento = 'client:caricamento-nativo' AND visto_l_ultima > now() - interval '1 day'
+  GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+  ```
+- **Un solo `onPause` in `MainActivity`**: lo sorveglia il lock `cookie-sessione-persistito-android`.
+
+### Come si prova (la CI **non** compila il nativo)
+
+Nessun test di CI vede un guasto di Swift o di Java: le prove native si lanciano **in locale**, e una regressione nativa si trova
+solo lì, nel collaudo o dal telefono di un'insegnante.
+
+```bash
+# iOS — harness sui file di produzione (Mac con Xcode, pochi secondi, senza simulatore: Mac Catalyst, due volte, senza e con -D DEBUG)
+sh ios/prove/caricamenti/esegui.sh
+# iOS — il Portachiavi vero, DENTRO un simulatore già avviato
+sh ios/prove/caricamenti/esegui-simulatore.sh
+# iOS — la build per il simulatore (Capacitor 8 usa SPM: -project, non -workspace; -derivedDataPath SEMPRE in una cartella tua)
+xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator \
+  -destination 'generic/platform=iOS Simulator' -derivedDataPath <cartella> CODE_SIGNING_ALLOWED=NO build
+
+# Android — JUnit e APK di debug (JDK 21, e UNA sola build Gradle alla volta sullo stesso albero)
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+cd android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
+```
+
+Il comportamento di tutto questo (rinnovo, rotazione del token, 404, 429, chiusura forzata, notifica, segreti cancellati a fine
+corsa, sequenze casuali di eventi a seme fisso) lo provano l'harness e JUnit; l'**aggancio** (nome e metodi identici nei tre
+linguaggi, registrazione prima di ogni `guard` e prima di `super.onCreate`, `AppDelegate`, parametri della sessione, file in
+Sources, manifest, versioni 1.2 (6) e `versionCode 4`, nessun dato personale nei log) lo tiene fermo il lock
+**`__tests__/architecture/caricamenti-nativi-agganciati.test.ts`**, che gira in CI e ha un controllo positivo: le sue regole
+girano anche su fixture rotte (`__tests__/architecture/fixtures/caricamenti-nativi-agganciati/`) e devono dire rosso.
+
+Due trappole del simulatore iOS, già pagate: una build **senza firma** (`CODE_SIGNING_ALLOWED=NO`) non ha entitlement e il
+Portachiavi risponde `-34018` (ogni `accodaVideo` darebbe `INTERNO`): per collaudare l'**app vera** serve `ENABLE_DEBUG_DYLIB=NO` e
+gli entitlement incorporati nel binario, come spiega l'intestazione di `ios/prove/caricamenti/esegui-simulatore.sh`. E una sessione
+`URLSession` in background **vera**, o la sospensione di iOS, non si provano da nessuna parte fuori da un'app installata: vanno
+alla prova sul campo.
+
+### Il collaudo col server finto (`scripts/collaudo-caricamenti/`)
+
+Per provare il **motore** senza sporcare lo Storage e **provocando i guasti a comando**, `scripts/collaudo-caricamenti/` ha un
+server finto che fa la parte dello Storage e delle due porte (`/api/video-uploads/rinnovo`, `/api/logs`) e **ricorda tutto**:
+byte e `sha256` ricevuti, ogni tentativo, ogni log. Ogni scenario si chiude **leggendo `GET /stato`**, non guardando lo schermo.
+
+```bash
+sh scripts/collaudo-caricamenti/autoverifica.sh                    # esce 0 solo se ogni controllo torna (solo node, nessuna rete)
+node scripts/collaudo-caricamenti/server.mjs --porta 4310           # ascolta SOLO su 127.0.0.1
+curl -s http://127.0.0.1:4310/stato                                 # tutto ciò che il server ha visto, e le verifiche
+```
+
+Dal simulatore iOS il Mac è `http://localhost:4310`; dall'emulatore Android è `http://10.0.2.2:4310` (alias del loopback del Mac).
+Lo scenario della PUT si sceglie col «token» dell'URL (`ok`, `lento`, `cade-a-meta`, `scaduto`, `duplicato`, `muto`, `errore-500`,
+`risposta-persa`), quello del rinnovo col suo (`da-caricare`, `arrivato`, `annullato`, `404`, `429`). La pagina `pagina.html`
+chiama il plugin con `window.Capacitor.Plugins` e crea i video con `creaElementoDiProva`, **solo in una build Debug**.
+
+Per puntare l'app al server finto si usa una **build Debug** con `server.url` cambiato **a mano, sulla copia di lavoro** dei due
+`capacitor.config.json` gitignorati — mai con un sync: **copie di sicurezza e impronte prima, ripristino e
+`python3 scripts/verifica-shell-nativa.py` dopo**. In Debug il nativo ammette in più `http(s)` verso `localhost`, `127.0.0.1` e
+`10.0.2.2` con qualunque porta, per tutte e tre le destinazioni (PUT, rinnovo, registro); fuori da quei tre host la PUT è ammessa
+solo verso lo Storage del progetto di produzione, in Debug come in Release (non verso il progetto della CI).
+
+### L'interruttore d'emergenza
+
+`NEXT_PUBLIC_CARICAMENTI_NATIVI=0` (variabile **di build**: vedi `docs/env.md`) fa comportare la 1.2 come la 1.1 — selettore del
+browser e TUS dalla pagina — con un **deploy del solo web**, senza una revisione degli store. Le voci **già in coda** nel nativo
+proseguono: spegnerlo non ferma i video già accodati. Dopo il deploy si verifica in `app_log` che la riga
+`caricamenti-nativi-spenti` compaia da un'app 1.2 che apre la Galleria: un interruttore che non si è visto scattare non è scattato.
+
+### Versioni e rilascio
+
+La 1.2 è **`1.2 (6)`** su iOS (`MARKETING_VERSION` e `CURRENT_PROJECT_VERSION` in entrambe le configurazioni) e `versionName "1.2"`,
+**`versionCode 4`** su Android (da confermare in sola lettura su Play Console prima di costruire). L'invio agli store, con i passi
+esatti e la dichiarazione del servizio in primo piano di Play, sta in **`docs/store-submission.md`** (§7).

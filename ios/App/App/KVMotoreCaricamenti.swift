@@ -211,6 +211,12 @@ private final class KVStatoRuntime {
     var byteUltimaEmissione: Int64 = 0
     /// I byte che il task aveva spedito quando la chiusura forzata l'ha annullato (per `video-nativo-ripreso-dopo-chiusura`).
     var byteDellaChiusura: Int64 = 0
+    /// Il numero d'ordine di creazione (`taskCreati`) del task corrente: dice a `riconcilia` se è nato PRIMA o DOPO che si chiedesse al sistema la
+    /// fotografia dei task. Una fotografia non può contenere ciò che è nato dopo la richiesta, e l'assenza non prova che sia sparito.
+    var creatoAlNumero = 0
+    /// I task di cui il motore ha già visto consegnare l'esito (qualunque esito): una fotografia più vecchia di quel momento può elencarli ancora, ma
+    /// non sono vivi, e `riconcilia` non li adotta.
+    var conclusi = Set<Int>()
 }
 
 // MARK: - Il motore
@@ -232,6 +238,9 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
     /// L'avanzamento arriva al JS al più ogni mezzo secondo, e solo se sono passati almeno 3 secondi o il progresso è di almeno l'1%.
     static let intervalloAvanzamentoMinimo: TimeInterval = 0.5
     static let intervalloAvanzamentoMassimo: TimeInterval = 3
+    /// Quanto si aspetta la risposta di `getAllTasks` (all'avvio e al rientro in primo piano) prima di andare avanti senza: un sistema che non risponde
+    /// non deve tenere ferma la pulizia, né la ripresa delle voci, né il completamento del lavoro in background.
+    static let tettoTaskViviSecondi: TimeInterval = 15
 
     /// Il motore dell'app. Parte alla prima chiamata: `AppDelegate` lo tocca in `didFinishLaunching`.
     static let condiviso = KVMotoreCaricamenti(dipendenze: .predefinite())
@@ -277,6 +286,8 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
     private var reteDisponibile: Bool?
     private var notificaVisibile = false
     private var tentativiLetturaCoda = 0
+    /// Quanti task ha creato il motore in questo processo: il numero d'ordine che `riconcilia` confronta con quello della richiesta di fotografia.
+    private var taskCreati = 0
     private var rinnoviAvviati = 0
     private var operazioniInSospeso = 0
     private var completamentoSessione: (() -> Void)?
@@ -395,20 +406,28 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
         inizioOperazione()
         var fatto = false
         var annullaGuardia: (() -> Void)?
+        // Quanti task il motore aveva creato quando ha chiesto la fotografia: ciò che nasce dopo, nella fotografia non c'è (vedi `riconcilia`).
+        let creatiPrima = taskCreati
         trasporto.taskVivi { [weak self] vivi in
             self?.inCoda {
-                guard let self = self, !fatto else { return }
+                guard let self = self else { return }
+                if fatto {
+                    // Il sistema risponde DOPO la guardia: l'avvio non si rifà, ma la fotografia serve lo stesso, a non lasciare due task per una voce (la guardia ha
+                    // già fatto ripartire ciò che le sembrava senza task).
+                    self.riconcilia(vivi, creatiPrimaDellaRichiesta: creatiPrima)
+                    return
+                }
                 fatto = true
                 annullaGuardia?()
-                self.completaAvvio(vivi: vivi)
+                self.completaAvvio(vivi: vivi, creatiPrimaDellaRichiesta: creatiPrima)
                 self.fineOperazione()
             }
         }
         // Se il sistema non risponde a `getAllTasks` la pulizia non resta indietro per sempre.
-        annullaGuardia = pianificaSulMotore(dopo: 15) { [weak self] in
+        annullaGuardia = pianificaSulMotore(dopo: Self.tettoTaskViviSecondi) { [weak self] in
             guard let self = self, !fatto else { return }
             fatto = true
-            self.completaAvvio(vivi: [])
+            self.completaAvvio(vivi: [], creatiPrimaDellaRichiesta: creatiPrima)
             self.fineOperazione()
         }
     }
@@ -416,8 +435,8 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
     /// Dopo che il sistema ha detto quali task ha ancora — e quindi dopo che gli eventi consegnati alla creazione della sessione sono stati
     /// applicati — si riconcilia e SI PULISCE: un task finito con successo a token appena scaduto si segna `inviato` prima che la pulizia lo chiuda
     /// come `TOKEN_SCADUTO`.
-    private func completaAvvio(vivi: [KVTaskVivo]) {
-        riconcilia(vivi)
+    private func completaAvvio(vivi: [KVTaskVivo], creatiPrimaDellaRichiesta: Int) {
+        riconcilia(vivi, creatiPrimaDellaRichiesta: creatiPrimaDellaRichiesta)
         pulisciLaCoda()
         let vive = coda.tutte().filter { !$0.stato.eTerminale }
         if !vive.isEmpty {
@@ -426,6 +445,9 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
                                     taskVivi: vive.filter { runtime[$0.jobId]?.taskCorrente != nil }.count)
         }
         avvioCompletato = true
+        // La rete che `reteCambiata` aveva solo annotato (il monitor parla subito, `getAllTasks` dopo): adesso che i task del sistema sono noti si fa ciò
+        // che la prima notizia avrebbe fatto.
+        if let attuale = reteDisponibile { reteCambiata(attuale) }
         svuotaRegistro()
         if primoPianoRinviato {
             primoPianoRinviato = false
@@ -513,17 +535,35 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
         assicuraCodaPronta()
         registro.riprovaLettura()
         inizioOperazione()
+        let creatiPrima = taskCreati
+        var chiusa = false
+        var guardiaScattata = false
+        var annullaGuardia: (() -> Void)?
         ottieniTrasporto().taskVivi { [weak self] vivi in
             self?.inCoda {
                 guard let self = self else { return }
-                self.riprendiConTaskVivi(vivi, logga: loggaIlPrimoPiano)
-                self.fineOperazione()
+                annullaGuardia?()
+                // La risposta che arriva DOPO la guardia si applica lo stesso (la riconciliazione si rimette a posto da sola), ma il rientro in primo piano
+                // si scrive una volta sola e l'operazione si chiude una volta sola.
+                self.riprendiConTaskVivi(vivi, creatiPrimaDellaRichiesta: creatiPrima, logga: loggaIlPrimoPiano && !guardiaScattata)
+                if !chiusa { chiusa = true; self.fineOperazione() }
             }
+        }
+        // Un tetto di tempo, come all'avvio: un sistema che non risponde a `getAllTasks` non deve tenere ferma la ripresa delle voci, né il completamento del
+        // lavoro in background. Senza fotografia si va avanti con ciò che il motore sa: le voci con un task suo non si toccano, le altre ripartono.
+        annullaGuardia = pianificaSulMotore(dopo: Self.tettoTaskViviSecondi) { [weak self] in
+            guard let self = self, !chiusa else { return }
+            chiusa = true
+            guardiaScattata = true
+            self.diagnostica.error("getAllTasks non ha risposto in tempo al rientro in primo piano")
+            self.riprendiConTaskVivi(nil, creatiPrimaDellaRichiesta: creatiPrima, logga: loggaIlPrimoPiano)
+            self.fineOperazione()
         }
     }
 
-    private func riprendiConTaskVivi(_ vivi: [KVTaskVivo], logga: Bool) {
-        riconcilia(vivi)
+    /// `vivi` è `nil` quando il sistema non ha risposto in tempo: non si riconcilia (non c'è niente con cui farlo) e si va avanti.
+    private func riprendiConTaskVivi(_ vivi: [KVTaskVivo]?, creatiPrimaDellaRichiesta: Int, logga: Bool) {
+        if let vivi = vivi { riconcilia(vivi, creatiPrimaDellaRichiesta: creatiPrimaDellaRichiesta) }
         guard coda.pronta else { return }
         if !pulizieFatte { pulisciLaCoda() }
         let vive = coda.tutte().filter { !$0.stato.eTerminale }
@@ -556,7 +596,7 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
         inCoda {
             self.inPrimoPiano = false
             guard self.coda.pronta else { return }
-            if self.reteDisponibile == false && self.esistonoVociInInvioOInAttesa() { self.mostraLaNotificaDiAttesa() }
+            if self.reteDisponibile == false, let ferma = self.vocePiuFerma() { self.mostraLaNotificaDiAttesa(per: ferma) }
         }
     }
 
@@ -713,27 +753,75 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
         return coda.pronta
     }
 
-    /// Mette d'accordo la coda con i task che il sistema ha davvero. Un task vivo per una voce viva si adotta; una voce senza task resta com'è
-    /// (non si crea niente qui); un task che nessuna voce viva nomina — o un secondo task per la stessa voce — si ferma.
-    private func riconcilia(_ vivi: [KVTaskVivo]) {
+    /// Mette d'accordo la coda con i task che il sistema ha davvero, e fa in modo che per OGNI voce viva ce ne sia al più UNO: due task per lo stesso video
+    /// sono due PUT da 2 GB (traffico doppio, anche su cellulare), e il secondo, a fine corsa, lo Storage lo rifiuta come duplicato.
+    ///
+    /// ⚠️ La fotografia è più VECCHIA di ciò che il motore sa. `getAllTasks` risponde dopo, e nel frattempo il motore può aver creato un task (la rete
+    /// che torna, un esito che arriva, un `accodaVideo` ripetuto) o visto finire quello che la fotografia elenca ancora. Per questo:
+    ///  · ciò che il motore ha creato DOPO aver chiesto la fotografia (`creatoAlNumero > creatiPrimaDellaRichiesta`) non può starci, e la sua assenza non
+    ///    prova niente: resta; ciò che aveva creato PRIMA e la fotografia non elenca il sistema non lo ha più (finito o perso): si dimentica;
+    ///  · un task che la fotografia elenca ma che il motore ha già fermato (`ignorati`) o già visto finire (`conclusi`) non è vivo e non si adotta
+    ///    (il fermo si ripete: se il sistema lo elenca, non si è ancora fermato);
+    ///  · se per una voce restano due o più candidati (un task del processo di prima e uno creato da questo, o due nella stessa fotografia) se ne tiene UNO:
+    ///    il più avanzato (più byte già spediti), a parità quello che il motore aveva già adottato, poi il più vecchio. Gli altri si fermano.
+    ///
+    /// Un task di nessuna voce viva si ferma. Una voce senza task resta com'è (non si crea niente qui).
+    private func riconcilia(_ vivi: [KVTaskVivo], creatiPrimaDellaRichiesta: Int) {
         guard coda.pronta else { return }
         let voci = coda.tutte().filter { !$0.stato.eTerminale }
-        var adottati: [UUID: Int] = [:]
+        let jobVivi = Set(voci.map { $0.jobId })
+
+        var fotografati: [UUID: [KVTaskVivo]] = [:]
         for task in vivi {
-            guard voci.contains(where: { $0.jobId == task.job }), adottati[task.job] == nil else {
+            guard jobVivi.contains(task.job) else {
                 ottieniTrasporto().annulla(task: task.identificativo)
                 continue
             }
-            adottati[task.job] = task.identificativo
             let rt = runtimeDi(task.job)
-            rt.taskCorrente = task.identificativo
-            rt.byteInviati = max(rt.byteInviati, task.byteInviati)
+            if rt.ignorati.contains(task.identificativo) {
+                ottieniTrasporto().annulla(task: task.identificativo)
+                continue
+            }
+            if rt.conclusi.contains(task.identificativo) { continue }
+            fotografati[task.job, default: []].append(task)
         }
+
         for voce in voci {
             let rt = runtimeDi(voce.jobId)
-            if adottati[voce.jobId] == nil {
-                rt.taskCorrente = nil
-            } else if voce.stato == .inCoda {
+            var candidati = fotografati[voce.jobId] ?? []
+            let adottato = rt.taskCorrente
+            if let proprio = adottato, !candidati.contains(where: { $0.identificativo == proprio }) {
+                if rt.creatoAlNumero > creatiPrimaDellaRichiesta {
+                    candidati.append(KVTaskVivo(job: voce.jobId, identificativo: proprio, byteInviati: rt.byteInviati))
+                } else {
+                    rt.taskCorrente = nil
+                }
+            }
+            guard !candidati.isEmpty else { continue }
+
+            // Il più avanzato; a parità quello già adottato; poi il più vecchio (l'identificativo più basso).
+            let tenuto = candidati.max { a, b in
+                if a.byteInviati != b.byteInviati { return a.byteInviati < b.byteInviati }
+                let aAdottato = a.identificativo == adottato
+                let bAdottato = b.identificativo == adottato
+                if aAdottato != bAdottato { return bAdottato }
+                return a.identificativo > b.identificativo
+            }!
+            for altro in candidati where altro.identificativo != tenuto.identificativo {
+                rt.ignorati.insert(altro.identificativo)
+                ottieniTrasporto().annulla(task: altro.identificativo)
+            }
+            if candidati.count > 1 {
+                diagnostica.error("due task vivi per la stessa voce: se ne tiene uno, gli altri si annullano")
+            }
+            if tenuto.identificativo == adottato {
+                rt.byteInviati = max(rt.byteInviati, tenuto.byteInviati)
+            } else {
+                rt.byteInviati = tenuto.byteInviati
+                rt.creatoAlNumero = 0
+            }
+            rt.taskCorrente = tenuto.identificativo
+            if voce.stato == .inCoda {
                 // Una voce ancora «in coda» con un task vivo (un task differito, o il processo è morto fra la creazione e il passo di stato) sta
                 // inviando: si porta a `in-invio` e il JS, se è già agganciato, lo sa.
                 _ = applicaStato(.trasferimentoAvviato, a: voce.jobId)
@@ -858,11 +946,20 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
         let differita = partenza > ora.addingTimeInterval(1)
         let richiesta = KVRichiestaPut(job: job, url: url, contentType: segretiVoce.contentType, file: file, byte: voce.byte,
                                        nonPrima: differita ? partenza : nil)
+        let rt = runtimeDi(job)
+        // UN task per voce, senza eccezioni: se per qualunque ragione ce n'è già uno (un task adottato mentre il rinnovo era in volo), lo si ferma prima di
+        // crearne un altro. Due task per lo stesso video sono due PUT da 2 GB.
+        if let precedente = rt.taskCorrente {
+            rt.ignorati.insert(precedente)
+            ottieniTrasporto().annulla(task: precedente)
+            rt.taskCorrente = nil
+        }
         guard let identificativo = ottieniTrasporto().avvia(richiesta) else {
             termina(voce, evento: .fallito(.interno), statoHTTP: nil)
             return
         }
-        let rt = runtimeDi(job)
+        taskCreati += 1
+        rt.creatoAlNumero = taskCreati
         rt.taskCorrente = identificativo
         rt.byteInviati = 0
         // Un task che parte subito: la voce sta inviando (un task differito lo diventa ai primi byte, in `avanzamento`).
@@ -941,6 +1038,9 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
 
     private func putFinita(_ job: UUID, task: Int, risposta: KVRispostaPut, byteInviati: Int64) {
         let rt = runtimeDi(job)
+        // Il task è finito, comunque vada e qualunque cosa se ne faccia: una fotografia più vecchia di adesso può elencarlo ancora, e `riconcilia` non deve
+        // adottare un task morto.
+        rt.conclusi.insert(task)
         if rt.ignorati.remove(task) != nil { return }
         let riuscita = risposta.statoHTTP.map { (200...299).contains($0) } ?? false
         if let corrente = rt.taskCorrente, corrente != task {
@@ -992,7 +1092,7 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
         attendi(voce, secondi: attesa, codice: codice)
         registro.registraRitento(job: voce.jobId, utente: voce.utenteId, codice: codice, statoHTTP: statoHTTP, tentativo: voce.tentativi,
                                  attesaSecondi: Int(attesa.rounded()), byteInviati: byteInviati)
-        if codice == .rete { mostraLaNotificaDiAttesa() } // si guarda da sé: con l'app in primo piano non mostra niente
+        if codice == .rete { mostraLaNotificaDiAttesa(per: voce) } // si guarda da sé: con l'app in primo piano non mostra niente
         avanza(voce.jobId)
     }
 
@@ -1196,7 +1296,10 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
 
     private func reteCambiata(_ disponibile: Bool) {
         reteDisponibile = disponibile
-        guard avviato, coda.pronta else { return }
+        // Finché il sistema non ha detto quali task ha ancora (`completaAvvio`) la rete si annota e basta: il monitor parla per primo (è locale,
+        // `getAllTasks` no), e una voce in attesa che SEMBRA senza task può averne uno differito ancora vivo nel sistema. Farla ripartire adesso vorrebbe
+        // dire due PUT dello stesso video, fino a 2 GB, anche su cellulare. `completaAvvio` riapplica la rete com'è, a riconciliazione fatta.
+        guard avviato, avvioCompletato, coda.pronta else { return }
         let vive = coda.tutte().filter { !$0.stato.eTerminale }
         if !disponibile {
             for voce in vive where voce.stato == .inInvio {
@@ -1218,8 +1321,12 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
 
     // MARK: - La notifica d'attesa
 
-    private func esistonoVociInInvioOInAttesa() -> Bool {
-        return coda.tutte().contains { $0.stato == .inInvio || $0.stato == .inAttesa }
+    /// La voce che il log di «attesa di rete» deve nominare quando non si sa quale tra più voci si è fermata (l'app va in background a rete assente): la
+    /// prima che ASPETTA la rete; in mancanza, la prima che sta inviando o aspettando (a rete assente si fermeranno tutte).
+    private func vocePiuFerma() -> KVVoceCoda? {
+        let voci = coda.tutte()
+        return voci.first(where: { $0.stato == .inAttesa && $0.codice == .rete })
+            ?? voci.first(where: { $0.stato == .inInvio || $0.stato == .inAttesa })
     }
 
     /// L'invio è fermo per la rete: o la rete manca e c'è qualcosa da inviare, o c'è una voce che ha aspettato per un errore di rete.
@@ -1229,9 +1336,13 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
         return reteDisponibile == false && vive.contains { $0.stato == .inInvio || $0.stato == .inAttesa }
     }
 
-    private func mostraLaNotificaDiAttesa() {
+    /// La notifica locale «in attesa di rete», per la voce `ferma` (quella che si è fermata: è lei che il log nomina, non la prima voce viva).
+    ///
+    /// Una notifica sullo schermo è UNA, e finché c'è non se ne mostra un'altra: il log `video-nativo-attesa-rete` di quella che è partita esce una volta
+    /// per notifica. Se invece la notifica NON parte (non autorizzata, o il sistema la rifiuta) il motore riprova a ogni transitorio di rete, e un log per
+    /// ogni prova riempirebbe il registro: quelle mancate si dirado come i ritentativi (ai tentativi 1, 2, 4, 8, 16…, §8.1: la coda insiste, il registro no).
+    private func mostraLaNotificaDiAttesa(per ferma: KVVoceCoda) {
         guard !inPrimoPiano, !notificaVisibile else { return }
-        guard let prima = coda.tutte().first(where: { $0.stato == .inInvio || $0.stato == .inAttesa }) else { return }
         let testi = coda.testi
         notificaVisibile = true
         inizioOperazione()
@@ -1239,7 +1350,9 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
             self?.inCoda {
                 guard let self = self else { return }
                 if !esito.programmata { self.notificaVisibile = false }
-                self.registro.registraAttesaRete(job: prima.jobId, utente: prima.utenteId, notifica: esito.programmata, autorizzata: esito.autorizzata)
+                if esito.programmata || KVPoliticaCaricamento.tentativoDaLoggare(ferma.tentativi) {
+                    self.registro.registraAttesaRete(job: ferma.jobId, utente: ferma.utenteId, notifica: esito.programmata, autorizzata: esito.autorizzata)
+                }
                 if !esito.autorizzata { self.registro.registraNotificaNonAutorizzata() }
                 self.fineOperazione()
             }
@@ -1373,7 +1486,12 @@ final class KVMonitorReteNW: KVMonitorRete {
 /// `isDiscretionary = false`, cellulare/rete costosa/dati ridotti ammessi (decisione del titolare: «qualunque rete»), 24 ore di tempo
 /// totale, due connessioni per host, nessun cookie, nessuna cache. Il task manda SOLO `content-type` (le intestazioni le decide il server, §2.2);
 /// `taskDescription` è il `jobId`; il corpo della risposta si raccoglie in `didReceive` fino a 4 KB (una PUT rifiutata NON porta `error`: lo
-/// stato HTTP si legge in `didCompleteWithError`). I reindirizzamenti NON si seguono: un 307 porterebbe il video altrove.
+/// stato HTTP si legge in `didCompleteWithError`).
+///
+/// ⚠️ I REINDIRIZZAMENTI: in una sessione IN BACKGROUND il sistema li segue da solo e `willPerformHTTPRedirection` NON viene chiamato (lo dice la
+/// documentazione di Apple: vale solo per le sessioni di default ed ephemeral). Il metodo qui sotto è quindi una cintura per le sessioni che il
+/// sistema consulta (quelle della prova), non una protezione della PUT vera. La difesa della PUT è un'altra, ed è a monte: l'URL deve stare sull'UNICO
+/// host ammesso, lo Storage del progetto di produzione (`KVPoliticaCaricamento.indirizzoAmmesso`), e un 3xx non fa parte di ciò che quello Storage risponde.
 final class KVTrasportoPutURLSession: NSObject, KVTrasportoPut, URLSessionDataDelegate, URLSessionTaskDelegate {
 
     static let identificativo = KVMotoreCaricamenti.identificativoSessione
@@ -1519,7 +1637,8 @@ final class KVTrasportoPutURLSession: NSObject, KVTrasportoPut, URLSessionDataDe
         delegato?.trasporto(terminatoPer: job, task: identificativo, risposta: risposta, byteInviati: task.countOfBytesSent)
     }
 
-    /// Nessun reindirizzamento: la PUT è su un URL firmato per QUEL percorso, e un 3xx lo porterebbe altrove con tutto il video.
+    /// Nessun reindirizzamento, DOVE il sistema lo chiede: nelle sessioni di default ed ephemeral (la prova). In quella in background — la PUT vera — questo
+    /// metodo non viene chiamato e il sistema segue i 3xx da solo: vedi la testata della classe.
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)

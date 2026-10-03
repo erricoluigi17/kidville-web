@@ -81,7 +81,7 @@ public class EsecutoreCodaTest {
     private static final String TOKEN = "kvr_" + "A".repeat(43);
     private static final String URL_RINNOVO = "https://app.kidville.it/api/video-uploads/rinnovo";
     private static final String URL_REGISTRO = "https://app.kidville.it/api/logs";
-    private static final String HOST_STORAGE = "https://abcdwxyzabcdwxyz.supabase.co/storage/v1/object/upload/sign/video_processing/";
+    private static final String HOST_STORAGE = "https://uimulkjyekgemjakmepp.supabase.co/storage/v1/object/upload/sign/video_processing/";
     private static final int PESO = 5_000;
 
     private static String id(int n) {

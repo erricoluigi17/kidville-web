@@ -30,7 +30,7 @@ public class RinnovoFirmaTest {
     private static final String TOKEN = "kvr_" + "T".repeat(43);
     private static final String PERCORSO = "/api/video-uploads/rinnovo";
 
-    private static final String DA_CARICARE = "{\"stato\":\"da-caricare\",\"caricamento\":{\"protocollo\":\"put\",\"url\":\"https://abcd.supabase.co/storage/v1/object/upload/sign/b/p?token=t\","
+    private static final String DA_CARICARE = "{\"stato\":\"da-caricare\",\"caricamento\":{\"protocollo\":\"put\",\"url\":\"https://uimulkjyekgemjakmepp.supabase.co/storage/v1/object/upload/sign/b/p?token=t\","
             + "\"metodo\":\"PUT\",\"intestazioni\":{\"content-type\":\"video/mp4\"}},\"scadeIl\":\"2026-10-05T10:00:00.000Z\"}";
 
     @Test(timeout = 60_000)
@@ -76,7 +76,7 @@ public class RinnovoFirmaTest {
             RispostaRinnovo letta = PoliticaCaricamento.leggiRispostaRinnovo(r.stato, r.corpo, r.retryAfterSecondi, false);
             assertSame(TipoRinnovo.DA_CARICARE, letta.tipo);
             assertEquals("video/mp4", letta.contentType);
-            assertTrue(letta.urlPut.startsWith("https://abcd.supabase.co/"));
+            assertTrue(letta.urlPut.startsWith("https://uimulkjyekgemjakmepp.supabase.co/"));
         }
     }
 

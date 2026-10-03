@@ -1,0 +1,27 @@
+// FIXTURE del lock `caricamenti-nativi-agganciati` — VERDE per costruzione (regola 8, Android).
+// Versione 1.2 (versionCode 4), la dipendenza di WorkManager e `BuildConfig` acceso. Nel commento: versionCode 3 e versionName "1.1" (la 1.1 già pubblicata).
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "it.kidville.app"
+    defaultConfig {
+        applicationId "it.kidville.app"
+        // 4 = la 1.2. Il 3 è la 1.1: un commento non è la versione.
+        versionCode 4
+        versionName "1.2"
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+    buildFeatures {
+        buildConfig true
+    }
+}
+
+dependencies {
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.work:work-runtime:$androidxWorkVersion"
+    testImplementation "junit:junit:$junitVersion"
+}

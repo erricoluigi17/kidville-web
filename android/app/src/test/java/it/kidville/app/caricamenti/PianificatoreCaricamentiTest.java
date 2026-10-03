@@ -82,7 +82,7 @@ public class PianificatoreCaricamentiTest {
     private static final int PESO = 4_000;
     private static final String TOKEN = "kvr_" + "A".repeat(43);
     private static final String TOKEN_NUOVO = "kvr_" + "B".repeat(43);
-    private static final String HOST_STORAGE = "https://abcdwxyzabcdwxyz.supabase.co/storage/v1/object/upload/sign/video_processing/";
+    private static final String HOST_STORAGE = "https://uimulkjyekgemjakmepp.supabase.co/storage/v1/object/upload/sign/video_processing/";
     private static final String URL_RINNOVO = "https://app.kidville.it/api/video-uploads/rinnovo";
     private static final String URL_REGISTRO = "https://app.kidville.it/api/logs";
     private static final Testi TESTI = new Testi("Kidville", "Invio dei video in corso", "Il video è in attesa di rete: riprenderà da solo", "Invio in pausa: tocca per riprendere");

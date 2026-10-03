@@ -112,7 +112,7 @@ public class ScenariDiComposizioneTest {
         return new Put(400, "{\"statusCode\":\"" + statusCode + "\",\"error\":\"" + errore + "\",\"message\":\"x\"}", durataMs, completo, 0L);
     }
 
-    private static final String URL_STORAGE = "https://abcdwxyzabcdwxyz.supabase.co/storage/v1/object/upload/sign/video_processing/x?token=t";
+    private static final String URL_STORAGE = "https://uimulkjyekgemjakmepp.supabase.co/storage/v1/object/upload/sign/video_processing/x?token=t";
 
     /** Una risposta del rinnovo: lo stato HTTP, il corpo, il `Retry-After`. */
     private static final class Rinnovo {

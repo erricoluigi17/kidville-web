@@ -52,6 +52,11 @@ func provaMotore() {
         ("PulizieConUnTaskVivo", provaMotorePulizieConUnTaskVivo),
         ("RiconciliazioneInPrimoPiano", provaMotoreRiconciliazioneInPrimoPiano),
         ("IndirizziNeiSegreti", provaMotoreIndirizziNeiSegreti),
+        ("CorsaAlRiavvio", provaMotoreCorsaAlRiavvio),
+        ("NessunDoppioneInRiconciliazione", provaMotoreNessunDoppioneInRiconciliazione),
+        ("TettoDiTempoInPrimoPiano", provaMotoreTettoDiTempoInPrimoPiano),
+        ("EscalationAzzerata", provaMotoreEscalationAzzerata),
+        ("AttesaReteDiradata", provaMotoreAttesaReteDiradata),
         ("Sequenze", provaMotoreASequenze),
     ]
     let solo = ProcessInfo.processInfo.environment["KV_SOLO"]
@@ -1281,12 +1286,15 @@ func provaMotoreAccodamentoRifiuti() {
         verifica("… e non è cambiato niente (nessuna voce, nessun segreto, nessun task, nessun log, preparato intatto)", senzaTracce(banco, preparato: preparato ? "e1" : nil))
     }
     rifiuta("PUT verso un host che non è Supabase", .hostNonAmmesso) { $0.urlPut = "https://evil.example.com/storage/x" }
+    rifiuta("PUT verso un ALTRO progetto Supabase (ne basta uno registrato da chiunque)", .hostNonAmmesso) { $0.urlPut = "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/x.mov?token=t" }
+    rifiuta("PUT verso un sottodominio del nostro progetto", .hostNonAmmesso) { $0.urlPut = "https://a.uimulkjyekgemjakmepp.supabase.co/x" }
+    rifiuta("PUT verso un host che COMINCIA come il nostro progetto", .hostNonAmmesso) { $0.urlPut = "https://uimulkjyekgemjakmepp.supabase.co.evil.example/x" }
     rifiuta("PUT verso l'host dell'applicazione", .hostNonAmmesso) { $0.urlPut = "https://app.kidville.it/x" }
-    rifiuta("PUT in chiaro (http)", .hostNonAmmesso) { $0.urlPut = "http://abcdefghij.supabase.co/x" }
-    rifiuta("PUT con credenziali nell'URL", .hostNonAmmesso) { $0.urlPut = "https://abcdefghij.supabase.co@evil.com/x" }
+    rifiuta("PUT in chiaro (http)", .hostNonAmmesso) { $0.urlPut = "http://uimulkjyekgemjakmepp.supabase.co/x" }
+    rifiuta("PUT con credenziali nell'URL", .hostNonAmmesso) { $0.urlPut = "https://uimulkjyekgemjakmepp.supabase.co@evil.com/x" }
     rifiuta("PUT verso localhost in Release", .hostNonAmmesso) { $0.urlPut = "http://localhost:4310/put/x" }
     rifiuta("rinnovo verso un altro host", .hostNonAmmesso) { $0.urlRinnovo = "https://evil.example.com/api/video-uploads/rinnovo" }
-    rifiuta("rinnovo verso Supabase", .hostNonAmmesso) { $0.urlRinnovo = "https://abcdefghij.supabase.co/x" }
+    rifiuta("rinnovo verso Supabase", .hostNonAmmesso) { $0.urlRinnovo = "https://uimulkjyekgemjakmepp.supabase.co/x" }
     rifiuta("registro verso un altro host", .hostNonAmmesso) { $0.urlRegistro = "https://evil.example.com/api/logs" }
     rifiuta("registro in chiaro", .hostNonAmmesso) { $0.urlRegistro = "http://app.kidville.it/api/logs" }
     rifiuta("peso dichiarato nullo", .parametriNonValidi) { $0.byteAttesi = 0 }
@@ -1311,6 +1319,13 @@ func provaMotoreAccodamentoRifiuti() {
     verificaUguali("… la destinazione dei log è quella del banco di prova", dbg.registro.stato().destinazione?.host, "10.0.2.2")
     verificaUguali("… il task parte sull'URL di sviluppo", dbg.trasporto.richiesta(0).url.absoluteString, "http://localhost:4310/put/x")
     verificaUguali("… e i segreti hanno l'indirizzo di rinnovo di sviluppo", dbg.segreti.segreti(uuid(1))?.urlRinnovo, "http://localhost:3101/api/video-uploads/rinnovo")
+    // Neanche in Debug un altro progetto Supabase è un host di sviluppo: il Debug aggiunge il loopback del collaudo, non altri Storage.
+    let dbgAltro = BancoMotore(ambiente: .debug)
+    var rAltro = dbgAltro.richiesta(1)
+    rAltro.urlPut = "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/x.mov?token=t"
+    verificaUguali("in Debug la PUT verso un altro progetto Supabase è rifiutata", dbgAltro.motore.accoda(rAltro), .rifiutato(.hostNonAmmesso))
+    verifica("… senza tracce (nessuna voce, nessun segreto, nessun task, preparato intatto)",
+             dbgAltro.coda.tutte().isEmpty && dbgAltro.segreti.numero == 0 && dbgAltro.trasporto.numeroCreati == 0 && esiste(dbgAltro.scelto("e1")))
     let rel = BancoMotore(ambiente: .release)
     verificaUguali("gli stessi indirizzi in Release: host non ammesso", rel.motore.accoda({ var q = rel.richiesta(1); q.urlPut = r.urlPut; q.urlRinnovo = r.urlRinnovo; q.urlRegistro = r.urlRegistro; return q }()), .rifiutato(.hostNonAmmesso))
 
@@ -1863,11 +1878,394 @@ func provaMotoreIndirizziNeiSegreti() {
                   [KVStatoCaricamento.fallito, KVCodiceCaricamento.interno, 1])
     verificaUguali("… copia e segreti cancellati", [esiste(b2.copia(1)), b2.segreti.contiene(uuid(1))], [false, false])
 
+    let b4 = BancoMotore()
+    b4.accoda(1)
+    b4.segreti.semina(uuid(1), KVSegretiVoce(token: tokenA, urlPut: "https://abcdefghij.supabase.co/storage/v1/object/upload/sign/video_originals/x.mov?token=t",
+                                              contentType: "video/quicktime", urlRinnovo: urlRinnovoProva))
+    b4.completa(b4.trasporto.id(0), putTransitoria(503))
+    verificaTutto("503, e l'URL della PUT nei segreti è di un ALTRO progetto Supabase: fallita INTERNO, nessun task nuovo", [b4.stato(1), b4.voce(1)?.codice, b4.trasporto.numeroCreati],
+                  [KVStatoCaricamento.fallito, KVCodiceCaricamento.interno, 1])
+
     let b3 = BancoMotore()
     b3.trasporto.rifiutaAvvio = true
     b3.accoda(1)
     verificaTutto("il sistema non accetta di creare il task: la voce si chiude INTERNO, con copia e segreti cancellati", [b3.stato(1), b3.voce(1)?.codice, esiste(b3.copia(1)), b3.segreti.contiene(uuid(1))],
                   [KVStatoCaricamento.fallito, KVCodiceCaricamento.interno, false, false])
+}
+
+// MARK: - Il riavvio del processo: la fotografia dei task è più VECCHIA di ciò che il motore sa
+
+/// Quanti task il sistema ha adesso per il job `n`: quelli che questo processo ha creato e quelli che il sistema aveva già (di un processo precedente).
+private func taskDelSistema(_ banco: BancoMotore, job n: Int) -> [Int] {
+    let propri = banco.trasporto.vivi.filter { $0.value.job == uuid(n) }.map { $0.key }
+    let ereditati = banco.trasporto.extraVivi.filter { $0.job == uuid(n) }.map { $0.identificativo }
+    return (propri + ereditati).sorted()
+}
+
+/// I byte che il JS legge dall'`elenco` per il job `n`.
+private func byteNellElenco(_ banco: BancoMotore, job n: Int) -> NSNumber? {
+    return banco.motore.elenco(perUtente: uuid(utenteProva)).first(where: { ($0["jobId"] as? String) == uuid(n).uuidString.lowercased() })?["byteInviati"] as? NSNumber
+}
+
+/// Un SECONDO processo sulla stessa cartella: il primo è morto, i segreti stanno nel Portachiavi, e il sistema ha ancora i suoi task (`task`). La risposta di
+/// `getAllTasks` è IN SOSPESO e porta la FOTOGRAFIA presa alla richiesta, com'è nel sistema vero (asincrono): la si dà con `rispondiATaskViviInSospeso()`.
+private func bancoDopoUnRiavvio(da primo: BancoMotore, inBackground: Bool = false, task: [KVTaskVivo], job: [Int] = [1]) -> BancoMotore {
+    var segretiRimasti: [(UUID, KVSegretiVoce)] = []
+    for n in job { if let s = primo.segreti.segreti(uuid(n)) { segretiRimasti.append((uuid(n), s)) } }
+    let adesso = orologioProva
+    return BancoMotore(inBackground: inBackground, avvia: false, inPrimoPiano: false, cartella: primo.radice) { b in
+        orologioProva = adesso
+        for (j, s) in segretiRimasti { b.segreti.semina(j, s) }
+        b.trasporto.extraVivi = task
+        b.trasporto.impostaProssimoId(3000)
+        b.trasporto.nonRispondeATaskVivi = true
+        b.trasporto.fotografiaAllaRichiesta = true
+    }
+}
+
+func provaMotoreCorsaAlRiavvio() {
+    sezione("Motore — riavvio del processo, la rete arriva PRIMA di `getAllTasks`: la voce in attesa ha un task differito ancora vivo nel sistema, e un secondo task non si crea (due PUT da 2 GB)")
+    let b1 = BancoMotore()
+    b1.accoda(1)
+    b1.completa(b1.trasporto.id(0), putSenzaRete())
+    let differito = b1.trasporto.ultimoId
+    verificaTutto("(setup) nel primo processo la PUT cade per la rete: la voce aspetta (RETE) e il sistema ha un task differito", [b1.stato(1), b1.voce(1)?.codice, b1.trasporto.identificativiVivi],
+                  [KVStatoCaricamento.inAttesa, KVCodiceCaricamento.rete, [differito]])
+    let b2 = bancoDopoUnRiavvio(da: b1, task: [KVTaskVivo(job: uuid(1), identificativo: differito, byteInviati: 0)])
+    b2.motore.avvia()
+    b2.attendi()
+    verificaUguali("(setup) il sistema non ha ancora risposto a `getAllTasks`", b2.trasporto.taskViviInSospeso, 1)
+    // Il monitor di rete parla per primo: è locale, `getAllTasks` no.
+    b2.rete.imposta(true)
+    b2.attendi()
+    verificaTutto("la rete torna PRIMA della risposta del sistema: nessun task creato e nessun rinnovo chiesto (la voce SEMBRA senza task, ma il sistema ne ha uno)",
+                  [b2.trasporto.numeroCreati, b2.rinnovo.numeroChiamate, b2.stato(1)], [0, 0, KVStatoCaricamento.inAttesa])
+    b2.trasporto.rispondiATaskViviInSospeso()
+    b2.attendi()
+    verificaUguali("risposto il sistema (con la fotografia di PRIMA della rete): ancora nessun task creato", b2.trasporto.numeroCreati, 0)
+    verificaUguali("… e nel sistema per quel video c'è UN task solo: quello differito del processo di prima", taskDelSistema(b2, job: 1), [differito])
+    verificaTutto("… la rete era tornata mentre si aspettava: riconciliato, la voce è di nuovo in-invio (il task differito parte da solo)", [b2.stato(1), b2.voce(1)?.codice], [KVStatoCaricamento.inInvio, nil])
+    b2.motore.trasporto(avanzamentoDi: uuid(1), task: differito, byteInviati: 500)
+    b2.attendi()
+    verificaUguali("… e il motore lo ha ADOTTATO: i suoi byte arrivano al JS (un task orfano avrebbe l'avanzamento scartato)", byteNellElenco(b2, job: 1), NSNumber(value: 500))
+    b2.trasporto.nonRispondeATaskVivi = false
+    b2.motore.riprendiInPrimoPiano()
+    b2.attendi()
+    verificaTutto("il rientro in primo piano non ne crea un altro", [b2.trasporto.numeroCreati, taskDelSistema(b2, job: 1)], [0, [differito]])
+
+    sezione("Motore — riavvio, la rete CADE prima di `getAllTasks`: a riconciliazione fatta la voce con un task vivo aspetta la rete, senza toccare il task")
+    let c1 = BancoMotore()
+    c1.accoda(1)
+    let vivoDiPrima = c1.trasporto.id(0)
+    let c2 = bancoDopoUnRiavvio(da: c1, task: [KVTaskVivo(job: uuid(1), identificativo: vivoDiPrima, byteInviati: 300)])
+    c2.motore.avvia()
+    c2.attendi()
+    c2.rete.imposta(false)
+    c2.attendi()
+    verificaUguali("(setup) a fotografia non arrivata la voce non si tocca: ancora in-invio", c2.stato(1), .inInvio)
+    c2.trasporto.rispondiATaskViviInSospeso()
+    c2.attendi()
+    verificaTutto("risposto il sistema la rete assente si riapplica: in-attesa(RETE), il task di prima non si tocca e non se ne crea un altro",
+                  [c2.stato(1), c2.voce(1)?.codice, c2.trasporto.numeroCreati, c2.trasporto.annullati.count], [KVStatoCaricamento.inAttesa, KVCodiceCaricamento.rete, 0, 0])
+
+    sezione("Motore — riavvio in background, l'ESITO di un task del processo di prima arriva PRIMA di `getAllTasks`: il task che il motore crea in risposta non si perde")
+    let d1 = BancoMotore()
+    d1.accoda(1)
+    let finito = d1.trasporto.id(0)
+    // Il task del processo di prima è già FINITO quando il processo nuovo crea la sessione: la fotografia non lo elenca.
+    let d2 = bancoDopoUnRiavvio(da: d1, inBackground: true, task: [])
+    d2.motore.avvia()
+    d2.attendi()
+    d2.trasporto.completaDiUnaVitaPrecedente(job: uuid(1), task: finito, putSenzaRete(), byteInviati: 100)
+    d2.attendi()
+    verificaTutto("l'esito (rete) crea il task differito, subito, senza aspettare la fotografia", [d2.trasporto.numeroCreati, d2.stato(1), d2.voce(1)?.codice], [1, KVStatoCaricamento.inAttesa, KVCodiceCaricamento.rete])
+    let creatoDopo = d2.trasporto.ultimoId
+    d2.trasporto.rispondiATaskViviInSospeso()
+    d2.attendi()
+    verificaUguali("arriva la fotografia, VECCHIA e vuota (presa quando quel task non c'era): il task creato dopo la richiesta NON si dimentica", taskDelSistema(d2, job: 1), [creatoDopo])
+    d2.avanza(31)
+    verificaTutto("… e il timer di risveglio non ne crea un secondo", [d2.trasporto.numeroCreati, taskDelSistema(d2, job: 1)], [1, [creatoDopo]])
+    d2.rete.imposta(true)
+    d2.attendi()
+    verificaTutto("… e quando la rete torna il motore sa di averne uno: lo riprende, non ne crea un secondo (due PUT da 2 GB)", [d2.trasporto.numeroCreati, taskDelSistema(d2, job: 1), d2.stato(1)],
+                  [1, [creatoDopo], KVStatoCaricamento.inInvio])
+    d2.trasporto.nonRispondeATaskVivi = false
+    d2.motore.riprendiInPrimoPiano()
+    d2.attendi()
+    // Il task è nato in background con 0 byte (per iOS discrezionale): all'apertura si SOSTITUISCE con uno in primo piano — non se ne aggiunge un secondo.
+    verificaTutto("… e il rientro in primo piano lo sostituisce (nato in background, 0 byte): resta UN task nel sistema, il nuovo", [d2.trasporto.numeroCreati, taskDelSistema(d2, job: 1).count, d2.trasporto.annullati],
+                  [2, 1, [creatoDopo]])
+}
+
+func provaMotoreNessunDoppioneInRiconciliazione() {
+    sezione("Motore — `riconcilia`: due task del sistema per la STESSA voce nella stessa fotografia: se ne tiene UNO, il più avanzato, e si ferma l'altro")
+    func conDueTask(_ byteA: Int64, _ byteB: Int64) -> BancoMotore {
+        return BancoMotore(avvia: true, inPrimoPiano: false) { b in
+            b.coda.carica()
+            var v = voce(1, byte: 1000, creatoIl: t0, utente: utenteProva)
+            v.urlScadeIl = t0.addingTimeInterval(7200)
+            _ = b.coda.aggiungi(v)
+            scrivi(b.radice.appendingPathComponent(v.file), byte: 1000)
+            _ = b.coda.applica(.trasferimentoAvviato, a: uuid(1))
+            b.segreti.semina(uuid(1), KVSegretiVoce(token: tokenA, urlPut: urlPutProva(1), contentType: "video/quicktime", urlRinnovo: urlRinnovoProva))
+            b.trasporto.extraVivi = [KVTaskVivo(job: uuid(1), identificativo: 55, byteInviati: byteA), KVTaskVivo(job: uuid(1), identificativo: 56, byteInviati: byteB)]
+        }
+    }
+    let piuAvanzatoIlSecondo = conDueTask(100, 700)
+    verificaUguali("il più avanzato (56, 700 byte) resta, l'altro (55) si ferma", [taskDelSistema(piuAvanzatoIlSecondo, job: 1), piuAvanzatoIlSecondo.trasporto.annullati], [[56], [55]])
+    verificaUguali("… e il motore adotta quello che resta: i byte al JS sono i suoi", byteNellElenco(piuAvanzatoIlSecondo, job: 1), NSNumber(value: 700))
+    verificaUguali("… nessun task nuovo, e la voce resta in-invio", [piuAvanzatoIlSecondo.trasporto.numeroCreati, piuAvanzatoIlSecondo.stato(1) == .inInvio ? 1 : 0], [0, 1])
+    let piuAvanzatoIlPrimo = conDueTask(900, 20)
+    verificaUguali("al contrario, il più avanzato è il primo (55): resta lui, si ferma il 56", [taskDelSistema(piuAvanzatoIlPrimo, job: 1), piuAvanzatoIlPrimo.trasporto.annullati], [[55], [56]])
+    let pari = conDueTask(0, 0)
+    verificaUguali("a parità resta il più vecchio (l'identificativo più basso, 55)", [taskDelSistema(pari, job: 1), pari.trasporto.annullati], [[55], [56]])
+
+    sezione("Motore — un task creato DOPO la richiesta della fotografia e uno vecchio nella fotografia: se ne tiene uno solo, e la voce non resta con due PUT")
+    func conUnTaskNuovoESuccessivoUnaFotografiaVecchia(byteDelVecchio: Int64) -> (banco: BancoMotore, vecchio: Int, nuovo: Int) {
+        let p1 = BancoMotore()
+        p1.accoda(1)
+        p1.completa(p1.trasporto.id(0), putSenzaRete())
+        let vecchio = p1.trasporto.ultimoId
+        let p2 = bancoDopoUnRiavvio(da: p1, task: [KVTaskVivo(job: uuid(1), identificativo: vecchio, byteInviati: byteDelVecchio)])
+        p2.motore.avvia()
+        p2.attendi()
+        // Prima che il sistema risponda il JS riapre lo stesso intento (apertura ripetuta, token ruotato): per il motore la voce è viva e senza task.
+        _ = p2.motore.accoda(p2.richiesta(1, token: tokenB, firma: "r"))
+        p2.attendi()
+        let nuovo = p2.trasporto.ultimoId
+        return (p2, vecchio, nuovo)
+    }
+    let a = conUnTaskNuovoESuccessivoUnaFotografiaVecchia(byteDelVecchio: 0)
+    verificaTutto("(setup) l'apertura ripetuta a fotografia non arrivata crea un task suo", [a.banco.trasporto.numeroCreati, taskDelSistema(a.banco, job: 1).count], [1, 2])
+    a.banco.trasporto.rispondiATaskViviInSospeso()
+    a.banco.attendi()
+    verificaUguali("arrivata la fotografia vecchia, a parità di byte resta il task che il motore aveva già adottato (il suo) e si ferma quello di prima", [taskDelSistema(a.banco, job: 1), a.banco.trasporto.annullati], [[a.nuovo], [a.vecchio]])
+    let b = conUnTaskNuovoESuccessivoUnaFotografiaVecchia(byteDelVecchio: 400)
+    b.banco.trasporto.rispondiATaskViviInSospeso()
+    b.banco.attendi()
+    verificaUguali("se invece quello di prima ha già spedito 400 byte resta lui, e si ferma il nuovo (non si butta via un invio in corso)", [taskDelSistema(b.banco, job: 1), b.banco.trasporto.annullati], [[b.vecchio], [b.nuovo]])
+    verificaUguali("… il motore lo ha adottato: i suoi byte arrivano al JS", byteNellElenco(b.banco, job: 1), NSNumber(value: 400))
+    b.banco.motore.trasporto(avanzamentoDi: uuid(1), task: b.vecchio, byteInviati: 650)
+    b.banco.attendi()
+    verificaUguali("… e il suo avanzamento successivo si registra (non è un task orfano)", byteNellElenco(b.banco, job: 1), NSNumber(value: 650))
+    b.banco.completa(b.nuovo, KVRispostaPut(errore: KVErroreSistema(dominio: .url, codice: NSURLErrorCancelled)))
+    verificaTutto("il completamento (cancellato) del task fermato non fa niente", [b.banco.stato(1), b.banco.trasporto.numeroCreati], [KVStatoCaricamento.inInvio, 1])
+
+    sezione("Motore — il sistema risponde a `getAllTasks` DOPO la guardia dei 15 secondi: la risposta tardiva non rifà l'avvio, ma non lascia due task per la stessa voce")
+    let t1 = BancoMotore()
+    t1.accoda(1)
+    t1.completa(t1.trasporto.id(0), putSenzaRete())
+    let vecchioDiT = t1.trasporto.ultimoId
+    let t2 = bancoDopoUnRiavvio(da: t1, task: [KVTaskVivo(job: uuid(1), identificativo: vecchioDiT, byteInviati: 0)])
+    t2.motore.avvia()
+    t2.attendi()
+    t2.avanza(15)
+    verificaUguali("(setup) a 15 secondi senza risposta l'avvio si completa da solo; nessun task ancora (la voce aspetta la rete, che non si sa)", t2.trasporto.numeroCreati, 0)
+    t2.rete.imposta(true)
+    t2.attendi()
+    verificaTutto("(setup) la rete torna: la voce SEMBRA senza task (la fotografia non è mai arrivata) e riparte con un task suo", [t2.trasporto.numeroCreati, taskDelSistema(t2, job: 1).count], [1, 2])
+    let nuovoDiT = t2.trasporto.ultimoId
+    t2.trasporto.rispondiATaskViviInSospeso()
+    t2.attendi()
+    verificaUguali("arriva la risposta tardiva (con il task di prima): se ne tiene UNO — quello del motore, a parità di byte — e si ferma l'altro", [taskDelSistema(t2, job: 1), t2.trasporto.annullati], [[nuovoDiT], [vecchioDiT]])
+    verificaUguali("… e l'avvio non si è rifatto: una riga del motore sola", t2.eventi("caricamenti-nativi-motore").count, 1)
+
+    sezione("Motore — UN task per voce, senza eccezioni: se la riconciliazione adotta un task mentre un rinnovo è in volo, il task nuovo che il rinnovo porta lo SOSTITUISCE")
+    let r1 = BancoMotore()
+    r1.accoda(1)
+    r1.completa(r1.trasporto.id(0), putSenzaRete())
+    let vecchioDiR = r1.trasporto.ultimoId
+    orologioProva = t0.addingTimeInterval(700) // l'URL è firmato da più di 10 minuti: prima di ogni nuova PUT serve un rinnovo
+    let r2 = bancoDopoUnRiavvio(da: r1, task: [KVTaskVivo(job: uuid(1), identificativo: vecchioDiR, byteInviati: 0)])
+    r2.motore.avvia()
+    r2.attendi()
+    // Prima che il sistema risponda il JS riapre l'intento, e dell'URL non si sa la scadenza: il motore chiede un rinnovo (la voce gli sembra senza task).
+    _ = r2.motore.accoda(r2.richiesta(1, token: tokenB, firma: "r", scadenzaUrl: .some(nil)))
+    r2.attendi()
+    verificaTutto("(setup) il rinnovo è in volo e nessun task è stato creato", [r2.rinnovo.senzaRisposta, r2.trasporto.numeroCreati], [1, 0])
+    r2.trasporto.rispondiATaskViviInSospeso()
+    r2.attendi()
+    verificaTutto("(setup) arriva la fotografia: il motore adotta il task di prima (e il rinnovo è ancora in volo)", [taskDelSistema(r2, job: 1), r2.rinnovo.senzaRisposta], [[vecchioDiR], 1])
+    r2.rinnovo.rispondiUltimo(rinnovoDaCaricare(url: urlPutProva(1, "n"), scadeIl: orologioProva.addingTimeInterval(48 * 3600)))
+    r2.attendi()
+    verificaTutto("il rinnovo risponde `da-caricare`: la PUT nuova SOSTITUISCE quella adottata — nel sistema resta UN task, il nuovo, e il vecchio è fermato", [taskDelSistema(r2, job: 1).count, r2.trasporto.numeroCreati, r2.trasporto.annullati],
+                  [1, 1, [vecchioDiR]])
+
+    sezione("Motore — una fotografia più vecchia di un esito: il task che elenca è già FINITO, e il motore non lo adotta (la voce resterebbe appesa a un task morto)")
+    let s = BancoMotore()
+    s.accoda(1)
+    let x = s.trasporto.id(0)
+    s.trasporto.nonRispondeATaskVivi = true
+    s.trasporto.fotografiaAllaRichiesta = true
+    s.trasporto.impostaByteSpediti(x, 300)
+    s.motore.riprendiInPrimoPiano()
+    s.attendi()
+    verificaUguali("(setup) la fotografia (con X, 300 byte) è in volo", s.trasporto.taskViviInSospeso, 1)
+    s.completa(x, putSenzaRete())
+    let y = s.trasporto.ultimoId
+    verificaTutto("(setup) nel frattempo X finisce con un errore di rete e il motore crea Y, differito", [s.trasporto.numeroCreati, y != x, s.stato(1), s.voce(1)?.codice], [2, true, KVStatoCaricamento.inAttesa, KVCodiceCaricamento.rete])
+    s.trasporto.rispondiATaskViviInSospeso()
+    s.attendi()
+    verificaTutto("arriva la fotografia vecchia, che elenca ancora X (finito): X non si adotta, e Y — più giovane ma VIVO — resta", [taskDelSistema(s, job: 1), s.trasporto.annullati.contains(y)], [[y], false])
+    s.motore.trasporto(avanzamentoDi: uuid(1), task: y, byteInviati: 120)
+    s.attendi()
+    verificaUguali("… e il motore ha ancora Y come task corrente: il suo avanzamento si registra", byteNellElenco(s, job: 1), NSNumber(value: 120))
+}
+
+// MARK: - Il tetto di tempo di `getAllTasks` al rientro in primo piano
+
+func provaMotoreTettoDiTempoInPrimoPiano() {
+    sezione("Motore — rientro in primo piano con un sistema che non risponde a `getAllTasks`: dopo 15 secondi si va avanti con ciò che il motore sa (come all'avvio)")
+    let banco = BancoMotore(inBackground: true, avvia: true, inPrimoPiano: false) { b in
+        b.coda.carica()
+        var v = voce(2, byte: 100, creatoIl: t0, utente: utenteProva)
+        v.urlScadeIl = t0.addingTimeInterval(7200)
+        _ = b.coda.aggiungi(v)
+        scrivi(b.radice.appendingPathComponent(v.file), byte: 100)
+        _ = b.coda.applica(.trasferimentoAvviato, a: uuid(2))
+        _ = b.coda.applica(.inAttesa(.server), a: uuid(2))
+        b.coda.aggiorna(uuid(2)) { $0.prossimoTentativoIl = t0.addingTimeInterval(3600) }
+        b.segreti.semina(uuid(2), KVSegretiVoce(token: tokenA, urlPut: urlPutProva(2), contentType: "video/quicktime", urlRinnovo: urlRinnovoProva))
+    }
+    // L'app torna in primo piano e il sistema NON risponde a `getAllTasks`; intanto il sistema ha anche risvegliato l'app per gli eventi della sessione.
+    banco.trasporto.nonRispondeATaskVivi = true
+    banco.motore.riprendiInPrimoPiano()
+    banco.attendi()
+    var completamenti = 0
+    banco.motore.ricollega("it.kidville.app.caricamenti") { completamenti += 1 }
+    banco.attendi()
+    banco.trasporto.consegnaEventi()
+    banco.attendi()
+    banco.giraIlMain()
+    verificaTutto("(setup) il sistema non risponde: la voce non è ripartita e il completamento del lavoro in background aspetta", [banco.trasporto.numeroCreati, banco.trasporto.taskViviInSospeso, completamenti], [0, 1, 0])
+    banco.avanza(14)
+    banco.giraIlMain()
+    verificaTutto("a 14 secondi ancora no", [banco.trasporto.numeroCreati, completamenti], [0, 0])
+    banco.avanza(1)
+    banco.giraIlMain()
+    verificaUguali("a 15 secondi si va avanti senza fotografia: la voce in attesa senza task riparte, UN task", [banco.trasporto.numeroCreati, banco.stato(2) == .inInvio ? 1 : 0], [1, 1])
+    verificaUguali("… e il completamento del lavoro in background scatta a 15 secondi, prima del tetto dei 20 (l'operazione in sospeso si è chiusa)", completamenti, 1)
+    verificaUguali("… e il rientro in primo piano si dichiara UNA volta", banco.eventi("caricamenti-nativi-motore").map { $0.messaggio }.filter { $0.hasSuffix("primo-piano") }.count, 1)
+    banco.trasporto.nonRispondeATaskVivi = false
+    banco.trasporto.rispondiATaskViviInSospeso()
+    banco.attendi()
+    verificaTutto("la risposta tardiva del sistema (coi task di adesso) non rifà niente: stesso task, nessun secondo rientro scritto", [banco.trasporto.numeroCreati, banco.eventi("caricamenti-nativi-motore").map { $0.messaggio }.filter { $0.hasSuffix("primo-piano") }.count, banco.trasporto.annullati.count],
+                  [1, 1, 0])
+
+    sezione("Motore — se il sistema risponde in tempo la guardia del rientro in primo piano non fa niente")
+    let b2 = BancoMotore()
+    b2.accoda(1)
+    b2.motore.riprendiInPrimoPiano()
+    b2.attendi()
+    b2.avanza(60)
+    verificaTutto("risposta immediata, e a distanza di un minuto nessun effetto della guardia: un task, voce in-invio", [b2.trasporto.numeroCreati, b2.stato(1)], [1, KVStatoCaricamento.inInvio])
+}
+
+// MARK: - Il contatore di escalation della coda illeggibile
+
+func provaMotoreEscalationAzzerata() {
+    sezione("Motore — il contatore dell'escalation della coda illeggibile si AZZERA quando la coda si legge, e dopo l'escalation: servono tre tentativi di fila ogni volta")
+    if getuid() == 0 {
+        print("  (prova saltata: eseguita come root, i permessi non bloccano la lettura)")
+        return
+    }
+    let banco = BancoMotore(avvia: false, inPrimoPiano: false) { b in
+        let scrittrice = KVCodaCaricamenti(cartella: b.radice, orologio: { orologioProva })
+        scrittrice.carica()
+        var v = voce(1, byte: 100, creatoIl: t0, utente: utenteProva)
+        v.urlScadeIl = t0.addingTimeInterval(7200)
+        _ = scrittrice.aggiungi(v)
+        scrivi(b.radice.appendingPathComponent(v.file), byte: 100)
+        b.segreti.semina(uuid(1), KVSegretiVoce(token: tokenA, urlPut: urlPutProva(1), contentType: "video/quicktime", urlRinnovo: urlRinnovoProva))
+        try! FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: scrittrice.urlFileCoda.path)
+    }
+    func rendiIllegibile() { try! FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: banco.coda.urlFileCoda.path) }
+    func rendiLeggibile() { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: banco.coda.urlFileCoda.path) }
+    func fileIsolati() -> Int { nomiIn(banco.radice).filter { $0.hasPrefix("coda.corrotta-") }.count }
+    func primoPiano() { banco.motore.riprendiInPrimoPiano(); banco.attendi() }
+
+    banco.motore.avvia()
+    banco.attendi()
+    primoPiano()
+    primoPiano()
+    verificaTutto("(setup) due tentativi a telefono sbloccato: ancora non pronta, il file non è stato buttato", [banco.coda.pronta, fileIsolati()], [false, 0])
+    rendiLeggibile()
+    primoPiano()
+    verificaUguali("il terzo tentativo trova la coda leggibile: pronta, e la voce c'è", [banco.coda.pronta, banco.voce(1) != nil], [true, true])
+    // Torna illeggibile (la prova fa girare `carica()` a mano sul file chmod 0, come farebbe un secondo guasto): il conto riparte da ZERO.
+    rendiIllegibile()
+    _ = banco.coda.carica()
+    verificaUguali("(setup) la coda è di nuovo non pronta", banco.coda.pronta, false)
+    primoPiano()
+    primoPiano()
+    verificaTutto("dopo la lettura riuscita il conto è ripartito: due tentativi non bastano a buttare il file", [banco.coda.pronta, fileIsolati()], [false, 0])
+    primoPiano()
+    verificaTutto("il terzo di questa serie sì: la coda si tratta da corrotta e si riparte (UN file isolato)", [banco.coda.pronta, fileIsolati()], [true, 1])
+
+    // Dopo l'escalation il conto si azzera di nuovo.
+    rendiIllegibile()
+    _ = banco.coda.carica()
+    verificaUguali("(setup) di nuovo non pronta, dopo l'escalation", banco.coda.pronta, false)
+    primoPiano()
+    primoPiano()
+    verificaTutto("dopo l'escalation il conto riparte da zero: due tentativi non bastano", [banco.coda.pronta, fileIsolati()], [false, 1])
+    primoPiano()
+    verificaUguali("… il terzo sì: un secondo file isolato", fileIsolati(), 2)
+    rendiLeggibile()
+}
+
+// MARK: - `video-nativo-attesa-rete`: la voce ferma, e non una riga a ogni transitorio
+
+func provaMotoreAttesaReteDiradata() {
+    sezione("Motore — `video-nativo-attesa-rete` nomina la voce che si è FERMATA, non la prima voce viva")
+    let banco = BancoMotore()
+    banco.accoda(1)
+    banco.accoda(2, token: tokenB)
+    banco.motore.notificaSeFermo()
+    banco.attendi()
+    let taskDellaDue = banco.trasporto.id(1)
+    banco.completa(taskDellaDue, putSenzaRete())
+    verificaTutto("(setup) la 2 cade per la rete in background, la 1 sta ancora inviando", [banco.stato(1), banco.stato(2), banco.voce(2)?.codice], [KVStatoCaricamento.inInvio, KVStatoCaricamento.inAttesa, KVCodiceCaricamento.rete])
+    verificaUguali("il log nomina la 2 (la voce ferma), non la 1", banco.eventi("video-nativo-attesa-rete").map { $0.messaggio }, [messaggio("video-nativo-attesa-rete", job: 2)])
+
+    sezione("Motore — app in background a rete assente con più voci: il log nomina quella che aspetta la RETE, non la prima voce viva")
+    let b2 = BancoMotore()
+    b2.accoda(1)
+    b2.accoda(2, token: tokenB)
+    b2.completa(b2.trasporto.id(0), putTransitoria(503))
+    b2.rete.imposta(false)
+    b2.attendi()
+    verificaTutto("(setup) la 1 aspetta il SERVER (un 503), la 2 aspetta la RETE (la rete è caduta mentre inviava)", [b2.voce(1)?.codice, b2.voce(2)?.codice], [KVCodiceCaricamento.server, KVCodiceCaricamento.rete])
+    b2.motore.notificaSeFermo()
+    b2.attendi()
+    verificaUguali("l'app va in background a rete assente: il log nomina la 2, che si è fermata per la rete — la 1 è la prima voce viva, ma non è lei", b2.eventi("video-nativo-attesa-rete").map { $0.messaggio },
+                   [messaggio("video-nativo-attesa-rete", job: 2)])
+
+    sezione("Motore — notifiche NON partite: il motore riprova a ogni errore di rete, ma il log si dirada (tentativi 1, 2, 4, 8…)")
+    let b3 = BancoMotore()
+    b3.notificatore.esito = KVEsitoNotificaAttesa(autorizzata: false, programmata: false)
+    b3.accoda(1)
+    b3.motore.notificaSeFermo()
+    b3.attendi()
+    // Cinque errori di fila: le attese sono 30 s, 1', 2', 5', 10' e l'URL, firmato a t0, resta sotto la soglia dei 10 minuti (dal sesto l'attesa di 15' porterebbe
+    // il ciclo dal rinnovo, ed è un altro scenario).
+    for _ in 1...5 { b3.completa(b3.trasporto.ultimoId, putSenzaRete()) }
+    verificaUguali("cinque errori di rete di fila: la notifica si riprova cinque volte (non è mai partita)", b3.notificatore.numeroMostrate, 5)
+    verificaUguali("i ritentativi si loggano ai tentativi 1, 2 e 4 (la regola di §8.1, già del registro)", b3.eventi("video-nativo-ritento").map { campi($0)["tentativo"] }, [num(1), num(2), num(4)])
+    verificaUguali("… e le righe `video-nativo-attesa-rete` sono in pari: TRE, non cinque", b3.eventi("video-nativo-attesa-rete").count, 3)
+    verificaUguali("… e `notifica-locale-non-autorizzata` resta UNA", b3.eventi("notifica-locale-non-autorizzata").count, 1)
+
+    sezione("Motore — una notifica che PARTE si logga una volta, anche se gli errori di rete sono più d'uno")
+    let b4 = BancoMotore()
+    b4.accoda(1)
+    b4.motore.notificaSeFermo()
+    b4.attendi()
+    for _ in 1...3 { b4.completa(b4.trasporto.ultimoId, putSenzaRete()) }
+    verificaTutto("tre errori di rete con la notifica già sullo schermo: una riga sola, e una sola notifica", [b4.eventi("video-nativo-attesa-rete").count, b4.notificatore.numeroMostrate], [1, 1])
+
+    sezione("Motore — gli accessori della prova non fanno cadere l'harness su un indice che non c'è")
+    let vuoto = BancoMotore()
+    verificaTutto("`id(7)` senza task creati è -1 e `richiesta(7)` è il segnaposto", [vuoto.trasporto.id(7), vuoto.trasporto.richiesta(7).byte, vuoto.trasporto.richiesta(7).url.scheme], [-1, -1, "assente"])
 }
 
 // MARK: - Sequenze casuali di eventi
@@ -1935,6 +2333,10 @@ private func controllaLeInvarianti(_ banco: BancoMotore, job: [Int], inPrimoPian
     if banco.segreti.numero != vive { return "ci sono \(banco.segreti.numero) segreti nel Portachiavi e \(vive) voci vive" }
     let copieInGiro = nomiIn(banco.radice.appendingPathComponent("file")).filter { !$0.hasPrefix(".") }.count
     if copieInGiro != vive { return "ci sono \(copieInGiro) copie di video in file/ e \(vive) voci vive" }
+    // Ogni preparato (`scelti/`) che la prova ha messo è stato preso in carico, o tolto se era la ripetizione di un'apertura: non ne resta nessuno.
+    // Un video fino a 2 GB che nessuna voce reclama resterebbe sul telefono finché la pulizia delle 24 ore non lo toglie.
+    let preparati = nomiIn(banco.radice.appendingPathComponent("scelti")).filter { !$0.hasPrefix(".") }
+    if !preparati.isEmpty { return "restano \(preparati.count) preparati in scelti/ dopo che ogni accodamento è riuscito" }
     // Il giornale dei log: ogni video preso in carico (`accodato`) si chiude UNA volta (inviato, fallito o annullato). Se il giornale ha già scartato
     // eventi (tetto di 200) il conto non si può fare.
     let statoRegistro = banco.registro.stato()
@@ -2128,7 +2530,10 @@ private func eseguiUnaSequenza(seme: UInt64, passi: Int) -> (descrizione: String
             }
         case 94..<97: // il processo muore e ne parte uno nuovo, in primo piano o rilanciato dal sistema in background
             let inBackground = secondoDado % 2 == 0
-            traccia.append(inBackground ? "il processo muore, rilancio in background" : "il processo muore, riapertura in primo piano")
+            // Una volta su tre il sistema risponde a `getAllTasks` DOPO la prima notizia della rete, e con la fotografia di quando la richiesta è partita
+            // (come il sistema vero, asincrono): è la corsa che faceva ripartire una voce in attesa il cui task differito era ancora vivo.
+            let fotografiaTardiva = secondoDado % 3 == 0
+            traccia.append((inBackground ? "il processo muore, rilancio in background" : "il processo muore, riapertura in primo piano") + (fotografiaTardiva ? " (getAllTasks risponde dopo la rete)" : ""))
             banco.attendi()
             var segretiRimasti: [(UUID, KVSegretiVoce)] = []
             for n in job { if let s = banco.segreti.segreti(uuid(n)) { segretiRimasti.append((uuid(n), s)) } }
@@ -2143,8 +2548,17 @@ private func eseguiUnaSequenza(seme: UInt64, passi: Int) -> (descrizione: String
                 for (j, s) in segretiRimasti { b.segreti.semina(j, s) }
                 b.trasporto.extraVivi = tasksRimasti
                 b.trasporto.impostaProssimoId(1000 * numeroGenerazione)
+                if fotografiaTardiva {
+                    b.trasporto.nonRispondeATaskVivi = true
+                    b.trasporto.fotografiaAllaRichiesta = true
+                }
             }
             if let c = reteNota { banco.rete.imposta(c); banco.attendi() }
+            if fotografiaTardiva {
+                banco.trasporto.nonRispondeATaskVivi = false
+                banco.trasporto.rispondiATaskViviInSospeso()
+                banco.attendi()
+            }
             inPrimoPiano = !inBackground
             appessePermesse = inBackground
             richiami = RichiamiDellaSessione()

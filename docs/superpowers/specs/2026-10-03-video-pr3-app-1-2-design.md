@@ -341,6 +341,7 @@ I limiti (`byteMassimiVideo`, `durataMassimaVideoSecondi`, `massimoElementi`) **
 | `in-coda` | trasferimento avviato | `in-invio` |
 | `in-invio` | rete assente / task in attesa / backoff dopo un transitorio | `in-attesa` |
 | `in-invio` | Android 12-13: FGS non avviabile da background; Android ≥ 14: UIDT non programmabile | `in-pausa` |
+| `in-coda` | Android: UIDT non programmabile già all'accodamento, o FGS non avviabile con voci ancora in coda (§6.2); su iOS nessun evento la percorre | `in-pausa` (aggiunta il 03/10 dopo l'ondata 2: le tabelle di TS, Swift e Java sono la stessa) |
 | `in-attesa`, `in-pausa` | rete tornata / app riaperta | `in-invio` |
 | `in-invio` | PUT 2xx, oppure rinnovo `arrivato` | `inviato` (copia e segreti cancellati) |
 | qualunque non terminale | rinnovo `annullato` · `annulla` dal JS | `annullato` (copia e segreti cancellati) |
@@ -364,7 +365,8 @@ il resto vale `altro`). `message` non si legge e non si logga.
 
 | Risposta del rinnovo | Azione |
 |---|---|
-| 200 `da-caricare` | nuova URL (scadenza = ricezione + 7200 s), nuova PUT; `rinnoviConsecutivi + 1`; oltre **3** rinnovi consecutivi senza un 2xx → `fallito` `RINNOVO_CICLICO` |
+| 200 `da-caricare` | nuova URL (scadenza = ricezione + 7200 s), nuova PUT; `rinnoviConsecutivi + 1`; oltre **3** rinnovi consecutivi senza un 2xx → `fallito` `RINNOVO_CICLICO`. **Come si conta** (iOS e Android, ondata 2): contano solo i rinnovi chiesti da una PUT **rifiutata** (4xx); il rinnovo proattivo dei 10' non conta, e ogni esito transitorio della PUT (5xx, rete, 408/429) azzera il conto — così un'ora di Storage in 5xx non chiude un video, e un rifiuto che si ripete sì |
+| 429 del rinnovo | esito `tetto` nel log `video-nativo-rinnovo` su **entrambe** le piattaforme (sono i tetti del rinnovo, §1.2); `RINNOVO_CICLICO` non è un esito del rinnovo ma un codice di `video-nativo-fallito` (deciso il 03/10) |
 | 200 `arrivato` | `inviato` (`esito: gia-arrivato`): è il caso della seconda PUT rifiutata come duplicato, e di `ORIGINALE_SOSTITUITO` (spec PR 2 §5.4) |
 | 200 `annullato` | `annullato` (`ANNULLATO_DAL_SERVER`) |
 | 404 | se nel Portachiavi/Keystore c'è un token più recente di quello usato (rotazione appena arrivata), si riprova con quello; altrimenti `fallito` `TOKEN_NON_VALIDO` |
@@ -384,6 +386,7 @@ server lo permette, non arrendersi al quinto. I **log** dei ritentativi invece s
   (iOS). **Nessun segreto.** Scrittura atomica (iOS `Data.write(options: [.atomic,
   .completeFileProtectionUntilFirstUserAuthentication])`, Android `AtomicFile`) dopo ogni transizione, su una coda
   seriale del motore.
+- **Una sola voce fuori forma in un file leggibile** (deciso il 03/10 dopo l'ondata 2, iOS e Android allo stesso modo): si scarta **solo quella voce**, le altre restano, e il conteggio (`voci_scartate`) entra nella riga `coda-nativa-corrotta`; i file `coda.corrotta-*` si tolgono dopo 7 giorni come le voci terminali.
 - **File illeggibile o di versione sconosciuta**: rinominato `coda.corrotta-<istante>.json`, coda nuova vuota, log
   `coda-nativa-corrotta` (`error`) col numero di file orfani, che la pulizia toglie (senza segreti non partirebbero
   mai; il server chiuderà quei job a 48 h e avviserà l'insegnante).
@@ -776,6 +779,7 @@ L'**avviso breve** (decisione del titolare) è il banner dopo «Pubblica» e la 
 | `coda-nativa-corrotta` | error | `coda.json` illeggibile | `file_orfani` |
 | `registro-nativo-scartati` | warn | eventi persi per tetto o 4xx | `scartati` |
 | `notifica-locale-non-autorizzata` | warn | una volta per installazione (iOS) | — |
+| `put-oltre-scadenza` | warn | un `400 InvalidJWT` arrivato dopo il trasferimento: la firma è scaduta durante l'invio (S0, §3) | `durata_s` |
 
 ### 8.3 Eventi JS
 

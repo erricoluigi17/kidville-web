@@ -221,14 +221,14 @@ const MESSAGGI_NATIVI = [
   'video-nativo-attesa-rete', 'video-nativo-pausa', 'video-nativo-ripreso-dopo-chiusura',
   'video-nativo-annullato', 'video-nativo-fallito', 'media-nativo-preparazione-fallita',
   'caricamenti-nativi-motore', 'coda-nativa-corrotta', 'registro-nativo-scartati',
-  'notifica-locale-non-autorizzata',
+  'notifica-locale-non-autorizzata', 'put-oltre-scadenza',
 ]
 
 /** Le chiavi di `campi` dei log nativi: l'unione delle colonne `campi` di spec §8.1 e §8.2, più `versione_app`. */
 const CHIAVI_CAMPI_NATIVI = [
   'esito', 'error_code', 'operazione', 'tipo', 'ambiente', 'mime', 'versione_app',
   'byte', 'ms', 'tentativi', 'rinnovi', 'in_background', 'tentativo', 'attesa_s', 'byte_inviati',
-  'notifica', 'autorizzata', 'sdk', 'in_coda', 'in_invio', 'task_vivi', 'file_orfani', 'scartati',
+  'notifica', 'autorizzata', 'sdk', 'in_coda', 'in_invio', 'task_vivi', 'file_orfani', 'scartati', 'durata_s',
 ]
 const FORMA_VERSIONE_APP = /^\d+\.\d+(?:\.\d+)?\+\d+$/
 

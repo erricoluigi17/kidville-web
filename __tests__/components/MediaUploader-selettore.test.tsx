@@ -30,10 +30,25 @@ import enShared from '../../messages/en/shared.json'
  * Ogni caso è stato visto ROSSO rompendo il codice che prova: le mutazioni sono nei rapporti di T11b e T11c.
  */
 
-const h = vi.hoisted(() => ({ logClient: vi.fn() }))
+const h = vi.hoisted(() => ({
+  logClient: vi.fn(),
+  // La rilevazione del plugin dei caricamenti nativi. In questo file è sempre `null`: l'app qui è la
+  // 1.0/1.1 (il plugin non c'è) e il riquadro grande è quello della PR 2. L'app 1.2 ha il suo file:
+  // `MediaUploader-nativo-12.test.tsx`.
+  disponibili: vi.fn(async () => null),
+}))
 vi.mock('@/lib/logging/client', () => ({
   logClient: h.logClient,
   nomeErrore: (e: unknown) => (e instanceof Error ? e.constructor.name : 'Sconosciuto'),
+}))
+vi.mock('@/lib/native/caricamenti-nativi', () => ({
+  caricamentiNativiDisponibili: h.disponibili,
+  codiceDelPonte: () => 'SCONOSCIUTO',
+  scegliMedia: vi.fn(),
+  annullaScelta: vi.fn(),
+  ascoltaPreparazione: vi.fn(),
+  leggiFoto: vi.fn(),
+  scartaScelti: vi.fn(),
 }))
 
 vi.mock('@/lib/native/camera', () => ({
@@ -86,6 +101,18 @@ const inputDi = (container: HTMLElement) => container.querySelector('input[type=
 /** Lascia finire `addFiles` (asincrona): le anteprime compaiono dopo un giro di microtask. */
 const asciuga = () => act(async () => { await Promise.resolve() })
 
+/**
+ * Monta il componente e lascia rispondere la rilevazione del plugin. Nell'app l'area di scelta NON si
+ * disegna finché `caricamentiNativiDisponibili()` non ha risposto (app 1.2, spec §7.2: niente sfarfallio fra
+ * i due impaginati), e la risposta arriva un giro di microtask dopo il montaggio. Sul web non c'è niente da
+ * aspettare. Solo `act`: con l'orologio finto di alcuni blocchi `findBy*` non finirebbe mai.
+ */
+async function monta(ui: React.ReactElement) {
+  const v = render(ui)
+  await asciuga()
+  return v
+}
+
 /** La pagina se ne va e torna: lo stesso evento che manda un iPhone quando si cambia app. */
 function paginaVaViaETorna() {
   act(() => {
@@ -113,16 +140,16 @@ afterEach(() => {
 })
 
 describe('nell’app: il riquadro grande apre il selettore di FOTO E VIDEO, non la fotocamera', () => {
-  it('parla di scegliere foto e video (non di trascinare) e dice il tetto dei 50', () => {
-    render(<MediaUploader onUpload={vi.fn()} />)
+  it('parla di scegliere foto e video (non di trascinare) e dice il tetto dei 50', async () => {
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     expect(screen.getByText(itShared.mediaScegliFotoVideo)).toBeInTheDocument()
     expect(screen.getByText(DETTAGLIO_CON_50)).toBeInTheDocument()
     expect(screen.queryByText(itShared.mediaTrascinaFotoVideo), 'nell’app non si trascina').not.toBeInTheDocument()
     expect(screen.queryByText(itShared.mediaOppureClicca)).not.toBeInTheDocument()
   })
 
-  it('il click sul riquadro clicca l’<input> (accept image+video) e NON apre la fotocamera', () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+  it('il click sul riquadro clicca l’<input> (accept image+video) e NON apre la fotocamera', async () => {
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     const input = inputDi(container)
     expect(input.accept).toBe('image/*,video/*')
     expect(input.multiple).toBe(true)
@@ -136,7 +163,7 @@ describe('nell’app: il riquadro grande apre il selettore di FOTO E VIDEO, non 
 
   it('«Scatta una foto» è un pulsante con nome accessibile, e apre la fotocamera (non l’input)', async () => {
     scegliMock.mockResolvedValue([foto('foto-1.jpg')])
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     const clickInput = vi.spyOn(inputDi(container), 'click')
 
     const scatta = screen.getByRole('button', { name: itShared.mediaScattaUnaFoto })
@@ -155,8 +182,8 @@ describe('nell’app: il riquadro grande apre il selettore di FOTO E VIDEO, non 
     expect(await screen.findByRole('button', { name: /1 file/i })).toBeInTheDocument()
   })
 
-  it('il vecchio link «Scegli file dal dispositivo» non c’è più: lo sostituisce «Scatta una foto»', () => {
-    render(<MediaUploader onUpload={vi.fn()} />)
+  it('il vecchio link «Scegli file dal dispositivo» non c’è più: lo sostituisce «Scatta una foto»', async () => {
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     expect(screen.queryByRole('button', { name: /scegli file dal dispositivo/i })).not.toBeInTheDocument()
     // Due comandi, e nessun altro: il riquadro grande — dal #150 un vero pulsante — e «Scatta una foto».
     expect(screen.getAllByRole('button').map((b) => b.getAttribute('data-testid'))).toEqual([
@@ -178,16 +205,16 @@ describe('nell’app: il riquadro grande apre il selettore di FOTO E VIDEO, non 
 describe('sul web non cambia niente: il riquadro apre l’input, niente fotocamera', () => {
   beforeEach(() => nativoMock.mockReturnValue(false))
 
-  it('i testi di sempre, nessun pulsante «Scatta una foto»', () => {
-    render(<MediaUploader onUpload={vi.fn()} />)
+  it('i testi di sempre, nessun pulsante «Scatta una foto»', async () => {
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     expect(screen.getByText(itShared.mediaTrascinaFotoVideo)).toBeInTheDocument()
     expect(screen.getByText(itShared.mediaOppureClicca)).toBeInTheDocument()
     expect(screen.queryByText(itShared.mediaScegliFotoVideo)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: itShared.mediaScattaUnaFoto })).not.toBeInTheDocument()
   })
 
-  it('il click sul riquadro clicca l’<input> e non tocca la fotocamera', () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+  it('il click sul riquadro clicca l’<input> e non tocca la fotocamera', async () => {
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     const clickInput = vi.spyOn(inputDi(container), 'click')
     fireEvent.click(riquadro())
     expect(clickInput).toHaveBeenCalledTimes(1)
@@ -207,8 +234,8 @@ describe('il riquadro grande è un VERO comando: ruolo, tastiera, nome (#150)', 
   describe.each(AMBIENTI)('%s', (_nome, nativo, nomeAtteso) => {
     beforeEach(() => nativoMock.mockReturnValue(nativo))
 
-    it('è un pulsante nell’albero di accessibilità, raggiungibile col Tab, col nome del suo testo visibile', () => {
-      render(<MediaUploader onUpload={vi.fn()} />)
+    it('è un pulsante nell’albero di accessibilità, raggiungibile col Tab, col nome del suo testo visibile', async () => {
+      await monta(<MediaUploader onUpload={vi.fn()} />)
       const r = screen.getByRole('button', { name: nomeAtteso })
       expect(r).toBe(riquadro())
       expect(r.getAttribute('role')).toBe('button')
@@ -220,8 +247,8 @@ describe('il riquadro grande è un VERO comando: ruolo, tastiera, nome (#150)', 
       expect(r).toHaveAccessibleName(visibile)
     })
 
-    it('Invio apre il selettore: lo stesso gesto del click (stesso <input>, stessa riga di log, mai la fotocamera)', () => {
-      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    it('Invio apre il selettore: lo stesso gesto del click (stesso <input>, stessa riga di log, mai la fotocamera)', async () => {
+      const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
       const clickInput = vi.spyOn(inputDi(container), 'click')
       riquadro().focus()
       expect(riquadro()).toHaveFocus()
@@ -233,8 +260,8 @@ describe('il riquadro grande è un VERO comando: ruolo, tastiera, nome (#150)', 
       expect(scegliMock).not.toHaveBeenCalled()
     })
 
-    it('Spazio fa lo stesso — e NON fa scorrere la pagina (il gesto è annullato)', () => {
-      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    it('Spazio fa lo stesso — e NON fa scorrere la pagina (il gesto è annullato)', async () => {
+      const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
       const clickInput = vi.spyOn(inputDi(container), 'click')
 
       // `fireEvent` risponde `false` quando l'evento è stato annullato con `preventDefault`.
@@ -243,8 +270,8 @@ describe('il riquadro grande è un VERO comando: ruolo, tastiera, nome (#150)', 
       expect(clickInput).toHaveBeenCalledTimes(1)
     })
 
-    it('un altro tasto non fa niente e non viene annullato: il Tab deve poter passare oltre', () => {
-      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    it('un altro tasto non fa niente e non viene annullato: il Tab deve poter passare oltre', async () => {
+      const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
       const clickInput = vi.spyOn(inputDi(container), 'click')
       for (const key of ['Tab', 'a', 'ArrowDown', 'Escape']) {
         expect(fireEvent.keyDown(riquadro(), { key }), key).toBe(true)
@@ -253,8 +280,8 @@ describe('il riquadro grande è un VERO comando: ruolo, tastiera, nome (#150)', 
       expect(messaggi()).toEqual([])
     })
 
-    it('il click di prima funziona ancora, una volta sola (il click dell’<input> non risale a riaprirlo)', () => {
-      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    it('il click di prima funziona ancora, una volta sola (il click dell’<input> non risale a riaprirlo)', async () => {
+      const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
       const input = inputDi(container)
       const clickInput = vi.spyOn(input, 'click')
       fireEvent.click(riquadro())
@@ -265,7 +292,7 @@ describe('il riquadro grande è un VERO comando: ruolo, tastiera, nome (#150)', 
     })
 
     it('è accessibile (axe): nessun controllo annidato, nome presente, ruolo ammesso', async () => {
-      const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+      const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
       const { axe } = await import('jest-axe')
       const risultato = await axe(container, {
         rules: { region: { enabled: false }, 'landmark-one-main': { enabled: false }, 'page-has-heading-one': { enabled: false } },
@@ -274,33 +301,38 @@ describe('il riquadro grande è un VERO comando: ruolo, tastiera, nome (#150)', 
     })
   })
 
-  it('un tasto premuto su un DISCENDENTE del riquadro non apre niente: conta solo il comando stesso', () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+  it('un tasto premuto su un DISCENDENTE del riquadro non apre niente: conta solo il comando stesso', async () => {
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     const clickInput = vi.spyOn(inputDi(container), 'click')
-    fireEvent.keyDown(container.querySelector('input[type="file"]') as HTMLElement, { key: 'Enter' })
+    // Il discendente è il testo DENTRO il riquadro: l'`<input>` non lo è più (sta fuori, sempre montato).
+    const testo = riquadro().querySelector('p') as HTMLElement
+    expect(riquadro().contains(testo)).toBe(true)
+    fireEvent.keyDown(testo, { key: 'Enter' })
+    fireEvent.keyDown(testo, { key: ' ' })
     expect(clickInput).not.toHaveBeenCalled()
+    expect(messaggi()).toEqual([])
   })
 })
 
 describe('riga di log 1 — selettore aperto', () => {
-  it('app, riquadro grande: strada=selettore-file ambiente=app', () => {
-    render(<MediaUploader onUpload={vi.fn()} />)
+  it('app, riquadro grande: strada=selettore-file ambiente=app', async () => {
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro())
     expect(messaggi()).toEqual(['gallery-selettore-aperto strada=selettore-file ambiente=app'])
     expect(righe()[0]).toMatchObject({ livello: 'warn', evento: 'js' })
   })
 
   it('app, «Scatta una foto»: strada=fotocamera-nativa ambiente=app', async () => {
-    render(<MediaUploader onUpload={vi.fn()} />)
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: itShared.mediaScattaUnaFoto }))
     await waitFor(() => expect(scegliMock).toHaveBeenCalled())
     expect(quelle('gallery-selettore-aperto').map((r) => r.messaggio))
       .toEqual(['gallery-selettore-aperto strada=fotocamera-nativa ambiente=app'])
   })
 
-  it('web: strada=selettore-file ambiente=web', () => {
+  it('web: strada=selettore-file ambiente=web', async () => {
     nativoMock.mockReturnValue(false)
-    render(<MediaUploader onUpload={vi.fn()} />)
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro())
     expect(messaggi()).toEqual(['gallery-selettore-aperto strada=selettore-file ambiente=web'])
   })
@@ -313,7 +345,7 @@ describe('riga di log 2 — file ricevuti', () => {
   })
 
   it('un video da 73 MB scelto dopo 7 s: mime=video attesa=5-30s tardivo=no, e compare la miniatura', async () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro())
     act(() => { vi.advanceTimersByTime(7_000) })
     consegna(container, video())
@@ -325,8 +357,8 @@ describe('riga di log 2 — file ricevuti', () => {
     expect(container.querySelector('video')).toBeTruthy()
   })
 
-  it('foto e video insieme: mime=misto con i due conteggi', () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+  it('foto e video insieme: mime=misto con i due conteggi', async () => {
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro())
     consegna(container, foto('a.jpg'), video('b.mov', 500), foto('c.jpg'))
     const [riga] = quelle('gallery-selettore-file-ricevuti')
@@ -339,7 +371,7 @@ describe('riga di log 2 — file ricevuti', () => {
       vi.advanceTimersByTime(2_500)
       return [foto('foto-1.jpg')]
     })
-    render(<MediaUploader onUpload={vi.fn()} />)
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: itShared.mediaScattaUnaFoto }))
     })
@@ -351,7 +383,7 @@ describe('riga di log 2 — file ricevuti', () => {
 
   it('un trascinamento sul riquadro (nessun selettore aperto) NON scrive la riga: i file entrano lo stesso', async () => {
     nativoMock.mockReturnValue(false)
-    render(<MediaUploader onUpload={vi.fn()} />)
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.drop(riquadro(), { dataTransfer: { files: [foto('trascinata.jpg')] } })
     await asciuga()
     // Sincrono: con `setTimeout` finto `findBy*` non finirebbe mai (l'`asyncWrapper` di RTL aspetta un timeout).
@@ -367,8 +399,8 @@ describe('riga di log 3 — chiuso senza file', () => {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
   })
 
-  it('motivo=cancel: l’evento `cancel` dell’input (React non lo inoltra a onCancel: va agganciato a mano)', () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+  it('motivo=cancel: l’evento `cancel` dell’input (React non lo inoltra a onCancel: va agganciato a mano)', async () => {
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro())
     act(() => { vi.advanceTimersByTime(2_000) })
     fireEvent(inputDi(container), new Event('cancel'))
@@ -379,8 +411,8 @@ describe('riga di log 3 — chiuso senza file', () => {
     expect(riga.campi).toEqual({ ms_da_apertura: 2_000 })
   })
 
-  it('motivo=ritorno-senza-file: la pagina torna in primo piano e dopo 15 s non è arrivato niente', () => {
-    render(<MediaUploader onUpload={vi.fn()} />)
+  it('motivo=ritorno-senza-file: la pagina torna in primo piano e dopo 15 s non è arrivato niente', async () => {
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro())
     act(() => { vi.advanceTimersByTime(2_000) })
     paginaVaViaETorna()
@@ -394,8 +426,8 @@ describe('riga di log 3 — chiuso senza file', () => {
     expect(riga.campi).toEqual({ ms_da_apertura: 2_000 })
   })
 
-  it('…e se i file arrivano DOPO, la riga dei file è `tardivo=si` con ms_da_ritorno (la firma di WebKit/iCloud)', () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+  it('…e se i file arrivano DOPO, la riga dei file è `tardivo=si` con ms_da_ritorno (la firma di WebKit/iCloud)', async () => {
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro())
     act(() => { vi.advanceTimersByTime(2_000) })
     paginaVaViaETorna()
@@ -416,7 +448,7 @@ describe('riga di log 3 — chiuso senza file', () => {
       vi.advanceTimersByTime(3_500)
       return []
     })
-    render(<MediaUploader onUpload={vi.fn()} />)
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: itShared.mediaScattaUnaFoto }))
     })
@@ -431,7 +463,7 @@ describe('riga di log 3 — chiuso senza file', () => {
       opts?.onErrore?.('permesso_negato', 'permission_denied_camera')
       return []
     })
-    render(<MediaUploader onUpload={vi.fn()} />)
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: itShared.mediaScattaUnaFoto }))
     })
@@ -439,8 +471,8 @@ describe('riga di log 3 — chiuso senza file', () => {
     expect(quelle('gallery-selettore-chiuso-senza-file'), 'un errore non è un annullamento').toEqual([])
   })
 
-  it('lo smontaggio spegne il timer e l’ascoltatore: nessuna riga a componente morto', () => {
-    const { container, unmount } = render(<MediaUploader onUpload={vi.fn()} />)
+  it('lo smontaggio spegne il timer e l’ascoltatore: nessuna riga a componente morto', async () => {
+    const { container, unmount } = await monta(<MediaUploader onUpload={vi.fn()} />)
     const input = inputDi(container)
     fireEvent.click(riquadro())
     paginaVaViaETorna()
@@ -463,23 +495,23 @@ describe('il ritorno in primo piano parte SOLO dal ritorno vero, mai da un orolo
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
   })
 
-  it('selettore aperto, pagina SEMPRE in primo piano, sessanta secondi di orologio: resta la sola riga «aperto»', () => {
-    render(<MediaUploader onUpload={vi.fn()} />)
+  it('selettore aperto, pagina SEMPRE in primo piano, sessanta secondi di orologio: resta la sola riga «aperto»', async () => {
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro())
     act(() => { vi.advanceTimersByTime(60_000) })
 
     expect(messaggi()).toEqual(['gallery-selettore-aperto strada=selettore-file ambiente=app'])
   })
 
-  it('anche senza aprire niente l’orologio non scrive: nessun ritorno, nessun timer dei 15 secondi', () => {
-    render(<MediaUploader onUpload={vi.fn()} />)
+  it('anche senza aprire niente l’orologio non scrive: nessun ritorno, nessun timer dei 15 secondi', async () => {
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     act(() => { vi.advanceTimersByTime(60_000) })
     expect(messaggi()).toEqual([])
     expect(vi.getTimerCount(), 'un orologio o un timer è rimasto armato').toBe(0)
   })
 
-  it('CONTROLLO POSITIVO: con un ritorno vero (la pagina se ne va e torna) la riga arriva, a 15 secondi', () => {
-    render(<MediaUploader onUpload={vi.fn()} />)
+  it('CONTROLLO POSITIVO: con un ritorno vero (la pagina se ne va e torna) la riga arriva, a 15 secondi', async () => {
+    await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro())
     act(() => { vi.advanceTimersByTime(2_000) })
     paginaVaViaETorna()
@@ -498,7 +530,7 @@ describe('il tetto dei 50 — si tengono i primi, e si avvisa in linea', () => {
 
   it('60 scelte → 50 anteprime, avviso in linea e log col SOLO conteggio', async () => {
     const onUpload = vi.fn()
-    const { container } = render(<MediaUploader onUpload={onUpload} />)
+    const { container } = await monta(<MediaUploader onUpload={onUpload} />)
     fireEvent.click(riquadro())
     consegna(container, ...sessanta())
     await waitFor(() => expect(miniature()).toHaveLength(50))
@@ -519,7 +551,7 @@ describe('il tetto dei 50 — si tengono i primi, e si avvisa in linea', () => {
   })
 
   it('esattamente 50 entrano tutti: nessun avviso e nessuna riga', async () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     consegna(container, ...sessanta().slice(0, 50))
     await waitFor(() => expect(miniature()).toHaveLength(50))
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
@@ -527,7 +559,7 @@ describe('il tetto dei 50 — si tengono i primi, e si avvisa in linea', () => {
   })
 
   it('il tetto vale sul TOTALE: 30 + 30 fanno 50, e la seconda scelta ne aggiunge 20', async () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     consegna(container, ...sessanta().slice(0, 30))
     await waitFor(() => expect(miniature()).toHaveLength(30))
     consegna(container, ...sessanta().slice(30, 60))
@@ -538,7 +570,7 @@ describe('il tetto dei 50 — si tengono i primi, e si avvisa in linea', () => {
   })
 
   it('l’avviso è un elemento SEMPRE MONTATO (VoiceOver non annuncia una regione viva che entra già piena)', async () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     const prima = screen.getByRole('status')
     expect(prima, 'vuoto e invisibile finché non serve').toBeEmptyDOMElement()
     expect(prima.className).toContain('sr-only')
@@ -552,7 +584,7 @@ describe('il tetto dei 50 — si tengono i primi, e si avvisa in linea', () => {
   })
 
   it('togliere un’anteprima libera un posto e spegne l’avviso', async () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     consegna(container, ...sessanta())
     await waitFor(() => expect(miniature()).toHaveLength(50))
 
@@ -567,7 +599,7 @@ describe('il tetto dei 50 — si tengono i primi, e si avvisa in linea', () => {
   })
 
   it('con 50 già scelti una nuova scelta non aggiunge niente e lo dice', async () => {
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     consegna(container, ...sessanta().slice(0, 50))
     await waitFor(() => expect(miniature()).toHaveLength(50))
     consegna(container, foto('una-in-piu.jpg'))
@@ -580,7 +612,7 @@ describe('il tetto dei 50 — si tengono i primi, e si avvisa in linea', () => {
 describe('MAI il nome del file: dal componente vero non esce in nessun log', () => {
   it('video, foto, un file rifiutato e il tetto: nessun log contiene il nome del bambino', async () => {
     nativoMock.mockReturnValue(true)
-    const { container } = render(<MediaUploader onUpload={vi.fn()} />)
+    const { container } = await monta(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(riquadro()) // riga 1
     const illeggibile = new File([new Uint8Array([1, 2, 3])], `${NOME_BAMBINO}.jpg`) // senza MIME e senza firma
     const tanti = Array.from({ length: 52 }, (_, i) => foto(`${NOME_BAMBINO} ${i}.jpg`))

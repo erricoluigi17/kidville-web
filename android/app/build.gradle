@@ -85,6 +85,10 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    // `org.json` dell'SDK Android, nei test sulla JVM, è uno stub che lancia «not mocked»: la coda e il registro dei
+    // caricamenti nativi (it.kidville.app.caricamenti) lo usano, quindi nei test serve l'implementazione vera. Sta PRIMA
+    // di android.jar nel classpath dei test, ed è per questo che si dichiara qui. Solo test: nell'APK resta quello di sistema.
+    testImplementation "org.json:json:20251224"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

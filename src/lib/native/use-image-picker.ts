@@ -3,7 +3,7 @@
 import { useCallback } from 'react'
 import { useTranslations } from 'next-intl'
 import { fotocameraNativaDisponibile, scegliFotoNativa } from '@/lib/native/camera'
-import type { CodiceFotocamera } from '@/lib/native/camera'
+import type { CodiceFotocamera, SorgenteFoto } from '@/lib/native/camera'
 
 // Hook condiviso per gli upload immagine: incapsula «se nativo apri la
 // fotocamera Capacitor, altrimenti clicca l'<input type=file>». I file scelti
@@ -30,6 +30,14 @@ export interface UseImagePickerOptions {
    * con «non è mai arrivato niente». Sul web non scatta mai: lì `apri()` clicca l'`<input>`.
    */
   onAnnullato?: () => void
+  /**
+   * Da dove prende la foto il NATIVO: il foglio «scatta o scegli» di sempre (`'prompt'`, il
+   * predefinito di `camera.ts`, e quello che vogliono la chat e i documenti) o la fotocamera diretta
+   * (`'fotocamera'`). Non passarlo lascia tutto com'era: l'hook lo inoltra solo se c'è.
+   */
+  sorgente?: SorgenteFoto
+  /** Lato lungo massimo dello scatto, in pixel. Non passarlo lascia il predefinito di `camera.ts`. */
+  latoMassimo?: number
 }
 
 export function useImagePicker({
@@ -38,6 +46,8 @@ export function useImagePicker({
   multiplo = false,
   onErrore,
   onAnnullato,
+  sorgente,
+  latoMassimo,
 }: UseImagePickerOptions) {
   const t = useTranslations('shared')
 
@@ -49,6 +59,10 @@ export function useImagePicker({
       let conErrore = false
       const files = await scegliFotoNativa({
         multiplo,
+        // Solo se richiesti: chi non li chiede (la chat, i documenti) chiama `scegliFotoNativa`
+        // esattamente come prima, e il suo predefinito resta il foglio a 1600 px.
+        ...(sorgente !== undefined ? { sorgente } : {}),
+        ...(latoMassimo !== undefined ? { latoMassimo } : {}),
         onErrore: (codice, dettaglio) => {
           conErrore = true
           onErrore?.(codice, dettaglio)
@@ -65,7 +79,7 @@ export function useImagePicker({
       return
     }
     inputRef.current?.click()
-  }, [inputRef, onFiles, multiplo, onErrore, onAnnullato, t])
+  }, [inputRef, onFiles, multiplo, onErrore, onAnnullato, sorgente, latoMassimo, t])
 
   return { apri }
 }

@@ -21,7 +21,7 @@ import {
   HOST_DEBUG_CARICAMENTI,
   LATO_MASSIMO_FOTO,
   LATO_MINIATURA_VIDEO,
-  MARGINE_RINNOVO_URL_SECONDI,
+  ETA_MASSIMA_URL_PRIMA_DELLA_PUT_SECONDI,
   METODI_PLUGIN_CARICAMENTI,
   MOTIVI_RIFIUTO,
   MOTORI_CARICAMENTI,
@@ -306,7 +306,7 @@ describe('caricamenti nativi · costanti e vocabolari chiusi (§4.2)', () => {
     )
   })
 
-  it('i messaggi di log nativi sono i QUATTORDICI di §8.2, in forma di slug, e nessuno è un evento del JS (§8.3)', () => {
+  it('i messaggi di log nativi sono i QUINDICI di §8.2 (con put-oltre-scadenza, dopo S0), in forma di slug, e nessuno è un evento del JS (§8.3)', () => {
     expect([...EVENTI_LOG_NATIVI]).toEqual([
       'video-nativo-accodato',
       'video-nativo-inviato',
@@ -322,6 +322,7 @@ describe('caricamenti nativi · costanti e vocabolari chiusi (§4.2)', () => {
       'coda-nativa-corrotta',
       'registro-nativo-scartati',
       'notifica-locale-non-autorizzata',
+      'put-oltre-scadenza',
     ])
     for (const slug of EVENTI_LOG_NATIVI) expect(slug, slug).toMatch(/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
     // Quelli del JS (§8.3) li scrive l'involucro, non il nativo: se entrassero qui il lock li lascerebbe passare dal Swift.
@@ -340,7 +341,8 @@ describe('caricamenti nativi · costanti e vocabolari chiusi (§4.2)', () => {
   })
 
   it('i numeri di §4.2 e gli host della forma Debug (§9)', () => {
-    expect(MARGINE_RINNOVO_URL_SECONDI).toBe(900)
+    // S0 (spec §3): si rinnova se l'URL ha più di 10 minuti, perché la firma si verifica alla fine della PUT.
+    expect(ETA_MASSIMA_URL_PRIMA_DELLA_PUT_SECONDI).toBe(600)
     expect(LATO_MASSIMO_FOTO).toBe(1920)
     expect(QUALITA_FOTO).toBe(0.85)
     expect(LATO_MINIATURA_VIDEO).toBe(320)
@@ -371,6 +373,7 @@ describe('caricamenti nativi · stati e transizioni (§4.4)', () => {
     ['in-coda', 'in-invio'], // trasferimento avviato
     ['in-invio', 'in-attesa'], // rete assente, task in attesa, backoff
     ['in-invio', 'in-pausa'], // FGS non avviabile (Android 12-13), UIDT non programmabile (Android ≥ 14)
+    ['in-coda', 'in-pausa'], // UIDT non programmabile già all'accodamento, FGS non avviabile con voci in coda (§6.2)
     ['in-attesa', 'in-invio'], // rete tornata
     ['in-pausa', 'in-invio'], // app riaperta
     ['in-invio', 'inviato'], // PUT 2xx, o rinnovo `arrivato`

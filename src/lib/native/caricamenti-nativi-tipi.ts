@@ -119,8 +119,12 @@ export type EventoPluginCaricamenti = (typeof EVENTI_PLUGIN_CARICAMENTI)[number]
  */
 export const VALIDITA_URL_PUT_SECONDI = 7200
 
-/** Se all'URL restano meno di 15 minuti si rinnova PRIMA di creare (o ricreare) il trasferimento. */
-export const MARGINE_RINNOVO_URL_SECONDI = 900
+/**
+ * Oltre quest'età (secondi dalla firma) l'URL si rinnova PRIMA di creare, o ricreare, il trasferimento. S0 (spec §3) ha
+ * misurato che lo Storage verifica la firma alla FINE della PUT: così ogni trasferimento ha davanti quasi due ore piene.
+ * Prima di S0 la regola era «se ne restano meno di 15 minuti» (900 s), e non bastava.
+ */
+export const ETA_MASSIMA_URL_PRIMA_DELLA_PUT_SECONDI = 600
 
 /** Lato massimo di una foto dopo la riduzione nativa, e qualità JPEG: le passa il JS, il nativo non le riscrive. */
 export const LATO_MASSIMO_FOTO = 1920
@@ -198,6 +202,11 @@ export type CodiceRifiutoPonte = (typeof CODICI_RIFIUTO_PONTE)[number]
  * I messaggi di log che il NATIVO può scrivere (§8.2): lo slug che apre il messaggio, prima di `: job=<uuid>` e
  * del codice. Swift e Java non ne usano altri: lo pretende il lock di J4. Gli eventi che scrive il JS (§8.3) non stanno
  * qui. Un messaggio nuovo si aggiunge qui, nella spec e nel PRD nello stesso lavoro, e mai con un testo libero.
+ *
+ * `put-oltre-scadenza` (aggiunto il 03/10, dopo S0 e l'ondata 2): un `400 InvalidJWT` arrivato DOPO il trasferimento è
+ * la firma scaduta durante l'invio (spec §3, §4.5); la riga porta la durata del trasferimento (`durata_s`).
+ * ⚠️ Niente commenti DENTRO l'elenco: l'harness iOS, JUnit e il server finto lo leggono come testo, e un apostrofo in un
+ * commento diventa un messaggio in più.
  */
 export const EVENTI_LOG_NATIVI = [
   'video-nativo-accodato',
@@ -214,6 +223,7 @@ export const EVENTI_LOG_NATIVI = [
   'coda-nativa-corrotta',
   'registro-nativo-scartati',
   'notifica-locale-non-autorizzata',
+  'put-oltre-scadenza',
 ] as const
 export type EventoLogNativo = (typeof EVENTI_LOG_NATIVI)[number]
 
@@ -269,13 +279,12 @@ export type StatoTerminaleNativo = (typeof STATI_TERMINALI_NATIVI)[number]
  *  · qualunque stato non terminale → `annullato` (rinnovo `annullato`, `annulla` dal JS) e → `fallito` (esito
  *    definitivo di §4.5, token scaduto).
  *
- * Un punto che la spec non chiude, e qui NON si decide: §6.2 manda la voce `in-pausa` anche quando UIDT non si riesce a
- * programmare già all'accodamento (cioè dallo stato `in-coda`), mentre la tabella di §4.4 conosce solo `in-invio` →
- * `in-pausa`. Qui vale la tabella; se la politica di Android ammetterà anche `in-coda` → `in-pausa`, la freccia si
- * aggiunge qui (e la riga del test) nello stesso lavoro.
+ * `in-coda` → `in-pausa` (deciso il 03/10 dopo l'ondata 2): §6.2 manda la voce in pausa anche quando UIDT non si riesce a
+ * programmare già all'accodamento, o il FGS non parte con voci ancora in coda. Android la usa; su iOS la freccia esiste
+ * ma nessun evento la percorre. Le tabelle di TS, Swift e Java sono la stessa (le confrontano l'harness e JUnit).
  */
 export const TRANSIZIONI_STATO_NATIVO = {
-  'in-coda': ['in-invio', 'annullato', 'fallito'],
+  'in-coda': ['in-invio', 'in-pausa', 'annullato', 'fallito'],
   'in-invio': ['in-attesa', 'in-pausa', 'inviato', 'annullato', 'fallito'],
   'in-attesa': ['in-invio', 'annullato', 'fallito'],
   'in-pausa': ['in-invio', 'annullato', 'fallito'],

@@ -26,12 +26,25 @@ vi.mock('@/lib/logging/client', () => ({
 
 import {
   ATTESA_FILE_DOPO_RITORNO_MS,
+  CHIAVE_RIFIUTO,
   MAX_ELEMENTI_PER_SCELTA,
   TracciaSelettore,
+  contaRifiutiPerMotivo,
   fasciaAttesa,
+  formattaDurata,
+  idNativi,
   limitaElementi,
+  nomeElemento,
+  nomeFotoJpeg,
+  postiRimasti,
+  riepilogaElementiNativi,
   riepilogaFile,
+  type ElementoCaricabile,
 } from '@/lib/gallery/selettore-media'
+import { MOTIVI_RIFIUTO, type MotivoRifiuto } from '@/lib/native/caricamenti-nativi-tipi'
+import { MAX_VIDEO_DURATION_SECONDS, MAX_VIDEO_INPUT_BYTES } from '@/lib/media/video/limiti'
+import itShared from '../../messages/it/shared.json'
+import enShared from '../../messages/en/shared.json'
 
 interface RigaLog {
   livello: string
@@ -58,9 +71,9 @@ const NOME_BAMBINO = 'Pinco Pallino recita di Natale'
 const FASCIA = '(<1s|1-5s|5-30s|30s-2m|>2m)'
 const FORMA_MESSAGGIO = new RegExp(
   '^gallery-selettore-(' +
-    'aperto strada=(selettore-file|fotocamera-nativa) ambiente=(app|web)' +
+    'aperto strada=(selettore-file|fotocamera-nativa|selettore-nativo|file-nativo) ambiente=(app|web)' +
     `|file-ricevuti mime=(image|video|misto) attesa=${FASCIA} tardivo=(si|no)` +
-    `|chiuso-senza-file motivo=(cancel|ritorno-senza-file|annullato-fotocamera) attesa=${FASCIA}` +
+    `|chiuso-senza-file motivo=(cancel|ritorno-senza-file|annullato-fotocamera|annullato-nativo) attesa=${FASCIA}` +
     ')$',
 )
 
@@ -537,5 +550,343 @@ describe('fail-open — il tracciatore non rompe mai la scelta del file', () => 
     t.fileRicevuti([fileOstile()])
     vi.advanceTimersByTime(60_000)
     expect(soloQuelle('gallery-selettore-chiuso-senza-file')).toEqual([])
+  })
+})
+
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * L'APP 1.2 (spec «caricamenti nativi» §7.2-§7.3, compito J2): la strada NATIVA del selettore
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+const SHA = 'c'.repeat(64)
+const videoN = (extra: Record<string, unknown> = {}) => ({
+  id: 'v1', tipo: 'video' as const, nome: 'filmato.mov', byte: 1_000, mime: 'video/quicktime',
+  durataSecondi: 52, miniatura: null, sha256: SHA, ...extra,
+})
+const fotoN = (extra: Record<string, unknown> = {}) => ({
+  id: 'f1', tipo: 'foto' as const, nome: 'IMG_1.HEIC', larghezza: 1920, altezza: 1080, byte: 200, ...extra,
+})
+const rifN = (motivo: MotivoRifiuto, origine: 'foto' | 'video' | 'altro' = 'video') => ({
+  id: `r-${motivo}`, tipo: 'rifiutato' as const, nome: 'x.bin', origine, motivo,
+})
+
+describe('postiRimasti — quanti ne restano, da 0 al tetto', () => {
+  it.each([
+    [0, 50],
+    [1, 49],
+    [30, 20],
+    [49, 1],
+    [50, 0],
+    [51, 0],
+    [1_000, 0],
+  ])('%i già scelti → %i posti', (giaScelti, atteso) => {
+    expect(postiRimasti(giaScelti)).toBe(atteso)
+  })
+
+  it('un numero negativo non regala posti oltre il tetto', () => {
+    expect(postiRimasti(-5)).toBe(MAX_ELEMENTI_PER_SCELTA)
+  })
+
+  it('è la STESSA formula di `limitaElementi` (una sola, sul totale)', () => {
+    for (const gia of [0, 7, 49, 50, 80]) {
+      const { tenuti } = limitaElementi(Array.from({ length: 100 }, (_, i) => i), gia)
+      expect(tenuti.length).toBe(postiRimasti(gia))
+    }
+  })
+})
+
+describe('riepilogaElementiNativi — il riepilogo di una scelta nativa, senza File', () => {
+  it('video e foto accettati: i conteggi e i byte (per una foto, il peso dopo la riduzione)', () => {
+    expect(riepilogaElementiNativi([videoN({ byte: 1_000 }), fotoN({ byte: 200 }), fotoN({ id: 'f2', byte: 50 })]))
+      .toEqual({ n: 3, nVideo: 1, nFoto: 2, byteTotali: 1_250, mime: 'misto' })
+  })
+
+  it('solo video → `video`; solo foto → `image`', () => {
+    expect(riepilogaElementiNativi([videoN(), videoN({ id: 'v2' })]).mime).toBe('video')
+    expect(riepilogaElementiNativi([fotoN(), fotoN({ id: 'f2' })]).mime).toBe('image')
+  })
+
+  it('i RIFIUTATI contano in `n` e, per `origine`, fra video e foto — ma NON nei byte (il peso non si conosce)', () => {
+    const r = riepilogaElementiNativi([videoN({ byte: 500 }), rifN('troppo-grande', 'video'), rifN('illeggibile', 'foto')])
+    expect(r).toEqual({ n: 3, nVideo: 2, nFoto: 1, byteTotali: 500, mime: 'misto' })
+  })
+
+  it('un rifiutato di origine `altro` conta in `n` ma né fra i video né fra le foto, e rende la scelta `misto`', () => {
+    expect(riepilogaElementiNativi([fotoN(), rifN('formato-non-supportato', 'altro')]))
+      .toMatchObject({ n: 2, nVideo: 0, nFoto: 1, mime: 'misto' })
+  })
+
+  it('TUTTI rifiutati dello stesso tipo: la scelta è di quel tipo (come per i file del browser)', () => {
+    expect(riepilogaElementiNativi([rifN('troppo-grande', 'video'), rifN('troppo-lungo', 'video')]))
+      .toEqual({ n: 2, nVideo: 2, nFoto: 0, byteTotali: 0, mime: 'video' })
+  })
+
+  it('un peso che non è un numero positivo non entra nei byte', () => {
+    expect(riepilogaElementiNativi([videoN({ byte: Number.NaN }), fotoN({ byte: -3 }), fotoN({ id: 'f2', byte: 7 })]).byteTotali).toBe(7)
+  })
+})
+
+describe('contaRifiutiPerMotivo — un numero per motivo, sempre tutti e sei', () => {
+  const CAMPI = ['troppo_grande', 'troppo_lungo', 'formato_non_supportato', 'illeggibile', 'spazio_insufficiente', 'icloud_non_disponibile']
+
+  it('senza rifiutati: sei zeri (forma fissa, interrogabile in SQL senza COALESCE)', () => {
+    const conti = contaRifiutiPerMotivo([videoN(), fotoN()])
+    expect(Object.keys(conti).sort()).toEqual([...CAMPI].sort())
+    expect(Object.values(conti).every((n) => n === 0)).toBe(true)
+  })
+
+  it('conta ciascun motivo; gli accettati non contano', () => {
+    const conti = contaRifiutiPerMotivo([
+      rifN('troppo-grande'), rifN('troppo-grande'), rifN('troppo-lungo'), rifN('spazio-insufficiente'), videoN(), fotoN(),
+    ])
+    expect(conti).toEqual({
+      troppo_grande: 2, troppo_lungo: 1, formato_non_supportato: 0, illeggibile: 0, spazio_insufficiente: 1, icloud_non_disponibile: 0,
+    })
+  })
+
+  it('le chiavi hanno la forma che `/api/logs` accetta (`^[a-z][a-z0-9_]{0,31}$`): nessun trattino', () => {
+    for (const chiave of Object.keys(contaRifiutiPerMotivo([]))) expect(chiave).toMatch(/^[a-z][a-z0-9_]{0,31}$/)
+  })
+
+  it('ogni motivo del plugin ha il suo campo: nessuno cade nel vuoto', () => {
+    for (const motivo of MOTIVI_RIFIUTO) {
+      const conti = contaRifiutiPerMotivo([rifN(motivo)])
+      expect(Object.values(conti).reduce((a, b) => a + b, 0), `il motivo ${motivo} non è contato`).toBe(1)
+    }
+  })
+})
+
+describe('CHIAVE_RIFIUTO — ogni motivo ha la sua frase, in ENTRAMBE le lingue', () => {
+  it('copre tutti e soli i sei motivi del plugin', () => {
+    expect(Object.keys(CHIAVE_RIFIUTO).sort()).toEqual([...MOTIVI_RIFIUTO].sort())
+  })
+
+  it('ogni frase esiste nei due cataloghi, è diversa dalle altre e non è vuota', () => {
+    const it = itShared as Record<string, string>
+    const en = enShared as Record<string, string>
+    for (const motivo of MOTIVI_RIFIUTO) {
+      const chiave = CHIAVE_RIFIUTO[motivo]
+      expect(it[chiave], `manca in italiano: ${chiave}`).toBeTruthy()
+      expect(en[chiave], `manca in inglese: ${chiave}`).toBeTruthy()
+    }
+    for (const catalogo of [it, en]) {
+      const frasi = MOTIVI_RIFIUTO.map((m) => catalogo[CHIAVE_RIFIUTO[m]])
+      expect(new Set(frasi).size, 'due motivi con la stessa frase').toBe(MOTIVI_RIFIUTO.length)
+    }
+  })
+
+  it('i numeri scritti nelle frasi sono i LIMITI veri: se `limiti.ts` cambia, questo test lo dice (le frasi non si aggiornano da sole)', () => {
+    const gb = MAX_VIDEO_INPUT_BYTES / 1_000_000_000
+    const minuti = MAX_VIDEO_DURATION_SECONDS / 60
+    expect(Number.isInteger(gb) && Number.isInteger(minuti), 'un limite non tondo non si scrive «N GB» / «N minuti»').toBe(true)
+    expect(itShared[CHIAVE_RIFIUTO['troppo-grande']]).toContain(`${gb} GB`)
+    expect(itShared[CHIAVE_RIFIUTO['troppo-lungo']]).toContain(`${minuti} minuti`)
+    expect(enShared[CHIAVE_RIFIUTO['troppo-grande']]).toContain(`${gb} GB`)
+    expect(enShared[CHIAVE_RIFIUTO['troppo-lungo']]).toContain(`${minuti} minutes`)
+  })
+})
+
+describe('nomeElemento e idNativi — l’elemento caricabile, un `File` o un video nativo', () => {
+  const conFile = (nome: string): ElementoCaricabile => ({ file: file(nome, 'image/jpeg'), preview: 'blob:x' })
+  const nativo = (id: string, nome: string): ElementoCaricabile => ({ file: null, preview: '', nativo: videoN({ id, nome }) })
+
+  it('il nome è quello del `File`, o quello del video nativo', () => {
+    expect(nomeElemento(conFile('foto.jpg'))).toBe('foto.jpg')
+    expect(nomeElemento(nativo('v1', 'filmato.mov'))).toBe('filmato.mov')
+  })
+
+  it('gli id sono i soli dei NATIVI, nell’ordine dell’elenco', () => {
+    expect(idNativi([conFile('a.jpg'), nativo('v1', 'a.mov'), conFile('b.jpg'), nativo('v2', 'b.mov')])).toEqual(['v1', 'v2'])
+    expect(idNativi([conFile('a.jpg')])).toEqual([])
+    expect(idNativi([])).toEqual([])
+  })
+})
+
+describe('formattaDurata — `m:ss`, e «non si sa» non diventa `0:00`', () => {
+  it.each([
+    [0, '0:00'],
+    [1, '0:01'],
+    [9, '0:09'],
+    [52, '0:52'],
+    [59.4, '0:59'],
+    [59.6, '1:00'],
+    [60, '1:00'],
+    [65, '1:05'],
+    [300, '5:00'],
+  ])('%s s → %s', (secondi, atteso) => {
+    expect(formattaDurata(secondi)).toBe(atteso)
+  })
+
+  it.each([[null], [Number.NaN], [Number.POSITIVE_INFINITY], [-1]])('%s → null (la durata si omette)', (valore) => {
+    expect(formattaDurata(valore)).toBeNull()
+  })
+})
+
+describe('nomeFotoJpeg — il nome del File JPEG di una foto scelta dal nativo', () => {
+  it.each([
+    ['IMG_0042.HEIC', 'IMG_0042.jpg'],
+    ['IMG_0042.jpeg', 'IMG_0042.jpg'],
+    ['senza-estensione', 'senza-estensione.jpg'],
+    ['due.punti.png', 'due.punti.jpg'],
+    ['  spazi.HEIC ', 'spazi.jpg'],
+    ['.HEIC', 'foto.jpg'],
+    ['', 'foto.jpg'],
+    ['cartella/sotto/IMG_9.heic', 'IMG_9.jpg'],
+    ['cartella\\sotto\\IMG_9.heic', 'IMG_9.jpg'],
+  ])('«%s» → «%s»', (nome, atteso) => {
+    expect(nomeFotoJpeg(nome)).toBe(atteso)
+  })
+})
+
+describe('riga 2 — file ricevuti DAL SELETTORE NATIVO (`elementiRicevuti`)', () => {
+  it('la stessa riga di `fileRicevuti`, dallo stesso riepilogo: forma, livello, campi', () => {
+    const t = new TracciaSelettore()
+    t.apri('selettore-nativo', 'app')
+    vi.advanceTimersByTime(7_000)
+    t.elementiRicevuti({ n: 3, nVideo: 2, nFoto: 1, byteTotali: 73_000_000, mime: 'misto' })
+
+    const [riga] = soloQuelle('gallery-selettore-file-ricevuti')
+    expect(riga.livello).toBe('warn')
+    expect(riga.evento).toBe('js')
+    expect(riga.messaggio).toBe('gallery-selettore-file-ricevuti mime=misto attesa=5-30s tardivo=no')
+    expect(riga.campi).toEqual({ n: 3, n_video: 2, n_foto: 1, byte_totali: 73_000_000, ms_da_apertura: 7_000 })
+  })
+
+  it('PARITÀ: `fileRicevuti` e `elementiRicevuti` scrivono la stessa riga per gli stessi dati', () => {
+    const scrivi = (azione: (t: TracciaSelettore) => void) => {
+      h.logClient.mockClear()
+      const t = new TracciaSelettore()
+      t.apri('selettore-nativo', 'app')
+      vi.advanceTimersByTime(2_500)
+      azione(t)
+      return soloQuelle('gallery-selettore-file-ricevuti')[0]
+    }
+    const dai = scrivi((t) => t.fileRicevuti([file('a.jpg', 'image/jpeg', 100), file('b.mp4', 'video/mp4', 200)]))
+    const dal = scrivi((t) => t.elementiRicevuti({ n: 2, nVideo: 1, nFoto: 1, byteTotali: 300, mime: 'misto' }))
+    expect(dal).toEqual(dai)
+  })
+
+  it('un riepilogo VUOTO non scrive niente (una scelta senza elementi è «chiuso senza file»)', () => {
+    const t = new TracciaSelettore()
+    t.apri('selettore-nativo', 'app')
+    t.elementiRicevuti({ n: 0, nVideo: 0, nFoto: 0, byteTotali: 0, mime: 'video' })
+    expect(soloQuelle('gallery-selettore-file-ricevuti')).toEqual([])
+  })
+
+  it('senza un’apertura non scrive niente (come `fileRicevuti`)', () => {
+    new TracciaSelettore().elementiRicevuti({ n: 1, nVideo: 1, nFoto: 0, byteTotali: 5, mime: 'video' })
+    expect(righe()).toEqual([])
+  })
+
+  it('arriva una volta sola: una seconda consegna senza una nuova apertura non riscrive la riga', () => {
+    const t = new TracciaSelettore()
+    t.apri('file-nativo', 'app')
+    const r = { n: 1, nVideo: 1, nFoto: 0, byteTotali: 5, mime: 'video' as const }
+    t.elementiRicevuti(r)
+    t.elementiRicevuti(r)
+    expect(soloQuelle('gallery-selettore-file-ricevuti')).toHaveLength(1)
+  })
+
+  it('con un ritorno della pagina (Android: l’attività del selettore) porta `ms_da_ritorno` = il tempo di preparazione', () => {
+    const t = new TracciaSelettore()
+    t.apri('selettore-nativo', 'app')
+    vi.advanceTimersByTime(3_000)
+    t.ritorno()
+    vi.advanceTimersByTime(40_000)
+    t.elementiRicevuti({ n: 1, nVideo: 1, nFoto: 0, byteTotali: 5, mime: 'video' })
+    const [riga] = soloQuelle('gallery-selettore-file-ricevuti')
+    expect(riga.messaggio).toBe('gallery-selettore-file-ricevuti mime=video attesa=30s-2m tardivo=no')
+    expect(riga.campi).toMatchObject({ ms_da_apertura: 43_000, ms_da_ritorno: 40_000 })
+  })
+})
+
+describe('riga 3 — chiuso senza file DAL SELETTORE NATIVO (`annullatoNativo`)', () => {
+  it.each(['selettore-nativo', 'file-nativo'] as const)('strada %s: `motivo=annullato-nativo`, con la fascia e `ms_da_apertura`', (strada) => {
+    const t = new TracciaSelettore()
+    t.apri(strada, 'app')
+    vi.advanceTimersByTime(2_000)
+    t.annullatoNativo()
+    expect(righe()).toEqual([
+      { livello: 'warn', evento: 'js', messaggio: `gallery-selettore-aperto strada=${strada} ambiente=app` },
+      { livello: 'warn', evento: 'js', messaggio: 'gallery-selettore-chiuso-senza-file motivo=annullato-nativo attesa=1-5s', campi: { ms_da_apertura: 2_000 } },
+    ])
+  })
+
+  it.each(['selettore-file', 'fotocamera-nativa'] as const)('NON vale per la strada %s: quelle hanno i loro motivi', (strada) => {
+    const t = new TracciaSelettore()
+    t.apri(strada, 'app')
+    t.annullatoNativo()
+    expect(soloQuelle('gallery-selettore-chiuso-senza-file')).toEqual([])
+  })
+
+  it('scrive una volta sola, e senza un’apertura non scrive niente', () => {
+    new TracciaSelettore().annullatoNativo()
+    expect(righe()).toEqual([])
+    const t = new TracciaSelettore()
+    t.apri('selettore-nativo', 'app')
+    t.annullatoNativo()
+    t.annullatoNativo()
+    expect(soloQuelle('gallery-selettore-chiuso-senza-file')).toHaveLength(1)
+  })
+
+  it('e viceversa: `annullatoFotocamera` e `cancel` non chiudono una strada nativa del selettore', () => {
+    const t = new TracciaSelettore()
+    t.apri('selettore-nativo', 'app')
+    t.annullatoFotocamera()
+    t.cancel()
+    expect(soloQuelle('gallery-selettore-chiuso-senza-file')).toEqual([])
+  })
+
+  it('per le strade native a dire come è finita è la PROMISE: il ritorno della pagina NON apre nessun timer dei 15 secondi', () => {
+    const t = new TracciaSelettore()
+    t.apri('selettore-nativo', 'app')
+    t.ritorno()
+    vi.advanceTimersByTime(60_000)
+    expect(soloQuelle('gallery-selettore-chiuso-senza-file'), 'una preparazione lunga non è un «ritorno senza file»').toEqual([])
+    expect(vi.getTimerCount()).toBe(0)
+
+    const u = new TracciaSelettore()
+    u.apri('file-nativo', 'app')
+    u.ritorno()
+    vi.advanceTimersByTime(60_000)
+    expect(soloQuelle('gallery-selettore-chiuso-senza-file')).toEqual([])
+  })
+
+  it('i file che arrivano DOPO l’annullamento sono `tardivo=si` (la sessione resta aperta, come per la fotocamera)', () => {
+    const t = new TracciaSelettore()
+    t.apri('selettore-nativo', 'app')
+    t.annullatoNativo()
+    t.elementiRicevuti({ n: 1, nVideo: 1, nFoto: 0, byteTotali: 5, mime: 'video' })
+    expect(messaggi().at(-1)).toMatch(/file-ricevuti mime=video attesa=<1s tardivo=si$/)
+  })
+})
+
+describe('MAI il nome, un id o un hash: la strada nativa scrive solo numeri e codici', () => {
+  it('un percorso nativo completo: forme dell’elenco chiuso, campi tutti numeri interi, livello warn', () => {
+    const t = new TracciaSelettore()
+    t.apri('selettore-nativo', 'app')
+    t.annullatoNativo()
+    t.apri('file-nativo', 'app')
+    vi.advanceTimersByTime(12_000)
+    t.elementiRicevuti(riepilogaElementiNativi([
+      videoN({ nome: `${NOME_BAMBINO}.mov`, id: 'video-segreto' }),
+      fotoN({ nome: `${NOME_BAMBINO}.HEIC` }),
+      rifN('troppo-grande'),
+    ]))
+    expect(soloQuelle('gallery-selettore-aperto')).toHaveLength(2)
+    expect(soloQuelle('gallery-selettore-chiuso-senza-file')).toHaveLength(1)
+    expect(soloQuelle('gallery-selettore-file-ricevuti')).toHaveLength(1)
+
+    for (const riga of righe()) {
+      expect(riga.messaggio, `forma non ammessa: «${riga.messaggio}»`).toMatch(FORMA_MESSAGGIO)
+      expect(riga.livello).toBe('warn')
+      for (const [chiave, valore] of Object.entries(riga.campi ?? {})) {
+        expect(typeof valore, `il campo ${chiave} non è un numero`).toBe('number')
+      }
+    }
+    const tutto = JSON.stringify(h.logClient.mock.calls)
+    for (const pezzo of [NOME_BAMBINO, 'Pinco', 'Natale', '.mov', '.HEIC', 'segreto', SHA]) {
+      expect(tutto, `«${pezzo}» è finito in un log`).not.toContain(pezzo)
+    }
   })
 })

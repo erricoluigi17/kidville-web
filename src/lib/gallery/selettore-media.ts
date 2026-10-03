@@ -1,4 +1,5 @@
 import { logClient, nomeErrore } from '@/lib/logging/client'
+import type { ElementoScelto, ElementoVideoScelto, MotivoRifiuto } from '@/lib/native/caricamenti-nativi-tipi'
 import { mimeBase } from './limiti'
 
 /**
@@ -52,6 +53,20 @@ import { mimeBase } from './limiti'
  *  5. NON LANCIA MAI (regola 9 di AGENTS.md). Il selettore è la funzione che si sta
  *     diagnosticando: un bug dell'osservabilità non può impedire di scegliere un file. Ogni
  *     metodo pubblico passa da `sicuro`, che registra il guasto invece di inghiottirlo.
+ *
+ * ─── DAL 03/10/2026: LA STRADA NATIVA (app 1.2, spec «caricamenti nativi» §7.2) ──────────────────
+ *
+ * Sull'app 1.2 la scelta non passa più dall'`<input>` del browser: la fa il plugin nostro
+ * (`scegliMedia`), che prepara gli elementi PRIMA di rispondere. Le tre righe restano le stesse, con
+ * due strade nuove — `selettore-nativo` («Scegli foto e video dalla galleria») e `file-nativo`
+ * («Scegli da File») — e un motivo nuovo, `annullato-nativo`: il selettore di sistema chiuso senza
+ * scelta, oppure «Annulla» premuto durante la preparazione. Cambia COME si sa che è finita:
+ *  · l'evento `cancel` dell'`<input>` non c'entra (il selettore non è l'`<input>`) e il ritorno della
+ *    pagina non apre nessun timer da 15 secondi: a dire come è andata è la PROMISE di `scegliMedia`,
+ *    come per la fotocamera nativa. Per questo `cancel()` e `ritorno()` guardano solo `selettore-file`;
+ *  · i file non sono `File`: arrivano come elementi nativi (`riepilogaElementiNativi`) e la riga dei
+ *    file si scrive da un riepilogo (`elementiRicevuti`), senza costruire niente.
+ * Sempre MAI il nome: il plugin consegna anche quello (serve a mostrarlo a schermo), e qui non entra.
  */
 
 /**
@@ -82,9 +97,9 @@ export const MAX_ELEMENTI_PER_SCELTA = 50
  */
 export const ATTESA_FILE_DOPO_RITORNO_MS = 15_000
 
-export type StradaSelettore = 'selettore-file' | 'fotocamera-nativa'
+export type StradaSelettore = 'selettore-file' | 'fotocamera-nativa' | 'selettore-nativo' | 'file-nativo'
 export type AmbienteSelettore = 'app' | 'web'
-export type MotivoChiusura = 'cancel' | 'ritorno-senza-file' | 'annullato-fotocamera'
+export type MotivoChiusura = 'cancel' | 'ritorno-senza-file' | 'annullato-fotocamera' | 'annullato-nativo'
 export type MimeScelta = 'image' | 'video' | 'misto'
 export type FasciaAttesa = '<1s' | '1-5s' | '5-30s' | '30s-2m' | '>2m'
 
@@ -104,13 +119,141 @@ export function fasciaAttesa(ms: number): FasciaAttesa {
 }
 
 /**
+ * Quanti posti restano, dato quanti elementi ci sono già: da 0 a `MAX_ELEMENTI_PER_SCELTA`. È il numero
+ * che il selettore nativo riceve come `massimoElementi` (e a 0 i pulsanti si spengono: il ponte
+ * rifiuta un massimo sotto 1) e che `limitaElementi` applica: una formula sola.
+ */
+export function postiRimasti(giaScelti: number): number {
+  return Math.max(0, MAX_ELEMENTI_PER_SCELTA - Math.max(0, giaScelti))
+}
+
+/**
  * Quanti elementi di una nuova scelta entrano, dato quanti ce n'erano già: i primi, finché c'è
  * posto. `scartati` è il numero di quelli rimasti fuori — il solo dato che finisce nel log.
  */
 export function limitaElementi<T>(nuovi: readonly T[], giaScelti: number): { tenuti: T[]; scartati: number } {
-  const posti = Math.max(0, MAX_ELEMENTI_PER_SCELTA - Math.max(0, giaScelti))
-  const tenuti = nuovi.slice(0, posti)
+  const tenuti = nuovi.slice(0, postiRimasti(giaScelti))
   return { tenuti, scartati: nuovi.length - tenuti.length }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * L'ELEMENTO CARICABILE: un `File` (web, app 1.0/1.1, ripiego del browser) oppure un video NATIVO
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Il video scelto dal selettore nativo, com'è consegnato dal plugin: già copiato nella cartella
+ * persistente del telefono, con lo `sha256` dei byte che partiranno, la durata e la miniatura. NON ha
+ * un `File`: i suoi byte non entrano mai in JavaScript (spec §2.2, «Registro dei trasporti»).
+ */
+export type ElementoVideoNativo = ElementoVideoScelto
+
+/**
+ * CIÒ CHE LA GALLERIA PUÒ PORTARE AL PASSO DEI BAMBINI (spec §7.3).
+ *
+ * Due forme e non una con un campo facoltativo: il compilatore costringe ogni lettura di `f.file.…`
+ * a decidere che cosa fare di un video nativo, che un `File` non ce l'ha. Un `File` va SEMPRE in TUS;
+ * un video nativo va al plugin (`avviaVideoNativo`, J3): il trasporto lo decide l'ORIGINE
+ * dell'elemento, non `scegliTrasporto()`.
+ *
+ * `preview` è un objectURL (da revocare) per un `File`, e la miniatura JPEG in data URL (niente da
+ * revocare) per un nativo — vuota se il sistema non ha saputo farla.
+ */
+export type ElementoCaricabile =
+  | { file: File; preview: string; nativo?: undefined }
+  | { file: null; preview: string; nativo: ElementoVideoNativo }
+
+/** Il nome da mostrare a schermo: mai in un log. */
+export function nomeElemento(elemento: ElementoCaricabile): string {
+  return elemento.file !== null ? elemento.file.name : elemento.nativo.nome
+}
+
+/** Gli identificativi dei soli elementi nativi: sono ciò che `scartaScelti` vuole. */
+export function idNativi(elementi: readonly ElementoCaricabile[]): string[] {
+  return elementi.flatMap((elemento) => (elemento.nativo ? [elemento.nativo.id] : []))
+}
+
+/**
+ * Le sei ragioni per cui un elemento NON entra, ciascuna con la sua frase di catalogo (`shared`). Le
+ * chiavi stanno scritte per esteso, non composte da `mediaRifiuto${motivo}`: il lock
+ * `messaggi-chiavi-orfane` cerca il NOME della chiave nel sorgente, e una chiave costruita da un dato
+ * gli è invisibile. Il tipo `Record<MotivoRifiuto, …>` fa sì che un motivo nuovo senza la sua frase non
+ * compili.
+ */
+export const CHIAVE_RIFIUTO = {
+  'troppo-grande': 'mediaRifiutoTroppoGrande',
+  'troppo-lungo': 'mediaRifiutoTroppoLungo',
+  'formato-non-supportato': 'mediaRifiutoFormatoNonSupportato',
+  illeggibile: 'mediaRifiutoIlleggibile',
+  'spazio-insufficiente': 'mediaRifiutoSpazioInsufficiente',
+  'icloud-non-disponibile': 'mediaRifiutoIcloudNonDisponibile',
+} as const satisfies Record<MotivoRifiuto, string>
+
+/**
+ * I nomi con cui i motivi di rifiuto stanno nei `campi` di un log: la chiave di un campo è
+ * `^[a-z][a-z0-9_]{0,31}$` (la porta `/api/logs` scarta il resto), quindi i trattini degli slug dei
+ * motivi diventano trattini bassi.
+ */
+export type CampoRifiuto =
+  | 'troppo_grande'
+  | 'troppo_lungo'
+  | 'formato_non_supportato'
+  | 'illeggibile'
+  | 'spazio_insufficiente'
+  | 'icloud_non_disponibile'
+
+const CAMPO_RIFIUTO = {
+  'troppo-grande': 'troppo_grande',
+  'troppo-lungo': 'troppo_lungo',
+  'formato-non-supportato': 'formato_non_supportato',
+  illeggibile: 'illeggibile',
+  'spazio-insufficiente': 'spazio_insufficiente',
+  'icloud-non-disponibile': 'icloud_non_disponibile',
+} as const satisfies Record<MotivoRifiuto, CampoRifiuto>
+
+/**
+ * Quanti elementi rifiutati per ciascun motivo, TUTTI e sei i motivi anche a zero: sono i `campi` della
+ * riga `selettore-nativo-rifiutati` (solo numeri), e una forma fissa si interroga in SQL senza `COALESCE`.
+ */
+export type ContiRifiuti = Record<CampoRifiuto, number>
+
+export function contaRifiutiPerMotivo(elementi: readonly ElementoScelto[]): ContiRifiuti {
+  const conti: ContiRifiuti = {
+    troppo_grande: 0,
+    troppo_lungo: 0,
+    formato_non_supportato: 0,
+    illeggibile: 0,
+    spazio_insufficiente: 0,
+    icloud_non_disponibile: 0,
+  }
+  for (const elemento of elementi) {
+    if (elemento.tipo === 'rifiutato') conti[CAMPO_RIFIUTO[elemento.motivo]]++
+  }
+  return conti
+}
+
+/**
+ * La durata di un video come `m:ss` (`52` → `0:52`, `300` → `5:00`). `null` — o un valore che non è un
+ * tempo — vale «non si sa»: il chiamante omette la durata invece di scrivere `0:00`. Il tetto è di 5
+ * minuti (`MAX_VIDEO_DURATION_SECONDS`), quindi i minuti non diventano mai ore.
+ */
+export function formattaDurata(secondi: number | null): string | null {
+  if (secondi === null || !Number.isFinite(secondi) || secondi < 0) return null
+  const totale = Math.round(secondi)
+  const minuti = Math.floor(totale / 60)
+  const resto = totale % 60
+  return `${minuti}:${resto < 10 ? '0' : ''}${resto}`
+}
+
+/**
+ * Il nome del `File` JPEG di una foto scelta dal selettore nativo: il nome che il sistema ha dato, senza
+ * la sua estensione (una HEIC è diventata un JPEG) e con `.jpg`. Solo l'ultimo segmento: un nome non è
+ * un percorso. Un nome vuoto vale `foto`. È il nome che finisce a schermo e nella didascalia della foto
+ * (come un file del browser), mai in un log.
+ */
+export function nomeFotoJpeg(nome: string): string {
+  const ultimo = nome.split(/[\\/]/).pop() ?? ''
+  const base = ultimo.replace(/\.[^.]{1,8}$/, '').trim()
+  return `${base === '' ? 'foto' : base}.jpg`
 }
 
 export interface RiepilogoFile {
@@ -139,6 +282,31 @@ export function riepilogaFile(files: readonly File[]): RiepilogoFile {
     if (typeof peso === 'number' && Number.isFinite(peso) && peso > 0) byteTotali += peso
   }
   const n = files.length
+  const mime: MimeScelta = nVideo === n ? 'video' : nFoto === n ? 'image' : 'misto'
+  return { n, nVideo, nFoto, byteTotali, mime }
+}
+
+/**
+ * Il riepilogo di una scelta NATIVA, senza `File` (la riga dei file la scrive `elementiRicevuti`). Conta
+ * ciò che il selettore ha CONSEGNATO, rifiutati compresi: «i file sono arrivati» vale anche se il
+ * plugin ne ha scartati alcuni (per `origine`, che dice se erano foto o video; `altro` conta in `n` e
+ * rende `misto`, come un file di tipo ignoto nel riepilogo del browser).
+ *
+ * ⚠️ `byteTotali` somma i soli elementi ACCETTATI, e per una foto è il peso DOPO la riduzione del
+ * plugin (JPEG ≤ 1920 px): è ciò che la schermata porterà davvero, mentre nel riepilogo del browser
+ * sono i byte dell'originale. Dei rifiutati il peso non si conosce.
+ */
+export function riepilogaElementiNativi(elementi: readonly ElementoScelto[]): RiepilogoFile {
+  let nVideo = 0
+  let nFoto = 0
+  let byteTotali = 0
+  for (const elemento of elementi) {
+    const tipo = elemento.tipo === 'rifiutato' ? elemento.origine : elemento.tipo
+    if (tipo === 'video') nVideo++
+    else if (tipo === 'foto') nFoto++
+    if (elemento.tipo !== 'rifiutato' && Number.isFinite(elemento.byte) && elemento.byte > 0) byteTotali += elemento.byte
+  }
+  const n = elementi.length
   const mime: MimeScelta = nVideo === n ? 'video' : nFoto === n ? 'image' : 'misto'
   return { n, nVideo, nFoto, byteTotali, mime }
 }
@@ -175,10 +343,12 @@ interface Sessione {
  * contemporanee non esistono.
  *
  * Chi la usa le dice cosa succede, e nient'altro:
- *  · `apri` — l'insegnante ha toccato il riquadro o «Scatta una foto»;
+ *  · `apri` — l'insegnante ha toccato il riquadro, «Scatta una foto» o uno dei due pulsanti nativi;
  *  · `fileRicevuti` — i file sono arrivati (dall'`<input>` o dalla fotocamera);
+ *    `elementiRicevuti` — gli elementi sono arrivati dal selettore nativo (un riepilogo, senza `File`);
  *  · `cancel` — l'`<input>` ha emesso `cancel`; `annullatoFotocamera` — il foglio nativo è stato
- *    chiuso senza foto e senza errore;
+ *    chiuso senza foto e senza errore; `annullatoNativo` — il selettore nativo è stato chiuso senza
+ *    scelta, o «Annulla» è stato premuto durante la preparazione;
  *  · `ritorno` — la pagina è tornata in primo piano; `chiudi` — il componente si smonta.
  */
 export class TracciaSelettore {
@@ -198,28 +368,16 @@ export class TracciaSelettore {
    * si scrive niente: la riga dice «il selettore ha consegnato», e qui non c'è stato nessun selettore.
    */
   fileRicevuti(files: readonly File[]): void {
-    this.sicuro(() => {
-      const s = this.sessione
-      if (s === null || files.length === 0) return
-      // La sessione si chiude PRIMA di leggere i file: se la lettura lancia, il timer dei 15 secondi
-      // non deve poter scrivere `ritorno-senza-file` per file che sono arrivati.
-      this.termina()
-      const ora = Date.now()
-      const dallApertura = ms(ora - s.apertoIl)
-      const r = riepilogaFile(files)
-      const campi: Record<string, number> = {
-        n: r.n,
-        n_video: r.nVideo,
-        n_foto: r.nFoto,
-        byte_totali: r.byteTotali,
-        ms_da_apertura: dallApertura,
-      }
-      if (s.ritornoIl !== null) campi.ms_da_ritorno = ms(ora - s.ritornoIl)
-      scrivi(
-        `gallery-selettore-file-ricevuti mime=${r.mime} attesa=${fasciaAttesa(dallApertura)} tardivo=${s.chiusa ? 'si' : 'no'}`,
-        campi,
-      )
-    })
+    this.sicuro(() => this.registraRicevuti(files.length, () => riepilogaFile(files)))
+  }
+
+  /**
+   * Gli elementi del selettore NATIVO sono arrivati: la stessa riga di `fileRicevuti`, da un riepilogo
+   * (`riepilogaElementiNativi`) invece che da dei `File`, che il nativo non consegna. Un riepilogo vuoto
+   * non scrive niente: una scelta senza elementi è «chiuso senza file», non «ricevuti».
+   */
+  elementiRicevuti(riepilogo: RiepilogoFile): void {
+    this.sicuro(() => this.registraRicevuti(riepilogo.n, () => riepilogo))
   }
 
   /** L'`<input>` ha emesso `cancel`: l'utente ha chiuso il selettore senza scegliere. */
@@ -241,10 +399,26 @@ export class TracciaSelettore {
   }
 
   /**
+   * Il selettore NATIVO (galleria o «Scegli da File») è stato chiuso senza scelta, oppure «Annulla» è
+   * stato premuto durante la preparazione: `scegliMedia` ha risposto `annullato`. Vale solo per le due
+   * strade native, come `annullatoFotocamera` vale solo per la fotocamera.
+   */
+  annullatoNativo(): void {
+    this.sicuro(() => {
+      const s = this.sessione
+      if (s === null || s.chiusa || (s.strada !== 'selettore-nativo' && s.strada !== 'file-nativo')) return
+      this.chiudiSenzaFile(s, 'annullato-nativo', Date.now() - s.apertoIl)
+    })
+  }
+
+  /**
    * La pagina è tornata in primo piano. Conta solo il PRIMO ritorno dopo l'apertura (i successivi
    * non spostano né il riferimento di `ms_da_ritorno` né il timer). Il timer dei 15 secondi parte
-   * solo per il selettore di file: per la fotocamera nativa a dire come è finita è la sua promise,
-   * non il ritorno della pagina.
+   * solo per il selettore di file: per la fotocamera nativa e per il selettore nativo a dire come è
+   * finita è la loro promise, non il ritorno della pagina. (Dove la pagina se ne va e torna davvero —
+   * l'attività del selettore su Android — `ms_da_ritorno` misura il tempo di PREPARAZIONE dopo la
+   * chiusura del selettore di sistema; dove non succede, come per un foglio che resta nella stessa
+   * app, il campo manca e basta.)
    */
   ritorno(): void {
     this.sicuro(() => {
@@ -268,6 +442,30 @@ export class TracciaSelettore {
   /** Il componente si smonta: nessun timer deve sopravvivergli. */
   chiudi(): void {
     this.sicuro(() => this.termina())
+  }
+
+  /** Scrive «file ricevuti» da un riepilogo che si calcola DOPO aver chiuso la sessione (vedi sotto). */
+  private registraRicevuti(n: number, riepiloga: () => RiepilogoFile): void {
+    const s = this.sessione
+    if (s === null || n === 0) return
+    // La sessione si chiude PRIMA di leggere i file: se la lettura lancia, il timer dei 15 secondi
+    // non deve poter scrivere `ritorno-senza-file` per file che sono arrivati.
+    this.termina()
+    const ora = Date.now()
+    const dallApertura = ms(ora - s.apertoIl)
+    const r = riepiloga()
+    const campi: Record<string, number> = {
+      n: r.n,
+      n_video: r.nVideo,
+      n_foto: r.nFoto,
+      byte_totali: r.byteTotali,
+      ms_da_apertura: dallApertura,
+    }
+    if (s.ritornoIl !== null) campi.ms_da_ritorno = ms(ora - s.ritornoIl)
+    scrivi(
+      `gallery-selettore-file-ricevuti mime=${r.mime} attesa=${fasciaAttesa(dallApertura)} tardivo=${s.chiusa ? 'si' : 'no'}`,
+      campi,
+    )
   }
 
   /** Scrive «chiuso senza file». La sessione RESTA aperta: se i file arrivano dopo sono `tardivo=si`. */

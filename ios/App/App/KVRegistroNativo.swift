@@ -32,7 +32,11 @@ import os
 //    scrive da sola `coda-nativa-corrotta` e i `video-nativo-fallito` dei token scaduti trovati dalla pulizia;
 //  · a ogni `accodaVideo`: `impostaDestinazione(<registro.url>)` (rifiuta ciò che non è un host ammesso);
 //  · a ogni transizione terminale, all'avvio e al ritorno in primo piano: `svuota(completamento:)`, e il completamento della
-//    sessione in background si chiama DOPO quello del registro.
+//    sessione in background si chiama DOPO quello del registro;
+//  · lo svuotamento che CHIUDE il lavoro di una sessione in background è l'unico che passa `forza: true` (D1 del collaudo C1): salta i
+//    10 secondi di cortesia (se l'avvio ne ha già consumato la finestra, i log di ciò che è appena successo aspetterebbero un'app che
+//    il sistema sospende subito dopo) ma non un `Retry-After` del server; e se un lotto è ancora in volo, il suo completamento aspetta la
+//    fine di quel lotto e di un ultimo tentativo.
 //
 // Questo file importa solo `Foundation` e `os`: si compila nell'harness `ios/prove/caricamenti/`.
 
@@ -322,9 +326,10 @@ final class KVTrasportoRegistroRete: KVTrasportoRegistro {
 enum KVEsitoSvuotamento: Equatable {
     /// Niente da spedire (registro vuoto o destinazione ancora ignota).
     case nulla
-    /// Meno di 10 secondi dall'ultimo invio (o `Retry-After` in corso): riprovare fra `attesa` secondi.
+    /// Meno di 10 secondi dall'ultimo invio (o `Retry-After` in corso): riprovare fra `attesa` secondi. Con `forza` restano solo i secondi che
+    /// il server ha chiesto con un 429.
     case troppoPresto(attesa: TimeInterval)
-    /// Un invio è già in volo.
+    /// Un invio è già in volo. Con `forza` il completamento non scatta subito: aspetta la fine di quel lotto (e di un ultimo tentativo).
     case giaInCorso
     /// Un lotto di `eventi` eventi è partito.
     case spedito(eventi: Int)
@@ -373,7 +378,14 @@ final class KVRegistroNativo {
     /// non scrive; `riprovaLettura()` lo rilegge e fonde.
     private var illeggibileAdesso = false
     private var invioInCorso = false
+    /// Non si spedisce prima di questo istante: i 10 secondi dall'ultimo invio, e (se più lungo) il `Retry-After` di un 429.
     private var nonPrimaDi = Date.distantPast
+    /// Il solo pezzo di `nonPrimaDi` che viene dal SERVER (`Retry-After` di un 429). I 10 secondi sono una nostra cortesia verso la porta dei log, e lo
+    /// svuotamento finale di una sessione in background (`forza`) li salta; ciò che il server ha chiesto di aspettare no.
+    private var nonPrimaDiPerIlServer = Date.distantPast
+    /// I completamenti di chi ha chiesto lo svuotamento FINALE (`forza`) mentre un lotto era in volo: alla fine di quel lotto si prova a spedire ciò
+    /// che è nato nel frattempo, e solo dopo scattano. Si tengono sotto la serratura.
+    private var finaliInAttesa: [() -> Void] = []
     private let diagnostica = Logger(subsystem: Bundle.main.bundleIdentifier ?? "it.kidville.app", category: "caricamenti-registro")
 
     /// `versioneApp` è `<versione>+<build>` (`1.2+6`): se non ha questa forma il campo `versione_app` non parte (il server lo
@@ -601,18 +613,32 @@ final class KVRegistroNativo {
     /// Spedisce UN lotto (al più 20 eventi dello stesso utente), se non ne è partito uno meno di 10 secondi fa e se si sa dove spedire. Si
     /// chiama a ogni transizione terminale, all'avvio e al ritorno in primo piano. `completamento` viene chiamato quando l'invio è finito
     /// (o subito, se non parte niente): il motore lo usa per chiudere il lavoro in background solo dopo.
+    ///
+    /// `forza` è dello svuotamento che CHIUDE il lavoro di una sessione in background, e di nessun altro (D1 del collaudo C1): il sistema sospende
+    /// l'app subito dopo il completamento, quindi ciò che non è partito prima non parte per minuti (nella prova, 4'22" dopo, alla riapertura).
+    ///  · ignora i 10 secondi di cortesia (l'avvio dell'app ne ha già consumato la finestra, e i log dell'esito arrivano subito dopo), ma NON il
+    ///    `Retry-After` di un 429: quello è ciò che il server ha chiesto, non una nostra cortesia;
+    ///  · se un lotto è già in volo il completamento NON scatta subito: alla fine di quel lotto si prova a spedire ciò che è nato nel frattempo (un
+    ///    lotto composto prima non lo contiene) e solo dopo scatta. Un lotto che non risponde lo chiude il tempo massimo del trasporto, e la guardia
+    ///    di tempo della sessione resta sopra a tutto.
     @discardableResult
-    func svuota(adesso: Date? = nil, completamento: (() -> Void)? = nil) -> KVEsitoSvuotamento {
+    func svuota(adesso: Date? = nil, forza: Bool = false, completamento: (() -> Void)? = nil) -> KVEsitoSvuotamento {
         let ora = adesso ?? orologio()
         riprovaLettura()
         serratura.lock()
         if invioInCorso {
+            if forza, let completamento = completamento {
+                finaliInAttesa.append(completamento)
+                serratura.unlock()
+                return .giaInCorso
+            }
             serratura.unlock()
             completamento?()
             return .giaInCorso
         }
-        if ora < nonPrimaDi {
-            let attesa = nonPrimaDi.timeIntervalSince(ora)
+        let nonPrima = forza ? nonPrimaDiPerIlServer : nonPrimaDi
+        if ora < nonPrima {
+            let attesa = nonPrima.timeIntervalSince(ora)
             serratura.unlock()
             completamento?()
             return .troppoPresto(attesa: attesa)
@@ -667,8 +693,20 @@ final class KVRegistroNativo {
         trasporto.invia(KVRichiestaRegistro(url: url, utenteId: utente, corpo: dati)) { [weak self] risposta in
             self?.concludi(progressivi: progressivi, risposta: risposta)
             completamento?()
+            self?.riprendiGliSvuotamentiFinali()
         }
         return .spedito(eventi: lotto.count)
+    }
+
+    /// Alla fine di un lotto: chi aveva chiesto lo svuotamento FINALE mentre quel lotto era in volo riprova UNA volta (con `forza`) a spedire ciò che nel
+    /// frattempo è nato, e il suo completamento scatta quando anche quel tentativo è finito (subito, se non c'è più niente da spedire).
+    private func riprendiGliSvuotamentiFinali() {
+        serratura.lock()
+        let attesi = finaliInAttesa
+        finaliInAttesa = []
+        serratura.unlock()
+        guard !attesi.isEmpty else { return }
+        svuota(forza: true, completamento: { attesi.forEach { $0() } })
     }
 
     private func campiDi(_ campi: [KVCampo]) -> [String: KVValoreCampo] {
@@ -694,6 +732,7 @@ final class KVRegistroNativo {
                 let secondi = KVPoliticaCaricamento.secondiRetryAfter(retryAfter, adesso: ora) ?? 0
                 let attesa = min(secondi, KVPoliticaCaricamento.tettoRetryAfterSecondi)
                 nonPrimaDi = max(nonPrimaDi, ora.addingTimeInterval(attesa))
+                nonPrimaDiPerIlServer = max(nonPrimaDiPerIlServer, ora.addingTimeInterval(attesa))
             } else if (400...499).contains(codice) {
                 // Un lotto che il server rifiuta oggi lo rifiuterebbe domani: si butta, e si conta.
                 let prima = eventi.count

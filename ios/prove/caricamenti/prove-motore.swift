@@ -30,6 +30,7 @@ func provaMotore() {
         ("RinnovoDuplicatoENegato", provaMotoreRinnovoDuplicatoENegato),
         ("RotazioneDelToken", provaMotoreRotazioneDelToken),
         ("RinnovoLimitatoOTransitorio", provaMotoreRinnovoLimitatoOTransitorio),
+        ("RinnovoCadutoPerLaRete", provaMotoreRinnovoCadutoPerLaRete),
         ("RinnovoCiclico", provaMotoreRinnovoCiclico),
         ("Transitori", provaMotoreTransitori),
         ("SogliaDiS0", provaMotoreSogliaDiS0),
@@ -39,6 +40,7 @@ func provaMotore() {
         ("BackgroundENotifica", provaMotoreBackgroundENotifica),
         ("Rete", provaMotoreRete),
         ("Ricollega", provaMotoreRicollega),
+        ("SvuotamentoFinale", provaMotoreSvuotamentoFinale),
         ("AvvioERiconciliazione", provaMotoreAvvioERiconciliazione),
         ("CodaIllegibile", provaMotoreCodaIllegibile),
         ("AccodamentoRifiuti", provaMotoreAccodamentoRifiuti),
@@ -327,7 +329,9 @@ func provaMotoreRinnovoLimitatoOTransitorio() {
     b2.rispondiRinnovo(rinnovoSenzaRete)
     verificaUguali("secondo giro: rinnovo senza risposta → log `rete`", b2.eventi("video-nativo-rinnovo").last?.messaggio, messaggio("video-nativo-rinnovo", job: 1, "rete"))
     verificaUguali("… e aspetta 60 secondi (secondo tentativo)", b2.voce(1)?.prossimoTentativoIl, t0.addingTimeInterval(30 + 60))
-    verificaTutto("… ancora viva, con la causa nel codice", [b2.stato(1), b2.voce(1)?.codice], ["inAttesa", "firmaRifiutata"])
+    // D3 (collaudo C1): una rete che manca vale `RETE` anche dopo una PUT rifiutata — prima restava `FIRMA_RIFIUTATA` e nessuno vedeva che mancava la rete. La
+    // causa (la PUT rifiutata) non sta più nel codice ma il motore la ricorda: lo prova il «conta come dopo una PUT rifiutata» del quarto giro, qui sotto.
+    verificaTutto("… ancora viva, e aspetta come RETE (nessuna risposta HTTP): la causa non è più nel codice, ma si ricorda (vedi il quarto giro)", [b2.stato(1), b2.voce(1)?.codice], ["inAttesa", "rete"])
     b2.avanza(60)
     b2.rispondiRinnovo(KVEsitoRinnovoRete(statoHTTP: 200, corpo: Data("non è JSON".utf8), retryAfter: nil))
     verificaTutto("terzo giro: 200 ma fuori schema → transitorio, mai un'azione: nessuna PUT, e (tentativo 3) nessuna riga nuova nel log, che si dirada come quello dei ritentativi",
@@ -1038,6 +1042,287 @@ func provaMotoreRicollega() {
     b7.attendi()
     b7.giraIlMain()
     verificaUguali("… e scatta quando arrivano", c7, 1)
+}
+
+// MARK: - D1 del collaudo C1: lo svuotamento FINALE di una sessione in background
+
+/// Un processo lanciato in background dal sistema (come `bancoDiUnRilancio`), ma col registro dei log che RISPONDE: `risposte` sono le risposte del server
+/// ai lotti, in ordine (poi 200), e `sincrono` dice se arrivano subito o a comando (`trasportoLog.rispondiAlSospeso()`). L'avvio spedisce subito il suo lotto
+/// (`rilancio-background`): ne consuma la finestra dei 10 secondi, com'è nel collaudo S6.
+private func bancoDiUnRilancioConLogChePartono(sincrono: Bool = true, risposte: [KVRispostaRegistro] = []) -> BancoMotore {
+    return BancoMotore(inBackground: true, inPrimoPiano: false) { b in
+        b.trasportoLog.rispostaPredefinita = .stato(200, retryAfter: nil)
+        b.trasportoLog.risposte = risposte
+        b.trasportoLog.sincrono = sincrono
+        b.coda.carica()
+        var v = voce(1, byte: 100, creatoIl: t0, utente: utenteProva)
+        v.urlScadeIl = t0.addingTimeInterval(7200)
+        _ = b.coda.aggiungi(v)
+        scrivi(b.radice.appendingPathComponent(v.file), byte: 100)
+        _ = b.coda.applica(.trasferimentoAvviato, a: uuid(1))
+        b.segreti.semina(uuid(1), KVSegretiVoce(token: tokenA, urlPut: urlPutProva(1), contentType: "video/quicktime", urlRinnovo: urlRinnovoProva))
+        b.trasporto.extraVivi = [KVTaskVivo(job: uuid(1), identificativo: 55, byteInviati: 100)]
+    }
+}
+
+/// I messaggi degli eventi del lotto N-esimo (da 0) che il registro ha mandato alla porta dei log.
+private func messaggiDelLotto(_ banco: BancoMotore, _ n: Int) -> [String] {
+    return banco.trasportoLog.eventi(n).compactMap { $0["messaggio"] as? String }
+}
+
+func provaMotoreSvuotamentoFinale() {
+    sezione("Motore — D1: rilancio in background con la finestra dei 10 secondi già consumata dall'avvio: l'ultimo lotto parte PRIMA del completamento del sistema")
+    let banco = bancoDiUnRilancioConLogChePartono()
+    verificaTutto("(setup) l'avvio ha già spedito il suo lotto (`rilancio-background`), ne ha consumato la finestra, e il registro è vuoto",
+                  [banco.trasportoLog.richieste.count, messaggiDelLotto(banco, 0), banco.messaggi], [1, ["caricamenti-nativi-motore: urlsession rilancio-background"], []])
+    banco.trasportoLog.sincrono = false // da qui il lotto finale resta in volo finché la prova non gli risponde: si vede che cosa fa il motore nel frattempo
+    var chiamate = 0
+    banco.motore.ricollega("it.kidville.app.caricamenti") { chiamate += 1 }
+    banco.attendi()
+    // Mentre l'app era morta nsurlsessiond ha finito la PUT: il sistema consegna l'esito (nessun secondo è passato dal lotto dell'avvio).
+    banco.trasporto.completaDiUnaVitaPrecedente(job: uuid(1), task: 55, putRiuscita(durata: 40), byteInviati: 100)
+    banco.attendi()
+    verificaTutto("la PUT è finita: `inviato`, e il log `video-nativo-inviato` aspetta nel registro (a 0 secondi dall'ultimo invio non può partire da sé)",
+                  [banco.stato(1), banco.eventi("video-nativo-inviato").count, banco.trasportoLog.richieste.count], [KVStatoCaricamento.inviato, 1, 1])
+    banco.trasporto.consegnaEventi()
+    banco.attendi()
+    banco.giraIlMain()
+    verificaUguali("il sistema ha consegnato tutti gli eventi: l'ultimo lotto parte lo stesso (`forza`: la finestra dell'avvio non conta)", banco.trasportoLog.richieste.count, 2)
+    verificaUguali("… e il completamento del sistema NON è scattato: aspetta che il lotto sia arrivato (prima si chiamava subito, e l'app veniva sospesa)", chiamate, 0)
+    verificaUguali("… il lotto è fatto di `video-nativo-inviato`, col suo job", messaggiDelLotto(banco, 1), [messaggio("video-nativo-inviato", job: 1)])
+    verificaUguali("… dell'insegnante della voce (`x-user-id`)", banco.trasportoLog.richieste.last?.utenteId, uuid(utenteProva))
+    verificaUguali("… e il lavoro in background è ancora aperto", banco.lavoro.terminati, [])
+    banco.trasportoLog.rispondiAlSospeso()
+    banco.attendi()
+    banco.giraIlMain()
+    verificaTutto("il server risponde 200: il completamento scatta UNA volta, il lavoro si chiude, e il log è uscito dal registro",
+                  [chiamate, banco.lavoro.terminati, banco.eventi("video-nativo-inviato").count, banco.trasportoLog.richieste.count], [1, [1], 0, 2])
+
+    sezione("Motore — D1: lo stesso, con il lotto dell'avvio ANCORA IN VOLO quando gli eventi finiscono: il completamento aspetta il suo esito, poi parte l'ultimo")
+    let b2 = bancoDiUnRilancioConLogChePartono(sincrono: false)
+    verificaUguali("(setup) il lotto dell'avvio è in volo", b2.trasportoLog.richieste.count, 1)
+    var c2 = 0
+    b2.motore.ricollega("it.kidville.app.caricamenti") { c2 += 1 }
+    b2.attendi()
+    b2.trasporto.completaDiUnaVitaPrecedente(job: uuid(1), task: 55, putRiuscita(durata: 40), byteInviati: 100)
+    b2.attendi()
+    b2.trasporto.consegnaEventi()
+    b2.attendi()
+    b2.giraIlMain()
+    verificaTutto("finiti gli eventi, con il lotto dell'avvio ancora in volo: nessun lotto in più e nessun completamento", [b2.trasportoLog.richieste.count, c2], [1, 0])
+    b2.trasportoLog.rispondiAlSospeso()
+    b2.attendi()
+    b2.giraIlMain()
+    verificaTutto("il lotto dell'avvio ha l'esito: parte l'ultimo (con `video-nativo-inviato`), e il completamento aspetta ancora", [b2.trasportoLog.richieste.count, messaggiDelLotto(b2, 1), c2],
+                  [2, [messaggio("video-nativo-inviato", job: 1)], 0])
+    b2.trasportoLog.rispondiAlSospeso()
+    b2.attendi()
+    b2.giraIlMain()
+    verificaTutto("… e a ultimo lotto arrivato il completamento scatta UNA volta e il lavoro si chiude", [c2, b2.lavoro.terminati], [1, [1]])
+
+    sezione("Motore — D1: lo svuotamento finale non salta un `Retry-After` del server (un 429 non è una cortesia nostra): il completamento scatta, i log restano e partono dopo")
+    let b3 = bancoDiUnRilancioConLogChePartono(risposte: [.stato(429, retryAfter: "120")])
+    verificaTutto("(setup) il lotto dell'avvio ha preso un 429 con Retry-After 120: il registro lo tiene", [b3.trasportoLog.richieste.count, b3.messaggi], [1, ["caricamenti-nativi-motore: urlsession rilancio-background"]])
+    var c3 = 0
+    b3.motore.ricollega("it.kidville.app.caricamenti") { c3 += 1 }
+    b3.attendi()
+    b3.trasporto.completaDiUnaVitaPrecedente(job: uuid(1), task: 55, putRiuscita(durata: 40), byteInviati: 100)
+    b3.attendi()
+    b3.trasporto.consegnaEventi()
+    b3.attendi()
+    b3.giraIlMain()
+    verificaTutto("l'ultimo svuotamento trova il Retry-After in corso: nessuna richiesta in più, e il completamento scatta comunque (UNA volta)", [b3.trasportoLog.richieste.count, c3, b3.lavoro.terminati], [1, 1, [1]])
+    verificaUguali("… i log aspettano nel registro (il lotto non è stato buttato)", b3.eventi("video-nativo-inviato").count, 1)
+    b3.avanza(121)
+    verificaUguali("passato il Retry-After il richiamo differito del motore li spedisce (il processo, se è ancora vivo, ci arriva da solo)", b3.trasportoLog.richieste.count, 2)
+    verificaUguali("… e il lotto contiene tutto ciò che aspettava", messaggiDelLotto(b3, 1).contains(messaggio("video-nativo-inviato", job: 1)), true)
+
+    sezione("Motore — D1: fuori dallo svuotamento finale la finestra dei 10 secondi resta: il log dell'esito aspetta il richiamo differito, non parte prima")
+    let b4 = bancoDiUnRilancioConLogChePartono()
+    // Nessun `ricollega`, nessun «eventi consegnati»: un task finisce mentre l'app è viva in background, a pochi istanti dal lotto dell'avvio.
+    b4.trasporto.completaDiUnaVitaPrecedente(job: uuid(1), task: 55, putRiuscita(durata: 40), byteInviati: 100)
+    b4.attendi()
+    verificaTutto("a 0 secondi dall'ultimo invio `inviato` non parte: il log aspetta nel registro", [b4.trasportoLog.richieste.count, b4.eventi("video-nativo-inviato").count], [1, 1])
+    b4.avanza(9)
+    verificaUguali("a 9 secondi ancora no", b4.trasportoLog.richieste.count, 1)
+    b4.avanza(2)
+    verificaTutto("a 10 secondi il richiamo differito lo spedisce, e il registro è vuoto", [b4.trasportoLog.richieste.count, b4.eventi("video-nativo-inviato").count], [2, 0])
+
+    sezione("Registro — `svuota(forza:)`: salta i 10 secondi di cortesia, non il Retry-After; con un lotto in volo il completamento aspetta la fine di quel lotto e di un ultimo tentativo")
+    let inizio = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+    do {
+        let trasporto = TrasportoFinto()
+        let (rr, _) = nuovoRegistro(trasporto)
+        _ = rr.impostaDestinazione(destinazioneProduzione)
+        orologioProva = inizio
+        rr.registraCodaCorrotta(fileOrfani: 0)
+        verificaUguali("primo svuotamento: un lotto", rr.svuota(), .spedito(eventi: 1))
+        rr.registraCodaCorrotta(fileOrfani: 1)
+        verificaUguali("subito dopo, senza `forza`: troppo presto (mancano 10 s)", rr.svuota(), .troppoPresto(attesa: 10))
+        var scattati = 0
+        verificaUguali("con `forza` i 10 secondi non contano: il lotto parte", rr.svuota(forza: true, completamento: { scattati += 1 }), .spedito(eventi: 1))
+        verificaTutto("… il completamento scatta alla risposta, UNA volta, e le richieste sono due", [scattati, trasporto.richieste.count], [1, 2])
+        rr.registraCodaCorrotta(fileOrfani: 2)
+        verificaUguali("dopo un invio `forza` la cortesia riparte da lì: senza `forza` si aspetta ancora 10 s", rr.svuota(), .troppoPresto(attesa: 10))
+    }
+    do {
+        let trasporto = TrasportoFinto()
+        trasporto.risposte = [.stato(429, retryAfter: "120")]
+        let (rr, _) = nuovoRegistro(trasporto)
+        _ = rr.impostaDestinazione(destinazioneProduzione)
+        orologioProva = inizio
+        rr.registraCodaCorrotta(fileOrfani: 0)
+        verificaUguali("un lotto: il server risponde 429, Retry-After 120", rr.svuota(), .spedito(eventi: 1))
+        orologioProva = inizio.addingTimeInterval(30)
+        var scattati = 0
+        verificaUguali("`forza` NON salta il Retry-After: troppo presto, mancano 90 s", rr.svuota(forza: true, completamento: { scattati += 1 }), .troppoPresto(attesa: 90))
+        verificaTutto("… il completamento scatta subito (non parte niente) e nessuna richiesta in più", [scattati, trasporto.richieste.count], [1, 1])
+        orologioProva = inizio.addingTimeInterval(120)
+        verificaUguali("passato il Retry-After `forza` spedisce", rr.svuota(forza: true), .spedito(eventi: 1))
+    }
+    do {
+        let trasporto = TrasportoFinto()
+        trasporto.sincrono = false
+        let (rr, _) = nuovoRegistro(trasporto)
+        _ = rr.impostaDestinazione(destinazioneProduzione)
+        orologioProva = inizio
+        rr.registraCodaCorrotta(fileOrfani: 0)
+        var primoFinito = 0
+        var finale = 0
+        verificaUguali("parte un lotto, e resta in volo", rr.svuota(completamento: { primoFinito += 1 }), .spedito(eventi: 1))
+        rr.registraCodaCorrotta(fileOrfani: 1) // nasce mentre il lotto è in volo: il lotto già composto non lo contiene
+        verificaUguali("lo svuotamento finale con un lotto in volo: già in corso", rr.svuota(forza: true, completamento: { finale += 1 }), .giaInCorso)
+        verificaTutto("… il suo completamento NON scatta subito (prima scattava: la sessione si chiudeva con un lotto in volo)", [finale, trasporto.richieste.count], [0, 1])
+        trasporto.rispondiAlSospeso()
+        verificaTutto("finito il primo lotto parte l'ultimo tentativo, con l'evento nato nel frattempo; il completamento aspetta ancora", [trasporto.richieste.count, primoFinito, finale], [2, 1, 0])
+        verificaUguali("… il lotto dell'ultimo tentativo è quello dell'evento nato in volo", (trasporto.eventi(1).first?["campi"] as? [String: Any])?["file_orfani"] as? Int, 1)
+        trasporto.rispondiAlSospeso()
+        verificaTutto("finito anche l'ultimo scatta il completamento, UNA volta; il registro è vuoto", [finale, rr.stato().eventi.count], [1, 0])
+    }
+    do {
+        let trasporto = TrasportoFinto()
+        trasporto.sincrono = false
+        let (rr, _) = nuovoRegistro(trasporto)
+        _ = rr.impostaDestinazione(destinazioneProduzione)
+        orologioProva = inizio
+        rr.registraCodaCorrotta(fileOrfani: 0)
+        var finale = 0
+        _ = rr.svuota()
+        verificaUguali("(setup) un lotto in volo e un finale che aspetta", rr.svuota(forza: true, completamento: { finale += 1 }), .giaInCorso)
+        trasporto.rispondiAlSospeso()
+        verificaTutto("finito il lotto non c'è altro da spedire: il completamento scatta subito, UNA volta, senza una seconda richiesta", [finale, trasporto.richieste.count], [1, 1])
+        // senza completamento un finale in volo non lascia niente in sospeso
+        var senza = 0
+        let spedito = rr.svuota(forza: true, completamento: { senza += 1 })
+        verificaUguali("registro vuoto: nulla, e il completamento scatta subito", [spedito == .nulla, senza == 1], [true, true])
+    }
+}
+
+// MARK: - D3 del collaudo C1: un rinnovo caduto per la rete è `RETE`, anche dopo una PUT rifiutata
+
+func provaMotoreRinnovoCadutoPerLaRete() {
+    sezione("Motore — D3: in background un rinnovo caduto per la RETE dopo una PUT rifiutata aspetta come RETE (non FIRMA_RIFIUTATA), e la notifica «in attesa di rete» parte")
+    let banco = BancoMotore()
+    banco.accoda(1)
+    banco.motore.notificaSeFermo() // l'app passa in background (la rete non è nota: nessuna notifica, non c'è motivo)
+    banco.attendi()
+    banco.completa(banco.trasporto.id(0), putRifiutata(400, errore: "InvalidJWT", completo: true, durata: 7500))
+    verificaTutto("(setup) 400 InvalidJWT: il rinnovo parte e aspetta la risposta", [banco.rinnovo.numeroChiamate, banco.rinnovo.senzaRisposta, banco.notificatore.numeroMostrate], [1, 1, 0])
+    banco.rispondiRinnovo(rinnovoSenzaRete)
+    verificaTutto("il rinnovo cade per la rete: la voce aspetta, e come RETE (non FIRMA_RIFIUTATA)", [banco.stato(1), banco.voce(1)?.codice], [KVStatoCaricamento.inAttesa, KVCodiceCaricamento.rete])
+    verificaUguali("… per 30 secondi (primo ciclo)", banco.voce(1)?.prossimoTentativoIl, t0.addingTimeInterval(30))
+    verificaTutto("… e al JS è arrivato `in-attesa` con RETE", [banco.emessi.last?.voce.stato, banco.emessi.last?.voce.codice], [KVStatoCaricamento.inAttesa, KVCodiceCaricamento.rete])
+    verificaTutto("la notifica locale «in attesa di rete» parte, UNA, col titolo e il testo che il JS ha dato (nessun nome)", [banco.notificatore.numeroMostrate, banco.notificatore.mostrate.first?.titolo,
+                  banco.notificatore.mostrate.first?.corpo], [1, testiProva.titolo, testiProva.attesaRete])
+    verificaUguali("… e il log `video-nativo-attesa-rete`: notifica partita, autorizzata", campi(banco.eventi("video-nativo-attesa-rete").first), ["notifica": boo(true), "autorizzata": boo(true)])
+    verificaUguali("il log del rinnovo dice `rete` (stato 0) e porta il nome d'errore della PUT che l'ha chiesto", [banco.eventi("video-nativo-rinnovo").last?.messaggio, banco.eventi("video-nativo-rinnovo").last?.stato.map { String($0) },
+                   campi(banco.eventi("video-nativo-rinnovo").last)["error_code"].map { testoDi($0) }] as [String?], [messaggio("video-nativo-rinnovo", job: 1, "rete"), "0", testoDi(tes("InvalidJWT"))])
+    verificaUguali("nessuna PUT nuova (il rinnovo non è riuscito: non si rispedisce l'URL rifiutato)", banco.trasporto.numeroCreati, 1)
+    // Passano i 30 secondi, nessun segnale della rete: il giro ricomincia dal rinnovo, e conta ancora come DOPO UNA PUT RIFIUTATA (la causa non sta più nel codice)
+    banco.avanza(30)
+    verificaTutto("a 30 secondi il giro ricomincia: un secondo rinnovo, la voce è tornata in-invio", [banco.rinnovo.numeroChiamate, banco.stato(1)], [2, KVStatoCaricamento.inInvio])
+    verificaUguali("… la notifica è ancora lì (nessuno ha visto tornare la rete): non se ne mostra un'altra", banco.notificatore.numeroMostrate, 1)
+    let rimosse = banco.notificatore.rimozioni
+    banco.rispondiRinnovo(rinnovoDaCaricare(url: urlPutProva(1, "b"), scadeIl: t0.addingTimeInterval(48 * 3600)))
+    verificaTutto("il rinnovo riesce: nasce la PUT nuova", [banco.trasporto.numeroCreati, banco.trasporto.richiesta(1).url.absoluteString], [2, urlPutProva(1, "b")])
+    verificaTutto("… e conta come rinnovo dopo una PUT rifiutata (la causa ha attraversato l'attesa RETE): rinnoviConsecutivi 1, rinnovi 1", [banco.voce(1)?.rinnoviConsecutivi, banco.voce(1)?.rinnovi], [1, 1])
+    verificaUguali("… col nome d'errore della PUT anche nella seconda riga del rinnovo", [banco.eventi("video-nativo-rinnovo").last?.messaggio, campi(banco.eventi("video-nativo-rinnovo").last)["error_code"].map { testoDi($0) }] as [String?],
+                   [messaggio("video-nativo-rinnovo", job: 1, "da-caricare"), testoDi(tes("InvalidJWT"))])
+    verificaUguali("la rete c'è (il rinnovo ha avuto risposta) e il video riparte: la notifica «in attesa di rete» si toglie", banco.notificatore.rimozioni, rimosse + 1)
+
+    sezione("Motore — D3: una voce che aspetta come RETE riparte SUBITO quando la rete torna (prima, come FIRMA_RIFIUTATA, aspettava il suo timer)")
+    let b2 = BancoMotore()
+    b2.accoda(1)
+    b2.motore.notificaSeFermo()
+    b2.attendi()
+    b2.completa(b2.trasporto.id(0), putRifiutata(403, errore: nil))
+    b2.rispondiRinnovo(rinnovoSenzaRete)
+    verificaTutto("(setup) aspetta come RETE, un solo rinnovo, nessun task nuovo, notifica mostrata", [b2.voce(1)?.codice, b2.rinnovo.numeroChiamate, b2.trasporto.numeroCreati, b2.notificatore.numeroMostrate],
+                  [KVCodiceCaricamento.rete, 1, 1, 1])
+    let rimosseB2 = b2.notificatore.rimozioni
+    b2.rete.imposta(false)
+    b2.rete.imposta(true)
+    b2.attendi()
+    verificaTutto("la rete torna: la voce riparte SUBITO (senza aspettare i 30 secondi): un secondo rinnovo, in-invio", [b2.rinnovo.numeroChiamate, b2.stato(1), b2.rinnovo.chiamate.last?.token], [2, KVStatoCaricamento.inInvio, tokenA])
+    verificaUguali("… e la notifica si toglie", b2.notificatore.rimozioni, rimosseB2 + 1)
+    b2.rispondiRinnovo(rinnovoDaCaricare(url: urlPutProva(1, "c"), scadeIl: t0.addingTimeInterval(48 * 3600)))
+    verificaTutto("… il rinnovo riesce e conta come dopo una PUT rifiutata (la causa non si è persa nel ripartire)", [b2.trasporto.numeroCreati, b2.voce(1)?.rinnoviConsecutivi], [2, 1])
+
+    sezione("Motore — D3: con l'app in PRIMO PIANO lo stesso rinnovo cade come RETE, ma non mostra nessuna notifica")
+    let b3 = BancoMotore()
+    b3.accoda(1)
+    b3.completa(b3.trasporto.id(0), putRifiutata(400, errore: "InvalidJWT"))
+    b3.rispondiRinnovo(rinnovoSenzaRete)
+    verificaTutto("aspetta come RETE, ma nessuna notifica e nessuna riga attesa-rete", [b3.voce(1)?.codice, b3.notificatore.numeroMostrate, b3.eventi("video-nativo-attesa-rete").count], [KVCodiceCaricamento.rete, 0, 0])
+
+    sezione("Motore — D3: un rinnovo che cade per il SERVER dopo una PUT rifiutata resta FIRMA_RIFIUTATA, e NON mostra la notifica «in attesa di rete» (la rete non c'entra)")
+    let b4 = BancoMotore()
+    b4.accoda(1)
+    b4.motore.notificaSeFermo()
+    b4.attendi()
+    b4.completa(b4.trasporto.id(0), putRifiutata(403, errore: nil))
+    b4.rispondiRinnovo(rinnovoErroreServer)
+    verificaTutto("503 del rinnovo in background: FIRMA_RIFIUTATA, nessuna notifica, nessuna riga attesa-rete", [b4.voce(1)?.codice, b4.notificatore.numeroMostrate, b4.eventi("video-nativo-attesa-rete").count],
+                  [KVCodiceCaricamento.firmaRifiutata, 0, 0])
+    let b4b = BancoMotore()
+    b4b.accoda(1)
+    b4b.motore.notificaSeFermo()
+    b4b.attendi()
+    b4b.completa(b4b.trasporto.id(0), putRifiutata(403, errore: nil))
+    b4b.rispondiRinnovo(rinnovoLimitato("60"))
+    verificaTutto("… e così il 429 del rinnovo", [b4b.voce(1)?.codice, b4b.notificatore.numeroMostrate], [KVCodiceCaricamento.firmaRifiutata, 0])
+
+    sezione("Motore — D3: la causa (PUT rifiutata) attraversa un'attesa RETE e poi una SERVER: il giro dopo è ancora «dopo un rifiuto», e la notifica si toglie quando non è più la rete")
+    let b5 = BancoMotore()
+    b5.accoda(1)
+    b5.motore.notificaSeFermo()
+    b5.attendi()
+    b5.completa(b5.trasporto.id(0), putRifiutata(400, errore: "InvalidJWT"))
+    b5.rispondiRinnovo(rinnovoSenzaRete)
+    verificaTutto("(setup) prima attesa: RETE, e la notifica è sullo schermo", [b5.voce(1)?.codice, b5.notificatore.numeroMostrate], [KVCodiceCaricamento.rete, 1])
+    let rimosseB5 = b5.notificatore.rimozioni
+    b5.avanza(30)
+    b5.rispondiRinnovo(rinnovoErroreServer)
+    verificaTutto("secondo giro: 503 → il codice torna FIRMA_RIFIUTATA (la causa si era ricordata attraverso la RETE), attesa 60 s", [b5.voce(1)?.codice, b5.voce(1)?.prossimoTentativoIl],
+                  [KVCodiceCaricamento.firmaRifiutata, t0.addingTimeInterval(30 + 60)])
+    verificaUguali("… e la notifica «in attesa di rete» si toglie: ora a mancare non è più la rete", b5.notificatore.rimozioni, rimosseB5 + 1)
+    b5.avanza(60)
+    b5.rispondiRinnovo(rinnovoDaCaricare(url: urlPutProva(1, "d"), scadeIl: t0.addingTimeInterval(48 * 3600)))
+    verificaTutto("terzo giro: il rinnovo riesce e conta come dopo una PUT rifiutata (rinnoviConsecutivi 1)", [b5.trasporto.numeroCreati, b5.voce(1)?.rinnoviConsecutivi], [2, 1])
+
+    sezione("Motore — D3: un rinnovo PROATTIVO (l'URL era solo vecchio) caduto per la rete aspetta come RETE, e il giro dopo NON conta come dopo un rifiuto")
+    let b6 = BancoMotore()
+    b6.accoda(1)
+    b6.motore.notificaSeFermo()
+    b6.attendi()
+    orologioProva = t0.addingTimeInterval(700) // l'URL è firmato da più di 10 minuti: la PUT che riparte vuole un rinnovo prima
+    b6.completa(b6.trasporto.ultimoId, putTransitoria(503))
+    b6.rispondiRinnovo(rinnovoSenzaRete)
+    verificaTutto("(setup) il rinnovo proattivo cade per la rete: RETE, notifica mostrata", [b6.stato(1), b6.voce(1)?.codice, b6.notificatore.numeroMostrate], [KVStatoCaricamento.inAttesa, KVCodiceCaricamento.rete, 1])
+    b6.avanza(60)
+    b6.rispondiRinnovo(rinnovoDaCaricare(url: urlPutProva(1, "e"), scadeIl: orologioProva.addingTimeInterval(48 * 3600)))
+    verificaTutto("il rinnovo riesce: NON conta come dopo un rifiuto (nessuna PUT era stata rifiutata)", [b6.voce(1)?.rinnoviConsecutivi, b6.voce(1)?.rinnovi], [0, 1])
+    verificaUguali("… e nessuna riga di rinnovo porta un nome d'errore (non c'è stata una PUT rifiutata a cui attribuirlo)", b6.eventi("video-nativo-rinnovo").allSatisfy { campi($0)["error_code"] == nil }, true)
 }
 
 // MARK: - L'avvio: riconciliare prima di pulire

@@ -206,6 +206,10 @@ private final class KVStatoRuntime {
     var rinnovoInCorso: Int?
     /// Il nome d'errore dello Storage della PUT rifiutata che ha causato il rinnovo in corso (per `error_code` del log del rinnovo).
     var erroreStorage: KVErroreStorage?
+    /// Il rinnovo che la voce aspetta di rifare è quello di una PUT RIFIUTATA (conta per `RINNOVO_CICLICO`, porta `error_code`). Su disco lo ricorda il
+    /// codice `FIRMA_RIFIUTATA` dell'attesa; ma un rinnovo caduto per la RETE fa aspettare la voce come `RETE` (D3), e la causa vive solo qui, finché
+    /// il processo vive. La legge `avanza`, che la consuma.
+    var rinnovoPerUnRifiuto = false
     var annullaRisveglio: (() -> Void)?
     var ultimaEmissione: Date?
     var byteUltimaEmissione: Int64 = 0
@@ -485,9 +489,11 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
     private func tentaCompletamentoSessione() {
         guard completamentoSessione != nil, eventiFinitiVisti, operazioniInSospeso == 0 else { return }
         if !svuotamentoFinaleFatto {
-            // Un ultimo svuotamento del registro PRIMA di chiudere: i log di ciò che è appena successo non devono aspettare la prossima volta.
+            // Un ultimo svuotamento del registro PRIMA di chiudere: i log di ciò che è appena successo non devono aspettare la prossima volta. È l'UNICO
+            // `forza`: l'avvio dell'app ha già consumato la finestra dei 10 secondi, e senza `forza` il lotto non partirebbe (`troppoPresto`) mentre la
+            // sessione si chiude e il sistema sospende l'app (D1: `video-nativo-inviato` usciva alla riapertura, minuti dopo).
             svuotamentoFinaleFatto = true
-            svuotaRegistro()
+            svuotaRegistro(finale: true)
             return
         }
         chiudiLavoroDellaSessione()
@@ -882,8 +888,11 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
         case .presente: break
         }
         // La causa di un eventuale rinnovo si legge PRIMA di cambiare lo stato: la porta il codice `FIRMA_RIFIUTATA` di una voce che aspetta dopo una
-        // PUT rifiutata il cui rinnovo non era riuscito.
-        let causa: KVCausaRinnovo = voce.codice == .firmaRifiutata ? .putRifiutata : .urlVecchio
+        // PUT rifiutata il cui rinnovo non era riuscito, oppure (se il rinnovo era caduto per la RETE, e la voce aspetta come `RETE`) la memoria del
+        // processo. Si consuma: il giro che comincia ne scrive una nuova se il rinnovo fallisce ancora.
+        let rifiutoRicordato = rt.rinnovoPerUnRifiuto
+        rt.rinnovoPerUnRifiuto = false
+        let causa: KVCausaRinnovo = (voce.codice == .firmaRifiutata || rifiutoRicordato) ? .putRifiutata : .urlVecchio
         let partenza = max(ora, voce.prossimoTentativoIl ?? ora)
         iniziaCiclo(voce, subito: partenza <= ora)
         proseguiIlCiclo(job, causa: causa, partenza: partenza)
@@ -1178,6 +1187,9 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
             }
             rt.erroreStorage = nil
             creaIlTask(job, segreti: corrente, partenza: partenza)
+            // Il rinnovo ha avuto risposta, quindi la rete c'è: se la voce aspettava la rete (D3) la notifica «in attesa di rete» non resta a dirlo mentre
+            // il video riparte. Si guarda da sé: se un'altra voce aspetta ancora la rete, resta.
+            aggiornaLaNotifica()
         case .inviato:
             terminaInviato(voce, esito: .giaArrivato, ms: Int64(max(0, ora.timeIntervalSince(rt.inizio ?? ora)) * 1000))
         case .annullato(let codice):
@@ -1192,16 +1204,27 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
                 termina(voce, evento: .fallito(.tokenNonValido), statoHTTP: risposta.statoHTTP)
             }
         case .attendi(let secondi):
-            // La causa si porta nel codice: dopo una PUT rifiutata la voce aspetta come `FIRMA_RIFIUTATA`, e il giro dopo sa che il rinnovo conta.
+            // Nessuna risposta HTTP (rete caduta, timeout, connessione persa) vale `RETE` QUALUNQUE sia la causa del rinnovo (D3 del collaudo C1): la voce
+            // aspetta la rete, e `fermoPerLaRete()`, `reteCambiata` e la notifica locale devono saperlo. Prima, dopo una PUT rifiutata, l'attesa si
+            // chiamava `FIRMA_RIFIUTATA` e nessuno vedeva che mancava la rete (la notifica non partiva, e il ritorno della rete non faceva ripartire la voce).
+            // Per ogni altra attesa dopo una PUT rifiutata (5xx, 429, risposta fuori schema) il codice resta `FIRMA_RIFIUTATA`: la causa si porta su disco, e
+            // il giro dopo sa che il rinnovo conta.
+            var perLaRete = false
+            if case .transitorio(.rete) = risposta.esito { perLaRete = true }
             let codice: KVCodiceCaricamento
-            if causa == .putRifiutata {
-                codice = .firmaRifiutata
-            } else if case .transitorio(.rete) = risposta.esito {
+            if perLaRete {
                 codice = .rete
+            } else if causa == .putRifiutata {
+                codice = .firmaRifiutata
             } else {
                 codice = .server
             }
+            // Con `RETE` il codice non ricorda più la causa: se il rinnovo era dovuto a una PUT rifiutata lo si tiene a mente qui per il giro dopo (`avanza`).
+            rt.rinnovoPerUnRifiuto = causa == .putRifiutata
             attendi(voce, secondi: secondi, codice: codice)
+            // Il rinnovo è caduto per la rete: se l'app non è attiva, la notifica locale «in attesa di rete» parte (§5.7). Si guarda da sé: in primo piano non
+            // mostra niente, e una già sullo schermo non se ne aggiunge un'altra.
+            if perLaRete { mostraLaNotificaDiAttesa(per: voce) }
         }
     }
 
@@ -1369,9 +1392,11 @@ final class KVMotoreCaricamenti: KVTrasportoPutDelegato {
     // MARK: - Il registro
 
     /// Spedisce un lotto del registro. `svuota` ne manda uno solo e, se è troppo presto, risponde senza riprogrammarsi: lo si riprogramma qui.
-    private func svuotaRegistro() {
+    /// `finale` è lo svuotamento che chiude il lavoro di una sessione in background (`tentaCompletamentoSessione`), l'unico che salta i 10 secondi di
+    /// cortesia del registro e che, se un lotto è ancora in volo, ne aspetta la fine prima di far scattare il completamento del sistema.
+    private func svuotaRegistro(finale: Bool = false) {
         inizioOperazione()
-        let esito = registro.svuota { [weak self] in
+        let esito = registro.svuota(forza: finale) { [weak self] in
             self?.inCoda { self?.fineOperazione() }
         }
         if case .troppoPresto(let attesa) = esito {

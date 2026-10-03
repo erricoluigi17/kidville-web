@@ -1,0 +1,586 @@
+<!doctype html>
+<!--
+  PAGINA DI COLLAUDO DEI CARICAMENTI NATIVI — PR 3 «app 1.2», compito S2
+  (spec: docs/superpowers/specs/2026-10-03-video-pr3-app-1-2-design.md, §10 e §11.1)
+
+  La serve `server.mjs` (GET /). Nel collaudo C1 è la pagina che la build DEBUG dell'app carica al
+  posto del sito: `server.url` della copia di lavoro di `capacitor.config.json` punta a
+  `http://localhost:<porta>` (iOS) o `http://10.0.2.2:<porta>` (Android). Non è un file dell'app e
+  non entra nel bundle: vive qui, in `scripts/`, fuori dal perimetro dei lock sui flow Maestro.
+
+  COSA FA, in tre mosse per ogni bottone «Invia …»
+    1. `creaElementoDiProva({ byte })` — solo nelle build Debug: il plugin crea un video di byte
+       casuali del peso chiesto, già preparato nella cartella persistente (`scelti/`), e ne
+       restituisce l'elemento (`id`, `nome`, `byte`, `mime`, `sha256`, …).
+    2. `POST /apri` sul server finto — fa la parte di `POST /api/video-uploads`: restituisce
+       URL della PUT (con lo scenario nel «token»), token di rinnovo, URL del registro e testi
+       delle notifiche, esattamente come li vuole `accodaVideo` (spec §4.2).
+    3. `accodaVideo({ … })` — il plugin prende in carico il video. Da qui in poi il motore
+       nativo lavora da solo; la pagina si limita a mostrare la coda (`elenco`) e a chiedere
+       a `/stato` che cosa il server ha visto.
+
+  IL CONTRATTO DI `creaElementoDiProva`, che la spec non fissa (§4.3: «un video di byte casuali
+  del peso chiesto, già preparato») e che questa pagina FISSA, perché I3 e A3 lo implementino
+  così: riceve `{ byte: <intero> }` e risolve con un elemento di tipo `video` come quelli di
+  `scegliMedia` — `{ id, tipo: 'video', nome, byte, mime, durataSecondi, miniatura, sha256 }` —
+  con `sha256` in esadecimale minuscolo calcolato sui byte che partiranno. La pagina accetta
+  anche l'elemento dentro `{ elemento }`, ma niente di più.
+
+  COME SI CHIAMA IL PLUGIN. Con `window.Capacitor.Plugins.KidvilleCaricamenti`: su iOS e su Android
+  il ponte nativo inietta quell'oggetto, già con i metodi del plugin, in OGNI pagina caricata dalla
+  WebView — anche in questa, che non ha il bundle di `@capacitor/core`. Se manca un metodo si ripiega
+  su `Capacitor.nativePromise`. MAI `await` sull'oggetto del plugin, MAI restituirlo da una funzione
+  `async`: un oggetto che risponde a `then` resta appeso (memoria
+  `plugin_capacitor_mai_risolto_da_promise`); per questo `plugin()` NON è `async`.
+
+  Per provarla senza dispositivo: `autoverifica.sh` la esegue in un contesto finto, con un plugin
+  finto che fa davvero le PUT contro il server, e controlla ciò che il server vede.
+
+  Il repository è pubblico: nessun segreto, nessun dato di nessuno. I byte sono casuali.
+-->
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Collaudo caricamenti</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fondo: #f6f4ee; --carta: #ffffff; --testo: #1f2a24; --tenue: #5b6860; --linea: #d9d5c8;
+    --verde: #2f6b4f; --verde-testo: #ffffff; --giallo: #8a6100; --rosso: #a3281e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fondo: #141a17; --carta: #1d2621; --testo: #e8ede9; --tenue: #9aa8a0; --linea: #34413a;
+      --verde: #4a9a74; --verde-testo: #0e1713; --giallo: #e0b14a; --rosso: #ff8a7d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; padding: 16px; padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+    background: var(--fondo); color: var(--testo);
+    font: 16px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .04em; color: var(--tenue); }
+  section { background: var(--carta); border: 1px solid var(--linea); border-radius: 12px; padding: 14px; margin: 12px 0; }
+  p { margin: 4px 0; }
+  .tenue { color: var(--tenue); font-size: 14px; }
+  .griglia { display: flex; flex-wrap: wrap; gap: 8px; }
+  button {
+    font: inherit; min-height: 44px; padding: 8px 14px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--verde); background: transparent; color: var(--verde);
+  }
+  button.primario { background: var(--verde); color: var(--verde-testo); }
+  button[disabled] { opacity: .45; cursor: default; }
+  textarea {
+    width: 100%; font: 13px/1.4 ui-monospace, Menlo, monospace; padding: 8px 10px; border-radius: 10px;
+    border: 1px solid var(--linea); background: var(--fondo); color: var(--testo);
+  }
+  input[type=number] {
+    font: inherit; width: 6em; min-height: 44px; padding: 6px 10px; border-radius: 10px;
+    border: 1px solid var(--linea); background: var(--fondo); color: var(--testo);
+  }
+  .riga { border-top: 1px solid var(--linea); padding: 10px 0; }
+  .riga:first-child { border-top: 0; }
+  .riga .azioni { margin-top: 6px; }
+  .stato { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--linea); font-size: 13px; }
+  .s-inviato { border-color: var(--verde); color: var(--verde); }
+  .s-fallito, .s-annullato { border-color: var(--rosso); color: var(--rosso); }
+  .s-in-pausa, .s-in-attesa { border-color: var(--giallo); color: var(--giallo); }
+  .ok { color: var(--verde); } .ko { color: var(--rosso); } .avviso { color: var(--giallo); }
+  pre {
+    margin: 0; max-height: 260px; overflow: auto; font: 12px/1.4 ui-monospace, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  code { font: 13px ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Collaudo caricamenti</h1>
+  <p class="tenue">Server finto di S2: questa pagina chiama il plugin <code>KidvilleCaricamenti</code> e il server registra ogni byte e ogni log.</p>
+
+  <section aria-labelledby="t-stato">
+    <h2 id="t-stato">Stato</h2>
+    <p>Server: <code id="origine">…</code></p>
+    <p>Plugin: <span id="plugin">verifico…</span></p>
+    <p>Utente di prova: <code id="utente">…</code></p>
+  </section>
+
+  <section aria-labelledby="t-peso">
+    <h2 id="t-peso">Peso del video di prova</h2>
+    <p><label for="peso">Megabyte</label> <input id="peso" type="number" inputmode="numeric" min="1" max="1999" step="1" value="20"></p>
+    <div class="griglia" id="pesi"></div>
+  </section>
+
+  <section aria-labelledby="t-scenari">
+    <h2 id="t-scenari">Scenari</h2>
+    <div class="griglia" id="preset"></div>
+    <p><label for="personalizzato" class="tenue">Parametri personalizzati (JSON, per «Invia personalizzato»)</label></p>
+    <textarea id="personalizzato" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off">{"put":"lento","volte":2}</textarea>
+    <details>
+      <summary class="tenue">Che cosa fa ogni scenario</summary>
+      <div id="legenda" class="tenue"></div>
+    </details>
+  </section>
+
+  <section aria-labelledby="t-coda">
+    <h2 id="t-coda">Coda nativa</h2>
+    <div id="coda"></div>
+    <div class="griglia">
+      <button type="button" data-azione="aggiorna">Aggiorna</button>
+      <button type="button" data-azione="dimentica">Dimentica i terminali</button>
+    </div>
+  </section>
+
+  <section aria-labelledby="t-server">
+    <h2 id="t-server">Server finto</h2>
+    <div id="server"></div>
+    <div class="griglia">
+      <button type="button" data-azione="azzera">Azzera il server</button>
+    </div>
+  </section>
+
+  <section aria-labelledby="t-registro">
+    <h2 id="t-registro">Registro della pagina</h2>
+    <pre id="registro" aria-live="polite"></pre>
+  </section>
+</main>
+
+<script>
+;(() => {
+  'use strict'
+
+  const NOME_PLUGIN = 'KidvilleCaricamenti'
+  const MB = 1024 * 1024
+  const PESI_MB = [1, 20, 100, 500, 1900]
+  const PESO_PREDEFINITO_MB = 20
+  const INTERVALLO_MS = 2000
+
+  /**
+   * Gli scenari come bottoni «Invia <nome>». `sigla` rimanda alla tabella di spec §11.1; `apri`
+   * sono i parametri di `POST /apri` del server finto (vedi la testata di `server.mjs`).
+   * Il testo del bottone è `Invia ` + nome: i flow Maestro li toccano per testo.
+   */
+  const PRESET = [
+    { nome: 'ok', sigla: 'S1', apri: { put: 'ok' }, nota: 'invio a piena velocità' },
+    { nome: 'lento', sigla: 'S1 S8 S9 S11', apri: { put: 'lento' }, nota: 'il server legge a velocità ridotta: il tempo di bloccare lo schermo, uccidere l’app, annullare' },
+    { nome: 'cade-a-meta', sigla: 'S2', apri: { put: 'cade-a-meta' }, nota: 'la prima PUT cade a metà (lenta, con l’app in background); la ripartenza arriva' },
+    { nome: 'scaduto', sigla: 'S3', apri: { put: 'scaduto' }, nota: 'URL scaduto: 400 InvalidJWT, rinnovo «da-caricare», nuova PUT' },
+    { nome: 'duplicato', sigla: 'S4', apri: { put: 'duplicato' }, nota: 'seconda PUT rifiutata come duplicato: rinnovo «arrivato»' },
+    { nome: 'risposta-persa', sigla: 'S4', apri: { put: 'risposta-persa' }, nota: 'la PUT arriva ma la risposta si perde: la ripetizione prende il duplicato' },
+    { nome: 'rinnovo-negato', sigla: 'S5', apri: { put: 'scaduto', rinnovo: '404' }, nota: 'il rinnovo risponde 404: TOKEN_NON_VALIDO' },
+    { nome: 'token-scaduto', sigla: 'S5', apri: { put: 'scaduto', tokenScadeSecondi: -60 }, nota: 'il token di rinnovo è già scaduto: TOKEN_SCADUTO (dipende da come il nativo tratta una scadenza passata)' },
+    { nome: 'token-scade-presto', sigla: 'S5', apri: { put: 'cade-a-meta', velocitaKBs: 400, tokenScadeSecondi: 40 }, nota: 'la PUT cade a metà e il token scade prima della ripartenza: TOKEN_SCADUTO quando l’orologio supera scadeIl (il momento in cui il nativo lo controlla dipende da lui)' },
+    { nome: 'rinnovo-429', sigla: '', apri: { put: 'scaduto', rinnovo: '429' }, nota: 'il primo rinnovo prende 429 con Retry-After' },
+    { nome: 'rinnovo-annullato', sigla: '', apri: { put: 'scaduto', rinnovo: 'annullato' }, nota: 'il rinnovo dice «annullato»: ANNULLATO_DAL_SERVER' },
+    { nome: 'rinnovo-ciclico', sigla: '', apri: { put: 'scaduto', dopoRinnovo: 'scaduto' }, nota: 'ogni URL rinnovato è già scaduto: RINNOVO_CICLICO dopo 3 rinnovi' },
+    { nome: 'url-in-scadenza', sigla: '', apri: { put: 'ok', urlScadeSecondi: 300 }, nota: 'all’URL restano 5 minuti: rinnovo proattivo prima della PUT' },
+    { nome: 'muto', sigla: '', apri: { put: 'muto' }, nota: 'il server legge tutto e non risponde: nessuna risposta, transitorio' },
+    { nome: 'errore-500', sigla: '', apri: { put: 'errore-500' }, nota: 'la prima PUT prende 500: transitorio' },
+    { nome: 'personalizzato', sigla: '', apri: {}, nota: 'i parametri di /apri scritti nel riquadro «Parametri personalizzati» (JSON): per ogni combinazione che i bottoni non coprono, per esempio {"put":"cade-a-meta","volte":3,"frazione":0.8}' },
+  ]
+
+  const stato = {
+    config: null,
+    utenteId: null,
+    coda: new Map(),
+    ultimoServer: null,
+    occupato: false,
+  }
+
+  const $ = (id) => document.getElementById(id)
+  const esc = (v) =>
+    String(v === undefined || v === null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+  const messaggio = (causa) => {
+    if (causa && typeof causa === 'object') {
+      const codice = causa.code ? `[${causa.code}] ` : ''
+      return codice + (causa.message || String(causa))
+    }
+    return String(causa)
+  }
+
+  // ─── Il registro della pagina ─────────────────────────────────────────────────
+
+  const righeRegistro = []
+  /** Come `registra`, ma scrive una riga identica alla precedente SOLO la prima volta: il giro ogni 2 secondi non la ripete. */
+  const ultimeUnaVolta = new Map()
+  function registraUnaVolta(chiave, testo) {
+    if (ultimeUnaVolta.get(chiave) === testo) return
+    ultimeUnaVolta.set(chiave, testo)
+    registra(testo)
+  }
+  function registra(testo) {
+    const riga = `${new Date().toLocaleTimeString('it-IT')} ${testo}`
+    righeRegistro.push(riga)
+    if (righeRegistro.length > 150) righeRegistro.shift()
+    $('registro').textContent = righeRegistro.join('\n')
+    if (window.console && typeof window.console.log === 'function') window.console.log(`[collaudo] ${testo}`)
+  }
+
+  // ─── Il plugin ────────────────────────────────────────────────────────────────
+
+  /**
+   * L'oggetto del plugin, o `undefined`. NON è `async` e nessuno lo attende mai: vedi la testata.
+   */
+  function plugin() {
+    const cap = window.Capacitor
+    return cap && cap.Plugins ? cap.Plugins[NOME_PLUGIN] : undefined
+  }
+
+  /** C'è un modo di parlare col plugin? (l'oggetto iniettato, o in mancanza `nativePromise`) */
+  function pluginDisponibile() {
+    const cap = window.Capacitor
+    return Boolean(plugin()) || Boolean(cap && typeof cap.nativePromise === 'function')
+  }
+
+  /**
+   * Il tetto di tempo di ogni chiamata al plugin, in millisecondi. Una chiamata nativa che non risponde mai
+   * non deve inchiodare la pagina («un invio è già in corso» per sempre): dopo il tetto la pagina lo dice e
+   * va avanti. `creaElementoDiProva` ha un tetto largo: scrivere e calcolare lo sha256 di 1,9 GB sull'emulatore
+   * non è questione di secondi.
+   */
+  const TETTO_CHIAMATA_MS = 15000
+  const TETTI_MS = { info: 5000, creaElementoDiProva: 300000 }
+
+  /**
+   * Chiama un metodo del plugin e restituisce la SUA promessa (di dati semplici, mai del plugin), con un tetto
+   * di tempo: una corsa fra la promessa del METODO e un timer, che si cancella appena il metodo risponde. (In
+   * `src/` il lock `logging-tetto` vieta `Promise.race` e impone `conTettoDiTempo`; questa pagina non è nel
+   * bundle dell'app e non passa da lì.)
+   */
+  async function chiama(metodo, opzioni) {
+    const p = plugin()
+    const cap = window.Capacitor
+    let promessa
+    if (p && typeof p[metodo] === 'function') promessa = p[metodo](opzioni)
+    else if (cap && typeof cap.nativePromise === 'function') promessa = cap.nativePromise(NOME_PLUGIN, metodo, opzioni)
+    else throw new Error(`il plugin ${NOME_PLUGIN} non è disponibile: questa pagina va aperta dentro l’app Debug`)
+    const tetto = TETTI_MS[metodo] || TETTO_CHIAMATA_MS
+    let timer
+    const scaduta = new Promise((_, rifiuta) => {
+      timer = setTimeout(() => rifiuta(new Error(`il plugin non ha risposto a ${metodo} entro ${Math.ceil(tetto / 1000)} s`)), tetto)
+    })
+    try {
+      return await Promise.race([promessa, scaduta])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  // ─── Il server finto ──────────────────────────────────────────────────────────
+
+  async function getJson(percorso) {
+    const risposta = await fetch(percorso, { cache: 'no-store' })
+    if (!risposta.ok) throw new Error(`GET ${percorso}: HTTP ${risposta.status}`)
+    return risposta.json()
+  }
+
+  async function postJson(percorso, corpo) {
+    const risposta = await fetch(percorso, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(corpo === undefined ? {} : corpo),
+    })
+    const testo = await risposta.text()
+    if (!risposta.ok) throw new Error(`POST ${percorso}: HTTP ${risposta.status} ${testo.slice(0, 300)}`)
+    return JSON.parse(testo)
+  }
+
+  // ─── L'invio di un video di prova ─────────────────────────────────────────────
+
+  function leggiPesoMB() {
+    const v = Number($('peso').value)
+    return Number.isFinite(v) && v > 0 ? v : PESO_PREDEFINITO_MB
+  }
+
+  /** L'elemento che `creaElementoDiProva` restituisce, riletto: un oggetto fuori forma non diventa una PUT. */
+  function leggiElemento(grezzo) {
+    const e = grezzo && typeof grezzo === 'object' && grezzo.elemento ? grezzo.elemento : grezzo
+    const valido =
+      e && typeof e === 'object' && typeof e.id === 'string' && e.id !== '' &&
+      typeof e.sha256 === 'string' && /^[0-9a-f]{64}$/.test(e.sha256) &&
+      Number.isSafeInteger(e.byte) && e.byte > 0
+    if (!valido) throw new Error('creaElementoDiProva: risposta fuori forma (servono id, byte e sha256 esadecimale minuscolo)')
+    return e
+  }
+
+  /**
+   * Un video di prova, dall'elemento alla coda nativa. `extra.byte` forza il peso (i test), `extra.apri`
+   * aggiunge o cambia parametri di /apri (per esempio `volte` o `velocitaKBs`).
+   */
+  async function invia(nome, extra) {
+    const opzioni = extra || {}
+    const preset = PRESET.find((p) => p.nome === nome)
+    if (!preset) throw new Error(`scenario sconosciuto: ${nome}`)
+    const byte = opzioni.byte !== undefined ? opzioni.byte : Math.round(leggiPesoMB() * MB)
+    registra(`${nome}: creo un elemento di prova da ${byte} byte`)
+    const elemento = leggiElemento(await chiama('creaElementoDiProva', { byte }))
+    registra(`${nome}: elemento ${elemento.id.slice(0, 8)} pronto (${elemento.byte} byte)`)
+
+    const apertura = await postJson('/apri', {
+      ...preset.apri,
+      ...(opzioni.apri || {}),
+      byte: elemento.byte,
+      sha256: elemento.sha256,
+      nome: typeof elemento.nome === 'string' && elemento.nome !== '' ? elemento.nome.slice(0, 120) : undefined,
+      mime: typeof elemento.mime === 'string' ? elemento.mime : undefined,
+    })
+    stato.utenteId = apertura.utenteId
+    registra(`${nome}: job ${apertura.jobId.slice(0, 8)} aperto sul server finto`)
+
+    // Esattamente i campi di `RichiestaAccodaVideo` (spec §4.2): i tre dell'elemento più quelli dell'apertura.
+    const richiesta = {
+      idElemento: elemento.id,
+      sha256: elemento.sha256,
+      byteAttesi: elemento.byte,
+      jobId: apertura.jobId,
+      intentId: apertura.intentId,
+      utenteId: apertura.utenteId,
+      scuolaId: apertura.scuolaId,
+      caricamento: apertura.caricamento,
+      rinnovo: apertura.rinnovo,
+      registro: apertura.registro,
+      testi: apertura.testi,
+    }
+    const accodato = await chiama('accodaVideo', richiesta)
+    registra(`${nome}: accodato, stato ${accodato && accodato.stato ? accodato.stato : '?'}`)
+    await aggiornaCoda()
+    return { elemento, apertura, accodato }
+  }
+
+  // ─── La coda nativa ───────────────────────────────────────────────────────────
+
+  async function aggiornaCoda() {
+    const utenteId = stato.utenteId || (stato.config && stato.config.utenteId)
+    if (!utenteId || !pluginDisponibile()) return
+    try {
+      const risposta = await chiama('elenco', { utenteId })
+      stato.coda.clear()
+      for (const voce of (risposta && risposta.caricamenti) || []) stato.coda.set(voce.jobId, voce)
+      disegnaCoda()
+      ultimeUnaVolta.delete('elenco')
+    } catch (causa) {
+      registraUnaVolta('elenco', `ERRORE elenco: ${messaggio(causa)}`)
+    }
+  }
+
+  function inCoda(voce) {
+    stato.coda.set(voce.jobId, voce)
+    disegnaCoda()
+  }
+
+  async function annulla(jobId) {
+    try {
+      const esito = await chiama('annulla', { jobId })
+      registra(`annulla ${String(jobId).slice(0, 8)}: ${esito && esito.annullato ? 'annullato' : 'niente da annullare'}`)
+    } catch (causa) {
+      registra(`ERRORE annulla: ${messaggio(causa)}`)
+    }
+    await aggiornaCoda()
+  }
+
+  const TERMINALI = ['inviato', 'fallito', 'annullato']
+  async function dimenticaTerminali() {
+    const jobIds = [...stato.coda.values()].filter((v) => TERMINALI.includes(v.stato)).map((v) => v.jobId)
+    if (jobIds.length === 0) return registra('dimentica: nessun terminale')
+    try {
+      const esito = await chiama('dimentica', { jobIds })
+      registra(`dimentica: ${esito && esito.dimenticati !== undefined ? esito.dimenticati : '?'} voci tolte`)
+    } catch (causa) {
+      registra(`ERRORE dimentica: ${messaggio(causa)}`)
+    }
+    await aggiornaCoda()
+  }
+
+  function disegnaCoda() {
+    const voci = [...stato.coda.values()].sort((a, b) => String(a.creatoIl).localeCompare(String(b.creatoIl)))
+    if (voci.length === 0) {
+      $('coda').innerHTML = '<p class="tenue">Nessun caricamento nella coda nativa.</p>'
+      return
+    }
+    $('coda').innerHTML = voci
+      .map((v) => {
+        const perc = v.byteTotali > 0 ? Math.floor((v.byteInviati / v.byteTotali) * 100) : 0
+        const codice = v.codice ? ` · ${esc(v.codice)}` : ''
+        const terminale = TERMINALI.includes(v.stato)
+        return (
+          `<div class="riga"><b>${esc(String(v.jobId).slice(0, 8))}</b> <span class="stato s-${esc(v.stato)}">${esc(v.stato)}</span>${codice}` +
+          `<div class="tenue">${esc(v.byteInviati)} / ${esc(v.byteTotali)} byte (${perc}%) · tentativi ${esc(v.tentativi)} · rinnovi ${esc(v.rinnovi)}</div>` +
+          (terminale ? '' : `<div class="azioni"><button type="button" data-azione="annulla" data-valore="${esc(v.jobId)}">Annulla</button></div>`) +
+          '</div>'
+        )
+      })
+      .join('')
+  }
+
+  // ─── Quello che il server ha visto ────────────────────────────────────────────
+
+  async function aggiornaServer() {
+    try {
+      stato.ultimoServer = await getJson('/stato')
+      disegnaServer()
+      ultimeUnaVolta.delete('stato')
+    } catch (causa) {
+      registraUnaVolta('stato', `ERRORE /stato: ${messaggio(causa)}`)
+    }
+  }
+
+  function disegnaServer() {
+    const s = stato.ultimoServer
+    if (!s) return
+    const righe = s.jobs.map((j) => {
+      const sha = j.sha256Coincide === null ? '—' : j.sha256Coincide ? '<span class="ok">sha256 giusto</span>' : '<span class="ko">sha256 DIVERSO</span>'
+      return (
+        `<div class="riga"><b>${esc(j.jobId.slice(0, 8))}</b> ${esc(j.scenario.put)} · ${esc(j.fase)}` +
+        `<div class="tenue">ricevuti ${esc(j.byteRicevuti === null ? 0 : j.byteRicevuti)} / ${esc(j.byteAttesi === null ? '?' : j.byteAttesi)} · ${sha} · PUT ${j.tentativi.length} · chiamate al rinnovo ${j.chiamateRinnovo.length} · righe di log ${esc(j.righeLog)}</div></div>`
+      )
+    })
+    const v = s.verifiche
+    const giudizio = v.ok
+      ? '<p class="ok">Verifiche del server: nessuna violazione.</p>'
+      : `<p class="ko">Verifiche del server: ${v.violazioni.length} violazioni (${esc([...new Set(v.violazioni.map((x) => x.codice))].join(', '))}).</p>`
+    const avvisi = v.avvisi.length > 0 ? `<p class="avviso">${v.avvisi.length} avvisi.</p>` : ''
+    $('server').innerHTML = (righe.length === 0 ? '<p class="tenue">Il server non ha visto ancora niente.</p>' : righe.join('')) + giudizio + avvisi
+  }
+
+  async function azzera() {
+    try {
+      await postJson('/azzera', {})
+      registra('server azzerato')
+    } catch (causa) {
+      registra(`ERRORE azzera: ${messaggio(causa)}`)
+    }
+    await aggiornaServer()
+  }
+
+  // ─── L'interfaccia ────────────────────────────────────────────────────────────
+
+  function disegnaPreset() {
+    $('pesi').innerHTML = PESI_MB.map((mb) => `<button type="button" data-azione="peso" data-valore="${mb}">${mb} MB</button>`).join('')
+    $('preset').innerHTML = PRESET.map(
+      // Niente `title`: darebbe al bottone un nome accessibile diverso dal testo, e i flow Maestro cercano per testo.
+      (p) => `<button type="button" class="primario" data-azione="invia" data-valore="${esc(p.nome)}">Invia ${esc(p.nome)}</button>`,
+    ).join('')
+    $('legenda').innerHTML =
+      PRESET.map((p) => `<p><b>${esc(p.nome)}</b>${p.sigla ? ` (${esc(p.sigla)})` : ''}: ${esc(p.nota)}</p>`).join('') +
+      '<p>I rifiuti del server (scaduto, duplicato, errore-500) rispondono SUBITO e poi, se il client sta ancora mandando, spezzano la connessione dopo 1 MiB: è la forma peggiore per un motore (lo Storage vero con un file grande potrebbe comportarsi così: non è misurato). Per separare i problemi si avvia il server con <code>--drena-byte -1</code>.</p>'
+  }
+
+  async function azione(nome, valore) {
+    try {
+      if (nome === 'peso') $('peso').value = String(valore)
+      else if (nome === 'invia') await inviaDaBottone(valore)
+      else if (nome === 'annulla') await annulla(valore)
+      else if (nome === 'aggiorna') await aggiornaTutto()
+      else if (nome === 'dimentica') await dimenticaTerminali()
+      else if (nome === 'azzera') await azzera()
+    } catch (causa) {
+      registra(`ERRORE ${nome}: ${messaggio(causa)}`)
+    }
+  }
+
+  /** Un solo invio alla volta: un secondo tocco mentre il primo è in corso non apre un secondo job. */
+  async function inviaDaBottone(nome) {
+    if (stato.occupato) return registra('un invio è già in corso: aspetta')
+    let extra
+    if (nome === 'personalizzato') {
+      let apri
+      try {
+        apri = JSON.parse($('personalizzato').value)
+      } catch (causa) {
+        return registra(`ERRORE nei parametri personalizzati: ${messaggio(causa)}`)
+      }
+      if (apri === null || typeof apri !== 'object' || Array.isArray(apri)) return registra('ERRORE: i parametri personalizzati devono essere un oggetto JSON')
+      extra = { apri }
+    }
+    stato.occupato = true
+    try {
+      await invia(nome, extra)
+    } finally {
+      stato.occupato = false
+    }
+    await aggiornaServer()
+  }
+
+  async function aggiornaTutto() {
+    await aggiornaCoda()
+    await aggiornaServer()
+  }
+
+  // ─── L'avvio ──────────────────────────────────────────────────────────────────
+
+  async function rileva() {
+    if (!plugin()) {
+      $('plugin').textContent = 'NON disponibile: apri questa pagina dentro l’app Debug con il plugin registrato'
+      return false
+    }
+    try {
+      const info = await chiama('info')
+      $('plugin').textContent = `disponibile (${info.piattaforma}, motore ${info.motore}, protocollo ${info.protocollo})`
+      return true
+    } catch (causa) {
+      $('plugin').textContent = `presente ma info() è fallita: ${messaggio(causa)}`
+      return false
+    }
+  }
+
+  function agganciaEventi() {
+    const p = plugin()
+    if (!p || typeof p.addListener !== 'function') return
+    // L'handle restituito (con `remove`) non serve: si ascolta finché la pagina vive. Se è una promessa e
+    // viene respinta, lo si scrive nel registro invece di lasciare un rifiuto non gestito.
+    const ascolta = (evento, funzione) => {
+      try {
+        const handle = p.addListener(evento, funzione)
+        if (handle && typeof handle.catch === 'function') handle.catch((causa) => registra(`ERRORE addListener ${evento}: ${messaggio(causa)}`))
+      } catch (causa) {
+        registra(`ERRORE addListener ${evento}: ${messaggio(causa)}`)
+      }
+    }
+    ascolta('caricamento', (voce) => {
+      if (voce && voce.jobId) inCoda(voce)
+    })
+    ascolta('preparazione', (avanzamento) => {
+      if (avanzamento) registra(`preparazione ${avanzamento.fatti}/${avanzamento.totali}`)
+    })
+  }
+
+  async function avvia() {
+    $('origine').textContent = window.location && window.location.origin ? window.location.origin : '?'
+    disegnaPreset()
+    // I bottoni funzionano SUBITO: se il plugin tarda a rispondere (o non risponde) la pagina resta usabile.
+    document.addEventListener('click', (evento) => {
+      const bersaglio = evento.target && typeof evento.target.closest === 'function' ? evento.target.closest('[data-azione]') : null
+      if (bersaglio) void azione(bersaglio.dataset.azione, bersaglio.dataset.valore)
+    })
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) void aggiornaTutto()
+    })
+    setInterval(() => {
+      if (!document.hidden) void aggiornaTutto()
+    }, INTERVALLO_MS)
+    try {
+      stato.config = await getJson('/config')
+      stato.utenteId = stato.config.utenteId
+      $('utente').textContent = stato.config.utenteId
+    } catch (causa) {
+      registra(`ERRORE /config: ${messaggio(causa)}`)
+    }
+    if (await rileva()) agganciaEventi()
+    await aggiornaTutto()
+    registra('pagina pronta')
+  }
+
+  // Un appiglio per chi guarda la pagina con l'ispettore, e per l'autoverifica.
+  window.collaudo = { PRESET, PESI_MB, TETTI_MS, invia, annulla, aggiornaCoda, aggiornaServer, dimenticaTerminali, azzera, stato }
+
+  void avvia()
+})()
+</script>
+</body>
+</html>

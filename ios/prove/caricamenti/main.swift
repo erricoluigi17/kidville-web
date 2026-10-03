@@ -1,20 +1,30 @@
-// Prova di COMPORTAMENTO della parte pura dei caricamenti nativi iOS (PR 3 «app 1.2», compito I1).
+// Prova di COMPORTAMENTO dei caricamenti nativi iOS (PR 3 «app 1.2», compiti I1 e I2).
 //
 // Perché esiste: Swift non gira in vitest, e la CI non compila il nativo. Una tabella di decisione sbagliata
 // (un rinnovo che parte a 11 minuti invece che a 10, un 413 letto come transitorio, un host di sviluppo ammesso
-// in Release) non si vede da nessun grep: si vede compilando ed eseguendo i file di produzione per davvero.
+// in Release) o un motore che dimentica di cancellare i segreti non si vedono da nessun grep: si vedono compilando
+// ed eseguendo i file di produzione per davvero.
 //
-// Qui NON si ricopia niente: si compilano gli stessi tre file che finiscono nell'app
-// (`KVPoliticaCaricamento.swift`, `KVCodaCaricamenti.swift`, `KVRegistroNativo.swift`) e si guardano le
-// CONSEGUENZE: la decisione presa per ogni riga di §4.4 e §4.5, il file che resta (o no) sul disco, il corpo che
-// parte verso `/api/logs`. Ogni sezione dichiara la riga di spec che prova. I valori attesi sono scritti
-// qui a mano, dalla spec, e non calcolati dal codice che si prova.
+// Qui NON si ricopia niente: si compilano gli stessi sette file che finiscono nell'app (`KVPoliticaCaricamento`,
+// `KVCodaCaricamenti`, `KVRegistroNativo`, `KVSegretiCaricamenti`, `KVRinnovoFirma`, `KVNotificaAttesa`,
+// `KVMotoreCaricamenti`) e si guardano le CONSEGUENZE: la decisione presa per ogni riga di §4.4 e §4.5, il file che
+// resta (o no) sul disco, il corpo che parte verso `/api/logs`, il task che il trasporto riceve, il token che
+// finisce (o non finisce) nel Portachiavi. Ogni sezione dichiara la riga di spec che prova. I valori attesi sono
+// scritti qui a mano, dalla spec, e non calcolati dal codice che si prova.
+//
+// File: `main.swift` (questo: la parte pura, la coda, il registro, i sorgenti), `fakes.swift` (le finte con cui si
+// pilota il motore), `prove-motore.swift` (il motore a comando, e a sequenze casuali di eventi), `prove-componenti.swift`
+// (Portachiavi, rinnovo, notifica, trasporto, sessione in background). `prove-simulatore.swift` NON è di questo giro:
+// prova `KVPortachiavi` sul Portachiavi vero dentro un simulatore (`esegui-simulatore.sh`).
 //
 // Si esegue con `sh ios/prove/caricamenti/esegui.sh` (due volte: senza e con `-D DEBUG`).
 //
 // Argomenti: <release|debug> <cartella dei file di produzione> <caricamenti-nativi-tipi.ts> <server.mjs di S2>.
 
 import Foundation
+
+// Un'uscita a righe: se un processo cade a metà (un `Index out of range` di una prova), ciò che è già stato detto è già uscito.
+setvbuf(stdout, nil, _IOLBF, 0)
 
 // MARK: - Piccolo cerimoniale di prova
 
@@ -51,6 +61,25 @@ func verifica(_ descrizione: String, _ condizione: @autoclosure () -> Bool, _ de
 func verificaUguali<T: Equatable>(_ descrizione: String, _ ottenuto: @autoclosure () -> T, _ atteso: T) {
     let valore = ottenuto()
     verifica(descrizione, valore == atteso, "ottenuto: \(valore)\n         atteso:   \(atteso)")
+}
+
+/// Il testo di un valore, per confrontare insieme valori di TIPI DIVERSI: gli `Optional` si scartano a ogni livello (`nil` è «nil»), gli elenchi si
+/// descrivono elemento per elemento, un istante si scrive col suo numero esatto di secondi (la `description` di `Date` ne taglia i decimali).
+func testoDi(_ valore: Any?) -> String {
+    guard let v = valore else { return "nil" }
+    let specchio = Mirror(reflecting: v)
+    if specchio.displayStyle == .optional { return specchio.children.first.map { testoDi($0.value) } ?? "nil" }
+    if let data = v as? Date { return "data(\(data.timeIntervalSince1970))" }
+    if specchio.displayStyle == .collection { return "[" + specchio.children.map { testoDi($0.value) }.joined(separator: ", ") + "]" }
+    return "\(v)"
+}
+
+/// Come `verificaUguali`, ma su un ELENCO di valori che possono avere tipi diversi (uno stato, un contatore, un istante…): ciò che sta in
+/// posizione `i` deve essere uguale a ciò che ci si aspetta in posizione `i`. Un passo di scenario si legge in una riga sola.
+func verificaTutto(_ descrizione: String, _ ottenuti: @autoclosure () -> [Any?], _ attesi: [Any?]) {
+    let a = ottenuti().map { testoDi($0) }
+    let b = attesi.map { testoDi($0) }
+    verifica(descrizione, a == b, "ottenuti: \(a)\n         attesi:   \(b)")
 }
 
 func vicini(_ a: TimeInterval, _ b: TimeInterval) -> Bool { abs(a - b) < 0.000001 }
@@ -103,6 +132,18 @@ var orologioProva = Date(timeIntervalSince1970: floor(Date().timeIntervalSince19
 
 func leggiTesto(_ percorso: String) -> String? {
     return try? String(contentsOfFile: percorso, encoding: .utf8)
+}
+
+/// Fa fallire ogni scrittura atomica su `url` mettendoci al posto del file una CARTELLA non vuota: «scrivi un file temporaneo e rinominalo sopra» non può
+/// sostituirla (vale anche da root, a differenza di un `chmod`). Si toglie con `sbloccaLaScrittura`.
+func bloccaLaScrittura(_ url: URL) {
+    try? FileManager.default.removeItem(at: url)
+    try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+    try! Data("x".utf8).write(to: url.appendingPathComponent("x"))
+}
+
+func sbloccaLaScrittura(_ url: URL) {
+    try? FileManager.default.removeItem(at: url)
 }
 
 // MARK: - Argomenti e modo
@@ -172,15 +213,14 @@ func provaParita() {
     verificaUguali("codici: gli stessi quattordici di CODICI_NATIVI", codici, Set(codiciTS))
     verificaUguali("codici: nessun doppione (\(codiciTS.count))", KVCodiceCaricamento.allCases.count, codiciTS.count)
 
-    // I messaggi: tutti quelli di EVENTI_LOG_NATIVI, più il solo `put-oltre-scadenza` che §3 e §4.5 chiedono e §8.2 non elenca.
+    // I messaggi: UGUAGLIANZA ESATTA con EVENTI_LOG_NATIVI (dal 03/10 ci sono anche `put-oltre-scadenza`, che §3 e §4.5 chiedono, e le quindici voci
+    // sono lo stesso elenco in TS, Swift e Java). Un messaggio in più o in meno lato Swift è un messaggio che il lock di J4 (messaggi ⊆ EVENTI_LOG_NATIVI)
+    // o il server finto di C1 giudicherebbero fuori elenco.
     let messaggi = Set(KVMessaggioLog.allCases.map { $0.rawValue })
     let messaggiTS = Set(elencoDa(ts, dichiarazione: "export const EVENTI_LOG_NATIVI = [") ?? [])
-    verifica("EVENTI_LOG_NATIVI si legge dal file TS (almeno i 14 messaggi di §8.2): senza, il confronto sotto passerebbe a vuoto", messaggiTS.count >= 14,
-             "letti \(messaggiTS.count) messaggi")
-    verifica("messaggi: ogni messaggio di EVENTI_LOG_NATIVI (\(messaggiTS.count)) esiste in Swift", messaggiTS.isSubset(of: messaggi),
-             "mancano: \(messaggiTS.subtracting(messaggi).sorted())")
-    verifica("messaggi: oltre a quelli di S1 non c'è altro che put-oltre-scadenza (che §3 e §4.5 chiedono e §8.2 non elenca ancora)",
-             messaggi.subtracting(messaggiTS).isSubset(of: ["put-oltre-scadenza"]), "fuori da S1: \(messaggi.subtracting(messaggiTS).sorted())")
+    verificaUguali("EVENTI_LOG_NATIVI si legge dal file TS: sono quindici (senza, il confronto sotto passerebbe a vuoto)", messaggiTS.count, 15)
+    verificaUguali("messaggi: quelli di Swift sono ESATTAMENTE quelli di EVENTI_LOG_NATIVI", messaggi, messaggiTS)
+    verificaUguali("messaggi: nessun doppione (\(messaggiTS.count))", KVMessaggioLog.allCases.count, messaggiTS.count)
 
     // Gli host di sviluppo e la validità dell'URL: le stesse costanti.
     let hostTS = elencoDa(ts, dichiarazione: "export const HOST_DEBUG_CARICAMENTI = [") ?? []
@@ -220,12 +260,12 @@ func provaParita() {
     }
     let messaggiS2 = Set(elencoDa(server, dichiarazione: "const MESSAGGI_NATIVI = [") ?? [])
     let chiaviS2 = Set(elencoDa(server, dichiarazione: "const CHIAVI_CAMPI_NATIVI = [") ?? [])
-    verifica("il server finto elenca i suoi messaggi (\(messaggiS2.count))", messaggiS2.count >= 14)
+    verificaUguali("il server finto elenca esattamente i messaggi di Swift (altrimenti segnerebbe una violazione LOG_MESSAGGIO_FUORI_ELENCO)", messaggiS2, messaggi)
     verifica("il server finto elenca le sue chiavi di `campi` (\(chiaviS2.count))", chiaviS2.count >= 20)
-    verifica("messaggi che il server finto non conosce: al più put-oltre-scadenza (il server segnerebbe una violazione finché non lo impara)",
-             messaggi.subtracting(messaggiS2).isSubset(of: ["put-oltre-scadenza"]), "sconosciuti al server finto: \(messaggi.subtracting(messaggiS2).sorted())")
     let chiavi = Set(KVChiaveCampo.allCases.map { $0.rawValue })
-    verifica("chiavi che il server finto non conosce: al più durata_s (come sopra)", chiavi.subtracting(chiaviS2).isSubset(of: ["durata_s"]),
+    // `voci_scartate` è la chiave che il 03/10 la spec (§4.6) ha chiesto per `coda-nativa-corrotta`: il server finto di S2 non la conosce ancora (lo
+    // segna LOG_CHIAVE_NON_AMMESSA) finché l'orchestratore non gliela insegna, insieme a TS e al PRD. È l'UNICA eccedenza tollerata.
+    verifica("chiavi che il server finto non conosce: al più voci_scartate (aggiunta il 03/10, da insegnare a S2)", chiavi.subtracting(chiaviS2).isSubset(of: ["voci_scartate"]),
              "sconosciute al server finto: \(chiavi.subtracting(chiaviS2).sorted())")
     verifica("ogni chiave di `campi` ha la forma che la porta dei log accetta (^[a-z][a-z0-9_]{0,31}$)",
              chiavi.allSatisfy { $0.range(of: "^[a-z][a-z0-9_]{0,31}$", options: .regularExpression) != nil })
@@ -644,6 +684,10 @@ func provaRinnovo() {
     verificaUguali("da-caricare con content-type non stringa → fuori schema", leggi(200, corpoRinnovo(contentType: 7)).esito, fuoriSchema)
     verificaUguali("da-caricare con content-type vuoto → fuori schema", leggi(200, corpoRinnovo(contentType: "")).esito, fuoriSchema)
     verificaUguali("da-caricare con content-type che non è un tipo MIME → fuori schema", leggi(200, corpoRinnovo(contentType: "quicktime")).esito, fuoriSchema)
+    verificaUguali("da-caricare con uno spazio dopo il sottotipo («video/mp4 ») → fuori schema (il server lo rifiuta, e non si taglia)",
+                   leggi(200, corpoRinnovo(contentType: "video/mp4 ")).esito, fuoriSchema)
+    verificaUguali("da-caricare con uno spazio dopo la barra («video/ mp4») → fuori schema",
+                   leggi(200, corpoRinnovo(contentType: "video/ mp4")).esito, fuoriSchema)
     verificaUguali("da-caricare con un a capo nel content-type (iniezione in un'intestazione) → fuori schema",
                    leggi(200, corpoRinnovo(contentType: "video/mp4\r\nx-upsert: true")).esito, fuoriSchema)
     verificaUguali("da-caricare senza scadeIl → fuori schema",
@@ -735,6 +779,107 @@ func provaRinnovo() {
     }
     verifica("il transitorio del rinnovo non porta alcun Retry-After: nessuna attesa più lunga",
              vicini(attesaDi(KVRispostaRinnovo(esito: .transitorio(.server), statoHTTP: 503), tentativo: 1, casuale: 0) ?? -1, 24))
+}
+
+// MARK: - 5b. `contentTypeAmmesso` = `MIME_DICHIARABILE` del server
+
+/// Il `content-type` che il nativo lascia passare sta DENTRO ciò che il server accetta. La tabella è l'uscita della regex vera del server
+/// (`src/lib/media/video/contratto.ts:743`: `/^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}(?:\s*;[^\n]*)?$/i`) valutata in Node su
+/// ciascuna stringa, più i due divieti del nativo (da 3 a 255 byte, nessun carattere di controllo). Un valore che il nativo accetta e il server no non
+/// resta un dettaglio: `comeDizionarioPonte` lo darebbe al JS e la rilettura zod, che è tutto o niente, farebbe cadere l'INTERO `elenco`.
+func provaContentType() {
+    sezione("`contentTypeAmmesso` è la regex del server (MIME_DICHIARABILE), più 3-255 byte e niente caratteri di controllo")
+    let casi: [(String, Bool)] = [
+        ("video/mp4", true),
+        ("video/quicktime", true),
+        ("VIDEO/MP4", true),
+        ("Video/QuickTime", true),
+        ("video/x-m4v", true),
+        ("video/3gpp", true),
+        ("application/octet-stream", true),
+        ("video/mp4;codecs=avc1.42E01E,mp4a.40.2", true),
+        ("video/mp4; codecs=\"avc1.42E01E\"", true),
+        ("video/mp4 ;codecs=x", true),
+        ("video/mp4   ;x", true),
+        ("video/mp4;", true),
+        ("video/mp4 ;", true),
+        ("video/mp4 ", false),
+        (" video/mp4", false),
+        ("video/ mp4", false),
+        ("video /mp4", false),
+        ("video/mp4  ", false),
+        ("video/mp4 x", false),
+        ("video/mp4 codecs", false),
+        ("video/mp4\u{00A0};x", true),
+        ("video/mp4\u{00A0}", false),
+        ("video/mp4\u{3000};x", true),
+        ("video/mp4\u{FEFF};x", true),
+        ("video/mp4\u{2003};x", true),
+        ("video/mp4\u{0085};x", false),
+        ("video", false),
+        ("video/", false),
+        ("/mp4", false),
+        ("a/b", true),
+        ("a/", false),
+        ("/b", false),
+        ("1/2", true),
+        ("a/b;", true),
+        ("+a/b", false),
+        ("a/+b", false),
+        ("-a/b", false),
+        ("a-b/c-d", true),
+        ("a.b/c.d", true),
+        ("a_b/c_d", true),
+        ("a+b/c+d", true),
+        ("a!b/c#d", true),
+        ("a$b/c&d", true),
+        ("a^b/c^d", true),
+        ("a b/c", false),
+        ("a/b c", false),
+        ("a/b/c", false),
+        ("a//b", false),
+        ("a/b;c;d", true),
+        ("a/b;c/d", true),
+        ("a/b ; c", true),
+        ("video/mp4;codecs=\u{00E9}", true),
+        ("video/mp4;\u{1F600}", true),
+        ("v\u{00EF}deo/mp4", false),
+        ("video/m\u{00F6}p4", false),
+        ("vide\u{212A}/mp4", false),
+        ("video/mp4\u{017F}", false),
+        ("\u{0130}/x", false),
+        ("video/mp4;a\u{0009}b", false),
+        ("video/mp4\u{0009};x", false),
+        ("video/mp4;a\u{000D}b", false),
+        ("video/mp4\u{000A}", false),
+        ("video/mp4;a\u{000A}b", false),
+        ("video/mp4\u{0000}", false),
+        ("", false),
+        ("ab", false),
+        ("abc", false),
+        ("quicktime", false),
+        ("boh", false),
+    ]
+    for (testo, atteso) in casi {
+        let visibile = testo.unicodeScalars.map { $0.value < 0x20 || $0.value > 0x7E ? "\\u{\(String($0.value, radix: 16, uppercase: true))}" : String($0) }.joined()
+        verificaUguali("«\(visibile)» → \(atteso)", KVPoliticaCaricamento.contentTypeAmmesso(testo), atteso)
+    }
+    // I confini di lunghezza, che la tabella non può scrivere per esteso.
+    let meta = String(repeating: "x", count: 127)
+    verifica("127 caratteri per metà (il massimo del server): ammesso", KVPoliticaCaricamento.contentTypeAmmesso(meta + "/" + meta))
+    verifica("128 caratteri nel tipo: respinto", !KVPoliticaCaricamento.contentTypeAmmesso(meta + "x/y"))
+    verifica("128 caratteri nel sottotipo: respinto", !KVPoliticaCaricamento.contentTypeAmmesso("x/" + meta + "y"))
+    verifica("255 byte in tutto (127 + / + 127 non basta a 255: si completa con i parametri): ammesso", KVPoliticaCaricamento.contentTypeAmmesso("x/y;" + String(repeating: "z", count: 251)))
+    verifica("256 byte in tutto: respinto", !KVPoliticaCaricamento.contentTypeAmmesso("x/y;" + String(repeating: "z", count: 252)))
+    verifica("parametri di 300 caratteri: respinti (oltre 255 byte)", !KVPoliticaCaricamento.contentTypeAmmesso("video/mp4;" + String(repeating: "p", count: 300)))
+    verifica("i byte contano, non i caratteri: 130 lettere accentate nei parametri fanno 260 byte e sono respinte",
+             !KVPoliticaCaricamento.contentTypeAmmesso("video/mp4;" + String(repeating: "\u{00E8}", count: 130)))
+    // Tutto ciò che il nativo ammette passa per il ponte com'è; tutto il resto diventa il ripiego.
+    for (testo, atteso) in casi {
+        let nelPonte = voce(1, mime: testo).comeDizionarioPonte(byteInviati: 0)["mime"] as? String
+        verificaUguali("sul ponte, «\(testo.unicodeScalars.map { $0.value < 0x20 || $0.value > 0x7E ? "?" : String($0) }.joined())» → \(atteso ? "se stesso" : "il ripiego")",
+                       nelPonte, atteso ? testo : KVPoliticaCaricamento.mimeDiRipiego)
+    }
 }
 
 // MARK: - 6. S0 — la soglia dei 10 minuti
@@ -1197,10 +1342,10 @@ func provaCoda() {
     verificaUguali("estensione lunga: al più otto", KVCodaCaricamenti.percorsoRelativoCopia(jobId: uuid(1), estensione: "abcdefghijkl"), "file/abcdef12-3456-4abc-9def-000000000001.abcdefgh")
     verifica("un percorso relativo prodotto da noi è sempre valido", KVCodaCaricamenti.percorsoRelativoValido(KVCodaCaricamenti.percorsoRelativoCopia(jobId: UUID(), estensione: "mov")))
 
-    sezione("§4.6 — i preparati (`scelti/`) e il passaggio a `file/` (primo passo di accodaVideo)")
+    sezione("§4.6 — i preparati (`scelti/`) e il passaggio a `file/` (DOPO `aggiungi`: il secondo passo di accodaVideo)")
     do {
         let (cc, ccCart) = nuova()
-        verificaUguali("prima del caricamento non si sposta niente", cc.spostaInFile(da: ccCart.appendingPathComponent("scelti/x.mov"), jobId: uuid(1), estensione: "mov"), nil)
+        verificaUguali("prima del caricamento non si sposta niente", cc.spostaInFile(da: ccCart.appendingPathComponent("scelti/x.mov"), perVoce: uuid(1)), false)
         cc.carica()
         scrivi(ccCart.appendingPathComponent("scelti/abc123.mov"), byte: 10)
         scrivi(ccCart.appendingPathComponent("scelti/abc12.jpg"), byte: 3)
@@ -1214,42 +1359,168 @@ func provaCoda() {
         verifica("… il file è andato, l'altro no", !esiste(ccCart.appendingPathComponent("scelti/abc12.jpg")) && esiste(ccCart.appendingPathComponent("scelti/abc123.mov")))
         verificaUguali("rimuoviScelti senza id", cc.rimuoviScelti(ids: []), 0)
 
-        // spostaInFile
+        // spostaInFile: la voce c'è già (aggiungi), e la sposta nel PERCORSO DELLA VOCE
         let sorgente = ccCart.appendingPathComponent("scelti/abc123.mov")
-        let relativo = cc.spostaInFile(da: sorgente, jobId: uuid(5), estensione: "MOV")
-        verificaUguali("spostaInFile: il percorso relativo da scrivere nella voce", relativo, "file/abcdef12-3456-4abc-9def-000000000005.mov")
-        verifica("… la sorgente non c'è più e la copia c'è, col suo peso", !esiste(sorgente) && esiste(ccCart.appendingPathComponent(relativo ?? "x")))
-        verificaUguali("… la copia è fuori dal backup", (try? ccCart.appendingPathComponent(relativo ?? "x").resourceValues(forKeys: [.isExcludedFromBackupKey]))?.isExcludedFromBackup, true)
-        verifica("… e il percorso è valido per una voce", KVCodaCaricamenti.percorsoRelativoValido(relativo ?? ""))
-        // fuori da scelti/
+        verificaUguali("senza voce con quel job non si sposta niente (la voce si aggiunge PRIMA)", cc.spostaInFile(da: sorgente, perVoce: uuid(5)), false)
+        verifica("… e il preparato è rimasto dov'era", esiste(sorgente))
+        let v5 = voce(5, byte: 10)
+        verificaUguali("aggiungi: la voce nasce in-coda", cc.aggiungi(v5), .aggiunta(v5))
+        verificaUguali("spostaInFile: sposta il preparato nella copia della voce", cc.spostaInFile(da: sorgente, perVoce: uuid(5)), true)
+        let copia5 = ccCart.appendingPathComponent(v5.file)
+        verifica("… la sorgente non c'è più e la copia c'è, nel percorso scritto nella voce", !esiste(sorgente) && esiste(copia5))
+        verificaUguali("… col suo peso", (try? FileManager.default.attributesOfItem(atPath: copia5.path))?[.size] as? Int, 10)
+        verificaUguali("… fuori dal backup", (try? copia5.resourceValues(forKeys: [.isExcludedFromBackupKey]))?.isExcludedFromBackup, true)
+        verifica("… e il percorso è valido per una voce", KVCodaCaricamenti.percorsoRelativoValido(v5.file))
+        // sorgente fuori da scelti/
         let estraneo = nuovaCartella().appendingPathComponent("altro.mov")
         scrivi(estraneo, byte: 4)
-        verificaUguali("sorgente fuori da scelti/: rifiutata", cc.spostaInFile(da: estraneo, jobId: uuid(6), estensione: "mov"), nil)
+        _ = cc.aggiungi(voce(6, byte: 4))
+        verificaUguali("sorgente fuori da scelti/: rifiutata", cc.spostaInFile(da: estraneo, perVoce: uuid(6)), false)
         verifica("… e il file estraneo è intatto", esiste(estraneo))
         let dentroFile = ccCart.appendingPathComponent("file/pezzo.mov")
         scrivi(dentroFile, byte: 4)
-        verificaUguali("sorgente dentro file/ (non scelti/): rifiutata", cc.spostaInFile(da: dentroFile, jobId: uuid(6), estensione: "mov"), nil)
+        verificaUguali("sorgente dentro file/ (non scelti/): rifiutata", cc.spostaInFile(da: dentroFile, perVoce: uuid(6)), false)
         let traversal = ccCart.appendingPathComponent("scelti/../file/pezzo.mov")
-        verificaUguali("sorgente che esce da scelti/ con `..`: rifiutata", cc.spostaInFile(da: traversal, jobId: uuid(6), estensione: "mov"), nil)
+        verificaUguali("sorgente che esce da scelti/ con `..`: rifiutata", cc.spostaInFile(da: traversal, perVoce: uuid(6)), false)
         verifica("… e il file è rimasto dov'era", esiste(dentroFile))
-        verificaUguali("sorgente che non esiste: nessun percorso", cc.spostaInFile(da: ccCart.appendingPathComponent("scelti/non-c-e.mov"), jobId: uuid(6), estensione: "mov"), nil)
+        verificaUguali("sorgente che non esiste: nessuna copia", cc.spostaInFile(da: ccCart.appendingPathComponent("scelti/non-c-e.mov"), perVoce: uuid(6)), false)
         // un residuo con lo stesso nome si sostituisce
-        scrivi(ccCart.appendingPathComponent("file/abcdef12-3456-4abc-9def-000000000007.mov"), byte: 99)
+        let v7 = voce(7, byte: 12)
+        _ = cc.aggiungi(v7)
+        scrivi(ccCart.appendingPathComponent(v7.file), byte: 99)
         scrivi(ccCart.appendingPathComponent("scelti/nuovo.mov"), byte: 12)
-        verificaUguali("residuo con lo stesso nome (nessun job vivo): sostituito", cc.spostaInFile(da: ccCart.appendingPathComponent("scelti/nuovo.mov"), jobId: uuid(7), estensione: "mov"),
-                       "file/abcdef12-3456-4abc-9def-000000000007.mov")
-        verificaUguali("… e pesa quanto il nuovo", (try? FileManager.default.attributesOfItem(atPath: ccCart.appendingPathComponent("file/abcdef12-3456-4abc-9def-000000000007.mov").path))?[.size] as? Int, 12)
-        // un job vivo non si sostituisce
-        var viva = voce(8, byte: 12)
-        viva.file = KVCodaCaricamenti.percorsoRelativoCopia(jobId: uuid(8), estensione: "mov")
-        scrivi(ccCart.appendingPathComponent(viva.file), byte: 12)
-        _ = cc.aggiungi(viva)
-        scrivi(ccCart.appendingPathComponent("scelti/secondo.mov"), byte: 30)
-        verificaUguali("un job vivo con quel jobId: la sua copia non si sostituisce", cc.spostaInFile(da: ccCart.appendingPathComponent("scelti/secondo.mov"), jobId: uuid(8), estensione: "mov"), nil)
-        verificaUguali("… e la copia viva pesa ancora 12", (try? FileManager.default.attributesOfItem(atPath: ccCart.appendingPathComponent(viva.file).path))?[.size] as? Int, 12)
-        _ = cc.applica(.annullato(nil), a: uuid(8))
-        verificaUguali("a job terminale la stessa cosa è di nuovo possibile", cc.spostaInFile(da: ccCart.appendingPathComponent("scelti/secondo.mov"), jobId: uuid(8), estensione: "mov"),
-                       "file/abcdef12-3456-4abc-9def-000000000008.mov")
+        verificaUguali("residuo con lo stesso nome (nessun'altra voce lo nomina): sostituito", cc.spostaInFile(da: ccCart.appendingPathComponent("scelti/nuovo.mov"), perVoce: uuid(7)), true)
+        verificaUguali("… e pesa quanto il nuovo", (try? FileManager.default.attributesOfItem(atPath: ccCart.appendingPathComponent(v7.file).path))?[.size] as? Int, 12)
+        // una voce terminale non riceve una copia
+        _ = cc.applica(.annullato(nil), a: uuid(7))
+        scrivi(ccCart.appendingPathComponent("scelti/tardivo.mov"), byte: 30)
+        verificaUguali("a voce terminale la copia non si sposta", cc.spostaInFile(da: ccCart.appendingPathComponent("scelti/tardivo.mov"), perVoce: uuid(7)), false)
+        verifica("… e il preparato è rimasto", esiste(ccCart.appendingPathComponent("scelti/tardivo.mov")))
+    }
+
+    sezione("§4.6 — `aggiungi` su un job con una voce TERMINALE la sostituisce (un reinvio deve ripartire); su una VIVA no")
+    do {
+        let (cc, ccCart) = nuova()
+        cc.carica()
+        var prima = voce(11, byte: 10)
+        prima.urlScadeIl = dopo(100)
+        _ = cc.aggiungi(prima)
+        _ = cc.applica(.trasferimentoAvviato, a: uuid(11))
+        _ = cc.applica(.fallito(.tokenNonValido), a: uuid(11))
+        verificaUguali("(setup) la voce è fallita", cc.voce(uuid(11))?.stato, .fallito)
+        let seconda = voce(11, nome: "Rimandato.mov", byte: 20)
+        verificaUguali("aggiungi sullo stesso job con la voce terminale: la sostituisce", cc.aggiungi(seconda), .sostituita(seconda))
+        let corrente = cc.voce(uuid(11))
+        verificaUguali("… ora la voce è quella nuova: in-coda", corrente?.stato, .inCoda)
+        verificaUguali("… senza il codice di fallimento della vecchia", corrente?.codice, nil)
+        verificaUguali("… col suo peso", corrente?.byte, 20)
+        verificaUguali("… una sola voce per quel job", cc.tutte().filter { $0.jobId == uuid(11) }.count, 1)
+        verificaUguali("… e il nome è quello nuovo", cc.voce(uuid(11))?.nome, "Rimandato.mov")
+        let rilettura = KVCodaCaricamenti(cartella: ccCart, orologio: { orologioProva })
+        _ = rilettura.carica()
+        verificaUguali("… e sta anche su disco", rilettura.voce(uuid(11)), seconda)
+        // a voce viva non si tocca
+        let terza = voce(11, nome: "Ancora.mov", byte: 30)
+        verificaUguali("aggiungi sullo stesso job con la voce VIVA: già presente, quella che c'è", cc.aggiungi(terza), .giaPresente(seconda))
+        verificaUguali("… e non è cambiato niente", cc.voce(uuid(11)), seconda)
+        // annullata, anche lei si sostituisce
+        _ = cc.applica(.annullato(nil), a: uuid(11))
+        verificaUguali("a voce ANNULLATA vale lo stesso", cc.aggiungi(terza), .sostituita(terza))
+        // inviata, pure
+        _ = cc.applica(.trasferimentoAvviato, a: uuid(11))
+        _ = cc.applica(.inviato, a: uuid(11))
+        verificaUguali("a voce INVIATA vale lo stesso", cc.aggiungi(voce(11, byte: 40)).isSostituita, true)
+    }
+
+    sezione("`rimuoviVoce` — il ripristino di accodaVideo: toglie la voce e la sua copia, qualunque sia lo stato")
+    do {
+        let (cc, ccCart) = nuova()
+        cc.carica()
+        let v = voce(12, byte: 5)
+        _ = cc.aggiungi(v)
+        scrivi(ccCart.appendingPathComponent(v.file), byte: 5)
+        verificaUguali("rimuoviVoce su una voce viva", cc.rimuoviVoce(uuid(12)), true)
+        verifica("… la voce non c'è più, né in memoria né su disco, e la copia nemmeno", cc.voce(uuid(12)) == nil && !esiste(ccCart.appendingPathComponent(v.file))
+                 && ((try? String(contentsOf: cc.urlFileCoda, encoding: .utf8)) ?? "").contains(uuid(12).uuidString) == false)
+        verificaUguali("rimuoviVoce su una voce che non c'è", cc.rimuoviVoce(uuid(12)), false)
+        let altra = KVCodaCaricamenti(cartella: nuovaCartella().appendingPathComponent("KidvilleCaricamenti"), orologio: { orologioProva })
+        verificaUguali("a coda non pronta non fa niente", altra.rimuoviVoce(uuid(12)), false)
+    }
+
+    sezione("§4.6 — una scrittura FALLITA ripristina lo stato di prima (la coda non dice «aggiunta» ciò che non è su disco)")
+    do {
+        do {
+            let (cc, ccCart) = nuova()
+            cc.carica()
+            let v1 = voce(21, byte: 5)
+            verificaUguali("(setup) una voce scritta bene", cc.aggiungi(v1), .aggiunta(v1))
+            bloccaLaScrittura(cc.urlFileCoda)
+            verificaUguali("aggiungi con la scrittura che fallisce → scritturaFallita", cc.aggiungi(voce(22, byte: 5)), .scritturaFallita)
+            verificaUguali("… e la voce NON è rimasta in memoria (il giornale non mente: una voce che non è su disco non esiste)", cc.tutte().map { $0.jobId }, [uuid(21)])
+            // sostituzione di una terminale con scrittura che fallisce: si torna alla terminale
+            sbloccaLaScrittura(cc.urlFileCoda)
+            _ = cc.applica(.annullato(nil), a: uuid(21))
+            verificaUguali("(setup) la voce 21 è annullata", cc.voce(uuid(21))?.stato, .annullato)
+            bloccaLaScrittura(cc.urlFileCoda)
+            verificaUguali("sostituire una terminale con la scrittura che fallisce → scritturaFallita", cc.aggiungi(voce(21, byte: 9)), .scritturaFallita)
+            verificaUguali("… e la voce è ancora quella annullata di prima: lo stato", cc.voce(uuid(21))?.stato, .annullato)
+            verificaUguali("… e il peso", cc.voce(uuid(21))?.byte, 5)
+            sbloccaLaScrittura(cc.urlFileCoda)
+            verificaUguali("sbloccata la scrittura, la stessa aggiunta riesce", cc.aggiungi(voce(21, byte: 9)).isSostituita, true)
+            _ = ccCart
+        }
+
+        sezione("§4.6 — a uno stato terminale la copia si cancella DOPO aver scritto lo stato, e solo se la scrittura è riuscita")
+        do {
+            let (cc, ccCart) = nuova()
+            cc.carica()
+            for n in 31...33 {
+                let v = voce(n, byte: 6)
+                _ = cc.aggiungi(v)
+                scrivi(ccCart.appendingPathComponent(v.file), byte: 6)
+                _ = cc.applica(.trasferimentoAvviato, a: uuid(n))
+            }
+            bloccaLaScrittura(cc.urlFileCoda)
+            if case .applicata(_, let v, _, let persistita) = cc.applica(.inviato, a: uuid(31)) {
+                verificaUguali("scrittura fallita: l'esito dice persistita = false", persistita, false)
+                verificaUguali("… lo stato in memoria è comunque inviato", v.stato, .inviato)
+            } else { verifica("inviato applicata con la scrittura fallita", false) }
+            verifica("… e la COPIA c'è ancora: se il processo muore ora la voce su disco è viva, e una PUT ripetuta dà un duplicato che il rinnovo risolve", esiste(ccCart.appendingPathComponent(voce(31).file)))
+            sbloccaLaScrittura(cc.urlFileCoda)
+            if case .applicata(_, _, _, let persistita) = cc.applica(.inviato, a: uuid(32)) {
+                verificaUguali("scrittura riuscita: persistita = true", persistita, true)
+            } else { verifica("inviato applicata con la scrittura riuscita", false) }
+            verifica("… e la copia è cancellata", !esiste(ccCart.appendingPathComponent(voce(32).file)))
+            // la pulizia: i token scaduti. `adesso` è 1.000 s dopo: la copia è più vecchia della grazia degli orfani (300 s), quindi a proteggerla
+            // dal punto 3 della pulizia non è l'età ma il fatto che la voce appena chiusa la nomina ancora.
+            let (pp, ppCart) = nuova()
+            pp.carica()
+            orologioProva = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+            let scadente = voce(41, byte: 6, creatoIl: orologioProva, tokenScadeIl: orologioProva.addingTimeInterval(100))
+            _ = pp.aggiungi(scadente)
+            scrivi(ppCart.appendingPathComponent(scadente.file), byte: 6)
+            bloccaLaScrittura(pp.urlFileCoda)
+            let blocco = pp.pulisci(adesso: orologioProva.addingTimeInterval(1000))
+            verificaUguali("pulizia con la scrittura fallita: la voce scaduta è chiusa in memoria", blocco.vociScadute.map { $0.jobId }, [uuid(41)])
+            verificaUguali("… persistita = false", blocco.persistita, false)
+            verifica("… jobIdAttivi è nil: il motore non toglie nessun segreto", blocco.jobIdAttivi == nil)
+            verificaUguali("… nessun orfano rimosso (la copia è della voce appena chiusa, non ancora scritta come terminale)", blocco.orfaniRimossi, 0)
+            verifica("… e la copia c'è ancora", esiste(ppCart.appendingPathComponent(scadente.file)))
+            sbloccaLaScrittura(pp.urlFileCoda)
+            let sblocco = pp.pulisci(adesso: orologioProva.addingTimeInterval(1000))
+            verificaUguali("scrittura riuscita (pulizia successiva): persistita = true", sblocco.persistita, true)
+            verificaUguali("… la copia della voce ormai terminale è un orfano e si toglie", sblocco.orfaniRimossi, 1)
+            verifica("… davvero", !esiste(ppCart.appendingPathComponent(scadente.file)))
+            // una pulizia che chiude una voce e scrive: la copia si cancella subito, dopo la scrittura
+            let (qq, qqCart) = nuova()
+            qq.carica()
+            let scadente2 = voce(42, byte: 6, creatoIl: orologioProva, tokenScadeIl: orologioProva.addingTimeInterval(100))
+            _ = qq.aggiungi(scadente2)
+            scrivi(qqCart.appendingPathComponent(scadente2.file), byte: 6)
+            let normale = qq.pulisci(adesso: orologioProva.addingTimeInterval(200))
+            verificaUguali("pulizia che chiude e scrive: persistita = true", normale.persistita, true)
+            verifica("… e la copia della voce chiusa è già cancellata (dopo la scrittura)", !esiste(qqCart.appendingPathComponent(scadente2.file)))
+        }
     }
 
     sezione("§4.6 — i testi delle notifiche: li passa il JS, il ripiego è italiano")
@@ -1274,8 +1545,8 @@ func provaCoda() {
                               ("versione 0", "{\"versione\":0,\"testi\":{\"titolo\":\"a\",\"invio\":\"b\",\"attesaRete\":\"c\",\"pausa\":\"d\"},\"voci\":[]}"),
                               ("senza versione", "{\"testi\":{\"titolo\":\"a\",\"invio\":\"b\",\"attesaRete\":\"c\",\"pausa\":\"d\"},\"voci\":[]}"),
                               ("senza l'elenco delle voci", "{\"versione\":1,\"testi\":{\"titolo\":\"a\",\"invio\":\"b\",\"attesaRete\":\"c\",\"pausa\":\"d\"}}"),
-                              ("una voce con uno stato che non esiste",
-                               "{\"versione\":1,\"testi\":{\"titolo\":\"a\",\"invio\":\"b\",\"attesaRete\":\"c\",\"pausa\":\"d\"},\"voci\":[{\"jobId\":\"abcdef12-3456-4abc-9def-000000000001\",\"stato\":\"boh\"}]}")] {
+                              ("con l'elenco delle voci che non è un elenco", "{\"versione\":1,\"testi\":{\"titolo\":\"a\",\"invio\":\"b\",\"attesaRete\":\"c\",\"pausa\":\"d\"},\"voci\":{}}"),
+                              ("senza i testi", "{\"versione\":1,\"voci\":[]}")] {
         let trasporto = TrasportoFinto()
         let cartellaRegistro = nuovaCartella()
         let registro = KVRegistroNativo(cartella: cartellaRegistro, trasporto: trasporto, versioneApp: "1.2+6", ambiente: .release, orologio: { orologioProva })
@@ -1336,6 +1607,145 @@ func provaCoda() {
         verificaUguali("… e ora scrive", altra.aggiungi(voce(52)).isAggiunta, true)
     } else {
         print("  (provata saltata: eseguita come root, i permessi non bloccano la lettura)")
+    }
+
+    sezione("§4.6 — UNA voce fuori forma in un file leggibile si scarta DA SOLA (come su Android), col conteggio in `coda-nativa-corrotta`")
+    do {
+        /// Una coda con tre voci buone e le loro copie, scritta da una coda vera; poi `rompi` modifica il JSON a mano.
+        func codaConTreVoci(rompi: (inout [[String: Any]]) -> Void) -> (cartella: URL, registro: KVRegistroNativo, coda: KVCodaCaricamenti, esito: KVEsitoCaricamentoCoda) {
+            let cart = nuovaCartella().appendingPathComponent("KidvilleCaricamenti", isDirectory: true)
+            let scrittrice = KVCodaCaricamenti(cartella: cart, orologio: { orologioProva })
+            scrittrice.carica()
+            for n in 1...3 {
+                let v = voce(n, byte: 10 * Int64(n))
+                _ = scrittrice.aggiungi(v)
+                scrivi(cart.appendingPathComponent(v.file), byte: 10 * n)
+            }
+            var radice = try! JSONSerialization.jsonObject(with: try! Data(contentsOf: scrittrice.urlFileCoda)) as! [String: Any]
+            var elenco = radice["voci"] as! [[String: Any]]
+            rompi(&elenco)
+            radice["voci"] = elenco
+            try! JSONSerialization.data(withJSONObject: radice).write(to: scrittrice.urlFileCoda)
+            let registro = KVRegistroNativo(cartella: nuovaCartella(), trasporto: TrasportoFinto(), versioneApp: "1.2+6", ambiente: .release, orologio: { orologioProva })
+            let coda = KVCodaCaricamenti(cartella: cart, orologio: { orologioProva }, registro: registro)
+            return (cart, registro, coda, coda.carica())
+        }
+        let casi: [(String, (inout [[String: Any]]) -> Void)] = [
+            ("stato che non esiste", { $0[1]["stato"] = "boh" }),
+            ("jobId che non è un uuid", { $0[1]["jobId"] = "non-un-uuid" }),
+            ("campo obbligatorio mancante (mime)", { $0[1].removeValue(forKey: "mime") }),
+            ("campo del tipo sbagliato (byte è una stringa)", { $0[1]["byte"] = "tanti" }),
+            ("peso nullo", { $0[1]["byte"] = 0 }),
+            ("contatore negativo", { $0[1]["tentativi"] = -1 }),
+            ("percorso della copia fuori da file/", { $0[1]["file"] = "file/../x.mov" }),
+            ("percorso della copia che nomina un altro job", { $0[1]["file"] = "file/abcdef12-3456-4abc-9def-000000000001.mov" }),
+            ("codice di fallimento che non esiste", { $0[1]["codice"] = "BOH" }),
+            ("una data che non è una data", { $0[1]["creatoIl"] = "ieri" }),
+            ("un oggetto vuoto", { $0[1] = [:] }),
+        ]
+        for (nome, rompi) in casi {
+            let c = codaConTreVoci(rompi: rompi)
+            if case .caricataConScarti(let voci, let scartate, let orfani) = c.esito {
+                verificaUguali("voce con \(nome): le altre due restano", voci, 2)
+                verificaUguali("… e UNA è scartata", scartate, 1)
+                verificaUguali("… i file di copia che nessuna voce viva nomina più sono 1", orfani, 1)
+            } else {
+                verifica("voce con \(nome): caricataConScarti (le altre voci non vanno perse)", false, "esito: \(c.esito)")
+                continue
+            }
+            verificaUguali("… le voci rimaste sono la prima e la terza", Set(c.coda.tutte().map { $0.jobId }), Set([uuid(1), uuid(3)]))
+            verifica("… NIENTE file coda.corrotta-*: il file non si butta, si riscrive", nomiIn(c.cartella).filter { $0.hasPrefix("coda.corrotta-") }.isEmpty)
+            verifica("… la coda è pronta", c.coda.pronta)
+            let log = c.registro.stato().eventi
+            verificaUguali("… UN log, coda-nativa-corrotta (error)", log.map { "\($0.messaggio)|\($0.livello.rawValue)" }, ["coda-nativa-corrotta|error"])
+            verificaUguali("… con file_orfani 1 e voci_scartate 1", [log.first?.campi["file_orfani"], log.first?.campi["voci_scartate"]], [.numero(1), .numero(1)])
+            // riscritta subito: la riga non si ripete a ogni avvio
+            let riletta = KVCodaCaricamenti(cartella: c.cartella, orologio: { orologioProva })
+            verificaUguali("… e il file è già riscritto senza la voce: un'altra istanza lo legge pulito", riletta.carica(), .caricata(voci: 2))
+        }
+        // una voce che non è nemmeno un oggetto JSON (un numero, una stringa, un elenco, null): si salta come le altre, senza fermare la lettura
+        for (nome, valore) in [("un numero", "42"), ("una stringa", "\"boh\""), ("un elenco", "[1,2]"), ("null", "null")] {
+            let cart = nuovaCartella().appendingPathComponent("KidvilleCaricamenti", isDirectory: true)
+            let scrittrice = KVCodaCaricamenti(cartella: cart, orologio: { orologioProva })
+            scrittrice.carica()
+            _ = scrittrice.aggiungi(voce(1, byte: 10))
+            _ = scrittrice.aggiungi(voce(2, byte: 20))
+            var radice = try! JSONSerialization.jsonObject(with: try! Data(contentsOf: scrittrice.urlFileCoda)) as! [String: Any]
+            var elenco = radice["voci"] as! [Any]
+            elenco.insert(valore == "null" ? NSNull() : (try! JSONSerialization.jsonObject(with: Data(valore.utf8), options: [.fragmentsAllowed])), at: 1)
+            radice["voci"] = elenco
+            try! JSONSerialization.data(withJSONObject: radice).write(to: scrittrice.urlFileCoda)
+            let letta = KVCodaCaricamenti(cartella: cart, orologio: { orologioProva })
+            if case .caricataConScarti(let voci, let scartate, _) = letta.carica() {
+                verificaUguali("una voce che è \(nome) in mezzo alle altre: le due buone restano, una scartata", [voci, scartate], [2, 1])
+            } else { verifica("una voce che è \(nome): caricataConScarti", false) }
+        }
+        // due voci rotte, e un doppione
+        let due = codaConTreVoci(rompi: { $0[0]["stato"] = "boh"; $0[2]["byte"] = 0 })
+        if case .caricataConScarti(let voci, let scartate, _) = due.esito { verificaUguali("due voci rotte: ne resta una, due scartate", [voci, scartate], [1, 2]) }
+        else { verifica("due voci rotte: caricataConScarti", false) }
+        verificaUguali("… voci_scartate 2 nel log", due.registro.stato().eventi.first?.campi["voci_scartate"], .numero(2))
+        let doppione = codaConTreVoci(rompi: { $0.append($0[0]) })
+        if case .caricataConScarti(let voci, let scartate, let orfani) = doppione.esito {
+            verificaUguali("un jobId ripetuto nel file: la seconda copia è scartata, le tre voci restano", [voci, scartate, orfani], [3, 1, 0])
+        } else { verifica("un jobId ripetuto: caricataConScarti", false) }
+        // nessuna voce rotta: nessun log, nessuna riscrittura inutile
+        let pulita = codaConTreVoci(rompi: { _ in })
+        verificaUguali("nessuna voce rotta: caricata, e nessun log", [pulita.esito == .caricata(voci: 3), pulita.registro.stato().eventi.isEmpty], [true, true])
+        // tutte le voci rotte: il file è leggibile, quindi NON è corrotto: coda vuota, le voci scartate si contano
+        let tutte = codaConTreVoci(rompi: { for i in $0.indices { $0[i]["stato"] = "boh" } })
+        if case .caricataConScarti(let voci, let scartate, let orfani) = tutte.esito { verificaUguali("tutte e tre rotte: coda vuota, tre scartate, tre file orfani", [voci, scartate, orfani], [0, 3, 3]) }
+        else { verifica("tutte rotte: caricataConScarti", false) }
+        verifica("… e il file non è stato rinominato", nomiIn(tutte.cartella).filter { $0.hasPrefix("coda.corrotta-") }.isEmpty)
+        // la pulizia toglie l'orfano della voce scartata
+        let conOrfano = codaConTreVoci(rompi: { $0[1]["stato"] = "boh" })
+        let orfani = conOrfano.coda.pulisci(adesso: Date().addingTimeInterval(3600))
+        verificaUguali("la pulizia toglie la copia della voce scartata (nessuno la nomina più)", orfani.orfaniRimossi, 1)
+        verificaUguali("… e restano le copie delle due voci buone", nomiIn(conOrfano.cartella.appendingPathComponent("file")).count, 2)
+    }
+
+    sezione("§4.6 — l'ESCALATION: una coda che non si riesce mai a leggere (`ripartiDaCapo`)")
+    if getuid() != 0 {
+        do {
+            let trasporto = TrasportoFinto()
+            let registro = KVRegistroNativo(cartella: nuovaCartella(), trasporto: trasporto, versioneApp: "1.2+6", ambiente: .release, orologio: { orologioProva })
+            let cart = nuovaCartella().appendingPathComponent("KidvilleCaricamenti", isDirectory: true)
+            let scrittrice = KVCodaCaricamenti(cartella: cart, orologio: { orologioProva })
+            scrittrice.carica()
+            _ = scrittrice.aggiungi(voce(1, byte: 5))
+            scrivi(cart.appendingPathComponent(voce(1).file), byte: 5)
+            let originale = try! Data(contentsOf: scrittrice.urlFileCoda)
+            try! FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: scrittrice.urlFileCoda.path)
+            let cc = KVCodaCaricamenti(cartella: cart, orologio: { orologioProva }, registro: registro)
+            if case .illeggibileOra = cc.carica() {} else { verifica("(setup) la coda non si legge", false) }
+            verifica("(setup) non è pronta", !cc.pronta)
+            if case .corrotta(let orfani) = cc.ripartiDaCapo() {
+                verificaUguali("ripartiDaCapo su un file che non si apre: lo tratta da corrotto, con un file orfano", orfani, 1)
+            } else { verifica("ripartiDaCapo: corrotta", false) }
+            verifica("… la coda è pronta e vuota", cc.pronta && cc.tutte().isEmpty)
+            let corrotti = nomiIn(cart).filter { $0.hasPrefix("coda.corrotta-") }
+            verificaUguali("… il file è rimasto da parte, coda.corrotta-<istante>.json", corrotti.count, 1)
+            if let nome = corrotti.first {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: cart.appendingPathComponent(nome).path)
+                verificaUguali("… col suo contenuto intatto", try? Data(contentsOf: cart.appendingPathComponent(nome)), originale)
+            }
+            verificaUguali("… e UN log coda-nativa-corrotta", registro.stato().eventi.map { $0.messaggio }, ["coda-nativa-corrotta"])
+            verificaUguali("… con file_orfani 1 e senza voci_scartate (è la coda intera che è andata)", [registro.stato().eventi.first?.campi["file_orfani"], registro.stato().eventi.first?.campi["voci_scartate"]], [.numero(1), nil])
+            verificaUguali("… la nuova coda si scrive e si rilegge", KVCodaCaricamenti(cartella: cart, orologio: { orologioProva }).carica(), .caricata(voci: 0))
+            // un file che ora si legge: si comporta come carica(), non rinomina niente
+            let cart2 = nuovaCartella().appendingPathComponent("KidvilleCaricamenti", isDirectory: true)
+            let s2 = KVCodaCaricamenti(cartella: cart2, orologio: { orologioProva })
+            s2.carica()
+            _ = s2.aggiungi(voce(2, byte: 5))
+            let c2 = KVCodaCaricamenti(cartella: cart2, orologio: { orologioProva })
+            verificaUguali("ripartiDaCapo su un file che si legge: lo carica, non lo butta", c2.ripartiDaCapo(), .caricata(voci: 1))
+            verifica("… e non rinomina niente", nomiIn(cart2).filter { $0.hasPrefix("coda.corrotta-") }.isEmpty)
+            // senza file
+            let c3 = KVCodaCaricamenti(cartella: nuovaCartella().appendingPathComponent("KidvilleCaricamenti"), orologio: { orologioProva })
+            verificaUguali("ripartiDaCapo senza file: coda nuova", c3.ripartiDaCapo(), .nuova)
+        }
+    } else {
+        print("  (prova saltata: eseguita come root, i permessi non bloccano la lettura)")
     }
 
     sezione("§4.6 — pulizia all'avvio: scelti > 24 h, orfani, terminali > 7 giorni, token scaduti, corrotte vecchie")
@@ -1446,6 +1856,7 @@ func provaCoda() {
 
 extension KVEsitoAggiunta {
     var isAggiunta: Bool { if case .aggiunta = self { return true }; return false }
+    var isSostituita: Bool { if case .sostituita = self { return true }; return false }
 }
 
 // MARK: - 10. Il registro dei log
@@ -1454,12 +1865,14 @@ extension KVEsitoAggiunta {
 final class TrasportoFinto: KVTrasportoRegistro {
     var richieste: [KVRichiestaRegistro] = []
     var risposte: [KVRispostaRegistro] = []
+    /// Ciò che risponde quando `risposte` è vuota.
+    var rispostaPredefinita = KVRispostaRegistro.stato(200, retryAfter: nil)
     var sincrono = true
     var inSospeso: [() -> Void] = []
 
     func invia(_ richiesta: KVRichiestaRegistro, completamento: @escaping (KVRispostaRegistro) -> Void) {
         richieste.append(richiesta)
-        let risposta = risposte.isEmpty ? KVRispostaRegistro.stato(200, retryAfter: nil) : risposte.removeFirst()
+        let risposta = risposte.isEmpty ? rispostaPredefinita : risposte.removeFirst()
         if sincrono { completamento(risposta) } else { inSospeso.append { completamento(risposta) } }
     }
 
@@ -1482,6 +1895,24 @@ final class ProtocolloFinto: URLProtocol {
     static var richieste: [URLRequest] = []
     static var corpi: [Data] = []
     static var risposta: (stato: Int, intestazioni: [String: String])? = (200, [:])
+    /// Il corpo della risposta (di solito `{}`).
+    static var corpo = Data("{}".utf8)
+    /// Se `true` la richiesta non finisce mai (per provare `taskVivi` e l'annullamento).
+    static var sospendi = false
+    /// Ciò che il TASK che ha portato la richiesta dichiarava al sistema (si legge da `self.task` in `startLoading`): la descrizione, l'inizio più
+    /// presto, i byte che pensa di spedire e di ricevere. Sono ciò che il trasporto vero ci mette, e nessun altro punto della prova lo vede.
+    static var proprietaDelTask: [(descrizione: String?, nonPrima: Date?, attesiInvio: Int64, attesiRicezione: Int64)] = []
+
+    /// Rimette tutto com'era: ogni prova che ne sposta una la ripristina con questa.
+    static func ripristina() {
+        serratura.lock(); defer { serratura.unlock() }
+        richieste = []
+        proprietaDelTask = []
+        corpi = []
+        risposta = (200, [:])
+        corpo = Data("{}".utf8)
+        sospendi = false
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -1502,13 +1933,18 @@ final class ProtocolloFinto: URLProtocol {
         }
         ProtocolloFinto.serratura.lock()
         ProtocolloFinto.richieste.append(request)
+        ProtocolloFinto.proprietaDelTask.append((task?.taskDescription, task?.earliestBeginDate, task?.countOfBytesClientExpectsToSend ?? -1,
+                                                 task?.countOfBytesClientExpectsToReceive ?? -1))
         ProtocolloFinto.corpi.append(corpo)
         let risposta = ProtocolloFinto.risposta
+        let corpoRisposta = ProtocolloFinto.corpo
+        let sospeso = ProtocolloFinto.sospendi
         ProtocolloFinto.serratura.unlock()
+        if sospeso { return }
         if let r = risposta {
             let http = HTTPURLResponse(url: request.url!, statusCode: r.stato, httpVersion: "HTTP/1.1", headerFields: r.intestazioni)!
             client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: Data("{}".utf8))
+            client?.urlProtocol(self, didLoad: corpoRisposta)
             client?.urlProtocolDidFinishLoading(self)
         } else {
             client?.urlProtocol(self, didFailWithError: NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet, userInfo: nil))
@@ -1614,6 +2050,11 @@ func provaRegistro() {
     }
     r.registraCodaCorrotta(fileOrfani: 3)
     ultimo(r, "coda-nativa-corrotta", "coda-nativa-corrotta", "error", stato: nil, campi: conVersione(["file_orfani": .numero(3)]), utente: nil)
+    r.registraCodaCorrotta(fileOrfani: 1, vociScartate: 2)
+    ultimo(r, "coda-nativa-corrotta (con voci scartate)", "coda-nativa-corrotta", "error", stato: nil,
+           campi: conVersione(["file_orfani": .numero(1), "voci_scartate": .numero(2)]), utente: nil)
+    r.registraCodaCorrotta(fileOrfani: 0, vociScartate: 0)
+    ultimo(r, "coda-nativa-corrotta (voci_scartate = 0 non si scrive)", "coda-nativa-corrotta", "error", stato: nil, campi: conVersione(["file_orfani": .numero(0)]), utente: nil)
     let prima = r.stato().eventi.count
     r.registraNotificaNonAutorizzata()
     ultimo(r, "notifica-locale-non-autorizzata", "notifica-locale-non-autorizzata", "warn", stato: nil, campi: conVersione([:]), utente: nil)
@@ -2035,6 +2476,125 @@ func provaRegistro() {
         verifica("il giornale nella cartella ha un solo file, senza temporanei", nomiIn(cart3) == ["registro.json"], "\(nomiIn(cart3))")
     }
 
+    sezione("il giornale su disco: ogni TIPO di campo (numero, booleano, testo) torna UGUALE dopo un riavvio")
+    do {
+        let cart = nuovaCartella()
+        let (primo, _) = nuovoRegistro(TrasportoFinto(), cartella: cart)
+        primo.registraInviato(job: j, utente: u, byte: 1500, ms: 8200, tentativi: 1, rinnovi: 0, esito: .put, inBackground: true)
+        primo.registraInviato(job: j, utente: u, byte: 1500, ms: 0, tentativi: 0, rinnovi: 1, esito: .giaArrivato, inBackground: false)
+        primo.registraAttesaRete(job: j, utente: u, notifica: true, autorizzata: false)
+        primo.registraAttesaRete(job: j, utente: u, notifica: false, autorizzata: true)
+        primo.registraRitento(job: j, utente: u, codice: .rete, statoHTTP: 0, tentativo: 1, attesaSecondi: 30, byteInviati: 0)
+        primo.registraRinnovo(job: j, utente: u, esito: .daCaricare, statoHTTP: 200, rinnovi: 1, errorCode: .storage(.invalidJWT))
+        primo.registraMotore(motore: .urlsession, occasione: .avvio, inCoda: 0, inInvio: 1, taskVivi: 1)
+        let scritti = primo.stato().eventi
+        let (secondo, _) = nuovoRegistro(TrasportoFinto(), cartella: cart)
+        verificaUguali("un'altra istanza rilegge TUTTI gli eventi identici, campo per campo", secondo.stato().eventi, scritti)
+        let riletti = secondo.stato().eventi
+        verificaUguali("… `in_background` resta un BOOLEANO (vero e falso)", [riletti[0].campi["in_background"], riletti[1].campi["in_background"]], [.booleano(true), .booleano(false)])
+        verificaUguali("… `notifica` e `autorizzata` restano booleani", [riletti[2].campi["notifica"], riletti[2].campi["autorizzata"], riletti[3].campi["notifica"], riletti[3].campi["autorizzata"]],
+                       [.booleano(true), .booleano(false), .booleano(false), .booleano(true)])
+        verificaUguali("… e i numeri 0 e 1 restano NUMERI, non diventano falso e vero", [riletti[1].campi["ms"], riletti[1].campi["tentativi"], riletti[1].campi["rinnovi"], riletti[4].campi["byte_inviati"], riletti[4].campi["tentativo"]],
+                       [.numero(0), .numero(0), .numero(1), .numero(0), .numero(1)])
+        verificaUguali("… e i testi restano testi", [riletti[0].campi["esito"], riletti[5].campi["error_code"]], [.testo("put"), .testo("InvalidJWT")])
+        verificaUguali("… nessuna perdita dichiarata", secondo.stato().scartati, 0)
+    }
+
+    sezione("il giornale su disco: un file che c'è ma NON SI LEGGE non è rotto: non si sovrascrive, e si rilegge dopo")
+    if getuid() != 0 {
+        do {
+            let cart = nuovaCartella()
+            let trasporto = TrasportoFinto()
+            let (primo, _) = nuovoRegistro(trasporto, cartella: cart)
+            primo.registraAccodato(job: uuid(1), utente: u, byte: 1, mime: .mp4, motore: .urlsession)
+            primo.registraAccodato(job: uuid(2), utente: u, byte: 2, mime: .mp4, motore: .urlsession)
+            _ = primo.impostaDestinazione(destinazioneProduzione)
+            let vecchi = primo.stato().eventi
+            let file = cart.appendingPathComponent("registro.json")
+            let dimensione = (try! FileManager.default.attributesOfItem(atPath: file.path))[.size] as? Int
+            try! FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+            let (secondo, _) = nuovoRegistro(trasporto, cartella: cart)
+            verificaUguali("file illeggibile all'avvio: nessuna perdita dichiarata (non sappiamo niente, e non è una perdita)", secondo.stato().scartati, 0)
+            verificaUguali("… e il giornale in memoria è vuoto", secondo.stato().eventi.count, 0)
+            secondo.registraCodaCorrotta(fileOrfani: 4)
+            secondo.registraNotificaNonAutorizzata()
+            verificaUguali("… due eventi nati dopo stanno in memoria", secondo.stato().eventi.count, 2)
+            verifica("… e il file NON è stato sovrascritto: è ancora illeggibile e pesa uguale (una scrittura riuscita lo avrebbe sostituito con un file leggibile)",
+                     (try? Data(contentsOf: file)) == nil && ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int) == dimensione)
+            verificaUguali("… riprovaLettura finché non si legge: ancora no", secondo.riprovaLettura(), false)
+            try! FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+            verificaUguali("tornati i permessi: riprovaLettura riesce", secondo.riprovaLettura(), true)
+            let fusi = secondo.stato().eventi
+            verificaUguali("… gli eventi di prima ci sono tutti, davanti, e quelli nuovi dietro (4 in tutto)", fusi.map { $0.messaggio },
+                           vecchi.map { $0.messaggio } + ["coda-nativa-corrotta", "notifica-locale-non-autorizzata"])
+            verificaUguali("… i progressivi sono tutti diversi e crescenti", fusi.map { $0.progressivo }, Array(1...4))
+            verificaUguali("… nessuna perdita dichiarata", secondo.stato().scartati, 0)
+            verificaUguali("… la destinazione di prima si è ritrovata", secondo.stato().destinazione?.host, "app.kidville.it")
+            let (terzo, _) = nuovoRegistro(trasporto, cartella: cart)
+            verificaUguali("… e il file ora contiene tutto: un'altra istanza rilegge i 4 eventi", terzo.stato().eventi.map { $0.messaggio }, fusi.map { $0.messaggio })
+            // `svuota` rilegge da sé, e i log escono anche col giornale non scrivibile
+            let cartB = nuovaCartella()
+            let (b1, _) = nuovoRegistro(TrasportoFinto(), cartella: cartB)
+            b1.registraCodaCorrotta(fileOrfani: 9)
+            let fileB = cartB.appendingPathComponent("registro.json")
+            try! FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: fileB.path)
+            let trasportoB = TrasportoFinto()
+            let (b2, _) = nuovoRegistro(trasportoB, cartella: cartB)
+            _ = b2.impostaDestinazione(destinazioneProduzione)
+            b2.registraNotificaNonAutorizzata()
+            verificaUguali("file illeggibile: i log nuovi escono lo stesso (spedirli non dipende dal disco)", b2.svuota(), .spedito(eventi: 1))
+            try! FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fileB.path)
+            orologioProva = orologioProva.addingTimeInterval(11)
+            _ = b2.svuota()
+            verificaUguali("… e ai permessi tornati lo svuotamento rilegge da solo: l'evento di prima parte", trasportoB.eventi(trasportoB.richieste.count - 1).first?["messaggio"] as? String, "coda-nativa-corrotta")
+
+            // La fusione tiene il conto dei persi di prima, e rispetta il tetto di 200 eventi
+            let cartC = nuovaCartella()
+            let (c1, _) = nuovoRegistro(TrasportoFinto(), cartella: cartC)
+            for n in 1...203 { c1.registraAccodato(job: uuid(n), utente: u, byte: Int64(n), mime: .mp4, motore: .urlsession) }
+            verificaUguali("(setup) il giornale su disco ha 200 eventi e 3 persi", [c1.stato().eventi.count, c1.stato().scartati], [200, 3])
+            let fileC = cartC.appendingPathComponent("registro.json")
+            try! FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: fileC.path)
+            let (c2, _) = nuovoRegistro(TrasportoFinto(), cartella: cartC)
+            for n in 1...5 { c2.registraAccodato(job: uuid(500 + n), utente: u, byte: Int64(500 + n), mime: .mp4, motore: .urlsession) }
+            try! FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fileC.path)
+            verificaUguali("tornati i permessi: la fusione riesce", c2.riprovaLettura(), true)
+            let fusiC = c2.stato()
+            verificaUguali("la fusione rispetta il tetto: 200 eventi (205 meno 5 scartati dalla fusione)", fusiC.eventi.count, 200)
+            verificaUguali("… i persi sono quelli di prima (3) più quelli della fusione (5): 8", fusiC.scartati, 8)
+            verificaUguali("… il più vecchio rimasto è il sesto del giornale su disco, il più recente l'ultimo nato in memoria", [fusiC.eventi.first?.campi["byte"], fusiC.eventi.last?.campi["byte"]], [.numero(9), .numero(505)])
+            verificaUguali("… e i progressivi sono tutti diversi", Set(fusiC.eventi.map { $0.progressivo }).count, 200)
+        }
+    } else {
+        print("  (prova saltata: eseguita come root, i permessi non bloccano la lettura)")
+    }
+
+    sezione("la destinazione di PRODUZIONE fin dall'avvio (Release); in Debug no; mai al posto di una già nota")
+    do {
+        let cart = nuovaCartella()
+        let (rr, _) = nuovoRegistro(TrasportoFinto(), ambiente: .release, cartella: cart)
+        verificaUguali("Release: nessuna destinazione all'inizio", rr.stato().destinazione, nil)
+        verificaUguali("impostaDestinazionePredefinita in Release la imposta", rr.impostaDestinazionePredefinita(), true)
+        verificaUguali("… ed è quella di produzione", rr.stato().destinazione?.absoluteString, "https://app.kidville.it/api/logs")
+        verificaUguali("… la costante scritta", KVRegistroNativo.destinazioneProduzione, "https://app.kidville.it/api/logs")
+        let (rr2, _) = nuovoRegistro(TrasportoFinto(), ambiente: .release, cartella: cart)
+        verificaUguali("… si ricorda dopo un riavvio", rr2.stato().destinazione?.host, "app.kidville.it")
+        let (altra, _) = nuovoRegistro(TrasportoFinto(), ambiente: .release)
+        _ = altra.impostaDestinazione("https://app.kidville.it/api/altrove")
+        verificaUguali("con una destinazione già nota non fa niente", altra.impostaDestinazionePredefinita(), false)
+        verificaUguali("… e non la sostituisce", altra.stato().destinazione?.path, "/api/altrove")
+        let (dbg, _) = nuovoRegistro(TrasportoFinto(), ambiente: .debug)
+        verificaUguali("in Debug non fa niente", dbg.impostaDestinazionePredefinita(), false)
+        verificaUguali("… e la destinazione resta vuota (arriva con accodaVideo, dal banco di prova)", dbg.stato().destinazione, nil)
+        // il giornale di un'installazione nuova: un log nato prima di ogni accodaVideo parte lo stesso
+        let trasporto = TrasportoFinto()
+        let (nuova, _) = nuovoRegistro(trasporto, ambiente: .release)
+        nuova.registraCodaCorrotta(fileOrfani: 2)
+        _ = nuova.impostaDestinazionePredefinita()
+        verificaUguali("un log nato prima del primo accodaVideo parte verso produzione", nuova.svuota(), .spedito(eventi: 1))
+        verificaUguali("… all'indirizzo di produzione", trasporto.richieste.first?.url.absoluteString, "https://app.kidville.it/api/logs")
+    }
+
     sezione("il trasporto VERO: POST con x-user-id e corpo JSON, senza cookie né altre credenziali (su un protocollo finto)")
     do {
         let configurazione = URLSessionConfiguration.ephemeral
@@ -2148,10 +2708,61 @@ func senzaCommenti(_ sorgente: String) -> String {
     return risultato
 }
 
+let nomiSorgentiI1 = ["KVPoliticaCaricamento.swift", "KVCodaCaricamenti.swift", "KVRegistroNativo.swift"]
+let nomiSorgentiI2 = ["KVSegretiCaricamenti.swift", "KVRinnovoFirma.swift", "KVNotificaAttesa.swift", "KVMotoreCaricamenti.swift"]
+
+/// Il testo di ogni chiamata che comincia con `prefisso` (per esempio `registro.registra`): dal prefisso alla parentesi che chiude, senza farsi
+/// ingannare dalle parentesi dentro una stringa. Serve a guardare DENTRO le chiamate di log.
+func chiamate(_ prefisso: String, in sorgente: String) -> [String] {
+    var trovate: [String] = []
+    var cursore = sorgente.startIndex
+    while let inizio = sorgente.range(of: prefisso, range: cursore..<sorgente.endIndex) {
+        guard let apri = sorgente[inizio.upperBound...].firstIndex(of: "(") else { break }
+        var profondita = 0
+        var dentroStringa = false
+        var scappato = false
+        var fine = apri
+        var i = apri
+        while i < sorgente.endIndex {
+            let c = sorgente[i]
+            if dentroStringa {
+                if scappato { scappato = false } else if c == "\\" { scappato = true } else if c == "\"" { dentroStringa = false }
+            } else if c == "\"" {
+                dentroStringa = true
+            } else if c == "(" {
+                profondita += 1
+            } else if c == ")" {
+                profondita -= 1
+                if profondita == 0 { fine = i; break }
+            }
+            i = sorgente.index(after: i)
+        }
+        trovate.append(String(sorgente[inizio.lowerBound...fine]))
+        cursore = inizio.upperBound
+    }
+    return trovate
+}
+
+/// Il corpo (da `{` a `}` bilanciate) della prima funzione la cui firma contiene `firma`.
+func corpoDi(_ sorgente: String, firma: String) -> String? {
+    guard let inizio = sorgente.range(of: firma), let apri = sorgente[inizio.upperBound...].firstIndex(of: "{") else { return nil }
+    var profondita = 0
+    var i = apri
+    while i < sorgente.endIndex {
+        if sorgente[i] == "{" { profondita += 1 }
+        if sorgente[i] == "}" {
+            profondita -= 1
+            if profondita == 0 { return String(sorgente[apri...i]) }
+        }
+        i = sorgente.index(after: i)
+    }
+    return nil
+}
+
 func provaSorgenti() {
     sezione("i sorgenti di produzione: il tipo garantisce la privacy, e le dipendenze sono quelle dichiarate")
     var testo: [String: String] = [:]
-    for nome in ["KVPoliticaCaricamento.swift", "KVCodaCaricamenti.swift", "KVRegistroNativo.swift"] {
+    for nome in nomiSorgentiI1 + nomiSorgentiI2 {
         guard let contenuto = leggiTesto(cartellaProduzione + "/" + nome) else {
             verifica("\(nome) leggibile", false)
             return
@@ -2161,9 +2772,24 @@ func provaSorgenti() {
     func importi(_ s: String) -> [String] {
         return s.split(separator: "\n").map { String($0) }.filter { $0.hasPrefix("import ") }
     }
-    verificaUguali("KVPoliticaCaricamento.swift importa SOLO Foundation (niente Capacitor, UIKit, WebKit)", importi(testo["KVPoliticaCaricamento.swift"]!), ["import Foundation"])
-    verificaUguali("KVCodaCaricamenti.swift importa Foundation e os", importi(testo["KVCodaCaricamenti.swift"]!), ["import Foundation", "import os"])
-    verificaUguali("KVRegistroNativo.swift importa Foundation e os", importi(testo["KVRegistroNativo.swift"]!), ["import Foundation", "import os"])
+    let importAttesi: [(String, [String])] = [
+        ("KVPoliticaCaricamento.swift", ["import Foundation"]),
+        ("KVCodaCaricamenti.swift", ["import Foundation", "import os"]),
+        ("KVRegistroNativo.swift", ["import Foundation", "import os"]),
+        ("KVSegretiCaricamenti.swift", ["import Foundation", "import os", "import Security"]),
+        ("KVRinnovoFirma.swift", ["import Foundation"]),
+        ("KVNotificaAttesa.swift", ["import Foundation", "import UserNotifications"]),
+        ("KVMotoreCaricamenti.swift", ["import Foundation", "import Network", "import os", "import UIKit"]),
+    ]
+    for (nome, atteso) in importAttesi {
+        verificaUguali("\(nome) importa solo \(atteso.map { String($0.dropFirst(7)) }.joined(separator: ", "))", importi(testo[nome]!), atteso)
+    }
+    for nome in ["KVPoliticaCaricamento.swift", "KVCodaCaricamenti.swift", "KVRegistroNativo.swift", "KVRinnovoFirma.swift"] {
+        verifica("\(nome) non importa né Capacitor né WebKit", !testo[nome]!.contains("import Capacitor") && !testo[nome]!.contains("import WebKit"))
+    }
+    verifica("UIKit entra in UN file solo (il motore, per il lavoro in background): né la politica, né la coda, né il registro, né i segreti, né il rinnovo, né la notifica lo vedono",
+             nomiSorgentiI1.filter { testo[$0]!.contains("import UIKit") }.isEmpty && testo["KVSegretiCaricamenti.swift"]!.contains("import UIKit") == false
+             && testo["KVRinnovoFirma.swift"]!.contains("import UIKit") == false && testo["KVNotificaAttesa.swift"]!.contains("import UIKit") == false)
 
     // La politica è PURA, come dice la sua testata: niente disco, niente rete, niente orologio, niente thread, niente preferenze, niente log di sistema.
     let impuri = ["FileManager", "URLSession", "URLRequest", "Date()", "Date.init", "Date(timeIntervalSinceNow", "DispatchQueue", "Thread", "OperationQueue",
@@ -2174,14 +2800,30 @@ func provaSorgenti() {
         verifica("KVPoliticaCaricamento.swift è pura: il codice non nomina «\(forma)»", !codicePolitica.contains(forma))
     }
 
-    // Le forme vietate: lo stesso elenco del lock di J4 («dentro una chiamata di log nativa»), qui applicato a tutto il file.
+    // Le forme vietate: lo stesso elenco del lock di J4 («dentro una chiamata di log nativa»), qui applicato a TUTTO il file nei tre sorgenti di I1.
     let vietate = ["absoluteString", "localizedDescription", "lastPathComponent", "suggestedName", "x-upsert", "apikey", "authorization",
                    "NSLog(", "print(", "debugPrint(", "dump(", "console."]
-    for (nome, contenuto) in testo.sorted(by: { $0.key < $1.key }) {
-        let basso = contenuto.lowercased()
+    for nome in nomiSorgentiI1 {
+        let basso = testo[nome]!.lowercased()
         for forma in vietate {
             verifica("\(nome) non contiene «\(forma)»", !basso.contains(forma.lowercased()))
         }
+    }
+    // Nei quattro di I2 lo stesso elenco vale per tutto il CODICE (i commenti spiegano proprio ciò che non si fa, e lo nominano), tranne `authorization` — che in
+    // `KVNotificaAttesa` è il nome del sistema (`authorizationStatus`, `UNAuthorizationStatus`) e non l'intestazione. Lì si toglie ciò che il sistema chiama così e
+    // si guarda che non resti altro.
+    for nome in nomiSorgentiI2 {
+        var corpo = senzaCommenti(testo[nome]!)
+        if nome == "KVNotificaAttesa.swift" {
+            corpo = corpo.replacingOccurrences(of: "UNAuthorizationStatus", with: "").replacingOccurrences(of: "authorizationStatus", with: "")
+        }
+        let basso = corpo.lowercased()
+        for forma in vietate {
+            verifica("\(nome) non contiene «\(forma)»", !basso.contains(forma.lowercased()))
+        }
+    }
+    for nome in nomiSorgentiI1 + nomiSorgentiI2 {
+        let contenuto = testo[nome]!
         verifica("\(nome) non usa `try!`, né `fatalError`, né `precondition` (il logger non rompe l'app)",
                  !contenuto.contains("try!") && !contenuto.contains("fatalError") && !contenuto.contains("precondition"))
     }
@@ -2204,6 +2846,9 @@ func provaSorgenti() {
         let sicure = contenuto.components(separatedBy: "options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]").count - 1
         verificaUguali("\(nome): ogni scrittura (\(scritture)) è atomica e protetta", sicure, scritture)
         verifica("\(nome): ha almeno una scrittura su disco", scritture >= 1)
+    }
+    for nome in ["KVSegretiCaricamenti.swift", "KVRinnovoFirma.swift", "KVNotificaAttesa.swift", "KVMotoreCaricamenti.swift"] {
+        verifica("\(nome): non scrive file di suo (la coda e il registro sono gli unici a scrivere sul disco)", !testo[nome]!.contains(".write(to:") && !testo[nome]!.contains("createFile("))
     }
 
     // La regione dell'API di log
@@ -2235,6 +2880,137 @@ func provaSorgenti() {
     // I nomi: tutti i caratteri minuscoli, nessun maiuscolo che farebbe fallire la porta
     verifica("ogni slug di messaggio è minuscolo con trattini",
              KVMessaggioLog.allCases.allSatisfy { $0.rawValue.range(of: "^[a-z][a-z0-9-]*$", options: .regularExpression) != nil })
+
+    // ───────────────────────── I2: dentro le chiamate di log, e nel log di sistema ─────────────────────────
+    sezione("I2 — dentro una chiamata di log non entra mai un nome, un percorso, un URL, un token, un hash")
+    let nelLog = ["absoluteString", "relativeString", "localizedDescription", "suggestedName", "lastPathComponent", "\\.nome\\b", "\\.file\\b", "\\.path\\b", "urlPut", "urlRinnovo",
+                  "urlRegistro", "\\.token\\b", "sha256", "contentType", "x-upsert", "apikey", "authorization", "x-kidville-rinnovo", "x-user-id"]
+    var chiamateDiLog = 0
+    var funzioniChiamate = Set<String>()
+    for nome in ["KVMotoreCaricamenti.swift", "KVCodaCaricamenti.swift"] {
+        let tutte = chiamate("registro.registra", in: testo[nome]!) + chiamate("registro?.registra", in: testo[nome]!)
+        chiamateDiLog += tutte.count
+        for chiamata in tutte {
+            let colpevoli = nelLog.filter { chiamata.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+            verifica("\(nome): \(chiamata.prefix(44).replacingOccurrences(of: "\n", with: " "))… non porta \(nelLog.count) forme vietate", colpevoli.isEmpty, "contiene \(colpevoli)")
+            if let fine = chiamata.firstIndex(of: "("), let inizio = chiamata.range(of: "registra") {
+                funzioniChiamate.insert(String(chiamata[inizio.lowerBound..<fine]))
+            }
+        }
+    }
+    verifica("(il controllo guarda davvero qualcosa: \(chiamateDiLog) chiamate di log nel motore e nella coda)", chiamateDiLog >= 14)
+    verificaUguali("il motore e la coda scrivono TUTTI i messaggi di log tranne quello del selettore (I3): nessun messaggio resta solo sulla carta",
+                   Set(firme.map { $0.nome }).subtracting(funzioniChiamate), Set(["registraPreparazioneFallita"]))
+    // Il log di SISTEMA (`os.Logger`): ogni valore interpolato è un numero o un nome di una lista chiusa, e ha `privacy: .public` solo per quelli.
+    let ammessiNelLogDiSistema: Set<String> = ["cosa", "e.dominio.rawValue", "e.codice", "Int(stato)"]
+    var interpolazioni: Set<String> = []
+    for nome in nomiSorgentiI1 + nomiSorgentiI2 {
+        for riga in testo[nome]!.split(separator: "\n") where riga.contains("diagnostica.") {
+            var resto = Substring(riga)
+            while let apre = resto.range(of: "\\(") {
+                guard let chiude = resto.range(of: ", privacy: .public)", range: apre.upperBound..<resto.endIndex) else { break }
+                interpolazioni.insert(String(resto[apre.upperBound..<chiude.lowerBound]))
+                resto = resto[chiude.upperBound...]
+            }
+        }
+    }
+    verificaUguali("il log di sistema interpola solo codici numerici, nomi d'errore e dominio (nessun URL, percorso, token, descrizione)", interpolazioni.subtracting(ammessiNelLogDiSistema), [])
+    verifica("(e ne interpola davvero: \(interpolazioni.sorted()))", !interpolazioni.isEmpty)
+    verifica("nessun `Logger` interpola un valore senza dichiarare `privacy: .public` solo se è una costante enumerata",
+             !testo["KVMotoreCaricamenti.swift"]!.contains("privacy: .private"))
+
+    sezione("I2 — la PUT manda SOLO il content-type; il rinnovo SOLO x-kidville-rinnovo; nessuna credenziale e nessun upsert")
+    let motore = testo["KVMotoreCaricamenti.swift"]!
+    let rinnovoSorgente = testo["KVRinnovoFirma.swift"]!
+    verificaUguali("nel motore c'è UNA sola `setValue` (la PUT: il content-type)", motore.components(separatedBy: ".setValue(").count - 1, 1)
+    verifica("… ed è il content-type del server, sull'intestazione `content-type`", motore.contains("setValue(richiesta.contentType, forHTTPHeaderField: \"content-type\")"))
+    verifica("nel motore nessun `addValue`, `allHTTPHeaderFields`, `httpAdditionalHeaders`",
+             !motore.contains(".addValue(") && !motore.contains("allHTTPHeaderFields") && !motore.contains("httpAdditionalHeaders"))
+    verificaUguali("nel rinnovo c'è UNA sola `setValue` (l'intestazione col token)", rinnovoSorgente.components(separatedBy: ".setValue(").count - 1, 1)
+    verifica("… ed è `x-kidville-rinnovo`", rinnovoSorgente.contains("setValue(token, forHTTPHeaderField: intestazioneToken)") && rinnovoSorgente.contains("\"x-kidville-rinnovo\""))
+    verifica("l'intestazione del token sta in UN solo sorgente (il rinnovo): nel CODICE degli altri sei non compare",
+             (nomiSorgentiI1 + ["KVMotoreCaricamenti.swift", "KVSegretiCaricamenti.swift", "KVNotificaAttesa.swift"]).allSatisfy { !senzaCommenti(testo[$0]!).contains("x-kidville-rinnovo") })
+    verifica("la PUT è `uploadTask(with:fromFile:)`, metodo PUT, con `taskDescription`, i byte attesi e i 4 KB di risposta",
+             motore.contains("uploadTask(with: chiamata, fromFile: richiesta.file)") && motore.contains("httpMethod = \"PUT\"") && motore.contains("task.taskDescription =")
+             && motore.contains("task.countOfBytesClientExpectsToSend = richiesta.byte + 1024") && motore.contains("task.countOfBytesClientExpectsToReceive = Int64(KVPoliticaCaricamento.byteCorpoMassimo)"))
+    verifica("la sessione: identificativo fisso, sessionSendsLaunchEvents, isDiscretionary = false, tre reti a true",
+             motore.contains("URLSessionConfiguration.background(withIdentifier: identificativo)") && motore.contains("sessionSendsLaunchEvents = true") && motore.contains("isDiscretionary = false")
+             && motore.contains("allowsCellularAccess = true") && motore.contains("allowsExpensiveNetworkAccess = true") && motore.contains("allowsConstrainedNetworkAccess = true"))
+    verifica("l'identificativo della sessione è it.kidville.app.caricamenti", motore.contains("static let identificativoSessione = \"it.kidville.app.caricamenti\""))
+    verifica("i reindirizzamenti non si seguono né nella PUT né nel rinnovo", motore.contains("willPerformHTTPRedirection") && motore.contains("completionHandler(nil)")
+             && rinnovoSorgente.contains("willPerformHTTPRedirection") && rinnovoSorgente.contains("completionHandler(nil)"))
+
+    sezione("I2 — i segreti stanno nel Portachiavi, AfterFirstUnlockThisDeviceOnly, mai nella coda né nel registro")
+    let segretiSorgente = testo["KVSegretiCaricamenti.swift"]!
+    verifica("accessibilità kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly", segretiSorgente.contains("kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly"))
+    verifica("nessun'altra accessibilità (né WhenUnlocked, né Always, né AfterFirstUnlock senza ThisDeviceOnly)",
+             segretiSorgente.range(of: "kSecAttrAccessible(WhenUnlocked|Always|AfterFirstUnlock(?!ThisDeviceOnly)|WhenPasscodeSet)", options: .regularExpression) == nil)
+    verifica("non sincronizzabile con iCloud (kSecAttrSynchronizable = false) e servizio it.kidville.app.caricamenti",
+             segretiSorgente.contains("kSecAttrSynchronizable as String: false") && segretiSorgente.contains("static let servizio = \"it.kidville.app.caricamenti\""))
+    verifica("la coda e il registro non nominano né il Portachiavi né i segreti (`SecItem`, `KVSegretiVoce`, `x-kidville-rinnovo`)",
+             nomiSorgentiI1.filter { $0 != "KVPoliticaCaricamento.swift" }.allSatisfy { !testo[$0]!.contains("SecItem") && !testo[$0]!.contains("KVSegretiVoce") && !testo[$0]!.contains("kvr_") })
+    verifica("la coda non ha campi per il token né per l'URL firmato (`struct KVVoceCoda` senza token/url della PUT)",
+             !(corpoDi(testo["KVCodaCaricamenti.swift"]!, firma: "struct KVVoceCoda") ?? "").lowercased().contains("token:") && !(corpoDi(testo["KVCodaCaricamenti.swift"]!, firma: "struct KVVoceCoda") ?? "").contains("urlPut"))
+
+    sezione("I2 — l'AppDelegate aggancia il motore ai quattro punti, e Firebase e le due push restano")
+    if let appDelegate = leggiTesto(cartellaProduzione + "/AppDelegate.swift") {
+        let lancio = corpoDi(appDelegate, firma: "func application(_ application: UIApplication, didFinishLaunchingWithOptions") ?? ""
+        verifica("didFinishLaunching: KVMotoreCaricamenti.condiviso.avvia() (dopo Firebase, prima di `return true`)",
+                 lancio.contains("KVMotoreCaricamenti.condiviso.avvia()") && lancio.contains("FirebaseApp.configure()")
+                 && (lancio.range(of: "FirebaseApp.configure()")?.lowerBound ?? lancio.endIndex) < (lancio.range(of: "KVMotoreCaricamenti.condiviso.avvia()")?.lowerBound ?? lancio.startIndex)
+                 && (lancio.range(of: "KVMotoreCaricamenti.condiviso.avvia()")?.lowerBound ?? lancio.endIndex) < (lancio.range(of: "return true")?.lowerBound ?? lancio.startIndex))
+        verifica("applicationDidBecomeActive → riprendiInPrimoPiano()", (corpoDi(appDelegate, firma: "func applicationDidBecomeActive(") ?? "").contains("KVMotoreCaricamenti.condiviso.riprendiInPrimoPiano()"))
+        verifica("applicationDidEnterBackground → notificaSeFermo()", (corpoDi(appDelegate, firma: "func applicationDidEnterBackground(") ?? "").contains("KVMotoreCaricamenti.condiviso.notificaSeFermo()"))
+        verifica("application(_:handleEventsForBackgroundURLSession:completionHandler:) → ricollega(identifier, completionHandler)",
+                 (corpoDi(appDelegate, firma: "func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void)") ?? "")
+                    .contains("KVMotoreCaricamenti.condiviso.ricollega(identifier, completionHandler)"))
+        // Il CORPO di ciascun hook, non la presenza del nome in un punto qualunque del file: `.capacitorDidFailToRegisterForRemoteNotifications` compare anche
+        // dentro il ramo FCM, e un hook svuotato lascerebbe quel nome al suo posto con il token che non arriva più a `/api/push/subscribe`.
+        let registrata = corpoDi(appDelegate, firma: "func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data)") ?? ""
+        let fallita = corpoDi(appDelegate, firma: "func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error)") ?? ""
+        verifica("le due push restano COL LORO CORPO: il token FCM (o APNs) e la registrazione fallita arrivano a Capacitor",
+                 registrata.contains("Messaging.messaging().apnsToken = deviceToken")
+                 && registrata.contains("NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: token)")
+                 && registrata.contains("NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: deviceToken)")
+                 && fallita.contains("NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)"))
+        verifica("l'apertura da URL e da Universal Link passano ancora da `ApplicationDelegateProxy` (le richiede Capacitor)",
+                 (corpoDi(appDelegate, firma: "func application(_ app: UIApplication, open url: URL") ?? "").contains("ApplicationDelegateProxy.shared.application(app, open: url, options: options)")
+                 && (corpoDi(appDelegate, firma: "func application(_ application: UIApplication, continue userActivity: NSUserActivity") ?? "")
+                    .contains("ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)"))
+        let codiceAppDelegate = senzaCommenti(appDelegate).replacingOccurrences(of: "handleEventsForBackgroundURLSession", with: "")
+        verifica("l'AppDelegate non nomina la sessione, i segreti, la coda: parla solo col motore",
+                 !codiceAppDelegate.contains("URLSession") && !codiceAppDelegate.contains("KVPortachiavi") && !codiceAppDelegate.contains("KVCodaCaricamenti") && !codiceAppDelegate.contains("SecItem"))
+    } else {
+        verifica("AppDelegate.swift leggibile", false)
+    }
+
+    sezione("I2 — ogni file Swift dell'app è «in Sources» nel pbxproj, con ID della serie KV28…010 e seguenti")
+    if let pbx = leggiTesto(cartellaProduzione + "/../App.xcodeproj/project.pbxproj"),
+       let sorgentiFase = pbx.components(separatedBy: "/* Begin PBXSourcesBuildPhase section */").dropFirst().first?.components(separatedBy: "/* End PBXSourcesBuildPhase section */").first {
+        let swiftNellaCartella = ((try? FileManager.default.contentsOfDirectory(atPath: cartellaProduzione)) ?? []).filter { $0.hasSuffix(".swift") }.sorted()
+        verifica("(si guardano davvero dei file: \(swiftNellaCartella.count) .swift in ios/App/App)", swiftNellaCartella.count >= 10)
+        for nome in swiftNellaCartella {
+            verifica("\(nome) è in Sources", sorgentiFase.contains("\(nome) in Sources"))
+        }
+        for nome in nomiSorgentiI1 + nomiSorgentiI2 {
+            let righeBuild = pbx.split(separator: "\n").filter { $0.contains("\(nome) in Sources */ = {isa = PBXBuildFile;") }
+            verificaUguali("\(nome): una riga PBXBuildFile sola", righeBuild.count, 1)
+            let rigaBuild = String(righeBuild.first ?? "")
+            let idBuild = rigaBuild.range(of: "KV28B0F[0-9A-F]{13}", options: .regularExpression).map { String(rigaBuild[$0]) } ?? ""
+            let numero = Int(idBuild.suffix(2), radix: 16) ?? 0
+            verifica("\(nome): ID di costruzione \(idBuild) nella serie nuova (≥ ...010)", numero >= 0x10, "id: \(idBuild)")
+            verificaUguali("\(nome): una riga PBXFileReference sola", pbx.split(separator: "\n").filter { $0.contains("/* \(nome) */ = {isa = PBXFileReference;") }.count, 1)
+            verificaUguali("\(nome): sta nel gruppo App (una riga di elenco)", pbx.split(separator: "\n").filter { $0.hasPrefix("\t\t\t\tKV28F0F") && $0.contains("/* \(nome) */,") }.count, 1)
+        }
+        let tuttiGliId = pbx.split(separator: "\n").compactMap { riga -> String? in
+            guard riga.hasPrefix("\t\tKV28"), let fine = riga.firstIndex(of: " ") else { return nil }
+            return String(riga[riga.index(riga.startIndex, offsetBy: 2)..<fine])
+        }
+        verificaUguali("nessun ID del pbxproj è definito due volte (\(tuttiGliId.count) definizioni KV28…)", Set(tuttiGliId).count, tuttiGliId.count)
+        verifica("capacitor.config.json resta com'era nel pbxproj (una sola riga di file, una fra le risorse)", pbx.components(separatedBy: "capacitor.config.json in Resources").count == 3)
+    } else {
+        verifica("project.pbxproj leggibile", false)
+    }
 }
 
 // MARK: - Esecuzione
@@ -2245,11 +3021,14 @@ provaStati()
 provaPut()
 provaAttese()
 provaRinnovo()
+provaContentType()
 provaSoglia()
 provaHost()
 provaPonte()
 provaCoda()
 provaRegistro()
+provaComponenti()
+provaMotore()
 provaSorgenti()
 chiudiSezione()
 try? FileManager.default.removeItem(at: radiceProva)

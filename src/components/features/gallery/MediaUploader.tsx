@@ -105,6 +105,9 @@ export function MediaUploader({ onUpload }: Props) {
     const [preparazione, setPreparazione] = useState<{ fatti: number; totali: number } | null>(null);
     // «Annulla» è stato premuto e il plugin non ha ancora risposto: il pulsante non si preme due volte.
     const [annullando, setAnnullando] = useState(false);
+    // Il plugin ha già risposto e le FOTO si stanno leggendo, una alla volta (`leggiFoto`): la preparazione nativa è finita,
+    // non c'è più niente da annullare, e «Annulla» spento lo dice invece di fingere (secondario J2 n. 2).
+    const [leggendoFoto, setLeggendoFoto] = useState(false);
     // Gli elementi che il plugin ha rifiutato nell'ultima scelta (nome e motivo, solo per lo schermo).
     const [rifiutati, setRifiutati] = useState<RifiutoMostrato[]>([]);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -309,6 +312,7 @@ export function MediaUploader({ onUpload }: Props) {
         const foto = tenuti.filter(eFoto);
         const lette: File[] = [];
         let nonLette = 0;
+        if (foto.length > 0) setLeggendoFoto(true);
         for (let i = 0; i < foto.length; i++) {
             if (!montatoRef.current) {
                 void scartaPreparatiNativi(foto.slice(i).map(f => f.id));
@@ -368,6 +372,7 @@ export function MediaUploader({ onUpload }: Props) {
                 setScegliendo(false);
                 setPreparazione(null);
                 setAnnullando(false);
+                setLeggendoFoto(false);
             }
         }
     };
@@ -396,7 +401,9 @@ export function MediaUploader({ onUpload }: Props) {
     };
 
     const handleSubmit = () => {
-        if (previews.length === 0) return;
+        // Il pulsante è spento durante una scelta nativa; la guardia sul ref vale anche per un gesto che il pulsante non vede.
+        // Passare al passo dei bambini a foto ancora da leggere smonterebbe questo componente e butterebbe quelle in volo.
+        if (previews.length === 0 || sceltaInCorsoRef.current) return;
         // Da qui i video nativi sono della pagina: lo smontaggio di questo componente non li scarta.
         consegnatoRef.current = true;
         onUpload(previews);
@@ -567,7 +574,7 @@ export function MediaUploader({ onUpload }: Props) {
                                 type="button"
                                 data-testid="gallery-selettore-annulla-preparazione"
                                 onClick={annullaPreparazione}
-                                disabled={annullando}
+                                disabled={annullando || leggendoFoto}
                                 className="min-h-11 shrink-0 rounded-pill px-3 font-maven text-xs font-bold text-kidville-green underline underline-offset-2 transition-opacity hover:opacity-80 disabled:pointer-events-none disabled:text-kidville-sub"
                             >
                                 {t('galleryAnnulla')}
@@ -721,8 +728,15 @@ export function MediaUploader({ onUpload }: Props) {
                           ed è esattamente così che in questo repo un lock si è già
                           immunizzato col proprio commento.
                         */}
-                        <button type="button" onClick={handleSubmit}
-                            className="mt-4 w-full py-3 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-base uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20">
+                        {/*
+                          SPENTO DURANTE UNA SCELTA NATIVA (secondario J2 n. 1). In `accogliScelta` i video entrano subito e le
+                          foto si leggono una alla volta: se qui si passasse al passo dei bambini a metà, questo componente si
+                          smonterebbe, le foto non ancora lette si scarterebbero dal telefono e quella in volo — già cancellata da
+                          `leggiFoto` — si butterebbe: la scelta si accorcerebbe senza un avviso. Lo stato spento si DIPINGE (lo
+                          stesso grigio di `Btn`, 5,75:1) e non si sbiadisce con un'alfa.
+                        */}
+                        <button type="button" onClick={handleSubmit} disabled={scegliendo}
+                            className="mt-4 w-full py-3 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-base uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20 disabled:pointer-events-none disabled:bg-kidville-neutral-soft disabled:text-kidville-sub disabled:shadow-none">
                             {t('galleryModificaTag')} · {previews.length} {previews.length === 1 ? t('mediaFileSingolare') : t('mediaFilePlurale')}
                             <ArrowRight size={16} strokeWidth={2} aria-hidden="true" />
                         </button>

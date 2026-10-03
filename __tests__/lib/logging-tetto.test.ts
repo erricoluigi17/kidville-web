@@ -545,6 +545,21 @@ const TETTI_DICHIARATI = new Map<string, string>([
         + 'l\'ordine di grandezza. Ogni giro lascia in `app_log` avvio ed esito '
         + '(`dispatch-anticipato-avviato`, poi `-ok`, `-fallito`, `-eccezione`…), quindi un\'attesa che non arriva in fondo '
         + 'si vede dal battito mancante.'],
+    ['src/components/features/gallery/use-video-galleria.ts',
+        'quanto la Galleria aspetta la lettura della coda dei caricamenti NATIVI prima di abbandonarla '
+        + '(`TETTO_ELENCO_NATIVO_MS`, 8 s — app 1.2, compito J3, 2026-10-03). Non limita una `fetch`: '
+        + 'limita una chiamata al PLUGIN (`elenco`), che il bridge di Capacitor non sa annullare e che, se il '
+        + 'nativo dimenticasse di risolverla, resterebbe appesa per sempre. Il guasto sarebbe grave fuori '
+        + 'proporzione: la lettura dell\'elenco del SERVER aspetta questa (`caricaElenco` le fa partire '
+        + 'insieme e riconcilia dopo entrambe), e la guardia `elencoInVoloRef` restituirebbe la promessa '
+        + 'appesa a ogni giro — la Galleria non si aggiornerebbe più, per i video del server come per quelli '
+        + 'del plugin, fino al ricaricamento. Il numero è alto rispetto al costo vero (una lettura del '
+        + 'giornale locale costa millisecondi) perché un tetto scattato a torto non perde niente: la lettura '
+        + 'si abbandona, si lascia una riga `warn` (`video-nativo-elenco-scaduto`) e al giro dopo — '
+        + '10 s più tardi, o al ritorno in primo piano — si riprova. Un numero corto (1-2 s) '
+        + 'invece scatterebbe di continuo sul primo risveglio di iOS, quando il processo del '
+        + 'plugin riparte a freddo. La scadenza ha la sua riga, e non è rumore: sul telefono sano non '
+        + 'scatta mai, quindi ogni occorrenza dice che il plugin non risponde.'],
 ]);
 
 /**

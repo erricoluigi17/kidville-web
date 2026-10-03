@@ -20,6 +20,10 @@ import os
 //  · una coda illeggibile o di una versione che non conosciamo NON si butta: si RINOMINA in
 //    `coda.corrotta-<istante>.json` e si riparte da una coda vuota (il server chiuderà i job di quelle voci dopo 48 ore e
 //    avviserà l'insegnante); i file di video che nessuna voce nomina più sono «orfani» e la pulizia li toglie;
+//  · UNA SOLA voce fuori forma in un file per il resto buono non porta via le altre (come su Android, §4.6): si scarta quella e si conta
+//    (`voci_scartate` nella riga `coda-nativa-corrotta`);
+//  · uno stato TERMINALE si scrive su disco PRIMA di cancellare la copia del video (e, nel motore, i segreti): se la scrittura fallisce la
+//    copia resta, e la pulizia ripassa comunque sui residui;
 //  · se invece il file esiste ma NON SI RIESCE A LEGGERE (dati protetti non ancora disponibili, permessi) non è
 //    corrotto, e sovrascriverlo con una coda vuota farebbe sparire i video in volo: `carica()` risponde
 //    `illeggibileOra`, la coda resta «non pronta» e rifiuta ogni scrittura finché un nuovo `carica()` non riesce;
@@ -170,6 +174,9 @@ enum KVEsitoCaricamentoCoda: Equatable {
     case nuova
     /// Letta: `voci` voci.
     case caricata(voci: Int)
+    /// Letta, ma con `vociScartate` voci fuori forma tolte da sole (§4.6): le altre `voci` restano. `fileOrfani` sono i file di `file/` che
+    /// nessuna voce viva nomina più (la pulizia li toglie). La coda ha già scritto `coda-nativa-corrotta` e riscritto il file senza le voci scartate.
+    case caricataConScarti(voci: Int, vociScartate: Int, fileOrfani: Int)
     /// Illeggibile o di una versione sconosciuta: rinominata in `coda.corrotta-<istante>.json`, coda nuova vuota.
     /// `fileOrfani` sono i file di video in `file/` che nessuna voce nomina più (la pulizia li toglie): va scritto
     /// `coda-nativa-corrotta` con questo numero.
@@ -181,7 +188,10 @@ enum KVEsitoCaricamentoCoda: Equatable {
 
 enum KVEsitoAggiunta: Equatable {
     case aggiunta(KVVoceCoda)
-    /// Esiste già una voce con quel `jobId` (apertura ripetuta): non si tocca, si restituisce lo stato attuale.
+    /// Esisteva una voce TERMINALE con quel `jobId` (un video fallito o annullato che si rimanda con gli stessi bambini: stessa chiave
+    /// d'idempotenza, stesso job): la nuova la sostituisce, e il reinvio riparte da zero.
+    case sostituita(KVVoceCoda)
+    /// Esiste già una voce VIVA con quel `jobId` (apertura ripetuta): non si tocca, si restituisce lo stato attuale.
     case giaPresente(KVVoceCoda)
     /// Percorso della copia fuori dalla cartella dei file, o peso nullo.
     case nonValida
@@ -215,9 +225,12 @@ struct KVEsitoPulizia: Equatable {
     /// Voci non terminali con il token scaduto: la pulizia le ha chiuse come `fallito`/`TOKEN_SCADUTO` (e cancellato la copia) e, se la coda ha un
     /// registro, ha già scritto `video-nativo-fallito`. Il motore avvisa il JS e toglie i segreti.
     var vociScadute: [KVVoceCoda] = []
+    /// `false` se la pulizia ha modificato la coda e la scrittura è fallita: le voci appena chiuse sono terminali solo in memoria, e il motore NON
+    /// ne cancella i segreti (come la coda non ne ha cancellato le copie).
+    var persistita = true
     /// I `jobId` delle voci NON terminali: i segreti di qualunque altro `jobId` non hanno più una voce e il motore li toglie.
-    /// ⚠️ `nil` se la pulizia NON è girata (la coda non era pronta): in quel caso non si toglie nessun segreto. Un elenco vuoto
-    /// «per errore» farebbe cancellare dal Portachiavi i segreti di tutti i video in volo.
+    /// ⚠️ `nil` se la pulizia NON è girata (la coda non era pronta) o se non è riuscita a scrivere: in quel caso non si toglie nessun segreto. Un
+    /// elenco vuoto «per errore» farebbe cancellare dal Portachiavi i segreti di tutti i video in volo.
     var jobIdAttivi: Set<UUID>? = nil
 }
 
@@ -372,14 +385,41 @@ final class KVCodaCaricamenti {
             return .illeggibileOra(errore)
         }
 
-        if let file = leggi(dati) {
-            vociInterne = file.voci
-            testiInterni = file.testi
-            prontaInterna = true
-            return .caricata(voci: file.voci.count)
-        }
+        guard let letto = leggi(dati) else { return isolaECominciaDaCapo() }
+        vociInterne = letto.voci
+        testiInterni = letto.testi
+        prontaInterna = true
+        if letto.vociScartate == 0 { return .caricata(voci: letto.voci.count) }
+        // Una voce sola fuori forma non porta via le altre (§4.6, come su Android): si scarta, si riscrive il file senza, si dichiara. Si
+        // riscrive SUBITO perché la riga di log esca una volta sola e non a ogni avvio.
+        let orfani = contaFileOrfani()
+        _ = salva()
+        registro?.registraCodaCorrotta(fileOrfani: orfani, vociScartate: letto.vociScartate)
+        return .caricataConScarti(voci: letto.voci.count, vociScartate: letto.vociScartate, fileOrfani: orfani)
+    }
 
-        // Illeggibile o di una versione che non conosciamo: si tiene da parte, e si riparte da una coda vuota.
+    /// L'ESCALATION per una coda che non si riesce MAI a leggere: se `carica()` risponde `illeggibileOra` anche quando i dati protetti sono
+    /// certamente disponibili (l'app è in primo piano, il telefono è sbloccato), un `coda.json` che si ostina a non aprirsi è guasto per
+    /// davvero (un errore di I/O) e lasciarlo lì vuol dire che OGNI `accodaVideo` fallisce, per sempre. Allora lo si tratta da corrotto:
+    /// rinominato `coda.corrotta-<istante>.json`, coda nuova vuota, `coda-nativa-corrotta`. Il motore la chiama solo dopo più tentativi.
+    /// Se il file non c'è più, o ora si legge, non rinomina niente e si comporta come `carica()`.
+    @discardableResult
+    func ripartiDaCapo() -> KVEsitoCaricamentoCoda {
+        serratura.lock()
+        let esiste = FileManager.default.fileExists(atPath: urlFileCoda.path)
+        let leggibile = esiste && (try? Data(contentsOf: urlFileCoda)) != nil
+        if esiste && !leggibile {
+            let esito = isolaECominciaDaCapo()
+            serratura.unlock()
+            return esito
+        }
+        serratura.unlock()
+        return carica()
+    }
+
+    /// Il file è illeggibile, rotto o di una versione che non conosciamo: lo si tiene da parte e si riparte da una coda vuota. Chi la chiama
+    /// tiene la serratura.
+    private func isolaECominciaDaCapo() -> KVEsitoCaricamentoCoda {
         let orfani = contaFileInCartella(cartellaFile)
         isolaFileCorrotto()
         vociInterne = []
@@ -400,14 +440,68 @@ final class KVCodaCaricamenti {
         var versione: Int
     }
 
-    /// `nil` se il contenuto non è una coda che sappiamo leggere: JSON rotto, voci fuori forma, versione diversa.
-    private func leggi(_ dati: Data) -> FileCoda? {
+    /// Il file com'è in LETTURA: la versione e i testi come prima (se mancano, il file è corrotto per intero), ma le voci UNA PER UNA: una che
+    /// non si decodifica non fa fallire le altre, si salta e si conta.
+    private struct FileCodaInLettura: Decodable {
+        var versione: Int
+        var testi: KVTestiNotifiche
+        var voci: [KVVoceCoda] = []
+        var scartate = 0
+
+        private enum Chiavi: String, CodingKey { case versione, testi, voci }
+        /// Si decodifica da qualunque valore JSON senza leggerlo: serve a far avanzare il contenitore oltre una voce che non si è decodificata
+        /// (un contenitore non avanza da solo dopo un errore).
+        private struct Qualunque: Decodable { init(from decoder: Decoder) throws {} }
+
+        init(from decoder: Decoder) throws {
+            let radice = try decoder.container(keyedBy: Chiavi.self)
+            versione = try radice.decode(Int.self, forKey: .versione)
+            testi = try radice.decode(KVTestiNotifiche.self, forKey: .testi)
+            var elenco = try radice.nestedUnkeyedContainer(forKey: .voci)
+            while !elenco.isAtEnd {
+                if let voce = try? elenco.decode(KVVoceCoda.self) {
+                    voci.append(voce)
+                } else {
+                    _ = try elenco.decode(Qualunque.self)
+                    scartate += 1
+                }
+            }
+        }
+    }
+
+    /// Una voce che si decodifica ma non ha senso è fuori forma quanto una che non si decodifica: peso nullo, contatori negativi, percorso della copia
+    /// che esce da `file/` o che nomina un altro job (a uno stato terminale la copia si cancella: un percorso sbagliato cancellerebbe il video di un altro).
+    static func voceValida(_ voce: KVVoceCoda) -> Bool {
+        guard voce.byte >= 1, voce.tentativi >= 0, voce.rinnovi >= 0, voce.rinnoviConsecutivi >= 0 else { return false }
+        guard percorsoRelativoValido(voce.file), let nome = voce.file.split(separator: "/").last else { return false }
+        return nome.hasPrefix(KVPoliticaCaricamento.uuidPerIlPonte(voce.jobId) + ".")
+    }
+
+    /// Le voci buone, i testi e quante voci si sono scartate; `nil` se il contenuto non è una coda che sappiamo leggere per intero: JSON rotto,
+    /// elenco delle voci assente o che non è un elenco, versione diversa.
+    private func leggi(_ dati: Data) -> (voci: [KVVoceCoda], testi: KVTestiNotifiche, vociScartate: Int)? {
         let decodificatore = JSONDecoder()
         decodificatore.dateDecodingStrategy = .iso8601
         guard let intestazione = try? decodificatore.decode(SoloVersione.self, from: dati),
               intestazione.versione == Self.versioneFile,
-              let file = try? decodificatore.decode(FileCoda.self, from: dati) else { return nil }
-        return file
+              let file = try? decodificatore.decode(FileCodaInLettura.self, from: dati) else { return nil }
+        var viste = Set<UUID>()
+        var buone: [KVVoceCoda] = []
+        var scartate = file.scartate
+        for voce in file.voci {
+            if Self.voceValida(voce) && viste.insert(voce.jobId).inserted {
+                buone.append(voce)
+            } else {
+                scartate += 1
+            }
+        }
+        return (buone, file.testi, scartate)
+    }
+
+    /// I file di `file/` che nessuna voce VIVA nomina (come li vede la pulizia).
+    private func contaFileOrfani() -> Int {
+        let nominati = Set(vociInterne.filter { !$0.stato.eTerminale }.compactMap { nomeDelFile($0.file) })
+        return nomiInCartella(cartellaFile).filter { !nominati.contains($0) }.count
     }
 
     /// `coda.json` → `coda.corrotta-<istante>.json` (con un suffisso se quel nome esiste già).
@@ -467,13 +561,28 @@ final class KVCodaCaricamenti {
         _ = salva()
     }
 
-    /// Aggiunge una voce `in-coda`. Se il `jobId` c'è già non fa niente e restituisce quella che c'è (`accodaVideo` è idempotente
-    /// sul `jobId`).
+    /// Aggiunge una voce `in-coda`. Se c'è già una voce VIVA con quel `jobId` non fa niente e restituisce quella che c'è (`accodaVideo` è
+    /// idempotente sul `jobId`). Se c'è una voce TERMINALE con quel `jobId` (un video fallito o annullato che si rimanda con gli stessi
+    /// bambini: la chiave d'idempotenza è deterministica, quindi il job è lo stesso) la SOSTITUISCE: un reinvio deve ripartire, non
+    /// restituire un `fallito` che non si muove più. La copia e i segreti della terminale non ci sono già (si cancellano a ogni stato terminale).
+    ///
+    /// La copia del video NON si sposta qui: si sposta DOPO, con `spostaInFile(da:perVoce:)`, e se non riesce si toglie la voce con
+    /// `rimuoviVoce` — così una voce aggiunta e non scritta, o una copia spostata senza voce, non restano mai in giro.
     func aggiungi(_ voce: KVVoceCoda) -> KVEsitoAggiunta {
         serratura.lock(); defer { serratura.unlock() }
         guard prontaInterna else { return .nonPronta }
-        if let esistente = vociInterne.first(where: { $0.jobId == voce.jobId }) { return .giaPresente(esistente) }
-        guard Self.percorsoRelativoValido(voce.file), voce.byte >= 1, voce.stato == .inCoda else { return .nonValida }
+        let esistente = vociInterne.firstIndex(where: { $0.jobId == voce.jobId })
+        if let indice = esistente, !vociInterne[indice].stato.eTerminale { return .giaPresente(vociInterne[indice]) }
+        guard Self.voceValida(voce), voce.stato == .inCoda else { return .nonValida }
+        if let indice = esistente {
+            let precedente = vociInterne[indice]
+            vociInterne[indice] = voce
+            if !salva() {
+                vociInterne[indice] = precedente
+                return .scritturaFallita
+            }
+            return .sostituita(voce)
+        }
         vociInterne.append(voce)
         if !salva() {
             vociInterne.removeLast()
@@ -482,8 +591,23 @@ final class KVCodaCaricamenti {
         return .aggiunta(voce)
     }
 
-    /// Cambia lo STATO di una voce, e solo qui lo si cambia. Applica la sequenza di `KVPoliticaCaricamento.catena`; a uno stato terminale
-    /// cancella la copia del video. I segreti (Portachiavi) li toglie il motore, che lo sa dal risultato.
+    /// Toglie una voce dalla coda qualunque sia il suo stato, con la sua copia: è il ripristino di `accodaVideo` quando, dopo l'`aggiungi`,
+    /// qualcosa non è riuscito (la copia non si sposta, i segreti non si salvano). Non è un `dimentica`: quello vale solo per le terminali.
+    @discardableResult
+    func rimuoviVoce(_ jobId: UUID) -> Bool {
+        serratura.lock(); defer { serratura.unlock() }
+        guard prontaInterna, let indice = vociInterne.firstIndex(where: { $0.jobId == jobId }) else { return false }
+        let voce = vociInterne.remove(at: indice)
+        _ = salva()
+        rimuoviCopia(voce)
+        return true
+    }
+
+    /// Cambia lo STATO di una voce, e solo qui lo si cambia. Applica la sequenza di `KVPoliticaCaricamento.catena`. A uno stato terminale la copia del
+    /// video si cancella DOPO aver scritto lo stato su disco, e solo se la scrittura è riuscita: se fallisce (o il processo muore in mezzo) la
+    /// voce sul disco resta viva CON la sua copia, e alla riapertura riparte (il server dirà con un duplicato se il file era già arrivato); se invece
+    /// la copia sparisse prima, la stessa voce rinascerebbe in `FILE_ASSENTE` anche a video arrivato. La pulizia ripassa comunque sui residui.
+    /// I segreti (Portachiavi) li toglie il motore, che lo sa dal risultato, con la stessa regola.
     func applica(_ evento: KVEventoStato, a jobId: UUID) -> KVEsitoTransizione {
         serratura.lock(); defer { serratura.unlock() }
         guard prontaInterna else { return .nonPronta }
@@ -495,17 +619,17 @@ final class KVCodaCaricamenti {
         let ora = orologio()
         for passo in passi { eseguiPasso(passo, sulla: indice, ora: ora) }
         let persistita = salva()
+        if persistita && vociInterne[indice].stato.eTerminale { rimuoviCopia(vociInterne[indice]) }
         return .applicata(prima: prima, voce: vociInterne[indice], passi: passi, persistita: persistita)
     }
 
-    /// Un passo della tabella, già verificato. Chi lo chiama tiene la serratura.
+    /// Un passo della tabella, già verificato. Chi lo chiama tiene la serratura e, a uno stato terminale, cancella la copia DOPO aver scritto.
     private func eseguiPasso(_ passo: KVEventoStato, sulla indice: Int, ora: Date) {
         guard let nuovo = KVPoliticaCaricamento.transizione(da: vociInterne[indice].stato, evento: passo) else { return }
         vociInterne[indice].stato = nuovo
         vociInterne[indice].codice = passo.codice
         vociInterne[indice].aggiornatoIl = ora
         if nuovo == .inInvio || nuovo.eTerminale { vociInterne[indice].prossimoTentativoIl = nil }
-        if nuovo.eTerminale { rimuoviCopia(vociInterne[indice]) }
     }
 
     /// Cambia gli altri campi di una voce (contatori, scadenze, codice, `prossimoTentativoIl`…). Lo `stato`, il `jobId` e `creatoIl` non si
@@ -600,27 +724,26 @@ final class KVCodaCaricamenti {
         return tolti
     }
 
-    /// Sposta un preparato di `scelti/` nella cartella delle copie, `file/<jobId>.<estensione>` (è il primo passo di `accodaVideo`), e lo
-    /// protegge. Restituisce il percorso RELATIVO da scrivere nella voce, o `nil` se non riesce: sorgente fuori da `scelti/`, un job vivo con
-    /// quel `jobId` (non si sostituisce la copia di un video che sta partendo), spostamento fallito. Una destinazione che esiste ma non
-    /// appartiene a nessun job vivo (un residuo) si sostituisce.
-    func spostaInFile(da sorgente: URL, jobId: UUID, estensione: String) -> String? {
+    /// Sposta un preparato di `scelti/` nella copia della voce `jobId`, `file/<jobId>.<estensione>` (è il secondo passo di `accodaVideo`, DOPO
+    /// `aggiungi`), e la protegge. Restituisce `false` se non riesce: la voce non c'è o è terminale, la sorgente sta fuori da `scelti/`, lo
+    /// spostamento fallisce. In quel caso la sorgente è ancora dov'era e chi chiama toglie la voce con `rimuoviVoce` (il ripristino). Una
+    /// destinazione che esiste già (un residuo: nessun'altra voce viva la nomina) si sostituisce.
+    func spostaInFile(da sorgente: URL, perVoce jobId: UUID) -> Bool {
         serratura.lock(); defer { serratura.unlock() }
-        guard prontaInterna else { return nil }
+        guard prontaInterna else { return false }
+        guard let voce = vociInterne.first(where: { $0.jobId == jobId }), !voce.stato.eTerminale,
+              let destinazione = urlFile(di: voce) else { return false }
         let radiceScelti = cartellaScelti.standardizedFileURL.path + "/"
-        guard sorgente.standardizedFileURL.path.hasPrefix(radiceScelti) else { return nil }
-        guard !vociInterne.contains(where: { $0.jobId == jobId && !$0.stato.eTerminale }) else { return nil }
-        let relativo = Self.percorsoRelativoCopia(jobId: jobId, estensione: estensione)
-        let destinazione = cartella.appendingPathComponent(relativo)
+        guard sorgente.standardizedFileURL.path.hasPrefix(radiceScelti) else { return false }
         do {
             if FileManager.default.fileExists(atPath: destinazione.path) { try FileManager.default.removeItem(at: destinazione) }
             try FileManager.default.moveItem(at: sorgente, to: destinazione)
         } catch {
             segnala("spostamento della copia fallito", error)
-            return nil
+            return false
         }
         proteggi(destinazione)
-        return relativo
+        return true
     }
 
     // MARK: Pulizia (all'avvio del motore)
@@ -660,8 +783,8 @@ final class KVCodaCaricamenti {
         esito.vociTerminaliRimosse = prima - vociInterne.count
         if esito.vociTerminaliRimosse > 0 { modificata = true }
 
-        // 3. file orfani
-        let nominati = Set(vociInterne.filter { !$0.stato.eTerminale }.compactMap { nomeDelFile($0.file) })
+        // 3. file orfani. Le copie delle voci appena chiuse al punto 1 NON lo sono ancora: si cancellano in fondo, dopo aver scritto lo stato.
+        let nominati = Set((vociInterne.filter { !$0.stato.eTerminale } + esito.vociScadute).compactMap { nomeDelFile($0.file) })
         for nome in nomiInCartella(cartellaFile) where !nominati.contains(nome) {
             let url = cartellaFile.appendingPathComponent(nome)
             if let eta = ultimaAttivita(url), ora.timeIntervalSince(eta) > Self.graziaFileOrfani, rimuovi(url) {
@@ -685,7 +808,16 @@ final class KVCodaCaricamenti {
             }
         }
 
-        if modificata { _ = salva() }
+        if modificata {
+            // Le copie delle voci appena chiuse si cancellano DOPO aver scritto lo stato (come in `applica`): se la scrittura fallisce restano, e la
+            // pulizia successiva le prende come orfane quando la voce risulterà terminale su disco.
+            if salva() {
+                for chiusa in esito.vociScadute { rimuoviCopia(chiusa) }
+            } else {
+                esito.persistita = false
+                return esito // jobIdAttivi resta nil: nessun segreto si toglie
+            }
+        }
         esito.jobIdAttivi = Set(vociInterne.filter { !$0.stato.eTerminale }.map { $0.jobId })
         return esito
     }

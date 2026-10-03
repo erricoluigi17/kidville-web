@@ -986,3 +986,145 @@ describe('l’<input> del browser è montato anche prima che la rilevazione risp
     expect(input.hidden).toBe(true)
   })
 })
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * DURANTE LA PREPARAZIONE, I PULSANTI CHE NON POSSONO FARE NIENTE SONO SPENTI (J3, secondari J2 n. 1 e n. 2)
+ *
+ * In `accogliScelta` i video entrano subito e le FOTO si leggono una alla volta (`leggiFoto` consegna la foto e la
+ * cancella dal telefono):
+ *
+ *  · «Modifica Tag · N file» premuto a metà smonterebbe il componente: le foto non ancora lette si scarterebbero dal
+ *    telefono e quella in volo — già cancellata da `leggiFoto` — si butterebbe. La scelta si accorcerebbe senza un avviso;
+ *  · «Annulla» resta a schermo dopo che il plugin ha risposto («Preparo i file: N di N»), ma lì non annulla niente: il
+ *    nativo non ha più nulla da fermare e le foto vengono aggiunte lo stesso. Un comando che finge è un comando che mente.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+describe('«Modifica Tag» è spento durante una scelta nativa, e «Annulla» durante la lettura delle foto', () => {
+  const modificaTag = () => screen.getByRole('button', { name: new RegExp(itShared.galleryModificaTag) }) as HTMLButtonElement
+  const annullaPreparazione = () => screen.getByTestId('gallery-selettore-annulla-preparazione') as HTMLButtonElement
+
+  /** Una prima scelta già fatta (un video), così «Modifica Tag» esiste prima della seconda. */
+  async function conUnVideoGiaScelto() {
+    const v = await monta()
+    h.scegliMedia.mockResolvedValueOnce({ annullato: false, elementi: [videoNativo(1)] })
+    await tocca(galleria())
+    await waitFor(() => expect(rimuovi()).toHaveLength(1))
+    return v
+  }
+
+  it('a scelta FINITA il pulsante è acceso e consegna; a selettore APERTO è spento (e un clic non consegna niente)', async () => {
+    const { onUpload } = await conUnVideoGiaScelto()
+    expect(modificaTag()).toBeEnabled()
+
+    const d = sceltaAperta()
+    await tocca(galleria())
+    expect(modificaTag(), 'selettore di sistema aperto').toBeDisabled()
+    fireEvent.click(modificaTag())
+    expect(onUpload).not.toHaveBeenCalled()
+
+    // Il selettore si chiude senza scegliere: tutto torna come prima.
+    await act(async () => { d.ok({ annullato: true, elementi: [] }) })
+    expect(modificaTag()).toBeEnabled()
+    fireEvent.click(modificaTag())
+    expect(onUpload).toHaveBeenCalledTimes(1)
+  })
+
+  it('anche nella finestra PRIMA del render: un secondo gesto nello stesso istante del tocco sul selettore non consegna niente', async () => {
+    const { onUpload } = await conUnVideoGiaScelto()
+    const d = sceltaAperta()
+    // I due clic nello stesso `act`: React non ha ancora ridisegnato il pulsante come spento, ma la scelta è già in corso
+    // (il ref cambia subito) e la guardia del gestore la vede.
+    act(() => {
+      fireEvent.click(galleria())
+      fireEvent.click(modificaTag())
+    })
+    expect(onUpload).not.toHaveBeenCalled()
+    await act(async () => { d.ok({ annullato: true, elementi: [] }) })
+    expect(modificaTag()).toBeEnabled()
+  })
+
+  it('durante la PREPARAZIONE nativa è spento, e si riaccende quando la scelta finisce', async () => {
+    await conUnVideoGiaScelto()
+    const d = sceltaAperta()
+    await tocca(galleria())
+    await waitFor(() => expect(h.avanzamento).not.toBeNull())
+    act(() => { h.avanzamento?.({ fatti: 1, totali: 3, byteCopiati: 1, byteTotali: 3 }) })
+    expect(screen.getByTestId('gallery-selettore-preparazione')).toHaveTextContent('Preparo i file: 1 di 3')
+    expect(modificaTag()).toBeDisabled()
+
+    await act(async () => { d.ok({ annullato: false, elementi: [videoNativo(2)] }) })
+    await waitFor(() => expect(rimuovi()).toHaveLength(2))
+    expect(modificaTag()).toBeEnabled()
+  })
+
+  it('durante la LETTURA DELLE FOTO (il plugin ha già risposto) è spento: le foto in volo non si perdono, e «Annulla» non finge', async () => {
+    const { onUpload } = await conUnVideoGiaScelto()
+    const d = sceltaAperta()
+    await tocca(galleria())
+    await waitFor(() => expect(h.avanzamento).not.toBeNull())
+    act(() => { h.avanzamento?.({ fatti: 2, totali: 2, byteCopiati: 6, byteTotali: 6 }) })
+    // Prima della risposta del plugin, «Annulla» è un comando vero.
+    expect(annullaPreparazione()).toBeEnabled()
+
+    // Il plugin risponde con due foto; la prima si legge, la seconda aspetta: la lettura è in corso.
+    const prima = differita<typeof FOTO_LETTA>()
+    h.leggiFoto.mockReturnValueOnce(prima.promessa)
+    await act(async () => { d.ok({ annullato: false, elementi: [fotoNativa(1), fotoNativa(2)] }) })
+    await waitFor(() => expect(h.leggiFoto).toHaveBeenCalledTimes(1))
+
+    // «Preparo i file: 2 di 2» è ancora a schermo, ma «Annulla» non può annullare più niente: è spento.
+    expect(screen.getByTestId('gallery-selettore-preparazione')).toHaveTextContent('Preparo i file: 2 di 2')
+    expect(annullaPreparazione()).toBeDisabled()
+    fireEvent.click(annullaPreparazione())
+    expect(h.annullaScelta, 'un clic su un comando spento non chiama il plugin').not.toHaveBeenCalled()
+    // E «Modifica Tag» è spento: premuto ora smonterebbe il componente a foto da leggere.
+    expect(modificaTag()).toBeDisabled()
+    fireEvent.click(modificaTag())
+    expect(onUpload).not.toHaveBeenCalled()
+    expect(h.scartaScelti, 'nessuna foto scartata: il componente è ancora montato').not.toHaveBeenCalled()
+
+    // La lettura finisce: tutte e due le foto sono entrate, «Annulla» è sparito e il pulsante consegna TUTTO.
+    await act(async () => { prima.ok(FOTO_LETTA) })
+    await waitFor(() => expect(rimuovi()).toHaveLength(3))
+    expect(tid('gallery-selettore-annulla-preparazione')).not.toBeInTheDocument()
+    expect(modificaTag()).toBeEnabled()
+    fireEvent.click(modificaTag())
+    const consegnati = onUpload.mock.calls[0][0] as Array<{ file: File | null }>
+    expect(consegnati).toHaveLength(3)
+    expect(consegnati.filter((c) => c.file !== null).map((c) => c.file!.name)).toEqual(['IMG_001.jpg', 'IMG_002.jpg'])
+  })
+
+  it('la fase di lettura NON si confonde con la preparazione vera: dopo una scelta con foto già lette «Annulla» non resta spento', async () => {
+    await monta()
+    // Una scelta con una foto: la lettura accende lo spegnimento, e a fine scelta deve spegnersi anche lui.
+    h.scegliMedia.mockResolvedValueOnce({ annullato: false, elementi: [fotoNativa(1)] })
+    await tocca(galleria())
+    await waitFor(() => expect(rimuovi()).toHaveLength(1))
+    const d = sceltaAperta()
+    await tocca(galleria())
+    await waitFor(() => expect(h.avanzamento).not.toBeNull())
+    act(() => { h.avanzamento?.({ fatti: 1, totali: 2, byteCopiati: 1, byteTotali: 2 }) })
+    expect(annullaPreparazione()).toBeEnabled()
+    // Una scelta che finisce annullata (nessuna foto da leggere) lascia la regione vuota e il pulsante assente.
+    await act(async () => { d.ok({ annullato: true, elementi: [] }) })
+    expect(tid('gallery-selettore-annulla-preparazione')).not.toBeInTheDocument()
+    // E la scelta dopo riparte con «Annulla» acceso: lo spegnimento non si è «appiccicato».
+    const d2 = sceltaAperta()
+    await tocca(galleria())
+    await waitFor(() => expect(h.avanzamento).not.toBeNull())
+    act(() => { h.avanzamento?.({ fatti: 0, totali: 1, byteCopiati: 0, byteTotali: null }) })
+    expect(annullaPreparazione()).toBeEnabled()
+    await act(async () => { d2.ok({ annullato: true, elementi: [] }) })
+  })
+
+  it('lo spegnimento si DIPINGE (stesso grigio di `Btn`) e non si sbiadisce con un’alfa', async () => {
+    await conUnVideoGiaScelto()
+    const d = sceltaAperta()
+    await tocca(galleria())
+    const classi = modificaTag().className
+    expect(classi).toContain('disabled:bg-kidville-neutral-soft')
+    expect(classi).toContain('disabled:text-kidville-sub')
+    expect(classi, 'un\'alfa abbassa in blocco riempimento e inchiostro: lo stato spento si dipinge').not.toMatch(/disabled:opacity/)
+    await act(async () => { d.ok({ annullato: true, elementi: [] }) })
+  })
+})

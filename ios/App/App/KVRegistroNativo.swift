@@ -72,8 +72,8 @@ enum KVMessaggioLog: String, CaseIterable {
     }
 }
 
-/// Le chiavi di `campi`: l'unione delle colonne di §8.1-8.2 più `versione_app` e `durata_s`. Tutte rispettano la forma che la porta dei
-/// log accetta (`^[a-z][a-z0-9_]{0,31}$`).
+/// Le chiavi di `campi`: l'unione delle colonne di §8.1-8.2 più `versione_app`, `durata_s` e `voci_scartate` (le voci fuori forma che la
+/// lettura della coda ha scartato da sole, §4.6). Tutte rispettano la forma che la porta dei log accetta (`^[a-z][a-z0-9_]{0,31}$`).
 enum KVChiaveCampo: String, CaseIterable {
     case esito
     case errorCode = "error_code"
@@ -99,6 +99,7 @@ enum KVChiaveCampo: String, CaseIterable {
     case fileOrfani = "file_orfani"
     case scartati
     case durataSecondi = "durata_s"
+    case vociScartate = "voci_scartate"
 }
 
 /// Il valore di un campo: un numero, un booleano, o un testo che viene SEMPRE da un elenco chiuso (mai da un dato dell'utente).
@@ -213,6 +214,7 @@ enum KVCampo: Equatable {
     case fileOrfani(Int)
     case scartati(Int)
     case durataSecondi(Int)
+    case vociScartate(Int)
 
     var coppia: (chiave: KVChiaveCampo, valore: KVValoreCampo) {
         switch self {
@@ -238,6 +240,7 @@ enum KVCampo: Equatable {
         case .fileOrfani(let v): return (.fileOrfani, .numero(Int64(v)))
         case .scartati(let v): return (.scartati, .numero(Int64(v)))
         case .durataSecondi(let v): return (.durataSecondi, .numero(Int64(v)))
+        case .vociScartate(let v): return (.vociScartate, .numero(Int64(v)))
         }
     }
 }
@@ -365,6 +368,10 @@ final class KVRegistroNativo {
     private var destinazione: URL?
     private var ultimoUtente: UUID?
     private var notificaNonAutorizzataScritta = false
+    /// `true` se il file del giornale c'è ma non si è riusciti a leggerlo (dati protetti non ancora disponibili, permessi): NON è rotto, e
+    /// scriverci sopra farebbe sparire gli eventi che ancora non sono partiti. Finché è `true` il giornale vive solo in memoria e `salva()`
+    /// non scrive; `riprovaLettura()` lo rilegge e fonde.
+    private var illeggibileAdesso = false
     private var invioInCorso = false
     private var nonPrimaDi = Date.distantPast
     private let diagnostica = Logger(subsystem: Bundle.main.bundleIdentifier ?? "it.kidville.app", category: "caricamenti-registro")
@@ -414,6 +421,23 @@ final class KVRegistroNativo {
     }
 
     // MARK: Destinazione
+
+    /// L'indirizzo dei log di produzione (la porta anonima `/api/logs`).
+    static let destinazioneProduzione = "https://app.kidville.it/api/logs"
+
+    /// All'avvio, in Release: se non si conosce ancora nessuna destinazione si usa quella di produzione, così i log nati PRIMA del primo
+    /// `accodaVideo` (`media-nativo-preparazione-fallita` su un'installazione nuova, `coda-nativa-corrotta`, `caricamenti-nativi-motore`) partono
+    /// lo stesso. Non sostituisce mai una destinazione già nota, e in Debug non fa niente: lì la destinazione è quella del banco di prova
+    /// (`http://localhost:…`), che arriva con `accodaVideo`.
+    @discardableResult
+    func impostaDestinazionePredefinita() -> Bool {
+        guard ambiente == .release else { return false }
+        serratura.lock()
+        let giaNota = destinazione != nil
+        serratura.unlock()
+        if giaNota { return false }
+        return impostaDestinazione(Self.destinazioneProduzione)
+    }
 
     /// L'indirizzo a cui spedire (`registro.url` di `accodaVideo`): vale solo se passa la politica degli host (`https://app.kidville.it` in
     /// Release; in Debug anche gli host di sviluppo). Si ricorda anche dopo un riavvio.
@@ -499,9 +523,12 @@ final class KVRegistroNativo {
                campi: [.inCoda(inCoda), .inInvio(inInvio), .taskVivi(taskVivi)])
     }
 
-    /// `coda.json` illeggibile: rinominato, coda nuova (`fileOrfani` = i file di video che nessuna voce nomina più).
-    func registraCodaCorrotta(fileOrfani: Int) {
-        accoda(.codaNativaCorrotta, job: nil, suffisso: nil, utente: nil, stato: nil, campi: [.fileOrfani(fileOrfani)])
+    /// `coda.json` illeggibile: rinominato, coda nuova (`fileOrfani` = i file di video che nessuna voce nomina più). Oppure, in un file per il
+    /// resto buono, `vociScartate` voci fuori forma tolte da sole (§4.6): il campo `voci_scartate` c'è solo se ce n'è almeno una.
+    func registraCodaCorrotta(fileOrfani: Int, vociScartate: Int = 0) {
+        var campi: [KVCampo] = [.fileOrfani(fileOrfani)]
+        if vociScartate > 0 { campi.append(.vociScartate(vociScartate)) }
+        accoda(.codaNativaCorrotta, job: nil, suffisso: nil, utente: nil, stato: nil, campi: campi)
     }
 
     /// Le notifiche non sono autorizzate: UNA riga per installazione (si ricorda anche dopo un riavvio).
@@ -577,6 +604,7 @@ final class KVRegistroNativo {
     @discardableResult
     func svuota(adesso: Date? = nil, completamento: (() -> Void)? = nil) -> KVEsitoSvuotamento {
         let ora = adesso ?? orologio()
+        riprovaLettura()
         serratura.lock()
         if invioInCorso {
             serratura.unlock()
@@ -691,35 +719,102 @@ final class KVRegistroNativo {
         var notificaNonAutorizzataScritta: Bool
     }
 
-    /// Legge il giornale (nell'`init`). Un file che non si legge non ferma niente: si riparte vuoti e si dichiara UN evento perso, perché
-    /// non sappiamo quanti ce n'erano.
-    private func carica() {
-        serratura.lock(); defer { serratura.unlock() }
-        guard FileManager.default.fileExists(atPath: urlFile.path) else { return }
+    /// Com'è andata la lettura del file del giornale.
+    private enum EsitoLettura {
+        case assente
+        case letto(FileRegistro)
+        /// Il file si legge ma non è un giornale che sappiamo leggere (JSON rotto, versione sconosciuta): è una perdita.
+        case rotto
+        /// Il file c'è ma non si riesce a leggerlo adesso (dati protetti non ancora disponibili, permessi): NON è una perdita.
+        case nonLeggibileAdesso
+    }
+
+    /// Chi la chiama tiene la serratura.
+    private func leggiFile() -> EsitoLettura {
+        guard FileManager.default.fileExists(atPath: urlFile.path) else { return .assente }
         let dati: Data
         do {
             dati = try Data(contentsOf: urlFile)
         } catch {
             segnala("lettura del registro fallita", error)
-            scartatiInterni = 1
-            return
+            let errore = KVErroreSistema(error)
+            // Sparito fra il controllo e la lettura: è come se non ci fosse.
+            if errore.dominio == .cocoa && errore.codice == NSFileReadNoSuchFileError { return .assente }
+            return .nonLeggibileAdesso
         }
-        let decodificatore = JSONDecoder()
-        guard let file = try? decodificatore.decode(FileRegistro.self, from: dati), file.versione == Self.versioneFile else {
+        guard let file = try? JSONDecoder().decode(FileRegistro.self, from: dati), file.versione == Self.versioneFile else {
             diagnostica.error("registro illeggibile o di versione sconosciuta: si riparte vuoti")
-            scartatiInterni = 1
-            return
+            return .rotto
         }
-        eventi = file.eventi
-        scartatiInterni = file.scartati
-        prossimoProgressivo = max(file.prossimoProgressivo, (file.eventi.map { $0.progressivo }.max() ?? 0) + 1)
-        destinazione = file.destinazione
-        ultimoUtente = file.ultimoUtente
-        notificaNonAutorizzataScritta = file.notificaNonAutorizzataScritta
+        return .letto(file)
     }
 
+    /// Legge il giornale (nell'`init`). Un file ROTTO non ferma niente: si riparte vuoti e si dichiara UN evento perso, perché non sappiamo
+    /// quanti ce n'erano. Un file che c'è ma NON SI RIESCE A LEGGERE adesso non è rotto: non si tocca (`illeggibileAdesso`) e lo si rilegge dopo.
+    private func carica() {
+        serratura.lock(); defer { serratura.unlock() }
+        switch leggiFile() {
+        case .assente:
+            return
+        case .rotto:
+            scartatiInterni = 1
+        case .nonLeggibileAdesso:
+            illeggibileAdesso = true
+        case .letto(let file):
+            eventi = file.eventi
+            scartatiInterni = file.scartati
+            prossimoProgressivo = max(file.prossimoProgressivo, (file.eventi.map { $0.progressivo }.max() ?? 0) + 1)
+            destinazione = file.destinazione
+            ultimoUtente = file.ultimoUtente
+            notificaNonAutorizzataScritta = file.notificaNonAutorizzataScritta
+        }
+    }
+
+    /// Se all'avvio il file non si leggeva, riprova: appena si legge fonde ciò che c'era su disco (più vecchio) con ciò che nel frattempo è
+    /// nato in memoria, e da lì il giornale torna a scriversi. Restituisce `true` se il giornale è scrivibile (lo era già, o lo è diventato).
+    /// Si chiama a ogni `svuota` e quando tornano i dati protetti. Se il file, appena letto, risulta ROTTO si riparte da quello che c'è in
+    /// memoria dichiarando una perdita.
+    @discardableResult
+    func riprovaLettura() -> Bool {
+        serratura.lock(); defer { serratura.unlock() }
+        guard illeggibileAdesso else { return true }
+        switch leggiFile() {
+        case .nonLeggibileAdesso:
+            return false
+        case .assente:
+            break
+        case .rotto:
+            scartatiInterni += 1
+        case .letto(let file):
+            fondi(file)
+        }
+        illeggibileAdesso = false
+        _ = salva()
+        return true
+    }
+
+    /// Il giornale su disco (più vecchio) davanti, gli eventi nati in memoria dietro, con progressivi nuovi e tutti diversi; il tetto vale anche qui.
     /// Chi la chiama tiene la serratura.
+    private func fondi(_ file: FileRegistro) {
+        let primoLibero = max(file.prossimoProgressivo, (file.eventi.map { $0.progressivo }.max() ?? 0) + 1)
+        var inMemoria = eventi
+        for indice in inMemoria.indices { inMemoria[indice].progressivo = primoLibero + indice }
+        eventi = file.eventi + inMemoria
+        prossimoProgressivo = primoLibero + inMemoria.count
+        scartatiInterni += file.scartati
+        let eccesso = eventi.count - Self.tettoEventi
+        if eccesso > 0 {
+            eventi.removeFirst(eccesso)
+            scartatiInterni += eccesso
+        }
+        if destinazione == nil { destinazione = file.destinazione }
+        if ultimoUtente == nil { ultimoUtente = file.ultimoUtente }
+        notificaNonAutorizzataScritta = notificaNonAutorizzataScritta || file.notificaNonAutorizzataScritta
+    }
+
+    /// Chi la chiama tiene la serratura. Non scrive mai finché il file esistente non si è potuto leggere (`illeggibileAdesso`).
     private func salva() -> Bool {
+        guard !illeggibileAdesso else { return false }
         let file = FileRegistro(versione: Self.versioneFile, eventi: eventi, scartati: scartatiInterni,
                                 prossimoProgressivo: prossimoProgressivo, destinazione: destinazione,
                                 ultimoUtente: ultimoUtente, notificaNonAutorizzataScritta: notificaNonAutorizzataScritta)

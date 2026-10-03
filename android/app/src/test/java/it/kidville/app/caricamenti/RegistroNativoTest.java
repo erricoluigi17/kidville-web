@@ -346,12 +346,22 @@ public class RegistroNativoTest {
     @Test
     public void codaCorrottaSenzaUtenteNeJob() {
         RegistroNativo r = registro();
-        r.codaCorrotta(null, 4);
+        r.codaCorrotta(null, 4, 0);
         EventoRegistrato e = unico(r);
         assertEquals("coda-nativa-corrotta", e.messaggio);
         assertSame(Livello.ERROR, e.livello);
         assertNull(e.utenteId);
-        assertCampi(e, "file_orfani", 4);
+        assertCampi(e, "file_orfani", 4, "voci_scartate", 0);
+    }
+
+    @Test
+    public void codaCorrottaPortaLeVociScartateEUnUtenteDiUnaVoceViva() {
+        RegistroNativo r = registro();
+        r.codaCorrotta(utente(7), 0, 3);
+        EventoRegistrato e = unico(r);
+        assertEquals("coda-nativa-corrotta", e.messaggio);
+        assertEquals("l'utente di una voce viva dà un x-user-id all'evento", utente(7).toString(), e.utenteId);
+        assertCampi(e, "file_orfani", 0, "voci_scartate", 3);
     }
 
     @Test
@@ -400,13 +410,16 @@ public class RegistroNativoTest {
     }
 
     @Test
-    public void soloSvuotaEPerCartellaPrendonoUnaStringaTraIMetodiPubblici() {
+    public void soloSvuotaPerCartellaEDestinazionePrendonoUnaStringaTraIMetodiPubblici() {
+        // `svuota` e `destinazione` prendono l'INDIRIZZO a cui spedire (mai il contenuto di un evento), `perCartella` la versione dell'app
+        // da scrivere in `versione_app`: sono i soli tre punti dove una stringa entra, e nessuno di loro scrive un evento.
         for (Method metodo : RegistroNativo.class.getDeclaredMethods()) {
             if (!java.lang.reflect.Modifier.isPublic(metodo.getModifiers())) continue;
             for (Class<?> tipo : metodo.getParameterTypes()) {
                 if (tipo == String.class || tipo == CharSequence.class || tipo == Object.class || tipo == Throwable.class) {
                     assertTrue("«" + metodo.getName() + "» prende un " + tipo.getSimpleName(),
-                            metodo.getName().equals("svuota") || metodo.getName().equals("perCartella"));
+                            metodo.getName().equals("svuota") || metodo.getName().equals("perCartella")
+                                    || metodo.getName().equals("destinazione"));
                 }
             }
         }
@@ -539,7 +552,7 @@ public class RegistroNativoTest {
         a.videoAttesaRete(j, u, true, true);
         a.videoRipresoDopoChiusura(j, u, 1L);
         a.putOltreScadenza(j, u, 1L, 400);
-        a.codaCorrotta(u, 1);
+        a.codaCorrotta(u, 1, 0);
         a.notificaNonAutorizzata(u);
         for (Motore motore : Motore.values()) {
             for (Occasione occasione : Occasione.values()) a.motore(u, motore, occasione, 1, 1, 1);
@@ -598,7 +611,7 @@ public class RegistroNativoTest {
     @Test
     public void ogniEventoPortaVersioneApp() {
         RegistroNativo r = registro();
-        r.codaCorrotta(null, 1);
+        r.codaCorrotta(null, 1, 0);
         r.notificaNonAutorizzata(null);
         r.videoAccodato(job(1), utente(1), 1L, MimeLog.MP4, Motore.UIDT);
         for (EventoRegistrato e : r.eventi()) assertEquals(VERSIONE, e.campi.get("versione_app"));
@@ -609,13 +622,13 @@ public class RegistroNativoTest {
         for (String forma : new String[]{null, "", "1.2", "abc", "1.2+", "+4", "1.2.3.4.5+1", "12345.1+1", "1.2+1234567890", "1.2 +4", "v1.2+4", "1.2+4\n"}) {
             File f = new File(fileRegistro.getParentFile(), "r-" + (forma == null ? "null" : Integer.toHexString(forma.hashCode())) + ".json");
             RegistroNativo r = new RegistroNativo(f, forma, orologio::get, diagnostica);
-            r.codaCorrotta(null, 1);
+            r.codaCorrotta(null, 1, 0);
             assertFalse("«" + forma + "»", unico(r).campi.containsKey("versione_app"));
         }
         for (String valida : new String[]{"1.2+4", "1.2.3+10", "10.20.30.40+999999999", "1+1", "1234.5678+0"}) {
             File f = new File(fileRegistro.getParentFile(), "v-" + Integer.toHexString(valida.hashCode()) + ".json");
             RegistroNativo r = new RegistroNativo(f, valida, orologio::get, diagnostica);
-            r.codaCorrotta(null, 1);
+            r.codaCorrotta(null, 1, 0);
             assertEquals(valida, unico(r).campi.get("versione_app"));
         }
     }
@@ -699,7 +712,7 @@ public class RegistroNativoTest {
         aggiungiN(r, 200, 1);
         assertEquals(200, r.numeroEventi());
         assertEquals(0L, r.scartati());
-        r.codaCorrotta(null, 1);
+        r.codaCorrotta(null, 1, 0);
         assertEquals(200, r.numeroEventi());
         assertEquals(1L, r.scartati());
     }
@@ -821,7 +834,7 @@ public class RegistroNativoTest {
         r.videoRipresoDopoChiusura(job(1), utente(1), 1L);     // u1
         r.videoRipresoDopoChiusura(job(2), utente(2), 2L);     // u2
         r.videoRipresoDopoChiusura(job(3), utente(1), 3L);     // u1
-        r.codaCorrotta(null, 4);                                // nessuno
+        r.codaCorrotta(null, 4, 0);                                // nessuno
         r.videoRipresoDopoChiusura(job(4), utente(2), 5L);     // u2
         FintoTrasporto t = new FintoTrasporto();
         List<String> utentiVisti = new ArrayList<>();
@@ -866,7 +879,7 @@ public class RegistroNativoTest {
     @Test
     public void ilRitmoSiApplicaAnchePerUnaRispostaNegativa() {
         RegistroNativo r = registro();
-        r.codaCorrotta(null, 1);
+        r.codaCorrotta(null, 1, 0);
         FintoTrasporto t = new FintoTrasporto().rispondi(http(503), http(503));
         assertSame(EsitoSvuotamento.TENUTO_PER_SERVER, r.svuota(URL_SITO, false, t));
         assertSame("anche dopo un fallimento: non si martella il server", EsitoSvuotamento.RIMANDATO, r.svuota(URL_SITO, false, t));
@@ -1003,7 +1016,7 @@ public class RegistroNativoTest {
         assertEquals(5L, ((Number) ultima.campi.get("scartati")).longValue());
         assertEquals("e per farle posto ne è uscita una vecchia", 1L, r.scartati());
         // Ora altri 200 eventi senza spedire: i 199 vecchi escono uno a uno, poi esce anche la dichiarazione.
-        for (int i = 0; i < 200; i++) r.codaCorrotta(null, i);
+        for (int i = 0; i < 200; i++) r.codaCorrotta(null, i, 0);
         assertEquals("1 di prima + 199 eventi vecchi + i 5 che la dichiarazione portava", 205L, r.scartati());
         for (EventoRegistrato e : r.eventi()) assertFalse(e.meta);
     }
@@ -1098,7 +1111,7 @@ public class RegistroNativoTest {
     @Test
     public void unEventoSenzaUtentePartePerSoloSenzaIdentita() {
         RegistroNativo r = registro();
-        r.codaCorrotta(null, 2);
+        r.codaCorrotta(null, 2, 0);
         FintoTrasporto t = new FintoTrasporto();
         r.svuota(URL_SITO, false, t);
         assertNull(t.chiamate.get(0).utenteId);
@@ -1121,7 +1134,7 @@ public class RegistroNativoTest {
         final RegistroNativo r = registro();
         aggiungiN(r, 3, 1);
         FintoTrasporto t = new FintoTrasporto();
-        t.durante = () -> r.codaCorrotta(null, 77);
+        t.durante = () -> r.codaCorrotta(null, 77, 0);
         assertSame(EsitoSvuotamento.INVIATO, r.svuota(URL_SITO, false, t));
         List<EventoRegistrato> restano = r.eventi();
         assertEquals("i 3 spediti sono usciti, quello scritto durante il volo no", 1, restano.size());
@@ -1151,7 +1164,7 @@ public class RegistroNativoTest {
         RegistroNativo r = registro();
         r.videoRitento(job(1), utente(1), Codice.RETE, 0, 1, 30L, 4096L);
         r.videoAttesaRete(job(1), utente(1), true, false);
-        r.codaCorrotta(null, 3);
+        r.codaCorrotta(null, 3, 0);
         assertTrue(fileRegistro.isFile());
         JSONObject radice = new JSONObject(new String(java.nio.file.Files.readAllBytes(fileRegistro.toPath()), StandardCharsets.UTF_8));
         assertEquals(1, radice.getInt("versione"));
@@ -1187,7 +1200,7 @@ public class RegistroNativoTest {
     @Test
     public void unEventoPersistitoFuoriFormaNonRientra() throws Exception {
         RegistroNativo r = registro();
-        r.codaCorrotta(null, 1);
+        r.codaCorrotta(null, 1, 0);
         r.videoAccodato(job(1), utente(1), 1L, MimeLog.MP4, Motore.UIDT);
         JSONObject radice = new JSONObject(new String(java.nio.file.Files.readAllBytes(fileRegistro.toPath()), StandardCharsets.UTF_8));
         JSONArray eventi = radice.getJSONArray("eventi");
@@ -1222,7 +1235,7 @@ public class RegistroNativoTest {
             assertEquals("«" + contenuto + "»", 0, r.numeroEventi());
             assertEquals("«" + contenuto + "»", 0L, r.scartati());
             assertEquals("«" + contenuto + "»: il guasto si dice in logcat", 1, diag.voci.size());
-            r.codaCorrotta(null, 1);
+            r.codaCorrotta(null, 1, 0);
             assertEquals("e si può scrivere di nuovo", 1, new RegistroNativo(f, VERSIONE, orologio::get, diag).numeroEventi());
         }
     }
@@ -1723,5 +1736,73 @@ public class RegistroNativoTest {
         } catch (NoSuchMethodException assente) {
             fail("manca la factory di produzione");
         }
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * COMPITO A2: LE CORREZIONI AI MATTONI DI A1 (secondari n. 45-49 della PR 3)
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void iRinnoviSiDiradanoFraUnGuastoLungoMaLeFiniEIGuastiDaVedereSiScrivonoSempre() {
+        // Sempre: la fine di una storia (arrivato, annullato) o un guasto da vedere (negato).
+        for (EsitoRinnovo sempre : new EsitoRinnovo[]{EsitoRinnovo.ARRIVATO, EsitoRinnovo.ANNULLATO, EsitoRinnovo.NEGATO}) {
+            for (int contatore : new int[]{0, 1, 2, 3, 5, 6, 7, 100}) {
+                assertTrue(sempre + " " + contatore, RegistroNativo.siLoggaIlRinnovo(sempre, contatore));
+            }
+        }
+        // Diradati come i ritentativi: potenze di due del contatore.
+        for (EsitoRinnovo diradato : new EsitoRinnovo[]{EsitoRinnovo.DA_CARICARE, EsitoRinnovo.TETTO, EsitoRinnovo.RETE, EsitoRinnovo.SERVER}) {
+            List<Integer> scritti = new ArrayList<>();
+            for (int contatore = 0; contatore <= 70; contatore++) if (RegistroNativo.siLoggaIlRinnovo(diradato, contatore)) scritti.add(contatore);
+            assertEquals(diradato.name(), Arrays.asList(1, 2, 4, 8, 16, 32, 64), scritti);
+            assertFalse(RegistroNativo.siLoggaIlRinnovo(diradato, -1));
+        }
+    }
+
+    @Test
+    public void inReleaseLaDestinazioneEFissaEInDebugEQuellaDellaPagina() {
+        assertEquals("https://app.kidville.it/api/logs", RegistroNativo.URL_REGISTRO_RELEASE);
+        assertTrue("l'indirizzo fisso passa la politica degli host di Release (§9)",
+                PoliticaCaricamento.urlAmmesso(RegistroNativo.URL_REGISTRO_RELEASE, PoliticaCaricamento.Destinazione.REGISTRO, false));
+        assertEquals("Release: sempre il sito, anche senza una voce che lo porti (all'avvio, al primo piano)", RegistroNativo.URL_REGISTRO_RELEASE,
+                RegistroNativo.destinazione(null, false));
+        assertEquals("Release: qualunque cosa abbia passato la pagina", RegistroNativo.URL_REGISTRO_RELEASE,
+                RegistroNativo.destinazione("https://app.kidville.it/altro", false));
+        assertEquals("Debug: quella della pagina (il server finto di collaudo)", "http://10.0.2.2:3101/api/logs",
+                RegistroNativo.destinazione("http://10.0.2.2:3101/api/logs", true));
+        assertNull("Debug senza indirizzo noto: non si spedisce niente (i log di una build Debug non vanno in produzione)", RegistroNativo.destinazione(null, true));
+    }
+
+    @Test
+    public void ilRegistroDiProduzioneEUnoSoloPerCartella() throws Exception {
+        File cartella = temporanea.newFolder("processo");
+        RegistroNativo primo = RegistroNativo.perCartella(cartella, "1.2+6");
+        assertSame("una sola istanza per processo", primo, RegistroNativo.perCartella(cartella, "1.2+7"));
+        assertSame("anche con la cartella scritta in un altro modo", primo, RegistroNativo.perCartella(new File(cartella, "../processo"), "1.2+6"));
+        assertTrue(primo != RegistroNativo.perCartella(temporanea.newFolder("altro"), "1.2+6"));
+        primo.videoRipresoDopoChiusura(job(1), utente(1), 5L);
+        assertEquals("stesso stato", 1, RegistroNativo.perCartella(cartella, "1.2+6").numeroEventi());
+    }
+
+    @Test
+    public void unaScritturaCheSulTelefonoNonRinominaVieneContataComeGuastoInternoENonSiPerdeIlRegistroInMemoria() throws Exception {
+        AtomicFileCheNonTrasloca nonTrasloca = new AtomicFileCheNonTrasloca(fileRegistro, false);
+        RegistroNativo r = new RegistroNativo(nonTrasloca, VERSIONE, orologio::get, diagnostica);
+        r.videoRipresoDopoChiusura(job(1), utente(1), 10L);
+        assertEquals("l'evento c'è in memoria: si potrà ancora spedire", 1, r.numeroEventi());
+        assertEquals("ma il guasto si conta e si dice (sul telefono finishWrite non lancia: lo dice la verifica)", 1, r.erroriInterni());
+        assertEquals("una sola riga di guasto, col nome dell'operazione e la CLASSE dell'eccezione (qui il file base non c'è)",
+                Arrays.asList("salva-registro:FileNotFoundException"), diagnostica.voci);
+        assertFalse("sul disco non c'è niente", fileRegistro.exists());
+        nonTrasloca.traslocaDavvero = true;
+        r.videoRipresoDopoChiusura(job(2), utente(1), 20L);
+        assertEquals("riaccesa la rinomina il registro scrive TUTTO, anche l'evento di prima", 2, registro().numeroEventi());
+    }
+
+    @Test
+    public void codaCorrottaEVociScartateHannoLeChiaviDelContratto() {
+        assertEquals("voci_scartate", RegistroNativo.Campo.VOCI_SCARTATE.chiave());
+        assertSame(RegistroNativo.Campo.VOCI_SCARTATE, RegistroNativo.Campo.daChiave("voci_scartate"));
+        assertEquals("durata_s", RegistroNativo.Campo.DURATA_S.chiave());
     }
 }

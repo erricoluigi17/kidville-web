@@ -47,7 +47,7 @@ vi.mock('@/lib/logging/client', () => ({
   nomeErrore: (e: unknown) => (e instanceof Error ? e.constructor.name : 'Sconosciuto'),
 }))
 
-import { chiaveIdempotenzaVideo, destinatariDaInviare } from '@/lib/gallery/video-galleria-flusso'
+import { chiaveIdempotenzaVideo, chiaveIdempotenzaVideoNativo, destinatariDaInviare } from '@/lib/gallery/video-galleria-flusso'
 
 const CARTELLA_MIGRAZIONI = join(process.cwd(), 'supabase/migrations')
 const leggi = (file: string): string => readFileSync(join(CARTELLA_MIGRAZIONI, file), 'utf8')
@@ -495,5 +495,238 @@ describe('il percorso dell’originale che questo file calcola è quello della r
       .join('\n')
     expect(codice).toContain("createHash('sha256').update(`${canale}:${f.chiaveIdempotenza}`).digest('hex').slice(0, 32)")
     expect(codice).toContain('`${ownerId}/${impronta}.${estensioneVideoDaMime(f.mime)}`')
+  })
+})
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (vi) L'INVIO NATIVO (app 1.2, compito J3): LA CHIAVE `gn1-` CONTRO LA RPC VERA
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Il video scelto dal selettore nativo è identificato dal suo `sha256`, non da nome e data. La chiave
+// (`chiaveIdempotenzaVideoNativo`) deve fare, sulla RPC, tre cose — e qui si provano sulla funzione SQL vera, con
+// `put-nativo`, `sha256` e token come li passa la route:
+//
+//  · lo STESSO video con gli STESSI bambini ritrova lo stesso intento (`ripetuta`) e ne RUOTA il token: il vecchio
+//    diventa sconosciuto, il nuovo è quello che il telefono avrà in mano;
+//  · lo stesso video con bambini DIVERSI apre un intento nuovo: mai `IDEMPOTENCY_CONFLICT` (che la route traduce in
+//    409 `VIDEO_RIPROVA`, «ricarica e riprova»: un gesto che non può riuscire);
+//  · la chiave non lascia in tabella lo `sha256`, i bambini né il sale.
+//
+// Il controllo positivo è la chiave che il progetto dell'architetto proponeva (`n-<impronta>`, SENZA i destinatari):
+// qui si vede che col server vero darebbe esattamente il 409 che la `gn1-` evita.
+
+const SHA_VIDEO_A = createHash('sha256').update('contenuto del video A').digest('hex')
+const SHA_VIDEO_B = createHash('sha256').update('contenuto del video B').digest('hex')
+const VIDEO_NATIVO = { byte: 73_000_000, sha256: SHA_VIDEO_A }
+const SALE_NATIVO_A = '0123456789abcdef0123456789abcdef'
+const SALE_NATIVO_B = 'fedcba9876543210fedcba9876543210'
+
+/** L'hash del token come lo passa la route: 32 byte. Un token per nome, così se ne riconosce la rotazione. */
+const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex')
+
+/**
+ * `video_galleria_intent_apri` come la chiama la route per un video `put-nativo`: la chiave e il percorso che ne
+ * discende, il peso e lo `sha256` dichiarati, i destinatari nella forma in cui il client li MANDA, e il token (l'hash
+ * dei 32 byte e la scadenza, fra 48 ore).
+ */
+function apriNativoConChiave(
+  chiave: string,
+  b: Bambini,
+  opzioni: { byte?: number; sha256?: string; token?: string } = {},
+): Promise<RispostaApri> {
+  const d = destinatariDaInviare(destinatari(b))
+  const byte = opzioni.byte ?? VIDEO_NATIVO.byte
+  const sha256 = opzioni.sha256 ?? VIDEO_NATIVO.sha256
+  return rpc<RispostaApri>(
+    `public.video_galleria_intent_apri(
+      '${OWNER}', '${SEDE}', '${chiave}', '${percorsoOriginale(chiave)}',
+      ${byte}, 'video/quicktime', 52,
+      ${uuids(d.tagAlunni)}, ${d.broadcast}, ${testi(d.classi)},
+      'put-nativo', decode('${sha256}', 'hex'), decode('${hashToken(opzioni.token ?? 'token-1')}', 'hex'),
+      clock_timestamp() + interval '48 hours'
+    )`,
+  )
+}
+
+/** Un invio nativo dal dispositivo col sale `sale`: la chiave che il CLIENT calcola per quel video e quei bambini. */
+function inviaNativo(
+  b: Bambini,
+  opzioni: { sale?: string; video?: { byte: number; sha256: string }; token?: string } = {},
+): Promise<RispostaApri> {
+  const video = opzioni.video ?? VIDEO_NATIVO
+  const chiave = chiaveIdempotenzaVideoNativo(video, destinatari(b), opzioni.sale ?? SALE_NATIVO_A)
+  return apriNativoConChiave(chiave, b, { byte: video.byte, sha256: video.sha256, token: opzioni.token })
+}
+
+/** L'hash del token che il database tiene per un job (esadecimale): è ciò che la rotazione cambia. */
+async function hashTokenInTabella(jobId: string): Promise<string> {
+  const { rows } = await db.query<{ h: string }>(
+    `SELECT encode(rinnovo_token_hash, 'hex') AS h FROM public.video_jobs WHERE id = '${jobId}'`,
+  )
+  return rows[0].h
+}
+
+describe('la chiave `gn1-` contro la RPC vera: lo stesso invio ritrova il suo intento e ne ruota il token', () => {
+  it('stesso video e stessi bambini: la stessa chiave, `ripetuta`, lo stesso intento e lo stesso job — e il TOKEN RUOTA', async () => {
+    const primo = await inviaNativo({ tag: [A1] }, { token: 'token-1' })
+    expect(primo.ok, JSON.stringify(primo)).toBe(true)
+    expect(primo.ripetuta).toBe(false)
+    expect(primo.token_ruotato).toBe(false)
+    expect(await hashTokenInTabella(primo.job!.id)).toBe(hashToken('token-1'))
+
+    // L'app è morta fra l'apertura e `accodaVideo` (o la risposta si è persa): l'insegnante rimanda lo stesso video.
+    const ripetuto = await inviaNativo({ tag: [A1] }, { token: 'token-2' })
+    expect(ripetuto.ok, JSON.stringify(ripetuto)).toBe(true)
+    expect(ripetuto.ripetuta).toBe(true)
+    expect(ripetuto.token_ruotato).toBe(true)
+    expect(ripetuto.intent!.id).toBe(primo.intent!.id)
+    expect(ripetuto.job!.id).toBe(primo.job!.id)
+    // Il vecchio token è SCONOSCIUTO e il nuovo è quello in tabella: nessun doppione, un solo job.
+    expect(await hashTokenInTabella(primo.job!.id)).toBe(hashToken('token-2'))
+    expect(await hashTokenInTabella(primo.job!.id)).not.toBe(hashToken('token-1'))
+    expect(await conta('public.video_intents')).toBe(1)
+    expect(await conta('public.video_jobs')).toBe(1)
+  })
+
+  it('i bambini in un altro ordine, o con un doppione, sono lo stesso invio anche per il server', async () => {
+    const primo = await inviaNativo({ tag: [A1, A2] })
+    const altroOrdine = await inviaNativo({ tag: [A2, A1] }, { token: 'token-2' })
+    const conDoppione = await inviaNativo({ tag: [A1, A2, A1] }, { token: 'token-3' })
+    expect(primo.ok).toBe(true)
+    expect(altroOrdine.ok, JSON.stringify(altroOrdine)).toBe(true)
+    expect(conDoppione.ok, JSON.stringify(conDoppione)).toBe(true)
+    expect(altroOrdine.intent!.id).toBe(primo.intent!.id)
+    expect(conDoppione.intent!.id).toBe(primo.intent!.id)
+    expect(await conta('public.video_intents')).toBe(1)
+  })
+})
+
+describe('la chiave `gn1-` contro la RPC vera: lo stesso video con altri bambini è un invio NUOVO, mai un conflitto', () => {
+  it('lo stesso video con un altro bambino: un intento diverso, `ripetuta: false`, nessun IDEMPOTENCY_CONFLICT', async () => {
+    const primo = await inviaNativo({ tag: [A1] })
+    const secondo = await inviaNativo({ tag: [A2] }, { token: 'token-2' })
+
+    expect(primo.ok).toBe(true)
+    expect(secondo.ok, `il reinvio con altri bambini è stato rifiutato: ${JSON.stringify(secondo)}`).toBe(true)
+    expect(secondo.code).toBeUndefined()
+    expect(secondo.ripetuta).toBe(false)
+    expect(secondo.intent!.id).not.toBe(primo.intent!.id)
+    expect(secondo.job!.id).not.toBe(primo.job!.id)
+    // Il primo non si è mosso: il suo token è ancora il suo.
+    expect(await hashTokenInTabella(primo.job!.id)).toBe(hashToken('token-1'))
+    expect(await conta('public.video_intents')).toBe(2)
+  })
+
+  it('dopo «Rimuovi» (intento ritirato), lo stesso video con altri bambini si manda senza prendere il 409', async () => {
+    const primo = await inviaNativo({ tag: [A1] })
+    await ritira(primo)
+    const secondo = await inviaNativo({ tag: [A2] }, { token: 'token-2' })
+    expect(secondo.ok, JSON.stringify(secondo)).toBe(true)
+    expect(secondo.intent!.status).toBe('confirmed')
+    expect(secondo.intent!.id).not.toBe(primo.intent!.id)
+  })
+
+  it('tutta la classe al posto dei bambini scelti è un altro invio, e un’altra classe pure', async () => {
+    const primo = await inviaNativo({ tag: [A1] })
+    const classe = await inviaNativo({ tag: [], broadcast: true, classi: ['3 ANNI'] }, { token: 'token-2' })
+    const altra = await inviaNativo({ tag: [], broadcast: true, classi: ['4 ANNI'] }, { token: 'token-3' })
+    for (const r of [classe, altra]) expect(r.ok, JSON.stringify(r)).toBe(true)
+    expect(new Set([primo.intent!.id, classe.intent!.id, altra.intent!.id]).size).toBe(3)
+  })
+
+  it('un video DIVERSO con gli stessi bambini: un altro intento (la chiave porta il contenuto)', async () => {
+    const primo = await inviaNativo({ tag: [A1] })
+    const altro = await inviaNativo({ tag: [A1] }, { video: { byte: VIDEO_NATIVO.byte, sha256: SHA_VIDEO_B }, token: 'token-2' })
+    expect(altro.ok, JSON.stringify(altro)).toBe(true)
+    expect(altro.intent!.id).not.toBe(primo.intent!.id)
+  })
+
+  it('IL CONTROLLO POSITIVO: una chiave SENZA i destinatari darebbe proprio il 409 che la `gn1-` evita', async () => {
+    // La chiave del progetto dell'architetto: peso e impronta del contenuto, nient'altro. Con la RPC vera, lo stesso
+    // video rimandato con altri bambini è IDEMPOTENCY_CONFLICT: il bloccante di T11a, riprodotto.
+    const senzaBambini = `n-${VIDEO_NATIVO.byte}-${createHash('sha256').update(SALE_NATIVO_A + SHA_VIDEO_A).digest('hex').slice(0, 12)}`
+    const primo = await apriNativoConChiave(senzaBambini, { tag: [A1] })
+    const altri = await apriNativoConChiave(senzaBambini, { tag: [A2] }, { token: 'token-2' })
+    expect(primo.ok).toBe(true)
+    expect(altri.ok).toBe(false)
+    expect(altri.code).toBe('IDEMPOTENCY_CONFLICT')
+    // Il rifiuto non ha scritto niente.
+    expect(await conta('public.video_intents')).toBe(1)
+  })
+
+  it('la RPC confronta anche lo `sha256`: un contenuto diverso sotto la STESSA chiave è un conflitto — per questo sta nella chiave', async () => {
+    const chiave = chiaveIdempotenzaVideoNativo(VIDEO_NATIVO, destinatari({ tag: [A1] }), SALE_NATIVO_A)
+    const primo = await apriNativoConChiave(chiave, { tag: [A1] })
+    const altroContenuto = await apriNativoConChiave(chiave, { tag: [A1] }, { sha256: SHA_VIDEO_B, token: 'token-2' })
+    expect(primo.ok).toBe(true)
+    expect(altroContenuto.ok).toBe(false)
+    expect(altroContenuto.code).toBe('IDEMPOTENCY_CONFLICT')
+  })
+})
+
+describe('la chiave `gn1-` contro la RPC vera: intento concluso, due dispositivi, e ciò che resta in tabella', () => {
+  it('l’intento ritrovato è già CONCLUSO (ritirato): la chiave col suffisso `-<uuid>` entra nel limite di 128 e apre un intento nuovo', async () => {
+    const b = { tag: [A1] }
+    const primo = await inviaNativo(b)
+    await ritira(primo)
+
+    // Come fa `avviaVideoNativo`: la prima apertura ritrova l'intento `cancelled` (ripetizione), e allora riapre con un uuid.
+    const ritrovato = await inviaNativo(b, { token: 'token-2' })
+    expect(ritrovato.ok).toBe(true)
+    expect(ritrovato.intent!.status).toBe('cancelled')
+    expect(ritrovato.intent!.id).toBe(primo.intent!.id)
+
+    const chiaveNuova = `${chiaveIdempotenzaVideoNativo(VIDEO_NATIVO, destinatari(b), SALE_NATIVO_A)}-${randomUUID()}`
+    expect(chiaveNuova.length).toBeLessThanOrEqual(128)
+    const nuovo = await apriNativoConChiave(chiaveNuova, b, { token: 'token-3' })
+    expect(nuovo.ok, JSON.stringify(nuovo)).toBe(true)
+    expect(nuovo.intent!.id).not.toBe(primo.intent!.id)
+    expect(nuovo.intent!.status).toBe('confirmed')
+  })
+
+  it('nel caso peggiore (due gigabyte) la chiave col suffisso sta ancora nel limite della RPC', async () => {
+    const peggiore = { byte: 2_000_000_000, sha256: SHA_VIDEO_A }
+    const chiave = `${chiaveIdempotenzaVideoNativo(peggiore, destinatari({ tag: [A1] }), SALE_NATIVO_A)}-${randomUUID()}`
+    expect(chiave.length).toBeLessThanOrEqual(128)
+    const aperto = await apriNativoConChiave(chiave, { tag: [A1] }, { byte: peggiore.byte })
+    expect(aperto.ok, JSON.stringify(aperto)).toBe(true)
+  })
+
+  it('DUE dispositivi (due sali), stesso video e stessi bambini: due intenti, e nessun IDEMPOTENCY_CONFLICT', async () => {
+    const dalTelefono = await inviaNativo({ tag: [A1] }, { sale: SALE_NATIVO_A })
+    const daAltro = await inviaNativo({ tag: [A1] }, { sale: SALE_NATIVO_B, token: 'token-2' })
+    expect(dalTelefono.ok).toBe(true)
+    expect(daAltro.ok, JSON.stringify(daAltro)).toBe(true)
+    expect(daAltro.ripetuta).toBe(false)
+    expect(daAltro.intent!.id).not.toBe(dalTelefono.intent!.id)
+  })
+
+  it('in `video_jobs.idempotency_key` resta la chiave SALATA: né lo `sha256`, né i bambini, né il sale', async () => {
+    await inviaNativo({ tag: [A1] })
+    const { rows } = await db.query<{ idempotency_key: string }>('SELECT idempotency_key FROM public.video_jobs')
+    expect(rows).toHaveLength(1)
+    const inTabella = rows[0].idempotency_key
+
+    expect(inTabella).toBe(chiaveIdempotenzaVideoNativo(VIDEO_NATIVO, destinatari({ tag: [A1] }), SALE_NATIVO_A))
+    expect(inTabella).toMatch(/^gn1-73000000-[0-9a-f]{12}-[0-9a-f]{12}$/)
+    expect(inTabella).not.toContain(SHA_VIDEO_A.slice(0, 12))
+    expect(inTabella).not.toContain(SHA_VIDEO_A.slice(-12))
+    expect(inTabella).not.toContain(A1)
+    expect(inTabella).not.toContain(A1.slice(0, 8))
+    expect(inTabella).not.toContain(SALE_NATIVO_A)
+    expect(inTabella).not.toContain(SALE_NATIVO_A.slice(0, 8))
+  })
+
+  it('il job nasce in attesa dei byte, col trasporto nativo, e porta lo `sha256` dichiarato (lo riverifica il Sandbox)', async () => {
+    const aperto = await inviaNativo({ tag: [A1] })
+    expect(aperto.ok).toBe(true)
+    expect(aperto.job!.status).toBe('awaiting_upload')
+    const { rows } = await db.query<{ trasporto: string; sha: string; byte: string }>(
+      `SELECT i.trasporto AS trasporto, encode(j.sha256_dichiarato, 'hex') AS sha, j.byte_dichiarati::text AS byte
+         FROM public.video_jobs j JOIN public.video_intents i ON i.id = j.intent_id
+        WHERE j.id = '${aperto.job!.id}'`,
+    )
+    expect(rows[0]).toEqual({ trasporto: 'put-nativo', sha: SHA_VIDEO_A, byte: String(VIDEO_NATIVO.byte) })
   })
 })

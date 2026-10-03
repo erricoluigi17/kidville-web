@@ -862,7 +862,9 @@ public class PoliticaCaricamentoTest {
             DecisioneRinnovo d = PoliticaCaricamento.decidiRinnovo(daCaricareOk(), prima, true, false);
             assertSame("prima " + prima, AzioneRinnovo.FALLITO, d.azione);
             assertSame(Codice.RINNOVO_CICLICO, d.codice);
-            assertSame(EsitoRinnovo.TETTO, d.esito);
+            // `RINNOVO_CICLICO` è il codice di `video-nativo-fallito`, NON un esito del rinnovo (deciso il 03/10): il rinnovo che fa
+            // scattare il tetto ha risposto `da-caricare`, e così si scrive, come su iOS. `tetto` è solo il 429.
+            assertSame(EsitoRinnovo.DA_CARICARE, d.esito);
             assertEquals("il contatore non cresce oltre il tetto", prima, d.rinnoviConsecutivi);
             assertTrue("il rinnovo c'è stato, e si conta", d.contaRinnovo);
         }
@@ -929,7 +931,7 @@ public class PoliticaCaricamentoTest {
         assertSame(AzioneRinnovo.ATTESA, d.azione);
         assertSame(Codice.SERVER, d.codice);
         assertEquals(90L, d.retryAfterSecondi);
-        assertSame(EsitoRinnovo.SERVER, d.esito);
+        assertSame("il 429 sono i tetti del rinnovo: esito `tetto`, come su iOS (deciso il 03/10)", EsitoRinnovo.TETTO, d.esito);
         assertEquals(1, d.rinnoviConsecutivi);
         assertFalse(d.contaRinnovo);
     }

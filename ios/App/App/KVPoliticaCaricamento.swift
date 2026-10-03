@@ -589,30 +589,51 @@ enum KVPoliticaCaricamento {
         }
     }
 
-    /// Il `content-type` che finisce in un'intestazione: da 3 a 255 caratteri, fatto come un tipo MIME e senza caratteri di
-    /// controllo (un a capo in un'intestazione è un'iniezione).
+    /// Il `content-type` che finisce in un'intestazione: la STESSA forma di `MIME_DICHIARABILE` del server (`contratto.ts`) —
+    /// `tipo/sottotipo` di lettere, cifre e `!#$&^_.+-` (da 1 a 127 caratteri per metà, il primo alfanumerico) e, se c'è altro,
+    /// `\s*;` seguito dal resto della riga — più due divieti nostri: da 3 a 255 byte e nessun carattere di controllo (un a capo in
+    /// un'intestazione è un'iniezione).
+    ///
+    /// Gli spazi NON si tagliano mai: «video/mp4 » e «video/ mp4» il server li rifiuta, e se qui passassero `comeDizionarioPonte` darebbe
+    /// al JavaScript un MIME che fa cadere l'INTERO `elenco` (la rilettura zod è tutto o niente). L'unico spazio ammesso è quello PRIMA
+    /// del `;`, come nella regex. Le lettere si confrontano come ASCII (la regex del server non ha il flag `u`: la «K» del Kelvin non è una k).
     static func contentTypeAmmesso(_ valore: String) -> Bool {
         guard (3...255).contains(valore.utf8.count) else { return false }
         for scalare in valore.unicodeScalars where scalare.value < 0x20 || scalare.value == 0x7F { return false }
-        guard let barra = valore.firstIndex(of: "/") else { return false }
-        let tipo = String(valore[..<barra])
-        let resto = valore[valore.index(after: barra)...]
-        let sottotipo = (resto.firstIndex(of: ";").map { resto[..<$0] } ?? resto).trimmingCharacters(in: .whitespaces)
-        return parteDiMimeAmmessa(tipo) && parteDiMimeAmmessa(sottotipo)
+        let scalari = Array(valore.unicodeScalars)
+        guard let fineTipo = fineParteDiMime(scalari, da: 0), fineTipo < scalari.count, scalari[fineTipo] == "/" else { return false }
+        guard let fineSottotipo = fineParteDiMime(scalari, da: fineTipo + 1) else { return false }
+        var posizione = fineSottotipo
+        if posizione == scalari.count { return true }
+        while posizione < scalari.count, spazioDiJavaScript(scalari[posizione]) { posizione += 1 }
+        return posizione < scalari.count && scalari[posizione] == ";"
     }
 
-    /// Una metà di un tipo MIME come la vuole il server (`MIME_DICHIARABILE`): da 1 a 127 caratteri, il primo una lettera o una cifra,
-    /// gli altri anche `!#$&^_.+-`.
-    private static func parteDiMimeAmmessa(_ parte: String) -> Bool {
-        guard (1...127).contains(parte.utf8.count) else { return false }
-        for (posizione, scalare) in parte.lowercased().unicodeScalars.enumerated() {
-            let valore = scalare.value
-            let alfanumerico = (valore >= 0x30 && valore <= 0x39) || (valore >= 0x61 && valore <= 0x7A)
-            if alfanumerico { continue }
-            if posizione > 0, "!#$&^_.+-".unicodeScalars.contains(scalare) { continue }
-            return false
+    /// Una metà di un tipo MIME come la vuole il server: da 1 a 127 caratteri ASCII, il primo una lettera o una cifra, gli altri anche
+    /// `!#$&^_.+-`. Restituisce la posizione subito DOPO la metà, o `nil` se non ce n'è nemmeno una. Si ferma al primo carattere che non
+    /// ci sta (come la regex, che ne prende al più 127): se il seguito non è `/`, `;` o la fine, il chiamante rifiuta.
+    private static func fineParteDiMime(_ scalari: [Unicode.Scalar], da inizio: Int) -> Int? {
+        var posizione = inizio
+        while posizione < scalari.count, posizione - inizio < 127 {
+            let valore = scalari[posizione].value
+            let alfanumerico = (valore >= 0x30 && valore <= 0x39) || (valore >= 0x41 && valore <= 0x5A) || (valore >= 0x61 && valore <= 0x7A)
+            let ammessoDopoIlPrimo = "!#$&^_.+-".unicodeScalars.contains(scalari[posizione])
+            if alfanumerico || (posizione > inizio && ammessoDopoIlPrimo) {
+                posizione += 1
+            } else {
+                break
+            }
         }
-        return true
+        return posizione > inizio ? posizione : nil
+    }
+
+    /// `\s` di JavaScript (è la regex del server): tabulazioni e a capo (qui mai: i caratteri di controllo sono già fuori), lo spazio, lo
+    /// spazio unificatore, e gli spazi tipografici Unicode.
+    private static func spazioDiJavaScript(_ scalare: Unicode.Scalar) -> Bool {
+        switch scalare.value {
+        case 0x09...0x0D, 0x20, 0xA0, 0x1680, 0x2000...0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF: return true
+        default: return false
+        }
     }
 
     /// La decisione sul rinnovo (la tabella «Risposta del rinnovo» di §4.5).

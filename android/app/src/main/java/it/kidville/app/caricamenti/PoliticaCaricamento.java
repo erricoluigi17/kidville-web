@@ -599,7 +599,19 @@ public final class PoliticaCaricamento {
         TRANSITORIO_RETE
     }
 
-    /** Come un rinnovo entra nel log (`video-nativo-rinnovo: job=<uuid> <esito>`, §8.2). */
+    /**
+     * Come un rinnovo entra nel log (`video-nativo-rinnovo: job=<uuid> <esito>`, §8.2). Una lettura per ogni valore, uguale su iOS e
+     * su Android (deciso il 03/10, dopo l'ondata 2: prima le due piattaforme li scrivevano in modo diverso e le query di §8.4 non
+     * avrebbero dato gli stessi numeri):
+     * <ul>
+     *   <li>`da-caricare`, `arrivato`, `annullato`: la risposta del server, qualunque cosa se ne faccia dopo. In particolare il
+     *       rinnovo che fa scattare `RINNOVO_CICLICO` ha risposto `da-caricare` e così si scrive: `RINNOVO_CICLICO` NON è un esito
+     *       del rinnovo ma un CODICE di `video-nativo-fallito`;</li>
+     *   <li>`negato`: il 404 (token sconosciuto, scaduto, ruotato);</li>
+     *   <li>`tetto`: il 429, cioè i tetti del rinnovo (30 richieste ogni 10' per IP e 20 per token, §1.2);</li>
+     *   <li>`rete`, `server`: nessuna risposta; 5xx o risposta fuori schema.</li>
+     * </ul>
+     */
     public enum EsitoRinnovo {
         DA_CARICARE("da-caricare"),
         ARRIVATO("arrivato"),
@@ -753,11 +765,12 @@ public final class PoliticaCaricamento {
      *
      * <pre>
      *  200 da-caricare    NUOVA_PUT; chiesto da un rifiuto della PUT: rinnoviConsecutivi + 1, e se erano già 3
-     *                     (il quarto di fila) FALLITO RINNOVO_CICLICO; proattivo: nessun conteggio, nessun tetto
+     *                     (il quarto di fila) FALLITO RINNOVO_CICLICO; proattivo: nessun conteggio, nessun tetto.
+     *                     Nel log il rinnovo resta `da-caricare` anche quando fa scattare il tetto
      *  200 arrivato       INVIATO
      *  200 annullato      ANNULLATO (ANNULLATO_DAL_SERVER)
      *  404                RIPROVA_CON_TOKEN_NUOVO se c'è un token più recente, altrimenti FALLITO TOKEN_NON_VALIDO
-     *  429                ATTESA (Retry-After)
+     *  429                ATTESA (Retry-After); nel log l'esito `tetto`, come su iOS
      *  5xx, rete, fuori schema   ATTESA
      * </pre>
      *
@@ -775,7 +788,8 @@ public final class PoliticaCaricamento {
                     return new DecisioneRinnovo(AzioneRinnovo.NUOVA_PUT, null, consecutivi, true, 0L, EsitoRinnovo.DA_CARICARE);
                 }
                 if (consecutivi >= TETTO_RINNOVI_CONSECUTIVI) {
-                    return new DecisioneRinnovo(AzioneRinnovo.FALLITO, Codice.RINNOVO_CICLICO, consecutivi, true, 0L, EsitoRinnovo.TETTO);
+                    // Il rinnovo ha risposto `da-caricare` e così si scrive; `RINNOVO_CICLICO` è il codice di `video-nativo-fallito`.
+                    return new DecisioneRinnovo(AzioneRinnovo.FALLITO, Codice.RINNOVO_CICLICO, consecutivi, true, 0L, EsitoRinnovo.DA_CARICARE);
                 }
                 return new DecisioneRinnovo(AzioneRinnovo.NUOVA_PUT, null, consecutivi + 1, true, 0L, EsitoRinnovo.DA_CARICARE);
             case ARRIVATO:
@@ -789,8 +803,9 @@ public final class PoliticaCaricamento {
                 }
                 return new DecisioneRinnovo(AzioneRinnovo.FALLITO, Codice.TOKEN_NON_VALIDO, consecutivi, false, 0L, EsitoRinnovo.NEGATO);
             case TROPPE_RICHIESTE:
+                // Il 429 sono i tetti del rinnovo: esito `tetto` su entrambe le piattaforme.
                 return new DecisioneRinnovo(AzioneRinnovo.ATTESA, Codice.SERVER, consecutivi, false, risposta.retryAfterSecondi,
-                        EsitoRinnovo.SERVER);
+                        EsitoRinnovo.TETTO);
             case TRANSITORIO_RETE:
                 return new DecisioneRinnovo(AzioneRinnovo.ATTESA, Codice.RETE, consecutivi, false, 0L, EsitoRinnovo.RETE);
             case TRANSITORIO_SERVER:

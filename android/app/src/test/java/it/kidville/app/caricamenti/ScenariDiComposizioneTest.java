@@ -438,7 +438,8 @@ public class ScenariDiComposizioneTest {
         assertEquals(3, v.rinnoviConsecutivi);
         assertEquals(4, count("put-oltre-scadenza"));
         List<String> m = messaggi();
-        assertEquals("video-nativo-rinnovo tetto", m.get(m.size() - 2));
+        assertEquals("il rinnovo che fa scattare il tetto ha risposto da-caricare: RINNOVO_CICLICO è un codice di fallito, non un esito del rinnovo",
+                "video-nativo-rinnovo da-caricare", m.get(m.size() - 2));
         assertEquals("video-nativo-fallito RINNOVO_CICLICO", m.get(m.size() - 1));
         assertTrue("nemmeno in questo caso il registro esplode: " + m.size() + " righe", m.size() <= 12);
     }
@@ -452,7 +453,7 @@ public class ScenariDiComposizioneTest {
         verificaChiusuraPulita(Stato.INVIATO);
         assertTrue("l'attesa è almeno il Retry-After", motore.attesaTotaleMs >= 120_000L);
         assertEquals(2, motore.chiamateRinnovo);
-        assertEquals("video-nativo-rinnovo server", messaggi().get(1));
+        assertEquals("il 429 sono i tetti del rinnovo: esito `tetto`", "video-nativo-rinnovo tetto", messaggi().get(1));
         assertEquals(429, registro.eventi().get(1).stato.intValue());
     }
 

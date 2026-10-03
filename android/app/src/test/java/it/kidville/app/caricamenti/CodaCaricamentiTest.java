@@ -1764,4 +1764,279 @@ public class CodaCaricamentiTest {
         assertNull(Origine.daValore(null));
         assertEquals(Arrays.asList("galleria", "file", "prova"), Arrays.asList(Origine.GALLERIA.valore(), Origine.FILE.valore(), Origine.PROVA.valore()));
     }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * COMPITO A2: LE CORREZIONI AI MATTONI DI A1 (secondari n. 43-49 della PR 3)
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    private File codaJson() {
+        return new File(cartella, "coda.json");
+    }
+
+    /** Una coda il cui disco si comporta come quello del TELEFONO: `finishWrite` non lancia, e se `traslocaDavvero` è falso non rinomina. */
+    private CodaCaricamenti codaSuUnDiscoCheSiPuoRompere(AtomicFileCheNonTrasloca atomico) {
+        return new CodaCaricamenti(cartella, orologio::get, atomico);
+    }
+
+    @Test
+    public void unaScritturaCheSulTelefonoNonRinominaFaLanciareAggiungiENonTieneLaVoce() throws Exception {
+        AtomicFileCheNonTrasloca nonTrasloca = new AtomicFileCheNonTrasloca(codaJson(), false);
+        CodaCaricamenti coda = codaSuUnDiscoCheSiPuoRompere(nonTrasloca);
+        try {
+            coda.aggiungi(nuova(1));
+            fail("sul telefono `finishWrite` non lancia: è la verifica a dire che il video NON è accodato (secondario n. 45)");
+        } catch (IOException atteso) {
+            // non accodato
+        }
+        assertEquals("la voce non resta in memoria", 0, coda.numeroVoci());
+        assertFalse("e sul disco non c'è niente", codaJson().exists());
+        nonTrasloca.traslocaDavvero = true;
+        coda.aggiungi(nuova(1));
+        assertEquals("riaccesa la rinomina, si riesce", 1, apri().numeroVoci());
+    }
+
+    @Test
+    public void unaTransizioneCheSulTelefonoNonSiScriveDaPersistitaFalsa() throws Exception {
+        AtomicFileCheNonTrasloca nonTrasloca = new AtomicFileCheNonTrasloca(codaJson(), true);
+        CodaCaricamenti coda = codaSuUnDiscoCheSiPuoRompere(nonTrasloca);
+        coda.aggiungi(nuova(1));
+        nonTrasloca.traslocaDavvero = false;
+        EsitoTransizione e = coda.transita(id(1), EventoStato.AVVIATO, null);
+        assertFalse("`persistita` dice la verità anche quando finishWrite non lancia", e.persistita);
+        assertSame("la memoria è aggiornata", Stato.IN_INVIO, coda.trova(id(1)).stato);
+        assertSame("il disco è quello di prima", Stato.IN_CODA, apri().trova(id(1)).stato);
+    }
+
+    @Test
+    public void ilTerminaleNonRiuscitoASalvareLasciaCopiaESegretiEIlDiscoCoraAncoraViva() throws Exception {
+        AtomicFileCheNonTrasloca nonTrasloca = new AtomicFileCheNonTrasloca(codaJson(), true);
+        CodaCaricamenti coda = codaSuUnDiscoCheSiPuoRompere(nonTrasloca);
+        coda.aggiungi(nuova(1));
+        coda.transita(id(1), EventoStato.AVVIATO, null);
+        File copia = creaFile("file", id(1) + ".mp4", orologio.get());
+        File segreto = coda.fileSegreto(id(1));
+        segreto.getParentFile().mkdirs();
+        assertTrue(segreto.createNewFile());
+
+        nonTrasloca.traslocaDavvero = false;       // il disco «non dà più i numeri»
+        EsitoTransizione e = coda.transita(id(1), EventoStato.INVIATO, null);
+        assertSame(TipoTransizione.APPLICATA, e.tipo);
+        assertFalse(e.persistita);
+        assertTrue("senza il disco la copia e i segreti restano (e `residuiRimasti` lo dice)", e.residuiRimasti);
+        assertTrue("la copia c'è ancora: sul disco la voce è viva e la nomina", copia.exists());
+        assertTrue("i segreti ci sono ancora", segreto.exists());
+        assertNull("in memoria la voce è terminale e non nomina più niente", e.voce.file);
+        // Alla riapertura la voce è com'era: viva, col suo file, pronta a riprendere (la PUT ripetuta dà il duplicato che il rinnovo risolve).
+        VoceCoda dopoIlRiavvio = apri().trova(id(1));
+        assertSame(Stato.IN_INVIO, dopoIlRiavvio.stato);
+        assertEquals("file/" + id(1) + ".mp4", dopoIlRiavvio.file);
+    }
+
+    @Test
+    public void ilTerminaleSiSalvaPrimaDellaCancellazioneEUnaCancellazioneCheFallisceNonDisfaIlSalvataggio() throws Exception {
+        CodaCaricamenti coda = apri();
+        coda.aggiungi(nuova(1));
+        coda.transita(id(1), EventoStato.AVVIATO, null);
+        // La «copia» è una cartella non vuota: `File.delete()` non la toglie. Lo stato terminale è però GIÀ su disco (secondario n. 43).
+        File copia = new File(cartella, "file/" + id(1) + ".mp4");
+        assertTrue(copia.mkdirs());
+        assertTrue(new File(copia, "dentro").createNewFile());
+        EsitoTransizione e = coda.transita(id(1), EventoStato.INVIATO, null);
+        assertTrue(e.persistita);
+        assertTrue(e.residuiRimasti);
+        VoceCoda dalDisco = apri().trova(id(1));
+        assertSame("il disco ha lo stato terminale: la cancellazione fallita non lo cancella", Stato.INVIATO, dalDisco.stato);
+        assertNull(dalDisco.file);
+    }
+
+    @Test
+    public void ogniTerminaleSalvaPrimaEPoiCancella() throws Exception {
+        for (EventoStato terminale : new EventoStato[]{EventoStato.INVIATO, EventoStato.FALLITO, EventoStato.ANNULLATO}) {
+            File radice = temporanea.newFolder();
+            AtomicFileCheNonTrasloca nonTrasloca = new AtomicFileCheNonTrasloca(new File(radice, "coda.json"), true);
+            CodaCaricamenti coda = new CodaCaricamenti(radice, orologio::get, nonTrasloca);
+            coda.aggiungi(nuova(1));
+            coda.transita(id(1), EventoStato.AVVIATO, null);
+            File copia = new File(radice, "file/" + id(1) + ".mp4");
+            copia.getParentFile().mkdirs();
+            assertTrue(copia.createNewFile());
+            nonTrasloca.traslocaDavvero = false;
+            coda.transita(id(1), terminale, terminale == EventoStato.FALLITO ? Codice.INTERNO : null);
+            assertTrue(terminale.name() + ": con il disco che non salva la copia non si tocca", copia.exists());
+        }
+    }
+
+    @Test
+    public void aggiungiSuUnJobConUnaVoceTerminaleLaSostituisceEIlVideoRiparte() throws Exception {
+        for (EventoStato terminale : new EventoStato[]{EventoStato.INVIATO, EventoStato.FALLITO, EventoStato.ANNULLATO}) {
+            File radice = temporanea.newFolder();
+            CodaCaricamenti coda = new CodaCaricamenti(radice, orologio::get);
+            coda.aggiungi(nuova(1));
+            coda.transita(id(1), EventoStato.AVVIATO, null);
+            coda.transita(id(1), terminale, terminale == EventoStato.FALLITO ? Codice.INTERNO : null);
+            assertTrue(coda.trova(id(1)).stato.terminale());
+            long creataPrima = coda.trova(id(1)).creatoIl;
+            orologio.addAndGet(5_000L);
+
+            RisultatoAggiunta r = coda.aggiungi(nuova(1));
+            assertFalse(terminale.name() + ": una voce NUOVA, non la terminale restituita (secondario n. 44)", r.giaPresente);
+            assertSame(Stato.IN_CODA, r.voce.stato);
+            assertNull(r.voce.codice);
+            assertEquals("file/" + id(1) + ".mp4", r.voce.file);
+            assertEquals("una voce sola, non due", 1, coda.numeroVoci());
+            assertEquals(creataPrima + 5_000L, coda.trova(id(1)).creatoIl);
+            assertSame("e la riapertura la ritrova viva", Stato.IN_CODA, new CodaCaricamenti(radice, orologio::get).trova(id(1)).stato);
+        }
+    }
+
+    @Test
+    public void aggiungiSuUnaVoceVivaRestaIdempotenteENonLaTocca() throws Exception {
+        CodaCaricamenti coda = apri();
+        coda.aggiungi(nuova(1));
+        coda.transita(id(1), EventoStato.AVVIATO, null);
+        coda.modifica(id(1), v -> v.tentativi = 4);
+        RisultatoAggiunta r = coda.aggiungi(nuova(1));
+        assertTrue(r.giaPresente);
+        assertSame(Stato.IN_INVIO, r.voce.stato);
+        assertEquals(4, r.voce.tentativi);
+    }
+
+    @Test
+    public void aggiungiSpostandoSostituisceUnaTerminaleEPortaIlFileNelPercorsoDellaVoce() throws Exception {
+        CodaCaricamenti coda = apri();
+        coda.aggiungi(nuova(1));
+        coda.transita(id(1), EventoStato.ANNULLATO, null);
+        File preparato = creaFile("scelti", "nuovo.mp4", orologio.get());
+        RisultatoAggiunta r = coda.aggiungiSpostando(nuova(1), preparato);
+        assertFalse(r.giaPresente);
+        assertFalse("il preparato è stato spostato", preparato.exists());
+        assertTrue(new File(cartella, "file/" + id(1) + ".mp4").isFile());
+        assertSame(Stato.IN_CODA, coda.trova(id(1)).stato);
+    }
+
+    @Test
+    public void seLaSostituzioneDiUnaTerminaleNonSiScriveLaTerminaleTornaAlSuoPosto() throws Exception {
+        AtomicFileCheNonTrasloca nonTrasloca = new AtomicFileCheNonTrasloca(codaJson(), true);
+        CodaCaricamenti coda = codaSuUnDiscoCheSiPuoRompere(nonTrasloca);
+        coda.aggiungi(nuova(1));
+        coda.transita(id(1), EventoStato.FALLITO, Codice.INTERNO);
+        nonTrasloca.traslocaDavvero = false;
+        try {
+            coda.aggiungi(nuova(1));
+            fail("la coda non si scrive");
+        } catch (IOException atteso) {
+            // non sostituita
+        }
+        assertSame("la terminale è ancora lì", Stato.FALLITO, coda.trova(id(1)).stato);
+        assertEquals(1, coda.numeroVoci());
+        File preparato = creaFile("scelti", "nuovo.mp4", orologio.get());
+        try {
+            coda.aggiungiSpostando(nuova(1), preparato);
+            fail("la coda non si scrive");
+        } catch (IOException atteso) {
+            // non sostituita
+        }
+        assertTrue("e il preparato è tornato dov'era", preparato.exists());
+        assertFalse(new File(cartella, "file/" + id(1) + ".mp4").exists());
+    }
+
+    @Test
+    public void dimenticaControllaLEsitoDellaScritturaERimettePosteLeVociSeNonRiesce() throws Exception {
+        AtomicFileCheNonTrasloca nonTrasloca = new AtomicFileCheNonTrasloca(codaJson(), true);
+        CodaCaricamenti coda = codaSuUnDiscoCheSiPuoRompere(nonTrasloca);
+        coda.aggiungi(nuova(1));
+        coda.aggiungi(nuova(2));
+        coda.transita(id(1), EventoStato.ANNULLATO, null);
+        coda.transita(id(2), EventoStato.FALLITO, Codice.INTERNO);
+        nonTrasloca.traslocaDavvero = false;
+        assertEquals("non scritto: nessuna voce è stata dimenticata (secondario n. 49)", 0, coda.dimentica(Arrays.asList(id(1), id(2))));
+        assertNotNull("e le voci sono ancora lì, in memoria", coda.trova(id(1)));
+        assertNotNull(coda.trova(id(2)));
+        assertEquals(2, apri().numeroVoci());
+        nonTrasloca.traslocaDavvero = true;
+        assertEquals("riaccesa la rinomina, si riesce", 2, coda.dimentica(Arrays.asList(id(1), id(2))));
+        assertEquals(0, apri().numeroVoci());
+    }
+
+    @Test
+    public void lePulizieTolgonoICodaCorrottaVecchiDiSetteGiorniDalNomeENonDallaDataDelFile() throws Exception {
+        CodaCaricamenti coda = apri();
+        long adesso = orologio.get();
+        File vecchioNelNome = scrivi(cartella, "coda.corrotta-" + (adesso - 8 * GIORNO) + ".json", adesso);              // data del file RECENTE
+        File recenteNelNome = scrivi(cartella, "coda.corrotta-" + (adesso - 1 * GIORNO) + ".json", adesso - 30 * GIORNO);  // data del file VECCHIA
+        File conSuffisso = scrivi(cartella, "coda.corrotta-" + (adesso - 9 * GIORNO) + "-2.json", adesso);
+        File senzaNumero = scrivi(cartella, "coda.corrotta-x.json", adesso - 20 * GIORNO);                                // si ripiega sulla data
+        File senzaNumeroRecente = scrivi(cartella, "coda.corrotta-y.json", adesso);
+        File altroTipo = scrivi(cartella, "coda.corrotta-" + (adesso - 99 * GIORNO) + ".txt", adesso - 99 * GIORNO);        // non è un file di coda guasta
+        File nonCorrotto = scrivi(cartella, "registro.json", adesso - 99 * GIORNO);
+        ReportPulizia r = coda.pulisci();
+        assertEquals("tre tolti: il vecchio nel nome, quello col suffisso, quello senza numero con la data vecchia", 3, r.codeCorrotte);
+        assertFalse(vecchioNelNome.exists());
+        assertFalse(conSuffisso.exists());
+        assertFalse(senzaNumero.exists());
+        assertTrue("recente nel nome: resta, anche se il file è vecchio", recenteNelNome.exists());
+        assertTrue(senzaNumeroRecente.exists());
+        assertTrue("un altro tipo di file non si tocca", altroTipo.exists());
+        assertTrue("il registro non si tocca mai", nonCorrotto.exists());
+    }
+
+    private File scrivi(File dir, String nome, long ultimaModificaMs) throws IOException {
+        File f = new File(dir, nome);
+        try (FileOutputStream uscita = new FileOutputStream(f)) {
+            uscita.write(new byte[]{'{', '}'});
+        }
+        assertTrue(f.setLastModified(ultimaModificaMs));
+        return f;
+    }
+
+    @Test
+    public void lIstanteDelNomeDiUnFileCorrottoSiLeggeFinoAlPrimoNonNumero() {
+        assertEquals(1_790_000_000_123L, CodaCaricamenti.istanteDelFileCorrotto("coda.corrotta-1790000000123.json", -1L));
+        assertEquals(1_790_000_000_123L, CodaCaricamenti.istanteDelFileCorrotto("coda.corrotta-1790000000123-3.json", -1L));
+        assertEquals("niente numero: il ripiego", 77L, CodaCaricamenti.istanteDelFileCorrotto("coda.corrotta-abc.json", 77L));
+        assertEquals(77L, CodaCaricamenti.istanteDelFileCorrotto("coda.corrotta-.json", 77L));
+    }
+
+    @Test
+    public void laPuliziaSenzaFileCorrottiNonLiContaEMantieneIlRapportoACinqueMisure() throws Exception {
+        CodaCaricamenti coda = apri();
+        coda.aggiungi(nuova(1));
+        ReportPulizia r = coda.pulisci();
+        assertEquals(0, r.codeCorrotte);
+        assertEquals(0, r.scelti + r.fileOrfani + r.vociTerminali + r.segreti);
+    }
+
+    @Test
+    public void iByteTotaliDelPonteNonSuperanoMaiIlTettoDiUnVideo() throws Exception {
+        VoceCoda v = nuova(1);
+        v.byteTotali = 3_000_000_000L;           // oltre i 2 GB: renderebbe RISPOSTA_NON_VALIDA l'intero elenco
+        v.stato = Stato.IN_INVIO;
+        JSONObject json = CodaCaricamenti.aJsonPonte(v, 2_900_000_000L);
+        assertEquals(CodaCaricamenti.MAX_VIDEO_INPUT_BYTES, json.getLong("byteTotali"));
+        assertTrue("e byteInviati sta nel totale limitato", json.getLong("byteInviati") <= CodaCaricamenti.MAX_VIDEO_INPUT_BYTES);
+        v.stato = Stato.INVIATO;
+        JSONObject inviata = CodaCaricamenti.aJsonPonte(v, 0L);
+        assertEquals("una voce inviata ha inviato tutto, nel totale limitato", CodaCaricamenti.MAX_VIDEO_INPUT_BYTES, inviata.getLong("byteInviati"));
+        assertEquals(CodaCaricamenti.MAX_VIDEO_INPUT_BYTES, inviata.getLong("byteTotali"));
+        assertEquals("sotto il tetto non cambia niente", 5_000_001L, CodaCaricamenti.aJsonPonte(nuova(1), 0L).getLong("byteTotali"));
+    }
+
+    @Test
+    public void ilTettoDiUnVideoEQuelloDelContratto() {
+        assertEquals(2_000_000_000L, CodaCaricamenti.MAX_VIDEO_INPUT_BYTES);
+    }
+
+    @Test
+    public void laCodaDiProduzioneERestituitaSempreLaStessaPerLaStessaCartella() throws Exception {
+        File a = temporanea.newFolder("processo-a");
+        CodaCaricamenti prima = CodaCaricamenti.perCartella(a, orologio::get);
+        assertSame("la seconda chiamata restituisce LO STESSO oggetto: una sola istanza per processo", prima, CodaCaricamenti.perCartella(a, orologio::get));
+        assertSame("anche se la cartella è scritta in un altro modo", prima, CodaCaricamenti.perCartella(new File(a, "../processo-a"), orologio::get));
+        assertNotNull(CodaCaricamenti.perCartella(a, () -> 0L));
+        File b = temporanea.newFolder("processo-b");
+        assertTrue("un'altra cartella è un'altra coda", prima != CodaCaricamenti.perCartella(b, orologio::get));
+        // E condividono lo stato: una voce aggiunta da una strada si vede dall'altra.
+        prima.aggiungi(nuova(1));
+        assertEquals(1, CodaCaricamenti.perCartella(a, orologio::get).numeroVoci());
+    }
 }

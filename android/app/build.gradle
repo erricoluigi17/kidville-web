@@ -51,6 +51,12 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    // `BuildConfig` NON si genera da solo: con AGP 8 la classe è spenta di default e `gradle.properties` non la riaccende.
+    // La vogliono i caricamenti nativi (`BuildConfig.DEBUG` per la politica degli host, §9, e per `creaElementoDiProva`, solo
+    // Debug; `VERSION_NAME`/`VERSION_CODE` per `versione_app` dei log) e il lock di J4, che cerca `BuildConfig.DEBUG` nei sorgenti.
+    buildFeatures {
+        buildConfig true
+    }
 }
 
 // ─── IL CANCELLO SULLA SHELL NATIVA ────────────────────────────────────────────
@@ -84,6 +90,9 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // Caricamenti nativi in background, API 24-33: lavoro unico `kidville-caricamenti` con servizio in primo piano `dataSync`
+    // (`LavoroCaricamenti`). Da API 34 il motore è UIDT (JobScheduler) e non passa di qui. Versione fissata in variables.gradle.
+    implementation "androidx.work:work-runtime:$androidxWorkVersion"
     testImplementation "junit:junit:$junitVersion"
     // `org.json` dell'SDK Android, nei test sulla JVM, è uno stub che lancia «not mocked»: la coda e il registro dei
     // caricamenti nativi (it.kidville.app.caricamenti) lo usano, quindi nei test serve l'implementazione vera. Sta PRIMA

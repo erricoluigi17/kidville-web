@@ -94,9 +94,18 @@ public class VocabolariCondivisiTest {
         return chiavi;
     }
 
-    /** Il solo scarto che oggi esiste, ed è dichiarato: il log di §3/§4.5 che la tabella di §8.2 non elenca (vedi `RegistroNativo`). */
-    private static final Set<String> SLUG_NON_ANCORA_NEL_CONTRATTO = Collections.singleton("put-oltre-scadenza");
-    private static final Set<String> CHIAVI_NON_ANCORA_NEL_SERVER_FINTO = Collections.singleton("durata_s");
+    /**
+     * Nessuno scarto: `put-oltre-scadenza` è entrato in `EVENTI_LOG_NATIVI` (TypeScript), in §8.2 e nel server finto il 03/10, dopo
+     * l'ondata 2. Un messaggio nostro che il contratto non conosce è un difetto, e il test lo dice.
+     */
+    private static final Set<String> SLUG_NON_ANCORA_NEL_CONTRATTO = Collections.emptySet();
+    /**
+     * Lo scarto che oggi esiste ed è dichiarato: `voci_scartate`, il numero di voci fuori forma che `coda-nativa-corrotta` porta dal 03/10
+     * (spec §4.6, compito A2). Sta in `Campo` di Android e in quello di iOS, ma non ancora in `CHIAVI_CAMPI_NATIVI` del server finto di
+     * collaudo (`scripts/collaudo-caricamenti/server.mjs`): finché non ce lo mette l'orchestratore, lo scenario S12 di C1 segnerebbe
+     * `LOG_CHIAVE_NON_AMMESSA` se una coda corrotta dovesse comparire. `durata_s` ci è invece già (aggiunto il 03/10).
+     */
+    private static final Set<String> CHIAVI_NON_ANCORA_NEL_SERVER_FINTO = Collections.singleton("voci_scartate");
 
     @Test
     public void gliStatiSonoQuelliDiStatiNativi() throws Exception {
@@ -218,5 +227,54 @@ public class VocabolariCondivisiTest {
         for (String testo : Arrays.asList(t.titolo, t.invio, t.attesaRete, t.pausa)) {
             assertTrue("«" + testo + "» non è nella spec (§7.8)", spec.contains(testo));
         }
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * COMPITO A2: I NUMERI E I NOMI CHE IL NATIVO CONDIVIDE COL SERVER E COL JAVASCRIPT
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void ilTettoDeiByteDiUnVideoEQuelloDiLimitiTs() throws Exception {
+        Matcher m = Pattern.compile("export const MAX_VIDEO_INPUT_BYTES = ([0-9_]+)").matcher(leggi("src/lib/media/video/limiti.ts"));
+        assertTrue("non trovo MAX_VIDEO_INPUT_BYTES in limiti.ts", m.find());
+        assertEquals("il ponte non deve mai uscire dal tetto che il JavaScript valida (schemaByteVideo, schemaByteInviati)",
+                Long.parseLong(m.group(1).replace("_", "")), CodaCaricamenti.MAX_VIDEO_INPUT_BYTES);
+    }
+
+    @Test
+    public void ilNomeDellIntestazioneDelTokenDiRinnovoEQuelloDelContratto() throws Exception {
+        Matcher m = Pattern.compile("export const INTESTAZIONE_TOKEN_RINNOVO = '([^']+)'").matcher(leggi("src/lib/media/video/contratto.ts"));
+        assertTrue(m.find());
+        assertEquals(m.group(1), RinnovoFirma.INTESTAZIONE_TOKEN);
+    }
+
+    @Test
+    public void leDuePorteChiamateDalNativoEsistonoNelServerEConIlPercorsoGiusto() throws Exception {
+        File radice = radiceDelRepository();
+        assertTrue("la route dei log", new File(radice, "src/app/api/logs/route.ts").isFile());
+        assertTrue("la route del rinnovo", new File(radice, "src/app/api/video-uploads/rinnovo/route.ts").isFile());
+        assertTrue(RegistroNativo.URL_REGISTRO_RELEASE.endsWith("/api/logs"));
+        assertEquals("https://" + PoliticaCaricamento.HOST_SITO_RELEASE + "/api/logs", RegistroNativo.URL_REGISTRO_RELEASE);
+        // L'identità dei log nativi viaggia nell'intestazione `x-user-id` (spec §2.2, A8) e `getRequestUserId` la legge.
+        assertTrue(leggi("src/lib/auth/require-staff.ts").contains("x-user-id"));
+        assertEquals("x-user-id", RegistroNativo.INTESTAZIONE_UTENTE);
+    }
+
+    @Test
+    public void laSogliaDelRinnovoProattivoEQuellaDelContratto() throws Exception {
+        Matcher m = Pattern.compile("export const ETA_MASSIMA_URL_PRIMA_DELLA_PUT_SECONDI = (\\d+)").matcher(leggi("src/lib/native/caricamenti-nativi-tipi.ts"));
+        assertTrue(m.find());
+        assertEquals("S0 (§3): la firma si verifica alla FINE della PUT, quindi si rinnova se l'URL ha più di 10 minuti", Long.parseLong(m.group(1)),
+                PoliticaCaricamento.SOGLIA_RINNOVO_PROATTIVO_SECONDI);
+    }
+
+    @Test
+    public void iTempiDelGuscioEDelRegistroSonoQuelliDellaSpec() {
+        assertEquals("il worker aspetta la rete al più 10 minuti (§6.2)", 600L, PoliticaCaricamento.ATTESA_RETE_NEL_WORKER_SECONDI);
+        assertEquals("al più un POST di log ogni 10 secondi (§8.1)", 10_000L, RegistroNativo.INTERVALLO_MINIMO_INVIO_MS);
+        assertEquals("lotti di al più 20 eventi (§8.1)", 20, RegistroNativo.LOTTO_MASSIMO);
+        assertEquals("tetto di 200 eventi sul disco (§4.6)", 200, RegistroNativo.TETTO_EVENTI);
+        assertEquals("le voci terminali restano 7 giorni, e i file di una coda guasta con loro (§4.6)", CodaCaricamenti.RITENZIONE_TERMINALI_MS,
+                CodaCaricamenti.RITENZIONE_CORROTTE_MS);
     }
 }

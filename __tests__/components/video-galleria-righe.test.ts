@@ -1,8 +1,21 @@
 import { describe, it, expect } from 'vitest'
 
-import { FASI_UI_ATTIVE, fondiRighe, type IngressoFusione, type StatoLocale } from '@/components/features/gallery/video-galleria-righe'
+import {
+  FASI_UI_ATTIVE,
+  fondiRighe,
+  statoLocaleDaCaricamentoNativo,
+  stessoStatoLocale,
+  type IngressoFusione,
+  type StatoLocale,
+} from '@/components/features/gallery/video-galleria-righe'
 import { FASI_ATTIVE } from '@/app/api/video-uploads/elenco'
-import { FASI_VOCE_VIDEO, type VoceVideo } from '@/lib/media/video/contratto'
+import { CODICI_MOSTRATI_VIDEO, FASI_VOCE_VIDEO, type VoceVideo } from '@/lib/media/video/contratto'
+import {
+  CODICI_NATIVI,
+  STATI_NATIVI,
+  schemaCaricamentoNativo,
+  type CaricamentoNativo,
+} from '@/lib/native/caricamenti-nativi-tipi'
 
 /**
  * COME SI FONDONO LE RIGHE DI QUESTO DISPOSITIVO CON L'ELENCO DEL SERVER.
@@ -21,6 +34,8 @@ const JOB_B = '22222222-0000-4000-8000-0000000000bb'
 
 const frase = (codice: string | null) => `[${codice ?? 'ripiego'}]`
 const NOTA = 'NOTA-TUS'
+/** Le tre note del trasporto NATIVO: tre testi diversi fra loro e dalla nota del TUS, così un confronto sbagliato si vede. */
+const NOTE_NATIVO = { invio: 'NOTA-INVIO', attesaRete: 'NOTA-ATTESA-RETE', pausa: 'NOTA-PAUSA' }
 
 function locale(extra: Partial<StatoLocale> = {}): StatoLocale {
   return {
@@ -31,6 +46,8 @@ function locale(extra: Partial<StatoLocale> = {}): StatoLocale {
     trasferimento: 'in-corso',
     percentuale: 42,
     codice: null,
+    trasporto: 'tus',
+    nota: null,
     ...extra,
   }
 }
@@ -64,6 +81,7 @@ function fondi(parziale: Partial<IngressoFusione>) {
     messaggiAzione: {},
     frase,
     notaCaricamento: NOTA,
+    noteNativo: NOTE_NATIVO,
     offline: false,
     ...parziale,
   })
@@ -287,5 +305,216 @@ describe('le fasi attive tengono viva la lettura dell’elenco', () => {
       const v = voce(fase)
       expect(() => fondi({ voci: [v] })).not.toThrow()
     }
+  })
+})
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// IL TRASPORTO NATIVO (app 1.2, compito J3)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Una riga nata dal plugin si racconta come le altre — finché i byte non sono sullo Storage la parola è del telefono — ma
+// con le sue note (l'invio non finisce con la pagina; la rete che manca; la pausa) e senza il codice «non autorizzato» del
+// TUS, che una PUT non produce. E la traduzione di una voce della coda nativa in uno `StatoLocale` sta in UN posto.
+
+const nativa = (extra: Partial<StatoLocale> = {}) => locale({ trasporto: 'nativo', nota: 'invio', ...extra })
+
+describe('le righe NATIVE: la nota giusta per ogni stato, e mai quella del TUS', () => {
+  it('in corso: «caricamento» con la barra vera e la nota dell’INVIO nativo (non «finché resti in Galleria»)', () => {
+    const r = unica({ locali: { [JOB]: nativa() }, voci: [voce('da-caricare')] })
+    expect(r.fase).toBe('caricamento')
+    expect(r.percentuale).toBe(42)
+    expect(r.messaggio).toBe(NOTE_NATIVO.invio)
+    expect(r.messaggio).not.toBe(NOTA)
+  })
+
+  it('accodato dal plugin: «in fila», senza barra, con la nota dell’invio', () => {
+    const r = unica({ locali: { [JOB]: nativa({ trasferimento: 'in-fila', percentuale: null }) }, voci: [voce('da-caricare')] })
+    expect(r.fase).toBe('in-fila')
+    expect(r.percentuale).toBeNull()
+    expect(r.messaggio).toBe(NOTE_NATIVO.invio)
+  })
+
+  it('fermo per la rete: «interrotto» con la nota dell’attesa di rete; fermo in pausa: con la nota della pausa', () => {
+    const attesa = unica({ locali: { [JOB]: nativa({ trasferimento: 'interrotto', percentuale: null, nota: 'attesa-rete' }) }, voci: [voce('da-caricare')] })
+    expect(attesa.fase).toBe('interrotto')
+    expect(attesa.percentuale).toBeNull()
+    expect(attesa.messaggio).toBe(NOTE_NATIVO.attesaRete)
+
+    const pausa = unica({ locali: { [JOB]: nativa({ trasferimento: 'interrotto', percentuale: null, nota: 'pausa' }) }, voci: [voce('da-caricare')] })
+    expect(pausa.fase).toBe('interrotto')
+    expect(pausa.messaggio).toBe(NOTE_NATIVO.pausa)
+  })
+
+  it('un fermo nativo SENZA nota dice comunque l’attesa di rete: mai una scheda muta', () => {
+    const r = unica({ locali: { [JOB]: nativa({ trasferimento: 'interrotto', percentuale: null, nota: null }) } })
+    expect(r.messaggio).toBe(NOTE_NATIVO.attesaRete)
+  })
+
+  it('un fermo nativo NON legge il codice del TUS («non autorizzato» è la firma che la pagina non ha potuto chiedere)', () => {
+    const r = unica({
+      locali: { [JOB]: nativa({ trasferimento: 'interrotto', percentuale: null, nota: 'attesa-rete', codice: 'VIDEO_NON_AUTORIZZATO' }) },
+      offline: false,
+    })
+    expect(r.messaggio).toBe(NOTE_NATIVO.attesaRete)
+  })
+
+  it('controprova: la STESSA riga fermo, se è TUS, legge ancora il suo codice e non la nota nativa', () => {
+    const r = unica({ locali: { [JOB]: locale({ trasferimento: 'interrotto', codice: 'VIDEO_NON_AUTORIZZATO' }) }, offline: false })
+    expect(r.messaggio).toBe('[VIDEO_NON_AUTORIZZATO]')
+  })
+
+  it('quando i byte sono arrivati la parola passa al server, nativo o no: concluso ⇒ la fase della voce', () => {
+    const r = unica({ locali: { [JOB]: nativa({ trasferimento: 'concluso', percentuale: null, nota: null }) }, voci: [voce('in-conversione')] })
+    expect(r.fase).toBe('conversione')
+    expect(r.nome).toBe('recita.mp4')
+    // Appena inviato dal plugin, prima che l'elenco lo sappia: «in coda», NON «da un altro dispositivo».
+    expect(unica({ locali: { [JOB]: nativa({ trasferimento: 'concluso', percentuale: null, nota: null }) }, voci: [voce('da-caricare')] }).fase).toBe('in-coda')
+    expect(unica({ locali: { [JOB]: nativa({ trasferimento: 'concluso', percentuale: null, nota: null }) }, voci: null }).fase).toBe('in-coda')
+  })
+
+  it('un fermo nativo il cui job ha GIÀ i byte sul server segue il server (la PUT sarebbe rifiutata come duplicato)', () => {
+    expect(unica({ locali: { [JOB]: nativa({ trasferimento: 'interrotto', nota: 'pausa' }) }, voci: [voce('pronto')] }).fase).toBe('pronto')
+  })
+
+  it('l’invio in corso non sparisce se il server «sorpassa» di un istante: la barra resta finché il plugin non dice altro', () => {
+    expect(unica({ locali: { [JOB]: nativa() }, voci: [voce('in-coda')] }).fase).toBe('caricamento')
+  })
+
+  it('fallito per i byte che non ci sono più (`VIDEO_RIPROVA`): «da ricaricare»; per il tetto: «fallito» col suo motivo', () => {
+    const daRicaricare = unica({ locali: { [JOB]: nativa({ trasferimento: 'fallito', percentuale: null, nota: null, codice: 'VIDEO_RIPROVA' }) } })
+    expect(daRicaricare.fase).toBe('da-ricaricare')
+    expect(daRicaricare.messaggio).toBeNull()
+
+    const troppoGrande = unica({ locali: { [JOB]: nativa({ trasferimento: 'fallito', percentuale: null, nota: null, codice: 'VIDEO_TROPPO_GRANDE' }) } })
+    expect(troppoGrande.fase).toBe('fallito')
+    expect(troppoGrande.messaggio).toBe('[VIDEO_TROPPO_GRANDE]')
+  })
+})
+
+describe('ogni riga dice come viaggiano i suoi byte (serve a chi decide che cosa offrire)', () => {
+  it('una riga locale porta il trasporto della sua riga, qualunque cosa dica la voce del server', () => {
+    expect(unica({ locali: { [JOB]: locale() }, voci: [voce('da-caricare')] }).trasporto).toBe('tus')
+    expect(unica({ locali: { [JOB]: nativa() }, voci: [voce('da-caricare')] }).trasporto).toBe('nativo')
+    // Un caricamento TUS di una voce che il server dà come nativa (non succede: la riga locale ha sempre ragione).
+    expect(unica({ locali: { [JOB]: locale() }, voci: [voce('da-caricare', { trasporto: 'put-nativo' })] }).trasporto).toBe('tus')
+  })
+
+  it('senza riga locale (un altro dispositivo) vale quello che il server dice del trasporto', () => {
+    expect(unica({ voci: [voce('da-caricare', { trasporto: 'tus' })] }).trasporto).toBe('tus')
+    expect(unica({ voci: [voce('da-caricare', { trasporto: 'put-nativo' })] }).trasporto).toBe('nativo')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// LA TRADUZIONE: una voce della coda nativa diventa uno `StatoLocale` (spec §7.5)
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+const UTENTE = '33333333-0000-4000-8000-000000000033'
+const SEDE_VOCE = '44444444-0000-4000-8000-000000000044'
+
+function voceNativa(extra: Partial<CaricamentoNativo> = {}): CaricamentoNativo {
+  return {
+    jobId: JOB,
+    intentId: INTENTO,
+    utenteId: UTENTE,
+    scuolaId: SEDE_VOCE,
+    nome: 'recita.mov',
+    mime: 'video/quicktime',
+    stato: 'in-invio',
+    byteInviati: 25,
+    byteTotali: 100,
+    tentativi: 0,
+    rinnovi: 0,
+    codice: null,
+    creatoIl: '2026-10-03T10:00:00.000Z',
+    aggiornatoIl: '2026-10-03T10:00:05.000Z',
+    ...extra,
+  }
+}
+
+describe('statoLocaleDaCaricamentoNativo — la tabella di §7.5, una riga per stato', () => {
+  it('la voce di prova passa lo schema vero del ponte (le prove qui sotto non girano su una forma inventata)', () => {
+    expect(schemaCaricamentoNativo.safeParse(voceNativa()).success).toBe(true)
+  })
+
+  it.each([
+    ['in-coda', 'in-fila', null, 'invio'],
+    ['in-invio', 'in-corso', 25, 'invio'],
+    ['in-attesa', 'interrotto', null, 'attesa-rete'],
+    ['in-pausa', 'interrotto', null, 'pausa'],
+    ['inviato', 'concluso', null, null],
+    ['fallito', 'fallito', null, null],
+    ['annullato', 'annullato', null, null],
+  ] as const)('%s ⇒ trasferimento %s, percentuale %s, nota %s', (stato, trasferimento, percentuale, nota) => {
+    const l = statoLocaleDaCaricamentoNativo(voceNativa({ stato }))
+    expect(l).toMatchObject({ jobId: JOB, intentId: INTENTO, nome: 'recita.mov', creatoIl: '2026-10-03T10:00:00.000Z', trasporto: 'nativo', trasferimento, percentuale, nota })
+  })
+
+  it('copre OGNI stato del ponte: uno stato nuovo senza la sua riga non compila, e qui non lancia', () => {
+    for (const stato of STATI_NATIVI) {
+      expect(() => statoLocaleDaCaricamentoNativo(voceNativa({ stato })), stato).not.toThrow()
+    }
+  })
+
+  it('la percentuale è intera, sta fra 0 e 100, e con zero byte totali non c’è (mai NaN)', () => {
+    const p = (byteInviati: number, byteTotali: number) =>
+      statoLocaleDaCaricamentoNativo(voceNativa({ stato: 'in-invio', byteInviati, byteTotali })).percentuale
+    expect(p(0, 100)).toBe(0)
+    expect(p(1, 3)).toBe(33)
+    expect(p(2, 3)).toBe(67)
+    expect(p(100, 100)).toBe(100)
+    expect(p(150, 100)).toBe(100)
+    expect(p(5, 0)).toBeNull()
+  })
+
+  it('un fallimento dice «da ricaricare» (`VIDEO_RIPROVA`) per tutto ciò che toglie i byte, e «troppo grande» per il tetto', () => {
+    const codice = (c: (typeof CODICI_NATIVI)[number] | null) =>
+      statoLocaleDaCaricamentoNativo(voceNativa({ stato: 'fallito', codice: c })).codice
+    for (const c of ['TOKEN_NON_VALIDO', 'TOKEN_SCADUTO', 'RINNOVO_CICLICO', 'FILE_ASSENTE', 'PESO_DIVERSO'] as const) {
+      expect(codice(c), c).toBe('VIDEO_RIPROVA')
+    }
+    expect(codice('TROPPO_GRANDE')).toBe('VIDEO_TROPPO_GRANDE')
+  })
+
+  it('ogni altro codice (e l’assenza di codice) non ha una frase sua: `null`, e la scheda dice il ripiego generico', () => {
+    for (const c of [null, 'RETE', 'SERVER', 'FIRMA_RIFIUTATA', 'ANNULLATO_DAL_SERVER', 'CHIUSURA_FORZATA', 'FGS_NON_AVVIABILE', 'UIDT_NON_PROGRAMMABILE', 'INTERNO'] as const) {
+      expect(statoLocaleDaCaricamentoNativo(voceNativa({ stato: 'fallito', codice: c })).codice, String(c)).toBeNull()
+    }
+  })
+
+  it('su ogni codice del ponte il risultato è un codice mostrabile del catalogo, o `null`: mai un codice che non ha una frase', () => {
+    for (const c of CODICI_NATIVI) {
+      const mostrato = statoLocaleDaCaricamentoNativo(voceNativa({ stato: 'fallito', codice: c })).codice
+      if (mostrato !== null) expect(CODICI_MOSTRATI_VIDEO as readonly string[], c).toContain(mostrato)
+    }
+  })
+
+  it('il codice di un fermo o di un invio in corso NON diventa un codice mostrabile (il perché sta nella nota)', () => {
+    for (const stato of ['in-coda', 'in-invio', 'in-attesa', 'in-pausa'] as const) {
+      expect(statoLocaleDaCaricamentoNativo(voceNativa({ stato, codice: 'RETE' })).codice, stato).toBeNull()
+    }
+  })
+})
+
+describe('stessoStatoLocale — un avanzamento che non cambia niente non rifà il disegno', () => {
+  const base = statoLocaleDaCaricamentoNativo(voceNativa())
+
+  it('due stati identici sono lo stesso; uno assente no', () => {
+    expect(stessoStatoLocale(base, { ...base })).toBe(true)
+    expect(stessoStatoLocale(undefined, base)).toBe(false)
+  })
+
+  it.each([
+    ['trasferimento', { trasferimento: 'interrotto' }],
+    ['percentuale', { percentuale: 26 }],
+    ['codice', { codice: 'VIDEO_RIPROVA' }],
+    ['nota', { nota: 'pausa' }],
+    ['nome', { nome: 'altro.mov' }],
+    ['trasporto', { trasporto: 'tus' }],
+    ['intentId', { intentId: INTENTO_B }],
+    ['creatoIl', { creatoIl: '2026-10-03T11:00:00.000Z' }],
+  ] as const)('se cambia %s è un altro stato', (_campo, cambio) => {
+    expect(stessoStatoLocale(base, { ...base, ...cambio } as StatoLocale)).toBe(false)
   })
 })

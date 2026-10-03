@@ -776,7 +776,7 @@ L'**avviso breve** (decisione del titolare) è il banner dopo «Pubblica» e la 
 | `video-nativo-fallito: job=<uuid> <CODICE>` | error | stato terminale `fallito` | `operazione` (`put` · `rinnovo` · `copia`), `tentativi`, `rinnovi` |
 | `media-nativo-preparazione-fallita: <MOTIVO>` | error | copia/hash/riduzione fallite per un motivo nostro (non i rifiuti attesi) | `tipo` (`foto` · `video`), `error_code` |
 | `caricamenti-nativi-motore: <motore> <occasione>` | warn | avvio del motore con voci vive (`avvio`, `rilancio-background`, `primo-piano`) | `in_coda`, `in_invio`, `task_vivi` |
-| `coda-nativa-corrotta` | error | `coda.json` illeggibile | `file_orfani` |
+| `coda-nativa-corrotta` | error | `coda.json` illeggibile, oppure voci fuori forma scartate da un file leggibile (§4.6) | `file_orfani`, `voci_scartate` |
 | `registro-nativo-scartati` | warn | eventi persi per tetto o 4xx | `scartati` |
 | `notifica-locale-non-autorizzata` | warn | una volta per installazione (iOS) | — |
 | `put-oltre-scadenza` | warn | un `400 InvalidJWT` arrivato dopo il trasferimento: la firma è scaduta durante l'invio (S0, §3) | `durata_s` |

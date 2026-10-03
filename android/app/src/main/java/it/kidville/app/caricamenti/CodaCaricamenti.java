@@ -12,7 +12,6 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -20,10 +19,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.function.Consumer;
@@ -68,8 +69,20 @@ import java.util.regex.Pattern;
  *    dell'esecutore leggono e scrivono la stessa lista. Restituiscono COPIE: modificarle non cambia
  *    la coda (per cambiarla ci sono `transita` e `modifica`).
  *  · UNA VOCE TERMINALE NON HA COPIA NÉ SEGRETI: la transizione che la rende tale cancella
- *    `file/<jobId>.<ext>` e `segreti/<jobId>.bin` (§4.4) e azzera `file`. Se una cancellazione fallisce
+ *    `file/<jobId>.<ext>` e `segreti/<jobId>.bin` (§4.4) e azzera `file`. Ma PRIMA SALVA lo stato terminale e SOLO DOPO cancella
+ *    (secondario n. 43 della PR 3): al contrario, una scrittura fallita o un processo ucciso in mezzo lasciavano sul disco una
+ *    voce viva senza copia né segreti, che alla riapertura cadeva in `FILE_ASSENTE` anche se il video era già arrivato. Se la
+ *    scrittura NON riesce la copia e i segreti restano (`residuiRimasti`): sul disco la voce è ancora viva e li nomina, e alla
+ *    riapertura riprende (la PUT ripetuta dà il duplicato che il rinnovo risolve). Se invece è una cancellazione a fallire,
  *    la pulizia riprova, perché il file non è più nominato da nessuna voce.
+ *  · UNA SOLA ISTANZA PER PROCESSO (secondario n. 49). Due `CodaCaricamenti` sulla stessa cartella si sovrascrivono `coda.json` a
+ *    vicenda, e gli aggiornamenti dell'una spariscono sotto quelli dell'altra: lo stato dell'esecutore non coinciderebbe più con
+ *    ciò che il ponte legge. L'istanza è quella del motore (`PianificatoreCaricamenti.condiviso`), e la strada di produzione per
+ *    ottenerla è {@link #perCartella}, che per la stessa cartella restituisce SEMPRE lo stesso oggetto. Il costruttore pubblico
+ *    resta per i test, che riaprono la coda sulla stessa cartella per simulare un riavvio del processo.
+ *  · `aggiungi` SU UN JOBID CON UNA VOCE TERMINALE LA SOSTITUISCE (secondario n. 44): l'apertura ripetuta di un video che era
+ *    fallito o annullato — stessi bambini, stessa chiave, stesso job, token ruotato — deve ripartire, non restituire indietro la
+ *    voce `fallito` e lasciare il video fermo fino a «Rimuovi». Una voce VIVA invece non si tocca (idempotenza).
  *
  * ─── COME SI COMPORTA CON UN FILE ROTTO ──────────────────────────────────────────────────────
  * File assente: coda vuota, nessun evento (è la prima volta). File illeggibile, non JSON, di versione
@@ -77,7 +90,9 @@ import java.util.regex.Pattern;
  * vuota, `Rapporto.corrotta` con il numero dei file orfani in `file/` (che la pulizia toglie: senza
  * segreti non partirebbero mai; il server chiude quei job a 48 ore e avvisa l'insegnante). Una voce
  * sola fuori forma in un file buono NON porta via le altre: si scarta e si conta (`vociScartate`).
- * Il chiamante scrive `coda-nativa-corrotta` quando il rapporto lo chiede.
+ * Il chiamante scrive `coda-nativa-corrotta` quando il rapporto lo chiede, con `file_orfani` E `voci_scartate`. I file
+ * `coda.corrotta-*` contengono nomi di file e identificativi di una coda guasta: la pulizia li toglie dopo 7 giorni, come le
+ * voci terminali (secondario n. 46), invece di lasciarli per sempre nella cartella privata.
  *
  * ─── LE DECISIONI DI QUESTO FILE (per chi legge A2/A3) ───────────────────────────────────────
  *  · `origine` (§4.6 la nomina senza definirla) è da dove viene il video: `galleria`, `file`
@@ -100,6 +115,16 @@ public final class CodaCaricamenti {
     public static final long ETA_MASSIMA_SCELTI_MS = 24L * 60L * 60L * 1000L;
     /** Le voci terminali restano 7 giorni, il tempo che il JavaScript le legga e le `dimentichi` (§4.6). */
     public static final long RITENZIONE_TERMINALI_MS = 7L * 24L * 60L * 60L * 1000L;
+    /** I file `coda.corrotta-*` restano gli stessi 7 giorni: il tempo di capire che cos'è successo (§4.6). */
+    public static final long RITENZIONE_CORROTTE_MS = RITENZIONE_TERMINALI_MS;
+
+    /**
+     * Il peso massimo di un video, che il ponte non può superare in nessun campo (`MAX_VIDEO_INPUT_BYTES` di
+     * `src/lib/media/video/limiti.ts`, che `schemaByteVideo` e `schemaByteInviati` di `caricamenti-nativi-tipi.ts` applicano a
+     * `byteTotali` e `byteInviati`): un solo valore fuori misura renderebbe RISPOSTA_NON_VALIDA l'intero `elenco` (secondario n. 49).
+     * Un test lo confronta col file TypeScript.
+     */
+    public static final long MAX_VIDEO_INPUT_BYTES = 2_000_000_000L;
 
     /** Un nome da mostrare sta fra 1 e 255 caratteri (`schemaNome` del contratto del ponte). */
     public static final int NOME_MASSIMO = 255;
@@ -315,13 +340,16 @@ public final class CodaCaricamenti {
         public final int fileOrfani;
         public final int vociTerminali;
         public final int segreti;
+        /** I file `coda.corrotta-*` più vecchi di 7 giorni. */
+        public final int codeCorrotte;
         public final boolean persistita;
 
-        ReportPulizia(int scelti, int fileOrfani, int vociTerminali, int segreti, boolean persistita) {
+        ReportPulizia(int scelti, int fileOrfani, int vociTerminali, int segreti, int codeCorrotte, boolean persistita) {
             this.scelti = scelti;
             this.fileOrfani = fileOrfani;
             this.vociTerminali = vociTerminali;
             this.segreti = segreti;
+            this.codeCorrotte = codeCorrotte;
             this.persistita = persistita;
         }
     }
@@ -337,18 +365,58 @@ public final class CodaCaricamenti {
     private Testi testi = Testi.predefiniti();
     private final Rapporto rapporto;
 
+    /** Le istanze di produzione, una per cartella canonica: vedi {@link #perCartella}. */
+    private static final Map<String, CodaCaricamenti> ISTANZE_PER_CARTELLA = new HashMap<>();
+
     /**
      * Apre la coda in `cartella` (la crea se manca) e legge `coda.json`. `orologio` dà gli istanti in millisecondi: in
      * produzione `System::currentTimeMillis`. Non lancia mai: un file rotto è il `Rapporto`.
+     *
+     * ⚠️ UNA SOLA ISTANZA PER PROCESSO (testata): questo costruttore non lo garantisce, lo fa {@link #perCartella}. Si usa direttamente
+     * solo nei test, per simulare un processo che riparte.
      */
     public CodaCaricamenti(File cartella, LongSupplier orologio) {
+        this(cartella, orologio, new AtomicFile(new File(cartella, NOME_FILE_CODA)));
+    }
+
+    /**
+     * Come il costruttore pubblico, ma con l'`AtomicFile` che il chiamante vuole: un test passa un `AtomicFile` che si comporta come
+     * quello del telefono (`finishWrite` che NON lancia quando la rinomina fallisce) per provare la verifica della scrittura.
+     */
+    CodaCaricamenti(File cartella, LongSupplier orologio, AtomicFile atomico) {
         this.cartella = cartella;
         this.orologio = orologio;
-        this.atomico = new AtomicFile(new File(cartella, NOME_FILE_CODA));
+        this.atomico = atomico;
         // `mkdirs` restituisce falso anche se la cartella c'è già: l'esito non è un errore. Se la creazione fallisce davvero,
         // la prima scrittura lo dirà (`aggiungi` lancia, le altre restituiscono `persistita = false`).
         cartella.mkdirs();
         this.rapporto = carica();
+    }
+
+    /**
+     * LA STRADA DI PRODUZIONE: la coda del processo per quella cartella. La prima chiamata la apre, le successive restituiscono
+     * LO STESSO oggetto (anche se `orologio` è un altro: conta il primo). Due code sulla stessa cartella si pesterebbero i piedi,
+     * e il motore, il ponte e la pulizia devono vedere lo stesso stato: è questo, e non la disciplina di chi chiama, a garantire
+     * «una sola istanza per processo».
+     */
+    public static CodaCaricamenti perCartella(File cartella, LongSupplier orologio) {
+        String chiave = chiaveDellaCartella(cartella);
+        synchronized (ISTANZE_PER_CARTELLA) {
+            CodaCaricamenti esistente = ISTANZE_PER_CARTELLA.get(chiave);
+            if (esistente != null) return esistente;
+            CodaCaricamenti nuova = new CodaCaricamenti(cartella, orologio);
+            ISTANZE_PER_CARTELLA.put(chiave, nuova);
+            return nuova;
+        }
+    }
+
+    /** Il percorso canonico (due scritture della stessa cartella, `a/../b` e `b`, sono la stessa); l'assoluto se non si risolve. */
+    static String chiaveDellaCartella(File cartella) {
+        try {
+            return cartella.getCanonicalPath();
+        } catch (IOException nonRisolvibile) {
+            return cartella.getAbsolutePath();
+        }
     }
 
     public synchronized Rapporto rapporto() {
@@ -443,24 +511,38 @@ public final class CodaCaricamenti {
      * ──────────────────────────────────────────────────────────────────────────── */
 
     /**
-     * Accoda una voce (`accodaVideo` riuscito → `in-coda`, §4.4). IDEMPOTENTE su `jobId`: se c'è già, restituisce quella (senza
-     * toccarla) con `giaPresente`, ed è il caso dell'apertura ripetuta. Gli istanti li mette la coda.
+     * Accoda una voce (`accodaVideo` riuscito → `in-coda`, §4.4). IDEMPOTENTE su `jobId` per una voce VIVA: se c'è già, restituisce
+     * quella (senza toccarla) con `giaPresente`, ed è il caso dell'apertura ripetuta. Se la voce che c'è è TERMINALE (`inviato`,
+     * `fallito`, `annullato`) la SOSTITUISCE con una nuova (`giaPresente = false`): il video rimandato agli stessi bambini ha la
+     * stessa chiave e lo stesso job, e deve ripartire (secondario n. 44). Gli istanti li mette la coda.
      *
      * @throws IllegalArgumentException se la voce è fuori forma (id non uuid minuscoli, `file` assente o che non è
      *                                  `file/<jobId>.<ext>`, peso nullo...): è un errore di chi chiama, che lo traduce in
      *                                  `PARAMETRI_NON_VALIDI`
      * @throws IOException              se la coda non si riesce a scrivere: il video NON è accodato, e la voce non resta in memoria
+     *                                  (né la terminale sostituita se ne va: torna al suo posto)
      */
     public synchronized RisultatoAggiunta aggiungi(VoceCoda nuova) throws IOException {
         VoceCoda voce = perLaCreazione(nuova);
         String motivo = motivoNonValida(voce);
         if (motivo != null) throw new IllegalArgumentException(motivo);
         VoceCoda esistente = trovaInterna(voce.jobId);
-        if (esistente != null) return new RisultatoAggiunta(esistente.copia(), true);
+        if (esistente != null && !esistente.stato.terminale()) return new RisultatoAggiunta(esistente.copia(), true);
         voce.nome = nomeValido(voce.nome);
-        voci.add(voce);
+        // Una voce terminale sullo stesso `jobId` cede il posto: non ha né copia né segreti (la transizione li ha cancellati, o la
+        // pulizia lo farà) e, se ne restasse un residuo nello stesso percorso, quello della voce nuova lo rimpiazza.
+        int posto = esistente == null ? -1 : voci.indexOf(esistente);
+        if (posto >= 0) {
+            voci.set(posto, voce);
+        } else {
+            voci.add(voce);
+        }
         if (!salva()) {
-            voci.remove(voce);
+            if (posto >= 0) {
+                voci.set(posto, esistente);
+            } else {
+                voci.remove(voce);
+            }
             throw new IOException("coda non scritta");
         }
         return new RisultatoAggiunta(voce.copia(), false);
@@ -485,15 +567,20 @@ public final class CodaCaricamenti {
     /**
      * Sposta `sorgente` (un preparato di `scelti/`) nel percorso `voce.file` e accoda la voce, TUTTO sotto lo stesso blocco: la
      * pulizia (anch'essa sincronizzata) non può passare fra lo spostamento e l'accodamento e cancellare, come orfana, la copia
-     * appena arrivata. Se la voce c'è già non si sposta niente (il preparato è già stato preso dalla prima chiamata). Se la
-     * scrittura della coda fallisce il file torna dov'era.
+     * appena arrivata. Se la voce VIVA c'è già non si sposta niente (il preparato è già stato preso dalla prima chiamata); se c'è una
+     * voce TERMINALE sullo stesso job la si sostituisce e il preparato si sposta (vedi {@link #aggiungi}). Se la scrittura della coda
+     * fallisce il file torna dov'era.
+     *
+     * ⚠️ Il blocco che tiene tutto insieme è il MONITOR della coda (`synchronized` sull'istanza, rientrante): chi deve rendere atomica
+     * una sequenza più lunga — il motore salva i segreti DENTRO lo stesso `synchronized (coda)`, così l'esecutore non vede la voce
+     * prima dei suoi segreti e la pulizia non li cancella in mezzo — può prenderlo a sua volta.
      */
     public synchronized RisultatoAggiunta aggiungiSpostando(VoceCoda nuova, File sorgente) throws IOException {
         VoceCoda voce = perLaCreazione(nuova);
         String motivo = motivoNonValida(voce);
         if (motivo != null) throw new IllegalArgumentException(motivo);
         VoceCoda esistente = trovaInterna(voce.jobId);
-        if (esistente != null) return new RisultatoAggiunta(esistente.copia(), true);
+        if (esistente != null && !esistente.stato.terminale()) return new RisultatoAggiunta(esistente.copia(), true);
         File destinazione = fileCopia(voce.file);
         File cartellaDestinazione = destinazione.getParentFile();
         if (cartellaDestinazione != null) cartellaDestinazione.mkdirs();
@@ -515,7 +602,10 @@ public final class CodaCaricamenti {
      * codice, per esempio da `RETE` a `SERVER`). Il codice si normalizza per stato: `inviato`, `in-coda` e `in-invio` non ne
      * hanno; `fallito` ne ha sempre uno (`INTERNO` se manca); `annullato` tiene `ANNULLATO_DAL_SERVER` o niente.
      *
-     * Su uno stato terminale cancella la copia e i segreti e azzera `file`: se non ci riesce lo dice (`residuiRimasti`).
+     * Su uno stato terminale SALVA PRIMA lo stato (voce senza `file`) e SOLO DOPO cancella la copia e i segreti: se la scrittura non
+     * riesce, o il processo muore fra le due cose, sul disco c'è ancora la voce viva COL SUO file e i suoi segreti, e alla
+     * riapertura riprende da dov'era; il contrario lasciava una voce viva senza niente da spedire (secondario n. 43). Se non riesce
+     * a cancellare — o se ha rinunciato a farlo perché la scrittura è fallita — lo dice (`residuiRimasti`): la pulizia ripassa.
      */
     public synchronized EsitoTransizione transita(String jobId, EventoStato evento, Codice codice) {
         VoceCoda voce = trovaInterna(jobId);
@@ -534,13 +624,18 @@ public final class CodaCaricamenti {
         }
         Stato nuovo = PoliticaCaricamento.transizione(voce.stato, evento);
         if (nuovo == null) return new EsitoTransizione(TipoTransizione.NON_AMMESSA, voce.copia(), true, false);
-        boolean residui = false;
-        if (nuovo.terminale()) residui = !cancellaCopiaESegreti(voce);
+        String fileDaCancellare = nuovo.terminale() ? voce.file : null;
         voce.stato = nuovo;
         voce.codice = codicePerStato(nuovo, codice);
         if (nuovo.terminale()) voce.file = null;
         voce.aggiornatoIl = orologio.getAsLong();
         boolean scritta = salva();
+        boolean residui = false;
+        if (nuovo.terminale()) {
+            // Prima il disco, poi la cancellazione. Se il disco non ha preso lo stato terminale la copia e i segreti restano: sono
+            // ancora nominati dalla voce viva che la coda ha scritto l'ultima volta.
+            residui = !scritta || !cancellaCopiaESegreti(voce.jobId, fileDaCancellare);
+        }
         return new EsitoTransizione(TipoTransizione.APPLICATA, voce.copia(), scritta, residui);
     }
 
@@ -585,22 +680,34 @@ public final class CodaCaricamenti {
 
     /**
      * Toglie dalla coda le voci TERMINALI indicate (`dimentica`, §4.3); le altre le ignora. Restituisce quante ne ha tolte.
+     *
+     * Controlla l'esito della scrittura (secondario n. 49): se `coda.json` non si riesce a scrivere le voci TORNANO al loro posto e
+     * il risultato è 0. Il contrario — toglierle dalla memoria e dire «dimenticate» mentre sul disco restano — farebbe riapparire
+     * alla riapertura voci che il JavaScript crede cancellate; con 0 invece sa che non è andata e riprova alla prossima occasione.
      */
     public synchronized int dimentica(Collection<String> jobIds) {
         if (jobIds == null || jobIds.isEmpty()) return 0;
         Set<String> richiesti = new HashSet<>(jobIds);
-        int tolte = 0;
+        List<VoceCoda> prima = new ArrayList<>(voci);
+        List<VoceCoda> daTogliere = new ArrayList<>();
         for (Iterator<VoceCoda> it = voci.iterator(); it.hasNext(); ) {
             VoceCoda voce = it.next();
             if (voce.stato.terminale() && richiesti.contains(voce.jobId)) {
-                // Di norma non c'è più niente da cancellare: ripeterlo è gratis e chiude i residui di una cancellazione fallita.
-                cancellaCopiaESegreti(voce);
+                daTogliere.add(voce);
                 it.remove();
-                tolte++;
             }
         }
-        if (tolte > 0) salva();
-        return tolte;
+        if (daTogliere.isEmpty()) return 0;
+        if (!salva()) {
+            voci.clear();
+            voci.addAll(prima);
+            return 0;
+        }
+        for (VoceCoda voce : daTogliere) {
+            // Di norma non c'è più niente da cancellare: ripeterlo è gratis e chiude i residui di una cancellazione fallita.
+            cancellaCopiaESegreti(voce.jobId, voce.file);
+        }
+        return daTogliere.size();
     }
 
     public synchronized boolean impostaTesti(Testi nuovi) {
@@ -615,9 +722,10 @@ public final class CodaCaricamenti {
      * ──────────────────────────────────────────────────────────────────────────── */
 
     /**
-     * La pulizia all'avvio del motore. Toglie: le voci terminali più vecchie di 7 giorni; i file di `scelti/` più vecchi di 24
+     * La pulizia all'avvio del motore. Toglie: le voci terminali più vecchie di 7 giorni; i file `coda.corrotta-*` più vecchi di 7
+     * giorni (secondario n. 46: contengono nomi di file e identificativi di una coda guasta); i file di `scelti/` più vecchi di 24
      * ore; i file di `file/` che nessuna voce nomina; i segreti di `segreti/` senza una voce VIVA (i terminali non ne hanno). Non
-     * tocca mai ciò che una voce viva nomina, né i nomi che non conosce in `segreti/` (sono di A2).
+     * tocca mai ciò che una voce viva nomina, né i nomi che non conosce in `segreti/`.
      */
     public synchronized ReportPulizia pulisci() {
         long adesso = orologio.getAsLong();
@@ -625,6 +733,7 @@ public final class CodaCaricamenti {
         int orfani = 0;
         int terminali = 0;
         int segreti = 0;
+        int corrotte = 0;
         boolean cambiata = false;
 
         for (Iterator<VoceCoda> it = voci.iterator(); it.hasNext(); ) {
@@ -634,6 +743,12 @@ public final class CodaCaricamenti {
                 terminali++;
                 cambiata = true;
             }
+        }
+
+        for (File f : elencaFile(cartella)) {
+            String nome = f.getName();
+            if (!nome.startsWith(PREFISSO_FILE_CORROTTO) || !nome.endsWith(".json")) continue;
+            if (adesso - istanteDelFileCorrotto(nome, f.lastModified()) > RITENZIONE_CORROTTE_MS && f.delete()) corrotte++;
         }
 
         for (File f : elencaFile(new File(cartella, SOTTOCARTELLA_SCELTI))) {
@@ -656,7 +771,24 @@ public final class CodaCaricamenti {
         }
 
         boolean persistita = !cambiata || salva();
-        return new ReportPulizia(scelti, orfani, terminali, segreti, persistita);
+        return new ReportPulizia(scelti, orfani, terminali, segreti, corrotte, persistita);
+    }
+
+    /**
+     * L'istante in cui una coda è stata messa da parte, dal nome `coda.corrotta-<istante>[-<n>].json` (millisecondi dall'epoca). Si
+     * legge dal NOME e non dalla data del file: la data è quella dell'ULTIMA scrittura della coda guasta, che può essere di molto
+     * prima. Se il nome non porta un numero si ripiega sulla data del file.
+     */
+    static long istanteDelFileCorrotto(String nome, long ripiegoMs) {
+        int inizio = PREFISSO_FILE_CORROTTO.length();
+        int fine = inizio;
+        while (fine < nome.length() && fine - inizio < 15 && Character.isDigit(nome.charAt(fine))) fine++;
+        if (fine == inizio) return ripiegoMs;
+        try {
+            return Long.parseLong(nome.substring(inizio, fine));
+        } catch (NumberFormatException nonUnNumero) {
+            return ripiegoMs;
+        }
     }
 
     /** I file (non le cartelle) direttamente dentro `cartella`; vuoto se non esiste. */
@@ -670,11 +802,14 @@ public final class CodaCaricamenti {
         return risultato;
     }
 
-    /** Cancella la copia e i segreti di una voce. Vero se non resta niente. */
-    private boolean cancellaCopiaESegreti(VoceCoda voce) {
+    /**
+     * Cancella la copia (`fileRelativo`, `null` se non ce n'è una) e i segreti del job. Vero se non resta niente. Il percorso della
+     * copia si passa a parte perché a questo punto la voce l'ha già azzerato (si salva prima lo stato, poi si cancella).
+     */
+    private boolean cancellaCopiaESegreti(String jobId, String fileRelativo) {
         boolean tutto = true;
-        if (voce.file != null) tutto &= cancella(fileCopia(voce.file));
-        File segreto = fileSegreto(voce.jobId);
+        if (fileRelativo != null) tutto &= cancella(fileCopia(fileRelativo));
+        File segreto = fileSegreto(jobId);
         tutto &= cancella(segreto);
         tutto &= cancella(new File(segreto.getPath() + ".new"));
         tutto &= cancella(new File(segreto.getPath() + ".bak"));
@@ -760,11 +895,14 @@ public final class CodaCaricamenti {
      *  · le date sono ISO con la `Z`;
      *  · `nome` sta fra 1 e 255 caratteri e `mime` ha una forma ammessa, con un ripiego se la voce salvata non le rispetta;
      *  · `byteInviati` è l'avanzamento della memoria dell'esecutore, limitato a `[0, byteTotali]`; per una voce `inviato` vale
-     *    sempre `byteTotali`.
+     *    sempre `byteTotali`;
+     *  · `byteTotali` non supera mai `MAX_VIDEO_INPUT_BYTES` (secondario n. 49): una voce fuori misura, oggi irraggiungibile perché il
+     *    JavaScript valida `byteAttesi`, renderebbe RISPOSTA_NON_VALIDA l'intero elenco invece della sola riga.
      */
     public static JSONObject aJsonPonte(VoceCoda voce, long byteInviati) {
         JSONObject json = new JSONObject();
-        long inviati = voce.stato == Stato.INVIATO ? voce.byteTotali : Math.max(0L, Math.min(byteInviati, voce.byteTotali));
+        long totali = Math.min(voce.byteTotali, MAX_VIDEO_INPUT_BYTES);
+        long inviati = voce.stato == Stato.INVIATO ? totali : Math.max(0L, Math.min(byteInviati, totali));
         try {
             json.put("jobId", voce.jobId);
             json.put("intentId", voce.intentId);
@@ -774,7 +912,7 @@ public final class CodaCaricamenti {
             json.put("mime", PoliticaCaricamento.mimeValido(voce.mime) ? voce.mime : MIME_DI_RIPIEGO);
             json.put("stato", voce.stato.valore());
             json.put("byteInviati", inviati);
-            json.put("byteTotali", voce.byteTotali);
+            json.put("byteTotali", totali);
             json.put("tentativi", Math.max(voce.tentativi, 0));
             json.put("rinnovi", Math.max(voce.rinnovi, 0));
             json.put("codice", voce.codice == null ? JSONObject.NULL : voce.codice.name());
@@ -792,8 +930,14 @@ public final class CodaCaricamenti {
      * IL FILE `coda.json`
      * ──────────────────────────────────────────────────────────────────────────── */
 
+    /**
+     * Scrive la coda in modo atomico e VERIFICATO (`ScritturaAtomica`): sul telefono `AtomicFile.finishWrite` non lancia se la
+     * rinomina fallisce, e dichiarare «scritto» un file che non lo è accodava video che alla riapertura non c'erano (secondario n. 45).
+     * Il fallimento è il VALORE restituito: i chiamanti lo portano nel loro esito (`persistita`, o l'`IOException` di `aggiungi`) e da
+     * lì nel registro. Il file vecchio è ancora intero.
+     */
     private boolean salva() {
-        FileOutputStream uscita = null;
+        byte[] dati;
         try {
             JSONArray elenco = new JSONArray();
             for (VoceCoda voce : voci) elenco.put(aJsonCoda(voce));
@@ -801,28 +945,15 @@ public final class CodaCaricamenti {
             radice.put("versione", VERSIONE);
             radice.put("testi", aJsonTesti(testi));
             radice.put("voci", elenco);
-            byte[] dati = radice.toString().getBytes(StandardCharsets.UTF_8);
-            cartella.mkdirs();
-            uscita = atomico.startWrite();
-            uscita.write(dati);
-            atomico.finishWrite(uscita);
-            return true;
-        } catch (JSONException nonScritta) {
+            dati = radice.toString().getBytes(StandardCharsets.UTF_8);
+        } catch (JSONException nonSerializzabile) {
             // `JSONException` in un `catch` a sé: sull'Android vero è un'eccezione controllata, in `org.json` di Maven (JUnit)
             // una `RuntimeException`, e un multi-catch che le mescola compila solo in uno dei due mondi.
-            return scritturaFallita(uscita);
-        } catch (IOException | RuntimeException nonScritta) {
-            return scritturaFallita(uscita);
+            return false;
+        } catch (RuntimeException nonSerializzabile) {
+            return false;
         }
-    }
-
-    /**
-     * Il fallimento è il VALORE restituito: i chiamanti lo portano nel loro esito (`persistita`, o l'`IOException` di `aggiungi`)
-     * e da lì nel registro. Il file vecchio è ancora intero (`failWrite` scarta quello nuovo).
-     */
-    private boolean scritturaFallita(FileOutputStream uscita) {
-        if (uscita != null) atomico.failWrite(uscita);
-        return false;
+        return ScritturaAtomica.scrivi(atomico, dati) == null;
     }
 
     private static JSONObject aJsonTesti(Testi t) throws JSONException {

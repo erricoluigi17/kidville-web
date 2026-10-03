@@ -44,10 +44,13 @@ import { MAX_VIDEO_DURATION_SECONDS, MAX_VIDEO_INPUT_BYTES } from '@/lib/media/v
 import * as flusso from '@/lib/gallery/video-galleria-flusso'
 import {
   apriIntentoVideoGalleria,
+  apriIntentoVideoGalleriaNativo,
   annullaIntentoVideo,
   chiaveIdempotenzaVideo,
+  chiaveIdempotenzaVideoNativo,
   creaSaleDelDispositivo,
   durataVideoDalFile,
+  intentoConcluso,
   leggiElencoVideoGalleria,
   leggiStatoIntentoVideo,
   rifiutoLocaleVideo,
@@ -1209,5 +1212,403 @@ describe('il modulo non ha più nessun ramo di pubblicazione', () => {
     for (const tolto of ['pubblicaVideoInGalleria', 'confermaIntentoVideo', 'faseDelJob']) {
       expect(esportati, `${tolto} è tornato`).not.toContain(tolto)
     }
+  })
+})
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// L'INVIO NATIVO (app 1.2, compito J3) — la chiave `gn1-` e l'apertura `put-nativo`
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Nell'app 1.2 un video scelto dal selettore nativo non è un `File`: l'identità di ciò che parte è lo `sha256` dei
+// suoi byte. Qui si tiene ferma la FORMA della chiave (che la RPC vera la accetti e ritrovi lo stesso intento lo prova
+// `video-galleria-chiave-rpc.test.ts`, su PGlite) e la lettura della risposta dell'apertura, che porta due credenziali:
+// l'URL firmato della PUT e il token di rinnovo.
+
+/** Gli `sha256` di due video diversi, calcolati con `node:crypto` (non due stringhe a caso: hanno la forma dei veri). */
+const SHA_A = createHash('sha256').update('contenuto del video A').digest('hex')
+const SHA_B = createHash('sha256').update('contenuto del video B').digest('hex')
+const VIDEO_A = { byte: 73_000_000, sha256: SHA_A }
+
+describe('chiaveIdempotenzaVideoNativo — `gn1-<byte>-<impronta del contenuto>-<impronta dell’invio>`', () => {
+  const chiave = (video = VIDEO_A, bambini = conBambini([BAMBINO_A]), sale = SALE_A) =>
+    chiaveIdempotenzaVideoNativo(video, bambini, sale)
+  /** Le due impronte: `gn1-<byte>-<contenuto>-<invio>`. */
+  const pezzi = (k: string) => {
+    const p = k.split('-')
+    expect(p, k).toHaveLength(4)
+    return { byte: p[1], contenuto: p[2], invio: p[3] }
+  }
+
+  it('ha la forma `gn1-<byte>-<12 cifre>-<12 cifre>`, e non può essere scambiata con una chiave del TUS o del flusso vecchio', () => {
+    const k = chiave()
+    expect(k).toMatch(/^gn1-73000000-[0-9a-f]{12}-[0-9a-f]{12}$/)
+    // Il server legge la chiave per prefisso: `g-` è il flusso vecchio (409 se già usata), `gv2-` il TUS di oggi.
+    expect(k.startsWith('g-')).toBe(false)
+    expect(k.startsWith('gv2-')).toBe(false)
+  })
+
+  it('è DETERMINISTICA: lo stesso video con gli stessi bambini dà la stessa chiave (la risposta si è persa: si ritrova l’intento)', () => {
+    expect(chiave()).toBe(chiave())
+    // Un'app morta fra l'apertura e `accodaVideo` non apre un doppione al reinvio: è il motivo per cui non è un UUID per «Invia».
+    expect(chiave(VIDEO_A, conBambini([BAMBINO_A, BAMBINO_B]))).toBe(chiave(VIDEO_A, conBambini([BAMBINO_A, BAMBINO_B])))
+  })
+
+  it('i bambini sono un INSIEME: ordine, doppioni e grafia dell’uuid non cambiano la chiave', () => {
+    const base = chiave(VIDEO_A, conBambini([BAMBINO_A, BAMBINO_B]))
+    expect(chiave(VIDEO_A, conBambini([BAMBINO_B, BAMBINO_A]))).toBe(base)
+    expect(chiave(VIDEO_A, conBambini([BAMBINO_A, BAMBINO_B, BAMBINO_A]))).toBe(base)
+    expect(chiave(VIDEO_A, conBambini([BAMBINO_B.toUpperCase(), BAMBINO_A]))).toBe(base)
+  })
+
+  it('lo stesso video con bambini DIVERSI è un’altra chiave: un altro invio, mai un `IDEMPOTENCY_CONFLICT`', () => {
+    const solo = chiave(VIDEO_A, conBambini([BAMBINO_A]))
+    const altro = chiave(VIDEO_A, conBambini([BAMBINO_B]))
+    const insieme = chiave(VIDEO_A, conBambini([BAMBINO_A, BAMBINO_B]))
+    expect(new Set([solo, altro, insieme]).size).toBe(3)
+    // Il pezzo che dice «è lo stesso video» resta uguale; cambia solo quello che porta i bambini.
+    expect(pezzi(altro).byte).toBe(pezzi(solo).byte)
+    expect(pezzi(altro).contenuto).toBe(pezzi(solo).contenuto)
+    expect(pezzi(altro).invio).not.toBe(pezzi(solo).invio)
+    // Tutta la classe al posto dei bambini scelti è un altro invio, e classi diverse pure.
+    const classe = chiave(VIDEO_A, conBambini([], { broadcast: true, classi: ['3 ANNI'] }))
+    expect(classe).not.toBe(solo)
+    expect(chiave(VIDEO_A, conBambini([], { broadcast: true, classi: ['4 ANNI'] }))).not.toBe(classe)
+  })
+
+  it('conta ciò che PARTE verso il server: in broadcast i tag non contano, senza broadcast le classi non contano', () => {
+    expect(chiave(VIDEO_A, conBambini([BAMBINO_A], { broadcast: true, classi: ['3 ANNI'] })))
+      .toBe(chiave(VIDEO_A, conBambini([BAMBINO_B], { broadcast: true, classi: ['3 ANNI'] })))
+    expect(chiave(VIDEO_A, conBambini([BAMBINO_A], { classi: ['3 ANNI'] })))
+      .toBe(chiave(VIDEO_A, conBambini([BAMBINO_A], { classi: [] })))
+    // E le classi, in un broadcast, sono un insieme anche loro.
+    expect(chiave(VIDEO_A, conBambini([], { broadcast: true, classi: ['4 ANNI', '3 ANNI', '4 ANNI'] })))
+      .toBe(chiave(VIDEO_A, conBambini([], { broadcast: true, classi: ['3 ANNI', '4 ANNI'] })))
+  })
+
+  it('un video DIVERSO (altro contenuto, o altro peso) è un’altra chiave, anche con gli stessi bambini', () => {
+    const base = chiave()
+    expect(chiave({ byte: VIDEO_A.byte, sha256: SHA_B })).not.toBe(base)
+    expect(chiave({ byte: VIDEO_A.byte + 1, sha256: SHA_A })).not.toBe(base)
+    // Il contenuto cambia ENTRAMBE le impronte: un confronto sul solo secondo pezzo non lo vedrebbe.
+    expect(pezzi(chiave({ byte: VIDEO_A.byte, sha256: SHA_B })).contenuto).not.toBe(pezzi(base).contenuto)
+    expect(pezzi(chiave({ byte: VIDEO_A.byte, sha256: SHA_B })).invio).not.toBe(pezzi(base).invio)
+  })
+
+  it('lo `sha256` si normalizza in minuscolo: il server lo riporta così, e due grafie non sono due video', () => {
+    expect(chiave({ byte: VIDEO_A.byte, sha256: SHA_A.toUpperCase() })).toBe(chiave())
+  })
+
+  it('è SALATA col sale del dispositivo, in entrambe le impronte: due dispositivi, due chiavi (e nessun conflitto)', () => {
+    const a = chiave(VIDEO_A, conBambini([BAMBINO_A]), SALE_A)
+    const b = chiave(VIDEO_A, conBambini([BAMBINO_A]), SALE_B)
+    expect(a).not.toBe(b)
+    expect(pezzi(a).contenuto).not.toBe(pezzi(b).contenuto)
+    expect(pezzi(a).invio).not.toBe(pezzi(b).invio)
+    // La parte che non è personale resta uguale.
+    expect(pezzi(a).byte).toBe(pezzi(b).byte)
+  })
+
+  it('le due impronte sono di due DOMINI: non si confrontano con quella dell’altro, neppure per lo stesso contenuto', () => {
+    const k = pezzi(chiave())
+    expect(k.contenuto).not.toBe(k.invio)
+    // L'impronta del contenuto non è lo SHA-256 salato di `sha256` in un altro dominio: provarne uno solo non basta.
+    expect(sha256Esadecimale(`${SALE_A}:contenuto:${SHA_A}`).slice(0, 12)).toBe(k.contenuto)
+    expect(sha256Esadecimale(`${SALE_A}:bambini:${SHA_A}`).slice(0, 12)).not.toBe(k.contenuto)
+  })
+
+  it('NON contiene lo `sha256`, il nome del file né l’uuid di un bambino: la chiave finisce IN CHIARO in `video_jobs.idempotency_key`', () => {
+    const k = chiave(VIDEO_A, conBambini([BAMBINO_A, BAMBINO_B]))
+    // Nemmeno un pezzo riconoscibile dello `sha256` (le 12 cifre della chiave sono SALATE, non il suo prefisso).
+    expect(k).not.toContain(SHA_A)
+    expect(k).not.toContain(SHA_A.slice(0, 12))
+    expect(k).not.toContain(SHA_A.slice(-12))
+    for (const id of [BAMBINO_A, BAMBINO_B]) {
+      expect(k).not.toContain(id)
+      expect(k).not.toContain(id.slice(0, 8))
+    }
+    // …e il sale non esce, nemmeno a pezzi.
+    expect(k).not.toContain(SALE_A)
+    expect(k).not.toContain(SALE_A.slice(0, 8))
+    expect(k).toMatch(/^[a-z0-9-]+$/)
+  })
+
+  it('IL DIFETTO DI #131, sulla chiave nuova: senza il sale i sottoinsiemi di bambini non si ritrovano, con il sale sì (controllo positivo)', () => {
+    // L'attacco di chi legge la tabella: conosce gli uuid dei bambini della sede e prova tutti i sottoinsiemi.
+    const SEGRETA = [CLASSE_DEL_NIDO[1], CLASSE_DEL_NIDO[4], CLASSE_DEL_NIDO[7]]
+    const inTabella = pezzi(chiave(VIDEO_A, conBambini(SEGRETA), SALE_A)).invio
+    const prova = (sale: string) => (tag: string[]) => pezzi(chiave(VIDEO_A, conBambini(tag), sale)).invio
+    // Controllo positivo: col sale giusto l'attacco funziona, quindi il test dopo non è verde a vuoto.
+    expect(scelteCompatibili(inTabella, prova(SALE_A))).toEqual([SEGRETA])
+    // Senza il sale (quello di un altro dispositivo) non torna niente.
+    expect(scelteCompatibili(inTabella, prova(SALE_B))).toEqual([])
+  })
+
+  it('resta nel limite di 128 caratteri anche col suffisso `-<uuid>` del ramo «intento concluso», nel caso peggiore', () => {
+    const peggiore = chiaveIdempotenzaVideoNativo(
+      { byte: MAX_VIDEO_INPUT_BYTES, sha256: SHA_A },
+      conBambini(Array.from({ length: 1000 }, (_, i) => `55555555-0000-4000-8000-${String(i).padStart(12, '0')}`)),
+      SALE_A,
+    )
+    expect(peggiore.length + 1 + 36).toBeLessThanOrEqual(128)
+    expect(peggiore).toMatch(/^[a-z0-9-]+$/)
+  })
+
+  it('un sale, uno `sha256` o un peso che non hanno la forma dei veri si RIFIUTANO: una chiave su un dato storto non la ritrova nessuno', () => {
+    for (const sale of ['', 'x', 'a'.repeat(31), 'A'.repeat(32), `${SALE_A}!`]) {
+      expect(() => chiaveIdempotenzaVideoNativo(VIDEO_A, conBambini([BAMBINO_A]), sale), JSON.stringify(sale)).toThrow('SaleNonValido')
+    }
+    for (const sha256 of ['', 'abc', 'g'.repeat(64), SHA_A.slice(1), `${SHA_A}0`, ` ${SHA_A}`]) {
+      expect(() => chiaveIdempotenzaVideoNativo({ byte: 10, sha256 }, conBambini([BAMBINO_A]), SALE_A), JSON.stringify(sha256)).toThrow('Sha256NonValido')
+    }
+    for (const byte of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 60]) {
+      expect(() => chiaveIdempotenzaVideoNativo({ byte, sha256: SHA_A }, conBambini([BAMBINO_A]), SALE_A), String(byte)).toThrow('ByteNonValidi')
+    }
+  })
+
+  it('senza un sale esplicito usa quello del DISPOSITIVO (lo stesso della `gv2-`), e lo stesso invio ritrova la sua chiave', () => {
+    localStorage.setItem(CHIAVE_SALE_NEL_DEPOSITO, SALE_A)
+    try {
+      expect(chiaveIdempotenzaVideoNativo(VIDEO_A, conBambini([BAMBINO_A]))).toBe(chiave(VIDEO_A, conBambini([BAMBINO_A]), SALE_A))
+      localStorage.setItem(CHIAVE_SALE_NEL_DEPOSITO, SALE_B)
+      expect(chiaveIdempotenzaVideoNativo(VIDEO_A, conBambini([BAMBINO_A]))).toBe(chiave(VIDEO_A, conBambini([BAMBINO_A]), SALE_B))
+    } finally {
+      localStorage.removeItem(CHIAVE_SALE_NEL_DEPOSITO)
+    }
+  })
+})
+
+describe('intentoConcluso — un intento ritrovato che è già finito non si riapre: serve un intento nuovo', () => {
+  it.each([
+    ['published', 'queued', true],
+    ['cancelled', 'awaiting_upload', true],
+    ['superseded', 'awaiting_upload', true],
+    ['confirmed', 'failed', true],
+    ['confirmed', 'rejected', true],
+    ['confirmed', 'awaiting_upload', false],
+    ['confirmed', 'processing', false],
+    ['pending', 'awaiting_upload', false],
+  ] as const)('intento %s, job %s ⇒ concluso: %s', (statoIntent, statoJob, atteso) => {
+    expect(intentoConcluso({ statoIntent, statoJob })).toBe(atteso)
+  })
+})
+
+const PUT_COORDINATE = {
+  protocollo: 'put' as const,
+  url: 'https://esempio.supabase.co/storage/v1/object/upload/sign/video_originals/percorso.mov?token=TOKEN-FINTO-DELLA-PUT',
+  metodo: 'PUT' as const,
+  intestazioni: { 'content-type': 'video/quicktime' },
+}
+/** `kvr_` più 43 caratteri base64url: la forma del token che il server conia (`schemaTokenRinnovoVideo`). */
+const TOKEN_RINNOVO = `kvr_${'Ab1_-'.repeat(8)}Ab1`
+const SCADENZA_URL = '2026-10-03T12:00:00.000Z'
+const SCADENZA_TOKEN = '2026-10-05T10:00:00.000Z'
+
+/** La risposta di un'apertura `put-nativo` riuscita: l'URL firmato nel job e il token di rinnovo accanto. */
+function aperturaNativaRiuscita(extra: Record<string, unknown> = {}, job: Record<string, unknown> = {}) {
+  return {
+    intentId: INTENTO,
+    revisione: 1,
+    canale: 'gallery',
+    intent: { status: 'confirmed' },
+    scadenzaCaricamentoIl: SCADENZA_URL,
+    job: [{
+      jobId: JOB,
+      chiaveIdempotenza: 'gn1-73000000-aaaaaaaaaaaa-bbbbbbbbbbbb',
+      caricamento: PUT_COORDINATE,
+      firma: '',
+      status: 'awaiting_upload',
+      needs_upload: true,
+      expires_at: SCADENZA_URL,
+      rinnovo: { token: TOKEN_RINNOVO, scadeIl: SCADENZA_TOKEN },
+      ...job,
+    }],
+    ...extra,
+  }
+}
+
+type DatiAperturaNativa = Parameters<typeof apriIntentoVideoGalleriaNativo>[1]
+
+/** Un'apertura nativa con le impostazioni di tutti i giorni; ogni test cambia solo ciò che prova. */
+function apriNativo(
+  rete: Parameters<typeof apriIntentoVideoGalleriaNativo>[0],
+  extra: Partial<DatiAperturaNativa> = {},
+) {
+  return apriIntentoVideoGalleriaNativo(rete, {
+    file: { nome: 'filmato-privato.mov', byte: 73_000_000, mime: 'video/quicktime', sha256: SHA_A },
+    scuolaId: SEDE_A,
+    durataSecondi: 52,
+    chiaveIdempotenza: 'gn1-73000000-aaaaaaaaaaaa-bbbbbbbbbbbb',
+    destinatari: { tagAlunni: [BAMBINO_A], broadcast: false, classi: [] },
+    ripiego: 'ripiego',
+    ...extra,
+  })
+}
+
+describe('apriIntentoVideoGalleriaNativo', () => {
+  it('dichiara il trasporto `put-nativo` e lo `sha256` del file, con i bambini e la sede', async () => {
+    const rete = vi.fn(async () => risposta(201, aperturaNativaRiuscita()))
+    const esito = await apriNativo(rete)
+    expect(esito.ok).toBe(true)
+
+    const [url, init] = rete.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/video-uploads')
+    expect(init.method).toBe('POST')
+    const corpo = JSON.parse(String(init.body))
+    expect(corpo).toMatchObject({
+      canale: 'gallery', azione: 'publish', scuolaId: SEDE_A, ambitoGlobale: false, trasporto: 'put-nativo',
+      destinatari: { tagAlunni: [BAMBINO_A], broadcast: false, classi: [] },
+    })
+    expect(corpo.file).toHaveLength(1)
+    expect(corpo.file[0]).toEqual({
+      chiaveIdempotenza: 'gn1-73000000-aaaaaaaaaaaa-bbbbbbbbbbbb',
+      nome: 'filmato-privato.mov', byte: 73_000_000, mime: 'video/quicktime', durataSecondi: 52, sha256: SHA_A,
+    })
+  })
+
+  it('il corpo passa lo schema VERO della route: `put-nativo` esige lo `sha256`, e col nostro corpo non manca', async () => {
+    const rete = vi.fn(async () => risposta(201, aperturaNativaRiuscita()))
+    const file = { nome: 'filmato-privato.mov', byte: 73_000_000, mime: 'video/quicktime', sha256: SHA_A }
+    const destinatari = { tagAlunni: [BAMBINO_A, BAMBINO_B], broadcast: false, classi: [] as string[] }
+    await apriNativo(rete, { file, destinatari, chiaveIdempotenza: chiaveIdempotenzaVideoNativo(file, destinatari, SALE_A) })
+
+    const corpo = corpoDellaChiamata(rete)
+    const letto = schemaAperturaIntentVideo.safeParse(corpo)
+    expect(letto.success, JSON.stringify(letto.error?.issues)).toBe(true)
+    if (letto.success) {
+      expect(letto.data.trasporto).toBe('put-nativo')
+      expect(letto.data.file[0].sha256).toBe(SHA_A)
+      expect(letto.data.file[0].chiaveIdempotenza).toMatch(/^gn1-/)
+    }
+    // La controprova: lo stesso corpo SENZA `sha256` lo rifiuta la route — è la garanzia che regge una PUT che non si riprende.
+    const senza = { ...corpo, file: [{ ...corpo.file[0], sha256: undefined }] }
+    expect(schemaAperturaIntentVideo.safeParse(senza).success).toBe(false)
+  })
+
+  it('in broadcast i tag non partono e le classi sì; una durata non misurabile viaggia come `null`', async () => {
+    const rete = vi.fn(async () => risposta(201, aperturaNativaRiuscita()))
+    await apriNativo(rete, { destinatari: { tagAlunni: [BAMBINO_A], broadcast: true, classi: ['3 ANNI'] }, durataSecondi: Number.NaN })
+    const corpo = corpoDellaChiamata(rete)
+    expect(corpo.destinatari).toEqual({ tagAlunni: [], broadcast: true, classi: ['3 ANNI'] })
+    expect(corpo.file[0].durataSecondi).toBeNull()
+  })
+
+  it('un MIME vuoto ripiega su `video/mp4`: il server rifiuterebbe un `mime` assente', async () => {
+    const rete = vi.fn(async () => risposta(201, aperturaNativaRiuscita()))
+    await apriNativo(rete, { file: { nome: 'a.mov', byte: 10, mime: '', sha256: SHA_A } })
+    expect(corpoDellaChiamata(rete).file[0].mime).toBe('video/mp4')
+  })
+
+  it('rilegge la risposta col suo schema: URL e `content-type` della PUT, token e scadenza del rinnovo, scadenza dell’URL', async () => {
+    const rete = vi.fn(async () => risposta(201, aperturaNativaRiuscita()))
+    const esito = await apriNativo(rete)
+    expect(esito).toEqual({
+      ok: true,
+      dati: {
+        intentId: INTENTO,
+        revisione: 1,
+        jobId: JOB,
+        chiaveIdempotenza: 'gn1-73000000-aaaaaaaaaaaa-bbbbbbbbbbbb',
+        statoIntent: 'confirmed',
+        statoJob: 'awaiting_upload',
+        needsUpload: true,
+        expiresAt: SCADENZA_URL,
+        put: { url: PUT_COORDINATE.url, contentType: 'video/quicktime' },
+        rinnovo: { token: TOKEN_RINNOVO, scadeIl: SCADENZA_TOKEN },
+      },
+    })
+  })
+
+  it('byte GIÀ arrivati (`needs_upload: false`): le coordinate sono di ripiego (TUS) e non si guardano; né URL né token', async () => {
+    // Senza byte da spedire il server manda coordinate TUS di ripiego e nessun token: lo schema le ammette, e il nativo non ne ha bisogno.
+    const rete = vi.fn(async () => risposta(201, aperturaNativaRiuscita({}, { caricamento: COORDINATE, rinnovo: undefined, needs_upload: false, expires_at: null })))
+    const esito = await apriNativo(rete)
+    expect(esito.ok).toBe(true)
+    if (esito.ok) {
+      expect(esito.dati.needsUpload).toBe(false)
+      expect(esito.dati.put).toBeNull()
+      expect(esito.dati.rinnovo).toBeNull()
+      expect(esito.dati.expiresAt).toBeNull()
+    }
+  })
+
+  it('un intento ritrovato GIÀ CONCLUSO porta lo stato dell’intento e del job, perché chi chiama lo riconosca', async () => {
+    const rete = vi.fn(async () => risposta(201, aperturaNativaRiuscita({ intent: { status: 'published' } }, { status: 'ready', needs_upload: false, caricamento: COORDINATE, rinnovo: undefined, expires_at: null })))
+    const esito = await apriNativo(rete)
+    expect(esito.ok).toBe(true)
+    if (esito.ok) {
+      expect(esito.dati.statoIntent).toBe('published')
+      expect(esito.dati.statoJob).toBe('ready')
+      expect(intentoConcluso(esito.dati)).toBe(true)
+    }
+  })
+
+  it.each([
+    ['byte da spedire ma coordinate TUS (il server e il client non si capiscono)', { caricamento: COORDINATE, firma: 'firma-presente', rinnovo: undefined }],
+    ['byte da spedire e URL di PUT, ma SENZA il token di rinnovo', { rinnovo: undefined }],
+    ['un token di rinnovo di un’altra forma', { rinnovo: { token: 'kvr_corto', scadeIl: SCADENZA_TOKEN } }],
+    ['un URL di PUT in chiaro (http)', { caricamento: { ...PUT_COORDINATE, url: 'http://esempio.supabase.co/x' } }],
+  ])('una risposta incompleta non diventa una PUT: %s', async (_nome, job) => {
+    const rete = vi.fn(async () => risposta(201, aperturaNativaRiuscita({}, job)))
+    const esito = await apriNativo(rete, { ripiego: 'frase di ripiego' })
+    expect(esito).toEqual({ ok: false, codice: null, messaggio: 'frase di ripiego', stato: null })
+    expect(h.logClient).toHaveBeenCalledWith(
+      expect.objectContaining({ livello: 'error', messaggio: 'video-galleria-apertura-incompleta', campi: expect.objectContaining({ tipo: 'put-nativo' }) }),
+    )
+  })
+
+  it('una risposta senza job, o che non è un oggetto, è incompleta e lascia la sua riga', async () => {
+    for (const corpo of [{ ...aperturaNativaRiuscita(), job: [] }, {}, null, 'testo']) {
+      h.logClient.mockClear()
+      const esito = await apriNativo(vi.fn(async () => risposta(201, corpo)))
+      expect(esito.ok, JSON.stringify(corpo)).toBe(false)
+      expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'video-galleria-apertura-incompleta' }))
+    }
+  })
+
+  it('il 422 del Privacy Lock porta i NOMI a schermo (con la sua prosa), e non nei log: prima di un solo byte', async () => {
+    const rete = vi.fn(async () =>
+      risposta(422, { error: 'Foto di gruppo non pubblicabile: alcuni bambini taggati non hanno la liberatoria foto.', nomi: ['Ada B.'], ids: [BAMBINO_A] }),
+    )
+    const esito = await apriNativo(rete)
+    expect(esito.ok).toBe(false)
+    if (!esito.ok) {
+      expect(esito.stato).toBe(422)
+      expect(esito.nomi).toEqual(['Ada B.'])
+      expect(esito.messaggio).toContain('Foto di gruppo non pubblicabile')
+    }
+    const scritto = JSON.stringify(h.logClient.mock.calls)
+    expect(scritto).not.toContain('Ada')
+    expect(scritto).not.toContain(BAMBINO_A)
+    // L'operazione si distingue da quella del TUS: un rifiuto dell'apertura nativa si legge a sé.
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'video-galleria-rifiutata: apertura-nativa', stato: 422 }))
+  })
+
+  it('un rifiuto con `codice` (403) si legge dal CATALOGO, e una rete caduta dice che non è partito (stato `null`)', async () => {
+    const rifiutato = await apriNativo(vi.fn(async () => risposta(403, { error: 'prosa del server', codice: 'TAG_FUORI_SEDE' })))
+    expect(rifiutato.ok).toBe(false)
+    if (!rifiutato.ok) {
+      expect(rifiutato.messaggio).toBe(itShared.erroreTagFuoriSede)
+      expect(rifiutato.codice).toBe('TAG_FUORI_SEDE')
+    }
+
+    const caduta = await apriNativo(vi.fn(async () => { throw new TypeError('Failed to fetch') }), { ripiego: 'Nessuna rete' })
+    expect(caduta).toEqual({ ok: false, codice: null, messaggio: 'Nessuna rete', stato: null })
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', messaggio: 'video-galleria-rete: apertura-nativa' }))
+  })
+
+  it('NON scrive nei log il nome del file, lo `sha256`, l’URL firmato, il token né i bambini: sono dati di minori e credenziali', async () => {
+    // Tre esiti, tre percorsi di log: rifiuto, rete caduta, risposta incompleta (e anche il successo, che non scrive niente).
+    await apriNativo(vi.fn(async () => risposta(500, { error: 'boom', codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' })))
+    await apriNativo(vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    await apriNativo(vi.fn(async () => risposta(201, aperturaNativaRiuscita({}, { rinnovo: undefined }))))
+    await apriNativo(vi.fn(async () => risposta(201, aperturaNativaRiuscita())))
+    const scritto = JSON.stringify(h.logClient.mock.calls)
+    expect(scritto.length).toBeGreaterThan(50)
+    for (const segreto of ['filmato-privato', SHA_A, SHA_A.slice(0, 16), 'supabase.co', 'TOKEN-FINTO', 'kvr_', TOKEN_RINNOVO, BAMBINO_A]) {
+      expect(scritto, segreto).not.toContain(segreto)
+    }
+    // Dei bambini passa il NUMERO, che sta nei campi.
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ campi: expect.objectContaining({ n_tag: 1, broadcast: false, byte: 73_000_000 }) }))
   })
 })

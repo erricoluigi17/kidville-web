@@ -14,7 +14,6 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -22,6 +21,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,13 +69,24 @@ import java.util.regex.Pattern;
  *  · La rete non si tiene sotto il blocco: mentre il POST è in volo gli altri thread possono ancora
  *    scrivere eventi.
  *
- * ─── DUE COSE CHE NON SONO NELLA TABELLA DI §8.2, E CHE VANNO ALLINEATE ──────────────────────
- *  · `put-oltre-scadenza` (§3 e §4.5: «con il log `put-oltre-scadenza` che porta la durata del
- *    trasferimento in secondi») è un quindicesimo messaggio, con il campo `durata_s`. Non sta in
- *    `EVENTI_LOG_NATIVI` (TypeScript) né nelle liste del server finto di collaudo: finché non
- *    vi si aggiunge, il lock J4 e le verifiche S12 lo segnaleranno.
- *  · Tutti gli eventi con un utente lo portano nell'intestazione; quelli senza (`coda-nativa-corrotta`
- *    all'avvio, `registro-nativo-scartati` se non resta altro) partono senza `x-user-id`.
+ * ─── CHE COSA È CAMBIATO DOPO L'ONDATA 2 (compito A2, secondari n. 45-49) ────────────────────
+ *  · `put-oltre-scadenza` (§3 e §4.5: la firma scaduta durante l'invio, con la durata del trasferimento in secondi) è il
+ *    quindicesimo messaggio ed è ora anche in `EVENTI_LOG_NATIVI` (TypeScript), in §8.2 e nel server finto di collaudo.
+ *  · UNA SOLA ISTANZA PER PROCESSO. Due registri sullo stesso `registro.json` si sovrascrivono il file a vicenda e perdono eventi.
+ *    La strada di produzione è {@link #perCartella}, che per la stessa cartella restituisce sempre lo stesso oggetto; il costruttore
+ *    pubblico resta per i test, che riaprono il registro per simulare un riavvio.
+ *  · LA DESTINAZIONE. In Release il registro scrive SEMPRE su `https://app.kidville.it/api/logs` ({@link #URL_REGISTRO_RELEASE}):
+ *    è l'unico indirizzo possibile (§9), e così si può svuotare anche all'avvio e al ritorno in primo piano, quando nessuna voce
+ *    viva ne porta uno. In Debug la destinazione è quella che la pagina ha passato ad `accodaVideo` (il server finto di collaudo,
+ *    `http://10.0.2.2:<porta>/api/logs`), e senza una voce che la porti non si spedisce niente: i log di una build Debug non vanno
+ *    in produzione ({@link #destinazione}).
+ *  · LA SCRITTURA È VERIFICATA (`ScritturaAtomica`): sul telefono `AtomicFile.finishWrite` non lancia se la rinomina fallisce.
+ *  · `coda-nativa-corrotta` porta anche `voci_scartate`, il numero di voci fuori forma scartate in un file per il resto buono.
+ *  · I `video-nativo-rinnovo` si DIRADANO durante un guasto lungo ({@link #siLoggaIlRinnovo}): con la regola di S0 ogni ripresa
+ *    dopo più di 10 minuti fa un rinnovo, e senza questo un'ora di Storage in 5xx scriveva circa quattro righe per video che col
+ *    tetto di 200 spingevano fuori righe più vecchie.
+ *  · Gli eventi che non hanno un utente proprio (`coda-nativa-corrotta` all'avvio, `registro-nativo-scartati`) partono senza
+ *    `x-user-id`: il chiamante passa l'utente di una voce viva quando ce n'è una.
  */
 public final class RegistroNativo {
 
@@ -92,6 +103,11 @@ public final class RegistroNativo {
     public static final String NOME_EVENTO_LOG = "caricamento-nativo";
     public static final String PIATTAFORMA = "android";
     public static final String INTESTAZIONE_UTENTE = "x-user-id";
+    /**
+     * La destinazione dei log nelle build Release: l'unica, e per intero (§9: «rinnovo e registro solo https://app.kidville.it»).
+     * `route.ts` di `/api/logs` è una porta anonima (30 richieste al minuto per IP), che identifica l'utente da `x-user-id`.
+     */
+    public static final String URL_REGISTRO_RELEASE = "https://app.kidville.it/api/logs";
     /** I campi di un evento: lo stesso tetto di `/api/logs` (`CAMPI_MAX`). */
     public static final int CAMPI_MASSIMI = 12;
 
@@ -173,8 +189,8 @@ public final class RegistroNativo {
     }
 
     /**
-     * Le chiavi di `campi`: l'unione delle colonne di §8.1 e §8.2, più `versione_app` e `durata_s`. Le prime sei portano
-     * stringhe (che il server lascia in chiaro e ammette solo con la forma di un enumerato); le altre numeri o booleani.
+     * Le chiavi di `campi`: l'unione delle colonne di §8.1 e §8.2, più `versione_app`, `durata_s` e `voci_scartate`. Le prime sei
+     * portano stringhe (che il server lascia in chiaro e ammette solo con la forma di un enumerato); le altre numeri o booleani.
      */
     enum Campo {
         ESITO("esito"),
@@ -200,7 +216,8 @@ public final class RegistroNativo {
         TASK_VIVI("task_vivi"),
         FILE_ORFANI("file_orfani"),
         SCARTATI("scartati"),
-        DURATA_S("durata_s");
+        DURATA_S("durata_s"),
+        VOCI_SCARTATE("voci_scartate");
 
         private final String chiave;
 
@@ -516,6 +533,8 @@ public final class RegistroNativo {
     private final LongSupplier orologio;
     private final Diagnostica diagnostica;
     private final List<Riga> righe = new ArrayList<>();
+    /** Le istanze di produzione, una per cartella canonica: vedi {@link #perCartella}. */
+    private static final Map<String, RegistroNativo> ISTANZE_PER_CARTELLA = new HashMap<>();
     private long scartati = 0L;
     private long nonPrimaDiMs = 0L;
     private boolean inVolo = false;
@@ -529,17 +548,45 @@ public final class RegistroNativo {
      * @param orologio     millisecondi dall'epoca (`System::currentTimeMillis`)
      */
     public RegistroNativo(File fileRegistro, String versioneApp, LongSupplier orologio, Diagnostica diagnostica) {
-        this.atomico = new AtomicFile(fileRegistro);
+        this(new AtomicFile(fileRegistro), versioneApp, orologio, diagnostica);
+    }
+
+    /**
+     * Come il costruttore pubblico, ma con l'`AtomicFile` che il chiamante vuole: un test passa un `AtomicFile` che si comporta come
+     * quello del telefono (`finishWrite` che NON lancia quando la rinomina fallisce) per provare la verifica della scrittura.
+     */
+    RegistroNativo(AtomicFile atomico, String versioneApp, LongSupplier orologio, Diagnostica diagnostica) {
+        this.atomico = atomico;
         this.versioneApp = versioneApp != null && FORMA_VERSIONE_APP.matcher(versioneApp).matches() ? versioneApp : null;
         this.orologio = orologio;
         this.diagnostica = diagnostica;
         carica();
     }
 
-    /** Il registro di produzione: `registro.json` nella cartella dei caricamenti, logcat per i guasti interni. */
+    /**
+     * Il registro di produzione: `registro.json` nella cartella dei caricamenti, logcat per i guasti interni. UNA SOLA ISTANZA PER
+     * PROCESSO: per la stessa cartella restituisce SEMPRE lo stesso oggetto (anche con un'altra `versioneApp`: conta la prima), perché
+     * due registri sullo stesso file si sovrascrivono a vicenda e gli eventi dell'uno spariscono sotto quelli dell'altro.
+     */
     public static RegistroNativo perCartella(File cartellaCaricamenti, String versioneApp) {
-        return new RegistroNativo(new File(cartellaCaricamenti, "registro.json"), versioneApp, System::currentTimeMillis,
-                new DiagnosticaLogcat());
+        String chiave = CodaCaricamenti.chiaveDellaCartella(cartellaCaricamenti);
+        synchronized (ISTANZE_PER_CARTELLA) {
+            RegistroNativo esistente = ISTANZE_PER_CARTELLA.get(chiave);
+            if (esistente != null) return esistente;
+            RegistroNativo nuovo = new RegistroNativo(new File(cartellaCaricamenti, "registro.json"), versioneApp,
+                    System::currentTimeMillis, new DiagnosticaLogcat());
+            ISTANZE_PER_CARTELLA.put(chiave, nuovo);
+            return nuovo;
+        }
+    }
+
+    /**
+     * Dove si spedisce: in Release SEMPRE {@link #URL_REGISTRO_RELEASE}, qualunque cosa abbia passato la pagina; in Debug quello che
+     * la pagina ha passato (`urlDaUnaVoce`, il server finto di collaudo) o `null` se non ce n'è nessuno, e allora non si spedisce
+     * niente: una build Debug non deve scrivere in `app_log` di produzione.
+     */
+    public static String destinazione(String urlDaUnaVoce, boolean debug) {
+        return debug ? urlDaUnaVoce : URL_REGISTRO_RELEASE;
     }
 
     /* ────────────────────────────────────────────────────────────────────────────
@@ -643,10 +690,15 @@ public final class RegistroNativo {
                 new Campi().numero(Campo.IN_CODA, inCoda).numero(Campo.IN_INVIO, inInvio).numero(Campo.TASK_VIVI, taskVivi)));
     }
 
-    /** `coda-nativa-corrotta` — `coda.json` illeggibile (livello `error`); `fileOrfani` viene dal `Rapporto` della coda. */
-    public void codaCorrotta(UUID utente, int fileOrfani) {
+    /**
+     * `coda-nativa-corrotta` — `coda.json` illeggibile, o con voci fuori forma scartate (livello `error`). `fileOrfani` e
+     * `vociScartate` vengono dal `Rapporto` della coda: i file di `file/` che nessuna voce nomina, e le voci scartate in un file per il
+     * resto buono (0 se il file era illeggibile per intero).
+     */
+    public void codaCorrotta(UUID utente, int fileOrfani, int vociScartate) {
         registra("coda-corrotta", Evento.CODA_CORROTTA, utente, null,
-                () -> new Dettagli(null, null, new Campi().numero(Campo.FILE_ORFANI, fileOrfani)));
+                () -> new Dettagli(null, null, new Campi().numero(Campo.FILE_ORFANI, fileOrfani)
+                        .numero(Campo.VOCI_SCARTATE, vociScartate)));
     }
 
     /** `notifica-locale-non-autorizzata` — una volta per installazione (iOS; qui per parità di vocabolario). */
@@ -658,6 +710,29 @@ public final class RegistroNativo {
     /** I ritentativi si loggano ai tentativi 1, 2, 4, 8, 16... (§8.1): le potenze di due. */
     public static boolean siLoggaIlRitento(int tentativo) {
         return tentativo >= 1 && (tentativo & (tentativo - 1)) == 0;
+    }
+
+    /**
+     * Quali righe `video-nativo-rinnovo` si scrivono (secondario n. 48). Con la regola di S0 ogni ripresa dopo più di 10 minuti rinnova
+     * l'URL prima di spedire, e durante un guasto lungo dello Storage sono circa quattro righe all'ora per video: col tetto di 200
+     * eventi spingerebbero fuori righe più vecchie e più utili. Quindi:
+     * <ul>
+     *   <li>`arrivato`, `annullato`, `negato` si scrivono SEMPRE: sono la fine di una storia o un guasto da vedere, e ce n'è una sola
+     *       per voce;</li>
+     *   <li>`da-caricare`, `tetto` (il 429), `rete` e `server` si diradano come i ritentativi: alle potenze di due di `contatore`
+     *       (1, 2, 4, 8, 16...). Per `da-caricare` il contatore è `rinnovi` della voce DOPO il rinnovo; per gli altri tre i tentativi
+     *       della voce. Così il primo rinnovo di ogni storia c'è sempre, e la coda insiste senza che il registro la segua.</li>
+     * </ul>
+     */
+    public static boolean siLoggaIlRinnovo(EsitoRinnovo esito, int contatore) {
+        switch (esito) {
+            case ARRIVATO:
+            case ANNULLATO:
+            case NEGATO:
+                return true;
+            default:
+                return siLoggaIlRitento(contatore);
+        }
     }
 
     /* ────────────────────────────────────────────────────────────────────────────
@@ -940,8 +1015,13 @@ public final class RegistroNativo {
      * IL FILE `registro.json`
      * ──────────────────────────────────────────────────────────────────────────── */
 
+    /**
+     * Scrive il registro in modo atomico e VERIFICATO (`ScritturaAtomica`): sul telefono `AtomicFile.finishWrite` non lancia se la
+     * rinomina fallisce, e il registro dichiarava «scritto» un file che non lo era (secondario n. 45). Un fallimento è un guasto
+     * INTERNO (si conta e si dice in logcat), mai un'eccezione verso chi sta loggando.
+     */
     private boolean salva() {
-        FileOutputStream uscita = null;
+        byte[] dati;
         try {
             JSONArray eventi = new JSONArray();
             for (Riga riga : righe) {
@@ -958,24 +1038,18 @@ public final class RegistroNativo {
             radice.put("versione", VERSIONE);
             radice.put("eventi", eventi);
             radice.put("scartati", scartati);
-            byte[] dati = radice.toString().getBytes(StandardCharsets.UTF_8);
-            File cartella = atomico.getBaseFile().getParentFile();
-            if (cartella != null) cartella.mkdirs();
-            uscita = atomico.startWrite();
-            uscita.write(dati);
-            atomico.finishWrite(uscita);
-            return true;
-        } catch (JSONException nonScritto) {
+            dati = radice.toString().getBytes(StandardCharsets.UTF_8);
+        } catch (JSONException nonSerializzabile) {
             // `JSONException` in un `catch` a sé: controllata sull'Android vero, non controllata in `org.json` di Maven (JUnit).
-            return scritturaFallita(uscita, nonScritto);
-        } catch (IOException | RuntimeException nonScritto) {
-            return scritturaFallita(uscita, nonScritto);
+            guastoInterno("salva-registro", nonSerializzabile);
+            return false;
+        } catch (RuntimeException nonSerializzabile) {
+            guastoInterno("salva-registro", nonSerializzabile);
+            return false;
         }
-    }
-
-    private boolean scritturaFallita(FileOutputStream uscita, Throwable causa) {
-        if (uscita != null) atomico.failWrite(uscita);
-        guastoInterno("salva-registro", causa);
+        IOException errore = ScritturaAtomica.scrivi(atomico, dati);
+        if (errore == null) return true;
+        guastoInterno("salva-registro", errore);
         return false;
     }
 

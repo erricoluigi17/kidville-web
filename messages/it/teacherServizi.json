@@ -246,5 +246,14 @@
   "galleryVideoTogli": "Togli",
   "galleryVideoDaRicaricare": "Questo video va ricaricato: scegli di nuovo il file e invialo.",
   "galleryVideoSenzaNome": "Video inviato il {quando}",
-  "galleryAvvisoVideoConNome": "«{nome}»: {messaggio}"
+  "galleryAvvisoVideoConNome": "«{nome}»: {messaggio}",
+  "galleryVideoAvviatoNativo": "{count, plural, one {Il video è in invio} other {# video sono in invio}}. Puoi bloccare il telefono o usare altre app; non chiudere Kidville dal multitasking finché non è inviato. Quando è pronto lo pubblichiamo in galleria e ti avvisiamo.",
+  "galleryVideoNotaNativo": "Puoi bloccare il telefono o usare altre app; non chiudere Kidville dal multitasking finché il video non è inviato.",
+  "galleryVideoAttesaRete": "In attesa di rete: riprenderà da solo.",
+  "galleryVideoInPausa": "In pausa: tocca la notifica o riapri Kidville per riprendere.",
+  "galleryVideoFaseInSospeso": "Invio in sospeso",
+  "notificaCaricamentoTitolo": "Kidville",
+  "notificaCaricamentoInvio": "Invio dei video in corso",
+  "notificaCaricamentoAttesaRete": "Il video è in attesa di rete: riprenderà da solo",
+  "notificaCaricamentoPausa": "Invio in pausa: tocca per riprendere"
 }

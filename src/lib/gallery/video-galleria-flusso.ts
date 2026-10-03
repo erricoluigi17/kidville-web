@@ -44,6 +44,25 @@
  * qualunque dispositivo l'abbia mandato.
  *
  * ─────────────────────────────────────────────────────────────────────────────
+ * L'INVIO NATIVO (app 1.2, spec «caricamenti nativi in background» §7.4).
+ *
+ * Nell'app 1.2 i byte di un video scelto dal selettore nativo NON entrano mai in
+ * JavaScript: li spedisce il sistema operativo, con una PUT sola su un URL firmato,
+ * anche a telefono bloccato (plugin `KidvilleCaricamenti`). Il passo 1 resta lo
+ * stesso — l'intento si apre con i bambini già scelti, e un 422 torna alla
+ * schermata prima di un byte — ma con due differenze che stanno in questo file:
+ *  · `apriIntentoVideoGalleriaNativo` dichiara il trasporto `put-nativo` e lo
+ *    `sha256` dei byte (il Sandbox lo riverifica prima di convertire), e rilegge la
+ *    risposta col suo schema (`schemaRispostaAperturaVideo`): l'URL di PUT firmato e
+ *    il token di rinnovo sono credenziali, e un oggetto fuori forma non diventa una PUT;
+ *  · la chiave d'idempotenza è `gn1-…` (`chiaveIdempotenzaVideoNativo`): sale del
+ *    dispositivo, e DENTRO i bambini scelti. Una chiave senza di loro darebbe
+ *    `IDEMPOTENCY_CONFLICT` allo stesso video rimandato con altri bambini; con loro,
+ *    la ripetizione dello stesso invio ritrova lo stesso intento e ne ruota il token.
+ * I passi 2 e 3 non sono di questo file: la PUT e il rinnovo sono del nativo, e
+ * `PATCH caricato` lo manda l'hook quando il nativo dice `inviato`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
  * TRE REGOLE CHE QUESTO FILE NON PUÒ PERMETTERSI DI DIMENTICARE.
  *
  * **Il MIME porta il suffisso del codec.** `MediaRecorder` consegna
@@ -66,6 +85,7 @@
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import {
   codiceMessaggioVideo,
+  schemaRispostaAperturaVideo,
   schemaStatoJobVideo,
   schemaVoceVideo,
   type CodiceMostratoVideo,
@@ -486,10 +506,14 @@ const CIFRE_IMPRONTA = 12
 
 /**
  * L'impronta SALATA di un testo: SHA-256 di `sale:dominio:testo`, troncato. Il `dominio` separa le
- * impronte (del nome, dei bambini) fra loro; il sale e il dominio non contengono mai `:`, quindi il
- * prefisso non è ambiguo.
+ * impronte (del nome, dei bambini, del contenuto, dell'invio nativo) fra loro; il sale e il dominio
+ * non contengono mai `:`, quindi il prefisso non è ambiguo.
  */
-function improntaSalata(sale: string, dominio: 'nome' | 'bambini', testo: string): string {
+function improntaSalata(
+  sale: string,
+  dominio: 'nome' | 'bambini' | 'contenuto' | 'invio-nativo',
+  testo: string,
+): string {
   return sha256Esadecimale(`${sale}:${dominio}:${testo}`).slice(0, CIFRE_IMPRONTA)
 }
 
@@ -578,6 +602,81 @@ export function chiaveIdempotenzaVideo(
   const classi = [...new Set(inviati.classi)].sort()
   const bambini = improntaSalata(sale, 'bambini', JSON.stringify([file.size, quando, file.name, tag, inviati.broadcast, classi]))
   return `gv2-${file.size}-${quando}-${improntaSalata(sale, 'nome', file.name)}-${bambini}`
+}
+
+/** Lo SHA-256 di un video nativo: esadecimale, 64 cifre. Il plugin lo scrive minuscolo; qui si accetta anche il maiuscolo e si normalizza. */
+const FORMA_SHA256 = /^[0-9a-fA-F]{64}$/
+
+/**
+ * LA CHIAVE D'IDEMPOTENZA DI UN VIDEO NATIVO (app 1.2): `gn1-<byte>-<impronta del contenuto>-<impronta dell'invio>`.
+ *
+ * ═══ PERCHÉ NON È LA `gv2-` ══════════════════════════════════════════════════════════════════════
+ * `chiaveIdempotenzaVideo` identifica un video dal suo NOME e dalla sua DATA (`File.name`, `lastModified`): due cose
+ * che il selettore nativo non dà. Un video nativo non ha un `File`, e il suo nome è del sistema (spesso `IMG_1234.MOV`,
+ * uguale per due filmati diversi di due telefoni). L'identità di ciò che parte è il CONTENUTO: lo `sha256` che il
+ * plugin ha calcolato sui byte esatti che spedirà. È quello che entra qui, insieme al peso.
+ *
+ * ═══ LA FORMA, E PERCHÉ OGNI PEZZO C'È ════════════════════════════════════════════════════════════
+ *  · `gn1-` — un prefisso suo, che non può ritrovare una chiave del flusso vecchio (`g-`) né della TUS di oggi
+ *    (`gv2-`): il server confronta i destinatari a parità di chiave e una chiave già usata per un altro contenuto è un
+ *    `IDEMPOTENCY_CONFLICT` (409 `VIDEO_RIPROVA`, «ricarica e riprova»: una frase che non può riuscire);
+ *  · `<byte>` — il peso, in chiaro: non è personale, e fa da primo filtro leggibile in tabella;
+ *  · `<impronta del contenuto>` — SALATA, 12 cifre: dice «lo stesso dispositivo ha mandato lo stesso video» e basta.
+ *    Lo `sha256` intero non viaggia nella chiave, né in tabella: è un'impronta del contenuto di un video di bambini;
+ *  · `<impronta dell'invio>` — SALATA, 12 cifre, di (byte, sha256, DESTINATARI). Il motivo per cui i bambini stanno
+ *    dentro è quello della `gv2-`, ed è il bloccante di T11a della PR 2: la RPC di apertura legge la chiave così —
+ *    stessa chiave e stessi destinatari = una RIPETIZIONE (ritorna lo stesso intento; per il trasporto nativo con il
+ *    job ancora in attesa RUOTA il token), stessa chiave con destinatari diversi = `IDEMPOTENCY_CONFLICT`. Una chiave
+ *    senza i bambini darebbe 409 allo stesso video rimandato con altri bambini (per esempio dopo «Rimuovi»).
+ *
+ * ═══ DETERMINISTICA, E SALATA ════════════════════════════════════════════════════════════════════
+ * Deterministica, e non un UUID per «Invia»: un'app morta fra l'apertura (che crea l'intento) e l'`accodaVideo` (che dà i
+ * byte al nativo) non ritroverebbe più il proprio intento, e ogni reinvio ne aprirebbe un altro. Con questa chiave lo
+ * stesso video con gli stessi bambini ritrova lo stesso intento e ne ruota il token: niente doppioni.
+ * Salata con `saleDelDispositivo` (128 bit casuali per dispositivo, mai in rete) per la stessa ragione della `gv2-`:
+ * la chiave finisce IN CHIARO in `video_jobs.idempotency_key`, che sopravvive alla minimizzazione di
+ * `video_intents.tag_alunni`, e un'impronta senza sale dei bambini scelti si ricostruisce provando i sottoinsiemi
+ * (#131). Il prezzo è dichiarato, ed è quello della `gv2-`: lo stesso video con gli stessi bambini mandato da DUE
+ * dispositivi apre due intenti.
+ *
+ * I destinatari entrano come INSIEMI e nella forma in cui partono davvero (`destinatariDaInviare`): ordine, doppioni e
+ * grafia dell'uuid non contano, e in broadcast contano le classi e non i tag. Lo `sha256` si normalizza in minuscolo: il
+ * server lo riporta così.
+ *
+ * ⚠️ NEL LIMITE DEI 128 CARATTERI anche col suffisso `-<uuid>` che l'hook aggiunge quando l'intento ritrovato è già
+ * concluso: il caso peggiore — due gigabyte, dieci cifre — fa 40 caratteri, più 37 del suffisso.
+ *
+ * `sale` è l'ultimo parametro per i collaudi. Come per la `gv2-`, un sale che non ha la forma dei veri si RIFIUTA; e si
+ * rifiuta anche uno `sha256` che non sia di 64 cifre esadecimali o un peso che non sia un intero positivo: una chiave
+ * costruita su un dato storto sarebbe una chiave che nessun altro invio ritroverebbe mai, in silenzio.
+ */
+export function chiaveIdempotenzaVideoNativo(
+  video: { byte: number; sha256: string },
+  destinatari: DestinatariVideo,
+  sale: string = saleDelDispositivo(),
+): string {
+  if (!FORMA_SALE.test(sale)) throw new Error('SaleNonValido')
+  if (!FORMA_SHA256.test(video.sha256)) throw new Error('Sha256NonValido')
+  if (!Number.isSafeInteger(video.byte) || video.byte < 1) throw new Error('ByteNonValidi')
+  const sha256 = video.sha256.toLowerCase()
+  const inviati = destinatariDaInviare(destinatari)
+  const tag = [...new Set(inviati.tagAlunni.map((id) => id.toLowerCase()))].sort()
+  const classi = [...new Set(inviati.classi)].sort()
+  const contenuto = improntaSalata(sale, 'contenuto', sha256)
+  const invio = improntaSalata(sale, 'invio-nativo', JSON.stringify([video.byte, sha256, tag, inviati.broadcast, classi]))
+  return `gn1-${video.byte}-${contenuto}-${invio}`
+}
+
+/**
+ * L'intento di un video che si è già CONCLUSO (pubblicato, ritirato, sostituito, o col job fallito o rifiutato): riaprirlo non
+ * porta da nessuna parte, serve un intento nuovo con una chiave nuova. Lo decide l'apertura che ritrova lo stesso intento
+ * (stessa chiave, stessi bambini): è la stessa regola per il TUS e per il nativo.
+ */
+export function intentoConcluso(apertura: { statoIntent: string; statoJob: StatoJobVideo }): boolean {
+  return (
+    ['published', 'cancelled', 'superseded'].includes(apertura.statoIntent)
+    || ['failed', 'rejected'].includes(apertura.statoJob)
+  )
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -834,6 +933,127 @@ export async function apriIntentoVideoGalleria(
       statoJob: (typeof primo?.status === 'string' ? primo.status : 'awaiting_upload') as StatoJobVideo,
       needsUpload,
       expiresAt: typeof primo?.expires_at === 'string' ? primo.expires_at : null,
+    },
+  }
+}
+
+/**
+ * L'apertura di un video NATIVO, com'è utile a chi lo consegna al plugin. `put` e `rinnovo` ci sono se e solo se
+ * `needsUpload`: senza byte da spedire non c'è niente da firmare, e il server manda coordinate TUS di ripiego che il
+ * nativo non usa.
+ */
+export interface IntentoApertoNativo {
+  intentId: string
+  revisione: number
+  jobId: string
+  chiaveIdempotenza: string
+  statoIntent: string
+  statoJob: StatoJobVideo
+  needsUpload: boolean
+  /** La scadenza dell'URL di PUT firmato (`expires_at` del job), o `null`. */
+  expiresAt: string | null
+  /** Dove e con quale `content-type` spedire i byte: l'URL è già firmato, una credenziale di due ore. */
+  put: { url: string; contentType: string } | null
+  /** Per chiedere un URL nuovo quando quello scade: il token (una credenziale) e la scadenza del TOKEN, 48 ore. */
+  rinnovo: { token: string; scadeIl: string } | null
+}
+
+/**
+ * IL PASSO 1 DI UN VIDEO NATIVO: apre l'intento con i bambini, dichiarando il trasporto `put-nativo` e lo `sha256`.
+ *
+ * Come `apriIntentoVideoGalleria` — stessi cancelli di `POST /api/gallery` (sede, bambini, liberatoria: il 422 coi nomi
+ * torna alla schermata prima di un byte), stessa traduzione dei rifiuti, stesso corpo — con le differenze di
+ * §7.4 della spec:
+ *  · `trasporto: 'put-nativo'` e `file[0].sha256` (obbligatorio col trasporto nativo: lo schema della route risponde 400
+ *    senza);
+ *  · la risposta si rilegge con lo schema DEL CONTRATTO (`schemaRispostaAperturaVideo`), non campo per campo: porta un
+ *    URL firmato e un token, e un oggetto fuori forma non deve diventare una PUT. Se i byte vanno spediti (`needs_upload`)
+ *    il protocollo deve essere `put` e il `rinnovo` deve esserci; se non vanno spediti le coordinate sono di ripiego e
+ *    non si guardano.
+ *
+ * ⚠️ Nei log passano peso, numero di bambini e un booleano: MAI il nome del file, lo `sha256`, l'URL o il token. La
+ * `operazione` è `apertura-nativa`, così un rifiuto o una rete caduta si distinguono dall'apertura TUS.
+ */
+export async function apriIntentoVideoGalleriaNativo(
+  rete: Rete,
+  dati: {
+    file: { nome: string; byte: number; mime: string; sha256: string }
+    scuolaId: string
+    durataSecondi: number | null
+    chiaveIdempotenza: string
+    destinatari: DestinatariVideo
+    ripiego: string
+  },
+): Promise<EsitoFlusso<IntentoApertoNativo>> {
+  const durata =
+    typeof dati.durataSecondi === 'number' && Number.isFinite(dati.durataSecondi) && dati.durataSecondi > 0
+      ? dati.durataSecondi
+      : null
+  const destinatari = destinatariDaInviare(dati.destinatari)
+
+  const esito = await chiama<unknown>(
+    rete,
+    '/api/video-uploads',
+    json({
+      canale: 'gallery',
+      azione: 'publish',
+      scuolaId: dati.scuolaId,
+      ambitoGlobale: false,
+      targetId: null,
+      versioneTargetAttesa: null,
+      destinatari,
+      trasporto: 'put-nativo',
+      file: [
+        {
+          chiaveIdempotenza: dati.chiaveIdempotenza,
+          nome: dati.file.nome,
+          byte: dati.file.byte,
+          mime: dati.file.mime || 'video/mp4',
+          durataSecondi: durata,
+          sha256: dati.file.sha256,
+        },
+      ],
+    }),
+    {
+      ripiego: dati.ripiego,
+      operazione: 'apertura-nativa',
+      traduci: traduciRifiutoApertura,
+      campi: { byte: dati.file.byte, n_tag: destinatari.tagAlunni.length, broadcast: destinatari.broadcast },
+    },
+  )
+  if (!esito.ok) return esito
+
+  const letta = schemaRispostaAperturaVideo.safeParse(esito.dati)
+  const primo = letta.success ? letta.data.job[0] : undefined
+  // Una PUT da fare vuole l'URL firmato (protocollo `put`) e il token: senza, nessuno potrebbe rinnovare l'URL che scade.
+  const put = primo?.caricamento.protocollo === 'put' ? primo.caricamento : null
+  const rinnovo = primo?.rinnovo ?? null
+  if (!letta.success || !primo || (primo.needs_upload && (!put || !rinnovo))) {
+    // La porta ha risposto 201 e non ha restituito ciò che promette: è un difetto NOSTRO, e va visto — senza questa riga il
+    // caricamento morirebbe dopo, dentro il nativo, con un rifiuto che la causa non la nomina.
+    logClient({
+      livello: 'error',
+      evento: 'fetch',
+      route: '/teacher/gallery',
+      messaggio: 'video-galleria-apertura-incompleta',
+      campi: { tipo: 'put-nativo', letta: letta.success, con_put: put !== null, con_rinnovo: rinnovo !== null },
+    })
+    return { ok: false, codice: null, messaggio: dati.ripiego, stato: null }
+  }
+
+  return {
+    ok: true,
+    dati: {
+      intentId: letta.data.intentId,
+      revisione: letta.data.revisione,
+      jobId: primo.jobId,
+      chiaveIdempotenza: primo.chiaveIdempotenza,
+      statoIntent: letta.data.intent.status,
+      statoJob: primo.status,
+      needsUpload: primo.needs_upload,
+      expiresAt: primo.expires_at,
+      put: primo.needs_upload && put ? { url: put.url, contentType: put.intestazioni['content-type'] } : null,
+      rinnovo: primo.needs_upload && rinnovo ? { token: rinnovo.token, scadeIl: rinnovo.scadeIl } : null,
     },
   }
 }

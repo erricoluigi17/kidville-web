@@ -228,7 +228,7 @@ const MESSAGGI_NATIVI = [
 const CHIAVI_CAMPI_NATIVI = [
   'esito', 'error_code', 'operazione', 'tipo', 'ambiente', 'mime', 'versione_app',
   'byte', 'ms', 'tentativi', 'rinnovi', 'in_background', 'tentativo', 'attesa_s', 'byte_inviati',
-  'notifica', 'autorizzata', 'sdk', 'in_coda', 'in_invio', 'task_vivi', 'file_orfani', 'scartati', 'durata_s',
+  'notifica', 'autorizzata', 'sdk', 'in_coda', 'in_invio', 'task_vivi', 'file_orfani', 'scartati', 'durata_s', 'voci_scartate',
 ]
 const FORMA_VERSIONE_APP = /^\d+\.\d+(?:\.\d+)?\+\d+$/
 

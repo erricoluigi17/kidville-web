@@ -25,6 +25,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             firebaseAttivo = true
         }
         #endif
+        // Caricamenti nativi in background (PR 3, app 1.2): ricrea la sessione `URLSession` con lo stesso identificativo (riceve gli eventi in
+        // sospeso), riconcilia la coda con i task che il sistema ha ancora e fa la pulizia. Non crea task: lo fa `riprendiInPrimoPiano`.
+        KVMotoreCaricamenti.condiviso.avvia()
         return true
     }
 
@@ -36,6 +39,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func applicationDidEnterBackground(_ application: UIApplication) {
         // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
         // If your application supports background execution, this method is called instead of applicationWillTerminate: when the user quits.
+
+        // Con un invio in corso e la rete assente la notifica locale «in attesa di rete» parte subito: a app sospesa nessun codice gira.
+        KVMotoreCaricamenti.condiviso.notificaSeFermo()
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
@@ -44,6 +50,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+
+        // Ricrea le voci dei caricamenti senza task vivo, quelle chiuse a forza e quelle create in background con 0 byte; toglie la notifica d'attesa.
+        KVMotoreCaricamenti.condiviso.riprendiInPrimoPiano()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
@@ -61,6 +70,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Feel free to add additional processing here, but if you want the App API to support
         // tracking app url opens, make sure to keep this call
         return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
+    }
+
+    // MARK: - Caricamenti nativi in background (sessione URLSession)
+    // Il sistema risveglia l'app (anche da terminata) quando un trasferimento della sessione in background è finito: qui si riaggancia la sessione e si
+    // tiene il completamento, che il motore chiama sul main DOPO il lavoro conseguente (rinnovo, nuovo task, svuotamento del registro).
+
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        KVMotoreCaricamenti.condiviso.ricollega(identifier, completionHandler)
     }
 
     // MARK: - Push nativa (@capacitor/push-notifications)

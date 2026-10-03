@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 
+import { IntlMessageFormat } from 'intl-messageformat'
+
 import itServizi from '../../messages/it/teacherServizi.json'
 import enServizi from '../../messages/en/teacherServizi.json'
 import itShared from '../../messages/it/shared.json'
 import { formatData } from '@/lib/i18n/date'
+import { schemaTestiNotificheCaricamento } from '@/lib/native/caricamenti-nativi-tipi'
 
 /**
  * V11 · CHE COSA VEDE UNA PERSONA MENTRE IL VIDEO SI PREPARA.
@@ -313,5 +316,130 @@ describe('le regole di casa', () => {
       container.innerHTML.includes('text-kidville-muted'),
       '`text-kidville-muted` vale 2,51:1 su bianco: il token del testo secondario è `text-kidville-sub`',
     ).toBe(false)
+  })
+})
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// UN VIDEO NATIVO (app 1.2, compito J3): il suo fermo non si riprende a mano
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Il TUS vive quanto la pagina e riprende «da dove si era fermato»: la scheda offre «Riprendi». Il trasporto nativo no:
+// la PUT è una sola (se la rete cade riparte dall'inizio), la riprende il sistema operativo — la rete che torna, l'app
+// che si riapre, la notifica che si tocca — e la pagina non ha un gesto che lo sposti. Un pulsante che non fa niente è
+// un pulsante che mente; una frase che promette «da dove si era fermato» è una frase falsa.
+
+describe('un invio NATIVO fermo: niente «Riprendi», e la fase non promette di ripartire da dove si era fermato', () => {
+  it('in fase «interrotto» il pulsante «Riprendi» NON c’è, e resta il gesto «Rimuovi»', () => {
+    montaggio([riga({ fase: 'interrotto', trasporto: 'nativo', messaggio: itServizi.galleryVideoAttesaRete })])
+    expect(screen.queryByRole('button', { name: itServizi.galleryVideoRiprendi })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: itServizi.galleryVideoRimuovi }))
+    expect(azioni.onRimuovi).toHaveBeenCalledWith(JOB_A)
+    expect(azioni.onRiprendi).not.toHaveBeenCalled()
+  })
+
+  it('la fase è neutra («Invio in sospeso») e il PERCHÉ sta nel messaggio sotto di lei: rete o pausa', () => {
+    const { container, rerender } = montaggio([riga({ fase: 'interrotto', trasporto: 'nativo', messaggio: itServizi.galleryVideoAttesaRete })])
+    expect(screen.getByText(itServizi.galleryVideoFaseInSospeso)).toBeInTheDocument()
+    // Non la frase del TUS: «riprende da solo da dove si era fermato» sarebbe falsa per una PUT che riparte dall'inizio.
+    expect(screen.queryByText(itServizi.galleryVideoFaseInterrotto)).toBeNull()
+    expect(container.querySelectorAll('[aria-live]')[1].textContent).toBe(itServizi.galleryVideoAttesaRete)
+
+    rerender(
+      <VideoInLavorazione
+        righe={[riga({ fase: 'interrotto', trasporto: 'nativo', messaggio: itServizi.galleryVideoInPausa })]}
+        {...azioni}
+      />,
+    )
+    expect(container.querySelectorAll('[aria-live]')[1].textContent).toBe(itServizi.galleryVideoInPausa)
+  })
+
+  it('un trasferimento TUS fermo resta com’era: «Riprendi» c’è, e la frase è quella di sempre (controprova)', () => {
+    for (const trasporto of [undefined, 'tus'] as const) {
+      const { unmount } = montaggio([riga({ fase: 'interrotto', trasporto })])
+      expect(screen.getByRole('button', { name: itServizi.galleryVideoRiprendi })).toBeInTheDocument()
+      expect(screen.getByText(itServizi.galleryVideoFaseInterrotto)).toBeInTheDocument()
+      expect(screen.queryByText(itServizi.galleryVideoFaseInSospeso)).toBeNull()
+      unmount()
+    }
+  })
+
+  it('le altre fasi di un invio nativo si leggono come quelle degli altri: la percentuale vera, e la nota onesta sotto', () => {
+    const { container } = montaggio([riga({ fase: 'caricamento', trasporto: 'nativo', percentuale: 40, messaggio: itServizi.galleryVideoNotaNativo })])
+    expect(screen.getByText(itServizi.galleryVideoFaseCaricamento)).toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40')
+    expect(container.querySelectorAll('[aria-live]')[1].textContent).toBe(itServizi.galleryVideoNotaNativo)
+    // «Riprendi» non compare mai sul caricamento in corso, nativo o no.
+    expect(screen.queryByRole('button', { name: itServizi.galleryVideoRiprendi })).toBeNull()
+  })
+
+  it('«da ricaricare» e «fallito» di un invio nativo si «Tolgono» come gli altri', () => {
+    montaggio([riga({ fase: 'da-ricaricare', trasporto: 'nativo' })])
+    fireEvent.click(screen.getByRole('button', { name: itServizi.galleryVideoTogli }))
+    expect(azioni.onRimuovi).toHaveBeenCalledWith(JOB_A)
+  })
+})
+
+describe('i testi del trasporto nativo: onesti, uguali in sostanza nelle due lingue, e dentro i limiti del plugin', () => {
+  const formatta = (testo: string, lingua: 'it' | 'en', valori: Record<string, unknown>) =>
+    String(new IntlMessageFormat(testo, lingua).format(valori))
+
+  it('la nota dell’invio dice cosa si può fare (bloccare, usare altre app) e cosa NO (chiudere dal multitasking)', () => {
+    expect(itServizi.galleryVideoNotaNativo).toMatch(/bloccare il telefono/)
+    expect(itServizi.galleryVideoNotaNativo).toMatch(/non chiudere Kidville dal multitasking/)
+    expect(enServizi.galleryVideoNotaNativo).toMatch(/lock your phone/)
+    expect(enServizi.galleryVideoNotaNativo).toMatch(/do not close Kidville from the app switcher/)
+    // Non è la nota del TUS: l'invio nativo NON finisce uscendo dalla Galleria, e dirlo sarebbe una bugia a rovescio.
+    for (const testo of [itServizi.galleryVideoNotaNativo, itServizi.galleryVideoAvviatoNativo]) {
+      expect(testo).not.toMatch(/finché resti in Galleria/)
+    }
+    for (const testo of [enServizi.galleryVideoNotaNativo, enServizi.galleryVideoAvviatoNativo]) {
+      expect(testo).not.toMatch(/while you stay on the Gallery page/)
+    }
+  })
+
+  it('l’avviso dopo «Pubblica» è un plurale vero, con la frase del multitasking, in italiano e in inglese', () => {
+    expect(formatta(itServizi.galleryVideoAvviatoNativo, 'it', { count: 1 })).toMatch(/^Il video è in invio\. .*multitasking.* Quando è pronto/)
+    expect(formatta(itServizi.galleryVideoAvviatoNativo, 'it', { count: 3 })).toMatch(/^3 video sono in invio\. /)
+    expect(formatta(enServizi.galleryVideoAvviatoNativo, 'en', { count: 1 })).toMatch(/^The video is being sent\. .*app switcher/)
+    expect(formatta(enServizi.galleryVideoAvviatoNativo, 'en', { count: 3 })).toMatch(/^3 videos are being sent\. /)
+  })
+
+  it('attesa di rete e pausa dicono che cosa aspettare: la rete (riprende da sola) o un tocco (notifica o riapertura)', () => {
+    expect(itServizi.galleryVideoAttesaRete).toMatch(/In attesa di rete/)
+    expect(itServizi.galleryVideoAttesaRete).toMatch(/da solo/)
+    expect(itServizi.galleryVideoInPausa).toMatch(/tocca la notifica o riapri Kidville/)
+    expect(enServizi.galleryVideoAttesaRete).toMatch(/connection/)
+    expect(enServizi.galleryVideoInPausa).toMatch(/tap the notification or reopen Kidville/)
+    expect(itServizi.galleryVideoFaseInSospeso).not.toBe(itServizi.galleryVideoFaseInterrotto)
+    expect(enServizi.galleryVideoFaseInSospeso).not.toBe(enServizi.galleryVideoFaseInterrotto)
+  })
+
+  it.each([['it', itServizi], ['en', enServizi]] as const)(
+    'le quattro frasi delle notifiche di sistema (%s) passano lo schema del plugin: non vuote, ≤ 200 caratteri, senza nomi',
+    (_lingua, catalogo) => {
+      const testi = {
+        titolo: catalogo.notificaCaricamentoTitolo,
+        invio: catalogo.notificaCaricamentoInvio,
+        attesaRete: catalogo.notificaCaricamentoAttesaRete,
+        pausa: catalogo.notificaCaricamentoPausa,
+      }
+      const letti = schemaTestiNotificheCaricamento.safeParse(testi)
+      expect(letti.success, JSON.stringify(letti.error?.issues)).toBe(true)
+      // La notifica è visibile a telefono bloccato: nessun segnaposto (niente nome di un bambino né di un file).
+      for (const testo of Object.values(testi)) expect(testo).not.toMatch(/[{}#]/)
+    },
+  )
+
+  it('le nove chiavi nuove stanno in ENTRAMBI i cataloghi, e nessuna è vuota', () => {
+    const chiavi = [
+      'galleryVideoAvviatoNativo', 'galleryVideoNotaNativo', 'galleryVideoAttesaRete', 'galleryVideoInPausa',
+      'galleryVideoFaseInSospeso', 'notificaCaricamentoTitolo', 'notificaCaricamentoInvio',
+      'notificaCaricamentoAttesaRete', 'notificaCaricamentoPausa',
+    ] as const
+    for (const chiave of chiavi) {
+      expect((itServizi as Record<string, string>)[chiave], `it.${chiave}`).toBeTruthy()
+      expect((enServizi as Record<string, string>)[chiave], `en.${chiave}`).toBeTruthy()
+    }
   })
 })

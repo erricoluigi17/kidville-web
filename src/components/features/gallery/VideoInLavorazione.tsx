@@ -102,6 +102,13 @@ export interface RigaVideoLavorazione {
     messaggio: string | null;
     /** «Riprova» ha senso solo su un non pubblicato che il server riprenderebbe. */
     riprovaPossibile: boolean;
+    /**
+     * Come viaggiano i byte: `tus` dalla pagina, `nativo` dal plugin dell'app 1.2 (assente = `tus`). Cambiano due cose sulla
+     * scheda di un video FERMO: il «Riprendi» non c'è (il nativo riprende da solo, o con la notifica: nessun gesto della
+     * pagina lo sposta) e la frase di fase non promette di ripartire «da dove si era fermato» (una PUT sola, se la rete cade
+     * riparte dall'inizio).
+     */
+    trasporto?: 'tus' | 'nativo';
 }
 
 interface Props {
@@ -135,11 +142,13 @@ export function VideoInLavorazione({ righe, onRiprendi, onRimuovi, onRiprova }: 
     // video in lavorazione sarebbe lì per sempre.
     if (righe.length === 0) return null;
 
-    const testoFase = (fase: FaseVideoUI): string => {
+    const testoFase = (fase: FaseVideoUI, nativo: boolean): string => {
         switch (fase) {
             case 'caricamento': return t('galleryVideoFaseCaricamento');
             case 'in-fila': return t('galleryVideoFaseInFila');
-            case 'interrotto': return t('galleryVideoFaseInterrotto');
+            // Il fermo del nativo non «riprende da dove si era fermato»: la PUT è una sola. Qui la fase è neutra, e il PERCHÉ
+            // (in attesa di rete, in pausa) sta nel messaggio sotto di lei.
+            case 'interrotto': return nativo ? t('galleryVideoFaseInSospeso') : t('galleryVideoFaseInterrotto');
             case 'altro-dispositivo': return t('galleryVideoFaseAltroDispositivo');
             case 'in-coda': return t('galleryVideoFaseInCoda');
             case 'conversione': return t('galleryVideoFaseConversione');
@@ -173,6 +182,7 @@ export function VideoInLavorazione({ righe, onRiprendi, onRimuovi, onRiprova }: 
                     const conMotivo = r.fase === 'fallito' || r.fase === 'non-pubblicato';
                     const messaggio = r.messaggio ?? (conMotivo ? t('galleryErrCaricamentoGenerico') : '');
                     const nome = r.nome ?? t('galleryVideoSenzaNome', { quando: dataOra(r.creatoIl) });
+                    const nativo = r.trasporto === 'nativo';
                     return (
                         <li key={r.jobId} className="rounded-2xl border border-kidville-green/10 bg-kidville-cream/35 p-3">
                             <p className="truncate font-maven text-xs font-semibold text-kidville-green" title={nome}>
@@ -192,7 +202,7 @@ export function VideoInLavorazione({ righe, onRiprendi, onRimuovi, onRiprova }: 
                                     rossa ? 'font-semibold text-kidville-error' : 'text-kidville-sub'
                                 }`}
                             >
-                                {testoFase(r.fase)}
+                                {testoFase(r.fase, nativo)}
                             </p>
 
                             {/*
@@ -239,7 +249,12 @@ export function VideoInLavorazione({ righe, onRiprendi, onRimuovi, onRiprova }: 
                             )}
 
                             <div className="mt-2 flex flex-wrap items-center gap-2">
-                                {r.fase === 'interrotto' && (
+                                {/*
+                                  «RIPRENDI» È SOLO DEL TUS. Il nativo riprende da solo (la rete torna, l'app si riapre, la
+                                  notifica si tocca) e la pagina non ha un gesto che lo sposti: un pulsante che non fa niente
+                                  è un pulsante che mente.
+                                */}
+                                {r.fase === 'interrotto' && !nativo && (
                                     <button
                                         type="button"
                                         onClick={() => onRiprendi(r.jobId)}

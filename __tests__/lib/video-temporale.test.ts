@@ -15,6 +15,13 @@ import {
   type TimelineFixture,
 } from '../fixtures/video/falso-scarto-2026-09-28'
 import {
+  CFR240,
+  FPS_CFR240,
+  TICK_SORGENTE_CFR240,
+  TICK_USCITA_CFR240,
+  leggiTimelineCfr240,
+} from '../fixtures/video/falso-scarto-cfr240-2026-10-03'
+import {
   FPS_SLOWMO,
   SLOWMO,
   TICK_SLOWMO,
@@ -350,12 +357,14 @@ describe('reduce60: il controllo d’arco resta, la copertura terminale no', () 
  *
  * Respinto due volte, da iOS e da Android, con `OUTPUT_FPS_INVALID` / `FPS_LIMIT` dopo una conversione
  * perfetta. Il filtro `fps=60` emette fotogrammi anche per COPRIRE la durata dell'ultimo campione della
- * sorgente, perciò l'arco d'uscita (primo → ultimo PTS) supera quello di sorgente di una quantità fra
- * `L − 1/60` e `L`, con L la durata di quel campione. A fps costante sopra i 60, L < 1/60 e nessuno se
- * n'era accorto; un rallentatore VFR finisce a 30 fps (L = 33,333 ms) e l'uscita sforava il limite
- * simmetrico di 1/60: 20,833 ms contro 16,667. Riprodotto il 03/10/2026 con i moduli di produzione e
- * ffmpeg vero (stesso rifiuto, stessa diagnosi del collaudo), e misurato con ffmpeg 8.1.2 per L da 1 a
- * 500 ms (sorgente a 120 fps, ultimo campione portato a L con `setts`): l'eccesso non supera mai L.
+ * sorgente, perciò l'arco d'uscita (primo → ultimo PTS) supera quello di sorgente di una quantità che
+ * sta in `(L − 2/60, L)`, con L la durata di quel campione: all'estremo superiore l'eccesso è L, e
+ * l'estremo inferiore (il difetto, `2/60 − L`) ha il suo caso nel 240 fps costante più sotto. A fps
+ * costante sopra i 60, L < 1/60 e nessuno se n'era accorto; un rallentatore VFR finisce a 30 fps
+ * (L = 33,333 ms) e l'uscita sforava il limite simmetrico di 1/60: 20,833 ms contro 16,667. Riprodotto
+ * il 03/10/2026 con i moduli di produzione e ffmpeg vero (stesso rifiuto, stessa diagnosi del collaudo),
+ * e misurato con ffmpeg 8.1.2 per L da 1 a 500 ms (sorgente a 120 fps, ultimo campione portato a L con
+ * `setts`): l'eccesso non supera mai L.
  *
  * Le due timeline vere stanno in `__tests__/fixtures/video/` (solo numeri). Con il controllo di prima il
  * caso principale era ROSSO, e adesso è verde. Le controprove ALTERANO le stesse timeline: un limite
@@ -417,9 +426,10 @@ describe('reduce60: lo slow-motion VFR di m05, con l’ultimo campione di 33 ms,
     expect(eccesso).toBeCloseTo(0.020833, 6)
     // La formula che c'era: `|Δ arco| > 1/60 + epsilon`, cioè 16,732 ms. I 20,833 ms la superano.
     expect(eccesso).toBeGreaterThan(1 / 60 + misure.epsilon)
-    // La causa: l'ultimo campione della sorgente dura più di un campione d'uscita, e l'eccesso sta fra `L − 1/60` e `L`.
+    // La causa: l'ultimo campione della sorgente dura più di un campione d'uscita, e l'eccesso sta in `(L − 2/60, L)`
+    // (qui 20,833 ms, con L = 33,333).
     expect(misure.sourceLastSample).toBeGreaterThan(1 / 60)
-    expect(eccesso).toBeGreaterThan(misure.sourceLastSample - 1 / 60)
+    expect(eccesso).toBeGreaterThan(misure.sourceLastSample - 2 / 60)
     expect(eccesso).toBeLessThanOrEqual(misure.sourceLastSample)
   })
 
@@ -494,6 +504,180 @@ describe('reduce60: lo slow-motion VFR di m05, con l’ultimo campione di 33 ms,
       expect(esito.measures!.sourceLastSample).toBeLessThan(eccessoDArco(esito.measures!))
       expect(framesDi(conUltimoCampione(48), SLOWMO.video)[0].duration).toBe(512)
     })
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * IL 240 FPS COSTANTE CHE PARTE FUORI DALLA GRIGLIA (il critico di Tfps, 03/10/2026): il DIFETTO dell'arco
+ *
+ * Il rallentatore classico dell'iPhone, a fps costanti: 482 fotogrammi a 240 fps, il video che parte 9 ms
+ * dopo l'audio. Il filtro `fps=60` arrotonda al sessantesimo più vicino sia la PARTENZA sia la FINE
+ * dell'ultimo campione: la partenza (9 ms) sale al secondo posto della griglia, la fine (2,017333 s) scende a
+ * 2,0 s, e l'uscita corretta — 120 fotogrammi — ha l'arco più corto di quello di sorgente di 20,833 ms,
+ * contro un limite di 16,732: `FPS_LIMIT` (con la partenza a 8 ms, 121 fotogrammi, passava). In difetto
+ * un'uscita corretta può essere più corta fino a `2/60 − L`, con L la durata dell'ultimo campione della
+ * SORGENTE (qui 4,167 ms): il limite è `max(1/60, 2/60 − L) + epsilon`, e L più lungo di un campione di
+ * uscita non lo allarga.
+ *
+ * Le due timeline vere stanno in `__tests__/fixtures/video/` (solo numeri). Con il controllo di prima il
+ * caso principale era ROSSO, e adesso è verde. Le controprove ALTERANO le stesse timeline: un limite
+ * allargato senza tetto, o legato a L sbagliato, o che non lasci il margine di un tick, non sarebbe una
+ * correzione, sarebbe un varco.
+ * ════════════════════════════════════════════════════════════════════════════ */
+describe('reduce60: il 240 fps costante che parte fuori dalla griglia a 60 Hz, con l’arco più corto di 20,8 ms, non è una troncatura', () => {
+  const sorgente = () => leggiTimelineCfr240('sorgente')
+  const uscita = () => leggiTimelineCfr240('uscita')
+  const prova = (s: TimelineFixture = sorgente(), u: TimelineFixture = uscita()) => confronta(s, u, CFR240.video, null, FPS_CFR240)
+  /** Di quanto l'ARCO (primo → ultimo PTS) dell'uscita supera quello della sorgente (negativo: l'uscita è più corta), dalle misure della prova. */
+  const scartoDArco = (m: VideoTemporalMeasures) => (m.outputCoverage - m.outputLastSample) - (m.sourceCoverage - m.sourceLastSample)
+  /** Il difetto della fixture vera, in tick di 1/90000 s: 20,833 ms. */
+  const DIFETTO_VERO_TICK = 1_875
+  /**
+   * La sorgente vera con l'ultimo campione di `ultimoTick` tick e l'ultimo PTS spostato in modo che l'arco
+   * d'uscita risulti più corto del suo di `difettoTick` tick (di 1/90000 s): il difetto è l'unica variabile.
+   */
+  const conDifetto = (difettoTick: number, ultimoTick = 375): TimelineFixture => {
+    const s = sorgente()
+    const ultimo = framesDi(s, CFR240.video).at(-1)!
+    ultimo.best_effort_timestamp += difettoTick - DIFETTO_VERO_TICK
+    ultimo.duration = ultimoTick
+    return s
+  }
+  /** Una timeline di `n` fotogrammi a passo costante, il primo a 0 e l'ultimo con la durata `ultimo`: serve a ricostruire le uscite vere misurate. */
+  const timelineA = (n: number, passo: number, ultimo: number, timeBase: string, fps: string): TimelineFixture => ({
+    streams: [{ index: 0, codec_type: 'video', time_base: timeBase, avg_frame_rate: fps, r_frame_rate: fps, disposition: { attached_pic: 0 } }],
+    frames: Array.from({ length: n }, (_, i) => ({ stream_index: 0, best_effort_timestamp: i * passo, duration: i === n - 1 ? ultimo : passo })),
+  })
+
+  it('le fixture contengono SOLO la proiezione di ffprobe del video: nessun tag, luogo, data o nome (il repository è pubblico)', () => {
+    expect(violazioniDiPrivacy(sorgente())).toEqual([])
+    expect(violazioniDiPrivacy(uscita())).toEqual([])
+  })
+
+  it('le misure della fixture sono quelle misurate: 482 → 120 fotogrammi, partenza a 9 ms, passi di 4,167 ms e griglia a 60 Hz in uscita', () => {
+    const s = framesDi(sorgente(), CFR240.video), u = framesDi(uscita(), CFR240.video)
+    expect(s).toHaveLength(482)
+    expect(u).toHaveLength(120)
+    // La sorgente: 240 fps costanti (375 tick di 1/90000 s), il primo PTS a 810 tick = 9 ms, l'ultimo campione di 375 tick.
+    expect(s[0].best_effort_timestamp * TICK_SORGENTE_CFR240).toBeCloseTo(0.009, 9)
+    expect(s.every((f, i) => f.best_effort_timestamp === 810 + 375 * i && f.duration === 375)).toBe(true)
+    // L'uscita: la griglia a 60 Hz (256 tick di 1/15360 s) dal primo fotogramma, ciascuno lungo 256.
+    expect(u.map(f => f.best_effort_timestamp - u[0].best_effort_timestamp)).toEqual(Array.from({ length: 120 }, (_, i) => i * 256))
+    expect(u.every(f => f.duration === 256)).toBe(true)
+    // La partenza è salita alla griglia (16 ms contro 9) e la fine è scesa (2,0 s contro 2,017333): da qui il difetto.
+    expect(u[0].best_effort_timestamp * TICK_USCITA_CFR240).toBeCloseTo(0.016, 3)
+    expect((u.at(-1)!.best_effort_timestamp + 256 - u[0].best_effort_timestamp) * TICK_USCITA_CFR240).toBeCloseTo(2.0, 9)
+  })
+
+  it('adesso passa, con il frame rate nominale della sorgente (240): era FPS_LIMIT', () => {
+    const esito = prova()
+    expect(esito).toMatchObject({ ok: true, mode: 'reduce60', sourceFrames: 482, outputFrames: 120, sourceFps: 240, outputFps: 60 })
+    expect(esito.reason).toBeUndefined()
+    expect(esito.measures!.sourceLastSample).toBeCloseTo(0.004167, 6)
+    expect(esito.measures!.sourceCoverage).toBeCloseTo(2.008333, 6)
+    expect(esito.measures!.outputCoverage).toBeCloseTo(2.0, 9)
+  })
+
+  it('e la fixture ESERCITA il limite che è stato allargato: quello di prima (1/60 e un tick) l’avrebbe scartata', () => {
+    const misure = prova().measures!
+    const difetto = -scartoDArco(misure)
+    expect(difetto).toBeCloseTo(0.020833, 6)
+    // La formula che c'era: `scarto < -(1/60 + epsilon)`, cioè 16,732 ms. I 20,833 ms la superano.
+    expect(difetto).toBeGreaterThan(1 / 60 + misure.epsilon)
+    // E stanno dentro quella nuova: 2/60 − L = 29,167 ms, più un tick.
+    expect(difetto).toBeLessThan(2 / 60 - misure.sourceLastSample + misure.epsilon)
+  })
+
+  it.each([
+    // [ultimo campione (tick di 1/90000), difetto massimo che passa, difetto minimo che cade]: `max(1/60, 2/60 − L) + un tick` (5,86 tick).
+    [270, 2_735, 2_737],     // L = 3 ms: 30,333 ms, il limite SALE col campione corto
+    [375, 2_630, 2_632],     // L = 4,167 ms (la fixture): 29,167 ms
+    [1_500, 1_505, 1_507],   // L = 1/60: 2/60 − L = 1/60, il pavimento
+    [3_000, 1_505, 1_507],   // L = 2/60: nessuna durata giustifica più di un campione
+    [9_000, 1_505, 1_507],   // L = 100 ms: il limite non scende sotto il pavimento
+  ])('il limite in DIFETTO è max(1/60, 2/60 − L) più un tick d’uscita: con l’ultimo campione di %i tick passa fino a %i tick di difetto, da %i cade', (ultimo, passa, cade) => {
+    for (const [difetto, atteso] of [[passa, true], [cade, false]] as const) {
+      const esito = prova(conDifetto(difetto, ultimo), uscita())
+      // La PREMESSA: il difetto costruito è davvero quello, e il solo cambiamento è la sorgente.
+      expect(-scartoDArco(esito.measures!) / TICK_SORGENTE_CFR240, `difetto di ${difetto} tick`).toBeCloseTo(difetto, 3)
+      expect(esito.ok, `ultimo campione ${ultimo} tick, difetto ${difetto} tick`).toBe(atteso)
+      if (!atteso) expect(esito).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT' })
+    }
+  })
+
+  it('un ultimo campione di 33,3 ms (un rallentatore con la coda a 30 fps) porta il limite al pavimento: la stessa uscita è troncata', () => {
+    // Stessa uscita, stessa sorgente: cambia solo la durata dell'ultimo campione (375 → 3.000 tick). Un limite fisso a
+    // `2/60`, che non guardasse L, la lascerebbe passare.
+    const esito = prova(conDifetto(DIFETTO_VERO_TICK, 3_000), uscita())
+    expect(esito).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT' })
+    expect(-scartoDArco(esito.measures!)).toBeCloseTo(0.020833, 6)
+  })
+
+  describe('le controprove, sulle stesse timeline, restano ROSSE', () => {
+    it.each([1, 2, 3])('un’uscita TRONCATA: %i fotogrammi in meno in coda (+16,7 ms di difetto ciascuno)', troncati => {
+      const troncata = uscita()
+      troncata.frames.splice(-troncati)
+      const esito = prova(sorgente(), troncata)
+      expect(esito).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT', outputFrames: 120 - troncati })
+      // La PREMESSA: il difetto è quello vero più i fotogrammi tolti, e sta sopra il limite nuovo (29,167 ms + un tick).
+      const misure = esito.measures!
+      expect(-scartoDArco(misure)).toBeCloseTo(0.020833 + troncati / 60, 6)
+      expect(-scartoDArco(misure)).toBeGreaterThan(2 / 60 - misure.sourceLastSample + misure.epsilon)
+    })
+
+    it.each([[2, true], [3, false]] as const)('un’uscita più LUNGA della sorgente: %i fotogrammi in più in coda, e il limite in ECCESSO è sempre max(1/60, L)', (aggiunti, passa) => {
+      const lunga = uscita()
+      const ultimo = framesDi(lunga, CFR240.video).at(-1)!
+      for (let i = 1; i <= aggiunti; i++) {
+        lunga.frames.push({ stream_index: CFR240.video, best_effort_timestamp: ultimo.best_effort_timestamp + 256 * i, duration: 256 })
+      }
+      const esito = prova(sorgente(), lunga)
+      // Dal difetto di 20,833 ms ogni fotogramma in più ne toglie 16,667: +12,5 ms con due, +29,2 con tre (oltre i 16,732 ammessi).
+      expect(scartoDArco(esito.measures!)).toBeCloseTo(-0.020833 + aggiunti / 60, 6)
+      expect(esito.ok).toBe(passa)
+      if (!passa) {
+        expect(esito).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT' })
+        expect(scartoDArco(esito.measures!)).toBeGreaterThan(Math.max(1 / 60, esito.measures!.sourceLastSample) + esito.measures!.epsilon)
+      }
+    })
+
+    it('la griglia a 60 Hz resta obbligatoria: un PTS spostato di 5 ms a metà video', () => {
+      const storta = uscita()
+      framesDi(storta, CFR240.video)[60].best_effort_timestamp += 77
+      expect(prova(sorgente(), storta)).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT' })
+    })
+  })
+
+  /**
+   * LE USCITE VERE, oltre alla fixture. Lo stesso file sintetico (240 fps costanti, video + audio) con la
+   * partenza traslata di 0-16,6 ms e l'ultimo campione portato a 4,167 · 10 · 20 · 40 · 100 ms con `setts`,
+   * convertito 150 volte con gli argomenti di produzione e ffmpeg 8.1.2: queste sono le 29 combinazioni DISTINTE
+   * di fotogrammi in ingresso e in uscita che sono uscite davvero (le altre ripetono le stesse). Per ogni
+   * riga: l'ultimo campione in tick di 1/90000 s, i fotogrammi in ingresso, i fotogrammi in uscita, e lo scarto
+   * d'arco misurato in ms (negativo: l'uscita è più corta). Lo scarto non è mai uscito da `(L − 2/60, L)`.
+   */
+  const USCITE_VERE: ReadonlyArray<readonly [number, number, number, number]> = [
+    [375, 481, 120, -16.667], [375, 481, 121, 0], [375, 482, 120, -20.833], [375, 482, 121, -4.167], [375, 483, 120, -25], [375, 483, 121, -8.333],
+    [900, 481, 120, -16.667], [900, 481, 121, 0], [900, 482, 120, -20.833], [900, 482, 121, -4.167], [900, 483, 121, -8.333], [900, 483, 122, 8.333],
+    [1_800, 481, 121, 0], [1_800, 481, 122, 16.667], [1_800, 482, 121, -4.167], [1_800, 482, 122, 12.5], [1_800, 483, 121, -8.333], [1_800, 483, 122, 8.333],
+    [3_600, 481, 122, 16.667], [3_600, 481, 123, 33.333], [3_600, 482, 122, 12.5], [3_600, 482, 123, 29.167], [3_600, 483, 122, 8.333], [3_600, 483, 123, 25],
+    [9_000, 481, 126, 83.333], [9_000, 482, 126, 79.167], [9_000, 482, 127, 95.833], [9_000, 483, 126, 75], [9_000, 483, 127, 91.667],
+  ]
+  const confrontaUscitaVera = (ultimo: number, ingresso: number, uscite: number) =>
+    confronta(timelineA(ingresso, 375, ultimo, '1/90000', '240/1'), timelineA(uscite, 256, 256, '1/15360', '60/1'), 0, null, FPS_CFR240)
+
+  it('le uscite vere misurate sono 29, e tre di loro sforavano il limite di prima', () => {
+    expect(USCITE_VERE).toHaveLength(29)
+    const epsilon = TICK_USCITA_CFR240 + 1e-9
+    const sforavano = USCITE_VERE.filter(([, , , scartoMs]) => -scartoMs / 1000 > 1 / 60 + epsilon)
+    expect(sforavano.map(([ultimo, ingresso, uscite]) => `${ultimo}/${ingresso}/${uscite}`)).toEqual(['375/482/120', '375/483/120', '900/482/120'])
+  })
+
+  it.each(USCITE_VERE)('uscita vera: ultimo campione di %i tick, %i fotogrammi in ingresso → %i in uscita (arco %f ms): passa', (ultimo, ingresso, uscite, scartoMs) => {
+    const esito = confrontaUscitaVera(ultimo, ingresso, uscite)
+    // La PREMESSA: la ricostruzione dai conteggi misurati ha lo scarto d'arco misurato.
+    expect(scartoDArco(esito.measures!) * 1000).toBeCloseTo(scartoMs, 2)
+    expect(esito).toMatchObject({ ok: true, mode: 'reduce60', sourceFrames: ingresso, outputFrames: uscite })
   })
 })
 
@@ -678,6 +862,20 @@ describe('il programma della Sandbox, eseguito con un ffprobe finto', () => {
       expect(stato).toBe(0)
       expect(prova).toMatchObject({ ok: true, mode: 'reduce60', sourceFrames: 720, outputFrames: 602, sourceFps: 72, outputFps: 60 })
       expect(prova.measures!.sourceLastSample).toBeCloseTo(0.033333, 6)
+    })
+  })
+
+  it('sulla timeline del 240 fps costante sfasato (reduce60, arco in difetto) dice ok: anche il limite in difetto sta nella funzione serializzata', () => {
+    // Il limite in difetto `max(1/60, 2/60 − L)` è una `Math.max` dentro il ramo: se un giorno diventasse una
+    // chiamata a un helper di modulo, nel Sandbox cadrebbe in `TEMPORAL_PROBE_FAILED` e i confronti diretti no.
+    inCartella((cartella, finto) => {
+      const { stato, prova } = esegui(
+        videoTemporalProgram({ videoIndex: CFR240.video, audioIndex: null, sourceFps: FPS_CFR240 }), finto,
+        scrivi(cartella, 'sorgente.json', leggiTimelineCfr240('sorgente')), scrivi(cartella, 'uscita.json', leggiTimelineCfr240('uscita')),
+      )
+      expect(stato).toBe(0)
+      expect(prova).toMatchObject({ ok: true, mode: 'reduce60', sourceFrames: 482, outputFrames: 120, sourceFps: 240, outputFps: 60 })
+      expect(prova.measures!.sourceLastSample).toBeCloseTo(0.004167, 6)
     })
   })
 

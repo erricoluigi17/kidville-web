@@ -1,5 +1,6 @@
 package it.kidville.app.caricamenti;
 
+import android.annotation.SuppressLint;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ImageDecoder;
@@ -584,6 +585,10 @@ public final class ElaborazioneFoto {
             return sdk >= SDK_PRIMO_IMAGEDECODER;
         }
 
+        // Il lint «NewApi» non vede la guardia: `sdk` è `Build.VERSION.SDK_INT` (lo passa `SelettoreMedia`), iniettato perché la JVM dei
+        // test lo possa scegliere, e `ConImageDecoder` (API 28) si raggiunge solo con `usaImageDecoder(sdk)` vero. Sotto la 28 si usa
+        // `BitmapFactory`.
+        @SuppressLint("NewApi")
         @Override
         public Decodificata decodifica(File originale, int latoMassimo, Formato formato) throws IOException, FotoRifiutata {
             if (usaImageDecoder(sdk)) return ConImageDecoder.decodifica(originale, latoMassimo, formato);

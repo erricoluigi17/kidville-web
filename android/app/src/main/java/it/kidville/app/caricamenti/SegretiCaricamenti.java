@@ -81,10 +81,21 @@ import javax.crypto.spec.GCMParameterSpec;
  *    passeggero. Definitivo: la voce non può più né rinnovare né spedire.
  *  · `NON_LEGGIBILE_ORA` — non si legge ADESSO ma il file e la chiave ci sono e riprovare fra poco può riuscire: un errore di lettura del
  *    disco (`IOException` che non sia «file mancante»), un Keystore occupato o che si sta riavviando. Lo dice il {@link Cifrario}
- *    ({@link Cifrario#guastoTransitorio}): per il Keystore, `android.security.KeyStoreException#isTransientFailure` da API 33 e
- *    `ProviderException` su tutti i livelli (è ciò che il provider lancia per un'operazione che non è riuscita, non per una chiave
- *    cattiva), sempre che nella catena delle cause non ci sia un guasto definitivo, che vince. La voce aspetta (`in-attesa` `INTERNO`,
- *    con le attese di §4.5) e conserva copia e segreti; il tetto di tutto è la vita del token, 48 ore, oltre cui `TOKEN_SCADUTO` la chiude.
+ *    ({@link Cifrario#guastoTransitorio}): per il Keystore, `android.security.KeyStoreException#isTransientFailure` da API 33 — e il
+ *    verdetto del sistema vince anche sui tipi che su keystore2 avvolgono ogni errore, passeggeri compresi (`UnrecoverableKeyException`,
+ *    `IllegalBlockSizeException`: secondario n. 153) — e `ProviderException` su tutti i livelli (è ciò che il provider lancia per
+ *    un'operazione che non è riuscita, non per una chiave cattiva), sempre che nella catena delle cause non ci sia un guasto definitivo
+ *    (contenuto toccato, chiave invalidata), che vince su tutto. La voce aspetta (`in-attesa` `INTERNO`, con le attese di §4.5) e conserva
+ *    copia e segreti; il tetto di tutto è la vita del token, 48 ore, oltre cui `TOKEN_SCADUTO` la chiude.
+ *
+ * ─── LA CHIAVE NON SI ELIMINA PER UN GUASTO CHE PASSA (secondario n. 154) ───────────────────
+ * Se `getKey` non restituisce la chiave (`UnrecoverableKeyException`) l'unica via per tornare a scrivere è eliminarla e crearne una nuova, e
+ * costa i segreti di TUTTE le voci vive: ciò che era cifrato con la vecchia non si legge più. Ma su keystore2 (API 33+) quell'eccezione avvolge
+ * anche i guasti PASSEGGERI (un servizio che si riavvia, una connessione persa col demone), e un intoppo di un istante non può far fallire
+ * INTERNO ogni invio in corso: sarebbe l'opposto del n. 79. Quindi la chiave si elimina SOLO per cifrare un segreto nuovo E per un guasto
+ * permanente ({@link CifrarioKeystore#eDaEliminare}): mai durante una decifratura, dove si rilancia e decide `guastoTransitorio`; mai se il
+ * sistema stesso dichiara il guasto passeggero (API 33+); su API 24-32, dove il sistema non dà un verdetto, come sempre. In ogni caso una riga
+ * `warn` in logcat ({@link CifrarioKeystore#trattaLaChiaveInutilizzabile}), con la sola classe dell'eccezione.
  *
  * ─── COSA NON PROTEGGE ───────────────────────────────────────────────────────────────────────
  * La chiave non richiede lo sblocco dello schermo (`setUnlockedDeviceRequired` non c'è, di proposito): l'invio deve poter
@@ -368,15 +379,31 @@ public final class SegretiCaricamenti {
      * Formato del blocco restituito da {@link #cifra}: `[lunghezza dell'IV: 1 byte][IV][testo cifrato + tag]`.
      *
      * Se la chiave esiste ma non si riesce a usarla (`UnrecoverableKeyException`: succede dopo certi aggiornamenti di sistema o con
-     * un Keystore danneggiato) la si ELIMINA e se ne crea una nuova: i file cifrati con la vecchia diventano `ILLEGGIBILE` — lo
-     * erano già — ma i nuovi segreti si possono di nuovo scrivere; senza questo il motore non potrebbe più accodare niente.
+     * un Keystore danneggiato) la si ELIMINA e se ne crea una nuova SOLO quando serve per cifrare un segreto nuovo e il guasto è
+     * permanente ({@link #eDaEliminare}): i file cifrati con la vecchia diventano `ILLEGGIBILE` — lo erano già — ma i nuovi segreti si
+     * possono di nuovo scrivere; senza questo il motore non potrebbe più accodare niente. Durante una decifratura, o per un guasto che il
+     * sistema dichiara passeggero, la chiave non si tocca: eliminarla renderebbe illeggibili i segreti di tutte le voci vive (secondario n. 154).
      */
     public static final class CifrarioKeystore implements Cifrario {
         private static final String PROVIDER = "AndroidKeyStore";
         private static final String TRASFORMAZIONE = "AES/GCM/NoPadding";
         private static final int BIT_DEL_TAG = 128;
 
+        /** Il primo livello di API in cui il sistema dà un verdetto sui guasti del Keystore (`KeyStoreException#isTransientFailure`). */
+        static final int API_CON_VERDETTO = 33;
+
+        /**
+         * Da dove viene la chiave. `perCifrare` dice a che cosa serve: scrivere un segreto NUOVO (vero) o leggerne uno già scritto (falso), perché
+         * da quello dipende se una chiave inutilizzabile si può eliminare ({@link CifrarioKeystore#eDaEliminare}). In produzione è il metodo
+         * `chiave(boolean)` di questa classe; i test ne passano uno che dà una chiave software, e così provano `cifra` e `decifra` sulla JVM,
+         * senza l'AndroidKeyStore.
+         */
+        interface FornitoreDellaChiave {
+            SecretKey chiave(boolean perCifrare) throws GeneralSecurityException, IOException;
+        }
+
         private final String alias;
+        private final FornitoreDellaChiave fornitore;
 
         public CifrarioKeystore() {
             this(ALIAS_CHIAVE);
@@ -384,49 +411,135 @@ public final class SegretiCaricamenti {
 
         CifrarioKeystore(String alias) {
             this.alias = alias;
+            this.fornitore = this::chiave;
+        }
+
+        /** SOLO PER I TEST: una chiave che non viene dall'AndroidKeyStore (che sulla JVM non esiste). */
+        CifrarioKeystore(FornitoreDellaChiave fornitore) {
+            this.alias = ALIAS_CHIAVE;
+            this.fornitore = fornitore;
         }
 
         /** Fin dove si risale la catena delle cause: abbastanza per ogni incapsulamento reale, e un tetto contro i cicli. */
         static final int PROFONDITA_MASSIMA_DELLE_CAUSE = 8;
 
         /**
-         * Il guasto è passeggero? I CRITERI (secondario n. 79), nell'ordine:
-         *  1. un guasto DEFINITIVO in un punto qualunque della catena delle cause vince su tutto: chiave invalidata
-         *     (`KeyPermanentlyInvalidatedException`), non più recuperabile (`UnrecoverableKeyException`), contenuto toccato o cifrato con
-         *     un'altra chiave (`BadPaddingException`, di cui `AEADBadTagException` è figlia) o di misura sbagliata (`IllegalBlockSizeException`);
-         *  2. da API 33, se nella catena c'è una `android.security.KeyStoreException`, decide LEI: `isTransientFailure()`. È il verdetto del
+         * Il guasto è passeggero? I CRITERI (secondari n. 79 e n. 153), nell'ordine:
+         *  1. un guasto DEFINITIVO in un punto qualunque della catena delle cause vince su tutto, anche sul verdetto del sistema: chiave
+         *     invalidata (`KeyPermanentlyInvalidatedException`), contenuto toccato o cifrato con un'altra chiave (`BadPaddingException`, di
+         *     cui `AEADBadTagException` è figlia);
+         *  2. `UnrecoverableKeyException` (chiave non recuperabile) e `IllegalBlockSizeException` (misura sbagliata) sono definitive come TIPO,
+         *     ma su keystore2 sono anche i CONTENITORI in cui il sistema avvolge ogni errore del Keystore, passeggeri compresi (un'operazione
+         *     potata, il servizio occupato, la connessione persa col demone). Prima di API 33 non c'è un verdetto a cui chiedere, e valgono
+         *     «definitivo»; da API 33 cedono al verdetto del punto 3 se nella catena ce n'è uno (senza, restano definitive).
+         *     `InvalidKeyException`, che all'init avvolge lo stesso guasto, NON è in elenco: da API 33 decide il verdetto, prima il punto 4; la
+         *     sua figlia `KeyPermanentlyInvalidatedException` è al punto 1;
+         *  3. da API 33, se nella catena c'è una `android.security.KeyStoreException`, decide LEI: `isTransientFailure()`. È il verdetto del
          *     sistema, e vale anche quando è «no» (una chiave corrotta o inesistente dentro un `ProviderException` non diventa passeggera);
-         *  3. altrimenti (API 24-32, o nessuna `KeyStoreException`): è passeggero un errore di I/O (`IOException`, per esempio l'apertura
+         *  4. altrimenti (API 24-32, o nessuna `KeyStoreException`): è passeggero un errore di I/O (`IOException`, per esempio l'apertura
          *     dell'archivio delle chiavi) o un `ProviderException`, che è ciò che il provider lancia quando un'operazione non riesce
-         *     (troppe operazioni aperte, servizio occupato), non per una chiave cattiva;
-         *  4. tutto il resto è definitivo.
+         *     (troppe operazioni aperte, servizio occupato), non per una chiave cattiva — sempre che nella catena non ci sia uno dei
+         *     contenitori del punto 2, che senza un verdetto restano definitivi;
+         *  5. tutto il resto è definitivo.
          */
         @Override
         public boolean guastoTransitorio(Throwable guasto) {
-            return eTransitorio(guasto, Build.VERSION.SDK_INT, causa -> Build.VERSION.SDK_INT >= 33 ? VerdettoApi33.su(causa) : null);
+            return eTransitorio(guasto, Build.VERSION.SDK_INT, CifrarioKeystore::verdettoDiProduzione);
         }
 
         /** La logica del punto precedente, senza `android.*` tranne i tipi delle eccezioni: la prova la JVM (`verdetto` e `sdk` si iniettano). */
         static boolean eTransitorio(Throwable guasto, int sdk, Function<Throwable, Boolean> verdetto) {
             boolean passeggero = false;
-            Boolean verdettoDelSistema = null;
+            boolean contenitoreDefinitivo = false;
             int profondita = 0;
             for (Throwable causa = guasto; causa != null && profondita < PROFONDITA_MASSIMA_DELLE_CAUSE; causa = causa.getCause(), profondita++) {
-                if (causa instanceof KeyPermanentlyInvalidatedException || causa instanceof UnrecoverableKeyException
-                        || causa instanceof BadPaddingException || causa instanceof IllegalBlockSizeException) {
-                    return false;
+                // Punto 1: i definitivi che nessun verdetto riabilita.
+                if (causa instanceof KeyPermanentlyInvalidatedException || causa instanceof BadPaddingException) return false;
+                // Punto 2: i contenitori. Prima di API 33 nessun verdetto: definitivi, come sempre.
+                if (causa instanceof UnrecoverableKeyException || causa instanceof IllegalBlockSizeException) {
+                    if (sdk < API_CON_VERDETTO) return false;
+                    contenitoreDefinitivo = true;
                 }
                 if (causa instanceof IOException || causa instanceof ProviderException) passeggero = true;
-                if (sdk >= 33 && verdettoDelSistema == null) verdettoDelSistema = verdetto.apply(causa);
             }
-            return verdettoDelSistema != null ? verdettoDelSistema : passeggero;
+            // Punto 3: da API 33, se il sistema ha detto la sua, ha deciso lui.
+            Boolean verdettoDelSistema = sdk >= API_CON_VERDETTO ? verdettoNellaCatena(guasto, verdetto) : null;
+            if (verdettoDelSistema != null) return verdettoDelSistema;
+            // Punti 4 e 5.
+            return passeggero && !contenitoreDefinitivo;
+        }
+
+        /**
+         * Il verdetto del sistema sulla catena delle cause: quello della PRIMA causa che ne ha uno (una `KeyStoreException`), `null` se nessuna
+         * ce l'ha. Con lo stesso tetto di profondità di {@link #eTransitorio}. Il chiamante lo chiede solo da API 33.
+         */
+        static Boolean verdettoNellaCatena(Throwable guasto, Function<Throwable, Boolean> verdetto) {
+            int profondita = 0;
+            for (Throwable causa = guasto; causa != null && profondita < PROFONDITA_MASSIMA_DELLE_CAUSE; causa = causa.getCause(), profondita++) {
+                Boolean delSistema = verdetto.apply(causa);
+                if (delSistema != null) return delSistema;
+            }
+            return null;
+        }
+
+        /** Il verdetto di produzione: da API 33 quello di `KeyStoreException#isTransientFailure`, prima nessuno. */
+        private static Boolean verdettoDiProduzione(Throwable causa) {
+            return Build.VERSION.SDK_INT >= API_CON_VERDETTO ? VerdettoApi33.su(causa) : null;
+        }
+
+        /**
+         * La chiave che `getKey` non restituisce (`UnrecoverableKeyException`) si ELIMINA, per crearne una nuova? (secondario n. 154)
+         * Eliminarla rende ILLEGGIBILI i segreti di tutte le voci vive: si fa solo quando è l'unica via, e per un guasto che non passa.
+         *  · `perCifrare` falso, cioè si sta DECIFRANDO un segreto già scritto: MAI. Si rilancia, e decide chi chiama con
+         *    {@link #guastoTransitorio}: eliminare la chiave non farebbe leggere quel segreto, e per un guasto che passa distruggerebbe quelli
+         *    di tutti gli altri;
+         *  · `perCifrare` vero, da API 33: decide il verdetto del sistema. Una `KeyStoreException` nella catena con `isTransientFailure()`
+         *    vero vuol dire che il guasto NON è permanente (un servizio che si riavvia, una connessione persa col demone): si rilancia senza
+         *    eliminare. Senza verdetto (l'invalidazione permanente arriva come un `UnrecoverableKeyException` col solo messaggio, senza
+         *    causa) o con un verdetto «no» il guasto è permanente: si elimina e si ricrea, o il motore non potrebbe più accodare niente;
+         *  · `perCifrare` vero, API 24-32: il sistema non dà un verdetto, e vale il comportamento di sempre: si elimina e si ricrea.
+         * Pura come {@link #eTransitorio}: la prova la JVM (`sdk` e `verdetto` si iniettano).
+         */
+        static boolean eDaEliminare(boolean perCifrare, Throwable guasto, int sdk, Function<Throwable, Boolean> verdetto) {
+            if (!perCifrare) return false;
+            if (sdk < API_CON_VERDETTO) return true;
+            Boolean verdettoDelSistema = verdettoNellaCatena(guasto, verdetto);
+            return verdettoDelSistema == null || !verdettoDelSistema;
+        }
+
+        /** L'eliminazione della chiave dall'archivio: `deleteEntry` in produzione, un finto nei test. */
+        interface Eliminazione {
+            void esegui() throws GeneralSecurityException;
+        }
+
+        /**
+         * Che cosa si fa di una chiave che `getKey` non restituisce: la decisione è di {@link #eDaEliminare}, e UNA riga `warn` in logcat dice
+         * com'è andata, in tutti e due i rami (regola 6 di AGENTS.md: un `catch` che non dice niente è un guasto che nessuno vedrà). Solo la CLASSE
+         * dell'eccezione e quella della sua causa, e il livello di API: mai l'alias, mai un percorso, mai il messaggio. Se la chiave non si
+         * elimina il guasto si RILANCIA tale e quale: se si proseguisse, il chiamante genererebbe una chiave nuova sullo stesso alias, che nel
+         * Keystore la sostituisce — lo stesso disastro per un'altra strada.
+         */
+        static void trattaLaChiaveInutilizzabile(UnrecoverableKeyException guasto, boolean perCifrare, int sdk, Function<Throwable, Boolean> verdetto,
+                Eliminazione elimina) throws GeneralSecurityException {
+            String fase = perCifrare ? "in scrittura" : "in lettura";
+            if (!eDaEliminare(perCifrare, guasto, sdk, verdetto)) {
+                DiagnosticaLocale.avviso("chiave dei segreti non utilizzabile " + fase + " (" + descrivi(guasto, sdk) + "): non si elimina, il guasto torna a chi chiama");
+                throw guasto;
+            }
+            DiagnosticaLocale.avviso("chiave dei segreti non utilizzabile " + fase + " (" + descrivi(guasto, sdk) + "): guasto permanente, si elimina la chiave e se ne crea una nuova, i segreti già salvati diventano illeggibili");
+            elimina.esegui();
+        }
+
+        /** «UnrecoverableKeyException, causa: KeyStoreException, API 34»: solo classi e un numero, mai un messaggio. */
+        private static String descrivi(Throwable guasto, int sdk) {
+            return DiagnosticaLocale.classe(guasto) + ", causa: " + DiagnosticaLocale.classe(guasto.getCause()) + ", API " + sdk;
         }
 
         /**
          * Il verdetto del sistema (API 33+) su una causa, in una classe a parte: `KeyStoreException` pubblica esiste solo da API 33, e così
          * la classe del cifrario non ne porta il riferimento sui livelli più vecchi (si carica solo quando `sdk >= 33`).
          */
-        @RequiresApi(33)
+        @RequiresApi(API_CON_VERDETTO)
         private static final class VerdettoApi33 {
             /** `null` se `causa` non è una `KeyStoreException`; altrimenti il suo `isTransientFailure()`. */
             static Boolean su(Throwable causa) {
@@ -438,7 +551,7 @@ public final class SegretiCaricamenti {
         @Override
         public byte[] cifra(byte[] chiaro, byte[] datiAssociati) throws GeneralSecurityException, IOException {
             Cipher cifrario = Cipher.getInstance(TRASFORMAZIONE);
-            cifrario.init(Cipher.ENCRYPT_MODE, chiave());
+            cifrario.init(Cipher.ENCRYPT_MODE, fornitore.chiave(true));
             cifrario.updateAAD(datiAssociati);
             byte[] iv = cifrario.getIV();
             byte[] testoCifrato = cifrario.doFinal(chiaro);
@@ -456,19 +569,26 @@ public final class SegretiCaricamenti {
             int lunghezzaIv = cifrato[0] & 0xFF;
             if (lunghezzaIv == 0 || cifrato.length < 1 + lunghezzaIv + 1) throw new GeneralSecurityException("blocco malformato");
             Cipher cifrario = Cipher.getInstance(TRASFORMAZIONE);
-            cifrario.init(Cipher.DECRYPT_MODE, chiave(), new GCMParameterSpec(BIT_DEL_TAG, cifrato, 1, lunghezzaIv));
+            cifrario.init(Cipher.DECRYPT_MODE, fornitore.chiave(false), new GCMParameterSpec(BIT_DEL_TAG, cifrato, 1, lunghezzaIv));
             cifrario.updateAAD(datiAssociati);
             return cifrario.doFinal(cifrato, 1 + lunghezzaIv, cifrato.length - 1 - lunghezzaIv);
         }
 
-        private SecretKey chiave() throws GeneralSecurityException, IOException {
+        /**
+         * La chiave `alias` dell'AndroidKeyStore, creata se non c'è. `perCifrare`: serve per scrivere un segreto nuovo (vero) o per leggerne uno
+         * già scritto (falso). Se `getKey` lancia `UnrecoverableKeyException` la chiave si elimina solo per cifrare e solo per un guasto
+         * permanente; altrimenti l'eccezione esce da qui tale e quale ({@link #trattaLaChiaveInutilizzabile}), e di qui NON si prosegue con
+         * la generazione: una chiave nuova sullo stesso alias sostituirebbe quella vecchia, e sarebbe l'eliminazione per un'altra strada.
+         */
+        private SecretKey chiave(boolean perCifrare) throws GeneralSecurityException, IOException {
             KeyStore keystore = KeyStore.getInstance(PROVIDER);
             keystore.load(null);
             try {
                 Key esistente = keystore.getKey(alias, null);
                 if (esistente instanceof SecretKey) return (SecretKey) esistente;
             } catch (UnrecoverableKeyException inutilizzabile) {
-                keystore.deleteEntry(alias);
+                trattaLaChiaveInutilizzabile(inutilizzabile, perCifrare, Build.VERSION.SDK_INT, CifrarioKeystore::verdettoDiProduzione,
+                        () -> keystore.deleteEntry(alias));
             }
             KeyGenerator generatore = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER);
             generatore.init(new KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)

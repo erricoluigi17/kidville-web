@@ -14,6 +14,12 @@ import {
   violazioniDiPrivacy,
   type TimelineFixture,
 } from '../fixtures/video/falso-scarto-2026-09-28'
+import {
+  FPS_SLOWMO,
+  SLOWMO,
+  TICK_SLOWMO,
+  leggiTimelineSlowmo,
+} from '../fixtures/video/falso-scarto-slowmo-2026-10-03'
 import { MAX_VIDEO_DURATION_SECONDS } from '@/lib/media/video/limiti'
 import {
   SONDA_TEMPORALE,
@@ -22,6 +28,7 @@ import {
   timeoutSondaTemporaleMs,
   videoTemporalProgram,
   type VideoTemporalEvidence,
+  type VideoTemporalMeasures,
 } from '@/lib/media/video/temporale'
 
 /** Il tetto di durata dell'ingresso: SEMPRE la costante, mai il numero (T1 l'ha portata da 180 a 300). */
@@ -339,6 +346,158 @@ describe('reduce60: il controllo d’arco resta, la copertura terminale no', () 
 })
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * LO SLOW-MOTION VFR (`m05` della matrice E1, 03/10/2026): l'ultimo campione LUNGO in `reduce60`
+ *
+ * Respinto due volte, da iOS e da Android, con `OUTPUT_FPS_INVALID` / `FPS_LIMIT` dopo una conversione
+ * perfetta. Il filtro `fps=60` emette fotogrammi anche per COPRIRE la durata dell'ultimo campione della
+ * sorgente, perciò l'arco d'uscita (primo → ultimo PTS) supera quello di sorgente di una quantità fra
+ * `L − 1/60` e `L`, con L la durata di quel campione. A fps costante sopra i 60, L < 1/60 e nessuno se
+ * n'era accorto; un rallentatore VFR finisce a 30 fps (L = 33,333 ms) e l'uscita sforava il limite
+ * simmetrico di 1/60: 20,833 ms contro 16,667. Riprodotto il 03/10/2026 con i moduli di produzione e
+ * ffmpeg vero (stesso rifiuto, stessa diagnosi del collaudo), e misurato con ffmpeg 8.1.2 per L da 1 a
+ * 500 ms (sorgente a 120 fps, ultimo campione portato a L con `setts`): l'eccesso non supera mai L.
+ *
+ * Le due timeline vere stanno in `__tests__/fixtures/video/` (solo numeri). Con il controllo di prima il
+ * caso principale era ROSSO, e adesso è verde. Le controprove ALTERANO le stesse timeline: un limite
+ * allargato anche in difetto, o senza tetto, o legato al campione sbagliato non sarebbe una correzione,
+ * sarebbe un varco.
+ * ════════════════════════════════════════════════════════════════════════════ */
+describe('reduce60: lo slow-motion VFR di m05, con l’ultimo campione di 33 ms, non è un falso scarto', () => {
+  const sorgente = () => leggiTimelineSlowmo('sorgente')
+  const uscita = () => leggiTimelineSlowmo('uscita')
+  const prova = (s: TimelineFixture = sorgente(), u: TimelineFixture = uscita()) => confronta(s, u, SLOWMO.video, null, FPS_SLOWMO)
+  /** Di quanto l'ARCO (primo → ultimo PTS) dell'uscita supera quello della sorgente, ricavato dalle misure della prova. */
+  const eccessoDArco = (m: VideoTemporalMeasures) => (m.outputCoverage - m.outputLastSample) - (m.sourceCoverage - m.sourceLastSample)
+  /** La stessa timeline vera, con la durata dell'ULTIMO campione della sorgente portata a `tick` tick. */
+  const conUltimoCampione = (tick: number): TimelineFixture => {
+    const s = sorgente()
+    framesDi(s, SLOWMO.video).at(-1)!.duration = tick
+    return s
+  }
+
+  it('le fixture contengono SOLO la proiezione di ffprobe del video: nessun tag, luogo, data o nome (il repository è pubblico)', () => {
+    expect(violazioniDiPrivacy(sorgente())).toEqual([])
+    expect(violazioniDiPrivacy(uscita())).toEqual([])
+  })
+
+  it('le misure della fixture sono quelle del collaudo E1: 720 → 602 fotogrammi, passi di 4,167 e 33,333 ms, uscita sulla griglia a 60 Hz', () => {
+    const s = framesDi(sorgente(), SLOWMO.video), u = framesDi(uscita(), SLOWMO.video)
+    expect(s).toHaveLength(720)
+    expect(u).toHaveLength(602)
+    // Il VFR: 479 passi da 64 tick (4,167 ms, il tratto a 240 fps) e 240 da 512 (33,333 ms, i tratti a 30 fps).
+    const passi: Record<number, number> = {}
+    for (let i = 1; i < s.length; i++) {
+      const passo = s[i].best_effort_timestamp - s[i - 1].best_effort_timestamp
+      passi[passo] = (passi[passo] ?? 0) + 1
+    }
+    expect(passi).toEqual({ 64: 479, 512: 240 })
+    // L'ultimo campione della sorgente è la coda a 30 fps: 512 tick, il doppio di un fotogramma a 60 Hz (256).
+    expect(s.at(-1)).toEqual({ stream_index: 0, best_effort_timestamp: 153_536, duration: 512 })
+    // L'uscita: la griglia a 60 Hz che parte dal primo PTS, un fotogramma ogni 256 tick, ognuno lungo 256.
+    expect(u[0].best_effort_timestamp).toBe(s[0].best_effort_timestamp)
+    expect(u.map(f => f.best_effort_timestamp - u[0].best_effort_timestamp)).toEqual(Array.from({ length: 602 }, (_, i) => i * 256))
+    expect(u.every(f => f.duration === 256)).toBe(true)
+  })
+
+  it('adesso passa, con il frame rate medio della sorgente (72): era FPS_LIMIT', () => {
+    const esito = prova()
+    expect(esito).toMatchObject({ ok: true, mode: 'reduce60', sourceFrames: 720, outputFrames: 602, sourceFps: 72, outputFps: 60 })
+    expect(esito.reason).toBeUndefined()
+    // I numeri della diagnosi del collaudo E1.
+    expect(esito.measures!.sourceCoverage).toBeCloseTo(10.029167, 6)
+    expect(esito.measures!.outputCoverage).toBeCloseTo(10.033333, 6)
+    expect(esito.measures!.sourceLastSample).toBeCloseTo(0.033333, 6)
+  })
+
+  it('e la fixture ESERCITA il controllo che è stato allargato: il limite simmetrico di prima l’avrebbe scartata', () => {
+    const misure = prova().measures!
+    const eccesso = eccessoDArco(misure)
+    expect(misure.sourceCoverage - misure.sourceLastSample).toBeCloseTo(9.995833, 6)
+    expect(misure.outputCoverage - misure.outputLastSample).toBeCloseTo(10.016667, 6)
+    expect(eccesso).toBeCloseTo(0.020833, 6)
+    // La formula che c'era: `|Δ arco| > 1/60 + epsilon`, cioè 16,732 ms. I 20,833 ms la superano.
+    expect(eccesso).toBeGreaterThan(1 / 60 + misure.epsilon)
+    // La causa: l'ultimo campione della sorgente dura più di un campione d'uscita, e l'eccesso sta fra `L − 1/60` e `L`.
+    expect(misure.sourceLastSample).toBeGreaterThan(1 / 60)
+    expect(eccesso).toBeGreaterThan(misure.sourceLastSample - 1 / 60)
+    expect(eccesso).toBeLessThanOrEqual(misure.sourceLastSample)
+  })
+
+  it('con un ultimo campione corto il limite in eccesso non scende sotto 1/60: nulla di ciò che passava prima viene respinto adesso', () => {
+    // Ultimo campione di 3,1 ms (48 tick) e un fotogramma in meno in uscita: +4,2 ms, dentro il campione d'uscita.
+    const uscitaCorta = uscita()
+    uscitaCorta.frames.pop()
+    const esito = prova(conUltimoCampione(48), uscitaCorta)
+    expect(esito.measures!.sourceLastSample).toBeLessThan(1 / 60)
+    expect(eccessoDArco(esito.measures!)).toBeCloseTo(0.004167, 6)
+    expect(esito).toMatchObject({ ok: true, mode: 'reduce60', outputFrames: 601 })
+  })
+
+  it('il limite in eccesso è L più un tick d’uscita di tolleranza: con l’eccesso di 320 tick, L = 320 e 319 passano, 318 no', () => {
+    // L'eccesso dell'uscita vera sono 320 tick (20,833 ms): la PREMESSA, con L come unica variabile.
+    expect(eccessoDArco(prova().measures!) / TICK_SLOWMO).toBeCloseTo(320, 6)
+    for (const [tick, passa] of [[320, true], [319, true], [318, false]] as const) {
+      expect(prova(conUltimoCampione(tick), uscita()).ok, `ultimo campione della sorgente di ${tick} tick`).toBe(passa)
+    }
+  })
+
+  it('il limite in DIFETTO resta 1/60 più un tick d’uscita, com’era: con l’uscita più corta di 256 e 257 tick passa, di 258 no', () => {
+    // L'uscita senza gli ultimi due fotogrammi (ultimo PTS 153.344) e l'ultimo PTS della sorgente portato
+    // avanti: lo scarto in difetto è l'unica variabile, e 256 tick sono esattamente 1/60 s.
+    for (const [tick, passa] of [[256, true], [257, true], [258, false]] as const) {
+      const corta = uscita()
+      corta.frames.splice(-2)
+      const s = sorgente()
+      framesDi(s, SLOWMO.video).at(-1)!.best_effort_timestamp = 153_344 + tick
+      const esito = prova(s, corta)
+      expect(-eccessoDArco(esito.measures!) / TICK_SLOWMO, `la premessa: uscita più corta di ${tick} tick`).toBeCloseTo(tick, 6)
+      expect(esito.ok, `uscita più corta di ${tick} tick`).toBe(passa)
+    }
+  })
+
+  describe('le controprove, sulle stesse timeline, restano ROSSE', () => {
+    it('un’uscita TRONCATA: tre fotogrammi in meno in coda, l’arco scende di 29,2 ms (oltre 1/60, sotto L)', () => {
+      const troncata = uscita()
+      troncata.frames.splice(-3)
+      const esito = prova(sorgente(), troncata)
+      expect(esito).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT', outputFrames: 599 })
+      // La PREMESSA: 29,2 ms stanno sopra il limite in difetto (1/60) e SOTTO l'ultimo campione. Un limite
+      // allargato anche da questa parte, a `max(1/60, L)`, li lascerebbe passare: è il caso che lo dice.
+      const misure = esito.measures!
+      expect(eccessoDArco(misure)).toBeCloseTo(-0.029167, 6)
+      expect(-eccessoDArco(misure)).toBeGreaterThan(1 / 60 + misure.epsilon)
+      expect(-eccessoDArco(misure)).toBeLessThan(misure.sourceLastSample)
+    })
+
+    it('un’uscita più LUNGA della sorgente di oltre L: un fotogramma in più in coda (+37,5 ms contro i 33,3 dell’ultimo campione)', () => {
+      const lunga = uscita()
+      const ultimo = framesDi(lunga, SLOWMO.video).at(-1)!
+      lunga.frames.push({ stream_index: SLOWMO.video, best_effort_timestamp: ultimo.best_effort_timestamp + 256, duration: 256 })
+      const esito = prova(sorgente(), lunga)
+      expect(esito).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT', outputFrames: 603 })
+      const misure = esito.measures!
+      expect(eccessoDArco(misure)).toBeCloseTo(0.0375, 6)
+      expect(eccessoDArco(misure)).toBeGreaterThan(misure.sourceLastSample + misure.epsilon)
+    })
+
+    it('la griglia a 60 Hz resta obbligatoria: un PTS spostato di 5 ms a metà video', () => {
+      const storta = uscita()
+      framesDi(storta, SLOWMO.video)[300].best_effort_timestamp += 77
+      expect(prova(sorgente(), storta)).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT' })
+    })
+
+    it('il limite in eccesso segue l’ultimo campione della SORGENTE: con quello di 3,1 ms la stessa uscita è troppo lunga', () => {
+      // Stessa uscita, stessa timeline: cambia solo la durata dell'ultimo campione in ingresso (512 → 48 tick).
+      // Il primo campione resta di 512 tick: un limite letto dal campione sbagliato lo lascerebbe passare.
+      const esito = prova(conUltimoCampione(48), uscita())
+      expect(esito).toMatchObject({ ok: false, mode: 'reduce60', reason: 'FPS_LIMIT' })
+      expect(esito.measures!.sourceLastSample).toBeLessThan(eccessoDArco(esito.measures!))
+      expect(framesDi(conUltimoCampione(48), SLOWMO.video)[0].duration).toBe(512)
+    })
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
  * I TETTI INTERNI derivano dal parametro, non da un numero scritto qui dentro
  *
  * Erano 180 s e 180.000 frame, cablati. Il 02/10/2026 il tetto di durata è diventato 300 s
@@ -504,6 +663,21 @@ describe('il programma della Sandbox, eseguito con un ffprobe finto', () => {
       expect(stato).toBe(0)
       expect(prova).toMatchObject({ ok: true, mode: 'preserve', sourceFrames: 264, outputFrames: 264 })
       expect(prova.measures!.sourceLastSample).toBeCloseTo(0.003035, 6)
+    })
+  })
+
+  it('sulla timeline di m05 (reduce60, ultimo campione lungo) dice ok: anche il ramo allargato sta nella funzione serializzata', () => {
+    // Il ramo `reduce60` non aveva nessun caso qui: una dipendenza di modulo infilata nel suo limite
+    // avrebbe fatto cadere ogni riduzione oltre i 60 fps in `TEMPORAL_PROBE_FAILED` dentro il Sandbox, e
+    // i confronti diretti non se ne sarebbero accorti.
+    inCartella((cartella, finto) => {
+      const { stato, prova } = esegui(
+        videoTemporalProgram({ videoIndex: SLOWMO.video, audioIndex: null, sourceFps: FPS_SLOWMO }), finto,
+        scrivi(cartella, 'sorgente.json', leggiTimelineSlowmo('sorgente')), scrivi(cartella, 'uscita.json', leggiTimelineSlowmo('uscita')),
+      )
+      expect(stato).toBe(0)
+      expect(prova).toMatchObject({ ok: true, mode: 'reduce60', sourceFrames: 720, outputFrames: 602, sourceFps: 72, outputFps: 60 })
+      expect(prova.measures!.sourceLastSample).toBeCloseTo(0.033333, 6)
     })
   })
 

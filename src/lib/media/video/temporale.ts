@@ -75,8 +75,9 @@ export interface VideoTemporalEvidence {
  * `TERMINAL_COVERAGE_MISMATCH` pur essendo una conversione perfetta. Provato anche con un file
  * sintetico (ultimo campione accorciato a 3 ms): `preserve` e `reduce60` cadono allo stesso modo.
  * In `preserve` l'uguaglianza dei PTS frame per frame prova già l'intera timeline, ultimo frame
- * compreso; in `reduce60` resta il controllo d'ARCO (primo → ultimo PTS, che non dipende da nessuna
- * durata di campione). Il tetto di durata resta, ma da solo e col suo motivo.
+ * compreso; in `reduce60` resta il controllo d'ARCO (primo → ultimo PTS, che non guarda la durata
+ * dell'ultimo campione dell'uscita: quella della SORGENTE allarga soltanto il limite in eccesso, come
+ * spiega il ramo). Il tetto di durata resta, ma da solo e col suo motivo.
  */
 export function compareVideoTimelines(
   source: unknown,
@@ -183,10 +184,21 @@ export function compareVideoTimelines(
   } else {
     // La riduzione intenzionale ha un contratto distinto: griglia a 60 Hz,
     // copertura della sorgente entro un campione di uscita, nessun confronto 1:1.
-    // L'ARCO (primo → ultimo PTS) è l'unico confronto di copertura che resta: non guarda la durata di
-    // nessun campione, che il muxer sceglie da sé.
+    // L'ARCO (primo → ultimo PTS) è l'unico confronto di copertura che resta: non guarda la durata
+    // dell'ultimo campione dell'USCITA, che il muxer sceglie da sé.
+    //
+    // I due versi dello scarto NON sono simmetrici (falso scarto di `m05`, collaudo E1 del 03/10/2026).
+    // Il filtro `fps=60` emette fotogrammi anche per COPRIRE la durata dell'ultimo campione della
+    // sorgente: l'arco d'uscita supera quello di sorgente di una quantità fra `L − 1/60` e `L`, con L
+    // quella durata. A fps costante sopra i 60, L < 1/60 e lo scarto sta dentro il campione di uscita;
+    // un rallentatore VFR (240 fps a tratti, 30 fps in coda) finisce con L = 33,333 ms: 720 fotogrammi
+    // con l'ultimo PTS a 9,995833 s, 602 in uscita sulla griglia con l'ultimo a 10,016667 s, cioè +20,833 ms
+    // contro un limite di 16,667 ms più un tick, e una conversione perfetta veniva scartata. In ECCESSO,
+    // dunque, si ammette `max(1/60, L)`; in DIFETTO — l'uscita più corta della sorgente, cioè una
+    // troncatura — resta un campione di uscita: nessuna durata la giustifica.
+    const scarto = (after.last - after.first) - (before.last - before.first)
     result.reason = 'FPS_LIMIT'
-    if (Math.abs(fpsOut - 60) > 0.01 || Math.abs((after.last - after.first) - (before.last - before.first)) > 1 / 60 + epsilon) return result
+    if (Math.abs(fpsOut - 60) > 0.01 || scarto < -(1 / 60 + epsilon) || scarto > Math.max(1 / 60, sourceLastSample) + epsilon) return result
     for (let i = 0; i < after.pts.length; i++) {
       if (Math.abs(after.pts[i] - after.first - i / 60) > epsilon) return result
     }

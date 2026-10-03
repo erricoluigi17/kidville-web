@@ -1,8 +1,11 @@
 package it.kidville.app;
 
+import android.os.Bundle;
 import android.util.Log;
 import android.webkit.CookieManager;
 import com.getcapacitor.BridgeActivity;
+import it.kidville.app.caricamenti.KidvilleCaricamentiPlugin;
+import it.kidville.app.caricamenti.PianificatoreCaricamenti;
 
 public class MainActivity extends BridgeActivity {
 
@@ -14,6 +17,40 @@ public class MainActivity extends BridgeActivity {
      * avvenuto. Nel messaggio non finisce mai un cookie, solo esito e millisecondi.
      */
     private static final String TAG = "KidvilleCookie";
+
+    /** Tag di logcat dei caricamenti nativi (lo stesso di tutte le classi di `it.kidville.app.caricamenti`). */
+    private static final String TAG_CARICAMENTI = "KidvilleCaricamenti";
+
+    /**
+     * Registra il plugin dei caricamenti nativi (app 1.2, video in background: spec «app 1.2», §4.1 e §6.5).
+     *
+     * `registerPlugin` va chiamato PRIMA di `super.onCreate`: è lì che `BridgeActivity` costruisce il ponte con l'elenco dei plugin
+     * che ha in mano, e un plugin registrato dopo non esisterebbe per il JavaScript. È un plugin locale all'app, non un pacchetto
+     * npm: non compare in `capacitor.plugins.json` e non passa da `npx cap sync`.
+     */
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        registerPlugin(KidvilleCaricamentiPlugin.class);
+        super.onCreate(savedInstanceState);
+    }
+
+    /**
+     * Quando l'app torna in primo piano i caricamenti che aspettavano (in pausa, in attesa di rete) ripartono subito, la notifica «Invio
+     * in pausa: tocca per riprendere» sparisce e il registro dei log si svuota (spec §6.5).
+     *
+     * Un guasto del motore NON deve far cadere l'Activity: `riprendiInPrimoPiano` non lancia mai, e il `catch` qui è la seconda cintura
+     * (un `Throwable`, per un errore di caricamento di una classe che nessuna `RuntimeException` vedrebbe). Nel messaggio finisce solo
+     * la classe dell'errore.
+     */
+    @Override
+    public void onResume() {
+        super.onResume();
+        try {
+            PianificatoreCaricamenti.riprendiInPrimoPiano(this);
+        } catch (Throwable guasto) {
+            Log.e(TAG_CARICAMENTI, "ripresa dei caricamenti non riuscita (" + guasto.getClass().getSimpleName() + ")");
+        }
+    }
 
     /**
      * Scrive su disco i cookie della WebView prima che l'app possa essere uccisa.

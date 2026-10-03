@@ -277,8 +277,13 @@ function eAnnullata(err: unknown): boolean {
  * Gli eventi che il server accetta. Tenerli qui non serve a difendere il server (che si
  * difende da sé: è la porta ostile), serve a non scoprire in produzione che una riga di log
  * è stata scartata con un 400 perché il nome dell'evento era `errore-js` invece di `js`.
+ *
+ * `caricamento-nativo` (2026-10-03, app 1.2): il caricamento dei video in background fatto dal
+ * plugin nostro. Lo scrivono sia il nativo (iOS/Android, per la stessa porta `/api/logs`) sia il JS
+ * che lo comanda (`src/lib/native/caricamenti-nativi.ts`), così le due metà dello stesso video
+ * finiscono nella stessa colonna (`client:caricamento-nativo`) e una query sola le legge insieme.
  */
-export type EventoNome = 'js' | 'unhandledrejection' | 'fetch' | 'react' | 'offline' | 'biometria' | 'push' | 'avvio' | 'accesso' | 'visibilita';
+export type EventoNome = 'js' | 'unhandledrejection' | 'fetch' | 'react' | 'offline' | 'biometria' | 'push' | 'avvio' | 'accesso' | 'visibilita' | 'caricamento-nativo';
 
 export interface EventoClient {
     livello: 'warn' | 'error';

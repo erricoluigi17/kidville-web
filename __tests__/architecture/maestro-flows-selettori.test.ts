@@ -635,6 +635,31 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
       'esecuzione verde DI SERA, che nessuno ha ancora fatto. Già verde 30/30 il 2026-08-01 (~/.maestro/tests/2026-08-01_125234 e _132906).',
     firma: 'e5f33aae091d',
   },
+  {
+    flow: 'ios-galleria-video-nativo.yaml',
+    data: '2026-10-03',
+    device:
+      'simulatore iPhone 16e · iOS 26.2 · App.app Debug 1.2 (6), server.url http://localhost:3101 ' +
+      '(proxy → `next dev` :3100 sul DB della CI)',
+    esito:
+      '40 COMPLETED, 0 FAILED (1 WARNED opzionale, 2 SKIPPED condizionali), DUE esecuzioni su due ' +
+      '(14:44 e 14:48 UTC); PHPicker guidato per id (Cancel, PXGGridLayout-Info, Add); video di prova ' +
+      '60 s/122 MB arrivato: job queued, video-nativo-inviato esito put. Prerequisito: l\'elemento più ' +
+      'recente della libreria Foto è un video valido.',
+    firma: 'd6ccfde8df3a',
+  },
+  {
+    flow: 'android-galleria-video-nativo.yaml',
+    data: '2026-10-03',
+    device:
+      'emulatore KV-play-phone · Android 16 (API 36) · WebView 150.0.7871.181 · APK Debug 1.2 (vc 4) su ' +
+      'http://10.0.2.2:3101 (`next dev` del banco E1, DB della CI, con l\'aggiramento CDP di allowedDevOrigins)',
+    esito:
+      '30 COMPLETED, 0 FAILED, 2 SKIPPED (rami dell\'accesso e del permesso notifiche), una esecuzione verde su ' +
+      'quattro tentativi: i primi caduti su «Modifica Tag» non centrato, su un `below:` senza ancora e sullo spazio ' +
+      'del dispositivo. Video arrivato: job b0713201, `video-nativo-inviato` in 87,6 s, poi ready e pubblicato.',
+    firma: 'cf262460fecb',
+  },
 ];
 
 /**

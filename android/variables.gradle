@@ -13,4 +13,9 @@ ext {
     androidxJunitVersion = '1.3.0'
     androidxEspressoCoreVersion = '3.7.0'
     cordovaAndroidVersion = '14.0.1'
+    // WorkManager (caricamenti nativi in background, API 24-33): l'ULTIMA PATCH della serie 2.11, letta il 03/10/2026 su Maven
+    // Google (`androidx/work/work-runtime/maven-metadata.xml`: 2.11.0, 2.11.1, 2.11.2) e confermata dalle note di rilascio AndroidX
+    // (2.11.2 del 25/03/2026). La 2.12.0 (23/09/2026) è troppo fresca per un'app con dati di minori: si passa alla serie
+    // successiva quando avrà una patch, mai prima, e si rilancia `./gradlew :app:testDebugUnitTest :app:assembleDebug`.
+    androidxWorkVersion = '2.11.2'
 }

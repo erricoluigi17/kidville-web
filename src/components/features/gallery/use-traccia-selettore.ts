@@ -16,6 +16,16 @@ import { TracciaSelettore } from '@/lib/gallery/selettore-media'
  *    `appStateChange` sì, e la correttezza non deve dipendere da quale dei due.
  *
  * Il tracciatore vive quanto il componente; allo smontaggio il suo timer si spegne.
+ *
+ * ⚠️ L'`<input>` DEVE ESSERCI QUANDO IL COMPONENTE SI MONTA. L'effetto qui sotto cerca `inputRef.current`
+ * UNA volta sola, e con un input che arriva dopo (dentro un'area di scelta che si disegna solo a
+ * rilevazione finita) troverebbe `null`, uscirebbe, e `motivo=cancel` non si scriverebbe mai — senza un
+ * errore da nessuna parte. Nell'app 1.2 l'area di scelta aspetta la rilevazione del plugin (spec «caricamenti
+ * nativi» §7.2): per questo `MediaUploader` tiene l'`<input>` fuori dall'area, sempre montato, e lo prova
+ * `MediaUploader-nativo-12.test.tsx` («l'<input> del browser è montato anche prima che la rilevazione risponda»).
+ *
+ * Le strade NATIVE del selettore (`selettore-nativo`, `file-nativo`) non passano da questi due segnali: a
+ * dire come è finita la scelta è la promise di `scegliMedia`, e `MediaUploader` chiama `traccia` da sé.
  */
 export function useTracciaSelettore(inputRef: RefObject<HTMLInputElement | null>): TracciaSelettore {
   const [traccia] = useState(() => new TracciaSelettore())

@@ -246,5 +246,14 @@
   "galleryVideoTogli": "Dismiss",
   "galleryVideoDaRicaricare": "This video has to be uploaded again: choose the file again and send it.",
   "galleryVideoSenzaNome": "Video sent on {quando}",
-  "galleryAvvisoVideoConNome": "“{nome}”: {messaggio}"
+  "galleryAvvisoVideoConNome": "“{nome}”: {messaggio}",
+  "galleryVideoAvviatoNativo": "{count, plural, one {The video is being sent} other {# videos are being sent}}. You can lock your phone or use other apps; do not close Kidville from the app switcher until it has been sent. When it is ready we publish it in the gallery and let you know.",
+  "galleryVideoNotaNativo": "You can lock your phone or use other apps; do not close Kidville from the app switcher until the video has been sent.",
+  "galleryVideoAttesaRete": "Waiting for a connection: it will resume by itself.",
+  "galleryVideoInPausa": "Paused: tap the notification or reopen Kidville to resume.",
+  "galleryVideoFaseInSospeso": "Sending on hold",
+  "notificaCaricamentoTitolo": "Kidville",
+  "notificaCaricamentoInvio": "Sending videos",
+  "notificaCaricamentoAttesaRete": "The video is waiting for a connection: it will resume by itself",
+  "notificaCaricamentoPausa": "Sending paused: tap to resume"
 }

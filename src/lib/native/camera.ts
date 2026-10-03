@@ -10,6 +10,8 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
 //  - Nativo  → `Camera.getPhoto({ source: 'PROMPT' })` chiede all'utente se
 //    scattare una foto o sceglierne una dalla libreria, poi converte il dataUrl
 //    in un `File` uguale a quello che darebbe `e.target.files[0]`.
+//    Chi vuole SOLO lo scatto passa `sorgente: 'fotocamera'`: `CameraSource.Camera`, la
+//    fotocamera DIRETTA, senza il foglio (vedi `SorgenteFoto`). Il predefinito resta il foglio.
 // L'annullamento da parte dell'utente è UX ATTESA, non un errore: nessun log
 // (stesso principio di `@/lib/native/share`). Un permesso negato invece NO —
 // vedi `diagnosi`, che distingue i due leggendo prima il CODICE del plugin (che
@@ -30,12 +32,33 @@ export interface EtichettePicker {
   annulla: string
 }
 
+/**
+ * DA DOVE SI PRENDE LA FOTO sul nativo.
+ *
+ *  · `'prompt'` (il PREDEFINITO) — il foglio «scatta una foto / scegli dalla galleria»
+ *    (`CameraSource.Prompt`): è ciò che usano la chat, i documenti, il fascicolo, e non cambia.
+ *  · `'fotocamera'` — la fotocamera DIRETTA (`CameraSource.Camera`), senza foglio. La usa la
+ *    Galleria dell'insegnante (app 1.2, spec «caricamenti nativi» §2.2): il pulsante dice «Scatta una
+ *    foto» e deve aprire la fotocamera, non un foglio con due scelte (secondario #194 della PR 2).
+ *    Le etichette del foglio non servono e non si passano al plugin.
+ */
+export type SorgenteFoto = 'prompt' | 'fotocamera'
+
 export interface OpzioniScatto {
   /** Coerenza con `multiple` dell'input: la fotocamera resta comunque 1 scatto. */
   multiplo?: boolean
   etichette?: EtichettePicker
   /** Chiamato quando NON è un annullamento dell'utente ma un problema vero. */
   onErrore?: (codice: 'permesso_negato' | 'errore', dettaglio?: CodiceFotocamera) => void
+  /** Da dove si prende la foto: il foglio di sempre (predefinito) o la fotocamera diretta. */
+  sorgente?: SorgenteFoto
+  /**
+   * Lato lungo massimo dello scatto, in pixel. Predefinito `LATO_MAX` (1600): un intero positivo,
+   * altrimenti vale il predefinito. La Galleria chiede 1920 (`LATO_MASSIMO_FOTO`), lo stesso lato
+   * delle foto che il selettore nativo riduce da sé: le foto di una galleria sono tutte alla stessa
+   * risoluzione, comunque siano arrivate.
+   */
+  latoMassimo?: number
 }
 
 /**
@@ -50,6 +73,11 @@ export interface OpzioniScatto {
  * 2048 (≈1 MB), che è ancora sotto i limiti.
  */
 const LATO_MAX = 1600
+
+/** Il lato richiesto se è un intero positivo; altrimenti il predefinito: al plugin non arriva mai un `NaN`. */
+function latoValido(richiesto: number | undefined): number {
+  return typeof richiesto === 'number' && Number.isInteger(richiesto) && richiesto > 0 ? richiesto : LATO_MAX
+}
 
 /** true se l'app gira nella shell nativa Capacitor (delega a isNativeApp). */
 export function fotocameraNativaDisponibile(): boolean {
@@ -403,7 +431,7 @@ function formatoFoto(v: unknown): string {
 }
 
 /**
- * IL SUCCESSO SI LOGGA UNA VOLTA PER SESSIONE (regola 5 di AGENTS.md).
+ * IL SUCCESSO SI LOGGA UNA VOLTA PER SESSIONE E PER SORGENTE (regola 5 di AGENTS.md).
  *
  * Senza la riga del successo, «nessun log» non distingue «la fotocamera
  * funziona» da «non è mai partita»: è la stessa ambiguità che ha tenuto nascosto
@@ -413,10 +441,15 @@ function formatoFoto(v: unknown): string {
  * aggiunge niente: il throttle di `logClient` (60 s) e la deduplica di `app_log`
  * (per giorno) la butterebbero comunque, ma qui non parte nemmeno.
  *
+ * ⚠️ PER SORGENTE, e non uno solo: la fotocamera DIRETTA della Galleria (`'fotocamera'`) e il foglio
+ * della chat o dei documenti (`'prompt'`) sono due strade diverse, e un solo flag farebbe nascondere
+ * la prima dietro il successo della seconda. La riga porta `canale` — lo stesso nome della sorgente —
+ * proprio perché si legga di quale delle due si parla.
+ *
  * Stato di MODULO, cioè per scheda: nella WebView nativa la scheda è la
  * sessione dell'app.
  */
-let successoLoggato = false
+const successiLoggati = new Set<SorgenteFoto>()
 
 /**
  * Apre la fotocamera/galleria native e restituisce i File scelti (0 o 1).
@@ -426,6 +459,8 @@ export async function scegliFotoNativa(opts?: OpzioniScatto): Promise<File[]> {
   if (!fotocameraNativaDisponibile()) return []
   const etichette = opts?.etichette
   const multiplo = opts?.multiplo === true
+  const sorgente: SorgenteFoto = opts?.sorgente === 'fotocamera' ? 'fotocamera' : 'prompt'
+  const lato = latoValido(opts?.latoMassimo)
   const avvio = Date.now()
   /**
    * DOVE si è fermata. Il valore che chiude la domanda «il foglio nativo è
@@ -442,10 +477,10 @@ export async function scegliFotoNativa(opts?: OpzioniScatto): Promise<File[]> {
     fase = 'scatto'
     const photo = await Camera.getPhoto({
       resultType: CameraResultType.DataUrl,
-      source: CameraSource.Prompt,
+      source: sorgente === 'fotocamera' ? CameraSource.Camera : CameraSource.Prompt,
       quality: 80,
-      width: LATO_MAX,
-      height: LATO_MAX,
+      width: lato,
+      height: lato,
       // Raddrizza il documento E ri-codifica l'immagine: la ricodifica lascia
       // indietro l'EXIF originale, GPS compreso. Su una foto scattata dentro una
       // scuola la posizione è un dato che non ha motivo di viaggiare.
@@ -454,7 +489,8 @@ export async function scegliFotoNativa(opts?: OpzioniScatto): Promise<File[]> {
       // docente, e da lì nel backup automatico di Google Foto / iCloud.
       saveToGallery: false,
       allowEditing: false,
-      ...(etichette
+      // Le etichette sono del FOGLIO: con la fotocamera diretta non c'è nessun foglio a cui darle.
+      ...(etichette && sorgente === 'prompt'
         ? {
             promptLabelHeader: etichette.intestazione,
             promptLabelPicture: etichette.scatta,
@@ -468,8 +504,8 @@ export async function scegliFotoNativa(opts?: OpzioniScatto): Promise<File[]> {
     fase = 'conversione'
     const blob = await (await fetch(dataUrl)).blob()
     const file = new File([blob], `foto-${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' })
-    if (!successoLoggato) {
-      successoLoggato = true
+    if (!successiLoggati.has(sorgente)) {
+      successiLoggati.add(sorgente)
       // `warn` è il livello più basso che `/api/logs` accetta: `info` lo
       // rifiuta, e la riga del successo esiste proprio per stare in tabella.
       // `canale` e non `sorgente`: la lista bianca di `redact` ha la prima e non
@@ -480,7 +516,7 @@ export async function scegliFotoNativa(opts?: OpzioniScatto): Promise<File[]> {
         messaggio: 'fotocamera-scatto-riuscito',
         campi: {
           esito: 'ok',
-          canale: 'prompt',
+          canale: sorgente,
           formato: formatoFoto(photo?.format),
           byte: blob.size,
           ms: Date.now() - avvio,
@@ -530,6 +566,9 @@ export async function scegliFotoNativa(opts?: OpzioniScatto): Promise<File[]> {
         plugin_presente: pluginPresente,
         con_etichette: etichette !== undefined,
         multiplo,
+        // Da quale delle due strade: un guasto della fotocamera diretta della Galleria e uno del
+        // foglio della chat hanno riparazioni diverse, e fino a oggi le righe non le distinguevano.
+        canale: sorgente,
       },
     })
     opts?.onErrore?.(causa, slug)

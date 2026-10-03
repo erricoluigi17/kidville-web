@@ -17,15 +17,20 @@ import {
 import {
     annullaIntentoVideo,
     apriIntentoVideoGalleria,
+    apriIntentoVideoGalleriaNativo,
     chiaveIdempotenzaVideo,
+    chiaveIdempotenzaVideoNativo,
+    intentoConcluso,
     leggiElencoVideoGalleria,
     leggiStatoIntentoVideo,
     rifiutoLocaleVideo,
     riprovaPubblicazioneVideo,
     segnalaVideoCaricato,
     type EsitoFlusso,
-    type IntentoApertoVideo,
 } from '@/lib/gallery/video-galleria-flusso';
+import { conTettoDiTempo } from '@/lib/auth/errore-accesso';
+import { scartaPreparatiNativi } from '@/lib/gallery/selettore-nativo';
+import type { ElementoVideoNativo } from '@/lib/gallery/selettore-media';
 import {
     CODICI_MOSTRATI_VIDEO,
     type CodiceMostratoVideo,
@@ -36,11 +41,32 @@ import { caricamentoNelContesto } from '@/lib/media/video/upload/stato';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { logClient } from '@/lib/logging/client';
+import {
+    accodaVideo as accodaVideoNativo,
+    annulla as annullaVideoNativo,
+    ascoltaCaricamenti,
+    caricamentiNativiDisponibili,
+    codiceDelPonte,
+    dimentica as dimenticaVideoNativi,
+    elenco as elencoVideoNativi,
+} from '@/lib/native/caricamenti-nativi';
+import {
+    eStatoTerminaleNativo,
+    type CaricamentoNativo,
+    type TestiNotificheCaricamento,
+} from '@/lib/native/caricamenti-nativi-tipi';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 import type { RigaVideoLavorazione } from './VideoInLavorazione';
 import { leggiNascosti, nascondiIntento } from './video-galleria-nascosti';
-import { FASI_UI_ATTIVE, fondiRighe, type RigaComposta, type StatoLocale } from './video-galleria-righe';
+import {
+    FASI_UI_ATTIVE,
+    fondiRighe,
+    statoLocaleDaCaricamentoNativo,
+    stessoStatoLocale,
+    type RigaComposta,
+    type StatoLocale,
+} from './video-galleria-righe';
 import { useRipresaAutomatica, type MotivoRipresa } from './use-ripresa-automatica';
 
 /**
@@ -107,11 +133,52 @@ import { useRipresaAutomatica, type MotivoRipresa } from './use-ripresa-automati
  *  · **Una credenziale arrivata tardi non si consegna.** Dopo un logout, un cambio di sede o lo
  *    smontaggio, nessuna firma arriva a TUS (`ancora()` nelle dipendenze del trasporto).
  *
- * ⚠️ Il trasferimento vive finché questa pagina è montata: lasciare la Galleria lo ferma al blocco
+ * ⚠️ Il trasferimento TUS vive finché questa pagina è montata: lasciare la Galleria lo ferma al blocco
  * successivo, e rientrarvi lo riprende dallo stesso punto (il `File` scelto resta nell'archivio
  * condiviso). I testi dicono «finché resti in Galleria», non «finché l'app è aperta»: è vero solo del
  * TRASFERIMENTO. Quando i byte sono arrivati conversione e pubblicazione sono del server, e lì sì,
  * l'app si può chiudere.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * L'APP 1.2: I VIDEO NATIVI (spec «caricamenti nativi in background» §7.4-§7.7)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Un video scelto dal selettore NATIVO non è un `File`: i suoi byte stanno nel plugin, che li spedisce
+ * dal sistema operativo con una PUT sola, a telefono bloccato e a pagina chiusa. Questo hook non
+ * li trasferisce: `avviaVideoNativo` apre l'intento (come `avviaVideo`, con gli stessi cancelli e lo
+ * stesso 422 coi nomi) e consegna al plugin ciò che gli serve; da lì la vita del video è del nativo, e
+ * qui si RACCONTA. Le regole che non si derogano:
+ *
+ *  · **Il trasporto lo decide l'ORIGINE dell'elemento, non `scegliTrasporto()`.** Un `File` (web, app
+ *    1.0/1.1, ripiego «Usa il selettore del browser» della 1.2) va SEMPRE in TUS; un elemento nativo va
+ *    al plugin. Nessuno registra `put-nativo`: farlo farebbe dichiarare la PUT a un `File` che poi andrebbe in TUS.
+ *  · **La chiave d'idempotenza è `gn1-`** (`chiaveIdempotenzaVideoNativo`): deterministica, salata, coi
+ *    bambini dentro. Lo stesso video con gli stessi bambini ritrova lo stesso intento (e ne ruota il token);
+ *    con altri bambini apre un intento nuovo, mai un `IDEMPOTENCY_CONFLICT`.
+ *  · **Un accodamento fallito ritira l'intento.** L'intento esiste già sul server, in attesa di byte che
+ *    non partiranno: si ritira, si scrive `video-nativo-accodamento-fallito: job=<uuid> <codice>` e il file
+ *    resta nel passo dei bambini. Lo stesso per un'apertura arrivata a schermata cambiata — salvo che la coda
+ *    nativa abbia già quel job: ritirarlo ucciderebbe un invio buono.
+ *  · **«Rimuovi» ferma prima i byte** (`annulla` del plugin) **e poi ritira l'intento**: stesso ordine della #58.
+ *    Se i byte non si riescono a fermare l'intento NON si ritira, e la scheda torna.
+ *  · **L'elenco è UNO**: la coda nativa (`elenco`, anche senza rete: è una chiamata al plugin) si fonde con
+ *    quella del server in `fondiRighe`. Si rilegge al montaggio, al ritorno in primo piano, ogni 10 secondi
+ *    mentre c'è qualcosa di attivo e a ogni evento `caricamento`. Una voce di un'altra sede o di un altro
+ *    utente non si vede.
+ *  · **A `inviato` si dice UNA volta «caricato»** al server (rete di sicurezza accanto al trigger d'arrivo e
+ *    alla scansione) quando il video PASSA a `inviato` davanti alla schermata; una voce che si trova già `inviato`
+ *    al montaggio lo dice solo se il server risponde ancora «da caricare» (`riconcilia`). Le voci terminali si
+ *    `dimenticano` quando il server è oltre `da-caricare`, o su «Togli».
+ *  · **La ripresa automatica TUS ignora le righe native**: il nativo riprende da solo.
+ *  · **All'uscita dall'account l'invio CONTINUA** (decisione del titolare): `logout.ts` non nomina il plugin.
+ *  · **Nei log mai un nome, un URL, un token o un hash**: uuid, conteggi e codici dell'elenco chiuso, sotto
+ *    l'evento `caricamento-nativo`, solo `warn`/`error`.
+ *  · **Gli id verso il plugin sono in minuscolo**: lo schema li rifiuta altrimenti (e la sede del cookie
+ *    `sedi_attive` può avere le maiuscole).
+ *
+ * ⚠️ LIMITE NOTO. Se il plugin non è rilevato (interruttore d'emergenza spento, binario incompleto, `info()`
+ * scaduta) NESSUNA chiamata al plugin parte, `elenco`/`annulla`/`dimentica` comprese: le voci già nella coda nativa
+ * proseguono da sole, ma questa schermata non le mostra né le può annullare fino al ricaricamento.
  */
 
 export interface OpzioniVideoGalleria {
@@ -157,7 +224,13 @@ export type EsitoAvvio =
 export interface ApiVideoGalleria {
     righe: RigaVideoLavorazione[];
     avviaVideo: (file: File, scelta: SceltaVideo) => Promise<EsitoAvvio>;
-    /** Riprende un caricamento fermo a mano: di norma lo fa da solo (`useRipresaAutomatica`). */
+    /**
+     * Invia un video NATIVO (app 1.2): apre l'intento e lo consegna al plugin, che lo spedisce dal sistema operativo.
+     * Stessi esiti di `avviaVideo` (un 422 coi nomi, un 429, una rete caduta restano alla schermata, col file dov'è).
+     * `scelta.durataSecondi` è quella che il plugin ha misurato (`ElementoVideoNativo.durataSecondi`).
+     */
+    avviaVideoNativo: (nativo: ElementoVideoNativo, scelta: SceltaVideo) => Promise<EsitoAvvio>;
+    /** Riprende un caricamento fermo a mano: di norma lo fa da solo (`useRipresaAutomatica`). Non vale per un video nativo. */
     riprendi: (jobId: string) => void;
     /** «Rimuovi» / «Togli»: ferma i byte, ritira l'intento, toglie la scheda. */
     rimuovi: (jobId: string) => void;
@@ -167,6 +240,30 @@ export interface ApiVideoGalleria {
 
 /** Ogni quanto si rilegge l'elenco mentre qualcosa è attivo e qualcuno guarda lo schermo. */
 const RITMO_ELENCO_MS = 10_000;
+
+/**
+ * Oltre questo tempo la lettura della coda nativa si ABBANDONA (la richiesta non si annulla: il bridge non lo permette):
+ * l'elenco del server non deve restare fermo dietro una chiamata al plugin che non risponde. Una lettura costa millisecondi.
+ */
+const TETTO_ELENCO_NATIVO_MS = 8_000;
+
+/** Il contesto di chi ha avviato un giro: finché è lo stesso, ciò che il giro scrive è ancora vero. */
+type Contesto = { owner: string | null; sede: string | null };
+
+/** Il plugin dei caricamenti nativi c'è, completo e acceso? La rilevazione ne tiene la risposta in memoria per tutta la sessione. */
+async function pluginNativoPresente(): Promise<boolean> {
+    return (await caricamentiNativiDisponibili()) !== null;
+}
+
+/** Il rifiuto di un'apertura, per la schermata: una rete caduta dice che il file non è partito. Vale per il TUS e per il nativo. */
+function rifiutoDellApertura(esito: Extract<EsitoFlusso<unknown>, { ok: false }>, testoRete: string): EsitoAvvio {
+    return {
+        ok: false,
+        messaggio: esito.stato === null ? testoRete : esito.messaggio,
+        ...(esito.nomi ? { nomi: esito.nomi } : {}),
+        ...(esito.stato === 429 ? { riprovaPiuTardi: true } : {}),
+    };
+}
 
 /** Un `string` qualunque (la colonna `codice` di una riga) come codice mostrabile, o `null`. */
 function comeCodiceMostrato(codice: string | null | undefined): CodiceMostratoVideo | null {
@@ -183,6 +280,9 @@ function statoDaRiga(riga: CaricamentoVideoLocale): StatoLocale | null {
         nome: riga.nome,
         creatoIl: riga.creatoIl,
         percentuale: null,
+        // Una riga dell'archivio locale è sempre un trasferimento TUS: i video nativi non hanno una riga IndexedDB.
+        trasporto: 'tus' as const,
+        nota: null,
     };
     switch (riga.stato) {
         // Una riga con byte ancora da spedire, al rientro, è un trasferimento fermo: il codice di
@@ -256,16 +356,54 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
     const ultimaPercentualeRef = useRef<Map<string, number | null>>(new Map());
     /** Azzera l'attesa della ripresa automatica: la chiama un trasferimento arrivato in fondo (`useRipresaAutomatica`). */
     const azzeraRipresaRef = useRef<() => void>(() => undefined);
+    /**
+     * L'ULTIMA voce della coda nativa vista per ogni job di QUESTO contesto (utente e sede). Serve a tre cose che lo
+     * `StatoLocale` non porta: i byte e il MIME da dichiarare a «caricato», l'istante dell'ultimo aggiornamento (un evento
+     * arrivato in ritardo non fa tornare indietro la scheda) e se la voce è terminale (e si può dimenticare).
+     */
+    const vociNativeRef = useRef<Map<string, CaricamentoNativo>>(new Map());
+    /** I job nativi di cui si è già chiesto `dimentica`: una volta sola. */
+    const dimenticatiNativiRef = useRef<Set<string>>(new Set());
+    /** Rilegge la coda nativa. Sta in un ref perché è definita dopo `segnalaCaricato`, da cui dipende: così si spezza il giro di dipendenze. */
+    const leggiElencoNativoRef = useRef<(c: Contesto) => Promise<void>>(async () => undefined);
+    /** Applica una voce della coda nativa (la stessa per l'elenco, per gli eventi e per l'esito di `accodaVideo`). */
+    const applicaVoceNativaRef = useRef<(voce: CaricamentoNativo, c: Contesto) => void>(() => undefined);
 
     /** Il ripiego di ogni messaggio: mai la stringa vuota, che a schermo è silenzio. */
     const ripiego = t('galleryErrCaricamentoGenerico');
     const ripiegoRef = useRef(ripiego);
     const testoRete = t('galleryErrRete');
     const testoReteRef = useRef(testoRete);
+    // I testi del trasporto NATIVO. Si leggono QUI, come stringhe, e non dentro le funzioni: `t` cambia a ogni render (nei
+    // test, e può farlo anche altrove) e metterlo fra le dipendenze rifarebbe ogni callback a ogni render.
+    const notaNativoInvio = t('galleryVideoNotaNativo');
+    const notaNativoAttesaRete = t('galleryVideoAttesaRete');
+    const notaNativoPausa = t('galleryVideoInPausa');
+    const noteNativo = useMemo(
+        () => ({ invio: notaNativoInvio, attesaRete: notaNativoAttesaRete, pausa: notaNativoPausa }),
+        [notaNativoInvio, notaNativoAttesaRete, notaNativoPausa],
+    );
+    // Le frasi delle notifiche di sistema (iOS: notifica locale; Android: servizio in primo piano): le conserva il nativo
+    // nella sua coda, e le legge a schermo bloccato. Senza nomi né miniature (spec §9).
+    const testoNotificaTitolo = t('notificaCaricamentoTitolo');
+    const testoNotificaInvio = t('notificaCaricamentoInvio');
+    const testoNotificaAttesaRete = t('notificaCaricamentoAttesaRete');
+    const testoNotificaPausa = t('notificaCaricamentoPausa');
+    const testiNotifiche = useMemo<TestiNotificheCaricamento>(
+        () => ({
+            titolo: testoNotificaTitolo,
+            invio: testoNotificaInvio,
+            attesaRete: testoNotificaAttesaRete,
+            pausa: testoNotificaPausa,
+        }),
+        [testoNotificaTitolo, testoNotificaInvio, testoNotificaAttesaRete, testoNotificaPausa],
+    );
+    const testiNotificheRef = useRef(testiNotifiche);
     useEffect(() => {
         opzioniRef.current = opzioni;
         ripiegoRef.current = ripiego;
         testoReteRef.current = testoRete;
+        testiNotificheRef.current = testiNotifiche;
     });
 
     /** La frase del catalogo per un codice della pipeline, nella lingua a schermo. */
@@ -440,6 +578,70 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
         [logErroreAzione, ritiraIntento],
     );
 
+    /**
+     * Lo stesso di `ritiraAperturaOrfana` per un video NATIVO: l'apertura è riuscita, ma la schermata non c'è più (smontata,
+     * un altro utente, un'altra sede) e nessuno consegnerà i byte al plugin. Il dubbio è lo stesso — «questo dispositivo ha
+     * già l'invio in mano?» — ma la risposta non sta nell'archivio (un video nativo non ha una riga IndexedDB): sta nella
+     * coda del PLUGIN. Se quel job c'è, la stessa chiave `gn1-` ha ritrovato l'intento di un invio precedente di questo
+     * telefono, che sta spedendo: ritirarlo ucciderebbe un caricamento buono. Nel dubbio — la coda non si legge — non si
+     * ritira, per la stessa ragione.
+     */
+    const ritiraAperturaOrfanaNativa = useCallback(
+        (intentId: string, jobId: string, owner: string) => {
+            void (async () => {
+                let giaNellaCoda: boolean;
+                try {
+                    const { caricamenti } = await elencoVideoNativi({ utenteId: owner.toLowerCase() });
+                    giaNellaCoda = caricamenti.some((v) => v.jobId === jobId.toLowerCase());
+                } catch (err) {
+                    logClient({
+                        livello: 'warn',
+                        evento: 'caricamento-nativo',
+                        messaggio: `video-nativo-elenco-non-letto: ${codiceDelPonte(err)}`,
+                    });
+                    return;
+                }
+                if (giaNellaCoda) return;
+                const ritirato = await ritiraIntento(intentId);
+                logClient({
+                    livello: 'warn',
+                    evento: 'caricamento-nativo',
+                    messaggio: `${ritirato ? 'video-intento-orfano-ritirato' : 'video-intento-orfano-non-ritirato'}: job=${jobId}`,
+                });
+            })().catch((err: unknown) => logErroreAzione('video-annullamento-interrotto', err));
+        },
+        [logErroreAzione, ritiraIntento],
+    );
+
+    /* ────────────────────────────────────────────────────────────────────────
+     * LA CODA NATIVA: togliere ciò che è finito
+     * ──────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * Toglie dalla coda del plugin la voce di un job che ha FINITO (`inviato`, `fallito`, `annullato`): da lì in poi la sua
+     * storia la racconta il server, e tenerla lì la farebbe tornare in ogni lettura fino alla pulizia di 7 giorni. Una volta
+     * sola per job (`dimenticatiNativiRef`), e solo se la voce che si è vista è terminale: il plugin ignora comunque una voce
+     * che non lo è, ma è inutile chiederglielo. Mai lancia: un guasto qui è un ritardo (la voce sparisce alla pulizia).
+     */
+    const dimenticaVoceNativa = useCallback((jobId: string) => {
+        const voce = vociNativeRef.current.get(jobId);
+        if (!voce || !eStatoTerminaleNativo(voce.stato) || dimenticatiNativiRef.current.has(jobId)) return;
+        dimenticatiNativiRef.current.add(jobId);
+        void dimenticaVideoNativi({ jobIds: [jobId] }).then(
+            () => {
+                vociNativeRef.current.delete(jobId);
+            },
+            (err: unknown) => {
+                dimenticatiNativiRef.current.delete(jobId);
+                logClient({
+                    livello: 'warn',
+                    evento: 'caricamento-nativo',
+                    messaggio: `video-nativo-dimentica-fallito: ${codiceDelPonte(err)}`,
+                });
+            },
+        );
+    }, []);
+
     /* ────────────────────────────────────────────────────────────────────────
      * L'ELENCO DAL SERVER
      * ──────────────────────────────────────────────────────────────────────── */
@@ -456,6 +658,12 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
      *  · un trasferimento finito per cui il server dice ancora «da caricare» riceve la rete di
      *    sicurezza (`PATCH caricato`) una volta sola: il server se ne accorge anche da sé, ma non
      *    è detto che l'abbia già fatto.
+     *
+     * Un video NATIVO ha le sue strade (spec §7.5), perché non ha una riga nell'archivio e i suoi byte non li
+     * muove questa pagina: la voce terminale del plugin si DIMENTICA quando il server è oltre `da-caricare` (o è già
+     * pubblicato); un trasferimento fermo non si «conclude» a mano (il plugin lo scoprirà da sé al prossimo rifiuto
+     * della PUT, che è immediato per un file già arrivato); e la rete di sicurezza usa i byte e il MIME che il plugin
+     * ha dichiarato, non quelli di una riga IndexedDB.
      */
     const riconcilia = useCallback(
         async (lista: readonly VoceElencoVideo[], c: { owner: string | null; sede: string | null }) => {
@@ -463,19 +671,24 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             for (const voce of lista) {
                 if (!stessoContesto(c)) return;
                 const locale = localiRef.current[voce.jobId];
+                const nativo = locale?.trasporto === 'nativo';
 
                 if (voce.fase === 'pubblicato') {
                     if (locale) {
                         togliLocale(voce.jobId);
                         dimenticaJob(voce.jobId);
-                        await archivio?.elimina(voce.jobId).catch((err: unknown) => {
-                            logClient({
-                                livello: 'warn',
-                                evento: 'offline',
-                                messaggio: 'video-riferimento-non-rimosso',
-                                campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' },
+                        if (nativo) {
+                            dimenticaVoceNativa(voce.jobId);
+                        } else {
+                            await archivio?.elimina(voce.jobId).catch((err: unknown) => {
+                                logClient({
+                                    livello: 'warn',
+                                    evento: 'offline',
+                                    messaggio: 'video-riferimento-non-rimosso',
+                                    campi: { error_code: err instanceof Error ? err.name : 'Sconosciuto' },
+                                });
                             });
-                        });
+                        }
                     }
                     if (!pubblicatiRef.current.has(voce.intentId)) {
                         pubblicatiRef.current.add(voce.intentId);
@@ -485,6 +698,25 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                 }
 
                 if (!locale) continue;
+
+                if (nativo) {
+                    if (voce.fase !== 'da-caricare') {
+                        dimenticaVoceNativa(voce.jobId);
+                    } else if (locale.trasferimento === 'concluso' && !segnalatiRef.current.has(voce.jobId)) {
+                        const inviata = vociNativeRef.current.get(voce.jobId);
+                        if (inviata) {
+                            segnalatiRef.current.add(voce.jobId);
+                            await segnalaVideoCaricato(fetch, {
+                                intentId: voce.intentId,
+                                jobId: voce.jobId,
+                                byte: inviata.byteTotali,
+                                mime: inviata.mime,
+                                ripiego: ripiegoRef.current,
+                            });
+                        }
+                    }
+                    continue;
+                }
 
                 if (
                     voce.fase !== 'da-caricare'
@@ -515,19 +747,24 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                 }
             }
         },
-        [aggiornaLocale, dimenticaJob, logErroreAzione, stessoContesto, togliLocale],
+        [aggiornaLocale, dimenticaJob, dimenticaVoceNativa, logErroreAzione, stessoContesto, togliLocale],
     );
 
     const caricaElenco = useCallback((): Promise<void> => {
         if (elencoInVoloRef.current) return elencoInVoloRef.current;
         const c = contesto();
         if (!c.owner || !c.sede) return Promise.resolve();
-        // Senza rete non si chiede: ogni giro a vuoto lascerebbe una riga `error` e non direbbe niente.
-        if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve();
         const sede = c.sede;
+        // Senza rete non si chiede al SERVER: ogni giro a vuoto lascerebbe una riga `error` e non direbbe niente. La coda
+        // NATIVA invece si legge lo stesso: è una chiamata al plugin e non alla rete, ed è proprio senza rete che racconta «in attesa».
+        const senzaRete = typeof navigator !== 'undefined' && navigator.onLine === false;
         const giro = (async () => {
-            const esito = await leggiElencoVideoGalleria(fetch, { scuolaId: sede, ripiego: ripiegoRef.current });
-            if (!stessoContesto(c) || !esito.ok) return;
+            // Le due letture partono insieme — la richiesta al server nello stesso istante di prima — e `riconcilia`
+            // aspetta entrambe: per decidere che cosa dimenticare e che cosa segnalare deve vedere le voci del plugin.
+            const codaNativa = leggiElencoNativoRef.current(c);
+            const server = senzaRete ? null : leggiElencoVideoGalleria(fetch, { scuolaId: sede, ripiego: ripiegoRef.current });
+            const [esito] = await Promise.all([server, codaNativa]);
+            if (!stessoContesto(c) || !esito?.ok) return;
             scriviVoci(esito.dati.voci);
             await riconcilia(esito.dati.voci, c);
         })()
@@ -583,6 +820,86 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
         },
         [dopoTrasferimento, logErroreAzione],
     );
+
+    /* ────────────────────────────────────────────────────────────────────────
+     * LA CODA NATIVA (app 1.2): leggerla e raccontarla
+     * ──────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * Mette una voce della coda del plugin dentro lo stato della schermata. È l'UNICA strada: la percorrono la lettura
+     * dell'elenco, ogni evento `caricamento` e l'esito di `accodaVideo`, così nessuna delle tre può raccontare le cose in
+     * modo diverso dalle altre.
+     *
+     *  · una voce di un ALTRO utente o di un'ALTRA sede non è di questa schermata: l'elenco del plugin è dell'utente, e un
+     *    evento arriva a chiunque ascolti;
+     *  · una voce che «Rimuovi» ha appena tolto (`annullatiRef`) non risorge: l'evento `annullato` che l'annullamento stesso
+     *    produce arriva dopo che la scheda è sparita;
+     *  · una voce PIÙ VECCHIA di quella già vista (un evento e l'esito di `accodaVideo` non hanno un ordine garantito)
+     *    non fa tornare indietro la scheda;
+     *  · lo stato si riscrive solo se cambia qualcosa: un avanzamento che non sposta la percentuale intera non rifà il disegno;
+     *  · quando il video PASSA a `inviato` sotto gli occhi di questa schermata (la voce di prima era ancora viva) i byte sono
+     *    sullo Storage: si dice «caricato» al server UNA volta, come fa il TUS a fine trasferimento (rete di sicurezza accanto
+     *    al trigger d'arrivo e alla scansione). Una voce che si TROVA già `inviato` — l'app era chiusa, la pagina appena
+     *    aperta — non scatta da qui: ci pensa `riconcilia`, che dice «caricato» solo se il server dice ancora «da caricare».
+     *    Chiederlo sempre sarebbe una richiesta in più, e un rifiuto nei log, per ogni video già pubblicato da giorni.
+     */
+    const applicaVoceNativa = useCallback(
+        (voce: CaricamentoNativo, c: Contesto) => {
+            if (!stessoContesto(c) || !c.owner || !c.sede) return;
+            if (voce.utenteId !== c.owner.toLowerCase() || voce.scuolaId !== c.sede.toLowerCase()) return;
+            if (annullatiRef.current.has(voce.jobId)) return;
+            const prima = vociNativeRef.current.get(voce.jobId);
+            if (prima && Date.parse(prima.aggiornatoIl) > Date.parse(voce.aggiornatoIl)) return;
+            vociNativeRef.current.set(voce.jobId, voce);
+            const stato = statoLocaleDaCaricamentoNativo(voce);
+            scriviLocali((prec) => (stessoStatoLocale(prec[voce.jobId], stato) ? prec : { ...prec, [voce.jobId]: stato }));
+            const eraViva = prima !== undefined && !eStatoTerminaleNativo(prima.stato);
+            if (voce.stato === 'inviato' && eraViva && !segnalatiRef.current.has(voce.jobId)) {
+                segnalatiRef.current.add(voce.jobId);
+                segnalaCaricato(voce.jobId, voce.byteTotali, voce.mime, c);
+            }
+        },
+        [scriviLocali, segnalaCaricato, stessoContesto],
+    );
+
+    /**
+     * Legge la coda del plugin per QUESTO utente e applica ogni voce di QUESTA sede. Senza plugin (web, app 1.0/1.1,
+     * interruttore spento, binario incompleto) non chiama niente e non scrive niente: è il caso normale, non un guasto.
+     * Mai lancia, e non aspetta più di `TETTO_ELENCO_NATIVO_MS`: una chiamata al plugin che non risponde non deve tenere
+     * ferma la lettura dell'elenco del server, che aspetta questa (`caricaElenco`). Un rifiuto è un `warn` col suo CODICE
+     * dell'elenco chiuso, mai il messaggio del ponte: la lettura successiva riprova.
+     */
+    const leggiElencoNativo = useCallback(
+        async (c: Contesto): Promise<void> => {
+            if (!c.owner || !c.sede || !(await pluginNativoPresente())) return;
+            let caricamenti: CaricamentoNativo[];
+            try {
+                const lettura = await conTettoDiTempo(
+                    elencoVideoNativi({ utenteId: c.owner.toLowerCase() }),
+                    TETTO_ELENCO_NATIVO_MS,
+                );
+                if (lettura.scaduto) {
+                    logClient({ livello: 'warn', evento: 'caricamento-nativo', messaggio: 'video-nativo-elenco-scaduto' });
+                    return;
+                }
+                caricamenti = lettura.valore.caricamenti;
+            } catch (err) {
+                logClient({
+                    livello: 'warn',
+                    evento: 'caricamento-nativo',
+                    messaggio: `video-nativo-elenco-non-letto: ${codiceDelPonte(err)}`,
+                });
+                return;
+            }
+            if (!stessoContesto(c)) return;
+            for (const voce of caricamenti) applicaVoceNativa(voce, c);
+        },
+        [applicaVoceNativa, stessoContesto],
+    );
+    useEffect(() => {
+        leggiElencoNativoRef.current = leggiElencoNativo;
+        applicaVoceNativaRef.current = applicaVoceNativa;
+    });
 
     const trasferisci = useCallback(
         async (jobId: string): Promise<void> => {
@@ -709,13 +1026,8 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                     trasporto: trasporto.nome,
                     ripiego: ripiegoRef.current,
                 });
-            /** Il rifiuto dell'apertura, per la schermata: una rete caduta dice che il file non è partito. */
-            const rifiutato = (esito: Extract<EsitoFlusso<unknown>, { ok: false }>): EsitoAvvio => ({
-                ok: false,
-                messaggio: esito.stato === null ? testoReteRef.current : esito.messaggio,
-                ...(esito.nomi ? { nomi: esito.nomi } : {}),
-                ...(esito.stato === 429 ? { riprovaPiuTardi: true } : {}),
-            });
+            const rifiutato = (esito: Extract<EsitoFlusso<unknown>, { ok: false }>): EsitoAvvio =>
+                rifiutoDellApertura(esito, testoReteRef.current);
 
             // ⚠️ La chiave porta i bambini: per il server la stessa chiave con bambini diversi è un
             // `IDEMPOTENCY_CONFLICT` (409 `VIDEO_RIPROVA`), cioè «ricarica e riprova» per un gesto che
@@ -729,20 +1041,16 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             // Una scelta NUOVA dello stesso file (stesso nome, peso e data) CON GLI STESSI BAMBINI
             // ritrova l'intento di prima. Se quello è già finito — pubblicato e magari poi cancellato,
             // ritirato, sostituito, fallito — riaprirlo non porta da nessuna parte: è un caricamento
-            // nuovo, con un intento nuovo.
-            const eConcluso = (a: IntentoApertoVideo): boolean =>
-                ['published', 'cancelled', 'superseded'].includes(a.statoIntent)
-                || ['failed', 'rejected'].includes(a.statoJob);
-
+            // nuovo, con un intento nuovo (`intentoConcluso`).
             // La risposta è arrivata a schermata cambiata (smontata, altro utente, altra sede): l'intento
             // esiste sul server e nessuno spedirà i suoi byte. Un intento già concluso, invece, non è
             // nostro e non si tocca.
             if (!stessoContesto(c)) {
-                if (!eConcluso(apertura.dati)) ritiraAperturaOrfana(apertura.dati.intentId, apertura.dati.jobId);
+                if (!intentoConcluso(apertura.dati)) ritiraAperturaOrfana(apertura.dati.intentId, apertura.dati.jobId);
                 return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
             }
 
-            if (eConcluso(apertura.dati)) {
+            if (intentoConcluso(apertura.dati)) {
                 logClient({
                     livello: 'warn',
                     evento: 'fetch',
@@ -806,6 +1114,8 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                         trasferimento: needsUpload ? 'in-fila' : 'concluso',
                         percentuale: null,
                         codice: null,
+                        trasporto: 'tus',
+                        nota: null,
                     },
                 }));
 
@@ -840,13 +1150,195 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
         ],
     );
 
+    /**
+     * INVIARE UN VIDEO NATIVO (app 1.2, spec §7.4): apre l'intento col trasporto `put-nativo` e consegna al plugin ciò
+     * che gli serve per spedire i byte dal sistema operativo.
+     *
+     * I passi sono quelli di `avviaVideo` — contesto, rifiuto locale, chiave, apertura con i bambini, intento già
+     * concluso, schermata cambiata — e finiscono in un posto diverso: non c'è un `File` né una riga IndexedDB, c'è
+     * `accodaVideo`. Un rifiuto dell'apertura (il 422 coi nomi, un 429, una rete caduta) torna alla schermata con il
+     * video ancora nel passo dei bambini, e prima di quel momento non è partito un byte.
+     *
+     * Dopo l'apertura:
+     *  · `needs_upload: false` — i byte sono GIÀ sullo Storage (un invio precedente è arrivato e la chiave deterministica
+     *    l'ha ritrovato): la copia preparata non serve più (`scartaScelti`), la riga locale è «conclusa» e si dice «caricato»;
+     *  · altrimenti `accodaVideo` con i campi della risposta (l'URL firmato, il `content-type` delle sue intestazioni, la
+     *    scadenza dell'URL, il token di rinnovo, e gli indirizzi di rinnovo e di registro, composti dall'origine della pagina).
+     *    Se il plugin rifiuta, l'intento si RITIRA (esiste già sul server, in attesa di byte che non partiranno), si scrive
+     *    `video-nativo-accodamento-fallito: job=<uuid> <codice>` e il video resta nel passo dei bambini.
+     *
+     * Gli id verso il plugin sono in MINUSCOLO: lo schema li rifiuta altrimenti, e la sede letta dal cookie `sedi_attive`
+     * può avere le maiuscole (secondario S1 n. 3).
+     *
+     * Dopo `accodaVideo` l'invio è del plugin: se nel frattempo la schermata è cambiata (smontata, altra sede) non si scrive
+     * niente qui — e non si ritira niente, perché sta partendo davvero — e si risponde `ok`: ripresentarsi con lo stesso video
+     * e gli stessi bambini ritrova lo stesso intento e ne ruota il token, senza un secondo invio.
+     */
+    const avviaVideoNativo = useCallback<ApiVideoGalleria['avviaVideoNativo']>(
+        async (nativo, scelta) => {
+            const c = contesto();
+            // Una pagina già smontata non apre intenti: li ritirerebbe subito.
+            if (!montatoRef.current) return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
+            if (!c.sede || !c.owner) {
+                // Come `avviaVideo`: NON si indovina il plesso.
+                return { ok: false, messaggio: fraseRef.current('SEDE_DA_SPECIFICARE') };
+            }
+            const sede = c.sede;
+            const owner = c.owner;
+
+            const rifiuto = rifiutoLocaleVideo({ size: nativo.byte }, scelta.durataSecondi);
+            if (rifiuto) return { ok: false, messaggio: fraseRef.current(rifiuto) };
+
+            // I bambini di QUESTO invio, fissati una volta: sono nel corpo della POST e sono nella chiave.
+            const destinatari = {
+                tagAlunni: scelta.tag,
+                broadcast: scelta.broadcast,
+                classi: opzioniRef.current.classi,
+            };
+            const apri = (chiaveIdempotenza: string) =>
+                apriIntentoVideoGalleriaNativo(fetch, {
+                    file: { nome: nativo.nome, byte: nativo.byte, mime: nativo.mime, sha256: nativo.sha256 },
+                    scuolaId: sede,
+                    durataSecondi: scelta.durataSecondi,
+                    chiaveIdempotenza,
+                    destinatari,
+                    ripiego: ripiegoRef.current,
+                });
+            const rifiutato = (esito: Extract<EsitoFlusso<unknown>, { ok: false }>): EsitoAvvio =>
+                rifiutoDellApertura(esito, testoReteRef.current);
+
+            // ⚠️ `gn1-`: deterministica, salata, e COI BAMBINI dentro (vedi `chiaveIdempotenzaVideoNativo`). Lo stesso video con
+            // gli stessi bambini ritrova lo stesso intento e ne ruota il token; con altri bambini è un intento nuovo, mai un conflitto.
+            let chiave = chiaveIdempotenzaVideoNativo({ byte: nativo.byte, sha256: nativo.sha256 }, destinatari);
+            let apertura = await apri(chiave);
+            if (!apertura.ok) return rifiutato(apertura);
+
+            // La risposta è arrivata a schermata cambiata: l'intento esiste sul server e nessuno consegnerà i byte al plugin.
+            // Un intento già concluso, invece, non è nostro e non si tocca.
+            if (!stessoContesto(c)) {
+                if (!intentoConcluso(apertura.dati)) {
+                    ritiraAperturaOrfanaNativa(apertura.dati.intentId, apertura.dati.jobId, owner);
+                }
+                return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
+            }
+
+            // Lo stesso video con gli stessi bambini ritrova l'intento di prima; se quello è già finito riaprirlo non porta
+            // da nessuna parte: è un invio nuovo, con un intento nuovo.
+            if (intentoConcluso(apertura.dati)) {
+                logClient({
+                    livello: 'warn',
+                    evento: 'caricamento-nativo',
+                    messaggio: `video-nuovo-intento-dopo-concluso: job=${apertura.dati.jobId}`,
+                    campi: { stato_intento: apertura.dati.statoIntent, stato_job: apertura.dati.statoJob, tipo: 'put-nativo' },
+                });
+                chiave = `${chiave}-${crypto.randomUUID()}`;
+                apertura = await apri(chiave);
+                if (!apertura.ok) return rifiutato(apertura);
+                if (!stessoContesto(c)) {
+                    ritiraAperturaOrfanaNativa(apertura.dati.intentId, apertura.dati.jobId, owner);
+                    return { ok: false, messaggio: fraseRef.current('VIDEO_NON_AUTORIZZATO') };
+                }
+            }
+
+            const { put, rinnovo, expiresAt, needsUpload } = apertura.dati;
+            const jobId = apertura.dati.jobId.toLowerCase();
+            const intentId = apertura.dati.intentId.toLowerCase();
+
+            if (!needsUpload) {
+                // I byte sono GIÀ sullo Storage: niente da spedire. La copia preparata non serve più, la riga locale è
+                // «conclusa» (da qui la parola è del server) e si dice «caricato» (idempotente).
+                annullatiRef.current.delete(jobId);
+                void scartaPreparatiNativi([nativo.id]);
+                scriviLocali((prec) => ({
+                    ...prec,
+                    [jobId]: {
+                        jobId,
+                        intentId,
+                        nome: nativo.nome,
+                        creatoIl: new Date().toISOString(),
+                        trasferimento: 'concluso',
+                        percentuale: null,
+                        codice: null,
+                        trasporto: 'nativo',
+                        nota: null,
+                    },
+                }));
+                segnalaCaricato(jobId, nativo.byte, nativo.mime, c);
+                void caricaElenco();
+                return { ok: true };
+            }
+
+            if (!put || !rinnovo) {
+                // Non può succedere (`apriIntentoVideoGalleriaNativo` rifiuta una risposta senza URL o senza token), ma se
+                // succede NON si spedisce a metà: si ritira l'intento e lo si dice.
+                logClient({
+                    livello: 'error',
+                    evento: 'caricamento-nativo',
+                    messaggio: `video-nativo-accodamento-fallito: job=${jobId} PARAMETRI_NON_VALIDI`,
+                });
+                ritiraSenzaAspettare(intentId);
+                return { ok: false, messaggio: ripiegoRef.current };
+            }
+
+            const origine = window.location.origin;
+            let voce: CaricamentoNativo;
+            try {
+                voce = await accodaVideoNativo({
+                    idElemento: nativo.id,
+                    sha256: nativo.sha256,
+                    byteAttesi: nativo.byte,
+                    jobId,
+                    intentId,
+                    utenteId: owner.toLowerCase(),
+                    scuolaId: sede.toLowerCase(),
+                    caricamento: { url: put.url, contentType: put.contentType, scadeIl: expiresAt },
+                    rinnovo: { url: `${origine}/api/video-uploads/rinnovo`, token: rinnovo.token, scadeIl: rinnovo.scadeIl },
+                    registro: { url: `${origine}/api/logs` },
+                    testi: testiNotificheRef.current,
+                });
+            } catch (err) {
+                // L'intento esiste già sul server, confermato e in attesa di byte che non partiranno: si ritira, o aspetterebbe
+                // la ritenzione e poi avviserebbe di un video fallito. Il video resta nel passo dei bambini. Solo il CODICE
+                // dell'elenco chiuso: mai il messaggio del ponte, né il nome del file.
+                logClient({
+                    livello: 'error',
+                    evento: 'caricamento-nativo',
+                    messaggio: `video-nativo-accodamento-fallito: job=${jobId} ${codiceDelPonte(err)}`,
+                });
+                ritiraSenzaAspettare(intentId);
+                return { ok: false, messaggio: ripiegoRef.current };
+            }
+
+            // L'invio è del plugin da qui in poi: prosegue anche se la schermata cambia, o se si esce dall'account.
+            annullatiRef.current.delete(jobId);
+            if (stessoContesto(c)) {
+                applicaVoceNativa(voce, c);
+                void caricaElenco();
+            }
+            return { ok: true };
+        },
+        [
+            applicaVoceNativa,
+            caricaElenco,
+            contesto,
+            ritiraAperturaOrfanaNativa,
+            ritiraSenzaAspettare,
+            scriviLocali,
+            segnalaCaricato,
+            stessoContesto,
+        ],
+    );
+
     /* ────────────────────────────────────────────────────────────────────────
      * GLI ALTRI GESTI
      * ──────────────────────────────────────────────────────────────────────── */
 
     const riprendi = useCallback(
         (jobId: string) => {
-            if (localiRef.current[jobId]?.trasferimento === 'interrotto') accodaTrasferimento(jobId);
+            // La ripresa a mano è del TUS: un invio nativo riprende da solo (rete, riapertura, notifica) e la pagina non ha un
+            // gesto che lo sposti.
+            const locale = localiRef.current[jobId];
+            if (locale?.trasporto !== 'nativo' && locale?.trasferimento === 'interrotto') accodaTrasferimento(jobId);
         },
         [accodaTrasferimento],
     );
@@ -870,6 +1362,12 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
      * nascosta soltanto a schermo; se il ritiro non riesce, o lancia, la scheda TORNA: l'intento è
      * ancora vivo, e un video in preparazione uscirebbe lo stesso in galleria mentre la persona lo
      * crede tolto.
+     *
+     * UN VIDEO NATIVO (app 1.2, spec §7.6) segue lo stesso ordine con le sue mani: PRIMA `annulla` del plugin (si fermano i
+     * byte, si cancellano copia e segreti), POI il ritiro dell'intento, e dopo il ritiro riuscito la voce terminale si
+     * `dimentica`. Se i byte NON si riescono a fermare l'intento non si ritira — i byte potrebbero ancora correre su un job
+     * revocato — e la scheda torna, riprendendo il racconto del plugin. Un `annulla` che risponde «niente da annullare»
+     * (la voce era già terminale) non è un guasto: il ritiro prosegue.
      */
     const rimuovi = useCallback(
         (jobId: string) => {
@@ -880,19 +1378,32 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             const voce = vociRef.current?.find((v) => v.jobId === jobId);
             const intentId = locale?.intentId ?? voce?.intentId;
             if (!intentId) return;
+            const nativo = locale?.trasporto === 'nativo';
 
             annullatiRef.current.add(jobId);
             // Sparisce a schermo (`inRitiro`), ma non entra fra i `nascosti` finché il server non conferma: vedi sopra.
             setInRitiro((prec) => new Set(prec).add(intentId));
             togliLocale(jobId);
             const archivio = archivioRef.current;
-            const dip = locale ? dipendenzePer(jobId, intentId) : null;
+            const dip = locale && !nativo ? dipendenzePer(jobId, intentId) : null;
             const byteGiaSulServer = locale?.trasferimento === 'concluso';
 
             void (async () => {
                 let ritirato = false;
                 try {
-                    if (archivio && dip) {
+                    if (nativo) {
+                        // PRIMA i byte (regola #58). Un rifiuto del plugin interrompe tutto: il ritiro non parte.
+                        try {
+                            await annullaVideoNativo({ jobId: jobId.toLowerCase() });
+                        } catch (err) {
+                            logClient({
+                                livello: 'error',
+                                evento: 'caricamento-nativo',
+                                messaggio: `video-nativo-annulla-fallito: job=${jobId} ${codiceDelPonte(err)}`,
+                            });
+                            throw err;
+                        }
+                    } else if (archivio && dip) {
                         if (byteGiaSulServer) {
                             // Nessun trasferimento da fermare: se la riga non si marca (archivio che non risponde) il
                             // ritiro dell'intento — che è ciò che conta — parte lo stesso, e il guasto si registra.
@@ -906,7 +1417,22 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                         }
                     }
                     ritirato = await ritiraIntento(intentId);
-                    if (archivio && locale) await archivio.elimina(jobId);
+                    if (nativo) {
+                        // Intento ritirato: la voce (annullata, o terminale) non serve più. Un guasto qui è un ritardo — la
+                        // pulizia del plugin la toglie dopo 7 giorni — e non cambia l'esito.
+                        if (ritirato) {
+                            await dimenticaVideoNativi({ jobIds: [jobId.toLowerCase()] }).catch((err: unknown) =>
+                                logClient({
+                                    livello: 'warn',
+                                    evento: 'caricamento-nativo',
+                                    messaggio: `video-nativo-dimentica-fallito: ${codiceDelPonte(err)}`,
+                                }),
+                            );
+                            vociNativeRef.current.delete(jobId);
+                        }
+                    } else if (archivio && locale) {
+                        await archivio.elimina(jobId);
+                    }
                     dimenticaJob(jobId);
                 } finally {
                     // Il verdetto c'è: l'attesa finisce comunque. Se il server ha confermato l'intento passa fra i
@@ -918,9 +1444,16 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                     } else {
                         logClient({
                             livello: 'warn',
-                            evento: 'fetch',
+                            // La storia di un video nativo sta tutta in `client:caricamento-nativo` (spec §8.1).
+                            evento: nativo ? 'caricamento-nativo' : 'fetch',
                             messaggio: `video-ritiro-non-riuscito: job=${jobId}`,
                         });
+                        // Un invio nativo non si è ritirato (i byte non si sono fermati, o il server ha rifiutato): la voce del
+                        // plugin torna a raccontarlo, e la rilettura la riporta a schermo.
+                        if (nativo) {
+                            annullatiRef.current.delete(jobId);
+                            void caricaElencoRef.current();
+                        }
                     }
                     if (stessoContesto(c)) {
                         if (ritirato) setNascosti((prec) => new Set([...prec, ...ricordati]));
@@ -975,8 +1508,9 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             // Senza rete non si tenta: ogni ripresa a vuoto lascerebbe una riga `error` (la firma che non
             // si riesce a chiedere) e un conto che non dice niente. Quando la rete torna lo dice `online`.
             if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+            // Solo i trasferimenti TUS: un invio nativo fermo riprende da solo (rete, riapertura, notifica) e questa pagina non può spostarlo.
             const daRiprendere = Object.values(localiRef.current).filter(
-                (l) => l.trasferimento === 'interrotto' && !inCodaRef.current.has(l.jobId),
+                (l) => l.trasporto !== 'nativo' && l.trasferimento === 'interrotto' && !inCodaRef.current.has(l.jobId),
             );
             for (const locale of daRiprendere) {
                 // Il motivo sta nel MESSAGGIO (e non solo nei campi): `app_log` conserva i campi della
@@ -1014,6 +1548,8 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             pubblicatiRef.current.clear();
             segnalatiRef.current.clear();
             annullatiRef.current.clear();
+            vociNativeRef.current.clear();
+            dimenticatiNativiRef.current.clear();
             if (!owner || !sede) return;
             setNascosti(leggiNascosti(owner));
             const archivio = await creaArchivioCaricamenti();
@@ -1027,7 +1563,12 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                 const stato = statoDaRiga(riga);
                 if (stato) iniziali[riga.jobId] = stato;
             }
-            scriviLocali(() => iniziali);
+            // Le righe NATIVE già scritte (un evento del plugin arrivato mentre si leggeva l'archivio) non si perdono: l'archivio
+            // IndexedDB non le conosce, e riscrivere tutto con le sole sue righe le cancellerebbe fino alla lettura successiva.
+            scriviLocali((prec) => ({
+                ...Object.fromEntries(Object.entries(prec).filter(([, l]) => l.trasporto === 'nativo')),
+                ...iniziali,
+            }));
             // Prima l'elenco (che dice a che punto è ciò che il server già sa), poi la ripresa.
             await caricaElenco();
             if (!vivo) return;
@@ -1059,9 +1600,10 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
             messaggiAzione,
             frase,
             notaCaricamento,
+            noteNativo,
             offline: !online,
         }),
-        [locali, voci, nascosti, inRitiro, messaggiAzione, frase, notaCaricamento, online],
+        [locali, voci, nascosti, inRitiro, messaggiAzione, frase, notaCaricamento, noteNativo, online],
     );
 
     // Gli intenti visti in una fase attiva: una pubblicazione di uno di questi è una NOVITÀ. Si
@@ -1085,16 +1627,53 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
     // «caricamento» e poi di nuovo a «interrotto»: il conto dei tentativi sta nell'hook della ripresa
     // e non riparte da capo a ogni giro; lo azzerano le notizie (rete tornata, ritorno in primo
     // piano, un trasferimento arrivato in fondo: `azzeraRipresaRef`).
+    // Solo i trasferimenti TUS: un invio nativo fermo riprende da solo, e armare la ripresa per lui sarebbe un orologio che non può fare niente.
     const ripresa = useRipresaAutomatica({
-        attiva: composte.some((r) => r.fase === 'interrotto'),
+        attiva: composte.some((r) => r.fase === 'interrotto' && r.trasporto !== 'nativo'),
         riprendi: riprendiInterrotti,
     });
     useEffect(() => {
         azzeraRipresaRef.current = ripresa.azzera;
     }, [ripresa.azzera]);
 
+    // GLI EVENTI DEL PLUGIN (app 1.2): ogni cambio di una voce della coda nativa arriva qui senza aspettare il prossimo
+    // giro dell'elenco — la percentuale si muove, un «in attesa di rete» compare quando la rete cade. Si ascolta solo se il
+    // plugin c'è, e solo con un utente e una sede (le voci di un'altra sede o di un altro utente le scarta `applicaVoceNativa`).
+    // L'ascolto si toglie allo smontaggio e al cambio di utente o di sede: gli eventi arrivano comunque a chiunque ascolti.
+    useEffect(() => {
+        const owner = opzioni.utenteId;
+        const sede = opzioni.sede;
+        if (!owner || !sede) return;
+        const c: Contesto = { owner, sede };
+        let vivo = true;
+        let togliAscolto: (() => Promise<void>) | null = null;
+        const logAscolto = (err: unknown) =>
+            logClient({
+                livello: 'warn',
+                evento: 'caricamento-nativo',
+                messaggio: `video-nativo-ascolto-fallito: ${codiceDelPonte(err)}`,
+            });
+        void (async () => {
+            if (!(await pluginNativoPresente()) || !vivo) return;
+            try {
+                const togli = await ascoltaCaricamenti((voce) => {
+                    if (vivo) applicaVoceNativaRef.current(voce, c);
+                });
+                // Smontato mentre il plugin rispondeva: l'ascolto appena agganciato si toglie subito.
+                if (vivo) togliAscolto = togli;
+                else await togli();
+            } catch (err) {
+                logAscolto(err);
+            }
+        })().catch(logAscolto);
+        return () => {
+            vivo = false;
+            if (togliAscolto) void togliAscolto().catch(logAscolto);
+        };
+    }, [opzioni.utenteId, opzioni.sede]);
+
     const righe: RigaVideoLavorazione[] = composte;
 
-    return { righe, avviaVideo, riprendi, rimuovi, riprova };
+    return { righe, avviaVideo, avviaVideoNativo, riprendi, rimuovi, riprova };
 }
 

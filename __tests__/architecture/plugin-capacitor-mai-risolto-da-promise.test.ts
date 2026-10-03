@@ -77,6 +77,12 @@ const PLUGIN_NOTI = [
   'SplashScreen',
   'Camera',
   'BiometricAuth',
+  // Il plugin NOSTRO dell'app 1.2 (caricamenti nativi in background, spec 2026-10-03): locale
+  // all'app, non un pacchetto npm, quindi la scoperta per import non lo vede mai. Arriva da
+  // `registerPlugin<…>(NOME_PLUGIN_CARICAMENTI)` in `src/lib/native/caricamenti-nativi.ts`, dove una
+  // funzione non `async` lo tiene e lo rende: la strada di `registerPlugin` lo scopre già da sola, il
+  // nome qui lo copre anche dove comparisse come `Capacitor.Plugins.KidvilleCaricamenti`.
+  'KidvilleCaricamenti',
 ]
 
 type Forma =

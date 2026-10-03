@@ -13,7 +13,7 @@ import { AnteprimaMedia } from '@/components/features/gallery/AnteprimaMedia';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { VideoInLavorazione } from '@/components/features/gallery/VideoInLavorazione';
 import { CodaFoto } from '@/components/features/gallery/CodaFoto';
-import { useVideoGalleria } from '@/components/features/gallery/use-video-galleria';
+import { useVideoGalleria, type EsitoAvvio } from '@/components/features/gallery/use-video-galleria';
 import { syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
 import { accodaFotoGalleria, assegnaSedeFotoLegacy, listaFotoInCoda, prossimaRipresaCodaFoto, riprovaFotoInCoda, scartaFotoInCoda } from '@/lib/gallery/coda-foto';
 import type { LocalGalleryMedia } from '@/lib/offline/db';
@@ -21,6 +21,8 @@ import { FotoTroppoGrandeError } from '@/lib/gallery/byte-foto';
 import { processImageWithWatermark, ImageProcessingError } from '@/lib/media/processing';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { applicaTagATutte, fotoDaConfigurare, fotoGiaConfigurate } from '@/lib/gallery/applica-tag';
+import { idNativi, nomeElemento, type ElementoCaricabile } from '@/lib/gallery/selettore-media';
+import { scartaPreparatiNativi } from '@/lib/gallery/selettore-nativo';
 import { durataVideoDalFile, sedeDelCaricamento, sediDalCookie } from '@/lib/gallery/video-galleria-flusso';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -103,14 +105,24 @@ function TeacherGalleryContent() {
     const [students, setStudents] = useState<Student[]>([]);
     const [loading, setLoading] = useState(true);
     const [step, setStep] = useState<Step>('gallery');
-    const [uploadedFiles, setUploadedFiles] = useState<{
-        file: File;
-        preview: string;
+    // Un elemento è un `File` (web, app 1.0/1.1, ripiego del browser: va in TUS) OPPURE un video NATIVO
+    // dell'app 1.2 (`file: null`, `nativo` pieno: i byte stanno sul telefono, nel plugin). Il compilatore
+    // costringe ogni lettura di `f.file.…` a decidere che cosa fare di un video nativo (spec §7.3).
+    const [uploadedFiles, setUploadedFiles] = useState<(ElementoCaricabile & {
         tag_students: string[];
         is_broadcast: boolean;
-    }[]>([]);
+    })[]>([]);
     const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
     const [uploading, setUploading] = useState(false);
+    // ── LO SMONTAGGIO DELLA PAGINA SCARTA I VIDEO NATIVI NON ANCORA PARTITI (spec §7.3). Un video scelto
+    // dal selettore nativo è una COPIA da fino a 2 GB sul telefono: se si esce dalla Galleria senza
+    // pubblicarlo nessuno la porterà più avanti, e resterebbe lì fino al prossimo avvio del motore.
+    // Il cleanup non può leggere `uploadedFiles` (la sua chiusura è quella del primo render): legge lo
+    // specchio, aggiornato a ogni elenco nuovo. Chi ha già passato il video al motore (`accodaVideo`) lo
+    // ha tolto dall'elenco, e comunque `scartaScelti` ignora ciò che non sta più fra i preparati.
+    const uploadedFilesRef = useRef(uploadedFiles);
+    useEffect(() => { uploadedFilesRef.current = uploadedFiles; }, [uploadedFiles]);
+    useEffect(() => () => { void scartaPreparatiNativi(idNativi(uploadedFilesRef.current)); }, []);
     const [queueRows, setQueueRows] = useState<LocalGalleryMedia[]>([]);
     const [queueNow, setQueueNow] = useState(0);
     const [readError, setReadError] = useState(false);
@@ -377,10 +389,9 @@ function TeacherGalleryContent() {
         onPubblicato: () => { void loadMedia(); },
     });
 
-    const handleUploadFiles = (files: { file: File; preview: string }[]) => {
+    const handleUploadFiles = (files: ElementoCaricabile[]) => {
         setUploadedFiles(files.map(f => ({
-            file: f.file,
-            preview: f.preview,
+            ...f,
             tag_students: [],
             is_broadcast: false
         })));
@@ -410,11 +421,16 @@ function TeacherGalleryContent() {
      *     la scheda dei tag smette di comparire senza dire perché;
      *  3. se l'elenco si svuota si torna al passo di scelta, non a uno step 2
      *     vuoto da cui non si esce.
+     *
+     * E un video NATIVO (app 1.2) non ha un objectURL da revocare: ha una copia sul
+     * telefono, e togliendolo dall'elenco la copia si CANCELLA (`scartaScelti`), perché
+     * nessuno la porterà più avanti. Alla miniatura, un data URL, non c'è niente da fare.
      */
     const rimuoviFileSelezionato = (indice: number) => {
         const rimosso = uploadedFiles[indice];
         if (!rimosso) return;
-        URL.revokeObjectURL(rimosso.preview);
+        if (rimosso.nativo) void scartaPreparatiNativi([rimosso.nativo.id]);
+        else URL.revokeObjectURL(rimosso.preview);
         const restanti = uploadedFiles.filter((_, i) => i !== indice);
         setUploadedFiles(restanti);
         // Se ho tolto una foto PRIMA di quella attiva, l'attiva è scalata di uno;
@@ -423,6 +439,20 @@ function TeacherGalleryContent() {
             indice < prev ? prev - 1 : Math.min(prev, Math.max(restanti.length - 1, 0))
         ));
         if (restanti.length === 0) setStep('upload');
+    };
+
+    /**
+     * «ANNULLA» — si torna alla galleria buttando la scelta, e con lei i video NATIVI (app 1.2): sono
+     * copie sul telefono, da fino a 2 GB, che dopo «Annulla» nessuno porterà più avanti (`scartaScelti`).
+     * Quelli che stanno ancora nel passo di scelta (`MediaUploader`) li scarta lo smontaggio di
+     * `MediaUploader`, che qui si smonta insieme al passo.
+     */
+    const annullaCaricamento = () => {
+        svuotaAvvisi();
+        void scartaPreparatiNativi(idNativi(uploadedFiles));
+        setStep('gallery');
+        setUploadedFiles([]);
+        setActiveFileIndex(0);
     };
 
     const handleToggleTag = (studentId: string) => {
@@ -535,11 +565,19 @@ function TeacherGalleryContent() {
      * Un video non si può inviare senza rete (l'apertura è una richiesta). Il file resta
      * nell'elenco, e il messaggio lo dice: riprovare è un tocco, riscegliere un video da un
      * gigabyte no. Le foto, invece, si salvano in locale e partono da sole.
+     *
+     * ─── I VIDEO NATIVI (app 1.2) ────────────────────────────────────────────────
+     * Un elemento senza `File` è un video scelto dal selettore nativo: `avviaVideoNativo` apre
+     * l'intento con gli stessi cancelli (il 422 coi nomi resta QUI) e lo consegna al plugin, che
+     * lo spedisce dal sistema operativo. Da quel momento l'elemento esce dall'elenco: la copia sul
+     * telefono è del plugin, e «Annulla» — spento finché il giro non finisce — non la tocca. Un file
+     * (web, app 1.0/1.1, ripiego del selettore del browser) va SEMPRE in TUS, anche sulla 1.2.
      */
     const handleConfirmUpload = async () => {
         if (!teacherId || uploading) return;
         svuotaAvvisi();
-        if (uploadedFiles.some(f => !f.file.type.startsWith('video/')) && !sedeVideo) {
+        // Un video nativo è sempre un video: le foto sono i soli `File` che non lo sono.
+        if (uploadedFiles.some(f => f.file !== null && !f.file.type.startsWith('video/')) && !sedeVideo) {
             mostraErrore(t('galleryCodaSedeRichiesta'));
             return;
         }
@@ -549,11 +587,54 @@ function TeacherGalleryContent() {
         const avvisiDelGiro: Omit<AvvisoPagina, 'id'>[] = [];
         let fotoAccodate = 0;
         let videoAvviati = 0;
+        let videoNativiAvviati = 0;
+        /**
+         * Il rifiuto di UN video — TUS o nativo, il trattamento è lo stesso: il file resta nell'elenco (non entra in
+         * `completati`) e la schermata resta al passo dei bambini. I NOMI dei bambini senza liberatoria stanno a schermo e
+         * basta: nei log passano solo i conteggi. Risponde `true` se il giro si deve FERMARE: «troppe richieste» (429) vale
+         * anche per i file che seguono, e trenta righe uguali non dicono niente di più di una — si dice una volta, senza nome
+         * (non riguarda questo file), e i file restano dove sono.
+         */
+        const registraRifiutoVideo = (avvio: Extract<EsitoAvvio, { ok: false }>, nome: string): boolean => {
+            const dettaglio = avvio.nomi?.length ? ` (${avvio.nomi.join(', ')})` : '';
+            const testo = `${avvio.messaggio}${dettaglio}`;
+            if (avvio.riprovaPiuTardi) {
+                avvisiDelGiro.push({ tono: 'errore', testo });
+                return true;
+            }
+            avvisiDelGiro.push({
+                tono: 'errore',
+                testo: uploadedFiles.length > 1 ? t('galleryAvvisoVideoConNome', { nome, messaggio: testo }) : testo,
+            });
+            return false;
+        };
         try {
             // Prima si conserva TUTTO il lotto foto nel dispositivo. La rete parte
             // solo dopo: un 429 sulla 31ª non perde le prime 30 né l'ultima.
             for (let i = 0; i < uploadedFiles.length; i++) {
                 const f = uploadedFiles[i];
+                if (f.file === null) {
+                    // UN VIDEO NATIVO (app 1.2, spec §7.4): i byte stanno nel plugin e li spedisce il sistema operativo,
+                    // anche a telefono bloccato. L'apertura dell'intento è una richiesta come per gli altri video: senza
+                    // rete il file resta nell'elenco, con la sua copia sul telefono.
+                    if (!isOnline) {
+                        avvisiDelGiro.push({ tono: 'errore', testo: t('galleryAlertVideoOffline', { nome: f.nativo.nome }) });
+                        continue;
+                    }
+                    const avvio = await videoGalleria.avviaVideoNativo(f.nativo, {
+                        tag: f.is_broadcast ? [] : f.tag_students,
+                        broadcast: f.is_broadcast,
+                        durataSecondi: f.nativo.durataSecondi,
+                    });
+                    if (!avvio.ok) {
+                        if (registraRifiutoVideo(avvio, f.nativo.nome)) break;
+                        continue;
+                    }
+                    // Da qui la copia è del plugin: l'elemento esce dall'elenco, e né «Annulla» né lo smontaggio la toccano.
+                    videoNativiAvviati++;
+                    completati.add(i);
+                    continue;
+                }
                 if (f.file.type.startsWith('video/')) {
                     // La pipeline video ha il suo intento e il proprio TUS riprendibile.
                     if (!isOnline) {
@@ -567,24 +648,7 @@ function TeacherGalleryContent() {
                         durataSecondi: durata,
                     });
                     if (!avvio.ok) {
-                        // Il file resta nell'elenco (non entra in `completati`) e la schermata resta
-                        // al passo dei bambini. I NOMI dei bambini senza liberatoria stanno a schermo
-                        // e basta: nei log passano solo i conteggi.
-                        const dettaglio = avvio.nomi?.length ? ` (${avvio.nomi.join(', ')})` : '';
-                        const testo = `${avvio.messaggio}${dettaglio}`;
-                        // «Troppe richieste»: anche i file che seguono riceverebbero lo stesso rifiuto, e
-                        // trenta righe uguali non dicono niente di più di una. Si dice una volta, senza
-                        // nome (non riguarda questo file), e ci si ferma: i file restano dove sono.
-                        if (avvio.riprovaPiuTardi) {
-                            avvisiDelGiro.push({ tono: 'errore', testo });
-                            break;
-                        }
-                        avvisiDelGiro.push({
-                            tono: 'errore',
-                            testo: uploadedFiles.length > 1
-                                ? t('galleryAvvisoVideoConNome', { nome: f.file.name, messaggio: testo })
-                                : testo,
-                        });
+                        if (registraRifiutoVideo(avvio, f.file.name)) break;
                         continue;
                     }
                     videoAvviati++;
@@ -646,8 +710,13 @@ function TeacherGalleryContent() {
             // sarebbe falso. Uscendo dalla Galleria (o chiudendo l'app) il trasferimento si ferma al
             // blocco successivo e riprende da solo al rientro.
             if (videoAvviati > 0) avvisiDelGiro.push({ tono: 'ok', testo: t('galleryVideoAvviato', { count: videoAvviati }) });
+            // L'AVVISO BREVE dell'app 1.2 (decisione del titolare): l'invio nativo prosegue a telefono bloccato e con altre app
+            // aperte, ma NON se Kidville si chiude dal multitasking. Lo dice qui e in ogni scheda in invio.
+            if (videoNativiAvviati > 0) {
+                avvisiDelGiro.push({ tono: 'ok', testo: t('galleryVideoAvviatoNativo', { count: videoNativiAvviati }) });
+            }
             mostraAvvisi(avvisiDelGiro);
-            if (isOnline && (fotoAccodate > 0 || videoAvviati > 0)) await loadMedia();
+            if (isOnline && (fotoAccodate > 0 || videoAvviati > 0 || videoNativiAvviati > 0)) await loadMedia();
         } catch (error) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `gallery-pubblicazione-fallita: ${nomeErrore(error)}`, route: '/teacher/gallery' });
             mostraAvvisi([...avvisiDelGiro, { tono: 'errore', testo: t('galleryErrCaricamentoGenerico') }]);
@@ -860,7 +929,10 @@ function TeacherGalleryContent() {
                         </Btn>
                     )}
                     {step !== 'gallery' && (
-                        <Btn variant="ghost" size="sm" onClick={() => { svuotaAvvisi(); setStep('gallery'); setUploadedFiles([]); setActiveFileIndex(0); }}>
+                        // Spento durante «Pubblica»: il giro sta scorrendo l'elenco, e «Annulla» scarterebbe le copie dei video
+                        // nativi che il giro non ha ancora consegnato al plugin (e quelle già consegnate non sono più sue).
+                        // Lo stesso vale per la X delle miniature, spenta dallo stesso stato.
+                        <Btn variant="ghost" size="sm" onClick={annullaCaricamento} disabled={uploading}>
                             {t('galleryAnnulla')}
                         </Btn>
                     )}
@@ -1033,7 +1105,7 @@ function TeacherGalleryContent() {
                                                 {t('galleryFotoNofM', { index: activeFileIndex + 1, totale: uploadedFiles.length })}
                                             </p>
                                             <p className="font-maven text-[10px] text-kidville-muted truncate">
-                                                {activeFile.file.name}
+                                                {nomeElemento(activeFile)}
                                             </p>
                                         </div>
                                     </div>

@@ -29,6 +29,11 @@ Dati di riferimento dell'app: `appId` **`it.kidville.app`**, nome **Kidville**, 
 caricato dalla WebView **`https://app.kidville.it`**, sede unica di produzione
 **Kidville Giugliano**.
 
+> **Dalla 1.2 (3 ottobre 2026): la consegna per l'invio agli store sta in §7** — i passi esatti per iOS e Android, i testi pronti
+> (novità, revisione accelerata, dichiarazione del servizio in primo piano) e il copione del video dimostrativo. Eccezione dichiarata
+> a «qui non si parla di build»: la 1.2 la invia **un'altra sessione**, e la consegna deve bastare da sola.
+> **Via libera del titolare prima di ogni invio.**
+
 ---
 
 ## 1. Account demo per il revisore
@@ -1083,3 +1088,275 @@ Due scorciatoie che hanno funzionato il 2026-07-26 e vale la pena riusare:
       giro di review.
 - [ ] Non ruotare le credenziali demo né toccare i dati TEST finché la versione è in
       vendita.
+
+---
+
+## 7. App 1.2 — la consegna per l'invio agli store (a cura del titolare, da un'altra sessione)
+
+> ### 🔴 VIA LIBERA DEL TITOLARE PRIMA DI OGNI INVIO
+>
+> La regola, in una riga: **via libera del titolare prima di ogni invio**.
+>
+> **Niente di ciò che segue è stato inviato.** Questa sezione è la **consegna**: chi costruisce la 1.2 (la PR 3, «caricamenti nativi
+> in background») **non** la invia. Ogni passo che porta qualcosa a Apple o a Google — l'invio in revisione su App Store Connect,
+> la richiesta di revisione accelerata, la dichiarazione del servizio in primo piano su Play Console, l'invio della release di
+> produzione — **aspetta un sì esplicito del titolare, scritto nella chat di quella sessione, passo per passo**. Un sì a un passo non
+> vale per il successivo. Le **letture** (🔎) non chiedono mai conferma; ciò che **scrive** (✍️) si mostra prima; ciò che **invia** (📤)
+> si ferma e chiede — e **caricare una build su App Store Connect o un bundle su Play Console conta come invio**, anche se non la
+> pubblica.
+
+**Che cosa è la 1.2.** Il video di un'insegnante parte da solo e continua a telefono bloccato o con l'app in secondo piano, su
+qualunque rete: l'invio lo fa il sistema operativo (iOS: `URLSession` in background; Android: UIDT da API 34, WorkManager con
+servizio in primo piano `dataSync` sotto). Il server è già in produzione dal 02/10 (PR 2). Spec:
+`docs/superpowers/specs/2026-10-03-video-pr3-app-1-2-design.md` (§12 è la sequenza di rilascio), plugin e prove in
+`docs/mobile.md` («Il plugin `KidvilleCaricamenti`»).
+
+| | iOS | Android |
+|---|---|---|
+| Versione | **1.2 (6)** (`MARKETING_VERSION` 1.2, `CURRENT_PROJECT_VERSION` 6) | `versionName` **1.2**, `versionCode` **4** |
+| Cosa cambia per lo store | nessuna chiave nuova in `Info.plist`, **niente `UIBackgroundModes`**, `PrivacyInfo.xcprivacy` invariato | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `RUN_USER_INITIATED_JOBS` (+ `RECEIVE_BOOT_COMPLETED` dal manifest di WorkManager); **nessun permesso media** |
+| Uscita | **subito al 100%**, rilascio **automatico dopo l'approvazione**, **senza rilascio graduale** | **produzione al 100%** |
+| Dichiarazione | — | **servizio in primo piano `dataSync`** su Play Console (con video dimostrativo) |
+
+### 7.0 Prima di cominciare
+
+Tutto questo deve già essere vero (spec §12, punti 1-2); se uno solo manca, **ci si ferma e si chiede**:
+
+- [ ] gate verde sull'albero fermo (`eslint`, `tsc`, `vitest run` letto su «Test Files N passed», `npm run build`) e prove native verdi
+      (harness iOS, JUnit, build del simulatore e `assembleDebug`);
+- [ ] collaudo **C1** (motore col server finto) ed **E1** (app vera sul simulatore e sugli emulatori) **PASS**, con le prove;
+- [ ] **merge in `main` e deploy del web fatti**: sul web e sulle app 1.0/1.1 non cambia niente (il plugin manca) e i caricamenti TUS
+      continuano (`intento-aperto` con `tipo = tus` in `app_log`);
+- [ ] il PRD con l'esito e le decisioni del titolare (`PRD REGISTRO ELETTRONICO.md`, voce del 03/10/2026);
+- [ ] i due `capacitor.config.json` gitignorati (`ios/App/App/` e `android/app/src/main/assets/`) sono quelli di **produzione**: il
+      collaudo C1/E1 punta una copia di lavoro a un indirizzo di sviluppo (`localhost`, `10.0.2.2`) e poi la rimette a posto dalle copie
+      di sicurezza fatte prima; un'app costruita con quell'indirizzo dentro **non si apre**. Qui lo si **riverifica sempre**, e se il
+      ripristino non c'è stato (o non si è sicuri) si **ripristinano le copie di produzione** e poi si verifica:
+
+  ```bash
+  npm run rilascio:verifica      # → «✅ shell nativa verificata»: legge i config COME JSON e li confronta con mobile/profilo-rilascio.json
+  ```
+
+  **Mai `npx cap sync` nudo** (senza `CAP_SERVER_URL` imbianca l'app; il plugin della 1.2 è locale e non ne ha bisogno). Se la copia
+  di produzione non c'è più, la strada documentata è `npm run rilascio:sync` (sync di entrambe le piattaforme con l'URL di
+  produzione e verifica subito dopo), mai un sync scritto a mano. La build Release rifà comunque il controllo da sola (Run Script
+  `Verifica shell nativa` su iOS, task `verificaShellNativa` su Gradle) e **si ferma** se il config è avvelenato.
+
+### 7.1 iOS 1.2 (6)
+
+1. 🔎 **Il build 6 è libero?** (sola lettura; l'ultima build in linea è la `1.1 (5)`)
+
+   ```bash
+   node scripts/asc-api.mjs GET '/v1/builds?filter[app]=6794883055&sort=-uploadedDate&limit=3'
+   ```
+
+   Se il `6` risultasse già usato, **non si forza**: si alza `CURRENT_PROJECT_VERSION` in un branch di correzione e si ricostruisce.
+2. ✍️ **Archive Release** (device generico). Il Run Script `Verifica shell nativa` gira in questa fase e **fa fallire l'archive** se il config non è quello di produzione:
+
+   ```bash
+   xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+     -destination 'generic/platform=iOS' -archivePath <cartella>/App.xcarchive -allowProvisioningUpdates archive
+   # → ** ARCHIVE SUCCEEDED **
+   ```
+3. ✍️ **Export con la chiave API** (da una sessione senza account Xcode, come per la `1.1 (5)`: vedi §5). `ios/ExportOptions.plist` sta nel repo.
+   La chiave e l'Issuer ID **non si stampano mai**: i comandi sotto li leggono dai file, **senza** `cat` né `echo`, e nessun valore va
+   copiato in una chat, in un file del repository o in un messaggio di commit.
+
+   ```bash
+   xcodebuild -exportArchive -archivePath <cartella>/App.xcarchive \
+     -exportOptionsPlist ios/ExportOptions.plist -exportPath <cartella>/export -allowProvisioningUpdates \
+     -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_36YQ6HDAN3.p8 \
+     -authenticationKeyID 36YQ6HDAN3 \
+     -authenticationKeyIssuerID "$(tr -d '[:space:]' < ~/.appstoreconnect/issuer_id)"
+   # → ** EXPORT SUCCEEDED **
+   ```
+4. 🔎 **Si legge l'`.ipa`, non l'archivio** (l'archivio resta firmato in sviluppo: è normale):
+
+   ```bash
+   unzip -q <cartella>/export/App.ipa -d <cartella>/ipa
+   codesign -d --entitlements :- <cartella>/ipa/Payload/App.app      # → aps-environment = production · get-task-allow = false
+   /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' <cartella>/ipa/Payload/App.app/Info.plist   # → 1.2
+   /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' <cartella>/ipa/Payload/App.app/Info.plist              # → 6
+   /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' <cartella>/ipa/Payload/App.app/Info.plist           # → «Does Not Exist» (deve NON esserci)
+   ```
+
+   E il config dentro il bundle si legge **come JSON**, non con un `grep` (che passa identico su `localhost`): `server.url` =
+   `https://app.kidville.it`, `limitsNavigationsToAppBoundDomains` = `true`, `loggingBehavior` = `none` (script in `docs/mobile.md`,
+   «Prima della build per lo store»).
+5. 📤 **Convalida e caricamento** con `altool` (è già un invio a Apple, anche se non è l'invio in revisione: **sì del titolare**),
+   **lanciato dalla cartella home** (cerca la chiave in `~/.appstoreconnect/private_keys`):
+
+   ```bash
+   cd ~
+   xcrun altool --validate-app -f <cartella>/export/App.ipa -t ios --apiKey 36YQ6HDAN3 \
+     --apiIssuer "$(tr -d '[:space:]' < ~/.appstoreconnect/issuer_id)"    # → VERIFY SUCCEEDED with no errors
+   xcrun altool --upload-app   -f <cartella>/export/App.ipa -t ios --apiKey 36YQ6HDAN3 \
+     --apiIssuer "$(tr -d '[:space:]' < ~/.appstoreconnect/issuer_id)"    # → UPLOAD SUCCEEDED
+   ```
+6. 🔎 **La build è elaborata?** Dopo qualche minuto: `processingState: VALID`, `usesNonExemptEncryption: false` (è cablato nel
+   `Info.plist`; con `null` la build non sarebbe distribuibile):
+
+   ```bash
+   node scripts/asc-api.mjs GET '/v1/builds?filter[app]=6794883055&sort=-uploadedDate&limit=3'
+   ```
+7. ✍️ **La scheda della versione 1.2** (si mostra prima ciò che si scrive). In App Store Connect, o con `node scripts/asc-api.mjs`
+   (corpo da stdin con `-`, come in §5-bis; un `409` non è un muro: `meta.associatedErrors` elenca ogni attributo mancante):
+   - la versione `1.2` esiste (altrimenti si crea) e **ha agganciata la build 6** (`PATCH /v1/appStoreVersions/<id>/relationships/build`: l'upload non la aggancia da solo);
+   - **«Novità» in italiano e in inglese** (§7.4), `PATCH /v1/appStoreVersionLocalizations/<id>` con `whatsNew`;
+   - `releaseType = AFTER_APPROVAL`: **rilascio automatico dopo l'approvazione** (`PATCH /v1/appStoreVersions/<id>`);
+   - **nessun rilascio graduale**: il rilascio graduale spento vale **100% subito**. In sola lettura,
+     `GET /v1/appStoreVersions/<id>/appStoreVersionPhasedRelease` non deve restituire niente (nella console: «Rilascia gradualmente agli
+     utenti che aggiornano automaticamente» **non** selezionato);
+   - restano com'erano account demo, note di review, privacy, classificazione, screenshot (§2-§4): **non si ruotano** le credenziali demo.
+8. 📤 **Invio in revisione** — **solo dopo il via libera del titolare**, come per la 1.0/1.1 (§5-bis: `reviewSubmissions` →
+   `reviewSubmissionItems` → `PATCH {submitted:true}`; stato atteso `WAITING_FOR_REVIEW`).
+9. 📤 **Richiesta di REVISIONE ACCELERATA** — solo con il via libera del titolare, dopo l'invio, dal modulo di Apple Developer
+   («Contact Us» → App Store → «Request an Expedited App Review»; testo in §7.4). È una correzione critica: **solo fatti, nessun dato
+   personale**.
+10. 🔎 **Dopo l'approvazione**: la versione passa da sola a «Pronta per la vendita» (`releaseType` automatico), e il semaforo del
+    territorio non deve avere `CANNOT_SELL` (§5-bis, DSA). Controllo sullo store: §7.3.
+
+### 7.2 Android 1.2
+
+1. **JDK 21** (la JBR di Android Studio): Gradle 8.14 non digerisce la JDK di sistema (*«Unsupported class file major version 69»*), e
+   `JAVA_HOME` non è persistente — va esportato in **ogni** shell:
+
+   ```bash
+   export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+   ```
+2. 🔎 **Il `versionCode 4` è libero?** Si **conferma in sola lettura su Play Console prima di costruire** (Release → «Esplora bundle di
+   app»: l'elenco di tutti i `versionCode` mai caricati, su **tutte** le tracce: l'1 è bruciato il 05/08 sul canale di test chiuso, il 2
+   è la 1.0, il 3 la 1.1). **Play non riaccetta mai un `versionCode` già usato**, nemmeno se l'upload è stato eliminato. Se il 4 fosse
+   già usato: **non si forza**, si alza in un branch di correzione (`android/app/build.gradle`) e si ricostruisce.
+3. 🔎 `npm run rilascio:verifica` → «✅ shell nativa verificata» (come in §7.0).
+4. ✍️ **Il bundle firmato** (la chiave di upload viene da `android/keystore.properties`, gitignorato, o dalle variabili `KV_UPLOAD_*`;
+   **mai** credenziali nel repository, vedi `docs/submission/C2-build-aab.md`):
+
+   ```bash
+   cd android && ./gradlew bundleRelease
+   # → android/app/build/outputs/bundle/release/app-release.aab
+   ```
+5. 🔎 **Si legge l'AAB prima di caricarlo**:
+
+   ```bash
+   python3 scripts/leggi-manifest-aab.py android/app/build/outputs/bundle/release/app-release.aab
+   ```
+
+   Atteso: `versionCode = 4`, `versionName = 1.2`, `targetSdkVersion = 36`, `usesCleartextTraffic` assente; fra i **permessi**
+   `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `RUN_USER_INITIATED_JOBS`, `RECEIVE_BOOT_COMPLETED` (che arriva fuso dal
+   manifest di WorkManager), `INTERNET`; e **nessun** `READ_MEDIA_*` né `READ_EXTERNAL_STORAGE` né `WRITE_EXTERNAL_STORAGE`
+   (**è il vantaggio da proteggere**: dichiararne uno farebbe entrare Kidville nella policy «Foto e video» di Google, su un'app con
+   foto di bambini). ⚠️ Lo script stampa **solo i permessi**: il tipo `dataSync` sul servizio non lo mostra. Per quello si legge il
+   manifest fuso Release che la build ha appena prodotto (testo, non binario), e deve comparire `dataSync` sul servizio di WorkManager
+   e il servizio UIDT con il suo permesso:
+
+   ```bash
+   grep -n -B1 -A3 'SystemForegroundService\|ServizioCaricamentiUidt' \
+     android/app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml
+   # → android:foregroundServiceType="dataSync"  ·  android:permission="android.permission.BIND_JOB_SERVICE"  ·  android:exported="false"
+   ```
+6. 📤 **La dichiarazione del servizio in primo piano `dataSync`** su Play Console (la voce sui servizi in primo piano dei «Contenuti
+   dell'app»; in inglese «Foreground service permissions»): tipo `dataSync`, uso **«caricamento di file avviato dall'utente»**, testi
+   it/en e **video dimostrativo girato su KV-api33** (Android 13: lì si vede il servizio in primo piano; su API 36 si vedrebbe UIDT, che
+   non è un servizio in primo piano). Testi e copione in §7.4. **Via libera del titolare prima di inviare la dichiarazione.**
+7. 📤 **Release di produzione al 100%** — **via libera del titolare prima dell'invio**. Produzione → «Crea nuova release» → carica
+   `app-release.aab` → note di rilascio (§7.4) → **percentuale di rollout 100%** → verifica e invia.
+8. Se la dichiarazione venisse **respinta o restasse in ritardo**: si ferma tutto e si decide col titolare (rischio 6 della spec: ripiego
+   senza `dataSync`, cioè solo UIDT su API ≥ 34 e solo primo piano sotto). Non si aggira.
+
+### 7.3 Dopo la pubblicazione
+
+Piattaforma per piattaforma, **solo dopo aver visto la 1.2 sullo store**:
+
+- 🔎 **iOS**: `curl -s 'https://itunes.apple.com/lookup?id=6794883055&country=it'` → `"version":"1.2"` (senza `country=it` si interrogano gli USA: falso rosso).
+  **Android**: la scheda su Google Play, in produzione → 1.2.
+- ✍️ **La micro-PR del pop-up «Aggiorna l'app»** (spec §12, punto 5), su un **branch nuovo**, dopo la pulizia di quello della PR 3: porta
+  `VERSIONE_MINIMA_PERSONALE` a `'1.2'` **per quella piattaforma** in `src/lib/native/aggiornamento-app.ts`, aggiorna
+  `__tests__/lib/aggiornamento-app.test.ts` e **scrive nel messaggio di commit quando la 1.2 è stata vista sullo store**. Il testo di
+  oggi descrive la 1.1: la micro-PR aggiunge `avvisoAggiornaCorpoPersonale` e fa dire ad `appDaAggiornare` quale minima è scattata.
+  Il **testo per il personale è una decisione del titolare** (secondario #123; se non risponde, la micro-PR aspetta). Proposta
+  (spec §14.1): titolo invariato («È disponibile una nuova versione di Kidville»), corpo «Aggiorna l'app: i video della galleria si
+  inviano anche con il telefono bloccato o mentre usi altre app.» Restano: personale = chi apre `/teacher` (la cuoca esclusa), decisione
+  per sessione, avviso settimanale che tace.
+- 🔎 **La prova sul campo di un'insegnante** (spec §8.4, §12 punto 6): un video **vero**, da lei. Per il suo `job`, in `app_log`:
+  una riga `video-nativo-accodato` e una `video-nativo-inviato`, `intento-aperto` con `tipo = put-nativo`, `video-originale-arrivato`
+  e `pubblicazione-automatica-riuscita`, e **zero** `video-nativo-fallito`. Poi: PRD con l'esito, memoria, pulizia dei branch.
+- Se qualcosa va storto dopo l'uscita al 100%: l'**interruttore d'emergenza** `NEXT_PUBLIC_CARICAMENTI_NATIVI=0` (variabile di build,
+  vedi `docs/env.md`) riporta la 1.2 al comportamento della 1.1 con un deploy del solo web, **senza una revisione degli store**.
+
+### 7.4 Testi pronti (nessun dato personale, nessun nome)
+
+**«Novità» — italiano** (App Store Connect, versione 1.2):
+
+```text
+Novità della versione 1.2
+• I video della galleria si inviano da soli, anche con il telefono bloccato o mentre usi altre app: scegli i bambini, premi «Pubblica» e il resto lo fa Kidville.
+• Nuovo selettore per foto e video, con «Scatta una foto» e «Scegli da File».
+• Se l'invio si ferma, per esempio perché manca la rete, ti avvisiamo con una notifica e riprende da solo.
+• Non chiudere Kidville dal multitasking finché il video non è stato inviato.
+• Miglioramenti e correzioni.
+```
+
+**«What's New» — inglese:**
+
+```text
+What's new in version 1.2
+• Gallery videos now upload on their own, even with the phone locked or while you use other apps: choose the children, tap "Pubblica" and Kidville does the rest.
+• New photo and video picker, with "Scatta una foto" (take a photo) and "Scegli da File" (choose from Files).
+• If an upload stops, for example because there is no network, we notify you and it resumes by itself.
+• Please don't close Kidville from the app switcher until the video has been sent.
+• Improvements and bug fixes.
+```
+
+**Note di rilascio Google Play** (it-IT / en-US, ≤ 500 caratteri):
+
+```text
+it-IT: Novità della 1.2: i video della galleria si inviano anche con il telefono bloccato o mentre usi altre app. Nuovo selettore per foto e video. Miglioramenti e correzioni.
+en-US: New in 1.2: gallery videos now upload even with the phone locked or while you use other apps. New photo and video picker. Improvements and bug fixes.
+```
+
+**Richiesta di REVISIONE ACCELERATA ad Apple** (in inglese, solo fatti; modulo «Request an Expedited App Review»):
+
+```text
+App: Kidville (Apple ID 6794883055), version 1.2 (6).
+Reason: critical fix.
+Teachers who use the app cannot reliably upload videos: on iOS the transfer pauses as soon as the app goes to the background or the phone is locked, and it only resumes when the teacher opens the app again. Videos are the daily communication between the school and the families, so the problem is visible every day.
+Version 1.2 moves the transfer to the operating system (a background URLSession), so it completes with the phone locked.
+This version adds no new permissions, no new data collection and no change to the privacy manifest. Review information and the demo account are unchanged.
+```
+
+**Dichiarazione del servizio in primo piano `dataSync`** (Play Console; i testi sono due, uso e impatto):
+
+```text
+it — Uso: Kidville è il registro elettronico di una scuola. Un'insegnante sceglie un video dalla galleria del telefono, sceglie i bambini e preme «Pubblica»: l'app invia il file (fino a 2 GB) al server della scuola. L'invio è avviato dall'utente ed è sempre visibile: finché dura, il servizio in primo piano mostra la notifica «Invio dei video in corso», con l'avanzamento. Il servizio si ferma da solo quando il file è arrivato o quando l'utente annulla.
+it — Impatto se interrotto: se il sistema fermasse l'invio, il video non arriverebbe e le famiglie non vedrebbero i contenuti del giorno; l'insegnante dovrebbe tenere l'app aperta davanti per tutta la durata del caricamento, anche decine di minuti per un video lungo.
+
+en — Use: Kidville is a school's electronic register. A teacher picks a video from the phone's gallery, chooses the children and taps "Pubblica": the app uploads the file (up to 2 GB) to the school's server. The upload is started by the user and is always visible: while it lasts, the foreground service shows the notification "Invio dei video in corso" with the progress. The service stops by itself when the file has arrived or when the user cancels.
+en — Impact if interrupted: if the system stopped the upload, the video would not arrive and families would not see the day's content; the teacher would have to keep the app open in the foreground for the whole upload, which can take tens of minutes for a long video.
+```
+
+**Copione del video dimostrativo** (su **KV-api33**, Android 13, account e classe **TEST**, nessun nome vero; registrazione con
+`adb shell screenrecord --time-limit 180 /sdcard/fgs.mp4` e `adb pull`, oppure il registratore dell'emulatore; un video di prova da
+almeno ~150 MB, perché l'invio duri più di un minuto):
+
+1. L'app Kidville aperta sulla Galleria dell'insegnante; si mostra anche la versione (Impostazioni di sistema → App → Kidville → 1.2).
+2. «Scegli foto e video dalla galleria» → il selettore di sistema → si sceglie il video → anteprima con miniatura, durata e peso.
+3. «Modifica Tag» → si sceglie **un** bambino della classe TEST → «Pubblica»: compare l'avviso «Il video è in invio. Puoi bloccare il
+   telefono o usare altre app; non chiudere Kidville dal multitasking finché non è inviato».
+4. **Blocco dello schermo** (tasto di accensione), si aspettano ~20 secondi.
+5. **Sblocco** e si apre la tendina delle notifiche: la notifica **«Invio dei video in corso»** con la barra di avanzamento, e nell'elenco
+   «App attive» di Android 13 compare Kidville (è la prova che c'è un servizio in primo piano).
+6. Si torna nell'app: la riga del video passa a **«inviato»**, poi il video compare pubblicato nella galleria.
+7. Il video si carica su YouTube come **non in elenco** (o su un link di Drive in sola lettura) e il link va nel modulo; nessuna
+   schermata deve mostrare un nome vero, un'email o un numero di telefono.
+
+### 7.5 Cosa NON fare
+
+- ❌ **Mai `npx cap sync` nudo**, né «per rinfrescare» il progetto: imbianca l'app. Per i config di produzione: `npm run rilascio:verifica`.
+- ❌ **Mai stampare** il contenuto di `AuthKey_36YQ6HDAN3.p8`, dell'Issuer ID, di un keystore o di una password di upload: né in chat, né in
+  un file, né in un messaggio di commit (il repository è **pubblico**).
+- ❌ **Mai forzare un `versionCode` o un build number già usato**: si alza in un branch di correzione.
+- ❌ **Mai aggiungere `UIBackgroundModes`** (motivo di rigetto 2.5.4) **né un permesso media** (`READ_MEDIA_*`, `READ_EXTERNAL_STORAGE`).
+- ❌ **Niente rilascio graduale** su nessuno dei due store: la decisione del titolare è l'uscita subito al 100%.
+- ❌ **Non ruotare le credenziali demo** né toccare i dati TEST finché la versione è in revisione o in vendita.
+- ❌ **Nessun invio, a Apple o a Google, senza il via libera del titolare** per quel passo.

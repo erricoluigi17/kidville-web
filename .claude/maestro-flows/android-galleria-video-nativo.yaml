@@ -1,0 +1,150 @@
+# =============================================================================
+# Kidville · ANDROID — galleria dell'insegnante, video NATIVO (app 1.2, PR 3)
+#   (accesso se serve) → Foto → Carica → «Scegli foto e video dalla galleria»
+#   → Photo Picker di sistema → anteprima nativa → Modifica Tag → un bambino
+#   → Pubblica → la riga nativa in invio → la riga lascia lo stato «in invio»
+#
+# Prerequisiti (misurati nel collaudo E1 Android del 2026-10-03, KV-play-phone):
+#   - APK Debug 1.2 (versionCode 4) col plugin KidvilleCaricamenti;
+#   - il PRIMO elemento del Photo Picker è un video di prova NUOVO: byte mai
+#     inviati con lo stesso bambino, altrimenti l'apertura dell'intento è
+#     idempotente e nessun invio parte. Si prepara con `adb push` in
+#     /sdcard/DCIM/Camera/ più la scansione dei media;
+#   - il Photo Picker di Android 16 (com.google.android.photopicker) si apre a
+#     metà schermo ed espone gli elementi solo con una descrizione di sistema in
+#     inglese, senza id: per questo i due tocchi dentro il picker sono a
+#     coordinate (primo elemento della griglia, poi il pulsante di conferma), e
+#     dopo di loro il flow prova di essere tornato nell'app (Modifica Tag) e di
+#     essersi mosso (sparisce «Scatta una foto» al passo dei bambini);
+#   - env MAESTRO_KV_EMAIL_DOCENTE / MAESTRO_KV_PASSWORD (lo fa esegui.sh) e,
+#     con più emulatori accesi, KV_DEVICE=<seriale> per esegui.sh.
+#
+# I nodi fuori schermo arrivano a Maestro con bounds [0,0][0,0]: ciò che può
+# stare sotto la piega si porta in vista con scrollUntilVisible prima di
+# asserirlo o di toccarlo.
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · Android — galleria, video nativo
+tags:
+  - android
+  - docente
+  - caricamenti-nativi
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_DOCENTE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp
+
+# ── 1. ACCESSO, solo se la sessione non c'è ─────────────────────────────────
+- extendedWaitUntil:
+    visible: "Dashboard|Accedi al tuo account Kidville"
+    timeout: 90000
+- runFlow:
+    when:
+      visible: "Accedi al tuo account Kidville"
+    commands:
+      # Il respiro prima di digitare: «visibile» non è «idratata».
+      - assertVisible: "Benvenuto/a!"
+      - tapOn:
+          below: "Email"
+      - inputText: ${KV_EMAIL}
+      - hideKeyboard
+      - tapOn:
+          below: "Password"
+      - inputText: ${KV_PASSWORD}
+      - hideKeyboard
+      - tapOn: "Accedi"
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+- extendedWaitUntil:
+    visible: "Dashboard"
+    timeout: 60000
+
+# ── 2. GALLERIA: l'impaginato della 1.2 col plugin (spec §7.2) ──────────────
+- tapOn: "Foto"
+- extendedWaitUntil:
+    visible: "Carica"
+    timeout: 45000
+- tapOn: "Carica"
+- extendedWaitUntil:
+    visible: "1. Seleziona foto e video"
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      text: "Scegli da File"
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- assertVisible: "Scatta una foto"
+- assertVisible: "Scegli foto e video dalla galleria"
+- takeScreenshot: /tmp/kv-android-video-nativo-1-scelta
+
+# ── 3. PHOTO PICKER DI SISTEMA ──────────────────────────────────────────────
+- tapOn: "Scegli foto e video dalla galleria"
+# Il picker copre l'app: il link dell'app non è più nell'albero.
+- extendedWaitUntil:
+    notVisible: "Scegli da File"
+    timeout: 15000
+- tapOn:
+    point: "17%,52%"
+- tapOn:
+    point: "84%,89%"
+# Tornati nell'app con la copia nativa pronta: compare il passo successivo.
+- extendedWaitUntil:
+    visible: "Modifica Tag.*"
+    timeout: 90000
+# Il pulsante sta in fondo alle anteprime, dietro la barra delle schede: il primo
+# giro di questo flow lo ha toccato senza centrarlo e non è successo niente, e un
+# tocco a mano alla stessa altezza ha aperto «Messaggi».
+- scrollUntilVisible:
+    element:
+      text: "Modifica Tag.*"
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- tapOn: "Modifica Tag.*"
+- extendedWaitUntil:
+    visible: "Tagga i bambini presenti nella foto"
+    timeout: 20000
+- assertNotVisible: "Scatta una foto"
+- takeScreenshot: /tmp/kv-android-video-nativo-2-bambini
+
+# ── 4. UN BAMBINO SOLO, POI PUBBLICA ────────────────────────────────────────
+# Un bambino solo, quindi niente liberatoria. Nel seme della CI l'unica scheda con
+# «Genitore non collegato» è A2: nessun genitore, nessuna notifica a famiglie di
+# prova. Il segnaposto della ricerca NON è nell'albero (misurato: niente testo né
+# hint), quindi non può fare da ancora per un `below:`.
+- tapOn: ".*Genitore non collegato.*"
+- extendedWaitUntil:
+    visible: ".*Foto Privata.*"
+    timeout: 10000
+# Il pulsante è «Pubblica 1 file»; «3 file» è la forma che il catalogo assume
+# quando il plurale ICU si istanzia a 3, e qui non compare mai.
+- scrollUntilVisible:
+    element:
+      text: "Pubblica 1 file|3 file"
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- tapOn: "Pubblica 1 file|3 file"
+
+# ── 5. L'INVIO NATIVO ───────────────────────────────────────────────────────
+# Il banner dopo «Pubblica» (galleryVideoAvviatoNativo): l'accodamento è riuscito.
+- extendedWaitUntil:
+    visible: "Il video è in invio.*|3 video sono in invio"
+    timeout: 120000
+- takeScreenshot: /tmp/kv-android-video-nativo-3-in-invio
+# La nota della riga nativa esiste solo finché il video è in coda o in invio.
+- scrollUntilVisible:
+    element:
+      text: "Puoi bloccare il telefono o usare altre app; non chiudere Kidville dal multitasking finché il video non è inviato."
+    direction: DOWN
+    centerElement: true
+    timeout: 60000
+- extendedWaitUntil:
+    notVisible: "Puoi bloccare il telefono o usare altre app; non chiudere Kidville dal multitasking finché il video non è inviato."
+    timeout: 300000
+- takeScreenshot: /tmp/kv-android-video-nativo-4-inviato

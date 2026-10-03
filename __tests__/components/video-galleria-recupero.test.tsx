@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -42,13 +46,39 @@ const h = vi.hoisted(() => ({
   elimina: vi.fn(),
   log: vi.fn(),
   ordine: [] as string[],
+  // Il plugin dei caricamenti NATIVI (app 1.2): finto SOLO nelle sue chiamate. `codiceDelPonte` e `ErroreCaricamentiNativi`
+  // restano VERI — sono loro a ridurre un rifiuto a un codice dell'elenco chiuso, ed è quello che finisce nei log.
+  nDisponibili: vi.fn(),
+  nAccoda: vi.fn(),
+  nElenco: vi.fn(),
+  nAnnulla: vi.fn(),
+  nDimentica: vi.fn(),
+  nScarta: vi.fn(),
+  nAscolta: vi.fn(),
+  nTogliAscolto: vi.fn(),
+  /** Il gestore degli eventi `caricamento` che l'hook ha registrato (lo chiama il test). */
+  eventoNativo: null as null | ((voce: unknown) => void),
+  /** L'archivio IndexedDB risponde quando questa promessa si risolve (di norma è già risolta). */
+  attesaArchivio: Promise.resolve() as Promise<void>,
+  /** Ogni lettura di una riga dell'archivio (per provare che un video nativo non la chiede mai). */
+  leggiArchivio: vi.fn(),
 }))
 vi.mock('@/lib/logging/client', () => ({ logClient: h.log, nomeErrore: (e: unknown) => (e instanceof Error ? e.constructor.name : 'Sconosciuto') }))
+vi.mock('@/lib/native/caricamenti-nativi', async (originale) => ({
+  ...(await originale<typeof import('@/lib/native/caricamenti-nativi')>()),
+  caricamentiNativiDisponibili: h.nDisponibili,
+  accodaVideo: h.nAccoda,
+  elenco: h.nElenco,
+  annulla: h.nAnnulla,
+  dimentica: h.nDimentica,
+  scartaScelti: h.nScarta,
+  ascoltaCaricamenti: h.nAscolta,
+}))
 vi.mock('@/lib/hooks/use-polling-visibile', () => ({ usePollingVisibile: vi.fn() }))
 vi.mock('@/lib/media/video/upload', () => ({
   creaArchivioCaricamenti: async () => ({
-    leggi: async (id: string) => h.righe.find((r) => r.jobId === id),
-    elenca: async () => h.righe,
+    leggi: async (id: string) => { h.leggiArchivio(id); return h.righe.find((r) => r.jobId === id) },
+    elenca: async () => { await h.attesaArchivio; return h.righe },
     aggiorna: h.aggiorna,
     elimina: h.elimina,
     eliminaByte: vi.fn(),
@@ -62,6 +92,9 @@ vi.mock('@/lib/media/video/upload', () => ({
 
 import { useVideoGalleria, type OpzioniVideoGalleria } from '@/components/features/gallery/use-video-galleria'
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile'
+import { scegliTrasporto } from '@/lib/media/video/trasporto'
+import { ErroreCaricamentiNativi } from '@/lib/native/caricamenti-nativi'
+import { CODICI_RIFIUTO_PONTE, type CaricamentoNativo } from '@/lib/native/caricamenti-nativi-tipi'
 
 const OWNER = '11111111-1111-4111-8111-111111111111'
 const SEDE = '22222222-2222-4222-8222-222222222222'
@@ -250,6 +283,21 @@ beforeEach(() => {
   h.elimina.mockImplementation(async (id: string) => { h.righe = h.righe.filter((r) => r.jobId !== id) })
   h.annullaLocale.mockImplementation(async () => { h.ordine.push('annullaCaricamento') })
   h.concludi.mockResolvedValue(undefined)
+  // Il plugin dei caricamenti nativi: di default NON c'è (web, app 1.0/1.1), e i test di prima non cambiano.
+  h.attesaArchivio = Promise.resolve()
+  h.nDisponibili.mockResolvedValue(null)
+  h.nElenco.mockResolvedValue({ caricamenti: [] })
+  h.nAnnulla.mockResolvedValue({ annullato: true })
+  h.nDimentica.mockResolvedValue({ dimenticati: 1 })
+  h.nScarta.mockResolvedValue({ eliminati: 1 })
+  h.nTogliAscolto.mockResolvedValue(undefined)
+  h.eventoNativo = null
+  h.nAscolta.mockImplementation(async (cb: typeof h.eventoNativo) => {
+    h.eventoNativo = cb
+    return h.nTogliAscolto
+  })
+  h.nAccoda.mockImplementation(async (richiesta: { jobId: string; intentId: string; utenteId: string; scuolaId: string }) =>
+    voceNativa({ jobId: richiesta.jobId, intentId: richiesta.intentId, utenteId: richiesta.utenteId, scuolaId: richiesta.scuolaId }))
   installaServer()
 })
 afterEach(() => {
@@ -1383,5 +1431,1017 @@ describe('il polling dell’elenco: ogni 10 secondi, solo se c’è qualcosa di 
     const { result } = renderHook(() => useVideoGalleria(opts))
     await waitFor(() => expect(result.current.righe).toHaveLength(1))
     expect(h.log).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'video-galleria-voci-fuori-contratto' }))
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// L'APP 1.2: I VIDEO NATIVI (compito J3) — invio, elenco unito, «Rimuovi»
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Un video scelto dal selettore NATIVO non è un `File`: i suoi byte stanno nel plugin, che li spedisce dal sistema
+// operativo con una PUT sola. Questo hook non li trasferisce: apre l'intento, consegna al plugin ciò che gli serve e
+// RACCONTA ciò che il plugin dice. Si prova qui:
+//
+//  · l'invio: apertura `put-nativo` con `sha256` e chiave `gn1-`, `accodaVideo` con i campi della risposta e gli id in
+//    minuscolo, il 422 che resta alla schermata prima di un byte, l'accodamento fallito che ritira l'intento;
+//  · l'elenco UNITO: le voci del plugin (anche senza rete, a ogni evento) si fondono con quelle del server, e una voce
+//    di un'altra sede o di un altro utente non si vede;
+//  · «caricato» UNA volta a `inviato`, la voce terminale che si dimentica, «Rimuovi» che ferma prima i byte;
+//  · la ripresa automatica TUS che ignora le righe native, e `scegliTrasporto()` che resta `tus` per ogni `File`.
+//
+// Il plugin è finto SOLO nelle sue chiamate: i suoi rifiuti sono `ErroreCaricamentiNativi` veri, perché è il codice
+// dell'elenco chiuso — e non il messaggio — ciò che deve finire nei log.
+
+const SHA_NATIVO = createHash('sha256').update('contenuto del video nativo').digest('hex')
+const NOME_PRIVATO = 'filmato-privato-di-ada.mov'
+const INFO_PLUGIN = { protocollo: 1, piattaforma: 'ios', motore: 'urlsession' } as const
+// L'host della PUT è quello del progetto Supabase del SITO (`caricamenti-nativi-tipi.ts`): sotto vitest, il banco locale.
+const URL_PUT = 'https://localhost:54321/storage/v1/object/upload/sign/video_originals/percorso.mov?token=TOKEN-FINTO-DELLA-PUT'
+/** `kvr_` più 43 caratteri base64url: la forma del token che il server conia. */
+const TOKEN_RINNOVO = `kvr_${'Ab1_-'.repeat(8)}Ab1`
+const SCADENZA_URL = '2026-10-03T12:00:00.000Z'
+const SCADENZA_TOKEN = '2026-10-05T10:00:00.000Z'
+/** Un token «ruotato»: la stessa forma, un valore diverso a ogni rotazione. */
+const tokenRuotato = (k: number) => `kvr_${'A'.repeat(42)}${k}`
+
+/** Un elemento video com'è consegnato dal selettore nativo (`ElementoVideoScelto`). */
+function nativoVideo(extra: Record<string, unknown> = {}) {
+  return {
+    id: 'video-1', tipo: 'video' as const, nome: NOME_PRIVATO, byte: 73_000_000, mime: 'video/quicktime',
+    durataSecondi: 52, miniatura: null, sha256: SHA_NATIVO, ...extra,
+  }
+}
+
+/** Una voce della coda del plugin: i campi che il ponte rilegge con `schemaCaricamentoNativo`. */
+function voceNativa(extra: Partial<CaricamentoNativo> = {}): CaricamentoNativo {
+  return {
+    jobId: uuid(101), intentId: uuid(201), utenteId: OWNER, scuolaId: SEDE, nome: NOME_PRIVATO,
+    mime: 'video/quicktime', stato: 'in-coda', byteInviati: 0, byteTotali: 73_000_000, tentativi: 0, rinnovi: 0,
+    codice: null, creatoIl: ADESSO, aggiornatoIl: ADESSO, ...extra,
+  }
+}
+
+/** La risposta di un'apertura `put-nativo`: l'URL firmato nel job e il token di rinnovo accanto. */
+function aperturaNativa(n: number, extra: { intent?: string; token?: string; job?: Record<string, unknown> } = {}) {
+  return json(
+    {
+      intentId: uuid(200 + n),
+      revisione: 1,
+      canale: 'gallery',
+      intent: { status: extra.intent ?? 'confirmed' },
+      scadenzaCaricamentoIl: SCADENZA_URL,
+      job: [{
+        jobId: uuid(100 + n),
+        chiaveIdempotenza: `gn1-prova-${n}`,
+        caricamento: { protocollo: 'put', url: URL_PUT, metodo: 'PUT', intestazioni: { 'content-type': 'video/quicktime' } },
+        firma: '',
+        status: 'awaiting_upload',
+        needs_upload: true,
+        expires_at: SCADENZA_URL,
+        rinnovo: { token: extra.token ?? TOKEN_RINNOVO, scadeIl: SCADENZA_TOKEN },
+        ...extra.job,
+      }],
+    },
+    201,
+  )
+}
+
+/** I byte sono GIÀ sullo Storage: il server manda coordinate TUS di ripiego, nessun token, `needs_upload: false`. */
+const GIA_ARRIVATO = { needs_upload: false, caricamento: COORD, rinnovo: undefined, expires_at: null }
+
+/**
+ * Il server finto con la semantica di `video_galleria_intent_apri` per il trasporto NATIVO (spec §5.3): la stessa chiave
+ * con gli STESSI destinatari e lo stesso `sha256` è una ripetizione — ritrova lo stesso intento e RUOTA il token —, con
+ * destinatari diversi è `IDEMPOTENCY_CONFLICT` (409 `VIDEO_RIPROVA`), altrimenti è un intento nuovo.
+ */
+function aperturaNativaSecondoIlServer() {
+  const viste = new Map<string, { contenuto: string; n: number; rotazioni: number }>()
+  return (n: number, corpo: Record<string, unknown>): Response => {
+    const f = (corpo.file as Array<{ chiaveIdempotenza: string; sha256?: string }>)[0]
+    const d = corpo.destinatari as { tagAlunni: string[]; broadcast: boolean; classi: string[] }
+    const contenuto = JSON.stringify([[...new Set(d.tagAlunni)].sort(), d.broadcast, [...new Set(d.classi)].sort(), f.sha256, corpo.trasporto])
+    const prima = viste.get(f.chiaveIdempotenza)
+    if (prima && prima.contenuto !== contenuto) return json({ error: 'Qualcosa è cambiato.', codice: 'VIDEO_RIPROVA' }, 409)
+    if (prima) {
+      prima.rotazioni += 1
+      return aperturaNativa(prima.n, { token: tokenRuotato(prima.rotazioni) })
+    }
+    viste.set(f.chiaveIdempotenza, { contenuto, n, rotazioni: 0 })
+    return aperturaNativa(n)
+  }
+}
+
+/** La voce del SERVER per il video che il plugin sta spedendo: lo stesso job e lo stesso intento di `voceNativa()`. */
+const voceDelNativo = (fase: string, extra: Record<string, unknown> = {}) =>
+  voce(fase, { trasporto: 'put-nativo', jobId: uuid(101), intentId: uuid(201), ...extra })
+
+/** Il corpo della n-esima POST di apertura. */
+const corpoApertura = (n = 0) => aperture()[n].corpo as Record<string, unknown> & {
+  file: Array<{ chiaveIdempotenza: string; sha256?: string; nome: string; byte: number; mime: string }>
+  destinatari: { tagAlunni: string[]; broadcast: boolean; classi: string[] }
+}
+const tutteLeRigheDiLog = () => JSON.stringify(h.log.mock.calls)
+const richiestaAccodata = (n = 0) => h.nAccoda.mock.calls[n][0] as Record<string, unknown>
+const logsDi = (prefisso: string) =>
+  h.log.mock.calls.map((c) => c[0] as { livello: string; evento: string; messaggio: string; campi?: Record<string, unknown> })
+    .filter((r) => r.messaggio.startsWith(prefisso))
+
+/** Monta con il plugin PRESENTE e aspetta che l'ascolto degli eventi sia agganciato (l'hook ha finito di avviarsi). */
+async function montaNativo(o: OpzioniVideoGalleria = opts) {
+  h.nDisponibili.mockResolvedValue(INFO_PLUGIN)
+  const v = await montaAttendendo(o)
+  if (o.utenteId && o.sede) await waitFor(() => expect(h.nAscolta).toHaveBeenCalled())
+  return v
+}
+
+describe('«Invia» un video NATIVO: apre l’intento `put-nativo` e lo consegna al plugin, con i campi della risposta', () => {
+  beforeEach(() => { server.apertura = (n) => aperturaNativa(n) })
+
+  it('la POST dichiara `put-nativo`, lo `sha256`, i bambini e la chiave `gn1-`; poi `accodaVideo` coi campi della risposta e NIENTE TUS', async () => {
+    const { result } = await montaNativo()
+    let esito: unknown
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(esito).toEqual({ ok: true })
+
+    const apertura = corpoApertura()
+    expect(apertura).toMatchObject({ canale: 'gallery', azione: 'publish', scuolaId: SEDE, trasporto: 'put-nativo' })
+    expect(apertura.destinatari).toEqual({ tagAlunni: [ADA], broadcast: false, classi: [] })
+    expect(apertura.file[0]).toMatchObject({ nome: NOME_PRIVATO, byte: 73_000_000, mime: 'video/quicktime', sha256: SHA_NATIVO })
+    expect(apertura.file[0].chiaveIdempotenza).toMatch(/^gn1-73000000-[0-9a-f]{12}-[0-9a-f]{12}$/)
+
+    // `accodaVideo`: ESATTAMENTE ciò che il plugin vuole, dalla risposta del server e dall'origine della pagina.
+    expect(h.nAccoda).toHaveBeenCalledTimes(1)
+    expect(richiestaAccodata()).toEqual({
+      idElemento: 'video-1',
+      sha256: SHA_NATIVO,
+      byteAttesi: 73_000_000,
+      jobId: uuid(101),
+      intentId: uuid(201),
+      utenteId: OWNER,
+      scuolaId: SEDE,
+      caricamento: { url: URL_PUT, contentType: 'video/quicktime', scadeIl: SCADENZA_URL },
+      rinnovo: { url: `${window.location.origin}/api/video-uploads/rinnovo`, token: TOKEN_RINNOVO, scadeIl: SCADENZA_TOKEN },
+      registro: { url: `${window.location.origin}/api/logs` },
+      testi: {
+        titolo: itServizi.notificaCaricamentoTitolo,
+        invio: itServizi.notificaCaricamentoInvio,
+        attesaRete: itServizi.notificaCaricamentoAttesaRete,
+        pausa: itServizi.notificaCaricamentoPausa,
+      },
+    })
+
+    // Nessun byte passa dal TUS e nessuna riga nasce nell'archivio IndexedDB: l'invio è del plugin.
+    expect(h.accoda).not.toHaveBeenCalled()
+    expect(h.carica).not.toHaveBeenCalled()
+    expect(h.concludi).not.toHaveBeenCalled()
+    expect(h.aggiorna).not.toHaveBeenCalled()
+    // E la scheda racconta ciò che il plugin ha risposto: accodato, in attesa del suo turno, con la nota dell'invio.
+    await waitFor(() => expect(result.current.righe).toHaveLength(1))
+    expect(result.current.righe[0]).toMatchObject({
+      jobId: uuid(101), nome: NOME_PRIVATO, fase: 'in-fila', trasporto: 'nativo', messaggio: itServizi.galleryVideoNotaNativo,
+    })
+    // «Caricato» NON si dice all'accodamento: i byte non sono ancora partiti.
+    expect(patchFatti()).toEqual([])
+  })
+
+  it('in broadcast i bambini non partono e le classi sì', async () => {
+    const { result } = await montaNativo()
+    await act(async () => { await result.current.avviaVideoNativo(nativoVideo(), { tag: [ADA], broadcast: true, durataSecondi: 52 }) })
+    expect(corpoApertura().destinatari).toEqual({ tagAlunni: [], broadcast: true, classi: ['3 ANNI'] })
+  })
+
+  it('gli id verso il plugin sono in MINUSCOLO: lo schema li rifiuta altrimenti, e la sede del cookie può avere le maiuscole (S1 n. 3)', async () => {
+    // Id CON LETTERE esadecimali: uno fatto di sole cifre ha la stessa grafia in maiuscolo e in minuscolo, e un test così
+    // resterebbe verde anche senza la normalizzazione.
+    const JOB_MAIUSCOLO = 'ABCDEF01-0000-4000-8000-0000000000AB'
+    const INTENTO_MAIUSCOLO = 'FEDCBA98-0000-4000-8000-0000000000CD'
+    const UTENTE_MAIUSCOLO = 'ABCD1111-1111-4111-8111-111111111111'
+    const SEDE_MAIUSCOLA = 'ABCD2222-2222-4222-8222-222222222222'
+    server.apertura = () => json({
+      intentId: INTENTO_MAIUSCOLO,
+      revisione: 1,
+      canale: 'gallery',
+      intent: { status: 'confirmed' },
+      scadenzaCaricamentoIl: SCADENZA_URL,
+      job: [{
+        jobId: JOB_MAIUSCOLO, chiaveIdempotenza: 'gn1-prova', status: 'awaiting_upload', needs_upload: true, firma: '', expires_at: SCADENZA_URL,
+        caricamento: { protocollo: 'put', url: URL_PUT, metodo: 'PUT', intestazioni: { 'content-type': 'video/quicktime' } },
+        rinnovo: { token: TOKEN_RINNOVO, scadeIl: SCADENZA_TOKEN },
+      }],
+    }, 201)
+    const { result } = await montaNativo({ ...opts, utenteId: UTENTE_MAIUSCOLO, sede: SEDE_MAIUSCOLA })
+    let esito: unknown
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(esito).toEqual({ ok: true })
+
+    // Alla POST la sede va com'è (il server accetta l'uuid in ogni grafia); al plugin tutto in minuscolo.
+    expect(corpoApertura().scuolaId).toBe(SEDE_MAIUSCOLA)
+    const r = richiestaAccodata()
+    expect(r).toMatchObject({
+      jobId: JOB_MAIUSCOLO.toLowerCase(), intentId: INTENTO_MAIUSCOLO.toLowerCase(),
+      utenteId: UTENTE_MAIUSCOLO.toLowerCase(), scuolaId: SEDE_MAIUSCOLA.toLowerCase(),
+    })
+    for (const campo of ['jobId', 'intentId', 'utenteId', 'scuolaId']) {
+      expect(r[campo], campo).toBe(String(r[campo]).toLowerCase())
+      expect(r[campo], campo).not.toBe(String(r[campo]).toUpperCase())
+    }
+    // Lo schema vero del ponte, quello che l'involucro applica a ogni richiesta, lo accetta: nessuna sorpresa a runtime.
+    const { schemaRichiestaAccodaVideo } = await import('@/lib/native/caricamenti-nativi-tipi')
+    expect(schemaRichiestaAccodaVideo.safeParse(r).success).toBe(true)
+    // E la scheda c'è, sotto l'id in minuscolo: la voce del plugin è dell'utente e della sede, comunque siano scritti.
+    await waitFor(() => expect(result.current.righe[0]?.jobId).toBe(JOB_MAIUSCOLO.toLowerCase()))
+  })
+
+  it('UN 422 RESTA ALLA SCHERMATA: messaggio e nomi, e ZERO byte — nessun `accodaVideo`, nessuna copia scartata', async () => {
+    server.apertura = () => json({ error: 'Foto di gruppo non pubblicabile: alcuni bambini non hanno la liberatoria foto.', nomi: ['Ada B.'], ids: [ADA] }, 422)
+    const { result } = await montaNativo()
+    let esito: { ok: boolean; messaggio?: string; nomi?: string[] } | undefined
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+
+    expect(esito).toMatchObject({ ok: false, nomi: ['Ada B.'] })
+    expect(esito?.messaggio).toContain('Foto di gruppo non pubblicabile')
+    expect(h.nAccoda).not.toHaveBeenCalled()
+    // Il video resta nel passo dei bambini: la sua copia sul telefono NON si tocca.
+    expect(h.nScarta).not.toHaveBeenCalled()
+    expect(chiamate.filter((c) => c.url !== '/api/video-uploads' && !c.url.startsWith('/api/video-uploads?'))).toEqual([])
+    expect(result.current.righe).toEqual([])
+    expect(tutteLeRigheDiLog()).not.toContain('Ada')
+  })
+
+  it('un rifiuto con codice (403 di sede), «troppe richieste» (429) e una rete caduta restano alla schermata, senza accodare niente', async () => {
+    const { result } = await montaNativo()
+    server.apertura = () => json({ error: 'prosa', codice: 'TAG_FUORI_SEDE' }, 403)
+    let esito: { ok: boolean; messaggio?: string; riprovaPiuTardi?: boolean } | undefined
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(esito).toEqual({ ok: false, messaggio: itShared.erroreTagFuoriSede })
+
+    server.apertura = () => new Response(JSON.stringify({ error: 'x', codice: 'TROPPE_RICHIESTE' }), { status: 429, headers: { 'Retry-After': '60' } })
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(esito).toMatchObject({ ok: false, riprovaPiuTardi: true })
+
+    server.apertura = () => { throw new TypeError('Failed to fetch') }
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(esito).toEqual({ ok: false, messaggio: itServizi.galleryErrRete })
+    expect(h.nAccoda).not.toHaveBeenCalled()
+  })
+
+  it('oltre il tetto di peso o di durata non si apre nemmeno l’intento; senza sede non si indovina il plesso', async () => {
+    const { result } = await montaNativo()
+    let esito: { ok: boolean; messaggio?: string } | undefined
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo({ byte: 2_000_000_001 }), scelta) })
+    expect(esito).toEqual({ ok: false, messaggio: itShared.erroreVideoTroppoGrande })
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), { ...scelta, durataSecondi: 301 }) })
+    expect(esito).toEqual({ ok: false, messaggio: itShared.erroreVideoTroppoLungo })
+    expect(aperture()).toHaveLength(0)
+
+    const senzaSede = await montaNativo({ ...opts, sede: null })
+    await act(async () => { esito = await senzaSede.result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(esito?.ok).toBe(false)
+    expect(esito?.messaggio).toBe(itShared.erroreSedeDaSpecificare)
+    expect(aperture()).toHaveLength(0)
+  })
+
+  it('un hook già smontato non apre intenti: li ritirerebbe subito', async () => {
+    const { result, unmount } = await montaNativo()
+    unmount()
+    let esito: { ok: boolean } | undefined
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(esito?.ok).toBe(false)
+    expect(aperture()).toHaveLength(0)
+    expect(h.nAccoda).not.toHaveBeenCalled()
+  })
+
+  it('i byte GIÀ sul server (`needs_upload: false`): niente accodamento, copia scartata, riga «conclusa» e «caricato» una volta', async () => {
+    server.apertura = (n) => aperturaNativa(n, { job: GIA_ARRIVATO })
+    const { result } = await montaNativo()
+    let esito: unknown
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(esito).toEqual({ ok: true })
+
+    expect(h.nAccoda).not.toHaveBeenCalled()
+    // La copia preparata non serve più: si cancella dal telefono (la chiede il passo dei bambini al plugin).
+    expect(h.nScarta).toHaveBeenCalledWith({ ids: ['video-1'] })
+    await waitFor(() => expect(patchFatti()).toEqual(['caricato']))
+    expect(chiamate.find((c) => c.metodo === 'PATCH')!.corpo).toMatchObject({ azione: 'caricato', jobId: uuid(101), byte: 73_000_000, mime: 'video/quicktime' })
+    // La parola è del server: «in coda», con il nome del file che il telefono conosce.
+    await waitFor(() => expect(result.current.righe[0]).toMatchObject({ fase: 'in-coda', nome: NOME_PRIVATO, trasporto: 'nativo' }))
+    expect(h.carica).not.toHaveBeenCalled()
+  })
+
+  it('l’apertura ripetuta (stesso video, stessi bambini) ritrova lo STESSO intento e RUOTA il token: `accodaVideo` riceve quello nuovo, e la scheda è una sola', async () => {
+    server.apertura = aperturaNativaSecondoIlServer()
+    const { result } = await montaNativo()
+    // Il plugin è idempotente su `jobId`: la seconda chiamata sostituisce i segreti e restituisce lo stato attuale.
+    await act(async () => { await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    await act(async () => { await result.current.avviaVideoNativo(nativoVideo({ id: 'video-2' }), scelta) })
+
+    expect(aperture()).toHaveLength(2)
+    expect(corpoApertura(1).file[0].chiaveIdempotenza).toBe(corpoApertura(0).file[0].chiaveIdempotenza)
+    expect(h.nAccoda).toHaveBeenCalledTimes(2)
+    expect(richiestaAccodata(0)).toMatchObject({ jobId: uuid(101), intentId: uuid(201) })
+    expect(richiestaAccodata(1)).toMatchObject({ jobId: uuid(101), intentId: uuid(201) })
+    expect((richiestaAccodata(0).rinnovo as { token: string }).token).toBe(TOKEN_RINNOVO)
+    expect((richiestaAccodata(1).rinnovo as { token: string }).token).toBe(tokenRuotato(1))
+    expect(result.current.righe).toHaveLength(1)
+  })
+
+  it('lo stesso video con ALTRI bambini (per esempio dopo «Rimuovi») apre un intento nuovo: una chiave diversa, e il server non risponde 409', async () => {
+    server.apertura = aperturaNativaSecondoIlServer()
+    const { result } = await montaNativo()
+    let primo: unknown
+    let secondo: unknown
+    await act(async () => { primo = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    await act(async () => { secondo = await result.current.avviaVideoNativo(nativoVideo(), { ...scelta, tag: [ADA, uuid(900)] }) })
+
+    expect(primo).toEqual({ ok: true })
+    expect(secondo, 'il reinvio con altri bambini è stato rifiutato').toEqual({ ok: true })
+    expect(corpoApertura(1).file[0].chiaveIdempotenza).not.toBe(corpoApertura(0).file[0].chiaveIdempotenza)
+    expect(richiestaAccodata(1).jobId).not.toBe(richiestaAccodata(0).jobId)
+  })
+
+  it('un intento ritrovato GIÀ CONCLUSO non si riapre: una chiave nuova (col suffisso), un intento nuovo, e il plugin riceve QUELLO', async () => {
+    server.apertura = (n) => (n === 1
+      ? aperturaNativa(1, { intent: 'published', job: { status: 'ready', ...GIA_ARRIVATO } })
+      : aperturaNativa(n))
+    const { result } = await montaNativo()
+    await act(async () => { await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+
+    expect(aperture()).toHaveLength(2)
+    const k1 = corpoApertura(0).file[0].chiaveIdempotenza
+    const k2 = corpoApertura(1).file[0].chiaveIdempotenza
+    expect(k2.startsWith(`${k1}-`)).toBe(true)
+    expect(k2.length).toBeLessThanOrEqual(128)
+    expect(richiestaAccodata()).toMatchObject({ jobId: uuid(102), intentId: uuid(202) })
+    // La storia di un video nativo sta tutta in `client:caricamento-nativo` (spec §8.1): una query sola la legge intera.
+    expect(logsDi('video-nuovo-intento-dopo-concluso')[0]).toMatchObject({ livello: 'warn', evento: 'caricamento-nativo', campi: { tipo: 'put-nativo' } })
+  })
+})
+
+describe('un `accodaVideo` RIFIUTATO ritira l’intento, lo scrive nei log col solo codice, e il video resta nel passo dei bambini', () => {
+  beforeEach(() => { server.apertura = (n) => aperturaNativa(n) })
+
+  it.each([...CODICI_RIFIUTO_PONTE])('rifiuto %s: errore nel log con job e solo il codice, PATCH `annulla`, messaggio generico', async (codice) => {
+    h.nAccoda.mockRejectedValueOnce(new ErroreCaricamentiNativi(codice))
+    const { result } = await montaNativo()
+    let esito: { ok: boolean; messaggio?: string } | undefined
+    await act(async () => { esito = await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+
+    expect(esito).toEqual({ ok: false, messaggio: itServizi.galleryErrCaricamentoGenerico })
+    // L'intento esiste già sul server, confermato e in attesa di byte che non partiranno: si ritira.
+    await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
+    expect(logsDi('video-nativo-accodamento-fallito')).toEqual([
+      expect.objectContaining({ livello: 'error', evento: 'caricamento-nativo', messaggio: `video-nativo-accodamento-fallito: job=${uuid(101)} ${codice}` }),
+    ])
+    expect(result.current.righe).toEqual([])
+    // Il file resta dov'è: la sua copia sul telefono non si cancella.
+    expect(h.nScarta).not.toHaveBeenCalled()
+  })
+
+  it('un rifiuto che non è del ponte (un errore qualunque) vale `SCONOSCIUTO`: nel log mai il suo messaggio', async () => {
+    h.nAccoda.mockRejectedValueOnce(new Error(`un messaggio che contiene ${NOME_PRIVATO} e ${URL_PUT}`))
+    const { result } = await montaNativo()
+    await act(async () => { await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(logsDi('video-nativo-accodamento-fallito')[0].messaggio).toBe(`video-nativo-accodamento-fallito: job=${uuid(101)} SCONOSCIUTO`)
+    expect(tutteLeRigheDiLog()).not.toContain(NOME_PRIVATO)
+    expect(tutteLeRigheDiLog()).not.toContain('supabase.co')
+  })
+
+  it('…e se quel ritiro LANCIA l’errore si registra: nessuna promessa rifiutata che nessuno ascolta (#137)', async () => {
+    h.nAccoda.mockRejectedValueOnce(new ErroreCaricamentiNativi('ELEMENTO_ASSENTE'))
+    const { result } = await montaNativo()
+    const base = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => (
+      /\/api\/video-uploads\/[^/?]+$/.test(url) && (init?.method ?? 'GET') === 'GET'
+        ? ({ ok: true, status: 200 } as unknown as Response)
+        : base(url, init)
+    )))
+    await act(async () => { await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    await waitFor(() => expect(h.log).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'video-annullamento-interrotto' })))
+  })
+})
+
+describe('un’apertura arrivata a SCHERMATA CAMBIATA: si ritira l’intento orfano — salvo che la coda nativa abbia già quel job', () => {
+  beforeEach(() => { server.apertura = (n) => aperturaNativa(n) })
+  const ALTRA_SEDE = '33333333-3333-4333-8333-333333333333'
+
+  /** Avvia un invio la cui apertura resta sospesa, cambia sede, poi la lascia arrivare. */
+  async function cambiaSedeDuranteLApertura() {
+    let risolvi!: (r: Response) => void
+    server.apertura = () => new Promise<Response>((r) => { risolvi = r })
+    const { result, rerender } = await montaNativo()
+    let promessa!: Promise<unknown>
+    act(() => { promessa = result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    await waitFor(() => expect(aperture()).toHaveLength(1))
+    rerender({ ...opts, sede: ALTRA_SEDE })
+    await act(async () => { risolvi(aperturaNativa(1)); return promessa })
+    return { risultato: await promessa as { ok: boolean }, result }
+  }
+
+  it('la coda nativa NON ha quel job: nessun accodamento, e l’intento che l’apertura ha creato si RITIRA', async () => {
+    const { risultato } = await cambiaSedeDuranteLApertura()
+    expect(risultato.ok).toBe(false)
+    expect(h.nAccoda).not.toHaveBeenCalled()
+    await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
+    expect(logsDi('video-intento-orfano-ritirato')[0]).toMatchObject({
+      livello: 'warn', evento: 'caricamento-nativo', messaggio: `video-intento-orfano-ritirato: job=${uuid(101)}`,
+    })
+  })
+
+  it('la coda nativa HA già quel job (la stessa chiave ha ritrovato un invio in corso di questo telefono): NON si ritira, sarebbe un caricamento buono ucciso', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'in-invio', byteInviati: 5 })] })
+    await cambiaSedeDuranteLApertura()
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(patchFatti()).toEqual([])
+    expect(h.nAccoda).not.toHaveBeenCalled()
+  })
+
+  it('se la coda nativa non si legge si resta prudenti: nel dubbio non si ritira (e si dice perché)', async () => {
+    h.nElenco.mockRejectedValue(new ErroreCaricamentiNativi('INTERNO'))
+    await cambiaSedeDuranteLApertura()
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(patchFatti()).toEqual([])
+    expect(logsDi('video-nativo-elenco-non-letto')[0]).toMatchObject({ livello: 'warn', messaggio: 'video-nativo-elenco-non-letto: INTERNO' })
+  })
+
+  it('smontato DOPO `accodaVideo` l’invio è del plugin e non si ritira niente: si risponde `ok`', async () => {
+    let finisci!: (v: CaricamentoNativo) => void
+    h.nAccoda.mockImplementationOnce(() => new Promise<CaricamentoNativo>((r) => { finisci = r }))
+    const { result, unmount } = await montaNativo()
+    let promessa!: Promise<unknown>
+    act(() => { promessa = result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    await waitFor(() => expect(h.nAccoda).toHaveBeenCalledTimes(1))
+
+    unmount()
+    await act(async () => { finisci(voceNativa()); await promessa })
+    expect(await promessa).toEqual({ ok: true })
+    // Il plugin sta spedendo: ritirare l'intento ucciderebbe un caricamento buono.
+    expect(patchFatti()).toEqual([])
+  })
+})
+
+describe('su un binario 1.2 un `File` va SEMPRE in TUS: `scegliTrasporto()` non sa niente del plugin', () => {
+  it('con il plugin presente un `File` apre un intento `tus` e parte dal TUS; il plugin non viene chiamato per i byte', async () => {
+    server.apertura = null
+    const { result } = await montaNativo()
+    expect(scegliTrasporto().nome).toBe('tus')
+    await act(async () => { await result.current.avviaVideo(video(), scelta) })
+
+    expect(aperture()[0].corpo!.trasporto).toBe('tus')
+    expect(corpoApertura().file[0].sha256).toBeUndefined()
+    expect(h.accoda).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(h.carica).toHaveBeenCalledTimes(1))
+    expect(h.nAccoda).not.toHaveBeenCalled()
+    expect(scegliTrasporto().nome).toBe('tus')
+  })
+
+  it('un elemento nativo e un `File` nella stessa sessione prendono due strade, e l’una non tocca l’altra', async () => {
+    server.apertura = (n, corpo) => (corpo.trasporto === 'put-nativo' ? aperturaNativa(n) : aperturaStandard(n))
+    const { result } = await montaNativo()
+    await act(async () => { await result.current.avviaVideo(video(), scelta) })
+    await act(async () => { await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    expect(aperture().map((a) => a.corpo!.trasporto)).toEqual(['tus', 'put-nativo'])
+    expect(h.accoda).toHaveBeenCalledTimes(1)
+    expect(h.nAccoda).toHaveBeenCalledTimes(1)
+    // Ogni scheda dice come viaggiano i suoi byte: da qui dipende ciò che offre («Riprendi» solo al TUS).
+    await waitFor(() => expect(result.current.righe).toHaveLength(2))
+    const trasporti = Object.fromEntries(result.current.righe.map((r) => [r.jobId, r.trasporto]))
+    expect(trasporti).toEqual({ [uuid(101)]: 'tus', [uuid(102)]: 'nativo' })
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────
+// L'ELENCO UNITO: la coda del plugin e quella del server in una lista sola
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('l’elenco UNITO: le voci del plugin si fondono con quelle del server', () => {
+  it('al montaggio chiede la coda nativa per QUELL’utente (id in minuscolo), e ogni stato ha la sua scheda e la sua nota', async () => {
+    // Un utente con lettere esadecimali nell'id (con sole cifre maiuscolo e minuscolo coincidono, e il test non proverebbe niente).
+    const UTENTE = 'abcd1111-1111-4111-8111-111111111111'
+    const voci = [
+      voceNativa({ utenteId: UTENTE, jobId: uuid(1), intentId: uuid(11), stato: 'in-coda' }),
+      voceNativa({ utenteId: UTENTE, jobId: uuid(2), intentId: uuid(12), stato: 'in-invio', byteInviati: 25 }),
+      voceNativa({ utenteId: UTENTE, jobId: uuid(3), intentId: uuid(13), stato: 'in-attesa', codice: 'RETE' }),
+      voceNativa({ utenteId: UTENTE, jobId: uuid(4), intentId: uuid(14), stato: 'in-pausa', codice: 'FGS_NON_AVVIABILE' }),
+      voceNativa({ utenteId: UTENTE, jobId: uuid(5), intentId: uuid(15), stato: 'inviato', byteInviati: 73_000_000 }),
+      voceNativa({ utenteId: UTENTE, jobId: uuid(6), intentId: uuid(16), stato: 'fallito', codice: 'TOKEN_SCADUTO' }),
+      voceNativa({ utenteId: UTENTE, jobId: uuid(7), intentId: uuid(17), stato: 'fallito', codice: 'TROPPO_GRANDE' }),
+      voceNativa({ utenteId: UTENTE, jobId: uuid(8), intentId: uuid(18), stato: 'annullato' }),
+    ]
+    h.nElenco.mockResolvedValue({ caricamenti: voci })
+    const { result } = await montaNativo({ ...opts, utenteId: UTENTE.toUpperCase() })
+    await waitFor(() => expect(result.current.righe).toHaveLength(8))
+
+    expect(h.nElenco).toHaveBeenCalledWith({ utenteId: UTENTE })
+    const per = (n: number) => result.current.righe.find((r) => r.jobId === uuid(n))!
+    expect(per(1)).toMatchObject({ fase: 'in-fila', percentuale: null, messaggio: itServizi.galleryVideoNotaNativo })
+    expect(per(2)).toMatchObject({ fase: 'caricamento', percentuale: 0, messaggio: itServizi.galleryVideoNotaNativo })
+    expect(per(3)).toMatchObject({ fase: 'interrotto', percentuale: null, messaggio: itServizi.galleryVideoAttesaRete })
+    expect(per(4)).toMatchObject({ fase: 'interrotto', percentuale: null, messaggio: itServizi.galleryVideoInPausa })
+    expect(per(5)).toMatchObject({ fase: 'in-coda', percentuale: null })
+    expect(per(6)).toMatchObject({ fase: 'da-ricaricare', messaggio: null })
+    expect(per(7)).toMatchObject({ fase: 'fallito', messaggio: itShared.erroreVideoTroppoGrande })
+    expect(per(8)).toMatchObject({ fase: 'annullato' })
+    for (const r of result.current.righe) {
+      expect(r.trasporto).toBe('nativo')
+      expect(r.nome).toBe(NOME_PRIVATO)
+    }
+  })
+
+  it('la percentuale è quella VERA: byte inviati sui totali, intera', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'in-invio', byteInviati: 18_250_000, byteTotali: 73_000_000 })] })
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('caricamento'))
+    expect(result.current.righe[0].percentuale).toBe(25)
+  })
+
+  it('una voce di un’ALTRA sede o di un ALTRO utente non si vede (l’elenco del plugin è dell’utente, non della sede)', async () => {
+    h.nElenco.mockResolvedValue({
+      caricamenti: [
+        voceNativa({ jobId: uuid(1), intentId: uuid(11) }),
+        voceNativa({ jobId: uuid(2), intentId: uuid(12), scuolaId: '33333333-3333-4333-8333-333333333333' }),
+        voceNativa({ jobId: uuid(3), intentId: uuid(13), utenteId: '44444444-4444-4444-8444-444444444444' }),
+      ],
+    })
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe).toHaveLength(1))
+    expect(result.current.righe[0].jobId).toBe(uuid(1))
+  })
+
+  it('SENZA RETE la coda nativa si legge lo stesso (è una chiamata al plugin, e dice «in attesa»), e il server non si chiede', async () => {
+    const spia = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'in-attesa', codice: 'RETE' })] })
+    h.nDisponibili.mockResolvedValue(INFO_PLUGIN)
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('interrotto'))
+    expect(result.current.righe[0].messaggio).toBe(itServizi.galleryVideoAttesaRete)
+    expect(elenchi()).toHaveLength(0)
+    spia.mockRestore()
+  })
+
+  it('SENZA PLUGIN (web, app 1.0/1.1, interruttore spento) il plugin non si chiama mai e non si scrive niente: è il caso normale', async () => {
+    h.nDisponibili.mockResolvedValue(null)
+    const { result } = await montaAttendendo()
+    await giroDiElenco()
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(h.nElenco).not.toHaveBeenCalled()
+    expect(h.nAscolta).not.toHaveBeenCalled()
+    expect(h.nAnnulla).not.toHaveBeenCalled()
+    expect(h.nDimentica).not.toHaveBeenCalled()
+    expect(logsDi('video-nativo')).toEqual([])
+    expect(result.current.righe).toEqual([])
+  })
+
+  it('una lettura RIFIUTATA dal plugin non rompe l’elenco del server: warn col solo codice, e le schede del server restano', async () => {
+    server.voci = [voce('in-coda')]
+    h.nElenco.mockRejectedValue(new ErroreCaricamentiNativi('RISPOSTA_NON_VALIDA'))
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('in-coda'))
+    expect(logsDi('video-nativo-elenco-non-letto')[0]).toMatchObject({
+      livello: 'warn', evento: 'caricamento-nativo', messaggio: 'video-nativo-elenco-non-letto: RISPOSTA_NON_VALIDA',
+    })
+  })
+
+  describe('una chiamata al plugin che non risponde non ferma l’elenco del server', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      Reflect.deleteProperty(document, 'hidden')
+    })
+
+    it('dopo il tetto la lettura si abbandona (`video-nativo-elenco-scaduto`) e il server riconcilia comunque', async () => {
+      server.voci = [voce('in-coda')]
+      h.nElenco.mockImplementation(() => new Promise(() => undefined)) // il bridge non risponde mai
+      h.nDisponibili.mockResolvedValue(INFO_PLUGIN)
+      const { result } = renderHook(() => useVideoGalleria(opts))
+      await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+      // La richiesta al server è già partita, ma la riconciliazione aspetta la coda nativa: finché non scade, niente schede.
+      expect(elenchi().length).toBeGreaterThan(0)
+      expect(result.current.righe).toEqual([])
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000) })
+      expect(logsDi('video-nativo-elenco-scaduto')[0]).toMatchObject({ livello: 'warn', evento: 'caricamento-nativo' })
+      expect(result.current.righe[0]?.fase).toBe('in-coda')
+    })
+  })
+})
+
+describe('una riga nativa scritta MENTRE si legge l’archivio IndexedDB non si perde', () => {
+  it('l’evento arriva prima che l’archivio risponda: alla fine la scheda c’è ancora (l’archivio non conosce i video nativi)', async () => {
+    let apriArchivio!: () => void
+    h.attesaArchivio = new Promise<void>((r) => { apriArchivio = r })
+    h.nDisponibili.mockResolvedValue(INFO_PLUGIN)
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(h.eventoNativo).not.toBeNull())
+
+    act(() => { h.eventoNativo?.(voceNativa({ stato: 'in-invio', byteInviati: 36_500_000 })) })
+    await waitFor(() => expect(result.current.righe[0]).toMatchObject({ fase: 'caricamento', percentuale: 50 }))
+    // L'archivio risponde adesso, con le sole sue righe (nessuna): riscrivere tutto cancellerebbe la scheda appena nata.
+    await act(async () => { apriArchivio() })
+    await waitFor(() => expect(elenchi().length).toBeGreaterThan(0))
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(result.current.righe[0]).toMatchObject({ fase: 'caricamento', trasporto: 'nativo' })
+  })
+})
+
+describe('gli EVENTI del plugin aggiornano la scheda senza aspettare il giro dell’elenco', () => {
+  const evento = (extra: Partial<CaricamentoNativo>) => act(() => { h.eventoNativo?.(voceNativa(extra)) })
+
+  it('un evento `caricamento` muove la percentuale, e un «in attesa» compare quando la rete cade', async () => {
+    const { result } = await montaNativo()
+    expect(result.current.righe).toEqual([])
+
+    evento({ stato: 'in-invio', byteInviati: 36_500_000, aggiornatoIl: '2026-10-02T10:00:10.000Z' })
+    await waitFor(() => expect(result.current.righe[0]).toMatchObject({ fase: 'caricamento', percentuale: 50 }))
+    evento({ stato: 'in-attesa', codice: 'RETE', aggiornatoIl: '2026-10-02T10:00:20.000Z' })
+    expect(result.current.righe[0]).toMatchObject({ fase: 'interrotto', messaggio: itServizi.galleryVideoAttesaRete })
+    evento({ stato: 'in-pausa', codice: 'FGS_NON_AVVIABILE', aggiornatoIl: '2026-10-02T10:00:30.000Z' })
+    expect(result.current.righe[0]).toMatchObject({ fase: 'interrotto', messaggio: itServizi.galleryVideoInPausa })
+    evento({ stato: 'in-invio', byteInviati: 73_000_000, aggiornatoIl: '2026-10-02T10:00:40.000Z' })
+    expect(result.current.righe[0]).toMatchObject({ fase: 'caricamento', percentuale: 100 })
+  })
+
+  it('un evento che non cambia niente non rifà il disegno: le righe restano lo stesso oggetto', async () => {
+    const { result } = await montaNativo()
+    evento({ stato: 'in-invio', byteInviati: 36_500_000 })
+    await waitFor(() => expect(result.current.righe).toHaveLength(1))
+    const prima = result.current.righe
+    // Un avanzamento di pochi byte che non sposta la percentuale intera: stessa scheda, stesso disegno.
+    evento({ stato: 'in-invio', byteInviati: 36_600_000, aggiornatoIl: '2026-10-02T10:00:01.000Z' })
+    expect(result.current.righe).toBe(prima)
+  })
+
+  it('un evento di un’altra sede o di un altro utente non arriva alla scheda', async () => {
+    const { result } = await montaNativo()
+    evento({ jobId: uuid(2), intentId: uuid(12), scuolaId: '33333333-3333-4333-8333-333333333333' })
+    evento({ jobId: uuid(3), intentId: uuid(13), utenteId: '44444444-4444-4444-8444-444444444444' })
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.righe).toEqual([])
+  })
+
+  it('un evento arrivato in RITARDO (più vecchio di quello già visto) non fa tornare indietro la scheda', async () => {
+    const { result } = await montaNativo()
+    evento({ stato: 'in-invio', byteInviati: 36_500_000, aggiornatoIl: '2026-10-02T10:00:10.000Z' })
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('caricamento'))
+    evento({ stato: 'in-coda', byteInviati: 0, aggiornatoIl: '2026-10-02T10:00:05.000Z' })
+    expect(result.current.righe[0]).toMatchObject({ fase: 'caricamento', percentuale: 50 })
+  })
+
+  it('l’ascolto si toglie allo smontaggio, e un ascolto agganciato dopo lo smontaggio si toglie subito', async () => {
+    const { unmount } = await montaNativo()
+    expect(h.nAscolta).toHaveBeenCalledTimes(1)
+    unmount()
+    await waitFor(() => expect(h.nTogliAscolto).toHaveBeenCalledTimes(1))
+
+    // Smontato mentre il plugin ancora rispondeva: l'ascolto appena agganciato non resta vivo.
+    h.nTogliAscolto.mockClear()
+    let aggancia!: (togli: () => Promise<void>) => void
+    h.nAscolta.mockImplementationOnce(() => new Promise((r) => { aggancia = r as typeof aggancia }))
+    h.nDisponibili.mockResolvedValue(INFO_PLUGIN)
+    const tardo = renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(h.nAscolta).toHaveBeenCalledTimes(2))
+    tardo.unmount()
+    await act(async () => { aggancia(h.nTogliAscolto) })
+    await waitFor(() => expect(h.nTogliAscolto).toHaveBeenCalledTimes(1))
+  })
+
+  it('senza utente e sede non si ascolta niente; un ascolto che il plugin rifiuta lascia un warn col solo codice', async () => {
+    h.nDisponibili.mockResolvedValue(INFO_PLUGIN)
+    renderHook(() => useVideoGalleria({ ...opts, utenteId: null, sede: null }))
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(h.nAscolta).not.toHaveBeenCalled()
+
+    h.nAscolta.mockRejectedValueOnce(new ErroreCaricamentiNativi('NON_DISPONIBILE'))
+    renderHook(() => useVideoGalleria(opts))
+    await waitFor(() => expect(logsDi('video-nativo-ascolto-fallito')).toHaveLength(1))
+    expect(logsDi('video-nativo-ascolto-fallito')[0]).toMatchObject({ livello: 'warn', messaggio: 'video-nativo-ascolto-fallito: NON_DISPONIBILE' })
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────
+// «CARICATO» UNA VOLTA, E LA VOCE TERMINALE CHE SI DIMENTICA
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('a `inviato` si dice «caricato» al server UNA volta; la voce terminale si dimentica quando il server è oltre `da-caricare`', () => {
+  it('quando il video PASSA a `inviato` davanti alla schermata, `PATCH caricato` coi byte e il MIME del plugin — una volta, anche se l’evento si ripete', async () => {
+    const { result } = await montaNativo()
+    act(() => { h.eventoNativo?.(voceNativa({ stato: 'in-invio', byteInviati: 70_000_000, aggiornatoIl: '2026-10-02T10:00:05.000Z' })) })
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('caricamento'))
+    expect(patchFatti(), '«caricato» non si dice finché i byte non sono tutti arrivati').toEqual([])
+
+    const inviato = { stato: 'inviato' as const, byteInviati: 73_000_000, aggiornatoIl: '2026-10-02T10:00:10.000Z' }
+    act(() => { h.eventoNativo?.(voceNativa(inviato)) })
+    await waitFor(() => expect(patchFatti()).toEqual(['caricato']))
+    expect(chiamate.find((c) => c.metodo === 'PATCH')!.corpo).toMatchObject({ azione: 'caricato', jobId: uuid(101), byte: 73_000_000, mime: 'video/quicktime' })
+
+    act(() => { h.eventoNativo?.(voceNativa({ ...inviato, aggiornatoIl: '2026-10-02T10:00:11.000Z' })) })
+    await giroDiElenco()
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(patchFatti()).toEqual(['caricato'])
+    expect(result.current.righe[0]).toMatchObject({ fase: 'in-coda', trasporto: 'nativo' })
+  })
+
+  it('una voce che si TROVA già `inviato` (l’app era chiusa) dice «caricato» solo se il server dice ancora «da caricare»: mai per un video già avanti', async () => {
+    // Il server è già oltre `da-caricare` (il trigger d'arrivo se n'è accorto): niente richiesta in più, e niente rifiuto nei log.
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'inviato', byteInviati: 73_000_000 })] })
+    server.voci = [voceDelNativo('pronto')]
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('pronto'))
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(patchFatti()).toEqual([])
+    // Un evento `inviato` senza una voce viva prima (ripetuto, in ritardo) non lo fa scattare da sé.
+    act(() => { h.eventoNativo?.(voceNativa({ stato: 'inviato', byteInviati: 73_000_000, aggiornatoIl: '2026-10-02T10:00:10.000Z' })) })
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(patchFatti()).toEqual([])
+  })
+
+  it('anche una voce già `inviato` trovata alla lettura dell’elenco (l’app era chiusa) dice «caricato», una volta', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'inviato', byteInviati: 73_000_000 })] })
+    server.voci = [voceDelNativo('da-caricare')]
+    await montaNativo()
+    await waitFor(() => expect(patchFatti()).toEqual(['caricato']))
+    await giroDiElenco()
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(patchFatti()).toEqual(['caricato'])
+  })
+
+  it('la voce `inviato` si DIMENTICA quando il server è oltre `da-caricare`, e non prima', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'inviato', byteInviati: 73_000_000 })] })
+    server.voci = [voceDelNativo('da-caricare')]
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('in-coda'))
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(h.nDimentica, 'il server dice ancora «da caricare»: la voce serve').not.toHaveBeenCalled()
+
+    server.voci = [voceDelNativo('in-conversione')]
+    await giroDiElenco()
+    await waitFor(() => expect(h.nDimentica).toHaveBeenCalledTimes(1))
+    expect(h.nDimentica).toHaveBeenCalledWith({ jobIds: [uuid(101)] })
+    // Una volta sola, anche se la lettura si ripete.
+    await giroDiElenco()
+    expect(h.nDimentica).toHaveBeenCalledTimes(1)
+  })
+
+  it('una voce NON terminale (sta ancora spedendo) non si dimentica, anche se il server è già oltre `da-caricare`', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'in-invio', byteInviati: 10 })] })
+    server.voci = [voceDelNativo('in-conversione')]
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe.length).toBeGreaterThan(0))
+    await giroDiElenco()
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(h.nDimentica).not.toHaveBeenCalled()
+  })
+
+  it('un video PUBBLICATO esce dalle schede, la voce si dimentica, la riga IndexedDB non si tocca e la galleria si ricarica UNA volta', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'inviato', byteInviati: 73_000_000 })] })
+    server.voci = [voceDelNativo('in-conversione')]
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('conversione'))
+
+    server.voci = [voceDelNativo('pubblicato', { mediaId: '66666666-6666-4666-8666-666666666666' })]
+    await giroDiElenco()
+    await waitFor(() => expect(result.current.righe).toEqual([]))
+    expect(h.nDimentica).toHaveBeenCalledWith({ jobIds: [uuid(101)] })
+    expect(h.elimina, 'un video nativo non ha una riga IndexedDB').not.toHaveBeenCalled()
+    expect(opts.onPubblicato).toHaveBeenCalledTimes(1)
+  })
+
+  it('una `dimentica` che il plugin rifiuta lascia un warn col solo codice, e si riprova alla lettura dopo', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'inviato', byteInviati: 73_000_000 })] })
+    server.voci = [voceDelNativo('in-conversione')]
+    h.nDimentica.mockRejectedValueOnce(new ErroreCaricamentiNativi('INTERNO'))
+    await montaNativo()
+    await waitFor(() => expect(logsDi('video-nativo-dimentica-fallito')).toHaveLength(1))
+    expect(logsDi('video-nativo-dimentica-fallito')[0]).toMatchObject({ livello: 'warn', messaggio: 'video-nativo-dimentica-fallito: INTERNO' })
+    await giroDiElenco()
+    await waitFor(() => expect(h.nDimentica).toHaveBeenCalledTimes(2))
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────
+// «RIMUOVI» — prima i byte (`annulla` del plugin), poi l'intento
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('«Rimuovi» un video NATIVO: `annulla` del plugin PRIMA, poi il ritiro dell’intento, poi `dimentica`', () => {
+  /** La coda del plugin con UN invio in corso, che dopo `annulla` risulta annullato. */
+  function codaConUnInvio() {
+    let stato: CaricamentoNativo['stato'] = 'in-invio'
+    h.nElenco.mockImplementation(async () => ({ caricamenti: [voceNativa({ stato, byteInviati: 10 })] }))
+    h.nAnnulla.mockImplementation(async () => {
+      h.ordine.push('annullaNativo')
+      stato = 'annullato'
+      return { annullato: true }
+    })
+  }
+
+  it('l’ORDINE: `annulla` viene PRIMA di `PATCH annulla`, che usa la revisione di ADESSO; la scheda sparisce subito e non torna', async () => {
+    codaConUnInvio()
+    server.voci = [voceDelNativo('da-caricare')]
+    server.revisione = 7
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('caricamento'))
+
+    act(() => result.current.rimuovi(uuid(101)))
+    // La scheda sparisce SUBITO.
+    expect(result.current.righe).toEqual([])
+    await waitFor(() => expect(patchFatti()).toContain('annulla'))
+
+    expect(h.nAnnulla).toHaveBeenCalledWith({ jobId: uuid(101) })
+    expect(h.ordine.indexOf('annullaNativo'), 'i byte non sono stati fermati').toBeGreaterThanOrEqual(0)
+    expect(h.ordine.indexOf('annullaNativo')).toBeLessThan(h.ordine.indexOf('PATCH:annulla'))
+    expect(chiamate.find((c) => c.corpo?.azione === 'annulla')!.corpo).toEqual({ azione: 'annulla', revisione: 7 })
+    // Ritiro riuscito: la voce (annullata) si dimentica, e la scheda non torna nemmeno alla lettura dopo.
+    await waitFor(() => expect(h.nDimentica).toHaveBeenCalledWith({ jobIds: [uuid(101)] }))
+    await waitFor(() => expect(localStorage.getItem(`kv:video-galleria-nascosti:${OWNER}`)).toContain(uuid(201)))
+    await giroDiElenco()
+    expect(result.current.righe).toEqual([])
+    // Nessun lavoro del TUS: né terminazione di una sessione né riga IndexedDB da eliminare.
+    expect(h.annullaLocale).not.toHaveBeenCalled()
+    expect(h.elimina).not.toHaveBeenCalled()
+  })
+
+  it('se `annulla` RIFIUTA (i byte potrebbero ancora correre) l’intento NON si ritira, si scrive l’errore col solo codice, e la scheda TORNA', async () => {
+    codaConUnInvio()
+    h.nAnnulla.mockRejectedValueOnce(new ErroreCaricamentiNativi('INTERNO'))
+    server.voci = [voceDelNativo('da-caricare')]
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('caricamento'))
+
+    act(() => result.current.rimuovi(uuid(101)))
+    expect(result.current.righe).toEqual([])
+    await waitFor(() => expect(logsDi('video-nativo-annulla-fallito')).toHaveLength(1))
+    expect(logsDi('video-nativo-annulla-fallito')[0]).toMatchObject({
+      livello: 'error', evento: 'caricamento-nativo', messaggio: `video-nativo-annulla-fallito: job=${uuid(101)} INTERNO`,
+    })
+    // Il verdetto manca: nessun ritiro, e la scheda torna col racconto del plugin (l'invio corre ancora).
+    await waitFor(() => expect(result.current.righe[0]).toMatchObject({ fase: 'caricamento', trasporto: 'nativo' }))
+    expect(patchFatti()).not.toContain('annulla')
+    expect(h.nDimentica).not.toHaveBeenCalled()
+    expect(localStorage.getItem(`kv:video-galleria-nascosti:${OWNER}`)).toBeNull()
+  })
+
+  it('se il server RIFIUTA il ritiro la scheda torna (annullata sul telefono, l’intento è ancora vivo) e la voce NON si dimentica', async () => {
+    codaConUnInvio()
+    server.voci = [voceDelNativo('da-caricare')]
+    server.patch = (azione) => (azione === 'annulla' ? json({ error: 'x', codice: 'VIDEO_OPERAZIONE_NON_RIUSCITA' }, 500) : null)
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('caricamento'))
+
+    act(() => result.current.rimuovi(uuid(101)))
+    await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
+    await waitFor(() => expect(result.current.righe[0]).toMatchObject({ fase: 'annullato', trasporto: 'nativo' }))
+    expect(logsDi('video-ritiro-non-riuscito')).toHaveLength(1)
+    expect(logsDi('video-ritiro-non-riuscito')[0]).toMatchObject({ livello: 'warn', evento: 'caricamento-nativo' })
+    expect(h.nDimentica).not.toHaveBeenCalled()
+    expect(localStorage.getItem(`kv:video-galleria-nascosti:${OWNER}`)).toBeNull()
+  })
+
+  it('«Togli» su un invio nativo FALLITO: `annulla` non ha niente da annullare (la voce è terminale) e il ritiro prosegue lo stesso', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'fallito', codice: 'TOKEN_SCADUTO' })] })
+    h.nAnnulla.mockResolvedValue({ annullato: false })
+    server.voci = [voceDelNativo('da-caricare')]
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('da-ricaricare'))
+
+    act(() => result.current.rimuovi(uuid(101)))
+    await waitFor(() => expect(patchFatti()).toEqual(['annulla']))
+    await waitFor(() => expect(h.nDimentica).toHaveBeenCalledWith({ jobIds: [uuid(101)] }))
+    expect(result.current.righe).toEqual([])
+  })
+
+  it('un evento che arriva dopo «Rimuovi» (lo `annullato` che l’annullamento produce) NON fa risorgere la scheda', async () => {
+    codaConUnInvio()
+    server.voci = [voceDelNativo('da-caricare')]
+    const { result } = await montaNativo()
+    await waitFor(() => expect(result.current.righe[0]?.fase).toBe('caricamento'))
+    // Il ritiro resta sospeso: la scheda è nascosta ma «in ritiro».
+    server.patch = () => new Promise<Response>(() => undefined) as unknown as Response
+
+    act(() => result.current.rimuovi(uuid(101)))
+    await waitFor(() => expect(h.nAnnulla).toHaveBeenCalled())
+    // Un `inviato` arrivato per un pelo (i byte erano già partiti): per un video che la persona ha tolto non si dice «caricato»
+    // al server mentre il suo intento si sta ritirando, e la sua voce non rientra fra quelle che la schermata racconta.
+    act(() => { h.eventoNativo?.(voceNativa({ stato: 'inviato', byteInviati: 73_000_000, aggiornatoIl: '2026-10-02T10:00:50.000Z' })) })
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+    expect(patchFatti()).not.toContain('caricato')
+    expect(result.current.righe).toEqual([])
+
+    // Poi lo `annullato` che l'annullamento stesso produce.
+    act(() => { h.eventoNativo?.(voceNativa({ stato: 'annullato', aggiornatoIl: '2026-10-02T10:01:00.000Z' })) })
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.righe).toEqual([])
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────
+// LA RIPRESA AUTOMATICA TUS IGNORA LE RIGHE NATIVE
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('la ripresa automatica del TUS ignora le righe native: il nativo riprende da solo', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    Reflect.deleteProperty(document, 'hidden')
+  })
+  const passa = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+
+  it('un invio nativo FERMO non arma nessun orologio, non riprende con `online` né col pulsante, e il TUS non parte', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'in-attesa', codice: 'RETE' })] })
+    server.voci = [voceDelNativo('da-caricare')]
+    h.nDisponibili.mockResolvedValue(INFO_PLUGIN)
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await passa(100)
+    expect(result.current.righe[0]).toMatchObject({ fase: 'interrotto', trasporto: 'nativo' })
+
+    // Né il rientro, né la rete che torna, né l'attesa crescente (5, 15, 30, 60 secondi): niente di tutto questo lo muove.
+    act(() => { window.dispatchEvent(new Event('online')) })
+    await passa(120_000)
+    h.leggiArchivio.mockClear()
+    act(() => result.current.riprendi(uuid(101)))
+    await passa(100)
+    expect(h.carica).not.toHaveBeenCalled()
+    expect(h.accoda).not.toHaveBeenCalled()
+    // «Riprendi» a mano è del TUS: per un video nativo non si accoda nemmeno un trasferimento (che andrebbe a cercare una riga
+    // dell'archivio che non esiste).
+    expect(h.leggiArchivio).not.toHaveBeenCalledWith(uuid(101))
+    expect(logsDi('video-ripresa-automatica')).toEqual([])
+    // E il plugin non è stato scomodato per «riprendere»: non ha un metodo per farlo.
+    expect(h.nAnnulla).not.toHaveBeenCalled()
+  })
+
+  it('con soli invii nativi fermi NESSUN timer di ripresa è armato: un orologio che non può fare niente si pagherebbe a ogni giro', async () => {
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'in-pausa', codice: 'FGS_NON_AVVIABILE' })] })
+    server.voci = [voceDelNativo('da-caricare')]
+    h.nDisponibili.mockResolvedValue(INFO_PLUGIN)
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await passa(100)
+    expect(result.current.righe[0]).toMatchObject({ fase: 'interrotto', trasporto: 'nativo' })
+    expect(vi.getTimerCount(), 'un timer pendente: la ripresa del TUS si è armata per una riga che non è sua').toBe(0)
+  })
+
+  it('…e la controprova del conteggio: un trasferimento TUS che la rete interrompe sì, arma l’orologio', async () => {
+    h.righe = [rigaArchivio({ stato: 'in_corso', offsetByte: 1 })]
+    server.voci = [voce('da-caricare')]
+    h.carica.mockImplementation(async (_dip: unknown, jobId: string) => ({ esito: 'interrotto', jobId, offsetByte: 1, codice: null }))
+    const { result } = renderHook(() => useVideoGalleria(opts))
+    await passa(100)
+    expect(h.carica).toHaveBeenCalledTimes(1)
+    expect(result.current.righe[0]?.fase).toBe('interrotto')
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+  })
+
+  it('controprova: un trasferimento TUS fermo, accanto a uno nativo, riprende come sempre', async () => {
+    h.righe = [rigaArchivio({ stato: 'in_corso', offsetByte: 1, jobId: uuid(500), intentId: uuid(600) })]
+    h.nElenco.mockResolvedValue({ caricamenti: [voceNativa({ stato: 'in-attesa', codice: 'RETE' })] })
+    server.voci = [voceDelNativo('da-caricare'), voce('da-caricare', { jobId: uuid(500), intentId: uuid(600) })]
+    h.nDisponibili.mockResolvedValue(INFO_PLUGIN)
+    renderHook(() => useVideoGalleria(opts))
+    await passa(100)
+    expect(h.carica).toHaveBeenCalledTimes(1)
+    expect(h.carica.mock.calls[0][1]).toBe(uuid(500))
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────
+// PRIVACY E USCITA DALL'ACCOUNT
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('nei log di un invio nativo non finisce mai un nome, un URL, un token, un hash o un bambino', () => {
+  it('apertura, accodamento, rifiuto, elenco, eventi, `inviato`, «Rimuovi»: tutto passa da uuid, conteggi e codici dell’elenco chiuso', async () => {
+    server.apertura = (n) => aperturaNativa(n)
+    h.nAnnulla.mockRejectedValueOnce(new ErroreCaricamentiNativi('INTERNO'))
+    const { result } = await montaNativo()
+    await act(async () => { await result.current.avviaVideoNativo(nativoVideo(), scelta) })
+    act(() => { h.eventoNativo?.(voceNativa({ stato: 'in-invio', byteInviati: 5, aggiornatoIl: '2026-10-02T10:00:05.000Z' })) })
+    act(() => { h.eventoNativo?.(voceNativa({ stato: 'inviato', byteInviati: 73_000_000, aggiornatoIl: '2026-10-02T10:00:09.000Z' })) })
+    await waitFor(() => expect(patchFatti()).toContain('caricato'))
+    act(() => result.current.rimuovi(uuid(101)))
+    await waitFor(() => expect(logsDi('video-nativo-annulla-fallito')).toHaveLength(1))
+    h.nAccoda.mockRejectedValueOnce(new ErroreCaricamentiNativi('HOST_NON_AMMESSO'))
+    server.apertura = (n) => aperturaNativa(n + 10)
+    await act(async () => { await result.current.avviaVideoNativo(nativoVideo({ id: 'video-2' }), { ...scelta, tag: [ADA, uuid(901)] }) })
+
+    const scritto = tutteLeRigheDiLog()
+    expect(scritto.length).toBeGreaterThan(100)
+    for (const segreto of [NOME_PRIVATO, 'filmato-privato', SHA_NATIVO, SHA_NATIVO.slice(0, 16), 'supabase.co', 'TOKEN-FINTO', 'kvr_', TOKEN_RINNOVO, ADA, uuid(901), 'localhost:']) {
+      expect(scritto, segreto).not.toContain(segreto)
+    }
+    // Solo livelli ammessi dal canale (`/api/logs` non accetta `info`) e solo l'evento nativo o quelli già in uso.
+    for (const [riga] of h.log.mock.calls) expect(['warn', 'error']).toContain((riga as { livello: string }).livello)
+  })
+})
+
+describe('all’uscita dall’account l’invio CONTINUA: `logout.ts` non nomina il modulo dei caricamenti nativi (spec §7.7)', () => {
+  it('né un import né un riferimento: il plugin non viene mai fermato da un logout', () => {
+    const sorgente = readFileSync(join(process.cwd(), 'src/lib/auth/logout.ts'), 'utf8')
+    expect(sorgente).not.toMatch(/caricamenti-nativi/)
+    expect(sorgente).not.toMatch(/KidvilleCaricamenti/)
+    // Controllo positivo: il file letto è davvero il logout (e gli altri plugin sì, li ferma).
+    expect(sorgente).toMatch(/unregisterNativePush/)
   })
 })

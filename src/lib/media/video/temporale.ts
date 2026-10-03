@@ -75,8 +75,9 @@ export interface VideoTemporalEvidence {
  * `TERMINAL_COVERAGE_MISMATCH` pur essendo una conversione perfetta. Provato anche con un file
  * sintetico (ultimo campione accorciato a 3 ms): `preserve` e `reduce60` cadono allo stesso modo.
  * In `preserve` l'uguaglianza dei PTS frame per frame prova già l'intera timeline, ultimo frame
- * compreso; in `reduce60` resta il controllo d'ARCO (primo → ultimo PTS, che non dipende da nessuna
- * durata di campione). Il tetto di durata resta, ma da solo e col suo motivo.
+ * compreso; in `reduce60` resta il controllo d'ARCO (primo → ultimo PTS, che non guarda la durata
+ * dell'ultimo campione dell'uscita: quella della SORGENTE decide i due limiti dell'arco, ciascuno a modo
+ * suo, come spiega il ramo). Il tetto di durata resta, ma da solo e col suo motivo.
  */
 export function compareVideoTimelines(
   source: unknown,
@@ -183,10 +184,38 @@ export function compareVideoTimelines(
   } else {
     // La riduzione intenzionale ha un contratto distinto: griglia a 60 Hz,
     // copertura della sorgente entro un campione di uscita, nessun confronto 1:1.
-    // L'ARCO (primo → ultimo PTS) è l'unico confronto di copertura che resta: non guarda la durata di
-    // nessun campione, che il muxer sceglie da sé.
+    // L'ARCO (primo → ultimo PTS) è l'unico confronto di copertura che resta: non guarda la durata
+    // dell'ultimo campione dell'USCITA, che il muxer sceglie da sé.
+    //
+    // I due versi dello scarto NON sono simmetrici, e nessuno dei due è «un campione di uscita»
+    // (falsi scarti di `m05` e del 240 fps costante, collaudo E1 del 03/10/2026).
+    // Il filtro `fps=60` mette sulla griglia a 60 Hz due istanti: la PARTENZA (il primo PTS) e la FINE
+    // dell'ultimo campione della sorgente (ultimo PTS + L, con L la durata di quel campione), ciascuno
+    // arrotondato al sessantesimo più vicino, quindi con un errore di al più 1/120. L'ultimo fotogramma
+    // d'uscita sta un passo PRIMA di quella fine: l'arco d'uscita meno quello di sorgente vale
+    // `L − 1/60 + (errore di fine − errore di partenza)`, cioè sta in (L − 2/60, L): gli estremi si toccano
+    // solo con i due errori al massimo e di segno opposto. Da qui i limiti, entrambi col pavimento di 1/60
+    // che c'era prima:
+    //  · in ECCESSO `max(1/60, L)`. A fps costante sopra i 60, L < 1/60 e basta un campione di uscita; un
+    //    rallentatore VFR (240 fps a tratti, 30 fps in coda) finisce con L = 33,333 ms: 720 fotogrammi con
+    //    l'ultimo PTS a 9,995833 s, 602 in uscita con l'ultimo a 10,016667 s, cioè +20,833 ms contro un
+    //    limite di 16,667 ms più un tick, e una conversione perfetta veniva scartata (`m05`);
+    //  · in DIFETTO `max(1/60, 2/60 − L)`. Con L corto (240 fps costanti: 4,167 ms) un'uscita corretta
+    //    può essere più CORTA della sorgente fin quasi di 2/60 − L, quando la partenza sale alla griglia
+    //    e la fine scende: 482 fotogrammi, il video che parte 9 ms dopo l'audio, 120 fotogrammi in uscita
+    //    (la partenza sale a 16 ms, la fine scende da 2,017 a 2,0 s di copertura) e −20,833 ms contro
+    //    16,667 ms più un tick; con la partenza a 8 ms passava. È il rallentatore classico dell'iPhone. Da
+    //    L = 2/60 in su nessuna durata giustifica più di un campione, com'era.
+    // Misurato con ffmpeg 8.1.2 e gli argomenti di produzione su 150 sorgenti sintetiche (fase di
+    // partenza, numero di fotogrammi, L da 4 a 100 ms): lo scarto non è mai uscito da (L − 2/60, L). Una
+    // troncatura vera — tre fotogrammi in coda, 50 ms — supera il limite ed è respinta. Il limite in
+    // difetto non supera mai 2/60 + epsilon, qualunque sia L: un ultimo campione cortissimo, anche
+    // ostile, compra al più due fotogrammi.
+    const scarto = (after.last - after.first) - (before.last - before.first)
+    const eccessoMassimo = Math.max(1 / 60, sourceLastSample) + epsilon
+    const difettoMassimo = Math.max(1 / 60, 2 / 60 - sourceLastSample) + epsilon
     result.reason = 'FPS_LIMIT'
-    if (Math.abs(fpsOut - 60) > 0.01 || Math.abs((after.last - after.first) - (before.last - before.first)) > 1 / 60 + epsilon) return result
+    if (Math.abs(fpsOut - 60) > 0.01 || scarto < -difettoMassimo || scarto > eccessoMassimo) return result
     for (let i = 0; i < after.pts.length; i++) {
       if (Math.abs(after.pts[i] - after.first - i / 60) > epsilon) return result
     }

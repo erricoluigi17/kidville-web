@@ -55,6 +55,21 @@ import { Play } from 'lucide-react';
  * sostenevano che la chiave non esistesse: esisteva già, e il risultato erano due
  * sorgenti di verità per una parola sola. Non si scrive a mano una parola
  * d'interfaccia che il catalogo ha già.
+ *
+ * ─── IL VIDEO NATIVO (app 1.2, spec «caricamenti nativi» §7.3) ──────────────
+ * Un video scelto dal selettore NATIVO non ha un `File`: i suoi byte stanno sul
+ * telefono, in una cartella del plugin, e non entrano mai in JavaScript. Non c'è
+ * nessun objectURL da dare a un `<video>`: l'anteprima è la MINIATURA che il
+ * plugin ha già fatto (un JPEG di al più 320 px in data URL), e si dipinge con
+ * un `<img>`. Lo si dichiara con `file={null}`: stessa forma dell'elemento
+ * caricabile (`ElementoCaricabile`, dove `file: null` vuol dire «nativo»), così
+ * le tre tessere che chiamano questo componente passano `f.file` com'è.
+ *
+ * ⚠️ La miniatura può mancare (`src=""`: il sistema non ha saputo estrarre un
+ * fotogramma). Non si dipinge un `<img>` senza sorgente — sarebbe il glifo del
+ * file rotto da cui questo componente è nato — ma un riquadro neutro col
+ * triangolino: dice «è un video» anche quando non può dire quale. La pastiglia
+ * «Video» con la parola resta quella di sempre, e la parola resta nel catalogo.
  */
 
 /**
@@ -83,9 +98,15 @@ import { Play } from 'lucide-react';
 export type EtichettaAnteprima = 'con-parola' | 'solo-icona' | 'nessuna';
 
 interface Props {
-    /** Il file scelto. Serve solo il TIPO: è lui che decide, non il nome. */
-    file: Pick<File, 'type'>;
-    /** L'objectURL dell'anteprima. Lo crea — e lo REVOCA — chi possiede l'elenco. */
+    /**
+     * Il file scelto. Serve solo il TIPO: è lui che decide, non il nome. `null` è un video NATIVO
+     * (nessun `File`): vedi la sezione «Il video nativo» in testa.
+     */
+    file: Pick<File, 'type'> | null;
+    /**
+     * L'objectURL dell'anteprima — lo crea, e lo REVOCA, chi possiede l'elenco — oppure, per un video
+     * nativo, la miniatura JPEG in data URL (vuota se il sistema non l'ha fatta).
+     */
     src: string;
     /** Le classi dell'elemento che dipinge. Il default riempie la tessella. */
     className?: string;
@@ -96,8 +117,41 @@ interface Props {
 /** Riempie la tessella senza deformare: identico per immagini e video. */
 const RIEMPI = 'w-full h-full object-cover';
 
-export function AnteprimaMedia({ file, src, className = RIEMPI, etichetta = 'con-parola' }: Props) {
+/**
+ * LA PASTIGLIA «▶ VIDEO», in basso a sinistra: la X di rimozione sta in alto a destra, e in basso a
+ * destra ci sono i badge dei tag sulla striscia dello step 2 — questo è l'angolo che resta libero su
+ * entrambe. La parola c'è sempre, e non è `aria-hidden`: un triangolino non si legge ad alta voce, e
+ * senza di lei per chi usa uno screen reader la tessella di un filmato è indistinguibile da quella di
+ * una foto. Quando lo spazio non basta smette di occupare pixel, non di esistere.
+ */
+function PastigliaVideo({ etichetta }: { etichetta: Exclude<EtichettaAnteprima, 'nessuna'> }) {
     const t = useTranslations('shared');
+    return (
+        <span className="pointer-events-none absolute bottom-1 left-1 flex items-center gap-0.5 rounded-pill bg-kidville-ink/90 px-1.5 py-0.5 font-barlow text-[9px] font-bold uppercase tracking-wide text-kidville-white">
+            <Play size={8} strokeWidth={2} fill="currentColor" aria-hidden="true" />
+            <span className={etichetta === 'solo-icona' ? 'sr-only' : ''}>{t('galleryVideo')}</span>
+        </span>
+    );
+}
+
+export function AnteprimaMedia({ file, src, className = RIEMPI, etichetta = 'con-parola' }: Props) {
+    // Un video NATIVO: niente `File`, niente `<video>`. La miniatura è già un JPEG pronto; se manca, un
+    // riquadro neutro col triangolino (mai un `<img>` senza sorgente: è il glifo del file rotto).
+    if (file === null) {
+        return (
+            <>
+                {src !== '' ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={src} alt="" className={className} />
+                ) : (
+                    <div className={`${className} flex items-center justify-center bg-kidville-neutral-soft text-kidville-sub`}>
+                        <Play size={20} strokeWidth={1.75} fill="currentColor" aria-hidden="true" />
+                    </div>
+                )}
+                {etichetta !== 'nessuna' && <PastigliaVideo etichetta={etichetta} />}
+            </>
+        );
+    }
 
     if (file.type.startsWith('video/')) {
         return (
@@ -111,20 +165,8 @@ export function AnteprimaMedia({ file, src, className = RIEMPI, etichetta = 'con
                   comandi la coprirebbero e il gesto utile qui è la X di rimozione.
                 */}
                 <video src={src} muted playsInline preload="metadata" className={className} />
-                {etichetta !== 'nessuna' && (
-                    // In BASSO A SINISTRA: la X di rimozione sta in alto a destra, e
-                    // in basso a destra ci sono i badge dei tag sulla striscia dello
-                    // step 2 — questo è l'angolo che resta libero su entrambe.
-                    // La parola c'è sempre, e non è `aria-hidden`: un triangolino non
-                    // si legge ad alta voce, e senza di lei per chi usa uno screen
-                    // reader la tessella di un filmato è indistinguibile da quella di
-                    // una foto. Quando lo spazio non basta smette di occupare pixel,
-                    // non di esistere.
-                    <span className="pointer-events-none absolute bottom-1 left-1 flex items-center gap-0.5 rounded-pill bg-kidville-ink/90 px-1.5 py-0.5 font-barlow text-[9px] font-bold uppercase tracking-wide text-kidville-white">
-                        <Play size={8} strokeWidth={2} fill="currentColor" aria-hidden="true" />
-                        <span className={etichetta === 'solo-icona' ? 'sr-only' : ''}>{t('galleryVideo')}</span>
-                    </span>
-                )}
+                {/* In BASSO A SINISTRA e con la parola sempre presente: vedi `PastigliaVideo`. */}
+                {etichetta !== 'nessuna' && <PastigliaVideo etichetta={etichetta} />}
             </>
         );
     }

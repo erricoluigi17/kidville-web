@@ -32,8 +32,11 @@ android {
         // 2 = la 1.0 ricostruita il 2026-08-09. 3 = la 1.1 (download in Galleria/File, 24/09/2026): la spec
         // vuole «il primo libero, da verificare su Play Console (≥ 3)» — se al caricamento
         // Play dicesse che il 3 è già usato, si alza qui e si ricostruisce, non si forza.
-        versionCode 3
-        versionName "1.1"
+        // 4 = la 1.2 (caricamenti nativi in background, 03/10/2026): il primo libero SECONDO IL REPO (3 = la 1.1 pubblicata).
+        // Da confermare su Play Console, in sola lettura, prima di costruire il bundle per l'invio: se Play dicesse che il 4 è già
+        // usato, si alza in un branch di correzione e si ricostruisce, mai forzare.
+        versionCode 4
+        versionName "1.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -50,6 +53,12 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+    }
+    // `BuildConfig` NON si genera da solo: con AGP 8 la classe è spenta di default e `gradle.properties` non la riaccende.
+    // La vogliono i caricamenti nativi (`BuildConfig.DEBUG` per la politica degli host, §9, e per `creaElementoDiProva`, solo
+    // Debug; `VERSION_NAME`/`VERSION_CODE` per `versione_app` dei log) e il lock di J4, che cerca `BuildConfig.DEBUG` nei sorgenti.
+    buildFeatures {
+        buildConfig true
     }
 }
 
@@ -84,7 +93,14 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // Caricamenti nativi in background, API 24-33: lavoro unico `kidville-caricamenti` con servizio in primo piano `dataSync`
+    // (`LavoroCaricamenti`). Da API 34 il motore è UIDT (JobScheduler) e non passa di qui. Versione fissata in variables.gradle.
+    implementation "androidx.work:work-runtime:$androidxWorkVersion"
     testImplementation "junit:junit:$junitVersion"
+    // `org.json` dell'SDK Android, nei test sulla JVM, è uno stub che lancia «not mocked»: la coda e il registro dei
+    // caricamenti nativi (it.kidville.app.caricamenti) lo usano, quindi nei test serve l'implementazione vera. Sta PRIMA
+    // di android.jar nel classpath dei test, ed è per questo che si dichiara qui. Solo test: nell'APK resta quello di sistema.
+    testImplementation "org.json:json:20251224"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
@@ -100,3 +116,9 @@ try {
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
+
+// `ManifestCaricamentiTest` legge il manifest FUSO della build Debug (RECEIVE_BOOT_COMPLETED, che serve a `setPersisted(true)` del job
+// UIDT e arriva da WorkManager; e l'assenza dei permessi sui media che nessuna libreria deve portare). Il file lo produce
+// `processDebugMainManifest`: i test ne dipendono in modo ESPLICITO, così col comando di verifica c'è sempre e il test non ha un
+// ramo «saltato» (secondario n. 85). `matching` e non `named`: AGP registra i task di variante dopo la valutazione di questo file.
+tasks.matching { it.name == 'testDebugUnitTest' }.configureEach { dependsOn 'processDebugMainManifest' }

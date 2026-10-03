@@ -436,6 +436,28 @@ describe('nessun `alert()` nel ramo di invio: gli esiti escono in una regione vi
   })
 })
 
+describe('«Annulla» si spegne mentre «Pubblica» scorre l’elenco (anche sul web: il giro sta leggendo la stessa lista)', () => {
+  it('con l’apertura in volo «Annulla» è spento e un clic non svuota niente; a giro finito la pagina torna alla galleria', async () => {
+    let completa!: (r: Response) => void
+    apertura = (() => new Promise<Response>((r) => { completa = r })) as unknown as typeof apertura
+    await finoAlTag(video('uno.mp4', 11_000_000), video('due.mp4', 22_000_000))
+    const annulla = screen.getByRole('button', { name: itServizi.galleryAnnulla })
+    expect(annulla).toBeEnabled()
+
+    fireEvent.click(pulsantePubblica())
+    await waitFor(() => expect(aperture).toBe(1))
+    expect(annulla).toBeDisabled()
+    fireEvent.click(annulla)
+    // Un «Annulla» che passasse butterebbe l'elenco sotto il giro che lo sta scorrendo: i bambini sono ancora lì.
+    expect(screen.getByText(`${ADA.nome} ${ADA.cognome}`)).toBeInTheDocument()
+
+    apertura = (n) => rispostaApertura(n)
+    completa(rispostaApertura(1))
+    await waitFor(() => expect(h.accoda).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByRole('button', { name: new RegExp(itServizi.galleryCarica) })).toBeInTheDocument())
+  })
+})
+
 describe('le schede raccontano ciò che il server sa, anche di un altro dispositivo', () => {
   it('un video che sta caricando un altro dispositivo si vede, senza nome, con la data', async () => {
     voci = [voce('da-caricare')]

@@ -1,0 +1,201 @@
+# =============================================================================
+# Kidville · iOS — GALLERIA, VIDEO NATIVO (app 1.2, PR 3 «caricamenti nativi»)
+#   login docente → Foto → Carica → «Scegli foto e video dalla galleria»
+#   → un video dal selettore di sistema (PHPicker) → un bambino → «Pubblica»
+#   → il video è in invio → la riga nativa si chiude (byte arrivati)
+#
+# Prerequisiti: vedi .claude/maestro-flows/README.md, più due cose di questo flow:
+#   1. app 1.2 (6) o successiva col plugin KidvilleCaricamenti (sulla 1.0/1.1 il
+#      pulsante «Scegli foto e video dalla galleria» non esiste);
+#   2. l'elemento PIÙ RECENTE della libreria Foto del simulatore è un video
+#      valido (sotto i 2 GB e i 5 minuti): il selettore di sistema
+#      mostra la libreria dal più recente, e il flow tocca la PRIMA casella. Si
+#      prepara così: `xcrun simctl addmedia <udid> <video-di-prova>.mp4`.
+#      Il collaudo E1 del 2026-10-03 ha usato una clip `testsrc2` di 60 s,
+#      1080p, ~122 MB: con ~2 MB/s di banda l'invio dura quasi un minuto, il tempo
+#      di trovare la riga «in invio» (con 33 MB durava 15 s e la riga non si vedeva).
+#
+# Esecuzione — SEMPRE dallo script, mai `maestro test` a mano:
+#   MAESTRO_KV_EMAIL_DOCENTE=<docente con una classe> KV_DEVICE=<udid> \
+#     .claude/maestro-flows/esegui.sh ios-galleria-video-nativo.yaml
+#
+# Il selettore di sistema NON è testo dell'app: la casella del video e la spunta
+# di conferma si toccano per identificatore (`id`), mai per un testo di sistema
+# (lock R24) né a coordinate. Il login si invia con `pressKey: Enter` e il dialogo
+# dei permessi si gestisce prima e dopo (R14, R15).
+#
+# Il bambino si sceglie toccando la sua scheda (che finisce con «Solo genitori»): il nome è un
+# DATO del seme, non un testo dell'app. Nel seme E2E la docente ha la sola
+# Girasoli, e i due bambini sono senza liberatoria: il primo dell'elenco diventa
+# un contenuto privato, visibile ai soli suoi genitori.
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · iOS — galleria, video nativo
+tags:
+  - ios
+  - docente
+  - galleria
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_DOCENTE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 0. PERMESSO RIMASTO IN CODA DAL GIRO PRECEDENTE ──────────────────────────
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 15000
+    optional: true
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- pressKey: Enter
+
+# ── 1b. DIALOGO DEI PERMESSI DI QUESTO GIRO ──────────────────────────────────
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 30000
+    optional: true
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
+# ── 2. DASHBOARD → GALLERIA → CARICA ─────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Dashboard"
+    timeout: 60000
+- tapOn: "Foto"
+- extendedWaitUntil:
+    visible: "Carica"
+    timeout: 45000
+- tapOn: "Carica"
+# «Carica» è nell'albero già dall'HTML del server, prima che React lo idrati: un
+# tocco in quella finestra risulta COMPLETED e non apre niente (misurato al terzo
+# giro di questo flow). Se il passo 1 non è comparso, si tocca una seconda volta.
+- extendedWaitUntil:
+    visible: "Scegli foto e video dalla galleria"
+    timeout: 10000
+    optional: true
+- runFlow:
+    when:
+      notVisible: "Scegli foto e video dalla galleria"
+    commands:
+      - tapOn: "Carica"
+
+# I tre comandi della 1.2 (spec §7.2): due pulsanti e il link, nessun riquadro.
+- extendedWaitUntil:
+    visible: "Scegli foto e video dalla galleria"
+    timeout: 30000
+- assertVisible: "Scatta una foto"
+- assertVisible: "Scegli da File"
+- takeScreenshot: /tmp/kv-ios-galleria-nativo-1-scelta
+
+# ── 3. IL SELETTORE DI SISTEMA ───────────────────────────────────────────────
+# PHPicker non è testo dell'app: lo si guida per IDENTIFICATORE, misurato con
+# `maestro hierarchy` sull'iPhone 16e / iOS 26.2 il 2026-10-03 — `Cancel` è la X
+# (etichetta «Annulla»), `PXGGridLayout-Info` ogni casella della griglia in ordine
+# dalla più recente, `Add` la spunta di conferma (etichetta «Fine»). `Add` entra
+# nell'albero SOLO dopo la prima scelta (misurato: prima non è visibile nemmeno
+# con `enabled: false`), quindi l'apertura del foglio si aspetta su `Cancel`.
+# Un tocco dato mentre il foglio sta ancora salendo risulta COMPLETED e non
+# seleziona niente (misurato al primo giro, con un tocco a coordinate dopo
+# `waitForAnimationToEnd`).
+- tapOn: "Scegli foto e video dalla galleria"
+- extendedWaitUntil:
+    visible:
+      id: "Cancel"
+    timeout: 30000
+- tapOn:
+    id: "PXGGridLayout-Info"
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: "Add"
+    timeout: 15000
+- tapOn:
+    id: "Add"
+# Arrivo: l'anteprima nativa del video è nell'elenco. Partenza: l'attesa di
+# preparazione («Preparo il file», copia e sha256 sul telefono) è finita.
+- extendedWaitUntil:
+    visible: "Modifica Tag.*"
+    timeout: 60000
+# Regex aperta anche in testa: nel catalogo la frase è dentro un plurale ICU
+# (`mediaPreparazione`), e il lock R24 la confronta col messaggio intero.
+- assertNotVisible: ".*Preparo i.*"
+- takeScreenshot: /tmp/kv-ios-galleria-nativo-2-video-scelto
+
+# ── 4. IL BAMBINO ────────────────────────────────────────────────────────────
+# «Modifica Tag · 1 file» sta sotto la piega, dietro la bottom-nav: toccato dov'è,
+# il tocco cade sul tab «Messaggi» (misurato al quarto giro). Prima al centro.
+- scrollUntilVisible:
+    element:
+      text: "Modifica Tag.*"
+    direction: DOWN
+    centerElement: true
+    timeout: 20000
+- tapOn: "Modifica Tag.*"
+- extendedWaitUntil:
+    visible: "2. Configura Tag e Privacy"
+    timeout: 30000
+# Nella WebView iOS ogni bambino è UN nodo con il testo concatenato («<nome>
+# Genitore: <nome> Solo genitori», misurato con `maestro hierarchy`): Maestro fa
+# full-match, quindi la regex è ancorata solo in fondo. Il primo è il bambino A.
+- scrollUntilVisible:
+    element:
+      text: ".*Solo genitori"
+    direction: DOWN
+    centerElement: true
+    timeout: 20000
+- tapOn:
+    text: ".*Solo genitori"
+    index: 0
+- extendedWaitUntil:
+    visible: ".*Foto Privata.*"
+    timeout: 15000
+
+# ── 5. PUBBLICA ──────────────────────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: "Pubblica.*"
+    direction: DOWN
+    centerElement: true
+    timeout: 20000
+- tapOn: "Pubblica.*"
+- extendedWaitUntil:
+    visible: ".*in invio.*"
+    timeout: 60000
+- takeScreenshot: /tmp/kv-ios-galleria-nativo-3-in-invio
+
+# ── 6. INVIATO ───────────────────────────────────────────────────────────────
+# La nota della riga nativa resta finché i byte non sono arrivati (spec §7.5,
+# `in-invio`), poi la riga diventa quella del server. Prima si vede, poi sparisce:
+# l'attesa dell'assenza da sola sarebbe vera anche prima che la riga esista.
+# Le righe di «Video in preparazione» vanno dalla più VECCHIA alla più nuova: con
+# altri video ancora in coda la riga nativa è in fondo, fuori viewport (misurato al
+# sesto giro: 13 righe in coda sopra di lei), quindi la si cerca scorrendo.
+- scrollUntilVisible:
+    element:
+      text: ".*finché il video non è inviato.*"
+    direction: DOWN
+    centerElement: true
+    timeout: 60000
+- extendedWaitUntil:
+    notVisible: ".*finché il video non è inviato.*"
+    timeout: 300000
+- takeScreenshot: /tmp/kv-ios-galleria-nativo-4-inviato

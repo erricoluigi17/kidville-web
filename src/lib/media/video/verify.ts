@@ -315,9 +315,9 @@ function fpsMatches(sourceFps: number, outputFps: number, evidence: VideoDecodeE
  * la durata dell'ultimo campione: è il solo grado di libertà che resta.
  *
  * Perché non apre un varco al troncamento: un frame mancante fa già fallire il conteggio (prima di
- * arrivare qui), e in `reduce60` — dove conteggio e PTS NON coincidono — la tolleranza resta quella di
- * sempre. Una misura assente, non positiva o più lunga della traccia stessa (incoerente: un campione
- * non dura più del video che lo contiene) non allarga niente.
+ * arrivare qui), e in `reduce60` — dove conteggio e PTS NON coincidono — vale un'altra regola, più
+ * stretta, quella di `misureDellaRiduzione`. Una misura assente, non positiva o più lunga della traccia
+ * stessa (incoerente: un campione non dura più del video che lo contiene) non allarga niente.
  */
 function ultimoCampioneConservato(evidence: VideoDecodeEvidence, durataTracciaSorgente: number): number | null {
   const temporal = provaTemporaleValida(evidence)
@@ -327,27 +327,111 @@ function ultimoCampioneConservato(evidence: VideoDecodeEvidence, durataTracciaSo
   return campione <= durataTracciaSorgente ? campione : null
 }
 
-/**
- * Di quanto possono differire due durate: `max(1 frame, ultimo campione della sorgente)` più il padding
- * AAC. Senza un ultimo campione da far valere (`null`) è il frame di prima, né più né meno.
- *
- * L'unico punto che la calcola: la verifica e la diagnosi leggono lo stesso numero.
- */
-function durationTolerance(
-  outputFps: number,
-  audioSampleRate: number | null,
-  ultimoCampione: number | null,
-): number {
-  const oneFrame = 1 / outputFps
-  const aacPadding = audioSampleRate === null ? 0 : AAC_SAMPLES_PER_FRAME / audioSampleRate
-  return Math.max(oneFrame, ultimoCampione ?? 0) + aacPadding
+/** Ciò che la prova di una RIDUZIONE a 60 Hz ha misurato della sorgente e che serve alla durata. */
+interface MisureDellaRiduzione {
+  /** Durata dell'ultimo campione della sorgente (L). */
+  ultimoCampione: number
+  /** Dal primo PTS alla fine dell'ultimo campione, sorgente. */
+  copertura: number
+  /** Un tick d'uscita più 1 ns: l'errore con cui la prova temporale confronta i PTS. */
+  epsilon: number
 }
 
-function durationMatches(sourceDuration: number, outputDuration: number, tolerance: number): boolean {
+/**
+ * La durata nella RIDUZIONE a 60 Hz (`reduce60`), dove conteggio e PTS non coincidono per costruzione.
+ *
+ * Perché serve (falso scarto di `m05`, collaudo E1 del 03/10/2026). Il filtro `fps=60` allunga l'uscita
+ * fino a coprire l'ULTIMO CAMPIONE della sorgente, arrotondando la fine alla griglia: l'uscita dura quanto
+ * la COPERTURA della sorgente (primo PTS → fine dell'ultimo campione) più o meno un fotogramma. Ma la durata
+ * dichiarata dalla sorgente può non contare quel campione, e in `m05` — una `.mov` fatta con `-t 10`,
+ * 10,000 s dichiarati contro 10,029 di copertura — l'uscita (10,033 s) superava la sorgente di 33,3 ms,
+ * esattamente L, contro un frame di tolleranza: senza audio (che col padding AAC passa per 4,7 ms di
+ * margine) era `OUTPUT_DURATION_MISMATCH` su una conversione perfetta.
+ *
+ * Perciò in `reduce60` l'ECCESSO ammette di più, e il DIFETTO no (`durationTolerances`). Le misure arrivano
+ * dalla prova temporale e sono incoerenti, senza peso, quando mancano, non sono positive e finite, un
+ * campione dura più della traccia o della copertura che lo contiene, la copertura sta oltre la traccia di
+ * più di un campione e un fotogramma (la sorgente è dichiarata così corta da non essere un riferimento), o
+ * il tick d'uscita supera un fotogramma: allora non si allarga niente.
+ */
+function misureDellaRiduzione(
+  evidence: VideoDecodeEvidence,
+  durataTracciaSorgente: number,
+  unFotogramma: number,
+): MisureDellaRiduzione | null {
+  const temporal = provaTemporaleValida(evidence)
+  if (!temporal || temporal.mode !== 'reduce60') return null
+  const misure = temporal.measures
+  const positivo = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0
+  if (!misure || !positivo(misure.sourceLastSample) || !positivo(misure.sourceCoverage) || !positivo(misure.epsilon)) return null
+  const { sourceLastSample: ultimoCampione, sourceCoverage: copertura, epsilon } = misure
+  if (
+    ultimoCampione > durataTracciaSorgente ||
+    ultimoCampione > copertura ||
+    copertura > durataTracciaSorgente + ultimoCampione + unFotogramma ||
+    epsilon > unFotogramma
+  ) return null
+  return { ultimoCampione, copertura, epsilon }
+}
+
+/**
+ * Di quanto l'uscita può restare SOTTO la durata della sorgente (`difetto`) e di quanto può SUPERARLA
+ * (`eccesso`); in `reduce60`, in più, `fineDellaCopertura`: la durata d'uscita oltre la quale l'uscita
+ * supera la COPERTURA della sorgente portata alla griglia (un fotogramma di arrotondamento compreso).
+ */
+interface ToleranzeDiDurata {
+  difetto: number
+  eccesso: number
+  fineDellaCopertura: number | null
+}
+
+/**
+ * Le tolleranze sulla durata, con il padding AAC dove l'uscita ha l'audio. L'unico punto che le calcola: la
+ * verifica e la diagnosi leggono gli stessi numeri.
+ *
+ *  · `preserve` (e ogni altro caso, o una prova senza misure): `max(1 frame, ultimo campione della
+ *    sorgente)` — l'ultimo campione solo se la conversione è 1:1, `ultimoCampioneConservato` — nei due versi.
+ *  · `reduce60`: il DIFETTO resta un frame, perché un'uscita più corta della sorgente è una troncatura e
+ *    nessuna durata la giustifica. L'ECCESSO ammette `max(1 frame, L)` più un tick (L = ultimo campione
+ *    della sorgente), o tutto ciò che serve a coprire la sorgente fino a dove arriva la sua copertura sulla
+ *    griglia (`fineDellaCopertura`): la durata dichiarata può essere più corta della copertura di quasi L, e
+ *    l'arrotondamento alla griglia ne aggiunge fino a un fotogramma (misurato il 03/10/2026 su 32 code VFR
+ *    senza audio: l'uscita superava la dichiarata fino a L + 1/240 s, otto volte su 32 oltre `max(1/60, L)`).
+ *    Sopra la copertura, comunque, nulla: una coda spuria resta respinta.
+ */
+function durationTolerances(
+  outputFps: number,
+  audioSampleRate: number | null,
+  evidence: VideoDecodeEvidence | null,
+  durataTracciaSorgente: number,
+): ToleranzeDiDurata {
+  const oneFrame = 1 / outputFps
+  const aacPadding = audioSampleRate === null ? 0 : AAC_SAMPLES_PER_FRAME / audioSampleRate
+  const conservato = evidence ? ultimoCampioneConservato(evidence, durataTracciaSorgente) : null
+  const simmetrica = Math.max(oneFrame, conservato ?? 0) + aacPadding
+  const riduzione = evidence ? misureDellaRiduzione(evidence, durataTracciaSorgente, oneFrame) : null
+  if (riduzione === null) return { difetto: simmetrica, eccesso: simmetrica, fineDellaCopertura: null }
+  return {
+    difetto: oneFrame + aacPadding,
+    eccesso: Math.max(oneFrame, riduzione.ultimoCampione) + riduzione.epsilon + aacPadding,
+    // `- 1e-6`: una copertura che è già un numero intero di fotogrammi non ne guadagna uno per il rumore dei decimali.
+    fineDellaCopertura: Math.ceil(outputFps * riduzione.copertura - 1e-6) / outputFps + riduzione.epsilon + aacPadding,
+  }
+}
+
+function durationMatches(sourceDuration: number, outputDuration: number, tolerance: ToleranzeDiDurata): boolean {
   if (!Number.isFinite(sourceDuration) || sourceDuration <= 0) return false
   // Limite aperto: perdere esattamente l'intera tolleranza non è considerato
   // una conversione completa. Lo stesso margine impedisce code spurie estese.
-  return Math.abs(outputDuration - sourceDuration) < tolerance
+  const differenza = outputDuration - sourceDuration
+  if (differenza < 0) return -differenza < tolerance.difetto
+  return differenza < tolerance.eccesso || (tolerance.fineDellaCopertura !== null && outputDuration < tolerance.fineDellaCopertura)
+}
+
+/** Il numero, fra le tolleranze, con cui `durationMatches` ha confrontato queste due durate: quello del verso in cui differiscono. */
+function toleranzaApplicata(tolerance: ToleranzeDiDurata, sourceDuration: number, outputDuration: number | null): number {
+  if (outputDuration === null || outputDuration < sourceDuration) return tolerance.difetto
+  return Math.max(tolerance.eccesso, (tolerance.fineDellaCopertura ?? Number.NEGATIVE_INFINITY) - sourceDuration)
 }
 
 /**
@@ -486,14 +570,10 @@ export function verifyVideoOutput(
   const sourceVideoDuration = source.videoDurationSeconds ?? source.durationSeconds
   const sourceAudioDuration = source.audioDurationSeconds
   // L'ultimo campione della sorgente allarga la tolleranza di tutto ciò che contiene la traccia
-  // VIDEO (la sua durata e quella complessiva); la durata della traccia AUDIO non c'entra, e ha il
-  // suo padding AAC e nient'altro.
-  const toleranzaVideo = durationTolerance(
-    fps,
-    audioSampleRate,
-    ultimoCampioneConservato(decodeEvidence, sourceVideoDuration),
-  )
-  const toleranzaAudio = durationTolerance(fps, audioSampleRate, null)
+  // VIDEO (la sua durata e quella complessiva), in `preserve` nei due versi e in `reduce60` solo in
+  // eccesso; la durata della traccia AUDIO non c'entra, e ha il suo padding AAC e nient'altro.
+  const toleranzaVideo = durationTolerances(fps, audioSampleRate, decodeEvidence, sourceVideoDuration)
+  const toleranzaAudio = durationTolerances(fps, audioSampleRate, null, sourceVideoDuration)
   if (
     !durationMatches(sourceVideoDuration, videoDurationSeconds, toleranzaVideo) ||
     (audioDurationSeconds !== null &&
@@ -625,8 +705,10 @@ function millisecondiDiagnosi(secondi: unknown): number | undefined {
  * 2048 byte vale PER COSTRUZIONE: venti chiavi in tutto, ciascuna con un numero di al più ~15 caratteri
  * (il caso peggiore, tutti i campi presenti e tutti i numeri al limite, misura 614 byte).
  *
- * La tolleranza sulla durata è calcolata da `durationTolerance`, la stessa funzione che decide: la
- * diagnosi non può raccontare un numero diverso da quello usato.
+ * La tolleranza sulla durata è calcolata da `durationTolerances`, la stessa funzione che decide, e
+ * `toleranzaApplicata` sceglie quella del verso in cui la durata d'uscita differisce da quella della
+ * sorgente (in `reduce60` l'eccesso e il difetto hanno limiti diversi): la diagnosi non può raccontare un
+ * numero diverso da quello usato.
  *
  * Il cablaggio nel runner (scrivere questo oggetto con `video_job_diagnosi`) non sta qui.
  */
@@ -665,12 +747,14 @@ export function diagnosiVerifica(
   const sampleRateUscita = audio ? positiveInteger(audio.sample_rate) : null
 
   const durataVideoSorgente = source?.videoDurationSeconds ?? source?.durationSeconds
+  const durataVideoUscita = video ? traceDuration(video) : null
   let tolleranzaDurata: number | undefined
   if (fpsUscita !== null && typeof durataVideoSorgente === 'number' && decodeEvidence) {
-    tolleranzaDurata = durationTolerance(
-      fpsUscita,
-      sampleRateUscita,
-      ultimoCampioneConservato(decodeEvidence, durataVideoSorgente),
+    // Quella del verso in cui le due durate differiscono: in `reduce60` l'eccesso e il difetto non hanno lo stesso limite.
+    tolleranzaDurata = toleranzaApplicata(
+      durationTolerances(fpsUscita, sampleRateUscita, decodeEvidence, durataVideoSorgente),
+      durataVideoSorgente,
+      durataVideoUscita,
     )
   }
 
@@ -685,7 +769,7 @@ export function diagnosiVerifica(
     ['ultimo_campione_sorgente_ms', millisecondiDiagnosi(misure?.sourceLastSample)],
     ['ultimo_campione_uscita_ms', millisecondiDiagnosi(misure?.outputLastSample)],
     ['durata_video_sorgente_ms', millisecondiDiagnosi(durataVideoSorgente)],
-    ['durata_video_uscita_ms', millisecondiDiagnosi(video ? traceDuration(video) : null)],
+    ['durata_video_uscita_ms', millisecondiDiagnosi(durataVideoUscita)],
     ['durata_audio_sorgente_ms', millisecondiDiagnosi(source?.audioDurationSeconds)],
     ['durata_audio_uscita_ms', millisecondiDiagnosi(audio ? traceDuration(audio) : null)],
     ['tolleranza_durata_ms', millisecondiDiagnosi(tolleranzaDurata)],

@@ -1,0 +1,10 @@
+// FIXTURE del lock `caricamenti-nativi-agganciati` — VERDE per costruzione (regola 8, Android).
+// `build.gradle` usa `$androidxWorkVersion`: qui la versione di WorkManager è definita. In questo commento: androidxWorkVersion = '9.9.9'.
+ext {
+    minSdkVersion = 24
+    compileSdkVersion = 36
+    targetSdkVersion = 36
+    junitVersion = '4.13.2'
+    // L'ultima patch della serie 2.11 (la 2.12 è troppo fresca per un'app con dati di minori).
+    androidxWorkVersion = '2.11.2'
+}

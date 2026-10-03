@@ -1,4 +1,5 @@
 import type { CodiceMostratoVideo, VoceVideo as VoceElencoVideo } from '@/lib/media/video/contratto'
+import type { CaricamentoNativo, CodiceNativo } from '@/lib/native/caricamenti-nativi-tipi'
 
 import type { FaseVideoUI, RigaVideoLavorazione } from './VideoInLavorazione'
 
@@ -35,6 +36,11 @@ import type { FaseVideoUI, RigaVideoLavorazione } from './VideoInLavorazione'
  *     (l'hook), e qui sarebbe una scheda per qualcosa che è già in galleria.
  *  6. Un fallimento LOCALE (il trasferimento non può riprendere) è `fallito`, salvo `VIDEO_RIPROVA`:
  *     lì i byte non ci sono più e l'unica cosa da fare è sceglierlo di nuovo — `da-ricaricare`.
+ *  7. (app 1.2) Un video NATIVO ha la sua riga locale come un altro, ma la racconta il plugin: la regola 2
+ *     vale uguale (finché i byte non sono sullo Storage la parola è del telefono), con le NOTE del trasporto
+ *     nativo al posto di quella del TUS — «puoi bloccare il telefono, non chiudere Kidville dal multitasking»,
+ *     «in attesa di rete», «in pausa» — perché il TUS vive quanto la pagina e il nativo no. `statoLocaleDaCaricamentoNativo`
+ *     traduce una voce della coda nativa in uno `StatoLocale`, ed è l'unico posto in cui lo fa.
  */
 
 /** Come sta andando il trasferimento di QUESTO dispositivo. */
@@ -52,6 +58,12 @@ export type TrasferimentoLocale =
   /** L'ha fermato una persona. */
   | 'annullato'
 
+/** Come viaggiano i byte di una riga: dalla pagina (TUS) o dal sistema operativo (plugin nativo, app 1.2). */
+export type TrasportoRiga = 'tus' | 'nativo'
+
+/** Le note del trasporto nativo (spec §7.5): l'invio che prosegue a telefono bloccato, l'attesa di rete, la pausa. */
+export type NotaNativa = 'invio' | 'attesa-rete' | 'pausa'
+
 /** Ciò che si sa, su QUESTO dispositivo, di un video. */
 export interface StatoLocale {
   jobId: string
@@ -65,6 +77,13 @@ export interface StatoLocale {
   percentuale: number | null
   /** Il codice mostrabile dell'ultimo esito negativo del trasferimento, o `null`. */
   codice: CodiceMostratoVideo | null
+  /**
+   * Come viaggiano i byte di questo video: `tus` dalla pagina (web, app 1.0/1.1, ripiego del selettore del browser)
+   * oppure `nativo` dal plugin (app 1.2). Nessun valore predefinito: chi scrive una riga decide.
+   */
+  trasporto: TrasportoRiga
+  /** Solo `nativo`: quale nota leggere sotto la fase. `null` per il TUS, e per un video nativo senza niente da dire. */
+  nota: NotaNativa | null
 }
 
 /** Una riga già composta, con ciò che serve al gancio per decidere cos'altro fare. */
@@ -86,6 +105,11 @@ export interface IngressoFusione {
   frase: (codice: string | null) => string
   /** «Il caricamento continua finché resti in Galleria…»: la nota onesta del trasporto a blocchi. */
   notaCaricamento: string
+  /**
+   * Le note del trasporto NATIVO, al posto di `notaCaricamento` per le righe nate dal plugin: l'invio non finisce con la
+   * pagina («puoi bloccare il telefono… non chiudere Kidville dal multitasking»), e quando si ferma lo dice (rete, pausa).
+   */
+  noteNativo: { invio: string; attesaRete: string; pausa: string }
   /** Il browser dice di essere senza rete? Un «non autorizzato» in quel momento è solo la rete. */
   offline: boolean
 }
@@ -159,12 +183,26 @@ function daLocale(locale: StatoLocale, voce: VoceElencoVideo | undefined, dati: 
   }
 
   if (!byteArrivati(locale, voce)) {
+    // Il trasporto nativo ha le sue note: l'invio non finisce con la pagina, e quando si ferma dice perché.
+    const nativo = locale.trasporto === 'nativo'
     switch (locale.trasferimento) {
       case 'in-fila':
-        return { ...semplice('in-fila'), messaggio: dati.notaCaricamento }
+        return { ...semplice('in-fila'), messaggio: nativo ? dati.noteNativo.invio : dati.notaCaricamento }
       case 'in-corso':
-        return { ...semplice('caricamento'), percentuale: locale.percentuale ?? 0, messaggio: dati.notaCaricamento }
+        return {
+          ...semplice('caricamento'),
+          percentuale: locale.percentuale ?? 0,
+          messaggio: nativo ? dati.noteNativo.invio : dati.notaCaricamento,
+        }
       default:
+        // Fermo del nativo (`in-attesa` o `in-pausa`): la nota dice perché, e che cosa si aspetta. Senza codice mostrabile:
+        // il motivo vero sta nella nota, e un «non autorizzato» qui non avrebbe senso (la firma non la chiede la pagina).
+        if (nativo) {
+          return {
+            ...semplice('interrotto'),
+            messaggio: locale.nota === 'pausa' ? dati.noteNativo.pausa : dati.noteNativo.attesaRete,
+          }
+        }
         // `interrotto`. Il codice, se c'è, si legge solo quando il browser crede di avere la rete:
         // «non autorizzato» mentre si è offline è soltanto la firma che non si è potuta chiedere.
         return {
@@ -223,6 +261,9 @@ export function fondiRighe(dati: IngressoFusione): RigaComposta[] {
       percentuale: corpo.percentuale,
       messaggio: azione ?? corpo.messaggio,
       riprovaPossibile: corpo.riprovaPossibile,
+      // Senza riga locale (un altro dispositivo) vale quello che il server dice del trasporto: non cambia niente di ciò
+      // che la scheda offre (nessun gesto dipende dal trasporto di un video che questo telefono non ha), ma la riga è sincera.
+      trasporto: locale?.trasporto ?? (voce?.trasporto === 'put-nativo' ? 'nativo' : 'tus'),
       localeDiQuestoDispositivo: locale !== undefined,
     })
   }
@@ -233,4 +274,90 @@ export function fondiRighe(dati: IngressoFusione): RigaComposta[] {
     if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb
     return a.jobId < b.jobId ? -1 : a.jobId > b.jobId ? 1 : 0
   })
+}
+
+/* ────────────────────────────────────────────────────────────────────────────────────────────
+ * IL TRASPORTO NATIVO (app 1.2): una voce della coda del plugin diventa uno `StatoLocale`
+ * ──────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Perché un invio nativo è FALLITO, ridotto a ciò che la scheda sa dire (spec §7.5). Due strade:
+ *  · il video non si può più mandare e va SCELTO DI NUOVO — il token è scaduto o non vale, l'URL non si rinnova più, la
+ *    copia sul telefono non c'è più o pesa diverso: i byte che si erano scelti non esistono. È `VIDEO_RIPROVA`, che la
+ *    scheda legge come «da ricaricare»;
+ *  · il video è oltre il tetto: `VIDEO_TROPPO_GRANDE`, con la sua frase.
+ * Ogni altro codice (e l'assenza di codice) non ha una frase sua: resta `null`, e la scheda dice il ripiego generico.
+ */
+const CODICE_MOSTRATO_DA_FALLIMENTO_NATIVO: Readonly<Partial<Record<CodiceNativo, CodiceMostratoVideo>>> = {
+  TOKEN_NON_VALIDO: 'VIDEO_RIPROVA',
+  TOKEN_SCADUTO: 'VIDEO_RIPROVA',
+  RINNOVO_CICLICO: 'VIDEO_RIPROVA',
+  FILE_ASSENTE: 'VIDEO_RIPROVA',
+  PESO_DIVERSO: 'VIDEO_RIPROVA',
+  TROPPO_GRANDE: 'VIDEO_TROPPO_GRANDE',
+}
+
+/**
+ * Lo stato di QUESTO telefono per un video che sta nella coda del plugin (spec §7.5):
+ *  · `in-coda` → `in-fila`;
+ *  · `in-invio` → `in-corso`, con la percentuale vera (i byte inviati sui totali);
+ *  · `in-attesa` → `interrotto` con la nota «in attesa di rete»; `in-pausa` → `interrotto` con la nota «in pausa»;
+ *  · `inviato` → `concluso` (i byte sono sullo Storage: da qui la parola è del server);
+ *  · `fallito` → `fallito`, col codice mostrabile di `CODICE_MOSTRATO_DA_FALLIMENTO_NATIVO`;
+ *  · `annullato` → `annullato`.
+ *
+ * Pura, e senza dati personali nei campi che non siano il nome (che resta a schermo di chi ha scelto il file).
+ */
+export function statoLocaleDaCaricamentoNativo(voce: CaricamentoNativo): StatoLocale {
+  const base = {
+    jobId: voce.jobId,
+    intentId: voce.intentId,
+    nome: voce.nome,
+    creatoIl: voce.creatoIl,
+    trasporto: 'nativo' as const,
+  }
+  switch (voce.stato) {
+    case 'in-coda':
+      return { ...base, trasferimento: 'in-fila', percentuale: null, codice: null, nota: 'invio' }
+    case 'in-invio':
+      return {
+        ...base,
+        trasferimento: 'in-corso',
+        percentuale: voce.byteTotali > 0 ? Math.min(100, Math.round((voce.byteInviati / voce.byteTotali) * 100)) : null,
+        codice: null,
+        nota: 'invio',
+      }
+    case 'in-attesa':
+      return { ...base, trasferimento: 'interrotto', percentuale: null, codice: null, nota: 'attesa-rete' }
+    case 'in-pausa':
+      return { ...base, trasferimento: 'interrotto', percentuale: null, codice: null, nota: 'pausa' }
+    case 'inviato':
+      return { ...base, trasferimento: 'concluso', percentuale: null, codice: null, nota: null }
+    case 'fallito':
+      return {
+        ...base,
+        trasferimento: 'fallito',
+        percentuale: null,
+        codice: (voce.codice !== null ? CODICE_MOSTRATO_DA_FALLIMENTO_NATIVO[voce.codice] : undefined) ?? null,
+        nota: null,
+      }
+    case 'annullato':
+      return { ...base, trasferimento: 'annullato', percentuale: null, codice: null, nota: null }
+  }
+}
+
+/** Due stati locali dicono la stessa cosa? Serve a non rifare il disegno a ogni avanzamento che non cambia niente. */
+export function stessoStatoLocale(a: StatoLocale | undefined, b: StatoLocale): boolean {
+  return (
+    a !== undefined
+    && a.jobId === b.jobId
+    && a.intentId === b.intentId
+    && a.nome === b.nome
+    && a.creatoIl === b.creatoIl
+    && a.trasferimento === b.trasferimento
+    && a.percentuale === b.percentuale
+    && a.codice === b.codice
+    && a.trasporto === b.trasporto
+    && a.nota === b.nota
+  )
 }

@@ -1,0 +1,91 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		F00000000000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* AppDelegate.swift */; };
+		F00000000000000000000002 /* KVBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000102 /* KVBridgeViewController.swift */; };
+		F00000000000000000000003 /* KVCaricamentiPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000103 /* KVCaricamentiPlugin.swift */; };
+		F00000000000000000000004 /* KVMotoreCaricamenti.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000104 /* KVMotoreCaricamenti.swift */; };
+		F00000000000000000000005 /* KVRegistroNativo.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000105 /* KVRegistroNativo.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		F00000000000000000000101 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		F00000000000000000000102 /* KVBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVBridgeViewController.swift; sourceTree = "<group>"; };
+		F00000000000000000000103 /* KVCaricamentiPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVCaricamentiPlugin.swift; sourceTree = "<group>"; };
+		F00000000000000000000104 /* KVMotoreCaricamenti.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVMotoreCaricamenti.swift; sourceTree = "<group>"; };
+		F00000000000000000000105 /* KVRegistroNativo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVRegistroNativo.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXNativeTarget section */
+		F00000000000000000000201 /* App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F00000000000000000000301 /* Build configuration list for PBXNativeTarget "App" */;
+			buildPhases = (
+				F00000000000000000000401 /* Verifica shell nativa */,
+				F00000000000000000000402 /* Sources */,
+				F00000000000000000000403 /* Resources */,
+			);
+			name = App;
+			productName = App;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F00000000000000000000402 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F00000000000000000000001 /* AppDelegate.swift in Sources */,
+				F00000000000000000000002 /* KVBridgeViewController.swift in Sources */,
+				F00000000000000000000003 /* KVCaricamentiPlugin.swift in Sources */,
+				F00000000000000000000004 /* KVMotoreCaricamenti.swift in Sources */,
+				F00000000000000000000005 /* KVRegistroNativo.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		F00000000000000000000311 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 6;
+				MARKETING_VERSION = 1.2;
+				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
+				PRODUCT_BUNDLE_IDENTIFIER = it.kidville.app;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			};
+			name = Debug;
+		};
+		F00000000000000000000312 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 6;
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = it.kidville.app;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		F00000000000000000000301 /* Build configuration list for PBXNativeTarget "App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F00000000000000000000311 /* Debug */,
+				F00000000000000000000312 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+}

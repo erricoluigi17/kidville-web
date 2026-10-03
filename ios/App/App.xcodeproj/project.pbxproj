@@ -16,6 +16,16 @@
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		KV28B0F0000000000001 /* KVPoliticaErroriNavigazione.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000001 /* KVPoliticaErroriNavigazione.swift */; };
 		KV28B0F0000000000002 /* KVBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000002 /* KVBridgeViewController.swift */; };
+		KV28B0F0000000000010 /* KVPoliticaCaricamento.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000010 /* KVPoliticaCaricamento.swift */; };
+		KV28B0F0000000000011 /* KVCodaCaricamenti.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000011 /* KVCodaCaricamenti.swift */; };
+		KV28B0F0000000000012 /* KVRegistroNativo.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000012 /* KVRegistroNativo.swift */; };
+		KV28B0F0000000000013 /* KVSegretiCaricamenti.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000013 /* KVSegretiCaricamenti.swift */; };
+		KV28B0F0000000000014 /* KVRinnovoFirma.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000014 /* KVRinnovoFirma.swift */; };
+		KV28B0F0000000000015 /* KVMotoreCaricamenti.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000015 /* KVMotoreCaricamenti.swift */; };
+		KV28B0F0000000000016 /* KVNotificaAttesa.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000016 /* KVNotificaAttesa.swift */; };
+		KV28B0F0000000000017 /* KVSelettoreMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000017 /* KVSelettoreMedia.swift */; };
+		KV28B0F0000000000018 /* KVElaborazioneFoto.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000018 /* KVElaborazioneFoto.swift */; };
+		KV28B0F0000000000019 /* KVCaricamentiPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = KV28F0F0000000000019 /* KVCaricamentiPlugin.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
@@ -29,6 +39,16 @@
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		KV28F0F0000000000001 /* KVPoliticaErroriNavigazione.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVPoliticaErroriNavigazione.swift; sourceTree = "<group>"; };
 		KV28F0F0000000000002 /* KVBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVBridgeViewController.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000010 /* KVPoliticaCaricamento.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVPoliticaCaricamento.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000011 /* KVCodaCaricamenti.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVCodaCaricamenti.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000012 /* KVRegistroNativo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVRegistroNativo.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000013 /* KVSegretiCaricamenti.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVSegretiCaricamenti.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000014 /* KVRinnovoFirma.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVRinnovoFirma.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000015 /* KVMotoreCaricamenti.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVMotoreCaricamenti.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000016 /* KVNotificaAttesa.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVNotificaAttesa.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000017 /* KVSelettoreMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVSelettoreMedia.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000018 /* KVElaborazioneFoto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVElaborazioneFoto.swift; sourceTree = "<group>"; };
+		KV28F0F0000000000019 /* KVCaricamentiPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KVCaricamentiPlugin.swift; sourceTree = "<group>"; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -80,6 +100,16 @@
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				KV28F0F0000000000001 /* KVPoliticaErroriNavigazione.swift */,
 				KV28F0F0000000000002 /* KVBridgeViewController.swift */,
+				KV28F0F0000000000010 /* KVPoliticaCaricamento.swift */,
+				KV28F0F0000000000011 /* KVCodaCaricamenti.swift */,
+				KV28F0F0000000000012 /* KVRegistroNativo.swift */,
+				KV28F0F0000000000013 /* KVSegretiCaricamenti.swift */,
+				KV28F0F0000000000014 /* KVRinnovoFirma.swift */,
+				KV28F0F0000000000015 /* KVMotoreCaricamenti.swift */,
+				KV28F0F0000000000016 /* KVNotificaAttesa.swift */,
+				KV28F0F0000000000017 /* KVSelettoreMedia.swift */,
+				KV28F0F0000000000018 /* KVElaborazioneFoto.swift */,
+				KV28F0F0000000000019 /* KVCaricamentiPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -202,6 +232,16 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				KV28B0F0000000000001 /* KVPoliticaErroriNavigazione.swift in Sources */,
 				KV28B0F0000000000002 /* KVBridgeViewController.swift in Sources */,
+				KV28B0F0000000000010 /* KVPoliticaCaricamento.swift in Sources */,
+				KV28B0F0000000000011 /* KVCodaCaricamenti.swift in Sources */,
+				KV28B0F0000000000012 /* KVRegistroNativo.swift in Sources */,
+				KV28B0F0000000000013 /* KVSegretiCaricamenti.swift in Sources */,
+				KV28B0F0000000000014 /* KVRinnovoFirma.swift in Sources */,
+				KV28B0F0000000000015 /* KVMotoreCaricamenti.swift in Sources */,
+				KV28B0F0000000000016 /* KVNotificaAttesa.swift in Sources */,
+				KV28B0F0000000000017 /* KVSelettoreMedia.swift in Sources */,
+				KV28B0F0000000000018 /* KVElaborazioneFoto.swift in Sources */,
+				KV28B0F0000000000019 /* KVCaricamentiPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -343,7 +383,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = B5ULCGG2V3;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -351,7 +391,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = it.kidville.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -367,7 +407,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = B5ULCGG2V3;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -375,7 +415,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = it.kidville.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";

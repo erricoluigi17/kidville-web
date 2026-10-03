@@ -14,6 +14,7 @@ import {
   leggiTimeline,
   type TimelineFixture,
 } from '../fixtures/video/falso-scarto-2026-09-28'
+import { FPS_SLOWMO, SLOWMO, leggiTimelineSlowmo } from '../fixtures/video/falso-scarto-slowmo-2026-10-03'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -1176,7 +1177,8 @@ describe('regressione media VFR e attestazione della timeline', () => {
  * grado di libertà rimasto, e quando la sorgente tiene l'ultimo campione più a lungo di un frame (una
  * schermata ferma fino alla fine) l'uscita risulta più corta di tutta la differenza. La tolleranza sulla
  * durata diventa `max(1 frame, ultimo campione della sorgente)` + padding AAC, e SOLO se conteggio
- * e PTS coincidono: un frame mancante fa già fallire il conteggio, e in `reduce60` non c'entra.
+ * e PTS coincidono: un frame mancante fa già fallire il conteggio. In `reduce60` — dove non coincidono —
+ * il difetto resta un frame e l'eccesso ha la sua regola: il blocco più sotto.
  * ════════════════════════════════════════════════════════════════════════════ */
 describe('verifyVideoOutput — l’ultimo campione della sorgente allarga la durata, e solo quella', () => {
   const misure = (sourceLastSample: number) => ({
@@ -1218,7 +1220,7 @@ describe('verifyVideoOutput — l’ultimo campione della sorgente allarga la du
     expect(verifyVideoOutput(source, uscitaConVideo('9.940000'), 1, conMisure(0.003))).toEqual(MISMATCH)
   })
 
-  it('in reduce60 non vale: conteggio e PTS NON coincidono, la tolleranza resta un frame d’uscita più l’AAC', () => {
+  it('in reduce60 non allarga il DIFETTO: conteggio e PTS NON coincidono, un’uscita più corta resta a un frame d’uscita più l’AAC', () => {
     const sorgente120: VideoProbe = { ...sorgenteConVideo(10.2), fps: 120 }
     const sessanta = uscitaConVideo('10.000000')
     sessanta.streams[0].avg_frame_rate = '60/1'
@@ -1271,6 +1273,207 @@ describe('verifyVideoOutput — l’ultimo campione della sorgente allarga la du
     const negativa = conMisure(0.2, { ok: false, reason: 'TIMESTAMP_MISMATCH' })
     expect(verifyVideoOutput(sorgenteConVideo(10.2), uscitaConVideo('10.000000'), 1, negativa))
       .toEqual({ ok: false, code: 'OUTPUT_FPS_INVALID' })
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * LA DURATA NELLA RIDUZIONE A 60 HZ: l'uscita copre l'ultimo campione della sorgente (Tfps2, 03/10/2026)
+ *
+ * `m05` SENZA audio (la sua traccia video con `-map 0:v -c copy -an`) cadeva su `OUTPUT_DURATION_MISMATCH`: la
+ * pipeline vera dava 10,033333 s contro i 10,000 dichiarati dalla sorgente (+33,3 ms, esattamente L, l'ultimo
+ * campione), senza audio e quindi senza il padding AAC che, con l'audio, la salva per 4,7 ms di margine. Il
+ * filtro `fps=60` allunga l'uscita fino a coprire l'ultimo campione della sorgente, e la sorgente può non
+ * contarlo nella durata che dichiara. In `reduce60` l'ECCESSO ammette `max(1/60, L)` più un tick, o quanto serve
+ * per arrivare alla fine della copertura della sorgente sulla griglia; il DIFETTO resta un fotogramma, e il
+ * `preserve` è com'era. Numeri VERI, misurati il 03/10/2026 con i moduli di produzione e ffmpeg 8.1.2.
+ * ════════════════════════════════════════════════════════════════════════════ */
+describe('verifyVideoOutput — la riduzione a 60 Hz: l’uscita copre l’ultimo campione della sorgente, e la durata lo sa', () => {
+  const MISMATCH = { ok: false, code: 'OUTPUT_DURATION_MISMATCH' } as const
+  /** La prova temporale vera di m05 (720 → 602 fotogrammi, `reduce60`, ultimo campione di 33,333 ms). */
+  const provaM05 = () => compareVideoTimelines(
+    leggiTimelineSlowmo('sorgente'), leggiTimelineSlowmo('uscita'), SLOWMO.video, null, FPS_SLOWMO, MAX_VIDEO_DURATION_SECONDS,
+  )
+  const evidenza = (prova: VideoTemporalEvidence) => ({ exitCode: 0, decodedFrames: prova.outputFrames, temporal: prova })
+  /** L'evidenza di m05 con una misura alterata (le misure arrivano dalla Sandbox, e non è detto che siano sane). */
+  const conMisura = (campo: keyof NonNullable<VideoTemporalEvidence['measures']>, valore: unknown) => {
+    const prova = provaM05()
+    ;(prova.measures as unknown as Record<string, unknown>)[campo] = valore
+    return evidenza(prova)
+  }
+  /** Il probe della sorgente di m05: HEVC SDR 1080p, 10 s dichiarati, VFR a 72 fps medi, senza audio. */
+  const sorgenteM05: VideoProbe = {
+    durationSeconds: 10, videoDurationSeconds: 10, audioDurationSeconds: null,
+    width: 1920, height: 1080, codedWidth: 1920, codedHeight: 1080, rotation: 0, fps: FPS_SLOWMO,
+    hasAudio: false, audioCodec: null, videoCodec: 'hevc', pixelFormat: 'yuv420p',
+    colorTransfer: 'bt709', colorPrimaries: 'bt709', colorSpace: 'bt709', isHdr: false,
+    videoStreamIndex: SLOWMO.video, audioStreamIndex: null,
+  }
+  /** L'uscita vera di m05: H.264 1920×1080 a 60 fps, 602 fotogrammi (`duration` 10.033333), contenitore uguale, niente audio. */
+  const uscitaM05 = (durata = '10.033333') => {
+    const raw = outputProbe()
+    raw.streams.pop()
+    raw.streams[0].avg_frame_rate = '60/1'
+    raw.streams[0].duration = durata
+    raw.format.duration = durata
+    return raw
+  }
+
+  it('m05 SENZA audio: l’uscita di 10,0333 s contro i 10,000 dichiarati (+33,3 ms, un ultimo campione) passa — era OUTPUT_DURATION_MISMATCH', () => {
+    const prova = provaM05()
+    expect(prova).toMatchObject({ ok: true, mode: 'reduce60', sourceFrames: 720, outputFrames: 602 })
+    // La PREMESSA, nei numeri: lo scarto di durata è due fotogrammi d'uscita, e senza audio nessun padding AAC lo copre.
+    expect(10.033333 - 10).toBeGreaterThan(1 / 60 + 1e-3)
+    expect(prova.measures!.sourceLastSample).toBeCloseTo(0.033333, 6)
+    expect(verifyVideoOutput(sorgenteM05, uscitaM05(), 1234, evidenza(prova))).toMatchObject({
+      ok: true, output: { hasAudio: false, videoDurationSeconds: 10.033333, durationSeconds: 10.033333, decodedFrames: 602 },
+    })
+  })
+
+  /** Una sorgente con l'AAC e l'uscita con l'AAC (la traccia audio di `outputProbe()`, 10,021333 s): le durate audio coerenti, il video a piacere. */
+  const conAudio = (sorgente: VideoProbe, durataVideoUscita: string) => {
+    const raw = outputProbe()
+    raw.streams[0].avg_frame_rate = '60/1'
+    raw.streams[0].duration = durataVideoUscita
+    raw.format.duration = durataVideoUscita
+    return {
+      sorgente: { ...sorgente, hasAudio: true, audioCodec: 'aac', audioStreamIndex: 1, audioDurationSeconds: sorgente.durationSeconds } satisfies VideoProbe,
+      uscita: raw,
+    }
+  }
+
+  it('il padding AAC si somma al limite L più un tick: con l’audio +50 ms passa, senza audio no', () => {
+    // Dichiarata la copertura intera (10,029167 s): decide la regola del campione (33,4 ms), e con l'AAC (21,3) arriva a 54,7.
+    const sorgenteIntera: VideoProbe = { ...sorgenteM05, durationSeconds: 10.029167, videoDurationSeconds: 10.029167 }
+    const { sorgente, uscita } = conAudio(sorgenteIntera, '10.079167')
+    expect(verifyVideoOutput(sorgente, uscita, 1234, evidenza(provaM05()))).toMatchObject({ ok: true })
+    expect(verifyVideoOutput(sorgenteIntera, uscitaM05('10.079167'), 1234, evidenza(provaM05()))).toEqual(MISMATCH)
+  })
+
+  it('l’ECCESSO oltre l’ultimo campione resta respinto, e il limite è L più un tick: +33,39 ms passa, +33,42 e +40 no', () => {
+    for (const [durata, passa] of [['10.033390', true], ['10.033420', false], ['10.040000', false], ['10.050000', false]] as const) {
+      const esito = verifyVideoOutput(sorgenteM05, uscitaM05(durata), 1234, evidenza(provaM05()))
+      expect(esito, `uscita di ${durata} s`).toEqual(passa ? expect.objectContaining({ ok: true }) : MISMATCH)
+    }
+  })
+
+  it('il limite L più un tick vale anche quando la sorgente dichiara tutta la sua copertura: +33,37 ms passa (serve il tick), +33,48 no', () => {
+    // Dichiarata 10,029167 s (la copertura di m05): la fine della copertura sulla griglia (10,0334 s) sta sotto il limite
+    // `L + un tick`, che decide da solo — è la regola «max(1/60, L) più un tick», non la fine della copertura.
+    const sorgenteIntera: VideoProbe = { ...sorgenteM05, durationSeconds: 10.029167, videoDurationSeconds: 10.029167 }
+    expect(verifyVideoOutput(sorgenteIntera, uscitaM05('10.062537'), 1234, evidenza(provaM05()))).toMatchObject({ ok: true })
+    expect(verifyVideoOutput(sorgenteIntera, uscitaM05('10.062650'), 1234, evidenza(provaM05()))).toEqual(MISMATCH)
+  })
+
+  it('il DIFETTO resta un fotogramma, anche con l’ultimo campione di 33 ms: −15 ms passa, −20 ms no', () => {
+    expect(verifyVideoOutput(sorgenteM05, uscitaM05('9.985000'), 1234, evidenza(provaM05()))).toMatchObject({ ok: true })
+    // Un limite allargato anche da questa parte (a `max(1/60, L)`) la lascerebbe passare: è una troncatura di 20 ms.
+    expect(verifyVideoOutput(sorgenteM05, uscitaM05('9.980000'), 1234, evidenza(provaM05()))).toEqual(MISMATCH)
+  })
+
+  it('il padding AAC vale anche per il DIFETTO: con l’audio −30 ms passa (un fotogramma più 21,3 ms), senza audio no', () => {
+    const { sorgente, uscita } = conAudio(sorgenteM05, '9.970000')
+    expect(verifyVideoOutput(sorgente, uscita, 1234, evidenza(provaM05()))).toMatchObject({ ok: true })
+    expect(verifyVideoOutput(sorgenteM05, uscitaM05('9.970000'), 1234, evidenza(provaM05()))).toEqual(MISMATCH)
+  })
+
+  it('con un ultimo campione corto l’eccesso non scende sotto un fotogramma: +10 ms passa con L = 3 ms, +20 ms no', () => {
+    // Misure coerenti con una sorgente che dichiara tutta la sua copertura (10 s): L = 3 ms, nessuna fine della copertura che aiuti.
+    const prova = provaM05()
+    prova.measures = { ...prova.measures!, sourceLastSample: 0.003, sourceCoverage: 10 }
+    const sorgenteCorta: VideoProbe = { ...sorgenteM05, durationSeconds: 10, videoDurationSeconds: 10 }
+    expect(verifyVideoOutput(sorgenteCorta, uscitaM05('10.010000'), 1234, evidenza(prova))).toMatchObject({ ok: true })
+    expect(verifyVideoOutput(sorgenteCorta, uscitaM05('10.020000'), 1234, evidenza(prova))).toEqual(MISMATCH)
+  })
+
+  describe('una coda VFR vera (la `r2` dello sweep di fase): la durata dichiarata sta sotto la copertura di quasi L', () => {
+    // Numeri VERI: 330 → 241 fotogrammi, ultimo campione di 33,333 ms, copertura della sorgente 4,008333 s contro i
+    // 3,979167 dichiarati, uscita di 4,016667 s: +37,5 ms, cioè L più un tick d'uscita di quarto di fotogramma a 240 fps.
+    // `max(1/60, L)` da solo (33,4 ms) la scarterebbe: l'uscita sta invece esattamente sulla fine della copertura
+    // portata alla griglia (241 fotogrammi), e un fotogramma in più no.
+    const sorgente: VideoProbe = { ...sorgenteM05, durationSeconds: 3.979167, videoDurationSeconds: 3.979167, fps: 82.5 }
+    const evidenzaR2 = (extra: Record<string, unknown> = {}) => ({
+      exitCode: 0, decodedFrames: 241,
+      temporal: {
+        version: 1, ok: true, mode: 'reduce60', sourceFrames: 330, outputFrames: 241, sourceFps: 82.5, outputFps: 60,
+        measures: { sourceLastSample: 1 / 30, outputLastSample: 1 / 60, sourceCoverage: 4.008333, outputCoverage: 4.016667, epsilon: 1 / 15_360 + 1e-9, ...extra },
+      } as VideoTemporalEvidence,
+    })
+    const uscita = (durata: string) => uscitaM05(durata)
+
+    it('l’uscita sulla fine della copertura passa', () => {
+      expect(0.037501).toBeGreaterThan(1 / 30 + 1 / 15_360)
+      expect(verifyVideoOutput(sorgente, uscita('4.016667'), 1234, evidenzaR2())).toMatchObject({ ok: true })
+    })
+
+    it('una copertura che è GIÀ un numero intero di fotogrammi non ne guadagna uno per il rumore dei decimali', () => {
+      // 4,15 s sono 249 fotogrammi a 60 Hz, ma in virgola mobile 60 × 4,15 = 249,00000000000003: arrotondato per eccesso
+      // senza cautela diventerebbe 250 e una coda spuria di un fotogramma passerebbe. La dichiarata (4,11 s) sta sotto di
+      // quanto basta perché la regola del campione non decida: è la fine della copertura.
+      const dichiarata: VideoProbe = { ...sorgente, durationSeconds: 4.11, videoDurationSeconds: 4.11 }
+      expect(60 * 4.15).toBeGreaterThan(249)
+      expect(verifyVideoOutput(dichiarata, uscita('4.150000'), 1234, evidenzaR2({ sourceCoverage: 4.15, outputCoverage: 4.15 }))).toMatchObject({ ok: true })
+      expect(verifyVideoOutput(dichiarata, uscita('4.166667'), 1234, evidenzaR2({ sourceCoverage: 4.15, outputCoverage: 4.15 }))).toEqual(MISMATCH)
+    })
+
+    it('con l’audio il padding AAC si somma anche alla fine della copertura: +56,8 ms passa, senza audio no', () => {
+      // Oltre `L` più l'AAC (54,7 ms): decide la fine della copertura sulla griglia (4,0167 s) più l'AAC (4,0380 s).
+      const { sorgente: conAac, uscita: uscitaAac } = conAudio(sorgente, '4.036000')
+      uscitaAac.streams[1].duration = '4.000000'
+      expect(verifyVideoOutput(conAac, uscitaAac, 1234, evidenzaR2())).toMatchObject({ ok: true })
+      expect(verifyVideoOutput(sorgente, uscita('4.036000'), 1234, evidenzaR2())).toEqual(MISMATCH)
+    })
+
+    it('un fotogramma d’uscita oltre la fine della copertura è una coda spuria, ed è respinta', () => {
+      expect(verifyVideoOutput(sorgente, uscita('4.033333'), 1234, evidenzaR2())).toEqual(MISMATCH)
+      expect(verifyVideoOutput(sorgente, uscita('4.025000'), 1234, evidenzaR2())).toEqual(MISMATCH)
+    })
+
+    it('la fine della copertura segue la copertura MISURATA: con una sorgente che copre un fotogramma in meno, la stessa uscita non passa più', () => {
+      // Copertura 3,991667 s (239,5 fotogrammi → 240, 4,000 s): l'uscita da 4,016667 oltre `L` e oltre la fine.
+      expect(verifyVideoOutput(sorgente, uscita('4.016667'), 1234, evidenzaR2({ sourceCoverage: 3.991667 }))).toEqual(MISMATCH)
+    })
+  })
+
+  describe('le misure incoerenti non allargano niente: la stessa uscita di m05 torna a un fotogramma', () => {
+    it.each([
+      ['sourceCoverage', undefined], ['sourceCoverage', Number.NaN], ['sourceCoverage', Number.POSITIVE_INFINITY],
+      ['sourceCoverage', -10.03], ['sourceCoverage', 0], ['sourceCoverage', '10.029167'], ['sourceCoverage', null],
+      ['sourceCoverage', 0.01],   // più corta dell'ultimo campione che dovrebbe contenere
+      ['sourceCoverage', 10.06],  // oltre la traccia di più di un campione e un fotogramma: la sorgente non è un riferimento
+      ['epsilon', undefined], ['epsilon', 0], ['epsilon', -1e-4], ['epsilon', Number.NaN], ['epsilon', '0.0000651'],
+      ['epsilon', 0.02],          // un tick d'uscita non è più di un fotogramma
+      ['sourceLastSample', undefined], ['sourceLastSample', Number.NaN], ['sourceLastSample', -0.0333], ['sourceLastSample', 0],
+      ['sourceLastSample', '0.0333'], ['sourceLastSample', 11],
+      ['sourceLastSample', 10.02],  // più lungo della traccia dichiarata (10 s), ma non della copertura che lo contiene
+    ] as const)('%s = %s', (campo, valore) => {
+      expect(verifyVideoOutput(sorgenteM05, uscitaM05(), 1234, conMisura(campo, valore))).toEqual(MISMATCH)
+    })
+
+    it('e senza `measures` (un marcatore di prima del 02/10) la riduzione si comporta come prima', () => {
+      const prova = provaM05()
+      delete prova.measures
+      expect(verifyVideoOutput(sorgenteM05, uscitaM05(), 1234, evidenza(prova))).toEqual(MISMATCH)
+    })
+  })
+
+  describe('la diagnosi riporta la tolleranza del verso in cui le durate differiscono: quella che la verifica ha usato', () => {
+    const numeri = (durata: string, esito: 'ok' | 'OUTPUT_DURATION_MISMATCH') =>
+      diagnosiVerifica(sorgenteM05, uscitaM05(durata), evidenza(provaM05()), esito)
+
+    it('in eccesso: L più un tick (33,398 ms), non il fotogramma di prima', () => {
+      expect(numeri('10.033333', 'ok').tolleranza_durata_ms).toBeCloseTo(33.398, 2)
+      expect(numeri('10.040000', 'OUTPUT_DURATION_MISMATCH').tolleranza_durata_ms).toBeCloseTo(33.398, 2)
+    })
+
+    it('in difetto: un fotogramma (16,667 ms)', () => {
+      expect(numeri('9.980000', 'OUTPUT_DURATION_MISMATCH').tolleranza_durata_ms).toBeCloseTo(16.667, 2)
+    })
+
+    it('senza la durata d’uscita (traccia illeggibile) riporta quella in difetto, la più stretta', () => {
+      const senzaDurata = uscitaM05()
+      delete (senzaDurata.streams[0] as Record<string, unknown>).duration
+      expect(diagnosiVerifica(sorgenteM05, senzaDurata, evidenza(provaM05()), 'OUTPUT_DURATION_UNKNOWN').tolleranza_durata_ms).toBeCloseTo(16.667, 2)
+    })
   })
 })
 

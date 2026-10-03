@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- FIXTURE del lock `caricamenti-nativi-agganciati` — VERDE per costruzione (regola 7, iOS).
+     Nessun UIBackgroundModes: una sessione URLSession in background non lo richiede. In questo commento compare di proposito
+     <key>UIBackgroundModes</key>: un commento non è una chiave. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

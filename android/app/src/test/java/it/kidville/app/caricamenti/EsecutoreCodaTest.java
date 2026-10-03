@@ -375,7 +375,7 @@ public class EsecutoreCodaTest {
         EventoRegistrato inviato = registro.eventi().get(0);
         assertEquals(PESO, numero(inviato, "byte"));
         assertEquals("la durata della PUT", 1_000L, numero(inviato, "ms"));
-        assertEquals(0L, numero(inviato, "tentativi"));
+        assertEquals("riuscito al primo colpo: UN tentativo, come su iOS (collaudo E1; prima Android scriveva 0)", 1L, numero(inviato, "tentativi"));
         assertEquals(0L, numero(inviato, "rinnovi"));
         assertEquals("put", inviato.campi.get("esito"));
         assertEquals("l'app è in background", Boolean.TRUE, inviato.campi.get("in_background"));
@@ -665,7 +665,7 @@ public class EsecutoreCodaTest {
         assertSame(EsitoCiclo.FINITO, esegui());
         verificaChiusuraPulita(1, Stato.INVIATO);
         assertEquals(Arrays.asList("video-nativo-ritento RETE", "video-nativo-inviato"), messaggi());
-        assertEquals(1L, numero(evento("video-nativo-inviato"), "tentativi"));
+        assertEquals("un tentativo caduto e uno riuscito: DUE tentativi", 2L, numero(evento("video-nativo-inviato"), "tentativi"));
         EventoRegistrato ritento = evento("video-nativo-ritento");
         assertEquals(1L, numero(ritento, "tentativo"));
         assertEquals("la prima attesa è di 30 s", 30L, numero(ritento, "attesa_s"));
@@ -700,7 +700,7 @@ public class EsecutoreCodaTest {
         long inizio = ora.get();
         assertSame(EsitoCiclo.FINITO, esegui());
         verificaChiusuraPulita(1, Stato.INVIATO);
-        assertEquals("nessun tentativo consumato: non c'era niente da tentare", 0L, numero(evento("video-nativo-inviato"), "tentativi"));
+        assertEquals("un solo tentativo, quello riuscito: la rete assente non ne ha consumati", 1L, numero(evento("video-nativo-inviato"), "tentativi"));
         assertEquals("niente ritento: la rete assente non è un guasto", 0, conta("video-nativo-ritento"));
         assertTrue("è ripartita appena tornata la rete, non dopo 30 s di ritardo: " + (ora.get() - inizio) + " ms", ora.get() - inizio < 30_000L);
         assertEquals("la notifica ha cambiato testo e poi è tornata", Arrays.asList(true, false), new ArrayList<>(presentazione.attese));
@@ -1831,5 +1831,276 @@ public class EsecutoreCodaTest {
                     new ArrayList<>(logcat.righe));
             for (String riga : logcat.righe) assertFalse("niente percorso né messaggio d'eccezione: " + riga, riga.contains("/data/") || riga.contains("video.mp4"));
         }
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * A2e: I LOG CHE IL COLLAUDO C1/E1 HA TROVATO MUTI O AMBIGUI
+     * (attesa di rete su UIDT · `tentativi` · `byte_inviati` dell'annullamento)
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * Il sistema ferma il guscio con una PUT in volo (UIDT: la rete è caduta, `onStopJob` → `ferma()`): la PUT si interrompe, il ciclo
+     * esce `INTERROTTO` e la voce resta `in-attesa` `RETE` col ritardo a zero. Torna solo a ciclo uscito. Chiamata una seconda volta, il
+     * ciclo che parte è quello del job che il sistema ha fatto ripartire, e si ferma di nuovo: un altro stallo.
+     */
+    private void ilSistemaFermaIlGuscioConUnaPutInVolo() throws Exception {
+        CountDownLatch inVolo = new CountDownLatch(1);
+        put.poi(putInVoloFinoAllInterruzione(inVolo));
+        AtomicReference<EsitoCiclo> esito = new AtomicReference<>();
+        Thread filo = new Thread(() -> esito.set(esegui()), "guscio-uidt");
+        filo.start();
+        assertTrue("la PUT è partita", inVolo.await(10, TimeUnit.SECONDS));
+        esecutore.ferma();                                    // onStopJob
+        filo.join(20_000);
+        assertFalse("il ciclo è uscito", filo.isAlive());
+        assertSame("fermato dal sistema, non finito", EsitoCiclo.INTERROTTO, esito.get());
+    }
+
+    @Test(timeout = 60_000)
+    public void unGuscioFermatoDallaReteERipartitoDopoPiuDiSessantaSecondiScriveAttesaReteUnaVoltaPrimaDellaPut() throws Exception {
+        accoda(1);
+        ilSistemaFermaIlGuscioConUnaPutInVolo();
+        rete.su = false;                                      // è la rete caduta ad aver fermato il job: finché non torna, nessun codice nostro gira
+        assertSame("la voce non è fallita: aspetta", Stato.IN_ATTESA, stato(1));
+        assertSame(Codice.RETE, voce(1).codice);
+        assertEquals("durante lo stallo non gira niente, e il registro non ha niente da dire", 0, registro.numeroEventi());
+
+        ora.addAndGet(90 * SECONDO);
+        rete.su = true;                                       // la rete torna, il sistema fa ripartire il job
+        assertSame(EsitoCiclo.FINITO, esegui());
+
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals("la riga c'è, una sola, e viene prima della PUT che riparte", Arrays.asList("video-nativo-attesa-rete", "video-nativo-inviato"), messaggi());
+        EventoRegistrato attesa = evento("video-nativo-attesa-rete");
+        assertEquals("a guscio fermato il sistema ha tolto la notifica del job: durante lo stallo non c'era nessuna notifica da vedere",
+                Boolean.FALSE, attesa.campi.get("notifica"));
+        assertEquals("il permesso alle notifiche è quello di adesso", Boolean.TRUE, attesa.campi.get("autorizzata"));
+    }
+
+    @Test(timeout = 60_000)
+    public void loStalloDiUnGuscioFermatoDichiaraIlPermessoCheLAmbienteDa() throws Exception {
+        accoda(1);
+        ilSistemaFermaIlGuscioConUnaPutInVolo();
+        ora.addAndGet(2 * MINUTO);
+        ambiente.autorizzate = false;
+        assertSame(EsitoCiclo.FINITO, esegui());
+        EventoRegistrato attesa = evento("video-nativo-attesa-rete");
+        assertEquals(Boolean.FALSE, attesa.campi.get("notifica"));
+        assertEquals("`autorizzata` viene dall'ambiente: non è una copia di `notifica`", Boolean.FALSE, attesa.campi.get("autorizzata"));
+    }
+
+    @Test(timeout = 60_000)
+    public void loStalloDiUndiciMinutiDelCollaudoE1SiVedeOraPrimaDelRinnovoCheLoSegue() throws Exception {
+        accoda(1);
+        ilSistemaFermaIlGuscioConUnaPutInVolo();
+        ora.addAndGet(11 * MINUTO + 22 * SECONDO);            // E1: rete tolta alle 14:31:16, ripristinata alle 14:42:38
+        assertSame(EsitoCiclo.FINITO, esegui());
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals("prima si vedeva solo il rinnovo, che lo stallo aveva reso necessario (URL firmato da più di 10')",
+                Arrays.asList("video-nativo-attesa-rete", "video-nativo-rinnovo da-caricare", "video-nativo-inviato"), messaggi());
+    }
+
+    @Test(timeout = 60_000)
+    public void loStalloSiScriveSoloSeDuraPiuDiSessantaSecondi() throws Exception {
+        long[] durate = {30 * SECONDO, 60 * SECONDO, 61 * SECONDO};
+        int[] righeFinoAQui = {0, 0, 1};
+        for (int i = 0; i < durate.length; i++) {
+            accoda(i + 1);
+            ilSistemaFermaIlGuscioConUnaPutInVolo();
+            ora.addAndGet(durate[i]);
+            assertSame(EsitoCiclo.FINITO, esegui());
+            verificaChiusuraPulita(i + 1, Stato.INVIATO);
+            assertEquals("fermo per " + durate[i] / SECONDO + " s (§8.2: più di 60): righe finora", righeFinoAQui[i], conta("video-nativo-attesa-rete"));
+        }
+    }
+
+    @Test(timeout = 60_000)
+    public void dueStalliDellaStessaVoceScrivonoDueRigheUnaPerStallo() throws Exception {
+        accoda(1);
+        ilSistemaFermaIlGuscioConUnaPutInVolo();              // primo stallo
+        ora.addAndGet(4 * MINUTO);
+        ilSistemaFermaIlGuscioConUnaPutInVolo();              // il job riparte (scrive la riga del primo), la PUT è di nuovo in volo e il sistema la ferma: secondo stallo
+        assertEquals("il primo stallo ha la sua riga alla ripartenza", 1, conta("video-nativo-attesa-rete"));
+        ora.addAndGet(4 * MINUTO);
+        assertSame(EsitoCiclo.FINITO, esegui());
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals("il secondo ha la sua: una per stallo, né più né meno",
+                Arrays.asList("video-nativo-attesa-rete", "video-nativo-attesa-rete", "video-nativo-inviato"), messaggi());
+    }
+
+    @Test
+    public void unoStalloGiaScrittoMentreSiAspettavaLaReteNonSiRiscriveAllaRipartenzaDelGuscio() throws Exception {
+        accoda(1);
+        rete.su = false;                                      // la rete non c'è: il ciclo la aspetta e, passati i 60 s, lo scrive lui
+        assertSame(EsitoCiclo.RIPROVA, esegui());
+        assertEquals(1, conta("video-nativo-attesa-rete"));
+        rete.su = true;                                       // il guscio riparte (`jobFinished(true)`, il lavoro di ripresa): è LO STESSO stallo
+        assertSame(EsitoCiclo.FINITO, esegui());
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals("scritto una volta, non due", 1, conta("video-nativo-attesa-rete"));
+    }
+
+    @Test(timeout = 60_000)
+    public void unoStalloCheContinuaDopoLaRipartenzaDelGuscioConLaReteAncoraAssenteSiScriveUnaVoltaSola() throws Exception {
+        accoda(1);
+        ilSistemaFermaIlGuscioConUnaPutInVolo();
+        rete.su = false;
+        ora.addAndGet(2 * MINUTO);
+        // Il guscio riparte ma la rete non è ancora tornata (il lavoro di WorkManager non ha il vincolo di rete la prima volta): la riga dello
+        // stallo già in corso si scrive alla ripartenza, e quando il ciclo, aspettando, supera a sua volta i 60 s NON la riscrive: è lo stesso.
+        rete.tornaAlle = ora.get() + 3 * MINUTO;
+        assertSame(EsitoCiclo.FINITO, esegui());
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals("lo stesso stallo: una riga, non due", 1, conta("video-nativo-attesa-rete"));
+    }
+
+    @Test(timeout = 60_000)
+    public void unRitentativoCheAspettaIlSuoRitardoNonEUnoStalloDiRete() throws Exception {
+        accoda(1);
+        // Una PUT caduta (nessuna risposta) lascia la voce `in-attesa` `RETE`, ma COL SUO RITARDO di §4.5: a non andare avanti non è la rete,
+        // è il turno del ritentativo, che ha già detto la sua riga (`video-nativo-ritento`).
+        coda.transita(id(1), EventoStato.AVVIATO, null);
+        coda.modifica(id(1), v -> v.prossimoTentativoIl = ora.get() + 10 * MINUTO);
+        coda.transita(id(1), EventoStato.IN_ATTESA_DI_RETE, Codice.RETE);
+        ora.addAndGet(5 * MINUTO);                            // ferma da più di 60 s, ma il ritardo non è ancora scaduto
+        assertSame(EsitoCiclo.FINITO, esegui());
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals("nessuna riga: un ritardo diverso da zero è un ritentativo, non uno stallo", 0, conta("video-nativo-attesa-rete"));
+    }
+
+    @Test(timeout = 60_000)
+    public void unaVoceCheAspettaPerUnAltroMotivoOChePartiraSoloOraNonEUnoStalloDiRete() throws Exception {
+        accoda(1);
+        accoda(2);
+        coda.transita(id(1), EventoStato.AVVIATO, null);
+        coda.transita(id(1), EventoStato.IN_ATTESA_DI_RETE, Codice.SERVER);     // ritardo zero, ma è il server ad aver detto «non adesso»
+        ora.addAndGet(10 * MINUTO);                           // la voce 2 è in coda da dieci minuti: ha aspettato il suo turno, non la rete
+        assertSame(EsitoCiclo.FINITO, esegui());
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        verificaChiusuraPulita(2, Stato.INVIATO);
+        assertEquals(0, conta("video-nativo-attesa-rete"));
+    }
+
+    /* ·· `tentativi`: i tentativi fatti, il riuscito compreso (1 = al primo colpo), come su iOS ·· */
+
+    @Test
+    public void dopoDueTransitoriLInviatoDichiaraTreTentativiEIRitentiNumeranoQuelliCaduti() throws Exception {
+        accoda(1);
+        put.poi(senzaRisposta(), server(503));
+        assertSame(EsitoCiclo.FINITO, esegui());
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals(Arrays.asList("video-nativo-ritento RETE", "video-nativo-ritento SERVER", "video-nativo-inviato"), messaggi());
+        List<EventoRegistrato> eventi = registro.eventi();
+        assertEquals("il primo tentativo è caduto", 1L, numero(eventi.get(0), "tentativo"));
+        assertEquals("il secondo pure", 2L, numero(eventi.get(1), "tentativo"));
+        assertEquals("il terzo è riuscito: tre tentativi in tutto, il riuscito compreso", 3L, numero(eventi.get(2), "tentativi"));
+    }
+
+    @Test
+    public void unaVoceGiaArrivataDopoUnRifiutoDichiaraIlTentativoCheLHaScoperta() throws Exception {
+        accoda(1);
+        put.poi(rifiuto("Duplicate", "409", true, 2_000L));
+        rinnovo.poi(arrivato());
+        esegui();
+        EventoRegistrato inviato = evento("video-nativo-inviato");
+        assertEquals("gia-arrivato", inviato.campi.get("esito"));
+        assertEquals("un tentativo: la PUT rifiutata come duplicato, che il rinnovo ha chiuso", 1L, numero(inviato, "tentativi"));
+    }
+
+    @Test
+    public void unTroppoGrandeAllaPrimaPutDichiaraUnTentativoENonZero() throws Exception {
+        accoda(1);
+        put.poi(rifiuto("EntityTooLarge", "413", true, 4_000L));
+        esegui();
+        assertEquals("il tentativo in cui è fallita conta: uno, come su iOS", 1L, numero(evento("video-nativo-fallito"), "tentativi"));
+    }
+
+    @Test
+    public void unTroppoGrandeDopoDueTransitoriDichiaraTreTentativi() throws Exception {
+        accoda(1);
+        put.poi(senzaRisposta(), server(503), rifiuto("EntityTooLarge", "413", true, 4_000L));
+        esegui();
+        assertEquals("due caduti e il terzo, in cui è fallita", 3L, numero(evento("video-nativo-fallito"), "tentativi"));
+    }
+
+    @Test
+    public void unaVoceCheFallisceSenzaAverTentatoDichiaraZeroTentativi() throws Exception {
+        accoda(1);
+        assertTrue(new File(cartella, "file/" + id(1) + ".mp4").delete());          // la copia sparisce
+        accoda(2, 2 * ORA_MS, MINUTO);                                             // il token vale un minuto
+        ora.addAndGet(2 * MINUTO);
+        esegui();
+        List<Long> tentativi = new ArrayList<>();
+        for (EventoRegistrato e : registro.eventi()) {
+            if (e.messaggio.startsWith("video-nativo-fallito")) tentativi.add(numero(e, "tentativi"));
+        }
+        assertEquals("copia mancante e token scaduto: la voce finisce prima di tentare, nessun tentativo da contare", Arrays.asList(0L, 0L), tentativi);
+        assertEquals(0, put.richieste.size());
+    }
+
+    /* ·· `byte_inviati` di `video-nativo-annullato`: i byte che c'erano, non lo zero lasciato dopo ·· */
+
+    @Test(timeout = 60_000)
+    public void annullareInVoloDichiaraNelLogIByteGiaSpeditiENonZero() throws Exception {
+        accoda(1);
+        final long spediti = 6_631_581L;                      // lo scenario S11 del collaudo C1: annullo a 6,6 MB
+        CountDownLatch inVolo = new CountDownLatch(1);
+        put.poi((Function<RichiestaPut, EsitoPut>) richiesta -> {
+            richiesta.avanzamento.accept(spediti);            // l'ultimo avanzamento che `CaricatorePut` ha comunicato
+            // In produzione `interrompi()` chiude la connessione (il gancio) e il thread della PUT, uscendo, azzera l'avanzamento. Qui il
+            // gancio ASPETTA che l'abbia azzerato: nel collaudo era questione di tempo (e `byte_inviati` usciva 0), qui l'ordine è certo.
+            richiesta.interruzione.agganciaA(() -> {
+                long fineGancio = System.nanoTime() + 10_000_000_000L;
+                while (esecutore.byteInviati(id(1)) != 0L && System.nanoTime() < fineGancio) pausa(2);
+            });
+            inVolo.countDown();
+            long fine = System.nanoTime() + 20_000_000_000L;
+            while (!richiesta.interruzione.richiesta() && System.nanoTime() < fine) pausa(2);
+            return EsitoPut.interrotto(spediti, 50L);
+        });
+        // La PUT interrotta lascia la voce `in-attesa` con ritardo zero, e il ciclo può riprenderla PRIMA che `annulla` la chiuda. Una seconda
+        // PUT, se parte, non deve né finire né far avanzare niente: resta lì finché la voce non è chiusa (come farebbe un invio vero).
+        put.predefinita = richiesta -> {
+            long fine = System.nanoTime() + 20_000_000_000L;
+            while (!richiesta.interruzione.richiesta() && !voce(1).stato.terminale() && System.nanoTime() < fine) pausa(2);
+            return EsitoPut.interrotto(0L, 0L);
+        };
+        AtomicReference<EsitoCiclo> esito = new AtomicReference<>();
+        Thread filo = new Thread(() -> esito.set(esegui()));
+        filo.start();
+        assertTrue(inVolo.await(10, TimeUnit.SECONDS));
+        assertEquals("l'avanzamento era arrivato fin lì", spediti, esecutore.byteInviati(id(1)));
+        assertTrue(esecutore.annulla(id(1)));
+        filo.join(20_000);
+        assertFalse(filo.isAlive());
+        assertSame(EsitoCiclo.FINITO, esito.get());
+        verificaChiusuraPulita(1, Stato.ANNULLATO);
+        assertEquals(Arrays.asList("video-nativo-annullato utente"), messaggi());
+        assertEquals("i byte spediti PRIMA di interrompere, non lo zero che la PUT lascia uscendo", spediti,
+                numero(evento("video-nativo-annullato"), "byte_inviati"));
+    }
+
+    @Test
+    public void ilRinnovoAnnullatoDopoUnaPutRifiutataDichiaraIByteCheLaPutAvevaSpedito() throws Exception {
+        accoda(1);
+        byte[] corpo = "{\"statusCode\":\"400\",\"error\":\"InvalidRequest\",\"message\":\"x\"}".getBytes(StandardCharsets.UTF_8);
+        put.poi(EsitoPut.risposta(400, corpo, 0L, 3_333L, 40L, false));
+        rinnovo.poi(annullato());
+        esegui();
+        verificaChiusuraPulita(1, Stato.ANNULLATO);
+        assertEquals(Arrays.asList("video-nativo-rinnovo annullato", "video-nativo-annullato server"), messaggi());
+        assertEquals("i byte della PUT rifiutata (come su iOS), non lo zero a cui `spedisci` riporta l'avanzamento a PUT finita", 3_333L,
+                numero(evento("video-nativo-annullato"), "byte_inviati"));
+    }
+
+    @Test
+    public void ilRinnovoProattivoAnnullatoPrimaDiOgniPutDichiaraZeroByte() throws Exception {
+        accoda(1, 2 * ORA_MS - 11 * MINUTO, 48 * ORA_MS);     // URL firmato da più di 10': il rinnovo viene prima della PUT
+        rinnovo.poi(annullato());
+        esegui();
+        verificaChiusuraPulita(1, Stato.ANNULLATO);
+        assertEquals("nessuna PUT", 0, put.richieste.size());
+        assertEquals(Arrays.asList("video-nativo-rinnovo annullato", "video-nativo-annullato server"), messaggi());
+        assertEquals("niente è stato spedito", 0L, numero(evento("video-nativo-annullato"), "byte_inviati"));
     }
 }

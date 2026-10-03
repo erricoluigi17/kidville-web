@@ -195,6 +195,7 @@ URL o token. Intestazioni identiche a quelle dei motori nativi: solo `content-ty
 | S0-b | 2e9 B a 250 KB/s, partita a firma + 32 s: **tutti i byte inviati in 7.812 s (2 h 10')**, poi **HTTP 400 `InvalidJWT`** | ❗ la firma si verifica **alla FINE** del trasferimento |
 | S0-b2 | 200 MB a 1 MB/s partita a firma + 1 h 58', finita a firma + 2 h 01': **HTTP 400 `InvalidJWT`** | ❗ conferma: conta la validità all'ultimo byte, non alla partenza |
 | S0-c | URL scaduto alla partenza: **HTTP 400** `statusCode:"400"`, `error:"InvalidJWT"`, in 72 ms | la forma del rifiuto per la tabella di §4.5 |
+| S0-h | (03/10 sera, progetto della CI) **seconda PUT da 100 MB** sullo stesso URL firmato, lenta: **HTTP 400 `Duplicate` DOPO l'ultimo byte** (104.857.600 inviati, prima risposta a fine trasferimento), uguale con `Expect: 100-continue` | ❗ lo Storage legge TUTTO il corpo prima di rispondere: il rifiuto anticipato del server finto (che fa cadere la scrittura di Android, collaudo C1 S3/S4) non succede col vero |
 | S0-e | `POST /api/logs` con gli UA nativi veri (iOS `Kidville/6 CFNetwork/… Darwin/…`, Android `Dalvik/2.1.0 …`): **200 `{ricevuti:1}`**; `POST /api/video-uploads/rinnovo` con un token inventato: **404 JSON `VIDEO_NON_TROVATO`**; nessuna pagina di sfida | ✅ |
 | Pulizia | l'unico oggetto creato (S0-a) tolto; `count(*)` di `video_processing/collaudo-trasporto/%` = **0** (SQL); MicroVM spenta | ✅ |
 
@@ -446,7 +447,9 @@ Tutti in `ios/App/App/`, aggiunti a mano al `project.pbxproj` con ID nuovi a par
   attiva. Log `caricamenti-nativi-motore` solo se ci sono voci vive.
 - `application(_:handleEventsForBackgroundURLSession:completionHandler:)` → `KVMotoreCaricamenti.condiviso.ricollega(
   identificativo, completamento)`; il completamento si chiama **sul main** in `urlSessionDidFinishEvents` **dopo** il
-  lavoro conseguente (rinnovo, nuovo task, svuotamento del registro), entro ~20 s, dentro `beginBackgroundTask`.
+  lavoro conseguente (rinnovo, nuovo task, svuotamento del registro), entro ~20 s, dentro `beginBackgroundTask`. Lo
+  svuotamento FINALE ignora la finestra dei 10 s (§8.1) e, se un lotto è già in volo, il completamento aspetta la sua fine:
+  senza, `video-nativo-inviato` di un invio concluso durante il rilancio partiva solo alla riapertura (collaudo C1, D1; I2c).
 - `applicationDidBecomeActive` → `riprendiInPrimoPiano()`: ricrea le voci senza task vivo, quelle chiuse a forza e
   quelle create in background con 0 byte; toglie la notifica locale consegnata.
 - `applicationDidEnterBackground` → `notificaSeFermo()`: con voci `in-invio`/`in-attesa` e `NWPathMonitor` a
@@ -767,9 +770,14 @@ L'**avviso breve** (decisione del titolare) è il banner dopo «Pubblica» e la 
   `localizedDescription`, messaggio di un'eccezione: per un errore di sistema solo dominio e codice numerico (iOS) o nome
   semplice della classe (Android).
 - Invio del registro nativo: `POST registro.url` con `x-user-id: <utenteId della voce>`, corpo `{eventi, piattaforma}`,
-  lotti ≤ 20, al più uno ogni 10 s, a ogni transizione terminale, all'avvio e al ritorno in primo piano; 429 →
+  lotti ≤ 20, al più uno ogni 10 s (eccezione: lo svuotamento finale di una sessione in background, §5.3, al più una richiesta
+  in più per ogni rilancio), a ogni transizione terminale, all'avvio e al ritorno in primo piano; 429 →
   `Retry-After`; altro 4xx → lotto scartato e contato; 5xx/rete → si tiene. Un video «normale» costa ≤ 4 righe.
 - I ritentativi si loggano ai tentativi 1, 2, 4, 8, 16, …: la coda insiste, il registro no.
+- Il campo **`tentativi`** degli eventi conta i TENTATIVI, non i ritentativi: **1 = riuscito (o fallito) al primo colpo**, uguale su
+  iOS e Android (A2e). I controlli fatti prima di tentare non contano. Resta una divergenza: Android non conta come tentativo
+  una fermata del sistema né la PUT uccisa col processo, iOS conta ogni ciclo ricreato. Il contatore interno della coda e
+  `CaricamentoNativo.tentativi` del ponte restano a base 0 su Android.
 
 ### 8.2 Eventi nativi
 
@@ -779,7 +787,7 @@ L'**avviso breve** (decisione del titolare) è il banner dopo «Pubblica» e la 
 | `video-nativo-inviato: job=<uuid>` | warn (successo) | 2xx, o rinnovo `arrivato` | `byte`, `ms`, `tentativi`, `rinnovi`, `esito` (`put` · `gia-arrivato`), `in_background` |
 | `video-nativo-ritento: job=<uuid> <CODICE>` | warn | transitorio (rete, 5xx, 408/429) | `tentativo`, `attesa_s`, `byte_inviati` |
 | `video-nativo-rinnovo: job=<uuid> <esito>` | warn | ogni rinnovo (`da-caricare`, `arrivato`, `annullato`, `negato`, `tetto`, `rete`, `server`) | `rinnovi`, `error_code` (`statusCode`/`error` del corpo della PUT, elenco chiuso) |
-| `video-nativo-attesa-rete: job=<uuid>` | warn | iOS: notifica locale partita; Android: attesa > 60 s nel worker | `notifica`, `autorizzata` |
+| `video-nativo-attesa-rete: job=<uuid>` | warn | iOS: notifica locale partita; Android: invio fermo per la rete da più di 60 s, nel worker (API 24-33) **e su UIDT** (API 34+, scritta alla ripartenza del job; A2e) — **una riga per stallo e per voce**, finché la voce non riparte | `notifica`, `autorizzata` |
 | `video-nativo-pausa: job=<uuid> <CODICE>` | warn | `FGS_NON_AVVIABILE`, `UIDT_NON_PROGRAMMABILE` | `sdk` |
 | `video-nativo-ripreso-dopo-chiusura: job=<uuid>` | warn | task ricreato dopo chiusura forzata | `byte_inviati` |
 | `video-nativo-annullato: job=<uuid> <da>` | warn | `utente` o `server` | `byte_inviati` |

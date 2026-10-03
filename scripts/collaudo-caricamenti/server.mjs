@@ -79,14 +79,18 @@
 // l'URL scade. L'ordine dei controlli è quello dello Storage: prima la firma (`scaduto`),
 // poi l'esistenza dell'oggetto (`Duplicate`), poi il corpo.
 //
-// I RIFIUTI RISPONDONO SUBITO, senza aspettare il corpo, come si ritiene faccia lo Storage
-// (S0-d: 400 in 50 ms su un corpo di 1 MB; con un file grande NON è stato misurato). Poi il
-// server continua a LEGGERE e scartare fino a `drenaByte` (1 MiB) e, se il client sta ancora
-// mandando, chiude di colpo la connessione. È la forma peggiore per un client — una
-// `HttpURLConnection` di Android in scrittura può prendere «Broken pipe» PRIMA di aver letto
-// la risposta — ed è quella che il motore deve saper leggere: un 400 scambiato per «rete
-// caduta» farebbe insistere per sempre su un URL morto. Con i file di prova piccoli
-// (≤ drenaByte) il rifiuto è pulito; per isolare un problema si avvia con `--drena-byte -1`.
+// I RIFIUTI RISPONDONO SUBITO, senza aspettare il corpo. Poi il server continua a LEGGERE e
+// scartare fino a `drenaByte` (1 MiB) e, se il client sta ancora mandando, chiude di colpo la
+// connessione. È la forma peggiore per un client — una `HttpURLConnection` di Android in
+// scrittura prende «Broken pipe» PRIMA di aver letto la risposta, e il collaudo C1 del 03/10 l'ha
+// visto: un 400 letto come «rete caduta», PUT ripetute sullo stesso URL fino al rinnovo proattivo.
+// ⚠️ NON è ciò che fa lo Storage vero: misurato la sera del 03/10 sul progetto della CI, il 400
+// `Duplicate` di una PUT da 100 MB arriva DOPO l'ultimo byte (104.857.600 inviati, anche con
+// `Expect: 100-continue`), come l'`InvalidJWT` di S0. Questa forma resta come prova di robustezza;
+// per un client che si comporta come con lo Storage vero si avvia con `--drena-byte -1`: il
+// rifiuto parte comunque subito, ma il server legge tutto il corpo senza mai chiudere, così la
+// scrittura finisce e la risposta si legge. Con i file di prova piccoli (≤ drenaByte) le due forme
+// coincidono.
 //
 // ─── GLI SCENARI DEL RINNOVO (il token `x-kidville-rinnovo`, assegnato da /apri) ──────
 //   da-caricare   200 `{stato:'da-caricare', caricamento:{protocollo:'put', url, metodo,

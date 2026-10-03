@@ -25,6 +25,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -72,6 +73,10 @@ import java.util.function.LongConsumer;
  *    (`RETE`) senza consumare un tentativo, e si aspetta la rete fino al tetto del guscio (10' per il lavoro di WorkManager, che
  *    tiene il servizio in primo piano; §6.2). Tornata la rete le voci in attesa `RETE` ripartono SUBITO, senza finire il loro
  *    ritardo. Una PUT che cade con la rete presente invece segue le attese di §4.5 (30 s, 1', 2'...).
+ *  · UNO STALLO DI RETE LASCIA UNA RIGA, comunque finisca (`video-nativo-attesa-rete`, §8.2): se l'esecutore aspetta la rete oltre i 60 s la
+ *    scrive lui; se a fermare tutto è stato il sistema (UIDT: rete caduta → `onStopJob`) nessun codice nostro gira durante lo stallo, e la
+ *    riga si scrive alla ripartenza, leggendo da quanto la voce era ferma (`loggaGliStalliDiPrima`). Una riga per stallo e per voce.
+ *  · I `tentativi` DEI LOG sono i tentativi fatti, quello riuscito compreso: 1 = al primo colpo, come su iOS (`tentativiFatti`).
  *  · NESSUN TETTO AL NUMERO DI TENTATIVI: «mai più errori» vuol dire insistere finché il server lo permette (il token vale 48 ore),
  *    non arrendersi al quinto. Sono i LOG dei ritentativi a diradarsi (1, 2, 4, 8, 16...), non la coda.
  *  · NIENTE DATI PERSONALI IN NESSUN LOG: il registro (`RegistroNativo`) prende solo uuid, numeri ed enumerati, e questo file non
@@ -362,6 +367,15 @@ public final class EsecutoreCoda {
     private final Map<String, Long> avanzamento = new ConcurrentHashMap<>();
     private volatile Osservatore osservatore;
 
+    /**
+     * Le voci il cui STALLO di rete è già stato scritto in `video-nativo-attesa-rete` (§8.2): UNA riga per stallo e per voce, comunque
+     * l'abbia vista l'esecutore (aspettando la rete nel ciclo, o leggendo da quanto la voce era ferma alla ripartenza del guscio). Una voce
+     * esce dall'insieme quando riparte (`avviaORiprendi`) o finisce (`chiudiLaVoce`): il suo stallo dopo è un altro. Solo in memoria: se il
+     * processo muore a stallo scritto, alla ripartenza può uscire una riga in più, mai una in meno. Lo toccano il thread del ciclo e, per
+     * `chiudiLaVoce`, quello del ponte (`annulla`).
+     */
+    private final Set<String> stalliDiReteScritti = ConcurrentHashMap.newKeySet();
+
     /* Stato del giro: toccato solo dal thread che esegue. */
     private boolean inAttesaDiRete;
     private long inizioAttesaRete;
@@ -494,13 +508,16 @@ public final class EsecutoreCoda {
         if (jobId == null) return false;
         VoceCoda prima = coda.trova(jobId);
         if (prima == null || prima.stato.terminale()) return false;
+        // I byte già spediti si leggono PRIMA di interrompere (collaudo C1, S11: `byte_inviati: 0` dopo 6,6 MB spediti). `interrompi()`
+        // chiude la connessione e il thread della PUT, uscendo, azzera l'avanzamento (`spedisci`: «una PUT che riparte ricomincia da
+        // zero»): letto dopo, in questo punto, si trova quasi sempre lo zero. Quello che l'utente ha visto è l'ultimo avanzamento noto.
+        long inviati = valore(avanzamento.get(jobId));
         if (jobId.equals(jobInCorso)) {
             Interruzione i = interruzioneInCorso;
             if (i != null) i.interrompi();
         }
         EsitoTransizione e = coda.transita(jobId, EventoStato.ANNULLATO, null);
         if (e.tipo != TipoTransizione.APPLICATA) return false;
-        long inviati = valore(avanzamento.get(jobId));
         registro.videoAnnullato(uuid(jobId), uuid(e.voce.utenteId), Da.UTENTE, inviati);
         chiudiLaVoce(e);
         segnala();
@@ -542,6 +559,7 @@ public final class EsecutoreCoda {
      * ──────────────────────────────────────────────────────────────────────────── */
 
     private EsitoCiclo ciclo(Presentazione presentazione, long attesaReteMassimaMs) {
+        loggaGliStalliDiPrima();
         for (;;) {
             if (fermo) return EsitoCiclo.INTERROTTO;
             List<VoceCoda> vive = coda.vive();
@@ -680,11 +698,53 @@ public final class EsecutoreCoda {
         }
     }
 
+    /**
+     * Lo stallo VISTO: il ciclo aspetta la rete da più di 60 s (§8.2). La notifica del guscio è quella che il ciclo ha cambiato in «in
+     * attesa di rete» (`Presentazione#inAttesaDiRete`), e si vede se il sistema lascia mostrare le notifiche: `notifica` = `autorizzata`.
+     */
     private void loggaAttesaDiRete() {
         boolean autorizzata = ambiente.notificheAutorizzate();
         for (VoceCoda voce : coda.vive()) {
-            registro.videoAttesaRete(uuid(voce.jobId), uuid(voce.utenteId), autorizzata, autorizzata);
+            scriviLoStalloDiRete(voce, autorizzata, autorizzata);
         }
+    }
+
+    /**
+     * Gli stalli NON visti, a inizio ciclo (collaudo E1, KV-play-phone: uno stallo di 11 minuti su UIDT si leggeva solo dal rinnovo
+     * `da-caricare` che lo seguiva). Su UIDT, quando la rete cade, è il SISTEMA a fermare il job (`onStopJob`): la PUT si interrompe
+     * (`suInterruzione`), il ciclo esce `INTERROTTO`, e finché il sistema non fa ripartire il job nessun codice nostro gira: nessuno può
+     * contare i 60 secondi mentre passano. L'unica cosa che si può fare è accorgersene alla ripartenza: una voce che `suInterruzione` (o
+     * `mettiInAttesaDiRete`) ha messo `in-attesa` `RETE` col ritardo a zero, e che nessuno ha ripreso da più di 60 s, è rimasta ferma per la
+     * rete (o per un arresto del guscio: la coda non distingue, `RETE` è il codice di tutti e due). Allora si scrive la STESSA riga che il
+     * ciclo scrive quando la rete la aspetta lui, una volta sola (`scriviLoStalloDiRete`).
+     *
+     * LA VOCE CHE NON È UNO STALLO: un ritardo diverso da zero è un ritentativo di §4.5 (la PUT è caduta, la voce aspetta il suo turno: se
+     * ne parla `video-nativo-ritento`); un altro codice (`SERVER`, `INTERNO`...) non è la rete; una voce ancora `in-coda` non è mai
+     * partita. Si guarda una volta per ciclo, all'inizio, e non a ogni giro: una voce che aspetta il suo turno dietro un'altra (l'esecutore
+     * è sequenziale) non ha fatto uno stallo di rete, ha aspettato in coda.
+     *
+     * `notifica` è FALSO: mentre il guscio era fermo il sistema ha tolto la notifica del job (`JOB_END_NOTIFICATION_POLICY_REMOVE` in
+     * `ServizioCaricamentiUidt`) o del servizio in primo piano di WorkManager, e l'insegnante non ha visto nessun «in attesa di rete».
+     * `autorizzata` è quella di adesso. NON LANCIA: un guasto del log non rompe il ciclo (AGENTS.md, regola 9).
+     */
+    private void loggaGliStalliDiPrima() {
+        try {
+            long adesso = ambiente.adesso();
+            for (VoceCoda voce : coda.vive()) {
+                if (voce.stato != Stato.IN_ATTESA || voce.codice != Codice.RETE || voce.prossimoTentativoIl != 0L) continue;
+                long fermaDaSecondi = Math.max(0L, adesso - voce.aggiornatoIl) / 1000L;
+                if (!PoliticaCaricamento.attesaReteDaLoggare(fermaDaSecondi)) continue;
+                scriviLoStalloDiRete(voce, false, ambiente.notificheAutorizzate());
+            }
+        } catch (RuntimeException guasto) {
+            ambiente.guasto("attesa-rete-di-prima", guasto);
+        }
+    }
+
+    /** UNA riga `video-nativo-attesa-rete` per stallo e per voce: se quello di adesso è già stato scritto non fa niente. */
+    private void scriviLoStalloDiRete(VoceCoda voce, boolean notifica, boolean autorizzata) {
+        if (!stalliDiReteScritti.add(voce.jobId)) return;
+        registro.videoAttesaRete(uuid(voce.jobId), uuid(voce.utenteId), notifica, autorizzata);
     }
 
     /* ────────────────────────────────────────────────────────────────────────────
@@ -698,17 +758,17 @@ public final class EsecutoreCoda {
         // 1. La copia c'è e pesa quanto la voce dice: un controllo che costa niente prima di spendere una PUT o un rinnovo.
         File copia = coda.fileCopia(iniziale.file);
         if (!copia.isFile()) {
-            fallisci(iniziale, Codice.FILE_ASSENTE, Operazione.COPIA);
+            fallisciPrimaDiTentare(iniziale, Codice.FILE_ASSENTE, Operazione.COPIA);
             return;
         }
         if (copia.length() != iniziale.byteTotali) {
-            fallisci(iniziale, Codice.PESO_DIVERSO, Operazione.COPIA);
+            fallisciPrimaDiTentare(iniziale, Codice.PESO_DIVERSO, Operazione.COPIA);
             return;
         }
 
         // 2. Il token vale ancora? Oltre `scadeIl` nessun rinnovo potrà più riuscire: inutile insistere.
         if (PoliticaCaricamento.tokenScaduto(iniziale.tokenScadeIl, adesso)) {
-            fallisci(iniziale, Codice.TOKEN_SCADUTO, Operazione.RINNOVO);
+            fallisciPrimaDiTentare(iniziale, Codice.TOKEN_SCADUTO, Operazione.RINNOVO);
             return;
         }
 
@@ -727,14 +787,14 @@ public final class EsecutoreCoda {
             return;
         }
         if (lettura.esito != Esito.OK) {
-            fallisci(voce, Codice.INTERNO, Operazione.PUT);
+            fallisciTentando(voce, Codice.INTERNO, Operazione.PUT);
             return;
         }
         Segreti daUsare = lettura.segreti;
 
         // 5. Il rinnovo PROATTIVO (regola di S0): l'URL è stato firmato da più di 10 minuti, o non se ne sa l'età.
         if (PoliticaCaricamento.serveRinnovoProattivo(voce.urlScadeIl, adesso)) {
-            daUsare = rinnova(voce, daUsare, false, null);
+            daUsare = rinnova(voce, daUsare, false, null, 0L);
             if (daUsare == null) return;
             voce = fresca(job);
             if (voce == null || voce.stato.terminale()) return;
@@ -775,6 +835,8 @@ public final class EsecutoreCoda {
         }
         EsitoTransizione e = coda.transita(voce.jobId, evento, null);
         if (e.tipo != TipoTransizione.APPLICATA && e.tipo != TipoTransizione.GIA_IN_QUELLO_STATO) return null;
+        // La voce riparte: lo stallo che aveva è finito, e il prossimo (se ce ne sarà uno) avrà la sua riga.
+        stalliDiReteScritti.remove(voce.jobId);
         notificaVoce(e.voce);
         return e.voce;
     }
@@ -812,10 +874,10 @@ public final class EsecutoreCoda {
                 suInterruzione(job);
                 return null;
             case FILE_ASSENTE:
-                fallisci(coda.trova(job), Codice.FILE_ASSENTE, Operazione.COPIA);
+                fallisciTentando(coda.trova(job), Codice.FILE_ASSENTE, Operazione.COPIA);
                 return null;
             case PESO_DIVERSO:
-                fallisci(coda.trova(job), Codice.PESO_DIVERSO, Operazione.COPIA);
+                fallisciTentando(coda.trova(job), Codice.PESO_DIVERSO, Operazione.COPIA);
                 return null;
             default:
                 return decidiLaPut(job, esito, segretiDellaPut);
@@ -872,7 +934,7 @@ public final class EsecutoreCoda {
                 concludiComeInviato(voce, esito.durataMs, EsitoInvio.PUT);
                 return null;
             case TROPPO_GRANDE:
-                fallisci(voce, Codice.TROPPO_GRANDE, Operazione.PUT);
+                fallisciTentando(voce, Codice.TROPPO_GRANDE, Operazione.PUT);
                 return null;
             case ATTESA:
                 attendi(voce, decisione.codice, decisione.retryAfterSecondi, esito.stato, consecutivi, esito.byteInviati);
@@ -890,7 +952,7 @@ public final class EsecutoreCoda {
                 });
                 VoceCoda aggiornata = fresca(job);
                 if (aggiornata == null || aggiornata.stato.terminale()) return null;
-                return rinnova(aggiornata, segretiDellaPut, true, corpo.errore);
+                return rinnova(aggiornata, segretiDellaPut, true, corpo.errore, esito.byteInviati);
             default:
                 throw new IllegalStateException("azione della PUT non prevista");
         }
@@ -906,8 +968,11 @@ public final class EsecutoreCoda {
      *
      * @param daRifiuto  vero se lo chiede un rifiuto della PUT (conta nel tetto di tre), falso se è il rinnovo proattivo
      * @param errorePut  il nome d'errore dello Storage che ha chiesto il rinnovo (per `error_code`), `null` se proattivo
+     * @param byteDellaPut i byte che la PUT rifiutata aveva spedito (0 per il rinnovo proattivo, che viene prima di ogni PUT): se il
+     *                   rinnovo risponde `annullato`, sono i `byte_inviati` di `video-nativo-annullato server`. NON si rileggono da
+     *                   `avanzamento`, che a PUT finita è già a zero
      */
-    private Segreti rinnova(VoceCoda voce, Segreti attuali, boolean daRifiuto, ErroreStorage errorePut) {
+    private Segreti rinnova(VoceCoda voce, Segreti attuali, boolean daRifiuto, ErroreStorage errorePut, long byteDellaPut) {
         final String job = voce.jobId;
         Segreti usati = attuali;
         for (int giro = 0; giro < GIRI_CON_TOKEN_NUOVO_MASSIMI; giro++) {
@@ -947,14 +1012,14 @@ public final class EsecutoreCoda {
                     concludiComeInviato(corrente, 0L, EsitoInvio.GIA_ARRIVATO);
                     return null;
                 case ANNULLATO:
-                    annullataDalServer(corrente);
+                    annullataDalServer(corrente, byteDellaPut);
                     return null;
                 case RIPROVA_CON_TOKEN_NUOVO:
                     usati = piuRecenti;
                     continue;
                 case FALLITO:
                     coda.modifica(job, x -> x.rinnovi = rinnoviDopo);
-                    fallisci(fresca(job), decisione.codice, Operazione.RINNOVO);
+                    fallisciTentando(fresca(job), decisione.codice, Operazione.RINNOVO);
                     return null;
                 case ATTESA:
                     attendi(corrente, decisione.codice, decisione.retryAfterSecondi, risposta.stato, decisione.rinnoviConsecutivi, 0L);
@@ -964,7 +1029,7 @@ public final class EsecutoreCoda {
             }
         }
         // Più di due rotazioni in un solo rinnovo non sono una rotazione: il token non vale.
-        fallisci(fresca(job), Codice.TOKEN_NON_VALIDO, Operazione.RINNOVO);
+        fallisciTentando(fresca(job), Codice.TOKEN_NON_VALIDO, Operazione.RINNOVO);
         return null;
     }
 
@@ -1045,30 +1110,56 @@ public final class EsecutoreCoda {
         if (e.tipo == TipoTransizione.APPLICATA || e.tipo == TipoTransizione.GIA_IN_QUELLO_STATO) notificaVoce(e.voce);
     }
 
+    /**
+     * I `tentativi` che il log dichiara quando una voce finisce (`video-nativo-inviato`, `video-nativo-fallito`): i tentativi FATTI,
+     * quello in corso compreso, e 1 vuol dire «riuscito al primo colpo» — come su iOS, dove la voce li conta dal primo ciclo avviato
+     * (collaudo E1: Android scriveva 0, e la stessa riga voleva dire due cose a seconda della piattaforma). `voce.tentativi` invece sono i
+     * tentativi CONSUMATI da un esito transitorio (`attendi`): una voce al primo colpo ne ha zero, e una fermata del sistema non ne
+     * consuma. Per questo il tentativo che finisce la voce si aggiunge qui, e non si conta due volte: la voce è terminale, nessun
+     * `attendi` lo conterà. `tentativoInCorso` è falso se la voce finisce PRIMA di tentare (copia mancante, token scaduto).
+     */
+    private static int tentativiFatti(VoceCoda voce, boolean tentativoInCorso) {
+        return voce.tentativi + (tentativoInCorso ? 1 : 0);
+    }
+
     private void concludiComeInviato(VoceCoda voce, long durataMs, EsitoInvio esito) {
         EsitoTransizione e = coda.transita(voce.jobId, EventoStato.INVIATO, null);
         // Se la voce è già terminale (annullata nel frattempo) non si scrive un «inviato» che non è la storia vera.
         if (e.tipo != TipoTransizione.APPLICATA) return;
         VoceCoda dopo = e.voce;
-        registro.videoInviato(uuid(dopo.jobId), uuid(dopo.utenteId), dopo.byteTotali, durataMs, dopo.tentativi, dopo.rinnovi, esito,
-                ambiente.inBackground());
+        registro.videoInviato(uuid(dopo.jobId), uuid(dopo.utenteId), dopo.byteTotali, durataMs, tentativiFatti(dopo, true), dopo.rinnovi,
+                esito, ambiente.inBackground());
         chiudiLaVoce(e);
     }
 
-    private void annullataDalServer(VoceCoda voce) {
+    /**
+     * Il rinnovo ha detto `annullato`. `byteDellaPut` sono i byte che la PUT rifiutata aveva spedito, passati da chi li conosce
+     * (`decidiLaPut`): `avanzamento` a PUT finita è già a zero (`spedisci`), e leggerlo qui darebbe sempre `byte_inviati: 0`.
+     */
+    private void annullataDalServer(VoceCoda voce, long byteDellaPut) {
         EsitoTransizione e = coda.transita(voce.jobId, EventoStato.ANNULLATO, Codice.ANNULLATO_DAL_SERVER);
         if (e.tipo != TipoTransizione.APPLICATA) return;
-        registro.videoAnnullato(uuid(voce.jobId), uuid(voce.utenteId), Da.SERVER, valore(avanzamento.get(voce.jobId)));
+        registro.videoAnnullato(uuid(voce.jobId), uuid(voce.utenteId), Da.SERVER, byteDellaPut);
         chiudiLaVoce(e);
+    }
+
+    /** `fallito` PRIMA di tentare (copia mancante o di peso diverso, token scaduto): il log non conta un tentativo che non c'è stato. */
+    private void fallisciPrimaDiTentare(VoceCoda voce, Codice codice, Operazione operazione) {
+        fallisci(voce, codice, operazione, false);
+    }
+
+    /** `fallito` DENTRO un tentativo (la PUT, il rinnovo, la lettura dei segreti): il log lo conta fra i tentativi fatti. */
+    private void fallisciTentando(VoceCoda voce, Codice codice, Operazione operazione) {
+        fallisci(voce, codice, operazione, true);
     }
 
     /** `fallito`, con il suo codice e la riga `error` del registro. `voce` può essere `null` (la voce non c'è più): non fa niente. */
-    private void fallisci(VoceCoda voce, Codice codice, Operazione operazione) {
+    private void fallisci(VoceCoda voce, Codice codice, Operazione operazione, boolean tentativoInCorso) {
         if (voce == null) return;
         EsitoTransizione e = coda.transita(voce.jobId, EventoStato.FALLITO, codice);
         if (e.tipo != TipoTransizione.APPLICATA) return;
         VoceCoda dopo = e.voce;
-        registro.videoFallito(uuid(dopo.jobId), uuid(dopo.utenteId), codice, operazione, dopo.tentativi, dopo.rinnovi);
+        registro.videoFallito(uuid(dopo.jobId), uuid(dopo.utenteId), codice, operazione, tentativiFatti(dopo, tentativoInCorso), dopo.rinnovi);
         chiudiLaVoce(e);
     }
 
@@ -1077,6 +1168,7 @@ public final class EsecutoreCoda {
         VoceCoda voce = e.voce;
         if (e.residuiRimasti) residuiVisti.set(true);
         avanzamento.remove(voce.jobId);
+        stalliDiReteScritti.remove(voce.jobId);
         notificaVoce(voce);
         try {
             ambiente.registroDaSvuotare();

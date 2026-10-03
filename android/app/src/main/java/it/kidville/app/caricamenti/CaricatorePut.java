@@ -219,15 +219,17 @@ public final class CaricatorePut implements EsecutoreCoda.TrasportoPut {
     }
 
     /**
-     * Chiude un flusso a esito GIÀ NOTO: se la chiusura fallisce l'esito della PUT non cambia, e non c'è niente da fare né da dire
-     * (la connessione si chiude comunque con `disconnect`, il file si rilascia con il processo).
+     * Chiude un flusso a esito GIÀ NOTO: se la chiusura fallisce l'esito della PUT non cambia e non c'è niente da fare (la connessione si
+     * chiude comunque con `disconnect`, il file si rilascia con il processo). Non si tace però: una riga `info` in logcat, con la sola
+     * CLASSE dell'eccezione, dice che è successo e perché non conta (secondario n. 84, AGENTS.md regola 6).
      */
-    private static void chiudi(Closeable flusso) {
+    static void chiudi(Closeable flusso) {
         if (flusso == null) return;
         try {
             flusso.close();
         } catch (IOException chiusuraNonRiuscita) {
-            // Vedi sopra.
+            DiagnosticaLocale.info("chiusura di un flusso della PUT non riuscita (" + DiagnosticaLocale.classe(chiusuraNonRiuscita)
+                    + "): ignorabile, l'esito della PUT è già noto");
         }
     }
 }

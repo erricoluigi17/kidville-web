@@ -100,12 +100,11 @@ public class VocabolariCondivisiTest {
      */
     private static final Set<String> SLUG_NON_ANCORA_NEL_CONTRATTO = Collections.emptySet();
     /**
-     * Lo scarto che oggi esiste ed è dichiarato: `voci_scartate`, il numero di voci fuori forma che `coda-nativa-corrotta` porta dal 03/10
-     * (spec §4.6, compito A2). Sta in `Campo` di Android e in quello di iOS, ma non ancora in `CHIAVI_CAMPI_NATIVI` del server finto di
-     * collaudo (`scripts/collaudo-caricamenti/server.mjs`): finché non ce lo mette l'orchestratore, lo scenario S12 di C1 segnerebbe
-     * `LOG_CHIAVE_NON_AMMESSA` se una coda corrotta dovesse comparire. `durata_s` ci è invece già (aggiunto il 03/10).
+     * Nessuno scarto: dal 03/10 `CHIAVI_CAMPI_NATIVI` del server finto di collaudo (`scripts/collaudo-caricamenti/server.mjs`) ha anche
+     * `voci_scartate` (il numero di voci fuori forma che `coda-nativa-corrotta` porta, spec §4.6) e `durata_s`. Una chiave nostra che il
+     * server finto non conosce farebbe segnare `LOG_CHIAVE_NON_AMMESSA` allo scenario S12 di C1: qui diventa rossa prima.
      */
-    private static final Set<String> CHIAVI_NON_ANCORA_NEL_SERVER_FINTO = Collections.singleton("voci_scartate");
+    private static final Set<String> CHIAVI_NON_ANCORA_NEL_SERVER_FINTO = Collections.emptySet();
 
     @Test
     public void gliStatiSonoQuelliDiStatiNativi() throws Exception {

@@ -141,6 +141,18 @@ public class PianificatoreCaricamentiTest {
             return programmabile;
         }
 
+        /** Per `programmaRipresaConRete` (n. 80): quante volte l'hanno chiesta, e che cosa risponde o lancia. */
+        final AtomicInteger riprese = new AtomicInteger();
+        volatile boolean ripresaAccodabile = true;
+        volatile RuntimeException lanciaAllaRipresa = null;
+
+        @Override
+        public boolean programmaRipresaConRete() {
+            riprese.incrementAndGet();
+            if (lanciaAllaRipresa != null) throw lanciaAllaRipresa;
+            return ripresaAccodabile;
+        }
+
         @Override
         public void mostraPausa(Testi testi) {
             pause.add(testi);
@@ -1218,5 +1230,251 @@ public class PianificatoreCaricamentiTest {
                 "2026-10-05T10:00:00.1234567890Z", "domani", "2026-10-05T10:00:00z"}) {
             assertEquals("«" + non + "»", -1L, PianificatoreCaricamenti.leggiIsoMs(non));
         }
+    }
+
+    /* ════════════════════════════════════════════════════════════════════════════
+     * COMPITO A2b: LE CORREZIONI AL MOTORE DI INVIO (secondari n. 77, 80, 92 della PR 3)
+     * ════════════════════════════════════════════════════════════════════════════ */
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 77: IL JOB UIDT SI PROGRAMMA OGNI VOLTA CHE L'ESECUTORE NON È ATTIVO
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void ilJobUidtNonSiLasciaPerCheJobSchedulerNeHaGiaUnoSiProgrammaSempreAEsecutoreNonAttivo() throws Exception {
+        // `SistemaAndroid` è l'unica classe che nomina JobScheduler e sulla JVM non si istanzia. Il difetto del secondario n. 77 era UNA RIGA —
+        // «se `getPendingJob(ID)` c'è già, restituisci vero» — che faceva due danni: alla riapertura un job in attesa col suo backoff non
+        // veniva sostituito, e un job che stava FINENDO (ciclo concluso, `jobFinished` non ancora arrivato) lasciava senza guscio la voce
+        // appena accodata. Qui si prova che quella strada non esista più: `programmaUidt` non consulta mai ciò che JobScheduler ha già.
+        String codice = SorgentiDiProva.codiceSenzaCommenti("PianificatoreCaricamenti");
+        assertFalse("`getPendingJob` torna a decidere se programmare (n. 77)", codice.contains("getPendingJob"));
+        assertFalse("`getPendingJobReason` idem", codice.contains("getPendingJobReason"));
+        assertTrue("e il job si programma davvero (`schedule`)", codice.contains("pianificatore.schedule(job)"));
+    }
+
+    @Test
+    public void quandoNessunCicloEAttivoOgniVoceNuovaProgrammaIlGuscioAncheSeIlSistemaNeAveGiaUno() throws Exception {
+        // Un job che sta finendo: la prima voce l'ha programmato, il ciclo è finito, la voce dopo trova `notificaLavoro` falso.
+        motore.accoda(richiesta(1));
+        assertEquals(1, sistema.programmazioni.size());
+        motore.eseguiSuGuscio(null, 600_000L);
+        assertSame(Stato.INVIATO, coda.trova(id(1)).stato);
+
+        motore.accoda(richiesta(2));
+
+        assertEquals("il ciclo non è attivo: si programma di nuovo, senza guardare lo stato del sistema (n. 77)", 2, sistema.programmazioni.size());
+        assertEquals("e alla riapertura dell'app si chiede «subito»", Arrays.asList(false, false), sistema.subito);
+        motore.suPrimoPiano();
+        assertEquals("anche il ritorno in primo piano programma, col suo «subito»", Arrays.asList(false, false, true), sistema.subito);
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 80: DOPO UNA RETE MANCATA SI ACCODA UNA RIPRESA COL VINCOLO DI RETE
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void laRipresaDopoUnaReteMancataEUnLavoroConIlVincoloDiReteSenzaRitardoEIlSuoBackoffNonCrescePerSempre() {
+        androidx.work.OneTimeWorkRequest richiesta = PianificatoreCaricamenti.richiestaDiRipresaConRete();
+        androidx.work.impl.model.WorkSpec spec = richiesta.getWorkSpec();
+        assertEquals("parte quando una rete c'è", androidx.work.NetworkType.CONNECTED, spec.constraints.getRequiredNetworkType());
+        assertEquals("senza ritardo iniziale: non aspetta niente oltre la rete", 0L, spec.initialDelay);
+        assertEquals("è il lavoro di sempre", LavoroCaricamenti.class.getName(), spec.workerClassName);
+        assertEquals(androidx.work.BackoffPolicy.EXPONENTIAL, spec.backoffPolicy);
+        assertEquals("i ritentativi che il lavoro stesso chiede ripartono da 30 s, non dal backoff accumulato", 30_000L, spec.backoffDelayDuration);
+    }
+
+    @Test
+    public void ilLavoroDellaPrimaVoltaNonHaIlVincoloDiReteMaLaRipresaSi() {
+        // §6.2: «nessun vincolo di rete (l'attesa la governa il worker)». Solo la RIPRESA dopo i dieci minuti senza rete ce l'ha: fra un
+        // lavoro e l'altro non c'è nessun servizio in primo piano da mostrare, e aspettare la rete senza consumare niente è ciò che un vincolo sa fare.
+        androidx.work.OneTimeWorkRequest primaVolta = new androidx.work.OneTimeWorkRequest.Builder(LavoroCaricamenti.class).build();
+        assertEquals(androidx.work.NetworkType.NOT_REQUIRED, primaVolta.getWorkSpec().constraints.getRequiredNetworkType());
+        assertEquals(androidx.work.NetworkType.CONNECTED, PianificatoreCaricamenti.richiestaDiRipresaConRete().getWorkSpec().constraints.getRequiredNetworkType());
+    }
+
+    @Test
+    public void laRipresaConReteSiChiedeAlSistemaEIlSuoEsitoVieneRestituito() {
+        assertTrue(motore.programmaRipresaConRete());
+        assertEquals(1, sistema.riprese.get());
+        sistema.ripresaAccodabile = false;
+        assertFalse("se il sistema non la sa accodare il lavoro ripiega sul ritentativo", motore.programmaRipresaConRete());
+        assertEquals(2, sistema.riprese.get());
+    }
+
+    @Test
+    public void unaRipresaCheLanciaVaListaComeNonAccodataEIlGuastoSiDice() {
+        sistema.lanciaAllaRipresa = new IllegalStateException("WorkManager non inizializzato");
+        assertFalse(motore.programmaRipresaConRete());
+        assertEquals(Arrays.asList("programma-ripresa-con-rete:IllegalStateException"), sistema.guasti);
+    }
+
+    @Test
+    public void ilSistemaPredefinitoNonSaAccodareLaRipresaEUidtNonNeHaBisogno() {
+        PianificatoreCaricamenti.Sistema senzaRipresa = new PianificatoreCaricamenti.Sistema() {
+            @Override
+            public Motore motore() {
+                return Motore.UIDT;
+            }
+
+            @Override
+            public int sdk() {
+                return 36;
+            }
+
+            @Override
+            public boolean debug() {
+                return false;
+            }
+
+            @Override
+            public boolean programma(long byteDaSpedire, boolean subito) {
+                return true;
+            }
+
+            @Override
+            public void mostraPausa(Testi testi) {
+            }
+
+            @Override
+            public void togliPausa() {
+            }
+
+            @Override
+            public boolean notificheAutorizzate() {
+                return true;
+            }
+
+            @Override
+            public boolean inBackground() {
+                return false;
+            }
+
+            @Override
+            public void guasto(String evento, Throwable causa) {
+            }
+        };
+        assertFalse("il job UIDT ha già il vincolo di rete nel suo JobInfo: il predefinito dice «non so»", senzaRipresa.programmaRipresaConRete());
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 92: IL RITORNO IN PRIMO PIANO NON FA I/O SUL THREAD CHE CHIAMA
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test(timeout = 60_000)
+    public void ilRitornoInPrimoPianoRitornaSubitoESulThreadChiamanteNonCostruisceNeTocca() throws Exception {
+        coda.aggiungi(VoceCoda.nuova(id(1), id(1001), UTENTE, SCUOLA, "v.mp4", "file/" + id(1) + ".mp4", PESO, "video/mp4", Origine.GALLERIA, 0L, 0L));
+        coda.transita(id(1), EventoStato.IN_PAUSA, Codice.UIDT_NON_PROGRAMMABILE);
+        long aggiornatoPrima = coda.trova(id(1)).aggiornatoIl;
+        ora.addAndGet(5_000L);                                    // se `suPrimoPiano` scrivesse (`modifica`), `aggiornatoIl` cambierebbe
+
+        final Thread chiamante = Thread.currentThread();
+        final AtomicInteger costruzioni = new AtomicInteger();
+        final java.util.concurrent.atomic.AtomicReference<Thread> threadDelMotore = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicReference<Runnable> lavoroAccodato = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.Executor chiTrattiene = lavoro -> lavoroAccodato.set(lavoro);
+
+        PianificatoreCaricamenti.riprendiInPrimoPiano(() -> {
+            costruzioni.incrementAndGet();
+            threadDelMotore.set(Thread.currentThread());
+            return motore;
+        }, chiTrattiene);
+
+        assertNotNull("il lavoro è stato consegnato a chi lo esegue", lavoroAccodato.get());
+        assertEquals("il motore NON è stato costruito sul thread che chiama (la sua costruzione è il primo I/O)", 0, costruzioni.get());
+        assertEquals("niente è stato toccato sul thread che chiama: la notifica di pausa è ancora lì", 0, sistema.pauseTolte.get());
+        assertEquals("e nessuna scrittura della coda", aggiornatoPrima, coda.trova(id(1)).aggiornatoIl);
+
+        Thread esecutore = new Thread(lavoroAccodato.get(), "esecutore-di-prova");
+        esecutore.start();
+        esecutore.join(20_000);
+
+        assertEquals(1, costruzioni.get());
+        assertSame("il motore si costruisce sul thread dell'esecutore", esecutore, threadDelMotore.get());
+        assertTrue(threadDelMotore.get() != chiamante);
+        assertEquals("poi gira tutto come prima: la pausa si toglie", 1, sistema.pauseTolte.get());
+        assertEquals("la voce riprova adesso, e la scrittura c'è stata (ma sul thread dell'esecutore)", 0L, coda.trova(id(1)).prossimoTentativoIl);
+        assertTrue(coda.trova(id(1)).aggiornatoIl > aggiornatoPrima);
+        assertEquals("e il guscio si riprogramma «subito»", Arrays.asList(true), sistema.subito);
+    }
+
+    @Test
+    public void ilRitornoInPrimoPianoNonLanciaMaiNeSeIlMotoreNonSiCostruisceNeSeLEsecutoreRifiuta() {
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            // Il motore non si costruisce (un guasto di disco alla prima apertura): l'Activity non cade, e si dice con la sola classe.
+            PianificatoreCaricamenti.riprendiInPrimoPiano(() -> {
+                throw new IllegalStateException("coda illeggibile in /data/privato");
+            }, Runnable::run);
+            // L'esecutore rifiuta il lavoro (non succederà con quello di produzione, ma `onResume` non deve cadere comunque).
+            PianificatoreCaricamenti.riprendiInPrimoPiano(() -> motore, lavoro -> {
+                throw new java.util.concurrent.RejectedExecutionException("pieno");
+            });
+            assertEquals(Arrays.asList(
+                    "E KidvilleCaricamenti ripresa in primo piano non riuscita (IllegalStateException)",
+                    "E KidvilleCaricamenti ripresa in primo piano non accodata (RejectedExecutionException)"), new ArrayList<>(logcat.righe));
+        }
+    }
+
+    @Test
+    public void ilPuntoDIngressoPubblicoNonChiamaIlMotoreSulThreadChiamanteMaLoConsegnaAlloEsecutore() throws Exception {
+        // `riprendiInPrimoPiano(Context)` non si può eseguire sulla JVM (vuole un `Context`): si prova che il suo CODICE passi dall'esecutore.
+        String codice = SorgentiDiProva.codiceSenzaCommenti("PianificatoreCaricamenti");
+        String corpo = SorgentiDiProva.corpoDi(codice, "public static void riprendiInPrimoPiano(Context contesto)");
+        assertTrue("consegna il lavoro all'esecutore dedicato", corpo.contains("ESECUTORE_PRIMO_PIANO"));
+        assertTrue("e il motore lo dà `condiviso`, ma dentro il lavoro (un Supplier), non qui", corpo.contains("() -> condiviso(applicazione)"));
+        assertFalse("`suPrimoPiano()` non si chiama sul thread chiamante (n. 92)", corpo.contains("suPrimoPiano"));
+        assertFalse("né si costruisce il motore sul thread chiamante: `condiviso` è solo dentro il Supplier", corpo.replace("() -> condiviso(applicazione)", "").contains("condiviso("));
+    }
+
+    @Test
+    public void ilPuntoDIngressoPubblicoNonLanciaMaiNemmenoConUnContestoCheNonCe() {
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            PianificatoreCaricamenti.riprendiInPrimoPiano((android.content.Context) null);
+            assertEquals("`onResume` non cade: si dice, con la sola classe", Arrays.asList(
+                    "E KidvilleCaricamenti ripresa in primo piano non avviata (NullPointerException)"), new ArrayList<>(logcat.righe));
+        }
+    }
+
+    @Test
+    public void ilPuntoDIngressoPubblicoDelRitornoInPrimoPianoResta() throws Exception {
+        // Lo chiama `MainActivity.onResume` (A3): firma e visibilità non cambiano.
+        java.lang.reflect.Method m = PianificatoreCaricamenti.class.getMethod("riprendiInPrimoPiano", android.content.Context.class);
+        assertTrue(java.lang.reflect.Modifier.isStatic(m.getModifiers()) && java.lang.reflect.Modifier.isPublic(m.getModifiers()));
+        assertEquals(void.class, m.getReturnType());
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * LA SUPERFICIE CHE IL PONTE (A3) USA NON CAMBIA: il merge a 3 vie deve compilare
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void laSuperficiePubblicaChePluginEMainActivityUsanoNonCambia() throws Exception {
+        Class<PianificatoreCaricamenti> c = PianificatoreCaricamenti.class;
+        Object[][] attese = {
+                {"condiviso", new Class<?>[]{android.content.Context.class}, true},
+                {"riprendiInPrimoPiano", new Class<?>[]{android.content.Context.class}, true},
+                {"coda", new Class<?>[]{}, false},
+                {"registro", new Class<?>[]{}, false},
+                {"motore", new Class<?>[]{}, false},
+                {"aggiungiOsservatore", new Class<?>[]{PianificatoreCaricamenti.OsservatoreCaricamenti.class}, false},
+                {"rimuoviOsservatore", new Class<?>[]{PianificatoreCaricamenti.OsservatoreCaricamenti.class}, false},
+                {"accoda", new Class<?>[]{RichiestaAccodamento.class}, false},
+                {"elenco", new Class<?>[]{String.class}, false},
+                {"annulla", new Class<?>[]{String.class}, false},
+                {"dimentica", new Class<?>[]{java.util.Collection.class}, false},
+                {"eseguiSuGuscio", new Class<?>[]{EsecutoreCoda.Presentazione.class, long.class}, false},
+                {"fermaIlGuscio", new Class<?>[]{}, false},
+                {"testiDelleNotifiche", new Class<?>[]{}, false},
+        };
+        for (Object[] attesa : attese) {
+            java.lang.reflect.Method m = c.getMethod((String) attesa[0], (Class<?>[]) attesa[1]);
+            assertTrue(attesa[0] + " resta pubblico", java.lang.reflect.Modifier.isPublic(m.getModifiers()));
+            assertEquals(attesa[0] + (((Boolean) attesa[2]) ? " resta statico" : " resta di istanza"), (Boolean) attesa[2], java.lang.reflect.Modifier.isStatic(m.getModifiers()));
+        }
+        // I rifiuti di `accodaVideo` e il risultato che il ponte traduce.
+        assertEquals(5, PianificatoreCaricamenti.CodiceRifiuto.values().length);
+        assertTrue(java.lang.reflect.Modifier.isPublic(PianificatoreCaricamenti.RisultatoAccodamento.class.getField("voce").getModifiers()));
+        assertTrue(java.lang.reflect.Modifier.isPublic(PianificatoreCaricamenti.RisultatoAccodamento.class.getField("giaPresente").getModifiers()));
+        assertEquals("il costruttore della richiesta ha ancora i diciassette campi", 17, RichiestaAccodamento.class.getConstructors()[0].getParameterCount());
+        assertEquals(CodaCaricamenti.Origine.class, RichiestaAccodamento.class.getField("origine").getType());
     }
 }

@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongConsumer;
 
 /**
@@ -48,7 +49,8 @@ import java.util.function.LongConsumer;
  * competono sono due trasferimenti che cadono insieme.
  *
  * ─── COME È FATTO ────────────────────────────────────────────────────────────────────────────
- *  · PURO: niente `android.*`, niente `Context`, niente orologio né rete direttamente. Tutto ciò che tocca il mondo è una
+ *  · PURO: niente `android.*`, niente `Context`, niente orologio né rete direttamente (l'unica traccia di Android è una riga di logcat
+ *    per un `catch` ignorabile, scritta da `DiagnosticaLocale`, che non lancia mai: secondario n. 84). Tutto ciò che tocca il mondo è una
  *    INTERFACCIA iniettata ({@link TrasportoPut}, {@link TrasportoRinnovo}, {@link Rete}, {@link Ambiente}, {@link Presentazione}):
  *    in produzione le implementano `CaricatorePut`, `RinnovoFirma` e `PianificatoreCaricamenti`; nei test dei finti con un orologio
  *    che si sposta a comando. Per questo ogni scenario di §11.1 che si può giudicare senza un telefono è provato in JUnit.
@@ -154,6 +156,9 @@ public final class EsecutoreCoda {
                 g.run();
             } catch (RuntimeException chiusuraNonRiuscita) {
                 // Il gancio chiude una connessione: se non ci riesce la bandiera resta alzata e la PUT si ferma al blocco dopo, o scade.
+                // Ignorabile, ma non muto: una riga `info` con la sola classe dell'eccezione (secondario n. 84, AGENTS.md regola 6).
+                DiagnosticaLocale.info("gancio dell'interruzione non riuscito (" + DiagnosticaLocale.classe(chiusuraNonRiuscita)
+                        + "): ignorabile, la bandiera resta alzata e la PUT si ferma al blocco dopo");
             }
         }
     }
@@ -363,7 +368,14 @@ public final class EsecutoreCoda {
     private boolean attesaReteLoggata;
     private long inviatiNelGiro;
     private long ultimaNotificaMs;
-    private boolean residuiVisti;
+
+    /**
+     * Una voce è finita con copia o segreti che non si sono potuti cancellare (o che per scelta non si sono cancellati): a fine giro una
+     * pulizia ripassa. NON è dello stato del giro: lo alza anche `chiudiLaVoce` quando la chiama `annulla()` sul thread del ponte, fuori o
+     * dentro un ciclo, e lo consuma il thread che esegue a fine giro. Per questo è atomico (secondario n. 89) e NON si azzera
+     * all'inizio di un giro: una richiesta arrivata dal ponte mentre nessun ciclo girava si perderebbe.
+     */
+    private final AtomicBoolean residuiVisti = new AtomicBoolean(false);
 
     public EsecutoreCoda(CodaCaricamenti coda, RegistroNativo registro, SegretiCaricamenti segreti, TrasportoPut put,
                          TrasportoRinnovo rinnovo, Rete rete, Ambiente ambiente) {
@@ -397,7 +409,6 @@ public final class EsecutoreCoda {
         attesaReteLoggata = false;
         inviatiNelGiro = 0L;
         ultimaNotificaMs = 0L;
-        residuiVisti = false;
         Presentazione p = presentazione != null ? presentazione : PRESENTAZIONE_NULLA;
         boolean chiusoDaIlCiclo = false;
         try {
@@ -426,10 +437,7 @@ public final class EsecutoreCoda {
             inAttesaDiRete = false;
             presentazione.inAttesaDiRete(false);
         }
-        if (residuiVisti) {
-            residuiVisti = false;
-            pulisciResidui();
-        }
+        if (residuiVisti.getAndSet(false)) pulisciResidui();
     }
 
     /**
@@ -641,9 +649,17 @@ public final class EsecutoreCoda {
         return null;
     }
 
-    /** Porta una voce viva in `in-attesa` `RETE` passando per gli stati che la tabella di §4.4 vuole; non conta un tentativo. */
+    /**
+     * Porta una voce viva in `in-attesa` `RETE` passando per gli stati che la tabella di §4.4 vuole; non conta un tentativo.
+     *
+     * UNA VOCE GIÀ `in-attesa` NON SI TOCCA (secondario n. 90). Se aspetta per la RETE è già com'è giusto che sia. Se aspetta per un 5xx del
+     * SERVER (o per un guasto interno) il suo ritardo è quello di §4.5 e la rete che manca non lo cancella: cambiarle il codice in `RETE`
+     * faceva sì che `tornataLaRete` le azzerasse il ritardo, e al ritorno della rete la voce riprovava prima delle sue attese, martellando
+     * proprio il server che aveva appena detto «non adesso».
+     */
     private void mettiInAttesaDiRete(VoceCoda voce) {
         String job = voce.jobId;
+        if (voce.stato == Stato.IN_ATTESA) return;
         if (voce.stato == Stato.IN_CODA) {
             if (coda.transita(job, EventoStato.AVVIATO, null).tipo != TipoTransizione.APPLICATA) return;
         } else if (voce.stato == Stato.IN_PAUSA) {
@@ -700,8 +716,16 @@ public final class EsecutoreCoda {
         VoceCoda voce = avviaORiprendi(iniziale);
         if (voce == null) return;
 
-        // 4. I segreti. Senza, la voce non può più né rinnovare né spedire: è perduta, e il server la chiuderà a 48 ore.
+        // 4. I segreti. Senza, la voce non può più né rinnovare né spedire: è perduta, e il server la chiuderà a 48 ore. Ma «non si leggono
+        //    ADESSO» non è «perduti» (secondario n. 79): un Keystore occupato o un errore di lettura del disco passano, e chiudere la voce
+        //    `fallito` cancellando copia e segreti per un guasto di un istante costerebbe un video da rimandare a mano. Solo l'illeggibilità
+        //    DEFINITIVA (file sparito, toccato, chiave invalidata: criteri in `SegretiCaricamenti`) chiude la voce.
         Lettura lettura = segreti.leggi(job);
+        if (lettura.esito == Esito.NON_LEGGIBILE_ORA) {
+            DiagnosticaLocale.info("segreti non leggibili adesso: la voce aspetta e riprova, copia e segreti restano");
+            attendi(voce, Codice.INTERNO, 0L, 0, voce.rinnoviConsecutivi, 0L);
+            return;
+        }
         if (lettura.esito != Esito.OK) {
             fallisci(voce, Codice.INTERNO, Operazione.PUT);
             return;
@@ -892,14 +916,26 @@ public final class EsecutoreCoda {
             RispostaRinnovo letta = PoliticaCaricamento.leggiRispostaRinnovo(risposta.stato, risposta.corpo, risposta.retryAfterSecondi,
                     ambiente.debug());
             Segreti piuRecenti = null;
+            boolean segretiNonLeggibiliOra = false;
             if (letta.tipo == TipoRinnovo.NON_TROVATO) {
                 // Un 404 può essere una rotazione appena arrivata (`accodaVideo` ripetuto): il token di prima è sconosciuto, ma sul
                 // disco ce n'è già uno nuovo. Si riprova con quello, e solo se è DIVERSO da quello appena rifiutato.
                 Lettura rilettura = segreti.leggi(job);
-                if (rilettura.esito == Esito.OK && !rilettura.segreti.token.equals(usati.token)) piuRecenti = rilettura.segreti;
+                if (rilettura.esito == Esito.OK && !rilettura.segreti.token.equals(usati.token)) {
+                    piuRecenti = rilettura.segreti;
+                } else {
+                    segretiNonLeggibiliOra = rilettura.esito == Esito.NON_LEGGIBILE_ORA;
+                }
             }
             VoceCoda corrente = fresca(job);
             if (corrente == null || corrente.stato.terminale()) return null;
+            if (segretiNonLeggibiliOra) {
+                // Un 404 e il token più recente che non si legge ADESSO (guasto passeggero, secondario n. 79): non si può dire «negato»
+                // — potrebbe essere proprio la rotazione — e chiudere la voce `TOKEN_NON_VALIDO` sarebbe un verdetto sul nulla. Si aspetta.
+                DiagnosticaLocale.info("segreti non leggibili adesso dopo un rinnovo respinto: la voce aspetta e riprova");
+                attendi(corrente, Codice.INTERNO, 0L, risposta.stato, corrente.rinnoviConsecutivi, 0L);
+                return null;
+            }
             DecisioneRinnovo decisione = PoliticaCaricamento.decidiRinnovo(letta, corrente.rinnoviConsecutivi, daRifiuto, piuRecenti != null);
             int rinnoviDopo = corrente.rinnovi + (decisione.contaRinnovo ? 1 : 0);
             int tentativiDopo = corrente.tentativi + 1;
@@ -952,13 +988,23 @@ public final class EsecutoreCoda {
         final String job = corrente.jobId;
         final Segreti conUrlNuovo = usati.conUrlPut(letta.urlPut, letta.contentType);
         boolean persistiti = true;
-        try {
-            // `aggiorna` e non `salva`: se nel frattempo `accodaVideo` ha ruotato il token, quello nuovo non si deve perdere.
-            Lettura scritti = segreti.aggiorna(job, s -> s.conUrlPut(letta.urlPut, letta.contentType));
-            persistiti = scritti.esito == Esito.OK;
-        } catch (IOException nonScritti) {
-            persistiti = false;
-            ambiente.guasto("rinnovo-segreti-non-salvati", nonScritti);
+        // SOTTO IL MONITOR DELLA CODA, lo stesso di `transita` (secondario n. 82). `aggiorna` legge, modifica e RISCRIVE il file dei segreti:
+        // se `annulla()` del ponte chiudesse la voce fra la lettura e la scrittura (la transizione terminale cancella `segreti/<jobId>.bin`),
+        // la scrittura lo farebbe RISORGERE per una voce già terminale — token e URL cifrati, fino alla prossima pulizia. Col monitor `annulla`
+        // aspetta che `aggiorna` finisca (poi cancella lui), o arriva prima e qui si trova la voce già chiusa e non si scrive niente.
+        // L'ordine dei blocchi è sempre coda → segreti (come in `PianificatoreCaricamenti.accoda`): nessuno prende il monitor dei segreti e
+        // poi quello della coda.
+        synchronized (coda) {
+            VoceCoda adesso = coda.trova(job);
+            if (adesso == null || adesso.stato.terminale()) return null;
+            try {
+                // `aggiorna` e non `salva`: se nel frattempo `accodaVideo` ha ruotato il token, quello nuovo non si deve perdere.
+                Lettura scritti = segreti.aggiorna(job, s -> s.conUrlPut(letta.urlPut, letta.contentType));
+                persistiti = scritti.esito == Esito.OK;
+            } catch (IOException nonScritti) {
+                persistiti = false;
+                ambiente.guasto("rinnovo-segreti-non-salvati", nonScritti);
+            }
         }
         final long scadenza = PoliticaCaricamento.scadenzaUrlDopoRinnovoMs(ricezione);
         final boolean conScadenza = persistiti;
@@ -1029,7 +1075,7 @@ public final class EsecutoreCoda {
     /** Ciò che si fa a ogni stato terminale: l'avanzamento in memoria si dimentica, l'osservatore lo sa, il registro si svuota. */
     private void chiudiLaVoce(EsitoTransizione e) {
         VoceCoda voce = e.voce;
-        if (e.residuiRimasti) residuiVisti = true;
+        if (e.residuiRimasti) residuiVisti.set(true);
         avanzamento.remove(voce.jobId);
         notificaVoce(voce);
         try {

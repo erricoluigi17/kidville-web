@@ -59,8 +59,8 @@ import java.util.regex.Pattern;
  *  · NESSUN SEGRETO nel JSON: né il token di rinnovo né l'URL firmato (stanno cifrati in `segreti/`),
  *    né un percorso assoluto (`file` è RELATIVO, e deve avere la forma `file/<jobId>.<ext>`: una voce
  *    non può puntare fuori dalla sua cartella). Un test lo verifica sul file scritto.
- *  · NIENTE `android.*` tranne `AtomicFile` di AndroidX (Java puro): la classe gira in JUnit sulla JVM.
- *    Clock e cartella arrivano dal chiamante.
+ *  · NIENTE `android.*` tranne `AtomicFile` di AndroidX (Java puro) e le righe di logcat di `DiagnosticaLocale` (che non lancia mai): la
+ *    classe gira in JUnit sulla JVM. Clock e cartella arrivano dal chiamante.
  *  · I FALLIMENTI SONO VALORI, non eccezioni mute: `aggiungi` lancia `IOException` (un video che non si
  *    riesce a scrivere in coda non va dichiarato accodato), le altre scritture restituiscono se sono
  *    arrivate su disco. Uno stato non scritto non perde dati: alla riapertura la voce riparte dallo
@@ -73,8 +73,10 @@ import java.util.regex.Pattern;
  *    (secondario n. 43 della PR 3): al contrario, una scrittura fallita o un processo ucciso in mezzo lasciavano sul disco una
  *    voce viva senza copia né segreti, che alla riapertura cadeva in `FILE_ASSENTE` anche se il video era già arrivato. Se la
  *    scrittura NON riesce la copia e i segreti restano (`residuiRimasti`): sul disco la voce è ancora viva e li nomina, e alla
- *    riapertura riprende (la PUT ripetuta dà il duplicato che il rinnovo risolve). Se invece è una cancellazione a fallire,
- *    la pulizia riprova, perché il file non è più nominato da nessuna voce.
+ *    riapertura riprende (la PUT ripetuta dà il duplicato che il rinnovo risolve). E restano anche alla PULIZIA di fine giro
+ *    (secondario n. 81): finché lo stato terminale non è arrivato sul disco la voce sta in `terminaliNonSalvate` e `pulisci` la tratta
+ *    come viva (riprova a scriverlo, e solo quando riesce copia e segreti diventano orfani come tutti gli altri). Se invece è una
+ *    cancellazione a fallire, la pulizia riprova, perché il file non è più nominato da nessuna voce.
  *  · UNA SOLA ISTANZA PER PROCESSO (secondario n. 49). Due `CodaCaricamenti` sulla stessa cartella si sovrascrivono `coda.json` a
  *    vicenda, e gli aggiornamenti dell'una spariscono sotto quelli dell'altra: lo stato dell'esecutore non coinciderebbe più con
  *    ciò che il ponte legge. L'istanza è quella del motore (`PianificatoreCaricamenti.condiviso`), e la strada di produzione per
@@ -365,6 +367,15 @@ public final class CodaCaricamenti {
     private Testi testi = Testi.predefiniti();
     private final Rapporto rapporto;
 
+    /**
+     * Le voci TERMINALI in memoria il cui stato terminale NON è arrivato sul disco (la scrittura è fallita). Sul disco sono ancora VIVE e
+     * nominano ancora la loro copia e i loro segreti; in memoria invece non li nominano più (`file` è `null`, lo stato è terminale). Se la
+     * pulizia si fidasse della sola memoria li cancellerebbe come orfani, e alla riapertura la voce — viva sul disco — cadrebbe in
+     * `FILE_ASSENTE` anche quando il video era già arrivato (secondario n. 81: la protezione di n. 43 durava solo fino a fine giro).
+     * Finché una voce sta qui, `pulisci` la tratta come viva. La chiave è il `jobId`; il valore, il percorso relativo della copia (o `null`).
+     */
+    private final Map<String, String> terminaliNonSalvate = new HashMap<>();
+
     /** Le istanze di produzione, una per cartella canonica: vedi {@link #perCartella}. */
     private static final Map<String, CodaCaricamenti> ISTANZE_PER_CARTELLA = new HashMap<>();
 
@@ -545,6 +556,8 @@ public final class CodaCaricamenti {
             }
             throw new IOException("coda non scritta");
         }
+        // La voce nuova è viva e sul disco: ciò che una terminale non salvata sullo stesso job proteggeva non ha più ragione di restare protetto.
+        terminaliNonSalvate.remove(voce.jobId);
         return new RisultatoAggiunta(voce.copia(), false);
     }
 
@@ -633,8 +646,14 @@ public final class CodaCaricamenti {
         boolean residui = false;
         if (nuovo.terminale()) {
             // Prima il disco, poi la cancellazione. Se il disco non ha preso lo stato terminale la copia e i segreti restano: sono
-            // ancora nominati dalla voce viva che la coda ha scritto l'ultima volta.
-            residui = !scritta || !cancellaCopiaESegreti(voce.jobId, fileDaCancellare);
+            // ancora nominati dalla voce viva che la coda ha scritto l'ultima volta, e la pulizia non deve toccarli (n. 81).
+            if (scritta) {
+                terminaliNonSalvate.remove(voce.jobId);
+                residui = !cancellaCopiaESegreti(voce.jobId, fileDaCancellare);
+            } else {
+                terminaliNonSalvate.put(voce.jobId, fileDaCancellare);
+                residui = true;
+            }
         }
         return new EsitoTransizione(TipoTransizione.APPLICATA, voce.copia(), scritta, residui);
     }
@@ -704,8 +723,10 @@ public final class CodaCaricamenti {
             return 0;
         }
         for (VoceCoda voce : daTogliere) {
-            // Di norma non c'è più niente da cancellare: ripeterlo è gratis e chiude i residui di una cancellazione fallita.
-            cancellaCopiaESegreti(voce.jobId, voce.file);
+            // Di norma non c'è più niente da cancellare: ripeterlo è gratis e chiude i residui di una cancellazione fallita. Se lo stato
+            // terminale non era mai arrivato sul disco, la voce ora è sparita anche da lì: la copia che proteggeva non è più di nessuno.
+            String protetta = terminaliNonSalvate.remove(voce.jobId);
+            cancellaCopiaESegreti(voce.jobId, voce.file != null ? voce.file : protetta);
         }
         return daTogliere.size();
     }
@@ -736,9 +757,16 @@ public final class CodaCaricamenti {
         int corrotte = 0;
         boolean cambiata = false;
 
+        // Gli stati terminali che non erano arrivati sul disco (secondario n. 81): si riprova a scriverli. Se questa volta la scrittura
+        // riesce, il disco ha finalmente lo stato terminale: copia e segreti non sono più nominati da niente, e i giri che seguono (qui sotto)
+        // li tolgono come orfani, contati come tali. Se non riesce restano PROTETTI: sul disco la voce è ancora viva, e cancellare ciò che
+        // nomina la lascerebbe senza niente da spedire.
+        if (!terminaliNonSalvate.isEmpty() && salva()) terminaliNonSalvate.clear();
+
         for (Iterator<VoceCoda> it = voci.iterator(); it.hasNext(); ) {
             VoceCoda voce = it.next();
-            if (voce.stato.terminale() && adesso - voce.aggiornatoIl > RITENZIONE_TERMINALI_MS) {
+            if (voce.stato.terminale() && !terminaliNonSalvate.containsKey(voce.jobId)
+                    && adesso - voce.aggiornatoIl > RITENZIONE_TERMINALI_MS) {
                 it.remove();
                 terminali++;
                 cambiata = true;
@@ -760,6 +788,11 @@ public final class CodaCaricamenti {
         for (VoceCoda voce : voci) {
             if (voce.file != null) nominati.add(voce.file);
             if (!voce.stato.terminale()) vivi.add(voce.jobId);
+        }
+        // Una terminale non salvata è, per il disco, ancora una voce viva: nomina la sua copia e ha diritto ai suoi segreti.
+        for (Map.Entry<String, String> protetta : terminaliNonSalvate.entrySet()) {
+            if (protetta.getValue() != null) nominati.add(protetta.getValue());
+            vivi.add(protetta.getKey());
         }
         for (File f : elencaFile(new File(cartella, SOTTOCARTELLA_FILE))) {
             if (!nominati.contains(SOTTOCARTELLA_FILE + "/" + f.getName()) && f.delete()) orfani++;
@@ -949,11 +982,18 @@ public final class CodaCaricamenti {
         } catch (JSONException nonSerializzabile) {
             // `JSONException` in un `catch` a sé: sull'Android vero è un'eccezione controllata, in `org.json` di Maven (JUnit)
             // una `RuntimeException`, e un multi-catch che le mescola compila solo in uno dei due mondi.
+            DiagnosticaLocale.avviso("coda non serializzabile (" + DiagnosticaLocale.classe(nonSerializzabile) + "): non scritta");
             return false;
         } catch (RuntimeException nonSerializzabile) {
+            DiagnosticaLocale.avviso("coda non serializzabile (" + DiagnosticaLocale.classe(nonSerializzabile) + "): non scritta");
             return false;
         }
-        return ScritturaAtomica.scrivi(atomico, dati) == null;
+        IOException nonScritta = ScritturaAtomica.scrivi(atomico, dati);
+        if (nonScritta == null) return true;
+        // Il fallimento è il valore restituito (`persistita`, l'`IOException` di `aggiungi`), ma chi guarda logcat deve poterlo vedere: la
+        // sola classe dell'errore, mai il suo messaggio (può portare un percorso).
+        DiagnosticaLocale.avviso("coda non scritta (" + DiagnosticaLocale.classe(nonScritta) + "): lo stato resta in memoria");
+        return false;
     }
 
     private static JSONObject aJsonTesti(Testi t) throws JSONException {

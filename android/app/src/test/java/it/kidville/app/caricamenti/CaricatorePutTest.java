@@ -453,4 +453,31 @@ public class CaricatorePutTest {
         assertSame(EsitoPut.Tipo.PESO_DIVERSO, EsitoPut.pesoDiverso().tipo);
         assertEquals(0, EsitoPut.nessunaRisposta(1L, 2L, null).stato);
     }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * COMPITO A2b (secondario n. 84 della PR 3)
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void unaChiusuraDiUnFlussoCheFallisceNonCambiaLEsitoMaSiDiceInLogcatSenzaDati() {
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            CaricatorePut.chiudi(() -> {
+                throw new IOException("/data/user/0/it.kidville.app/privato/video.mp4: Input/output error");
+            });
+            CaricatorePut.chiudi(null);                            // niente da chiudere: nessuna riga
+            assertEquals("una riga `info`, col tag del pacchetto, la sola classe e perché non conta",
+                    Arrays.asList("I KidvilleCaricamenti chiusura di un flusso della PUT non riuscita (IOException): ignorabile, l'esito della PUT è già noto"),
+                    new ArrayList<>(logcat.righe));
+            for (String riga : logcat.righe) assertFalse("niente percorso né messaggio d'eccezione: " + riga, riga.contains("/data/") || riga.contains("video.mp4"));
+        }
+    }
+
+    @Test
+    public void unaChiusuraCheRiesceNonDiceNiente() {
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            CaricatorePut.chiudi(() -> {
+            });
+            assertTrue(logcat.righe.isEmpty());
+        }
+    }
 }

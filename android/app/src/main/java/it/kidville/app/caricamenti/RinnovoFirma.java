@@ -25,8 +25,12 @@ import java.nio.charset.StandardCharsets;
  * ─── COME È FATTA ────────────────────────────────────────────────────────────────────────────
  *  · `HttpURLConnection`, corpo VUOTO (`Content-Length: 0`), tempo massimo di 30 s per leggere la risposta (§5.4) e 15 s per
  *    connettersi. Nessun reindirizzamento.
- *  · NESSUN COOKIE, NESSUNA CREDENZIALE: è una chiamata nativa che non porta niente della sessione della WebView, e non aggiunge
- *    `authorization`, `apikey` o un `x-user-id` (il rinnovo non ne ha bisogno: la porta è anonima per costruzione).
+ *  · AUTENTICA COL TOKEN, NON COI COOKIE: la richiesta non aggiunge `authorization`, `apikey` o un `x-user-id` (il rinnovo non ne ha
+ *    bisogno: la porta è anonima per costruzione) e il codice non legge né scrive cookie. Ma NON è vero che non ne porti: Capacitor
+ *    carica sempre il suo plugin dei cookie, che nel `load()` installa un gestore globale (`CookieHandler.setDefault`, anche con i
+ *    suoi due interruttori spenti), e l'`HttpURLConnection` di sistema lo consulta: una richiesta nativa verso il dominio dell'app
+ *    PUÒ portare i cookie della WebView. Il rinnovo non li usa e non ne dipende (la route non li legge: conta solo il token).
+ *    Correzione del secondario n. 78; la frase «le chiamate native non usano i cookie» di §6.5 la corregge J4.
  *  · NON LANCIA MAI. Come {@link CaricatorePut}, un guasto è un valore: `stato = 0` («nessuna risposta») con la CLASSE dell'eccezione, e
  *    sta alla politica (`PoliticaCaricamento.leggiRispostaRinnovo`) decidere che cosa significhi ogni stato.
  *  · Il corpo della risposta si legge fino a {@link #CORPO_MASSIMO_BYTE} (32 KB): quello vero pesa meno di 1 KB (un URL firmato), e un
@@ -121,12 +125,16 @@ public final class RinnovoFirma implements EsecutoreCoda.TrasportoRinnovo {
         return raccolti.toByteArray();
     }
 
-    /** Chiude un flusso a esito GIÀ NOTO: se la chiusura fallisce la risposta non cambia, e la connessione si chiude comunque. */
-    private static void chiudi(Closeable flusso) {
+    /**
+     * Chiude un flusso a esito GIÀ NOTO: se la chiusura fallisce la risposta non cambia, e la connessione si chiude comunque. Non si
+     * tace: una riga `info` in logcat con la sola CLASSE dell'eccezione (secondario n. 84, AGENTS.md regola 6).
+     */
+    static void chiudi(Closeable flusso) {
         try {
             flusso.close();
         } catch (IOException chiusuraNonRiuscita) {
-            // Vedi sopra.
+            DiagnosticaLocale.info("chiusura di un flusso del rinnovo non riuscita (" + DiagnosticaLocale.classe(chiusuraNonRiuscita)
+                    + "): ignorabile, la risposta è già stata letta");
         }
     }
 }

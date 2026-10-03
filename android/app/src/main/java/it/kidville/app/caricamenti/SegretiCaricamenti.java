@@ -1,8 +1,11 @@
 package it.kidville.app.caricamenti;
 
+import android.os.Build;
 import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.security.keystore.KeyProperties;
 
+import androidx.annotation.RequiresApi;
 import androidx.core.util.AtomicFile;
 
 import org.json.JSONException;
@@ -15,11 +18,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.Key;
 import java.security.KeyStore;
+import java.security.ProviderException;
 import java.security.UnrecoverableKeyException;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 
+import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
@@ -61,8 +67,24 @@ import javax.crypto.spec.GCMParameterSpec;
  *  · TUTTI I METODI SONO `synchronized`: il motore (un thread) rinnova e il ponte (un altro) può sostituire il token di una voce,
  *    e senza questo un `leggi` + `salva` dell'uno cancellerebbe il token nuovo dell'altro. Per questo c'è {@link #aggiorna}, che
  *    legge, modifica e scrive sotto lo stesso blocco: chi cambia SOLO l'URL non deve poter riportare indietro il token.
- *  · NESSUN LOG qui, e niente nelle eccezioni: un segreto che non si decifra è il VALORE `ILLEGGIBILE`, e il chiamante lo porta nel
- *    registro come `video-nativo-fallito INTERNO`. Mai il contenuto, mai un percorso, mai il messaggio di un'eccezione.
+ *  · NESSUN LOG DI DATI qui, e niente nelle eccezioni: un segreto che non si legge è un VALORE (`ILLEGGIBILE`, `NON_LEGGIBILE_ORA`) e il
+ *    chiamante decide che cosa farne. In logcat va al più una riga — `info` per un guasto che passa, `warn` per uno definitivo — con la
+ *    sola CLASSE dell'eccezione. Mai il contenuto, mai un percorso, mai il messaggio di un'eccezione.
+ *
+ * ─── I TRE MODI DI NON LEGGERE UN SEGRETO (secondario n. 79) ─────────────────────────────────
+ * Chiudere la voce `fallito` per un guasto che passa costa un video da rimandare a mano, con copia e segreti già cancellati: per questo la
+ * lettura distingue, con criteri ESPLICITI, ciò che è finito da ciò che è solo fermo:
+ *  · `ASSENTE` — il file non c'è (e `file.exists()` lo conferma: `FileInputStream` lancia «file non trovato» per OGNI apertura fallita,
+ *    anche con il file presente, per troppi file aperti o un permesso). Definitivo: i segreti di quel job non esistono più.
+ *  · `ILLEGGIBILE` — il file c'è e non si leggerà MAI: versione o forma sbagliata, contenuto toccato (il tag GCM non torna), file di un
+ *    altro job (dati associati diversi), chiave invalidata o non più recuperabile, qualunque guasto che il cifrario non riconosce come
+ *    passeggero. Definitivo: la voce non può più né rinnovare né spedire.
+ *  · `NON_LEGGIBILE_ORA` — non si legge ADESSO ma il file e la chiave ci sono e riprovare fra poco può riuscire: un errore di lettura del
+ *    disco (`IOException` che non sia «file mancante»), un Keystore occupato o che si sta riavviando. Lo dice il {@link Cifrario}
+ *    ({@link Cifrario#guastoTransitorio}): per il Keystore, `android.security.KeyStoreException#isTransientFailure` da API 33 e
+ *    `ProviderException` su tutti i livelli (è ciò che il provider lancia per un'operazione che non è riuscita, non per una chiave
+ *    cattiva), sempre che nella catena delle cause non ci sia un guasto definitivo, che vince. La voce aspetta (`in-attesa` `INTERNO`,
+ *    con le attese di §4.5) e conserva copia e segreti; il tetto di tutto è la vita del token, 48 ore, oltre cui `TOKEN_SCADUTO` la chiude.
  *
  * ─── COSA NON PROTEGGE ───────────────────────────────────────────────────────────────────────
  * La chiave non richiede lo sblocco dello schermo (`setUnlockedDeviceRequired` non c'è, di proposito): l'invio deve poter
@@ -87,6 +109,16 @@ public final class SegretiCaricamenti {
 
         /** L'inverso: lancia se il blocco è stato toccato, o se i dati associati non sono quelli con cui è stato cifrato. */
         byte[] decifra(byte[] cifrato, byte[] datiAssociati) throws GeneralSecurityException, IOException;
+
+        /**
+         * Il guasto lanciato da `cifra` o `decifra` è PASSEGGERO? Vero se riprovare fra poco può riuscire (un archivio delle chiavi occupato
+         * o che si sta riavviando); falso se il file non si leggerà mai più (toccato, chiave invalidata). Lo può dire solo il cifrario, che
+         * conosce il suo sistema. Il predefinito riconosce l'unico caso che vale per ogni cifrario: un errore di I/O. `leggi` lo usa per
+         * distinguere `NON_LEGGIBILE_ORA` da `ILLEGGIBILE` (secondario n. 79).
+         */
+        default boolean guastoTransitorio(Throwable guasto) {
+            return guasto instanceof IOException;
+        }
     }
 
     /** Ciò che si custodisce per un job. Immutabile; nessun campo è nullo né vuoto. */
@@ -135,10 +167,16 @@ public final class SegretiCaricamenti {
         /** Nessun file: la voce non ha (più) segreti. */
         ASSENTE,
         /**
-         * Il file c'è ma non si legge: toccato, di un'altra versione, di un altro job, cifrato con una chiave che il Keystore non ha più,
-         * o con una forma sbagliata. Vale come «segreti persi»: la voce non può più né rinnovare né spedire.
+         * Il file c'è ma non si leggerà MAI: toccato, di un'altra versione, di un altro job, cifrato con una chiave che il Keystore non ha
+         * più o ha invalidato, o con una forma sbagliata. Vale come «segreti persi»: la voce non può più né rinnovare né spedire.
          */
-        ILLEGGIBILE
+        ILLEGGIBILE,
+        /**
+         * Il file c'è e la chiave pure, ma ADESSO non si legge: un errore di lettura del disco, un Keystore occupato o che si sta
+         * riavviando (criteri nella testata della classe). NON vale «segreti persi»: la voce aspetta e riprova, con copia e segreti intatti
+         * (secondario n. 79).
+         */
+        NON_LEGGIBILE_ORA
     }
 
     /** L'esito di una lettura e, solo per `OK`, ciò che c'era scritto. */
@@ -154,6 +192,7 @@ public final class SegretiCaricamenti {
 
     private static final Lettura LETTURA_ASSENTE = new Lettura(Esito.ASSENTE, null);
     private static final Lettura LETTURA_ILLEGGIBILE = new Lettura(Esito.ILLEGGIBILE, null);
+    private static final Lettura LETTURA_NON_LEGGIBILE_ORA = new Lettura(Esito.NON_LEGGIBILE_ORA, null);
 
     private final CodaCaricamenti coda;
     private final Cifrario cifrario;
@@ -207,16 +246,23 @@ public final class SegretiCaricamenti {
         if (errore != null) throw errore;
     }
 
-    /** Legge i segreti di un job. Non lancia mai: il guasto è un valore (`ILLEGGIBILE`). */
+    /**
+     * Legge i segreti di un job. Non lancia mai: il guasto è un valore, e sono TRE (testata della classe, secondario n. 79): `ASSENTE` (il
+     * file non c'è), `ILLEGGIBILE` (c'è e non si leggerà mai) e `NON_LEGGIBILE_ORA` (c'è, ma adesso non si legge: riprovare può riuscire).
+     */
     public synchronized Lettura leggi(String jobId) {
         File file = coda.fileSegreto(jobId);
         byte[] contenuto;
         try {
             contenuto = aperturaFile.apply(file).readFully();
-        } catch (FileNotFoundException assente) {
-            return LETTURA_ASSENTE;
-        } catch (IOException | RuntimeException nonLeggibile) {
-            return LETTURA_ILLEGGIBILE;
+        } catch (FileNotFoundException nonAperto) {
+            // `FileInputStream` lancia questa eccezione per OGNI apertura fallita: «sparito» vale solo se il file davvero non c'è.
+            if (!file.exists()) return LETTURA_ASSENTE;
+            return nonLeggibileOra("file dei segreti presente ma non apribile", nonAperto);
+        } catch (IOException guastoDiLettura) {
+            return nonLeggibileOra("file dei segreti non letto", guastoDiLettura);
+        } catch (RuntimeException guastoImprevisto) {
+            return illeggibile("file dei segreti non leggibile", guastoImprevisto);
         }
         if (contenuto.length < 2 || contenuto[0] != (byte) VERSIONE_FILE) return LETTURA_ILLEGGIBILE;
         byte[] cifrato = new byte[contenuto.length - 1];
@@ -226,9 +272,23 @@ public final class SegretiCaricamenti {
             Segreti segreti = daJson(new JSONObject(new String(chiaro, StandardCharsets.UTF_8)));
             return segreti == null ? LETTURA_ILLEGGIBILE : new Lettura(Esito.OK, segreti);
         } catch (GeneralSecurityException | IOException | JSONException | RuntimeException nonDecifrabile) {
-            // Il motivo non si dice: un messaggio d'eccezione può portare un pezzo di contenuto, e il chiamante non sa che farsene.
-            return LETTURA_ILLEGGIBILE;
+            // Passeggero o definitivo lo dice il cifrario (testata della classe). Il motivo, in logcat, è la sola CLASSE: un messaggio
+            // d'eccezione può portare un pezzo di contenuto, e il chiamante non sa che farsene.
+            if (cifrario.guastoTransitorio(nonDecifrabile)) return nonLeggibileOra("segreti non decifrati adesso", nonDecifrabile);
+            return illeggibile("segreti non decifrabili", nonDecifrabile);
         }
+    }
+
+    /** Un guasto che passa: si dice (`info`, con la sola classe) e la lettura vale «non adesso». */
+    private static Lettura nonLeggibileOra(String frase, Throwable guasto) {
+        DiagnosticaLocale.info(frase + " (" + DiagnosticaLocale.classe(guasto) + "): passeggero, la voce riprova");
+        return LETTURA_NON_LEGGIBILE_ORA;
+    }
+
+    /** Un guasto che non passa: si dice (`avviso`, con la sola classe) e la lettura vale «mai più». */
+    private static Lettura illeggibile(String frase, Throwable guasto) {
+        DiagnosticaLocale.avviso(frase + " (" + DiagnosticaLocale.classe(guasto) + "): definitivo");
+        return LETTURA_ILLEGGIBILE;
     }
 
     /**
@@ -324,6 +384,55 @@ public final class SegretiCaricamenti {
 
         CifrarioKeystore(String alias) {
             this.alias = alias;
+        }
+
+        /** Fin dove si risale la catena delle cause: abbastanza per ogni incapsulamento reale, e un tetto contro i cicli. */
+        static final int PROFONDITA_MASSIMA_DELLE_CAUSE = 8;
+
+        /**
+         * Il guasto è passeggero? I CRITERI (secondario n. 79), nell'ordine:
+         *  1. un guasto DEFINITIVO in un punto qualunque della catena delle cause vince su tutto: chiave invalidata
+         *     (`KeyPermanentlyInvalidatedException`), non più recuperabile (`UnrecoverableKeyException`), contenuto toccato o cifrato con
+         *     un'altra chiave (`BadPaddingException`, di cui `AEADBadTagException` è figlia) o di misura sbagliata (`IllegalBlockSizeException`);
+         *  2. da API 33, se nella catena c'è una `android.security.KeyStoreException`, decide LEI: `isTransientFailure()`. È il verdetto del
+         *     sistema, e vale anche quando è «no» (una chiave corrotta o inesistente dentro un `ProviderException` non diventa passeggera);
+         *  3. altrimenti (API 24-32, o nessuna `KeyStoreException`): è passeggero un errore di I/O (`IOException`, per esempio l'apertura
+         *     dell'archivio delle chiavi) o un `ProviderException`, che è ciò che il provider lancia quando un'operazione non riesce
+         *     (troppe operazioni aperte, servizio occupato), non per una chiave cattiva;
+         *  4. tutto il resto è definitivo.
+         */
+        @Override
+        public boolean guastoTransitorio(Throwable guasto) {
+            return eTransitorio(guasto, Build.VERSION.SDK_INT, causa -> Build.VERSION.SDK_INT >= 33 ? VerdettoApi33.su(causa) : null);
+        }
+
+        /** La logica del punto precedente, senza `android.*` tranne i tipi delle eccezioni: la prova la JVM (`verdetto` e `sdk` si iniettano). */
+        static boolean eTransitorio(Throwable guasto, int sdk, Function<Throwable, Boolean> verdetto) {
+            boolean passeggero = false;
+            Boolean verdettoDelSistema = null;
+            int profondita = 0;
+            for (Throwable causa = guasto; causa != null && profondita < PROFONDITA_MASSIMA_DELLE_CAUSE; causa = causa.getCause(), profondita++) {
+                if (causa instanceof KeyPermanentlyInvalidatedException || causa instanceof UnrecoverableKeyException
+                        || causa instanceof BadPaddingException || causa instanceof IllegalBlockSizeException) {
+                    return false;
+                }
+                if (causa instanceof IOException || causa instanceof ProviderException) passeggero = true;
+                if (sdk >= 33 && verdettoDelSistema == null) verdettoDelSistema = verdetto.apply(causa);
+            }
+            return verdettoDelSistema != null ? verdettoDelSistema : passeggero;
+        }
+
+        /**
+         * Il verdetto del sistema (API 33+) su una causa, in una classe a parte: `KeyStoreException` pubblica esiste solo da API 33, e così
+         * la classe del cifrario non ne porta il riferimento sui livelli più vecchi (si carica solo quando `sdk >= 33`).
+         */
+        @RequiresApi(33)
+        private static final class VerdettoApi33 {
+            /** `null` se `causa` non è una `KeyStoreException`; altrimenti il suo `isTransientFailure()`. */
+            static Boolean su(Throwable causa) {
+                if (!(causa instanceof android.security.KeyStoreException)) return null;
+                return ((android.security.KeyStoreException) causa).isTransientFailure();
+            }
         }
 
         @Override

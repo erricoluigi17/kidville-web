@@ -2039,4 +2039,169 @@ public class CodaCaricamentiTest {
         prima.aggiungi(nuova(1));
         assertEquals(1, CodaCaricamenti.perCartella(a, orologio::get).numeroVoci());
     }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * COMPITO A2b: LA PULIZIA NON TOCCA CIÒ CHE IL DISCO NOMINA ANCORA (secondario n. 81 della PR 3)
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    /** Il disco di un telefono che smette di rinominare: una voce con copia e segreti, già `in-invio`, e la scrittura che da qui non riesce. */
+    private static final class VoceSuDiscoRotto {
+        final AtomicFileCheNonTrasloca disco;
+        final CodaCaricamenti coda;
+        final File copia;
+        final File segreto;
+
+        VoceSuDiscoRotto(CodaCaricamentiTest banco, int n) throws IOException {
+            disco = new AtomicFileCheNonTrasloca(banco.codaJson(), true);
+            coda = banco.codaSuUnDiscoCheSiPuoRompere(disco);
+            coda.aggiungi(banco.nuova(n));
+            coda.transita(id(n), EventoStato.AVVIATO, null);
+            copia = banco.creaFile("file", id(n) + ".mp4", banco.orologio.get());
+            segreto = coda.fileSegreto(id(n));
+            segreto.getParentFile().mkdirs();
+            assertTrue(segreto.createNewFile());
+        }
+    }
+
+    @Test
+    public void laPuliziaNonCancellaComeOrfaniCopiaESegretiDiUnaTerminaleNonArrivataSulDisco() throws Exception {
+        VoceSuDiscoRotto v = new VoceSuDiscoRotto(this, 1);
+        File orfanoVero = creaFile("file", id(77) + ".mp4", orologio.get());
+        v.disco.traslocaDavvero = false;
+        EsitoTransizione e = v.coda.transita(id(1), EventoStato.INVIATO, null);
+        assertTrue(e.residuiRimasti);
+        assertFalse("lo stato terminale non è sul disco", e.persistita);
+
+        ReportPulizia r = v.coda.pulisci();
+
+        assertTrue("sul disco la voce è ancora viva e nomina la copia: la pulizia non la tocca (n. 81)", v.copia.exists());
+        assertTrue("e i segreti nemmeno", v.segreto.exists());
+        assertFalse("un orfano VERO, invece, si toglie ancora", orfanoVero.exists());
+        assertEquals("un solo orfano tolto, quello vero", 1, r.fileOrfani);
+        assertEquals("nessun segreto tolto", 0, r.segreti);
+        // Alla riapertura la voce è com'era: viva, col suo file, pronta a riprendere (la PUT ripetuta dà il duplicato che il rinnovo risolve).
+        VoceCoda dopoIlRiavvio = apri().trova(id(1));
+        assertSame(Stato.IN_INVIO, dopoIlRiavvio.stato);
+        assertEquals("file/" + id(1) + ".mp4", dopoIlRiavvio.file);
+    }
+
+    @Test
+    public void quandoIlDiscoTornaLaPuliziaScriveLoStatoTerminaleEPoiTogliCopiaESegreti() throws Exception {
+        VoceSuDiscoRotto v = new VoceSuDiscoRotto(this, 1);
+        v.disco.traslocaDavvero = false;
+        v.coda.transita(id(1), EventoStato.INVIATO, null);
+        v.coda.pulisci();
+        assertTrue(v.copia.exists());
+
+        v.disco.traslocaDavvero = true;                   // il disco «torna a dare i numeri»
+        ReportPulizia r = v.coda.pulisci();
+
+        assertSame("lo stato terminale è arrivato sul disco", Stato.INVIATO, apri().trova(id(1)).stato);
+        assertNull(apri().trova(id(1)).file);
+        assertFalse("e adesso la copia è davvero orfana: si toglie", v.copia.exists());
+        assertFalse("anche i segreti", v.segreto.exists());
+        assertEquals("e si toglie come un orfano qualunque, contato come tale", 1, r.fileOrfani);
+        assertEquals(1, r.segreti);
+        assertEquals("e la protezione è finita: una pulizia dopo non trova più niente da proteggere", 0, v.coda.pulisci().fileOrfani);
+    }
+
+    @Test
+    public void unaPuliziaCheNonRiescePerLoStessoMotivoTieneProtettoESiRiprovaAlGiroDopo() throws Exception {
+        VoceSuDiscoRotto v = new VoceSuDiscoRotto(this, 1);
+        v.disco.traslocaDavvero = false;
+        v.coda.transita(id(1), EventoStato.INVIATO, null);
+        for (int giro = 0; giro < 3; giro++) {
+            v.coda.pulisci();                             // il disco non c'è ancora: la pulizia riprova a scrivere, non riesce, e non tocca niente
+            assertTrue("giro " + giro + ": la copia resta", v.copia.exists());
+            assertTrue("giro " + giro + ": i segreti restano", v.segreto.exists());
+        }
+        v.disco.traslocaDavvero = true;
+        v.coda.pulisci();
+        assertFalse(v.copia.exists());
+    }
+
+    @Test
+    public void riaccodareLoStessoJobDopoUnaTerminaleNonSalvataNonLasciaALaPuliziaLaCopiaNuova() throws Exception {
+        VoceSuDiscoRotto v = new VoceSuDiscoRotto(this, 1);
+        v.disco.traslocaDavvero = false;
+        v.coda.transita(id(1), EventoStato.INVIATO, null);
+        v.disco.traslocaDavvero = true;
+
+        // L'insegnante rimanda lo stesso video agli stessi bambini: stesso job, preparato nuovo, segreti nuovi (come fa `accodaVideo`).
+        File preparato = creaFile("scelti", "nuovo.mp4", orologio.get());
+        RisultatoAggiunta r = v.coda.aggiungiSpostando(nuova(1), preparato);
+        assertFalse(r.giaPresente);
+        assertTrue("segreti nuovi per la voce nuova", v.segreto.exists() || v.segreto.createNewFile());
+
+        ReportPulizia pulizia = v.coda.pulisci();
+
+        assertEquals("la voce è viva: niente da togliere", 0, pulizia.fileOrfani);
+        assertTrue("la copia nuova è al suo posto", new File(cartella, "file/" + id(1) + ".mp4").isFile());
+        assertTrue("i segreti nuovi pure", v.segreto.exists());
+        assertSame(Stato.IN_CODA, v.coda.trova(id(1)).stato);
+    }
+
+    @Test
+    public void riaccodareLoStessoJobConUnaCopiaDiversaSostituisceLaProtezioneELaCopiaVecchiaNonRestaProtetta() throws Exception {
+        VoceSuDiscoRotto v = new VoceSuDiscoRotto(this, 1);          // la copia della prima voce è file/<id>.mp4
+        v.disco.traslocaDavvero = false;
+        v.coda.transita(id(1), EventoStato.INVIATO, null);           // terminale non salvata: protegge la copia .mp4
+        v.disco.traslocaDavvero = true;
+
+        // Lo stesso video rimandato agli stessi bambini, ma preparato come `.mov`: stesso job, un'altra copia.
+        VoceCoda comeMov = VoceCoda.nuova(id(1), id(1001), UTENTE, SCUOLA, "prova-1.mov", "file/" + id(1) + ".mov", 5_000_001L, "video/quicktime",
+                Origine.GALLERIA, orologio.get() + 2 * ORA, orologio.get() + 2 * GIORNO);
+        v.coda.aggiungiSpostando(comeMov, creaFile("scelti", "nuovo.mov", orologio.get()));
+        v.disco.traslocaDavvero = false;                              // e il disco smette di nuovo di rinominare
+        // Un cambiamento che non arriva sul disco: senza, la scrittura della pulizia «riuscirebbe» (riscriverebbe gli stessi byte già lì).
+        v.coda.modifica(id(1), x -> x.tentativi = 1);
+
+        v.coda.pulisci();
+
+        assertFalse("la voce nuova è viva e il disco ha già lei (l'aggiunta è stata scritta): la vecchia copia .mp4 non è di nessuno e non resta protetta",
+                v.copia.exists());
+        assertTrue("la copia nuova resta", new File(cartella, "file/" + id(1) + ".mov").isFile());
+        assertSame(Stato.IN_CODA, v.coda.trova(id(1)).stato);
+    }
+
+    @Test
+    public void dimenticareUnaTerminaleNonSalvataTogliAncheLaCopiaCheProteggeva() throws Exception {
+        VoceSuDiscoRotto v = new VoceSuDiscoRotto(this, 1);
+        v.disco.traslocaDavvero = false;
+        v.coda.transita(id(1), EventoStato.INVIATO, null);
+        v.disco.traslocaDavvero = true;
+
+        assertEquals(1, v.coda.dimentica(Arrays.asList(id(1))));
+
+        assertEquals("la voce è sparita anche dal disco", 0, apri().numeroVoci());
+        assertFalse("e con lei la copia che il disco nominava", v.copia.exists());
+        assertFalse(v.segreto.exists());
+    }
+
+    @Test
+    public void unaTerminaleNonSalvataNonSiTogliDallaCodaPerEtaFincheIlDiscoNonLaPrende() throws Exception {
+        VoceSuDiscoRotto v = new VoceSuDiscoRotto(this, 1);
+        v.disco.traslocaDavvero = false;
+        v.coda.transita(id(1), EventoStato.INVIATO, null);
+        orologio.addAndGet(8 * GIORNO);                   // oltre la ritenzione delle terminali (7 giorni)
+
+        ReportPulizia r = v.coda.pulisci();
+
+        assertEquals("nessuna voce tolta per età: sul disco è ancora viva", 0, r.vociTerminali);
+        assertNotNull(v.coda.trova(id(1)));
+        assertTrue(v.copia.exists());
+    }
+
+    @Test
+    public void unaScritturaCheNonRiesceSiDiceInLogcatConLaSolaClasseDellErrore() throws Exception {
+        final List<String> righe;
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            VoceSuDiscoRotto v = new VoceSuDiscoRotto(this, 1);
+            v.disco.traslocaDavvero = false;
+            v.coda.transita(id(1), EventoStato.INVIATO, null);
+            righe = new ArrayList<>(logcat.righe);
+        }
+        assertEquals(Arrays.asList("W KidvilleCaricamenti coda non scritta (IOException): lo stato resta in memoria"), righe);
+        for (String riga : righe) assertFalse("nessun percorso in una riga di log: " + riga, riga.contains(cartella.getName()));
+    }
 }

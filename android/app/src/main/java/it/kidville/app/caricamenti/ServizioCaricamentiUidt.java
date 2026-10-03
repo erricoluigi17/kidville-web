@@ -7,9 +7,13 @@ import android.content.Context;
 import android.os.Build;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
+
 import it.kidville.app.caricamenti.CodaCaricamenti.Testi;
 import it.kidville.app.caricamenti.EsecutoreCoda.EsitoCiclo;
 import it.kidville.app.caricamenti.NotificheCaricamento.Situazione;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * IL GUSCIO PER API 34 E OLTRE: un job UIDT («user-initiated data transfer») di JobScheduler.
@@ -33,6 +37,13 @@ import it.kidville.app.caricamenti.NotificheCaricamento.Situazione;
  *  · Quando il ciclo finisce `jobFinished(params, false)`; se la rete è mancata oltre il tetto, `jobFinished(params, true)`: il sistema lo
  *    riprogramma col backoff esponenziale dichiarato alla programmazione.
  *
+ * ─── UN RIAVVIO CHE ARRIVA MENTRE IL CICLO PRECEDENTE STA USCENDO (n. 76) ────────────────────
+ * Dopo `onStopJob` il ciclo vecchio non esce subito (un rinnovo in volo non si interrompe). Se il sistema riavvia il job in quei secondi,
+ * il thread nuovo trova l'esecutore ancora attivo: non chiude il job «senza lavoro» (prima lo faceva, e le voci restavano ferme senza
+ * nessun job, in silenzio) ma aspetta che l'altro finisca e riparte ({@link CicloDelGuscio}). La fermata è PER ESECUZIONE
+ * ({@link Esecuzione}), non un campo dell'istanza: un thread vecchio che esce in ritardo non deve vedere la bandiera del job nuovo, né il
+ * job nuovo ereditare quella del vecchio.
+ *
  * ─── LA NOTIFICA ─────────────────────────────────────────────────────────────────────────────
  * Titolo e testo sono quelli di `testi` (passati dal JavaScript, senza nomi né miniature), e a fine job la notifica si TOGLIE
  * (`JOB_END_NOTIFICATION_POLICY_REMOVE`): non resta niente nell'area notifiche di un invio finito. Le voci terminali le vede
@@ -52,14 +63,41 @@ public final class ServizioCaricamentiUidt extends JobService {
     private static final String TAG = "KidvilleCaricamenti";
 
     /**
-     * Il sistema ha fermato il job (`onStopJob`). Serve per la finestra fra `onStartJob` e l'avvio del ciclo: in quel momento l'esecutore
-     * non è ancora attivo e `fermaIlGuscio` non ha niente da interrompere, ma il ciclo non deve partire su un job che non esiste più.
+     * UN'ESECUZIONE DEL JOB, dal suo `onStartJob` al suo `jobFinished`. Porta la bandiera «il sistema ha fermato QUESTA esecuzione»: serve
+     * per la finestra fra `onStartJob` e l'avvio del ciclo (l'esecutore non è ancora attivo e `fermaIlGuscio` non ha niente da
+     * interrompere, ma il ciclo non deve partire su un job che non esiste più), e per l'attesa di un ciclo precedente.
      */
-    private volatile boolean fermato;
+    static final class Esecuzione {
+        private final AtomicBoolean fermata = new AtomicBoolean(false);
+
+        void ferma() {
+            fermata.set(true);
+        }
+
+        boolean fermata() {
+            return fermata.get();
+        }
+    }
+
+    /** L'esecuzione in corso (l'ultima partita): `onStopJob` ferma quella. Un thread vecchio ha in mano la propria. */
+    private volatile Esecuzione corrente;
+
+    /** Comincia una nuova esecuzione: quella di prima, se un thread la sta ancora finendo, resta com'è (fermata o no). */
+    Esecuzione nuovaEsecuzione() {
+        Esecuzione nuova = new Esecuzione();
+        corrente = nuova;
+        return nuova;
+    }
+
+    /** Il sistema ha fermato il job: la bandiera si alza SOLO sull'esecuzione in corso. */
+    void fermaLEsecuzioneCorrente() {
+        Esecuzione esecuzione = corrente;
+        if (esecuzione != null) esecuzione.ferma();
+    }
 
     @Override
     public boolean onStartJob(final JobParameters parametri) {
-        fermato = false;
+        final Esecuzione esecuzione = nuovaEsecuzione();
         final PianificatoreCaricamenti motore;
         try {
             motore = PianificatoreCaricamenti.condiviso(getApplicationContext());
@@ -81,17 +119,7 @@ public final class ServizioCaricamentiUidt extends JobService {
         Thread filo = new Thread(() -> {
             boolean riprogramma = true;
             try {
-                if (fermato) {
-                    // Il sistema ha già fermato il job (e lo riprogramma lui, `onStopJob` ha detto `true`): non si parte.
-                    riprogramma = false;
-                } else {
-                    EsitoCiclo esito = motore.eseguiSuGuscio(presentazione, LavoroCaricamenti.ATTESA_RETE_MASSIMA_MS);
-                    // `RIPROVA`: la rete è mancata oltre il tetto, il sistema ripropone il job. `INTERROTTO`: lo ha già fermato lui
-                    // (`onStopJob`), e il suo `jobFinished` non conta. Negli altri casi il lavoro è finito.
-                    riprogramma = esito == EsitoCiclo.RIPROVA;
-                }
-            } catch (RuntimeException guasto) {
-                Log.e(TAG, "ciclo del job interrotto da un guasto (" + guasto.getClass().getSimpleName() + ")");
+                riprogramma = eseguiIlGiro(motore::eseguiSuGuscio, presentazione, esecuzione, Thread::sleep);
             } finally {
                 jobFinished(parametri, riprogramma);
             }
@@ -101,18 +129,49 @@ public final class ServizioCaricamentiUidt extends JobService {
     }
 
     /**
+     * Il corpo del thread del job: fa girare il ciclo e dice se `jobFinished` deve chiedere la riprogrammazione. NON LANCIA MAI: un guasto
+     * vale «riprogramma» (le voci stanno su disco), e si dice.
+     *
+     * Chiede la riprogrammazione se la rete è mancata oltre il tetto (`RIPROVA`) o se un ciclo precedente non ha finito di uscire
+     * (`GIA_ATTIVO`, dopo l'attesa di {@link CicloDelGuscio}); non la chiede se il ciclo è finito o se il sistema ha fermato il job
+     * (`INTERROTTO`: lo riprogramma lui, `onStopJob` ha detto `true`).
+     */
+    static boolean eseguiIlGiro(CicloDelGuscio.MotoreDelGuscio motore, EsecutoreCoda.Presentazione presentazione, Esecuzione esecuzione,
+                                CicloDelGuscio.Pausa pausa) {
+        try {
+            EsitoCiclo esito = CicloDelGuscio.esegui(motore, presentazione, LavoroCaricamenti.ATTESA_RETE_MASSIMA_MS, esecuzione::fermata, pausa);
+            return CicloDelGuscio.serveUnaRipresa(esito);
+        } catch (RuntimeException guasto) {
+            DiagnosticaLocale.errore("ciclo del job interrotto da un guasto (" + DiagnosticaLocale.classe(guasto) + ")");
+            return true;
+        }
+    }
+
+    /**
      * Il sistema ferma il job (la rete è caduta, il job ha superato un limite, l'utente lo ha fermato dal Task Manager): la PUT in volo
      * si interrompe e le voci tornano `in-attesa`, ferme finché il job non riparte. Restituire `true` lo fa riprogrammare.
      */
     @Override
     public boolean onStopJob(JobParameters parametri) {
-        fermato = true;
+        fermaLEsecuzioneCorrente();
         try {
             PianificatoreCaricamenti.condiviso(getApplicationContext()).fermaIlGuscio();
         } catch (RuntimeException guasto) {
             Log.e(TAG, "arresto del job non riuscito (" + guasto.getClass().getSimpleName() + ")");
         }
         return true;
+    }
+
+    /**
+     * API 34+: con un vincolo di rete il sistema avvisa quando la rete usata dal job CAMBIA (da Wi-Fi a cellulare, per esempio) e, se la
+     * classe non ha un'implementazione propria, scrive in logcat «onNetworkChanged() not implemented… Must override» a ogni cambio
+     * (secondario n. 88). Qui non c'è niente da fare: il job non lega il trasferimento a una rete in particolare (non usa
+     * `JobParameters#getNetwork`) e la PUT in corso continua sulla rete predefinita; se quella cade, la PUT cade e il ciclo riprova
+     * come per ogni altra caduta (§4.5). Si dice con una riga `info` senza dati, e non si chiama la versione della classe base.
+     */
+    @Override
+    public void onNetworkChanged(@NonNull JobParameters parametri) {
+        DiagnosticaLocale.info("rete del job cambiata: il trasferimento prosegue sulla rete predefinita");
     }
 
     /** `setNotification` esiste da API 34: il servizio non parte mai prima, ma il controllo costa niente. */

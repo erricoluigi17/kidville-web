@@ -15,6 +15,8 @@ import it.kidville.app.caricamenti.CodaCaricamenti.Testi;
 import it.kidville.app.caricamenti.EsecutoreCoda.EsitoCiclo;
 import it.kidville.app.caricamenti.NotificheCaricamento.Situazione;
 
+import java.util.function.BooleanSupplier;
+
 /**
  * IL GUSCIO PER API 24-33: un lavoro di WorkManager con un servizio in primo piano `dataSync`.
  * (spec 2026-10-03 «app 1.2: caricamenti nativi in background», §6.2 «API 24-33: WorkManager + FGS `dataSync`»; compito A2)
@@ -23,8 +25,9 @@ import it.kidville.app.caricamenti.NotificheCaricamento.Situazione;
  * Un guscio SOTTILE: tutta la logica sta nell'esecutore (`EsecutoreCoda`), che è lo stesso del guscio UIDT. Questo lavoro fa tre cose:
  *  1. chiede il SERVIZIO IN PRIMO PIANO (`setForegroundAsync(...).get()`, tipo `dataSync` da API 29): è ciò che permette di
  *     trasferire per ore a schermo bloccato senza che il sistema uccida il processo, e che tiene la notifica «Invio dei video in corso»;
- *  2. fa girare il ciclo dell'esecutore, finché c'è lavoro;
- *  3. quando il sistema lo ferma (`onStopped`) interrompe la PUT in volo.
+ *  2. fa girare il ciclo dell'esecutore, finché c'è lavoro ({@link CicloDelGuscio}: se un ciclo precedente sta ancora uscendo lo aspetta
+ *     invece di chiudersi «senza lavoro», secondario n. 76);
+ *  3. quando il sistema lo ferma (`onStopped`) interrompe la PUT in volo, e da quel momento non tocca più la notifica (n. 91).
  *
  * ─── SE IL SERVIZIO IN PRIMO PIANO NON PARTE ─────────────────────────────────────────────────
  * Su Android 12 e 13 un lavoro avviato DA BACKGROUND (un ritentativo, un riavvio del processo) non può far partire un servizio in
@@ -36,14 +39,16 @@ import it.kidville.app.caricamenti.NotificheCaricamento.Situazione;
  *
  * ─── LA RETE ─────────────────────────────────────────────────────────────────────────────────
  * Il lavoro NON ha vincoli di rete (§6.2): l'attesa la governa l'esecutore, che con la rete assente tiene il servizio attivo per
- * al più 10 minuti e poi restituisce `RIPROVA` (qui `Result.retry()`, con il backoff esponenziale di WorkManager). Un vincolo di
- * rete avrebbe lasciato il lavoro fermo e invisibile, senza notifica, per tutto il tempo senza rete.
+ * al più 10 minuti. Oltre il tetto (`RIPROVA`) NON si restituisce `Result.retry()` (secondario n. 80): il backoff esponenziale di
+ * WorkManager parte da 30 s ma arriva a CINQUE ORE, e con l'app chiusa e la rete tornata dopo dieci minuti la ripresa poteva tardare
+ * ore. Si accoda invece un lavoro SUCCESSIVO (`PianificatoreCaricamenti.programmaRipresaConRete`) col vincolo di rete e senza ritardo:
+ * parte quando una rete c'è, e il backoff non cresce mai. `Result.retry()` resta solo come ripiego se l'accodamento non riesce.
  */
 public final class LavoroCaricamenti extends Worker {
 
     private static final String TAG = "KidvilleCaricamenti";
 
-    /** Per quanto aspettare la rete, con il servizio attivo, prima di restituire `Result.retry()`: 10 minuti (§6.2). */
+    /** Per quanto aspettare la rete, con il servizio attivo, prima di chiedere una ripresa: 10 minuti (§6.2). */
     static final long ATTESA_RETE_MASSIMA_MS = PoliticaCaricamento.ATTESA_RETE_NEL_WORKER_SECONDI * 1000L;
 
     public LavoroCaricamenti(@NonNull Context contesto, @NonNull WorkerParameters parametri) {
@@ -84,8 +89,23 @@ public final class LavoroCaricamenti extends Worker {
         // WorkManager lo sappia, e quello nuovo, trovandolo attivo, finirebbe subito e porterebbe via il servizio in primo piano.
         if (isStopped()) return Result.success();
 
-        EsitoCiclo esito = motore.eseguiSuGuscio(new PresentazioneDelLavoro(notifiche, testi), ATTESA_RETE_MASSIMA_MS);
-        return esito == EsitoCiclo.RIPROVA ? Result.retry() : Result.success();
+        final BooleanSupplier fermato = this::isStopped;
+        EsitoCiclo esito = CicloDelGuscio.esegui(motore::eseguiSuGuscio, new PresentazioneDelLavoro(notifiche::aggiornaInvio, testi, fermato),
+                ATTESA_RETE_MASSIMA_MS, fermato, Thread::sleep);
+        return risultatoPer(esito, motore::programmaRipresaConRete);
+    }
+
+    /**
+     * Che cosa risponde il lavoro a WorkManager dopo il ciclo. Se servono voci da riprendere — la rete è mancata oltre il tetto, o un
+     * altro ciclo non ha finito di uscire — si accoda un lavoro successivo col vincolo di rete (secondario n. 80) e questo finisce con
+     * successo; se l'accodamento non riesce si ripiega su `Result.retry()`, col backoff di WorkManager. Per `FINITO` e `INTERROTTO` il
+     * lavoro è finito (a fermarlo, nel secondo caso, è stato il sistema).
+     *
+     * @param programmaRipresaConRete accoda la ripresa; vero se è stata accodata
+     */
+    static Result risultatoPer(EsitoCiclo esito, BooleanSupplier programmaRipresaConRete) {
+        if (!CicloDelGuscio.serveUnaRipresa(esito)) return Result.success();
+        return programmaRipresaConRete.getAsBoolean() ? Result.success() : Result.retry();
     }
 
     /** WorkManager ferma il lavoro (vincoli, quote, l'utente): la PUT in volo si interrompe e le voci tornano in attesa. */
@@ -105,26 +125,5 @@ public final class LavoroCaricamenti extends Worker {
             return new ForegroundInfo(NotificheCaricamento.ID_NOTIFICA_INVIO, notifica, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
         }
         return new ForegroundInfo(NotificheCaricamento.ID_NOTIFICA_INVIO, notifica);
-    }
-
-    /** L'avanzamento sulla notifica del servizio (stesso id: si aggiorna in posto). */
-    private static final class PresentazioneDelLavoro implements EsecutoreCoda.Presentazione {
-        private final NotificheCaricamento notifiche;
-        private final Testi testi;
-
-        PresentazioneDelLavoro(NotificheCaricamento notifiche, Testi testi) {
-            this.notifiche = notifiche;
-            this.testi = testi;
-        }
-
-        @Override
-        public void avanzamento(long inviatiVoce, long totaleVoce, long inviatiNelGiro) {
-            notifiche.aggiornaInvio(testi, Situazione.INVIO, inviatiVoce, totaleVoce);
-        }
-
-        @Override
-        public void inAttesaDiRete(boolean inAttesa) {
-            notifiche.aggiornaInvio(testi, inAttesa ? Situazione.ATTESA_RETE : Situazione.INVIO, 0L, 0L);
-        }
     }
 }

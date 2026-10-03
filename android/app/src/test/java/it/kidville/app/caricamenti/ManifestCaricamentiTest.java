@@ -5,7 +5,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
-import org.junit.Assume;
 import org.junit.Test;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -153,7 +152,7 @@ public class ManifestCaricamentiTest {
     }
 
     /* ────────────────────────────────────────────────────────────────────────────
-     * IL MANIFEST FUSO (se la build lo ha prodotto)
+     * IL MANIFEST FUSO (lo produce la build: `testDebugUnitTest` dipende da `processDebugMainManifest`)
      * ──────────────────────────────────────────────────────────────────────────── */
 
     private static File manifestFuso() {
@@ -161,10 +160,19 @@ public class ManifestCaricamentiTest {
         return f;
     }
 
+    /**
+     * Il controllo del manifest FUSO non si salta in silenzio (secondario n. 85): un `Assume` lo avrebbe fatto passare per «saltato», cioè
+     * per niente, proprio nel caso in cui la build non l'ha prodotto, e RECEIVE_BOOT_COMPLETED (che serve a `setPersisted(true)` del job
+     * UIDT) e l'assenza dei permessi media nel manifest vero resterebbero senza prova. Se il file manca il test FALLISCE, e dice che cosa fare.
+     * `android/app/build.gradle` fa dipendere `testDebugUnitTest` da `processDebugMainManifest`, così col comando di verifica il file c'è
+     * sempre; se manca è perché quel task è stato escluso o l'albero non è stato costruito.
+     */
     @Test
     public void ilManifestFusoDebugHaPermessiEServiziDelMotoreESenzaPermessiMedia() throws Exception {
         File fuso = manifestFuso();
-        Assume.assumeTrue("la build non ha ancora prodotto il manifest fuso: lo verifica `assembleDebug`", fuso.isFile());
+        assertTrue("manca il manifest fuso della build Debug (" + fuso.getPath() + "): lancia `./gradlew :app:testDebugUnitTest`, che dipende da "
+                + "`processDebugMainManifest` e lo produce prima dei test. Questo controllo non si salta: è l'unico che vede i permessi che "
+                + "arrivano dalle librerie (RECEIVE_BOOT_COMPLETED) e quelli che nessuna libreria deve portare (i permessi sui media).", fuso.isFile());
         Document manifest = leggiManifest(fuso);
         Set<String> permessi = permessiDichiarati(manifest);
         for (String atteso : new String[]{"android.permission.FOREGROUND_SERVICE", "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
@@ -228,9 +236,10 @@ public class ManifestCaricamentiTest {
 
     @Test
     public void leClassiNuoveNonUsanoMaiConsoleNeStampaNeUnLogDiUnaStringaLibera() throws Exception {
-        // Il solo posto dove si scrive in logcat è `Log.w/e` con la CLASSE di un'eccezione; mai `System.out`, mai `printStackTrace` (che
-        // stampa il messaggio, con percorsi o indirizzi), mai `Log.d/i/v` di dati.
-        Pattern vietati = Pattern.compile("System\\s*\\.\\s*(out|err)|printStackTrace|\\bLog\\s*\\.\\s*[div]\\s*\\(");
+        // Il solo posto dove si scrive in logcat è `Log.i/w/e` con una frase costante e la CLASSE di un'eccezione (`Log.i` è il livello dei
+        // `catch` ignorabili, secondario n. 84: li scrive `DiagnosticaLocale`); mai `System.out`, mai `printStackTrace` (che stampa il
+        // messaggio, con percorsi o indirizzi), mai `Log.d/v`, che sono righe di debug di dati.
+        Pattern vietati = Pattern.compile("System\\s*\\.\\s*(out|err)|printStackTrace|\\bLog\\s*\\.\\s*[dv]\\s*\\(");
         List<String> colpevoli = new ArrayList<>();
         for (File f : sorgentiJava()) {
             if (!f.getPath().contains("/caricamenti/")) continue;
@@ -241,9 +250,11 @@ public class ManifestCaricamentiTest {
 
     @Test
     public void nelleChiamateDiLogDelNativoNonCompaionoMaiNomiDiFileUrlTokenOHash() throws Exception {
-        // Le chiamate `Log.w` / `Log.e` e `guasto(...)` dei sorgenti di produzione portano al più una costante e il NOME DELLA CLASSE
-        // di un'eccezione (`getSimpleName()`): niente `getMessage`, `toString` di un'eccezione, percorsi, indirizzi, token.
-        Pattern chiamata = Pattern.compile("(Log\\s*\\.\\s*[we]\\s*\\([^;]*;)|(\\.guasto\\s*\\([^;]*;)", Pattern.DOTALL);
+        // Le chiamate `Log.i` / `Log.w` / `Log.e`, `guasto(...)` e `DiagnosticaLocale.info/avviso/errore(...)` dei sorgenti di produzione
+        // portano al più una costante e il NOME DELLA CLASSE di un'eccezione (`getSimpleName()`): niente `getMessage`, `toString` di
+        // un'eccezione, percorsi, indirizzi, token.
+        Pattern chiamata = Pattern.compile("(Log\\s*\\.\\s*[wei]\\s*\\([^;]*;)|(\\.guasto\\s*\\([^;]*;)"
+                + "|(DiagnosticaLocale\\s*\\.\\s*(info|avviso|errore)\\s*\\([^;]*;)", Pattern.DOTALL);
         List<String> colpevoli = new ArrayList<>();
         for (File f : sorgentiJava()) {
             if (!f.getPath().contains("/caricamenti/")) continue;

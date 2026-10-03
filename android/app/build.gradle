@@ -116,3 +116,9 @@ try {
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
+
+// `ManifestCaricamentiTest` legge il manifest FUSO della build Debug (RECEIVE_BOOT_COMPLETED, che serve a `setPersisted(true)` del job
+// UIDT e arriva da WorkManager; e l'assenza dei permessi sui media che nessuna libreria deve portare). Il file lo produce
+// `processDebugMainManifest`: i test ne dipendono in modo ESPLICITO, così col comando di verifica c'è sempre e il test non ha un
+// ramo «saltato» (secondario n. 85). `matching` e non `named`: AGP registra i task di variante dopo la valutazione di questo file.
+tasks.matching { it.name == 'testDebugUnitTest' }.configureEach { dependsOn 'processDebugMainManifest' }

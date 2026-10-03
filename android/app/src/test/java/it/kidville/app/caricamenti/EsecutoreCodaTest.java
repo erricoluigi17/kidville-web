@@ -1410,4 +1410,426 @@ public class EsecutoreCodaTest {
         }
     }
 
+
+    /* ════════════════════════════════════════════════════════════════════════════
+     * COMPITO A2b: LE CORREZIONI AL MOTORE DI INVIO (secondari n. 76-92 della PR 3)
+     * ════════════════════════════════════════════════════════════════════════════ */
+
+    /** Un guasto che il cifrario dichiara PASSEGGERO (un Keystore occupato): il marcatore con cui `CifrarioDiProva` lo riconosce. */
+    private static final class GuastoPasseggero extends java.security.GeneralSecurityException {
+        GuastoPasseggero() {
+            super("Keystore occupato");
+        }
+    }
+
+    /**
+     * Un cifrario che decifra come quello software, ma: fa fallire le decifrature che si scelgono per numero (la prima è la 1), con un
+     * guasto passeggero (`GuastoPasseggero`) o definitivo (un tag GCM che non torna), e dopo ogni decifratura riuscita lascia partire un
+     * gancio col suo numero: è il punto in cui un test fa succedere qualcosa «fra la lettura dei segreti e ciò che viene dopo».
+     */
+    private final class CifrarioDiProva implements SegretiCaricamenti.Cifrario {
+        final AtomicInteger decifrature = new AtomicInteger();
+        final java.util.Map<Integer, Exception> guasti = new java.util.concurrent.ConcurrentHashMap<>();
+        volatile java.util.function.IntConsumer dopoLaDecifratura = null;
+        volatile boolean tuttoPasseggero = false;
+
+        @Override
+        public byte[] cifra(byte[] chiaro, byte[] datiAssociati) throws java.security.GeneralSecurityException, IOException {
+            return cifrario.cifra(chiaro, datiAssociati);
+        }
+
+        @Override
+        public byte[] decifra(byte[] cifrato, byte[] datiAssociati) throws java.security.GeneralSecurityException, IOException {
+            int n = decifrature.incrementAndGet();
+            Exception g = tuttoPasseggero ? new GuastoPasseggero() : guasti.get(n);
+            if (g instanceof java.security.GeneralSecurityException) throw (java.security.GeneralSecurityException) g;
+            if (g instanceof IOException) throw (IOException) g;
+            byte[] chiaro = cifrario.decifra(cifrato, datiAssociati);
+            java.util.function.IntConsumer gancio = dopoLaDecifratura;
+            if (gancio != null) gancio.accept(n);
+            return chiaro;
+        }
+
+        @Override
+        public boolean guastoTransitorio(Throwable guasto) {
+            return guasto instanceof GuastoPasseggero || SegretiCaricamenti.Cifrario.super.guastoTransitorio(guasto);
+        }
+    }
+
+    /** Rimonta segreti ed esecutore sul cifrario di prova (dopo, `accoda(n)` salva con quello). */
+    private CifrarioDiProva conCifrarioDiProva() {
+        CifrarioDiProva c = new CifrarioDiProva();
+        segreti = new SegretiCaricamenti(coda, c);
+        esecutore = new EsecutoreCoda(coda, registro, segreti, put, rinnovo, rete, ambiente);
+        esecutore.impostaOsservatore((voce, byteInviati) -> osservate.add(voce.stato.valore() + ":" + byteInviati));
+        return c;
+    }
+
+    /** Aspetta che un thread sia finito o fermo su un monitor: i due soli modi in cui un `annulla` concorrente può trovarsi. */
+    private static void aspettaCheSiaFinitoOBloccato(Thread t) throws InterruptedException {
+        long limite = System.nanoTime() + 10_000_000_000L;
+        while (System.nanoTime() < limite && t.getState() != Thread.State.TERMINATED && t.getState() != Thread.State.BLOCKED) Thread.sleep(1);
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 76: IL RIAVVIO DEL GUSCIO MENTRE IL CICLO PRECEDENTE STA USCENDO, con l'esecutore vero
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    /**
+     * Il caso del secondario: il sistema ferma il job (`ferma()`), la PUT in volo esce piano (un rinnovo che non si interrompe...), e in
+     * quei secondi riavvia il job. Il thread nuovo trova `GIA_ATTIVO`: prima chiudeva il job senza lavoro, e la voce restava `in-attesa`
+     * senza nessun guscio. Adesso aspetta che il vecchio finisca e porta a termine il lavoro rimasto.
+     */
+    @Test(timeout = 60_000)
+    public void unGuscioRiavviatoMentreIlCicloPrecedenteStaUscendoPortaATermineIlLavoroRimasto() throws Exception {
+        accoda(1);
+        CountDownLatch inVolo = new CountDownLatch(1);
+        CountDownLatch uscitaLenta = new CountDownLatch(1);
+        put.poi((Function<RichiestaPut, EsitoPut>) r -> {
+            inVolo.countDown();
+            long limite = System.nanoTime() + 20_000_000_000L;
+            while (!r.interruzione.richiesta() && System.nanoTime() < limite) pausa(2);
+            try {
+                uscitaLenta.await(20, TimeUnit.SECONDS);       // l'uscita del ciclo vecchio è LENTA: il sistema riavvia il job nel frattempo
+            } catch (InterruptedException interrotto) {
+                Thread.currentThread().interrupt();
+            }
+            return EsitoPut.interrotto(1_234L, 50L);
+        });
+        AtomicReference<EsitoCiclo> vecchio = new AtomicReference<>();
+        Thread filoVecchio = new Thread(() -> vecchio.set(esegui()));
+        filoVecchio.start();
+        assertTrue(inVolo.await(10, TimeUnit.SECONDS));
+        esecutore.ferma();                                         // onStopJob
+
+        // Il job riparte: il thread nuovo passa dal ciclo del guscio, come `ServizioCaricamentiUidt`.
+        CountDownLatch trovatoAttivo = new CountDownLatch(1);
+        AtomicReference<EsitoCiclo> nuovo = new AtomicReference<>();
+        Thread filoNuovo = new Thread(() -> nuovo.set(CicloDelGuscio.esegui((p, tetto) -> {
+            EsitoCiclo e = esecutore.esegui(p, tetto);
+            if (e == EsitoCiclo.GIA_ATTIVO) trovatoAttivo.countDown();
+            return e;
+        }, presentazione, TETTO_RETE_MS, () -> false, ms -> Thread.sleep(20))));
+        filoNuovo.start();
+        assertTrue("il job nuovo ha trovato il ciclo vecchio ancora attivo", trovatoAttivo.await(10, TimeUnit.SECONDS));
+        assertSame("e il ciclo vecchio non è ancora uscito", Stato.IN_INVIO, stato(1));
+
+        uscitaLenta.countDown();                                   // il ciclo vecchio finisce di uscire
+        filoVecchio.join(20_000);
+        filoNuovo.join(20_000);
+        assertFalse(filoVecchio.isAlive() || filoNuovo.isAlive());
+        assertSame("il vecchio è uscito perché fermato", EsitoCiclo.INTERROTTO, vecchio.get());
+        assertSame("il nuovo ha fatto il lavoro rimasto invece di chiudersi senza", EsitoCiclo.FINITO, nuovo.get());
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals("due PUT: quella interrotta e quella del job nuovo", 2, put.richieste.size());
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 79: UN GUASTO PASSEGGERO DEI SEGRETI NON FA FALLIRE LA VOCE
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void unKeystoreOccupatoPerUnIstanteNonFaFallireLaVoceAspettaConCopiaESegretiEPoiArriva() throws Exception {
+        CifrarioDiProva c = conCifrarioDiProva();
+        accoda(1);
+        c.guasti.put(1, new GuastoPasseggero());                  // la prima decifratura (quella dell'esecutore) fallisce, la seconda no
+        AtomicReference<VoceCoda> allaPut = new AtomicReference<>();
+        put.allaPartenza = () -> allaPut.set(voce(1));
+
+        List<String> righeDiLogcat;
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            assertSame(EsitoCiclo.FINITO, esegui());
+            righeDiLogcat = new ArrayList<>(logcat.righe);
+        }
+
+        assertTrue("il guasto passeggero si dice in logcat, senza dati: " + righeDiLogcat,
+                righeDiLogcat.contains("I KidvilleCaricamenti segreti non decifrati adesso (GuastoPasseggero): passeggero, la voce riprova")
+                        && righeDiLogcat.contains("I KidvilleCaricamenti segreti non leggibili adesso: la voce aspetta e riprova, copia e segreti restano"));
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals("una PUT sola: arrivata al secondo giro, dopo l'attesa", 1, put.richieste.size());
+        assertEquals("un tentativo consumato: l'attesa di §4.5", 1, allaPut.get().tentativi);
+        assertEquals("nessun fallimento: la voce non è mai stata dichiarata persa", 0, conta("video-nativo-fallito"));
+        assertEquals("il ritentativo si dice, con codice INTERNO", 1, conta("video-nativo-ritento INTERNO"));
+        assertEquals("e il video è arrivato", 1, conta("video-nativo-inviato"));
+        assertEquals(30_000L, ambiente.dormitoMs.get());
+    }
+
+    @Test
+    public void durantelAttesaPerUnGuastoPasseggeroLaVoceEInAttesaInternoConCopiaESegretiAlloStessoPosto() throws Exception {
+        CifrarioDiProva c = conCifrarioDiProva();
+        accoda(1);
+        c.guasti.put(1, new GuastoPasseggero());
+        List<String> viste = Collections.synchronizedList(new ArrayList<String>());
+        esecutore.impostaOsservatore((v, byteInviati) -> {
+            if (v.stato == Stato.IN_ATTESA) {
+                viste.add(v.codice + "|copia=" + new File(cartella, "file/" + id(1) + ".mp4").exists() + "|segreti=" + coda.fileSegreto(id(1)).exists());
+            }
+        });
+
+        esegui();
+
+        assertEquals("quando la voce passa in attesa: codice INTERNO, e la copia e i segreti ci sono ancora", Arrays.asList("INTERNO|copia=true|segreti=true"),
+                new ArrayList<>(viste));
+    }
+
+    @Test
+    public void unGuastoDefinitivoDeiSegretiChiudeLaVoceFallitaInternoCometPrima() throws Exception {
+        CifrarioDiProva c = conCifrarioDiProva();
+        accoda(1);
+        c.guasti.put(1, new javax.crypto.AEADBadTagException("contenuto toccato"));
+        esegui();
+        verificaChiusuraPulita(1, Stato.FALLITO);
+        assertSame(Codice.INTERNO, voce(1).codice);
+        assertEquals(0, put.richieste.size());
+        assertEquals("put", evento("video-nativo-fallito").campi.get("operazione"));
+    }
+
+    @Test
+    public void unGuastoPasseggeroCheNonPassaMaiSiFermaAllaScadenzaDelTokenNonPrima() throws Exception {
+        CifrarioDiProva c = conCifrarioDiProva();
+        accoda(1, 2 * ORA_MS, 3 * ORA_MS);                         // il token vale 3 ore
+        c.tuttoPasseggero = true;
+        esegui();
+        verificaChiusuraPulita(1, Stato.FALLITO);
+        assertSame("è la vita del token a chiudere la voce, non il guasto", Codice.TOKEN_SCADUTO, voce(1).codice);
+        assertTrue("l'orologio ha superato la scadenza", ora.get() >= 1_790_000_000_000L + 3 * ORA_MS);
+        assertEquals("mai una PUT con segreti che non si leggono", 0, put.richieste.size());
+        assertTrue("ha ritentato più volte", voce(1).tentativi >= 10);
+        assertTrue("i log dei ritentativi si diradano (1, 2, 4, 8, ...): nessuna riga a ogni tentativo (" + conta("video-nativo-ritento INTERNO") + " righe)",
+                conta("video-nativo-ritento INTERNO") <= 6);
+    }
+
+    @Test
+    public void unRinnovoRespintoConIlTokenPiuRecenteChePerUnIstanteNonSiLeggeNonFaFallireLaVoceTokenNonValido() throws Exception {
+        CifrarioDiProva c = conCifrarioDiProva();
+        accoda(1, 2 * ORA_MS - 11 * MINUTO, 48 * ORA_MS);          // firmato 11 minuti fa: rinnovo proattivo
+        // 1ª decifratura: i segreti dell'esecutore. 2ª: la rilettura dopo il 404 (potrebbe esserci un token ruotato): il Keystore è occupato.
+        c.guasti.put(2, new GuastoPasseggero());
+        rinnovo.poi(trovatoNo(), daCaricare("riprovato"));
+
+        List<String> righeDiLogcat;
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            assertSame(EsitoCiclo.FINITO, esegui());
+            righeDiLogcat = new ArrayList<>(logcat.righe);
+        }
+
+        assertTrue("l'attesa dopo il rinnovo respinto si dice in logcat: " + righeDiLogcat,
+                righeDiLogcat.contains("I KidvilleCaricamenti segreti non leggibili adesso dopo un rinnovo respinto: la voce aspetta e riprova"));
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals("nessun «negato»: un 404 con la rilettura impossibile non è un verdetto", 0, conta("video-nativo-rinnovo negato"));
+        assertEquals(0, conta("video-nativo-fallito"));
+        assertEquals("si è riprovato dopo l'attesa, e il rinnovo seguente ha risposto", 2, rinnovo.chiamate.size());
+        assertEquals(1, conta("video-nativo-ritento INTERNO"));
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 81: LA PULIZIA DI FINE GIRO NON TOCCA CIÒ CHE IL DISCO NOMINA ANCORA
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void seLoStatoTerminaleNonArrivaSulDiscoLaPuliziaDiFineGiroNonCancellaCopiaESegreti() throws Exception {
+        AtomicFileCheNonTrasloca disco = new AtomicFileCheNonTrasloca(new File(cartella, "coda.json"), true);
+        coda = new CodaCaricamenti(cartella, ora::get, disco);
+        segreti = new SegretiCaricamenti(coda, cifrario);
+        esecutore = new EsecutoreCoda(coda, registro, segreti, put, rinnovo, rete, ambiente);
+        accoda(1);
+        put.allaPartenza = () -> disco.traslocaDavvero = false;    // il disco «non dà più i numeri» mentre la PUT è in volo
+
+        assertSame(EsitoCiclo.FINITO, esegui());
+
+        assertSame("in memoria la voce è inviata", Stato.INVIATO, stato(1));
+        assertEquals("e il video è arrivato davvero", 1, conta("video-nativo-inviato"));
+        assertTrue("ma sul disco la voce è ancora viva e nomina la copia: la pulizia di fine giro non la tocca (n. 81)",
+                new File(cartella, "file/" + id(1) + ".mp4").exists());
+        assertTrue("né i segreti", coda.fileSegreto(id(1)).exists());
+        // Alla riapertura la voce non cade in FILE_ASSENTE: è viva, col suo file, e riprende.
+        VoceCoda dopoIlRiavvio = new CodaCaricamenti(cartella, ora::get).trova(id(1));
+        assertNotNull(dopoIlRiavvio);
+        assertSame(Stato.IN_INVIO, dopoIlRiavvio.stato);
+        assertEquals("file/" + id(1) + ".mp4", dopoIlRiavvio.file);
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 82: IL RINNOVO NON FA RISORGERE I SEGRETI DI UNA VOCE ANNULLATA
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test(timeout = 60_000)
+    public void unAnnullaCheArrivaFraLaLetturaELaScritturaDeiSegretiDopoUnRinnovoNonLiFaRisorgere() throws Exception {
+        CifrarioDiProva c = conCifrarioDiProva();
+        accoda(1, 2 * ORA_MS - 11 * MINUTO, 48 * ORA_MS);          // rinnovo proattivo: dopo il rinnovo, `aggiorna` riscrive i segreti
+        rinnovo.poi(daCaricare("rinnovato"));
+        final AtomicReference<Thread> annullatore = new AtomicReference<>();
+        // La 1ª decifratura è quella dell'esecutore; la 2ª è la LETTURA di `aggiorna`: è lì che il ponte annulla, da un altro thread.
+        c.dopoLaDecifratura = n -> {
+            if (n != 2) return;
+            Thread t = new Thread(() -> esecutore.annulla(id(1)), "ponte-annulla");
+            annullatore.set(t);
+            t.start();
+            try {
+                aspettaCheSiaFinitoOBloccato(t);
+            } catch (InterruptedException interrotto) {
+                Thread.currentThread().interrupt();
+            }
+        };
+
+        esegui();
+        annullatore.get().join(20_000);
+
+        assertFalse(annullatore.get().isAlive());
+        assertTrue("la voce è chiusa (annullata, o già inviata se la PUT è arrivata prima)", voce(1).stato.terminale());
+        assertFalse("i segreti di una voce terminale NON si riscrivono: non devono esserci (n. 82)", coda.fileSegreto(id(1)).exists());
+        assertFalse(new File(cartella, "file/" + id(1) + ".mp4").exists());
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 83: IL RICONTROLLO PRIMA DELLA PUT (la mutazione MC3 del critico)
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    /** Una PUT che rispetta l'interruzione come `CaricatorePut`: se è già stata chiesta all'avvio non spedisce nemmeno un byte. */
+    private Function<RichiestaPut, EsitoPut> putCheRispettaLInterruzioneGiaChiesta() {
+        return richiesta -> richiesta.interruzione.richiesta() ? EsitoPut.interrotto(0L, 0L) : ok();
+    }
+
+    @Test
+    public void unaFermataCheArrivaPrimaChePubblichiLInterruzioneImpedisceLaPutNonLaFaPartire() throws Exception {
+        accoda(1, 2 * ORA_MS - 11 * MINUTO, 48 * ORA_MS);
+        rinnovo.poi(daCaricare("rinnovato"));
+        // Il guscio si ferma MENTRE il rinnovo è in volo: `interruzioneInCorso` non c'è ancora, `ferma()` non ha niente da interrompere.
+        rinnovo.dentro = () -> esecutore.ferma();
+        put.poi(putCheRispettaLInterruzioneGiaChiesta());
+
+        assertSame(EsitoCiclo.INTERROTTO, esegui());
+
+        assertEquals(1, put.richieste.size());
+        assertTrue("la PUT parte GIÀ interrotta: il ricontrollo di `spedisci` la ferma prima del primo byte", put.richieste.get(0).interruzione.richiesta());
+        assertSame("e la voce non è stata inviata: aspetta, senza un tentativo consumato", Stato.IN_ATTESA, stato(1));
+        assertEquals(0, voce(1).tentativi);
+        assertEquals(0, conta("video-nativo-inviato"));
+    }
+
+    @Test
+    public void unAnnullaCheArrivaPrimaChePubblichiLInterruzioneImpedisceLaPutDiUnVideoAnnullato() throws Exception {
+        CifrarioDiProva c = conCifrarioDiProva();
+        accoda(1);
+        // L'utente annulla fra la lettura dei segreti e la PUT: la voce è già terminale quando `spedisci` parte.
+        c.dopoLaDecifratura = n -> assertTrue("c'era una voce viva da annullare", esecutore.annulla(id(1)));
+        put.poi(putCheRispettaLInterruzioneGiaChiesta());
+
+        esegui();
+
+        assertEquals(1, put.richieste.size());
+        assertTrue("nessun byte per un video annullato: la PUT parte già interrotta", put.richieste.get(0).interruzione.richiesta());
+        verificaChiusuraPulita(1, Stato.ANNULLATO);
+        assertEquals(Arrays.asList("video-nativo-annullato utente"), messaggi());
+    }
+
+    @Test
+    public void unaVoceSparitaPrimaDellaPutNonFaScattareUnaEccezioneEImpedisceLaPut() throws Exception {
+        CifrarioDiProva c = conCifrarioDiProva();
+        accoda(1);
+        // Annullata e poi dimenticata dal ponte: alla PUT la voce non c'è più (`coda.trova` restituisce `null`).
+        c.dopoLaDecifratura = n -> {
+            assertTrue(esecutore.annulla(id(1)));
+            assertEquals(1, coda.dimentica(Arrays.asList(id(1))));
+        };
+        put.poi(putCheRispettaLInterruzioneGiaChiesta());
+
+        esegui();
+
+        assertEquals("nessuna eccezione imprevista nel giro (lo verifica anche @After)", Collections.<String>emptyList(), ambiente.guasti);
+        assertEquals(1, put.richieste.size());
+        assertTrue(put.richieste.get(0).interruzione.richiesta());
+        assertEquals(0, coda.numeroVoci());
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 89: residuiVisti È ATOMICO, E UNA RICHIESTA DEL PONTE NON SI PERDE
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void unAnnullaDelPonteFuoriDaUnCicloCheLasciaResiduiViveEFaPulireAlGiroDopo() throws Exception {
+        AtomicFileCheNonTrasloca disco = new AtomicFileCheNonTrasloca(new File(cartella, "coda.json"), true);
+        coda = new CodaCaricamenti(cartella, ora::get, disco);
+        segreti = new SegretiCaricamenti(coda, cifrario);
+        esecutore = new EsecutoreCoda(coda, registro, segreti, put, rinnovo, rete, ambiente);
+        accoda(1);
+
+        // Il ponte annulla (sul SUO thread, fuori da ogni ciclo) mentre il disco non scrive: copia e segreti restano, e si segna la pulizia.
+        disco.traslocaDavvero = false;
+        Thread ponte = new Thread(() -> assertTrue(esecutore.annulla(id(1))), "ponte");
+        ponte.start();
+        ponte.join(20_000);
+        assertTrue("restano, perché il disco non ha preso lo stato terminale", new File(cartella, "file/" + id(1) + ".mp4").exists());
+
+        // Il disco torna; parte un ciclo per un'altra voce. La richiesta del ponte non si deve essere persa: a fine giro si pulisce.
+        disco.traslocaDavvero = true;
+        accoda(2);
+        assertSame(EsitoCiclo.FINITO, esegui());
+
+        verificaChiusuraPulita(2, Stato.INVIATO);
+        assertFalse("la copia della voce annullata è stata tolta dalla pulizia di fine giro (la richiesta del ponte non si perde)",
+                new File(cartella, "file/" + id(1) + ".mp4").exists());
+        assertFalse(coda.fileSegreto(id(1)).exists());
+    }
+
+    @Test
+    public void ilCampoCheDueThreadScrivonoEAtomico() throws Exception {
+        java.lang.reflect.Field campo = EsecutoreCoda.class.getDeclaredField("residuiVisti");
+        assertTrue("`residuiVisti` lo scrive anche `annulla()` sul thread del ponte (n. 89): un `boolean` semplice non lo rende visibile al thread che esegue",
+                java.util.concurrent.atomic.AtomicBoolean.class.isAssignableFrom(campo.getType()) || java.lang.reflect.Modifier.isVolatile(campo.getModifiers()));
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 90: LA RETE CHE MANCA NON AZZERA IL RITARDO DI UN 5xx DEL SERVER
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void unaVoceInAttesaPerUnCinqueCentoDelServerRispettaIlSuoRitardoAnchePoiCheLaReteECaduta() throws Exception {
+        accoda(1);
+        List<Long> partenze = new ArrayList<>();
+        List<Long> finiDellePut = new ArrayList<>();
+        put.allaPartenza = () -> partenze.add(ora.get());
+        put.poi((Function<RichiestaPut, EsitoPut>) r -> {
+            rete.su = false;                                       // subito dopo il 503 la rete cade e torna dopo 5 secondi
+            rete.tornaAlle = ora.get() + 5 * SECONDO;
+            finiDellePut.add(ora.get() + 500L);                    // `server(503)` dura 500 ms
+            return server(503);
+        });
+
+        assertSame(EsitoCiclo.FINITO, esegui());
+
+        verificaChiusuraPulita(1, Stato.INVIATO);
+        assertEquals(2, partenze.size());
+        assertTrue("la rete è tornata dopo ~5 s ma il server aveva detto «non adesso» per 30 s: la seconda PUT non parte prima. Parte dopo "
+                        + (partenze.get(1) - finiDellePut.get(0)) + " ms",
+                partenze.get(1) - finiDellePut.get(0) >= 30 * SECONDO);
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * N. 84: IL GANCIO DELL'INTERRUZIONE CHE LANCIA SI DICE IN LOGCAT
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void unGancioDiInterruzioneCheLanciaSiDiceConUnaRigaInfoESenzaDatiENonFermaChiInterrompe() {
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            EsecutoreCoda.Interruzione registrataPrima = new EsecutoreCoda.Interruzione();
+            registrataPrima.agganciaA(() -> {
+                throw new IllegalStateException("socket già chiuso /data/privato/video.mp4");
+            });
+            registrataPrima.interrompi();                          // il gancio c'era già: lo esegue `interrompi`
+            assertTrue("la bandiera resta alzata comunque", registrataPrima.richiesta());
+
+            EsecutoreCoda.Interruzione richiestaPrima = new EsecutoreCoda.Interruzione();
+            richiestaPrima.interrompi();
+            richiestaPrima.agganciaA(() -> {
+                throw new IllegalStateException("socket già chiuso /data/privato/video.mp4");
+            });                                                    // l'interruzione era già chiesta: lo esegue `agganciaA`
+
+            assertEquals("una riga per ognuno dei due modi, `info`, col tag del pacchetto e la sola classe", Arrays.asList(
+                    "I KidvilleCaricamenti gancio dell'interruzione non riuscito (IllegalStateException): ignorabile, la bandiera resta alzata e la PUT si ferma al blocco dopo",
+                    "I KidvilleCaricamenti gancio dell'interruzione non riuscito (IllegalStateException): ignorabile, la bandiera resta alzata e la PUT si ferma al blocco dopo"),
+                    new ArrayList<>(logcat.righe));
+            for (String riga : logcat.righe) assertFalse("niente percorso né messaggio d'eccezione: " + riga, riga.contains("/data/") || riga.contains("video.mp4"));
+        }
+    }
 }

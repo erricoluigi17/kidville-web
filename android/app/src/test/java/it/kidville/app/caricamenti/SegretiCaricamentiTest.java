@@ -401,4 +401,255 @@ public class SegretiCaricamentiTest {
         assertEquals("ogni lettura, in ogni momento, trova un file integro", 0, errori.get());
         assertNotEquals(Esito.ILLEGGIBILE, segreti.leggi(id(1)).esito);
     }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * COMPITO A2b: «NON SI LEGGE ADESSO» NON È «PERSO» (secondario n. 79 della PR 3)
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    /** Un `AtomicFile` che legge come il vero, tranne quando `guasto` (o `guastoImprevisto`) non è nullo: allora `readFully` lancia quello. */
+    private static final class FileCheSiRompeInLettura extends androidx.core.util.AtomicFile {
+        volatile IOException guasto;
+        volatile RuntimeException guastoImprevisto;
+
+        FileCheSiRompeInLettura(File base) {
+            super(base);
+        }
+
+        @Override
+        public byte[] readFully() throws IOException {
+            if (guastoImprevisto != null) throw guastoImprevisto;
+            if (guasto != null) throw guasto;
+            return super.readFully();
+        }
+    }
+
+    /** Un cifrario che decifra come quello software, tranne quando `guasto` non è nullo; e dice lui quali guasti sono passeggeri. */
+    private static final class CifrarioCheSiRompe implements SegretiCaricamenti.Cifrario {
+        final CifrarioSoftware vero;
+        volatile Exception guasto;
+        volatile boolean passeggero;
+
+        CifrarioCheSiRompe(CifrarioSoftware vero) {
+            this.vero = vero;
+        }
+
+        @Override
+        public byte[] cifra(byte[] chiaro, byte[] datiAssociati) throws GeneralSecurityException, IOException {
+            return vero.cifra(chiaro, datiAssociati);
+        }
+
+        @Override
+        public byte[] decifra(byte[] cifrato, byte[] datiAssociati) throws GeneralSecurityException, IOException {
+            Exception g = guasto;
+            if (g instanceof GeneralSecurityException) throw (GeneralSecurityException) g;
+            if (g instanceof IOException) throw (IOException) g;
+            if (g instanceof RuntimeException) throw (RuntimeException) g;
+            return vero.decifra(cifrato, datiAssociati);
+        }
+
+        @Override
+        public boolean guastoTransitorio(Throwable g) {
+            return passeggero || SegretiCaricamenti.Cifrario.super.guastoTransitorio(g);
+        }
+    }
+
+    @Test
+    public void unErroreDiLetturaDelDiscoNonEUnSegretoPersoMaUnaLetturaNonRiuscitaAdesso() throws Exception {
+        segreti.salva(id(1), esempio());
+        byte[] prima = Files.readAllBytes(file(id(1)).toPath());
+        SegretiCaricamenti lettore = new SegretiCaricamenti(coda, cifrario, base -> {
+            FileCheSiRompeInLettura rotto = new FileCheSiRompeInLettura(base);
+            rotto.guasto = new IOException("Input/output error");
+            return rotto;
+        });
+
+        Lettura l = lettore.leggi(id(1));
+
+        assertSame("un errore di I/O è passeggero: non «illeggibile»", Esito.NON_LEGGIBILE_ORA, l.esito);
+        assertNull(l.segreti);
+        assertTrue("il file c'è ancora", file(id(1)).exists());
+        assertArrayEquals("e non è stato toccato", prima, Files.readAllBytes(file(id(1)).toPath()));
+        assertSame("passato il guasto, si legge", Esito.OK, segreti.leggi(id(1)).esito);
+    }
+
+    @Test
+    public void unaEccezioneImprevistaNellaLetturaDelFileEDefinitivaNonUnaRipresa() throws Exception {
+        segreti.salva(id(1), esempio());
+        SegretiCaricamenti conUnBug = new SegretiCaricamenti(coda, cifrario, base -> {
+            FileCheSiRompeInLettura f = new FileCheSiRompeInLettura(base);
+            f.guastoImprevisto = new IllegalStateException("bug");
+            return f;
+        });
+        assertSame("un'eccezione che non è di I/O non passa riprovando", Esito.ILLEGGIBILE, conUnBug.leggi(id(1)).esito);
+    }
+
+    @Test
+    public void unaAperturaFallitaConIlFilePresenteNonEUnFileSparito() throws Exception {
+        segreti.salva(id(1), esempio());
+        // `FileInputStream` lancia «file non trovato» per OGNI apertura fallita (troppi file aperti, permessi): col file presente non è «sparito».
+        SegretiCaricamenti nonApribile = new SegretiCaricamenti(coda, cifrario, base -> {
+            FileCheSiRompeInLettura f = new FileCheSiRompeInLettura(base);
+            f.guasto = new java.io.FileNotFoundException("open failed: EMFILE (Too many open files)");
+            return f;
+        });
+        assertSame("presente ma non apribile: passeggero", Esito.NON_LEGGIBILE_ORA, nonApribile.leggi(id(1)).esito);
+        // Lo stesso guasto con il file DAVVERO assente è «assente»: definitivo.
+        assertTrue(file(id(1)).delete());
+        assertSame("sparito: assente", Esito.ASSENTE, nonApribile.leggi(id(1)).esito);
+        assertSame("e col lettore normale, lo stesso", Esito.ASSENTE, segreti.leggi(id(1)).esito);
+    }
+
+    @Test
+    public void unGuastoCheIlCifrarioDichiaraPasseggeroEUnaLetturaNonRiuscitaAdessoEUnoCheNonLoEIlleggibile() throws Exception {
+        CifrarioCheSiRompe cheSiRompe = new CifrarioCheSiRompe(cifrario);
+        SegretiCaricamenti s = new SegretiCaricamenti(coda, cheSiRompe);
+        s.salva(id(1), esempio());
+
+        cheSiRompe.guasto = new GeneralSecurityException("Keystore occupato");
+        cheSiRompe.passeggero = true;
+        assertSame("un guasto che il cifrario dice passeggero", Esito.NON_LEGGIBILE_ORA, s.leggi(id(1)).esito);
+
+        cheSiRompe.passeggero = false;
+        assertSame("lo stesso guasto, se il cifrario non lo dice passeggero, è definitivo", Esito.ILLEGGIBILE, s.leggi(id(1)).esito);
+
+        cheSiRompe.guasto = new IOException("archivio delle chiavi non aperto");
+        assertSame("un IOException è passeggero per ogni cifrario (regola predefinita)", Esito.NON_LEGGIBILE_ORA, s.leggi(id(1)).esito);
+
+        cheSiRompe.guasto = new javax.crypto.AEADBadTagException("contenuto toccato");
+        assertSame("contenuto toccato o chiave diversa: definitivo", Esito.ILLEGGIBILE, s.leggi(id(1)).esito);
+
+        cheSiRompe.guasto = null;
+        assertSame("e passato il guasto il segreto c'era tutto il tempo", Esito.OK, s.leggi(id(1)).esito);
+    }
+
+    @Test
+    public void unFileConLaVersioneSbagliataOTroncatoRestaIlleggibileAncheSeIlCifrarioDiceChePassa() throws Exception {
+        CifrarioCheSiRompe cheSiRompe = new CifrarioCheSiRompe(cifrario);
+        cheSiRompe.passeggero = true;
+        SegretiCaricamenti s = new SegretiCaricamenti(coda, cheSiRompe);
+        s.salva(id(1), esempio());
+        byte[] dati = Files.readAllBytes(file(id(1)).toPath());
+        byte[] altraVersione = dati.clone();
+        altraVersione[0] = (byte) (SegretiCaricamenti.VERSIONE_FILE + 1);
+        Files.write(file(id(1)).toPath(), altraVersione);
+        assertSame("la forma sbagliata non si risolve riprovando", Esito.ILLEGGIBILE, s.leggi(id(1)).esito);
+        Files.write(file(id(1)).toPath(), new byte[]{1});
+        assertSame(Esito.ILLEGGIBILE, s.leggi(id(1)).esito);
+    }
+
+    @Test
+    public void aggiornaSuUnaLetturaNonRiuscitaAdessoNonScriveNienteELaRestituisce() throws Exception {
+        segreti.salva(id(1), esempio());
+        byte[] prima = Files.readAllBytes(file(id(1)).toPath());
+        SegretiCaricamenti lettore = new SegretiCaricamenti(coda, cifrario, base -> {
+            FileCheSiRompeInLettura rotto = new FileCheSiRompeInLettura(base);
+            rotto.guasto = new IOException("Input/output error");
+            return rotto;
+        });
+        AtomicInteger chiamate = new AtomicInteger();
+        Lettura l = lettore.aggiorna(id(1), x -> {
+            chiamate.incrementAndGet();
+            return x;
+        });
+        assertSame(Esito.NON_LEGGIBILE_ORA, l.esito);
+        assertEquals("la modifica non gira su ciò che non si legge", 0, chiamate.get());
+        assertArrayEquals("e il file non è stato riscritto", prima, Files.readAllBytes(file(id(1)).toPath()));
+    }
+
+    @Test
+    public void iCriteriDelKeystoreSeparanoIlPasseggeroDalDefinitivoEIlDefinitivoVince() {
+        java.util.function.Function<Throwable, Boolean> nessunVerdetto = c -> null;
+        // Passeggeri: l'operazione del provider non è riuscita; un errore di I/O (l'archivio delle chiavi non si apre).
+        assertTrue("ProviderException", SegretiCaricamenti.CifrarioKeystore.eTransitorio(new java.security.ProviderException("Keystore operation failed"), 0, nessunVerdetto));
+        assertTrue("IOException", SegretiCaricamenti.CifrarioKeystore.eTransitorio(new IOException("archivio non aperto"), 0, nessunVerdetto));
+        assertTrue("un ProviderException dentro un altro guasto", SegretiCaricamenti.CifrarioKeystore.eTransitorio(
+                new GeneralSecurityException("incapsulato", new java.security.ProviderException("operazione")), 0, nessunVerdetto));
+        // Definitivi: il contenuto è stato toccato, la chiave non c'è più o non si recupera, la misura è sbagliata.
+        for (Throwable definitivo : new Throwable[]{new GeneralSecurityException("generico"), new javax.crypto.AEADBadTagException("tag"),
+                new javax.crypto.BadPaddingException("padding"), new javax.crypto.IllegalBlockSizeException("misura"),
+                new java.security.UnrecoverableKeyException("chiave"), new android.security.keystore.KeyPermanentlyInvalidatedException(),
+                new IllegalStateException("sconosciuto")}) {
+            assertFalse(definitivo.getClass().getSimpleName(), SegretiCaricamenti.CifrarioKeystore.eTransitorio(definitivo, 0, nessunVerdetto));
+        }
+        // Il definitivo VINCE su un passeggero nella stessa catena, in qualunque ordine: anche quando sta IN CIMA e il passeggero sotto.
+        javax.crypto.AEADBadTagException tagInCima = new javax.crypto.AEADBadTagException("tag");
+        tagInCima.initCause(new java.security.ProviderException("operazione"));
+        assertFalse("un contenuto toccato con sotto un ProviderException", SegretiCaricamenti.CifrarioKeystore.eTransitorio(tagInCima, 0, nessunVerdetto));
+        assertFalse("una chiave invalidata con sotto un ProviderException", SegretiCaricamenti.CifrarioKeystore.eTransitorio(
+                new android.security.keystore.KeyPermanentlyInvalidatedException("chiave", new java.security.ProviderException("operazione")), 0, nessunVerdetto));
+        java.security.UnrecoverableKeyException nonRecuperabileInCima = new java.security.UnrecoverableKeyException("chiave");
+        nonRecuperabileInCima.initCause(new IOException("archivio"));
+        assertFalse("una chiave non recuperabile con sotto un errore di I/O", SegretiCaricamenti.CifrarioKeystore.eTransitorio(nonRecuperabileInCima, 0, nessunVerdetto));
+        assertFalse("ProviderException causato da una chiave invalidata", SegretiCaricamenti.CifrarioKeystore.eTransitorio(
+                new java.security.ProviderException("operazione", new android.security.keystore.KeyPermanentlyInvalidatedException()), 0, nessunVerdetto));
+        assertFalse("IOException causato da un contenuto toccato", SegretiCaricamenti.CifrarioKeystore.eTransitorio(
+                new IOException("lettura", new javax.crypto.AEADBadTagException("tag")), 0, nessunVerdetto));
+        assertFalse("un definitivo in fondo a una catena con un passeggero in cima", SegretiCaricamenti.CifrarioKeystore.eTransitorio(
+                new java.security.ProviderException("a", new IllegalStateException("b", new java.security.UnrecoverableKeyException("c"))), 0, nessunVerdetto));
+    }
+
+    @Test
+    public void daApi33IlVerdettoDelSistemaDecideEVaIlSuoNoAncheSottoUnProviderException() {
+        final RuntimeException conVerdettoSi = new RuntimeException("sistema: passeggero");
+        final RuntimeException conVerdettoNo = new RuntimeException("sistema: definitivo");
+        java.util.function.Function<Throwable, Boolean> verdetto = c -> c == conVerdettoSi ? Boolean.TRUE : c == conVerdettoNo ? Boolean.FALSE : null;
+        assertTrue("il sistema dice «passeggero»", SegretiCaricamenti.CifrarioKeystore.eTransitorio(new GeneralSecurityException("x", conVerdettoSi), 33, verdetto));
+        assertFalse("il sistema dice «definitivo»: vale anche con un ProviderException sopra",
+                SegretiCaricamenti.CifrarioKeystore.eTransitorio(new java.security.ProviderException("operazione", conVerdettoNo), 33, verdetto));
+        assertTrue("senza verdetto del sistema si ripiega sulla regola dei tipi",
+                SegretiCaricamenti.CifrarioKeystore.eTransitorio(new java.security.ProviderException("operazione"), 33, verdetto));
+        assertTrue("prima di API 33 il verdetto non si chiede nemmeno: vale la regola dei tipi",
+                SegretiCaricamenti.CifrarioKeystore.eTransitorio(new java.security.ProviderException("operazione", conVerdettoNo), 32, verdetto));
+    }
+
+    @Test
+    public void laCatenaDelleCauseNonFaGirareAVuotoSeSiMordeLaCoda() {
+        Throwable circolare = new IllegalStateException("circolare") {
+            @Override
+            public synchronized Throwable getCause() {
+                return this;
+            }
+        };
+        assertFalse("termina, e senza un passeggero in catena è definitivo",
+                SegretiCaricamenti.CifrarioKeystore.eTransitorio(circolare, 33, c -> null));
+    }
+
+    @Test
+    public void ilCifrarioDelKeystoreUsaDavveroLaRegolaDeiTipi() {
+        SegretiCaricamenti.Cifrario keystore = new SegretiCaricamenti.CifrarioKeystore();
+        assertTrue("un ProviderException è passeggero, e non lo dice il predefinito del contratto (che conosce solo l'I/O)",
+                keystore.guastoTransitorio(new java.security.ProviderException("Keystore operation failed")));
+        assertFalse(keystore.guastoTransitorio(new javax.crypto.AEADBadTagException("tag")));
+    }
+
+    @Test
+    public void ilPredefinitoDelContrattoRiconosceSoloLErroreDiIo() {
+        SegretiCaricamenti.Cifrario predefinito = new CifrarioSoftware();
+        assertTrue(predefinito.guastoTransitorio(new IOException("x")));
+        assertFalse(predefinito.guastoTransitorio(new java.security.ProviderException("x")));
+        assertFalse(predefinito.guastoTransitorio(new GeneralSecurityException("x")));
+    }
+
+    @Test
+    public void unaLetturaCheNonRiesceSiDiceInLogcatConLaSolaClasseSenzaCheIlMessaggioNeVadaFuori() throws Exception {
+        segreti.salva(id(1), esempio());
+        final java.util.List<String> righe;
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            SegretiCaricamenti passeggero = new SegretiCaricamenti(coda, cifrario, base -> {
+                FileCheSiRompeInLettura rotto = new FileCheSiRompeInLettura(base);
+                rotto.guasto = new IOException("/data/user/0/it.kidville.app/no_backup/caricamenti/segreti/privato");
+                return rotto;
+            });
+            assertSame(Esito.NON_LEGGIBILE_ORA, passeggero.leggi(id(1)).esito);
+            byte[] dati = Files.readAllBytes(file(id(1)).toPath());
+            dati[dati.length - 1] ^= 1;
+            Files.write(file(id(1)).toPath(), dati);
+            assertSame(Esito.ILLEGGIBILE, segreti.leggi(id(1)).esito);
+            righe = new java.util.ArrayList<>(logcat.righe);
+        }
+        assertEquals(2, righe.size());
+        assertTrue(righe.get(0), righe.get(0).startsWith("I KidvilleCaricamenti file dei segreti non letto (IOException): passeggero"));
+        assertTrue(righe.get(1), righe.get(1).startsWith("W KidvilleCaricamenti segreti non decifrabili (AEADBadTagException): definitivo"));
+        for (String riga : righe) assertFalse("niente percorso né messaggio d'eccezione: " + riga, riga.contains("/data/") || riga.contains("privato"));
+    }
 }

@@ -210,4 +210,52 @@ public class RinnovoFirmaTest {
             assertEquals(0, r.stato);
         }
     }
+
+    /* ────────────────────────────────────────────────────────────────────────────
+     * COMPITO A2b (secondari n. 78 e n. 84 della PR 3)
+     * ──────────────────────────────────────────────────────────────────────────── */
+
+    @Test
+    public void unaChiusuraDiUnFlussoCheFallisceNonCambiaLaRispostaMaSiDiceInLogcatSenzaDati() {
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            RinnovoFirma.chiudi(() -> {
+                throw new IOException("/data/user/0/it.kidville.app/privato: Input/output error");
+            });
+            assertEquals("una riga `info`, col tag del pacchetto, la sola classe e perché non conta",
+                    Arrays.asList("I KidvilleCaricamenti chiusura di un flusso del rinnovo non riuscita (IOException): ignorabile, la risposta è già stata letta"),
+                    new java.util.ArrayList<>(logcat.righe));
+            for (String riga : logcat.righe) assertFalse("niente percorso né messaggio d'eccezione: " + riga, riga.contains("/data/") || riga.contains("privato"));
+        }
+    }
+
+    @Test
+    public void unaChiusuraCheRiesceNonDiceNiente() {
+        try (RigheDiLogcat logcat = new RigheDiLogcat()) {
+            RinnovoFirma.chiudi(() -> {
+            });
+            assertTrue(logcat.righe.isEmpty());
+        }
+    }
+
+    @Test(timeout = 60_000)
+    public void unRinnovoCheRiesceNonScriveRigheDiLogcatPerLaChiusuraDelFlusso() throws Exception {
+        try (ServerHttpDiProva server = new ServerHttpDiProva(); RigheDiLogcat logcat = new RigheDiLogcat()) {
+            server.corpoRisposta = DA_CARICARE;
+            RispostaHttp risposta = new RinnovoFirma().rinnova(server.url(PERCORSO), TOKEN);
+            assertEquals(200, risposta.stato);
+            assertTrue("nessun guasto, nessuna riga: " + logcat.righe, logcat.righe.isEmpty());
+        }
+    }
+
+    @Test
+    public void ilCommentoDiRinnovoFirmaNonPromettePiuNessunCookieMaDiceLaVerita() throws Exception {
+        // Secondario n. 78: CapacitorCookies installa un gestore globale (`CookieHandler.setDefault`), quindi una richiesta nativa verso il
+        // dominio dell'app PUÒ portare i cookie della WebView. La promessa «nessun cookie» era falsa; il commento deve dire come stanno le cose.
+        java.io.File sorgente = new java.io.File(new java.io.File("").getAbsoluteFile(), "src/main/java/it/kidville/app/caricamenti/RinnovoFirma.java");
+        if (!sorgente.isFile()) sorgente = new java.io.File(new java.io.File("").getAbsoluteFile(), "app/src/main/java/it/kidville/app/caricamenti/RinnovoFirma.java");
+        String testo = new String(java.nio.file.Files.readAllBytes(sorgente.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        assertFalse("la promessa falsa non c'è più", testo.contains("NESSUN COOKIE"));
+        assertTrue("dice che il gestore globale di Capacitor può portare i cookie della WebView", testo.contains("CookieHandler.setDefault") && testo.contains("PUÒ portare i cookie"));
+        assertTrue("e che il rinnovo non li usa: autentica col token", testo.contains("AUTENTICA COL TOKEN, NON COI COOKIE"));
+    }
 }

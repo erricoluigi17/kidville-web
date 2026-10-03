@@ -13,7 +13,9 @@ import android.util.Log;
 
 import androidx.annotation.RequiresApi;
 import androidx.work.BackoffPolicy;
+import androidx.work.Constraints;
 import androidx.work.ExistingWorkPolicy;
+import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
 import androidx.work.WorkManager;
 
@@ -43,12 +45,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.DoubleSupplier;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -64,9 +68,12 @@ import java.util.regex.Pattern;
  *
  * ─── DUE MOTORI, UNO PER LIVELLO DI API (§6.2) ───────────────────────────────────────────────
  *  · API 34 e oltre: UIDT, un job «avviato dall'utente» di JobScheduler (`ServizioCaricamentiUidt`): rete qualunque, persistito, ID
- *    fisso. Si programma SOLO se l'esecutore non è già attivo: riprogrammare lo stesso ID ferma quello in corso. Se la
- *    programmazione lancia (l'app non è più visibile al momento di `accodaVideo`) la voce va `in-pausa` `UIDT_NON_PROGRAMMABILE`, e
- *    `onResume` la riprogramma.
+ *    fisso. Si programma SOLO se l'esecutore non è già attivo (riprogrammare lo stesso ID ferma quello in corso, ed è il ciclo attivo a
+ *    vedere da solo le voci nuove), e SEMPRE quando non lo è: che JobScheduler abbia un job con quell'ID «in attesa» o «in corso» non
+ *    vuol dire che qualcuno stia guardando la coda (§6.2; secondario n. 77). Un job in attesa, con un backoff alzato da fermate di
+ *    sistema, non si lascia lì alla riapertura dell'app; e un job che sta finendo (ciclo concluso, `jobFinished` non ancora arrivato)
+ *    non si lascia chiudere sopra una voce appena accodata. Se la programmazione lancia (l'app non è più visibile al momento di
+ *    `accodaVideo`) la voce va `in-pausa` `UIDT_NON_PROGRAMMABILE`, e `onResume` la riprogramma.
  *  · API 24-33: WorkManager con un servizio in primo piano `dataSync` (`LavoroCaricamenti`): lavoro unico `kidville-caricamenti`, nessun
  *    vincolo di rete (l'attesa la governa l'esecutore). Se il servizio non parte da background (Android 12-13) le voci vanno
  *    `in-pausa` `FGS_NON_AVVIABILE` con la notifica «tocca per riprendere»: la pausa che il titolare ha accettato.
@@ -131,8 +138,20 @@ public final class PianificatoreCaricamenti {
          * `subito` è vero quando l'insegnante ha appena riaperto l'app (`suPrimoPiano`): se c'è già un lavoro IN ATTESA — un ritentativo
          * con un backoff che può arrivare a ore — lo si SOSTITUISCE, invece di accodarci dietro. Non si chiama mai con un ciclo attivo
          * (`notificaLavoro` lo ha già intercettato), quindi non si ferma mai un trasferimento in corso.
+         *
+         * Per UIDT vale lo stesso, `subito` o no: l'esecutore non è attivo, quindi si programma (secondario n. 77).
          */
         boolean programma(long byteDaSpedire, boolean subito);
+
+        /**
+         * Accoda un lavoro SUCCESSIVO per quando una rete c'è (WorkManager, API 24-33): lo chiede il lavoro che ha aspettato la rete per dieci
+         * minuti senza vederla tornare (secondario n. 80). Il lavoro nuovo ha il vincolo di rete e nessun ritardo, così parte appena la
+         * rete torna, senza il backoff di WorkManager (fino a cinque ore). `true` se è accodato; `false` se questo sistema non lo sa fare
+         * (UIDT ha già il vincolo di rete nel job): chi chiama ripiega sul ritentativo del sistema. Può lanciare: è lo stesso.
+         */
+        default boolean programmaRipresaConRete() {
+            return false;
+        }
 
         /** Mostra «Invio in pausa: tocca per riprendere». */
         void mostraPausa(Testi testi);
@@ -210,12 +229,44 @@ public final class PianificatoreCaricamenti {
      * Il ritorno in primo piano (`MainActivity.onResume`, §6.5): toglie la notifica di pausa, fa ripartire subito le voci che
      * aspettavano (una voce `in-pausa` o `in-attesa` riprova adesso: l'app è aperta, il servizio in primo piano e il job UIDT si
      * possono avviare) e svuota il registro. Non lancia mai: un guasto del motore non deve far cadere l'Activity.
+     *
+     * RITORNA SUBITO e non fa nessun I/O sul thread che chiama (secondario n. 92): `onResume` gira sul thread principale, e il lavoro vero —
+     * la prima costruzione del motore (lettura di coda e registro, pulizia dei file), una scrittura con sincronizzazione per ogni voce in
+     * attesa o in pausa, la decifratura di un segreto in Debug — va su un thread a parte, uno solo e in coda: ritorni ravvicinati si
+     * eseguono uno dopo l'altro. Ciò che si vede non cambia, solo arriva qualche millisecondo dopo.
      */
     public static void riprendiInPrimoPiano(Context contesto) {
         try {
-            condiviso(contesto).suPrimoPiano();
-        } catch (RuntimeException guasto) {
-            Log.e(TAG, "ripresa in primo piano non riuscita (" + guasto.getClass().getSimpleName() + ")");
+            final Context applicazione = contesto.getApplicationContext();
+            riprendiInPrimoPiano(() -> condiviso(applicazione), ESECUTORE_PRIMO_PIANO);
+        } catch (RuntimeException nonAvviata) {
+            // «Non lancia mai»: nemmeno con un contesto che non c'è (prima il `catch` stava dentro `condiviso`, ora la costruzione è sul thread dedicato).
+            DiagnosticaLocale.errore("ripresa in primo piano non avviata (" + DiagnosticaLocale.classe(nonAvviata) + ")");
+        }
+    }
+
+    /** Il thread dei ritorni in primo piano: uno solo, in coda, e daemon (non tiene vivo il processo). */
+    private static final Executor ESECUTORE_PRIMO_PIANO = Executors.newSingleThreadExecutor(lavoro -> {
+        Thread filo = new Thread(lavoro, "kidville-primo-piano");
+        filo.setDaemon(true);
+        return filo;
+    });
+
+    /**
+     * Il cuore di {@link #riprendiInPrimoPiano(Context)} con le sue due dipendenze in vista: CHI dà il motore (la sua costruzione è il primo
+     * I/O) e DOVE gira il lavoro. Non lancia mai, e non tocca né il motore né il disco prima di passare la mano a `esecutore`.
+     */
+    static void riprendiInPrimoPiano(Supplier<PianificatoreCaricamenti> motore, Executor esecutore) {
+        try {
+            esecutore.execute(() -> {
+                try {
+                    motore.get().suPrimoPiano();
+                } catch (RuntimeException guasto) {
+                    DiagnosticaLocale.errore("ripresa in primo piano non riuscita (" + DiagnosticaLocale.classe(guasto) + ")");
+                }
+            });
+        } catch (RuntimeException nonAccettato) {
+            DiagnosticaLocale.errore("ripresa in primo piano non accodata (" + DiagnosticaLocale.classe(nonAccettato) + ")");
         }
     }
 
@@ -655,6 +706,38 @@ public final class PianificatoreCaricamenti {
     }
 
     /**
+     * Il lavoro di WorkManager (API 24-33) ha aspettato la rete per il suo tetto di dieci minuti senza vederla tornare, o un altro ciclo non
+     * ha mai finito di uscire: invece di `Result.retry()` — il cui backoff esponenziale arriva a cinque ore, con la rete tornata da un pezzo
+     * (secondario n. 80) — accoda un lavoro successivo col vincolo di rete e senza ritardo (vedi {@link #richiestaDiRipresaConRete}).
+     *
+     * @return vero se il lavoro è stato accodato; falso se non si è potuto (WorkManager non pronto): il chiamante ripiega sul ritentativo
+     *         del sistema, e il guasto si dice
+     */
+    boolean programmaRipresaConRete() {
+        try {
+            return sistema.programmaRipresaConRete();
+        } catch (RuntimeException nonAccodata) {
+            sistema.guasto("programma-ripresa-con-rete", nonAccodata);
+            return false;
+        }
+    }
+
+    /**
+     * Il lavoro di ripresa dopo una rete mancata: lo stesso lavoro di sempre ({@link LavoroCaricamenti}) col VINCOLO DI RETE e SENZA
+     * ritardo iniziale. Parte quando JobScheduler vede una rete, non dopo un backoff che cresce; il backoff esponenziale da 30 s resta
+     * solo per i ritentativi che il lavoro stesso chiede (motore non disponibile). Il lavoro NON ha il vincolo la prima volta (§6.2:
+     * l'attesa la governa il worker, che tiene il servizio in primo piano e la notifica «in attesa di rete»): qui c'è, perché fra un
+     * lavoro e l'altro non c'è nessun servizio in primo piano da mostrare, e aspettare la rete senza consumare niente è proprio ciò che
+     * un vincolo sa fare.
+     */
+    static OneTimeWorkRequest richiestaDiRipresaConRete() {
+        return new OneTimeWorkRequest.Builder(LavoroCaricamenti.class)
+                .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30L, TimeUnit.SECONDS)
+                .build();
+    }
+
+    /**
      * Tutte le voci vive passano `in-pausa` con `codice` (`FGS_NON_AVVIABILE` o `UIDT_NON_PROGRAMMABILE`), si scrive
      * `video-nativo-pausa` per ognuna e si mostra la notifica «Invio in pausa: tocca per riprendere». Una voce `in-attesa` passa prima
      * da `in-invio` (§4.4 non ha la freccia diretta); una già `in-pausa` non si ripete.
@@ -971,14 +1054,22 @@ public final class PianificatoreCaricamenti {
         /**
          * Il job UIDT (§6.2): avviato dall'utente, rete qualunque (anche cellulare e a consumo: «qualunque rete»), persistito (sopravvive al
          * riavvio: `RECEIVE_BOOT_COMPLETED` arriva dal manifest di WorkManager), con il backoff esponenziale di sistema per i casi in cui
-         * il guscio si ferma a metà. Se c'è già un job con quell'ID — in attesa o in corso — NON si riprogramma: riprogrammare lo stesso ID
-         * ferma quello in esecuzione, e il ciclo in corso vedrà da solo le voci nuove (`notificaLavoro`).
+         * il guscio si ferma a metà.
+         *
+         * SI PROGRAMMA SEMPRE, e non si guarda se JobScheduler ha già un job con quell'ID (secondario n. 77). Il chiamante (`avviaIlGuscio`)
+         * ha già scartato il caso «ciclo attivo» (`notificaLavoro`): riprogrammare lo stesso ID ferma il job in esecuzione, ed è per questo
+         * che il ciclo attivo si avverte e non si riprogramma. Quando il ciclo NON è attivo, un job «già presente» non dice niente di buono:
+         *  · se è IN ATTESA, magari con un backoff alzato da fermate di sistema, alla riapertura dell'app deve partire ADESSO, e riprogrammarlo
+         *    lo sostituisce con uno senza ritardo;
+         *  · se è IN CORSO, sta partendo o sta FINENDO (ciclo concluso, `jobFinished` non ancora arrivato): nel secondo caso una voce appena
+         *    accodata verrebbe chiusa fuori dal job e non la guarderebbe nessuno; riprogrammare lo sostituisce con un job che la vede.
+         * Il `jobFinished` del vecchio, se arriva dopo, non conta: la chiusura porta il callback dell'esecuzione vecchia, e JobScheduler ignora
+         * quella che non è dell'esecuzione corrente (AOSP, `JobServiceContext.verifyCallerLocked`). Da provare sull'emulatore (C1).
          */
         @RequiresApi(34)
         private boolean programmaUidt(long byteDaSpedire) {
             JobScheduler pianificatore = applicazione.getSystemService(JobScheduler.class);
             if (pianificatore == null) return false;
-            if (pianificatore.getPendingJob(ID_JOB_UIDT) != null) return true;
             ComponentName servizio = new ComponentName(applicazione, ServizioCaricamentiUidt.class);
             JobInfo job = new JobInfo.Builder(ID_JOB_UIDT, servizio)
                     .setUserInitiated(true)
@@ -1003,6 +1094,17 @@ public final class PianificatoreCaricamenti {
                     .build();
             WorkManager.getInstance(applicazione).enqueueUniqueWork(NOME_LAVORO,
                     subito ? ExistingWorkPolicy.REPLACE : ExistingWorkPolicy.APPEND_OR_REPLACE, richiesta);
+            return true;
+        }
+
+        /**
+         * Il lavoro che prosegue dopo una rete mancata (secondario n. 80): `APPEND_OR_REPLACE`, perché chi lo chiede è il lavoro in corso
+         * e `REPLACE` lo cancellerebbe da sé; il successivo parte quando questo finisce con successo e una rete c'è.
+         */
+        @Override
+        public boolean programmaRipresaConRete() {
+            WorkManager.getInstance(applicazione).enqueueUniqueWork(NOME_LAVORO, ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    richiestaDiRipresaConRete());
             return true;
         }
 

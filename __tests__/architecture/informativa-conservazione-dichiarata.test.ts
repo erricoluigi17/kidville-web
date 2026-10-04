@@ -337,15 +337,20 @@ describe('lock · il motivo dell’assenza scade e si dimentica', () => {
 // proprio perché un lock possa leggerla).
 //
 // ⚠️ PERIMETRO DICHIARATO: le prove qui sotto guardano i due job di retention di
-// questo dominio. In `supabase/migrations/` ce ne sono altri undici che scrivono
-// un `fingerprint` `cron:*` con la stessa forma piatta (iscrizioni, audit-docente,
-// bonifica-pii): è un debito misurato, non un'omissione — e nessuno di quelli è
-// citato dall'informativa come automa.
+// questo dominio, più `fascicolo-audit-ip-retention` (gli IP del registro degli
+// accessi, un anno: decisione del titolare del 2026-10-04), che l'informativa non
+// cita — gli IP sono del personale — ma che nasce di sola SQL e quindi deve battere
+// nella forma che il sorvegliante sa leggere; il resto del suo contratto sta in
+// `fascicolo-audit-ip-retention.test.ts`. In `supabase/migrations/` ce ne sono
+// altri undici che scrivono un `fingerprint` `cron:*` con la stessa forma piatta
+// (iscrizioni, audit-docente, bonifica-pii): è un debito misurato, non
+// un'omissione — e nessuno di quelli è citato dall'informativa come automa.
 // =============================================================================
 
 const BATTITI_DA_LEGGERE: { job: string; funzione: string }[] = [
   { job: 'presenze-giustificazioni-retention', funzione: 'presenze_giustificazioni_retention_tick' },
   { job: 'notifiche-retention', funzione: 'notifiche_retention_tick' },
+  { job: 'fascicolo-audit-ip-retention', funzione: 'fascicolo_audit_ip_retention_tick' },
 ]
 
 /** L'ULTIMA migrazione che (ri)definisce una funzione: è quella che vale. */

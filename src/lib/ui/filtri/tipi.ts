@@ -85,6 +85,15 @@ interface Comune {
   primario?: boolean;
   /** Con zero opzioni il controllo non si disegna (elenco derivato dai dati). */
   nascondiSeVuoto?: boolean;
+  /**
+   * Il valore può contenere un DATO PERSONALE (un nome digitato nella ricerca): non
+   * si scrive mai nell'indirizzo e non si legge da lì. Il service worker salva le
+   * pagine usando l'indirizzo come chiave, e i log di accesso registrano la query:
+   * un nome di bambino finirebbe in tutti e due. Il parametro resta comunque
+   * GOVERNATO (`parametriGovernati`), quindi se un indirizzo lo porta la barra lo
+   * cancella.
+   */
+  maiNellUrl?: boolean;
 }
 
 /** I testi della riga da cui la ricerca pesca. Vuoti e assenti sono ammessi. */

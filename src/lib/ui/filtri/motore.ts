@@ -113,7 +113,7 @@ export function valoriIniziali<R>(
   const valori: ValoriFiltri = {};
   for (const campo of campi) {
     const neutro = valoreNeutro(campo);
-    if (!daUrl) {
+    if (!daUrl || campo.maiNellUrl) {
       valori[campo.chiave] = neutro;
       continue;
     }
@@ -254,7 +254,7 @@ function scriviParametro<R>(p: URLSearchParams, campo: CampoFiltro<R>, valori: V
 export function versoUrl<R>(campi: readonly CampoFiltro<R>[], valori: ValoriFiltri): URLSearchParams {
   const p = new URLSearchParams();
   for (const campo of campi) {
-    if (!campoAttivo(campo, valori)) continue;
+    if (campo.maiNellUrl || !campoAttivo(campo, valori)) continue;
     scriviParametro(p, campo, valori);
   }
   return p;

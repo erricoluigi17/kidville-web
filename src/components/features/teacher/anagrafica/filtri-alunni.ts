@@ -1,5 +1,6 @@
 import { opzioniDerivate } from '@/lib/ui/filtri/motore'
 import type { CampoFiltro, Traduttore } from '@/lib/ui/filtri/tipi'
+import { PARAMETRO_RICERCA_ALUNNI } from '@/lib/anagrafiche/docente/ritorno-elenco'
 import type { Grado, SezioneElenco, VoceElencoAlunno } from '@/lib/anagrafiche/docente/tipi'
 
 /**
@@ -27,6 +28,7 @@ export interface ContestoFiltriAlunni {
 export function campiAlunni(t: Traduttore, contesto: ContestoFiltriAlunni): CampoFiltro<VoceElencoAlunno>[] {
   const { alunni } = contesto
   const nomeSezione = new Map(contesto.sezioni.map((s) => [s.id, s.nome]))
+  const ORDINE_GRADI: readonly Grado[] = ['nido', 'infanzia', 'primaria']
   const etichettaGrado: Record<Grado, string> = {
     nido: t('anagraficaGradoNido'),
     infanzia: t('anagraficaGradoInfanzia'),
@@ -34,14 +36,22 @@ export function campiAlunni(t: Traduttore, contesto: ContestoFiltriAlunni): Camp
   }
   const etichettaSesso: Record<'M' | 'F', string> = { M: t('anagraficaSessoM'), F: t('anagraficaSessoF') }
 
-  const sezioni = opzioniDerivate(alunni, (a) => a.sectionId, { etichettaDi: (id) => nomeSezione.get(id) ?? id })
-  const gradi = opzioniDerivate(alunni, (a) => a.grado, { etichettaDi: (g) => etichettaGrado[g as Grado] ?? g })
+  // Sezioni: solo quelle note (mai un uuid come etichetta), nell'ordine dei gruppi dell'elenco.
+  const sezioniPerId = new Map(
+    opzioniDerivate(alunni, (a) => a.sectionId, { etichettaDi: (id) => nomeSezione.get(id) ?? id }).map((o) => [o.valore, o]),
+  )
+  const sezioni = contesto.sezioni.flatMap((s) => sezioniPerId.get(s.id) ?? [])
+  // Gradi: ordine fisso, non alfabetico (l'alfabeto cambia con la lingua).
+  const gradiPerValore = new Map(
+    opzioniDerivate(alunni, (a) => a.grado, { etichettaDi: (g) => etichettaGrado[g as Grado] ?? g }).map((o) => [o.valore, o]),
+  )
+  const gradi = ORDINE_GRADI.flatMap((g) => gradiPerValore.get(g) ?? [])
   const soloSeScelta = <T,>(opzioni: T[]): T[] => (opzioni.length > 1 ? opzioni : [])
 
   return [
     {
       tipo: 'ricerca',
-      chiave: 'q',
+      chiave: PARAMETRO_RICERCA_ALUNNI,
       etichetta: t('anagraficaFiltroCerca'),
       segnaposto: t('anagraficaFiltroCercaSegnaposto'),
       dove: 'client',

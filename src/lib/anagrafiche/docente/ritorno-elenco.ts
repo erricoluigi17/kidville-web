@@ -14,7 +14,13 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
  */
 
 const CHIAVE = 'kv-teacher-alunni-ritorno'
-const LUNGHEZZA_MASSIMA = 600
+const LUNGHEZZA_MASSIMA = 2000
+
+/**
+ * Il parametro della ricerca per nome: è il campo `maiNellUrl` dell'elenco
+ * (`filtri-alunni.ts`), e qui si toglie dall'appunto. Un nome solo, in un posto solo.
+ */
+export const PARAMETRO_RICERCA_ALUNNI = 'q'
 
 let storageGiaSegnalato = false
 
@@ -31,11 +37,13 @@ function segnalaStorage(operazione: 'lettura' | 'scrittura', e: unknown): void {
 
 /** Una query d'elenco ripulita: niente ricerca per nome, niente di malformato. */
 export function ripulisciRitorno(search: string): string {
-  if (typeof search !== 'string' || search.length > LUNGHEZZA_MASSIMA) return ''
-  const parametri = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
-  parametri.delete('q')
+  if (typeof search !== 'string') return ''
+  const parametri = new URLSearchParams(search)
+  parametri.delete(PARAMETRO_RICERCA_ALUNNI)
   const pulita = parametri.toString()
-  return pulita === '' ? '' : `?${pulita}`
+  // la lunghezza si misura DOPO aver tolto la ricerca: un nome lungo non fa perdere i filtri
+  if (pulita === '' || pulita.length > LUNGHEZZA_MASSIMA) return ''
+  return `?${pulita}`
 }
 
 export function salvaRitornoElenco(search: string): void {

@@ -330,5 +330,7 @@
   "anagraficaErroreNonTrovata": "Scheda non trovata.",
   "anagraficaErroreLettura": "Non è stato possibile caricare la scheda.",
   "anagraficaErroreOffline": "Serve la connessione per aprire la scheda.",
-  "anagraficaRiprova": "Riprova"
+  "anagraficaRiprova": "Riprova",
+  "anagraficaErroreSessione": "La sessione è scaduta: accedi di nuovo per vedere la scheda.",
+  "anagraficaAccedi": "Accedi"
 }

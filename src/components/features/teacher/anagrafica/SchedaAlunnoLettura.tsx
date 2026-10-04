@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, type MouseEvent } from 'react'
+import { useEffect, useId, useRef, useState, type MouseEvent } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useTranslations } from 'next-intl'
@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/Badge'
 import { allergeneEmoji, useAllergeneLabel } from '@/lib/mensa/allergeni'
 import { isoToIt } from '@/lib/format/data'
 import { logClient } from '@/lib/logging/client'
+import { zUuid } from '@/lib/validation/common'
 import { leggiRitornoElenco } from '@/lib/anagrafiche/docente/ritorno-elenco'
 import type { SchedaAlunnoDocente } from '@/lib/anagrafiche/docente/tipi'
 import { CampoLettura } from './CampoLettura'
@@ -28,97 +29,130 @@ import { SchedaGenitore } from './SchedaGenitore'
 type Esito =
   | { tipo: 'caricamento' }
   | { tipo: 'pronta'; scheda: SchedaAlunnoDocente }
-  | { tipo: 'negata' | 'nonTrovata' | 'errore' | 'offline' }
+  | { tipo: 'negata' | 'nonTrovata' | 'sessione' | 'errore' | 'offline' }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const ROTTA = '/teacher/alunni/[id]'
+
+/** Legge la scheda e la traduce in un esito. Nessuno stato React qui dentro: è una funzione del modulo. */
+async function leggiScheda(alunnoId: string): Promise<Esito> {
+  // Il fallimento della rete è un VALORE (`null`), non un'eccezione da rincorrere.
+  const res = await fetch(`/api/teacher/alunni/${encodeURIComponent(alunnoId)}`, { cache: 'no-store' }).catch(() => null)
+  if (!res) {
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false
+    if (!offline) logClient({ livello: 'error', evento: 'fetch', messaggio: 'scheda anagrafica non raggiunta', route: ROTTA })
+    return { tipo: offline ? 'offline' : 'errore' }
+  }
+  // 401, 403 e 404 sono risposte di merito: il server le ha già registrate.
+  if (res.status === 401) return { tipo: 'sessione' }
+  if (res.status === 403) return { tipo: 'negata' }
+  if (res.status === 404) return { tipo: 'nonTrovata' }
+  const corpo = res.ok ? ((await res.json().catch(() => null)) as SchedaAlunnoDocente | null) : null
+  if (!corpo || typeof corpo.id !== 'string') {
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'scheda anagrafica non letta', route: ROTTA, stato: res.status })
+    return { tipo: 'errore' }
+  }
+  return { tipo: 'pronta', scheda: corpo }
+}
 
 export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
   const t = useTranslations('teacherServizi')
   const router = useRouter()
-  const etichettaAllergene = useAllergeneLabel()
-  const idValido = UUID.test(alunnoId)
-  const [esito, setEsito] = useState<Esito>({ tipo: 'caricamento' })
+  // Lo stesso criterio della route (`zUuid`): un id che il server rifiuterebbe non parte.
+  const idValido = zUuid.safeParse(alunnoId).success
+  const annunciRef = useRef<HTMLDivElement>(null)
 
-  const carica = useCallback(async () => {
-    // Il fallimento della rete è un VALORE, non un `catch` che scrive lo stato:
-    // `react-hooks/set-state-in-effect` vuole ogni `setState` dopo un `await`.
-    // ⚠️ E vuole anche il `try/finally` attorno (misurato il 2026-10-04): senza, la
-    // regola è rossa perfino con un solo `setEsito` dopo l'`await`. È la forma che
-    // l'analisi riconosce, la stessa di `parent/profilo` (`controllaBio`).
-    try {
-      const res = await fetch(`/api/teacher/alunni/${encodeURIComponent(alunnoId)}`, { cache: 'no-store' }).catch(() => null)
-      if (!res) {
-        const offline = typeof navigator !== 'undefined' && navigator.onLine === false
-        setEsito({ tipo: offline ? 'offline' : 'errore' })
-        if (!offline) logClient({ livello: 'error', evento: 'fetch', messaggio: 'scheda anagrafica non raggiunta', route: ROTTA })
-        return
-      }
-      // 403 e 404 sono risposte di merito: il server le ha già registrate.
-      if (res.status === 403) return setEsito({ tipo: 'negata' })
-      if (res.status === 404) return setEsito({ tipo: 'nonTrovata' })
-      const corpo = res.ok ? ((await res.json().catch(() => null)) as SchedaAlunnoDocente | null) : null
-      if (!corpo || typeof corpo.id !== 'string') {
-        setEsito({ tipo: 'errore' })
-        logClient({ livello: 'warn', evento: 'fetch', messaggio: 'scheda anagrafica non letta', route: ROTTA, stato: res.status })
-        return
-      }
-      setEsito({ tipo: 'pronta', scheda: corpo })
-    } finally {
-      // nessuna azione: il blocco esiste solo perché la regola riconosca il confine async
-    }
-  }, [alunnoId])
+  // Lo stato porta con sé l'id a cui si riferisce: se `alunnoId` cambia, la scheda
+  // vecchia non resta a schermo (si torna a «caricamento» per derivazione).
+  const [letto, setLetto] = useState<{ id: string; esito: Esito } | null>(null)
+  const [tentativo, setTentativo] = useState(0)
 
   useEffect(() => {
-    if (idValido) void carica()
-  }, [carica, idValido])
+    if (!idValido) return
+    let vivo = true
+    // Il `setState` sta nel `.then`, mai nel corpo dell'effetto: è la forma che
+    // `react-hooks/set-state-in-effect` accetta (come in `parent/primaria/valutazioni`).
+    void leggiScheda(alunnoId).then((esito) => {
+      if (vivo) setLetto({ id: alunnoId, esito })
+    })
+    return () => {
+      vivo = false
+    }
+  }, [alunnoId, idValido, tentativo])
 
   const riprova = () => {
-    setEsito({ tipo: 'caricamento' })
-    void carica()
+    setLetto(null)
+    setTentativo((n) => n + 1)
+    // Il pulsante sta per sparire: il fuoco va sulla regione che annuncerà l'esito,
+    // non su `<body>` (WCAG 2.4.3).
+    annunciRef.current?.focus()
   }
 
   // In avanti verso l'elenco, ma con i filtri che c'erano (il tasto indietro del
-  // telefono li ritrova da solo; questo pulsante no, senza l'appunto).
+  // telefono li ritrova da solo; questo pulsante no, senza l'appunto). Un clic con un
+  // modificatore o col tasto centrale resta al browser: apre l'elenco in un'altra scheda.
   const tornaAllElenco = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
     e.preventDefault()
     router.push(`/teacher/alunni${leggiRitornoElenco()}`)
   }
 
-  const indietro = (
-    <Link
-      href="/teacher/alunni"
-      onClick={tornaAllElenco}
-      className="inline-flex min-h-[44px] items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline"
-    >
-      <ArrowLeft size={16} aria-hidden="true" />
-      {t('anagraficaIndietro')}
-    </Link>
-  )
+  const stato: Esito = !idValido
+    ? { tipo: 'nonTrovata' }
+    : letto?.id === alunnoId
+      ? letto.esito
+      : { tipo: 'caricamento' }
+  const scheda = stato.tipo === 'pronta' ? stato.scheda : null
 
-  const stato: Esito = idValido ? esito : { tipo: 'nonTrovata' }
-
-  if (stato.tipo !== 'pronta') {
-    const messaggio =
-      stato.tipo === 'negata'
-        ? t('anagraficaErroreNegato')
-        : stato.tipo === 'nonTrovata'
-          ? t('anagraficaErroreNonTrovata')
+  const messaggio =
+    stato.tipo === 'negata'
+      ? t('anagraficaErroreNegato')
+      : stato.tipo === 'nonTrovata'
+        ? t('anagraficaErroreNonTrovata')
+        : stato.tipo === 'sessione'
+          ? t('anagraficaErroreSessione')
           : stato.tipo === 'offline'
             ? t('anagraficaErroreOffline')
             : stato.tipo === 'errore'
               ? t('anagraficaErroreLettura')
               : null
-    return (
-      <div className="space-y-4">
-        {indietro}
+
+  return (
+    <div data-testid={scheda ? 'scheda-alunno' : undefined} className="space-y-4">
+      <Link
+        href="/teacher/alunni"
+        onClick={tornaAllElenco}
+        className="inline-flex min-h-[44px] items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline"
+      >
+        <ArrowLeft size={16} aria-hidden="true" />
+        {t('anagraficaIndietro')}
+      </Link>
+
+      {scheda ? (
+        <PageHeaderCard
+          eyebrow={t('anagraficaTitolo')}
+          icon={IdCard}
+          title={`${scheda.cognome} ${scheda.nome}`}
+          subtitle={scheda.sezione?.nome}
+          badge={<Badge tone="neutral">{t('anagraficaSolaLettura')}</Badge>}
+          compatta
+        />
+      ) : (
         <PageHeaderCard eyebrow={t('anagraficaTitolo')} icon={IdCard} title={t('anagraficaSchedaTitolo')} compatta />
+      )}
+
+      {/* Sempre montata, così caricamento ed esiti vengono annunciati quando cambiano. */}
+      <div
+        ref={annunciRef}
+        tabIndex={-1}
+        aria-live="polite"
+        className="rounded-card outline-none empty:hidden focus-visible:ring-2 focus-visible:ring-kidville-green"
+      >
         {stato.tipo === 'caricamento' ? (
-          <div role="status" className="flex items-center justify-center gap-3 py-12">
+          <div className="flex items-center justify-center gap-3 py-12">
             <span aria-hidden="true" className="h-5 w-5 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" />
             <p className="font-maven text-sm text-kidville-sub">{t('anagraficaCaricamento')}</p>
           </div>
-        ) : (
+        ) : stato.tipo !== 'pronta' ? (
           <div data-testid="scheda-esito" data-esito={stato.tipo} className="flex flex-col items-center gap-3 py-12 text-center">
             <TriangleAlert size={34} aria-hidden="true" className="text-kidville-error-strong" />
             <p className="max-w-md font-maven text-sm text-kidville-ink">{messaggio}</p>
@@ -131,13 +165,29 @@ export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
                 {t('anagraficaRiprova')}
               </button>
             )}
+            {stato.tipo === 'sessione' && (
+              // Navigazione piena e non `Link`: il login riparte da zero, senza lo stato della sessione scaduta.
+              <a
+                href="/auth/login"
+                className="inline-flex min-h-[44px] items-center rounded-pill bg-kidville-green px-4 font-maven text-sm font-semibold text-white"
+              >
+                {t('anagraficaAccedi')}
+              </a>
+            )}
           </div>
-        )}
+        ) : null}
       </div>
-    )
-  }
 
-  const s = stato.scheda
+      {scheda && <CorpoScheda s={scheda} />}
+    </div>
+  )
+}
+
+/** I riquadri della scheda pronta. */
+function CorpoScheda({ s }: { s: SchedaAlunnoDocente }) {
+  const t = useTranslations('teacherServizi')
+  const etichettaAllergene = useAllergeneLabel()
+  const idTitoloAllergie = useId()
   const nonIndicato = t('anagraficaNonIndicato')
   const siNo = (v: boolean | null) => (v === null ? null : v ? t('anagraficaSi') : t('anagraficaNo'))
   const data = (v: string | null) => (v ? isoToIt(v) : null)
@@ -154,8 +204,9 @@ export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
         : s.sezione?.grado === 'primaria'
           ? t('anagraficaGradoPrimaria')
           : null
+  // `role="list"`: con `list-style: none` Safari toglie all'`ul` la semantica di elenco.
   const chipAllergie = (
-    <ul className="flex flex-wrap gap-1.5">
+    <ul role="list" className="flex flex-wrap gap-1.5">
       {s.salute.allergeni.map((k) => (
         <li key={k} className="inline-flex items-center gap-1 rounded-pill bg-kidville-error-soft px-2.5 py-1 font-barlow text-xs font-extrabold uppercase tracking-wide text-kidville-ink">
           <span aria-hidden="true">{allergeneEmoji(k)}</span> {etichettaAllergene(k)}
@@ -170,20 +221,10 @@ export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
   )
 
   return (
-    <div data-testid="scheda-alunno" className="space-y-4">
-      {indietro}
-      <PageHeaderCard
-        eyebrow={t('anagraficaTitolo')}
-        icon={IdCard}
-        title={`${s.cognome} ${s.nome}`}
-        subtitle={s.sezione?.nome}
-        badge={<Badge tone="neutral">{t('anagraficaSolaLettura')}</Badge>}
-        compatta
-      />
-
+    <>
       {s.salute.haAllergie && (
-        <div role="note" aria-label={t('anagraficaAvvisoAllergie')} className="rounded-card border-2 border-kidville-error bg-kidville-error-soft p-4">
-          <p className="mb-2 flex items-center gap-2 font-barlow text-sm font-extrabold uppercase text-kidville-ink">
+        <div role="note" aria-labelledby={idTitoloAllergie} className="rounded-card border-2 border-kidville-error bg-kidville-error-soft p-4">
+          <p id={idTitoloAllergie} className="mb-2 flex items-center gap-2 font-barlow text-sm font-extrabold uppercase text-kidville-ink">
             <TriangleAlert size={18} aria-hidden="true" className="text-kidville-error-strong" />
             {t('anagraficaAvvisoAllergie')}
           </p>
@@ -250,24 +291,23 @@ export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
         )}
       </RiquadroScheda>
 
+      {/* Al ritiro si controlla il NOME: è lui in evidenza, la parentela sotto in piccolo. */}
       <RiquadroScheda titolo={t('anagraficaRiquadroDelegati')} icona={UserCheck}>
         {s.delegati.length === 0 ? (
           <p className="py-2 font-maven text-sm italic text-kidville-sub">{t('anagraficaNessunDelegato')}</p>
         ) : (
-          <dl className="divide-y divide-kidville-line">
+          <ul role="list" className="divide-y divide-kidville-line">
             {s.delegati.map((d, i) => (
-              <CampoLettura
-                key={`${i}-${d.cognome}-${d.nome}`}
-                etichetta={`${d.cognome} ${d.nome}`}
-                valore={d.parentela}
-                nonIndicato={nonIndicato}
-              />
+              <li key={`${i}-${d.cognome}-${d.nome}`} className="py-2.5">
+                <p className="font-maven text-sm font-semibold text-kidville-ink">{`${d.cognome} ${d.nome}`}</p>
+                {d.parentela && <p className="font-maven text-xs text-kidville-sub">{d.parentela}</p>}
+              </li>
             ))}
-          </dl>
+          </ul>
         )}
       </RiquadroScheda>
 
       <p className="pb-2 text-center font-maven text-xs text-kidville-sub">{t('anagraficaCorrezione')}</p>
-    </div>
+    </>
   )
 }

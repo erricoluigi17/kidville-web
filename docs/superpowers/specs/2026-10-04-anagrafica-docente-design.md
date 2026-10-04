@@ -65,8 +65,9 @@ l'errore di lettura (→ 500) dall'assenza di assegnazioni (→ elenco vuoto / 4
 1. `requireDocente` → `sediAnagrafica` (nessuna sede: admin → 500, altri → 403 `ANAGRAFICA_SENZA_SEDE`) → `resolveScuoleAttive(request, supabase, user, sedi.plessi)` (il selettore di sede, senza rileggere `utenti_scuole`) → `sezioniAnagraficaVisibili`.
 2. Errore → 500. `sezioni: []` → `{ sezioni: [], alunni: [] }` senza interrogare `alunni`.
 3. Query su `alunni` con, nella **stessa** query: filtro di sede (`.in('scuola_id', plessi)`),
-   `.eq('stato', STATO_ISCRITTO)` incondizionato (lock `elenchi-operativi-solo-iscritti`; esclude
-   già gli archiviati, che l'archiviazione mette in `ritirato`), `.is('anonimizzato_il', null)`, e
+   `.in('stato', [...STATI_CHE_FREQUENTANO])` incondizionato (iscritti e sospesi; lock
+   `elenchi-operativi-solo-iscritti`; esclude già gli archiviati, che l'archiviazione mette in
+   `ritirato`), `.is('anonimizzato_il', null)`, e
    per l'educator `.in('section_id', sezioni)`.
    - Le letture anagrafiche (elenco e scheda) passano da `selectResiliente`
      (`src/lib/supabase/select-resiliente.ts`, livello `warn`). Il database E2E della CI non riceve
@@ -100,7 +101,7 @@ Ordine **vincolante**, nessun dato anagrafico letto prima che tutti i controlli 
 | Ruolo non ammesso (es. genitore) | 403 (da `requireDocente`) |
 | `id` non uuid | 400 (`zod`), senza toccare il database |
 | Lettura minima `id, section_id, scuola_id, stato, anonimizzato_il` (tutte del baseline) | errore → 500 |
-| Inesistente, non `iscritto`, archiviato o anonimizzato | 404 |
+| Inesistente, stato fuori da `STATI_CHE_FREQUENTANO` (ritirato, stato mai deciso, vuoto) o anonimizzato | 404 |
 | Nessuna sede per l'utente (`scuoleDiUtente` vuoto) | admin → 500 (per lui il vuoto nasce da una lettura fallita di `utenti_scuole`), altri → 403 `ANAGRAFICA_SENZA_SEDE` |
 | Sede fuori da `scuoleDiUtente` | 403 `ANAGRAFICA_FUORI_SEDE` + log `warn` (solo uuid) |
 | `sezioniAnagraficaVisibili` in errore | 500 |
@@ -134,7 +135,7 @@ di un bambino perché il registro ha avuto un guasto sarebbe peggio del registro
 `document_number`, nascita, residenza, `consensi_gdpr`, `auth_user_id`; dei delegati
 `document_number`, `document_url`.
 
-**Database:** nessuna migrazione, nessun cambio di RLS.
+**Database:** nessun cambio di schema né di RLS per la consultazione. Una sola migrazione, per la conservazione degli IP del registro (vedi «Aggiunte del 2026-10-04»).
 
 ### Client
 
@@ -241,11 +242,11 @@ margini nativi (lock `fascia-safe-area-nativa`).
     `alunni` una sola lettura (quella minima del controllo), nessuna su `student_parents` e
     `delegates`, nessuna riga di audit, e il codice fiscale del bambino non compare nella risposta;
   - 403 per un'altra sede e per il genitore, 401 anonimo, 400 `id` non valido;
-  - 404 per inesistente, non iscritto, archiviato, anonimizzato;
+  - 200 anche per un bambino `sospeso`; 404 per inesistente, ritirato, stato mai deciso o vuoto, anonimizzato;
   - 500 con log su guasto di ciascuna lettura;
   - audit scritto **solo** sul 200;
   - il modulo esporta **solo** `GET`; `Cache-Control: no-store`.
-- Elenco: solo iscritti, solo sezioni visibili, filtro di sede, educator senza sezioni → vuoto senza
+- Elenco: solo chi frequenta (iscritti e sospesi), solo sezioni visibili, filtro di sede, educator senza sezioni → vuoto senza
   interrogare `alunni`, nessun testo libero nella risposta, 500 su guasto.
 
 **Componenti** (Testing Library)
@@ -289,7 +290,8 @@ auto-merge) → deploy → verifica in produzione con sole `SELECT` (righe di au
 
 1. **I bambini `sospeso` sono visibili alle insegnanti** (risposta: «sì»). Elenco e scheda leggono
    gli stati del lato «ancora iscritto» di `LATO_DEL_CONFINE` (`src/lib/alunni/stato.ts`: oggi
-   `iscritto` e `sospeso`), con la costante già derivata da lì, in `.in('stato', …)`
+   `iscritto` e `sospeso`), con la costante NUOVA `STATI_CHE_FREQUENTANO`, derivata da lì come le
+   altre (elenco chiuso: uno stato mai deciso o vuoto resta fuori), in `.in('stato', …)`
    incondizionato. Nessuna etichetta «sospeso» a schermo: lo stato della pratica resta della
    segreteria. La colonna booleana `alunni.sospeso` (morosità) resta esclusa come ogni dato
    economico.
@@ -297,7 +299,9 @@ auto-merge) → deploy → verifica in produzione con sole `SELECT` (righe di au
    con `public.fascicolo_audit_ip_retention_tick()` (`v_mesi constant int := 12`): ogni notte azzera
    `ip` e `user_agent` delle righe di `fascicolo_accessi_audit` più vecchie di 12 mesi, lascia il
    resto della riga, scrive un battito in `app_log`; pianificata con `cron.schedule` (job
-   `fascicolo-audit-ip-retention`), sorvegliata da `/api/health` (26 h) e da un lock sul modello di
+   `fascicolo-audit-ip-retention`, `29 4 * * *`), sorvegliata da `/api/health` (26 h) DOPO il primo
+   battito in produzione — prima il lock `cron-sorvegliato-e-applicato` lo vieta, quindi sta in
+   `JOB_CRON_NON_SORVEGLIATI` — e da un lock sul modello di
    quello dei motivi d'assenza. Vale per tutto il registro. L'informativa per le famiglie NON
    cambia (decisione del titolare: gli IP sono del personale).
 

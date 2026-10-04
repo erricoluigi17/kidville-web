@@ -1,6 +1,6 @@
 ## 🪪 Changelog — Le insegnanti consultano l'anagrafica dei propri alunni, in sola lettura — 2026-10-04 (branch `feat/anagrafica-docente`)
 
-**Stato.** 🟡 Sul branch, gate da eseguire prima della PR (vedi in fondo). **Nessuna migrazione, nessun cambio di RLS.**
+**Stato.** 🟡 In PR ([#184](https://github.com/erricoluigi17/kidville-web/pull/184)). **Una migrazione**, `20261004215133_fascicolo_audit_ip_retention` (conservazione degli IP del registro, vedi sotto), che l'integrazione Supabase **applica in produzione al merge**. Nessun cambio di RLS.
 
 **La richiesta (04/10).** «Le insegnanti devono poter vedere le anagrafiche dei propri alunni, non modificarle, solo visionarle.» Fino a oggi un docente riceveva a pezzi, in route diverse, solo nome, allergie, note mediche, email dei genitori e delegati: una scheda per lui non esisteva.
 
@@ -9,6 +9,8 @@
 2. **Alla primaria la vedono tutti i docenti della classe**: assegnazione diretta (`utenti_sezioni`) **e** per materia (`utenti_sezioni_materie`), la stessa regola del fascicolo.
 3. **Nuova voce «Alunni»** nel menu docente (gruppo «In classe»), poi elenco, poi scheda.
 4. **Ricerca per nome e ricerca avanzata**: sezione e grado, salute (con allergie, allergene preciso, BES/DSA, pannolino), consensi foto (senza consenso sito/social; un consenso **assente** conta come «senza»), anno di nascita, sesso.
+5. **I bambini `sospeso` sono visibili** (risposta del 04/10): un sospeso frequenta, e l'insegnante ne deve vedere almeno le allergie. Elenco e scheda leggono `STATI_CHE_FREQUENTANO` (`src/lib/alunni/stato.ts`, derivata da `LATO_DEL_CONFINE`: oggi `iscritto` e `sospeso`); nessuna etichetta «sospeso» a schermo, la morosità resta esclusa. ⚠️ La classe della primaria (`api/primaria/classe/[sectionId]`) resta sui soli iscritti, come gli altri elenchi operativi: un sospeso comparirà in «Alunni» ma non lì (oggi i sospesi sono 0).
+6. **Gli IP del registro degli accessi si conservano un anno** (risposta del 04/10). Migrazione `20261004215133_fascicolo_audit_ip_retention`: `fascicolo_audit_ip_retention_tick()` azzera ogni notte (`29 4 * * *`, job `fascicolo-audit-ip-retention`) `ip` e `user_agent` delle righe più vecchie di 12 mesi; la riga resta. Misurato: oggi tocca 0 righe su 2.336 (la più vecchia è del 31/07/2026: il primo azzeramento vero cadrà il 31/07/2027). L'informativa per le famiglie non cambia (gli IP sono del personale).
 
 **Server.**
 - `GET /api/teacher/alunni` (elenco) e `GET /api/teacher/alunni/[id]` (scheda). Ognuno **esporta solo `GET`**, e un test lo verifica. Usano `requireDocente`, `zod`, `withRoute` e rispondono con `Cache-Control: no-store`.
@@ -17,7 +19,7 @@
   - `colonne.ts`: colonne scritte una per una, mai `*`.
   - `proiezione.ts`: lista bianca campo per campo.
   - `tipi.ts`, `ritorno-elenco.ts`.
-- **Ordine della scheda.** Ruolo, poi uuid, poi controllo (riga minima, 404, sedi, sezioni), poi letture, poi proiezione, poi audit. La seconda lettura rifiltra stato iscritto, non anonimizzato e sede: un bambino archiviato fra il controllo e la lettura dà 404, non 200.
+- **Ordine della scheda.** Ruolo, poi uuid, poi controllo (riga minima, 404, sedi, sezioni), poi letture, poi proiezione, poi audit. La seconda lettura rifiltra gli stessi stati del controllo (`STATI_CHE_FREQUENTANO`), non anonimizzato e sede: un bambino archiviato fra il controllo e la lettura dà 404, non 200.
 - **Sedi vuote.** Per l'admin nascono da una lettura fallita di `utenti_scuole`, e la risposta è 500. Per gli altri ruoli la risposta è 403 `ANAGRAFICA_SENZA_SEDE`. Lo stesso vale in elenco e scheda (`sediAnagrafica`). L'elenco legge le sedi una volta sola: `resolveScuoleAttive` ha un quarto parametro opzionale `accessibili`.
 - **Audit.** Ogni scheda aperta scrive una riga in `fascicolo_accessi_audit` con `azione: 'view'` e `finalita: 'anagrafica-docente'` (costante condivisa `FINALITA_AUDIT_ANAGRAFICA`), **dopo** controlli e lettura. Se l'audit fallisce, la scheda si mostra e il guasto va in log `error`.
 - **Il registro letto dalla segreteria** (Direzione → Primaria → «Fascicoli») etichetta queste righe «Scheda anagrafica», perché non vengano scambiate per una visione di PEI, PDP o documenti sanitari, e per default **le esclude** (`GET /api/admin/primaria/fascicolo-audit`, parametro `conAnagrafica`, con un interruttore nel visualizzatore). Misurato: il registro riceve già ~53 righe al giorno e ne mostra 200; con 74 docenti le visioni vere del fascicolo uscirebbero dalla finestra in meno di un giorno. Chiedendo il registro di un solo bambino (`alunnoId`) le aperture della scheda sono sempre incluse.
@@ -48,10 +50,8 @@
 - **6 iscritti senza sezione**: gruppo «Senza sezione» nell'elenco della segreteria.
 - **93 bambini con allergie solo a testo libero**: il filtro «con allergie» usa il criterio operativo del motore unico.
 
-**Aperto, per il titolare.**
-- I bambini con stato `sospeso` (oggi 0) restano esclusi da elenco e scheda, come da lock `elenchi-operativi-solo-iscritti`. Ma per `stato.ts` un sospeso frequenta: va deciso se l'insegnante debba vederne le allergie.
-- `fascicolo_accessi_audit` conserva l'IP del docente senza scadenza.
-- **Da provare su telefono vero.** I link `tel:` e `mailto:` sono i primi dell'app nativa. Va provata anche la fluidità dei filtri con l'elenco della Direzione.
+**Aperto.**
+- **Da provare su telefono vero (lo fa il titolare).** I link `tel:` e `mailto:` sono i primi dell'app nativa. Va provata anche la fluidità dei filtri con l'elenco della Direzione.
 
 **Segnalati come lavori separati.**
 - Punto cieco del lock `isolamento-sede-coverage`: un filtro di sezione condizionale nasconde l'assenza del filtro di sede.
@@ -66,6 +66,16 @@ SELECT count(*) FROM fascicolo_accessi_audit WHERE finalita = 'anagrafica-docent
 ```
 
 E `app_log` per `anagrafica-fuori-sezione` e `anagrafica-fuori-sede` (tentativi su schede non proprie), `anagrafica-sezioni-non-lette` e `anagrafica-sedi-non-risolte` (guasti: attesi 0), `anagrafica-elenco-troncato` (atteso 0).
+
+```sql
+-- La migrazione degli IP è applicata e il lavoro notturno è installato:
+SELECT jobname, schedule, active FROM cron.job WHERE jobname = 'fascicolo-audit-ip-retention';
+-- …e batte (la prova vera, dopo le 04:29 UTC):
+SELECT visto_l_ultima, contesto FROM public.app_log
+ WHERE fingerprint = 'cron:fascicolo-audit-ip-retention' ORDER BY visto_l_ultima DESC LIMIT 3;
+```
+
+⏳ **Dopo il primo battito**: rigenerare la fotografia delle migrazioni applicate, spostare `fascicolo-audit-ip-retention` da `JOB_CRON_NON_SORVEGLIATI` a `JOB_CRON` (26 h) in `src/lib/health/controlli.ts`, attestare «APPLICATA il …» nella testata della migrazione.
 
 
 ## 🎓 Changelog — «I genitori vedono il giudizio ma non il voto»: il giudizio sintetico diventa obbligatorio, le dimensioni un'aggiunta — 2026-10-04 (branch `feat/popup-1-2-personale-android`)

@@ -60,9 +60,12 @@ export const GET = withRoute('teacher/alunni:GET', async (request: NextRequest) 
     //   sedi non accessibili (un cookie rimasto da un'altra assegnazione). È una
     //   preferenza dell'interfaccia, `resolveScuoleAttive` la logga già, e la risposta
     //   onesta è che nelle sedi scelte non c'è nessun bambino da mostrare: 200 vuoto.
+    // Le sedi dell'utente si leggono UNA volta e si passano: una seconda lettura di
+    // `utenti_scuole` che fallisse da sola renderebbe `[]`, cioè proprio quel 200 vuoto
+    // dopo un controllo di sede appena superato.
     const sedi = await sediAnagrafica(supabase, user)
     if (!sedi.ok) return sedi.response
-    const plessi = await resolveScuoleAttive(request, supabase, user)
+    const plessi = await resolveScuoleAttive(request, supabase, user, sedi.plessi)
     if (plessi.length === 0) return NextResponse.json(VUOTO, { headers: SENZA_CACHE })
 
     // Le sezioni PRIMA della query: un educator senza assegnazioni esce di qui senza

@@ -367,6 +367,29 @@ describe('resolveScuoleAttive', () => {
       ),
     ).toEqual([SEDE_B])
   })
+
+  describe('con le sedi accessibili GIÀ lette dal chiamante (`accessibili`)', () => {
+    // Chi ha appena letto le sedi dell'utente le passa: una seconda lettura di
+    // `utenti_scuole` che fallisse renderebbe `[]`, e un elenco risponderebbe vuoto.
+    it('non rilegge `utenti_scuole`, e il cookie interseca quelle', async () => {
+      const { supabase, lette } = client()
+      expect(await resolveScuoleAttive(richiesta(), supabase, ADMIN_TRE_SEDI, [SEDE_A, SEDE_B])).toEqual([SEDE_A, SEDE_B])
+      expect(await resolveScuoleAttive(richiesta(SEDE_B), supabase, ADMIN_TRE_SEDI, [SEDE_A, SEDE_B])).toEqual([SEDE_B])
+      expect(lette).not.toContain('utenti_scuole')
+    })
+
+    it('un cookie fuori da quelle resta negato, con il warn', async () => {
+      const { supabase } = client()
+      expect(await resolveScuoleAttive(richiesta(SEDE_C), supabase, ADMIN_TRE_SEDI, [SEDE_A, SEDE_B])).toEqual([])
+      expect(tipiLoggati('warn')).toContain('sedi-attive-non-accessibili')
+    })
+
+    it('CONTROLLO — senza il parametro la lettura c’è, come prima', async () => {
+      const { supabase, lette } = client()
+      await resolveScuoleAttive(richiesta(), supabase, ADMIN_TRE_SEDI)
+      expect(lette).toContain('utenti_scuole')
+    })
+  })
 })
 
 // =============================================================================

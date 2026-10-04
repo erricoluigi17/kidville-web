@@ -187,6 +187,49 @@ describe('sedi vuote: le stesse risposte della scheda', () => {
   })
 })
 
+/**
+ * Un errore iniettato SOLO dalla seconda lettura di `utenti_scuole` in poi. Serve un
+ * getter: `erroreDi` del finto client rilegge `opzioni.errori[chiave]` a ogni
+ * esecuzione (la stessa tecnica di `dallaSecondaLetturaDiAlunni` nei test della scheda).
+ */
+const dallaSecondaLetturaDiUtentiScuole = () => {
+  let n = 0
+  return {
+    get 'utenti_scuole:select'() {
+      n += 1
+      return n >= 2 ? { code: '57P01' } : undefined
+    },
+  } as unknown as Record<string, { code: string }>
+}
+
+describe('le sedi dell’admin si leggono UNA volta', () => {
+  // Prima `sediAnagrafica` e poi `resolveScuoleAttive` leggevano entrambe
+  // `utenti_scuole`: se la seconda lettura falliva, lo scope diventava `[]` e l'elenco
+  // rispondeva 200 vuoto — «nessun bambino» a chi ne ha, con il guasto sparito.
+  it('una seconda lettura che fallirebbe non svuota l’elenco: non c’è', async () => {
+    h.requireDocente.mockResolvedValue({ user: ADMIN })
+    h.db.utenti_scuole = [
+      { utente_id: 'adm1', scuola_id: SEDE_A },
+      { utente_id: 'adm1', scuola_id: SEDE_B },
+    ]
+    h.opzioni = { errori: dallaSecondaLetturaDiUtentiScuole() }
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(await cognomi(res)).toEqual(['Alfieri', 'Altrui', 'Sedeb', 'Zeta'])
+    expect(h.tabelle.filter((t) => t === 'utenti_scuole')).toHaveLength(1)
+  })
+
+  it('il selettore restringe anche senza la seconda lettura', async () => {
+    h.requireDocente.mockResolvedValue({ user: ADMIN })
+    h.db.utenti_scuole = [
+      { utente_id: 'adm1', scuola_id: SEDE_A },
+      { utente_id: 'adm1', scuola_id: SEDE_B },
+    ]
+    expect(await cognomi(await chiama(`sedi_attive=${SEDE_B}`))).toEqual(['Sedeb'])
+    expect(h.tabelle.filter((t) => t === 'utenti_scuole')).toHaveLength(1)
+  })
+})
+
 describe('la sede, percorso per percorso', () => {
   it('educator assegnato anche a una sezione dell’altra sede: quel bambino NON compare', async () => {
     h.db.utenti_sezioni.push({ utente_id: 'ed1', section_id: SEZ_B })

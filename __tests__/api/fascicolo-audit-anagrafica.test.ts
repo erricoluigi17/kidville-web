@@ -40,9 +40,11 @@ vi.mock('@/lib/logging/logger', async (originale) => ({
 
 import { GET } from '@/app/api/admin/primaria/fascicolo-audit/route'
 
-const audit = (id: string, finalita: string | null, scuola_id: string) => ({
+const ALUNNO = 'a1a1a1a1-1111-4111-8111-aaaaaaaaaaaa'
+
+const audit = (id: string, finalita: string | null, scuola_id: string, alunno_id = `alunno-${id}`) => ({
   id,
-  alunno_id: `alunno-${id}`,
+  alunno_id,
   documento_id: null,
   utente_id: 'doc1',
   azione: 'view',
@@ -55,7 +57,11 @@ const audit = (id: string, finalita: string | null, scuola_id: string) => ({
 
 const dbBase = (): DBFinto => ({
   utenti_scuole: [],
+  alunni: [{ id: ALUNNO, section_id: null, scuola_id: SEDE_A }],
   fascicolo_accessi_audit: [
+    // Il fascicolo di UN bambino: un'apertura della scheda e una visione senza finalità.
+    audit('r7', FINALITA_AUDIT_ANAGRAFICA, SEDE_A, ALUNNO),
+    audit('r8', null, SEDE_A, ALUNNO),
     audit('r1', null, SEDE_A),
     audit('r2', 'stampa del modulo', SEDE_A),
     audit('r3', FINALITA_AUDIT_ANAGRAFICA, SEDE_A),
@@ -83,17 +89,23 @@ describe('fascicolo-audit — le aperture della scheda anagrafica, a parte', () 
   it('senza parametro: le righe `anagrafica-docente` non ci sono, quelle con finalità NULL sì', async () => {
     const res = await chiama()
     expect(res.status).toBe(200)
-    expect(await ids(res)).toEqual(['r1', 'r2'])
+    expect(await ids(res)).toEqual(['r1', 'r2', 'r8'])
   })
 
   it('`conAnagrafica=1`: ci sono tutte (della propria sede)', async () => {
     const res = await chiama('&conAnagrafica=1')
     expect(res.status).toBe(200)
-    expect(await ids(res)).toEqual(['r1', 'r2', 'r3', 'r4'])
+    expect(await ids(res)).toEqual(['r1', 'r2', 'r3', 'r4', 'r7', 'r8'])
   })
 
   it('`conAnagrafica=0` vale come assente', async () => {
-    expect(await ids(await chiama('&conAnagrafica=0'))).toEqual(['r1', 'r2'])
+    expect(await ids(await chiama('&conAnagrafica=0'))).toEqual(['r1', 'r2', 'r8'])
+  })
+
+  it('con `alunnoId` («chi ha aperto il fascicolo di QUESTO bambino») le aperture della scheda ci sono anche senza `conAnagrafica`', async () => {
+    const res = await chiama(`&alunnoId=${ALUNNO}`)
+    expect(res.status).toBe(200)
+    expect(await ids(res)).toEqual(['r7', 'r8'])
   })
 
   it('un valore non booleano è un errore del client (400), e il database non si tocca', async () => {

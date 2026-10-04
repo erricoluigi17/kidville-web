@@ -55,7 +55,9 @@ export const GET = withRoute('admin/primaria/fascicolo-audit:GET', async (reques
     if (alunnoId) query = query.eq('alunno_id', alunnoId)
     // `or` e non `neq`: in SQL `NULL <> 'anagrafica-docente'` vale NULL, quindi un `neq`
     // scarterebbe anche le righe senza finalità, che sono la maggioranza del registro.
-    if (!conAnagrafica) query = query.or(`finalita.is.null,finalita.neq.${FINALITA_AUDIT_ANAGRAFICA}`)
+    // Con `alunnoId` non si esclude: «chi ha aperto il fascicolo di QUESTO bambino» comprende
+    // chi ne ha aperto la scheda anagrafica, e per un bambino solo le righe sono poche.
+    if (!conAnagrafica && !alunnoId) query = query.or(`finalita.is.null,finalita.neq.${FINALITA_AUDIT_ANAGRAFICA}`)
 
     const { data, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

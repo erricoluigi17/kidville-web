@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import primaria from '../../messages/it/adminPrimaria.json'
 import { FascicoloAuditViewer } from '@/components/features/admin/primaria/FascicoloAuditViewer'
 
@@ -11,7 +11,7 @@ import { FascicoloAuditViewer } from '@/components/features/admin/primaria/Fasci
 
 const T = primaria as Record<string, string>
 
-const fetchFinto = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: [] }) }))
+const fetchFinto = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: [] as unknown[] }) }))
 const urlChiamati = () => fetchFinto.mock.calls.map((c) => String((c as unknown[])[0]))
 
 beforeEach(() => {
@@ -46,5 +46,38 @@ describe('FascicoloAuditViewer — l’interruttore delle aperture della scheda 
     fireEvent.click(interruttore)
     await waitFor(() => expect(fetchFinto).toHaveBeenCalledTimes(3))
     expect(urlChiamati()[2]).not.toContain('conAnagrafica')
+  })
+
+  it.each([
+    ['la rete', () => Promise.reject(new TypeError('Failed to fetch'))],
+    ['un 500', async () => ({ ok: false, json: async () => ({ error: 'guasto' }) })],
+  ])('lettura fallita (%s) dopo un cambio dell’interruttore: niente righe vecchie, e un messaggio d’errore', async (_nome, fallita) => {
+    fetchFinto.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: [
+          {
+            id: 'r1',
+            azione: 'view',
+            finalita: null,
+            ip: null,
+            creato_il: '2026-10-04T08:00:00.000Z',
+            utenti: { nome: 'Docente', cognome: 'Prova-E2E' },
+            alunni: { nome: 'Bimbo', cognome: 'Vecchia-E2E' },
+          },
+        ],
+      }),
+    })
+    fetchFinto.mockImplementationOnce(fallita as never)
+    render(<FascicoloAuditViewer scuolaId="s" userId="u" />)
+    expect(await screen.findByText(/Vecchia-E2E/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: T.fascicoloIncludiAnagrafica }))
+    const errore = await screen.findByText(T.fascicoloErroreLettura)
+    expect(within(errore.closest('table') as HTMLElement).queryByText(/Vecchia-E2E/)).toBeNull()
+    expect(screen.queryByText(/Vecchia-E2E/)).toBeNull()
+    // «Nessun accesso registrato» sarebbe falso: il registro non ha risposto.
+    expect(screen.queryByText(T.fascicoloNessunAccesso)).toBeNull()
   })
 })

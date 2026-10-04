@@ -28,10 +28,10 @@ const AZIONE: Record<string, { lKey: string; cls: string }> = {
 };
 
 /**
- * La lettura, fuori dal componente: restituisce le righe (o `null`) e logga, non tocca
- * lo stato. Prima un errore di rete usciva come promessa rifiutata non gestita; ora il
- * registro resta quello di prima e lo si dice nei log, `warn` come il logger globale
- * per una fetch mancata.
+ * La lettura, fuori dal componente: restituisce le righe, oppure `null` se il registro
+ * non ha risposto (rete giù o risposta senza `success`), e non tocca lo stato. Un errore
+ * di rete si logga a `warn`, come fa il logger globale per una fetch mancata; un `!res.ok`
+ * lo registra già il fetch strumentato.
  */
 async function leggiRegistro(userId: string, conAnagrafica: boolean): Promise<AuditRow[] | null> {
   const filtro = conAnagrafica ? '&conAnagrafica=1' : '';
@@ -57,6 +57,9 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
   // a parte, con l'interruttore spento di default.
   const [conAnagrafica, setConAnagrafica] = useState(false);
   const [tentativo, setTentativo] = useState(0);
+  // Una lettura fallita SVUOTA la tabella: le righe rimaste sarebbero quelle dell'altra
+  // posizione dell'interruttore, cioè una risposta a una domanda diversa.
+  const [erroreLettura, setErroreLettura] = useState(false);
 
   // Il `setState` sta nel `.then` (la forma che `react-hooks/set-state-in-effect`
   // accetta). `vivo` scarta la risposta di una lettura superata: accendendo e spegnendo
@@ -65,7 +68,8 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
     let vivo = true;
     void leggiRegistro(userId, conAnagrafica).then((righe) => {
       if (!vivo) return;
-      if (righe) setRows(righe);
+      setRows(righe ?? []);
+      setErroreLettura(righe === null);
       setLoading(false);
     });
     return () => {
@@ -113,7 +117,11 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {/* «Nessun accesso registrato» solo se il registro ha risposto: dopo una lettura
+                fallita sarebbe falso. */}
+            {erroreLettura ? (
+              <tr><td colSpan={5} className="py-3 font-maven text-sm text-kidville-error-strong">{t('fascicoloErroreLettura')}</td></tr>
+            ) : rows.length === 0 && (
               <tr><td colSpan={5} className="py-3 font-maven text-sm text-kidville-muted">{t('fascicoloNessunAccesso')}</td></tr>
             )}
             {rows.map((r) => (

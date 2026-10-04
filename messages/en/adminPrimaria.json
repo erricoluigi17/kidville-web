@@ -83,6 +83,7 @@
   "fascicoloAzioneDelete": "Deletion",
   "fascicoloFinalitaAnagraficaDocente": "Student record",
   "fascicoloIncludiAnagrafica": "Include student record views",
+  "fascicoloErroreLettura": "The log could not be loaded.",
   "didatticaTabMaterie": "Subjects",
   "didatticaTabDocenti": "Teachers & Subjects",
   "didatticaTabObiettivi": "Objectives",

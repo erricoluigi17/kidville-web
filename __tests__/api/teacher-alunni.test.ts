@@ -197,6 +197,7 @@ describe('la sede, percorso per percorso', () => {
     h.requireDocente.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
     const res = await chiama(`sedi_attive=${SEDE_B}`)
     expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
     expect(await res.json()).toEqual({ sezioni: [], alunni: [] })
   })
 
@@ -215,11 +216,14 @@ describe('il tetto dell’elenco', () => {
   const troncato = () =>
     h.logEvento.mock.calls.filter((c) => (c[2] as { tipo?: string } | undefined)?.tipo === 'anagrafica-elenco-troncato')
 
-  it('elenco lungo quanto il tetto: warn nei log, e l’elenco esce comunque', async () => {
+  it('elenco lungo quanto il tetto: la query si ferma lì, warn nei log, e l’elenco esce comunque', async () => {
+    // La segreteria ha TRE bambini: con il tetto a 2 ne escono due solo se la query usa
+    // davvero la costante (un `.limit(1000)` scritto a mano li restituirebbe tutti e tre).
+    h.requireDocente.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
     h.limite = 2
     const res = await chiama()
     expect(res.status).toBe(200)
-    expect(await cognomi(res)).toEqual(['Alfieri', 'Zeta'])
+    expect(await cognomi(res)).toEqual(['Alfieri', 'Altrui'])
     expect(h.logEvento).toHaveBeenCalledWith(
       'anagrafica',
       'warn',

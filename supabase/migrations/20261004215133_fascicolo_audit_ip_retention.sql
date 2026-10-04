@@ -72,8 +72,9 @@
 --
 -- `CREATE OR REPLACE`, `REVOKE`/`GRANT`, `COMMENT ON` e il lavoro notturno tolto e
 -- rimesso: la migrazione si può rilanciare (anche dal workflow «DB migrate (CI)»)
--- senza effetti diversi dal primo giro. Il DB E2E della CI non ha `pg_cron`: il
--- blocco `DO … EXCEPTION` lo lascia passare senza installare il lavoro, e lo dice.
+-- senza effetti diversi dal primo giro. Il DB E2E della CI non ha `pg_cron`: una
+-- guardia su `pg_extension` lo lascia passare senza installare il lavoro, e lo dice.
+-- Dove `pg_cron` c'è, un errore vero di `cron.schedule` fa FALLIRE la migrazione.
 --
 -- Nessuna corsa una tantum qui dentro: la prima la fa il lavoro notturno, oppure il
 -- coordinatore a mano dopo il merge (`SELECT public.fascicolo_audit_ip_retention_tick();`),
@@ -148,15 +149,24 @@ COMMENT ON COLUMN public.fascicolo_accessi_audit.user_agent IS
 -- un mensile non si può sorvegliare da /api/health, perché `app_log` conserva 30
 -- giorni e il battito sparirebbe prima del successivo.
 -- Il nome sta sulla stessa riga di `cron.schedule(`: è così che lo trovano i lock.
+--
+-- UNA GUARDIA MIRATA, NON UN `EXCEPTION WHEN OTHERS`. L'unico caso legittimo in cui
+-- il lavoro non si installa è il database E2E della CI, che non ha `pg_cron`: lì si
+-- esce con un avviso. In produzione, invece, un `EXCEPTION WHEN OTHERS` trasformerebbe
+-- un errore vero di `cron.schedule` in un WARNING che nessuno legge — migrazione
+-- «applicata», job assente e, finché sta in `JOB_CRON_NON_SORVEGLIATI`, nemmeno
+-- sorvegliato: la decisione del titolare non sarebbe applicata da niente, in
+-- silenzio. Senza il blocco d'eccezione quell'errore fa fallire la migrazione.
+-- (In plpgsql `cron.job` si risolve solo quando l'istruzione viene eseguita: con il
+-- `RETURN` della guardia, sul DB della CI non viene mai risolto.)
 DO $$
 BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+    RAISE WARNING 'pg_cron assente: fascicolo-audit-ip-retention non installato';
+    RETURN;
+  END IF;
   PERFORM cron.unschedule(jobid) FROM cron.job WHERE jobname = 'fascicolo-audit-ip-retention';
   PERFORM cron.schedule('fascicolo-audit-ip-retention', '29 4 * * *', $cron$ SELECT public.fascicolo_audit_ip_retention_tick(); $cron$);
-EXCEPTION WHEN OTHERS THEN
-  -- pg_cron non esiste sul database E2E della CI: lì la migrazione passa senza
-  -- installare il lavoro. Lo si dice, invece di tacerlo: in produzione lo stesso
-  -- avviso vorrebbe dire che la decisione del titolare non è applicata da niente.
-  RAISE WARNING 'fascicolo-audit-ip-retention non installato (pg_cron assente?): %', SQLERRM;
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════════

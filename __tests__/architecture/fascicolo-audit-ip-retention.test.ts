@@ -46,6 +46,18 @@ import { join } from 'node:path'
  * che si scrive `user_agent = NULL`: un lock che leggesse il file come testo
  * troverebbe la frase nel commento e resterebbe verde con il codice sbagliato —
  * un lock che si immunizza da solo.
+ *
+ * ⚠️ ROSSI FALSI NOTI, su formattazioni innocue. Il lock legge il SQL con espressioni
+ * regolari, non con un parser: queste riscritture, equivalenti per Postgres, lo fanno
+ * diventare rosso senza che il lavoro sia sbagliato.
+ *  · `$fn$` (o qualunque etichetta) al posto di `$$` come delimitatore del corpo: il
+ *    corpo si cerca fra due `$$`, e non lo si trova;
+ *  · `--` DENTRO una stringa (per esempio nel messaggio del battito): la pulizia dei
+ *    commenti taglia la riga da lì in poi;
+ *  · `creato_il < (now() - make_interval(…))`, con le parentesi: il termine si cerca
+ *    nella forma senza parentesi, e al livello più esterno del WHERE.
+ * Il verso dell'errore è quello giusto — grida, non tace —: se capita, si riscrive il
+ * SQL nella forma attesa, o si insegna al lock la forma nuova; mai si allenta una prova.
  */
 
 const MIGRAZIONI = join(process.cwd(), 'supabase', 'migrations')
@@ -171,6 +183,36 @@ describe('lock · gli IP del registro degli accessi scadono a un anno, e la riga
       `Il WHERE di \`${FUNZIONE}\` non è \`creato_il < now() - make_interval(months => v_mesi)\`. ` +
         `Un termine riscritto a mano accanto a \`v_mesi\` fa passare la prova sul numero mentre il ` +
         `lavoro ne applica un altro: due copie dello stesso termine sono il modo in cui divergono.`,
+    ).toBe(true)
+  })
+
+  it('e il termine è OBBLIGATORIO: nessun `OR` lo aggira', () => {
+    // Che il termine COMPAIA non basta: `… v_mesi) OR true`, oppure `AND (a.ip …)` diventato
+    // `OR (a.ip …)`, lasciano la prova qui sopra verde e azzererebbero SUBITO tutti gli IP del
+    // registro. Si riducono le parentesi bilanciate a `§` finché ce ne sono, e quel che resta è
+    // il livello più esterno del WHERE: lì non deve esserci nessun `OR`, e il termine deve stare
+    // lì — non dentro una parentesi, dove un `OR` o un `NOT` lo renderebbero facoltativo.
+    // ⚠️ Il segnaposto NON contiene parentesi, di proposito: con `()` la riduzione si ferma alla
+    // prima parentesi annidata (`()` è un punto fisso che contiene ancora `(`), e il livello
+    // «esterno» conterrebbe ancora l'interno — misurato scrivendo questa prova.
+    const where = update.match(/\bWHERE\b([\s\S]*);/i)?.[1] ?? ''
+    let livelloEsterno = where
+    let precedente: string
+    do {
+      precedente = livelloEsterno
+      livelloEsterno = livelloEsterno.replace(/\([^()]*\)/g, '§')
+    } while (livelloEsterno !== precedente)
+    expect(
+      /\bOR\b/i.test(livelloEsterno),
+      `Il WHERE di \`${FUNZIONE}\` ha un \`OR\` al livello più esterno («${livelloEsterno.trim()}»): ` +
+        `il termine dei ${MESI_DECISI} mesi diventa facoltativo, e il lavoro azzera anche gli IP di ` +
+        `ieri. Le condizioni si legano con \`AND\`; un \`OR\` va chiuso fra parentesi.`,
+    ).toBe(false)
+    expect(
+      /(?:\w+\.)?creato_il\s*<\s*now§\s*-\s*make_interval§/i.test(livelloEsterno),
+      `Nel WHERE di \`${FUNZIONE}\` il termine \`creato_il < now() - make_interval(…)\` non sta al ` +
+        `livello più esterno («${livelloEsterno.trim()}»): chiuso in una parentesi, un \`OR\` o un ` +
+        `\`NOT\` accanto a lui lo rendono facoltativo.`,
     ).toBe(true)
   })
 

@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/Badge'
 import { allergeneEmoji, useAllergeneLabel } from '@/lib/mensa/allergeni'
 import { isoToIt } from '@/lib/format/data'
 import { logClient } from '@/lib/logging/client'
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch'
 import { zUuid } from '@/lib/validation/common'
 import { cx } from '@/lib/ui/cx'
 import { leggiRitornoElenco } from '@/lib/anagrafiche/docente/ritorno-elenco'
@@ -30,9 +31,15 @@ import { SchedaGenitore } from './SchedaGenitore'
 type Esito =
   | { tipo: 'caricamento' }
   | { tipo: 'pronta'; scheda: SchedaAlunnoDocente }
-  | { tipo: 'negata' | 'nonTrovata' | 'sessione' | 'errore' | 'offline' }
+  // `corpo`: il corpo del 403 quando il rifiuto NON è «fuori dalle tue classi» (profilo
+  // senza sede, account archiviato…). Il testo si ricava dal suo codice al momento di mostrarlo.
+  | { tipo: 'negata'; corpo?: unknown }
+  | { tipo: 'nonTrovata' | 'sessione' | 'errore' | 'offline' }
 
 const ROTTA = '/teacher/alunni/[id]'
+
+/** I due rifiuti che vogliono dire «questo bambino non è tuo»: per loro la frase della scheda. */
+const CODICI_FUORI_SCOPE: readonly unknown[] = ['ANAGRAFICA_FUORI_SEDE', 'ANAGRAFICA_FUORI_SEZIONE']
 
 /** Legge la scheda e la traduce in un esito. Nessuno stato React qui dentro: è una funzione del modulo. */
 async function leggiScheda(alunnoId: string): Promise<Esito> {
@@ -40,12 +47,21 @@ async function leggiScheda(alunnoId: string): Promise<Esito> {
   const res = await fetch(`/api/teacher/alunni/${encodeURIComponent(alunnoId)}`, { cache: 'no-store' }).catch(() => null)
   if (!res) {
     const offline = typeof navigator !== 'undefined' && navigator.onLine === false
-    if (!offline) logClient({ livello: 'error', evento: 'fetch', messaggio: 'scheda anagrafica non raggiunta', route: ROTTA })
+    // `warn` e non `error`: il logger globale per la stessa fetch scrive già un `warn`
+    // (nelle WebView una richiesta troncata dal telefono che si addormenta è frequente).
+    if (!offline) logClient({ livello: 'warn', evento: 'fetch', messaggio: 'scheda anagrafica non raggiunta', route: ROTTA })
     return { tipo: offline ? 'offline' : 'errore' }
   }
   // 401, 403 e 404 sono risposte di merito: il server le ha già registrate.
   if (res.status === 401) return { tipo: 'sessione' }
-  if (res.status === 403) return { tipo: 'negata' }
+  if (res.status === 403) {
+    // Un profilo senza sede o un account archiviato non sono «un bambino non tuo»: dirlo
+    // manderebbe a cercare la classe sbagliata. Lì parla il codice, tradotto.
+    // Un corpo illeggibile è `null`: si ricade sulla frase della scheda.
+    const corpo = (await res.json().catch(() => null)) as { codice?: unknown } | null
+    if (CODICI_FUORI_SCOPE.includes(corpo?.codice)) return { tipo: 'negata' }
+    return { tipo: 'negata', corpo }
+  }
   if (res.status === 404) return { tipo: 'nonTrovata' }
   const corpo = res.ok ? ((await res.json().catch(() => null)) as SchedaAlunnoDocente | null) : null
   if (!corpo || typeof corpo.id !== 'string') {
@@ -106,7 +122,9 @@ export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
 
   const messaggio =
     stato.tipo === 'negata'
-      ? t('anagraficaErroreNegato')
+      ? stato.corpo === undefined
+        ? t('anagraficaErroreNegato')
+        : messaggioDaCorpo(stato.corpo, t('anagraficaErroreNegato'))
       : stato.tipo === 'nonTrovata'
         ? t('anagraficaErroreNonTrovata')
         : stato.tipo === 'sessione'

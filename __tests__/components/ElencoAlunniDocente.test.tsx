@@ -255,19 +255,36 @@ describe('ElencoAlunniDocente', () => {
     expect(h.logClient).not.toHaveBeenCalled()
   })
 
-  it('senza rete: errore con «Riprova», ma nessun log', async () => {
-    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
-    vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+  it('senza rete: «Serve la connessione», con «Riprova» che ricarica davvero, e nessun log', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(risposta(200, DATI))
+    const onLine = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
     render(<ElencoAlunniDocente />)
-    expect(await screen.findByText(S.filtriErroreTitolo)).toBeTruthy()
-    expect(screen.getByRole('button', { name: S.paginaErroreRiprova })).toBeTruthy()
+    expect(await screen.findByText(T.anagraficaErroreOffline)).toBeTruthy()
     expect(h.logClient).not.toHaveBeenCalled()
+    onLine.mockReturnValue(true)
+    fireEvent.click(screen.getByRole('button', { name: S.paginaErroreRiprova }))
+    expect(await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })).toBeTruthy()
   })
 
-  it('rete giù ma «online»: errore, con un log `error`', async () => {
+  it('rete giù ma «online»: errore, con un log `warn` (come il logger globale per la stessa fetch)', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
     render(<ElencoAlunniDocente />)
     expect(await screen.findByText(S.filtriErroreTitolo)).toBeTruthy()
-    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', evento: 'fetch' }))
+    expect(screen.queryByText(T.anagraficaErroreOffline)).toBeNull()
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'warn', evento: 'fetch' }))
+    expect(h.logClient).not.toHaveBeenCalledWith(expect.objectContaining({ livello: 'error' }))
+  })
+
+  it.each([
+    ['ANAGRAFICA_SENZA_SEDE', 'erroreAnagraficaSenzaSede'],
+    ['ACCOUNT_ARCHIVIATO', 'erroreAccountArchiviato'],
+  ])('403 %s ⇒ il messaggio del codice, senza «Riprova» (non cambierebbe niente) e senza log', async (codice, chiave) => {
+    fetchMock.mockResolvedValue(risposta(403, { error: 'Testo del server', codice }))
+    render(<ElencoAlunniDocente />)
+    expect(await screen.findByText(S[chiave])).toBeTruthy()
+    expect(screen.queryByRole('button', { name: S.paginaErroreRiprova })).toBeNull()
+    expect(screen.queryByText(S.filtriErroreTitolo)).toBeNull()
+    expect(screen.queryByText(T.anagraficaVuotoTitolo)).toBeNull()
+    expect(h.logClient).not.toHaveBeenCalled()
   })
 })

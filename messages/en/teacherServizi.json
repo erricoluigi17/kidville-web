@@ -328,7 +328,7 @@
   "anagraficaErroreNegato": "This child is not in one of your classes.",
   "anagraficaErroreNonTrovata": "Record not found.",
   "anagraficaErroreLettura": "The record could not be loaded.",
-  "anagraficaErroreOffline": "You need a connection to open the record.",
+  "anagraficaErroreOffline": "You need a connection: try again when you are back online.",
   "anagraficaRiprova": "Try again",
   "anagraficaErroreSessione": "Your session has expired: please sign in again.",
   "anagraficaAccedi": "Sign in"

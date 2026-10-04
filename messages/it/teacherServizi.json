@@ -328,7 +328,7 @@
   "anagraficaErroreNegato": "Questo bambino non è in una delle tue classi.",
   "anagraficaErroreNonTrovata": "Scheda non trovata.",
   "anagraficaErroreLettura": "Non è stato possibile caricare la scheda.",
-  "anagraficaErroreOffline": "Serve la connessione per aprire la scheda.",
+  "anagraficaErroreOffline": "Serve la connessione: riprova quando sei di nuovo in rete.",
   "anagraficaRiprova": "Riprova",
   "anagraficaErroreSessione": "La sessione è scaduta: accedi di nuovo.",
   "anagraficaAccedi": "Accedi"

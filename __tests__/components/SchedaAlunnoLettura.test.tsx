@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor, within, act } from '@testing-library/react'
 import servizi from '../../messages/it/teacherServizi.json'
 import etichette from '../../messages/it/etichette.json'
+import condivisi from '../../messages/it/shared.json'
 import type { GenitoreScheda, Parentela, SchedaAlunnoDocente } from '@/lib/anagrafiche/docente/tipi'
 
 const T = servizi as Record<string, string>
 const E = etichette as Record<string, string>
+const S = condivisi as Record<string, string>
 
 const h = vi.hoisted(() => ({ push: vi.fn(), logClient: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: h.push }) }))
@@ -287,10 +289,22 @@ describe('SchedaAlunnoLettura — pronta', () => {
 })
 
 describe('SchedaAlunnoLettura — non si apre', () => {
-  it('403 ⇒ «non è in una delle tue classi»', async () => {
-    fetchMock.mockResolvedValue(risposta(403, { codice: 'ANAGRAFICA_FUORI_SEZIONE' }))
+  it.each(['ANAGRAFICA_FUORI_SEZIONE', 'ANAGRAFICA_FUORI_SEDE'])('403 %s ⇒ «non è in una delle tue classi»', async (codice) => {
+    fetchMock.mockResolvedValue(risposta(403, { error: 'negato', codice }))
     render(<SchedaAlunnoLettura alunnoId={ID} />)
     expect(await screen.findByText(T.anagraficaErroreNegato)).toBeTruthy()
+    expect(screen.getByTestId('scheda-esito').getAttribute('data-esito')).toBe('negata')
+  })
+
+  it.each([
+    ['ANAGRAFICA_SENZA_SEDE', 'erroreAnagraficaSenzaSede'],
+    ['ACCOUNT_ARCHIVIATO', 'erroreAccountArchiviato'],
+  ])('403 %s ⇒ il messaggio del codice, non «non è in una delle tue classi», e niente «Riprova»', async (codice, chiave) => {
+    fetchMock.mockResolvedValue(risposta(403, { error: 'Testo del server', codice }))
+    render(<SchedaAlunnoLettura alunnoId={ID} />)
+    expect(await screen.findByText(S[chiave])).toBeTruthy()
+    expect(screen.queryByText(T.anagraficaErroreNegato)).toBeNull()
+    expect(screen.queryByRole('button', { name: T.anagraficaRiprova })).toBeNull()
   })
 
   it('404 ⇒ «Scheda non trovata»', async () => {
@@ -352,11 +366,12 @@ describe('SchedaAlunnoLettura — non si apre', () => {
     expect(screen.getByRole('button', { name: T.anagraficaRiprova })).toBeTruthy()
   })
 
-  it('rete giù ma «online» ⇒ errore, con un log `error`', async () => {
+  it('rete giù ma «online» ⇒ errore, con un log `warn` (come il logger globale per la stessa fetch)', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
     render(<SchedaAlunnoLettura alunnoId={ID} />)
     expect(await screen.findByText(T.anagraficaErroreLettura)).toBeTruthy()
-    await waitFor(() => expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error' })))
+    await waitFor(() => expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'warn', evento: 'fetch' })))
+    expect(h.logClient).not.toHaveBeenCalledWith(expect.objectContaining({ livello: 'error' }))
   })
 })
 

@@ -53,7 +53,7 @@ vi.mock('capacitor-native-settings', () => ({
 // Chi deve aggiornare lo verifica `__tests__/lib/aggiornamento-app.test.ts`: qui conta solo la
 // risposta, e QUANDO la si chiede.
 const appDaAggiornare = vi.hoisted(() =>
-  vi.fn<() => Promise<{ piattaforma: 'ios' | 'android'; versione: string } | null>>(async () => null),
+  vi.fn<() => Promise<import('@/lib/native/aggiornamento-app').AppDaAggiornare | null>>(async () => null),
 )
 vi.mock('@/lib/native/aggiornamento-app', () => ({ appDaAggiornare }))
 
@@ -134,7 +134,7 @@ describe('avvisoDaMostrare — la cadenza settimanale', () => {
     async (piattaforma) => {
       // Il pop-up «Aggiorna l'app» ha la precedenza, e l'aggiornamento porta anche il bottone
       // delle impostazioni: due richieste insieme coprirebbero la pagina.
-      appDaAggiornare.mockResolvedValue({ piattaforma, versione: '1.0' })
+      appDaAggiornare.mockResolvedValue({ piattaforma, versione: '1.0', minima: 'store' })
       expect(await avvisoDaMostrare(ORA)).toBeNull()
       expect(statoPermessoPush).not.toHaveBeenCalled()
       expect(window.localStorage.getItem(CHIAVI_ULTIMA_COMPARSA['notifiche-disattivate'])).toBeNull()

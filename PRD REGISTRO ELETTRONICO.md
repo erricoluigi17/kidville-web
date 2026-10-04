@@ -1,7 +1,82 @@
 
+## 🎓 Changelog — «I genitori vedono il giudizio ma non il voto»: il giudizio sintetico diventa obbligatorio, le dimensioni un'aggiunta — 2026-10-04 (branch `feat/popup-1-2-personale-android`)
+
+**Stato.** 🟡 **Gate verde, sul branch della PR #183** (`eslint` 0 · `tsc` 0 · `vitest run` 1655 file / 27.974 test · `npm run build` ok). **Nessuna migrazione.** La correzione dei 31 voti esistenti è già **in produzione** (vedi sotto). Il codice va in produzione col merge.
+
+**La segnalazione (04/10).** «I genitori della primaria vedono il giudizio, ma non qual è il voto.» Misurato sul DB di produzione in sola lettura (solo conteggi). Non è la stessa cosa del 30/09: allora mancavano i voti, oggi i voti ci sono ma senza giudizio sintetico.
+
+**La causa.** La pagina Voti del docente partiva in modalità **«Per dimensioni»**, che salvava **solo** un testo descrittivo e nessun giudizio sintetico. La casella dell'annotazione numerica privata sta più in alto e propone un giudizio, ma serviva un clic su «Usa». Chi scriveva il numero e salvava lasciava quindi al genitore un testo e nessun voto. Il numero, per il §4 #1, al genitore non arriva mai. La lettura del genitore era sana: la pagina mostra il giudizio quando c'è.
+
+| Classe | Voti senza giudizio | Con il numero | Dimensioni mai toccate | Testi distinti |
+|---|---|---|---|---|
+| Giugliano IV (01/10) | 15 | 15 (fra 6 e 10) | 15 | **1** |
+| Cesa IV (23/09) | 16 | 14 | 15 | 2 |
+| Cesa V, Giugliano V | 1 + 1 | 1 + 1 | 1 + 1 | 1 + 1 |
+
+A Giugliano IV quindici bambini hanno ricevuto **lo stesso testo**, generato dalle dimensioni predefinite, per appunti da 6 a 10. Su 133 voti reali, 99 avevano il giudizio.
+
+**Le due decisioni del titolare (04/10).**
+1. **Il giudizio sintetico c'è sempre**, e il numero resta privato (§4 #1, O.M. 3/2025). Il descrittivo per dimensioni diventa un'aggiunta.
+2. **I voti già dati** prendono il giudizio che il sistema suggerisce dal numero, con la stessa tabella del pulsante «Usa». Il testo resta accanto.
+
+**Scritto in produzione (04/10, dopo aver mostrato l'istruzione).** Un solo `UPDATE` di `valutazioni.giudizio_sintetico`, dentro un blocco `DO` che annullava tutto se le righe non erano **esattamente 31**. Bersaglio: `modalita = 'dimensioni'`, giudizio nullo, annotazione presente, sede Demo e classi di prova escluse. Il giudizio è l'etichetta della **scala attiva** della sede col valore più vicino al numero; a pari distanza vince il più alto, come in `suggerisciGiudizio`. Esito: **12 Ottimo, 4 Distinto, 4 Buono, 11 Discreto**. Verificato dopo: restano senza giudizio solo **2 voti di Cesa IV senza numero**, che spettano alla maestra. Nessun trigger su `valutazioni` e nessuna notifica partita. Sono voti orali oltre il termine: per cambiarne uno serve lo sblocco.
+
+**Cosa cambia nel codice.**
+- `POST` e `PATCH /api/primaria/valutazioni`: il giudizio è **obbligatorio in entrambe le modalità**. Senza giudizio, o con soli spazi, si risponde `400 VALUTAZIONE_GIUDIZIO_MANCANTE`, prima di leggere o scrivere, con un log `warn` `valutazione-senza-giudizio` (`tipo` = la modalità): una scheda rimasta aperta da prima del rilascio si vede. Il giudizio si salva anche «per dimensioni», e il corpo della notifica (nuova o ancora in coda) è il giudizio, non il testo. Il `refine` zod sul giudizio è stato tolto, perché non dava né il codice né il log. Il codice è dichiarato in `CODICI_ERRORE` (`src/lib/ui/esito-fetch.ts`) e tradotto in `shared.json` (`erroreValutazioneGiudizioMancante`): il lock `errori-con-codice` lo pretende, e senza la dichiarazione era rosso.
+- Pagina Voti del docente: la tendina «Giudizio sintetico» è **sempre** visibile, con la nota «È il voto che vede la famiglia.», e parte **vuota**. Un predefinito come il primo della scala sarebbe la stessa trappola, con «Ottimo» a tutti. Dopo ogni salvataggio torna vuota, così il bambino successivo non eredita il giudizio. «Aggiungi anche il giudizio descrittivo (per dimensioni)» è una casella spenta in partenza. «Usa» sceglie il giudizio e non spegne il descrittivo.
+- La modale «Modifica» della valutazione (`VociValutazioni.tsx`) ha la stessa struttura. Una voce storica senza giudizio parte vuota e lo chiede prima di salvare. `bozzaDaValutazione` e `valutazioneCambiata` perdono il parametro `scala`, che serviva solo al predefinito.
+- Media (`src/lib/primaria/media.ts`, `GET /api/primaria/prospetto`): entra anche il giudizio dei voti «per dimensioni» (`MODALITA_CON_GIUDIZIO`), con lo stesso filtro nella panoramica e nella singola materia. I 31 voti sistemati contano.
+- Il genitore non cambia: pagina Voti e home mostravano già il giudizio quando c'è.
+- Catalogo `teacherPrimaria`: tre chiavi nuove (`valutazioniGiudizioScegli`, `valutazioniGiudizioVisibileHint`, `valutazioniAggiungiDescrittivo`), `valutazioniGiudizioObbligatorio` riscritta e `valutazioniModalitaLabel` tolta perché orfana.
+- §4.2 del PRD aggiornato: il giudizio sintetico in itinere passa da «alternativa» a «obbligatorio». Nella nota sull'annotazione numerica è scritta l'eccezione una tantum dei 31 voti.
+
+**Test.** `primaria-valutazioni` (+3), `primaria-valutazioni-modifica-elimina` (+2, uno rafforzato col codice), `primaria-media` (+1) e il nuovo `primaria-prospetto-media`, con un DB finto che **applica** i filtri: col filtro vecchio conta 1 voto e media 10, col nuovo 2 e 8,5. `teacher-primaria-valutazioni-voci` ha +6, e tre salvataggi esistenti ora scelgono il giudizio. Tutti visti rossi prima della correzione, per la ragione attesa.
+
+**Dopo il deploy, in produzione (sola lettura).**
+
+```sql
+-- Voti senza giudizio nati DOPO il rilascio: atteso 0.
+SELECT count(*) FROM valutazioni
+WHERE modalita IS NOT NULL AND giudizio_sintetico IS NULL AND creato_il > '<istante del deploy>';
+```
+
+E `app_log` / Vercel per `valutazione-senza-giudizio`: qualche riga nelle prime ore (schede aperte da prima del rilascio) è normale; righe che continuano dicono che il modulo non funziona.
+
+## 🔔 Changelog — Pop-up «Aggiorna l'app» per il personale su Android: la 1.2 è su Google Play — 2026-10-04 (branch `feat/popup-1-2-personale-android`)
+
+**Stato.** 🟡 **Gate verde, in PR** (`eslint` 0 · `tsc` 0 · `vitest run` 1654 file / 27.961 test · `npm run build` ok). Branch nato da `main` dopo il deploy riuscito della PR 3 (#182). **Nessuna migrazione**, nessun cambiamento sul server, nessuna build delle app: cambiano una soglia, un testo e il modo in cui il pop-up sceglie il testo.
+
+**Perché adesso.** La 1.2 per Android è **vista sullo store**: la scheda pubblica Google Play di `it.kidville.app` risponde `1.2` (in it e in en) dal 04/10 alle 10:41 UTC, e Play Console dà la release «4 (1.2)» pubblicata in produzione al 100% (notifica «L'aggiornamento dell'app è stato pubblicato»). L'invio era partito alle ~10:20 UTC, con la dichiarazione del servizio in primo piano `dataSync` (Elaborazione della rete → Altro, con il video dimostrativo). **iOS no**: la 1.2 (6) è ancora in revisione, quindi su iPhone non cambia niente.
+
+**Cosa cambia.**
+- `VERSIONE_MINIMA_PERSONALE` (`src/lib/native/aggiornamento-app.ts`) passa da `{ ios: null, android: null }` a **`{ ios: null, android: '1.2' }`**. `VERSIONE_MINIMA_STORE` resta `'1.1'`: le famiglie non vedono niente di nuovo.
+- `appDaAggiornare` dice **quale minima è scattata**: `minima: 'store'` (sotto la 1.1, per tutti) o `minima: 'personale'` (fra la 1.1 e la 1.2, solo per chi apre `/teacher`).
+- Il pop-up sceglie il corpo da lì. Il titolo e i bottoni restano quelli di sempre. Sotto la minima dello store resta `avvisoAggiornaCorpo` (la 1.1). Fra le due minime c'è la chiave nuova **`avvisoAggiornaCorpoPersonale`**, con il testo **approvato dal titolare il 04/10**: «Aggiorna l'app: i video della galleria si inviano anche con il telefono bloccato o mentre usi altre app.» In inglese: «Update the app: gallery videos now upload even with the phone locked or while you use other apps.»
+- Restano com'erano: personale = chi apre `/teacher` (la cuoca esclusa), decisione per sessione, avviso settimanale delle notifiche che tace dove compare il pop-up, gate biometrico rispettato.
+
+**I log.** Nessun log nuovo, ed è una scelta: i messaggi restano `avviso-aggiorna-app-{mostrato|rimandato|tocco-store}: <piattaforma> <versione>`. La minima scattata **non** entra nei log, perché direbbe chi lavora a scuola. La fascia si legge dalla versione: su Android una comparsa a `1.1` è per forza del personale (la minima dello store la accetta), una a `1.0` è della minima dello store.
+
+**Verificato.**
+- `__tests__/lib/aggiornamento-app.test.ts` fotografa il valore spedito (Android `1.2`, iOS `null`). Prova il valore spedito piattaforma per piattaforma: su iPhone il ruolo non si chiede; su Android il docente sulla 1.1 → `personale`, il genitore → niente, il docente sulla 1.0 → `store` senza chiedere il ruolo. Ogni esito porta la minima scattata.
+- `__tests__/components/AvvisoAggiornamentoApp.test.tsx`: sotto la minima dello store compare il corpo di sempre e **non** quello del personale; il personale vede il suo corpo e **non** quello di sempre, sia a minima iniettata sia col valore spedito su Android.
+- Le due finte di `appDaAggiornare` negli avvisi settimanali hanno la forma vera del risultato.
+- **Tre mutazioni, tutte rosse**: il componente che mostra sempre il corpo di sempre (3 test rossi), la libreria che dice sempre `store` (12), la minima del personale spenta anche su Android (4). Ripristino: 105/105 verdi.
+
+**Dopo il deploy, in produzione (sola lettura).**
+
+```sql
+SELECT messaggio, sum(occorrenze) FROM app_log
+WHERE messaggio LIKE 'avviso-aggiorna-app-%' AND giorno >= '2026-10-04'
+GROUP BY 1 ORDER BY 1;
+```
+
+Atteso: compaiono righe `… android 1.1` (il personale Android rimasto sulla 1.1); nessuna riga `… ios 1.1` e nessuna `… android 1.2`.
+
+**Prossimo passo.** Quando `itunes.apple.com/lookup?id=6794883055&country=it` risponde `1.2`: una seconda micro-PR, su un branch nuovo, che porta `ios` a `'1.2'`, aggiorna lo stesso test e scrive nel commit quando la 1.2 è stata vista sull'App Store. Il testo c'è già.
+
 ## 📲 Changelog — Video, PR 3 «app 1.2»: il video dell'insegnante parte da solo e arriva anche a telefono bloccato (invio nativo in background) — 2026-10-03 (branch `feat/app-1-2-caricamenti-nativi`)
 
-**Stato.** ✅ **Collaudo C1/E1 fatto; il web va in produzione col merge di questa PR (#182); l'invio agli store lo fa il titolare da un'altra sessione.** Il branch è nato dopo il deploy riuscito della PR 2 (#181, merge `06dd1d66`, in produzione dal 02/10 23:18 UTC). **Nessuna migrazione** e il contratto della PR 2 non si tocca: sul server cambiano solo le tolleranze della verifica dell'uscita in reduce60 (**Tfps**, **Tfps2**: due falsi scarti del rallentatore trovati dal collaudo E1). Ondate 1-4, rilievi dei critici e correzioni del collaudo sono scritti, criticati e committati (tabella qui sotto); il collaudo del motore (C1) e dell'app vera (E1) è nella sezione **K**. **Nulla è stato inviato a Apple né a Google:** ogni invio aspetta il **via libera del titolare**, passo per passo. Spec: `docs/superpowers/specs/2026-10-03-video-pr3-app-1-2-design.md` (con l'**Appendice A**: gli scostamenti fra piano, progetto e codice, dove vale il codice) · difetti secondari (**237**, contati dal file il 03/10 sera; il più importante è il #230, compito **Tfps3**): `docs/superpowers/plans/2026-10-03-video-pr3-difetti-secondari.md` · plugin, prove native e server finto: `docs/mobile.md` · **consegna per l'invio agli store: `docs/store-submission.md` §7** · interruttore d'emergenza: `docs/env.md`.
+**Stato.** ✅ **In produzione dal 03/10/2026 18:03 UTC (merge `89d4822d`, #182). Android 1.2 (`versionCode` 4) pubblicata su Google Play il 04/10 alle 10:41 UTC, al 100%, con la dichiarazione del servizio in primo piano `dataSync`; iOS 1.2 (6) in revisione da Apple dal 04/10 08:56 UTC.** Il pop-up «Aggiorna l'app» per il personale è acceso su Android (voce del 04/10 qui sopra); su iOS si accende con una seconda micro-PR quando la 1.2 è sull'App Store. Il branch è nato dopo il deploy riuscito della PR 2 (#181, merge `06dd1d66`, in produzione dal 02/10 23:18 UTC). **Nessuna migrazione** e il contratto della PR 2 non si tocca: sul server cambiano solo le tolleranze della verifica dell'uscita in reduce60 (**Tfps**, **Tfps2**: due falsi scarti del rallentatore trovati dal collaudo E1). Ondate 1-4, rilievi dei critici e correzioni del collaudo sono scritti, criticati e committati (tabella qui sotto); il collaudo del motore (C1) e dell'app vera (E1) è nella sezione **K**. **Gli invii a Apple e a Google li ha autorizzati il titolare, passo per passo** (03-04/10). Spec: `docs/superpowers/specs/2026-10-03-video-pr3-app-1-2-design.md` (con l'**Appendice A**: gli scostamenti fra piano, progetto e codice, dove vale il codice) · difetti secondari (**237**, contati dal file il 03/10 sera; il più importante è il #230, compito **Tfps3**): `docs/superpowers/plans/2026-10-03-video-pr3-difetti-secondari.md` · plugin, prove native e server finto: `docs/mobile.md` · **consegna per l'invio agli store: `docs/store-submission.md` §7** · interruttore d'emergenza: `docs/env.md`.
 
 | Compito | Che cosa | Stato al 03/10 |
 |---|---|---|
@@ -26815,11 +26890,15 @@ La valutazione quotidiana mantiene **funzione formativa** e si articola così:
   4. **Risorse mobilitate** (Interne / Esterne / Entrambe)
 • **Giudizio descrittivo auto-generato:** sulla base delle dimensioni il sistema propone un giudizio
   descrittivo testuale, **pienamente modificabile** dall'insegnante.
-• **Giudizio sintetico in itinere (alternativa):** in alternativa al descrittivo esteso, il docente può
-  registrare direttamente un giudizio sintetico abbreviato (es. Buono, Sufficiente) correlato
-  all'obiettivo testato, per semplificare la visualizzazione nel prospetto.
+• **Giudizio sintetico in itinere (OBBLIGATORIO, dal 2026-10-04):** ogni valutazione in itinere porta
+  un giudizio sintetico (es. Buono, Sufficiente) scelto dal docente: è **il voto che vede la famiglia**
+  (#1). Le dimensioni e il descrittivo sono un'**aggiunta facoltativa** («Aggiungi anche il giudizio
+  descrittivo»), spenta in partenza, e **non sostituiscono** il giudizio. Il server rifiuta una
+  valutazione senza giudizio con `400 VALUTAZIONE_GIUDIZIO_MANCANTE`. *Prima era un'alternativa, e la
+  modalità predefinita era «per dimensioni»: 33 voti di 32 alunni arrivarono ai genitori senza voto
+  (vedi changelog 2026-10-04).*
 • **Nessun voto numerico** alla primaria, in nessuna delle due modalità.
-• **Annotazione numerica privata (facoltativa):** sulla singola verifica in itinere il docente può registrare un **appunto numerico** (scala /10) come **strumento di lavoro personale**. Vincoli: (a) il valore **ufficiale** periodico/finale per disciplina resta il **giudizio sintetico** (Allegato A) scelto dal docente; (b) l'annotazione **non compare** sul documento di valutazione (pagella/scrutinio); (c) **non è MAI visibile al genitore** (endpoint docente con gate di ruolo; gli endpoint `/api/parent/**` non la espongono); (d) **non genera automaticamente** il giudizio e **non produce medie automatiche**. Il sistema può al massimo **suggerire** un giudizio sintetico a partire dal numero (giudizio col valore nascosto più vicino), ma il docente deve **confermarlo** esplicitamente.
+• **Annotazione numerica privata (facoltativa):** sulla singola verifica in itinere il docente può registrare un **appunto numerico** (scala /10) come **strumento di lavoro personale**. Vincoli: (a) il valore **ufficiale** periodico/finale per disciplina resta il **giudizio sintetico** (Allegato A) scelto dal docente; (b) l'annotazione **non compare** sul documento di valutazione (pagella/scrutinio); (c) **non è MAI visibile al genitore** (endpoint docente con gate di ruolo; gli endpoint `/api/parent/**` non la espongono); (d) **non genera automaticamente** il giudizio e **non produce medie automatiche**. Il sistema può al massimo **suggerire** un giudizio sintetico a partire dal numero (giudizio col valore nascosto più vicino), ma il docente deve **confermarlo** esplicitamente. *Unica eccezione, una tantum e per decisione del titolare (2026-10-04): ai 31 voti storici «per dimensioni» rimasti senza giudizio è stato scritto il giudizio suggerito dal loro numero (vedi changelog di quel giorno); il docente può cambiarlo con lo sblocco.*
 
 ### 4.3 Scrutinio Periodico e Finale (Primaria) — Sei Giudizi Sintetici
 In sede di scrutinio (intermedio e finale), il team dei docenti contitolari attribuisce a ciascun

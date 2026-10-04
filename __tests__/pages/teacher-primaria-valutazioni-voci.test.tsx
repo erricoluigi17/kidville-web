@@ -165,7 +165,18 @@ beforeEach(() => {
       });
     }
     if (url.startsWith('/api/primaria/obiettivi')) {
-      return risposta(200, { success: true, data: { scala: ['Ottimo', 'Buono', 'Sufficiente'], scalaValori: [], obiettivi: [] } });
+      return risposta(200, {
+        success: true,
+        data: {
+          scala: ['Ottimo', 'Buono', 'Sufficiente'],
+          scalaValori: [
+            { etichetta: 'Ottimo', valore_numerico: 10 },
+            { etichetta: 'Buono', valore_numerico: 8 },
+            { etichetta: 'Sufficiente', valore_numerico: 6 },
+          ],
+          obiettivi: [],
+        },
+      });
     }
     if (url.startsWith('/api/primaria/me')) return risposta(200, { success: true, data: { ruolo } });
     if (url.startsWith('/api/primaria/sblocca') && metodo === 'POST') return risposta(200, { success: true });
@@ -192,6 +203,11 @@ async function svuotaCoda() {
   await act(async () => {
     await new Promise((r) => setTimeout(r, 0));
   });
+}
+
+/** Il giudizio sintetico del modulo di creazione (fuori dalla modale). */
+function scegliGiudizio(valore: string) {
+  fireEvent.change(screen.getByLabelText('Giudizio sintetico'), { target: { value: valore } });
 }
 
 /** Monta la pagina e sceglie alunno e materia: le «recenti» partono solo così. */
@@ -262,9 +278,8 @@ describe('pure: elenco unito, tipo, corpi delle PATCH', () => {
       dim_risorse: 'esterne',
       tipo: 'scritto',
     });
-    const scala = ['Ottimo', 'Buono'];
-    const b = bozzaDaValutazione(v, scala);
-    expect(valutazioneCambiata(v, b, scala)).toBe(false);
+    const b = bozzaDaValutazione(v);
+    expect(valutazioneCambiata(v, b)).toBe(false);
     const corpo = corpoModificaValutazione(v, b);
     expect(corpo).not.toHaveProperty('tipoProva');
     expect(corpo).toMatchObject({
@@ -291,7 +306,7 @@ describe('pure: elenco unito, tipo, corpi delle PATCH', () => {
       dim_tipologia: 'nota',
       dim_risorse: 'interne',
     });
-    const b = bozzaDaValutazione(v, []);
+    const b = bozzaDaValutazione(v);
     expect(dimensioniCambiate(v, b)).toBe(false);
 
     // La modale svuota il campo appena cambia una dimensione (il docente lo vede).
@@ -320,37 +335,47 @@ describe('pure: elenco unito, tipo, corpi delle PATCH', () => {
       dim_tipologia: 'nota',
       dim_risorse: 'interne',
     });
-    const b = { ...bozzaDaValutazione(v, []), giudizioTesto: 'Il mio testo' };
+    const b = { ...bozzaDaValutazione(v), giudizioTesto: 'Il mio testo' };
     const cambiata = conCambioDimensioni(v, b, { tipologia: 'non_nota' });
     expect(cambiata.giudizioTesto).toBe('Il mio testo');
     expect(corpoModificaValutazione(v, cambiata).giudizioTesto).toBe('Il mio testo');
     // Svuotato una volta, un cambio successivo non tocca ciò che il docente riscrive.
-    const svuotata = conCambioDimensioni(v, bozzaDaValutazione(v, []), { continuita: false });
+    const svuotata = conCambioDimensioni(v, bozzaDaValutazione(v), { continuita: false });
     const riscritta = conCambioDimensioni(v, { ...svuotata, giudizioTesto: 'Nuovo' }, { risorse: 'entrambe' });
     expect(riscritta.giudizioTesto).toBe('Nuovo');
   });
 
   it('valutazione per dimensioni con i dim_* null: la bozza di partenza NON è un cambio', () => {
     const v = valutazione({ modalita: 'dimensioni', giudizio_sintetico: null, giudizio_testo: 'Testo salvato' });
-    const scala = ['Ottimo', 'Buono'];
-    const b = bozzaDaValutazione(v, scala);
+    const b = bozzaDaValutazione(v);
     // I predefiniti della bozza (true, 'nota', 'interne') valgono i null salvati.
-    expect(valutazioneCambiata(v, b, scala)).toBe(false);
+    expect(valutazioneCambiata(v, b)).toBe(false);
     expect(dimensioniCambiate(v, b)).toBe(false);
     // Un cambio vero resta un cambio, per ciascuna delle quattro dimensioni.
-    expect(valutazioneCambiata(v, { ...b, autonomia: false }, scala)).toBe(true);
-    expect(valutazioneCambiata(v, { ...b, continuita: false }, scala)).toBe(true);
-    expect(valutazioneCambiata(v, { ...b, tipologia: 'non_nota' }, scala)).toBe(true);
-    expect(valutazioneCambiata(v, { ...b, risorse: 'entrambe' }, scala)).toBe(true);
+    expect(valutazioneCambiata(v, { ...b, autonomia: false })).toBe(true);
+    expect(valutazioneCambiata(v, { ...b, continuita: false })).toBe(true);
+    expect(valutazioneCambiata(v, { ...b, tipologia: 'non_nota' })).toBe(true);
+    expect(valutazioneCambiata(v, { ...b, risorse: 'entrambe' })).toBe(true);
     // E le due funzioni dicono la stessa cosa sulla stessa voce.
     expect(dimensioniCambiate(v, { ...b, risorse: 'entrambe' })).toBe(true);
   });
 
+  it('per dimensioni: la bozza storica senza giudizio parte vuota, e scegliere il giudizio è un cambio', () => {
+    const v = valutazione({ modalita: 'dimensioni', giudizio_sintetico: null, giudizio_testo: 'Testo' });
+    const b = bozzaDaValutazione(v);
+    expect(b.giudizioSintetico).toBe('');
+    expect(valutazioneCambiata(v, { ...b, giudizioSintetico: 'Buono' })).toBe(true);
+    expect(corpoModificaValutazione(v, { ...b, giudizioSintetico: 'Buono' })).toMatchObject({
+      modalita: 'dimensioni',
+      giudizioSintetico: 'Buono',
+    });
+  });
+
   it('valutazione sintetica passata a «per dimensioni»: il testo salvato non riparte intatto', () => {
     const v = valutazione({ modalita: 'sintetico', giudizio_testo: 'Testo della sintetica' });
-    const b = conCambioDimensioni(v, bozzaDaValutazione(v, ['Buono']), { modalita: 'dimensioni' });
+    const b = conCambioDimensioni(v, bozzaDaValutazione(v), { modalita: 'dimensioni' });
     expect(b.giudizioTesto).toBe('');
-    expect(corpoModificaValutazione(v, { ...bozzaDaValutazione(v, ['Buono']), modalita: 'dimensioni' }).giudizioTesto).toBeNull();
+    expect(corpoModificaValutazione(v, { ...bozzaDaValutazione(v), modalita: 'dimensioni' }).giudizioTesto).toBeNull();
   });
 });
 
@@ -514,6 +539,7 @@ describe('«Segna impreparato»', () => {
     fireEvent.change(screen.getByPlaceholderText('Es. Le tabelline del 7, La comprensione del testo…'), {
       target: { value: 'Le frazioni' },
     });
+    scegliGiudizio('Buono');
     fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
     await waitFor(() => expect(chiamate('POST', '/api/primaria/valutazioni')).toHaveLength(1));
     expect(corpoDi(chiamate('POST', '/api/primaria/valutazioni')[0]!)).toMatchObject({ alunnoId: ALUNNO.id });
@@ -596,7 +622,8 @@ describe('Modifica', () => {
     valutazioni = [
       valutazione({
         modalita: 'dimensioni',
-        giudizio_sintetico: null,
+        // Dal 2026-10-04 anche «per dimensioni» ha il giudizio (la voce storica senza: test in fondo).
+        giudizio_sintetico: 'Buono',
         giudizio_testo: 'Testo generato dalle dimensioni vecchie',
         dim_autonomia: true,
         dim_continuita: true,
@@ -728,6 +755,7 @@ describe('classe senza materie, classe non letta, salvataggio che non va', () =>
     rispostaMutazione = { status: 423, corpo: { error: 'Inserimento bloccato: superato il termine di 2 giorni.', locked: true } };
     await montaEScegli();
     fireEvent.change(screen.getByPlaceholderText('Es. Le tabelline del 7, La comprensione del testo…'), { target: { value: 'Le frazioni' } });
+    scegliGiudizio('Buono');
     fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
     expect(await screen.findByText('Inserimento bloccato: superato il termine di 2 giorni.')).toBeTruthy();
     expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'valutazione-salva-rifiutata', stato: 423 }));
@@ -744,9 +772,102 @@ describe('classe senza materie, classe non letta, salvataggio che non va', () =>
     });
     await montaEScegli();
     fireEvent.change(screen.getByPlaceholderText('Es. Le tabelline del 7, La comprensione del testo…'), { target: { value: 'Le frazioni' } });
+    scegliGiudizio('Buono');
     fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
     expect(await screen.findByText('Operazione non inviata: controlla la connessione e riprova.')).toBeTruthy();
     expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ messaggio: expect.stringContaining('valutazione-salva-non-inviata') }));
     expect((screen.getByRole('button', { name: 'Salva valutazione' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+// ── Il giudizio sintetico è il VOTO che vede la famiglia (2026-10-04). ──
+// Il modulo partiva su «Per dimensioni», che salvava solo un testo: 33 voti di
+// 32 alunni sono arrivati ai genitori senza voto (IV di Giugliano: lo stesso
+// testo a 15 bambini, perché le dimensioni predefinite non erano state toccate).
+// Ora il giudizio si sceglie SEMPRE, parte vuoto (un predefinito sarebbe la
+// stessa trappola, con «Ottimo» a tutti), e il descrittivo è un'aggiunta.
+describe('giudizio sintetico obbligatorio (2026-10-04)', () => {
+  const ARGOMENTO = 'Es. Le tabelline del 7, La comprensione del testo…';
+  const DESCRITTIVO = 'Aggiungi anche il giudizio descrittivo (per dimensioni)';
+
+  it('il modulo parte senza giudizio e senza descrittivo; senza giudizio la POST non parte e lo dice', async () => {
+    await montaEScegli();
+    expect((screen.getByLabelText('Giudizio sintetico') as HTMLSelectElement).value).toBe('');
+    expect((screen.getByRole('checkbox', { name: DESCRITTIVO }) as HTMLInputElement).checked).toBe(false);
+    fireEvent.change(screen.getByPlaceholderText(ARGOMENTO), { target: { value: 'Le frazioni' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
+    expect(await screen.findByText('Scegli il giudizio sintetico: è il voto che vede la famiglia.')).toBeTruthy();
+    expect(chiamate('POST', '/api/primaria/valutazioni')).toHaveLength(0);
+  });
+
+  it('col giudizio scelto parte la sintetica; dopo il salvataggio il giudizio torna vuoto per il bambino dopo', async () => {
+    rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuova' } } };
+    await montaEScegli();
+    fireEvent.change(screen.getByPlaceholderText(ARGOMENTO), { target: { value: 'Le frazioni' } });
+    scegliGiudizio('Buono');
+    fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
+    expect(await screen.findByText('Valutazione salvata ✓')).toBeTruthy();
+    const corpo = corpoDi(chiamate('POST', '/api/primaria/valutazioni')[0]!);
+    expect(corpo).toMatchObject({ modalita: 'sintetico', giudizioSintetico: 'Buono' });
+    expect(corpo.dims).toBeUndefined();
+    expect((screen.getByLabelText('Giudizio sintetico') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('col descrittivo: parte «per dimensioni» CON il giudizio, e il descrittivo resta acceso', async () => {
+    rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuova' } } };
+    await montaEScegli();
+    fireEvent.click(screen.getByRole('checkbox', { name: DESCRITTIVO }));
+    fireEvent.change(screen.getByPlaceholderText(ARGOMENTO), { target: { value: 'Le frazioni' } });
+    scegliGiudizio('Sufficiente');
+    fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
+    expect(await screen.findByText('Valutazione salvata ✓')).toBeTruthy();
+    expect(corpoDi(chiamate('POST', '/api/primaria/valutazioni')[0]!)).toMatchObject({
+      modalita: 'dimensioni',
+      giudizioSintetico: 'Sufficiente',
+      dims: { autonomia: true, continuita: true, tipologia: 'nota', risorse: 'interne' },
+    });
+    expect((screen.getByRole('checkbox', { name: DESCRITTIVO }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('«Usa» del suggerimento sceglie il giudizio e non spegne il descrittivo', async () => {
+    await montaEScegli();
+    fireEvent.click(screen.getByRole('checkbox', { name: DESCRITTIVO }));
+    fireEvent.change(screen.getByPlaceholderText('Es. 7.5'), { target: { value: '8' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Usa' }));
+    expect((screen.getByLabelText('Giudizio sintetico') as HTMLSelectElement).value).toBe('Buono');
+    expect((screen.getByRole('checkbox', { name: DESCRITTIVO }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('modale: una voce storica per dimensioni SENZA giudizio lo chiede, poi la PATCH lo porta', async () => {
+    valutazioni = [
+      valutazione({
+        modalita: 'dimensioni',
+        giudizio_sintetico: null,
+        giudizio_testo: 'Testo delle dimensioni',
+        dim_autonomia: true,
+        dim_continuita: true,
+        dim_tipologia: 'nota',
+        dim_risorse: 'interne',
+      }),
+    ];
+    rispostaMutazione = { status: 200, corpo: { success: true } };
+    await montaEScegli();
+    fireEvent.click(screen.getByRole('button', { name: 'Modifica la valutazione del 20/09/2026 (Le tabelline)' }));
+    const dialogo = await screen.findByRole('dialog');
+    const giudizio = within(dialogo).getByLabelText('Giudizio sintetico') as HTMLSelectElement;
+    // Vuoto, non il primo della scala: niente «Ottimo» regalato a chi non l'ha scelto.
+    expect(giudizio.value).toBe('');
+    expect((within(dialogo).getByRole('checkbox', { name: DESCRITTIVO }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
+    expect(await within(dialogo).findByText('Scegli il giudizio sintetico: è il voto che vede la famiglia.')).toBeTruthy();
+    expect(chiamate('PATCH', '/api/primaria/valutazioni')).toHaveLength(0);
+    fireEvent.change(giudizio, { target: { value: 'Buono' } });
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
+    expect(await screen.findByText('Valutazione modificata ✓')).toBeTruthy();
+    expect(corpoDi(chiamate('PATCH', '/api/primaria/valutazioni')[0]!)).toMatchObject({
+      modalita: 'dimensioni',
+      giudizioSintetico: 'Buono',
+      giudizioTesto: 'Testo delle dimensioni',
+    });
   });
 });

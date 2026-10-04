@@ -151,8 +151,13 @@ export function obiettiviCollegati(v: Pick<ValutazioneRecente, 'valutazione_obie
   return (v.valutazione_obiettivi ?? []).map((o) => o.obiettivo_id).filter(Boolean);
 }
 
-/** La bozza di partenza: i valori della voce, e per ciò che manca i predefiniti della creazione. */
-export function bozzaDaValutazione(v: ValutazioneRecente, scala: readonly string[]): BozzaValutazione {
+/**
+ * La bozza di partenza: i valori della voce, e per ciò che manca i predefiniti
+ * della creazione. Il giudizio mancante (voce storica «per dimensioni», prima
+ * del 2026-10-04) parte VUOTO e non dal primo della scala: un predefinito
+ * regalerebbe «Ottimo» a chi non l'ha scelto.
+ */
+export function bozzaDaValutazione(v: ValutazioneRecente): BozzaValutazione {
   const tipologia = v.dim_tipologia === 'non_nota' ? 'non_nota' : 'nota';
   const risorse = v.dim_risorse === 'esterne' || v.dim_risorse === 'entrambe' ? v.dim_risorse : 'interne';
   return {
@@ -162,7 +167,7 @@ export function bozzaDaValutazione(v: ValutazioneRecente, scala: readonly string
     continuita: v.dim_continuita ?? true,
     tipologia,
     risorse,
-    giudizioSintetico: v.giudizio_sintetico ?? scala[0] ?? '',
+    giudizioSintetico: v.giudizio_sintetico ?? '',
     giudizioTesto: v.giudizio_testo ?? '',
     annotazioneNumerica:
       v.annotazione_numerica === null || v.annotazione_numerica === undefined ? '' : String(v.annotazione_numerica),
@@ -178,7 +183,7 @@ export function bozzaDaValutazione(v: ValutazioneRecente, scala: readonly string
 export function dimensioniCambiate(v: ValutazioneRecente, b: BozzaValutazione): boolean {
   if (b.modalita !== 'dimensioni') return false;
   if (v.modalita === 'sintetico') return true;
-  return dimensioniDiverse(bozzaDaValutazione(v, []), b);
+  return dimensioniDiverse(bozzaDaValutazione(v), b);
 }
 
 /**
@@ -231,7 +236,8 @@ export function corpoModificaValutazione(v: ValutazioneRecente, b: BozzaValutazi
       b.modalita === 'dimensioni'
         ? { autonomia: b.autonomia, continuita: b.continuita, tipologia: b.tipologia, risorse: b.risorse }
         : undefined,
-    giudizioSintetico: b.modalita === 'sintetico' ? b.giudizioSintetico : null,
+    // In ENTRAMBE le modalità: è il voto che vede la famiglia (2026-10-04).
+    giudizioSintetico: b.giudizioSintetico || null,
     // Per dimensioni: il testo del docente, oppure `null` e il server lo genera.
     // `null` anche quando le dimensioni cambiano e il testo è quello salvato
     // (generato dalle dimensioni VECCHIE): altrimenti il genitore leggerebbe un
@@ -255,15 +261,15 @@ export function corpoModificaValutazione(v: ValutazioneRecente, b: BozzaValutazi
 }
 
 /** Vero se la bozza cambia qualcosa della voce: senza cambi la PATCH non parte. */
-export function valutazioneCambiata(v: ValutazioneRecente, b: BozzaValutazione, scala: readonly string[]): boolean {
-  const prima = bozzaDaValutazione(v, scala);
+export function valutazioneCambiata(v: ValutazioneRecente, b: BozzaValutazione): boolean {
+  const prima = bozzaDaValutazione(v);
   const numero = (s: string) => (s.trim() === '' ? null : Number(s.trim().replace(',', '.')));
   if (b.tipoProva !== prima.tipoProva) return true;
   if (b.modalita !== prima.modalita) return true;
   if (b.argomento.trim() !== prima.argomento.trim()) return true;
   if (b.modalita === 'dimensioni' && b.giudizioTesto.trim() !== prima.giudizioTesto.trim()) return true;
   if (numero(b.annotazioneNumerica) !== numero(prima.annotazioneNumerica)) return true;
-  if (b.modalita === 'sintetico' && b.giudizioSintetico !== (v.giudizio_sintetico ?? '')) return true;
+  if (b.giudizioSintetico !== (v.giudizio_sintetico ?? '')) return true;
   if (b.modalita === 'dimensioni' && dimensioniDiverse(prima, b)) return true;
   const a = [...new Set(b.obiettiviIds)].sort().join(',');
   const c = [...new Set(prima.obiettiviIds)].sort().join(',');
@@ -607,7 +613,7 @@ function ModaleModificaValutazione({
 }) {
   const t = useTranslations('teacherPrimaria');
   const idBase = useId();
-  const [b, setB] = useState<BozzaValutazione>(() => bozzaDaValutazione(valutazione, scala));
+  const [b, setB] = useState<BozzaValutazione>(() => bozzaDaValutazione(valutazione));
   const [errore, setErrore] = useState('');
   const [inVolo, setInVolo] = useState(false);
   const set = <K extends keyof BozzaValutazione>(k: K, val: BozzaValutazione[K]) => setB((p) => ({ ...p, [k]: val }));
@@ -639,7 +645,7 @@ function ModaleModificaValutazione({
       setErrore(t('valutazioniInserisciArgomento'));
       return;
     }
-    if (b.modalita === 'sintetico' && !b.giudizioSintetico) {
+    if (!b.giudizioSintetico) {
       setErrore(t('valutazioniGiudizioObbligatorio'));
       return;
     }
@@ -647,7 +653,7 @@ function ModaleModificaValutazione({
       setErrore(t('valutazioniCollegaObiettivo'));
       return;
     }
-    if (!valutazioneCambiata(valutazione, b, scala)) {
+    if (!valutazioneCambiata(valutazione, b)) {
       setErrore(t('valutazioniNessunCambio'));
       return;
     }
@@ -747,21 +753,43 @@ function ModaleModificaValutazione({
           className="font-maven mt-1 w-24 rounded-pill border border-kidville-line px-3 py-2 text-sm"
         />
 
-        <div className="mt-3 flex gap-1.5" role="group" aria-label={t('valutazioniModalitaLabel')}>
-          {(['dimensioni', 'sintetico'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={b.modalita === m}
-              onClick={() => setB((p) => conCambioDimensioni(valutazione, p, { modalita: m }))}
-              className={`font-maven rounded-pill px-3 py-1.5 text-xs ${b.modalita === m ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-sub'}`}
-            >
-              {m === 'dimensioni' ? t('valutazioniPerDimensioni') : t('valutazioniGiudizioSintetico')}
-            </button>
-          ))}
+        {/* Il giudizio sintetico SEMPRE: è il voto che vede la famiglia (2026-10-04). */}
+        <div className="mt-3">
+          <label htmlFor={scalaId} className="block font-maven text-xs font-semibold text-kidville-sub">
+            {t('valutazioniGiudizioSintetico')}
+          </label>
+          <select
+            id={scalaId}
+            value={b.giudizioSintetico}
+            onChange={(e) => set('giudizioSintetico', e.target.value)}
+            aria-describedby={`${scalaId}-hint`}
+            className="font-maven mt-1 w-full rounded-pill border border-kidville-line px-3 py-2 text-sm"
+          >
+            <option value="">{t('valutazioniGiudizioScegli')}</option>
+            {opzioniScala.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+          <p id={`${scalaId}-hint`} className="mt-1 font-maven text-[11px] text-kidville-sub">
+            {t('valutazioniGiudizioVisibileHint')}
+          </p>
         </div>
 
-        {b.modalita === 'dimensioni' ? (
+        <label className="mt-3 flex items-center gap-2 font-maven text-xs text-kidville-ink">
+          <input
+            type="checkbox"
+            checked={b.modalita === 'dimensioni'}
+            onChange={(e) =>
+              setB((p) => conCambioDimensioni(valutazione, p, { modalita: e.target.checked ? 'dimensioni' : 'sintetico' }))
+            }
+            className="accent-kidville-green"
+          />
+          {t('valutazioniAggiungiDescrittivo')}
+        </label>
+
+        {b.modalita === 'dimensioni' && (
           <div className="mt-2 space-y-2 rounded-card bg-kidville-cream/40 p-3">
             <Scelta etichetta={t('valutazioniDimAutonomia')} valore={b.autonomia} opzioni={siNo} onScegli={(x) => setB((p) => conCambioDimensioni(valutazione, p, { autonomia: x }))} />
             <Scelta etichetta={t('valutazioniDimContinuita')} valore={b.continuita} opzioni={siNo} onScegli={(x) => setB((p) => conCambioDimensioni(valutazione, p, { continuita: x }))} />
@@ -799,24 +827,6 @@ function ModaleModificaValutazione({
             <p id={`${testoId}-hint`} className="font-maven text-[11px] text-kidville-sub">
               {t('valutazioniGiudizioDescrittivoHint')}
             </p>
-          </div>
-        ) : (
-          <div className="mt-2">
-            <label htmlFor={scalaId} className="block font-maven text-xs font-semibold text-kidville-sub">
-              {t('valutazioniGiudizioSintetico')}
-            </label>
-            <select
-              id={scalaId}
-              value={b.giudizioSintetico}
-              onChange={(e) => set('giudizioSintetico', e.target.value)}
-              className="font-maven mt-1 w-full rounded-pill border border-kidville-line px-3 py-2 text-sm"
-            >
-              {opzioniScala.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
           </div>
         )}
 

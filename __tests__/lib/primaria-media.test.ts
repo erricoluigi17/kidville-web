@@ -56,6 +56,19 @@ describe('giudiziSintetici — coerenza media singola-materia ↔ panoramica', (
     expect(mediaGiudizi(scala, giudiziSintetici(valutazioniMateria))).toBeNull()
   })
 
+  // 2026-10-04: il giudizio è obbligatorio anche «per dimensioni» (è il voto che
+  // vede la famiglia). Un voto per dimensioni CON giudizio entra nella media; uno
+  // storico senza giudizio resta fuori, come prima.
+  it('per dimensioni col giudizio conta; per dimensioni senza giudizio no', () => {
+    const valutazioniMateria = [
+      { modalita: 'sintetico', giudizio_sintetico: 'Avanzato' }, //      4
+      { modalita: 'dimensioni', giudizio_sintetico: 'Base' }, //          2 → conta
+      { modalita: 'dimensioni', giudizio_sintetico: null }, //            storica: esclusa
+    ]
+    expect(giudiziSintetici(valutazioniMateria)).toEqual(['Avanzato', 'Base'])
+    expect(mediaGiudizi(scala, giudiziSintetici(valutazioniMateria))).toBe(3)
+  })
+
   it('array vuoto → nessun giudizio, media null', () => {
     expect(giudiziSintetici([])).toEqual([])
     expect(mediaGiudizi(scala, giudiziSintetici([]))).toBeNull()

@@ -138,6 +138,59 @@ describe('POST /api/primaria/valutazioni — collegamento obiettivo (DL-015)', (
   })
 })
 
+// ── Il giudizio sintetico è il VOTO che vede la famiglia (2026-10-04). ──
+// «Per dimensioni» salvava solo un testo, senza giudizio: 33 voti di 32 alunni
+// arrivavano al genitore senza voto (IV Giugliano 01/10: 15 testi identici per
+// annotazioni da 6 a 10). Ora il giudizio è obbligatorio in ENTRAMBE le modalità;
+// le dimensioni aggiungono il testo, non lo sostituiscono (PRD #1).
+describe('POST /api/primaria/valutazioni — giudizio sintetico sempre', () => {
+  const DIMS = { autonomia: true, continuita: true, tipologia: 'nota', risorse: 'interne' }
+
+  function inseritaInValutazioni() {
+    const ins = (h.state.captured.insert as Array<{ table: string; v: Record<string, unknown> }>).find((c) => c.table === 'valutazioni')
+    return ins?.v
+  }
+
+  it('per dimensioni SENZA giudizio: 400 col codice, niente insert, e un warn che lo dice', async () => {
+    seedMateriaAndInsert()
+    h.state.queues.obiettivi_apprendimento = [{ data: [], error: null }]
+    const res = await POST(req({ ...BASE, modalita: 'dimensioni', dims: DIMS, giudizioSintetico: undefined }))
+    expect(res.status).toBe(400)
+    expect((await res.json()).codice).toBe('VALUTAZIONE_GIUDIZIO_MANCANTE')
+    expect(inseritaInValutazioni()).toBeUndefined()
+    expect(notif.logEvento).toHaveBeenCalledWith(
+      'registro',
+      'warn',
+      expect.objectContaining({ esito: 'valutazione-senza-giudizio', tipo: 'dimensioni' }),
+    )
+  })
+
+  it('sintetico con un giudizio fatto di soli spazi: 400 col codice', async () => {
+    seedMateriaAndInsert()
+    h.state.queues.obiettivi_apprendimento = [{ data: [], error: null }]
+    const res = await POST(req({ ...BASE, giudizioSintetico: '   ' }))
+    expect(res.status).toBe(400)
+    expect((await res.json()).codice).toBe('VALUTAZIONE_GIUDIZIO_MANCANTE')
+    expect(inseritaInValutazioni()).toBeUndefined()
+  })
+
+  it('per dimensioni CON giudizio: salva il giudizio E le dimensioni col testo', async () => {
+    seedMateriaAndInsert()
+    h.state.queues.obiettivi_apprendimento = [{ data: [], error: null }]
+    const res = await POST(req({ ...BASE, modalita: 'dimensioni', dims: DIMS, giudizioSintetico: 'Discreto' }))
+    expect(res.status).toBe(201)
+    expect(inseritaInValutazioni()).toEqual(expect.objectContaining({
+      modalita: 'dimensioni',
+      giudizio_sintetico: 'Discreto',
+      dim_autonomia: true,
+      dim_risorse: 'interne',
+      giudizio_testo: 'Giudizio auto',
+    }))
+    // La notifica porta il voto, non il testo generato.
+    expect(notif.enqueueNotifichePerAlunni.mock.calls[0][1]).toEqual(expect.objectContaining({ corpo: 'Discreto' }))
+  })
+})
+
 // ── La notifica al genitore porta al FIGLIO giusto (2026-09-30). ──
 // Con due figli, un link senza `?id=` apriva la pagina Voti del figlio
 // selezionato l'ultima volta: 34 account genitore su 65 ne hanno più d'uno.

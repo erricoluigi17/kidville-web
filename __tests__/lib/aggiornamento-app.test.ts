@@ -15,11 +15,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
  *    funzione che restituisse il plugin da una promise resterebbe appesa qui come sul telefono
  *    (#166 → #168). Un finto piatto sarebbe verde anche col difetto.
  *
- * LA MINIMA DEL PERSONALE (spec 2026-10-02, T14), spedita SPENTA:
- *  - con `null` (il valore spedito) nessun effetto, né per il personale né per i genitori, e il
- *    ruolo non si chiede nemmeno: accenderla per sbaglio fa diventare rossi questi test;
+ * LA MINIMA DEL PERSONALE (spec 2026-10-02, T14), spedita ACCESA SU ANDROID (1.2, vista su Google
+ * Play il 2026-10-04) e SPENTA SU iOS:
+ *  - dove è `null` nessun effetto, né per il personale né per i genitori, e il ruolo non si chiede
+ *    nemmeno: accendere iOS prima di aver visto la 1.2 sull'App Store fa diventare rossi questi test;
  *  - accesa a 1.2: il personale sotto la 1.2 è da aggiornare, il personale alla 1.2 no, il genitore
  *    no — e sotto la minima dello store il pop-up resta per tutti, senza chiedere chi sia;
+ *  - la decisione dice QUALE minima è scattata (`store` o `personale`): il pop-up ne sceglie il testo;
  *  - il ruolo non letto, che rifiuta o che resta appeso non promette niente (nel dubbio non si
  *    disturba): `null` e, per gli ultimi due, una riga di log;
  *  - chi è il «personale» lo dice la matrice delle aree (`AREE_PER_RUOLO`): chi apre `/teacher`.
@@ -90,6 +92,9 @@ function messaggiLog(): string[] {
   return logClient.mock.calls.map(([e]) => (e as { messaggio: string }).messaggio)
 }
 
+/** La minima del personale spenta su entrambe le piattaforme: solo la minima dello store decide. */
+const SPENTA = { ios: null, android: null }
+
 beforeEach(() => {
   stato.nativo = true
   stato.piattaforma = 'android'
@@ -134,25 +139,28 @@ describe('VERSIONE_MINIMA_STORE — il valore spedito', () => {
 })
 
 describe('VERSIONE_MINIMA_PERSONALE — il valore spedito', () => {
-  it('SPENTA: null su entrambe le piattaforme, congelata', () => {
-    // La minima del personale nasce spenta (T14) e si accende come l'altra: dopo aver visto la 1.2
-    // pubblicata sullo store. Chi la accende aggiorna QUESTA riga e scrive nel commit quando l'ha
-    // vista — e fino ad allora il pop-up per il personale non esiste.
-    expect(VERSIONE_MINIMA_PERSONALE).toEqual({ ios: null, android: null })
+  it('1.2 su Android, spenta su iOS, congelata', () => {
+    // La minima del personale è nata spenta (T14) e si accende come l'altra: dopo aver visto la 1.2
+    // pubblicata sullo store di QUELLA piattaforma. Android: vista su Google Play il 2026-10-04 alle
+    // 10:41 UTC. iOS: ancora in revisione da Apple, e finché la scheda dell'App Store non risponde
+    // `1.2` il pop-up per il personale su iPhone non esiste. Chi accende iOS aggiorna QUESTA riga e
+    // scrive nel commit quando l'ha vista.
+    expect(VERSIONE_MINIMA_PERSONALE).toEqual({ ios: null, android: '1.2' })
     expect(Object.isFrozen(VERSIONE_MINIMA_PERSONALE)).toBe(true)
   })
 })
 
 describe('appDaAggiornare', () => {
-  it.each(['ios', 'android'])('binario 1.0 su %s: da aggiornare', async (piattaforma) => {
+  it.each(['ios', 'android'])('binario 1.0 su %s: da aggiornare per la minima dello store', async (piattaforma) => {
     stato.piattaforma = piattaforma
-    expect(await appDaAggiornare()).toEqual({ piattaforma, versione: '1.0' })
+    expect(await appDaAggiornare()).toEqual({ piattaforma, versione: '1.0', minima: 'store' })
   })
 
-  it.each(['1.1', '1.2', '2.0'])('binario %s: niente', async (versione) => {
+  it.each(['1.1', '1.2', '2.0'])('binario %s, minima del personale spenta: niente', async (versione) => {
     stato.getInfo = async () => ({ version: versione, build: '5' })
-    expect(await appDaAggiornare()).toBeNull()
+    expect(await appDaAggiornare(VERSIONE_MINIMA_STORE, SPENTA)).toBeNull()
     expect(logClient).not.toHaveBeenCalled()
+    expect(leggiProfili).not.toHaveBeenCalled()
   })
 
   it('sul web non chiede niente al bridge', async () => {
@@ -171,10 +179,14 @@ describe('appDaAggiornare', () => {
   it('minima null per la piattaforma: niente, e getInfo non si chiama', async () => {
     const getInfo = vi.fn(stato.getInfo)
     stato.getInfo = getInfo
-    expect(await appDaAggiornare({ ios: '1.1', android: null })).toBeNull()
+    expect(await appDaAggiornare({ ios: '1.1', android: null }, SPENTA)).toBeNull()
     expect(getInfo).not.toHaveBeenCalled()
     stato.piattaforma = 'ios'
-    expect(await appDaAggiornare({ ios: '1.1', android: null })).toEqual({ piattaforma: 'ios', versione: '1.0' })
+    expect(await appDaAggiornare({ ios: '1.1', android: null }, SPENTA)).toEqual({
+      piattaforma: 'ios',
+      versione: '1.0',
+      minima: 'store',
+    })
   })
 
   it('senza il plugin App nel binario: niente, una riga di log', async () => {
@@ -261,16 +273,48 @@ describe('haProfiloDelPersonale — chi lavora con l\'app', () => {
 })
 
 describe('appDaAggiornare — la minima del personale', () => {
-  describe('spenta (il valore spedito)', () => {
+  describe('il valore spedito: spenta su iOS', () => {
     it.each([
       ['il personale', DOCENTE],
       ['il genitore', GENITORE],
-    ])('%s sul binario 1.1: niente, e il ruolo non si chiede', async (_chi, profili) => {
+    ])('%s sul binario 1.1 di iPhone: niente, e il ruolo non si chiede', async (_chi, profili) => {
+      stato.piattaforma = 'ios'
       stato.profili = profili
       conVersione('1.1')
       expect(await appDaAggiornare()).toBeNull()
       expect(leggiProfili).not.toHaveBeenCalled()
       expect(logClient).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('il valore spedito: accesa a 1.2 su Android', () => {
+    it('il personale sul binario 1.1: da aggiornare, per la minima del personale', async () => {
+      stato.profili = DOCENTE
+      conVersione('1.1')
+      expect(await appDaAggiornare()).toEqual({ piattaforma: 'android', versione: '1.1', minima: 'personale' })
+      expect(leggiProfili).toHaveBeenCalledTimes(1)
+      expect(logClient).not.toHaveBeenCalled()
+    })
+
+    it('il genitore sul binario 1.1: niente, e il ruolo è stato davvero chiesto', async () => {
+      stato.profili = GENITORE
+      conVersione('1.1')
+      expect(await appDaAggiornare()).toBeNull()
+      expect(leggiProfili).toHaveBeenCalledTimes(1)
+    })
+
+    it('il personale sul binario 1.2: niente, e il ruolo non si chiede', async () => {
+      stato.profili = DOCENTE
+      conVersione('1.2')
+      expect(await appDaAggiornare()).toBeNull()
+      expect(leggiProfili).not.toHaveBeenCalled()
+    })
+
+    it('il personale sul binario 1.0: la minima dello store scatta prima, senza chiedere chi sia', async () => {
+      stato.profili = DOCENTE
+      conVersione('1.0')
+      expect(await appDaAggiornare()).toEqual({ piattaforma: 'android', versione: '1.0', minima: 'store' })
+      expect(leggiProfili).not.toHaveBeenCalled()
     })
   })
 
@@ -280,7 +324,7 @@ describe('appDaAggiornare — la minima del personale', () => {
       conVersione('1.1')
       for (const piattaforma of ['ios', 'android']) {
         stato.piattaforma = piattaforma
-        expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma, versione: '1.1' })
+        expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma, versione: '1.1', minima: 'personale' })
       }
     })
 
@@ -307,14 +351,14 @@ describe('appDaAggiornare — la minima del personale', () => {
     ])('%s sul binario 1.0: da aggiornare per la minima dello store, senza chiedere chi sia', async (_chi, profili) => {
       stato.profili = profili
       conVersione('1.0')
-      expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.0' })
+      expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.0', minima: 'store' })
       expect(leggiProfili).not.toHaveBeenCalled()
     })
 
     it('un docente che è anche genitore sul binario 1.1: da aggiornare, conta ogni ruolo reale', async () => {
       stato.profili = DOCENTE_E_GENITORE
       conVersione('1.1')
-      expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.1' })
+      expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.1', minima: 'personale' })
     })
 
     it('la cuoca sul binario 1.1: niente (non carica video)', async () => {
@@ -328,7 +372,7 @@ describe('appDaAggiornare — la minima del personale', () => {
       const spenta = { ios: null, android: null }
       conVersione('1.1')
       stato.profili = DOCENTE
-      expect(await appDaAggiornare(spenta, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.1' })
+      expect(await appDaAggiornare(spenta, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.1', minima: 'personale' })
       stato.profili = GENITORE
       expect(await appDaAggiornare(spenta, PERSONALE_1_2)).toBeNull()
     })
@@ -343,7 +387,7 @@ describe('appDaAggiornare — la minima del personale', () => {
       expect(getInfo).not.toHaveBeenCalled()
       expect(leggiProfili).not.toHaveBeenCalled()
       stato.piattaforma = 'ios'
-      expect(await appDaAggiornare(store, personale)).toEqual({ piattaforma: 'ios', versione: '1.1' })
+      expect(await appDaAggiornare(store, personale)).toEqual({ piattaforma: 'ios', versione: '1.1', minima: 'personale' })
     })
 
     it('una minima del personale più bassa di quella dello store non cambia niente', async () => {
@@ -353,7 +397,7 @@ describe('appDaAggiornare — la minima del personale', () => {
       expect(await appDaAggiornare(STORE_1_1, piuBassa)).toBeNull()
       expect(leggiProfili).not.toHaveBeenCalled()
       conVersione('1.0')
-      expect(await appDaAggiornare(STORE_1_1, piuBassa)).toEqual({ piattaforma: 'android', versione: '1.0' })
+      expect(await appDaAggiornare(STORE_1_1, piuBassa)).toEqual({ piattaforma: 'android', versione: '1.0', minima: 'store' })
     })
 
     it('dalla pagina di accesso (pubblica): niente, e il ruolo non si chiede', async () => {
@@ -370,7 +414,7 @@ describe('appDaAggiornare — la minima del personale', () => {
     it('dalla pagina di accesso la minima dello store vale lo stesso: il binario 1.0 è da aggiornare', async () => {
       window.history.pushState({}, '', '/auth/login')
       conVersione('1.0')
-      expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.0' })
+      expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.0', minima: 'store' })
       expect(leggiProfili).not.toHaveBeenCalled()
     })
 
@@ -461,7 +505,7 @@ describe('appDaAggiornare — la minima del personale', () => {
 
     it('un docente: da aggiornare, con UNA richiesta a /api/me', async () => {
       rispondi(200, { role: 'educator', profili: DOCENTE })
-      expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.1' })
+      expect(await appDaAggiornare(STORE_1_1, PERSONALE_1_2)).toEqual({ piattaforma: 'android', versione: '1.1', minima: 'personale' })
       expect(fetchFinta).toHaveBeenCalledTimes(1)
       expect(fetchFinta.mock.calls[0][0]).toBe('/api/me')
       expect(logClient).not.toHaveBeenCalled()

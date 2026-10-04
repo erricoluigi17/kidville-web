@@ -815,6 +815,8 @@ export const CODICI_ERRORE = {
     VALUTAZIONE_ANNOTAZIONE_NON_VALIDA: 'erroreValutazioneAnnotazioneNonValida',
     VALUTAZIONE_OBIETTIVO_MANCANTE: 'erroreValutazioneObiettivoMancante',
     VALUTAZIONE_OBIETTIVO_NON_VALIDO: 'erroreValutazioneObiettivoNonValido',
+    /** 400 di POST/PATCH: manca il giudizio sintetico, il voto che vede la famiglia (2026-10-04). */
+    VALUTAZIONE_GIUDIZIO_MANCANTE: 'erroreValutazioneGiudizioMancante',
     /** 404/500/503 di `/api/primaria/sblocca`: voce inesistente, audit non scritto, schema non migrato. */
     SBLOCCO_VOCE_NON_TROVATA: 'erroreSbloccoVoceNonTrovata',
     SBLOCCO_NON_REGISTRATO: 'erroreSbloccoNonRegistrato',

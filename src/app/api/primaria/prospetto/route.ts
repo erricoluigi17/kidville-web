@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
-import { mediaGiudizi, giudiziSintetici, type ScalaVoce } from '@/lib/primaria/media'
+import { mediaGiudizi, giudiziSintetici, MODALITA_CON_GIUDIZIO, type ScalaVoce } from '@/lib/primaria/media'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -67,7 +67,8 @@ export const GET = withRoute('primaria/prospetto:GET', async (request: NextReque
           .from('valutazioni')
           .select('materia_id, giudizio_sintetico')
           .eq('alunno_id', alunnoId)
-          .eq('modalita', 'sintetico')
+          // Anche «per dimensioni»: dal 2026-10-04 ha il giudizio (è il voto visibile).
+          .in('modalita', [...MODALITA_CON_GIUDIZIO])
           .not('giudizio_sintetico', 'is', null),
       ])
 
@@ -100,8 +101,8 @@ export const GET = withRoute('primaria/prospetto:GET', async (request: NextReque
       .order('creato_il', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    // Media coerente con la panoramica: si mediano SOLO i giudizi con modalità
-    // 'sintetico' (la panoramica filtra .eq('modalita','sintetico') lato query).
+    // Media coerente con la panoramica: si mediano SOLO i giudizi delle modalità
+    // in MODALITA_CON_GIUDIZIO (la panoramica filtra con la stessa lista lato query).
     // La lista per-obiettivo qui sotto resta INVARIATA: mostra tutte le modalità.
     const mediaMateria = mediaGiudizi(scala, giudiziSintetici(valutazioni ?? []))
 

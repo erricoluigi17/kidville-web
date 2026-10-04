@@ -92,6 +92,11 @@ export function PannelloAlunni({ dati }: { dati: ElencoAlunniRisposta }) {
               <li key={a.id}>
                 <Link
                   href={`/teacher/alunni/${a.id}`}
+                  // Niente prefetch: l'elenco della Direzione supera le 700 righe, e ogni riga
+                  // visibile ne chiederebbe uno. In questo repo il volume di richieste è già
+                  // costato caro; la scheda si carica al tocco, e i suoi dati arrivano comunque
+                  // dall'API, mai dal prefetch.
+                  prefetch={false}
                   // I filtri attuali (mai la ricerca per nome) per il pulsante di ritorno.
                   onClick={() => salvaRitornoElenco(window.location.search)}
                   // L'`<ul>` ha `overflow-hidden` (gli angoli tondi) e taglierebbe l'anello di

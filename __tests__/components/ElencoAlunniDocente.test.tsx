@@ -19,20 +19,25 @@ vi.mock('next/link', async () => {
   const React = await import('react')
   return {
     // Il clic arriva al gestore della pagina, poi si ferma: jsdom non tenta la navigazione.
+    // `prefetch` non è un attributo di `<a>`: il finto lo riporta in `data-prefetch`, così un
+    // test può leggere che cosa la pagina ha chiesto a `next/link`.
     default: ({
       children,
       href,
       onClick,
+      prefetch,
       ...rest
     }: {
       children: React.ReactNode
       href: string
       onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void
+      prefetch?: boolean | null | 'auto'
     }) =>
       React.createElement(
         'a',
         {
           href,
+          'data-prefetch': prefetch === undefined ? undefined : String(prefetch),
           ...rest,
           onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
             onClick?.(e)
@@ -188,6 +193,15 @@ describe('ElencoAlunniDocente', () => {
     cerca('aur')
     fireEvent.click(aurora)
     expect(window.sessionStorage.getItem('kv-teacher-alunni-ritorno')).toBe('?sezione=S1')
+  })
+
+  it('le righe NON chiedono il prefetch: con l’elenco della Direzione sarebbero centinaia di richieste', async () => {
+    fetchMock.mockResolvedValue(risposta(200, DATI))
+    render(<ElencoAlunniDocente />)
+    await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })
+    const righe = screen.getAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('/teacher/alunni/'))
+    expect(righe).toHaveLength(3)
+    for (const a of righe) expect(a.getAttribute('data-prefetch')).toBe('false')
   })
 
   it('il link porta l’anello di fuoco DENTRO di sé: l’elenco con gli angoli tondi lo taglierebbe', async () => {

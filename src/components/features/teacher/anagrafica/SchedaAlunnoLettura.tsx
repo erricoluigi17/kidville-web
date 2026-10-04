@@ -11,6 +11,7 @@ import { allergeneEmoji, useAllergeneLabel } from '@/lib/mensa/allergeni'
 import { isoToIt } from '@/lib/format/data'
 import { logClient } from '@/lib/logging/client'
 import { zUuid } from '@/lib/validation/common'
+import { cx } from '@/lib/ui/cx'
 import { leggiRitornoElenco } from '@/lib/anagrafiche/docente/ritorno-elenco'
 import type { SchedaAlunnoDocente } from '@/lib/anagrafiche/docente/tipi'
 import { CampoLettura } from './CampoLettura'
@@ -141,11 +142,15 @@ export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
       )}
 
       {/* Sempre montata, così caricamento ed esiti vengono annunciati quando cambiano. */}
+      {/* A scheda pronta `sr-only` e non `hidden`: dopo «Riprova» il fuoco sta qui, e un `display:none` lo farebbe cadere su `<body>`. */}
       <div
         ref={annunciRef}
         tabIndex={-1}
         aria-live="polite"
-        className="rounded-card outline-none empty:hidden focus-visible:ring-2 focus-visible:ring-kidville-green"
+        className={cx(
+          'rounded-card outline-none focus-visible:ring-2 focus-visible:ring-kidville-green',
+          scheda && 'sr-only',
+        )}
       >
         {stato.tipo === 'caricamento' ? (
           <div className="flex items-center justify-center gap-3 py-12">

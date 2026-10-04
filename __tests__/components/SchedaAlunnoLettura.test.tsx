@@ -170,6 +170,23 @@ describe('SchedaAlunnoLettura — pronta', () => {
     expect(within(residenza).getAllByText(T.anagraficaNonIndicato)).toHaveLength(3)
   })
 
+  it('Classe: la sezione e l’etichetta del suo grado', async () => {
+    await apri()
+    const classe = riquadro(T.anagraficaRiquadroClasse)
+    expect(valore(classe, T.anagraficaCampoSezione).textContent).toBe('Girasoli')
+    expect(valore(classe, T.anagraficaCampoGrado).textContent).toBe(T.anagraficaGradoInfanzia)
+  })
+
+  it('a scheda pronta la regione degli annunci resta focalizzabile: `sr-only`, mai `hidden`', async () => {
+    const { container } = await apri()
+    const regione = container.querySelector('[aria-live="polite"]') as HTMLElement
+    expect(regione).not.toBeNull()
+    const classi = regione.className.split(/\s+/)
+    expect(classi).toContain('sr-only')
+    expect(classi).not.toContain('hidden')
+    expect(classi).not.toContain('empty:hidden')
+  })
+
   it('un bambino senza sezione: sezione e grado «Non indicato»', async () => {
     await apri({ ...SCHEDA, sezione: null })
     const classe = riquadro(T.anagraficaRiquadroClasse)
@@ -326,6 +343,7 @@ describe('SchedaAlunnoLettura — non si apre', () => {
     vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
     render(<SchedaAlunnoLettura alunnoId={ID} />)
     expect(await screen.findByText(T.anagraficaErroreOffline)).toBeTruthy()
+    expect(screen.getByRole('button', { name: T.anagraficaRiprova })).toBeTruthy()
   })
 
   it('rete giù ma «online» ⇒ errore, con un log `error`', async () => {

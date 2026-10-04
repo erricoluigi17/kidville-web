@@ -277,10 +277,13 @@ auto-merge) → deploy → verifica in produzione con sole `SELECT` (righe di au
   registro dei documenti del fascicolo. Il visualizzatore (`FascicoloAuditViewer`) e la sua route
   (`GET /api/admin/primaria/fascicolo-audit`, parametro `conAnagrafica`) le ESCLUDONO per default,
   con un interruttore per includerle: altrimenti, con le ultime 200 righe, le visioni vere di
-  PEI/PDP uscirebbero dalla finestra in meno di un giorno.
+  PEI/PDP uscirebbero dalla finestra in meno di un giorno. Quando si chiede il registro di UN bambino (`alunnoId`), le
+  aperture della scheda sono sempre incluse: è la domanda «chi ha aperto la scheda di mio figlio».
 - **Messaggi d'errore dal codice.** Il client traduce il `codice` della risposta
   (`messaggioDaCorpo`) per i 403 che non sono «fuori sede/sezione» (profilo senza sede, account
-  archiviato).
+  archiviato). Un 403 senza codice ma con un testo del server mostra quel testo (la regola
+  del repo è «codice, poi prosa, poi frase di ripiego»): in pratica non capita, perché il middleware
+  ferma prima chi non ha un ruolo da docente.
 
 ## Fuori perimetro
 

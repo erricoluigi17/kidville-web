@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { FolderLock, RefreshCw } from 'lucide-react';
 import { FINALITA_AUDIT_ANAGRAFICA } from '@/lib/anagrafiche/docente/tipi';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface AuditRow {
   id: string;
@@ -26,23 +27,56 @@ const AZIONE: Record<string, { lKey: string; cls: string }> = {
   delete: { lKey: 'fascicoloAzioneDelete', cls: 'bg-kidville-error-soft text-kidville-error' },
 };
 
+/**
+ * La lettura, fuori dal componente: restituisce le righe (o `null`) e logga, non tocca
+ * lo stato. Prima un errore di rete usciva come promessa rifiutata non gestita; ora il
+ * registro resta quello di prima e lo si dice nei log, `warn` come il logger globale
+ * per una fetch mancata.
+ */
+async function leggiRegistro(userId: string, conAnagrafica: boolean): Promise<AuditRow[] | null> {
+  const filtro = conAnagrafica ? '&conAnagrafica=1' : '';
+  const d: { success?: boolean; data?: AuditRow[] } | null = await fetch(
+    `/api/admin/primaria/fascicolo-audit?limit=200&userId=${userId}${filtro}`,
+    { headers: { 'x-user-id': userId } },
+  )
+    .then((r) => r.json())
+    .catch((e: unknown) => {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `registro accessi fascicolo non letto (${nomeErrore(e)})`, route: '/admin/primaria' });
+      return null;
+    });
+  return d?.success && Array.isArray(d.data) ? d.data : null;
+}
+
 export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: string }) {
   const t = useTranslations('adminPrimaria');
   const f = useDateFormat();
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Le aperture della scheda anagrafica dal docente sono decine al giorno: dentro una
+  // finestra di 200 righe spingerebbero fuori le visioni vere di PEI/PDP. Si chiedono
+  // a parte, con l'interruttore spento di default.
+  const [conAnagrafica, setConAnagrafica] = useState(false);
+  const [tentativo, setTentativo] = useState(0);
 
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch(`/api/admin/primaria/fascicolo-audit?limit=200&userId=${userId}`, { headers: { 'x-user-id': userId } });
-      const d = await r.json();
-      if (d.success) setRows(d.data);
-    } finally {
+  // Il `setState` sta nel `.then` (la forma che `react-hooks/set-state-in-effect`
+  // accetta). `vivo` scarta la risposta di una lettura superata: accendendo e spegnendo
+  // in fretta, una risposta vecchia arrivata in ritardo non copre quella giusta.
+  useEffect(() => {
+    let vivo = true;
+    void leggiRegistro(userId, conAnagrafica).then((righe) => {
+      if (!vivo) return;
+      if (righe) setRows(righe);
       setLoading(false);
-    }
-  }, [userId]);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [userId, conAnagrafica, tentativo]);
 
-  useEffect(() => { load(); }, [load]);
+  const aggiorna = () => {
+    setLoading(true);
+    setTentativo((n) => n + 1);
+  };
 
   return (
     <div>
@@ -50,11 +84,22 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
         <h3 className="font-barlow text-base font-bold text-kidville-ink flex items-center gap-2">
           <FolderLock size={16} className="text-kidville-green" /> {t('fascicoloTitolo')}
         </h3>
-        <button onClick={load} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green/10 px-3 py-1.5 text-xs text-kidville-green">
+        <button onClick={aggiorna} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green/10 px-3 py-1.5 text-xs text-kidville-green">
           <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> {t('fascicoloAggiorna')}
         </button>
       </div>
       <p className="font-maven text-xs text-kidville-muted mb-3">{t('fascicoloSottotitolo')}</p>
+      <label className="mb-3 inline-flex items-center gap-2 font-maven text-xs text-kidville-ink">
+        <input
+          type="checkbox"
+          checked={conAnagrafica}
+          onChange={(e) => {
+            setLoading(true);
+            setConAnagrafica(e.target.checked);
+          }}
+        />
+        {t('fascicoloIncludiAnagrafica')}
+      </label>
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
+import { TriangleAlert } from 'lucide-react'
 import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
 import { logClient } from '@/lib/logging/client'
 import type { ElencoAlunniRisposta } from '@/lib/anagrafiche/docente/tipi'
@@ -13,29 +14,36 @@ import { PannelloAlunni } from './PannelloAlunni'
  * segreteria una classe che c'è già.
  */
 
-type Lettura = { ok: true; dati: ElencoAlunniRisposta } | { ok: false }
+type Lettura = { tipo: 'pronta'; dati: ElencoAlunniRisposta } | { tipo: 'errore' | 'sessione' }
+
+const ROTTA = '/teacher/alunni'
 
 /** La lettura, fuori dal componente: restituisce un esito e logga, non tocca lo stato. */
 async function leggiElenco(): Promise<Lettura> {
+  // Il fallimento della rete è un VALORE (`null`), non un'eccezione da rincorrere.
   const res = await fetch('/api/teacher/alunni', { cache: 'no-store' }).catch(() => null)
-  const corpo = res?.ok ? ((await res.json().catch(() => null)) as ElencoAlunniRisposta | null) : null
-  if (!corpo || !Array.isArray(corpo.alunni) || !Array.isArray(corpo.sezioni)) {
-    logClient({
-      livello: res ? 'warn' : 'error',
-      evento: 'fetch',
-      messaggio: 'elenco anagrafiche docente non letto',
-      route: '/teacher/alunni',
-      ...(res ? { stato: res.status } : null),
-    })
-    return { ok: false }
+  if (!res) {
+    // Senza rete il telefono lo sa già: nessun log (come nella scheda).
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false
+    if (!offline) logClient({ livello: 'error', evento: 'fetch', messaggio: 'elenco anagrafiche docente non raggiunto', route: ROTTA })
+    return { tipo: 'errore' }
   }
-  return { ok: true, dati: corpo }
+  // 401 è una risposta di merito: il server l'ha già registrata.
+  if (res.status === 401) return { tipo: 'sessione' }
+  const corpo = res.ok ? ((await res.json().catch(() => null)) as ElencoAlunniRisposta | null) : null
+  if (!corpo || !Array.isArray(corpo.alunni) || !Array.isArray(corpo.sezioni)) {
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'elenco anagrafiche docente non letto', route: ROTTA, stato: res.status })
+    return { tipo: 'errore' }
+  }
+  return { tipo: 'pronta', dati: corpo }
 }
 
 export function ElencoAlunniDocente() {
+  const t = useTranslations('teacherServizi')
   const ts = useTranslations('shared')
   const [lettura, setLettura] = useState<Lettura | null>(null)
   const [tentativo, setTentativo] = useState(0)
+  const esitoRef = useRef<HTMLDivElement>(null)
 
   // Il `setState` sta nel `.then`: è la forma che `react-hooks/set-state-in-effect`
   // accetta (la stessa di `parent/primaria/valutazioni`). `vivo` scarta una risposta
@@ -53,9 +61,40 @@ export function ElencoAlunniDocente() {
   const riprova = () => {
     setLettura(null)
     setTentativo((n) => n + 1)
+    // Il pulsante sta per sparire: il fuoco va sul contenitore che mostrerà l'esito,
+    // non su `<body>` (WCAG 2.4.3).
+    esitoRef.current?.focus()
   }
 
-  if (lettura && !lettura.ok) return <StatoElenco stato="errore" testi={testiStatoElenco(ts)} onRiprova={riprova} />
-  if (!lettura) return <StatoElenco stato="caricamento" testi={testiStatoElenco(ts)} />
-  return <PannelloAlunni dati={lettura.dati} />
+  const testi = testiStatoElenco(ts)
+
+  return (
+    <>
+      {/* Sempre montato, così dopo «Riprova» il fuoco ha dove stare. Non è una regione
+          live: il caricamento ha già il suo `role="status"`, e due regioni annidate
+          annuncerebbero due volte. */}
+      <div ref={esitoRef} tabIndex={-1} className="rounded-card outline-none focus-visible:ring-2 focus-visible:ring-kidville-green">
+        {!lettura && <StatoElenco stato="caricamento" testi={testi} />}
+        {/* L'esito negativo si annuncia da qui: regione montata DA PRIMA (una regione che
+            nasce col proprio testo non annuncia niente), accanto al `role="status"`, non attorno. */}
+        <div aria-live="polite">
+          {lettura?.tipo === 'errore' && <StatoElenco stato="errore" testi={testi} onRiprova={riprova} />}
+          {lettura?.tipo === 'sessione' && (
+            <div className="flex flex-col items-center gap-3 py-12 text-center">
+              <TriangleAlert size={34} aria-hidden="true" className="text-kidville-error-strong" />
+              <p className="max-w-md font-maven text-sm text-kidville-ink">{t('anagraficaErroreSessione')}</p>
+              {/* Navigazione piena e non `Link`: il login riparte da zero, senza lo stato della sessione scaduta. */}
+              <a
+                href="/auth/login"
+                className="inline-flex min-h-[44px] items-center rounded-pill bg-kidville-green px-4 font-maven text-sm font-semibold text-white"
+              >
+                {t('anagraficaAccedi')}
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+      {lettura?.tipo === 'pronta' && <PannelloAlunni dati={lettura.dati} />}
+    </>
+  )
 }

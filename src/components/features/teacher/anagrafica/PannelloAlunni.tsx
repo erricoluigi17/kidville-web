@@ -56,6 +56,15 @@ export function PannelloAlunni({ dati }: { dati: ElencoAlunniRisposta }) {
     mostrati: visibili.length,
   })
   const gruppi = raggruppa(visibili, dati.sezioni, t('anagraficaSenzaSezione'))
+  const testiStato = {
+    ...testiStatoElenco(ts),
+    vuotoTitolo: t('anagraficaVuotoTitolo'),
+    vuotoCorpo: t('anagraficaVuotoCorpo'),
+  }
+
+  // Zero bambini: la barra non avrebbe niente da filtrare, e un «0 risultati su 0»
+  // sopra il messaggio direbbe che il problema sono i filtri. Resta solo il passo da fare.
+  if (schermata === 'vuoto') return <StatoElenco stato="vuoto" testi={testiStato} />
 
   return (
     <div className="space-y-4">
@@ -68,16 +77,7 @@ export function PannelloAlunni({ dati }: { dati: ElencoAlunniRisposta }) {
         variante="compatta"
       />
 
-      <StatoElenco
-        stato={schermata}
-        testi={{
-          ...testiStatoElenco(ts),
-          vuotoTitolo: t('anagraficaVuotoTitolo'),
-          vuotoCorpo: t('anagraficaVuotoCorpo'),
-        }}
-        attivi={stato.attivi}
-        onPulisci={stato.pulisci}
-      />
+      <StatoElenco stato={schermata} testi={testiStato} attivi={stato.attivi} onPulisci={stato.pulisci} />
 
       {gruppi.map((g) => (
         <section key={g.chiave} aria-labelledby={`sezione-${g.chiave}`} className="space-y-2">
@@ -94,7 +94,12 @@ export function PannelloAlunni({ dati }: { dati: ElencoAlunniRisposta }) {
                   href={`/teacher/alunni/${a.id}`}
                   // I filtri attuali (mai la ricerca per nome) per il pulsante di ritorno.
                   onClick={() => salvaRitornoElenco(window.location.search)}
-                  className="flex min-h-[56px] items-center gap-3 px-4 py-3 transition-colors hover:bg-kidville-cream"
+                  // L'`<ul>` ha `overflow-hidden` (gli angoli tondi) e taglierebbe l'anello di
+                  // fuoco globale, che sta FUORI dal link: con un bambino solo non si vedrebbe
+                  // affatto (WCAG 2.4.7). Lo si porta dentro. Il `!` serve: la regola
+                  // `:focus-visible` di `globals.css` vive fuori dai layer e batte qualunque
+                  // utility Tailwind senza `!important` (misurato in Chromium: senza, resta 2px).
+                  className="flex min-h-[56px] items-center gap-3 px-4 py-3 transition-colors hover:bg-kidville-cream focus-visible:outline-offset-[-3px]!"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-barlow text-sm font-extrabold uppercase text-kidville-green">

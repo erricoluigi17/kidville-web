@@ -26,6 +26,7 @@
       "/cancellazione-account/conferma": "Conferma cancellazione"
     },
     "segmenti": {
+      "alunni": "Alunni",
       "appello": "Appello",
       "armadietto": "Armadietto",
       "assenze": "Assenze",

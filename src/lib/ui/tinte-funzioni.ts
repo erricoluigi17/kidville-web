@@ -76,6 +76,7 @@ export const TINTA_FUNZIONE = {
   profilo: TINTE_SORGENTE['color-kidville-sub'],
   calendario: TINTE_SORGENTE['kv-subj-italiano'],
   attivita: TINTE_SORGENTE['kv-subj-scienze'],
+  alunni: TINTE_SORGENTE['kv-subj-geografia'],
 } as const
 
 export type IdFunzione = keyof typeof TINTA_FUNZIONE

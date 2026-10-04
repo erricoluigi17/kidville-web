@@ -220,8 +220,8 @@
 // Questa volta il cambio è la voce «coda-fatture» aggiunta a `segmenti` in
 // `messages/{it,en}/offline.json` (nucleo coda-fatture §4): senza, l'elenco di
 // /offline avrebbe reso «Coda-fatture» capitalizzando l'URL invece del nome.
-const VERSIONE = 'v12';
-// IMPRONTA-PAGINA-OFFLINE: 5461aa452f035ce3c28deeb4e54acf690ef9066ffe5c8d4fab7074484ef6bdff
+const VERSIONE = 'v13';
+// IMPRONTA-PAGINA-OFFLINE: 702f3130c4a6eadfbe7f5875e5a19674c62476e32b9f44354fb3a9b44f2b411d
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

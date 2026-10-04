@@ -113,3 +113,12 @@ describe('TeacherBottomNav — «Profilo» porta da qualche parte', () => {
     expect(calendario?.textContent).toContain(NAV.badgeInArrivo);
   });
 });
+
+describe('TeacherBottomNav — «Alunni» porta all’anagrafica', () => {
+  it('è un LINK verso /teacher/alunni, nel gruppo «In classe»', () => {
+    apriIlMenu();
+    const voce = screen.getByRole('link', { name: new RegExp(NAV.voceAlunniLabel, 'i') });
+    expect(voce.getAttribute('href')).toBe('/teacher/alunni');
+    expect(voce.textContent).toContain(NAV.voceAlunniSub);
+  });
+});

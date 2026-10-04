@@ -8,7 +8,7 @@ import { useTranslations } from 'next-intl';
 import {
   Home, NotebookPen, MessageCircle, BookOpen, LayoutGrid,
   Image, Package, FileText, FileSignature, ClipboardCheck, Users, Megaphone,
-  ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight, Newspaper,
+  ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight, Newspaper, Contact,
 } from 'lucide-react';
 import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
@@ -109,6 +109,9 @@ export default function TeacherBottomNav() {
         { id: 'diario', label: t('voceDiarioLabel'), sub: t('voceDiarioSub'), icon: NotebookPen, href: '/teacher/diary', tint: tintaFunzione('diario'), grado: 'infanzia' },
         { id: 'registro', label: t('voceRegistroLabel'), sub: t('voceRegistroSub'), icon: BookOpen, href: '/teacher/primaria', tint: tintaFunzione('registro'), grado: 'primaria' },
         { id: 'presenze', label: t('vocePresenzeLabel'), sub: t('vocePresenzeSub'), icon: Users, href: '/teacher/attendance', tint: tintaFunzione('presenze'), grado: 'comune' },
+        // L'anagrafica dei propri bambini, in SOLA LETTURA: la route esporta solo GET,
+        // e il perimetro (sezioni assegnate, anche per materia) lo decide il server.
+        { id: 'alunni', label: t('voceAlunniLabel'), sub: t('voceAlunniSub'), icon: Contact, href: '/teacher/alunni', tint: tintaFunzione('alunni'), grado: 'comune' },
       ],
     },
     {

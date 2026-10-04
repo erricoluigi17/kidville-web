@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireEnv } from '@/lib/security/require-env'
 import { requireDocente } from '@/lib/auth/require-staff'
+import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -67,6 +68,10 @@ export const GET = withRoute(
       if (!scope.ok) return scope.response
       const { alunno } = scope
 
+      // La lettura della scheda RIFÀ i filtri del controllo (sede, iscritto, non
+      // anonimizzato): archiviare e dimenticare non cancellano la riga, la aggiornano.
+      // Senza i filtri un bambino archiviato fra il controllo e questa lettura uscirebbe
+      // con 200 e una riga di audit.
       const [anagrafica, legami, delegati, sezione] = await Promise.all([
         selectResiliente(
           COLONNE_SCHEDA,
@@ -76,6 +81,8 @@ export const GET = withRoute(
               .select(colonne.join(', '))
               .eq('id', alunnoId)
               .eq('scuola_id', alunno.scuolaId)
+              .eq('stato', STATO_ISCRITTO)
+              .is('anonimizzato_il', null)
               .maybeSingle(),
           OPERAZIONE,
           { livello: 'warn' },
@@ -101,7 +108,9 @@ export const GET = withRoute(
         logErrore({ operazione: OPERAZIONE, stato: 500 }, guasto)
         return erroreLettura()
       }
-      // Fra il controllo e la lettura la riga può essere sparita (archiviazione, oblio).
+      // Nessuna riga: fra il controllo e la lettura il bambino è stato ritirato o
+      // anonimizzato (la riga resta, ma i filtri qui sopra la escludono) oppure la riga
+      // è stata cancellata davvero. In tutti e tre i casi la scheda non esiste più.
       if (!anagrafica.data) {
         return NextResponse.json(
           { error: 'Alunno non trovato', codice: 'ANAGRAFICA_NON_TROVATA' },

@@ -18,6 +18,7 @@ const CF_MIO = 'TSTMIO21C44Z999Q'
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
   logEvento: vi.fn(),
+  logErrore: vi.fn(),
   db: {} as Record<string, Record<string, unknown>[]>,
   tabelle: [] as string[],
   scritture: [] as unknown[],
@@ -28,6 +29,7 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente })
 vi.mock('@/lib/logging/logger', async (originale) => ({
   ...(await originale<typeof import('@/lib/logging/logger')>()),
   logEvento: h.logEvento,
+  logErrore: h.logErrore,
 }))
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
@@ -85,6 +87,29 @@ const chiama = (id: string) =>
 
 const audit = () => (h.scritture as Scrittura[]).filter((s) => s.tabella === 'fascicolo_accessi_audit')
 
+/**
+ * La route legge `alunni` DUE volte: il controllo (riga minima) e la scheda. Per
+ * colpire solo la seconda serve un getter: `erroreDi` del finto client rilegge
+ * `opzioni.errori[chiave]` a ogni esecuzione, PRIMA di filtrare `db[tabella]`. `azione`
+ * riceve il numero della lettura e può restituire un errore o cambiare il database.
+ */
+const dallaSecondaLetturaDiAlunni = (azione: (n: number) => { code: string; message?: string } | undefined) => {
+  let n = 0
+  return {
+    get 'alunni:select'() {
+      n += 1
+      return azione(n)
+    },
+  } as unknown as Record<string, { code: string }>
+}
+
+/** Fra il controllo e la lettura della scheda, la riga di `ALU_MIO` cambia così. */
+const cambiaFraLeDueLetture = (modifica: (riga: Record<string, unknown>) => Record<string, unknown>) =>
+  dallaSecondaLetturaDiAlunni((n) => {
+    if (n === 2) h.db.alunni = h.db.alunni.map((a) => (a.id === ALU_MIO ? modifica(a) : a))
+    return undefined
+  })
+
 beforeEach(() => {
   vi.clearAllMocks()
   h.db = dbBase()
@@ -130,6 +155,34 @@ describe('GET /api/teacher/alunni/[id] — si apre', () => {
     expect((await chiama(ALU_MIO)).status).toBe(200)
     expect(h.logEvento).toHaveBeenCalledWith('fascicolo', 'error', expect.objectContaining({ esito: 'audit-non-registrato', alunno_id: ALU_MIO }), expect.anything())
   })
+
+  it('l’audit porta ip e user-agent della richiesta', async () => {
+    const richiesta = new NextRequest(`http://localhost/api/teacher/alunni/${ALU_MIO}`, {
+      headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1', 'user-agent': 'UA-FINTO' },
+    })
+    expect((await rotta.GET(richiesta, { params: Promise.resolve({ id: ALU_MIO }) })).status).toBe(200)
+    expect(audit()[0].valori[0]).toMatchObject({ ip: '203.0.113.7', user_agent: 'UA-FINTO', documento_id: null })
+  })
+
+  it('una colonna recente che il database non ha diventa «Non indicato», con un warn nei log', async () => {
+    // Il finto client restituisce righe intere: la colonna assente si simula con una riga
+    // che NON ha il campo (come in un database senza la migrazione) e con il 42703 sulla
+    // lettura della scheda che la chiede. Il controllo (prima lettura) non la chiede.
+    h.errori = dallaSecondaLetturaDiAlunni((n) =>
+      n === 2 ? { code: '42703', message: 'column alunni.birth_province does not exist' } : undefined,
+    )
+    const res = await chiama(ALU_MIO)
+    expect(res.status).toBe(200)
+    const scheda = await res.json()
+    expect(scheda.luogoNascita.provincia).toBeNull()
+    expect(scheda.codiceFiscale).toBe(CF_MIO)
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'db',
+      'warn',
+      expect.objectContaining({ operazione: 'teacher/alunni/[id]:GET', esito: 'colonna-assente:birth_province' }),
+    )
+    expect(audit()).toHaveLength(1)
+  })
 })
 
 describe('GET /api/teacher/alunni/[id] — non si apre', () => {
@@ -140,15 +193,25 @@ describe('GET /api/teacher/alunni/[id] — non si apre', () => {
     expect(h.tabelle).not.toContain('student_parents')
     expect(h.tabelle).not.toContain('delegates')
     expect(audit()).toHaveLength(0)
-    const testo = await res.text()
+    // La proiezione scrive il codice fiscale in maiuscolo: il confronto non deve dipenderne.
+    const testo = (await res.text()).toLowerCase()
     expect(testo).not.toContain('tsta2a2')
-    expect(testo).not.toContain('Altra')
+    expect(testo).not.toContain('altra')
   })
 
   it('403 su un bambino di un’altra sede', async () => {
     const res = await chiama(ALU_B)
     expect(res.status).toBe(403)
     expect((await res.json()).codice).toBe('ANAGRAFICA_FUORI_SEDE')
+  })
+
+  it('403 anche alla segreteria, che vede tutte le classi ma solo della propria sede', async () => {
+    h.requireDocente.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
+    const res = await chiama(ALU_B)
+    expect(res.status).toBe(403)
+    expect((await res.json()).codice).toBe('ANAGRAFICA_FUORI_SEDE')
+    expect(h.tabelle).not.toContain('student_parents')
+    expect(audit()).toHaveLength(0)
   })
 
   it('404 per non iscritto, anonimizzato, inesistente', async () => {
@@ -169,16 +232,66 @@ describe('GET /api/teacher/alunni/[id] — non si apre', () => {
     expect(h.tabelle).toEqual([])
   })
 
-  it('500 se genitori o delegati non si leggono, e nessuna riga di audit', async () => {
-    h.errori = { 'student_parents:select': { code: '57P01' } }
+  it.each(['student_parents', 'delegates', 'sections'])(
+    '500 se %s non si legge: log del guasto, niente cache, nessuna riga di audit',
+    async (tabella) => {
+      h.errori = { [`${tabella}:select`]: { code: '57P01' } }
+      const res = await chiama(ALU_MIO)
+      expect(res.status).toBe(500)
+      expect(res.headers.get('Cache-Control')).toBe('no-store')
+      expect((await res.json()).codice).toBe('ANAGRAFICA_NON_LETTA')
+      expect(h.logErrore).toHaveBeenCalledWith(
+        expect.objectContaining({ operazione: 'teacher/alunni/[id]:GET', stato: 500 }),
+        expect.objectContaining({ code: '57P01' }),
+      )
+      expect(audit()).toHaveLength(0)
+    },
+  )
+
+  it('500 se la lettura della scheda su `alunni` fallisce dopo un controllo riuscito', async () => {
+    h.errori = dallaSecondaLetturaDiAlunni((n) => (n >= 2 ? { code: '57P01' } : undefined))
     const res = await chiama(ALU_MIO)
     expect(res.status).toBe(500)
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
     expect((await res.json()).codice).toBe('ANAGRAFICA_NON_LETTA')
+    expect(h.logErrore).toHaveBeenCalledWith(
+      expect.objectContaining({ operazione: 'teacher/alunni/[id]:GET', stato: 500 }),
+      expect.objectContaining({ code: '57P01' }),
+    )
     expect(audit()).toHaveLength(0)
   })
 
   it('sola lettura: il modulo esporta SOLO `GET`', () => {
     const metodi = Object.keys(rotta).filter((k) => /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(k))
     expect(metodi).toEqual(['GET'])
+  })
+})
+
+describe('GET /api/teacher/alunni/[id] — la corsa fra il controllo e la lettura', () => {
+  // Archiviare e dimenticare non cancellano la riga: la AGGIORNANO (`stato`, `anonimizzato_il`).
+  // La lettura della scheda deve rifare i due filtri del controllo, o un bambino archiviato
+  // nell'intervallo esce con 200 e una riga di audit. Un test per filtro: ciascuno da solo.
+  it.each([
+    ['passa a «ritirato»', (a: Record<string, unknown>) => ({ ...a, stato: 'ritirato' })],
+    ['viene anonimizzato', (a: Record<string, unknown>) => ({ ...a, anonimizzato_il: '2026-10-04T00:00:00Z' })],
+  ])('se il bambino %s fra le due letture: 404, niente cache, nessuna riga di audit', async (_caso, modifica) => {
+    h.errori = cambiaFraLeDueLetture(modifica)
+    const res = await chiama(ALU_MIO)
+    expect(res.status).toBe(404)
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
+    expect((await res.json()).codice).toBe('ANAGRAFICA_NON_TROVATA')
+    expect(audit()).toHaveLength(0)
+  })
+
+  it('se la riga sparisce fra le due letture: 404, niente cache, nessuna riga di audit', async () => {
+    h.errori = dallaSecondaLetturaDiAlunni((n) => {
+      if (n === 2) h.db.alunni = h.db.alunni.filter((a) => a.id !== ALU_MIO)
+      return undefined
+    })
+    const res = await chiama(ALU_MIO)
+    expect(res.status).toBe(404)
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
+    expect((await res.json()).codice).toBe('ANAGRAFICA_NON_TROVATA')
+    expect(audit()).toHaveLength(0)
   })
 })

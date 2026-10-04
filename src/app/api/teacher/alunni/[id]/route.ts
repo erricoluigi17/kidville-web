@@ -11,6 +11,7 @@ import { selectResiliente } from '@/lib/supabase/select-resiliente'
 import { logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
 import { assertAlunnoAnagraficaInScope } from '@/lib/anagrafiche/docente/visibilita'
 import { COLONNE_DELEGATI, COLONNE_LEGAMI, COLONNE_SCHEDA } from '@/lib/anagrafiche/docente/colonne'
+import { FINALITA_AUDIT_ANAGRAFICA } from '@/lib/anagrafiche/docente/tipi'
 import {
   proiettaDelegati,
   proiettaGenitori,
@@ -37,7 +38,6 @@ import {
  */
 
 const OPERAZIONE = 'teacher/alunni/[id]:GET'
-const FINALITA_AUDIT = 'anagrafica-docente'
 const SENZA_CACHE = { 'Cache-Control': 'no-store' }
 
 const erroreLettura = () =>
@@ -128,7 +128,7 @@ export const GET = withRoute(
         alunnoId,
         utenteId: user.id,
         azione: 'view',
-        finalita: FINALITA_AUDIT,
+        finalita: FINALITA_AUDIT_ANAGRAFICA,
         request,
       })
 

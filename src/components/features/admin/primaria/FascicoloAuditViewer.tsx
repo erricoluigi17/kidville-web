@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { FolderLock, RefreshCw } from 'lucide-react';
+import { FINALITA_AUDIT_ANAGRAFICA } from '@/lib/anagrafiche/docente/tipi';
 
 interface AuditRow {
   id: string;
@@ -75,6 +76,14 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
                 <td className="py-2 pr-3 text-kidville-ink whitespace-nowrap">{intlDateTime(f.locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(r.creato_il))}</td>
                 <td className="py-2 pr-3">
                   <span className={`rounded-pill px-2 py-0.5 text-[11px] ${AZIONE[r.azione]?.cls ?? 'bg-kidville-line text-kidville-ink'}`}>{AZIONE[r.azione] ? t(AZIONE[r.azione].lKey) : r.azione}</span>
+                  {/* Un'apertura della scheda anagrafica dal docente non è una visione dei
+                      documenti del fascicolo (PEI/PDP, sanitari): lo si dice. Le altre
+                      finalità restano come prima. */}
+                  {r.finalita === FINALITA_AUDIT_ANAGRAFICA && (
+                    <span className="ml-1.5 font-maven text-[11px] text-kidville-muted">
+                      {t('fascicoloFinalitaAnagraficaDocente')}
+                    </span>
+                  )}
                 </td>
                 <td className="py-2 pr-3 text-kidville-ink">{r.utenti ? `${r.utenti.cognome ?? ''} ${r.utenti.nome ?? ''}`.trim() || '—' : '—'}</td>
                 <td className="py-2 pr-3 text-kidville-ink">{r.alunni ? `${r.alunni.cognome ?? ''} ${r.alunni.nome ?? ''}`.trim() || '—' : '—'}</td>

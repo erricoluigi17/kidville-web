@@ -90,3 +90,12 @@ export interface SchedaAlunnoDocente {
   genitori: GenitoreScheda[]
   delegati: DelegatoScheda[]
 }
+
+/**
+ * Il valore di `fascicolo_accessi_audit.finalita` con cui la scheda docente registra
+ * ogni apertura. È un contratto fra la route che scrive (`api/teacher/alunni/[id]`) e il
+ * registro che la segreteria legge (`FascicoloAuditViewer`): una sola definizione, perché
+ * se le due copie divergessero il registro tornerebbe a mostrare una «visualizzazione del
+ * fascicolo» qualunque.
+ */
+export const FINALITA_AUDIT_ANAGRAFICA = 'anagrafica-docente'

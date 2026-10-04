@@ -159,9 +159,6 @@ export async function assertAlunnoAnagraficaInScope(
     return nonTrovata()
   }
 
-  // Nei log va `riga.id`, l'uuid come lo scrive il database, e non `alunnoId`
-  // arrivato dal client: le righe dello stesso bambino devono distinguersi e sommarsi
-  // sullo stesso valore.
   const plessi = await scuoleDiUtente(supabase, user)
   if (plessi.length === 0) {
     // Nessuna sede non è «fuori sede»: senza questo ramo il controllo di sede si
@@ -187,6 +184,9 @@ export async function assertAlunnoAnagraficaInScope(
   if (!riga.scuola_id || !plessi.includes(riga.scuola_id)) {
     // Il segnale più forte dei due: un uuid di un bambino di un'altra sede non arriva
     // da nessun elenco dell'app. Una riga per (utente, bambino, giorno).
+    // Qui e nel log del «fuori sezione» va `riga.id`, l'uuid come lo scrive il
+    // database, e non `alunnoId` arrivato dal client: le righe dello stesso bambino
+    // devono distinguersi e sommarsi sullo stesso valore.
     logEvento(
       'auth',
       'warn',

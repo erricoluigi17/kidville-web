@@ -35,6 +35,10 @@ const CUOCA: AppUser = { id: 'cuo1', role: 'cuoca', scuola_id: SEDE_A }
 const DOCENTE_IN_VESTE_GENITORE: AppUser = {
   id: 'ed1', role: 'genitore', ruoli: ['educator', 'genitore'], scuola_id: SEDE_A,
 }
+/** La stessa segretaria di `SEGRETERIA`, nella veste di genitore: «tutte le classi» non vale. */
+const SEGRETERIA_IN_VESTE_GENITORE: AppUser = {
+  id: 'seg1', role: 'genitore', ruoli: ['segreteria', 'genitore'], scuola_id: SEDE_A,
+}
 
 let db: DBFinto
 let tabelle: string[]
@@ -157,6 +161,11 @@ describe('assertAlunnoAnagraficaInScope', () => {
     if (esito.ok) return
     expect(esito.response.status).toBe(403)
     expect((await esito.response.json()).codice).toBe('ANAGRAFICA_SENZA_SEDE')
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'auth',
+      'warn',
+      expect.objectContaining({ tipo: 'anagrafica-profilo-senza-sede', utente: 'ed1' }),
+    )
   })
 
   it('admin multi-sede (utenti_scuole): apre anche il bambino dell’altra sede', async () => {
@@ -175,6 +184,11 @@ describe('assertAlunnoAnagraficaInScope', () => {
     if (esito.ok) return
     expect(esito.response.status).toBe(500)
     expect((await esito.response.json()).codice).toBe('ANAGRAFICA_SCOPE_NON_RISOLTO')
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'auth',
+      'error',
+      expect.objectContaining({ tipo: 'anagrafica-sedi-non-risolte', utente: 'adm1' }),
+    )
   })
 
   it('ogni risposta del gate porta Cache-Control: no-store', async () => {
@@ -203,6 +217,10 @@ describe('assertAlunnoAnagraficaInScope', () => {
   it('docente in veste di genitore: le sue assegnazioni valgono uguale, né di più né di meno', async () => {
     expect(await stato(DOCENTE_IN_VESTE_GENITORE, ALU_MIO)).toBe(200)
     expect(await stato(DOCENTE_IN_VESTE_GENITORE, ALU_ALTRUI)).toBe(403)
+  })
+
+  it('segreteria in veste di genitore: conta la veste attiva, e senza assegnazioni non apre', async () => {
+    expect(await stato(SEGRETERIA_IN_VESTE_GENITORE, ALU_ALTRUI)).toBe(403)
   })
 
   it('404 per inesistente, non iscritto, anonimizzato — prima di guardare le sezioni', async () => {

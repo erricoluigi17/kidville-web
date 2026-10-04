@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
+import { mascheraSorgente, fineParentesi } from '../fixtures/sorgente'
 
 /**
  * LE TRE FUNZIONI CHE DICONO «QUESTA CLASSE È TUA» LEGGONO LE STESSE TABELLE.
@@ -23,9 +24,15 @@ import path from 'node:path'
  *    il risultato entra davvero nella risposta, se l'`error` di PostgREST viene
  *    controllato. Quello lo provano i test di comportamento
  *    (`__tests__/lib/anagrafica-docente-visibilita.test.ts` per la terza funzione);
- *  · il corpo di una funzione arriva fino alla dichiarazione esportata successiva: una
- *    lettura spostata in un helper privato non viene seguita, e il lock diventa rosso.
- *    È l'errore nel verso giusto (un rosso da spiegare, non un verde che mente);
+ *  · il corpo di una funzione va dalla graffa che lo apre a quella che lo chiude,
+ *    contate sul sorgente mascherato (`mascheraSorgente`: le graffe dentro stringhe e
+ *    commenti non contano). Un helper scritto DOPO la funzione non le presta una
+ *    lettura; una lettura spostata in un helper, chiamato o no, non viene seguita, e
+ *    il lock diventa rosso. È l'errore nel verso giusto (un rosso da spiegare, non un
+ *    verde che mente);
+ *  · al contrario, una lettura scritta DENTRO il corpo conta anche se sta in una
+ *    callback o in un ramo che non viene mai eseguito: il lock vede il testo, non
+ *    l'esecuzione;
  *  · un nome di tabella costruito a runtime (`from(nomeTabella)`) non viene
  *    riconosciuto: anche qui il lock è rosso, non cieco.
  */
@@ -41,16 +48,42 @@ const FUNZIONI = [
   { file: 'src/lib/anagrafiche/docente/visibilita.ts', nome: 'sezioniAnagraficaVisibili' },
 ]
 
-function senzaCommenti(codice: string): string {
-  return codice.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+/**
+ * Indice DOPO la graffa che chiude quella aperta in `apertura` — la stessa idea di
+ * `fineGraffa` in `isolamento-sede-coverage.test.ts`. Va usato su `struttura`, dove
+ * nessuna graffa vive dentro una stringa o un commento.
+ */
+function fineGraffa(strut: string, apertura: number): number {
+  let livello = 0
+  for (let k = apertura; k < strut.length; k++) {
+    if (strut[k] === '{') livello++
+    else if (strut[k] === '}') { livello--; if (livello === 0) return k + 1 }
+  }
+  return strut.length
 }
 
-/** Il corpo di `export async function <nome>(` fino alla dichiarazione esportata successiva. */
+/**
+ * Il CORPO di `export async function <nome>(`, dalla graffa che lo apre a quella che
+ * lo chiude, con i commenti spenti e le stringhe leggibili (`senzaCommenti`).
+ */
 function corpoDi(sorgente: string, nome: string): string | null {
-  const inizio = sorgente.indexOf(`export async function ${nome}(`)
+  const { senzaCommenti, struttura } = mascheraSorgente(sorgente)
+  const firma = `export async function ${nome}(`
+  const inizio = struttura.indexOf(firma)
   if (inizio < 0) return null
-  const fine = sorgente.indexOf('\nexport ', inizio + 1)
-  return senzaCommenti(sorgente.slice(inizio, fine < 0 ? undefined : fine))
+  const parametri = fineParentesi(struttura, inizio + firma.length - 1)
+  // La graffa del CORPO, non quella di un tipo di ritorno:
+  // `): Promise<{ esito: 'tutte' }> {` ne ha due, e la prima è il tipo.
+  let graffa = -1
+  let angolare = 0
+  for (let k = parametri; k < struttura.length; k++) {
+    const c = struttura[k]
+    if (c === '<') angolare++
+    else if (c === '>') angolare = Math.max(0, angolare - 1)
+    else if (c === '{' && angolare === 0) { graffa = k; break }
+  }
+  if (graffa < 0) return null
+  return senzaCommenti.slice(graffa, fineGraffa(struttura, graffa))
 }
 
 const mancanti = (corpo: string) => TABELLE.filter((t) => !letturaDi(t).test(corpo))
@@ -74,6 +107,13 @@ describe('LOCK · le assegnazioni docente↔classe si leggono ovunque dalle stes
       "  const tabella = 'utenti_sezioni_materie'\n" +
       "  await s.rpc('leggi', { nome: 'utenti_sezioni_materie' })\n" +
       "  return s.from( \"utenti_sezioni\" )\n}\n"
+    expect(mancanti(corpoDi(finto, 'x') ?? '')).toEqual(['utenti_sezioni_materie'])
+  })
+
+  it('CONTROLLO POSITIVO — un helper privato scritto DOPO la funzione, e mai chiamato, non le presta la lettura', () => {
+    const finto =
+      "export async function x(s) {\n  return s.from('utenti_sezioni')\n}\n\n" +
+      "async function maiChiamata(s) {\n  return s.from('utenti_sezioni_materie')\n}\n"
     expect(mancanti(corpoDi(finto, 'x') ?? '')).toEqual(['utenti_sezioni_materie'])
   })
 

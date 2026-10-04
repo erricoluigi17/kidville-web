@@ -1,3 +1,71 @@
+## 🪪 Changelog — Le insegnanti consultano l'anagrafica dei propri alunni, in sola lettura — 2026-10-04 (branch `feat/anagrafica-docente`)
+
+**Stato.** 🟡 Sul branch, gate da eseguire prima della PR (vedi in fondo). **Nessuna migrazione, nessun cambio di RLS.**
+
+**La richiesta (04/10).** «Le insegnanti devono poter vedere le anagrafiche dei propri alunni, non modificarle, solo visionarle.» Fino a oggi un docente riceveva a pezzi, in route diverse, solo nome, allergie, note mediche, email dei genitori e delegati: una scheda per lui non esisteva.
+
+**Le decisioni del titolare (04/10).**
+1. **Scheda completa senza economia.** Dati anagrafici, codice fiscale, nascita, cittadinanza, residenza, salute (allergie, note mediche, BES/DSA, pannolino), consensi, genitori con telefoni, email e codice fiscale, delegati al ritiro. **Mai**: retta, fatturazione, intestatari, sospensioni, documenti d'identità (file e numero), nascita e residenza dei genitori.
+2. **Alla primaria la vedono tutti i docenti della classe**: assegnazione diretta (`utenti_sezioni`) **e** per materia (`utenti_sezioni_materie`), la stessa regola del fascicolo.
+3. **Nuova voce «Alunni»** nel menu docente (gruppo «In classe»), poi elenco, poi scheda.
+4. **Ricerca per nome e ricerca avanzata**: sezione e grado, salute (con allergie, allergene preciso, BES/DSA, pannolino), consensi foto (senza consenso sito/social; un consenso **assente** conta come «senza»), anno di nascita, sesso.
+
+**Server.**
+- `GET /api/teacher/alunni` (elenco) e `GET /api/teacher/alunni/[id]` (scheda). Ognuno **esporta solo `GET`**, e un test lo verifica. Usano `requireDocente`, `zod`, `withRoute` e rispondono con `Cache-Control: no-store`.
+- `src/lib/anagrafiche/docente/`:
+  - `visibilita.ts`: `sezioniAnagraficaVisibili`, `sediAnagrafica`, `assertAlunnoAnagraficaInScope`. Una regola sola decide elenco e scheda. Un guasto di lettura è un **500 con log**, mai «nessuna sezione» e mai un 403 falso.
+  - `colonne.ts`: colonne scritte una per una, mai `*`.
+  - `proiezione.ts`: lista bianca campo per campo.
+  - `tipi.ts`, `ritorno-elenco.ts`.
+- **Ordine della scheda.** Ruolo, poi uuid, poi controllo (riga minima, 404, sedi, sezioni), poi letture, poi proiezione, poi audit. La seconda lettura rifiltra stato iscritto, non anonimizzato e sede: un bambino archiviato fra il controllo e la lettura dà 404, non 200.
+- **Sedi vuote.** Per l'admin nascono da una lettura fallita di `utenti_scuole`, e la risposta è 500. Per gli altri ruoli la risposta è 403 `ANAGRAFICA_SENZA_SEDE`. Lo stesso vale in elenco e scheda.
+- **Audit.** Ogni scheda aperta scrive una riga in `fascicolo_accessi_audit` con `azione: 'view'` e `finalita: 'anagrafica-docente'` (costante condivisa `FINALITA_AUDIT_ANAGRAFICA`), **dopo** controlli e lettura. Se l'audit fallisce, la scheda si mostra e il guasto va in log `error`.
+- **Il registro letto dalla segreteria** (Direzione → Primaria → «Fascicoli») etichetta queste righe «Scheda anagrafica». Così non vengono scambiate per una visione di PEI, PDP o documenti sanitari.
+- **Log.** `warn` `anagrafica-fuori-sede` e `anagrafica-fuori-sezione` con i soli uuid (`distingui: ['alunno_id']`), `anagrafica-elenco-troncato` al tetto `LIMITE_ELENCO_ALUNNI`, `error` sui guasti.
+- **Codici d'errore.** Tutti dichiarati in `CODICI_ERRORE` e tradotti: `ANAGRAFICA_SCOPE_NON_RISOLTO`, `_NON_TROVATA`, `_FUORI_SEDE`, `_FUORI_SEZIONE`, `_SENZA_SEDE`, `_ELENCO_NON_LETTO`, `_NON_LETTA`.
+- **DB della CI.** Le letture passano da `selectResiliente`: sul DB E2E della CI, non migrato, una colonna recente che manca diventa «Non indicato».
+
+**Client.**
+- Pagine `/teacher/alunni` e `/teacher/alunni/[id]`. Sono gusci: i dati arrivano solo dall'API e non entrano nell'HTML né in Dexie.
+- **Barra filtri.** È il motore condiviso (`useFiltri` + `BarraFiltri`). Ha un nuovo flag `maiNellUrl` sui campi: **la ricerca per nome non entra nell'indirizzo**, perché il service worker usa l'URL come chiave di cache su disco.
+- **Ritorno dalla scheda.** Gli altri filtri si ritrovano col tasto indietro. Il pulsante «Tutti gli alunni», fisso in alto, li ritrova da `sessionStorage`, senza mai il nome cercato.
+- **Scheda.** Nessun campo modificabile (verificato da un test). In cima, il banner delle allergie. Parentela `madre` / `padre` / `delegato` / `altro`, e nessuna etichetta se manca. Delegati con il nome in evidenza. Link `tel:` e `mailto:`.
+- **Stati.** 403, 404, sessione scaduta (con «Accedi»), errore con «Riprova», assenza di rete.
+- **Accessibilità.** Regione `aria-live` sempre montata, fuoco dopo «Riprova», anello di focus visibile nell'elenco.
+- **Freccia «indietro» dell'AppBar.** È nascosta sulla scheda, come nella classe della primaria: perdeva i filtri.
+- Service worker `v13` per la nuova etichetta offline `alunni`. Testi in `teacherServizi`, `teacherNav`, `adminPrimaria` (it/en; in inglese «location» per «sede», termini allineati al catalogo).
+- **Caricamento.** Funzione pura più effetto che possiede la richiesta, con `setState` nel `.then`. Un `try/finally` vuoto avrebbe spento in silenzio la regola `set-state-in-effect`.
+
+**Lock e commenti.**
+- Nuovo lock `__tests__/architecture/assegnazioni-docente-coerenti.test.ts`: le tre funzioni «questa classe è tua» (`puoAccedereFascicolo`, `sezioniContitolari`, `sezioniAnagraficaVisibili`) leggono le stesse due tabelle.
+- Il commento di `fascicolo-rbac.ts` citava un lock che **non è mai esistito**.
+
+**Misure di produzione che hanno cambiato il codice (solo conteggi, 04/10).**
+- **747 iscritti vivi**: la Direzione è al 75% del tetto di 1.000 dell'elenco, da qui il log del troncamento.
+- **520 legami su 1.116 (47%) senza `relation_type`**: da qui l'ordine deterministico dei genitori e nessuna etichetta inventata.
+- **9 adulti registrati in famiglia come `delegate`**: etichettati «Delegato al ritiro» e messi dopo i genitori.
+- **6 iscritti senza sezione**: gruppo «Senza sezione» nell'elenco della segreteria.
+- **93 bambini con allergie solo a testo libero**: il filtro «con allergie» usa il criterio operativo del motore unico.
+
+**Aperto, per il titolare.**
+- I bambini con stato `sospeso` (oggi 0) restano esclusi da elenco e scheda, come da lock `elenchi-operativi-solo-iscritti`. Ma per `stato.ts` un sospeso frequenta: va deciso se l'insegnante debba vederne le allergie.
+- `fascicolo_accessi_audit` conserva l'IP del docente senza scadenza.
+- **Da provare su telefono vero.** I link `tel:` e `mailto:` sono i primi dell'app nativa. Va provata anche la fluidità dei filtri con l'elenco della Direzione.
+
+**Segnalati come lavori separati.**
+- Punto cieco del lock `isolamento-sede-coverage`: un filtro di sezione condizionale nasconde l'assenza del filtro di sede.
+- `useFiltri` cancella i filtri dall'URL sotto lo StrictMode di `next dev`.
+- Anello di focus senza effetto in `MediaGrid`, perché la regola globale sta fuori dai layer.
+
+**Dopo il deploy, in produzione (sola lettura).**
+
+```sql
+-- Le schede aperte dalle insegnanti: atteso > 0 dopo il primo uso vero.
+SELECT count(*) FROM fascicolo_accessi_audit WHERE finalita = 'anagrafica-docente';
+```
+
+E `app_log` per `anagrafica-fuori-sezione` e `anagrafica-fuori-sede` (tentativi su schede non proprie), `anagrafica-sezioni-non-lette` e `anagrafica-sedi-non-risolte` (guasti: attesi 0), `anagrafica-elenco-troncato` (atteso 0).
+
 
 ## 🎓 Changelog — «I genitori vedono il giudizio ma non il voto»: il giudizio sintetico diventa obbligatorio, le dimensioni un'aggiunta — 2026-10-04 (branch `feat/popup-1-2-personale-android`)
 
@@ -26533,6 +26601,7 @@ scala automaticamente un pannolino dall'Armadietto del bambino (vedi Modulo Arma
 bambini senza questo flag, gli eventi Bagno non generano alcuno scalo di materiale.
 ***Dati Didattici:** Profilo BES (Si/No), Storico valutazioni, Note disciplinari, Accesso allo storico
 del "Diario 0-6" degli anni precedenti.
+***Consultazione da parte del docente (dal 2026-10-04):** sola lettura, da «Alunni» nel menu docente. La vedono i docenti assegnati alla classe direttamente o per materia, e la segreteria della sede; mai retta, fatturazione e documenti d'identità. Ogni apertura è registrata in `fascicolo_accessi_audit` (`finalita = 'anagrafica-docente'`).
 ***Gestione Delegati:** Lista dinamica di persone autorizzate al ritiro. Non vi è limite numerico.
 Richiede esplicito caricamento del documento di identità del delegato. Nel caso di fratelli, la
 delega va replicata per singolo alunno.

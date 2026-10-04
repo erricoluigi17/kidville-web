@@ -1,7 +1,39 @@
 
+## 🔔 Changelog — Pop-up «Aggiorna l'app» per il personale su Android: la 1.2 è su Google Play — 2026-10-04 (branch `feat/popup-1-2-personale-android`)
+
+**Stato.** 🟡 **Gate verde, in PR** (`eslint` 0 · `tsc` 0 · `vitest run` 1654 file / 27.961 test · `npm run build` ok). Branch nato da `main` dopo il deploy riuscito della PR 3 (#182). **Nessuna migrazione**, nessun cambiamento sul server, nessuna build delle app: cambiano una soglia, un testo e il modo in cui il pop-up sceglie il testo.
+
+**Perché adesso.** La 1.2 per Android è **vista sullo store**: la scheda pubblica Google Play di `it.kidville.app` risponde `1.2` (in it e in en) dal 04/10 alle 10:41 UTC, e Play Console dà la release «4 (1.2)» pubblicata in produzione al 100% (notifica «L'aggiornamento dell'app è stato pubblicato»). L'invio era partito alle ~10:20 UTC, con la dichiarazione del servizio in primo piano `dataSync` (Elaborazione della rete → Altro, con il video dimostrativo). **iOS no**: la 1.2 (6) è ancora in revisione, quindi su iPhone non cambia niente.
+
+**Cosa cambia.**
+- `VERSIONE_MINIMA_PERSONALE` (`src/lib/native/aggiornamento-app.ts`) passa da `{ ios: null, android: null }` a **`{ ios: null, android: '1.2' }`**. `VERSIONE_MINIMA_STORE` resta `'1.1'`: le famiglie non vedono niente di nuovo.
+- `appDaAggiornare` dice **quale minima è scattata**: `minima: 'store'` (sotto la 1.1, per tutti) o `minima: 'personale'` (fra la 1.1 e la 1.2, solo per chi apre `/teacher`).
+- Il pop-up sceglie il corpo da lì. Il titolo e i bottoni restano quelli di sempre. Sotto la minima dello store resta `avvisoAggiornaCorpo` (la 1.1). Fra le due minime c'è la chiave nuova **`avvisoAggiornaCorpoPersonale`**, con il testo **approvato dal titolare il 04/10**: «Aggiorna l'app: i video della galleria si inviano anche con il telefono bloccato o mentre usi altre app.» In inglese: «Update the app: gallery videos now upload even with the phone locked or while you use other apps.»
+- Restano com'erano: personale = chi apre `/teacher` (la cuoca esclusa), decisione per sessione, avviso settimanale delle notifiche che tace dove compare il pop-up, gate biometrico rispettato.
+
+**I log.** Nessun log nuovo, ed è una scelta: i messaggi restano `avviso-aggiorna-app-{mostrato|rimandato|tocco-store}: <piattaforma> <versione>`. La minima scattata **non** entra nei log, perché direbbe chi lavora a scuola. La fascia si legge dalla versione: su Android una comparsa a `1.1` è per forza del personale (la minima dello store la accetta), una a `1.0` è della minima dello store.
+
+**Verificato.**
+- `__tests__/lib/aggiornamento-app.test.ts` fotografa il valore spedito (Android `1.2`, iOS `null`). Prova il valore spedito piattaforma per piattaforma: su iPhone il ruolo non si chiede; su Android il docente sulla 1.1 → `personale`, il genitore → niente, il docente sulla 1.0 → `store` senza chiedere il ruolo. Ogni esito porta la minima scattata.
+- `__tests__/components/AvvisoAggiornamentoApp.test.tsx`: sotto la minima dello store compare il corpo di sempre e **non** quello del personale; il personale vede il suo corpo e **non** quello di sempre, sia a minima iniettata sia col valore spedito su Android.
+- Le due finte di `appDaAggiornare` negli avvisi settimanali hanno la forma vera del risultato.
+- **Tre mutazioni, tutte rosse**: il componente che mostra sempre il corpo di sempre (3 test rossi), la libreria che dice sempre `store` (12), la minima del personale spenta anche su Android (4). Ripristino: 105/105 verdi.
+
+**Dopo il deploy, in produzione (sola lettura).**
+
+```sql
+SELECT messaggio, sum(occorrenze) FROM app_log
+WHERE messaggio LIKE 'avviso-aggiorna-app-%' AND giorno >= '2026-10-04'
+GROUP BY 1 ORDER BY 1;
+```
+
+Atteso: compaiono righe `… android 1.1` (il personale Android rimasto sulla 1.1); nessuna riga `… ios 1.1` e nessuna `… android 1.2`.
+
+**Prossimo passo.** Quando `itunes.apple.com/lookup?id=6794883055&country=it` risponde `1.2`: una seconda micro-PR, su un branch nuovo, che porta `ios` a `'1.2'`, aggiorna lo stesso test e scrive nel commit quando la 1.2 è stata vista sull'App Store. Il testo c'è già.
+
 ## 📲 Changelog — Video, PR 3 «app 1.2»: il video dell'insegnante parte da solo e arriva anche a telefono bloccato (invio nativo in background) — 2026-10-03 (branch `feat/app-1-2-caricamenti-nativi`)
 
-**Stato.** ✅ **Collaudo C1/E1 fatto; il web va in produzione col merge di questa PR (#182); l'invio agli store lo fa il titolare da un'altra sessione.** Il branch è nato dopo il deploy riuscito della PR 2 (#181, merge `06dd1d66`, in produzione dal 02/10 23:18 UTC). **Nessuna migrazione** e il contratto della PR 2 non si tocca: sul server cambiano solo le tolleranze della verifica dell'uscita in reduce60 (**Tfps**, **Tfps2**: due falsi scarti del rallentatore trovati dal collaudo E1). Ondate 1-4, rilievi dei critici e correzioni del collaudo sono scritti, criticati e committati (tabella qui sotto); il collaudo del motore (C1) e dell'app vera (E1) è nella sezione **K**. **Nulla è stato inviato a Apple né a Google:** ogni invio aspetta il **via libera del titolare**, passo per passo. Spec: `docs/superpowers/specs/2026-10-03-video-pr3-app-1-2-design.md` (con l'**Appendice A**: gli scostamenti fra piano, progetto e codice, dove vale il codice) · difetti secondari (**237**, contati dal file il 03/10 sera; il più importante è il #230, compito **Tfps3**): `docs/superpowers/plans/2026-10-03-video-pr3-difetti-secondari.md` · plugin, prove native e server finto: `docs/mobile.md` · **consegna per l'invio agli store: `docs/store-submission.md` §7** · interruttore d'emergenza: `docs/env.md`.
+**Stato.** ✅ **In produzione dal 03/10/2026 18:03 UTC (merge `89d4822d`, #182). Android 1.2 (`versionCode` 4) pubblicata su Google Play il 04/10 alle 10:41 UTC, al 100%, con la dichiarazione del servizio in primo piano `dataSync`; iOS 1.2 (6) in revisione da Apple dal 04/10 08:56 UTC.** Il pop-up «Aggiorna l'app» per il personale è acceso su Android (voce del 04/10 qui sopra); su iOS si accende con una seconda micro-PR quando la 1.2 è sull'App Store. Il branch è nato dopo il deploy riuscito della PR 2 (#181, merge `06dd1d66`, in produzione dal 02/10 23:18 UTC). **Nessuna migrazione** e il contratto della PR 2 non si tocca: sul server cambiano solo le tolleranze della verifica dell'uscita in reduce60 (**Tfps**, **Tfps2**: due falsi scarti del rallentatore trovati dal collaudo E1). Ondate 1-4, rilievi dei critici e correzioni del collaudo sono scritti, criticati e committati (tabella qui sotto); il collaudo del motore (C1) e dell'app vera (E1) è nella sezione **K**. **Gli invii a Apple e a Google li ha autorizzati il titolare, passo per passo** (03-04/10). Spec: `docs/superpowers/specs/2026-10-03-video-pr3-app-1-2-design.md` (con l'**Appendice A**: gli scostamenti fra piano, progetto e codice, dove vale il codice) · difetti secondari (**237**, contati dal file il 03/10 sera; il più importante è il #230, compito **Tfps3**): `docs/superpowers/plans/2026-10-03-video-pr3-difetti-secondari.md` · plugin, prove native e server finto: `docs/mobile.md` · **consegna per l'invio agli store: `docs/store-submission.md` §7** · interruttore d'emergenza: `docs/env.md`.
 
 | Compito | Che cosa | Stato al 03/10 |
 |---|---|---|

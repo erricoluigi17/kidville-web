@@ -6,15 +6,20 @@ import { Download } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { useBloccoBiometrico } from '@/components/providers/BiometricGate'
 import { logClient, nomeErrore } from '@/lib/logging/client'
-import { apriSchedaStore, appDaAggiornare, type PiattaformaStore } from '@/lib/native/aggiornamento-app'
+import { apriSchedaStore, appDaAggiornare, type AppDaAggiornare } from '@/lib/native/aggiornamento-app'
 
 /**
  * IL POP-UP «AGGIORNA L'APP» (spec 2026-09-29). Chi deve aggiornare lo decide
  * `@/lib/native/aggiornamento-app` (versione del binario sotto la minima dello store, per tutti;
- * dal 2026-10-02 anche sotto la minima del PERSONALE, per chi lavora con l'app, spenta finché la 1.2
- * non è sullo store); qui c'è la finestra. Montato in `RootProviders` DENTRO il gate biometrico, così
- * copre ogni area (genitore, docente, segreteria) e la pagina di login. Sul web, sul server e sulla
- * versione aggiornata non rende niente. Il testo è uno solo, per tutti.
+ * dal 2026-10-02 anche sotto la minima del PERSONALE, per chi lavora con l'app, accesa su ogni
+ * piattaforma solo dopo aver visto la 1.2 sul suo store); qui c'è la finestra. Montato in
+ * `RootProviders` DENTRO il gate biometrico, così copre ogni area (genitore, docente, segreteria) e
+ * la pagina di login. Sul web, sul server e sulla versione aggiornata non rende niente.
+ *
+ * DUE TESTI, UNO PER MINIMA (dal 2026-10-04, testo approvato dal titolare). Il titolo e i bottoni
+ * sono gli stessi; il corpo dice perché aggiornare: sotto la minima dello store quello di sempre
+ * (`avvisoAggiornaCorpo`, la 1.1), fra le due minime quello del personale
+ * (`avvisoAggiornaCorpoPersonale`, i video della 1.2 che partono anche a telefono bloccato).
  *
  * «A OGNI APERTURA» (scelta del titolare, 29/09): compare a ogni avvio a freddo e, se era stato
  * chiuso, di nuovo al ritorno in primo piano dopo almeno `RIPROPONI_DOPO_MS` in background. Un
@@ -42,15 +47,16 @@ import { apriSchedaStore, appDaAggiornare, type PiattaformaStore } from '@/lib/n
  *
  * I LOG. Il canale del client accetta solo `warn` ed `error`: comparsa e tocchi escono `warn`, con
  * la piattaforma e l'esito; `versione_app` la aggiunge il logger. Nessun dato personale: il ruolo
- * non entra nei log, e per il personale i messaggi sono gli stessi di tutti (la fascia si legge
- * dalla versione: finché la minima dello store resta sotto quella del personale, una comparsa a una
- * versione che la minima dello store già accetta è per forza del personale).
+ * non entra nei log, e per il personale i messaggi sono gli stessi di tutti — anche la minima
+ * scattata resta fuori, perché direbbe chi lavora a scuola. La fascia si legge dalla versione:
+ * finché la minima dello store resta sotto quella del personale, una comparsa a una versione che la
+ * minima dello store già accetta è per forza del personale.
  */
 
 /** Il background oltre il quale il ritorno in primo piano vale come una nuova apertura. */
 export const RIPROPONI_DOPO_MS = 30 * 60 * 1000
 
-type Decisione = { piattaforma: PiattaformaStore; versione: string } | null
+type Decisione = AppDaAggiornare | null
 
 let decisioneSessione: Promise<Decisione> | null = null
 let chiusoInSessione = false
@@ -173,7 +179,9 @@ export function AvvisoAggiornamentoApp() {
       >
         {t('avvisoAggiornaTitolo')}
       </h2>
-      <p className="mt-2 font-maven text-[15px] text-kidville-sub">{t('avvisoAggiornaCorpo')}</p>
+      <p className="mt-2 font-maven text-[15px] text-kidville-sub">
+        {decisione.minima === 'personale' ? t('avvisoAggiornaCorpoPersonale') : t('avvisoAggiornaCorpo')}
+      </p>
       <button
         type="button"
         onClick={aggiorna}

@@ -50,7 +50,7 @@ vi.mock('capacitor-native-settings', () => ({
 }))
 
 const appDaAggiornare = vi.hoisted(() =>
-  vi.fn(async () => (stato.daAggiornare ? { piattaforma: 'android' as const, versione: '1.0' } : null)),
+  vi.fn(async () => (stato.daAggiornare ? { piattaforma: 'android' as const, versione: '1.0', minima: 'store' as const } : null)),
 )
 vi.mock('@/lib/native/aggiornamento-app', () => ({ appDaAggiornare }))
 

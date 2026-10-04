@@ -29,17 +29,28 @@ import { isPublicPath } from '@/lib/auth/middleware-rules'
  * DUE MINIME, E LA SECONDA È PER IL PERSONALE (spec 2026-10-02, PR 2 «video», compito T14).
  * `VERSIONE_MINIMA_STORE` vale per tutti. `VERSIONE_MINIMA_PERSONALE` vale SOLO per chi lavora con
  * l'app — chi può aprire l'area docente, dove si caricano i video — ed è la via con cui la 1.2
- * (l'invio dei video in background, PR 3) arriverà a loro senza disturbare le famiglie, che non la
- * usano. Nasce SPENTA: con `null` questo modulo si comporta esattamente come prima, e non fa nemmeno
- * una richiesta in più. Il ruolo si chiede solo a chi sta FRA le due minime (sotto quella del
+ * (l'invio dei video in background, PR 3) arriva a loro senza disturbare le famiglie, che non la
+ * usano. Su una piattaforma dove è `null` questo modulo si comporta esattamente come prima, e non fa
+ * nemmeno una richiesta in più. Il ruolo si chiede solo a chi sta FRA le due minime (sotto quella del
  * personale, ma non sotto quella dello store): sotto la minima dello store il pop-up compare per
  * chiunque senza chiedere chi sia, come sempre.
+ *
+ * LA DECISIONE DICE QUALE MINIMA È SCATTATA (`minima: 'store' | 'personale'`), perché il testo del
+ * pop-up è diverso: sotto la minima dello store vale quello di sempre, che descrive la 1.1; fra le
+ * due minime il personale legge perché la 1.2 gli serve (i video che si inviano a telefono
+ * bloccato). Il ruolo resta fuori dai log: la fascia si legge dalla versione.
  */
 
 export type PiattaformaStore = 'ios' | 'android'
 
 /** Una versione minima per piattaforma. `null` spegne il controllo su quella piattaforma. */
 export type VersioniMinime = Readonly<Record<PiattaformaStore, string | null>>
+
+/** Quale minima ha deciso che l'app è da aggiornare: quella dello store (tutti) o del personale. */
+export type MinimaScattata = 'store' | 'personale'
+
+/** Chi deve aggiornare: piattaforma, versione installata e la minima che è scattata. */
+export type AppDaAggiornare = { piattaforma: PiattaformaStore; versione: string; minima: MinimaScattata }
 
 /**
  * LA VERSIONE MINIMA, PER PIATTAFORMA. Sotto questa, il pop-up chiede di aggiornare.
@@ -65,20 +76,24 @@ export const VERSIONE_MINIMA_STORE: VersioniMinime = Object.freeze({
  * lavora con l'app: docenti, Direzione, segreteria (`haProfiloDelPersonale`). Le famiglie non la
  * vedono mai: per loro vale `VERSIONE_MINIMA_STORE`, e basta.
  *
- * NASCE SPENTA (`null` su entrambe le piattaforme): è costruita prima della 1.2 perché il deploy
- * web non debba aspettare l'app. Si ACCENDE come l'altra, e alle stesse condizioni: SOLO DOPO AVER
- * VISTO la 1.2 pubblicata sullo store di quella piattaforma (iOS scaricabile dalla scheda, Android
- * uscita in PRODUZIONE su Google Play e non nel test chiuso). Poi si scrive `'1.2'` per quella
- * piattaforma, si aggiorna il test che fotografa questo valore
+ * È NATA SPENTA (`null` su entrambe le piattaforme): è stata costruita prima della 1.2 perché il
+ * deploy web non dovesse aspettare l'app. Si ACCENDE come l'altra, e alle stesse condizioni: SOLO
+ * DOPO AVER VISTO la 1.2 pubblicata sullo store di quella piattaforma (iOS scaricabile dalla scheda,
+ * Android uscita in PRODUZIONE su Google Play e non nel test chiuso). Poi si scrive `'1.2'` per
+ * quella piattaforma, si aggiorna il test che fotografa questo valore
  * (`__tests__/lib/aggiornamento-app.test.ts`) e nel commit si scrive quando l'ha vista sullo store.
  * Niente build e niente altro codice.
+ *
+ * ANDROID 1.2 vista il 2026-10-04 alle 10:41 UTC: la scheda Google Play di `it.kidville.app`
+ * risponde `1.2` (it e en), e Play Console dà la release «4 (1.2)» pubblicata in produzione al 100%.
+ * iOS resta spenta finché `itunes.apple.com/lookup?id=6794883055&country=it` non risponde `1.2`.
  *
  * Una minima del personale PIÙ BASSA di quella dello store non cambia niente: chi è sotto la seconda
  * è già sotto la prima, e per lui il pop-up compare comunque.
  */
 export const VERSIONE_MINIMA_PERSONALE: VersioniMinime = Object.freeze({
   ios: null,
-  android: null,
+  android: '1.2',
 })
 
 /** Oltre questo tempo un `getInfo` senza risposta vale «versione illeggibile». */
@@ -189,15 +204,16 @@ async function utenteDelPersonale(): Promise<boolean> {
 }
 
 /**
- * Il binario installato è sotto la versione minima che lo riguarda? Restituisce piattaforma e
- * versione installata, oppure `null` (aggiornato, web, piattaforma senza minima, versione o ruolo
- * illeggibili, o un genitore su un binario che solo il personale deve aggiornare). Non lancia mai.
+ * Il binario installato è sotto la versione minima che lo riguarda? Restituisce piattaforma,
+ * versione installata e la minima che è scattata, oppure `null` (aggiornato, web, piattaforma senza
+ * minima, versione o ruolo illeggibili, o un genitore su un binario che solo il personale deve
+ * aggiornare). Non lancia mai.
  *
  * LE DUE MINIME, IN ORDINE:
- *  1. sotto quella dello store, `minime`: per TUTTI, senza chiedere chi sia;
+ *  1. sotto quella dello store, `minime`: per TUTTI, senza chiedere chi sia (`minima: 'store'`);
  *  2. sotto quella del personale, `minimePersonale`: solo se chi usa l'app lavora con l'app
- *     (`utenteDelPersonale`). Il ruolo si chiede qui e non prima: con la minima del personale
- *     spenta, o con un binario già alla pari, non parte nessuna richiesta.
+ *     (`utenteDelPersonale`; `minima: 'personale'`). Il ruolo si chiede qui e non prima: con la
+ *     minima del personale spenta, o con un binario già alla pari, non parte nessuna richiesta.
  *
  * `minime` e `minimePersonale` si passano solo dai test; in produzione valgono
  * `VERSIONE_MINIMA_STORE` e `VERSIONE_MINIMA_PERSONALE`. (Anche `avvisoDaMostrare` lo chiama senza
@@ -207,7 +223,7 @@ async function utenteDelPersonale(): Promise<boolean> {
 export async function appDaAggiornare(
   minime: VersioniMinime = VERSIONE_MINIMA_STORE,
   minimePersonale: VersioniMinime = VERSIONE_MINIMA_PERSONALE,
-): Promise<{ piattaforma: PiattaformaStore; versione: string } | null> {
+): Promise<AppDaAggiornare | null> {
   if (!isNativeApp()) return null
   let piattaforma: string
   try {
@@ -234,14 +250,14 @@ export async function appDaAggiornare(
   if (minima !== null) {
     const confronto = confrontaVersioni(versione, minima)
     if (confronto === null) return versioneIllegibile('formato')
-    if (confronto < 0) return { piattaforma, versione }
+    if (confronto < 0) return { piattaforma, versione, minima: 'store' }
   }
 
   if (minimaDelPersonale === null) return null
   const confrontoPersonale = confrontaVersioni(versione, minimaDelPersonale)
   if (confrontoPersonale === null) return versioneIllegibile('formato')
   if (confrontoPersonale >= 0) return null
-  return (await utenteDelPersonale()) ? { piattaforma, versione } : null
+  return (await utenteDelPersonale()) ? { piattaforma, versione, minima: 'personale' } : null
 }
 
 /** La scheda dello store per la piattaforma; `null` fuori da iOS e Android. */

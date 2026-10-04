@@ -1878,6 +1878,7 @@ in `messages/en/teacherNav.json`, nella stessa posizione:
   "anagraficaParentelaMadre": "Madre",
   "anagraficaParentelaPadre": "Padre",
   "anagraficaParentelaAltro": "Altro adulto di riferimento",
+  "anagraficaParentelaDelegato": "Delegato al ritiro",
   "anagraficaPrincipale": "Referente principale",
   "anagraficaSi": "Sì",
   "anagraficaNo": "No",
@@ -1957,6 +1958,7 @@ e in `messages/en/teacherServizi.json`, stesse chiavi e stessa posizione:
   "anagraficaParentelaMadre": "Mother",
   "anagraficaParentelaPadre": "Father",
   "anagraficaParentelaAltro": "Other responsible adult",
+  "anagraficaParentelaDelegato": "Authorised for pick-up",
   "anagraficaPrincipale": "Main contact",
   "anagraficaSi": "Yes",
   "anagraficaNo": "No",
@@ -2647,9 +2649,11 @@ export function SchedaGenitore({ genitore }: { genitore: GenitoreScheda }) {
       ? t('anagraficaParentelaMadre')
       : genitore.parentela === 'padre'
         ? t('anagraficaParentelaPadre')
-        : genitore.parentela === 'altro'
-          ? t('anagraficaParentelaAltro')
-          : null
+        : genitore.parentela === 'delegato'
+          ? t('anagraficaParentelaDelegato')
+          : genitore.parentela === 'altro'
+            ? t('anagraficaParentelaAltro')
+            : null
   const sottotitolo = [parentela, genitore.principale ? t('anagraficaPrincipale') : null].filter(Boolean).join(' · ')
 
   return (

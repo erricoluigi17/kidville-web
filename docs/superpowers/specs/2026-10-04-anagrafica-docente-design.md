@@ -122,8 +122,8 @@ di un bambino perché il registro ha avuto un guasto sarebbe peggio del registro
 | Residenza | `indirizzo`, `civico`, `cap`, `comune`, `provincia` |
 | Classe | `sezione` (`id`, `nome`, `grado`), `dataIscrizione` |
 | Salute | `allergeni` (stessa unione dell'elenco), `allergieAltro` (`testoResiduoAllergie`: solo il testo che le chiavi non dicono già), `haAllergie`, `noteMediche`, `besDsa`, `usaPannolino` |
-| Consensi | `consensoPrivacy`, `consensoFotoSito`, `consensoFotoSocial` |
-| Genitori (`student_parents` → `parents`) | per ciascuno: `nome`, `cognome`, `parentela` (`relation_type`), `principale` (`is_primary`), `telefoni` (`phone_numbers`), `email` (`emails`), `codiceFiscale` (`fiscal_code`); esclusi i genitori anonimizzati |
+| Consensi | `consensi.privacy`, `consensi.fotoSito`, `consensi.fotoSocial` (`null` = non registrato) |
+| Genitori (`student_parents` → `parents`) | per ciascuno: `nome`, `cognome`, `parentela` (`relation_type` → `madre` / `padre` / `delegato` / `altro`, `null` se assente: misurato il 04/10, quasi metà dei legami non la porta), `principale` (`is_primary`), `telefoni` (`phone_numbers`), `email` (`emails`), `codiceFiscale` (`fiscal_code`); esclusi i genitori anonimizzati. Ordine deterministico: i `delegato` sempre in fondo, poi il referente principale, poi madre, padre, parentela assente, altro, poi cognome e nome. Un adulto registrato in famiglia come `delegate` resta nel riquadro Famiglia, etichettato «Delegato al ritiro» |
 | Delegati (`delegates`) | per ciascuno: `nome`, `cognome`, `parentela` |
 
 **Mai nella scheda:** `importo_retta_mensile`, `retta_split_config`, `retta_a_carico_di`,

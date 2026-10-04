@@ -3,8 +3,9 @@ import { parametriGovernati, valoriIniziali, versoUrl } from '@/lib/ui/filtri/mo
 import type { CampoFiltro } from '@/lib/ui/filtri/tipi'
 
 // La ricerca per nome dell'anagrafica docente porta il NOME di un bambino: non deve
-// finire nell'indirizzo, che il service worker usa come chiave di cache su disco e che
-// i log di accesso registrano. Gli altri filtri restano nell'URL come sempre.
+// finire nell'indirizzo, che resta nella cronologia del browser, nei log di accesso del
+// server (a ogni ricarica o apertura diretta) e in ogni link copiato o condiviso. Gli
+// altri filtri restano nell'URL come sempre.
 
 interface Riga {
   nome: string

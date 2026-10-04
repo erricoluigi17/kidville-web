@@ -87,11 +87,21 @@ interface Comune {
   nascondiSeVuoto?: boolean;
   /**
    * Il valore può contenere un DATO PERSONALE (un nome digitato nella ricerca): non
-   * si scrive mai nell'indirizzo e non si legge da lì. Il service worker salva le
-   * pagine usando l'indirizzo come chiave, e i log di accesso registrano la query:
-   * un nome di bambino finirebbe in tutti e due. Il parametro resta comunque
-   * GOVERNATO (`parametriGovernati`): se un indirizzo lo porta, la barra lo toglie
-   * alla prima modifica di un filtro o uscendo dalla pagina — non al caricamento.
+   * si scrive mai nell'indirizzo e non si legge da lì. L'indirizzo completo, query
+   * compresa, finisce in tre posti dove un nome di bambino non deve stare:
+   *  · nella cronologia del browser, salvata sul dispositivo;
+   *  · nei log di accesso del server, a ogni ricarica o apertura diretta della pagina;
+   *  · in un indirizzo copiato o condiviso.
+   * (Non nella cache del service worker: `chiaveDocumento` in `public/sw.js` usa solo
+   * `origin + pathname`, e anche i log client tolgono la query.)
+   *
+   * Il flag riguarda SOLO l'indirizzo della PAGINA. Su un campo `dove: 'server'` il
+   * valore viaggerebbe comunque nella query dell'API (`queryServer`), e da lì nei log
+   * di accesso: si usa quindi solo su campi `dove: 'client'`.
+   *
+   * Il parametro resta comunque GOVERNATO (`parametriGovernati`): se un indirizzo lo
+   * porta, la barra lo toglie alla prima modifica di un filtro o uscendo dalla
+   * pagina — non al caricamento.
    */
   maiNellUrl?: boolean;
 }

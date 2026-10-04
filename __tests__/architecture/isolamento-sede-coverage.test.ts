@@ -2485,7 +2485,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // Nessuna esenzione: le sedi le decide `resolveScuoleAttive`, e la lettura di `alunni`
             // porta `.in('scuola_id', plessi)` nella STESSA catena, come quella di `sections`.
             // Misurato rieseguendo il lock: 343 → 344.
-            routeConServiceRole: 344,
+            // +1 il 2026-10-04 (anagrafica docente, Task 5): `teacher/alunni/[id]`, file nuovo con
+            // un solo metodo (GET, sola lettura: un test verifica che il modulo esporti solo `GET`).
+            // Nessuna esenzione: il gate `assertAlunnoAnagraficaInScope` sta nello stesso handler,
+            // prima di ogni lettura di `student_parents` e `delegates`, e le letture di `alunni` e
+            // `sections` portano `.eq('scuola_id', alunno.scuolaId)` nella STESSA catena.
+            // Misurato rieseguendo il lock: 344 → 345.
+            routeConServiceRole: 345,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2751,7 +2757,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // +1 il 2026-10-04 (anagrafica docente, Task 4): `teacher/alunni:GET` (vedi sopra, a
             // `routeConServiceRole`). CONTROLLATO, `handlerEsentati` fermo a 113.
             // Misurato rieseguendo il lock: 536 → 537.
-            handlerControllati: 537,
+            // +1 il 2026-10-04 (anagrafica docente, Task 5): `teacher/alunni/[id]:GET` (vedi sopra,
+            // a `routeConServiceRole`). CONTROLLATO, `handlerEsentati` fermo a 113.
+            // Misurato rieseguendo il lock: 537 → 538.
+            handlerControllati: 538,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

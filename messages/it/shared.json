@@ -489,6 +489,7 @@
   "erroreAnagraficaFuoriSezione": "Questo bambino non è in una delle tue classi.",
   "erroreAnagraficaSenzaSede": "Il tuo profilo non è associato a nessuna sede.",
   "erroreAnagraficaElencoNonLetto": "Non è stato possibile caricare l’elenco degli alunni.",
+  "erroreAnagraficaNonLetta": "Non è stato possibile caricare la scheda dell’alunno.",
   "erroreFatturaRevisioneImmutabile": "Questa revisione non è più modificabile: ricarica lo stato delle fatture.",
   "erroreFatturaAnteprimaCambiata": "L’anteprima delle fatture irrisolte è cambiata: ricaricala prima di attivare.",
   "erroreFatturaRevisioniIncomplete": "La verifica dello storico non è completa: classifica tutte le fatture prima di attivare.",

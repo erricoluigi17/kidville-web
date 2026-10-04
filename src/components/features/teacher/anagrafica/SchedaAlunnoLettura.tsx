@@ -119,10 +119,13 @@ export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
 
   return (
     <div data-testid={scheda ? 'scheda-alunno' : undefined} className="space-y-4">
+      {/* Fisso sotto l'AppBar, come il ritorno della `ClasseShell`: la freccia dell'AppBar
+          qui non c'è, su iOS nativo non c'è il tasto fisico, e su una scheda lunga
+          bisognerebbe risalire in cima per uscire. Lo sfondo è quello della pagina. */}
       <Link
         href="/teacher/alunni"
         onClick={tornaAllElenco}
-        className="inline-flex min-h-[44px] items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline"
+        className="sticky top-[var(--kv-appbar-h,0px)] z-20 flex min-h-[44px] items-center gap-1.5 bg-kidville-cream font-maven text-sm font-semibold text-kidville-green hover:underline"
       >
         <ArrowLeft size={16} aria-hidden="true" />
         {t('anagraficaIndietro')}
@@ -143,15 +146,8 @@ export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
 
       {/* Sempre montata, così caricamento ed esiti vengono annunciati quando cambiano. */}
       {/* A scheda pronta `sr-only` e non `hidden`: dopo «Riprova» il fuoco sta qui, e un `display:none` lo farebbe cadere su `<body>`. */}
-      <div
-        ref={annunciRef}
-        tabIndex={-1}
-        aria-live="polite"
-        className={cx(
-          'rounded-card outline-none focus-visible:ring-2 focus-visible:ring-kidville-green',
-          scheda && 'sr-only',
-        )}
-      >
+      {/* L'anello di fuoco lo disegna la regola globale `:focus-visible` di `globals.css`. */}
+      <div ref={annunciRef} tabIndex={-1} aria-live="polite" className={cx('rounded-card', scheda && 'sr-only')}>
         {stato.tipo === 'caricamento' ? (
           <div className="flex items-center justify-center gap-3 py-12">
             <span aria-hidden="true" className="h-5 w-5 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" />

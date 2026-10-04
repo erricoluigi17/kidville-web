@@ -72,8 +72,9 @@ export function ElencoAlunniDocente() {
     <>
       {/* Sempre montato, così dopo «Riprova» il fuoco ha dove stare. Non è una regione
           live: il caricamento ha già il suo `role="status"`, e due regioni annidate
-          annuncerebbero due volte. */}
-      <div ref={esitoRef} tabIndex={-1} className="rounded-card outline-none focus-visible:ring-2 focus-visible:ring-kidville-green">
+          annuncerebbero due volte. L'anello di fuoco lo disegna la regola globale
+          `:focus-visible` di `globals.css`. */}
+      <div ref={esitoRef} tabIndex={-1} className="rounded-card">
         {!lettura && <StatoElenco stato="caricamento" testi={testi} />}
         {/* L'esito negativo si annuncia da qui: regione montata DA PRIMA (una regione che
             nasce col proprio testo non annuncia niente), accanto al `role="status"`, non attorno. */}

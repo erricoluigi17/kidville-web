@@ -266,6 +266,12 @@ describe('SchedaAlunnoLettura — pronta', () => {
     expect(h.push).toHaveBeenCalledWith('/teacher/alunni?sezione=S1')
   })
 
+  it('«Tutti gli alunni» resta fisso sotto l’AppBar: su una scheda lunga non si torna in cima per uscire', async () => {
+    await apri()
+    const classi = screen.getByRole('link', { name: T.anagraficaIndietro }).className.split(/\s+/)
+    expect(classi).toEqual(expect.arrayContaining(['sticky', 'top-[var(--kv-appbar-h,0px)]', 'bg-kidville-cream']))
+  })
+
   it.each([
     ['metaKey', { metaKey: true }],
     ['ctrlKey', { ctrlKey: true }],

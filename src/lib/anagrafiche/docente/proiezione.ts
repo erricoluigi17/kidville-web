@@ -129,11 +129,13 @@ export function proiettaGenitori(legami: readonly RigaDb[]): GenitoreScheda[] {
     if (!grezzo || typeof grezzo !== 'object') continue
     const p = grezzo as RigaDb
     if (p.anonimizzato_il) continue
+    const rapporto = parentela(legame.relation_type)
     genitori.push({
       nome: testo(p.first_name) ?? '',
       cognome: testo(p.last_name) ?? '',
-      parentela: parentela(legame.relation_type),
-      principale: vero(legame.is_primary),
+      parentela: rapporto,
+      // Un delegato non è mai «referente principale».
+      principale: vero(legame.is_primary) && rapporto !== 'delegato',
       telefoni: testi(p.phone_numbers),
       email: testi(p.emails),
       codiceFiscale: testo(p.fiscal_code)?.toUpperCase() ?? null,

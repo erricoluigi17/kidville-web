@@ -207,6 +207,19 @@ describe('proiettaGenitori / proiettaDelegati', () => {
       { relation_type: 'mother', is_primary: false, parents: { first_name: 'Mamma', last_name: 'Zeta' } },
     ])
     expect(g.map((x) => x.nome)).toEqual(['Mamma', 'N2', 'N1', 'Del'])
+    expect(g.find((x) => x.nome === 'Del')?.principale).toBe(false)
+  })
+
+  it('fra non delegati: principale, poi madre, padre, nessuna, altro; a parità di cognome, il nome', () => {
+    const g = proiettaGenitori([
+      { relation_type: 'tutore', parents: { first_name: 'Altro', last_name: 'A' } },
+      { relation_type: null, parents: { first_name: 'Nessuna', last_name: 'A' } },
+      { relation_type: 'father', parents: { first_name: 'Padre', last_name: 'A' } },
+      { relation_type: 'mother', parents: { first_name: 'Madre', last_name: 'A' } },
+      { relation_type: 'father', is_primary: true, parents: { first_name: 'PadrePrincipale', last_name: 'Z' } },
+      { relation_type: 'mother', parents: { first_name: 'Bea', last_name: 'A' } },
+    ])
+    expect(g.map((x) => x.nome)).toEqual(['PadrePrincipale', 'Bea', 'Madre', 'Padre', 'Nessuna', 'Altro'])
   })
 
   it('un legame con parents vuoto è saltato', () => {

@@ -22,17 +22,25 @@ export interface ValutazioneGiudizio {
 }
 
 /**
- * Estrae le etichette dei giudizi dalle sole valutazioni con modalità
- * 'sintetico' e giudizio_sintetico valorizzato. Rispecchia esattamente il filtro
- * applicato dalla panoramica lato query
- * (`.eq('modalita','sintetico').not('giudizio_sintetico','is',null)`): così la
- * media per singola materia e la media in panoramica insistono sullo stesso
- * insieme di dati e non divergono. Funzione pura, senza effetti collaterali.
+ * Le modalità della primaria il cui giudizio sintetico entra nella media. Dal
+ * 2026-10-04 il giudizio è obbligatorio in ENTRAMBE: «per dimensioni» aggiunge
+ * il testo, non toglie il voto. La panoramica filtra con la stessa lista.
+ */
+export const MODALITA_CON_GIUDIZIO = ['sintetico', 'dimensioni'] as const
+
+/**
+ * Estrae le etichette dei giudizi dalle valutazioni con modalità in
+ * `MODALITA_CON_GIUDIZIO` e giudizio_sintetico valorizzato. Rispecchia esattamente
+ * il filtro applicato dalla panoramica lato query
+ * (`.in('modalita', MODALITA_CON_GIUDIZIO).not('giudizio_sintetico','is',null)`):
+ * così la media per singola materia e la media in panoramica insistono sullo
+ * stesso insieme di dati e non divergono. Funzione pura, senza effetti collaterali.
  */
 export function giudiziSintetici<T extends ValutazioneGiudizio>(valutazioni: readonly T[]): string[] {
   const out: string[] = []
   for (const v of valutazioni) {
-    if (v.modalita === 'sintetico' && v.giudizio_sintetico != null && v.giudizio_sintetico !== '') {
+    const modalita = (MODALITA_CON_GIUDIZIO as readonly (string | null | undefined)[]).includes(v.modalita)
+    if (modalita && v.giudizio_sintetico != null && v.giudizio_sintetico !== '') {
       out.push(v.giudizio_sintetico)
     }
   }

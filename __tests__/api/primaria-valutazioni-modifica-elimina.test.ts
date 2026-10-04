@@ -296,7 +296,32 @@ describe('PATCH /api/primaria/valutazioni', () => {
   it('stessa validazione della POST: modalità sintetico senza giudizio è 400', async () => {
     const res = await PATCH(patch({ ...CORPO, giudizioSintetico: null }))
     expect(res.status).toBe(400)
+    expect((await res.json()).codice).toBe('VALUTAZIONE_GIUDIZIO_MANCANTE')
     expect(chiamate('valutazioni', 'select')).toHaveLength(0)
+  })
+
+  // 2026-10-04: il giudizio è il voto che vede la famiglia, anche «per dimensioni».
+  const DIMS = { autonomia: false, continuita: true, tipologia: 'nota', risorse: 'esterne' }
+
+  it('per dimensioni senza giudizio è 400 col codice, prima di leggere la voce, e lascia un warn', async () => {
+    const res = await PATCH(patch({ ...CORPO, modalita: 'dimensioni', dims: DIMS, giudizioSintetico: undefined }))
+    expect(res.status).toBe(400)
+    expect((await res.json()).codice).toBe('VALUTAZIONE_GIUDIZIO_MANCANTE')
+    expect(chiamate('valutazioni', 'select')).toHaveLength(0)
+    expect(m.logEvento).toHaveBeenCalledWith('registro', 'warn',
+      expect.objectContaining({ esito: 'valutazione-senza-giudizio', tipo: 'dimensioni' }))
+  })
+
+  it('per dimensioni con giudizio: il giudizio resta sulla voce accanto a dimensioni e testo, e va nella notifica in coda', async () => {
+    coda('valutazioni:select', { data: riga(), error: null })
+    coda('valutazioni:update', { data: [riga()], error: null })
+    const res = await PATCH(patch({ ...CORPO, modalita: 'dimensioni', dims: DIMS, giudizioSintetico: 'Discreto' }))
+    expect(res.status).toBe(200)
+    expect(chiamate('valutazioni', 'update')[0].payload).toMatchObject({
+      modalita: 'dimensioni', giudizio_sintetico: 'Discreto',
+      dim_autonomia: false, dim_risorse: 'esterne', giudizio_testo: 'Giudizio auto',
+    })
+    expect(chiamate('notifiche', 'update')[0].payload).toEqual({ corpo: 'Discreto' })
   })
 
   it('500 con codice se la sostituzione degli obiettivi fallisce (non un 200 bugiardo), ma audit e notifica ci sono', async () => {

@@ -394,6 +394,7 @@
   "erroreValutazioneAnnotazioneNonValida": "The numeric note must be a value between 0 and 10.",
   "erroreValutazioneObiettivoMancante": "Link at least one learning objective to the assessment.",
   "erroreValutazioneObiettivoNonValido": "This learning objective is not valid for this subject or class.",
+  "erroreValutazioneGiudizioMancante": "Choose the synthetic judgement: it is the grade the family sees.",
   "erroreSbloccoVoceNonTrovata": "The entry to unlock no longer exists. Reload the page.",
   "erroreSbloccoNonRegistrato": "Unlock not recorded. Please try again shortly.",
   "erroreFirmaNonTrovata": "This signature no longer exists. Reload the page.",

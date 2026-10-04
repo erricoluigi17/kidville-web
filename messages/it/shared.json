@@ -394,6 +394,7 @@
   "erroreValutazioneAnnotazioneNonValida": "L’annotazione numerica deve essere un valore tra 0 e 10.",
   "erroreValutazioneObiettivoMancante": "Collega almeno un obiettivo di apprendimento alla valutazione.",
   "erroreValutazioneObiettivoNonValido": "Obiettivo non valido per questa materia o per questa classe.",
+  "erroreValutazioneGiudizioMancante": "Scegli il giudizio sintetico: è il voto che vede la famiglia.",
   "erroreSbloccoVoceNonTrovata": "La voce da sbloccare non esiste più. Ricarica la pagina.",
   "erroreSbloccoNonRegistrato": "Sblocco non registrato. Riprova fra poco.",
   "erroreFirmaNonTrovata": "Questa firma non esiste più. Ricarica la pagina.",

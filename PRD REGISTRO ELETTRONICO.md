@@ -1,4 +1,47 @@
 
+## 🎓 Changelog — «I genitori vedono il giudizio ma non il voto»: il giudizio sintetico diventa obbligatorio, le dimensioni un'aggiunta — 2026-10-04 (branch `feat/popup-1-2-personale-android`)
+
+**Stato.** 🟡 **Gate verde, sul branch della PR #183** (`eslint` 0 · `tsc` 0 · `vitest run` 1655 file / 27.974 test · `npm run build` ok). **Nessuna migrazione.** La correzione dei 31 voti esistenti è già **in produzione** (vedi sotto). Il codice va in produzione col merge.
+
+**La segnalazione (04/10).** «I genitori della primaria vedono il giudizio, ma non qual è il voto.» Misurato sul DB di produzione in sola lettura (solo conteggi). Non è la stessa cosa del 30/09: allora mancavano i voti, oggi i voti ci sono ma senza giudizio sintetico.
+
+**La causa.** La pagina Voti del docente partiva in modalità **«Per dimensioni»**, che salvava **solo** un testo descrittivo e nessun giudizio sintetico. La casella dell'annotazione numerica privata sta più in alto e propone un giudizio, ma serviva un clic su «Usa». Chi scriveva il numero e salvava lasciava quindi al genitore un testo e nessun voto. Il numero, per il §4 #1, al genitore non arriva mai. La lettura del genitore era sana: la pagina mostra il giudizio quando c'è.
+
+| Classe | Voti senza giudizio | Con il numero | Dimensioni mai toccate | Testi distinti |
+|---|---|---|---|---|
+| Giugliano IV (01/10) | 15 | 15 (fra 6 e 10) | 15 | **1** |
+| Cesa IV (23/09) | 16 | 14 | 15 | 2 |
+| Cesa V, Giugliano V | 1 + 1 | 1 + 1 | 1 + 1 | 1 + 1 |
+
+A Giugliano IV quindici bambini hanno ricevuto **lo stesso testo**, generato dalle dimensioni predefinite, per appunti da 6 a 10. Su 133 voti reali, 99 avevano il giudizio.
+
+**Le due decisioni del titolare (04/10).**
+1. **Il giudizio sintetico c'è sempre**, e il numero resta privato (§4 #1, O.M. 3/2025). Il descrittivo per dimensioni diventa un'aggiunta.
+2. **I voti già dati** prendono il giudizio che il sistema suggerisce dal numero, con la stessa tabella del pulsante «Usa». Il testo resta accanto.
+
+**Scritto in produzione (04/10, dopo aver mostrato l'istruzione).** Un solo `UPDATE` di `valutazioni.giudizio_sintetico`, dentro un blocco `DO` che annullava tutto se le righe non erano **esattamente 31**. Bersaglio: `modalita = 'dimensioni'`, giudizio nullo, annotazione presente, sede Demo e classi di prova escluse. Il giudizio è l'etichetta della **scala attiva** della sede col valore più vicino al numero; a pari distanza vince il più alto, come in `suggerisciGiudizio`. Esito: **12 Ottimo, 4 Distinto, 4 Buono, 11 Discreto**. Verificato dopo: restano senza giudizio solo **2 voti di Cesa IV senza numero**, che spettano alla maestra. Nessun trigger su `valutazioni` e nessuna notifica partita. Sono voti orali oltre il termine: per cambiarne uno serve lo sblocco.
+
+**Cosa cambia nel codice.**
+- `POST` e `PATCH /api/primaria/valutazioni`: il giudizio è **obbligatorio in entrambe le modalità**. Senza giudizio, o con soli spazi, si risponde `400 VALUTAZIONE_GIUDIZIO_MANCANTE`, prima di leggere o scrivere, con un log `warn` `valutazione-senza-giudizio` (`tipo` = la modalità): una scheda rimasta aperta da prima del rilascio si vede. Il giudizio si salva anche «per dimensioni», e il corpo della notifica (nuova o ancora in coda) è il giudizio, non il testo. Il `refine` zod sul giudizio è stato tolto, perché non dava né il codice né il log. Il codice è dichiarato in `CODICI_ERRORE` (`src/lib/ui/esito-fetch.ts`) e tradotto in `shared.json` (`erroreValutazioneGiudizioMancante`): il lock `errori-con-codice` lo pretende, e senza la dichiarazione era rosso.
+- Pagina Voti del docente: la tendina «Giudizio sintetico» è **sempre** visibile, con la nota «È il voto che vede la famiglia.», e parte **vuota**. Un predefinito come il primo della scala sarebbe la stessa trappola, con «Ottimo» a tutti. Dopo ogni salvataggio torna vuota, così il bambino successivo non eredita il giudizio. «Aggiungi anche il giudizio descrittivo (per dimensioni)» è una casella spenta in partenza. «Usa» sceglie il giudizio e non spegne il descrittivo.
+- La modale «Modifica» della valutazione (`VociValutazioni.tsx`) ha la stessa struttura. Una voce storica senza giudizio parte vuota e lo chiede prima di salvare. `bozzaDaValutazione` e `valutazioneCambiata` perdono il parametro `scala`, che serviva solo al predefinito.
+- Media (`src/lib/primaria/media.ts`, `GET /api/primaria/prospetto`): entra anche il giudizio dei voti «per dimensioni» (`MODALITA_CON_GIUDIZIO`), con lo stesso filtro nella panoramica e nella singola materia. I 31 voti sistemati contano.
+- Il genitore non cambia: pagina Voti e home mostravano già il giudizio quando c'è.
+- Catalogo `teacherPrimaria`: tre chiavi nuove (`valutazioniGiudizioScegli`, `valutazioniGiudizioVisibileHint`, `valutazioniAggiungiDescrittivo`), `valutazioniGiudizioObbligatorio` riscritta e `valutazioniModalitaLabel` tolta perché orfana.
+- §4.2 del PRD aggiornato: il giudizio sintetico in itinere passa da «alternativa» a «obbligatorio». Nella nota sull'annotazione numerica è scritta l'eccezione una tantum dei 31 voti.
+
+**Test.** `primaria-valutazioni` (+3), `primaria-valutazioni-modifica-elimina` (+2, uno rafforzato col codice), `primaria-media` (+1) e il nuovo `primaria-prospetto-media`, con un DB finto che **applica** i filtri: col filtro vecchio conta 1 voto e media 10, col nuovo 2 e 8,5. `teacher-primaria-valutazioni-voci` ha +6, e tre salvataggi esistenti ora scelgono il giudizio. Tutti visti rossi prima della correzione, per la ragione attesa.
+
+**Dopo il deploy, in produzione (sola lettura).**
+
+```sql
+-- Voti senza giudizio nati DOPO il rilascio: atteso 0.
+SELECT count(*) FROM valutazioni
+WHERE modalita IS NOT NULL AND giudizio_sintetico IS NULL AND creato_il > '<istante del deploy>';
+```
+
+E `app_log` / Vercel per `valutazione-senza-giudizio`: qualche riga nelle prime ore (schede aperte da prima del rilascio) è normale; righe che continuano dicono che il modulo non funziona.
+
 ## 🔔 Changelog — Pop-up «Aggiorna l'app» per il personale su Android: la 1.2 è su Google Play — 2026-10-04 (branch `feat/popup-1-2-personale-android`)
 
 **Stato.** 🟡 **Gate verde, in PR** (`eslint` 0 · `tsc` 0 · `vitest run` 1654 file / 27.961 test · `npm run build` ok). Branch nato da `main` dopo il deploy riuscito della PR 3 (#182). **Nessuna migrazione**, nessun cambiamento sul server, nessuna build delle app: cambiano una soglia, un testo e il modo in cui il pop-up sceglie il testo.
@@ -26847,11 +26890,15 @@ La valutazione quotidiana mantiene **funzione formativa** e si articola così:
   4. **Risorse mobilitate** (Interne / Esterne / Entrambe)
 • **Giudizio descrittivo auto-generato:** sulla base delle dimensioni il sistema propone un giudizio
   descrittivo testuale, **pienamente modificabile** dall'insegnante.
-• **Giudizio sintetico in itinere (alternativa):** in alternativa al descrittivo esteso, il docente può
-  registrare direttamente un giudizio sintetico abbreviato (es. Buono, Sufficiente) correlato
-  all'obiettivo testato, per semplificare la visualizzazione nel prospetto.
+• **Giudizio sintetico in itinere (OBBLIGATORIO, dal 2026-10-04):** ogni valutazione in itinere porta
+  un giudizio sintetico (es. Buono, Sufficiente) scelto dal docente: è **il voto che vede la famiglia**
+  (#1). Le dimensioni e il descrittivo sono un'**aggiunta facoltativa** («Aggiungi anche il giudizio
+  descrittivo»), spenta in partenza, e **non sostituiscono** il giudizio. Il server rifiuta una
+  valutazione senza giudizio con `400 VALUTAZIONE_GIUDIZIO_MANCANTE`. *Prima era un'alternativa, e la
+  modalità predefinita era «per dimensioni»: 33 voti di 32 alunni arrivarono ai genitori senza voto
+  (vedi changelog 2026-10-04).*
 • **Nessun voto numerico** alla primaria, in nessuna delle due modalità.
-• **Annotazione numerica privata (facoltativa):** sulla singola verifica in itinere il docente può registrare un **appunto numerico** (scala /10) come **strumento di lavoro personale**. Vincoli: (a) il valore **ufficiale** periodico/finale per disciplina resta il **giudizio sintetico** (Allegato A) scelto dal docente; (b) l'annotazione **non compare** sul documento di valutazione (pagella/scrutinio); (c) **non è MAI visibile al genitore** (endpoint docente con gate di ruolo; gli endpoint `/api/parent/**` non la espongono); (d) **non genera automaticamente** il giudizio e **non produce medie automatiche**. Il sistema può al massimo **suggerire** un giudizio sintetico a partire dal numero (giudizio col valore nascosto più vicino), ma il docente deve **confermarlo** esplicitamente.
+• **Annotazione numerica privata (facoltativa):** sulla singola verifica in itinere il docente può registrare un **appunto numerico** (scala /10) come **strumento di lavoro personale**. Vincoli: (a) il valore **ufficiale** periodico/finale per disciplina resta il **giudizio sintetico** (Allegato A) scelto dal docente; (b) l'annotazione **non compare** sul documento di valutazione (pagella/scrutinio); (c) **non è MAI visibile al genitore** (endpoint docente con gate di ruolo; gli endpoint `/api/parent/**` non la espongono); (d) **non genera automaticamente** il giudizio e **non produce medie automatiche**. Il sistema può al massimo **suggerire** un giudizio sintetico a partire dal numero (giudizio col valore nascosto più vicino), ma il docente deve **confermarlo** esplicitamente. *Unica eccezione, una tantum e per decisione del titolare (2026-10-04): ai 31 voti storici «per dimensioni» rimasti senza giudizio è stato scritto il giudizio suggerito dal loro numero (vedi changelog di quel giorno); il docente può cambiarlo con lo sblocco.*
 
 ### 4.3 Scrutinio Periodico e Finale (Primaria) — Sei Giudizi Sintetici
 In sede di scrutinio (intermedio e finale), il team dei docenti contitolari attribuisce a ciascun

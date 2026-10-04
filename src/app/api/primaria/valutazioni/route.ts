@@ -60,12 +60,36 @@ const campiGiudizio = {
   obiettiviIds: z.unknown().optional(),
 }
 
-// Le due regole di coerenza fra modalità e giudizio, condivise da POST e PATCH.
+// La regola di coerenza fra modalità e dimensioni, condivisa da POST e PATCH.
+// Quella sul giudizio sta in `leggiGiudizio`: vale per ENTRAMBE le modalità.
 const dimsSeDimensioni = (b: { modalita: string; dims?: unknown }) => b.modalita !== 'dimensioni' || Boolean(b.dims)
 const REGOLA_DIMS = { message: 'dimensioni obbligatorie per la modalità dimensioni', path: ['dims'] }
-const sinteticoSeSintetico = (b: { modalita: string; giudizioSintetico?: string | null }) =>
-  b.modalita !== 'sintetico' || Boolean(b.giudizioSintetico)
-const REGOLA_SINTETICO = { message: 'giudizio sintetico obbligatorio', path: ['giudizioSintetico'] }
+
+/**
+ * Il giudizio sintetico è il VOTO che vede la famiglia (PRD §4 #1): obbligatorio
+ * in ENTRAMBE le modalità. «Per dimensioni» AGGIUNGE il testo descrittivo, non
+ * lo sostituisce. Fino al 2026-10-04 bastava il testo, e la modalità predefinita
+ * era quella: 33 voti di 32 alunni sono arrivati ai genitori senza voto (IV di
+ * Giugliano, 01/10: lo stesso testo a quindici bambini, con appunti da 6 a 10).
+ * Si controlla nel corpo e non con un `refine`, per dare il codice e il log.
+ */
+function leggiGiudizio(
+  operazione: string,
+  modalita: string,
+  giudizioSintetico: string | null | undefined,
+): { giudizio: string } | { response: NextResponse } {
+  const giudizio = giudizioSintetico?.trim()
+  if (giudizio) return { giudizio }
+  // `warn`: una scheda aperta da prima del rilascio manda ancora «per dimensioni»
+  // senza giudizio. Si vuole sapere quante volte succede. (`tipo` = la modalità.)
+  logEvento('registro', 'warn', { operazione, esito: 'valutazione-senza-giudizio', tipo: modalita })
+  return {
+    response: NextResponse.json(
+      { error: 'Scegli il giudizio sintetico: è il voto che vede la famiglia.', codice: 'VALUTAZIONE_GIUDIZIO_MANCANTE' },
+      { status: 400 },
+    ),
+  }
+}
 
 // docenteId resta permissivo: lo valida risolviValutatore (422).
 const postBodySchema = z
@@ -79,7 +103,6 @@ const postBodySchema = z
     docenteId: z.unknown().optional(),
   })
   .refine(dimsSeDimensioni, REGOLA_DIMS)
-  .refine(sinteticoSeSintetico, REGOLA_SINTETICO)
 
 // PATCH: la voce per `id` più gli stessi campi della POST. Un'eccezione sola,
 // voluta: `tipoProva` ASSENTE lascia il tipo com'è, invece di ricadere su
@@ -92,7 +115,6 @@ const patchBodySchema = z
     ...campiGiudizio,
   })
   .refine(dimsSeDimensioni, REGOLA_DIMS)
-  .refine(sinteticoSeSintetico, REGOLA_SINTETICO)
 
 const deleteQuerySchema = z.object({ id: zUuid })
 
@@ -332,6 +354,9 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
       alunnoId, sectionId, materiaId, tipoProva, modalita,
       giudizioSintetico, giudizioTesto, argomento, data, annotazioneNumerica,
     } = b.data
+    const g = leggiGiudizio('primaria/valutazioni:POST', modalita, giudizioSintetico)
+    if ('response' in g) return g.response
+    const { giudizio } = g
     // Il refine dello schema garantisce dims presente quando modalita === 'dimensioni';
     // il contenuto resta a forma libera (tollerante) come prima della validazione.
     const dims = b.data.dims as Dimensioni | undefined
@@ -428,7 +453,7 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
         dim_continuita: modalita === 'dimensioni' ? dims?.continuita ?? null : null,
         dim_tipologia: modalita === 'dimensioni' ? dims?.tipologia ?? null : null,
         dim_risorse: modalita === 'dimensioni' ? dims?.risorse ?? null : null,
-        giudizio_sintetico: modalita === 'sintetico' ? giudizioSintetico : null,
+        giudizio_sintetico: giudizio, // in entrambe le modalità: è il voto visibile
         giudizio_testo: testo,
         voto_numerico: null, // voto ufficiale numerico vietato alla primaria
         annotazione_numerica: annNum, // appunto privato del docente (mai al genitore)
@@ -481,7 +506,7 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
         alunnoIds: [alunnoId],
         tipo: 'valutazione',
         titolo: nome ? `Nuova valutazione di ${materia.nome} per ${nome}` : `Nuova valutazione di ${materia.nome}`,
-        corpo: giudizioSintetico || testo || undefined,
+        corpo: giudizio,
         link: linkVotiGenitore(alunnoId),
         entitaTipo: 'valutazione',
         entitaId: val.id,
@@ -527,6 +552,9 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
     const { id, modalita, giudizioSintetico, giudizioTesto, argomento, annotazioneNumerica, obiettiviIds } = b.data
+    const g = leggiGiudizio(operazione, modalita, giudizioSintetico)
+    if ('response' in g) return g.response
+    const { giudizio } = g
     const dims = b.data.dims as Dimensioni | undefined
 
     const annNum = leggiAnnotazione(annotazioneNumerica)
@@ -613,7 +641,7 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
         dim_continuita: modalita === 'dimensioni' ? dims?.continuita ?? null : null,
         dim_tipologia: modalita === 'dimensioni' ? dims?.tipologia ?? null : null,
         dim_risorse: modalita === 'dimensioni' ? dims?.risorse ?? null : null,
-        giudizio_sintetico: modalita === 'sintetico' ? giudizioSintetico : null,
+        giudizio_sintetico: giudizio,
         giudizio_testo: testo,
         annotazione_numerica: annNum,
         lock_tipo: lockTipo,
@@ -674,7 +702,7 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     // esiste più. Una notifica già partita resta com'è.
     const { error: notifErr } = await supabase
       .from('notifiche')
-      .update({ corpo: (modalita === 'sintetico' ? giudizioSintetico : null) || testo || null })
+      .update({ corpo: giudizio })
       .eq('entita_tipo', 'valutazione')
       .eq('entita_id', id)
       .is('push_inviata_il', null)

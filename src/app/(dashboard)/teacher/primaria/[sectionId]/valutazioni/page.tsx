@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
@@ -83,7 +83,14 @@ export default function ValutazioniPage() {
 
   // form
   const [tipoProva, setTipoProva] = useState('orale');
-  const [modalita, setModalita] = useState<'dimensioni' | 'sintetico'>('dimensioni');
+  /**
+   * Il giudizio descrittivo «per dimensioni» è un'AGGIUNTA, spenta in partenza.
+   * Fino al 2026-10-04 era la modalità predefinita e sostituiva il giudizio
+   * sintetico: chi scriveva solo l'appunto numerico e salvava lasciava al
+   * genitore un testo generato dalle dimensioni mai toccate, e nessun voto.
+   */
+  const [descrittivo, setDescrittivo] = useState(false);
+  const modalita: 'dimensioni' | 'sintetico' = descrittivo ? 'dimensioni' : 'sintetico';
   const [autonomia, setAutonomia] = useState(true);
   const [continuita, setContinuita] = useState(true);
   const [tipologia, setTipologia] = useState<'nota' | 'non_nota'>('nota');
@@ -94,6 +101,7 @@ export default function ValutazioniPage() {
   const [argomento, setArgomento] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const giudizioId = useId();
 
   // Alunni e materie della classe. Fino al 2026-09-30 la lettura non guardava
   // `ok` e non aveva `catch`: un guasto lasciava le tendine vuote in silenzio.
@@ -150,7 +158,9 @@ export default function ValutazioniPage() {
         setScalaValori(d.data.scalaValori ?? []);
         setObiettivi(d.data.obiettivi ?? []);
         setObiettiviSel([]);
-        if (d.data.scala.length) setGiudizioSintetico(d.data.scala[0]);
+        // Vuoto, non il primo della scala: un predefinito darebbe «Ottimo» a chi
+        // non ha scelto niente. Il giudizio è il voto che vede la famiglia.
+        setGiudizioSintetico('');
       }
     } finally {
       // nessuno stato di caricamento da azzerare
@@ -331,6 +341,7 @@ export default function ValutazioniPage() {
     setMsg('');
     if (!alunnoId || !materiaId) { setMsg(t('valutazioniSelezionaAlunnoMateria')); return; }
     if (!argomento.trim()) { setMsg(t('valutazioniInserisciArgomento')); return; }
+    if (!giudizioSintetico) { setMsg(t('valutazioniGiudizioObbligatorio')); return; }
     if (!userId) { setMsg(t('comuneIdentitaNonRisolta')); return; }
     // Collegamento obiettivo obbligatorio quando la materia/livello ne ha di configurati (DL-015).
     if (obiettivi.length > 0 && obiettiviSel.length === 0) { setMsg(t('valutazioniCollegaObiettivo')); return; }
@@ -347,7 +358,7 @@ export default function ValutazioniPage() {
         body: JSON.stringify({
           alunnoId, sectionId, materiaId, tipoProva, modalita,
           dims: modalita === 'dimensioni' ? { autonomia, continuita, tipologia, risorse } : undefined,
-          giudizioSintetico: modalita === 'sintetico' ? giudizioSintetico : undefined,
+          giudizioSintetico,
           giudizioTesto: giudizioTesto || undefined,
           annotazioneNumerica: annotazioneNumerica.trim() ? annotazioneNumerica.replace(',', '.') : undefined,
           argomento: argomento.trim(),
@@ -361,6 +372,8 @@ export default function ValutazioniPage() {
         return;
       }
       setMsg(t('valutazioniSalvata'));
+      // Il bambino dopo ha il SUO giudizio: non eredita quello appena dato.
+      setGiudizioSintetico('');
       setGiudizioTesto('');
       setAnnotazioneNumerica('');
       setArgomento('');
@@ -488,7 +501,7 @@ export default function ValutazioniPage() {
                 <span className="font-maven rounded-pill border border-kidville-warn/30 bg-white px-2.5 py-1 text-xs font-semibold text-kidville-warn">{giudizioSuggerito}</span>
                 <button
                   type="button"
-                  onClick={() => { setModalita('sintetico'); setGiudizioSintetico(giudizioSuggerito); }}
+                  onClick={() => setGiudizioSintetico(giudizioSuggerito)}
                   className="font-maven rounded-pill bg-kidville-green px-3 py-1 text-xs text-kidville-yellow"
                 >
                   {t('valutazioniUsa')}
@@ -501,12 +514,33 @@ export default function ValutazioniPage() {
           </p>
         </div>
 
-        <div className="mb-3 flex gap-1.5">
-          <button onClick={() => setModalita('dimensioni')} className={`font-maven rounded-pill px-3 py-1.5 text-xs ${modalita === 'dimensioni' ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-muted'}`}>{t('valutazioniPerDimensioni')}</button>
-          <button onClick={() => setModalita('sintetico')} className={`font-maven rounded-pill px-3 py-1.5 text-xs ${modalita === 'sintetico' ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-muted'}`}>{t('valutazioniGiudizioSintetico')}</button>
+        {/* Il giudizio sintetico SEMPRE: è il voto che vede la famiglia (PRD §4 #1). */}
+        <div className="mb-3">
+          <label htmlFor={giudizioId} className="block font-maven text-xs text-kidville-muted mb-1">{t('valutazioniGiudizioSintetico')}</label>
+          <select
+            id={giudizioId}
+            value={giudizioSintetico}
+            onChange={(e) => setGiudizioSintetico(e.target.value)}
+            aria-describedby={`${giudizioId}-hint`}
+            className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm"
+          >
+            <option value="">{t('valutazioniGiudizioScegli')}</option>
+            {scala.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+          <p id={`${giudizioId}-hint`} className="mt-1 font-maven text-[11px] text-kidville-muted">{t('valutazioniGiudizioVisibileHint')}</p>
         </div>
 
-        {modalita === 'dimensioni' ? (
+        <label className="mb-3 flex items-center gap-2 font-maven text-xs text-kidville-ink">
+          <input
+            type="checkbox"
+            checked={descrittivo}
+            onChange={(e) => setDescrittivo(e.target.checked)}
+            className="accent-kidville-green"
+          />
+          {t('valutazioniAggiungiDescrittivo')}
+        </label>
+
+        {descrittivo && (
           <div className="space-y-2 rounded-card bg-kidville-cream/40 p-3 mb-3">
             <DimToggle label={t('valutazioniDimAutonomia')} value={autonomia} options={[{ label: t('comuneSi'), value: true }, { label: t('comuneNo'), value: false }]} onChange={(v) => setAutonomia(v as boolean)} />
             <DimToggle label={t('valutazioniDimContinuita')} value={continuita} options={[{ label: t('comuneSi'), value: true }, { label: t('comuneNo'), value: false }]} onChange={(v) => setContinuita(v as boolean)} />
@@ -519,13 +553,6 @@ export default function ValutazioniPage() {
               placeholder={t('valutazioniPlaceholderDescrittivo')}
               className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm"
             />
-          </div>
-        ) : (
-          <div className="mb-3">
-            <label className="block font-maven text-xs text-kidville-muted mb-1">{t('valutazioniGiudizioSintetico')}</label>
-            <select value={giudizioSintetico} onChange={(e) => setGiudizioSintetico(e.target.value)} className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm">
-              {scala.map((g) => <option key={g} value={g}>{g}</option>)}
-            </select>
           </div>
         )}
 

@@ -7,9 +7,10 @@ import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione'
 import { selectResiliente } from '@/lib/supabase/select-resiliente'
-import { sezioniAnagraficaVisibili } from '@/lib/anagrafiche/docente/visibilita'
+import { sediAnagrafica, sezioniAnagraficaVisibili } from '@/lib/anagrafiche/docente/visibilita'
 import { COLONNE_ELENCO } from '@/lib/anagrafiche/docente/colonne'
 import { proiettaSezione, proiettaVoceElenco, type RigaDb } from '@/lib/anagrafiche/docente/proiezione'
 import type { ElencoAlunniRisposta } from '@/lib/anagrafiche/docente/tipi'
@@ -51,6 +52,16 @@ export const GET = withRoute('teacher/alunni:GET', async (request: NextRequest) 
     if (configurazione) return configurazione
     const supabase = await createAdminClient()
 
+    // Due «nessuna sede», due risposte diverse, e non per caso.
+    // · Le sedi dell'UTENTE vuote (`sediAnagrafica`, la stessa regola della scheda):
+    //   un profilo senza sede (403) o, per un admin, `utenti_scuole` illeggibile (500).
+    //   Un 200 vuoto lì direbbe «non hai bambini» a chi ne ha, e il guasto sparirebbe.
+    // · Le sedi ATTIVE vuote (`resolveScuoleAttive`): il selettore di sede punta solo a
+    //   sedi non accessibili (un cookie rimasto da un'altra assegnazione). È una
+    //   preferenza dell'interfaccia, `resolveScuoleAttive` la logga già, e la risposta
+    //   onesta è che nelle sedi scelte non c'è nessun bambino da mostrare: 200 vuoto.
+    const sedi = await sediAnagrafica(supabase, user)
+    if (!sedi.ok) return sedi.response
     const plessi = await resolveScuoleAttive(request, supabase, user)
     if (plessi.length === 0) return NextResponse.json(VUOTO, { headers: SENZA_CACHE })
 
@@ -72,7 +83,10 @@ export const GET = withRoute('teacher/alunni:GET', async (request: NextRequest) 
           .eq('stato', STATO_ISCRITTO)
           .is('anonimizzato_il', null)
         if (visibili.esito === 'sezioni') query = query.in('section_id', visibili.sezioni)
-        return query.order('cognome', { ascending: true }).order('nome', { ascending: true }).limit(1000)
+        return query
+          .order('cognome', { ascending: true })
+          .order('nome', { ascending: true })
+          .limit(LIMITE_ELENCO_ALUNNI)
       },
       OPERAZIONE,
       { livello: 'warn' },
@@ -82,6 +96,11 @@ export const GET = withRoute('teacher/alunni:GET', async (request: NextRequest) 
       return erroreLettura()
     }
     const alunni = (righe ?? []) as unknown as RigaDb[]
+    if (alunni.length === LIMITE_ELENCO_ALUNNI) {
+      // Un elenco troncato non produce un errore: produce meno bambini e nessuno che
+      // se ne accorga. Almeno lo si scrive nei log (la Direzione vede tutte le sedi).
+      logEvento('anagrafica', 'warn', { tipo: 'anagrafica-elenco-troncato', righe: alunni.length, limite: LIMITE_ELENCO_ALUNNI })
+    }
 
     const idSezioni = [...new Set(alunni.map((a) => a.section_id).filter((s): s is string => typeof s === 'string'))]
     let sezioni: ElencoAlunniRisposta['sezioni'] = []

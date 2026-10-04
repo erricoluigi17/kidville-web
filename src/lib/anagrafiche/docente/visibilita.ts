@@ -68,7 +68,12 @@ export interface AlunnoInScope {
   scuolaId: string
 }
 
-export type EsitoScope = { ok: true; alunno: AlunnoInScope } | { ok: false; response: NextResponse }
+/** Un rifiuto già pronto: chi lo riceve lo restituisce così com'è. */
+export type Rifiuto = { ok: false; response: NextResponse }
+
+export type EsitoScope = { ok: true; alunno: AlunnoInScope } | Rifiuto
+
+export type EsitoSedi = { ok: true; plessi: string[] } | Rifiuto
 
 /**
  * I codici dei cinque rifiuti che nascono qui, dichiarati in `CODICI_ERRORE`
@@ -85,7 +90,7 @@ const CODICE_FUORI_SEDE = 'ANAGRAFICA_FUORI_SEDE'
 const CODICE_FUORI_SEZIONE = 'ANAGRAFICA_FUORI_SEZIONE'
 const CODICE_SENZA_SEDE = 'ANAGRAFICA_SENZA_SEDE'
 
-const scopeNonRisolto = (): EsitoScope => ({
+const scopeNonRisolto = (): Rifiuto => ({
   ok: false,
   response: NextResponse.json(
     { error: 'Verifica di accesso non riuscita', codice: CODICE_SCOPE_NON_RISOLTO },
@@ -93,7 +98,7 @@ const scopeNonRisolto = (): EsitoScope => ({
   ),
 })
 
-const nonTrovata = (): EsitoScope => ({
+const nonTrovata = (): Rifiuto => ({
   ok: false,
   response: NextResponse.json(
     { error: 'Alunno non trovato', codice: CODICE_NON_TROVATA },
@@ -101,7 +106,7 @@ const nonTrovata = (): EsitoScope => ({
   ),
 })
 
-const fuoriSede = (): EsitoScope => ({
+const fuoriSede = (): Rifiuto => ({
   ok: false,
   response: NextResponse.json(
     { error: 'Alunno fuori dalla tua sede', codice: CODICE_FUORI_SEDE },
@@ -109,7 +114,7 @@ const fuoriSede = (): EsitoScope => ({
   ),
 })
 
-const fuoriSezione = (): EsitoScope => ({
+const fuoriSezione = (): Rifiuto => ({
   ok: false,
   response: NextResponse.json(
     { error: 'Alunno non nella tua classe', codice: CODICE_FUORI_SEZIONE },
@@ -117,13 +122,41 @@ const fuoriSezione = (): EsitoScope => ({
   ),
 })
 
-const senzaSede = (): EsitoScope => ({
+const senzaSede = (): Rifiuto => ({
   ok: false,
   response: NextResponse.json(
     { error: 'Profilo non associato a nessuna sede', codice: CODICE_SENZA_SEDE },
     { status: 403, headers: { 'Cache-Control': 'no-store' } },
   ),
 })
+
+/**
+ * LE SEDI DI CHI CONSULTA L'ANAGRAFICA — una regola sola, per l'elenco e per la scheda.
+ *
+ * Nessuna sede non è mai «nessun bambino» né «fuori sede». Per un admin le sedi vuote
+ * sono quasi sempre una lettura di `utenti_scuole` fallita (`scuoleDiUtente` la logga
+ * già): è un guasto, 500. Per gli altri ruoli la sede è `utenti.scuola_id`, e se manca
+ * è il profilo a essere incompleto: 403. Prima che l'elenco la usasse, questa regola
+ * viveva dentro la scheda soltanto, e l'elenco rispondeva al guasto con un 200 vuoto.
+ */
+export async function sediAnagrafica(supabase: SupabaseClient, user: AppUser): Promise<EsitoSedi> {
+  const plessi = await scuoleDiUtente(supabase, user)
+  if (plessi.length > 0) return { ok: true, plessi }
+  if (user.role === 'admin') {
+    logEvento(
+      'auth',
+      'error',
+      { tipo: 'anagrafica-sedi-non-risolte', azione: 'sediAnagrafica', utente: user.id, ruolo: user.role },
+    )
+    return scopeNonRisolto()
+  }
+  logEvento(
+    'auth',
+    'warn',
+    { tipo: 'anagrafica-profilo-senza-sede', azione: 'sediAnagrafica', utente: user.id, ruolo: user.role },
+  )
+  return senzaSede()
+}
 
 /**
  * Il controllo della scheda. L'ordine conta: si legge solo la riga minima del
@@ -159,28 +192,11 @@ export async function assertAlunnoAnagraficaInScope(
     return nonTrovata()
   }
 
-  const plessi = await scuoleDiUtente(supabase, user)
-  if (plessi.length === 0) {
-    // Nessuna sede non è «fuori sede»: senza questo ramo il controllo di sede si
-    // poteva saltare (`plessi.length > 0 && …`) senza che nessun test se ne accorgesse.
-    // Per un admin le sedi vuote sono quasi sempre una lettura di `utenti_scuole`
-    // fallita (`scuoleDiUtente` la logga già): è un guasto, 500. Per gli altri ruoli
-    // la sede è `utenti.scuola_id`, e se manca è il profilo a essere incompleto.
-    if (user.role === 'admin') {
-      logEvento(
-        'auth',
-        'error',
-        { tipo: 'anagrafica-sedi-non-risolte', azione: 'assertAlunnoAnagraficaInScope', utente: user.id, ruolo: user.role },
-      )
-      return scopeNonRisolto()
-    }
-    logEvento(
-      'auth',
-      'warn',
-      { tipo: 'anagrafica-profilo-senza-sede', azione: 'assertAlunnoAnagraficaInScope', utente: user.id, ruolo: user.role },
-    )
-    return senzaSede()
-  }
+  // Nessuna sede non è «fuori sede»: senza questo rifiuto il controllo di sede si
+  // poteva saltare (`plessi.length > 0 && …`) senza che nessun test se ne accorgesse.
+  const sedi = await sediAnagrafica(supabase, user)
+  if (!sedi.ok) return sedi
+  const plessi = sedi.plessi
   if (!riga.scuola_id || !plessi.includes(riga.scuola_id)) {
     // Il segnale più forte dei due: un uuid di un bambino di un'altra sede non arriva
     // da nessun elenco dell'app. Una riga per (utente, bambino, giorno).

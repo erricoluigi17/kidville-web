@@ -2480,7 +2480,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // libreria `firme.ts`. La seconda, la porta SENZA sessione del rinnovo, porta UNA voce in
             // AMMESSE (`video-uploads/rinnovo:POST`) e sta nel conto di `handlerEsentati`.
             // Misurato rieseguendo il lock: 341 → 343.
-            routeConServiceRole: 343,
+            // +1 il 2026-10-04 (anagrafica docente, Task 4): `teacher/alunni`, file nuovo con un
+            // solo metodo (GET, sola lettura: un test verifica che il modulo esporti solo `GET`).
+            // Nessuna esenzione: le sedi le decide `resolveScuoleAttive`, e la lettura di `alunni`
+            // porta `.in('scuola_id', plessi)` nella STESSA catena, come quella di `sections`.
+            // Misurato rieseguendo il lock: 343 → 344.
+            routeConServiceRole: 344,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2743,7 +2748,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `video-uploads/rinnovo:POST` (vedi sopra, a `routeConServiceRole`). I primi due sono
             // CONTROLLATI, e il lock li vede coperti da sé; il terzo è l'unico esentato.
             // Misurato rieseguendo il lock: 533 → 536.
-            handlerControllati: 536,
+            // +1 il 2026-10-04 (anagrafica docente, Task 4): `teacher/alunni:GET` (vedi sopra, a
+            // `routeConServiceRole`). CONTROLLATO, `handlerEsentati` fermo a 113.
+            // Misurato rieseguendo il lock: 536 → 537.
+            handlerControllati: 537,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -2158,6 +2158,8 @@ export const CODICI_ERRORE = {
     ANAGRAFICA_FUORI_SEZIONE: 'erroreAnagraficaFuoriSezione',
     /** 403 — il profilo di chi apre la scheda anagrafica non ha nessuna sede (`visibilita.ts`). */
     ANAGRAFICA_SENZA_SEDE: 'erroreAnagraficaSenzaSede',
+    /** 500 — l'elenco dell'anagrafica docente non si è potuto leggere (`api/teacher/alunni`). */
+    ANAGRAFICA_ELENCO_NON_LETTO: 'erroreAnagraficaElencoNonLetto',
     /** 409 — la revisione storica è già stata finalizzata o la sede è già attiva. */
     FATTURA_REVISIONE_IMMUTABILE: 'erroreFatturaRevisioneImmutabile',
     /** 409 — l’insieme delle irrisolte è cambiato dopo l’anteprima mostrata allo staff. */

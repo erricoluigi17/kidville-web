@@ -113,7 +113,7 @@ Ordine **vincolante**, nessun dato anagrafico letto prima che tutti i controlli 
 criterio di `api/parent/prestampati`). Se l'audit fallisce la scheda si restituisce comunque e il
 guasto va in log `error` (comportamento di `logAccessoFascicolo`): negare a un'insegnante le allergie
 di un bambino perché il registro ha avuto un guasto sarebbe peggio del registro mancante. L'elenco
-**non** scrive righe di audit.
+**non** scrive righe di audit. Il registro che la segreteria legge (Direzione → Primaria → «Fascicoli», `FascicoloAuditViewer`) etichetta queste righe «Scheda anagrafica», perché non vengano scambiate per una visione dei documenti del fascicolo (PEI/PDP, sanitari); il valore della finalità è una costante condivisa (`FINALITA_AUDIT_ANAGRAFICA`).
 
 **`SchedaAlunnoDocente`:**
 

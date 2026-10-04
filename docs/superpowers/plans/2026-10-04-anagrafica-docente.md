@@ -3424,6 +3424,134 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+### Task 9b: il registro degli accessi dice «Scheda anagrafica»
+
+**Perché.** Ogni scheda aperta dal Task 5 scrive in `fascicolo_accessi_audit` una riga
+`azione: 'view'`, `finalita: 'anagrafica-docente'`. La segreteria legge quel registro in
+Direzione → Primaria → «Fascicoli» (`FascicoloAuditViewer`), che oggi mostra solo data, azione,
+utente, alunno e IP: un'insegnante che apre l'anagrafica comparirebbe come «Visualizzazione» del
+fascicolo — dove «fascicolo» vuol dire PEI, PDP e documenti sanitari. Va detto che cosa è stato
+aperto.
+
+**Files:**
+- Modify: `src/lib/anagrafiche/docente/tipi.ts` (costante condivisa)
+- Modify: `src/app/api/teacher/alunni/[id]/route.ts` (usa la costante al posto del letterale locale)
+- Modify: `src/components/features/admin/primaria/FascicoloAuditViewer.tsx`
+- Modify: `messages/it/adminPrimaria.json`, `messages/en/adminPrimaria.json`
+- Test: `__tests__/components/FascicoloAuditViewer-finalita.test.tsx`
+
+- [ ] **Step 1: la costante condivisa** — in fondo a `src/lib/anagrafiche/docente/tipi.ts`:
+
+```ts
+/**
+ * Il valore di `fascicolo_accessi_audit.finalita` con cui la scheda docente registra
+ * ogni apertura. È un contratto fra la route che scrive (`api/teacher/alunni/[id]`) e il
+ * registro che la segreteria legge (`FascicoloAuditViewer`): una sola definizione, perché
+ * se le due copie divergessero il registro tornerebbe a mostrare una «visualizzazione del
+ * fascicolo» qualunque.
+ */
+export const FINALITA_AUDIT_ANAGRAFICA = 'anagrafica-docente'
+```
+
+Nella route `src/app/api/teacher/alunni/[id]/route.ts` togli `const FINALITA_AUDIT = 'anagrafica-docente'`
+e usa `FINALITA_AUDIT_ANAGRAFICA` importato da `@/lib/anagrafiche/docente/tipi` (i test della
+route continuano ad asserire il valore letterale `'anagrafica-docente'`: devono restare verdi).
+
+- [ ] **Step 2: scrivi il test che fallisce** — `__tests__/components/FascicoloAuditViewer-finalita.test.tsx`:
+
+```tsx
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, cleanup, within } from '@testing-library/react'
+import primaria from '../../messages/it/adminPrimaria.json'
+import { FascicoloAuditViewer } from '@/components/features/admin/primaria/FascicoloAuditViewer'
+
+const T = primaria as Record<string, string>
+
+const riga = (id: string, finalita: string | null, cognome: string) => ({
+  id,
+  azione: 'view',
+  finalita,
+  ip: null,
+  creato_il: '2026-10-04T08:00:00.000Z',
+  utenti: { nome: 'Docente', cognome: 'Prova-E2E' },
+  alunni: { nome: 'Bimbo', cognome },
+})
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: [riga('r1', 'anagrafica-docente', 'Anagrafica-E2E'), riga('r2', 'stampa del modulo', 'Altro-E2E'), riga('r3', null, 'Nulla-E2E')],
+      }),
+    })),
+  )
+})
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
+
+describe('FascicoloAuditViewer — la finalità «anagrafica docente»', () => {
+  it('la riga della scheda anagrafica dice che cosa è stato aperto', async () => {
+    render(<FascicoloAuditViewer scuolaId="s" userId="u" />)
+    const cella = (await screen.findByText(/Anagrafica-E2E/)).closest('tr') as HTMLElement
+    expect(within(cella).getByText(T.fascicoloFinalitaAnagraficaDocente)).toBeTruthy()
+  })
+
+  it('le altre righe restano come prima', async () => {
+    render(<FascicoloAuditViewer scuolaId="s" userId="u" />)
+    for (const cognome of [/Altro-E2E/, /Nulla-E2E/]) {
+      const tr = (await screen.findByText(cognome)).closest('tr') as HTMLElement
+      expect(within(tr).queryByText(T.fascicoloFinalitaAnagraficaDocente)).toBeNull()
+      expect(within(tr).getByText(T.fascicoloAzioneView)).toBeTruthy()
+    }
+  })
+})
+```
+
+- [ ] **Step 3: verifica che fallisca**
+
+Run: `npx vitest run __tests__/components/FascicoloAuditViewer-finalita.test.tsx 2>&1 | tail -8`
+Expected: FAIL (la chiave `fascicoloFinalitaAnagraficaDocente` non esiste: il primo test non trova il testo).
+
+- [ ] **Step 4: testi** — in `messages/it/adminPrimaria.json`, dopo `"fascicoloAzioneDelete": …,`:
+`"fascicoloFinalitaAnagraficaDocente": "Scheda anagrafica",`; in `messages/en/adminPrimaria.json`, stessa posizione:
+`"fascicoloFinalitaAnagraficaDocente": "Student record",`.
+
+- [ ] **Step 5: il visualizzatore** — in `FascicoloAuditViewer.tsx` importa
+`import { FINALITA_AUDIT_ANAGRAFICA } from '@/lib/anagrafiche/docente/tipi';` e, nella cella
+dell'azione, subito dopo lo `<span>` del badge:
+
+```tsx
+                  {/* Un'apertura della scheda anagrafica dal docente non è una visione dei
+                      documenti del fascicolo (PEI/PDP, sanitari): lo si dice. Le altre
+                      finalità restano come prima. */}
+                  {r.finalita === FINALITA_AUDIT_ANAGRAFICA && (
+                    <span className="ml-1.5 font-maven text-[11px] text-kidville-muted">
+                      {t('fascicoloFinalitaAnagraficaDocente')}
+                    </span>
+                  )}
+```
+
+- [ ] **Step 6: verifica**
+
+Run: `npx vitest run __tests__/components/FascicoloAuditViewer-finalita.test.tsx __tests__/api/teacher-alunni-scheda.test.ts 2>&1 | tail -8`
+Expected: `Test Files  2 passed (2)`. Poi tutti i lock (regole comuni), eslint sui file toccati, tsc.
+
+- [ ] **Step 7: commit**
+
+```bash
+git add src/lib/anagrafiche/docente/tipi.ts "src/app/api/teacher/alunni/[id]/route.ts" src/components/features/admin/primaria/FascicoloAuditViewer.tsx messages/it/adminPrimaria.json messages/en/adminPrimaria.json __tests__/components/FascicoloAuditViewer-finalita.test.tsx
+git commit -m "Registro degli accessi: l'apertura della scheda anagrafica si riconosce
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 10: E2E Playwright (gira in CI)
 
 **Files:**

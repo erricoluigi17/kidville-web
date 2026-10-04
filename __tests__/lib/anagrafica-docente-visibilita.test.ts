@@ -27,6 +27,7 @@ const ALU_ANONIMO = 'a5a5a5a5-5555-4555-8555-aaaaaaaaaaaa'
 const ALU_SENZA_SEZIONE = 'a6a6a6a6-6666-4666-8666-aaaaaaaaaaaa'
 const ALU_SOSPESO = 'a7a7a7a7-7777-4777-8777-aaaaaaaaaaaa'
 const ALU_STATO_IGNOTO = 'a8a8a8a8-8888-4888-8888-aaaaaaaaaaaa'
+const ALU_STATO_NULL = 'a9a9a9a9-9999-4999-8999-aaaaaaaaaaaa'
 
 const EDUCATOR: AppUser = { id: 'ed1', role: 'educator', scuola_id: SEDE_A }
 const SEGRETERIA: AppUser = { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A }
@@ -74,6 +75,8 @@ beforeEach(() => {
       alunno(ALU_SOSPESO, SEZ_MIA, SEDE_A, { stato: 'sospeso' }),
       // Uno stato che nessuno ha deciso: l'elenco è chiuso, quindi resta fuori.
       alunno(ALU_STATO_IGNOTO, SEZ_MIA, SEDE_A, { stato: 'trasferito' }),
+      // La colonna è NULLABLE: uno stato vuoto non è una decisione, e resta fuori.
+      alunno(ALU_STATO_NULL, SEZ_MIA, SEDE_A, { stato: null }),
     ],
   }
 })
@@ -234,8 +237,8 @@ describe('assertAlunnoAnagraficaInScope', () => {
     expect(esito).toEqual({ ok: true, alunno: { id: ALU_SOSPESO, sectionId: SEZ_MIA, scuolaId: SEDE_A } })
   })
 
-  it('404 per inesistente, ritirato, stato mai deciso, anonimizzato — prima di guardare le sezioni', async () => {
-    for (const id of ['c0c0c0c0-0000-4000-8000-cccccccccccc', ALU_RITIRATO, ALU_STATO_IGNOTO, ALU_ANONIMO]) {
+  it('404 per inesistente, ritirato, stato mai deciso o vuoto, anonimizzato — prima di guardare le sezioni', async () => {
+    for (const id of ['c0c0c0c0-0000-4000-8000-cccccccccccc', ALU_RITIRATO, ALU_STATO_IGNOTO, ALU_STATO_NULL, ALU_ANONIMO]) {
       tabelle = []
       expect(await stato(EDUCATOR, id)).toBe(404)
       expect(tabelle).not.toContain('utenti_sezioni')

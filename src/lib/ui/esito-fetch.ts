@@ -2150,7 +2150,7 @@ export const CODICI_ERRORE = {
     FATTURA_ACCESSO_NEGATO: 'erroreFatturaAccessoNegato',
     /** 500 — non si è potuto verificare l’accesso alla scheda anagrafica (`src/lib/anagrafiche/docente/visibilita.ts`): alunno, sedi o assegnazioni illeggibili. */
     ANAGRAFICA_SCOPE_NON_RISOLTO: 'erroreAnagraficaScopeNonRisolto',
-    /** 404 — la scheda anagrafica non esiste, o il bambino non è iscritto o è anonimizzato (`visibilita.ts`). */
+    /** 404 — la scheda anagrafica non esiste, o il bambino non frequenta (ritirato, stato mai deciso o vuoto) o è anonimizzato (`visibilita.ts`). */
     ANAGRAFICA_NON_TROVATA: 'erroreAnagraficaNonTrovata',
     /** 403 — il bambino della scheda anagrafica è di un’altra sede (`visibilita.ts`). */
     ANAGRAFICA_FUORI_SEDE: 'erroreAnagraficaFuoriSede',

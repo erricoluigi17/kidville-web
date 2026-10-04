@@ -71,7 +71,11 @@
  * `'sospeso'` di questa colonna e quel booleano non si parlano.
  */
 
-/** L'unico stato che significa «frequenta». È anche il `DEFAULT` della colonna. */
+/**
+ * Lo stato pieno: iscritto, pratica in regola. È anche il `DEFAULT` della colonna.
+ * Non è l'unico stato di chi frequenta: quello è `STATI_CHE_FREQUENTANO`, che
+ * comprende anche `'sospeso'`.
+ */
 export const STATO_ISCRITTO = 'iscritto'
 
 /** Lo stato in cui l'archiviazione mette l'alunno: anagrafica intatta, fuori dagli elenchi. */
@@ -270,7 +274,9 @@ export function eNonPiuIscritto(stato: string | null | undefined): boolean {
  *
  * ⚠️ NON è il filtro degli elenchi operativi. «Mostrami la classe», «genera le
  * rette», «invia i frequentanti al SIDI» vogliono i soli `iscritto` in senso
- * stretto. Misurato il 2026-08-12, e scritto qui perché fino a quella mattina
+ * stretto — con un'eccezione decisa dal titolare il 2026-10-04: l'anagrafica in
+ * sola lettura per i docenti (elenco della classe e scheda) mostra anche i
+ * `'sospeso'`, e si filtra con `STATI_CHE_FREQUENTANO`. Misurato il 2026-08-12, e scritto qui perché fino a quella mattina
  * questa riga sosteneva che quei filtri «restano `.eq('stato', STATO_ISCRITTO)`»,
  * cioè che la costante li governasse: **non li governa**. In `src/` ci sono
  * ancora **11 filtri di lettura** con la stringa scritta a mano
@@ -281,9 +287,10 @@ export function eNonPiuIscritto(stato: string | null | undefined): boolean {
  * ⚠️ E NON È NEMMENO IL FILTRO DEI CANALI VERSO LE FAMIGLIE (2026-08-13). Quello
  * è `STATI_CON_CANALE_FAMIGLIA`, poche righe più su, e `'sospeso'` sta DENTRO:
  * la rubrica, gli avvisi di plesso, gli inviti d'agenda e il digest News parlano
- * a una famiglia, e una famiglia a scuola deve restare raggiungibile. Tre
- * confini, tre nomi, tre ragioni scritte — invece di una stessa stringa copiata e
- * interpretata da ogni chiamante. Escludere un sospeso da un elenco operativo è
+ * a una famiglia, e una famiglia a scuola deve restare raggiungibile. Dal
+ * 2026-10-04 c'è un quarto nome, `STATI_CHE_FREQUENTANO` (l'anagrafica docente):
+ * quattro confini, quattro nomi, quattro ragioni scritte — invece di una stessa
+ * stringa copiata e interpretata da ogni chiamante. Escludere un sospeso da un elenco operativo è
  * una scelta di prodotto reversibile; renderlo irraggiungibile o anonimizzarlo
  * no, ed è per questo che quei due non li decide `.eq(…)` scritto a mano.
  */

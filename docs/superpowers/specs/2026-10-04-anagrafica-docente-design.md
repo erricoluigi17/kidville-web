@@ -65,8 +65,14 @@ l'errore di lettura (→ 500) dall'assenza di assegnazioni (→ elenco vuoto / 4
 1. `requireDocente` → `resolveScuoleAttive` (sedi) → `sezioniAnagraficaVisibili`.
 2. Errore → 500. `sezioni: []` → `{ sezioni: [], alunni: [] }` senza interrogare `alunni`.
 3. Query su `alunni` con, nella **stessa** query: filtro di sede (`.in('scuola_id', plessi)`),
-   `.eq('stato', STATO_ISCRITTO)` incondizionato (lock `elenchi-operativi-solo-iscritti`), esclusi
-   archiviati e anonimizzati, e per l'educator `.in('section_id', sezioni)`.
+   `.eq('stato', STATO_ISCRITTO)` incondizionato (lock `elenchi-operativi-solo-iscritti`; esclude
+   già gli archiviati, che l'archiviazione mette in `ritirato`), `.is('anonimizzato_il', null)`, e
+   per l'educator `.in('section_id', sezioni)`.
+   - Le letture anagrafiche (elenco e scheda) passano da `selectResiliente`
+     (`src/lib/supabase/select-resiliente.ts`, livello `warn`). Il database E2E della CI non riceve
+     le migrazioni da solo, e una colonna recente che manca (consensi foto, data di iscrizione,
+     provincia e civico) diventa un campo «Non indicato» invece di un 500. La lettura del
+     **controllo** usa solo colonne del baseline e non degrada mai.
 4. Le sezioni (`id`, `name`, `school_type`) per i raggruppamenti, lette per id.
 
 Ogni voce dell'elenco (`VoceElencoAlunno`):
@@ -76,8 +82,9 @@ Ogni voce dell'elenco (`VoceElencoAlunno`):
 | `id`, `nome`, `cognome`, `sectionId` | `alunni` |
 | `dataNascita`, `annoNascita` | `data_nascita` |
 | `sesso` | `gender` |
-| `allergeni: AllergeneKey[]` | `allergeniAlunno(...)` del motore unico `src/lib/mensa/allergeni.ts` (legge anche il testo libero) |
-| `haAllergie` | `haAllergiaOperativa(...)` dello stesso motore |
+| `grado` | `school_type` della sezione |
+| `allergeni: string[]` | unione di `chiaviAllergeni` e `allergeniAlunno` del motore unico `src/lib/mensa/allergeni.ts`: le chiavi come stanno in archivio più quelle dedotte dal testo libero, la stessa regola della home docente |
+| `haAllergie` | `haAllergiaOperativa(...)` dello stesso motore: è un segnale di sicurezza in classe, quindi non nasconde un «fragole» fuori dai 14 allergeni UE |
 | `besDsa`, `usaPannolino` | booleani |
 | `consensoFotoSito`, `consensoFotoSocial` | booleani |
 
@@ -92,7 +99,7 @@ Ordine **vincolante**, nessun dato anagrafico letto prima che tutti i controlli 
 | Non autenticato | 401 (da `requireDocente`) |
 | Ruolo non ammesso (es. genitore) | 403 (da `requireDocente`) |
 | `id` non uuid | 400 (`zod`), senza toccare il database |
-| Lettura minima `id, section_id, scuola_id, stato, archiviato_il, anonimizzato_il` | errore → 500 |
+| Lettura minima `id, section_id, scuola_id, stato, anonimizzato_il` (tutte del baseline) | errore → 500 |
 | Inesistente, non `iscritto`, archiviato o anonimizzato | 404 |
 | Sede fuori da `scuoleDiUtente` | 403 |
 | `sezioniAnagraficaVisibili` in errore | 500 |
@@ -114,7 +121,7 @@ di un bambino perché il registro ha avuto un guasto sarebbe peggio del registro
 | Identità | `id`, `nome`, `cognome`, `sesso`, `dataNascita`, `luogoNascita` (`birth_city`, `birth_province`, `birth_nation`), `cittadinanza`, `codiceFiscale` |
 | Residenza | `indirizzo`, `civico`, `cap`, `comune`, `provincia` |
 | Classe | `sezione` (`id`, `nome`, `grado`), `dataIscrizione` |
-| Salute | `allergeni: AllergeneKey[]`, `allergieTesto` (`allergies`), `noteMediche`, `besDsa`, `usaPannolino` |
+| Salute | `allergeni` (stessa unione dell'elenco), `allergieAltro` (`testoResiduoAllergie`: solo il testo che le chiavi non dicono già), `haAllergie`, `noteMediche`, `besDsa`, `usaPannolino` |
 | Consensi | `consensoPrivacy`, `consensoFotoSito`, `consensoFotoSocial` |
 | Genitori (`student_parents` → `parents`) | per ciascuno: `nome`, `cognome`, `parentela` (`relation_type`), `principale` (`is_primary`), `telefoni` (`phone_numbers`), `email` (`emails`), `codiceFiscale` (`fiscal_code`); esclusi i genitori anonimizzati |
 | Delegati (`delegates`) | per ciascuno: `nome`, `cognome`, `parentela` |
@@ -153,23 +160,36 @@ passa dalla read-cache Dexie: un codice fiscale non deve finire su disco.
 | `CampoLettura` | riga «etichetta: valore», «Non indicato» se vuoto |
 | `SchedaGenitore` | un genitore con `tel:` e `mailto:` toccabili |
 
-**Filtri** — `src/lib/anagrafiche/docente/filtri.ts`, funzione **pura**
-`filtraAlunni(alunni, filtri)`:
+**Filtri** — si usa il **motore condiviso** del progetto, non una funzione nuova:
+`BarraFiltri` + `StatoElenco` (`src/components/ui/`), `useFiltri` e il motore puro
+(`src/lib/ui/filtri/`), lo stesso di «Modulistica» docente e del cockpit. La pagina dichiara solo i
+**campi**, in `src/components/features/teacher/anagrafica/filtri-alunni.ts`
+(`campiAlunni(t, contesto)`), tutti `dove: 'client'` perché l'elenco è già in memoria:
 
-| Gruppo | Filtri |
+| Gruppo | Campo (`chiave`, tipo) |
 |---|---|
-| Nome | testo libero su nome e cognome, con `testoCorrisponde` di `src/lib/ui/testo-ricerca.ts` (normalizza accenti e maiuscole; **non** `rangoDiMatch`, che pretende testo già normalizzato) |
-| Sezione e grado | sezioni (scelta multipla fra quelle visibili), gradi (fra quelli presenti) |
-| Salute | solo con allergie · allergeni precisi (dal catalogo `ALLERGENI`) · BES/DSA · usa il pannolino |
-| Consensi foto | senza consenso per il sito · senza consenso per i social |
-| Età e sesso | anno di nascita (fra quelli presenti) · sesso |
+| Nome | `q`, `ricerca`: nome, cognome e le due combinazioni, con la normalizzazione di `testoCorrisponde` (accenti, maiuscole, apostrofi) |
+| Sezione e grado | `sezione`, `multi` (solo se le sezioni sono più di una) · `grado`, `multi` (solo se i gradi sono più di uno) |
+| Salute | `allergie`, `interruttore` · `allergene`, `multi` (gli allergeni presenti) · `bes`, `interruttore` · `pannolino`, `interruttore` |
+| Consensi foto | `senzaFotoSito`, `interruttore` · `senzaFotoSocial`, `interruttore`; un consenso **assente** conta come «senza consenso», la direzione prudente per chi pubblica |
+| Età e sesso | `anno`, `multi` (gli anni presenti) · `sesso`, `multi` |
 
-- Fra gruppi diversi valgono **tutti** (AND); dentro lo stesso filtro a scelta multipla basta
-  **uno** (OR). Nessun filtro = tutti.
+- Il motore applica già la semantica: **AND** fra campi, **OR** dentro un `multi`, nessun filtro =
+  tutti.
 - Anno di nascita e non fascia d'età: non dipende dalla data di oggi.
-- I filtri si salvano in `sessionStorage` per ritrovarli tornando dalla scheda — ogni accesso in
-  `try/catch`, la pagina funziona anche senza — e **mai nell'URL**: un nome di bambino
-  nell'indirizzo finirebbe nei log di accesso.
+- Le opzioni nascono dai dati, quindi il pannello dei filtri si **monta dopo** il caricamento:
+  `useFiltri` legge l'indirizzo una volta sola, e un valore che non è fra le opzioni lo scarta.
+- **La ricerca per nome non entra mai nell'indirizzo.** Oggi il motore scrive ogni filtro attivo
+  nell'URL (`history.replaceState`), e il service worker salva le pagine visitate usando
+  l'indirizzo come chiave: un nome di bambino finirebbe salvato sul telefono e nei log di accesso.
+  Si aggiunge al tipo dei campi un flag `maiNellUrl?: boolean`: `versoUrl` lo salta e
+  `valoriIniziali` lo ignora. Il parametro resta comunque **governato**, quindi se un indirizzo lo
+  porta, la barra lo cancella.
+- Gli altri filtri restano nell'indirizzo, come in tutte le barre del progetto. Per questo tornando
+  indietro dalla scheda col tasto del telefono o del browser si ritrovano da soli. Il pulsante
+  «Tutti gli alunni» della scheda li ritrova da `sessionStorage`
+  (`src/lib/anagrafiche/docente/ritorno-elenco.ts`): ogni accesso in `try/catch`, e senza
+  `sessionStorage` si torna all'elenco senza filtri.
 
 **Scheda** — in cima nome, cognome, sezione ed etichetta «Sola lettura»; se ci sono allergie, un
 riquadro in evidenza con gli allergeni. Poi i riquadri Dati anagrafici, Residenza, Salute (note
@@ -198,8 +218,13 @@ margini nativi (lock `fascia-safe-area-nativa`).
 **Funzioni pure**
 - Proiezione: una riga piena di campi economici, documenti e `archiviato_*` non ne lascia passare
   nessuno; le chiavi in uscita sono fissate esatte.
-- `filtraAlunni`: ogni filtro da solo, AND fra gruppi, OR dentro il gruppo, nessun filtro = tutti,
-  accenti e maiuscole nella ricerca.
+- `campiAlunni` passati al motore vero (`filtraRighe`): ogni filtro da solo, AND fra campi, OR
+  dentro un `multi`, nessun filtro = tutti, accenti e maiuscole nella ricerca, consenso assente =
+  «senza consenso».
+- Motore: un campo `maiNellUrl` non esce da `versoUrl` e non si legge da `valoriIniziali`, ma resta
+  fra i `parametriGovernati`.
+- `ritorno-elenco`: salva e rilegge la query dell'elenco, scarta `q` e valori malformati, regge un
+  `sessionStorage` che lancia.
 - `sezioniAnagraficaVisibili`: staff → `tutte`; unione delle due tabelle senza doppioni; nessuna
   assegnazione → `[]`; errore su una delle due letture → `errore`.
 
@@ -207,7 +232,9 @@ margini nativi (lock `fascia-safe-area-nativa`).
 `predicati-ruolo-non-mockabili`), database finto (`__tests__/fixtures/finto-supabase.ts`).
 - Scheda:
   - 200 per l'educator di sezione, per l'educator di sola materia e per la segreteria della sede;
-  - 403 per un'altra sezione della stessa sede, **verificando che l'anagrafica non sia letta**;
+  - 403 per un'altra sezione della stessa sede, **verificando che l'anagrafica non sia letta**: su
+    `alunni` una sola lettura (quella minima del controllo), nessuna su `student_parents` e
+    `delegates`, nessuna riga di audit, e il codice fiscale del bambino non compare nella risposta;
   - 403 per un'altra sede e per il genitore, 401 anonimo, 400 `id` non valido;
   - 404 per inesistente, non iscritto, archiviato, anonimizzato;
   - 500 con log su guasto di ciascuna lettura;
@@ -219,8 +246,8 @@ margini nativi (lock `fascia-safe-area-nativa`).
 **Componenti** (Testing Library)
 - Scheda: nessun `input` / `textarea` / `select` / pulsante di salvataggio; «Non indicato»; riquadro
   allergie; `tel:` e `mailto:`; i messaggi di 403, 404 ed errore.
-- Elenco: raggruppamento, stati vuoto ed errore, pannello che applica e azzera i filtri, contatore,
-  ripristino dei filtri anche con `sessionStorage` che lancia.
+- Elenco: raggruppamento per sezione, stati vuoto ed errore, un filtro che restringe l'elenco e il
+  contatore che lo dice, la ricerca per nome che non finisce nell'indirizzo.
 
 **Lock trasversali** — gate intero: `npx eslint . --max-warnings 0`, `npx tsc --noEmit`,
 `npx vitest run` completo, `npm run build`.

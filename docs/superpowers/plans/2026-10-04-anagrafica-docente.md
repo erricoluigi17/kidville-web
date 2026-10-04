@@ -3649,6 +3649,116 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+### Task 12: i bambini `sospeso` sono visibili alle insegnanti
+
+**Decisione del titolare (04/10):** un bambino con `alunni.stato = 'sospeso'` frequenta ancora
+(`LATO_DEL_CONFINE` in `src/lib/alunni/stato.ts` lo classifica `'ancora-iscritto'`): l'insegnante
+deve vederne elenco e scheda, allergie comprese. Nessuna etichetta «sospeso» a schermo.
+⚠️ Non confondere con la colonna BOOLEANA `alunni.sospeso` (sospensione per morosità, dato
+economico): resta esclusa da colonne e proiezione.
+
+**Files (da verificare leggendo il codice):**
+- Modify: `src/lib/anagrafiche/docente/visibilita.ts` (il controllo della scheda oggi risponde 404 se `stato !== STATO_ISCRITTO`)
+- Modify: `src/app/api/teacher/alunni/route.ts` (elenco: `.eq('stato', STATO_ISCRITTO)`)
+- Modify: `src/app/api/teacher/alunni/[id]/route.ts` (seconda lettura della scheda: `.eq('stato', STATO_ISCRITTO)`)
+- Test: `__tests__/lib/anagrafica-docente-visibilita.test.ts`, `__tests__/api/teacher-alunni.test.ts`, `__tests__/api/teacher-alunni-scheda.test.ts`
+
+**Regola:** gli stati ammessi sono quelli con `LATO_DEL_CONFINE[s] === 'ancora-iscritto'`. In
+`stato.ts` esiste già la costante derivata `STATI_CON_CANALE_FAMIGLIA` (stesso filtro), ma il suo
+nome parla dei canali verso le famiglie. Valuta (e dichiara nel rapporto) la soluzione più pulita:
+- (preferita) aggiungere in `stato.ts` una costante dal nome giusto, per esempio
+  `STATI_CHE_FREQUENTANO`, DERIVATA da `LATO_DEL_CONFINE` esattamente come le altre (mai una lista
+  scritta a mano), con un commento che dica a chi serve (anagrafica docente) e perché non è
+  `STATO_ISCRITTO` in senso stretto; controlla i test di `stato.ts`
+  (`__tests__/lib/alunni-stato.test.ts`) e i lock `stati-alunno-classificati` /
+  `elenchi-operativi-solo-iscritti` (che cosa accettano come filtro di stato);
+- oppure riusare `STATI_CON_CANALE_FAMIGLIA` se aggiungere una costante creasse un doppione che un
+  lock vieta.
+Nelle query: `.in('stato', [...COSTANTE])`, INCONDIZIONATO (il lock `elenchi-operativi-solo-iscritti`
+vuole un filtro di stato positivo e senza `if`). Nel controllo della scheda: 404 se lo stato NON è
+fra quelli ammessi (un `ritirato` resta 404).
+
+**Test (TDD, rossi prima):**
+- visibilità: un alunno `sospeso` della sezione dell'educator → apre (200); un `ritirato` → 404 come
+  prima;
+- elenco: un `sospeso` della sezione compare; un `ritirato` no;
+- scheda: un `sospeso` apre con 200 e riga di audit; la seconda lettura rifiltra con gli stessi stati
+  (corsa: un bambino che passa a `ritirato` fra controllo e lettura → 404, già coperto: verifica che
+  resti verde);
+- il campo booleano `sospeso: true` (morosità) su una riga NON compare nella risposta (aggiungilo al
+  fixture di un bambino e cerca la chiave/valore nel testo della risposta).
+
+**Prova di rottura:** rimetti `.eq('stato', STATO_ISCRITTO)` nell'elenco → il test del sospeso
+diventa rosso; ripristina.
+
+**Commit:** un commit con i file toccati, messaggio
+«Anagrafica docente: anche i bambini sospesi (frequentano) sono visibili alle insegnanti».
+
+---
+
+### Task 13: gli IP del registro degli accessi si conservano un anno
+
+**Decisione del titolare (04/10):** l'IP di chi consulta i dati dei bambini, registrato in
+`fascicolo_accessi_audit.ip`, si conserva **un anno**. Insieme all'IP si azzera `user_agent` (il
+dispositivo: stessa natura). Il resto della riga (`alunno_id`, `documento_id`, `utente_id`,
+`azione`, `finalita`, `creato_il`) RESTA: è il registro che risponde a «chi ha aperto la scheda di
+mio figlio». Vale per TUTTO il registro, non solo per le aperture della scheda. L'informativa per
+le famiglie NON cambia (decisione del titolare).
+
+**Modello da seguire alla lettera:** la scadenza dei motivi d'assenza.
+- La funzione e il battito: `supabase/migrations/20260808042814_retention_battito_leggibile.sql`
+  (`presenze_giustificazioni_retention_tick` e `notifiche_retention_tick`: `SECURITY DEFINER`,
+  `SET search_path = public, pg_temp`, `v_mesi constant int := 12`, `INSERT INTO public.app_log …
+  ON CONFLICT (fingerprint, giorno) DO UPDATE`, `REVOKE … FROM PUBLIC, anon, authenticated`,
+  `GRANT EXECUTE … TO service_role`). Leggila per intero, e trova con Grep la migrazione che fa il
+  `cron.schedule('presenze-giustificazioni-retention', …)` e copiane la forma (idempotente:
+  `cron.unschedule` se esiste, poi `cron.schedule`).
+- Il lock: `__tests__/architecture/informativa-conservazione-dichiarata.test.ts` (blocco
+  «il motivo dell'assenza scade e si dimentica» e `BATTITI_DA_LEGGERE`).
+- La sorveglianza: `src/lib/health/controlli.ts` (voce `presenze-giustificazioni-retention`,
+  finestra 26 h).
+
+**Files:**
+- Create: `supabase/migrations/<YYYYMMDDHHMMSS>_fascicolo_audit_ip_retention.sql` — timestamp
+  successivo all'ultima migrazione presente (`ls supabase/migrations | tail -1`), formato identico.
+  Contenuto:
+  - `CREATE OR REPLACE FUNCTION public.fascicolo_audit_ip_retention_tick() RETURNS void` con
+    `v_mesi constant int := 12`; `UPDATE public.fascicolo_accessi_audit SET ip = NULL, user_agent = NULL
+    WHERE creato_il < now() - make_interval(months => v_mesi) AND (ip IS NOT NULL OR user_agent IS NOT NULL)`;
+    conteggio delle righe (`GET DIAGNOSTICS`); battito in `app_log` con fingerprint
+    `cron:fascicolo-audit-ip-retention`, messaggio con i mesi letti da `v_mesi`, contesto con i soli
+    conteggi (nessun IP, nessun uuid di persona);
+  - `REVOKE`/`GRANT` come nel modello;
+  - `cron.schedule('fascicolo-audit-ip-retention', '<un orario notturno libero, es. 17 4 * * *>', 'SELECT public.fascicolo_audit_ip_retention_tick()')`, idempotente;
+  - commento di testata in italiano: decisione del titolare con la data, perché la riga resta, perché
+    anche `user_agent`, perché una funzione SQL e non una route (nessun file nello Storage);
+  - TUTTO idempotente (la migrazione può essere rilanciata dal workflow «DB migrate (CI)»);
+  - nessun uuid di sede cablato (lock `migrazioni-senza-sede-cablata`).
+- Modify: `src/lib/health/controlli.ts` — `{ nome: 'fascicolo-audit-ip-retention', finestraMs: 26 * ORA }`
+  con un commento come le voci vicine (verifica come il controllo legge i battiti, per esempio dal
+  fingerprint `cron:<nome>`, e che il nome combaci).
+- Modify/Create test: un lock (nel file `informativa-conservazione-dichiarata.test.ts` o in uno nuovo
+  in `__tests__/architecture/`, segui ciò che è più coerente) che verifichi: la funzione è definita
+  da una migrazione; dichiara `v_mesi constant int := 12`; azzera `ip = NULL` e `user_agent = NULL`;
+  NON cancella righe (nessun `DELETE FROM public.fascicolo_accessi_audit`); è schedulata con
+  `cron.schedule('fascicolo-audit-ip-retention'`; e aggiungi il job a `BATTITI_DA_LEGGERE` se quel
+  lock lo prevede per i lavori di scadenza. Controllo positivo: il lock fallirebbe su un SQL senza
+  `user_agent = NULL`.
+- Se esiste un test di `controlli.ts` che elenca i job attesi, aggiornalo.
+
+**NON applicare la migrazione in produzione né sul DB della CI.** In produzione la applica
+l'integrazione Supabase al merge (con la `version` del file: applicarla a mano farebbe due righe in
+`schema_migrations`). Riporta nel rapporto l'SQL completo, così il coordinatore lo mostra al
+titolare prima del merge.
+
+**Verifiche:** i lock (`__tests__/architecture`), i test di health (`Grep "controlli" __tests__`),
+eslint/tsc sui file TS toccati. Se riesci, verifica la sintassi SQL leggendo con attenzione il
+modello (in locale non c'è Postgres: non provare a connetterti a nessun database).
+
+**Commit:** «Registro degli accessi: gli IP si conservano un anno (decisione del titolare)».
+
+---
+
 ### Task 11: PRD, gate intero, revisione, PR, rilascio
 
 **Files:**

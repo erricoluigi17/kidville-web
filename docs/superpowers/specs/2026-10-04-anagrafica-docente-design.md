@@ -285,6 +285,22 @@ auto-merge) → deploy → verifica in produzione con sole `SELECT` (righe di au
   del repo è «codice, poi prosa, poi frase di ripiego»): in pratica non capita, perché il middleware
   ferma prima chi non ha un ruolo da docente.
 
+## Aggiunte del 2026-10-04, dopo le risposte del titolare
+
+1. **I bambini `sospeso` sono visibili alle insegnanti** (risposta: «sì»). Elenco e scheda leggono
+   gli stati del lato «ancora iscritto» di `LATO_DEL_CONFINE` (`src/lib/alunni/stato.ts`: oggi
+   `iscritto` e `sospeso`), con la costante già derivata da lì, in `.in('stato', …)`
+   incondizionato. Nessuna etichetta «sospeso» a schermo: lo stato della pratica resta della
+   segreteria. La colonna booleana `alunni.sospeso` (morosità) resta esclusa come ogni dato
+   economico.
+2. **Gli IP del registro degli accessi si conservano un anno** (risposta: «un anno»). Migrazione
+   con `public.fascicolo_audit_ip_retention_tick()` (`v_mesi constant int := 12`): ogni notte azzera
+   `ip` e `user_agent` delle righe di `fascicolo_accessi_audit` più vecchie di 12 mesi, lascia il
+   resto della riga, scrive un battito in `app_log`; pianificata con `cron.schedule` (job
+   `fascicolo-audit-ip-retention`), sorvegliata da `/api/health` (26 h) e da un lock sul modello di
+   quello dei motivi d'assenza. Vale per tutto il registro. L'informativa per le famiglie NON
+   cambia (decisione del titolare: gli IP sono del personale).
+
 ## Fuori perimetro
 
 - Nomi cliccabili nelle schermate esistenti (appello, diario, classe della primaria).

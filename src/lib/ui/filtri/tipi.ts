@@ -90,8 +90,8 @@ interface Comune {
    * si scrive mai nell'indirizzo e non si legge da lì. Il service worker salva le
    * pagine usando l'indirizzo come chiave, e i log di accesso registrano la query:
    * un nome di bambino finirebbe in tutti e due. Il parametro resta comunque
-   * GOVERNATO (`parametriGovernati`), quindi se un indirizzo lo porta la barra lo
-   * cancella.
+   * GOVERNATO (`parametriGovernati`): se un indirizzo lo porta, la barra lo toglie
+   * alla prima modifica di un filtro o uscendo dalla pagina — non al caricamento.
    */
   maiNellUrl?: boolean;
 }

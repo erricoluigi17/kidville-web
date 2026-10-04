@@ -36,7 +36,7 @@ describe('motore filtri — `maiNellUrl`', () => {
     expect(v.classe).toBe('A')
   })
 
-  it('resta GOVERNATO: un `q` arrivato nell’indirizzo la barra lo cancella', () => {
+  it('resta GOVERNATO: è fra i parametri che la barra riscrive (e quindi toglie)', () => {
     expect(parametriGovernati(campi)).toContain('q')
   })
 
@@ -44,5 +44,38 @@ describe('motore filtri — `maiNellUrl`', () => {
     const senza = campi.map((c) => (c.chiave === 'q' ? { ...c, maiNellUrl: undefined } : c)) as CampoFiltro<Riga>[]
     expect(versoUrl(senza, { q: 'Rossi', classe: '' }).get('q')).toBe('Rossi')
     expect(valoriIniziali(senza, new URLSearchParams('q=Rossi')).q).toBe('Rossi')
+  })
+
+  it('vale anche per un campo `multi` e per un `periodo` (`<chiave>Da`/`<chiave>A`)', () => {
+    const altri: CampoFiltro<Riga>[] = [
+      {
+        tipo: 'multi',
+        chiave: 'tag',
+        etichetta: 'Tag',
+        dove: 'client',
+        maiNellUrl: true,
+        opzioni: [
+          { valore: 'A', etichetta: 'A' },
+          { valore: 'B', etichetta: 'B' },
+        ],
+        valoriDi: (r) => [r.classe],
+      },
+      {
+        tipo: 'periodo',
+        chiave: 'dal',
+        etichetta: 'Periodo',
+        dove: 'client',
+        maiNellUrl: true,
+        dataDi: () => '2026-01-01',
+      },
+    ]
+    const p = versoUrl(altri, { tag: ['A', 'B'], dal: { da: '2026-01-01', a: '2026-03-31' } })
+    expect([...p.keys()]).toEqual([])
+
+    const v = valoriIniziali(altri, new URLSearchParams('tag=A&tag=B&tag=A,B&dalDa=2026-01-01&dalA=2026-03-31'))
+    expect(v.tag).toEqual([])
+    expect(v.dal).toEqual({ da: '', a: '' })
+
+    expect(parametriGovernati(altri)).toEqual(expect.arrayContaining(['tag', 'dalDa', 'dalA']))
   })
 })

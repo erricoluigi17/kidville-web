@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 
 /**
  * LA VOCE «PROFILO» DEL DOCENTE ESISTE DAVVERO — e lo slot c’era già.
@@ -120,5 +120,15 @@ describe('TeacherBottomNav — «Alunni» porta all’anagrafica', () => {
     const voce = screen.getByRole('link', { name: new RegExp(NAV.voceAlunniLabel, 'i') });
     expect(voce.getAttribute('href')).toBe('/teacher/alunni');
     expect(voce.textContent).toContain(NAV.voceAlunniSub);
+  });
+
+  it('sta nello stesso gruppo di «Presenze» (il gruppo «In classe»)', () => {
+    apriIlMenu();
+    // Il gruppo è il contenitore dell'etichetta «In classe»: lì dentro devono
+    // esserci sia «Presenze» sia «Alunni».
+    const gruppo = screen.getByText(NAV.gruppoInClasse).parentElement as HTMLElement;
+    expect(gruppo).not.toBeNull();
+    expect(within(gruppo).getByRole('link', { name: new RegExp(NAV.voceAlunniLabel, 'i') })).toBeTruthy();
+    expect(within(gruppo).getAllByRole('link', { name: new RegExp(NAV.vocePresenzeLabel, 'i') }).length).toBeGreaterThan(0);
   });
 });

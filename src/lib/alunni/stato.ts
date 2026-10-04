@@ -178,6 +178,42 @@ export const STATI_CON_CANALE_FAMIGLIA: readonly string[] = STATI_TENDINA.filter
 )
 
 /**
+ * CHI FREQUENTA — i bambini di cui un'insegnante vede l'anagrafica.
+ *
+ * Serve all'anagrafica in sola lettura per i docenti (`src/lib/anagrafiche/docente/`
+ * e `src/app/api/teacher/alunni/`): l'elenco della classe e la scheda, allergie
+ * comprese. Decisione del titolare (2026-10-04): un bambino `'sospeso'` FREQUENTA —
+ * è `LATO_DEL_CONFINE` a dirlo, qualche riga più su — quindi l'insegnante che lo ha
+ * in classe deve poterne leggere la scheda. Negarle le allergie di un bambino che è
+ * in aula perché la sua pratica è ferma sarebbe il difetto, non la prudenza.
+ *
+ * Perché non `STATO_ISCRITTO` in senso stretto: quello resta il filtro degli
+ * elenchi OPERATIVI (rette, SIDI, dashboard), dove escludere un sospeso è una
+ * scelta di prodotto. Qui la domanda è un'altra: «questo bambino è in classe con
+ * me?», e per un sospeso la risposta è sì.
+ *
+ * Perché non `STATI_CON_CANALE_FAMIGLIA`, che oggi contiene gli stessi stati: il
+ * nome parla dei canali verso le famiglie, e chi legge una query dell'anagrafica
+ * docente deve capire che cosa sta filtrando senza aprire questo file. Il valore
+ * vive comunque in un posto solo — entrambe DERIVANO dallo stesso `Record`
+ * esaustivo — quindi spostare uno stato da una parte del confine sposta tutte e
+ * due, e uno stato nuovo non compila finché qualcuno non lo decide.
+ *
+ * È un ELENCO CHIUSO, non `eAncoraIscritto`: quel predicato risponde `true` anche a
+ * uno stato mai visto, a un refuso e alla colonna vuota, cioè protegge nel verso
+ * dell'oblio. Qui il verso prudente è l'opposto — non mostrare l'anagrafica di un
+ * minore — e uno stato che nessuno ha deciso resta fuori.
+ *
+ * ⚠️ Non c'entra la colonna BOOLEANA `alunni.sospeso` (la morosità, un dato
+ * economico): resta esclusa dalle colonne e dalla proiezione dell'anagrafica docente.
+ *
+ * Si applica con `.in('stato', [...STATI_CHE_FREQUENTANO])`, incondizionato.
+ */
+export const STATI_CHE_FREQUENTANO: readonly string[] = STATI_TENDINA.filter(
+  (s) => LATO_DEL_CONFINE[s] === 'ancora-iscritto',
+)
+
+/**
  * Vero SOLO per gli stati dell'allowlist.
  *
  * È il predicato che AUTORIZZA (oblio, esclusione dagli elenchi): tutto ciò che

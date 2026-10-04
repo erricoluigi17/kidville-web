@@ -5,6 +5,7 @@ import {
   STATO_SOSPESO,
   STATI_TENDINA,
   STATI_NON_PIU_ISCRITTO,
+  STATI_CHE_FREQUENTANO,
   LATO_DEL_CONFINE,
   eNonPiuIscritto,
   eAncoraIscritto,
@@ -53,7 +54,14 @@ describe('alunni/stato — il confine di «non più iscritto»', () => {
     for (const s of STATI_TENDINA) {
       expect(eNonPiuIscritto(s), `stato «${s}»`).toBe(LATO_DEL_CONFINE[s] === 'non-piu-iscritto')
       expect(eAncoraIscritto(s), `stato «${s}»`).toBe(LATO_DEL_CONFINE[s] === 'ancora-iscritto')
+      // Anche l'elenco di chi frequenta (anagrafica docente) DERIVA dalla decisione.
+      expect(STATI_CHE_FREQUENTANO.includes(s), `stato «${s}»`).toBe(LATO_DEL_CONFINE[s] === 'ancora-iscritto')
     }
+  })
+
+  it('chi frequenta: «iscritto» e «sospeso», mai «ritirato» né uno stato mai deciso', () => {
+    expect([...STATI_CHE_FREQUENTANO].sort()).toEqual([STATO_ISCRITTO, STATO_SOSPESO].sort())
+    expect(STATI_CHE_FREQUENTANO).not.toContain('trasferito')
   })
 
   it('«ritirato» non è più iscritto', () => {

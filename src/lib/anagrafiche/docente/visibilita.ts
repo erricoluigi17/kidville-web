@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { scuoleDiUtente, vedeTutteLeClassi } from '@/lib/auth/scope'
-import { STATO_ISCRITTO } from '@/lib/alunni/stato'
+import { STATI_CHE_FREQUENTANO } from '@/lib/alunni/stato'
 import { logEvento } from '@/lib/logging/logger'
 import { COLONNE_GATE } from './colonne'
 
@@ -160,8 +160,8 @@ export async function sediAnagrafica(supabase: SupabaseClient, user: AppUser): P
 
 /**
  * Il controllo della scheda. L'ordine conta: si legge solo la riga minima del
- * bambino (colonne del baseline), si risponde 404 a ciò che non è un iscritto vivo,
- * poi sedi dell'utente (nessuna sede è un rifiuto a sé, mai «fuori sede»), poi sede
+ * bambino (colonne del baseline), si risponde 404 a chi non frequenta o è stato
+ * anonimizzato, poi sedi dell'utente (nessuna sede è un rifiuto a sé, mai «fuori sede»), poi sede
  * del bambino, poi sezione. Nessun dato anagrafico si legge prima che tutto sia passato.
  * Il nome segue il contratto `assert…InScope` che il lock dell'isolamento per sede
  * riconosce.
@@ -188,7 +188,11 @@ export async function assertAlunnoAnagraficaInScope(
     stato: string | null
     anonimizzato_il: string | null
   } | null
-  if (!riga || riga.stato !== STATO_ISCRITTO || riga.anonimizzato_il) {
+  // «Frequenta» è un ELENCO CHIUSO (`STATI_CHE_FREQUENTANO`): iscritto e sospeso sì
+  // (decisione del titolare, 2026-10-04), ritirato no, e uno stato che nessuno ha
+  // deciso — o la colonna vuota — nemmeno. Lo stesso elenco filtra l'elenco della
+  // classe e la seconda lettura della scheda.
+  if (!riga || riga.stato === null || !STATI_CHE_FREQUENTANO.includes(riga.stato) || riga.anonimizzato_il) {
     return nonTrovata()
   }
 

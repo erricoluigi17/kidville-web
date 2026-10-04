@@ -13,6 +13,8 @@ const ALU_MATERIA = 'a3a3a3a3-3333-4333-8333-aaaaaaaaaaaa'
 const ALU_B = 'b1b1b1b1-1111-4111-8111-bbbbbbbbbbbb'
 const ALU_RITIRATO = 'a4a4a4a4-4444-4444-8444-aaaaaaaaaaaa'
 const ALU_ANONIMO = 'a5a5a5a5-5555-4555-8555-aaaaaaaaaaaa'
+const ALU_SOSPESO = 'a7a7a7a7-7777-4777-8777-aaaaaaaaaaaa'
+const ALU_STATO_IGNOTO = 'a8a8a8a8-8888-4888-8888-aaaaaaaaaaaa'
 const CF_MIO = 'TSTMIO21C44Z999Q'
 
 const h = vi.hoisted(() => ({
@@ -67,6 +69,10 @@ const dbBase = (): DBFinto => ({
     alunno(ALU_B, SEZ_B, SEDE_B),
     alunno(ALU_RITIRATO, SEZ_MIA, SEDE_A, { stato: 'ritirato' }),
     alunno(ALU_ANONIMO, SEZ_MIA, SEDE_A, { anonimizzato_il: '2026-09-01T00:00:00Z' }),
+    // `stato = 'sospeso'`: la pratica è ferma, il bambino frequenta. Porta anche la
+    // colonna BOOLEANA `sospeso` della morosità, un dato economico che non deve uscire.
+    alunno(ALU_SOSPESO, SEZ_MIA, SEDE_A, { cognome: 'Pausa-E2E', stato: 'sospeso', sospeso: true, allergies: 'kiwi' }),
+    alunno(ALU_STATO_IGNOTO, SEZ_MIA, SEDE_A, { stato: 'trasferito' }),
   ],
   student_parents: [
     {
@@ -146,6 +152,19 @@ describe('GET /api/teacher/alunni/[id] — si apre', () => {
     expect(audit()[0].valori[0]).toMatchObject({ alunno_id: ALU_MIO, utente_id: 'ed1', azione: 'view', finalita: 'anagrafica-docente' })
   })
 
+  it('il bambino «sospeso» frequenta: scheda con le allergie e una riga di audit', async () => {
+    const res = await chiama(ALU_SOSPESO)
+    expect(res.status).toBe(200)
+    const testo = await res.text()
+    // Nessuna etichetta «sospeso» e nessuna traccia della morosità (la colonna booleana).
+    expect(testo.toLowerCase()).not.toContain('sospeso')
+    const scheda = JSON.parse(testo)
+    expect(scheda).toMatchObject({ id: ALU_SOSPESO, cognome: 'Pausa-E2E' })
+    expect(scheda.salute).toMatchObject({ haAllergie: true, allergieAltro: 'kiwi' })
+    expect(audit()).toHaveLength(1)
+    expect(audit()[0].valori[0]).toMatchObject({ alunno_id: ALU_SOSPESO, utente_id: 'ed1', azione: 'view' })
+  })
+
   it('educator assegnato per sola materia', async () => {
     expect((await chiama(ALU_MATERIA)).status).toBe(200)
   })
@@ -219,11 +238,12 @@ describe('GET /api/teacher/alunni/[id] — non si apre', () => {
     expect(audit()).toHaveLength(0)
   })
 
-  it('404 per non iscritto, anonimizzato, inesistente', async () => {
-    for (const id of [ALU_RITIRATO, ALU_ANONIMO, 'c0c0c0c0-0000-4000-8000-cccccccccccc']) {
+  it('404 per ritirato, stato mai deciso, anonimizzato, inesistente', async () => {
+    for (const id of [ALU_RITIRATO, ALU_STATO_IGNOTO, ALU_ANONIMO, 'c0c0c0c0-0000-4000-8000-cccccccccccc']) {
       expect((await chiama(id)).status).toBe(404)
     }
     expect(h.tabelle).not.toContain('student_parents')
+    expect(audit()).toHaveLength(0)
   })
 
   it('400 per un id che non è un uuid, senza toccare il database', async () => {
@@ -288,6 +308,14 @@ describe('GET /api/teacher/alunni/[id] — la corsa fra il controllo e la lettur
     expect(res.headers.get('Cache-Control')).toBe('no-store')
     expect((await res.json()).codice).toBe('ANAGRAFICA_NON_TROVATA')
     expect(audit()).toHaveLength(0)
+  })
+
+  it('se il bambino passa a «sospeso» fra le due letture la scheda si apre: la seconda lettura ammette gli stessi stati del controllo', async () => {
+    // Il controllo vede un `iscritto`: qui si misura SOLO il filtro della seconda lettura.
+    h.errori = cambiaFraLeDueLetture((a) => ({ ...a, stato: 'sospeso' }))
+    const res = await chiama(ALU_MIO)
+    expect(res.status).toBe(200)
+    expect(audit()).toHaveLength(1)
   })
 
   it('se la riga sparisce fra le due letture: 404, niente cache, nessuna riga di audit', async () => {

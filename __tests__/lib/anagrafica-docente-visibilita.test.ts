@@ -25,6 +25,8 @@ const ALU_B = 'b1b1b1b1-1111-4111-8111-bbbbbbbbbbbb'
 const ALU_RITIRATO = 'a4a4a4a4-4444-4444-8444-aaaaaaaaaaaa'
 const ALU_ANONIMO = 'a5a5a5a5-5555-4555-8555-aaaaaaaaaaaa'
 const ALU_SENZA_SEZIONE = 'a6a6a6a6-6666-4666-8666-aaaaaaaaaaaa'
+const ALU_SOSPESO = 'a7a7a7a7-7777-4777-8777-aaaaaaaaaaaa'
+const ALU_STATO_IGNOTO = 'a8a8a8a8-8888-4888-8888-aaaaaaaaaaaa'
 
 const EDUCATOR: AppUser = { id: 'ed1', role: 'educator', scuola_id: SEDE_A }
 const SEGRETERIA: AppUser = { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A }
@@ -68,6 +70,10 @@ beforeEach(() => {
       alunno(ALU_RITIRATO, SEZ_MIA, SEDE_A, { stato: 'ritirato' }),
       alunno(ALU_ANONIMO, SEZ_MIA, SEDE_A, { anonimizzato_il: '2026-09-01T00:00:00Z' }),
       alunno(ALU_SENZA_SEZIONE, null, SEDE_A),
+      // `stato = 'sospeso'` è un bambino che frequenta (decisione del titolare, 04/10).
+      alunno(ALU_SOSPESO, SEZ_MIA, SEDE_A, { stato: 'sospeso' }),
+      // Uno stato che nessuno ha deciso: l'elenco è chiuso, quindi resta fuori.
+      alunno(ALU_STATO_IGNOTO, SEZ_MIA, SEDE_A, { stato: 'trasferito' }),
     ],
   }
 })
@@ -223,8 +229,13 @@ describe('assertAlunnoAnagraficaInScope', () => {
     expect(await stato(SEGRETERIA_IN_VESTE_GENITORE, ALU_ALTRUI)).toBe(403)
   })
 
-  it('404 per inesistente, non iscritto, anonimizzato — prima di guardare le sezioni', async () => {
-    for (const id of ['c0c0c0c0-0000-4000-8000-cccccccccccc', ALU_RITIRATO, ALU_ANONIMO]) {
+  it('il bambino «sospeso» della sua sezione si apre: frequenta ancora', async () => {
+    const esito = await assertAlunnoAnagraficaInScope(client(), EDUCATOR, ALU_SOSPESO)
+    expect(esito).toEqual({ ok: true, alunno: { id: ALU_SOSPESO, sectionId: SEZ_MIA, scuolaId: SEDE_A } })
+  })
+
+  it('404 per inesistente, ritirato, stato mai deciso, anonimizzato — prima di guardare le sezioni', async () => {
+    for (const id of ['c0c0c0c0-0000-4000-8000-cccccccccccc', ALU_RITIRATO, ALU_STATO_IGNOTO, ALU_ANONIMO]) {
       tabelle = []
       expect(await stato(EDUCATOR, id)).toBe(404)
       expect(tabelle).not.toContain('utenti_sezioni')

@@ -166,6 +166,33 @@ describe('GET /api/teacher/alunni', () => {
   })
 })
 
+describe('i bambini «sospeso» frequentano: l’insegnante li vede', () => {
+  // Aggiunti qui e non in `dbBase`: gli altri test contano i bambini, e il tetto
+  // dell'elenco ne dipende.
+  const SOSPESO = 'a7a7a7a7-7777-4777-8777-aaaaaaaaaaaa'
+  beforeEach(() => {
+    h.db.alunni.push(
+      // `stato = 'sospeso'` (la pratica è ferma, il bambino frequenta) e, insieme, la
+      // colonna BOOLEANA `sospeso` della morosità: un dato economico che non deve uscire.
+      riga(SOSPESO, 'Iota', 'Pausa-E2E', SEZ_MIA, SEDE_A, { stato: 'sospeso', sospeso: true }),
+      // Uno stato che nessuno ha deciso: l'elenco degli stati è chiuso, quindi resta fuori.
+      riga('a8a8a8a8-8888-4888-8888-aaaaaaaaaaaa', 'Kappa', 'Ignoto-E2E', SEZ_MIA, SEDE_A, { stato: 'trasferito' }),
+    )
+  })
+
+  it('il sospeso della sua sezione compare; ritirato e stato mai deciso no', async () => {
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(await cognomi(res)).toEqual(['Alfieri', 'Pausa-E2E', 'Zeta'])
+  })
+
+  it('nessuna etichetta «sospeso» e nessuna morosità nella risposta', async () => {
+    const testo = await (await chiama()).text()
+    expect(testo).toContain('Pausa-E2E')
+    expect(testo.toLowerCase()).not.toContain('sospeso')
+  })
+})
+
 describe('sedi vuote: le stesse risposte della scheda', () => {
   it('profilo senza sede: 403 ANAGRAFICA_SENZA_SEDE, senza leggere gli alunni', async () => {
     h.requireDocente.mockResolvedValue({ user: { id: 'ed1', role: 'educator', scuola_id: null } })

@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireEnv } from '@/lib/security/require-env'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
-import { STATO_ISCRITTO } from '@/lib/alunni/stato'
+import { STATI_CHE_FREQUENTANO } from '@/lib/alunni/stato'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -19,8 +19,10 @@ import type { ElencoAlunniRisposta } from '@/lib/anagrafiche/docente/tipi'
  * GET /api/teacher/alunni — l'elenco dei bambini di cui l'utente vede l'anagrafica.
  *
  * SOLA LETTURA: questo modulo esporta solo `GET`, e un test lo verifica. Educator →
- * gli iscritti delle sezioni assegnate direttamente o per materia; direzione,
- * coordinamento e segreteria → gli iscritti della propria sede. L'elenco porta solo
+ * i bambini che frequentano le sezioni assegnate direttamente o per materia; direzione,
+ * coordinamento e segreteria → quelli della propria sede. «Frequenta» è
+ * `STATI_CHE_FREQUENTANO`: iscritti e sospesi (decisione del titolare, 2026-10-04),
+ * mai i ritirati. L'elenco porta solo
  * ciò che serve a riconoscere e filtrare (nessun testo sanitario, nessun codice
  * fiscale): la scheda completa sta in `[id]`, che scrive nel registro degli accessi.
  */
@@ -83,7 +85,7 @@ export const GET = withRoute('teacher/alunni:GET', async (request: NextRequest) 
           .from('alunni')
           .select(colonne.join(', '))
           .in('scuola_id', plessi)
-          .eq('stato', STATO_ISCRITTO)
+          .in('stato', [...STATI_CHE_FREQUENTANO])
           .is('anonimizzato_il', null)
         if (visibili.esito === 'sezioni') query = query.in('section_id', visibili.sezioni)
         return query

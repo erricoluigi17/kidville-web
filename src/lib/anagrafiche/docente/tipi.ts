@@ -26,7 +26,7 @@ export interface VoceElencoAlunno {
   dataNascita: string | null
   annoNascita: number | null
   sesso: 'M' | 'F' | null
-  /** Chiavi degli allergeni (anche fuori dai 14 UE): MAI il testo libero. */
+  /** Le chiavi restituite dal motore (in archivio possono esserci chiavi fuori dai 14 UE), mai il campo di testo libero `allergies`. */
   allergeni: string[]
   haAllergie: boolean
   besDsa: boolean
@@ -41,7 +41,7 @@ export interface ElencoAlunniRisposta {
   alunni: VoceElencoAlunno[]
 }
 
-export type Parentela = 'madre' | 'padre' | 'altro'
+export type Parentela = 'madre' | 'padre' | 'delegato' | 'altro'
 
 export interface GenitoreScheda {
   nome: string

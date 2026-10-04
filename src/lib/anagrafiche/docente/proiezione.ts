@@ -40,7 +40,10 @@ function testi(v: unknown): string[] {
 
 const vero = (v: unknown): boolean => v === true
 const booleanoONull = (v: unknown): boolean | null => (typeof v === 'boolean' ? v : null)
-const sesso = (v: unknown): 'M' | 'F' | null => (v === 'M' || v === 'F' ? v : null)
+function sesso(v: unknown): 'M' | 'F' | null {
+  const s = typeof v === 'string' ? v.trim().toUpperCase() : ''
+  return s === 'M' || s === 'F' ? s : null
+}
 
 function dataIso(v: unknown): string | null {
   return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null
@@ -91,21 +94,33 @@ export function proiettaVoceElenco(riga: RigaDb, gradoSezione: Grado | null): Vo
   }
 }
 
-const ORDINE_PARENTELA: Record<Parentela, number> = { madre: 0, padre: 1, altro: 2 }
+const ORDINE_PARENTELA: Record<Parentela | 'nessuna', number> = {
+  madre: 0,
+  padre: 1,
+  nessuna: 2,
+  altro: 3,
+  delegato: 4,
+}
 
+/**
+ * Stessa normalizzazione di `ruoloDaRelazione` (`src/lib/prestampati/prefill.ts`),
+ * con un'uscita diversa: là serve a compilare i moduli, qui a etichettare e ordinare.
+ */
 function parentela(v: unknown): Parentela | null {
   const r = typeof v === 'string' ? v.trim().toLowerCase() : ''
   if (r === '') return null
   if (r === 'mother' || r === 'madre') return 'madre'
   if (r === 'father' || r === 'padre') return 'padre'
+  if (r === 'delegate' || r === 'delegato') return 'delegato'
   return 'altro'
 }
 
 /**
  * I genitori dai legami `student_parents` con `parents` incorporato (oggetto o
  * array, secondo come PostgREST risolve la relazione). Un genitore anonimizzato
- * (diritto all'oblio) non compare. Prima il referente principale, poi madre, padre,
- * altri.
+ * (diritto all'oblio) non compare. Ordine deterministico: i delegati sempre dopo
+ * tutti gli altri (anche se `is_primary`), poi il referente principale, poi madre,
+ * padre, parentela assente, altri; a parità, cognome e nome in ordine alfabetico.
  */
 export function proiettaGenitori(legami: readonly RigaDb[]): GenitoreScheda[] {
   const genitori: GenitoreScheda[] = []
@@ -124,10 +139,14 @@ export function proiettaGenitori(legami: readonly RigaDb[]): GenitoreScheda[] {
       codiceFiscale: testo(p.fiscal_code)?.toUpperCase() ?? null,
     })
   }
+  const rango = (g: GenitoreScheda) => ORDINE_PARENTELA[g.parentela ?? 'nessuna']
   return genitori.sort(
     (a, b) =>
+      Number(a.parentela === 'delegato') - Number(b.parentela === 'delegato') ||
       Number(b.principale) - Number(a.principale) ||
-      ORDINE_PARENTELA[a.parentela ?? 'altro'] - ORDINE_PARENTELA[b.parentela ?? 'altro'],
+      rango(a) - rango(b) ||
+      a.cognome.localeCompare(b.cognome, 'it') ||
+      a.nome.localeCompare(b.nome, 'it'),
   )
 }
 

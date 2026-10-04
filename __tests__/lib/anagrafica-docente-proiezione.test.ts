@@ -113,6 +113,13 @@ describe('proiettaVoceElenco', () => {
     expect(proiettaVoceElenco({ id: 'x', allergies: 'Nessuna', allergeni: [] }, null).haAllergie).toBe(false)
   })
 
+  it('data con orario, sesso minuscolo, allergeni null o con elementi sporchi', () => {
+    const v = proiettaVoceElenco({ id: 'x', data_nascita: '2021-03-04T00:00:00+00', gender: ' f ' }, null)
+    expect(v).toMatchObject({ dataNascita: '2021-03-04', annoNascita: 2021, sesso: 'F' })
+    expect(() => proiettaVoceElenco({ id: 'x', allergeni: null }, null)).not.toThrow()
+    expect(proiettaVoceElenco({ id: 'x', allergeni: ['latte', null, ' '] }, null).allergeni).toEqual(['latte'])
+  })
+
   it('valori assenti o storti diventano null, non stringhe vuote né eccezioni', () => {
     const voce = proiettaVoceElenco({ id: 'x', gender: 'X', data_nascita: 'ieri', section_id: '' }, null)
     expect(voce).toMatchObject({ nome: '', sesso: null, dataNascita: null, annoNascita: null, sectionId: null })
@@ -180,13 +187,30 @@ describe('proiettaGenitori / proiettaDelegati', () => {
     for (const v of ['DOC-FINTO', 'doc/finto.pdf', 'Via Genitore', 'Anonima']) expect(json).not.toContain(v)
   })
 
-  it('una parentela sconosciuta è «altro», una assente è null', () => {
-    const [a, b] = proiettaGenitori([
-      { relation_type: 'delegate', parents: { first_name: 'Zia', last_name: 'X' } },
+  it('una parentela sconosciuta è «altro», una assente è null, «delegate» è «delegato»', () => {
+    const g = proiettaGenitori([
+      { relation_type: 'tutore', parents: { first_name: 'Zia', last_name: 'X' } },
       { relation_type: null, parents: { first_name: 'Y', last_name: 'X' } },
+      { relation_type: 'delegate', parents: { first_name: 'Del', last_name: 'X' } },
     ])
-    expect(a.parentela).toBe('altro')
-    expect(b.parentela).toBeNull()
+    const per = (nome: string) => g.find((x) => x.nome === nome)?.parentela
+    expect(per('Zia')).toBe('altro')
+    expect(per('Y')).toBeNull()
+    expect(per('Del')).toBe('delegato')
+  })
+
+  it('ordine deterministico: delegato sempre ultimo, poi principale, parentela, cognome, nome', () => {
+    const g = proiettaGenitori([
+      { relation_type: 'delegate', is_primary: true, parents: { first_name: 'Del', last_name: 'Aaa' } },
+      { relation_type: null, parents: { first_name: 'N1', last_name: 'Bianchi' } },
+      { relation_type: null, parents: { first_name: 'N2', last_name: 'Abate' } },
+      { relation_type: 'mother', is_primary: false, parents: { first_name: 'Mamma', last_name: 'Zeta' } },
+    ])
+    expect(g.map((x) => x.nome)).toEqual(['Mamma', 'N2', 'N1', 'Del'])
+  })
+
+  it('un legame con parents vuoto è saltato', () => {
+    expect(proiettaGenitori([{ relation_type: 'mother', parents: [] }])).toEqual([])
   })
 
   it('i delegati portano nome e parentela, mai il documento', () => {

@@ -10,7 +10,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
  * L'appunto sta in `sessionStorage` (la sola scheda del browser, si perde chiudendola)
  * e non contiene MAI la ricerca per nome: `q` si toglie sia salvando sia leggendo.
  * Uno storage che non risponde (navigazione privata, permessi) non rompe niente: si
- * torna all'elenco senza filtri, con un solo `warn` per sessione.
+ * torna all'elenco senza filtri, con un solo `warn` per caricamento della pagina (il flag vive nel modulo).
  */
 
 const CHIAVE = 'kv-teacher-alunni-ritorno'

@@ -40,7 +40,7 @@ l'errore di lettura (→ 500) dall'assenza di assegnazioni (→ elenco vuoto / 4
 **`src/lib/anagrafiche/docente/`** (nuovo modulo):
 
 - **`visibilita.ts`** — `sezioniAnagraficaVisibili(supabase, user)` →
-  `{ esito: 'tutte' } | { esito: 'sezioni', sezioni: string[] } | { esito: 'errore', errore }`.
+  `{ esito: 'tutte' } | { esito: 'sezioni', sezioni: string[] } | { esito: 'errore' }` (l'errore va nel log, non nel valore).
   - `admin` / `coordinator` / `segreteria` (`vedeTutteLeClassi`) → `tutte` (il limite resta la sede).
   - `educator` → unione di `utenti_sezioni` e `utenti_sezioni_materie`; nessuna assegnazione →
     `sezioni: []` (nega per difetto).
@@ -101,7 +101,8 @@ Ordine **vincolante**, nessun dato anagrafico letto prima che tutti i controlli 
 | `id` non uuid | 400 (`zod`), senza toccare il database |
 | Lettura minima `id, section_id, scuola_id, stato, anonimizzato_il` (tutte del baseline) | errore → 500 |
 | Inesistente, non `iscritto`, archiviato o anonimizzato | 404 |
-| Sede fuori da `scuoleDiUtente` | 403 |
+| Nessuna sede per l'utente (`scuoleDiUtente` vuoto) | admin → 500 (per lui il vuoto nasce da una lettura fallita di `utenti_scuole`), altri → 403 `ANAGRAFICA_SENZA_SEDE` |
+| Sede fuori da `scuoleDiUtente` | 403 `ANAGRAFICA_FUORI_SEDE` + log `warn` (solo uuid) |
 | `sezioniAnagraficaVisibili` in errore | 500 |
 | Educator e `section_id` non fra le sue sezioni | 403 + log `warn` (solo uuid di utente e alunno) |
 | Lettura anagrafica + genitori + delegati + sezione | errore → 500 |
@@ -209,7 +210,8 @@ margini nativi (lock `fascia-safe-area-nativa`).
 ## Log
 
 - `withRoute` su entrambe le route.
-- 403 «fuori sezione» → `logEvento(..., 'warn', { utente_id, alunno_id, esito: 'fuori-sezione' })`.
+- 403 «fuori sede» e «fuori sezione» → `logEvento('auth', 'warn', { tipo: 'anagrafica-fuori-sede' | 'anagrafica-fuori-sezione', azione, utente, alunno_id }, undefined, { distingui: ['alunno_id'] })`, con l'id canonico letto dal database.
+- Ogni risposta d'errore porta un `codice` dichiarato in `CODICI_ERRORE` e tradotto nei due cataloghi (lock `errori-con-codice`): `ANAGRAFICA_SCOPE_NON_RISOLTO`, `ANAGRAFICA_NON_TROVATA`, `ANAGRAFICA_FUORI_SEDE`, `ANAGRAFICA_FUORI_SEZIONE`, `ANAGRAFICA_SENZA_SEDE`, `ANAGRAFICA_ELENCO_NON_LETTO`, `ANAGRAFICA_NON_LETTA`.
 - Errori di lettura → `error`, con l'errore PostgREST intero come quarto argomento.
 - Solo uuid, conteggi e codici: mai nomi, codici fiscali o testi sanitari.
 

@@ -10,6 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-04-anagrafica-docente-design.md`. **Branch:** `feat/anagrafica-docente` (già creato).
 
+> **Valori di prova.** Nei blocchi di codice dei test, i valori accanto alle colonne di dati personali (`codice_fiscale`, `data_nascita`, `allergies`, `note_mediche`, `indirizzo`…) sono sostituiti da `[VALORE_DI_PROVA: …]`: il lock `__tests__/architecture/pii-nei-file-tracciati.test.ts` vieta la forma «colonna: valore» nei documenti tracciati, perché è quella di una query incollata. Il codice vero dei test, con i suoi valori palesemente inventati, sta nei file `__tests__/` citati da ogni task.
+
+
 ---
 
 ## Regole del repo che valgono per OGNI task
@@ -303,12 +306,12 @@ const RIGA_PIENA: Record<string, unknown> = {
   nome: '  Alfa ',
   cognome: 'Prova-E2E',
   gender: 'F',
-  data_nascita: '2021-03-04',
+  data_nascita: '[VALORE_DI_PROVA: nel file di test]',
   birth_city: 'Testville',
   birth_province: 'TV',
   birth_nation: 'Italia',
   citizenship: 'Italiana',
-  codice_fiscale: 'tstprv21c44z999q',
+  codice_fiscale: '[VALORE_DI_PROVA: nel file di test]',
   residence_address: 'Via Finta',
   residence_street_number: '1',
   zip_code: '00000',
@@ -316,9 +319,9 @@ const RIGA_PIENA: Record<string, unknown> = {
   residence_province: 'TV',
   section_id: SEZIONE_ID,
   data_iscrizione: '2025-09-01',
-  allergies: 'latte, fragole',
+  allergies: '[VALORE_DI_PROVA: nel file di test]',
   allergeni: ['latte'],
-  note_mediche: 'Riga uno\nRiga due',
+  note_mediche: '[VALORE_DI_PROVA: nel file di test]',
   is_bes_dsa: true,
   usa_pannolino: false,
   consenso_privacy: true,
@@ -390,15 +393,15 @@ describe('proiettaVoceElenco', () => {
   })
 
   it('allergeni dedotti dal testo quando l’archivio è vuoto; «fragole» resta un’allergia operativa', () => {
-    expect(proiettaVoceElenco({ id: 'x', allergies: 'uova', allergeni: [] }, null).allergeni).toEqual(['uova'])
-    const soloFragole = proiettaVoceElenco({ id: 'x', allergies: 'fragole', allergeni: [] }, null)
+    expect(proiettaVoceElenco({ id: 'x', allergies: '[VALORE_DI_PROVA: nel file di test]', allergeni: [] }, null).allergeni).toEqual(['uova'])
+    const soloFragole = proiettaVoceElenco({ id: 'x', allergies: '[VALORE_DI_PROVA: nel file di test]', allergeni: [] }, null)
     expect(soloFragole.allergeni).toEqual([])
     expect(soloFragole.haAllergie).toBe(true)
-    expect(proiettaVoceElenco({ id: 'x', allergies: 'Nessuna', allergeni: [] }, null).haAllergie).toBe(false)
+    expect(proiettaVoceElenco({ id: 'x', allergies: '[VALORE_DI_PROVA: nel file di test]', allergeni: [] }, null).haAllergie).toBe(false)
   })
 
   it('valori assenti o storti diventano null, non stringhe vuote né eccezioni', () => {
-    const voce = proiettaVoceElenco({ id: 'x', gender: 'X', data_nascita: 'ieri', section_id: '' }, null)
+    const voce = proiettaVoceElenco({ id: 'x', gender: 'X', data_nascita: '[VALORE_DI_PROVA: nel file di test]', section_id: '' }, null)
     expect(voce).toMatchObject({ nome: '', sesso: null, dataNascita: null, annoNascita: null, sectionId: null })
   })
 })
@@ -428,7 +431,7 @@ describe('proiettaScheda', () => {
     const s = scheda()
     expect(s.codiceFiscale).toBe('TSTPRV21C44Z999Q')
     expect(s.luogoNascita).toEqual({ comune: 'Testville', provincia: 'TV', nazione: 'Italia' })
-    expect(s.residenza).toEqual({ indirizzo: 'Via Finta', civico: '1', cap: '00000', comune: 'Testville', provincia: 'TV' })
+    expect(s.residenza).toEqual({ indirizzo: '[VALORE_DI_PROVA: nel file di test]', civico: '1', cap: '00000', comune: 'Testville', provincia: 'TV' })
     expect(s.sezione).toEqual({ id: SEZIONE_ID, nome: 'Girasoli', grado: 'infanzia' })
     expect(s.salute).toEqual({
       allergeni: ['latte'],
@@ -1157,6 +1160,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Create: `src/app/api/teacher/alunni/route.ts`
 - Test: `__tests__/api/teacher-alunni.test.ts`
+- Modify: `src/lib/ui/esito-fetch.ts`, `messages/{it,en}/shared.json` (codice d'errore)
 
 - [ ] **Step 1: scrivi il test che fallisce** — `__tests__/api/teacher-alunni.test.ts`:
 
@@ -1188,10 +1192,10 @@ import * as rotta from '@/app/api/teacher/alunni/route'
 
 const riga = (id: string, nome: string, cognome: string, section_id: string, scuola_id: string, extra: Record<string, unknown> = {}) => ({
   id, nome, cognome, section_id, scuola_id,
-  stato: 'iscritto', anonimizzato_il: null, gender: 'F', data_nascita: '2021-03-04',
+  stato: 'iscritto', anonimizzato_il: null, gender: 'F', data_nascita: '[VALORE_DI_PROVA: nel file di test]',
   allergies: null, allergeni: [], is_bes_dsa: false, usa_pannolino: false,
   consenso_foto_sito: true, consenso_foto_social: true,
-  note_mediche: 'NOTA-RISERVATA', codice_fiscale: 'TSTCFX21C44Z999Q', importo_retta_mensile: 987,
+  note_mediche: '[VALORE_DI_PROVA: nel file di test]', codice_fiscale: '[VALORE_DI_PROVA: nel file di test]', importo_retta_mensile: 987,
   ...extra,
 })
 
@@ -1402,6 +1406,27 @@ export const GET = withRoute(OPERAZIONE, async (request: NextRequest) => {
 })
 ```
 
+- [ ] **Step 3b: dichiara il codice d'errore** — il lock `errori-con-codice` pretende che ogni codice che esce da `src/` sia dichiarato e tradotto. In `src/lib/ui/esito-fetch.ts`, dentro `CODICI_ERRORE`, accanto alle voci `ANAGRAFICA_*` del Task 3:
+
+```ts
+    /** 500 — l'elenco dell'anagrafica docente non si è potuto leggere (`api/teacher/alunni`). */
+    ANAGRAFICA_ELENCO_NON_LETTO: 'erroreAnagraficaElencoNonLetto',
+```
+
+e nei due cataloghi condivisi, accanto alle altre voci `erroreAnagrafica…`:
+
+```json
+  "erroreAnagraficaElencoNonLetto": "Non è stato possibile caricare l’elenco degli alunni.",
+```
+
+(`messages/it/shared.json`) e
+
+```json
+  "erroreAnagraficaElencoNonLetto": "The student list could not be loaded.",
+```
+
+(`messages/en/shared.json`).
+
 - [ ] **Step 4: verifica che passi, insieme ai lock delle route**
 
 Run: `npx vitest run __tests__/api/teacher-alunni.test.ts __tests__/api/zod-coverage.test.ts __tests__/architecture/logging-coverage.test.ts __tests__/architecture/gate-coverage.test.ts __tests__/architecture/isolamento-sede-coverage.test.ts __tests__/architecture/elenchi-operativi-solo-iscritti.test.ts __tests__/architecture/scope-vuoto-nega.test.ts __tests__/architecture/identita-della-classe.test.ts 2>&1 | tail -12`
@@ -1410,7 +1435,7 @@ Expected: `Test Files  8 passed (8)`. Se un lock è rosso, leggi il suo messaggi
 - [ ] **Step 5: commit**
 
 ```bash
-git add src/app/api/teacher/alunni/route.ts __tests__/api/teacher-alunni.test.ts
+git add src/app/api/teacher/alunni/route.ts __tests__/api/teacher-alunni.test.ts src/lib/ui/esito-fetch.ts messages/it/shared.json messages/en/shared.json
 git commit -m "Anagrafica docente: GET /api/teacher/alunni (elenco in sola lettura)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1423,6 +1448,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Create: `src/app/api/teacher/alunni/[id]/route.ts`
 - Test: `__tests__/api/teacher-alunni-scheda.test.ts`
+- Modify: `src/lib/ui/esito-fetch.ts`, `messages/{it,en}/shared.json` (codice d'errore)
 
 - [ ] **Step 1: scrivi il test che fallisce** — `__tests__/api/teacher-alunni-scheda.test.ts`:
 
@@ -1470,7 +1496,7 @@ import * as rotta from '@/app/api/teacher/alunni/[id]/route'
 
 const alunno = (id: string, section_id: string, scuola_id: string, extra: Record<string, unknown> = {}) => ({
   id, section_id, scuola_id, nome: 'Alfa', cognome: 'Prova-E2E', stato: 'iscritto', anonimizzato_il: null,
-  gender: 'F', data_nascita: '2021-03-04', codice_fiscale: `tst${id.slice(0, 4)}21c44z999q`,
+  gender: 'F', data_nascita: '[VALORE_DI_PROVA: nel file di test]', codice_fiscale: `[VALORE_DI_PROVA: nel file di test]`,
   allergies: null, allergeni: [], note_mediche: null, is_bes_dsa: false, usa_pannolino: false,
   consenso_privacy: true, consenso_foto_sito: true, consenso_foto_social: false,
   importo_retta_mensile: 987, intestatario_fatture: 'INTESTATARIO-FINTO', documento_path: 'doc/ALUNNO-FINTO.pdf',
@@ -1488,7 +1514,7 @@ const dbBase = (): DBFinto => ({
   utenti_sezioni_materie: [{ utente_id: 'ed1', section_id: SEZ_MATERIA, materia_id: 'm1' }],
   utenti_scuole: [],
   alunni: [
-    alunno(ALU_MIO, SEZ_MIA, SEDE_A, { codice_fiscale: CF_MIO.toLowerCase(), allergies: 'latte, fragole', allergeni: ['latte'] }),
+    alunno(ALU_MIO, SEZ_MIA, SEDE_A, { codice_fiscale: CF_MIO.toLowerCase(), allergies: '[VALORE_DI_PROVA: nel file di test]', allergeni: ['latte'] }),
     alunno(ALU_ALTRUI, SEZ_ALTRUI, SEDE_A),
     alunno(ALU_MATERIA, SEZ_MATERIA, SEDE_A),
     alunno(ALU_B, SEZ_B, SEDE_B),
@@ -1754,6 +1780,27 @@ export const GET = withRoute(
 )
 ```
 
+- [ ] **Step 3b: dichiara il codice d'errore** — il lock `errori-con-codice` pretende che ogni codice che esce da `src/` sia dichiarato e tradotto. In `src/lib/ui/esito-fetch.ts`, dentro `CODICI_ERRORE`, accanto alle voci `ANAGRAFICA_*` del Task 3:
+
+```ts
+    /** 500 — la scheda dell'anagrafica docente non si è potuta leggere (`api/teacher/alunni/[id]`). */
+    ANAGRAFICA_NON_LETTA: 'erroreAnagraficaNonLetta',
+```
+
+e nei due cataloghi condivisi, accanto alle altre voci `erroreAnagrafica…`:
+
+```json
+  "erroreAnagraficaNonLetta": "Non è stato possibile caricare la scheda dell’alunno.",
+```
+
+(`messages/it/shared.json`) e
+
+```json
+  "erroreAnagraficaNonLetta": "The student record could not be loaded.",
+```
+
+(`messages/en/shared.json`).
+
 - [ ] **Step 4: verifica che passi, insieme ai lock**
 
 Run: `npx vitest run __tests__/api/teacher-alunni-scheda.test.ts __tests__/api/zod-coverage.test.ts __tests__/architecture/logging-coverage.test.ts __tests__/architecture/gate-coverage.test.ts __tests__/architecture/isolamento-sede-coverage.test.ts __tests__/architecture/supabase-client-strumentato.test.ts 2>&1 | tail -10`
@@ -1764,7 +1811,7 @@ Expected: `Test Files  6 passed (6)`. Un lock rosso si corregge nella route segu
 - [ ] **Step 6: commit**
 
 ```bash
-git add "src/app/api/teacher/alunni/[id]/route.ts" __tests__/api/teacher-alunni-scheda.test.ts
+git add "src/app/api/teacher/alunni/[id]/route.ts" __tests__/api/teacher-alunni-scheda.test.ts src/lib/ui/esito-fetch.ts messages/it/shared.json messages/en/shared.json
 git commit -m "Anagrafica docente: GET /api/teacher/alunni/[id] con audit degli accessi
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"

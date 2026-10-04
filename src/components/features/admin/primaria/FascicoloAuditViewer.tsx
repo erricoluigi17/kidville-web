@@ -80,7 +80,7 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
                       documenti del fascicolo (PEI/PDP, sanitari): lo si dice. Le altre
                       finalità restano come prima. */}
                   {r.finalita === FINALITA_AUDIT_ANAGRAFICA && (
-                    <span className="ml-1.5 font-maven text-[11px] text-kidville-muted">
+                    <span className="ml-1.5 font-maven text-[11px] text-kidville-sub">
                       {t('fascicoloFinalitaAnagraficaDocente')}
                     </span>
                   )}

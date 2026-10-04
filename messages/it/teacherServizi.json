@@ -331,6 +331,6 @@
   "anagraficaErroreLettura": "Non è stato possibile caricare la scheda.",
   "anagraficaErroreOffline": "Serve la connessione per aprire la scheda.",
   "anagraficaRiprova": "Riprova",
-  "anagraficaErroreSessione": "La sessione è scaduta: accedi di nuovo per vedere la scheda.",
+  "anagraficaErroreSessione": "La sessione è scaduta: accedi di nuovo.",
   "anagraficaAccedi": "Accedi"
 }

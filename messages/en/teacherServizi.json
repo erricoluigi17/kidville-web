@@ -331,6 +331,6 @@
   "anagraficaErroreLettura": "The record could not be loaded.",
   "anagraficaErroreOffline": "You need a connection to open the record.",
   "anagraficaRiprova": "Try again",
-  "anagraficaErroreSessione": "Your session has expired: sign in again to see the record.",
+  "anagraficaErroreSessione": "Your session has expired: please sign in again.",
   "anagraficaAccedi": "Sign in"
 }

@@ -27,7 +27,6 @@ export interface ContestoFiltriAlunni {
 
 export function campiAlunni(t: Traduttore, contesto: ContestoFiltriAlunni): CampoFiltro<VoceElencoAlunno>[] {
   const { alunni } = contesto
-  const nomeSezione = new Map(contesto.sezioni.map((s) => [s.id, s.nome]))
   const ORDINE_GRADI: readonly Grado[] = ['nido', 'infanzia', 'primaria']
   const etichettaGrado: Record<Grado, string> = {
     nido: t('anagraficaGradoNido'),
@@ -37,10 +36,11 @@ export function campiAlunni(t: Traduttore, contesto: ContestoFiltriAlunni): Camp
   const etichettaSesso: Record<'M' | 'F', string> = { M: t('anagraficaSessoM'), F: t('anagraficaSessoF') }
 
   // Sezioni: solo quelle note (mai un uuid come etichetta), nell'ordine dei gruppi dell'elenco.
-  const sezioniPerId = new Map(
-    opzioniDerivate(alunni, (a) => a.sectionId, { etichettaDi: (id) => nomeSezione.get(id) ?? id }).map((o) => [o.valore, o]),
-  )
-  const sezioni = contesto.sezioni.flatMap((s) => sezioniPerId.get(s.id) ?? [])
+  const conteggiSezioni = new Map(opzioniDerivate(alunni, (a) => a.sectionId).map((o) => [o.valore, o]))
+  const sezioni = contesto.sezioni.flatMap((s) => {
+    const o = conteggiSezioni.get(s.id)
+    return o ? [{ ...o, etichetta: s.nome }] : []
+  })
   // Gradi: ordine fisso, non alfabetico (l'alfabeto cambia con la lingua).
   const gradiPerValore = new Map(
     opzioniDerivate(alunni, (a) => a.grado, { etichettaDi: (g) => etichettaGrado[g as Grado] ?? g }).map((o) => [o.valore, o]),

@@ -19,8 +19,11 @@ describe('ripulisciRitorno', () => {
     expect(ripulisciRitorno('?sezione=S1&q=rossi&bes=1')).toBe('?sezione=S1&bes=1')
   })
   it('una query lunga ma sensata (molte sezioni, sotto 2000) sopravvive', () => {
-    const lunga = `?${Array.from({ length: 15 }, (_, i) => `sezione=11111111-1111-1111-1111-1111111111${String(i).padStart(2, '0')}`).join('&')}&bes=1`
+    // `useFiltri` scrive UN parametro, coi valori separati da virgola codificata
+    const uuid = Array.from({ length: 20 }, (_, i) => `11111111-1111-1111-1111-1111111111${String(i).padStart(2, '0')}`)
+    const lunga = `?sezione=${uuid.join('%2C')}&bes=1`
     expect(lunga.length).toBeGreaterThan(600)
+    expect(lunga.length).toBeLessThan(2000)
     expect(ripulisciRitorno(lunga)).toBe(lunga)
   })
   it('la lunghezza si misura DOPO aver tolto la ricerca', () => {
@@ -30,7 +33,9 @@ describe('ripulisciRitorno', () => {
     expect(ripulisciRitorno('')).toBe('')
     expect(ripulisciRitorno('?q=rossi')).toBe('')
     expect(ripulisciRitorno(`?sezione=${'x'.repeat(2100)}`)).toBe('')
-    expect(ripulisciRitorno(undefined as unknown as string)).toBe('')
+    expect(ripulisciRitorno(null as unknown as string)).toBe('')
+    // `new URLSearchParams(null)` è già vuoto: la guardia si misura con un valore che non lo è
+    expect(ripulisciRitorno(5 as unknown as string)).toBe('')
   })
 })
 

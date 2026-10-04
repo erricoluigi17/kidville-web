@@ -18,19 +18,20 @@
   - `proiezione.ts`: lista bianca campo per campo.
   - `tipi.ts`, `ritorno-elenco.ts`.
 - **Ordine della scheda.** Ruolo, poi uuid, poi controllo (riga minima, 404, sedi, sezioni), poi letture, poi proiezione, poi audit. La seconda lettura rifiltra stato iscritto, non anonimizzato e sede: un bambino archiviato fra il controllo e la lettura dà 404, non 200.
-- **Sedi vuote.** Per l'admin nascono da una lettura fallita di `utenti_scuole`, e la risposta è 500. Per gli altri ruoli la risposta è 403 `ANAGRAFICA_SENZA_SEDE`. Lo stesso vale in elenco e scheda.
+- **Sedi vuote.** Per l'admin nascono da una lettura fallita di `utenti_scuole`, e la risposta è 500. Per gli altri ruoli la risposta è 403 `ANAGRAFICA_SENZA_SEDE`. Lo stesso vale in elenco e scheda (`sediAnagrafica`). L'elenco legge le sedi una volta sola: `resolveScuoleAttive` ha un quarto parametro opzionale `accessibili`.
 - **Audit.** Ogni scheda aperta scrive una riga in `fascicolo_accessi_audit` con `azione: 'view'` e `finalita: 'anagrafica-docente'` (costante condivisa `FINALITA_AUDIT_ANAGRAFICA`), **dopo** controlli e lettura. Se l'audit fallisce, la scheda si mostra e il guasto va in log `error`.
-- **Il registro letto dalla segreteria** (Direzione → Primaria → «Fascicoli») etichetta queste righe «Scheda anagrafica». Così non vengono scambiate per una visione di PEI, PDP o documenti sanitari.
+- **Il registro letto dalla segreteria** (Direzione → Primaria → «Fascicoli») etichetta queste righe «Scheda anagrafica», perché non vengano scambiate per una visione di PEI, PDP o documenti sanitari, e per default **le esclude** (`GET /api/admin/primaria/fascicolo-audit`, parametro `conAnagrafica`, con un interruttore nel visualizzatore). Misurato: il registro riceve già ~53 righe al giorno e ne mostra 200; con 74 docenti le visioni vere del fascicolo uscirebbero dalla finestra in meno di un giorno.
+- **Effetto sulla cancellazione del personale.** `fascicolo_accessi_audit.utente_id` blocca la cancellazione di un account: un docente che ha aperto anche una sola scheda si archivia, non si cancella. È voluto, perché il registro degli accessi a dati di minori deve sopravvivere all'account.
 - **Log.** `warn` `anagrafica-fuori-sede` e `anagrafica-fuori-sezione` con i soli uuid (`distingui: ['alunno_id']`), `anagrafica-elenco-troncato` al tetto `LIMITE_ELENCO_ALUNNI`, `error` sui guasti.
 - **Codici d'errore.** Tutti dichiarati in `CODICI_ERRORE` e tradotti: `ANAGRAFICA_SCOPE_NON_RISOLTO`, `_NON_TROVATA`, `_FUORI_SEDE`, `_FUORI_SEZIONE`, `_SENZA_SEDE`, `_ELENCO_NON_LETTO`, `_NON_LETTA`.
 - **DB della CI.** Le letture passano da `selectResiliente`: sul DB E2E della CI, non migrato, una colonna recente che manca diventa «Non indicato».
 
 **Client.**
 - Pagine `/teacher/alunni` e `/teacher/alunni/[id]`. Sono gusci: i dati arrivano solo dall'API e non entrano nell'HTML né in Dexie.
-- **Barra filtri.** È il motore condiviso (`useFiltri` + `BarraFiltri`). Ha un nuovo flag `maiNellUrl` sui campi: **la ricerca per nome non entra nell'indirizzo**, perché il service worker usa l'URL come chiave di cache su disco.
+- **Barra filtri.** È il motore condiviso (`useFiltri` + `BarraFiltri`). Ha un nuovo flag `maiNellUrl` sui campi: **la ricerca per nome non entra nell'indirizzo**, perché l'URL completo resta nella cronologia del browser, nei log di accesso a ogni ricarica e negli indirizzi condivisi (la cache del service worker usa solo il percorso, la query no).
 - **Ritorno dalla scheda.** Gli altri filtri si ritrovano col tasto indietro. Il pulsante «Tutti gli alunni», fisso in alto, li ritrova da `sessionStorage`, senza mai il nome cercato.
 - **Scheda.** Nessun campo modificabile (verificato da un test). In cima, il banner delle allergie. Parentela `madre` / `padre` / `delegato` / `altro`, e nessuna etichetta se manca. Delegati con il nome in evidenza. Link `tel:` e `mailto:`.
-- **Stati.** 403, 404, sessione scaduta (con «Accedi»), errore con «Riprova», assenza di rete.
+- **Stati.** 403 (col messaggio del `codice` quando non è «fuori sede/sezione»), 404, sessione scaduta (con «Accedi»), errore con «Riprova», assenza di rete; gli stessi nell'elenco. Le righe dell'elenco hanno `prefetch={false}`: per la Direzione sono più di 700.
 - **Accessibilità.** Regione `aria-live` sempre montata, fuoco dopo «Riprova», anello di focus visibile nell'elenco.
 - **Freccia «indietro» dell'AppBar.** È nascosta sulla scheda, come nella classe della primaria: perdeva i filtri.
 - Service worker `v13` per la nuova etichetta offline `alunni`. Testi in `teacherServizi`, `teacherNav`, `adminPrimaria` (it/en; in inglese «location» per «sede», termini allineati al catalogo).

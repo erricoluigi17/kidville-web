@@ -62,7 +62,7 @@ l'errore di lettura (→ 500) dall'assenza di assegnazioni (→ elenco vuoto / 4
 
 #### `GET /api/teacher/alunni` — l'elenco
 
-1. `requireDocente` → `resolveScuoleAttive` (sedi) → `sezioniAnagraficaVisibili`.
+1. `requireDocente` → `sediAnagrafica` (nessuna sede: admin → 500, altri → 403 `ANAGRAFICA_SENZA_SEDE`) → `resolveScuoleAttive(request, supabase, user, sedi.plessi)` (il selettore di sede, senza rileggere `utenti_scuole`) → `sezioniAnagraficaVisibili`.
 2. Errore → 500. `sezioni: []` → `{ sezioni: [], alunni: [] }` senza interrogare `alunni`.
 3. Query su `alunni` con, nella **stessa** query: filtro di sede (`.in('scuola_id', plessi)`),
    `.eq('stato', STATO_ISCRITTO)` incondizionato (lock `elenchi-operativi-solo-iscritti`; esclude
@@ -153,9 +153,8 @@ passa dalla read-cache Dexie: un codice fiscale non deve finire su disco.
 
 | Componente | Compito |
 |---|---|
-| `ElencoAlunniDocente` | carica l'elenco, tiene lo stato dei filtri, raggruppa per sezione |
-| `BarraFiltriAlunni` | ricerca per nome + pulsante «Filtri» col numero dei filtri attivi + etichette rimovibili + «Azzera filtri» + contatore «12 di 28 bambini» |
-| `PannelloFiltriAlunni` | il pannello dei filtri (dal basso su telefono, sotto la barra su schermi larghi) |
+| `ElencoAlunniDocente` | carica l'elenco (funzione di modulo + effetto con `setState` nel `.then`), gestisce errore, 403, sessione scaduta e assenza di rete, poi monta il pannello |
+| `PannelloAlunni` | la `BarraFiltri` condivisa (variante compatta: ricerca, pulsante «Filtri», etichette rimovibili, contatore) con i campi di `filtri-alunni.ts`, e l'elenco raggruppato per sezione con «Senza sezione» in fondo; righe con `prefetch={false}` (l'elenco della Direzione supera le 700 righe) |
 | `SchedaAlunnoLettura` | carica la scheda e la impagina |
 | `RiquadroScheda` | un blocco con titolo |
 | `CampoLettura` | riga «etichetta: valore», «Non indicato» se vuoto |
@@ -180,12 +179,16 @@ passa dalla read-cache Dexie: un codice fiscale non deve finire su disco.
 - Anno di nascita e non fascia d'età: non dipende dalla data di oggi.
 - Le opzioni nascono dai dati, quindi il pannello dei filtri si **monta dopo** il caricamento:
   `useFiltri` legge l'indirizzo una volta sola, e un valore che non è fra le opzioni lo scarta.
-- **La ricerca per nome non entra mai nell'indirizzo.** Oggi il motore scrive ogni filtro attivo
-  nell'URL (`history.replaceState`), e il service worker salva le pagine visitate usando
-  l'indirizzo come chiave: un nome di bambino finirebbe salvato sul telefono e nei log di accesso.
-  Si aggiunge al tipo dei campi un flag `maiNellUrl?: boolean`: `versoUrl` lo salta e
-  `valoriIniziali` lo ignora. Il parametro resta comunque **governato**, quindi se un indirizzo lo
-  porta, la barra lo cancella.
+- **La ricerca per nome non entra mai nell'indirizzo.** Il motore scrive ogni filtro attivo
+  nell'URL (`history.replaceState`), e l'URL completo finisce nella cronologia del browser
+  (salvata sul dispositivo), nei log di accesso del server a ogni ricarica o apertura diretta, e in
+  un indirizzo copiato o condiviso: un nome di bambino non deve starci. (La cache del service
+  worker non c'entra: `chiaveDocumento` usa solo `origin + pathname`.) Si aggiunge al tipo dei
+  campi un flag `maiNellUrl?: boolean`: `versoUrl` lo salta e `valoriIniziali` lo ignora. Il
+  parametro resta **governato**: se un indirizzo lo porta, la barra lo toglie alla prima modifica
+  di un filtro o uscendo dalla pagina. Il flag riguarda solo l'indirizzo della PAGINA: si usa solo
+  su campi `dove: 'client'` (su un campo `server` il valore viaggerebbe comunque nella query
+  dell'API).
 - Gli altri filtri restano nell'indirizzo, come in tutte le barre del progetto. Per questo tornando
   indietro dalla scheda col tasto del telefono o del browser si ritrovano da soli. Il pulsante
   «Tutti gli alunni» della scheda li ritrova da `sessionStorage`
@@ -263,6 +266,21 @@ Branch `feat/anagrafica-docente` → piano → implementazione TDD → PRD (tabe
 datato) → revisione del codice → PR → CI verde su **tutti** i job → merge a mano (niente
 auto-merge) → deploy → verifica in produzione con sole `SELECT` (righe di audit con
 `finalita = 'anagrafica-docente'` dopo il primo uso vero) → pulizia dei branch.
+
+## Effetti collaterali da conoscere
+
+- **Cancellazione del personale.** `fascicolo_accessi_audit.utente_id` è una traccia che blocca la
+  cancellazione di un account (`src/lib/personale/tracce-docente-voci.ts`): da ora un docente che
+  ha aperto anche una sola scheda non si cancella, si archivia. È voluto: il registro degli accessi
+  a dati di minori deve sopravvivere all'account.
+- **Registro degli accessi della Direzione.** Le aperture della scheda finiscono nello stesso
+  registro dei documenti del fascicolo. Il visualizzatore (`FascicoloAuditViewer`) e la sua route
+  (`GET /api/admin/primaria/fascicolo-audit`, parametro `conAnagrafica`) le ESCLUDONO per default,
+  con un interruttore per includerle: altrimenti, con le ultime 200 righe, le visioni vere di
+  PEI/PDP uscirebbero dalla finestra in meno di un giorno.
+- **Messaggi d'errore dal codice.** Il client traduce il `codice` della risposta
+  (`messaggioDaCorpo`) per i 403 che non sono «fuori sede/sezione» (profilo senza sede, account
+  archiviato).
 
 ## Fuori perimetro
 

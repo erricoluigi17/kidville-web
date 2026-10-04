@@ -15,6 +15,33 @@
 
 ---
 
+## Scostamenti del codice finale dal piano (dopo le revisioni)
+
+Il piano qui sotto è quello eseguito; ogni task è passato da due revisioni (conformità e qualità,
+con mutanti) e le correzioni hanno cambiato il codice in questi punti. **Vale il codice.**
+
+- **Proiezione:** parentela anche `'delegato'`; ordine deterministico dei genitori (delegati in
+  fondo, poi referente, madre, padre, parentela assente, altro, poi cognome e nome); un delegato non
+  è mai «referente principale»; `sesso` normalizzato in maiuscolo.
+- **Visibilità:** codici d'errore con costanti locali e corpi letterali (lock `errori-con-codice`);
+  `sediAnagrafica()` estratta e condivisa da elenco e scheda (nessuna sede: admin → 500, altri →
+  403 `ANAGRAFICA_SENZA_SEDE`); `warn` anche per il «fuori sede»; log con l'id canonico (`riga.id`).
+- **Elenco:** `LIMITE_ELENCO_ALUNNI` con `warn` al tetto; `resolveScuoleAttive` ha un quarto
+  parametro opzionale `accessibili` per non rileggere `utenti_scuole`.
+- **Scheda:** la seconda lettura rifiltra `stato` e `anonimizzato_il`; caricamento con funzione di
+  modulo + effetto (`setState` nel `.then`), non con `try/finally` vuoto; esito «sessione» (401);
+  il client legge il `codice` dei 403; regione `aria-live`; delegati come elenco col nome in
+  evidenza; «Tutti gli alunni» fisso in alto.
+- **Elenco (UI):** stessa forma di caricamento; 401, 403 col codice, assenza di rete; niente barra
+  su elenco vuoto; anello di focus con `outline-offset` `!important`; righe `prefetch={false}`.
+- **Fuori dalla cartella della funzione:** `AppBar.tsx` (`suppressBack` sulla scheda),
+  `FascicoloAuditViewer.tsx` + `api/admin/primaria/fascicolo-audit` (etichetta «Scheda
+  anagrafica» e filtro `conAnagrafica`), `esito-fetch.ts` e `shared.json` (7 codici),
+  `adminPrimaria.json`, `public/sw.js` (`v13`), conteggi-fotografia del lock
+  `isolamento-sede-coverage`, `scope.ts`.
+- **Testi inglesi** allineati al catalogo (BES/DSA, diapers, Gender, Postal Code, Enrollment
+  date); «sede» → «location».
+
 ## Regole del repo che valgono per OGNI task
 
 - Si legge con `Read`, si cerca con `Grep`/`Glob`; ogni comando che stampa molto passa da `tail`.
@@ -72,8 +99,8 @@ import { parametriGovernati, valoriIniziali, versoUrl } from '@/lib/ui/filtri/mo
 import type { CampoFiltro } from '@/lib/ui/filtri/tipi'
 
 // La ricerca per nome dell'anagrafica docente porta il NOME di un bambino: non deve
-// finire nell'indirizzo, che il service worker usa come chiave di cache su disco e che
-// i log di accesso registrano. Gli altri filtri restano nell'URL come sempre.
+// finire nell'indirizzo, che resta nella cronologia del browser e che i log di accesso
+// registrano a ogni ricarica. Gli altri filtri restano nell'URL come sempre.
 
 interface Riga {
   nome: string
@@ -127,9 +154,9 @@ Expected: FAIL (`expected 'Rossi' to be null` sui primi due casi; `tsc` segnaler
 ```ts
   /**
    * Il valore può contenere un DATO PERSONALE (un nome digitato nella ricerca): non
-   * si scrive mai nell'indirizzo e non si legge da lì. Il service worker salva le
-   * pagine usando l'indirizzo come chiave, e i log di accesso registrano la query:
-   * un nome di bambino finirebbe in tutti e due. Il parametro resta comunque
+   * si scrive mai nell'indirizzo e non si legge da lì. L'URL completo resta nella
+   * cronologia del browser e nei log di accesso a ogni ricarica, e viaggia in un
+   * indirizzo condiviso: un nome di bambino non deve starci. Il parametro resta comunque
    * GOVERNATO (`parametriGovernati`), quindi se un indirizzo lo porta la barra lo
    * cancella.
    */
@@ -3647,7 +3674,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - `src/lib/anagrafiche/docente/`: `visibilita.ts` (una funzione sola decide elenco e scheda; un guasto di lettura è un **500 con log**, mai «nessuna sezione»), `colonne.ts` (colonne una per una, mai `*`), `proiezione.ts` (lista bianca campo per campo), `ritorno-elenco.ts`.
 - Audit: ogni scheda aperta scrive una riga in `fascicolo_accessi_audit` (`azione: 'view'`, `finalita: 'anagrafica-docente'`), **dopo** i controlli e la lettura. Un 403 «fuori sezione» lascia un `warn` `anagrafica-fuori-sezione` con i soli uuid.
 - Letture con `selectResiliente`: sul DB E2E della CI una colonna recente mancante diventa «Non indicato».
-- Filtri: motore condiviso (`useFiltri` + `BarraFiltri`). Nuovo flag `maiNellUrl` sui campi: la ricerca per nome **non entra nell'indirizzo**, perché il service worker usa l'URL come chiave di cache su disco.
+- Filtri: motore condiviso (`useFiltri` + `BarraFiltri`). Nuovo flag `maiNellUrl` sui campi: la ricerca per nome **non entra nell'indirizzo**, perché l'URL completo resta nella cronologia del browser e nei log di accesso a ogni ricarica (la cache del service worker usa solo il percorso).
 - Lock nuovo `__tests__/architecture/assegnazioni-docente-coerenti.test.ts`: le tre funzioni «questa classe è tua» leggono le stesse due tabelle. Il commento di `fascicolo-rbac.ts` citava un lock che **non è mai esistito**.
 - UI: `src/components/features/teacher/anagrafica/`, pagine `/teacher/alunni` e `/teacher/alunni/[id]`, nessun campo modificabile. Testi in `teacherServizi`/`teacherNav` (it/en), etichetta offline, tinta `alunni`.
 

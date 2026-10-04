@@ -78,6 +78,8 @@ const dbBase = (): DBFinto => ({
   ],
   delegates: [
     { id: 'd1', student_id: ALU_MIO, first_name: 'Nonna', last_name: 'Prova-E2E', relation: 'Nonna', document_number: 'DOC-DELEGATO-FINTO', document_url: 'u', created_at: '2026-09-01T00:00:00Z' },
+    // Inserito DOPO ma creato PRIMA: esce per primo solo se la lettura ordina per `created_at`.
+    { id: 'd2', student_id: ALU_MIO, first_name: 'Zio', last_name: 'Prova-E2E', relation: 'Zio', document_number: 'DOC-DELEGATO-FINTO-2', document_url: 'u', created_at: '2026-08-01T00:00:00Z' },
   ],
   fascicolo_accessi_audit: [],
 })
@@ -135,7 +137,10 @@ describe('GET /api/teacher/alunni/[id] — si apre', () => {
     expect(scheda.genitori).toEqual([
       { nome: 'Mamma', cognome: 'Prova-E2E', parentela: 'madre', principale: true, telefoni: ['333 000 0000'], email: ['mamma@example.test'], codiceFiscale: 'TSTMMM80A41Z999Q' },
     ])
-    expect(scheda.delegati).toEqual([{ nome: 'Nonna', cognome: 'Prova-E2E', parentela: 'Nonna' }])
+    expect(scheda.delegati).toEqual([
+      { nome: 'Zio', cognome: 'Prova-E2E', parentela: 'Zio' },
+      { nome: 'Nonna', cognome: 'Prova-E2E', parentela: 'Nonna' },
+    ])
 
     expect(audit()).toHaveLength(1)
     expect(audit()[0].valori[0]).toMatchObject({ alunno_id: ALU_MIO, utente_id: 'ed1', azione: 'view', finalita: 'anagrafica-docente' })
@@ -268,12 +273,14 @@ describe('GET /api/teacher/alunni/[id] — non si apre', () => {
 })
 
 describe('GET /api/teacher/alunni/[id] — la corsa fra il controllo e la lettura', () => {
-  // Archiviare e dimenticare non cancellano la riga: la AGGIORNANO (`stato`, `anonimizzato_il`).
-  // La lettura della scheda deve rifare i due filtri del controllo, o un bambino archiviato
-  // nell'intervallo esce con 200 e una riga di audit. Un test per filtro: ciascuno da solo.
+  // Archiviare, dimenticare e trasferire non cancellano la riga: la AGGIORNANO (`stato`,
+  // `anonimizzato_il`, `scuola_id`). La lettura della scheda deve rifare i filtri del
+  // controllo, o un bambino uscito dal perimetro nell'intervallo esce con 200 e una riga di
+  // audit. Un test per filtro: ciascuno da solo.
   it.each([
     ['passa a «ritirato»', (a: Record<string, unknown>) => ({ ...a, stato: 'ritirato' })],
     ['viene anonimizzato', (a: Record<string, unknown>) => ({ ...a, anonimizzato_il: '2026-10-04T00:00:00Z' })],
+    ['cambia sede', (a: Record<string, unknown>) => ({ ...a, scuola_id: SEDE_B })],
   ])('se il bambino %s fra le due letture: 404, niente cache, nessuna riga di audit', async (_caso, modifica) => {
     h.errori = cambiaFraLeDueLetture(modifica)
     const res = await chiama(ALU_MIO)

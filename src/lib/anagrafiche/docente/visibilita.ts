@@ -21,6 +21,13 @@ import { COLONNE_GATE } from './colonne'
  * come «nessuna sezione» — cioè come un permesso negato o un elenco vuoto, senza
  * traccia. Su un dato di minori «non sono riuscito a leggere» e «non è tuo» non
  * possono avere la stessa risposta: qui il primo è un 500 con log `error`.
+ *
+ * «Tutte le classi» si decide su `user.role`, la veste ATTIVA, come fa
+ * `assertAlunnoInScope`, e non sui ruoli reali. Per chi lavora in una classe la veste
+ * non allarga e non restringe niente: l'insegnante che guarda l'app da genitore
+ * continua a vedere le classi a cui è assegnata, perché le assegnazioni si leggono per
+ * `user.id`. Dove la veste può sbagliare (la segretaria in veste di genitore) sbaglia
+ * nel verso restrittivo: vede solo le classi assegnate, mai di più.
  */
 
 export type SezioniVisibili =
@@ -63,15 +70,66 @@ export interface AlunnoInScope {
 
 export type EsitoScope = { ok: true; alunno: AlunnoInScope } | { ok: false; response: NextResponse }
 
-const rifiuto = (status: number, error: string, codice: string): EsitoScope => ({
+/**
+ * I codici dei cinque rifiuti che nascono qui, dichiarati in `CODICI_ERRORE`
+ * (`src/lib/ui/esito-fetch.ts`) e tradotti in `messages/{it,en}/shared.json`.
+ *
+ * Costanti LOCALI e letterali, e un helper per codice con il corpo scritto per
+ * esteso: il lock `errori-con-codice` legge `codice: X` solo se `X` è una stringa o
+ * un `const X = '…'` di questo file. Un codice passato come parametro è un codice
+ * che nessuno controlla.
+ */
+const CODICE_SCOPE_NON_RISOLTO = 'ANAGRAFICA_SCOPE_NON_RISOLTO'
+const CODICE_NON_TROVATA = 'ANAGRAFICA_NON_TROVATA'
+const CODICE_FUORI_SEDE = 'ANAGRAFICA_FUORI_SEDE'
+const CODICE_FUORI_SEZIONE = 'ANAGRAFICA_FUORI_SEZIONE'
+const CODICE_SENZA_SEDE = 'ANAGRAFICA_SENZA_SEDE'
+
+const scopeNonRisolto = (): EsitoScope => ({
   ok: false,
-  response: NextResponse.json({ error, codice }, { status, headers: { 'Cache-Control': 'no-store' } }),
+  response: NextResponse.json(
+    { error: 'Verifica di accesso non riuscita', codice: CODICE_SCOPE_NON_RISOLTO },
+    { status: 500, headers: { 'Cache-Control': 'no-store' } },
+  ),
+})
+
+const nonTrovata = (): EsitoScope => ({
+  ok: false,
+  response: NextResponse.json(
+    { error: 'Alunno non trovato', codice: CODICE_NON_TROVATA },
+    { status: 404, headers: { 'Cache-Control': 'no-store' } },
+  ),
+})
+
+const fuoriSede = (): EsitoScope => ({
+  ok: false,
+  response: NextResponse.json(
+    { error: 'Alunno fuori dalla tua sede', codice: CODICE_FUORI_SEDE },
+    { status: 403, headers: { 'Cache-Control': 'no-store' } },
+  ),
+})
+
+const fuoriSezione = (): EsitoScope => ({
+  ok: false,
+  response: NextResponse.json(
+    { error: 'Alunno non nella tua classe', codice: CODICE_FUORI_SEZIONE },
+    { status: 403, headers: { 'Cache-Control': 'no-store' } },
+  ),
+})
+
+const senzaSede = (): EsitoScope => ({
+  ok: false,
+  response: NextResponse.json(
+    { error: 'Profilo non associato a nessuna sede', codice: CODICE_SENZA_SEDE },
+    { status: 403, headers: { 'Cache-Control': 'no-store' } },
+  ),
 })
 
 /**
  * Il controllo della scheda. L'ordine conta: si legge solo la riga minima del
  * bambino (colonne del baseline), si risponde 404 a ciò che non è un iscritto vivo,
- * poi sede, poi sezione. Nessun dato anagrafico si legge prima che tutto sia passato.
+ * poi sedi dell'utente (nessuna sede è un rifiuto a sé, mai «fuori sede»), poi sede
+ * del bambino, poi sezione. Nessun dato anagrafico si legge prima che tutto sia passato.
  * Il nome segue il contratto `assert…InScope` che il lock dell'isolamento per sede
  * riconosce.
  */
@@ -88,7 +146,7 @@ export async function assertAlunnoAnagraficaInScope(
       { tipo: 'anagrafica-alunno-non-letto', azione: 'assertAlunnoAnagraficaInScope', utente: user.id },
       error,
     )
-    return rifiuto(500, 'Verifica di accesso non riuscita', 'ANAGRAFICA_SCOPE_NON_RISOLTO')
+    return scopeNonRisolto()
   }
   const riga = data as {
     id: string
@@ -98,17 +156,50 @@ export async function assertAlunnoAnagraficaInScope(
     anonimizzato_il: string | null
   } | null
   if (!riga || riga.stato !== STATO_ISCRITTO || riga.anonimizzato_il) {
-    return rifiuto(404, 'Alunno non trovato', 'ANAGRAFICA_NON_TROVATA')
+    return nonTrovata()
   }
 
+  // Nei log va `riga.id`, l'uuid come lo scrive il database, e non `alunnoId`
+  // arrivato dal client: le righe dello stesso bambino devono distinguersi e sommarsi
+  // sullo stesso valore.
   const plessi = await scuoleDiUtente(supabase, user)
+  if (plessi.length === 0) {
+    // Nessuna sede non è «fuori sede»: senza questo ramo il controllo di sede si
+    // poteva saltare (`plessi.length > 0 && …`) senza che nessun test se ne accorgesse.
+    // Per un admin le sedi vuote sono quasi sempre una lettura di `utenti_scuole`
+    // fallita (`scuoleDiUtente` la logga già): è un guasto, 500. Per gli altri ruoli
+    // la sede è `utenti.scuola_id`, e se manca è il profilo a essere incompleto.
+    if (user.role === 'admin') {
+      logEvento(
+        'auth',
+        'error',
+        { tipo: 'anagrafica-sedi-non-risolte', azione: 'assertAlunnoAnagraficaInScope', utente: user.id, ruolo: user.role },
+      )
+      return scopeNonRisolto()
+    }
+    logEvento(
+      'auth',
+      'warn',
+      { tipo: 'anagrafica-profilo-senza-sede', azione: 'assertAlunnoAnagraficaInScope', utente: user.id, ruolo: user.role },
+    )
+    return senzaSede()
+  }
   if (!riga.scuola_id || !plessi.includes(riga.scuola_id)) {
-    return rifiuto(403, 'Alunno fuori dalla tua sede', 'ANAGRAFICA_FUORI_SEDE')
+    // Il segnale più forte dei due: un uuid di un bambino di un'altra sede non arriva
+    // da nessun elenco dell'app. Una riga per (utente, bambino, giorno).
+    logEvento(
+      'auth',
+      'warn',
+      { tipo: 'anagrafica-fuori-sede', azione: 'assertAlunnoAnagraficaInScope', utente: user.id, alunno_id: riga.id },
+      undefined,
+      { distingui: ['alunno_id'] },
+    )
+    return fuoriSede()
   }
 
   const visibili = await sezioniAnagraficaVisibili(supabase, user)
   if (visibili.esito === 'errore') {
-    return rifiuto(500, 'Verifica di accesso non riuscita', 'ANAGRAFICA_SCOPE_NON_RISOLTO')
+    return scopeNonRisolto()
   }
   if (visibili.esito === 'sezioni' && (!riga.section_id || !visibili.sezioni.includes(riga.section_id))) {
     // Una riga per (utente, bambino, giorno): è la traccia di chi prova ad aprire
@@ -116,11 +207,11 @@ export async function assertAlunnoAnagraficaInScope(
     logEvento(
       'auth',
       'warn',
-      { tipo: 'anagrafica-fuori-sezione', azione: 'assertAlunnoAnagraficaInScope', utente: user.id, alunno_id: alunnoId },
+      { tipo: 'anagrafica-fuori-sezione', azione: 'assertAlunnoAnagraficaInScope', utente: user.id, alunno_id: riga.id },
       undefined,
       { distingui: ['alunno_id'] },
     )
-    return rifiuto(403, 'Alunno non nella tua classe', 'ANAGRAFICA_FUORI_SEZIONE')
+    return fuoriSezione()
   }
 
   return { ok: true, alunno: { id: riga.id, sectionId: riga.section_id, scuolaId: riga.scuola_id } }

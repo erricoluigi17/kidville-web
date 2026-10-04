@@ -28,6 +28,13 @@ const ALU_SENZA_SEZIONE = 'a6a6a6a6-6666-4666-8666-aaaaaaaaaaaa'
 
 const EDUCATOR: AppUser = { id: 'ed1', role: 'educator', scuola_id: SEDE_A }
 const SEGRETERIA: AppUser = { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A }
+const ADMIN: AppUser = { id: 'adm1', role: 'admin', scuola_id: SEDE_A }
+const GENITORE: AppUser = { id: 'gen1', role: 'genitore', scuola_id: SEDE_A }
+const CUOCA: AppUser = { id: 'cuo1', role: 'cuoca', scuola_id: SEDE_A }
+/** La stessa insegnante di `EDUCATOR`, che sta guardando l'app nella veste di genitore. */
+const DOCENTE_IN_VESTE_GENITORE: AppUser = {
+  id: 'ed1', role: 'genitore', ruoli: ['educator', 'genitore'], scuola_id: SEDE_A,
+}
 
 let db: DBFinto
 let tabelle: string[]
@@ -130,6 +137,74 @@ describe('assertAlunnoAnagraficaInScope', () => {
     expect(!esito.ok && (await esito.response.json()).codice).toBe('ANAGRAFICA_FUORI_SEDE')
   })
 
+  it('il «fuori sede» lascia una traccia warn per bambino, e non legge le assegnazioni', async () => {
+    await assertAlunnoAnagraficaInScope(client(), EDUCATOR, ALU_B)
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'auth',
+      'warn',
+      expect.objectContaining({ tipo: 'anagrafica-fuori-sede', utente: 'ed1', alunno_id: ALU_B }),
+      undefined,
+      { distingui: ['alunno_id'] },
+    )
+    expect(tabelle).not.toContain('utenti_sezioni')
+  })
+
+  it('profilo senza sede: 403 ANAGRAFICA_SENZA_SEDE, mai «fuori sede» né un’apertura', async () => {
+    // ALU_MIO e non un bambino qualunque: è quello che le sue assegnazioni aprirebbero,
+    // quindi se il controllo di sede venisse saltato la risposta sarebbe 200.
+    const esito = await assertAlunnoAnagraficaInScope(client(), { ...EDUCATOR, scuola_id: null }, ALU_MIO)
+    expect(esito.ok).toBe(false)
+    if (esito.ok) return
+    expect(esito.response.status).toBe(403)
+    expect((await esito.response.json()).codice).toBe('ANAGRAFICA_SENZA_SEDE')
+  })
+
+  it('admin multi-sede (utenti_scuole): apre anche il bambino dell’altra sede', async () => {
+    db.utenti_scuole = [
+      { utente_id: 'adm1', scuola_id: SEDE_A },
+      { utente_id: 'adm1', scuola_id: SEDE_B },
+    ]
+    expect(await stato(ADMIN, ALU_B)).toBe(200)
+  })
+
+  it('admin con le sedi illeggibili: 500, mai un’apertura e mai «fuori sede»', async () => {
+    db.utenti_scuole = [{ utente_id: 'adm1', scuola_id: SEDE_B }]
+    opzioni = { errori: { utenti_scuole: { code: '57P01' } } }
+    const esito = await assertAlunnoAnagraficaInScope(client(), ADMIN, ALU_MIO)
+    expect(esito.ok).toBe(false)
+    if (esito.ok) return
+    expect(esito.response.status).toBe(500)
+    expect((await esito.response.json()).codice).toBe('ANAGRAFICA_SCOPE_NON_RISOLTO')
+  })
+
+  it('ogni risposta del gate porta Cache-Control: no-store', async () => {
+    for (const [user, id] of [
+      [EDUCATOR, ALU_ALTRUI], // 403 fuori sezione
+      [EDUCATOR, ALU_B], // 403 fuori sede
+      [EDUCATOR, ALU_RITIRATO], // 404
+      [{ ...EDUCATOR, scuola_id: null }, ALU_MIO], // 403 senza sede
+    ] as const) {
+      const esito = await assertAlunnoAnagraficaInScope(client(), user, id)
+      expect(!esito.ok && esito.response.headers.get('Cache-Control')).toBe('no-store')
+    }
+    opzioni = { errori: { alunni: { code: '57P01' } } }
+    const guasto = await assertAlunnoAnagraficaInScope(client(), EDUCATOR, ALU_MIO)
+    expect(!guasto.ok && guasto.response.headers.get('Cache-Control')).toBe('no-store')
+  })
+
+  it('genitore e cuoca senza assegnazioni: 403, non vedono «tutte le classi»', async () => {
+    for (const user of [GENITORE, CUOCA]) {
+      const esito = await assertAlunnoAnagraficaInScope(client(), user, ALU_MIO)
+      expect(!esito.ok && esito.response.status).toBe(403)
+      expect(!esito.ok && (await esito.response.json()).codice).toBe('ANAGRAFICA_FUORI_SEZIONE')
+    }
+  })
+
+  it('docente in veste di genitore: le sue assegnazioni valgono uguale, né di più né di meno', async () => {
+    expect(await stato(DOCENTE_IN_VESTE_GENITORE, ALU_MIO)).toBe(200)
+    expect(await stato(DOCENTE_IN_VESTE_GENITORE, ALU_ALTRUI)).toBe(403)
+  })
+
   it('404 per inesistente, non iscritto, anonimizzato — prima di guardare le sezioni', async () => {
     for (const id of ['c0c0c0c0-0000-4000-8000-cccccccccccc', ALU_RITIRATO, ALU_ANONIMO]) {
       tabelle = []
@@ -149,5 +224,16 @@ describe('assertAlunnoAnagraficaInScope', () => {
     expect(await stato(EDUCATOR, ALU_MIO)).toBe(500)
     opzioni = { errori: { utenti_sezioni: { code: '57P01' } } }
     expect(await stato(EDUCATOR, ALU_MIO)).toBe(500)
+  })
+
+  it('la lettura fallita dell’alunno lascia un log error con il codice del guasto', async () => {
+    opzioni = { errori: { alunni: { code: '57P01', message: 'terminating connection' } } }
+    await assertAlunnoAnagraficaInScope(client(), EDUCATOR, ALU_MIO)
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'auth',
+      'error',
+      expect.objectContaining({ tipo: 'anagrafica-alunno-non-letto', utente: 'ed1' }),
+      expect.objectContaining({ code: '57P01' }),
+    )
   })
 })

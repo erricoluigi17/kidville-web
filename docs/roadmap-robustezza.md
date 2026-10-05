@@ -25,7 +25,7 @@ Questo file resta la copia di lavoro: lo stato delle sessioni si aggiorna **qui*
 | # | Sessione | Stato | PR | Note |
 |---|---|---|---|---|
 | 0 | Decisioni e interruttori (titolare) | ⬜ da fare | — | PITR? conferme agenti? |
-| 1 | Funzioni a Dublino + disarmo `migrate.yml` | ⬜ da fare | — | |
+| 1 | Funzioni a Dublino + disarmo `migrate.yml` | 🟡 rilasciata (PR #188) | #188 | misura definitiva a +12 h dal deploy; timeout a ~0 solo su 2-3 giorni feriali. ✅ con i numeri nel primo commit della fase 2 |
 | 2 | Paracadute esterno (DB + Storage) e prova di ripristino | ⬜ da fare | — | |
 | 3 | Campanello e salute a livelli | ⬜ da fare | — | |
 | 4 | Scatola nera e pulizie sicure | ⬜ da fare | — | |
@@ -40,7 +40,7 @@ Questo file resta la copia di lavoro: lo stato delle sessioni si aggiorna **qui*
 | 12 | Pulizia e costi (Small/Medium) | ⬜ da fare | — | |
 
 Dipendenze:
-- 0 prima di tutto;
+- 0 prima di tutto (eccezione verificata il 05/10: la 1 non usa nessuna decisione della 0);
 - **2 prima di qualunque migrazione che cancella o restringe** (4, 7, 12);
 - 3 prima di 4-12 (le regressioni devono arrivare come allarme, non dai genitori);
 - 6 prima di 7;
@@ -292,6 +292,15 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
   - ms di `/api/health`;
   - durata di POST diary e dei cron.
 - **Rollback**: Instant Rollback.
+- **Fatto (PR #188, 05/10)**:
+  - `"regions": ["dub1"]` in `vercel.json`;
+  - `migrate.yml` solo `workflow_dispatch`, solo `--dry-run`, CLI fissata a 2.109.0;
+  - due lock: `vercel-json-funzioni-nella-regione-del-db` e `migrate-yml-non-applica-da-solo`. Sono il «passo che valida `vercel.json`», fatto come test del job Unit: offline, senza scaricare lo schema da rete;
+  - `docs/cicd.md` corretto (diceva che l'approvazione di `migrate.yml` era la strada delle migrazioni);
+  - controllo dei fornitori: passato (nessun IP d'uscita fisso, Supabase aperto a ogni IP, 0 errori 401/403 in 7 giorni).
+- **Non incluso**: `functionFailoverRegions` (il piano non è verificato e nessuna misura lo chiede). Il costo del compute per regione non è verificato: guardare l'Usage di ottobre.
+- **Da fare a mano dopo il merge**: annullare l'esecuzione di `migrate.yml` ancora in attesa (run 37304105773).
+- **Misura definitiva**: a **+12 h** dal deploy (Skew Protection a 12 h: chi ha una pagina vecchia resta su `iad1` fino a 12 h). I timeout di `/api/logs` e `sedi` si leggono su 2-3 giorni feriali.
 
 ### Sessione 2 — Paracadute esterno
 - **Workflow notturno**:
@@ -311,6 +320,10 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
   - monitor collegato;
   - correzione dei 2 alunni (UPDATE mostrato prima).
 - **Verifica**: variabile rotta in Preview → allarme ricevuto.
+- **Dalla fase 1**:
+  - lo smoke test dopo il deploy controlla anche che `x-vercel-id` contenga `::dub1::`, così la regione non regredisce in silenzio (il lock della fase 1 prova il file, non il deploy);
+  - tracciare la regione in `app_log` richiede una chiave nuova in `CHIAVI_IN_CHIARO` (`src/lib/logging/redact.ts`), che allarga il canale anonimo di `/api/logs`, oppure una colonna: si decide qui;
+  - le soglie di latenza di «salute» si fissano con i valori misurati **dopo** la fase 1 (oggi `/api/health` risponde in 1,06 s end-to-end, 633 ms interni).
 
 ### Sessione 4 — Scatola nera e pulizie sicure
 - **Migrazione**: `registro_eliminazioni` WORM, trigger AFTER DELETE sulle tabelle preziose, scadenza, inclusione nell'oblio.
@@ -342,6 +355,7 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
 
 ### Sessione 10 — Identità per richiesta
 - Solo se dopo la sessione 1 `/auth/v1/user` pesa ancora: memoria in AsyncLocalStorage, decisione su getClaims.
+- **Dalla fase 1**: oggi (lunedì 05/10) `/auth/v1/user` conta **117.658** chiamate in 24 h, con p50 105 ms da `iad1`; la fotografia ne dava 40.483 perché la finestra era quasi tutta domenica. Il confronto prima/dopo si fa **feriale contro feriale** e con le mediane per colo, mai con il conteggio di un giorno diverso.
 
 ### Sessione 11 — Errori non ignorati
 - Lucchetto sui nuovi `{ data }` senza `error`, correzioni per area, tetto ai tentativi di postgrest.
@@ -349,6 +363,7 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
 ### Sessione 12 — Pulizia e costi
 - Storico UPDATE, WORM degli audit, `app_log`, DROP delle tabelle di backup, `log_temp_files`, CHECK, GRANT, cache CDN.
 - Decisione sulla home aggregata e su Small/Medium.
+- **Dalla fase 1**: il 05/10 alle 16:39 UTC l'istanza ha lo swap usato a 359 MB (la fotografia diceva 442), RAM disponibile 731 su 1.835 MB, load 0,16/0,12/0,07. Si rileggono a +24 h dalla fase 1 e **sempre nella stessa fascia oraria**, prima di scegliere Small o Medium.
 
 ---
 
@@ -368,6 +383,28 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
 | Cron | 30 job, 0 fallimenti in 7 giorni | `cron.job_run_details` |
 | Fetch falliti client | ~1.100-1.500 per giorno feriale | query 3 |
 | Iscrizioni | 722 righe | `SELECT count(*) FROM enrollment_submissions;` |
+
+**Correzione del 05/10, fatta nella fase 1.** Due righe della tabella, «Query server→DB» (293.718/24h) e
+`/auth/v1/user` (40.483/24h), erano di una finestra in gran parte **domenicale**. Rimisurate di lunedì
+(05/10, 16:35 UTC) danno 1.032.711 e 117.658, con la **stessa mediana** (103 ms). Un conteggio di 24 ore non
+si confronta fra giorni diversi: si confrontano le **quote per colo**, le **mediane**, e i conteggi feriale con
+feriale. Il traffico del **server** si isola dall'intestazione, non dal colo: la query 2 senza filtro mescola i
+browser (MXP, FCO); quella con il filtro qui sotto no.
+
+Fotografia del 05/10 (lunedì), 16:35–16:51 UTC, per la fase 1: server→DB, colo IAD 99,5%, p50 103 ms, p95 129 ms
+(DUB 0,2%, p50 12 ms); `/auth/v1/user` 117.658 (p50 105 ms); `/api/health` p50 1,06 s su 30 richieste;
+`/api/iscrizione/sedi` p50 0,63 s; swap usato 359 MB; 29 job cron, 0 fallite in 7 giorni.
+
+**Query 2 bis — solo le richieste del server** (log, `query_logs`; si cambiano `iso_timestamp_start` e `iso_timestamp_end`
+per misurare a +12 h dal deploy):
+```sql
+select toString(log_attributes['request.cf.colo']) as colo, count(*) as n,
+  round(quantile(0.5)(toFloat64OrZero(toString(log_attributes['response.origin_time']))),0) as p50,
+  round(quantile(0.95)(toFloat64OrZero(toString(log_attributes['response.origin_time']))),0) as p95
+from logs where source='edge_logs'
+  and toString(log_attributes['request.headers.x_client_info']) like '%createServerClient'
+group by colo order by n desc limit 8
+```
 
 **Query 1 — tempo DB per statement** (Supabase SQL, sola lettura):
 ```sql

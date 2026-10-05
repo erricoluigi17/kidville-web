@@ -1,3 +1,45 @@
+## 🌍 Changelog — Roadmap di robustezza, fase 1: le funzioni girano a Dublino e `migrate.yml` non applica più niente — 2026-10-05 (branch `robustezza/fase-1-funzioni-a-dublino`, PR #188)
+
+**Stato.** 🟡 **In PR.** Una riga di configurazione, un workflow disarmato, due lock. **Nessun file in `src/`, nessuna migrazione, nessuna scrittura sul database.** `SELECT count(*) FROM enrollment_submissions;` = 722, letto prima e dopo: invariato. Il rilascio avviene di sera, in una finestra di basso traffico (21:00–22:00 UTC), e la misura definitiva si prende **12 ore dopo** il deploy: il risultato con i numeri prima → dopo entra nel primo commit della fase successiva.
+
+**Perché.** Problemi **S1** e **D7** di `docs/roadmap-robustezza.md`.
+- **S1.** Le funzioni Vercel giravano a Washington (`iad1`) e il database sta in Irlanda (`eu-west-1`). Ogni domanda dal server al database attraversava l'Atlantico: p50 **103 ms**, contro 12–13 ms per le sole route che `vercel.json` teneva già a Dublino. Le route fanno da 3 a 20 domande in fila, e il tempo si moltiplica: da qui l'app lenta, i timeout di `/api/logs` e di `/api/iscrizione/sedi`.
+- **D7.** `migrate.yml` partiva a ogni merge che toccava le migrazioni e lasciava una richiesta di approvazione: chi la approvava lanciava `supabase db push` con la CLI `latest`, senza dry-run, sul database di produzione. È una seconda strada accanto all'integrazione GitHub di Supabase, che le applica già al merge, e arrivava sempre dopo. I giri approvati il 30/09 e il 02/10 hanno stampato soltanto «Remote database is up to date». Ma il giorno in cui l'integrazione fosse stata in ritardo, la stessa approvazione, data per abitudine, avrebbe applicato davvero le migrazioni pendenti.
+
+**Cosa cambia.**
+- **`vercel.json`**: `"regions": ["dub1"]` alla radice. Dublino è la regione AWS `eu-west-1` del progetto Supabase. Il blocco `functions` per `video-uploads/**` resta (ridondante, ma ferma quelle route a Dublino anche se la radice cambiasse). La regione sta nel file e non nel pannello del progetto perché appartiene al deployment: un Instant Rollback la ripristina, mentre l'impostazione del pannello no.
+- **`.github/workflows/migrate.yml`**: unico trigger `workflow_dispatch`, un solo comando, `supabase db push --dry-run`, CLI fissata a **2.109.0**, sempre dietro `environment: production`. Elenca le migrazioni che mancano e non ne applica nessuna. La richiesta ancora in attesa (run 37304105773, creata dal merge della #186) si annulla a mano **dopo** il merge di questa fase: l'esito si annota nel primo commit della fase successiva.
+- **Lock `vercel-json-funzioni-nella-regione-del-db`**: JSON valido; chiavi di primo livello note; `regions` alla radice **esattamente** `["dub1"]`; nessuna funzione in un'altra regione; ogni pattern di `functions` con almeno un file vero (il guasto del 17/09). 14 mutazioni sintetiche.
+- **Lock `migrate-yml-non-applica-da-solo`**: solo `workflow_dispatch`; ogni `db push` con `--dry-run` sulla stessa riga; nessun `migration up/repair/squash`, `db reset`, `--include-all`, `psql`; CLI a versione esatta; il segreto di produzione solo dietro `environment: production`. Legge il file **senza commenti** (un lock che legge i commenti si immunizza da solo). 14 mutazioni sintetiche e due controprove.
+- **`docs/cicd.md`**: ora dice che le migrazioni le applica l'integrazione al merge e che `migrate.yml` è una verifica a mano; nuova sezione «Regione delle funzioni»; rollback esteso. Prima presentava l'approvazione di `migrate.yml` come **la** strada delle migrazioni.
+
+**Controlli fatti prima** (sola lettura).
+- **Nessun fornitore filtra per IP**, con tre prove: il progetto non ha IP d'uscita fissi (`staticIps` assente), Supabase accetta ogni indirizzo (`0.0.0.0/0`), e in 7 giorni `app_log` non ha un solo 401 o 403 dai fornitori (email, push, fattura, SIDI). Restano i pannelli dei fornitori, che vede solo il titolare: si ricontrolla nei log dopo il rilascio.
+- **Nessuna route fissa il runtime Edge o una regione propria** (355 file route).
+
+**Misura PRIMA** (05/10, 16:35–16:51 UTC). «Server» = richieste a Supabase con `x_client_info` che finisce in `createServerClient`.
+- **Regione**: progetto e deployment di produzione `iad1`; header `x-vercel-id: fra1::iad1::…`.
+- **Server→DB**: colo **IAD 99,5%**, p50 **103 ms**, p95 129 ms; colo DUB 0,2%, p50 12 ms.
+- **`/auth/v1/user`**: 117.658 in 24 ore, p50 105 ms da IAD.
+- **`/api/health`**: 30 richieste, p50 **1,06 s**, p95 1,29 s. **`/api/iscrizione/sedi`**: p50 **0,63 s**, p95 0,84 s.
+- **Timeout Supabase, «Failed to fetch», `chat-realtime-errore`**: nei giorni feriali 19–79, 980–1.486 e 184–340 al giorno.
+- **Istanza**: swap usato 359 MB su 1.024, RAM disponibile 731 su 1.835 MB, load 0,16.
+- **`migrate.yml`**: 72 giri dal 04/07 (18 riusciti, 13 falliti, 40 annullati, 1 in attesa).
+
+**Trappole della misura** (valgono per tutte le fasi).
+- **Una finestra di 24 ore non si confronta fra giorni diversi.** La fotografia del mattino riportava 293.718 query dal colo IAD e 40.483 `/auth/v1/user`: erano in gran parte una domenica. Il lunedì sono 1.032.711 e 117.658 (×3,5 e ×2,9), con la stessa mediana. Si confrontano **le quote per colo e le mediane**, e i conteggi feriale con feriale.
+- **Il traffico del server si isola dall'intestazione, non dal colo**: la query non filtrata mescola i browser (MXP, FCO).
+- **Skew Protection a 12 ore.** Chi ha una pagina del deployment vecchio resta su quello per al massimo 12 ore: la quota `dub1` non arriva al 95% subito, e la misura vera è a +12 ore.
+- **La durata del POST del diario e dei cron non è misurabile** con gli strumenti a disposizione (il MCP Vercel risponde 403, lo stream dei log della CLI non emette, `cron.job_run_details` misura solo l'invio asincrono). Resta una stima, circa 20 viaggi × 90 ms.
+
+**Obiettivo della misura dopo** (+12 ore dal deploy, mattina del 06/10): colo DUB ≥ 95% e p50 < 25 ms; `/api/health` e `sedi` sotto la metà dei tempi di oggi; timeout Supabase a circa 0 sui giorni feriali (servono 2–3 giorni feriali); nessun nuovo 401 o 403 dai fornitori.
+
+**Rollback.** Instant Rollback al deployment precedente (`vercel rollback <id>`): riporta anche la regione. È temporaneo; per tornare davvero indietro serve un `git revert` del commit di fase. `migrate.yml`: `git revert`, senza effetti sulla produzione. Nessuna migrazione, niente da annullare.
+
+**Log.** Nessuna riga da aggiungere: la fase non tocca `src/`, quindi non nasce nessuna route, integrazione o percorso d'errore. La regione si verifica da `x-vercel-id` (`::dub1::`), dal campo `regions` del deployment e dai `colo` di `edge_logs`; tracciarla anche in `app_log` richiederebbe una chiave nuova nella lista bianca di `redact.ts` (che allarga il canale anonimo di `/api/logs`): è annotato nella scheda della fase 3.
+
+**Resta da provare.** Dopo il merge: header `::dub1::`, `regions: ["dub1"]` del deployment di produzione, latenze, colo; a +12 ore la misura definitiva; nei giorni feriali successivi i timeout. Il costo del compute per regione non è stato verificato (la roadmap dice «zero»): si guarda nell'Usage di ottobre.
+
 ## 🛡️ Changelog — Roadmap di robustezza di server e database: cosa c'è dietro il «degraded» — 2026-10-05 (branch `docs/roadmap-robustezza`, PR #185)
 
 **Stato.** 📝 Solo documentazione: **nessun cambiamento** al codice, allo schema o ai dati. La roadmap

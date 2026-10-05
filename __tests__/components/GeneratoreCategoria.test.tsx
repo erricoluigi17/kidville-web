@@ -178,18 +178,25 @@ describe('GeneratoreCategoria — metodi di pagamento ammessi', () => {
     expect(screen.getByRole('button', { name: /Anteprima/ })).toBeInTheDocument();
   });
 
-  it('togliendole entrambe, «Anteprima» non chiama il server e mostra l\'errore', async () => {
+  /**
+   * Zero metodi: il perché è GIÀ a schermo, e già annunciato, dal role=alert del
+   * fieldset (`ScegliMetodiAmmessi`). Fino alla revisione del 2026-10-05 «Anteprima»
+   * lo ripeteva nell'errore generale, e la stessa frase compariva due volte: ora la
+   * guardia non parte e basta, come in `ModificaPagamentoModal`.
+   * La guardia è SINCRONA (prima di ogni `await`): dopo il clic il conteggio è già
+   * definitivo, e con il codice di prima qui sarebbe 2.
+   */
+  it('togliendole entrambe, «Anteprima» non chiama il server e la frase resta UNA (quella del fieldset)', async () => {
     render(<GeneratoreCategoria userId="u1" scuolaId="sc-1" />);
     await screen.findByText(/Si genera per 2 bambini/i);
     fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '30' } });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Contanti' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Bonifico' }));
-    // Le caselle lo dicono già da sole, prima di ogni clic.
-    expect(screen.getAllByText('Scegli almeno un metodo di pagamento.')).toHaveLength(1);
+    // Le caselle lo dicono già da sole, prima di ogni clic: è una PRESENZA.
+    expect(screen.getByRole('alert')).toHaveTextContent('Scegli almeno un metodo di pagamento.');
 
     fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
-    // Una PRESENZA: il messaggio compare anche accanto al pulsante (ora sono due).
-    await waitFor(() => expect(screen.getAllByText('Scegli almeno un metodo di pagamento.')).toHaveLength(2));
+    expect(screen.getAllByText('Scegli almeno un metodo di pagamento.')).toHaveLength(1);
     expect(getAnteprima()).toBe(0);
     expect(screen.queryByText(/Da generare/i)).toBeNull();
     expect(posted).toHaveLength(0);

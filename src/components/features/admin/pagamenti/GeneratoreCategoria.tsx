@@ -112,7 +112,10 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     }, [importo, nRate, scadenza]);
 
     const caricaAnteprima = async () => {
-        if (metodi.length === 0) { setError(t('metodiAmmessiAlmenoUno')); return; }
+        // Zero metodi: il perché è GIÀ a schermo, e già annunciato, dal role=alert di
+        // `ScegliMetodiAmmessi`. Ripeterlo nell'errore generale scriveva la stessa frase
+        // due volte (come in `ModificaPagamentoModal`): basta non partire.
+        if (metodi.length === 0) return;
         if (!descrizione.trim()) { setError(t('gencErrCausale')); return; }
         if (!importo || importo <= 0) { setError(t('gencErrImporto')); return; }
         if (target.length === 0) { setError(t('gencErrNessunTarget')); return; }

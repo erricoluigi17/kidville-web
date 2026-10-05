@@ -32,7 +32,7 @@ export function ScegliMetodiAmmessi({
   };
   return (
     <fieldset aria-describedby={`${id}-aiuto${vuoto ? ` ${id}-errore` : ''}`} className="space-y-1">
-      <legend className="font-maven text-xs text-kidville-muted mb-1">{t('metodiAmmessiLegenda')}</legend>
+      <legend className="font-maven text-xs text-kidville-sub mb-1">{t('metodiAmmessiLegenda')}</legend>
       <div className="flex flex-wrap gap-4">
         {METODI_AMMESSI.map((m) => (
           <label key={m} className="flex items-center gap-2 cursor-pointer">
@@ -47,7 +47,7 @@ export function ScegliMetodiAmmessi({
           </label>
         ))}
       </div>
-      <p id={`${id}-aiuto`} className="font-maven text-[11px] text-kidville-muted">{t('metodiAmmessiAiuto')}</p>
+      <p id={`${id}-aiuto`} className="font-maven text-[11px] text-kidville-sub">{t('metodiAmmessiAiuto')}</p>
       {vuoto && (
         <p id={`${id}-errore`} role="alert" className="font-maven text-xs text-kidville-error-strong">
           {t('metodiAmmessiAlmenoUno')}

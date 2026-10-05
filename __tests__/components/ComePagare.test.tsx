@@ -967,6 +967,60 @@ describe('ComePagare — le voci «solo contanti» escono dal bonifico (metodi a
         expect(screen.getByText(NOTA_730)).toBeVisible();
     });
 
+    it('tutte solo contanti: al posto dei tab un’intestazione «Contanti», che non è un comando', () => {
+        const { container } = render(
+            <ComePagare sedi={[SEDE_UNO]} voci={[{ ...VOCE_UNO, ammetteBonifico: false }, SOLO_CONTANTI]} />,
+        );
+
+        // PRESENZA prima: senza tab, la parola «Contanti» non si leggeva da nessuna parte
+        // prima del testo — il genitore vedeva «In segreteria…» senza sapere di che metodo
+        // si stesse parlando.
+        const intestazione = screen.getByText('Contanti');
+        expect(intestazione).toBeVisible();
+        // Sta dove stavano i tab: DOPO l'occhiello e PRIMA del testo dei contanti.
+        const testo = screen.getByText(TESTO_CONTANTI);
+        expect(intestazione.compareDocumentPosition(testo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        // L'icona c'è, ed è decorazione: il nome lo dà il testo.
+        const icona = intestazione.querySelector('svg');
+        expect(icona).not.toBeNull();
+        expect(icona).toHaveAttribute('aria-hidden', 'true');
+
+        // NON è un comando: niente tab, niente bottone, niente fuoco.
+        expect(screen.queryAllByRole('tab')).toHaveLength(0);
+        expect(intestazione.tagName).toBe('P');
+        expect(intestazione.closest('button')).toBeNull();
+        expect(intestazione).not.toHaveAttribute('tabindex');
+        expect(container.querySelectorAll('button')).toHaveLength(0);
+
+        // …e quindi non accende il segnale dei comandi. In Alto Contrasto
+        // `.kv-come-pagare .bg-kidville-green` diventa GIALLO, cioè «premimi»: una
+        // pillola verde che non si preme lo prometterebbe a vuoto. Nella card coi soli
+        // contanti il verde resta all'occhiello e basta (vedi «in tutta la card il
+        // verde lo portano SOLO i comandi», più sopra).
+        const verdi = [...container.querySelectorAll<HTMLElement>('*')].filter((el) => {
+            const classi = (el.getAttribute('class') ?? '').split(/\s+/);
+            return classi.includes('text-kidville-green') || classi.includes('bg-kidville-green');
+        });
+        expect(verdi.map((el) => el.textContent)).toEqual(['Come pagare']);
+        // Inchiostro pieno su crema, la stessa voce di «struttura» della barra dei tab:
+        // in Alto Contrasto `.bg-kidville-cream` va a #1A1A1A e `.text-kidville-ink` a bianco.
+        expect(intestazione.className).toContain('text-kidville-ink');
+        expect(intestazione.className).toContain('bg-kidville-cream');
+        expect(intestazione.className).not.toContain('text-kidville-muted');
+    });
+
+    it('con il bonifico ammesso l’intestazione «Contanti» non c’è: lo dicono già i tab', () => {
+        const { container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        // Presenza prima: i tab ci sono.
+        expect(screen.getByRole('tab', { name: 'Contanti' })).toBeInTheDocument();
+        // «Contanti» compare UNA volta sola, ed è il tab.
+        const occorrenze = [...container.querySelectorAll('*')].filter(
+            (el) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim() === 'Contanti'),
+        );
+        expect(occorrenze).toHaveLength(1);
+        expect(occorrenze[0]).toHaveAttribute('role', 'tab');
+    });
+
     it('i plessi dei contanti contano anche le voci uscite dal bonifico', () => {
         // Plesso Uno ha una voce col bonifico, Plesso Due solo una voce in contanti:
         // il conto da mostrare è uno, ma le segreterie dove si può andare sono due.

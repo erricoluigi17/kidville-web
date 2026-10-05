@@ -406,6 +406,25 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                     {tab('contanti', t('metodoContanti'), Banknote)}
                 </div>
             )}
+            {/* …MA IL METODO SI DICE LO STESSO (rifinitura, 2026-10-05). Senza tab la
+                parola «Contanti» non compariva da nessuna parte: sotto l'occhiello si
+                leggeva subito «In segreteria, negli orari di apertura», e il genitore
+                doveva indovinare di che metodo si parlasse. Al posto della barra dei
+                tab, nella stessa posizione e con la stessa forma della pillola (icona,
+                Barlow 13px maiuscolo), c'è un'intestazione che lo dice.
+                NON È UN COMANDO, e non ne ha la faccia: un `<p>`, nessun ruolo, nessun
+                fuoco. E NON È VERDE, anche se il tab attivo lo è: in Alto Contrasto
+                `.kv-come-pagare .bg-kidville-green` diventa pieno GIALLO, il segnale
+                che in questa card vuol dire «premimi» (quinto giro, più sopra), e una
+                pillola gialla che non si preme lo prometterebbe a vuoto — proprio in
+                una card dove, coi soli contanti, non c'è niente da premere. Crema e
+                inchiostro pieno: la voce di «struttura» della barra dei tab, che in
+                Alto Contrasto diventa #1A1A1A con il testo bianco. */}
+            {soloContanti && (
+                <p className="mt-3 flex min-h-[44px] items-center justify-center gap-2 rounded-pill bg-kidville-cream px-3 font-barlow text-[13px] font-extrabold uppercase tracking-[0.05em] text-kidville-ink">
+                    <Banknote size={16} aria-hidden="true" /> {t('metodoContanti')}
+                </p>
+            )}
 
             {/* I due pannelli restano nel DOM (`hidden` su quello inattivo): così
                 `aria-controls` punta sempre a un elemento che esiste davvero. */}

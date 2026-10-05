@@ -79,8 +79,11 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
     useEffect(() => { loadIncassi(); }, [loadIncassi]);
 
     const salvaDati = async () => {
-        // Validazioni speculari a quelle del server (finding #3):
-        if (metodi.length === 0) { setError(t('metodiAmmessiAlmenoUno')); return; }
+        // Validazioni speculari a quelle del server (finding #3).
+        // Zero metodi: il perché è GIÀ a schermo, e già annunciato, dal role=alert di
+        // `ScegliMetodiAmmessi` subito sopra. Ripeterlo qui scriveva la stessa frase due
+        // volte, una sotto l'altra: basta non partire.
+        if (metodi.length === 0) return;
         if (importo < 0) { setError(t('modifErrImportoNeg')); return; }
         if (importo - sconto < giaIncassato - 0.005) {
             setError(t('modifErrImportoInferiore'));

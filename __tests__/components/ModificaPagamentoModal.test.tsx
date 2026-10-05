@@ -112,20 +112,24 @@ describe('ModificaPagamentoModal — metodi di pagamento ammessi', () => {
     expect(patch[0]).not.toHaveProperty('metodi_ammessi');
   });
 
-  it('zero metodi: niente PATCH, e il perché a schermo', async () => {
+  it('zero metodi: niente PATCH, e il perché a schermo UNA volta sola', async () => {
     const onDone = rendi(['contanti', 'bonifico']);
     await screen.findByText('Nessun incasso registrato.');
     fireEvent.click(screen.getByRole('checkbox', { name: 'Contanti' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Bonifico' }));
-    // Le caselle lo dicono già da sole.
-    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    // PRESENZA prima: le caselle lo dicono già da sole, con un role=alert.
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Scegli almeno un metodo di pagamento.');
 
     fireEvent.click(screen.getByRole('button', { name: 'Salva modifiche' }));
-    // Una PRESENZA: anche il salvataggio dice perché non parte (due alert, stesso testo).
-    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
-    for (const a of screen.getAllByRole('alert')) {
-      expect(a).toHaveTextContent('Scegli almeno un metodo di pagamento.');
-    }
+    // La guardia di `salvaDati` gira PRIMA di qualunque await: se scrivesse un secondo errore,
+    // `fireEvent` (avvolto in act) lo avrebbe già reso qui. Si lascia comunque passare un giro
+    // del ciclo degli eventi, così una PATCH partita per sbaglio avrebbe il tempo di vedersi.
+    await new Promise((r) => setTimeout(r, 0));
+    // La stessa frase due volte, una sotto l'altra, era il difetto: il messaggio è già a
+    // schermo e già annunciato dall'alert del gruppo di caselle.
+    expect(screen.getAllByText('Scegli almeno un metodo di pagamento.')).toHaveLength(1);
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
     expect(patchVerso()).toBe(0);
     expect(onDone).not.toHaveBeenCalled();
   });

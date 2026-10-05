@@ -27,6 +27,11 @@
 #   MAX_MANCANTI     file della sorgente tollerati come "non ancora nello specchio" alla fine
 #                    (caricati mentre il giro era in corso; default 20)
 #   PERMETTI_CALO    1 = ammette che la sorgente sia calata sotto il 90% dello specchio
+#   ESCLUDI_BUCKET   nomi di bucket (separati da spazio) che NON si copiano. Scelta del titolare del
+#                    2026-10-06: foto e video della galleria fuori dal backup, per non pagare spazio.
+#                    I file esclusi non vengono né copiati né cancellati dallo specchio, e non
+#                    entrano nei conteggi di sicurezza. Il workflow la dichiara; un lock pretende che
+#                    sia solo quella e che non tocchi mai i bucket insostituibili.
 #
 # USCITA: una riga `RISULTATO …` con soli aggregati. I log di rclone passano da un filtro che
 # maschera gli uuid dei percorsi: il repository è pubblico e i log dei workflow si leggono da fuori.
@@ -61,18 +66,32 @@ case "$DESTINAZIONE" in
   "$CESTINO" | "$CESTINO"/*) errore "il cestino ($CESTINO) non può contenere lo specchio ($DESTINAZIONE)" ;;
 esac
 
+# I bucket esclusi diventano filtri di rclone, uguali per `size`, `sync` e `check`: un filtro solo su
+# `sync` farebbe contare alla guardia del 90% (e al controllo finale) file che non si copiano mai.
+# `read -a` e non un `for` sul testo: un valore con `*` non deve essere espanso come un glob.
+FILTRI=()
+LISTA_ESCLUSI=()
+IFS=' ' read -r -a LISTA_ESCLUSI <<< "${ESCLUDI_BUCKET:-}"
+for b in ${LISTA_ESCLUSI[@]+"${LISTA_ESCLUSI[@]}"}; do
+  case "$b" in
+    '' | *[!a-z0-9_-]*) errore "ESCLUDI_BUCKET: «$b» non è un nome di bucket valido (solo minuscole, cifre, - e _)" ;;
+  esac
+  FILTRI+=(--exclude "/$b/**")
+done
+
 T="$(mktemp -d "${TMPDIR:-/tmp}/specchio-storage.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 INIZIO=$SECONDS
 
-conta() { # remote → "count bytes" (0 0 se il remote non esiste ancora)
-  local json
-  json="$(rclone size "$1" --json 2>/dev/null)" || json='{"count":0,"bytes":0}'
+conta() { # remote [flag di rclone…] → "count bytes" (0 0 se il remote non esiste ancora)
+  local remote="$1" json
+  shift
+  json="$(rclone size "$remote" --json "$@" 2>/dev/null)" || json='{"count":0,"bytes":0}'
   printf '%s %s' "$(printf '%s' "$json" | jq -r '.count')" "$(printf '%s' "$json" | jq -r '.bytes')"
 }
 
 # ── le guardie PRIMA del sync ────────────────────────────────────────────────
-N_SORGENTE="$(conta "$SORGENTE" | cut -d' ' -f1)"
+N_SORGENTE="$(conta "$SORGENTE" ${FILTRI[@]+"${FILTRI[@]}"} | cut -d' ' -f1)"
 N_DEST="$(conta "$DESTINAZIONE" | cut -d' ' -f1)"
 
 [ "$N_SORGENTE" -gt 0 ] \
@@ -93,6 +112,7 @@ rclone sync "$SORGENTE" "$DESTINAZIONE" \
   --max-delete "$MAX_DELETE" \
   --max-delete-size "$MAX_DELETE_SIZE" \
   --transfers 8 --checkers 16 \
+  ${FILTRI[@]+"${FILTRI[@]}"} \
   --log-level NOTICE --stats 0 2>&1 | maschera
 ST_SYNC="${PIPESTATUS[0]}"
 set -e
@@ -104,6 +124,7 @@ set -e
 set +e
 rclone check "$SORGENTE" "$DESTINAZIONE" --one-way --size-only \
   --missing-on-dst "$T/mancanti.txt" --differ "$T/diversi.txt" \
+  ${FILTRI[@]+"${FILTRI[@]}"} \
   --log-level NOTICE --stats 0 2>&1 | maschera
 ST_CHECK="${PIPESTATUS[0]}"
 set -e
@@ -121,7 +142,7 @@ read -r N_FINALE BYTE_FINALE <<< "$(conta "$DESTINAZIONE")"
 read -r N_CESTINO _ <<< "$(conta "$CESTINO")"
 SECONDI=$((SECONDS - INIZIO))
 
-echo "RISULTATO oggetti_specchio=$N_FINALE byte_specchio=$BYTE_FINALE spostati_nel_cestino=$N_CESTINO mancanti=$MANCANTI differenti=$DIVERSI secondi=$SECONDI"
+echo "RISULTATO oggetti_specchio=$N_FINALE byte_specchio=$BYTE_FINALE spostati_nel_cestino=$N_CESTINO mancanti=$MANCANTI differenti=$DIVERSI secondi=$SECONDI esclusi=$(IFS=,; echo "${LISTA_ESCLUSI[*]-}")"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
@@ -134,6 +155,7 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo "| oggetti nel cestino di oggi | $N_CESTINO |"
     echo "| mancanti / di dimensione diversa alla fine | $MANCANTI / $DIVERSI |"
     echo "| durata | $SECONDI s |"
+    echo "| bucket esclusi dal backup (scelta del titolare) | ${LISTA_ESCLUSI[*]-nessuno} |"
     echo ""
     echo "Gli uuid dei percorsi sono mascherati nei log; i file sono cifrati con rclone crypt."
   } >> "$GITHUB_STEP_SUMMARY"

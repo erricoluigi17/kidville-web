@@ -209,6 +209,42 @@ describe('specchio-storage.sh · cosa rifiuta', () => {
     })
 })
 
+describe('specchio-storage.sh · bucket esclusi dal backup (scelta del titolare, 06/10)', () => {
+    it('senza ESCLUDI_BUCKET non c\'è nessun filtro', () => {
+        esegui()
+        expect(chiamate().filter((c) => c.includes('--exclude'))).toEqual([])
+    })
+
+    it('con ESCLUDI_BUCKET la sorgente, il sync e il controllo finale usano gli STESSI filtri', () => {
+        const r = esegui({ ESCLUDI_BUCKET: 'gallery video_originals' })
+        expect(r.status).toBe(0)
+        const con = chiamate().filter((c) => c.includes('--exclude /gallery/** --exclude /video_originals/**'))
+        const comandi = con.map((c) => c.split(' ')[0]).sort()
+        // size della sorgente + sync + check; NON la size dello specchio né quella del cestino
+        expect(comandi).toEqual(['check', 'size', 'sync'])
+        const size = con.find((c) => c.startsWith('size'))!
+        expect(size).toContain('SB_FINTO:')
+        expect(r.out).toMatch(/esclusi=gallery,video_originals/)
+    })
+
+    it('rifiuta un nome di bucket non valido, e non lancia il sync', () => {
+        for (const cattivo of ['../x', 'Gallery', 'a/b', '*', 'x;y']) {
+            const r = esegui({ ESCLUDI_BUCKET: `gallery ${cattivo}` })
+            expect(r.status, cattivo).not.toBe(0)
+            expect(r.err, cattivo).toMatch(/ESCLUDI_BUCKET/)
+        }
+        expect(sync()).toHaveLength(0)
+    })
+
+    it('i file esclusi non pesano nella guardia del 90%: la sorgente filtrata è quella che conta', () => {
+        // Il finto rclone risponde 100 per ogni size della sorgente; qui si controlla solo che il conteggio
+        // della sorgente sia chiesto CON i filtri (altrimenti la guardia confronterebbe mele con pere).
+        esegui({ ESCLUDI_BUCKET: 'gallery' })
+        const sizeSorgente = chiamate().find((c) => c.startsWith('size') && c.includes('SB_FINTO:'))!
+        expect(sizeSorgente).toContain('--exclude /gallery/**')
+    })
+})
+
 describe('PROVE GEMELLE · se si toglie una guardia, il comportamento sbagliato appare davvero', () => {
     function mutato(da: RegExp, a: string): string {
         const originale = readFileSync(SCRIPT, 'utf8')
@@ -242,6 +278,18 @@ describe('PROVE GEMELLE · se si toglie una guardia, il comportamento sbagliato 
         const p = mutato(/\$\(\(N_SORGENTE \* 10\)\) -lt \$\(\(N_DEST \* 9\)\)/, '1 -lt 0')
         esegui({ FAKE_N_SORGENTE: '80', FAKE_N_DEST: '100' }, p)
         expect(sync().length).toBeGreaterThan(0)
+    })
+
+    it('senza i filtri sul sync, la galleria verrebbe copiata comunque', () => {
+        const p = mutato(/  \$\{FILTRI\[@\]\+"\$\{FILTRI\[@\]\}"\} \\\n  --log-level NOTICE --stats 0 2>&1 \| maschera\nST_SYNC/, '  --log-level NOTICE --stats 0 2>&1 | maschera\nST_SYNC')
+        esegui({ ESCLUDI_BUCKET: 'gallery' }, p)
+        expect(sync()[0]).not.toContain('--exclude')
+    })
+
+    it('senza la validazione dei nomi, un valore con un glob verrebbe usato come filtro', () => {
+        const p = mutato(/'' \| \*\[!a-z0-9_-\]\*\) errore/, "'@@@') errore")
+        const r = esegui({ ESCLUDI_BUCKET: 'x;y' }, p)
+        expect(r.status).toBe(0)
     })
 
     it('senza la maschera degli uuid, i nomi dei file finirebbero nel log pubblico', () => {

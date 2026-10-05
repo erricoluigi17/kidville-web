@@ -58,6 +58,18 @@ const SEGRETI_BACKUP = [
     'BACKUP_DB_URL',
 ]
 const SEGRETI_AMMESSI = [...SEGRETI_BACKUP, 'RESEND_API_KEY', 'SENTINELLA_DESTINATARI']
+/**
+ * LA SCELTA DEL TITOLARE (2026-10-06): foto e video della galleria NON vanno nel backup, per non
+ * pagare spazio per cose che non si vogliono salvare. L'elenco degli esclusi deve essere ESATTAMENTE
+ * questo. Cambiarlo è una decisione sua: si cambia qui, con la ragione scritta accanto.
+ */
+const BUCKET_ESCLUSI_DECISI = ['gallery', 'video_originals']
+/** I bucket insostituibili: non possono MAI stare fra gli esclusi, qualunque cosa si decida. */
+const BUCKET_INSOSTITUIBILI = [
+    'protocollo', 'sensitive_documents', 'documenti_personale', 'fatture', 'pagelle', 'credenziali',
+    'registro-allegati', 'form_attachments', 'video_build', 'iscrizioni_elenchi', 'avvisi_allegati',
+    'certificati-medici', 'cassa-giustificativi', 'task_allegati',
+]
 const SOTTOCOMANDI_RCLONE = ['copyto', 'lsjson', 'lsf', 'cat', 'size', 'obscure', 'version']
 const EVENTI_VIETATI = [
     'push', 'pull_request', 'pull_request_target', 'workflow_run', 'repository_dispatch',
@@ -258,6 +270,15 @@ function violazioni(grezzo: string, cicd: string): string[] {
         v.push('la modalità prova deve scrivere SOLO sotto prove/')
     }
 
+    // ── BUCKET ESCLUSI DAL BACKUP ──────────────────────────────────────────
+    const esclusi = (bloccoRadice(c, 'env').ESCLUDI_BUCKET ?? '').split(/\s+/).filter(Boolean).sort()
+    if (esclusi.join(' ') !== [...BUCKET_ESCLUSI_DECISI].sort().join(' ')) {
+        v.push(`bucket esclusi: devono essere esattamente «${BUCKET_ESCLUSI_DECISI.join(' ')}» (scelta del titolare, 2026-10-06), non «${esclusi.join(' ')}»`)
+    }
+    for (const e of esclusi) {
+        if (BUCKET_INSOSTITUIBILI.includes(e)) v.push(`bucket insostituibile escluso dal backup: ${e}`)
+    }
+
     // ── CHIAVE age ─────────────────────────────────────────────────────────
     const chiave = (bloccoRadice(c, 'env').AGE_PUBLIC_KEY ?? '').trim()
     if (/AGE-SECRET-KEY-/.test(c)) v.push('chiave age PRIVATA nel workflow')
@@ -271,8 +292,10 @@ function repoTracciato(): string[] {
 
 const REALE = readFileSync(FILE, 'utf8')
 const DOC = readFileSync(CICD, 'utf8')
-/** Il workflow reale con una chiave di forma valida al posto del segnaposto: base per le prove. */
-const BASE = REALE.replace(SEGNAPOSTO, CHIAVE_DI_PROVA)
+/** La chiave pubblica che il workflow usa davvero (le prove gemelle la sostituiscono). */
+const CHIAVE_REALE = /^\s{2}AGE_PUBLIC_KEY:\s*(\S+)\s*$/m.exec(REALE)?.[1] ?? CHIAVE_DI_PROVA
+/** Base delle prove gemelle: il workflow vero, con la chiave vera. */
+const BASE = REALE
 
 describe('LOCK · backup-notturno.yml', () => {
     it('il file esiste e gli script che chiama esistono', () => {
@@ -282,7 +305,7 @@ describe('LOCK · backup-notturno.yml', () => {
         }
     })
 
-    it('rispetta tutte le regole (con una chiave di forma valida)', () => {
+    it('rispetta tutte le regole', () => {
         expect(violazioni(BASE, DOC)).toEqual([])
     })
 
@@ -335,8 +358,8 @@ describe('PROVE GEMELLE · il lock diventa rosso quando una regola si rompe', ()
         ['segreto BACKUP_ nel job avviso', (s) => s.replace('          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n          SIMULATO: ${{ inputs.simula_guasto }}\n        run: |\n          set -o pipefail', '          ALTRO: ${{ secrets.BACKUP_DB_URL }}\n          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n          SIMULATO: ${{ inputs.simula_guasto }}\n        run: |\n          set -o pipefail'), /segreti BACKUP_ vietati nel job avviso/],
         ['input dentro uno script', (s) => s.replace('echo "::notice::dump caricato', 'echo ${{ inputs.modalita }}\n          echo "::notice::dump caricato'), /input usato fuori da env\/if/],
         ['senza persist-credentials', (s) => s.replace('          persist-credentials: false\n', ''), /persist-credentials/],
-        ['chiave age privata', (s) => s.replace(CHIAVE_DI_PROVA, 'AGE-SECRET-KEY-1' + 'Q'.repeat(50)), /chiave age PRIVATA/],
-        ['chiave age fuori forma', (s) => s.replace(CHIAVE_DI_PROVA, 'age1corta'), /forma attesa/],
+        ['chiave age privata', (s) => s.replace(CHIAVE_REALE, 'AGE-SECRET-KEY-1' + 'Q'.repeat(50)), /chiave age PRIVATA/],
+        ['chiave age fuori forma', (s) => s.replace(CHIAVE_REALE, 'age1corta'), /forma attesa/],
         ['senza verifica sha256', (s) => s.replace('echo "${RCLONE_SHA256}  $RUNNER_TEMP/rclone.zip" | sha256sum -c -', 'true'), /sha256sum -c/],
         ['rclone latest', (s) => s.replace('RCLONE_VERSION: "1.75.1"', 'RCLONE_VERSION: "latest"'), /versione esatta mancante|latest/],
         ['set -x', (s) => s.replace('          set -euo pipefail\n          sudo apt-get update', '          set -euxo pipefail\n          sudo apt-get update'), /set -x/],
@@ -353,6 +376,12 @@ describe('PROVE GEMELLE · il lock diventa rosso quando una regola si rompe', ()
         ['la prova scrive fuori da prove/', (s) => s.replace('PREFISSO_DB=prove/run-', 'PREFISSO_DB=db/run-'), /SOLO sotto prove/],
         ['senza client Postgres 17', (s) => s.replace('postgresql-client-17', 'postgresql-client'), /postgresql-client-17/],
         ['senza passare dallo script del dump', (s) => s.replace('bash scripts/backup/dump-cifrato.sh', 'true'), /dump-cifrato\.sh/],
+        ['esclude anche il protocollo', (s) => s.replace('ESCLUDI_BUCKET: gallery video_originals', 'ESCLUDI_BUCKET: gallery video_originals protocollo'), /bucket insostituibile escluso dal backup: protocollo/],
+        ['esclude anche le iscrizioni (form_attachments)', (s) => s.replace('ESCLUDI_BUCKET: gallery video_originals', 'ESCLUDI_BUCKET: gallery video_originals form_attachments'), /insostituibile escluso dal backup: form_attachments/],
+        ['esclude i programmi FFmpeg (video_build)', (s) => s.replace('ESCLUDI_BUCKET: gallery video_originals', 'ESCLUDI_BUCKET: gallery video_build'), /insostituibile escluso dal backup: video_build/],
+        ['esclude anche la chat (il titolare ha deciso di tenerla)', (s) => s.replace('ESCLUDI_BUCKET: gallery video_originals', 'ESCLUDI_BUCKET: gallery video_originals chat-allegati'), /devono essere esattamente/],
+        ['esclude solo la galleria', (s) => s.replace('ESCLUDI_BUCKET: gallery video_originals', 'ESCLUDI_BUCKET: gallery'), /devono essere esattamente/],
+        ['non esclude più niente', (s) => s.replace('  ESCLUDI_BUCKET: gallery video_originals\n', ''), /devono essere esattamente/],
         ['senza passare dallo script dello specchio', (s) => s.replaceAll('bash scripts/backup/specchio-storage.sh', 'true'), /specchio-storage\.sh/],
     ]
 

@@ -68,10 +68,18 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Chiave PUBBLICA age del titolare (la privata sta offline). SEGNAPOSTO finché il titolare
-  # non la consegna: il lock rifiuta il segnaposto, quindi questo file non si può mergiare così.
-  AGE_PUBLIC_KEY: age1segnapostoinserirelachiavepubblicadeltitolarexxxxxxxxxxxxx
+  # Chiave PUBBLICA age del titolare, generata il 2026-10-05. La privata sta OFFLINE dal titolare
+  # (due supporti) e non è mai stata in GitHub, nel repository o in una chat.
+  AGE_PUBLIC_KEY: age1p3xkv8avezpg7mnm3cche4e62y4uk6h7d92wze0lht0tx34xtp6sj52lxu
   R2_BUCKET: kidville-backup
+  # SCELTA DEL TITOLARE, 2026-10-06: foto e video della galleria NON vanno nel backup, per non
+  # pagare spazio per cose che non si vogliono salvare. Sono due bucket: `gallery` (foto e video
+  # condivisi con i genitori) e `video_originals` (gli originali dei video). Tutto il resto SI
+  # copia, compresi `form_attachments` (scansioni dei documenti delle iscrizioni, dati legali),
+  # `chat-allegati` e `video_build` (i programmi FFmpeg, unica copia). Il lock pretende che l'elenco
+  # sia esattamente questo e che non contenga mai un bucket insostituibile. Conseguenza accettata:
+  # se la galleria o i video originali vengono persi o cancellati, NON si possono recuperare.
+  ESCLUDI_BUCKET: gallery video_originals
   # rclone fissato a una versione esatta, con l'impronta verificata (stessa su GitHub e su
   # downloads.rclone.org il 2026-10-05). Una versione che cambia da sola cambia il comportamento
   # di un giro che nessuno guarda.

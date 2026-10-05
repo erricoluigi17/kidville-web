@@ -172,6 +172,13 @@ cifrate, che l'app non legge mai. Il workflow è `.github/workflows/backup-nottu
 - **I file.** `rclone sync` incrementale da Supabase Storage (protocollo S3) verso un remote `crypt`: contenuti e
   nomi dei file cifrati; nomi di cartella in chiaro (sono solo uuid e parole fisse) perché i lock lavorano per
   prefisso. Ciò che sparisce dalla sorgente finisce nel **cestino** del giorno, mai nel nulla.
+- **Cosa NON è nel backup, per scelta del titolare (2026-10-06): foto e video della galleria.** Sono i bucket
+  `gallery` e `video_originals` (circa 7,7 GB su 15): non si copiano, per non pagare spazio. È scritto in
+  `ESCLUDI_BUCKET` nel workflow e un lock (`backup-notturno-sicuro`) pretende che l'elenco sia **esattamente**
+  questo e che non contenga mai un bucket insostituibile (iscrizioni, protocollo, 104/PEI, fatture, pagelle,
+  personale, `video_build`). **Conseguenza accettata:** se la galleria o i video originali vengono persi o
+  cancellati su Supabase, non si possono recuperare. I bucket `chat-allegati` e `form_attachments` (scansioni dei
+  documenti delle iscrizioni) restano nel backup.
 - **Regole su R2** (si impostano dal pannello, **dopo** i giri di prova: con un lock attivo il bucket non si
   svuota più). R2 non ha versioning né Object Lock S3: la protezione sono nomi con data + bucket lock, e il lock
   vince sul lifecycle (documentazione Cloudflare), quindi la scadenza GDPR è automatica.
@@ -197,8 +204,9 @@ cifrate, che l'app non legge mai. Il workflow è `.github/workflows/backup-nottu
   responsabili del trattamento da dichiarare nel registro dei trattamenti. Le copie scadono da sole: 30 giorni
   (giornaliere e cestino) e 12 mesi (mensili). Un oblio si compie al più tardi alla scadenza; dopo un
   ripristino gli oblii avvenuti dopo la data del backup vanno **riapplicati**.
-- **Costo.** Circa 17-18 GB su R2: ~0,15 $/mese oltre i 10 GB gratuiti; uscita dati gratuita; GitHub Actions è
-  gratuito sui repository pubblici.
+- **Costo.** Senza galleria e video: circa 7,4 GB di file + i dump (circa 2 GB per 30 giornalieri e 12 mensili) = circa
+  9-10 GB, cioè dentro i 10 GB gratuiti di R2 (**0 $** o pochi centesimi). Con tutto sarebbero 17-18 GB, circa 0,15 $/mese.
+  Uscita dati gratuita; GitHub Actions è gratuito sui repository pubblici.
 
 ---
 

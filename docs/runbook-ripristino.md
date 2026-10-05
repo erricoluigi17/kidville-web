@@ -27,6 +27,12 @@
 | Copia mensile del database | R2 `db/mensili/AAAA-MM.dump.age` | 12 mesi (lock) | chiave privata `age` |
 | Specchio dei file (14 GB) | R2 `storage/corrente/…` | sempre aggiornato | password e salt di `rclone crypt` |
 | File spariti da Supabase | R2 `storage/cestino/AAAA-MM-GG/…` | 30 giorni (lock) | password e salt di `rclone crypt` |
+| **Foto e video della galleria** (`gallery`, `video_originals`) | **NON sono in nessun backup** | — | scelta del titolare, 2026-10-06 |
+
+> 🔴 **Foto e video della galleria non hanno copie.** Per scelta del titolare (2026-10-06) i bucket `gallery` e
+> `video_originals` sono **fuori dal backup** per non pagare spazio. Se vengono cancellati o persi, **non si
+> recuperano**: nemmeno dallo scenario C. Il resto dei file (iscrizioni, protocollo, 104/PEI, fatture, pagelle,
+> personale, chat) è coperto.
 
 **Cosa NON c'è nel dump** (e va rifatto a mano dopo un ripristino su un progetto nuovo):
 - i **dati** di `public.app_log`, `cron.job_run_details` e dei token di sessione di `auth` (la struttura sì; gli utenti rifanno il login);
@@ -99,7 +105,9 @@ Non è un'emergenza la prima notte: l'ultima copia buona è quella di ieri. **Lo
 2. Rilancia: `gh workflow run backup-notturno.yml -f modalita=completo`.
 3. Se il workflow **non parte proprio** (nessuna email, nessun giro): oggi non c'è nessun allarme (lo darà il campanello della fase 3). Controlla ogni tanto i giri con `gh run list --workflow backup-notturno.yml`.
 
-## Scenario C — «Un file è stato cancellato per errore» (foto, modulo, documento)
+## Scenario C — «Un file è stato cancellato per errore» (modulo, documento, allegato)
+
+> Vale per tutti i bucket **tranne** `gallery` e `video_originals`, che non sono nel backup (vedi sopra).
 
 1. Entro 30 giorni il file è nel cestino dello specchio. Cerca il giorno in cui è sparito (la cartella ha la data):
    ```bash

@@ -176,8 +176,12 @@ const ESENTE = 'src/lib/logging/';
 // uscito proprio il 2026-09-12 — e nessuno aveva un `catch { /* … */ }` con soli commenti: misurato
 // prima e dopo, né i due tetti qui sopra né quelli della metà scoperta (`MAX_SOLO_COMMENTI`,
 // `MAX_FILE_SOLO_COMMENTI`) hanno credito da restituire per questo intervento.
-const MAX_FILE = 40;
-const MAX_OCCORRENZE = 61;
+// 🔻 40 → 39 e 61 → 60 il 2026-10-05 (metodi di pagamento ammessi): `RateizzaModal.tsx` esce
+// dall'allowlist. Il suo `.catch(() => {})` stava sulla DELETE della voce originale dopo la
+// rateizzazione: se falliva, la voce restava ACCANTO al piano rateale nuovo (debito doppio) senza
+// traccia. Ora logga (`rateizza-originale-non-eliminato`), anche sul ramo `!res.ok`.
+const MAX_FILE = 39;
+const MAX_OCCORRENZE = 60;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

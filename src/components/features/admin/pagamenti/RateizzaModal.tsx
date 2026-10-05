@@ -9,6 +9,7 @@ import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY, BTN_SECOND
 import { formatEuro } from '@/lib/format/valuta';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { normalizzaMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Campo compatto per la riga-rata (importo + scadenza) dentro il piano.
 const RATA_FIELD = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1.5 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -107,9 +108,17 @@ export function RateizzaModal({
             if (!res.ok) { setError(messaggioDaCorpo(j, t('rateErrCreazione'))); return; }
             // sostituzione: elimina il pagamento singolo originale
             if (replacePagamentoId) {
-                await fetch(`/api/pagamenti/${replacePagamentoId}?userId=${userId}`, {
+                // Un `.catch(() => {})` qui lasciava in silenzio la voce originale ACCANTO
+                // al piano rateale nuovo (debito doppio): ora il fallimento si logga.
+                const del = await fetch(`/api/pagamenti/${replacePagamentoId}?userId=${userId}`, {
                     method: 'DELETE', headers: { 'x-user-id': userId },
-                }).catch(() => {});
+                }).catch((err: unknown) => {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: `rateizza-originale-non-eliminato: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+                    return null;
+                });
+                if (del && !del.ok) {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'rateizza-originale-non-eliminato', route: '/admin/pagamenti', stato: del.status });
+                }
             }
             onDone();
         } catch {

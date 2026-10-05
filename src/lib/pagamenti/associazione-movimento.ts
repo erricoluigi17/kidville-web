@@ -83,6 +83,30 @@ function incassoVivo(r: RigaIncasso): r is RigaIncasso & { pagamento_id: string 
   return !!r.pagamento_id && !r.stornato_il && !r.storno_di
 }
 
+/** Colonna assente: `42703` da Postgres, `PGRST204` dalla cache di PostgREST. */
+const COLONNA_ASSENTE = new Set(['42703', 'PGRST204'])
+
+type LetturaIncassi = { data: unknown; error: { code?: string; message?: string } | null }
+
+/**
+ * ─── IL DB E2E DELLA CI NON HA LE COLONNE DELLO STORNO (revisione, 2026-10-05) ──
+ *
+ * `stornato_il` e `storno_di` sono nate dopo (S3), e il DB E2E della CI non è
+ * migrato: chiederle lì fa `42703`, e il popup di OGNI confermato diceva «non è
+ * stato possibile leggere». Su quel codice — e solo su quello — si ritenta senza:
+ * gli incassi contano come vivi, perché senza quelle colonne uno storno di quella
+ * forma non può esserci. Un `warn` lo dice; un guasto vero resta un guasto.
+ */
+async function leggiIncassiConRipiego(
+  leggi: (colonne: string) => PromiseLike<LetturaIncassi>,
+  operazione: string,
+): Promise<LetturaIncassi> {
+  const prima = await leggi('pagamento_id, importo, stornato_il, storno_di')
+  if (!prima.error || !COLONNA_ASSENTE.has(prima.error.code ?? '')) return prima
+  logEvento('pagamento', 'warn', { operazione, esito: 'associazione-colonne-storno-assenti' }, prima.error)
+  return leggi('pagamento_id, importo')
+}
+
 /**
  * ─── LA VOCE DI UN FRATELLO ISCRITTO IN UN'ALTRA SEDE (2026-10-05) ──────────
  *
@@ -129,10 +153,11 @@ export async function leggiAssociazione(
   // 1. Quanto il bonifico ha messo su ciascuna voce
   const incassatoPerVoce = new Map<string, number>()
   if (mov.transazione_id) {
-    const { data, error } = await supabase
-      .from('incassi')
-      .select('pagamento_id, importo, stornato_il, storno_di')
-      .eq('transazione_id', mov.transazione_id)
+    const transazioneId = mov.transazione_id
+    const { data, error } = await leggiIncassiConRipiego(
+      (colonne) => supabase.from('incassi').select(colonne).eq('transazione_id', transazioneId),
+      operazione,
+    )
     if (error) return { guasto: error }
     for (const r of (data ?? []) as RigaIncasso[]) {
       if (!incassoVivo(r)) continue
@@ -142,11 +167,11 @@ export async function leggiAssociazione(
     // Stesse colonne del ramo composito, e per la stessa ragione: un incasso
     // stornato a mano dal registro (senza riaprire il movimento) non porta più
     // denaro sulla voce, e il popup non deve dire il contrario.
-    const { data, error } = await supabase
-      .from('incassi')
-      .select('pagamento_id, importo, stornato_il, storno_di')
-      .eq('id', mov.incasso_id)
-      .maybeSingle()
+    const incassoId = mov.incasso_id
+    const { data, error } = await leggiIncassiConRipiego(
+      (colonne) => supabase.from('incassi').select(colonne).eq('id', incassoId).maybeSingle(),
+      operazione,
+    )
     if (error) return { guasto: error }
     const r = data as RigaIncasso | null
     if (r && incassoVivo(r)) incassatoPerVoce.set(r.pagamento_id, Number(r.importo))

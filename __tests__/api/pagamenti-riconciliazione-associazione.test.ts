@@ -41,6 +41,13 @@ const h = vi.hoisted(() => ({
   incassiTxError: null as { code: string; message: string } | null,
   /** L'incasso della voce singola (`.eq('id', …).maybeSingle()`). */
   incasso: null as Record<string, unknown> | null,
+  /**
+   * Il DB E2E della CI, non migrato: su `incassi` le colonne `stornato_il` e
+   * `storno_di` non esistono. Ogni lettura che le NOMINA risponde con questo
+   * codice (`42703`/`PGRST204`); la stessa lettura senza, va. Si emula sul
+   * CONTENUTO della select, non con «la prima lettura fallisce».
+   */
+  colonneStornoAssenti: null as string | null,
   pagamenti: [] as Record<string, unknown>[],
   pagamentiError: null as { code: string; message: string } | null,
   coda: [] as Record<string, unknown>[],
@@ -94,8 +101,14 @@ function finto() {
       b.limit = () => b
       const cols = () => (typeof b._cols === 'string' ? b._cols : '')
       const registra = () => h.letture.push({ table, cols: cols(), filtri: { ...filtri } })
+      const colonnaStornoRespinta = () =>
+        table === 'incassi' && h.colonneStornoAssenti && /stornato_il|storno_di/.test(cols())
+          ? { data: null, error: { code: h.colonneStornoAssenti, message: 'column incassi.stornato_il does not exist' } }
+          : null
       b.maybeSingle = async () => {
         registra()
+        const respinta = colonnaStornoRespinta()
+        if (respinta) return respinta
         if (table === 'riconciliazione_movimenti') {
           if (cols().includes('abbinato_auto_il') && h.marcaError) return { data: null, error: h.marcaError }
           return { data: h.movimento, error: null }
@@ -137,6 +150,8 @@ function finto() {
       }
       b.then = (resolve: (v: unknown) => unknown) => {
         registra()
+        const respinta = colonnaStornoRespinta()
+        if (respinta) return resolve(respinta)
         if (table === 'incassi' && 'transazione_id' in filtri) {
           return resolve({ data: h.incassiTxError ? null : filtra(h.incassiTx, filtri), error: h.incassiTxError })
         }
@@ -220,6 +235,7 @@ beforeEach(() => {
   h.rpcCalls = []
   h.incassiTx = []
   h.incassiTxError = null
+  h.colonneStornoAssenti = null
   h.pagamentiError = null
   h.coda = []
   h.codaError = null
@@ -432,6 +448,54 @@ describe('GET — a che cosa è associato il bonifico', () => {
     expect(res.status).toBe(500)
     expect(((await res.json()) as CorpoGet).codice).toBe('MOVIMENTO_NON_LETTO')
     expect(h.logErrore).toHaveBeenCalled()
+  })
+
+  /**
+   * ─── IL DB E2E DELLA CI, NON MIGRATO (revisione finale, 2026-10-05) ──────────
+   *
+   * La lettura degli incassi chiede `stornato_il, storno_di`, che lì possono non
+   * esistere: ogni popup di un confermato diceva «non è stato possibile leggere».
+   * Ora si ritenta senza quelle colonne — gli incassi contano come vivi, perché
+   * senza le colonne dello storno uno storno di quella forma non può esserci — e
+   * un `warn` lo dice. Un guasto VERO resta un 500 (il test qui sopra).
+   */
+  it.each(['42703', 'PGRST204'])('voce SINGOLA, colonne dello storno assenti (%s): si ritenta senza, 200, e un `warn`', async (codice) => {
+    h.colonneStornoAssenti = codice
+
+    const res = await get()
+
+    expect(res.status).toBe(200)
+    const voci = ((await res.json()) as CorpoGet).data?.associazione?.voci ?? []
+    expect(voci.map((v) => v.pagamento_id)).toEqual([PID])
+    expect(voci[0].incassato_qui, 'l’incasso del ritentativo non è stato contato').toBe(150)
+    // Il primo tentativo nominava le colonne; il secondo no, e cerca lo stesso incasso.
+    const inc = letteDa('incassi')
+    expect(inc).toHaveLength(2)
+    expect(inc[0].cols).toContain('stornato_il')
+    expect(inc[1].cols).not.toMatch(/stornato_il|storno_di/)
+    expect(inc[1].filtri.id).toBe(INCID)
+    const warn = h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string }).esito === 'associazione-colonne-storno-assenti')
+    expect(warn).toHaveLength(1)
+    expect(warn[0][1]).toBe('warn')
+    expect(h.logErrore).not.toHaveBeenCalled()
+    nessunNomeNeiLog()
+  })
+
+  it('COMPOSITA, colonne dello storno assenti: le voci dagli incassi della transazione, 200', async () => {
+    h.colonneStornoAssenti = '42703'
+    h.movimento = { ...h.movimento!, transazione_id: TXID, incasso_id: null }
+    h.incassiTx = [
+      { transazione_id: TXID, pagamento_id: PID, importo: 70 },
+      { transazione_id: TXID, pagamento_id: PID2, importo: 80 },
+    ]
+    h.pagamenti = [vocePagamento(PID, { importo: 70 }), vocePagamento(PID2, { importo: 80 })]
+
+    const res = await get()
+
+    expect(res.status).toBe(200)
+    const voci = ((await res.json()) as CorpoGet).data?.associazione?.voci ?? []
+    expect(voci.map((v) => [v.pagamento_id, v.incassato_qui])).toEqual([[PID, 70], [PID2, 80]])
+    expect(letteDa('incassi')).toHaveLength(2)
   })
 
   it('errore sulla lettura delle VOCI: 500 `MOVIMENTO_NON_LETTO`', async () => {

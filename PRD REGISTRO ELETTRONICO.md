@@ -1,3 +1,34 @@
+## 🛡️ Changelog — Roadmap di robustezza di server e database: cosa c'è dietro il «degraded» — 2026-10-05 (branch `docs/roadmap-robustezza`, PR #185)
+
+**Stato.** 📝 Solo documentazione: **nessun cambiamento** al codice, allo schema o ai dati. La roadmap
+da eseguire in più sessioni sta in **`docs/roadmap-robustezza.md`**, con lo stato di ogni sessione,
+la fotografia di partenza e le query per rimisurarla.
+
+**Perché.** `/api/health` era `degraded` da giorni. La ricerca del 05/10, in sola lettura (misure di
+produzione su Supabase e Vercel, tre audit del codice), ha mostrato che quel `degraded` veniva da un
+solo controllo di **qualità dei dati** (2 alunni col testo della classe divergente). Il degrado vero,
+il controllo di salute non lo vede.
+
+**Cosa ha trovato.** Le voci principali, ciascuna con le soluzioni spiegate e quella consigliata, sono:
+- funzioni Vercel in `iad1` (Washington) con il DB in `eu-west-1`: p50 **103 ms** a query, contro 14 ms dalle route già in `dub1`;
+- backup giornalieri di soli 7 giorni, **PITR spento**, Storage (14 GB) senza nessun backup, ripristino mai provato;
+- 119 FK `ON DELETE CASCADE` (un periodo di scrutinio cancellato porta via le pagelle, un pagamento porta via i suoi incassi);
+- nessun allarme esterno;
+- il Realtime `postgres_changes` come prima voce di tempo del DB;
+- code senza presa con scadenza;
+- report di cassa troncati a 1000 righe.
+
+**Ordine delle sessioni.** Prima le decisioni del titolare (PITR, conferme degli agenti) e gli
+interruttori dei pannelli. Poi, nell'ordine:
+- funzioni a Dublino;
+- backup esterno cifrato di DB e Storage, con prova di ripristino;
+- allarmi;
+- scatola nera delle cancellazioni;
+- soldi atomici;
+- indici e freni RESTRICT;
+- code, tempo reale, identità, errori;
+- pulizia e costi.
+
 ## 💶 Changelog — 2026-10-05: metodi di pagamento ammessi e associazioni dei bonifici (branch `feat/metodi-pagamento-riconciliazione`)
 
 **Stato.** ✅ **In produzione dal 05/10/2026 11:39 UTC** (PR #186, merge `57c1d28e`; CI tutta verde, E2E 164 passati, 0 ritentativi; deploy Vercel `success`, la GET nuova dell'associazione risponde 401 senza sessione). Gate al momento della PR: `eslint` 0 · `tsc` 0 · `vitest run` 1683 file / 28.405 test passati, 1 rosso ambientale: `offline-html-nativo`, che in un worktree senza `npx cap sync` non ha gli artefatti nativi da collaudare — rosso identico sul `main` di partenza · `npm run build` ok. **Una migrazione**, `20261005120000_pagamenti_metodi_ammessi.sql`, **applicata dall'integrazione al merge** con la version del file (una riga sola nel registro). Verificato sul DB: default `{contanti,bonifico}`, `NOT NULL`, CHECK presente, 2.140 voci tutte col default, advisor senza ERROR. **PR-B** (stesso giorno): la voce esce da `MIGRAZIONI_ATTESE_AL_MERGE`, fotografie FK e migrazioni (204) rigenerate dalla produzione. ⚠️ La version `…120000` era nel FUTURO rispetto al merge (11:37 UTC): il lock delle FK è rimasto rosso finché l'orologio non ha superato le 12:00. I nomi delle migrazioni usano l'ora UTC reale. Spec `docs/superpowers/specs/2026-10-05-metodi-ammessi-e-associazioni-bonifici-design.md`, piano `docs/superpowers/plans/2026-10-05-metodi-ammessi-e-associazioni-bonifici.md`.

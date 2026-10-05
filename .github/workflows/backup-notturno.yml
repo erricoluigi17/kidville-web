@@ -1,0 +1,379 @@
+name: Backup notturno (database e file → R2)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COSA FA. Ogni notte porta fuori da Supabase una copia CIFRATA di tutto:
+#   · il database (dump `pg_dump` di public, auth, storage, cron, supabase_migrations);
+#   · i 14 GB di file di Supabase Storage, specchiati in modo incrementale.
+# Le copie finiscono su Cloudflare R2 in giurisdizione UE (bucket `kidville-backup`), cifrate con
+# una chiave pubblica `age` il cui lato privato sta SOLO offline dal titolare, e con `rclone crypt`
+# per i file. Supabase resta il database dell'app: R2 contiene soltanto copie.
+#
+# PERCHÉ. Roadmap di robustezza, fase 2 (D1 e D2). Prima di questo file i backup stavano tutti
+# dentro Supabase (7 giorni, mai ripristinati) e i file non avevano nessuna copia. Un account
+# bloccato, un progetto cancellato o un errore scoperto dopo otto giorni avrebbero portato via
+# dati e rimedi insieme.
+#
+# COME SI LANCIA. `workflow_dispatch`, con due scelte:
+#   · modalita = prova      scrive SOLO sotto `prove/` su R2: il dump è vero, lo specchio gira su
+#                           tre file sintetici (e prova il cestino e la cifratura);
+#   · modalita = completo   il backup vero.
+#   · simula_guasto         non tocca niente: fa fallire apposta il giro per vedere arrivare
+#                           l'allarme (segnalazione + email). Un allarme mai visto suonare non
+#                           è un allarme.
+# Lo `schedule` NON c'è ancora: lo si arma (PR successiva) solo dopo due giri manuali riusciti e
+# dopo le regole di lock su R2.
+#
+# I SEGRETI vivono nell'ambiente GitHub `backup`, che accetta solo il branch `main` e non ha
+# revisori (deve girare di notte, da solo). Un branch con un workflow modificato non può quindi
+# leggerli. L'elenco e il significato sono in `docs/cicd.md`.
+#
+# LA CHIAVE PUBBLICA sta qui sotto, nel file, e NON in una variabile di GitHub: chi può
+# modificare una variabile potrebbe sostituirla con la sua e farsi cifrare i backup di domani;
+# modificare questo file richiede un commit su `main`, che si vede. Una chiave pubblica non è
+# un segreto.
+#
+# COSA NON FA MAI (e il lock `backup-notturno-sicuro.test.ts` lo pretende):
+#   · non carica il dump come artefatto del workflow (in un repository pubblico gli artefatti
+#     sono scaricabili da chiunque);
+#   · non scrive il dump in chiaro su disco;
+#   · non cancella niente da R2: gli unici sottocomandi di rclone sono `copyto`, `lsjson`,
+#     `lsf`, `cat`, `size`, `obscure`, `version` (la cancellazione sta solo dentro lo script
+#     dello specchio, e finisce sempre in un cestino);
+#   · non stampa segreti, nomi di file né conteggi per tabella: il repository è pubblico e i
+#     log si leggono da fuori. I conteggi stanno nel manifest, cifrato.
+#
+# COME SI SPEGNE. `gh workflow disable backup-notturno.yml`. Nessun effetto sulla produzione.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      modalita:
+        description: "prova = scrive solo sotto prove/ (dump vero, specchio su file sintetici); completo = il backup vero"
+        type: choice
+        options:
+          - prova
+          - completo
+        default: prova
+      simula_guasto:
+        description: "Fa fallire apposta il giro per provare l'allarme (segnalazione + email). Non tocca niente."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-notturno
+  cancel-in-progress: false
+
+env:
+  # Chiave PUBBLICA age del titolare (la privata sta offline). SEGNAPOSTO finché il titolare
+  # non la consegna: il lock rifiuta il segnaposto, quindi questo file non si può mergiare così.
+  AGE_PUBLIC_KEY: age1segnapostoinserirelachiavepubblicadeltitolarexxxxxxxxxxxxx
+  R2_BUCKET: kidville-backup
+  # rclone fissato a una versione esatta, con l'impronta verificata (stessa su GitHub e su
+  # downloads.rclone.org il 2026-10-05). Una versione che cambia da sola cambia il comportamento
+  # di un giro che nessuno guarda.
+  RCLONE_VERSION: "1.75.1"
+  RCLONE_SHA256: "982b5aa772841168f8e380f139e9e787b2a105403e32b94da8676a0e1c0a13ab"
+
+jobs:
+  backup:
+    name: Dump del database e specchio dei file
+    if: ${{ !inputs.simula_guasto }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: backup
+    env:
+      # Per lo `schedule` (quando verrà armato) `inputs` è vuoto: si ripiega sul backup vero.
+      MODALITA: ${{ inputs.modalita || 'completo' }}
+      # I remote di rclone si descrivono con variabili d'ambiente: nessun file di configurazione
+      # con dentro i segreti.
+      RCLONE_CONFIG_R2_TYPE: s3
+      RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.BACKUP_R2_KEY_ID }}
+      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_R2_KEY_SECRET }}
+      RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.BACKUP_R2_ACCOUNT_ID }}.eu.r2.cloudflarestorage.com
+      RCLONE_CONFIG_R2_REGION: auto
+      RCLONE_CONFIG_R2_ACL: private
+      RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"
+      RCLONE_CONFIG_SB_TYPE: s3
+      RCLONE_CONFIG_SB_PROVIDER: Other
+      RCLONE_CONFIG_SB_ACCESS_KEY_ID: ${{ secrets.BACKUP_SUPABASE_S3_KEY_ID }}
+      RCLONE_CONFIG_SB_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_SUPABASE_S3_KEY_SECRET }}
+      RCLONE_CONFIG_SB_ENDPOINT: https://uimulkjyekgemjakmepp.storage.supabase.co/storage/v1/s3
+      RCLONE_CONFIG_SB_REGION: eu-west-1
+      RCLONE_CONFIG_SB_FORCE_PATH_STYLE: "true"
+      # Il remote cifrato: i NOMI DEI FILE sono cifrati, i nomi delle cartelle no (sono solo uuid e
+      # parole fisse come `iscrizioni/` o `originale`, misurato il 2026-10-05) perché i lock di R2
+      # lavorano per prefisso e un prefisso cifrato non si potrebbe bloccare.
+      RCLONE_CONFIG_CRIPTO_TYPE: crypt
+      RCLONE_CONFIG_CRIPTO_FILENAME_ENCRYPTION: standard
+      RCLONE_CONFIG_CRIPTO_DIRECTORY_NAME_ENCRYPTION: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/backup
+
+      - name: Installa gli strumenti (versioni fissate)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age jq curl unzip ca-certificates postgresql-common
+          # Il client di Postgres 17, lo stesso major del server: il repository PGDG ufficiale.
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+          curl -fsSL -o "$RUNNER_TEMP/rclone.zip" "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip"
+          echo "${RCLONE_SHA256}  $RUNNER_TEMP/rclone.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/rclone.zip" -d "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/rclone-v${RCLONE_VERSION}-linux-amd64/rclone" /usr/local/bin/rclone
+          age --version
+          rclone version | head -n 1
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Prepara la cifratura dei file e le destinazioni
+        env:
+          CRYPT_PW: ${{ secrets.BACKUP_CRYPT_PASSWORD }}
+          CRYPT_SALT: ${{ secrets.BACKUP_CRYPT_SALT }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CRYPT_PW" ] || [ -z "$CRYPT_SALT" ]; then
+            echo "::error::mancano i segreti BACKUP_CRYPT_PASSWORD o BACKUP_CRYPT_SALT nell'ambiente backup"
+            exit 1
+          fi
+          P1="$(rclone obscure "$CRYPT_PW")"
+          P2="$(rclone obscure "$CRYPT_SALT")"
+          echo "::add-mask::$P1"
+          echo "::add-mask::$P2"
+          echo "RCLONE_CONFIG_CRIPTO_PASSWORD=$P1" >> "$GITHUB_ENV"
+          echo "RCLONE_CONFIG_CRIPTO_PASSWORD2=$P2" >> "$GITHUB_ENV"
+
+          echo "STAMPA=$(date -u +%Y-%m-%dT%H%MZ)" >> "$GITHUB_ENV"
+          if [ "$MODALITA" = "completo" ]; then
+            echo "PREFISSO_DB=db/giornalieri" >> "$GITHUB_ENV"
+            echo "RCLONE_CONFIG_CRIPTO_REMOTE=R2:${R2_BUCKET}/storage" >> "$GITHUB_ENV"
+          else
+            echo "PREFISSO_DB=prove/run-${GITHUB_RUN_ID}/db" >> "$GITHUB_ENV"
+            echo "RCLONE_CONFIG_CRIPTO_REMOTE=R2:${R2_BUCKET}/prove/run-${GITHUB_RUN_ID}/storage" >> "$GITHUB_ENV"
+          fi
+
+      - name: Dump del database, cifrato mentre esce
+        env:
+          BACKUP_DB_URL: ${{ secrets.BACKUP_DB_URL }}
+          AGE_RECIPIENT: ${{ env.AGE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          PREV=0
+          if [ "$MODALITA" = "completo" ]; then
+            PREV="$(rclone lsjson "R2:${R2_BUCKET}/db/giornalieri" --files-only 2>/dev/null \
+              | jq -r '[.[] | select(.Name | endswith(".dump.age"))] | sort_by(.Name) | last | .Size // 0' || echo 0)"
+          fi
+          export PREV_DUMP_BYTES="${PREV:-0}"
+          export DEST_DIR="$RUNNER_TEMP/backup-db"
+          export GIORNO="$STAMPA"
+          bash scripts/backup/dump-cifrato.sh
+
+      - name: Carica il dump su R2 e verifica la dimensione
+        run: |
+          set -euo pipefail
+          DEST="R2:${R2_BUCKET}/${PREFISSO_DB}"
+          for f in "$RUNNER_TEMP/backup-db/$STAMPA.dump.age" "$RUNNER_TEMP/backup-db/$STAMPA.manifest.jsonl.age"; do
+            nome="$(basename "$f")"
+            rclone copyto "$f" "$DEST/$nome" --immutable --s3-upload-cutoff 200M --s3-chunk-size 64M
+            locale="$(wc -c < "$f" | tr -d ' ')"
+            remoto="$(rclone lsjson "$DEST/$nome" | jq -r '.[0].Size')"
+            if [ "$locale" != "$remoto" ]; then
+              echo "::error::dimensione diversa dopo il caricamento ($locale in locale, $remoto su R2)"
+              exit 1
+            fi
+          done
+          # Il primo giro del mese lascia anche la copia mensile (tenuta 12 mesi dal lock).
+          if [ "$MODALITA" = "completo" ] && [ "$(date -u +%d)" = "01" ]; then
+            MESE="$(date -u +%Y-%m)"
+            if [ -z "$(rclone lsf "R2:${R2_BUCKET}/db/mensili/$MESE.dump.age" 2>/dev/null)" ]; then
+              rclone copyto "$DEST/$STAMPA.dump.age" "R2:${R2_BUCKET}/db/mensili/$MESE.dump.age" --immutable
+              rclone copyto "$DEST/$STAMPA.manifest.jsonl.age" "R2:${R2_BUCKET}/db/mensili/$MESE.manifest.jsonl.age" --immutable
+            fi
+          fi
+          echo "::notice::dump caricato ($locale byte l'ultimo file)"
+
+      # Lo specchio gira anche se il dump è fallito: un guasto del database non deve fermare la
+      # copia dei file, e viceversa. Il giro resta rosso se uno dei due fallisce.
+      - name: Specchio dei file (cifrato, con cestino)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          if [ "$MODALITA" = "completo" ]; then
+            export SORGENTE="SB:"
+            export DESTINAZIONE="CRIPTO:corrente"
+            export CESTINO="CRIPTO:cestino/$(date -u +%Y-%m-%d)"
+            bash scripts/backup/specchio-storage.sh
+          else
+            # PROVA: tre file sintetici. Si prova il giro intero (sync, cestino, controllo) e la
+            # cifratura andata e ritorno, senza toccare i file veri dei bambini.
+            SRC="$RUNNER_TEMP/sorgente-prova"
+            mkdir -p "$SRC/b1"
+            printf 'uno' > "$SRC/b1/a.txt"
+            printf 'due' > "$SRC/b1/b.txt"
+            printf 'tre' > "$SRC/b1/c.txt"
+            export SORGENTE="$SRC"
+            export DESTINAZIONE="CRIPTO:corrente"
+            export CESTINO="CRIPTO:cestino/giro1"
+            bash scripts/backup/specchio-storage.sh
+            rm "$SRC/b1/b.txt"
+            export CESTINO="CRIPTO:cestino/giro2"
+            export PERMETTI_CALO=1
+            bash scripts/backup/specchio-storage.sh
+            N_CORRENTE="$(rclone lsf CRIPTO:corrente -R --files-only | wc -l | tr -d ' ')"
+            N_CESTINO="$(rclone lsf CRIPTO:cestino/giro2 -R --files-only | wc -l | tr -d ' ')"
+            if [ "$N_CORRENTE" != "2" ] || [ "$N_CESTINO" != "1" ]; then
+              echo "::error::prova del cestino fallita: $N_CORRENTE file nello specchio (atteso 2), $N_CESTINO nel cestino (atteso 1)"
+              exit 1
+            fi
+            if [ "$(rclone cat CRIPTO:corrente/b1/a.txt)" != "uno" ]; then
+              echo "::error::la cifratura andata e ritorno non restituisce il contenuto originale"
+              exit 1
+            fi
+            echo "::notice::prova del cestino e della cifratura riuscita"
+          fi
+
+      - name: Riepilogo
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Riepilogo del giro"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| modalità | \`$MODALITA\` |"
+            echo "| stampa | \`$STAMPA\` |"
+            echo "| lanciato da | \`${GITHUB_ACTOR}\` |"
+            echo "| commit | \`${GITHUB_SHA}\` |"
+            if [ "$MODALITA" = "completo" ]; then
+              echo "| dump giornalieri su R2 | $(rclone lsf "R2:${R2_BUCKET}/db/giornalieri" --files-only 2>/dev/null | grep -c '\.dump\.age$' || true) |"
+            fi
+            echo ""
+            echo "Nessun dato personale in questo riepilogo: soli aggregati. Cosa fare se qualcosa non va: \`docs/runbook-ripristino.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  guasto_simulato:
+    name: Guasto simulato (prova dell'allarme)
+    if: ${{ inputs.simula_guasto }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fallisci apposta
+        run: |
+          echo "::error::Guasto SIMULATO su richiesta (simula_guasto=true): serve a provare che l'allarme arrivi. Non è successo niente."
+          exit 1
+
+  avviso:
+    name: Avviso di guasto (segnalazione + email)
+    needs: [backup, guasto_simulato]
+    if: ${{ failure() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # Questo passo viene PRIMA dell'email, di proposito: non usa nessun segreto, quindi non può
+      # fallire per configurazione mancante. Se l'email non parte, la segnalazione c'è già.
+      # ⚠️ Il corpo è PUBBLICO: solo il link al giro, nessun dato.
+      - name: Apri o aggiorna la segnalazione nel repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SIMULATO: ${{ inputs.simula_guasto }}
+        run: |
+          set -uo pipefail
+          if [ "$SIMULATO" = "true" ]; then
+            TITOLO="PROVA dell'allarme del backup notturno (nessun guasto vero)"
+            APERTURA="Questo è un guasto SIMULATO, lanciato a mano per vedere arrivare l'allarme. Il backup non ha avuto nessun problema."
+          else
+            TITOLO="Backup notturno FALLITO"
+            APERTURA="Il backup notturno di database e file non è andato a buon fine. Finché non torna verde, l'ultima copia buona è quella di ieri o più vecchia."
+          fi
+          {
+            echo "$APERTURA"
+            echo
+            echo "- giro: $RUN_URL"
+            echo "- quando: $(date -u '+%d/%m/%Y alle %H:%M UTC')"
+            echo "- cosa fare: \`docs/runbook-ripristino.md\`, sezione «il backup di stanotte è fallito»"
+          } > "$RUNNER_TEMP/corpo.md"
+
+          gh label create backup-notturno --color D93F0B --description "Backup notturno esterno" --repo "$REPO" --force >/dev/null 2>&1 || true
+          APERTA="$(gh issue list --repo "$REPO" --state open --label backup-notturno --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+          if [ -n "$APERTA" ]; then
+            gh issue comment "$APERTA" --repo "$REPO" --body-file "$RUNNER_TEMP/corpo.md" \
+              && echo "::notice::commento aggiunto alla segnalazione già aperta" \
+              || echo "::warning::non sono riuscito ad aggiornare la segnalazione. Resta l'email."
+          else
+            gh issue create --repo "$REPO" --title "$TITOLO" --label backup-notturno --body-file "$RUNNER_TEMP/corpo.md" \
+              && echo "::notice::segnalazione aperta" \
+              || echo "::warning::non sono riuscito ad aprire la segnalazione. Resta l'email."
+          fi
+
+      - name: Manda l'email
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          # I destinatari NON stanno nel file: il repository è PUBBLICO e un indirizzo scritto qui
+          # verrebbe raccolto dagli spammer. Segreto separato, indirizzi separati da virgola.
+          DESTINATARI: ${{ secrets.SENTINELLA_DESTINATARI }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SIMULATO: ${{ inputs.simula_guasto }}
+        run: |
+          set -o pipefail
+          # Configurazione mancante = errore, mai una nota a piè di pagina: un allarme che non sa
+          # a chi scrivere è peggio di nessun allarme perché sembra che ci sia.
+          if [ -z "$RESEND_API_KEY" ] || [ -z "$DESTINATARI" ]; then
+            echo "::error::mancano RESEND_API_KEY o SENTINELLA_DESTINATARI: l'email di allarme NON parte. La segnalazione nel repository c'è."
+            exit 1
+          fi
+          if [ "$SIMULATO" = "true" ]; then
+            OGGETTO="PROVA dell'allarme del backup Kidville (nessun guasto vero)"
+            INTRO='<p><strong>Questa è una prova.</strong> Il guasto è simulato: il backup non ha avuto nessun problema. Serve a vedere che l’allarme arrivi.</p>'
+          else
+            OGGETTO="Backup notturno Kidville FALLITO"
+            INTRO='<p>Il backup notturno di database e file <strong>non è andato a buon fine</strong>. Finché non torna verde, l’ultima copia buona è quella di ieri o più vecchia.</p>'
+          fi
+          PAYLOAD=$(jq -n \
+            --arg from    "Kidville <noreply@mail.kidville.it>" \
+            --arg subject "$OGGETTO" \
+            --arg intro   "$INTRO" \
+            --arg run     "$RUN_URL" \
+            --arg quando  "$(date -u '+%d/%m/%Y alle %H:%M UTC')" \
+            --arg dest    "$DESTINATARI" \
+            '{
+               from: $from,
+               to: ($dest | split(",") | map(select(length > 0))),
+               subject: $subject,
+               html: (
+                 "<div style=\"font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:560px;color:#1a1a1a\">"
+                 + "<h2 style=\"color:#006A5F;margin-bottom:4px\">" + $subject + "</h2>"
+                 + $intro
+                 + "<p>Giro: <a href=\"" + $run + "\" style=\"color:#006A5F\">" + $run + "</a><br>Quando: " + $quando + ".</p>"
+                 + "<p style=\"font-size:12px;color:#55615C\">Backup notturno &middot; repository kidville-web</p>"
+                 + "</div>"
+               )
+             }')
+          RISPOSTA=$(curl -sS -X POST https://api.resend.com/emails \
+            -H "Authorization: Bearer ${RESEND_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -w '\n%{http_code}')
+          STATO=$(echo "$RISPOSTA" | tail -n1)
+          CORPO_RISPOSTA=$(echo "$RISPOSTA" | sed '$d')
+          # Il corpo dell'errore di un provider esterno non si butta MAI via.
+          echo "Resend ha risposto ${STATO}: ${CORPO_RISPOSTA}"
+          if [ "$STATO" != "200" ]; then
+            echo "::error::Resend ha rifiutato l'invio con ${STATO}: ${CORPO_RISPOSTA}"
+            exit 1
+          fi
+          echo "::notice::email di allarme spedita - ${CORPO_RISPOSTA}"

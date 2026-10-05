@@ -86,13 +86,17 @@ export const VERSIONE_MINIMA_STORE: VersioniMinime = Object.freeze({
  *
  * ANDROID 1.2 vista il 2026-10-04 alle 10:41 UTC: la scheda Google Play di `it.kidville.app`
  * risponde `1.2` (it e en), e Play Console dà la release «4 (1.2)» pubblicata in produzione al 100%.
- * iOS resta spenta finché `itunes.apple.com/lookup?id=6794883055&country=it` non risponde `1.2`.
+ * iOS 1.2 vista il 2026-10-04 (approvata e `READY_FOR_SALE` alle ~22:01 UTC, territorio ITA
+ * `AVAILABLE`): la scheda pubblica `apps.apple.com/it/app/kidville/id6794883055` mostra «Versione 1.2»
+ * con le sue novità. `itunes.apple.com/lookup?…&country=it` rispondeva ancora `1.1` due ore dopo:
+ * quell'API ha una cache più lenta della scheda, e non è lei a decidere cosa scarica chi tocca
+ * «Aggiorna ora».
  *
  * Una minima del personale PIÙ BASSA di quella dello store non cambia niente: chi è sotto la seconda
  * è già sotto la prima, e per lui il pop-up compare comunque.
  */
 export const VERSIONE_MINIMA_PERSONALE: VersioniMinime = Object.freeze({
-  ios: null,
+  ios: '1.2',
   android: '1.2',
 })
 

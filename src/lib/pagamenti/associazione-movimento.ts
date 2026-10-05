@@ -24,8 +24,15 @@ import { logEvento } from '@/lib/logging/logger'
 
 export interface VoceAssociata {
   pagamento_id: string
-  descrizione: string
-  alunno: string
+  /** `null` solo su una voce `fuori_sede`: vedi `oscuraVociFuoriSede`. */
+  descrizione: string | null
+  /** `null` solo su una voce `fuori_sede`: vedi `oscuraVociFuoriSede`. */
+  alunno: string | null
+  /**
+   * La voce è di un plesso fuori dalle sedi attive di chi guarda — il fratello
+   * iscritto altrove di un bonifico composito. Presente solo quando è vero.
+   */
+  fuori_sede?: boolean
   scuola_id: string | null
   importo_voce: number
   /** Quanto QUESTO bonifico ha messo sulla voce: la somma dei suoi incassi vivi. */
@@ -74,6 +81,42 @@ type RigaIncasso = {
  */
 function incassoVivo(r: RigaIncasso): r is RigaIncasso & { pagamento_id: string } {
   return !!r.pagamento_id && !r.stornato_il && !r.storno_di
+}
+
+/**
+ * ─── LA VOCE DI UN FRATELLO ISCRITTO IN UN'ALTRA SEDE (2026-10-05) ──────────
+ *
+ * Il gate di sede dell'handler giudica il MOVIMENTO. Un bonifico composito però
+ * può pagare le voci di due fratelli in due plessi diversi, e la voce del
+ * fratello è di una sede che chi guarda non vede: senza questo passo, il popup
+ * di Giugliano avrebbe mostrato il nome di un bambino di Cesa e la descrizione
+ * della sua voce.
+ *
+ * Si tolgono il NOME e la DESCRIZIONE; restano le CIFRE, lo stato e la fattura.
+ * Il denaro del bonifico va spiegato per intero — altrimenti la somma delle voci
+ * a schermo non fa l'importo, e la conferma di uno scollegamento direbbe meno di
+ * ciò che farà davvero (lo storno tocca anche quella voce). Le cifre non dicono
+ * di chi è la voce.
+ *
+ * Una voce SENZA sede (`scuola_id` nullo) è trattata come fuori sede: nel dubbio
+ * non si mostra, come fa `assertPagamentoInScope`.
+ *
+ * Il confronto ignora le maiuscole per la stessa ragione di `formaConfronto` in
+ * `@/lib/auth/scope` (in Postgres `uuid` è un tipo: `'AAAA…'` e `'aaaa…'` sono lo
+ * stesso valore). Non la si importa perché questo è il modulo di dominio della
+ * lettura, e la forma — `trim().toLowerCase()` — è una riga.
+ */
+export function oscuraVociFuoriSede(associazione: Associazione, sediAttive: readonly string[]): Associazione {
+  const forma = (id: string) => id.trim().toLowerCase()
+  const dentro = new Set(sediAttive.map(forma))
+  return {
+    ...associazione,
+    voci: associazione.voci.map((v) =>
+      v.scuola_id && dentro.has(forma(v.scuola_id))
+        ? v
+        : { ...v, descrizione: null, alunno: null, fuori_sede: true },
+    ),
+  }
 }
 
 export async function leggiAssociazione(

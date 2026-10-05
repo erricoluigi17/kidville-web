@@ -39,7 +39,7 @@ import { riapriMovimento, COLONNA_ASSENTE } from '@/lib/pagamenti/riapertura-mov
 // La lettura «a che cosa è associato questo bonifico» della GET: le voci, i
 // bambini, il denaro per voce e chi ha confermato. Il gate di sede resta qui,
 // nell'handler; al modulo arriva un movimento che chi chiede può già vedere.
-import { leggiAssociazione } from '@/lib/pagamenti/associazione-movimento'
+import { leggiAssociazione, oscuraVociFuoriSede } from '@/lib/pagamenti/associazione-movimento'
 
 const patchBodySchema = z.object({
   azione: z.enum(['conferma', 'ignora', 'riapri']),
@@ -343,10 +343,13 @@ export const GET = withRoute('pagamenti/riconciliazione/[id]:GET', async (reques
     // sede → 404 e non 403, come altrove: chi non può vederla non deve nemmeno
     // sapere che esiste. Una riga confermata SENZA sede (storica) si giudica
     // dalla voce àncora, con lo stesso gate della riapertura a voce singola.
+    // Le sedi attive servono due volte: al gate qui sotto, e dopo la lettura per
+    // oscurare le voci di un fratello iscritto in un altro plesso (`oscuraVociFuoriSede`).
+    let sediAttive: string[] = []
     if (mov.stato === 'confermato') {
+      sediAttive = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
       if (mov.scuola_id) {
-        const sedi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
-        if (!sedi.includes(mov.scuola_id)) {
+        if (!sediAttive.includes(mov.scuola_id)) {
           return NextResponse.json(
             { error: 'Movimento non trovato', codice: 'CONCILIAZIONE_MOVIMENTO_NON_TROVATO' },
             { status: 404 },
@@ -373,7 +376,9 @@ export const GET = withRoute('pagamenti/riconciliazione/[id]:GET', async (reques
         stato: mov.stato,
         importo: mov.importo,
         data_operazione: mov.data_operazione,
-        associazione: esito.associazione,
+        // Un composito può pagare le voci di fratelli in sedi diverse: quelle fuori
+        // dalle sedi attive escono senza nome né descrizione, con le sole cifre.
+        associazione: esito.associazione ? oscuraVociFuoriSede(esito.associazione, sediAttive) : null,
         pagamento: esito.ancora,
       },
     })

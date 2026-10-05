@@ -319,6 +319,83 @@ describe('GET — a che cosa è associato il bonifico', () => {
     nessunNomeNeiLog()
   })
 
+  /**
+   * ─── UN FRATELLO ISCRITTO IN UN'ALTRA SEDE (privacy multi-sede) ─────────────
+   *
+   * Un bonifico composito può pagare le voci di due fratelli in due plessi. Il
+   * gate di sede lascia passare il movimento (la sua sede è di chi guarda), ma la
+   * voce del fratello è di una sede che questa segreteria NON vede: il nome del
+   * bambino e la descrizione della voce non devono uscire. Restano le CIFRE — il
+   * denaro del bonifico va spiegato per intero, o la somma non torna — e il segno
+   * `fuori_sede`, con cui il popup dice «Voce di un'altra sede».
+   */
+  it('COMPOSITA con un fratello in un’ALTRA sede: la sua voce senza nome né descrizione, le cifre restano', async () => {
+    h.movimento = { ...h.movimento!, transazione_id: TXID, incasso_id: null }
+    h.incassiTx = [
+      { transazione_id: TXID, pagamento_id: PID, importo: 70, stornato_il: null, storno_di: null },
+      { transazione_id: TXID, pagamento_id: PID2, importo: 80, stornato_il: null, storno_di: null },
+    ]
+    h.pagamenti = [
+      vocePagamento(PID, { importo: 70, stato: 'pagato' }),
+      vocePagamento(PID2, {
+        importo: 80, stato: 'pagato', scuola_id: 'sc-2', fattura_stato: 'emessa',
+        descrizione: 'Retta di Luca', alunni: { nome: 'Luca', cognome: 'Rossi' },
+      }),
+    ]
+    h.coda = [{ pagamento_id: PID2, stato: 'in_coda' }]
+
+    const res = await get()
+
+    expect(res.status).toBe(200)
+    const corpo = await res.text()
+    const voci = ((JSON.parse(corpo) as CorpoGet).data?.associazione?.voci ?? [])
+    // La voce di casa: tutto in chiaro, e nessun segno «fuori sede».
+    expect(voci[0]).toMatchObject({ pagamento_id: PID, alunno: 'Mara Bianchi', descrizione: 'Retta settembre' })
+    expect(voci[0].fuori_sede, 'la voce di CASA segnata come di un’altra sede').toBeUndefined()
+    // La voce dell'altra sede: nomi tolti, cifre e stati intatti.
+    expect(voci[1]).toEqual({
+      pagamento_id: PID2,
+      descrizione: null,
+      alunno: null,
+      fuori_sede: true,
+      scuola_id: 'sc-2',
+      importo_voce: 80,
+      incassato_qui: 80,
+      stato_voce: 'pagato',
+      fattura_stato: 'emessa',
+      fattura_in_coda: 'in_coda',
+    })
+    // …e non solo nel campo: in NESSUN punto della risposta.
+    for (const dato of ['Luca', 'Rossi', 'Retta di Luca']) {
+      expect(corpo, `«${dato}» di un’altra sede è uscito nella risposta`).not.toContain(dato)
+    }
+    nessunNomeNeiLog()
+  })
+
+  it('una voce SENZA sede è trattata come fuori sede: nel dubbio non si mostra', async () => {
+    h.pagamenti = [vocePagamento(PID, { scuola_id: null })]
+
+    const j = (await (await get()).json()) as CorpoGet
+
+    const voce = j.data?.associazione?.voci?.[0]
+    expect(voce?.fuori_sede).toBe(true)
+    expect(voce?.alunno).toBeNull()
+    expect(voce?.importo_voce, 'le cifre restano anche qui').toBe(300)
+  })
+
+  it('il confronto delle sedi ignora le maiuscole: la PROPRIA sede scritta diversa resta di casa', async () => {
+    // In Postgres `uuid` è un TIPO: 'SC-1' e 'sc-1' sono lo stesso valore. Un `===`
+    // oscurerebbe la voce della propria sede (`formaConfronto` in `@/lib/auth/scope`).
+    h.sediAttive = ['SC-1']
+    h.movimento = { ...h.movimento!, scuola_id: 'SC-1' }
+
+    const j = (await (await get()).json()) as CorpoGet
+
+    const voce = j.data?.associazione?.voci?.[0]
+    expect(voce?.alunno).toBe('Mara Bianchi')
+    expect(voce?.fuori_sede).toBeUndefined()
+  })
+
   it('voce SINGOLA con l’incasso stornato dal registro: la voce resta, `incassato_qui: 0`', async () => {
     // Uno storno fatto a mano dal registro incassi, senza riaprire il movimento:
     // il denaro non è più sulla voce, e il popup non deve dire che c'è.

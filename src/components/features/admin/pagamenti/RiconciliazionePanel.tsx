@@ -1638,6 +1638,11 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
 
       {selezionato && (
         <MovimentoDialog
+          /* La `key` porta anche lo STATO: «Modifica associazione» restituisce la
+             stessa riga ora `da_abbinare`, e il popup deve rinascere da capo —
+             lettura, abbinamento, suggerimenti — non restare il dialog del
+             confermato con la prop cambiata sotto i piedi. */
+          key={`${selezionato.id}:${selezionato.stato}`}
           movimento={selezionato}
           aperti={aperti}
           userId={userId}
@@ -1666,6 +1671,14 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
             riconta();
           }}
           onIncassoUnico={onIncassoUnico ? gestisciIncassoUnico : undefined}
+          onRiapertoPerModifica={(m) => {
+            // Il popup si riapre sulla STESSA riga, ora libera: l'operatrice
+            // sceglie subito la voce giusta. `load()` rilegge anche le voci
+            // aperte, dove quella appena stornata ricompare.
+            setSelezionato(m);
+            void load();
+            riconta();
+          }}
         />
       )}
 

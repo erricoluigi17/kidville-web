@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createRef } from 'react';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { IntlMessageFormat } from 'intl-messageformat';
 import { MovimentoDialog } from '@/components/features/admin/pagamenti/MovimentoDialog';
 import type { MovimentoUi, PagamentoApertoUi } from '@/components/features/admin/pagamenti/riconciliazione-ui';
@@ -144,15 +144,46 @@ const confermato: MovimentoUi = { ...daAbbinare, stato: 'confermato', pagamento_
 
 const ref = () => createRef<HTMLButtonElement>();
 
-/** La lettura del pagamento collegato che il popup fa sui movimenti confermati. */
+/**
+ * La lettura che il popup fa sui movimenti confermati. Dal 2026-10-05 è
+ * `GET /api/pagamenti/riconciliazione/{id}` (prima `/api/pagamenti/{pagamento_id}`),
+ * e stato e fattura della voce àncora arrivano in `data.pagamento`, accanto
+ * all'associazione. La PATCH ha la stessa URL: si distingue dal metodo, come prima.
+ */
 const rispostaPagamento = (patch: () => Promise<unknown>) =>
   vi.fn(async (url: string, init?: { method?: string }) => {
     if (init?.method === 'PATCH') return patch();
-    return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato: 'emessa' } }) };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: { id: 'm1', stato: 'confermato', associazione: null, pagamento: { stato: 'pagato', fattura_stato: 'emessa' } },
+      }),
+    };
   });
 
+/**
+ * LA RIAPERTURA DI UN CONFERMATO, DAL 2026-10-05. «Riapri» è diventato «Modifica
+ * associazione» / «Elimina associazione», e tutt'e due passano da una conferma che
+ * elenca gli storni (`MovimentoDialog-associazione.test.tsx`). Qui si prende la
+ * strada di «Elimina» col destino predefinito — «torna da abbinare» — che è la
+ * riapertura di prima: stessa PATCH `riapri`, stessa risposta, stesso esito a
+ * schermo. Le asserzioni di questo file sono sulla RISPOSTA, e non cambiano.
+ * Il comando è spento finché la lettura è in volo: si aspetta che si accenda, o il
+ * click cadrebbe su un pulsante disabilitato e non succederebbe niente.
+ */
 const riapri = async () => {
-  fireEvent.click(await screen.findByRole('button', { name: testo('movdlgRiapri') }));
+  const elimina = await screen.findByRole('button', { name: testo('movdlgEliminaAssociazione') });
+  await waitFor(() => expect(elimina).toBeEnabled());
+  fireEvent.click(elimina);
+  const conferma = await screen.findByRole('dialog', { name: testo('scollegaTitoloElimina') });
+  fireEvent.click(within(conferma).getByRole('button', { name: testo('scollegaConferma') }));
+};
+
+/** La riapertura di un IGNORATO: nessun incasso da stornare, quindi nessuna conferma. */
+const rimettiDaAbbinare = async () => {
+  fireEvent.click(await screen.findByRole('button', { name: testo('movdlgRimettiDaAbbinare') }));
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -513,7 +544,7 @@ describe('MovimentoDialog — la riapertura racconta CHE COSA ha fatto', () => {
     const onDone = vi.fn();
     render(<MovimentoDialog movimento={ignorato} aperti={aperti} userId="u1" onClose={onClose} onDone={onDone} returnFocusRef={ref()} />);
 
-    await riapri();
+    await rimettiDaAbbinare();
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(onDone).toHaveBeenCalled();
@@ -688,7 +719,7 @@ describe('MovimentoDialog — i due percorsi vecchi non si sono mossi', () => {
 
     const ignorato: MovimentoUi = { ...daAbbinare, stato: 'ignorato', pagamento_id: null, suggerimenti: [] };
     render(<MovimentoDialog movimento={ignorato} aperti={aperti} userId="u1" onClose={() => {}} onDone={onDone} returnFocusRef={ref()} />);
-    await riapri();
+    await rimettiDaAbbinare();
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(3));
 
     for (const chiamata of onDone.mock.calls) expect(chiamata).toEqual([]);

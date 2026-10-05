@@ -4,7 +4,9 @@
 // Aperto cliccando una riga della lista a semaforo. Dà, in un punto solo:
 //   · i suggerimenti ordinati (i CF-match primi, badge «CF») con «Conferma questo»;
 //   · la ricerca manuale fra i pagamenti aperti (stessa fonte del pannello);
-//   · le azioni sul movimento (Ignora / Riapri);
+//   · le azioni sul movimento (Ignora; sui confermati Modifica/Elimina associazione,
+//     con una conferma che ne elenca le conseguenze; sugli ignorati Rimetti da abbinare);
+//   · sui confermati, A CHE COSA è associato il bonifico (voci, bambini, chi ha confermato);
 //   · a saldo avvenuto, la Fattura SdI (come il PagamentoDrawer);
 //   · il punto d'innesto «Apri Incasso unico» per i bonifici di famiglia (multi-CF):
 //     lo renderizza solo se il chiamante passa `onIncassoUnico` (impl. UI-2).
@@ -19,6 +21,8 @@ import { AlertTriangle, Check, Clock, FileCheck, FileText, Layers, Receipt, Sear
 import { Modal } from '@/components/ui/Modal';
 import { FatturaButton } from './FatturaButton';
 import { ComposizioneBonifico } from './ComposizioneBonifico';
+import { AssociazioneBonifico } from './AssociazioneBonifico';
+import { ConfermaScollegaBonifico } from './ConfermaScollegaBonifico';
 // Ricerca dei bambini, frasi della regione viva e «che cosa si legge accanto al
 // nome» (classe, plesso, e `voci_aperte: null` che NON è zero): stanno tutte in
 // `use-ricerca-alunni`, una volta sola, perché due copie divergono in silenzio.
@@ -44,6 +48,9 @@ import {
   movimentoMultiCf,
   testoRicercaPagamento,
   FRASE_FATTURAZIONE,
+  OCCHIELLO,
+  OCCHIELLO_TIPO,
+  type AssociazioneUi,
   type EsitoComposizione,
   type MovimentoUi,
   type PagamentoApertoUi,
@@ -76,19 +83,25 @@ interface Props {
    * Reso SOLO se fornito e il movimento è multi-CF: l'implementazione è di UI-2.
    */
   onIncassoUnico?: (movimento: MovimentoUi) => void;
+  /**
+   * «Modifica associazione»: dopo la riapertura il popup NON si chiude, si
+   * RIAPRE sulla stessa riga ora libera, in abbinamento. Lo fa il pannello,
+   * che possiede `selezionato`. Assente ⇒ si comporta come «Elimina».
+   *
+   * ⚠️ Quando c'è, `onDone` NON viene chiamato: è il pannello, riaprendo il popup,
+   * a rileggere la lista. Chiamarli tutti e due vorrebbe dire due letture della
+   * stessa lista per lo stesso gesto.
+   */
+  onRiapertoPerModifica?: (movimento: MovimentoUi) => void;
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 
 const TITLE_ID = 'movimento-dialog-title';
 
-/**
- * Occhiello: la parolina in Barlow che dice CHE COSA si sta guardando. Sta qui e
- * non in `ui.ts` perché è la voce di questa schermata (intestazione del popup,
- * etichette dei campi, titoletto dei documenti) e non una primitiva dell'app.
- */
-const OCCHIELLO_TIPO = 'font-barlow text-[11px] font-extrabold uppercase tracking-[0.08em]';
-const OCCHIELLO = `${OCCHIELLO_TIPO} text-kidville-green`;
+// `OCCHIELLO` e `OCCHIELLO_TIPO` — la parolina in Barlow che dice CHE COSA si sta
+// guardando — stanno in `riconciliazione-ui.ts` dal 2026-10-05: li usa anche il
+// riquadro «Associato a», che è un componente suo. Il perché, accanto alla costante.
 
 /**
  * Il glifo di ogni chip di fatturazione. Mappa STATICA — nessuna icona costruita
@@ -224,6 +237,15 @@ interface CorpoAzione {
     transazione_annullata?: boolean;
     movimenti_riaperti?: number;
     incassi_stornati?: number;
+    /**
+     * Solo con `poi: 'ignorato'` («Elimina associazione» → «viene segnato come
+     * ignorato»): `true` se la riga è davvero finita fra gli ignorati, `false` se
+     * la riapertura è riuscita ma l'«ignora» no (corsa persa, errore). Assente
+     * negli altri casi, e assente NON è `false`.
+     */
+    ignorato?: boolean;
+    /** Le richieste di fattura ancora in coda che la riapertura ha tolto. */
+    richieste_fattura_tolte?: number;
   } | null;
   avviso?: AvvisoRiapertura | null;
 }
@@ -247,7 +269,69 @@ interface CorpoAzione {
  * fatture vive arrivano sulla risposta della PATCH e non hanno nessun'altra strada
  * per arrivare all'operatrice.
  */
-type EsitoAzione = { tipo: 'riapertura'; righeRiaperte: number; incassiStornati: number; avviso: AvvisoRiapertura | null };
+type EsitoAzione = {
+  tipo: 'riapertura';
+  righeRiaperte: number;
+  incassiStornati: number;
+  avviso: AvvisoRiapertura | null;
+  /** Vedi `CorpoAzione.data.ignorato`: assente quando non è stato chiesto. */
+  ignorato?: boolean;
+  richiesteFatturaTolte?: number;
+};
+
+/**
+ * La lettura del popup sui movimenti confermati, in una FUNZIONE DI MODULO che non
+ * lancia mai e restituisce un esito.
+ *
+ * ⚠️ LA FORMA NON È ESTETICA. `react-hooks/set-state-in-effect` va soddisfatta,
+ * non spenta: un `try` dentro l'effetto la zittisce solo perché il compilatore di
+ * React rinuncia ad analizzare la funzione (`react-hooks/todo`, spento nel config),
+ * e la rinuncia è muta. Qui l'effetto non ha nessun `try`: chiama questa funzione e
+ * fa i suoi `setState` nel `.then`, dopo il controllo `active`.
+ *
+ * ⚠️ E «NON HO POTUTO LEGGERE» NON È «NON C'È NIENTE». Ogni ramo che non porta una
+ * risposta valida — stato HTTP non-ok, corpo che non è JSON, `success` assente —
+ * esce con `ok: false`, e il riquadro dice «non è stato possibile leggere»: un
+ * elenco vuoto al suo posto direbbe che il bonifico non è associato a niente.
+ * Nei log: lo stato HTTP e il NOME dell'errore, mai il corpo (porta nomi di bambini).
+ */
+type EsitoLetturaMovimento =
+  | { ok: true; associazione: AssociazioneUi | null; pagamentoStato: string | null; pagamentoFattura: string | null }
+  | { ok: false };
+
+async function leggiMovimentoConfermato(movimentoId: string, userId: string): Promise<EsitoLetturaMovimento> {
+  try {
+    const r = await fetch(`/api/pagamenti/riconciliazione/${movimentoId}?userId=${userId}`, { headers: hdr(userId) });
+    if (!r.ok) {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: 'associazione-movimento-non-letta', route: '/admin/pagamenti', stato: r.status });
+      return { ok: false };
+    }
+    const j = (await r.json()) as {
+      success?: boolean;
+      data?: {
+        associazione?: AssociazioneUi | null;
+        pagamento?: { stato?: string | null; fattura_stato?: string | null } | null;
+      } | null;
+    } | null;
+    if (!j?.success) {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: 'associazione-movimento-risposta-senza-successo', route: '/admin/pagamenti', stato: r.status });
+      return { ok: false };
+    }
+    return {
+      ok: true,
+      associazione: j.data?.associazione ?? null,
+      // Stato e fattura della voce àncora, che prima costavano una seconda lettura
+      // (`/api/pagamenti/[id]`). Assenti ⇒ `null`, e il riquadro Documenti si
+      // comporta come con una risposta vecchia: nessun chip, nessun crash.
+      pagamentoStato: j.data?.pagamento?.stato ?? null,
+      pagamentoFattura: j.data?.pagamento?.fattura_stato ?? null,
+    };
+  } catch (err) {
+    // Il dialog resta usabile senza la lettura: si logga, e l'esito lo dice.
+    logClient({ livello: 'error', evento: 'fetch', messaggio: `associazione-movimento-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+    return { ok: false };
+  }
+}
 
 /**
  * ─── QUANDO LA LISTA VA RILETTA, E PERCHÉ NON LO DECIDE PIÙ UNA FRASE ───────
@@ -504,19 +588,32 @@ function AvvisoEsito({ testo, etichettaNumeri, numeri }: {
  */
 function PannelloEsito({ esito }: { esito: EsitoAzione }) {
   const t = useTranslations('adminContabilita');
-  const { righeRiaperte, incassiStornati, avviso } = esito;
+  const { righeRiaperte, incassiStornati, avviso, ignorato, richiesteFatturaTolte = 0 } = esito;
+  /**
+   * L'«ignora» chiesto e NON applicato è l'unica riga di questo riquadro che chiede
+   * di fare qualcosa (premere «Ignora» a mano): pesa come un avviso, e il riquadro
+   * si annuncia come tale. `ignorato` ASSENTE non è `false`: l'«ignora» non era
+   * stato chiesto, e non c'è niente da dire.
+   */
+  const ignoraMancato = ignorato === false;
   return (
-    <section role={avviso ? 'alert' : 'status'} className="rounded-card bg-kidville-cream p-4">
+    <section role={avviso || ignoraMancato ? 'alert' : 'status'} className="rounded-card bg-kidville-cream p-4">
       <h3 className={OCCHIELLO}>{t('reconComponiEsitoRiaperto')}</h3>
-      {/* I due conteggi che il server manda e che nessuno leggeva. Si mostrano solo
+      {/* I conteggi che il server manda e che nessuno leggeva. Si mostrano solo
           se dicono qualcosa: «0 incassi stornati» è rumore su una riga che non
-          aveva incassi. */}
-      {(righeRiaperte > 0 || incassiStornati > 0) && (
+          aveva incassi, e «0 richieste di fattura tolte» lo è su una voce che in
+          coda non aveva niente. */}
+      {(righeRiaperte > 0 || incassiStornati > 0 || richiesteFatturaTolte > 0 || ignorato === true) && (
         <ul className="mt-2 space-y-1 font-maven text-sm text-kidville-ink">
           {righeRiaperte > 0 && <li>{t('reconComponiEsitoRigheRiaperte', { n: righeRiaperte })}</li>}
           {incassiStornati > 0 && <li>{t('reconComponiEsitoIncassiStornati', { n: incassiStornati })}</li>}
+          {richiesteFatturaTolte > 0 && <li>{t('movdlgEsitoCodaTolte', { n: richiesteFatturaTolte })}</li>}
+          {ignorato === true && <li>{t('movdlgEsitoIgnorato')}</li>}
         </ul>
       )}
+      {/* Riaperto sì, ignorato no: la riga è di nuovo in coda, e chi voleva toglierla
+          deve saperlo — o la ritroverà fra le «da abbinare» senza capire perché. */}
+      {ignoraMancato && <AvvisoEsito testo={t('movdlgEsitoIgnoraNonApplicato')} />}
       {/* La decisione n. 17 è «riapri comunque, AVVISANDO»: ecco l'avvisando.
           Frase dal `codice` (traducibile come tutte le altre), numeri dal campo
           `numeri` — che il server tiene separato dalla prosa apposta. */}
@@ -531,7 +628,7 @@ function PannelloEsito({ esito }: { esito: EsitoAzione }) {
   );
 }
 
-export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, returnFocusRef, onIncassoUnico }: Props) {
+export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, returnFocusRef, onIncassoUnico, onRiapertoPerModifica }: Props) {
   const t = useTranslations('adminContabilita');
   const f = useDateFormat();
   // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
@@ -549,7 +646,28 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
    * fatturato — chi lo preme riceve un 409 che non spiega niente.
    */
   const [pagamentoFattura, setPagamentoFattura] = useState<string | null>(null);
-  const [loadingPag, setLoadingPag] = useState(movimento.stato === 'confermato' && !!movimento.pagamento_id);
+  /**
+   * La lettura parte su OGNI confermato, anche senza `pagamento_id`: un composito
+   * storico può non avere la voce àncora sulla riga, e «a che cosa è associato» va
+   * detto lo stesso. Finché è in volo i due comandi dello scollegamento restano
+   * spenti: la conferma elenca gli storni, e un elenco a metà direbbe meno di ciò
+   * che succederà.
+   */
+  const [loadingPag, setLoadingPag] = useState(movimento.stato === 'confermato');
+  /** A che cosa è associato il bonifico: voci, bambini, denaro per voce, chi ha confermato. */
+  const [associazione, setAssociazione] = useState<AssociazioneUi | null>(null);
+  /** «Non ho potuto leggere» — che NON è «non è associato a niente». */
+  const [associazioneErrore, setAssociazioneErrore] = useState(false);
+  /** Quale conferma è montata: «Modifica» o «Elimina associazione». `null` = nessuna. */
+  const [confermaScollega, setConfermaScollega] = useState<'modifica' | 'elimina' | null>(null);
+  /**
+   * Perché si sta riaprendo: lo legge `azione`, dopo la risposta, per decidere se
+   * restituire la riga al pannello («Modifica») o raccontare l'esito qui («Elimina»).
+   * Un `ref` e non uno stato perché `azione` è una `useCallback` e lo legge DOPO un
+   * `await`: uno stato entrerebbe nelle dipendenze e sarebbe comunque quello vecchio
+   * del render in cui la richiesta è partita.
+   */
+  const intentoRef = useRef<'modifica' | 'elimina' | null>(null);
   /**
    * ⚠️ IL SEGNALE DI RILETTURA — perché il popup possa rileggere CIÒ CHE HA APPENA
    * CAMBIATO.
@@ -654,41 +772,51 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
    */
   const altraSede = movimento.altra_sede ?? null;
 
-  // Dettaglio del pagamento (solo movimenti confermati): stesso pattern di
-  // PagamentoDrawer — setState solo in try (guardato da `active`) e in finally,
-  // MAI nel catch (react-hooks/set-state-in-effect).
+  // Il movimento confermato e A CHE COSA è associato, in UNA lettura (solo
+  // confermati): `GET /api/pagamenti/riconciliazione/[id]` porta l'associazione e,
+  // in `data.pagamento`, stato e fattura della voce àncora — che prima costavano
+  // una seconda chiamata a `/api/pagamenti/[id]`. La lettura vive in
+  // `leggiMovimentoConfermato`, che non lancia: qui nessun `try`, e i `setState`
+  // stanno nel `.then`, dopo `active` (react-hooks/set-state-in-effect — il perché
+  // accanto alla funzione).
   useEffect(() => {
-    if (stato !== 'confermato' || !movimento.pagamento_id) return;
+    if (stato !== 'confermato') return;
     let active = true;
-    (async () => {
-      try {
-        const r = await fetch(`/api/pagamenti/${movimento.pagamento_id}?userId=${userId}`, { headers: hdr(userId) });
-        const j = await r.json();
-        if (active && j?.success) {
-          const d = j.data as { stato?: string; fattura_stato?: string } | null;
-          setPagamentoStato(d?.stato ?? null);
-          // Assente su una risposta più vecchia: si degrada a `null` e il
-          // pulsante torna a comportarsi come prima, senza rompersi.
-          setPagamentoFattura(d?.fattura_stato ?? null);
-        }
-      } catch (err) {
-        // Il dialog resta usabile senza lo stato: si logga, non si rompe.
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `pagamento-stato-fattura-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-      } finally {
-        if (active) setLoadingPag(false);
+    void leggiMovimentoConfermato(movimento.id, userId).then((esitoLettura) => {
+      if (!active) return;
+      if (esitoLettura.ok) {
+        setPagamentoStato(esitoLettura.pagamentoStato);
+        // Assente su una risposta più vecchia: si degrada a `null` e il
+        // pulsante torna a comportarsi come prima, senza rompersi.
+        setPagamentoFattura(esitoLettura.pagamentoFattura);
+        setAssociazione(esitoLettura.associazione);
+        setAssociazioneErrore(false);
+      } else {
+        setAssociazioneErrore(true);
       }
-    })();
+      setLoadingPag(false);
+    });
     return () => { active = false; };
-  }, [stato, movimento.pagamento_id, userId, ricarica]);
+  }, [stato, movimento.id, userId, ricarica]);
 
-  const azione = useCallback(async (az: 'conferma' | 'ignora' | 'riapri', pagamentoId?: string) => {
+  /**
+   * `poi` c'è solo sulla riapertura di un CONFERMATO, e solo passando dalla
+   * conferma dello scollegamento: `'ignorato'` è «Elimina associazione → viene
+   * segnato come ignorato», `'da_abbinare'` tutto il resto. La riapertura di un
+   * IGNORATO («Rimetti da abbinare») non lo manda: il corpo resta quello di prima.
+   */
+  const azione = useCallback(async (az: 'conferma' | 'ignora' | 'riapri', pagamentoId?: string, poi?: 'da_abbinare' | 'ignorato') => {
+    // L'intento si CONSUMA qui, prima della richiesta: vale per questa e per
+    // nessun'altra, anche se questa fallisce.
+    const intento = intentoRef.current;
+    intentoRef.current = null;
     setBusy(true);
     setError(null);
     try {
       const r = await fetch(`/api/pagamenti/riconciliazione/${movimento.id}`, {
         method: 'PATCH',
         headers: hdr(userId),
-        body: JSON.stringify({ azione: az, pagamento_id: pagamentoId }),
+        body: JSON.stringify({ azione: az, pagamento_id: pagamentoId, ...(poi ? { poi } : {}) }),
       });
       // Nessun catch muto sul parse: un corpo non-JSON risale al catch che LOGGA.
       const j = (await r.json()) as CorpoAzione;
@@ -717,6 +845,18 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
         if (vaRisincronizzato(r.status)) onDone();
         return;
       }
+      /**
+       * «MODIFICA ASSOCIAZIONE»: la riga è tornata libera, e il gesto non è finito —
+       * resta da scegliere la voce giusta. Il popup non racconta un esito e non si
+       * chiude: restituisce la riga al pannello, che lo riapre su di lei in
+       * abbinamento (e rilegge la lista: per questo qui non c'è `onDone`).
+       * La riga si ricompone da quella che il popup ha in mano: è la stessa, con lo
+       * stato che la PATCH ha appena scritto.
+       */
+      if (az === 'riapri' && intento === 'modifica' && onRiapertoPerModifica) {
+        onRiapertoPerModifica({ ...movimento, stato: 'da_abbinare', confermato_il: null });
+        return;
+      }
       onDone();
       /**
        * ⚠️ IL CORPO DI UNA RIAPERTURA NON SI BUTTA VIA. Qui c'era `onClose()` e
@@ -734,6 +874,9 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
           righeRiaperte: Number(j.data?.movimenti_riaperti ?? 0),
           incassiStornati: Number(j.data?.incassi_stornati ?? 0),
           avviso: j.avviso ?? null,
+          // Booleano VERO o niente: una stringa o un numero non diventano un esito.
+          ignorato: typeof j.data?.ignorato === 'boolean' ? j.data.ignorato : undefined,
+          richiesteFatturaTolte: Number(j.data?.richieste_fattura_tolte ?? 0),
         });
         return;
       }
@@ -744,7 +887,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
     } finally {
       setBusy(false);
     }
-  }, [movimento.id, userId, onDone, onClose, t]);
+  }, [movimento, userId, onDone, onClose, onRiapertoPerModifica, t]);
 
   /**
    * «Componi per questo bambino»: apre il pannello PUNTATO su di lui.
@@ -1053,6 +1196,13 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                 Crema PIENO, mai `bg-kidville-cream/50`: con l'alfa dentro il nome della
                 classe la regola di Alto Contrasto `.bg-kidville-cream` non lo
                 raggiungerebbe, e il riquadro resterebbe chiaro sulla card nera. */}
+            {/* ── «Associato a»: A CHE COSA è legato il bonifico (2026-10-05) ──────
+                Prima dei documenti, perché è la domanda che si fa per prima — e
+                perché è ciò che «Modifica»/«Elimina associazione», nel piede,
+                stanno per sciogliere. Presentazionale: la lettura è quella sopra. */}
+            {!esito && isConfermato && (
+              <AssociazioneBonifico associazione={associazione} caricamento={loadingPag} errore={associazioneErrore} />
+            )}
             {!esito && isConfermato && (
               <section className="rounded-card bg-kidville-cream p-4">
                 {/* Lo stato sta SULLA RIGA DELL'OCCHIELLO — «DOCUMENTI … FATTURATA» — e
@@ -1463,13 +1613,55 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
             <X size={15} /> {t('movdlgIgnora')}
           </button>
         )}
-        {!esito && !composto && (isConfermato || isIgnorato) && (
+        {/* ── «RIAPRI» È DIVENTATO DUE COMANDI, E TUTT'E DUE CHIEDONO CONFERMA ──
+            Su un confermato «Riapri» stornava l'incasso senza dire QUALE, né che
+            cosa sarebbe successo alla ricevuta, alla fattura emessa, alla richiesta
+            in coda. Ora i comandi dicono l'INTENTO — rifare l'abbinamento, o
+            toglierlo — e passano da `ConfermaScollegaBonifico`, che elenca le
+            conseguenze prima di farle. Spenti finché la lettura è in volo: la
+            conferma le ricava proprio da lì. Non dalla sua RIUSCITA, però: su una
+            lettura fallita la riapertura resta possibile (il server sa da sé che
+            cosa stornare) e la conferma dice ciò che può. */}
+        {!esito && !composto && isConfermato && (
+          <>
+            <button type="button" onClick={() => setConfermaScollega('modifica')} disabled={busy || loadingPag} className={cx(BTN_SECONDARY, 'min-h-11')}>
+              {t('movdlgModificaAssociazione')}
+            </button>
+            <button type="button" onClick={() => setConfermaScollega('elimina')} disabled={busy || loadingPag} className={cx(BTN_SECONDARY, 'min-h-11')}>
+              {t('movdlgEliminaAssociazione')}
+            </button>
+          </>
+        )}
+        {/* Un IGNORATO non ha incassi da stornare: si rimette in coda senza conferma,
+            come faceva «Riapri». */}
+        {!esito && !composto && isIgnorato && (
           <button type="button" onClick={() => azione('riapri')} disabled={busy} className={cx(BTN_SECONDARY, 'min-h-11')}>
-            {t('movdlgRiapri')}
+            {t('movdlgRimettiDaAbbinare')}
           </button>
         )}
         <button type="button" onClick={onClose} className={cx(BTN_SECONDARY, 'ml-auto min-h-11')}>{t('movdlgChiudi')}</button>
       </div>
+
+      {/* La conferma è DENTRO il popup, e non per comodità: `Modal` non usa un
+          portale, quindi la conferma eredita l'àncora `kv-recon-dialog` dell'Alto
+          Contrasto; e la pila dei `Modal` le dà Escape e il giro del fuoco finché
+          è aperta, restituendoli al popup quando si chiude.
+          Su una lettura fallita `associazione` è `null`: la conferma riceve
+          un'associazione VUOTA e dice soltanto ciò che vale per tutte — l'intento,
+          e per «Elimina» la scelta del destino. Non inventa storni che non conosce. */}
+      {confermaScollega && (
+        <ConfermaScollegaBonifico
+          modo={confermaScollega}
+          associazione={associazione ?? { tipo: 'singola', automatico: false, confermato_il: null, confermato_da: null, voci: [] }}
+          busy={busy}
+          onAnnulla={() => setConfermaScollega(null)}
+          onConferma={(poi) => {
+            intentoRef.current = confermaScollega;
+            setConfermaScollega(null);
+            void azione('riapri', undefined, poi);
+          }}
+        />
+      )}
     </Modal>
   );
 }

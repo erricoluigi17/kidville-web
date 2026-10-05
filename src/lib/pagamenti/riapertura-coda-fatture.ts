@@ -20,23 +20,40 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 /** Tabella o RPC assente (DB E2E della CI, mai migrato): si degrada, non si cade. */
 const ASSENTE = new Set(['42P01', 'PGRST205', 'PGRST202', '42883'])
 
-/** Le voci toccate dalla riapertura: la voce singola, o quelle degli incassi della transazione. */
+/** Colonna assente (`incassi.transazione_id` sul DB non migrato): come la tabella assente, si degrada. */
+const COLONNA_ASSENTE = new Set(['42703', 'PGRST204'])
+
+/**
+ * Le voci toccate dalla riapertura: la voce singola, o quelle degli incassi della transazione.
+ *
+ * ⚠️ FAIL-CLOSED (revisione finale, 2026-10-05). Su un guasto di lettura qui si
+ * tornava alla sola voce àncora: il controllo «c'è una fattura IN INVIO?» guardava
+ * una voce su tre, e lo storno partiva sopra le voci dei fratelli senza averle viste.
+ * «Non ho potuto leggere» non è «non ci sono altre voci»: ora è `{ guasto: true }`, e
+ * la riapertura si ferma PRIMA dello storno. Solo lo schema non migrato (DB E2E della
+ * CI: tabella o colonna assente) degrada alla voce àncora, col suo `warn`.
+ */
 export async function vociDelMovimento(
   supabase: SupabaseClient,
   mov: { pagamento_id: string | null; transazione_id?: string | null },
   operazione: string,
-): Promise<string[]> {
+): Promise<{ voci: string[] } | { guasto: true }> {
   const ids = new Set<string>()
   if (mov.pagamento_id) ids.add(mov.pagamento_id)
   if (mov.transazione_id) {
     const { data, error } = await supabase.from('incassi').select('pagamento_id').eq('transazione_id', mov.transazione_id)
     if (error) {
+      const code = error.code ?? ''
+      if (!ASSENTE.has(code) && !COLONNA_ASSENTE.has(code)) {
+        logErrore({ operazione, evento: 'voci_transazione_non_lette_riapertura', stato: 500 }, error)
+        return { guasto: true }
+      }
       logEvento('pagamento', 'warn', { operazione, esito: 'voci-transazione-non-lette' }, error)
     } else {
       for (const r of (data ?? []) as { pagamento_id: string | null }[]) if (r.pagamento_id) ids.add(r.pagamento_id)
     }
   }
-  return [...ids]
+  return { voci: [...ids] }
 }
 
 /** `true` se una richiesta di fattura su queste voci è IN INVIO adesso. Fail-closed su errore. */

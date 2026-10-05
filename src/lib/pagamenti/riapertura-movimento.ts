@@ -192,6 +192,35 @@ async function stornoGiaRegistrato(
 }
 
 /**
+ * ─── CIÒ CHE LO STORNO LASCIA DIETRO DI SÉ ───────────────────────────────────
+ *
+ * Due pulizie, nell'ordine: la RICEVUTA della transazione composita si annulla
+ * come fa `transazioni/[id]/annulla` (la transazione è annullata, da questo giro o
+ * da uno precedente: la ricevuta di famiglia resterebbe attiva su un pagamento che
+ * non esiste più), poi si tolgono dalla CODA FATTURE le richieste delle voci che lo
+ * storno ha lasciato non saldate — è lo stato appena prodotto a dire quali.
+ *
+ * Sta in una funzione perché i chiamanti sono DUE: la riapertura riuscita e il 409
+ * «stornato ma non riaperto» (revisione finale, 2026-10-05), dove lo storno è
+ * avvenuto lo stesso e fino a qui la pulizia veniva saltata. Non lancia mai, logga
+ * da sé, ed è idempotente (`.is('annullata_il', null)`; una richiesta già tolta non
+ * è più `in_coda`/`errore`): il ritentativo non la raddoppia.
+ * Restituisce quante richieste di fattura ha tolto.
+ */
+async function pulisciDopoStorno(
+  supabase: ClientAdmin,
+  transazioneId: string | null,
+  vociCoinvolte: string[],
+  attoreId: string,
+  operazione: string,
+): Promise<number> {
+  if (transazioneId) {
+    await annullaRicevutaTransazioneAttiva(supabase, transazioneId, { da: attoreId, motivo: MOTIVO_RIAPERTURA })
+  }
+  return togliCodaVociNonSaldate(supabase, vociCoinvolte, attoreId, operazione)
+}
+
+/**
  * Storna ciò che la conferma aveva scritto e riporta la riga bancaria in coda.
  *
  * L'ordine — avviso, storno, riapertura — non si riordina: l'avviso si legge
@@ -202,8 +231,9 @@ async function stornoGiaRegistrato(
  * Dal 2026-10-05 l'ordine ha due passi in più, ai due capi: il controllo della
  * coda fatture (`in_invio` ⇒ 409) sta fra l'avviso e lo storno, perché è un
  * rifiuto e un rifiuto si dà prima di scrivere; ricevuta e pulizia della coda
- * stanno DOPO la riapertura riuscita, perché guardano lo stato delle voci che
- * lo storno ha appena prodotto.
+ * stanno DOPO lo storno, perché guardano lo stato delle voci che lo storno ha
+ * appena prodotto — sulla riapertura riuscita E sul 409 «stornato ma non
+ * riaperto» (`pulisciDopoStorno`).
  */
 export async function riapriMovimento(
   supabase: ClientAdmin,
@@ -329,7 +359,14 @@ export async function riapriMovimento(
   // produrrebbe una fattura su una voce non più pagata. È un RIFIUTO, quindi
   // sta prima di qualunque scrittura; e un guasto di lettura ferma (fail-closed),
   // perché «non lo so» non è «non c'è nessuna richiesta in invio».
-  const vociCoinvolte = await vociDelMovimento(supabase, mov, operazione)
+  // Prima ancora: QUALI voci. Un guasto di lettura degli incassi della
+  // transazione ferma tutto (fail-closed): controllare la sola voce àncora
+  // lascerebbe stornare sopra una fattura in invio di una voce di un fratello.
+  const voci = await vociDelMovimento(supabase, mov, operazione)
+  if ('guasto' in voci) {
+    return { status: 500, body: { error: 'Non è stato possibile leggere le voci di questo bonifico: la riapertura è stata fermata.', codice: 'RIAPERTURA_NON_RIUSCITA' } }
+  }
+  const vociCoinvolte = voci.voci
   const coda = await codaInInvio(supabase, vociCoinvolte, operazione)
   if ('guasto' in coda) {
     return { status: 500, body: { error: 'Non è stato possibile verificare la coda fatture: la riapertura è stata fermata.', codice: 'RIAPERTURA_NON_RIUSCITA' } }
@@ -578,6 +615,13 @@ export async function riapriMovimento(
         },
         errUpd ?? new Error('nessuna riga riaperta: il movimento è cambiato sotto la richiesta'),
       )
+      // ⚠️ E LA PULIZIA SI FA LO STESSO (revisione finale, 2026-10-05). Il denaro
+      // è già stato restituito: la ricevuta della transazione resterebbe attiva
+      // su un pagamento che non c'è più, e la richiesta di fattura di una voce
+      // non più saldata fallirebbe «non saldato» a ogni giro. Ciò che manca è
+      // solo il ritorno in coda della RIGA BANCARIA, che il ritentativo ripara —
+      // e le due pulizie sono idempotenti, quindi il secondo giro non le raddoppia.
+      const richiesteTolteDopoStorno = await pulisciDopoStorno(supabase, mov.transazione_id ?? null, vociCoinvolte, attoreId, operazione)
       return {
         status: 409,
         body: {
@@ -593,23 +637,18 @@ export async function riapriMovimento(
           // bonifico: ricarica l'elenco e ricomponi il pagamento». Misurato
           // eseguendo `messaggioDaCorpo`, non dedotto.
           codice: 'RIAPERTURA_STORNATA_NON_RIAPERTA',
-          data: { incassi_stornati: incassiStornati, transazione_annullata: transazioneAnnullata },
+          data: {
+            incassi_stornati: incassiStornati,
+            transazione_annullata: transazioneAnnullata,
+            richieste_fattura_tolte: richiesteTolteDopoStorno,
+          },
         },
       }
     }
   }
 
-  // ── 4. LA RICEVUTA del composito: si annulla come fa `transazioni/[id]/annulla`
-  // La transazione è annullata (da questo giro o da uno precedente): la sua
-  // ricevuta di famiglia resterebbe attiva su un pagamento che non esiste più.
-  // Non lancia mai e logga da sé; `.is('annullata_il', null)` la rende idempotente.
-  if (mov.transazione_id) {
-    await annullaRicevutaTransazioneAttiva(supabase, mov.transazione_id, { da: attoreId, motivo: MOTIVO_RIAPERTURA })
-  }
-  // ── 5. LA CODA FATTURE delle voci che non sono più saldate
-  // DOPO lo storno e la riapertura: è lo stato che lo storno ha appena prodotto
-  // a dire quali voci non sono più `pagato`. Non lancia mai e logga da sé.
-  const richiesteFatturaTolte = await togliCodaVociNonSaldate(supabase, vociCoinvolte, attoreId, operazione)
+  // ── 4-5. RICEVUTA del composito e CODA FATTURE: v. `pulisciDopoStorno`.
+  const richiesteFatturaTolte = await pulisciDopoStorno(supabase, mov.transazione_id ?? null, vociCoinvolte, attoreId, operazione)
 
   // NESSUNA notifica al genitore: decisione esplicita del titolare. La
   // conferma avvisa («Pagamento registrato»), lo storno no — un avviso

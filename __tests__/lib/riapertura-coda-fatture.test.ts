@@ -108,25 +108,46 @@ describe('vociDelMovimento — le voci toccate dalla riapertura', () => {
       { transazione_id: TX, pagamento_id: null },
     ]
 
-    const voci = await vociDelMovimento(finto(), { pagamento_id: P1, transazione_id: TX }, OP)
+    const esito = await vociDelMovimento(finto(), { pagamento_id: P1, transazione_id: TX }, OP)
 
-    expect([...voci].sort()).toEqual([P1, P2])
+    expect('voci' in esito && [...esito.voci].sort()).toEqual([P1, P2])
     expect(letteDa('incassi')).toHaveLength(1)
     expect(letteDa('incassi')[0].filtri).toEqual({ transazione_id: TX })
   })
 
   it('senza transazione: la sola voce abbinata, e nessuna lettura', async () => {
-    expect(await vociDelMovimento(finto(), { pagamento_id: P1, transazione_id: null }, OP)).toEqual([P1])
+    expect(await vociDelMovimento(finto(), { pagamento_id: P1, transazione_id: null }, OP)).toEqual({ voci: [P1] })
     expect(s.letture).toEqual([])
   })
 
-  it('lettura degli incassi fallita: resta la voce singola, e un `warn` lo dice', async () => {
+  /**
+   * FAIL-CLOSED (revisione finale, 2026-10-05). Fino a qui una lettura fallita
+   * degli incassi della transazione tornava alla sola voce àncora: il controllo
+   * «c'è una fattura IN INVIO?» guardava una voce su tre, e lo storno partiva
+   * sopra le voci dei fratelli senza averle viste. «Non lo so» non è «non c'è».
+   */
+  it('lettura degli incassi fallita (guasto): `{ guasto: true }`, con un `logErrore`', async () => {
     s.errori.incassi = { code: 'XX000', message: 'guasto' }
 
-    expect(await vociDelMovimento(finto(), { pagamento_id: P1, transazione_id: TX }, OP)).toEqual([P1])
+    expect(await vociDelMovimento(finto(), { pagamento_id: P1, transazione_id: TX }, OP)).toEqual({ guasto: true })
+    expect(
+      h.logErrore.mock.calls.find((c) => (c[0] as { evento?: string })?.evento === 'voci_transazione_non_lette_riapertura'),
+      'un guasto di lettura senza una riga di log',
+    ).toBeTruthy()
+  })
+
+  it.each([
+    ['42703', 'colonna assente'],
+    ['PGRST204', 'colonna assente (PostgREST)'],
+    ['42P01', 'tabella assente'],
+  ])('%s (%s, DB E2E non migrato): resta la voce singola, e un `warn` lo dice', async (code) => {
+    s.errori.incassi = { code, message: 'schema non migrato' }
+
+    expect(await vociDelMovimento(finto(), { pagamento_id: P1, transazione_id: TX }, OP)).toEqual({ voci: [P1] })
     const riga = eventi('voci-transazione-non-lette')
-    expect(riga, 'una lettura fallita senza una riga di log').toHaveLength(1)
+    expect(riga, 'una degradazione senza una riga di log').toHaveLength(1)
     expect(riga[0][1]).toBe('warn')
+    expect(h.logErrore).not.toHaveBeenCalled()
   })
 })
 

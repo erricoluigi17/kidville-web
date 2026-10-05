@@ -422,6 +422,39 @@ describe('03·04·05 solleciti — la gravità sale nel colore, non nel volume',
         expect(rotto.html).not.toContain('IT99')
         expect(rotto.html).not.toContain('IBAN')
     })
+
+    // ─── VOCE «SOLO CONTANTI» (2026-10-05): `causale: null` ─────────────────
+    // L'IBAN della sede è VALIDO apposta: è il caso vero, in cui la sede ha le
+    // coordinate compilate ma questa voce non ammette il bonifico. Se il modulo
+    // decidesse dall'IBAN e non dalla causale, la riga ricomparirebbe.
+    it('voce solo contanti: niente IBAN né «Dati per il bonifico», dice come si paga', () => {
+        for (const l of [1, 2, 3] as const) {
+            const contanti = messaggioSollecito({ ...base, livello: l, causale: null, iban: 'IT60X0542811101000000123456' }, GIUGLIANO)
+            expect(contanti.html).not.toContain('IBAN')
+            expect(contanti.html).not.toContain('Dati per il bonifico')
+            expect(contanti.html).toContain('in contanti presso la segreteria')
+            expect(contanti.testo).not.toContain('DATI PER IL BONIFICO')
+            expect(contanti.testo).not.toContain('IBAN')
+            expect(contanti.testo).toContain('in contanti presso la segreteria')
+        }
+    })
+
+    it('voce solo contanti: il preheader non annuncia una causale che non c\'è', () => {
+        const contanti = messaggioSollecito({ ...base, livello: 1, causale: null, iban: 'IT60X0542811101000000123456' }, GIUGLIANO)
+        // Né il preheader né il riquadro parlano di causale: nel messaggio non c'è.
+        expect(contanti.html).not.toMatch(/causale/i)
+        expect(contanti.testo).not.toMatch(/causale/i)
+        expect(contanti.html).toContain('da saldare in contanti presso la segreteria.')
+    })
+
+    it('più voci solo contanti: niente «un solo bonifico», e il preheader parla di contanti', () => {
+        const due = [...base.voci, { descrizione: 'Mensa di marzo', scadenza: '05/03/2026', giorniRitardo: 3, importo: 80 }]
+        const contanti = messaggioSollecito({ ...base, livello: 1, voci: due, causale: null }, GIUGLIANO)
+        expect(contanti.html).not.toMatch(/bonifico/i)
+        expect(contanti.testo).not.toMatch(/bonifico/i)
+        expect(contanti.html).not.toMatch(/causale/i)
+        expect(contanti.html).toContain('in contanti presso la segreteria')
+    })
 })
 
 describe('10 digest news — da 1 a 20 articoli', () => {

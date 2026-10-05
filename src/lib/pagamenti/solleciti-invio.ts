@@ -1,11 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede, type ContestoSede } from '@/lib/email/contesto'
-import { messaggioSollecito, type LivelloSollecito } from '@/lib/email/messaggi/sollecito'
+import { FRASE_PAGAMENTO_CONTANTI, messaggioSollecito, type LivelloSollecito } from '@/lib/email/messaggi/sollecito'
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getModuleConfig } from '@/lib/settings/module-config'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
 import { residuoEffettivo } from './aging'
@@ -15,6 +15,7 @@ import { DEFAULT_CAUSALE_TEMPLATE, causaleBonifico, modelloCausale, rigaCausaleS
 import { codiceVoce } from './codice-voce'
 import { meseAnnoDaPeriodo } from './periodo'
 import { coordinateBonificoSede } from './coordinate-bonifico'
+import { ammetteBonifico } from './metodi-ammessi'
 import {
     DEFAULT_SOLLECITI_CONFIG,
     livelliEffettivi,
@@ -55,11 +56,16 @@ interface PagRow {
     tipo: string
     periodo_competenza: string | null
     ultimo_sollecito_il: string | null
+    /** Assente (DB non migrato) o `null` ⇒ tutti e due i metodi: lo decide `normalizzaMetodiAmmessi`. */
+    metodi_ammessi?: string[] | null
     alunni?: { nome?: string; cognome?: string; codice_fiscale?: string | null } | null
     payment_categories?: { slug?: string | null } | null
 }
 
 const MS_GIORNO = 86_400_000
+
+/** Il registro `solleciti` assente (DB E2E della CI non migrato): Postgres e PostgREST. */
+const REGISTRO_ASSENTE = new Set(['42P01', 'PGRST205'])
 
 export async function sollecitaPagamenti(
     supabase: SupabaseClient,
@@ -75,10 +81,17 @@ export async function sollecitaPagamenti(
 ): Promise<EsitoSollecito[]> {
     const COLONNE_PAG_BASE = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, stato, scadenza, tipo, periodo_competenza, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale ), payment_categories:categoria_id ( slug )'
     const COLONNE_PAG = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, sconto, stato, scadenza, tipo, periodo_competenza, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale ), payment_categories:categoria_id ( slug )'
-    let { data: pagRows, error: errPag } = await supabase.from('pagamenti').select(COLONNE_PAG).in('id', pagamentoIds)
-    // DB E2E CI non migrato: `sconto` assente → 42703, ritenta senza (residuo = importo − pagato).
-    if (errPag && (errPag as { code?: string }).code === '42703') {
-        const retry = await supabase.from('pagamenti').select(COLONNE_PAG_BASE).in('id', pagamentoIds)
+    const COLONNE_PAG_METODI = `${COLONNE_PAG}, metodi_ammessi`
+    let { data: pagRows, error: errPag } = await supabase.from('pagamenti').select(COLONNE_PAG_METODI).in('id', pagamentoIds)
+    // DB E2E CI non migrato, una colonna nuova alla volta (42703 ⇒ un gradino giù):
+    //   `metodi_ammessi` assente → senza: ogni voce ammette entrambi i metodi, come prima della colonna;
+    //   `sconto` assente         → senza: residuo = importo − pagato.
+    // Ogni gradino lascia un `warn`: in produzione la colonna c'è, e una degradazione
+    // muta nasconderebbe una migrazione mai applicata.
+    for (const colonne of [COLONNE_PAG, COLONNE_PAG_BASE]) {
+        if (!errPag || (errPag as { code?: string }).code !== '42703') break
+        logEvento('pagamento', 'warn', { operazione: 'solleciti:pagamenti', esito: 'select-in-degradazione' })
+        const retry = await supabase.from('pagamenti').select(colonne).in('id', pagamentoIds)
         pagRows = retry.data as unknown as typeof pagRows
         errPag = retry.error
     }
@@ -87,14 +100,33 @@ export async function sollecitaPagamenti(
     const pags = (pagRows || []) as unknown as PagRow[]
 
     // livello già raggiunto (registro; degrade → si riparte da 1)
+    //
+    // Il degrado resta quello di sempre, ma ora SI DICE. Il `catch` qui sotto aveva
+    // soltanto un commento, e non scattava nemmeno: PostgREST non lancia, l'errore
+    // torna in `{ error }` e `data` resta `null` — cioè «nessuno storico», in silenzio.
+    // Per il registro assente (DB della CI non migrato) è giusto ripartire da 1, e
+    // basta un `info`; per un guasto vero è un `error`, perché vuol dire rimandare il
+    // 1° sollecito a chi ha già ricevuto il 2°.
     const maxLivello = new Map<string, number>()
     try {
-        const { data } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', pagamentoIds)
+        const { data, error: errLivelli } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', pagamentoIds)
+        if (errLivelli) {
+            const assente = REGISTRO_ASSENTE.has((errLivelli as { code?: string }).code ?? '')
+            logEvento('pagamento', assente ? 'info' : 'error', {
+                operazione: 'solleciti:livelli',
+                esito: assente ? 'registro-solleciti-assente' : 'livelli-non-letti',
+                n: pagamentoIds.length,
+            }, errLivelli)
+        }
         for (const s of (data || []) as { pagamento_id: string; livello: number }[]) {
             maxLivello.set(s.pagamento_id, Math.max(maxLivello.get(s.pagamento_id) ?? 0, s.livello))
         }
-    } catch {
-        // registro assente: nessuno storico livelli
+    } catch (err) {
+        logEvento('pagamento', 'error', {
+            operazione: 'solleciti:livelli',
+            esito: 'livelli-non-letti',
+            n: pagamentoIds.length,
+        }, err)
     }
 
     const cfgCache = new Map<string, {
@@ -226,7 +258,16 @@ export async function sollecitaPagamenti(
         // dato lecito), MAI nei log: `corpo` non viene passato a nessun logger, e
         // `sendEmail`/`externalFetch` non loggano il body della richiesta. Lo stesso
         // vale per il `codice`, che nella causale viaggia accanto a quel CF.
-        const corpo = `${renderTemplate(liv.testo, ctx)}\n\n${rigaCausaleSollecito(datiCausale, templateCausale)}`
+        //
+        // VOCE «SOLO CONTANTI» (2026-10-05): niente causale e niente codice. Una
+        // causale mandata per una voce che non ammette il bonifico è un invito a
+        // fare un bonifico che la segreteria non si aspetta; al suo posto, la stessa
+        // frase che il riquadro HTML mette sotto «Come pagare».
+        const bonificoAmmesso = ammetteBonifico(pag.metodi_ammessi)
+        const rigaPagamento = bonificoAmmesso
+            ? rigaCausaleSollecito(datiCausale, templateCausale)
+            : FRASE_PAGAMENTO_CONTANTI
+        const corpo = `${renderTemplate(liv.testo, ctx)}\n\n${rigaPagamento}`
 
         // destinatari: titolari quota (split) oppure tutori del bambino
         let adultIds: string[] = []
@@ -278,7 +319,8 @@ export async function sollecitaPagamenti(
             // La STESSA stringa del corpo testuale qui sopra: stessi dati, stesso
             // modello, stessa porta (`causaleBonifico`, l'unica che applica
             // `conCodiceVoce`). Il riquadro è ciò che la famiglia copia davvero.
-            causale: causaleBonifico(datiCausale, templateCausale),
+            // `null` per la voce «solo contanti»: il modulo toglie riquadro e IBAN.
+            causale: bonificoAmmesso ? causaleBonifico(datiCausale, templateCausale) : null,
             intestatario,
             iban,
         }, contestoSede)
@@ -299,11 +341,22 @@ export async function sollecitaPagamenti(
                 link: '/parent/pagamenti',
                 scuolaId: pag.scuola_id,
             })
-        } catch {
-            // push best-effort
+        } catch (err) {
+            // Best-effort: l'email è già partita e il registro qui sotto si scrive lo
+            // stesso. Ma una push persa si DICE — il commento «best-effort» era l'unica
+            // traccia, e non finiva in `app_log`. Solo l'uuid della voce.
+            logEvento('notifica', 'error', {
+                operazione: 'solleciti:push',
+                esito: 'push-non-accodata',
+                pagamento_id: id,
+            }, err)
         }
+        // Il registro è l'AUDIT di ciò che è partito (e la fonte dei livelli qui sopra).
+        // Se non si scrive il sollecito resta valido — l'email è partita — ma il prossimo
+        // ripartirebbe dallo stesso livello: si dice, `info` se il registro non esiste
+        // (DB della CI), `error` altrimenti. PostgREST non lancia: si legge `{ error }`.
         try {
-            await supabase.from('solleciti').insert({
+            const { error: errRegistro } = await supabase.from('solleciti').insert({
                 pagamento_id: id,
                 scuola_id: pag.scuola_id,
                 alunno_id: pag.alunno_id,
@@ -315,8 +368,20 @@ export async function sollecitaPagamenti(
                 automatico: !!opts.automatico,
                 inviato_da: opts.attoreId ?? null,
             })
-        } catch {
-            // registro assente (CI): l'invio resta comunque valido
+            if (errRegistro) {
+                const assente = REGISTRO_ASSENTE.has((errRegistro as { code?: string }).code ?? '')
+                logEvento('pagamento', assente ? 'info' : 'error', {
+                    operazione: 'solleciti:registro',
+                    esito: assente ? 'registro-solleciti-assente' : 'registro-sollecito-non-scritto',
+                    pagamento_id: id,
+                }, errRegistro)
+            }
+        } catch (err) {
+            logEvento('pagamento', 'error', {
+                operazione: 'solleciti:registro',
+                esito: 'registro-sollecito-non-scritto',
+                pagamento_id: id,
+            }, err)
         }
         await supabase.from('pagamenti').update({ ultimo_sollecito_il: new Date().toISOString() }).eq('id', id)
         esiti.push({ pagamento_id: id, ok: true, livello, oggetto, destinatari })

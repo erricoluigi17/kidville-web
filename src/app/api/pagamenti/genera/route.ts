@@ -8,6 +8,13 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import {
+  normalizzaMetodiAmmessi,
+  sonoTuttiIMetodi,
+  CODICI_COLONNA_ASSENTE,
+  type MetodoAmmesso,
+} from '@/lib/pagamenti/metodi-ammessi'
+import { zMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi-zod'
 
 // Genera pagamenti una tantum per una categoria, su una classe o un elenco di alunni.
 // Riusa il filtro alunni di genera-rette e la logica di creazione di pagamenti/rate.
@@ -41,7 +48,16 @@ const postBodySchema = z.object({
   classe_sezione: z.string().nullish(),
   obbligatorio: z.boolean().nullish(),
   categoria_id: zUuid.nullish(),
+  // Metodi ammessi (2026-10-05). Assente = tutti e due (default della colonna).
+  metodi_ammessi: zMetodiAmmessi.optional(),
 })
+
+/** La stessa riga senza `metodi_ammessi`: il ritentativo sul DB senza la colonna. */
+function senzaMetodi<T extends Record<string, unknown>>(riga: T): Omit<T, 'metodi_ammessi'> {
+  const { metodi_ammessi: _m, ...resto } = riga
+  void _m
+  return resto
+}
 
 // GET /api/pagamenti/genera?userId=&categoria_id=&classe_sezione=&gruppo=  (staff)
 //   Preview: alunni candidati (iscritti con sezione), esclusi quelli che hanno
@@ -191,6 +207,30 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
     const obbligatorio = body.obbligatorio ?? true
     const categoriaId = body.categoria_id ?? null
 
+    // Metodi ammessi (2026-10-05). Si SCRIVONO solo quando non sono tutti e
+    // due: il default lo mette il DB, e così sul DB E2E della CI (colonna
+    // assente) il caso normale non nomina mai la colonna.
+    const metodiDaScrivere: MetodoAmmesso[] | undefined =
+      body.metodi_ammessi && !sonoTuttiIMetodi(body.metodi_ammessi)
+        ? normalizzaMetodiAmmessi(body.metodi_ammessi)
+        : undefined
+    // Diventa vero al primo PGRST204/42703: da lì in poi la colonna non si
+    // nomina più (UN rifiuto e un warn, non due per alunno), e il successo e
+    // l'audit non dichiarano scritto ciò che non lo è.
+    let metodiScartati = false
+    const conMetodi = (): { metodi_ammessi?: MetodoAmmesso[] } =>
+      metodiDaScrivere && !metodiScartati ? { metodi_ammessi: metodiDaScrivere } : {}
+    const colonnaMetodiAssente = (e: { code?: string } | null): boolean =>
+      !!e && !!metodiDaScrivere && !metodiScartati && CODICI_COLONNA_ASSENTE.includes(e.code ?? '')
+    const scartaMetodi = (ramo: 'padre' | 'rata' | 'singolo', e: unknown) => {
+      metodiScartati = true
+      logEvento('pagamento', 'warn', {
+        operazione: 'pagamenti/genera:POST',
+        esito: 'metodi-ammessi-colonna-assente',
+        tipo: ramo,
+      }, e)
+    }
+
     let generati = 0
     const alunniGenerati: string[] = []
 
@@ -205,20 +245,62 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
 
       for (const aId of alunnoIds) {
         const scuolaId = scuolaByAlunno.get(aId)
-        const { data: padre, error: pErr } = await supabase.from('pagamenti').insert({
+        const rigaPadre = {
           alunno_id: aId, scuola_id: scuolaId, descrizione, importo: tot, scadenza: ultimaScadenza,
           categoria_id: categoriaId, tipo: 'padre', obbligatorio, gruppo: gruppo ?? null,
           creato_da: user.id, stato: 'da_pagare',
-        }).select('id').single()
-        if (pErr || !padre) continue
+        }
+        let insPadre = await supabase.from('pagamenti')
+          .insert({ ...rigaPadre, ...conMetodi() }).select('id').single()
+        if (colonnaMetodiAssente(insPadre.error)) {
+          scartaMetodi('padre', insPadre.error)
+          insPadre = await supabase.from('pagamenti').insert(rigaPadre).select('id').single()
+        }
+        const { data: padre, error: pErr } = insPadre
+        // L'alunno si SALTA e si prosegue con gli altri (comportamento invariato), ma
+        // lo si dice: senza questa riga la segreteria leggeva «generati: 1» su due e
+        // nessuno poteva sapere quale alunno mancasse, né perché. Solo uuid e codice.
+        if (pErr || !padre) {
+          logEvento('pagamento', 'error', {
+            operazione: 'pagamenti/genera:POST',
+            esito: 'padre-non-creato',
+            alunno_id: aId,
+          }, pErr ?? undefined)
+          continue
+        }
         const figlie = rate.map((r, i) => ({
           alunno_id: aId, scuola_id: scuolaId, descrizione: `${descrizione} — Rata ${i + 1}/${rate.length}`,
           importo: r.importo, scadenza: r.scadenza, categoria_id: categoriaId,
           tipo: 'rata', obbligatorio, parent_payment_id: padre.id, gruppo: gruppo ?? null,
           creato_da: user.id, stato: 'da_pagare',
+          ...conMetodi(),
         }))
-        const { error: rErr } = await supabase.from('pagamenti').insert(figlie)
-        if (rErr) { await supabase.from('pagamenti').delete().eq('id', padre.id); continue }
+        let insRate = await supabase.from('pagamenti').insert(figlie)
+        if (colonnaMetodiAssente(insRate.error)) {
+          scartaMetodi('rata', insRate.error)
+          insRate = await supabase.from('pagamenti').insert(figlie.map(senzaMetodi))
+        }
+        if (insRate.error) {
+          logEvento('pagamento', 'error', {
+            operazione: 'pagamenti/genera:POST',
+            esito: 'rate-non-create',
+            alunno_id: aId,
+            pagamento_id: padre.id,
+          }, insRate.error)
+          // Si toglie il padre rimasto senza rate. PostgREST non lancia: se la delete
+          // fallisce, il padre ORFANO resta in tabella — una voce da pagare senza le
+          // sue rate — e va detto con il suo uuid, perché qualcuno lo tolga a mano.
+          const del = await supabase.from('pagamenti').delete().eq('id', padre.id)
+          if (del.error) {
+            logEvento('pagamento', 'error', {
+              operazione: 'pagamenti/genera:POST',
+              esito: 'padre-orfano-non-cancellato',
+              alunno_id: aId,
+              pagamento_id: padre.id,
+            }, del.error)
+          }
+          continue
+        }
         generati += 1
         alunniGenerati.push(aId)
       }
@@ -227,13 +309,18 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
         alunno_id: aId, scuola_id: scuolaByAlunno.get(aId), descrizione,
         importo, scadenza, categoria_id: categoriaId, tipo: 'singolo',
         obbligatorio, gruppo: gruppo ?? null, creato_da: user.id, stato: 'da_pagare',
+        ...conMetodi(),
       }))
-      const { data: created, error } = await supabase.from('pagamenti').insert(records).select('id')
-      if (error) {
-        logErrore({ operazione: 'pagamenti/genera:POST', stato: 500, evento: 'db' }, error)
-        return NextResponse.json({ error: 'Errore nella generazione', details: error.message }, { status: 500 })
+      let ins = await supabase.from('pagamenti').insert(records).select('id')
+      if (colonnaMetodiAssente(ins.error)) {
+        scartaMetodi('singolo', ins.error)
+        ins = await supabase.from('pagamenti').insert(records.map(senzaMetodi)).select('id')
       }
-      generati = created?.length ?? 0
+      if (ins.error) {
+        logErrore({ operazione: 'pagamenti/genera:POST', stato: 500, evento: 'db' }, ins.error)
+        return NextResponse.json({ error: 'Errore nella generazione', details: ins.error.message }, { status: 500 })
+      }
+      generati = ins.data?.length ?? 0
       alunniGenerati.push(...alunnoIds)
     }
 
@@ -248,7 +335,10 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
       azione: 'genera_pagamenti_categoria',
       tabella_interessata: 'pagamenti',
       record_id: null,
-      nuovo_valore: { categoria_id: categoriaId, descrizione, gruppo, generati, rate: !!rate },
+      nuovo_valore: {
+        categoria_id: categoriaId, descrizione, gruppo, generati, rate: !!rate,
+        metodi_ammessi: metodiScartati ? null : (metodiDaScrivere ?? null),
+      },
       utente_id: user.id,
     })
     if (auditRes.error) {
@@ -257,6 +347,14 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
         esito: 'audit-non-scritto',
         generati,
       }, auditRes.error)
+    }
+    if (metodiDaScrivere && !metodiScartati) {
+      logEvento('pagamento', 'info', {
+        operazione: 'pagamenti/genera:POST',
+        esito: 'metodi-ammessi-scritti',
+        solo_contanti: metodiDaScrivere.length === 1 && metodiDaScrivere[0] === 'contanti',
+        generati,
+      })
     }
 
     // Notifica ai genitori: nuovo dovuto disponibile (best-effort). UNA

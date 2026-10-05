@@ -2464,6 +2464,9 @@ export const CODICI_ERRORE = {
      * lo stesso denaro incassato due volte. Meglio non riaprire.
      */
     RIAPERTURA_NON_RIUSCITA: 'erroreRiaperturaNonRiuscita',
+    /** 409 — una richiesta della coda fatture è in invio: nessuno storno.
+     *  Il lavoratore sta parlando con Aruba adesso; fra un minuto si ritenta. */
+    RIAPERTURA_FATTURA_IN_INVIO: 'erroreRiaperturaFatturaInInvio',
     /**
      * 500 — la riga dell'estratto conto non si è potuta LEGGERE.
      *

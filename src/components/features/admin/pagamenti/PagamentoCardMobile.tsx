@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { FatturaChip } from './FatturaChip';
 import { STATI_PAGAMENTO } from './stati';
 import { Badge } from '@/components/ui/Badge';
+import { BadgeMetodoPagamento } from '@/components/features/pagamenti/BadgeMetodoPagamento';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import type { PagamentoRow } from './RegistraIncassoModal';
@@ -91,7 +92,14 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
                 <Badge tone={st.tone} className="shrink-0">{st.label}</Badge>
             </div>
 
-            <p className="mt-1 truncate font-maven text-xs text-kidville-ink">{pagamento.descrizione}</p>
+            {/* Il badge «Solo contanti/bonifico» sta FUORI dal testo `truncate`, e non si
+                restringe: una descrizione lunga taglierebbe via proprio l'informazione che
+                la tabella desktop mostra accanto alla descrizione. Con tutti e due i metodi
+                il badge non rende niente. */}
+            <div className="mt-1 flex min-w-0 items-center gap-1">
+                <p className="truncate font-maven text-xs text-kidville-ink">{pagamento.descrizione}</p>
+                <BadgeMetodoPagamento metodi={pagamento.metodi_ammessi} testoSoloContanti={t('badgeSoloContanti')} testoSoloBonifico={t('badgeSoloBonifico')} className="shrink-0" />
+            </div>
             {avviso && <div className="mt-1 flex flex-wrap gap-1">{avviso}</div>}
 
             <div className="mt-2 flex items-center justify-between font-maven text-xs">

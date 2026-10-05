@@ -31,6 +31,11 @@ export interface PagamentoRow {
      * `GET /api/pagamenti` allo staff; `null` = nessuna voce attiva, o coda non letta.
      */
     coda_stato?: StatoCodaAttivo | null;
+    /**
+     * Con cosa si può pagare la voce (2026-10-05). Assente/`null` sul DB della CI senza
+     * colonna: vale «tutti e due» (`normalizzaMetodiAmmessi`).
+     */
+    metodi_ammessi?: string[] | null;
     alunni?: { nome?: string; cognome?: string };
 }
 

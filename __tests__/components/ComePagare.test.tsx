@@ -873,3 +873,190 @@ describe('ComePagare — la copia che non riesce non resta muta (rilievo 5)', ()
         expect(riga).not.toContain(IBAN_LEGGIBILE);
     });
 });
+
+/**
+ * METODI AMMESSI (2026-10-05) — la segreteria può dire che una voce si paga SOLO
+ * in contanti (`metodi_ammessi = ['contanti']`), e la voce arriva qui con
+ * `ammetteBonifico: false`.
+ *
+ * Una voce così NON deve offrire la propria causale nel pannello del bonifico: il
+ * genitore la copierebbe e manderebbe un bonifico che la scuola non vuole. E quando
+ * nessuna voce aperta ammette il bonifico, la card resta coi soli contanti — niente
+ * tab, niente IBAN (decisione del titolare, 2026-10-05).
+ */
+describe('ComePagare — le voci «solo contanti» escono dal bonifico (metodi ammessi)', () => {
+    const SOLO_CONTANTI: VoceCausale = { ...VOCE_DUE, scuola_id: 'sede-1', ammetteBonifico: false };
+    const TESTO_CONTANTI = 'In segreteria, negli orari di apertura: il pagamento viene registrato subito e lo vedi qui.';
+    const NOTA_730 =
+        'I pagamenti in contanti non sono detraibili nella dichiarazione dei redditi (L. 160/2019): per la detrazione usa il bonifico.';
+
+    /**
+     * Il testo di TUTTI i campi copiabili nel DOM — l'IBAN e le causali —, pannelli
+     * nascosti compresi.
+     */
+    const campiCopiabili = () =>
+        [...document.querySelectorAll<HTMLElement>('.kv-campo-copiabile')].map((c) => c.textContent);
+
+    it('una voce solo contanti: il bonifico tiene la causale dell’ALTRA e dice dove trovare la prima', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO, SOLO_CONTANTI]} />);
+
+        // I tab restano: c'è ancora una voce che si paga col bonifico.
+        expect(screen.getAllByRole('tab')).toHaveLength(2);
+        const pannello = screen.getByRole('tabpanel');
+        expect(pannello).toHaveAttribute('aria-labelledby', screen.getByRole('tab', { name: 'Bonifico' }).id);
+
+        expect(within(pannello).getByText(VOCE_UNO.descrizione)).toBeInTheDocument();
+        expect(campoCausale(VOCE_UNO.causale)).toBeInTheDocument();
+        // La causale della voce solo contanti non c'è IN NESSUN pannello, nascosti compresi.
+        expect(campiCopiabili()).not.toContain(SOLO_CONTANTI.causale);
+        expect(within(pannello).queryByText(SOLO_CONTANTI.descrizione)).toBeNull();
+
+        // …e il genitore non la perde di vista: la frase gli dice COME e DOVE si paga
+        // (testo rivisto il 2026-10-05: prima rimandava «alla scheda Contanti»).
+        expect(
+            within(pannello).getByText('Una voce si paga solo in contanti, in segreteria.'),
+        ).toBeInTheDocument();
+    });
+
+    it('due voci solo contanti: la frase va al plurale', () => {
+        render(
+            <ComePagare
+                sedi={[SEDE_UNO]}
+                voci={[VOCE_UNO, SOLO_CONTANTI, { ...SOLO_CONTANTI, id: 'p9', descrizione: 'Mensa Settembre 2026' }]}
+            />,
+        );
+
+        expect(
+            within(screen.getByRole('tabpanel')).getByText(
+                '2 voci si pagano solo in contanti, in segreteria.',
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it('nessuna voce esclusa: la frase non compare', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO, { ...VOCE_DUE, scuola_id: 'sede-1', ammetteBonifico: true }]} />);
+
+        expect(screen.queryByText(/solo in contanti/)).toBeNull();
+        expect(campiCopiabili()).toEqual([IBAN_LEGGIBILE, VOCE_UNO.causale, VOCE_DUE.causale]);
+    });
+
+    it('tutte solo contanti: niente tab, niente IBAN, restano i contanti', () => {
+        const { container } = render(
+            <ComePagare sedi={[SEDE_UNO]} voci={[{ ...VOCE_UNO, ammetteBonifico: false }, SOLO_CONTANTI]} />,
+        );
+
+        expect(screen.getByText('Come pagare')).toBeInTheDocument();
+        expect(screen.queryByRole('tablist')).toBeNull();
+        // Nessun pezzo di WAI-ARIA Tabs rimasto orfano, nemmeno nei nodi nascosti:
+        // un `tabpanel` senza tab o un `aria-controls` che punta al nulla è peggio
+        // di nessun ruolo.
+        expect(container.querySelectorAll('[role="tablist"], [role="tab"], [role="tabpanel"]')).toHaveLength(0);
+        expect(container.querySelector('[aria-controls]')).toBeNull();
+        expect(container.querySelector('[aria-labelledby]')).toBeNull();
+
+        // Nessun IBAN, in nessuna delle due forme (quella a schermo e quella `sr-only`).
+        expect(container.textContent).not.toContain(IBAN_LEGGIBILE);
+        expect(container.textContent).not.toContain(IBAN_COMPATTO);
+        expect(screen.queryByRole('button', { name: /Copia l’IBAN/ })).toBeNull();
+        expect(screen.queryByText(INTESTATARIO)).toBeNull();
+        expect(campiCopiabili()).toHaveLength(0);
+
+        // I contanti sono VISIBILI, non solo presenti: lo stato iniziale del
+        // componente resta «bonifico», e senza la correzione il pannello dei contanti
+        // nascerebbe `hidden` — una card col solo titolo.
+        expect(screen.getByText(TESTO_CONTANTI)).toBeVisible();
+        expect(screen.getByText(NOTA_730)).toBeVisible();
+    });
+
+    it('tutte solo contanti: al posto dei tab un’intestazione «Contanti», che non è un comando', () => {
+        const { container } = render(
+            <ComePagare sedi={[SEDE_UNO]} voci={[{ ...VOCE_UNO, ammetteBonifico: false }, SOLO_CONTANTI]} />,
+        );
+
+        // PRESENZA prima: senza tab, la parola «Contanti» non si leggeva da nessuna parte
+        // prima del testo — il genitore vedeva «In segreteria…» senza sapere di che metodo
+        // si stesse parlando.
+        const intestazione = screen.getByText('Contanti');
+        expect(intestazione).toBeVisible();
+        // Sta dove stavano i tab: DOPO l'occhiello e PRIMA del testo dei contanti.
+        const testo = screen.getByText(TESTO_CONTANTI);
+        expect(intestazione.compareDocumentPosition(testo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        // L'icona c'è, ed è decorazione: il nome lo dà il testo.
+        const icona = intestazione.querySelector('svg');
+        expect(icona).not.toBeNull();
+        expect(icona).toHaveAttribute('aria-hidden', 'true');
+
+        // NON è un comando: niente tab, niente bottone, niente fuoco.
+        expect(screen.queryAllByRole('tab')).toHaveLength(0);
+        expect(intestazione.tagName).toBe('P');
+        expect(intestazione.closest('button')).toBeNull();
+        expect(intestazione).not.toHaveAttribute('tabindex');
+        expect(container.querySelectorAll('button')).toHaveLength(0);
+
+        // …e quindi non accende il segnale dei comandi. In Alto Contrasto
+        // `.kv-come-pagare .bg-kidville-green` diventa GIALLO, cioè «premimi»: una
+        // pillola verde che non si preme lo prometterebbe a vuoto. Nella card coi soli
+        // contanti il verde resta all'occhiello e basta (vedi «in tutta la card il
+        // verde lo portano SOLO i comandi», più sopra).
+        const verdi = [...container.querySelectorAll<HTMLElement>('*')].filter((el) => {
+            const classi = (el.getAttribute('class') ?? '').split(/\s+/);
+            return classi.includes('text-kidville-green') || classi.includes('bg-kidville-green');
+        });
+        expect(verdi.map((el) => el.textContent)).toEqual(['Come pagare']);
+        // Inchiostro pieno su crema, la stessa voce di «struttura» della barra dei tab:
+        // in Alto Contrasto `.bg-kidville-cream` va a #1A1A1A e `.text-kidville-ink` a bianco.
+        expect(intestazione.className).toContain('text-kidville-ink');
+        expect(intestazione.className).toContain('bg-kidville-cream');
+        expect(intestazione.className).not.toContain('text-kidville-muted');
+    });
+
+    it('con il bonifico ammesso l’intestazione «Contanti» non c’è: lo dicono già i tab', () => {
+        const { container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        // Presenza prima: i tab ci sono.
+        expect(screen.getByRole('tab', { name: 'Contanti' })).toBeInTheDocument();
+        // «Contanti» compare UNA volta sola, ed è il tab.
+        const occorrenze = [...container.querySelectorAll('*')].filter(
+            (el) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim() === 'Contanti'),
+        );
+        expect(occorrenze).toHaveLength(1);
+        expect(occorrenze[0]).toHaveAttribute('role', 'tab');
+    });
+
+    it('i plessi dei contanti contano anche le voci uscite dal bonifico', () => {
+        // Plesso Uno ha una voce col bonifico, Plesso Due solo una voce in contanti:
+        // il conto da mostrare è uno, ma le segreterie dove si può andare sono due.
+        render(
+            <ComePagare
+                sedi={[SEDE_UNO, { ...SEDE_DUE, iban: IBAN_ALTRO }]}
+                voci={[VOCE_UNO, { ...VOCE_DUE, ammetteBonifico: false }]}
+            />,
+        );
+
+        // Nel bonifico un solo conto: quello di Plesso Uno, senza riga di plesso.
+        expect(screen.getByText(IBAN_LEGGIBILE)).toBeInTheDocument();
+        expect(screen.queryByText(IBAN_ALTRO)).toBeNull();
+        expect(screen.queryByText('Per la sede Plesso Uno')).toBeNull();
+
+        fireEvent.click(screen.getByRole('tab', { name: 'Contanti' }));
+        expect(
+            within(screen.getByRole('tabpanel')).getByText('Per le sedi Plesso Uno · Plesso Due'),
+        ).toBeInTheDocument();
+    });
+
+    it('una copia appena riuscita non fa cadere la card quando le voci diventano solo contanti', async () => {
+        const { rerender, container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copia l’IBAN' }));
+        expect(await screen.findByRole('button', { name: 'Copiato: IBAN' })).toBeInTheDocument();
+
+        // Il realtime ricarica le voci entro i due secondi della conferma: l'esito
+        // della copia punta a un conto che non c'è più.
+        rerender(<ComePagare sedi={[SEDE_UNO]} voci={[{ ...VOCE_UNO, ammetteBonifico: false }]} />);
+
+        expect(screen.getByText(TESTO_CONTANTI)).toBeVisible();
+        // Nessun comando di copia ⇒ nessun esito di copia da annunciare.
+        const regioni = [...container.querySelectorAll('[role="status"]')];
+        expect(regioni).toHaveLength(1);
+        expect(regioni[0].textContent).toBe('');
+    });
+});

@@ -179,6 +179,14 @@ export function posterioriCheContengono(
 // (T16), insieme alla rigenerazione delle fotografie: la prova gemella 2 diventa rossa da sola.
 // SVUOTATA il 03/10 (02/10 22:3x UTC): il file A, rinominato `20261002215600_…`, e' applicato in produzione
 // e le fotografie sono rigenerate dalla produzione (202 migrazioni, 232 indici unici).
+//
+// RIAPERTA il 2026-10-05 (metodi di pagamento ammessi): la migrazione della PR aggiunge
+// `pagamenti.metodi_ammessi` col suo CHECK, scritto con DROP/ADD CONSTRAINT perché sia
+// rieseguibile — è quella forma che la guardia delle FK verso `utenti` vede, non una FK.
+// Si toglie dopo il merge, insieme alla rigenerazione delle fotografie dalla produzione.
+// SVUOTATA il 05/10 (PR-B dopo il merge di #186, `57c1d28e`): la migrazione è applicata in
+// produzione dall'integrazione con la version del file (una riga sola nel registro) e le
+// fotografie sono rigenerate dalla produzione.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**

@@ -176,8 +176,12 @@ const ESENTE = 'src/lib/logging/';
 // uscito proprio il 2026-09-12 — e nessuno aveva un `catch { /* … */ }` con soli commenti: misurato
 // prima e dopo, né i due tetti qui sopra né quelli della metà scoperta (`MAX_SOLO_COMMENTI`,
 // `MAX_FILE_SOLO_COMMENTI`) hanno credito da restituire per questo intervento.
-const MAX_FILE = 40;
-const MAX_OCCORRENZE = 61;
+// 🔻 40 → 39 e 61 → 60 il 2026-10-05 (metodi di pagamento ammessi): `RateizzaModal.tsx` esce
+// dall'allowlist. Il suo `.catch(() => {})` stava sulla DELETE della voce originale dopo la
+// rateizzazione: se falliva, la voce restava ACCANTO al piano rateale nuovo (debito doppio) senza
+// traccia. Ora logga (`rateizza-originale-non-eliminato`), anche sul ramo `!res.ok`.
+const MAX_FILE = 39;
+const MAX_OCCORRENZE = 60;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un
@@ -365,9 +369,20 @@ function soloCommenti(rel: string): { riga: number; testo: string }[] {
  * PERCHÉ l'errore è ignorabile. Chi ne bonifica uno porta giù il numero, come per gli altri
  * due tetti: lasciarlo largo significa tenere credito non speso, cioè un tetto che non misura
  * più niente.
+ *
+ * ➖ 59 → 52 e 44 → 40 il 2026-10-05. Di questi, −3 occorrenze e −1 file sono la bonifica di
+ * `src/lib/pagamenti/solleciti-invio.ts`: la lettura dei livelli già inviati, l'accodamento
+ * della push e la scrittura del registro `solleciti` avevano un `catch { /* … *\/ }` — e due
+ * stavano attorno a `await supabase.from(…)`, che non lancia, quindi non scattavano nemmeno.
+ * Ora leggono `{ error }` e loggano (`registro-solleciti-assente` a `info`, `livelli-non-letti`,
+ * `push-non-accodata`, `registro-sollecito-non-scritto` a `error`). Gli altri −4 / −3 erano
+ * CREDITO NON SPESO: questo stesso test, dopo la bonifica, misura 52 occorrenze in 40 file;
+ * prima erano quindi 55 in 41 (i 3 catch di quell'unico file), contro un tetto di 59 / 44 —
+ * qualcuno aveva bonificato senza abbassare. Il tetto scende alla misura vera, non alla sola
+ * parte di questo intervento.
  */
-const MAX_SOLO_COMMENTI = 59;
-const MAX_FILE_SOLO_COMMENTI = 44;
+const MAX_SOLO_COMMENTI = 52;
+const MAX_FILE_SOLO_COMMENTI = 40;
 
 type Voce = { path: string; n: number };
 type Allowlist = { totale_occorrenze: number; file: Voce[] };

@@ -18,7 +18,27 @@ const h = vi.hoisted(() => ({
   quote: [] as Record<string, unknown>[],
   inserts: [] as { table: string; row: Record<string, unknown> }[],
   updates: [] as { table: string; row: Record<string, unknown> }[],
+  // Guasti sul registro `solleciti` (rifinitura 2026-10-05): `{ error }` di PostgREST,
+  // oppure un RIGETTO (rete, client), sulla lettura dei livelli e sull'insert.
+  erroreLivelli: null as null | { code: string; message: string },
+  livelliLancia: false,
+  erroreRegistro: null as null | { code: string; message: string },
+  registroLancia: false,
+  logEvento: vi.fn(),
 }))
+
+// Il logger VERO, con il solo `logEvento` spiato: `withRoute` e il resto della
+// catena ne usano anche altri export, e un mock parziale li lascerebbe `undefined`.
+vi.mock('@/lib/logging/logger', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/logging/logger')>()
+  return {
+    ...vero,
+    logEvento: (...a: Parameters<typeof vero.logEvento>) => {
+      h.logEvento(...a)
+      return vero.logEvento(...a)
+    },
+  }
+})
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: h.sendEmail, sendEmailDetailed: h.sendEmailDetailed }))
@@ -39,11 +59,17 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : table === 'scuole' ? { nome: 'Kidville Giugliano' } : null, error: null })
       b.insert = (row: Record<string, unknown>) => {
         h.inserts.push({ table, row })
-        return { then: (r: (v: unknown) => unknown) => r({ data: null, error: null }), select: () => ({ single: async () => ({ data: row, error: null }) }) }
+        if (table === 'solleciti' && h.registroLancia) {
+          return { then: (_r: unknown, ko: (e: unknown) => unknown) => ko(new TypeError('fetch failed')) }
+        }
+        const errore = table === 'solleciti' ? h.erroreRegistro : null
+        return { then: (r: (v: unknown) => unknown) => r({ data: null, error: errore }), select: () => ({ single: async () => ({ data: row, error: null }) }) }
       }
       b.update = (row: Record<string, unknown>) => { h.updates.push({ table, row }); return b }
-      b.then = (resolve: (v: unknown) => unknown) =>
-        resolve({
+      b.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
+        if (table === 'solleciti' && h.livelliLancia && reject) return reject(new TypeError('fetch failed'))
+        if (table === 'solleciti' && h.erroreLivelli) return resolve({ data: null, error: h.erroreLivelli })
+        return resolve({
           data:
             table === 'pagamenti' ? h.pagamenti
             : table === 'solleciti' ? h.sollecitiEsistenti
@@ -54,6 +80,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
             : [],
           error: null,
         })
+      }
       return b
     },
   }),
@@ -81,6 +108,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.inserts = []
   h.updates = []
+  h.erroreLivelli = null
+  h.livelliLancia = false
+  h.erroreRegistro = null
+  h.registroLancia = false
+  h.enqueueNotifiche.mockImplementation(async () => {})
   h.requireStaff.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
   h.pagamenti = [{
     id: PID, alunno_id: 'al-1', scuola_id: 'sc-1', descrizione: 'Retta Giugno', importo: 150, importo_pagato: 0,
@@ -347,5 +379,98 @@ describe('POST /api/pagamenti/solleciti — le coordinate del bonifico', () => {
     h.settingsRow = { solleciti_config: {}, fiscale_config: { denominazione: 'La Segreteria', iban: IBAN_OK }, aruba_config: {} }
     expect((await POST(post({ pagamento_ids: [PID] }))).status).toBe(200)
     expect(htmlInviato()).toContain('Intestato a')
+  })
+})
+
+/**
+ * I TRE `catch` MUTI DEL MOTORE (rifinitura, 2026-10-05). La lettura dei livelli già
+ * inviati, l'accodamento della push e la scrittura del registro `solleciti` avevano un
+ * `catch { /* commento *\/ }` — e due di loro stavano attorno a `await supabase.from(…)`,
+ * che NON lancia: l'errore di PostgREST torna in `{ error }`, e il `catch` non scattava
+ * mai. Il comportamento resta quello di prima (il sollecito parte lo stesso), ma ora il
+ * guasto si DICE: `info` se è il registro assente del DB non migrato, `error` altrimenti.
+ */
+describe('sollecitaPagamenti — i guasti secondari non tacciono', () => {
+  const eventi = (esito: string) =>
+    h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string } | undefined)?.esito === esito)
+  /** Il sollecito è PARTITO davvero: email, registro tentato, data aggiornata. */
+  const partito = async (res: Response) => {
+    expect(res.status).toBe(200)
+    expect((await res.json()).data[0]).toMatchObject({ pagamento_id: PID, ok: true })
+    expect(h.sendEmailDetailed).toHaveBeenCalledTimes(1)
+    expect(h.updates.some((u) => u.table === 'pagamenti' && u.row.ultimo_sollecito_il)).toBe(true)
+  }
+
+  it('tutto riuscito: nessuna riga di guasto', async () => {
+    await partito(await POST(post({ pagamento_ids: [PID] })))
+    for (const esito of ['registro-solleciti-assente', 'livelli-non-letti', 'push-non-accodata', 'registro-sollecito-non-scritto']) {
+      expect(eventi(esito)).toHaveLength(0)
+    }
+  })
+
+  it('registro dei livelli ASSENTE (42P01, DB della CI): parte dal livello 1, e una riga `info`', async () => {
+    h.erroreLivelli = { code: '42P01', message: 'relation "solleciti" does not exist' }
+    await partito(await POST(post({ pagamento_ids: [PID] })))
+    const log = eventi('registro-solleciti-assente').filter((c) => (c[2] as { operazione?: string }).operazione === 'solleciti:livelli')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'info'])
+    expect(log[0][2]).toEqual({ operazione: 'solleciti:livelli', esito: 'registro-solleciti-assente', n: 1 })
+  })
+
+  it('livelli non letti per un altro motivo: il sollecito parte, e una riga `error` col codice', async () => {
+    h.erroreLivelli = { code: '57014', message: 'canceling statement due to statement timeout' }
+    await partito(await POST(post({ pagamento_ids: [PID] })))
+    const log = eventi('livelli-non-letti')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][3]).toMatchObject({ code: '57014' })
+  })
+
+  it('lettura dei livelli che RIGETTA: il sollecito parte, e il rigetto si logga', async () => {
+    h.livelliLancia = true
+    await partito(await POST(post({ pagamento_ids: [PID] })))
+    const log = eventi('livelli-non-letti')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][3]).toBeInstanceOf(TypeError)
+  })
+
+  it('push che non si accoda: l’email è partita, il registro si scrive lo stesso, e la push persa si dice', async () => {
+    h.enqueueNotifiche.mockRejectedValueOnce(new Error('coda push non raggiungibile'))
+    await partito(await POST(post({ pagamento_ids: [PID] })))
+    expect(h.inserts.some((i) => i.table === 'solleciti')).toBe(true)
+    const log = eventi('push-non-accodata')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['notifica', 'error'])
+    expect(log[0][2]).toEqual({ operazione: 'solleciti:push', esito: 'push-non-accodata', pagamento_id: PID })
+  })
+
+  it('registro del sollecito ASSENTE all’insert: il sollecito resta valido, e una riga `info`', async () => {
+    h.erroreRegistro = { code: 'PGRST205', message: "Could not find the table 'public.solleciti' in the schema cache" }
+    await partito(await POST(post({ pagamento_ids: [PID] })))
+    const log = eventi('registro-solleciti-assente').filter((c) => (c[2] as { operazione?: string }).operazione === 'solleciti:registro')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'info'])
+    expect(log[0][2]).toEqual({ operazione: 'solleciti:registro', esito: 'registro-solleciti-assente', pagamento_id: PID })
+  })
+
+  it('registro del sollecito non scritto per un altro motivo: riga `error`, senza oggetto né corpo', async () => {
+    h.erroreRegistro = { code: '23502', message: 'null value in column "livello" violates not-null constraint' }
+    await partito(await POST(post({ pagamento_ids: [PID] })))
+    const log = eventi('registro-sollecito-non-scritto')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][2]).toEqual({ operazione: 'solleciti:registro', esito: 'registro-sollecito-non-scritto', pagamento_id: PID })
+    expect(log[0][3]).toMatchObject({ code: '23502' })
+    // Il corpo del sollecito (nome del bambino, CF nella causale) non entra nei campi del log.
+    expect(JSON.stringify(log[0][2])).not.toContain('Mario')
+  })
+
+  it('insert del registro che RIGETTA: il sollecito resta valido, e il rigetto si logga', async () => {
+    h.registroLancia = true
+    await partito(await POST(post({ pagamento_ids: [PID] })))
+    const log = eventi('registro-sollecito-non-scritto')
+    expect(log).toHaveLength(1)
+    expect(log[0][3]).toBeInstanceOf(TypeError)
   })
 })

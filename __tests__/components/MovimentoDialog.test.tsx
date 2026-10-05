@@ -115,6 +115,22 @@ const movBase: MovimentoUi = {
 
 const ref = () => createRef<HTMLButtonElement>();
 
+/**
+ * LA LETTURA DEL POPUP SU UN CONFERMATO, DAL 2026-10-05.
+ *
+ * Era `GET /api/pagamenti/{pagamento_id}`, con `{ stato, fattura_stato }` in `data`.
+ * È diventata `GET /api/pagamenti/riconciliazione/{id}` — la riga bancaria e A CHE
+ * COSA è associata, in una richiesta sola — e stato e fattura della voce àncora
+ * stanno in `data.pagamento`. Le asserzioni di questo file non cambiano: cambiano
+ * l'indirizzo che il finto riconosce e la forma in cui risponde. La PATCH ha la
+ * STESSA URL: la lettura si riconosce dal metodo.
+ */
+type InitFinto = { method?: string };
+const eLetturaMovimento = (url: string, init?: InitFinto) =>
+  String(url).includes('/api/pagamenti/riconciliazione/m1') && (init?.method ?? 'GET') === 'GET';
+const corpoLettura = (pagamento: { stato?: string; fattura_stato?: string | null }) =>
+  ({ success: true, data: { id: 'm1', stato: 'confermato', associazione: null, pagamento } });
+
 describe('MovimentoDialog', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
@@ -283,10 +299,16 @@ describe('MovimentoDialog', () => {
    * che va inchiodato, altrimenti la cancellazione si disfa da sola alla prima
    * modifica di questo riquadro.
    */
-  it('movimento confermato + pagamento pagato → Fattura + Riapri, e NESSUNA «Ricevuta»', async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (String(url).includes('/api/pagamenti/pg1')) {
-        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato' } }) };
+  /*
+   * Dal 2026-10-05 «Riapri» su un confermato è diventato DUE comandi — «Modifica
+   * associazione» ed «Elimina associazione», con una conferma che elenca gli storni
+   * (`MovimentoDialog-associazione.test.tsx`). È il cambiamento voluto: la prova
+   * della presenza si sposta sui due comandi nuovi, non si toglie.
+   */
+  it('movimento confermato + pagamento pagato → Fattura + Modifica/Elimina associazione, e NESSUNA «Ricevuta»', async () => {
+    const fetchMock = vi.fn(async (url: string, init?: InitFinto) => {
+      if (eLetturaMovimento(url, init)) {
+        return { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato' }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
     });
@@ -297,7 +319,9 @@ describe('MovimentoDialog', () => {
     // Ciò che DEVE esserci: senza questa metà, l'assenza qui sotto sarebbe verde
     // anche su un riquadro che non ha renderizzato niente.
     expect(await screen.findByTestId('fattura-button')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Riapri/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: testo('movdlgModificaAssociazione') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: testo('movdlgEliminaAssociazione') })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: testo('movdlgRiapri') })).toBeNull();
     // Ciò che NON deve esserci più: né la parola, né l'indirizzo.
     expect(screen.queryByText(/Ricevuta/i)).toBeNull();
     expect(container.innerHTML).not.toContain('/api/pagamenti/ricevuta');
@@ -306,7 +330,7 @@ describe('MovimentoDialog', () => {
   });
 
   it('movimento confermato ma non ancora pagato → la nota parla della sola FATTURA', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'parziale' } }) }));
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => corpoLettura({ stato: 'parziale' }) }));
     vi.stubGlobal('fetch', fetchMock);
     const confermato: MovimentoUi = { ...movBase, stato: 'confermato', pagamento_id: 'pg1' };
     const { container } = render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
@@ -336,9 +360,9 @@ describe('MovimentoDialog — stato della fattura al pulsante', () => {
 
   const confermato: MovimentoUi = { ...movBase, stato: 'confermato', pagamento_id: 'pg1' };
   const rispostaPagamento = (fattura_stato: string | null) =>
-    vi.fn(async (url: string) => {
-      if (String(url).includes('/api/pagamenti/pg1')) {
-        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato } }) };
+    vi.fn(async (url: string, init?: InitFinto) => {
+      if (eLetturaMovimento(url, init)) {
+        return { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato', fattura_stato }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
     });
@@ -435,9 +459,9 @@ describe('MovimentoDialog — stato della fattura al pulsante', () => {
   });
 
   it('risposta senza `fattura_stato` (server più vecchio) → si degrada, nessun crash', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (String(url).includes('/api/pagamenti/pg1')) {
-        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato' } }) };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: InitFinto) => {
+      if (eLetturaMovimento(url, init)) {
+        return { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato' }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
     }));
@@ -474,9 +498,9 @@ describe('MovimentoDialog — il chip del popup dice QUALE documento', () => {
 
   /** Il pagamento è saldato e fatturato: è la sola condizione in cui il chip nasce. */
   const pagamentoSaldatoEFatturato = () =>
-    vi.fn(async (url: string) => {
-      if (String(url).includes('/api/pagamenti/pg1')) {
-        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato: 'emessa' } }) };
+    vi.fn(async (url: string, init?: InitFinto) => {
+      if (eLetturaMovimento(url, init)) {
+        return { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato', fattura_stato: 'emessa' }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
     });
@@ -524,9 +548,9 @@ describe('MovimentoDialog — forma, bersagli e àncore di stile', () => {
 
   const confermato: MovimentoUi = { ...movBase, stato: 'confermato', pagamento_id: 'pg1' };
   const rispostaPagamento = (fattura_stato: string | null) =>
-    vi.fn(async (url: string) => {
-      if (String(url).includes('/api/pagamenti/pg1')) {
-        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato } }) };
+    vi.fn(async (url: string, init?: InitFinto) => {
+      if (eLetturaMovimento(url, init)) {
+        return { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato', fattura_stato }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
     });
@@ -1101,9 +1125,9 @@ describe('MovimentoDialog — nessuna chiave di catalogo a schermo', () => {
 
   const confermato2: MovimentoUi = { ...movBase, stato: 'confermato', pagamento_id: 'pg1' };
   const conFattura = (fattura_stato: string | null) =>
-    vi.fn(async (url: string) => {
-      if (String(url).includes('/api/pagamenti/pg1')) {
-        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato } }) };
+    vi.fn(async (url: string, init?: InitFinto) => {
+      if (eLetturaMovimento(url, init)) {
+        return { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato', fattura_stato }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
     });
@@ -1163,8 +1187,8 @@ describe('MovimentoDialog — spaziature sulla scala 4/8', () => {
       .filter((c) => MEZZO_PASSO.test(c));
 
   it('nessun mezzo passo nelle spaziature, salvo il gap fra glifo e parola', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => (String(url).includes('/api/pagamenti/pg1')
-      ? { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato: 'emessa' } }) }
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: InitFinto) => (eLetturaMovimento(url, init)
+      ? { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato', fattura_stato: 'emessa' }) }
       : { ok: true, status: 200, json: async () => ({ success: true }) })));
     const { container } = render(<MovimentoDialog movimento={confermato3} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
     await screen.findByText('Fatturata');
@@ -1178,8 +1202,8 @@ describe('MovimentoDialog — spaziature sulla scala 4/8', () => {
   });
 
   it('i due riquadri gemelli hanno lo stesso respiro (p-4) e lo stesso stacco (mb-4)', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => (String(url).includes('/api/pagamenti/pg1')
-      ? { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato: 'emessa' } }) }
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: InitFinto) => (eLetturaMovimento(url, init)
+      ? { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato', fattura_stato: 'emessa' }) }
       : { ok: true, status: 200, json: async () => ({ success: true }) })));
     render(<MovimentoDialog movimento={confermato3} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
     await screen.findByText('Fatturata');
@@ -1206,8 +1230,8 @@ describe('MovimentoDialog — il chip di stato sta sull’occhiello', () => {
   const confermato4: MovimentoUi = { ...movBase, stato: 'confermato', pagamento_id: 'pg1' };
 
   it('il chip condivide la riga con «Documenti», non la fila dei pulsanti', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => (String(url).includes('/api/pagamenti/pg1')
-      ? { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato: 'emessa' } }) }
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: InitFinto) => (eLetturaMovimento(url, init)
+      ? { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato', fattura_stato: 'emessa' }) }
       : { ok: true, status: 200, json: async () => ({ success: true }) })));
     const { container } = render(<MovimentoDialog movimento={confermato4} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
     await screen.findByText('Fatturata');
@@ -1229,11 +1253,13 @@ describe('MovimentoDialog — il chip di stato sta sull’occhiello', () => {
        che porta `BTN_SECONDARY` — perché la tesi non era «la ricevuta è una
        pillola», era «lo stato NON ha la forma di un comando», e per dirlo serve
        un comando qualunque nella stessa vista.
+       Dal 2026-10-05 «Riapri» su un confermato è «Modifica associazione» (con
+       «Elimina associazione» accanto): stesso `BTN_SECONDARY`, stessa tesi.
        NON si misura sul pulsante della fattura: lì la pillola arriva da
        `globals.css` (`.kv-recon-azione-fattura > button { border-radius: 9999px }`),
        che in jsdom non è caricato — e sotto c'è comunque il mock, non il
        componente vero. Sarebbe una prova che guarda il proprio finto. */
-    const comando = screen.getByRole('button', { name: /Riapri/ });
+    const comando = screen.getByRole('button', { name: testo('movdlgModificaAssociazione') });
     expect(comando.className, 'i comandi restano pillole: la differenza di forma è il segnale').toContain('rounded-pill');
     expect(screen.queryByText(/Ricevuta/i), 'la ricevuta non si scarica più da qui').toBeNull();
   });
@@ -1271,10 +1297,10 @@ describe('MovimentoDialog — dopo l’emissione il popup rilegge sé stesso', (
    */
   const serverDelPagamento = () => {
     const banco = { letture: 0, fattura: 'non_richiesta' };
-    const fetchMock = vi.fn(async (url: string) => {
-      if (String(url).includes('/api/pagamenti/pg1')) {
+    const fetchMock = vi.fn(async (url: string, init?: InitFinto) => {
+      if (eLetturaMovimento(url, init)) {
         banco.letture += 1;
-        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato: banco.fattura } }) };
+        return { ok: true, status: 200, json: async () => corpoLettura({ stato: 'pagato', fattura_stato: banco.fattura }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
     });

@@ -132,6 +132,51 @@ describe('PagamentoCardMobile', () => {
 });
 
 /**
+ * Metodi ammessi (2026-10-05) — sotto `lg` la card è l'UNICA vista della segreteria: il badge
+ * «Solo contanti / Solo bonifico» che la tabella mostra accanto alla descrizione deve esserci
+ * anche qui, altrimenti dal telefono una voce «solo contanti» è indistinguibile dalle altre.
+ */
+describe('PagamentoCardMobile — metodi ammessi', () => {
+  it('voce «solo contanti»: badge accanto alla descrizione, fuori dal testo troncato', () => {
+    render(
+      <PagamentoCardMobile pagamento={{ ...base, metodi_ammessi: ['contanti'] }} alunnoLabel="Mario Rossi"
+        onIncassa={() => {}} onApri={() => {}} />
+    );
+    const badge = screen.getByTestId('badge-metodo-pagamento');
+    expect(badge).toHaveTextContent('Solo contanti');
+    const descrizione = screen.getByText('Retta Settembre 2026');
+    // Accanto: stesso contenitore della descrizione.
+    expect(descrizione.parentElement).toContainElement(badge);
+    // NON dentro il testo `truncate`: una descrizione lunga lo taglierebbe via, ed è proprio
+    // l'informazione che serve vedere.
+    expect(descrizione).not.toContainElement(badge);
+    expect(badge).toHaveClass('shrink-0');
+  });
+
+  it('voce «solo bonifico»: badge «Solo bonifico»', () => {
+    render(
+      <PagamentoCardMobile pagamento={{ ...base, metodi_ammessi: ['bonifico'] }} alunnoLabel="Mario Rossi"
+        onIncassa={() => {}} onApri={() => {}} />
+    );
+    expect(screen.getByTestId('badge-metodo-pagamento')).toHaveTextContent('Solo bonifico');
+  });
+
+  it('tutti e due i metodi, null o colonna assente (DB della CI): nessun badge', () => {
+    for (const metodi_ammessi of [['contanti', 'bonifico'], null, undefined]) {
+      const { container, unmount } = render(
+        <PagamentoCardMobile pagamento={{ ...base, metodi_ammessi }} alunnoLabel="Mario Rossi"
+          onIncassa={() => {}} onApri={() => {}} />
+      );
+      // Presenza prima: la card è resa davvero.
+      expect(screen.getByText('Retta Settembre 2026')).toBeInTheDocument();
+      expect(container.querySelector('[data-testid="badge-metodo-pagamento"]')).toBeNull();
+      expect(container.textContent).not.toMatch(/Solo (contanti|bonifico)/);
+      unmount();
+    }
+  });
+});
+
+/**
  * P2b (26/09) — con più sedi accorpate la card dice di quale sede è la scadenza.
  * `scuola_nome` arriva da `GET /api/pagamenti`; senza `mostraSede` la card resta com'era.
  */

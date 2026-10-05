@@ -299,3 +299,37 @@ describe('PagamentoDrawer — sede (P2b)', () => {
     expect(conSedeFalse.html).toBe(oggi.html);
   });
 });
+
+/**
+ * Metodi ammessi (2026-10-05) — «Solo contanti» / «Solo bonifico» in testa al corpo del
+ * drawer. Il `title` del Drawer resta una stringa (la descrizione). Con entrambi i metodi,
+ * o senza la colonna (DB della CI), il drawer è quello di sempre: nessun badge.
+ */
+describe('PagamentoDrawer — metodi ammessi', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => dettaglio })));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const props = { userId: 'u1', onClose: () => {}, onIncassa: () => {}, onModifica: () => {}, onRateizza: () => {} };
+
+  it('solo contanti: il badge «Solo contanti», e il titolo resta la descrizione', async () => {
+    render(<PagamentoDrawer pagamento={{ ...pagamentoRow, metodi_ammessi: ['contanti'] }} {...props} />);
+    await waitFor(() => expect(screen.getByText('Bonifico')).toBeInTheDocument());
+    expect(screen.getByTestId('badge-metodo-pagamento')).toHaveTextContent('Solo contanti');
+    expect(screen.getByRole('heading', { name: 'Retta Settembre 2026' })).toBeInTheDocument();
+  });
+
+  it('solo bonifico: il badge «Solo bonifico»', async () => {
+    render(<PagamentoDrawer pagamento={{ ...pagamentoRow, metodi_ammessi: ['bonifico'] }} {...props} />);
+    await waitFor(() => expect(screen.getByText('Contanti')).toBeInTheDocument());
+    expect(screen.getByTestId('badge-metodo-pagamento')).toHaveTextContent('Solo bonifico');
+  });
+
+  it('entrambi i metodi: nessun badge, a dettaglio caricato', async () => {
+    render(<PagamentoDrawer pagamento={{ ...pagamentoRow, metodi_ammessi: ['contanti', 'bonifico'] }} {...props} />);
+    await waitFor(() => expect(screen.getByText('Bonifico')).toBeInTheDocument());
+    expect(screen.queryByTestId('badge-metodo-pagamento')).toBeNull();
+  });
+});

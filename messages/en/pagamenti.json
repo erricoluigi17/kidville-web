@@ -81,5 +81,8 @@
   "fatture": "Invoices",
   "fatturaApriBrowserSalvare": "Open in browser to save",
   "pushAttivazioneNonRiuscita": "Could not turn them on: please try again in a moment.",
-  "pushAttivazioneNonPossibile": "They could not be turned on for this device."
+  "pushAttivazioneNonPossibile": "They could not be turned on for this device.",
+  "badgeSoloContanti": "Cash only",
+  "badgeSoloBonifico": "Bank transfer only",
+  "bonificoEsclusiContanti": "{count, plural, one {One item can only be paid in cash, at the school office.} other {# items can only be paid in cash, at the school office.}}"
 }

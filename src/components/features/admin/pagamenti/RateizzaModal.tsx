@@ -8,6 +8,7 @@ import { cx } from '@/lib/ui/cx';
 import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 import { formatEuro } from '@/lib/format/valuta';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { normalizzaMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi';
 
 // Campo compatto per la riga-rata (importo + scadenza) dentro il piano.
 const RATA_FIELD = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1.5 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -25,6 +26,13 @@ interface Props {
     obbligatorio?: boolean;
     /** se valorizzato, dopo aver creato il piano elimina il pagamento singolo originale */
     replacePagamentoId?: string;
+    /**
+     * I metodi ammessi della voce che il piano SOSTITUISCE (2026-10-05), come li
+     * manda `GET /api/pagamenti`. Senza, la voce «solo contanti» rinasceva pagabile
+     * anche con bonifico: il vincolo spariva insieme all'originale cancellata.
+     * Assente («Acquisto rapido», nessuna voce da sostituire) = il corpo non li nomina.
+     */
+    metodiAmmessi?: string[] | null;
     onClose: () => void;
     onDone: () => void;
 }
@@ -39,7 +47,7 @@ function addMonths(iso: string, n: number): string {
 // mensili a partire da una data base; importi e date restano modificabili.
 export function RateizzaModal({
     alunno, userId, scuolaId, categoriaId, descrizione = '', importoTotale = 0,
-    obbligatorio = true, replacePagamentoId, onClose, onDone,
+    obbligatorio = true, replacePagamentoId, metodiAmmessi, onClose, onDone,
 }: Props) {
     const t = useTranslations('adminContabilita');
     const [desc, setDesc] = useState(descrizione);
@@ -90,6 +98,9 @@ export function RateizzaModal({
                     categoria_id: categoriaId ?? null,
                     obbligatorio,
                     rate: rate.map((r) => ({ importo: Number(r.importo), scadenza: r.scadenza })),
+                    // Normalizzati: un valore ignoto non diventa un 400 di `zod`. Se sono
+                    // tutti e due, decide la rotta di non scriverli (default della colonna).
+                    ...(metodiAmmessi != null ? { metodi_ammessi: normalizzaMetodiAmmessi(metodiAmmessi) } : {}),
                 }),
             });
             const j = await res.json();

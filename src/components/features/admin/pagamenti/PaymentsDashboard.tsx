@@ -1188,6 +1188,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     importoTotale={Number(rateizza.pagamento.importo)}
                     obbligatorio={rateizza.pagamento.obbligatorio}
                     replacePagamentoId={rateizza.pagamento.id}
+                    metodiAmmessi={rateizza.pagamento.metodi_ammessi}
                     onClose={() => setRateizza(null)}
                     onDone={() => { setRateizza(null); load(); }}
                 />

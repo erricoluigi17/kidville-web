@@ -26,7 +26,7 @@ Questo file resta la copia di lavoro: lo stato delle sessioni si aggiorna **qui*
 |---|---|---|---|---|
 | 0 | Decisioni e interruttori (titolare) | ⬜ da fare | — | PITR? conferme agenti? |
 | 1 | Funzioni a Dublino + disarmo `migrate.yml` | 🟡 rilasciata (PR #188) | #188 | misura definitiva a +12 h dal deploy; timeout a ~0 solo su 2-3 giorni feriali. ✅ con i numeri nel primo commit della fase 2 |
-| 2 | Paracadute esterno (DB + Storage) e prova di ripristino | ⬜ da fare | — | |
+| 2 | Paracadute esterno (DB + Storage) e prova di ripristino | 🟠 in corso (branch `robustezza/fase-2-paracadute-esterno`) | — | in attesa dei passi del titolare: Cloudflare R2 in UE, chiave `age`, chiavi S3 di Supabase, segreti nell'ambiente GitHub `backup`. Misura PRIMA del 05/10 20:48 UTC: copia esterna = nessuna |
 | 3 | Campanello e salute a livelli | ⬜ da fare | — | |
 | 4 | Scatola nera e pulizie sicure | ⬜ da fare | — | |
 | 5 | Soldi corretti | ⬜ da fare | — | |

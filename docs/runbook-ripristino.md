@@ -44,8 +44,8 @@
 
 | Serve | Dove sta | Se è perso |
 |---|---|---|
-| **Chiave privata age** | offline, 2 supporti (titolare) | i dump non si aprono più, per nessuno |
-| **Password e salt di rclone crypt** | offline, 2 supporti (titolare); in GitHub solo per il backup | i file dello specchio non si aprono più |
+| **Chiave privata age** | offline, 2 supporti (titolare). Copia di lavoro nella cartella `KIDVILLE-CHIAVI-BACKUP/` dell'app: **ignorata da git** (un lock lo verifica) ma **non è una copia offline** | i dump non si aprono più, per nessuno |
+| **Password e salt di rclone crypt** | offline, 2 supporti (titolare); in GitHub solo per il backup; copia di lavoro in `KIDVILLE-CHIAVI-BACKUP/` (ignorata da git) | i file dello specchio non si aprono più |
 | **Token R2 di lettura** (`backup-lettura`) | pannello Cloudflare → R2 → Manage API tokens (si ricrea) | si ricrea; non serve la chiave per cambiarlo |
 | Accesso al pannello Supabase, Vercel, GitHub | titolare | — |
 | Strumenti sul computer | `age`, `rclone`, `jq`, Postgres 17 (`pg_restore`, `psql`, `initdb`) | `brew install age rclone jq postgresql@17` |

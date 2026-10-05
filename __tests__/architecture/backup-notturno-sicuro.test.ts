@@ -407,3 +407,53 @@ describe('PROVE GEMELLE · il lock diventa rosso quando una regola si rompe', ()
         expect(violazioni(conCommento, DOC)).toEqual([])
     })
 })
+
+describe('LOCK · le chiavi del backup non vanno online', () => {
+    /**
+     * Il titolare tiene la cartella delle chiavi (`KIDVILLE-CHIAVI-BACKUP/`: chiave privata age e
+     * password di cifratura dei file) dentro la cartella dell'app, per averla a portata di mano.
+     * Il repository è PUBBLICO: una riga di `.gitignore` è l'unica cosa che separa quella cartella
+     * da internet, e basta una riga cancellata per sbaglio. Qui la riga è sorvegliata, e git stesso
+     * conferma che i file dentro sono ignorati (anche quando la cartella non esiste, come in CI).
+     */
+    const CARTELLA = 'KIDVILLE-CHIAVI-BACKUP'
+    const FILE_SENSIBILI = ['chiave-age-PRIVATA.txt', 'password-cifratura-file.txt']
+
+    /** La regola esiste fuori dai commenti e chiude la cartella dalla radice. */
+    function cartellaChiusa(gitignore: string): boolean {
+        const senza = gitignore.split('\n').filter((r) => !r.trim().startsWith('#')).join('\n')
+        return new RegExp(`^/${CARTELLA}/\\s*$`, 'm').test(senza)
+    }
+
+    const GITIGNORE = readFileSync(join(RADICE, '.gitignore'), 'utf8')
+
+    it('.gitignore chiude la cartella delle chiavi', () => {
+        expect(cartellaChiusa(GITIGNORE)).toBe(true)
+    })
+
+    it('git conferma: i file sensibili dentro la cartella sono ignorati', () => {
+        for (const f of FILE_SENSIBILI) {
+            let ignorato = true
+            try {
+                execFileSync('git', ['check-ignore', '-q', `${CARTELLA}/${f}`], { cwd: RADICE })
+            } catch {
+                ignorato = false
+            }
+            expect(ignorato, `${CARTELLA}/${f} NON è ignorato da git`).toBe(true)
+        }
+    })
+
+    it('nessun file tracciato sta dentro la cartella delle chiavi', () => {
+        expect(repoTracciato().filter((f) => f.startsWith(`${CARTELLA}/`))).toEqual([])
+    })
+
+    it('prova gemella: senza la riga, il controllo diventa rosso', () => {
+        expect(cartellaChiusa(GITIGNORE.replace(`/${CARTELLA}/`, ''))).toBe(false)
+    })
+
+    it('prova gemella: la riga scritta solo in un commento non vale', () => {
+        const solo = GITIGNORE.replace(`\n/${CARTELLA}/`, `\n# /${CARTELLA}/`)
+        expect(solo).not.toBe(GITIGNORE)
+        expect(cartellaChiusa(solo)).toBe(false)
+    })
+})

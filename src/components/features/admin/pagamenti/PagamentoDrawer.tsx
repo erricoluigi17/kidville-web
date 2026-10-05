@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/Badge';
 import { FatturaChip } from './FatturaChip';
 import { FatturaButton } from './FatturaButton';
 import { BadgeSede, type ConSede } from './PagamentoCardMobile';
+import { BadgeMetodoPagamento } from '@/components/features/pagamenti/BadgeMetodoPagamento';
 import type { EsitoAccodamento } from './FatturaButton';
 import { STATI_PAGAMENTO, METODO_LABEL } from './stati';
 import { formatEuro } from '@/lib/format/valuta';
@@ -114,6 +115,9 @@ export function PagamentoDrawer({ pagamento, userId, mostraSede = false, onClose
                     {extra}
                 </div>
             }>
+            {/* «Solo contanti» / «Solo bonifico» in testa al corpo: il `title` del Drawer resta
+                una stringa (è il nome del dialogo). Con tutti e due i metodi non rende niente. */}
+            <BadgeMetodoPagamento metodi={pagamento.metodi_ammessi} testoSoloContanti={t('badgeSoloContanti')} testoSoloBonifico={t('badgeSoloBonifico')} className="mb-3" />
             {/* Riepilogo importi + stato */}
             <div className="mb-4 rounded-card bg-kidville-cream/60 p-3">
                 <div className="flex items-center justify-between gap-2">

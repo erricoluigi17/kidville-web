@@ -8,6 +8,8 @@ import { formatEuro } from '@/lib/format/valuta';
 import { Modal } from '@/components/ui/Modal';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { normalizzaMetodiAmmessi, type MetodoAmmesso } from '@/lib/pagamenti/metodi-ammessi';
+import { ScegliMetodiAmmessi } from './ScegliMetodiAmmessi';
 
 // Campo inline compatto per la correzione di un incasso già registrato.
 const INLINE_FIELD = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -19,6 +21,8 @@ interface PagamentoBase {
     categoria_id?: string | null; obbligatorio: boolean; stato: string;
     importo_pagato?: number;
     sconto?: number;
+    /** Assente/`null` (DB della CI senza colonna) = tutti e due: vedi `normalizzaMetodiAmmessi`. */
+    metodi_ammessi?: string[] | null;
     alunni?: { nome?: string; cognome?: string };
 }
 
@@ -43,6 +47,8 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
     const [scadenza, setScadenza] = useState(String(pagamento.scadenza).slice(0, 10));
     const [categoriaId, setCategoriaId] = useState(pagamento.categoria_id ?? '');
     const [obbligatorio, setObbligatorio] = useState(pagamento.obbligatorio);
+    const iniziali = normalizzaMetodiAmmessi(pagamento.metodi_ammessi);
+    const [metodi, setMetodi] = useState<MetodoAmmesso[]>(iniziali);
     const [incassi, setIncassi] = useState<Incasso[]>([]);
     const [editId, setEditId] = useState<string | null>(null);
     const [editDraft, setEditDraft] = useState<Partial<Incasso>>({});
@@ -74,6 +80,7 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
 
     const salvaDati = async () => {
         // Validazioni speculari a quelle del server (finding #3):
+        if (metodi.length === 0) { setError(t('metodiAmmessiAlmenoUno')); return; }
         if (importo < 0) { setError(t('modifErrImportoNeg')); return; }
         if (importo - sconto < giaIncassato - 0.005) {
             setError(t('modifErrImportoInferiore'));
@@ -87,6 +94,9 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                 body: JSON.stringify({
                     descrizione: descrizione.trim(), importo: Number(importo), scadenza,
                     categoria_id: categoriaId || null, obbligatorio,
+                    // Solo se cambiano: sul DB della CI (senza colonna) la modifica
+                    // normale non deve toccarla. L'ordine è canonico da entrambe le parti.
+                    ...(metodi.join() !== iniziali.join() ? { metodi_ammessi: metodi } : {}),
                 }),
             });
             const j = await res.json();
@@ -194,6 +204,7 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                         className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
                     <span className="font-maven text-xs text-kidville-green">{t('modifObbligatorio')}</span>
                 </label>
+                <ScegliMetodiAmmessi valore={metodi} onChange={setMetodi} disabled={saving} />
                 {error && <p role="alert" className="font-maven text-xs text-kidville-error-strong">{error}</p>}
             </div>
 

@@ -116,3 +116,82 @@ describe('GeneratoreCategoria — scelta dei bambini', () => {
     expect(screen.queryByText(/Da generare: 1/i)).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// I METODI DI PAGAMENTO AMMESSI (2026-10-05)
+//
+// Due caselle, entrambe spuntate di partenza. La POST li porta sempre; con zero
+// caselle l'anteprima non parte (e lo dice), invece di generare voci che non si
+// possono pagare in nessun modo.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('GeneratoreCategoria — metodi di pagamento ammessi', () => {
+  const posted: unknown[] = [];
+  let fetchFinta: ReturnType<typeof mockFetch>;
+  beforeEach(() => {
+    posted.length = 0;
+    fetchFinta = mockFetch(posted);
+    vi.stubGlobal('fetch', fetchFinta);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const getAnteprima = () =>
+    fetchFinta.mock.calls.filter(([url]) => String(url).startsWith('/api/pagamenti/genera?')).length;
+
+  it('di partenza: tutte e due spuntate, e la POST porta [contanti, bonifico]', async () => {
+    render(<GeneratoreCategoria userId="u1" scuolaId="sc-1" />);
+    await screen.findByText(/Si genera per 2 bambini/i);
+    expect(screen.getByRole('checkbox', { name: 'Contanti' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Bonifico' })).toBeChecked();
+
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    await screen.findByText(/Da generare: 1/i);
+    fireEvent.click(screen.getByRole('button', { name: /Conferma generazione/ }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect((posted[0] as { metodi_ammessi?: string[] }).metodi_ammessi).toEqual(['contanti', 'bonifico']);
+  });
+
+  it('togliendo «Bonifico» e generando, la POST porta metodi_ammessi: [contanti]', async () => {
+    render(<GeneratoreCategoria userId="u1" scuolaId="sc-1" />);
+    await screen.findByText(/Si genera per 2 bambini/i);
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Bonifico' }));
+
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    await screen.findByText(/Da generare: 1/i);
+    fireEvent.click(screen.getByRole('button', { name: /Conferma generazione/ }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect((posted[0] as { metodi_ammessi?: string[] }).metodi_ammessi).toEqual(['contanti']);
+    // Il resto del corpo non cambia: c'è ancora chi generare.
+    expect((posted[0] as { alunno_ids: string[] }).alunno_ids).toEqual(['a1']);
+  });
+
+  it('cambiare i metodi invalida l\'anteprima già fatta', async () => {
+    render(<GeneratoreCategoria userId="u1" scuolaId="sc-1" />);
+    await screen.findByText(/Si genera per 2 bambini/i);
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    await screen.findByText(/Da generare: 1/i);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Contanti' }));
+    expect(screen.queryByText(/Da generare: 1/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /Anteprima/ })).toBeInTheDocument();
+  });
+
+  it('togliendole entrambe, «Anteprima» non chiama il server e mostra l\'errore', async () => {
+    render(<GeneratoreCategoria userId="u1" scuolaId="sc-1" />);
+    await screen.findByText(/Si genera per 2 bambini/i);
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Contanti' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Bonifico' }));
+    // Le caselle lo dicono già da sole, prima di ogni clic.
+    expect(screen.getAllByText('Scegli almeno un metodo di pagamento.')).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    // Una PRESENZA: il messaggio compare anche accanto al pulsante (ora sono due).
+    await waitFor(() => expect(screen.getAllByText('Scegli almeno un metodo di pagamento.')).toHaveLength(2));
+    expect(getAnteprima()).toBe(0);
+    expect(screen.queryByText(/Da generare/i)).toBeNull();
+    expect(posted).toHaveLength(0);
+  });
+});

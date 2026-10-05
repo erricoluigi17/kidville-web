@@ -1,6 +1,6 @@
 import { formatEuro } from '@/lib/format/valuta'
 import { ibanLeggibile } from '@/lib/pagamenti/iban'
-import { h, paragrafiDaTesto, unisci, type Html } from '../html'
+import { esc, h, paragrafiDaTesto, unisci, type Html } from '../html'
 import { documento, intestazioneTesto, piedeTesto } from '../layout'
 import {
     avviso, h2, nota, p, riepilogoVoci, riepilogoVociTesto, riquadroApp,
@@ -64,6 +64,16 @@ const TITOLO: Record<LivelloSollecito, string> = {
     3: 'Secondo sollecito',
 }
 
+/**
+ * Come si paga una voce che NON ammette il bonifico (2026-10-05).
+ *
+ * È esportata perché la stessa frase va in DUE posti: qui (HTML e gemello
+ * testuale) e nel `corpo` di `solleciti-invio.ts`, che è anche l'anteprima
+ * dell'operatore e l'audit in `solleciti.corpo`. Due copie della stessa frase
+ * sono due frasi che un giorno dicono cose diverse.
+ */
+export const FRASE_PAGAMENTO_CONTANTI = 'Questo pagamento si salda in contanti presso la segreteria, negli orari di apertura.'
+
 export interface DatiSollecito {
     livello: LivelloSollecito
     /** L'oggetto già reso dal template della sede: questo modulo non lo ricompone. */
@@ -73,8 +83,15 @@ export interface DatiSollecito {
     /** Nome dell'alunno, o il ripiego che il motore usa già quando non è noto. */
     alunno: string
     voci: readonly VocePagamento[]
-    /** La causale del bonifico, composta dal motore: si copia nell'home banking. */
-    causale: string
+    /**
+     * La causale del bonifico, composta dal motore: si copia nell'home banking.
+     *
+     * `null` ⇒ la voce non ammette il bonifico (voce «solo contanti»): niente
+     * riquadro «Dati per il bonifico», niente IBAN, niente causale — al loro
+     * posto la frase che dice di pagare in segreteria. Lo decide la VOCE, non
+     * la sede: l'IBAN compilato in Impostazioni qui viene ignorato.
+     */
+    causale: string | null
     /** L'intestatario del conto. Assente ⇒ la riga si omette. */
     intestatario?: string | null
     /** L'IBAN dalle impostazioni fiscali. Assente o invalido ⇒ la riga si omette. */
@@ -85,8 +102,11 @@ export function messaggioSollecito(d: DatiSollecito, sede: ContestoSede): Messag
     const totale = d.voci.reduce((a, v) => a + v.importo, 0)
     const motivo = `Ricevi questo messaggio perché risulta un pagamento non ancora saldato presso ${sede.nome}.`
     const iban = ibanLeggibile(d.iban)
+    // Voce «solo contanti»: lo dice la causale assente, MAI l'IBAN. L'IBAN è
+    // della sede e c'è per tutte le voci; il metodo è della voce.
+    const soloContanti = d.causale === null
 
-    const righeBonifico: RigaDati[] = [
+    const righeBonifico: RigaDati[] = d.causale === null ? [] : [
         { etichetta: 'Importo', valore: formatEuro(totale), mono: true },
         ...(iban ? [{ etichetta: 'IBAN', valore: iban, mono: true }] : []),
         { etichetta: 'Causale', valore: d.causale, mono: true },
@@ -109,13 +129,15 @@ export function messaggioSollecito(d: DatiSollecito, sede: ContestoSede): Messag
         tabellaDati([{ etichetta: 'Alunno', valore: d.alunno }]),
         spazio(12),
         riepilogoVoci(d.voci),
-        piuVoci
+        // «Un solo bonifico» a chi non può fare bonifici sarebbe un'istruzione sbagliata.
+        piuVoci && !soloContanti
             ? unisci([spazio(14), nota(h`Un solo bonifico dell'importo totale copre tutte le voci: non serve un versamento per ciascuna.`)])
             : ('' as Html),
         spazio(16),
         avvisoDelLivello,
-        h2('Dati per il bonifico'),
-        tabellaDati(righeBonifico),
+        soloContanti
+            ? unisci([h2('Come pagare'), p(esc(FRASE_PAGAMENTO_CONTANTI))])
+            : unisci([h2('Dati per il bonifico'), tabellaDati(righeBonifico)]),
         spazio(18),
         // Il riquadro app non compare al terzo sollecito: a quel punto il
         // messaggio è uno solo, e un invito a scaricare un'app in mezzo lo
@@ -142,10 +164,15 @@ export function messaggioSollecito(d: DatiSollecito, sede: ContestoSede): Messag
             // Il preheader non promette un IBAN che non c'è: senza, dice quello
             // che il messaggio contiene davvero. Una riga d'anteprima che
             // annuncia un dato assente è una bugia piccola, letta da tutti e
-            // scoperta da chi apre.
-            preheader: piuVoci
-                ? `${formatEuro(totale)} in tutto su ${d.voci.length} pagamenti arretrati. ${iban ? 'IBAN e causale sono' : 'La causale è'} nel messaggio.`
-                : `${formatEuro(totale)} da saldare. ${iban ? 'IBAN e causale sono' : 'La causale è'} nel messaggio.`,
+            // scoperta da chi apre. Per la voce «solo contanti» non annuncia
+            // nemmeno la causale: nel messaggio non c'è.
+            preheader: soloContanti
+                ? piuVoci
+                    ? `${formatEuro(totale)} in tutto su ${d.voci.length} pagamenti arretrati, da saldare in contanti presso la segreteria.`
+                    : `${formatEuro(totale)} da saldare in contanti presso la segreteria.`
+                : piuVoci
+                    ? `${formatEuro(totale)} in tutto su ${d.voci.length} pagamenti arretrati. ${iban ? 'IBAN e causale sono' : 'La causale è'} nel messaggio.`
+                    : `${formatEuro(totale)} da saldare. ${iban ? 'IBAN e causale sono' : 'La causale è'} nel messaggio.`,
             tab: tabMascotte({ occhiello: 'Pagamenti', titolo: TITOLO[d.livello], sottotitolo }),
             corpo,
             motivo,
@@ -159,14 +186,18 @@ export function messaggioSollecito(d: DatiSollecito, sede: ContestoSede): Messag
             '',
             riepilogoVociTesto(d.voci),
             '',
-            piuVoci ? 'Un solo bonifico dell\'importo totale copre tutte le voci: non serve un versamento per ciascuna.\n' : '',
+            piuVoci && !soloContanti ? 'Un solo bonifico dell\'importo totale copre tutte le voci: non serve un versamento per ciascuna.\n' : '',
             testoAvviso(d.livello),
             '',
-            'DATI PER IL BONIFICO',
-            `  Importo:      ${formatEuro(totale)}`,
-            ...(iban ? [`  IBAN:         ${iban}`] : []),
-            `  Causale:      ${d.causale}`,
-            ...(d.intestatario ? [`  Intestato a:  ${d.intestatario}`] : []),
+            ...(soloContanti
+                ? ['COME PAGARE', `  ${FRASE_PAGAMENTO_CONTANTI}`]
+                : [
+                    'DATI PER IL BONIFICO',
+                    `  Importo:      ${formatEuro(totale)}`,
+                    ...(iban ? [`  IBAN:         ${iban}`] : []),
+                    `  Causale:      ${d.causale}`,
+                    ...(d.intestatario ? [`  Intestato a:  ${d.intestatario}`] : []),
+                ]),
             '',
             d.livello < 3
                 ? `${riquadroAppTesto(sede, 'Importi, scadenze e ricevute stanno nell\'area genitori, anche nell\'app: gratuita su App Store e Google Play.')}\n`

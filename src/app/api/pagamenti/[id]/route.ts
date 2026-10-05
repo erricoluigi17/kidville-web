@@ -37,6 +37,36 @@ const CAMPI_EDITABILI = [
   'periodo_competenza', 'gruppo', 'tipo', 'visibile_dal', 'metodi_ammessi',
 ] as const
 
+/** RPC di ricalcolo (`ricalcola_stato_padre`/`_pagamento`) assenti sul DB non migrato. */
+const RPC_ASSENTE = new Set(['PGRST202', '42883'])
+
+/** `registro_modifiche` assente sul DB non migrato. */
+const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
+
+type ErroreDb = { code?: string; message?: string }
+
+/**
+ * Attende una scrittura SECONDARIA — il ricalcolo dopo la PATCH, l'audit dopo la
+ * DELETE — e ne restituisce l'errore, mai un'eccezione. `null` = riuscita.
+ *
+ * Erano `.then(() => {}, () => {})`: scartavano il `{ error }` di PostgREST (che NON
+ * lancia) insieme al rigetto, e uno stato mai ricalcolato o un audit mai scritto non
+ * lasciavano traccia. Il rigetto (rete, client) resta catturato qui: un'operazione
+ * principale GIÀ riuscita non deve diventare un 500. Stesso approccio di
+ * `pagamenti/incassi/storno` (Task 7).
+ */
+async function erroreScrittura(
+  scrittura: PromiseLike<{ error: ErroreDb | null } | null | undefined>,
+): Promise<{ errore: unknown; codice: string } | null> {
+  try {
+    const esito = await scrittura
+    if (!esito?.error) return null
+    return { errore: esito.error, codice: esito.error.code ?? '' }
+  } catch (err) {
+    return { errore: err, codice: '' }
+  }
+}
+
 // Dettaglio pagamento: soli campi usati dalla logica di proiezione qui sotto
 // (il resto viaggia com'è nello spread finale).
 interface PagamentoDettaglio {
@@ -244,10 +274,22 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
     // gli altri ricalcolano dal proprio ledger incassi (cascata al padre se rata).
     if (updates.importo !== undefined || updates.scadenza !== undefined) {
       const tipo = (data as { tipo?: string } | null)?.tipo
-      if (tipo === 'padre') {
-        await supabase.rpc('ricalcola_stato_padre', { p_parent: id }).then(() => {}, () => {})
-      } else {
-        await supabase.rpc('ricalcola_stato_pagamento', { p_id: id }).then(() => {}, () => {})
+      const ric = await erroreScrittura(
+        tipo === 'padre'
+          ? supabase.rpc('ricalcola_stato_padre', { p_parent: id })
+          : supabase.rpc('ricalcola_stato_pagamento', { p_id: id }),
+      )
+      if (ric) {
+        // La modifica è salvata: la risposta resta 200. Ma uno stato non ricalcolato
+        // lascia la voce «scaduta» (o «pagata») sbagliata, e va detto. `info` se la RPC
+        // non esiste (DB non migrato), `error` se è un guasto vero.
+        const assente = RPC_ASSENTE.has(ric.codice)
+        logEvento('pagamento', assente ? 'info' : 'error', {
+          operazione: 'pagamenti/[id]:PATCH',
+          esito: assente ? 'ricalcolo-rpc-assente' : 'ricalcolo-non-riuscito',
+          pagamento_id: id,
+          tipo: tipo ?? null,
+        }, ric.errore)
       }
 
       // Un importo più basso o una scadenza spostata al futuro può azzerare lo
@@ -326,15 +368,31 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
       return NextResponse.json({ error: 'Pagamento con incassi di una transazione di famiglia: annulla prima la transazione.' }, { status: 409 })
     }
     const { error } = await supabase.from('pagamenti').delete().eq('id', id)
-    if (error) return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
+    if (error) {
+      logErrore({ operazione: 'pagamenti/[id]:DELETE', stato: 500, evento: 'db' }, error)
+      return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
+    }
 
-    await supabase.from('registro_modifiche').insert({
-      azione: 'elimina_pagamento',
-      tabella_interessata: 'pagamenti',
-      record_id: id,
-      vecchio_valore: old,
-      utente_id: user.id,
-    }).then(() => {}, () => {})
+    // La voce è GIÀ cancellata: l'audit non cambia la risposta, ma un audit perso è
+    // una cancellazione senza traccia di chi l'ha fatta, e si dice. Il `vecchio_valore`
+    // (descrizione, alunno…) vive nell'audit, MAI nei log: lì solo uuid e codice.
+    const audit = await erroreScrittura(
+      supabase.from('registro_modifiche').insert({
+        azione: 'elimina_pagamento',
+        tabella_interessata: 'pagamenti',
+        record_id: id,
+        vecchio_valore: old,
+        utente_id: user.id,
+      }),
+    )
+    if (audit) {
+      const assente = TABELLA_ASSENTE.has(audit.codice)
+      logEvento('pagamento', assente ? 'info' : 'error', {
+        operazione: 'pagamenti/[id]:DELETE',
+        esito: assente ? 'audit-tabella-assente' : 'audit-eliminazione-non-scritto',
+        pagamento_id: id,
+      }, audit.errore)
+    }
 
     return NextResponse.json({ success: true })
   } catch (err) {

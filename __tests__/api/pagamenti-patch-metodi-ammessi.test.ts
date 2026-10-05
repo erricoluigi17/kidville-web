@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import { SEDE_A } from '../fixtures/sedi'
-import type { DBFinto, ErrorePostgrest, Riga, Scrittura } from '../fixtures/finto-supabase'
+import type { DBFinto, ErrorePostgrest, Riga, RispostaRpc, Scrittura } from '../fixtures/finto-supabase'
 
 // =============================================================================
 // `PATCH /api/pagamenti/[id]` — i METODI AMMESSI si modificano (2026-10-05).
@@ -80,6 +80,9 @@ const h = vi.hoisted(() => {
     db: {} as Record<string, Record<string, unknown>[]>,
     scritture: [] as unknown[],
     errori: undefined as Record<string, unknown> | undefined,
+    rpc: {} as Record<string, (args: Record<string, unknown>) => unknown>,
+    /** L'insert dell'audit della DELETE RIGETTA (rete, client): non ritorna `{ error }`. */
+    auditLancia: false,
     colonnaAssente: false,
     respinte: [] as unknown[],
     senzaColonnaMetodi,
@@ -105,13 +108,28 @@ vi.mock('@/lib/supabase/server-client', async () => {
       const c = creaFintoSupabase(h.db, [], {
         scritture: h.scritture as unknown as Scrittura[],
         errori: h.errori as Record<string, ErrorePostgrest> | undefined,
+        rpc: h.rpc as Record<string, (args: Riga) => RispostaRpc | Promise<RispostaRpc>>,
       })
-      return (h.colonnaAssente ? h.senzaColonnaMetodi(c, h.respinte) : c) as never
+      const base = h.colonnaAssente ? h.senzaColonnaMetodi(c, h.respinte) : c
+      if (!h.auditLancia) return base as never
+      // L'audit che RIGETTA invece di ritornare `{ error }`: il caso che il vecchio
+      // `.then(() => {}, () => {})` ingoiava insieme all'errore vero.
+      return new Proxy(base, {
+        get(t, prop, rec) {
+          const v = Reflect.get(t, prop, rec)
+          if (prop !== 'from') return v
+          return (tabella: string) => {
+            const q = (v as (x: string) => object)(tabella)
+            if (tabella !== 'registro_modifiche') return q
+            return { insert: () => Promise.reject(new TypeError('fetch failed')) }
+          }
+        },
+      }) as never
     },
   }
 })
 
-import { PATCH } from '@/app/api/pagamenti/[id]/route'
+import { PATCH, DELETE } from '@/app/api/pagamenti/[id]/route'
 
 const ctx = { params: Promise.resolve({ id: PID }) }
 const patch = (body: unknown) =>
@@ -140,6 +158,8 @@ beforeEach(() => {
   h.db = dbBase()
   h.scritture = []
   h.errori = undefined
+  h.rpc = {}
+  h.auditLancia = false
   h.respinte = []
   h.colonnaAssente = false
   h.requireStaff.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria', scuola_id: SEDE_A } })
@@ -233,5 +253,167 @@ describe('PATCH /api/pagamenti/[id] — metodi ammessi', () => {
       expect(h.respinte).toHaveLength(0)
       expect(riga().descrizione).toBe('Gita allo zoo')
     })
+  })
+})
+
+// =============================================================================
+// Le scritture SECONDARIE della route non ingoiano più gli errori (rifinitura,
+// 2026-10-05). Nella PATCH il ricalcolo dello stato (`ricalcola_stato_padre` /
+// `ricalcola_stato_pagamento`), nella DELETE l'audit su `registro_modifiche`: erano
+// `.then(() => {}, () => {})`, che scarta il successo, il `{ error }` di PostgREST E il
+// rigetto. Ora l'errore si legge e si logga — `info` se è lo schema non migrato (RPC o
+// tabella assenti), `error` altrimenti — e un rigetto NON trasforma in 500
+// un'operazione già riuscita. Nei log solo uuid e codici.
+// =============================================================================
+const RICALCOLO_OK = (): RispostaRpc => ({ data: null, error: null })
+const eventiRicalcolo = () =>
+  h.logEvento.mock.calls.filter((c) => /^ricalcolo-/.test(String((c[2] as { esito?: string } | undefined)?.esito)))
+
+describe('PATCH /api/pagamenti/[id] — il ricalcolo dello stato non tace', () => {
+  it('riuscito: la RPC giusta è chiamata con l’id, e nessuna riga di errore', async () => {
+    const chiamate: unknown[] = []
+    h.rpc = { ricalcola_stato_pagamento: (a) => { chiamate.push(a); return RICALCOLO_OK() } }
+    const res = await PATCH(patch({ importo: 12 }), ctx)
+    expect(res.status).toBe(200)
+    // Presenza prima: il ricalcolo è partito davvero.
+    expect(chiamate).toEqual([{ p_id: PID }])
+    expect(eventiRicalcolo()).toHaveLength(0)
+  })
+
+  it('RPC assente (PGRST202, DB non migrato): 200 e una riga `info`', async () => {
+    h.rpc = {
+      ricalcola_stato_pagamento: () => ({
+        data: null,
+        error: { code: 'PGRST202', message: 'Could not find the function public.ricalcola_stato_pagamento' },
+      }),
+    }
+    const res = await PATCH(patch({ scadenza: '2026-11-30' }), ctx)
+    expect(res.status).toBe(200)
+    expect(riga().scadenza).toBe('2026-11-30')
+    const log = eventiRicalcolo()
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'info'])
+    expect(log[0][2]).toEqual({
+      operazione: 'pagamenti/[id]:PATCH', esito: 'ricalcolo-rpc-assente', pagamento_id: PID, tipo: 'singolo',
+    })
+    expect(log[0][3]).toMatchObject({ code: 'PGRST202' })
+  })
+
+  it('RPC fallita per un altro motivo: 200 (la modifica è salvata) e una riga `error`', async () => {
+    h.rpc = { ricalcola_stato_pagamento: () => ({ data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } }) }
+    const res = await PATCH(patch({ importo: 12 }), ctx)
+    expect(res.status).toBe(200)
+    expect(riga().importo).toBe(12)
+    const log = eventiRicalcolo()
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][2]).toMatchObject({ esito: 'ricalcolo-non-riuscito', pagamento_id: PID })
+    expect(log[0][3]).toMatchObject({ code: '57014' })
+  })
+
+  it('RPC che RIGETTA: non diventa un 500, e il rigetto si logga', async () => {
+    h.rpc = { ricalcola_stato_pagamento: () => { throw new TypeError('fetch failed') } }
+    const res = await PATCH(patch({ importo: 12 }), ctx)
+    expect(res.status).toBe(200)
+    expect((await res.json()).success).toBe(true)
+    expect(h.logErrore).not.toHaveBeenCalled()
+    const log = eventiRicalcolo()
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][3]).toBeInstanceOf(TypeError)
+  })
+
+  it('voce PADRE: si chiama `ricalcola_stato_padre`; assente (42883) ⇒ `info` col tipo', async () => {
+    h.db.pagamenti[0].tipo = 'padre'
+    const chiamate: unknown[] = []
+    h.rpc = {
+      ricalcola_stato_padre: (a) => {
+        chiamate.push(a)
+        return { data: null, error: { code: '42883', message: 'function ricalcola_stato_padre(uuid) does not exist' } }
+      },
+    }
+    const res = await PATCH(patch({ importo: 12 }), ctx)
+    expect(res.status).toBe(200)
+    expect(chiamate).toEqual([{ p_parent: PID }])
+    const log = eventiRicalcolo()
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'info'])
+    expect(log[0][2]).toMatchObject({ esito: 'ricalcolo-rpc-assente', tipo: 'padre' })
+  })
+})
+
+describe('DELETE /api/pagamenti/[id] — l’audit della cancellazione non tace', () => {
+  const del = () => new NextRequest(`http://localhost/api/pagamenti/${PID}`, { method: 'DELETE' })
+  const eventiAudit = () =>
+    h.logEvento.mock.calls.filter((c) => /^audit-/.test(String((c[2] as { esito?: string } | undefined)?.esito)))
+
+  beforeEach(() => {
+    h.db.fatture_emesse = []
+    h.db.incassi = []
+    h.db.registro_modifiche = []
+  })
+
+  it('riuscito: la voce sparisce, l’audit è scritto, nessuna riga di errore', async () => {
+    const res = await DELETE(del(), ctx)
+    expect(res.status).toBe(200)
+    expect(h.db.pagamenti).toEqual([])
+    // Presenza prima: l'audit c'è, con l'id della voce cancellata.
+    expect(h.db.registro_modifiche).toHaveLength(1)
+    expect(h.db.registro_modifiche[0]).toMatchObject({ azione: 'elimina_pagamento', record_id: PID })
+    expect(eventiAudit()).toHaveLength(0)
+  })
+
+  it('tabella dell’audit assente (42P01, DB non migrato): 200 e una riga `info`', async () => {
+    h.errori = { 'registro_modifiche:insert': { code: '42P01', message: 'relation "registro_modifiche" does not exist' } }
+    const res = await DELETE(del(), ctx)
+    expect(res.status).toBe(200)
+    expect(h.db.pagamenti).toEqual([])
+    const log = eventiAudit()
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'info'])
+    expect(log[0][2]).toEqual({
+      operazione: 'pagamenti/[id]:DELETE', esito: 'audit-tabella-assente', pagamento_id: PID,
+    })
+  })
+
+  it('audit fallito per un altro motivo: 200 (la voce è già cancellata) e una riga `error`, senza i dati della voce', async () => {
+    h.errori = { 'registro_modifiche:insert': { code: '23502', message: 'null value in column "utente_id" violates not-null constraint' } }
+    const res = await DELETE(del(), ctx)
+    expect(res.status).toBe(200)
+    expect(h.db.pagamenti).toEqual([])
+    const log = eventiAudit()
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][2]).toEqual({
+      operazione: 'pagamenti/[id]:DELETE', esito: 'audit-eliminazione-non-scritto', pagamento_id: PID,
+    })
+    expect(log[0][3]).toMatchObject({ code: '23502' })
+    // Il `vecchio_valore` dell'audit (descrizione, alunno…) non finisce nei campi del log.
+    expect(JSON.stringify(log[0][2])).not.toContain('Gita al museo')
+  })
+
+  it('audit che RIGETTA: la cancellazione riuscita non diventa un 500', async () => {
+    h.auditLancia = true
+    const res = await DELETE(del(), ctx)
+    expect(res.status).toBe(200)
+    expect((await res.json()).success).toBe(true)
+    expect(h.db.pagamenti).toEqual([])
+    expect(h.logErrore).not.toHaveBeenCalled()
+    const log = eventiAudit()
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][3]).toBeInstanceOf(TypeError)
+  })
+
+  it('la cancellazione stessa fallisce: 500, e il 500 si logga col codice', async () => {
+    h.errori = { 'pagamenti:delete': { code: '23503', message: 'update or delete on table "pagamenti" violates foreign key constraint' } }
+    const res = await DELETE(del(), ctx)
+    expect(res.status).toBe(500)
+    expect(h.db.pagamenti).toHaveLength(1)
+    expect(h.logErrore).toHaveBeenCalledTimes(1)
+    expect(h.logErrore.mock.calls[0][0]).toMatchObject({ operazione: 'pagamenti/[id]:DELETE', stato: 500, evento: 'db' })
+    expect(h.logErrore.mock.calls[0][1]).toMatchObject({ code: '23503' })
+    // Nessun audit di una cancellazione che non è avvenuta.
+    expect(h.db.registro_modifiche).toEqual([])
   })
 })

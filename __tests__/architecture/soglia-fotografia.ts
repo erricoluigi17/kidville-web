@@ -184,11 +184,10 @@ export function posterioriCheContengono(
 // `pagamenti.metodi_ammessi` col suo CHECK, scritto con DROP/ADD CONSTRAINT perché sia
 // rieseguibile — è quella forma che la guardia delle FK verso `utenti` vede, non una FK.
 // Si toglie dopo il merge, insieme alla rigenerazione delle fotografie dalla produzione.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261005120000_pagamenti_metodi_ammessi.sql':
-        'CHECK su pagamenti.metodi_ammessi scritto con DROP/ADD CONSTRAINT, nessuna FK verso utenti: ' +
-        'la applica l\'integrazione al merge, e la voce si toglie nella PR-B con la rigenerazione delle fotografie',
-}
+// SVUOTATA il 05/10 (PR-B dopo il merge di #186, `57c1d28e`): la migrazione è applicata in
+// produzione dall'integrazione con la version del file (una riga sola nel registro) e le
+// fotografie sono rigenerate dalla produzione.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

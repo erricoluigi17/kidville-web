@@ -39,6 +39,12 @@ key.properties
 *.pfx
 *.pepk
 
+# chiavi del BACKUP esterno (chiave privata age, password di cifratura dei file): MAI nel repository,
+# che è PUBBLICO. Roadmap di robustezza, fase 2. Il lock `backup-notturno-sicuro` verifica che questa
+# regola esista e che nessun file tracciato contenga una chiave age privata. ⚠️ `git clean -x` cancella
+# i file ignorati: per questo la cartella esiste ANCHE altrove finché non ci sono le copie offline.
+/KIDVILLE-CHIAVI-BACKUP/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

@@ -26,7 +26,7 @@ Questo file resta la copia di lavoro: lo stato delle sessioni si aggiorna **qui*
 |---|---|---|---|---|
 | 0 | Decisioni e interruttori (titolare) | ⬜ da fare | — | PITR? conferme agenti? |
 | 1 | Funzioni a Dublino + disarmo `migrate.yml` | 🟡 rilasciata (PR #188) | #188 | misura definitiva a +12 h dal deploy; timeout a ~0 solo su 2-3 giorni feriali. ✅ con i numeri nel primo commit della fase 2 |
-| 2 | Paracadute esterno (DB + Storage) e prova di ripristino | ⬜ da fare | — | |
+| 2 | Paracadute esterno (DB + Storage) e prova di ripristino | 🟠 in corso (branch `robustezza/fase-2-paracadute-esterno`) | — | in attesa dei passi del titolare: Cloudflare R2 in UE, chiave `age`, chiavi S3 di Supabase, segreti nell'ambiente GitHub `backup`. Misura PRIMA del 05/10 20:48 UTC: copia esterna = nessuna |
 | 3 | Campanello e salute a livelli | ⬜ da fare | — | |
 | 4 | Scatola nera e pulizie sicure | ⬜ da fare | — | |
 | 5 | Soldi corretti | ⬜ da fare | — | |
@@ -166,7 +166,7 @@ Legenda: 🔴 alta · 🟠 media · 🟡 bassa · ✅ = consigliata.
 - **B. Backup esterno notturno (circa 0-1 €/mese)**:
   - workflow GitHub: `pg_dump` 17 di `public`, `auth`, `storage`, `cron` e `supabase_migrations` dal **pooler di sessione** (la connessione diretta è solo IPv6);
   - cifratura **age** (chiave privata offline dal titolare);
-  - **Cloudflare R2** in UE (10 GB gratis, uscita gratuita) con versioni e **bucket lock**;
+  - **Cloudflare R2** in UE (10 GB gratis, uscita gratuita) con **nomi con data e bucket lock** (R2 non ha versioning né Object Lock S3);
   - conservazione: 30 giornaliere più 12 mensili.
 - ✅ **C. Entrambi.**
 - ✅ **Sempre**:
@@ -309,6 +309,12 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
   - la chiave privata age **mai** nel repo né in GitHub.
 - **Runbook** in `docs/` e **prima prova di ripristino**: «Restore to a new project», conteggi per tabella contro la produzione, apertura di file, tempo.
 - **Rollback**: spegnere il workflow (nessun effetto sulla produzione).
+- **Fatto nel codice (05/10, branch `robustezza/fase-2-paracadute-esterno`, in attesa dei passi del titolare)**:
+  - `.github/workflows/backup-notturno.yml` (solo `workflow_dispatch`; lo `schedule` si arma in una PR successiva), `scripts/backup/{dump-cifrato,specchio-storage,ripristina-prova,apri-campioni}.sh`, migrazione del ruolo `backup_lettura` (solo lettura), `docs/runbook-ripristino.md`, sezione «Backup notturno esterno» in `docs/cicd.md`;
+  - ambiente GitHub **`backup`** ristretto a `main`, senza revisori: i segreti sono di ambiente (`gh secret set NOME --env backup`), quindi un branch con un workflow modificato non li legge;
+  - **cosa è cambiato rispetto al piano**: R2 non ha versioning né Object Lock S3, la protezione sono nomi con data + bucket lock (e il lock vince sul lifecycle: scadenza GDPR automatica); lo specchio dei file ha un **cestino** di 30 giorni (`--backup-dir`, con tetti e rifiuto se la sorgente è vuota o calata sotto il 90%), perché uno specchio «solo aggiunte» violerebbe l'oblio; il ruolo di sola lettura al posto dell'URL `postgres`; la chiave pubblica age sta nel file, non in una variabile (chi modifica una variabile potrebbe sostituirla);
+  - **scelta del titolare (06/10)**: `gallery` e `video_originals` (foto e video, circa 7,7 GB) **fuori dal backup** per non pagare spazio; `chat-allegati` e `form_attachments` dentro; un lock vieta di escludere i bucket insostituibili. Costo atteso: dentro i 10 GB gratuiti di R2. Il rischio accettato (galleria persa = non recuperabile) sta nel runbook;
+  - **trappola scoperta**: «Restore to a new project» copia anche i cron: 28 job attivi e 19 funzioni con `pg_net` chiamano l'app di produzione (`iscrizioni-import-invio` manda mail dalle 08:10 UTC). Si fa di notte, fuori da 08:00–09:00 UTC, e si spegne `pg_cron` appena il progetto nasce. Il progetto temporaneo contiene dati di minori: lo cancella il titolare nel pannello.
 
 ### Sessione 3 — Campanello e salute a livelli
 - **File**: `src/lib/health/controlli.ts`, `src/app/api/health/route.ts`, CI.
@@ -324,6 +330,9 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
   - lo smoke test dopo il deploy controlla anche che `x-vercel-id` contenga `::dub1::`, così la regione non regredisce in silenzio (il lock della fase 1 prova il file, non il deploy);
   - tracciare la regione in `app_log` richiede una chiave nuova in `CHIAVI_IN_CHIARO` (`src/lib/logging/redact.ts`), che allarga il canale anonimo di `/api/logs`, oppure una colonna: si decide qui;
   - le soglie di latenza di «salute» si fissano con i valori misurati **dopo** la fase 1 (oggi `/api/health` risponde in 1,06 s end-to-end, 633 ms interni).
+- **Dalla fase 2**:
+  - il backup notturno non ha nessun allarme se il workflow **non parte affatto** (GitHub disattiva, ritarda o salta un giro): serve un **heartbeat** esterno (Better Stack: il backup lo chiama alla fine; se non lo riceve entro 26 ore, suona);
+  - la «salute» può mostrare l'età dell'ultimo backup riuscito (un file minimo, non cifrato e senza dati, tipo `ULTIMO.json` con data e byte; da decidere dove leggerlo senza dare un accesso a R2 all'app).
 
 ### Sessione 4 — Scatola nera e pulizie sicure
 - **Migrazione**: `registro_eliminazioni` WORM, trigger AFTER DELETE sulle tabelle preziose, scadenza, inclusione nell'oblio.
@@ -331,6 +340,9 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
 - **Lucchetto** sulle migrazioni distruttive.
 - **Pulizie**: interruttori sui job di retention (D6).
 - **Verifica**: riga cancellata → ripristinata con lo script del runbook.
+- **Dalla fase 2**:
+  - `registro_eliminazioni` sta in `public` e quindi **entra già nel dump notturno**; il WORM e la scadenza (90 giorni) devono convivere con la copia: nel dump c'è la riga cancellata finché il dump non scade;
+  - dopo un ripristino da un dump vecchio vanno **riapplicati gli oblii** avvenuti dopo la data della copia: serve un **registro recuperabile degli oblii** (data, uuid, tipo; mai i dati). Oggi l'elenco è solo nei log.
 
 ### Sessione 5 — Soldi corretti
 - RPC per incassi, quote e ticket; versione sullo scrutinio; report di cassa e cruscotto aggregati; `error` controllato in `src/app/api/pagamenti/**`.
@@ -343,6 +355,7 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
 - **PR 1**: `account-oblio`, eliminazione account ed eliminazione personale come RPC esplicite che cancellano in ordine e registrano.
 - **PR 2**: vincoli RESTRICT sulle catene legali, provati sulla copia della sessione 2.
 - **Verifica**: oblio e cancellazione account verdi; DELETE di un padre con figli rifiutato.
+- **Dalla fase 2**: il progetto temporaneo creato per la prova di ripristino viene **distrutto** dal titolare appena finita la prova (contiene dati di minori e ha i cron). Per la PR 2 se ne ricrea uno dal backup del giorno, di notte e con `pg_cron` spento subito.
 
 ### Sessione 8 — Code robuste
 - Presa con scadenza su push, digest e solleciti; idempotenza; `Idempotency-Key`; `maxDuration`; dispatch chat deduplicato. Poi le sonde sugli arretrati nella «salute».
@@ -362,6 +375,7 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
 
 ### Sessione 12 — Pulizia e costi
 - Storico UPDATE, WORM degli audit, `app_log`, DROP delle tabelle di backup, `log_temp_files`, CHECK, GRANT, cache CDN.
+- **Dalla fase 2**: i DATI di `public.app_log` (44% del DB) sono esclusi dal dump notturno: se la pulizia di `app_log` ne cambia la forma o la conservazione, si rivede l'esclusione in `scripts/backup/dump-cifrato.sh`. Anche le tabelle di backup con dati personali (`backup_diario_vuote_20260908`, `backup_pulizia_note_20260905`) finiscono nel dump finché esistono: un motivo in più per eliminarle.
 - Decisione sulla home aggregata e su Small/Medium.
 - **Dalla fase 1**: il 05/10 alle 16:39 UTC l'istanza ha lo swap usato a 359 MB (la fotografia diceva 442), RAM disponibile 731 su 1.835 MB, load 0,16/0,12/0,07. Si rileggono a +24 h dalla fase 1 e **sempre nella stessa fascia oraria**, prima di scegliere Small o Medium.
 

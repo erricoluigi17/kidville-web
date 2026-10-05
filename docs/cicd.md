@@ -94,6 +94,25 @@ quando serve sapere se il database è allineato ai file del repo.
   `__tests__/architecture/migrate-yml-non-applica-da-solo.test.ts` pretende che il segreto di produzione stia
   sempre in un job con `environment: production`.
 
+### Environment `backup` (Settings → Environments)
+
+Serve a `backup-notturno.yml`, che gira di notte **senza persone**: quindi **nessun revisore**, ma
+**Deployment branches = solo `main`**. Un branch con un workflow modificato (anche da un agente) non può
+leggere questi segreti. Creato il 2026-10-05 (fase 2 della roadmap di robustezza). I segreti sono **di
+ambiente**: si impostano con `gh secret set NOME --env backup` (campo nascosto, mai in chat).
+
+| Secret (ambiente `backup`) | Cosa | Chi lo crea |
+|---|---|---|
+| `BACKUP_R2_ACCOUNT_ID` | id dell'account Cloudflare (serve a costruire l'endpoint `https://<id>.eu.r2.cloudflarestorage.com`) | titolare |
+| `BACKUP_R2_KEY_ID` / `BACKUP_R2_KEY_SECRET` | token R2 `backup-scrittura` (Object Read & Write, **solo** sul bucket `kidville-backup`) | titolare |
+| `BACKUP_SUPABASE_S3_KEY_ID` / `BACKUP_SUPABASE_S3_KEY_SECRET` | chiave S3 di Supabase Storage (Storage → S3). ⚠️ dà pieni poteri su **tutti** i bucket: non esistono chiavi di sola lettura | titolare |
+| `BACKUP_CRYPT_PASSWORD` / `BACKUP_CRYPT_SALT` | password e salt di `rclone crypt` per i nomi e i contenuti dei file. **Da tenere anche offline**: senza, lo specchio non si decifra più | titolare |
+| `BACKUP_DB_URL` | stringa **Session pooler** (porta 5432) con l'utente `backup_lettura.<ref>`: solo lettura | titolare, dopo la migrazione del ruolo |
+
+Non è un segreto: la **chiave pubblica age** sta scritta in `backup-notturno.yml` (la privata sta offline dal
+titolare, in due posti, e non entra mai in GitHub né nel repo). Il job `avviso` usa invece i segreti di
+repository `RESEND_API_KEY` e `SENTINELLA_DESTINATARI` (gli stessi di `sentinella-play.yml`).
+
 ---
 
 ## Setup Vercel
@@ -133,6 +152,61 @@ l'Atlantico (p50 103 ms dalle funzioni di `iad1`, Washington, misurato il 2026-1
 - **Regole del file.** Resta JSON stretto, senza commenti: un `vercel.json` che il parser rifiuta blocca ogni
   deploy. Un pattern in `functions` che non corrisponde a nessun file fa fallire la build (il lock lo vede).
   Un fornitore che filtrasse per indirizzo IP non sarebbe toccato dal cambio: il progetto non ha IP d'uscita fissi.
+
+---
+
+## Backup notturno esterno (Cloudflare R2, UE)
+
+Roadmap di robustezza, fase 2 (problemi D1 e D2). **Supabase resta il database dell'app**: R2 riceve solo copie
+cifrate, che l'app non legge mai. Il workflow è `.github/workflows/backup-notturno.yml`; la logica sta in
+`scripts/backup/` (`dump-cifrato.sh`, `specchio-storage.sh`), provata offline da
+`__tests__/lib/backup-*.test.ts` e sorvegliata da `__tests__/architecture/backup-notturno-sicuro.test.ts`.
+
+- **Il database.** `pg_dump` 17 (formato custom) degli schemi `public`, `auth`, `storage`, `cron`,
+  `supabase_migrations`, con l'utente di sola lettura `backup_lettura`, nella stessa istantanea in cui si
+  contano le righe di ogni tabella. Il flusso passa per `age` (chiave pubblica) e **non tocca mai il disco in
+  chiaro**. Accanto al dump, un `manifest.jsonl.age` cifrato (versioni, estensioni, conteggi per tabella, impronta).
+  Dati esclusi (la struttura c'è sempre): `public.app_log`, `cron.job_run_details` e i token di sessione di
+  `auth`. Le impostazioni **del database** (`app.cron_secret` e simili) non sono nel dump: i loro nomi sono nel
+  manifest, i valori vanno rimessi a mano dopo un ripristino.
+- **I file.** `rclone sync` incrementale da Supabase Storage (protocollo S3) verso un remote `crypt`: contenuti e
+  nomi dei file cifrati; nomi di cartella in chiaro (sono solo uuid e parole fisse) perché i lock lavorano per
+  prefisso. Ciò che sparisce dalla sorgente finisce nel **cestino** del giorno, mai nel nulla.
+- **Cosa NON è nel backup, per scelta del titolare (2026-10-06): foto e video della galleria.** Sono i bucket
+  `gallery` e `video_originals` (circa 7,7 GB su 15): non si copiano, per non pagare spazio. È scritto in
+  `ESCLUDI_BUCKET` nel workflow e un lock (`backup-notturno-sicuro`) pretende che l'elenco sia **esattamente**
+  questo e che non contenga mai un bucket insostituibile (iscrizioni, protocollo, 104/PEI, fatture, pagelle,
+  personale, `video_build`). **Conseguenza accettata:** se la galleria o i video originali vengono persi o
+  cancellati su Supabase, non si possono recuperare. I bucket `chat-allegati` e `form_attachments` (scansioni dei
+  documenti delle iscrizioni) restano nel backup.
+- **Regole su R2** (si impostano dal pannello, **dopo** i giri di prova: con un lock attivo il bucket non si
+  svuota più). R2 non ha versioning né Object Lock S3: la protezione sono nomi con data + bucket lock, e il lock
+  vince sul lifecycle (documentazione Cloudflare), quindi la scadenza GDPR è automatica.
+
+| Prefisso | Contenuto | Lock | Lifecycle |
+|---|---|---|---|
+| `db/giornalieri/` | dump e manifest del giorno | 30 giorni | cancella a 31 g |
+| `db/mensili/` | copia del primo giro del mese | 365 giorni | cancella a 366 g |
+| `storage/corrente/` | specchio cifrato dei file | **nessuno** (rclone deve poter cancellare) | — |
+| `storage/cestino/` | file spariti da Supabase, una cartella per giorno | 30 giorni | cancella a 31 g |
+| `prove/` | solo giri di prova | nessuno | cancella a 2 g |
+
+- **Come si lancia.** `gh workflow run backup-notturno.yml -f modalita=prova` (dump vero su `prove/`, specchio su
+  tre file sintetici: prova anche il cestino e la cifratura) e poi `-f modalita=completo`.
+  `-f simula_guasto=true` fa fallire apposta il giro per vedere arrivare l'allarme (segnalazione + email).
+  Lo `schedule` si arma in una PR successiva, solo dopo due giri manuali riusciti e le regole di lock su R2.
+- **Se fallisce** il job `avviso` apre una segnalazione nel repository (etichetta `backup-notturno`, corpo
+  pubblico: solo il link al giro) e manda un'email ai `SENTINELLA_DESTINATARI`. Se il workflow non parte affatto non
+  c'è nessun allarme: lo copre la fase 3 (heartbeat esterno).
+- **Come si ripristina** e cosa serve (chiave age, password crypt, token di lettura, impostazioni del database da
+  rimettere): `docs/runbook-ripristino.md`.
+- **GDPR.** Cloudflare (R2) e GitHub (il runner che esegue il dump, che lo cifra appena esce da `pg_dump`) sono
+  responsabili del trattamento da dichiarare nel registro dei trattamenti. Le copie scadono da sole: 30 giorni
+  (giornaliere e cestino) e 12 mesi (mensili). Un oblio si compie al più tardi alla scadenza; dopo un
+  ripristino gli oblii avvenuti dopo la data del backup vanno **riapplicati**.
+- **Costo.** Senza galleria e video: circa 7,4 GB di file + i dump (circa 2 GB per 30 giornalieri e 12 mensili) = circa
+  9-10 GB, cioè dentro i 10 GB gratuiti di R2 (**0 $** o pochi centesimi). Con tutto sarebbero 17-18 GB, circa 0,15 $/mese.
+  Uscita dati gratuita; GitHub Actions è gratuito sui repository pubblici.
 
 ---
 

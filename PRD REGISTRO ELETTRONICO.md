@@ -1,3 +1,34 @@
+## 🛡️ Changelog — Roadmap di robustezza di server e database: cosa c'è dietro il «degraded» — 2026-10-05 (branch `docs/roadmap-robustezza`)
+
+**Stato.** 📝 Solo documentazione: **nessun cambiamento** al codice, allo schema o ai dati. La roadmap
+da eseguire in più sessioni sta in **`docs/roadmap-robustezza.md`**, con lo stato di ogni sessione,
+la fotografia di partenza e le query per rimisurarla.
+
+**Perché.** `/api/health` era `degraded` da giorni. La ricerca del 05/10, in sola lettura (misure di
+produzione su Supabase e Vercel, tre audit del codice), ha mostrato che quel `degraded` veniva da un
+solo controllo di **qualità dei dati** (2 alunni col testo della classe divergente). Il degrado vero,
+il controllo di salute non lo vede.
+
+**Cosa ha trovato.** Le voci principali, ciascuna con le soluzioni spiegate e quella consigliata, sono:
+- funzioni Vercel in `iad1` (Washington) con il DB in `eu-west-1`: p50 **103 ms** a query, contro 14 ms dalle route già in `dub1`;
+- backup giornalieri di soli 7 giorni, **PITR spento**, Storage (14 GB) senza nessun backup, ripristino mai provato;
+- 119 FK `ON DELETE CASCADE` (un periodo di scrutinio cancellato porta via le pagelle, un pagamento porta via i suoi incassi);
+- nessun allarme esterno;
+- il Realtime `postgres_changes` come prima voce di tempo del DB;
+- code senza presa con scadenza;
+- report di cassa troncati a 1000 righe.
+
+**Ordine delle sessioni.** Prima le decisioni del titolare (PITR, conferme degli agenti) e gli
+interruttori dei pannelli. Poi, nell'ordine:
+- funzioni a Dublino;
+- backup esterno cifrato di DB e Storage, con prova di ripristino;
+- allarmi;
+- scatola nera delle cancellazioni;
+- soldi atomici;
+- indici e freni RESTRICT;
+- code, tempo reale, identità, errori;
+- pulizia e costi.
+
 ## 🔔 Changelog — Pop-up «Aggiorna l'app» per il personale anche su iOS: la 1.2 è sull'App Store — 2026-10-05 (branch `feat/anagrafica-docente`, dentro la PR #184)
 
 **Stato.** 🟡 **Gate verde, dentro la PR #184** (`eslint` 0 · `tsc` 0 · `vitest run` 1670 file / 28.187 test · `npm run build` ok, sull'albero intero della #184; scelta del titolare: l'albero di lavoro era sul branch dell'anagrafica docente, e la regola del repo è continuare sul branch secondario aperto). **Nessuna migrazione**, nessun cambiamento sul server, nessuna build delle app.

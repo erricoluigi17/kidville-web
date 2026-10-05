@@ -645,5 +645,6 @@
   "erroreIntestatarioDigitatoIncompleto": "The billed-to details typed by hand are incomplete or invalid: check tax code, first name, last name, address, postcode and town. No invoice was queued.",
   "erroreObiettivoCodiceDuplicato": "This code is already used by another objective for the same subject and class: choose a different one. The objective was not changed.",
   "avvisoAggiornaPiuTardi": "Later",
-  "errorePushStatoNonLetto": "Whether notifications are on for this device could not be checked: please try again in a moment"
+  "errorePushStatoNonLetto": "Whether notifications are on for this device could not be checked: please try again in a moment",
+  "erroreRiaperturaFatturaInInvio": "An invoice for this item is being sent right now: please try again in a minute. Nothing has been reversed."
 }

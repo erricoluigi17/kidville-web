@@ -65,9 +65,10 @@ const h = vi.hoisted(() => ({
    * storno di un giro precedente È avvenuto, letta con `.eq('storno_di', …)`.
    *
    * Esiste perché l'idempotenza della riapertura NON può poggiare su
-   * `incassi.stornato_il`: quella marcatura, dentro `eseguiStornoIncasso`, è un
-   * `.then(()=>{},()=>{})` — best-effort MUTO. Se fallisce, l'originale resta
-   * «vivo» e un ritentativo lo stornerebbe una seconda volta.
+   * `incassi.stornato_il`: quella marcatura, dentro `eseguiStornoIncasso`, è
+   * best-effort — dal Task 7 un suo errore si LOGGA (`storno-marcatura-non-scritta`)
+   * ma non risale al chiamante. Se fallisce, l'originale resta «vivo» e un
+   * ritentativo lo stornerebbe una seconda volta.
    */
   controIncasso: [] as Record<string, unknown>[],
   controIncassoError: null as { code: string; message: string } | null,
@@ -75,7 +76,8 @@ const h = vi.hoisted(() => ({
    * Errore restituito dall'INSERT su `incassi` — cioè dal contro-incasso, che è
    * la scrittura PRIMARIA di `eseguiStornoIncasso` e l'unica il cui errore
    * risalga al chiamante (`stornato_il`, `ricalcola_stato_pagamento` e
-   * `registro_modifiche` sono tutti `.then(()=>{},()=>{})`). È perciò il solo
+   * `registro_modifiche` sono secondarie: dal Task 7 i loro errori si loggano,
+   * ma la risposta resta 200). È perciò il solo
    * modo di far fallire uno storno dall'esterno, e serve a provare il ramo che
    * su quel fallimento RIFIUTA di riaprire.
    */
@@ -163,8 +165,8 @@ function finto() {
       b.insert = (row: Record<string, unknown> | Record<string, unknown>[]) => {
         h.inserts.push({ table, row })
         // Solo l'insert su `incassi` è pilotabile in errore: è l'unico di cui il
-        // chiamante veda l'esito. Gli altri (`registro_modifiche`) restano muti,
-        // com'è nel codice vero.
+        // chiamante veda l'esito. Gli altri (`registro_modifiche`) nel codice vero
+        // si loggano ma non cambiano la risposta: qui rispondono sempre puliti.
         const errore = table === 'incassi' ? h.incassoInsertError : null
         return {
           select: () => ({
@@ -790,16 +792,16 @@ describe('PATCH riapri — il RITENTATIVO ripara davvero (due giri di fila)', ()
   })
 
   it('🔁 VOCE SINGOLA: il contro-incasso c’è già ma la MARCATURA è fallita → niente secondo storno', async () => {
-    // ⚠️ `eseguiStornoIncasso` marca `incassi.stornato_il` con un
-    // `.then(()=>{},()=>{})`: best-effort MUTO, codice di un'altra rotta che qui
-    // non si riscrive. Ma la riapertura ne diventa un chiamante che DIPENDE da
-    // quella marcatura per la propria idempotenza — e se fallisce in silenzio, il
-    // ritentativo storna due volte lo stesso denaro.
+    // ⚠️ `eseguiStornoIncasso` marca `incassi.stornato_il` in best-effort: dal
+    // Task 7 un suo errore si LOGGA (`storno-marcatura-non-scritta`), ma non
+    // risale al chiamante — la risposta resta 200. Se la riapertura DIPENDESSE da
+    // quella marcatura per la propria idempotenza, un fallimento farebbe
+    // stornare due volte lo stesso denaro al ritentativo.
     //
     // Perciò l'idempotenza NON poggia su `stornato_il`: poggia sul CONTRO-INCASSO,
     // che è la scrittura primaria di quella funzione — l'unica il cui errore viene
-    // restituito invece che inghiottito. Qui l'originale è ancora «vivo» in ogni
-    // campo e lo storno va riconosciuto lo stesso.
+    // restituito al chiamante invece che solo loggato. Qui l'originale è ancora
+    // «vivo» in ogni campo e lo storno va riconosciuto lo stesso.
     h.incasso = { id: INCID, pagamento_id: PID, importo: 150, metodo: 'bonifico', storno_di: null, stornato_il: null }
     h.controIncasso = [{ id: 'contro-1' }]
 

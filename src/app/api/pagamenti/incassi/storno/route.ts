@@ -15,8 +15,34 @@ const postBodySchema = z.object({
   motivo: z.string().min(3, 'Il motivo dello storno è obbligatorio (min 3 caratteri)'),
 })
 
-/** Colonne S3 assenti sul DB E2E CI non migrato → 42703 su SELECT. */
+/**
+ * Colonne S3 assenti sul DB E2E CI non migrato → 42703 su SELECT, PGRST204 su
+ * UPDATE (la marcatura `stornato_il`/`storno_motivo`).
+ */
 const COLONNA_ASSENTE = new Set(['42703', 'PGRST204'])
+
+/** RPC `ricalcola_stato_pagamento` assente sul DB non migrato. */
+const RPC_ASSENTE = new Set(['PGRST202', '42883'])
+
+type ErroreDb = { code?: string; message?: string }
+
+/**
+ * Attende una scrittura SECONDARIA dello storno e ne restituisce l'errore, mai
+ * un'eccezione. PostgREST di norma ritorna `{ error }`; un rigetto (rete, client)
+ * è raro, ma il vecchio `.then(() => {}, () => {})` ingoiava anche quello, e uno
+ * storno già avvenuto non deve diventare un 500. `null` = scritta.
+ */
+async function erroreScrittura(
+  scrittura: PromiseLike<{ error: ErroreDb | null } | null | undefined>,
+): Promise<{ errore: unknown; codice: string } | null> {
+  try {
+    const esito = await scrittura
+    if (!esito?.error) return null
+    return { errore: esito.error, codice: esito.error.code ?? '' }
+  } catch (err) {
+    return { errore: err, codice: '' }
+  }
+}
 
 export interface StornoEsito {
   status: number
@@ -31,6 +57,10 @@ export interface StornoEsito {
  * incasso originale), marca l'originale (`stornato_il`/`storno_motivo`,
  * best-effort su DB non migrato), ricalcola lo stato del pagamento. Il MOTIVO
  * va in colonna/registro_modifiche, MAI nei log.
+ *
+ * Marcatura, ricalcolo e audit vengono DOPO il contro-incasso: un loro errore
+ * non cambia la risposta (200), ma si logga (`info` se è uno schema non
+ * migrato, `error` se è un guasto vero).
  *
  * 409 se l'incasso è già stornato o se è esso stesso uno storno.
  */
@@ -107,38 +137,61 @@ export async function eseguiStornoIncasso(
     return { status: 500, body: { error: 'Errore nello storno', details: contro.error.message } }
   }
 
-  // Marca l'originale (best-effort: colonne assenti su DB non migrato → si salta).
-  await supabase
-    .from('incassi')
-    .update({ stornato_il: new Date().toISOString(), storno_motivo: motivo })
-    .eq('id', orig.id)
-    .then(
-      () => {},
-      () => {},
-    )
+  // Da qui in poi lo storno È avvenuto (il contro-incasso c'è): le tre scritture
+  // che seguono sono secondarie e non cambiano la risposta al chiamante. Ma non
+  // sono più mute: ognuna controlla `{ error }` (PostgREST non lancia) e logga
+  // con soli uuid e codici — mai il motivo.
 
-  // Ricalcola lo stato del pagamento (il trigger su incassi somma i contro-incassi;
-  // l'RPC v3 è sconto-aware). Best-effort: assente su DB non migrato.
-  await supabase.rpc('ricalcola_stato_pagamento', { p_id: pagamentoId }).then(
-    () => {},
-    () => {},
+  // Marca l'originale. Colonne assenti su DB non migrato → `info`; altrimenti è un
+  // guasto vero. La riapertura non dipende più da questa marcatura
+  // (`stornoGiaRegistrato` guarda il contro-incasso).
+  const marca = await erroreScrittura(
+    supabase
+      .from('incassi')
+      .update({ stornato_il: new Date().toISOString(), storno_motivo: motivo })
+      .eq('id', orig.id),
   )
+  if (marca) {
+    logEvento('pagamento', COLONNA_ASSENTE.has(marca.codice) ? 'info' : 'error', {
+      operazione: 'pagamenti/incassi/storno:POST',
+      esito: 'storno-marcatura-non-scritta',
+      incasso_id: orig.id as string,
+    }, marca.errore)
+  }
+
+  // Ricalcola lo stato del pagamento. Il trigger `incassi_ricalcola` ricalcola
+  // comunque; la RPC esplicita (v3, sconto-aware) resta per i DB col trigger
+  // vecchio. Assente su DB non migrato → `info`.
+  const ric = await erroreScrittura(supabase.rpc('ricalcola_stato_pagamento', { p_id: pagamentoId }))
+  if (ric) {
+    const assente = RPC_ASSENTE.has(ric.codice)
+    logEvento('pagamento', assente ? 'info' : 'error', {
+      operazione: 'pagamenti/incassi/storno:POST',
+      esito: assente ? 'ricalcolo-rpc-assente' : 'ricalcolo-non-riuscito',
+      pagamento_id: pagamentoId,
+    }, ric.errore)
+  }
 
   // Audit col MOTIVO (il motivo vive qui, non nei log).
-  await supabase
-    .from('registro_modifiche')
-    .insert({
-      azione: 'storno_incasso',
-      tabella_interessata: 'incassi',
-      record_id: orig.id,
-      vecchio_valore: orig,
-      nuovo_valore: { storno_motivo: motivo, contro_incasso_id: (contro.data as { id: string }).id },
-      utente_id: userId,
-    })
-    .then(
-      () => {},
-      () => {},
-    )
+  const audit = await erroreScrittura(
+    supabase
+      .from('registro_modifiche')
+      .insert({
+        azione: 'storno_incasso',
+        tabella_interessata: 'incassi',
+        record_id: orig.id,
+        vecchio_valore: orig,
+        nuovo_valore: { storno_motivo: motivo, contro_incasso_id: (contro.data as { id: string }).id },
+        utente_id: userId,
+      }),
+  )
+  if (audit) {
+    logEvento('pagamento', 'error', {
+      operazione: 'pagamenti/incassi/storno:POST',
+      esito: 'audit-storno-non-scritto',
+      incasso_id: orig.id as string,
+    }, audit.errore)
+  }
 
   // Evento critico: logga il SUCCESSO (id, MAI il motivo/PII).
   logEvento('pagamento', 'info', {

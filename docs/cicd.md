@@ -4,7 +4,10 @@ Pipeline di produzione per Kidville Web.
 
 - **CI** (gate di qualità) → **GitHub Actions**
 - **CD** (deploy) → **Vercel** (auto: Preview su ogni PR, Produzione al merge su `main`)
-- **Migrazioni DB** → **GitHub Actions** (`migrate.yml`), modello additivo, dietro approvazione manuale
+- **Migrazioni DB** → **integrazione GitHub di Supabase** («Deploy to production»): applica al merge i file di
+  `supabase/migrations/**`, modello additivo. `migrate.yml` **non applica niente**: è solo una verifica a mano
+  (`supabase db push --dry-run`), disarmata il 2026-10-05
+- **Funzioni** → Vercel, regione **`dub1`** (Dublino, la stessa del database): vedi «Regione delle funzioni»
 - **Cron** → **pg_cron dentro Supabase** (non Vercel Cron): schedulazioni in `supabase/migrations/*_cron.sql`
 
 ```
@@ -13,17 +16,23 @@ PR ──► GitHub Actions (CI)                    Vercel
        └ e2e: Playwright su Supabase CI
        branch protection: merge BLOCCATO finché CI non è verde
                     │
-   merge su main ───┼──► Vercel: deploy PRODUZIONE (auto)
-                    └──► Actions migrate.yml: supabase db push (approvazione manuale)
+   merge su main ───┼──► Vercel: deploy PRODUZIONE (auto), funzioni in dub1
+                    └──► Supabase (integrazione GitHub): applica supabase/migrations/** del merge
 ```
+
+`migrate.yml` non fa parte di questo flusso: si lancia **a mano** e fa solo un dry-run (vedi sotto).
 
 Solo codice verde arriva su `main`, quindi Vercel non pubblica mai una regressione.
 
 ---
 
-## ⚠️ Prerequisito (una tantum): baseline dello storico migrazioni
+## Prerequisito (una tantum): baseline dello storico migrazioni — ✅ FATTO
 
-Lo storico è **disallineato**: i primi ~50 file di `supabase/migrations/` sono stati
+Fatto a luglio 2026 (la prima version del registro è `20260704120000_baseline`): il registro
+`supabase_migrations.schema_migrations` è allineato ai file. La procedura qui sotto resta come storia, e come
+ricetta se un giorno si dovesse rifare.
+
+Lo storico era **disallineato**: i primi ~50 file di `supabase/migrations/` sono stati
 applicati a mano (script `apply_*.mjs`, via `exec_sql`) e **non** sono nella tabella
 di tracking `supabase_migrations.schema_migrations`; i più recenti sì, ma con versioni
 non corrispondenti ai nomi dei file locali. Senza baseline, `supabase db push`
@@ -39,9 +48,11 @@ Procedura (da fare con `supabase login` + accesso al progetto prod, verificando 
 3. Marca come applicate le migrazioni presenti in locale ma non tracciate:
    `supabase migration repair --status applied <version> …`
    (e `--status reverted` per eventuali righe remote che non corrispondono ad alcun file locale)
-4. **Verifica**: `supabase db push --dry-run` deve dire **"no pending migrations"**.
+4. **Verifica**: `supabase db push --dry-run` deve dire **«Remote database is up to date.»** (è la frase che
+   stampa la CLI 2.x, letta nei log dei giri riusciti).
 
-Solo dopo che il dry-run è pulito, `migrate.yml` è sicuro da attivare.
+Quel dry-run pulito («Remote database is up to date») è esattamente ciò che `migrate.yml` fa oggi, a mano,
+quando serve sapere se il database è allineato ai file del repo.
 
 ---
 
@@ -54,7 +65,7 @@ Solo dopo che il dry-run è pulito, `migrate.yml` è sicuro da attivare.
 | `CI_SUPABASE_URL` | URL del **progetto Supabase CI dedicato** (non prod) | job `e2e` |
 | `CI_SUPABASE_ANON_KEY` | anon key del progetto CI | job `e2e` |
 | `CI_SUPABASE_SERVICE_ROLE_KEY` | service-role del progetto CI (usata dal seed) | job `e2e` |
-| `PROD_SUPABASE_DB_URL` | connection string del DB **di produzione** | `migrate.yml` |
+| `PROD_SUPABASE_DB_URL` | connection string del DB **di produzione** | `migrate.yml` (solo `--dry-run`, dietro `environment: production`) |
 | `CI_SUPABASE_DB_URL` | connection string (**Session pooler**, porta 5432) del DB del **progetto CI** | `migrate-ci.yml` |
 
 > Il progetto CI è un secondo progetto Supabase (gratis sul free tier). La E2E ci semina
@@ -78,8 +89,10 @@ Solo dopo che il dry-run è pulito, `migrate.yml` è sicuro da attivare.
 ### Environment `production` (Settings → Environments)
 
 - Crea l'environment `production`
-- Abilita **Required reviewers** (te stesso) → `migrate.yml` attende la tua approvazione
-  prima di applicare migrazioni al DB di produzione.
+- Abilita **Required reviewers** (te stesso) → ogni lancio di `migrate.yml` (a mano, solo `--dry-run`) attende la
+  tua approvazione prima di collegarsi al DB di produzione. Il lock
+  `__tests__/architecture/migrate-yml-non-applica-da-solo.test.ts` pretende che il segreto di produzione stia
+  sempre in un job con `environment: production`.
 
 ---
 
@@ -93,6 +106,33 @@ Solo dopo che il dry-run è pulito, `migrate.yml` è sicuro da attivare.
    - `CRON_SECRET`, `ALLOW_HEADER_IDENTITY`
    - Integrazioni gated (se/quando disponibili): `SIDI_*`, `ARUBA_*`, `RESEND_API_KEY`, `ANTHROPIC_API_KEY`
      — senza credenziali l'app **degrada in modo pulito** (vedi README).
+
+---
+
+## Regione delle funzioni: `dub1`
+
+`vercel.json` dichiara `"regions": ["dub1"]` alla radice. Dublino è la regione AWS `eu-west-1`, dove sta il
+progetto Supabase: il server e il database parlano nella stessa zona (p50 13 ms a domanda) invece di attraversare
+l'Atlantico (p50 103 ms dalle funzioni di `iad1`, Washington, misurato il 2026-10-05).
+
+- **Perché nel file e non nel pannello del progetto.** La regione scritta in `vercel.json` appartiene al
+  deployment, e un Instant Rollback la ripristina. L'impostazione «Function Region» del pannello è del progetto:
+  un rollback non la tocca.
+- **Cosa la difende.** Il lock `__tests__/architecture/vercel-json-funzioni-nella-regione-del-db.test.ts`.
+  Serve perché `next build` non legge `vercel.json`: eslint, tsc, vitest e build non si accorgerebbero della
+  riga persa, e il sito continuerebbe a funzionare, solo più lento di 90 ms a ogni domanda al database.
+- **Come si verifica che Vercel l'abbia applicata** (il lock prova il file, non il deploy):
+  - il campo `regions` del deployment: `vercel api "/v13/deployments/<id>?teamId=<team>"` deve dare `["dub1"]`;
+  - l'intestazione `x-vercel-id` di una risposta: `curl -sI https://app.kidville.it/api/health` deve contenere
+    `::dub1::`;
+  - i log di Supabase (`edge_logs`): le richieste del server, cioè con `x_client_info` che finisce in
+    `createServerClient`, devono arrivare dal colo `DUB`.
+- **Chi ha una pagina aperta.** Con la Skew Protection a 12 ore, un client che ha caricato il deployment vecchio
+  continua a essere servito da quello per al massimo 12 ore: la quota `dub1` si completa dopo, e la misura
+  definitiva si prende a +12 ore dal deploy.
+- **Regole del file.** Resta JSON stretto, senza commenti: un `vercel.json` che il parser rifiuta blocca ogni
+  deploy. Un pattern in `functions` che non corrisponde a nessun file fa fallire la build (il lock lo vede).
+  Un fornitore che filtrasse per indirizzo IP non sarebbe toccato dal cambio: il progetto non ha IP d'uscita fissi.
 
 ---
 
@@ -120,10 +160,19 @@ e assicurati che le migrazioni `*_cron.sql` siano applicate in prod (idempotenti
 
 1. Apri una PR → parte la CI; Vercel crea una Preview.
 2. CI verde → puoi fare merge (la protection lo impedisce se rossa).
-3. Merge su `main` → Vercel pubblica in produzione; se la PR toccava `supabase/migrations/**`,
-   `migrate.yml` si mette in attesa della tua approvazione, poi applica le migrazioni.
+3. Merge su `main` → Vercel pubblica in produzione; se la PR toccava `supabase/migrations/**`, l'integrazione
+   GitHub di Supabase le applica al merge, registrando la version del **file**. **Non si riapplicano a mano**:
+   il registro avrebbe due righe con lo stesso nome. Per sapere se il database è allineato ai file si lancia a
+   mano il workflow «DB migrate (prod)»: esegue solo `supabase db push --dry-run`, e non applica niente.
 
 ### Rollback
 
 Deploy di produzione andato male → **Vercel → Deployments → Instant Rollback** al deploy precedente
-(un click). Le migrazioni, essendo additive, non vanno annullate per un rollback del solo codice.
+(un click), oppure `vercel rollback <id-del-deployment>`. Le migrazioni, essendo additive, non vanno annullate
+per un rollback del solo codice.
+
+- Il rollback riporta anche la **regione delle funzioni**, perché `regions` sta nel `vercel.json` del deployment.
+- È **temporaneo**: il prossimo deploy riparte da `main`. Per tornare davvero indietro serve un `git revert`
+  del commit, altrimenti il deploy successivo rimette le funzioni dove stavano.
+- Dopo un rollback si controlla `vercel rollback status` e che i nuovi deploy risultino ancora assegnati al
+  dominio di produzione.

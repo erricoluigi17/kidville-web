@@ -27,6 +27,7 @@ import { codiceVoce } from '@/lib/pagamenti/codice-voce'
 // motore dei solleciti): la pagina e l'email devono dire lo stesso IBAN e lo
 // stesso intestatario. Lock: `coordinate-bonifico-un-motore-solo`.
 import { coordinateBonificoSede } from '@/lib/pagamenti/coordinate-bonifico'
+import { normalizzaMetodiAmmessi, ammetteBonifico } from '@/lib/pagamenti/metodi-ammessi'
 import { meseAnnoDaPeriodo } from '@/lib/pagamenti/periodo'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
@@ -124,6 +125,17 @@ const SELECT_GET = SELECT.replace(
   'importo, importo_pagato, sconto, sconto_motivo, scadenza, stato,',
 )
 
+// Metodi ammessi (2026-10-05): un gradino in più della stessa scala. Ordine di
+// ricchezza decrescente = ordine delle migrazioni, quindi le colonne presenti
+// su un database sono sempre un PREFISSO: `metodi_ammessi` → `sconto` → base.
+// Se il frammento non si trovasse, `replace` restituirebbe `SELECT_GET` intatta e
+// la colonna non arriverebbe mai al client, in silenzio: lo inchioda
+// `__tests__/api/pagamenti-causale-suggerita.test.ts` («DB migrato: UNA lettura…»).
+const SELECT_GET_METODI = SELECT_GET.replace(
+  'fattura_stato, fattura_pdf_path,',
+  'metodi_ammessi, fattura_stato, fattura_pdf_path,',
+)
+
 // Riga grezza del GET. Il SELECT è passato come `string` (retry con/senza sconto),
 // quindi supabase non ne inferisce la forma: la fissiamo qui (index signature per
 // i campi non elencati, es. quota_id aggiunto lato genitore).
@@ -134,6 +146,8 @@ type PagamentoGetRow = {
   importo: number | string
   importo_pagato: number | string | null
   sconto?: number | string | null
+  /** Grezzo dal DB, assente sul DB non migrato: passa SEMPRE da `normalizzaMetodiAmmessi`. */
+  metodi_ammessi?: unknown
   scadenza: string | null
   stato: string
   tipo: string | null
@@ -256,10 +270,19 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       }
     }
 
-    let { data, error, blocchi, troncata } = await leggiTutte(SELECT_GET)
-    // DB E2E CI non migrato: sconto/sconto_motivo assenti → 42703, ritenta senza.
-    if (error && (error as { code?: string }).code === '42703') {
-      const retry = await leggiTutte(SELECT)
+    let { data, error, blocchi, troncata } = await leggiTutte(SELECT_GET_METODI)
+    // DB E2E CI non migrato: una colonna assente → 42703, e si scende di UN gradino
+    // alla volta (`metodi_ammessi` → `sconto`/`sconto_motivo` → base). Ogni gradino
+    // sceso lascia un `warn`: una degradazione muta in produzione vorrebbe dire una
+    // migrazione mai applicata, e i metodi ammessi ignorati senza che nessuno lo sappia.
+    for (const ripiego of [SELECT_GET, SELECT]) {
+      if (!(error && (error as { code?: string }).code === '42703')) break
+      logEvento('pagamento', 'warn', {
+        operazione: 'pagamenti:GET',
+        esito: 'select-in-degradazione',
+        tipo: ripiego === SELECT ? 'base' : 'senza-metodi',
+      })
+      const retry = await leggiTutte(ripiego)
       data = retry.data
       error = retry.error
       blocchi = retry.blocchi
@@ -575,7 +598,14 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
         const template = modelloCausale(cfg, slug, DEFAULT_CAUSALE_TEMPLATE)
         const al = r.alunni as { nome?: string | null; cognome?: string | null; codice_fiscale?: string | null } | null | undefined
         const { mese, anno } = meseAnnoDaPeriodo(r.periodo_competenza as string | null)
-        const causale_suggerita = causaleBonifico({
+        // Assente (DB non migrato), `null` o vuota ⇒ entrambi i metodi: il comportamento
+        // di prima della colonna, mai «nessun metodo».
+        const metodi_ammessi = normalizzaMetodiAmmessi(r.metodi_ammessi)
+        // Senza bonifico la causale NON si compone: è ciò che toglie IBAN e causale
+        // al genitore (decisione 2026-10-05). Si decide qui, a valle del motore
+        // unico — `causaleBonifico` resta l'unica porta. `null`, non una chiave
+        // assente: la forma della risposta non cambia con il contenuto.
+        const causale_suggerita = ammetteBonifico(metodi_ammessi) ? causaleBonifico({
           descrizione: r.descrizione as string | null,
           nome: al?.nome,
           cognome: al?.cognome,
@@ -595,8 +625,8 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
           // legge il codice nomina il contenitore, cioè esattamente la riga di cui
           // questa causale descrive descrizione e importo.
           codice: codiceVoce(r.id),
-        }, template)
-        return { ...r, scuola_nome: sede, causale_suggerita, ...(isStaff ? { coda_stato: codaPerPagamento.get(r.id) ?? null } : {}) }
+        }, template) : null
+        return { ...r, metodi_ammessi, scuola_nome: sede, causale_suggerita, ...(isStaff ? { coda_stato: codaPerPagamento.get(r.id) ?? null } : {}) }
       }),
     }, { headers: SENZA_CACHE })
   } catch (err) {

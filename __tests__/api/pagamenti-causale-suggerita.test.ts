@@ -17,7 +17,23 @@ const h = vi.hoisted(() => ({
   /** Le quote di uno split: servono al ramo genitore, che senza filtra via la riga. */
   quote: [] as Record<string, unknown>[],
   settingsRow: {} as Record<string, unknown> | null,
+  /**
+   * Le select chieste a `pagamenti`, in ordine. La scala di degradazione
+   * (`metodi_ammessi` → `sconto` → base) si legge QUI: un mock che ignora le
+   * colonne sarebbe verde anche con una route che non le chiede affatto.
+   */
+  selectPagamenti: [] as string[],
+  /** Il guasto di una select su `pagamenti` (es. `42703` del DB E2E non migrato); `null` = risposta normale. */
+  guasto: null as null | ((select: string) => { code: string; message: string } | null),
+  logEvento: vi.fn(),
 }))
+
+// Il logger vero con la sola `logEvento` sostituita: si misurano le CHIAMATE
+// (il `warn` di degradazione). `withRoute` importa lo stesso modulo.
+vi.mock('@/lib/logging/logger', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/logging/logger')>()
+  return { ...actual, logEvento: h.logEvento }
+})
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff, requireUser: h.requireUser }))
 vi.mock('@/lib/auth/scope', () => ({
@@ -38,7 +54,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
         pagamenti_quote: h.quote,
       }
       const b: Record<string, unknown> = {}
-      b.select = () => b
+      // La select di QUESTA query: il guasto si decide su di lei, al momento dell'`await`.
+      let selectCorrente = ''
+      b.select = (s: unknown) => {
+        if (table === 'pagamenti') {
+          selectCorrente = String(s ?? '')
+          h.selectPagamenti.push(selectCorrente)
+        }
+        return b
+      }
       b.eq = () => b
       b.in = () => b
       b.or = () => b
@@ -48,7 +72,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.gte = () => b
       b.lte = () => b
       b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : null, error: null })
-      b.then = (resolve: (v: unknown) => unknown) => resolve({ data: righe[table] ?? [], error: null })
+      b.then = (resolve: (v: unknown) => unknown) => {
+        const errore = table === 'pagamenti' && h.guasto ? h.guasto(selectCorrente) : null
+        return resolve(errore ? { data: null, error: errore } : { data: righe[table] ?? [], error: null })
+      }
       return b
     },
   }),
@@ -116,6 +143,13 @@ const pagRata = () => ({
 /** La voce divisa fra due genitori separati: ognuno vede la propria quota. */
 const pagSplit = () => ({
   ...pagRetta(), id: 'pg-split', tipo: 'split',
+})
+
+// Per OGNI blocco del file, prima dei `beforeEach` dei singoli `describe`: la scala
+// delle select e il guasto non devono passare da un caso all'altro.
+beforeEach(() => {
+  h.selectPagamenti = []
+  h.guasto = null
 })
 
 describe('GET /api/pagamenti — causale_suggerita per categoria', () => {
@@ -272,5 +306,134 @@ describe('GET /api/pagamenti — il codice della voce dentro la causale', () => 
       `Retta Settembre 2026 ${COD_SPLIT} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
     )
     expect(j.data[0].causale_suggerita).not.toContain(COD_QUOTA)
+  })
+})
+
+// =============================================================================
+// I METODI AMMESSI (2026-10-05): SENZA BONIFICO LA CAUSALE TACE
+//
+// Una voce «solo contanti» non deve dare al genitore una causale da ricopiare
+// nell'home banking: è ciò che gli toglie IBAN e causale dalla card. La decisione
+// sta nella route, a valle del motore unico — `causaleBonifico` resta l'unica
+// porta, e non viene nemmeno chiamata.
+//
+// E la colonna nuova non esiste sul DB E2E della CI: la lettura la chiede in testa
+// alla scala, e su `42703` scende di un gradino alla volta.
+// =============================================================================
+const errColonnaAssente = { code: '42703', message: 'column does not exist' }
+/** Le chiamate `warn` di degradazione della select, nell'ordine. */
+const degradazioni = () =>
+  (h.logEvento.mock.calls as [string, string, Record<string, unknown>?][])
+    .filter(([, liv, c]) => liv === 'warn' && c?.esito === 'select-in-degradazione')
+    .map(([ev, , c]) => ({ ev, tipo: c?.tipo, operazione: c?.operazione }))
+
+describe('GET /api/pagamenti — metodi ammessi e causale', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    h.requireUser.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
+    h.pagamenti = [pagRetta()]
+    h.scuole = [{ id: 'sc-1', nome: 'Kidville Giugliano' }]
+    h.quote = []
+    h.settingsRow = null
+  })
+
+  it('voce «solo contanti» → `causale_suggerita: null` e `metodi_ammessi: [\'contanti\']`', async () => {
+    h.pagamenti = [{ ...pagRetta(), metodi_ammessi: ['contanti'] }]
+    const res = await GET(url())
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.data).toHaveLength(1)
+    expect(j.data[0].metodi_ammessi).toEqual(['contanti'])
+    // `toBeNull`, non `toBeFalsy`: la chiave c'è, e dice «nessuna causale» — la forma
+    // della risposta non cambia con il contenuto.
+    expect(j.data[0]).toHaveProperty('causale_suggerita')
+    expect(j.data[0].causale_suggerita).toBeNull()
+  })
+
+  it('in veste di GENITORE la voce «solo contanti» non porta causale, l\'altra sì (decisione PER RIGA)', async () => {
+    // È il genitore che ricopia la causale: il caso che conta. E con due righe nella
+    // stessa risposta, una decisione presa una volta per tutte (globale) sarebbe rossa.
+    h.requireUser.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore' } })
+    h.pagamenti = [
+      { ...pagRetta(), metodi_ammessi: ['contanti'] },
+      { ...pagMensa(), metodi_ammessi: ['bonifico'] },
+    ]
+    const j = await (await GET(url())).json()
+    expect(j.data).toHaveLength(2)
+    expect(j.data[0].id).toBe('pg-1')
+    expect(j.data[0].metodi_ammessi).toEqual(['contanti'])
+    expect(j.data[0].causale_suggerita).toBeNull()
+    expect(j.data[1].id).toBe('pg-2')
+    expect(j.data[1].metodi_ammessi).toEqual(['bonifico'])
+    expect(j.data[1].causale_suggerita).toBe(
+      `Mensa Settembre 2026 ${COD_2} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+    )
+  })
+
+  it('riga SENZA la chiave (o con `null`) → entrambi i metodi, e la causale come prima', async () => {
+    // Senza la chiave è il DB E2E non migrato; con `null` una riga scritta prima
+    // della colonna. In tutti e due i casi: comportamento di prima, mai «nessun metodo».
+    h.pagamenti = [pagRetta(), { ...pagMensa(), metodi_ammessi: null }]
+    const j = await (await GET(url())).json()
+    expect(j.data).toHaveLength(2)
+    expect(j.data[0].metodi_ammessi).toEqual(['contanti', 'bonifico'])
+    expect(j.data[0].causale_suggerita).toBe(
+      `Retta Settembre 2026 ${COD_1} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+    )
+    expect(j.data[1].metodi_ammessi).toEqual(['contanti', 'bonifico'])
+    expect(j.data[1].causale_suggerita).toBe(
+      `Mensa Settembre 2026 ${COD_2} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+    )
+  })
+
+  it('DB migrato: UNA lettura, che chiede `metodi_ammessi` E le colonne dello sconto', async () => {
+    const res = await GET(url())
+    expect(res.status).toBe(200)
+    expect(h.selectPagamenti).toHaveLength(1)
+    // Se la sostituzione su `SELECT_GET` non trovasse il frammento, la select resterebbe
+    // quella di prima e la colonna non arriverebbe mai al client: verde muto.
+    expect(h.selectPagamenti[0]).toMatch(/\bmetodi_ammessi\b/)
+    expect(h.selectPagamenti[0]).toMatch(/\bsconto\b/)
+    expect(degradazioni()).toEqual([])
+  })
+
+  it('42703 sulla prima lettura → si ritenta SENZA `metodi_ammessi` (lo sconto resta), con un `warn`', async () => {
+    h.guasto = (s) => (/\bmetodi_ammessi\b/.test(s) ? errColonnaAssente : null)
+    const res = await GET(url())
+    expect(res.status).toBe(200)
+    expect(h.selectPagamenti).toHaveLength(2)
+    const [prima, seconda] = h.selectPagamenti
+    expect(prima).toMatch(/\bmetodi_ammessi\b/)
+    // La seconda lettura chiede le stesse colonne della prima MENO `metodi_ammessi`:
+    // il gradino tolto è uno solo, e lo sconto sopravvive.
+    expect(seconda).not.toMatch(/\bmetodi_ammessi\b/)
+    expect(seconda).toMatch(/\bsconto\b/)
+    expect(prima.replace('metodi_ammessi, ', '')).toBe(seconda)
+    expect(degradazioni()).toEqual([{ ev: 'pagamento', tipo: 'senza-metodi', operazione: 'pagamenti:GET' }])
+    // La risposta degrada al comportamento di prima: entrambi i metodi, causale presente.
+    const j = await res.json()
+    expect(j.data[0].metodi_ammessi).toEqual(['contanti', 'bonifico'])
+    expect(j.data[0].causale_suggerita).toBe(
+      `Retta Settembre 2026 ${COD_1} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+    )
+  })
+
+  it('42703 anche senza `metodi_ammessi` → terzo gradino: la select BASE, senza sconto', async () => {
+    h.guasto = (s) => (/\b(metodi_ammessi|sconto)\b/.test(s) ? errColonnaAssente : null)
+    const res = await GET(url())
+    expect(res.status).toBe(200)
+    expect(h.selectPagamenti).toHaveLength(3)
+    const [, seconda, terza] = h.selectPagamenti
+    expect(seconda).toMatch(/\bsconto\b/)
+    expect(seconda).not.toMatch(/\bmetodi_ammessi\b/)
+    expect(terza).not.toMatch(/\bsconto\b/)
+    expect(terza).not.toMatch(/\bmetodi_ammessi\b/)
+    expect(degradazioni()).toEqual([
+      { ev: 'pagamento', tipo: 'senza-metodi', operazione: 'pagamenti:GET' },
+      { ev: 'pagamento', tipo: 'base', operazione: 'pagamenti:GET' },
+    ])
+    const j = await res.json()
+    expect(j.data[0].metodi_ammessi).toEqual(['contanti', 'bonifico'])
+    expect(j.data[0].causale_suggerita).toContain(COD_1)
   })
 })

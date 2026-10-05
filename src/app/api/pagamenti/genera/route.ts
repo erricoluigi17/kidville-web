@@ -257,7 +257,17 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
           insPadre = await supabase.from('pagamenti').insert(rigaPadre).select('id').single()
         }
         const { data: padre, error: pErr } = insPadre
-        if (pErr || !padre) continue
+        // L'alunno si SALTA e si prosegue con gli altri (comportamento invariato), ma
+        // lo si dice: senza questa riga la segreteria leggeva «generati: 1» su due e
+        // nessuno poteva sapere quale alunno mancasse, né perché. Solo uuid e codice.
+        if (pErr || !padre) {
+          logEvento('pagamento', 'error', {
+            operazione: 'pagamenti/genera:POST',
+            esito: 'padre-non-creato',
+            alunno_id: aId,
+          }, pErr ?? undefined)
+          continue
+        }
         const figlie = rate.map((r, i) => ({
           alunno_id: aId, scuola_id: scuolaId, descrizione: `${descrizione} — Rata ${i + 1}/${rate.length}`,
           importo: r.importo, scadenza: r.scadenza, categoria_id: categoriaId,
@@ -270,7 +280,27 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
           scartaMetodi('rata', insRate.error)
           insRate = await supabase.from('pagamenti').insert(figlie.map(senzaMetodi))
         }
-        if (insRate.error) { await supabase.from('pagamenti').delete().eq('id', padre.id); continue }
+        if (insRate.error) {
+          logEvento('pagamento', 'error', {
+            operazione: 'pagamenti/genera:POST',
+            esito: 'rate-non-create',
+            alunno_id: aId,
+            pagamento_id: padre.id,
+          }, insRate.error)
+          // Si toglie il padre rimasto senza rate. PostgREST non lancia: se la delete
+          // fallisce, il padre ORFANO resta in tabella — una voce da pagare senza le
+          // sue rate — e va detto con il suo uuid, perché qualcuno lo tolga a mano.
+          const del = await supabase.from('pagamenti').delete().eq('id', padre.id)
+          if (del.error) {
+            logEvento('pagamento', 'error', {
+              operazione: 'pagamenti/genera:POST',
+              esito: 'padre-orfano-non-cancellato',
+              alunno_id: aId,
+              pagamento_id: padre.id,
+            }, del.error)
+          }
+          continue
+        }
         generati += 1
         alunniGenerati.push(aId)
       }

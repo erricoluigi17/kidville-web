@@ -74,6 +74,49 @@ const h = vi.hoisted(() => {
     })
   }
 
+  /**
+   * Un guasto MIRATO su UNA riga dell'insert in `pagamenti` (es. il padre di un solo alunno):
+   * l'opzione `errori` del finto colpisce la tabella intera, e non distinguerebbe «un alunno
+   * saltato» da «nessuno generato». Il predicato guarda il CONTENUTO della scrittura.
+   */
+  function guastoSuInsert<T extends object>(
+    client: T,
+    colpisce: (riga: Record<string, unknown>) => boolean,
+    errore: Record<string, unknown>,
+  ): T {
+    const respinta = () => {
+      const r = { data: null, error: { ...errore }, count: null, status: 409, statusText: 'Conflict' }
+      const q: Record<string, unknown> = {}
+      q.select = () => q
+      q.eq = () => q
+      q.single = async () => r
+      q.maybeSingle = async () => r
+      q.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(r).then(ok, ko)
+      return q
+    }
+    return new Proxy(client, {
+      get(t, prop, rec) {
+        const v = Reflect.get(t, prop, rec)
+        if (prop !== 'from') return v
+        return (tabella: string) => {
+          const q = (v as (x: string) => object)(tabella)
+          if (tabella !== 'pagamenti') return q
+          return new Proxy(q, {
+            get(qt, qp, qr) {
+              const m = Reflect.get(qt, qp, qr)
+              if (qp !== 'insert') return m
+              return (valori: Record<string, unknown> | Record<string, unknown>[], ...resto: unknown[]) => {
+                const righe = Array.isArray(valori) ? valori : [valori]
+                if (righe.some(colpisce)) return respinta()
+                return (m as (...a: unknown[]) => unknown)(valori, ...resto)
+              }
+            },
+          })
+        }
+      },
+    })
+  }
+
   return {
     requireStaff: vi.fn(),
     notificaEvento: vi.fn(async () => {}),
@@ -84,7 +127,10 @@ const h = vi.hoisted(() => {
     scritture: [] as unknown[],
     colonnaAssente: false,
     respinte: [] as unknown[],
+    errori: undefined as Record<string, { code: string; message: string }> | undefined,
+    guasto: null as null | { colpisce: (riga: Record<string, unknown>) => boolean; errore: Record<string, unknown> },
     senzaColonnaMetodi,
+    guastoSuInsert,
   }
 })
 
@@ -101,8 +147,12 @@ vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   return {
     createAdminClient: async () => {
-      const c = creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture as unknown as Scrittura[] })
-      return (h.colonnaAssente ? h.senzaColonnaMetodi(c, h.respinte) : c) as never
+      const c = creaFintoSupabase(h.db, h.tabelle, {
+        scritture: h.scritture as unknown as Scrittura[],
+        ...(h.errori ? { errori: h.errori } : {}),
+      })
+      const base = h.colonnaAssente ? h.senzaColonnaMetodi(c, h.respinte) : c
+      return (h.guasto ? h.guastoSuInsert(base, h.guasto.colpisce, h.guasto.errore) : base) as never
     },
   }
 })
@@ -144,6 +194,8 @@ beforeEach(() => {
   h.scritture = []
   h.respinte = []
   h.colonnaAssente = false
+  h.errori = undefined
+  h.guasto = null
   h.requireStaff.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria', scuola_id: SEDE_A } })
 })
 
@@ -246,5 +298,102 @@ describe('POST /api/pagamenti/genera — metodi ammessi', () => {
       expect(pagamenti()).toHaveLength(2)
       expect(eventi('metodi-ammessi-colonna-assente')).toHaveLength(0)
     })
+  })
+})
+
+// =============================================================================
+// Il piano rateale salta un alunno: lo si DICE (rifinitura, 2026-10-05).
+//
+// `if (pErr || !padre) continue` e `if (insRate.error) { delete; continue }` facevano
+// proseguire la generazione con gli altri alunni — e questo resta — ma l'alunno saltato
+// spariva senza una riga di log: la segreteria leggeva «generati: 1» su due e nessuno
+// poteva sapere quale e perché. Il PADRE ORFANO, poi, se anche la delete falliva, restava
+// in tabella senza rate, e la delete non leggeva nemmeno il proprio `{ error }`.
+// Nei log solo uuid e codici: nessuna descrizione, nessun nome.
+// =============================================================================
+describe('POST /api/pagamenti/genera — piano rateale, alunno saltato', () => {
+  const ERRORE_FK = { code: '23503', message: 'insert or update on table "pagamenti" violates foreign key constraint' }
+  const padreDi = (aId: string) => (r: Record<string, unknown>) => r.tipo === 'padre' && r.alunno_id === aId
+  const rataDi = (aId: string) => (r: Record<string, unknown>) => r.tipo === 'rata' && r.alunno_id === aId
+  const pianoPerDue = () => post({ descrizione: 'Corso di nuoto', rate: RATE, alunno_ids: [ALU_1, ALU_2] })
+
+  it('il padre di UN alunno non si crea (codice qualsiasi): log error con il suo uuid, gli altri proseguono', async () => {
+    h.guasto = { colpisce: padreDi(ALU_1), errore: ERRORE_FK }
+    const res = await POST(pianoPerDue())
+
+    // Comportamento invariato: si continua con gli altri, e la risposta conta i generati veri.
+    expect(res.status).toBe(201)
+    expect(await res.json()).toMatchObject({ success: true, data: { generati: 1 } })
+    expect(pagamenti().filter((r) => r.alunno_id === ALU_1)).toEqual([])
+    expect(pagamenti().filter((r) => r.alunno_id === ALU_2 && r.tipo === 'padre')).toHaveLength(1)
+    expect(pagamenti().filter((r) => r.alunno_id === ALU_2 && r.tipo === 'rata')).toHaveLength(2)
+    // La notifica va solo a chi il pagamento lo ha davvero.
+    expect(h.notificaEvento).toHaveBeenCalledTimes(1)
+    expect((h.notificaEvento.mock.calls[0] as unknown[])[1]).toMatchObject({ alunnoIds: [ALU_2] })
+
+    // …e il saltato si DICE: una riga, livello error, con l'uuid dell'alunno e il codice.
+    const log = eventi('padre-non-creato')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][2]).toEqual({ operazione: 'pagamenti/genera:POST', esito: 'padre-non-creato', alunno_id: ALU_1 })
+    expect(log[0][3]).toMatchObject({ code: '23503' })
+    // Niente dati della voce nei campi del log.
+    expect(JSON.stringify(log[0][2])).not.toContain('Corso di nuoto')
+  })
+
+  it('le rate di UN alunno non si creano: log error, il padre si cancella, nessun orfano', async () => {
+    h.guasto = { colpisce: rataDi(ALU_1), errore: ERRORE_FK }
+    const res = await POST(pianoPerDue())
+
+    expect(res.status).toBe(201)
+    expect(await res.json()).toMatchObject({ data: { generati: 1 } })
+    // Il padre di ALU_1 era stato scritto e poi CANCELLATO: in tabella non resta niente di suo.
+    expect(pagamenti().filter((r) => r.alunno_id === ALU_1)).toEqual([])
+    expect(pagamenti().filter((r) => r.alunno_id === ALU_2)).toHaveLength(3)
+
+    const log = eventi('rate-non-create')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][2]).toMatchObject({ operazione: 'pagamenti/genera:POST', esito: 'rate-non-create', alunno_id: ALU_1 })
+    expect(log[0][3]).toMatchObject({ code: '23503' })
+    // La delete è riuscita: nessun allarme di orfano.
+    expect(eventi('padre-orfano-non-cancellato')).toHaveLength(0)
+  })
+
+  it('rate fallite E delete del padre fallita: l’orfano si DICE, con l’uuid del padre', async () => {
+    h.guasto = { colpisce: rataDi(ALU_1), errore: ERRORE_FK }
+    h.errori = { 'pagamenti:delete': { code: '42501', message: 'permission denied for table pagamenti' } }
+    const res = await POST(pianoPerDue())
+
+    // Comportamento invariato: l'alunno è saltato, gli altri proseguono.
+    expect(res.status).toBe(201)
+    expect(await res.json()).toMatchObject({ data: { generati: 1 } })
+    // Il padre di ALU_1 è rimasto in tabella senza rate: è esattamente ciò che il log deve dire.
+    const orfani = pagamenti().filter((r) => r.alunno_id === ALU_1)
+    expect(orfani).toHaveLength(1)
+    expect(orfani[0].tipo).toBe('padre')
+
+    expect(eventi('rate-non-create')).toHaveLength(1)
+    const log = eventi('padre-orfano-non-cancellato')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][2]).toEqual({
+      operazione: 'pagamenti/genera:POST',
+      esito: 'padre-orfano-non-cancellato',
+      alunno_id: ALU_1,
+      pagamento_id: orfani[0].id,
+    })
+    expect(log[0][3]).toMatchObject({ code: '42501' })
+  })
+
+  it('tutto riuscito: nessuna riga di alunno saltato', async () => {
+    const res = await POST(pianoPerDue())
+    expect(res.status).toBe(201)
+    expect(await res.json()).toMatchObject({ data: { generati: 2 } })
+    // Presenza prima: le righe ci sono davvero.
+    expect(pagamenti()).toHaveLength(6)
+    for (const esito of ['padre-non-creato', 'rate-non-create', 'padre-orfano-non-cancellato']) {
+      expect(eventi(esito)).toHaveLength(0)
+    }
   })
 })

@@ -2760,7 +2760,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // +1 il 2026-10-04 (anagrafica docente, Task 5): `teacher/alunni/[id]:GET` (vedi sopra,
             // a `routeConServiceRole`). CONTROLLATO, `handlerEsentati` fermo a 113.
             // Misurato rieseguendo il lock: 537 → 538.
-            handlerControllati: 538,
+            // +1 il 2026-10-05 (metodi ammessi, Task 9): `pagamenti/riconciliazione/[id]:GET`,
+            // «a che cosa è associato questo bonifico». `routeConServiceRole` NON cresce (il
+            // file c'era già, col PATCH) e `handlerEsentati` resta fermo a 113: il movimento si
+            // legge per id nell'handler, poi il gate di sede — `.includes(mov.scuola_id)` sulle
+            // sedi attive, o `assertPagamentoInScope` sulla voce àncora per una riga storica
+            // senza sede — PRIMA di leggere voci e nomi. Misurato rieseguendo il lock: 538 → 539.
+            handlerControllati: 539,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

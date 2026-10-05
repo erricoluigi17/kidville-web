@@ -36,10 +36,21 @@ import { riapriMovimento, COLONNA_ASSENTE } from '@/lib/pagamenti/riapertura-mov
 // risposta arriva perciò dalla lettura del movimento (`MOV_SELECT_MARCA`), che
 // degrada sulla sola colonna assente e su tutto il resto esce 500 prima dello
 // storno.
+// La lettura «a che cosa è associato questo bonifico» della GET: le voci, i
+// bambini, il denaro per voce e chi ha confermato. Il gate di sede resta qui,
+// nell'handler; al modulo arriva un movimento che chi chiede può già vedere.
+import { leggiAssociazione } from '@/lib/pagamenti/associazione-movimento'
 
 const patchBodySchema = z.object({
   azione: z.enum(['conferma', 'ignora', 'riapri']),
   pagamento_id: zUuid.optional(),
+  /**
+   * Che cosa fare della riga DOPO la riapertura di un confermato: tornare in
+   * coda (`da_abbinare`, il default di sempre) o finire fra gli ignorati — cioè
+   * «elimina l'associazione» del popup. Conta solo su `riapri` di un
+   * `confermato`: una riga ignorata che si riapre torna in coda e basta.
+   */
+  poi: z.enum(['da_abbinare', 'ignorato']).optional(),
 })
 
 /**
@@ -93,6 +104,21 @@ const MOV_SELECT_MARCA = `${MOV_SELECT_TX}, abbinato_auto_il`
  */
 const MOV_VARIANTI = [MOV_SELECT_MARCA, MOV_SELECT_TX, MOV_SELECT_BASE] as const
 
+/**
+ * La stessa scala per la GET, con le due colonne della conferma in coda a OGNI
+ * gradino: «chi ha confermato, e quando» è metà della risposta del popup.
+ *
+ * Non si degradano, e non per svista: `confermato_da`/`confermato_il` esistono
+ * dalla migrazione base del 2026-07-10, quindi ci sono anche sul DB E2E della
+ * CI. Stanno in coda per non spostare la ragione per cui la scala esiste — il
+ * gradino che cade è sempre quello di `abbinato_auto_il` o di `transazione_id`.
+ *
+ * ⚠️ NON si aggiungono anche al PATCH: la sua lettura non ne ha bisogno, e una
+ * colonna in più nella SELECT che regge storno e conferma è un modo in più per
+ * farla cadere.
+ */
+const MOV_VARIANTI_ASSOCIAZIONE = MOV_VARIANTI.map((v) => `${v}, confermato_da, confermato_il`)
+
 interface Movimento {
   id: string
   // I movimenti sono ora GLOBALI: nasce senza sede (null) e assume quella del pagamento alla conferma.
@@ -125,6 +151,94 @@ interface Movimento {
    */
   transazione_id?: string | null
   suggerimenti?: { pagamento_id: string }[] | null
+  /** La marca «abbinato dalla macchina»: `undefined` dove la colonna non c'è. */
+  abbinato_auto_il?: string | null
+  /** Chi ha confermato e quando: li chiede solo la GET (`MOV_VARIANTI_ASSOCIAZIONE`). */
+  confermato_da?: string | null
+  confermato_il?: string | null
+}
+
+/**
+ * La lettura di UNA riga di `riconciliazione_movimenti` con le colonne date.
+ * La scrive l'handler — tabella e chiave — e `leggiMovimento` la chiama a ogni
+ * gradino della scala.
+ */
+type LetturaMovimento = (colonne: string) => PromiseLike<{ data: unknown; error: { code?: string } | null }>
+
+// ── LA LETTURA DEL MOVIMENTO, E PERCHÉ GUARDA L'ERRORE ───────────────────────
+// PostgREST non lancia: ritorna `{ error }`. In origine l'errore era scartato
+// dalla destrutturazione, e QUALUNQUE guasto di lettura — permesso
+// negato, rete, colonna assente — usciva come «Movimento non trovato», 404: un
+// messaggio che manda a cercare una riga che invece esiste. Adesso l'errore si
+// legge, e serve anche a un secondo scopo: `transazione_id` non esiste sul DB
+// E2E della CI, e senza il ritentativo qui sotto l'intera rotta — conferma
+// compresa — cadrebbe su quell'ambiente.
+//
+// È UNA FUNZIONE dal 2026-10-05 perché la usano due handler: il PATCH (con
+// `MOV_VARIANTI`) e la GET dell'associazione (con `MOV_VARIANTI_ASSOCIAZIONE`).
+// Il codice è quello che stava in linea nel PATCH, spostato: stessi gradini,
+// stessi log, stesse risposte.
+//
+// ⚠️ LA QUERY LA PASSA L'HANDLER (`leggi`), e non è un vezzo. Il PATCH scrive
+// su `riconciliazione_movimenti` per `id` (ignora, riapri, poi), e il lock
+// `isolamento-sede-coverage` accetta quelle scritture perché lo STESSO handler
+// legge quella riga di quella tabella con quella chiave — l'idioma «leggi la
+// riga per id, verifica, riscrivila». Una funzione che facesse da sé la
+// `.from(…)` sposterebbe la lettura fuori dall'handler, e le tre scritture
+// diventerebbero rosse (misurato: le tre righe del PATCH, il 2026-10-05). Così
+// chi legge l'handler vede quale riga si legge; qui resta solo il COME:
+// la scala, i log, le risposte.
+async function leggiMovimento(
+  leggi: LetturaMovimento,
+  operazione: string,
+  varianti: readonly string[] = MOV_VARIANTI,
+): Promise<{ mov: Movimento; colonnaTransazione: boolean; colonnaMarca: boolean } | { response: NextResponse }> {
+  let movRaw: unknown = null
+  /** `true` se il database HA la colonna: decide se la riapertura può scriverla. */
+  let colonnaTransazione = true
+  /**
+   * `true` se il database HA `abbinato_auto_il`: decide se la riapertura può
+   * SPEGNERE la marca. Parte da `true` e scende solo su un `42703`/`PGRST204`
+   * — cioè su «la colonna non c'è», mai su «non lo so»: un guasto qualunque
+   * esce 500 dal ciclo qui sotto, PRIMA dello storno.
+   */
+  let colonnaMarca = true
+  for (let i = 0; i < varianti.length; i++) {
+    const lettura = await leggi(varianti[i])
+    if (!lettura.error) {
+      movRaw = lettura.data
+      break
+    }
+    const code = (lettura.error as { code?: string }).code ?? ''
+    // Si scala di UNA colonna sola, e solo finché resta una variante più
+    // povera da provare: sull'ultima non c'è più niente da togliere, quindi
+    // l'errore è un guasto vero e va detto.
+    if (i < varianti.length - 1 && COLONNA_ASSENTE.has(code)) {
+      if (i === 0) colonnaMarca = false
+      else colonnaTransazione = false
+      // `warn` e non `info`: una colonna nuova che manca è lo stato ATTESO sul
+      // DB E2E della CI, ma un ramo di degradazione che nessuno vede è la
+      // prima metà di ogni guasto lungo di questo repository. Non è `error`
+      // per la stessa ragione: un canale rosso a ogni giro di CI smette di
+      // essere guardato. Solo enumerati e codici: niente causali, niente nomi.
+      logEvento('pagamento', 'warn', {
+        operazione,
+        esito: 'movimento-letto-in-degradazione',
+        tipo: i === 0 ? 'colonna-marca-assente' : 'colonna-transazione-assente',
+        error_code: code,
+      })
+      continue
+    }
+    logErrore({ operazione, evento: 'movimento_non_letto', stato: 500 }, lettura.error)
+    return {
+      response: NextResponse.json(
+        { error: 'Errore nel recupero del movimento', codice: 'MOVIMENTO_NON_LETTO' },
+        { status: 500 },
+      ),
+    }
+  }
+  if (!movRaw) return { response: NextResponse.json({ error: 'Movimento non trovato' }, { status: 404 }) }
+  return { mov: movRaw as unknown as Movimento, colonnaTransazione, colonnaMarca }
 }
 
 /**
@@ -201,6 +315,76 @@ async function assertTransazioneInScope(
   return { annullataIl: riga.annullata_il ?? null }
 }
 
+// GET /api/pagamenti/riconciliazione/[id] — il movimento e A CHE COSA è associato (staff).
+// Una richiesta sola per il popup: voci, bambini, denaro per voce, chi ha
+// confermato, e stato/fattura della voce àncora (che prima costavano una
+// seconda chiamata a `/api/pagamenti/[id]`).
+export const GET = withRoute('pagamenti/riconciliazione/[id]:GET', async (request: Request, context: { params: Promise<{ id: string }> }) => {
+  try {
+    const auth = await requireStaff(request)
+    if (auth.response) return auth.response
+    const { id: rawId } = await context.params
+    const idParsed = parseData(zUuid, rawId)
+    if ('response' in idParsed) return idParsed.response
+    const id = idParsed.data
+
+    const supabase = await createAdminClient()
+    const letto = await leggiMovimento(
+      (colonne) => supabase.from('riconciliazione_movimenti').select(colonne).eq('id', id).maybeSingle(),
+      'pagamenti/riconciliazione/[id]:GET',
+      MOV_VARIANTI_ASSOCIAZIONE,
+    )
+    if ('response' in letto) return letto.response
+    const mov = letto.mov
+
+    // ── IL GATE DI SEDE, PRIMA DI LEGGERE VOCI E NOMI ─────────────────────────
+    // Un movimento CONFERMATO ha la sede della voce (la scrive la conferma); uno
+    // libero è della coda globale, come per `ignora`, e non porta nomi. Fuori
+    // sede → 404 e non 403, come altrove: chi non può vederla non deve nemmeno
+    // sapere che esiste. Una riga confermata SENZA sede (storica) si giudica
+    // dalla voce àncora, con lo stesso gate della riapertura a voce singola.
+    if (mov.stato === 'confermato') {
+      if (mov.scuola_id) {
+        const sedi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
+        if (!sedi.includes(mov.scuola_id)) {
+          return NextResponse.json(
+            { error: 'Movimento non trovato', codice: 'CONCILIAZIONE_MOVIMENTO_NON_TROVATO' },
+            { status: 404 },
+          )
+        }
+      } else if (mov.pagamento_id) {
+        const fuoriScope = await assertPagamentoInScope(supabase, auth.user, mov.pagamento_id)
+        if (fuoriScope) return fuoriScope
+      }
+    }
+
+    const esito = await leggiAssociazione(supabase, mov, 'pagamenti/riconciliazione/[id]:GET')
+    if ('guasto' in esito) {
+      logErrore({ operazione: 'pagamenti/riconciliazione/[id]:GET', evento: 'associazione_non_letta', stato: 500 }, esito.guasto)
+      return NextResponse.json(
+        { error: 'Errore nella lettura dell’associazione', codice: 'MOVIMENTO_NON_LETTO' },
+        { status: 500 },
+      )
+    }
+    return NextResponse.json({
+      success: true,
+      data: {
+        id: mov.id,
+        stato: mov.stato,
+        importo: mov.importo,
+        data_operazione: mov.data_operazione,
+        associazione: esito.associazione,
+        pagamento: esito.ancora,
+      },
+    })
+  } catch (err) {
+    logErrore({ operazione: 'pagamenti/riconciliazione/[id]:GET', stato: 500 }, err)
+    // Con un codice anche qui: è una lettura di questa riga che non è riuscita,
+    // e `MOVIMENTO_NON_LETTO` è il 500 che il catalogo già traduce.
+    return NextResponse.json({ error: 'Internal Server Error', codice: 'MOVIMENTO_NON_LETTO' }, { status: 500 })
+  }
+})
+
 // PATCH /api/pagamenti/riconciliazione/[id] — conferma/ignora/riapri (staff).
 // La CONFERMA crea l'incasso (metodo bonifico, data = data operazione): lo
 // stato del pagamento lo ricalcola il trigger. Mai conferme automatiche.
@@ -218,65 +402,16 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
     const { azione } = b.data
 
     const supabase = await createAdminClient()
-    // ── LA LETTURA DEL MOVIMENTO, E PERCHÉ ORA GUARDA L'ERRORE ───────────────
-    // PostgREST non lancia: ritorna `{ error }`. Fino a oggi l'errore era scartato
-    // dalla destrutturazione, e QUALUNQUE guasto di lettura — permesso negato,
-    // rete, colonna assente — usciva come «Movimento non trovato», 404: un
-    // messaggio che manda a cercare una riga che invece esiste. Adesso l'errore si
-    // legge, e serve anche a un secondo scopo: `transazione_id` non esiste sul DB
-    // E2E della CI, e senza il ritentativo qui sotto l'intera rotta — conferma
-    // compresa — cadrebbe su quell'ambiente.
-    let movRaw: unknown = null
-    /** `true` se il database HA la colonna: decide se la riapertura può scriverla. */
-    let colonnaTransazione = true
-    /**
-     * `true` se il database HA `abbinato_auto_il`: decide se la riapertura può
-     * SPEGNERE la marca. Parte da `true` e scende solo su un `42703`/`PGRST204`
-     * — cioè su «la colonna non c'è», mai su «non lo so»: un guasto qualunque
-     * esce 500 dal ciclo qui sotto, PRIMA dello storno.
-     */
-    let colonnaMarca = true
-    for (let i = 0; i < MOV_VARIANTI.length; i++) {
-      const lettura = await supabase
-        .from('riconciliazione_movimenti')
-        .select(MOV_VARIANTI[i])
-        .eq('id', id)
-        .maybeSingle()
-      if (!lettura.error) {
-        movRaw = lettura.data
-        break
-      }
-      const code = (lettura.error as { code?: string }).code ?? ''
-      // Si scala di UNA colonna sola, e solo finché resta una variante più
-      // povera da provare: sull'ultima non c'è più niente da togliere, quindi
-      // l'errore è un guasto vero e va detto.
-      if (i < MOV_VARIANTI.length - 1 && COLONNA_ASSENTE.has(code)) {
-        if (i === 0) colonnaMarca = false
-        else colonnaTransazione = false
-        // `warn` e non `info`: una colonna nuova che manca è lo stato ATTESO sul
-        // DB E2E della CI, ma un ramo di degradazione che nessuno vede è la
-        // prima metà di ogni guasto lungo di questo repository. Non è `error`
-        // per la stessa ragione: un canale rosso a ogni giro di CI smette di
-        // essere guardato. Solo enumerati e codici: niente causali, niente nomi.
-        logEvento('pagamento', 'warn', {
-          operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-          esito: 'movimento-letto-in-degradazione',
-          tipo: i === 0 ? 'colonna-marca-assente' : 'colonna-transazione-assente',
-          error_code: code,
-        })
-        continue
-      }
-      logErrore(
-        { operazione: 'pagamenti/riconciliazione/[id]:PATCH', evento: 'movimento_non_letto', stato: 500 },
-        lettura.error,
-      )
-      return NextResponse.json(
-        { error: 'Errore nel recupero del movimento', codice: 'MOVIMENTO_NON_LETTO' },
-        { status: 500 },
-      )
-    }
-    if (!movRaw) return NextResponse.json({ error: 'Movimento non trovato' }, { status: 404 })
-    const mov = movRaw as unknown as Movimento
+    // La lettura del movimento — con la scala di degradazione e il 500 su ogni
+    // guasto che non sia «la colonna non c'è» — sta in `leggiMovimento`, qui
+    // sopra: la condivide la GET dell'associazione. La riga (tabella e chiave)
+    // la sceglie questo handler, che poi la riscrive per la stessa chiave.
+    const letto = await leggiMovimento(
+      (colonne) => supabase.from('riconciliazione_movimenti').select(colonne).eq('id', id).maybeSingle(),
+      'pagamenti/riconciliazione/[id]:PATCH',
+    )
+    if ('response' in letto) return letto.response
+    const { mov, colonnaTransazione, colonnaMarca } = letto
 
     // I movimenti sono GLOBALI (scuola_id può essere null finché non confermati): niente gate di
     // sede in cima. ignora/riapri restano azioni staff sulla coda globale. Il vincolo di scrittura
@@ -417,6 +552,57 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
             // mai partito niente». Booleano, quindi `redact` lo lascia in chiaro.
             marca_disponibile: colonnaMarca,
           })
+
+          // ── «ELIMINA L'ASSOCIAZIONE»: RIAPRIRE E POI IGNORARE ──────────────
+          // Il popup offre due seguiti alla riapertura: rimettere la riga in coda
+          // (il default) o toglierla di mezzo fra gli ignorati. Il secondo è un
+          // UPDATE A PARTE, e CONDIZIONATO a `da_abbinare`: fra la riapertura e
+          // questa riga un'altra persona può aver già riabbinato il bonifico, e un
+          // «ignora» incondizionato ignorerebbe una riga confermata — cioè un
+          // incasso vivo sparito dalla coda di chi lo deve vedere.
+          // Se non tocca righe (o fallisce) la risposta resta 200: lo storno e la
+          // riapertura sono avvenuti e sono ciò che conta. La riga è in coda, e
+          // la risposta lo DICE (`ignorato: false`) invece di fingere.
+          let ignoraApplicato: boolean | undefined
+          if (b.data.poi === 'ignorato') {
+            const { data: ign, error: errIgn } = await supabase
+              .from('riconciliazione_movimenti')
+              .update({ stato: 'ignorato' })
+              .eq('id', id)
+              .eq('stato', 'da_abbinare')
+              .select('id')
+            ignoraApplicato = !errIgn && (ign?.length ?? 0) > 0
+            if (!ignoraApplicato) {
+              logEvento(
+                'pagamento',
+                'warn',
+                {
+                  operazione: 'pagamenti/riconciliazione/[id]:PATCH',
+                  esito: 'ignora-dopo-riapertura-non-applicato',
+                  movimento_id: id,
+                },
+                errIgn ?? undefined,
+              )
+            }
+          }
+          // Il SUCCESSO dell'intenzione dell'operatrice, distinto dal
+          // `movimento-riaperto` qui sopra (che è il successo dello storno).
+          logEvento('pagamento', 'info', {
+            operazione: 'pagamenti/riconciliazione/[id]:PATCH',
+            esito: b.data.poi === 'ignorato' ? 'associazione-eliminata' : 'associazione-riaperta',
+            movimento_id: id,
+            ignorato: ignoraApplicato === true,
+          })
+          if (ignoraApplicato !== undefined) {
+            // Spread, non sostituzione: `data` porta già i numeri della
+            // riapertura (incassi stornati, transazione annullata…).
+            const corpo = esito.body as { data?: Record<string, unknown> }
+            corpo.data = {
+              ...(corpo.data ?? {}),
+              stato: ignoraApplicato ? 'ignorato' : 'da_abbinare',
+              ignorato: ignoraApplicato,
+            }
+          }
         }
         return NextResponse.json(esito.body, { status: esito.status })
       }

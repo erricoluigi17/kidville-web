@@ -10,6 +10,8 @@ import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { normalizzaMetodiAmmessi, CODICI_COLONNA_ASSENTE } from '@/lib/pagamenti/metodi-ammessi'
+import { zMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi-zod'
 
 // ─── Schemi di validazione input (M3 + Contabilità v2 S3) ────────────────────
 // PATCH: merge parziale sui soli campi ammessi, ora TIPIZZATI (finding #3: prima
@@ -25,11 +27,14 @@ const patchBodySchema = z.object({
   gruppo: z.string().nullish(),
   tipo: z.string().optional(),
   visibile_dal: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data non valida (atteso YYYY-MM-DD)').nullish(),
+  // Metodi ammessi (2026-10-05). Qui si scrive SEMPRE l'array normalizzato,
+  // anche «tutti e due»: è così che una voce «solo contanti» torna libera.
+  metodi_ammessi: zMetodiAmmessi.optional(),
 })
 
 const CAMPI_EDITABILI = [
   'descrizione', 'importo', 'scadenza', 'categoria_id', 'obbligatorio',
-  'periodo_competenza', 'gruppo', 'tipo', 'visibile_dal',
+  'periodo_competenza', 'gruppo', 'tipo', 'visibile_dal', 'metodi_ammessi',
 ] as const
 
 // Dettaglio pagamento: soli campi usati dalla logica di proiezione qui sotto
@@ -158,6 +163,7 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
 
     const updates: Record<string, unknown> = {}
     for (const f of CAMPI_EDITABILI) if (body[f] !== undefined) updates[f] = body[f]
+    if (updates.metodi_ammessi !== undefined) updates.metodi_ammessi = normalizzaMetodiAmmessi(updates.metodi_ammessi)
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
     }
@@ -193,8 +199,44 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
       }
     }
 
-    const { data, error } = await supabase.from('pagamenti').update(updates).eq('id', id).select(SELECT).single()
-    if (error) return NextResponse.json({ error: 'Errore aggiornamento', details: error.message }, { status: 500 })
+    let upd = await supabase.from('pagamenti').update(updates).eq('id', id).select(SELECT).single()
+    let metodiNonSalvati = false
+    if (
+      upd.error &&
+      updates.metodi_ammessi !== undefined &&
+      CODICI_COLONNA_ASSENTE.includes((upd.error as { code?: string }).code ?? '')
+    ) {
+      // DB E2E della CI (colonna assente): si salva il resto e si DICE che i
+      // metodi non sono stati salvati, invece di fingere.
+      metodiNonSalvati = true
+      logEvento('pagamento', 'warn', {
+        operazione: 'pagamenti/[id]:PATCH',
+        esito: 'metodi-ammessi-colonna-assente',
+        pagamento_id: id,
+      }, upd.error)
+      const { metodi_ammessi: _m, ...resto } = updates
+      void _m
+      // Se restava solo `aggiornato_il`, un update non cambierebbe niente di
+      // ciò che è stato chiesto: si rilegge la riga e basta.
+      upd = Object.keys(resto).some((k) => k !== 'aggiornato_il')
+        ? await supabase.from('pagamenti').update(resto).eq('id', id).select(SELECT).single()
+        : await supabase.from('pagamenti').select(SELECT).eq('id', id).single()
+    }
+    const { data, error } = upd
+    if (error) {
+      logErrore({ operazione: 'pagamenti/[id]:PATCH', stato: 500, evento: 'db' }, error)
+      return NextResponse.json({ error: 'Errore aggiornamento', details: error.message }, { status: 500 })
+    }
+    if (updates.metodi_ammessi !== undefined && !metodiNonSalvati) {
+      const m = updates.metodi_ammessi as string[]
+      logEvento('pagamento', 'info', {
+        operazione: 'pagamenti/[id]:PATCH',
+        esito: 'metodi-ammessi-modificati',
+        pagamento_id: id,
+        solo_contanti: m.length === 1 && m[0] === 'contanti',
+        solo_bonifico: m.length === 1 && m[0] === 'bonifico',
+      })
+    }
 
     // se è cambiato l'importo O la scadenza, ricalcola lo stato dal ledger.
     // Spostare la scadenza al futuro pulisce la morosità (scaduto -> parziale/da_pagare);
@@ -243,7 +285,7 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
       }, e)
     }
 
-    return NextResponse.json({ success: true, data })
+    return NextResponse.json({ success: true, data, ...(metodiNonSalvati ? { avviso: 'metodi-non-salvabili' } : {}) })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/[id]:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

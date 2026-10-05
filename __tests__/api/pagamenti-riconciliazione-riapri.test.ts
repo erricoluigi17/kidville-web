@@ -99,6 +99,21 @@ const h = vi.hoisted(() => ({
    * che mente — cioè proprio ciò che questa fetta esiste per impedire.
    */
   marcaError: null as { code: string; message: string } | null,
+  /**
+   * LA CODA FATTURE (Task 8, 2026-10-05). Righe `{ id, pagamento_id, stato }`
+   * che il finto FILTRA con i `.eq`/`.in` applicati davvero dal codice: una
+   * richiesta `in_invio` ferma la riapertura PRIMA dello storno, quelle
+   * `in_coda`/`errore` delle voci non più saldate si tolgono DOPO.
+   * Vuota di default: i test di prima non vedono nessuna coda.
+   */
+  codaFatture: [] as Record<string, unknown>[],
+  codaFattureError: null as { code: string; message: string } | null,
+  /** Lo stato delle voci DOPO lo storno (`pagamenti.select('id, stato')`). Vuoto di default. */
+  statoPagamenti: [] as { id: string; stato: string }[],
+  /** Gli incassi della transazione composita, letti per sapere quali voci tocca. Vuoti di default. */
+  incassiTransazione: [] as Record<string, unknown>[],
+  /** Ogni lettura, insert, update e rpc nell'ORDINE in cui avviene: «prima» e «dopo» si misurano qui. */
+  ordine: [] as string[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -132,7 +147,11 @@ function finto() {
       b.limit = () => b
       const registra = () => {
         h.letture.push({ table, cols: typeof b._cols === 'string' ? b._cols : '', filtri: { ...filtri } })
+        h.ordine.push(`lettura:${table}`)
       }
+      /** Una riga passa i filtri applicati: array → il valore è fra quelli; scalare → è uguale. */
+      const passa = (riga: Record<string, unknown>) =>
+        Object.entries(filtri).every(([c, v]) => (Array.isArray(v) ? v.includes(riga[c]) : riga[c] === v))
       b.maybeSingle = async () => {
         registra()
         if (table === 'riconciliazione_movimenti') {
@@ -164,6 +183,7 @@ function finto() {
       }
       b.insert = (row: Record<string, unknown> | Record<string, unknown>[]) => {
         h.inserts.push({ table, row })
+        h.ordine.push(`insert:${table}`)
         // Solo l'insert su `incassi` è pilotabile in errore: è l'unico di cui il
         // chiamante veda l'esito. Gli altri (`registro_modifiche`) nel codice vero
         // si loggano ma non cambiano la risposta: qui rispondono sempre puliti.
@@ -179,7 +199,12 @@ function finto() {
         const uf: Record<string, unknown> = {}
         const u: Record<string, unknown> = {}
         u.eq = (c: string, v: unknown) => { uf[c] = v; return u }
-        const spingi = () => h.updates.push({ table, row, filtri: { ...uf } })
+        // `.is(c, null)`: l'annullo della ricevuta tocca solo quella ancora attiva.
+        u.is = (c: string, v: unknown) => { uf[`is:${c}`] = v; return u }
+        const spingi = () => {
+          h.updates.push({ table, row, filtri: { ...uf } })
+          h.ordine.push(`update:${table}`)
+        }
         u.select = () => ({
           then: (r: (v: unknown) => unknown) => {
             spingi()
@@ -207,13 +232,27 @@ function finto() {
         if (table === 'incassi' && 'storno_di' in filtri) {
           return resolve({ data: h.controIncassoError ? null : h.controIncasso, error: h.controIncassoError })
         }
+        // Le voci della transazione composita: `incassi.select('pagamento_id').eq('transazione_id', …)`.
+        if (table === 'incassi' && 'transazione_id' in filtri) {
+          return resolve({ data: h.incassiTransazione.filter(passa), error: null })
+        }
+        if (table === 'fatture_coda') {
+          if (h.codaFattureError) return resolve({ data: null, error: h.codaFattureError })
+          return resolve({ data: h.codaFatture.filter(passa), error: null })
+        }
+        if (table === 'pagamenti' && Array.isArray(filtri.id)) {
+          return resolve({ data: h.statoPagamenti.filter(passa), error: null })
+        }
         return resolve({ data: [], error: null })
       }
       return b
     },
     rpc: async (name: string, args: Record<string, unknown>) => {
       h.rpcCalls.push({ name, args })
-      return h.rpcEsito[name] ?? { data: null, error: null }
+      h.ordine.push(`rpc:${name}`)
+      // `fatture_coda_togli` risponde NEUTRO di default: zero richieste tolte.
+      const neutro = name === 'fatture_coda_togli' ? { data: 0, error: null } : { data: null, error: null }
+      return h.rpcEsito[name] ?? neutro
     },
   }
 }
@@ -224,6 +263,7 @@ import { PATCH } from '@/app/api/pagamenti/riconciliazione/[id]/route'
 // fa SCARTARE la prosa del server, e un 409 che «dichiara lo storno» nella
 // prosa può arrivare a schermo dicendo tutt'altro.
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch'
+import { MOTIVO_RIAPERTURA } from '@/lib/pagamenti/riapertura-movimento'
 
 const MID = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd1'
 const PID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
@@ -264,6 +304,11 @@ beforeEach(() => {
   h.incassoInsertError = null
   h.marcaError = null
   h.rpcEsito = {}
+  h.codaFatture = []
+  h.codaFattureError = null
+  h.statoPagamenti = []
+  h.incassiTransazione = []
+  h.ordine = []
   h.requireStaff.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
   h.movimento = {
     id: MID, scuola_id: 'sc-1', importo: 150, data_operazione: '2026-09-05',
@@ -1068,5 +1113,188 @@ describe('PATCH riapri — ciò che NON cambia', () => {
     const res = await patch({ azione: 'ignora' })
     expect(res.status).toBe(409)
     nessunaScrittura()
+  })
+})
+
+// ─── LA CODA FATTURE E LA RICEVUTA (Task 8, 2026-10-05) ─────────────────────
+//
+// Il caso che l'ha fatta nascere: un bonifico associato alla retta sbagliata
+// aveva messo in coda la fattura di QUELLA retta; riaperto il bonifico, la voce
+// tornava da pagare ma la richiesta restava in coda — «errore», poi «non
+// saldato» a ogni giro. E sul composito la ricevuta della transazione annullata
+// restava attiva, cosa che il pulsante «annulla transazione» non fa mai.
+//
+// Due regole, e un ordine che non si inverte:
+//  · PRIMA dello storno, una richiesta `in_invio` ferma tutto (409): il lavoratore
+//    sta parlando con Aruba proprio adesso.
+//  · DOPO la riapertura riuscita, si annulla la ricevuta del composito e si
+//    tolgono le richieste `in_coda`/`errore` delle voci non più saldate.
+const PID2 = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2'
+const CODA1 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'
+const CODA2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'
+
+const rpcDi = (nome: string) => h.rpcCalls.filter((c) => c.name === nome)
+const posizione = (passo: string) => h.ordine.indexOf(passo)
+
+describe('PATCH riapri — la coda fatture e la ricevuta', () => {
+  it('⛔ una richiesta IN INVIO sulla voce → 409 `RIAPERTURA_FATTURA_IN_INVIO`, e niente si muove', async () => {
+    h.codaFatture = [{ id: CODA1, pagamento_id: PID, stato: 'in_invio' }]
+
+    const res = await patch({ azione: 'riapri' })
+
+    expect(res.status).toBe(409)
+    const j = (await res.json()) as { codice?: string; error?: string }
+    expect(j.codice).toBe('RIAPERTURA_FATTURA_IN_INVIO')
+    // Lo storno NON è stato tentato: è la differenza fra un rifiuto e un guasto a metà.
+    expect(h.inserts.filter((i) => i.table === 'incassi'), 'storno fatto sotto una fattura in invio').toEqual([])
+    expect(h.rpcCalls, 'una RPC partita prima del rifiuto').toEqual([])
+    nessunaScrittura()
+    const riga = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'riapertura-fattura-in-invio',
+    )
+    expect(riga, 'un rifiuto senza una riga di log').toBeTruthy()
+    expect(riga![1]).toBe('warn')
+    expect((riga![2] as { movimento_id?: string }).movimento_id).toBe(MID)
+    // La frase che arriva a schermo è quella del CATALOGO: il codice è dichiarato.
+    expect(messaggioDaCorpo(j, 'ripiego')).toContain('Non è stato stornato niente')
+  })
+
+  it('una richiesta IN INVIO su una voce di un ALTRO pagamento non ferma niente', async () => {
+    h.codaFatture = [{ id: CODA1, pagamento_id: PID2, stato: 'in_invio' }]
+
+    expect((await patch({ azione: 'riapri' })).status).toBe(200)
+    expect(h.inserts.find((i) => i.table === 'incassi'), 'nessuno storno').toBeTruthy()
+  })
+
+  it('⛔ COMPOSITO: richiesta IN INVIO su una voce della TRANSAZIONE → 409, e la RPC di annullo non parte', async () => {
+    // La voce non è `pagamento_id` del movimento: la si trova fra gli incassi
+    // della transazione. Guardare solo `pagamento_id` lascerebbe passare lo storno.
+    h.movimento = { ...h.movimento!, pagamento_id: null, transazione_id: TXID }
+    h.incassiTransazione = [{ transazione_id: TXID, pagamento_id: PID2 }]
+    h.codaFatture = [{ id: CODA2, pagamento_id: PID2, stato: 'in_invio' }]
+    h.rpcEsito.annulla_transazione_contabile = { data: { incassi_stornati: 1, movimenti_riaperti: 1 }, error: null }
+
+    const res = await patch({ azione: 'riapri' })
+
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { codice?: string }).codice).toBe('RIAPERTURA_FATTURA_IN_INVIO')
+    expect(rpcDi('annulla_transazione_contabile'), 'transazione annullata sotto una fattura in invio').toEqual([])
+    nessunaScrittura()
+  })
+
+  it('⛔ la coda fatture NON SI LEGGE (guasto) → 500 PRIMA dello storno: fail-closed', async () => {
+    h.codaFattureError = { code: 'XX000', message: 'internal error' }
+
+    const res = await patch({ azione: 'riapri' })
+
+    expect(res.status).toBe(500)
+    expect(((await res.json()) as { codice?: string }).codice).toBe('RIAPERTURA_NON_RIUSCITA')
+    expect(h.rpcCalls).toEqual([])
+    nessunaScrittura()
+    expect(
+      h.logErrore.mock.calls.find((c) => (c[0] as { evento?: string })?.evento === 'coda_fatture_non_letta_riapertura'),
+      'un guasto di lettura senza una riga di log',
+    ).toBeTruthy()
+  })
+
+  it('tabella `fatture_coda` ASSENTE (42P01, DB E2E non migrato): si riapre lo stesso', async () => {
+    h.codaFattureError = { code: '42P01', message: 'relation "fatture_coda" does not exist' }
+
+    expect((await patch({ azione: 'riapri' })).status).toBe(200)
+    expect(h.inserts.find((i) => i.table === 'incassi'), 'nessuno storno').toBeTruthy()
+    expect(updateDi('riconciliazione_movimenti')).toHaveLength(1)
+  })
+
+  it('VOCE SINGOLA tornata da pagare: la sua richiesta in `errore` si TOGLIE, DOPO la riapertura', async () => {
+    h.codaFatture = [{ id: CODA1, pagamento_id: PID, stato: 'errore' }]
+    h.statoPagamenti = [{ id: PID, stato: 'da_pagare' }]
+    h.rpcEsito.fatture_coda_togli = { data: 1, error: null }
+
+    const res = await patch({ azione: 'riapri' })
+
+    expect(res.status).toBe(200)
+    expect(rpcDi('fatture_coda_togli')).toEqual([
+      { name: 'fatture_coda_togli', args: { p_ids: [CODA1], p_attore: 'staff-1' } },
+    ])
+    const j = (await res.json()) as { data?: Record<string, unknown> }
+    expect(j.data?.richieste_fattura_tolte).toBe(1)
+    // L'ORDINE: la coda si guarda PRIMA dello storno, si pulisce DOPO la riapertura.
+    expect(posizione('lettura:fatture_coda'), 'la coda non è stata letta').toBeGreaterThanOrEqual(0)
+    expect(posizione('lettura:fatture_coda'), 'la coda letta dopo lo storno').toBeLessThan(posizione('insert:incassi'))
+    expect(
+      posizione('rpc:fatture_coda_togli'),
+      'richiesta tolta prima che la riga tornasse in coda',
+    ).toBeGreaterThan(posizione('update:riconciliazione_movimenti'))
+  })
+
+  it('VOCE SINGOLA ancora `pagato` dopo lo storno (saldata da altri incassi): la richiesta RESTA', async () => {
+    h.codaFatture = [{ id: CODA1, pagamento_id: PID, stato: 'errore' }]
+    h.statoPagamenti = [{ id: PID, stato: 'pagato' }]
+
+    const res = await patch({ azione: 'riapri' })
+
+    expect(res.status).toBe(200)
+    expect(rpcDi('fatture_coda_togli'), 'tolta la richiesta di una voce ancora saldata').toEqual([])
+    expect(((await res.json()) as { data?: Record<string, unknown> }).data?.richieste_fattura_tolte).toBe(0)
+  })
+
+  it('senza coda (il caso di tutti i giorni): `richieste_fattura_tolte` è 0 e nessuna RPC parte', async () => {
+    const res = await patch({ azione: 'riapri' })
+
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { data?: Record<string, unknown> }).data?.richieste_fattura_tolte).toBe(0)
+    expect(rpcDi('fatture_coda_togli')).toEqual([])
+    // Nessuna ricevuta di transazione su una voce singola.
+    expect(updateDi('ricevute_emesse')).toEqual([])
+  })
+
+  it('COMPOSITO: la ricevuta della transazione si ANNULLA, come fa «annulla transazione»', async () => {
+    h.movimento = { ...h.movimento!, transazione_id: TXID }
+    h.rpcEsito.annulla_transazione_contabile = { data: { incassi_stornati: 2, movimenti_riaperti: 1 }, error: null }
+
+    expect((await patch({ azione: 'riapri' })).status).toBe(200)
+
+    const ric = updateDi('ricevute_emesse')
+    expect(ric, 'la ricevuta di una transazione annullata resta attiva').toHaveLength(1)
+    expect(typeof ric[0].row.annullata_il).toBe('string')
+    expect(ric[0].row.annullata_da).toBe('staff-1')
+    expect(ric[0].row.annullo_motivo).toBe(MOTIVO_RIAPERTURA)
+    expect(ric[0].filtri.transazione_id).toBe(TXID)
+    // Solo quella ancora attiva: un numero già annullato non si riannulla.
+    expect(ric[0].filtri['is:annullata_il']).toBeNull()
+    expect(posizione('update:ricevute_emesse')).toBeGreaterThan(posizione('rpc:annulla_transazione_contabile'))
+  })
+
+  it('COMPOSITO: si tolgono le richieste delle voci della transazione tornate da pagare', async () => {
+    h.movimento = { ...h.movimento!, pagamento_id: null, transazione_id: TXID }
+    h.rpcEsito.annulla_transazione_contabile = { data: { incassi_stornati: 2, movimenti_riaperti: 1 }, error: null }
+    h.incassiTransazione = [
+      { transazione_id: TXID, pagamento_id: PID },
+      { transazione_id: TXID, pagamento_id: PID2 },
+    ]
+    h.statoPagamenti = [
+      { id: PID, stato: 'pagato' },
+      { id: PID2, stato: 'parziale' },
+    ]
+    h.codaFatture = [
+      { id: CODA1, pagamento_id: PID, stato: 'in_coda' },
+      { id: CODA2, pagamento_id: PID2, stato: 'errore' },
+    ]
+    h.rpcEsito.fatture_coda_togli = { data: 1, error: null }
+
+    const res = await patch({ azione: 'riapri' })
+
+    expect(res.status).toBe(200)
+    expect(rpcDi('fatture_coda_togli').map((c) => c.args.p_ids)).toEqual([[CODA2]])
+    expect(((await res.json()) as { data?: Record<string, unknown> }).data?.richieste_fattura_tolte).toBe(1)
+  })
+
+  it('la coda non si pulisce su una riapertura FALLITA (corsa persa): solo dopo quella riuscita', async () => {
+    h.codaFatture = [{ id: CODA1, pagamento_id: PID, stato: 'errore' }]
+    h.statoPagamenti = [{ id: PID, stato: 'da_pagare' }]
+    h.updateRows = []
+
+    expect((await patch({ azione: 'riapri' })).status).toBe(409)
+    expect(rpcDi('fatture_coda_togli')).toEqual([])
   })
 })

@@ -12,6 +12,13 @@ import { fatturaViva, etichettaFattura, type RigaFatturaEmessa } from '@/lib/pag
 // significherebbe avere due idee diverse di che cos'è uno storno, e la seconda nascerebbe
 // senza il ramo che degrada quando l'enum `storno` non esiste sul DB non migrato.
 import { eseguiStornoIncasso } from '@/app/api/pagamenti/incassi/storno/route'
+// LA CODA FATTURE DAVANTI ALLA RIAPERTURA (2026-10-05): una richiesta `in_invio`
+// ferma tutto PRIMA dello storno; DOPO la riapertura riuscita si tolgono le
+// richieste delle voci non più saldate. Il perché per esteso sta nel modulo.
+import { vociDelMovimento, codaInInvio, togliCodaVociNonSaldate } from '@/lib/pagamenti/riapertura-coda-fatture'
+// La ricevuta della transazione composita si annulla come fa `transazioni/[id]/annulla`:
+// stessa funzione, che non lancia mai e logga da sé i propri errori.
+import { annullaRicevutaTransazioneAttiva } from '@/lib/pagamenti/ricevute'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LO STORNO E LA RIAPERTURA DI UN MOVIMENTO CONFERMATO — fuori dalla rotta.
@@ -104,6 +111,8 @@ export interface RiaperturaRiuscita {
   incassiStornati: number
   movimentiRiaperti: number
   fattureVive: number
+  /** Le richieste `in_coda`/`errore` tolte dalla coda fatture perché la loro voce non è più saldata. */
+  richiesteFatturaTolte: number
 }
 
 export interface EsitoRiapertura {
@@ -189,6 +198,12 @@ async function stornoGiaRegistrato(
  * PRIMA di scrivere, e la riapertura viene DOPO lo storno perché nel verso
  * opposto un movimento libero con l'incasso ancora vivo si fa riabbinare, cioè
  * incassare due volte.
+ *
+ * Dal 2026-10-05 l'ordine ha due passi in più, ai due capi: il controllo della
+ * coda fatture (`in_invio` ⇒ 409) sta fra l'avviso e lo storno, perché è un
+ * rifiuto e un rifiuto si dà prima di scrivere; ricevuta e pulizia della coda
+ * stanno DOPO la riapertura riuscita, perché guardano lo stato delle voci che
+ * lo storno ha appena prodotto.
  */
 export async function riapriMovimento(
   supabase: ClientAdmin,
@@ -307,6 +322,21 @@ export async function riapriMovimento(
         }
       }
     }
+  }
+
+  // ── 1b. LA CODA FATTURE: una richiesta IN INVIO ferma tutto ────────────
+  // Il lavoratore sta parlando con Aruba proprio adesso: stornare sotto di lui
+  // produrrebbe una fattura su una voce non più pagata. È un RIFIUTO, quindi
+  // sta prima di qualunque scrittura; e un guasto di lettura ferma (fail-closed),
+  // perché «non lo so» non è «non c'è nessuna richiesta in invio».
+  const vociCoinvolte = await vociDelMovimento(supabase, mov, operazione)
+  const coda = await codaInInvio(supabase, vociCoinvolte, operazione)
+  if ('guasto' in coda) {
+    return { status: 500, body: { error: 'Non è stato possibile verificare la coda fatture: la riapertura è stata fermata.', codice: 'RIAPERTURA_NON_RIUSCITA' } }
+  }
+  if (coda.inInvio) {
+    logEvento('pagamento', 'warn', { operazione, esito: 'riapertura-fattura-in-invio', movimento_id: id })
+    return { status: 409, body: { error: 'Una fattura di questa voce è in invio: riprova fra un minuto.', codice: 'RIAPERTURA_FATTURA_IN_INVIO' } }
   }
 
   // ── 2. LO STORNO ──────────────────────────────────────────────────────
@@ -569,6 +599,18 @@ export async function riapriMovimento(
     }
   }
 
+  // ── 4. LA RICEVUTA del composito: si annulla come fa `transazioni/[id]/annulla`
+  // La transazione è annullata (da questo giro o da uno precedente): la sua
+  // ricevuta di famiglia resterebbe attiva su un pagamento che non esiste più.
+  // Non lancia mai e logga da sé; `.is('annullata_il', null)` la rende idempotente.
+  if (mov.transazione_id) {
+    await annullaRicevutaTransazioneAttiva(supabase, mov.transazione_id, { da: attoreId, motivo: MOTIVO_RIAPERTURA })
+  }
+  // ── 5. LA CODA FATTURE delle voci che non sono più saldate
+  // DOPO lo storno e la riapertura: è lo stato che lo storno ha appena prodotto
+  // a dire quali voci non sono più `pagato`. Non lancia mai e logga da sé.
+  const richiesteFatturaTolte = await togliCodaVociNonSaldate(supabase, vociCoinvolte, attoreId, operazione)
+
   // NESSUNA notifica al genitore: decisione esplicita del titolare. La
   // conferma avvisa («Pagamento registrato»), lo storno no — un avviso
   // «il tuo pagamento non risulta più» su una correzione di segreteria
@@ -583,9 +625,10 @@ export async function riapriMovimento(
         transazione_annullata: transazioneAnnullata,
         movimenti_riaperti: movimentiRiaperti,
         incassi_stornati: incassiStornati,
+        richieste_fattura_tolte: richiesteFatturaTolte,
       },
       ...(avviso ? { avviso } : {}),
     },
-    ok: { transazioneAnnullata, incassiStornati, movimentiRiaperti, fattureVive },
+    ok: { transazioneAnnullata, incassiStornati, movimentiRiaperti, fattureVive, richiesteFatturaTolte },
   }
 }

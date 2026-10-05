@@ -289,7 +289,9 @@ describe('LOCK · backup-notturno.yml', () => {
     it('🔑 la chiave pubblica age nel file è quella del titolare, non il segnaposto', () => {
         // Questo test resta ROSSO finché il titolare non consegna la sua chiave pubblica: è voluto,
         // è il cancello che impedisce di mergiare un workflow che cifrerebbe per nessuno.
-        expect(REALE).not.toContain(SEGNAPOSTO)
+        const chiave = /^\s{2}AGE_PUBLIC_KEY:\s*(\S+)\s*$/m.exec(REALE)?.[1]
+        expect(chiave, 'AGE_PUBLIC_KEY non trovata nel workflow').toBeDefined()
+        expect(chiave, 'AGE_PUBLIC_KEY è ancora il SEGNAPOSTO: serve la chiave pubblica del titolare').not.toBe(SEGNAPOSTO)
     })
 
     it('in nessun file tracciato c\'è una chiave age PRIVATA', () => {

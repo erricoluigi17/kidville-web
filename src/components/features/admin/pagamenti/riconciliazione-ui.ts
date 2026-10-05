@@ -38,6 +38,24 @@ export type {
   TonoFatturazione,
 } from '@/lib/pagamenti/fatturazione-riga'
 
+/**
+ * A CHE COSA È ASSOCIATO IL BONIFICO (2026-10-05) — la forma di `data.associazione`
+ * della GET `/api/pagamenti/riconciliazione/[id]`, che il popup legge e
+ * `AssociazioneBonifico`/`ConfermaScollegaBonifico` rendono.
+ *
+ * Stessa regola dei tipi qui sopra: la DEFINIZIONE è una sola, accanto alla
+ * lettura che la produce (`@/lib/pagamenti/associazione-movimento`), e qui la si
+ * rilegge col nome della schermata. Una copia scritta a mano qui avrebbe perso in
+ * silenzio il giorno in cui la rotta ha imparato `fuori_sede` (la voce di un
+ * fratello iscritto in un'altra sede, senza nome né descrizione): con il ri-export
+ * è `tsc` a dirlo. `export type` sparisce alla compilazione, quindi il logger del
+ * server che quel modulo importa non entra nel bundle del client.
+ */
+export type {
+  Associazione as AssociazioneUi,
+  VoceAssociata as VoceAssociataUi,
+} from '@/lib/pagamenti/associazione-movimento'
+
 export type StatoMovimento = 'da_abbinare' | 'suggerito' | 'confermato' | 'ignorato'
 
 /** Un candidato all'abbinamento calcolato dal server (`lib/pagamenti/riconciliazione.ts`). */
@@ -918,3 +936,16 @@ export function riepilogoComposizione(e: EsitoComposizione): RiepilogoComposizio
     numeriLeggibili,
   }
 }
+
+/**
+ * Occhiello: la parolina in Barlow che dice CHE COSA si sta guardando. È la voce
+ * di QUESTA schermata (intestazione del popup, etichette dei campi, titoletti dei
+ * riquadri) e non una primitiva dell'app, perciò non sta in `ui.ts`.
+ *
+ * Sta qui e non più dentro `MovimentoDialog` dal 2026-10-05: il riquadro
+ * «Associato a» (`AssociazioneBonifico`) è un componente suo, figlio del popup, e
+ * importare la costante dal popup avrebbe fatto un giro chiuso fra i due moduli.
+ * Una copia sarebbe stata peggio: due occhielli che divergono in silenzio.
+ */
+export const OCCHIELLO_TIPO = 'font-barlow text-[11px] font-extrabold uppercase tracking-[0.08em]'
+export const OCCHIELLO = `${OCCHIELLO_TIPO} text-kidville-green`

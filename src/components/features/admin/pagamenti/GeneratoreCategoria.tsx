@@ -13,6 +13,8 @@ import { eDirezioneCockpit } from '@/lib/auth/ruoli';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { SelettoreAlunni } from '@/components/ui/SelettoreAlunni';
 import { SELEZIONE_TUTTI, parametriSelezione, alunniBersaglio, type SelezioneAlunni } from '@/lib/pagamenti/selezione-alunni';
+import { type MetodoAmmesso } from '@/lib/pagamenti/metodi-ammessi';
+import { ScegliMetodiAmmessi } from './ScegliMetodiAmmessi';
 
 const GC_INPUT = 'w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GC_SELECT = `${GC_INPUT} cursor-pointer hover:border-kidville-green/50`;
@@ -48,6 +50,8 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const [gruppo, setGruppo] = useState('');
     const [acconti, setAcconti] = useState(false);
     const [nRate, setNRate] = useState(3);
+    // Con cosa si potrà pagare la voce: di partenza tutti e due, come prima della colonna.
+    const [metodi, setMetodi] = useState<MetodoAmmesso[]>(['contanti', 'bonifico']);
     const [loading, setLoading] = useState(false);
     const [done, setDone] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -108,6 +112,10 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     }, [importo, nRate, scadenza]);
 
     const caricaAnteprima = async () => {
+        // Zero metodi: il perché è GIÀ a schermo, e già annunciato, dal role=alert di
+        // `ScegliMetodiAmmessi`. Ripeterlo nell'errore generale scriveva la stessa frase
+        // due volte (come in `ModificaPagamentoModal`): basta non partire.
+        if (metodi.length === 0) return;
         if (!descrizione.trim()) { setError(t('gencErrCausale')); return; }
         if (!importo || importo <= 0) { setError(t('gencErrImporto')); return; }
         if (target.length === 0) { setError(t('gencErrNessunTarget')); return; }
@@ -144,6 +152,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 scadenza,
                 obbligatorio,
                 gruppo: gruppo.trim() || null,
+                metodi_ammessi: metodi,
                 ...parametriSelezione(anteprima.candidati, { modo: 'scelti', classe: '', ids: anteprima.candidati.map((a) => a.id) }),
             };
             if (acconti && nRate >= 2) body.rate = buildRate();
@@ -212,6 +221,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                         <span className="font-maven text-[11px] text-kidville-muted">{t('gencMensili')} ~{formatEuro(importo ? importo / nRate : 0)} {t('gencCadauno')}</span>
                     </div>
                 )}
+                <ScegliMetodiAmmessi valore={metodi} onChange={(v) => { setMetodi(v); setAnteprima(null); }} disabled={loading} />
             </div>
 
             {anteprima && !done && (

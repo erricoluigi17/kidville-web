@@ -175,3 +175,45 @@ describe('StoricoPagamenti — la card segue il RESIDUO, non la causale', () => 
         expect(screen.queryByText('Come pagare')).toBeNull();
     });
 });
+
+/**
+ * METODI AMMESSI (2026-10-05) — il GET porta `metodi_ammessi` su ogni voce. La
+ * lista lo dice sulla card della voce («Solo contanti» / «Solo bonifico») e lo
+ * passa a «Come pagare», che toglie dal bonifico le voci che non lo ammettono.
+ */
+describe('StoricoPagamenti — i metodi ammessi arrivano alla card e a «Come pagare»', () => {
+    it('una voce solo contanti: badge sulla card, e «Come pagare» senza tab né IBAN', async () => {
+        corpo = { success: true, data: [{ ...VOCE, metodi_ammessi: ['contanti'] }], sedi: SEDI };
+        render(<StoricoPagamenti userId="u-1" />);
+
+        expect(await screen.findByText('Come pagare')).toBeInTheDocument();
+        expect(screen.getByTestId('badge-metodo-pagamento')).toHaveTextContent('Solo contanti');
+
+        // `ammetteBonifico: false` è arrivato a `ComePagare`: lo si legge dal DOM.
+        expect(screen.queryByRole('tablist')).toBeNull();
+        expect(screen.queryByText(IBAN_LEGGIBILE)).toBeNull();
+        expect(document.querySelectorAll('.kv-campo-copiabile')).toHaveLength(0);
+        expect(
+            screen.getByText('In segreteria, negli orari di apertura: il pagamento viene registrato subito e lo vedi qui.'),
+        ).toBeVisible();
+    });
+
+    it('una voce solo bonifico: badge «Solo bonifico», e il bonifico resta com’era', async () => {
+        corpo = { success: true, data: [{ ...VOCE, metodi_ammessi: ['bonifico'] }], sedi: SEDI };
+        render(<StoricoPagamenti userId="u-1" />);
+
+        expect(await screen.findByText('Come pagare')).toBeInTheDocument();
+        expect(screen.getByTestId('badge-metodo-pagamento')).toHaveTextContent('Solo bonifico');
+        expect(screen.getByRole('tab', { name: 'Bonifico' })).toBeInTheDocument();
+        expect(screen.getByText(IBAN_LEGGIBILE)).toBeInTheDocument();
+        expect(campoCausale(VOCE.causale_suggerita)).toBeInTheDocument();
+    });
+
+    it('senza `metodi_ammessi` (DB non migrato) nessun badge, e la voce resta nel bonifico', async () => {
+        render(<StoricoPagamenti userId="u-1" />);
+
+        expect(await screen.findByText('Come pagare')).toBeInTheDocument();
+        expect(screen.queryByTestId('badge-metodo-pagamento')).toBeNull();
+        expect(campoCausale(VOCE.causale_suggerita)).toBeInTheDocument();
+    });
+});

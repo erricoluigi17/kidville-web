@@ -55,8 +55,18 @@ const h = vi.hoisted(() => ({
   pagamenti: [] as Record<string, unknown>[],
   utenti: [] as Record<string, unknown>[],
   settingsRow: null as Record<string, unknown> | null,
-  /** I dati passati al costruttore dell'email: da qui si legge il campo `causale` del riquadro. */
-  riquadri: [] as { causale: string }[],
+  /**
+   * I dati passati al costruttore dell'email: da qui si legge il campo `causale` del riquadro.
+   * `null` ⇒ la voce non ammette il bonifico (voce «solo contanti»).
+   */
+  riquadri: [] as { causale: string | null }[],
+  /**
+   * Colonne di `pagamenti` che il DB «non ha» (DB E2E della CI non migrato): una SELECT
+   * che ne nomina una risponde `42703`, come fa PostgREST.
+   */
+  colonneAssenti: [] as string[],
+  /** Le chiamate a `logEvento`, per vedere i gradini della degradazione. */
+  eventi: [] as unknown[][],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff, requireUser: h.requireUser }))
@@ -73,6 +83,17 @@ vi.mock('@/lib/anagrafiche/legami', () => ({
 }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: h.sendEmail, sendEmailDetailed: h.sendEmailDetailed }))
 vi.mock('@/lib/push/enqueue', () => ({ enqueueNotifiche: h.enqueueNotifiche }))
+// Il logger vero resta: gli si appoggia accanto un taccuino delle chiamate a `logEvento`.
+vi.mock('@/lib/logging/logger', async (importActual) => {
+  const reale = await importActual<typeof import('@/lib/logging/logger')>()
+  return {
+    ...reale,
+    logEvento: (...a: Parameters<typeof reale.logEvento>) => {
+      h.eventi.push(a)
+      return reale.logEvento(...a)
+    },
+  }
+})
 
 /**
  * Il costruttore dell'email si INTERCETTA, non si sostituisce.
@@ -98,7 +119,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
       const b: Record<string, unknown> = {}
-      b.select = () => b
+      let colonne = ''
+      b.select = (c?: string) => {
+        colonne = c ?? ''
+        return b
+      }
       b.eq = () => b
       b.in = () => b
       b.or = () => b
@@ -126,7 +151,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.insert = () => ({ then: (r: (v: unknown) => unknown) => r({ data: null, error: null }) })
       b.update = () => b
       b.then = (resolve: (v: unknown) => unknown) =>
-        resolve({
+        table === 'pagamenti' && h.colonneAssenti.some((col) => colonne.includes(col))
+          ? resolve({ data: null, error: { code: '42703', message: 'column does not exist' } })
+          : resolve({
           data:
             table === 'pagamenti' ? h.pagamenti
             : table === 'scuole' ? [{ id: 'sc-1', nome: 'Kidville Giugliano' }]
@@ -230,6 +257,8 @@ async function inviaSolleciti(ids: string[]) {
 beforeEach(() => {
   vi.clearAllMocks()
   h.riquadri = []
+  h.colonneAssenti = []
+  h.eventi = []
   h.requireStaff.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
   h.requireUser.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
   h.pagamenti = [pagRetta()]
@@ -337,5 +366,96 @@ describe('Sollecito ed elenco pagamenti compongono la STESSA causale', () => {
     expect(mail[0].riquadro).toBe(app[0])
     expect(mail[1].riquadro).toBe(app[1])
     expect(app[0]).not.toBe(app[1])
+  })
+})
+
+// =============================================================================
+// LA VOCE «SOLO CONTANTI» (2026-10-05): il sollecito non chiede un bonifico che
+// la voce non ammette.
+//
+// Una causale col codice della voce, mandata per una voce che si paga solo in
+// segreteria, è un invito a fare un bonifico che la scuola poi non sa dove
+// mettere. La voce che ammette il bonifico, invece, deve restare IDENTICA a prima:
+// lo provano i test qui sopra, che non sono stati toccati.
+// =============================================================================
+describe('Voce «solo contanti» — nel sollecito niente causale, niente IBAN', () => {
+  // IBAN SINTETICO: l'esempio pubblico della Banca d'Italia, non è il conto di nessuno.
+  const IBAN_OK = 'IT60X0542811101000000123456'
+  const IBAN_LEGGIBILE = 'IT60 X054 2811 1010 0000 0123 456'
+  const FRASE = 'in contanti presso la segreteria'
+  const soloContanti = () => ({ ...pagRetta(), metodi_ammessi: ['contanti'] })
+  const soloBonifico = () => ({ ...pagMensa(), metodi_ammessi: ['bonifico'] })
+  const anteprima = (ids: string[]) =>
+    new Request('http://localhost/api/pagamenti/solleciti', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pagamento_ids: ids, anteprima: true }),
+    })
+  const gradini = () =>
+    h.eventi.filter((a) =>
+      a[0] === 'pagamento' && a[1] === 'warn' && (a[2] as { esito?: string }).esito === 'select-in-degradazione')
+
+  beforeEach(() => {
+    // La sede HA l'IBAN compilato: se il motore decidesse dall'IBAN invece che dalla
+    // voce, la riga ricomparirebbe nell'email della voce in contanti.
+    h.settingsRow = { fiscale_config: { denominazione: 'Kidville', iban: IBAN_OK }, aruba_config: {} }
+  })
+
+  it('anteprima: il corpo non porta il codice della voce e dice di pagare in contanti', async () => {
+    h.pagamenti = [soloContanti()]
+    const res = await POST(anteprima([PID]))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.data[0].ok).toBe(true)
+    const corpo = j.data[0].corpo as string
+    expect(corpo).not.toContain('#')
+    expect(corpo).not.toContain(COD_1)
+    expect(corpo).not.toContain(CF)
+    expect(corpo).toContain(FRASE)
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+  })
+
+  it('invio: riquadro senza causale, HTML senza IBAN né «Dati per il bonifico»', async () => {
+    h.pagamenti = [soloContanti()]
+    const [mail] = await inviaSolleciti([PID])
+    expect(mail.riquadro).toBeNull()
+    expect(mail.corpo).toBeNull()
+    expect(mail.text).toContain(FRASE)
+    expect(mail.text).not.toContain(COD_1)
+    expect(mail.html).not.toContain(COD_1)
+    expect(mail.html).not.toContain('IBAN')
+    expect(mail.html).not.toContain('Dati per il bonifico')
+    expect(mail.html).toContain(FRASE)
+  })
+
+  it('due voci, una in contanti e una col bonifico: ciascuna email segue la PROPRIA voce', async () => {
+    // Un `bonificoAmmesso` calcolato una volta sola fuori dal ciclo sarebbe verde su
+    // una voce sola: qui le due email devono uscire diverse.
+    h.pagamenti = [soloContanti(), soloBonifico()]
+    const mail = await inviaSolleciti([PID, PID2])
+    expect(mail).toHaveLength(2)
+    expect(mail[0].corpo).toBeNull()
+    expect(mail[0].html).not.toContain('IBAN')
+    expect(mail[1].corpo).toContain(COD_2)
+    expect(mail[1].riquadro).toBe(mail[1].corpo)
+    // Il controllo che l'IBAN della sede arriva davvero: senza, l'assenza qui sopra
+    // non proverebbe niente.
+    expect(mail[1].html).toContain(IBAN_LEGGIBILE)
+    expect(mail[1].html).toContain('Dati per il bonifico')
+  })
+
+  it('colonna `metodi_ammessi` assente (DB E2E non migrato): un gradino giù, un warn, il bonifico resta', async () => {
+    h.colonneAssenti = ['metodi_ammessi']
+    const [mail] = await inviaSolleciti([PID])
+    expect(mail.corpo).toContain(COD_1)
+    expect(mail.riquadro).toBe(mail.corpo)
+    expect(gradini()).toHaveLength(1)
+  })
+
+  it('assenti anche `sconto`: due gradini, due warn, e il sollecito parte lo stesso', async () => {
+    h.colonneAssenti = ['metodi_ammessi', 'sconto']
+    const [mail] = await inviaSolleciti([PID])
+    expect(mail.corpo).toContain(COD_1)
+    expect(gradini()).toHaveLength(2)
   })
 })

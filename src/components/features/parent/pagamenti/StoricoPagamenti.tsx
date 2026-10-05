@@ -5,8 +5,10 @@ import { useTranslations } from 'next-intl';
 import { AlertTriangle } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
 import { FatturaDocumenti } from '@/components/features/pagamenti/FatturaDocumenti';
+import { BadgeMetodoPagamento } from '@/components/features/pagamenti/BadgeMetodoPagamento';
 import { raggruppaPerCategoria } from '@/lib/pagamenti/categorie';
 import { residuoEffettivo } from '@/lib/pagamenti/aging';
+import { ammetteBonifico } from '@/lib/pagamenti/metodi-ammessi';
 import { isoToIt } from '@/lib/format/data';
 import { formatEuro } from '@/lib/format/valuta';
 import { PushOptIn } from './PushOptIn';
@@ -35,6 +37,12 @@ interface Pagamento {
     scuola_nome?: string | null;
     /** Causale del bonifico COMPOSTA DAL SERVER (modello per-categoria). */
     causale_suggerita?: string | null;
+    /**
+     * Con quali metodi la segreteria accetta questa voce (2026-10-05). Assente o
+     * `null` — DB della CI non migrato, backend più vecchio — vale «tutti e due»:
+     * lo decide `normalizzaMetodiAmmessi`, mai questo componente.
+     */
+    metodi_ammessi?: string[] | null;
     payment_categories?: { nome?: string; colore?: string; icona?: string } | null;
     alunni?: { nome?: string; cognome?: string; codice_fiscale?: string | null; sospeso?: boolean };
 }
@@ -159,6 +167,9 @@ export function StoricoPagamenti({ userId }: Props) {
             nome: p.alunni?.nome ?? '',
             cognome: p.alunni?.cognome ?? '',
             hasCf: !!p.alunni?.codice_fiscale,
+            // Una voce SOLO contanti resta fra le voci aperte (va pagata comunque),
+            // ma `ComePagare` la toglie dal pannello del bonifico.
+            ammetteBonifico: ammetteBonifico(p.metodi_ammessi),
         }));
 
     return (
@@ -266,6 +277,13 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                     <p className="font-maven font-bold text-sm text-kidville-green flex items-center gap-1">
                         {p.payment_categories?.icona} {p.descrizione}
                         {p.obbligatorio && <span className="text-[10px] text-kidville-error">{t('obbligatorioBadge')}</span>}
+                        {/* «Solo contanti» / «Solo bonifico»: non rende niente quando la
+                            voce ammette tutti e due i metodi, cioè quasi sempre. */}
+                        <BadgeMetodoPagamento
+                            metodi={p.metodi_ammessi}
+                            testoSoloContanti={t('badgeSoloContanti')}
+                            testoSoloBonifico={t('badgeSoloBonifico')}
+                        />
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">
                         {p.alunni?.nome} {p.alunni?.cognome} · {t('scadPrefix')} {isoToIt(p.scadenza) || p.scadenza}

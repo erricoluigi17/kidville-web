@@ -11,6 +11,7 @@ import {
 } from './fiscale'
 import { resolveParentRegistry } from './intestatari'
 import { annoFiscale } from '@/lib/format/fiscal-date'
+import { logEvento } from '@/lib/logging/logger'
 
 // Emissione ricevute NUMERATE (registro ricevute_emesse):
 //  • idempotente: una sola ricevuta ATTIVA per transazione (indice parziale DB);
@@ -41,14 +42,21 @@ export interface RicevutaRecord {
 // Registro/colonne assenti (DB non migrato) → fallback di cortesia, mai crash.
 const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
 
-/** Annulla (best-effort) la ricevuta famiglia attiva di una TRANSAZIONE (Contabilità v2). */
+/**
+ * Annulla (best-effort) la ricevuta famiglia attiva di una TRANSAZIONE (Contabilità v2).
+ *
+ * Non lancia MAI: l'annullo della transazione non deve fallire per la ricevuta.
+ * Ma non è più muta: PostgREST non lancia, ritorna `{ error }`, e il vecchio
+ * `catch {}` non scattava nemmeno. Registro/colonne assenti (DB non migrato) →
+ * `info`; qualunque altro errore → `error`. Nei log solo uuid e codici, mai il motivo.
+ */
 export async function annullaRicevutaTransazioneAttiva(
     supabase: SupabaseClient,
     transazioneId: string,
     opts: { da?: string | null; motivo: string },
 ): Promise<void> {
     try {
-        await supabase
+        const esito = await supabase
             .from('ricevute_emesse')
             .update({
                 annullata_il: new Date().toISOString(),
@@ -57,8 +65,21 @@ export async function annullaRicevutaTransazioneAttiva(
             })
             .eq('transazione_id', transazioneId)
             .is('annullata_il', null)
-    } catch {
-        // registro assente (CI) o errore transitorio: l'annullo transazione non deve fallire per questo
+        const error = esito?.error
+        if (error) {
+            const assente = SCHEMA_MANCANTE.has(error.code ?? '')
+            logEvento('pagamento', assente ? 'info' : 'error', {
+                operazione: 'ricevute:annulla-transazione',
+                esito: assente ? 'ricevute-registro-assente' : 'ricevuta-non-annullata',
+                transazione_id: transazioneId,
+            }, error)
+        }
+    } catch (err) {
+        logEvento('pagamento', 'error', {
+            operazione: 'ricevute:annulla-transazione',
+            esito: 'ricevuta-non-annullata',
+            transazione_id: transazioneId,
+        }, err)
     }
 }
 

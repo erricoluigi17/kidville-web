@@ -24,6 +24,7 @@ import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
 import { STATI_PAGAMENTO as STATI, calcolaTotaliPagamenti } from './stati';
 import { AgendaScadenze } from './AgendaScadenze';
+import { BadgeMetodoPagamento } from '@/components/features/pagamenti/BadgeMetodoPagamento';
 import { useAgingLabel, bucketScadenze, isMoroso, residuoEffettivo, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
 import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
@@ -849,7 +850,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         <tr key={p.id} className={TROW}>
                                             <td className={cx(TD, 'font-semibold text-kidville-green')}>{p.alunni?.nome} {p.alunni?.cognome}</td>
                                             {mostraSede && <td className={TD}><BadgeSede nome={p.scuola_nome} /></td>}
-                                            <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
+                                            <td className={cx(TD, 'text-kidville-ink')}>
+                                                {p.descrizione}
+                                                <BadgeMetodoPagamento metodi={p.metodi_ammessi} testoSoloContanti={t('badgeSoloContanti')} testoSoloBonifico={t('badgeSoloBonifico')} className="ml-2 align-middle" />
+                                            </td>
                                             <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
                                             <td className={cx(TD, 'text-right font-bold text-kidville-green')}>{formatEuro(residuo)}</td>
                                             <td className={TD}>
@@ -1088,7 +1092,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                             )}
                                         </td>
                                         {mostraSede && <td className={TD}><BadgeSede nome={p.scuola_nome} /></td>}
-                                        <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
+                                        <td className={cx(TD, 'text-kidville-ink')}>
+                                            {p.descrizione}
+                                            <BadgeMetodoPagamento metodi={p.metodi_ammessi} testoSoloContanti={t('badgeSoloContanti')} testoSoloBonifico={t('badgeSoloBonifico')} className="ml-2 align-middle" />
+                                        </td>
                                         <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
                                         <td className={cx(TD, 'text-right text-kidville-green')}>{formatEuro(p.importo)}</td>
                                         <td className={cx(TD, 'text-right text-kidville-muted')}>{acconto > 0 ? formatEuro(acconto) : '—'}</td>
@@ -1181,6 +1188,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     importoTotale={Number(rateizza.pagamento.importo)}
                     obbligatorio={rateizza.pagamento.obbligatorio}
                     replacePagamentoId={rateizza.pagamento.id}
+                    metodiAmmessi={rateizza.pagamento.metodi_ammessi}
                     onClose={() => setRateizza(null)}
                     onDone={() => { setRateizza(null); load(); }}
                 />

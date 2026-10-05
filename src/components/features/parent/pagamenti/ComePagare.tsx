@@ -152,8 +152,43 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
 
     if (voci.length === 0) return null;
 
-    const blocchi = raggruppaPerConto(sedi, voci);
+    /**
+     * METODI AMMESSI (2026-10-05). Una voce che la segreteria vuole SOLO in contanti
+     * esce dal pannello del bonifico: la sua causale lì sarebbe un invito a fare
+     * proprio il bonifico che la scuola non vuole. Resta nella card perché resta da
+     * pagare — è nei contanti, e la frase in testa al bonifico dice dove trovarla.
+     */
+    const vociBonifico = voci.filter((v) => v.ammetteBonifico !== false);
+    const escluseContanti = voci.length - vociBonifico.length;
+    // Nessuna voce aperta ammette il bonifico ⇒ niente tab e niente IBAN:
+    // resta il solo pannello dei contanti (decisione del titolare, 2026-10-05).
+    const soloContanti = vociBonifico.length === 0;
+    /**
+     * Il metodo MOSTRATO. Lo stato resta quello scelto dalla persona (all'inizio
+     * «bonifico»), ma con `soloContanti` il pannello del bonifico non esiste: senza
+     * questa riga quello dei contanti nascerebbe `hidden`, e la card sarebbe il solo
+     * titolo. Derivato al render e non forzato con un effetto: se il realtime riporta
+     * una voce che ammette il bonifico, la card torna ai due tab da sola.
+     */
+    const metodoAttivo: Metodo = soloContanti ? 'contanti' : metodo;
+    /**
+     * L'esito di una copia vale solo finché c'è un comando di copia. Con
+     * `soloContanti` non c'è nessun IBAN da copiare — e un esito rimasto in volo
+     * (il realtime che toglie il bonifico entro i due secondi della conferma)
+     * punterebbe a un conto che non è più a schermo.
+     */
+    const esitoCopia = soloContanti ? null : esito;
+
+    // I conti del pannello del BONIFICO: solo le voci che lo ammettono.
+    const blocchi = raggruppaPerConto(sedi, vociBonifico);
     const nomiSedi = blocchi.flatMap((b) => b.nomi);
+    /**
+     * I plessi del pannello dei CONTANTI: TUTTE le voci aperte, comprese quelle
+     * uscite dal bonifico — anzi, soprattutto quelle: sono le uniche che si pagano
+     * SOLO lì. Leggere i nomi da `blocchi` lascerebbe fuori la segreteria di un
+     * plesso che ha solo voci in contanti, cioè proprio quella dove andare.
+     */
+    const nomiSediTutte = raggruppaPerConto(sedi, voci).flatMap((b) => b.nomi);
     /**
      * IL NOME DEL PLESSO DENTRO IL BLOCCO — e la condizione guarda i BLOCCHI, non i
      * nomi (rilievo 2 del collaudo, 2026-09-06).
@@ -175,8 +210,9 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
      * senza nome non aggiunge una segreteria: aggiunge un'incognita, e scrivere «Per
      * la sede Plesso Uno» mentre metà delle voci sono di un plesso ignoto sarebbe una
      * mezza verità detta con la faccia di un'indicazione.
+     * Conta `nomiSediTutte`, non `nomiSedi`: vedi sopra, le voci solo contanti.
      */
-    const mostraNomi = nomiSedi.length > 1;
+    const mostraNomi = nomiSediTutte.length > 1;
 
     const idTab = (m: Metodo) => `${idBase}-tab-${m}`;
     const idPannello = (m: Metodo) => `${idBase}-panel-${m}`;
@@ -278,7 +314,7 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
     };
 
     const tab = (m: Metodo, etichetta: string, Icona: typeof Landmark) => {
-        const attivo = metodo === m;
+        const attivo = metodoAttivo === m;
         return (
             <button
                 key={m}
@@ -354,22 +390,50 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 sé stessi. La seconda metà è diventata la prima riga DENTRO il pannello
                 del bonifico, dove serve e dove si nasconde insieme a lui. */}
 
-            <div
-                role="tablist"
-                aria-label={t('ariaMetodoPagamento')}
-                className="mt-3 flex gap-1 rounded-pill bg-kidville-cream p-1"
-            >
-                {tab('bonifico', t('metodoBonifico'), Landmark)}
-                {tab('contanti', t('metodoContanti'), Banknote)}
-            </div>
+            {/* CON `soloContanti` NON C'È NESSUN TAB (metodi ammessi, 2026-10-05): un
+                tablist con un tab solo è una scelta che non si può fare, e un tab
+                «Bonifico» davanti a voci che il bonifico non lo ammettono sarebbe un
+                invito sbagliato. Spariscono INSIEME il tablist e il pannello del
+                bonifico — così nessun `aria-controls` resta a puntare al nulla — e il
+                pannello dei contanti perde i suoi attributi di tab (vedi sotto). */}
+            {!soloContanti && (
+                <div
+                    role="tablist"
+                    aria-label={t('ariaMetodoPagamento')}
+                    className="mt-3 flex gap-1 rounded-pill bg-kidville-cream p-1"
+                >
+                    {tab('bonifico', t('metodoBonifico'), Landmark)}
+                    {tab('contanti', t('metodoContanti'), Banknote)}
+                </div>
+            )}
+            {/* …MA IL METODO SI DICE LO STESSO (rifinitura, 2026-10-05). Senza tab la
+                parola «Contanti» non compariva da nessuna parte: sotto l'occhiello si
+                leggeva subito «In segreteria, negli orari di apertura», e il genitore
+                doveva indovinare di che metodo si parlasse. Al posto della barra dei
+                tab, nella stessa posizione e con la stessa forma della pillola (icona,
+                Barlow 13px maiuscolo), c'è un'intestazione che lo dice.
+                NON È UN COMANDO, e non ne ha la faccia: un `<p>`, nessun ruolo, nessun
+                fuoco. E NON È VERDE, anche se il tab attivo lo è: in Alto Contrasto
+                `.kv-come-pagare .bg-kidville-green` diventa pieno GIALLO, il segnale
+                che in questa card vuol dire «premimi» (quinto giro, più sopra), e una
+                pillola gialla che non si preme lo prometterebbe a vuoto — proprio in
+                una card dove, coi soli contanti, non c'è niente da premere. Crema e
+                inchiostro pieno: la voce di «struttura» della barra dei tab, che in
+                Alto Contrasto diventa #1A1A1A con il testo bianco. */}
+            {soloContanti && (
+                <p className="mt-3 flex min-h-[44px] items-center justify-center gap-2 rounded-pill bg-kidville-cream px-3 font-barlow text-[13px] font-extrabold uppercase tracking-[0.05em] text-kidville-ink">
+                    <Banknote size={16} aria-hidden="true" /> {t('metodoContanti')}
+                </p>
+            )}
 
             {/* I due pannelli restano nel DOM (`hidden` su quello inattivo): così
                 `aria-controls` punta sempre a un elemento che esiste davvero. */}
+            {!soloContanti && (
             <div
                 role="tabpanel"
                 id={idPannello('bonifico')}
                 aria-labelledby={idTab('bonifico')}
-                hidden={metodo !== 'bonifico'}
+                hidden={metodoAttivo !== 'bonifico'}
                 className="mt-4"
             >
                 {/* Quello che serve PER IL BONIFICO si dice dentro il pannello del
@@ -377,6 +441,16 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                     la mezza riga che descriveva la scelta già fatta dai tab.
                     14px e non 12: è il corpo del testo di una card che un genitore
                     legge sul telefono prima di spostare dei soldi. */}
+                {/* Le voci uscite dal bonifico (solo contanti) non spariscono in
+                    silenzio: la prima riga del pannello dice quante sono e dove sono.
+                    Senza, il genitore conterebbe le causali, ne troverebbe una in meno
+                    delle voci aperte e penserebbe a un errore. `sub` come
+                    l'introduzione qui sotto: è contesto, non un comando. */}
+                {escluseContanti > 0 && (
+                    <p className="mb-2 font-maven text-sm leading-relaxed text-pretty text-kidville-sub">
+                        {t('bonificoEsclusiContanti', { count: escluseContanti })}
+                    </p>
+                )}
                 <p className="font-maven text-sm leading-relaxed text-pretty text-kidville-sub">
                     {t('comePagareIntro')}
                 </p>
@@ -561,12 +635,17 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 })}
                 </div>
             </div>
+            )}
 
+            {/* Con `soloContanti` questo pannello è la card intera: niente
+                `role="tabpanel"` né `aria-labelledby`, perché non c'è nessun tab che
+                lo etichetti — un pannello di tab senza tab è un ruolo che mente a chi
+                naviga a voce. Gli attributi vanno via INSIEME (spread condizionale):
+                uno senza l'altro sarebbe un mezzo pattern. */}
             <div
-                role="tabpanel"
+                {...(soloContanti ? {} : { role: 'tabpanel', 'aria-labelledby': idTab('contanti') })}
                 id={idPannello('contanti')}
-                aria-labelledby={idTab('contanti')}
-                hidden={metodo !== 'contanti'}
+                hidden={metodoAttivo !== 'contanti'}
                 className="mt-4 space-y-3"
             >
                 {/* LE ICONE NON SONO VERDI (quinto giro, 2026-09-05). Lo erano qui e nere
@@ -600,7 +679,7 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                             <Building2 size={16} />
                         </span>
                         <span className="min-w-0 break-words">
-                            {t('sediDelBlocco', { count: nomiSedi.length, sedi: nomiSedi.join(' · ') })}
+                            {t('sediDelBlocco', { count: nomiSediTutte.length, sedi: nomiSediTutte.join(' · ') })}
                         </span>
                     </p>
                 )}
@@ -637,13 +716,17 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 role="status"
                 aria-live="polite"
                 className={
-                    esito && !esito.ok
+                    esitoCopia && !esitoCopia.ok
                         ? 'mt-3 flex items-start gap-2 font-maven text-sm leading-relaxed text-pretty text-kidville-ink'
                         : 'sr-only'
                 }
             >
-                {esito === null ? '' : esito.ok ? (
-                    nomeComandoIban(blocchi.find((b) => b.chiave === esito.chiave) ?? blocchi[0], true)
+                {/* Il ripiego su `blocchi[0]` vale solo se un blocco c'è: con
+                    `soloContanti` l'elenco è vuoto, e `esitoCopia` è già `null`. */}
+                {esitoCopia === null ? '' : esitoCopia.ok ? (
+                    blocchi.length > 0
+                        ? nomeComandoIban(blocchi.find((b) => b.chiave === esitoCopia.chiave) ?? blocchi[0], true)
+                        : ''
                 ) : (
                     <>
                         <span className={SCATOLA_ICONA} aria-hidden="true">

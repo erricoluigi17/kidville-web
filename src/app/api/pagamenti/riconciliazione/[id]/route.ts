@@ -523,22 +523,6 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
           operazione: 'pagamenti/riconciliazione/[id]:PATCH',
         })
         if (esito.ok) {
-          // Chi ha riaperto: la riapertura cancella `confermato_da`/`confermato_il`,
-          // quindi senza questa riga «chi aveva confermato quel bonifico» si perde e
-          // nessuno sa nemmeno chi l'abbia disfatto.
-          await logScrittura(supabase, {
-            attore: auth.user,
-            entitaTipo: 'riconciliazione_movimenti',
-            entitaId: id,
-            azione: 'update',
-            scuolaId: mov.scuola_id ?? undefined,
-            valoreDopo: {
-              stato: 'da_abbinare',
-              transazione_annullata: esito.ok.transazioneAnnullata,
-              incassi_stornati: esito.ok.incassiStornati,
-            },
-          })
-
           // Evento critico → il SUCCESSO si logga (AGENTS.md §5): con i soli errori,
           // «nessun log» non distinguerebbe «tutto ok» da «non è mai partito niente».
           // Solo uuid, numeri e booleani: la causale di un bonifico porta i nomi delle
@@ -590,6 +574,25 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
               )
             }
           }
+          // Chi ha riaperto: la riapertura cancella `confermato_da`/`confermato_il`,
+          // quindi senza questa riga «chi aveva confermato quel bonifico» si perde e
+          // nessuno sa nemmeno chi l'abbia disfatto.
+          // ⚠️ DOPO l'«ignora», non prima (revisione finale, 2026-10-05): l'audit
+          // registrava `da_abbinare` anche quando un istante dopo la riga finiva
+          // `ignorato`, cioè uno stato che la riga non aveva più. Ora porta quello
+          // in cui è RIMASTA.
+          await logScrittura(supabase, {
+            attore: auth.user,
+            entitaTipo: 'riconciliazione_movimenti',
+            entitaId: id,
+            azione: 'update',
+            scuolaId: mov.scuola_id ?? undefined,
+            valoreDopo: {
+              stato: ignoraApplicato ? 'ignorato' : 'da_abbinare',
+              transazione_annullata: esito.ok.transazioneAnnullata,
+              incassi_stornati: esito.ok.incassiStornati,
+            },
+          })
           // Il SUCCESSO dell'intenzione dell'operatrice, distinto dal
           // `movimento-riaperto` qui sopra (che è il successo dello storno).
           logEvento('pagamento', 'info', {

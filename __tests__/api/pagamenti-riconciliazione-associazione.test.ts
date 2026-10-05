@@ -606,6 +606,41 @@ describe('PATCH riapri con `poi` — eliminare l’associazione', () => {
     expect(updateDi('riconciliazione_movimenti')).toHaveLength(1)
   })
 
+  /**
+   * ─── L'AUDIT DICE LO STATO FINALE (revisione finale, 2026-10-05) ─────────────
+   *
+   * `logScrittura` registrava `stato: 'da_abbinare'` PRIMA dell'«ignora», e la riga
+   * finiva `ignorato` un istante dopo: il registro raccontava uno stato che la riga
+   * non aveva più. Ora l'audit si scrive dopo, con lo stato in cui la riga è rimasta.
+   */
+  const statoNellAudit = () => {
+    expect(h.logScrittura, 'nessuna traccia di chi ha riaperto').toHaveBeenCalledTimes(1)
+    return ((h.logScrittura.mock.calls[0] as unknown[])[1] as { valoreDopo?: { stato?: string } }).valoreDopo?.stato
+  }
+
+  it('`poi: \'ignorato\'` applicato: l’audit registra `ignorato`, non `da_abbinare`', async () => {
+    const res = await patch({ azione: 'riapri', poi: 'ignorato' })
+
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { data?: Record<string, unknown> }).data?.stato).toBe('ignorato')
+    expect(statoNellAudit()).toBe('ignorato')
+  })
+
+  it('`poi: \'ignorato\'` NON applicato (corsa persa): l’audit registra `da_abbinare`', async () => {
+    h.esitiUpdateMov = [
+      { data: [{ id: MID }], error: null },
+      { data: [], error: null },
+    ]
+
+    expect((await patch({ azione: 'riapri', poi: 'ignorato' })).status).toBe(200)
+    expect(statoNellAudit()).toBe('da_abbinare')
+  })
+
+  it('senza `poi`: l’audit registra `da_abbinare`', async () => {
+    expect((await patch({ azione: 'riapri' })).status).toBe(200)
+    expect(statoNellAudit()).toBe('da_abbinare')
+  })
+
   it('`poi` fuori dall’elenco: 400', async () => {
     const res = await patch({ azione: 'riapri', poi: 'cancellato' })
 

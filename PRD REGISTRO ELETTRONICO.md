@@ -1,3 +1,73 @@
+## 💶 Changelog — 2026-10-05: metodi di pagamento ammessi e associazioni dei bonifici (branch `feat/metodi-pagamento-riconciliazione`)
+
+**Stato.** 🟡 **Sul branch, non ancora in PR.** Il gate finale (`eslint` · `tsc` · `vitest run` · `npm run build`) si esegue dopo questo commit: finché questa riga non ne porta i numeri, non è stato visto verde. **Una migrazione**, `20261005120000_pagamenti_metodi_ammessi.sql`, che l'integrazione Supabase **applica in produzione al merge**; fino ad allora è dichiarata in `MIGRAZIONI_ATTESE_AL_MERGE`. Spec `docs/superpowers/specs/2026-10-05-metodi-ammessi-e-associazioni-bonifici-design.md`, piano `docs/superpowers/plans/2026-10-05-metodi-ammessi-e-associazioni-bonifici.md`.
+
+**Perché.** Due richieste del titolare, nate lo stesso giorno.
+- **Con quale metodo si paga una voce.** Il metodo esisteva solo sull'incasso (`incassi.metodo`), cioè a pagamento avvenuto. Per una voce da saldare in segreteria, come il materiale, il genitore vedeva lo stesso IBAN e la stessa causale di una retta, nella card «Come pagare» e nei solleciti via email.
+- **A cosa è associato un bonifico.** In Riconciliazione, una volta associato, il popup non diceva **a quale voce**. «Riapri» c'era, ma partiva senza conferma, non si leggeva né come «modifica» né come «elimina», e dopo bisognava chiudere, ritrovare la riga e riaprirla. Il caso reale, a Giugliano il 05/10: un bonifico per una quota d'iscrizione mai registrata in app era finito sulla retta di settembre, e quello della retta di settembre su ottobre. Dall'app non si poteva correggere: è stato corretto **a mano sul DB**, in una sola transazione (storni, nuova associazione, richiesta di fattura spostata sulla voce giusta).
+
+**Le decisioni del titolare (05/10).**
+1. Metodi selezionabili: **Contanti** e **Bonifico**, nient'altro. Di partenza sono spuntati entrambi, cioè il comportamento di prima.
+2. **Causale e IBAN compaiono solo se il bonifico è ammesso.**
+3. Si sceglie **nel generatore «una tantum per categoria» e nella modifica di un pagamento**. Rette, «Nuovo acquisto», rate e ticket restano contanti + bonifico.
+4. La richiesta di fattura del caso reale si **sposta sulla voce giusta**.
+5. «Elimina associazione»: nella conferma si sceglie fra **rimettere il bonifico da abbinare** e **segnarlo come ignorato**.
+
+**Metodi ammessi sulla voce.**
+- **Dati.** `pagamenti.metodi_ammessi text[] NOT NULL DEFAULT ARRAY['contanti','bonifico']`, con il CHECK `pagamenti_metodi_ammessi_validi`: almeno un metodo, solo valori noti. Il default copre ogni insert che già esiste (RPC delle rette, ticket, composizione, merchandise). L'helper puro `src/lib/pagamenti/metodi-ammessi.ts`, senza import perché lo usano anche componenti client, normalizza: valori ignoti scartati; assente, vuoto o tutto ignoto → entrambi.
+- **Segreteria.** Un gruppo «Metodi di pagamento ammessi» con due caselle, Contanti e Bonifico, nel generatore per categoria e nella modifica di un pagamento; con zero caselle compare l'errore e il salvataggio si blocca. `POST /api/pagamenti/genera` scrive il valore sulla voce singola, sul padre e sulle sue rate; il PATCH della modifica lo cambia. Badge «Solo contanti» / «Solo bonifico» nella riga dello scadenzario, nel dettaglio della voce e nella card mobile.
+- **Genitore.** Lo stesso badge sulla card della voce. `GET /api/pagamenti` restituisce `metodi_ammessi` e mette `causale_suggerita` a `null` sulle voci senza bonifico: si decide a valle del motore della causale, che resta unico. Nella card «Come pagare» queste voci escono dalle causali del bonifico, con la frase «N voci si pagano solo in contanti: le trovi nella scheda Contanti.»; se **nessuna** voce aperta ammette il bonifico, spariscono scheda Bonifico e IBAN e resta il solo pannello Contanti.
+- **Solleciti via email.** Una voce senza bonifico non ha il riquadro «Dati per il bonifico»: al suo posto c'è «Come pagare», con la frase del pagamento in contanti presso la segreteria.
+- **DB della CI, non migrato.** Su `PGRST204`/`42703` la scrittura si ritenta senza la colonna, con un log `warn`; in lettura la voce vale «entrambi».
+- **Riconciliazione invariata.** Un bonifico arrivato su una voce «solo contanti» si associa ancora, a mano.
+
+**L'associazione dei bonifici si vede e si cambia.**
+- **Lettura.** Nuova `GET /api/pagamenti/riconciliazione/[id]` (staff, `zod` sull'uuid, `withRoute`). Dice a cosa è associato il bonifico, con una riga per voce (bambino, voce, importo, quanto incassato con questo bonifico, stato, fattura, richiesta di fattura in coda), e chi ha confermato e quando, oppure «abbinato in automatico». Nel composito le voci si leggono dagli incassi della stessa transazione. Le voci di **un'altra sede** (fratelli in plessi diversi) escono **anonime**. Il popup la legge una volta sola all'apertura, al posto di `/api/pagamenti/{id}`.
+- **Popup.** Su un bonifico confermato compaiono il riquadro «Associato a» e, al posto di «Riapri», **«Modifica associazione»** ed **«Elimina associazione»**. Su un ignorato, «Rimetti da abbinare».
+- **Conferma.** Prima di toccare qualunque cosa, una finestra elenca cosa viene annullato:
+  - lo storno di ciascun incasso, voce per voce;
+  - le voci create dalla composizione, che restano e tornano da pagare;
+  - la ricevuta, che viene annullata;
+  - la fattura **emessa**, che resta valida e va stornata con una nota di credito;
+  - la richiesta di fattura in coda, che viene tolta.
+
+  Per «Elimina» si sceglie il destino: «torna da abbinare» (predefinito) o «viene segnato come ignorato» (`PATCH azione:'riapri'` con `poi`). L'ignora è un update condizionale su `stato='da_abbinare'`: se non tocca righe, la riapertura resta fatta e la risposta lo dice.
+- **«Modifica».** Dopo la riapertura il pannello ricarica elenco e voci e **riapre il popup sulla stessa riga**, ora da abbinare: si associa con suggerimenti, ricerca o «Componi». Non è una RPC «sposta associazione». «Riapri + riabbina» riusa percorsi già collaudati (conferma singola, composizione, guardia `BONIFICO_GIA_FATTURATO`, sede di scrittura), e il passaggio intermedio resta visibile.
+
+**Riapertura più sicura** (`src/lib/pagamenti/riapertura-movimento.ts`).
+- Se una fattura di una voce coinvolta è **in invio**: `409 RIAPERTURA_FATTURA_IN_INVIO`, prima di qualunque storno.
+- Dopo lo storno, le richieste di fattura `in_coda` o `errore` delle voci **non più pagate** si tolgono dalla coda (`fatture_coda_togli`). L'esito le conta (`richieste_fattura_tolte`) e il popup lo dice.
+- Sul composito la ricevuta della transazione si annulla (`annullaRicevutaTransazioneAttiva`), come già faceva `transazioni/[id]/annulla`. **Prima mancava.**
+
+**Errori non più muti** (AGENTS.md, regole 6 e 7).
+- **Storno di un incasso** (`eseguiStornoIncasso`). La marcatura `stornato_il`, la RPC di ricalcolo e `registro_modifiche` erano tre `.then(() => {}, () => {})`. Ora si legge `{ error }` e si logga; sul DB della CI `42883`/`42703` restano `info`.
+- **Annullo della ricevuta**, e **ricalcoli e audit della PATCH/DELETE** di un pagamento: gli stessi controlli.
+- **Generazione rateale.** Un alunno saltato ora si dice (`padre-non-creato`, `rate-non-create`, `padre-orfano-non-cancellato`).
+- **Solleciti.** I catch con soli commenti ora loggano, e l'allowlist del lock `catch-muti-allowlist` si accorcia.
+
+**Log** (solo uuid, conteggi e codici).
+- `pagamento` · `metodi-ammessi-scritti` (info, generazione) · `metodi-ammessi-modificati` (info, modifica) · `metodi-ammessi-colonna-assente` (warn, DB non migrato).
+- `pagamento` · `movimento-riaperto` (il successo dello storno) · `associazione-eliminata` / `associazione-riaperta` (l'intenzione dell'operatrice, con `ignorato`) · `ignora-dopo-riapertura-non-applicato` · `riapertura-fattura-in-invio` (warn).
+
+**Resta da provare sul campo.**
+- Un pagamento «solo contanti» visto da un genitore, in app e nell'email di sollecito.
+- Un'associazione modificata, e una eliminata, dalla segreteria.
+- Caso reale: la richiesta di fattura spostata resterà **in errore** finché la segreteria non completa il CAP nell'anagrafica del genitore intestatario.
+
+**Dopo il merge.** PR-B: la migrazione esce da `MIGRAZIONI_ATTESE_AL_MERGE` e le fotografie si rigenerano dalla produzione.
+
+**Dopo il deploy, in produzione (sola lettura).**
+
+```sql
+-- La migrazione è applicata:
+SELECT column_name, column_default FROM information_schema.columns
+ WHERE table_schema = 'public' AND table_name = 'pagamenti' AND column_name = 'metodi_ammessi';
+-- Le voci ristrette a un metodo solo (attese > 0 dopo il primo uso vero):
+SELECT metodi_ammessi, count(*) FROM pagamenti GROUP BY 1;
+```
+
+E `app_log` per `associazione-eliminata` e `associazione-riaperta` (il primo uso vero), `riapertura-fattura-in-invio` (rara) e `metodi-ammessi-colonna-assente` (atteso 0 in produzione).
+
 ## 🔔 Changelog — Pop-up «Aggiorna l'app» per il personale anche su iOS: la 1.2 è sull'App Store — 2026-10-05 (branch `feat/anagrafica-docente`, dentro la PR #184)
 
 **Stato.** 🟡 **Gate verde, dentro la PR #184** (`eslint` 0 · `tsc` 0 · `vitest run` 1670 file / 28.187 test · `npm run build` ok, sull'albero intero della #184; scelta del titolare: l'albero di lavoro era sul branch dell'anagrafica docente, e la regola del repo è continuare sul branch secondario aperto). **Nessuna migrazione**, nessun cambiamento sul server, nessuna build delle app.
@@ -27395,6 +27465,7 @@ dalla Segreteria.
 La Segreteria dispone di un tool per generare qualsiasi tipologia di pagamento (es. Rette, Quote d'iscrizione, Divise, Gite).
 • Assegnazione Flessibile: I pagamenti possono essere assegnati massivamente a un'intera classe oppure singolarmente a specifici studenti.
 • Rateizzazione: In fase di creazione di un pagamento ad alto importo, la Segreteria ha la facoltà di abilitare un piano di rateizzazione predefinito.
+• Metodi di pagamento ammessi **✅ (2026-10-05)**: ogni voce dichiara con quali metodi si paga (`pagamenti.metodi_ammessi`: Contanti e/o Bonifico, di partenza entrambi). La Segreteria li sceglie con due caselle nel generatore «una tantum per categoria» e nella modifica di un pagamento; rette, «Nuovo acquisto», rate e ticket restano contanti + bonifico. Una voce ristretta porta il badge «Solo contanti» / «Solo bonifico» in scadenzario, dettaglio e card mobile. Vedi il changelog 2026-10-05.
 
 ### 2.2 Rette Mensili e Quote
 • Automazione Rette: Il sistema genera automaticamente le rette ricorrenti. Di default, la retta applicata e la data di scadenza sono standard per tutti.
@@ -27407,6 +27478,7 @@ La Segreteria dispone di un tool per generare qualsiasi tipologia di pagamento (
 • II genitore non può pagare tramite l'app.
 • Quando la Segreteria riceve il pagamento, lo registra manualmente a sistema. L'aggiornamento dello stato in "Pagato" è istantaneo e si riflette in tempo reale sull'app del genitore.
 • Fatturazione su Richiesta: Il sistema non invia fatture automaticamente. La Segreteria ha a disposizione un pulsante "Invia Fattura/Ricevuta" per generare e inoltrare il documento al genitore.
+• Riconciliazione bancaria, associazione visibile e modificabile **✅ (2026-10-05)**: il popup di un bonifico confermato dice a quali voci è associato (riquadro «Associato a», `GET /api/pagamenti/riconciliazione/[id]`; le voci di un'altra sede escono anonime) e offre «Modifica associazione» ed «Elimina associazione». Una conferma elenca prima cosa si annulla: storni, ricevuta, richieste di fattura in coda; una fattura già emessa resta valida e va stornata con nota di credito. «Elimina» rimette il bonifico da abbinare o lo segna come ignorato; con una fattura in invio la riapertura si rifiuta (409).
 
 ### 3.2 Cruscotto Insoluti
 • Dashboard Morosità: La Direzione ha una visuale completa sui pagamenti in sospeso. Gli utenti insoluti e i pagamenti scaduti sono evidenziati cromaticamente in rosso.
@@ -27417,6 +27489,7 @@ La Segreteria dispone di un tool per generare qualsiasi tipologia di pagamento (
 • L'interfaccia genitore categorizza i pagamenti per tipologia (es. "Rette", "Quote di iscrizione", "Mensa", "Gite"). **✅ (P3.2, DL-022)** vista raggruppata per `payment_categories` (`raggruppaPerCategoria`), storico saldati + pendenze per categoria. Ricevuta PDF non fiscale scaricabile sul saldato **✅ (DL-023)**.
 • Ogni categoria mostra chiaramente lo storico dei pagamenti saldati e le pendenze future.
 • Voci Facoltative: Per i pagamenti non obbligatori, il genitore può semplicemente ignorarli; resteranno visibili nell'elenco fino alla data di naturale scadenza.
+• Come pagare **✅ (2026-10-05)**: causale e IBAN compaiono solo per le voci che ammettono il bonifico. Una voce «solo contanti» ha il suo badge ed esce dalle causali della card «Come pagare»; nei solleciti via email, al posto dei dati del bonifico, porta la frase del pagamento in contanti presso la segreteria. Se nessuna voce aperta ammette il bonifico, la card mostra solo Contanti.
 
 ### 4.2 Sistema di Reminder Aggressivo
 • Per combattere le insolvenze, il sistema prevede una logica di notifica push automatizzata per i pagamenti obbligatori:

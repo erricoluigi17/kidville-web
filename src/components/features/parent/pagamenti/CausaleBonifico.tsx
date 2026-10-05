@@ -232,6 +232,8 @@ export interface VoceCausale {
     cognome: string;
     /** Il CF del proprio figlio è presente: quando manca, mostra la nota di ripiego. */
     hasCf: boolean;
+    /** `false` quando la voce si paga SOLO in contanti: esce dal pannello del bonifico. Assente = ammesso. */
+    ammetteBonifico?: boolean;
 }
 
 // Card «Causale consigliata per il bonifico»: UNA causale per voce ancora aperta,

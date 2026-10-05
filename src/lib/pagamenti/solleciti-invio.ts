@@ -64,6 +64,9 @@ interface PagRow {
 
 const MS_GIORNO = 86_400_000
 
+/** Il registro `solleciti` assente (DB E2E della CI non migrato): Postgres e PostgREST. */
+const REGISTRO_ASSENTE = new Set(['42P01', 'PGRST205'])
+
 export async function sollecitaPagamenti(
     supabase: SupabaseClient,
     pagamentoIds: string[],
@@ -97,14 +100,33 @@ export async function sollecitaPagamenti(
     const pags = (pagRows || []) as unknown as PagRow[]
 
     // livello già raggiunto (registro; degrade → si riparte da 1)
+    //
+    // Il degrado resta quello di sempre, ma ora SI DICE. Il `catch` qui sotto aveva
+    // soltanto un commento, e non scattava nemmeno: PostgREST non lancia, l'errore
+    // torna in `{ error }` e `data` resta `null` — cioè «nessuno storico», in silenzio.
+    // Per il registro assente (DB della CI non migrato) è giusto ripartire da 1, e
+    // basta un `info`; per un guasto vero è un `error`, perché vuol dire rimandare il
+    // 1° sollecito a chi ha già ricevuto il 2°.
     const maxLivello = new Map<string, number>()
     try {
-        const { data } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', pagamentoIds)
+        const { data, error: errLivelli } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', pagamentoIds)
+        if (errLivelli) {
+            const assente = REGISTRO_ASSENTE.has((errLivelli as { code?: string }).code ?? '')
+            logEvento('pagamento', assente ? 'info' : 'error', {
+                operazione: 'solleciti:livelli',
+                esito: assente ? 'registro-solleciti-assente' : 'livelli-non-letti',
+                n: pagamentoIds.length,
+            }, errLivelli)
+        }
         for (const s of (data || []) as { pagamento_id: string; livello: number }[]) {
             maxLivello.set(s.pagamento_id, Math.max(maxLivello.get(s.pagamento_id) ?? 0, s.livello))
         }
-    } catch {
-        // registro assente: nessuno storico livelli
+    } catch (err) {
+        logEvento('pagamento', 'error', {
+            operazione: 'solleciti:livelli',
+            esito: 'livelli-non-letti',
+            n: pagamentoIds.length,
+        }, err)
     }
 
     const cfgCache = new Map<string, {
@@ -319,11 +341,22 @@ export async function sollecitaPagamenti(
                 link: '/parent/pagamenti',
                 scuolaId: pag.scuola_id,
             })
-        } catch {
-            // push best-effort
+        } catch (err) {
+            // Best-effort: l'email è già partita e il registro qui sotto si scrive lo
+            // stesso. Ma una push persa si DICE — il commento «best-effort» era l'unica
+            // traccia, e non finiva in `app_log`. Solo l'uuid della voce.
+            logEvento('notifica', 'error', {
+                operazione: 'solleciti:push',
+                esito: 'push-non-accodata',
+                pagamento_id: id,
+            }, err)
         }
+        // Il registro è l'AUDIT di ciò che è partito (e la fonte dei livelli qui sopra).
+        // Se non si scrive il sollecito resta valido — l'email è partita — ma il prossimo
+        // ripartirebbe dallo stesso livello: si dice, `info` se il registro non esiste
+        // (DB della CI), `error` altrimenti. PostgREST non lancia: si legge `{ error }`.
         try {
-            await supabase.from('solleciti').insert({
+            const { error: errRegistro } = await supabase.from('solleciti').insert({
                 pagamento_id: id,
                 scuola_id: pag.scuola_id,
                 alunno_id: pag.alunno_id,
@@ -335,8 +368,20 @@ export async function sollecitaPagamenti(
                 automatico: !!opts.automatico,
                 inviato_da: opts.attoreId ?? null,
             })
-        } catch {
-            // registro assente (CI): l'invio resta comunque valido
+            if (errRegistro) {
+                const assente = REGISTRO_ASSENTE.has((errRegistro as { code?: string }).code ?? '')
+                logEvento('pagamento', assente ? 'info' : 'error', {
+                    operazione: 'solleciti:registro',
+                    esito: assente ? 'registro-solleciti-assente' : 'registro-sollecito-non-scritto',
+                    pagamento_id: id,
+                }, errRegistro)
+            }
+        } catch (err) {
+            logEvento('pagamento', 'error', {
+                operazione: 'solleciti:registro',
+                esito: 'registro-sollecito-non-scritto',
+                pagamento_id: id,
+            }, err)
         }
         await supabase.from('pagamenti').update({ ultimo_sollecito_il: new Date().toISOString() }).eq('id', id)
         esiti.push({ pagamento_id: id, ok: true, livello, oggetto, destinatari })

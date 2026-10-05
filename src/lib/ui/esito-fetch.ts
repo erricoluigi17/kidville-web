@@ -2148,6 +2148,20 @@ export const CODICI_ERRORE = {
      * contro `fattura-ruolo-non-ammesso`).
      */
     FATTURA_ACCESSO_NEGATO: 'erroreFatturaAccessoNegato',
+    /** 500 — non si è potuto verificare l’accesso alla scheda anagrafica (`src/lib/anagrafiche/docente/visibilita.ts`): alunno, sedi o assegnazioni illeggibili. */
+    ANAGRAFICA_SCOPE_NON_RISOLTO: 'erroreAnagraficaScopeNonRisolto',
+    /** 404 — la scheda anagrafica non esiste, o il bambino non frequenta (ritirato, stato mai deciso o vuoto) o è anonimizzato (`visibilita.ts`). */
+    ANAGRAFICA_NON_TROVATA: 'erroreAnagraficaNonTrovata',
+    /** 403 — il bambino della scheda anagrafica è di un’altra sede (`visibilita.ts`). */
+    ANAGRAFICA_FUORI_SEDE: 'erroreAnagraficaFuoriSede',
+    /** 403 — il bambino della scheda anagrafica non è in una delle classi assegnate al docente (`visibilita.ts`). */
+    ANAGRAFICA_FUORI_SEZIONE: 'erroreAnagraficaFuoriSezione',
+    /** 403 — il profilo di chi apre la scheda anagrafica non ha nessuna sede (`visibilita.ts`). */
+    ANAGRAFICA_SENZA_SEDE: 'erroreAnagraficaSenzaSede',
+    /** 500 — l'elenco dell'anagrafica docente non si è potuto leggere (`api/teacher/alunni`). */
+    ANAGRAFICA_ELENCO_NON_LETTO: 'erroreAnagraficaElencoNonLetto',
+    /** 500 — la scheda dell'anagrafica docente non si è potuta leggere (`api/teacher/alunni/[id]`). */
+    ANAGRAFICA_NON_LETTA: 'erroreAnagraficaNonLetta',
     /** 409 — la revisione storica è già stata finalizzata o la sede è già attiva. */
     FATTURA_REVISIONE_IMMUTABILE: 'erroreFatturaRevisioneImmutabile',
     /** 409 — l’insieme delle irrisolte è cambiato dopo l’anteprima mostrata allo staff. */

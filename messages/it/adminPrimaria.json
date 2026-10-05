@@ -85,6 +85,9 @@
   "fascicoloAzioneDownload": "Download",
   "fascicoloAzioneUpload": "Caricamento",
   "fascicoloAzioneDelete": "Eliminazione",
+  "fascicoloFinalitaAnagraficaDocente": "Scheda anagrafica",
+  "fascicoloIncludiAnagrafica": "Includi le aperture della scheda anagrafica",
+  "fascicoloErroreLettura": "Non è stato possibile leggere il registro.",
 
   "didatticaTabMaterie": "Materie",
   "didatticaTabDocenti": "Docenti & Materie",

@@ -181,23 +181,30 @@ function sediDalCookie(request: NextRequest): string[] {
  * restituisce la forma CANONICA del database: prima un cookie in maiuscolo
  * svuotava lo scope — cioè negava — *e* accendeva quel segnale con un falso
  * positivo. Lo stesso confronto sbagliato che sulla scrittura valeva un 403.
+ *
+ * `accessibili` (facoltativo): le sedi dell'utente che il chiamante ha GIÀ letto con
+ * `scuoleDiUtente`. Passate, non si rilegge `utenti_scuole`: per un admin sarebbe una
+ * seconda lettura dello stesso ponte, e se fallisse lei sola lo scope diventerebbe
+ * `[]` — un elenco «vuoto» dopo un controllo di sede appena superato. Chi non le passa
+ * ottiene il comportamento di sempre.
  */
 export async function resolveScuoleAttive(
   request: NextRequest,
   supabase: SupabaseClient,
   user: AppUser,
+  accessibili?: string[],
 ): Promise<string[]> {
-  const accessibili = await scuoleDiUtente(supabase, user)
+  const sedi = accessibili ?? (await scuoleDiUtente(supabase, user))
   const selezionate = sediDalCookie(request)
-  if (selezionate.length === 0) return accessibili
-  const inter = sediInScope(selezionate, indiceSedi(accessibili))
+  if (selezionate.length === 0) return sedi
+  const inter = sediInScope(selezionate, indiceSedi(sedi))
   if (inter.length === 0) {
     // `warn` → persistito: nessuna sede selezionata è accessibile. Solo uuid
     // utente, ruolo e conteggi: nessun dato di minori, nessuna sede in chiaro.
     logEvento('auth', 'warn', {
       tipo: 'sedi-attive-non-accessibili', azione: 'resolveScuoleAttive',
       utente: user.id, ruolo: user.role,
-      selezionate: selezionate.length, accessibili: accessibili.length,
+      selezionate: selezionate.length, accessibili: sedi.length,
     })
   }
   return inter

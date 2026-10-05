@@ -79,12 +79,14 @@ export async function puoAccedereFascicolo(
  * ognuno dei trentatré alunni significherebbe sessantasei query per disegnare
  * una pagina.
  *
- * ⚠️ Le due funzioni devono restare d'accordo. Se un giorno nasce una terza
- * tabella di assegnazione, va aggiunta in entrambe — un elenco più generoso del
+ * ⚠️ Le due funzioni devono restare d'accordo, e con loro `sezioniAnagraficaVisibili`
+ * (`src/lib/anagrafiche/docente/visibilita.ts`). Se un giorno nasce un'altra
+ * tabella di assegnazione, va aggiunta in tutte e tre — un elenco più generoso del
  * gate mostrerebbe righe che poi non si aprono; più severo, nasconderebbe
  * documenti a chi ha diritto di vederli e nessuno se ne accorgerebbe.
- * Il lock `__tests__/lib/documenti-registro-rbac.test.ts` verifica che leggano
- * le stesse due tabelle.
+ * Il lock `__tests__/architecture/assegnazioni-docente-coerenti.test.ts` verifica
+ * che leggano le stesse due tabelle (fino al 2026-10-04 questo commento citava un
+ * file che non è mai esistito).
  */
 export async function sezioniContitolari(
   supabase: SupabaseClient,

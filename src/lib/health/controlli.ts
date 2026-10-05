@@ -381,6 +381,27 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'Job di sola SQL, non passa da una route HTTP: qui sarebbe sempre rosso. Vale anche ' +
             'per consensi-retention, audit-docente-retention e app-log-bonifica-pii.',
     },
+    // `fascicolo-audit-ip-retention` (`29 4 * * *`, OGNI NOTTE, funzione SQL
+    // `fascicolo_audit_ip_retention_tick`): azzera `ip` e `user_agent` del registro degli accessi
+    // ai dati dei bambini dopo un anno, decisione del titolare del 2026-10-04; la riga resta. È
+    // giornaliero e il suo battito ha la forma che `controlloBattitoCron` legge (lock
+    // `informativa-conservazione-dichiarata`, `BATTITI_DA_LEGGERE`): il suo posto è `JOB_CRON`, con
+    // `finestraMs: 26 * ORA` come gli altri giornalieri.
+    //
+    // Sta qui per un vincolo di SEQUENZA, non per una scelta — come `galleria-retention` e
+    // `cestino-registro-retention` prima di lui. La migrazione
+    // (`20261004215133_fascicolo_audit_ip_retention`) la applica l'integrazione al merge della PR
+    // #184, e fino ad allora il lock `cron-sorvegliato-e-applicato` vieta di sorvegliarla: un nome
+    // in `JOB_CRON` senza il suo lavoro manda `/api/health` in `degradato` dal primo deploy, e un
+    // allarme che suona da solo viene spento.
+    {
+        nome: 'fascicolo-audit-ip-retention',
+        perche:
+            'IN ATTESA DEL PRIMO BATTITO: la migrazione che lo installa la applica l’integrazione ' +
+            'Supabase al merge della PR #184. Dopo il primo battito `ok` in app_log (impronta ' +
+            '`cron:fascicolo-audit-ip-retention`) e la fotografia delle migrazioni rigenerata, ' +
+            'passa in `JOB_CRON` con `finestraMs: 26 * ORA`.',
+    },
 ]
 
 /** La finestra più larga: quanto indietro serve leggere `app_log` per coprirle tutte. */

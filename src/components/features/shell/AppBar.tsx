@@ -92,8 +92,11 @@ export function AppBar({ area }: AppBarProps) {
   // Onboarding genitore: primo accesso, niente navigazione (resta il wordmark).
   const isOnboarding = pathname.startsWith('/parent/onboarding');
   // Le pagine classe primaria hanno già il back nella ClasseShell (condivisa
-  // con /admin): la AppBar non ne aggiunge un secondo.
-  const suppressBack = /^\/teacher\/primaria\/[^/]+/.test(pathname);
+  // con /admin): la AppBar non ne aggiunge un secondo. Lo stesso per la scheda
+  // anagrafica dell'insegnante: il suo «Tutti gli alunni» riapre l'elenco CON i
+  // filtri di prima, la freccia (in avanti, su di un livello) lo riaprirebbe senza.
+  const suppressBack =
+    /^\/teacher\/primaria\/[^/]+/.test(pathname) || /^\/teacher\/alunni\/[^/]+/.test(pathname);
   const back = isOnboarding || suppressBack ? null : backTarget(pathname, root);
 
   const withUser = (href: string) => (area === 'teacher' && userId ? `${href}?userId=${userId}` : href);

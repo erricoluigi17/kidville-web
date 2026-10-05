@@ -1,3 +1,97 @@
+## 🔔 Changelog — Pop-up «Aggiorna l'app» per il personale anche su iOS: la 1.2 è sull'App Store — 2026-10-05 (branch `feat/anagrafica-docente`, dentro la PR #184)
+
+**Stato.** 🟡 **Gate verde, dentro la PR #184** (`eslint` 0 · `tsc` 0 · `vitest run` 1670 file / 28.187 test · `npm run build` ok, sull'albero intero della #184; scelta del titolare: l'albero di lavoro era sul branch dell'anagrafica docente, e la regola del repo è continuare sul branch secondario aperto). **Nessuna migrazione**, nessun cambiamento sul server, nessuna build delle app.
+
+**Perché adesso.** La 1.2 (6) è **vista sullo store**: Apple l'ha presa in revisione il 04/10 alle ~21:15 UTC e l'ha approvata; dalle ~22:01 UTC App Store Connect dà `READY_FOR_SALE`, con il territorio Italia `AVAILABLE` (niente `CANNOT_SELL`). La scheda pubblica `apps.apple.com/it/app/kidville/id6794883055` mostra «Versione 1.2» con le sue novità. ⚠️ `itunes.apple.com/lookup?…&country=it` rispondeva ancora `1.1` due ore dopo: quell'API ha una cache più lenta della scheda, e per decidere fa fede la scheda.
+
+**Cosa cambia.** `VERSIONE_MINIMA_PERSONALE` passa da `{ ios: null, android: '1.2' }` a **`{ ios: '1.2', android: '1.2' }`**. Tutto il resto c'è già dalla #183: la minima scattata, il corpo del personale (`avvisoAggiornaCorpoPersonale`, testo approvato dal titolare), i log senza ruolo. Le famiglie non vedono niente di nuovo (`VERSIONE_MINIMA_STORE` resta `'1.1'`).
+
+**Verificato.**
+- `__tests__/lib/aggiornamento-app.test.ts` fotografa il valore spedito (1.2 su entrambe) e lo prova piattaforma per piattaforma: il docente sulla 1.1 → `personale`, il genitore → niente, il docente sulla 1.2 → niente senza chiedere il ruolo, il docente sulla 1.0 → `store`. La minima spenta, passata dal test, non chiede il ruolo su nessuna delle due.
+- `__tests__/components/AvvisoAggiornamentoApp.test.tsx`: col valore spedito, il personale sulla 1.1 vede il corpo del personale su iOS e su Android; spenta, niente e nessuna richiesta del ruolo.
+- **Mutazione rossa**: iOS rimessa a `null` → 4 test rossi. Ripristino: verde.
+
+**Dopo il deploy, in produzione (sola lettura)**: la query della voce del 04/10 deve mostrare anche righe `… ios 1.1`, e nessuna `… ios 1.2`.
+
+## 🪪 Changelog — Le insegnanti consultano l'anagrafica dei propri alunni, in sola lettura — 2026-10-04 (branch `feat/anagrafica-docente`)
+
+**Stato.** 🟡 In PR ([#184](https://github.com/erricoluigi17/kidville-web/pull/184)). **Una migrazione**, `20261004215133_fascicolo_audit_ip_retention` (conservazione degli IP del registro, vedi sotto), che l'integrazione Supabase **applica in produzione al merge**. Nessun cambio di RLS.
+
+**La richiesta (04/10).** «Le insegnanti devono poter vedere le anagrafiche dei propri alunni, non modificarle, solo visionarle.» Fino a oggi un docente riceveva a pezzi, in route diverse, solo nome, allergie, note mediche, email dei genitori e delegati: una scheda per lui non esisteva.
+
+**Le decisioni del titolare (04/10).**
+1. **Scheda completa senza economia.** Dati anagrafici, codice fiscale, nascita, cittadinanza, residenza, salute (allergie, note mediche, BES/DSA, pannolino), consensi, genitori con telefoni, email e codice fiscale, delegati al ritiro. **Mai**: retta, fatturazione, intestatari, sospensioni, documenti d'identità (file e numero), nascita e residenza dei genitori.
+2. **Alla primaria la vedono tutti i docenti della classe**: assegnazione diretta (`utenti_sezioni`) **e** per materia (`utenti_sezioni_materie`), la stessa regola del fascicolo.
+3. **Nuova voce «Alunni»** nel menu docente (gruppo «In classe»), poi elenco, poi scheda.
+4. **Ricerca per nome e ricerca avanzata**: sezione e grado, salute (con allergie, allergene preciso, BES/DSA, pannolino), consensi foto (senza consenso sito/social; un consenso **assente** conta come «senza»), anno di nascita, sesso.
+5. **I bambini `sospeso` sono visibili** (risposta del 04/10): un sospeso frequenta, e l'insegnante ne deve vedere almeno le allergie. Elenco e scheda leggono `STATI_CHE_FREQUENTANO` (`src/lib/alunni/stato.ts`, derivata da `LATO_DEL_CONFINE`: oggi `iscritto` e `sospeso`); nessuna etichetta «sospeso» a schermo, la morosità resta esclusa. ⚠️ La classe della primaria (`api/primaria/classe/[sectionId]`) resta sui soli iscritti, come gli altri elenchi operativi: un sospeso comparirà in «Alunni» ma non lì (oggi i sospesi sono 0).
+6. **Gli IP del registro degli accessi si conservano un anno** (risposta del 04/10). Migrazione `20261004215133_fascicolo_audit_ip_retention`: `fascicolo_audit_ip_retention_tick()` azzera ogni notte (`29 4 * * *`, job `fascicolo-audit-ip-retention`) `ip` e `user_agent` delle righe più vecchie di 12 mesi; la riga resta. Misurato: oggi tocca 0 righe su 2.336 (la più vecchia è del 31/07/2026: il primo azzeramento vero cadrà il 31/07/2027). L'informativa per le famiglie non cambia (gli IP sono del personale).
+
+**Server.**
+- `GET /api/teacher/alunni` (elenco) e `GET /api/teacher/alunni/[id]` (scheda). Ognuno **esporta solo `GET`**, e un test lo verifica. Usano `requireDocente`, `zod`, `withRoute` e rispondono con `Cache-Control: no-store`.
+- `src/lib/anagrafiche/docente/`:
+  - `visibilita.ts`: `sezioniAnagraficaVisibili`, `sediAnagrafica`, `assertAlunnoAnagraficaInScope`. Una regola sola decide elenco e scheda. Un guasto di lettura è un **500 con log**, mai «nessuna sezione» e mai un 403 falso.
+  - `colonne.ts`: colonne scritte una per una, mai `*`.
+  - `proiezione.ts`: lista bianca campo per campo.
+  - `tipi.ts`, `ritorno-elenco.ts`.
+- **Ordine della scheda.** Ruolo, poi uuid, poi controllo (riga minima, 404, sedi, sezioni), poi letture, poi proiezione, poi audit. La seconda lettura rifiltra gli stessi stati del controllo (`STATI_CHE_FREQUENTANO`), non anonimizzato e sede: un bambino archiviato fra il controllo e la lettura dà 404, non 200.
+- **Sedi vuote.** Per l'admin nascono da una lettura fallita di `utenti_scuole`, e la risposta è 500. Per gli altri ruoli la risposta è 403 `ANAGRAFICA_SENZA_SEDE`. Lo stesso vale in elenco e scheda (`sediAnagrafica`). L'elenco legge le sedi una volta sola: `resolveScuoleAttive` ha un quarto parametro opzionale `accessibili`.
+- **Audit.** Ogni scheda aperta scrive una riga in `fascicolo_accessi_audit` con `azione: 'view'` e `finalita: 'anagrafica-docente'` (costante condivisa `FINALITA_AUDIT_ANAGRAFICA`), **dopo** controlli e lettura. Se l'audit fallisce, la scheda si mostra e il guasto va in log `error`.
+- **Il registro letto dalla segreteria** (Direzione → Primaria → «Fascicoli») etichetta queste righe «Scheda anagrafica», perché non vengano scambiate per una visione di PEI, PDP o documenti sanitari, e per default **le esclude** (`GET /api/admin/primaria/fascicolo-audit`, parametro `conAnagrafica`, con un interruttore nel visualizzatore). Misurato: il registro riceve già ~53 righe al giorno e ne mostra 200; con 74 docenti le visioni vere del fascicolo uscirebbero dalla finestra in meno di un giorno. Chiedendo il registro di un solo bambino (`alunnoId`) le aperture della scheda sono sempre incluse.
+- **Effetto sulla cancellazione del personale.** `fascicolo_accessi_audit.utente_id` blocca la cancellazione di un account: un docente che ha aperto anche una sola scheda si archivia, non si cancella. È voluto, perché il registro degli accessi a dati di minori deve sopravvivere all'account.
+- **Log.** `warn` `anagrafica-fuori-sede` e `anagrafica-fuori-sezione` con i soli uuid (`distingui: ['alunno_id']`), `anagrafica-elenco-troncato` al tetto `LIMITE_ELENCO_ALUNNI`, `error` sui guasti.
+- **Codici d'errore.** Tutti dichiarati in `CODICI_ERRORE` e tradotti: `ANAGRAFICA_SCOPE_NON_RISOLTO`, `_NON_TROVATA`, `_FUORI_SEDE`, `_FUORI_SEZIONE`, `_SENZA_SEDE`, `_ELENCO_NON_LETTO`, `_NON_LETTA`.
+- **DB della CI.** Le letture passano da `selectResiliente`: sul DB E2E della CI, non migrato, una colonna recente che manca diventa «Non indicato».
+
+**Client.**
+- Pagine `/teacher/alunni` e `/teacher/alunni/[id]`. Sono gusci: i dati arrivano solo dall'API e non entrano nell'HTML né in Dexie.
+- **Barra filtri.** È il motore condiviso (`useFiltri` + `BarraFiltri`). Ha un nuovo flag `maiNellUrl` sui campi: **la ricerca per nome non entra nell'indirizzo**, perché l'URL completo resta nella cronologia del browser, nei log di accesso a ogni ricarica e negli indirizzi condivisi (la cache del service worker usa solo il percorso, la query no).
+- **Ritorno dalla scheda.** Gli altri filtri si ritrovano col tasto indietro. Il pulsante «Tutti gli alunni», fisso in alto, li ritrova da `sessionStorage`, senza mai il nome cercato.
+- **Scheda.** Nessun campo modificabile (verificato da un test). In cima, il banner delle allergie. Parentela `madre` / `padre` / `delegato` / `altro`, e nessuna etichetta se manca. Delegati con il nome in evidenza. Link `tel:` e `mailto:`.
+- **Stati.** 403 (col messaggio del `codice` quando non è «fuori sede/sezione»), 404, sessione scaduta (con «Accedi»), errore con «Riprova», assenza di rete; gli stessi nell'elenco. Le righe dell'elenco hanno `prefetch={false}`: per la Direzione sono più di 700.
+- **Accessibilità.** Regione `aria-live` sempre montata, fuoco dopo «Riprova», anello di focus visibile nell'elenco.
+- **Freccia «indietro» dell'AppBar.** È nascosta sulla scheda, come nella classe della primaria: perdeva i filtri.
+- Service worker `v13` per la nuova etichetta offline `alunni`. Testi in `teacherServizi`, `teacherNav`, `adminPrimaria` (it/en; in inglese «location» per «sede», termini allineati al catalogo).
+- **Caricamento.** Funzione pura più effetto che possiede la richiesta, con `setState` nel `.then`. Un `try/finally` vuoto avrebbe spento in silenzio la regola `set-state-in-effect`.
+
+**Lock e commenti.**
+- Nuovo lock `__tests__/architecture/assegnazioni-docente-coerenti.test.ts`: le tre funzioni «questa classe è tua» (`puoAccedereFascicolo`, `sezioniContitolari`, `sezioniAnagraficaVisibili`) leggono le stesse due tabelle.
+- Il commento di `fascicolo-rbac.ts` citava un lock che **non è mai esistito**.
+
+**Misure di produzione che hanno cambiato il codice (solo conteggi, 04/10).**
+- **747 iscritti vivi**: la Direzione è al 75% del tetto di 1.000 dell'elenco, da qui il log del troncamento.
+- **520 legami su 1.116 (47%) senza `relation_type`**: da qui l'ordine deterministico dei genitori e nessuna etichetta inventata.
+- **9 adulti registrati in famiglia come `delegate`**: etichettati «Delegato al ritiro» e messi dopo i genitori.
+- **6 iscritti senza sezione**: gruppo «Senza sezione» nell'elenco della segreteria.
+- **93 bambini con allergie solo a testo libero**: il filtro «con allergie» usa il criterio operativo del motore unico.
+
+**Aperto.**
+- **Da provare su telefono vero (lo fa il titolare).** I link `tel:` e `mailto:` sono i primi dell'app nativa. Va provata anche la fluidità dei filtri con l'elenco della Direzione.
+
+**Segnalati come lavori separati.**
+- Punto cieco del lock `isolamento-sede-coverage`: un filtro di sezione condizionale nasconde l'assenza del filtro di sede.
+- `useFiltri` cancella i filtri dall'URL sotto lo StrictMode di `next dev`.
+- Anello di focus senza effetto in `MediaGrid`, perché la regola globale sta fuori dai layer.
+
+**Dopo il deploy, in produzione (sola lettura).**
+
+```sql
+-- Le schede aperte dalle insegnanti: atteso > 0 dopo il primo uso vero.
+SELECT count(*) FROM fascicolo_accessi_audit WHERE finalita = 'anagrafica-docente';
+```
+
+E `app_log` per `anagrafica-fuori-sezione` e `anagrafica-fuori-sede` (tentativi su schede non proprie), `anagrafica-sezioni-non-lette` e `anagrafica-sedi-non-risolte` (guasti: attesi 0), `anagrafica-elenco-troncato` (atteso 0).
+
+```sql
+-- La migrazione degli IP è applicata e il lavoro notturno è installato:
+SELECT jobname, schedule, active FROM cron.job WHERE jobname = 'fascicolo-audit-ip-retention';
+-- …e batte (la prova vera, dopo le 04:29 UTC):
+SELECT visto_l_ultima, contesto FROM public.app_log
+ WHERE fingerprint = 'cron:fascicolo-audit-ip-retention' ORDER BY visto_l_ultima DESC LIMIT 3;
+```
+
+⏳ **Dopo il primo battito**: rigenerare la fotografia delle migrazioni applicate, spostare `fascicolo-audit-ip-retention` da `JOB_CRON_NON_SORVEGLIATI` a `JOB_CRON` (26 h) in `src/lib/health/controlli.ts`, attestare «APPLICATA il …» nella testata della migrazione.
+
 
 ## 🎓 Changelog — «I genitori vedono il giudizio ma non il voto»: il giudizio sintetico diventa obbligatorio, le dimensioni un'aggiunta — 2026-10-04 (branch `feat/popup-1-2-personale-android`)
 
@@ -44,7 +138,7 @@ E `app_log` / Vercel per `valutazione-senza-giudizio`: qualche riga nelle prime 
 
 ## 🔔 Changelog — Pop-up «Aggiorna l'app» per il personale su Android: la 1.2 è su Google Play — 2026-10-04 (branch `feat/popup-1-2-personale-android`)
 
-**Stato.** 🟡 **Gate verde, in PR** (`eslint` 0 · `tsc` 0 · `vitest run` 1654 file / 27.961 test · `npm run build` ok). Branch nato da `main` dopo il deploy riuscito della PR 3 (#182). **Nessuna migrazione**, nessun cambiamento sul server, nessuna build delle app: cambiano una soglia, un testo e il modo in cui il pop-up sceglie il testo.
+**Stato.** ✅ **In produzione dal 04/10/2026 13:35 UTC** (PR #183, merge `82e4b0b3`, insieme al giudizio sintetico obbligatorio della primaria; CI tutta verde, E2E compreso; branch eliminato). **Verificato in `app_log`** (04/10, 17:00 UTC): `avviso-aggiorna-app-mostrato: android 1.1` ×3 dalle 13:51 UTC, `rimandato` ×1, `tocco-store` ×1; nessuna riga `ios 1.1` né `android 1.2`. Gate al momento della PR: `eslint` 0 · `tsc` 0 · `vitest run` 1654 file / 27.961 test · `npm run build` ok. Branch nato da `main` dopo il deploy riuscito della PR 3 (#182). **Nessuna migrazione**, nessun cambiamento sul server, nessuna build delle app: cambiano una soglia, un testo e il modo in cui il pop-up sceglie il testo.
 
 **Perché adesso.** La 1.2 per Android è **vista sullo store**: la scheda pubblica Google Play di `it.kidville.app` risponde `1.2` (in it e in en) dal 04/10 alle 10:41 UTC, e Play Console dà la release «4 (1.2)» pubblicata in produzione al 100% (notifica «L'aggiornamento dell'app è stato pubblicato»). L'invio era partito alle ~10:20 UTC, con la dichiarazione del servizio in primo piano `dataSync` (Elaborazione della rete → Altro, con il video dimostrativo). **iOS no**: la 1.2 (6) è ancora in revisione, quindi su iPhone non cambia niente.
 
@@ -76,7 +170,7 @@ Atteso: compaiono righe `… android 1.1` (il personale Android rimasto sulla 1.
 
 ## 📲 Changelog — Video, PR 3 «app 1.2»: il video dell'insegnante parte da solo e arriva anche a telefono bloccato (invio nativo in background) — 2026-10-03 (branch `feat/app-1-2-caricamenti-nativi`)
 
-**Stato.** ✅ **In produzione dal 03/10/2026 18:03 UTC (merge `89d4822d`, #182). Android 1.2 (`versionCode` 4) pubblicata su Google Play il 04/10 alle 10:41 UTC, al 100%, con la dichiarazione del servizio in primo piano `dataSync`; iOS 1.2 (6) in revisione da Apple dal 04/10 08:56 UTC.** Il pop-up «Aggiorna l'app» per il personale è acceso su Android (voce del 04/10 qui sopra); su iOS si accende con una seconda micro-PR quando la 1.2 è sull'App Store. Il branch è nato dopo il deploy riuscito della PR 2 (#181, merge `06dd1d66`, in produzione dal 02/10 23:18 UTC). **Nessuna migrazione** e il contratto della PR 2 non si tocca: sul server cambiano solo le tolleranze della verifica dell'uscita in reduce60 (**Tfps**, **Tfps2**: due falsi scarti del rallentatore trovati dal collaudo E1). Ondate 1-4, rilievi dei critici e correzioni del collaudo sono scritti, criticati e committati (tabella qui sotto); il collaudo del motore (C1) e dell'app vera (E1) è nella sezione **K**. **Gli invii a Apple e a Google li ha autorizzati il titolare, passo per passo** (03-04/10). Spec: `docs/superpowers/specs/2026-10-03-video-pr3-app-1-2-design.md` (con l'**Appendice A**: gli scostamenti fra piano, progetto e codice, dove vale il codice) · difetti secondari (**237**, contati dal file il 03/10 sera; il più importante è il #230, compito **Tfps3**): `docs/superpowers/plans/2026-10-03-video-pr3-difetti-secondari.md` · plugin, prove native e server finto: `docs/mobile.md` · **consegna per l'invio agli store: `docs/store-submission.md` §7** · interruttore d'emergenza: `docs/env.md`.
+**Stato.** ✅ **In produzione dal 03/10/2026 18:03 UTC (merge `89d4822d`, #182). Android 1.2 (`versionCode` 4) pubblicata su Google Play il 04/10 alle 10:41 UTC, al 100%, con la dichiarazione del servizio in primo piano `dataSync`; iOS 1.2 (6) inviata il 04/10 alle 08:56 UTC, in revisione dalle ~21:15, approvata e in vendita dalle ~22:01 UTC (territorio ITA `AVAILABLE`).** Il pop-up «Aggiorna l'app» per il personale è acceso su Android (#183) e su iOS (voce del 05/10). Il branch è nato dopo il deploy riuscito della PR 2 (#181, merge `06dd1d66`, in produzione dal 02/10 23:18 UTC). **Nessuna migrazione** e il contratto della PR 2 non si tocca: sul server cambiano solo le tolleranze della verifica dell'uscita in reduce60 (**Tfps**, **Tfps2**: due falsi scarti del rallentatore trovati dal collaudo E1). Ondate 1-4, rilievi dei critici e correzioni del collaudo sono scritti, criticati e committati (tabella qui sotto); il collaudo del motore (C1) e dell'app vera (E1) è nella sezione **K**. **Gli invii a Apple e a Google li ha autorizzati il titolare, passo per passo** (03-04/10). Spec: `docs/superpowers/specs/2026-10-03-video-pr3-app-1-2-design.md` (con l'**Appendice A**: gli scostamenti fra piano, progetto e codice, dove vale il codice) · difetti secondari (**237**, contati dal file il 03/10 sera; il più importante è il #230, compito **Tfps3**): `docs/superpowers/plans/2026-10-03-video-pr3-difetti-secondari.md` · plugin, prove native e server finto: `docs/mobile.md` · **consegna per l'invio agli store: `docs/store-submission.md` §7** · interruttore d'emergenza: `docs/env.md`.
 
 | Compito | Che cosa | Stato al 03/10 |
 |---|---|---|
@@ -26533,6 +26627,7 @@ scala automaticamente un pannolino dall'Armadietto del bambino (vedi Modulo Arma
 bambini senza questo flag, gli eventi Bagno non generano alcuno scalo di materiale.
 ***Dati Didattici:** Profilo BES (Si/No), Storico valutazioni, Note disciplinari, Accesso allo storico
 del "Diario 0-6" degli anni precedenti.
+***Consultazione da parte del docente (dal 2026-10-04):** sola lettura, da «Alunni» nel menu docente. La vedono i docenti assegnati alla classe direttamente o per materia, e la segreteria della sede; mai retta, fatturazione e documenti d'identità. Ogni apertura è registrata in `fascicolo_accessi_audit` (`finalita = 'anagrafica-docente'`).
 ***Gestione Delegati:** Lista dinamica di persone autorizzate al ritiro. Non vi è limite numerico.
 Richiede esplicito caricamento del documento di identità del delegato. Nel caso di fratelli, la
 delega va replicata per singolo alunno.

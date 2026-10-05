@@ -1,0 +1,313 @@
+# Anagrafica alunni in sola lettura per le insegnanti — design
+
+**Data:** 2026-10-04 · **Branch:** `feat/anagrafica-docente` · **Stato:** design approvato dal titolare
+
+## Obiettivo
+
+Le insegnanti devono poter **consultare**, senza poterla modificare, l'anagrafica dei **propri**
+alunni: dati anagrafici, residenza, salute, consensi, famiglia e delegati. Oggi non esiste una
+scheda per il docente: riceve a pezzi, sparsi in route diverse, solo nome, allergie, note mediche,
+email dei genitori e delegati (`/api/diary/students`, `/api/primaria/classe/[sectionId]`,
+`/api/attendance/delegates`, `/api/documenti-firmati`).
+
+## Decisioni del titolare
+
+| Tema | Decisione |
+|---|---|
+| Campi | **Scheda completa senza economia**: esclusi retta, fatturazione, intestatari e documenti d'identità |
+| Chi è «mio alunno» alla primaria | **Tutti i docenti della classe**: assegnazione diretta (`utenti_sezioni`) **e** per materia (`utenti_sezioni_materie`), la stessa regola di `fascicolo-rbac` |
+| Accesso | Nuova voce **«Alunni»** nel menu docente → elenco → scheda |
+| Filtri | Ricerca per nome **e** ricerca avanzata: sezione e grado, salute, consensi foto, età e sesso |
+| Approccio | **A — API dedicata in sola lettura** con componenti nuovi (scartati: riuso di `StudentDetailPanel` in modalità `readOnly`; vista SQL + RLS) |
+
+## Perché un controllo nuovo e non `assertAlunnoInScope`
+
+`assertAlunnoInScope` (`src/lib/auth/scope.ts`) per un educator conta **solo** `utenti_sezioni`:
+il docente di sola materia della primaria ne resterebbe fuori. `puoAccedereFascicolo` e
+`sezioniContitolari` (`src/lib/primaria/fascicolo-rbac.ts`) contano entrambe le tabelle, ma **non
+controllano l'`error` di PostgREST**: un guasto esce come «nessuna sezione», cioè come un permesso
+negato o un elenco vuoto, senza traccia. Per un dato di minori «non sono riuscito a leggere» e «non
+è tuo» non possono avere la stessa risposta.
+
+Serve quindi **una funzione sola** che decida le sezioni visibili per l'anagrafica, usata **sia**
+dall'elenco **sia** dalla scheda, così i due non possono andare in disaccordo, e che distingua
+l'errore di lettura (→ 500) dall'assenza di assegnazioni (→ elenco vuoto / 403).
+
+## Architettura
+
+### Server
+
+**`src/lib/anagrafiche/docente/`** (nuovo modulo):
+
+- **`visibilita.ts`** — `sezioniAnagraficaVisibili(supabase, user)` →
+  `{ esito: 'tutte' } | { esito: 'sezioni', sezioni: string[] } | { esito: 'errore' }` (l'errore va nel log, non nel valore).
+  - `admin` / `coordinator` / `segreteria` (`vedeTutteLeClassi`) → `tutte` (il limite resta la sede).
+  - `educator` → unione di `utenti_sezioni` e `utenti_sezioni_materie`; nessuna assegnazione →
+    `sezioni: []` (nega per difetto).
+  - Una delle due letture fallisce → `errore`, con log `error` e il codice PostgREST.
+  - Le tabelle lette devono restare le stesse di `puoAccedereFascicolo`/`sezioniContitolari`. Il
+    commento di `fascicolo-rbac.ts` cita un lock `__tests__/lib/documenti-registro-rbac.test.ts`
+    che **non esiste**: nessun test tiene d'accordo le due funzioni gemelle. Si scrive un lock
+    nuovo che verifica che **tutte e tre** leggano le stesse tabelle di assegnazione, e si corregge
+    il commento perché punti al file vero.
+- **`proiezione.ts`** — funzioni **pure** che costruiscono le risposte copiando **solo** i campi
+  ammessi (lista bianca). Anche se la `select` venisse allargata per errore, nella risposta non
+  entra niente che non sia elencato qui.
+  - `proiettaVoceElenco(riga)` → `VoceElencoAlunno`
+  - `proiettaScheda(riga, genitori, delegati, sezione)` → `SchedaAlunnoDocente`
+- **`colonne.ts`** — le `select` scritte colonna per colonna. **Mai `select('*')`.**
+
+**Route** (gruppo `/api/teacher/`, già presente; entrambe in `withRoute`, `requireDocente`, `zod`,
+`createAdminClient`, `Cache-Control: no-store`; **unico metodo esportato: `GET`**):
+
+#### `GET /api/teacher/alunni` — l'elenco
+
+1. `requireDocente` → `sediAnagrafica` (nessuna sede: admin → 500, altri → 403 `ANAGRAFICA_SENZA_SEDE`) → `resolveScuoleAttive(request, supabase, user, sedi.plessi)` (il selettore di sede, senza rileggere `utenti_scuole`) → `sezioniAnagraficaVisibili`.
+2. Errore → 500. `sezioni: []` → `{ sezioni: [], alunni: [] }` senza interrogare `alunni`.
+3. Query su `alunni` con, nella **stessa** query: filtro di sede (`.in('scuola_id', plessi)`),
+   `.in('stato', [...STATI_CHE_FREQUENTANO])` incondizionato (iscritti e sospesi; lock
+   `elenchi-operativi-solo-iscritti`; esclude già gli archiviati, che l'archiviazione mette in
+   `ritirato`), `.is('anonimizzato_il', null)`, e
+   per l'educator `.in('section_id', sezioni)`.
+   - Le letture anagrafiche (elenco e scheda) passano da `selectResiliente`
+     (`src/lib/supabase/select-resiliente.ts`, livello `warn`). Il database E2E della CI non riceve
+     le migrazioni da solo, e una colonna recente che manca (consensi foto, data di iscrizione,
+     provincia e civico) diventa un campo «Non indicato» invece di un 500. La lettura del
+     **controllo** usa solo colonne del baseline e non degrada mai.
+4. Le sezioni (`id`, `name`, `school_type`) per i raggruppamenti, lette per id.
+
+Ogni voce dell'elenco (`VoceElencoAlunno`):
+
+| Campo | Origine |
+|---|---|
+| `id`, `nome`, `cognome`, `sectionId` | `alunni` |
+| `dataNascita`, `annoNascita` | `data_nascita` |
+| `sesso` | `gender` |
+| `grado` | `school_type` della sezione |
+| `allergeni: string[]` | unione di `chiaviAllergeni` e `allergeniAlunno` del motore unico `src/lib/mensa/allergeni.ts`: le chiavi come stanno in archivio più quelle dedotte dal testo libero, la stessa regola della home docente |
+| `haAllergie` | `haAllergiaOperativa(...)` dello stesso motore: è un segnale di sicurezza in classe, quindi non nasconde un «fragole» fuori dai 14 allergeni UE |
+| `besDsa`, `usaPannolino` | booleani |
+| `consensoFotoSito`, `consensoFotoSocial` | booleani |
+
+**Mai nell'elenco:** il testo di `allergies`, `note_mediche`, codice fiscale, residenza, genitori.
+
+#### `GET /api/teacher/alunni/[id]` — la scheda
+
+Ordine **vincolante**, nessun dato anagrafico letto prima che tutti i controlli siano passati:
+
+| Passo | Esito |
+|---|---|
+| Non autenticato | 401 (da `requireDocente`) |
+| Ruolo non ammesso (es. genitore) | 403 (da `requireDocente`) |
+| `id` non uuid | 400 (`zod`), senza toccare il database |
+| Lettura minima `id, section_id, scuola_id, stato, anonimizzato_il` (tutte del baseline) | errore → 500 |
+| Inesistente, stato fuori da `STATI_CHE_FREQUENTANO` (ritirato, stato mai deciso, vuoto) o anonimizzato | 404 |
+| Nessuna sede per l'utente (`scuoleDiUtente` vuoto) | admin → 500 (per lui il vuoto nasce da una lettura fallita di `utenti_scuole`), altri → 403 `ANAGRAFICA_SENZA_SEDE` |
+| Sede fuori da `scuoleDiUtente` | 403 `ANAGRAFICA_FUORI_SEDE` + log `warn` (solo uuid) |
+| `sezioniAnagraficaVisibili` in errore | 500 |
+| Educator e `section_id` non fra le sue sezioni | 403 + log `warn` (solo uuid di utente e alunno) |
+| Lettura anagrafica + genitori + delegati + sezione | errore → 500 |
+| Audit in `fascicolo_accessi_audit` | `logAccessoFascicolo(..., { azione: 'view', finalita: 'anagrafica-docente' })` |
+| Risposta | 200 con `SchedaAlunnoDocente` |
+
+**Audit.** Si scrive **dopo** i controlli e dopo una lettura riuscita, mai sopra un 403 (stesso
+criterio di `api/parent/prestampati`). Se l'audit fallisce la scheda si restituisce comunque e il
+guasto va in log `error` (comportamento di `logAccessoFascicolo`): negare a un'insegnante le allergie
+di un bambino perché il registro ha avuto un guasto sarebbe peggio del registro mancante. L'elenco
+**non** scrive righe di audit. Il registro che la segreteria legge (Direzione → Primaria → «Fascicoli», `FascicoloAuditViewer`) etichetta queste righe «Scheda anagrafica», perché non vengano scambiate per una visione dei documenti del fascicolo (PEI/PDP, sanitari); il valore della finalità è una costante condivisa (`FINALITA_AUDIT_ANAGRAFICA`).
+
+**`SchedaAlunnoDocente`:**
+
+| Blocco | Campi |
+|---|---|
+| Identità | `id`, `nome`, `cognome`, `sesso`, `dataNascita`, `luogoNascita` (`birth_city`, `birth_province`, `birth_nation`), `cittadinanza`, `codiceFiscale` |
+| Residenza | `indirizzo`, `civico`, `cap`, `comune`, `provincia` |
+| Classe | `sezione` (`id`, `nome`, `grado`), `dataIscrizione` |
+| Salute | `allergeni` (stessa unione dell'elenco), `allergieAltro` (`testoResiduoAllergie`: solo il testo che le chiavi non dicono già), `haAllergie`, `noteMediche`, `besDsa`, `usaPannolino` |
+| Consensi | `consensi.privacy`, `consensi.fotoSito`, `consensi.fotoSocial` (`null` = non registrato) |
+| Genitori (`student_parents` → `parents`) | per ciascuno: `nome`, `cognome`, `parentela` (`relation_type` → `madre` / `padre` / `delegato` / `altro`, `null` se assente: misurato il 04/10, quasi metà dei legami non la porta), `principale` (`is_primary`), `telefoni` (`phone_numbers`), `email` (`emails`), `codiceFiscale` (`fiscal_code`); esclusi i genitori anonimizzati. Ordine deterministico: i `delegato` sempre in fondo, poi il referente principale, poi madre, padre, parentela assente, altro, poi cognome e nome. Un adulto registrato in famiglia come `delegate` resta nel riquadro Famiglia, etichettato «Delegato al ritiro» |
+| Delegati (`delegates`) | per ciascuno: `nome`, `cognome`, `parentela` |
+
+**Mai nella scheda:** `importo_retta_mensile`, `retta_split_config`, `retta_a_carico_di`,
+`genitori_separati`, `intestatario_fatture`, `invoice_holder_*`, `fiscale_config`,
+`opposizione_ade`, `bollo_virtuale`, `giorno_scadenza_pagamenti`, `sospeso*`, `documento_path`,
+`numero_domanda_sidi`, `archiviato_*`; dei genitori `documento_path`, `document_type`,
+`document_number`, nascita, residenza, `consensi_gdpr`, `auth_user_id`; dei delegati
+`document_number`, `document_url`.
+
+**Database:** nessun cambio di schema né di RLS per la consultazione. Una sola migrazione, per la conservazione degli IP del registro (vedi «Aggiunte del 2026-10-04»).
+
+### Client
+
+**Menu** — voce `alunni` nel gruppo «In classe» di `TeacherBottomNav` (`grado: 'comune'`,
+`href: '/teacher/alunni'`), etichetta «Alunni», sottotitolo «Anagrafica dei tuoi bambini»
+(namespace `teacherNav`, `messages/it` e `messages/en`).
+
+**Pagine** — gusci client che chiamano le API: **nessun dato del bambino nell'HTML**, che il
+service worker salva per l'offline (`public/sw.js` non mette mai in cache `/api/`). La scheda **non**
+passa dalla read-cache Dexie: un codice fiscale non deve finire su disco.
+
+- `src/app/(dashboard)/teacher/alunni/page.tsx` → `ElencoAlunniDocente`
+- `src/app/(dashboard)/teacher/alunni/[id]/page.tsx` → `SchedaAlunnoLettura`
+
+**Componenti** — `src/components/features/teacher/anagrafica/`, piccoli e di sola visualizzazione:
+
+| Componente | Compito |
+|---|---|
+| `ElencoAlunniDocente` | carica l'elenco (funzione di modulo + effetto con `setState` nel `.then`), gestisce errore, 403, sessione scaduta e assenza di rete, poi monta il pannello |
+| `PannelloAlunni` | la `BarraFiltri` condivisa (variante compatta: ricerca, pulsante «Filtri», etichette rimovibili, contatore) con i campi di `filtri-alunni.ts`, e l'elenco raggruppato per sezione con «Senza sezione» in fondo; righe con `prefetch={false}` (l'elenco della Direzione supera le 700 righe) |
+| `SchedaAlunnoLettura` | carica la scheda e la impagina |
+| `RiquadroScheda` | un blocco con titolo |
+| `CampoLettura` | riga «etichetta: valore», «Non indicato» se vuoto |
+| `SchedaGenitore` | un genitore con `tel:` e `mailto:` toccabili |
+
+**Filtri** — si usa il **motore condiviso** del progetto, non una funzione nuova:
+`BarraFiltri` + `StatoElenco` (`src/components/ui/`), `useFiltri` e il motore puro
+(`src/lib/ui/filtri/`), lo stesso di «Modulistica» docente e del cockpit. La pagina dichiara solo i
+**campi**, in `src/components/features/teacher/anagrafica/filtri-alunni.ts`
+(`campiAlunni(t, contesto)`), tutti `dove: 'client'` perché l'elenco è già in memoria:
+
+| Gruppo | Campo (`chiave`, tipo) |
+|---|---|
+| Nome | `q`, `ricerca`: nome, cognome e le due combinazioni, con la normalizzazione di `testoCorrisponde` (accenti, maiuscole, apostrofi) |
+| Sezione e grado | `sezione`, `multi` (solo se le sezioni sono più di una) · `grado`, `multi` (solo se i gradi sono più di uno) |
+| Salute | `allergie`, `interruttore` · `allergene`, `multi` (gli allergeni presenti) · `bes`, `interruttore` · `pannolino`, `interruttore` |
+| Consensi foto | `senzaFotoSito`, `interruttore` · `senzaFotoSocial`, `interruttore`; un consenso **assente** conta come «senza consenso», la direzione prudente per chi pubblica |
+| Età e sesso | `anno`, `multi` (gli anni presenti) · `sesso`, `multi` |
+
+- Il motore applica già la semantica: **AND** fra campi, **OR** dentro un `multi`, nessun filtro =
+  tutti.
+- Anno di nascita e non fascia d'età: non dipende dalla data di oggi.
+- Le opzioni nascono dai dati, quindi il pannello dei filtri si **monta dopo** il caricamento:
+  `useFiltri` legge l'indirizzo una volta sola, e un valore che non è fra le opzioni lo scarta.
+- **La ricerca per nome non entra mai nell'indirizzo.** Il motore scrive ogni filtro attivo
+  nell'URL (`history.replaceState`), e l'URL completo finisce nella cronologia del browser
+  (salvata sul dispositivo), nei log di accesso del server a ogni ricarica o apertura diretta, e in
+  un indirizzo copiato o condiviso: un nome di bambino non deve starci. (La cache del service
+  worker non c'entra: `chiaveDocumento` usa solo `origin + pathname`.) Si aggiunge al tipo dei
+  campi un flag `maiNellUrl?: boolean`: `versoUrl` lo salta e `valoriIniziali` lo ignora. Il
+  parametro resta **governato**: se un indirizzo lo porta, la barra lo toglie alla prima modifica
+  di un filtro o uscendo dalla pagina. Il flag riguarda solo l'indirizzo della PAGINA: si usa solo
+  su campi `dove: 'client'` (su un campo `server` il valore viaggerebbe comunque nella query
+  dell'API).
+- Gli altri filtri restano nell'indirizzo, come in tutte le barre del progetto. Per questo tornando
+  indietro dalla scheda col tasto del telefono o del browser si ritrovano da soli. Il pulsante
+  «Tutti gli alunni» della scheda li ritrova da `sessionStorage`
+  (`src/lib/anagrafiche/docente/ritorno-elenco.ts`): ogni accesso in `try/catch`, e senza
+  `sessionStorage` si torna all'elenco senza filtri.
+
+**Scheda** — in cima nome, cognome, sezione ed etichetta «Sola lettura»; se ci sono allergie, un
+riquadro in evidenza con gli allergeni. Poi i riquadri Dati anagrafici, Residenza, Salute (note
+mediche con gli a capo conservati), Consensi, Famiglia, Delegati al ritiro. In fondo: «Un dato è
+sbagliato? Rivolgiti alla segreteria». **Nessun `input`, `textarea`, `select` o pulsante di
+salvataggio.**
+
+**Stati** — caricamento; errore con «Riprova»; docente senza classi («Non ti è stata assegnata
+nessuna classe: rivolgiti alla segreteria»); nessun bambino corrisponde ai filtri. Scheda: 403 →
+«Questo bambino non è in una delle tue classi»; 404 → «Scheda non trovata»; rete o 500 →
+messaggio con «Riprova»; senza connessione → «Serve la connessione».
+
+**Contorno obbligatorio** — testi in `messages/it` e `messages/en` (lock di parità e chiavi
+orfane); etichetta della rotta nel dizionario di `/offline` (lock `offline-etichette-rotte`);
+margini nativi (lock `fascia-safe-area-nativa`).
+
+## Log
+
+- `withRoute` su entrambe le route.
+- 403 «fuori sede» e «fuori sezione» → `logEvento('auth', 'warn', { tipo: 'anagrafica-fuori-sede' | 'anagrafica-fuori-sezione', azione, utente, alunno_id }, undefined, { distingui: ['alunno_id'] })`, con l'id canonico letto dal database.
+- Ogni risposta d'errore porta un `codice` dichiarato in `CODICI_ERRORE` e tradotto nei due cataloghi (lock `errori-con-codice`): `ANAGRAFICA_SCOPE_NON_RISOLTO`, `ANAGRAFICA_NON_TROVATA`, `ANAGRAFICA_FUORI_SEDE`, `ANAGRAFICA_FUORI_SEZIONE`, `ANAGRAFICA_SENZA_SEDE`, `ANAGRAFICA_ELENCO_NON_LETTO`, `ANAGRAFICA_NON_LETTA`.
+- Errori di lettura → `error`, con l'errore PostgREST intero come quarto argomento.
+- Solo uuid, conteggi e codici: mai nomi, codici fiscali o testi sanitari.
+
+## Test (TDD)
+
+**Funzioni pure**
+- Proiezione: una riga piena di campi economici, documenti e `archiviato_*` non ne lascia passare
+  nessuno; le chiavi in uscita sono fissate esatte.
+- `campiAlunni` passati al motore vero (`filtraRighe`): ogni filtro da solo, AND fra campi, OR
+  dentro un `multi`, nessun filtro = tutti, accenti e maiuscole nella ricerca, consenso assente =
+  «senza consenso».
+- Motore: un campo `maiNellUrl` non esce da `versoUrl` e non si legge da `valoriIniziali`, ma resta
+  fra i `parametriGovernati`.
+- `ritorno-elenco`: salva e rilegge la query dell'elenco, scarta `q` e valori malformati, regge un
+  `sessionStorage` che lancia.
+- `sezioniAnagraficaVisibili`: staff → `tutte`; unione delle due tabelle senza doppioni; nessuna
+  assegnazione → `[]`; errore su una delle due letture → `errore`.
+
+**Route** — sul modello di `__tests__/api/sezioni-assegnate-scope.test.ts`: controlli veri (lock
+`predicati-ruolo-non-mockabili`), database finto (`__tests__/fixtures/finto-supabase.ts`).
+- Scheda:
+  - 200 per l'educator di sezione, per l'educator di sola materia e per la segreteria della sede;
+  - 403 per un'altra sezione della stessa sede, **verificando che l'anagrafica non sia letta**: su
+    `alunni` una sola lettura (quella minima del controllo), nessuna su `student_parents` e
+    `delegates`, nessuna riga di audit, e il codice fiscale del bambino non compare nella risposta;
+  - 403 per un'altra sede e per il genitore, 401 anonimo, 400 `id` non valido;
+  - 200 anche per un bambino `sospeso`; 404 per inesistente, ritirato, stato mai deciso o vuoto, anonimizzato;
+  - 500 con log su guasto di ciascuna lettura;
+  - audit scritto **solo** sul 200;
+  - il modulo esporta **solo** `GET`; `Cache-Control: no-store`.
+- Elenco: solo chi frequenta (iscritti e sospesi), solo sezioni visibili, filtro di sede, educator senza sezioni → vuoto senza
+  interrogare `alunni`, nessun testo libero nella risposta, 500 su guasto.
+
+**Componenti** (Testing Library)
+- Scheda: nessun `input` / `textarea` / `select` / pulsante di salvataggio; «Non indicato»; riquadro
+  allergie; `tel:` e `mailto:`; i messaggi di 403, 404 ed errore.
+- Elenco: raggruppamento per sezione, stati vuoto ed errore, un filtro che restringe l'elenco e il
+  contatore che lo dice, la ricerca per nome che non finisce nell'indirizzo.
+
+**Lock trasversali** — gate intero: `npx eslint . --max-warnings 0`, `npx tsc --noEmit`,
+`npx vitest run` completo, `npm run build`.
+
+**E2E Playwright (CI)** — il docente E2E apre «Alunni», filtra, apre una scheda e non trova campi
+modificabili; l'indirizzo di un bambino di un'altra sezione mostra l'accesso negato.
+
+## Consegna
+
+Branch `feat/anagrafica-docente` → piano → implementazione TDD → PRD (tabella di stato + changelog
+datato) → revisione del codice → PR → CI verde su **tutti** i job → merge a mano (niente
+auto-merge) → deploy → verifica in produzione con sole `SELECT` (righe di audit con
+`finalita = 'anagrafica-docente'` dopo il primo uso vero) → pulizia dei branch.
+
+## Effetti collaterali da conoscere
+
+- **Cancellazione del personale.** `fascicolo_accessi_audit.utente_id` è una traccia che blocca la
+  cancellazione di un account (`src/lib/personale/tracce-docente-voci.ts`): da ora un docente che
+  ha aperto anche una sola scheda non si cancella, si archivia. È voluto: il registro degli accessi
+  a dati di minori deve sopravvivere all'account.
+- **Registro degli accessi della Direzione.** Le aperture della scheda finiscono nello stesso
+  registro dei documenti del fascicolo. Il visualizzatore (`FascicoloAuditViewer`) e la sua route
+  (`GET /api/admin/primaria/fascicolo-audit`, parametro `conAnagrafica`) le ESCLUDONO per default,
+  con un interruttore per includerle: altrimenti, con le ultime 200 righe, le visioni vere di
+  PEI/PDP uscirebbero dalla finestra in meno di un giorno. Quando si chiede il registro di UN bambino (`alunnoId`), le
+  aperture della scheda sono sempre incluse: è la domanda «chi ha aperto la scheda di mio figlio».
+- **Messaggi d'errore dal codice.** Il client traduce il `codice` della risposta
+  (`messaggioDaCorpo`) per i 403 che non sono «fuori sede/sezione» (profilo senza sede, account
+  archiviato). Un 403 senza codice ma con un testo del server mostra quel testo (la regola
+  del repo è «codice, poi prosa, poi frase di ripiego»): in pratica non capita, perché il middleware
+  ferma prima chi non ha un ruolo da docente.
+
+## Aggiunte del 2026-10-04, dopo le risposte del titolare
+
+1. **I bambini `sospeso` sono visibili alle insegnanti** (risposta: «sì»). Elenco e scheda leggono
+   gli stati del lato «ancora iscritto» di `LATO_DEL_CONFINE` (`src/lib/alunni/stato.ts`: oggi
+   `iscritto` e `sospeso`), con la costante NUOVA `STATI_CHE_FREQUENTANO`, derivata da lì come le
+   altre (elenco chiuso: uno stato mai deciso o vuoto resta fuori), in `.in('stato', …)`
+   incondizionato. Nessuna etichetta «sospeso» a schermo: lo stato della pratica resta della
+   segreteria. La colonna booleana `alunni.sospeso` (morosità) resta esclusa come ogni dato
+   economico.
+2. **Gli IP del registro degli accessi si conservano un anno** (risposta: «un anno»). Migrazione
+   con `public.fascicolo_audit_ip_retention_tick()` (`v_mesi constant int := 12`): ogni notte azzera
+   `ip` e `user_agent` delle righe di `fascicolo_accessi_audit` più vecchie di 12 mesi, lascia il
+   resto della riga, scrive un battito in `app_log`; pianificata con `cron.schedule` (job
+   `fascicolo-audit-ip-retention`, `29 4 * * *`), sorvegliata da `/api/health` (26 h) DOPO il primo
+   battito in produzione — prima il lock `cron-sorvegliato-e-applicato` lo vieta, quindi sta in
+   `JOB_CRON_NON_SORVEGLIATI` — e da un lock sul modello di
+   quello dei motivi d'assenza. Vale per tutto il registro. L'informativa per le famiglie NON
+   cambia (decisione del titolare: gli IP sono del personale).
+
+## Fuori perimetro
+
+- Nomi cliccabili nelle schermate esistenti (appello, diario, classe della primaria).
+- Qualunque modifica dell'anagrafica da parte del docente.
+- Consultazione offline della scheda.
+- Unificare le route parziali esistenti (`/api/diary/students` e simili) con la nuova.

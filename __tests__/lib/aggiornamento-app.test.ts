@@ -15,10 +15,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
  *    funzione che restituisse il plugin da una promise resterebbe appesa qui come sul telefono
  *    (#166 → #168). Un finto piatto sarebbe verde anche col difetto.
  *
- * LA MINIMA DEL PERSONALE (spec 2026-10-02, T14), spedita ACCESA SU ANDROID (1.2, vista su Google
- * Play il 2026-10-04) e SPENTA SU iOS:
+ * LA MINIMA DEL PERSONALE (spec 2026-10-02, T14), spedita ACCESA A 1.2 SU ENTRAMBE LE PIATTAFORME
+ * (Android vista su Google Play e iOS vista sull'App Store, il 2026-10-04):
  *  - dove è `null` nessun effetto, né per il personale né per i genitori, e il ruolo non si chiede
- *    nemmeno: accendere iOS prima di aver visto la 1.2 sull'App Store fa diventare rossi questi test;
+ *    nemmeno (provato con la minima spenta passata dal test);
  *  - accesa a 1.2: il personale sotto la 1.2 è da aggiornare, il personale alla 1.2 no, il genitore
  *    no — e sotto la minima dello store il pop-up resta per tutti, senza chiedere chi sia;
  *  - la decisione dice QUALE minima è scattata (`store` o `personale`): il pop-up ne sceglie il testo;
@@ -139,13 +139,13 @@ describe('VERSIONE_MINIMA_STORE — il valore spedito', () => {
 })
 
 describe('VERSIONE_MINIMA_PERSONALE — il valore spedito', () => {
-  it('1.2 su Android, spenta su iOS, congelata', () => {
+  it('1.2 su entrambe le piattaforme, congelata', () => {
     // La minima del personale è nata spenta (T14) e si accende come l'altra: dopo aver visto la 1.2
     // pubblicata sullo store di QUELLA piattaforma. Android: vista su Google Play il 2026-10-04 alle
-    // 10:41 UTC. iOS: ancora in revisione da Apple, e finché la scheda dell'App Store non risponde
-    // `1.2` il pop-up per il personale su iPhone non esiste. Chi accende iOS aggiorna QUESTA riga e
-    // scrive nel commit quando l'ha vista.
-    expect(VERSIONE_MINIMA_PERSONALE).toEqual({ ios: null, android: '1.2' })
+    // 10:41 UTC. iOS: approvata da Apple e vista sulla scheda dell'App Store («Versione 1.2») il
+    // 2026-10-04 dalle 22:01 UTC. Chi la alza per una versione futura aggiorna QUESTA riga e scrive
+    // nel commit quando l'ha vista.
+    expect(VERSIONE_MINIMA_PERSONALE).toEqual({ ios: '1.2', android: '1.2' })
     expect(Object.isFrozen(VERSIONE_MINIMA_PERSONALE)).toBe(true)
   })
 })
@@ -273,25 +273,15 @@ describe('haProfiloDelPersonale — chi lavora con l\'app', () => {
 })
 
 describe('appDaAggiornare — la minima del personale', () => {
-  describe('il valore spedito: spenta su iOS', () => {
-    it.each([
-      ['il personale', DOCENTE],
-      ['il genitore', GENITORE],
-    ])('%s sul binario 1.1 di iPhone: niente, e il ruolo non si chiede', async (_chi, profili) => {
-      stato.piattaforma = 'ios'
-      stato.profili = profili
-      conVersione('1.1')
-      expect(await appDaAggiornare()).toBeNull()
-      expect(leggiProfili).not.toHaveBeenCalled()
-      expect(logClient).not.toHaveBeenCalled()
+  describe.each(['ios', 'android'])('il valore spedito: accesa a 1.2 su %s', (piattaforma) => {
+    beforeEach(() => {
+      stato.piattaforma = piattaforma
     })
-  })
 
-  describe('il valore spedito: accesa a 1.2 su Android', () => {
     it('il personale sul binario 1.1: da aggiornare, per la minima del personale', async () => {
       stato.profili = DOCENTE
       conVersione('1.1')
-      expect(await appDaAggiornare()).toEqual({ piattaforma: 'android', versione: '1.1', minima: 'personale' })
+      expect(await appDaAggiornare()).toEqual({ piattaforma, versione: '1.1', minima: 'personale' })
       expect(leggiProfili).toHaveBeenCalledTimes(1)
       expect(logClient).not.toHaveBeenCalled()
     })
@@ -313,8 +303,24 @@ describe('appDaAggiornare — la minima del personale', () => {
     it('il personale sul binario 1.0: la minima dello store scatta prima, senza chiedere chi sia', async () => {
       stato.profili = DOCENTE
       conVersione('1.0')
-      expect(await appDaAggiornare()).toEqual({ piattaforma: 'android', versione: '1.0', minima: 'store' })
+      expect(await appDaAggiornare()).toEqual({ piattaforma, versione: '1.0', minima: 'store' })
       expect(leggiProfili).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('spenta (passata dal test): il ruolo non si chiede', () => {
+    it.each([
+      ['il personale', DOCENTE],
+      ['il genitore', GENITORE],
+    ])('%s sul binario 1.1: niente, su entrambe le piattaforme', async (_chi, profili) => {
+      stato.profili = profili
+      conVersione('1.1')
+      for (const piattaforma of ['ios', 'android']) {
+        stato.piattaforma = piattaforma
+        expect(await appDaAggiornare(STORE_1_1, SPENTA)).toBeNull()
+      }
+      expect(leggiProfili).not.toHaveBeenCalled()
+      expect(logClient).not.toHaveBeenCalled()
     })
   })
 

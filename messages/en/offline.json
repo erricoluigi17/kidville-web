@@ -26,6 +26,7 @@
       "/cancellazione-account/conferma": "Confirm deletion"
     },
     "segmenti": {
+      "alunni": "Students",
       "appello": "Roll call",
       "armadietto": "Locker",
       "assenze": "Absences",

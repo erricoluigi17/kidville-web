@@ -16,11 +16,11 @@ import sharedIt from '../../messages/it/shared.json'
  *  - non si apre mentre il gate biometrico blocca (la `Modal` renderebbe inerte lo sblocco);
  *  - StrictMode e rimontaggi non raddoppiano la comparsa né il log.
  *
- * LA MINIMA DEL PERSONALE (spec 2026-10-02, T14), spedita ACCESA SU ANDROID (1.2, dal 2026-10-04) e
- * SPENTA SU iOS: l'ultimo blocco di questo file la ACCENDE a 1.2 su entrambe (`stato.minimaPersonale`,
- * iniettata dove la libreria userebbe il valore spedito) e guarda ciò che si vede: il personale sotto
- * la 1.2 vede il pop-up COL SUO TESTO, il personale alla 1.2 e il genitore no; e prova il valore
- * spedito, piattaforma per piattaforma. Il ruolo arriva da `leggiProfili` (finta qui, e spia); chi
+ * LA MINIMA DEL PERSONALE (spec 2026-10-02, T14), spedita ACCESA A 1.2 SU ENTRAMBE LE PIATTAFORME
+ * (dal 2026-10-04): l'ultimo blocco di questo file la inietta (`stato.minimaPersonale`, dove la
+ * libreria userebbe il valore spedito) e guarda ciò che si vede: il personale sotto la 1.2 vede il
+ * pop-up COL SUO TESTO, il personale alla 1.2 e il genitore no; spenta, non si chiede nemmeno il
+ * ruolo; e prova il valore spedito, piattaforma per piattaforma. Il ruolo arriva da `leggiProfili` (finta qui, e spia); chi
  * lavora con l'app lo decide la libreria vera, verificata in `__tests__/lib/aggiornamento-app.test.ts`.
  * Tutti gli altri test di questo file girano col valore spedito e senza un ruolo noto: lì decide la
  * sola minima dello store, e il corpo è quello di sempre.
@@ -37,7 +37,7 @@ const stato = vi.hoisted(() => ({
   bloccato: false,
   visibilita: 'visible' as DocumentVisibilityState,
   ora: Date.UTC(2026, 8, 29, 8, 0, 0),
-  /** La minima del personale di questo test; `null` = il valore spedito (Android 1.2, iOS spenta). */
+  /** La minima del personale di questo test; `null` = il valore spedito (1.2 su entrambe). */
   minimaPersonale: null as { ios: string | null; android: string | null } | null,
   /** I profili che `/api/me` darebbe alla sessione; `null` = «non lo so». */
   profili: null as Profilo[] | null,
@@ -353,9 +353,8 @@ describe('AvvisoAggiornamentoApp — la minima del personale (T14)', () => {
   const attendiMostrato = (piattaforma = 'android', versione = '1.1', volte = 1) =>
     waitFor(() => expect(messaggiLog().filter((m) => m === M('mostrato', piattaforma, versione))).toHaveLength(volte))
 
-  it('il valore spedito, su iOS (spenta): il personale sul binario 1.1 non vede niente, e il ruolo non si chiede', async () => {
-    stato.minimaPersonale = null // il valore spedito: `VERSIONE_MINIMA_PERSONALE`, spenta su iOS
-    stato.piattaforma = 'ios'
+  it('spenta: il personale sul binario 1.1 non vede niente, e il ruolo non si chiede', async () => {
+    stato.minimaPersonale = { ios: null, android: null }
     stato.profili = DOCENTE
     const { container } = await monta()
     // Si aspetta la PRESENZA di un fatto (la versione è stata letta), non un'assenza.
@@ -366,15 +365,19 @@ describe('AvvisoAggiornamentoApp — la minima del personale (T14)', () => {
     expect(logClient).not.toHaveBeenCalled()
   })
 
-  it('il valore spedito, su Android (1.2): il personale sul binario 1.1 vede il pop-up col testo del personale', async () => {
-    stato.minimaPersonale = null // il valore spedito: `VERSIONE_MINIMA_PERSONALE`, 1.2 su Android
-    stato.profili = DOCENTE
-    await monta()
-    expect(await screen.findByRole('dialog', { name: T.avvisoAggiornaTitolo })).toBeTruthy()
-    expect(screen.getByText(T.avvisoAggiornaCorpoPersonale)).toBeTruthy()
-    await attendiMostrato('android', '1.1')
-    expect(leggiProfili).toHaveBeenCalledTimes(1)
-  })
+  it.each(['ios', 'android'])(
+    'il valore spedito (1.2) su %s: il personale sul binario 1.1 vede il pop-up col testo del personale',
+    async (piattaforma) => {
+      stato.minimaPersonale = null // il valore spedito: `VERSIONE_MINIMA_PERSONALE`
+      stato.piattaforma = piattaforma
+      stato.profili = DOCENTE
+      await monta()
+      expect(await screen.findByRole('dialog', { name: T.avvisoAggiornaTitolo })).toBeTruthy()
+      expect(screen.getByText(T.avvisoAggiornaCorpoPersonale)).toBeTruthy()
+      await attendiMostrato(piattaforma, '1.1')
+      expect(leggiProfili).toHaveBeenCalledTimes(1)
+    },
+  )
 
   it.each([
     ['ios', 'https://apps.apple.com/it/app/kidville/id6794883055'],

@@ -1391,7 +1391,7 @@
   "scollegaVociComposte": "le voci create insieme a questo bonifico restano e tornano da pagare;",
   "scollegaRicevuta": "la ricevuta di questo pagamento viene annullata;",
   "scollegaFatturaEmessa": "su «{voce}» c’è una fattura emessa: resta valida, e va stornata con una nota di credito;",
-  "scollegaFatturaInCoda": "la richiesta di fattura in coda per «{voce}» viene tolta;",
+  "scollegaFatturaInCoda": "la richiesta di fattura in coda per «{voce}» viene tolta, se la voce non risulta più saldata;",
   "scollegaDopoModifica": "subito dopo scegli la voce giusta.",
   "scollegaDestinoLegenda": "Dopo, il bonifico",
   "scollegaDestinoDaAbbinare": "torna da abbinare",

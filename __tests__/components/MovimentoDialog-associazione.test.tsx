@@ -391,6 +391,9 @@ describe('MovimentoDialog — «Riapri» è diventato «Modifica» ed «Elimina 
     expect(within(dlg).getByText(testoIcu('scollegaFatturaInCoda', { voce: 'Retta ottobre' }))).toBeInTheDocument();
     expect(within(dlg).getByText(testoIcu('scollegaFatturaInCoda', { voce: 'Mensa ottobre' }))).toBeInTheDocument();
     expect(within(dlg).queryByText(testoIcu('scollegaFatturaInCoda', { voce: 'Gita' }))).toBeNull();
+    // La frase non promette più di quanto il server faccia: la richiesta si toglie
+    // solo se la voce, dopo lo storno, non risulta più saldata (`togliCodaVociNonSaldate`).
+    expect(within(dlg).getByText('la richiesta di fattura in coda per «Retta ottobre» viene tolta, se la voce non risulta più saldata;')).toBeInTheDocument();
     // Composita: le voci composte e la ricevuta.
     expect(within(dlg).getByText(testo('scollegaVociComposte'))).toBeInTheDocument();
     expect(within(dlg).getByText(testo('scollegaRicevuta'))).toBeInTheDocument();

@@ -1391,7 +1391,7 @@
   "scollegaVociComposte": "items created together with this bank transfer stay and become due again;",
   "scollegaRicevuta": "the receipt for this payment is cancelled;",
   "scollegaFatturaEmessa": "«{voce}» has an issued invoice: it stays valid and must be reversed with a credit note;",
-  "scollegaFatturaInCoda": "the queued invoice request for «{voce}» is removed;",
+  "scollegaFatturaInCoda": "the queued invoice request for «{voce}» is removed, if the item is no longer fully paid;",
   "scollegaDopoModifica": "right after, choose the correct item.",
   "scollegaDestinoLegenda": "Afterwards, the bank transfer",
   "scollegaDestinoDaAbbinare": "goes back to be matched",

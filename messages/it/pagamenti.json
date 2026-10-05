@@ -84,5 +84,5 @@
   "pushAttivazioneNonPossibile": "Non è stato possibile attivarle su questo dispositivo.",
   "badgeSoloContanti": "Solo contanti",
   "badgeSoloBonifico": "Solo bonifico",
-  "bonificoEsclusiContanti": "{count, plural, one {Una voce si paga solo in contanti: la trovi nella scheda Contanti.} other {# voci si pagano solo in contanti: le trovi nella scheda Contanti.}}"
+  "bonificoEsclusiContanti": "{count, plural, one {Una voce si paga solo in contanti, in segreteria.} other {# voci si pagano solo in contanti, in segreteria.}}"
 }

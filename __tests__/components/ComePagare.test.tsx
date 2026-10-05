@@ -911,9 +911,10 @@ describe('ComePagare — le voci «solo contanti» escono dal bonifico (metodi a
         expect(campiCopiabili()).not.toContain(SOLO_CONTANTI.causale);
         expect(within(pannello).queryByText(SOLO_CONTANTI.descrizione)).toBeNull();
 
-        // …e il genitore non la perde di vista: la frase gli dice dove sta.
+        // …e il genitore non la perde di vista: la frase gli dice COME e DOVE si paga
+        // (testo rivisto il 2026-10-05: prima rimandava «alla scheda Contanti»).
         expect(
-            within(pannello).getByText('Una voce si paga solo in contanti: la trovi nella scheda Contanti.'),
+            within(pannello).getByText('Una voce si paga solo in contanti, in segreteria.'),
         ).toBeInTheDocument();
     });
 
@@ -927,7 +928,7 @@ describe('ComePagare — le voci «solo contanti» escono dal bonifico (metodi a
 
         expect(
             within(screen.getByRole('tabpanel')).getByText(
-                '2 voci si pagano solo in contanti: le trovi nella scheda Contanti.',
+                '2 voci si pagano solo in contanti, in segreteria.',
             ),
         ).toBeInTheDocument();
     });

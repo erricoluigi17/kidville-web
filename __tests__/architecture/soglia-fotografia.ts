@@ -179,7 +179,16 @@ export function posterioriCheContengono(
 // (T16), insieme alla rigenerazione delle fotografie: la prova gemella 2 diventa rossa da sola.
 // SVUOTATA il 03/10 (02/10 22:3x UTC): il file A, rinominato `20261002215600_…`, e' applicato in produzione
 // e le fotografie sono rigenerate dalla produzione (202 migrazioni, 232 indici unici).
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// RIAPERTA il 2026-10-05 (metodi di pagamento ammessi): la migrazione della PR aggiunge
+// `pagamenti.metodi_ammessi` col suo CHECK, scritto con DROP/ADD CONSTRAINT perché sia
+// rieseguibile — è quella forma che la guardia delle FK verso `utenti` vede, non una FK.
+// Si toglie dopo il merge, insieme alla rigenerazione delle fotografie dalla produzione.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261005120000_pagamenti_metodi_ammessi.sql':
+        'CHECK su pagamenti.metodi_ammessi scritto con DROP/ADD CONSTRAINT, nessuna FK verso utenti: ' +
+        'la applica l\'integrazione al merge, e la voce si toglie nella PR-B con la rigenerazione delle fotografie',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

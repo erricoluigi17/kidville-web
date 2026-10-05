@@ -1399,5 +1399,6 @@
   "scollegaDestinoIgnoratoAiuto": "For a bank transfer that matches no item in the app, for example a fee never recorded.",
   "scollegaConferma": "Confirm",
   "scollegaAnnulla": "Cancel",
-  "movdlgAssociatoAltraSede": "Item from another location"
+  "movdlgAssociatoAltraSede": "Item from another location",
+  "scollegaModificaBloccataFattura": "«{voce}» has an issued invoice: the bank transfer cannot be moved to another item until the invoice is reversed with a credit note. You can only remove the link."
 }

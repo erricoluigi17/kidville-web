@@ -38,6 +38,9 @@ const CATALOGO_IT = JSON.parse(
 const PAGAMENTI_IT = JSON.parse(
   readFileSync(join(process.cwd(), 'messages/it/pagamenti.json'), 'utf8'),
 ) as Record<string, string>;
+const SHARED_IT = JSON.parse(
+  readFileSync(join(process.cwd(), 'messages/it/shared.json'), 'utf8'),
+) as Record<string, string>;
 const testo = (chiave: string): string => CATALOGO_IT[chiave] ?? `adminContabilita.${chiave}`;
 /** Il testo ICU come lo rende `test/setup.ts`: stesso motore, stessi valori. */
 const testoIcu = (chiave: string, valori: Record<string, unknown>): string =>
@@ -468,6 +471,109 @@ describe('MovimentoDialog — «Modifica associazione» riapre il popup sulla st
 
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(onRiapertoPerModifica).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ─── IL VICOLO CIECO DELLA FATTURA EMESSA (revisione finale, 2026-10-05) ─────
+   *
+   * La riapertura CONSERVA `pagamento_id`, e il riabbinamento su una voce diversa
+   * passa dalla guardia `BONIFICO_GIA_FATTURATO`, che rifiuta con 409 finché sulla
+   * voce di prima c'è una fattura viva. «Modifica» su una voce con fattura emessa
+   * stornava, e poi non riusciva a riabbinare: l'incasso perso, la riga sospesa.
+   * Decisione: la guardia resta; è «Modifica» che non parte, e dice perché.
+   * «Elimina» invece si fa (la decisione n. 17: si riapre sempre, avvisando).
+   */
+  it('fattura EMESSA sulla voce: «Modifica» dice perché non si può e «Conferma» non parte', async () => {
+    const s = server({ lettura: () => risposta(200, lettura(associazione({ voci: [voce({ fattura_stato: 'emessa' })] }))) });
+    vi.stubGlobal('fetch', s.fetchMock);
+    const onRiapertoPerModifica = vi.fn();
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} onRiapertoPerModifica={onRiapertoPerModifica} />);
+
+    fireEvent.click(await comandoPronto(testo('movdlgModificaAssociazione')));
+    const dlg = await conferma('Modifica');
+
+    const avviso = within(dlg).getByRole('alert');
+    expect(avviso).toHaveTextContent(testoIcu('scollegaModificaBloccataFattura', { voce: 'Retta ottobre' }));
+    const ok = within(dlg).getByRole('button', { name: testo('scollegaConferma') });
+    expect(ok).toBeDisabled();
+    // «Subito dopo scegli la voce giusta» accanto a un divieto direbbe il contrario.
+    expect(within(dlg).queryByText(testo('scollegaDopoModifica'))).toBeNull();
+    fireEvent.click(ok);
+    expect(s.patch()).toEqual([]);
+    expect(onRiapertoPerModifica).not.toHaveBeenCalled();
+  });
+
+  it('la voce bloccata di un’ALTRA sede si dice «Voce di un’altra sede», mai per nome', async () => {
+    const s = server({
+      lettura: () => risposta(200, lettura(associazione({
+        tipo: 'composita',
+        voci: [voce(), voce({ pagamento_id: 'pg2', descrizione: null, alunno: null, fuori_sede: true, scuola_id: 'sc-2', fattura_stato: 'emessa' })],
+      }))),
+    });
+    vi.stubGlobal('fetch', s.fetchMock);
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    fireEvent.click(await comandoPronto(testo('movdlgModificaAssociazione')));
+    const dlg = await conferma('Modifica');
+
+    expect(within(dlg).getByRole('alert')).toHaveTextContent(
+      testoIcu('scollegaModificaBloccataFattura', { voce: testo('movdlgAssociatoAltraSede') }),
+    );
+    expect(within(dlg).getByRole('button', { name: testo('scollegaConferma') })).toBeDisabled();
+  });
+
+  it('fattura EMESSA ma «Elimina»: nessun blocco, si riapre avvisando (decisione n. 17)', async () => {
+    const s = server({ lettura: () => risposta(200, lettura(associazione({ voci: [voce({ fattura_stato: 'emessa' })] }))) });
+    vi.stubGlobal('fetch', s.fetchMock);
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    fireEvent.click(await comandoPronto(testo('movdlgEliminaAssociazione')));
+    const dlg = await conferma('Elimina');
+
+    expect(within(dlg).queryByText(testoIcu('scollegaModificaBloccataFattura', { voce: 'Retta ottobre' }))).toBeNull();
+    const ok = within(dlg).getByRole('button', { name: testo('scollegaConferma') });
+    expect(ok).toBeEnabled();
+    fireEvent.click(ok);
+    await waitFor(() => expect(s.patch()).toHaveLength(1));
+  });
+
+  it('nessuna fattura emessa: «Modifica» resta confermabile e senza avviso', async () => {
+    const s = server();
+    vi.stubGlobal('fetch', s.fetchMock);
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    fireEvent.click(await comandoPronto(testo('movdlgModificaAssociazione')));
+    const dlg = await conferma('Modifica');
+
+    expect(within(dlg).getByRole('button', { name: testo('scollegaConferma') })).toBeEnabled();
+    expect(within(dlg).queryByRole('alert')).toBeNull();
+  });
+
+  /**
+   * Una riapertura per «Modifica» che torna con un AVVISO (fatture non verificate,
+   * fattura viva) non riapre il popup in abbinamento: lì l'avviso sparirebbe sotto
+   * la ricerca delle voci. Si racconta come per «Elimina», e la lista si rilegge.
+   */
+  it('«Modifica» che torna con un avviso: niente riabbinamento, l’esito e l’avviso a schermo', async () => {
+    const s = server({
+      patch: () => risposta(200, {
+        success: true,
+        data: { stato: 'da_abbinare', transazione_annullata: false, movimenti_riaperti: 1, incassi_stornati: 1 },
+        avviso: { codice: 'RIAPERTURA_FATTURE_NON_VERIFICATE', messaggio: 'non verificate', numeri: [] },
+      }),
+    });
+    vi.stubGlobal('fetch', s.fetchMock);
+    const onRiapertoPerModifica = vi.fn();
+    const onDone = vi.fn();
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={onDone} returnFocusRef={ref()} onRiapertoPerModifica={onRiapertoPerModifica} />);
+
+    fireEvent.click(await comandoPronto(testo('movdlgModificaAssociazione')));
+    fireEvent.click(within(await conferma('Modifica')).getByRole('button', { name: testo('scollegaConferma') }));
+
+    expect(await screen.findByText(SHARED_IT.erroreRiaperturaFattureNonVerificate)).toBeInTheDocument();
+    expect(screen.getByText(testo('reconComponiEsitoRiaperto'))).toBeInTheDocument();
+    expect(onRiapertoPerModifica).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalled();
   });
 });
 

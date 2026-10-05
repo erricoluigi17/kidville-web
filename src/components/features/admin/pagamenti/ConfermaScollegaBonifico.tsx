@@ -90,7 +90,24 @@ export function ConfermaScollegaBonifico({ modo, associazione, busy, onConferma,
       conseguenze.push({ k: `coda-${v.pagamento_id}`, testo: t('scollegaFatturaInCoda', { voce: voceDi(v) }) });
     }
   }
-  if (modo === 'modifica') conseguenze.push({ k: 'dopo-modifica', testo: t('scollegaDopoModifica') });
+  /**
+   * ─── «MODIFICA» CON UNA FATTURA EMESSA È UN VICOLO CIECO: NON PARTE ─────────
+   *
+   * La riapertura CONSERVA `pagamento_id`, e il riabbinamento su una voce diversa
+   * passa dalla guardia `BONIFICO_GIA_FATTURATO` (`riconciliazione-conferma.ts`,
+   * `conciliazione-registra.ts`), che rifiuta con 409 finché sulla voce di prima
+   * c'è una fattura viva. Confermare qui volle dire stornare l'incasso e poi non
+   * poterlo rimettere da nessuna parte. La guardia è giusta e resta; è «Modifica»
+   * che si ferma PRIMA, e dice perché. «Elimina» no: lì si riapre comunque,
+   * avvisando (decisione n. 17 del titolare).
+   * Su una voce di un'altra sede il nome non c'è: «Voce di un'altra sede».
+   */
+  const vociBloccanti = modo === 'modifica' ? associazione.voci.filter((v) => v.fattura_stato === 'emessa') : [];
+  const bloccata = vociBloccanti.length > 0;
+  const idBlocco = `${uid}-blocco`;
+
+  // Il passo dopo si promette solo se si può fare: accanto al divieto direbbe il contrario.
+  if (modo === 'modifica' && !bloccata) conseguenze.push({ k: 'dopo-modifica', testo: t('scollegaDopoModifica') });
 
   const titolo = t(modo === 'modifica' ? 'scollegaTitoloModifica' : 'scollegaTitoloElimina');
 
@@ -115,6 +132,21 @@ export function ConfermaScollegaBonifico({ modo, associazione, busy, onConferma,
             {conseguenze.map((c) => <li key={c.k}>{c.testo}</li>)}
           </ul>
         </>
+      )}
+
+      {/* Il vestito dell'avviso del popup (filetto, inchiostro d'avviso, mai il rosso):
+          non è fallito niente, è un gesto che da qui non si può fare. `kv-recon-avviso-sede`
+          lo ridipinge in Alto Contrasto (v. `AvvisoEsito` in `MovimentoDialog`). */}
+      {bloccata && (
+        <div
+          id={idBlocco}
+          role="alert"
+          className="kv-recon-avviso-sede mt-4 space-y-2 border-l-4 border-kidville-warn-strong pl-3 font-maven text-sm leading-snug text-kidville-ink"
+        >
+          {vociBloccanti.map((v) => (
+            <p key={v.pagamento_id}>{t('scollegaModificaBloccataFattura', { voce: voceDi(v) })}</p>
+          ))}
+        </div>
       )}
 
       {modo === 'elimina' && (
@@ -165,7 +197,8 @@ export function ConfermaScollegaBonifico({ modo, associazione, busy, onConferma,
         <button
           type="button"
           onClick={() => onConferma(modo === 'modifica' ? 'da_abbinare' : scelta)}
-          disabled={busy}
+          disabled={busy || bloccata}
+          aria-describedby={bloccata ? idBlocco : undefined}
           className={cx(BTN_PRIMARY_AA, 'min-h-11')}
         >
           {t('scollegaConferma')}

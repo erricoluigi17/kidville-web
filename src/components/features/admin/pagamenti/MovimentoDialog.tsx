@@ -852,8 +852,13 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
        * abbinamento (e rilegge la lista: per questo qui non c'è `onDone`).
        * La riga si ricompone da quella che il popup ha in mano: è la stessa, con lo
        * stato che la PATCH ha appena scritto.
+       *
+       * ⚠️ MA NON SE LA RISPOSTA PORTA UN AVVISO (fatture non verificate, fattura
+       * viva): riaperto in abbinamento, il popup lo seppellirebbe sotto la ricerca
+       * delle voci, e la riapertura è proprio ciò che l'avviso racconta. Allora si
+       * racconta come per «Elimina» — `onDone` e il riquadro dell'esito, qui sotto.
        */
-      if (az === 'riapri' && intento === 'modifica' && onRiapertoPerModifica) {
+      if (az === 'riapri' && intento === 'modifica' && onRiapertoPerModifica && !j.avviso) {
         onRiapertoPerModifica({ ...movimento, stato: 'da_abbinare', confermato_il: null });
         return;
       }

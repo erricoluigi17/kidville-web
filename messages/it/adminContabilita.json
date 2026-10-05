@@ -1399,5 +1399,6 @@
   "scollegaDestinoIgnoratoAiuto": "Per un bonifico che non corrisponde a nessuna voce in app, per esempio una quota mai registrata.",
   "scollegaConferma": "Conferma",
   "scollegaAnnulla": "Annulla",
-  "movdlgAssociatoAltraSede": "Voce di un’altra sede"
+  "movdlgAssociatoAltraSede": "Voce di un’altra sede",
+  "scollegaModificaBloccataFattura": "Su «{voce}» c’è una fattura emessa: il bonifico non si può spostare su un’altra voce finché la fattura non è stornata con una nota di credito. Puoi solo eliminare l’associazione."
 }

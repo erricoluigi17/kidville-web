@@ -16,7 +16,7 @@
 **Metodi ammessi sulla voce.**
 - **Dati.** `pagamenti.metodi_ammessi text[] NOT NULL DEFAULT ARRAY['contanti','bonifico']`, con il CHECK `pagamenti_metodi_ammessi_validi`: almeno un metodo, solo valori noti. Il default copre ogni insert che già esiste (RPC delle rette, ticket, composizione, merchandise). L'helper puro `src/lib/pagamenti/metodi-ammessi.ts`, senza import perché lo usano anche componenti client, normalizza: valori ignoti scartati; assente, vuoto o tutto ignoto → entrambi.
 - **Segreteria.** Un gruppo «Metodi di pagamento ammessi» con due caselle, Contanti e Bonifico, nel generatore per categoria e nella modifica di un pagamento; con zero caselle compare l'errore e il salvataggio si blocca. `POST /api/pagamenti/genera` scrive il valore sulla voce singola, sul padre e sulle sue rate; il PATCH della modifica lo cambia. Badge «Solo contanti» / «Solo bonifico» nella riga dello scadenzario, nel dettaglio della voce e nella card mobile.
-- **Genitore.** Lo stesso badge sulla card della voce. `GET /api/pagamenti` restituisce `metodi_ammessi` e mette `causale_suggerita` a `null` sulle voci senza bonifico: si decide a valle del motore della causale, che resta unico. Nella card «Come pagare» queste voci escono dalle causali del bonifico, con la frase «N voci si pagano solo in contanti: le trovi nella scheda Contanti.»; se **nessuna** voce aperta ammette il bonifico, spariscono scheda Bonifico e IBAN e resta il solo pannello Contanti.
+- **Genitore.** Lo stesso badge sulla card della voce. `GET /api/pagamenti` restituisce `metodi_ammessi` e mette `causale_suggerita` a `null` sulle voci senza bonifico: si decide a valle del motore della causale, che resta unico. Nella card «Come pagare» queste voci escono dalle causali del bonifico, con la frase «N voci si pagano solo in contanti, in segreteria.»; se **nessuna** voce aperta ammette il bonifico, spariscono scheda Bonifico e IBAN e resta il solo pannello Contanti.
 - **Solleciti via email.** Una voce senza bonifico non ha il riquadro «Dati per il bonifico»: al suo posto c'è «Come pagare», con la frase del pagamento in contanti presso la segreteria.
 - **DB della CI, non migrato.** Su `PGRST204`/`42703` la scrittura si ritenta senza la colonna, con un log `warn`; in lettura la voce vale «entrambi».
 - **Riconciliazione invariata.** Un bonifico arrivato su una voce «solo contanti» si associa ancora, a mano.
@@ -29,7 +29,7 @@
   - le voci create dalla composizione, che restano e tornano da pagare;
   - la ricevuta, che viene annullata;
   - la fattura **emessa**, che resta valida e va stornata con una nota di credito;
-  - la richiesta di fattura in coda, che viene tolta.
+  - la richiesta di fattura in coda, che viene tolta se la voce non risulta più saldata.
 
   Per «Elimina» si sceglie il destino: «torna da abbinare» (predefinito) o «viene segnato come ignorato» (`PATCH azione:'riapri'` con `poi`). L'ignora è un update condizionale su `stato='da_abbinare'`: se non tocca righe, la riapertura resta fatta e la risposta lo dice.
 - **«Modifica».** Dopo la riapertura il pannello ricarica elenco e voci e **riapre il popup sulla stessa riga**, ora da abbinare: si associa con suggerimenti, ricerca o «Componi». Non è una RPC «sposta associazione». «Riapri + riabbina» riusa percorsi già collaudati (conferma singola, composizione, guardia `BONIFICO_GIA_FATTURATO`, sede di scrittura), e il passaggio intermedio resta visibile.
@@ -45,9 +45,19 @@
 - **Generazione rateale.** Un alunno saltato ora si dice (`padre-non-creato`, `rate-non-create`, `padre-orfano-non-cancellato`).
 - **Solleciti.** I catch con soli commenti ora loggano, e l'allowlist del lock `catch-muti-allowlist` si accorcia.
 
+**Revisione finale (05/10), otto correzioni.**
+- **«Modifica» con una fattura emessa non parte.** La riapertura conserva `pagamento_id`, e il riabbinamento a un'altra voce è respinto da `BONIFICO_GIA_FATTURATO` finché sulla voce di prima c'è una fattura viva: «Modifica» stornava e poi non poteva riabbinare. La guardia resta; la conferma in modo «modifica» mostra l'avviso (`scollegaModificaBloccataFattura`) e disabilita «Conferma». «Elimina» resta com'era. Se la riapertura per «Modifica» torna con un avviso, il popup mostra l'esito invece di riaprire l'abbinamento.
+- **«Dividi in acconti» conserva i metodi.** La modale passa i `metodi_ammessi` della voce che sostituisce; `POST /api/pagamenti/rate` li accetta (`zod`, `[]` = 400) e li scrive su padre e rate solo se non sono «tutti e due», con lo stesso ripiego di `genera` sul DB non migrato. Prima un «solo contanti» rinasceva pagabile con bonifico.
+- **Riapertura fail-closed sulle voci della transazione.** Se gli incassi della transazione non si leggono (guasto), `500 RIAPERTURA_NON_RIUSCITA` **prima** dello storno; prima si controllava la sola voce àncora.
+- **Stornato ma non riaperto (409).** Anche lì si annulla la ricevuta del composito e si pulisce la coda fatture: il denaro era già stato restituito.
+- **Audit della riapertura.** `registro_modifiche` registra lo stato finale (`ignorato` quando l'«ignora» è applicato), non `da_abbinare`.
+- **Popup sul DB della CI.** Senza `stornato_il`/`storno_di` la lettura degli incassi si ritenta senza, invece di dire «non letto».
+- **Testi.** La coda fatture «viene tolta, se la voce non risulta più saldata»; la frase del «solo contanti» dice «in segreteria». Nel generatore, con zero metodi, l'errore compare una volta sola.
+
 **Log** (solo uuid, conteggi e codici).
-- `pagamento` · `metodi-ammessi-scritti` (info, generazione) · `metodi-ammessi-modificati` (info, modifica) · `metodi-ammessi-colonna-assente` (warn, DB non migrato).
+- `pagamento` · `metodi-ammessi-scritti` (info, generazione e piano rateale) · `metodi-ammessi-modificati` (info, modifica) · `metodi-ammessi-colonna-assente` (warn, DB non migrato).
 - `pagamento` · `movimento-riaperto` (il successo dello storno) · `associazione-eliminata` / `associazione-riaperta` (l'intenzione dell'operatrice, con `ignorato`) · `ignora-dopo-riapertura-non-applicato` · `riapertura-fattura-in-invio` (warn).
+- `pagamento` · `padre-non-creato` / `rate-non-create` / `padre-orfano-non-cancellato` (error, anche in `pagamenti/rate:POST`) · `associazione-colonne-storno-assenti` (warn) · `voci-transazione-non-lette` (warn, schema non migrato); evento `voci_transazione_non_lette_riapertura` (error, guasto).
 
 **Resta da provare sul campo.**
 - Un pagamento «solo contanti» visto da un genitore, in app e nell'email di sollecito.

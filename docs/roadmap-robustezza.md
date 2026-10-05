@@ -25,7 +25,7 @@ Questo file resta la copia di lavoro: lo stato delle sessioni si aggiorna **qui*
 | # | Sessione | Stato | PR | Note |
 |---|---|---|---|---|
 | 0 | Decisioni e interruttori (titolare) | ⬜ da fare | — | PITR? conferme agenti? |
-| 1 | Funzioni a Dublino + disarmo `migrate.yml` | 🟡 rilasciata (PR #PR) | #PR | misura definitiva a +12 h dal deploy; timeout a ~0 solo su 2-3 giorni feriali. ✅ con i numeri nel primo commit della fase 2 |
+| 1 | Funzioni a Dublino + disarmo `migrate.yml` | 🟡 rilasciata (PR #188) | #188 | misura definitiva a +12 h dal deploy; timeout a ~0 solo su 2-3 giorni feriali. ✅ con i numeri nel primo commit della fase 2 |
 | 2 | Paracadute esterno (DB + Storage) e prova di ripristino | ⬜ da fare | — | |
 | 3 | Campanello e salute a livelli | ⬜ da fare | — | |
 | 4 | Scatola nera e pulizie sicure | ⬜ da fare | — | |
@@ -292,7 +292,7 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
   - ms di `/api/health`;
   - durata di POST diary e dei cron.
 - **Rollback**: Instant Rollback.
-- **Fatto (PR #PR, 05/10)**:
+- **Fatto (PR #188, 05/10)**:
   - `"regions": ["dub1"]` in `vercel.json`;
   - `migrate.yml` solo `workflow_dispatch`, solo `--dry-run`, CLI fissata a 2.109.0;
   - due lock: `vercel-json-funzioni-nella-regione-del-db` e `migrate-yml-non-applica-da-solo`. Sono il «passo che valida `vercel.json`», fatto come test del job Unit: offline, senza scaricare lo schema da rete;

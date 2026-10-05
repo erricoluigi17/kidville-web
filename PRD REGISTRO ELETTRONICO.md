@@ -1,4 +1,4 @@
-## 🌍 Changelog — Roadmap di robustezza, fase 1: le funzioni girano a Dublino e `migrate.yml` non applica più niente — 2026-10-05 (branch `robustezza/fase-1-funzioni-a-dublino`, PR #PR)
+## 🌍 Changelog — Roadmap di robustezza, fase 1: le funzioni girano a Dublino e `migrate.yml` non applica più niente — 2026-10-05 (branch `robustezza/fase-1-funzioni-a-dublino`, PR #188)
 
 **Stato.** 🟡 **In PR.** Una riga di configurazione, un workflow disarmato, due lock. **Nessun file in `src/`, nessuna migrazione, nessuna scrittura sul database.** `SELECT count(*) FROM enrollment_submissions;` = 722, letto prima e dopo: invariato. Il rilascio avviene di sera, in una finestra di basso traffico (21:00–22:00 UTC), e la misura definitiva si prende **12 ore dopo** il deploy: il risultato con i numeri prima → dopo entra nel primo commit della fase successiva.
 

@@ -47,6 +47,17 @@ case "$cmd" in
     echo "{\\"count\\":$n,\\"bytes\\":$((n * 1000))}"
     ;;
   sync)
+    case "$*" in
+      *--dry-run*)
+        # il PIANO: una riga per ogni cosa che il sync farebbe. Il percorso (con un uuid) deve poi
+        # sparire dal log pubblico: lo script ne tiene solo la FORMA e i conteggi.
+        i=0; while [ "$i" -lt "\${FAKE_PIANO_COPIE:-0}" ]; do echo "2026/10/06 09:10:00 NOTICE: fatture/${UUID}-$i.pdf: Skipped copy as --dry-run is set (size 10)" >&2; i=$((i+1)); done
+        i=0; while [ "$i" -lt "\${FAKE_PIANO_SOSTITUITI:-0}" ]; do echo "2026/10/06 09:10:00 NOTICE: fatture/${UUID}-$i.pdf: Skipped move as --dry-run is set (size 10)" >&2; i=$((i+1)); done
+        i=0; while [ "$i" -lt "\${FAKE_PIANO_CANCELLATI:-0}" ]; do echo "2026/10/06 09:10:00 NOTICE: chat-allegati/${UUID}-$i.jpg: Skipped move into backup dir as --dry-run is set (size 10)" >&2; i=$((i+1)); done
+        i=0; while [ "$i" -lt "\${FAKE_PIANO_ORARI:-0}" ]; do echo "2026/10/06 09:10:00 DEBUG : fatture/${UUID}-$i.pdf: Modification times differ by 345ms: 2026-10-06 09:10:12.345 +0000 UTC, 2026-10-06 09:10:13 +0000 UTC" >&2; i=$((i+1)); done
+        exit "\${FAKE_PIANO_EXIT:-0}"
+        ;;
+    esac
     [ -n "$FAKE_SYNC_AVVISO" ] && echo "NOTICE: ${UUID}/foto.jpg: Failed to copy: finto" >&2
     exit "\${FAKE_SYNC_EXIT:-0}"
     ;;
@@ -93,7 +104,8 @@ function chiamate(): string[] {
     const f = join(log, 'rclone.chiamate')
     return existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean) : []
 }
-const sync = () => chiamate().filter((c) => c.startsWith('sync '))
+const sync = () => chiamate().filter((c) => c.startsWith('sync ') && !c.includes('--dry-run'))
+const piano = () => chiamate().filter((c) => c.startsWith('sync ') && c.includes('--dry-run'))
 
 beforeEach(() => {
     radice = mkdtempSync(join(tmpdir(), 'specchio-'))
@@ -114,7 +126,7 @@ describe('specchio-storage.sh · il giro buono', () => {
         expect(s).toHaveLength(1)
         expect(s[0]).toContain('sync SB_FINTO: CRIPTO:corrente')
         expect(s[0]).toContain('--backup-dir CRIPTO:cestino/2026-10-06')
-        expect(s[0]).toMatch(/--max-delete 500\b/)
+        expect(s[0]).toMatch(/--max-delete 800\b/) // 500 cancellazioni + 300 sostituzioni: il PIANO ha già limitato ciascuna
         expect(s[0]).toMatch(/--max-delete-size 2G\b/)
         expect(r.out).toMatch(/^RISULTATO oggetti_specchio=100 byte_specchio=100000 spostati_nel_cestino=4 mancanti=0/m)
     })
@@ -209,6 +221,103 @@ describe('specchio-storage.sh · cosa rifiuta', () => {
     })
 })
 
+describe('specchio-storage.sh · il PIANO prima di eseguire (06/10: il primo sync su uno specchio già popolato)', () => {
+    /**
+     * Il 06/10 il primo giro programmato ha lanciato `rclone sync` su uno specchio GIÀ popolato (il
+     * `completo` delle 00:04 l'aveva trovato vuoto) e ha superato `--max-delete 500` dopo 80 secondi,
+     * a metà trasferimento, spostando nel cestino le vecchie versioni di centinaia di file che nella
+     * sorgente non erano cambiati. Nessuno sapeva perché. Ora: un dry-run PRIMA (stessa riga di
+     * comando), con un riepilogo senza nomi; se il piano è anomalo ci si ferma PRIMA di toccare lo
+     * specchio, e il log dice che cosa rclone riteneva diverso.
+     */
+    it('lancia un dry-run con le STESSE opzioni del sync vero, e senza tetto (per contare tutto)', () => {
+        esegui({ ESCLUDI_BUCKET: 'gallery' })
+        const pi = piano()
+        expect(pi, 'il piano non è stato chiesto').toHaveLength(1)
+        expect(pi[0]).toContain('sync SB_FINTO: CRIPTO:corrente')
+        expect(pi[0]).toContain('--backup-dir CRIPTO:cestino/2026-10-06')
+        expect(pi[0]).toContain('--exclude /gallery/**')
+        expect(pi[0]).toMatch(/--max-delete -1\b/)
+        expect(pi[0]).toMatch(/-vv\b/)
+    })
+
+    it('piano e sync vero usano la STESSA finestra sulle date (un crypt non ha hash: 1 ns = tutto «cambiato»)', () => {
+        esegui()
+        expect(piano()[0]).toMatch(/--modify-window 2s\b/)
+        expect(sync()[0]).toMatch(/--modify-window 2s\b/)
+        // il controllo finale confronta solo le dimensioni: la data non c'entra
+        const c = chiamate().find((x) => x.startsWith('check '))!
+        expect(c).not.toContain('--modify-window')
+    })
+
+    it('il piano viene PRIMA del sync vero', () => {
+        esegui()
+        const tutte = chiamate()
+        const iPiano = tutte.findIndex((c) => c.startsWith('sync ') && c.includes('--dry-run'))
+        const iVero = tutte.findIndex((c) => c.startsWith('sync ') && !c.includes('--dry-run'))
+        expect(iPiano).toBeGreaterThanOrEqual(0)
+        expect(iVero).toBeGreaterThan(iPiano)
+    })
+
+    it('un piano normale (pochi nuovi, pochi sostituiti, poche cancellazioni) passa e finisce nel RISULTATO', () => {
+        const r = esegui({ FAKE_PIANO_COPIE: '40', FAKE_PIANO_SOSTITUITI: '3', FAKE_PIANO_CANCELLATI: '2' })
+        expect(r.status, r.err).toBe(0)
+        expect(sync()).toHaveLength(1)
+        expect(r.out).toMatch(/^PIANO copie=40 sostituiti=3 cancellati=2\b/m)
+        expect(r.out).toMatch(/^RISULTATO .*piano_sostituiti=3 piano_cancellati=2/m)
+    })
+
+    it('troppe SOSTITUZIONI: tutto sembra cambiato → si ferma PRIMA, senza toccare lo specchio', () => {
+        const r = esegui({ FAKE_PIANO_COPIE: '700', FAKE_PIANO_SOSTITUITI: '650' })
+        expect(r.status).not.toBe(0)
+        expect(r.err).toMatch(/sostituir|cambiati/i)
+        expect(r.err).toMatch(/650/)
+        expect(sync(), 'il sync vero non doveva partire').toHaveLength(0)
+    })
+
+    it('troppe CANCELLAZIONI: si ferma PRIMA, senza toccare lo specchio', () => {
+        const r = esegui({ FAKE_PIANO_CANCELLATI: '501' })
+        expect(r.status).not.toBe(0)
+        expect(r.err).toMatch(/cancellazion/i)
+        expect(r.err).toMatch(/501/)
+        expect(sync()).toHaveLength(0)
+    })
+
+    it('i tetti del piano sono configurabili (una pulizia voluta passa alzando MAX_DELETE)', () => {
+        expect(esegui({ FAKE_PIANO_SOSTITUITI: '10', MAX_SOSTITUITI: '5' }).status).not.toBe(0)
+        expect(esegui({ FAKE_PIANO_SOSTITUITI: '10', MAX_SOSTITUITI: '20' }).status).toBe(0)
+        expect(esegui({ FAKE_PIANO_CANCELLATI: '600', MAX_DELETE: '700' }).status).toBe(0)
+    })
+
+    it('se il piano stesso fallisce, non si va avanti: non si sa che cosa farebbe il sync', () => {
+        const r = esegui({ FAKE_PIANO_EXIT: '3' })
+        expect(r.status).not.toBe(0)
+        expect(r.err).toMatch(/piano/i)
+        expect(sync()).toHaveLength(0)
+    })
+
+    it('il log mostra le FRASI di rclone con i conteggi (che cosa riteneva diverso) senza nessun nome di file', () => {
+        const r = esegui({ FAKE_PIANO_COPIE: '12', FAKE_PIANO_SOSTITUITI: '12', FAKE_PIANO_ORARI: '12' })
+        expect(r.out).toMatch(/Modification times differ by/)
+        expect(r.out).toMatch(/Skipped move as --dry-run/)
+        expect(r.out).not.toContain(UUID)
+        expect(r.out).not.toMatch(/fatture\/|\.pdf/)
+    })
+
+    it('anche quando si ferma, il log del rifiuto porta la forma dei messaggi e nessun nome', () => {
+        const r = esegui({ FAKE_PIANO_SOSTITUITI: '650', FAKE_PIANO_ORARI: '650' })
+        expect(r.status).not.toBe(0)
+        expect((r.out + r.err)).toMatch(/Modification times differ by/)
+        expect((r.out + r.err)).not.toContain(UUID)
+    })
+
+    it('rifiuta tetti non numerici', () => {
+        const r = esegui({ MAX_SOSTITUITI: 'molti' })
+        expect(r.status).not.toBe(0)
+        expect(r.err).toMatch(/numeri/)
+    })
+})
+
 describe('specchio-storage.sh · bucket esclusi dal backup (scelta del titolare, 06/10)', () => {
     it('senza ESCLUDI_BUCKET non c\'è nessun filtro', () => {
         esegui()
@@ -221,7 +330,7 @@ describe('specchio-storage.sh · bucket esclusi dal backup (scelta del titolare,
         const con = chiamate().filter((c) => c.includes('--exclude /gallery/** --exclude /video_originals/**'))
         const comandi = con.map((c) => c.split(' ')[0]).sort()
         // size della sorgente + sync + check; NON la size dello specchio né quella del cestino
-        expect(comandi).toEqual(['check', 'size', 'sync'])
+        expect(comandi).toEqual(['check', 'size', 'sync', 'sync']) // il piano (dry-run) e il sync vero
         const size = con.find((c) => c.startsWith('size'))!
         expect(size).toContain('SB_FINTO:')
         expect(r.out).toMatch(/esclusi=gallery,video_originals/)
@@ -256,13 +365,14 @@ describe('PROVE GEMELLE · se si toglie una guardia, il comportamento sbagliato 
     }
 
     it('senza --backup-dir, ciò che sparisce dalla sorgente sparirebbe anche dallo specchio', () => {
-        const p = mutato(/--backup-dir "\$CESTINO"/, '')
+        // quello del sync VERO (il primo è del piano, e lì il dry-run non sposta niente)
+        const p = mutato(/--backup-dir "\$CESTINO" \\\n  --max-delete "\$TETTO_RCLONE"/, '--max-delete "$TETTO_RCLONE"')
         esegui({}, p)
         expect(sync()[0]).not.toContain('--backup-dir')
     })
 
     it('senza --max-delete, una cancellazione di massa passerebbe', () => {
-        const p = mutato(/--max-delete "\$MAX_DELETE"/, '')
+        const p = mutato(/--max-delete "\$TETTO_RCLONE"/, '')
         esegui({}, p)
         expect(sync()[0]).not.toContain('--max-delete ')
     })
@@ -296,6 +406,37 @@ describe('PROVE GEMELLE · se si toglie una guardia, il comportamento sbagliato 
         const p = mutato(/sed -E 's\/\[0-9a-f\]\{8\}[^']*'/, "cat #")
         const r = esegui({ FAKE_SYNC_AVVISO: '1' }, p)
         expect(r.out + r.err).toContain(UUID)
+    })
+    it('senza il piano, un sync anomalo partirebbe a metà e si fermerebbe sul tetto di rclone', () => {
+        // si toglie il rifiuto sul numero di sostituzioni: il sync vero parte comunque
+        const p = mutato(/\[ "\$SOSTITUITI" -gt "\$MAX_SOSTITUITI" \]/, 'false')
+        esegui({ FAKE_PIANO_SOSTITUITI: '650' }, p)
+        expect(sync().length).toBeGreaterThan(0)
+    })
+
+    it('senza il rifiuto sulle cancellazioni del piano, una cancellazione di massa partirebbe', () => {
+        const p = mutato(/\[ "\$CANCELLATI" -gt "\$MAX_DELETE" \]/, 'false')
+        esegui({ FAKE_PIANO_CANCELLATI: '501' }, p)
+        expect(sync().length).toBeGreaterThan(0)
+    })
+
+    it('senza --dry-run il «piano» sarebbe un secondo sync vero: toccherebbe lo specchio prima di ogni guardia', () => {
+        const p = mutato(/--dry-run -vv --max-delete -1/, '-vv --max-delete -1')
+        esegui({}, p)
+        expect(piano()).toHaveLength(0)
+        expect(sync(), 'due sync veri').toHaveLength(2)
+    })
+
+    it('senza la finestra sulle date, il sync vero ricopierebbe tutto ciò che differisce di un attimo', () => {
+        const p = mutato(/  --max-delete-size "\$MAX_DELETE_SIZE" \\\n  --modify-window "\$FINESTRA_DATE" \\\n/, '  --max-delete-size "$MAX_DELETE_SIZE" \\\n')
+        esegui({}, p)
+        expect(sync()[0]).not.toContain('--modify-window')
+    })
+
+    it('senza la lista bianca sul riepilogo del piano, i nomi dei file finirebbero nel log pubblico', () => {
+        const p = mutato(/forma_piano\(\) \{/, 'forma_piano() { cat "$T/piano.log"; return 0;')
+        const r = esegui({ FAKE_PIANO_SOSTITUITI: '2' }, p)
+        expect(r.out + r.err).toContain('fatture/')
     })
 })
 

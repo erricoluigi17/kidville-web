@@ -134,8 +134,8 @@ prima di riaprire l'app (oggi l'elenco degli oblii è nei log: la fase 4 della r
 
 ## Scenario E — «Il progetto Supabase è perso o bloccato» (il disastro)
 
-> 🟠 **Procedura NON ancora provata dall'inizio alla fine.** La prima prova di ripristino (vedi
-> `docs/prova-ripristino-2026-10.md`) la verifica su un progetto temporaneo; chi la usa per un disastro vero
+> 🟠 **Procedura provata a pezzi, non dall'inizio alla fine.** Le due prove del 06/10 (vedi
+> `docs/prova-ripristino-2026-10.md`: la nostra copia sul Mac e il «Restore to a new project» di Supabase) ne coprono il database; mancano i file e l'app; chi la usa per un disastro vero
 > deve aggiornare questo scenario con quello che ha trovato.
 
 1. Respira. Le copie sono al sicuro in R2; l'app è ferma ma i dati non sono persi.
@@ -149,6 +149,10 @@ prima di riaprire l'app (oggi l'elenco degli oblii è nei log: la fase 4 della r
    schema esiste già) — il dettaglio e l'ordine esatto vanno confermati dalla prova.
 5. **Subito, prima di qualunque altra cosa: spegni `pg_cron`** nel nuovo progetto (28 job attivi e 19 funzioni
    con `pg_net`: potrebbero chiamare l'app di produzione, e `iscrizioni-import-invio` manda email alle famiglie).
+   **Provato il 06/10:** `pg_cron` viene copiato e resta **acceso**, e `UPDATE cron.job` è **negato** (`42501`). Si spegne
+   dal pannello del **nuovo** progetto, Database → Extensions → `pg_cron` → off (cancella i job), oppure un job alla volta con
+   `SELECT cron.alter_job(job_id := N, active := false);`. Controlla il nome del progetto nel titolo della scheda
+   **prima** di cliccare: spegnerli in produzione sarebbe un incidente.
 6. Rimetti le **impostazioni del database** (i nomi sono nel manifest) e le **password dei ruoli**.
 7. Ricarica i **file** dallo specchio nel nuovo Storage (`rclone sync CRIPTO:corrente SB_NUOVO:`), con il remote cifrato.
 8. In **Vercel** cambia le variabili del nuovo progetto (`NEXT_PUBLIC_SUPABASE_URL`, chiavi `anon` e `service_role`, URL del DB), poi rilancia il deploy.

@@ -37,41 +37,66 @@ corretti con un test visto prima rosso:
 3. `ripristina-prova.sh`: su macOS un postmaster senza una locale valida muore con «postmaster became multithreaded during
    startup»; lo script ora imposta `LC_ALL` (`en_US.UTF-8` se non c'è).
 
-## Prova 2 — «Restore to a new project» di Supabase · ⬜ da fare dal titolare
+## Prova 2 — «Restore to a new project» di Supabase · ✅ riuscita il 06/10/2026 (progetto temporaneo da cancellare)
 
-Verifica il **paracadute di Supabase** (i suoi backup fisici), non il nostro: serve a sapere quanto ci mette e se i conteggi
-tornano. La creazione del progetto richiede di scegliere una password del database, quindi la fa il titolare.
+Verifica il **paracadute di Supabase** (i suoi backup fisici), non il nostro. Dal pannello (Database → Backups → «Restore to
+new project») si è ripristinato il backup più recente (06/10, 00:59 UTC) in un progetto nuovo: stessa organizzazione e
+regione (`eu-west-1`), compute Small, **14,83 $ al mese di calcolo, fatturati a ore** (qualche centesimo per la prova).
+È stata fatta **di giorno**, su richiesta del titolare, che ha accettato il rischio di notifiche doppie alle famiglie.
 
-**Prima di cominciare**
-
-- **Di notte e fuori dalle 08:00–09:00 UTC.** Il progetto ripristinato copia anche `pg_cron` e `pg_net`: **28 job attivi**,
-  19 dei quali chiamano l'app di produzione, e `iscrizioni-import-invio` manda email dalle 08:10 UTC.
-- **Spegnere `pg_cron` nel progetto nuovo appena è nato**, prima di ogni altra cosa: nell'editor SQL **del progetto
-  temporaneo** (mai quello di produzione) `UPDATE cron.job SET active = false;`.
-- Non collegare niente al progetto temporaneo: contiene dati di minori.
-
-**Passi.** Pannello Supabase → Database → Backups → «Restore to a new project» → scegliere il backup di ieri → nome
-`kidville-prova-ripristino` → stessa regione (UE) → scegliere la password. Cronometrare dalla conferma a «progetto pronto».
-
-**Cosa si registra qui (solo numeri):** minuti di attesa; per le tabelle chiave (`alunni`, `utenti`, `pagamenti`, `incassi`,
-`enrollment_submissions`, `auth.users`) le righe nel progetto temporaneo contro la produzione dello stesso giorno (la
-differenza attesa è quella dei dati scritti dopo il backup); se i file di Storage ci sono (i backup fisici di Supabase
-**non** contengono i file: è proprio il motivo dello specchio su R2).
-
-**Dopo.** Il progetto temporaneo **lo cancella il titolare** dal pannello (Settings → General → Delete project). Chi
-esegue una cancellazione di progetto non è mai l'assistente.
-
-| Esito | Valore |
+| | Esito |
 |---|---|
-| Data e ora della prova | — |
-| Minuti per avere il progetto pronto | — |
-| Tabelle chiave: temporaneo / produzione | — |
-| `pg_cron` spento entro (minuti dalla nascita) | — |
-| Progetto cancellato il | — |
+| Richiesta inviata | 06/10, 12:49 UTC |
+| Progetto pronto («COMPLETED», stato «Healthy») | entro le 12:54:58 UTC: **circa 5 minuti e mezzo** (è un massimo: il controllo era ogni minuto) |
+| Ultima migrazione nel clone | `ruolo_backup_lettura`, la stessa di produzione |
+| `pg_cron` spento | 12:57:15 UTC, **circa 2 minuti** dopo che il ripristino risultava completo |
+| Tabelle in `public` | 145 nel clone, 145 in produzione |
+| Ultimo log nel clone | 00:51 UTC, coerente con un backup delle 00:59 |
+
+**Conteggi, clone contro produzione (12:48 UTC), spiegati record per record.** In produzione sono nate dopo il backup
+(00:59:17 UTC) 26 righe di `pagamenti`, 359 di `incassi` e 1 di `enrollment_submissions`.
+
+| Tabella | Clone | Produzione | Nate dopo il backup | Produzione − nuove |
+|---|---|---|---|---|
+| `alunni` | 789 | 789 | 0 | 789 ✅ |
+| `utenti` | 956 | 956 | 0 | 956 ✅ |
+| `auth.users` | 956 | 956 | 0 | 956 ✅ |
+| `pagamenti` | 2.142 | 2.168 | 26 | 2.142 ✅ |
+| `incassi` | 1.081 | 1.440 | 359 | 1.081 ✅ |
+| `enrollment_submissions` | 722 | 723 | 1 | 722 ✅ |
+
+**Tutte le tabelle chiave coincidono al record**, una volta tolte le righe scritte dopo il backup.
+
+**Cosa ha insegnato** (e il runbook, scenario E, ora lo dice):
+
+1. **Il modulo chiede una password del database ma la precompila** con una generata: non serve scriverne nessuna, e chi
+   fa la prova non deve rivelarla. Il nome del progetto sì.
+2. **`pg_cron` e `pg_net` vengono copiati e restano accesi**: la trappola era vera. Nel clone `UPDATE cron.job` è **negato**
+   (`42501: permission denied for table job`). Si spegne dal pannello, **Database → Extensions → `pg_cron` → off** (cancella
+   i job: va bene solo su un progetto temporaneo), oppure un job alla volta con
+   `SELECT cron.alter_job(job_id := N, active := false);`.
+3. **Da «pronto» a «cron spento» sono passati circa 2 minuti**, pur andando in fretta. In quel tempo il clone può avere
+   eseguito dei job che chiamano l'app di produzione. Nei log di produzione di quella finestra (12:53–12:59 UTC) non c'è
+   nessuna riga anomala, ma **non è una prova che non abbia eseguito nulla**. Per questo la prova si fa **di notte**, a
+   coda delle notifiche vuota.
+4. Il modulo avvisa che **non si copiano** Storage, Edge Functions, impostazioni di Auth, estensioni e impostazioni del
+   database, repliche: un clone ripristinato **non è un'app funzionante**. I file si recuperano solo dallo specchio su R2.
+5. Nella lista «Scheduled backups» i pulsanti **Restore ripristinano sopra la produzione**. Quelli giusti stanno nella
+   scheda «Restore to new project».
+6. La prova ha richiesto di **non fidarsi dell'ultimo clic**: ogni azione sul clone è stata preceduta dalla verifica del
+   nome del progetto nel titolo della scheda e dell'indirizzo, perché un `cron.job` spento per sbaglio in produzione
+   sarebbe stato un incidente.
+
+**Il progetto temporaneo** `kidville-prova-ripristino-TEMPORANEO` contiene **dati veri di minori** e costa circa 2 centesimi
+all'ora: **va cancellato appena possibile** (Settings → General → Delete project). L'assistente non cancella progetti.
+
+| | |
+|---|---|
+| Progetto temporaneo cancellato il | — (da compilare) |
 
 ## Per mettere la ✅ sulla fase 2
 
 - Prova 1 ✅ (fatta, qui sopra).
-- Prova 2 compilata nella tabella.
+- Prova 2 ✅ (fatta, qui sopra) **e progetto temporaneo cancellato**.
 - **Due notti consecutive** di backup automatico riuscito (verificate con `gh run list --workflow backup-notturno.yml --event schedule`).
 - Le **copie offline delle chiavi** confermate dal titolare.

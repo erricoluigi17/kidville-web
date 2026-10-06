@@ -2491,7 +2491,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             // prima di ogni lettura di `student_parents` e `delegates`, e le letture di `alunni` e
             // `sections` portano `.eq('scuola_id', alunno.scuolaId)` nella STESSA catena.
             // Misurato rieseguendo il lock: 344 → 345.
-            routeConServiceRole: 345,
+            // +2 il 2026-10-06 (robustezza, fase 3): `health/vivo:GET` e `health/qualita:GET`, i due
+            // livelli nuovi accanto a `health:GET` (che c'era già: nel 2026-08-04 «+1» era lui).
+            // Stesso perimetro, nessun dato in più: leggono lo stato del sistema, mai righe di una
+            // sede. Il `createAdminClient(` sta NEL FILE di ciascuna route (`creaClient: () =>
+            // createAdminClient()`) e non nell'helper `lib/health/porta.ts`, proprio perché questo
+            // lock le veda: spostarlo là avrebbe fatto CALARE il conto (345 → 344) senza cambiare
+            // niente di ciò che le route fanno. Misurato rieseguendo il lock: 345 → 347.
+            routeConServiceRole: 347,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2766,7 +2773,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // legge per id nell'handler, poi il gate di sede — `.includes(mov.scuola_id)` sulle
             // sedi attive, o `assertPagamentoInScope` sulla voce àncora per una riga storica
             // senza sede — PRIMA di leggere voci e nomi. Misurato rieseguendo il lock: 538 → 539.
-            handlerControllati: 539,
+            // +2 il 2026-10-06 (robustezza, fase 3): `health/vivo:GET` e `health/qualita:GET` (vedi
+            // sopra, a `routeConServiceRole`). CONTROLLATI come `health:GET`, `handlerEsentati`
+            // fermo a 113: un endpoint di salute non legge dati di nessuna sede, quindi non c'è
+            // niente da isolare. Misurato rieseguendo il lock: 539 → 541.
+            handlerControllati: 541,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -26,12 +26,17 @@ vi.mock('@/lib/logging/logger', () => log)
 const supa = vi.hoisted(() => ({ createAdminClient: vi.fn(), createClient: vi.fn() }))
 vi.mock('@/lib/supabase/server-client', () => supa)
 
+// GoTrue, visto dal controllo `auth`: `auth.admin.getUserById(<uuid nullo>)`.
+const auth = vi.hoisted(() => ({ getUserById: vi.fn() }))
+
 import { GET } from '@/app/api/health/route'
 import { resetRateLimit } from '@/lib/security/rate-limit'
 import {
     VARIABILI_CRITICHE,
     JOB_CRON,
     SOGLIA_IMPRONTE_ERRORE,
+    SOGLIA_OCCORRENZE_ERRORE,
+    REGIONE_ATTESA,
     ESITI_BATTITO,
     ESITI_BATTITO_PER_OPERAZIONE,
     valeComeBattito,
@@ -93,8 +98,19 @@ function dbSano(): DBFinto {
     }
 }
 
+/** La risposta di un Auth VIVO a «chi è l'utente nullo?»: 404 `user_not_found`, che è l'esito ok. */
+function authVivo() {
+    return {
+        data: { user: null },
+        error: Object.assign(new Error('User not found'), { status: 404, code: 'user_not_found' }),
+    }
+}
+
 function montaDb(db: DBFinto, errori: Record<string, ErrorePostgrest> = {}): void {
-    supa.createAdminClient.mockResolvedValue(creaFintoSupabase(db, [], { errori }))
+    const finto = creaFintoSupabase(db, [], { errori })
+    supa.createAdminClient.mockResolvedValue(
+        Object.assign(finto, { auth: { admin: { getUserById: auth.getUserById } } }),
+    )
 }
 
 async function chiama(): Promise<{ stato: number; header: string | null; corpo: Salute; grezzo: string }> {
@@ -119,6 +135,7 @@ function controllo(corpo: Salute, nome: string): Controllo {
 beforeEach(() => {
     vi.clearAllMocks()
     resetRateLimit()
+    auth.getUserById.mockResolvedValue(authVivo())
     // `ambienteCorrente()` legge `VERCEL_ENV`: senza, l'ambiente sarebbe 'locale' e il
     // filtro su `app_log` non troverebbe le righe del fixture, che sono di 'production'.
     vi.stubEnv('VERCEL_ENV', 'production')
@@ -144,12 +161,13 @@ describe('GET /api/health', () => {
         // Non basta lo stato aggregato: se un controllo sparisse dall'elenco,
         // l'aggregato resterebbe 'ok' e nessuno se ne accorgerebbe.
         expect(corpo.controlli.map((c) => c.nome).sort()).toEqual([
+            'auth',
             'coda-fatture',
             'config',
             'cron-battito',
             'db-lettura',
+            'regione',
             'schema-atteso',
-            'sezione-testo-allineato',
             'tasso-errore',
         ])
         for (const c of corpo.controlli) expect([c.nome, c.esito]).toEqual([c.nome, 'ok'])
@@ -645,6 +663,8 @@ describe('GET /api/health', () => {
                 id: `err-${i}`,
                 evento: 'route',
                 livello: 'error',
+                sorgente: 'server',
+                occorrenze: 1,
                 ambiente: 'production',
                 creato_il: fa(quandoMs),
                 visto_l_ultima: fa(quandoMs),
@@ -717,9 +737,205 @@ describe('GET /api/health', () => {
         expect(corpo.stato).toBe('ok')
     })
 
+    /* ── fase 3 (2026-10-06): solo il server, e anche le occorrenze ─────────── */
+
+    it('gli errori del BROWSER non contano: `/api/logs` è anonimo e li fabbrica chiunque', async () => {
+        const db = conImpronteErrore(12, 2 * MIN)
+        for (const r of db.app_log) if (r.livello === 'error') r.sorgente = 'client'
+        montaDb(db)
+
+        const { corpo } = await chiama()
+
+        // 12 impronte sarebbero «degraded» se fossero del server: qui sono rumore dei browser.
+        expect(corpo.stato).toBe('ok')
+        expect(controllo(corpo, 'tasso-errore').esito).toBe('ok')
+    })
+
+    function conUnaImprontaRipetuta(occorrenze: number, quandoMs = 2 * MIN): DBFinto {
+        const db = dbSano()
+        db.app_log.push({
+            id: 'err-ripetuto',
+            evento: 'email',
+            livello: 'error',
+            sorgente: 'server',
+            occorrenze,
+            ambiente: 'production',
+            creato_il: fa(8 * ORA),
+            visto_l_ultima: fa(quandoMs),
+            contesto: { campi: {} },
+        })
+        return db
+    }
+
+    // NUMERI LETTERALI (come per le impronte): 26 e 25 inchiodano il confine, perché con
+    // `SOGLIA_OCCORRENZE_ERRORE + 1` il fixture crescerebbe insieme alla soglia.
+    it('UNA sola impronta ripetuta 26 volte (il «403 domain not verified» di Resend) porta a degraded', async () => {
+        montaDb(conUnaImprontaRipetuta(26))
+
+        const { stato, corpo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('degraded')
+        expect(controllo(corpo, 'tasso-errore').esito).toBe('degradato')
+        expect(controllo(corpo, 'tasso-errore').dettaglio).toContain('occorrenze')
+    })
+
+    it('la stessa impronta con 25 occorrenze — sotto il doppio del massimo misurato — resta ok', async () => {
+        montaDb(conUnaImprontaRipetuta(25))
+
+        const { corpo } = await chiama()
+
+        expect(controllo(corpo, 'tasso-errore').esito).toBe('ok')
+    })
+
+    it("un'impronta ripetuta molto ma vista l'ultima volta 40 minuti fa non conta", async () => {
+        montaDb(conUnaImprontaRipetuta(200, 40 * MIN))
+
+        const { corpo } = await chiama()
+
+        expect(controllo(corpo, 'tasso-errore').esito).toBe('ok')
+    })
+
+    it('le soglie sono sopra il massimo misurato in produzione il 2026-10-06 (5 impronte, 11 occorrenze)', () => {
+        // MISURATO su 7 giorni (676 finestre da 15 minuti), solo errori del server: massimo 5 impronte
+        // attive, somma delle occorrenze massima 11. Sotto → falso allarme quotidiano, e un allarme che
+        // suona da solo viene spento; molto sopra → non suona mai.
+        expect(SOGLIA_OCCORRENZE_ERRORE).toBeGreaterThan(11)
+        expect(SOGLIA_OCCORRENZE_ERRORE).toBeLessThanOrEqual(50)
+    })
+
+    /* ═══════════════════════════════════════════════════════════════════════
+     * AUTH — il login passa da GoTrue, che può cadere col database sano
+     * ═══════════════════════════════════════════════════════════════════════ */
+
+    it('con Auth vivo (404 user_not_found sull\'utente nullo) il controllo è ok', async () => {
+        const { corpo } = await chiama()
+
+        expect(controllo(corpo, 'auth').esito).toBe('ok')
+        // Si chiede di un utente che NON esiste: nessun utente vero viene letto.
+        expect(auth.getUserById).toHaveBeenCalledWith('00000000-0000-0000-0000-000000000000')
+    })
+
+    it('con Auth che risponde 500 lo stato è down e l\'HTTP è 503, col database sano', async () => {
+        auth.getUserById.mockResolvedValue({
+            data: { user: null },
+            error: Object.assign(new Error('unexpected_failure'), { status: 500, code: 'unexpected_failure' }),
+        })
+
+        const { stato, corpo, header } = await chiama()
+
+        expect(stato).toBe(503)
+        expect(header).toBe('down')
+        expect(controllo(corpo, 'db-lettura').esito).toBe('ok')
+        expect(controllo(corpo, 'auth').esito).toBe('giu')
+        expect(controllo(corpo, 'auth').dettaglio).toContain('500')
+    })
+
+    it('con Auth irraggiungibile (la chiamata lancia) lo stato è down, non un\'eccezione non gestita', async () => {
+        auth.getUserById.mockRejectedValue(new TypeError('fetch failed'))
+
+        const { stato, corpo } = await chiama()
+
+        expect(stato).toBe(503)
+        expect(controllo(corpo, 'auth').esito).toBe('giu')
+    })
+
+    it('un 401 di Auth (chiave sbagliata) NON passa per «vivo»: solo il 404 vale', async () => {
+        auth.getUserById.mockResolvedValue({
+            data: { user: null },
+            error: Object.assign(new Error('Invalid API key'), { status: 401, code: 'bad_jwt' }),
+        })
+
+        const { stato } = await chiama()
+
+        expect(stato).toBe(503)
+    })
+
+    /* ═══════════════════════════════════════════════════════════════════════
+     * REGIONE — la funzione deve girare dov'è il database
+     * ═══════════════════════════════════════════════════════════════════════ */
+
+    it('con la funzione in dub1 il controllo è ok e la risposta dichiara la regione', async () => {
+        vi.stubEnv('VERCEL_REGION', 'dub1')
+
+        const { corpo } = await chiama()
+
+        expect(controllo(corpo, 'regione').esito).toBe('ok')
+        expect(corpo.regione).toBe('dub1')
+    })
+
+    it('con la funzione in iad1 lo stato è degraded (200), non down: serve i genitori, solo più piano', async () => {
+        vi.stubEnv('VERCEL_REGION', 'iad1')
+
+        const { stato, corpo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('degraded')
+        expect(controllo(corpo, 'regione').esito).toBe('degradato')
+        expect(controllo(corpo, 'regione').dettaglio).toContain('iad1')
+    })
+
+    it('fuori da Vercel (nessuna VERCEL_REGION) non è un guasto', async () => {
+        vi.stubEnv('VERCEL_REGION', '')
+
+        const { corpo } = await chiama()
+
+        expect(controllo(corpo, 'regione').esito).toBe('ok')
+        expect(corpo.regione).toBeUndefined()
+    })
+
+    it("la regione attesa è quella di vercel.json: le due cose non possono divergere", () => {
+        const vj = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'vercel.json'), 'utf8')) as {
+            regions?: string[]
+        }
+        expect(vj.regions).toEqual([REGIONE_ATTESA])
+    })
+
+    it('la versione esce solo se ha la forma di uno sha: il contenuto di una variabile non si rilancia', async () => {
+        vi.stubEnv('VERCEL_GIT_COMMIT_SHA', '13d8806585d38aba1e81a93620dc502f85c92b31')
+        expect((await chiama()).corpo.versione).toBe('13d8806585d3')
+
+        vi.stubEnv('VERCEL_GIT_COMMIT_SHA', 'SUPABASE_SERVICE_ROLE_KEY=eyJhbGci')
+        expect((await chiama()).corpo.versione).toBeUndefined()
+    })
+
+    it('la qualità dei dati NON è nella salute: alunni col testo diverso dalla sezione non cambiano lo stato', async () => {
+        const db = dbSano()
+        db.sections = [{ id: 's1', name: 'Sezione A' }]
+        db.alunni = [{ id: 'a1', section_id: 's1', classe_sezione: 'Sezione B', stato: 'iscritto' }]
+        montaDb(db)
+
+        const { corpo } = await chiama()
+
+        expect(corpo.stato).toBe('ok')
+        expect(corpo.controlli.map((c) => c.nome)).not.toContain('sezione-testo-allineato')
+    })
+
     /* ═══════════════════════════════════════════════════════════════════════
      * CONFIGURAZIONE
      * ═══════════════════════════════════════════════════════════════════════ */
+
+    // IL «7 SU 6». Fino al 2026-10-06 `valoriCritici()` leggeva SEI variabili mentre
+    // `VARIABILI_CRITICHE` ne dichiarava SETTE: `ARUBA_PASSWORD` non veniva mai guardata e il
+    // dettaglio scriveva «7 variabili presenti». Un solo test su `RESEND_API_KEY` non lo vede mai:
+    // si prova OGNUNA, una alla volta.
+    it.each(VARIABILI_CRITICHE.map((n) => [n]))(
+        'senza %s — e solo lei — la configurazione è degradata e la nomina',
+        async (nome) => {
+            vi.stubEnv(nome, '')
+
+            const { corpo } = await chiama()
+
+            expect(controllo(corpo, 'config').esito).toBe('degradato')
+            expect(controllo(corpo, 'config').dettaglio).toContain(nome)
+        },
+    )
+
+    it('il numero dichiarato nel dettaglio è quello delle variabili davvero lette', async () => {
+        const { corpo } = await chiama()
+
+        expect(controllo(corpo, 'config').dettaglio).toBe(`${VARIABILI_CRITICHE.length} variabili presenti`)
+    })
 
     it('una variabile critica assente porta a degraded e la nomina, senza mai stampare un valore', async () => {
         vi.stubEnv('RESEND_API_KEY', '')

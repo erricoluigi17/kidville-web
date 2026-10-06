@@ -78,6 +78,9 @@ printf '%s' "$META" | jq -e '.conteggi' >/dev/null || errore "il manifest non co
 ESCLUSE_JSON="$(printf '%s' "$EXTRA" | jq -c '.dati_esclusi // []')"
 
 # ── il Postgres usa-e-getta, SOLO su un socket locale ────────────────────────
+# Su macOS un postmaster senza una locale valida muore con «postmaster became multithreaded during
+# startup» (visto dal vivo il 06/10/2026: lo script usciva con «il Postgres temporaneo non parte»).
+export LC_ALL="${LC_ALL:-en_US.UTF-8}"
 initdb -D "$W/data" -U postgres --auth=trust -E UTF8 --no-locale >/dev/null
 pg_ctl -D "$W/data" -o "-p $PORTA -k $SOCK -c listen_addresses=''" -w -l "$W/pg.log" start >/dev/null \
   || errore "il Postgres temporaneo non parte"

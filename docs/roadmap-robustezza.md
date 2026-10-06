@@ -25,7 +25,7 @@ Questo file resta la copia di lavoro: lo stato delle sessioni si aggiorna **qui*
 | # | Sessione | Stato | PR | Note |
 |---|---|---|---|---|
 | 0 | Decisioni e interruttori (titolare) | ⬜ da fare | — | PITR? conferme agenti? |
-| 1 | Funzioni a Dublino + disarmo `migrate.yml` | 🟡 rilasciata (PR #188) | #188 | misura definitiva a +12 h dal deploy; timeout a ~0 solo su 2-3 giorni feriali. ✅ con i numeri nel primo commit della fase 2 |
+| 1 | Funzioni a Dublino + disarmo `migrate.yml` | ✅ (PR #188) · misurata a +12 h il 06/10 | #188 | server→DB: DUB 99,8%, mediana 103 → 10-17 ms; `/api/health` p50 1,06 → 0,42 s; `sedi` 0,63 → 0,26 s; 0 errori 401/403 dai fornitori. **Aperti**: i timeout di Supabase si leggono su 2-3 giorni feriali (07-09/10); il p95 nei picchi di job (07:55-08:05 UTC) non è migliorato |
 | 2 | Paracadute esterno (DB + Storage) e prova di ripristino | 🟡 rilasciata (PR #189, #191, #193) | — | backup notturno cifrato su R2 UE, armato alle 02:23 UTC dal 06/10. Misura PRIMA 05/10: copia esterna = nessuna. DOPO 06/10: DB 20,4 MB + 5.532 file (7,41 GB), 0 mancanti, blocco R2 provato (409 su cancella e sovrascrivi), allarme provato. Prova di ripristino 1 sul Mac ✅ (175/175 tabelle uguali, 54/54 file identici). **Restano**: prova 2 («Restore to a new project», dal titolare), due notti consecutive riuscite (il primo passaggio delle 02:23 UTC del 06/10 non è partito: si guarda quello del 07/10) e le copie offline delle chiavi; la ✅ finale va nel primo commit della fase 3 |
 | 3 | Campanello e salute a livelli | ⬜ da fare | — | |
 | 4 | Scatola nera e pulizie sicure | ⬜ da fare | — | |
@@ -301,6 +301,15 @@ Istanza Small (1,92 GB di RAM, 40% libera, **442 MB di swap usato**), CPU media 
 - **Non incluso**: `functionFailoverRegions` (il piano non è verificato e nessuna misura lo chiede). Il costo del compute per regione non è verificato: guardare l'Usage di ottobre.
 - **Da fare a mano dopo il merge**: annullare l'esecuzione di `migrate.yml` ancora in attesa (run 37304105773).
 - **Misura definitiva**: a **+12 h** dal deploy (Skew Protection a 12 h: chi ha una pagina vecchia resta su `iad1` fino a 12 h). I timeout di `/api/logs` e `sedi` si leggono su 2-3 giorni feriali.
+- **Fatta il 06/10 alle 08:02-08:24 UTC** (finestra dalle 07:55, il deploy era delle 19:55):
+  - regione: header `fra1::dub1::`, `regions: ["dub1"]` del deployment;
+  - server→DB, 07:55-08:05 UTC: **DUB 99,83%** (17.806 richieste, FRA 30, IAD 0), p50 **17 ms**; nelle finestre calme p50 **10-14 ms**, p95 28-82 ms (prima: IAD p50 103, p95 129);
+  - `/auth/v1/user`: 2.118 richieste in 10 minuti, **100% DUB**, p50 18 ms (prima p50 105 da IAD);
+  - `/api/health` (30 richieste): p50 **0,42 s**, p95 0,67 (prima 1,06 / 1,29); `/api/iscrizione/sedi`: p50 **0,26 s**, p95 0,46 (prima 0,63 / 0,84);
+  - `app_log`: **0 righe con stato 401 o 403** dal deploy (nessun fornitore filtra per IP).
+  - ⚠️ **Il p95 nei picchi non è migliorato.** Nei 5 minuti 07:55-08:00 UTC (c'è un picco di job ogni mattina) lunedì 05/10 da Washington: 8.775 richieste, p50 102, **p95 224 ms**; martedì 06/10 da Dublino: 13.057 richieste (+49%), p50 19, **p95 386 ms**. Nei 5 minuti successivi p95 119 contro 290. La mediana è molto migliore, la coda sotto carico no: causa **non indagata** (candidata: l'istanza Small del database sotto il picco, non la regione). Da guardare in S4/S5, con la stessa finestra a confronto.
+  - **Trappola della misura**: la finestra «dopo le 07:55» cade proprio su quel picco. Una finestra di 10 minuti presa a caso sposta il p95 di un fattore 10: si confrontano finestre di pari ora e di pari carico, e si riportano p50 e p95 **separatamente per finestra calma e per picco**.
+  - **Non chiuso**: timeout Supabase nei giorni feriali (prima 29-79 al giorno; lunedì 05/10 era già a 6 e martedì 06/10, a metà mattina, è a 0): serve 07-09/10 per un confronto serio.
 
 ### Sessione 2 — Paracadute esterno
 - **Workflow notturno**:

@@ -44,7 +44,7 @@
 
 ## 🌍 Changelog — Roadmap di robustezza, fase 1: le funzioni girano a Dublino e `migrate.yml` non applica più niente — 2026-10-05 (branch `robustezza/fase-1-funzioni-a-dublino`, PR #188)
 
-**Stato.** 🟡 **Rilasciata (PR #188, mergiata il 05/10 alle 19:54 UTC, deploy di produzione READY alle 19:55 UTC).** Una riga di configurazione, un workflow disarmato, due lock. **Nessun file in `src/`, nessuna migrazione, nessuna scrittura sul database.** `SELECT count(*) FROM enrollment_submissions;` = 722, letto prima e dopo: invariato. *Correzione del 05/10:* questo testo diceva che il rilascio sarebbe avvenuto nella finestra serale di basso traffico (21:00–22:00 UTC); il merge è stato fatto a mano alle 19:54 UTC, un'ora e un quarto prima, su richiesta del titolare. La misura definitiva si prende **12 ore dopo** il deploy (dopo le 07:55 UTC del 06/10): il risultato con i numeri prima → dopo entra nel primo commit utile della fase successiva, appena la misura esiste.
+**Stato.** 🟡 **Rilasciata (PR #188, mergiata il 05/10 alle 19:54 UTC, deploy di produzione READY alle 19:55 UTC).** Una riga di configurazione, un workflow disarmato, due lock. **Nessun file in `src/`, nessuna migrazione, nessuna scrittura sul database.** `SELECT count(*) FROM enrollment_submissions;` = 722, letto prima e dopo: invariato. *Correzione del 05/10:* questo testo diceva che il rilascio sarebbe avvenuto nella finestra serale di basso traffico (21:00–22:00 UTC); il merge è stato fatto a mano alle 19:54 UTC, un'ora e un quarto prima, su richiesta del titolare. La misura definitiva si prende **12 ore dopo** il deploy (dopo le 07:55 UTC del 06/10): il risultato con i numeri prima → dopo entra nel primo commit utile della fase successiva, appena la misura esiste. ✅ **Misurata il 06/10 (08:02-08:24 UTC):** funzioni a Dublino, accessi del server al database a 10-17 ms invece di 103, `/api/health` e `sedi` sotto la metà dei tempi di prima, nessun errore 401/403 dai fornitori (sezione «Misura DOPO» più sotto). Restano aperti i timeout (2-3 giorni feriali) e il p95 nei picchi di job.
 
 **Perché.** Problemi **S1** e **D7** di `docs/roadmap-robustezza.md`.
 - **S1.** Le funzioni Vercel giravano a Washington (`iad1`) e il database sta in Irlanda (`eu-west-1`). Ogni domanda dal server al database attraversava l'Atlantico: p50 **103 ms**, contro 12–13 ms per le sole route che `vercel.json` teneva già a Dublino. Le route fanno da 3 a 20 domande in fila, e il tempo si moltiplica: da qui l'app lenta, i timeout di `/api/logs` e di `/api/iscrizione/sedi`.
@@ -77,6 +77,24 @@
 - **La durata del POST del diario e dei cron non è misurabile** con gli strumenti a disposizione (il MCP Vercel risponde 403, lo stream dei log della CLI non emette, `cron.job_run_details` misura solo l'invio asincrono). Resta una stima, circa 20 viaggi × 90 ms.
 
 **Obiettivo della misura dopo** (+12 ore dal deploy, mattina del 06/10): colo DUB ≥ 95% e p50 < 25 ms; `/api/health` e `sedi` sotto la metà dei tempi di oggi; timeout Supabase a circa 0 sui giorni feriali (servono 2–3 giorni feriali); nessun nuovo 401 o 403 dai fornitori.
+
+**Misura DOPO** (06/10, a +12 ore dal deploy: finestra dalle 07:55 UTC; deployment del 05/10 alle 19:55 UTC).
+
+| | PRIMA (05/10, 16:35-16:51 UTC) | DOPO (06/10) |
+|---|---|---|
+| Regione | `iad1`, header `fra1::iad1::` | `dub1`, header `fra1::dub1::`, `regions: ["dub1"]` |
+| Server→DB, quota del colo | IAD 99,5% | **DUB 99,83%** (17.806 richieste; FRA 30; IAD 0) |
+| Server→DB, p50 | 103 ms | **17 ms** nella finestra 07:55-08:05; **10-14 ms** nelle finestre calme |
+| Server→DB, p95 | 129 ms | 28-82 ms calme; **386 ms nel picco** 07:55-08:00 (vedi sotto) |
+| `/auth/v1/user` | p50 105 ms da IAD | 2.118 richieste in 10 minuti, **100% DUB**, p50 18 ms |
+| `/api/health` (30 richieste) | p50 1,06 s, p95 1,29 | p50 **0,42 s**, p95 0,67 |
+| `/api/iscrizione/sedi` (30 richieste) | p50 0,63 s, p95 0,84 | p50 **0,26 s**, p95 0,46 |
+| 401/403 dai fornitori in `app_log` | 0 in 7 giorni | **0** dal deploy |
+| Timeout Supabase al giorno (feriali) | 29-79 | 0 a metà mattina del 06/10; 6 il 05/10: **da rileggere su 07-09/10** |
+
+**Esito sugli obiettivi.** Colo DUB ≥ 95% e p50 < 25 ms: ✅ (99,83% e 17 ms). `/api/health` e `sedi` sotto la metà dei tempi di prima: ✅ (40% e 41% del p50). Nessun nuovo 401/403 dai fornitori: ✅. Timeout a circa 0 sui feriali: ⏳ servono 2-3 giorni feriali.
+
+**Ciò che la misura NON dice di bene.** Il **p95 nei picchi di job** non è migliorato. Nei 5 minuti dalle 07:55 UTC (ogni mattina c'è un picco di job) lunedì 05/10, da Washington: 8.775 richieste, p50 102, p95 224 ms. Martedì 06/10, da Dublino: 13.057 richieste (+49%), p50 19, p95 386 ms. Nei 5 minuti dopo: p95 119 contro 290. La mediana è molto migliore; la coda sotto carico no, e la causa **non è stata indagata** (la candidata è l'istanza Small del database, non la regione). Una finestra «dopo le 07:55» cade proprio sul picco: si riportano p50 e p95 separati per finestra calma e per picco.
 
 **Rollback.** Instant Rollback al deployment precedente (`vercel rollback <id>`): riporta anche la regione. È temporaneo; per tornare davvero indietro serve un `git revert` del commit di fase. `migrate.yml`: `git revert`, senza effetti sulla produzione. Nessuna migrazione, niente da annullare.
 

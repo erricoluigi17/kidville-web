@@ -14,6 +14,10 @@
 #   SORGENTE     remote rclone dei file veri (default `SB:`, Supabase Storage)
 #   SPECCHIO     remote rclone dello specchio decifrato (default `CRIPTO:corrente`)
 #   PER_BUCKET   quanti file provare per bucket (default 5; se il bucket ne ha meno, tutti)
+#   ESCLUDI_BUCKET  nomi di bucket (separati da spazio) che NON sono nel backup, per scelta del titolare
+#                di 06/10/2026 (oggi `gallery video_originals`, gli stessi del workflow): si saltano. Senza
+#                questa variabile un bucket mancante dallo specchio risulta «diverso» e il giro FALLISCE,
+#                ed è giusto: un bucket sparito dal backup per errore non deve passare inosservato.
 #
 # Servono le credenziali di entrambi i remote come variabili `RCLONE_CONFIG_*` (vedi il runbook):
 # la password di `rclone crypt` e il token R2 di LETTURA. Esce con errore se un solo file è diverso,
@@ -32,6 +36,15 @@ SORGENTE="${SORGENTE:-SB:}"
 SPECCHIO="${SPECCHIO:-CRIPTO:corrente}"
 PER_BUCKET="${PER_BUCKET:-5}"
 case "$PER_BUCKET" in '' | *[!0-9]*) errore "PER_BUCKET deve essere un numero" ;; esac
+
+ESCLUSI=" "
+IFS=' ' read -r -a LISTA_ESCLUSI <<< "${ESCLUDI_BUCKET:-}"
+for e in ${LISTA_ESCLUSI[@]+"${LISTA_ESCLUSI[@]}"}; do
+  case "$e" in
+    '' | *[!a-z0-9_-]*) errore "ESCLUDI_BUCKET: «$e» non è un nome di bucket valido (solo minuscole, cifre, - e _)" ;;
+  esac
+  ESCLUSI="$ESCLUSI$e "
+done
 
 T="$(mktemp -d "${TMPDIR:-/tmp}/apri-campioni.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
@@ -64,9 +77,15 @@ rclone lsf "$SORGENTE" --dirs-only > "$T/bucket.txt" || errore "non riesco a ele
 while IFS= read -r riga; do
   b="${riga%/}"
   [ -n "$b" ] || continue
+  case "$ESCLUSI" in
+    *" $b "*) echo "ESCLUSO bucket=$b (non è nel backup per scelta del titolare)"; continue ;;
+  esac
 
   rclone lsf "${SORGENTE}${b}" -R --files-only > "$T/file.txt" 2>/dev/null || : > "$T/file.txt"
-  sort -R "$T/file.txt" | head -n "$PER_BUCKET" > "$T/scelti.txt"
+  # Non `sort -R … | head -n N`: con `pipefail`, se l'elenco è lungo `head` chiude la pipe dopo N righe, `sort`
+  # riceve SIGPIPE e la pipeline esce 141 (visto dal vivo su un bucket con migliaia di file).
+  sort -R "$T/file.txt" > "$T/mescolati.txt"
+  head -n "$PER_BUCKET" "$T/mescolati.txt" > "$T/scelti.txt"
 
   PROVATI=0; IDENTICI=0; DIVERSI=0; FIRMA_ERRATA=0; NON_LEGGIBILI=0; NON_VERIFICABILI=0
   while IFS= read -r f; do

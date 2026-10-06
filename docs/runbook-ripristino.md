@@ -187,8 +187,11 @@ rm -f ./chiave-temporanea.txt ./dump.age ./manifest.age
 Lo script stampa una riga `RISULTATO tabelle_confrontate=… uguali=… diverse=… secondi_ripristino=…` e esce con errore se
 anche **una sola** tabella ha un numero di righe diverso dal manifest. Non stampa righe né i messaggi di `pg_restore`.
 
-Per i **file**: `bash scripts/backup/apri-campioni.sh` (con i due remote `SB:` e `CRIPTO:` configurati come sopra)
-apre 5 file per bucket, li decifra e li confronta con l'originale (impronta e firma dei byte), **senza mostrarli**.
+Per i **file**: `ESCLUDI_BUCKET="gallery video_originals" bash scripts/backup/apri-campioni.sh` (con i due remote `SB:`
+e `CRIPTO:` configurati come sopra) apre 5 file per bucket, li decifra e li confronta con l'originale (impronta e firma
+dei byte), **senza mostrarli**. `ESCLUDI_BUCKET` elenca i bucket fuori dal backup per scelta del titolare (gli stessi del
+workflow): senza, il giro **fallisce** perché non li trova nello specchio, ed è giusto che un bucket sparito per errore
+non passi inosservato.
 
 ## Cambiare la chiave age (rotazione)
 

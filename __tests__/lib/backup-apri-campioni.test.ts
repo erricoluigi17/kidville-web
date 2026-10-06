@@ -31,8 +31,11 @@ cmd="$1"; shift
 case "$cmd" in
   lsf)
     case "$*" in
-      *--dirs-only*) [ -n "$FAKE_SENZA_BUCKET" ] || printf 'b1/\\nb2/\\nvuoto/\\n' ;;
-      *"SB_FINTO:b1"*) for i in 1 2 3 4 5 6 7; do echo "${NOME_RISERVATO}-$i.pdf"; done ;;
+      *--dirs-only*) [ -n "$FAKE_SENZA_BUCKET" ] || { printf 'b1/\\nb2/\\nvuoto/\\n'; if [ -n "$FAKE_CON_ESCLUSO" ]; then printf 'escluso/\\n'; fi; } ;;
+      *"SB_FINTO:escluso"*) for i in 1 2; do echo "${NOME_RISERVATO}-$i.pdf"; done ;;
+      *"SB_FINTO:b1"*)
+        n=7; [ -n "$FAKE_BUCKET_GRANDE" ] && n="$FAKE_BUCKET_GRANDE"
+        i=1; while [ "$i" -le "$n" ]; do echo "${NOME_RISERVATO}-$i.pdf"; i=$((i + 1)); done ;;
       *"SB_FINTO:b2"*) for i in 1 2 3; do echo "${NOME_RISERVATO}-$i.jpg"; done ;;
     esac
     ;;
@@ -41,6 +44,8 @@ case "$cmd" in
     conta=""
     [ "$1" = "--count" ] && conta="$2"
     [ -n "$FAKE_CAT_FALLISCE" ] && case "$percorso" in *"$FAKE_CAT_FALLISCE"*) exit 1 ;; esac
+    # un bucket che nello specchio non esiste (escluso dal backup): la lettura dalla copia fallisce
+    case "$percorso" in CRIPTO_FINTO:*/escluso/*) exit 1 ;; esac
     case "$percorso" in
       *.pdf) corpo="%PDF-1.4 contenuto-riservato-pdf" ;;
       *.jpg) corpo="$(printf '\\xff\\xd8\\xff')contenuto-riservato-jpg" ;;
@@ -92,6 +97,39 @@ describe('apri-campioni.sh · il giudizio', () => {
         expect(r.out).toMatch(/^CAMPIONE bucket=b1 provati=5 identici=5 diversi=0 firma_errata=0 /m)
         expect(r.out).toMatch(/^CAMPIONE bucket=b2 provati=3 identici=3 diversi=0 firma_errata=0 /m)
         expect(r.out).toMatch(/^RISULTATO provati=8 identici=8 diversi=0 firma_errata=0 non_leggibili=0/m)
+    })
+
+    it('un bucket con decine di migliaia di file NON fa morire lo script per SIGPIPE (visto dal vivo il 06/10: codice 141)', () => {
+        // Con `set -o pipefail`, `sort -R file | head -n 5` fa morire `sort` quando `head` ha preso le sue 5 righe e
+        // chiude la pipe: la pipeline esce 141 e `set -e` ferma lo script. Succede solo se l'elenco è abbastanza
+        // lungo da non essere già stato scritto tutto: il rclone finto con 7 file non lo faceva mai.
+        const r = esegui({ FAKE_BUCKET_GRANDE: '60000' })
+        expect(r.err).not.toMatch(/ERRORE/)
+        expect(r.status).toBe(0)
+        expect(r.out).toMatch(/^CAMPIONE bucket=b1 provati=5 identici=5 diversi=0 firma_errata=0 /m)
+        expect(r.out).toMatch(/^RISULTATO provati=8 /m)
+    })
+
+    it('un bucket che non è nello specchio FA FALLIRE il giro (non deve passare inosservato)', () => {
+        const r = esegui({ FAKE_CON_ESCLUSO: '1' })
+        expect(r.status).not.toBe(0)
+        expect(r.out).toMatch(/^CAMPIONE bucket=escluso provati=2 .*non_leggibili=2/m)
+    })
+
+    it('ESCLUDI_BUCKET salta i bucket fuori dal backup per scelta del titolare, e lo dice', () => {
+        const r = esegui({ FAKE_CON_ESCLUSO: '1', ESCLUDI_BUCKET: 'escluso' })
+        expect(r.err).not.toMatch(/ERRORE/)
+        expect(r.status).toBe(0)
+        expect(r.out).toMatch(/^ESCLUSO bucket=escluso /m)
+        expect(r.out).not.toMatch(/^CAMPIONE bucket=escluso/m)
+        expect(r.out).toMatch(/^RISULTATO provati=8 /m)
+    })
+
+    it('ESCLUDI_BUCKET con un nome non valido → rifiutato prima di fare qualsiasi cosa', () => {
+        const r = esegui({ ESCLUDI_BUCKET: 'b1;rm' })
+        expect(r.status).not.toBe(0)
+        expect(r.err).toMatch(/ESCLUDI_BUCKET: «b1;rm» non è un nome di bucket valido/)
+        expect(r.out).not.toMatch(/CAMPIONE/)
     })
 
     it('un bucket vuoto si salta senza errore', () => {
@@ -168,6 +206,13 @@ describe('PROVE GEMELLE · se si toglie una guardia, il comportamento sbagliato 
         const p = mutato(/\[ "\$H_ORIG" = "\$H_COPIA" \]/, 'true')
         const r = esegui({ FAKE_DANNEGGIA: '-1.', PER_BUCKET: '7' }, p)
         expect(r.out).toMatch(/diversi=0/)
+    })
+
+    it('senza il salto dei bucket esclusi, un bucket fuori dal backup farebbe fallire il giro', () => {
+        const p = mutato(/\*" \$b "\*\) echo "ESCLUSO[^\n]*\n/, '*" $b "*) : ;;\n')
+        const r = esegui({ FAKE_CON_ESCLUSO: '1', ESCLUDI_BUCKET: 'escluso' }, p)
+        expect(r.status).not.toBe(0)
+        expect(r.out).toMatch(/bucket=escluso provati=2 .*non_leggibili=2/)
     })
 
     it('senza il controllo della firma, un PDF che non lo è passerebbe', () => {

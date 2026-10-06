@@ -212,6 +212,9 @@
   "lockerMeseSuccessivo": "Mese successivo",
   "inAttesaTitolo": "Iscrizione in lavorazione",
   "inAttesaTesto": "Stiamo completando l’iscrizione: appena la classe è assegnata qui compare tutto. Per sapere a che punto siamo, contatta la segreteria.",
+  "senzaFigliTitolo": "Nessun bambino collegato",
+  "senzaFigliTesto": "A questo accesso non risulta ancora collegato nessun bambino. Contatta la segreteria della scuola: collegherà il tuo accesso a tuo figlio. Se ti hanno scritto da un altro indirizzo email, esci e rientra con quello.",
+  "senzaFigliProfilo": "Vai al profilo",
   "nonPiuIscrittoTitolo": "Nessuna iscrizione attiva",
   "nonPiuIscrittoTesto": "In questo momento non risulta nessun bambino iscritto collegato a questo accesso. Per i documenti degli anni già frequentati — compreso il certificato di frequenza — contatta la segreteria."
 }

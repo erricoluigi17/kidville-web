@@ -98,10 +98,28 @@ export const GET = withRoute('parent/students:GET', async (request: Request) => 
             ? 'archiviato'
             : null
 
+    // ── «NESSUN FIGLIO COLLEGATO» È UN TERZO CASO, E NON ERA DICHIARATO ───────
+    //
+    // `in_attesa` copre i legami che ci sono ma i cui figli sono nascosti. Chi ha
+    // ZERO legami non rientrava in nessuno dei due rami: la home restava vuota e
+    // le altre schermate (galleria, diario, armadietto, pagelle…) aspettavano per
+    // sempre uno `studentId` che non sarebbe arrivato — uno spinner senza fine,
+    // che la famiglia legge come «l'app non funziona». Misurato il 2026-10-06: un
+    // account entrato e restato così per 19 giorni, con la segreteria convinta di
+    // aver collegato il bambino (il collegamento era andato a un secondo profilo).
+    //
+    // ⚠️ SOLO A LETTURA COMPLETA. `completo: false` vuol dire che l'elenco dei
+    // legami può essere corto (una delle due tabelle non ha risposto): dichiarare
+    // «nessun figlio» in quel caso manderebbe in segreteria una famiglia che ha un
+    // guasto di lettura, non un legame mancante. Il client, poi, lo legge solo da
+    // una risposta riuscita: offline resta il comportamento di sempre.
+    const senzaFigli = rows.length === 0 && esito.totaleLegami === 0 && esito.completo
+
     if (rows.length === 0) {
       return NextResponse.json({
         success: true,
         data: [],
+        senza_figli: senzaFigli,
         in_attesa: inAttesa,
         // `in_attesa` resta, e non è ridondanza: è il campo che i chiamanti già
         // scritti leggono. Toglierlo per «tenere un campo solo» spegnerebbe la
@@ -145,7 +163,7 @@ export const GET = withRoute('parent/students:GET', async (request: Request) => 
       }
     })
 
-    return NextResponse.json({ success: true, data: enriched, in_attesa: false, motivo_assenza: null })
+    return NextResponse.json({ success: true, data: enriched, senza_figli: false, in_attesa: false, motivo_assenza: null })
   } catch (err) {
     logErrore({ operazione: 'parent/students:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

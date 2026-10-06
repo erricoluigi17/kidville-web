@@ -447,6 +447,12 @@ export const POST = withRoute('admin/legami-familiari:POST', async (request: Req
      * l'anagrafica può essere nata e le credenziali essere partite.
      */
     const adultoDaArchivio = parentId !== null;
+    // PERCHÉ l'accesso dell'adulto NUOVO non si è completato (enum chiuso, mai
+    // l'email). Fino al 2026-10-06 `linkOrCreateParent` lo calcolava e questa rotta lo
+    // scartava: il bambino finiva su una scheda SENZA account (email già di un'altra
+    // scheda → UNIQUE `parents_auth_user_id_key`), la schermata annunciava «Collegamento
+    // salvato», e la famiglia entrava in un'app vuota per tre settimane.
+    let identitaNonCompletata: 'email_conflict' | 'error' | null = null;
     if (!parentId) {
         if (!dati.genitore) {
             // Codice suo, e non `LEGAME_NON_SALVATO`: quella frase di catalogo
@@ -471,6 +477,7 @@ export const POST = withRoute('admin/legami-familiari:POST', async (request: Req
                 payload: { ...dati.genitore, role: dati.relation_type },
             });
             parentId = creato.parentId;
+            identitaNonCompletata = creato.identitaMotivo ?? null;
         } catch (err) {
             logEvento('anagrafica', 'error', {
                 operazione: 'admin/legami-familiari:POST',
@@ -522,5 +529,9 @@ export const POST = withRoute('admin/legami-familiari:POST', async (request: Req
     // ⚠️ 200 anche con `runtime: 'non-scritto'` — vedi la nota accanto al `return`
     // di `collegaFamiliare`: la riga anagrafica c'è, quella runtime no, e chi
     // rende questa risposta deve MOSTRARLO. Lo status non lo dice.
-    return NextResponse.json(esito);
+    //
+    // `identita_non_completata` è ADDITIVO e c'è solo quando serve: il legame è
+    // scritto, ma l'adulto non ha un accesso che lo veda. Stesso schema di `runtime`:
+    // 200, e un campo che la schermata deve mostrare.
+    return NextResponse.json(identitaNonCompletata ? { ...esito, identita_non_completata: identitaNonCompletata } : esito);
 });

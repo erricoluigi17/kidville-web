@@ -728,6 +728,8 @@
   "legamiScollegato": "Link removed.",
   "legamiSenzaAccount": "Link saved. This adult has no account yet: they will see the child in the app once the office sends them their credentials.",
   "legamiRuntimeNonScritto": "The link is on file, but the row that opens access to payments and registers was not written: repeat the link in a few moments.",
+  "legamiEmailGiaInUso": "Link saved, but this adult will NOT see the child in the app: the email address is already used by another record that has an account. Find that record in the archive and link the child to it instead of creating a new one.",
+  "legamiIdentitaNonCompletata": "Link saved, but this adult’s access was not completed: they will not see the child in the app for now. Check the email on file and try sending the credentials again.",
   "legamiErroreGenerico": "The operation could not be completed: nothing was changed.",
   "legamiErroreRicerca": "The search failed: please try again.",
   "legamiCercaEtichetta": "Search the archive by surname or tax code",

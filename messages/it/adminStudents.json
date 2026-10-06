@@ -728,6 +728,8 @@
   "legamiScollegato": "Collegamento tolto.",
   "legamiSenzaAccount": "Collegamento salvato. Questo adulto non ha ancora un account: vedrà il bambino nell’app quando la Segreteria gli invierà le credenziali.",
   "legamiRuntimeNonScritto": "Il collegamento è in anagrafica, ma la riga che apre l’accesso a pagamenti e registri non è stata scritta: ripeti il collegamento fra qualche istante.",
+  "legamiEmailGiaInUso": "Collegamento salvato, ma questo adulto NON vedrà il bambino nell’app: l’indirizzo email risulta già usato da un’altra scheda che ha un accesso. Cerca quella scheda in archivio e collega il bambino a lei, invece di crearne una nuova.",
+  "legamiIdentitaNonCompletata": "Collegamento salvato, ma l’accesso di questo adulto non è stato completato: per ora non vedrà il bambino nell’app. Controlla l’email in anagrafica e riprova a inviare le credenziali.",
   "legamiErroreGenerico": "Non è stato possibile completare l’operazione: niente è stato modificato.",
   "legamiErroreRicerca": "La ricerca non è riuscita: riprova.",
   "legamiCercaEtichetta": "Cerca in archivio per cognome o codice fiscale",

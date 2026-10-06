@@ -212,6 +212,9 @@
   "lockerMeseSuccessivo": "Next month",
   "inAttesaTitolo": "Enrolment in progress",
   "inAttesaTesto": "We are still completing the enrolment: everything will appear here as soon as the class is assigned. To check the status, please contact the school office.",
+  "senzaFigliTitolo": "No child linked",
+  "senzaFigliTesto": "No child is linked to this account yet. Please contact the school office: they will link your account to your child. If they wrote to you from a different email address, sign out and sign back in with that one.",
+  "senzaFigliProfilo": "Go to profile",
   "nonPiuIscrittoTitolo": "No active enrolment",
   "nonPiuIscrittoTesto": "There is currently no enrolled child linked to this account. For documents covering years already attended — including the attendance certificate — please contact the school office."
 }

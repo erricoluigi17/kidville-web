@@ -54,6 +54,16 @@ export interface ParentIdentity {
    */
   inAttesa: boolean;
   /**
+   * «NESSUN FIGLIO COLLEGATO A QUESTO ACCOUNT» — il terzo caso, accanto a «i miei
+   * figli ci sono ma non si vedono» (`inAttesa`) e a «la rete è giù».
+   *
+   * Vero solo quando il server ha letto tutti i legami e non ce n'è nemmeno uno.
+   * Senza questo campo le schermate che aspettano uno `studentId` giravano in
+   * spinner per sempre. Resta `false` finché `ready` non è vero, e **resta `false`
+   * offline**: l'assenza di una risposta non è mai «nessun figlio».
+   */
+  senzaFigli: boolean;
+  /**
    * PERCHÉ non è visibile nessuno — perché «in attesa» era vero per 3 famiglie
    * su 4 e falso per la quarta.
    *
@@ -116,6 +126,8 @@ export function decidiFiglioRivalidato(
 export interface EsitoFigli {
   /** I figli da mostrare: già filtrati dal server. */
   figli: FiglioAnagrafica[];
+  /** Il server ha letto TUTTI i legami e non ce n'è nessuno: l'account non ha un figlio collegato. */
+  senzaFigli: boolean;
   /** L'elenco è vuoto perché il filtro ha tolto tutto, non perché non c'è nessuno. */
   inAttesa: boolean;
   /** Quale dei tre motivi, per scegliere la frase. `null` = frase generica. */
@@ -192,7 +204,11 @@ async function caricaFigli(parentId: string): Promise<EsitoFigli | null> {
   // Il motivo vale SOLO dentro `inAttesa`: fuori di lì non c'è nessuna schermata
   // da scegliere, e un motivo che sopravvive a un elenco pieno è solo un campo
   // che aspetta di essere letto per sbaglio.
-  return { figli, inAttesa, motivoAssenza: inAttesa ? leggiMotivoAssenza(body.motivo_assenza) : null };
+  // `senza_figli` è additivo come `in_attesa`: un server che non lo manda vale
+  // `false`, cioè il comportamento di prima. E vale solo con l'elenco vuoto, e mai
+  // insieme a `in_attesa` (un legame c'è, quindi il figlio esiste ma è nascosto).
+  const senzaFigli = figli.length === 0 && !inAttesa && body.senza_figli === true;
+  return { figli, senzaFigli, inAttesa, motivoAssenza: inAttesa ? leggiMotivoAssenza(body.motivo_assenza) : null };
 }
 
 /**
@@ -277,6 +293,7 @@ export function useParentIdentity(): ParentIdentity {
   const [studentId, setStudentId] = useState<string | null>(fromUrl);
   const [figliIds, setFigliIds] = useState<string[]>([]);
   const [inAttesa, setInAttesa] = useState<boolean>(false);
+  const [senzaFigli, setSenzaFigli] = useState<boolean>(false);
   const [motivoAssenza, setMotivoAssenza] = useState<MotivoFiglioNascosto | null>(null);
   const [studentReady, setStudentReady] = useState<boolean>(false);
 
@@ -323,6 +340,7 @@ export function useParentIdentity(): ParentIdentity {
       // lavorazione» a chi è semplicemente offline sarebbe una bugia, e per giunta
       // manderebbe una famiglia in segreteria per un problema di rete.
       setInAttesa(lettura !== null && lettura.inAttesa);
+      setSenzaFigli(lettura !== null && lettura.senzaFigli);
       setMotivoAssenza(lettura !== null ? lettura.motivoAssenza : null);
       setStudentReady(true);
     };
@@ -330,5 +348,5 @@ export function useParentIdentity(): ParentIdentity {
     return () => { cancelled = true; };
   }, [session.ready, session.userId, searchParams]);
 
-  return { parentId: session.userId, studentId, figliIds, inAttesa, motivoAssenza, ready: session.ready && studentReady };
+  return { parentId: session.userId, studentId, figliIds, inAttesa, senzaFigli, motivoAssenza, ready: session.ready && studentReady };
 }

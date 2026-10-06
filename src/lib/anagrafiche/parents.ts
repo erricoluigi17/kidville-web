@@ -60,6 +60,14 @@ export interface LinkOrCreateParentResult {
   credenzialiEmail?: { email: string; inviata: boolean; errore: string | null };
   /** Identità di accesso non completata (email presente ma creazione fallita). */
   identitaErrore?: string;
+  /**
+   * PERCHÉ l'identità non si è completata, come enum chiuso (senza l'email che
+   * `identitaErrore` contiene). Serve a chi risponde alla segreteria: un legame
+   * salvato su una scheda SENZA accesso non fa vedere il bambino alla famiglia, e
+   * fino al 2026-10-06 la rotta dei legami buttava via questo esito e rispondeva
+   * come se fosse andato tutto bene.
+   */
+  identitaMotivo?: 'email_conflict' | 'error';
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
@@ -162,8 +170,75 @@ async function insertParentResilient(supabase: SupabaseClient, record: Record<st
   return res;
 }
 
+/** Nome o cognome confrontabile: minuscolo, spazi compattati. */
+const normalizzaNome = (v: unknown): string => str(v).trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** Scheda `parents` già in archivio che sembra la STESSA PERSONA del payload. */
+interface SchedaTrovata {
+  id: string;
+  auth_user_id: string | null;
+  emails: unknown;
+  first_name: string | null;
+  last_name: string | null;
+  fiscal_code: string | null;
+}
+
 /**
- * Crea (o riusa per CF) un genitore e lo collega allo studente.
+ * La stessa persona con un CODICE FISCALE DIVERSO — cioè con un refuso.
+ *
+ * ⚠️ LA DEDUPLICA PER CF DA SOLA NON BASTA, e il guasto è misurato. Il 2026-10-06 una
+ * madre risultava con QUATTRO schede: stesso nome, stesso cognome, stesso indirizzo
+ * email, e tre CF diversi da quello dell'import (stesso schema dei doppioni di
+ * alunno del 2026-09-14: un carattere sbagliato). La prima scheda aveva l'account;
+ * ogni tentativo della segreteria di collegare il bambino ne creava una NUOVA, e
+ * `ensureParentIdentity` poi provava ad attaccarle lo stesso account, urtando nella
+ * UNIQUE `parents_auth_user_id_key` (409 `email_conflict`). Il bambino finiva su una
+ * scheda senza accesso, e la famiglia entrava in un'app vuota per tre settimane.
+ *
+ * Qui si cerca, PRIMA di creare, una scheda con lo stesso NOME e COGNOME e almeno
+ * UN'EMAIL IN COMUNE: due indizi indipendenti che combaciano, e nessuno dei due da
+ * solo (due genitori possono chiamarsi uguale; una mail può essere condivisa da
+ * famiglie diverse). Fra più candidate vince quella che ha già un account, perché è
+ * quella che la famiglia sta usando; a parità, la più vecchia.
+ *
+ * Se la ricerca fallisce si torna al comportamento di sempre (si crea): un guasto di
+ * lettura non deve impedire di registrare una famiglia. Si LOGGA, però.
+ */
+async function trovaSchedaPerEmailENome(
+  supabase: SupabaseClient,
+  record: Record<string, unknown>,
+): Promise<SchedaTrovata | null> {
+  const emails = (Array.isArray(record.emails) ? record.emails : [])
+    .filter((e): e is string => typeof e === 'string' && e.trim() !== '')
+    .map((e) => e.trim());
+  const nome = normalizzaNome(record.first_name);
+  const cognome = normalizzaNome(record.last_name);
+  if (emails.length === 0 || !nome || !cognome) return null;
+
+  const varianti = [...new Set(emails.flatMap((e) => [e, e.toLowerCase()]))];
+  const { data, error } = await supabase
+    .from('parents')
+    .select('id, auth_user_id, emails, first_name, last_name, fiscal_code, created_at')
+    .overlaps('emails', varianti)
+    .order('created_at', { ascending: true })
+    .limit(20);
+  if (error) {
+    logEvento('anagrafica', 'warn', {
+      operazione: 'linkOrCreateParent:riuso',
+      azione: 'ricerca-per-email-non-riuscita',
+      error_code: (error as { code?: string }).code,
+    }, error);
+    return null;
+  }
+  const stessi = ((data ?? []) as unknown as SchedaTrovata[]).filter(
+    (r) => normalizzaNome(r.first_name) === nome && normalizzaNome(r.last_name) === cognome,
+  );
+  if (stessi.length === 0) return null;
+  return stessi.find((r) => r.auth_user_id) ?? stessi[0];
+}
+
+/**
+ * Crea (o riusa per CF, o per nome+email) un genitore e lo collega allo studente.
  * Lancia `Error` con messaggio parlante in caso di fallimento.
  */
 export async function linkOrCreateParent(
@@ -209,6 +284,32 @@ export async function linkOrCreateParent(
         first_name: (existing as { first_name?: string | null }).first_name ?? null,
         last_name: (existing as { last_name?: string | null }).last_name ?? null,
       };
+    }
+  }
+
+  // 1b. Nessun CF uguale: ma può essere la stessa persona con un refuso nel CF.
+  //     Solo per i ruoli-genitore (le schede-staff non sono genitori dell'app).
+  if (!parentId && !STAFF_ROLES.includes(role)) {
+    const simile = await trovaSchedaPerEmailENome(supabase, record);
+    if (simile) {
+      parentId = simile.id;
+      identityInput = {
+        ...identityInput,
+        auth_user_id: simile.auth_user_id ?? null,
+        emails: firstEmail(simile.emails) ? simile.emails : record.emails,
+        first_name: simile.first_name ?? null,
+        last_name: simile.last_name ?? null,
+      };
+      const cfPayload = str(record.fiscal_code).trim().toUpperCase();
+      const cfScheda = str(simile.fiscal_code).trim().toUpperCase();
+      // Solo booleani: nome, email e CF sono dati di persone e non vanno a log.
+      logEvento('anagrafica', 'warn', {
+        operazione: 'linkOrCreateParent:riuso',
+        azione: 'scheda-riusata-per-email-e-nome',
+        parent_id: simile.id,
+        ha_account: Boolean(simile.auth_user_id),
+        cf_diverso: Boolean(cfPayload && cfScheda && cfPayload !== cfScheda),
+      });
     }
   }
 
@@ -260,6 +361,7 @@ export async function linkOrCreateParent(
   //    genitori dell'app: per loro nessun account.
   let credenzialiEmail: LinkOrCreateParentResult['credenzialiEmail'];
   let identitaErrore: string | undefined;
+  let identitaMotivo: LinkOrCreateParentResult['identitaMotivo'];
   if (!STAFF_ROLES.includes(role)) {
     // LA SEDE DEL GENITORE VIENE DAI FIGLI, e il legame col figlio è stato
     // appena scritto qui sopra (punto 3): `ensureParentIdentity` lo trova. Qui
@@ -321,6 +423,7 @@ export async function linkOrCreateParent(
     } else if (!identita.ok && identita.reason !== 'no_email') {
       // Senza email è il caso normale "solo anagrafica": nessun rumore.
       identitaErrore = identita.message;
+      identitaMotivo = identita.reason === 'email_conflict' ? 'email_conflict' : 'error';
       // `identita.message` NON va a log: nel ramo `email_conflict` contiene
       // l'INDIRIZZO EMAIL del genitore in chiaro (parent-identity.ts), e questo
       // codice gira in una funzione Vercel, dove `console.*` scrive nei Runtime
@@ -337,5 +440,5 @@ export async function linkOrCreateParent(
     }
   }
 
-  return { parentId, created, credenzialiEmail, identitaErrore };
+  return { parentId, created, credenzialiEmail, identitaErrore, identitaMotivo };
 }

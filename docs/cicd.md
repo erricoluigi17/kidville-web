@@ -194,7 +194,9 @@ cifrate, che l'app non legge mai. Il workflow è `.github/workflows/backup-nottu
 - **Come si lancia.** `gh workflow run backup-notturno.yml -f modalita=prova` (dump vero su `prove/`, specchio su
   tre file sintetici: prova anche il cestino e la cifratura) e poi `-f modalita=completo`.
   `-f simula_guasto=true` fa fallire apposta il giro per vedere arrivare l'allarme (segnalazione + email).
-  Lo `schedule` si arma in una PR successiva, solo dopo due giri manuali riusciti e le regole di lock su R2.
+  Lo `schedule` è armato dal 06/10 (PR #193): **ogni notte alle 02:23 UTC**, in modalità `completo`, dopo che
+  un giro `prova`, uno `completo`, le regole di lock su R2 e la prova dell'allarme erano riusciti da `main`.
+  Per fermarlo: `gh workflow disable backup-notturno.yml`.
 - **Se fallisce** il job `avviso` apre una segnalazione nel repository (etichetta `backup-notturno`, corpo
   pubblico: solo il link al giro) e manda un'email ai `SENTINELLA_DESTINATARI`. Se il workflow non parte affatto non
   c'è nessun allarme: lo copre la fase 3 (heartbeat esterno).

@@ -20,8 +20,11 @@ name: Backup notturno (database e file → R2)
 #   · simula_guasto         non tocca niente: fa fallire apposta il giro per vedere arrivare
 #                           l'allarme (segnalazione + email). Un allarme mai visto suonare non
 #                           è un allarme.
-# Lo `schedule` NON c'è ancora: lo si arma (PR successiva) solo dopo due giri manuali riusciti e
-# dopo le regole di lock su R2.
+# OGNI NOTTE. Lo `schedule` gira alle 02:23 UTC (dopo il backup fisico di Supabase delle 01:00 e
+# prima dei cron dell'app delle 03:30), sempre in modalità `completo`. Il minuto 23 non è a caso:
+# alle :00 le code di GitHub sono intasate e i giri partono in ritardo. Armato il 2026-10-06,
+# dopo un giro `prova` e uno `completo` riusciti dal ramo `main`, dopo le regole di lock e di
+# scadenza su R2 e dopo la prova dell'allarme con `simula_guasto`.
 #
 # I SEGRETI vivono nell'ambiente GitHub `backup`, che accetta solo il branch `main` e non ha
 # revisori (deve girare di notte, da solo). Un branch con un workflow modificato non può quindi
@@ -46,6 +49,8 @@ name: Backup notturno (database e file → R2)
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
+  schedule:
+    - cron: '23 2 * * *'
   workflow_dispatch:
     inputs:
       modalita:
@@ -97,7 +102,7 @@ jobs:
     timeout-minutes: 180
     environment: backup
     env:
-      # Per lo `schedule` (quando verrà armato) `inputs` è vuoto: si ripiega sul backup vero.
+      # Per lo `schedule` `inputs` è vuoto: si ripiega sul backup vero.
       MODALITA: ${{ inputs.modalita || 'completo' }}
       # I remote di rclone si descrivono con variabili d'ambiente: nessun file di configurazione
       # con dentro i segreti.

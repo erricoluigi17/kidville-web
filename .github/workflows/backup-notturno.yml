@@ -83,8 +83,11 @@ env:
   # rclone fissato a una versione esatta, con l'impronta verificata (stessa su GitHub e su
   # downloads.rclone.org il 2026-10-05). Una versione che cambia da sola cambia il comportamento
   # di un giro che nessuno guarda.
-  RCLONE_VERSION: "1.75.1"
-  RCLONE_SHA256: "982b5aa772841168f8e380f139e9e787b2a105403e32b94da8676a0e1c0a13ab"
+  # ⚠️ NON chiamare queste variabili `RCLONE_*`: rclone legge ogni variabile con quel prefisso come
+  # un'opzione sua, e `RCLONE_VERSION=1.75.1` diventa `--version 1.75.1` («invalid argument»). È
+  # successo al primo giro dal vivo (2026-10-05); il lock ora lo vieta.
+  PIN_RCLONE_VERSIONE: "1.75.1"
+  PIN_RCLONE_SHA256: "982b5aa772841168f8e380f139e9e787b2a105403e32b94da8676a0e1c0a13ab"
 
 jobs:
   backup:
@@ -135,10 +138,10 @@ jobs:
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y -qq postgresql-client-17
           echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
-          curl -fsSL -o "$RUNNER_TEMP/rclone.zip" "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip"
-          echo "${RCLONE_SHA256}  $RUNNER_TEMP/rclone.zip" | sha256sum -c -
+          curl -fsSL -o "$RUNNER_TEMP/rclone.zip" "https://downloads.rclone.org/v${PIN_RCLONE_VERSIONE}/rclone-v${PIN_RCLONE_VERSIONE}-linux-amd64.zip"
+          echo "${PIN_RCLONE_SHA256}  $RUNNER_TEMP/rclone.zip" | sha256sum -c -
           unzip -q "$RUNNER_TEMP/rclone.zip" -d "$RUNNER_TEMP"
-          sudo install -m 0755 "$RUNNER_TEMP/rclone-v${RCLONE_VERSION}-linux-amd64/rclone" /usr/local/bin/rclone
+          sudo install -m 0755 "$RUNNER_TEMP/rclone-v${PIN_RCLONE_VERSIONE}-linux-amd64/rclone" /usr/local/bin/rclone
           age --version
           rclone version | head -n 1
           /usr/lib/postgresql/17/bin/pg_dump --version

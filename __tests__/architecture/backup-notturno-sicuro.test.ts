@@ -237,8 +237,14 @@ function violazioni(grezzo: string, cicd: string): string[] {
     }
 
     // ── RCLONE ─────────────────────────────────────────────────────────────
-    if (!/RCLONE_VERSION:\s*"\d+\.\d+\.\d+"/.test(c)) v.push('rclone: versione esatta mancante')
-    if (!/RCLONE_SHA256:\s*"[0-9a-f]{64}"/.test(c)) v.push('rclone: impronta sha256 mancante')
+    if (!/PIN_RCLONE_VERSIONE:\s*"\d+\.\d+\.\d+"/.test(c)) v.push('rclone: versione esatta mancante')
+    if (!/PIN_RCLONE_SHA256:\s*"[0-9a-f]{64}"/.test(c)) v.push('rclone: impronta sha256 mancante')
+    // ⚠️ rclone legge OGNI variabile d'ambiente `RCLONE_*` come un'opzione sua: `RCLONE_VERSION=1.75.1` diventa
+    // `--version 1.75.1` e rclone muore con «invalid argument for --version» (successo al primo giro dal vivo,
+    // il 2026-10-05). Le uniche `RCLONE_*` ammesse sono `RCLONE_CONFIG_*`, che sono proprio la sua configurazione.
+    for (const m of c.matchAll(/\b(RCLONE_(?!CONFIG_)[A-Z0-9_]+)\b/g)) {
+        v.push(`variabile ${m[1]}: rclone legge ogni RCLONE_* come un'opzione sua (RCLONE_VERSION diventa --version)`)
+    }
     if (!/sha256sum -c/.test(c)) v.push('rclone: l\'impronta sha256 non viene verificata (manca `sha256sum -c`)')
     if (/rclone-current|rclone\/latest|\blatest\b/i.test(c)) v.push('versione `latest`/current vietata')
     for (const m of c.matchAll(/\brclone[ \t]+([a-z]+)/g)) {
@@ -360,8 +366,11 @@ describe('PROVE GEMELLE · il lock diventa rosso quando una regola si rompe', ()
         ['senza persist-credentials', (s) => s.replace('          persist-credentials: false\n', ''), /persist-credentials/],
         ['chiave age privata', (s) => s.replace(CHIAVE_REALE, 'AGE-SECRET-KEY-1' + 'Q'.repeat(50)), /chiave age PRIVATA/],
         ['chiave age fuori forma', (s) => s.replace(CHIAVE_REALE, 'age1corta'), /forma attesa/],
-        ['senza verifica sha256', (s) => s.replace('echo "${RCLONE_SHA256}  $RUNNER_TEMP/rclone.zip" | sha256sum -c -', 'true'), /sha256sum -c/],
-        ['rclone latest', (s) => s.replace('RCLONE_VERSION: "1.75.1"', 'RCLONE_VERSION: "latest"'), /versione esatta mancante|latest/],
+        ['senza verifica sha256', (s) => s.replace('echo "${PIN_RCLONE_SHA256}  $RUNNER_TEMP/rclone.zip" | sha256sum -c -', 'true'), /sha256sum -c/],
+        ['rclone latest', (s) => s.replace('PIN_RCLONE_VERSIONE: "1.75.1"', 'PIN_RCLONE_VERSIONE: "latest"'), /versione esatta mancante|latest/],
+        ['una variabile RCLONE_VERSION (letta da rclone come --version)', (s) => s.replace('PIN_RCLONE_VERSIONE: "1.75.1"', 'RCLONE_VERSION: "1.75.1"'), /rclone legge ogni RCLONE_\* come un'opzione sua/],
+        ['una variabile RCLONE_SHA256', (s) => s.replace('PIN_RCLONE_SHA256:', 'RCLONE_SHA256:'), /variabile RCLONE_SHA256/],
+        ['una RCLONE_* scritta nello script', (s) => s.replace('rclone version | head -n 1', 'RCLONE_QUIET=1 rclone version | head -n 1'), /variabile RCLONE_QUIET/],
         ['set -x', (s) => s.replace('          set -euo pipefail\n          sudo apt-get update', '          set -euxo pipefail\n          sudo apt-get update'), /set -x/],
         ['stampa un segreto', (s) => s.replace('echo "::notice::dump caricato', 'echo "$BACKUP_DB_URL"\n          echo "::notice::dump caricato'), /stampa un segreto/],
         ['pg_dump dal workflow', (s) => s.replace('      - name: Riepilogo', '      - run: pg_dump -f /tmp/dump.sql "$X"\n      - name: Riepilogo'), /pg_dump chiamato dal workflow/],

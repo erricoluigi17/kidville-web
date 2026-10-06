@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { caricaFile } from '@/lib/upload/carica-file'
+import { caricaFile, caricaFileConConferma } from '@/lib/upload/carica-file'
 import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
 
 /**
@@ -652,5 +652,119 @@ describe('caricaFile — le chiavi riservate del multipart', () => {
     })
 
     expect(righeDiLog()).toEqual([])
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * LA PORTA CHE IL PERCORSO NON LO RESTITUISCE — `caricaFileConConferma`.
+ *
+ * Il 06/10/2026 la segreteria ha sostituito tre volte il fronte del documento di un
+ * dipendente: TRE volte il server ha archiviato il file e cancellato il vecchio, TRE volte
+ * la scheda ha detto «Non è stato possibile caricare la scansione». La route
+ * `admin/anagrafica-personale/scansione:POST` risponde `{ success: true }` SENZA `path`, per
+ * scelta (il percorso è la chiave di un documento d'identità), e `caricaFile` legge ogni
+ * 200 senza `path` come un errore. In `app_log`: `modulo-allegato-senza-path` con stato 200.
+ *
+ * La regola del punto 3 resta VERA anche qui, cambia solo la prova del successo: una 200
+ * senza la conferma esplicita non è un successo muto, è un errore con il suo nome.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('caricaFileConConferma — la porta che scrive il percorso da sé', () => {
+  /** La risposta ESATTA della route vera (lock in `anagrafica-personale-scansione.test.ts`). */
+  const confermaDellaRoute = () =>
+    new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+
+  it('`{ success: true }` senza percorso è un SUCCESSO, e non logga niente', async () => {
+    rete.mockResolvedValue(confermaDellaRoute())
+
+    const esito = await caricaFileConConferma({
+      endpoint: '/api/admin/anagrafica-personale/scansione?utenteId=u&lato=fronte',
+      file: fileDa(2048, 'fronte.jpg'),
+    })
+
+    // Nessun `path`, nemmeno finto: chi rende rilegge il fascicolo dal server.
+    expect(esito).toEqual({ esito: 'ok' })
+    expect(righeDiLog()).toEqual([])
+  })
+
+  it('la stessa risposta, passata a `caricaFile`, resta un errore (la regola di prima non si indebolisce)', async () => {
+    rete.mockResolvedValue(confermaDellaRoute())
+
+    const esito = await caricaFile({ endpoint: '/api/personale/upload', file: fileDa(2048) })
+
+    expect(esito).toEqual({ esito: 'errore', stato: 200 })
+  })
+
+  it.each([
+    ['un corpo vuoto', {}],
+    ['`success: false`', { success: false }],
+    ['`success` come stringa', { success: 'true' }],
+    ['un `ok: true` di un’altra forma', { ok: true }],
+  ])('una 200 con %s è un errore con un nome PROPRIO in `app_log`', async (_nome, corpo) => {
+    rete.mockResolvedValue(
+      new Response(JSON.stringify(corpo), { status: 200, headers: { 'content-type': 'application/json' } }),
+    )
+
+    const esito = await caricaFileConConferma({ endpoint: '/x', file: fileDa(2048) })
+
+    expect(esito).toEqual({ esito: 'errore', stato: 200 })
+    const righe = righeDiLog()
+    expect(righe).toHaveLength(1)
+    expect(righe[0].livello).toBe('error')
+    // Diverso da `modulo-allegato-senza-path`: sono due contratti diversi, e una query su
+    // `app_log` deve poter dire quale dei due si è rotto.
+    expect(righe[0].messaggio).toBe('modulo-allegato-senza-conferma')
+  })
+
+  it('una 200 con corpo NON JSON è un errore, e resta lo stato', async () => {
+    rete.mockResolvedValue(new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }))
+
+    const esito = await caricaFileConConferma({ endpoint: '/x', file: fileDa(2048) })
+
+    expect(esito).toEqual({ esito: 'errore', stato: 200 })
+  })
+
+  it('i rami condivisi restano: taglia prima di spedire, 413 = troppo grande, codice del server', async () => {
+    expect(await caricaFileConConferma({ endpoint: '/x', file: fileDa(2 * 1024 * 1024), maxSizeMb: 1 })).toEqual({
+      esito: 'troppo-grande',
+      limiteMb: 1,
+    })
+    expect(rete).not.toHaveBeenCalled()
+
+    rete.mockResolvedValueOnce(risposta413())
+    expect(await caricaFileConConferma({ endpoint: '/x', file: fileDa(1024), maxSizeMb: 4 })).toEqual({
+      esito: 'troppo-grande',
+      limiteMb: 4,
+    })
+
+    rete.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'prosa', codice: 'SCANSIONE_SOSTITUITA_ALTROVE' }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    expect(await caricaFileConConferma({ endpoint: '/x', file: fileDa(1024) })).toEqual({
+      esito: 'errore',
+      stato: 409,
+      messaggioServer: 'prosa',
+      codice: 'SCANSIONE_SOSTITUITA_ALTROVE',
+    })
+  })
+
+  it('porta gli header della porta autenticata, e la rete che cade dà `stato: null`', async () => {
+    rete.mockResolvedValueOnce(confermaDellaRoute())
+    await caricaFileConConferma({ endpoint: '/x', file: fileDa(1024), headers: { 'x-user-id': 'u-admin' } })
+    const init = (rete.mock.calls[0] as [string, RequestInit])[1]
+    expect((init.headers as Record<string, string>)['x-user-id']).toBe('u-admin')
+    expect(init.method).toBe('POST')
+
+    rete.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    expect(await caricaFileConConferma({ endpoint: '/x', file: fileDa(1024) })).toEqual({
+      esito: 'errore',
+      stato: null,
+    })
   })
 })

@@ -235,6 +235,24 @@ describe('cruscotto scadenze documenti · il gate', () => {
     expect(h.state.scritture).toEqual([])
   })
 
+  it.each(['1990-01-01', '1985-03-01', '0202-05-12'])(
+    'una scadenza che il CHECK rifiuta (%s) è 400, non il 503 «riprovare fra poco» del `23514`',
+    async (data) => {
+      // Dal 06/10/2026 la PATCH ha un campo data nella scheda staff: un anno digitato male
+      // non deve arrivare al database, dove `document_expiry > date '1990-01-01'` lo
+      // respingerebbe con `23514` e la rotta direbbe di riprovare — cioè di rifare l'unica
+      // cosa che non può riuscire. `1990-01-01` compreso: il CHECK è STRETTO.
+      const res = await PATCH(patch({ utenteId: MAESTRA, document_expiry: data }))
+      expect(res.status).toBe(400)
+      expect(h.state.scritture).toEqual([])
+    },
+  )
+
+  it('il primo giorno ammesso dal CHECK passa (il limite non è più stretto della tabella)', async () => {
+    const res = await PATCH(patch({ utenteId: MAESTRA, document_expiry: '1990-01-02' }))
+    expect(res.status).toBe(200)
+  })
+
   it('la PATCH passa da `assertUtenteInScope` PRIMA di scrivere', async () => {
     h.assertUtenteInScope.mockImplementation(async () =>
       NextResponse.json({ error: 'Utente fuori dal tuo plesso' }, { status: 403 }),

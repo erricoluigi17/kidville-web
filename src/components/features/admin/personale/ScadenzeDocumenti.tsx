@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import {
-  AlertTriangle, CalendarClock, CheckCircle2, ExternalLink, FileWarning, Loader2, XCircle,
+  AlertTriangle, CalendarClock, CheckCircle2, ExternalLink, FileWarning, Loader2, RefreshCw, XCircle,
 } from 'lucide-react'
 import { Badge, type BadgeTone } from '@/components/ui/Badge'
 import { TABLE, TABLE_WRAP, TD, TH, TROW } from '@/components/ui/cockpit'
@@ -1065,6 +1065,7 @@ export function ScadenzeDocumenti({ userId, statoIniziale = null, oggi }: Props)
                             E niente `opacity-*`: sbiadire toglie proprio l'unico
                             segnale che il gesto è partito — lo stato è il
                             girandolo, che resta pieno. */}
+                        <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={() => apriDocumento(riga)}
@@ -1078,6 +1079,28 @@ export function ScadenzeDocumenti({ userId, statoIniziale = null, oggi }: Props)
                             : <ExternalLink size={13} aria-hidden="true" />}
                           {t('scadApriDocumento')}
                         </button>
+                        {/* «RINNOVA» — il cruscotto resta in SOLA LETTURA, e questo è un
+                            collegamento, non una chiamata: porta alla scheda della
+                            persona GIÀ sul tab Documento (`?tab=documento`), dove ci sono
+                            le due facce da sostituire e i dati da correggere. Il 06/10/2026
+                            l'admin avvisato dal cron dei 60 giorni non sapeva che il posto
+                            fosse quello, e la scheda non aveva comunque dove cambiare la data.
+                            ⚠️ NON SULLE RIGHE «MANCANTE»: lì non c'è un documento da
+                            rinnovare, c'è un documento da raccogliere — e la strada è la
+                            richiesta del modulo, che la scheda offre già.
+                            ⚠️ L'`aria-label` COMINCIA con il testo visibile («Rinnova il
+                            documento di…»): WCAG 2.5.3, come «Apri documento di…» qui sopra. */}
+                        {stato !== 'mancante' && (
+                          <a
+                            href={`/admin/students/${riga.utente_id}?kind=staff&tab=documento`}
+                            aria-label={t('scadRinnovaDi', { nome: nomeDi(riga) })}
+                            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-pill bg-kidville-green px-3 font-barlow text-[11.5px] font-bold uppercase tracking-[0.03em] text-kidville-white transition-colors hover:bg-kidville-green-dark"
+                          >
+                            <RefreshCw size={13} aria-hidden="true" />
+                            {t('scadRinnova')}
+                          </a>
+                        )}
+                        </div>
                       </td>
                     </tr>
                   ))}

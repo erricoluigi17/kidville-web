@@ -26,7 +26,7 @@ import { limiteUploadByte, limiteUploadMb } from '@/lib/upload/limite-piattaform
  *   · `StaffDetailPanel.tsx` — il tab «Documento» della scheda staff, cioè la prima porta
  *     AUTENTICATA. È la ragione per cui esiste `headers` qui sotto: senza, quel pannello
  *     avrebbe dovuto riscriversi il `fetch` a mano, e con lui i cinque rami di questa
- *     testata.
+ *     testata. Chiama `caricaFileConConferma`, NON `caricaFile`: vedi il punto 3.
  *
  * La lezione, visto che è costata due giri: **un commento che afferma un CONTEGGIO e
  * indica il comando per verificarlo scade il giorno in cui qualcuno chiama la funzione.**
@@ -55,6 +55,18 @@ import { limiteUploadByte, limiteUploadMb } from '@/lib/upload/limite-piattaform
  *     lanciava un `new Error('risposta senza path')` per cadere nel `catch`, in tabella
  *     arrivava `…-upload-fallito: Error` — indistinguibile da qualunque altro guasto, con
  *     la frase viva solo dentro `stack`, campo opzionale e troncato.
+ *
+ *     ⚠️ MA NON OGNI PORTA RESTITUISCE IL `path`, e la scheda staff l'ha pagato. La route
+ *     `admin/anagrafica-personale/scansione:POST` il percorso lo scrive DA SÉ nella colonna
+ *     e risponde `{ success: true }` senza farlo uscire: è la chiave che apre un documento
+ *     d'identità, e nessuno deve rimandarla indietro. Dal 13/08 al 06/10/2026 la scheda la
+ *     chiamava con `caricaFile`, cioè con questa regola: ogni sostituzione RIUSCIVA sul
+ *     server e veniva dichiarata fallita a schermo — il 06/10 la segreteria ci ha provato
+ *     tre volte, tre volte il server ha archiviato il file e cancellato il vecchio, e in
+ *     `app_log` c'era `modulo-allegato-senza-path` con stato 200. Per quelle porte esiste
+ *     `caricaFileConConferma`: la regola è LA STESSA — una 200 senza la prova del successo
+ *     è un errore con un nome suo (`modulo-allegato-senza-conferma`) — cambia solo la prova,
+ *     che lì è `success: true`. Non si allenta questa per farci passare quella.
  *
  *  4. L'ERRORE NON PERDE LO STATO HTTP. `403` (sessione scaduta) e «rete assente» non
  *     sono lo stesso guasto, e chi rende deve poterli distinguere: `stato: null` dice
@@ -215,6 +227,14 @@ export type EsitoCaricamento =
       };
 
 /**
+ * L'esito delle porte che il percorso NON lo restituiscono (`caricaFileConConferma`).
+ *
+ * Nessun `path`, nemmeno finto: chi rende rilegge dal server, che è la sua fonte di verità.
+ * Gli altri due casi sono gli stessi di `EsitoCaricamento`, presi da lì e non riscritti.
+ */
+export type EsitoConferma = { esito: 'ok' } | Exclude<EsitoCaricamento, { esito: 'ok' }>;
+
+/**
  * Il messaggio d'errore del SERVER, o `undefined` se non ce n'è uno leggibile.
  *
  * Tre strette, e ognuna ha un motivo:
@@ -271,8 +291,49 @@ function messaggioDelGuasto(err: unknown): string {
 /**
  * Spedisce il file e riporta l'esito. NON LANCIA MAI: chi rende non deve avvolgerla in un
  * `try/catch` per non rompersi, e il ramo d'errore è un valore di ritorno, non un'eccezione.
+ *
+ * Per le porte che restituiscono il `path` (i wizard pubblici, i moduli delle famiglie).
  */
 export async function caricaFile(req: RichiestaCaricamento): Promise<EsitoCaricamento> {
+    return spedisci<{ esito: 'ok'; path: string }>(
+        req,
+        (json) => {
+            const path = (json as { path?: unknown } | null)?.path;
+            return typeof path === 'string' && path !== '' ? { esito: 'ok', path } : null;
+        },
+        // Punto 3: una 200 senza `path` non è un successo. Si logga QUI, con un messaggio
+        // proprio, invece di lanciare per cadere nel `catch`: là sotto la sua identità
+        // sarebbe evaporata in un `Error` generico (vedi `messaggioDelGuasto`), e il guasto
+        // «che nessuno si accorge di aver perso» sarebbe stato anche irrintracciabile in SQL.
+        () => logClient({ livello: 'error', evento: 'fetch', messaggio: 'modulo-allegato-senza-path' }),
+    );
+}
+
+/**
+ * Come `caricaFile`, per le porte AUTENTICATE che il percorso lo scrivono da sé e rispondono
+ * `{ success: true }` senza farlo uscire (oggi: `admin/anagrafica-personale/scansione:POST`).
+ * Vedi il punto 3 della testata: la regola non cambia, cambia la prova del successo.
+ */
+export async function caricaFileConConferma(req: RichiestaCaricamento): Promise<EsitoConferma> {
+    return spedisci<{ esito: 'ok' }>(
+        req,
+        // `=== true` e non un valore «vero»: `'true'` o `1` sarebbero una forma che la route
+        // non scrive, cioè un contratto che è cambiato senza che nessuno se ne accorgesse.
+        (json) => ((json as { success?: unknown } | null)?.success === true ? { esito: 'ok' } : null),
+        () => logClient({ livello: 'error', evento: 'fetch', messaggio: 'modulo-allegato-senza-conferma' }),
+    );
+}
+
+/**
+ * Il corpo comune delle due porte — i cinque rami della testata, scritti una volta sola.
+ * `riconosci` dice se la 200 è un successo (e quale), `senzaSuccesso` ne lascia la traccia
+ * quando non lo è.
+ */
+async function spedisci<Ok extends { esito: 'ok' }>(
+    req: RichiestaCaricamento,
+    riconosci: (json: unknown) => Ok | null,
+    senzaSuccesso: () => void,
+): Promise<Ok | Exclude<EsitoCaricamento, { esito: 'ok' }>> {
     const { endpoint, file, maxSizeMb, extra, headers } = req;
     const limite = limiteUploadByte(maxSizeMb);
 
@@ -363,16 +424,12 @@ export async function caricaFile(req: RichiestaCaricamento): Promise<EsitoCarica
         }
 
         const json: unknown = await res.json();
-        const path = (json as { path?: unknown } | null)?.path;
-        // Punto 3: una 200 senza `path` non è un successo. Si logga QUI, con un messaggio
-        // proprio, invece di lanciare per cadere nel `catch`: là sotto la sua identità
-        // sarebbe evaporata in un `Error` generico (vedi `messaggioDelGuasto`), e il guasto
-        // «che nessuno si accorge di aver perso» sarebbe stato anche irrintracciabile in SQL.
-        if (typeof path !== 'string' || path === '') {
-            logClient({ livello: 'error', evento: 'fetch', messaggio: 'modulo-allegato-senza-path' });
+        const successo = riconosci(json);
+        if (successo === null) {
+            senzaSuccesso();
             return { esito: 'errore', stato: res.status };
         }
-        return { esito: 'ok', path };
+        return successo;
     } catch (err) {
         // Un catch che non logga è un bug: il caricamento fallito è invisibile a chi non ha in
         // mano il dispositivo. `logClient` redige i path nel testo e non lancia mai.

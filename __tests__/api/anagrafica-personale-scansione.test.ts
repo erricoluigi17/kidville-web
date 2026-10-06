@@ -341,6 +341,7 @@ import { POST } from '@/app/api/admin/anagrafica-personale/scansione/route'
 import { resetRateLimit } from '@/lib/security/rate-limit'
 import { COLONNE_DOCUMENTO } from '@/lib/personale/percorso-documento'
 import { LIMITE_UPLOAD_BYTE } from '@/lib/upload/limite-piattaforma'
+import { caricaFile, caricaFileConConferma } from '@/lib/upload/carica-file'
 
 const URL_ROUTE = 'http://localhost/api/admin/anagrafica-personale/scansione'
 
@@ -571,6 +572,32 @@ describe('POST admin/anagrafica-personale/scansione · il percorso felice', () =
     const corpo = await res.text()
     expect(JSON.parse(corpo)).toEqual({ success: true })
     expect(corpo).not.toContain('documenti/')
+  })
+
+  /**
+   * IL CONTRATTO CON LA SCHEDA — le due metà che dal 13/08 al 06/10/2026 si sono smentite.
+   *
+   * Il caso qui sopra blocca la forma della risposta; il client che la legge stava altrove,
+   * e leggeva una forma diversa: `caricaFile` vuole un `path`, quindi ogni sostituzione
+   * riuscita diventava a schermo «Non è stato possibile caricare la scansione». La risposta
+   * VERA dell'handler va quindi data in pasto al client VERO, senza finti in mezzo: se uno
+   * dei due cambia forma da solo, questo caso diventa rosso.
+   */
+  it('CONTRATTO con la scheda: la risposta vera, letta dal client della scheda, è un SUCCESSO', async () => {
+    const res = await chiama(richiesta(documento()))
+    expect(res.status).toBe(200)
+    const copia = res.clone()
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(res).mockResolvedValueOnce(copia))
+    try {
+      // È la funzione che `StaffDetailPanel.caricaScansione` chiama.
+      expect(await caricaFileConConferma({ endpoint: '/scansione', file: documento() })).toEqual({ esito: 'ok' })
+      // E la ragione per cui non può chiamare l'altra: la stessa risposta, con la regola
+      // del `path`, è un errore.
+      expect(await caricaFile({ endpoint: '/scansione', file: documento() })).toEqual({ esito: 'errore', stato: 200 })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('l’audit dice CHE COSA è stato fatto, e non il percorso', async () => {

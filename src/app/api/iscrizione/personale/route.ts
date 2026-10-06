@@ -12,6 +12,7 @@ import {
   PERSONALE_FIELDS,
   CONSENSI_PERSONALE_FIELDS,
   CONSENSI_PERSONALE_VERSIONE,
+  DOC_EXPIRY_MINIMO,
 } from '@/lib/forms/personale-template'
 import { GRADI_OPTIONS } from '@/lib/forms/insegnanti-template'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
@@ -890,8 +891,9 @@ function motivoCodiceFiscaleRespinto(
  * condiviso di un altro elemento, quindi sta nel rapporto e non qui.
  */
 
-/** Il limite inferiore che la colonna dichiara, in un posto solo. Stretto: `>`. */
-const DOC_EXPIRY_MINIMO = '1990-01-01'
+// Il limite inferiore che la colonna dichiara (`DOC_EXPIRY_MINIMO`, stretto: `>`) vive in
+// `@/lib/forms/personale-template`: lo leggono anche la PATCH della scheda staff e il suo
+// campo data.
 
 /**
  * La data esiste sul calendario?

@@ -230,6 +230,17 @@ let rispostaAnagrafica: Record<string, unknown> | undefined | 'errore' | 'mai' =
 
 function serverPredefinito(url: string) {
   const u = String(url)
+  /**
+   * ⚠️ LA RISPOSTA DELLA SCANSIONE È QUELLA VERA: `{ success: true }`, SENZA `path`.
+   *
+   * È la forma che `anagrafica-personale-scansione.test.ts` blocca sulla route (il percorso
+   * è la chiave di un documento d'identità e non esce dal server). Fino al 06/10/2026 qui
+   * non c'era nessun ramo: l'URL della scansione contiene `/api/admin/anagrafica-personale`
+   * e riceveva la risposta del FASCICOLO, mentre il caso del fuoco più in basso inventava un
+   * `path: 'x'` — due finti che la route non scrive mai. Con quelli la suite era verde e in
+   * produzione ogni sostituzione riuscita veniva dichiarata fallita.
+   */
+  if (u.includes('/scansione?')) return ok({ success: true })
   if (u.includes('/api/admin/anagrafica-personale')) {
     if (u.includes('doc=')) return ok({ url: 'https://storage.example.test/firmata' })
     if (rispostaAnagrafica === 'mai') return new Promise<never>(() => {})
@@ -901,6 +912,28 @@ describe('scheda staff · caricare e sostituire una scansione', () => {
     expect(String(invii()[0][0])).toContain('lato=retro')
   })
 
+  it('una sostituzione RIUSCITA dice «archiviata», non «non è stato possibile» (06/10/2026)', async () => {
+    // Il caso di produzione: tre sostituzioni del fronte riuscite sul server, tre volte
+    // «Non è stato possibile caricare la scansione» a schermo, e in `app_log`
+    // `modulo-allegato-senza-path` con stato 200. La risposta qui è quella VERA della
+    // route (`serverPredefinito`): `{ success: true }` e nessun percorso.
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda()
+    await apriTab('Documento')
+
+    fireEvent.click(sostituisciFaccia('Fronte'))
+    const conferma = screen.getByRole('group', { name: /Sostituisci la scansione\s+Fronte/ })
+    scegli(conferma.querySelector('label') as HTMLElement, fileFinto('fronte-nuovo.jpg'))
+
+    // Si aspetta la PRESENZA del successo, non l'assenza dell'errore: un `waitFor` su
+    // un'assenza passa anche mentre la richiesta è ancora in volo.
+    await waitFor(() => expect(screen.getByText('Scansione archiviata.')).toBeInTheDocument())
+    expect(screen.queryByText(/Non è stato possibile caricare la scansione/)).not.toBeInTheDocument()
+    expect(logClient).not.toHaveBeenCalledWith(
+      expect.objectContaining({ messaggio: 'anagrafica-personale-scansione-non-caricata' }),
+    )
+  })
+
   it('il 409 del server si legge dal CATALOGO, non nella prosa cruda', async () => {
     // Il codice `SCANSIONE_SOSTITUITA_ALTROVE` esiste perché quella frase, nata sul
     // server dove il locale non c'è, sarebbe italiana per costruzione: mostrarla a
@@ -1011,7 +1044,7 @@ describe('scheda staff · caricare e sostituire una scansione', () => {
     fetchMock.mockImplementation((url: string) => {
       if (String(url).includes('/scansione?')) {
         caricata = true
-        return Promise.resolve({ ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ success: true, path: 'x' }) })
+        return Promise.resolve({ ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ success: true }) })
       }
       if (String(url).includes('utenteId=') && caricata) {
         rispostaAnagrafica = anagraficaCompleta()
@@ -2529,5 +2562,217 @@ describe('scheda staff · a schermo non finisce MAI la prosa del database', () =
       .replace(/^\s*\/\/.*$/gm, '')
     const sospetti = [...src.matchAll(/(?:alert|setErrore)\([^)]*\b(?:j|b|body|corpo)\??\.(?:error|warning|message)/g)].map((m) => m[0])
     expect(sospetti, 'la prosa del server non si mostra: si traduce e si logga lo stato').toEqual([])
+  })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * AGGIORNARE I DATI DEL DOCUMENTO RINNOVATO — tipo, numero, scadenza.
+ *
+ * Il 06/10/2026 l'admin ha provato a rinnovare il documento di un dipendente (avvisato
+ * alle 05:47 dal cron dei 60 giorni) e «non mi fa modificare le date». Era vero da
+ * nessuna parte: la testata di questa scheda rimandava al «cruscotto delle scadenze»,
+ * che fa solo GET, e `admin/anagrafica-personale:PATCH` — la correzione allo sportello,
+ * con gate di sede, audit e trigger che azzera il promemoria — non la chiamava nessun
+ * componente. L'unica strada era far ricompilare alla persona TUTTO il modulo pubblico.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('scheda staff · aggiornare i dati del documento rinnovato', () => {
+  const API = '/api/admin/anagrafica-personale'
+  /** Le PATCH partite verso la correzione allo sportello, con il loro corpo già letto. */
+  const correzioni = () =>
+    fetchMock.mock.calls
+      .filter((a: unknown[]) => (a[1] as RequestInit | undefined)?.method === 'PATCH' && String(a[0]) === API)
+      .map((a: unknown[]) => ({ init: a[1] as RequestInit, corpo: JSON.parse(String((a[1] as RequestInit).body)) }))
+  const letture = () =>
+    fetchMock.mock.calls.filter(
+      (a: unknown[]) => String(a[0]).startsWith(`${API}?utenteId=`) && (a[1] as RequestInit | undefined)?.method !== 'PATCH',
+    ).length
+
+  const apriDati = () => fireEvent.click(screen.getByRole('button', { name: 'Aggiorna i dati del documento' }))
+  const tipo = () => screen.getByLabelText('Tipo di documento') as HTMLSelectElement
+  const numero = () => screen.getByLabelText('Numero del documento') as HTMLInputElement
+  const scadenza = () => screen.getByLabelText('Scadenza del documento') as HTMLInputElement
+  const salva = () => fireEvent.click(screen.getByRole('button', { name: 'Salva i dati' }))
+
+  /** Il finto server con una PATCH che risponde come la route vera (o come le si dice). */
+  function conPatch(risposta: () => Promise<unknown> = () => ok({ success: true, data: null })) {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH' && String(url) === API) return risposta()
+      return serverPredefinito(url)
+    })
+  }
+
+  async function montaSulDocumento() {
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda()
+    await apriTab('Documento')
+  }
+
+  it('il comando sta nel tab Documento, CHIUSO; aperto, i tre campi sono precompilati dal fascicolo', async () => {
+    await montaSulDocumento()
+    const comando = screen.getByRole('button', { name: 'Aggiorna i dati del documento' })
+    expect(comando).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByLabelText('Scadenza del documento')).not.toBeInTheDocument()
+
+    apriDati()
+    expect(screen.getByRole('button', { name: 'Aggiorna i dati del documento' })).toHaveAttribute('aria-expanded', 'true')
+    expect(tipo().value).toBe('CI')
+    expect(numero().value).toBe('AB1234567')
+    expect(scadenza().value).toBe('2030-01-31')
+    expect(scadenza().type).toBe('date')
+    // Il pavimento del CHECK sta anche nel campo: il selettore non propone il 1990.
+    expect(scadenza().min).toBe('1990-01-02')
+    expect(numero().maxLength).toBe(50)
+  })
+
+  it('si spedisce SOLO ciò che è cambiato, alla PATCH vera, con l’identità dell’operatore', async () => {
+    conPatch()
+    await montaSulDocumento()
+    apriDati()
+    fireEvent.change(numero(), { target: { value: 'CA00000AA' } })
+    fireEvent.change(scadenza(), { target: { value: '2036-10-01' } })
+    salva()
+
+    await waitFor(() => expect(correzioni()).toHaveLength(1))
+    const [{ init, corpo }] = correzioni()
+    // Il tipo NON viaggia: non è cambiato, e un campo non toccato non si riscrive.
+    expect(corpo).toEqual({ utenteId: STAFF_ID, document_number: 'CA00000AA', document_expiry: '2036-10-01' })
+    expect((init.headers as Record<string, string>)['x-user-id']).toBe('u-admin')
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json')
+  })
+
+  it('dopo il salvataggio dice che è fatto, chiude il modulo e RILEGGE il fascicolo', async () => {
+    conPatch()
+    await montaSulDocumento()
+    const prima = letture()
+    apriDati()
+    fireEvent.change(scadenza(), { target: { value: '2036-10-01' } })
+    salva()
+
+    await waitFor(() => expect(screen.getByText('Dati del documento aggiornati.')).toBeInTheDocument())
+    expect(screen.queryByLabelText('Scadenza del documento')).not.toBeInTheDocument()
+    await waitFor(() => expect(letture(), 'il fascicolo non è stato riletto').toBeGreaterThan(prima))
+    // Il fuoco torna sul comando, non cade su `<body>` quando il modulo si smonta.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Aggiorna i dati del documento' })),
+    )
+  })
+
+  it('la scadenza è OBBLIGATORIA: vuota non parte niente, e il campo dice perché', async () => {
+    conPatch()
+    await montaSulDocumento()
+    apriDati()
+    fireEvent.change(scadenza(), { target: { value: '' } })
+    salva()
+
+    await waitFor(() => expect(screen.getByText(/Indica la scadenza del documento/)).toBeInTheDocument())
+    expect(scadenza()).toHaveAttribute('aria-invalid', 'true')
+    expect(correzioni()).toHaveLength(0)
+  })
+
+  it('una scadenza che il database rifiuta (1985) non parte, e lo dice sotto il campo', async () => {
+    conPatch()
+    await montaSulDocumento()
+    apriDati()
+    fireEvent.change(scadenza(), { target: { value: '1985-03-01' } })
+    salva()
+
+    await waitFor(() => expect(screen.getByText(/successiva al 1990/)).toBeInTheDocument())
+    expect(correzioni()).toHaveLength(0)
+  })
+
+  it('senza nessuna modifica non parte niente, e lo dice invece di fingere un salvataggio', async () => {
+    conPatch()
+    await montaSulDocumento()
+    apriDati()
+    salva()
+
+    await waitFor(() => expect(screen.getByText('Non hai cambiato nessun dato.')).toBeInTheDocument())
+    expect(correzioni()).toHaveLength(0)
+  })
+
+  it('il 503 della route si legge dal CATALOGO, non nella prosa; il modulo resta aperto coi dati', async () => {
+    conPatch(() => ok({ error: 'prosa del server', codice: 'ANAGRAFICA_PERSONALE_NON_AGGIORNATA' }, 503))
+    await montaSulDocumento()
+    apriDati()
+    fireEvent.change(scadenza(), { target: { value: '2036-10-01' } })
+    salva()
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/La correzione non è stata registrata/))
+    expect(screen.queryByText('prosa del server')).not.toBeInTheDocument()
+    expect(scadenza().value, 'il dato appena scritto è andato perso con l’errore').toBe('2036-10-01')
+    expect(logClient).toHaveBeenCalledWith(
+      expect.objectContaining({ messaggio: 'anagrafica-personale-documento-non-corretto', stato: 503 }),
+    )
+    // Nel log lo STATO, mai i valori: un numero di documento non entra in `app_log`.
+    expect(JSON.stringify(vi.mocked(logClient).mock.calls)).not.toContain('2036-10-01')
+  })
+
+  it('una richiesta per volta: il secondo «Salva» mentre la prima è in volo non parte', async () => {
+    let rispondi: (v: unknown) => void = () => {}
+    conPatch(() => new Promise((r) => { rispondi = r }))
+    await montaSulDocumento()
+    apriDati()
+    fireEvent.change(scadenza(), { target: { value: '2036-10-01' } })
+    salva()
+    await waitFor(() => expect(correzioni()).toHaveLength(1))
+    salva()
+    salva()
+    expect(correzioni()).toHaveLength(1)
+    rispondi({ ok: true, status: 200, json: async () => ({ success: true, data: null }) })
+    await waitFor(() => expect(screen.getByText('Dati del documento aggiornati.')).toBeInTheDocument())
+  })
+
+  it('«Annulla» chiude senza spedire niente', async () => {
+    conPatch()
+    await montaSulDocumento()
+    apriDati()
+    fireEvent.change(scadenza(), { target: { value: '2036-10-01' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Annulla/ }))
+    expect(screen.queryByLabelText('Scadenza del documento')).not.toBeInTheDocument()
+    expect(correzioni()).toHaveLength(0)
+  })
+
+  it('la Segreteria lo vede: la correzione allo sportello è sua, non della sola Direzione', async () => {
+    ruoloCorrente = 'segreteria'
+    await montaSulDocumento()
+    expect(screen.getByRole('button', { name: 'Aggiorna i dati del documento' })).toBeInTheDocument()
+  })
+
+  it('campi e comandi a 44px, e nessuna violazione axe con il modulo aperto', async () => {
+    const { container } = await (async () => {
+      rispostaAnagrafica = anagraficaCompleta()
+      const u = await montaScheda()
+      await apriTab('Documento')
+      return u
+    })()
+    apriDati()
+    for (const el of [tipo(), numero(), scadenza(), screen.getByRole('button', { name: 'Salva i dati' })]) {
+      expect(el.className, `«${el.getAttribute('aria-label') ?? el.textContent}» sotto i 44px`).toContain('min-h-[44px]')
+    }
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('il tab Anagrafica resta in SOLA LETTURA: il modulo vive solo nel tab Documento', async () => {
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda()
+    await apriTab('Anagrafica')
+    expect(screen.queryByRole('button', { name: 'Aggiorna i dati del documento' })).not.toBeInTheDocument()
+  })
+})
+
+describe('scheda staff · si apre DIRETTAMENTE sul tab chiesto (`tabIniziale`)', () => {
+  it('«Rinnova» dal cruscotto apre il tab Documento', async () => {
+    rispostaAnagrafica = anagraficaCompleta()
+    render(<StaffDetailPanel staffId={STAFF_ID} onClose={vi.fn()} tabIniziale="documento" />)
+    await waitFor(() => expect(screen.getByRole('heading', { name: /Bianchi Maria/i })).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Documento' })).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aggiorna i dati del documento' })).toBeInTheDocument())
+  })
+
+  it('senza indicazione resta l’Incarico, come prima', async () => {
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda()
+    expect(screen.getByRole('button', { name: 'Incarico' })).toHaveAttribute('aria-pressed', 'true')
   })
 })

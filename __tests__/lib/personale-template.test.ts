@@ -7,6 +7,7 @@ import {
   CAMPI_VIETATI,
   CONSENSI_PERSONALE_FIELDS,
   TIPI_DOCUMENTO,
+  DOC_EXPIRY_MINIMO,
 } from '@/lib/forms/personale-template'
 import { FORMA_CF } from '@/lib/fiscale/tabelle'
 import { ESTENSIONI_ALLEGATO_PUBBLICO } from '@/lib/upload/allegati-pubblici'
@@ -191,6 +192,22 @@ describe('personale-template · la forma del codice fiscale, in TRE dichiarazion
     // …e la stessa persona senza omocodia passa comunque: non è un pattern per soli
     // codici omocodici.
     expect(forma.test('RSSMRA80A41H501U')).toBe(true)
+  })
+})
+
+describe('personale-template · il limite inferiore della scadenza (`DOC_EXPIRY_MINIMO`)', () => {
+  /**
+   * Tre porte lo leggono — modulo pubblico, PATCH della scheda staff, campo data della
+   * scheda — e il CHECK di tabella è la quarta copia, quella che Postgres esegue. Se il
+   * CHECK cambiasse e la costante no, il campo e le route accetterebbero una data che
+   * l'INSERT respinge con `23514`: il 503 «riprovare fra poco» che la costante esiste per
+   * evitare.
+   */
+  it('coincide con il CHECK di ENTRAMBE le tabelle, `>` stretto compreso', () => {
+    const sql = migrazione('20260811205643_anagrafica_personale.sql')
+    const check = [...sql.matchAll(/document_expiry\s*>\s*date\s*'([^']+)'/g)].map((m) => m[1])
+    expect(check, 'il CHECK della scadenza non compare in entrambe le tabelle').toHaveLength(2)
+    for (const dichiarato of check) expect(dichiarato).toBe(DOC_EXPIRY_MINIMO)
   })
 })
 

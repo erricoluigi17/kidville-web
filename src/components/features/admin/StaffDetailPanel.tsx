@@ -16,7 +16,7 @@ import { dataCivile } from '@/i18n/config';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Tabs } from '@/components/ui/cockpit';
 import { PERSONALE_FIELDS, PERSONALE_LIMITI } from '@/lib/forms/personale-template';
-import { caricaFile } from '@/lib/upload/carica-file';
+import { caricaFileConConferma } from '@/lib/upload/carica-file';
 import { messaggioDaCorpo, messaggioSoloCatalogo } from '@/lib/ui/esito-fetch';
 import { useDestinazioniSede, altreSedi, nomeSede, stessaSede } from './destinazioni-sede';
 import { giorniResidui, sogliaRaggiunta } from '@/lib/anagrafica/scadenze';
@@ -24,6 +24,7 @@ import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato, apriLinkNellApp } from 
 import { FUOCO_ESITO } from '@/lib/ui/fuoco';
 import { logClient } from '@/lib/logging/client';
 import { ZonaPericolosaStaff, segreteriaVedeZonaPericolosa } from './ZonaPericolosaStaff';
+import { DatiDocumentoSezione } from './personale/DatiDocumentoForm';
 
 // Scheda dedicata di un membro dello STAFF (elenco reale da `utenti`, tab Staff
 // dell'anagrafica). Si auto-carica da GET /api/admin/staff e seleziona il membro.
@@ -45,8 +46,19 @@ import { ZonaPericolosaStaff, segreteriaVedeZonaPericolosa } from './ZonaPericol
 // Da qui non si CORREGGE nessun dato anagrafico. La data di nascita, il codice
 // fiscale e la residenza entrano per una strada sola — la persona compila
 // `/anagrafica-personale`, la Segreteria APPROVA la pratica — e si aggiornano
-// dalla stessa, oppure dal cruscotto delle scadenze quando è la scadenza a
-// cambiare. Venti `<input>` aggiunti a questa scheda sarebbero un SECONDO modulo
+// dalla stessa.
+//
+// ⚠️ UNA SOLA ECCEZIONE, e fino al 06/10/2026 questa riga la negava: il DOCUMENTO
+// (tipo, numero, scadenza) si aggiorna dal tab Documento, con
+// `personale/DatiDocumentoForm`, che chiama la correzione allo sportello
+// (`admin/anagrafica-personale:PATCH`). La testata diceva «oppure dal cruscotto delle
+// scadenze quando è la scadenza a cambiare»: quel cruscotto fa solo `GET`, e la PATCH
+// non la chiamava nessuno — il 06/10 l'admin che rinnovava un documento non aveva
+// nessun posto dove cambiare la data. Sono TRE campi, la validazione non è riscritta
+// (viene da `TIPI_DOCUMENTO` e `DOC_EXPIRY_MINIMO`) e il codice fiscale non si tocca: non
+// è il «secondo modulo di raccolta» che il resto di questo punto rifiuta.
+//
+// Venti `<input>` aggiunti a questa scheda sarebbero un SECONDO modulo
 // di raccolta, con la propria validazione da tenere allineata a
 // `PERSONALE_FIELDS`, il proprio `consents_log` da non scrivere e la propria
 // strada per infilare in `anagrafica_personale` un codice fiscale che nessuno ha
@@ -96,9 +108,17 @@ interface School { id: string; nome: string }
 interface Section { id: string; name: string; scuola_id: string; school_type?: string }
 interface Assegnazione { utente_id: string; section_id: string }
 
+export type TabScheda = 'incarico' | 'anagrafica' | 'documento';
+
 interface Props {
   staffId: string;
   onClose: () => void;
+  /**
+   * Il tab con cui si apre la scheda. Serve al «Rinnova» del cruscotto delle scadenze, che
+   * porta dritto sul tab Documento invece di lasciare alla segreteria il giro. Assente =
+   * `incarico`, com'è sempre stato.
+   */
+  tabIniziale?: TabScheda;
 }
 
 /** Il modulo pubblico che alimenta l'anagrafica: un solo link, senza sede. */
@@ -517,7 +537,7 @@ const TONO_DOCUMENTO: Record<StatoDocumento, BadgeTone> = {
   inRegola: 'success',
 };
 
-export function StaffDetailPanel({ staffId, onClose }: Props) {
+export function StaffDetailPanel({ staffId, onClose, tabIniziale }: Props) {
   const t = useTranslations('adminStudents');
   const ts = useTranslations('shared');
   const labelRuolo = useLabelRuolo();
@@ -613,7 +633,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
   const [erroreIncarico, setErroreIncarico] = useState<string | null>(null);
   const [regenBusy, setRegenBusy] = useState(false);
 
-  const [tab, setTab] = useState<'incarico' | 'anagrafica' | 'documento'>('incarico');
+  const [tab, setTab] = useState<TabScheda>(tabIniziale ?? 'incarico');
   /**
    * Gli `id` delle due tendine di «Modifica», per legarci sopra le `<label>`.
    * `useId()` e non due stringhe fisse: la scheda è montata una volta sola oggi,
@@ -1110,7 +1130,11 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
     setConferma(null);
     setEsitoCaricamento(null);
     try {
-      const esito = await caricaFile({
+      // `caricaFileConConferma` e NON `caricaFile`: questa route il percorso non lo
+      // restituisce, e con `caricaFile` — dal 13/08 al 06/10/2026 — ogni sostituzione
+      // RIUSCITA sul server veniva dichiarata fallita qui, senza rileggere il fascicolo
+      // (vedi il punto 3 della testata di `@/lib/upload/carica-file`).
+      const esito = await caricaFileConConferma({
         // Gli identificativi stanno in QUERY e non nel multipart, e non è una
         // preferenza: con `utenteId` nel corpo il server dovrebbe bufferizzare fino
         // a 4 MB PRIMA di poter dire «questa persona non è della tua sede». Vedi la
@@ -1651,6 +1675,26 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
                       </p>
                     )}
                   </div>
+
+                  {/* IL RINNOVO: tipo, numero e scadenza si correggono da qui, con la
+                      `PATCH` della correzione allo sportello. Sta SOTTO le due facce
+                      perché è l'ordine del gesto — prima il documento nuovo in mano, poi
+                      i suoi dati — e SOPRA «Richiedi l'aggiornamento», che resta la strada
+                      di chi il documento non ce l'ha. */}
+                  <DatiDocumentoSezione
+                    utenteId={staffId}
+                    userId={userId}
+                    iniziale={{
+                      tipo: valoreTesto(valori, 'document_type') ?? '',
+                      numero: valoreTesto(valori, 'document_number') ?? '',
+                      // La colonna è una `date`: se mai arrivasse con l'ora, il campo
+                      // `type="date"` non la accetterebbe e resterebbe vuoto.
+                      scadenza: (scadenza ?? '').slice(0, 10),
+                    }}
+                    onSalvato={caricaAnagrafica}
+                    rotta={ROUTE_LOG}
+                    stili={{ primario: CMD_PRIMARIO, secondario: CMD_SECONDARIO, campo: TENDINA_44 }}
+                  />
 
                   <section className="rounded-card border border-kidville-line bg-kidville-cream/50 p-4">
                     <h3 className="font-barlow text-sm font-extrabold uppercase tracking-[0.02em] text-kidville-green">

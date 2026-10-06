@@ -1,0 +1,65 @@
+name: Verifica dopo il deploy
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COSA FA. A ogni rilascio in PRODUZIONE guarda il sito vero (`app.kidville.it`) e controlla che:
+#   · serva il rilascio appena fatto (`versione` = lo sha del deploy; attende fino a 10 minuti);
+#   · il vivo risponda (database e login);
+#   · la funzione giri in `dub1`, la regione del database (nel corpo e in `x-vercel-id`);
+#   · la salute non sia `down` (`degraded` è solo una nota: non l'ha causato il deploy).
+# Se qualcosa non va apre una segnalazione, manda l'email e fa fallire il giro. Se va tutto bene chiude
+# le segnalazioni `deploy:*` dei rilasci rotti precedenti.
+#
+# PERCHÉ ESISTE. Roadmap di robustezza, fase 3 (S2-C) e «dalla fase 1»: `next build` non legge
+# `vercel.json`, quindi eslint, tsc, vitest e build non si accorgono di una regione persa, e il sito
+# continua a funzionare — solo più lento di ~90 ms a ogni domanda al database. Il lock della fase 1
+# prova il FILE; questo prova il DEPLOY. E un rilascio che nasce rotto non deve aspettare la
+# telefonata di un genitore.
+#
+# PERCHÉ SOLO `Production`. Gli URL `*.vercel.app` stanno dietro il login di Vercel (302 a
+# `vercel.com/sso-api`, verificato il 2026-10-06): una Preview non si può leggere da qui senza un
+# token di bypass, che sarebbe un altro segreto da custodire. Il dominio di produzione è pubblico.
+#
+# SICUREZZA. Il workflow gira dal branch di default e ne fa il checkout ESPLICITO (non il commit del
+# deployment), quindi esegue sempre gli script di `main`. Il token e gli sha arrivano agli script come
+# variabili d'ambiente, mai interpolati dentro un comando.
+#
+# COME SI SPEGNE. `gh workflow disable dopo-deploy.yml`. Nessun effetto sulla produzione.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+# Un giro per volta, e nessuno viene cancellato: se due rilasci arrivano vicini, ognuno si verifica.
+concurrency:
+  group: dopo-deploy
+  cancel-in-progress: false
+
+jobs:
+  verifica:
+    name: Il sito serve il rilascio nuovo, in dub1, vivo
+    if: >-
+      ${{ github.event.deployment_status.state == 'success'
+      && github.event.deployment_status.environment == 'Production' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts/campanello
+          sparse-checkout-cone-mode: true
+
+      - name: Verifica il rilascio
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SENTINELLA_DESTINATARI: ${{ secrets.SENTINELLA_DESTINATARI }}
+          SHA_ATTESO: ${{ github.event.deployment.sha }}
+          URL_BASE: https://app.kidville.it
+        run: node scripts/campanello/dopo-deploy.mjs

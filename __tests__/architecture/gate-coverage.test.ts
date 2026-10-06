@@ -515,6 +515,11 @@ const PUBBLICHE: Record<string, string> = {
     // Quello che un anonimo può dedurre è dunque: se il sistema sta bene, e se un
     // job notturno non gira. È esattamente ciò che deve poter dedurre.
     'health:GET': "endpoint di salute per un monitor esterno, che una sessione non ce l'ha e non può averla: il caso in cui serve di più è quello in cui l'autenticazione è il guasto. Perimetro: tetto per IP + una risposta che non porta dati (nomi di controllo, booleani, ms, al più un codice d'errore — mai messaggi, mai conteggi, mai valori di variabili)",
+    // Dal 2026-10-06 (robustezza, fase 3) l'endpoint è in TRE livelli, e le due voci qui sotto sono lo
+    // stesso identico perimetro di `health:GET` — non due porte nuove con dati nuovi, ma la stessa porta
+    // divisa in tre perché un campanello non deve dipendere dalla qualità dei dati.
+    'health/vivo:GET': "il livello «vivo» dell'endpoint di salute: DB + Auth, 200 o 503, per un campanello esterno che una sessione non ce l'ha e non può averla (se il login è il guasto, un gate misurerebbe il gate). Perimetro: tetto per IP PROPRIO + una risposta che non porta dati (nomi di controllo, esito, ms, la regione e lo sha del deploy — il repository è pubblico — mai messaggi, mai conteggi, mai valori di variabili). È MENO di `health:GET`: due controlli invece di otto",
+    'health/qualita:GET': "il livello «qualità dei dati» dell'endpoint di salute, che non accende nessun allarme e risponde sempre 200. Perimetro: tetto per IP PROPRIO + una risposta che porta UN numero («2 alunni col testo classe divergente»), mai nomi di classi né di bambini, mai messaggi d'errore (solo il codice). È lo stesso dato che `health:GET` già esponeva fino al 2026-10-05, spostato in un livello a parte: un anonimo non ottiene niente in più",
 
     // ── Dato APERTO: la tabella dei comuni ───────────────────────────────────
     // La domanda che decide, quella di `health` e non quella di `send-otp`, è
@@ -865,12 +870,21 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // confrontato con le costanti vere dal test qui sotto: è la lezione di
         // `iscrizione/personale:POST`, una motivazione che dichiarava «3 invii/ora» per un giro intero
         // dopo che la rotta era passata a 20.
+        // 🔺 20 → 22 il 2026-10-06, DUE SALITE nello stesso giorno: `health/vivo:GET` e
+        // `health/qualita:GET`. Mi sono fermato, come chiede la riga qui sotto, e la domanda l'ho fatta:
+        // «cosa ottiene un anonimo che passa?». La risposta è la stessa di `health:GET` nel 2026-08-04,
+        // anzi MENO: il vivo dice se DB e Auth rispondono (due esiti), la qualità dà un numero che
+        // `health:GET` già esponeva e che ora sta in un livello a parte. Non sono due porte nuove con
+        // dati nuovi: è una porta divisa in tre perché un campanello non deve dipendere dalla qualità
+        // dei dati (il 02-05/10 `/api/health` è stato `degraded` per due giorni per 2 alunni, e un
+        // allarme sempre acceso vale come uno spento). Tetto per IP separato per ciascuna, risposta
+        // senza messaggi d'errore: lo verificano `health.test.ts` e `health-livelli.test.ts`.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(20)
+        ).toBe(22)
     })
 
     it('la motivazione di `iscrizione/insegnanti/upload:POST` dichiara il tetto VERO', () => {
@@ -972,6 +986,17 @@ describe('coverage-lock dei gate di autenticazione', () => {
             'repository. È la sola porta di questo elenco per cui «nessuna `fetch` in `src/`» è la ' +
             'forma corretta e non il sintomo di un pannello cancellato — una pagina che si chiedesse ' +
             'da sola se sta bene risponderebbe di sì proprio quando è caduta.',
+        'health/vivo:GET':
+            "il livello «vivo» non ha e non deve avere un chiamante dentro l'app: a interrogarlo sono " +
+            'il workflow `campanello.yml` e la verifica dopo il deploy (`dopo-deploy.yml`), che vivono ' +
+            'in `.github/workflows/` e non in `src/`, più l\'eventuale monitor esterno (Better Stack, ' +
+            'UptimeRobot). Stessa forma di `health:GET`: una pagina che si chiedesse da sola se è viva ' +
+            'risponderebbe di sì proprio quando è caduta.',
+        'health/qualita:GET':
+            "il livello «qualità dei dati» non ha un chiamante dentro l'app: a leggerlo è chi sistema i " +
+            'dati (a mano, con `curl`), non una schermata. Non lo interroga nessun monitor e non accende ' +
+            'nessun allarme, ed è proprio per questo che sta in un endpoint a parte: la qualità di un ' +
+            'dato non deve mai poter svegliare qualcuno.',
         'video-uploads/rinnovo:POST':
             "a bussare sarà l'app nativa 1.2 (PR 3): il sistema operativo la risveglia a app chiusa per rinnovare " +
             'l\'URL di caricamento scaduto di una PUT in background, con codice nativo (Swift e Kotlin) che non vive in ' +
@@ -1041,12 +1066,19 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // ammessa perché la PR 2 e la PR 3 sono due metà dello stesso contratto (spec §12) e la
         // seconda non può uscire prima della prima; ed è l'unica deroga che porta la sua scadenza
         // scritta nel testo: se la PR 3 non arriva, la porta va chiusa.
+        //
+        // 🔺 2 → 4 il 2026-10-06, SALITA: `health/vivo:GET` e `health/qualita:GET`. Mi sono fermato, e la
+        // domanda «chi bussa, se non l'app?» ha la stessa risposta di `health:GET`, la deroga storica:
+        // il monitoraggio, che esiste (il workflow `campanello.yml`, la verifica `dopo-deploy.yml`, e
+        // un monitor esterno quando il titolare ne creerà l'account). La seconda, la qualità, è letta
+        // a mano da chi sistema i dati: nessuno la chiama dal codice e non deve, perché è fatta per
+        // non essere sorvegliata.
         expect(
             Object.keys(CHIAMATA_DA_FUORI).length,
             'Il numero di porte «chiamate da fuori» è cambiato. Se è SALITO, fermati: la ' +
             'risposta facile a questa rete è aggiungere una riga qui, ed è la risposta ' +
             'sbagliata in tutti i casi tranne quello del monitoraggio.',
-        ).toBe(2)
+        ).toBe(4)
     })
 
     it('la rete riconosce una porta orfana anche quando la sua voce è impeccabile', () => {

@@ -26,16 +26,35 @@ import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
  * e per ognuno esiste un test che lo forza a dirlo.
  *
  * ════════════════════════════════════════════════════════════════════════════════
- * LE SETTE MISURE, E COSA VEDE CIASCUNA CHE LE ALTRE NON VEDONO
+ * LE MISURE, E COSA VEDE CIASCUNA CHE LE ALTRE NON VEDONO
  *
  *  1. `db-lettura`   — il database risponde e il service role legge davvero.
- *  2. `schema-atteso`— le tabelle che il codice usa SENZA tollerarne l'assenza ci sono.
- *  3. `cron-battito` — ogni job critico ha lasciato un «ok» dentro la sua finestra.
- *  4. `tasso-errore` — quante impronte d'errore distinte sono ATTIVE adesso.
- *  5. `config`       — le variabili la cui assenza produce un guasto silenzioso.
- *  6. `sezione-testo-allineato` — il testo della classe coincide col nome della sezione.
+ *  2. `auth`         — GoTrue risponde e arriva al suo database (fase 3, 2026-10-06).
+ *  3. `schema-atteso`— le tabelle che il codice usa SENZA tollerarne l'assenza ci sono.
+ *  4. `cron-battito` — ogni job critico ha lasciato un «ok» dentro la sua finestra.
+ *  5. `tasso-errore` — gli errori DEL SERVER attivi adesso: per impronte E per occorrenze.
+ *  6. `config`       — le variabili la cui assenza produce un guasto silenzioso.
  *  7. `coda-fatture` — la coda delle fatture Aruba non è ferma: nessuna voce aspetta
  *                      da più di 24 ore, e la coda non è sospesa da più di 24 ore.
+ *  8. `regione`      — la funzione gira nella regione del database (`dub1`), non altrove.
+ *  9. `sezione-testo-allineato` — il testo della classe coincide col nome della sezione.
+ *                      È QUALITÀ DEI DATI, non salute: sta nel suo livello (vedi sotto).
+ *
+ * ════════════════════════════════════════════════════════════════════════════════
+ * I TRE LIVELLI (roadmap di robustezza, fase 3 — 2026-10-06)
+ *
+ * Fino al 2026-10-05 `/api/health` era un solo endpoint e stava in `degraded` da due giorni per
+ * UN controllo, `sezione-testo-allineato` (2 alunni con il testo della classe diverso dal nome
+ * della sezione). Un allarme sempre acceso vale come uno spento, e chiunque l'avesse collegato a
+ * un monitor l'avrebbe silenziato entro una settimana. Ora sono tre, con tre pubblici:
+ *
+ *   `eseguiVivo`    → `/api/health/vivo`     DB + Auth, 200 o 503. È ciò che sorveglia un
+ *                                            campanello esterno: «il sito serve i genitori?»
+ *   `eseguiSalute`  → `/api/health`          vivo + schema, cron, errori, config, coda, regione.
+ *                                            `degraded` (200) = qualcosa che nessuno vedrebbe è
+ *                                            rotto; `down` (503) = come il vivo.
+ *   `eseguiQualita` → `/api/health/qualita`  la qualità dei dati. Risponde SEMPRE 200: non
+ *                                            accende nessun allarme, la legge chi sistema i dati.
  *
  * ════════════════════════════════════════════════════════════════════════════════
  * NESSUN DATO PERSONALE, E LA TENSIONE CON LA REGOLA 3 DI AGENTS.md
@@ -77,6 +96,11 @@ export interface Salute {
     stato: StatoSalute
     ms: number
     controlli: Controllo[]
+    /** La regione in cui gira QUESTA funzione (`VERCEL_REGION`). Non è un segreto. */
+    regione?: string
+    /** Lo sha del commit di QUESTO deploy: il repository è pubblico, il valore pure. Serve alla
+     *  verifica dopo il deploy per sapere che sta parlando con il rilascio nuovo e non col vecchio. */
+    versione?: string
 }
 
 /**
@@ -427,6 +451,41 @@ export const FINESTRA_ERRORI_MS = 15 * MIN
 export const SOGLIA_IMPRONTE_ERRORE = 5
 
 /**
+ * LA SOGLIA SULLE OCCORRENZE, e perché la sola conta delle impronte non bastava (fase 3).
+ *
+ * Contare le impronte distinte lascia invisibile proprio il guasto che ha dato origine a questo
+ * progetto: «403 the domain is not verified» di Resend è UNA impronta ripetuta a ogni invio, cioè
+ * `1 > 5` falso per sempre, mentre le occorrenze salgono. Qui si somma `occorrenze` delle impronte
+ * attive nella finestra.
+ *
+ * ⚠️ `occorrenze` è cumulativo per (impronta, giorno), non per finestra: la somma è un TETTO
+ * SUPERIORE di ciò che è successo negli ultimi 15 minuti (una riga vista ora con `occorrenze = 30`
+ * può averne avute 29 stamattina). È un errore nella direzione che serve — non nasconde un guasto —
+ * e si paga con la soglia, tarata sul rumore vero.
+ *
+ * MISURATO in produzione il 2026-10-06 su 7 giorni (676 finestre da 15 minuti), SOLO errori del
+ * server: massimo 5 impronte attive (p99 = 3), somma delle occorrenze massima 11 (p99,9 = 11),
+ * occorrenze massime di una sola riga 10. La soglia è 25: più del doppio del massimo osservato,
+ * cioè non suona sul rumore di una settimana (il `BUILD_DOWNLOAD_FAILED` del cron, i `NoSuchKey`
+ * dello storage), e suona quando uno stesso errore si ripete decine di volte nello stesso giorno.
+ * Limite dichiarato: un fornitore che fallisce 10 volte al giorno resta sotto soglia — per quello
+ * esistono i battiti dei cron e il log del SUCCESSO degli eventi critici.
+ */
+export const SOGLIA_OCCORRENZE_ERRORE = 25
+
+/**
+ * La regione in cui DEVE girare la funzione: quella del database (`eu-west-1` → `dub1`). Sta in
+ * `vercel.json` (`regions`), e il lock `vercel-json-funzioni-nella-regione-del-db` pretende che le
+ * due cose coincidano. Il lock prova il FILE; questo controllo prova il DEPLOY: se la regione
+ * sparisse da un deploy (o il piano la ignorasse) il sito continuerebbe a funzionare, solo più lento
+ * di ~90 ms a ogni domanda al database, e nessun test sarebbe rosso.
+ */
+export const REGIONE_ATTESA = 'dub1'
+
+/** Un uuid che non esiste: serve a chiedere a GoTrue «chi è?» senza leggere nessun utente vero. */
+const UUID_NULLO = '00000000-0000-0000-0000-000000000000'
+
+/**
  * LE VARIABILI CRITICHE — copia NOMINALE della lista di `src/instrumentation.ts`.
  *
  * La duplicazione è deliberata e sorvegliata: `variabiliCritiche()` non è esportata da
@@ -569,6 +628,38 @@ async function controlloDbLettura(supabase: SupabaseClient): Promise<Controllo> 
         }
         if (rotte.length > 0) return { esito: 'giu', dettaglio: rotte.join(' ') }
         return { esito: 'ok' }
+    })
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 1 bis. Auth risponde e arriva al suo database
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * IL PUNTO CIECO CHE QUESTO CONTROLLO CHIUDE. Il login passa da GoTrue, che ha il suo pool di
+ * connessioni (fisso a 10: advisor `auth_db_connections_absolute`) e può cadere con il database
+ * dell'app perfettamente sano: `db-lettura` sarebbe verde e nessun genitore riuscirebbe a entrare.
+ *
+ * Si chiede a GoTrue di cercare un utente CHE NON ESISTE (`UUID_NULLO`). Un `404 user_not_found` è
+ * la risposta di un Auth VIVO che ha consultato il suo database: è l'esito `ok`. Qualunque altro
+ * errore (5xx, rete, timeout, 401 per una chiave sbagliata) è `giu`. Non si legge nessun utente
+ * vero — niente email, niente id — e la risposta non esce dal controllo: la rotta è pubblica.
+ *
+ * La chiamata passa dal `fetch` strumentato dei client Supabase: un 4xx dell'auth è `info`, non
+ * persistito (`livelloDi` in `supabase-fetch.ts`), quindi un campanello che interroga ogni minuto
+ * NON riempie `app_log` di errori finti e non fa salire `tasso-errore`.
+ */
+async function controlloAuth(supabase: SupabaseClient): Promise<Controllo> {
+    return misura('auth', 'giu', async () => {
+        const { error } = await supabase.auth.admin.getUserById(UUID_NULLO)
+        if (!error) return { esito: 'ok' }
+        const stato = (error as { status?: unknown }).status
+        const codice = codiceDi(error)
+        if (stato === 404 || codice === 'user_not_found') return { esito: 'ok' }
+        return {
+            esito: 'giu',
+            dettaglio: `auth ${typeof stato === 'number' ? stato : 'senza-stato'} ${codice}`,
+        }
     })
 }
 
@@ -804,6 +895,27 @@ async function controlloBattitoCron(
  * 4. Tasso d'errore
  * ════════════════════════════════════════════════════════════════════════════ */
 
+/** Righe lette per sommare le occorrenze. Una sola colonna numerica, quindi niente da proteggere:
+ *  il tetto serve a non trascinare in memoria una tabella intera se un giorno il rumore esplode.
+ *  Una somma troncata è comunque ≥ della soglia molto prima di arrivare qui. */
+const RIGHE_MAX_OCCORRENZE = 500
+
+/**
+ * SOLO GLI ERRORI DEL SERVER (`sorgente = 'server'`), e il perché è misurato.
+ *
+ * `/api/logs` è ANONIMO: scrive in `app_log` ciò che un browser gli manda (`sorgente = 'client'`).
+ * In produzione, in 7 giorni, gli errori del browser sono 1.258 righe contro 154 del server — otto
+ * volte tanti — e li fabbrica chiunque abbia una scheda aperta o un `curl`. Con quelli dentro, il
+ * campanello suonava per un browser vecchio e poteva essere acceso da un estraneo. Gli errori del
+ * browser restano in tabella e si leggono, ma NON accendono questo controllo.
+ *
+ * Due soglie, entrambe sul solo server: più di `SOGLIA_IMPRONTE_ERRORE` tipi di guasto attivi
+ * (la forma vecchia), OPPURE la somma delle occorrenze oltre `SOGLIA_OCCORRENZE_ERRORE` (la
+ * novità: lo stesso guasto ripetuto). Vedi le due costanti per i numeri misurati.
+ *
+ * Le righe lette portano UNA colonna, `occorrenze`: né `messaggio`, né `stack`, né `contesto`.
+ * Il conteggio delle impronte viene da `count: 'exact'`, non dalla lunghezza dell'elenco.
+ */
 async function controlloTassoErrore(
     supabase: SupabaseClient,
     adesso: number,
@@ -811,26 +923,37 @@ async function controlloTassoErrore(
 ): Promise<Controllo> {
     return misura('tasso-errore', 'degradato', async () => {
         const da = new Date(adesso - FINESTRA_ERRORI_MS).toISOString()
-        // `head: true`: si vuole il CONTEGGIO, non le righe. Le righe di `app_log`
-        // portano `messaggio`, `stack` e `contesto` — cioè, su un endpoint pubblico,
-        // esattamente ciò che non deve entrare nemmeno in memoria per sbaglio.
-        const { count, error } = await supabase
+        const { data, count, error } = await supabase
             .from('app_log')
-            .select('id', { head: true, count: 'exact' })
+            .select('occorrenze', { count: 'exact' })
             .eq('livello', 'error')
+            .eq('sorgente', 'server')
             .eq('ambiente', ambiente)
             .gte('visto_l_ultima', da)
+            .limit(RIGHE_MAX_OCCORRENZE)
         if (error) {
             return { esito: 'degradato', dettaglio: `conteggio app_log ${codiceDi(error)}` }
         }
-        const n = count ?? 0
+        const righe = (data ?? []) as { occorrenze?: unknown }[]
+        const n = count ?? righe.length
+        const occorrenze = righe.reduce(
+            (somma, r) => somma + (typeof r.occorrenze === 'number' && r.occorrenze > 0 ? r.occorrenze : 1),
+            0,
+        )
+        const guasti: string[] = []
         if (n > SOGLIA_IMPRONTE_ERRORE) {
+            guasti.push(`${n} impronte d'errore attive (soglia ${SOGLIA_IMPRONTE_ERRORE})`)
+        }
+        if (occorrenze > SOGLIA_OCCORRENZE_ERRORE) {
+            guasti.push(`al più ${occorrenze} occorrenze (soglia ${SOGLIA_OCCORRENZE_ERRORE})`)
+        }
+        if (guasti.length > 0) {
             return {
                 esito: 'degradato',
-                dettaglio: `${n} impronte d'errore attive negli ultimi ${FINESTRA_ERRORI_MS / MIN} min (soglia ${SOGLIA_IMPRONTE_ERRORE})`,
+                dettaglio: `errori del server negli ultimi ${FINESTRA_ERRORI_MS / MIN} min: ${guasti.join('; ')}`,
             }
         }
-        return { esito: 'ok', dettaglio: `${n} impronte d'errore attive` }
+        return { esito: 'ok', dettaglio: `${n} impronte d'errore del server attive, al più ${occorrenze} occorrenze` }
     })
 }
 
@@ -849,28 +972,39 @@ async function controlloTassoErrore(
  * L'accesso è STATICO (`process.env.NOME`), mai `process.env[nome]`: le `NEXT_PUBLIC_*`
  * il bundler le sostituisce solo sulla forma statica, e con quella dinamica il controllo
  * griderebbe al lupo su una variabile che c'è.
+ *
+ * ⚠️ IL TIPO DI RITORNO È IL LOCK CONTRO IL «7 SU 6» (corretto il 2026-10-06).
+ *
+ * Fino a oggi questa funzione elencava SEI variabili e `VARIABILI_CRITICHE` ne dichiarava SETTE:
+ * `ARUBA_PASSWORD` non veniva mai guardata, e il dettaglio scriveva comunque «7 variabili
+ * presenti» — un controllo che dichiara più di ciò che misura è un verde che non ha guardato.
+ * Ora l'oggetto è un `Record` su TUTTI i nomi della tupla: aggiungerne uno a `VARIABILI_CRITICHE`
+ * senza leggerlo qui è un errore di `tsc`, e il numero nel dettaglio è la lunghezza di ciò che si è
+ * davvero letto.
  */
-function valoriCritici(): ReadonlyArray<readonly [string, string | undefined]> {
-    return [
-        ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY],
-        ['NEXT_PUBLIC_SUPABASE_URL', process.env.NEXT_PUBLIC_SUPABASE_URL],
-        ['RESEND_API_KEY', process.env.RESEND_API_KEY],
-        ['OTP_FROM_EMAIL', process.env.OTP_FROM_EMAIL],
-        ['CRON_SECRET', process.env.CRON_SECRET],
-        ['LOG_HASH_SALT', process.env.LOG_HASH_SALT],
-    ]
+function valoriCritici(): Record<(typeof VARIABILI_CRITICHE)[number], string | undefined> {
+    return {
+        SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+        RESEND_API_KEY: process.env.RESEND_API_KEY,
+        OTP_FROM_EMAIL: process.env.OTP_FROM_EMAIL,
+        CRON_SECRET: process.env.CRON_SECRET,
+        LOG_HASH_SALT: process.env.LOG_HASH_SALT,
+        ARUBA_PASSWORD: process.env.ARUBA_PASSWORD,
+    }
 }
 
 async function controlloConfig(): Promise<Controllo> {
     return misura('config', 'degradato', async () => {
+        const letti = Object.entries(valoriCritici())
         // Una variabile impostata a stringa vuota è assente: `''` non configura niente.
-        const assenti = valoriCritici()
+        const assenti = letti
             .filter(([, v]) => v === undefined || v.trim() === '')
             .map(([nome]) => nome)
         if (assenti.length > 0) {
             return { esito: 'degradato', dettaglio: `variabili assenti: ${assenti.join(',')}` }
         }
-        return { esito: 'ok', dettaglio: `${VARIABILI_CRITICHE.length} variabili presenti` }
+        return { esito: 'ok', dettaglio: `${letti.length} variabili presenti` }
     })
 }
 
@@ -1094,6 +1228,36 @@ export async function controlloCodaFatture(
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * 8. La funzione gira nella regione del database
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * `VERCEL_REGION` la valorizza la piattaforma su ogni invocazione. Se non c'è, il processo non gira
+ * su Vercel (`next dev`, un test, la CI): non è un guasto, e il dettaglio lo dice.
+ *
+ * `degradato` e mai `giu`: una funzione nella regione sbagliata serve i genitori, solo più piano
+ * (~90 ms in più a ogni domanda al database, ~5 s sul salvataggio del diario). Dichiararla giù
+ * sarebbe falso. Ma è un degrado che nessun'altra misura vede, ed è esattamente ciò che la fase 1
+ * ha corretto: senza questo controllo tornerebbe in silenzio.
+ */
+export function controlloRegione(regione: string | undefined = process.env.VERCEL_REGION): Controllo {
+    const t0 = Date.now()
+    const letta = regione?.trim() ?? ''
+    if (letta === '') {
+        return { nome: 'regione', esito: 'ok', dettaglio: 'non su Vercel: nessuna regione da verificare', ms: Date.now() - t0 }
+    }
+    if (letta !== REGIONE_ATTESA) {
+        return {
+            nome: 'regione',
+            esito: 'degradato',
+            dettaglio: `funzione in ${letta}, attesa ${REGIONE_ATTESA} (la regione del database)`,
+            ms: Date.now() - t0,
+        }
+    }
+    return { nome: 'regione', esito: 'ok', dettaglio: letta, ms: Date.now() - t0 }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
 
@@ -1111,26 +1275,71 @@ export interface OpzioniSalute {
 }
 
 /**
- * I sette controlli girano IN PARALLELO.
- *
- * In serie il caso peggiore sarebbe 7 × il tetto = 14 secondi, cioè oltre il timeout di
- * ogni monitor ragionevole: l'endpoint verrebbe dichiarato giù proprio quando il suo
- * compito è dire in che modo è giù. In parallelo il caso peggiore resta il tetto singolo.
+ * Lo sha del commit di questo deploy, SOLO se ha la forma di uno sha. `VERCEL_GIT_COMMIT_SHA` è
+ * valorizzata da Vercel (`autoExposeSystemEnvs`), ma una risposta pubblica non deve mai rilanciare
+ * il contenuto arbitrario di una variabile d'ambiente: se non è esadecimale non esce.
  */
-export async function eseguiControlli(
-    supabase: SupabaseClient,
-    opzioni: OpzioniSalute,
-): Promise<Salute> {
+function versioneCorrente(): string | undefined {
+    const sha = process.env.VERCEL_GIT_COMMIT_SHA?.trim() ?? ''
+    return /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 12).toLowerCase() : undefined
+}
+
+function conIdentita(salute: Salute): Salute {
+    const regione = process.env.VERCEL_REGION?.trim()
+    const versione = versioneCorrente()
+    return {
+        ...salute,
+        ...(regione ? { regione } : {}),
+        ...(versione ? { versione } : {}),
+    }
+}
+
+/**
+ * I controlli di ogni livello girano IN PARALLELO.
+ *
+ * In serie il caso peggiore sarebbe N × il tetto (2 s l'uno), cioè oltre il timeout di ogni
+ * monitor ragionevole: l'endpoint verrebbe dichiarato giù proprio quando il suo compito è dire in
+ * che modo è giù. In parallelo il caso peggiore resta il tetto singolo.
+ */
+
+/**
+ * IL VIVO — «il sito serve i genitori?». DB + Auth, e basta: è ciò che sorveglia un campanello
+ * esterno, e ogni controllo in più è una ragione in più per svegliare qualcuno di notte.
+ */
+export async function eseguiVivo(supabase: SupabaseClient): Promise<Salute> {
+    const t0 = Date.now()
+    const controlli = await Promise.all([controlloDbLettura(supabase), controlloAuth(supabase)])
+    return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })
+}
+
+/**
+ * LA SALUTE — il vivo più tutto ciò che si rompe senza che nessun genitore lo veda subito: schema,
+ * cron, errori del server, configurazione, coda delle fatture, regione. NON include la qualità dei
+ * dati: vedi `eseguiQualita`.
+ */
+export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSalute): Promise<Salute> {
     const t0 = Date.now()
     const adesso = opzioni.adesso ?? Date.now()
     const controlli = await Promise.all([
         controlloDbLettura(supabase),
+        controlloAuth(supabase),
         controlloSchema(supabase),
         controlloBattitoCron(supabase, adesso, opzioni.ambiente),
         controlloTassoErrore(supabase, adesso, opzioni.ambiente),
         controlloConfig(),
-        controlloTestoClasse(supabase),
         controlloCodaFatture(supabase, adesso),
+        Promise.resolve(controlloRegione()),
     ])
-    return { stato: aggrega(controlli), ms: Date.now() - t0, controlli }
+    return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })
+}
+
+/**
+ * LA QUALITÀ DEI DATI — a parte, e non accende nessun allarme. Oggi è un controllo solo
+ * (`sezione-testo-allineato`); qui entreranno gli altri che dicono «i dati sono storti», non «il
+ * servizio è rotto». Un monitor collegato a `/api/health` non deve mai dipenderne.
+ */
+export async function eseguiQualita(supabase: SupabaseClient): Promise<Salute> {
+    const t0 = Date.now()
+    const controlli = await Promise.all([controlloTestoClasse(supabase)])
+    return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })
 }

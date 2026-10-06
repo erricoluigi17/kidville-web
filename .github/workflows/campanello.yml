@@ -1,0 +1,81 @@
+name: Campanello (sito, salute, backup)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COSA FA. Ogni ~15 minuti guarda tre cose e, se una non va, apre una segnalazione nel repository e
+# manda un'email; quando il problema rientra, chiude la segnalazione da sola:
+#   1. il VIVO     `/api/health/vivo`  — database e login (tre tentativi);
+#   2. la SALUTE   `/api/health`       — cron, errori del server, configurazione, coda fatture, regione;
+#   3. il BACKUP   l'ultimo giro automatico riuscito di `backup-notturno.yml` (allarme oltre 30 ore).
+# La logica sta in `scripts/campanello/` ed è provata con numeri letterali
+# (`__tests__/lib/campanello-*.test.ts`). Questo file la fa solo partire.
+#
+# PERCHÉ ESISTE. Roadmap di robustezza, fase 3 (S2). Fino al 2026-10-06 nessuno interrogava
+# `/api/health`: se il sito si fermava lo scopriva un genitore. E il backup notturno non aveva nessun
+# allarme per il caso «non è partito» (GitHub avvisa solo di un giro che parte e fallisce): il primo
+# giro programmato è partito con 6 ore e 45 minuti di ritardo.
+#
+# È UN RINFORZO, NON IL CAMPANELLO DEFINITIVO. I cron di GitHub ritardano di 10-30 minuti e a volte
+# saltano un giro. Il campanello vero è un monitor esterno su `/api/health/vivo` (Better Stack o
+# UptimeRobot, gratis, account del titolare: vedi `docs/cicd.md`). Questo copre il tempo finché non
+# c'è, senza nessun account nuovo, e controlla anche il backup, che un monitor esterno non vede.
+#
+# COME SI PROVA. `gh workflow run campanello.yml -f simula_guasto=true` apre una segnalazione PROVA e
+# manda l'email marcata PROVA, senza guardare il sito. Il giro normale successivo la chiude da solo.
+# Un allarme mai visto suonare non è un allarme.
+#
+# COME SI SPEGNE. `gh workflow disable campanello.yml`. Nessun effetto sulla produzione: legge due
+# URL pubblici e scrive solo segnalazioni.
+#
+# COSA NON FA MAI (e il lock `campanello-workflow.test.ts` lo pretende): non gira su `pull_request`,
+# non ha permessi di scrittura sul codice, non stampa segreti, non interpola `${{ … }}` dentro uno
+# script.
+#
+# I DUE SEGRETI sono quelli dell'allarme del backup e della sentinella Play, già impostati nel
+# repository: `RESEND_API_KEY` e `SENTINELLA_DESTINATARI` (gli indirizzi stanno in un segreto perché
+# il repository è PUBBLICO). Senza, la segnalazione si apre lo stesso e il giro FALLISCE: un allarme
+# che non sa a chi scrivere è peggio di nessun allarme.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # Quattro volte l'ora, a minuti non tondi: alle :00 le code di GitHub sono intasate.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+    inputs:
+      simula_guasto:
+        description: "Apre una segnalazione PROVA e manda l'email marcata PROVA, senza guardare il sito. Serve a vedere che l'allarme arrivi."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Un giro alla volta: due giri insieme aprirebbero la stessa segnalazione due volte.
+concurrency:
+  group: campanello
+  cancel-in-progress: false
+
+jobs:
+  campanello:
+    name: Guarda il sito e il backup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      # Solo gli script: del repository non serve altro.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/campanello
+          sparse-checkout-cone-mode: true
+
+      - name: Controlla
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SENTINELLA_DESTINATARI: ${{ secrets.SENTINELLA_DESTINATARI }}
+          SIMULA_GUASTO: ${{ inputs.simula_guasto }}
+          URL_BASE: https://app.kidville.it
+        run: node scripts/campanello/campanello.mjs

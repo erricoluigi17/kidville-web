@@ -98,12 +98,13 @@ Non è un'emergenza la prima notte: l'ultima copia buona è quella di ieri. **Lo
    - **«sorgente vuota» / «calata sotto il 90%»** (specchio): la sorgente appare vuota o molto più piccola. NON è
      una cancellazione voluta finché non lo verifichi su Supabase. Se invece è una pulizia vera: rilancia con
      `PERMETTI_CALO=1` (solo dallo script, a voce).
-   - **«--max-delete» superato**: troppi file spariti in un giro. Stessa verifica.
+   - **«il piano prevede N cancellazioni»** (specchio): troppi file spariti dalla sorgente in un giro. Stessa verifica. Il giro si è fermato PRIMA di toccare lo specchio.
+   - **«il piano sostituirebbe N file già presenti»** (specchio): rclone ritiene cambiati troppi file che nella sorgente non lo sono, di solito perché le **date** non coincidono (lo specchio è un `crypt`, senza hash). Nel log, sotto `PIANO`, ci sono i conteggi per frase e l'unità degli scarti di data (`ms`, `s`, `h`…): se sono `ms` o pochi `s` serve una finestra più larga (`FINESTRA_DATE` in `scripts/backup/specchio-storage.sh`, oggi 2 s); se sono ore, qualcuno ha toccato le date dei file. Nei log non passa mai un nome di file.
    - **«dump troppo piccolo» / «meno della metà di ieri»**: il database ha perso molte righe o il dump è monco. Verifica i conteggi su Supabase prima di tutto.
    - **errore di connessione / permessi** su `BACKUP_DB_URL`: password del ruolo `backup_lettura` cambiata, o il pooler. Si rimette con `ALTER ROLE backup_lettura WITH LOGIN PASSWORD '…'` (nel SQL editor, a mano) e si aggiorna il segreto.
    - **errore 403 su R2**: token R2 scaduto o revocato → si ricrea in Cloudflare e si aggiorna `BACKUP_R2_KEY_*`.
 2. Rilancia: `gh workflow run backup-notturno.yml -f modalita=completo`.
-3. Se il workflow **non parte proprio** (nessuna email, nessun giro): oggi non c'è nessun allarme (lo darà il campanello della fase 3). Controlla ogni tanto i giri con `gh run list --workflow backup-notturno.yml`.
+3. Se il workflow **non parte proprio** (nessuna email, nessun giro): lo vede il campanello (`campanello.yml`, fase 3), che apre `[backup-vecchio]` quando l'ultimo giro automatico riuscito ha più di 30 ore. Si guarda anche a mano con `gh run list --workflow backup-notturno.yml --event schedule`.
 
 ## Scenario C — «Un file è stato cancellato per errore» (modulo, documento, allegato)
 

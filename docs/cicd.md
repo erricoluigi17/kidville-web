@@ -212,6 +212,115 @@ cifrate, che l'app non legge mai. Il workflow è `.github/workflows/backup-nottu
 
 ---
 
+## Campanello e verifica dopo il deploy
+
+Roadmap di robustezza, fase 3 (S2). Fino al 2026-10-06 nessuno interrogava `/api/health`: se il sito si fermava lo
+scopriva un genitore; e `/api/health` era `degraded` da due giorni per **2 alunni** col testo della classe diverso dal
+nome della sezione — un allarme sempre acceso vale come uno spento.
+
+### I tre livelli di salute (tutti pubblici, senza cache, con un tetto per IP ciascuno)
+
+| URL | Cosa dice | HTTP | Per chi |
+|---|---|---|---|
+| `/api/health/vivo` | database e **login** (GoTrue): «il sito serve i genitori?» | 200 oppure **503** | il **campanello**: è l'unico da sorvegliare |
+| `/api/health` | il vivo + schema, battito dei cron, errori del server, configurazione, coda fatture, regione | 200 (`ok` o `degraded`) oppure 503 | chi indaga; il workflow `campanello.yml` |
+| `/api/health/qualita` | qualità dei dati (oggi: alunni col testo classe diverso dalla sezione) | **sempre 200** | chi sistema i dati; non accende nessun allarme |
+
+Il corpo porta anche `regione` (la funzione gira in `dub1`?) e `versione` (sha del commit del deploy: il repository è
+pubblico). Tre correzioni fatte nello stesso lavoro:
+
+- **7 su 6**: `config` dichiarava 7 variabili e ne controllava 6 (`ARUBA_PASSWORD` mai guardata). Ora il tipo di
+  `valoriCritici()` è un `Record` su tutta la tupla `VARIABILI_CRITICHE`: dimenticarne una è un errore di `tsc`.
+- **`tasso-errore` sul solo server, impronte E occorrenze.** Gli errori del browser (`sorgente = 'client'`, scritti da
+  `/api/logs`, che è anonimo) erano 1.258 righe contro 154 del server in 7 giorni e li fabbrica chiunque. Soglie
+  tarate sulle misure del 06/10 (676 finestre da 15 minuti, solo server): impronte massimo 5 (soglia 5), somma delle
+  occorrenze massimo 11 (soglia 25). La somma di `occorrenze` è un **tetto superiore** (è cumulativa per impronta e
+  giorno): è l'errore nella direzione giusta. Il guasto storico di Resend («403 domain not verified») è **una**
+  impronta ripetuta: con la sola conta delle impronte restava invisibile.
+- **Il controllo `auth`** chiede a GoTrue di cercare l'utente nullo (`00000000-…`): un 404 `user_not_found` è la
+  risposta di un Auth vivo che ha letto il suo database. Non legge nessun utente vero, e un 4xx dell'auth è `info`
+  (non persistito), quindi un monitor che interroga ogni minuto non riempie `app_log`.
+
+**Dove NON si traccia la regione:** non in `app_log`. Avrebbe richiesto una chiave nuova in `CHIAVI_IN_CHIARO`
+(`src/lib/logging/redact.ts`), cioè un campo in più nel canale **anonimo** di `/api/logs`. La regione si legge da
+`/api/health` (`regione`, controllo `regione`) e da `x-vercel-id`; la verifica dopo il deploy la controlla a ogni
+rilascio.
+
+### Collegare un monitor esterno (il campanello vero) — 5 minuti, account del titolare
+
+I cron di GitHub ritardano di 10-30 minuti: il workflow qui sotto è un **rinforzo**, non il campanello definitivo.
+Con Better Stack (gratis: 10 sonde ogni 3 minuti; avvisi via email, SMS e app) o UptimeRobot (gratis: 50 sonde ogni
+5 minuti):
+
+1. nuova sonda HTTP su **`https://app.kidville.it/api/health/vivo`**, ogni 1–3 minuti;
+2. «allarma se» il codice non è 200 **o** la pagina non contiene `"stato":"ok"`; tempo massimo 10 secondi;
+3. conferma dopo 2 controlli falliti di fila (un singolo scatto di rete non deve svegliare nessuno);
+4. **non** puntare il monitor su `/api/health` (può essere `degraded` per un cron muto: è un avviso, non un guasto) né
+   su `/api/health/qualita`.
+
+Il monitor non vede il backup: quello lo guarda `campanello.yml`.
+
+### `campanello.yml` — ogni ~15 minuti, senza account nuovi
+
+Guarda tre cose; se una non va **apre una segnalazione** nel repository (etichetta `campanello`, titolo
+`[chiave] testo`, corpo pubblico: solo ciò che gli endpoint di salute già espongono) e **manda un'email** (Resend, ai
+`SENTINELLA_DESTINATARI`); quando il problema rientra **chiude la segnalazione da sola**.
+
+- **Il vivo**, tre tentativi a 15 secondi: uno scatto isolato non sveglia nessuno. Incidente `app-giu`.
+- **La salute**, due letture a 45 secondi: conta solo ciò che c'è in entrambe. Un incidente per controllo
+  (`salute:<nome>`): un cron muto e una variabile sparita svegliano persone diverse.
+- **Il backup**: l'ultimo giro **automatico** riuscito di `backup-notturno.yml`; oltre **30 ore** (o nessuno) →
+  `backup-vecchio`. È l'unico modo di accorgersi che il backup **non è partito**: GitHub avvisa solo di un giro che
+  parte e fallisce. Perché 30 e non 26: il primo giro programmato (06/10) è partito alle 09:08 UTC invece che alle
+  02:23, **6 ore e 45 minuti di ritardo**; con 26 ore sarebbe suonato per un ritardo di due ore. Perché solo
+  `schedule`: un giro lanciato a mano può essere in modalità `prova` (scrive sotto `prove/` e non è un backup) e
+  dall'API dei giri non si distingue da `completo`. Perché da GitHub e non dall'app: GitHub è l'unico che sa la
+  verità, ha già un token, e chiederlo da Vercel (indirizzi condivisi) sarebbe a 60 richieste l'ora.
+- **Una segnalazione si chiude solo se la sua chiave è stata misurata in quel giro**: con il sito giù la salute non si
+  legge, e le segnalazioni `salute:*` restano aperte (non è «rientrato», è «non l'ho guardato»). Lo stesso per il backup
+  quando l'API dei giri non risponde.
+- **Promemoria**: un incidente ancora aperto dopo 24 ore riceve un commento (non un'email).
+- **Se l'email non può partire il giro fallisce** (e GitHub manda la sua email di «workflow fallito»): la segnalazione
+  c'è comunque. Un allarme che non sa a chi scrivere è peggio di nessun allarme.
+
+Si prova con `gh workflow run campanello.yml -f simula_guasto=true`: apre una segnalazione `[prova]` e manda l'email
+marcata PROVA, senza guardare il sito; il giro normale successivo la chiude da solo. Si spegne con
+`gh workflow disable campanello.yml`. Segreti (già impostati nel repository, gli stessi della sentinella Play e
+dell'allarme del backup): `RESEND_API_KEY` e `SENTINELLA_DESTINATARI`.
+
+### Quando suona: cosa fare
+
+| Segnalazione | Cosa vuol dire | Cosa guardare |
+|---|---|---|
+| `[app-giu]` | database o login non rispondono (o il sito non risponde) | `curl -s https://app.kidville.it/api/health/vivo` dice QUALE controllo è caduto (`db-lettura` o `auth`). Se è comparso dopo un rilascio: **Instant Rollback** di Vercel. Altrimenti stato di Supabase e log di Auth |
+| `[salute:cron-battito]` | un job non ha lasciato il suo battito nella finestra | il nome del job è nel testo; `cron.job_run_details` su Supabase e `app_log` (`evento = 'cron'`) |
+| `[salute:config]` | una variabile d'ambiente critica manca o è vuota | il nome è nel testo (mai il valore): si rimette su Vercel e si rifà il deploy |
+| `[salute:tasso-errore]` | troppi errori **del server** (impronte o occorrenze) negli ultimi 15 minuti | `app_log` con `livello = 'error'` e `sorgente = 'server'`, per `fingerprint` |
+| `[salute:coda-fatture]` | voci ferme da oltre 24 ore o coda sospesa | pagina della coda fatture; log dei giri `fatture-coda-tick` |
+| `[salute:regione]` | la funzione gira fuori da `dub1` | `vercel.json` (`regions`) e il deploy: Instant Rollback se è nuovo |
+| `[salute:schema-atteso]` / `[salute:auth]` | una tabella manca / Auth non risponde | migrazione non applicata (integrazione Supabase) / stato di Auth |
+| `[backup-vecchio]` | l'ultimo giro **automatico** del backup è più vecchio di 30 ore, o non c'è | i giri di `backup-notturno.yml` (`gh run list --workflow backup-notturno.yml`) e `docs/runbook-ripristino.md`. Un giro **manuale** `completo` fa il backup ma non spegne l'allarme: aspetta il primo giro automatico |
+| `[deploy:<sha>]` | il rilascio non passa la verifica (versione, vivo, regione, salute `down`) | il testo dice cosa; Instant Rollback se il sito è rotto |
+| `[prova]` | è la prova dell'allarme (`simula_guasto`): non è successo niente | si chiude da sola al giro successivo |
+
+### `dopo-deploy.yml` — a ogni rilascio in produzione
+
+Sull'evento `deployment_status` (`success`, ambiente `Production`) guarda `app.kidville.it`: che serva **il rilascio
+appena fatto** (`versione` = sha del deploy, attesa fino a 10 minuti; se nel frattempo è andato in produzione un
+rilascio più nuovo si ferma senza allarmare), che il vivo risponda, che la funzione giri in **`dub1`** (nel corpo e in
+`x-vercel-id`) e che la salute non sia `down`. `degraded` è solo una nota: non l'ha causato il deploy. Se qualcosa non
+va apre una segnalazione `[deploy:<sha>]`, manda l'email e fa fallire il giro; un rilascio buono chiude le segnalazioni
+`deploy:*` precedenti.
+
+Si testa il **dominio di produzione**, non l'URL del deploy: gli URL `*.vercel.app` stanno dietro il login di Vercel
+(302 a `vercel.com/sso-api`) e una Preview non si può leggere senza un token di bypass. Il workflow esegue sempre gli
+script di `main` (checkout esplicito di `default_branch`, non del commit del deployment).
+
+Il lock `__tests__/architecture/campanello-workflow.test.ts` vieta `pull_request`/`push`, i permessi di scrittura sul
+codice, i segreti fuori da `NOME: ${{ secrets.X }}` e ogni `${{ … }}` dentro un comando.
+
+---
+
 ## Cron di produzione (pg_cron, dentro Supabase)
 
 Le schedulazioni **non** usano Vercel Cron: girano in Postgres (`pg_cron` + `pg_net`) e

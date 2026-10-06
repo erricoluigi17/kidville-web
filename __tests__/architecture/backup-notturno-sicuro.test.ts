@@ -153,6 +153,7 @@ function violazioni(grezzo: string, cicd: string): string[] {
         if (EVENTI_VIETATI.includes(e)) v.push(`trigger vietato: ${e}`)
         else if (e !== 'workflow_dispatch' && e !== 'schedule') v.push(`trigger non ammesso: ${e}`)
     }
+    if (!eventi.includes('schedule')) v.push('schedule: manca (il backup deve girare da solo ogni notte)')
     if (eventi.includes('schedule')) {
         const cron = [...c.matchAll(/-\s*cron:\s*['"]([^'"]+)['"]/g)].map((m) => m[1])
         if (cron.length !== 1) v.push(`schedule: ci vuole UN solo cron, ce ne sono ${cron.length}`)
@@ -344,11 +345,13 @@ describe('LOCK · backup-notturno.yml', () => {
 
 describe('PROVE GEMELLE · il lock diventa rosso quando una regola si rompe', () => {
     const MUTAZIONI: Array<[string, (s: string) => string, RegExp]> = [
-        ['trigger pull_request', (s) => s.replace('on:\n  workflow_dispatch:', 'on:\n  pull_request:\n  workflow_dispatch:'), /trigger vietato: pull_request/],
-        ['trigger push', (s) => s.replace('on:\n  workflow_dispatch:', 'on:\n  push:\n  workflow_dispatch:'), /trigger vietato: push/],
-        ['trigger workflow_run', (s) => s.replace('on:\n  workflow_dispatch:', 'on:\n  workflow_run:\n  workflow_dispatch:'), /trigger vietato: workflow_run/],
-        ['cron alle :00', (s) => s.replace('on:\n  workflow_dispatch:', "on:\n  schedule:\n    - cron: '0 2 * * *'\n  workflow_dispatch:"), /non alle :00/],
-        ['due cron', (s) => s.replace('on:\n  workflow_dispatch:', "on:\n  schedule:\n    - cron: '23 2 * * *'\n    - cron: '41 3 * * *'\n  workflow_dispatch:"), /UN solo cron/],
+        ['trigger pull_request', (s) => s.replace('on:\n  schedule:', 'on:\n  pull_request:\n  schedule:'), /trigger vietato: pull_request/],
+        ['trigger push', (s) => s.replace('on:\n  schedule:', 'on:\n  push:\n  schedule:'), /trigger vietato: push/],
+        ['trigger workflow_run', (s) => s.replace('on:\n  schedule:', 'on:\n  workflow_run:\n  schedule:'), /trigger vietato: workflow_run/],
+        ['cron alle :00', (s) => s.replace("- cron: '23 2 * * *'", "- cron: '0 2 * * *'"), /non alle :00/],
+        ['due cron', (s) => s.replace("- cron: '23 2 * * *'", "- cron: '23 2 * * *'\n    - cron: '41 3 * * *'"), /UN solo cron/],
+        ['senza schedule', (s) => s.replace("  schedule:\n    - cron: '23 2 * * *'\n", ''), /schedule: manca/],
+        ['cron non giornaliero', (s) => s.replace("- cron: '23 2 * * *'", "- cron: '23 2 * * 1'"), /forma del cron non ammessa/],
         ['senza ambiente backup', (s) => s.replace('    environment: backup\n', ''), /environment: backup/],
         ['permessi write-all', (s) => s.replace('permissions:\n  contents: read\n\nconcurrency', 'permissions: write-all\n\nconcurrency'), /permessi/],
         ['permessi contents: write', (s) => s.replace('permissions:\n  contents: read\n\nconcurrency', 'permissions:\n  contents: write\n\nconcurrency'), /permessi/],

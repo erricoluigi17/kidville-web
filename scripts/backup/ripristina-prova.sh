@@ -90,7 +90,7 @@ P postgres -c "CREATE SCHEMA IF NOT EXISTS extensions;" >/dev/null 2>&1 || true
 DISPONIBILI="$(P postgres -c "SELECT name FROM pg_available_extensions;" 2>/dev/null || true)"
 for e in $(printf '%s' "$META" | jq -r '.estensioni // {} | keys[]'); do
   case "$e" in plpgsql | pg_cron | pg_net | supabase_vault | pg_stat_statements | pg_graphql | pgsodium | supabase_wrappers) continue ;; esac
-  if printf '%s\n' "$DISPONIBILI" | grep -qx "$e"; then
+  if grep -qx "$e" <<<"$DISPONIBILI"; then
     P postgres -c "CREATE EXTENSION IF NOT EXISTS \"$e\" SCHEMA extensions;" >/dev/null 2>&1 || true
   fi
 done

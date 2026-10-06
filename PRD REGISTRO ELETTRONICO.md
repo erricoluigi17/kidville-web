@@ -1,6 +1,6 @@
 ## 🔔 Changelog — Roadmap di robustezza, fase 3: il campanello e la salute a livelli — 2026-10-06 (branch `robustezza/fase-3-campanello-e-salute`, PR #198)
 
-**Stato.** 🟡 **In PR #198 (CI e merge a mano da fare).** Tre livelli di salute, due workflow nuovi (il campanello e la verifica dopo il deploy), tre correzioni ai controlli, **nessuna migrazione**. Una scrittura sul database di produzione, **mostrata prima** e verificata dopo: la correzione dei 2 alunni (vedi sotto). **Il monitor esterno (Better Stack o UptimeRobot) NON è collegato**: serve un account del titolare, e `/api/health/vivo` è pronto a riceverlo (istruzioni in `docs/cicd.md`).
+**Stato.** 🟡 **Rilasciata (PR #198, mergiata il 06/10 alle 15:28 UTC, deploy di produzione attivo), allarme provato dal vivo il 06/10** (vedi «Prova dal vivo» più sotto). Tre livelli di salute, due workflow nuovi (il campanello e la verifica dopo il deploy), tre correzioni ai controlli, **nessuna migrazione**. Una scrittura sul database di produzione, **mostrata prima** e verificata dopo: la correzione dei 2 alunni (vedi sotto). **Il monitor esterno (Better Stack o UptimeRobot) NON è collegato**: serve un account del titolare, e `/api/health/vivo` è pronto a riceverlo (istruzioni in `docs/cicd.md`).
 
 **Perché.** Problema **S2** di `docs/roadmap-robustezza.md`. Prima di questa fase:
 - nessuno interrogava `/api/health`: se il sito si fermava lo scopriva un genitore;
@@ -32,7 +32,14 @@
 
 **Cose emerse, non di questa fase.** Il **primo giro programmato del backup** (06/10, 09:08 UTC) è partito con 6 h 45 min di ritardo e **è fallito** nello specchio dei file (`rclone: --max-delete threshold reached`); l'allarme del backup è scattato. Finché un giro automatico non riesce, il campanello terrà aperto `[backup-vecchio]`: è vero. Il file e la riga 2 della roadmap sono della fase 2.
 
-**Resta da fare.** Collegare il monitor esterno su `/api/health/vivo` (titolare); la prova reale della «variabile rotta in Preview» non è stata fatta (le Preview stanno dietro il login di Vercel): il controllo `config` è provato una variabile per volta, e il percorso dell'allarme con `simula_guasto`; il p95 nei picchi di job e i timeout di Supabase (fase 1) si guardano su 07–09/10.
+**Prova dal vivo (06/10, dopo il merge, nessun file in `src/`, nessuna migrazione, nessuna scrittura sul database).**
+- **Misura PRIMA (17:12 UTC):** `/api/health` → `ok`, 8 controlli, 161 ms interni, 5 richieste end-to-end da 0,40 a 1,12 s (**mediana 0,51 s**); `/api/health/vivo` → 200 (mediana 0,25 s; `auth` ok in 20-25 ms); `/api/health/qualita` → 200 («775 iscritti allineati»); regione `dub1`, versione `b609592dffa4`. Alunni con il testo della classe diverso dalla sezione: **0** (erano 2). Giri del campanello: **0**, segnalazioni: **0**. `dopo-deploy`: 1 giro vero, riuscito. Errori del server in `app_log` in 7 giorni: 167 (righe del server oggi: 2.208).
+- **L'allarme suona.** `gh workflow run campanello.yml -f simula_guasto=true` (17:14 UTC): giro verde in 14 s, **segnalazione #199** `[prova]` aperta con l'etichetta `campanello`, il log dice «email: spedita» (Resend). Fino a questo momento l'allarme non era mai stato visto suonare.
+- **`dopo-deploy` vero.** Il rilascio della #198 (15:32 UTC): «rilascio b609592 verificato»; il giro sul branch di lavoro è «skipped», voluto.
+- **Il controllo `auth` regge in produzione:** l'utente nullo dà 404 `user_not_found` e vale come «vivo».
+- **Il primo passaggio programmato del campanello non era partito** a 1 h 45 min dal merge: come per il backup, GitHub ritarda il primo giro di un cron appena aggiunto (nessun buco: il campanello non esisteva prima).
+
+**Resta da fare.** Collegare il monitor esterno su `/api/health/vivo` (titolare); la prova reale della «variabile rotta in Preview» non è stata fatta (le Preview stanno dietro il login di Vercel): il controllo `config` è provato una variabile per volta, e il percorso dell'allarme con `simula_guasto`; il p95 nei picchi di job e i timeout di Supabase (fase 1) si guardano su 07–09/10. La ✅ finale della fase 3 va nel primo commit della fase 4.
 
 ## 🛟 Changelog — Roadmap di robustezza, fase 2: il paracadute esterno (database e file cifrati su Cloudflare R2) e la prova di ripristino — 2026-10-05 (branch `robustezza/fase-2-paracadute-esterno`)
 

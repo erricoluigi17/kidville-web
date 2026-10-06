@@ -60,6 +60,7 @@ exit 0
 `)
     scrivi('pg_ctl', `#!/bin/bash
 echo "$*" >> "$FAKE_LOG/pg_ctl.chiamate"
+echo "\${LC_ALL:-}" >> "$FAKE_LOG/pg_ctl.locale"
 exit 0
 `)
     scrivi('psql', `#!/bin/bash
@@ -213,6 +214,16 @@ describe('ripristina-prova.sh · cosa NON deve succedere', () => {
         expect(chiamate).toMatch(/start/)
         expect(chiamate).toMatch(/stop/)
         expect(readdirSync(radice).filter((n) => n.startsWith('ripristina-prova.'))).toEqual([])
+    })
+
+    it('avvia il Postgres con una LC_ALL valida (su macOS senza, il server rifiuta di partire: visto dal vivo il 06/10)', () => {
+        // Su macOS un postmaster senza una locale valida muore con «postmaster became multithreaded during startup».
+        // I Postgres finti non lo sanno: per questo il finto registra la LC_ALL con cui lo script lo avvia.
+        esegui()
+        // una riga per ogni chiamata di pg_ctl (start e stop), VUOTA se la LC_ALL non c'era: va tenuta, non scartata
+        const locali = readFileSync(join(log, 'pg_ctl.locale'), 'utf8').replace(/\n$/, '').split('\n')
+        expect(locali.length).toBeGreaterThanOrEqual(2)
+        for (const l of locali) expect(l).toMatch(/^[A-Za-z_]+\.UTF-8$/)
     })
 
     it('il Postgres temporaneo ascolta SOLO su un socket locale (nessuna rete)', () => {

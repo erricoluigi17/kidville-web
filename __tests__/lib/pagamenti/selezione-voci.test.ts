@@ -43,6 +43,9 @@ describe('meseDellaVoce', () => {
     expect(meseDellaVoce({ periodo_competenza: null, scadenza: '2026-11-05' })).toBe('2026-11');
     expect(meseDellaVoce({ scadenza: '2026-12-31T10:00:00Z' })).toBe('2026-12');
   });
+  it('periodo_competenza vuoto: si ripiega sulla scadenza', () => {
+    expect(meseDellaVoce({ periodo_competenza: '', scadenza: '2026-11-05' })).toBe('2026-11');
+  });
   it('senza date è null', () => {
     expect(meseDellaVoce({})).toBeNull();
     expect(meseDellaVoce({ periodo_competenza: '', scadenza: null })).toBeNull();
@@ -104,6 +107,16 @@ describe('filtraPerSelezione', () => {
     expect(ids(filtraPerSelezione(voci, sel({ categorie: [MENSA], mesi: [10] })))).toEqual(['mensa-ott']);
   });
 
+  it('mesi tutti non validi = tutto l\'anno, per il filtro e per l\'etichetta', () => {
+    expect(ids(filtraPerSelezione(voci, sel({ mesi: [13] })))).toEqual(ids(filtraPerSelezione(voci, sel({}))));
+    expect(etichettaMesi(sel({ mesi: [13, 0] }), 'it')).toBeNull();
+  });
+
+  it('anno 2025, mese 8: agosto 2026', () => {
+    const v = [{ id: 'ago-26', categoria_id: MENSA, scadenza: '2026-08-10' }, { id: 'ago-25', categoria_id: MENSA, scadenza: '2025-08-10' }];
+    expect(ids(filtraPerSelezione(v, sel({ anno: 2025, mesi: [8] })))).toEqual(['ago-26']);
+  });
+
   it('mese 7 e 8 dell\'anno scolastico cadono nell\'anno successivo', () => {
     expect(ids(filtraPerSelezione(voci, sel({ mesi: [7] })))).toEqual(['mensa-lug-27']);
     expect(ids(filtraPerSelezione(voci, sel({ mesi: [8] })))).toEqual([]);
@@ -113,6 +126,13 @@ describe('filtraPerSelezione', () => {
 describe('eVistaPerAlunno', () => {
   it('vera solo con retta unica e un solo mese', () => {
     expect(eVistaPerAlunno(sel({ categorie: [RETTA], mesi: [10] }), RETTA)).toBe(true);
+  });
+  it('categorie e mesi sono insiemi: i duplicati non contano', () => {
+    expect(eVistaPerAlunno(sel({ categorie: [RETTA, RETTA], mesi: [10, 10] }), RETTA)).toBe(true);
+  });
+  it('mesi non validi non contano come mese scelto', () => {
+    expect(eVistaPerAlunno(sel({ categorie: [RETTA], mesi: [10, 13] }), RETTA)).toBe(true);
+    expect(eVistaPerAlunno(sel({ categorie: [RETTA], mesi: [13] }), RETTA)).toBe(false);
   });
   it('falsa con due mesi, due categorie, nessun mese o rettaId assente', () => {
     expect(eVistaPerAlunno(sel({ categorie: [RETTA], mesi: [10, 11] }), RETTA)).toBe(false);
@@ -137,7 +157,7 @@ describe('etichette', () => {
   it('etichettaMese corta: iniziale maiuscola', () => {
     expect(etichettaMese('2026-10-01', 'it', 'corta')).toBe('Ott 2026');
   });
-  it('etichettaMese lunga: minuscolo per esteso', () => {
+  it('etichettaMese lunga: mese per esteso come lo dà Intl', () => {
     expect(etichettaMese('2026-10-01', 'it', 'lunga')).toBe('ottobre 2026');
     expect(etichettaMese('2027-01-01', 'it', 'lunga')).toBe('gennaio 2027');
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 
 import {
@@ -138,6 +138,86 @@ describe('SceltaMultiplaContabilita', () => {
     fireEvent.click(btn);
     fireEvent.mouseDown(document.body);
     expect(btn.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('a pannello CHIUSO Escape non sposta il fuoco', () => {
+    render(
+      <div>
+        <SceltaMultiplaContabilita
+          etichetta="Voce"
+          riepilogo="Tutte le voci"
+          testoTutte="Tutte le voci"
+          tutteAttiva
+          etichettaPannello="Scegli le voci"
+          legendaPredefinita="Voci"
+          gruppi={GRUPPI}
+          attive={new Set()}
+          onCommuta={vi.fn()}
+          onTutte={vi.fn()}
+        />
+        <button type="button">Altrove</button>
+      </div>,
+    );
+    const btn = comando();
+    fireEvent.click(btn); // apre
+    fireEvent.click(btn); // chiude
+    const altrove = screen.getByRole('button', { name: 'Altrove' });
+    altrove.focus();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(document.activeElement).toBe(altrove);
+  });
+
+  it('il pannello ha `hidden` quando è chiuso', () => {
+    monta();
+    const btn = comando();
+    const pannello = document.getElementById(btn.getAttribute('aria-controls')!)!;
+    expect(pannello.hasAttribute('hidden')).toBe(true);
+    fireEvent.click(btn);
+    expect(pannello.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('un clic dentro il pannello non lo chiude', () => {
+    monta();
+    const btn = comando();
+    fireEvent.click(btn);
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Uno' }));
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('il fuoco che va su un elemento esterno chiude il pannello e NON torna al comando', () => {
+    render(
+      <div>
+        <SceltaMultiplaContabilita
+          etichetta="Voce"
+          riepilogo="Tutte le voci"
+          testoTutte="Tutte le voci"
+          tutteAttiva
+          etichettaPannello="Scegli le voci"
+          legendaPredefinita="Voci"
+          gruppi={GRUPPI}
+          attive={new Set()}
+          onCommuta={vi.fn()}
+          onTutte={vi.fn()}
+        />
+        <button type="button">Altrove</button>
+      </div>,
+    );
+    const btn = comando();
+    fireEvent.click(btn);
+    screen.getByRole('button', { name: 'Uno' }).focus();
+    const altrove = screen.getByRole('button', { name: 'Altrove' });
+    act(() => altrove.focus());
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(altrove);
+  });
+
+  it('il fuoco che si sposta DENTRO il contenitore non chiude il pannello', () => {
+    monta();
+    const btn = comando();
+    fireEvent.click(btn);
+    screen.getByRole('button', { name: 'Uno' }).focus();
+    screen.getByRole('button', { name: 'Tre' }).focus();
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
   });
 
   it('nessuna violazione axe a pannello aperto', async () => {

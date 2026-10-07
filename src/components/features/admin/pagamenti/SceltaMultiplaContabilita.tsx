@@ -49,6 +49,11 @@ const PASTIGLIA_OFF =
   'bg-kidville-white text-kidville-ink/70 ring-[1.5px] ring-inset ring-kidville-line hover:text-kidville-green hover:ring-kidville-green/50';
 
 export interface VoceSceltaMultipla {
+  /**
+   * Identificatore della voce. Deve essere UNICO fra TUTTI i gruppi, non solo
+   * dentro il suo: `attive` è un insieme piatto di id, e due voci con lo stesso
+   * id in gruppi diversi risulterebbero premute insieme.
+   */
   id: string;
   /** Testo visibile della pastiglia. */
   testo: string;
@@ -120,11 +125,22 @@ export function SceltaMultiplaContabilita({
     const suClic = (e: MouseEvent) => {
       if (contenitoreRef.current && !contenitoreRef.current.contains(e.target as Node)) setAperto(false);
     };
+    // Con più controlli affiancati (Classi, Categorie, Mesi) da tastiera si
+    // potevano aprire due pannelli insieme: il pannello si chiude anche quando
+    // il FUOCO esce dal contenitore. Qui il fuoco NON si riporta al comando: è
+    // andato altrove per scelta dell'utente.
+    const suFuoco = (e: FocusEvent) => {
+      if (contenitoreRef.current && e.target instanceof Node && !contenitoreRef.current.contains(e.target)) {
+        setAperto(false);
+      }
+    };
     document.addEventListener('keydown', suTasto);
     document.addEventListener('mousedown', suClic);
+    document.addEventListener('focusin', suFuoco);
     return () => {
       document.removeEventListener('keydown', suTasto);
       document.removeEventListener('mousedown', suClic);
+      document.removeEventListener('focusin', suFuoco);
     };
   }, [aperto]);
 

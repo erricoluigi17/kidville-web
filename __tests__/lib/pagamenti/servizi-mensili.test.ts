@@ -6,7 +6,11 @@ import {
   periodoValido,
   primoDelMese,
   zMese,
+  vociFuoriPeriodo,
+  motivoIntoccabile,
+  type ContestoVoce,
   type PeriodoIscrizione,
+  type VoceServizio,
 } from '@/lib/pagamenti/servizi-mensili';
 
 const p = (dal: string, al: string | null = null): PeriodoIscrizione => ({ dal, al });
@@ -94,5 +98,69 @@ describe('mesiCoperti', () => {
   });
   it('intervallo fuori dall’iscrizione: vuoto', () => {
     expect(mesiCoperti(p('2026-10-01', '2026-10-01'), '2026-11-01', '2026-12-01')).toEqual([]);
+  });
+});
+
+const voce = (extra: Partial<VoceServizio> = {}): VoceServizio => ({
+  id: 'v', tipo: 'singolo', importo: 80, importo_pagato: 0, stato: 'da_pagare',
+  periodo_competenza: '2026-10-01', scadenza: '2026-10-05', fattura_stato: 'non_richiesta', fattura_aruba_id: null,
+  ...extra,
+});
+const libera: ContestoVoce = { conIncassi: false, conFatturaEmessa: false, inCodaFatture: false };
+
+describe('vociFuoriPeriodo', () => {
+  const vecchio = p('2026-09-01');
+  const voci = ['2026-09', '2026-10', '2026-11'].map((m) => voce({ id: m, periodo_competenza: `${m}-01`, scadenza: `${m}-05` }));
+
+  it('accorciando la fine escono i mesi dopo la nuova fine', () => {
+    expect(vociFuoriPeriodo(voci, vecchio, p('2026-09-01', '2026-09-01')).map((v) => v.id)).toEqual(['2026-10', '2026-11']);
+  });
+  it('spostando in avanti l’inizio escono i mesi prima del nuovo inizio', () => {
+    expect(vociFuoriPeriodo(voci, vecchio, p('2026-11-01')).map((v) => v.id)).toEqual(['2026-09', '2026-10']);
+  });
+  it('eliminando l’iscrizione (nuovo = null) escono tutte quelle del periodo vecchio', () => {
+    expect(vociFuoriPeriodo(voci, p('2026-10-01', '2026-10-01'), null).map((v) => v.id)).toEqual(['2026-10']);
+  });
+  it('allungare il periodo non fa uscire nessuna voce', () => {
+    expect(vociFuoriPeriodo(voci, p('2026-09-01', '2026-10-01'), p('2026-09-01', null))).toEqual([]);
+  });
+  it('un mese che il periodo vecchio non copriva non è colpito', () => {
+    expect(vociFuoriPeriodo(voci, p('2026-10-01', '2026-10-01'), p('2026-10-01', '2026-10-01')).length).toBe(0);
+  });
+  it('senza periodo_competenza il mese viene dalla scadenza (e basta a PROPORLA)', () => {
+    const storica = voce({ id: 's', periodo_competenza: null, scadenza: '2026-10-20' });
+    expect(vociFuoriPeriodo([storica], vecchio, p('2026-09-01', '2026-09-01')).map((v) => v.id)).toEqual(['s']);
+  });
+  it('senza mese ricavabile: non colpita', () => {
+    expect(vociFuoriPeriodo([voce({ periodo_competenza: null, scadenza: null })], vecchio, null)).toEqual([]);
+  });
+});
+
+describe('motivoIntoccabile', () => {
+  it('una voce normale, non pagata, non fatturata: eliminabile (null)', () => {
+    expect(motivoIntoccabile(voce(), libera)).toBeNull();
+  });
+  it('senza periodo_competenza: manuale, anche se scaduta e anche se è l’unica ragione', () => {
+    expect(motivoIntoccabile(voce({ periodo_competenza: null, stato: 'scaduto' }), libera)).toBe('manuale');
+  });
+  it('manuale vince su tutto il resto (non si propone nemmeno)', () => {
+    expect(motivoIntoccabile(voce({ periodo_competenza: null, stato: 'pagato' }), { ...libera, conIncassi: true })).toBe('manuale');
+  });
+  it.each([
+    ['padre', voce({ tipo: 'padre' }), libera, 'rateizzata'],
+    ['split', voce({ tipo: 'split' }), libera, 'rateizzata'],
+    ['pagato', voce({ stato: 'pagato' }), libera, 'pagata'],
+    ['stato parziale', voce({ stato: 'parziale' }), libera, 'parziale'],
+    ['importo_pagato > 0', voce({ importo_pagato: '10.00' }), libera, 'parziale'],
+    ['incassi', voce(), { ...libera, conIncassi: true }, 'incassi'],
+    ['fattura_aruba_id', voce({ fattura_aruba_id: 'X' }), libera, 'fatturata'],
+    ['fattura_stato emessa', voce({ fattura_stato: 'emessa' }), libera, 'fatturata'],
+    ['fatture_emesse', voce(), { ...libera, conFatturaEmessa: true }, 'fatturata'],
+    ['in coda', voce(), { ...libera, inCodaFatture: true }, 'in_coda'],
+  ] as const)('%s', (_n, v, ctx, atteso) => {
+    expect(motivoIntoccabile(v, ctx)).toBe(atteso);
+  });
+  it('fattura_stato nullo o non_richiesta non fatturano', () => {
+    expect(motivoIntoccabile(voce({ fattura_stato: null }), libera)).toBeNull();
   });
 });

@@ -13,6 +13,7 @@
  * coincide con quello cronologico.
  */
 import { z } from 'zod';
+import { meseDellaVoce } from '@/lib/pagamenti/selezione-voci';
 
 /** Mese 'YYYY-MM'. */
 export const zMese = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Mese non valido (atteso AAAA-MM)');
@@ -65,4 +66,78 @@ export function mesiCoperti(p: PeriodoIscrizione, daPeriodo: string, aPeriodo: s
     }
   }
   return out;
+}
+
+// ─── Fine / eliminazione di un'iscrizione: quali voci già generate ne sono colpite ─────────────
+
+/** I campi di una voce di pagamento che servono a decidere se esce dal periodo e se è eliminabile. */
+export interface VoceServizio {
+  id: string;
+  tipo: string;
+  importo: number | string | null;
+  importo_pagato: number | string | null;
+  stato: string | null;
+  periodo_competenza: string | null;
+  scadenza: string | null;
+  fattura_stato: string | null;
+  fattura_aruba_id: string | null;
+}
+
+/**
+ * Perché una voce non si tocca mai.
+ *  · `manuale`    senza `periodo_competenza`: l'ha scritta una persona prima che esistessero i
+ *                 servizi (o fuori da essi). Il mese si ricava dalla scadenza e basta a
+ *                 *proporla*, ma non a *cancellarla*: i solleciti ne dipendono (ON DELETE CASCADE);
+ *  · `rateizzata` padre/split: hanno rate o quote figlie;
+ *  · `pagata` · `parziale` · `incassi` · `fatturata` · `in_coda`: denaro o fisco.
+ */
+export type MotivoIntoccabile =
+  | 'manuale'
+  | 'rateizzata'
+  | 'pagata'
+  | 'parziale'
+  | 'incassi'
+  | 'fatturata'
+  | 'in_coda';
+
+/**
+ * Le voci che il cambio di periodo lascia fuori: il loro mese (`meseDellaVoce`) era coperto dal
+ * periodo VECCHIO e non lo è più dal NUOVO. `nuovo = null`: l'iscrizione sparisce, quindi tutte
+ * quelle del periodo vecchio. Una voce senza mese ricavabile non si può collocare: non è colpita.
+ */
+export function vociFuoriPeriodo<T extends Pick<VoceServizio, 'periodo_competenza' | 'scadenza'>>(
+  voci: readonly T[],
+  vecchio: PeriodoIscrizione,
+  nuovo: PeriodoIscrizione | null,
+): T[] {
+  return voci.filter((v) => {
+    const mese = meseDellaVoce(v);
+    if (!mese) return false;
+    const periodo = `${mese}-01`;
+    return attivaNel(vecchio, periodo) && (nuovo === null || !attivaNel(nuovo, periodo));
+  });
+}
+
+/** Che cosa si sa di una voce oltre alla sua riga: le letture di sicurezza su `incassi`, fatture e coda. */
+export interface ContestoVoce {
+  conIncassi: boolean;
+  conFatturaEmessa: boolean;
+  inCodaFatture: boolean;
+}
+
+/**
+ * Il motivo per cui la voce NON si cancella, o `null` se è eliminabile. L'ordine è quello della
+ * gravità: prima ciò che non si può nemmeno proporre (manuale, rate), poi il denaro, poi il fisco.
+ */
+export function motivoIntoccabile(v: VoceServizio, ctx: ContestoVoce): MotivoIntoccabile | null {
+  if (!v.periodo_competenza) return 'manuale';
+  if (v.tipo !== 'singolo') return 'rateizzata';
+  if (v.stato === 'pagato') return 'pagata';
+  if (v.stato === 'parziale' || Number(v.importo_pagato ?? 0) > 0) return 'parziale';
+  if (ctx.conIncassi) return 'incassi';
+  if (v.fattura_aruba_id || (v.fattura_stato && v.fattura_stato !== 'non_richiesta') || ctx.conFatturaEmessa) {
+    return 'fatturata';
+  }
+  if (ctx.inCodaFatture) return 'in_coda';
+  return null;
 }

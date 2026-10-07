@@ -9,17 +9,21 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione'
+import { ID_PER_QUERY, RIGHE_MASSIME_POSTGREST, aBlocchi } from '@/lib/db/blocchi'
 import { leggiABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
 import { rispostaServiziNonDisponibili } from '@/lib/pagamenti/generazione-server'
 import { STATI_CODA_OCCUPATA } from '@/lib/pagamenti/fatturazione-riga'
 import { meseDellaVoce } from '@/lib/pagamenti/selezione-voci'
 import {
-  attivaNel,
+  motivoIntoccabile,
   periodiSovrapposti,
   periodoValido,
   primoDelMese,
+  vociFuoriPeriodo,
   zMese,
+  type MotivoIntoccabile,
   type PeriodoIscrizione,
+  type VoceServizio,
 } from '@/lib/pagamenti/servizi-mensili'
 
 /**
@@ -46,16 +50,18 @@ import {
  * `VOCI_FUTURE_DA_DECIDERE` con l'elenco (eliminabili / intoccabili); con `'elimina'` cancella
  * SOLO le eliminabili, con `'mantieni'` le lascia.
  *
- * «ELIMINABILE». La cancellazione di una voce singola (`DELETE /api/pagamenti/[id]`) non ha una
- * regola esplicita di «cancellabile»: rifiuta solo la fattura emessa e l'incasso di una
- * transazione di famiglia. Qui il gesto è di massa e silenzioso, quindi la regola è PIÙ
- * STRETTA e dichiarata: una voce è eliminabile solo se è `singolo` (le voci di un servizio
- * nascono tutte così; padre/split hanno rate o quote figlie e non si cancellano in blocco),
- * mai incassata (`importo_pagato = 0`, stato né `pagato` né `parziale`, nessuna riga in
- * `incassi`), mai fatturata (`fattura_aruba_id` nullo, `fattura_stato` nullo o
- * `non_richiesta`, nessuna riga in `fatture_emesse`) e fuori dalla coda fatture attiva. Tutto
- * il resto è «intoccabile» e viene elencato col motivo. La DELETE ripete le condizioni
- * verificabili nel filtro: una voce incassata fra il primo e il secondo tempo non si cancella.
+ * «ELIMINABILE» (la regola pura sta in `motivoIntoccabile`, `servizi-mensili.ts`). La cancellazione
+ * di una voce singola (`DELETE /api/pagamenti/[id]`) non ha una regola esplicita di
+ * «cancellabile»: rifiuta solo la fattura emessa e l'incasso di una transazione di famiglia. Qui
+ * il gesto è di massa, quindi la regola è PIÙ STRETTA e dichiarata. Eliminabile = `singolo`
+ * (padre/split hanno rate o quote figlie), CON `periodo_competenza` (senza, la voce è «manuale»:
+ * scritta a mano prima dei servizi, con solleciti che la cancellazione porterebbe via in cascata;
+ * in produzione ne esistono), mai incassata (`importo_pagato` = 0, stato né `pagato` né `parziale`,
+ * nessuna riga in `incassi`), mai fatturata (`fattura_aruba_id` nullo, `fattura_stato` nullo o
+ * `non_richiesta`, nessuna riga in `fatture_emesse`) e fuori dalla coda fatture attiva. Il resto è
+ * «intoccabile» e viene elencato col motivo. La DELETE ripete nel filtro le condizioni verificabili
+ * (sede, bambino, servizio, tipo, periodo presente, `importo_pagato` nullo, stato, fattura): una voce
+ * cambiata fra il primo e il secondo tempo non si cancella.
  */
 
 // Schema non ancora migrato (il DB degli E2E in CI non ha la tabella né le colonne):
@@ -69,9 +75,6 @@ const SOVRAPPOSIZIONE_DB = '23P01'
 
 const TIPI_VOCE = ['singolo', 'split', 'padre'] as const
 
-/** Blocchi per le liste di id nell'URL di PostgREST: 1.000 uuid sforerebbero la lunghezza ammessa. */
-const BLOCCO_ID = 100
-
 const zScuolaOpzionale = z.preprocess((v) => (v === '' || v === null ? undefined : v), zUuid.optional())
 
 const zImporto = z
@@ -81,6 +84,17 @@ const zImporto = z
   .refine((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-6, 'Al massimo due decimali')
 
 const zVociFuture = z.enum(['elimina', 'mantieni'])
+
+/**
+ * Gli id delle voci che la segreteria ha VISTO e confermato nel primo tempo (T10). Se presenti,
+ * con `elimina` si cancella solo l'intersezione fra questi e le eliminabili ricalcolate: una voce
+ * comparsa dopo la finestra non viene cancellata senza che nessuno l'abbia vista. Nella query
+ * della DELETE arrivano separati da virgole (o come chiave ripetuta).
+ */
+const zVociIds = z.preprocess(
+  (v) => (typeof v === 'string' ? v.split(',').filter((x) => x !== '') : v),
+  z.array(zUuid).max(RIGHE_MASSIME_POSTGREST).optional(),
+)
 
 const getQuerySchema = z.object({ scuola_id: zScuolaOpzionale })
 
@@ -105,6 +119,7 @@ const patchBodySchema = z
     dal: zMese.optional(),
     al: zMese.nullable().optional(),
     voci_future: zVociFuture.optional(),
+    voci_ids: zVociIds,
   })
   .refine((b) => b.importo_mensile !== undefined || b.dal !== undefined || b.al !== undefined, {
     message: 'Nessuna modifica richiesta',
@@ -114,6 +129,7 @@ const deleteQuerySchema = z.object({
   id: zUuid,
   scuola_id: zUuid,
   voci_future: zVociFuture.optional(),
+  voci_ids: zVociIds,
 })
 
 // ─── tipi di riga ───────────────────────────────────────────────────────────────────────────
@@ -128,25 +144,17 @@ interface Iscrizione {
   al: string | null
 }
 
-interface Voce {
-  id: string
-  tipo: string
-  importo: number | string | null
-  importo_pagato: number | string | null
-  stato: string | null
-  periodo_competenza: string | null
-  scadenza: string | null
-  fattura_stato: string | null
-  fattura_aruba_id: string | null
-  descrizione?: string | null
-}
-
-type MotivoIntoccabile = 'rateizzata' | 'pagata' | 'parziale' | 'incassi' | 'fatturata' | 'in_coda'
+/** La riga intera di `pagamenti` (serve all'audit); i campi di decisione sono quelli di `VoceServizio`. */
+type Voce = VoceServizio & Record<string, unknown>
 
 interface VoceElencata {
   id: string
   periodo: string | null
   importo: number
+  scadenza: string | null
+  stato: string | null
+  /** C'è almeno un sollecito (riga in `solleciti`) o `ultimo_sollecito_il`: cancellandola si perdono. */
+  sollecitata: boolean
 }
 
 interface Classificazione {
@@ -164,9 +172,9 @@ const letturaFallita = () =>
     { status: 500 },
   )
 
-const scritturaFallita = () =>
+const scritturaFallita = (extra: Record<string, unknown> = {}) =>
   NextResponse.json(
-    { error: 'Non è stato possibile salvare: riprova.', codice: 'SERVIZI_SCRITTURA_FALLITA' },
+    { error: 'Non è stato possibile salvare: riprova.', codice: 'SERVIZI_SCRITTURA_FALLITA', ...extra },
     { status: 500 },
   )
 
@@ -179,16 +187,13 @@ const sovrapposta = (extra: Record<string, unknown> = {}) =>
 const periodoNonValido = () =>
   NextResponse.json({ error: 'Il periodo non è valido.', codice: 'SERVIZIO_PERIODO_NON_VALIDO' }, { status: 400 })
 
-const iscrizioneNonTrovata = () =>
-  NextResponse.json({ error: 'Iscrizione non trovata.', codice: 'ISCRIZIONE_SERVIZIO_NON_TROVATA' }, { status: 404 })
+const iscrizioneNonTrovata = (extra: Record<string, unknown> = {}) =>
+  NextResponse.json(
+    { error: 'Iscrizione non trovata.', codice: 'ISCRIZIONE_SERVIZIO_NON_TROVATA', ...extra },
+    { status: 404 },
+  )
 
 const num = (v: number | string | null | undefined): number => Number(v ?? 0)
-
-function aBlocchi<T>(xs: T[], n: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n))
-  return out
-}
 
 /** Il periodo dell'iscrizione come lo capiscono le regole pure ('YYYY-MM-01'). */
 const periodoDi = (i: Pick<Iscrizione, 'dal' | 'al'>): PeriodoIscrizione => ({
@@ -359,7 +364,7 @@ export const POST = withRoute('pagamenti/servizi:POST', async (request: Request)
 
     // 3. Tutti i bambini devono essere iscritti ALLA SEDE (a blocchi: l'elenco sta nell'URL).
     const validi = new Set<string>()
-    for (const blocco of aBlocchi(b.data.alunno_ids, BLOCCO_ID)) {
+    for (const blocco of aBlocchi(b.data.alunno_ids, ID_PER_QUERY)) {
       const { data, error } = await supabase
         .from('alunni')
         .select('id')
@@ -491,14 +496,14 @@ async function classificaVoci(
   nuovo: PeriodoIscrizione | null,
 ): Promise<EsitoClassifica> {
   const vecchio = periodoDi(iscr)
+  const vuota: EsitoClassifica = { ok: true, classificazione: { eliminabili: [], intoccabili: [] } }
   // Il periodo non cambia (modifica del solo importo): nessuna voce esce, niente da leggere.
-  if (nuovo && nuovo.dal === vecchio.dal && nuovo.al === vecchio.al) {
-    return { ok: true, classificazione: { eliminabili: [], intoccabili: [] } }
-  }
+  if (nuovo && nuovo.dal === vecchio.dal && nuovo.al === vecchio.al) return vuota
+
   const lette = await leggiABlocchi<Voce>(() =>
     supabase
       .from('pagamenti')
-      .select('id, tipo, importo, importo_pagato, stato, periodo_competenza, scadenza, fattura_stato, fattura_aruba_id, descrizione')
+      .select('*')
       .eq('scuola_id', sede)
       .eq('alunno_id', iscr.alunno_id)
       .eq('categoria_id', iscr.categoria_id)
@@ -511,37 +516,34 @@ async function classificaVoci(
     return { ok: false, response: letturaFallita() }
   }
 
-  const interessate = lette.righe.filter((v) => {
-    const mese = meseDellaVoce({ periodo_competenza: v.periodo_competenza, scadenza: v.scadenza })
-    if (!mese) return false
-    const periodo = `${mese}-01`
-    return attivaNel(vecchio, periodo) && (nuovo === null || !attivaNel(nuovo, periodo))
-  })
-  if (interessate.length === 0) return { ok: true, classificazione: { eliminabili: [], intoccabili: [] } }
+  const interessate = vociFuoriPeriodo(lette.righe, vecchio, nuovo)
+  if (interessate.length === 0) return vuota
 
-  // Letture di sicurezza sui soli candidati (poche decine di id al massimo).
-  const candidati = interessate.filter((v) => v.tipo === 'singolo').map((v) => v.id)
-  const conFattura = new Set<string>()
-  const inCoda = new Set<string>()
-  const conIncassi = new Set<string>()
-  if (candidati.length > 0) {
-    const [emesse, coda, incassi] = await Promise.all([
-      supabase.from('fatture_emesse').select('pagamento_id').in('pagamento_id', candidati),
-      supabase.from('fatture_coda').select('pagamento_id').in('pagamento_id', candidati).in('stato', [...STATI_CODA_OCCUPATA]),
-      supabase.from('incassi').select('pagamento_id').in('pagamento_id', candidati),
-    ])
-    for (const [tipo, r] of [['fatture_emesse', emesse], ['fatture_coda', coda], ['incassi', incassi]] as const) {
-      if (r.error) {
+  // Letture di sicurezza sulle sole voci colpite (a blocchi: gli id stanno nell'URL).
+  const ids = interessate.map((v) => v.id)
+  const leggi = async (tabella: string, soloCoda: boolean): Promise<Set<string> | null> => {
+    const trovati = new Set<string>()
+    for (const blocco of aBlocchi(ids, ID_PER_QUERY)) {
+      let q = supabase.from(tabella).select('pagamento_id').in('pagamento_id', blocco)
+      if (soloCoda) q = q.in('stato', [...STATI_CODA_OCCUPATA])
+      const { data, error } = await q
+      if (error) {
         logEvento('pagamento', 'error', {
-          operazione, esito: 'servizi-lettura-fallita', tipo, scuola_id: sede,
-        }, r.error)
-        return { ok: false, response: letturaFallita() }
+          operazione, esito: 'servizi-lettura-fallita', tipo: tabella, scuola_id: sede,
+        }, error)
+        return null
       }
+      for (const r of (data ?? []) as { pagamento_id: string }[]) trovati.add(r.pagamento_id)
     }
-    for (const r of (emesse.data ?? []) as { pagamento_id: string }[]) conFattura.add(r.pagamento_id)
-    for (const r of (coda.data ?? []) as { pagamento_id: string }[]) inCoda.add(r.pagamento_id)
-    for (const r of (incassi.data ?? []) as { pagamento_id: string }[]) conIncassi.add(r.pagamento_id)
+    return trovati
   }
+  // Una lettura di sicurezza che fallisce FERMA tutto: nel dubbio non si cancella.
+  const emesse = await leggi('fatture_emesse', false)
+  const coda = await leggi('fatture_coda', true)
+  const incassi = await leggi('incassi', false)
+  // I solleciti stanno in una tabella figlia con ON DELETE CASCADE: cancellare la voce li porta via.
+  const solleciti = await leggi('solleciti', false)
+  if (!emesse || !coda || !incassi || !solleciti) return { ok: false, response: letturaFallita() }
 
   const classificazione: Classificazione = { eliminabili: [], intoccabili: [] }
   for (const v of interessate) {
@@ -549,14 +551,15 @@ async function classificaVoci(
       id: v.id,
       periodo: meseDellaVoce({ periodo_competenza: v.periodo_competenza, scadenza: v.scadenza }),
       importo: num(v.importo),
+      scadenza: v.scadenza,
+      stato: v.stato,
+      sollecitata: solleciti.has(v.id) || !!v.ultimo_sollecito_il,
     }
-    let motivo: MotivoIntoccabile | null = null
-    if (v.tipo !== 'singolo') motivo = 'rateizzata'
-    else if (v.stato === 'pagato') motivo = 'pagata'
-    else if (v.stato === 'parziale' || num(v.importo_pagato) > 0) motivo = 'parziale'
-    else if (conIncassi.has(v.id)) motivo = 'incassi'
-    else if (v.fattura_aruba_id || (v.fattura_stato && v.fattura_stato !== 'non_richiesta') || conFattura.has(v.id)) motivo = 'fatturata'
-    else if (inCoda.has(v.id)) motivo = 'in_coda'
+    const motivo = motivoIntoccabile(v, {
+      conIncassi: incassi.has(v.id),
+      conFatturaEmessa: emesse.has(v.id),
+      inCodaFatture: coda.has(v.id),
+    })
     if (motivo) classificazione.intoccabili.push({ ...base, motivo })
     else classificazione.eliminabili.push({ ...base, voce: v })
   }
@@ -589,6 +592,8 @@ async function applicaConVoci(
     iscr: Iscrizione
     nuovo: PeriodoIscrizione | null
     vociFuture: 'elimina' | 'mantieni' | undefined
+    /** Le voci che il client ha confermato nel primo tempo: se presenti, si cancella solo l'intersezione. */
+    vociIds: string[] | undefined
     /** La scrittura sull'iscrizione: ritorna l'errore, o `null` se riuscita. */
     scrivi: () => Promise<{ error: unknown; trovata: boolean }>
     nuovoValore: Record<string, unknown>
@@ -612,26 +617,36 @@ async function applicaConVoci(
         error: 'Ci sono voci già generate fuori dal nuovo periodo: scegli cosa farne.',
         codice: 'VOCI_FUTURE_DA_DECIDERE',
         data: {
-          eliminabili: eliminabili.map(({ id, periodo, importo }) => ({ id, periodo, importo })),
-          intoccabili: intoccabili.map(({ id, periodo, importo, motivo }) => ({ id, periodo, importo, motivo })),
+          eliminabili: eliminabili.map(({ id, periodo, importo, scadenza, stato, sollecitata }) => ({
+            id, periodo, importo, scadenza, stato, sollecitata,
+          })),
+          intoccabili: intoccabili.map(({ id, periodo, importo, scadenza, stato, sollecitata, motivo }) => ({
+            id, periodo, importo, scadenza, stato, sollecitata, motivo,
+          })),
         },
       },
       { status: 409 },
     )
   }
 
-  // Secondo tempo: eventuale cancellazione delle sole eliminabili.
+  // Secondo tempo: eventuale cancellazione delle sole eliminabili (e, se il client ha mandato
+  // `voci_ids`, solo di quelle che ha visto e confermato).
   let eliminate = 0
-  if (p.vociFuture === 'elimina' && eliminabili.length > 0) {
-    const ids = eliminabili.map((v) => v.id)
-    // Le condizioni di sicurezza si RIPETONO nel filtro: una voce incassata, fatturata o
-    // trasformata fra il primo e il secondo tempo non corrisponde più e non si cancella.
+  const confermate = p.vociIds ? new Set(p.vociIds.map((x) => x.toLowerCase())) : null
+  const daCancellare = eliminabili.filter((v) => !confermate || confermate.has(v.id.toLowerCase()))
+  if (p.vociFuture === 'elimina' && daCancellare.length > 0) {
+    const ids = daCancellare.map((v) => v.id)
+    // Le condizioni di sicurezza si RIPETONO nel filtro: una voce incassata, fatturata, trasformata,
+    // spostata o privata del periodo fra il primo e il secondo tempo non corrisponde più e non si cancella.
     const del = await supabase
       .from('pagamenti')
       .delete()
       .in('id', ids)
       .eq('scuola_id', sede)
+      .eq('alunno_id', iscr.alunno_id)
+      .eq('categoria_id', iscr.categoria_id)
       .eq('tipo', 'singolo')
+      .not('periodo_competenza', 'is', null) // una voce «manuale» non si cancella mai (vedi il motivo)
       .eq('importo_pagato', 0)
       .neq('stato', 'pagato')
       .neq('stato', 'parziale')
@@ -647,17 +662,25 @@ async function applicaConVoci(
     const cancellate = new Set(((del.data ?? []) as { id: string }[]).map((r) => r.id))
     eliminate = cancellate.size
     if (eliminate > 0) {
-      await audit(supabase, operazione, 'elimina_voci_servizio', p.utenteId, iscr.id,
-        {
-          voci: eliminabili
+      // Come `DELETE /api/pagamenti/[id]`: una riga per voce, riga intera in `vecchio_valore`.
+      // L'audit è best-effort (la voce è già cancellata) ma un audit perso si logga.
+      try {
+        const { error } = await supabase.from('registro_modifiche').insert(
+          daCancellare
             .filter((v) => cancellate.has(v.id))
             .map((v) => ({
-              id: v.id, periodo: v.periodo, importo: v.importo,
-              scadenza: v.voce.scadenza, descrizione: v.voce.descrizione ?? null,
+              azione: 'elimina_pagamento',
+              tabella_interessata: 'pagamenti',
+              record_id: v.id,
+              vecchio_valore: v.voce,
+              nuovo_valore: { origine: 'iscrizione-servizio', iscrizione_id: iscr.id },
+              utente_id: p.utenteId,
             })),
-        },
-        { scuola_id: sede, iscrizione_id: iscr.id, voci_eliminate: eliminate },
-      )
+        )
+        if (error) logEvento('pagamento', 'error', { operazione, azione: 'elimina_pagamento', esito: 'audit-non-scritto', n: eliminate }, error)
+      } catch (e) {
+        logEvento('pagamento', 'error', { operazione, azione: 'elimina_pagamento', esito: 'audit-non-scritto', n: eliminate }, e)
+      }
     }
   }
 
@@ -672,19 +695,19 @@ async function applicaConVoci(
       logEvento('pagamento', 'warn', {
         operazione, esito: 'iscrizione-servizio-sovrapposta-gara', scuola_id: sede, iscrizione_id: iscr.id, voci_eliminate: eliminate,
       }, esito.error)
-      return sovrapposta()
+      return sovrapposta({ voci_eliminate: eliminate })
     }
     logEvento('pagamento', 'error', {
       operazione, esito: 'iscrizione-servizio-non-scritta', scuola_id: sede, iscrizione_id: iscr.id,
       voci_eliminate: eliminate, // se > 0 le voci sono già state cancellate: va detto
     }, esito.error)
-    return scritturaFallita()
+    return scritturaFallita({ voci_eliminate: eliminate })
   }
   if (!esito.trovata) {
     logEvento('pagamento', 'warn', {
       operazione, esito: 'iscrizione-servizio-sparita', scuola_id: sede, iscrizione_id: iscr.id, voci_eliminate: eliminate,
     })
-    return iscrizioneNonTrovata()
+    return iscrizioneNonTrovata({ voci_eliminate: eliminate })
   }
 
   const mantenute = eliminabili.length - eliminate
@@ -800,6 +823,7 @@ export const PATCH = withRoute('pagamenti/servizi:PATCH', async (request: Reques
       // Cambia solo l'importo: nessuna voce esce dal periodo, non c'è nulla da chiedere.
       nuovo: periodoCambiato ? nuovo : vecchio,
       vociFuture: b.data.voci_future,
+      vociIds: b.data.voci_ids,
       scrivi: async () => {
         const r = await supabase
           .from('iscrizioni_servizi')
@@ -847,6 +871,7 @@ export const DELETE = withRoute('pagamenti/servizi:DELETE', async (request: Requ
       iscr,
       nuovo: null, // l'iscrizione sparisce: interessate sono TUTTE le voci del suo periodo
       vociFuture: q.data.voci_future,
+      vociIds: q.data.voci_ids,
       scrivi: async () => {
         const r = await supabase
           .from('iscrizioni_servizi')

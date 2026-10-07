@@ -469,12 +469,12 @@ describe('la GET dei legami', () => {
         stub({ legamiStatus: 500 }); await apri();
         expect(await screen.findByTestId('errore-legami')).toBeInTheDocument();
         // Categoria: si aspetta la PRESENZA di qualcosa che c'è SOLO nella vista Categoria — la
-        // riga vuota «Nessun pagamento in questa categoria.» (qui la Mensa non ha voci) — poi si
+        // riga vuota «Nessun pagamento per questa selezione.» (qui la Mensa non ha voci) — poi si
         // guarda l'assenza del banner. (R11d, terza revisione 2026-09-29: il segnaposto della
         // ricerca che si aspettava prima c'è in ENTRAMBE le viste, e l'attesa vera era quella
         // su un'assenza, «Luca Rossi» sparito — che passa anche mentre la vista sta cambiando.)
         await scegliCategorie(['Mensa']);
-        expect(await screen.findByText('Nessun pagamento in questa categoria.')).toBeInTheDocument();
+        expect(await screen.findByText('Nessun pagamento per questa selezione.')).toBeInTheDocument();
         expect(screen.queryByText('Luca Rossi')).toBeNull();
         expect(screen.queryByTestId('errore-legami')).toBeNull();
         // Di nuovo Rette: torna.

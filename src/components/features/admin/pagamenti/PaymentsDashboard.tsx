@@ -146,8 +146,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
      * scelta del titolare), somma le righe da sé.
      *
      * Il pattern «il server omette la chiave» — quello vero, in `cassa/movimenti` — qui
-     * non è applicabile senza togliere anche le righe. Dove invece i numeri li calcola il
-     * server (la home /admin) l'omissione è reale e si fa là.
+     * non è applicabile senza togliere anche le righe. La home /admin, che prima calcolava
+     * gli importi sul server e li ometteva ai ruoli non Direzione, ora non li calcola più
+     * per nessun ruolo (decisione del titolare, 2026-10-07): lì non c'è nulla da nascondere.
      */
     const eDirezione = eDirezioneCockpit(useRuoloCockpit());
     // «Nascondi cifre»: scelta ricordata per utente su questo dispositivo (default: visibili).
@@ -398,8 +399,13 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     );
     /** Finché le categorie non arrivano i KPI dicono «—»: niente lampo della somma di TUTTO. */
     const selezioneInAttesa = categorieScelte === null && !categorieLette;
-    /** Retta e un solo mese: la vista «per alunno» (con «Non generata», «Genera mancanti», fratelli). */
-    const vistaPerAlunno = eVistaPerAlunno(selezione, rettaCat?.id);
+    /**
+     * Retta e un solo mese DI RETTA (set–giu): la vista «per alunno» (con «Non generata»,
+     * «Genera mancanti», fratelli). A luglio e agosto le rette non si generano: la stessa
+     * selezione apre l'elenco per voce (le eventuali voci reali del mese, o lo stato vuoto).
+     */
+    const vistaPerAlunno = eVistaPerAlunno(selezione, rettaCat?.id)
+        && eMeseDiRetta(mesiValidi(mesiScelti)[0]);
     /** Il mese (1–12) della vista per alunno: il solo mese valido scelto. */
     const meseSolo = vistaPerAlunno ? mesiValidi(mesiScelti)[0] : undefined;
     /** 'YYYY-MM-01' del solo mese della vista per alunno (vuoto altrove). */
@@ -782,7 +788,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             {/* CTA generazione rette mancanti. Con più sedi la sede si SCEGLIE (il bottone resta
                 spento finché non la si sceglie): la generazione è di UNA sede, e il numero
                 mostrato diventa quello della sede scelta. */}
-            {meseSolo !== undefined && eMeseDiRetta(meseSolo) && !loading && mancantiTotali > 0 && (
+            {vistaPerAlunno && !loading && mancantiTotali > 0 && (
                 <div data-testid="cta-genera-mancanti" className="flex flex-wrap items-center justify-between gap-2 bg-kidville-warn-soft border border-kidville-warn/30 rounded-card px-3 py-2 mb-3">
                     <span data-testid="cta-genera-mancanti-frase" className="font-maven text-xs text-kidville-warn-strong">
                         {t('dashMsAlunniSenzaRetta', { n: mancantiRette, mese: etichettaMese(meseUnico, f.locale, 'corta') })}
@@ -1060,7 +1066,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 </div>
                 )}
                 {righeVoci.length === 0 ? (
-                    <EmptyRiga emoji="🧾" testo={categorieValide.length === 1 ? t('dashVuotoCategoria') : t('dashVuotoSelezione')} />
+                    <EmptyRiga emoji="🧾" testo={t('dashVuotoSelezione')} />
                 ) : (
                 <TabellaVociContabilita
                     righe={righeVoci}
@@ -1073,6 +1079,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     sospesoByAlunno={sospesoByAlunno}
                     oggiStr={oggiStr}
                     userId={userId}
+                    rettaId={rettaCat?.id}
                     onIncassa={(p) => setSelected(p)}
                     onRateizza={(p) => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }}
                     onDettagli={(p) => setDrawer(p)}

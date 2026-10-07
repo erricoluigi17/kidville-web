@@ -20,6 +20,7 @@ import { BTN_PRIMARY_SM, ICON_BTN } from './ui';
 export interface RigaVoce extends PagamentoRow {
     alunno_id: string;
     scadenza: string;
+    categoria_id?: string | null;
     scuola_nome?: string | null;
 }
 
@@ -34,6 +35,8 @@ interface Props<P extends RigaVoce> {
     /** «Oggi» come `YYYY-MM-DD`: serve a riconoscere le voci morose. */
     oggiStr: string;
     userId: string;
+    /** Id della categoria Retta: sulle rette «Rateizza» non c'è (le rate non portano `periodo_competenza`). */
+    rettaId?: string;
     onIncassa: (p: P) => void;
     onRateizza: (p: P) => void;
     onDettagli: (p: P) => void;
@@ -43,7 +46,7 @@ interface Props<P extends RigaVoce> {
 
 /** Elenco per voce: tabella su desktop (da `lg`), card su mobile. Solo presentazione. */
 export function TabellaVociContabilita<P extends RigaVoce>({
-    righe, mostraSede, mostraCategoria, nomeCategoria, sospesoByAlunno, oggiStr, userId,
+    righe, mostraSede, mostraCategoria, nomeCategoria, sospesoByAlunno, oggiStr, userId, rettaId,
     onIncassa, onRateizza, onDettagli, onModifica, dopoAccodamento,
 }: Props<P>) {
     const t = useTranslations('adminContabilita');
@@ -104,7 +107,7 @@ export function TabellaVociContabilita<P extends RigaVoce>({
                                             ) : (
                                                 <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} codaStato={p.coda_stato ?? null} onEmessa={(e) => dopoAccodamento(p.id, e)} />
                                             )}
-                                            {p.tipo === 'singolo' && p.stato !== 'pagato' && (
+                                            {p.tipo === 'singolo' && p.stato !== 'pagato' && p.categoria_id !== rettaId && (
                                                 <button onClick={() => onRateizza(p)} title={t('dashDividiAcconti')} className={ICON_BTN}><Layers size={15} /></button>
                                             )}
                                             <button onClick={() => onDettagli(p)} title={t('dashDettagli')} className={ICON_BTN}><Eye size={15} /></button>

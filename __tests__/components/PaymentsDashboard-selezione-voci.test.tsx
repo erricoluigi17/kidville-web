@@ -435,17 +435,31 @@ describe('T9 · 6 — «Genera mancanti» solo con un mese di retta', () => {
         expect(JSON.parse(String((postGenera()[0][1] as RequestInit).body))).toEqual({ periodo: '2027-10', scuola_id: 's1' });
     });
 
-    it('a luglio no, pur con la vista per alunno e i mancanti', async () => {
+    it('a luglio la retta si vede come elenco per voce: niente «Non generata», niente CTA, stato vuoto', async () => {
         vi.setSystemTime(new Date('2026-07-10T10:00:00'));
         stub(pagamenti({ id: 's1', nome: 'Kidville Uno' }));
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
-        // Presenza prima: la vista per alunno di luglio è aperta e i tre bambini sono «Non generata»…
-        await attendiVistaAlunno();
+        // Presenza prima: l'elenco per voce di luglio non ha voci e lo dice.
+        expect(await screen.findByText('Nessun pagamento per questa selezione.')).toBeInTheDocument();
         expect(screen.getByTestId('kpi-selezione')).toHaveTextContent('luglio 2026');
-        expect(within(rigaTabella('Prova Tre')).getByText('Non generata')).toBeInTheDocument();
-        // …e la CTA, che a luglio genererebbe rette estive, non c'è.
+        // La vista per alunno (e il suo «Non generata» falso) non c'è, né la CTA che genererebbe rette estive.
+        expect(screen.queryByText('Non generata')).toBeNull();
         expect(screen.queryByRole('button', { name: 'Genera mancanti' })).toBeNull();
         expect(screen.queryByTestId('cta-genera-mancanti')).toBeNull();
+    });
+});
+
+describe('T9 · 6b — «Rateizza» non compare sulle rette nell\'elenco per voce', () => {
+    it('la retta non pagata non ha «Dividi in acconti»; la gita non pagata sì', async () => {
+        stub(pagamenti({ id: 's1', nome: 'Kidville Uno' }));
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await attendiVistaAlunno();
+        await scegliCategorie(['Retta', 'Gita']);
+        await waitFor(() => expect(rigaTabella('Gita ott Uno')).toBeInTheDocument());
+        // Presenza prima: la gita (altra categoria, non pagata) lo ha…
+        expect(within(rigaTabella('Gita ott Uno')).getByTitle('Dividi in acconti')).toBeInTheDocument();
+        // …la retta scaduta no: le rate non portano `periodo_competenza` e «Genera mancanti» la riemetterebbe.
+        expect(within(rigaTabella('Retta ott Due')).queryByTitle('Dividi in acconti')).toBeNull();
     });
 });
 

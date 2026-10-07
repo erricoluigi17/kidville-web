@@ -12,8 +12,6 @@
   "kpiAlunniIscritti": "Alunni iscritti",
   "kpiAlunniIscrittiSub": "stato iscritto · sedi attive",
   "kpiPagamentiScaduti": "Pagamenti scaduti",
-  "kpiPagamentiScadutiSub": "{count, plural, one {# posizione} other {# posizioni}}",
-  "kpiIncassatoMese": "Incassato nel mese",
   "kpiIscrizioniAttesa": "Iscrizioni in attesa",
   "kpiPrenotazioniMensa": "Prenotazioni mensa oggi",
   "kpiFattureEmettere": "Fatture da emettere",
@@ -26,7 +24,6 @@
   "moduloImpostazioni": "Impostazioni",
   "moduloStrumenti": "Strumenti",
 
-  "graficoIncassiTitolo": "Incassi · ultimi 6 mesi",
   "graficoAlunniClasseTitolo": "Alunni per classe",
   "nessunAlunnoIscritto": "Nessun alunno iscritto",
 
@@ -95,6 +92,5 @@
   "nessunaNotifica": "Nessuna notifica",
   "notificaFallback": "Notifica",
 
-  "chartIncassato": "Incassato",
   "chartAlunni": "Alunni"
 }

@@ -15,7 +15,6 @@ import {
   AlertTriangle,
   ArrowRight,
   Plus,
-  TrendingUp,
   GraduationCap,
   IdCard,
   Settings,
@@ -24,7 +23,7 @@ import {
 import { AnimatedNumber } from '@/components/features/admin/motion/AnimatedNumber';
 import { TiltCard } from '@/components/features/admin/motion/TiltCard';
 import { RevealGroup, RevealItem } from '@/components/features/admin/motion/reveal';
-import { TrendIncassiChart, StudentiPerClasseChart } from '@/components/features/admin/DashboardCharts';
+import { StudentiPerClasseChart } from '@/components/features/admin/DashboardCharts';
 import { Donut, Live, SectionTitle } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
 import { btnClass } from '@/components/ui/Btn';
@@ -42,31 +41,29 @@ import type { PresenzeAggregate } from '@/lib/presenze/aggregate';
 import { dataCivile, formattaIstante } from '@/i18n/config';
 
 /**
- * ⚠️ I tre campi economici sono OPZIONALI, e non è un dettaglio di tipizzazione.
+ * ⚠️ NESSUN IMPORTO IN EURO ARRIVA A QUESTA PAGINA, a nessun ruolo.
  *
- * `GET /api/admin/dashboard` li OMETTE per chi non è Direzione (titolare, 2026-09-02): la
- * chiave non arriva proprio. Il gate vero è quello — questa pagina non fa che non disegnare
- * ciò che non ha ricevuto. Un `?? 0` al posto del controllo di presenza scriverebbe
- * «€ 0,00» dove il dato è riservato, cioè direbbe una cosa falsa invece di tacere.
+ * Il titolare ha tolto le cifre in euro dalla home della Direzione (2026-10-07):
+ * `GET /api/admin/dashboard` manda solo conteggi, e questa interfaccia non ha più
+ * i campi economici (`scadutoImporto`, `incassatoMese`, `trend`, `importo`).
+ * I KPI in euro stanno in Contabilità.
  */
 interface DashboardData {
   studenti: { iscritti: number; perClasse: { classe: string; count: number }[] };
-  pagamenti: { scadutoImporto?: number; scadutoCount: number; incassatoMese?: number; fattureInAttesa: number };
+  pagamenti: { scadutoCount: number; fattureInAttesa: number };
   iscrizioni: { pending: number };
   mensa: { oggiPrenotazioni: number };
   moduli: { submissionTotale: number; daFirmare: number };
-  trend?: { mese: string; label: string; incassato: number }[];
   alert: {
-    scaduti: { id: string; alunno: string; importo: number; scadenza: string }[];
+    scaduti: { id: string; alunno: string; scadenza: string }[];
     iscrizioni: { id: string; data: string | null }[];
   };
 }
 
-const euroFmt = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
-
 function AdminDashboardInner() {
   const t = useTranslations('adminNav');
   const locale = useLocale();
+  const f = useDateFormat();
   const { userId, ready } = useSessionIdentity();
   // Identità di sessione (M4): con identità non risolta il parametro viene
   // omesso (href invariato), mai `userId=null`.
@@ -108,46 +105,17 @@ function AdminDashboardInner() {
         iconBg: 'bg-kidville-green/10 text-kidville-green',
         href: '/admin/students',
       },
-      // Scaduti: alla Direzione l'IMPORTO (col conteggio sotto), a tutti gli altri il
-      // solo CONTEGGIO. Non è un ripiego: la Segreteria deve sapere quanti pagamenti
-      // sono scaduti per sollecitarli, e quello non è un dato economico riservato.
-      data.pagamenti.scadutoImporto !== undefined
-        ? {
-            key: 'scaduto',
-            label: t('kpiPagamentiScaduti'),
-            value: data.pagamenti.scadutoImporto,
-            format: 'euro' as const,
-            sub: t('kpiPagamentiScadutiSub', { count: data.pagamenti.scadutoCount }),
-            icon: AlertTriangle,
-            accent: 'border-kidville-error',
-            iconBg: 'bg-kidville-error-soft text-kidville-error',
-            href: '/admin/pagamenti',
-          }
-        : {
-            key: 'scaduto',
-            label: t('kpiPagamentiScaduti'),
-            value: data.pagamenti.scadutoCount,
-            format: 'int' as const,
-            icon: AlertTriangle,
-            accent: 'border-kidville-error',
-            iconBg: 'bg-kidville-error-soft text-kidville-error',
-            href: '/admin/pagamenti',
-          },
-      // Incassato del mese: non ha un gemello «di conteggio», quindi o c'è o sparisce.
-      ...(data.pagamenti.incassatoMese === undefined
-        ? []
-        : [
-            {
-              key: 'incassato',
-              label: t('kpiIncassatoMese'),
-              value: data.pagamenti.incassatoMese,
-              format: 'euro' as const,
-              icon: TrendingUp,
-              accent: 'border-kidville-success',
-              iconBg: 'bg-kidville-success-soft text-kidville-success',
-              href: '/admin/pagamenti',
-            },
-          ]),
+      // Scaduti: solo il CONTEGGIO (nessun importo in euro sulla home, 2026-10-07).
+      {
+        key: 'scaduto',
+        label: t('kpiPagamentiScaduti'),
+        value: data.pagamenti.scadutoCount,
+        format: 'int' as const,
+        icon: AlertTriangle,
+        accent: 'border-kidville-error',
+        iconBg: 'bg-kidville-error-soft text-kidville-error',
+        href: '/admin/pagamenti',
+      },
       {
         key: 'iscrizioni',
         label: t('kpiIscrizioniAttesa'),
@@ -237,7 +205,7 @@ function AdminDashboardInner() {
       {/* KPI */}
       {loading && !(ready && !userId) ? (
         <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
+          {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="h-32 rounded-2xl bg-kidville-white/60 animate-pulse border border-kidville-line" />
           ))}
         </div>
@@ -270,28 +238,9 @@ function AdminDashboardInner() {
         )
       )}
 
-      {/* Grafici. Senza il trend degli incassi (non-Direzione: il server non lo manda)
-          resta il solo grafico degli alunni, che allora prende tutta la larghezza invece
-          di lasciare mezza riga vuota. */}
+      {/* Grafici: resta il solo grafico degli alunni, a tutta larghezza. */}
       {data && (
-        <div className={`mt-6 grid grid-cols-1 gap-4${data.trend ? ' lg:grid-cols-2' : ''}`}>
-          {data.trend && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, type: 'spring', stiffness: 200, damping: 24 }}
-            className="rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line"
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">
-                {t('graficoIncassiTitolo')}
-              </h2>
-              <TrendingUp size={18} className="text-kidville-success" />
-            </div>
-            <TrendIncassiChart data={data.trend} />
-          </motion.div>
-          )}
-
+        <div className="mt-6 grid grid-cols-1 gap-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -330,8 +279,8 @@ function AdminDashboardInner() {
             rows={data.alert.scaduti.map((s) => ({
               id: s.id,
               left: s.alunno,
-              right: euroFmt.format(s.importo),
-              meta: formattaIstante(new Date(s.scadenza), locale),
+              right: f.dataBreve(s.scadenza),
+              meta: '',
             }))}
           />
           <AlertPanel

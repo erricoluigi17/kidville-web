@@ -12,8 +12,6 @@
   "kpiAlunniIscritti": "Enrolled pupils",
   "kpiAlunniIscrittiSub": "enrolled status · active locations",
   "kpiPagamentiScaduti": "Overdue payments",
-  "kpiPagamentiScadutiSub": "{count, plural, one {# entry} other {# entries}}",
-  "kpiIncassatoMese": "Collected this month",
   "kpiIscrizioniAttesa": "Pending enrollments",
   "kpiPrenotazioniMensa": "Canteen bookings today",
   "kpiFattureEmettere": "Invoices to issue",
@@ -26,7 +24,6 @@
   "moduloImpostazioni": "Settings",
   "moduloStrumenti": "Tools",
 
-  "graficoIncassiTitolo": "Income · last 6 months",
   "graficoAlunniClasseTitolo": "Pupils per class",
   "nessunAlunnoIscritto": "No enrolled pupils",
 
@@ -95,6 +92,5 @@
   "nessunaNotifica": "No notifications",
   "notificaFallback": "Notification",
 
-  "chartIncassato": "Collected",
   "chartAlunni": "Pupils"
 }

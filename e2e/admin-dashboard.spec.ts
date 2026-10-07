@@ -24,7 +24,6 @@ test('la dashboard mostra i KPI e le presenze realtime seedate', async ({ page }
   // KPI (i valori arrivano da /api/admin/dashboard; qui contano le tile).
   for (const label of [
     'Alunni iscritti',
-    'Incassato nel mese',
     'Iscrizioni in attesa',
     'Prenotazioni mensa oggi',
     'Fatture da emettere',
@@ -32,6 +31,8 @@ test('la dashboard mostra i KPI e le presenze realtime seedate', async ({ page }
     await expect(page.getByText(label).first()).toBeVisible({ timeout: 15_000 });
   }
   await expect(page.getByText('Pagamenti scaduti').first()).toBeVisible();
+  // Nessuna cifra in euro sulla home (titolare, 2026-10-07): la card degli incassi non c'è più.
+  await expect(page.getByText('Incassato nel mese')).toHaveCount(0);
 
   // Card presenze realtime: aggregato multi-sede scoped sulla scuola E2E.
   await expect(page.getByText('Presenze in tempo reale')).toBeVisible();

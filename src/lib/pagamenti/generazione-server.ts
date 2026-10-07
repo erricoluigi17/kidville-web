@@ -117,7 +117,7 @@ export function rispostaServizi(
 }
 
 /** Funzione assente dallo schema: PostgREST PGRST202, Postgres 42883 (DB non migrato). */
-function funzioneAssente(error: { code?: string | null }): boolean {
+export function funzioneAssente(error: { code?: string | null }): boolean {
   return error.code === 'PGRST202' || error.code === '42883'
 }
 

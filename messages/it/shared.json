@@ -651,5 +651,8 @@
   "erroreRiaperturaFatturaInInvio": "Una fattura di questa voce è in invio proprio adesso: riprova fra un minuto. Non è stato stornato niente.",
   "erroreSedeDiCollaudo": "La generazione non è consentita su una sede di collaudo.",
   "erroreServiziNonGenerati": "I servizi mensili non sono stati generati: riprova fra qualche istante.",
-  "erroreServiziNonDisponibili": "I servizi mensili non sono ancora disponibili su questo database."
+  "erroreServiziNonDisponibili": "I servizi mensili non sono ancora disponibili su questo database.",
+  "erroreServiziAnteprimaFallita": "Non è stato possibile calcolare l’anteprima dei servizi: riprova.",
+  "erroreCategoriaRettaNonMensile": "La causale «retta» non può essere un servizio mensile.",
+  "erroreCategoriaInUso": "La categoria è usata da voci di pagamento o da iscrizioni ai servizi: disattivala invece di eliminarla."
 }

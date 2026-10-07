@@ -3115,6 +3115,21 @@ export const CODICI_ERRORE = {
      */
     SERVIZI_NON_GENERATI: 'erroreServiziNonGenerati',
     SERVIZI_NON_DISPONIBILI: 'erroreServiziNonDisponibili',
+    /**
+     * 500 — l'anteprima dei servizi mensili (`GET /api/pagamenti/genera-servizi`) non si è
+     * potuta calcolare: il dettaglio sta nel log `error`, non nel testo.
+     */
+    SERVIZI_ANTEPRIMA_FALLITA: 'erroreServiziAnteprimaFallita',
+    /**
+     * 409 — `PATCH /api/admin/settings/categorie` ha chiesto `mensile` su una causale che il
+     * database non ammette (CHECK: la categoria «retta» non è un servizio mensile).
+     */
+    CATEGORIA_RETTA_NON_MENSILE: 'erroreCategoriaRettaNonMensile',
+    /**
+     * 409 — `DELETE /api/admin/settings/categorie` su una causale che ha ancora voci di
+     * pagamento o iscrizioni ai servizi (FK 23503): si disattiva, non si elimina.
+     */
+    CATEGORIA_IN_USO: 'erroreCategoriaInUso',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -651,5 +651,8 @@
   "erroreRiaperturaFatturaInInvio": "An invoice for this item is being sent right now: please try again in a minute. Nothing has been reversed.",
   "erroreSedeDiCollaudo": "Generation is not allowed on a test location.",
   "erroreServiziNonGenerati": "The monthly services were not generated: please try again in a moment.",
-  "erroreServiziNonDisponibili": "Monthly services are not yet available on this database."
+  "erroreServiziNonDisponibili": "Monthly services are not yet available on this database.",
+  "erroreServiziAnteprimaFallita": "The services preview could not be calculated: please try again.",
+  "erroreCategoriaRettaNonMensile": "The “tuition” category cannot be a monthly service.",
+  "erroreCategoriaInUso": "The category is used by payment items or service enrolments: deactivate it instead of deleting it."
 }

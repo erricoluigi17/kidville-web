@@ -143,7 +143,12 @@ describe('etichette', () => {
   });
   it('lingua inglese', () => {
     expect(etichettaMese('2026-10-01', 'en', 'corta')).toBe('Oct 2026');
-    expect(etichettaMese('2026-10-01', 'en', 'lunga')).toBe('october 2026');
+    expect(etichettaMese('2026-10-01', 'en', 'lunga')).toBe('October 2026');
+  });
+  it('lingua inglese: intervalli e mesi isolati seguono le maiuscole di Intl', () => {
+    expect(etichettaMesi(sel({ mesi: [9, 10] }), 'en')).toBe('Sept–Oct 2026'); // l'inglese dell'app è en-GB: settembre = «Sept»
+    expect(etichettaMesi(sel({ mesi: [12, 1] }), 'en')).toBe('Dec 2026–Jan 2027');
+    expect(etichettaMesi(sel({ mesi: [10] }), 'en')).toBe('October 2026');
   });
 
   it('nessun mese = null (tutto l\'anno)', () => {

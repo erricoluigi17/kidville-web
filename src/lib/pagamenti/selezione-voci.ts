@@ -95,17 +95,17 @@ function formatoMese(periodo: string, locale: string, month: 'short' | 'long'): 
   return intlDateTime(locale, { month, timeZone: 'UTC' }).format(new Date(Date.UTC(anno, mese - 1, 15)));
 }
 
-/** 'corta' = «Ott 2026»; 'lunga' = «ottobre 2026». */
+/** 'corta' = «Ott 2026» (iniziale maiuscola); 'lunga' = come Intl («ottobre 2026», «October 2026»). */
 export function etichettaMese(periodo: string, locale: string, forma: 'corta' | 'lunga'): string {
   const anno = periodo.slice(0, 4);
-  if (forma === 'lunga') return `${formatoMese(periodo, locale, 'long').toLowerCase()} ${anno}`;
+  if (forma === 'lunga') return `${formatoMese(periodo, locale, 'long')} ${anno}`;
   const s = formatoMese(periodo, locale, 'short');
   return `${s.charAt(0).toUpperCase()}${s.slice(1)} ${anno}`;
 }
 
-/** Abbreviazione minuscola, senza punto finale («sept.» → «sept»). */
+/** Abbreviazione come la dà Intl (maiuscole della lingua), senza punto finale («sept.» → «sept»). */
 function abbreviato(periodo: string, locale: string): string {
-  return formatoMese(periodo, locale, 'short').toLowerCase().replace(/\.$/, '');
+  return formatoMese(periodo, locale, 'short').replace(/\.$/, '');
 }
 
 /**

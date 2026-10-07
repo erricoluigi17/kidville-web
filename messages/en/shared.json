@@ -650,6 +650,6 @@
   "errorePushStatoNonLetto": "Whether notifications are on for this device could not be checked: please try again in a moment",
   "erroreRiaperturaFatturaInInvio": "An invoice for this item is being sent right now: please try again in a minute. Nothing has been reversed.",
   "erroreSedeDiCollaudo": "Generation is not allowed on a test location.",
-  "erroreServiziNonGenerati": "The tuition fees were generated, but the monthly services were not: please try again in a moment. The fees already written were not touched.",
-  "erroreServiziNonDisponibili": "Monthly services are not yet available on this database: the tuition fees were generated normally."
+  "erroreServiziNonGenerati": "The monthly services were not generated: please try again in a moment.",
+  "erroreServiziNonDisponibili": "Monthly services are not yet available on this database."
 }

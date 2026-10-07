@@ -650,6 +650,6 @@
   "errorePushStatoNonLetto": "Non è stato possibile verificare se le notifiche sono attive su questo dispositivo: riprova fra qualche istante",
   "erroreRiaperturaFatturaInInvio": "Una fattura di questa voce è in invio proprio adesso: riprova fra un minuto. Non è stato stornato niente.",
   "erroreSedeDiCollaudo": "La generazione non è consentita su una sede di collaudo.",
-  "erroreServiziNonGenerati": "Le rette sono state generate, ma i servizi mensili no: riprova fra qualche istante. Le rette già scritte non sono state toccate.",
-  "erroreServiziNonDisponibili": "I servizi mensili non sono ancora disponibili su questo database: le rette sono state generate normalmente."
+  "erroreServiziNonGenerati": "I servizi mensili non sono stati generati: riprova fra qualche istante.",
+  "erroreServiziNonDisponibili": "I servizi mensili non sono ancora disponibili su questo database."
 }

@@ -99,11 +99,7 @@ export type EsitoServizi =
   | { ok: true; generati: number }
   | { ok: false; codice: 'SERVIZI_NON_GENERATI' | 'SERVIZI_NON_DISPONIBILI' }
 
-export interface ParametriServizi {
-  /** Primo del mese, `YYYY-MM-01`. Alternativo ad `anno`. */
-  periodo?: string
-  /** Anno di inizio dell'anno scolastico (set → giu). Alternativo a `periodo`. */
-  anno?: number
+export type ParametriServizi = ({ periodo: string } | { anno: number }) & {
   scuolaId: string
   /** `null`/assente = tutti gli iscritti della sede (mai un array vuoto). */
   alunnoIds?: string[] | null
@@ -111,6 +107,13 @@ export interface ParametriServizi {
   operazione: string
   /** Da dove nasce la generazione: insieme alle rette o a mano. Finisce nell'audit. */
   azione: 'rette' | 'manuale'
+}
+
+/** L'esito dei servizi come lo vede il client: il conteggio, o l'errore con il suo codice. */
+export function rispostaServizi(
+  e: EsitoServizi,
+): { generati: number } | { errore: true; codice: Extract<EsitoServizi, { ok: false }>['codice'] } {
+  return e.ok ? { generati: e.generati } : { errore: true, codice: e.codice }
 }
 
 /** Funzione assente dallo schema: PostgREST PGRST202, Postgres 42883 (DB non migrato). */
@@ -134,9 +137,10 @@ export async function generaServizi(
   supabase: SupabaseClient,
   p: ParametriServizi,
 ): Promise<EsitoServizi> {
-  const mensile = p.anno == null
+  const mensile = 'periodo' in p
   const funzione = mensile ? 'genera_servizi_mensili' : 'genera_servizi_anno'
-  const args = mensile
+  const quando = 'periodo' in p ? { periodo: p.periodo } : { anno: p.anno }
+  const args = 'periodo' in p
     ? { p_periodo: p.periodo, p_scuola_id: p.scuolaId, p_alunno_ids: p.alunnoIds ?? null }
     : { p_anno_inizio: p.anno, p_scuola_id: p.scuolaId, p_alunno_ids: p.alunnoIds ?? null }
 
@@ -148,8 +152,7 @@ export async function generaServizi(
       logEvento('pagamento', 'error', {
         operazione: p.operazione,
         esito: assente ? 'servizi-non-disponibili' : 'servizi-non-generati',
-        tipo: funzione, scuola_id: p.scuolaId, azione: p.azione,
-        ...(mensile ? { periodo: p.periodo } : { anno: p.anno }),
+        tipo: funzione, scuola_id: p.scuolaId, azione: p.azione, ...quando,
       }, r.error)
       return { ok: false, codice: assente ? 'SERVIZI_NON_DISPONIBILI' : 'SERVIZI_NON_GENERATI' }
     }
@@ -157,8 +160,7 @@ export async function generaServizi(
   } catch (e) {
     logEvento('pagamento', 'error', {
       operazione: p.operazione, esito: 'servizi-non-generati',
-      tipo: funzione, scuola_id: p.scuolaId, azione: p.azione,
-      ...(mensile ? { periodo: p.periodo } : { anno: p.anno }),
+      tipo: funzione, scuola_id: p.scuolaId, azione: p.azione, ...quando,
     }, e)
     return { ok: false, codice: 'SERVIZI_NON_GENERATI' }
   }
@@ -169,22 +171,22 @@ export async function generaServizi(
     await tracciaAuditGenerazione(
       supabase, p.operazione, mensile ? 'genera_servizi' : 'genera_servizi_anno',
       {
-        ...(mensile ? { periodo: p.periodo } : { anno_inizio: p.anno }),
+        ...('periodo' in p ? { periodo: p.periodo } : { anno_inizio: p.anno }),
         generati, scuola_id: p.scuolaId, azione: p.azione,
       },
       p.utenteId,
     )
   } catch (e) {
     logEvento('pagamento', 'error', {
-      operazione: p.operazione, esito: 'audit-non-scritto', scuola_id: p.scuolaId,
+      operazione: p.operazione, esito: 'audit-non-scritto',
+      tipo: funzione, scuola_id: p.scuolaId, azione: p.azione, ...quando,
     }, e)
   }
   // Un evento contabile va visto anche quando non fa niente: con 0 voci,
   // «nessun log» non distingue «nessun servizio dovuto» da «non è mai partito».
   logEvento('pagamento', 'info', {
     operazione: p.operazione, esito: 'servizi-generati',
-    ...(mensile ? { periodo: p.periodo } : { anno: p.anno }),
-    generati, scuola_id: p.scuolaId, azione: p.azione,
+    tipo: funzione, scuola_id: p.scuolaId, azione: p.azione, ...quando, generati,
   })
   return { ok: true, generati }
 }

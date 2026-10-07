@@ -8,7 +8,7 @@ import { zUuid } from '@/lib/validation/common'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { sedeDellaGenerazione, tracciaAuditGenerazione, generaServizi } from '@/lib/pagamenti/generazione-server'
+import { sedeDellaGenerazione, tracciaAuditGenerazione, generaServizi, rispostaServizi } from '@/lib/pagamenti/generazione-server'
 
 // `anno` e `periodo` NON sono vincolati nel formato: storicamente un valore
 // malformato ricade sull'anteprima/generazione mensile del mese corrente
@@ -307,13 +307,6 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
   }
 })
 
-/** L'esito dei servizi come lo vede il client: il conteggio, o l'errore con il suo codice. */
-function esitoServizi(
-  e: Awaited<ReturnType<typeof generaServizi>>,
-): { generati: number } | { errore: true; codice: string } {
-  return e.ok ? { generati: e.generati } : { errore: true, codice: e.codice }
-}
-
 // POST /api/pagamenti/genera-rette  (staff) — conferma generazione
 // Body: { userId, scuola_id, periodo?: 'YYYY-MM' }  -> singolo mese
 //   oppure { userId, scuola_id, anno: 2026 }        -> intero anno scolastico (set->giu)
@@ -366,7 +359,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
 
       return NextResponse.json({
         success: true,
-        data: { anno_inizio: annoInizio, generati: data, servizi: esitoServizi(servizi) },
+        data: { anno_inizio: annoInizio, generati: data, servizi: rispostaServizi(servizi) },
       })
     }
 
@@ -470,7 +463,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
       utenteId: auth.user.id, operazione: 'pagamenti/genera-rette:POST', azione: 'rette',
     })
 
-    return NextResponse.json({ success: true, data: { periodo, generati: data, servizi: esitoServizi(servizi) } })
+    return NextResponse.json({ success: true, data: { periodo, generati: data, servizi: rispostaServizi(servizi) } })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

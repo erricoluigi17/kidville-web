@@ -24,7 +24,7 @@ import { generaServizi } from '@/lib/pagamenti/generazione-server'
 
 type Rpc = (nome: string, args: Record<string, unknown>) => Promise<{ data?: unknown; error?: unknown }>
 
-function finto(rpc: Rpc, erroreAudit: unknown = null) {
+function finto(rpc: Rpc, erroreAudit: unknown = null, auditLancia = false) {
   const rpcChiamate: { nome: string; args: Record<string, unknown> }[] = []
   const audit: Record<string, unknown>[] = []
   const client = {
@@ -34,6 +34,7 @@ function finto(rpc: Rpc, erroreAudit: unknown = null) {
     },
     from: (tabella: string) => ({
       insert: async (riga: Record<string, unknown>) => {
+        if (auditLancia) throw new Error('audit: rete caduta')
         if (tabella === 'registro_modifiche' && !erroreAudit) audit.push(riga)
         return { error: erroreAudit }
       },
@@ -119,6 +120,15 @@ describe('generaServizi', () => {
     const r = await generaServizi(f.client, { ...base, periodo: '2026-10-01' })
     expect(r).toEqual({ ok: true, generati: 2 })
     expect(esiti().some((e) => e.livello === 'error' && e.campi.esito === 'audit-non-scritto')).toBe(true)
+    expect(esiti().some((e) => e.livello === 'info' && e.campi.esito === 'servizi-generati')).toBe(true)
+  })
+
+  it('audit che LANCIA: successo comunque, log audit-non-scritto con azione e tipo', async () => {
+    const f = finto(async () => ({ data: 2, error: null }), null, true)
+    const r = await generaServizi(f.client, { ...base, periodo: '2026-10-01' })
+    expect(r).toEqual({ ok: true, generati: 2 })
+    const l = esiti().find((e) => e.campi.esito === 'audit-non-scritto')
+    expect(l).toMatchObject({ livello: 'error', campi: { azione: 'rette', tipo: 'genera_servizi_mensili' } })
     expect(esiti().some((e) => e.livello === 'info' && e.campi.esito === 'servizi-generati')).toBe(true)
   })
 })

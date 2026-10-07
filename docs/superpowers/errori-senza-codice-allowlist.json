@@ -16,7 +16,7 @@
     "`codice` accanto a `error`. Per i due dinieghi di sede esiste già `rifiutoSede()`",
     "(src/lib/auth/rifiuto-sede.ts): quella è la forma da copiare."
   ],
-  "aggiornato": "2026-10-02",
+  "aggiornato": "2026-10-07",
   "totale_occorrenze": 1362,
   "file": [
     {

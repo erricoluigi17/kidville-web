@@ -59,6 +59,10 @@ vi.mock('@/lib/supabase/server-client', async () => {
             h.chiamate.push({ nome: 'servizi_da_generare', args })
             return guasto() ?? { data: h.daGenerare, error: null }
           },
+          genera_servizi_anno: (args: Riga) => {
+            h.chiamate.push({ nome: 'genera_servizi_anno', args })
+            return guasto() ?? { data: 7, error: null }
+          },
           genera_servizi_mensili: (args: Riga) => {
             h.chiamate.push({ nome: 'genera_servizi_mensili', args })
             const g = guasto()
@@ -365,5 +369,89 @@ describe('POST /api/pagamenti/genera-servizi — conferma', () => {
     expect(JSON.stringify(j)).not.toContain('guasto servizi')
     expect(audit()).toEqual([])
     expect(h.log.some((c) => c[1] === 'error' && JSON.stringify(c).includes('servizi-non-generati'))).toBe(true)
+  })
+})
+
+describe('modalità «anno scolastico»', () => {
+  const ANNO = 2026
+  const letture = () => h.chiamate.filter((c) => c.nome === 'servizi_da_generare')
+
+  it('GET con anno E periodo insieme: 400, nessuna rpc', async () => {
+    const res = await GET(get(`anno=${ANNO}&periodo=2026-10&scuola_id=${SEDE_A}`))
+    expect(res.status).toBe(400)
+    expect(h.chiamate).toEqual([])
+  })
+
+  it('GET senza né anno né periodo: 400', async () => {
+    expect((await GET(get(`scuola_id=${SEDE_A}`))).status).toBe(400)
+    expect(h.chiamate).toEqual([])
+  })
+
+  it('GET con anno fuori misura o non numerico: 400', async () => {
+    expect((await GET(get(`anno=1999&scuola_id=${SEDE_A}`))).status).toBe(400)
+    expect((await GET(get(`anno=2101&scuola_id=${SEDE_A}`))).status).toBe(400)
+    expect((await GET(get(`anno=abc&scuola_id=${SEDE_A}`))).status).toBe(400)
+    expect((await GET(get(`anno=2026.5&scuola_id=${SEDE_A}`))).status).toBe(400)
+  })
+
+  it('GET con anno: una lettura per mese da settembre a giugno, voci e importi sommati (Direzione)', async () => {
+    const res = await GET(get(`anno=${ANNO}&scuola_id=${SEDE_A}`))
+    expect(res.status).toBe(200)
+    expect(letture().map((c) => c.args.p_periodo)).toEqual([
+      '2026-09-01', '2026-10-01', '2026-11-01', '2026-12-01',
+      '2027-01-01', '2027-02-01', '2027-03-01', '2027-04-01', '2027-05-01', '2027-06-01',
+    ])
+    expect(letture().every((c) => c.args.p_scuola_id === SEDE_A && c.args.p_alunno_ids === null)).toBe(true)
+    const { data } = await res.json()
+    expect(data.anno_inizio).toBe(ANNO)
+    expect('periodo' in data).toBe(false)
+    expect(data.voci).toBe(30) // 3 voci × 10 mesi
+    const pom = data.per_servizio.find((x: { categoria_id: string }) => x.categoria_id === CAT_POMERIDIANO)
+    expect(pom).toMatchObject({ nome: 'Pomeridiano', voci: 20, totale: 1550 }) // 2 × 77,50 × 10
+    expect(data.totale).toBe(1882.5) // (77,50 × 2 + 33,25) × 10
+  })
+
+  it('GET con anno, Segreteria: i conteggi ci sono, i totali no', async () => {
+    h.requireStaff.mockResolvedValue({ user: SEGRETERIA_UTENTE })
+    const { data } = await (await GET(get(`anno=${ANNO}`))).json()
+    expect(data.voci).toBe(30)
+    expect('totale' in data).toBe(false)
+    expect(data.per_servizio.every((x: object) => !('totale' in x))).toBe(true)
+  })
+
+  it('GET con anno e funzione assente: 503 SERVIZI_NON_DISPONIBILI', async () => {
+    h.rpc = 'assente'
+    const res = await GET(get(`anno=${ANNO}&scuola_id=${SEDE_A}`))
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('SERVIZI_NON_DISPONIBILI')
+  })
+
+  it('GET con anno e rpc in errore: 500 SERVIZI_ANTEPRIMA_FALLITA', async () => {
+    h.rpc = 'errore'
+    const res = await GET(get(`anno=${ANNO}&scuola_id=${SEDE_A}`))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('SERVIZI_ANTEPRIMA_FALLITA')
+  })
+
+  it('POST con anno E periodo, o con nessuno dei due: 400 e nessuna generazione', async () => {
+    expect((await POST(post({ anno: ANNO, periodo: '2026-10', scuola_id: SEDE_A }))).status).toBe(400)
+    expect((await POST(post({ scuola_id: SEDE_A }))).status).toBe(400)
+    expect(h.chiamate).toEqual([])
+  })
+
+  it('POST con anno: chiama genera_servizi_anno con p_anno_inizio e risponde anno_inizio + generati', async () => {
+    const res = await POST(post({ anno: ANNO, scuola_id: SEDE_A }))
+    expect(res.status).toBe(200)
+    expect(h.chiamate).toEqual([
+      { nome: 'genera_servizi_anno', args: { p_anno_inizio: ANNO, p_scuola_id: SEDE_A, p_alunno_ids: null } },
+    ])
+    expect((await res.json()).data).toEqual({ anno_inizio: ANNO, generati: 7 })
+  })
+
+  it('POST con anno e funzione assente: 503', async () => {
+    h.rpc = 'assente'
+    const res = await POST(post({ anno: ANNO, scuola_id: SEDE_A }))
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('SERVIZI_NON_DISPONIBILI')
   })
 })

@@ -70,3 +70,10 @@ export const BTN_PRIMARY_AA =
 /** Bottone secondario pillola: bordo line, testo sub, AA a riposo (annulla/chiudi). */
 export const BTN_SECONDARY =
   'inline-flex items-center justify-center gap-1.5 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-5 py-2.5 font-maven text-sm font-bold text-kidville-sub transition-colors hover:border-kidville-green hover:text-kidville-green disabled:opacity-50';
+
+/** Bottone pillola verde+giallo, formato piccolo (azioni di riga: «Incassa», «Genera»). */
+export const BTN_PRIMARY_SM =
+  'inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
+
+/** Bottone di sola icona nelle righe di tabella: testo `sub` (AA a riposo), verde al passaggio. */
+export const ICON_BTN = 'text-kidville-sub transition-colors hover:text-kidville-green';

@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
-import { Search, Filter, AlertTriangle, RefreshCw, Plus, Pencil, Layers, Eye, Download, X } from 'lucide-react';
+import { Search, Filter, AlertTriangle, RefreshCw, Plus, Pencil, Eye, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton, type EsitoAccodamento } from './FatturaButton';
 import { FatturaChip } from './FatturaChip';
@@ -25,6 +25,8 @@ import { RateizzaModal } from './RateizzaModal';
 import { STATI_PAGAMENTO as STATI, calcolaTotaliPagamenti } from './stati';
 import { AgendaScadenze } from './AgendaScadenze';
 import { KpiContabilita } from './KpiContabilita';
+import { TabellaVociContabilita } from './TabellaVociContabilita';
+import { BTN_PRIMARY_SM, ICON_BTN } from './ui';
 import { useCifreNascoste } from './cifre-nascoste';
 import { BadgeMetodoPagamento } from '@/components/features/pagamenti/BadgeMetodoPagamento';
 import { useAgingLabel, bucketScadenze, isMoroso, residuoEffettivo, type AgingBucketId } from '@/lib/pagamenti/aging';
@@ -38,8 +40,6 @@ import { eDirezioneCockpit } from '@/lib/auth/ruoli';
 
 // Pelle locale della dashboard contabilità, su token dell'app (allineata a
 // `Btn`/cockpit): pillole verde+giallo per le azioni, filtri come la Toolbar.
-const BTN_PRIMARY_SM = 'inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
-const ICON_BTN = 'text-kidville-muted transition-colors hover:text-kidville-green';
 const FILTER_SELECT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 
 /** Stato vuoto nello stile app: cerchio crema + emoji + testo (come parent/avvisi). */
@@ -1034,86 +1034,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 {righeCategoria.length === 0 ? (
                     <EmptyRiga emoji="🧾" testo={t('dashVuotoCategoria')} />
                 ) : (
-                <>
-                <div className={cx('hidden lg:block', TABLE_WRAP)}>
-                    <table className={TABLE}>
-                        <thead>
-                            <tr>
-                                <th className={TH}>{t('dashThAlunno')}</th>
-                                {mostraSede && <th className={TH}>{t('dashMsThSede')}</th>}
-                                <th className={TH}>{t('dashThDescrizione')}</th>
-                                <th className={TH}>{t('dashThScadenza')}</th>
-                                <th className={cx(TH, 'text-right')}>{t('dashThImporto')}</th>
-                                <th className={cx(TH, 'text-right')}>{t('dashAcconto')}</th>
-                                <th className={TH}>{t('dashThStato')}</th>
-                                <th className={TH}></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {righeCategoria.map((p) => {
-                                const st = STATI[p.stato] ?? STATI.da_pagare;
-                                const moroso = isMoroso(p, oggiStr);
-                                const acconto = Number(p.importo_pagato || 0);
-                                return (
-                                    <tr key={p.id} className={cx(TROW, moroso && 'bg-kidville-error-soft/50')}>
-                                        <td className={cx(TD, 'font-semibold text-kidville-green')}>
-                                            {p.alunni?.nome} {p.alunni?.cognome}
-                                            {sospesoByAlunno.get(p.alunno_id) && (
-                                                <Badge tone="error" className="ml-1 align-middle">{t('dashSospeso')}</Badge>
-                                            )}
-                                        </td>
-                                        {mostraSede && <td className={TD}><BadgeSede nome={p.scuola_nome} /></td>}
-                                        <td className={cx(TD, 'text-kidville-ink')}>
-                                            {p.descrizione}
-                                            <BadgeMetodoPagamento metodi={p.metodi_ammessi} testoSoloContanti={t('badgeSoloContanti')} testoSoloBonifico={t('badgeSoloBonifico')} className="ml-2 align-middle" />
-                                        </td>
-                                        <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
-                                        <td className={cx(TD, 'text-right text-kidville-green')}>{formatEuro(p.importo)}</td>
-                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{acconto > 0 ? formatEuro(acconto) : '—'}</td>
-                                        <td className={TD}>
-                                            <span className="inline-flex flex-wrap items-center gap-1">
-                                                <Badge tone={st.tone}>{st.label}</Badge>
-                                                {moroso && acconto > 0 && (
-                                                    <Badge tone="warn">{t('dashAcconto')} {formatEuro(acconto)}</Badge>
-                                                )}
-                                                <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} codaStato={p.coda_stato} />
-                                            </span>
-                                        </td>
-                                        <td className={cx(TD, 'text-right')}>
-                                            <div className="flex items-center justify-end gap-2">
-                                                {p.stato !== 'pagato' ? (
-                                                    <button onClick={() => setSelected(p)}
-                                                        className={BTN_PRIMARY_SM}>{t('dashIncassa')}</button>
-                                                ) : (
-                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} codaStato={p.coda_stato ?? null} onEmessa={(e) => dopoAccodamento(p.id, e)} />
-                                                )}
-                                                {p.tipo === 'singolo' && p.stato !== 'pagato' && (
-                                                    <button onClick={() => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }} title={t('dashDividiAcconti')} className={ICON_BTN}><Layers size={15} /></button>
-                                                )}
-                                                <button onClick={() => setDrawer(p)} title={t('dashDettagli')} className={ICON_BTN}><Eye size={15} /></button>
-                                                <button onClick={() => setEditing(p)} title={t('dashModifica')} className={ICON_BTN}><Pencil size={15} /></button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
-                <div className="space-y-2 lg:hidden">
-                    {righeCategoria.map((p) => (
-                        <PagamentoCardMobile
-                            key={p.id}
-                            pagamento={p}
-                            alunnoLabel={`${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || '—'}
-                            sospeso={!!sospesoByAlunno.get(p.alunno_id)}
-                            mostraSede={mostraSede}
-                            onIncassa={() => setSelected(p)}
-                            onApri={() => setDrawer(p)}
-                        />
-                    ))}
-                </div>
-                </>
+                <TabellaVociContabilita
+                    righe={righeCategoria}
+                    mostraSede={mostraSede}
+                    sospesoByAlunno={sospesoByAlunno}
+                    oggiStr={oggiStr}
+                    userId={userId}
+                    onIncassa={(p) => setSelected(p)}
+                    onRateizza={(p) => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }}
+                    onDettagli={(p) => setDrawer(p)}
+                    onModifica={(p) => setEditing(p)}
+                    dopoAccodamento={dopoAccodamento}
+                />
                 )}
                 </>
             )}

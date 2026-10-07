@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { scegliCategorie } from '../helpers/scelta-contabilita';
 
 /**
  * «Paga il fratello …» al posto di «Non generata» (spec 2026-09-28, D1–D13).
@@ -472,12 +473,12 @@ describe('la GET dei legami', () => {
         // guarda l'assenza del banner. (R11d, terza revisione 2026-09-29: il segnaposto della
         // ricerca che si aspettava prima c'è in ENTRAMBE le viste, e l'attesa vera era quella
         // su un'assenza, «Luca Rossi» sparito — che passa anche mentre la vista sta cambiando.)
-        fireEvent.change(screen.getByDisplayValue('Retta'), { target: { value: 'c-mensa' } });
+        await scegliCategorie(['Mensa']);
         expect(await screen.findByText('Nessun pagamento in questa categoria.')).toBeInTheDocument();
         expect(screen.queryByText('Luca Rossi')).toBeNull();
         expect(screen.queryByTestId('errore-legami')).toBeNull();
         // Di nuovo Rette: torna.
-        fireEvent.change(screen.getByDisplayValue('Mensa'), { target: { value: 'c-retta' } });
+        await scegliCategorie(['Retta']);
         await waitFor(() => expect(riga('Luca Rossi')).toBeInTheDocument());
         expect(screen.getByTestId('errore-legami')).toBeInTheDocument();
         // Agenda (dalla vista Rette): un bucket qualunque.

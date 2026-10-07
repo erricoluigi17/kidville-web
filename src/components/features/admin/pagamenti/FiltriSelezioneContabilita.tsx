@@ -24,10 +24,12 @@ import { cx } from '@/lib/ui/cx';
  * nome uguale lo renderebbe ambiguo.
  */
 
-// Stesso stile del `FILTER_SELECT` di `PaymentsDashboard` (là è una costante
-// locale del modulo, non esportata).
-const FILTER_SELECT =
-  'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
+// Il `<select>` dell'anno sta in riga con i comandi a scelta multipla (`SceltaMultiplaContabilita`):
+// ne ha la stessa geometria (42px, 44px sul telefono) e lo stesso fuoco visibile — niente
+// `outline-none`, il ring di focus è quello del comando accanto. Per questo non usa
+// `FILTER_SELECT` di `ui.ts`, pensato per i select della barra filtri (padding verticale, `outline-none`).
+const SELECT_ANNO =
+  'h-[42px] rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 font-maven text-sm text-kidville-ink transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15 max-sm:h-[44px]';
 
 export interface OpzioneCategoria {
   id: string;
@@ -132,7 +134,7 @@ export function FiltroAnnoContabilita({ anno, anni, onChange, className }: Filtr
       <label htmlFor={id} className={ETICHETTA}>
         {t('filtroAnnoScolastico')}
       </label>
-      <select id={id} value={anno} onChange={(e) => onChange(Number(e.target.value))} className={FILTER_SELECT}>
+      <select id={id} value={anno} onChange={(e) => onChange(Number(e.target.value))} className={SELECT_ANNO}>
         {anni.map((y) => (
           <option key={y} value={y}>
             {t('dashAsPrefix')} {y}/{y + 1}

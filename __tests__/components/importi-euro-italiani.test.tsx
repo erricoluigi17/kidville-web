@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import { scegliAnno, scegliCategorie, scegliMesi } from '../helpers/scelta-contabilita';
 
 /**
  * ─── ⚠️ IL RUOLO, DAL 2026-09-02, DECIDE SE LE CARD ESISTONO ────────────────
@@ -128,6 +129,20 @@ function stubFetch() {
  */
 const GIORNO_FISSO = '2026-10-01T10:00:00';
 
+/**
+ * Dal 2026-10-07 le card sommano la SELEZIONE (categorie × mesi), non tutte le voci: all'apertura
+ * c'è la Retta del mese corrente. I due pagamenti finti sono rette di settembre e di ottobre 2026,
+ * quindi i valori sotto valgono solo scegliendo ESPLICITAMENTE «Set 2026» e «Ott 2026» — e
+ * l'anno 2026, perché prima di settembre l'anno scolastico di apertura è il 2025. Così l'esito
+ * non dipende dal giorno in cui gira il test.
+ */
+async function selezionaSettembreOttobre2026() {
+    // Si aspetta il comando dei mesi (le categorie sono arrivate): senza, l'anno non c'è ancora.
+    await screen.findByRole('button', { name: /^Mesi/ });
+    scegliAnno(2026);
+    await scegliMesi(['Set 2026', 'Ott 2026']);
+}
+
 /** Le quattro card KPI, e l'importo che ciascuna deve portare. */
 const ATTESI: ReadonlyArray<readonly [string, string]> = [
     ['Incassato', '€ 1.234,50'],      // l'unico `importo_pagato`
@@ -168,6 +183,7 @@ describe('PaymentsDashboard — i KPI della Contabilità in formato italiano', (
 
     it('ogni card KPI stampa il suo importo come «€ 1.234,50», non «€ 1234.50»', async () => {
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await selezionaSettembreOttobre2026();
         await waitFor(() => expect(cardKpi('Incassato')).toHaveTextContent('€ 1.234,50'));
         for (const [etichetta, importo] of ATTESI) {
             expect(cardKpi(etichetta)).toHaveTextContent(importo);
@@ -176,6 +192,7 @@ describe('PaymentsDashboard — i KPI della Contabilità in formato italiano', (
 
     it('in tutta la schermata non resta un solo importo col punto decimale', async () => {
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await selezionaSettembreOttobre2026();
         await waitFor(() => expect(screen.getAllByText('€ 1.234,50').length).toBeGreaterThan(0));
         // La tabella e l'agenda ci sono davvero, a questa data: è la parte che ad
         // agosto non veniva guardata.
@@ -190,11 +207,16 @@ describe('PaymentsDashboard — i KPI della Contabilità in formato italiano', (
 /**
  * IL LOCK CONTRO IL RITORNO DELLA BOMBA A OROLOGERIA.
  *
- * Le stesse asserzioni, su tre mesi diversi. Con il conteggio globale di prima,
+ * Le stesse asserzioni, su tre date diverse. Con il conteggio globale di prima,
  * agosto sarebbe passato e settembre e ottobre no — cioè esattamente ciò che è
  * successo, ma **subito** invece che al cambio di mese.
+ *
+ * Dal 2026-10-07 le card DIPENDONO dalla selezione (categorie × mesi), non dal giorno: con la
+ * STESSA selezione esplicita (Retta · Set+Ott 2026) restituiscono gli stessi importi in qualunque
+ * data. Quello che cambia col giorno è solo la selezione di apertura, e ha i suoi test in
+ * `PaymentsDashboard-selezione-voci.test.tsx`.
  */
-describe('PaymentsDashboard — le card KPI non dipendono da che giorno è oggi', () => {
+describe('PaymentsDashboard — le card KPI dipendono dalla selezione, non da che giorno è oggi', () => {
     beforeEach(stubFetch);
     afterEach(() => {
         vi.useRealTimers();
@@ -205,10 +227,11 @@ describe('PaymentsDashboard — le card KPI non dipendono da che giorno è oggi'
         ['2026-08-03T10:00:00', 'tabella e agenda vuote'],
         ['2026-09-01T10:00:00', 'in tabella il pagamento saldato'],
         ['2026-10-01T10:00:00', 'in tabella e in agenda quello scaduto'],
-    ])('al %s (%s) le card portano gli stessi importi', async (quando) => {
+    ])('al %s (%s) la stessa selezione porta gli stessi importi', async (quando) => {
         vi.useFakeTimers({ shouldAdvanceTime: true });
         vi.setSystemTime(new Date(quando));
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await selezionaSettembreOttobre2026();
         await waitFor(() => expect(cardKpi('Incassato')).toHaveTextContent('€ 1.234,50'));
         for (const [etichetta, importo] of ATTESI) {
             expect(cardKpi(etichetta)).toHaveTextContent(importo);
@@ -266,6 +289,7 @@ describe('PaymentsDashboard — i totali sono della Direzione (2026-09-02)', () 
     it('alla DIREZIONE (coordinator) i KPI ci sono', async () => {
         identita.ruolo = 'coordinator';
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await selezionaSettembreOttobre2026();
         await waitFor(() => expect(cardKpi('Incassato')).toHaveTextContent('€ 1.234,50'));
     });
 });
@@ -345,8 +369,8 @@ describe('PaymentsDashboard — il chip della coda fatture sta sulla riga della 
 
     it('vista per categoria, dal select: «Errore in coda» sulla riga in errore, niente sulla riga senza voce', async () => {
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
-        // Il select delle categorie (`PaymentsDashboard.tsx:324`) si riempie con una fetch: si aspetta la «Retta».
-        fireEvent.change(await screen.findByDisplayValue('Retta'), { target: { value: 'c2' } });
+        // Il filtro delle categorie si riempie con una fetch: l'helper aspetta che il comando esista.
+        await scegliCategorie(['Mensa']);
         await waitFor(() => expect(within(rigaTabella('Mensa Ottobre')).getByTestId('coda-chip')).toHaveTextContent('Errore in coda'));
         const senzaVoce = rigaTabella('Mensa Novembre');
         expect(within(senzaVoce).getByText('Da fatturare')).toBeInTheDocument();

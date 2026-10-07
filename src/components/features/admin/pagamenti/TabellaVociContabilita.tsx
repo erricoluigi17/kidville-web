@@ -26,6 +26,10 @@ export interface RigaVoce extends PagamentoRow {
 interface Props<P extends RigaVoce> {
     righe: P[];
     mostraSede: boolean;
+    /** Colonna «Categoria» (e riga nella card): quando la selezione non è UNA categoria sola. */
+    mostraCategoria: boolean;
+    /** Nome da mostrare per la categoria della voce (con la sede per quelle di sede); «—» se ignota. */
+    nomeCategoria: (p: P) => string;
     sospesoByAlunno: Map<string, boolean>;
     /** «Oggi» come `YYYY-MM-DD`: serve a riconoscere le voci morose. */
     oggiStr: string;
@@ -39,7 +43,7 @@ interface Props<P extends RigaVoce> {
 
 /** Elenco per voce: tabella su desktop (da `lg`), card su mobile. Solo presentazione. */
 export function TabellaVociContabilita<P extends RigaVoce>({
-    righe, mostraSede, sospesoByAlunno, oggiStr, userId,
+    righe, mostraSede, mostraCategoria, nomeCategoria, sospesoByAlunno, oggiStr, userId,
     onIncassa, onRateizza, onDettagli, onModifica, dopoAccodamento,
 }: Props<P>) {
     const t = useTranslations('adminContabilita');
@@ -52,6 +56,7 @@ export function TabellaVociContabilita<P extends RigaVoce>({
                         <tr>
                             <th className={TH}>{t('dashThAlunno')}</th>
                             {mostraSede && <th className={TH}>{t('dashMsThSede')}</th>}
+                            {mostraCategoria && <th className={TH}>{t('dashThCategoria')}</th>}
                             <th className={TH}>{t('dashThDescrizione')}</th>
                             <th className={TH}>{t('dashThScadenza')}</th>
                             <th className={cx(TH, 'text-right')}>{t('dashThImporto')}</th>
@@ -74,6 +79,7 @@ export function TabellaVociContabilita<P extends RigaVoce>({
                                         )}
                                     </td>
                                     {mostraSede && <td className={TD}><BadgeSede nome={p.scuola_nome} /></td>}
+                                    {mostraCategoria && <td className={cx(TD, 'text-kidville-ink')}>{nomeCategoria(p)}</td>}
                                     <td className={cx(TD, 'text-kidville-ink')}>
                                         {p.descrizione}
                                         <BadgeMetodoPagamento metodi={p.metodi_ammessi} testoSoloContanti={t('badgeSoloContanti')} testoSoloBonifico={t('badgeSoloBonifico')} className="ml-2 align-middle" />
@@ -117,6 +123,7 @@ export function TabellaVociContabilita<P extends RigaVoce>({
                         key={p.id}
                         pagamento={p}
                         alunnoLabel={`${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || '—'}
+                        categoriaLabel={mostraCategoria ? nomeCategoria(p) : undefined}
                         sospeso={!!sospesoByAlunno.get(p.alunno_id)}
                         mostraSede={mostraSede}
                         onIncassa={() => onIncassa(p)}

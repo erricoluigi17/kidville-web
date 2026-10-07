@@ -55,6 +55,13 @@ export const INPUT =
 /** Select native brandizzata (INPUT + cursore pointer). */
 export const SELECT = `${INPUT} cursor-pointer hover:border-kidville-green/50`;
 
+/**
+ * `<select>` dei filtri della Contabilità: stessa pelle dei filtri della Toolbar cockpit
+ * (bordo line, focus verde con ring). Condiviso da `PaymentsDashboard` e dai filtri di selezione.
+ */
+export const FILTER_SELECT =
+  'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
+
 /** Bottone primario pillola: verde + giallo come `Btn` primary dell'app. */
 export const BTN_PRIMARY =
   'inline-flex items-center justify-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50';

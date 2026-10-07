@@ -1506,5 +1506,7 @@
   "servErroreEVoci": "{errore} {voci}",
   "servGenRigaServizio": "{nome}: {voci}",
   "servGenRigaServizioTotale": "{nome}: {voci} · {importo}",
-  "servFormCaricamentoAlunni": "Caricamento dei bambini…"
+  "servFormCaricamentoAlunni": "Caricamento dei bambini…",
+  "genrServiziGenerati": "{n, plural, one {# voce dei servizi mensili generata} other {# voci dei servizi mensili generate}}",
+  "genrServiziNonGenerati": "Le rette sono state generate, ma le voci dei servizi mensili no: riprova da Servizi → Genera servizi del mese."
 }

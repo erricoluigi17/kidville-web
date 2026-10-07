@@ -1506,5 +1506,7 @@
   "servErroreEVoci": "{errore} {voci}",
   "servGenRigaServizio": "{nome}: {voci}",
   "servGenRigaServizioTotale": "{nome}: {voci} · {importo}",
-  "servFormCaricamentoAlunni": "Loading children…"
+  "servFormCaricamentoAlunni": "Loading children…",
+  "genrServiziGenerati": "{n, plural, one {# monthly service charge generated} other {# monthly service charges generated}}",
+  "genrServiziNonGenerati": "Fees were generated, but monthly service charges were not: try again from Services → Generate this month’s services."
 }

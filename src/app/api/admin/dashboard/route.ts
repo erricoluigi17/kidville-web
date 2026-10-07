@@ -59,7 +59,7 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
       .eq('stato', 'iscritto'),
     // Pagamenti scaduti (non saldati con scadenza passata) + dato per gli alert.
     // Esclude i contenitori rateali 'padre' (gli incassi stanno sulle rate figlie:
-    // contarlo raddoppierebbe residuo/conteggio/alert), coerente con
+    // contarlo raddoppierebbe conteggio/alert), coerente con
     // calcolaTotaliPagamenti/aging/export/solleciti.
     supabase
       .from('pagamenti')

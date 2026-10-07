@@ -106,7 +106,7 @@ function formatoMese(periodo: string, locale: string, month: 'short' | 'long'): 
   return intlDateTime(locale, { month, timeZone: 'UTC' }).format(new Date(Date.UTC(anno, mese - 1, 15)));
 }
 
-/** Abbreviazione come la dà Intl (maiuscole della lingua), senza punto finale (it-IT ed en-GB: «sept.» → «sept»). */
+/** Abbreviazione come la dà Intl (maiuscole della lingua), senza punto finale (difensivo: it-IT ed en-GB non hanno il punto finale, altre lingue sì, es. fr «sept.»). */
 function abbreviato(periodo: string, locale: string): string {
   return formatoMese(periodo, locale, 'short').replace(/\.$/, '');
 }

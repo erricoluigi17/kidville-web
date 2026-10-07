@@ -274,7 +274,7 @@ describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
     expect(j.studenti.iscritti).toBe(1) // il resto della dashboard regge
     const eventi = h.logErrore.mock.calls.map((c) => (c[0] as { evento?: string }).evento)
     // Il log dice QUALE aggregato è a zero: «db» e basta non basterebbe a
-    // distinguere il modulo dagli incassi.
+    // distinguere un aggregato dall'altro.
     expect(eventi).toContain('db:form_submissions:totale')
     expect(eventi).toContain('db:form_submissions:da_firmare')
   })

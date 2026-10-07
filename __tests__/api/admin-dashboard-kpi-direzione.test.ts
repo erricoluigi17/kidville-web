@@ -83,6 +83,7 @@ describe('GET /api/admin/dashboard — nessun ruolo riceve importi', () => {
       comeUtente(user)
       const j = await (await DASHBOARD_GET(req())).json()
 
+      expect(Object.keys(j).sort()).toEqual(['alert', 'iscrizioni', 'mensa', 'moduli', 'pagamenti', 'studenti'])
       expect(Object.keys(j.pagamenti).sort()).toEqual(['fattureInAttesa', 'scadutoCount'])
       expect(j.pagamenti.scadutoCount).toBe(1)
       expect(j).not.toHaveProperty('trend')

@@ -33,6 +33,8 @@ test('la dashboard mostra i KPI e le presenze realtime seedate', async ({ page }
   await expect(page.getByText('Pagamenti scaduti').first()).toBeVisible();
   // Nessuna cifra in euro sulla home (titolare, 2026-10-07): la card degli incassi non c'è più.
   await expect(page.getByText('Incassato nel mese')).toHaveCount(0);
+  // Né altrove: nessun simbolo «€» sulla home (la pagina è caricata: i KPI sopra sono visibili).
+  await expect(page.getByText('€')).toHaveCount(0);
 
   // Card presenze realtime: aggregato multi-sede scoped sulla scuola E2E.
   await expect(page.getByText('Presenze in tempo reale')).toBeVisible();

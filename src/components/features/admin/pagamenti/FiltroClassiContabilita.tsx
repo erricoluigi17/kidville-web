@@ -23,7 +23,8 @@ import { etichettaClasse, NOME_CLASSE_ASSENTE, type ClasseFiltro } from '@/lib/p
  * (pastiglie `aria-pressed` dentro un `fieldset`/`legend`, stessa geometria,
  * stessi toni) chiuso dentro il pannello a disclosure della stessa barra
  * (`aria-expanded` + `aria-controls`, pannello sempre nel DOM con `hidden`,
- * Escape e clic fuori chiudono, il fuoco torna al comando). Il raggruppamento
+ * Escape, clic fuori o fuoco che esce chiudono; il fuoco torna al comando solo
+ * con Escape). Il raggruppamento
  * per sede con l'intestazione è quello di `SezioniMultiSelect`.
  *
  * Perché non `BarraFiltri` intera: quella possiede il PROPRIO stato

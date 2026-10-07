@@ -215,8 +215,8 @@ describe('SceltaMultiplaContabilita', () => {
     monta();
     const btn = comando();
     fireEvent.click(btn);
-    screen.getByRole('button', { name: 'Uno' }).focus();
-    screen.getByRole('button', { name: 'Tre' }).focus();
+    act(() => screen.getByRole('button', { name: 'Uno' }).focus());
+    act(() => screen.getByRole('button', { name: 'Tre' }).focus());
     expect(btn.getAttribute('aria-expanded')).toBe('true');
   });
 

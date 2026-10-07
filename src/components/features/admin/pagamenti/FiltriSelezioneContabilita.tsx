@@ -2,8 +2,8 @@
 
 import { useId } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { SceltaMultiplaContabilita } from './SceltaMultiplaContabilita';
-import { etichettaMese, mesiAnnoScolastico } from '@/lib/pagamenti/selezione-voci';
+import { ETICHETTA, SceltaMultiplaContabilita } from './SceltaMultiplaContabilita';
+import { etichettaMese, mesiAnnoScolastico, mesiValidi } from '@/lib/pagamenti/selezione-voci';
 import { cx } from '@/lib/ui/cx';
 
 /**
@@ -28,8 +28,6 @@ import { cx } from '@/lib/ui/cx';
 // locale del modulo, non esportata).
 const FILTER_SELECT =
   'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
-const ETICHETTA =
-  'mb-1 block font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-sub';
 
 export interface OpzioneCategoria {
   id: string;
@@ -91,8 +89,7 @@ export function FiltroMesiContabilita({ anno, mesi, onChange, className }: Filtr
   const periodi = mesiAnnoScolastico(anno);
   const voci = periodi.map((p) => ({ id: String(p.mese), testo: etichettaMese(p.periodo, locale, 'corta') }));
 
-  const presenti = new Set(periodi.map((p) => p.mese));
-  const valide = [...new Set(mesi)].filter((m) => presenti.has(m));
+  const valide = mesiValidi(mesi);
   const attive = new Set(valide.map(String));
 
   let riepilogo: string;

@@ -111,6 +111,18 @@ describe('FiltroCategorieContabilita', () => {
     expect(screen.getAllByRole('button', { pressed: true }).map((b) => b.textContent)).toEqual(['Mensa']);
   });
 
+  it('solo scelte non valide: «Tutte le categorie» e pastiglia «Tutte» premuta', () => {
+    render(<FiltroCategorieContabilita opzioni={OPZIONI} scelte={['fantasma']} onChange={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Categorie Tutte le categorie' })).toBeTruthy();
+    fireEvent.click(comandoCategorie());
+    expect(screen.getByRole('button', { name: 'Tutte le categorie', pressed: true })).toBeTruthy();
+  });
+
+  it('id ripetuti contano una volta: il nome della categoria, non «2 categorie»', () => {
+    render(<FiltroCategorieContabilita opzioni={OPZIONI} scelte={['mensa', 'mensa']} onChange={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Categorie Mensa' })).toBeTruthy();
+  });
+
   it('senza opzioni non disegna nulla', () => {
     const { container } = render(<FiltroCategorieContabilita opzioni={[]} scelte={[]} onChange={() => {}} />);
     expect(container.firstChild).toBeNull();
@@ -161,6 +173,13 @@ describe('FiltroMesiContabilita', () => {
   it('i mesi non validi si ignorano', () => {
     render(<FiltroMesiContabilita anno={2026} mesi={[13, 0, 10]} onChange={() => {}} />);
     expect(screen.getByRole('button', { name: 'Mesi Ott 2026' })).toBeTruthy();
+  });
+
+  it('solo mesi non validi: «Tutto l’anno» e pastiglia premuta', () => {
+    render(<FiltroMesiContabilita anno={2026} mesi={[13]} onChange={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Mesi Tutto l’anno' })).toBeTruthy();
+    fireEvent.click(comandoMesi());
+    expect(screen.getByRole('button', { name: 'Tutto l’anno', pressed: true })).toBeTruthy();
   });
 
   it('nessuna violazione axe a pannello aperto', async () => {

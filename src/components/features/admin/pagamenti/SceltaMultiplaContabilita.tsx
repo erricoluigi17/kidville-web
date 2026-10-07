@@ -23,8 +23,9 @@ import { BERSAGLIO_TOCCO } from '@/components/ui/FoglioFiltri';
  *
  * Accessibilità (invariata rispetto al filtro delle classi): comando a
  * disclosure con `aria-expanded` + `aria-controls`, pannello sempre nel DOM con
- * `hidden`, pastiglie `aria-pressed` in un `fieldset`/`legend`, Escape e clic
- * fuori chiudono, il fuoco torna al comando. Sotto `sm` il pannello scende nel
+ * `hidden`, pastiglie `aria-pressed` in un `fieldset`/`legend`. Il pannello si
+ * chiude con Escape, con un clic fuori o quando il fuoco esce dal contenitore;
+ * il fuoco torna al comando solo con Escape. Sotto `sm` il pannello scende nel
  * flusso a piena larghezza e i bersagli sono da 44px.
  */
 
@@ -33,7 +34,7 @@ import { BERSAGLIO_TOCCO } from '@/components/ui/FoglioFiltri';
 // sono costanti interne al modulo.
 const GEOMETRIA =
   'h-[42px] rounded-input border-[1.5px] border-kidville-line bg-kidville-white font-maven text-sm text-kidville-ink transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
-const ETICHETTA =
+export const ETICHETTA =
   'mb-1 block font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-sub';
 // Bersaglio di tocco: la costante del design system (`BERSAGLIO_TOCCO`),
 // applicata mobile-first e annullata da `sm` in su. Non `max-sm:${BERSAGLIO_TOCCO}`:
@@ -110,7 +111,7 @@ export function SceltaMultiplaContabilita({
   const comandoRef = useRef<HTMLButtonElement>(null);
   const contenitoreRef = useRef<HTMLDivElement>(null);
 
-  // Escape e clic fuori chiudono. `setState` sta dentro un ASCOLTATORE, non nel
+  // Escape, clic fuori e fuoco che esce chiudono. `setState` sta dentro un ASCOLTATORE, non nel
   // corpo dell'effetto (`react-hooks/set-state-in-effect`): stesso schema di
   // `BarraFiltri`.
   useEffect(() => {

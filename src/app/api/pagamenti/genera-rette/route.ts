@@ -1,15 +1,14 @@
-import { NextResponse, type NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff, type AppUser } from '@/lib/auth/require-staff'
+import { requireStaff } from '@/lib/auth/require-staff'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { resolveScuolaScrittura } from '@/lib/auth/scope'
-import { isScuolaE2E } from '@/lib/scuole/reali'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { sedeDellaGenerazione, tracciaAuditGenerazione } from '@/lib/pagamenti/generazione-server'
 
 // `anno` e `periodo` NON sono vincolati nel formato: storicamente un valore
 // malformato ricade sull'anteprima/generazione mensile del mese corrente
@@ -74,65 +73,6 @@ function iscrittoEntro(a: { data_iscrizione?: string | null }, periodo: string):
 }
 
 /**
- * LA SEDE DELLE RETTE — una sola, e la STESSA per l'anteprima e per la conferma.
- *
- * Fino al 2026-07-31 i due verbi guardavano insiemi diversi: il GET filtrava
- * `.eq('scuola_id', …)` sui candidati, il POST chiamava `genera_rette_mensili(p_periodo)`,
- * una RPC senza parametro di sede, e generava per TUTTI i plessi. Non è un rischio
- * teorico: in produzione `registro_modifiche` conserva UNA sola esecuzione
- * (`generati: 25`) e le rette risultanti stanno su DUE sedi — 21 su Giugliano e 4
- * sulla sede finta di collaudo. Un clic, due plessi.
- *
- * Perciò la sede la risolve un punto solo, con la regola delle SCRITTURE
- * (`resolveScuolaScrittura`): dichiarata dal client se accessibile, altrimenti
- * l'unica sede attiva/accessibile, altrimenti **400** — mai «ne scelgo una io».
- *
- * In più: la sede di COLLAUDO non entra nella contabilità di produzione. Le 4
- * rette emesse sulla sede E2E sono dati finti dentro il database vero, che
- * entrano nei totali e nelle liste di morosità. Il presidio è doppio — qui un 400
- * leggibile, e nella RPC (`schools.operativa`) il rifiuto strutturale, per chi la
- * chiamasse senza passare da questa route.
- */
-async function sedeDelleRette(
-  request: Request,
-  supabase: SupabaseClient,
-  user: AppUser,
-  operazione: string,
-  preferita?: string | null,
-): Promise<{ scuolaId?: string; response?: NextResponse }> {
-  const sede = await resolveScuolaScrittura(request as NextRequest, supabase, user, preferita)
-  if (sede.response || !sede.scuolaId) return sede
-  const scuolaId = sede.scuolaId
-
-  // Il nome è il secondo indizio di `isScuolaE2E` (il primo è il prefisso
-  // dell'uuid). PostgREST non lancia: se la lettura fallisce si prosegue col
-  // solo indizio dell'id — ma lo si dice, perché un predicato dimezzato in
-  // silenzio è il modo in cui questi filtri smettono di funzionare.
-  const { data: scuola, error } = await supabase
-    .from('schools')
-    .select('id, nome')
-    .eq('id', scuolaId)
-    .maybeSingle()
-  if (error) {
-    logEvento('pagamento', 'error', { operazione, esito: 'sede-non-riletta', scuola_id: scuolaId }, error)
-  }
-  const nome = (scuola as { nome?: string | null } | null)?.nome ?? ''
-  if (isScuolaE2E({ id: scuolaId, nome })) {
-    logEvento('pagamento', 'warn', {
-      operazione, tipo: 'sede-collaudo', esito: 'generazione-rifiutata',
-      utente: user.id, ruolo: user.role, scuola_id: scuolaId,
-    })
-    return {
-      response: NextResponse.json(
-        { error: 'Sede di collaudo: la generazione delle rette non è consentita' },
-        { status: 400 },
-      ),
-    }
-  }
-  return { scuolaId }
-}
-
-/**
  * La categoria «retta» della sede, con precedenza `sede > globale`.
  *
  * Le categorie di sistema sono globali (`scuola_id IS NULL`) ma il vincolo
@@ -178,7 +118,7 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
 
     const supabase = await createAdminClient()
     // Stesso scope della conferma: l'anteprima conta ciò che il POST scriverà.
-    const sede = await sedeDelleRette(request, supabase, auth.user, 'pagamenti/genera-rette:GET', q.data.scuola_id)
+    const sede = await sedeDellaGenerazione(request, supabase, auth.user, 'pagamenti/genera-rette:GET', q.data.scuola_id)
     if (sede.response) return sede.response
     const scuolaId = sede.scuolaId as string
 
@@ -367,30 +307,6 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
   }
 })
 
-/** Traccia in `registro_modifiche` chi ha generato, quando e SU QUALE SEDE.
- *  Best-effort — non fa fallire la generazione — ma mai muta: `.then(() => {}, () => {})`
- *  scartava sia l'esito sia il rifiuto, e PostgREST NON lancia (l'errore torna
- *  dentro il risultato). Senza questa riga, «l'audit non è stato scritto» era
- *  indistinguibile da «è stato scritto». */
-async function tracciaAudit(
-  supabase: SupabaseClient,
-  operazione: string,
-  azione: string,
-  nuovoValore: Record<string, unknown>,
-  utenteId: string,
-): Promise<void> {
-  const { error } = await supabase.from('registro_modifiche').insert({
-    azione,
-    tabella_interessata: 'pagamenti',
-    record_id: null,
-    nuovo_valore: nuovoValore,
-    utente_id: utenteId,
-  })
-  if (error) {
-    logEvento('pagamento', 'error', { operazione, azione, esito: 'audit-non-scritto' }, error)
-  }
-}
-
 // POST /api/pagamenti/genera-rette  (staff) — conferma generazione
 // Body: { userId, scuola_id, periodo?: 'YYYY-MM' }  -> singolo mese
 //   oppure { userId, scuola_id, anno: 2026 }        -> intero anno scolastico (set->giu)
@@ -407,7 +323,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
     const body = b.data
 
     const supabase = await createAdminClient()
-    const sede = await sedeDelleRette(request, supabase, auth.user, 'pagamenti/genera-rette:POST', body.scuola_id)
+    const sede = await sedeDellaGenerazione(request, supabase, auth.user, 'pagamenti/genera-rette:POST', body.scuola_id)
     if (sede.response) return sede.response
     const scuolaId = sede.scuolaId as string
 
@@ -423,7 +339,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
         logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500, evento: 'db' }, error)
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
-      await tracciaAudit(
+      await tracciaAuditGenerazione(
         supabase, 'pagamenti/genera-rette:POST', 'genera_rette_anno',
         { anno_inizio: annoInizio, generati: data, scuola_id: scuolaId }, auth.user.id,
       )
@@ -458,7 +374,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    await tracciaAudit(
+    await tracciaAuditGenerazione(
       supabase, 'pagamenti/genera-rette:POST', 'genera_rette',
       { periodo, generati: data, scuola_id: scuolaId }, auth.user.id,
     )

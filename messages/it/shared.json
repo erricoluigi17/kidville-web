@@ -648,5 +648,8 @@
   "erroreObiettivoCodiceDuplicato": "Questo codice è già usato da un altro obiettivo della stessa materia e classe: scegline uno diverso. L’obiettivo non è stato modificato.",
   "avvisoAggiornaPiuTardi": "Più tardi",
   "errorePushStatoNonLetto": "Non è stato possibile verificare se le notifiche sono attive su questo dispositivo: riprova fra qualche istante",
-  "erroreRiaperturaFatturaInInvio": "Una fattura di questa voce è in invio proprio adesso: riprova fra un minuto. Non è stato stornato niente."
+  "erroreRiaperturaFatturaInInvio": "Una fattura di questa voce è in invio proprio adesso: riprova fra un minuto. Non è stato stornato niente.",
+  "erroreSedeDiCollaudo": "La generazione non è consentita su una sede di collaudo.",
+  "erroreServiziNonGenerati": "Le rette sono state generate, ma i servizi mensili no: riprova fra qualche istante. Le rette già scritte non sono state toccate.",
+  "erroreServiziNonDisponibili": "I servizi mensili non sono ancora disponibili su questo database: le rette sono state generate normalmente."
 }

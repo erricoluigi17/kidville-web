@@ -3103,6 +3103,18 @@ export const CODICI_ERRORE = {
      * catalogo serve a chi lo riusa da una schermata che invece l'errore lo mostra.
      */
     PUSH_STATO_NON_LETTO: 'errorePushStatoNonLetto',
+    /**
+     * 400 — la generazione di rette o servizi su una sede di COLLAUDO (`e2e00000-…`):
+     * non entra nella contabilità di produzione (`@/lib/pagamenti/generazione-server`).
+     */
+    SEDE_DI_COLLAUDO: 'erroreSedeDiCollaudo',
+    /**
+     * Esito dei servizi mensili generati insieme alle rette (o a mano): le rette sono già
+     * scritte, i servizi no. `SERVIZI_NON_GENERATI` = guasto (il dettaglio sta nel log);
+     * `SERVIZI_NON_DISPONIBILI` = lo schema non c'è ancora (database non migrato).
+     */
+    SERVIZI_NON_GENERATI: 'erroreServiziNonGenerati',
+    SERVIZI_NON_DISPONIBILI: 'erroreServiziNonDisponibili',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

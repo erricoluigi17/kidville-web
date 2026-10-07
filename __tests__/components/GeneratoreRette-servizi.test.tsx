@@ -37,6 +37,9 @@ async function generaMese() {
   await screen.findByText(/Generate 3 rette per/);
 }
 
+// Le aree live stanno sempre nel DOM: «nessun avviso» vuol dire area VUOTA, non area assente.
+const testoAvvisi = () => screen.queryAllByRole('alert').map((a) => a.textContent ?? '').join('')
+
 const AVVISO = 'Le rette sono state generate, ma le voci dei servizi mensili no: riprova da Servizi → «Genera le voci dei servizi».';
 
 describe('GeneratoreRette — voci dei servizi mensili', () => {
@@ -59,20 +62,20 @@ describe('GeneratoreRette — voci dei servizi mensili', () => {
     vi.stubGlobal('fetch', fintoFetch({ generati: 0 }));
     await generaMese();
     expect(screen.queryByText(/servizi mensili/)).toBeNull();
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(testoAvvisi()).toBe('');
   });
 
   it('servizi assenti dalla risposta: nessuna riga e nessun avviso', async () => {
     vi.stubGlobal('fetch', fintoFetch(undefined));
     await generaMese();
     expect(screen.queryByText(/servizi mensili/)).toBeNull();
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(testoAvvisi()).toBe('');
   });
 
   it('SERVIZI_NON_GENERATI: avviso in role="alert", le rette restano mostrate come generate', async () => {
     vi.stubGlobal('fetch', fintoFetch({ errore: true, codice: 'SERVIZI_NON_GENERATI' }));
     await generaMese();
-    expect(screen.getByRole('alert')).toHaveTextContent(AVVISO);
+    expect(testoAvvisi()).toBe(AVVISO);
     expect(screen.getByText(/Generate 3 rette per/)).toBeInTheDocument();
     expect(screen.queryByText(/voci dei servizi mensili generate/)).toBeNull();
   });
@@ -80,7 +83,7 @@ describe('GeneratoreRette — voci dei servizi mensili', () => {
   it('SERVIZI_NON_DISPONIBILI: nessun avviso, lo schema non c\'è', async () => {
     vi.stubGlobal('fetch', fintoFetch({ errore: true, codice: 'SERVIZI_NON_DISPONIBILI' }));
     await generaMese();
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(testoAvvisi()).toBe('');
     expect(screen.queryByText(AVVISO)).toBeNull();
   });
 
@@ -93,11 +96,21 @@ describe('GeneratoreRette — voci dei servizi mensili', () => {
     expect(screen.getByText('4 voci dei servizi mensili generate')).toBeInTheDocument();
   });
 
-  it('una nuova anteprima azzera l\'esito dei servizi', async () => {
+  it('una nuova anteprima azzera l\'avviso dei servizi (l\'area live resta, vuota)', async () => {
     vi.stubGlobal('fetch', fintoFetch({ errore: true, codice: 'SERVIZI_NON_GENERATI' }));
     await generaMese();
+    expect(testoAvvisi()).toBe(AVVISO);
     fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
     await screen.findByRole('button', { name: /Genera 1 rette/ });
-    expect(screen.queryByText(AVVISO)).toBeNull();
+    expect(testoAvvisi()).toBe('');
+  });
+
+  it('una nuova anteprima azzera anche la riga con il numero di voci', async () => {
+    vi.stubGlobal('fetch', fintoFetch({ generati: 3 }));
+    await generaMese();
+    expect(screen.getByText('3 voci dei servizi mensili generate')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    await screen.findByRole('button', { name: /Genera 1 rette/ });
+    expect(screen.queryByText(/servizi mensili/)).toBeNull();
   });
 });

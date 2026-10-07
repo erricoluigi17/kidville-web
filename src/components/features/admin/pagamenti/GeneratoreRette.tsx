@@ -80,6 +80,8 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
      */
     const [selezione, setSelezione] = useState<SelezioneAlunni>(SELEZIONE_TUTTI);
 
+    const avvisoServiziNonGenerati = servizi !== null && 'errore' in servizi && servizi.codice === 'SERVIZI_NON_GENERATI';
+
     const reset = () => { setPreviewMese(null); setPreviewAnno(null); setDone(null); setServizi(null); setSelezione(SELEZIONE_TUTTI); };
 
     const loadPreview = useCallback(async () => {
@@ -194,15 +196,15 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     <CheckCircle2 size={18} /> {done}
                 </div>
             )}
-            {done !== null && servizi && 'generati' in servizi && servizi.generati > 0 && (
-                <p role="status" className="font-maven text-sm text-kidville-success">{t('genrServiziGenerati', { n: servizi.generati })}</p>
-            )}
-            {/* Le rette restano generate; solo i servizi no. «Non disponibili» tace: senza schema non c'è nulla da perdere. */}
-            {done !== null && servizi && 'errore' in servizi && servizi.codice === 'SERVIZI_NON_GENERATI' && (
-                <p role="alert" className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">
-                    {t('genrServiziNonGenerati')}
-                </p>
-            )}
+            {/* Le aree live stanno SEMPRE nel DOM: un'area nata insieme al testo non viene annunciata.
+                Le rette restano generate anche se i servizi no; «non disponibili» tace (senza schema
+                non c'è nulla da perdere). Il loro stato si azzera con ogni anteprima e generazione. */}
+            <p role="status" className={servizi && 'generati' in servizi && servizi.generati > 0 ? 'font-maven text-sm text-kidville-success' : undefined}>
+                {servizi && 'generati' in servizi && servizi.generati > 0 ? t('genrServiziGenerati', { n: servizi.generati }) : ''}
+            </p>
+            <div role="alert" className={avvisoServiziNonGenerati ? 'rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong' : undefined}>
+                {avvisoServiziNonGenerati ? t('genrServiziNonGenerati') : ''}
+            </div>
 
             {/* Anteprima ANNO */}
             {mode === 'anno' && previewAnno && (

@@ -7,7 +7,7 @@ import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { zMese } from '@/lib/pagamenti/servizi-mensili';
-import { PAGINA_SERVIZI, codiceSicuro, importoNumero, intestazioni, leggiCorpo, meseCorrente } from './servizi-client';
+import { PAGINA_SERVIZI, codiceSicuro, intestazioni, leggiCorpo, meseCorrente } from './servizi-client';
 import { BottonePrimarioServizi } from './BottonePrimarioServizi';
 import { avvisoErrore, avvisoOk, btnSecondario, campo, etichetta } from './servizi-stili';
 

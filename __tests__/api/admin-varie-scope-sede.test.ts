@@ -53,22 +53,6 @@ vi.mock('@/lib/supabase/server-client', async () => {
 import { GET as SEGNALAZIONI_GET, PATCH as SEGNALAZIONI_PATCH } from '@/app/api/admin/segnalazioni/route'
 import { GET as AUDIT_GET } from '@/app/api/admin/audit/route'
 import { GET as DASHBOARD_GET } from '@/app/api/admin/dashboard/route'
-import { dataCivile } from '@/i18n/config'
-
-// «Oggi» per una scuola di Giugliano è oggi in ITALIA, non a Greenwich.
-//
-// Questa riga era `new Date().toISOString().slice(0, 10)`, cioè la data in UTC,
-// e il 2026-08-01 all'01:08 italiane ha fatto diventare rosso il test degli
-// incassi: la fixture datava l'incasso al 31 luglio, la dashboard cercava
-// «questo mese» in agosto. Non era un test fragile — era il difetto vero, che
-// si era manifestato da solo nelle due ore in cui Italia e UTC stanno in mesi
-// diversi. In produzione quelle due ore ci sono ogni notte, perché su Vercel il
-// processo gira in UTC.
-//
-// Ora la fixture usa la stessa nozione di «oggi» del prodotto, e il test non
-// dipende più dal fuso della macchina che lo esegue: verificato con
-// Europe/Rome, UTC, Pacific/Kiritimati (UTC+14) e Pacific/Niue (UTC-11).
-const OGGI = dataCivile()
 
 const req = (url: string, cookie?: string) =>
   new NextRequest(url, cookie ? { headers: { cookie } } : undefined)
@@ -119,13 +103,12 @@ const dbBase = (): DBFinto => ({
     { id: 'al-a', classe_sezione: '2 ANNI', stato: 'iscritto', scuola_id: SEDE_A },
     { id: 'al-b', classe_sezione: '2 ANNI', stato: 'iscritto', scuola_id: SEDE_B },
   ],
-  pagamenti: [],
+  pagamenti: [
+    { id: 'pag-a', scuola_id: SEDE_A, tipo: 'singolo', stato: 'scaduto', scadenza: '2026-01-10', alunni: { nome: 'Prova', cognome: 'Collaudo' } },
+    { id: 'pag-b', scuola_id: SEDE_B, tipo: 'singolo', stato: 'scaduto', scadenza: '2026-01-11', alunni: { nome: 'Prova', cognome: 'Altrove' } },
+  ],
   enrollment_submissions: [],
   mensa_prenotazioni: [],
-  incassi: [
-    { id: 'inc-a', importo: 100, data_incasso: OGGI, pagamenti: { scuola_id: SEDE_A } },
-    { id: 'inc-b', importo: 900, data_incasso: OGGI, pagamenti: { scuola_id: SEDE_B } },
-  ],
   form_submissions: [
     { id: 'fs-a', scuola_id: SEDE_A, status: 'pending_signature' },
     { id: 'fs-b1', scuola_id: SEDE_B, status: 'pending_signature' },
@@ -245,13 +228,9 @@ describe('GET /api/admin/audit — il registro immutabile è del proprio plesso'
 })
 
 describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
-  // ⚠️ QUESTI TEST PARLANO DI SEDI, NON DI RUOLI, e dal 2026-09-02 l'identità che
-  // usano non è più indifferente: gli aggregati economici (`incassatoMese`,
-  // `scadutoImporto`, `trend`) il server li OMETTE per chi non è Direzione. Una
-  // segreteria qui vedrebbe `undefined` e il test parlerebbe d'altro. La Direzione
-  // è l'identità che quei numeri li riceve, quindi è l'unica da cui si può
-  // osservare se sommano la sede sbagliata — che è la domanda di questo blocco.
-  // Il comportamento per ruolo ha i suoi test in `admin-dashboard-kpi-direzione`.
+  // Dal 2026-10-07 la dashboard non manda più importi in euro a nessun ruolo: qui
+  // si osserva solo lo scope di sede sui CONTEGGI e sulla lista degli scaduti.
+  // Il contratto «niente euro» ha i suoi test in `admin-dashboard-kpi-direzione`.
   it('Moduli conta solo le compilazioni del proprio plesso', async () => {
     h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'coordinator', scuola_id: SEDE_A } })
     const res = await DASHBOARD_GET(req('http://localhost/api/admin/dashboard'))
@@ -261,14 +240,13 @@ describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
     expect(j.moduli.daFirmare).toBe(1)
   })
 
-  it('Incassato del mese: solo gli incassi legati a pagamenti del proprio plesso', async () => {
+  it('Pagamenti scaduti: solo quelli del proprio plesso, conteggio e alert', async () => {
     h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'coordinator', scuola_id: SEDE_A } })
     const res = await DASHBOARD_GET(req('http://localhost/api/admin/dashboard'))
     expect(res.status).toBe(200)
     const j = await res.json()
-    expect(j.pagamenti.incassatoMese).toBe(100)
-    const totaleTrend = (j.trend as { incassato: number }[]).reduce((a, t) => a + t.incassato, 0)
-    expect(totaleTrend).toBe(100)
+    expect(j.pagamenti.scadutoCount).toBe(1)
+    expect(j.alert.scaduti.map((a: { id: string }) => a.id)).toEqual(['pag-a'])
   })
 
   it('scope vuoto ⇒ tutti gli aggregati a zero (deny), non i totali di tutte le sedi', async () => {
@@ -278,7 +256,8 @@ describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
     const j = await res.json()
     expect(j.studenti.iscritti).toBe(0)
     expect(j.moduli.submissionTotale).toBe(0)
-    expect(j.pagamenti.incassatoMese).toBe(0)
+    expect(j.pagamenti.scadutoCount).toBe(0)
+    expect(j.alert.scaduti).toEqual([])
   })
 
   // Il DB E2E della CI non è migrato e `form_submissions.scuola_id` non c'è:
@@ -298,15 +277,5 @@ describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
     // distinguere il modulo dagli incassi.
     expect(eventi).toContain('db:form_submissions:totale')
     expect(eventi).toContain('db:form_submissions:da_firmare')
-  })
-
-  it('incassi illeggibili: l\'errore del join non resta muto', async () => {
-    h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'coordinator', scuola_id: SEDE_A } })
-    h.errori = { incassi: { code: '42703', message: 'column does not exist' } }
-    const res = await DASHBOARD_GET(req('http://localhost/api/admin/dashboard'))
-    expect(res.status).toBe(200)
-    const j = await res.json()
-    expect(j.pagamenti.incassatoMese).toBe(0)
-    expect(h.logErrore).toHaveBeenCalled()
   })
 })

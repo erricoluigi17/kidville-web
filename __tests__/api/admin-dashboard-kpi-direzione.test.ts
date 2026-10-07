@@ -4,25 +4,15 @@ import type { DBFinto } from '../fixtures/finto-supabase'
 import { SEDE_A } from '../fixtures/sedi'
 
 // =============================================================================
-// I KPI ECONOMICI DELLA HOME SONO DELLA DIREZIONE (titolare, 2026-09-02).
+// NESSUN IMPORTO IN EURO ESCE DALLA DASHBOARD (titolare, 2026-10-07).
 //
-// ─── COSA SI STA COLLAUDANDO, E PERCHÉ È DIVERSO DALLO SCADENZARIO ───────────
-// In Contabilità i totali li somma il BROWSER, a partire da righe che la
-// segreteria deve legittimamente vedere: lì nasconderli è mettere in ordine la
-// vista, non costruire una barriera. Qui no: `scadutoImporto`, `incassatoMese` e
-// `trend` li calcola il SERVER, e quindi il server può — e deve — non mandarli.
-// Questo file collauda l'unica delle due cose che è una protezione vera.
+// Fino al 2026-10-06 la Direzione riceveva `scadutoImporto`, `incassatoMese` e
+// `trend`, gli altri ruoli no. Il titolare ha tolto le cifre in euro dalla home:
+// restano i conteggi. Gli importi si vedono in Contabilità, non qui.
 //
-// L'asserzione che conta è `not.toHaveProperty`, non «è zero»: uno zero sarebbe
-// un'affermazione FALSA sui conti della scuola («non è entrato niente»), e
-// sarebbe pure indistinguibile da un mese davvero senza incassi. La chiave non
-// deve esistere. Stesso contratto della cassa (`cassa/movimenti`), stessa forma
-// di test (`__tests__/cassa/movimenti-route.test.ts`).
-//
-// ─── COSA RESTA A TUTTI, E NON È UNA DIMENTICANZA ────────────────────────────
-// `scadutoCount`, `fattureInAttesa` e `alert.scaduti`: sono la lista operativa
-// con cui la segreteria sollecita. Decisione esplicita del titolare, coerente col
-// fatto che in Contabilità gli importi riga per riga restano visibili.
+// Le asserzioni che contano sono sulle CHIAVI (esattamente quelle attese) e sulla
+// tabella `incassi`, che non deve nemmeno essere interrogata: uno zero sarebbe
+// un'affermazione falsa sui conti, e una query inutile resta un'esposizione.
 // =============================================================================
 
 const h = vi.hoisted(() => ({
@@ -38,17 +28,14 @@ vi.mock('@/lib/supabase/server-client', async () => {
 })
 
 import { GET as DASHBOARD_GET } from '@/app/api/admin/dashboard/route'
-import { dataCivile } from '@/i18n/config'
 
-const OGGI = dataCivile()
 const req = () => new NextRequest('http://localhost/api/admin/dashboard')
 
 const dbBase = (): DBFinto => ({
   utenti_scuole: [],
   alunni: [{ id: 'al-a', classe_sezione: '2 ANNI', stato: 'iscritto', scuola_id: SEDE_A }],
-  // Un pagamento scaduto e non saldato: alimenta insieme l'IMPORTO (riservato) e
-  // il CONTEGGIO (che resta a tutti). Averli entrambi nella stessa fixture è il
-  // punto: si deve poter vedere che uno sparisce e l'altro no.
+  // Un pagamento scaduto e non saldato, con un importo vero nella fixture: il
+  // conteggio deve uscire, l'importo no.
   pagamenti: [
     {
       id: 'pag-1',
@@ -66,7 +53,6 @@ const dbBase = (): DBFinto => ({
   ],
   enrollment_submissions: [],
   mensa_prenotazioni: [],
-  incassi: [{ id: 'inc-a', importo: 100, data_incasso: OGGI, pagamenti: { scuola_id: SEDE_A } }],
   form_submissions: [],
   fatture_emesse: [],
   segnalazioni: [],
@@ -83,47 +69,29 @@ const comeUtente = (user: Record<string, unknown>) => {
   h.requireStaff.mockResolvedValue({ user: { scuola_id: SEDE_A, ...user } })
 }
 
-describe('GET /api/admin/dashboard — gli euro sono della Direzione', () => {
-  it('SEGRETERIA: le tre chiavi economiche NON esistono nella risposta', async () => {
-    comeUtente({ id: 'seg-1', role: 'segreteria' })
-    const j = await (await DASHBOARD_GET(req())).json()
+describe('GET /api/admin/dashboard — nessun ruolo riceve importi', () => {
+  const identita: [string, Record<string, unknown>][] = [
+    ['SEGRETERIA', { id: 'seg-1', role: 'segreteria' }],
+    ['ADMIN', { id: 'dir-1', role: 'admin' }],
+    ['COORDINATOR', { id: 'dir-1', role: 'coordinator' }],
+    // `role` è la veste indossata adesso; i ruoli reali sono in `ruoli`.
+    ['COORDINATRICE in veste di genitore', { id: 'dir-2', role: 'genitore', ruoli: ['coordinator', 'genitore'] }],
+  ]
 
-    expect(j.pagamenti).not.toHaveProperty('scadutoImporto')
-    expect(j.pagamenti).not.toHaveProperty('incassatoMese')
-    expect(j).not.toHaveProperty('trend')
-  })
-
-  it('SEGRETERIA: i conteggi e la lista degli scaduti restano — servono a sollecitare', async () => {
-    comeUtente({ id: 'seg-1', role: 'segreteria' })
-    const j = await (await DASHBOARD_GET(req())).json()
-
-    expect(j.pagamenti.scadutoCount).toBe(1)
-    expect(j.pagamenti).toHaveProperty('fattureInAttesa')
-    expect(j.alert.scaduti).toHaveLength(1)
-    // E il resto della dashboard non deve essersi rotto per un ramo di ruolo.
-    expect(j.studenti.iscritti).toBe(1)
-  })
-
-  for (const ruolo of ['admin', 'coordinator'] as const) {
-    it(`${ruolo.toUpperCase()}: le tre chiavi economiche ci sono, e coi numeri veri`, async () => {
-      comeUtente({ id: 'dir-1', role: ruolo })
+  for (const [nome, user] of identita) {
+    it(`${nome}: solo conteggi, nessuna chiave in euro, nessuna lettura di incassi`, async () => {
+      comeUtente(user)
       const j = await (await DASHBOARD_GET(req())).json()
 
-      expect(j.pagamenti.scadutoImporto).toBe(250)
-      expect(j.pagamenti.incassatoMese).toBe(100)
-      expect(Array.isArray(j.trend)).toBe(true)
+      expect(Object.keys(j.pagamenti).sort()).toEqual(['fattureInAttesa', 'scadutoCount'])
+      expect(j.pagamenti.scadutoCount).toBe(1)
+      expect(j).not.toHaveProperty('trend')
+      expect(j.alert.scaduti).toHaveLength(1)
+      expect(Object.keys(j.alert.scaduti[0]).sort()).toEqual(['alunno', 'id', 'scadenza'])
+      expect(JSON.stringify(j)).not.toContain('250')
+      expect(h.tabelle).not.toContain('incassi')
+      // E il resto della dashboard non deve essersi rotto.
+      expect(j.studenti.iscritti).toBe(1)
     })
   }
-
-  it('decide sui ruoli REALI, non sulla veste indossata adesso', async () => {
-    // `user.role` è il ruolo ATTIVO, quello del cookie `kv-active-role`: una
-    // coordinatrice che sta guardando l'app «come genitore» resta la Direzione.
-    // Se questa route guardasse `role`, cambiare veste le toglierebbe i propri
-    // numeri — e, girata al contrario, la stessa svista è come si regalano
-    // permessi a chi indossa la veste giusta.
-    comeUtente({ id: 'dir-2', role: 'genitore', ruoli: ['coordinator', 'genitore'] })
-    const j = await (await DASHBOARD_GET(req())).json()
-
-    expect(j.pagamenti.scadutoImporto).toBe(250)
-  })
 })

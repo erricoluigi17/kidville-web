@@ -369,8 +369,8 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
 })
 
 describe('GeneraServiziMese', () => {
-  const ANTEPRIMA_DIREZIONE = ok({ periodo: '2026-10', voci: 3, totale: 256.5, per_servizio: [{ categoria_id: SERV, nome: 'Pomeridiano', voci: 3, totale: 256.5 }] })
-  const ANTEPRIMA_SEGRETERIA = ok({ periodo: '2026-10', voci: 3, per_servizio: [{ categoria_id: SERV, nome: 'Pomeridiano', voci: 3 }] })
+  const ANTEPRIMA_DIREZIONE = ok({ periodo: '2026-10-01', voci: 3, totale: 256.5, per_servizio: [{ categoria_id: SERV, nome: 'Pomeridiano', voci: 3, totale: 256.5 }] })
+  const ANTEPRIMA_SEGRETERIA = ok({ periodo: '2026-10-01', voci: 3, per_servizio: [{ categoria_id: SERV, nome: 'Pomeridiano', voci: 3 }] })
   let anteprima: Risposta
   let genera: Risposta
 
@@ -409,7 +409,7 @@ describe('GeneraServiziMese', () => {
   })
 
   it('0 voci: «Genera» disabilitato e il perché a schermo', async () => {
-    anteprima = ok({ periodo: '2026-10', voci: 0, per_servizio: [] })
+    anteprima = ok({ periodo: '2026-10-01', voci: 0, per_servizio: [] })
     await apri()
     fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
     expect(await screen.findByText('Nessuna voce da generare per questo mese')).toBeInTheDocument()
@@ -420,7 +420,7 @@ describe('GeneraServiziMese', () => {
     await apri()
     fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Genera 3 voci' }))
-    anteprima = ok({ periodo: '2026-10', voci: 0, per_servizio: [] })
+    anteprima = ok({ periodo: '2026-10-01', voci: 0, per_servizio: [] })
     expect(await screen.findByText('3 voci generate')).toBeInTheDocument()
     expect(vedi('POST')[0].body).toEqual({ periodo: '2026-10', scuola_id: SEDE })
     expect(await screen.findByText('Nessuna voce da generare per questo mese')).toBeInTheDocument()
@@ -524,15 +524,24 @@ describe('ServiziPanel — correzioni della revisione', () => {
     expect(ids).not.toContain(A1)
   })
 
+  it('dopo un\'eliminazione riuscita il focus sta sul titolo della scheda', async () => {
+    scritture = [ok({ voci_eliminate: 0, voci_mantenute: 0, intoccabili: 0 })]
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: NOME_ELIMINA }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Elimina l’iscrizione' }))
+    expect(await screen.findByText('Iscrizione eliminata')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Pomeridiano' })).toHaveFocus())
+  })
+
   it('Modifica che riceve il 409: la seconda richiesta ripete importo, dal e al', async () => {
-    scritture = [DA_DECIDERE, ok({ voci_eliminate: 0, voci_mantenute: 2, intoccabili: 0 })]
+    scritture = [DA_DECIDERE, ok({ voci_eliminate: 0, voci_mantenute: 1, intoccabili: 0 })]
     await apri()
     fireEvent.click(screen.getByRole('button', { name: NOME_MODIFICA }))
     fireEvent.change(await screen.findByLabelText('Importo mensile (€)'), { target: { value: '90' } })
     fireEvent.change(screen.getByLabelText('Al mese (facoltativo)'), { target: { value: '2027-06' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salva' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Mantienile' }))
-    await screen.findByText('Iscrizione aggiornata · 2 voci mantenute')
+    await screen.findByText('Iscrizione aggiornata · 1 voce mantenuta')
     const [uno, due] = vedi('PATCH').map((c) => c.body)
     expect(uno).toEqual({ id: ISCR1, scuola_id: SEDE, importo_mensile: 90, dal: '2026-10', al: '2027-06' })
     expect(due).toEqual({ ...uno, voci_future: 'mantieni' })
@@ -560,7 +569,7 @@ describe('GeneraServiziMese — gara fra anteprima e mese', () => {
         if (metodo === 'POST') return { ok: true, status: 200, json: async () => ({ success: true, data: { periodo: '2026-10', generati: 3 } }) }
         letture += 1
         if (letture > 1) return { ok: false, status: 500, json: async () => ({ error: 'x', codice: 'SERVIZI_ANTEPRIMA_FALLITA' }) }
-        return { ok: true, status: 200, json: async () => ok({ periodo: '2026-10', voci: 3, per_servizio: [{ categoria_id: SERV, nome: 'Pomeridiano', voci: 3 }] }).body }
+        return { ok: true, status: 200, json: async () => ok({ periodo: '2026-10-01', voci: 3, per_servizio: [{ categoria_id: SERV, nome: 'Pomeridiano', voci: 3 }] }).body }
       }
       return base(u, init)
     })
@@ -581,7 +590,7 @@ describe('GeneraServiziMese — gara fra anteprima e mese', () => {
     fetchMock.mockImplementation(async (u: string, init?: { method?: string; body?: string }) => {
       if (u.startsWith('/api/pagamenti/genera-servizi')) {
         chiamate.push({ url: u, metodo: init?.method ?? 'GET', body: null })
-        return { ok: true, status: 200, json: async () => ok({ periodo: '2026-09', voci: 4, per_servizio: [] }).body }
+        return { ok: true, status: 200, json: async () => ok({ periodo: '2026-09-01', voci: 4, per_servizio: [] }).body }
       }
       return base(u, init)
     })
@@ -589,5 +598,23 @@ describe('GeneraServiziMese — gara fra anteprima e mese', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
     expect(await screen.findByRole('button', { name: 'Genera 4 voci' })).toBeDisabled()
     expect(vedi('POST')).toHaveLength(0)
+  })
+
+  it('un 200 senza il numero delle voci generate mostra l\'errore, non «0 voci generate»', async () => {
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (u: string, init?: { method?: string; body?: string }) => {
+      if (u.startsWith('/api/pagamenti/genera-servizi')) {
+        const metodo = init?.method ?? 'GET'
+        chiamate.push({ url: u, metodo, body: null })
+        if (metodo === 'POST') return { ok: true, status: 200, json: async () => { throw new Error('corpo illeggibile') } }
+        return { ok: true, status: 200, json: async () => ok({ periodo: '2026-10-01', voci: 3, per_servizio: [] }).body }
+      }
+      return base(u, init)
+    })
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Genera 3 voci' }))
+    expect(await screen.findByText('Non siamo riusciti a generare le voci.')).toBeInTheDocument()
+    expect(screen.queryByText('0 voci generate')).toBeNull()
   })
 })

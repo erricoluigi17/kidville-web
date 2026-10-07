@@ -77,9 +77,13 @@ export function GeneraServiziMese({ userId, scuolaId }: Props) {
             if (!res.ok) {
                 logClient({ livello: 'error', evento: 'fetch', messaggio: `servizi-generazione-respinta${codiceSicuro(corpo)}`, route: PAGINA_SERVIZI, stato: res.status });
                 setEsito({ tipo: 'errore', testo: messaggioDaCorpo(corpo, t('servGenErroreGenera')) });
+            } else if (typeof corpo?.data?.generati !== 'number') {
+                // 200 ma senza il numero (corpo illeggibile o inatteso): non si scrive «0 voci generate».
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'servizi-generazione-senza-esito', route: PAGINA_SERVIZI, stato: res.status });
+                setEsito({ tipo: 'errore', testo: t('servGenErroreGenera') });
             } else {
                 // Il successo resta a schermo anche se la rilettura dell'anteprima fallisce.
-                setEsito({ tipo: 'ok', testo: t('servGenFatto', { n: importoNumero(corpo?.data?.generati) }) });
+                setEsito({ tipo: 'ok', testo: t('servGenFatto', { n: corpo.data.generati }) });
                 const r = await leggiAnteprima(periodo);
                 setAnteprima('anteprima' in r ? r.anteprima : null);
             }

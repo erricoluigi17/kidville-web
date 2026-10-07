@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/Badge';
 import { formatEuro } from '@/lib/format/valuta';
@@ -41,12 +41,22 @@ export function ServizioScheda({ userId, scuolaId, servizio, iscrizioni, onEsito
     const titoloRef = useRef<HTMLHeadingElement>(null);
     // Dopo un'operazione riuscita il bottone da cui si era partiti può sparire (eliminazione,
     // iscrizione conclusa): il focus va sul titolo della scheda, che c'è sempre.
+    const daFocalizzare = useRef(false);
     const esitoConFocus = useCallback((e: EsitoMostrato) => {
         onEsito(e);
-        if (e.tipo === 'ok') setTimeout(() => titoloRef.current?.focus(), 0);
+        if (e.tipo === 'ok') daFocalizzare.current = true;
     }, [onEsito]);
     const scrittura = useScritturaServizi({ onEsito: esitoConFocus, onScritto, onChiuso: chiudi }, userId);
     const { azzeraErrore } = scrittura;
+    // Il focus passa al titolo DOPO che la modale si è smontata (il suo cleanup, che restituisce il
+    // focus al bottone d'origine, gira prima degli effetti nuovi dello stesso commit) e il titolo
+    // non è più `inert`: un timer poteva scattare prima.
+    useEffect(() => {
+        if (azione === null && daFocalizzare.current) {
+            daFocalizzare.current = false;
+            titoloRef.current?.focus();
+        }
+    }, [azione]);
     const apri = (a: Azione) => { azzeraErrore(); onNuovaAzione(); setAzione(a); };
 
     const oggi = primoDelMese(meseCorrente());
@@ -94,8 +104,10 @@ export function ServizioScheda({ userId, scuolaId, servizio, iscrizioni, onEsito
                 <div>
                     <h3 ref={titoloRef} tabIndex={-1} className="font-barlow text-lg font-extrabold text-kidville-green outline-none">{servizio.nome}</h3>
                     <p className="font-maven text-xs text-kidville-sub">
-                        {predefinito > 0 ? t('servImportoProposto', { importo: formatEuro(predefinito) }) : t('servImportoNonImpostato')}
-                        {' · '}{t('servIscrittiAttivi', { n: attivi })}
+                        {t('servUnisci', {
+                            a: predefinito > 0 ? t('servImportoProposto', { importo: formatEuro(predefinito) }) : t('servImportoNonImpostato'),
+                            b: t('servIscrittiAttivi', { n: attivi }),
+                        })}
                     </p>
                 </div>
                 <button type="button" onClick={() => apri({ tipo: 'aggiungi' })} className={btnSecondario}

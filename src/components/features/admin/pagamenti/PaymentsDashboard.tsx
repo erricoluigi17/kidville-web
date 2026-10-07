@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
-import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText, Download, X } from 'lucide-react';
+import { Search, Filter, AlertTriangle, RefreshCw, Plus, Pencil, Layers, Eye, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton, type EsitoAccodamento } from './FatturaButton';
 import { FatturaChip } from './FatturaChip';
@@ -24,10 +24,12 @@ import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
 import { STATI_PAGAMENTO as STATI, calcolaTotaliPagamenti } from './stati';
 import { AgendaScadenze } from './AgendaScadenze';
+import { KpiContabilita } from './KpiContabilita';
+import { useCifreNascoste } from './cifre-nascoste';
 import { BadgeMetodoPagamento } from '@/components/features/pagamenti/BadgeMetodoPagamento';
 import { useAgingLabel, bucketScadenze, isMoroso, residuoEffettivo, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
-import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
+import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
@@ -164,6 +166,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
      * server (la home /admin) l'omissione è reale e si fa là.
      */
     const eDirezione = eDirezioneCockpit(useRuoloCockpit());
+    // «Nascondi cifre»: scelta ricordata per utente su questo dispositivo (default: visibili).
+    const [cifreNascoste, setCifreNascoste] = useCifreNascoste(userId);
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [categorie, setCategorie] = useState<Categoria[]>([]);
@@ -672,51 +676,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 </div>
             )}
 
-            {/* KPI (StatCard cockpit): 1 colonna sotto sm, 2 da sm, 4 da lg
-                `data-testid`: le etichette dei KPI NON sono uniche nella schermata —
-                «Da fatturare» è anche il badge di stato di una riga della tabella —
-                e senza un confine i test finiscono per contare importi che stanno
-                altrove, con esiti che cambiano col calendario. Vedi
-                `__tests__/components/importi-euro-italiani.test.tsx`. */}
+            {/* KPI della Direzione: card, tabella per sede (con più sedi), selezione e occhio.
+                Il gate `eDirezione` sta qui; il dettaglio e i testid in `KpiContabilita`. */}
             {eDirezione && (
-            <div data-testid="kpi-contabilita" className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <StatCard icon={CheckCircle2} label={t('dashIncassato')} value={loading ? '—' : formatEuro(totals.incassato)} tone="success" />
-                <StatCard icon={Clock} label={t('dashDaIncassare')} value={loading ? '—' : formatEuro(totals.daIncassare)} tone="warn" />
-                <StatCard icon={AlertTriangle} label={t('dashScadutoMorosita')} value={loading ? '—' : formatEuro(totals.scaduto)} tone="error" />
-                <StatCard icon={FileText} label={t('dashDaFatturare')} value={loading ? '—' : formatEuro(totals.daFatturare)}
-                    sub={!loading && totals.nDaFatturare > 0 ? `${totals.nDaFatturare} ${totals.nDaFatturare === 1 ? t('dashPagamentoSing') : t('dashPagamentiPlur')}` : undefined} tone="info" />
-            </div>
-            )}
-
-            {/* KPI PER SEDE: con più sedi accorpate il totale da solo non dice a quale
-                segreteria tocca cosa. Stesse quattro somme, una riga per sede; stesso
-                filtro classi delle card. Anche questi sono totali della Direzione. */}
-            {eDirezione && mostraSede && !loading && (
-                <div data-testid="kpi-per-sede" className={cx('mb-5', TABLE_WRAP)}>
-                    <table className={TABLE}>
-                        <caption className="px-3 pt-3 text-left font-barlow text-sm font-extrabold uppercase text-kidville-green">{t('dashMsKpiTitolo')}</caption>
-                        <thead>
-                            <tr>
-                                <th scope="col" className={TH}>{t('dashMsThSede')}</th>
-                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashIncassato')}</th>
-                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashDaIncassare')}</th>
-                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashScadutoMorosita')}</th>
-                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashDaFatturare')}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {totaliPerSede.map(({ id, totali }) => (
-                                <tr key={id || 'sede-non-indicata'} className={TROW}>
-                                    <th scope="row" className={cx(TD, 'text-left font-semibold text-kidville-green')}>{nomeSedeTesto(id)}</th>
-                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.incassato)}</td>
-                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.daIncassare)}</td>
-                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.scaduto)}</td>
-                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.daFatturare)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                <KpiContabilita
+                    totals={totals}
+                    totaliPerSede={totaliPerSede}
+                    loading={loading}
+                    mostraSede={mostraSede}
+                    nomeSedeTesto={nomeSedeTesto}
+                    nascoste={cifreNascoste}
+                    onCommutaNascoste={() => setCifreNascoste(!cifreNascoste)}
+                />
             )}
 
             {/* Filtro classi (K6): sta SOPRA l'agenda perché vale per KPI, agenda, tabelle
@@ -734,7 +705,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             {/* Agenda scadenze / aging: i bucket filtrano la lista sottostante.
                 Alla Segreteria restano i CONTEGGI e il clic — è uno strumento di lavoro,
                 non un cruscotto — e spariscono i soli importi (`mostraImporti`). */}
-            {!loading && <AgendaScadenze pagamenti={pagamentiVisibili} attivo={agendaFiltro} onSelect={setAgendaFiltro} mostraImporti={eDirezione} mostraSede={mostraSede} />}
+            {!loading && <AgendaScadenze pagamenti={pagamentiVisibili} attivo={agendaFiltro} onSelect={setAgendaFiltro} mostraImporti={eDirezione} mostraSede={mostraSede} mascheraImporti={cifreNascoste} />}
 
             {/* Filtri (nascosti in vista agenda: non filtrerebbero la lista del bucket) */}
             {!agendaFiltro && (

@@ -107,7 +107,7 @@ export function TabellaVociContabilita<P extends RigaVoce>({
                                             ) : (
                                                 <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} codaStato={p.coda_stato ?? null} onEmessa={(e) => dopoAccodamento(p.id, e)} />
                                             )}
-                                            {p.tipo === 'singolo' && p.stato !== 'pagato' && p.categoria_id !== rettaId && (
+                                            {p.tipo === 'singolo' && p.stato !== 'pagato' && (rettaId === undefined || p.categoria_id !== rettaId) && (
                                                 <button onClick={() => onRateizza(p)} title={t('dashDividiAcconti')} className={ICON_BTN}><Layers size={15} /></button>
                                             )}
                                             <button onClick={() => onDettagli(p)} title={t('dashDettagli')} className={ICON_BTN}><Eye size={15} /></button>

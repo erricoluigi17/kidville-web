@@ -137,7 +137,8 @@ const GIORNO_FISSO = '2026-10-01T10:00:00';
  * non dipende dal giorno in cui gira il test.
  */
 async function selezionaSettembreOttobre2026() {
-    // Si aspetta il comando dei mesi (le categorie sono arrivate): senza, l'anno non c'è ancora.
+    // Si aspetta il comando dei mesi: i filtri compaiono a caricamento finito, e senza la
+    // selezione resterebbe quella di apertura.
     await screen.findByRole('button', { name: /^Mesi/ });
     scegliAnno(2026);
     await scegliMesi(['Set 2026', 'Ott 2026']);
@@ -202,6 +203,16 @@ describe('PaymentsDashboard — i KPI della Contabilità in formato italiano', (
         const anglosassoni = document.body.textContent?.match(/\d\.\d{2}(?!\d)/g) ?? [];
         expect(anglosassoni).toEqual([]);
     });
+
+    it('anche nella vista di apertura (per alunno) nessun importo col punto decimale', async () => {
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        // Presenza prima: la vista per alunno è quella di ottobre (la retta di Ada, 2.000,00).
+        await waitFor(() => expect(cardKpi('Da incassare')).toHaveTextContent('€ 2.000,00'));
+        expect(screen.getAllByText('€ 2.000,00').length).toBeGreaterThan(0);
+        expect(screen.getAllByRole('row').length).toBeGreaterThan(1);
+        const anglosassoni = document.body.textContent?.match(/\d\.\d{2}(?!\d)/g) ?? [];
+        expect(anglosassoni).toEqual([]);
+    });
 });
 
 /**
@@ -224,9 +235,9 @@ describe('PaymentsDashboard — le card KPI dipendono dalla selezione, non da ch
     });
 
     it.each([
-        ['2026-08-03T10:00:00', 'tabella e agenda vuote'],
-        ['2026-09-01T10:00:00', 'in tabella il pagamento saldato'],
-        ['2026-10-01T10:00:00', 'in tabella e in agenda quello scaduto'],
+        ['2026-08-03T10:00:00', 'selezione di apertura senza voci, agenda vuota'],
+        ['2026-09-01T10:00:00', 'apertura sulla retta di settembre, saldata'],
+        ['2026-10-01T10:00:00', 'apertura sulla retta di ottobre, scaduta'],
     ])('al %s (%s) la stessa selezione porta gli stessi importi', async (quando) => {
         vi.useFakeTimers({ shouldAdvanceTime: true });
         vi.setSystemTime(new Date(quando));
@@ -367,7 +378,7 @@ describe('PaymentsDashboard — il chip della coda fatture sta sulla riga della 
         expect(within(senzaVoce).queryByTestId('coda-chip')).toBeNull();
     });
 
-    it('vista per categoria, dal select: «Errore in coda» sulla riga in errore, niente sulla riga senza voce', async () => {
+    it('elenco per voce, dal filtro Categorie: «Errore in coda» sulla riga in errore, niente sulla riga senza voce', async () => {
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
         // Il filtro delle categorie si riempie con una fetch: l'helper aspetta che il comando esista.
         await scegliCategorie(['Mensa']);

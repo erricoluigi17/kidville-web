@@ -546,7 +546,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     // non l'ha fatto). La risposta si guarda: un rifiuto (sede non dichiarata, sede
     // di collaudo) resterebbe altrimenti invisibile all'operatore.
     const generaMese = async () => {
-        if (!sedeGeneraValida) return;
+        if (!sedeGeneraValida || !meseUnico) return;
         setGenerando(true);
         try {
             const res = await fetch('/api/pagamenti/genera-rette', {
@@ -734,14 +734,17 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         selezionate={scelteValide}
                         onChange={setClassiScelte}
                         mostraSede={mostraSede}
+                        className="max-sm:w-full"
                     />
-                    <FiltroCategorieContabilita opzioni={opzioniCategorie} scelte={categorieValide} onChange={setCategorieScelte} />
-                    <FiltroMesiContabilita anno={annoScolastico} mesi={mesiScelti} onChange={setMesiScelti} />
+                    <FiltroCategorieContabilita opzioni={opzioniCategorie} scelte={categorieValide} onChange={setCategorieScelte} className="max-sm:w-full" />
+                    {/* L'anno prima dei mesi: le etichette dei mesi («Ott 2026») dipendono da lui. */}
                     <FiltroAnnoContabilita
                         anno={annoScolastico}
                         anni={[annoScolasticoCorrente - 1, annoScolasticoCorrente, annoScolasticoCorrente + 1]}
                         onChange={setAnnoScolastico}
+                        className="max-sm:w-full"
                     />
+                    <FiltroMesiContabilita anno={annoScolastico} mesi={mesiScelti} onChange={setMesiScelti} className="max-sm:w-full" />
                 </div>
             )}
 

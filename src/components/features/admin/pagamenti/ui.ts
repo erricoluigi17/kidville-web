@@ -57,7 +57,9 @@ export const SELECT = `${INPUT} cursor-pointer hover:border-kidville-green/50`;
 
 /**
  * `<select>` dei filtri della Contabilità: stessa pelle dei filtri della Toolbar cockpit
- * (bordo line, focus verde con ring). Condiviso da `PaymentsDashboard` e dai filtri di selezione.
+ * (bordo line, focus verde con ring). Per i select della barra filtri e delle CTA di
+ * `PaymentsDashboard`; il select dell'anno dei filtri di selezione ha la sua geometria
+ * (`SELECT_ANNO` in `FiltriSelezioneContabilita`), allineata ai comandi multi-selezione.
  */
 export const FILTER_SELECT =
   'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';

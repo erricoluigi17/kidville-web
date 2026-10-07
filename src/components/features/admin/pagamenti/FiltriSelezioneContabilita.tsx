@@ -29,7 +29,7 @@ import { cx } from '@/lib/ui/cx';
 // `outline-none`, il ring di focus è quello del comando accanto. Per questo non usa
 // `FILTER_SELECT` di `ui.ts`, pensato per i select della barra filtri (padding verticale, `outline-none`).
 const SELECT_ANNO =
-  'h-[42px] rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 font-maven text-sm text-kidville-ink transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15 max-sm:h-[44px]';
+  'h-[42px] rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 font-maven text-sm text-kidville-ink transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15 max-sm:h-[44px] max-sm:w-full';
 
 export interface OpzioneCategoria {
   id: string;

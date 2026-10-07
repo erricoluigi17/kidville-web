@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
-import { scegliCategorie, scegliMesi } from '../helpers/scelta-contabilita';
+import { scegliAnno, scegliCategorie, scegliMesi } from '../helpers/scelta-contabilita';
 
 /**
  * ─── I KPI DELLA CONTABILITÀ SOMMANO LA SELEZIONE (T9, 2026-10-07) ───────────────────────
@@ -231,6 +231,11 @@ describe('T9 · 2 — più categorie e più mesi: elenco per voce con la colonna
         // La categoria della voce, in una cella a sé.
         expect(within(rigaTabella('Mensa nov Due')).getByText('Mensa')).toBeInTheDocument();
         expect(within(rigaTabella('Retta ott Uno')).getByText('Retta')).toBeInTheDocument();
+        // E nelle card mobile (in jsdom montate insieme alla tabella): una riga di categoria per voce.
+        const cardCategoria = screen.getAllByTestId('card-categoria').map((c) => c.textContent);
+        expect(cardCategoria).toHaveLength(4);
+        expect(cardCategoria.filter((c) => c === 'Mensa')).toHaveLength(1);
+        expect(cardCategoria.filter((c) => c === 'Retta')).toHaveLength(3);
         // Fuori selezione: la gita di ottobre e la mensa di settembre.
         expect(righeConTesto('Gita ott Uno')).toHaveLength(0);
         expect(righeConTesto('Mensa set Uno')).toHaveLength(0);
@@ -245,6 +250,7 @@ describe('T9 · 2 — più categorie e più mesi: elenco per voce con la colonna
         await scegliCategorie(['Gita']);
         await waitFor(() => expect(rigaTabella('Gita ott Uno')).toBeInTheDocument());
         expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).not.toContain('Categoria');
+        expect(screen.queryAllByTestId('card-categoria')).toHaveLength(0);
     });
 });
 
@@ -263,11 +269,39 @@ describe('T9 · 3 — i KPI non seguono la ricerca né «Morosi»', () => {
         aspettaCard('€ 100,00', '€ 200,00', '€ 200,00', '€ 100,00');
 
         fireEvent.change(screen.getByPlaceholderText('Cerca alunno o sezione…'), { target: { value: '' } });
+        // Presenza prima: la ricerca svuotata riporta TUTTI (anche Prova Tre, senza retta).
+        await waitFor(() => expect(rigaTabella('Prova Uno')).toBeInTheDocument());
+        expect(rigaTabella('Prova Tre')).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: /Morosi/ }));
         // Solo chi ha la retta scaduta (Prova Due) resta in elenco.
         await waitFor(() => expect(righeConTesto('Prova Uno')).toHaveLength(0));
+        expect(righeConTesto('Prova Tre')).toHaveLength(0);
         expect(rigaTabella('Prova Due')).toBeInTheDocument();
         aspettaCard('€ 100,00', '€ 200,00', '€ 200,00', '€ 100,00');
+    });
+
+    it('anche nell\'elenco per voce (Retta+Mensa × ott+nov) le card restano ferme', async () => {
+        stub(pagamenti({ id: 's1', nome: 'Kidville Uno' }));
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await attendiVistaAlunno();
+        await scegliCategorie(['Retta', 'Mensa']);
+        await scegliMesi(['Ott 2026', 'Nov 2026']);
+        await waitFor(() => expect(rigaTabella('Mensa nov Due')).toBeInTheDocument());
+        aspettaCard('€ 100,00', '€ 410,00', '€ 200,00', '€ 100,00');
+
+        fireEvent.change(screen.getByPlaceholderText('Cerca alunno o sezione…'), { target: { value: 'Due' } });
+        await waitFor(() => expect(righeConTesto('Retta nov Uno')).toHaveLength(0));
+        expect(rigaTabella('Mensa nov Due')).toBeInTheDocument();
+        aspettaCard('€ 100,00', '€ 410,00', '€ 200,00', '€ 100,00');
+
+        fireEvent.change(screen.getByPlaceholderText('Cerca alunno o sezione…'), { target: { value: '' } });
+        await waitFor(() => expect(rigaTabella('Retta nov Uno')).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: /Morosi/ }));
+        // Resta la sola voce scaduta («Retta ott Due»): l'elenco si è ristretto davvero...
+        await waitFor(() => expect(righeConTesto('Mensa nov Due')).toHaveLength(0));
+        expect(rigaTabella('Retta ott Due')).toBeInTheDocument();
+        // ...e le card no.
+        aspettaCard('€ 100,00', '€ 410,00', '€ 200,00', '€ 100,00');
     });
 });
 
@@ -321,11 +355,84 @@ describe('T9 · 5 — la riga «Somma di:» dice cosa si somma', () => {
     });
 });
 
+describe('T9 · 5b — mai «in caricamento» per sempre se le categorie non arrivano', () => {
+    /** Le categorie falliscono in modo diverso; il resto risponde. */
+    function stubCategorieGuaste(guasto: () => Promise<unknown>) {
+        vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+            const u = String(url);
+            if (u.includes('/settings/categorie')) return guasto();
+            const body = u.startsWith('/api/pagamenti?') ? pagamenti({ id: 's1', nome: 'Kidville Uno' })
+                : u.startsWith('/api/pagamenti/rette-a-carico') ? { success: true, data: [], a_carico_non_visibili: [] }
+                    : u.startsWith('/api/admin/students') ? STUDENTS
+                        : { success: true, data: { abilitato: true } };
+            return { ok: true, status: 200, json: async () => body };
+        }));
+    }
+    async function controlla() {
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        // Tutte le categorie, il mese fissato: la selezione di ripiego, non «—» né «Caricamento…».
+        await waitFor(() => expect(screen.getByTestId('kpi-selezione')).toHaveTextContent('Somma di: Tutte le categorie · ottobre 2026'));
+        // Con tutte le voci di ottobre: incassato 100 (retta pagata), da incassare 200+40.
+        expect(cardKpi('Incassato')).toHaveTextContent('€ 100,00');
+        expect(cardKpi('Da incassare')).toHaveTextContent('€ 240,00');
+        expect(screen.queryByText('Caricamento…')).toBeNull();
+    }
+
+    it('GET categorie 500: «Tutte le categorie», card in euro, nessun caricamento infinito', async () => {
+        stubCategorieGuaste(async () => ({ ok: false, status: 500, json: async () => ({ error: 'Errore interno' }) }));
+        await controlla();
+    });
+
+    it('fetch delle categorie che rifiuta (rete giù): lo stesso', async () => {
+        stubCategorieGuaste(() => Promise.reject(new TypeError('Failed to fetch')));
+        await controlla();
+    });
+});
+
+describe('T9 · 5c — la scelta dell\'anno mantiene i mesi', () => {
+    it('anno 2027 con ottobre scelto: la riga dice «ottobre 2027»', async () => {
+        stub(pagamenti({ id: 's1', nome: 'Kidville Uno' }));
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await waitFor(() => expect(screen.getByTestId('kpi-selezione')).toHaveTextContent('Somma di: Retta · ottobre 2026'));
+        await screen.findByRole('button', { name: /^Mesi/ });
+        scegliAnno(2027);
+        await waitFor(() => expect(screen.getByTestId('kpi-selezione')).toHaveTextContent('Somma di: Retta · ottobre 2027'));
+    });
+});
+
 describe('T9 · 6 — «Genera mancanti» solo con un mese di retta', () => {
     it('a ottobre c\'è (Prova Tre senza retta)', async () => {
         stub(pagamenti({ id: 's1', nome: 'Kidville Uno' }));
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
         expect(await screen.findByRole('button', { name: 'Genera mancanti' })).toBeInTheDocument();
+    });
+
+    function postGenera() {
+        return (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls
+            .filter(([u, i]) => String(u).startsWith('/api/pagamenti/genera-rette') && (i as RequestInit | undefined)?.method === 'POST');
+    }
+
+    it('con Retta + novembre la CTA genera il mese SCELTO (2026-11), sulla sede giusta', async () => {
+        stub(pagamenti({ id: 's1', nome: 'Kidville Uno' }));
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await screen.findByRole('button', { name: 'Genera mancanti' });
+        await scegliMesi(['Nov 2026']);
+        // A novembre solo Prova Uno ha la retta: mancano Prova Due e Prova Tre, e la frase cita il mese.
+        await waitFor(() => expect(screen.getByTestId('cta-genera-mancanti-frase').textContent).toMatch(/^2 alunni senza retta generata per Nov 2026/));
+        fireEvent.click(screen.getByRole('button', { name: 'Genera mancanti' }));
+        await waitFor(() => expect(postGenera()).toHaveLength(1));
+        expect(JSON.parse(String((postGenera()[0][1] as RequestInit).body))).toEqual({ periodo: '2026-11', scuola_id: 's1' });
+    });
+
+    it('con un altro anno (2027) e ottobre: periodo 2027-10', async () => {
+        stub(pagamenti({ id: 's1', nome: 'Kidville Uno' }));
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await screen.findByRole('button', { name: 'Genera mancanti' });
+        scegliAnno(2027);
+        await waitFor(() => expect(screen.getByTestId('cta-genera-mancanti-frase').textContent).toMatch(/^3 alunni senza retta generata per Ott 2027/));
+        fireEvent.click(screen.getByRole('button', { name: 'Genera mancanti' }));
+        await waitFor(() => expect(postGenera()).toHaveLength(1));
+        expect(JSON.parse(String((postGenera()[0][1] as RequestInit).body))).toEqual({ periodo: '2027-10', scuola_id: 's1' });
     });
 
     it('a luglio no, pur con la vista per alunno e i mancanti', async () => {
@@ -388,6 +495,17 @@ describe('T9 · 7 — l\'occhio «Nascondi cifre»', () => {
 });
 
 describe('T9 · 8 — «Nuovo acquisto» solo con UNA categoria non retta', () => {
+    it('la sola retta su DUE mesi è un elenco per voce, e non offre «Nuovo acquisto»', async () => {
+        stub(pagamenti({ id: 's1', nome: 'Kidville Uno' }));
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await attendiVistaAlunno();
+        await scegliMesi(['Ott 2026', 'Nov 2026']);
+        // Presenza: l'elenco per voce c'è (la voce di novembre non esiste nella vista per alunno di ottobre).
+        await waitFor(() => expect(rigaTabella('Retta nov Uno')).toBeInTheDocument());
+        expect(screen.queryByRole('button', { name: /Nuovo acquisto/ })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Genera mancanti' })).toBeNull();
+    });
+
     it('non c\'è con la sola retta, c\'è con la sola gita, sparisce con gita+mensa', async () => {
         stub(pagamenti({ id: 's1', nome: 'Kidville Uno' }));
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);

@@ -1,6 +1,6 @@
 ## 💶 Changelog — KPI di contabilità per mese e categoria, cifre nascondibili, dashboard Direzione senza euro — 2026-10-07 (branch `feat/kpi-contabilita-selezione`)
 
-**Stato.** 🟡 **Pronto sul branch, non ancora pubblicato.** Gate: `eslint` 0 · `tsc` 0 · `vitest run` **1.711 file / 28.996 test passati (25 saltati)**, alla prima esecuzione, nessun test instabile · `npm run build` ok (`verifica-artefatto` ok, 2.967 file JS). E2E in CI al push.
+**Stato.** ✅ **In produzione dal 2026-10-07** (PR #204, merge `67ce866a`; CI di `main` verde — Lint · Typecheck · Unit ed E2E Playwright — e «Verifica dopo il deploy» verde). Gate sul branch: `eslint` 0 · `tsc` 0 · `vitest run` **1.711 file / 28.996 test passati (25 saltati)**, alla prima esecuzione, nessun test instabile · `npm run build` ok (`verifica-artefatto` ok, 2.967 file JS). E2E in CI al push.
 
 **Il caso.** Il titolare ha chiesto tre cose: (1) niente cifre in euro sulla home della Direzione; (2) in Contabilità, KPI che si possano leggere per mese e per categoria (retta, mensa, ecc.), non solo sul totale; (3) un modo per nascondere le cifre quando lo schermo è visibile ad altri.
 
@@ -28,7 +28,7 @@
 
 ## 🪪 Changelog — Rinnovo del documento di un docente: la sostituzione «falliva» sempre pur riuscendo, e le date non si potevano cambiare da nessuna parte — 2026-10-06 (branch `fix/genitore-senza-figli-e-collegamento`)
 
-**Stato.** 🟡 **Pronto sul branch, non ancora pubblicato** (stessa PR del lavoro «genitore senza figli», in due commit separati). Gate: `eslint` 0 · `tsc` 0 · `vitest run` **1.694 file / 28.682 test**, tutti verdi alla terza esecuzione · `npm run build` ok (`verifica-artefatto` ok). E2E in CI al push.
+**Stato.** ✅ **In produzione dal 2026-10-07** (PR #203, merge `a3891379`, insieme al lavoro «genitore senza figli», in due commit separati). Gate: `eslint` 0 · `tsc` 0 · `vitest run` **1.694 file / 28.682 test**, tutti verdi alla terza esecuzione · `npm run build` ok (`verifica-artefatto` ok). E2E in CI al push.
 
 ⚠️ **Come ci si è arrivati, senza abbellirlo.** La prima esecuzione intera aveva 2 rossi: uno era **mio** — il lock sui tempi (`logging-tetto.test.ts`) legge ogni costante con `SCADENZA` nel nome come un tetto in millisecondi, e `SCADENZA_MIN` era una data (rinominata `PRIMO_GIORNO_AMMESSO`) — l'altro, `AvvisoAggiornamentoApp`, non c'entra. La seconda esecuzione ne aveva uno diverso, `SidiPanel-sede`, mentre quello di prima passava. Entrambi passano da soli (`SidiPanel-sede` 3 volte su 3) e nessuno importa un file toccato qui: è il rumore già annotato dei test UI che cadono a caso a suite piena. **Non provato contro `main`**: la terza esecuzione, verde, è l'unica prova che si ha.
 

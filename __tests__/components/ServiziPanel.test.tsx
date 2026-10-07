@@ -618,3 +618,86 @@ describe('GeneraServiziMese — gara fra anteprima e mese', () => {
     expect(screen.queryByText('0 voci generate')).toBeNull()
   })
 })
+
+describe('GeneraServiziMese — anno scolastico', () => {
+  let risposte: { anteprima: Risposta; genera: Risposta }
+
+  beforeEach(() => {
+    risposte = {
+      anteprima: ok({ anno_inizio: 2026, voci: 30, per_servizio: [{ categoria_id: SERV, nome: 'Pomeridiano', voci: 30 }] }),
+      genera: ok({ anno_inizio: 2026, generati: 27 }),
+    }
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (u: string, init?: { method?: string; body?: string }) => {
+      if (u.startsWith('/api/pagamenti/genera-servizi')) {
+        const metodo = init?.method ?? 'GET'
+        chiamate.push({ url: u, metodo, body: init?.body ? JSON.parse(init.body) : null })
+        const r = metodo === 'POST' ? risposte.genera : risposte.anteprima
+        return { ok: r.status < 400, status: r.status, json: async () => r.body }
+      }
+      return base(u, init)
+    })
+  })
+
+  const letture = () => chiamate.filter((c) => c.url.startsWith('/api/pagamenti/genera-servizi') && c.metodo === 'GET')
+
+  it('scelta dell\'anno (corrente e successivo, «2026/2027»), aiuto su settembre–giugno; anteprima e POST con l\'anno', async () => {
+    await apri()
+    expect(screen.getByRole('button', { name: 'Un mese' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'Anno scolastico' }))
+    expect(screen.getByRole('button', { name: 'Anno scolastico' })).toHaveAttribute('aria-pressed', 'true')
+    const scelta = screen.getByLabelText('Anno scolastico') as HTMLSelectElement
+    expect([...scelta.options].map((o) => o.textContent)).toEqual(['2026/2027', '2027/2028'])
+    expect(scelta.value).toBe('2026')
+    expect(screen.getByText(/da settembre a giugno\. Luglio e agosto/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Genera 30 voci' }))
+    expect(await screen.findByText('27 voci generate')).toBeInTheDocument()
+    const q = url(letture()[0])
+    expect(q.searchParams.get('anno')).toBe('2026')
+    expect(q.searchParams.has('periodo')).toBe(false)
+    expect(q.searchParams.get('scuola_id')).toBe(SEDE)
+    expect(vedi('POST')[0].body).toEqual({ anno: 2026, scuola_id: SEDE })
+  })
+
+  it('l\'anno scelto è quello che si anteprima e che si genera', async () => {
+    risposte.anteprima = ok({ anno_inizio: 2027, voci: 5, per_servizio: [] })
+    risposte.genera = ok({ anno_inizio: 2027, generati: 5 })
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: 'Anno scolastico' }))
+    fireEvent.change(screen.getByLabelText('Anno scolastico'), { target: { value: '2027' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Genera 5 voci' }))
+    await screen.findByText('5 voci generate')
+    expect(url(letture()[0]).searchParams.get('anno')).toBe('2027')
+    expect(vedi('POST')[0].body).toEqual({ anno: 2027, scuola_id: SEDE })
+  })
+
+  it('cambiare modalità invalida l\'anteprima: «Genera» sparisce finché non si rifà l\'anteprima', async () => {
+    risposte.anteprima = ok({ periodo: '2026-10-01', voci: 3, per_servizio: [] })
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
+    await screen.findByRole('button', { name: 'Genera 3 voci' })
+    fireEvent.click(screen.getByRole('button', { name: 'Anno scolastico' }))
+    expect(screen.queryByRole('button', { name: /^Genera \d+ voc/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Un mese' }))
+    expect(screen.queryByRole('button', { name: /^Genera \d+ voc/ })).toBeNull()
+  })
+
+  it('un\'anteprima di un altro anno non abilita «Genera»', async () => {
+    risposte.anteprima = ok({ anno_inizio: 2025, voci: 4, per_servizio: [] })
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: 'Anno scolastico' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
+    expect(await screen.findByRole('button', { name: 'Genera 4 voci' })).toBeDisabled()
+    expect(vedi('POST')).toHaveLength(0)
+  })
+
+  it('un servizio senza nome (null) si legge «—»', async () => {
+    risposte.anteprima = ok({ anno_inizio: 2026, voci: 2, per_servizio: [{ categoria_id: SERV, nome: null, voci: 2 }] })
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: 'Anno scolastico' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
+    expect(await screen.findByText('—: 2 voci')).toBeInTheDocument()
+  })
+})

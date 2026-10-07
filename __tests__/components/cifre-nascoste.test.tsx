@@ -41,11 +41,43 @@ describe('cifre-nascoste — deposito che non funziona', () => {
     scriviCifreNascoste('u1', false, dep);
     expect(leggiCifreNascoste('u1', dep)).toBe(false);
     expect(logClient).toHaveBeenCalledTimes(1);
-    const evento = logClient.mock.calls[0][0] as { livello: string; evento: string; messaggio: string; route: string };
+    const evento = logClient.mock.calls[0][0] as { livello: string; messaggio: string; campi: Record<string, string>; route?: string };
     expect(evento.livello).toBe('warn');
-    expect(evento.messaggio).toBe('cifre-nascoste-storage-non-disponibile: SecurityError');
-    expect(evento.route).toBe('/admin/pagamenti');
+    expect(evento.messaggio).toBe('cifre-nascoste-storage-non-disponibile');
+    expect(evento.campi).toEqual({ operazione: 'lettura', error_code: 'SecurityError' });
+    expect(evento.route).toBeUndefined();
     expect(evento.messaggio).not.toContain('u1');
+  });
+
+  it('quota piena: la scrittura vince sul deposito che riporta il valore vecchio', async () => {
+    vi.resetModules();
+    const { leggiCifreNascoste, scriviCifreNascoste } = await import(
+      '@/components/features/admin/pagamenti/cifre-nascoste'
+    );
+    const dep = {
+      getItem: () => '0',
+      setItem: () => {
+        throw new DOMException('', 'QuotaExceededError');
+      },
+    };
+    scriviCifreNascoste('u1', true, dep);
+    expect(leggiCifreNascoste('u1', dep)).toBe(true);
+    expect(logClient).toHaveBeenCalledTimes(1);
+    expect((logClient.mock.calls[0][0] as { campi: Record<string, string> }).campi.operazione).toBe('scrittura');
+  });
+
+  it('window.localStorage null: si segnala una volta (accesso) e non si rompe', async () => {
+    vi.resetModules();
+    const { leggiCifreNascoste } = await import('@/components/features/admin/pagamenti/cifre-nascoste');
+    const spia = vi.spyOn(window, 'localStorage', 'get').mockReturnValue(null as unknown as Storage);
+    try {
+      expect(leggiCifreNascoste('u1')).toBe(false);
+      expect(leggiCifreNascoste('u1')).toBe(false);
+    } finally {
+      spia.mockRestore();
+    }
+    expect(logClient).toHaveBeenCalledTimes(1);
+    expect((logClient.mock.calls[0][0] as { campi: Record<string, string> }).campi).toEqual({ operazione: 'accesso' });
   });
 
   it('senza userId: sempre false e la scrittura non fa niente', async () => {

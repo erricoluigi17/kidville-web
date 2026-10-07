@@ -42,6 +42,14 @@ describe('AgendaScadenze — mascheraImporti', () => {
     expect(container.textContent).toContain('Cifra nascosta');
   });
 
+  it('il nome accessibile del bottone dice «Cifra nascosta» e non contiene i puntini', () => {
+    render(<AgendaScadenze pagamenti={rows} oggi="2026-07-10" attivo={null} onSelect={() => {}} mascheraImporti />);
+    const bottone = screen.getByRole('button', { name: /Scaduti oltre 30gg.*Cifra nascosta/ });
+    expect(bottone.querySelector('span[aria-hidden="true"]')?.textContent).toContain('••••');
+    // Il nome accessibile (calcolato dal browser/dom-testing-library) non porta i puntini.
+    expect(screen.queryByRole('button', { name: /•/ })).toBeNull();
+  });
+
   it('senza mascheraImporti gli importi restano', () => {
     const { container } = render(<AgendaScadenze pagamenti={rows} oggi="2026-07-10" attivo={null} onSelect={() => {}} />);
     expect(container.textContent).toContain('€');

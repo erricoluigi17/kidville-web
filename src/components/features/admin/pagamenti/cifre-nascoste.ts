@@ -24,15 +24,21 @@ export interface DepositoCifre {
 
 let segnalato = false
 
-/** Un guasto del deposito si dice una volta per sessione. */
-function segnala(err: unknown): void {
+/**
+ * Un guasto del deposito si dice una volta per sessione. La fase va in `operazione` e NON in `motivo`:
+ * `motivo` è fra le radici di testo libero di `redact.ts` e uscirebbe `[redatto:…]`; `operazione` ed
+ * `error_code` passano in chiaro.
+ */
+function segnala(operazione: 'accesso' | 'lettura' | 'scrittura', err?: unknown): void {
   if (segnalato) return
   segnalato = true
+  const campi: Record<string, string> = { operazione }
+  if (err !== undefined) campi.error_code = nomeErrore(err)
   logClient({
     livello: 'warn',
     evento: 'offline',
-    messaggio: `cifre-nascoste-storage-non-disponibile: ${nomeErrore(err)}`,
-    route: '/admin/pagamenti',
+    messaggio: 'cifre-nascoste-storage-non-disponibile',
+    campi,
   })
 }
 
@@ -45,9 +51,13 @@ const inMemoria = new Map<string, string>()
 /** Il deposito del browser, o `null` quando non c'è: l'accesso stesso può lanciare. */
 function depositoDelBrowser(): DepositoCifre | null {
   try {
-    return typeof window === 'undefined' ? null : window.localStorage
+    if (typeof window === 'undefined') return null
+    const deposito = window.localStorage
+    // Con lo storage disattivato alcuni browser danno `null` invece di lanciare.
+    if (!deposito) segnala('accesso')
+    return deposito ?? null
   } catch (err) {
-    segnala(err)
+    segnala('accesso', err)
     return null
   }
 }
@@ -65,7 +75,7 @@ export function leggiCifreNascoste(
   try {
     return deposito.getItem(chiave) === '1'
   } catch (err) {
-    segnala(err)
+    segnala('lettura', err)
     return false
   }
 }
@@ -92,7 +102,7 @@ export function scriviCifreNascoste(
       deposito.setItem(chiave, valore)
       scritto = true
     } catch (err) {
-      segnala(err)
+      segnala('scrittura', err)
     }
   }
   // Scritto sul deposito: la memoria non serve e non deve fare ombra. Altrimenti si ripiega.

@@ -1497,5 +1497,14 @@
   "servGenNessuna": "Nessuna voce da generare per questo mese",
   "servGenFatto": "{n, plural, one {# voce generata} other {# voci generate}}",
   "servGenErroreAnteprima": "Non siamo riusciti a calcolare l’anteprima.",
-  "servGenErroreGenera": "Non siamo riusciti a generare le voci."
+  "servGenErroreGenera": "Non siamo riusciti a generare le voci.",
+  "servAzioneIscrizione": "{azione}: {nome}, {servizio}, {periodo}",
+  "servAzioneServizio": "{azione}: {servizio}",
+  "servErrFineOltreAttuale": "L’ultimo mese non può essere dopo la fine attuale dell’iscrizione: per allungarla usa «Modifica».",
+  "servVociNonEliminabiliRestano": "{n, plural, one {# voce non eliminabile resta} other {# voci non eliminabili restano}}",
+  "servUnisci": "{a} · {b}",
+  "servErroreEVoci": "{errore} {voci}",
+  "servGenRigaServizio": "{nome}: {voci}",
+  "servGenRigaServizioTotale": "{nome}: {voci} · {importo}",
+  "servFormCaricamentoAlunni": "Caricamento dei bambini…"
 }

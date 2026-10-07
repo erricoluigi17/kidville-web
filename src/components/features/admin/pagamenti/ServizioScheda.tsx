@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/Badge';
 import { formatEuro } from '@/lib/format/valuta';
@@ -22,6 +22,8 @@ interface Props {
     iscrizioni: IscrizioneServizio[];
     onEsito: (e: EsitoMostrato) => void;
     onScritto: () => void;
+    /** Si apre una nuova azione: l'esito precedente non vale più. */
+    onNuovaAzione: () => void;
 }
 
 type Azione =
@@ -31,14 +33,25 @@ type Azione =
 const nomeDi = (i: IscrizioneServizio) => nomeCompleto({ id: i.id, nome: i.alunno?.nome, cognome: i.alunno?.cognome });
 
 /** Un servizio mensile: dati, elenco delle iscrizioni e le azioni (aggiungi, modifica, termina, elimina). */
-export function ServizioScheda({ userId, scuolaId, servizio, iscrizioni, onEsito, onScritto }: Props) {
+export function ServizioScheda({ userId, scuolaId, servizio, iscrizioni, onEsito, onScritto, onNuovaAzione }: Props) {
     const t = useTranslations('adminContabilita');
     const locale = useLocale();
     const [azione, setAzione] = useState<Azione | null>(null);
     const chiudi = useCallback(() => setAzione(null), []);
-    const scrittura = useScritturaServizi({ onEsito, onScritto, onChiuso: chiudi }, userId);
+    const titoloRef = useRef<HTMLHeadingElement>(null);
+    // Dopo un'operazione riuscita il bottone da cui si era partiti può sparire (eliminazione,
+    // iscrizione conclusa): il focus va sul titolo della scheda, che c'è sempre.
+    const esitoConFocus = useCallback((e: EsitoMostrato) => {
+        onEsito(e);
+        if (e.tipo === 'ok') setTimeout(() => titoloRef.current?.focus(), 0);
+    }, [onEsito]);
+    const scrittura = useScritturaServizi({ onEsito: esitoConFocus, onScritto, onChiuso: chiudi }, userId);
+    const { azzeraErrore } = scrittura;
+    const apri = (a: Azione) => { azzeraErrore(); onNuovaAzione(); setAzione(a); };
 
     const oggi = primoDelMese(meseCorrente());
+    const ordinate = [...iscrizioni].sort((a, b) =>
+        nomeDi(a).localeCompare(nomeDi(b), 'it') || a.dal.localeCompare(b.dal));
     const attivi = iscrizioni.filter((i) => attivaNel({ dal: i.dal, al: i.al }, oggi)).length;
     const predefinito = importoNumero(servizio.importo_mensile_default);
 
@@ -79,23 +92,24 @@ export function ServizioScheda({ userId, scuolaId, servizio, iscrizioni, onEsito
         <section className="rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                    <h3 className="font-barlow text-lg font-extrabold text-kidville-green">{servizio.nome}</h3>
+                    <h3 ref={titoloRef} tabIndex={-1} className="font-barlow text-lg font-extrabold text-kidville-green outline-none">{servizio.nome}</h3>
                     <p className="font-maven text-xs text-kidville-sub">
                         {predefinito > 0 ? t('servImportoProposto', { importo: formatEuro(predefinito) }) : t('servImportoNonImpostato')}
                         {' · '}{t('servIscrittiAttivi', { n: attivi })}
                     </p>
                 </div>
-                <button type="button" onClick={() => setAzione({ tipo: 'aggiungi' })} className={btnSecondario}
-                    aria-label={`${t('servAggiungi')}: ${servizio.nome}`}>{t('servAggiungi')}</button>
+                <button type="button" onClick={() => apri({ tipo: 'aggiungi' })} className={btnSecondario}
+                    aria-label={t('servAzioneServizio', { azione: t('servAggiungi'), servizio: servizio.nome })}>{t('servAggiungi')}</button>
             </div>
 
             {iscrizioni.length === 0 ? (
                 <p className="mt-3 font-maven text-sm text-kidville-sub">{t('servNessunaIscrizione')}</p>
             ) : (
                 <ul className="mt-3 space-y-2">
-                    {iscrizioni.map((i) => {
+                    {ordinate.map((i) => {
                         const nome = nomeDi(i);
                         const conclusa = i.al !== null && i.al < oggi;
+                        const per = (azione: string) => t('servAzioneIscrizione', { azione, nome, servizio: servizio.nome, periodo: periodo(i) });
                         return (
                             <li key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-input bg-kidville-cream px-3 py-2 font-maven text-sm text-kidville-ink">
                                 <span className="font-bold">{nome}</span>
@@ -105,9 +119,11 @@ export function ServizioScheda({ userId, scuolaId, servizio, iscrizioni, onEsito
                                 {conclusa && <Badge tone="neutral">{t('servConclusa')}</Badge>}
                                 {i.alunno && i.alunno.stato !== 'iscritto' && <Badge tone="warn">{t('servNonIscritto')}</Badge>}
                                 <span className="ml-auto flex gap-1.5">
-                                    <button type="button" className={btnPiccolo} aria-label={`${t('servModifica')}: ${nome}`} onClick={() => setAzione({ tipo: 'modifica', iscrizione: i })}>{t('servModifica')}</button>
-                                    <button type="button" className={btnPiccolo} aria-label={`${t('servTermina')}: ${nome}`} onClick={() => setAzione({ tipo: 'termina', iscrizione: i })}>{t('servTermina')}</button>
-                                    <button type="button" className={btnPiccolo} aria-label={`${t('servElimina')}: ${nome}`} onClick={() => setAzione({ tipo: 'elimina', iscrizione: i })}>{t('servElimina')}</button>
+                                    <button type="button" className={btnPiccolo} aria-label={per(t('servModifica'))} onClick={() => apri({ tipo: 'modifica', iscrizione: i })}>{t('servModifica')}</button>
+                                    {!conclusa && (
+                                        <button type="button" className={btnPiccolo} aria-label={per(t('servTermina'))} onClick={() => apri({ tipo: 'termina', iscrizione: i })}>{t('servTermina')}</button>
+                                    )}
+                                    <button type="button" className={btnPiccolo} aria-label={per(t('servElimina'))} onClick={() => apri({ tipo: 'elimina', iscrizione: i })}>{t('servElimina')}</button>
                                 </span>
                             </li>
                         );
@@ -121,7 +137,7 @@ export function ServizioScheda({ userId, scuolaId, servizio, iscrizioni, onEsito
                     invio={scrittura.invio} errore={scrittura.errore} onInvia={invia} onAnnulla={annulla} />
             )}
             {azione && !scrittura.decisione && (azione.tipo === 'termina' || azione.tipo === 'elimina') && (
-                <ConfermaIscrizioneServizio modo={azione.tipo} nome={nomeDi(azione.iscrizione)} dal={azione.iscrizione.dal}
+                <ConfermaIscrizioneServizio modo={azione.tipo} nome={nomeDi(azione.iscrizione)} dal={azione.iscrizione.dal} al={azione.iscrizione.al}
                     invio={scrittura.invio} errore={scrittura.errore} onConferma={conferma} onAnnulla={annulla} />
             )}
             {scrittura.decisione && (

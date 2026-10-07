@@ -7,13 +7,14 @@ import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { zMese } from '@/lib/pagamenti/servizi-mensili';
-import { PAGINA_SERVIZI, importoNumero, intestazioni, meseCorrente } from './servizi-client';
+import { PAGINA_SERVIZI, codiceSicuro, importoNumero, intestazioni, leggiCorpo, meseCorrente } from './servizi-client';
 import { BottonePrimarioServizi } from './BottonePrimarioServizi';
 import { avvisoErrore, avvisoOk, btnSecondario, campo, etichetta } from './servizi-stili';
 
 interface Props { userId: string; scuolaId: string }
 
 interface Anteprima {
+    periodo: string;
     voci: number;
     totale?: number;
     per_servizio: { categoria_id: string; nome: string; voci: number; totale?: number }[];
@@ -35,21 +36,21 @@ export function GeneraServiziMese({ userId, scuolaId }: Props) {
     const [occupato, setOccupato] = useState(false);
     const [esito, setEsito] = useState<Esito>(null);
 
-    const leggiAnteprima = async (): Promise<Anteprima | null> => {
-        const q = new URLSearchParams({ periodo: mese, scuola_id: scuolaId });
+    // Legge l'anteprima di UN mese; l'errore si restituisce, non si scrive: chi chiama decide
+    // se sovrascrive un esito (dopo una generazione riuscita, no).
+    const leggiAnteprima = async (periodo: string): Promise<{ anteprima: Anteprima } | { errore: string }> => {
+        const q = new URLSearchParams({ periodo, scuola_id: scuolaId });
         try {
             const res = await fetch(`${ROUTE}?${q.toString()}`, { headers: intestazioni(userId) });
-            const corpo = await res.json().catch(() => null) as { data?: Anteprima } | null;
+            const corpo = await leggiCorpo(res, 'servizi-anteprima') as { data?: Anteprima } | null;
             if (!res.ok || !corpo?.data) {
-                logClient({ livello: 'error', evento: 'fetch', messaggio: 'servizi-anteprima-respinta', route: PAGINA_SERVIZI, stato: res.status });
-                setEsito({ tipo: 'errore', testo: messaggioDaCorpo(corpo, t('servGenErroreAnteprima')) });
-                return null;
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `servizi-anteprima-respinta${codiceSicuro(corpo)}`, route: PAGINA_SERVIZI, stato: res.status });
+                return { errore: messaggioDaCorpo(corpo, t('servGenErroreAnteprima')) };
             }
-            return corpo.data;
+            return { anteprima: corpo.data };
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `servizi-anteprima-non-riuscita: ${nomeErrore(err)}`, route: PAGINA_SERVIZI });
-            setEsito({ tipo: 'errore', testo: t('servGenErroreAnteprima') });
-            return null;
+            return { errore: t('servGenErroreAnteprima') };
         }
     };
 
@@ -57,22 +58,30 @@ export function GeneraServiziMese({ userId, scuolaId }: Props) {
         if (!zMese.safeParse(mese).success) { setEsito({ tipo: 'errore', testo: t('servErrDal') }); return; }
         setOccupato(true);
         setEsito(null);
-        setAnteprima(await leggiAnteprima());
+        const r = await leggiAnteprima(mese);
+        if ('errore' in r) { setAnteprima(null); setEsito({ tipo: 'errore', testo: r.errore }); } else setAnteprima(r.anteprima);
         setOccupato(false);
     };
 
+    // Si genera il mese dell'ANTEPRIMA vista, non quello che il campo dice adesso.
+    const pronta = anteprima !== null && anteprima.periodo.slice(0, 7) === mese;
+
     const genera = async () => {
+        if (!anteprima || !pronta) return;
+        const periodo = anteprima.periodo.slice(0, 7);
         setOccupato(true);
         setEsito(null);
         try {
-            const res = await fetch(ROUTE, { method: 'POST', headers: intestazioni(userId), body: JSON.stringify({ periodo: mese, scuola_id: scuolaId }) });
-            const corpo = await res.json().catch(() => null) as { data?: { generati?: number } } | null;
+            const res = await fetch(ROUTE, { method: 'POST', headers: intestazioni(userId), body: JSON.stringify({ periodo, scuola_id: scuolaId }) });
+            const corpo = await leggiCorpo(res, 'servizi-generazione') as { data?: { generati?: number } } | null;
             if (!res.ok) {
-                logClient({ livello: 'error', evento: 'fetch', messaggio: 'servizi-generazione-respinta', route: PAGINA_SERVIZI, stato: res.status });
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `servizi-generazione-respinta${codiceSicuro(corpo)}`, route: PAGINA_SERVIZI, stato: res.status });
                 setEsito({ tipo: 'errore', testo: messaggioDaCorpo(corpo, t('servGenErroreGenera')) });
             } else {
+                // Il successo resta a schermo anche se la rilettura dell'anteprima fallisce.
                 setEsito({ tipo: 'ok', testo: t('servGenFatto', { n: importoNumero(corpo?.data?.generati) }) });
-                setAnteprima(await leggiAnteprima());
+                const r = await leggiAnteprima(periodo);
+                setAnteprima('anteprima' in r ? r.anteprima : null);
             }
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `servizi-generazione-non-riuscita: ${nomeErrore(err)}`, route: PAGINA_SERVIZI });
@@ -88,7 +97,7 @@ export function GeneraServiziMese({ userId, scuolaId }: Props) {
                 <div>
                     <label htmlFor={`${id}-mese`} className={etichetta}>{t('servGenMese')}</label>
                     <input id={`${id}-mese`} type="month" value={mese}
-                        onChange={(e) => { setMese(e.target.value); setAnteprima(null); setEsito(null); }} className={`${campo} w-44`} />
+                        disabled={occupato} onChange={(e) => { setMese(e.target.value); setAnteprima(null); setEsito(null); }} className={`${campo} w-44`} />
                 </div>
                 <button type="button" onClick={() => { void mostraAnteprima(); }} disabled={occupato} className={btnSecondario}>{t('servGenAnteprima')}</button>
             </div>
@@ -98,8 +107,9 @@ export function GeneraServiziMese({ userId, scuolaId }: Props) {
                     <ul className="space-y-1 font-maven text-sm text-kidville-ink">
                         {anteprima.per_servizio.map((s) => (
                             <li key={s.categoria_id}>
-                                <span className="font-bold">{s.nome}</span>{': '}{t('servGenVoci', { n: s.voci })}
-                                {s.totale !== undefined && ` · ${formatEuro(s.totale)}`}
+                                {s.totale !== undefined
+                                    ? t('servGenRigaServizioTotale', { nome: s.nome, voci: t('servGenVoci', { n: s.voci }), importo: formatEuro(s.totale) })
+                                    : t('servGenRigaServizio', { nome: s.nome, voci: t('servGenVoci', { n: s.voci }) })}
                             </li>
                         ))}
                     </ul>
@@ -107,7 +117,7 @@ export function GeneraServiziMese({ userId, scuolaId }: Props) {
                         <p className="font-maven text-sm font-bold text-kidville-green">{t('servGenTotale', { importo: formatEuro(anteprima.totale) })}</p>
                     )}
                     {anteprima.voci === 0 && <p className="font-maven text-sm text-kidville-sub">{t('servGenNessuna')}</p>}
-                    <BottonePrimarioServizi onClick={() => { void genera(); }} disabled={occupato || anteprima.voci === 0}>
+                    <BottonePrimarioServizi onClick={() => { void genera(); }} disabled={occupato || !pronta || anteprima.voci === 0}>
                         {t('servGenGenera', { n: anteprima.voci })}
                     </BottonePrimarioServizi>
                 </div>

@@ -6,6 +6,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { useDateFormat } from '@/lib/i18n/date';
 import { formatEuro } from '@/lib/format/valuta';
+import { primoDelMese } from '@/lib/pagamenti/servizi-mensili';
 import { etichettaMese } from '@/lib/pagamenti/selezione-voci';
 import type { VociDaDecidere, VoceDaDecidere } from './servizi-client';
 import { btnSecondario } from './servizi-stili';
@@ -34,7 +35,7 @@ function RigaVoce({ v, conMotivo }: { v: VoceDaDecidere; conMotivo: boolean }) {
     const importo = formatEuro(v.importo);
     const data = v.scadenza ? f.dataBreve(v.scadenza) : '—';
     const riga = v.periodo
-        ? t('servVfRiga', { mese: etichettaMese(v.periodo, locale, 'corta'), data, importo })
+        ? t('servVfRiga', { mese: etichettaMese(primoDelMese(v.periodo), locale, 'corta'), data, importo })
         : t('servVfRigaSenzaMese', { data, importo });
     const chiaveStato = v.stato ? CHIAVE_STATO[v.stato] : undefined;
     const chiaveMotivo = v.motivo ? CHIAVE_MOTIVO[v.motivo] : undefined;
@@ -63,7 +64,7 @@ export function VociFutureDialog({ voci, invio, onElimina, onMantieni, onAnnulla
     const titoloId = useId();
     const nElim = voci.eliminabili.length;
     return (
-        <Modal open onClose={onAnnulla} title={t('servVfTitolo')} labelledBy={titoloId} closeOnBackdrop={false}
+        <Modal open onClose={invio ? () => {} : onAnnulla} title={t('servVfTitolo')} labelledBy={titoloId} closeOnBackdrop={false}
             className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-card bg-kidville-white p-5 shadow-xl">
             <h3 id={titoloId} className="font-barlow text-lg font-extrabold text-kidville-green">{t('servVfTitolo')}</h3>
             <p className="mt-1 font-maven text-sm text-kidville-ink">{t('servVfIntro')}</p>

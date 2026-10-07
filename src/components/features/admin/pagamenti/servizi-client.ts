@@ -18,8 +18,8 @@ export const intestazioni = (userId: string) => ({ 'Content-Type': 'application/
 export interface Servizio {
     id: string;
     nome: string;
-    slug: string;
-    scuola_id: string;
+    slug: string | null;
+    scuola_id: string | null;
     importo_mensile_default: number | string | null;
 }
 
@@ -64,12 +64,12 @@ export const importoNumero = (v: number | string | null | undefined): number => 
 };
 
 /** Il codice del server solo se ha la forma di una costante: nel log non entra altro. */
-const codiceSicuro = (corpo: unknown): string => {
+export const codiceSicuro = (corpo: unknown): string => {
     const c = (corpo as { codice?: unknown } | null)?.codice;
     return typeof c === 'string' && /^[A-Z_]{3,60}$/.test(c) ? `:${c}` : '';
 };
 
-async function leggiCorpo(res: Response, evento: string): Promise<unknown> {
+export async function leggiCorpo(res: Response, evento: string): Promise<unknown> {
     try {
         return await res.json();
     } catch (err) {
@@ -148,7 +148,9 @@ export async function scriviServizi(
         if (res.status === 409 && c?.codice === 'VOCI_FUTURE_DA_DECIDERE') {
             return { tipo: 'da_decidere', voci: { eliminabili: c.data?.eliminabili ?? [], intoccabili: c.data?.intoccabili ?? [] } };
         }
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `${evento}${codiceSicuro(corpo)}`, route: PAGINA_SERVIZI, stato: res.status });
+        // Un rifiuto previsto e mostrato all'utente (periodo sovrapposto) non è un guasto: 'warn'.
+        const previsto = c?.codice === 'SERVIZIO_ISCRIZIONE_SOVRAPPOSTA';
+        logClient({ livello: previsto ? 'warn' : 'error', evento: 'fetch', messaggio: `${evento}${codiceSicuro(corpo)}`, route: PAGINA_SERVIZI, stato: res.status });
         const eliminate = importoNumero(c?.voci_eliminate as number | string | undefined);
         return { tipo: 'errore', testo: messaggioDaCorpo(corpo, fallback), vociEliminate: eliminate > 0 ? Math.floor(eliminate) : 0 };
     } catch (err) {

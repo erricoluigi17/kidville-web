@@ -28,6 +28,11 @@ const V1 = '55555555-5555-4555-8555-555555555551'
 const V2 = '55555555-5555-4555-8555-555555555552'
 const V3 = '55555555-5555-4555-8555-555555555553'
 
+const PER = 'Verdi Gianni, Pomeridiano, da ottobre 2026'
+const NOME_TERMINA = `Termina: ${PER}`
+const NOME_MODIFICA = `Modifica: ${PER}`
+const NOME_ELIMINA = `Elimina: ${PER}`
+
 const DATI = {
   servizi: [{ id: SERV, nome: 'Pomeridiano', slug: 'pomeridiano', scuola_id: SEDE, importo_mensile_default: 85.5 }],
   iscrizioni: [
@@ -43,12 +48,13 @@ const ALUNNI = [
   { id: A3, nome: 'Rosa', cognome: 'Gialli', classe_sezione: '1B' },
 ]
 const VOCE = (id: string, mese: string, extra: Record<string, unknown> = {}) =>
-  ({ id, periodo: mese, importo: 85.5, scadenza: `${mese.slice(0, 7)}-10`, stato: 'da_pagare', sollecitata: false, ...extra })
+  ({ id, periodo: mese, importo: 85.5, scadenza: `${mese}-10`, stato: 'da_pagare', sollecitata: false, ...extra })
 
 type Risposta = { status: number; body: unknown }
 const ok = (data: unknown): Risposta => ({ status: 200, body: { success: true, data } })
 
 let getServizi: Risposta
+let attesa: Promise<void> | null // se presente, le scritture restano in sospeso finché non si risolve
 let scritture: Risposta[] // risposte consecutive a PATCH/DELETE/POST
 let chiamate: { url: string; metodo: string; body: Record<string, unknown> | null }[]
 const fetchMock = vi.fn()
@@ -61,6 +67,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-15T10:00:00Z') })
   getServizi = ok(DATI)
   scritture = []
+  attesa = null
   chiamate = []
   fetchMock.mockImplementation(async (u: string, init?: { method?: string; body?: string }) => {
     const metodo = init?.method ?? 'GET'
@@ -68,7 +75,7 @@ beforeEach(() => {
     let r: Risposta
     if (u.startsWith('/api/admin/students')) r = ok(ALUNNI)
     else if (metodo === 'GET') r = getServizi
-    else r = scritture.shift() ?? ok({})
+    else { if (attesa) await attesa; r = scritture.shift() ?? ok({}) }
     return { ok: r.status < 400, status: r.status, json: async () => r.body }
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -82,7 +89,7 @@ async function apri() {
 
 /** Apre «Termina», lascia l'ultimo mese predefinito e conferma. */
 async function terminaVerdi() {
-  fireEvent.click(screen.getByRole('button', { name: 'Termina: Verdi Gianni' }))
+  fireEvent.click(screen.getByRole('button', { name: NOME_TERMINA }))
   fireEvent.click(await screen.findByRole('button', { name: 'Termina l’iscrizione' }))
 }
 
@@ -207,9 +214,15 @@ describe('ServiziPanel — aggiunta di iscritti', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Iscrivi' }))
     await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent).toMatch(/sovrappone/i))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ stato: 409 }))
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'warn', stato: 409 }))
+    expect(JSON.stringify(h.logClient.mock.calls)).not.toMatch(/Gialli|Rosa/)
   })
 })
+
+const DA_DECIDERE: Risposta = {
+  status: 409,
+  body: { codice: 'VOCI_FUTURE_DA_DECIDERE', data: { eliminabili: [VOCE(V1, '2026-11')], intoccabili: [] } },
+}
 
 describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
   const DA_DECIDERE_CON_ELIMINABILI: Risposta = {
@@ -217,14 +230,14 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
     body: {
       error: 'Ci sono voci già generate fuori dal nuovo periodo: scegli cosa farne.', codice: 'VOCI_FUTURE_DA_DECIDERE',
       data: {
-        eliminabili: [VOCE(V1, '2026-11-01'), VOCE(V2, '2026-12-01', { sollecitata: true })],
-        intoccabili: [VOCE(V3, '2027-01-01', { stato: 'pagato', motivo: 'pagata' })],
+        eliminabili: [VOCE(V1, '2026-11'), VOCE(V2, '2026-12', { sollecitata: true })],
+        intoccabili: [VOCE(V3, '2027-01', { stato: 'pagato', motivo: 'pagata' })],
       },
     },
   }
 
   it('Termina → 409 → finestra con eliminabili e intoccabili (con il motivo) → «Elimina» ripete la richiesta con gli id mostrati', async () => {
-    scritture = [DA_DECIDERE_CON_ELIMINABILI, ok({ voci_eliminate: 2, voci_mantenute: 1, intoccabili: 1 })]
+    scritture = [DA_DECIDERE_CON_ELIMINABILI, ok({ voci_eliminate: 2, voci_mantenute: 0, intoccabili: 1 })]
     await apri()
     await terminaVerdi()
     const dialogo = await screen.findByRole('dialog', { name: 'Che cosa facciamo delle voci già generate?' })
@@ -234,7 +247,7 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
     expect(within(dialogo).getByText('Eliminandola si perde anche lo storico dei solleciti.')).toBeInTheDocument()
     expect(within(dialogo).getByText(/Nov 2026 · scade il 10\/11\/2026/)).toBeInTheDocument()
     fireEvent.click(within(dialogo).getByRole('button', { name: 'Elimina le 2 voci non pagate e non fatturate' }))
-    expect(await screen.findByText('Iscrizione aggiornata · 2 voci eliminate · 1 voce mantenuta')).toBeInTheDocument()
+    expect(await screen.findByText('Iscrizione aggiornata · 2 voci eliminate · 1 voce non eliminabile resta')).toBeInTheDocument()
     const patch = vedi('PATCH')
     expect(patch).toHaveLength(2)
     expect(patch[0].body).toEqual({ id: ISCR1, scuola_id: SEDE, al: '2026-10' })
@@ -252,11 +265,11 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
   })
 
   it('«Mantienile» invia «mantieni» e NESSUN voci_ids', async () => {
-    scritture = [DA_DECIDERE_CON_ELIMINABILI, ok({ voci_eliminate: 0, voci_mantenute: 3, intoccabili: 1 })]
+    scritture = [DA_DECIDERE_CON_ELIMINABILI, ok({ voci_eliminate: 0, voci_mantenute: 2, intoccabili: 1 })]
     await apri()
     await terminaVerdi()
     fireEvent.click(await screen.findByRole('button', { name: 'Mantienile' }))
-    expect(await screen.findByText('Iscrizione aggiornata · 3 voci mantenute')).toBeInTheDocument()
+    expect(await screen.findByText('Iscrizione aggiornata · 2 voci mantenute · 1 voce non eliminabile resta')).toBeInTheDocument()
     const secondo = vedi('PATCH')[1].body!
     expect(secondo.voci_future).toBe('mantieni')
     expect('voci_ids' in secondo).toBe(false)
@@ -284,8 +297,8 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
 
   it('senza voci eliminabili non c\'è il bottone «Elimina le …»: resta «Procedi», che invia «mantieni»', async () => {
     scritture = [
-      { status: 409, body: { codice: 'VOCI_FUTURE_DA_DECIDERE', data: { eliminabili: [], intoccabili: [VOCE(V3, '2027-01-01', { stato: 'parziale', motivo: 'parziale' })] } } },
-      ok({ voci_eliminate: 0, voci_mantenute: 1, intoccabili: 1 }),
+      { status: 409, body: { codice: 'VOCI_FUTURE_DA_DECIDERE', data: { eliminabili: [], intoccabili: [VOCE(V3, '2027-01', { stato: 'parziale', motivo: 'parziale' })] } } },
+      ok({ voci_eliminate: 0, voci_mantenute: 0, intoccabili: 1 }),
     ]
     await apri()
     await terminaVerdi()
@@ -294,7 +307,7 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
     expect(within(dialogo).queryByRole('button', { name: 'Mantienile' })).toBeNull()
     expect(within(dialogo).getByText('Con un acconto')).toBeInTheDocument()
     fireEvent.click(within(dialogo).getByRole('button', { name: 'Procedi' }))
-    await screen.findByText('Iscrizione aggiornata · 1 voce mantenuta')
+    await screen.findByText('Iscrizione aggiornata · 1 voce non eliminabile resta')
     expect(vedi('PATCH')[1].body).toMatchObject({ voci_future: 'mantieni' })
     expect('voci_ids' in vedi('PATCH')[1].body!).toBe(false)
   })
@@ -302,12 +315,12 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
   it('Elimina iscrizione: conferma esplicita, DELETE con sede, secondo tempo con gli id nella query', async () => {
     scritture = [DA_DECIDERE_CON_ELIMINABILI, ok({ voci_eliminate: 2, voci_mantenute: 0, intoccabili: 1 })]
     await apri()
-    fireEvent.click(screen.getByRole('button', { name: 'Elimina: Verdi Gianni' }))
+    fireEvent.click(screen.getByRole('button', { name: NOME_ELIMINA }))
     expect(vedi('DELETE')).toHaveLength(0) // ancora nessuna richiesta: serve la conferma
     fireEvent.click(await screen.findByRole('button', { name: 'Elimina l’iscrizione' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Che cosa facciamo delle voci già generate?' })
     fireEvent.click(within(dialogo).getByRole('button', { name: /^Elimina le 2 voci/ }))
-    expect(await screen.findByText('Iscrizione eliminata · 2 voci eliminate')).toBeInTheDocument()
+    expect(await screen.findByText('Iscrizione eliminata · 2 voci eliminate · 1 voce non eliminabile resta')).toBeInTheDocument()
     const [primo, secondo] = vedi('DELETE').map(url)
     expect(primo.searchParams.get('id')).toBe(ISCR1)
     expect(primo.searchParams.get('scuola_id')).toBe(SEDE)
@@ -338,7 +351,7 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
   it('Modifica: PATCH con importo, mese di inizio e fine nulla (al: null)', async () => {
     scritture = [ok({ voci_eliminate: 0, voci_mantenute: 0, intoccabili: 0 })]
     await apri()
-    fireEvent.click(screen.getByRole('button', { name: 'Modifica: Verdi Gianni' }))
+    fireEvent.click(screen.getByRole('button', { name: NOME_MODIFICA }))
     fireEvent.change(await screen.findByLabelText('Importo mensile (€)'), { target: { value: '90' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salva' }))
     expect(await screen.findByText('Iscrizione aggiornata')).toBeInTheDocument()
@@ -347,7 +360,7 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
 
   it('Termina con ultimo mese prima dell\'inizio: errore e nessuna richiesta', async () => {
     await apri()
-    fireEvent.click(screen.getByRole('button', { name: 'Termina: Verdi Gianni' }))
+    fireEvent.click(screen.getByRole('button', { name: NOME_TERMINA }))
     fireEvent.change(await screen.findByLabelText('Ultimo mese'), { target: { value: '2026-08' } })
     fireEvent.click(screen.getByRole('button', { name: 'Termina l’iscrizione' }))
     expect(await screen.findByText('Il mese di fine non può essere prima del mese di inizio.')).toBeInTheDocument()
@@ -418,7 +431,163 @@ describe('GeneraServiziMese', () => {
     await apri()
     fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Genera 3 voci' }))
-    await waitFor(() => expect(screen.getAllByRole('alert').some((a) => (a.textContent ?? '').length > 0)).toBe(true))
-    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', stato: 400 }))
+    expect(await screen.findByText('La generazione non è consentita su una sede di collaudo.')).toBeInTheDocument()
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', stato: 400, messaggio: 'servizi-generazione-respinta:SEDE_DI_COLLAUDO' }))
+    expect(JSON.stringify(h.logClient.mock.calls)).not.toMatch(/Verdi|Bianchi|Pomeridiano|256/)
+  })
+})
+
+describe('ServiziPanel — correzioni della revisione', () => {
+  const S2 = '22222222-2222-4222-8222-222222222299'
+  const iscr = (id: string, cat: string, dal: string, al: string | null) => ({
+    id, alunno_id: A1, categoria_id: cat, importo_mensile: 80, dal, al,
+    alunno: { nome: 'Gianni', cognome: 'Verdi', classe_sezione: '1A', stato: 'iscritto' },
+  })
+
+  it('stesso bambino in due servizi e due volte nello stesso: ogni nome accessibile è UNICO', async () => {
+    getServizi = ok({
+      servizi: [DATI.servizi[0], { id: S2, nome: 'Doposcuola', slug: null, scuola_id: null, importo_mensile_default: null }],
+      iscrizioni: [
+        iscr('a0000000-0000-4000-8000-000000000001', SERV, '2026-01-01', '2026-06-01'),
+        iscr('a0000000-0000-4000-8000-000000000002', SERV, '2026-10-01', null),
+        iscr('a0000000-0000-4000-8000-000000000003', S2, '2026-10-01', null),
+      ],
+    })
+    render(<ServiziPanel userId={USER} scuolaId={SEDE} />)
+    await screen.findByRole('heading', { name: 'Doposcuola' })
+    const nomi = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent ?? '')
+      .filter((n) => /^(Modifica|Termina|Elimina):/.test(n))
+    expect(nomi.length).toBeGreaterThanOrEqual(8) // 3 righe: Modifica+Elimina ×3, Termina ×2 (la conclusa no)
+    expect(new Set(nomi).size).toBe(nomi.length)
+    for (const n of nomi) expect(screen.getAllByRole('button', { name: n })).toHaveLength(1)
+  })
+
+  it('le iscrizioni stanno in ordine di cognome e nome, poi di inizio', async () => {
+    await apri()
+    const testo = screen.getAllByRole('listitem').map((r) => r.textContent ?? '')
+    expect(testo.findIndex((x) => x.includes('Bianchi Lia'))).toBeLessThan(testo.findIndex((x) => x.includes('Verdi Gianni')))
+  })
+
+  it('«Termina» non c\'è sulle iscrizioni concluse e non può allungare quelle in corso', async () => {
+    getServizi = ok({ servizi: DATI.servizi, iscrizioni: [DATI.iscrizioni[1], { ...DATI.iscrizioni[0], al: '2026-12-01' }] })
+    await apri()
+    expect(screen.queryByRole('button', { name: /^Termina: Bianchi Lia/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Termina: Verdi Gianni/ }))
+    // Predefinito: il mese corrente (prima della fine attuale). Spostarlo DOPO la fine è rifiutato.
+    expect(await screen.findByLabelText('Ultimo mese')).toHaveValue('2026-10')
+    fireEvent.change(screen.getByLabelText('Ultimo mese'), { target: { value: '2027-02' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Termina l’iscrizione' }))
+    expect(await screen.findByText(/non può essere dopo la fine attuale/)).toBeInTheDocument()
+    expect(vedi('PATCH')).toHaveLength(0)
+  })
+
+  it('Escape con la scrittura in sospeso NON chiude la finestra, e i bottoni sono disabilitati', async () => {
+    let sblocca!: () => void
+    attesa = new Promise<void>((r) => { sblocca = r })
+    scritture = [ok({ voci_eliminate: 0, voci_mantenute: 0, intoccabili: 0 })]
+    await apri()
+    await terminaVerdi()
+    await waitFor(() => expect(vedi('PATCH')).toHaveLength(1))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Annulla' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Termina l’iscrizione' })).toBeDisabled()
+    sblocca()
+    expect(await screen.findByText('Iscrizione aggiornata')).toBeInTheDocument()
+  })
+
+  it('aggiunta con la POST in sospeso: «Iscrivi» e «Annulla» disabilitati', async () => {
+    let sblocca!: () => void
+    attesa = new Promise<void>((r) => { sblocca = r })
+    scritture = [{ status: 201, body: { success: true, data: { creati: 1, ids: [] } } }]
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi iscritti: Pomeridiano' }))
+    expect(screen.getByText('Caricamento dei bambini…')).toBeInTheDocument() // subito, prima che l'elenco arrivi
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Gialli Rosa/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Iscrivi' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Iscrivi' })).toBeDisabled())
+    expect(screen.getByRole('button', { name: 'Annulla' })).toBeDisabled()
+    sblocca()
+    expect(await screen.findByText('1 bambino iscritto')).toBeInTheDocument()
+  })
+
+  it('modalità «Tutti»: chi ha un\'iscrizione sovrapposta resta fuori dalla POST', async () => {
+    scritture = [{ status: 201, body: { success: true, data: { creati: 2, ids: [] } } }]
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi iscritti: Pomeridiano' }))
+    await screen.findByRole('checkbox', { name: /Gialli Rosa/ })
+    fireEvent.click(screen.getByRole('button', { name: /^Tutti/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Iscrivi' }))
+    expect(await screen.findByText('2 bambini iscritti')).toBeInTheDocument()
+    const ids = (vedi('POST')[0].body as { alunno_ids: string[] }).alunno_ids
+    expect([...ids].sort()).toEqual([A2, A3].sort())
+    expect(ids).not.toContain(A1)
+  })
+
+  it('Modifica che riceve il 409: la seconda richiesta ripete importo, dal e al', async () => {
+    scritture = [DA_DECIDERE, ok({ voci_eliminate: 0, voci_mantenute: 2, intoccabili: 0 })]
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: NOME_MODIFICA }))
+    fireEvent.change(await screen.findByLabelText('Importo mensile (€)'), { target: { value: '90' } })
+    fireEvent.change(screen.getByLabelText('Al mese (facoltativo)'), { target: { value: '2027-06' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salva' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Mantienile' }))
+    await screen.findByText('Iscrizione aggiornata · 2 voci mantenute')
+    const [uno, due] = vedi('PATCH').map((c) => c.body)
+    expect(uno).toEqual({ id: ISCR1, scuola_id: SEDE, importo_mensile: 90, dal: '2026-10', al: '2027-06' })
+    expect(due).toEqual({ ...uno, voci_future: 'mantieni' })
+  })
+
+  it('un nuovo clic su un\'azione azzera l\'esito precedente', async () => {
+    scritture = [ok({ voci_eliminate: 0, voci_mantenute: 0, intoccabili: 0 })]
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: NOME_MODIFICA }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Salva' }))
+    expect(await screen.findByText('Iscrizione aggiornata')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: NOME_ELIMINA }))
+    expect(screen.queryByText('Iscrizione aggiornata')).toBeNull()
+  })
+})
+
+describe('GeneraServiziMese — gara fra anteprima e mese', () => {
+  it('cambiando il mese l\'anteprima decade; il successo resta a schermo anche se la rilettura fallisce', async () => {
+    let letture = 0
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (u: string, init?: { method?: string; body?: string }) => {
+      if (u.startsWith('/api/pagamenti/genera-servizi')) {
+        const metodo = init?.method ?? 'GET'
+        chiamate.push({ url: u, metodo, body: init?.body ? JSON.parse(init.body) : null })
+        if (metodo === 'POST') return { ok: true, status: 200, json: async () => ({ success: true, data: { periodo: '2026-10', generati: 3 } }) }
+        letture += 1
+        if (letture > 1) return { ok: false, status: 500, json: async () => ({ error: 'x', codice: 'SERVIZI_ANTEPRIMA_FALLITA' }) }
+        return { ok: true, status: 200, json: async () => ok({ periodo: '2026-10', voci: 3, per_servizio: [{ categoria_id: SERV, nome: 'Pomeridiano', voci: 3 }] }).body }
+      }
+      return base(u, init)
+    })
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Genera 3 voci' }))
+    expect(await screen.findByText('3 voci generate')).toBeInTheDocument()
+    await waitFor(() => expect(letture).toBe(2))
+    expect(screen.getByText('3 voci generate')).toBeInTheDocument()
+    expect(vedi('POST')[0].body).toEqual({ periodo: '2026-10', scuola_id: SEDE })
+    // Cambiare il mese fa sparire l'anteprima: non si può generare un mese mai visto.
+    fireEvent.change(screen.getByLabelText('Mese'), { target: { value: '2026-11' } })
+    expect(screen.queryByRole('button', { name: /^Genera/ })).toBeNull()
+  })
+
+  it('un\'anteprima di un altro mese non abilita «Genera» e non genera quel mese', async () => {
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (u: string, init?: { method?: string; body?: string }) => {
+      if (u.startsWith('/api/pagamenti/genera-servizi')) {
+        chiamate.push({ url: u, metodo: init?.method ?? 'GET', body: null })
+        return { ok: true, status: 200, json: async () => ok({ periodo: '2026-09', voci: 4, per_servizio: [] }).body }
+      }
+      return base(u, init)
+    })
+    await apri()
+    fireEvent.click(screen.getByRole('button', { name: 'Anteprima' }))
+    expect(await screen.findByRole('button', { name: 'Genera 4 voci' })).toBeDisabled()
+    expect(vedi('POST')).toHaveLength(0)
   })
 })

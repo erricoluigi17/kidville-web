@@ -13,6 +13,8 @@ interface Props {
     nome: string;
     /** Primo mese dell'iscrizione ('YYYY-MM-01'): l'ultimo mese non può precederlo. */
     dal: string;
+    /** Ultimo mese attuale ('YYYY-MM-01') o null: «Termina» può accorciare, mai allungare. */
+    al: string | null;
     invio: boolean;
     errore: string;
     /** `ultimoMese` ('YYYY-MM') c'è solo per «termina». */
@@ -21,12 +23,15 @@ interface Props {
 }
 
 /** Conferma esplicita di «Termina» (chiede l'ultimo mese) e di «Elimina». */
-export function ConfermaIscrizioneServizio({ modo, nome, dal, invio, errore, onConferma, onAnnulla }: Props) {
+export function ConfermaIscrizioneServizio({ modo, nome, dal, al, invio, errore, onConferma, onAnnulla }: Props) {
     const t = useTranslations('adminContabilita');
     const id = useId();
     const dalMese = aMeseInput(dal);
     const corrente = meseCorrente();
-    const [ultimo, setUltimo] = useState(corrente < dalMese ? dalMese : corrente);
+    const alMese = al ? aMeseInput(al) : null;
+    // Il mese corrente, ma mai dopo la fine attuale e mai prima dell'inizio.
+    const proposto = alMese !== null && corrente > alMese ? alMese : corrente;
+    const [ultimo, setUltimo] = useState(proposto < dalMese ? dalMese : proposto);
     const [erroreLocale, setErroreLocale] = useState('');
     const titolo = modo === 'termina' ? t('servTerminaTitolo', { nome }) : t('servEliminaTitolo', { nome });
 
@@ -34,12 +39,13 @@ export function ConfermaIscrizioneServizio({ modo, nome, dal, invio, errore, onC
         if (modo === 'elimina') { onConferma(); return; }
         if (!/^\d{4}-\d{2}$/.test(ultimo)) { setErroreLocale(t('servErrDal')); return; }
         if (ultimo < dalMese) { setErroreLocale(t('servErrAlPrimaDiDal')); return; }
+        if (alMese !== null && ultimo > alMese) { setErroreLocale(t('servErrFineOltreAttuale')); return; }
         setErroreLocale('');
         onConferma(ultimo);
     };
     const messaggio = erroreLocale || errore;
     return (
-        <Modal open onClose={onAnnulla} title={titolo} labelledBy={`${id}-titolo`} closeOnBackdrop={false}
+        <Modal open onClose={invio ? () => {} : onAnnulla} title={titolo} labelledBy={`${id}-titolo`} closeOnBackdrop={false}
             className="w-full max-w-md rounded-card bg-kidville-white p-5 shadow-xl">
             <h3 id={`${id}-titolo`} className="font-barlow text-lg font-extrabold text-kidville-green">{titolo}</h3>
             {modo === 'termina' ? (

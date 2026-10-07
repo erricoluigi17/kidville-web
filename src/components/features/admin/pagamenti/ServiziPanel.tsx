@@ -43,6 +43,16 @@ export function ServiziPanel({ userId, scuolaId }: Props) {
         <div className="space-y-4">
             <SectionTitle icon={Repeat} title={t('servTitolo')} sub={t('servSottotitolo')} />
 
+            {/* Le regioni dell'esito stanno SEMPRE nel DOM (un'area live nata col testo non si annuncia)
+                e subito sotto il titolo: dove si guarda dopo aver premuto un bottone della scheda. */}
+            <div role="alert" className={esito?.tipo === 'errore' ? avvisoErrore : undefined}>
+                {esito?.tipo === 'errore' && (<>
+                    <AlertTriangle size={15} className="mt-0.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+                    <span>{esito.testo}</span>
+                </>)}
+            </div>
+            <p role="status" className={esito?.tipo === 'ok' ? avvisoOk : undefined}>{esito?.tipo === 'ok' ? esito.testo : ''}</p>
+
             {stato.fase === 'caricamento' && <p role="status" className="font-maven text-sm text-kidville-sub">{t('servCaricamento')}</p>}
 
             {stato.fase === 'errore' && (
@@ -67,20 +77,12 @@ export function ServiziPanel({ userId, scuolaId }: Props) {
                     {pronti.servizi.map((s) => (
                         <ServizioScheda key={s.id} userId={userId} scuolaId={scuolaId} servizio={s}
                             iscrizioni={pronti.iscrizioni.filter((i) => i.categoria_id === s.id)}
-                            onEsito={setEsito} onScritto={ricarica} />
+                            onEsito={setEsito} onScritto={ricarica} onNuovaAzione={() => setEsito(null)} />
                     ))}
                     <GeneraServiziMese userId={userId} scuolaId={scuolaId} />
                 </>
             )}
 
-            {/* Le regioni dell'esito stanno SEMPRE nel DOM: un'area live nata insieme al testo non si annuncia. */}
-            <div role="alert" className={esito?.tipo === 'errore' ? avvisoErrore : undefined}>
-                {esito?.tipo === 'errore' && (<>
-                    <AlertTriangle size={15} className="mt-0.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-                    <span>{esito.testo}</span>
-                </>)}
-            </div>
-            <p role="status" className={esito?.tipo === 'ok' ? avvisoOk : undefined}>{esito?.tipo === 'ok' ? esito.testo : ''}</p>
         </div>
     );
 }

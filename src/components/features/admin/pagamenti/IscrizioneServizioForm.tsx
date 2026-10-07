@@ -41,6 +41,7 @@ export function IscrizioneServizioForm({ userId, scuolaId, servizio, iscrizioniS
     const [selezione, setSelezione] = useState<SelezioneAlunni>({ ...SELEZIONE_TUTTI, modo: 'scelti' });
     const [alunni, setAlunni] = useState<AlunnoElenco[]>([]);
     const [alunniErrore, setAlunniErrore] = useState(false);
+    const [alunniCaricati, setAlunniCaricati] = useState(false);
     const [erroreLocale, setErroreLocale] = useState('');
 
     // L'elenco dei bambini si carica all'apertura, solo per le nuove iscrizioni.
@@ -51,6 +52,7 @@ export function IscrizioneServizioForm({ userId, scuolaId, servizio, iscrizioniS
             if (!vivo) return;
             setAlunni(r.alunni);
             setAlunniErrore(r.errore);
+            setAlunniCaricati(true);
         });
         return () => { vivo = false; };
     }, [userId, scuolaId, modifica]);
@@ -80,13 +82,16 @@ export function IscrizioneServizioForm({ userId, scuolaId, servizio, iscrizioniS
     const titolo = modifica ? t('servFormModificaTitolo', { nome: nomeModifica }) : t('servFormAggiungiTitolo', { servizio: servizio.nome });
     const messaggio = erroreLocale || errore;
     return (
-        <Modal open onClose={onAnnulla} title={titolo} labelledBy={`${id}-titolo`} closeOnBackdrop={false}
+        <Modal open onClose={invio ? () => {} : onAnnulla} title={titolo} labelledBy={`${id}-titolo`} closeOnBackdrop={false}
             className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-card bg-kidville-white p-5 shadow-xl">
             <h3 id={`${id}-titolo`} className="font-barlow text-lg font-extrabold text-kidville-green">{titolo}</h3>
 
             {!modifica && (
                 <div className="mt-3 space-y-2">
                     {alunniErrore && <p role="alert" className="font-maven text-xs text-kidville-error-strong">{t('servAlunniNonCaricati')}</p>}
+                    {!alunniCaricati ? (
+                        <p role="status" className="font-maven text-sm text-kidville-sub">{t('servFormCaricamentoAlunni')}</p>
+                    ) : (
                     <SelettoreAlunni
                         id={`${id}-scelta`}
                         alunni={candidati}
@@ -109,6 +114,7 @@ export function IscrizioneServizioForm({ userId, scuolaId, servizio, iscrizioniS
                             bersaglio: (n: number) => t('genrSceltaBersaglio', { n }),
                         }}
                     />
+                    )}
                     <p role="status" className="font-maven text-xs text-kidville-sub">{esclusi > 0 ? t('servAlunniEsclusi', { n: esclusi }) : ''}</p>
                 </div>
             )}

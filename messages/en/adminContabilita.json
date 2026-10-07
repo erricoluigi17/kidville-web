@@ -1497,5 +1497,14 @@
   "servGenNessuna": "No charges to generate for this month",
   "servGenFatto": "{n, plural, one {# charge generated} other {# charges generated}}",
   "servGenErroreAnteprima": "We could not work out the preview.",
-  "servGenErroreGenera": "We could not generate the charges."
+  "servGenErroreGenera": "We could not generate the charges.",
+  "servAzioneIscrizione": "{azione}: {nome}, {servizio}, {periodo}",
+  "servAzioneServizio": "{azione}: {servizio}",
+  "servErrFineOltreAttuale": "The last month cannot be after the current end of the enrolment: use “Edit” to extend it.",
+  "servVociNonEliminabiliRestano": "{n, plural, one {# charge that cannot be deleted remains} other {# charges that cannot be deleted remain}}",
+  "servUnisci": "{a} · {b}",
+  "servErroreEVoci": "{errore} {voci}",
+  "servGenRigaServizio": "{nome}: {voci}",
+  "servGenRigaServizioTotale": "{nome}: {voci} · {importo}",
+  "servFormCaricamentoAlunni": "Loading children…"
 }

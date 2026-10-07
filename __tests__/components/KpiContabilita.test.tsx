@@ -125,7 +125,28 @@ describe('KpiContabilita', () => {
     expect(onCommutaNascoste).toHaveBeenCalledTimes(1);
   });
 
-  it('con testoSelezione compare «Somma di: …», senza no', () => {
+  it('il bottone è type="button" e le icone sono nascoste agli screen reader', () => {
+    const { container, rerender, onCommutaNascoste } = monta({ nascoste: false });
+    const bottone = screen.getByRole('button', { name: 'Nascondi cifre' });
+    expect(bottone).toHaveAttribute('type', 'button');
+    expect(bottone).toHaveAttribute('title', 'Nascondi cifre');
+    const icona = () => bottone.querySelector('svg');
+    expect(icona()).toHaveAttribute('aria-hidden', 'true');
+    rerender(
+      <KpiContabilita
+        totals={TOTALI}
+        totaliPerSede={SEDI}
+        loading={false}
+        mostraSede
+        nomeSedeTesto={(id) => `Sede ${id}`}
+        nascoste
+        onCommutaNascoste={onCommutaNascoste}
+      />,
+    );
+    expect(container.querySelector('[data-testid="kpi-selezione"] svg')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('con testoSelezione la frase «Somma di: …» compare, e senza testoSelezione non compare', () => {
     const { unmount } = monta({ testoSelezione: 'Retta · Ottobre' });
     expect(within(screen.getByTestId('kpi-selezione')).getByText('Somma di: Retta · Ottobre')).toBeInTheDocument();
     unmount();

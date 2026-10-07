@@ -60,7 +60,7 @@ export function KpiContabilita({ totals, totaliPerSede, loading, mostraSede, nom
                 {testoSelezione ? (
                     <p className="font-maven text-xs text-kidville-sub">{t('dashKpiSelezione', { selezione: testoSelezione })}</p>
                 ) : <span />}
-                <button type="button" onClick={onCommutaNascoste} aria-label={t('dashNascondiCifre')} aria-pressed={nascoste}
+                <button type="button" onClick={onCommutaNascoste} aria-label={t('dashNascondiCifre')} title={t('dashNascondiCifre')} aria-pressed={nascoste}
                     className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-sub transition-colors hover:border-kidville-green hover:text-kidville-green">
                     {nascoste ? <Eye size={14} aria-hidden="true" /> : <EyeOff size={14} aria-hidden="true" />}
                 </button>

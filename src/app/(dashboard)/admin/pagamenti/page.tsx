@@ -21,6 +21,7 @@ function Caricamento() {
 }
 const GeneratoreRette = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreRette').then((m) => m.GeneratoreRette), { loading: Caricamento });
 const GeneratoreCategoria = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreCategoria').then((m) => m.GeneratoreCategoria), { loading: Caricamento });
+const ServiziPanel = dynamic(() => import('@/components/features/admin/pagamenti/ServiziPanel').then((m) => m.ServiziPanel), { loading: Caricamento });
 const TicketMensaPanel = dynamic(() => import('@/components/features/admin/pagamenti/TicketMensaPanel').then((m) => m.TicketMensaPanel), { loading: Caricamento });
 const FiscalePanel = dynamic(() => import('@/components/features/admin/pagamenti/FiscalePanel').then((m) => m.FiscalePanel), { loading: Caricamento });
 const SollecitiPanel = dynamic(() => import('@/components/features/admin/pagamenti/SollecitiPanel').then((m) => m.SollecitiPanel), { loading: Caricamento });
@@ -158,6 +159,17 @@ function PagamentiInner() {
                 </SedeRequired>
             )}
 
+            {/* I servizi mensili scrivono le iscrizioni e le voci di UNA sede. */}
+            {vista === 'servizi' && (
+                <SedeRequired cosa={t('pagPageCosaServizi')}>
+                    {(scuolaId) => (
+                        <Card key={scuolaId} className="p-4 md:p-6">
+                            {userId && <ServiziPanel userId={userId} scuolaId={scuolaId} />}
+                        </Card>
+                    )}
+                </SedeRequired>
+            )}
+
             {/* Due editor, uno per documento: la causale del bonifico la ricopia
                 il genitore, quella della fattura finisce nell'XML per lo SDI. */}
             {vista === 'causali' && (
@@ -175,7 +187,7 @@ function PagamentiInner() {
                 </SedeRequired>
             )}
 
-            {vista !== 'genera' && vista !== 'causali' && (
+            {vista !== 'genera' && vista !== 'servizi' && vista !== 'causali' && (
                 <ContabilitaMultiSede>
                     {(scuolaId) => (
                         <Card className="p-4 md:p-6">

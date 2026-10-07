@@ -86,15 +86,22 @@ const zImporto = z
 const zVociFuture = z.enum(['elimina', 'mantieni'])
 
 /**
- * Gli id delle voci che la segreteria ha VISTO e confermato nel primo tempo (T10). Se presenti,
- * con `elimina` si cancella solo l'intersezione fra questi e le eliminabili ricalcolate: una voce
- * comparsa dopo la finestra non viene cancellata senza che nessuno l'abbia vista. Nella query
- * della DELETE arrivano separati da virgole (o come chiave ripetuta).
+ * Gli id delle voci che la segreteria ha VISTO e confermato nel primo tempo (T10). Con `elimina`
+ * sono OBBLIGATORI (vedi `vociIdsConElimina`): si cancella solo l'intersezione fra questi e le
+ * eliminabili ricalcolate, così una voce comparsa dopo la finestra non viene cancellata senza che
+ * nessuno l'abbia vista. `[]` e l'assenza sono entrambi un 400. Nella query della DELETE arrivano
+ * separati da virgole (o come chiave ripetuta).
  */
 const zVociIds = z.preprocess(
   (v) => (typeof v === 'string' ? v.split(',').filter((x) => x !== '') : v),
   z.array(zUuid).max(RIGHE_MASSIME_POSTGREST).optional(),
 )
+
+/** `elimina` senza gli id visti cancellerebbe anche ciò che nessuno ha visto: non si accetta. */
+const vociIdsConElimina = {
+  check: (b: { voci_future?: string; voci_ids?: string[] }) => b.voci_future !== 'elimina' || (b.voci_ids?.length ?? 0) > 0,
+  opzioni: { message: 'Indica le voci da eliminare', path: ['voci_ids'] },
+}
 
 const getQuerySchema = z.object({ scuola_id: zScuolaOpzionale })
 
@@ -124,13 +131,20 @@ const patchBodySchema = z
   .refine((b) => b.importo_mensile !== undefined || b.dal !== undefined || b.al !== undefined, {
     message: 'Nessuna modifica richiesta',
   })
+  .refine(vociIdsConElimina.check, vociIdsConElimina.opzioni)
 
 const deleteQuerySchema = z.object({
   id: zUuid,
   scuola_id: zUuid,
   voci_future: zVociFuture.optional(),
   voci_ids: zVociIds,
-})
+}).refine(vociIdsConElimina.check, vociIdsConElimina.opzioni)
+
+/** Il mese di una voce come 'YYYY-MM-01' (o null se la voce non ha né competenza né scadenza). */
+function periodoDellaVoce(v: { periodo_competenza: string | null; scadenza: string | null }): string | null {
+  const m = meseDellaVoce({ periodo_competenza: v.periodo_competenza, scadenza: v.scadenza })
+  return m ? primoDelMese(m) : null
+}
 
 // ─── tipi di riga ───────────────────────────────────────────────────────────────────────────
 
@@ -549,7 +563,8 @@ async function classificaVoci(
   for (const v of interessate) {
     const base: VoceElencata = {
       id: v.id,
-      periodo: meseDellaVoce({ periodo_competenza: v.periodo_competenza, scadenza: v.scadenza }),
+      // 'YYYY-MM-01', come ogni altro mese in uscita dalle route dei servizi.
+      periodo: periodoDellaVoce(v),
       importo: num(v.importo),
       scadenza: v.scadenza,
       stato: v.stato,

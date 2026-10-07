@@ -78,8 +78,23 @@ const corpo = (metodo: string, body: unknown) =>
     body: JSON.stringify(body),
   })
 const post = (b: unknown) => POST(corpo('POST', b))
-const patch = (b: unknown) => PATCH(corpo('PATCH', b))
-const del = (qs: string) => DELETE(new Request(`http://localhost/api/pagamenti/servizi?${qs}`, { method: 'DELETE' }))
+
+// Con `voci_future: 'elimina'` la route PRETENDE gli id delle voci viste (`voci_ids`): i test che non
+// parlano di questo li compilano da soli con TUTTE le voci presenti nel finto database. I test che
+// provano il rifiuto usano `patchNudo` / `delNudo`, che non aggiungono niente.
+const IGNOTA = 'd0000000-0000-4000-8000-0000000009ff'
+const tutteLeVoci = () => {
+  const ids = (h.db.pagamenti as Riga[]).map((p) => String(p.id))
+  return ids.length > 0 ? ids : [IGNOTA]
+}
+const patchNudo = (b: unknown) => PATCH(corpo('PATCH', b))
+const patch = (b: unknown) => {
+  const o = b as Record<string, unknown>
+  return patchNudo(o.voci_future === 'elimina' && !('voci_ids' in o) ? { ...o, voci_ids: tutteLeVoci() } : o)
+}
+const delNudo = (qs: string) => DELETE(new Request(`http://localhost/api/pagamenti/servizi?${qs}`, { method: 'DELETE' }))
+const del = (qs: string) =>
+  delNudo(qs.includes('voci_future=elimina') && !qs.includes('voci_ids=') ? `${qs}&voci_ids=${tutteLeVoci().join(',')}` : qs)
 
 const ADMIN_UTENTE = { id: ADMIN, role: 'admin', scuola_id: SEDE_A }
 const SEGRETERIA_UTENTE = { id: SEGRETERIA, role: 'segreteria', scuola_id: SEDE_B }
@@ -424,30 +439,30 @@ function scenario(): void {
     iscrizione(ISCR_ALTRA_SEDE, ALU_ALTRA_SEDE, '2026-09-01', null, SEDE_B),
   ]
   h.db.pagamenti = [
-    voce('p-09', '2026-09', { stato: 'pagato', importo_pagato: 80 }),
-    voce('p-10', '2026-10'),
-    voce('p-11', '2026-11'),
-    voce('p-12', '2026-12', { stato: 'parziale', importo_pagato: 30 }),
-    voce('p-01', '2027-01', { fattura_stato: 'emessa', fattura_aruba_id: 'ARU-1' }),
-    voce('p-02', '2027-02'),
-    voce('p-03', '2027-03'),
+    voce('d0000000-0000-4000-8000-000000000009', '2026-09', { stato: 'pagato', importo_pagato: 80 }),
+    voce('d0000000-0000-4000-8000-000000000010', '2026-10'),
+    voce('d0000000-0000-4000-8000-000000000011', '2026-11'),
+    voce('d0000000-0000-4000-8000-000000000012', '2026-12', { stato: 'parziale', importo_pagato: 30 }),
+    voce('d0000000-0000-4000-8000-000000000001', '2027-01', { fattura_stato: 'emessa', fattura_aruba_id: 'ARU-1' }),
+    voce('d0000000-0000-4000-8000-000000000002', '2027-02'),
+    voce('d0000000-0000-4000-8000-000000000003', '2027-03'),
     // un'altra sede, stesso servizio: MAI toccata
-    voce('p-altra', '2026-11', { scuola_id: SEDE_B, alunno_id: ALU_ALTRA_SEDE }),
+    voce('d0000000-0000-4000-8000-000000000101', '2026-11', { scuola_id: SEDE_B, alunno_id: ALU_ALTRA_SEDE }),
     // un'altra sede, STESSO alunno e STESSA categoria (dato sporco): mai proposta né cancellata
-    voce('p-altra-sede-stesso-alunno', '2026-11', { scuola_id: SEDE_B }),
+    voce('d0000000-0000-4000-8000-000000000103', '2026-11', { scuola_id: SEDE_B }),
     // un altro bambino della stessa sede: non è di questa iscrizione
-    voce('p-altro-bimbo', '2026-11', { alunno_id: ALU_2 }),
+    voce('d0000000-0000-4000-8000-000000000104', '2026-11', { alunno_id: ALU_2 }),
     // un'altra causale dello stesso bambino: non è di questo servizio
-    voce('p-altra-causale', '2026-11', { categoria_id: CAT_NON_MENSILE }),
+    voce('d0000000-0000-4000-8000-000000000102', '2026-11', { categoria_id: CAT_NON_MENSILE }),
   ]
-  h.db.fatture_coda = [{ id: 'q1', pagamento_id: 'p-02', stato: 'in_coda', scuola_id: SEDE_A }]
-  h.db.incassi = [{ id: 'i1', pagamento_id: 'p-03', importo: 10 }]
+  h.db.fatture_coda = [{ id: 'q1', pagamento_id: 'd0000000-0000-4000-8000-000000000002', stato: 'in_coda', scuola_id: SEDE_A }]
+  h.db.incassi = [{ id: 'i1', pagamento_id: 'd0000000-0000-4000-8000-000000000003', importo: 10 }]
 }
 
-const ALTRE = ['p-altra', 'p-altra-causale', 'p-altro-bimbo', 'p-altra-sede-stesso-alunno']
-const INTOCCABILI = ['p-12', 'p-01', 'p-02', 'p-03']
+const ALTRE = ['d0000000-0000-4000-8000-000000000101', 'd0000000-0000-4000-8000-000000000102', 'd0000000-0000-4000-8000-000000000104', 'd0000000-0000-4000-8000-000000000103']
+const INTOCCABILI = ['d0000000-0000-4000-8000-000000000012', 'd0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000003']
 const TUTTE = [
-  'p-09', 'p-10', 'p-11', 'p-12', 'p-01', 'p-02', 'p-03', ...ALTRE,
+  'd0000000-0000-4000-8000-000000000009', 'd0000000-0000-4000-8000-000000000010', 'd0000000-0000-4000-8000-000000000011', 'd0000000-0000-4000-8000-000000000012', 'd0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000003', ...ALTRE,
 ].sort()
 
 describe('PATCH — accorciare il periodo: il primo tempo CHIEDE', () => {
@@ -460,15 +475,15 @@ describe('PATCH — accorciare il periodo: il primo tempo CHIEDE', () => {
     expect(res.status).toBe(409)
     const j = await res.json()
     expect(j.codice).toBe('VOCI_FUTURE_DA_DECIDERE')
-    expect(j.data.eliminabili.map((v: { id: string }) => v.id).sort()).toEqual(['p-10', 'p-11'])
+    expect(j.data.eliminabili.map((v: { id: string }) => v.id).sort()).toEqual(['d0000000-0000-4000-8000-000000000010', 'd0000000-0000-4000-8000-000000000011'])
     expect(j.data.eliminabili[0]).toEqual({
-      id: 'p-10', periodo: '2026-10', importo: 80, scadenza: '2026-10-05', stato: 'da_pagare', sollecitata: false,
+      id: 'd0000000-0000-4000-8000-000000000010', periodo: '2026-10-01', importo: 80, scadenza: '2026-10-05', stato: 'da_pagare', sollecitata: false,
     })
-    expect(j.data.intoccabili.find((v: { id: string }) => v.id === 'p-12')).toMatchObject({
+    expect(j.data.intoccabili.find((v: { id: string }) => v.id === 'd0000000-0000-4000-8000-000000000012')).toMatchObject({
       scadenza: '2026-12-05', stato: 'parziale', sollecitata: false, motivo: 'parziale',
     })
     const motivi = Object.fromEntries(j.data.intoccabili.map((v: { id: string; motivo: string }) => [v.id, v.motivo]))
-    expect(motivi).toEqual({ 'p-12': 'parziale', 'p-01': 'fatturata', 'p-02': 'in_coda', 'p-03': 'incassi' })
+    expect(motivi).toEqual({ 'd0000000-0000-4000-8000-000000000012': 'parziale', 'd0000000-0000-4000-8000-000000000001': 'fatturata', 'd0000000-0000-4000-8000-000000000002': 'in_coda', 'd0000000-0000-4000-8000-000000000003': 'incassi' })
     expect(h.scritture).toEqual([])
     expect(istantanea()).toBe(prima)
   })
@@ -478,13 +493,13 @@ describe('PATCH — accorciare il periodo: il primo tempo CHIEDE', () => {
     const res = await patch({ ...accorcia, voci_future: 'elimina' })
     expect(res.status).toBe(200)
     expect((await res.json()).data).toEqual({ voci_eliminate: 2, voci_mantenute: 0, intoccabili: 4 })
-    expect(idsVoci()).toEqual(['p-09', ...INTOCCABILI, ...ALTRE].sort())
+    expect(idsVoci()).toEqual(['d0000000-0000-4000-8000-000000000009', ...INTOCCABILI, ...ALTRE].sort())
     expect(iscrizioni().find((r) => r.id === ISCR_1)).toMatchObject({ dal: '2026-09-01', al: '2026-09-01' })
     // l'iscrizione di un'altra sede è intatta
     expect(iscrizioni().find((r) => r.id === ISCR_ALTRA_SEDE)).toMatchObject({ dal: '2026-09-01', al: null })
     // audit: UNA riga per voce cancellata (riga intera, come DELETE /api/pagamenti/[id]) + una per l'iscrizione
     const perVoce = audit().filter((a) => a.tabella_interessata === 'pagamenti')
-    expect(perVoce.map((a) => a.record_id).sort()).toEqual(['p-10', 'p-11'])
+    expect(perVoce.map((a) => a.record_id).sort()).toEqual(['d0000000-0000-4000-8000-000000000010', 'd0000000-0000-4000-8000-000000000011'])
     for (const a of perVoce) {
       expect(a).toMatchObject({ azione: 'elimina_pagamento', utente_id: ADMIN })
       expect(a.vecchio_valore).toMatchObject({ id: a.record_id, scuola_id: SEDE_A, alunno_id: ALU_1, importo: 80, descrizione: expect.any(String) })
@@ -507,11 +522,11 @@ describe('PATCH — accorciare il periodo: il primo tempo CHIEDE', () => {
 
   it('senza voci interessate: applicata subito, senza chiedere', async () => {
     h.db.iscrizioni_servizi = [iscrizione(ISCR_1, ALU_1, '2026-09-01', null)]
-    h.db.pagamenti = [voce('p-09', '2026-09', { stato: 'pagato', importo_pagato: 80 })]
+    h.db.pagamenti = [voce('d0000000-0000-4000-8000-000000000009', '2026-09', { stato: 'pagato', importo_pagato: 80 })]
     const res = await patch(accorcia)
     expect(res.status).toBe(200)
     expect(iscrizioni()[0]).toMatchObject({ al: '2026-09-01' })
-    expect(idsVoci()).toEqual(['p-09'])
+    expect(idsVoci()).toEqual(['d0000000-0000-4000-8000-000000000009'])
   })
 
   it('solo l\'importo: applicato subito anche con voci future, nessuna voce toccata', async () => {
@@ -524,10 +539,10 @@ describe('PATCH — accorciare il periodo: il primo tempo CHIEDE', () => {
 
   it('allungare o togliere la fine: nessuna voce esce, applicata subito', async () => {
     h.db.iscrizioni_servizi = [iscrizione(ISCR_1, ALU_1, '2026-09-01', '2026-10-01')]
-    h.db.pagamenti = [voce('p-10', '2026-10')]
+    h.db.pagamenti = [voce('d0000000-0000-4000-8000-000000000010', '2026-10')]
     expect((await patch({ id: ISCR_1, scuola_id: SEDE_A, al: null })).status).toBe(200)
     expect(iscrizioni()[0].al).toBeNull()
-    expect(idsVoci()).toEqual(['p-10'])
+    expect(idsVoci()).toEqual(['d0000000-0000-4000-8000-000000000010'])
   })
 
   it('spostare l\'INIZIO in avanti: le voci dei mesi scoperti sono interessate', async () => {
@@ -536,8 +551,8 @@ describe('PATCH — accorciare il periodo: il primo tempo CHIEDE', () => {
     expect(res.status).toBe(409)
     const j = await res.json()
     // settembre (pagata) e ottobre (eliminabile) escono dal periodo
-    expect(j.data.eliminabili.map((v: { id: string }) => v.id)).toEqual(['p-10'])
-    expect(j.data.intoccabili.map((v: { id: string }) => v.id)).toEqual(['p-09'])
+    expect(j.data.eliminabili.map((v: { id: string }) => v.id)).toEqual(['d0000000-0000-4000-8000-000000000010'])
+    expect(j.data.intoccabili.map((v: { id: string }) => v.id)).toEqual(['d0000000-0000-4000-8000-000000000009'])
     expect(j.data.intoccabili[0].motivo).toBe('pagata')
   })
 
@@ -608,7 +623,7 @@ describe('PATCH — accorciare il periodo: il primo tempo CHIEDE', () => {
     // anche il CORPO della risposta lo dice, perché il client possa avvisare la segreteria
     expect(corpoRisposta.voci_eliminate).toBe(2)
     // le voci eliminabili sono andate; l'iscrizione è com'era; le altre intatte
-    expect(idsVoci()).toEqual(['p-09', ...INTOCCABILI, ...ALTRE].sort())
+    expect(idsVoci()).toEqual(['d0000000-0000-4000-8000-000000000009', ...INTOCCABILI, ...ALTRE].sort())
     expect(iscrizioni().find((r) => r.id === ISCR_1)).toMatchObject({ al: null })
     // ritentando: le eliminabili non ci sono più, restano solo le intoccabili (la finestra si
     // ripresenta con quelle); con una scelta la modifica passa e nulla resta orfano
@@ -645,46 +660,46 @@ describe('Fra il primo e il secondo tempo: la gara', () => {
   it('una voce incassata nel frattempo (importo_pagato > 0) NON si cancella', async () => {
     scenario()
     h.durante = () => {
-      const v = pagamenti().find((p) => p.id === 'p-10') as Riga
+      const v = pagamenti().find((p) => p.id === 'd0000000-0000-4000-8000-000000000010') as Riga
       v.importo_pagato = 20 // l'incasso arriva dopo la classificazione
     }
     const res = await patch(elimina)
     expect(res.status).toBe(200)
-    expect(idsVoci()).toContain('p-10')
-    expect(idsVoci()).not.toContain('p-11')
+    expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
+    expect(idsVoci()).not.toContain('d0000000-0000-4000-8000-000000000011')
     expect((await res.json()).data).toMatchObject({ voci_eliminate: 1, voci_mantenute: 1 })
   })
 
   it('una voce diventata `pagato` nel frattempo NON si cancella', async () => {
     scenario()
     h.durante = () => {
-      const v = pagamenti().find((p) => p.id === 'p-11') as Riga
+      const v = pagamenti().find((p) => p.id === 'd0000000-0000-4000-8000-000000000011') as Riga
       v.stato = 'pagato'
     }
     expect((await patch(elimina)).status).toBe(200)
-    expect(idsVoci()).toContain('p-11')
-    expect(idsVoci()).not.toContain('p-10')
+    expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000011')
+    expect(idsVoci()).not.toContain('d0000000-0000-4000-8000-000000000010')
   })
 
   it('una voce fatturata nel frattempo NON si cancella', async () => {
     scenario()
     h.durante = () => {
-      const v = pagamenti().find((p) => p.id === 'p-10') as Riga
+      const v = pagamenti().find((p) => p.id === 'd0000000-0000-4000-8000-000000000010') as Riga
       v.fattura_aruba_id = 'ARU-9'
     }
     expect((await patch(elimina)).status).toBe(200)
-    expect(idsVoci()).toContain('p-10')
+    expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
   })
 
   it('una voce che non è più della sede NON si cancella (il filtro di sede è anche nella DELETE)', async () => {
     scenario()
     h.durante = () => {
-      const v = pagamenti().find((p) => p.id === 'p-10') as Riga
+      const v = pagamenti().find((p) => p.id === 'd0000000-0000-4000-8000-000000000010') as Riga
       v.scuola_id = SEDE_B
     }
     expect((await patch(elimina)).status).toBe(200)
-    expect(idsVoci()).toContain('p-10')
-    expect(idsVoci()).not.toContain('p-11')
+    expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
+    expect(idsVoci()).not.toContain('d0000000-0000-4000-8000-000000000011')
   })
 })
 
@@ -698,8 +713,8 @@ describe('DELETE — eliminare l\'iscrizione, in due tempi', () => {
     expect(res.status).toBe(409)
     const j = await res.json()
     expect(j.codice).toBe('VOCI_FUTURE_DA_DECIDERE')
-    expect(j.data.eliminabili.map((v: { id: string }) => v.id).sort()).toEqual(['p-10', 'p-11'])
-    expect(j.data.intoccabili.map((v: { id: string }) => v.id).sort()).toEqual(['p-01', 'p-02', 'p-03', 'p-09', 'p-12'])
+    expect(j.data.eliminabili.map((v: { id: string }) => v.id).sort()).toEqual(['d0000000-0000-4000-8000-000000000010', 'd0000000-0000-4000-8000-000000000011'])
+    expect(j.data.intoccabili.map((v: { id: string }) => v.id).sort()).toEqual(['d0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000003', 'd0000000-0000-4000-8000-000000000009', 'd0000000-0000-4000-8000-000000000012'])
     expect(h.scritture).toEqual([])
     expect(istantanea()).toBe(prima)
   })
@@ -710,7 +725,7 @@ describe('DELETE — eliminare l\'iscrizione, in due tempi', () => {
     expect(res.status).toBe(200)
     expect((await res.json()).data).toEqual({ voci_eliminate: 2, voci_mantenute: 0, intoccabili: 5 })
     expect(iscrizioni().map((r) => r.id)).toEqual([ISCR_ALTRA_SEDE])
-    expect(idsVoci()).toEqual(['p-09', ...INTOCCABILI, ...ALTRE].sort())
+    expect(idsVoci()).toEqual(['d0000000-0000-4000-8000-000000000009', ...INTOCCABILI, ...ALTRE].sort())
     expect(audit().map((a) => a.azione).sort()).toEqual(['elimina_iscrizione_servizio', 'elimina_pagamento', 'elimina_pagamento'])
   })
 
@@ -746,16 +761,16 @@ describe('DELETE — eliminare l\'iscrizione, in due tempi', () => {
     scenario()
     // primo tempo: p-10 è eliminabile
     const primo = await del(qs())
-    expect((await primo.json()).data.eliminabili.map((v: { id: string }) => v.id)).toContain('p-10')
+    expect((await primo.json()).data.eliminabili.map((v: { id: string }) => v.id)).toContain('d0000000-0000-4000-8000-000000000010')
     // nel frattempo la segreteria incassa p-10
-    const v = pagamenti().find((p) => p.id === 'p-10') as Riga
+    const v = pagamenti().find((p) => p.id === 'd0000000-0000-4000-8000-000000000010') as Riga
     v.importo_pagato = 80
     v.stato = 'pagato'
     // secondo tempo: la classificazione la rilegge e la protegge
     const secondo = await del(qs('&voci_future=elimina'))
     expect(secondo.status).toBe(200)
-    expect(idsVoci()).toContain('p-10')
-    expect(idsVoci()).not.toContain('p-11')
+    expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
+    expect(idsVoci()).not.toContain('d0000000-0000-4000-8000-000000000011')
   })
 
   it('cancellazione delle voci fallita: 500 e l\'iscrizione resta', async () => {
@@ -779,7 +794,7 @@ describe('DELETE — eliminare l\'iscrizione, in due tempi', () => {
 
   it('le voci a rate (padre/split) sono sempre intoccabili', async () => {
     h.db.iscrizioni_servizi = [iscrizione(ISCR_1, ALU_1, '2026-09-01', null)]
-    h.db.pagamenti = [voce('p-padre', '2026-10', { tipo: 'padre' }), voce('p-split', '2026-11', { tipo: 'split' })]
+    h.db.pagamenti = [voce('d0000000-0000-4000-8000-000000000105', '2026-10', { tipo: 'padre' }), voce('d0000000-0000-4000-8000-000000000106', '2026-11', { tipo: 'split' })]
     const j = await (await del(qs())).json()
     expect(j.data.eliminabili).toEqual([])
     expect(j.data.intoccabili.map((v: { motivo: string }) => v.motivo)).toEqual(['rateizzata', 'rateizzata'])
@@ -794,10 +809,10 @@ describe('voci scritte a mano (senza periodo_competenza): mai eliminabili', () =
   function storica(): void {
     h.db.iscrizioni_servizi = [iscrizione(ISCR_1, ALU_1, '2026-09-01', null)]
     h.db.pagamenti = [
-      voce('p-storica', '2026-10', { periodo_competenza: null, stato: 'scaduto', ultimo_sollecito_il: '2026-10-20T08:00:00Z' }),
-      voce('p-10', '2026-10'),
+      voce('d0000000-0000-4000-8000-000000000107', '2026-10', { periodo_competenza: null, stato: 'scaduto', ultimo_sollecito_il: '2026-10-20T08:00:00Z' }),
+      voce('d0000000-0000-4000-8000-000000000010', '2026-10'),
     ]
-    h.db.solleciti = [{ id: 's1', pagamento_id: 'p-storica', scuola_id: SEDE_A }]
+    h.db.solleciti = [{ id: 's1', pagamento_id: 'd0000000-0000-4000-8000-000000000107', scuola_id: SEDE_A }]
   }
 
   it('è elencata come intoccabile «manuale», con scadenza, stato e sollecitata', async () => {
@@ -805,9 +820,9 @@ describe('voci scritte a mano (senza periodo_competenza): mai eliminabili', () =
     const res = await patch(accorcia)
     expect(res.status).toBe(409)
     const { data } = await res.json()
-    expect(data.eliminabili.map((v: { id: string }) => v.id)).toEqual(['p-10'])
+    expect(data.eliminabili.map((v: { id: string }) => v.id)).toEqual(['d0000000-0000-4000-8000-000000000010'])
     expect(data.intoccabili).toEqual([
-      { id: 'p-storica', periodo: '2026-10', importo: 80, scadenza: '2026-10-05', stato: 'scaduto', sollecitata: true, motivo: 'manuale' },
+      { id: 'd0000000-0000-4000-8000-000000000107', periodo: '2026-10-01', importo: 80, scadenza: '2026-10-05', stato: 'scaduto', sollecitata: true, motivo: 'manuale' },
     ])
   })
 
@@ -815,7 +830,7 @@ describe('voci scritte a mano (senza periodo_competenza): mai eliminabili', () =
     storica()
     const res = await patch({ ...accorcia, voci_future: 'elimina' })
     expect(res.status).toBe(200)
-    expect(idsVoci()).toEqual(['p-storica'])
+    expect(idsVoci()).toEqual(['d0000000-0000-4000-8000-000000000107'])
     expect(T('solleciti')).toHaveLength(1)
     expect((await res.json()).data).toEqual({ voci_eliminate: 1, voci_mantenute: 0, intoccabili: 1 })
   })
@@ -824,19 +839,19 @@ describe('voci scritte a mano (senza periodo_competenza): mai eliminabili', () =
     storica()
     const res = await del(`id=${ISCR_1}&scuola_id=${SEDE_A}&voci_future=elimina`)
     expect(res.status).toBe(200)
-    expect(idsVoci()).toEqual(['p-storica'])
+    expect(idsVoci()).toEqual(['d0000000-0000-4000-8000-000000000107'])
     expect(T('solleciti')).toHaveLength(1)
   })
 
   it('una voce che perde il periodo FRA i due tempi non si cancella (il filtro è anche nella DELETE)', async () => {
     scenario()
     h.durante = () => {
-      const v = pagamenti().find((p) => p.id === 'p-10') as Riga
+      const v = pagamenti().find((p) => p.id === 'd0000000-0000-4000-8000-000000000010') as Riga
       v.periodo_competenza = null
     }
     expect((await patch({ id: ISCR_1, scuola_id: SEDE_A, al: '2026-09', voci_future: 'elimina' })).status).toBe(200)
-    expect(idsVoci()).toContain('p-10')
-    expect(idsVoci()).not.toContain('p-11')
+    expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
+    expect(idsVoci()).not.toContain('d0000000-0000-4000-8000-000000000011')
   })
 })
 
@@ -844,14 +859,14 @@ describe('sollecitata: la finestra deve poter dire che si perdono i solleciti', 
   it('vale per una riga in `solleciti` e per `ultimo_sollecito_il`; altrimenti falso', async () => {
     h.db.iscrizioni_servizi = [iscrizione(ISCR_1, ALU_1, '2026-09-01', null)]
     h.db.pagamenti = [
-      voce('p-10', '2026-10'),
-      voce('p-11', '2026-11', { ultimo_sollecito_il: '2026-11-20T08:00:00Z' }),
-      voce('p-12', '2026-12'),
+      voce('d0000000-0000-4000-8000-000000000010', '2026-10'),
+      voce('d0000000-0000-4000-8000-000000000011', '2026-11', { ultimo_sollecito_il: '2026-11-20T08:00:00Z' }),
+      voce('d0000000-0000-4000-8000-000000000012', '2026-12'),
     ]
-    h.db.solleciti = [{ id: 's1', pagamento_id: 'p-10', scuola_id: SEDE_A }]
+    h.db.solleciti = [{ id: 's1', pagamento_id: 'd0000000-0000-4000-8000-000000000010', scuola_id: SEDE_A }]
     const { data } = await (await patch({ id: ISCR_1, scuola_id: SEDE_A, al: '2026-09' })).json()
     const per = Object.fromEntries(data.eliminabili.map((v: { id: string; sollecitata: boolean }) => [v.id, v.sollecitata]))
-    expect(per).toEqual({ 'p-10': true, 'p-11': true, 'p-12': false })
+    expect(per).toEqual({ 'd0000000-0000-4000-8000-000000000010': true, 'd0000000-0000-4000-8000-000000000011': true, 'd0000000-0000-4000-8000-000000000012': false })
   })
 })
 
@@ -892,11 +907,37 @@ describe('voci_ids: il secondo tempo cancella solo ciò che il client ha visto',
     expect(iscrizioni()).toHaveLength(0)
   })
 
-  it('senza voci_ids: tutte le eliminabili (comportamento di prima)', async () => {
-    scenario()
-    expect((await patch(accorcia)).status).toBe(200)
-    expect(idsVoci()).not.toContain('p-10')
-    expect(idsVoci()).not.toContain('p-11')
+  describe('«elimina» senza gli id visti: 400 e NULLA viene scritto', () => {
+    const chiave = (r: Response) => r.json().then((j) => JSON.stringify(j.details))
+
+    it('PATCH senza voci_ids', async () => {
+      scenario()
+      const res = await patchNudo(accorcia)
+      expect(res.status).toBe(400)
+      expect(await chiave(res)).toMatch(/Indica le voci da eliminare/)
+      expect(h.scritture).toEqual([])
+      expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
+    })
+
+    it('PATCH con voci_ids vuoto: lo stesso 400', async () => {
+      scenario()
+      const res = await patchNudo({ ...accorcia, voci_ids: [] })
+      expect(res.status).toBe(400)
+      expect(h.scritture).toEqual([])
+    })
+
+    it('DELETE senza voci_ids: 400, l\'iscrizione e le voci restano', async () => {
+      scenario()
+      const res = await delNudo(`id=${ISCR_1}&scuola_id=${SEDE_A}&voci_future=elimina`)
+      expect(res.status).toBe(400)
+      expect(h.scritture).toEqual([])
+      expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
+    })
+
+    it('«mantieni» e il primo tempo non chiedono voci_ids', async () => {
+      scenario()
+      expect((await patchNudo({ ...accorcia, voci_future: 'mantieni' })).status).toBe(200)
+    })
   })
 })
 
@@ -910,11 +951,11 @@ describe('altre gare fra i due tempi: la voce cambiata resta', () => {
   ])('%s', async (_n, cambio) => {
     scenario()
     h.durante = () => {
-      Object.assign(pagamenti().find((p) => p.id === 'p-10') as Riga, cambio)
+      Object.assign(pagamenti().find((p) => p.id === 'd0000000-0000-4000-8000-000000000010') as Riga, cambio)
     }
     expect((await patch(elimina)).status).toBe(200)
-    expect(idsVoci()).toContain('p-10')
-    expect(idsVoci()).not.toContain('p-11')
+    expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
+    expect(idsVoci()).not.toContain('d0000000-0000-4000-8000-000000000011')
   })
 })
 
@@ -957,8 +998,8 @@ describe('voci di un\'altra sede con lo STESSO alunno e la stessa categoria', ()
     scenario()
     const j = await (await patch({ id: ISCR_1, scuola_id: SEDE_A, al: '2026-09' })).json()
     const viste = [...j.data.eliminabili, ...j.data.intoccabili].map((v: { id: string }) => v.id)
-    expect(viste).not.toContain('p-altra-sede-stesso-alunno')
+    expect(viste).not.toContain('d0000000-0000-4000-8000-000000000103')
     expect((await patch({ id: ISCR_1, scuola_id: SEDE_A, al: '2026-09', voci_future: 'elimina' })).status).toBe(200)
-    expect(idsVoci()).toContain('p-altra-sede-stesso-alunno')
+    expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000103')
   })
 })

@@ -91,7 +91,7 @@ export function useScritturaServizi({ onEsito, onScritto, onChiuso }: Opzioni, u
         if (!decisione) return;
         const { richiesta, voci } = decisione;
         const ids = voci.eliminabili.map((v) => v.id);
-        // Mai una lista vuota: `voci_ids` vuoto varrebbe «tutte». Senza eliminabili non si elimina.
+        // Mai una lista vuota: la route la rifiuta (400) come l'assenza di `voci_ids`. Senza eliminabili non si elimina.
         if (scelta === 'elimina' && ids.length === 0) return;
         const mia = ++operazione.current;
         setInvio(true);

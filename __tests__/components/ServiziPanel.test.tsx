@@ -48,7 +48,7 @@ const ALUNNI = [
   { id: A3, nome: 'Rosa', cognome: 'Gialli', classe_sezione: '1B' },
 ]
 const VOCE = (id: string, mese: string, extra: Record<string, unknown> = {}) =>
-  ({ id, periodo: mese, importo: 85.5, scadenza: `${mese}-10`, stato: 'da_pagare', sollecitata: false, ...extra })
+  ({ id, periodo: `${mese}-01`, importo: 85.5, scadenza: `${mese}-10`, stato: 'da_pagare', sollecitata: false, ...extra })
 
 type Risposta = { status: number; body: unknown }
 const ok = (data: unknown): Risposta => ({ status: 200, body: { success: true, data } })

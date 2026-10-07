@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from 'next-intl';
 import { useAgingLabel, bucketScadenze, type AgingBucketId, type AgingPagamento } from '@/lib/pagamenti/aging';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
+import { CifraNascosta } from './CifraNascosta';
 
 const ORDINE: AgingBucketId[] = ['scaduti_oltre_30', 'scaduti_entro_30', 'settimana', 'mese'];
 const TONO: Record<AgingBucketId, { testo: string; attivo: string }> = {
@@ -59,10 +60,16 @@ interface Props {
      * Default `false`: con una sede sola il rendering resta identico a prima.
      */
     mostraSede?: boolean;
+    /**
+     * Sostituire l'importo con «••••» (il pulsante a occhio della Direzione: schermo visibile ad altri)?
+     * Conta solo dove l'importo si mostra: con `mostraImporti` falso la Segreteria non lo vede comunque.
+     * Default `false`: gli importi restano visibili.
+     */
+    mascheraImporti?: boolean;
 }
 
 /** Agenda scadenze: 4 bucket di aging cliccabili che filtrano la lista. */
-export function AgendaScadenze({ pagamenti, oggi, attivo, onSelect, mostraImporti = true, mostraSede = false }: Props) {
+export function AgendaScadenze({ pagamenti, oggi, attivo, onSelect, mostraImporti = true, mostraSede = false, mascheraImporti = false }: Props) {
     const agingLabel = useAgingLabel();
     const t = useTranslations('adminContabilita');
     const locale = useLocale();
@@ -91,7 +98,9 @@ export function AgendaScadenze({ pagamenti, oggi, attivo, onSelect, mostraImport
                         <span className="mt-0.5 flex items-baseline gap-1.5">
                             <span className={cx('font-barlow text-xl font-black leading-none', TONO[id].testo)}>{b.count}</span>
                             {mostraImporti && (
-                                <span className="font-maven text-[11px] text-kidville-muted">{formatEuro(b.totale)}</span>
+                                <span className="font-maven text-[11px] text-kidville-muted">
+                                    {mascheraImporti ? <CifraNascosta /> : formatEuro(b.totale)}
+                                </span>
                             )}
                         </span>
                         {mostraSede && b.count > 0 && (() => {

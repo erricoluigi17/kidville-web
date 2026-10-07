@@ -1,3 +1,31 @@
+## 💶 Changelog — KPI di contabilità per mese e categoria, cifre nascondibili, dashboard Direzione senza euro — 2026-10-07 (branch `feat/kpi-contabilita-selezione`)
+
+**Stato.** 🟡 **Pronto sul branch, non ancora pubblicato.** Gate: `eslint` 0 · `tsc` 0 · `vitest run` **1.711 file / 28.996 test passati (25 saltati)**, alla prima esecuzione, nessun test instabile · `npm run build` ok (`verifica-artefatto` ok, 2.967 file JS). E2E in CI al push.
+
+**Il caso.** Il titolare ha chiesto tre cose: (1) niente cifre in euro sulla home della Direzione; (2) in Contabilità, KPI che si possano leggere per mese e per categoria (retta, mensa, ecc.), non solo sul totale; (3) un modo per nascondere le cifre quando lo schermo è visibile ad altri.
+
+**Cosa cambia.**
+1. **Dashboard Direzione `/admin`.** L'API `/api/admin/dashboard` non calcola né manda più importi in euro a nessun ruolo (via `scadutoImporto`, `incassatoMese`, `trend`, l'importo negli alert). La home mostra «Pagamenti scaduti» a conteggio; niente card «Incassato del mese», niente grafico dei trend degli incassi (rimosso `TrendIncassiChart`); il pannello degli scaduti mostra la data al posto dell'importo.
+2. **Contabilità `/admin/pagamenti`.** Filtri a scelta multipla «Categorie» e «Mesi» (12 mesi set→ago, «Tutto l'anno») più «Anno scolastico». Le card KPI e la tabella per sede (solo Direzione) sommano **solo la selezione**, dopo il filtro classi; non seguono la ricerca né «Morosi». Riga «Somma di: …» sotto le card. Il mese di una voce è `periodo_competenza` se c'è, altrimenti il mese della scadenza. La vista per alunno compare solo con la retta e un solo mese; altrimenti elenco per voce con colonna Categoria (anche nelle card mobile). «Genera mancanti» solo per set–giu; «Nuovo acquisto» solo con una categoria non-retta; il cambio d'anno mantiene i mesi scelti; l'agenda scadenze copre tutte le voci; l'export non cambia.
+3. **«Nascondi cifre»** (occhio, solo Direzione). Mostra «••••» (letto «Cifra nascosta» dagli screen reader) su card, tabella per sede e importi dell'agenda. La scelta è ricordata nel browser (`localStorage`, chiave per utente), default: visibili. Se lo storage non è disponibile, un solo log `warn`.
+4. **Segreteria: categorie non retta per mese, «Rateizza», luglio/agosto.** Le categorie diverse dalla retta ora si vedono filtrate per mese (all'apertura il mese corrente); le voci arretrate si raggiungono con «Tutto l'anno» (che copre l'anno scolastico scelto) o dall'agenda. Un «Nuovo acquisto» con scadenza fuori dai mesi scelti non compare nell'elenco finché non si allarga la selezione. «Rateizza» non compare più sulle rette nell'elenco per voce. A luglio/agosto la retta si vede come elenco per voce (le eventuali voci reali del mese, o lo stato vuoto «Nessun pagamento per questa selezione.»), non più come vista per alunno con tutti «Non generata».
+5. **Codice.** Nuovi `src/lib/pagamenti/selezione-voci.ts`, `SceltaMultiplaContabilita.tsx` (estratto da `FiltroClassiContabilita`), `FiltriSelezioneContabilita.tsx`, `cifre-nascoste.ts`, `CifraNascosta.tsx`, `KpiContabilita.tsx`, `TabellaVociContabilita.tsx`. `PaymentsDashboard.tsx` scende da 1.220 a circa 1.156 righe.
+
+**Verificato.** Test su selezione (categorie × mesi), cifre nascoste, filtri e dashboard senza importi per tutti i ruoli (segreteria, admin, coordinatrice anche in veste di genitore: nessuna chiave in euro, nessuna lettura di incassi). Prove di rottura: KPI calcolati su tutte le voci invece che sulla selezione → rosso; pulsante «Genera mancanti» attivo a luglio → rosso; caricamento infinito con le categorie non leggibili → rosso.
+
+**Noti e NON corretti qui.**
+- Le rate di una retta e 4 rette su 1.436 sono senza `periodo_competenza`: nei KPI cadono nel mese della scadenza, mentre la vista per alunno guarda solo il periodo.
+- Il campo `motivo` dei log di `video-galleria-nascosti.ts` è fra le radici redatte e arriva come `[redatto:…]`.
+- Il formato `'euro'` di `AnimatedNumber` non è più usato.
+- `e2e/primaria-360/journeys/89-fix-360.spec.ts` («grafico incassi») descrive un grafico che non esiste più; la cartella è esclusa da Playwright.
+- Nella vista per alunno le card contano anche le rette di bambini non più iscritti o senza classe, che la tabella non elenca (oggi 1 su 704 a ottobre).
+- Con «Tutte × Tutto l'anno» l'elenco per voce disegna ~2.000 righe senza paginazione.
+- Se la GET delle categorie fallisce il filtro «Categorie» sparisce (guasto loggato) e la riga dice «Tutte le categorie».
+- Le rate create da `/api/pagamenti/rate` non hanno `periodo_competenza`: la strada esiste già dal dettaglio voce (`PagamentoDrawer`); la correzione vera è un lavoro a parte.
+- La **Parte 2** («servizi mensili») arriverà con un rilascio separato: specifica in `docs/superpowers/specs/2026-10-07-kpi-contabilita-servizi-mensili-design.md`.
+
+---
+
 ## 🪪 Changelog — Rinnovo del documento di un docente: la sostituzione «falliva» sempre pur riuscendo, e le date non si potevano cambiare da nessuna parte — 2026-10-06 (branch `fix/genitore-senza-figli-e-collegamento`)
 
 **Stato.** 🟡 **Pronto sul branch, non ancora pubblicato** (stessa PR del lavoro «genitore senza figli», in due commit separati). Gate: `eslint` 0 · `tsc` 0 · `vitest run` **1.694 file / 28.682 test**, tutti verdi alla terza esecuzione · `npm run build` ok (`verifica-artefatto` ok). E2E in CI al push.

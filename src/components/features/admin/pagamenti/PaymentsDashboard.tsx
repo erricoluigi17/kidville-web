@@ -3,9 +3,9 @@
 import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
-import { intlDateTime } from '@/i18n/config';
+import { dataCivile } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
-import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText, Download, X } from 'lucide-react';
+import { Search, Filter, AlertTriangle, RefreshCw, Plus, Pencil, Eye, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton, type EsitoAccodamento } from './FatturaButton';
 import { FatturaChip } from './FatturaChip';
@@ -24,21 +24,24 @@ import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
 import { STATI_PAGAMENTO as STATI, calcolaTotaliPagamenti } from './stati';
 import { AgendaScadenze } from './AgendaScadenze';
+import { KpiContabilita } from './KpiContabilita';
+import { TabellaVociContabilita } from './TabellaVociContabilita';
+import { FiltroAnnoContabilita, FiltroCategorieContabilita, FiltroMesiContabilita } from './FiltriSelezioneContabilita';
+import { BTN_PRIMARY_SM, FILTER_SELECT, ICON_BTN } from './ui';
+import { useCifreNascoste } from './cifre-nascoste';
+import {
+    annoScolasticoDi, eMeseDiRetta, eVistaPerAlunno, etichettaMese, etichettaMesi, filtraPerSelezione,
+    meseDi, mesiValidi, periodoDi, type SelezioneVoci,
+} from '@/lib/pagamenti/selezione-voci';
 import { BadgeMetodoPagamento } from '@/components/features/pagamenti/BadgeMetodoPagamento';
 import { useAgingLabel, bucketScadenze, isMoroso, residuoEffettivo, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
-import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
+import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { useRuoloCockpit } from '@/lib/context/admin-identity';
 import { eDirezioneCockpit } from '@/lib/auth/ruoli';
-
-// Pelle locale della dashboard contabilità, su token dell'app (allineata a
-// `Btn`/cockpit): pillole verde+giallo per le azioni, filtri come la Toolbar.
-const BTN_PRIMARY_SM = 'inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
-const ICON_BTN = 'text-kidville-muted transition-colors hover:text-kidville-green';
-const FILTER_SELECT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 
 /** Stato vuoto nello stile app: cerchio crema + emoji + testo (come parent/avvisi). */
 function EmptyRiga({ emoji, testo }: { emoji: string; testo: string }) {
@@ -117,23 +120,6 @@ function elencoNomi(nomi: string[], locale: string): string {
     return new Intl.ListFormat(locale, { type: 'conjunction' }).format(nomi);
 }
 
-// Mese abbreviato localizzato con iniziale maiuscola. In IT riproduce ESATTAMENTE
-// il vecchio array hardcoded (Gen, Feb, … Dic); in EN diventa Jan, Feb, … Dec.
-function meseCorto(mese1a12: number, locale: string): string {
-    const s = intlDateTime(locale, { month: 'short', timeZone: 'UTC' }).format(
-        new Date(Date.UTC(2020, mese1a12 - 1, 15)),
-    );
-    return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// I 10 periodi (primo del mese) dell'anno scolastico set(annoInizio) -> giu(annoInizio+1)
-function periodiAnno(annoInizio: number, locale: string): { periodo: string; label: string }[] {
-    const out: { periodo: string; label: string }[] = [];
-    for (let m = 9; m <= 12; m++) out.push({ periodo: `${annoInizio}-${String(m).padStart(2, '0')}-01`, label: `${meseCorto(m, locale)} ${annoInizio}` });
-    for (let m = 1; m <= 6; m++) out.push({ periodo: `${annoInizio + 1}-${String(m).padStart(2, '0')}-01`, label: `${meseCorto(m, locale)} ${annoInizio + 1}` });
-    return out;
-}
-
 /**
  * `scuolaId`: la sede dichiarata, oppure `null` quando le sedi selezionate sono più di una
  * (P1). Con `null` le GET NON portano `scuola_id` — la route restringe già alle sedi attive
@@ -160,16 +146,26 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
      * scelta del titolare), somma le righe da sé.
      *
      * Il pattern «il server omette la chiave» — quello vero, in `cassa/movimenti` — qui
-     * non è applicabile senza togliere anche le righe. Dove invece i numeri li calcola il
-     * server (la home /admin) l'omissione è reale e si fa là.
+     * non è applicabile senza togliere anche le righe. La home /admin, che prima calcolava
+     * gli importi sul server e li ometteva ai ruoli non Direzione, ora non li calcola più
+     * per nessun ruolo (decisione del titolare, 2026-10-07): lì non c'è nulla da nascondere.
      */
     const eDirezione = eDirezioneCockpit(useRuoloCockpit());
+    // «Nascondi cifre»: scelta ricordata per utente su questo dispositivo (default: visibili).
+    const [cifreNascoste, setCifreNascoste] = useCifreNascoste(userId);
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [categorie, setCategorie] = useState<Categoria[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
-    const [fCategoria, setFCategoria] = useState<string>('');
+    /**
+     * Le categorie scelte nel filtro. `null` = «predefinita» (la Retta, appena si sa qual è):
+     * serve a distinguere la scelta dell'utente («tutte» = `[]`) da quella che nessuno ha ancora
+     * fatto. È un valore DERIVATO in lettura (`categorieEffettive`), mai impostato da un effetto.
+     */
+    const [categorieScelte, setCategorieScelte] = useState<string[] | null>(null);
+    /** Le categorie sono arrivate (o la risposta è inutilizzabile): da qui la predefinita è nota. */
+    const [categorieLette, setCategorieLette] = useState(false);
     const [onlyMorosi, setOnlyMorosi] = useState(false);
     const [nuovoAcqId, setNuovoAcqId] = useState('');
     const [selected, setSelected] = useState<Pagamento | null>(null);
@@ -212,16 +208,13 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     /** `&scuola_id=…` solo con una sede dichiarata: con più sedi si OMETTE. */
     const sedeQs = scuolaId ? `&scuola_id=${encodeURIComponent(scuolaId)}` : '';
 
-    // Anno scolastico corrente (set->ago = anno corrente, gen->giu = anno-1)
-    const now = new Date();
-    const oggiStr = now.toISOString().slice(0, 10);
-    const annoScolasticoCorrente = now.getMonth() + 1 >= 9 ? now.getFullYear() : now.getFullYear() - 1;
-    const [annoScolastico, setAnnoScolastico] = useState<number>(annoScolasticoCorrente);
-    const periodi = useMemo(() => periodiAnno(annoScolastico, f.locale), [annoScolastico, f.locale]);
-    const [mese, setMese] = useState<string>(() => {
-        const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-        return periodiAnno(annoScolasticoCorrente, f.locale).some((p) => p.periodo === cur) ? cur : `${annoScolasticoCorrente}-09-01`;
-    });
+    // «Oggi» è la data civile italiana: `toISOString()` è UTC e dopo le 22:00 d'estate è già domani.
+    // Anno scolastico corrente: set->ago = anno corrente, gen->giu = anno-1.
+    const oggiStr = dataCivile();
+    const annoScolasticoCorrente = annoScolasticoDi(oggiStr);
+    const [annoScolastico, setAnnoScolastico] = useState<number>(() => annoScolasticoDi(dataCivile()));
+    /** I mesi scelti (1–12); all'apertura il mese corrente. Cambiando anno si mantengono. */
+    const [mesiScelti, setMesiScelti] = useState<number[]>(() => [meseDi(dataCivile())]);
 
     // NB: niente setLoading(true) sincrono qui dentro (react-hooks/set-state-in-effect):
     // al mount loading parte già true; il refresh manuale lo imposta nel suo handler.
@@ -295,15 +288,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         void leggiJson<{ success?: boolean; data?: Categoria[] }>(`/api/admin/settings/categorie?userId=${userId}${sedeQs}`, userId, 'scadenzario-categorie')
             .then(({ ok, corpo: d }) => {
                 if (ok && d?.success && Array.isArray(d.data)) {
-                    const lista = d.data;
-                    setCategorie(lista);
-                    const retta = lista.find((c) => c.slug === 'retta');
-                    setFCategoria((cur) => cur || retta?.id || lista[0]?.id || '');
+                    setCategorie(d.data);
                 } else if (ok) {
                     // 2xx ma senza elenco (il rifiuto, il corpo illeggibile e la rete giù li ha
-                    // già loggati `leggiJson`): il select vuoto non deve sembrare «nessuna categoria».
+                    // già loggati `leggiJson`): il filtro vuoto non deve sembrare «nessuna categoria».
                     logClient({ livello: 'error', evento: 'fetch', messaggio: 'scadenzario-categorie-forma-inattesa', route: '/admin/pagamenti' });
                 }
+                // Anche a risposta inutilizzabile: la categoria predefinita non arriverà più, e i
+                // KPI non possono restare in attesa per sempre (somma di tutte le categorie).
+                setCategorieLette(true);
             });
     }, [userId, sedeQs]);
 
@@ -381,20 +374,68 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     );
 
     const rettaCat = useMemo(() => categorie.find((c) => c.slug === 'retta'), [categorie]);
-    const categoriaSel = useMemo(() => categorie.find((c) => c.id === fCategoria), [categorie, fCategoria]);
-    const isRettaView = !!rettaCat && fCategoria === rettaCat.id;
     /** Con più sedi due categorie omonime (es. «Gita» di Aversa e di Cesa) si distinguono dalla sede. */
     const etichettaCategoria = (c: Categoria) =>
         mostraSede && c.scuola_id ? t('dashMsCategoriaDiSede', { categoria: c.nome, nome: nomeSedeTesto(c.scuola_id) }) : c.nome;
+    const opzioniCategorie = categorie.map((c) => ({ id: c.id, testo: etichettaCategoria(c) }));
 
-    // mappa retta del periodo selezionato: alunno_id -> pagamento
+    // ── La selezione: categorie × mesi di un anno scolastico (decisione del titolare) ─────
+    // Guida le card KPI, la tabella per sede e la scelta fra vista per alunno ed elenco per voce.
+    // NON segue la ricerca né «Morosi»: sono filtri dell'ELENCO, non di ciò che si somma.
+    /** Nessuna scelta fatta = la Retta; finché le categorie non arrivano non si sa qual è. */
+    const categorieEffettive = useMemo(
+        () => categorieScelte ?? (rettaCat ? [rettaCat.id] : []),
+        [categorieScelte, rettaCat],
+    );
+    // Una scelta che non corrisponde più a una categoria in elenco si scarta (e si deduplica):
+    // stessa regola con cui il filtro scrive il riepilogo, così filtro e KPI dicono la stessa cosa.
+    const categorieValide = useMemo(
+        () => [...new Set(categorieEffettive)].filter((id) => categorie.some((c) => c.id === id)),
+        [categorieEffettive, categorie],
+    );
+    const selezione = useMemo<SelezioneVoci>(
+        () => ({ categorie: categorieValide, anno: annoScolastico, mesi: mesiScelti }),
+        [categorieValide, annoScolastico, mesiScelti],
+    );
+    /** Finché le categorie non arrivano i KPI dicono «—»: niente lampo della somma di TUTTO. */
+    const selezioneInAttesa = categorieScelte === null && !categorieLette;
+    /**
+     * Retta e un solo mese DI RETTA (set–giu): la vista «per alunno» (con «Non generata»,
+     * «Genera mancanti», fratelli). A luglio e agosto le rette non si generano: la stessa
+     * selezione apre l'elenco per voce (le eventuali voci reali del mese, o lo stato vuoto).
+     */
+    const vistaPerAlunno = eVistaPerAlunno(selezione, rettaCat?.id)
+        && eMeseDiRetta(mesiValidi(mesiScelti)[0]);
+    /** Il mese (1–12) della vista per alunno: il solo mese valido scelto. */
+    const meseSolo = vistaPerAlunno ? mesiValidi(mesiScelti)[0] : undefined;
+    /** 'YYYY-MM-01' del solo mese della vista per alunno (vuoto altrove). */
+    const meseUnico = useMemo(
+        () => (meseSolo === undefined ? '' : periodoDi(annoScolastico, meseSolo)),
+        [meseSolo, annoScolastico],
+    );
+    /** Il nuovo acquisto ha senso con UNA categoria sola, e non la retta (quella si genera). */
+    const categoriaAcquisto = categorieValide.length === 1 && categorieValide[0] !== rettaCat?.id
+        ? categorie.find((c) => c.id === categorieValide[0])
+        : undefined;
+    const vociSelezione = useMemo(() => filtraPerSelezione(pagamentiVisibili, selezione), [pagamentiVisibili, selezione]);
+    /** La frase sotto le card: «Retta · ottobre 2026», «3 categorie · set–ott 2026», … */
+    const testoSelezione = (() => {
+        const nomi = categorieValide.flatMap((id) => { const c = categorie.find((x) => x.id === id); return c ? [etichettaCategoria(c)] : []; });
+        const categorieTesto = nomi.length === 0 ? t('filtroCategorieTutte')
+            : nomi.length <= 3 ? nomi.join(', ')
+                : t('filtroCategorieSelezionate', { n: nomi.length });
+        return t('dashKpiSelezioneVoce', { categorie: categorieTesto, mesi: etichettaMesi(selezione, f.locale) ?? t('filtroMesiTutto') });
+    })();
+
+    // mappa retta del mese della vista per alunno: alunno_id -> pagamento
     const rettaByAlunno = useMemo(() => {
         const m = new Map<string, Pagamento>();
+        if (!meseUnico) return m;
         for (const p of pagamenti) {
-            if (p.categoria_id === rettaCat?.id && p.periodo_competenza === mese) m.set(p.alunno_id, p);
+            if (p.categoria_id === rettaCat?.id && p.periodo_competenza === meseUnico) m.set(p.alunno_id, p);
         }
         return m;
-    }, [pagamenti, rettaCat, mese]);
+    }, [pagamenti, rettaCat, meseUnico]);
 
     /**
      * Per ogni bambino A CARICO di un fratello: il legame e ciò che il suo badge sa del PAGANTE —
@@ -429,7 +470,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 const nome = `${a.nome ?? ''} ${a.cognome ?? ''} ${a.classe_sezione ?? ''} ${pagante}`.toLowerCase();
                 if (!nome.includes(q)) return false;
             }
-            if (isRettaView && onlyMorosi) {
+            if (vistaPerAlunno && onlyMorosi) {
                 const p = rettaByAlunno.get(a.id);
                 // D10: senza retta propria, conta la retta del fratello che paga.
                 const pPagante = !p && legame ? rettaByAlunno.get(legame.pagante.id) : undefined;
@@ -438,15 +479,16 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             }
             return true;
         });
-    }, [alunni, scelteValide, search, isRettaView, onlyMorosi, rettaByAlunno, oggiStr, legami]);
+    }, [alunni, scelteValide, search, vistaPerAlunno, onlyMorosi, rettaByAlunno, oggiStr, legami]);
 
-    // Vista CATEGORIA (non-retta): una riga per pagamento (padre escluso), con
-    // ricerca su alunno/sezione, filtro morosi e ordinamento per scadenza.
-    const righeCategoria = useMemo(() => {
-        if (isRettaView) return [];
+    // Elenco PER VOCE (ogni selezione che non sia «retta + un mese»): una riga per pagamento
+    // della selezione (padre escluso), con ricerca su alunno/sezione, filtro morosi e
+    // ordinamento per scadenza. Parte da `vociSelezione`: categorie e mesi sono già applicati.
+    const righeVoci = useMemo(() => {
+        if (vistaPerAlunno) return [];
         const q = search.trim().toLowerCase();
-        return pagamentiVisibili
-            .filter((p) => p.categoria_id === fCategoria && p.tipo !== 'padre')
+        return vociSelezione
+            .filter((p) => p.tipo !== 'padre')
             .filter((p) => {
                 if (q) {
                     // nome da p.alunni (stessa fonte del display, copre anche i ritirati);
@@ -459,24 +501,25 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 return true;
             })
             .sort((a, b) => (a.scadenza || '').localeCompare(b.scadenza || ''));
-    }, [pagamentiVisibili, fCategoria, isRettaView, search, onlyMorosi, oggiStr, alunnoById]);
+    }, [vociSelezione, vistaPerAlunno, search, onlyMorosi, oggiStr, alunnoById]);
 
-    const totals = useMemo(() => calcolaTotaliPagamenti(pagamentiVisibili), [pagamentiVisibili]);
+    // Le card sommano SOLO la selezione (categorie × mesi, dopo il filtro classi).
+    const totals = useMemo(() => calcolaTotaliPagamenti(vociSelezione), [vociSelezione]);
 
     /**
-     * KPI per sede: le stesse somme delle card, una riga per sede visibile (nell'ordine del
+     * KPI per sede: le stesse somme delle card (la selezione), una riga per sede visibile (nell'ordine del
      * contesto), più «Sede non indicata» se qualche riga non la porta. Solo con più sedi.
      */
     const totaliPerSede = useMemo(() => {
         if (!mostraSede) return [];
         const gruppi = new Map<string, Pagamento[]>(sediVisibili.map((id) => [id, []]));
-        for (const p of pagamentiVisibili) {
+        for (const p of vociSelezione) {
             const k = p.scuola_id ?? '';
             const g = gruppi.get(k);
             if (g) g.push(p); else gruppi.set(k, [p]);
         }
         return [...gruppi].map(([id, righe]) => ({ id, totali: calcolaTotaliPagamenti(righe) }));
-    }, [mostraSede, sediVisibili, pagamentiVisibili]);
+    }, [mostraSede, sediVisibili, vociSelezione]);
 
     // ── «Genera mancanti» ─────────────────────────────────────────────────────────────────
     // Quanti iscritti non hanno la retta del mese, PER SEDE. Si conta su tutti gli iscritti
@@ -484,7 +527,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     // e il numero che si legge deve essere quello che il bottone produce.
     const mancantiPerSede = useMemo(() => {
         const m = new Map<string, number>();
-        if (!isRettaView) return m;
+        if (!vistaPerAlunno) return m;
         for (const a of alunni) {
             // D6: chi ha la retta a carico di un fratello non è «mancante» — la generazione
             // lo salta, e contarlo teneva il numero sopra zero per sempre. Anche quando chi
@@ -494,7 +537,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             m.set(k, (m.get(k) ?? 0) + 1);
         }
         return m;
-    }, [isRettaView, alunni, rettaByAlunno, sedeUnica, legami, aCaricoNonVisibili]);
+    }, [vistaPerAlunno, alunni, rettaByAlunno, sedeUnica, legami, aCaricoNonVisibili]);
     /** Le sedi fra cui scegliere: le visibili che hanno almeno un mancante. */
     const sediConMancanti = sediVisibili.filter((id) => (mancantiPerSede.get(id) ?? 0) > 0);
     const sedeGeneraValida = mostraSede ? (sediConMancanti.includes(sedeGenera) ? sedeGenera : '') : (sedeUnica ?? '');
@@ -509,13 +552,13 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     // non l'ha fatto). La risposta si guarda: un rifiuto (sede non dichiarata, sede
     // di collaudo) resterebbe altrimenti invisibile all'operatore.
     const generaMese = async () => {
-        if (!sedeGeneraValida) return;
+        if (!sedeGeneraValida || !meseUnico) return;
         setGenerando(true);
         try {
             const res = await fetch('/api/pagamenti/genera-rette', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                body: JSON.stringify({ periodo: mese.slice(0, 7), scuola_id: sedeGeneraValida }),
+                body: JSON.stringify({ periodo: meseUnico.slice(0, 7), scuola_id: sedeGeneraValida }),
             });
             const j = await res.json().catch((e: unknown) => {
                 logClient({ livello: 'error', evento: 'fetch', messaggio: `genera-rette-corpo-illeggibile: ${nomeErrore(e)}`, route: '/admin/pagamenti', stato: res.status });
@@ -534,7 +577,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
     // ── Nuovo acquisto: la sede ───────────────────────────────────────────────────────────
     // Una categoria di sede vale solo per quella sede; una globale per tutte le visibili.
-    const sediAcquisto = categoriaSel?.scuola_id ? sediVisibili.filter((id) => id === categoriaSel.scuola_id) : sediVisibili;
+    const sediAcquisto = categoriaAcquisto?.scuola_id ? sediVisibili.filter((id) => id === categoriaAcquisto.scuola_id) : sediVisibili;
     const chiedeSedeAcquisto = sediAcquisto.length > 1;
     const sedeAcquisto = chiedeSedeAcquisto
         ? (sediAcquisto.includes(sedeAcquistoScelta) ? sedeAcquistoScelta : '')
@@ -625,7 +668,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 Q7 (quarta revisione 2026-09-29): nemmeno senza gli iscritti — la vista Rette è
                 vuota e il banner degli alunni dice già tutto — e il «Riprova» ha un nome
                 accessibile suo: con due banner, due «Riprova» uguali non si distinguevano. */}
-            {erroreLegami && !erroreAlunni && isRettaView && !agendaFiltro && (
+            {erroreLegami && !erroreAlunni && vistaPerAlunno && !agendaFiltro && (
                 <div data-testid="errore-legami" role="alert" className="mb-4 flex items-center gap-2 rounded-xl border-2 border-kidville-error-soft bg-kidville-error-soft px-4 py-3 text-kidville-error">
                     <AlertTriangle size={18} />
                     <span className="flex-1 font-maven text-sm font-bold">{t('dashMsErrLegami')}</span>
@@ -672,69 +715,49 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 </div>
             )}
 
-            {/* KPI (StatCard cockpit): 1 colonna sotto sm, 2 da sm, 4 da lg
-                `data-testid`: le etichette dei KPI NON sono uniche nella schermata —
-                «Da fatturare» è anche il badge di stato di una riga della tabella —
-                e senza un confine i test finiscono per contare importi che stanno
-                altrove, con esiti che cambiano col calendario. Vedi
-                `__tests__/components/importi-euro-italiani.test.tsx`. */}
+            {/* KPI della Direzione: card, tabella per sede (con più sedi), selezione e occhio.
+                Il gate `eDirezione` sta qui; il dettaglio e i testid in `KpiContabilita`. */}
             {eDirezione && (
-            <div data-testid="kpi-contabilita" className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <StatCard icon={CheckCircle2} label={t('dashIncassato')} value={loading ? '—' : formatEuro(totals.incassato)} tone="success" />
-                <StatCard icon={Clock} label={t('dashDaIncassare')} value={loading ? '—' : formatEuro(totals.daIncassare)} tone="warn" />
-                <StatCard icon={AlertTriangle} label={t('dashScadutoMorosita')} value={loading ? '—' : formatEuro(totals.scaduto)} tone="error" />
-                <StatCard icon={FileText} label={t('dashDaFatturare')} value={loading ? '—' : formatEuro(totals.daFatturare)}
-                    sub={!loading && totals.nDaFatturare > 0 ? `${totals.nDaFatturare} ${totals.nDaFatturare === 1 ? t('dashPagamentoSing') : t('dashPagamentiPlur')}` : undefined} tone="info" />
-            </div>
-            )}
-
-            {/* KPI PER SEDE: con più sedi accorpate il totale da solo non dice a quale
-                segreteria tocca cosa. Stesse quattro somme, una riga per sede; stesso
-                filtro classi delle card. Anche questi sono totali della Direzione. */}
-            {eDirezione && mostraSede && !loading && (
-                <div data-testid="kpi-per-sede" className={cx('mb-5', TABLE_WRAP)}>
-                    <table className={TABLE}>
-                        <caption className="px-3 pt-3 text-left font-barlow text-sm font-extrabold uppercase text-kidville-green">{t('dashMsKpiTitolo')}</caption>
-                        <thead>
-                            <tr>
-                                <th scope="col" className={TH}>{t('dashMsThSede')}</th>
-                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashIncassato')}</th>
-                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashDaIncassare')}</th>
-                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashScadutoMorosita')}</th>
-                                <th scope="col" className={cx(TH, 'text-right')}>{t('dashDaFatturare')}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {totaliPerSede.map(({ id, totali }) => (
-                                <tr key={id || 'sede-non-indicata'} className={TROW}>
-                                    <th scope="row" className={cx(TD, 'text-left font-semibold text-kidville-green')}>{nomeSedeTesto(id)}</th>
-                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.incassato)}</td>
-                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.daIncassare)}</td>
-                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.scaduto)}</td>
-                                    <td className={cx(TD, 'text-right text-kidville-ink')}>{formatEuro(totali.daFatturare)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-
-            {/* Filtro classi (K6): sta SOPRA l'agenda perché vale per KPI, agenda, tabelle
-                ed export — anche in vista agenda, dove la barra dei filtri si nasconde. */}
-            {!loading && (
-                <FiltroClassiContabilita
-                    classi={classi}
-                    selezionate={scelteValide}
-                    onChange={setClassiScelte}
+                <KpiContabilita
+                    totals={totals}
+                    totaliPerSede={totaliPerSede}
+                    loading={loading || selezioneInAttesa}
                     mostraSede={mostraSede}
-                    className="mb-4"
+                    nomeSedeTesto={nomeSedeTesto}
+                    nascoste={cifreNascoste}
+                    onCommutaNascoste={() => setCifreNascoste(!cifreNascoste)}
+                    testoSelezione={selezioneInAttesa ? undefined : testoSelezione}
                 />
+            )}
+
+            {/* Filtri di selezione, SOPRA l'agenda. Le classi (K6) valgono per KPI, agenda, tabelle
+                ed export — anche in vista agenda, dove la barra dei filtri si nasconde; categorie,
+                mesi e anno guidano KPI e tabella (non l'agenda, che resta su tutte le voci). */}
+            {!loading && (
+                <div className="mb-4 flex flex-wrap items-end gap-2">
+                    <FiltroClassiContabilita
+                        classi={classi}
+                        selezionate={scelteValide}
+                        onChange={setClassiScelte}
+                        mostraSede={mostraSede}
+                        className="max-sm:w-full"
+                    />
+                    <FiltroCategorieContabilita opzioni={opzioniCategorie} scelte={categorieValide} onChange={setCategorieScelte} className="max-sm:w-full" />
+                    {/* L'anno prima dei mesi: le etichette dei mesi («Ott 2026») dipendono da lui. */}
+                    <FiltroAnnoContabilita
+                        anno={annoScolastico}
+                        anni={[annoScolasticoCorrente - 1, annoScolasticoCorrente, annoScolasticoCorrente + 1]}
+                        onChange={setAnnoScolastico}
+                        className="max-sm:w-full"
+                    />
+                    <FiltroMesiContabilita anno={annoScolastico} mesi={mesiScelti} onChange={setMesiScelti} className="max-sm:w-full" />
+                </div>
             )}
 
             {/* Agenda scadenze / aging: i bucket filtrano la lista sottostante.
                 Alla Segreteria restano i CONTEGGI e il clic — è uno strumento di lavoro,
                 non un cruscotto — e spariscono i soli importi (`mostraImporti`). */}
-            {!loading && <AgendaScadenze pagamenti={pagamentiVisibili} attivo={agendaFiltro} onSelect={setAgendaFiltro} mostraImporti={eDirezione} mostraSede={mostraSede} />}
+            {!loading && <AgendaScadenze pagamenti={pagamentiVisibili} attivo={agendaFiltro} onSelect={setAgendaFiltro} mostraImporti={eDirezione} mostraSede={mostraSede} mascheraImporti={cifreNascoste} />}
 
             {/* Filtri (nascosti in vista agenda: non filtrerebbero la lista del bucket) */}
             {!agendaFiltro && (
@@ -746,28 +769,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white pl-9 pr-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
                     />
                 </div>
-                <select value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}
-                    className={FILTER_SELECT}>
-                    {categorie.map((c) => <option key={c.id} value={c.id}>{etichettaCategoria(c)}</option>)}
-                </select>
-
-                {/* Filtro mensilità: solo nella vista Rette */}
-                {isRettaView && (
-                    <>
-                        <select value={annoScolastico} onChange={(e) => { const y = Number(e.target.value); setAnnoScolastico(y); setMese(`${y}-09-01`); }}
-                            className={FILTER_SELECT}>
-                            {[annoScolasticoCorrente - 1, annoScolasticoCorrente, annoScolasticoCorrente + 1].map((y) => (
-                                <option key={y} value={y}>{t('dashAsPrefix')} {y}/{y + 1}</option>
-                            ))}
-                        </select>
-                        <select value={periodi.some((p) => p.periodo === mese) ? mese : periodi[0].periodo}
-                            onChange={(e) => setMese(e.target.value)}
-                            className={FILTER_SELECT}>
-                            {periodi.map((p) => <option key={p.periodo} value={p.periodo}>{p.label}</option>)}
-                        </select>
-                    </>
-                )}
-                {/* Filtro Morosi: disponibile in tutte le categorie */}
+                {/* Filtro Morosi: disponibile in ogni selezione (filtra l'elenco, non i KPI) */}
                 <button onClick={() => setOnlyMorosi((v) => !v)}
                     className={cx('inline-flex items-center gap-1 rounded-pill px-3 py-2 font-maven text-sm font-bold transition-colors', onlyMorosi ? 'bg-kidville-error-soft text-kidville-error' : 'border-[1.5px] border-kidville-line bg-kidville-white text-kidville-muted hover:border-kidville-green hover:text-kidville-green')}>
                     <Filter size={14} /> {t('dashMorosi')}
@@ -786,10 +788,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             {/* CTA generazione rette mancanti. Con più sedi la sede si SCEGLIE (il bottone resta
                 spento finché non la si sceglie): la generazione è di UNA sede, e il numero
                 mostrato diventa quello della sede scelta. */}
-            {isRettaView && !loading && mancantiTotali > 0 && (
+            {vistaPerAlunno && !loading && mancantiTotali > 0 && (
                 <div data-testid="cta-genera-mancanti" className="flex flex-wrap items-center justify-between gap-2 bg-kidville-warn-soft border border-kidville-warn/30 rounded-card px-3 py-2 mb-3">
                     <span data-testid="cta-genera-mancanti-frase" className="font-maven text-xs text-kidville-warn-strong">
-                        {t('dashMsAlunniSenzaRetta', { n: mancantiRette, mese: periodi.find((p) => p.periodo === mese)?.label ?? '' })}
+                        {t('dashMsAlunniSenzaRetta', { n: mancantiRette, mese: etichettaMese(meseUnico, f.locale, 'corta') })}
                     </span>
                     <div className="flex flex-wrap items-center gap-2">
                         {mostraSede && (
@@ -811,7 +813,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             )}
 
             {/* Corpo */}
-            {loading ? (
+            {loading || selezioneInAttesa ? (
                 <p className="font-maven text-sm text-kidville-muted py-8 text-center">{t('dashCaricamento')}</p>
             ) : agendaFiltro ? (
                 /* ---- Vista AGENDA: pagamenti aperti del bucket, per scadenza ---- */
@@ -887,8 +889,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     </>
                 )}
                 </>
-            ) : isRettaView ? (
-                /* ---- Vista RETTE: tabella su desktop, card-list su mobile ---- */
+            ) : vistaPerAlunno ? (
+                /* ---- Vista PER ALUNNO (retta + un mese): tabella su desktop, card-list su mobile ---- */
                 alunniFiltrati.length === 0 ? (
                 // Con la GET degli iscritti fallita l'elenco vuoto NON è «nessun alunno»: lo
                 // dice il banner d'errore qui sopra, e qui non si afferma il contrario.
@@ -1022,9 +1024,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 </>
                 )
             ) : (
-                /* ---- Vista CATEGORIA: tabella 1-riga-per-pagamento (come le rette) ---- */
+                /* ---- Elenco PER VOCE: tabella 1-riga-per-pagamento (come le rette) ---- */
                 <>
-                {/* Aggiungi acquisto: la tabella per-pagamento non elenca gli alunni senza acquisti */}
+                {/* Aggiungi acquisto: solo con UNA categoria non retta; la tabella per-pagamento
+                    non elenca gli alunni senza acquisti */}
+                {categoriaAcquisto && (
                 <div className="flex flex-wrap items-center gap-2 mb-3">
                     {/* Con più sedi l'acquisto CHIEDE la sede prima del bambino: l'elenco dei
                         bambini diventa quello della sede scelta, e la sede arriva al modale. */}
@@ -1048,11 +1052,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         ))}
                     </select>
                     <button
-                        disabled={!nuovoAcqValido || !categoriaSel || acquistoSenzaSede}
+                        disabled={!nuovoAcqValido || acquistoSenzaSede}
                         onClick={() => {
                             const a = alunnoById.get(nuovoAcqValido);
-                            if (a && categoriaSel) {
-                                setQuick({ alunno: a, categoria: categoriaSel, scuolaId: sedeAcquisto || undefined });
+                            if (a) {
+                                setQuick({ alunno: a, categoria: categoriaAcquisto, scuolaId: sedeAcquisto || undefined });
                                 setNuovoAcqId('');
                             }
                         }}
@@ -1060,89 +1064,28 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         <Plus size={15} /> {t('dashNuovoAcquisto')}
                     </button>
                 </div>
-                {righeCategoria.length === 0 ? (
-                    <EmptyRiga emoji="🧾" testo={t('dashVuotoCategoria')} />
+                )}
+                {righeVoci.length === 0 ? (
+                    <EmptyRiga emoji="🧾" testo={t('dashVuotoSelezione')} />
                 ) : (
-                <>
-                <div className={cx('hidden lg:block', TABLE_WRAP)}>
-                    <table className={TABLE}>
-                        <thead>
-                            <tr>
-                                <th className={TH}>{t('dashThAlunno')}</th>
-                                {mostraSede && <th className={TH}>{t('dashMsThSede')}</th>}
-                                <th className={TH}>{t('dashThDescrizione')}</th>
-                                <th className={TH}>{t('dashThScadenza')}</th>
-                                <th className={cx(TH, 'text-right')}>{t('dashThImporto')}</th>
-                                <th className={cx(TH, 'text-right')}>{t('dashAcconto')}</th>
-                                <th className={TH}>{t('dashThStato')}</th>
-                                <th className={TH}></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {righeCategoria.map((p) => {
-                                const st = STATI[p.stato] ?? STATI.da_pagare;
-                                const moroso = isMoroso(p, oggiStr);
-                                const acconto = Number(p.importo_pagato || 0);
-                                return (
-                                    <tr key={p.id} className={cx(TROW, moroso && 'bg-kidville-error-soft/50')}>
-                                        <td className={cx(TD, 'font-semibold text-kidville-green')}>
-                                            {p.alunni?.nome} {p.alunni?.cognome}
-                                            {sospesoByAlunno.get(p.alunno_id) && (
-                                                <Badge tone="error" className="ml-1 align-middle">{t('dashSospeso')}</Badge>
-                                            )}
-                                        </td>
-                                        {mostraSede && <td className={TD}><BadgeSede nome={p.scuola_nome} /></td>}
-                                        <td className={cx(TD, 'text-kidville-ink')}>
-                                            {p.descrizione}
-                                            <BadgeMetodoPagamento metodi={p.metodi_ammessi} testoSoloContanti={t('badgeSoloContanti')} testoSoloBonifico={t('badgeSoloBonifico')} className="ml-2 align-middle" />
-                                        </td>
-                                        <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
-                                        <td className={cx(TD, 'text-right text-kidville-green')}>{formatEuro(p.importo)}</td>
-                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{acconto > 0 ? formatEuro(acconto) : '—'}</td>
-                                        <td className={TD}>
-                                            <span className="inline-flex flex-wrap items-center gap-1">
-                                                <Badge tone={st.tone}>{st.label}</Badge>
-                                                {moroso && acconto > 0 && (
-                                                    <Badge tone="warn">{t('dashAcconto')} {formatEuro(acconto)}</Badge>
-                                                )}
-                                                <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} codaStato={p.coda_stato} />
-                                            </span>
-                                        </td>
-                                        <td className={cx(TD, 'text-right')}>
-                                            <div className="flex items-center justify-end gap-2">
-                                                {p.stato !== 'pagato' ? (
-                                                    <button onClick={() => setSelected(p)}
-                                                        className={BTN_PRIMARY_SM}>{t('dashIncassa')}</button>
-                                                ) : (
-                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} codaStato={p.coda_stato ?? null} onEmessa={(e) => dopoAccodamento(p.id, e)} />
-                                                )}
-                                                {p.tipo === 'singolo' && p.stato !== 'pagato' && (
-                                                    <button onClick={() => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }} title={t('dashDividiAcconti')} className={ICON_BTN}><Layers size={15} /></button>
-                                                )}
-                                                <button onClick={() => setDrawer(p)} title={t('dashDettagli')} className={ICON_BTN}><Eye size={15} /></button>
-                                                <button onClick={() => setEditing(p)} title={t('dashModifica')} className={ICON_BTN}><Pencil size={15} /></button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
-                <div className="space-y-2 lg:hidden">
-                    {righeCategoria.map((p) => (
-                        <PagamentoCardMobile
-                            key={p.id}
-                            pagamento={p}
-                            alunnoLabel={`${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || '—'}
-                            sospeso={!!sospesoByAlunno.get(p.alunno_id)}
-                            mostraSede={mostraSede}
-                            onIncassa={() => setSelected(p)}
-                            onApri={() => setDrawer(p)}
-                        />
-                    ))}
-                </div>
-                </>
+                <TabellaVociContabilita
+                    righe={righeVoci}
+                    mostraSede={mostraSede}
+                    mostraCategoria={categorieValide.length !== 1}
+                    nomeCategoria={(p) => {
+                        const c = categorie.find((x) => x.id === p.categoria_id);
+                        return c ? etichettaCategoria(c) : p.payment_categories?.nome || '—';
+                    }}
+                    sospesoByAlunno={sospesoByAlunno}
+                    oggiStr={oggiStr}
+                    userId={userId}
+                    rettaId={rettaCat?.id}
+                    onIncassa={(p) => setSelected(p)}
+                    onRateizza={(p) => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }}
+                    onDettagli={(p) => setDrawer(p)}
+                    onModifica={(p) => setEditing(p)}
+                    dopoAccodamento={dopoAccodamento}
+                />
                 )}
                 </>
             )}

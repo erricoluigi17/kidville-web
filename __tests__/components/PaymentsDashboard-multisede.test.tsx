@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { scegliCategorie, scegliMesi } from '../helpers/scelta-contabilita';
 
 /**
  * ─── LO SCADENZARIO CON PIÙ SEDI ACCORPATE (P2a, 2026-09-26) ─────────────────────────────
@@ -280,13 +281,23 @@ describe('P2a · 2 — KPI: totale e ripartizione per sede', () => {
         stub(PAGAMENTI_DUE_SEDI, STUDENTS_DUE_SEDI);
         render(<PaymentsDashboard userId="u1" scuolaId={null} />);
         const blocco = await screen.findByTestId('kpi-per-sede');
-        const aversa = within(blocco).getByRole('row', { name: /Kidville Aversa/ });
-        const giugliano = within(blocco).getByRole('row', { name: /Kidville Giugliano/ });
-        // Aversa: incassati 100 (retta) ; da incassare 30 (gita).
-        expect(within(aversa).getAllByRole('cell').map((c) => c.textContent)).toEqual(['€ 100,00', '€ 30,00', '€ 0,00', '€ 100,00']);
+        const celle = (sede: RegExp) => within(within(blocco).getByRole('row', { name: sede })).getAllByRole('cell').map((c) => c.textContent);
+
+        // Selezione di apertura: Retta · ottobre. Le due gite (categoria Gita) restano fuori.
+        // Aversa: la retta di Mario, incassata (100). Giugliano: Ada scaduta 200 + Luca da pagare 300.
+        expect(celle(/Kidville Aversa/)).toEqual(['€ 100,00', '€ 0,00', '€ 0,00', '€ 100,00']);
+        expect(celle(/Kidville Giugliano/)).toEqual(['€ 0,00', '€ 500,00', '€ 200,00', '€ 0,00']);
+        // Il totale nelle card resta la somma delle sedi: da incassare 0 + 500.
+        expect(cardKpi('Da incassare')).toHaveTextContent('€ 500,00');
+        expect(cardKpi('Incassato')).toHaveTextContent('€ 100,00');
+
+        // Tutte le categorie e tutto l'anno: tornano le gite (Aversa 30; Giugliano 40) e i totali di prima.
+        await scegliCategorie('tutte');
+        await scegliMesi('tutto');
+        // Aversa: incassati 100 (retta); da incassare 30 (gita).
+        await waitFor(() => expect(celle(/Kidville Aversa/)).toEqual(['€ 100,00', '€ 30,00', '€ 0,00', '€ 100,00']));
         // Giugliano: niente incassato; da incassare 200+300+40; scaduto 200.
-        expect(within(giugliano).getAllByRole('cell').map((c) => c.textContent)).toEqual(['€ 0,00', '€ 540,00', '€ 200,00', '€ 0,00']);
-        // Il totale nelle card resta la somma delle sedi.
+        expect(celle(/Kidville Giugliano/)).toEqual(['€ 0,00', '€ 540,00', '€ 200,00', '€ 0,00']);
         expect(within(screen.getByTestId('kpi-contabilita')).getByText('€ 570,00')).toBeInTheDocument();
     });
 
@@ -294,6 +305,10 @@ describe('P2a · 2 — KPI: totale e ripartizione per sede', () => {
         unaSede();
         stub(PAGAMENTI_DUE_SEDI, STUDENTS_DUE_SEDI);
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        // Apertura: Retta · ottobre → da incassare 500 (Ada 200 + Luca 300). Poi tutto: 570 con le gite.
+        await waitFor(() => expect(cardKpi('Da incassare')).toHaveTextContent('€ 500,00'));
+        await scegliCategorie('tutte');
+        await scegliMesi('tutto');
         await waitFor(() => expect(within(screen.getByTestId('kpi-contabilita')).getByText('€ 570,00')).toBeInTheDocument());
         expect(screen.queryByTestId('kpi-per-sede')).toBeNull();
     });
@@ -314,7 +329,7 @@ describe('P2a · 3 — la sede nelle righe', () => {
         dueSedi();
         stub(PAGAMENTI_DUE_SEDI, STUDENTS_DUE_SEDI);
         render(<PaymentsDashboard userId="u1" scuolaId={null} />);
-        fireEvent.change(await screen.findByDisplayValue('Retta'), { target: { value: 'c-gita' } });
+        await scegliCategorie(['Gita']);
         await waitFor(() => expect(within(rigaTabella('Gita al museo')).getByTestId('sede-badge')).toHaveTextContent('Kidville Giugliano'));
         expect(within(rigaTabella('Gita allo zoo')).getByTestId('sede-badge')).toHaveTextContent('Kidville Aversa');
 
@@ -458,7 +473,7 @@ describe('P2a · 5 — «Genera mancanti» e «Nuovo acquisto» chiedono la sede
         dueSedi();
         stub(PAGAMENTI_DUE_SEDI, STUDENTS_DUE_SEDI);
         render(<PaymentsDashboard userId="u1" scuolaId={null} />);
-        fireEvent.change(await screen.findByDisplayValue('Retta'), { target: { value: 'c-gita' } });
+        await scegliCategorie(['Gita']);
         const sede = await screen.findByLabelText('Sede dell’acquisto');
         const alunno = screen.getByDisplayValue('Scegli prima la sede…');
         expect(alunno).toBeDisabled();
@@ -486,7 +501,7 @@ describe('P2a · 5 — «Genera mancanti» e «Nuovo acquisto» chiedono la sede
             categorie: { success: true, data: [...CATEGORIE.data, { id: 'c-gita-a', nome: 'Gita', slug: 'gita-aversa', scuola_id: 'sede-a' }] },
         });
         render(<PaymentsDashboard userId="u1" scuolaId={null} />);
-        fireEvent.change(await screen.findByDisplayValue('Retta'), { target: { value: 'c-gita-a' } });
+        await scegliCategorie(['Gita — Kidville Aversa']);
         const alunno = await screen.findByDisplayValue('Seleziona alunno…');
         expect(screen.queryByLabelText('Sede dell’acquisto')).toBeNull();
         const opzioni = within(alunno).getAllByRole('option').map((o) => o.textContent);
@@ -506,7 +521,7 @@ describe('P2a · 5 — «Genera mancanti» e «Nuovo acquisto» chiedono la sede
         unaSede();
         stub(PAGAMENTI_DUE_SEDI, STUDENTS_DUE_SEDI);
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
-        fireEvent.change(await screen.findByDisplayValue('Retta'), { target: { value: 'c-gita' } });
+        await scegliCategorie(['Gita']);
         const alunno = await screen.findByDisplayValue('Seleziona alunno…');
         expect(screen.queryByLabelText('Sede dell’acquisto')).toBeNull();
         fireEvent.change(alunno, { target: { value: 'a2' } });
@@ -629,7 +644,7 @@ describe('P2a · 6 — filtro classi su KPI, tabelle ed export', () => {
         dueSedi();
         stub(PAGAMENTI_DUE_SEDI, STUDENTS_DUE_SEDI);
         render(<PaymentsDashboard userId="u1" scuolaId={null} />);
-        fireEvent.change(await screen.findByDisplayValue('Retta'), { target: { value: 'c-gita' } });
+        await scegliCategorie(['Gita']);
         await waitFor(() => expect(rigaTabella('Gita allo zoo')).toBeInTheDocument());
         await scegliClasse(/^Tulipani — Kidville Giugliano$/);
         await waitFor(() => expect(screen.getAllByRole('row').some((r) => r.textContent?.includes('Gita allo zoo'))).toBe(false));

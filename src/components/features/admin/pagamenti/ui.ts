@@ -55,6 +55,15 @@ export const INPUT =
 /** Select native brandizzata (INPUT + cursore pointer). */
 export const SELECT = `${INPUT} cursor-pointer hover:border-kidville-green/50`;
 
+/**
+ * `<select>` dei filtri della Contabilità: stessa pelle dei filtri della Toolbar cockpit
+ * (bordo line, focus verde con ring). Per i select della barra filtri e delle CTA di
+ * `PaymentsDashboard`; il select dell'anno dei filtri di selezione ha la sua geometria
+ * (`SELECT_ANNO` in `FiltriSelezioneContabilita`), allineata ai comandi multi-selezione.
+ */
+export const FILTER_SELECT =
+  'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
+
 /** Bottone primario pillola: verde + giallo come `Btn` primary dell'app. */
 export const BTN_PRIMARY =
   'inline-flex items-center justify-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
@@ -70,3 +79,10 @@ export const BTN_PRIMARY_AA =
 /** Bottone secondario pillola: bordo line, testo sub, AA a riposo (annulla/chiudi). */
 export const BTN_SECONDARY =
   'inline-flex items-center justify-center gap-1.5 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-5 py-2.5 font-maven text-sm font-bold text-kidville-sub transition-colors hover:border-kidville-green hover:text-kidville-green disabled:opacity-50';
+
+/** Bottone pillola verde+giallo, formato piccolo (azioni di riga: «Incassa», «Genera»). */
+export const BTN_PRIMARY_SM =
+  'inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
+
+/** Bottone di sola icona nelle righe di tabella: testo `sub` (AA a riposo), verde al passaggio. */
+export const ICON_BTN = 'text-kidville-sub transition-colors hover:text-kidville-green';

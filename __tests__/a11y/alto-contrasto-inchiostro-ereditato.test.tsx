@@ -1628,6 +1628,8 @@ describe('§5 · RISERVA 2 — le UTILITY che dipingono scuro, censite e sorvegl
       'src/components/features/admin/pagamenti/riconciliazione-ui.ts · bg-kidville-green · inchiostro nella dichiarazione: true',
       'src/components/features/admin/pagamenti/ui.ts · bg-kidville-green · inchiostro nella dichiarazione: true',
       'src/components/features/admin/pagamenti/ui.ts · bg-kidville-green · inchiostro nella dichiarazione: true',
+      // `BTN_PRIMARY_SM` spostato da PaymentsDashboard.tsx (T8), non è un uso nuovo.
+      'src/components/features/admin/pagamenti/ui.ts · bg-kidville-green · inchiostro nella dichiarazione: true',
       'src/components/features/admin/settings/ui.ts · bg-kidville-green · inchiostro nella dichiarazione: true',
     ])
 
@@ -1635,6 +1637,6 @@ describe('§5 · RISERVA 2 — le UTILITY che dipingono scuro, censite e sorvegl
     // quando c'è e la sua assenza quando manca. Senza queste due righe, un
     // refuso nel filtro produrrebbe un elenco vuoto identico a un repo pulito.
     expect(SORGENTI_TS.length, 'la sonda legge davvero i `.ts` di src/').toBeGreaterThan(100)
-    expect(stringhe.every((x) => x.endsWith('true')), 'oggi nessuna delle cinque è senza inchiostro').toBe(true)
+    expect(stringhe.every((x) => x.endsWith('true')), 'oggi nessuna delle sei è senza inchiostro').toBe(true)
   })
 })

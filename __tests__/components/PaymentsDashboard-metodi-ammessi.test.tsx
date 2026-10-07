@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { scegliCategorie } from '../helpers/scelta-contabilita';
 
 /**
  * ─── «SOLO CONTANTI» / «SOLO BONIFICO» NELLO SCADENZARIO (2026-10-05) ─────────────────────
@@ -142,7 +143,7 @@ afterEach(() => {
 describe('PaymentsDashboard — badge dei metodi ammessi', () => {
     it('vista per categoria: «Solo contanti» accanto alla descrizione, e niente sulla voce con tutti e due', async () => {
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
-        fireEvent.change(await screen.findByDisplayValue('Retta'), { target: { value: 'c-gita' } });
+        await scegliCategorie(['Gita']);
         await waitFor(() => expect(rigaTabella('Gita al museo')).toBeInTheDocument());
 
         const cella = within(rigaTabella('Gita al museo')).getByText('Gita al museo');
@@ -155,7 +156,7 @@ describe('PaymentsDashboard — badge dei metodi ammessi', () => {
     it('agenda: la voce scaduta «solo bonifico» porta il suo badge', async () => {
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
         // Fuori dalla vista rette: nell'agenda la riga si riconosce dalla descrizione.
-        fireEvent.change(await screen.findByDisplayValue('Retta'), { target: { value: 'c-gita' } });
+        await scegliCategorie(['Gita']);
         await waitFor(() => expect(rigaTabella('Gita al museo')).toBeInTheDocument());
 
         fireEvent.click(screen.getByRole('button', { name: /Scaduti fino a 30gg/ }));

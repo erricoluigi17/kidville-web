@@ -56,6 +56,8 @@ interface Props {
     pagamento: PagamentoRow & { scadenza?: string | null } & ConSede;
     alunnoLabel: string;
     sezioneLabel?: string | null;
+    /** Nome della categoria della voce: solo nell'elenco per voce con più categorie (come la colonna «Categoria» della tabella). */
+    categoriaLabel?: string;
     sospeso?: boolean;
     /**
      * Mostrare la sede della riga? Sì quando le sedi accorpate sono più di una (P2b).
@@ -70,7 +72,7 @@ interface Props {
 }
 
 /** Card compatta per la lista pagamenti su mobile (sotto lg la tabella diventa card-list). */
-export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sospeso, mostraSede = false, avviso, onIncassa, onApri }: Props) {
+export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, categoriaLabel, sospeso, mostraSede = false, avviso, onIncassa, onApri }: Props) {
     const t = useTranslations('adminContabilita');
     const st = STATI_PAGAMENTO[pagamento.stato] ?? STATI_PAGAMENTO.da_pagare;
     const residuo = Math.max(0, Number(pagamento.importo) - Number(pagamento.importo_pagato || 0));
@@ -87,6 +89,7 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
                         )}
                     </p>
                     {sezioneLabel && <p className="font-maven text-xs text-kidville-muted">{sezioneLabel}</p>}
+                    {categoriaLabel && <p data-testid="card-categoria" className="font-maven text-xs text-kidville-sub">{categoriaLabel}</p>}
                     {mostraSede && <BadgeSede nome={pagamento.scuola_nome} className="mt-1" />}
                 </div>
                 <Badge tone={st.tone} className="shrink-0">{st.label}</Badge>

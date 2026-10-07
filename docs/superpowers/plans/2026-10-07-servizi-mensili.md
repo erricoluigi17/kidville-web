@@ -19,7 +19,7 @@ Decisioni aggiuntive:
 - `CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA extensions` (disponibile, non installata).
 - `payment_categories`: `mensile boolean not null default false`, `importo_mensile_default numeric(10,2)`,
   CHECK importo ≥ 0, CHECK `NOT mensile OR slug <> 'retta'`.
-- Tabella `iscrizioni_servizi` (id, alunno_id FK cascade, categoria_id FK restrict, scuola_id FK
+- Tabella `iscrizioni_servizi` (id, alunno_id FK cascade, categoria_id FK NO ACTION (non RESTRICT: su PG 18 dà 23001 invece di 23503; motivo nella migrazione), scuola_id FK
   schools, importo_mensile ≥ 0, `dal` primo del mese, `al` facoltativo primo del mese ≥ dal,
   creato_da senza FK, timestamp, trigger `set_updated_at`), **EXCLUDE gist** contro iscrizioni
   sovrapposte (alunno, categoria, daterange), RLS attiva senza policy (solo service-role), REVOKE ad
@@ -55,7 +55,7 @@ Decisioni aggiuntive:
 - **T4 · Aggancio in `genera-rette/route.ts`**: dopo le rette (mensile e annuale) `generaServizi`;
   se i servizi falliscono risposta 200 con `data.servizi = { errore: true, codice }` e log `error`
   (le rette già scritte non sembrano fallite); se le rette falliscono i servizi non partono. Test in
-  `genera-rette-sede-scrittura.test.ts` con le rpc dei servizi in un array **separato** da `h.chiamate`.
+  `genera-rette-servizi.test.ts` (fatto così), con le rpc dei servizi in un array **separato** da `h.chiamate`.
 - **T5 · Route `src/app/api/pagamenti/genera-servizi/route.ts`** (`withRoute`, `requireStaff`, zod):
   GET anteprima (`servizi_da_generare`), POST generazione manuale; 503 `SERVIZI_NON_DISPONIBILI` se
   lo schema manca (DB E2E non migrato).
@@ -64,8 +64,10 @@ Decisioni aggiuntive:
   insert semplice, 23P01 → 409), PATCH (importo/dal/al) e DELETE sempre `.eq('scuola_id')`;
   **fine/eliminazione in due tempi**: senza `voci_future` risponde l'elenco delle voci fuori periodo
   (eliminabili vs intoccabili); con `voci_future: 'elimina' | 'mantieni'` esegue (eliminando solo
-  le non pagate/non fatturate, con lo stesso predicato della cancellazione voce esistente in
-  `/api/pagamenti`), audit e log col conteggio.
+  le eliminabili, con una regola PIÙ STRETTA della cancellazione voce singola di `/api/pagamenti`:
+  `motivoIntoccabile` in `servizi-mensili.ts` esclude anche manuali senza `periodo_competenza`,
+  rateizzate, con incassi e in coda fatture; con `elimina` è OBBLIGATORIO `voci_ids`, gli id visti
+  nel primo tempo, e si cancella solo l'intersezione con le eliminabili ricalcolate), audit e log col conteggio.
 - **T7 · Route categorie**: zod POST/PATCH con `mensile` e `importo_mensile_default` (inseriti solo
   se presenti), log `categoria-aggiornata`, 23503 su DELETE → 409 `CATEGORIA_IN_USO`.
 - **T8 · `CategorieManager`** estratto da `SettingsPanel.tsx:378-433` in un file suo, con
@@ -77,8 +79,9 @@ Decisioni aggiuntive:
   mese d'inizio obbligatorio, esclusi i già iscritti nel periodo), finestra «cosa fare delle voci
   future», «Genera servizi del mese» con anteprima, stati vuoti («attivalo in Impostazioni»,
   `non_disponibile`). Aggiunta a `CHIAMANTI` di `limite-elenco-alunni.test.ts`.
-- **T11 · `GeneratoreRette`**: riga «N voci di servizi generate» o avviso se `servizi.errore`.
-- **T12 · E2E** `e2e/admin-contabilita.spec.ts`: `?vista=servizi` mostra il titolo sia con schema
+- **T11 · `GeneratoreRette`**: riga «N voci dei servizi mensili generate» se `generati > 0`; avviso se
+  `servizi.errore` con `SERVIZI_NON_GENERATI`; nulla con 0, campo assente o `SERVIZI_NON_DISPONIBILI`.
+- **T12 · E2E** `e2e/admin-scelta-sede.spec.ts` (l'admin E2E ha due sedi: prima la scelta della sede): `?vista=servizi` mostra il titolo sia con schema
   assente sia con elenco vuoto (verifica solo in CI).
 - **T13 · PRD, gate, rilascio**: changelog + schema nel PRD; gate completi; prima del merge solo
   letture (`count(*)` di `pagamenti`, `payment_categories`, `enrollment_submissions`); la migrazione

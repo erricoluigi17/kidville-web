@@ -114,7 +114,8 @@ describe('SettingsPanel — il salvataggio dice com\'è andato', () => {
             expect.stringContaining('/api/admin/settings'),
             expect.objectContaining({ method: 'PATCH' }),
         ))
-        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+        // I contenitori `alert` delle categorie sono sempre nel DOM (vuoti): conta quello che dicono.
+        expect(screen.queryAllByRole('alert').filter(e => (e.textContent ?? '').trim() !== '')).toHaveLength(0)
         expect(h.logClient).not.toHaveBeenCalled()
     })
 })

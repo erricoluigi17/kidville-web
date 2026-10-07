@@ -433,5 +433,16 @@
   "noteRimuoviCategoria": "Remove category",
   "spEliminaCategoria": "Delete category",
   "spRimuoviPacchetto": "Remove package",
-  "meErrMenu": "The menu operation failed. Try again."
+  "meErrMenu": "The menu operation failed. Try again.",
+  "catAiuto": "Monthly categories (e.g. afternoon care, after-school, school bus) are generated together with the tuition fees for the children enrolled in the service, from the Services tab of Accounting. Make an existing category monthly instead of creating a new one.",
+  "catMensile": "Monthly",
+  "catImportoMensile": "Default monthly amount (€)",
+  "catSalva": "Save",
+  "catTogliMensileAvviso": "Children enrolled in this service will no longer receive the monthly charge at the next generation.",
+  "catConferma": "Confirm",
+  "catAnnulla": "Cancel",
+  "catSalvata": "Category updated.",
+  "catAggiunta": "Category added.",
+  "catEliminata": "Category deleted.",
+  "catImportoNonValido": "The monthly amount must be a number greater than or equal to zero."
 }

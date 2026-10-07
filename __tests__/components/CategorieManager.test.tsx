@@ -71,7 +71,7 @@ describe('CategorieManager — servizi mensili', () => {
         const r = riga(/Divisa/)
         fireEvent.click(within(r).getByRole('checkbox', { name: itSettings.catMensile }))
         fireEvent.change(within(r).getByLabelText(itSettings.catImportoMensile), { target: { value: '45.5' } })
-        fireEvent.click(within(r).getByRole('button', { name: itSettings.catSalva }))
+        fireEvent.click(within(r).getByRole('button', { name: /^Salva/ }))
         await waitFor(() => expect(chiamate('PATCH')).toHaveLength(1))
         expect(JSON.parse(chiamate('PATCH')[0][1].body)).toEqual({
             id: DIVISA.id, scuola_id: SEDE_A, mensile: true, importo_mensile_default: 45.5,
@@ -83,7 +83,7 @@ describe('CategorieManager — servizi mensili', () => {
         await monta()
         const r = riga(/Divisa/)
         fireEvent.click(within(r).getByRole('checkbox', { name: itSettings.catMensile }))
-        fireEvent.click(within(r).getByRole('button', { name: itSettings.catSalva }))
+        fireEvent.click(within(r).getByRole('button', { name: /^Salva/ }))
         await waitFor(() => expect(chiamate('PATCH')).toHaveLength(1))
         expect(JSON.parse(chiamate('PATCH')[0][1].body).importo_mensile_default).toBeNull()
     })
@@ -92,14 +92,65 @@ describe('CategorieManager — servizi mensili', () => {
         await monta()
         const r = riga(/Pomeridiano/)
         fireEvent.click(within(r).getByRole('checkbox', { name: itSettings.catMensile }))
-        fireEvent.click(within(r).getByRole('button', { name: itSettings.catSalva }))
+        fireEvent.click(within(r).getByRole('button', { name: /^Salva/ }))
         expect(within(r).getByRole('alert')).toHaveTextContent(itSettings.catTogliMensileAvviso)
-        fireEvent.click(within(r).getByRole('button', { name: itSettings.catAnnulla }))
+        fireEvent.click(within(r).getByRole('button', { name: /^Annulla/ }))
         expect(chiamate('PATCH')).toHaveLength(0)
-        fireEvent.click(within(r).getByRole('button', { name: itSettings.catSalva }))
-        fireEvent.click(within(r).getByRole('button', { name: itSettings.catConferma }))
+        // Annulla rimette la spunta.
+        expect((within(r).getByRole('checkbox', { name: itSettings.catMensile }) as HTMLInputElement).checked).toBe(true)
+        fireEvent.click(within(r).getByRole('checkbox', { name: itSettings.catMensile }))
+        fireEvent.click(within(r).getByRole('button', { name: /^Salva/ }))
+        fireEvent.click(within(r).getByRole('button', { name: /^Conferma/ }))
         await waitFor(() => expect(chiamate('PATCH')).toHaveLength(1))
-        expect(JSON.parse(chiamate('PATCH')[0][1].body)).toMatchObject({ id: POMER.id, mensile: false, importo_mensile_default: null })
+        const corpo = JSON.parse(chiamate('PATCH')[0][1].body)
+        expect(corpo).toMatchObject({ id: POMER.id, mensile: false })
+        // L'importo predefinito NON si cancella: la chiave non viaggia.
+        expect(corpo).not.toHaveProperty('importo_mensile_default')
+    })
+
+    it('i nomi accessibili sono univoci per riga', async () => {
+        elenco = [RETTA, POMER, DIVISA, { ...DIVISA, id: '44444444-4444-4444-8444-444444444444', nome: 'Pulmino' }]
+        await monta()
+        const salvaNomi = screen.getAllByRole('button', { name: /^Salva/ }).map(b => b.getAttribute('aria-label'))
+        expect(new Set(salvaNomi).size).toBe(salvaNomi.length)
+        expect(salvaNomi).toContain('Salva: Pomeridiano')
+        const casella = within(riga(/Pulmino/)).getByRole('checkbox', { name: itSettings.catMensile })
+        expect(casella).toHaveAccessibleDescription(/Pulmino/)
+        expect(within(riga(/Divisa/)).getByRole('checkbox', { name: itSettings.catMensile })).toHaveAccessibleDescription(/Divisa/)
+    })
+
+    it('Salva è disabilitato finché nulla cambia', async () => {
+        await monta()
+        const r = riga(/Pomeridiano/)
+        const salva = within(r).getByRole('button', { name: /^Salva/ })
+        expect(salva).toBeDisabled()
+        fireEvent.change(within(r).getByLabelText(itSettings.catImportoMensile), { target: { value: '90' } })
+        expect(salva).toBeEnabled()
+    })
+
+    it.each(['-5', 'abc', '1,234', '100000'])('importo non valido «%s»: errore e nessuna PATCH', async (valore) => {
+        await monta()
+        const r = riga(/Pomeridiano/)
+        fireEvent.change(within(r).getByLabelText(itSettings.catImportoMensile), { target: { value: valore } })
+        fireEvent.click(within(r).getByRole('button', { name: /^Salva/ }))
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(itSettings.catImportoNonValido))
+        expect(chiamate('PATCH')).toHaveLength(0)
+    })
+
+    it('l’importo con la virgola è accettato', async () => {
+        await monta()
+        const r = riga(/Pomeridiano/)
+        fireEvent.change(within(r).getByLabelText(itSettings.catImportoMensile), { target: { value: '85,50' } })
+        fireEvent.click(within(r).getByRole('button', { name: /^Salva/ }))
+        await waitFor(() => expect(chiamate('PATCH')).toHaveLength(1))
+        expect(JSON.parse(chiamate('PATCH')[0][1].body).importo_mensile_default).toBe(85.5)
+    })
+
+    it('GET respinta (403): messaggio a schermo e log con lo stato', async () => {
+        fetchMock.mockImplementation(() => Promise.resolve({ ok: false, status: 403, json: async () => ({ error: 'Sede non accessibile' }) }))
+        render(<CategorieManager userId={USER} scuolaId={SEDE_A} />)
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Sede non accessibile'))
+        expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', stato: 403 }))
     })
 
     it('la categoria di sistema non ha controlli', async () => {
@@ -114,8 +165,8 @@ describe('CategorieManager — servizi mensili', () => {
         await monta()
         const r = riga(/Divisa/)
         fireEvent.click(within(r).getByRole('checkbox', { name: itSettings.catMensile }))
-        fireEvent.click(within(r).getByRole('button', { name: itSettings.catSalva }))
-        expect(await screen.findByRole('alert')).toHaveTextContent(/non sono ancora disponibili/)
+        fireEvent.click(within(r).getByRole('button', { name: /^Salva/ }))
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/non sono ancora disponibili/))
         expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', stato: 503 }))
     })
 
@@ -124,8 +175,8 @@ describe('CategorieManager — servizi mensili', () => {
         await monta()
         const r = riga(/Divisa/)
         fireEvent.click(within(r).getByRole('checkbox', { name: itSettings.catMensile }))
-        fireEvent.click(within(r).getByRole('button', { name: itSettings.catSalva }))
-        expect(await screen.findByRole('alert')).toHaveTextContent('Categoria fuori dal tuo plesso')
+        fireEvent.click(within(r).getByRole('button', { name: /^Salva/ }))
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Categoria fuori dal tuo plesso'))
     })
 
     it('rete morta: errore a schermo e log', async () => {
@@ -135,8 +186,8 @@ describe('CategorieManager — servizi mensili', () => {
             : Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: elenco }) }))
         const r = riga(/Divisa/)
         fireEvent.click(within(r).getByRole('checkbox', { name: itSettings.catMensile }))
-        fireEvent.click(within(r).getByRole('button', { name: itSettings.catSalva }))
-        expect(await screen.findByRole('alert')).toHaveTextContent(itSettings.erroreSalvataggio)
+        fireEvent.click(within(r).getByRole('button', { name: /^Salva/ }))
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(itSettings.erroreSalvataggio))
         expect(h.logClient).toHaveBeenCalled()
     })
 
@@ -163,7 +214,7 @@ describe('CategorieManager — servizi mensili', () => {
     it('axe non trova violazioni', async () => {
         const { container } = await monta()
         fireEvent.click(within(riga(/Pomeridiano/)).getByRole('checkbox', { name: itSettings.catMensile }))
-        fireEvent.click(within(riga(/Pomeridiano/)).getByRole('button', { name: itSettings.catSalva }))
+        fireEvent.click(within(riga(/Pomeridiano/)).getByRole('button', { name: /^Salva/ }))
         expect(await axe(container, { rules: { region: { enabled: false } } })).toHaveNoViolations()
     })
 })

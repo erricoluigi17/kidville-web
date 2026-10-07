@@ -49,7 +49,7 @@ function importoIniziale(c: Categoria): string {
 
 interface RigaProps {
     c: Categoria;
-    onSalva: (c: Categoria, mensile: boolean, importo: number | null) => Promise<void>;
+    onSalva: (c: Categoria, mensile: boolean, importo: number | null | undefined) => Promise<void>;
     onNonValido: () => void;
 }
 
@@ -63,17 +63,25 @@ function ControlliMensile({ c, onSalva, onNonValido }: RigaProps) {
     const [invio, setInvio] = useState(false);
 
     const esegui = async () => {
-        let valore: number | null = null;
-        if (mensile && importo.trim() !== '') {
-            valore = Number(importo.replace(',', '.'));
-            if (!Number.isFinite(valore) || valore < 0) { onNonValido(); return; }
-            valore = Math.round(valore * 100) / 100;
+        // Togliendo «Mensile» l'importo predefinito NON si tocca (undefined = chiave assente).
+        let valore: number | null | undefined = undefined;
+        if (mensile) {
+            valore = null;
+            const grezzo = importo.trim();
+            if (grezzo !== '') {
+                // Accetta la virgola; niente segno, al massimo due decimali, tetto della route.
+                if (!/^\d+([.,]\d{1,2})?$/.test(grezzo)) { onNonValido(); return; }
+                valore = Number(grezzo.replace(',', '.'));
+                if (valore > 99999.99) { onNonValido(); return; }
+            }
         }
         setInvio(true);
         await onSalva(c, mensile, valore);
         setInvio(false);
         setConferma(false);
     };
+    // «Salva» serve solo se qualcosa è cambiato rispetto ai valori già salvati.
+    const modificato = mensile !== eraMensile || (mensile && importo.trim() !== importoIniziale(c));
     const salva = () => {
         // Togliere «Mensile» a chi lo era: prima si avvisa, perché gli iscritti smettono di
         // ricevere la voce mensile. Niente `window.confirm`: l'avviso sta in pagina.
@@ -85,23 +93,24 @@ function ControlliMensile({ c, onSalva, onNonValido }: RigaProps) {
         <div className="mt-2 flex flex-wrap items-end gap-3 border-t border-kidville-line pt-2">
             <label className={checkboxRow}>
                 <input type="checkbox" className={checkbox} checked={mensile}
+                    aria-describedby={`cat-nome-${c.id}`}
                     onChange={e => { setMensile(e.target.checked); setConferma(false); }} />
                 <span className={checkboxLabel}>{t('catMensile')}</span>
             </label>
             {mensile && (
                 <div>
                     <label htmlFor={`cat-imp-${c.id}`} className={label}>{t('catImportoMensile')}</label>
-                    <input id={`cat-imp-${c.id}`} type="number" inputMode="decimal" min={0} step="0.01"
+                    <input id={`cat-imp-${c.id}`} type="text" inputMode="decimal" aria-describedby={`cat-nome-${c.id}`}
                         value={importo} onChange={e => setImporto(e.target.value)} className={`${input} w-36`} />
                 </div>
             )}
-            <button type="button" onClick={salva} disabled={invio} className={btnPrimary}>{t('catSalva')}</button>
+            <button type="button" onClick={salva} disabled={invio || !modificato} aria-label={`${t('salva')}: ${c.nome}`} className={btnPrimary}>{t('salva')}</button>
             {conferma && (
                 <div role="alert" className="basis-full flex flex-wrap items-center gap-3 rounded-2xl bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error-strong">
                     <AlertTriangle size={15} className="shrink-0" strokeWidth={1.8} />
                     <span>{t('catTogliMensileAvviso')}</span>
-                    <button type="button" onClick={() => { void esegui(); }} disabled={invio} className={btnPrimary}>{t('catConferma')}</button>
-                    <button type="button" onClick={() => setConferma(false)} className="font-maven text-sm text-kidville-green underline">{t('catAnnulla')}</button>
+                    <button type="button" onClick={() => { void esegui(); }} disabled={invio} aria-label={`${t('catConferma')}: ${c.nome}`} className={btnPrimary}>{t('catConferma')}</button>
+                    <button type="button" onClick={() => { setMensile(eraMensile); setConferma(false); }} aria-label={`${t('annulla')}: ${c.nome}`} className="font-maven text-sm text-kidville-green underline">{t('annulla')}</button>
                 </div>
             )}
         </div>
@@ -116,7 +125,15 @@ export function CategorieManager({ userId, scuolaId }: Props) {
 
     const load = useCallback(() => {
         fetch(`${ROUTE}?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setCats(d.data); })
+            .then(async r => {
+                if (!r.ok) {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'settings-categorie-lettura-respinta', route: PAGINA, stato: r.status });
+                    setEsito({ tipo: 'errore', testo: await messaggioErrore(r, t('erroreCaricamentoDati')) });
+                    return;
+                }
+                const d = await r.json();
+                if (d.success) setCats(d.data);
+            })
             .catch(err => {
                 // Un catch che non logga è un bug: senza questa riga «non ci sono categorie» e
                 // «la lettura è morta» sono la stessa cosa.
@@ -149,12 +166,15 @@ export function CategorieManager({ userId, scuolaId }: Props) {
         riporta(err, t('catEliminata'));
         load();
     };
-    const salvaMensile = async (c: Categoria, mensile: boolean, importo: number | null) => {
+    const salvaMensile = async (c: Categoria, mensile: boolean, importo: number | null | undefined) => {
         const err = await chiama(
             ROUTE,
             {
                 method: 'PATCH', headers: hdr(userId),
-                body: JSON.stringify({ id: c.id, scuola_id: scuolaId, mensile, importo_mensile_default: importo }),
+                body: JSON.stringify({
+                    id: c.id, scuola_id: scuolaId, mensile,
+                    ...(importo !== undefined ? { importo_mensile_default: importo } : {}),
+                }),
             },
             t('erroreSalvataggio'), 'settings-categoria-mensile-respinta',
         );
@@ -170,7 +190,7 @@ export function CategorieManager({ userId, scuolaId }: Props) {
                 {cats.map(c => (
                     <li key={`${c.id}-${c.mensile === true}-${importoIniziale(c)}`} className="rounded-2xl bg-kidville-cream px-3 py-2 font-maven text-sm text-kidville-green">
                         <span className="flex items-center gap-2">
-                            <span>{c.icona} {c.nome}</span>
+                            <span id={`cat-nome-${c.id}`}>{c.icona} {c.nome}</span>
                             {c.mensile === true && (
                                 <span data-testid="badge-mensile" className="rounded-pill bg-kidville-white px-2 py-0.5 text-[11px] font-bold">{t('catMensile')}</span>
                             )}
@@ -189,16 +209,15 @@ export function CategorieManager({ userId, scuolaId }: Props) {
                 <button type="button" onClick={add} className={btnPrimary}><Plus size={14} /> {t('aggiungi')}</button>
             </div>
             <p className="font-maven text-[11px] text-kidville-sub mt-2"><Lock size={10} className="inline" />{t('spCategoriaSistemaHint')}</p>
-            {esito && (
-                esito.tipo === 'errore' ? (
-                    <div role="alert" className="mt-3 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error-strong">
-                        <AlertTriangle size={15} className="mt-0.5 shrink-0" strokeWidth={1.8} />
-                        <span>{esito.testo}</span>
-                    </div>
-                ) : (
-                    <p role="status" className="mt-3 font-maven text-sm text-kidville-green">{esito.testo}</p>
-                )
-            )}
+            <div role="alert" className={esito?.tipo === 'errore' ? 'mt-3 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error-strong' : undefined}>
+                {esito?.tipo === 'errore' && (<>
+                    <AlertTriangle size={15} className="mt-0.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+                    <span>{esito.testo}</span>
+                </>)}
+            </div>
+            <p role="status" className={esito?.tipo === 'ok' ? 'mt-3 font-maven text-sm text-kidville-green' : undefined}>
+                {esito?.tipo === 'ok' ? esito.testo : ''}
+            </p>
         </section>
     );
 }

@@ -1,10 +1,8 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
-import { ChevronDown } from 'lucide-react';
-import { cx } from '@/lib/ui/cx';
-import { BERSAGLIO_TOCCO } from '@/components/ui/FoglioFiltri';
+import { SceltaMultiplaContabilita, type GruppoSceltaMultipla } from './SceltaMultiplaContabilita';
 import { etichettaClasse, NOME_CLASSE_ASSENTE, type ClasseFiltro } from '@/lib/pagamenti/filtro-classi';
 
 /**
@@ -57,26 +55,9 @@ import { etichettaClasse, NOME_CLASSE_ASSENTE, type ClasseFiltro } from '@/lib/p
  * Contratto: docs/superpowers/specs/2026-09-26-orario-appello-contabilita-cf/contratti/K6.md
  */
 
-// Geometria e pastiglie: le stesse di `ui/BarraFiltri` (niente `outline-none`,
-// vedi la nota sul fuoco in quel file). Ricopiate e non importate perché là
-// sono costanti interne al modulo.
-const GEOMETRIA =
-  'h-[42px] rounded-input border-[1.5px] border-kidville-line bg-kidville-white font-maven text-sm text-kidville-ink transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
-const ETICHETTA =
-  'mb-1 block font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-sub';
-// Bersaglio di tocco: la costante del design system (`BERSAGLIO_TOCCO`, la
-// stessa che `BarraFiltri` usa nel foglio del telefono), applicata mobile-first
-// e annullata da `sm` in su. Non `max-sm:${BERSAGLIO_TOCCO}`: Tailwind legge le
-// classi dal sorgente come testo, e una classe composta a runtime non
-// genererebbe CSS.
-const PASTIGLIA = cx(
-  'inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 font-barlow text-[13px] font-extrabold uppercase tracking-[0.02em] transition-colors',
-  BERSAGLIO_TOCCO,
-  'sm:min-h-0 max-sm:px-4',
-);
-const PASTIGLIA_ON = 'bg-kidville-green text-kidville-white';
-const PASTIGLIA_OFF =
-  'bg-kidville-white text-kidville-ink/70 ring-[1.5px] ring-inset ring-kidville-line hover:text-kidville-green hover:ring-kidville-green/50';
+// Il comando, il pannello, lo stile e l'accessibilità stanno in
+// `SceltaMultiplaContabilita` (generico, senza testi propri): qui restano solo
+// i gruppi per sede, le etichette delle classi e i testi del dominio.
 
 export interface FiltroClassiContabilitaProps {
   /** Le classi fra cui scegliere, già ordinate (`classiDaAlunni`). */
@@ -108,37 +89,6 @@ export function FiltroClassiContabilita({
   className,
 }: FiltroClassiContabilitaProps) {
   const t = useTranslations('adminContabilita');
-  const idBase = useId();
-  const idEtichetta = `${idBase}-etichetta`;
-  const idRiepilogo = `${idBase}-riepilogo`;
-  const idPannello = `${idBase}-pannello`;
-  const [aperto, setAperto] = useState(false);
-  const comandoRef = useRef<HTMLButtonElement>(null);
-  const contenitoreRef = useRef<HTMLDivElement>(null);
-
-  // Escape e clic fuori chiudono. `setState` sta dentro un ASCOLTATORE, non nel
-  // corpo dell'effetto (`react-hooks/set-state-in-effect`): stesso schema di
-  // `BarraFiltri`.
-  useEffect(() => {
-    if (!aperto) return;
-    const suTasto = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      setAperto(false);
-      // WCAG 2.4.3: il fuoco torna al comando, non cade sul `<body>`.
-      comandoRef.current?.focus();
-    };
-    const suClic = (e: MouseEvent) => {
-      if (contenitoreRef.current && !contenitoreRef.current.contains(e.target as Node)) setAperto(false);
-    };
-    document.addEventListener('keydown', suTasto);
-    document.addEventListener('mousedown', suClic);
-    return () => {
-      document.removeEventListener('keydown', suTasto);
-      document.removeEventListener('mousedown', suClic);
-    };
-  }, [aperto]);
-
   // Il nome di sede da MOSTRARE per ogni `scuolaId`. Una sede assente dalla
   // mappa dei nomi arriva con `scuolaNome: ''` (`classiDaAlunni` non inventa
   // nomi): qui prende «Sede non indicata», numerata quando le sedi ignote sono
@@ -223,94 +173,31 @@ export function FiltroClassiContabilita({
     riepilogo = t('filtroClassiSelezionate', { n: valide.length });
   }
 
-  const pastiglia = (attiva: boolean) => cx(PASTIGLIA, attiva ? PASTIGLIA_ON : PASTIGLIA_OFF);
+  // Con più sedi il nome accessibile porta la sede (`nomeAccessibile` →
+  // `aria-label`); comincia col testo visibile, quindi WCAG 2.5.3 regge.
+  const gruppiScelta: GruppoSceltaMultipla[] = gruppi.map((g) => ({
+    chiave: g.chiave,
+    titolo: g.titolo,
+    voci: g.classi.map((c) => ({
+      id: c.id,
+      testo: nomeDi(c),
+      nomeAccessibile: conSede ? etichetta(c) : undefined,
+    })),
+  }));
 
   return (
-    <div ref={contenitoreRef} className={cx('relative min-w-0', className)}>
-      <span id={idEtichetta} className={ETICHETTA}>
-        {t('filtroClassiEtichetta')}
-      </span>
-      <button
-        ref={comandoRef}
-        type="button"
-        aria-labelledby={`${idEtichetta} ${idRiepilogo}`}
-        aria-expanded={aperto}
-        aria-controls={idPannello}
-        onClick={() => setAperto((v) => !v)}
-        className={cx(
-          GEOMETRIA,
-          // `max-sm:h-[44px]`: sul telefono anche il comando è un bersaglio da
-          // 44px, come il campo di `BarraFiltri` nel modo `tocco`.
-          'inline-flex w-full min-w-[200px] cursor-pointer items-center justify-between gap-2 px-3 text-left hover:border-kidville-green/50 max-sm:h-[44px] sm:w-auto',
-        )}
-      >
-        <span id={idRiepilogo} className="min-w-0 truncate">
-          {riepilogo}
-        </span>
-        <ChevronDown
-          size={16}
-          aria-hidden="true"
-          className={cx('shrink-0 text-kidville-sub transition-transform', aperto && 'rotate-180')}
-        />
-      </button>
-
-      {/* Sempre nel DOM: `aria-controls` punta qui, e un riferimento che sparisce
-          a pannello chiuso è un `aria-controls` rotto. Niente `role="menu"`: un
-          menu ARIA promette la navigazione con le frecce, che qui non c'è. */}
-      <div
-        id={idPannello}
-        hidden={!aperto}
-        role="group"
-        aria-label={t('filtroClassiPannello')}
-        className={cx(
-          'z-40 mt-2 w-full rounded-card border border-kidville-line bg-kidville-white p-4 shadow-xl',
-          'sm:absolute sm:left-0 sm:top-full sm:w-[360px] sm:max-w-[92vw]',
-          'max-h-[60vh] overflow-y-auto',
-        )}
-      >
-        <div className="flex flex-col gap-4">
-          <div>
-            <button
-              type="button"
-              aria-pressed={selezionate.length === 0}
-              onClick={() => onChange([])}
-              className={pastiglia(selezionate.length === 0)}
-            >
-              {t('filtroClassiTutte')}
-            </button>
-          </div>
-
-          {gruppi.map((g) => (
-            // `fieldset`/`legend`: le pastiglie sono un GRUPPO di interruttori.
-            // Non `role="radiogroup"`: la scelta è multipla e revocabile.
-            <fieldset key={g.chiave} className="min-w-0 border-0 p-0">
-              <legend className={ETICHETTA}>{g.titolo || t('filtroClassiLegenda')}</legend>
-              <div className="flex flex-wrap items-center gap-2">
-                {g.classi.map((c) => {
-                  const attiva = scelte.has(c.id);
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      aria-pressed={attiva}
-                      // Con più sedi il nome accessibile porta la sede. `aria-label`
-                      // e non uno `span.sr-only` col separatore: lo spazio in testa
-                      // a un nodo figlio viene tagliato da alcuni motori di calcolo
-                      // del nome (jsdom scrive «Sezione A— Giugliano»). Il nome
-                      // COMINCIA col testo visibile, quindi WCAG 2.5.3 regge.
-                      aria-label={conSede ? etichetta(c) : undefined}
-                      onClick={() => commuta(c.id)}
-                      className={pastiglia(attiva)}
-                    >
-                      {nomeDi(c)}
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
-          ))}
-        </div>
-      </div>
-    </div>
+    <SceltaMultiplaContabilita
+      etichetta={t('filtroClassiEtichetta')}
+      riepilogo={riepilogo}
+      testoTutte={t('filtroClassiTutte')}
+      tutteAttiva={selezionate.length === 0}
+      etichettaPannello={t('filtroClassiPannello')}
+      legendaPredefinita={t('filtroClassiLegenda')}
+      gruppi={gruppiScelta}
+      attive={scelte}
+      onCommuta={commuta}
+      onTutte={() => onChange([])}
+      className={className}
+    />
   );
 }

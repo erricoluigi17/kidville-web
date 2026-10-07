@@ -3130,6 +3130,34 @@ export const CODICI_ERRORE = {
      * pagamento o iscrizioni ai servizi (FK 23503): si disattiva, non si elimina.
      */
     CATEGORIA_IN_USO: 'erroreCategoriaInUso',
+    /**
+     * Route delle iscrizioni ai servizi mensili (`/api/pagamenti/servizi`, T6).
+     * 404 — il servizio non esiste o non è visibile alla sede.
+     */
+    SERVIZIO_NON_TROVATO: 'erroreServizioNonTrovato',
+    /** 409 — la causale esiste ma non è un servizio mensile attivo: non si può iscrivere nessuno. */
+    SERVIZIO_NON_MENSILE: 'erroreServizioNonMensile',
+    /** 400 — il periodo è incoerente (la fine precede l'inizio). */
+    SERVIZIO_PERIODO_NON_VALIDO: 'erroreServizioPeriodoNonValido',
+    /**
+     * 409 — l'iscrizione si sovrappone, anche per un solo mese, a un'altra dello stesso
+     * bambino allo stesso servizio. La risposta porta `alunno_ids` (POST) dei bambini in conflitto.
+     */
+    SERVIZIO_ISCRIZIONE_SOVRAPPOSTA: 'erroreServizioIscrizioneSovrapposta',
+    /** 400 — qualche bambino non è iscritto alla sede indicata. La risposta porta `alunno_ids`. */
+    SERVIZIO_ALUNNI_NON_VALIDI: 'erroreServizioAlunniNonValidi',
+    /** 404 — l'iscrizione al servizio non esiste in questa sede. */
+    ISCRIZIONE_SERVIZIO_NON_TROVATA: 'erroreIscrizioneServizioNonTrovata',
+    /** 500 — la scrittura di iscrizioni o voci non è riuscita; il dettaglio sta nel log. */
+    SERVIZI_SCRITTURA_FALLITA: 'erroreServiziScritturaFallita',
+    /** 500 — la lettura di servizi, iscrizioni o voci non è riuscita; il dettaglio sta nel log. */
+    SERVIZI_LETTURA_FALLITA: 'erroreServiziLetturaFallita',
+    /**
+     * 409 — fine o eliminazione di un'iscrizione che lascia voci già generate: la risposta porta
+     * l'elenco (eliminabili / intoccabili) e la richiesta va ripetuta con `voci_future`. Nessuna
+     * scrittura è avvenuta.
+     */
+    VOCI_FUTURE_DA_DECIDERE: 'erroreVociFutureDaDecidere',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

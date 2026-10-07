@@ -654,5 +654,14 @@
   "erroreServiziNonDisponibili": "I servizi mensili non sono ancora disponibili su questo database.",
   "erroreServiziAnteprimaFallita": "Non è stato possibile calcolare l’anteprima dei servizi: riprova.",
   "erroreCategoriaRettaNonMensile": "La categoria «Retta» non può essere un servizio mensile.",
-  "erroreCategoriaInUso": "La categoria è usata da voci di pagamento o da iscrizioni ai servizi: disattivala invece di eliminarla."
+  "erroreCategoriaInUso": "La categoria è usata da voci di pagamento o da iscrizioni ai servizi: disattivala invece di eliminarla.",
+  "erroreServizioNonTrovato": "Il servizio non esiste o non è disponibile per questa sede.",
+  "erroreServizioNonMensile": "Questa causale non è un servizio mensile attivo: attivala in Impostazioni.",
+  "erroreServizioPeriodoNonValido": "Il periodo non è valido: il mese di fine non può precedere quello di inizio.",
+  "erroreServizioIscrizioneSovrapposta": "Esiste già un’iscrizione allo stesso servizio che si sovrappone a questo periodo.",
+  "erroreServizioAlunniNonValidi": "Alcuni bambini non risultano iscritti a questa sede.",
+  "erroreIscrizioneServizioNonTrovata": "L’iscrizione al servizio non esiste in questa sede.",
+  "erroreServiziScritturaFallita": "Non è stato possibile salvare le iscrizioni ai servizi: riprova.",
+  "erroreServiziLetturaFallita": "Non è stato possibile leggere i servizi mensili: riprova.",
+  "erroreVociFutureDaDecidere": "Ci sono voci già generate fuori dal nuovo periodo: scegli se eliminare quelle non pagate e non fatturate o mantenerle."
 }

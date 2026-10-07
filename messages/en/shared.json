@@ -654,5 +654,14 @@
   "erroreServiziNonDisponibili": "Monthly services are not yet available on this database.",
   "erroreServiziAnteprimaFallita": "The services preview could not be calculated: please try again.",
   "erroreCategoriaRettaNonMensile": "The “Tuition” category cannot be a monthly service.",
-  "erroreCategoriaInUso": "The category is used by payment items or service enrolments: deactivate it instead of deleting it."
+  "erroreCategoriaInUso": "The category is used by payment items or service enrolments: deactivate it instead of deleting it.",
+  "erroreServizioNonTrovato": "The service does not exist or is not available for this location.",
+  "erroreServizioNonMensile": "This category is not an active monthly service: enable it in Settings.",
+  "erroreServizioPeriodoNonValido": "The period is not valid: the end month cannot be before the start month.",
+  "erroreServizioIscrizioneSovrapposta": "An enrolment in the same service already overlaps this period.",
+  "erroreServizioAlunniNonValidi": "Some children are not enrolled at this location.",
+  "erroreIscrizioneServizioNonTrovata": "The service enrolment does not exist at this location.",
+  "erroreServiziScritturaFallita": "The service enrolments could not be saved: please try again.",
+  "erroreServiziLetturaFallita": "The monthly services could not be loaded: please try again.",
+  "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them."
 }

@@ -8,11 +8,16 @@ import { requireUser, requireDocente } from '@/lib/auth/require-staff';
 // esplodere con `No "agisceComeGenitore" export is defined on the mock`.
 import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo';
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
+import type { AppUser } from '@/lib/auth/predicati-ruolo';
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
+import {
+    avvisoVisibileAlDocente, puoGestireAvviso, vedeTuttiGliAvvisi, RUOLI_GESTIONE_AVVISI,
+} from '@/lib/avvisi/permessi-docente';
+import { sezioniDiUtenteConSede } from '@/lib/sezioni/docenti';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaEvento } from '@/lib/notifiche/triggers';
-import { genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
+import { tipoNotificaAvviso, titoloNotificaAvviso, destinatariAvviso } from '@/lib/avvisi/notifica-avviso';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { degradoSedeLecito } from '@/lib/forms/degrado-sede';
@@ -347,10 +352,24 @@ function statsPerGenitore(stats: StatsAvviso): StatsGenitore {
 }
 
 // ── Ramo STAFF/DOCENTE: cockpit /admin|/teacher avvisi, isolato per plesso. ──
+//
+// ── E, PER LA DOCENTE, ANCHE PER CLASSE (2026-10-07) ─────────────────────────
+//
+// Fino a oggi questo ramo filtrava SOLO per sede: ogni docente vedeva in bacheca
+// e in home ogni avviso del plesso. La scuola l'ha segnalato così: «l'avviso
+// scritto per due classi è comparso a tutta la scuola». Le famiglie giuste lo
+// avevano ricevuto — misurato in produzione, zero notifiche e zero risposte fuori
+// target — ma lo vedevano tutte le maestre, con «Modifica» ed «Elimina» accanto.
+//
+// Ora la regola è una e sta in `@/lib/avvisi/permessi-docente`: la docente vede i
+// globali, gli avvisi con almeno UNA sua classe (nella stessa sede) e i propri;
+// segreteria e direzione tutto. Il booleano `modificabile` lo calcola il server,
+// come `scaduto` e `adesioni_chiuse`: la card non decide niente da sola.
 async function listaAvvisiStaff(
     request: NextRequest,
     supabase: SupabaseAdmin,
     plessiScope: string[],
+    user: AppUser,
 ): Promise<NextResponse> {
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
@@ -370,9 +389,11 @@ async function listaAvvisiStaff(
         if (scope) query = query.eq('target_scope', scope);
         return query;
     };
-    let res = await buildQuery(`${AVVISO_COLS_SCADENZE}, form_model_id`);
+    // `scuola_id` serve al filtro della docente (la classe è una coppia nome+sede)
+    // e sta in ENTRAMBI i passi del degrado: è una colonna storica.
+    let res = await buildQuery(`${AVVISO_COLS_SCADENZE}, form_model_id, scuola_id`);
     if (colonnaMancante(res.error as { code?: string } | null)) {
-        res = await buildQuery(AVVISO_COLS);
+        res = await buildQuery(`${AVVISO_COLS}, scuola_id`);
         // 🔴 IL DEGRADO SI DICHIARA, E QUI PIÙ CHE ALTROVE. Senza le sette colonne
         // del cantiere A2, `posti_totali` arriva `undefined` su OGNI riga e
         // `sopraCapienza` restituisce `false` per tutti: un indicatore di sicurezza
@@ -395,6 +416,22 @@ async function listaAvvisiStaff(
         return NextResponse.json({ error: res.error.message }, { status: 500 });
     }
     let filtered = (res.data ?? []) as unknown as AvvisoRow[];
+    // La docente vede solo ciò che la riguarda. Le sue classi si leggono una volta
+    // per richiesta, e solo per chi non è segreteria o direzione.
+    if (!vedeTuttiGliAvvisi(user)) {
+        const sezioni = await sezioniDiUtenteConSede(supabase, user.id);
+        if (sezioni.length === 0) {
+            // `warn` → persistito. Una docente senza classi assegnate da qui in poi
+            // vede solo i globali e i propri: senza questa riga il suo «non vedo
+            // più gli avvisi» non avrebbe niente da guardare. Solo uuid.
+            logEvento('avvisi', 'warn', {
+                operazione: 'avvisi:GET',
+                esito: 'docente-senza-sezioni',
+                uid: user.id,
+            });
+        }
+        filtered = filtered.filter((a) => avvisoVisibileAlDocente(a, { uid: user.id, sezioni }));
+    }
     if (classe) {
         filtered = filtered.filter(
             (a) => a.target_scope === 'globale' || (a.target_classes?.includes(classe) ?? false),
@@ -415,6 +452,9 @@ async function listaAvvisiStaff(
             ...extra,
             ...statoTemporale(avviso, adessoISO),
             sopra_capienza: sopraCapienza(avviso.posti_totali, extra.stats.persone_ammesse),
+            // Lo decide il server con la STESSA regola che PUT e DELETE applicano:
+            // la card mostra «Modifica»/«Elimina» solo dove il server li accetta.
+            modificabile: puoGestireAvviso(user, avviso.author_id),
             my_response: null,
         };
     });
@@ -660,7 +700,7 @@ export const GET = withRoute('avvisi:GET', async (request: NextRequest) => {
         // Sedi ATTIVE (cookie SedeSelector) ∩ sedi accessibili, ri-validate server-side.
         const plessiScope = await resolveScuoleAttive(request, supabase, auth.user);
         if (plessiScope.length === 0) return NextResponse.json([]);
-        return await listaAvvisiStaff(request, supabase, plessiScope);
+        return await listaAvvisiStaff(request, supabase, plessiScope, auth.user);
     } catch (error) {
         logErrore({ operazione: 'avvisi:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
@@ -700,10 +740,12 @@ export const GET = withRoute('avvisi:GET', async (request: NextRequest) => {
 // questo dubbio — `areaForRole('segreteria') = 'admin'` (active-role.ts:24),
 // `requireStaff` la ammette per default (require-staff.ts:253),
 // `vedeTutteLeClassi` la include (scope.ts:240).
-const RUOLI_GRUPPO_GESTIONE = ['admin', 'coordinator', 'segreteria'];
-
+//
+// L'insieme sta in `@/lib/avvisi/permessi-docente` (2026-10-07): è lo stesso
+// gruppo che vede tutti gli avvisi e può modificarli, e una lista copiata qui
+// divergerebbe alla prima modifica.
 function gruppoPubblicazione(ruolo: string): string {
-    return RUOLI_GRUPPO_GESTIONE.includes(ruolo) ? 'admin' : 'teacher';
+    return (RUOLI_GESTIONE_AVVISI as readonly string[]).includes(ruolo) ? 'admin' : 'teacher';
 }
 
 /** Come si chiama un gruppo sullo schermo; un gruppo ignoto si mostra com'è. */
@@ -1088,23 +1130,15 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
 
         // Notifica ai genitori destinatari (best-effort). UN solo enqueue con
         // tipo per priorità: modulo firmabile > richiesta adesione > avviso.
-        const tipoNotifica = form_model_id
-            ? 'modulo_da_compilare'
-            : (tipo === 'adesione' ? 'consenso_uscita' : 'avviso');
+        const tipoNotifica = tipoNotificaAvviso(form_model_id, tipo);
         // Il conteggio si tiene FUORI dal try perché è il dato del log di successo qui
         // sotto. `null` significa «non si è arrivati a calcolarlo»: in quel caso la riga
         // `error` del catch dice già perché, e un conteggio inventato mentirebbe.
         let nDestinatari: number | null = null;
         try {
-            const globale = (target_scope ?? 'globale') === 'globale';
-            const destinatari = globale
-                ? await genitoriDiScuola(supabase, scuolaId)
-                : await genitoriDiClassi(supabase, scuolaId, classiTarget);
+            const destinatari = await destinatariAvviso(supabase, scuolaId, target_scope, classiTarget);
             nDestinatari = destinatari.length;
-            const titoloNotifica =
-                tipoNotifica === 'modulo_da_compilare' ? `Modulo da compilare: ${titolo}`
-                : tipoNotifica === 'consenso_uscita' ? `Richiesta di consenso: ${titolo}`
-                : `Nuovo avviso: ${titolo}`;
+            const titoloNotifica = titoloNotificaAvviso(tipoNotifica, titolo);
             await notificaEvento(supabase, {
                 tipo: tipoNotifica,
                 scuolaId,

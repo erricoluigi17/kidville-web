@@ -70,6 +70,8 @@
   "dettaglio": "Details",
   "modifica": "Edit",
   "elimina": "Delete",
+  "soloLettura": "Read only",
+  "soloLetturaSpiegazione": "You can only edit or delete announcements you wrote",
   "genitoreFallback": "Parent",
   "analisiInCorso": "Analyzing responses…",
   "tabStatoLettura": "📖 Read status",

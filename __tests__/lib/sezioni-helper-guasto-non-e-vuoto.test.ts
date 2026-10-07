@@ -37,6 +37,7 @@ vi.mock('@/lib/logging/logger', () => ({
 import {
   sezioniDiUtente,
   nomiSezioniDiUtente,
+  sezioniDiUtenteConSede,
   sezioniDiUtentePerGrado,
   materieDiDocenteInSezione,
 } from '@/lib/sezioni/docenti'
@@ -112,6 +113,30 @@ describe('una lettura fallita NON è «nessuna sezione»', () => {
     })
     expect(await materieDiDocenteInSezione(c, UTENTE, SEZIONE)).toEqual([])
     expect(erroriLoggati().join(' ')).toContain('materie-non-lette')
+  })
+})
+
+describe('sezioniDiUtenteConSede — le classi della docente CON la loro sede', () => {
+  // Il nome di una sezione non è unico fra i plessi: la bacheca avvisi della
+  // docente (2026-10-07) confronta la coppia (nome, sede), non il nome da solo.
+  it('restituisce nome e sede di ogni classe assegnata, senza log', async () => {
+    const c = creaFintoSupabase({
+      ...db,
+      utenti_sezioni: [
+        { utente_id: UTENTE, section_id: SEZIONE, sections: { name: '1 A', scuola_id: 'sede-a' } },
+        { utente_id: 'altro', section_id: SEZIONE, sections: { name: '2 B', scuola_id: 'sede-a' } },
+      ],
+    })
+    expect(await sezioniDiUtenteConSede(c, UTENTE)).toEqual([{ nome: '1 A', scuola_id: 'sede-a' }])
+    expect(logEvento).not.toHaveBeenCalled()
+  })
+
+  it('una lettura fallita è [] MA con la riga che dice il codice', async () => {
+    const c = creaFintoSupabase(db, [], {
+      errori: { utenti_sezioni: { code: '42501', message: 'permission denied' } },
+    })
+    expect(await sezioniDiUtenteConSede(c, UTENTE)).toEqual([])
+    expect(erroriLoggati().join(' ')).toContain('sezioni-non-lette')
   })
 })
 

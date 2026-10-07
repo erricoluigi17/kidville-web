@@ -3875,6 +3875,18 @@ SELECT (SELECT count(*) FROM allegati_registro) AS allegati,
 
 ---
 
+## Changelog — Avvisi: la bacheca delle docenti per classe, modifica solo dell'autrice, notifica alla modifica — 2026-10-07 (branch `fix/genitore-senza-figli-e-collegamento`, PR #203; stato di produzione: lo registra il primo commit che segue il deploy)
+
+**Segnalazione della scuola:** «l'avviso scritto per due classi è comparso a tutta la scuola»; verificare che l'avviso mandi la notifica; un avviso della segreteria non deve essere modificabile dalle insegnanti.
+
+**Misure in produzione (solo `SELECT`):** il dato era giusto. Ogni avviso di classe recente ha `target_scope='classe'` con le classi scelte; notifiche e risposte stanno solo nelle classi destinatarie (0 fuori target); nessun avviso `globale` porta classi. Notifica iniziale presente su 103 avvisi su 103 negli ultimi 30 giorni. La causa era il ramo staff di `GET /api/avvisi`, che filtrava solo per sede: ogni docente vedeva tutti gli avvisi del plesso, con «Modifica» ed «Elimina» (una docente poteva eliminare quello della segreteria, risposta 200).
+
+**Regola (titolare):** segreteria/direzione vedono e gestiscono tutto; la docente vede i globali, quelli con almeno una sua classe (stessa sede) e i propri, e modifica/elimina solo i propri. Codice: `src/lib/avvisi/permessi-docente.ts` (una regola per lista, dettaglio, risposte, PUT, DELETE), booleano `modificabile` calcolato dal server, chip «Solo lettura» nella card, 403 `AVVISO_NON_AUTORE` / `AVVISO_FUORI_DALLE_TUE_CLASSI`.
+
+**Notifica alla modifica:** il PUT che cambia scope o classi avvisa solo le famiglie nuove (`src/lib/avvisi/notifica-avviso.ts`, condiviso col POST); se non si sa chi è già stato avvisato non invia nulla e logga `error`.
+
+**Fuori perimetro, da fare a parte:** `verificaTargetAvvisoDocente` guarda la veste attiva (una docente in veste genitore salta il gate sul target del POST); con la notifica disattivata per sede il POST logga comunque `n_destinatari`.
+
 ## Changelog — Coda fatture Aruba — consegna 2c: le notifiche — 2026-09-24 (branch `feat/coda-fatture-notifiche-2c`; stato di produzione: lo registra il primo commit del branch che segue il deploy)
 
 Consegna 2c della coda, su richiesta del titolare («correggi tutto e poi vai avanti fino al deploy»): la

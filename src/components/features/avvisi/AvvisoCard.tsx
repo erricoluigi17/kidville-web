@@ -78,6 +78,14 @@ export interface Avviso {
     author: { first_name: string; last_name: string; role: string };
     stats: { letti: number; adesioni_si: number; adesioni_no: number };
     /**
+     * Può chi guarda modificarlo o eliminarlo? Lo decide il SERVER (ramo staff di
+     * `GET /api/avvisi`) con la stessa regola di PUT e DELETE: la docente solo i
+     * propri, segreteria e direzione tutti (2026-10-07). `false` toglie i due
+     * pulsanti e mostra «Solo lettura»; ASSENTE vale come prima — è il caso dei
+     * chiamanti che non lo mandano, e il server resta comunque il gate.
+     */
+    modificabile?: boolean;
+    /**
      * LA PROPRIA RIGA, aggregata sui figli destinatari dal server.
      *
      * 🔴 `stato_adesione` e `numero_partecipanti` non sono una statistica di
@@ -782,18 +790,31 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                                 >
                                     <Users size={12} strokeWidth={1.8} /> {t('dettaglio')}
                                 </button>
-                                <button
-                                    onClick={() => onEdit?.(avviso)}
-                                    className="flex items-center gap-1 font-maven text-xs font-bold text-kidville-info hover:underline"
-                                >
-                                    <Pencil size={12} strokeWidth={1.8} /> {t('modifica')}
-                                </button>
-                                <button
-                                    onClick={() => onDelete?.(avviso.id)}
-                                    className="flex items-center gap-1 font-maven text-xs font-bold text-kidville-error hover:underline"
-                                >
-                                    <Trash2 size={12} strokeWidth={1.8} /> {t('elimina')}
-                                </button>
+                                {avviso.modificabile === false ? (
+                                    // Della segreteria o di una collega: si legge, non si tocca.
+                                    // Il server rifiuterebbe comunque (403 AVVISO_NON_AUTORE).
+                                    <span
+                                        title={t('soloLetturaSpiegazione')}
+                                        className="rounded-full bg-kidville-line/60 px-2 py-0.5 font-maven text-xs font-bold text-kidville-sub"
+                                    >
+                                        {t('soloLettura')}
+                                    </span>
+                                ) : (
+                                    <>
+                                        <button
+                                            onClick={() => onEdit?.(avviso)}
+                                            className="flex items-center gap-1 font-maven text-xs font-bold text-kidville-info hover:underline"
+                                        >
+                                            <Pencil size={12} strokeWidth={1.8} /> {t('modifica')}
+                                        </button>
+                                        <button
+                                            onClick={() => onDelete?.(avviso.id)}
+                                            className="flex items-center gap-1 font-maven text-xs font-bold text-kidville-error hover:underline"
+                                        >
+                                            <Trash2 size={12} strokeWidth={1.8} /> {t('elimina')}
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}

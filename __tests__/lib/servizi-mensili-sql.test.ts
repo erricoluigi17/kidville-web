@@ -16,10 +16,15 @@ import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist'
  * Un finto client direbbe «sì» a tutto, ed è così che una migrazione passa i test e
  * fallisce al primo INSERT in produzione.
  *
- * Lo schema qui sotto è il MINIMO di produzione prima della migrazione (colonne
- * verificate in sola lettura il 2026-10-07), e l'indice `uq_pagamenti_categoria_mese`
+ * Lo schema qui sotto è un MINIMO ispirato alla produzione prima della migrazione: le colonne
+ * che la migrazione usa sono verificate in sola lettura il 2026-10-07 (`nome` e `slug` di
+ * `payment_categories` sono `text`, `slug` NULLABLE); le altre sono semplificate. L'indice `uq_pagamenti_categoria_mese`
  * ha il predicato esatto di `pg_indexes`. Il file della migrazione è LETTO DAL DISCO e
  * applicato DUE volte: la seconda è la prova dell'idempotenza.
+ *
+ * ⚠️ PGlite è PostgreSQL 18 (18.3), la produzione è PostgreSQL 17 (17.6): dove i due
+ * differiscono (es. il codice d'errore di ON DELETE RESTRICT, 23001 da PG 18) la migrazione
+ * usa la forma che dà lo stesso risultato su entrambi.
  *
  * Solo dati finti: uuid inventati, nessuna anagrafica.
  */
@@ -33,6 +38,7 @@ const SEDE_FERMA = 'f0000000-0000-4000-8000-000000000003'
 const CAT = 'c0000000-0000-4000-8000-000000000001' // globale, mensile, attiva
 const CAT_RETTA = 'c0000000-0000-4000-8000-000000000002'
 const CAT_DI_B = 'c0000000-0000-4000-8000-000000000003' // appartiene alla sede B
+const CAT_DI_A = 'c0000000-0000-4000-8000-000000000004' // appartiene alla sede A (come in produzione)
 const A1 = '10000000-0000-4000-8000-000000000001' // sede A, iscritto, classe, scadenza di sede
 const A2 = '10000000-0000-4000-8000-000000000002' // sede A, iscritto, giorno proprio = 10
 const A3 = '10000000-0000-4000-8000-000000000003' // sede B
@@ -130,8 +136,8 @@ async function schemaMinimo(conn: PGlite) {
     CREATE TABLE public.payment_categories (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       scuola_id uuid,
-      nome varchar NOT NULL,
-      slug varchar NOT NULL,
+      nome text NOT NULL,
+      slug text,
       colore varchar,
       icona varchar,
       is_sistema boolean DEFAULT false,
@@ -188,7 +194,8 @@ beforeEach(async () => {
     INSERT INTO public.payment_categories(id, scuola_id, nome, slug, mensile, attivo) VALUES
       ('${CAT}', NULL, 'Pomeridiano', 'pomeridiano', true, true),
       ('${CAT_RETTA}', NULL, 'Retta', 'retta', false, true),
-      ('${CAT_DI_B}', '${SEDE_B}', 'Doposcuola B', 'doposcuola-b', true, true);
+      ('${CAT_DI_B}', '${SEDE_B}', 'Doposcuola B', 'doposcuola-b', true, true),
+      ('${CAT_DI_A}', '${SEDE_A}', 'Pomeridiano A', 'pomeridiano-a', true, true);
 
     -- la sede A ha le sue impostazioni (scadenza il 7, visibile dal 20 del mese prima);
     -- la sede B no: valgono i default 5 e 25
@@ -223,6 +230,14 @@ describe('struttura: colonne, tabella, privilegi', () => {
     it('niente accesso per anon/authenticated, sì per service_role', async () => {
         expect(await numero(`has_table_privilege('authenticated','public.iscrizioni_servizi','SELECT')::int`)).toBe(0)
         expect(await numero(`has_table_privilege('anon','public.iscrizioni_servizi','SELECT')::int`)).toBe(0)
+        for (const ruolo of ['authenticated', 'anon']) {
+            for (const priv of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+                expect(
+                    await numero(`has_table_privilege('${ruolo}','public.iscrizioni_servizi','${priv}')::int`),
+                    `${ruolo} ${priv}`,
+                ).toBe(0)
+            }
+        }
         expect(await numero(`has_table_privilege('service_role','public.iscrizioni_servizi','INSERT')::int`)).toBe(1)
         for (const f of [
             'public.servizi_da_generare(date,uuid,uuid[])',
@@ -247,7 +262,10 @@ describe('struttura: colonne, tabella, privilegi', () => {
         const conn = new PGlite({ extensions: { btree_gist } })
         try {
             await schemaMinimo(conn)
-            await conn.exec(`INSERT INTO public.schools(id, operativa) VALUES ('${SEDE_FERMA}', false);`)
+            // una ferma (sonda del rifiuto) e una operativa (sonda a scrittura zero sull'INSERT,
+            // che pianifica l'ON CONFLICT contro l'indice vero)
+            await conn.exec(`INSERT INTO public.schools(id, operativa) VALUES
+              ('${SEDE_FERMA}', false), ('${SEDE_A}', true);`)
             await expect(conn.exec(MIGRAZIONE)).resolves.toBeDefined()
         } finally {
             await conn.close()
@@ -327,6 +345,21 @@ describe('servizi_da_generare / genera_servizi_mensili', () => {
         expect(await anteprima('2026-10-01')).toHaveLength(1)
     })
 
+    it('categoria della STESSA sede: generata (in produzione i servizi sono categorie di sede)', async () => {
+        await isc(A1, '2026-09-01', null, { categoria: CAT_DI_A })
+        expect((await anteprima('2026-10-01')).map((x) => x.alunno_id)).toEqual([A1])
+        expect(await genera('2026-10-01')).toBe(1)
+        expect(await numero(`(SELECT count(*) FROM public.pagamenti WHERE categoria_id = '${CAT_DI_A}')`)).toBe(1)
+    })
+
+    it('slug NULL (la colonna lo permette): gruppo «servizio-YYYY-MM»', async () => {
+        await db.exec(`UPDATE public.payment_categories SET slug = NULL WHERE id = '${CAT}'`)
+        await isc(A1, '2026-09-01')
+        const r = await anteprima('2026-10-01')
+        expect(r).toHaveLength(1)
+        expect(r[0].gruppo).toBe('servizio-2026-10')
+    })
+
     it('categoria di un\'altra sede: saltata', async () => {
         await isc(A1, '2026-09-01', null, { categoria: CAT_DI_B })
         expect(await anteprima('2026-10-01')).toHaveLength(0)
@@ -347,12 +380,12 @@ describe('servizi_da_generare / genera_servizi_mensili', () => {
     })
 
     it('deduplica storica: una voce della stessa categoria SENZA periodo, con scadenza nel mese, blocca', async () => {
-        await isc(A1, '2026-09-01')
-        await isc(A2, '2026-09-01')
+        await isc(A1, '2026-09-01', null, { categoria: CAT_DI_A })
+        await isc(A2, '2026-09-01', null, { categoria: CAT_DI_A })
         // voce vecchia di A1: nessun periodo_competenza, scadenza a metà ottobre
         await db.exec(`
       INSERT INTO public.pagamenti(alunno_id, scuola_id, descrizione, importo, scadenza, categoria_id, tipo)
-      VALUES ('${A1}', '${SEDE_A}', 'Pomeridiano ottobre (storico)', 80, '2026-10-15', '${CAT}', 'singolo');
+      VALUES ('${A1}', '${SEDE_A}', 'Pomeridiano ottobre (storico)', 80, '2026-10-15', '${CAT_DI_A}', 'singolo');
     `)
         const r = await anteprima('2026-10-01')
         expect(r.map((x) => x.alunno_id)).toEqual([A2])
@@ -430,8 +463,11 @@ describe('genera_servizi_anno', () => {
         ).toBe(0)
     })
 
-    it('la sede è obbligatoria', async () => {
+    it('la sede e l\'anno di inizio sono obbligatori', async () => {
         expect((await errore(`SELECT public.genera_servizi_anno(2026, NULL)`))?.message).toMatch(/obbligatoria/)
+        expect((await errore(`SELECT public.genera_servizi_anno(NULL, '${SEDE_A}')`))?.message).toMatch(
+            /anno di inizio è obbligatorio/,
+        )
     })
 })
 

@@ -85,8 +85,9 @@ END $mig$;
 CREATE TABLE IF NOT EXISTS public.iscrizioni_servizi (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   alunno_id       uuid NOT NULL REFERENCES public.alunni(id) ON DELETE CASCADE,
-  -- NO ACTION (il default) e non RESTRICT: stesso effetto, ma l'errore è 23503 e non 23001, e la
-  -- route delle categorie traduce 23503 in 409 CATEGORIA_IN_USO (provato in PGlite)
+  -- NO ACTION (il default) e non RESTRICT: stesso effetto, ma da PG 18 RESTRICT risponde 23001 e
+  -- non 23503 (PGlite è 18.3; la produzione, 17.6, oggi darebbe 23503 in entrambi i casi).
+  -- NO ACTION tiene il 23503 che la route delle categorie traduce in 409 CATEGORIA_IN_USO.
   categoria_id    uuid NOT NULL REFERENCES public.payment_categories(id),
   scuola_id       uuid NOT NULL REFERENCES public.schools(id),
   importo_mensile numeric(10,2) NOT NULL,
@@ -146,21 +147,21 @@ BEGIN
   SELECT i.id, i.alunno_id, i.categoria_id, i.importo_mensile,
          -- STESSA formula della retta (20260731115341): giorno proprio del bambino, poi
          -- quello di sede, poi 5. Una famiglia vede le due voci del mese con le stesse date.
-         (p_periodo + ((COALESCE(al.giorno_scadenza_pagamenti, s.retta_giorno_scadenza, 5) - 1) || ' days')::interval)::date,
+         (p_periodo + ((COALESCE(a.giorno_scadenza_pagamenti, s.retta_giorno_scadenza, 5) - 1) || ' days')::interval)::date,
          ((p_periodo - interval '1 month')::date
             + ((COALESCE(s.retta_giorno_visibilita, 25) - 1) || ' days')::interval)::date,
          pc.nome || ' ' || to_char(p_periodo, 'MM/YYYY'),
          COALESCE(NULLIF(pc.slug, ''), 'servizio') || '-' || to_char(p_periodo, 'YYYY-MM')
     FROM public.iscrizioni_servizi i
     JOIN public.payment_categories pc ON pc.id = i.categoria_id
-    JOIN public.alunni al ON al.id = i.alunno_id
-    LEFT JOIN public.admin_settings s ON s.scuola_id = al.scuola_id
+    JOIN public.alunni a ON a.id = i.alunno_id
+    LEFT JOIN public.admin_settings s ON s.scuola_id = a.scuola_id
    WHERE i.scuola_id = p_scuola_id
-     AND al.scuola_id = p_scuola_id
+     AND a.scuola_id = p_scuola_id
      AND (pc.scuola_id IS NULL OR pc.scuola_id = p_scuola_id)
      AND pc.mensile AND pc.attivo
-     AND al.stato = 'iscritto'
-     AND (al.classe_sezione IS NOT NULL OR al.section_id IS NOT NULL)
+     AND a.stato = 'iscritto'
+     AND (a.classe_sezione IS NOT NULL OR a.section_id IS NOT NULL)
      AND i.importo_mensile > 0
      AND i.dal <= p_periodo
      AND (i.al IS NULL OR i.al >= p_periodo)
@@ -247,6 +248,9 @@ BEGIN
   IF p_scuola_id IS NULL THEN
     RAISE EXCEPTION 'genera_servizi_anno: la sede (p_scuola_id) è obbligatoria';
   END IF;
+  IF p_anno_inizio IS NULL THEN
+    RAISE EXCEPTION 'genera_servizi_anno: l''anno di inizio è obbligatorio';
+  END IF;
   FOR m IN 9..12 LOOP
     v_tot := v_tot + public.genera_servizi_mensili(make_date(p_anno_inizio, m, 1), p_scuola_id, p_alunno_ids);
   END LOOP;
@@ -278,9 +282,11 @@ BEGIN
   IF has_function_privilege('authenticated', 'public.genera_servizi_mensili(date,uuid,uuid[])', 'EXECUTE')
      OR has_function_privilege('anon', 'public.genera_servizi_mensili(date,uuid,uuid[])', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.servizi_da_generare(date,uuid,uuid[])', 'EXECUTE')
+     OR has_function_privilege('anon', 'public.servizi_da_generare(date,uuid,uuid[])', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.genera_servizi_anno(integer,uuid,uuid[])', 'EXECUTE')
-     OR has_table_privilege('authenticated', 'public.iscrizioni_servizi', 'SELECT')
-     OR has_table_privilege('anon', 'public.iscrizioni_servizi', 'SELECT') THEN
+     OR has_function_privilege('anon', 'public.genera_servizi_anno(integer,uuid,uuid[])', 'EXECUTE')
+     OR has_table_privilege('authenticated', 'public.iscrizioni_servizi', 'SELECT,INSERT,UPDATE,DELETE')
+     OR has_table_privilege('anon', 'public.iscrizioni_servizi', 'SELECT,INSERT,UPDATE,DELETE') THEN
     RAISE EXCEPTION 'REVOKE non ha morso';
   END IF;
 
@@ -298,6 +304,42 @@ BEGIN
       END IF;
     END;
   END IF;
+
+  -- Sonda a SCRITTURA ZERO sul percorso dell'INSERT: una sede operativa con un alunno che non
+  -- esiste non genera niente, ma l'ON CONFLICT viene pianificato contro l'indice vero già
+  -- al merge (un predicato diverso dall'indice darebbe 42P10 qui e non al primo uso).
+  SELECT id INTO v_sede FROM public.schools WHERE operativa LIMIT 1;
+  IF v_sede IS NOT NULL
+     AND public.genera_servizi_mensili(date '2026-09-01', v_sede,
+           ARRAY['00000000-0000-0000-0000-000000000000']::uuid[]) <> 0 THEN
+    RAISE EXCEPTION 'SONDA FALLITA: un alunno inesistente ha generato voci';
+  END IF;
 END $mig$;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ── COME SI VERIFICA ─────────────────────────────────────────────────────────
+--   select column_name from information_schema.columns
+--    where table_name='payment_categories' and column_name in ('mensile','importo_mensile_default');  -- 2
+--   select count(*) from public.iscrizioni_servizi;                                    -- 0 subito dopo
+--   select has_function_privilege('authenticated','public.genera_servizi_mensili(date,uuid,uuid[])','EXECUTE'); -- false
+--   select has_table_privilege('authenticated','public.iscrizioni_servizi','SELECT');  -- false
+--   select count(*) from public.pagamenti;                                             -- invariato
+--   get_advisors (security): 0 ERROR
+--
+-- ── ROLLBACK ─────────────────────────────────────────────────────────────────
+-- Solo commenti: non esegue niente. `apply_migration` è transazionale; il rollback che serve è
+-- «migrazione riuscita, voci generate». Prima si bonifica ciò che è ancora annullabile:
+--   1. delete from public.pagamenti
+--       where gruppo like '<slug>-YYYY-MM' and scuola_id = '<sede>'
+--         and importo_pagato = 0 and fattura_aruba_id is null and creato_il > '<istante>';
+--   2. drop function if exists public.genera_servizi_anno(integer, uuid, uuid[]);
+--      drop function if exists public.genera_servizi_mensili(date, uuid, uuid[]);
+--      drop function if exists public.servizi_da_generare(date, uuid, uuid[]);
+--   3. drop table if exists public.iscrizioni_servizi;
+--   4. alter table public.payment_categories
+--        drop constraint if exists payment_categories_retta_non_mensile_chk,
+--        drop constraint if exists payment_categories_importo_mensile_chk,
+--        drop column if exists importo_mensile_default,
+--        drop column if exists mensile;
+--   (l'estensione btree_gist si lascia: è innocua e altre tabelle potrebbero usarla.)

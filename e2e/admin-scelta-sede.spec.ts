@@ -125,6 +125,33 @@ test('Genera, con più sedi, chiede ancora di sceglierne una — e la scelta apr
   expect(erroriPagina).toEqual([]);
 });
 
+/**
+ * SERVIZI MENSILI (2026-10-07): la scheda iscrive bambini e genera voci di UNA sede, quindi sta
+ * dentro `SedeRequired` come Genera. Scelta la sede, il titolo c'è SEMPRE: col DB della CI non
+ * migrato la route risponde `non_disponibile`, con lo schema e senza categorie mensili nel seed
+ * compare l'invito ad attivarne una. Si accetta l'uno O l'altro, mai un crash.
+ */
+test('Servizi, con più sedi, chiede la sede — e poi mostra il pannello anche vuoto', async ({ page }) => {
+  const erroriPagina: string[] = [];
+  page.on('pageerror', (err) => erroriPagina.push(err.message));
+
+  await page.goto('/admin/pagamenti?vista=servizi');
+  await expect(page.getByRole('heading', { name: 'Contabilità' })).toBeVisible();
+
+  const scelta = page.getByRole('group', { name: 'Seleziona una sede' });
+  await expect(scelta).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: 'Servizi mensili', exact: true })).toHaveCount(0);
+
+  await scelta.getByRole('button', { name: NOMI_SEDI.scuola }).click();
+
+  await expect(page.getByRole('heading', { name: 'Servizi mensili', exact: true })).toBeVisible({ timeout: 15_000 });
+  const nonDisponibile = page.getByText('I servizi mensili non sono ancora disponibili su questo ambiente.');
+  const nessunServizio = page.getByText(/Nessun servizio mensile: attiva «Mensile»/);
+  await expect(nonDisponibile.or(nessunServizio).first()).toBeVisible({ timeout: 15_000 });
+
+  expect(erroriPagina).toEqual([]);
+});
+
 test('Causali, con più sedi, chiede ancora di sceglierne una', async ({ page }) => {
   await page.goto('/admin/pagamenti?vista=causali');
   await expect(page.getByRole('heading', { name: 'Contabilità' })).toBeVisible();

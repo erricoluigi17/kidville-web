@@ -10,6 +10,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
+import { rispostaServiziNonDisponibili } from '@/lib/pagamenti/generazione-server'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -79,17 +80,14 @@ function erroreServizioMensile(
     logEvento('pagamento', 'error', {
       operazione, esito: 'servizi-non-disponibili', ...(categoriaId ? { categoria_id: categoriaId } : {}),
     }, error)
-    return NextResponse.json(
-      { error: 'I servizi mensili non sono ancora disponibili su questo database', codice: 'SERVIZI_NON_DISPONIBILI' },
-      { status: 503 },
-    )
+    return rispostaServiziNonDisponibili()
   }
   if (error.code === '23514') {
     logEvento('pagamento', 'warn', {
       operazione, esito: 'categoria-retta-non-mensile', ...(categoriaId ? { categoria_id: categoriaId } : {}),
     }, error)
     return NextResponse.json(
-      { error: 'La causale «retta» non può essere un servizio mensile', codice: 'CATEGORIA_RETTA_NON_MENSILE' },
+      { error: 'La categoria «Retta» non può essere un servizio mensile', codice: 'CATEGORIA_RETTA_NON_MENSILE' },
       { status: 409 },
     )
   }

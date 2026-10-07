@@ -102,6 +102,11 @@ describe('PATCH /api/admin/settings/categorie — servizio mensile', () => {
     expect((await PATCH(corpo('PATCH', { id: CAT_LIBERA, importo_mensile_default: 0 }))).status).toBe(200)
   })
 
+  it('il limite 99999.99 è accettato, 100000 rifiutato', async () => {
+    expect((await PATCH(corpo('PATCH', { id: CAT_LIBERA, importo_mensile_default: 99999.99 }))).status).toBe(200)
+    expect((await PATCH(corpo('PATCH', { id: CAT_LIBERA, importo_mensile_default: 100000 }))).status).toBe(400)
+  })
+
   it.each([
     ['negativo', -1],
     ['oltre il tetto', 100000],
@@ -182,6 +187,13 @@ describe('POST /api/admin/settings/categorie — servizio mensile', () => {
     const res = await POST(corpo('POST', { nome: 'Pulmino', scuola_id: SEDE_A, mensile: true, importo_mensile_default: -5 }))
     expect(res.status).toBe(400)
     expect(inserimenti()).toEqual([])
+  })
+
+  it('CHECK della retta (23514) anche sul POST: 409 CATEGORIA_RETTA_NON_MENSILE', async () => {
+    h.errori = { 'payment_categories:insert': { code: '23514', message: 'violates check constraint' } }
+    const res = await POST(corpo('POST', { nome: 'Retta', scuola_id: SEDE_A, mensile: true }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('CATEGORIA_RETTA_NON_MENSILE')
   })
 
   it('colonna assente (PGRST204): 503 SERVIZI_NON_DISPONIBILI', async () => {

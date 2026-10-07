@@ -3121,8 +3121,8 @@ export const CODICI_ERRORE = {
      */
     SERVIZI_ANTEPRIMA_FALLITA: 'erroreServiziAnteprimaFallita',
     /**
-     * 409 — `PATCH /api/admin/settings/categorie` ha chiesto `mensile` su una causale che il
-     * database non ammette (CHECK: la categoria «retta» non è un servizio mensile).
+     * 409 — `POST` o `PATCH /api/admin/settings/categorie` hanno chiesto `mensile` su una
+     * categoria che il database non ammette (CHECK: la categoria «Retta» non è un servizio mensile).
      */
     CATEGORIA_RETTA_NON_MENSILE: 'erroreCategoriaRettaNonMensile',
     /**

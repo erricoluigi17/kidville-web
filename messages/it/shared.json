@@ -653,6 +653,6 @@
   "erroreServiziNonGenerati": "I servizi mensili non sono stati generati: riprova fra qualche istante.",
   "erroreServiziNonDisponibili": "I servizi mensili non sono ancora disponibili su questo database.",
   "erroreServiziAnteprimaFallita": "Non è stato possibile calcolare l’anteprima dei servizi: riprova.",
-  "erroreCategoriaRettaNonMensile": "La causale «retta» non può essere un servizio mensile.",
+  "erroreCategoriaRettaNonMensile": "La categoria «Retta» non può essere un servizio mensile.",
   "erroreCategoriaInUso": "La categoria è usata da voci di pagamento o da iscrizioni ai servizi: disattivala invece di eliminarla."
 }

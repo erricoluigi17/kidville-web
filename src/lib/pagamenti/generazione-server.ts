@@ -95,6 +95,14 @@ export async function tracciaAuditGenerazione(
   }
 }
 
+/** La risposta 503 «servizi non disponibili» (schema non ancora migrato): una sola, per tutte le route. */
+export function rispostaServiziNonDisponibili(): NextResponse {
+  return NextResponse.json(
+    { error: 'I servizi mensili non sono ancora disponibili su questo database', codice: 'SERVIZI_NON_DISPONIBILI' },
+    { status: 503 },
+  )
+}
+
 export type EsitoServizi =
   | { ok: true; generati: number }
   | { ok: false; codice: 'SERVIZI_NON_GENERATI' | 'SERVIZI_NON_DISPONIBILI' }

@@ -7,7 +7,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { sedeDellaGenerazione, generaServizi, funzioneAssente } from '@/lib/pagamenti/generazione-server'
+import { sedeDellaGenerazione, generaServizi, funzioneAssente, rispostaServiziNonDisponibili } from '@/lib/pagamenti/generazione-server'
 import { zMese, primoDelMese } from '@/lib/pagamenti/servizi-mensili'
 
 /**
@@ -17,8 +17,8 @@ import { zMese, primoDelMese } from '@/lib/pagamenti/servizi-mensili'
  * l'anteprima è la STESSA della conferma: ciò che si conta è ciò che si scrive.
  */
 
-// stringa vuota = assente: la sede la decide `sedeDellaGenerazione` (400 se ambigua)
-const zScuolaId = z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional())
+// stringa vuota o null = assente: la sede la decide `sedeDellaGenerazione` (400 se ambigua)
+const zScuolaId = z.preprocess((v) => (v === '' || v === null ? undefined : v), zUuid.optional())
 
 const getQuerySchema = z.object({
   periodo: zMese,
@@ -27,10 +27,8 @@ const getQuerySchema = z.object({
 
 const postBodySchema = z.object({
   periodo: zMese,
-  scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.nullish()),
+  scuola_id: zScuolaId,
 })
-
-const MSG_NON_DISPONIBILI = 'I servizi mensili non sono ancora disponibili su questo database'
 
 // GET /api/pagamenti/genera-servizi?periodo=YYYY-MM&scuola_id=  (staff)
 // Anteprima: quante voci per servizio si genererebbero. Gli IMPORTI (totale e totali per
@@ -62,7 +60,7 @@ export const GET = withRoute('pagamenti/genera-servizi:GET', async (request: Req
         tipo: 'servizi_da_generare', scuola_id: scuolaId, periodo,
       }, error)
       return assente
-        ? NextResponse.json({ error: MSG_NON_DISPONIBILI, codice: 'SERVIZI_NON_DISPONIBILI' }, { status: 503 })
+        ? rispostaServiziNonDisponibili()
         : NextResponse.json(
             { error: 'Non è stato possibile calcolare l’anteprima dei servizi: riprova.', codice: 'SERVIZI_ANTEPRIMA_FALLITA' },
             { status: 500 },
@@ -95,13 +93,16 @@ export const GET = withRoute('pagamenti/genera-servizi:GET', async (request: Req
     }
 
     const direzione = eDirezione(auth.user)
+    // Somme in centesimi: 7 × 33,33 in virgola mobile non dà 233,31 esatto.
+    const somma = (xs: { importo: number | string | null }[]) =>
+      Math.round(xs.reduce((s, v) => s + Number(v.importo ?? 0), 0) * 100) / 100
     const perServizio = ids.map((id) => {
       const sue = voci.filter((v) => v.categoria_id === id)
       return {
         categoria_id: id,
         nome: nomi.get(id) ?? null,
         voci: sue.length,
-        ...(direzione ? { totale: sue.reduce((s, v) => s + Number(v.importo ?? 0), 0) } : {}),
+        ...(direzione ? { totale: somma(sue) } : {}),
       }
     })
 
@@ -111,12 +112,12 @@ export const GET = withRoute('pagamenti/genera-servizi:GET', async (request: Req
         periodo,
         voci: voci.length,
         per_servizio: perServizio,
-        ...(direzione ? { totale: voci.reduce((s, v) => s + Number(v.importo ?? 0), 0) } : {}),
+        ...(direzione ? { totale: somma(voci) } : {}),
       },
     })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/genera-servizi:GET', stato: 500 }, err)
-    return NextResponse.json({ error: 'Internal Server Error', codice: 'LETTURA_FALLITA' }, { status: 500 })
+    return NextResponse.json({ error: 'Internal Server Error', codice: 'SERVIZI_ANTEPRIMA_FALLITA' }, { status: 500 })
   }
 })
 
@@ -143,7 +144,7 @@ export const POST = withRoute('pagamenti/genera-servizi:POST', async (request: R
     })
     if (!esito.ok) {
       return esito.codice === 'SERVIZI_NON_DISPONIBILI'
-        ? NextResponse.json({ error: MSG_NON_DISPONIBILI, codice: 'SERVIZI_NON_DISPONIBILI' }, { status: 503 })
+        ? rispostaServiziNonDisponibili()
         : NextResponse.json(
             { error: 'I servizi mensili non sono stati generati: riprova', codice: 'SERVIZI_NON_GENERATI' },
             { status: 500 },

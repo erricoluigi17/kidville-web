@@ -6,8 +6,9 @@ import type { DBFinto, Riga, Scrittura } from '../fixtures/finto-supabase'
 // Generazione MANUALE dei servizi mensili: anteprima (GET) e conferma (POST).
 //
 // Il finto Supabase applica davvero i filtri e le scritture; le rpc dei servizi
-// sono emulate con uno STATO (le voci già generate), così l'idempotenza — due
-// POST, la seconda genera zero — è una proprietà verificata e non asserita.
+// sono emulate con uno STATO (le voci già generate). L'idempotenza VERA la garantisce
+// l'ON CONFLICT provato su PGlite (T2): qui si verifica solo che la route inoltri
+// l'esito della funzione (la seconda chiamata che genera zero arriva al client).
 // =============================================================================
 
 const ADMIN = '11111111-1111-4111-8111-111111111111'
@@ -198,6 +199,34 @@ describe('GET /api/pagamenti/genera-servizi — anteprima', () => {
     expect(data.per_servizio).toHaveLength(2)
   })
 
+  it('coordinator (Direzione): riceve il totale', async () => {
+    h.requireStaff.mockResolvedValue({ user: { id: SEGRETERIA, role: 'coordinator', scuola_id: SEDE_B } })
+    const { data } = await (await GET(get(`periodo=2026-10&scuola_id=${SEDE_B}`))).json()
+    expect(data.totale).toBe(188.25)
+  })
+
+  it('veste segreteria ma ruoli REALI admin+segreteria: riceve il totale (decidono i ruoli reali)', async () => {
+    h.requireStaff.mockResolvedValue({
+      user: { id: SEGRETERIA, role: 'segreteria', ruoli: ['admin', 'segreteria'], scuola_id: SEDE_B },
+    })
+    const { data } = await (await GET(get(`periodo=2026-10&scuola_id=${SEDE_B}`))).json()
+    expect(data.totale).toBe(188.25)
+  })
+
+  it('utente con una sola sede, senza scuola_id: la rpc riceve la SUA sede', async () => {
+    h.requireStaff.mockResolvedValue({ user: SEGRETERIA_UTENTE })
+    const res = await GET(get('periodo=2026-10'))
+    expect(res.status).toBe(200)
+    expect(h.chiamate[0].args).toMatchObject({ p_scuola_id: SEDE_B })
+  })
+
+  it('le somme sono arrotondate ai centesimi: 7 × 33,33 = 233,31', async () => {
+    h.daGenerare = Array.from({ length: 7 }, (_, i) => voce(`a${i}`, CAT_PULMINO, 33.33))
+    const { data } = await (await GET(get(`periodo=2026-10&scuola_id=${SEDE_B}`))).json()
+    expect(data.totale).toBe(233.31)
+    expect(data.per_servizio[0].totale).toBe(233.31)
+  })
+
   it('Segreteria: i conteggi ci sono, le CHIAVI degli importi no (assenti, non azzerate)', async () => {
     h.requireStaff.mockResolvedValue({ user: SEGRETERIA_UTENTE })
     const res = await GET(get(`periodo=2026-10&scuola_id=${SEDE_B}`))
@@ -246,6 +275,13 @@ describe('GET /api/pagamenti/genera-servizi — anteprima', () => {
     const { data } = await (await GET(get(`periodo=2026-10&scuola_id=${SEDE_B}`))).json()
     const nomi = Object.fromEntries(data.per_servizio.map((s: { categoria_id: string; nome: string | null }) => [s.categoria_id, s.nome]))
     expect(nomi).toEqual({ [CAT_POMERIDIANO]: null, [CAT_PULMINO]: 'Pulmino' })
+  })
+
+  it('eccezione imprevista (rpc che lancia): 500 SERVIZI_ANTEPRIMA_FALLITA dal catch esterno', async () => {
+    h.rpc = 'lancia'
+    const res = await GET(get(`periodo=2026-10&scuola_id=${SEDE_B}`))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('SERVIZI_ANTEPRIMA_FALLITA')
   })
 
   it('lettura dei nomi fallita: 500 SERVIZI_ANTEPRIMA_FALLITA', async () => {

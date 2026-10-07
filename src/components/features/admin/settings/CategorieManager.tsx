@@ -190,7 +190,7 @@ export function CategorieManager({ userId, scuolaId }: Props) {
                 {cats.map(c => (
                     <li key={`${c.id}-${c.mensile === true}-${importoIniziale(c)}`} className="rounded-2xl bg-kidville-cream px-3 py-2 font-maven text-sm text-kidville-green">
                         <span className="flex items-center gap-2">
-                            <span id={`cat-nome-${c.id}`}>{c.icona} {c.nome}</span>
+                            <span><span aria-hidden="true">{c.icona}</span> <span id={`cat-nome-${c.id}`}>{c.nome}</span></span>
                             {c.mensile === true && (
                                 <span data-testid="badge-mensile" className="rounded-pill bg-kidville-white px-2 py-0.5 text-[11px] font-bold">{t('catMensile')}</span>
                             )}

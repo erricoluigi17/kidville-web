@@ -401,3 +401,129 @@ describe('POST collega — quando su questo ramo qualcosa va storto, la rotta DI
     expect(h.db.parents).toHaveLength(1)
   })
 })
+
+// =============================================================================
+// LA FAMIGLIA CHE ENTRAVA IN UN'APP VUOTA — il caso reale del 2026-10-06, col
+// ramo «crea un adulto nuovo» esercitato dalla rotta VERA.
+//
+// Una madre aveva una scheda con l'account (creata dall'import) e nessun legame
+// col bambino. La segreteria la reinseriva con lo stesso nome e la stessa email ma
+// con un CF diverso da quello dell'import (un refuso, come i doppioni di alunno del
+// 2026-09-14). Il dedup per CF non la riconosceva: nasceva una scheda nuova, a cui
+// `ensureParentIdentity` provava ad attaccare lo stesso account e urtava nella
+// UNIQUE (`email_conflict`). Il bambino finiva su una scheda senza accesso e la
+// schermata annunciava «Collegamento salvato». Tre volte, in tre settimane.
+// =============================================================================
+describe('POST collega — la stessa persona con un refuso nel CF', () => {
+  const ACCOUNT_VECCHIO = 'aaaa3333-0000-4000-8000-0000000000e1'
+  const PARENT_CON_ACCOUNT = 'aaaa2222-0000-4000-8000-0000000000c9'
+  const EMAIL = 'adulta.diprova@example.invalid'
+
+  beforeEach(() => {
+    h.db.utenti.push({ id: ACCOUNT_VECCHIO, ruolo: 'genitore', scuola_id: SEDE_A })
+    h.db.parents.push({
+      id: PARENT_CON_ACCOUNT,
+      first_name: 'ADULTA',
+      last_name: 'diprova',
+      fiscal_code: 'DPRDLT80A41F839A',
+      emails: [EMAIL],
+      auth_user_id: ACCOUNT_VECCHIO,
+    })
+  })
+
+  it('⚠️ riusa la scheda che ha l\'account: il bambino compare a CHI ESCE DAL LOGIN, e non nasce nessuna scheda', async () => {
+    h.identitaFinta = async () => ({
+      ok: true,
+      authUserId: ACCOUNT_VECCHIO,
+      email: EMAIL,
+      createdAuth: false,
+      createdUtenti: false,
+      boundNow: false,
+      password: null,
+      scuolaId: SEDE_A,
+      indirizzo: null,
+    })
+
+    const res = await post({
+      azione: 'collega',
+      alunno_id: ALUNNO,
+      relation_type: 'mother',
+      // Stesso nome e stessa email, CF DIVERSO da quello in archivio.
+      genitore: { ...adultoNuovo(EMAIL), first_name: 'Adulta', last_name: 'Diprova', fiscal_code: 'DPRDLT80A41F839B' },
+    })
+
+    expect(res.status).toBe(200)
+    // Nessuna scheda in più: era la scheda vuota a fabbricare il guasto.
+    expect(h.db.parents).toHaveLength(1)
+    // Il legame sta sulla scheda che ha l'account…
+    expect(h.db.student_parents).toHaveLength(1)
+    expect(h.db.student_parents[0]).toMatchObject({ student_id: ALUNNO, parent_id: PARENT_CON_ACCOUNT })
+    // …e il gemello runtime sull'ACCOUNT che la famiglia usa davvero: è questa riga a
+    // far restituire il bambino da `/api/parent/students`.
+    expect(h.db.legame_genitori_alunni).toHaveLength(1)
+    expect(h.db.legame_genitori_alunni[0]).toMatchObject({ alunno_id: ALUNNO, genitore_id: ACCOUNT_VECCHIO })
+    // Il CF in archivio non viene sovrascritto da un dato che potrebbe essere il refuso.
+    expect(h.db.parents[0].fiscal_code).toBe('DPRDLT80A41F839A')
+    const corpo = await res.json()
+    expect(corpo.identita_non_completata).toBeUndefined()
+  })
+
+  it('PROVA NEGATIVA — stessa email ma nome DIVERSO: è un\'altra persona, nasce una scheda', async () => {
+    h.identitaFinta = async () => ({ ok: false, reason: 'no_email', message: 'senza email' })
+    const res = await post({
+      azione: 'collega',
+      alunno_id: ALUNNO,
+      relation_type: 'father',
+      genitore: { ...adultoNuovo(EMAIL), first_name: 'Altro', last_name: 'Nome', fiscal_code: '' },
+    })
+    expect(res.status).toBe(200)
+    expect(h.db.parents).toHaveLength(2)
+  })
+
+  it('⚠️ se l\'identità NON si completa (email già di un\'altra scheda) la risposta lo DICE', async () => {
+    // L'email è di un'altra scheda con account, ma nome e cognome non coincidono:
+    // il riuso non scatta e `ensureParentIdentity` urta nella UNIQUE. Prima la rotta
+    // buttava via questo esito e rispondeva come se fosse andato tutto bene.
+    h.identitaFinta = async () => ({
+      ok: false,
+      reason: 'email_conflict',
+      message: `L'email ${EMAIL} risulta già collegata a un'altra anagrafica genitore`,
+    })
+    const res = await post({
+      azione: 'collega',
+      alunno_id: ALUNNO,
+      relation_type: 'father',
+      genitore: { ...adultoNuovo(EMAIL), first_name: 'Altro', last_name: 'Nome', fiscal_code: '' },
+    })
+
+    expect(res.status).toBe(200)
+    const corpo = await res.json()
+    expect(corpo.identita_non_completata).toBe('email_conflict')
+    // Il legame resta scritto (è il comportamento di sempre): è l'avviso che mancava.
+    expect(h.db.student_parents).toHaveLength(1)
+    // E l'indirizzo NON viaggia nella risposta: il motivo è un enum chiuso.
+    expect(JSON.stringify(corpo)).not.toContain(EMAIL)
+  })
+
+  it('il controllo positivo: identità completata ⇒ il campo NON c\'è', async () => {
+    h.identitaFinta = async () => ({
+      ok: true,
+      authUserId: ACCOUNT_NUOVO,
+      email: 'nuova@example.invalid',
+      createdAuth: false,
+      createdUtenti: false,
+      boundNow: false,
+      password: null,
+      scuolaId: SEDE_A,
+      indirizzo: null,
+    })
+    const res = await post({
+      azione: 'collega',
+      alunno_id: ALUNNO,
+      relation_type: 'father',
+      genitore: { ...adultoNuovo('nuova@example.invalid'), first_name: 'Altro', last_name: 'Nome', fiscal_code: '' },
+    })
+    expect(res.status).toBe(200)
+    expect('identita_non_completata' in (await res.json())).toBe(false)
+  })
+})

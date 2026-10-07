@@ -8,6 +8,7 @@ import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola } from '@/lib/notifiche/destinatari';
 import { alunniDelleRisposte, nomiGenitoriDelleRisposte } from '@/lib/avvisi/nomi-risposte';
+import { verificaVisibilitaDocente } from '@/lib/avvisi/gate-docente';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { zNumeroPartecipanti } from '@/lib/validation/avvisi';
@@ -238,12 +239,22 @@ export const GET = withRoute('avvisi/[id]/risposte:GET', async (request: Request
         // e le risposte portano nome dei genitori e dei bambini. Senza questo si
         // leggevano le adesioni di un avviso di un'altra sede.
         const { data: avviso } = await supabase
-            .from('avvisi').select('id, scuola_id').eq('id', avvisoId).maybeSingle();
+            .from('avvisi')
+            .select('id, scuola_id, author_id, target_scope, target_classes')
+            .eq('id', avvisoId)
+            .maybeSingle();
         if (!avviso) return NextResponse.json({ error: 'Avviso non trovato' }, { status: 404 });
         const plessiAvviso = await scuoleDiUtente(supabase, auth.user);
         if (!avviso.scuola_id || !plessiAvviso.includes(avviso.scuola_id as string)) {
             return NextResponse.json({ error: 'Avviso fuori dal tuo plesso' }, { status: 403 });
         }
+        // E dentro la sede, per la docente, anche la CLASSE (2026-10-07): queste
+        // righe portano i nomi delle famiglie, e una maestra non legge quelle di
+        // una classe non sua solo perché conosce l'indirizzo dell'avviso.
+        const visibilitaErr = await verificaVisibilitaDocente(
+            supabase, auth.user, avviso, 'avvisi/[id]/risposte:GET',
+        );
+        if (visibilitaErr) return visibilitaErr;
 
         const leggiRisposte = async (colonne: string) => {
             const res = await supabase

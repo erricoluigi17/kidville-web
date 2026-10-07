@@ -3,6 +3,7 @@ import { getTranslations } from 'next-intl/server';
 import { AppBar } from '@/components/features/shell/AppBar';
 import BottomNav from '@/components/features/parent/BottomNav';
 import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher';
+import { GuardiaSenzaFigli } from '@/components/features/parent/GuardiaSenzaFigli';
 import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { AvvisiSettimanaliApp } from '@/components/providers/AvvisiSettimanaliApp';
@@ -59,7 +60,12 @@ export default async function ParentLayout({ children }: { children: React.React
             navigazione sequenziale, ma il comportamento non è uniforme fra
             browser e tecnologie assistive, e uno screen reader non annuncia
             la destinazione. Raggiungibile dal codice, mai dal Tab. */}
-        <main id="content" tabIndex={-1} className="outline-none">{children}</main>
+        <main id="content" tabIndex={-1} className="outline-none">
+          {/* Un account senza nessun bambino collegato non vede il vuoto né uno
+              spinner senza fine: vede una frase che dice cosa fare. Rende i figli
+              come sempre finché il server non lo dichiara. */}
+          <GuardiaSenzaFigli>{children}</GuardiaSenzaFigli>
+        </main>
         {/* BottomNav usa useSearchParams (via useChildSchoolType): Suspense per il prerender. */}
         <Suspense fallback={null}>
           <BottomNav />

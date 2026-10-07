@@ -125,6 +125,23 @@ export const TIPI_DOCUMENTO: FormFieldOption[] = [
 ]
 
 /**
+ * Il limite inferiore che la colonna `document_expiry` dichiara, in un posto solo.
+ * STRETTO: `check (document_expiry is null or document_expiry > date '1990-01-01')`, su
+ * `pratiche_personale` e su `anagrafica_personale` (migrazione `20260811205643`).
+ *
+ * Lo leggono le tre porte che scrivono quella colonna — il modulo pubblico
+ * (`iscrizione/personale`), la correzione allo sportello (`admin/anagrafica-personale:PATCH`)
+ * e il campo data della scheda staff — perché un rifiuto arrivi sotto il campo e non come
+ * `23514` del database. Fino al 06/10/2026 viveva solo nella prima: la PATCH lasciava
+ * passare `1985-03-01` e rispondeva 503 «riprovare fra poco», cioè l'invito a rifare
+ * l'unica cosa che non poteva riuscire.
+ *
+ * Confronto fra STRINGHE `YYYY-MM-DD`: stessa larghezza, quindi l'ordine lessicografico è
+ * quello cronologico, ed è lo stesso `>` stretto di Postgres.
+ */
+export const DOC_EXPIRY_MINIMO = '1990-01-01'
+
+/**
  * I limiti e i termini del modulo, in un posto solo — e sono anche i termini
  * PROMESSI nel testo dei consensi e quelli che il cron di conservazione applica.
  *

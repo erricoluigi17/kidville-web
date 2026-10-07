@@ -341,6 +341,45 @@ describe('Quello che il server dice di aver fatto — e quello che non ha fatto'
 
         expect(await screen.findByText(itAdminStudents.legamiRuntimeNonScritto)).toBeInTheDocument()
     })
+
+    it('⚠️ email già di un’altra scheda: NON è «Collegamento salvato», perché la famiglia non vedrebbe il bambino', async () => {
+        // Il caso reale del 2026-10-06: il legame è scritto, ma sulla scheda SENZA
+        // accesso. Per tre settimane la schermata annunciava «Collegamento salvato» e
+        // la madre entrava in un'app vuota. La rotta ora lo dichiara; la schermata lo dice.
+        fetchMock
+            .mockResolvedValueOnce(risposta(ELENCO))
+            .mockResolvedValueOnce(risposta({
+                ok: true, parentId: ADULTO_2, anagrafica: 'gia-presente', runtime: 'gia-presente',
+                identita_non_completata: 'email_conflict',
+            }))
+        await collegaIlPrimo()
+
+        expect(await screen.findByText(itAdminStudents.legamiEmailGiaInUso)).toBeInTheDocument()
+        expect(screen.queryByText(itAdminStudents.legamiCollegato)).toBeNull()
+    })
+
+    it('un altro guasto dell’identità ⇒ la frase generica, non «salvato»', async () => {
+        fetchMock
+            .mockResolvedValueOnce(risposta(ELENCO))
+            .mockResolvedValueOnce(risposta({
+                ok: true, parentId: ADULTO_2, anagrafica: 'gia-presente', runtime: 'gia-presente',
+                identita_non_completata: 'error',
+            }))
+        await collegaIlPrimo()
+
+        expect(await screen.findByText(itAdminStudents.legamiIdentitaNonCompletata)).toBeInTheDocument()
+        expect(screen.queryByText(itAdminStudents.legamiCollegato)).toBeNull()
+    })
+
+    it('il controllo positivo: senza il campo la frase è quella di sempre', async () => {
+        fetchMock
+            .mockResolvedValueOnce(risposta(ELENCO))
+            .mockResolvedValueOnce(risposta({ ok: true, parentId: ADULTO_2, anagrafica: 'gia-presente', runtime: 'creato' }))
+        await collegaIlPrimo()
+
+        expect(await screen.findByText(itAdminStudents.legamiCollegato)).toBeInTheDocument()
+        expect(screen.queryByText(itAdminStudents.legamiEmailGiaInUso)).toBeNull()
+    })
 })
 
 describe('Il capo fisso che manca — si sparisce, non si tace', () => {

@@ -2,6 +2,13 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import type { AppUser } from '@/lib/auth/predicati-ruolo';
+import { puoGestireAvviso, vedeTuttiGliAvvisi } from '@/lib/avvisi/permessi-docente';
+import { verificaVisibilitaDocente } from '@/lib/avvisi/gate-docente';
+import { notificaEvento } from '@/lib/notifiche/triggers';
+import {
+    tipoNotificaAvviso, titoloNotificaAvviso, destinatariAvviso, giaAvvisati,
+} from '@/lib/avvisi/notifica-avviso';
 import { assertAvvisoInScope } from '@/lib/auth/scope-avvisi';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { classiMancantiNellaSede, classiTargetValide } from '@/lib/avvisi/classi-sede';
@@ -206,6 +213,36 @@ function rifiutoScadenze(
 // una copia locale che non guardava `{ error }` di PostgREST, e rispondeva 403
 // «fuori dal tuo plesso» anche su un guasto di lettura e su un id inesistente.
 
+// ─── CHI PUÒ TOCCARE UN AVVISO, OLTRE ALLA SEDE (2026-10-07) ─────────────────
+//
+// PUT e DELETE chiedevano soltanto `requireDocente` e la sede: nessuno guardava
+// CHI avesse scritto l'avviso. Una docente poteva eliminare quello della
+// segreteria (200), o «modificarlo» restringendolo alle sue classi — e le altre
+// famiglie smettevano di vederlo in silenzio. Regola del titolare: la docente
+// modifica ed elimina SOLO i propri; segreteria e direzione tutto. La regola è
+// una sola e sta in `@/lib/avvisi/permessi-docente`, la stessa che dà alla
+// bacheca il booleano `modificabile`.
+//
+// Il `warn` è persistito: un diniego qui è quasi sempre un pulsante che la
+// schermata non avrebbe dovuto mostrare, e senza la riga resterebbe una
+// telefonata. Solo uuid e ruolo, mai il titolo.
+function rifiutoNonAutore(operazione: string, user: AppUser, id: string): NextResponse {
+    logEvento('avvisi', 'warn', {
+        operazione,
+        esito: 'modifica-negata-non-autore',
+        uid: user.id,
+        ruolo: user.role,
+        entitaId: id,
+    });
+    return NextResponse.json(
+        {
+            error: 'Questo avviso l’ha scritto la segreteria o un’altra insegnante: puoi leggerlo, ma non modificarlo né eliminarlo.',
+            codice: 'AVVISO_NON_AUTORE',
+        },
+        { status: 403 },
+    );
+}
+
 // GET /api/avvisi/[id]
 // Singolo avviso (deep-link del dettaglio cockpit /admin/avvisi/[id]).
 export const GET = withRoute('avvisi/[id]:GET', async (request: Request, { params }: RouteParams) => {
@@ -237,6 +274,9 @@ export const GET = withRoute('avvisi/[id]:GET', async (request: Request, { param
         if (!data) {
             return NextResponse.json({ error: 'Avviso non trovato' }, { status: 404 });
         }
+
+        const visibilitaErr = await verificaVisibilitaDocente(supabase, auth.user, data, 'avvisi/[id]:GET');
+        if (visibilitaErr) return visibilitaErr;
 
         // Autore con query separata (nessun FK embed, come la route lista).
         const { data: author } = await supabase
@@ -289,18 +329,10 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         const scopeErr = await assertAvvisoInScope(supabase, auth.user, id);
         if (scopeErr) return scopeErr;
 
-        // Gate sul TARGET (come nel POST): un educator può riassegnare l'avviso
-        // solo alle proprie classi, mai a tutto il plesso o a classi altrui.
-        const targetErr = await verificaTargetAvvisoDocente(supabase, auth.user, {
-            scope: target_scope,
-            classi: target_classes,
-        });
-        if (targetErr) return targetErr;
-
         // ── IL GATE DI SEDE SUL TARGET, CHE QUI NON C'ERA MAI STATO (2026-08-01) ──
         //
         // Il POST ce l'ha dal 30 luglio; questa strada no. Aveva il gate di RUOLO
-        // qui sopra («un educator riassegna solo alle proprie classi») e si fermava
+        // («un educator riassegna solo alle proprie classi») e si fermava
         // lì, poi scriveva `target_classes` GREZZO. Bastava modificare un avviso per
         // assegnarlo a una classe di un altro plesso — o a un id di sezione invece
         // che a un nome — ricevendo **200 con la riga aggiornata**. L'avviso poi non
@@ -332,9 +364,14 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         // obbligatoria, le due scadenze si confrontano fra loro anche quando il
         // corpo ne manda una sola, `posti_totali` serve a sapere se il tetto è
         // CAMBIATO e `chiedi_numero` a non spegnerlo per sbaglio.
+        //
+        // E dal 2026-10-07 anche `author_id` (chi può modificarlo) e `form_model_id`
+        // (che tipo di notifica ricevono i destinatari aggiunti). `author_id` sta
+        // anche nel ripiego perché è una colonna storica: senza, sul DB E2E il gate
+        // dell'autore leggerebbe `undefined` e negherebbe a ogni docente il proprio.
         const COLONNE_PRIMA =
-            'scuola_id, target_scope, target_classes, tipo, scadenza, scadenza_avviso, scadenza_adesione, posti_totali, chiedi_numero';
-        const COLONNE_PRIMA_STORICHE = 'scuola_id, target_scope, target_classes, tipo, scadenza';
+            'author_id, form_model_id, scuola_id, target_scope, target_classes, tipo, scadenza, scadenza_avviso, scadenza_adesione, posti_totali, chiedi_numero';
+        const COLONNE_PRIMA_STORICHE = 'author_id, scuola_id, target_scope, target_classes, tipo, scadenza';
         let letturaPrima = await supabase
             .from('avvisi')
             .select(COLONNE_PRIMA)
@@ -372,11 +409,28 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
             );
         }
         const prima = rigaPrima as {
+            author_id?: string | null; form_model_id?: string | null;
             scuola_id?: string; target_scope?: string; target_classes?: string[] | null;
             tipo?: string | null; scadenza?: string | null;
             scadenza_avviso?: string | null; scadenza_adesione?: string | null;
             posti_totali?: number | null; chiedi_numero?: boolean | null;
         } | null;
+
+        // PRIMA di ogni altro controllo sul contenuto: a una docente che apre
+        // l'avviso della segreteria la risposta giusta è «non è tuo», non «non è
+        // una tua classe» (che il gate qui sotto direbbe se lo scope fosse globale).
+        if (!puoGestireAvviso(auth.user, prima?.author_id)) {
+            return rifiutoNonAutore('avvisi/[id]:PUT', auth.user, id);
+        }
+
+        // Gate sul TARGET (come nel POST): un educator può riassegnare l'avviso
+        // solo alle proprie classi, mai a tutto il plesso o a classi altrui.
+        const targetErr = await verificaTargetAvvisoDocente(supabase, auth.user, {
+            scope: target_scope,
+            classi: target_classes,
+        });
+        if (targetErr) return targetErr;
+
         const scopeEffettivo = target_scope ?? prima?.target_scope ?? 'globale';
         // `undefined` = il campo non è stato mandato → si conservano le classi che
         // l'avviso ha già. Un array vuoto, invece, è una richiesta esplicita di
@@ -652,6 +706,51 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
             attore: auth.user, entitaTipo: 'avviso', entitaId: id, azione: 'update', valoreDopo: { id, titolo },
         });
 
+        // ── LA MODIFICA CHE ALLARGA I DESTINATARI LI AVVISA (2026-10-07) ─────────
+        //
+        // Prima il PUT non notificava mai: aggiungere una classe lasciava quelle
+        // famiglie senza avviso. Si manda SOLO a chi non ha già la notifica
+        // iniziale, e solo se scope o classi sono davvero cambiati. Best-effort,
+        // ma mai muto: se non si sa chi è già stato avvisato non si manda niente.
+        const scopeDopo = target_scope ?? prima?.target_scope ?? 'globale';
+        const classiPrima = [...(prima?.target_classes ?? [])].sort().join('|');
+        const classiDopo = [...classiTarget].sort().join('|');
+        const destinatariCambiati = scopeDopo !== (prima?.target_scope ?? 'globale') || classiPrima !== classiDopo;
+        if (destinatariCambiati && prima?.scuola_id) {
+            try {
+                const tipoNotifica = tipoNotificaAvviso(prima.form_model_id, tipoRisultante);
+                const tutti = await destinatariAvviso(supabase, prima.scuola_id, scopeDopo, classiTarget);
+                const gia = await giaAvvisati(supabase, id, tipoNotifica);
+                const nuovi = tutti.filter((u) => !gia.has(u));
+                if (nuovi.length > 0) {
+                    await notificaEvento(supabase, {
+                        tipo: tipoNotifica,
+                        scuolaId: prima.scuola_id,
+                        utenteIds: nuovi,
+                        titolo: titoloNotificaAvviso(tipoNotifica, titolo),
+                        corpo: contenuto.length > 140 ? `${contenuto.slice(0, 140)}…` : contenuto,
+                        link: '/parent/avvisi',
+                        entitaTipo: 'avviso',
+                        entitaId: id,
+                        bufferMin: 10,
+                        debounce: true,
+                    });
+                }
+                logEvento('avvisi', 'info', {
+                    operazione: 'avvisi/[id]:PUT',
+                    esito: 'notifica-nuovi-destinatari',
+                    entitaId: id,
+                    n_nuovi: nuovi.length,
+                });
+            } catch (e) {
+                logEvento('avvisi', 'error', {
+                    operazione: 'avvisi/[id]:PUT',
+                    esito: 'notifica-nuovi-destinatari-non-calcolata',
+                    entitaId: id,
+                }, e);
+            }
+        }
+
         return NextResponse.json(data);
     } catch (error) {
         logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500 }, error);
@@ -671,6 +770,29 @@ export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, {
         const supabase = await createAdminClient();
         const scopeErr = await assertAvvisoInScope(supabase, auth.user, id);
         if (scopeErr) return scopeErr;
+
+        // Chi non è segreteria o direzione cancella solo i PROPRI avvisi. La lettura
+        // dell'autore si paga solo lì: per lo staff la risposta è già sì.
+        if (!vedeTuttiGliAvvisi(auth.user)) {
+            const { data: riga, error: erroreAutore } = await supabase
+                .from('avvisi')
+                .select('author_id')
+                .eq('id', id)
+                .maybeSingle();
+            // PostgREST non lancia: senza questo ramo un guasto di lettura
+            // diventerebbe «autore ignoto», cioè un 403 che accusa la docente di
+            // voler cancellare un avviso altrui.
+            if (erroreAutore) {
+                logErrore({ operazione: 'avvisi/[id]:DELETE', stato: 500, evento: 'db' }, erroreAutore);
+                return NextResponse.json(
+                    { error: 'Non è stato possibile verificare l’autore dell’avviso. Riprova fra poco.', codice: 'LETTURA_FALLITA' },
+                    { status: 500 },
+                );
+            }
+            if (!puoGestireAvviso(auth.user, (riga as { author_id?: string | null } | null)?.author_id)) {
+                return rifiutoNonAutore('avvisi/[id]:DELETE', auth.user, id);
+            }
+        }
 
         // Prima della cancellazione, perché dopo il dato non c'è più.
         const allegato = await percorsoAllegatoArchiviatoAvviso(supabase, id, 'avvisi/[id]:DELETE');

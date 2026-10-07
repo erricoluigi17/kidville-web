@@ -114,6 +114,14 @@ export interface EsitoScrittura {
     anagrafica?: string | null;
     runtime?: string | null;
     relation_type?: string | null;
+    /**
+     * Presente solo sul ramo «adulto nuovo», e solo quando l'accesso dell'adulto NON si
+     * è completato: il legame è scritto, ma lui non vedrà il bambino. `email_conflict` =
+     * l'indirizzo è già di un'altra scheda con un account (UNIQUE sul ponte), `error` =
+     * qualunque altro guasto. Senza questo campo la schermata annunciava «Collegamento
+     * salvato» per una famiglia che entrava in un'app vuota.
+     */
+    identita_non_completata?: string | null;
 }
 
 /**

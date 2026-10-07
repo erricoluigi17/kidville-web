@@ -41,6 +41,8 @@
   "erroreConfigPregressoNonLetto": "Non è stato possibile rileggere le impostazioni già salvate: per non sovrascriverle, non è stato salvato niente. Riprova fra qualche istante",
   "erroreClasseDestinatariaMancante": "Seleziona almeno una classe destinataria per un avviso di classe",
   "erroreClassiFuoriSede": "Alcune classi destinatarie non appartengono alla sede dell’avviso: controlla i destinatari",
+  "erroreAvvisoNonAutore": "Questo avviso l’ha scritto la segreteria o un’altra insegnante: puoi leggerlo, ma non modificarlo né eliminarlo.",
+  "erroreAvvisoFuoriDalleTueClassi": "Questo avviso è indirizzato a classi che non sono le tue.",
   "erroreRettaMancante": "Indica la retta mensile di ogni bambino, oppure il fratello che la paga per lui: senza, verrebbe applicata la retta predefinita della sede",
   "erroreRettaZero": "La retta non può essere zero: nel registro lo zero vale «usa la retta predefinita della sede». Se il bambino non deve pagare, indica il fratello che paga per lui",
   "erroreRettaFratelloNonValido": "Il fratello indicato per la retta non è fra i bambini di questa domanda",

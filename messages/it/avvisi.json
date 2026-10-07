@@ -70,6 +70,8 @@
   "dettaglio": "Dettaglio",
   "modifica": "Modifica",
   "elimina": "Elimina",
+  "soloLettura": "Solo lettura",
+  "soloLetturaSpiegazione": "Puoi modificare o eliminare solo gli avvisi scritti da te",
   "genitoreFallback": "Genitore",
   "analisiInCorso": "Analisi risposte in corso…",
   "tabStatoLettura": "📖 Stato Lettura",

@@ -233,6 +233,18 @@ export const CODICI_ERRORE = {
      */
     CLASSI_FUORI_SEDE: 'erroreClassiFuoriSede',
     /**
+     * 403 — una docente prova a modificare o eliminare un avviso che non ha scritto
+     * lei: della segreteria o di una collega (`/api/avvisi/[id]`, 2026-10-07). Lo
+     * legge, non lo tocca. Segreteria e direzione non lo ricevono mai.
+     */
+    AVVISO_NON_AUTORE: 'erroreAvvisoNonAutore',
+    /**
+     * 403 — una docente apre il dettaglio o le risposte di un avviso indirizzato a
+     * classi che non sono le sue. Ciò che la bacheca non le mostra, il server non
+     * glielo consegna per un'altra strada.
+     */
+    AVVISO_FUORI_DALLE_TUE_CLASSI: 'erroreAvvisoFuoriDalleTueClassi',
+    /**
      * 400 — l'import di una domanda d'iscrizione senza la retta di un bambino.
      *
      * Non è un campo dimenticato: fino al 2026-09-02 la retta non veniva chiesta

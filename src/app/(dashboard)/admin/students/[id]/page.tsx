@@ -7,7 +7,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
 import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel';
 import { ParentDetailPanel } from '@/components/features/admin/ParentDetailPanel';
-import { StaffDetailPanel } from '@/components/features/admin/StaffDetailPanel';
+import { StaffDetailPanel, type TabScheda } from '@/components/features/admin/StaffDetailPanel';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Scheda anagrafica a TUTTA AREA (sidebar + TopBar del cockpit restano). Sostituisce
@@ -16,6 +16,16 @@ import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 // `kind` (child|adult|staff) è propagato dalla tabella: decide quale scheda mostrare.
 
 type Kind = 'child' | 'adult' | 'staff';
+
+/**
+ * I tab con cui la scheda del PERSONALE può aprirsi (`?tab=`). Lo usa il «Rinnova» del
+ * cruscotto delle scadenze, che porta dritto sul tab Documento.
+ *
+ * ⚠️ `tab` ARRIVA DALL'URL, cioè da chiunque: si passa alla scheda solo ciò che conosce, e
+ * una stringa qualunque apre l'Incarico come se `tab` non ci fosse. È un ELENCO e non una
+ * ricerca in un oggetto: `{}['constructor']` esiste, e un `in` lo prenderebbe per un tab.
+ */
+const TAB_SCHEDA: readonly TabScheda[] = ['incarico', 'anagrafica', 'documento'];
 
 interface StudentRecord { id: string; nome?: string; cognome?: string; [k: string]: unknown }
 
@@ -27,6 +37,8 @@ function AnagraficaDetailInner() {
     const id = params?.id;
     const kind = (search.get('kind') as Kind) || 'child';
     const userId = search.get('userId');
+    const tabRichiesto = search.get('tab');
+    const tabIniziale = TAB_SCHEDA.find((t) => t === tabRichiesto);
     const isParent = kind === 'adult';
     const isStaff = kind === 'staff';
 
@@ -235,7 +247,7 @@ function AnagraficaDetailInner() {
                     onSave={handleSaveParent}
                 />
             ) : isStaff ? (
-                <StaffDetailPanel staffId={id!} onClose={goBack} />
+                <StaffDetailPanel staffId={id!} onClose={goBack} tabIniziale={tabIniziale} />
             ) : (
                 <StudentDetailPanel
                     variant="page"

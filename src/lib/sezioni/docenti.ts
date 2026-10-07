@@ -205,6 +205,31 @@ export async function nomiSezioniDiUtente(supabase: SupabaseClient, utenteId: st
   )]
 }
 
+// Le sezioni assegnate a un utente con la loro SEDE: `{ nome, scuola_id }`.
+// Il nome da solo non è una chiave — «2 ANNI» esiste in due plessi — e chi deve
+// decidere se un avviso «di classe» riguarda questo docente (bacheca avvisi,
+// 2026-10-07) confronta la coppia, non la stringa. Stessa fonte e stesso
+// trattamento del guasto di `nomiSezioniDiUtente`: `[]` più la riga di log.
+export async function sezioniDiUtenteConSede(
+  supabase: SupabaseClient,
+  utenteId: string,
+): Promise<{ nome: string; scuola_id: string | null }[]> {
+  const { data, error } = await supabase
+    .from('utenti_sezioni')
+    .select('sections(name, scuola_id)')
+    .eq('utente_id', utenteId)
+  if (error) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
+  type Sezione = { name?: string | null; scuola_id?: string | null }
+  type Row = { sections: Sezione[] | Sezione | null }
+  return ((data ?? []) as Row[]).flatMap((r) => {
+    const s = r.sections
+    if (!s) return []
+    return (Array.isArray(s) ? s : [s])
+      .filter((x): x is Sezione & { name: string } => Boolean(x.name))
+      .map((x) => ({ nome: x.name, scuola_id: x.scuola_id ?? null }))
+  })
+}
+
 // Sezioni di un docente filtrate per grado scolastico (es. solo 'primaria').
 // Restituisce le righe sections complete (id, name, school_type, scholastic_year).
 export interface SezioneInfo {

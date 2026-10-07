@@ -190,6 +190,13 @@ export function GestoreLegami({ verso, alunnoId, parentId, nomeFisso, collegati,
             collegati.some((v) => v.id === esito.parentId);
 
         if (esito.runtime === 'non-scritto') return { tono: 'attenzione', testo: t('legamiRuntimeNonScritto') };
+        // Ugualmente grave, e si guarda subito dopo: il legame c'è ma l'adulto non ha un
+        // accesso che lo veda. Prima di `eraNellElenco` e di `senza-account` perché quelle
+        // frasi direbbero «salvato» e basta, o «vedrà il bambino quando…», cioè il falso.
+        if (esito.identita_non_completata === 'email_conflict')
+            return { tono: 'attenzione', testo: t('legamiEmailGiaInUso') };
+        if (esito.identita_non_completata)
+            return { tono: 'attenzione', testo: t('legamiIdentitaNonCompletata') };
         if (eraNellElenco && modo === 'nuovo' && esito.runtime === 'creato')
             return { tono: 'attenzione', testo: t('legamiNuovoAccessoCreato') };
         if ((eraNellElenco || (modo === 'ricerca' && esito.anagrafica === 'gia-presente')) && esito.runtime !== 'creato')

@@ -219,6 +219,44 @@ describe('ScadenzeDocumenti · lo stato si deriva dalle date', () => {
   })
 })
 
+describe('ScadenzeDocumenti · «Rinnova», dal cruscotto dritto al tab Documento', () => {
+  /**
+   * Il 06/10/2026 l'admin avvisato dal cron dei 60 giorni apriva questo cruscotto, trovava
+   * la persona, e per rinnovarne il documento doveva indovinare che il posto era la scheda,
+   * il tab «Documento», un modulo che non c'era. Ora il comando è sulla riga e porta lì.
+   * Il cruscotto resta in SOLA LETTURA: non scrive niente, rimanda.
+   */
+  it('ogni riga CON un documento porta «Rinnova», un collegamento vero al tab Documento', async () => {
+    render(<ScadenzeDocumenti userId="u1" />)
+    await waitFor(() => expect(screen.getByText('Alfa Anna')).toBeInTheDocument())
+
+    const link = screen.getByRole('link', { name: 'Rinnova il documento di Alfa Anna' })
+    expect(link).toHaveAttribute('href', `/admin/students/${SCADUTA}?kind=staff&tab=documento`)
+    expect(link).toHaveTextContent('Rinnova')
+    // WCAG 2.5.3: il nome accessibile COMINCIA con il testo visibile.
+    expect(link.getAttribute('aria-label')?.startsWith('Rinnova')).toBe(true)
+    expect(link.className).toContain('min-h-[44px]')
+    // Quattro righe su cinque hanno un documento.
+    expect(screen.getAllByRole('link', { name: /^Rinnova il documento di/ })).toHaveLength(4)
+  })
+
+  it('la riga SENZA documento non lo offre: non c’è niente da rinnovare, c’è da raccogliere', async () => {
+    render(<ScadenzeDocumenti userId="u1" statoIniziale="mancante" />)
+    await waitFor(() => expect(screen.getByText('Epsilon Elsa')).toBeInTheDocument())
+    expect(screen.queryByRole('link', { name: /^Rinnova/ })).not.toBeInTheDocument()
+  })
+
+  it('il cruscotto non scrive: «Rinnova» è un collegamento, non una chiamata', async () => {
+    render(<ScadenzeDocumenti userId="u1" />)
+    await waitFor(() => expect(screen.getByText('Alfa Anna')).toBeInTheDocument())
+    const scritture = fetchMock.mock.calls.filter((c: unknown[]) => {
+      const m = (c[1] as RequestInit | undefined)?.method
+      return m && m !== 'GET'
+    })
+    expect(scritture).toEqual([])
+  })
+})
+
 describe('ScadenzeDocumenti · i quattro stati della schermata', () => {
   it('CARICAMENTO: una regione `status` finché la risposta non arriva', async () => {
     let sblocca: (v: unknown) => void = () => {}

@@ -113,9 +113,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
                 // scadenze): senza una riga vera il PUT valuterebbe lo stato
                 // risultante su un `null` e risponderebbe 400 invece di 200, e questi
                 // test parlerebbero dell'allegato senza arrivare mai all'allegato.
-                if (tabella === 'avvisi' && q.sel.startsWith('scuola_id, target_scope')) {
+                if (tabella === 'avvisi' && q.sel.includes('scuola_id, target_scope')) {
                     return {
                         data: {
+                            author_id: 'seg-1', form_model_id: null,
                             scuola_id: SEDE_MIA, target_scope: 'globale', target_classes: null,
                             tipo: 'presa_visione', scadenza: null,
                             scadenza_avviso: SCADENZA_ISO, scadenza_adesione: null,

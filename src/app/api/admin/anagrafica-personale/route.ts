@@ -10,7 +10,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { verificaCoerenza } from '@/lib/fiscale/coerenza'
 import { RUOLI_VALIDI } from '@/lib/auth/ruoli'
-import { TIPI_DOCUMENTO } from '@/lib/forms/personale-template'
+import { DOC_EXPIRY_MINIMO, TIPI_DOCUMENTO } from '@/lib/forms/personale-template'
 import {
   COLONNE_DOCUMENTO,
   DOC_MAX_LUNGHEZZA,
@@ -197,7 +197,14 @@ const patchBodySchema = z
       .nullable()
       .optional(),
     document_number: z.string().trim().max(50).nullable().optional(),
-    document_expiry: zDataYMD.nullable().optional(),
+    // Il limite del CHECK di tabella, rispecchiato qui: senza, una scadenza al
+    // `1985-03-01` (un anno digitato male nel campo data della scheda staff) passava
+    // `zod`, moriva in tabella con `23514` e diventava il 503 «riprovare fra poco» qui
+    // sotto. Stretto come il CHECK: `1990-01-01` è rifiutato anche lui.
+    document_expiry: zDataYMD
+      .refine((v) => v > DOC_EXPIRY_MINIMO, 'La scadenza dev’essere successiva al 1990')
+      .nullable()
+      .optional(),
     cessato_il: zDataYMD.nullable().optional(),
   })
   .refine(

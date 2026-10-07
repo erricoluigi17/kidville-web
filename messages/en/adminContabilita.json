@@ -298,6 +298,7 @@
   "dashMsScegliPrimaSede": "Choose the location first…",
   "dashMsCategoriaDiSede": "{categoria} — {nome}",
   "dashMsErrAlunni": "Could not load the students: the fee list, the missing fees and new purchases are not reliable. Try again.",
+  "dashCifraNascosta": "Hidden amount",
   "drawerCaricamento": "Loading…",
   "drawerIncassa": "Collect",
   "drawerIncassato": "Collected",

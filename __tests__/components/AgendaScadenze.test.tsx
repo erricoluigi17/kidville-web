@@ -32,6 +32,31 @@ describe('AgendaScadenze', () => {
   });
 });
 
+describe('AgendaScadenze — mascheraImporti', () => {
+  it('con mascheraImporti compaiono «••••» e nessun «€»', () => {
+    const { container } = render(
+      <AgendaScadenze pagamenti={rows} oggi="2026-07-10" attivo={null} onSelect={() => {}} mascheraImporti />,
+    );
+    expect(container.textContent).toContain('••••');
+    expect(container.textContent).not.toContain('€');
+    expect(container.textContent).toContain('Cifra nascosta');
+  });
+
+  it('senza mascheraImporti gli importi restano', () => {
+    const { container } = render(<AgendaScadenze pagamenti={rows} oggi="2026-07-10" attivo={null} onSelect={() => {}} />);
+    expect(container.textContent).toContain('€');
+    expect(container.textContent).not.toContain('••••');
+  });
+
+  it('con mostraImporti falso la maschera non aggiunge nulla', () => {
+    const { container } = render(
+      <AgendaScadenze pagamenti={rows} oggi="2026-07-10" attivo={null} onSelect={() => {}} mostraImporti={false} mascheraImporti />,
+    );
+    expect(container.textContent).not.toContain('••••');
+    expect(container.textContent).not.toContain('€');
+  });
+});
+
 /**
  * P2b (26/09) — con più sedi accorpate l'agenda dice DI QUALE SEDE sono le scadenze di
  * ogni bucket. I bucket sono aggregati, quindi la sede compare come ripartizione dei

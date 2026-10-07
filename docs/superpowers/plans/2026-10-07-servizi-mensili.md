@@ -57,7 +57,8 @@ Decisioni aggiuntive:
   (le rette già scritte non sembrano fallite); se le rette falliscono i servizi non partono. Test in
   `genera-rette-servizi.test.ts` (fatto così), con le rpc dei servizi in un array **separato** da `h.chiamate`.
 - **T5 · Route `src/app/api/pagamenti/genera-servizi/route.ts`** (`withRoute`, `requireStaff`, zod):
-  GET anteprima (`servizi_da_generare`), POST generazione manuale; 503 `SERVIZI_NON_DISPONIBILI` se
+  GET anteprima (`servizi_da_generare`), POST generazione manuale, per `periodo` OPPURE `anno`
+  (set–giu, aggiunto dopo la revisione finale: con le rette dell'anno già generate servivano nove giri a mano); 503 `SERVIZI_NON_DISPONIBILI` se
   lo schema manca (DB E2E non migrato).
 - **T6 · Route iscrizioni `src/app/api/pagamenti/servizi/route.ts`**: GET (servizi mensili + iscritti
   della sede; `{ non_disponibile: true }` se lo schema manca), POST (controllo sovrapposizioni prima,

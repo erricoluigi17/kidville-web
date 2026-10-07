@@ -934,6 +934,14 @@ describe('voci_ids: il secondo tempo cancella solo ciò che il client ha visto',
       expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
     })
 
+    it('DELETE con voci_ids= vuoto nella query: lo stesso 400', async () => {
+      scenario()
+      const res = await delNudo(`id=${ISCR_1}&scuola_id=${SEDE_A}&voci_future=elimina&voci_ids=`)
+      expect(res.status).toBe(400)
+      expect(h.scritture).toEqual([])
+      expect(idsVoci()).toContain('d0000000-0000-4000-8000-000000000010')
+    })
+
     it('«mantieni» e il primo tempo non chiedono voci_ids', async () => {
       scenario()
       expect((await patchNudo({ ...accorcia, voci_future: 'mantieni' })).status).toBe(200)

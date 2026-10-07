@@ -31,6 +31,8 @@ const h = vi.hoisted(() => ({
   /** Le voci già scritte (chiave alunno|categoria|periodo): lo stato dell'idempotenza. */
   scritte: new Set<string>(),
   rpc: 'ok' as 'ok' | 'errore' | 'assente' | 'lancia',
+  /** Il mese ('YYYY-MM-01') in cui SOLO l'anteprima si guasta: per il guasto a metà anno. */
+  guastoAlPeriodo: null as string | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -57,6 +59,9 @@ vi.mock('@/lib/supabase/server-client', async () => {
         rpc: {
           servizi_da_generare: (args: Riga) => {
             h.chiamate.push({ nome: 'servizi_da_generare', args })
+            if (h.guastoAlPeriodo && args.p_periodo === h.guastoAlPeriodo) {
+              return { data: null, error: { code: 'XX000', message: 'guasto servizi' } }
+            }
             return guasto() ?? { data: h.daGenerare, error: null }
           },
           genera_servizi_anno: (args: Riga) => {
@@ -131,6 +136,7 @@ beforeEach(() => {
   h.chiamate = []
   h.scritte = new Set()
   h.rpc = 'ok'
+  h.guastoAlPeriodo = null
   h.daGenerare = [
     voce(ALU_1, CAT_POMERIDIANO, 77.5),
     voce(ALU_2, CAT_POMERIDIANO, 77.5),
@@ -431,6 +437,19 @@ describe('modalità «anno scolastico»', () => {
     const res = await GET(get(`anno=${ANNO}&scuola_id=${SEDE_A}`))
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('SERVIZI_ANTEPRIMA_FALLITA')
+  })
+
+  it('GET con anno e guasto a gennaio: 500, nessun conteggio parziale, i mesi dopo non si leggono', async () => {
+    h.guastoAlPeriodo = '2027-01-01'
+    const res = await GET(get(`anno=${ANNO}&scuola_id=${SEDE_A}`))
+    expect(res.status).toBe(500)
+    const corpo = await res.json()
+    expect(corpo.codice).toBe('SERVIZI_ANTEPRIMA_FALLITA')
+    expect(corpo.data).toBeUndefined()
+    // settembre, ottobre, novembre, dicembre, gennaio: poi il ciclo si ferma.
+    expect(h.chiamate.map((c) => c.args.p_periodo)).toEqual([
+      '2026-09-01', '2026-10-01', '2026-11-01', '2026-12-01', '2027-01-01',
+    ])
   })
 
   it('POST con anno E periodo, o con nessuno dei due: 400 e nessuna generazione', async () => {

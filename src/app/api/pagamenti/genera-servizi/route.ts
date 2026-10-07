@@ -122,7 +122,8 @@ export const GET = withRoute('pagamenti/genera-servizi:GET', async (request: Req
     }
 
     const direzione = eDirezione(auth.user)
-    // Somme in centesimi: 7 × 33,33 in virgola mobile non dà 233,31 esatto.
+    // Somma in euro e arrotondamento al centesimo a fine conto: 7 × 33,33 in virgola mobile
+    // non dà 233,31 esatto, l'arrotondamento finale sì.
     const somma = (xs: { importo: number | string | null }[]) =>
       Math.round(xs.reduce((s, v) => s + Number(v.importo ?? 0), 0) * 100) / 100
     const perServizio = ids.map((id) => {

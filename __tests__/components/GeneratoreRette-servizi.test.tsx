@@ -37,7 +37,7 @@ async function generaMese() {
   await screen.findByText(/Generate 3 rette per/);
 }
 
-const AVVISO = 'Le rette sono state generate, ma le voci dei servizi mensili no: riprova da Servizi → Genera servizi del mese.';
+const AVVISO = 'Le rette sono state generate, ma le voci dei servizi mensili no: riprova da Servizi → «Genera le voci dei servizi».';
 
 describe('GeneratoreRette — voci dei servizi mensili', () => {
   afterEach(() => vi.unstubAllGlobals());

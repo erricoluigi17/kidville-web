@@ -140,7 +140,10 @@ Il corpo **ricontrolla tutto** (la route non è l'unica difesa) e risponde `{ ok
 2. Ammissibilità come in 4.2.3, con `public.stati_alunno_non_piu_iscritto()` (mai `<> 'iscritto'`).
 3. Registro primaria presente → `registro_primaria`.
 4. Pagamenti presenti e `p_con_pagamenti = false` → `ha_pagamenti`; con `true` e un pagamento con
-   ricevuta/fattura/riconciliazione/incasso → `pagamenti_non_cancellabili`.
+   ricevuta/fattura/riconciliazione/incasso, quote di un altro alunno appese, o una voce in
+   `fatture_coda` non `tolta` (in coda, in invio verso SDI, emessa, in errore) → `pagamenti_non_cancellabili`.
+   Le righe di `pagamenti` del bambino si bloccano `FOR UPDATE` prima del controllo: un incasso
+   scritto in parallelo o finisce prima (e il controllo lo vede) o fallisce.
 5. Cancellazioni, nell'ordine: `solleciti` (per `alunno_id`), `pagamenti` (se ammessi; le figlie
    vanno in `CASCADE`), `eventi_diario`, `legame_genitori_alunni`, `armadietto`, `ticket_mensa`,
    `forms_submissions` (`student_id`), `backup_diario_vuote_20260908` **solo se esiste**
@@ -148,6 +151,9 @@ Il corpo **ricontrolla tutto** (la route non è l'unica difesa) e risponde `{ ok
    `galleria_media.tag_alunni` (tabella storica, oggi vuota), infine `DELETE FROM alunni` (il resto è
    `CASCADE`; `retta_a_carico_di` dei fratelli va a `NULL` da sé).
 6. `{ ok: true, code: 'eliminato', righe: { … conteggi per tabella } }`.
+
+Se ne vanno con la scheda anche le righe in `CASCADE` di registri di accesso legati al bambino
+(`fascicolo_accessi_audit`): la traccia dell'eliminazione resta nel registro delle scritture.
 
 Restano **di proposito**: `ricevute_emesse` e `fatture_emesse` (WORM / `RESTRICT`: il caso che le
 tocca è già bloccato al punto 4), `chat_vigilanza_accessi` (registro di accountability, solo uuid),

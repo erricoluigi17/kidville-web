@@ -1,6 +1,18 @@
 ## 🔁 Changelog — Servizi mensili: pomeridiano, doposcuola e pulmino come voci ricorrenti per bambino, generate insieme alle rette — 2026-10-07 (branch `feat/servizi-mensili`)
 
-**Stato.** 🟡 **Sul branch, non ancora in produzione.** Gate sul branch (commit `3502597b`): `eslint` 0 · `tsc` 0 · `vitest run` **1.721 file / 29.314 test passati (25 saltati)** · `npm run build` ok (`verifica-artefatto` ok, 2.982 file JS). Dopo, due test in più (sulle due route) passati da soli. E2E in CI al push. La migrazione `20261007170813_servizi_mensili.sql` la applica **l'integrazione Supabase al merge**: non va applicata a mano. Sul DB della CI si prova con `DB migrate (CI)`.
+**Stato.** ✅ **In produzione dal 2026-10-08.**
+- **Merge.** PR #205, merge `f836d94d` alle 08:23 UTC con l'auto-merge acceso dal titolare. CI di `main` verde, e verde anche «Verifica dopo il deploy».
+- **Migrazione.** L'integrazione Supabase l'ha applicata una volta sola: nel registro c'è una sola riga `20261007170813`.
+- **Verifiche dopo il merge**, solo `SELECT`:
+  - due colonne nuove presenti, `btree_gist` installata;
+  - `iscrizioni_servizi` presente e vuota, con RLS attiva;
+  - anon e authenticated senza privilegi sulla tabella e sulle tre funzioni; service-role abilitato;
+  - nessuna voce di servizio ancora generata;
+  - advisor di sicurezza: 0 ERROR (la tabella compare solo fra gli INFO «RLS senza policy», com'è voluto).
+- **Primo uso dalla segreteria.** È nata la categoria «PULMINO» di Aversa: mensile, 40 € al mese, nessuna voce passata, quindi nessun rischio di doppio addebito. Pomeridiano (Giugliano) e doposcuola (Cesa) non sono ancora mensili.
+- **DB della CI.** `DB migrate (CI)` si è fermato con `column "operativa" does not exist`, perché a quel DB manca `20260731115341` e quindi `schools.operativa`. Il rollback è stato pulito. L'E2E ha provato il ramo «schema assente».
+
+Gate sul branch (commit `3502597b`): `eslint` 0 · `tsc` 0 · `vitest run` **1.721 file / 29.314 test passati (25 saltati)** · `npm run build` ok (`verifica-artefatto` ok, 2.982 file JS). Dopo, due test in più (sulle due route) passati da soli. E2E in CI al push. La migrazione `20261007170813_servizi_mensili.sql` la applica **l'integrazione Supabase al merge**: non va applicata a mano. Sul DB della CI si prova con `DB migrate (CI)`.
 
 **Il caso.** È la Parte 2 della richiesta del titolare del 2026-10-07: «la mensilità nelle categorie, come pomeridiano, doposcuola, pulmino». Il bambino iscritto al servizio nel mese in cui si generano le rette deve ricevere in automatico anche la voce del servizio di quel mese. Oggi queste voci si scrivono a mano e senza mese di competenza. In produzione ce ne sono di settembre e ottobre 2026.
 

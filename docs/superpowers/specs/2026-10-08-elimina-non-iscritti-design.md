@@ -110,7 +110,7 @@ Corpo: `{ alunno_id: uuid, mode: 'dryrun' | 'execute', scelta?: 'elimina' | 'eli
    Con registro primaria presente **tutte e tre** le scelte sono `false` e il motivo è
    `REGISTRO_PRIMARIA`.
 6. `execute`, `scelta` non disponibile → `409` con il codice del motivo
-   (`REGISTRO_PRIMARIA` vince su tutti, poi `ELIMINAZIONE_HA_PAGAMENTI`, `PAGAMENTI_NON_CANCELLABILI`).
+   (`REGISTRO_PRIMARIA_DA_CONSERVARE` vince su tutti, poi `ALUNNO_ELIMINAZIONE_HA_PAGAMENTI`, `ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI`). I nomi definitivi dei codici sono quelli del piano (Task 4).
 7. `execute` + `elimina` / `elimina_con_pagamenti`:
    a. **file prima** — con le funzioni dell'oblio, nessuna copia (`gdpr-erase-canale-unico`):
       `obliaFotoAlunno`, `obliaFotoNewsAlunno`, `obliaIntentiVideoAlunno`, `obliaPagelleAlunno`,
@@ -157,7 +157,7 @@ tocca è già bloccato al punto 4), `chat_vigilanza_accessi` (registro di accoun
 L'elenco delle tabelle che fanno «registro della primaria» — `valutazioni`, `pagelle`,
 `scrutinio_giudizi`, `scrutinio_comportamento`, `note_disciplinari`, `certificati_competenze` — vive
 in **una** costante TS, `TABELLE_REGISTRO_PRIMARIA` in `src/lib/alunni/registro-primaria.ts`, con
-`leggiRegistroPrimaria(supabase, alunnoId) → { ok: true, presente, conteggi } | { ok: false, errore }`
+`leggiRegistroPrimaria(supabase, alunnoId) → { ok: true, presente } | { ok: false, errore }` (e `alunniConRegistroPrimaria` per un elenco)
 (una lettura fallita non è mai «assente»). La usano:
 
 1. la nuova route `admin/students/elimina` (§4.2);

@@ -763,11 +763,10 @@ const CHIAMATA_ANAGRAFICA = /\/api\/admin\/students\?/g
  * Chiave: il percorso del file. Ognuno dichiara quante chiamate cieche ha.
  */
 const CHIAMANTI_SENZA_STATO: Record<string, Esenzione> = {
-  'src/app/(dashboard)/admin/students/page.tsx': {
-    scoperte: 1,
-    ragione:
-      'È l’anagrafica stessa: la linguetta «Non più iscritti» accanto chiede `?stato=ritirato`, quindi qui l’elenco completo è il contenuto della pagina, non una dimenticanza',
-  },
+  // `src/app/(dashboard)/admin/students/page.tsx` stava qui fino al 2026-10-09:
+  // l'elenco «Alunni» chiedeva la sede intera. Ora dichiara `elenco=frequentanti`
+  // (e la linguetta «Non iscritti» `elenco=non_iscritti`): non è più una chiamata
+  // cieca, e una voce rimasta qui sarebbe morta.
   'src/app/(dashboard)/admin/protocolli/page.tsx': {
     scoperte: 1,
     ragione:

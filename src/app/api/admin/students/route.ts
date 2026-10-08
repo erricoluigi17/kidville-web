@@ -128,7 +128,9 @@ const getQuerySchema = z.object({
     stato: z.string().optional(),
     // Quale ELENCO vuole chi chiama (2026-10-08). Assente = la sede intera, come
     // sempre: pagamenti, sezioni e generatori di categoria non lo passano.
-    //  · `frequentanti` — iscritti e sospesi CON una sezione: la linguetta «Alunni»;
+    //  · `frequentanti` — il complemento ESATTO di `non_iscritti` fra le schede non
+    //    anonimizzate: chi ha una sezione e non è ritirato (uno stato NULL o
+    //    anomalo CON sezione sta qui, lato protetto): la linguetta «Alunni»;
     //  · `non_iscritti` — ritirati (elenco chiuso) o senza sezione, anonimizzati
     //    esclusi: la linguetta «Non iscritti».
     elenco: z.enum(['frequentanti', 'non_iscritti']).optional(),

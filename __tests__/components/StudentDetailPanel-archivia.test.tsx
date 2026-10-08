@@ -394,9 +394,11 @@ describe('/admin/students/[id] — sul fallimento NON si naviga', () => {
     fireEvent.click(screen.getByRole('button', { name: ETICHETTA_CONFERMA }))
 
     // Il segno di spunta distingue l'annuncio dal riquadro di conferma, che
-    // nomina anch'esso i «non più iscritti» ed è ancora in pagina.
+    // nomina anch'esso i «non iscritti» ed è ancora in pagina. (Fino al
+    // 2026-10-09 la linguetta si chiamava «Non più iscritti»: il nome è cambiato
+    // quando ci sono entrati anche gli iscritti senza sezione.)
     const conferma = await screen.findByText(/✅/)
-    expect(conferma.textContent).toMatch(/non più iscritti/i)
+    expect(conferma.textContent).toMatch(/fra i non iscritti/i)
 
     /**
      * ⚠️ IL NOME ORA SI ASSERISCE, e questo blocco raccontava il contrario.

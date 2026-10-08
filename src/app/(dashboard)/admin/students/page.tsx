@@ -42,7 +42,7 @@ const tabDaQuery = (v: string | null): TipoVista =>
  * nessuno spegnerà, perché è lo stesso predicato a fare entrambe le cose.
  *
  * Le tab che caricano da sé sono TRE: SEZIONI (`SectionsView`), CODICI FISCALI
- * (`CodiciFiscaliDaVerificare`) e NON PIÙ ISCRITTI (`AlunniArchiviatiView`) —
+ * (`CodiciFiscaliDaVerificare`) e NON ISCRITTI (`AlunniArchiviatiView`) —
  * le ultime due hanno il loro hook e i loro stati, perché il numero sulla
  * pillola va saputo prima che qualcuno apra la linguetta.
  */
@@ -109,13 +109,16 @@ function AdminStudentsInner() {
   // di grandezza, quella è la strada; la misura va rifatta, non ricordata.
   const codiciFiscali = useCodiciFiscaliDaVerificare();
   /**
-   * «Non più iscritti»: stessa forma, e per lo stesso motivo — il CONTEGGIO va
+   * «Non iscritti»: stessa forma, e per lo stesso motivo — il CONTEGGIO va
    * sulla pillola della linguetta, quindi la lettura non può aspettare che
    * qualcuno la apra.
    *
-   * Il costo è una `GET /api/admin/students?stato=ritirato` in più a ogni
-   * apertura della pagina. È la stessa tabella e lo stesso filtro di sede della
-   * lettura che questa pagina fa comunque, ristretta a uno stato: sui 33 alunni
+   * Il costo è una `GET /api/admin/students?elenco=non_iscritti` in più a ogni
+   * apertura della pagina (ritirati e iscritti senza sezione). Le due letture
+   * dell'anagrafica alunni si DIVIDONO la sede: `elenco=frequentanti` qui sotto e
+   * `elenco=non_iscritti` qui, complementari per costruzione nella rotta — ogni
+   * scheda non anonimizzata sta in una sola delle due linguette. È la stessa
+   * tabella e lo stesso filtro di sede, ristretta a un elenco: sui 33 alunni
    * misurati in produzione il 2026-08-12 sono decine di righe e meno di un
    * millisecondo di lavoro sul database (vedi la misura, con `EXPLAIN ANALYZE`,
    * annotata qui sopra per i codici fiscali). Quando l'anagrafica crescerà di due
@@ -285,9 +288,12 @@ function AdminStudentsInner() {
     }
   }, [reFetchKey]);
 
+  // La linguetta «Alunni» = chi FREQUENTA: iscritti e sospesi con una sezione
+  // (più gli stati vuoti o anomali con sezione, lato protetto). Ritirati e
+  // iscritti senza sezione stanno nella linguetta «Non iscritti».
   const fetchStudents = useCallback(
     () => caricaElenco(
-      `/api/admin/students?limit=${LIMITE_ELENCO_ALUNNI}`,
+      `/api/admin/students?elenco=frequentanti&limit=${LIMITE_ELENCO_ALUNNI}`,
       (c) => (Array.isArray(c) ? (c as Student[]) : null),
       'anagrafica-alunni-non-caricata',
     ),
@@ -624,7 +630,7 @@ function AdminStudentsInner() {
       />
 
       {/* Toolbar / Filtri — nascosta per le tab che hanno i propri filtri
-          (Sezioni, Codici fiscali e Non più iscritti). */}
+          (Sezioni, Codici fiscali e Non iscritti). */}
       {viewType !== 'sections' && viewType !== 'codici' && viewType !== 'archiviati' && (
       <div className="bg-kidville-white rounded-card p-4 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-center">
         {/* Search */}
@@ -655,7 +661,8 @@ function AdminStudentsInner() {
                 {nomiClasse.map(nome => (
                   <option key={nome} value={nome}>{nome}</option>
                 ))}
-                <option value="">{t('filtroNonAssegnata')}</option>
+                {/* Niente più «Non assegnata»: chi non ha sezione sta nella
+                    linguetta «Non iscritti», non in questo elenco. */}
               </select>
             </div>
 
@@ -667,7 +674,7 @@ function AdminStudentsInner() {
             >
               <option value="all">{t('filtroTuttiStati')}</option>
               <option value="iscritto">{t('statoIscritto')}</option>
-              <option value="ritirato">{t('statoRitirato')}</option>
+              {/* Niente «Ritirato»: i ritirati stanno nella linguetta «Non iscritti». */}
               <option value="sospeso">{t('statoSospeso')}</option>
             </select>
           </>
@@ -688,7 +695,7 @@ function AdminStudentsInner() {
            fiscali: quello è l'errore dell'ELENCO alunni, e mostrarlo qui
            racconterebbe il guasto di un'altra tab al posto di un pannello che
            ha i suoi stati e il suo «Riprova». */
-        <AlunniArchiviatiView esito={archiviati} ruolo={ruolo} userId={userId} />
+        <AlunniArchiviatiView esito={archiviati} ruolo={ruolo} userId={userId} sezioni={availableSections} />
       ) : erroreElenco !== null ? (
         /* L'elenco NON è arrivato. Questo riquadro prende il posto di contatori
            e tabella: lasciarli renderebbe «0 alunni» e «Nessun alunno trovato»,

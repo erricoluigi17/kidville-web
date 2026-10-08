@@ -1,8 +1,20 @@
 'use client';
 
 /**
- * «NON PIÙ ISCRITTI» — la linguetta di /admin/students che elenca i bambini
- * archiviati, dice da quale classe sono usciti, e li riporta dentro.
+ * «NON ISCRITTI» — la linguetta di /admin/students con chi NON frequenta, in
+ * due gruppi: i RITIRATI (dice da quale classe sono usciti, e li riporta
+ * dentro) e gli ISCRITTI SENZA SEZIONE (a cui si assegna una sezione). Da
+ * entrambi segreteria e Direzione possono «Eliminare definitivamente».
+ *
+ * Fino al 2026-10-09 si chiamava «Non più iscritti» e leggeva `?stato=ritirato`:
+ * un iscritto senza sezione non stava né qui né — di fatto — da nessuna parte,
+ * perché registro, appello e mensa lavorano per sezione. Ora legge
+ * `?elenco=non_iscritti` (ritirati e senza sezione, anonimizzati esclusi), che
+ * la rotta definisce come complemento ESATTO di `?elenco=frequentanti` della
+ * linguetta «Alunni»: ogni scheda non anonimizzata sta in una delle due, e in
+ * una sola. Il gruppo «Ritirati» è `eNonPiuIscritto(stato)`; tutto il resto che
+ * arriva (iscritto, sospeso, stato vuoto o anomalo SENZA sezione) è «senza
+ * sezione» — la stessa regola della rotta, non una seconda.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * PERCHÉ UNA LINGUETTA E NON UNA PAGINA NUOVA
@@ -10,9 +22,8 @@
  * È la stessa anagrafica. Una rotta separata avrebbe duplicato i filtri, lo
  * scope di sede e i conteggi — cioè tre posti in cui la stessa regola può
  * divergere — e avrebbe chiesto una GET nuova per una domanda a cui
- * `GET /api/admin/students?stato=ritirato` risponde già: quel parametro è
- * dichiarato nello schema zod della rotta E applicato (`if (stato) query =
- * query.eq('stato', stato)`), verificato prima di scrivere questo file.
+ * `GET /api/admin/students` risponde già con il parametro `elenco`, dichiarato
+ * nello schema zod della rotta e applicato nella sua query.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * L'ELENCO SI CARICA QUI, NON QUANDO SI APRE LA LINGUETTA
@@ -56,8 +67,8 @@
  * Non si è ridotta la proiezione con un parametro apposta, e la ragione è che il
  * rimedio sarebbe peggio del male: una GET che consegna colonne diverse a
  * seconda di chi la chiama è una seconda regola di proiezione libera di divergere
- * dalla prima, e il filtro «stato=ritirato» è usato anche dall'elenco principale,
- * dove la ricerca e l'export quel campo lo vogliono. Quello che si può
+ * dalla prima, e la stessa GET serve anche l'elenco principale
+ * (`elenco=frequentanti`), dove la ricerca e l'export quel campo lo vogliono. Quello che si può
  * promettere è ciò che è scritto sopra e provato dal test: che di qui non esca a
  * schermo. Chi un giorno introdurrà una proiezione per vista cominci da qui.
  *
@@ -108,13 +119,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Archive, AlertTriangle, CheckCircle2, Eraser, Info, RotateCcw, Search, Undo2 } from 'lucide-react';
+import { Archive, AlertTriangle, CheckCircle2, Eraser, Info, RotateCcw, Search, Trash2, Undo2 } from 'lucide-react';
 import { SectionTitle, TABLE, TABLE_WRAP, TD, TH, TROW } from '@/components/ui/cockpit';
 import { btnClass } from '@/components/ui/Btn';
+import { EliminaDefinitivoDialog } from '@/components/features/admin/EliminaDefinitivoDialog';
 import { LiberaSpazioDialog } from '@/components/features/admin/LiberaSpazioDialog';
 import { HEADER_TOTALE, LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
-import { RUOLI_LIBERA_SPAZIO } from '@/lib/alunni/archiviazione';
-import { STATO_RITIRATO } from '@/lib/alunni/stato';
+import { RUOLI_ELIMINA_DEFINITIVO, RUOLI_LIBERA_SPAZIO } from '@/lib/alunni/archiviazione';
+import { eNonPiuIscritto } from '@/lib/alunni/stato';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { useDateFormat } from '@/lib/i18n/date';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -136,6 +148,13 @@ import { cx } from '@/lib/ui/cx';
 const RUOLI_DISTRUZIONE = new Set<string>(RUOLI_LIBERA_SPAZIO);
 
 /**
+ * I ruoli a cui l'interfaccia offre «Elimina definitivamente»: segreteria e
+ * Direzione. Stessa disciplina di `RUOLI_DISTRUZIONE`: la fonte è
+ * `@/lib/alunni/archiviazione`, la stessa che la rotta passa a `requireStaff`.
+ */
+const RUOLI_ELIMINA = new Set<string>(RUOLI_ELIMINA_DEFINITIVO);
+
+/**
  * La riga come la restituisce `admin/students:GET` — proiezione minima, più le
  * tre colonne dell'archiviazione, tutte OPZIONALI (vedi la testata).
  */
@@ -146,6 +165,8 @@ export interface AlunnoArchiviato {
     data_nascita?: string | null;
     scuola_id?: string | null;
     stato?: string | null;
+    /** `null` per chi sta fra gli «iscritti senza sezione». */
+    section_id?: string | null;
     archiviato_il?: string | null;
     archiviato_classe_sezione?: string | null;
     spazio_liberato_il?: string | null;
@@ -202,8 +223,10 @@ export function useAlunniArchiviati(): EsitoAlunniArchiviati {
         // ramo dimenticato in «non c'è nessun bambino archiviato».
         let prossima: 'pronto' | 'errore' = 'errore';
         try {
+            // Ritirati e iscritti senza sezione, anonimizzati esclusi: il
+            // complemento esatto dell'elenco «Alunni» (`elenco=frequentanti`).
             const res = await fetch(
-                `/api/admin/students?stato=${encodeURIComponent(STATO_RITIRATO)}&limit=${LIMITE_ELENCO_ALUNNI}`,
+                `/api/admin/students?elenco=non_iscritti&limit=${LIMITE_ELENCO_ALUNNI}`,
                 { headers: { 'x-sedi': reFetchKey } },
             ).catch((e: unknown) => {
                 motivo = nomeErrore(e);
@@ -301,15 +324,61 @@ export function useAlunniArchiviati(): EsitoAlunniArchiviati {
     return { fase, righe, totale, ricaricando, riletturaFallita, errore, ricarica };
 }
 
+/** Esito di «Assegna sezione». `errore: ''` = il server non ha detto perché: il ripiego tradotto lo sceglie il componente. */
+type EsitoAssegnazione = { ok: true } | { ok: false; errore: string };
+
+/**
+ * LA PATCH DI «ASSEGNA SEZIONE», fuori dal componente: non tocca stato, ritorna
+ * un esito e logga ogni fallimento (rete giù col NOME dell'errore, rifiuto con lo
+ * stato). Non lancia: `fetch` rifiutata e `messaggioErrore` sono già intercettate.
+ */
+async function assegnaSezioneAlServer(alunnoId: string, classe: string): Promise<EsitoAssegnazione> {
+    let motivo = '';
+    const res = await fetch('/api/admin/students', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [alunnoId], classe_sezione: classe }),
+    }).catch((e: unknown) => {
+        motivo = nomeErrore(e);
+        return null;
+    });
+    if (res === null) {
+        logClient({
+            livello: 'error', evento: 'fetch',
+            messaggio: `sezione-non-assegnata: ${motivo}`,
+            route: '/admin/students',
+        });
+        return { ok: false, errore: '' };
+    }
+    if (!res.ok) {
+        logClient({
+            livello: 'error', evento: 'fetch',
+            messaggio: 'sezione-non-assegnata',
+            route: '/admin/students', stato: res.status,
+        });
+        return { ok: false, errore: await messaggioErrore(res, '') };
+    }
+    return { ok: true };
+}
+
 export interface AlunniArchiviatiViewProps {
     esito: EsitoAlunniArchiviati;
     /** Il ruolo di chi guarda: decide se «Libera spazio» compare. Cortesia, non gate. */
     ruolo?: string | null;
     /** Passa avanti l'identità nell'URL della scheda, come fa il resto del cockpit. */
     userId?: string | null;
+    /**
+     * Le sezioni delle sedi attive, per «Assegna sezione». Ogni riga ne offre
+     * SOLO quelle della sede del bambino: una sezione di un altro plesso il
+     * server la rifiuterebbe (`classeEsisteInOgniSede`, admin/students:PATCH).
+     */
+    sezioni?: { id: string; name: string; scuola_id?: string | null }[];
 }
 
-export function AlunniArchiviatiView({ esito, ruolo, userId }: AlunniArchiviatiViewProps) {
+/** Il default FUORI dal componente: un `[]` nuovo a ogni render rifarebbe `sezioniDi`. */
+const NESSUNA_SEZIONE: NonNullable<AlunniArchiviatiViewProps['sezioni']> = [];
+
+export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_SEZIONE }: AlunniArchiviatiViewProps) {
     const t = useTranslations('adminStudents');
     const router = useRouter();
     const { sedi } = useSediAttive();
@@ -324,7 +393,11 @@ export function AlunniArchiviatiView({ esito, ruolo, userId }: AlunniArchiviatiV
      * proprio nell'istante in cui l'operatore vuole sapere su chi sta decidendo.
      */
     const [daLiberare, setDaLiberare] = useState<AlunnoArchiviato | null>(null);
-    /** L'esito dell'ultima riattivazione: `null` = non è ancora stato fatto niente. */
+    /** Il bambino su cui è aperta «Elimina definitivamente». `null` = chiusa. */
+    const [daEliminare, setDaEliminare] = useState<AlunnoArchiviato | null>(null);
+    /** La sezione scelta nella tendina di ogni riga senza sezione: id alunno → nome classe. */
+    const [classeScelta, setClasseScelta] = useState<Record<string, string>>({});
+    /** L'esito dell'ultimo comando (ritorno, sezione, eliminazione): `null` = non è ancora stato fatto niente. */
     const [messaggio, setMessaggio] = useState<{ tipo: 'ok' | 'errore'; testo: string } | null>(null);
     /** Su quale riga è in volo la riattivazione: serve solo all'etichetta del comando. */
     const [inVolo, setInVolo] = useState<string | null>(null);
@@ -367,6 +440,32 @@ export function AlunniArchiviatiView({ esito, ruolo, userId }: AlunniArchiviatiV
             return nomi !== 0 ? nomi : a.id.localeCompare(b.id);
         });
     }, [esito.righe, cerca]);
+
+    /**
+     * I DUE GRUPPI, con UN predicato solo: ritirato è `eNonPiuIscritto`, e tutto
+     * il resto che la rotta ha mandato qui è «senza sezione». Non c'è un terzo
+     * caso da inventare: uno stato vuoto o anomalo arriva qui solo se non ha
+     * sezione (con la sezione sta fra i frequentanti), e il suo posto è quello
+     * dove gli si può assegnare una sezione — non fra i ritirati, a cui si offre
+     * «Riporta fra gli iscritti».
+     */
+    const ritirati = useMemo(() => visibili.filter((r) => eNonPiuIscritto(r.stato)), [visibili]);
+    const senzaSezione = useMemo(() => visibili.filter((r) => !eNonPiuIscritto(r.stato)), [visibili]);
+
+    /**
+     * Le sezioni della sede del bambino, un NOME una volta sola (la PATCH lavora
+     * sul nome). Un bambino senza sede non ne riceve nessuna: confrontare `null`
+     * con `null` gli offrirebbe le sezioni senza plesso, cioè un'ipotesi.
+     */
+    const sezioniDi = useCallback(
+        (scuolaId: string | null | undefined): string[] =>
+            typeof scuolaId === 'string'
+                ? [...new Set(sezioni.filter((s) => s.scuola_id === scuolaId).map((s) => s.name))].sort((a, b) =>
+                      a.localeCompare(b, 'it'),
+                  )
+                : [],
+        [sezioni],
+    );
 
     const apriScheda = useCallback(
         (r: AlunnoArchiviato) => {
@@ -486,6 +585,40 @@ export function AlunniArchiviatiView({ esito, ruolo, userId }: AlunniArchiviatiV
     );
 
     /**
+     * «ASSEGNA SEZIONE» — la PATCH di sempre (`{ ids, classe_sezione }`), quella
+     * della barra di assegnazione massiva. Basta da sola: il trigger
+     * `trg_alunni_sync_section` risolve `section_id` dal nome DENTRO la sede del
+     * bambino, e con la sezione il bambino passa fra i frequentanti — esce di qui
+     * ed entra nell'elenco «Alunni», che si rilegge a ogni cambio di linguetta.
+     *
+     * Stessa disciplina di `riattiva` (guardia sul ref, ogni fallimento loggato),
+     * ma NON la sua forma: la chiamata vive in `assegnaSezioneAlServer`, fuori dal
+     * componente, e qui si attende con `.then`. Un `try/finally` qui dentro fa
+     * arrendere il compilatore React (`react-hooks/todo`, «TryStatement without a
+     * catch clause») — è la forma già usata da `EliminaDefinitivoDialog`.
+     */
+    const assegnaSezione = useCallback(
+        (r: AlunnoArchiviato) => {
+            const classe = classeScelta[r.id];
+            if (!classe || inVoloRef.current !== null) return;
+            inVoloRef.current = r.id;
+            setInVolo(r.id);
+            setMessaggio(null);
+            void assegnaSezioneAlServer(r.id, classe).then((fatto) => {
+                inVoloRef.current = null;
+                setInVolo(null);
+                if (!fatto.ok) {
+                    setMessaggio({ tipo: 'errore', testo: fatto.errore || t('arcErroreAssegnazione') });
+                    return;
+                }
+                setMessaggio({ tipo: 'ok', testo: t('arcEsitoSezioneAssegnata', { nome: nominativo(r), classe }) });
+                esito.ricarica();
+            });
+        },
+        [classeScelta, esito, nominativo, t],
+    );
+
+    /**
      * IL FUOCO NON CADE SUL VUOTO. Appena la riattivazione riesce, la riga sparisce
      * e con lei il bottone che era stato premuto: chi naviga da tastiera si
      * ritroverebbe con `document.activeElement` su `<body>`, cioè all'inizio della
@@ -523,6 +656,9 @@ export function AlunniArchiviatiView({ esito, ruolo, userId }: AlunniArchiviatiV
 
     const parziale = esito.totale > esito.righe.length;
     const puoLiberare = RUOLI_DISTRUZIONE.has(ruolo ?? '');
+    // Stessa cortesia, e stesso verso dell'errore: finché il ruolo non è
+    // risolto vale '' e il comando NON compare.
+    const puoEliminare = RUOLI_ELIMINA.has(ruolo ?? '');
 
     return (
         <div className="flex flex-col">
@@ -590,9 +726,9 @@ export function AlunniArchiviatiView({ esito, ruolo, userId }: AlunniArchiviatiV
                 </label>
             </div>
 
-            {/* L'ESITO DELL'ULTIMA RIATTIVAZIONE, sopra la tabella e con il fuoco
-                sopra: è l'unica cosa vera rimasta a schermo su un bambino che è
-                appena uscito dall'elenco. */}
+            {/* L'ESITO DELL'ULTIMO COMANDO (ritorno, sezione, eliminazione), sopra
+                le tabelle e con il fuoco sopra: è l'unica cosa vera rimasta a
+                schermo su un bambino che è appena uscito dall'elenco. */}
             {messaggio !== null && (
                 <p
                     ref={messaggioRef}
@@ -626,97 +762,232 @@ export function AlunniArchiviatiView({ esito, ruolo, userId }: AlunniArchiviatiV
                     <p className="font-maven mt-1 max-w-md text-sm text-kidville-sub">{t('arcFiltriVuotoTesto')}</p>
                 </div>
             ) : (
-                <div className="rounded-card bg-kidville-white p-4 shadow-sm">
-                    <p aria-live="polite" className="mb-3 font-maven text-[13px] text-kidville-sub">
+                <div className="flex flex-col gap-4">
+                    {/* Il conteggio di ciò che la ricerca lascia, annunciato a chi usa
+                        un lettore di schermo: i due titoli qui sotto dicono quanti
+                        per gruppo, questa riga dice quanti in tutto. */}
+                    <p aria-live="polite" className="font-maven text-[13px] text-kidville-sub">
                         {t('arcConteggio', { n: visibili.length })}
                     </p>
-                    <div className={TABLE_WRAP}>
-                        <table className={TABLE}>
-                            <caption className="sr-only">{t('arcTabellaDidascalia')}</caption>
-                            <thead>
-                                <tr>
-                                    <th scope="col" className={TH}>{t('arcColPersona')}</th>
-                                    <th scope="col" className={TH}>{t('arcColNascita')}</th>
-                                    {mostraSede && <th scope="col" className={TH}>{t('arcColSede')}</th>}
-                                    <th scope="col" className={TH}>{t('arcColEraIn')}</th>
-                                    <th scope="col" className={TH}>{t('arcColArchiviatoIl')}</th>
-                                    <th scope="col" className={TH}>{t('arcColComandi')}</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {visibili.map((r) => {
-                                    const eraIn = typeof r.archiviato_classe_sezione === 'string' && r.archiviato_classe_sezione !== ''
-                                        ? r.archiviato_classe_sezione
-                                        : null;
-                                    const quando = typeof r.archiviato_il === 'string' ? dataBreve(r.archiviato_il) : '';
-                                    const nascita = typeof r.data_nascita === 'string' ? dataBreve(r.data_nascita) : '';
-                                    return (
-                                        <tr key={r.id} className={TROW}>
-                                            <td className={cx(TD, 'font-maven text-sm font-semibold text-kidville-ink')}>
-                                                {nominativo(r)}
-                                                {/* Il badge dice un fatto IRREVERSIBILE, e va detto in
-                                                    parole oltre che col colore: foto, video e messaggi
-                                                    di questo bambino non ci sono più. */}
-                                                {r.spazio_liberato_il != null && (
-                                                    <span className="ml-2 inline-flex items-center gap-1 rounded-pill bg-kidville-neutral-soft px-2 py-0.5 font-barlow text-[11px] font-extrabold uppercase tracking-[0.03em] text-kidville-sub">
-                                                        <Eraser size={12} strokeWidth={2.2} aria-hidden="true" />
-                                                        {t('arcBadgeSpazioLiberato')}
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td className={cx(TD, 'font-maven text-sm text-kidville-sub')}>
-                                                {nascita || t('arcSenzaData')}
-                                            </td>
-                                            {mostraSede && (
-                                                <td className={cx(TD, 'font-maven text-sm text-kidville-sub')}>
-                                                    {nomeSede(r.scuola_id)}
-                                                </td>
-                                            )}
-                                            <td className={cx(TD, 'font-maven text-sm text-kidville-ink')}>
-                                                {eraIn ?? <span className="text-kidville-sub">{t('arcSenzaClasse')}</span>}
-                                            </td>
-                                            <td className={cx(TD, 'font-maven text-sm text-kidville-sub')}>
-                                                {quando || t('arcSenzaData')}
-                                            </td>
-                                            <td className={TD}>
-                                                <div className="flex flex-wrap gap-2">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => void riattiva(r)}
-                                                        // `aria-disabled`, NON `disabled`: marcarlo spegne
-                                                        // il fuoco, che in Chrome torna su `<body>`. Il
-                                                        // doppio invio lo ferma `inVoloRef`, che è sincrona.
-                                                        aria-disabled={inVolo !== null}
-                                                        className={btnClass('primary', 'sm')}
-                                                    >
-                                                        <Undo2 size={14} strokeWidth={2} aria-hidden="true" />
-                                                        {inVolo === r.id ? t('arcAzioneRiattivaInCorso') : t('arcAzioneRiattiva')}
-                                                    </button>
-                                                    {puoLiberare && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setDaLiberare(r)}
-                                                            className={btnClass('ghost', 'sm')}
-                                                        >
-                                                            <Eraser size={14} strokeWidth={2} aria-hidden="true" />
-                                                            {t('arcAzioneLiberaSpazio')}
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => apriScheda(r)}
-                                                        className={btnClass('ghost', 'sm')}
-                                                    >
-                                                        {t('arcAzioneApriScheda')}
-                                                    </button>
-                                                </div>
-                                            </td>
+
+                    {/* ── RITIRATI ── */}
+                    <section className="rounded-card bg-kidville-white p-4 shadow-sm" aria-labelledby="gruppo-ritirati">
+                        <h3 id="gruppo-ritirati" className="mb-3 font-barlow text-base font-bold uppercase text-kidville-green">
+                            {t('arcGruppoRitirati')}{' '}
+                            <span className="font-maven text-sm font-normal normal-case text-kidville-sub">({ritirati.length})</span>
+                        </h3>
+                        {ritirati.length === 0 ? (
+                            <p className="font-maven text-[13px] text-kidville-sub">{t('arcGruppoRitiratiVuoto')}</p>
+                        ) : (
+                            <div className={TABLE_WRAP}>
+                                <table className={TABLE}>
+                                    <caption className="sr-only">{t('arcTabellaDidascalia')}</caption>
+                                    <thead>
+                                        <tr>
+                                            <th scope="col" className={TH}>{t('arcColPersona')}</th>
+                                            <th scope="col" className={TH}>{t('arcColNascita')}</th>
+                                            {mostraSede && <th scope="col" className={TH}>{t('arcColSede')}</th>}
+                                            <th scope="col" className={TH}>{t('arcColEraIn')}</th>
+                                            <th scope="col" className={TH}>{t('arcColArchiviatoIl')}</th>
+                                            <th scope="col" className={TH}>{t('arcColComandi')}</th>
                                         </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
+                                    </thead>
+                                    <tbody>
+                                        {ritirati.map((r) => {
+                                            const eraIn = typeof r.archiviato_classe_sezione === 'string' && r.archiviato_classe_sezione !== ''
+                                                ? r.archiviato_classe_sezione
+                                                : null;
+                                            const quando = typeof r.archiviato_il === 'string' ? dataBreve(r.archiviato_il) : '';
+                                            const nascita = typeof r.data_nascita === 'string' ? dataBreve(r.data_nascita) : '';
+                                            return (
+                                                <tr key={r.id} className={TROW}>
+                                                    <td className={cx(TD, 'font-maven text-sm font-semibold text-kidville-ink')}>
+                                                        {nominativo(r)}
+                                                        {/* Il badge dice un fatto IRREVERSIBILE, e va detto in
+                                                            parole oltre che col colore: foto, video e messaggi
+                                                            di questo bambino non ci sono più. */}
+                                                        {r.spazio_liberato_il != null && (
+                                                            <span className="ml-2 inline-flex items-center gap-1 rounded-pill bg-kidville-neutral-soft px-2 py-0.5 font-barlow text-[11px] font-extrabold uppercase tracking-[0.03em] text-kidville-sub">
+                                                                <Eraser size={12} strokeWidth={2.2} aria-hidden="true" />
+                                                                {t('arcBadgeSpazioLiberato')}
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                    <td className={cx(TD, 'font-maven text-sm text-kidville-sub')}>
+                                                        {nascita || t('arcSenzaData')}
+                                                    </td>
+                                                    {mostraSede && (
+                                                        <td className={cx(TD, 'font-maven text-sm text-kidville-sub')}>
+                                                            {nomeSede(r.scuola_id)}
+                                                        </td>
+                                                    )}
+                                                    <td className={cx(TD, 'font-maven text-sm text-kidville-ink')}>
+                                                        {eraIn ?? <span className="text-kidville-sub">{t('arcSenzaClasse')}</span>}
+                                                    </td>
+                                                    <td className={cx(TD, 'font-maven text-sm text-kidville-sub')}>
+                                                        {quando || t('arcSenzaData')}
+                                                    </td>
+                                                    <td className={TD}>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void riattiva(r)}
+                                                                // `aria-disabled`, NON `disabled`: marcarlo spegne
+                                                                // il fuoco, che in Chrome torna su `<body>`. Il
+                                                                // doppio invio lo ferma `inVoloRef`, che è sincrona.
+                                                                aria-disabled={inVolo !== null}
+                                                                className={btnClass('primary', 'sm')}
+                                                            >
+                                                                <Undo2 size={14} strokeWidth={2} aria-hidden="true" />
+                                                                {inVolo === r.id ? t('arcAzioneRiattivaInCorso') : t('arcAzioneRiattiva')}
+                                                            </button>
+                                                            {puoLiberare && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setDaLiberare(r)}
+                                                                    className={btnClass('ghost', 'sm')}
+                                                                >
+                                                                    <Eraser size={14} strokeWidth={2} aria-hidden="true" />
+                                                                    {t('arcAzioneLiberaSpazio')}
+                                                                </button>
+                                                            )}
+                                                            {puoEliminare && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setDaEliminare(r)}
+                                                                    className={btnClass('ghost', 'sm', 'text-kidville-error-strong')}
+                                                                >
+                                                                    <Trash2 size={14} strokeWidth={2} aria-hidden="true" />
+                                                                    {t('arcAzioneElimina')}
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => apriScheda(r)}
+                                                                className={btnClass('ghost', 'sm')}
+                                                            >
+                                                                {t('arcAzioneApriScheda')}
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </section>
+
+                    {/* ── ISCRITTI SENZA SEZIONE ── */}
+                    <section className="rounded-card bg-kidville-white p-4 shadow-sm" aria-labelledby="gruppo-senza-sezione">
+                        <h3 id="gruppo-senza-sezione" className="mb-3 font-barlow text-base font-bold uppercase text-kidville-green">
+                            {t('arcGruppoSenzaSezione')}{' '}
+                            <span className="font-maven text-sm font-normal normal-case text-kidville-sub">({senzaSezione.length})</span>
+                        </h3>
+                        {senzaSezione.length === 0 ? (
+                            <p className="font-maven text-[13px] text-kidville-sub">{t('arcGruppoSenzaSezioneVuoto')}</p>
+                        ) : (
+                            <div className={TABLE_WRAP}>
+                                <table className={TABLE}>
+                                    <caption className="sr-only">{t('arcSenzaSezioneDidascalia')}</caption>
+                                    <thead>
+                                        <tr>
+                                            <th scope="col" className={TH}>{t('arcColPersona')}</th>
+                                            <th scope="col" className={TH}>{t('arcColNascita')}</th>
+                                            {mostraSede && <th scope="col" className={TH}>{t('arcColSede')}</th>}
+                                            <th scope="col" className={TH}>{t('arcColComandi')}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {senzaSezione.map((r) => {
+                                            const opzioni = sezioniDi(r.scuola_id);
+                                            const scelta = classeScelta[r.id] ?? '';
+                                            const nascita = typeof r.data_nascita === 'string' ? dataBreve(r.data_nascita) : '';
+                                            return (
+                                                <tr key={r.id} className={TROW}>
+                                                    <td className={cx(TD, 'font-maven text-sm font-semibold text-kidville-ink')}>
+                                                        {nominativo(r)}
+                                                    </td>
+                                                    <td className={cx(TD, 'font-maven text-sm text-kidville-sub')}>
+                                                        {nascita || t('arcSenzaData')}
+                                                    </td>
+                                                    {mostraSede && (
+                                                        <td className={cx(TD, 'font-maven text-sm text-kidville-sub')}>
+                                                            {nomeSede(r.scuola_id)}
+                                                        </td>
+                                                    )}
+                                                    <td className={TD}>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            {opzioni.length === 0 ? (
+                                                                // Una tendina vuota direbbe «scegli» senza niente da
+                                                                // scegliere: si dice perché, e la sezione si crea dalla
+                                                                // linguetta «Sezioni».
+                                                                <span className="font-maven text-[13px] text-kidville-sub">
+                                                                    {t('arcNessunaSezioneInSede')}
+                                                                </span>
+                                                            ) : (
+                                                                <>
+                                                                    <label className="sr-only" htmlFor={`sez-${r.id}`}>
+                                                                        {t('arcSceltaSezione', { nome: nominativo(r) })}
+                                                                    </label>
+                                                                    <select
+                                                                        id={`sez-${r.id}`}
+                                                                        value={scelta}
+                                                                        onChange={(e) => {
+                                                                            const valore = e.target.value;
+                                                                            setClasseScelta((m) => ({ ...m, [r.id]: valore }));
+                                                                        }}
+                                                                        className="rounded-input border-2 border-kidville-line bg-kidville-white px-2 py-1.5 font-maven text-sm text-kidville-ink focus:border-kidville-green focus:outline-none focus:ring-2 focus:ring-kidville-green/15"
+                                                                    >
+                                                                        <option value="">{t('arcSceltaSezioneVuota')}</option>
+                                                                        {opzioni.map((nome) => (
+                                                                            <option key={nome} value={nome}>
+                                                                                {nome}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => assegnaSezione(r)}
+                                                                        // `aria-disabled` e non `disabled`, come per
+                                                                        // «Riporta fra gli iscritti»: il click a vuoto
+                                                                        // lo ferma `assegnaSezione` (nessuna scelta, o
+                                                                        // un altro comando in volo).
+                                                                        aria-disabled={inVolo !== null || scelta === ''}
+                                                                        className={btnClass('primary', 'sm')}
+                                                                    >
+                                                                        {inVolo === r.id ? t('arcAzioneAssegnaSezioneInCorso') : t('arcAzioneAssegnaSezione')}
+                                                                    </button>
+                                                                </>
+                                                            )}
+                                                            {puoEliminare && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setDaEliminare(r)}
+                                                                    className={btnClass('ghost', 'sm', 'text-kidville-error-strong')}
+                                                                >
+                                                                    <Trash2 size={14} strokeWidth={2} aria-hidden="true" />
+                                                                    {t('arcAzioneElimina')}
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => apriScheda(r)}
+                                                                className={btnClass('ghost', 'sm')}
+                                                            >
+                                                                {t('arcAzioneApriScheda')}
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </section>
                 </div>
             )}
 
@@ -725,13 +996,26 @@ export function AlunniArchiviatiView({ esito, ruolo, userId }: AlunniArchiviatiV
                 N stati da tenere allineati. Il bambino su cui è aperto è `daLiberare`.
 
                 `onLiberato` rilegge l'elenco perché la riga NON esce di qui — resta
-                fra i «non più iscritti» — ma cambia: prende il badge «Spazio
-                liberato», che è l'unica cosa a schermo che dica che foto, video e
-                messaggi non ci sono più. */}
+                fra i ritirati — ma cambia: prende il badge «Spazio liberato», che è
+                l'unica cosa a schermo che dica che foto, video e messaggi non ci
+                sono più. */}
             <LiberaSpazioDialog
                 alunno={daLiberare}
                 onChiudi={() => setDaLiberare(null)}
                 onLiberato={esito.ricarica}
+            />
+
+            {/* «ELIMINA DEFINITIVAMENTE», montata anch'essa UNA volta per la vista.
+                A operazione riuscita la frase della finestra diventa l'esito della
+                vista — con il fuoco sopra, perché la riga sta per sparire — e
+                l'elenco si rilegge: una scheda eliminata o anonimizzata esce di qui. */}
+            <EliminaDefinitivoDialog
+                alunno={daEliminare}
+                onChiudi={() => setDaEliminare(null)}
+                onEliminato={(testo) => {
+                    setMessaggio({ tipo: 'ok', testo });
+                    esito.ricarica();
+                }}
             />
         </div>
     );

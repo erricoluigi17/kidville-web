@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { STATI_TENDINA } from '@/lib/alunni/stato'
+import { STATI_CHE_FREQUENTANO, STATI_TENDINA } from '@/lib/alunni/stato'
 
 // =============================================================================
 // LA PROMESSA CHE `@/lib/alunni/stato` FACEVA SENZA POTERLA MANTENERE.
@@ -86,6 +86,28 @@ const SENTINELLE: Record<string, string[]> = {
 }
 
 /**
+ * GLI STATI CHE OGNI TENDINA DEVE OFFRIRE, per file e senza ripiego.
+ *
+ * La tendina che SCRIVE (`StudentDetailPanel`) offre tutti gli stati classificati:
+ * è da lì che uno stato entra in tabella.
+ *
+ * Il filtro dell'elenco «Alunni» (`page.tsx`) offre dal 2026-10-09 solo gli stati
+ * di chi FREQUENTA: quella linguetta legge `elenco=frequentanti`, e i ritirati
+ * stanno nella linguetta «Non iscritti», divisi in un gruppo loro — filtrabili lì,
+ * non qui, dove un'opzione «Ritirato» darebbe sempre zero righe. La domanda del
+ * lock resta la stessa («nessun bambino esiste in anagrafica senza essere
+ * filtrabile da qualche parte»), e il valore atteso non è scritto a mano: è la
+ * costante che decide il confine. Uno stato nuovo dalla parte di chi frequenta la
+ * cambia, e questo test torna rosso finché il filtro non lo offre; un «ritirato»
+ * rimesso nel filtro è rosso lo stesso, perché offrirebbe un elenco vuoto per
+ * costruzione.
+ */
+const ATTESI: Record<string, readonly string[]> = {
+  'src/components/features/admin/StudentDetailPanel.tsx': STATI_TENDINA,
+  'src/app/(dashboard)/admin/students/page.tsx': STATI_CHE_FREQUENTANO,
+}
+
+/**
  * Le opzioni della `<select>` DELLO STATO, prese dal blocco intero.
  *
  * Non si cercano le opzioni per nome — sarebbe circolare: troverebbe solo quelle
@@ -127,12 +149,12 @@ describe('lock architettura · ogni stato che la tendina offre è classificato d
     if (opzioni.length === 0) return // deroga già verificata: rende dalla costante
     expect(
       [...new Set(opzioni.map((o) => o.valore))].sort(),
-      `Gli stati offerti da ${file} non coincidono con \`STATI_TENDINA\`. Uno stato ` +
+      `Gli stati offerti da ${file} non coincidono con quelli attesi (\`ATTESI\`). Uno stato ` +
       `che la tendina scrive e il modulo non conosce non è classificabile: per ` +
       `\`gdpr/candidates\` quel bambino non esiste e per \`gdpr/erase\` è un 409 — ` +
       `cioè un diritto all'oblio che il prodotto non sa evadere. Aggiungilo a ` +
       `\`STATI_TENDINA\` e DECIDI di che parte del confine sta.`,
-    ).toEqual([...STATI_TENDINA].sort())
+    ).toEqual([...ATTESI[file]].sort())
   })
 
   it.each(TENDINE)('%s non attacca a uno stato l\'etichetta di un altro', (file) => {

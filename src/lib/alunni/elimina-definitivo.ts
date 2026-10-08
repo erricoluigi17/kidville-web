@@ -253,7 +253,7 @@ export interface EsitoFileAlunno {
     fascicolo: number
     allegati_chat: number
     documento: number
-    /** 1 se il documento d'identità lo nomina anche un'altra scheda: allora non si toglie. */
+    /** 1 se il documento d'identità lo nomina anche un'altra scheda o una domanda d'iscrizione: allora non si toglie. */
     documento_condiviso: number
     restanti: number
   }
@@ -272,13 +272,26 @@ const NUMERI_ZERO: EsitoFileAlunno['numeri'] = {
   restanti: 0,
 }
 
+/** Solo «la tabella non esiste» (DB E2E della CI non migrato): una COLONNA assente è un guasto. */
+const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
+
 /**
- * Un'ALTRA scheda nomina lo stesso documento d'identità? (un altro alunno o un
- * genitore). `null` = non si è potuto sapere.
+ * Qualcun ALTRO nomina lo stesso documento d'identità? Un altro alunno, un
+ * genitore o una domanda d'iscrizione. `null` = non si è potuto sapere.
  *
- * È il caso del doppione: la scheda nata da un refuso copia il `documento_path`
- * del bambino vero, e togliere il file eliminando il doppione lascerebbe la
- * scheda vera senza documento. Un file che non è solo suo non è suo da togliere.
+ * Un file che non è solo suo non è suo da togliere. Due casi:
+ *  · il DOPPIONE: la scheda nata da un refuso copia il `documento_path` del
+ *    bambino vero, e togliere il file eliminando il doppione lascerebbe la scheda
+ *    vera senza documento;
+ *  · la DOMANDA D'ISCRIZIONE, che per decisione del titolare resta in Iscrizioni
+ *    con il suo allegato. Misurato in produzione il 2026-10-09: 243 alunni su 243
+ *    con `documento_path` hanno lo STESSO file allegato alla loro domanda. In
+ *    pratica, quindi, il documento resta con la domanda e se ne va col ciclo di
+ *    vita della domanda (la retention delle iscrizioni, o l'oblio) — non con
+ *    l'eliminazione della scheda.
+ *
+ * Le domande si cercano con lo stesso filtro dell'oblio (`obliaIscrizioni`,
+ * `src/lib/gdpr/esegui.ts`): contenimento JSONB per ramo, `children` e `adults`.
  */
 async function documentoCondiviso(
   supabase: SupabaseClient,
@@ -309,7 +322,36 @@ async function documentoCondiviso(
     )
     return null
   }
-  return genitori.data.length > 0
+  if (genitori.data.length > 0) return true
+
+  for (const ramo of ['children', 'adults'] as const) {
+    const domande = await supabase
+      .from('enrollment_submissions')
+      .select('id')
+      .contains('data', { [ramo]: [{ documento_path: percorso }] })
+      .limit(1)
+    if (domande.error) {
+      const code = (domande.error as { code?: string }).code
+      if (code && TABELLA_ASSENTE.has(code)) {
+        // Sul DB E2E della CI la tabella non c'è: da lì il file non è nominato,
+        // come fa l'oblio. In produzione non deve succedere, quindi si dice.
+        logEvento('db', 'warn', {
+          operazione: op,
+          esito: 'tabella-assente-trattata-come-vuota',
+          tipo: 'enrollment_submissions',
+        })
+        return false
+      }
+      logErrore({ operazione: op, evento: 'elimina_documento_condiviso_domande' }, domande.error)
+      return null
+    }
+    if (!Array.isArray(domande.data)) {
+      logErrore({ operazione: op, evento: 'elimina_documento_condiviso_domande' }, { message: 'risposta senza righe' })
+      return null
+    }
+    if (domande.data.length > 0) return true
+  }
+  return false
 }
 
 /**
@@ -356,7 +398,7 @@ export async function rimuoviFileAlunno(
         esito: 'elimina-documento-condiviso',
         entita_tipo: 'alunni',
         entita_id: alunno.id,
-        msg: `${op}: il documento d'identità è nominato anche da un'altra scheda, quindi resta nell'archivio`,
+        msg: `${op}: il documento d'identità è nominato anche da un'altra scheda o da una domanda d'iscrizione, quindi resta nell'archivio`,
       })
     }
   }

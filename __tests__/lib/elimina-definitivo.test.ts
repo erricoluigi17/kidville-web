@@ -32,6 +32,7 @@ function db(extra: Partial<DBFinto> = {}): DBFinto {
     news_posts: [],
     chat_threads: [],
     chat_messages: [],
+    enrollment_submissions: [],
     ...extra,
   }
 }
@@ -335,35 +336,77 @@ describe('rimuoviFileAlunno — i file escono, o la scheda resta', () => {
     expect(rimossi).toEqual([{ bucket: 'form_attachments', percorsi: [DOC] }])
   })
 
-  it.each<{ tabella: 'alunni' | 'parents' }>([{ tabella: 'alunni' }, { tabella: 'parents' }])(
-    'un documento che un’altra riga di $tabella nomina NON si toglie: non è suo',
+  // Chi altro può nominare lo stesso file: un altro alunno (il doppione), un
+  // genitore, o la DOMANDA d'iscrizione — nel ramo dei bambini o degli adulti.
+  const ALTRE_SCHEDE: { caso: string; extra: Partial<DBFinto> }[] = [
+    { caso: 'un altro alunno', extra: { alunni: [{ id: AL, documento_path: DOC }, { id: DOPPIONE, documento_path: DOC }] } },
+    { caso: 'un genitore', extra: { parents: [{ id: 'p-9', documento_path: DOC }] } },
+    {
+      caso: 'una domanda d’iscrizione (bambini)',
+      extra: { enrollment_submissions: [{ id: 'dom-1', data: { children: [{ nome: 'Bambino', documento_path: DOC }], adults: [] } }] },
+    },
+    {
+      caso: 'una domanda d’iscrizione (adulti)',
+      extra: { enrollment_submissions: [{ id: 'dom-1', data: { children: [], adults: [{ nome: 'Adulto', documento_path: DOC }] } }] },
+    },
+  ]
+
+  it.each(ALTRE_SCHEDE)('un documento che nomina anche $caso NON si toglie: non è solo suo', async ({ extra }) => {
+    const { client, rimossi } = conStorage(db({ alunni: [{ id: AL, documento_path: DOC }], ...extra }))
+    const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
+    expect(esito.ok).toBe(true)
+    expect(esito.numeri).toMatchObject({ documento: 0, documento_condiviso: 1, restanti: 0 })
+    expect(rimossi).toEqual([])
+  })
+
+  it('una domanda che nomina un ALTRO file non rende condiviso il suo', async () => {
+    const { client, rimossi } = conStorage(
+      db({
+        alunni: [{ id: AL, documento_path: DOC }],
+        enrollment_submissions: [{ id: 'dom-1', data: { children: [{ documento_path: 'iscrizioni/prova/altro.pdf' }] } }],
+      }),
+    )
+    const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
+    expect(esito.numeri).toMatchObject({ documento: 1, documento_condiviso: 0 })
+    expect(rimossi).toEqual([{ bucket: 'form_attachments', percorsi: [DOC] }])
+  })
+
+  it.each([{ tabella: 'alunni' }, { tabella: 'parents' }, { tabella: 'enrollment_submissions' }])(
+    'non si sa se $tabella nomina il documento → ok=false, e nessun file esce',
     async ({ tabella }) => {
       const dati = db({
-        alunni: [
-          { id: AL, documento_path: DOC },
-          ...(tabella === 'alunni' ? [{ id: DOPPIONE, documento_path: DOC }] : []),
-        ],
-        parents: tabella === 'parents' ? [{ id: 'p-9', documento_path: DOC }] : [],
+        alunni: [{ id: AL, documento_path: DOC }],
+        galleria_media_v2: [{ id: 'm-1', file_url: 'uploads/u1/sua.jpg', file_type: 'foto', tag_students: [AL] }],
       })
-      const { client, rimossi } = conStorage(dati)
-      const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
-      expect(esito.ok).toBe(true)
-      expect(esito.numeri).toMatchObject({ documento: 0, documento_condiviso: 1, restanti: 0 })
-      expect(rimossi).toEqual([])
-    },
-  )
-
-  it.each<{ tabella: 'alunni' | 'parents' }>([{ tabella: 'alunni' }, { tabella: 'parents' }])(
-    'non si sa se $tabella condivide il documento → ok=false, e niente esce',
-    async ({ tabella }) => {
-      const { client, rimossi } = conStorage(db({ alunni: [{ id: AL, documento_path: DOC }] }), {
-        errori: { [tabella]: GUASTO },
-      })
+      const { client, rimossi } = conStorage(dati, { errori: { [tabella]: GUASTO } })
       const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
       expect(esito.ok).toBe(false)
       expect(rimossi).toEqual([])
+      expect(dati.galleria_media_v2).toHaveLength(1)
     },
   )
+
+  it.each(['42P01', 'PGRST205'])(
+    'domande assenti dallo schema (%s, il DB E2E non migrato): non condiviso da lì, il documento esce',
+    async (code) => {
+      const { client, rimossi } = conStorage(db({ alunni: [{ id: AL, documento_path: DOC }] }), {
+        errori: { enrollment_submissions: { code, message: 'assente' } },
+      })
+      const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
+      expect(esito.ok).toBe(true)
+      expect(esito.numeri).toMatchObject({ documento: 1, documento_condiviso: 0 })
+      expect(rimossi).toEqual([{ bucket: 'form_attachments', percorsi: [DOC] }])
+    },
+  )
+
+  it('una COLONNA assente (42703) sulle domande non è «tabella assente»: ok=false, nessun file esce', async () => {
+    const { client, rimossi } = conStorage(db({ alunni: [{ id: AL, documento_path: DOC }] }), {
+      errori: { enrollment_submissions: { code: '42703', message: 'column does not exist' } },
+    })
+    const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
+    expect(esito.ok).toBe(false)
+    expect(rimossi).toEqual([])
+  })
 
   it('una foto del blog che un ALTRO articolo usa resta, e si conta in news_trattenuti', async () => {
     const POST = '20000000-0000-4000-8000-000000000001'

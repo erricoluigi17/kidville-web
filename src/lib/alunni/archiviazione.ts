@@ -55,6 +55,21 @@ export type MotivoArchiviazione = (typeof MOTIVI_ARCHIVIAZIONE)[number]
 export const RUOLI_LIBERA_SPAZIO = ['admin', 'coordinator'] as const
 
 /**
+ * Chi può ELIMINARE DEFINITIVAMENTE una scheda dai «non iscritti»
+ * (`admin/students/elimina`). Decisione del titolare (2026-10-08): anche la
+ * SEGRETERIA, che è chi corregge le anagrafiche ogni giorno — a differenza di
+ * «Libera spazio», che resta della Direzione. Le difese sono altrove: anteprima
+ * con i numeri, isolamento di sede, funzione SQL che ricontrolla tutto, traccia
+ * scritta solo a cose fatte.
+ *
+ * Vive qui per la stessa ragione di `RUOLI_LIBERA_SPAZIO`: lo leggono il gate
+ * del server e il filtro di cortesia del client, e due copie divergerebbero in
+ * silenzio. Il test della route asserisce il valore LETTERALE passato a
+ * `requireStaff`.
+ */
+export const RUOLI_ELIMINA_DEFINITIVO = ['admin', 'coordinator', 'segreteria'] as const
+
+/**
  * LE SEI COLONNE che la migrazione ha aggiunto, e senza le quali l'archiviazione
  * NON si fa a metà.
  *

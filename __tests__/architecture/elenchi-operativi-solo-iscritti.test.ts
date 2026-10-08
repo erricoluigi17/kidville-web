@@ -824,7 +824,7 @@ describe('i chiamanti dell’anagrafica dichiarano lo stato che vogliono', () =>
     const cieche = tutte.filter((c) => !c.conStato && !(c.percorso in CHIAMANTI_SENZA_STATO))
     expect(
       cieche.map((c) => `${c.percorso}:${c.riga}`),
-      'Chiamate a `/api/admin/students` senza `stato=` (o `elenco=`; `elenco=` è per l'anagrafica e comprende i sospesi, gli elenchi operativi usano `stato=iscritto`): la risposta PREDEFINITA è la sede intera, ' +
+      'Chiamate a `/api/admin/students` senza `stato=` (o `elenco=`; `elenco=` è per l’anagrafica e comprende i sospesi, gli elenchi operativi usano `stato=iscritto`): la risposta PREDEFINITA è la sede intera, ' +
         'archiviati compresi. Aggiungi `stato=iscritto` se è un elenco operativo, oppure aggiungi il ' +
         'file a `CHIAMANTI_SENZA_STATO` con la ragione per cui vuole anche chi non frequenta più.',
     ).toEqual([])

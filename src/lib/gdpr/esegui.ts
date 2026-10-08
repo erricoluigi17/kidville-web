@@ -81,15 +81,20 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  *  · `utente_id` = il destinatario, cioè l'account (`utenti.id`) del genitore —
  *    non `parents.id`: è la stessa trappola già pagata su
  *    `news_visualizzazioni` e `push_subscriptions`.
+ *
+ * `completo: false` = una cancellazione è stata rifiutata (schema assente escluso, che degrada
+ * come il resto del file). Aggiunto il 2026-10-09 per `bonificaTracceTestualiAlunno`, che deve
+ * poter dire «non tutto è uscito»; `anonimizzaParent` legge solo `rimosse`, come prima.
  */
 async function obliaNotifiche(
   supabase: SupabaseClient,
   bersagli: { entitaIds?: string[]; utenteIds?: string[] },
   op: string,
-): Promise<number> {
+): Promise<{ rimosse: number; completo: boolean }> {
   const entitaIds = [...new Set((bersagli.entitaIds ?? []).filter(Boolean))]
   const utenteIds = [...new Set((bersagli.utenteIds ?? []).filter(Boolean))]
   let rimosse = 0
+  let completo = true
 
   const cancella = async (colonna: 'entita_id' | 'utente_id', ids: string[]) => {
     if (ids.length === 0) return
@@ -99,6 +104,7 @@ async function obliaNotifiche(
       // «nessuna notifica da togliere», cioè un oblio dichiarato e non fatto.
       if (!schemaAssente(error)) {
         logErrore({ operazione: op, evento: 'oblio_notifiche' }, error)
+        completo = false
       }
       return
     }
@@ -107,7 +113,7 @@ async function obliaNotifiche(
 
   await cancella('entita_id', entitaIds)
   await cancella('utente_id', utenteIds)
-  return rimosse
+  return { rimosse, completo }
 }
 
 /**
@@ -1538,7 +1544,7 @@ export async function anonimizzaParent(
   // `utenti.id`, non un `parents.id`.
   let notificheRimosse = 0
   if (authUserId) {
-    notificheRimosse = await obliaNotifiche(supabase, { utenteIds: [authUserId] }, op)
+    notificheRimosse = (await obliaNotifiche(supabase, { utenteIds: [authUserId] }, op)).rimosse
   }
 
   let pushSubscriptionsRimosse = 0
@@ -1881,6 +1887,230 @@ export async function obliaIntentiVideoAlunno(
   return { intenti, revocati, letto: true }
 }
 
+/** Esito di `bonificaTracceTestualiAlunno`. */
+export interface EsitoTracceTestuali {
+  /** Righe di `notifiche` che nominavano il bambino, rimosse. */
+  notificheRimosse: number
+  /** Segnalazioni di moderazione su sue voci di diario, suoi media, suoi thread: `motivo`/`note_gestione` a null. */
+  segnalazioniBonificate: number
+  /** Sospensioni dei suoi thread di chat: `motivo` a null. */
+  sospensioniBonificate: number
+  /**
+   * `false` = almeno una lettura o una scrittura non è riuscita (lo schema assente non conta: degrada
+   * in silenzio come il resto del file). Chi lo riceve non può dichiarare la pulizia compiuta.
+   */
+  completo: boolean
+  /**
+   * Gli id dei thread di chat del bambino, letti qui. Esposti perché `anonimizzaAlunno` ci toglie
+   * poi gli allegati (`obliaAllegatiChat`) e non deve rileggerli: un solo posto in cui è scritto che i
+   * thread di un bambino si trovano per `student_id`.
+   */
+  threadIds: string[]
+  /** `false` = l'elenco dei thread non si è potuto leggere: segnalazioni e sospensioni di chat non sono state guardate. */
+  threadLetti: boolean
+  /** `false` = l'audit delle cancellazioni di diario senza `entita_id` non si è potuto bonificare. */
+  auditDiarioCompleto: boolean
+}
+
+/**
+ * LE TRACCE DI TESTO SUL BAMBINO CHE NON HANNO UNA FK VERSO `alunni` — una procedura, due canali.
+ *
+ * PERCHÉ ESISTE (2026-10-09). Questi passi vivevano dentro `anonimizzaAlunno`. Poi è arrivato un
+ * secondo canale che fa sparire un bambino dall'archivio: l'ELIMINAZIONE DEFINITIVA di una scheda non
+ * iscritta (`src/lib/alunni/elimina-definitivo.ts`), che cancella la riga `alunni` e ciò che le sta
+ * appeso in CASCADE. Ma le tracce trattate qui non le sono appese — non hanno FK, apposta, per
+ * sopravvivere agli altri oblii — e dopo la cancellazione resterebbero lì col nome del bambino o un
+ * suo dato sanitario, senza più nessuna riga a cui ricondurle e quindi senza che nessuno possa
+ * ritrovarle. Il principio è quello di `gdpr-erase-canale-unico.test.ts`: un canale nuovo passa dalle
+ * STESSE funzioni dell'oblio, mai da una copia. La copia diverge in silenzio: è già successo.
+ *
+ * Cosa tratta:
+ *  · le NOTIFICHE che lo nominano (`entita_id` = l'alunno o una delle sue presenze): la riga si
+ *    cancella, perché la riga È il messaggio (vedi `obliaNotifiche`);
+ *  · le SEGNALAZIONI di moderazione sulle sue voci di diario, sui media in cui è taggato e sui
+ *    messaggi dei suoi thread: si azzerano `motivo` e `note_gestione`;
+ *  · le SOSPENSIONI dei suoi thread: si azzera `motivo` (le righe andrebbero via in CASCADE col
+ *    thread, ma l'oblio non cancella i thread, e il testo va tolto comunque);
+ *  · l'AUDIT delle cancellazioni di diario scritte senza `entita_id` (`bonificaAuditDiarioSenzaId`).
+ *
+ * ⚠️ L'ORDINE È UN VINCOLO PER CHI LA CHIAMA. Gli id di presenze, voci di diario, media e thread li
+ * legge da sé, qui dentro: va chiamata PRIMA di qualunque passo che cancelli quelle righe —
+ * in `anonimizzaAlunno` prima di `obliaFotoAlunno`, nell'eliminazione definitiva prima della funzione
+ * SQL. Dopo, le segnalazioni sarebbero irraggiungibili: l'unico aggancio è l'id dell'oggetto segnalato.
+ *
+ * ⚠️ NON SCRIVE UN LOG DI SUCCESSO PROPRIO, e non per dimenticanza: era codice inline di
+ * `anonimizzaAlunno`, che i suoi conteggi li porta già nella riga `oblio-eseguito` di chi la chiama, e
+ * un'estrazione che aggiungesse una riga cambierebbe i log dell'oblio. I conteggi tornano al chiamante,
+ * che li scrive nel proprio esito. Ogni ramo d'errore invece logga qui, come prima.
+ */
+export async function bonificaTracceTestualiAlunno(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  op: string,
+): Promise<EsitoTracceTestuali> {
+  let completo = true
+
+  // a. LE NOTIFICHE CHE NOMINANO IL BAMBINO (art. 17).
+  //
+  //    Le notifiche del registro puntano alla riga di `presenze` (`entita_id`),
+  //    non all'alunno: per ritrovarle servono gli id delle sue presenze — TUTTE,
+  //    non solo quelle col motivo bonificato, perché il nome sta nel corpo della
+  //    notifica anche quando la presenza non aveva alcun motivo scritto.
+  //    All'elenco si aggiunge l'id dell'alunno stesso, che è ciò a cui puntano
+  //    `assenza_non_comunicata` e `mensa_saldo_basso`.
+  const { data: righePresenze, error: errIdPresenze } = await supabase
+    .from('presenze')
+    .select('id')
+    .eq('alunno_id', alunnoId)
+  if (errIdPresenze && !schemaAssente(errIdPresenze)) {
+    logErrore({ operazione: op, evento: 'oblio_notifiche_presenze_non_lette' }, errIdPresenze)
+    completo = false
+  }
+  const idPresenze = ((righePresenze ?? []) as { id?: unknown }[])
+    .map((r) => r.id)
+    .filter((v): v is string => typeof v === 'string')
+  const notifiche = await obliaNotifiche(supabase, { entitaIds: [alunnoId, ...idPresenze] }, op)
+  if (!notifiche.completo) completo = false
+
+  // b. Bonifica del testo libero UGC (C5) agganciato ai CONTENUTI del minore.
+  //    Le segnalazioni non hanno FK verso l'alunno: l'aggancio passa dall'oggetto
+  //    segnalato (voce di diario / media / thread), via tipo_oggetto + oggetto_id
+  //    o thread_id. Ogni ramo degrada in silenzio se lo schema C5 è assente.
+  let segnalazioniBonificate = 0
+  let sospensioniBonificate = 0
+
+  // b1) Segnalazioni su voci di diario dell'alunno.
+  const { data: diarioRows, error: errDiario } = await supabase
+    .from('eventi_diario')
+    .select('id')
+    .eq('alunno_id', alunnoId)
+  if (errDiario && !schemaAssente(errDiario)) {
+    logErrore({ operazione: op, evento: 'oblio_segnalazioni_diario_select' }, errDiario)
+    completo = false
+  }
+  const diarioIds = ((diarioRows ?? []) as { id: string }[]).map((d) => d.id)
+  if (diarioIds.length > 0) {
+    const { data: segDiario, error: errSegD } = await supabase
+      .from('segnalazioni')
+      .update({ motivo: null, note_gestione: null })
+      .eq('tipo_oggetto', 'voce_diario')
+      .in('oggetto_id', diarioIds)
+      .select('id')
+    if (errSegD) {
+      if (!schemaAssente(errSegD)) {
+        logErrore({ operazione: op, evento: 'oblio_segnalazioni_diario' }, errSegD)
+        completo = false
+      }
+    } else {
+      segnalazioniBonificate += (segDiario ?? []).length
+    }
+  }
+
+  // b2) Segnalazioni su media di galleria taggati all'alunno.
+  // `ancheNelCestino`: questa lettura serve a TROVARE le segnalazioni da bonificare,
+  // e il testo libero di una segnalazione su una foto cestinata è PII su un minore
+  // esattamente come quello su una foto viva. Filtrare qui non lascerebbe in piedi
+  // una foto: lascerebbe in piedi il `motivo` scritto da un adulto su un bambino.
+  const { data: mediaRows, error: errMedia } = await ancheNelCestino(
+    supabase
+      .from('galleria_media_v2')
+      .select('id')
+      .contains('tag_students', [alunnoId]),
+    'ricerca delle segnalazioni da bonificare: il motivo e le note scritte su una foto ' +
+      'cestinata sono testo libero su un minore come quelli su una foto viva, e filtrare ' +
+      "qui li lascerebbe in tabella dopo l'oblio.",
+  )
+  if (errMedia && !schemaAssente(errMedia)) {
+    logErrore({ operazione: op, evento: 'oblio_segnalazioni_media_select' }, errMedia)
+    completo = false
+  }
+  const mediaIds = ((mediaRows ?? []) as { id: string }[]).map((m) => m.id)
+  if (mediaIds.length > 0) {
+    const { data: segMedia, error: errSegM } = await supabase
+      .from('segnalazioni')
+      .update({ motivo: null, note_gestione: null })
+      .eq('tipo_oggetto', 'media_galleria')
+      .in('oggetto_id', mediaIds)
+      .select('id')
+    if (errSegM) {
+      if (!schemaAssente(errSegM)) {
+        logErrore({ operazione: op, evento: 'oblio_segnalazioni_media' }, errSegM)
+        completo = false
+      }
+    } else {
+      segnalazioniBonificate += (segMedia ?? []).length
+    }
+  }
+
+  // b3) Segnalazioni sui messaggi + sospensioni dei thread di chat dell'alunno.
+  //     Un alunno ha DUE genitori (student_parents molti-a-molti): se solo uno
+  //     chiede la cancellazione, un thread con l'ALTRO genitore (non
+  //     anonimizzato) o con la maestra non verrebbe mai toccato dallo scrub di
+  //     anonimizzaParent — questo è l'unico ramo che lo copre.
+  const { data: threadRows, error: errThread } = await supabase
+    .from('chat_threads')
+    .select('id')
+    .eq('student_id', alunnoId)
+  // Un elenco di thread che non si è potuto leggere rende ciechi DUE rami: lo scrub
+  // delle segnalazioni qui sotto e gli allegati di chat che `anonimizzaAlunno` toglie
+  // con questi stessi id. Non è «nessun thread»: è «non lo so», e va detto a chi
+  // scriverà l'esito.
+  let threadLetti = true
+  if (errThread && !schemaAssente(errThread)) {
+    logErrore({ operazione: op, evento: 'oblio_segnalazioni_thread_select' }, errThread)
+    threadLetti = false
+    completo = false
+  }
+  const threadIds = ((threadRows ?? []) as { id: string }[]).map((t) => t.id)
+  if (threadIds.length > 0) {
+    const { data: segChat, error: errSegC } = await supabase
+      .from('segnalazioni')
+      .update({ motivo: null, note_gestione: null })
+      .eq('tipo_oggetto', 'messaggio_chat')
+      .in('thread_id', threadIds)
+      .select('id')
+    if (errSegC) {
+      if (!schemaAssente(errSegC)) {
+        logErrore({ operazione: op, evento: 'oblio_segnalazioni_chat' }, errSegC)
+        completo = false
+      }
+    } else {
+      segnalazioniBonificate += (segChat ?? []).length
+    }
+
+    const { data: sospChat, error: errSospC } = await supabase
+      .from('conversazioni_sospensioni')
+      .update({ motivo: null })
+      .in('thread_id', threadIds)
+      .select('id')
+    if (errSospC) {
+      if (!schemaAssente(errSospC)) {
+        logErrore({ operazione: op, evento: 'oblio_sospensioni_chat' }, errSospC)
+        completo = false
+      }
+    } else {
+      sospensioniBonificate += (sospChat ?? []).length
+    }
+  }
+
+  // c. Le cancellazioni di voci del diario registrate SENZA `entita_id` (fino al 2026-09-28): il
+  //    loro valore di prima porta la nota del bambino e il testo delle routine. Si ritrovano per
+  //    contenuto (`valore_prima @> [{"alunno_id": …}]`). Misurate il 28/09: 79 righe, una con una nota.
+  //    La riga dell'audit resta (chi ha cancellato cosa e quando), il contenuto no.
+  const auditDiarioCompleto = await bonificaAuditDiarioSenzaId(supabase, alunnoId, op)
+  if (!auditDiarioCompleto) completo = false
+
+  return {
+    notificheRimosse: notifiche.rimosse,
+    segnalazioniBonificate,
+    sospensioniBonificate,
+    completo,
+    threadIds,
+    threadLetti,
+    auditDiarioCompleto,
+  }
+}
+
 /**
  * Anonimizza UN alunno + bonifica i suoi dati finanziari collegati
  * (riconciliazione/incassi/cassa), con la stessa logica del diritto all'oblio
@@ -1977,29 +2207,10 @@ export async function anonimizzaAlunno(
   //    Vedi `bonificaDiarioAlunno`.
   const diario = await bonificaDiarioAlunno(supabase, alunno.id, op)
 
-  // 2-bis. LE NOTIFICHE CHE NOMINANO IL BAMBINO (art. 17).
-  //
-  //    Le notifiche del registro puntano alla riga di `presenze` (`entita_id`),
-  //    non all'alunno: per ritrovarle servono gli id delle sue presenze — TUTTE,
-  //    non solo quelle appena bonificate, perché il nome sta nel corpo della
-  //    notifica anche quando la presenza non aveva alcun motivo scritto.
-  //    All'elenco si aggiunge l'id dell'alunno stesso, che è ciò a cui puntano
-  //    `assenza_non_comunicata` e `mensa_saldo_basso`.
-  const { data: righePresenze, error: errIdPresenze } = await supabase
-    .from('presenze')
-    .select('id')
-    .eq('alunno_id', alunno.id)
-  if (errIdPresenze && !schemaAssente(errIdPresenze)) {
-    logErrore({ operazione: op, evento: 'oblio_notifiche_presenze_non_lette' }, errIdPresenze)
-  }
-  const idPresenze = ((righePresenze ?? []) as { id?: unknown }[])
-    .map((r) => r.id)
-    .filter((v): v is string => typeof v === 'string')
-  const notificheRimosse = await obliaNotifiche(
-    supabase,
-    { entitaIds: [alunno.id, ...idPresenze] },
-    op,
-  )
+  // 2-bis. LE NOTIFICHE CHE NOMINANO IL BAMBINO stavano qui fino al 2026-10-09: ora sono il primo
+  //    passo di `bonificaTracceTestualiAlunno`, chiamata al punto 3f. Lo spostamento non cambia
+  //    niente di ciò che si toglie: i passi 3a–3e in mezzo toccano solo pagamenti, movimenti
+  //    bancari, incassi e cassa, mai `presenze` né `notifiche`.
 
   const cf = [alunno.codice_fiscale, alunno.fiscal_code]
     .map((v) => (typeof v === 'string' ? v.trim() : ''))
@@ -2123,112 +2334,21 @@ export async function anonimizzaAlunno(
     }
   }
 
-  // 3f. Bonifica del testo libero UGC (C5) agganciato ai CONTENUTI del minore.
-  //     Le segnalazioni non hanno FK verso l'alunno: l'aggancio passa dall'oggetto
-  //     segnalato (voce di diario / media / thread), via tipo_oggetto + oggetto_id
-  //     o thread_id. Ogni ramo degrada in silenzio se lo schema C5 è assente.
-  let segnalazioniBonificate = 0
-  let sospensioniBonificate = 0
+  // 3f. LE TRACCE DI TESTO SENZA FK — notifiche, segnalazioni, sospensioni, audit del diario senza
+  //     id. Vedi `bonificaTracceTestualiAlunno`, che le tratta per l'oblio E per l'eliminazione
+  //     definitiva. Sta QUI e non più in basso perché legge da sé gli id dei media del bambino per
+  //     trovare le segnalazioni da bonificare: dopo 3g, che li cancella, quel ramo sarebbe cieco.
+  //     (Due passi ci sono arrivati da altrove il 2026-10-09: le notifiche da 2-bis e l'audit del
+  //     diario senza id dal punto 5. Ciò che si toglie non cambia: fra 2-bis e qui nessun passo
+  //     tocca `presenze` o `notifiche`, e fra qui e il punto 5 l'unico che scrive su
+  //     `audit_scritture_docente` è `bonificaAuditScritture`, sulle righe con `entita_id` = il
+  //     bambino — insieme disgiunto da quelle senza id. Cambia solo l'ORDINE di alcune righe di
+  //     log: la riga `audit-diario-senza-id-bonificato` ora precede quelle dei passi 3g–5.)
+  const tracce = await bonificaTracceTestualiAlunno(supabase, alunno.id, op)
+  // Gli id dei thread servono ancora al punto 3h (allegati di chat): si riusano, non si rileggono.
+  const threadIds = tracce.threadIds
 
-  // 3f-a) Segnalazioni su voci di diario dell'alunno.
-  const { data: diarioRows, error: errDiario } = await supabase
-    .from('eventi_diario')
-    .select('id')
-    .eq('alunno_id', alunno.id)
-  if (errDiario && !schemaAssente(errDiario)) {
-    logErrore({ operazione: op, evento: 'oblio_segnalazioni_diario_select' }, errDiario)
-  }
-  const diarioIds = ((diarioRows ?? []) as { id: string }[]).map((d) => d.id)
-  if (diarioIds.length > 0) {
-    const { data: segDiario, error: errSegD } = await supabase
-      .from('segnalazioni')
-      .update({ motivo: null, note_gestione: null })
-      .eq('tipo_oggetto', 'voce_diario')
-      .in('oggetto_id', diarioIds)
-      .select('id')
-    if (errSegD) {
-      if (!schemaAssente(errSegD)) logErrore({ operazione: op, evento: 'oblio_segnalazioni_diario' }, errSegD)
-    } else {
-      segnalazioniBonificate += (segDiario ?? []).length
-    }
-  }
-
-  // 3f-b) Segnalazioni su media di galleria taggati all'alunno.
-  // `ancheNelCestino`: questa lettura serve a TROVARE le segnalazioni da bonificare,
-  // e il testo libero di una segnalazione su una foto cestinata è PII su un minore
-  // esattamente come quello su una foto viva. Filtrare qui non lascerebbe in piedi
-  // una foto: lascerebbe in piedi il `motivo` scritto da un adulto su un bambino.
-  const { data: mediaRows, error: errMedia } = await ancheNelCestino(
-    supabase
-      .from('galleria_media_v2')
-      .select('id')
-      .contains('tag_students', [alunno.id]),
-    'ricerca delle segnalazioni da bonificare: il motivo e le note scritte su una foto ' +
-      'cestinata sono testo libero su un minore come quelli su una foto viva, e filtrare ' +
-      "qui li lascerebbe in tabella dopo l'oblio.",
-  )
-  if (errMedia && !schemaAssente(errMedia)) {
-    logErrore({ operazione: op, evento: 'oblio_segnalazioni_media_select' }, errMedia)
-  }
-  const mediaIds = ((mediaRows ?? []) as { id: string }[]).map((m) => m.id)
-  if (mediaIds.length > 0) {
-    const { data: segMedia, error: errSegM } = await supabase
-      .from('segnalazioni')
-      .update({ motivo: null, note_gestione: null })
-      .eq('tipo_oggetto', 'media_galleria')
-      .in('oggetto_id', mediaIds)
-      .select('id')
-    if (errSegM) {
-      if (!schemaAssente(errSegM)) logErrore({ operazione: op, evento: 'oblio_segnalazioni_media' }, errSegM)
-    } else {
-      segnalazioniBonificate += (segMedia ?? []).length
-    }
-  }
-
-  // 3f-c) Segnalazioni sui messaggi + sospensioni dei thread di chat dell'alunno.
-  //       Un alunno ha DUE genitori (student_parents molti-a-molti): se solo uno
-  //       chiede la cancellazione, un thread con l'ALTRO genitore (non
-  //       anonimizzato) o con la maestra non verrebbe mai toccato dallo scrub di
-  //       anonimizzaParent — questo è l'unico ramo che lo copre.
-  const { data: threadRows, error: errThread } = await supabase
-    .from('chat_threads')
-    .select('id')
-    .eq('student_id', alunno.id)
-  // Un elenco di thread che non si è potuto leggere rende ciechi DUE rami: lo scrub
-  // delle segnalazioni qui sotto e gli allegati di chat al punto 3h. Non è «nessun
-  // thread»: è «non lo so», e va detto a chi scriverà l'esito.
-  let threadNonLetti = false
-  if (errThread && !schemaAssente(errThread)) {
-    logErrore({ operazione: op, evento: 'oblio_segnalazioni_thread_select' }, errThread)
-    threadNonLetti = true
-  }
-  const threadIds = ((threadRows ?? []) as { id: string }[]).map((t) => t.id)
-  if (threadIds.length > 0) {
-    const { data: segChat, error: errSegC } = await supabase
-      .from('segnalazioni')
-      .update({ motivo: null, note_gestione: null })
-      .eq('tipo_oggetto', 'messaggio_chat')
-      .in('thread_id', threadIds)
-      .select('id')
-    if (errSegC) {
-      if (!schemaAssente(errSegC)) logErrore({ operazione: op, evento: 'oblio_segnalazioni_chat' }, errSegC)
-    } else {
-      segnalazioniBonificate += (segChat ?? []).length
-    }
-
-    const { data: sospChat, error: errSospC } = await supabase
-      .from('conversazioni_sospensioni')
-      .update({ motivo: null })
-      .in('thread_id', threadIds)
-      .select('id')
-    if (errSospC) {
-      if (!schemaAssente(errSospC)) logErrore({ operazione: op, evento: 'oblio_sospensioni_chat' }, errSospC)
-    } else {
-      sospensioniBonificate += (sospChat ?? []).length
-    }
-  }
-
-  // 3g. Le FOTO del minore (warning privacy, ciclo 2). Va DOPO 3f-b, che si
+  // 3g. Le FOTO del minore (warning privacy, ciclo 2). Va DOPO 3f, che si
   //     serve proprio di `galleria_media_v2` per trovare le segnalazioni da
   //     bonificare: cancellare prima i media renderebbe quel ramo cieco.
   const foto = await obliaFotoAlunno(supabase, alunno.id, op)
@@ -2258,9 +2378,10 @@ export async function anonimizzaAlunno(
   //     in cima al file — dove sta anche la ragione scritta dei bucket che
   //     restano fuori di proposito.
   //
-  //     Gli allegati riusano i `threadIds` già letti al punto 3f-c: una sola
-  //     lettura di `chat_threads`, e soprattutto un solo posto in cui è scritto
-  //     che i thread di un bambino si trovano per `student_id`.
+  //     Gli allegati riusano i `threadIds` già letti al punto 3f (dentro
+  //     `bonificaTracceTestualiAlunno`): una sola lettura di `chat_threads`, e
+  //     soprattutto un solo posto in cui è scritto che i thread di un bambino si
+  //     trovano per `student_id`.
   const pagelle = await obliaPagelleAlunno(supabase, alunno.id, op)
   const certificati = await obliaCertificatiMediciAlunno(supabase, alunno.id, op)
   const allegatiChat = await obliaAllegatiChat(supabase, threadIds, op)
@@ -2299,11 +2420,9 @@ export async function anonimizzaAlunno(
   //    da docenti e segreteria su quel bambino — e, fino al 2026-08-01, il suo
   //    record integrale al momento dell'importazione. La riga resta (dice chi ha
   //    fatto cosa e quando), il contenuto no.
+  //    (Le cancellazioni del diario registrate SENZA `entita_id` si bonificavano qui fino al
+  //    2026-10-09: ora le tratta `bonificaTracceTestualiAlunno` al punto 3f.)
   await bonificaAuditScritture(supabase, [alunno.id], op)
-  // …e le cancellazioni di voci del diario registrate SENZA `entita_id` (fino al 2026-09-28): il
-  // loro valore di prima porta la nota del bambino e il testo delle routine. Si ritrovano per
-  // contenuto (`valore_prima @> [{"alunno_id": …}]`). Misurate il 28/09: 79 righe, una con una nota.
-  const auditDiario = await bonificaAuditDiarioSenzaId(supabase, alunno.id, op)
 
   // I conteggi dei file sono UNA somma su tutti i bucket toccati: chi legge la
   // risposta deve poter chiedere «è uscito tutto?» una volta sola. Il dettaglio
@@ -2328,14 +2447,14 @@ export async function anonimizzaAlunno(
       allegatiChat.nonRimossi +
       fascicolo.nonRimossi +
       fotoNews.fileNonRimossi,
-    segnalazioniBonificate,
-    sospensioniBonificate,
+    segnalazioniBonificate: tracce.segnalazioniBonificate,
+    sospensioniBonificate: tracce.sospensioniBonificate,
     iscrizioniScrubbate: iscr.domandeScrubbate,
     fotoRimosse: foto.fotoRimosse,
     fotoSganciate: foto.fotoSganciate,
     presenzeBonificate,
     diarioBonificate: diario.bonificate,
-    notificheRimosse,
+    notificheRimosse: tracce.notificheRimosse,
     videoIntentiTrattati: videoIntenti.intenti,
     videoIntentiRevocati: videoIntenti.revocati,
     // ── GLI INVENTARI CHE NON SI SONO POTUTI LEGGERE ──
@@ -2353,9 +2472,13 @@ export async function anonimizzaAlunno(
       fascicolo.letto,
       allegatiChat.letto,
       iscr.letto,
-      !threadNonLetti,
+      // Le due letture di `bonificaTracceTestualiAlunno` che questo conteggio guardava già prima
+      // dell'estrazione, una per voce come allora. Il suo `completo` è più largo (vede anche le
+      // scritture rifiutate su notifiche e segnalazioni) e qui di proposito NON entra: l'estrazione
+      // del 2026-10-09 è un refactoring, e allargare questo numero cambierebbe l'esito dell'oblio.
+      tracce.threadLetti,
       diario.completo,
-      auditDiario,
+      tracce.auditDiarioCompleto,
       // Dal 2026-10-02: l'oblio dei video in volo. `false` = la RPC non ha risposto o ha rifiutato, e il
       // bambino può essere ancora nominato da `video_intents.tag_alunni`.
       videoIntenti.letto,

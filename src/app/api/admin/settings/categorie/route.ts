@@ -10,6 +10,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
+import { rispostaServiziNonDisponibili } from '@/lib/pagamenti/generazione-server'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -21,6 +22,17 @@ const zScuolaId = z.preprocess((v) => v || undefined, zUuid.optional())
 
 const getQuerySchema = z.object({ scuola_id: zScuolaId })
 
+/**
+ * Servizio MENSILE (pomeridiano, doposcuola, pulmino…): la causale genera ogni mese una voce
+ * per i bambini iscritti al servizio, con questo importo come proposta. Facoltativi, e nel
+ * POST finiscono nell'insert SOLO se presenti nel body: il database degli E2E non ha ancora
+ * le colonne e un insert con chiavi sconosciute risponderebbe PGRST204.
+ */
+const zServizioMensile = {
+  mensile: z.boolean().optional(),
+  importo_mensile_default: z.number().min(0).max(99999.99).nullable().optional(),
+}
+
 // slug/colore/icona/ordine: oggi pass-through senza vincoli (tipi enforced dal
 // DB): schema volutamente permissivo. L'.optional() su z.unknown() è
 // OBBLIGATORIO (in zod v4 z.unknown() nudo è required a runtime).
@@ -31,6 +43,7 @@ const postBodySchema = z.object({
   colore: z.unknown().optional(),
   icona: z.unknown().optional(),
   ordine: z.unknown().optional(),
+  ...zServizioMensile,
 })
 
 const patchBodySchema = z.object({
@@ -40,11 +53,46 @@ const patchBodySchema = z.object({
   icona: z.unknown().optional(),
   ordine: z.unknown().optional(),
   attivo: z.unknown().optional(),
+  ...zServizioMensile,
 })
 
 const deleteQuerySchema = z.object({
   id: zUuid, // sostituisce il 400 manuale 'id è obbligatorio'
 })
+
+/**
+ * Gli errori di scrittura che hanno un significato per chi usa la schermata dei servizi.
+ *
+ *  · PGRST204 / 42703 — la colonna `mensile` / `importo_mensile_default` non c'è: database non
+ *    ancora migrato (è il caso del DB degli E2E). 503, non un 500 generico.
+ *  · 23514 — il CHECK che vieta `mensile` sulla causale con slug `retta` (la retta ha la sua
+ *    generazione). Di fatto la retta è `is_sistema` e il PATCH la rifiuta prima con 409; resta
+ *    la rete per una «retta» creata a mano dentro una sede.
+ *
+ * Ritorna la risposta pronta, oppure `null` per lasciar proseguire gli altri errori com'erano.
+ */
+function erroreServizioMensile(
+  error: { code?: string | null },
+  operazione: string,
+  categoriaId?: string,
+): NextResponse | null {
+  if (error.code === 'PGRST204' || error.code === '42703') {
+    logEvento('pagamento', 'error', {
+      operazione, esito: 'servizi-non-disponibili', ...(categoriaId ? { categoria_id: categoriaId } : {}),
+    }, error)
+    return rispostaServiziNonDisponibili()
+  }
+  if (error.code === '23514') {
+    logEvento('pagamento', 'warn', {
+      operazione, esito: 'categoria-retta-non-mensile', ...(categoriaId ? { categoria_id: categoriaId } : {}),
+    }, error)
+    return NextResponse.json(
+      { error: 'La categoria «Retta» non può essere un servizio mensile', codice: 'CATEGORIA_RETTA_NON_MENSILE' },
+      { status: 409 },
+    )
+  }
+  return null
+}
 
 function slugify(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -281,9 +329,17 @@ export const POST = withRoute('admin/settings/categorie:POST', async (request: N
         icona: body.icona ?? '💶',
         is_sistema: false,
         ordine: body.ordine ?? 99,
+        // Solo se dichiarati: il database non migrato non ha le colonne (PGRST204).
+        ...(body.mensile !== undefined ? { mensile: body.mensile } : {}),
+        ...(body.importo_mensile_default !== undefined ? { importo_mensile_default: body.importo_mensile_default } : {}),
       }
       const { data, error } = await supabase.from('payment_categories').insert(record).select().single()
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (error) {
+        const speciale = erroreServizioMensile(error, 'admin/settings/categorie:POST')
+        if (speciale) return speciale
+        logErrore({ operazione: 'admin/settings/categorie:POST', stato: 500, evento: 'db' }, error)
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
       return NextResponse.json({ success: true, data }, { status: 201 })
     } catch (err) {
       logErrore({ operazione: 'admin/settings/categorie:POST', stato: 500 }, err)
@@ -302,7 +358,7 @@ export const PATCH = withRoute('admin/settings/categorie:PATCH', async (request:
       if ('response' in b) return b.response
       const body = b.data as Record<string, unknown>
 
-      const allowed = ['nome', 'colore', 'icona', 'ordine', 'attivo']
+      const allowed = ['nome', 'colore', 'icona', 'ordine', 'attivo', 'mensile', 'importo_mensile_default']
       const updates: Record<string, unknown> = {}
       for (const f of allowed) if (body[f] !== undefined) updates[f] = body[f]
       if (Object.keys(updates).length === 0) {
@@ -324,7 +380,19 @@ export const PATCH = withRoute('admin/settings/categorie:PATCH', async (request:
       // cloni cassa/news): `genera_rette_mensili` risolve la causale per
       // `slug='retta'`. Rigenerarlo spegnerebbe la generazione delle rette.
       const { data, error } = await supabase.from('payment_categories').update(updates).eq('id', b.data.id).select().single()
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (error) {
+        const speciale = erroreServizioMensile(error, 'admin/settings/categorie:PATCH', b.data.id)
+        if (speciale) return speciale
+        logErrore({ operazione: 'admin/settings/categorie:PATCH', stato: 500, evento: 'db' }, error)
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+      // Cambiare cos'è una causale (e quanto vale il servizio) muove le voci dei mesi a venire:
+      // l'esito si vede anche quando va bene. Mai nome o testo libero: solo id e interruttore.
+      logEvento('pagamento', 'info', {
+        operazione: 'admin/settings/categorie:PATCH', esito: 'categoria-aggiornata',
+        categoria_id: b.data.id,
+        ...(typeof updates.mensile === 'boolean' ? { mensile: updates.mensile } : {}),
+      })
       return NextResponse.json({ success: true, data })
     } catch (err) {
       logErrore({ operazione: 'admin/settings/categorie:PATCH', stato: 500 }, err)
@@ -355,7 +423,24 @@ export const DELETE = withRoute('admin/settings/categorie:DELETE', async (reques
         return NextResponse.json({ error: 'Le categorie di sistema non possono essere eliminate' }, { status: 409 })
       }
       const { error } = await supabase.from('payment_categories').delete().eq('id', id)
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (error) {
+        // FK (23503): la causale è usata da voci di pagamento o da iscrizioni ai servizi.
+        // Non è un guasto: è un conflitto con lo stato della risorsa, e c'è una via d'uscita.
+        if (error.code === '23503') {
+          logEvento('pagamento', 'warn', {
+            operazione: 'admin/settings/categorie:DELETE', esito: 'categoria-in-uso', categoria_id: id,
+          }, error)
+          return NextResponse.json(
+            {
+              error: 'La categoria è usata da voci di pagamento o da iscrizioni ai servizi: disattivala invece di eliminarla',
+              codice: 'CATEGORIA_IN_USO',
+            },
+            { status: 409 },
+          )
+        }
+        logErrore({ operazione: 'admin/settings/categorie:DELETE', stato: 500, evento: 'db' }, error)
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
       return NextResponse.json({ success: true })
     } catch (err) {
       logErrore({ operazione: 'admin/settings/categorie:DELETE', stato: 500 }, err)

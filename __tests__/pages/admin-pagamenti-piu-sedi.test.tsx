@@ -80,6 +80,7 @@ vi.mock('@/components/features/admin/pagamenti/TicketMensaPanel', () => ({ Ticke
 vi.mock('@/components/features/admin/pagamenti/CassaPanel', () => ({ CassaPanel: segnaposto('cassa') }));
 vi.mock('@/components/features/admin/pagamenti/GeneratoreRette', () => ({ GeneratoreRette: segnaposto('genera-rette') }));
 vi.mock('@/components/features/admin/pagamenti/GeneratoreCategoria', () => ({ GeneratoreCategoria: segnaposto('genera-categoria') }));
+vi.mock('@/components/features/admin/pagamenti/ServiziPanel', () => ({ ServiziPanel: segnaposto('servizi') }));
 vi.mock('@/components/features/admin/pagamenti/CausaliPanel', () => ({
   CausaliPanel: segnaposto('causali'),
   CausaliFatturaPanel: segnaposto('causali-fattura'),
@@ -168,6 +169,21 @@ describe('/admin/pagamenti — più sedi selezionate', () => {
     await screen.findByText('Seleziona una sede');
     expect(screen.queryByTestId('pannello-causali')).toBeNull();
     expect(screen.queryByTestId('pannello-causali-fattura')).toBeNull();
+  });
+
+  it('servizi con due sedi: chiede la sede e NON monta il pannello', async () => {
+    h.vista = 'servizi';
+    renderPagina();
+    await screen.findByText('Seleziona una sede');
+    expect(screen.queryByTestId('pannello-servizi')).toBeNull();
+  });
+
+  it('servizi con due sedi: scelta una sede, il pannello si monta con QUELLA sede', async () => {
+    h.vista = 'servizi';
+    renderPagina();
+    fireEvent.click(await screen.findByRole('button', { name: NOME_SEDE_B }));
+    const pannello = await screen.findByTestId('pannello-servizi');
+    expect(pannello.getAttribute('data-scuola')).toBe(SEDE_B);
   });
 
   it('genera con due sedi: scelta una sede dall\'avviso, i generatori si montano con QUELLA sede', async () => {

@@ -3,9 +3,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ContabilitaNav, VISTE_CONTABILITA } from '@/components/features/admin/pagamenti/ContabilitaNav';
 
 describe('ContabilitaNav', () => {
-  it('espone le 9 viste attese (con «Cassa» fra «Ticket mensa» e «Causali»)', () => {
+  it('espone le 10 viste attese («Servizi» subito dopo «Genera», «Cassa» fra «Ticket mensa» e «Causali»)', () => {
     expect(VISTE_CONTABILITA.map((v) => v.id)).toEqual([
-      'scadenzario', 'transazioni', 'genera', 'solleciti', 'riconciliazione', 'fiscale', 'ticket', 'cassa', 'causali',
+      'scadenzario', 'transazioni', 'genera', 'servizi', 'solleciti', 'riconciliazione', 'fiscale', 'ticket', 'cassa', 'causali',
     ]);
   });
 
@@ -40,5 +40,12 @@ describe('ContabilitaNav', () => {
       .getAllByRole('button', { pressed: true })
       .filter((b) => b.textContent?.includes('Cassa'));
     expect(premuti.length).toBeGreaterThan(0);
+  });
+
+  it('la vista «Servizi» è presente, cliccabile e chiama onChange con «servizi»', () => {
+    const onChange = vi.fn();
+    render(<ContabilitaNav value="scadenzario" onChange={onChange} />);
+    fireEvent.click(screen.getAllByText('Servizi')[0]);
+    expect(onChange).toHaveBeenCalledWith('servizi');
   });
 });

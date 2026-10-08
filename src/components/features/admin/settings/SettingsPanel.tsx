@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { Tag, Euro, AlertTriangle, Ticket, FileText, Plus, Trash2, Save, Lock, BellRing, Receipt } from 'lucide-react';
+import { Euro, AlertTriangle, Ticket, FileText, Plus, Trash2, Save, BellRing, Receipt } from 'lucide-react';
 import { livelliEffettivi, type LivelloSollecito, type SollecitiConfig } from '@/lib/pagamenti/solleciti';
 // Da `iban.ts` e non da `fiscale.ts`: quest'ultimo importa il logger, che
 // trascina `node:crypto` — e questo è un componente client.
@@ -14,6 +14,7 @@ import {
 } from '@/lib/fatturazione/cedente';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
+import { CategorieManager } from './CategorieManager';
 import { hdr, card, h3, input, label, btnPrimary } from './ui';
 
 interface Props { userId: string; scuolaId: string }
@@ -60,7 +61,6 @@ async function mutaConEsito(
     }
 }
 
-interface Categoria { id: string; nome: string; slug?: string; colore?: string; icona?: string; is_sistema: boolean; ordine: number }
 interface Settings {
     retta_default_importo: number; retta_giorno_scadenza: number; retta_giorno_visibilita: number;
     retta_auto_enabled: boolean; insoluto_tolleranza_giorni: number;
@@ -370,67 +370,6 @@ function FiscaleSettings({ userId, scuolaId }: Props) {
                 )}
             </div>
             <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
-            <ErroreBox testo={errore} />
-        </section>
-    );
-}
-
-function CategorieManager({ userId }: Props) {
-    const t = useTranslations('adminSettings');
-    const [cats, setCats] = useState<Categoria[]>([]);
-    const [nuovo, setNuovo] = useState('');
-    const [errore, setErrore] = useState('');
-    const load = useCallback(() => {
-        fetch(`/api/admin/settings/categorie?userId=${userId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setCats(d.data); })
-            .catch(err => {
-                // Un catch che non logga è un bug: senza questa riga «non ci
-                // sono categorie» e «la lettura è morta» sono la stessa cosa.
-                logClient({ livello: 'error', evento: 'fetch', messaggio: `settings-categorie-non-caricate: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
-                setErrore(t('erroreCaricamentoDati'));
-            });
-    }, [userId, t]);
-    useEffect(() => { load(); }, [load]);
-
-    const add = async () => {
-        if (!nuovo.trim()) return;
-        const err = await mutaConEsito(
-            '/api/admin/settings/categorie',
-            { method: 'POST', headers: hdr(userId), body: JSON.stringify({ nome: nuovo.trim() }) },
-            t('erroreSalvataggio'), 'settings-categoria-nuova-respinta',
-        );
-        setErrore(err);
-        // Il testo NON si azzera quando il server ha detto di no: cancellarlo
-        // costringerebbe a riscriverlo per riprovare.
-        if (!err) setNuovo('');
-        load();
-    };
-    const del = async (id: string) => {
-        setErrore(await mutaConEsito(
-            `/api/admin/settings/categorie?userId=${userId}&id=${id}`,
-            { method: 'DELETE', headers: hdr(userId) },
-            t('erroreSalvataggio'), 'settings-categoria-elimina-respinta',
-        ));
-        load();
-    };
-
-    return (
-        <section className={card}>
-            <h3 className={h3}><Tag size={16} /> {t('spCategorie')}</h3>
-            <div className="flex flex-wrap gap-2 mb-3">
-                {cats.map(c => (
-                    <span key={c.id} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green">
-                        {c.icona} {c.nome}
-                        {c.is_sistema ? <Lock size={11} className="text-kidville-sub" /> :
-                            <button onClick={() => del(c.id)} aria-label={t('spEliminaCategoria')} className="text-kidville-sub hover:text-kidville-error"><Trash2 size={13} /></button>}
-                    </span>
-                ))}
-            </div>
-            <div className="flex gap-2">
-                <input value={nuovo} onChange={e => setNuovo(e.target.value)} placeholder={t('nuovaCategoriaPlaceholder')} className={`${input} flex-1`} />
-                <button onClick={add} className={btnPrimary}><Plus size={14} /> {t('aggiungi')}</button>
-            </div>
-            <p className="font-maven text-[11px] text-kidville-sub mt-2"><Lock size={10} className="inline" />{t('spCategoriaSistemaHint')}</p>
             <ErroreBox testo={errore} />
         </section>
     );

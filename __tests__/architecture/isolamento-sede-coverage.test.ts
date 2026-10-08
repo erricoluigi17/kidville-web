@@ -2498,7 +2498,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // createAdminClient()`) e non nell'helper `lib/health/porta.ts`, proprio perché questo
             // lock le veda: spostarlo là avrebbe fatto CALARE il conto (345 → 344) senza cambiare
             // niente di ciò che le route fanno. Misurato rieseguendo il lock: 345 → 347.
-            routeConServiceRole: 347,
+            // 347 → 348 il 2026-10-07 (servizi mensili, T5): nasce `pagamenti/genera-servizi`
+            // (GET anteprima + POST conferma), service-role con la sede risolta da
+            // `sedeDellaGenerazione` (→ `resolveScuolaScrittura`); i nomi dei servizi si leggono
+            // con `.or(scuola_id null | sede)`. Misurato rieseguendo il lock: 347 → 348.
+            // 348 → 349 il 2026-10-07 (servizi mensili, T6): nasce `pagamenti/servizi` (GET, POST,
+            // PATCH, DELETE), service-role con la sede risolta da `resolveScuolaScrittura` (non da
+            // `sedeDellaGenerazione`: gli E2E devono poter leggere la sede fittizia). Ogni
+            // lettura e scrittura porta `.eq('scuola_id', sede)`. Misurato: 348 → 349.
+            routeConServiceRole: 349,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2777,7 +2785,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // sopra, a `routeConServiceRole`). CONTROLLATI come `health:GET`, `handlerEsentati`
             // fermo a 113: un endpoint di salute non legge dati di nessuna sede, quindi non c'è
             // niente da isolare. Misurato rieseguendo il lock: 539 → 541.
-            handlerControllati: 541,
+            // +2 il 2026-10-07 (servizi mensili, T5): `pagamenti/genera-servizi:GET` e `:POST`,
+            // CONTROLLATI (con la sede della generazione), `handlerEsentati` fermo a 113.
+            // Misurato rieseguendo il lock: 541 → 543.
+            // +4 il 2026-10-07 (servizi mensili, T6): `pagamenti/servizi:GET`, `:POST`, `:PATCH` e
+            // `:DELETE`, CONTROLLATI, `handlerEsentati` fermo a 113 (nessuna esenzione).
+            // Misurato rieseguendo il lock: 543 → 547.
+            handlerControllati: 547,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

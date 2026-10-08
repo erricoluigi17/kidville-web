@@ -31,6 +31,7 @@ const CHIAMANTI = [
   'src/components/features/admin/pagamenti/GeneratoreCategoria.tsx',
   'src/components/features/admin/pagamenti/TicketMensaPanel.tsx',
   'src/components/features/admin/pagamenti/FiscalePanel.tsx',
+  'src/components/features/admin/pagamenti/servizi-client.ts',
 ]
 
 const sorgente = (f: string) => readFileSync(f, 'utf8')

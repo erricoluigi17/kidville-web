@@ -68,6 +68,11 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
     const [loading, setLoading] = useState(false);
     const [done, setDone] = useState<string | null>(null);
     /**
+     * Esito dei servizi mensili generati insieme alle rette: `generati` (si mostra solo se > 0),
+     * oppure l'avviso quando NON sono stati generati. Assente / non disponibili: niente da dire.
+     */
+    const [servizi, setServizi] = useState<{ generati: number } | { errore: true; codice: string } | null>(null);
+    /**
      * Chi generare. Vive nel BROWSER: il client ha già l'elenco dei candidati —
      * quello dell'anteprima, non un elenco alunni grezzo — e filtrarlo qui dà lo
      * stesso insieme che filtrerebbe il server, senza spedire trecento uuid in una
@@ -75,10 +80,12 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
      */
     const [selezione, setSelezione] = useState<SelezioneAlunni>(SELEZIONE_TUTTI);
 
-    const reset = () => { setPreviewMese(null); setPreviewAnno(null); setDone(null); setSelezione(SELEZIONE_TUTTI); };
+    const avvisoServiziNonGenerati = servizi !== null && 'errore' in servizi && servizi.codice === 'SERVIZI_NON_GENERATI';
+
+    const reset = () => { setPreviewMese(null); setPreviewAnno(null); setDone(null); setServizi(null); setSelezione(SELEZIONE_TUTTI); };
 
     const loadPreview = useCallback(async () => {
-        setLoading(true); setDone(null);
+        setLoading(true); setDone(null); setServizi(null);
         try {
             const qs = mode === 'anno' ? `anno=${anno}` : `periodo=${periodo}`;
             const res = await fetch(`/api/pagamenti/genera-rette?userId=${userId}&${qs}&scuola_id=${scuolaId}`, { headers: hdr(userId) });
@@ -106,10 +113,15 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
             const res = await fetch('/api/pagamenti/genera-rette', { method: 'POST', headers: hdr(userId), body: JSON.stringify(body) });
             const j = await res.json();
             if (j.success) {
+                // Prima il reset (azzera anche `done`), poi i messaggi: in ordine inverso l'ultimo
+                // `setDone(null)` cancellava l'esito appena scritto.
+                reset();
                 setDone(mode === 'anno'
                     ? `${t('genrGenerate')} ${j.data.generati} ${t('genrRettePerAS')} ${anno}/${anno + 1}.`
                     : `${t('genrGenerate')} ${j.data.generati} ${t('genrRettePer')} ${periodo}.`);
-                reset();
+                const sv = j.data.servizi as { generati?: unknown; errore?: unknown; codice?: unknown } | undefined;
+                if (sv && typeof sv.generati === 'number') setServizi({ generati: sv.generati });
+                else if (sv?.errore === true && typeof sv.codice === 'string') setServizi({ errore: true, codice: sv.codice });
             // `alert(j.error)` nudo mostrava «undefined» quando il corpo non portava `error`.
             } else alert(messaggioDaCorpo(j, t('genrErrGenerazione')));
         } finally { setLoading(false); }
@@ -184,6 +196,15 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     <CheckCircle2 size={18} /> {done}
                 </div>
             )}
+            {/* Le aree live stanno SEMPRE nel DOM: un'area nata insieme al testo non viene annunciata.
+                Le rette restano generate anche se i servizi no; «non disponibili» tace (senza schema
+                non c'è nulla da perdere). Il loro stato si azzera con ogni anteprima e generazione. */}
+            <p role="status" className={servizi && 'generati' in servizi && servizi.generati > 0 ? 'font-maven text-sm text-kidville-success' : undefined}>
+                {servizi && 'generati' in servizi && servizi.generati > 0 ? t('genrServiziGenerati', { n: servizi.generati }) : ''}
+            </p>
+            <div role="alert" className={avvisoServiziNonGenerati ? 'rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong' : undefined}>
+                {avvisoServiziNonGenerati ? t('genrServiziNonGenerati') : ''}
+            </div>
 
             {/* Anteprima ANNO */}
             {mode === 'anno' && previewAnno && (

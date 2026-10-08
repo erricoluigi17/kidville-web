@@ -187,7 +187,18 @@ export function posterioriCheContengono(
 // SVUOTATA il 05/10 (PR-B dopo il merge di #186, `57c1d28e`): la migrazione è applicata in
 // produzione dall'integrazione con la version del file (una riga sola nel registro) e le
 // fotografie sono rigenerate dalla produzione.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// 2026-10-07 · PARTE 2 «servizi mensili»: `20261007170813_servizi_mensili.sql` (tabella
+// `iscrizioni_servizi` con PRIMARY KEY, EXCLUDE e RLS senza policy; colonne nuove su
+// `payment_categories`). Resta dichiarata finché non è applicata.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261007170813_servizi_mensili.sql':
+        "Migrazione dentro una PR: la applica l'integrazione Supabase al merge, con la version del file " +
+        '(mai a mano). Introduce `iscrizioni_servizi` (RLS attiva, nessuna policy) e due colonne su ' +
+        '`payment_categories`. Le fotografie (policy, indici unici, FK, migrazioni applicate, tabelle con ' +
+        '`scuola_id`) si rigenerano dalla produzione in una PR-B successiva, che svuota questa voce e censisce ' +
+        '`iscrizioni_servizi` in NOT_NULL_ATTESE.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

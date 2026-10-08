@@ -391,8 +391,14 @@ const MAX_FILE = 271;
  * `rispostaVideo`, che le legge dal catalogo, e dal 429 di `rispostaTroppeRichieste`), quindi
  * l'allowlist non ha una voce per loro e non ne ha bisogno. `MAX_FILE` non si muove: 271 voci,
  * nessuna arriva a zero.
+ *
+ * 2026-10-07 · −1 (1363 → 1362), e il debito è stato PAGATO, non spostato. Il rifiuto della sede
+ * di collaudo di `genera-rette` (400 senza codice) è uscito dalla route con la funzione
+ * `sedeDellaGenerazione`, ora in `@/lib/pagamenti/generazione-server`, e porta
+ * `codice: 'SEDE_DI_COLLAUDO'` (catalogo it/en). La voce di `genera-rette` scende da 5 a 4;
+ * `MAX_FILE` non si muove (la voce non è arrivata a zero).
  */
-const MAX_OCCORRENZE = 1363;
+const MAX_OCCORRENZE = 1362;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

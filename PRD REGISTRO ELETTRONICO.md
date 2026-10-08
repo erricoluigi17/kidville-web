@@ -1,6 +1,96 @@
+## 🔁 Changelog — Servizi mensili: pomeridiano, doposcuola e pulmino come voci ricorrenti per bambino, generate insieme alle rette — 2026-10-07 (branch `feat/servizi-mensili`)
+
+**Stato.** 🟡 **Sul branch, non ancora in produzione.** Gate sul branch (commit `3502597b`): `eslint` 0 · `tsc` 0 · `vitest run` **1.721 file / 29.314 test passati (25 saltati)** · `npm run build` ok (`verifica-artefatto` ok, 2.982 file JS). Dopo, due test in più (sulle due route) passati da soli. E2E in CI al push. La migrazione `20261007170813_servizi_mensili.sql` la applica **l'integrazione Supabase al merge**: non va applicata a mano. Sul DB della CI si prova con `DB migrate (CI)`.
+
+**Il caso.** È la Parte 2 della richiesta del titolare del 2026-10-07: «la mensilità nelle categorie, come pomeridiano, doposcuola, pulmino». Il bambino iscritto al servizio nel mese in cui si generano le rette deve ricevere in automatico anche la voce del servizio di quel mese. Oggi queste voci si scrivono a mano e senza mese di competenza. In produzione ce ne sono di settembre e ottobre 2026.
+
+**Decisioni del titolare.**
+
+| Tema | Decisione |
+|---|---|
+| Categoria mensile | Interruttore «Mensile» in Impostazioni → Categorie, con importo mensile predefinito. La retta non può esserlo. |
+| Chi riceve il servizio | Un'iscrizione per bambino, gestita nella nuova scheda **Contabilità → Servizi**. |
+| Importo | Uno per iscrizione, proposto da quello della categoria. |
+| Periodo | Da un mese a un mese (la fine è facoltativa e compresa). |
+| Generazione | Automatica dopo le rette, mensili e annuali (l'annuale copre set–giu). In più, nella scheda Servizi, «Genera le voci dei servizi» per **un mese** o per **l'anno scolastico** (set–giu), con anteprima: è idempotente e serve per le iscrizioni tardive, per gli anni con le rette già generate e per luglio/agosto. |
+| Fine o eliminazione con voci già generate | **Si chiede alla segreteria**: «Elimina le N voci non pagate e non fatturate», «Mantienile» o «Annulla». Le voci pagate, con acconto, con incassi, fatturate, in coda fatture, rateizzate o scritte a mano senza mese non si toccano mai: vengono elencate col motivo. |
+| Notifiche | Nessuna push nuova: vale `visibile_dal`, con la stessa formula della retta. |
+
+**Cosa cambia.**
+1. **Schema.** Gli oggetti nuovi o modificati sono quattro.
+   - **Colonne nuove in `payment_categories`**: `mensile boolean NOT NULL DEFAULT false` e `importo_mensile_default numeric(10,2)`. Due CHECK: importo ≥ 0, e la retta non può essere mensile.
+   - **Tabella nuova `iscrizioni_servizi`**, con i campi `alunno_id`, `categoria_id`, `scuola_id`, `importo_mensile`, `dal` e `al` (date al primo del mese), `creato_da` e i timestamp.
+     - Vincoli: EXCLUDE gist contro le iscrizioni sovrapposte dello stesso bambino allo stesso servizio (`btree_gist`). La FK verso la categoria è NO ACTION: una categoria con iscritti non si cancella (409 `CATEGORIA_IN_USO`).
+     - Accesso: RLS attiva senza policy, quindi solo service-role; REVOKE da anon e authenticated.
+   - **Funzioni** `servizi_da_generare` (il predicato unico di anteprima e conferma), `genera_servizi_mensili` e `genera_servizi_anno`. Sono plpgsql, eseguibili solo dal service-role.
+   - **Deduplica storica**: un bambino viene saltato se ha già una voce della stessa categoria nel mese, dove il mese è `COALESCE(periodo_competenza, mese della scadenza)`. È la regola «mese della voce» della Parte 1, e impedisce il doppio addebito sulle voci scritte a mano.
+2. **Route.** Sono tutte con `withRoute`, `requireStaff`, `zod` e un codice d'errore.
+   - **`/api/pagamenti/servizi`** gestisce le iscrizioni (GET, POST, PATCH, DELETE).
+     - PATCH e DELETE lavorano **in due tempi**. Senza `voci_future` non scrivono niente e rispondono 409 `VOCI_FUTURE_DA_DECIDERE`, con le voci eliminabili e quelle intoccabili. Con `voci_future: 'elimina'` cancellano solo l'intersezione fra le eliminabili ricalcolate e i `voci_ids` mostrati. `voci_ids` è **obbligatorio**: assente o vuoto dà 400, così una voce comparsa dopo la finestra non sparisce senza essere stata vista.
+     - Ogni voce eliminata lascia una riga di audit.
+   - **`/api/pagamenti/genera-servizi`** fa l'anteprima (GET, con il totale in euro solo per la Direzione) e la generazione manuale (POST), per `periodo` (un mese) **oppure** `anno` (set–giu): uno dei due, mai entrambi.
+   - **`/api/pagamenti/genera-rette`**, dopo le rette, genera anche i servizi. Se i servizi non riescono risponde comunque 200, con `data.servizi.errore` e un log `error`: le rette già scritte non sembrano fallite.
+   - **`/api/admin/settings/categorie`** accetta `mensile` e `importo_mensile_default`.
+   - Codici d'errore nuovi:
+     - `SEDE_DI_COLLAUDO`, `SERVIZI_NON_GENERATI`, `SERVIZI_NON_DISPONIBILI`, `SERVIZI_ANTEPRIMA_FALLITA`;
+     - `CATEGORIA_RETTA_NON_MENSILE`, `CATEGORIA_IN_USO`;
+     - `SERVIZIO_NON_TROVATO`, `SERVIZIO_NON_MENSILE`, `SERVIZIO_PERIODO_NON_VALIDO`, `SERVIZIO_ISCRIZIONE_SOVRAPPOSTA`, `SERVIZIO_ALUNNI_NON_VALIDI`;
+     - `ISCRIZIONE_SERVIZIO_NON_TROVATA`, `SERVIZI_SCRITTURA_FALLITA`, `SERVIZI_LETTURA_FALLITA`, `VOCI_FUTURE_DA_DECIDERE`.
+3. **Interfaccia.**
+   - **Impostazioni**: `CategorieManager` è estratto da `SettingsPanel`. Ha la casella «Mensile», l'importo predefinito e Salva, e passa `scuola_id` in tutte le chiamate (prima mancava).
+   - **Contabilità → Servizi**, una scheda che richiede la sede, come Genera. Contiene:
+     - una scheda per servizio, con gli iscritti, l'importo, il periodo e il badge «Conclusa»;
+     - «Aggiungi iscritti», che esclude chi è già iscritto in un periodo che si sovrappone;
+     - Modifica, Termina (che non può allungare l'iscrizione) ed Elimina;
+     - la finestra «cosa fare delle voci future»;
+     - «Genera le voci dei servizi» per un mese o per l'anno scolastico, con anteprima legata a ciò che mostra: la conferma manda esattamente il mese o l'anno visto.
+   - **Genera rette**: mostra anche «N voci dei servizi mensili generate», oppure l'avviso se non sono state generate. Corretto un difetto che c'era già: dopo la generazione il messaggio «Generate N rette…» non compariva mai, perché `reset()` lo azzerava subito dopo averlo scritto.
+
+**Verificato.**
+- **Migrazione su PGlite**: applicata due volte, 27 test. Coprono il periodo, la formula della scadenza, l'idempotenza, le esclusioni, la deduplica delle voci senza mese (anche su una categoria di sede), la sovrapposizione (23P01), i CHECK, la retta non mensile, la generazione annuale e i privilegi.
+- **Route**: test su sede, scope e codici d'errore. Per i due tempi provano anche che nulla viene scritto senza la scelta, e che `elimina` senza `voci_ids` dà 400 senza scrivere niente. Provano poi che nessuna voce manuale, pagata, fatturata, in coda o rateizzata viene cancellata, e che una voce cambiata fra i due tempi resta.
+- **Componenti**: test con axe. Coprono i nomi accessibili univoci (lo stesso bambino in due servizi), «Termina» che non allunga, Escape che durante l'invio non annulla, l'anteprima legata al mese o all'anno mostrato, e l'esito delle voci eliminate, mantenute e non eliminabili.
+- **Prove di rottura**, tutte diventate rosse:
+  - `voci_ids` vuoto o mandato con «mantieni»;
+  - esclusione dei già iscritti tolta;
+  - Escape che spedisce;
+  - ultimo mese oltre la fine;
+  - anteprima di un altro mese o anno;
+  - refine sulle due route tolti;
+  - guasto dell'anteprima annuale a gennaio che non ferma il ciclo.
+- **Revisione Opus** compito per compito e finale su tutto il branch: approvata per il merge.
+
+**Prima della prima generazione vera (da fare con la segreteria).** Misurato il 2026-10-07, solo `SELECT` e conteggi: le voci scritte a mano senza mese sono **27**, tutte su categorie **di sede**.
+- doposcuola di Cesa: 7 a settembre, 4 a ottobre;
+- pomeridiano di Giugliano: 11 a settembre, con scadenze dal 2 al 30, e 5 a ottobre.
+
+Cosa fare:
+- Rendere «Mensile» **quelle due categorie**, senza crearne di nuove: la deduplica guarda la `categoria_id`, e una categoria nuova non vedrebbe le voci scritte a mano, quindi le addebiterebbe due volte.
+- Controllare l'anteprima di ottobre di Giugliano: le voci di pomeridiano con scadenza a fine settembre potrebbero essere ottobre pagato in anticipo. La deduplica le colloca a settembre, e allora ottobre verrebbe generato di nuovo.
+- Valutare se far partire le iscrizioni dal mese successivo all'ultimo già emesso a mano.
+
+**Noti e NON corretti qui.**
+- `servizi_da_generare` non controlla che la sede sia operativa (`genera_servizi_mensili` sì).
+- I servizi ignorano `data_iscrizione` e sono sempre di tipo `singolo`, anche con genitori separati: la decisione resta aperta per il titolare.
+- La lettura `gia` di `genera-rette` non controlla l'errore.
+- I 403 della route categorie non hanno `codice`: nell'interfaccia inglese compare l'italiano.
+- In `CategorieManager`, `chiama` è una copia di `mutaConEsito` di `SettingsPanel`, da unificare.
+- Le rate di `/api/pagamenti/rate` non scrivono `periodo_competenza` (era già noto nella Parte 1).
+- Cambiare l'importo di un'iscrizione non tocca le voci già generate: con la generazione annuale possono restare fino a dieci mesi al prezzo vecchio. Vale lo stesso per la retta.
+- «Genera N rette» con «tutti» genera anche i servizi di tutta la sede senza mostrarne un'anteprima: il conteggio arriva dopo, nella riga dei servizi.
+- «Manuale» vuol dire soltanto «senza `periodo_competenza`». Una voce scritta a mano **con** il mese risulta eliminabile, se non è pagata né fatturata.
+- «Elimina iscrizione» propone anche le voci **passate** non pagate di tutto il periodo, con mese e data in vista. Va confermato col titolare che sia il comportamento voluto (iscrizione creata per errore) e non un credito che si perde.
+- Togliendo «Mensile» o «Attivo» a una categoria, le sue iscrizioni spariscono dal pannello e non si possono più chiudere dall'interfaccia. La categoria resta non eliminabile (`CATEGORIA_IN_USO`).
+- Una categoria globale resa mensile vale per tutte e tre le sedi, con un solo importo predefinito.
+- Un bambino trasferito di sede lascia l'iscrizione nella sede vecchia e non riceve più voci.
+- L'anteprima di «Genera servizi» legge al massimo 1.000 righe per mese (`max_rows`): oltre quella soglia conterebbe meno di quanto poi genera. Oggi non ci si arriva.
+- Le fotografie dello schema vanno rigenerate dopo il merge, in una PR successiva: `MIGRAZIONI_ATTESE_AL_MERGE` va svuotata e `iscrizioni_servizi` va aggiunta a `NOT_NULL_ATTESE`.
+
+---
+
 ## 💶 Changelog — KPI di contabilità per mese e categoria, cifre nascondibili, dashboard Direzione senza euro — 2026-10-07 (branch `feat/kpi-contabilita-selezione`)
 
-**Stato.** 🟡 **Pronto sul branch, non ancora pubblicato.** Gate: `eslint` 0 · `tsc` 0 · `vitest run` **1.711 file / 28.996 test passati (25 saltati)**, alla prima esecuzione, nessun test instabile · `npm run build` ok (`verifica-artefatto` ok, 2.967 file JS). E2E in CI al push.
+**Stato.** ✅ **In produzione dal 2026-10-07** (PR #204, merge `67ce866a`; CI di `main` verde — Lint · Typecheck · Unit ed E2E Playwright — e «Verifica dopo il deploy» verde). Gate sul branch: `eslint` 0 · `tsc` 0 · `vitest run` **1.711 file / 28.996 test passati (25 saltati)**, alla prima esecuzione, nessun test instabile · `npm run build` ok (`verifica-artefatto` ok, 2.967 file JS). E2E in CI al push.
 
 **Il caso.** Il titolare ha chiesto tre cose: (1) niente cifre in euro sulla home della Direzione; (2) in Contabilità, KPI che si possano leggere per mese e per categoria (retta, mensa, ecc.), non solo sul totale; (3) un modo per nascondere le cifre quando lo schermo è visibile ad altri.
 
@@ -22,13 +112,13 @@
 - Con «Tutte × Tutto l'anno» l'elenco per voce disegna ~2.000 righe senza paginazione.
 - Se la GET delle categorie fallisce il filtro «Categorie» sparisce (guasto loggato) e la riga dice «Tutte le categorie».
 - Le rate create da `/api/pagamenti/rate` non hanno `periodo_competenza`: la strada esiste già dal dettaglio voce (`PagamentoDrawer`); la correzione vera è un lavoro a parte.
-- La **Parte 2** («servizi mensili») arriverà con un rilascio separato: specifica in `docs/superpowers/specs/2026-10-07-kpi-contabilita-servizi-mensili-design.md`.
+- La **Parte 2** («servizi mensili») è la voce subito sopra, con un rilascio separato.
 
 ---
 
 ## 🪪 Changelog — Rinnovo del documento di un docente: la sostituzione «falliva» sempre pur riuscendo, e le date non si potevano cambiare da nessuna parte — 2026-10-06 (branch `fix/genitore-senza-figli-e-collegamento`)
 
-**Stato.** 🟡 **Pronto sul branch, non ancora pubblicato** (stessa PR del lavoro «genitore senza figli», in due commit separati). Gate: `eslint` 0 · `tsc` 0 · `vitest run` **1.694 file / 28.682 test**, tutti verdi alla terza esecuzione · `npm run build` ok (`verifica-artefatto` ok). E2E in CI al push.
+**Stato.** ✅ **In produzione dal 2026-10-07** (PR #203, merge `a3891379`, insieme al lavoro «genitore senza figli», in due commit separati). Gate: `eslint` 0 · `tsc` 0 · `vitest run` **1.694 file / 28.682 test**, tutti verdi alla terza esecuzione · `npm run build` ok (`verifica-artefatto` ok). E2E in CI al push.
 
 ⚠️ **Come ci si è arrivati, senza abbellirlo.** La prima esecuzione intera aveva 2 rossi: uno era **mio** — il lock sui tempi (`logging-tetto.test.ts`) legge ogni costante con `SCADENZA` nel nome come un tetto in millisecondi, e `SCADENZA_MIN` era una data (rinominata `PRIMO_GIORNO_AMMESSO`) — l'altro, `AvvisoAggiornamentoApp`, non c'entra. La seconda esecuzione ne aveva uno diverso, `SidiPanel-sede`, mentre quello di prima passava. Entrambi passano da soli (`SidiPanel-sede` 3 volte su 3) e nessuno importa un file toccato qui: è il rumore già annotato dei test UI che cadono a caso a suite piena. **Non provato contro `main`**: la terza esecuzione, verde, è l'unica prova che si ha.
 

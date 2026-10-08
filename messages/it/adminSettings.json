@@ -433,5 +433,14 @@
   "noteRimuoviCategoria": "Rimuovi categoria",
   "spEliminaCategoria": "Elimina categoria",
   "spRimuoviPacchetto": "Rimuovi pacchetto",
-  "meErrMenu": "Operazione sui menu non riuscita. Riprova."
+  "meErrMenu": "Operazione sui menu non riuscita. Riprova.",
+  "catAiuto": "Le voci delle categorie mensili (es. pomeridiano, doposcuola, pulmino) si generano insieme alle rette per i bambini iscritti al servizio, dalla scheda Servizi della Contabilità. Rendi mensile la categoria che usi già invece di crearne una nuova.",
+  "catMensile": "Mensile",
+  "catImportoMensile": "Importo mensile predefinito (€)",
+  "catTogliMensileAvviso": "Gli iscritti a questo servizio non riceveranno più la voce mensile alla prossima generazione.",
+  "catConferma": "Conferma",
+  "catSalvata": "Categoria aggiornata.",
+  "catAggiunta": "Categoria aggiunta.",
+  "catEliminata": "Categoria eliminata.",
+  "catImportoNonValido": "L’importo mensile deve essere un numero maggiore o uguale a zero."
 }

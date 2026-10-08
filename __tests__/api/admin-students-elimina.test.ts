@@ -4,17 +4,20 @@ import { NextResponse } from 'next/server'
 import type { DBFinto, Scrittura } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import { redact } from '@/lib/logging/redact'
+import { riduciValoreAudit } from '@/lib/audit/riassunto'
 
 // =============================================================================
 // `POST /api/admin/students/elimina` — l'eliminazione definitiva dai «non iscritti».
 // Le asserzioni sono sulla MUTAZIONE (che cosa è stato chiamato, scritto,
-// tolto dai bucket) e sull'ORDINE: prima le tracce di testo senza FK, poi i
-// file, poi il database, la traccia nuova solo a cose fatte. Un 200 da solo non
-// dice niente.
+// tolto dai bucket) e sull'ORDINE: la sonda della funzione SQL, poi le tracce
+// di testo senza FK, poi i file, poi il database, la traccia nuova solo a cose
+// fatte. Un 200 da solo non dice niente — e un errore da solo nemmeno: dopo il
+// primo effetto, ogni risposta deve dire che cosa è GIÀ successo.
 // =============================================================================
 
 const AL = 'a1a1a1a1-1111-4111-8111-aaaaaaaaaaaa'
 const ISCRITTO = 'c3c3c3c3-3333-4333-8333-cccccccccccc'
+const OP = 'admin/students/elimina:POST'
 
 /** L'esito di `bonificaTracceTestualiAlunno` quando tutto è andato a buon fine. */
 const TRACCE_OK = {
@@ -27,7 +30,29 @@ const TRACCE_OK = {
   auditDiarioCompleto: true,
 }
 
+/** L'esito di `anonimizzaAlunno` senza niente di rimasto indietro. */
+const ANONIMIZZA_OK = {
+  riconciliazione: 0,
+  incassi: 0,
+  cassa: 0,
+  file: 0,
+  fileNonRimossi: 0,
+  segnalazioniBonificate: 0,
+  sospensioniBonificate: 0,
+  iscrizioniScrubbate: 0,
+  fotoRimosse: 0,
+  fotoSganciate: 0,
+  presenzeBonificate: 0,
+  diarioBonificate: 0,
+  notificheRimosse: 0,
+  videoIntentiTrattati: 0,
+  videoIntentiRevocati: 0,
+  lettureFallite: 0,
+}
+
 const h = vi.hoisted(() => ({
+  /** L'uuid della chiamata-sonda: nessuna scheda lo porta, la funzione risponde `non_trovato`. */
+  SONDA: '00000000-0000-0000-0000-000000000000',
   requireStaff: vi.fn(),
   logScrittura: vi.fn(),
   logEvento: vi.fn(),
@@ -35,6 +60,7 @@ const h = vi.hoisted(() => ({
   bonificaAuditScritture: vi.fn(),
   bonificaTracce: vi.fn(),
   rpc: vi.fn(),
+  sonda: vi.fn(),
   db: {} as Record<string, Record<string, unknown>[]>,
   scritture: [] as unknown[],
   rimossi: [] as { bucket: string; percorsi: string[] }[],
@@ -92,7 +118,11 @@ vi.mock('@/lib/supabase/server-client', async () => {
     const base = creaFintoSupabase(h.db as DBFinto, [], {
       scritture: h.scritture as Scrittura[],
       rpc: {
-        elimina_alunno_definitivo: (args) => { h.ordine.push('rpc'); return h.rpc(args) },
+        elimina_alunno_definitivo: (args) => {
+          if (args.p_alunno === h.SONDA) { h.ordine.push('sonda'); return h.sonda(args) }
+          h.ordine.push('rpc')
+          return h.rpc(args)
+        },
         video_intent_oblio_alunno: () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
       },
     }) as unknown as Record<string, unknown>
@@ -148,12 +178,32 @@ function dbDiProva(): Record<string, Record<string, unknown>[]> {
   }
 }
 
+/** I campi di UNA chiamata a `logEvento` con quell'esito. */
+function campiDelLog(esito: string): Record<string, unknown> {
+  const chiamata = h.logEvento.mock.calls.find((c) => (c[2] as { esito?: string } | undefined)?.esito === esito)
+  expect(chiamata, `nessun log con esito «${esito}»`).toBeDefined()
+  return chiamata![2] as Record<string, unknown>
+}
+
+/** Pagamenti presenti ma non cancellabili (un incasso): resta solo «anonimizza». */
+function conPagamentoBloccato() {
+  h.db.pagamenti = [{ id: 'pag-1', alunno_id: AL, parent_payment_id: null }]
+  h.db.incassi = [{ id: 'inc-1', pagamento_id: 'pag-1' }]
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SEDE_A } })
   h.rpc.mockReturnValue({ data: { ok: true, code: 'eliminato', righe: { legami: 0 } }, error: null })
-  h.anonimizzaAlunno.mockResolvedValue({ riconciliazione: 0, incassi: 0, cassa: 0, file: 0 })
-  h.bonificaAuditScritture.mockResolvedValue(0)
+  // La migrazione risponde `non_trovato` a un uuid che nessuna scheda porta, PRIMA di qualunque scrittura.
+  h.sonda.mockReturnValue({ data: { ok: false, code: 'non_trovato' }, error: null })
+  // Come la funzione vera: la scheda risulta anonimizzata dopo la chiamata.
+  h.anonimizzaAlunno.mockImplementation(async (_s: unknown, alunno: { id: string }) => {
+    const riga = h.db.alunni.find((a) => a.id === alunno.id)
+    if (riga) riga.anonimizzato_il = '2026-10-09T00:00:00.000Z'
+    return { ...ANONIMIZZA_OK }
+  })
+  h.bonificaAuditScritture.mockResolvedValue(3)
   h.bonificaTracce.mockResolvedValue({ ...TRACCE_OK })
   h.db = dbDiProva()
   h.scritture = []
@@ -175,16 +225,18 @@ describe('POST /api/admin/students/elimina — chi, su chi', () => {
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(403)
     expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.sonda).not.toHaveBeenCalled()
     expect(h.bonificaTracce).not.toHaveBeenCalled()
     expect(h.rimossi).toEqual([])
   })
 
-  it('fuori sede: rifiuto e nessun effetto', async () => {
+  it('fuori sede: 403 e nessun effetto', async () => {
     h.requireStaff.mockResolvedValue({ user: { id: 'seg-b', role: 'segreteria', scuola_id: SEDE_B } })
     h.db.utenti = [{ id: 'seg-b', ruolo: 'segreteria', scuola_id: SEDE_B }]
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
-    expect(res.status).toBeGreaterThanOrEqual(403)
+    expect(res.status).toBe(403)
     expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.sonda).not.toHaveBeenCalled()
     expect(h.bonificaTracce).not.toHaveBeenCalled()
     expect(h.rimossi).toEqual([])
   })
@@ -193,6 +245,26 @@ describe('POST /api/admin/students/elimina — chi, su chi', () => {
     const res = await POST(req({ alunno_id: ISCRITTO, mode: 'dryrun' }))
     expect(res.status).toBe(409)
     expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_FREQUENTANTE')
+  })
+
+  it('execute su stato NULL con una sezione (frequenta: il default è «iscritto»): 409 e nessun effetto', async () => {
+    h.db.alunni[0] = { ...h.db.alunni[0], stato: null, section_id: 'sez-1' }
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_FREQUENTANTE')
+    expect(h.bonificaTracce).not.toHaveBeenCalled()
+    expect(h.rimossi).toEqual([])
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('execute su una scheda già anonimizzata: 409, nessun effetto, e il log dice «anonimizzato»', async () => {
+    h.db.alunni[0] = { ...h.db.alunni[0], anonimizzato_il: '2026-09-01T00:00:00.000Z' }
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_FREQUENTANTE')
+    expect(campiDelLog('eliminazione-rifiutata-frequentante').tipo).toBe('anonimizzato')
+    expect(h.bonificaTracce).not.toHaveBeenCalled()
+    expect(h.rpc).not.toHaveBeenCalled()
   })
 
   it('execute senza scelta: 400 ALUNNO_ELIMINAZIONE_SCELTA_MANCANTE', async () => {
@@ -216,6 +288,7 @@ describe('dryrun', () => {
     expect(h.scritture).toEqual([])
     expect(h.rimossi).toEqual([])
     expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.sonda).not.toHaveBeenCalled()
     expect(h.bonificaTracce).not.toHaveBeenCalled()
   })
 
@@ -227,16 +300,69 @@ describe('dryrun', () => {
   })
 })
 
-describe('execute', () => {
-  it('ORDINE: tracce di testo → file → funzione SQL → bonifica audit → traccia', async () => {
+describe('execute — la scelta deve essere fra quelle offerte, e il rifiuto dice PERCHÉ', () => {
+  it.each<{ caso: string; prepara: () => void; scelta: string; codice: string }>([
+    {
+      caso: 'nessun motivo (scelta che non esiste per lui)',
+      prepara: () => {},
+      scelta: 'elimina_con_pagamenti',
+      codice: 'ALUNNO_ELIMINAZIONE_SCELTA_NON_DISPONIBILE',
+    },
+    {
+      caso: 'registro della primaria',
+      prepara: () => { h.db.valutazioni = [{ id: 'v-1', alunno_id: AL }] },
+      scelta: 'elimina',
+      codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE',
+    },
+    {
+      caso: 'pagamenti cancellabili, scelta «elimina»',
+      prepara: () => { h.db.pagamenti = [{ id: 'pag-1', alunno_id: AL, parent_payment_id: null }] },
+      scelta: 'elimina',
+      codice: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI',
+    },
+    {
+      caso: 'pagamenti bloccati, scelta «elimina_con_pagamenti»',
+      prepara: conPagamentoBloccato,
+      scelta: 'elimina_con_pagamenti',
+      codice: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI',
+    },
+    {
+      caso: 'una foto solo sua con un indirizzo che l’archivio non riconosce',
+      prepara: () => {
+        h.db.galleria_media_v2 = [
+          { id: 'm-1', file_url: 'https://esterno.example.invalid/foto-finta.jpg', file_type: 'foto', tag_students: [AL] },
+        ]
+      },
+      scelta: 'elimina',
+      codice: 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI',
+    },
+  ])('$caso → 409 $codice e nessun effetto', async ({ prepara, scelta, codice }) => {
+    prepara()
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe(codice)
+    expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.sonda).not.toHaveBeenCalled()
+    expect(h.bonificaTracce).not.toHaveBeenCalled()
+    expect(h.anonimizzaAlunno).not.toHaveBeenCalled()
+    expect(h.rimossi).toEqual([])
+  })
+})
+
+describe('execute — elimina', () => {
+  it('ORDINE: sonda → tracce di testo → file → funzione SQL → bonifica audit → traccia', async () => {
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(200)
-    expect(h.bonificaTracce).toHaveBeenCalledWith(expect.anything(), AL, 'admin/students/elimina:POST')
+    expect(h.sonda).toHaveBeenCalledWith({ p_alunno: '00000000-0000-0000-0000-000000000000', p_con_pagamenti: false })
+    expect(h.bonificaTracce).toHaveBeenCalledWith(expect.anything(), AL, OP)
     expect(h.rpc).toHaveBeenCalledWith({ p_alunno: AL, p_con_pagamenti: false })
+    expect(h.bonificaAuditScritture).toHaveBeenCalledWith(expect.anything(), [AL], OP)
+    const sonda = h.ordine.indexOf('sonda')
     const tracce = h.ordine.indexOf('tracce')
     const primoStorage = h.ordine.indexOf('storage')
     const primoRpc = h.ordine.indexOf('rpc')
-    expect(tracce).toBeGreaterThanOrEqual(0)
+    expect(sonda).toBeGreaterThanOrEqual(0)
+    expect(tracce).toBeGreaterThan(sonda)
     expect(primoStorage).toBeGreaterThan(tracce)
     expect(h.ordine.lastIndexOf('storage')).toBeLessThan(primoRpc)
     expect(h.ordine.indexOf('bonifica')).toBeGreaterThan(primoRpc)
@@ -247,20 +373,54 @@ describe('execute', () => {
     )
   })
 
-  it('tracce di testo incomplete: 500 PRIMA di file e database, nessuna traccia', async () => {
+  it('funzione assente (DB non migrato): la SONDA lo dice PRIMA di ogni effetto → 503, niente toccato', async () => {
+    h.sonda.mockReturnValue({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } })
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    expect(res.status).toBe(503)
+    const j = await res.json()
+    expect(j.codice).toBe('ALUNNO_ELIMINAZIONE_NON_DISPONIBILE')
+    expect(j.effetti).toBeUndefined()
+    expect(h.bonificaTracce).not.toHaveBeenCalled()
+    expect(h.rimossi).toEqual([])
+    expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.logScrittura).not.toHaveBeenCalled()
+  })
+
+  it('la sonda fallisce per un altro motivo: 500 e niente toccato', async () => {
+    h.sonda.mockReturnValue({ data: null, error: { code: '57014', message: 'canceling statement' } })
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    expect(res.status).toBe(500)
+    const j = await res.json()
+    expect(j.codice).toBe('ALUNNO_ELIMINAZIONE_NON_RIUSCITA')
+    expect(j.effetti).toBeUndefined()
+    expect(h.bonificaTracce).not.toHaveBeenCalled()
+    expect(h.rimossi).toEqual([])
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('la sonda risponde qualcosa che non è `non_trovato`: 500 e niente toccato', async () => {
+    h.sonda.mockReturnValue({ data: { ok: true, code: 'eliminato' }, error: null })
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    expect(res.status).toBe(500)
+    expect(h.bonificaTracce).not.toHaveBeenCalled()
+    expect(h.rimossi).toEqual([])
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('tracce di testo incomplete: 500 PRIMA di file e database, con gli effetti già avvenuti', async () => {
     h.bonificaTracce.mockResolvedValue({ ...TRACCE_OK, completo: false, threadLetti: false })
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(500)
-    expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_NON_RIUSCITA')
+    const j = await res.json()
+    expect(j.codice).toBe('ALUNNO_ELIMINAZIONE_NON_RIUSCITA')
+    expect(j.effetti).toEqual({ tracce: { notifiche: 2, segnalazioni: 1, sospensioni: 0 }, file: null })
     expect(h.rimossi).toEqual([])
     expect(h.rpc).not.toHaveBeenCalled()
     expect(h.bonificaAuditScritture).not.toHaveBeenCalled()
     expect(h.logScrittura).not.toHaveBeenCalled()
-    expect(h.logEvento).toHaveBeenCalledWith(
-      'gdpr',
-      'warn',
-      expect.objectContaining({ esito: 'eliminazione-ferma-tracce-incomplete', entita_id: AL }),
-    )
+    expect(campiDelLog('eliminazione-ferma-tracce-incomplete')).toMatchObject({
+      entita_id: AL, n_notifiche: 2, n_segnalazioni: 1,
+    })
   })
 
   it('la traccia non contiene la riga dell’alunno: niente nome, cognome, percorso', async () => {
@@ -270,48 +430,83 @@ describe('execute', () => {
     expect(testo).not.toContain('doc-finto')
   })
 
-  it('un file che non esce ferma TUTTO prima del database: 502 e nessuna traccia', async () => {
+  it('il numero del documento tolto SOPRAVVIVE alla riduzione dell’audit', async () => {
+    // `riduciValoreAudit` riduce la chiave `documento` a qualunque profondità: col
+    // nome corto il registro diceva «[non registrato]» al posto di 1.
+    await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    const ridotto = riduciValoreAudit(h.logScrittura.mock.calls[0][1].valoreDopo) as Record<string, unknown>
+    expect(ridotto).toMatchObject({ file: { documenti_rimossi: 1 }, tracce: { notifiche: 2, segnalazioni: 1 } })
+  })
+
+  it('un file che non esce ferma TUTTO prima del database: 502, gli effetti detti, nessuna traccia', async () => {
     h.bloccati = ['iscrizioni/doc-finto.pdf']
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(502)
-    expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_FILE_RESTANTI')
+    const j = await res.json()
+    expect(j.codice).toBe('ALUNNO_ELIMINAZIONE_FILE_RESTANTI')
+    expect(j.effetti).toMatchObject({ tracce: { notifiche: 2, segnalazioni: 1 }, file: { restanti: 1 } })
     // Il file c'era ed è stato tentato: il 502 non nasce da una lettura fallita.
     expect(h.rimossi.flatMap((r) => r.percorsi)).toContain('iscrizioni/doc-finto.pdf')
     expect(h.rpc).not.toHaveBeenCalled()
     expect(h.logScrittura).not.toHaveBeenCalled()
   })
 
-  it('il database rifiuta (corsa: è arrivato un voto): 409 col codice giusto e nessuna traccia', async () => {
-    h.rpc.mockReturnValue({ data: { ok: false, code: 'registro_primaria' }, error: null })
+  it.each<{ code: string; status: number; codice: string }>([
+    { code: 'non_trovato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
+    { code: 'frequentante', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
+    { code: 'gia_anonimizzato', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
+    { code: 'registro_primaria', status: 409, codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
+    { code: 'ha_pagamenti', status: 409, codice: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI' },
+    { code: 'pagamenti_non_cancellabili', status: 409, codice: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI' },
+    { code: 'codice_mai_visto', status: 500, codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA' },
+  ])('il database rifiuta con «$code»: $status $codice, gli effetti detti e registrati, nessuna traccia', async ({ code, status, codice }) => {
+    h.rpc.mockReturnValue({ data: { ok: false, code }, error: null })
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
-    expect(res.status).toBe(409)
-    expect((await res.json()).codice).toBe('REGISTRO_PRIMARIA_DA_CONSERVARE')
+    expect(res.status).toBe(status)
+    const j = await res.json()
+    expect(j.codice).toBe(codice)
+    expect(j.effetti).toMatchObject({
+      tracce: { notifiche: 2, segnalazioni: 1 },
+      file: { documenti_rimossi: 1, restanti: 0 },
+    })
+    expect(campiDelLog('eliminazione-rifiutata-dal-db')).toMatchObject({
+      tipo: code, entita_id: AL, n_notifiche: 2, n_segnalazioni: 1, n_documenti: 1,
+    })
     expect(h.logScrittura).not.toHaveBeenCalled()
     expect(h.bonificaAuditScritture).not.toHaveBeenCalled()
   })
 
-  it('il database rifiuta con un codice che non conosce: 500, nessuna traccia', async () => {
-    h.rpc.mockReturnValue({ data: { ok: false, code: 'codice_mai_visto' }, error: null })
+  it('errore della RPC e la scheda c’è ancora: 500 con gli effetti già avvenuti', async () => {
+    h.rpc.mockReturnValue({ data: null, error: { code: '57014', message: 'canceling statement' } })
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(500)
-    expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_NON_RIUSCITA')
+    const j = await res.json()
+    expect(j.codice).toBe('ALUNNO_ELIMINAZIONE_NON_RIUSCITA')
+    expect(j.effetti).toMatchObject({ tracce: { notifiche: 2, segnalazioni: 1 }, file: { documenti_rimossi: 1 } })
+    expect(campiDelLog('eliminazione-non-riuscita')).toMatchObject({ entita_id: AL, n_notifiche: 2 })
     expect(h.logScrittura).not.toHaveBeenCalled()
+    expect(h.bonificaAuditScritture).not.toHaveBeenCalled()
   })
 
-  it('funzione assente (DB non migrato): 503 ALUNNO_ELIMINAZIONE_NON_DISPONIBILE', async () => {
-    h.rpc.mockReturnValue({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } })
+  it('esito incerto: la RPC risponde errore ma la scheda NON c’è più → completa la traccia, 200 incerto', async () => {
+    // Il commit è avvenuto, la risposta si è persa per strada.
+    h.rpc.mockImplementation(() => {
+      h.db.alunni = h.db.alunni.filter((a) => a.id !== AL)
+      return { data: null, error: { code: '08006', message: 'connessione interrotta' } }
+    })
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
-    expect(res.status).toBe(503)
-    expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_NON_DISPONIBILE')
-  })
-
-  it('una scelta non offerta dall’anteprima: 409 e nessun effetto', async () => {
-    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina_con_pagamenti' }))
-    expect(res.status).toBe(409)
-    expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_SCELTA_NON_DISPONIBILE')
-    expect(h.rpc).not.toHaveBeenCalled()
-    expect(h.bonificaTracce).not.toHaveBeenCalled()
-    expect(h.rimossi).toEqual([])
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: true, incerto: true, scelta: 'elimina' })
+    expect(h.bonificaAuditScritture).toHaveBeenCalledWith(expect.anything(), [AL], OP)
+    expect(h.logScrittura).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        entitaTipo: 'alunno_eliminato',
+        entitaId: AL,
+        valoreDopo: expect.objectContaining({ esito_incerto: true }),
+      }),
+    )
+    expect(campiDelLog('alunno-eliminato')).toMatchObject({ esito_incerto: true })
   })
 
   it('con pagamenti cancellabili: «elimina_con_pagamenti» passa p_con_pagamenti=true', async () => {
@@ -322,30 +517,104 @@ describe('execute', () => {
     expect(h.ordine.indexOf('tracce')).toBeLessThan(h.ordine.indexOf('storage'))
   })
 
-  it('«anonimizza» chiama la funzione dell’oblio sul solo bambino, mai la RPC', async () => {
-    h.db.pagamenti = [{ id: 'pag-1', alunno_id: AL, parent_payment_id: null }]
-    h.db.incassi = [{ id: 'inc-1', pagamento_id: 'pag-1' }]
+  it('il successo lascia un log, con soli identificativi e i numeri che passano la redazione', async () => {
+    await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'gdpr',
+      'info',
+      expect.objectContaining({
+        esito: 'alunno-eliminato', entita_id: AL, n_notifiche: 2, n_segnalazioni: 1, n_audit_bonificate: 3,
+      }),
+    )
+    // I numeri devono USCIRE dalla redazione come numeri, non come `[redatto…]`.
+    const campi = campiDelLog('alunno-eliminato')
+    expect(redact(campi)).toMatchObject({
+      n_notifiche: 2, n_segnalazioni: 1, n_audit_bonificate: 3, n_documenti: 1, n_file_restanti: 0,
+    })
+    // E i numeri stanno anche nella traccia immutabile.
+    expect(h.logScrittura.mock.calls[0][1].valoreDopo).toMatchObject({
+      tracce: { notifiche: 2, segnalazioni: 1, sospensioni: 0 },
+      audit_bonificate: 3,
+    })
+  })
+
+  it('anche i numeri dei rifiuti passano la redazione', async () => {
+    h.rpc.mockReturnValue({ data: { ok: false, code: 'ha_pagamenti' }, error: null })
+    await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    const campi = campiDelLog('eliminazione-rifiutata-dal-db')
+    expect(redact(campi)).toMatchObject({
+      tipo: 'ha_pagamenti', n_notifiche: 2, n_segnalazioni: 1, n_documenti: 1, n_file_restanti: 0,
+    })
+  })
+})
+
+describe('execute — anonimizza', () => {
+  it('chiama la funzione dell’oblio sul solo bambino, mai la RPC (nemmeno la sonda)', async () => {
+    conPagamentoBloccato()
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'anonimizza' }))
     expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: true, scelta: 'anonimizza', parziale: false })
     expect(h.anonimizzaAlunno).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ id: AL }),
       expect.any(String),
-      'admin/students/elimina:POST',
+      OP,
     )
     expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.sonda).not.toHaveBeenCalled()
     // Il registro si rilegge SUBITO PRIMA dell'anonimizzazione, non solo nella misura.
     expect(h.lettureRegistro).toBe(2)
     expect(h.ordine.lastIndexOf('registro')).toBeLessThan(h.ordine.indexOf('anonimizza'))
     expect(h.logScrittura).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ entitaTipo: 'alunno_anonimizzato' }),
+      expect.objectContaining({ entitaTipo: 'alunno_anonimizzato', valoreDopo: expect.objectContaining({ parziale: false }) }),
     )
+    expect(h.logEvento).toHaveBeenCalledWith('gdpr', 'info', expect.objectContaining({ esito: 'alunno-anonimizzato' }))
   })
 
-  it('«anonimizza» con un voto arrivato DOPO la misura: 409 e nessuna anonimizzazione', async () => {
-    h.db.pagamenti = [{ id: 'pag-1', alunno_id: AL, parent_payment_id: null }]
-    h.db.incassi = [{ id: 'inc-1', pagamento_id: 'pag-1' }]
+  it.each<{ caso: string; esito: Partial<typeof ANONIMIZZA_OK>; lasciaLaScheda?: boolean; numeri: Record<string, unknown> }>([
+    { caso: 'un file non è uscito', esito: { fileNonRimossi: 1 }, numeri: { file_non_rimossi: 1, letture_fallite: 0, scheda_anonimizzata: true } },
+    { caso: 'un archivio non si è potuto leggere', esito: { lettureFallite: 2 }, numeri: { file_non_rimossi: 0, letture_fallite: 2, scheda_anonimizzata: true } },
+    { caso: 'la scheda non risulta anonimizzata', esito: {}, lasciaLaScheda: true, numeri: { file_non_rimossi: 0, letture_fallite: 0, scheda_anonimizzata: false } },
+  ])('PARZIALE se $caso: 200 con parziale=true, log a livello error, numeri nella traccia', async ({ esito, lasciaLaScheda, numeri }) => {
+    conPagamentoBloccato()
+    h.anonimizzaAlunno.mockImplementation(async (_s: unknown, alunno: { id: string }) => {
+      const riga = h.db.alunni.find((a) => a.id === alunno.id)
+      if (riga && !lasciaLaScheda) riga.anonimizzato_il = '2026-10-09T00:00:00.000Z'
+      return { ...ANONIMIZZA_OK, ...esito }
+    })
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'anonimizza' }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: true, parziale: true, numeri })
+    expect(h.logEvento).toHaveBeenCalledWith('gdpr', 'error', expect.objectContaining({ esito: 'anonimizzazione-parziale', entita_id: AL }))
+    expect(h.logEvento).not.toHaveBeenCalledWith('gdpr', 'info', expect.objectContaining({ esito: 'alunno-anonimizzato' }))
+    expect(h.logScrittura.mock.calls[0][1].valoreDopo).toMatchObject({ parziale: true, ...numeri })
+    // I numeri del log escono dalla redazione come sono.
+    const campi = campiDelLog('anonimizzazione-parziale')
+    expect(redact(campi)).toMatchObject({
+      n_file: numeri.file_non_rimossi,
+      n_letture_fallite: numeri.letture_fallite,
+      scheda_anonimizzata: numeri.scheda_anonimizzata,
+    })
+  })
+
+  it('le chiavi condivise escluse (CF, documento di un altro bambino) finiscono nella traccia, e sopravvivono alla riduzione', async () => {
+    conPagamentoBloccato()
+    h.anonimizzaAlunno.mockImplementation(async (_s: unknown, alunno: { id: string }) => {
+      const riga = h.db.alunni.find((a) => a.id === alunno.id)
+      if (riga) riga.anonimizzato_il = '2026-10-09T00:00:00.000Z'
+      // La forma di `anonimizzaAlunno` (src/lib/gdpr/esegui.ts): due conteggi.
+      return { ...ANONIMIZZA_OK, chiaviCondiviseEscluse: { codiceFiscale: 1, documento: 0 } }
+    })
+    await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'anonimizza' }))
+    const ridotto = riduciValoreAudit(h.logScrittura.mock.calls[0][1].valoreDopo) as Record<string, unknown>
+    expect(ridotto).toMatchObject({
+      chiavi_condivise_escluse: { codice_fiscale_escluso: 1, documento_escluso: 0 },
+    })
+  })
+
+  it('con un voto arrivato DOPO la misura: 409 e nessuna anonimizzazione', async () => {
+    conPagamentoBloccato()
     h.registroDopoMisura = 'voto'
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'anonimizza' }))
     expect(res.status).toBe(409)
@@ -355,30 +624,13 @@ describe('execute', () => {
     expect(h.logScrittura).not.toHaveBeenCalled()
   })
 
-  it('«anonimizza» con il registro illeggibile alla seconda lettura: 500 e nessuna anonimizzazione', async () => {
-    h.db.pagamenti = [{ id: 'pag-1', alunno_id: AL, parent_payment_id: null }]
-    h.db.incassi = [{ id: 'inc-1', pagamento_id: 'pag-1' }]
+  it('con il registro illeggibile alla seconda lettura: 500 e nessuna anonimizzazione', async () => {
+    conPagamentoBloccato()
     h.registroDopoMisura = 'guasto'
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'anonimizza' }))
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_NON_MISURATA')
     expect(h.anonimizzaAlunno).not.toHaveBeenCalled()
     expect(h.logScrittura).not.toHaveBeenCalled()
-  })
-
-  it('il successo lascia un log, con soli identificativi e i numeri delle tracce', async () => {
-    await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
-    expect(h.logEvento).toHaveBeenCalledWith(
-      'gdpr',
-      'info',
-      expect.objectContaining({ esito: 'alunno-eliminato', entita_id: AL, n_notifiche: 2, n_segnalazioni: 1 }),
-    )
-    // I numeri devono USCIRE dalla redazione come numeri, non come `[redatto…]`.
-    const campi = h.logEvento.mock.calls.find((c) => c[2]?.esito === 'alunno-eliminato')![2]
-    expect(redact(campi)).toMatchObject({ n_notifiche: 2, n_segnalazioni: 1 })
-    // E i numeri stanno anche nella traccia immutabile.
-    expect(h.logScrittura.mock.calls[0][1].valoreDopo).toMatchObject({
-      tracce: { notifiche: 2, segnalazioni: 1, sospensioni: 0 },
-    })
   })
 })

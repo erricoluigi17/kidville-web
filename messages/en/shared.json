@@ -251,7 +251,7 @@
   "erroreAlunnoEliminazioneHaPagamenti": "This child has payments: choose whether to delete them or anonymise the record.",
   "erroreAlunnoEliminazioneNonDisponibile": "Permanent deletion is not available in this environment: nothing was changed.",
   "erroreAlunnoEliminazioneNonMisurata": "We could not read what is linked to this record: nothing was deleted. Please try again.",
-  "erroreAlunnoEliminazioneNonRiuscita": "Deletion failed: the record is unchanged. Please try again.",
+  "erroreAlunnoEliminazioneNonRiuscita": "The record was not deleted. Photos and documents may already have been removed: try again to complete the deletion.",
   "erroreAlunnoEliminazioneNonTrovato": "This child is no longer listed: reload the page.",
   "erroreAlunnoEliminazionePagamentiBloccati": "One or more payments have a receipt, an invoice, a matched bank transfer or a recorded collection: they cannot be deleted. You can anonymise the record.",
   "erroreAlunnoEliminazioneSceltaMancante": "Choose what to do before confirming.",

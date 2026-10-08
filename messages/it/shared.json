@@ -251,7 +251,7 @@
   "erroreAlunnoEliminazioneHaPagamenti": "Questo bambino ha dei pagamenti: scegli se cancellarli o anonimizzare la scheda.",
   "erroreAlunnoEliminazioneNonDisponibile": "L’eliminazione definitiva non è disponibile su questo ambiente: nessuna modifica è stata fatta.",
   "erroreAlunnoEliminazioneNonMisurata": "Non è stato possibile leggere che cosa è collegato alla scheda: non è stato eliminato niente. Riprova.",
-  "erroreAlunnoEliminazioneNonRiuscita": "Eliminazione non riuscita: la scheda è rimasta com’era. Riprova.",
+  "erroreAlunnoEliminazioneNonRiuscita": "La scheda non è stata eliminata. Foto e documenti potrebbero essere già stati tolti: riprova per completare.",
   "erroreAlunnoEliminazioneNonTrovato": "Questo bambino non è più in elenco: ricarica la pagina.",
   "erroreAlunnoEliminazionePagamentiBloccati": "Uno o più pagamenti hanno una ricevuta, una fattura, un bonifico abbinato o un incasso registrato: non si possono cancellare. Puoi anonimizzare la scheda.",
   "erroreAlunnoEliminazioneSceltaMancante": "Scegli che cosa fare prima di confermare.",

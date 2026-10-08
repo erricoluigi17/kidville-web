@@ -304,7 +304,7 @@ describe('rimuoviFileAlunno — i file escono, o la scheda resta', () => {
         certificati: 0,
         fascicolo: 0,
         allegati_chat: 0,
-        documento: 0,
+        documenti_rimossi: 0,
         documento_condiviso: 0,
         restanti: 0,
       },
@@ -360,7 +360,7 @@ describe('rimuoviFileAlunno — i file escono, o la scheda resta', () => {
     const { client, rimossi } = conStorage(db({ alunni: [{ id: AL, documento_path: DOC }] }))
     const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
     expect(esito.ok).toBe(true)
-    expect(esito.numeri).toMatchObject({ documento: 1, documento_condiviso: 0 })
+    expect(esito.numeri).toMatchObject({ documenti_rimossi: 1, documento_condiviso: 0 })
     expect(rimossi).toEqual([{ bucket: 'form_attachments', percorsi: [DOC] }])
   })
 
@@ -383,7 +383,7 @@ describe('rimuoviFileAlunno — i file escono, o la scheda resta', () => {
     const { client, rimossi } = conStorage(db({ alunni: [{ id: AL, documento_path: DOC }], ...extra }))
     const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
     expect(esito.ok).toBe(true)
-    expect(esito.numeri).toMatchObject({ documento: 0, documento_condiviso: 1, restanti: 0 })
+    expect(esito.numeri).toMatchObject({ documenti_rimossi: 0, documento_condiviso: 1, restanti: 0 })
     expect(rimossi).toEqual([])
   })
 
@@ -395,7 +395,7 @@ describe('rimuoviFileAlunno — i file escono, o la scheda resta', () => {
       }),
     )
     const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
-    expect(esito.numeri).toMatchObject({ documento: 1, documento_condiviso: 0 })
+    expect(esito.numeri).toMatchObject({ documenti_rimossi: 1, documento_condiviso: 0 })
     expect(rimossi).toEqual([{ bucket: 'form_attachments', percorsi: [DOC] }])
   })
 

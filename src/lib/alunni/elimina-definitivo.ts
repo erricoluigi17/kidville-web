@@ -276,7 +276,17 @@ export interface EsitoFileAlunno {
     certificati: number
     fascicolo: number
     allegati_chat: number
-    documento: number
+    /**
+     * Quanti documenti d'identità sono usciti dal bucket (0 o 1).
+     *
+     * ⚠️ NON si chiama `documento`: questi numeri finiscono in `valoreDopo` del
+     * registro delle scritture, e `riduciValoreAudit` (`src/lib/audit/riassunto.ts`)
+     * riduce la chiave `documento` a `[non registrato]` a QUALUNQUE profondità —
+     * perché altrove sotto quel nome viaggia il documento stesso. Col nome corto,
+     * la traccia dell'eliminazione perdeva in silenzio il solo numero che dice se
+     * il documento è stato tolto.
+     */
+    documenti_rimossi: number
     /** 1 se il documento d'identità lo nomina anche un'altra scheda o una domanda d'iscrizione: allora non si toglie. */
     documento_condiviso: number
     restanti: number
@@ -291,7 +301,7 @@ const NUMERI_ZERO: EsitoFileAlunno['numeri'] = {
   certificati: 0,
   fascicolo: 0,
   allegati_chat: 0,
-  documento: 0,
+  documenti_rimossi: 0,
   documento_condiviso: 0,
   restanti: 0,
 }
@@ -453,7 +463,7 @@ export async function rimuoviFileAlunno(
       certificati: certificati.rimossi,
       fascicolo: fascicolo.rimossi,
       allegati_chat: chat.rimossi,
-      documento: documento.rimossi.length,
+      documenti_rimossi: documento.rimossi.length,
       documento_condiviso: condiviso ? 1 : 0,
       restanti,
     },

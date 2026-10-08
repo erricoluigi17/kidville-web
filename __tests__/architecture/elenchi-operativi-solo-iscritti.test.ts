@@ -809,7 +809,9 @@ describe('i chiamanti dell’anagrafica dichiarano lo stato che vogliono', () =>
         out.push({
           percorso: path.relative(process.cwd(), file).split(path.sep).join('/'),
           riga: riga(src, m.index),
-          conStato: /[?&]stato=/.test(url),
+          // `elenco=frequentanti|non_iscritti` (2026-10-08) è un insieme di stati
+          // DICHIARATO, esattamente come `stato=`: chi lo passa ha detto chi vuole.
+          conStato: /[?&](stato|elenco)=/.test(url),
         })
       }
     }
@@ -822,7 +824,7 @@ describe('i chiamanti dell’anagrafica dichiarano lo stato che vogliono', () =>
     const cieche = tutte.filter((c) => !c.conStato && !(c.percorso in CHIAMANTI_SENZA_STATO))
     expect(
       cieche.map((c) => `${c.percorso}:${c.riga}`),
-      'Chiamate a `/api/admin/students` senza `stato=`: la risposta PREDEFINITA è la sede intera, ' +
+      'Chiamate a `/api/admin/students` senza `stato=` (o `elenco=`): la risposta PREDEFINITA è la sede intera, ' +
         'archiviati compresi. Aggiungi `stato=iscritto` se è un elenco operativo, oppure aggiungi il ' +
         'file a `CHIAMANTI_SENZA_STATO` con la ragione per cui vuole anche chi non frequenta più.',
     ).toEqual([])

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
-import { STATO_ISCRITTO } from '@/lib/alunni/stato';
+import { STATO_ISCRITTO, STATI_CHE_FREQUENTANO, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente, formaConfronto } from '@/lib/auth/scope';
@@ -126,6 +126,12 @@ const getQuerySchema = z.object({
     scuola_id: z.string().optional(),
     classe_sezione: z.string().optional(),
     stato: z.string().optional(),
+    // Quale ELENCO vuole chi chiama (2026-10-08). Assente = la sede intera, come
+    // sempre: pagamenti, sezioni e generatori di categoria non lo passano.
+    //  · `frequentanti` — iscritti e sospesi CON una sezione: la linguetta «Alunni»;
+    //  · `non_iscritti` — ritirati (elenco chiuso) o senza sezione, anonimizzati
+    //    esclusi: la linguetta «Non iscritti».
+    elenco: z.enum(['frequentanti', 'non_iscritti']).optional(),
     // Clamp identico al comportamento precedente: default 200 (limit) / 0 (offset),
     // range 1..1000; input non numerico → default, mai 400.
     limit: z.preprocess((v) => Math.min(Math.max(Number(v ?? 200) || 200, 1), 1000), z.number()),
@@ -489,7 +495,7 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     // Paginazione: limit clampato 1..1000 (default 200) + offset; shape array nudo invariata.
-    const { scuola_id: sedeChiesta, classe_sezione: classeSezione, stato, limit, offset } = q.data;
+    const { scuola_id: sedeChiesta, classe_sezione: classeSezione, stato, elenco, limit, offset } = q.data;
 
     try {
         const supabase = await createAdminClient();
@@ -576,6 +582,17 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
             if (sedeChiesta) query = query.eq('scuola_id', sedeChiesta);
             if (classeSezione) query = query.eq('classe_sezione', classeSezione);
             if (stato) query = query.eq('stato', stato);
+            // ATTENZIONE stato NULL: la colonna lo permette (in produzione oggi non
+            // ce ne sono). NULL non è in STATI_CHE_FREQUENTANO, quindi `frequentanti`
+            // lo esclude; `non_iscritti` lo include solo se senza sezione. Un
+            // bambino con stato NULL E sezione non compare in nessuna delle due.
+            if (elenco === 'frequentanti') {
+                query = query.in('stato', [...STATI_CHE_FREQUENTANO]).not('section_id', 'is', null);
+            } else if (elenco === 'non_iscritti') {
+                query = query
+                    .or(`stato.in.(${STATI_NON_PIU_ISCRITTO.join(',')}),section_id.is.null`)
+                    .is('anonimizzato_il', null);
+            }
             return query;
         };
 

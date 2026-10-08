@@ -272,9 +272,6 @@ const NUMERI_ZERO: EsitoFileAlunno['numeri'] = {
   restanti: 0,
 }
 
-/** Solo «la tabella non esiste» (DB E2E della CI non migrato): una COLONNA assente è un guasto. */
-const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
-
 /**
  * Qualcun ALTRO nomina lo stesso documento d'identità? Un altro alunno, un
  * genitore o una domanda d'iscrizione. `null` = non si è potuto sapere.
@@ -292,6 +289,12 @@ const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
  *
  * Le domande si cercano con lo stesso filtro dell'oblio (`obliaIscrizioni`,
  * `src/lib/gdpr/esegui.ts`): contenimento JSONB per ramo, `children` e `adults`.
+ *
+ * ⚠️ NESSUNA TOLLERANZA PER LO SCHEMA ASSENTE, a differenza dell'oblio.
+ * `enrollment_submissions` è nella baseline: esiste in produzione e sul DB della
+ * CI. Se risponde «tabella assente» (`42P01`/`PGRST205`) è un guasto, e
+ * trattarlo come «nessuna domanda» porterebbe a togliere il file che la domanda
+ * conserva. Ogni errore, qui come su `alunni` e `parents`, vale «non lo so».
  */
 async function documentoCondiviso(
   supabase: SupabaseClient,
@@ -330,23 +333,11 @@ async function documentoCondiviso(
       .select('id')
       .contains('data', { [ramo]: [{ documento_path: percorso }] })
       .limit(1)
-    if (domande.error) {
-      const code = (domande.error as { code?: string }).code
-      if (code && TABELLA_ASSENTE.has(code)) {
-        // Sul DB E2E della CI la tabella non c'è: da lì il file non è nominato,
-        // come fa l'oblio. In produzione non deve succedere, quindi si dice.
-        logEvento('db', 'warn', {
-          operazione: op,
-          esito: 'tabella-assente-trattata-come-vuota',
-          tipo: 'enrollment_submissions',
-        })
-        return false
-      }
-      logErrore({ operazione: op, evento: 'elimina_documento_condiviso_domande' }, domande.error)
-      return null
-    }
-    if (!Array.isArray(domande.data)) {
-      logErrore({ operazione: op, evento: 'elimina_documento_condiviso_domande' }, { message: 'risposta senza righe' })
+    if (domande.error || !Array.isArray(domande.data)) {
+      logErrore(
+        { operazione: op, evento: 'elimina_documento_condiviso_domande' },
+        domande.error ?? { message: 'risposta senza righe' },
+      )
       return null
     }
     if (domande.data.length > 0) return true

@@ -386,27 +386,25 @@ describe('rimuoviFileAlunno — i file escono, o la scheda resta', () => {
     },
   )
 
-  it.each(['42P01', 'PGRST205'])(
-    'domande assenti dallo schema (%s, il DB E2E non migrato): non condiviso da lì, il documento esce',
+  // `enrollment_submissions` è nella baseline: esiste in produzione e sul DB della
+  // CI. Se risponde «tabella assente» (o «colonna assente») è un GUASTO, non un
+  // «nessuna domanda»: trattarlo come vuoto toglierebbe il file della domanda.
+  it.each(['42P01', 'PGRST205', '42703'])(
+    'le domande rispondono %s: è un guasto → ok=false, e nessun file esce',
     async (code) => {
-      const { client, rimossi } = conStorage(db({ alunni: [{ id: AL, documento_path: DOC }] }), {
+      const dati = db({
+        alunni: [{ id: AL, documento_path: DOC }],
+        galleria_media_v2: [{ id: 'm-1', file_url: 'uploads/u1/sua.jpg', file_type: 'foto', tag_students: [AL] }],
+      })
+      const { client, rimossi } = conStorage(dati, {
         errori: { enrollment_submissions: { code, message: 'assente' } },
       })
       const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
-      expect(esito.ok).toBe(true)
-      expect(esito.numeri).toMatchObject({ documento: 1, documento_condiviso: 0 })
-      expect(rimossi).toEqual([{ bucket: 'form_attachments', percorsi: [DOC] }])
+      expect(esito.ok).toBe(false)
+      expect(rimossi).toEqual([])
+      expect(dati.galleria_media_v2).toHaveLength(1)
     },
   )
-
-  it('una COLONNA assente (42703) sulle domande non è «tabella assente»: ok=false, nessun file esce', async () => {
-    const { client, rimossi } = conStorage(db({ alunni: [{ id: AL, documento_path: DOC }] }), {
-      errori: { enrollment_submissions: { code: '42703', message: 'column does not exist' } },
-    })
-    const esito = await rimuoviFileAlunno(client, { id: AL, documento_path: DOC }, 'test')
-    expect(esito.ok).toBe(false)
-    expect(rimossi).toEqual([])
-  })
 
   it('una foto del blog che un ALTRO articolo usa resta, e si conta in news_trattenuti', async () => {
     const POST = '20000000-0000-4000-8000-000000000001'

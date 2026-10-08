@@ -38,6 +38,8 @@ fattura e un bonifico abbinato, 1 una ricevuta. In `alunni` vale sempre
 | Chi elimina | **Segreteria e Direzione**, nelle proprie sedi |
 | Conferma | **Niente nominativo da riscrivere**: anteprima con i numeri, poi un bottone |
 | Genitori | **Mai toccati**: si toglie solo il legame |
+| Registro della primaria (voti, pagelle, scrutini, note, certificati delle competenze) | **Né cancellato né anonimizzato** — da nessuna porta, **oblio GDPR compreso** (art. 17 §3 lett. b: dati che la legge obbliga a conservare) |
+| Pagamenti cancellabili | Solo senza ricevuta, fattura, bonifico abbinato **né incasso registrato** (decisione di design, segnalata al titolare in revisione) |
 
 ## 3. Cosa vede la segreteria
 
@@ -71,8 +73,9 @@ pillola è la somma delle righe arrivate nei due gruppi (stessa regola di oggi: 
      un pagamento ha ricevuta, fattura, bonifico abbinato o incasso registrato) · «Anonimizza e tieni
      la contabilità» · Annulla;
    - **registro della primaria presente** (valutazioni, pagelle, scrutini, note disciplinari,
-     certificati delle competenze) → solo «Anonimizza» · Annulla. È un registro ufficiale: non si
-     cancella.
+     certificati delle competenze) → **nessuna scelta**: la finestra spiega che il registro va
+     conservato e che la scheda resta fra i ritirati, e offre solo «Chiudi». Questa condizione vince
+     sulle altre: con registro e pagamenti insieme, non si offre niente.
 3. Esito: successo → la riga sparisce e l'elenco si rilegge; rifiuto/guasto → il messaggio del server
    (tradotto dal `codice`), la finestra resta aperta.
 
@@ -101,11 +104,13 @@ Corpo: `{ alunno_id: uuid, mode: 'dryrun' | 'execute', scelta?: 'elimina' | 'eli
    Altrimenti `409 ALUNNO_ANCORA_FREQUENTANTE`.
 4. **Conteggi** (sole `SELECT`, lib nuova `src/lib/alunni/elimina-definitivo.ts`,
    `contaPerEliminazione`): le voci di `contaCosaDistrugge` + pagamenti, pagamenti bloccati (ricevuta ·
-   fattura · riconciliazione · incasso), registro primaria. Una lettura fallita → `null`, mai `0`, e
-   l'`execute` si ferma (`500 ELIMINAZIONE_NON_MISURATA`).
+   fattura · riconciliazione · incasso), registro primaria (via `leggiRegistroPrimaria`, §4.4). Una
+   lettura fallita → `null`, mai `0`, e l'`execute` si ferma (`500 ELIMINAZIONE_NON_MISURATA`).
 5. `dryrun` → `{ dryrun: true, conteggi, scelte: { elimina, elimina_con_pagamenti, anonimizza }, motivi }`.
+   Con registro primaria presente **tutte e tre** le scelte sono `false` e il motivo è
+   `REGISTRO_PRIMARIA`.
 6. `execute`, `scelta` non disponibile → `409` con il codice del motivo
-   (`ELIMINAZIONE_HA_PAGAMENTI`, `PAGAMENTI_NON_CANCELLABILI`, `REGISTRO_PRIMARIA`).
+   (`REGISTRO_PRIMARIA` vince su tutti, poi `ELIMINAZIONE_HA_PAGAMENTI`, `PAGAMENTI_NON_CANCELLABILI`).
 7. `execute` + `elimina` / `elimina_con_pagamenti`:
    a. **file prima** — con le funzioni dell'oblio, nessuna copia (`gdpr-erase-canale-unico`):
       `obliaFotoAlunno`, `obliaFotoNewsAlunno`, `obliaIntentiVideoAlunno`, `obliaPagelleAlunno`,
@@ -117,7 +122,8 @@ Corpo: `{ alunno_id: uuid, mode: 'dryrun' | 'execute', scelta?: 'elimina' | 'eli
    c. **solo dopo il successo**: `bonificaAuditScritture(supabase, [alunno_id], op)` e poi
       `logScrittura({ entitaTipo: 'alunno_eliminato', azione: 'delete', entitaId, scuolaId,
       valoreDopo: { scelta, conteggi } })` — uuid e numeri, **mai** la riga. `logEvento` di successo.
-8. `execute` + `anonimizza`: `anonimizzaAlunno(...)` sul solo bambino (stessa funzione dell'oblio),
+8. `execute` + `anonimizza` (ammessa solo senza registro primaria, ricontrollato qui):
+   `anonimizzaAlunno(...)` sul solo bambino (stessa funzione dell'oblio),
    `logScrittura({ entitaTipo: 'alunno_anonimizzato', … })`, log di successo. I genitori no: un
    genitore rimasto senza figli resta nella linguetta Genitori.
 
@@ -147,6 +153,24 @@ Restano **di proposito**: `ricevute_emesse` e `fatture_emesse` (WORM / `RESTRICT
 tocca è già bloccato al punto 4), `chat_vigilanza_accessi` (registro di accountability, solo uuid),
 `enrollment_submissions` (non collegata per id; vive in Iscrizioni).
 
+### 4.4 Il registro della primaria: una regola, tre porte
+L'elenco delle tabelle che fanno «registro della primaria» — `valutazioni`, `pagelle`,
+`scrutinio_giudizi`, `scrutinio_comportamento`, `note_disciplinari`, `certificati_competenze` — vive
+in **una** costante TS, `TABELLE_REGISTRO_PRIMARIA` in `src/lib/alunni/registro-primaria.ts`, con
+`leggiRegistroPrimaria(supabase, alunnoId) → { ok: true, presente, conteggi } | { ok: false, errore }`
+(una lettura fallita non è mai «assente»). La usano:
+
+1. la nuova route `admin/students/elimina` (§4.2);
+2. **l'oblio GDPR** `admin/gdpr/erase`: subito dopo il controllo di stato, in `dryrun` **e** in
+   `execute`, registro presente → `409 REGISTRO_PRIMARIA` con `logEvento('gdpr','warn',
+   { esito: 'oblio-rifiutato-registro-primaria' })`; lettura fallita → `500` (mai procedere);
+3. **l'elenco dei candidati all'oblio** `admin/gdpr/candidates`: ogni candidato porta
+   `registro_primaria: boolean`, e `OblioPanel` mostra la riga con il motivo e il comando spento —
+   il bambino **non sparisce** dall'elenco in silenzio.
+
+La funzione SQL (§4.3, punto 3) ripete lo stesso elenco: un test legge la migrazione dal disco e
+pretende che le tabelle controllate in SQL siano **esattamente** quelle della costante TS.
+
 Vincoli di forma (lock): niente `DELETE FROM storage.objects`; nessun uuid di sede; nel corpo e nei
 commenti evitare le parole che accendono le guardie di freschezza (`unique`, `primary key`, `policy`,
 `references utenti`, `drop table`, `add/drop constraint`) — la migrazione è di sole funzioni e non
@@ -170,6 +194,9 @@ deve richiedere una PR-B.
   stop sui file restanti **prima** della RPC, audit scritto **solo dopo** il successo, anonimizza →
   `anonimizzaAlunno`, codici d'errore.
 - **Elenco**: `elenco=frequentanti` / `non_iscritti` applicano i filtri; senza parametro nulla cambia.
+- **Oblio GDPR**: `erase` rifiuta `409 REGISTRO_PRIMARIA` in `dryrun` ed `execute` senza alcuna
+  scrittura; lettura del registro fallita → `500`; `candidates` porta il flag; `OblioPanel` spegne il
+  comando con il motivo. La costante TS e l'elenco in SQL coincidono (lock).
 - **UI**: le due tabelle; «Assegna sezione» chiama la PATCH e rilegge; la finestra mostra le scelte
   giuste per ciascun caso e il motivo del bottone spento; la pagina Alunni non mostra ritirati né
   senza sezione.

@@ -110,7 +110,7 @@ const NOT_NULL_ATTESE: readonly string[] = [
     'cassa_movimenti', 'certificati_competenze', 'crediti_famiglia', 'divise_articoli',
     'divise_ordini', 'enrollment_submissions', 'eventi_agenda', 'fatture_emesse',
     'fatture_numerazione', 'forms_templates', 'giudizi_sintetici_scala', 'gruppi_mensa',
-    'materie', 'mensa_alternative', 'mensa_class_menu_assignment', 'mensa_menu_config',
+    'iscrizioni_servizi', 'materie', 'mensa_alternative', 'mensa_class_menu_assignment', 'mensa_menu_config',
     'merch_fornitori', 'merch_ordini_fornitore', 'merch_po_numerazione', 'merch_rettifiche',
     'news_digest_edizioni', 'obiettivi_apprendimento', 'pagamenti_transazioni', 'presenze',
     'protocolli', 'protocolli_categorie', 'protocolli_numerazione', 'ricevute_emesse',

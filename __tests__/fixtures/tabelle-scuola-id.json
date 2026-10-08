@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/tabelle-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/tabelle-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-26",
-  "generato_alle": "2026-09-26T18:38:36Z",
-  "sha256": "429be985f5ecaf35682c55a7f00cb2017fd7e8fded39ff3cd4d7829499bd68d8",
+  "generato_il": "2026-10-08",
+  "generato_alle": "2026-10-08T09:34:05Z",
+  "sha256": "3be9b04fe6fad10581263967aed4ce53c0998992eb5b9a5a3d52f1ee169f718d",
   "con_scuola_id": [
     "admin_settings",
     "alunni",
@@ -40,6 +40,7 @@
     "iscrizioni_elenco_caricamenti",
     "iscrizioni_elenco_righe",
     "iscrizioni_import_esiti",
+    "iscrizioni_servizi",
     "materie",
     "mensa_alternative",
     "mensa_class_menu_assignment",

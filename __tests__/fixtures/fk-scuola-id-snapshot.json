@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-26",
-  "generato_alle": "2026-09-26T18:38:33Z",
-  "sha256": "b1c1485ed6bc26c0b3845ed8c50daa1a1cf38b870c0117a1ab814442b74f059b",
+  "generato_il": "2026-10-08",
+  "generato_alle": "2026-10-08T09:34:05Z",
+  "sha256": "25160f53c6acab553ca8186dcfb8a874be6b501af015fcf1fd75d87463de1335",
   "tabelle": [
     {
       "tabella": "admin_settings",
@@ -218,6 +218,12 @@
       "tabella": "iscrizioni_import_esiti",
       "not_null": true,
       "fk_nome": "iscrizioni_import_esiti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "iscrizioni_servizi",
+      "not_null": true,
+      "fk_nome": "iscrizioni_servizi_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {

@@ -10,7 +10,22 @@
 --
 -- ─── PERCHÉ LA FUNZIONE RICONTROLLA TUTTO ──────────────────────────────────
 -- La route misura e decide, ma fra la misura e questa chiamata può arrivare un
--- pagamento o un voto. Qui le condizioni si rileggono sotto `FOR UPDATE`.
+-- pagamento o un voto. Qui le condizioni si rileggono sotto `FOR UPDATE`: sulla
+-- scheda E sui pagamenti del bambino (la ragione del secondo lock è scritta
+-- accanto alla riga che lo prende).
+--
+-- ─── QUANDO UN PAGAMENTO È CONTABILITÀ VERA (e blocca, anche col permesso) ──
+-- Un pagamento si cancella solo se è «pulito». Non lo è se ha:
+--  · una ricevuta emessa (o il bambino ha una ricevuta, anche senza pagamento);
+--  · una fattura emessa;
+--  · un bonifico abbinato in riconciliazione;
+--  · un incasso registrato;
+--  · la quota di un ALTRO alunno appesa (parent_payment_id: la cascata la
+--    porterebbe via);
+--  · una voce in fatture_coda in qualunque stato tranne 'tolta': 'in_invio' vuol
+--    dire che il file può essere già partito verso Aruba/SDI, 'errore' è un
+--    esito ambiguo, e la FK è in CASCADE — col pagamento la voce sparirebbe
+--    senza traccia. Una voce 'tolta' è già fuori dalla coda e se ne va con lui.
 --
 -- ─── LA LEZIONE DEL 2026-08-12 ─────────────────────────────────────────────
 -- La vecchia cancellazione scriveva l'audit PRIMA di una DELETE che falliva
@@ -80,6 +95,20 @@ begin
     return jsonb_build_object('ok', false, 'code', 'frequentante');
   end if;
 
+  -- IL SECONDO LOCK: i pagamenti del bambino, PRIMA di controllarli.
+  -- Il `for update` sulla scheda ferma solo chi scrive su `alunni` (o inserisce
+  -- un pagamento nuovo per lui). Non ferma chi scrive una riga FIGLIA di un
+  -- pagamento P che esiste già: un incasso, un abbinamento, la quota di un
+  -- fratello, una voce in fatture_coda. Se quella transazione non ha ancora
+  -- confermato quando i controlli qui sotto guardano P, la sua riga è invisibile:
+  -- il controllo dice «pulito», la delete di P aspetta che l'altra confermi, e poi
+  -- porta via in CASCADE l'incasso appena registrato — rispondendo ok: true.
+  -- Chi inserisce una riga figlia prende sul padre, per il controllo della FK, un
+  -- lock FOR KEY SHARE; FOR UPDATE è in conflitto con quello. Da qui in poi chi
+  -- scrive o ha già confermato (e i controlli lo vedono), o aspetta la fine di
+  -- questa transazione e fallisce con 23503 perché P non c'è più.
+  perform 1 from public.pagamenti where alunno_id = p_alunno for update;
+
   -- registro-primaria:inizio
   if exists (select 1 from public.valutazioni where alunno_id = p_alunno)
      or exists (select 1 from public.pagelle where alunno_id = p_alunno)
@@ -99,8 +128,9 @@ begin
       return jsonb_build_object('ok', false, 'code', 'ha_pagamenti', 'pagamenti', v_pagamenti);
     end if;
     -- Un pagamento è contabilità vera se ha una ricevuta, una fattura, un
-    -- bonifico abbinato, un incasso, oppure quote di un ALTRO alunno appese a lui
-    -- (la cascata su parent_payment_id le porterebbe via).
+    -- bonifico abbinato, un incasso, quote di un ALTRO alunno appese a lui
+    -- (la cascata su parent_payment_id le porterebbe via), oppure una voce
+    -- ancora viva in fatture_coda (vedi il commento di testa).
     select count(*) into v_bloccati
       from public.pagamenti p
      where p.alunno_id = p_alunno
@@ -110,7 +140,10 @@ begin
          or exists (select 1 from public.incassi i where i.pagamento_id = p.id)
          or exists (select 1 from public.pagamenti c
                      where c.parent_payment_id = p.id
-                       and c.alunno_id is distinct from p_alunno));
+                       and c.alunno_id is distinct from p_alunno)
+         or exists (select 1 from public.fatture_coda q
+                     where q.pagamento_id = p.id
+                       and q.stato <> 'tolta'));
     if v_bloccati > 0 or v_ricevute > 0 then
       return jsonb_build_object('ok', false, 'code', 'pagamenti_non_cancellabili',
                                 'bloccati', v_bloccati, 'ricevute', v_ricevute);

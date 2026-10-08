@@ -44,8 +44,11 @@ fattura e un bonifico abbinato, 1 una ricevuta. In `alunni` vale sempre
 ## 3. Cosa vede la segreteria
 
 ### 3.1 Linguetta «Alunni»
-Solo chi **frequenta**: `stato ∈ STATI_CHE_FREQUENTANO` (`iscritto`, `sospeso`) **e** `section_id`
-non nullo. Contatori, ricerca, filtro classe ed export CSV seguono. La tendina «Stato» perde
+Solo chi **frequenta**, cioè il **complemento esatto** di «Non iscritti» fra le schede non
+anonimizzate: `section_id` non nullo **e** stato NULL o fuori da `STATI_NON_PIU_ISCRITTO`
+(per i tre stati della tendina coincide con `iscritto`/`sospeso`; uno stato anomalo con sezione
+resta qui, lato protetto). Le due linguette sono una partizione: ogni scheda in una sola,
+gli anonimizzati in nessuna. Contatori, ricerca, filtro classe ed export CSV seguono. La tendina «Stato» perde
 `ritirato` (resta Tutti / Iscritto / Sospeso); l'opzione «Non assegnata» del filtro classe sparisce
 (quei bambini non sono più qui).
 
@@ -86,7 +89,9 @@ Ruoli: il comando compare a `admin`, `coordinator`, `segreteria` (cortesia; il g
 ### 4.1 Elenchi — `GET /api/admin/students?elenco=…`
 Nuovo parametro zod `elenco: z.enum(['frequentanti', 'non_iscritti']).optional()`.
 - assente → **comportamento identico a oggi** (lo usano pagamenti, sezioni, generatori di categoria);
-- `frequentanti` → `.in('stato', STATI_CHE_FREQUENTANO).not('section_id', 'is', null)`;
+- `frequentanti` → complemento esatto di `non_iscritti`:
+  `.not('section_id', 'is', null)` + `.or('stato.is.null,stato.not.in.(…STATI_NON_PIU_ISCRITTO)')` +
+  `.is('anonimizzato_il', null)`;
 - `non_iscritti` → `.or('stato.in.(…STATI_NON_PIU_ISCRITTO),section_id.is.null')` +
   `.is('anonimizzato_il', null)` (colonna in baseline: c'è anche sul DB E2E).
 

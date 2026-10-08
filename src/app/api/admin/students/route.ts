@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
-import { STATO_ISCRITTO, STATI_CHE_FREQUENTANO, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato';
+import { STATO_ISCRITTO, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente, formaConfronto } from '@/lib/auth/scope';
@@ -582,12 +582,18 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
             if (sedeChiesta) query = query.eq('scuola_id', sedeChiesta);
             if (classeSezione) query = query.eq('classe_sezione', classeSezione);
             if (stato) query = query.eq('stato', stato);
-            // ATTENZIONE stato NULL: la colonna lo permette (in produzione oggi non
-            // ce ne sono). NULL non è in STATI_CHE_FREQUENTANO, quindi `frequentanti`
-            // lo esclude; `non_iscritti` lo include solo se senza sezione. Un
-            // bambino con stato NULL E sezione non compare in nessuna delle due.
+            // COMPLEMENTO ESATTO di `non_iscritti` fra le schede non anonimizzate
+            // (2026-10-09): uno stato NULL o fuori vocabolario CON sezione sta qui
+            // (lato protetto, come `eAncoraIscritto`), ed è anche dove
+            // `elimina_alunno_definitivo` risponde 'frequentante'. Per i tre stati
+            // della tendina il risultato è identico a `STATI_CHE_FREQUENTANO`: cambia
+            // solo per i valori anomali, che così non spariscono da entrambe le
+            // linguette. `stato.is.null` è esplicito: in SQL `NULL NOT IN (…)` dà NULL.
             if (elenco === 'frequentanti') {
-                query = query.in('stato', [...STATI_CHE_FREQUENTANO]).not('section_id', 'is', null);
+                query = query
+                    .not('section_id', 'is', null)
+                    .or(`stato.is.null,stato.not.in.(${STATI_NON_PIU_ISCRITTO.join(',')})`)
+                    .is('anonimizzato_il', null);
             } else if (elenco === 'non_iscritti') {
                 query = query
                     .or(`stato.in.(${STATI_NON_PIU_ISCRITTO.join(',')}),section_id.is.null`)

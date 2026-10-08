@@ -9,20 +9,32 @@
  * disponibili. Il server ricontrolla comunque tutto: questa finestra non è una
  * difesa, è la spiegazione.
  *
- * Un comando che non si può usare resta a schermo, spento e con il motivo
- * accanto: sparire direbbe «non esiste», mentre la verità è «non qui, e perché».
- * È spento con `aria-disabled` e non con `disabled` (che toglie il fuoco), quindi
- * il click ARRIVA: a fermarlo è `esegui`, che non parte su una scelta che il
- * server non ha offerto.
+ * «Cancella anche i pagamenti» con un pagamento bloccato resta a schermo, spento
+ * e con il motivo accanto: sparire direbbe «non esiste», mentre la verità è «non
+ * qui, e perché». È spento con `aria-disabled` e non con `disabled` (che toglie
+ * il fuoco), quindi il click ARRIVA: a fermarlo è `esegui`.
  *
- * ⚠️ `t` NON entra nelle dipendenze di `misura`, per la stessa ragione misurata
- * scritta in `LiberaSpazioDialog`: `useTranslations` non promette la stessa
- * funzione a ogni render, e con `t` fra le dipendenze l'effetto ripartirebbe a
- * ogni render sparando un dry-run per giro. Perciò l'errore si conserva come
- * frase del server (o stringa vuota) e il ripiego tradotto si sceglie a render.
+ * ════════════════════════════════════════════════════════════════════════════
+ * PERCHÉ LE CHIAMATE STANNO FUORI DAL COMPONENTE
+ *
+ * `react-hooks/set-state-in-effect` (un ERRORE del gate) con un
+ * `try { await … } finally { setState }` dentro il componente non è soddisfatta:
+ * è SPENTA. Il compilatore di React rinuncia al componente intero («Handle
+ * TryStatement without a catch clause», visibile con `react-hooks/todo` acceso),
+ * e con lui tutte le sue regole. Qui la forma è quella che il compilatore legge:
+ * la rete in due funzioni di MODULO che non toccano lo stato e restituiscono un
+ * esito; nel componente un effetto su `[alunnoId, tentativo]` con il flag `vivo`
+ * e i `setState` dentro il `.then`. «Riprova» incrementa `tentativo`.
+ *
+ * Nelle due funzioni non entra nessuna frase di catalogo: l'errore torna come
+ * frase del server (già tradotta dal catalogo dei codici) o come stringa vuota,
+ * e il ripiego tradotto si sceglie a render. Così `t` non entra in nessuna
+ * dipendenza: `useTranslations` non promette la stessa funzione a ogni render, e
+ * un effetto che dipendesse da `t` ripartirebbe a ogni render (misurato su
+ * «Libera spazio»: un dry-run per giro).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
@@ -53,9 +65,63 @@ interface Anteprima {
     motivo: MotivoBloccoEliminazione | null;
 }
 
+/**
+ * L'esito di una chiamata, già pronto per lo stato. `errore` vale la frase del
+ * server, o `''` quando il server non ha detto perché (rete giù, corpo
+ * illeggibile): il ripiego tradotto lo sceglie il render.
+ */
+type EsitoAnteprima = { ok: true; anteprima: Anteprima } | { ok: false; errore: string };
+type EsitoEsecuzione = { ok: true } | { ok: false; errore: string };
+
 type Fase = 'misura' | 'pronta' | 'misura-fallita' | 'esecuzione';
 
 const ROTTA = '/api/admin/students/elimina';
+const ID_MOTIVO = 'elimina-definitivo-motivo';
+/** Il comando spento deve SEMBRARE spento: `btnClass` stila `disabled`, non `aria-disabled`. */
+const SPENTO = 'aria-disabled:border-kidville-neutral aria-disabled:bg-kidville-neutral-soft aria-disabled:text-kidville-sub';
+
+function chiama(corpo: Record<string, unknown>): Promise<Response | null> {
+    return fetch(ROTTA, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(corpo),
+    }).catch((e: unknown) => {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina-non-arrivata: ${nomeErrore(e)}`, route: '/admin/students' });
+        return null;
+    });
+}
+
+/** Il dry-run: SOLE letture sul server. Non tocca lo stato di nessun componente. */
+async function misuraEliminazione(alunnoId: string): Promise<EsitoAnteprima> {
+    const res = await chiama({ alunno_id: alunnoId, mode: 'dryrun' });
+    if (res === null) return { ok: false, errore: '' };
+    if (!res.ok) {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: 'elimina-anteprima-rifiutata', route: '/admin/students', stato: res.status });
+        return { ok: false, errore: await messaggioErrore(res, '') };
+    }
+    let motivo = 'forma';
+    const corpo = (await res.json().catch((e: unknown) => {
+        motivo = nomeErrore(e);
+        return null;
+    })) as Partial<Anteprima> | null;
+    if (!corpo || typeof corpo !== 'object' || !corpo.scelte || !corpo.conteggi) {
+        // Senza numeri non si offre niente: «non lo so» non si traveste da «niente».
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina-anteprima-illeggibile: ${motivo}`, route: '/admin/students', stato: res.status });
+        return { ok: false, errore: '' };
+    }
+    return { ok: true, anteprima: { conteggi: corpo.conteggi, scelte: corpo.scelte, motivo: corpo.motivo ?? null } };
+}
+
+/** L'esecuzione. Un 200 vuol dire fatto: il corpo non serve alla finestra. */
+async function eseguiEliminazione(alunnoId: string, scelta: SceltaEliminazione): Promise<EsitoEsecuzione> {
+    const res = await chiama({ alunno_id: alunnoId, mode: 'execute', scelta });
+    if (res === null) return { ok: false, errore: '' };
+    if (!res.ok) {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: 'elimina-rifiutata', route: '/admin/students', stato: res.status });
+        return { ok: false, errore: await messaggioErrore(res, '') };
+    }
+    return { ok: true };
+}
 
 export function EliminaDefinitivoDialog({ alunno, onChiudi, onEliminato }: EliminaDefinitivoDialogProps) {
     if (alunno === null) return null;
@@ -68,112 +134,78 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
     const t = useTranslations('adminStudents');
     const [fase, setFase] = useState<Fase>('misura');
     const [anteprima, setAnteprima] = useState<Anteprima | null>(null);
-    /**
-     * `null` = niente di storto; `''` = storto senza un motivo del server (il
-     * ripiego tradotto si sceglie a render); testo = il motivo del server, già
-     * tradotto dal catalogo dei codici.
-     */
-    const [errore, setErrore] = useState<string | null>(null);
-    /** Guardia di rientro: due click nello stesso tick non fanno due POST. */
+    const [erroreMisura, setErroreMisura] = useState('');
+    /** `null` = nessuna esecuzione fallita da mostrare. Resta a schermo durante la rimisura. */
+    const [erroreEsecuzione, setErroreEsecuzione] = useState<string | null>(null);
+    /** La scelta in volo: è il SUO bottone a dire «Un momento…». */
+    const [inCorso, setInCorso] = useState<SceltaEliminazione | null>(null);
+    /** Ogni incremento rifà la misura: «Riprova», e dopo un'esecuzione fallita. */
+    const [tentativo, setTentativo] = useState(0);
+    /** Guardia di rientro, sincrona: due click nello stesso tick non fanno due POST. */
     const inVolo = useRef(false);
-    /** L'epoca della misura in corso: la risposta VECCHIA non vince sulla nuova. */
-    const ultimaMisura = useRef(0);
+    /** Dove va il fuoco quando un'esecuzione fallisce e i comandi spariscono. */
+    const erroreRef = useRef<HTMLParagraphElement>(null);
 
     const alunnoId = alunno.id;
     const nominativo = [alunno.cognome, alunno.nome].filter((v) => typeof v === 'string' && v !== '').join(' ');
 
-    const misura = useCallback(async () => {
-        const mia = ultimaMisura.current + 1;
-        ultimaMisura.current = mia;
-        let motivo = '';
-        // Il default è il RIFIUTO: qualunque strada esca da qui senza aver letto
-        // i numeri ferma l'operatore. «Non lo so» non si traveste da «niente».
-        let prossima: Fase = 'misura-fallita';
-        try {
-            const res = await fetch(ROTTA, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ alunno_id: alunnoId, mode: 'dryrun' }),
-            }).catch((e: unknown) => {
-                motivo = nomeErrore(e);
-                return null;
-            });
-            if (mia !== ultimaMisura.current) return;
-            if (res === null) {
-                setErrore('');
-                logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina-anteprima-non-arrivata: ${motivo}`, route: '/admin/students' });
-                return;
+    useEffect(() => {
+        let vivo = true;
+        void misuraEliminazione(alunnoId).then((esito) => {
+            if (!vivo) return;
+            if (esito.ok) {
+                setAnteprima(esito.anteprima);
+                setFase('pronta');
+            } else {
+                setErroreMisura(esito.errore);
+                setFase('misura-fallita');
             }
-            if (!res.ok) {
-                setErrore(await messaggioErrore(res, ''));
-                logClient({ livello: 'error', evento: 'fetch', messaggio: 'elimina-anteprima-rifiutata', route: '/admin/students', stato: res.status });
-                return;
-            }
-            const corpo = (await res.json().catch((e: unknown) => {
-                motivo = nomeErrore(e);
-                return null;
-            })) as Anteprima | null;
-            if (mia !== ultimaMisura.current) return;
-            if (!corpo || typeof corpo !== 'object' || !corpo.scelte || !corpo.conteggi) {
-                setErrore('');
-                logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina-anteprima-illeggibile: ${motivo || 'forma'}`, route: '/admin/students', stato: res.status });
-                return;
-            }
-            setAnteprima(corpo);
-            setErrore(null);
-            prossima = 'pronta';
-        } finally {
-            if (mia === ultimaMisura.current) setFase(prossima);
-        }
-    }, [alunnoId]);
+        });
+        return () => {
+            vivo = false;
+        };
+    }, [alunnoId, tentativo]);
 
     useEffect(() => {
-        void misura();
-    }, [misura]);
+        if (erroreEsecuzione !== null) erroreRef.current?.focus();
+    }, [erroreEsecuzione]);
 
-    const riprova = () => {
+    const rimisura = () => {
         setFase('misura');
-        setErrore(null);
-        void misura();
+        setTentativo((n) => n + 1);
     };
 
-    const esegui = async (scelta: SceltaEliminazione) => {
+    /** Durante l'esecuzione la finestra non si chiude: né Annulla, né Escape, né Indietro. */
+    const chiudi = () => {
+        if (inVolo.current) return;
+        onChiudi();
+    };
+
+    const esegui = (scelta: SceltaEliminazione) => {
         // Un comando spento con `aria-disabled` riceve comunque il click: qui si
         // ferma, sia in volo sia su una scelta che il server non ha offerto.
-        if (inVolo.current || !anteprima?.scelte[scelta]) return;
+        if (inVolo.current || fase !== 'pronta' || !anteprima?.scelte[scelta]) return;
         inVolo.current = true;
+        setInCorso(scelta);
         setFase('esecuzione');
-        setErrore(null);
-        let motivo = '';
-        try {
-            const res = await fetch(ROTTA, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ alunno_id: alunnoId, mode: 'execute', scelta }),
-            }).catch((e: unknown) => {
-                motivo = nomeErrore(e);
-                return null;
-            });
-            if (res === null) {
-                setErrore('');
-                logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina-non-arrivata: ${motivo}`, route: '/admin/students' });
-                return;
-            }
-            if (!res.ok) {
-                setErrore(await messaggioErrore(res, ''));
-                logClient({ livello: 'error', evento: 'fetch', messaggio: 'elimina-rifiutata', route: '/admin/students', stato: res.status });
-                return;
-            }
-            onEliminato(
-                scelta === 'anonimizza'
-                    ? t('elmEsitoAnonimizzato', { nome: nominativo })
-                    : t('elmEsitoEliminato', { nome: nominativo }),
-            );
-            onChiudi();
-        } finally {
+        setErroreEsecuzione(null);
+        void eseguiEliminazione(alunnoId, scelta).then((esito) => {
             inVolo.current = false;
-            setFase((f) => (f === 'esecuzione' ? 'pronta' : f));
-        }
+            if (esito.ok) {
+                onEliminato(
+                    scelta === 'anonimizza'
+                        ? t('elmEsitoAnonimizzato', { nome: nominativo })
+                        : t('elmEsitoEliminato', { nome: nominativo }),
+                );
+                onChiudi();
+                return;
+            }
+            // Fallita: il messaggio resta, e i numeri si rileggono — quelli di
+            // prima potrebbero non essere più veri (un file uscito, uno no).
+            setInCorso(null);
+            setErroreEsecuzione(esito.errore);
+            rimisura();
+        });
     };
 
     const c = anteprima?.conteggi;
@@ -188,19 +220,28 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
               c.foto_solo_sue > 0 ? t('elmFoto', { n: c.foto_solo_sue }) : null,
               c.foto_di_gruppo > 0 ? t('elmFotoGruppo', { n: c.foto_di_gruppo }) : null,
               c.allegati_chat > 0 ? t('elmChat', { n: c.allegati_chat }) : null,
+              c.articoli_pubblici > 0 ? t('elmArticoli', { n: c.articoli_pubblici }) : null,
               c.pagamenti > 0 ? t('elmPagamenti', { n: c.pagamenti }) : null,
+              // Ricevute senza un pagamento dell'alunno a cui appendersi: non sono
+              // «niente», e sono loro a bloccare.
+              c.pagamenti === 0 && c.pagamenti_bloccati > 0 ? t('elmRicevute', { n: c.pagamenti_bloccati }) : null,
           ].filter((v): v is string => v !== null)
         : [];
 
-    const registro = anteprima?.motivo === 'REGISTRO_PRIMARIA_DA_CONSERVARE';
-    const pagamentiBloccati = anteprima?.motivo === 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI';
+    const motivo = anteprima?.motivo ?? null;
+    const registro = motivo === 'REGISTRO_PRIMARIA_DA_CONSERVARE';
+    const pagamentiBloccati = motivo === 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI';
+    const fotoBloccano = motivo === 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI';
+    const scelte = anteprima?.scelte;
+    const qualcheScelta = scelte ? scelte.elimina || scelte.elimina_con_pagamenti || scelte.anonimizza : false;
     const occupato = fase === 'esecuzione';
     const decisione = anteprima !== null && (fase === 'pronta' || fase === 'esecuzione');
+    const soloChiudi = fase === 'misura-fallita' || (decisione && !qualcheScelta);
 
     return (
         <Modal
             open
-            onClose={onChiudi}
+            onClose={chiudi}
             title={t('elmTitolo')}
             labelledBy="elimina-definitivo-titolo"
             // Non si chiude cliccando fuori: da qui parte un'operazione senza annulla.
@@ -227,11 +268,11 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
 
             {fase === 'misura-fallita' && (
                 <p role="alert" className="mb-4 flex items-start gap-2 rounded-input bg-kidville-error-soft px-3 py-2.5 font-maven text-[13px] text-kidville-error-strong">
-                    <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" /> {errore || t('elmMisuraFallita')}
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" /> {erroreMisura || t('elmMisuraFallita')}
                 </p>
             )}
 
-            {decisione && (
+            {decisione && scelte && (
                 <>
                     <div className="mb-4 rounded-input bg-kidville-cream px-3 py-2.5 font-maven text-[13px] text-kidville-ink">
                         <p className="mb-1 font-semibold">{t('elmCollegati')}</p>
@@ -247,61 +288,69 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
                         {c && c.legami_genitori > 0 && <p className="mt-2">{t('elmGenitoriIntatti')}</p>}
                     </div>
 
-                    {registro ? (
+                    {registro && (
                         <p className="mb-4 rounded-input bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn-strong">
                             {t('elmBloccoRegistro')}
                         </p>
-                    ) : (
-                        <>
-                            {pagamentiBloccati && (
-                                <p className="mb-3 rounded-input bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn-strong">
-                                    {t('elmBloccoPagamenti')}
-                                </p>
-                            )}
-                            {anteprima.scelte.anonimizza && (
-                                <p className="mb-3 font-maven text-[13px] text-kidville-sub">{t('elmSpiegaAnonimizza')}</p>
-                            )}
-                            <p className="mb-3 font-maven text-[13px] font-semibold text-kidville-error-strong">{t('elmIrreversibile')}</p>
-                        </>
                     )}
-
-                    {errore !== null && (
-                        <p role="alert" className="mb-3 rounded-input bg-kidville-error-soft px-3 py-2.5 font-maven text-[13px] text-kidville-error-strong">
-                            {errore || t('elmErrore')}
+                    {pagamentiBloccati && (
+                        <p id={ID_MOTIVO} className="mb-3 rounded-input bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn-strong">
+                            {t('elmBloccoPagamenti')}
                         </p>
+                    )}
+                    {fotoBloccano && c && (
+                        <p id={ID_MOTIVO} className="mb-3 rounded-input bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn-strong">
+                            {t('elmBloccoFoto', { n: c.foto_non_rimovibili })}
+                        </p>
+                    )}
+                    {scelte.anonimizza && <p className="mb-3 font-maven text-[13px] text-kidville-sub">{t('elmSpiegaAnonimizza')}</p>}
+                    {qualcheScelta && (
+                        <p className="mb-3 font-maven text-[13px] font-semibold text-kidville-error-strong">{t('elmIrreversibile')}</p>
                     )}
                 </>
             )}
 
+            {erroreEsecuzione !== null && (
+                <p
+                    ref={erroreRef}
+                    role="alert"
+                    tabIndex={-1}
+                    className="mb-3 rounded-input bg-kidville-error-soft px-3 py-2.5 font-maven text-[13px] text-kidville-error-strong outline-none focus-visible:ring-2 focus-visible:ring-kidville-green"
+                >
+                    {erroreEsecuzione || t('elmErrore')}
+                </p>
+            )}
+
             <div className="flex flex-wrap justify-end gap-2">
-                <button type="button" onClick={onChiudi} className={btnClass('ghost', 'sm')}>
-                    {registro || fase === 'misura-fallita' ? t('elmChiudi') : t('elmAnnulla')}
+                <button type="button" onClick={chiudi} aria-disabled={occupato} className={btnClass('ghost', 'sm')}>
+                    {soloChiudi ? t('elmChiudi') : t('elmAnnulla')}
                 </button>
                 {fase === 'misura-fallita' && (
-                    <button type="button" onClick={riprova} className={btnClass('primary', 'sm')}>
+                    <button type="button" onClick={rimisura} className={btnClass('primary', 'sm')}>
                         <RotateCcw size={14} strokeWidth={2} aria-hidden="true" /> {t('elmRiprova')}
                     </button>
                 )}
-                {decisione && !registro && (
+                {decisione && scelte && (
                     <>
-                        {anteprima.scelte.anonimizza && (
-                            <button type="button" onClick={() => void esegui('anonimizza')} aria-disabled={occupato} className={btnClass('secondary', 'sm')}>
-                                {t('elmBtnAnonimizza')}
+                        {scelte.anonimizza && (
+                            <button type="button" onClick={() => esegui('anonimizza')} aria-disabled={occupato} className={btnClass('secondary', 'sm')}>
+                                {inCorso === 'anonimizza' ? t('elmInCorso') : t('elmBtnAnonimizza')}
                             </button>
                         )}
-                        {(anteprima.scelte.elimina_con_pagamenti || pagamentiBloccati) && (
+                        {(scelte.elimina_con_pagamenti || pagamentiBloccati) && (
                             <button
                                 type="button"
-                                onClick={() => void esegui('elimina_con_pagamenti')}
-                                aria-disabled={occupato || !anteprima.scelte.elimina_con_pagamenti}
-                                className={btnClass('danger', 'sm')}
+                                onClick={() => esegui('elimina_con_pagamenti')}
+                                aria-disabled={occupato || !scelte.elimina_con_pagamenti}
+                                aria-describedby={scelte.elimina_con_pagamenti ? undefined : ID_MOTIVO}
+                                className={btnClass('danger', 'sm', scelte.elimina_con_pagamenti ? undefined : SPENTO)}
                             >
-                                {t('elmBtnEliminaConPagamenti')}
+                                {inCorso === 'elimina_con_pagamenti' ? t('elmInCorso') : t('elmBtnEliminaConPagamenti')}
                             </button>
                         )}
-                        {anteprima.scelte.elimina && (
-                            <button type="button" onClick={() => void esegui('elimina')} aria-disabled={occupato} className={btnClass('danger', 'sm')}>
-                                {occupato ? t('elmInCorso') : t('elmBtnElimina')}
+                        {scelte.elimina && (
+                            <button type="button" onClick={() => esegui('elimina')} aria-disabled={occupato} className={btnClass('danger', 'sm')}>
+                                {inCorso === 'elimina' ? t('elmInCorso') : t('elmBtnElimina')}
                             </button>
                         )}
                     </>

@@ -1327,6 +1327,12 @@ export const CODICI_ERRORE = {
     /** 409 — un pagamento ha ricevuta, fattura, bonifico abbinato, incasso o quote altrui: non si cancella. */
     ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI: 'erroreAlunnoEliminazionePagamentiBloccati',
     /**
+     * 409 — ci sono foto in cui il bambino è l'unico ritratto ma il cui indirizzo
+     * non è riconoscibile in questo archivio: non si tolgono, quindi l'eliminazione
+     * finirebbe sempre con file restanti. Si tolgono prima dalla galleria.
+     */
+    ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI: 'erroreAlunnoEliminazioneFotoNonRimovibili',
+    /**
      * 409 — il registro della primaria (voti, pagelle, scrutini, note, certificati delle
      * competenze) va conservato: né eliminazione né anonimizzazione. Lo usano
      * `admin/students/elimina:POST` e `admin/gdpr/erase:POST`: una regola, una frase.

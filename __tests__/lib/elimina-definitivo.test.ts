@@ -39,30 +39,58 @@ function db(extra: Partial<DBFinto> = {}): DBFinto {
 
 describe('scelteDisponibili — la tabella delle decisioni del titolare', () => {
   it('nessun pagamento e nessun registro: solo «elimina»', () => {
-    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 0 })).toEqual({
       scelte: { elimina: true, elimina_con_pagamenti: false, anonimizza: false },
       motivo: null,
     })
   })
 
   it('pagamenti cancellabili: «cancella anche i pagamenti» oppure «anonimizza»', () => {
-    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: false })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 0 })).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: true, anonimizza: true },
       motivo: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI',
     })
   })
 
   it('un pagamento bloccato: resta solo «anonimizza»', () => {
-    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 1, registro_primaria: false })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 1, registro_primaria: false, foto_non_rimovibili: 0 })).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: true },
       motivo: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI',
     })
   })
 
   it('il registro della primaria vince su tutto: nessuna scelta, nemmeno anonimizzare', () => {
-    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: true })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: true, foto_non_rimovibili: 0 })).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
       motivo: 'REGISTRO_PRIMARIA_DA_CONSERVARE',
+    })
+  })
+
+  it('foto non rimovibili: niente «elimina», che fallirebbe SEMPRE con file restanti', () => {
+    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 1 })).toEqual({
+      scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
+      motivo: 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI',
+    })
+  })
+
+  it('foto non rimovibili e registro della primaria: vince il registro', () => {
+    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: true, foto_non_rimovibili: 3 })).toEqual({
+      scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
+      motivo: 'REGISTRO_PRIMARIA_DA_CONSERVARE',
+    })
+  })
+
+  it('pagamenti cancellabili e foto non rimovibili: resta solo «anonimizza», che quelle foto le tollera', () => {
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 1 })).toEqual({
+      scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: true },
+      motivo: 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI',
+    })
+  })
+
+  it('pagamenti bloccati e foto non rimovibili: il motivo è il blocco permanente, i pagamenti', () => {
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 1, registro_primaria: false, foto_non_rimovibili: 1 })).toEqual({
+      scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: true },
+      motivo: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI',
     })
   })
 })

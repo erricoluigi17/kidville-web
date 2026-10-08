@@ -33,6 +33,7 @@ export type MotivoBloccoEliminazione =
   | 'REGISTRO_PRIMARIA_DA_CONSERVARE'
   | 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI'
   | 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI'
+  | 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI'
 
 /**
  * I conteggi dell'oblio quando sono stati TUTTI misurati. In `ConteggiOblio`
@@ -61,10 +62,22 @@ export interface ConteggiEliminazione extends ConteggiOblioMisurati {
 
 export type EsitoMisura = { ok: true; conteggi: ConteggiEliminazione } | { ok: false }
 
+/**
+ * ⚠️ LE FOTO NON RIMOVIBILI tolgono le due eliminazioni, non l'anonimizzazione.
+ * Sono foto in cui il bambino è l'unico ritratto ma il cui indirizzo non è
+ * riconoscibile in questo archivio: `rimuoviFileAlunno` non le toglie, quindi
+ * «elimina» finirebbe SEMPRE in `ALUNNO_ELIMINAZIONE_FILE_RESTANTI`, e riprovare
+ * non servirebbe a niente. Offrirla sarebbe un comando che non funziona mai.
+ * L'oblio invece le tollera (le lascia e lo dice): «anonimizza» resta come da
+ * regole sui pagamenti. Il motivo: il registro vince su tutto; i pagamenti
+ * bloccati vengono prima delle foto, perché sono un blocco PERMANENTE mentre le
+ * foto si tolgono dalla galleria.
+ */
 export function scelteDisponibili(c: {
   pagamenti: number
   pagamenti_bloccati: number
   registro_primaria: boolean
+  foto_non_rimovibili: number
 }): { scelte: Record<SceltaEliminazione, boolean>; motivo: MotivoBloccoEliminazione | null } {
   if (c.registro_primaria) {
     return {
@@ -72,11 +85,22 @@ export function scelteDisponibili(c: {
       motivo: 'REGISTRO_PRIMARIA_DA_CONSERVARE',
     }
   }
+  const fotoBloccano = c.foto_non_rimovibili > 0
   if (c.pagamenti > 0 || c.pagamenti_bloccati > 0) {
     const bloccati = c.pagamenti_bloccati > 0
     return {
-      scelte: { elimina: false, elimina_con_pagamenti: !bloccati, anonimizza: true },
-      motivo: bloccati ? 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI' : 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI',
+      scelte: { elimina: false, elimina_con_pagamenti: !bloccati && !fotoBloccano, anonimizza: true },
+      motivo: bloccati
+        ? 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI'
+        : fotoBloccano
+          ? 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI'
+          : 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI',
+    }
+  }
+  if (fotoBloccano) {
+    return {
+      scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
+      motivo: 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI',
     }
   }
   return { scelte: { elimina: true, elimina_con_pagamenti: false, anonimizza: false }, motivo: null }

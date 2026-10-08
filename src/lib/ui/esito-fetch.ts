@@ -1304,6 +1304,32 @@ export const CODICI_ERRORE = {
      * — la lezione già pagata su `ASSENZA_NON_ANNULLATA`.
      */
     ALUNNO_NON_ARCHIVIATO: 'erroreAlunnoNonArchiviato',
+    /** 404 — l'eliminazione definitiva non trova più l'alunno in elenco (`admin/students/elimina:POST`). */
+    ALUNNO_ELIMINAZIONE_NON_TROVATO: 'erroreAlunnoEliminazioneNonTrovato',
+    /** 409 — si elimina solo un ritirato o un iscritto senza sezione: questo frequenta. */
+    ALUNNO_ELIMINAZIONE_FREQUENTANTE: 'erroreAlunnoEliminazioneFrequentante',
+    /** 400 — `execute` senza `scelta`. */
+    ALUNNO_ELIMINAZIONE_SCELTA_MANCANTE: 'erroreAlunnoEliminazioneSceltaMancante',
+    /** 409 — la scelta inviata non è fra quelle che l'anteprima offre per questo bambino. */
+    ALUNNO_ELIMINAZIONE_SCELTA_NON_DISPONIBILE: 'erroreAlunnoEliminazioneSceltaNonDisponibile',
+    /** 409 — ci sono pagamenti: si sceglie se cancellarli o anonimizzare. */
+    ALUNNO_ELIMINAZIONE_HA_PAGAMENTI: 'erroreAlunnoEliminazioneHaPagamenti',
+    /** 409 — un pagamento ha ricevuta, fattura, bonifico abbinato, incasso o quote altrui: non si cancella. */
+    ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI: 'erroreAlunnoEliminazionePagamentiBloccati',
+    /**
+     * 409 — il registro della primaria (voti, pagelle, scrutini, note, certificati delle
+     * competenze) va conservato: né eliminazione né anonimizzazione. Lo usano
+     * `admin/students/elimina:POST` e `admin/gdpr/erase:POST`: una regola, una frase.
+     */
+    REGISTRO_PRIMARIA_DA_CONSERVARE: 'erroreRegistroPrimariaDaConservare',
+    /** 500 — non si è potuto misurare cosa è collegato: non si elimina niente. */
+    ALUNNO_ELIMINAZIONE_NON_MISURATA: 'erroreAlunnoEliminazioneNonMisurata',
+    /** 502 — alcuni file non sono usciti dall'archivio: la scheda resta intatta. */
+    ALUNNO_ELIMINAZIONE_FILE_RESTANTI: 'erroreAlunnoEliminazioneFileRestanti',
+    /** 500 — guasto durante l'eliminazione: la transazione è annullata, la scheda è intatta. */
+    ALUNNO_ELIMINAZIONE_NON_RIUSCITA: 'erroreAlunnoEliminazioneNonRiuscita',
+    /** 503 — la funzione SQL non esiste su questo database (DB E2E non migrato). */
+    ALUNNO_ELIMINAZIONE_NON_DISPONIBILE: 'erroreAlunnoEliminazioneNonDisponibile',
     /**
      * 404 — quel bambino non è più raggiungibile da questa postazione: non esiste
      * più, oppure è uscito dalle sedi di chi guarda.

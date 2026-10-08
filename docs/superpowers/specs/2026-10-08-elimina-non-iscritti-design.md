@@ -170,7 +170,7 @@ Restano **di proposito**: `ricevute_emesse` e `fatture_emesse` (WORM / `RESTRICT
 tocca è già bloccato al punto 4), `chat_vigilanza_accessi` (registro di accountability, solo uuid),
 `enrollment_submissions` (non collegata per id; vive in Iscrizioni).
 
-### 4.4 Il registro della primaria: una regola, tre porte
+### 4.4 Il registro della primaria: una regola, quattro porte
 L'elenco delle tabelle che fanno «registro della primaria» — `valutazioni`, `pagelle`,
 `scrutinio_giudizi`, `scrutinio_comportamento`, `note_disciplinari`, `certificati_competenze` — vive
 in **una** costante TS, `TABELLE_REGISTRO_PRIMARIA` in `src/lib/alunni/registro-primaria.ts`, con
@@ -184,6 +184,17 @@ in **una** costante TS, `TABELLE_REGISTRO_PRIMARIA` in `src/lib/alunni/registro-
 3. **l'elenco dei candidati all'oblio** `admin/gdpr/candidates`: ogni candidato porta
    `registro_primaria: boolean`, e `OblioPanel` mostra la riga con il motivo e il comando spento —
    il bambino **non sparisce** dall'elenco in silenzio.
+
+4. **le richieste GDPR delle famiglie** `admin/gdpr/richieste` (scoperta in esecuzione): la richiesta è del
+   GENITORE e copre più figli. Scelta «salta e prosegui», come già per i figli ancora iscritti: i
+   figli con registro sono esclusi dall'anonimizzazione e contati in `alunni_registro_primaria`
+   (GET, dry-run, execute, esito salvato, audit); genitore e altri figli non iscritti si
+   anonimizzano e la richiesta si chiude. Se resta un figlio non anonimizzato, l'account di accesso
+   del genitore resta (regola preesistente di `account-oblio`): lo si DICE (`account_mantenuti`) nel
+   pannello e nell'esito, perché la risposta alla famiglia lo citi.
+
+Un lock (`anonimizza-alunno-controlla-registro`) pretende che ogni gestore che chiama
+`anonimizzaAlunno` controlli prima il registro.
 
 La funzione SQL (§4.3, punto 3) ripete lo stesso elenco: un test legge la migrazione dal disco e
 pretende che le tabelle controllate in SQL siano **esattamente** quelle della costante TS.

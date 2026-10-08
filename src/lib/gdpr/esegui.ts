@@ -16,6 +16,7 @@ import { BUCKET_CHAT_ALLEGATI, normalizzaAllegatoChat } from '@/lib/chat/allegat
 import { rimuoviEVerifica, bloccanti } from '@/lib/storage/rimozione-verificata'
 import { obliaFotoNewsAlunno } from '@/lib/news/permanenza-consenso'
 import { liberaAccountGenitore, type EsitoAccountOblio } from '@/lib/gdpr/account-oblio'
+import { aBlocchi, ID_PER_QUERY, RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
@@ -85,6 +86,12 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  * `completo: false` = una cancellazione è stata rifiutata (schema assente escluso, che degrada
  * come il resto del file). Aggiunto il 2026-10-09 per `bonificaTracceTestualiAlunno`, che deve
  * poter dire «non tutto è uscito»; `anonimizzaParent` legge solo `rimosse`, come prima.
+ *
+ * A BLOCCHI DI `ID_PER_QUERY` (2026-10-09). Gli id viaggiano nell'URL (`.in()` è query string):
+ * un bambino del nido ha più di mille presenze in un anno, e mille uuid in una riga sola sono
+ * ~38 kB — la richiesta torna 414 e non si cancella NIENTE, nemmeno le notifiche che puntano
+ * all'alunno stesso. Un blocco rifiutato non ferma gli altri: si toglie tutto ciò che si può, e
+ * `completo: false` dice che non è tutto.
  */
 async function obliaNotifiche(
   supabase: SupabaseClient,
@@ -97,18 +104,19 @@ async function obliaNotifiche(
   let completo = true
 
   const cancella = async (colonna: 'entita_id' | 'utente_id', ids: string[]) => {
-    if (ids.length === 0) return
-    const { data, error } = await supabase.from('notifiche').delete().in(colonna, ids).select('id')
-    if (error) {
-      // PostgREST non lancia: senza questo controllo un guasto diventerebbe
-      // «nessuna notifica da togliere», cioè un oblio dichiarato e non fatto.
-      if (!schemaAssente(error)) {
+    for (const blocco of aBlocchi(ids, ID_PER_QUERY)) {
+      const { data, error } = await supabase.from('notifiche').delete().in(colonna, blocco).select('id')
+      if (error) {
+        // PostgREST non lancia: senza questo controllo un guasto diventerebbe
+        // «nessuna notifica da togliere», cioè un oblio dichiarato e non fatto.
+        // Schema assente: la tabella non c'è, e gli altri blocchi non la troverebbero.
+        if (schemaAssente(error)) return
         logErrore({ operazione: op, evento: 'oblio_notifiche' }, error)
         completo = false
+        continue
       }
-      return
+      rimosse += (data ?? []).length
     }
-    rimosse += (data ?? []).length
   }
 
   await cancella('entita_id', entitaIds)
@@ -1887,6 +1895,101 @@ export async function obliaIntentiVideoAlunno(
   return { intenti, revocati, letto: true }
 }
 
+/**
+ * LE SEGNALAZIONI SU UN TIPO DI OGGETTO DEL BAMBINO (voci di diario, media), cercate AL ROVESCIO.
+ *
+ * PERCHÉ AL ROVESCIO (2026-10-09). La ricerca diritta — «tutte le voci di diario del bambino, poi
+ * le segnalazioni su quelle» — ha un costo che cresce con la lunghezza del diario, e si rompeva in
+ * due modi muti oltre le mille righe: la lettura troncata da PostgREST a `max_rows` e, peggio,
+ * l'update con TUTTI gli id nell'URL, che con un anno di nido (~1.400 voci) torna 414. Per
+ * l'eliminazione definitiva, che si ferma su `completo: false`, voleva dire non poter MAI
+ * eliminare proprio i ritirati del nido.
+ *
+ * Qui si parte dalle segnalazioni, che sono poche: quelle di questo tipo che hanno ANCORA testo
+ * (`motivo` o `note_gestione`), lette a pagine; poi si chiede a blocchi di `ID_PER_QUERY` quali dei
+ * loro oggetti sono del bambino (`verificaDelBambino`), e si bonificano a blocchi quelle. Il costo
+ * dipende dal numero di segnalazioni, non da quanto è lungo il diario.
+ *
+ * Il conteggio è quello delle segnalazioni a cui il testo è stato davvero tolto: una già senza
+ * testo (bonificata dall'oblio di un genitore, o da un oblio precedente) non si riscrive e non si
+ * conta, come per le presenze.
+ *
+ * `completo: false` = una lettura o una scrittura non è riuscita (schema assente escluso).
+ */
+async function bonificaSegnalazioniSuOggetti(
+  supabase: SupabaseClient,
+  tipo: 'voce_diario' | 'media_galleria',
+  verificaDelBambino: (blocco: string[]) => PromiseLike<{ data: unknown; error: unknown }>,
+  eventi: { candidate: string; verifica: string; scrittura: string },
+  op: string,
+): Promise<{ bonificate: number; completo: boolean }> {
+  let completo = true
+
+  // 1. Le segnalazioni candidate: di questo tipo, con testo ancora presente, a pagine.
+  const candidate: { id: string; oggetto: string }[] = []
+  for (let da = 0; ; da += RIGHE_MASSIME_POSTGREST) {
+    const { data, error } = await supabase
+      .from('segnalazioni')
+      .select('id, oggetto_id')
+      .eq('tipo_oggetto', tipo)
+      .or('motivo.not.is.null,note_gestione.not.is.null')
+      .order('id')
+      .range(da, da + RIGHE_MASSIME_POSTGREST - 1)
+    if (error) {
+      if (!schemaAssente(error)) {
+        logErrore({ operazione: op, evento: eventi.candidate }, error)
+        completo = false
+      }
+      break
+    }
+    const righe = (data ?? []) as { id?: unknown; oggetto_id?: unknown }[]
+    for (const r of righe) {
+      if (typeof r.id === 'string' && typeof r.oggetto_id === 'string') candidate.push({ id: r.id, oggetto: r.oggetto_id })
+    }
+    if (righe.length < RIGHE_MASSIME_POSTGREST) break
+  }
+
+  // 2. Quali di quegli oggetti sono del bambino, a blocchi. Si tiene solo ciò che si è chiesto:
+  //    una risposta che portasse un id fuori dal blocco non può allargare la bonifica.
+  const delBambino = new Set<string>()
+  for (const blocco of aBlocchi([...new Set(candidate.map((c) => c.oggetto))], ID_PER_QUERY)) {
+    const { data, error } = await verificaDelBambino(blocco)
+    if (error) {
+      if (!schemaAssente(error)) {
+        logErrore({ operazione: op, evento: eventi.verifica }, error)
+        completo = false
+      }
+      continue
+    }
+    const chiesti = new Set(blocco)
+    for (const r of (data ?? []) as { id?: unknown }[]) {
+      if (typeof r.id === 'string' && chiesti.has(r.id)) delBambino.add(r.id)
+    }
+  }
+
+  // 3. La bonifica, a blocchi di id di segnalazione. Il filtro sul tipo è una cintura: un id
+  //    di segnalazione di un altro tipo non ci può finire, ma se ci finisse non verrebbe toccato.
+  let bonificate = 0
+  const daBonificare = candidate.filter((c) => delBambino.has(c.oggetto)).map((c) => c.id)
+  for (const blocco of aBlocchi(daBonificare, ID_PER_QUERY)) {
+    const { data, error } = await supabase
+      .from('segnalazioni')
+      .update({ motivo: null, note_gestione: null })
+      .eq('tipo_oggetto', tipo)
+      .in('id', blocco)
+      .select('id')
+    if (error) {
+      if (!schemaAssente(error)) {
+        logErrore({ operazione: op, evento: eventi.scrittura }, error)
+        completo = false
+      }
+      continue
+    }
+    bonificate += (data ?? []).length
+  }
+  return { bonificate, completo }
+}
+
 /** Esito di `bonificaTracceTestualiAlunno`. */
 export interface EsitoTracceTestuali {
   /** Righe di `notifiche` che nominavano il bambino, rimosse. */
@@ -1904,6 +2007,9 @@ export interface EsitoTracceTestuali {
    * Gli id dei thread di chat del bambino, letti qui. Esposti perché `anonimizzaAlunno` ci toglie
    * poi gli allegati (`obliaAllegatiChat`) e non deve rileggerli: un solo posto in cui è scritto che i
    * thread di un bambino si trovano per `student_id`.
+   *
+   * ⚠️ Vale SOLO se `threadLetti` è vero. Con la lettura fallita è un elenco vuoto che non vuol dire
+   * «nessun thread»: chi lo usa per decidere qualcosa guarda prima `threadLetti`.
    */
   threadIds: string[]
   /** `false` = l'elenco dei thread non si è potuto leggere: segnalazioni e sospensioni di chat non sono state guardate. */
@@ -1933,10 +2039,19 @@ export interface EsitoTracceTestuali {
  *    thread, ma l'oblio non cancella i thread, e il testo va tolto comunque);
  *  · l'AUDIT delle cancellazioni di diario scritte senza `entita_id` (`bonificaAuditDiarioSenzaId`).
  *
- * ⚠️ L'ORDINE È UN VINCOLO PER CHI LA CHIAMA. Gli id di presenze, voci di diario, media e thread li
- * legge da sé, qui dentro: va chiamata PRIMA di qualunque passo che cancelli quelle righe —
- * in `anonimizzaAlunno` prima di `obliaFotoAlunno`, nell'eliminazione definitiva prima della funzione
- * SQL. Dopo, le segnalazioni sarebbero irraggiungibili: l'unico aggancio è l'id dell'oggetto segnalato.
+ * ⚠️ L'ORDINE È UN VINCOLO PER CHI LA CHIAMA. Presenze, voci di diario, media e thread li legge da
+ * sé, qui dentro: va chiamata PRIMA di qualunque passo che cancelli quelle righe. Dopo, le
+ * segnalazioni sarebbero irraggiungibili: l'unico aggancio è l'id dell'oggetto segnalato.
+ *  · in `anonimizzaAlunno`: prima di `obliaFotoAlunno`;
+ *  · nell'eliminazione definitiva: PRIMA di `rimuoviFileAlunno`/`obliaFotoAlunno` (che cancella i
+ *    media: dopo, le segnalazioni sui media non si ritroverebbero più) e prima della funzione SQL
+ *    (che cancella diario, presenze e thread in CASCADE); e solo in `execute`, dopo tutti i controlli
+ *    di ammissibilità — è una scrittura irreversibile, non una misura.
+ *
+ * Nessun elenco di id cresce con la storia del bambino dentro un URL, e nessuna lettura si ferma a
+ * `max_rows` (2026-10-09): presenze e segnalazioni si leggono a pagine, gli id viaggiano a blocchi di
+ * `ID_PER_QUERY`. Fino a quel giorno, oltre le mille righe, la scrittura tornava 414 e la funzione
+ * diceva `completo: false` per sempre — cioè un ritirato del nido non si poteva eliminare.
  *
  * ⚠️ NON SCRIVE UN LOG DI SUCCESSO PROPRIO, e non per dimenticanza: era codice inline di
  * `anonimizzaAlunno`, che i suoi conteggi li porta già nella riga `oblio-eseguito` di chi la chiama, e
@@ -1958,17 +2073,30 @@ export async function bonificaTracceTestualiAlunno(
   //    notifica anche quando la presenza non aveva alcun motivo scritto.
   //    All'elenco si aggiunge l'id dell'alunno stesso, che è ciò a cui puntano
   //    `assenza_non_comunicata` e `mensa_saldo_basso`.
-  const { data: righePresenze, error: errIdPresenze } = await supabase
-    .from('presenze')
-    .select('id')
-    .eq('alunno_id', alunnoId)
-  if (errIdPresenze && !schemaAssente(errIdPresenze)) {
-    logErrore({ operazione: op, evento: 'oblio_notifiche_presenze_non_lette' }, errIdPresenze)
-    completo = false
+  //
+  //    A PAGINE (2026-10-09): PostgREST tronca in silenzio a `max_rows` (1000), e un bambino del
+  //    nido supera le mille presenze in un anno. Una lettura sola ne vedeva mille: le notifiche
+  //    della milleunesima in poi restavano, e il passo diceva «fatto». La cancellazione poi va a
+  //    blocchi dentro `obliaNotifiche`, perché mille id in un URL sono un 414.
+  const idPresenze: string[] = []
+  for (let da = 0; ; da += RIGHE_MASSIME_POSTGREST) {
+    const { data: righePresenze, error: errIdPresenze } = await supabase
+      .from('presenze')
+      .select('id')
+      .eq('alunno_id', alunnoId)
+      .order('id')
+      .range(da, da + RIGHE_MASSIME_POSTGREST - 1)
+    if (errIdPresenze) {
+      if (!schemaAssente(errIdPresenze)) {
+        logErrore({ operazione: op, evento: 'oblio_notifiche_presenze_non_lette' }, errIdPresenze)
+        completo = false
+      }
+      break
+    }
+    const righe = (righePresenze ?? []) as { id?: unknown }[]
+    for (const r of righe) if (typeof r.id === 'string') idPresenze.push(r.id)
+    if (righe.length < RIGHE_MASSIME_POSTGREST) break
   }
-  const idPresenze = ((righePresenze ?? []) as { id?: unknown }[])
-    .map((r) => r.id)
-    .filter((v): v is string => typeof v === 'string')
   const notifiche = await obliaNotifiche(supabase, { entitaIds: [alunnoId, ...idPresenze] }, op)
   if (!notifiche.completo) completo = false
 
@@ -1979,68 +2107,45 @@ export async function bonificaTracceTestualiAlunno(
   let segnalazioniBonificate = 0
   let sospensioniBonificate = 0
 
-  // b1) Segnalazioni su voci di diario dell'alunno.
-  const { data: diarioRows, error: errDiario } = await supabase
-    .from('eventi_diario')
-    .select('id')
-    .eq('alunno_id', alunnoId)
-  if (errDiario && !schemaAssente(errDiario)) {
-    logErrore({ operazione: op, evento: 'oblio_segnalazioni_diario_select' }, errDiario)
-    completo = false
-  }
-  const diarioIds = ((diarioRows ?? []) as { id: string }[]).map((d) => d.id)
-  if (diarioIds.length > 0) {
-    const { data: segDiario, error: errSegD } = await supabase
-      .from('segnalazioni')
-      .update({ motivo: null, note_gestione: null })
-      .eq('tipo_oggetto', 'voce_diario')
-      .in('oggetto_id', diarioIds)
-      .select('id')
-    if (errSegD) {
-      if (!schemaAssente(errSegD)) {
-        logErrore({ operazione: op, evento: 'oblio_segnalazioni_diario' }, errSegD)
-        completo = false
-      }
-    } else {
-      segnalazioniBonificate += (segDiario ?? []).length
-    }
-  }
+  // b1) Segnalazioni su voci di diario dell'alunno. Ricerca ROVESCIATA: vedi
+  //     `bonificaSegnalazioniSuOggetti`. Fino al 2026-10-09 si leggevano tutte le voci di diario
+  //     del bambino (troncate in silenzio a 1000) e si mettevano TUTTE nell'URL dell'update: con un
+  //     anno di nido la richiesta tornava 414 e nessuna segnalazione veniva bonificata.
+  const segDiario = await bonificaSegnalazioniSuOggetti(
+    supabase,
+    'voce_diario',
+    (blocco) => supabase.from('eventi_diario').select('id').in('id', blocco).eq('alunno_id', alunnoId),
+    { candidate: 'oblio_segnalazioni_diario_candidate', verifica: 'oblio_segnalazioni_diario_select', scrittura: 'oblio_segnalazioni_diario' },
+    op,
+  )
+  segnalazioniBonificate += segDiario.bonificate
+  if (!segDiario.completo) completo = false
 
-  // b2) Segnalazioni su media di galleria taggati all'alunno.
+  // b2) Segnalazioni su media di galleria taggati all'alunno (`tag_students` lo contiene), con la
+  //     stessa ricerca rovesciata.
   // `ancheNelCestino`: questa lettura serve a TROVARE le segnalazioni da bonificare,
   // e il testo libero di una segnalazione su una foto cestinata è PII su un minore
   // esattamente come quello su una foto viva. Filtrare qui non lascerebbe in piedi
   // una foto: lascerebbe in piedi il `motivo` scritto da un adulto su un bambino.
-  const { data: mediaRows, error: errMedia } = await ancheNelCestino(
-    supabase
-      .from('galleria_media_v2')
-      .select('id')
-      .contains('tag_students', [alunnoId]),
-    'ricerca delle segnalazioni da bonificare: il motivo e le note scritte su una foto ' +
-      'cestinata sono testo libero su un minore come quelli su una foto viva, e filtrare ' +
-      "qui li lascerebbe in tabella dopo l'oblio.",
+  const segMedia = await bonificaSegnalazioniSuOggetti(
+    supabase,
+    'media_galleria',
+    (blocco) =>
+      ancheNelCestino(
+        supabase
+          .from('galleria_media_v2')
+          .select('id')
+          .in('id', blocco)
+          .contains('tag_students', [alunnoId]),
+        'ricerca delle segnalazioni da bonificare: il motivo e le note scritte su una foto ' +
+          'cestinata sono testo libero su un minore come quelli su una foto viva, e filtrare ' +
+          "qui li lascerebbe in tabella dopo l'oblio.",
+      ),
+    { candidate: 'oblio_segnalazioni_media_candidate', verifica: 'oblio_segnalazioni_media_select', scrittura: 'oblio_segnalazioni_media' },
+    op,
   )
-  if (errMedia && !schemaAssente(errMedia)) {
-    logErrore({ operazione: op, evento: 'oblio_segnalazioni_media_select' }, errMedia)
-    completo = false
-  }
-  const mediaIds = ((mediaRows ?? []) as { id: string }[]).map((m) => m.id)
-  if (mediaIds.length > 0) {
-    const { data: segMedia, error: errSegM } = await supabase
-      .from('segnalazioni')
-      .update({ motivo: null, note_gestione: null })
-      .eq('tipo_oggetto', 'media_galleria')
-      .in('oggetto_id', mediaIds)
-      .select('id')
-    if (errSegM) {
-      if (!schemaAssente(errSegM)) {
-        logErrore({ operazione: op, evento: 'oblio_segnalazioni_media' }, errSegM)
-        completo = false
-      }
-    } else {
-      segnalazioniBonificate += (segMedia ?? []).length
-    }
-  }
+  segnalazioniBonificate += segMedia.bonificate
+  if (!segMedia.completo) completo = false
 
   // b3) Segnalazioni sui messaggi + sospensioni dei thread di chat dell'alunno.
   //     Un alunno ha DUE genitori (student_parents molti-a-molti): se solo uno

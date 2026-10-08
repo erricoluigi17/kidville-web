@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SEDE_A } from '../fixtures/sedi'
 import { NextResponse, NextRequest } from 'next/server'
+import { TABELLE_REGISTRO_PRIMARIA } from '@/lib/alunni/registro-primaria'
 
 // =============================================================================
 // LOCK del contratto sullo spazio-id: `richieste_cancellazione.parent_id` è un
@@ -61,7 +62,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // l'ultimo `eq` vinceva su tutti — il finto avrebbe reso rossa una somma
       // giusta (o, peggio, verde una sbagliata).
       let alunnoDelFiltro = ''
+      // Il controllo del registro della primaria (2026-10-09) legge le sue tabelle
+      // con `.limit(1)`. In questo file il registro è VUOTO: `pagellePerAlunno`
+      // descrive ciò che il DRY-RUN conta, non il registro. Chi ha il registro si
+      // salta: lo prova `admin-gdpr-richieste-registro-primaria.test.ts`.
+      let letturaRegistro = false
       const dati = () => {
+        if (letturaRegistro && (TABELLE_REGISTRO_PRIMARIA as readonly string[]).includes(table)) return []
         if (table === 'student_parents') return h.state.links
         if (table === 'alunni') return h.state.alunni
         if (table === 'pagelle') return h.state.pagellePerAlunno[alunnoDelFiltro] ?? []
@@ -86,6 +93,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // rosso per il finto, non per il prodotto.
       b.contains = () => b
       b.not = () => b
+      b.limit = () => { letturaRegistro = true; return b }
       b.update = (v: Record<string, unknown>) => { patch = v; return b }
       b.maybeSingle = async () => {
         if (table === 'richieste_cancellazione') {
@@ -99,6 +107,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
       }
       b.then = (res: (v: unknown) => unknown) => {
         if (patch) h.state.updates.push({ table, patch })
+        // Il registro vuoto non eredita gli errori iniettati per i CONTEGGI.
+        if (letturaRegistro) return Promise.resolve({ data: dati(), error: null }).then(res)
         const err = h.state.erroriTabella[table] ?? null
         return Promise.resolve({ data: err ? null : dati(), error: err }).then(res)
       }

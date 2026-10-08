@@ -117,6 +117,12 @@ Corpo: `{ alunno_id: uuid, mode: 'dryrun' | 'execute', scelta?: 'elimina' | 'eli
 6. `execute`, `scelta` non disponibile → `409` con il codice del motivo
    (`REGISTRO_PRIMARIA_DA_CONSERVARE` vince su tutti, poi `ALUNNO_ELIMINAZIONE_HA_PAGAMENTI`, `ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI`). I nomi definitivi dei codici sono quelli del piano (Task 4).
 7. `execute` + `elimina` / `elimina_con_pagamenti`:
+   0. **tracce di testo prima di tutto** — `bonificaTracceTestualiAlunno` (estratta da
+      `anonimizzaAlunno`, la usano entrambi i canali): notifiche che nominano il bambino, testo
+      delle segnalazioni su sue voci di diario/media/thread, sospensioni, audit del diario. Va
+      PRIMA dei file (dopo `obliaFotoAlunno` i media non ci sono più e le loro segnalazioni non si
+      ritrovano). Letture a pagine, scritture a blocchi da 100 id: un bambino del nido supera le
+      1000 voci l'anno. `completo: false` → stop prima di file e DB (500);
    a. **file prima** — con le funzioni dell'oblio, nessuna copia (`gdpr-erase-canale-unico`):
       `obliaFotoAlunno`, `obliaFotoNewsAlunno`, `obliaIntentiVideoAlunno`, `obliaPagelleAlunno`,
       `obliaCertificatiMediciAlunno`, `obliaFascicoloAlunno`, `obliaAllegatiChat` (thread del bambino),

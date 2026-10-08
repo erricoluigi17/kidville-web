@@ -190,14 +190,9 @@ export function posterioriCheContengono(
 //
 // 2026-10-07 · PARTE 2 «servizi mensili»: `20261007170813_servizi_mensili.sql` (tabella
 // `iscrizioni_servizi` con PRIMARY KEY, EXCLUDE e RLS senza policy; colonne nuove su
-// `payment_categories`). Resta dichiarata finché non è applicata.
+// `payment_categories`). SVUOTATA l'08/10 (PR-B dopo il merge di #205, `f836d94d`): applicata in
+// produzione dall'integrazione, una riga sola nel registro; fotografie rigenerate dalla produzione.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261007170813_servizi_mensili.sql':
-        "Migrazione dentro una PR: la applica l'integrazione Supabase al merge, con la version del file " +
-        '(mai a mano). Introduce `iscrizioni_servizi` (RLS attiva, nessuna policy) e due colonne su ' +
-        '`payment_categories`. Le fotografie (policy, indici unici, FK, migrazioni applicate, tabelle con ' +
-        '`scuola_id`) si rigenerano dalla produzione in una PR-B successiva, che svuota questa voce e censisce ' +
-        '`iscrizioni_servizi` in NOT_NULL_ATTESE.',
 }
 
 /**

@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-02",
-  "generato_alle": "2026-10-02T22:38:08Z",
-  "sha256": "c3cd1cfbac0f3a1ad33912d1b92a5ec938de53b56da39c9a19b933f087386941",
+  "generato_il": "2026-10-08",
+  "generato_alle": "2026-10-08T09:34:05Z",
+  "sha256": "f730d95eba75343a44125c5dc85e88208478d48f9b5b35c3e2720a7f3e185964",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -1057,6 +1057,17 @@
     {
       "tabella": "iscrizioni_retention_esecuzioni",
       "indice": "iscrizioni_retention_esecuzioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_servizi",
+      "indice": "iscrizioni_servizi_pkey",
       "parziale": false,
       "con_espressioni": false,
       "nulls_not_distinct": false,

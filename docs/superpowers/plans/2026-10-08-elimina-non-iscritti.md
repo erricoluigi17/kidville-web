@@ -907,6 +907,22 @@ describe('contaPerEliminazione', () => {
     const esito = await contaPerEliminazione(supabase as never, AL, 'test')
     expect(esito.ok).toBe(false)
   })
+
+  it('un conteggio ASSENTE (HEAD con 404: error null, count null) non diventa uno zero', async () => {
+    // Così risponde postgrest-js a una HEAD su una risorsa che dà 404: nessun
+    // errore, nessun conteggio. Il finto restituisce sempre un numero, quindi il
+    // caso si costruisce avvolgendo `from` per la sola tabella `presenze`.
+    const vero = creaFintoSupabase(db()) as unknown as { from: (t: string) => unknown }
+    const supabase = {
+      ...vero,
+      from: (t: string) =>
+        t === 'presenze'
+          ? { select: () => ({ eq: async () => ({ data: null, error: null, count: null }) }) }
+          : vero.from(t),
+    }
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    expect(esito.ok).toBe(false)
+  })
 })
 ```
 
@@ -1001,11 +1017,15 @@ async function conta(
     .from(tabella)
     .select(colonna, { count: 'exact', head: true })
     .eq(colonna, id)
-  if (error) {
-    logErrore({ operazione: op, evento: `elimina_conta_${tabella}` }, error)
+  // ⚠️ Con `head: true` una richiesta HEAD non ha corpo: un 404 (tabella assente,
+  // gateway) torna come `error: null, count: null`, e gli altri errori arrivano
+  // senza `code`. `count === null` è quindi un GUASTO, mai uno zero
+  // (postgrest-js 2.112, `dist/index.cjs:488-503`; misurato in revisione).
+  if (error || count === null) {
+    logErrore({ operazione: op, evento: `elimina_conta_${tabella}` }, error ?? { message: 'conteggio assente' })
     return null
   }
-  return count ?? 0
+  return count
 }
 
 async function idsDove(

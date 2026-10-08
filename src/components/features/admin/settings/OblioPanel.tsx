@@ -19,6 +19,10 @@ interface Candidato {
   // più una chiave: «Rossi Beta / 2 ANNI» può esistere in due sedi.
   scuola_id?: string | null;
   genitori: { id: string; nome: string }[];
+  // Il bambino ha voti, pagelle, scrutini, note o certificati della primaria
+  // (da `gdpr/candidates`, 2026-10-08): il registro va conservato per legge e
+  // la scheda NON si anonimizza. Resta in elenco col motivo, a comando spento.
+  registro_primaria?: boolean;
 }
 
 interface DryRun extends ContiOblio {
@@ -52,6 +56,13 @@ export function OblioPanel({ userId }: { userId: string }) {
   const [misura, setMisura] = useState<StatoMisuraOblio>('assente');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
+  // Il corpo della risposta d'errore dell'elenco, se l'elenco NON si è caricato.
+  // Senza, un 500 lasciava l'elenco vuoto e la schermata diceva «Nessun alunno
+  // non iscritto da anonimizzare»: un guasto travestito da risposta. Dal
+  // 2026-10-09 succede anche quando non si è potuto leggere il registro della
+  // primaria (`GDPR_CANDIDATI_NON_LETTI`). Si tiene il CORPO, non la frase: la
+  // frase si compone al render, così `t` non entra nelle dipendenze di `load`.
+  const [erroreElenco, setErroreElenco] = useState<unknown>(null);
 
   const hdr = { 'Content-Type': 'application/json', 'x-user-id': userId };
 
@@ -60,7 +71,11 @@ export function OblioPanel({ userId }: { userId: string }) {
     // (react-hooks set-state-in-effect); refetch senza spinner, accettato.
     try {
       const res = await fetch('/api/admin/gdpr/candidates', { headers: { 'x-user-id': userId } });
-      const j = await res.json();
+      const j = await res.json().catch(() => null);
+      // Il patch di `fetch` (`installaLoggerClient`) ha già loggato il `!res.ok`:
+      // qui si fa la sola cosa che il log non sa fare, cioè DIRLO a schermo.
+      if (!res.ok) { setErroreElenco(j ?? {}); return; }
+      setErroreElenco(null);
       if (Array.isArray(j)) setList(j);
     } finally {
       setLoading(false);
@@ -116,6 +131,14 @@ export function OblioPanel({ userId }: { userId: string }) {
   }, [userId]);
 
   const apri = async (c: Candidato) => {
+    if (c.registro_primaria) {
+      // Niente misura: la route risponderebbe 409. Si mostra il motivo e basta.
+      setTarget(c);
+      setDry(null);
+      setMisura('assente');
+      setConfirm('');
+      return;
+    }
     setTarget(c);
     setConfirm('');
     await misuraDi(c);
@@ -165,7 +188,11 @@ export function OblioPanel({ userId }: { userId: string }) {
         onRiprova={target ? () => { void misuraDi(target); } : undefined}
       />
 
-      {list.length === 0 ? (
+      {erroreElenco !== null ? (
+        <div role="alert" className="rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-[13px] font-semibold leading-relaxed text-kidville-error-strong">
+          {messaggioDaCorpo(erroreElenco, t('errore'))}
+        </div>
+      ) : list.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-kidville-line bg-kidville-white/60 p-10 text-center">
           <UserX size={26} className="mx-auto text-kidville-muted" />
           <p className="mt-2 font-maven text-sm text-kidville-muted">{t('oblioVuoto')}</p>
@@ -185,6 +212,9 @@ export function OblioPanel({ userId }: { userId: string }) {
                   <span className="flex items-center gap-2 font-barlow text-sm font-extrabold uppercase text-kidville-green">
                     {c.cognome} {c.nome}
                     <span className="rounded-pill bg-kidville-neutral-soft px-2 py-0.5 font-maven text-[10px] font-semibold uppercase text-kidville-muted">{c.stato ?? t('oblioStatoNonIscritto')}</span>
+                    {c.registro_primaria && (
+                      <span className="rounded-pill bg-kidville-warn-soft px-2 py-0.5 font-maven text-[10px] font-semibold uppercase text-kidville-warn-strong">{t('oblioRegistroPrimariaBadge')}</span>
+                    )}
                   </span>
                   <span className="truncate font-maven text-[11.5px] text-kidville-muted">
                     {c.classe_sezione ? t('oblioClasse', { classe: c.classe_sezione }) : ''}{t('oblioGenitori', { elenco: c.genitori.map((g) => g.nome).join(', ') || '—' })}
@@ -211,60 +241,75 @@ export function OblioPanel({ userId }: { userId: string }) {
                 <h3 className="flex items-center gap-2 font-barlow text-xl font-black uppercase tracking-wide text-kidville-error">
                   <AlertTriangle size={20} /> {t('oblioTitoloCancellazione')}
                 </h3>
-                <p className={cx('mt-2 font-maven text-sm text-kidville-ink/80', piuSedi ? 'mb-2' : 'mb-4')}>
-                  {t.rich('oblioAvviso', { nome: `${target.cognome} ${target.nome}`, strong: (c) => <strong>{c}</strong> })}
-                </p>
-                {/* La sede resta sotto gli occhi anche nel passo di conferma e di
-                    esecuzione: è l'ultimo punto in cui l'operazione si può fermare. */}
-                {piuSedi && (
-                  <p className="mb-4 flex items-center gap-1.5 font-maven text-sm text-kidville-ink/80">
-                    <SedeIcon size={14} className="shrink-0 text-kidville-green" /> {t('oblioSede')}{' '}
-                    <strong>{nomeSede(target.scuola_id)}</strong>
-                  </p>
+                {/* IL REGISTRO DELLA PRIMARIA NON SI ANONIMIZZA (titolare,
+                    2026-10-08): niente nominativo da digitare, niente bottone
+                    rosso — solo il motivo. Il server rifiuterebbe comunque (409);
+                    qui si evita di far digitare un nome per sentirsi dire di no. */}
+                {target.registro_primaria ? (
+                  <>
+                    <p className="mt-2 mb-4 font-maven text-sm text-kidville-ink/80">{t('oblioRegistroPrimariaTesto')}</p>
+                    <div className="flex justify-end">
+                      <button onClick={() => { setTarget(null); setMisura('assente'); }} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-muted hover:bg-kidville-cream">{t('annulla')}</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className={cx('mt-2 font-maven text-sm text-kidville-ink/80', piuSedi ? 'mb-2' : 'mb-4')}>
+                      {t.rich('oblioAvviso', { nome: `${target.cognome} ${target.nome}`, strong: (c) => <strong>{c}</strong> })}
+                    </p>
+                    {/* La sede resta sotto gli occhi anche nel passo di conferma e di
+                        esecuzione: è l'ultimo punto in cui l'operazione si può fermare. */}
+                    {piuSedi && (
+                      <p className="mb-4 flex items-center gap-1.5 font-maven text-sm text-kidville-ink/80">
+                        <SedeIcon size={14} className="shrink-0 text-kidville-green" /> {t('oblioSede')}{' '}
+                        <strong>{nomeSede(target.scuola_id)}</strong>
+                      </p>
+                    )}
+
+                    {/* Lo stesso numero non si mostra due volte con due nomi diversi.
+                        Qui c'era anche «File personali rimossi: 3», che è
+                        ESATTAMENTE il valore mostrato sopra come «Documento
+                        d'identità e domanda d'iscrizione: 3»: chi legge non aveva
+                        modo di sapere che era lo stesso 3 e non 6. Il numero resta
+                        dov'è nominato per quello che è. */}
+                    {misura === 'in-corso' ? (
+                      <div className="flex items-center gap-2 py-3 font-maven text-sm text-kidville-muted"><Loader2 className="animate-spin" size={14} /> {t('oblioDryRun')}</div>
+                    ) : dry ? (
+                      <div className="mb-4 space-y-1 rounded-xl bg-kidville-cream p-3.5 font-maven text-xs text-kidville-ink/80">
+                        <div>{t('oblioAnagrafica')} <strong>{dry.alunno}</strong></div>
+                        <div>{t('oblioGenitoriAnon')} <strong>{dry.parents}</strong></div>
+                        {dry.parents_non_anonimizzati > 0 && <div className="text-kidville-warn">{t('oblioGenitoriMantenuti', { n: dry.parents_non_anonimizzati })}</div>}
+                      </div>
+                    ) : null}
+
+                    <label className="mb-1.5 block font-maven text-xs font-semibold text-kidville-muted">
+                      {t('oblioConfermaDigita')} <span className="font-mono text-kidville-error">{nomeConferma}</span>
+                    </label>
+                    <input
+                      value={confirm}
+                      onChange={(e) => setConfirm(e.target.value)}
+                      placeholder={t('oblioPlaceholderNome')}
+                      className="mb-4 w-full rounded-xl border-2 border-kidville-line px-3 py-2 text-sm outline-none focus:border-kidville-error"
+                    />
+
+                    <div className="flex justify-end gap-3">
+                      <button onClick={() => { setTarget(null); setMisura('assente'); }} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-muted hover:bg-kidville-cream">{t('annulla')}</button>
+                      {/* `misura !== 'ok'` È IL GATE, non un dettaglio di stato:
+                          un'anonimizzazione irreversibile non si conferma su numeri
+                          che nessuno ha letto. Prima bastava digitare il nominativo
+                          — che il fallback fornisce comunque — e il bottone partiva
+                          anche col dry-run caduto. Chi vuole procedere ha il
+                          «Riprova la misura» nel riquadro rosso qui sopra. */}
+                      <button
+                        disabled={busy || !confirm.trim() || misura !== 'ok'}
+                        onClick={esegui}
+                        className="rounded-pill bg-kidville-error px-5 py-2 font-barlow text-sm font-black uppercase tracking-wider text-kidville-white hover:opacity-90 disabled:opacity-50"
+                      >
+                        {busy ? t('oblioBtnAnonimizzando') : t('oblioBtnAnonimizza')}
+                      </button>
+                    </div>
+                  </>
                 )}
-
-                {/* Lo stesso numero non si mostra due volte con due nomi diversi.
-                    Qui c'era anche «File personali rimossi: 3», che è
-                    ESATTAMENTE il valore mostrato sopra come «Documento
-                    d'identità e domanda d'iscrizione: 3»: chi legge non aveva
-                    modo di sapere che era lo stesso 3 e non 6. Il numero resta
-                    dov'è nominato per quello che è. */}
-                {misura === 'in-corso' ? (
-                  <div className="flex items-center gap-2 py-3 font-maven text-sm text-kidville-muted"><Loader2 className="animate-spin" size={14} /> {t('oblioDryRun')}</div>
-                ) : dry ? (
-                  <div className="mb-4 space-y-1 rounded-xl bg-kidville-cream p-3.5 font-maven text-xs text-kidville-ink/80">
-                    <div>{t('oblioAnagrafica')} <strong>{dry.alunno}</strong></div>
-                    <div>{t('oblioGenitoriAnon')} <strong>{dry.parents}</strong></div>
-                    {dry.parents_non_anonimizzati > 0 && <div className="text-kidville-warn">{t('oblioGenitoriMantenuti', { n: dry.parents_non_anonimizzati })}</div>}
-                  </div>
-                ) : null}
-
-                <label className="mb-1.5 block font-maven text-xs font-semibold text-kidville-muted">
-                  {t('oblioConfermaDigita')} <span className="font-mono text-kidville-error">{nomeConferma}</span>
-                </label>
-                <input
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  placeholder={t('oblioPlaceholderNome')}
-                  className="mb-4 w-full rounded-xl border-2 border-kidville-line px-3 py-2 text-sm outline-none focus:border-kidville-error"
-                />
-
-                <div className="flex justify-end gap-3">
-                  <button onClick={() => { setTarget(null); setMisura('assente'); }} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-muted hover:bg-kidville-cream">{t('annulla')}</button>
-                  {/* `misura !== 'ok'` È IL GATE, non un dettaglio di stato:
-                      un'anonimizzazione irreversibile non si conferma su numeri
-                      che nessuno ha letto. Prima bastava digitare il nominativo
-                      — che il fallback fornisce comunque — e il bottone partiva
-                      anche col dry-run caduto. Chi vuole procedere ha il
-                      «Riprova la misura» nel riquadro rosso qui sopra. */}
-                  <button
-                    disabled={busy || !confirm.trim() || misura !== 'ok'}
-                    onClick={esegui}
-                    className="rounded-pill bg-kidville-error px-5 py-2 font-barlow text-sm font-black uppercase tracking-wider text-kidville-white hover:opacity-90 disabled:opacity-50"
-                  >
-                    {busy ? t('oblioBtnAnonimizzando') : t('oblioBtnAnonimizza')}
-                  </button>
-                </div>
               </>
             )}
           </section>

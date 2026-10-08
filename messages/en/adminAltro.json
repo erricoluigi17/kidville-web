@@ -11,6 +11,8 @@
   "oblioBanner": "Only <strong>unenrolled</strong> pupils and their parents. Permanent deletion <strong>anonymizes</strong> personal data (irreversible): audit logs and tax documents (invoices) are kept as required by law.",
   "oblioVuoto": "No unenrolled pupils to anonymize.",
   "oblioStatoNonIscritto": "unenrolled",
+  "oblioRegistroPrimariaBadge": "Register to keep",
+  "oblioRegistroPrimariaTesto": "This child has primary school marks, report cards, assessments or notes: the register must be kept by law (GDPR art. 17(3)(b)), so the record cannot be anonymised.",
   "oblioClasse": "Class {classe} · ",
   "oblioSede": "Location:",
   "oblioGenitori": "Parents: {elenco}",

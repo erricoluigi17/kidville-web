@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { TABELLE_REGISTRO_PRIMARIA } from '@/lib/alunni/registro-primaria'
 
 // =============================================================================
 // IL TERZO CANALE DELL'OBLIO — quello della Direzione — AVEVA LA SUA COPIA.
@@ -71,7 +72,7 @@ vi.mock('@/lib/gdpr/orfano', () => ({
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
-      const st: { isDelete?: boolean; eq: Record<string, unknown> } = { eq: {} }
+      const st: { isDelete?: boolean; limit?: boolean; eq: Record<string, unknown> } = { eq: {} }
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = (col: string, val: unknown) => { st.eq[col] = val; return b }
@@ -89,7 +90,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.range = () => b
       b.ilike = () => b
       b.contains = () => b
-      b.limit = () => b
+      b.limit = () => { st.limit = true; return b }
       b.delete = () => { st.isDelete = true; return b }
       b.update = (row: Record<string, unknown>) => { h.updates.push({ table, ...row }); return b }
       b.maybeSingle = async () => ({
@@ -97,6 +98,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
         error: null,
       })
       b.then = (res: (v: unknown) => unknown) => {
+        // Il controllo del registro della primaria (2026-10-08) legge le sue
+        // tabelle con `.limit(1)`: qui quel registro è VUOTO. `h.pagelle` sono i
+        // FILE da togliere dal bucket, che è ciò che questo file misura; il
+        // rifiuto di chi ha il registro sta in `gdpr-erase-registro-primaria.test.ts`.
+        if (st.limit && (TABELLE_REGISTRO_PRIMARIA as readonly string[]).includes(table)) {
+          return Promise.resolve({ data: [], error: null }).then(res)
+        }
         const error = h.err[table] ?? null
         if (error) return Promise.resolve({ data: null, error }).then(res)
         let data: unknown[] = []

@@ -4,6 +4,7 @@ import { axe, toHaveNoViolations } from 'jest-axe'
 
 import itAdminAltro from '../../messages/it/adminAltro.json'
 import enAdminAltro from '../../messages/en/adminAltro.json'
+import itShared from '../../messages/it/shared.json'
 import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
 
 expect.extend(toHaveNoViolations)
@@ -455,5 +456,102 @@ describe('OblioPanel — che cosa distrugge, detto prima della conferma', () => 
     fireEvent.click(screen.getByText(/Rossi Beta/))
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// IL REGISTRO DELLA PRIMARIA NON SI ANONIMIZZA (titolare, 2026-10-08).
+//
+// Chi ha voti, pagelle, scrutini, note o certificati della primaria resta
+// nell'elenco — un bambino che sparisce in silenzio è il difetto già pagato da
+// `gdpr/candidates` — ma con il motivo scritto e il comando SPENTO: niente
+// dry-run (la route risponderebbe 409), niente nominativo da digitare, niente
+// bottone rosso.
+// ═════════════════════════════════════════════════════════════════════════════
+describe('OblioPanel — il registro della primaria si conserva', () => {
+  const CON_REGISTRO = [{ ...CANDIDATI[0], registro_primaria: true }, { ...CANDIDATI[1], registro_primaria: false }]
+
+  beforeEach(() => {
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('/api/admin/gdpr/erase')) {
+        return Promise.resolve({ ok: true, json: async () => DRY_RUN })
+      }
+      return Promise.resolve({ ok: true, json: async () => CON_REGISTRO })
+    })
+  })
+
+  const chiamateErase = () =>
+    fetchMock.mock.calls.filter((c) => String(c[0]).includes('/api/admin/gdpr/erase'))
+
+  it('il bambino resta in elenco con il badge; gli altri no', async () => {
+    const { container } = render(<OblioPanel userId="dir-1" />)
+    await waitFor(() => expect(screen.getByText(/Rossi Alfa/)).toBeInTheDocument())
+    const righe = Array.from(container.querySelectorAll('aside button')) as HTMLElement[]
+    expect(righe).toHaveLength(2)
+    expect(within(righe[0]).getByText(itAdminAltro.oblioRegistroPrimariaBadge)).toBeInTheDocument()
+    expect(within(righe[1]).queryByText(itAdminAltro.oblioRegistroPrimariaBadge)).not.toBeInTheDocument()
+  })
+
+  it('aperto: il motivo, nessun dry-run, nessuna casella, nessun bottone rosso', async () => {
+    const { container } = render(<OblioPanel userId="dir-1" />)
+    await waitFor(() => expect(screen.getByText(/Rossi Alfa/)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(/Rossi Alfa/))
+    const dettaglio = container.querySelector('section') as HTMLElement
+    await waitFor(() => expect(within(dettaglio).getByText(itAdminAltro.oblioRegistroPrimariaTesto)).toBeInTheDocument())
+    expect(chiamateErase()).toEqual([])
+    expect(screen.queryByRole('button', { name: itAdminAltro.oblioBtnAnonimizza })).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(itAdminAltro.oblioPlaceholderNome)).not.toBeInTheDocument()
+  })
+
+  it('controllo: il bambino SENZA registro apre il dry-run e il bottone rosso, come sempre', async () => {
+    render(<OblioPanel userId="dir-1" />)
+    await waitFor(() => expect(screen.getByText(/Rossi Beta/)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(/Rossi Beta/))
+    await waitFor(() => expect(voce('Pagelle: 2')).toBeInTheDocument())
+    expect(chiamateErase()).toHaveLength(1)
+    expect(bottoneRosso()).toBeInTheDocument()
+    expect(screen.queryByText(itAdminAltro.oblioRegistroPrimariaTesto)).not.toBeInTheDocument()
+  })
+
+  it('i testi nuovi esistono in ENTRAMBI i cataloghi', () => {
+    for (const k of ['oblioRegistroPrimariaBadge', 'oblioRegistroPrimariaTesto']) {
+      expect(itAdminAltro).toHaveProperty(k)
+      expect(enAdminAltro).toHaveProperty(k)
+    }
+  })
+
+  it('nessuna violazione axe con il motivo a schermo', async () => {
+    const { container } = render(<OblioPanel userId="dir-1" />)
+    await waitFor(() => expect(screen.getByText(/Rossi Alfa/)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(/Rossi Alfa/))
+    await waitFor(() => expect(screen.getByText(itAdminAltro.oblioRegistroPrimariaTesto)).toBeInTheDocument())
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// L'ELENCO CHE NON SI CARICA NON È UN ELENCO VUOTO.
+//
+// Prima un 500 di `gdpr/candidates` lasciava la lista vuota e la schermata
+// diceva «Nessun alunno non iscritto da anonimizzare». Dal 2026-10-09 la route
+// risponde 500 anche quando non ha potuto leggere il registro della primaria:
+// mostrarlo come «nessuno» sarebbe un guasto travestito da risposta.
+// ═════════════════════════════════════════════════════════════════════════════
+describe('OblioPanel — elenco non caricato', () => {
+  it('un 500 dei candidati si dice, con la frase del suo codice, e non «nessun alunno»', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'Errore interno', codice: 'GDPR_CANDIDATI_NON_LETTI' }) }),
+    )
+    render(<OblioPanel userId="dir-1" />)
+    const avviso = await waitFor(() => screen.getByRole('alert'))
+    expect(avviso.textContent).toBe(itShared.erroreGdprCandidatiNonLetti)
+    expect(screen.queryByText(itAdminAltro.oblioVuoto)).not.toBeInTheDocument()
+  })
+
+  it('controllo: un elenco davvero vuoto dice ancora «nessun alunno»', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve({ ok: true, json: async () => [] }))
+    render(<OblioPanel userId="dir-1" />)
+    await waitFor(() => expect(screen.getByText(itAdminAltro.oblioVuoto)).toBeInTheDocument())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

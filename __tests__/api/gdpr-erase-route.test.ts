@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
+import { TABELLE_REGISTRO_PRIMARIA } from '@/lib/alunni/registro-primaria'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
@@ -65,7 +66,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
       // Ogni `from()` è un nuovo builder con stato filtri proprio.
-      const state: { stato?: string; neqStato?: string; inPagamenti?: boolean } = {}
+      const state: { stato?: string; neqStato?: string; inPagamenti?: boolean; limit?: boolean } = {}
       const dataFor = () => {
         if (table === 'student_parents') return h.links
         if (table === 'pagamenti') return h.pagamenti
@@ -113,6 +114,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // doppio non è più un doppio del client Supabase e il dry-run cadrebbe con
       // un 500 «not is not a function».
       b.not = () => b
+      // Il controllo del registro della primaria (2026-10-08) legge le sue
+      // tabelle con `.limit(1)`: vedi `b.then`.
+      b.limit = () => { state.limit = true; return b }
       b.delete = () => { h.deletedTables.push(table); return b }
       // `parents` risponde anche in forma singola: da quando la route passa da
       // `anonimizzaParent`, l'`auth_user_id` del genitore orfano si legge con
@@ -127,6 +131,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
         }
       }
       b.then = (res: (v: unknown) => unknown) => {
+        // In questo file il registro della primaria è VUOTO: `h.pagelle` e
+        // `h.erroriTabella.pagelle` descrivono ciò che il DRY-RUN conta, non il
+        // registro. Il rifiuto di chi lo ha sta in `gdpr-erase-registro-primaria.test.ts`.
+        if (state.limit && (TABELLE_REGISTRO_PRIMARIA as readonly string[]).includes(table)) {
+          return Promise.resolve({ data: [], error: null }).then(res)
+        }
         if (table === 'student_parents' && h.linksError) {
           return Promise.resolve({ data: null, error: h.linksError }).then(res)
         }

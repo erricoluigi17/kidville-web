@@ -49,6 +49,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.select = () => b
       b.eq = () => b
       b.in = () => b
+      // Il controllo del registro della primaria (2026-10-08) legge con
+      // `.limit(1)`: qui il registro è VUOTO (ogni tabella non nominata risponde `[]`).
+      b.limit = () => b
       b.maybeSingle = async () => ({ data: table === 'alunni' ? ALUNNO : null, error: null })
       b.then = (res: (v: unknown) => unknown) =>
         Promise.resolve({ data: table === 'student_parents' ? h.links : [], error: null }).then(res)

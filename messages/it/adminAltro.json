@@ -11,6 +11,8 @@
   "oblioBanner": "Solo alunni <strong>non iscritti</strong> e relativi genitori. La cancellazione definitiva <strong>anonimizza</strong> i dati personali (irreversibile): i registri di audit e i documenti fiscali (fatture) restano conservati per obbligo di legge.",
   "oblioVuoto": "Nessun alunno non iscritto da anonimizzare.",
   "oblioStatoNonIscritto": "non iscritto",
+  "oblioRegistroPrimariaBadge": "Registro da conservare",
+  "oblioRegistroPrimariaTesto": "Questo bambino ha voti, pagelle, scrutini o note della primaria: il registro va conservato per legge (GDPR art. 17 §3 lett. b), quindi la scheda non si anonimizza.",
   "oblioClasse": "Classe {classe} · ",
   "oblioSede": "Sede:",
   "oblioGenitori": "Genitori: {elenco}",

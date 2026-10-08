@@ -10,6 +10,7 @@ import { contaAccountOblio, type EsitoAccountOblio } from '@/lib/gdpr/account-ob
 import { contaCosaDistrugge } from '@/lib/gdpr/cosa-distrugge'
 import { leggiAltriFigliIscritti } from '@/lib/gdpr/orfano'
 import { eNonPiuIscritto, STATO_RITIRATO } from '@/lib/alunni/stato'
+import { leggiRegistroPrimaria } from '@/lib/alunni/registro-primaria'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -134,6 +135,29 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       return NextResponse.json(
         { error: `Operazione consentita solo su alunni con stato «${STATO_RITIRATO}»` },
         { status: 409 }
+      )
+    }
+
+    // IL REGISTRO DELLA PRIMARIA NON SI ANONIMIZZA (titolare, 2026-10-08).
+    // Voti, pagelle, scrutini, note e certificati delle competenze sono il
+    // registro che la legge obbliga a conservare: è l'eccezione dell'art. 17 §3
+    // lett. b. Vale in `dryrun` come in `execute`, e una lettura fallita FERMA:
+    // «non ho potuto guardare» non può aprire un'anonimizzazione irreversibile.
+    const registro = await leggiRegistroPrimaria(supabase, alunno_id)
+    if (!registro.ok) {
+      logErrore({ operazione: OP, stato: 500, evento: 'db' }, registro.errore)
+      return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+    }
+    if (registro.presente) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'oblio-rifiutato-registro-primaria',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+      })
+      return NextResponse.json(
+        { error: 'Il registro della primaria va conservato', codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
+        { status: 409 },
       )
     }
 

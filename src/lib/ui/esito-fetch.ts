@@ -573,6 +573,16 @@ export const CODICI_ERRORE = {
      */
     GDPR_ERASE_NON_RIUSCITO: 'erroreGdprEraseNonRiuscito',
     /**
+     * 500 — l'elenco dei candidati all'oblio non si è potuto comporre: la
+     * lettura del registro della primaria non è riuscita
+     * (`GET /api/admin/gdpr/candidates`, 2026-10-09).
+     *
+     * Non è «nessun candidato»: un elenco mostrato senza aver guardato il
+     * registro accenderebbe il comando d'oblio su un bambino il cui registro va
+     * conservato per legge. La frase chiede di riprovare, non dice «vuoto».
+     */
+    GDPR_CANDIDATI_NON_LETTI: 'erroreGdprCandidatiNonLetti',
+    /**
      * 409 — l'insegnante ha GIÀ fatto l'appello di quel giorno: la comunicazione
      * del genitore (e il suo annullamento) non sovrascrive il registro.
      *

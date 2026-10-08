@@ -7,6 +7,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { STATI_NON_PIU_ISCRITTO, STATO_ISCRITTO, eNonPiuIscritto } from '@/lib/alunni/stato'
+import { alunniConRegistroPrimaria } from '@/lib/alunni/registro-primaria'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -151,6 +152,17 @@ export const GET = withRoute('admin/gdpr/candidates:GET', async (request: NextRe
     })
   }
 
+  // Chi ha il registro della primaria resta IN elenco, con il motivo: un bambino
+  // che sparisce in silenzio dall'elenco dell'oblio è il difetto già pagato qui
+  // sopra (`candidati-esclusi-fuori-elenco`). Il pannello spegne il comando.
+  // Una lettura fallita FERMA l'elenco: «non ho potuto guardare» mostrerebbe un
+  // comando d'oblio acceso su un bambino il cui registro va conservato per legge.
+  const registro = await alunniConRegistroPrimaria(supabase, ids)
+  if (!registro.ok) {
+    logErrore({ operazione: OP, stato: 500, evento: 'db' }, registro.errore)
+    return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_CANDIDATI_NON_LETTI' }, { status: 500 })
+  }
+
   const parentById = new Map(parents.map((p) => [p.id, p]))
   const result = (alunni ?? []).map((a: { id: string }) => {
     const genitori = links
@@ -158,7 +170,7 @@ export const GET = withRoute('admin/gdpr/candidates:GET', async (request: NextRe
       .map((x) => parentById.get(x.parent_id))
       .filter(Boolean)
       .map((p) => ({ id: p!.id, nome: `${p!.first_name ?? ''} ${p!.last_name ?? ''}`.trim() }))
-    return { ...a, genitori }
+    return { ...a, genitori, registro_primaria: registro.conRegistro.has(a.id) }
   })
 
   return NextResponse.json(result)

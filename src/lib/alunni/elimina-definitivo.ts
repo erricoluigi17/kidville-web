@@ -11,7 +11,7 @@ import {
 import { obliaFotoNewsAlunno } from '@/lib/news/permanenza-consenso'
 import { bloccanti, rimuoviEVerifica } from '@/lib/storage/rimozione-verificata'
 import { leggiRegistroPrimaria } from '@/lib/alunni/registro-primaria'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
 // ELIMINAZIONE DEFINITIVA — il motore della route `admin/students/elimina`.
@@ -34,12 +34,27 @@ export type MotivoBloccoEliminazione =
   | 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI'
   | 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI'
 
-export interface ConteggiEliminazione extends ConteggiOblio {
+/**
+ * I conteggi dell'oblio quando sono stati TUTTI misurati. In `ConteggiOblio`
+ * `null` vuol dire «non l'ho potuto leggere»; qui quel caso è già uscito come
+ * `ok: false`, quindi chi legge (la finestra) non deve più gestire `null`.
+ */
+export type ConteggiOblioMisurati = { [K in keyof ConteggiOblio]: number }
+
+function tuttiMisurati(c: ConteggiOblio): c is ConteggiOblioMisurati {
+  return Object.values(c).every((v) => typeof v === 'number')
+}
+
+export interface ConteggiEliminazione extends ConteggiOblioMisurati {
   presenze: number
   diario: number
   legami_genitori: number
   pagamenti: number
-  /** Pagamenti con ricevuta, fattura, bonifico abbinato, incasso o quote altrui + ricevute senza pagamento. */
+  /**
+   * I pagamenti BLOCCATI (ricevuta, fattura, voce viva in `fatture_coda`,
+   * bonifico abbinato, incasso o quote di un altro alunno appese) PIÙ le
+   * ricevute dell'alunno che non sono appese a un suo pagamento.
+   */
   pagamenti_bloccati: number
   registro_primaria: boolean
 }
@@ -113,9 +128,12 @@ async function idsDove(
 }
 
 /**
- * Le tabelle che rendono un pagamento CONTABILITÀ VERA, cioè non cancellabile.
- * Stessa regola della funzione SQL `elimina_alunno_definitivo`, che la ricontrolla
- * da sé dentro la transazione: questa è l'anteprima, quella è la porta.
+ * Le tabelle in cui UNA riga qualunque rende un pagamento CONTABILITÀ VERA, cioè
+ * non cancellabile. Non sono le sole condizioni: `contaPerEliminazione` aggiunge
+ * la voce di `fatture_coda` in qualunque stato tranne `tolta` e le quote di un
+ * altro alunno appese (`parent_payment_id`). Stessa regola della funzione SQL
+ * `elimina_alunno_definitivo`, che la ricontrolla da sé dentro la transazione:
+ * questa è l'anteprima, quella è la porta.
  */
 const TABELLE_CHE_BLOCCANO_UN_PAGAMENTO = [
   'ricevute_emesse',
@@ -130,7 +148,7 @@ export async function contaPerEliminazione(
   op: string,
 ): Promise<EsitoMisura> {
   const oblio = await contaCosaDistrugge(supabase, alunnoId, op)
-  if (Object.values(oblio).some((v) => v === null)) return { ok: false }
+  if (!tuttiMisurati(oblio)) return { ok: false }
 
   const presenze = await conta(supabase, 'presenze', 'alunno_id', alunnoId, op)
   const diario = await conta(supabase, 'eventi_diario', 'alunno_id', alunnoId, op)
@@ -153,6 +171,24 @@ export async function contaPerEliminazione(
     const ids = await idsDove(supabase, tabella, 'pagamento_id', 'pagamento_id', pagIds, op)
     if (ids === null) return { ok: false }
     ids.forEach((id) => bloccati.add(id))
+  }
+  // Una voce di `fatture_coda` ancora VIVA (ogni stato tranne `tolta`): `in_invio`
+  // vuol dire che il file può essere già partito verso Aruba/SDI, `errore` è un
+  // esito ambiguo, e la FK è in CASCADE — col pagamento la voce sparirebbe senza
+  // traccia. Una voce `tolta` è già fuori dalla coda (`stato` è NOT NULL).
+  if (pagIds.length > 0) {
+    const { data: coda, error: codaErr } = await supabase
+      .from('fatture_coda')
+      .select('pagamento_id')
+      .in('pagamento_id', pagIds)
+      .neq('stato', 'tolta')
+    if (codaErr) {
+      logErrore({ operazione: op, evento: 'elimina_blocchi_fatture_coda' }, codaErr)
+      return { ok: false }
+    }
+    for (const q of (coda ?? []) as { pagamento_id: string | null }[]) {
+      if (q.pagamento_id) bloccati.add(q.pagamento_id)
+    }
   }
   // Le quote di un ALTRO alunno appese a un suo pagamento: la cascata su
   // `parent_payment_id` le porterebbe via. `alunno_id` nullo conta come «altro»,
@@ -211,12 +247,69 @@ export interface EsitoFileAlunno {
     foto_rimosse: number
     foto_sganciate: number
     news_ritirate: number
+    /** File del blog che RESTANO perché un altro articolo, che non dichiara il bambino, li usa ancora. */
+    news_trattenuti: number
     certificati: number
     fascicolo: number
     allegati_chat: number
     documento: number
+    /** 1 se il documento d'identità lo nomina anche un'altra scheda: allora non si toglie. */
+    documento_condiviso: number
     restanti: number
   }
+}
+
+const NUMERI_ZERO: EsitoFileAlunno['numeri'] = {
+  foto_rimosse: 0,
+  foto_sganciate: 0,
+  news_ritirate: 0,
+  news_trattenuti: 0,
+  certificati: 0,
+  fascicolo: 0,
+  allegati_chat: 0,
+  documento: 0,
+  documento_condiviso: 0,
+  restanti: 0,
+}
+
+/**
+ * Un'ALTRA scheda nomina lo stesso documento d'identità? (un altro alunno o un
+ * genitore). `null` = non si è potuto sapere.
+ *
+ * È il caso del doppione: la scheda nata da un refuso copia il `documento_path`
+ * del bambino vero, e togliere il file eliminando il doppione lascerebbe la
+ * scheda vera senza documento. Un file che non è solo suo non è suo da togliere.
+ */
+async function documentoCondiviso(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  percorso: string,
+  op: string,
+): Promise<boolean | null> {
+  const altriAlunni = await supabase
+    .from('alunni')
+    .select('id')
+    .eq('documento_path', percorso)
+    .neq('id', alunnoId)
+    .limit(1)
+  if (altriAlunni.error || !Array.isArray(altriAlunni.data)) {
+    logErrore(
+      { operazione: op, evento: 'elimina_documento_condiviso_alunni' },
+      altriAlunni.error ?? { message: 'risposta senza righe' },
+    )
+    return null
+  }
+  if (altriAlunni.data.length > 0) return true
+
+  const genitori = await supabase.from('parents').select('id').eq('documento_path', percorso).limit(1)
+  if (genitori.error || !Array.isArray(genitori.data)) {
+    logErrore(
+      { operazione: op, evento: 'elimina_documento_condiviso_genitori' },
+      genitori.error ?? { message: 'risposta senza righe' },
+    )
+    return null
+  }
+  return genitori.data.length > 0
 }
 
 /**
@@ -224,32 +317,64 @@ export interface EsitoFileAlunno {
  * file non è uscito o un inventario non si è potuto leggere: allora la route si
  * ferma e la scheda resta intatta.
  *
+ * PRIMA LE LETTURE, POI I GESTI. I thread della chat e il controllo sul
+ * documento condiviso si leggono in cima: se una di queste letture fallisce si
+ * risponde `ok: false` senza aver tolto nessun file — una rimozione a metà su
+ * una scheda che poi resta in piedi è il peggiore dei due mondi.
+ *
  * Dal blog pubblico contano `fileNonRimossi` e non `fileTrattenuti`, come
  * nell'oblio (`anonimizzaAlunno`): un file «trattenuto» resta perché un ALTRO
  * articolo, che questo bambino non lo dichiara, lo nomina ancora — nessun nuovo
- * tentativo lo toglierebbe, e `obliaFotoNewsAlunno` lo logga già a livello `error`.
+ * tentativo lo toglierebbe, e `obliaFotoNewsAlunno` lo logga già a livello
+ * `error`. Si restituisce in `news_trattenuti`, perché la route possa dirlo.
  */
 export async function rimuoviFileAlunno(
   supabase: SupabaseClient,
   alunno: { id: string; documento_path?: string | null },
   op: string,
 ): Promise<EsitoFileAlunno> {
+  // ── LE LETTURE ──
+  const { data: thread, error: threadErr } = await supabase
+    .from('chat_threads')
+    .select('id')
+    .eq('student_id', alunno.id)
+  if (threadErr) {
+    logErrore({ operazione: op, evento: 'elimina_thread_chat' }, threadErr)
+    return { ok: false, numeri: { ...NUMERI_ZERO } }
+  }
+  const threadIds = ((thread ?? []) as { id: string }[]).map((t) => t.id)
+
+  const percorsoDocumento = (alunno.documento_path ?? '').trim()
+  let condiviso = false
+  if (percorsoDocumento) {
+    const esito = await documentoCondiviso(supabase, alunno.id, percorsoDocumento, op)
+    if (esito === null) return { ok: false, numeri: { ...NUMERI_ZERO } }
+    condiviso = esito
+    if (condiviso) {
+      logEvento('gdpr', 'warn', {
+        operazione: op,
+        esito: 'elimina-documento-condiviso',
+        entita_tipo: 'alunni',
+        entita_id: alunno.id,
+        msg: `${op}: il documento d'identità è nominato anche da un'altra scheda, quindi resta nell'archivio`,
+      })
+    }
+  }
+
+  // ── I GESTI ──
   const foto = await obliaFotoAlunno(supabase, alunno.id, op)
   const news = await obliaFotoNewsAlunno(supabase, alunno.id, op)
   const video = await obliaIntentiVideoAlunno(supabase, alunno.id, op)
   const certificati = await obliaCertificatiMediciAlunno(supabase, alunno.id, op)
   const fascicolo = await obliaFascicoloAlunno(supabase, alunno.id, op)
+  const chat = await obliaAllegatiChat(supabase, threadIds, op)
 
-  const { data: thread, error: threadErr } = await supabase
-    .from('chat_threads')
-    .select('id')
-    .eq('student_id', alunno.id)
-  if (threadErr) logErrore({ operazione: op, evento: 'elimina_thread_chat' }, threadErr)
-  const chat = threadErr
-    ? { rimossi: 0, nonRimossi: 0, fermi: [], letto: false }
-    : await obliaAllegatiChat(supabase, ((thread ?? []) as { id: string }[]).map((t) => t.id), op)
-
-  const documento = await rimuoviEVerifica(supabase, BUCKET_ISCRIZIONI, [alunno.documento_path], op)
+  const documento = await rimuoviEVerifica(
+    supabase,
+    BUCKET_ISCRIZIONI,
+    percorsoDocumento && !condiviso ? [percorsoDocumento] : [],
+    op,
+  )
   const documentoRestanti = bloccanti(documento).length + (documento.erroreRimozione ? 1 : 0)
 
   const restanti =
@@ -267,10 +392,12 @@ export async function rimuoviFileAlunno(
       foto_rimosse: foto.fotoRimosse,
       foto_sganciate: foto.fotoSganciate,
       news_ritirate: news.ritirati,
+      news_trattenuti: news.fileTrattenuti,
       certificati: certificati.rimossi,
       fascicolo: fascicolo.rimossi,
       allegati_chat: chat.rimossi,
       documento: documento.rimossi.length,
+      documento_condiviso: condiviso ? 1 : 0,
       restanti,
     },
   }

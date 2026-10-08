@@ -106,6 +106,35 @@ describe('registro della primaria', () => {
     expect(esito.ok).toBe(false)
   })
 
+  it('le sei letture di un alunno partono INSIEME, non una dopo l’altra', async () => {
+    // Su un elenco di candidati sono sei andate e ritorno per bambino: in fila,
+    // il tempo dell'elenco è la SOMMA delle sei; in parallelo è la più lenta.
+    const partite: string[] = []
+    const sblocca: (() => void)[] = []
+    const supabase = {
+      from: (t: string) => ({
+        select: () => ({
+          eq: () => ({
+            limit: () => {
+              partite.push(t)
+              return new Promise((ok) => sblocca.push(() => ok({ data: [], error: null })))
+            },
+          }),
+        }),
+      }),
+    }
+    const esito = leggiRegistroPrimaria(supabase as never, PULITO)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(partite.sort()).toEqual([...TABELLE_REGISTRO_PRIMARIA].sort())
+    for (const s of sblocca) s()
+    expect(await esito).toEqual({ ok: true, presente: false })
+  })
+
+  it('in parallelo resta la regola: una riga in una tabella qualsiasi basta, anche se è l’ultima', async () => {
+    const supabase = creaFintoSupabase({ ...db(), certificati_competenze: [{ id: 'c-1', alunno_id: PULITO }] })
+    expect(await leggiRegistroPrimaria(supabase as never, PULITO)).toEqual({ ok: true, presente: true })
+  })
+
   it('in blocco con lista vuota non legge niente e risponde vuoto', async () => {
     const lette: string[] = []
     const esito = await alunniConRegistroPrimaria(creaFintoSupabase({}, lette) as never, [])

@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
   registro: {} as Record<string, { alunno_id: string }[]>,
   // Errore PostgREST iniettato su una tabella del registro.
   erroreRegistro: {} as Record<string, { code: string; message: string }>,
+  // Errore PostgREST sulla lettura dell'elenco stesso.
+  erroreAlunni: null as { code: string; message: string } | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -47,6 +49,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.order = () => b
       b.limit = () => b
       b.then = (res: (v: unknown) => unknown) => {
+        if (table === 'alunni' && h.erroreAlunni) return Promise.resolve({ data: null, error: h.erroreAlunni }).then(res)
         if (h.erroreRegistro[table]) return Promise.resolve({ data: null, error: h.erroreRegistro[table] }).then(res)
         if (table in h.registro) {
           const righe = h.registro[table].filter((r) => r.alunno_id === filtri.alunnoId)
@@ -84,6 +87,7 @@ beforeEach(() => {
   h.contaTotale = null
   h.registro = {}
   h.erroreRegistro = {}
+  h.erroreAlunni = null
 })
 
 describe('GET /api/admin/gdpr/candidates', () => {
@@ -254,5 +258,16 @@ describe('GET /api/admin/gdpr/candidates — il registro della primaria', () => 
     const res = await GET(get())
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('GDPR_CANDIDATI_NON_LETTI')
+  })
+})
+
+describe('GET /api/admin/gdpr/candidates — l’elenco che non si legge', () => {
+  it('lettura dell’elenco fallita → 500 con il codice, mai il messaggio grezzo del database', async () => {
+    h.erroreAlunni = { code: '42501', message: 'permission denied for table alunni' }
+    const res = await GET(get())
+    expect(res.status).toBe(500)
+    const corpo = await res.json()
+    expect(corpo.codice).toBe('GDPR_CANDIDATI_NON_LETTI')
+    expect(JSON.stringify(corpo)).not.toContain('permission denied')
   })
 })

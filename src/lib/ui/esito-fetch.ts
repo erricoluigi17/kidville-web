@@ -573,9 +573,10 @@ export const CODICI_ERRORE = {
      */
     GDPR_ERASE_NON_RIUSCITO: 'erroreGdprEraseNonRiuscito',
     /**
-     * 500 — l'elenco dei candidati all'oblio non si è potuto comporre: la
-     * lettura del registro della primaria non è riuscita
-     * (`GET /api/admin/gdpr/candidates`, 2026-10-09).
+     * 500 — l'elenco dei candidati all'oblio non si è potuto comporre: non è
+     * riuscita la lettura degli alunni o quella del registro della primaria
+     * (`GET /api/admin/gdpr/candidates`, 2026-10-09). `OblioPanel` usa la
+     * stessa frase anche per la rete caduta e per un 200 senza elenco.
      *
      * Non è «nessun candidato»: un elenco mostrato senza aver guardato il
      * registro accenderebbe il comando d'oblio su un bambino il cui registro va

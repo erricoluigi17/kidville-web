@@ -7,9 +7,13 @@ import { logEvento } from '@/lib/logging/logger'
 // Decisione del titolare (2026-10-08): voti, pagelle, scrutini, note
 // disciplinari e certificati delle competenze sono il registro ufficiale della
 // scuola, che la legge obbliga a conservare — ed è la stessa eccezione che il
-// GDPR scrive per l'oblio (art. 17 §3 lett. b). Vale per TRE porte:
+// GDPR scrive per l'oblio (art. 17 §3 lett. b). Vale per QUATTRO porte:
 // l'eliminazione definitiva (`admin/students/elimina`), l'oblio
-// (`admin/gdpr/erase`) e l'elenco dei suoi candidati (`admin/gdpr/candidates`).
+// (`admin/gdpr/erase`), l'elenco dei suoi candidati (`admin/gdpr/candidates`) e
+// l'evasione delle richieste di cancellazione delle famiglie
+// (`admin/gdpr/richieste`, che salta i figli col registro e lo scrive nell'esito).
+// Il lock `__tests__/architecture/anonimizza-alunno-controlla-registro.test.ts`
+// pretende che ogni gestore che chiama `anonimizzaAlunno` passi prima di qui.
 //
 // L'elenco vive QUI e in nessun altro file TypeScript. La funzione SQL
 // `elimina_alunno_definitivo` lo ripete (in SQL non si importa), e il test
@@ -59,12 +63,21 @@ export async function leggiRegistroPrimaria(
   supabase: SupabaseClient,
   alunnoId: string,
 ): Promise<EsitoRegistroPrimaria> {
-  for (const tabella of TABELLE_REGISTRO_PRIMARIA) {
-    const { data, error } = await supabase
-      .from(tabella)
-      .select('alunno_id')
-      .eq('alunno_id', alunnoId)
-      .limit(1)
+  // Le sei letture partono INSIEME: in fila il tempo era la somma delle sei, e
+  // sull'elenco dei candidati all'oblio si paga per ogni bambino. Le risposte si
+  // leggono però NELL'ORDINE dell'elenco, come prima: lo stesso insieme di
+  // risposte dà lo stesso esito di quando si leggevano una alla volta.
+  const risposte = await Promise.all(
+    TABELLE_REGISTRO_PRIMARIA.map(async (tabella) => {
+      const { data, error } = await supabase
+        .from(tabella)
+        .select('alunno_id')
+        .eq('alunno_id', alunnoId)
+        .limit(1)
+      return { tabella, data, error }
+    }),
+  )
+  for (const { tabella, data, error } of risposte) {
     if (error) {
       const code = (error as { code?: string }).code
       if (code && TABELLA_ASSENTE.has(code)) {

@@ -51,19 +51,25 @@ vi.mock('@/lib/gdpr/esegui', async (originale) => {
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
+      // `eq('alunno_id', …)` si APPLICA: la riga del registro di un altro bambino
+      // non deve bastare a rifiutare questo (caso «un altro bambino»).
+      let alunnoDelFiltro: string | null = null
+      const righe = () =>
+        (h.db[table] ?? []).filter((r) => alunnoDelFiltro === null || !('alunno_id' in r) || r.alunno_id === alunnoDelFiltro)
       const b: Record<string, unknown> = {}
-      for (const m of ['select', 'eq', 'is', 'neq', 'in', 'or', 'like', 'order', 'range', 'ilike', 'contains', 'not', 'limit']) {
+      for (const m of ['select', 'is', 'neq', 'in', 'or', 'like', 'order', 'range', 'ilike', 'contains', 'not', 'limit']) {
         b[m] = () => b
       }
+      b.eq = (col: string, val: unknown) => { if (col === 'alunno_id') alunnoDelFiltro = String(val); return b }
       b.delete = () => { h.scritture.push({ tipo: 'delete', tabella: table }); return b }
       b.update = () => { h.scritture.push({ tipo: 'update', tabella: table }); return b }
       b.maybeSingle = async () => ({
-        data: table === 'alunni' ? h.alunno : (h.db[table]?.[0] ?? null),
+        data: table === 'alunni' ? h.alunno : (righe()[0] ?? null),
         error: null,
       })
       b.then = (res: (v: unknown) => unknown) => {
         if (h.errori[table]) return Promise.resolve({ data: null, error: h.errori[table] }).then(res)
-        return Promise.resolve({ data: h.db[table] ?? [], error: null }).then(res)
+        return Promise.resolve({ data: righe(), error: null }).then(res)
       }
       return b
     },
@@ -159,6 +165,12 @@ describe('oblio GDPR — il registro della primaria si conserva', () => {
   // ── Il controllo: senza registro l'oblio procede come sempre ──────────────
   // Senza questi due casi i rifiuti qui sopra potrebbero essere verdi per un
   // finto che rifiuta tutto.
+  it('il registro di un ALTRO bambino non ferma questo', async () => {
+    h.db.valutazioni = [{ id: 'v-9', alunno_id: 'a1b2c3d4-0000-4000-8000-00000000a999' }]
+    const res = await POST(req({ alunno_id: AL, mode: 'dryrun' }))
+    expect(res.status).toBe(200)
+  })
+
   it('senza registro il dryrun resta 200', async () => {
     const res = await POST(req({ alunno_id: AL, mode: 'dryrun' }))
     expect(res.status).toBe(200)

@@ -7,6 +7,7 @@ import { SedeIcon } from '@/components/ui/SedeIcon';
 import { cx } from '@/lib/ui/cx';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { AvvisoOblio, type ContiOblio, type StatoMisuraOblio } from './AvvisoOblio';
 
 interface Candidato {
@@ -23,6 +24,44 @@ interface Candidato {
   // (da `gdpr/candidates`, 2026-10-08): il registro va conservato per legge e
   // la scheda NON si anonimizza. Resta in elenco col motivo, a comando spento.
   registro_primaria?: boolean;
+}
+
+/** L'elenco dei candidati, o il CORPO dell'errore da mostrare (la frase si compone al render). */
+type EsitoCandidati = { ok: true; elenco: Candidato[] } | { ok: false; corpo: unknown };
+
+/**
+ * Legge l'elenco dei candidati all'oblio. Non lancia e non tocca lo stato: è una
+ * funzione di modulo apposta (vedi l'effetto in `OblioPanel`).
+ *
+ * Fino al 2026-10-09 un 500, una rete caduta o un 200 senza elenco lasciavano la
+ * lista vuota, e la schermata diceva «Nessun alunno non iscritto da
+ * anonimizzare»: un guasto travestito da risposta. Ora ognuno dei tre torna
+ * `ok: false`, e il pannello mostra il riquadro d'errore.
+ */
+async function leggiCandidati(userId: string): Promise<EsitoCandidati> {
+  const nonLetti = { codice: 'GDPR_CANDIDATI_NON_LETTI' };
+  try {
+    const res = await fetch('/api/admin/gdpr/candidates', { headers: { 'x-user-id': userId } });
+    const j: unknown = await res.json().catch((e: unknown) => {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `gdpr/candidates: corpo non leggibile — errore=${nomeErrore(e)}` });
+      return null;
+    });
+    // Il patch di `fetch` (`installaLoggerClient`) ha già loggato il `!res.ok`:
+    // qui si fa la sola cosa che il log non sa fare, cioè DIRLO a schermo.
+    if (!res.ok) return { ok: false, corpo: j ?? nonLetti };
+    // Un 200 che non porta un elenco non è «nessun candidato»: il patch di
+    // `fetch` non lo vede (la risposta è `ok`), quindi la riga la scrive qui.
+    if (!Array.isArray(j)) {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: 'gdpr/candidates: risposta 200 senza elenco' });
+      return { ok: false, corpo: nonLetti };
+    }
+    return { ok: true, elenco: j as Candidato[] };
+  } catch (e) {
+    // Rete caduta: stessa conseguenza di un 500 — il riquadro d'errore, mai
+    // «Nessun alunno non iscritto da anonimizzare».
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: `gdpr/candidates non raggiunto — errore=${nomeErrore(e)}` });
+    return { ok: false, corpo: nonLetti };
+  }
 }
 
 interface DryRun extends ContiOblio {
@@ -61,28 +100,31 @@ export function OblioPanel({ userId }: { userId: string }) {
   // non iscritto da anonimizzare»: un guasto travestito da risposta. Dal
   // 2026-10-09 succede anche quando non si è potuto leggere il registro della
   // primaria (`GDPR_CANDIDATI_NON_LETTI`). Si tiene il CORPO, non la frase: la
-  // frase si compone al render, così `t` non entra nelle dipendenze di `load`.
+  // frase si compone al render, così `t` non entra nelle dipendenze dell'effetto.
   const [erroreElenco, setErroreElenco] = useState<unknown>(null);
 
   const hdr = { 'Content-Type': 'application/json', 'x-user-id': userId };
 
-  const load = useCallback(async () => {
-    // niente setLoading(true) sincrono: loading parte true da useState(true)
-    // (react-hooks set-state-in-effect); refetch senza spinner, accettato.
-    try {
-      const res = await fetch('/api/admin/gdpr/candidates', { headers: { 'x-user-id': userId } });
-      const j = await res.json().catch(() => null);
-      // Il patch di `fetch` (`installaLoggerClient`) ha già loggato il `!res.ok`:
-      // qui si fa la sola cosa che il log non sa fare, cioè DIRLO a schermo.
-      if (!res.ok) { setErroreElenco(j ?? {}); return; }
-      setErroreElenco(null);
-      if (Array.isArray(j)) setList(j);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
+  // Ogni volta che sale, l'elenco si rilegge (dopo un'anonimizzazione).
+  const [tentativo, setTentativo] = useState(0);
 
-  useEffect(() => { load(); }, [load]);
+  // La forma che soddisfa `react-hooks/set-state-in-effect` invece di spegnerla:
+  // la lettura è una funzione di MODULO che non tocca lo stato, e i `setState`
+  // stanno nel `.then`. Il flag `vivo` scarta la risposta di un giro superato.
+  useEffect(() => {
+    let vivo = true;
+    void leggiCandidati(userId).then((esito) => {
+      if (!vivo) return;
+      if (esito.ok) {
+        setErroreElenco(null);
+        setList(esito.elenco);
+      } else {
+        setErroreElenco(esito.corpo);
+      }
+      setLoading(false);
+    });
+    return () => { vivo = false; };
+  }, [userId, tentativo]);
 
   // LA MISURA CHE FALLISCE NON PUÒ ESSERE MUTA.
   //
@@ -112,6 +154,17 @@ export function OblioPanel({ userId }: { userId: string }) {
     try {
       const res = await fetch('/api/admin/gdpr/erase', { method: 'POST', headers: hdr, body: JSON.stringify({ alunno_id: c.id, mode: 'dryrun' }) });
       const j = await res.json().catch(() => null);
+      // L'elenco era vecchio: il bambino ha ricevuto il suo primo voto (o pagella,
+      // scrutinio, nota, certificato) DOPO che la lista è stata caricata, e la
+      // route lo rifiuta. Non è una misura fallita: è il motivo del registro, e
+      // la riga dell'elenco prende il suo badge.
+      if (res.status === 409 && (j as { codice?: unknown } | null)?.codice === 'REGISTRO_PRIMARIA_DA_CONSERVARE') {
+        const conRegistro = { ...c, registro_primaria: true };
+        setTarget(conRegistro);
+        setList((l) => l.map((x) => (x.id === c.id ? conRegistro : x)));
+        setMisura('assente');
+        return;
+      }
       if (!res.ok || !j || typeof j !== 'object') { setMisura('fallita'); return; }
       setDry(j);
       setMisura('ok');
@@ -153,7 +206,7 @@ export function OblioPanel({ userId }: { userId: string }) {
       if (!res.ok) { alert(messaggioDaCorpo(j, t('errore'))); return; }
       setTarget(null);
       setMisura('assente');
-      await load();
+      setTentativo((n) => n + 1);
     } finally {
       setBusy(false);
     }
@@ -249,7 +302,8 @@ export function OblioPanel({ userId }: { userId: string }) {
                   <>
                     <p className="mt-2 mb-4 font-maven text-sm text-kidville-ink/80">{t('oblioRegistroPrimariaTesto')}</p>
                     <div className="flex justify-end">
-                      <button onClick={() => { setTarget(null); setMisura('assente'); }} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-muted hover:bg-kidville-cream">{t('annulla')}</button>
+                      {/* `text-kidville-sub`, non `muted`: il grigio chiaro non passa il contrasto (lock a11y). */}
+                      <button onClick={() => { setTarget(null); setMisura('assente'); }} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-sub hover:bg-kidville-cream">{t('annulla')}</button>
                     </div>
                   </>
                 ) : (

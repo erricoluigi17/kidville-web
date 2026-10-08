@@ -256,7 +256,7 @@
   "erroreAlunnoEliminazionePagamentiBloccati": "Uno o più pagamenti hanno una ricevuta, una fattura, un bonifico abbinato o un incasso registrato: non si possono cancellare. Puoi anonimizzare la scheda.",
   "erroreAlunnoEliminazioneSceltaMancante": "Scegli che cosa fare prima di confermare.",
   "erroreAlunnoEliminazioneSceltaNonDisponibile": "Questa scelta non è disponibile per questo bambino: riapri la finestra.",
-  "erroreRegistroPrimariaDaConservare": "Il registro della primaria (voti, pagelle, scrutini, note) va conservato per legge: questa scheda non si elimina e non si anonimizza.",
+  "erroreRegistroPrimariaDaConservare": "Il registro della primaria (voti, pagelle, scrutini, note, certificati delle competenze) va conservato per legge: questa scheda non si elimina e non si anonimizza.",
   "erroreArchiviazioneNonRiuscita": "L’archiviazione non è stata registrata: la scheda è rimasta com’era. Riprova fra qualche minuto.",
   "erroreRiattivazioneNonRiuscita": "Il bambino non è stato riportato fra gli iscritti: la scheda è rimasta com’era. Riprova fra qualche minuto.",
   "erroreRubricaNonDisponibile": "La rubrica non si è potuta caricare: l’elenco che vedi non è vuoto, è mancante. Riprova fra qualche minuto.",

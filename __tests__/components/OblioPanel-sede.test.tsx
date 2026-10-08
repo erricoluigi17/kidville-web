@@ -23,6 +23,14 @@ expect.extend(toHaveNoViolations)
  * e nel riquadro di conferma, quello con la casella da digitare.
  */
 
+// `logClient` spiato: un `catch` che non logga è un bug (AGENTS.md, regola 6), e
+// senza spia «loggato» non si distingue da «inghiottito».
+const spiaLog = vi.hoisted(() => ({ logClient: vi.fn() }))
+vi.mock('@/lib/logging/client', async (originale) => {
+  const vero = await originale<typeof import('@/lib/logging/client')>()
+  return { ...vero, logClient: spiaLog.logClient }
+})
+
 vi.mock('@/lib/context/sede-context', () => ({
   useSediAttive: () => h.sedi(),
 }))
@@ -553,5 +561,57 @@ describe('OblioPanel — elenco non caricato', () => {
     render(<OblioPanel userId="dir-1" />)
     await waitFor(() => expect(screen.getByText(itAdminAltro.oblioVuoto)).toBeInTheDocument())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+describe('OblioPanel — elenco non caricato: rete giù e risposta senza elenco', () => {
+  it('rete giù: il riquadro d’errore, non «nessun alunno», e il catch LOGGA', async () => {
+    fetchMock.mockImplementation(() => Promise.reject(new TypeError('Failed to fetch')))
+    render(<OblioPanel userId="dir-1" />)
+    const avviso = await waitFor(() => screen.getByRole('alert'))
+    expect(avviso.textContent).toBe(itShared.erroreGdprCandidatiNonLetti)
+    expect(screen.queryByText(itAdminAltro.oblioVuoto)).not.toBeInTheDocument()
+    expect(spiaLog.logClient).toHaveBeenCalledWith(expect.objectContaining({ evento: 'fetch' }))
+  })
+
+  it('200 con un corpo che non è un elenco: il riquadro d’errore, non «nessun alunno»', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve({ ok: true, json: async () => ({ inatteso: true }) }))
+    render(<OblioPanel userId="dir-1" />)
+    const avviso = await waitFor(() => screen.getByRole('alert'))
+    expect(avviso.textContent).toBe(itShared.erroreGdprCandidatiNonLetti)
+    expect(screen.queryByText(itAdminAltro.oblioVuoto)).not.toBeInTheDocument()
+  })
+})
+
+describe('OblioPanel — il dry-run risponde «registro da conservare» (elenco vecchio)', () => {
+  it('409 REGISTRO_PRIMARIA_DA_CONSERVARE: il motivo del registro, non «misura fallita», e il badge sulla riga', async () => {
+    // L'elenco è stato caricato PRIMA che il bambino avesse il suo primo voto:
+    // `registro_primaria` è falso, il pannello misura, la route risponde 409.
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('/api/admin/gdpr/erase')) {
+        return Promise.resolve({
+          ok: false, status: 409,
+          json: async () => ({ error: 'Il registro della primaria va conservato', codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => CANDIDATI })
+    })
+    const { container } = render(<OblioPanel userId="dir-1" />)
+    await waitFor(() => expect(screen.getByText(/Rossi Beta/)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(/Rossi Beta/))
+    await waitFor(() => expect(screen.getByText(itAdminAltro.oblioRegistroPrimariaTesto)).toBeInTheDocument())
+    expect(screen.queryByText(itAdminAltro.oblioMisuraFallita)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: itAdminAltro.oblioBtnAnonimizza })).not.toBeInTheDocument()
+    const riga = Array.from(container.querySelectorAll('aside button')).find((b) => /Rossi Beta/.test(b.textContent ?? '')) as HTMLElement
+    expect(within(riga).getByText(itAdminAltro.oblioRegistroPrimariaBadge)).toBeInTheDocument()
+  })
+
+  it('controllo: un 500 del dry-run resta «misura fallita»', async () => {
+    conDryRunRotto()
+    render(<OblioPanel userId="dir-1" />)
+    await waitFor(() => expect(screen.getByText(/Rossi Beta/)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(/Rossi Beta/))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain(itAdminAltro.oblioMisuraFallita))
+    expect(screen.queryByText(itAdminAltro.oblioRegistroPrimariaTesto)).not.toBeInTheDocument()
   })
 })

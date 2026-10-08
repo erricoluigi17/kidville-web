@@ -99,11 +99,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
       })
       b.then = (res: (v: unknown) => unknown) => {
         // Il controllo del registro della primaria (2026-10-08) legge le sue
-        // tabelle con `.limit(1)`: qui quel registro è VUOTO. `h.pagelle` sono i
-        // FILE da togliere dal bucket, che è ciò che questo file misura; il
-        // rifiuto di chi ha il registro sta in `gdpr-erase-registro-primaria.test.ts`.
+        // tabelle con `.limit(1)` e vede le STESSE righe: con `h.pagelle` piene il
+        // bambino ha il registro e l'oblio si rifiuta (caso in fondo al primo
+        // blocco). Gli errori iniettati in `h.err` non toccano quella lettura, ma
+        // solo sulle tabelle del registro.
         if (st.limit && (TABELLE_REGISTRO_PRIMARIA as readonly string[]).includes(table)) {
-          return Promise.resolve({ data: [], error: null }).then(res)
+          return Promise.resolve({ data: table === 'pagelle' ? h.pagelle : [], error: null }).then(res)
         }
         const error = h.err[table] ?? null
         if (error) return Promise.resolve({ data: null, error }).then(res)
@@ -161,7 +162,9 @@ beforeEach(() => {
     documento_path: null, codice_fiscale: null, fiscal_code: null, scuola_id: 'sc-1', section_id: null,
   }
   h.parents = [{ id: 'p-1', auth_user_id: 'auth-1', fiscal_code: null, documento_path: null }]
-  h.pagelle = [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf' }]
+  // Niente pagelle di default: un bambino con le pagelle ha il registro della
+  // primaria e non si anonimizza più (2026-10-08). Il caso sta qui sotto.
+  h.pagelle = []
   h.certificati = [{ id: 'cm-1', file_path: 'al-1/cert.pdf' }]
   h.media = []
   h.threadAlunno = [{ id: 'th-1' }]
@@ -174,7 +177,6 @@ beforeEach(() => {
   h.rimuoveDavvero = true
   h.err = {}
   h.archivio = new Map<string, Set<string>>([
-    ['pagelle', new Set(['scr-1/al-1.pdf'])],
     ['certificati-medici', new Set(['al-1/cert.pdf'])],
     ['chat-allegati', new Set(['auth-9/uuid-referto.pdf'])],
     ['credenziali', new Set(['p-1-1700000000000.pdf'])],
@@ -185,10 +187,14 @@ const bucketSvuotati = () =>
   [...new Set(h.removed.filter((r) => r.paths.length > 0).map((r) => r.bucket))].sort()
 
 describe('POST /api/admin/gdpr/erase — un canale solo, le stesse funzioni', () => {
-  it('svuota i magazzini che la copia locale non conosceva (pagelle, certificati, chat, credenziali)', async () => {
+  // ⚠️ Fino al 2026-10-09 l'elenco comprendeva il bucket `pagelle`, e descriveva un
+  // mondo che non esiste più: un bambino con le pagelle ha il registro della
+  // primaria e l'oblio si RIFIUTA (caso qui sotto). Restano gli altri tre magazzini
+  // che la copia locale non conosceva — e la prova che le pagelle NON si toccano.
+  it('svuota i magazzini che la copia locale non conosceva (certificati, chat, credenziali)', async () => {
     const res = await esegui()
     expect(res.status).toBe(200)
-    for (const bucket of ['pagelle', 'certificati-medici', 'chat-allegati', 'credenziali']) {
+    for (const bucket of ['certificati-medici', 'chat-allegati', 'credenziali']) {
       expect(
         bucketSvuotati(),
         `il canale della Direzione non manda nessuna \`remove()\` su \`${bucket}\`: ` +
@@ -196,9 +202,20 @@ describe('POST /api/admin/gdpr/erase — un canale solo, le stesse funzioni', ()
       ).toContain(bucket)
     }
     // Non basta chiamare: l'archivio deve risultare VUOTO alla fine.
-    for (const bucket of ['pagelle', 'certificati-medici', 'chat-allegati', 'credenziali']) {
+    for (const bucket of ['certificati-medici', 'chat-allegati', 'credenziali']) {
       expect(h.archivio.get(bucket)?.size ?? 0, `\`${bucket}\` è ancora pieno`).toBe(0)
     }
+  })
+
+  it('pagelle presenti → registro della primaria: 409, e NESSUN magazzino si tocca (pagelle comprese)', async () => {
+    h.pagelle = [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf' }]
+    h.archivio.set('pagelle', new Set(['scr-1/al-1.pdf']))
+    const res = await esegui()
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('REGISTRO_PRIMARIA_DA_CONSERVARE')
+    expect(h.removed).toEqual([])
+    expect(h.updates).toEqual([])
+    expect(h.archivio.get('pagelle')?.size).toBe(1)
   })
 
   it('bonifica il registro delle scritture DEL BAMBINO, non solo quello dei genitori', async () => {

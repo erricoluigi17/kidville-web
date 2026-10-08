@@ -256,7 +256,7 @@
   "erroreAlunnoEliminazionePagamentiBloccati": "One or more payments have a receipt, an invoice, a matched bank transfer or a recorded collection: they cannot be deleted. You can anonymise the record.",
   "erroreAlunnoEliminazioneSceltaMancante": "Choose what to do before confirming.",
   "erroreAlunnoEliminazioneSceltaNonDisponibile": "This option is not available for this child: reopen the window.",
-  "erroreRegistroPrimariaDaConservare": "The primary school register (marks, report cards, assessments, notes) must be kept by law: this record cannot be deleted or anonymised.",
+  "erroreRegistroPrimariaDaConservare": "The primary school register (marks, report cards, assessments, notes, competence certificates) must be kept by law: this record cannot be deleted or anonymised.",
   "erroreArchiviazioneNonRiuscita": "Archiving was not recorded: the record was left unchanged. Please try again in a few minutes.",
   "erroreRiattivazioneNonRiuscita": "The child was not moved back to the enrolled list: the record was left unchanged. Please try again in a few minutes.",
   "erroreRubricaNonDisponibile": "The contact list could not be loaded: what you see is not an empty list, it is a missing one. Please try again in a few minutes.",

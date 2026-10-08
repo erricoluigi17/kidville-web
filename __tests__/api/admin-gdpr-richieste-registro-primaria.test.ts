@@ -29,6 +29,7 @@ const AL_LIBERO = 'a1b2c3d4-0000-4000-8000-00000000a001'
 const AL_REGISTRO = 'a1b2c3d4-0000-4000-8000-00000000a002'
 const AL_ISCRITTO = 'a1b2c3d4-0000-4000-8000-00000000a003'
 const OP = 'admin/gdpr/richieste:POST'
+const AUTH_GENITORE = 'cccccccc-cccc-4ccc-8ccc-account00001'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
@@ -102,7 +103,7 @@ beforeEach(() => {
     richieste_cancellazione: [
       { id: 'req-1', parent_id: PARENT_ID, stato: 'pending', scuola_id: SEDE_A, creata_il: '2026-10-01T08:00:00Z' },
     ],
-    parents: [{ id: PARENT_ID, first_name: 'Genitore', last_name: 'DiProva', documento_path: null }],
+    parents: [{ id: PARENT_ID, first_name: 'Genitore', last_name: 'DiProva', documento_path: null, auth_user_id: AUTH_GENITORE }],
     student_parents: [
       { parent_id: PARENT_ID, student_id: AL_LIBERO },
       { parent_id: PARENT_ID, student_id: AL_REGISTRO },
@@ -122,7 +123,11 @@ beforeEach(() => {
   }
   h.errori = {}
   h.updates = []
-  h.anonimizzaParent.mockResolvedValue({ newsVisualizzazioniRimosse: 0, segnalazioniBonificate: 0, sospensioniBonificate: 0 })
+  // Con un figlio che resta (registro, o ancora iscritto) l'account del genitore non
+  // si libera: è ciò che `anonimizzaParent` risponde davvero in quel caso.
+  h.anonimizzaParent.mockResolvedValue({
+    newsVisualizzazioniRimosse: 0, segnalazioniBonificate: 0, sospensioniBonificate: 0, account: 'non-toccato-figli-vivi',
+  })
   h.anonimizzaAlunno.mockResolvedValue({
     riconciliazione: 0, incassi: 0, cassa: 0, file: 0, segnalazioniBonificate: 0, sospensioniBonificate: 0,
   })
@@ -254,5 +259,82 @@ describe('GET /api/admin/gdpr/richieste — lo stesso conteggio dell’elenco', 
     expect(h.logEvento).toHaveBeenCalledWith(
       'gdpr', 'warn', expect.objectContaining({ esito: 'registro-primaria-non-letto', richiesta: 'req-1' }), expect.anything(),
     )
+  })
+})
+
+// =============================================================================
+// L'ACCOUNT DEL GENITORE RESTA, E VA DETTO (revisione del 2026-10-09).
+//
+// Con un figlio che non si anonimizza — registro da conservare, o ancora
+// iscritto — `anonimizzaParent` anonimizza la SCHEDA del genitore ma lascia il suo
+// account di accesso (email e nome) con l'esito `non-toccato-figli-vivi`. Il
+// dry-run diceva «il genitore si anonimizza lo stesso», e basta. Quando
+// l'account si cancella è una decisione del titolare e NON cambia qui: qui si
+// rende VISIBILE, con `account_mantenuti` (0/1 per richiesta) nel dry-run, nella
+// risposta, nell'esito salvato e nell'audit.
+// =============================================================================
+describe('POST /api/admin/gdpr/richieste — l’account del genitore che resta', () => {
+  /** Toglie il figlio ancora iscritto (il finto non applica `.in`, quindi da entrambe le tabelle). */
+  const senzaIscritto = () => {
+    h.db.student_parents = h.db.student_parents.filter((l) => l.student_id !== AL_ISCRITTO)
+    h.db.alunni = h.db.alunni.filter((a) => a.id !== AL_ISCRITTO)
+  }
+
+  it('dryrun: un figlio col registro tiene in vita l’account → account_mantenuti 1', async () => {
+    senzaIscritto()
+    const j = await (await dryrun()).json()
+    expect(j).toMatchObject({ alunni_registro_primaria: 1, alunni_iscritti_mantenuti: 0, account_mantenuti: 1 })
+  })
+
+  it('dryrun: anche un figlio ancora ISCRITTO tiene in vita l’account', async () => {
+    h.db.valutazioni = []
+    const j = await (await dryrun()).json()
+    expect(j).toMatchObject({ alunni_registro_primaria: 0, alunni_iscritti_mantenuti: 1, account_mantenuti: 1 })
+  })
+
+  it('dryrun: tutti i figli anonimizzati → account_mantenuti 0', async () => {
+    h.db.valutazioni = []
+    senzaIscritto()
+    expect((await (await dryrun()).json()).account_mantenuti).toBe(0)
+  })
+
+  it('dryrun: un genitore SENZA account non ha un account che resta', async () => {
+    h.db.parents = [{ ...h.db.parents[0], auth_user_id: null }]
+    expect((await (await dryrun()).json()).account_mantenuti).toBe(0)
+  })
+
+  it('dryrun: scheda del genitore non letta → account_mantenuti «non misurato» (null), non 0', async () => {
+    h.errori = { parents: { code: '42501', message: 'permission denied' } }
+    expect((await (await dryrun()).json()).account_mantenuti).toBeNull()
+  })
+
+  it('execute: account_mantenuti nella risposta, nell’esito SALVATO e nell’audit', async () => {
+    const j = await (await esegui()).json()
+    expect(j.account_mantenuti).toBe(1)
+    const salvato = h.updates.find((u) => u.table === 'richieste_cancellazione')!.patch.esito as Record<string, unknown>
+    expect(salvato.account_mantenuti).toBe(1)
+    const audit = (h.logScrittura.mock.calls[0][1] as { valoreDopo: Record<string, unknown> }).valoreDopo
+    expect(audit.account_mantenuti).toBe(1)
+  })
+
+  it('execute: account liberato davvero → account_mantenuti 0', async () => {
+    h.anonimizzaParent.mockResolvedValue({
+      newsVisualizzazioniRimosse: 0, segnalazioniBonificate: 0, sospensioniBonificate: 0, account: 'rimosso',
+    })
+    expect((await (await esegui()).json()).account_mantenuti).toBe(0)
+  })
+})
+
+describe('GET /api/admin/gdpr/richieste — il registro non letto è «non misurato», mai zero', () => {
+  it('legami non letti → alunni_registro_primaria null', async () => {
+    h.errori = { student_parents: { code: '42501', message: 'permission denied' } }
+    const elenco = (await (await get()).json()) as Record<string, unknown>[]
+    expect(elenco[0].alunni_registro_primaria).toBeNull()
+  })
+
+  it('figli non letti → alunni_registro_primaria null', async () => {
+    h.errori = { alunni: { code: '42501', message: 'permission denied' } }
+    const elenco = (await (await get()).json()) as Record<string, unknown>[]
+    expect(elenco[0].alunni_registro_primaria).toBeNull()
   })
 })

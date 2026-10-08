@@ -51,6 +51,18 @@ interface DryRun extends ContiOblio {
   alunni_iscritti_mantenuti: number;
   alunni_fuori_scope?: number;
   alunni_registro_primaria?: number;
+  /**
+   * 1 = l'account di accesso del genitore RESTA (email e nome), perché un figlio
+   * non si anonimizza; 0 = no; `null` = non misurato. La scheda anagrafica si
+   * anonimizza in ogni caso.
+   */
+  account_mantenuti?: number | null;
+}
+
+/** Ciò che l'ultima evasione ha lasciato in piedi, da citare nella risposta alla famiglia. */
+interface EsitoEvasione {
+  registro: number;
+  account: boolean;
 }
 
 export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
@@ -64,11 +76,11 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
   const [misura, setMisura] = useState<StatoMisuraOblio>('assente');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
-  // Quanti figli l'ULTIMA evasione ha lasciato fuori per il registro della
-  // primaria. La richiesta sparisce dall'elenco appena evasa: senza questo
-  // riquadro il numero vivrebbe solo nell'esito salvato, e chi risponde alla
-  // famiglia non lo leggerebbe mai.
-  const [esclusiRegistro, setEsclusiRegistro] = useState<number | null>(null);
+  // Ciò che l'ULTIMA evasione ha lasciato in piedi: i figli col registro della
+  // primaria e l'account di accesso del genitore. La richiesta sparisce
+  // dall'elenco appena evasa: senza questo riquadro i due fatti vivrebbero solo
+  // nell'esito salvato, e chi risponde alla famiglia non li leggerebbe mai.
+  const [esitoEvasione, setEsitoEvasione] = useState<EsitoEvasione | null>(null);
 
   const hdr = { 'Content-Type': 'application/json', 'x-user-id': userId };
 
@@ -110,7 +122,7 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
   }, [userId]);
 
   const apri = async (r: Richiesta) => {
-    setEsclusiRegistro(null);
+    setEsitoEvasione(null);
     setTarget(r);
     setConfirm('');
     await misuraDi(r);
@@ -123,8 +135,9 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
       const res = await fetch('/api/admin/gdpr/richieste', { method: 'POST', headers: hdr, body: JSON.stringify({ id: target.id, mode: 'execute', confirm }) });
       const j = await res.json();
       if (!res.ok) { alert(messaggioDaCorpo(j, t('errore'))); return; }
-      const esclusi = Number(j?.alunni_registro_primaria ?? 0);
-      setEsclusiRegistro(esclusi > 0 ? esclusi : null);
+      const registro = Number(j?.alunni_registro_primaria ?? 0);
+      const account = Number(j?.account_mantenuti ?? 0) === 1;
+      setEsitoEvasione(registro > 0 || account ? { registro, account } : null);
       setTarget(null);
       setMisura('assente');
       await load();
@@ -162,9 +175,13 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
         onRiprova={target ? () => { void misuraDi(target); } : undefined}
       />
 
-      {esclusiRegistro !== null && (
+      {esitoEvasione !== null && (
         <div role="status" className="rounded-2xl border border-kidville-warn/30 bg-kidville-warn-soft p-4 font-maven text-[13px] leading-relaxed text-kidville-ink/80">
-          {t('richiesteEvasaRegistroPrimaria', { n: esclusiRegistro })}
+          <p className="font-semibold">{t('richiesteEvasaTitolo')}</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {esitoEvasione.registro > 0 && <li>{t('richiesteEvasaRegistroPrimaria', { n: esitoEvasione.registro })}</li>}
+            {esitoEvasione.account && <li>{t('richiesteEvasaAccountMantenuto')}</li>}
+          </ul>
         </div>
       )}
 
@@ -191,7 +208,7 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
                   {/* Prima di aprire la richiesta: chi ha il registro della
                       primaria resta, e l'elenco lo dice. `null` = non misurato. */}
                   {r.alunni_registro_primaria === null ? (
-                    <span className="font-maven text-[11.5px] text-kidville-muted">{t('richiesteFigliRegistroNonMisurato')}</span>
+                    <span className="font-maven text-[11.5px] text-kidville-sub">{t('richiesteFigliRegistroNonMisurato')}</span>
                   ) : (r.alunni_registro_primaria ?? 0) > 0 ? (
                     <span className="font-maven text-[11.5px] font-semibold text-kidville-warn-strong">{t('richiesteFigliRegistroElenco', { n: r.alunni_registro_primaria ?? 0 })}</span>
                   ) : null}
@@ -227,6 +244,15 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
                         quei figli restano, e perché. */}
                     {(dry.alunni_registro_primaria ?? 0) > 0 && (
                       <div className="text-kidville-warn-strong">{t('richiesteFigliRegistroPrimaria', { n: dry.alunni_registro_primaria ?? 0 })}</div>
+                    )}
+                    {/* L'account del genitore NON si libera finché un figlio resta
+                        (registro, iscritto, altro plesso): la scheda sì. Detto qui
+                        perché «genitore anonimizzato: 1» da solo lo nasconde. */}
+                    {dry.account_mantenuti === 1 && (
+                      <div className="text-kidville-warn-strong">{t('richiesteAccountMantenuto')}</div>
+                    )}
+                    {dry.account_mantenuti === null && (
+                      <div className="text-kidville-sub">{t('richiesteAccountNonMisurato')}</div>
                     )}
                     {/* Il residuo NON si tace: questa evasione chiude la richiesta,
                         e un pezzo dell'oblio resta in carico a un altro plesso.

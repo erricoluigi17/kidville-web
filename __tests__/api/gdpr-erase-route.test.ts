@@ -131,11 +131,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
         }
       }
       b.then = (res: (v: unknown) => unknown) => {
-        // In questo file il registro della primaria è VUOTO: `h.pagelle` e
-        // `h.erroriTabella.pagelle` descrivono ciò che il DRY-RUN conta, non il
-        // registro. Il rifiuto di chi lo ha sta in `gdpr-erase-registro-primaria.test.ts`.
+        // La lettura del registro della primaria (`.limit(1)` sulle sue sei
+        // tabelle) vede le STESSE righe del dry-run: con `h.pagelle` piene il
+        // bambino ha il registro e l'oblio si rifiuta (409, caso qui sotto). Gli
+        // errori iniettati per i CONTEGGI non la toccano, ma solo sulle tabelle
+        // del registro: il caso «lettura del registro fallita» ha il suo file
+        // (`gdpr-erase-registro-primaria.test.ts`).
         if (state.limit && (TABELLE_REGISTRO_PRIMARIA as readonly string[]).includes(table)) {
-          return Promise.resolve({ data: [], error: null }).then(res)
+          return Promise.resolve({ data: dataFor(), error: null }).then(res)
         }
         if (table === 'student_parents' && h.linksError) {
           return Promise.resolve({ data: null, error: h.linksError }).then(res)
@@ -299,18 +302,32 @@ describe('POST /api/admin/gdpr/erase', () => {
   // dichiara alla voce `pagelle`. Il difetto non era un dato non cancellato: era
   // un consenso raccolto su un'informazione mancante.
   // ───────────────────────────────────────────────────────────────────────────
-  it('dryrun: dice quante PAGELLE e quanti CERTIFICATI MEDICI se ne vanno', async () => {
-    h.pagelle = [{ id: 'pg-1' }, { id: 'pg-2' }]
-    h.certificati = [{ id: 'cm-1' }]
+  // ⚠️ Fino al 2026-10-09 questo caso contava anche due PAGELLE, e descriveva un
+  // mondo che non esiste più: un bambino con le pagelle ha il registro della
+  // primaria e l'oblio si RIFIUTA (409, caso qui sotto) — nel dry-run le pagelle
+  // valgono sempre zero. Il conteggio si prova sui CERTIFICATI MEDICI.
+  it('dryrun: dice quanti CERTIFICATI MEDICI se ne vanno (e le pagelle sono zero)', async () => {
+    h.certificati = [{ id: 'cm-1' }, { id: 'cm-2' }]
     const res = await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
     expect(res.status).toBe(200)
     const json = await res.json()
-    expect(json.pagelle).toBe(2)
-    expect(json.certificati_medici).toBe(1)
+    expect(json.certificati_medici).toBe(2)
+    expect(json.pagelle).toBe(0)
     // Resta un dry-run: SOLE SELECT. Nessuna scrittura, nessuna cancellazione,
     // nessun file tolto dall'archivio — è il passo che PRECEDE la conferma.
     expect(h.updates).toHaveLength(0)
     expect(h.deletedTables).toHaveLength(0)
+    expect(h.removed).toHaveLength(0)
+  })
+
+  it('pagelle presenti → il registro della primaria si conserva: 409, nessuna scrittura', async () => {
+    h.pagelle = [{ id: 'pg-1' }, { id: 'pg-2' }]
+    for (const mode of ['dryrun', 'execute'] as const) {
+      const res = await POST(req({ alunno_id: 'al-1', mode, confirm: 'rossi marco' }))
+      expect(res.status, mode).toBe(409)
+      expect((await res.json()).codice, mode).toBe('REGISTRO_PRIMARIA_DA_CONSERVARE')
+    }
+    expect(h.updates).toHaveLength(0)
     expect(h.removed).toHaveLength(0)
   })
 
@@ -341,16 +358,17 @@ describe('POST /api/admin/gdpr/erase', () => {
 
   it('dryrun: una lettura FALLITA si annuncia «non misurato» (null), mai zero', async () => {
     // PostgREST non lancia: ritorna `{ error }`. Se questo ramo rispondesse `0`,
-    // il riquadro direbbe «Pagelle: 0» a chi sta per distruggerne due — la stessa
-    // rassicurazione falsa per cui il dry-run era stato reso onesto.
-    h.pagelle = [{ id: 'pg-1' }, { id: 'pg-2' }]
-    h.erroriTabella = { pagelle: { code: '42501', message: 'permission denied for table pagelle' } }
+    // il riquadro direbbe «Certificati medici: 0» a chi sta per distruggerne due —
+    // la stessa rassicurazione falsa per cui il dry-run era stato reso onesto.
+    // (Sui certificati e non sulle pagelle: vedi la nota sopra il conteggio.)
+    h.certificati = [{ id: 'cm-1' }, { id: 'cm-2' }]
+    h.erroriTabella = { certificati_medici: { code: '42501', message: 'permission denied for table certificati_medici' } }
     const res = await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
     expect(res.status).toBe(200)
     const json = await res.json()
-    expect(json.pagelle).toBeNull()
+    expect(json.certificati_medici).toBeNull()
     // Un magazzino illeggibile non spegne l'avviso: le altre voci restano misurate.
-    expect(json.certificati_medici).toBe(0)
+    expect(json.pagelle).toBe(0)
   })
 
   it('dryrun: lo schema assente (DB E2E della CI non migrato) vale zero, non un 500', async () => {
@@ -378,7 +396,6 @@ describe('POST /api/admin/gdpr/erase', () => {
     // campo che descrive COM'È ANDATA l'esecuzione ci può entrare, e ne è entrato
     // uno il 2026-08-16 (`letture_fallite`, gli archivi che non si sono potuti
     // nemmeno leggere). Ciò che non può entrare è un numero contato prima.
-    h.pagelle = [{ id: 'pg-1' }]
     h.certificati = [{ id: 'cm-1' }]
     const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
     expect(res.status).toBe(200)

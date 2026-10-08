@@ -63,12 +63,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // giusta (o, peggio, verde una sbagliata).
       let alunnoDelFiltro = ''
       // Il controllo del registro della primaria (2026-10-09) legge le sue tabelle
-      // con `.limit(1)`. In questo file il registro è VUOTO: `pagellePerAlunno`
-      // descrive ciò che il DRY-RUN conta, non il registro. Chi ha il registro si
-      // salta: lo prova `admin-gdpr-richieste-registro-primaria.test.ts`.
+      // con `.limit(1)`, e vede le STESSE righe del dry-run: un figlio con le
+      // pagelle ha il registro, e si salta (vedi il caso qui sotto). Gli errori
+      // iniettati per i CONTEGGI non toccano quella lettura — ma solo sulle sei
+      // tabelle del registro: ogni altra lettura con `.limit` li riceve come prima.
       let letturaRegistro = false
+      const delRegistro = () => (TABELLE_REGISTRO_PRIMARIA as readonly string[]).includes(table)
       const dati = () => {
-        if (letturaRegistro && (TABELLE_REGISTRO_PRIMARIA as readonly string[]).includes(table)) return []
         if (table === 'student_parents') return h.state.links
         if (table === 'alunni') return h.state.alunni
         if (table === 'pagelle') return h.state.pagellePerAlunno[alunnoDelFiltro] ?? []
@@ -108,7 +109,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.then = (res: (v: unknown) => unknown) => {
         if (patch) h.state.updates.push({ table, patch })
         // Il registro vuoto non eredita gli errori iniettati per i CONTEGGI.
-        if (letturaRegistro) return Promise.resolve({ data: dati(), error: null }).then(res)
+        if (letturaRegistro && delRegistro()) return Promise.resolve({ data: dati(), error: null }).then(res)
         const err = h.state.erroriTabella[table] ?? null
         return Promise.resolve({ data: err ? null : dati(), error: err }).then(res)
       }
@@ -270,34 +271,49 @@ describe('POST /api/admin/gdpr/richieste — evasione', () => {
     ]
   }
 
-  it('dryrun: SOMMA le pagelle e i certificati di TUTTI i figli che verranno anonimizzati', async () => {
+  // ⚠️ Fino al 2026-10-09 la somma si provava sulle PAGELLE, e descriveva un mondo
+  // che non esiste più: un figlio con le pagelle ha il registro della primaria e
+  // si SALTA (caso qui sotto), quindi nel dry-run le sue pagelle non entrano mai.
+  // La somma si prova sui CERTIFICATI MEDICI, che non sono registro.
+  it('dryrun: SOMMA i certificati medici di TUTTI i figli che verranno anonimizzati', async () => {
     dueFigliNonIscritti()
-    h.state.pagellePerAlunno = { 'al-1': [{ id: 'pg-1' }, { id: 'pg-2' }], 'al-2': [{ id: 'pg-3' }] }
-    h.state.certificatiPerAlunno = { 'al-1': [{ id: 'cm-1' }] }
+    h.state.certificatiPerAlunno = { 'al-1': [{ id: 'cm-1' }, { id: 'cm-2' }], 'al-2': [{ id: 'cm-3' }] }
 
     const j = await (await POST(req({ id: 'req-1', mode: 'dryrun' }))).json()
-    // Tre pagelle e un certificato: sono i numeri che la Direzione deve leggere
-    // PRIMA di digitare ANONIMIZZA. Due figli con numeri diversi, così la somma
-    // non può essere verde per caso.
-    expect(j.pagelle).toBe(3)
-    expect(j.certificati_medici).toBe(1)
+    // Tre certificati: sono i numeri che la Direzione deve leggere PRIMA di
+    // digitare ANONIMIZZA. Due figli con numeri diversi, così la somma non può
+    // essere verde per caso.
+    expect(j.certificati_medici).toBe(3)
+    expect(j.pagelle).toBe(0)
     // Resta un dry-run: nessuna anonimizzazione, nessuna scrittura.
     expect(h.anonimizzaAlunno).not.toHaveBeenCalled()
     expect(h.state.updates).toHaveLength(0)
   })
 
+  it('pagelle presenti → quel figlio ha il registro della primaria: si salta, e le sue pagelle non si contano', async () => {
+    dueFigliNonIscritti()
+    h.state.pagellePerAlunno = { 'al-2': [{ id: 'pg-1' }] }
+    const dry = await (await POST(req({ id: 'req-1', mode: 'dryrun' }))).json()
+    expect(dry).toMatchObject({ alunni_non_iscritti: 1, alunni_registro_primaria: 1, pagelle: 0 })
+
+    const ese = await (await POST(req({ id: 'req-1', mode: 'execute', confirm: 'ANONIMIZZA' }))).json()
+    expect(ese).toMatchObject({ alunni: 1, alunni_registro_primaria: 1 })
+    expect(h.anonimizzaAlunno.mock.calls.map((c) => (c[1] as { id: string }).id)).toEqual(['al-1'])
+  })
+
   it('dryrun: un solo figlio NON misurato annulla il totale, non lo abbassa', async () => {
-    // PostgREST non lancia. Se la lettura delle pagelle fallisce su un bambino,
+    // PostgREST non lancia. Se la lettura dei certificati fallisce su un bambino,
     // sommare gli altri darebbe un numero più basso del vero con l'aria di una
     // misura — la conferma inventata che questo avviso esiste per abolire.
+    // (Sui certificati e non sulle pagelle: vedi la nota sopra la somma.)
     dueFigliNonIscritti()
-    h.state.pagellePerAlunno = { 'al-1': [{ id: 'pg-1' }] }
-    h.state.erroriTabella = { pagelle: { code: '42501', message: 'permission denied for table pagelle' } }
+    h.state.certificatiPerAlunno = { 'al-1': [{ id: 'cm-1' }] }
+    h.state.erroriTabella = { certificati_medici: { code: '42501', message: 'permission denied for table certificati_medici' } }
 
     const j = await (await POST(req({ id: 'req-1', mode: 'dryrun' }))).json()
-    expect(j.pagelle).toBeNull()
+    expect(j.certificati_medici).toBeNull()
     // Un magazzino illeggibile non spegne l'intero avviso.
-    expect(j.certificati_medici).toBe(0)
+    expect(j.pagelle).toBe(0)
   })
 
   it('dryrun: i documenti d’identità contati sono quelli dei figli PIÙ quello del genitore', async () => {

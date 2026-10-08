@@ -16,91 +16,204 @@ import { mascheraSorgente, fileSorgente, riga } from '../fixtures/sorgente'
 // evade la richiesta di cancellazione della FAMIGLIA, in blocco su tutti i figli
 // non iscritti — chiamava `anonimizzaAlunno` senza nessun controllo. Nessun test
 // era rosso: ogni route aveva i suoi, e nessuno guardava le route che non
-// conosceva. Una porta nuova (l'eliminazione definitiva di
-// `admin/students/elimina`, per esempio) avrebbe ripetuto lo stesso buco.
+// conosceva.
 //
-// LA FORMA: ogni file di `src/` che CHIAMA `anonimizzaAlunno(` — esclusa la sua
-// definizione in `src/lib/gdpr/esegui.ts` — deve chiamare anche
-// `leggiRegistroPrimaria(` o `alunniConRegistroPrimaria(`
-// (`src/lib/alunni/registro-primaria.ts`). La scansione legge il sorgente con
-// commenti e stringhe spenti (`mascheraSorgente`): un nome citato in un
-// commento che spiega la regola non conta né come chiamata né come controllo.
+// ⚠️ E LA PRIMA VERSIONE DI QUESTO LOCK ERA CIECA (revisione del 2026-10-09):
+// guardava il FILE, e in `richieste` il controllo c'è sia nel GET (per i
+// conteggi dell'elenco) sia nella POST. Togliendolo dalla POST — quella che
+// anonimizza — il controllo del GET bastava a tenere verde il lock. Ora il
+// confine è il GESTORE: per ogni chiamata ad `anonimizzaAlunno(` si pretende una
+// chiamata di controllo fra l'inizio del gestore che la contiene — l'ultimo
+// `export const` / `export function` / `export async function` che la precede —
+// e la chiamata stessa. La prova che il lock non è più cieco è il sorgente finto
+// «il GET controlla, la POST no» qui sotto, che deve risultare rosso.
 //
-// Il lock non prova che il controllo stia PRIMA della scrittura né che il suo
-// esito sia rispettato: quello lo provano i test di ciascuna route
-// (`gdpr-erase-registro-primaria`, `admin-gdpr-richieste-registro-primaria`).
-// Prova che nessuna porta lo dimentichi del tutto.
+// Il sorgente si legge con commenti e stringhe spenti (`mascheraSorgente`): un
+// nome citato in un commento che spiega la regola non conta né come chiamata né
+// come controllo. Il lock non prova che l'ESITO del controllo sia rispettato:
+// quello lo provano i test di ciascuna route (`gdpr-erase-registro-primaria`,
+// `admin-gdpr-richieste-registro-primaria`, `admin-students-elimina`). Prova che
+// nessun gestore lo dimentichi.
 // =============================================================================
 
 const RADICE = path.resolve(__dirname, '../..')
 const SRC = path.join(RADICE, 'src')
-const DEFINIZIONE = 'src/lib/gdpr/esegui.ts'
 
 const CHIAMATA = /\banonimizzaAlunno\s*\(/g
+const DEFINIZIONE = /\bfunction\s+anonimizzaAlunno\s*\($/
 const CONTROLLO = /\b(?:leggiRegistroPrimaria|alunniConRegistroPrimaria)\s*\(/
-// Un import rinominato renderebbe il chiamante invisibile alla scansione.
-const ALIAS = /\banonimizzaAlunno\s+as\s+\w+/
+const INIZIO_GESTORE = /\bexport\s+(?:const|async\s+function|function)\b/g
+// Tre modi di dare un altro nome alla funzione, che renderebbero il chiamante
+// invisibile alla scansione: import rinominato, destrutturazione, assegnazione.
+const ALIAS = [
+  /\banonimizzaAlunno\s+as\s+\w+/,
+  /\banonimizzaAlunno\s*:/,
+  /=\s*anonimizzaAlunno\b(?!\s*\()/,
+]
 
-interface Chiamante {
-  file: string
-  righe: number[]
-  controlla: boolean
+/**
+ * Le chiamate che NON hanno un controllo del registro nel loro gestore, e perché
+ * sono giustificate. Chiave: `<file>:<riga della chiamata>`. Oggi è vuota: nessun
+ * chiamante interno a `src/lib/gdpr/esegui.ts` oltre alla definizione. Una voce
+ * che non corrisponde più a nessuna chiamata fa rosso (un'esclusione scaduta è
+ * una porta aperta).
+ */
+const GIUSTIFICATE: Record<string, string> = {}
+
+interface ChiamataScoperta {
+  riga: number
+  gestore: string
 }
 
-function chiamanti(): Chiamante[] {
-  const out: Chiamante[] = []
-  for (const assoluto of fileSorgente(SRC)) {
-    const file = path.relative(RADICE, assoluto).split(path.sep).join('/')
-    if (file === DEFINIZIONE) continue
-    const { struttura } = mascheraSorgente(fs.readFileSync(assoluto, 'utf8'))
-    const righe = [...struttura.matchAll(CHIAMATA)].map((m) => riga(struttura, m.index ?? 0))
-    if (righe.length === 0) continue
-    out.push({ file, righe, controlla: CONTROLLO.test(struttura) })
+/** Le chiamate ad `anonimizzaAlunno(` di un sorgente senza controllo del registro nel proprio gestore. */
+function chiamateSenzaControllo(sorgente: string): { chiamate: number; scoperte: ChiamataScoperta[] } {
+  // `struttura` per cercare (stringhe spente), `senzaCommenti` per l'etichetta (stessi indici).
+  const { struttura, senzaCommenti } = mascheraSorgente(sorgente)
+  const inizi = [...struttura.matchAll(INIZIO_GESTORE)].map((m) => m.index ?? 0)
+  const scoperte: ChiamataScoperta[] = []
+  let chiamate = 0
+  for (const m of struttura.matchAll(CHIAMATA)) {
+    const i = m.index ?? 0
+    // La definizione (`export async function anonimizzaAlunno(`) non è una chiamata.
+    if (DEFINIZIONE.test(struttura.slice(Math.max(0, i - 40), i + m[0].length))) continue
+    chiamate++
+    const inizio = inizi.filter((s) => s < i).pop() ?? 0
+    if (!CONTROLLO.test(struttura.slice(inizio, i))) {
+      scoperte.push({ riga: riga(struttura, i), gestore: senzaCommenti.slice(inizio, inizio + 60).split('\n')[0].trim() })
+    }
   }
-  return out.sort((a, b) => a.file.localeCompare(b.file))
+  return { chiamate, scoperte }
+}
+
+function relativo(assoluto: string): string {
+  return path.relative(RADICE, assoluto).split(path.sep).join('/')
+}
+
+function scansione() {
+  const chiamanti: string[] = []
+  const scoperte: string[] = []
+  for (const assoluto of fileSorgente(SRC)) {
+    const file = relativo(assoluto)
+    const esito = chiamateSenzaControllo(fs.readFileSync(assoluto, 'utf8'))
+    if (esito.chiamate > 0) chiamanti.push(file)
+    for (const s of esito.scoperte) scoperte.push(`${file}:${s.riga} (gestore «${s.gestore}»)`)
+  }
+  return { chiamanti: chiamanti.sort(), scoperte }
 }
 
 describe('LOCK · chi anonimizza un alunno guarda prima il registro della primaria', () => {
-  it('la definizione esclusa esiste davvero (un’esclusione scaduta è una porta aperta)', () => {
-    const percorso = path.join(RADICE, DEFINIZIONE)
-    expect(fs.existsSync(percorso), `${DEFINIZIONE} non esiste più: aggiorna DEFINIZIONE`).toBe(true)
-    const { struttura } = mascheraSorgente(fs.readFileSync(percorso, 'utf8'))
-    expect(struttura, `${DEFINIZIONE} non definisce più anonimizzaAlunno`).toMatch(/function\s+anonimizzaAlunno\s*\(/)
+  // ── Il lock sa vedere: prove su sorgenti finti ──────────────────────────────
+  it('controllo positivo: «il GET controlla, la POST no» è ROSSO (la prima versione lo dava verde)', () => {
+    const finto = [
+      "export const GET = withRoute('x:GET', async () => {",
+      '  const r = await alunniConRegistroPrimaria(db, ids)',
+      '})',
+      "export const POST = withRoute('x:POST', async () => {",
+      '  await anonimizzaAlunno(db, alunno, at, op)',
+      '})',
+    ].join('\n')
+    const esito = chiamateSenzaControllo(finto)
+    expect(esito.chiamate).toBe(1)
+    expect(esito.scoperte).toHaveLength(1)
+    expect(esito.scoperte[0].riga).toBe(5)
+    expect(esito.scoperte[0].gestore).toContain('export const POST')
   })
 
+  it('controllo positivo: il controllo DOPO la chiamata non vale', () => {
+    const finto = [
+      'export async function esegui() {',
+      '  await anonimizzaAlunno(db, alunno, at, op)',
+      '  await leggiRegistroPrimaria(db, id)',
+      '}',
+    ].join('\n')
+    expect(chiamateSenzaControllo(finto).scoperte).toHaveLength(1)
+  })
+
+  it('controllo positivo: un controllo citato in un COMMENTO non vale', () => {
+    const finto = [
+      'export async function esegui() {',
+      '  // qui andrebbe leggiRegistroPrimaria(db, id)',
+      '  await anonimizzaAlunno(db, alunno, at, op)',
+      '}',
+    ].join('\n')
+    expect(chiamateSenzaControllo(finto).scoperte).toHaveLength(1)
+  })
+
+  it('controllo negativo: controllo nello stesso gestore, prima della chiamata → nessuna scoperta', () => {
+    const finto = [
+      "export const POST = withRoute('x:POST', async () => {",
+      '  const r = await leggiRegistroPrimaria(db, id)',
+      '  if (!r.ok || r.presente) return',
+      '  await anonimizzaAlunno(db, alunno, at, op)',
+      '})',
+      'export async function anonimizzaAlunno(db, a, at, op) {}',
+    ].join('\n')
+    expect(chiamateSenzaControllo(finto)).toEqual({ chiamate: 1, scoperte: [] })
+  })
+
+  it('gli alias si riconoscono: import rinominato, destrutturazione, assegnazione', () => {
+    const casi = [
+      "import { anonimizzaAlunno as anon } from '@/lib/gdpr/esegui'",
+      'const { anonimizzaAlunno: anon } = mod',
+      'const anon = anonimizzaAlunno',
+    ]
+    for (const c of casi) {
+      const { struttura } = mascheraSorgente(c)
+      expect(ALIAS.some((r) => r.test(struttura)), c).toBe(true)
+    }
+    const { struttura } = mascheraSorgente('const r = anonimizzaAlunno(db, a, at, op)')
+    expect(ALIAS.some((r) => r.test(struttura)), 'una chiamata non è un alias').toBe(false)
+  })
+
+  // ── Il codice vero ─────────────────────────────────────────────────────────
   it('controllo positivo: la scansione trova almeno due chiamanti (oggi gdpr/erase e gdpr/richieste)', () => {
-    const elenco = chiamanti().map((c) => c.file)
+    const { chiamanti } = scansione()
     // Un lock che scandisce zero file è verde per sempre: se questo numero
     // scende, la scansione è diventata cieca (cartella spostata, nome cambiato),
     // non il codice più sicuro.
-    expect(elenco.length, `chiamanti trovati: ${JSON.stringify(elenco)}`).toBeGreaterThanOrEqual(2)
-    expect(elenco).toContain('src/app/api/admin/gdpr/erase/route.ts')
-    expect(elenco).toContain('src/app/api/admin/gdpr/richieste/route.ts')
+    expect(chiamanti.length, `chiamanti trovati: ${JSON.stringify(chiamanti)}`).toBeGreaterThanOrEqual(2)
+    expect(chiamanti).toContain('src/app/api/admin/gdpr/erase/route.ts')
+    expect(chiamanti).toContain('src/app/api/admin/gdpr/richieste/route.ts')
   })
 
-  it('ogni chiamante di anonimizzaAlunno chiama anche leggiRegistroPrimaria o alunniConRegistroPrimaria', () => {
-    const senza = chiamanti()
-      .filter((c) => !c.controlla)
-      .map((c) => `${c.file} (anonimizzaAlunno alla riga ${c.righe.join(', ')})`)
+  it('la definizione in esegui.ts esiste ancora e non è contata come chiamata', () => {
+    const percorso = path.join(RADICE, 'src/lib/gdpr/esegui.ts')
+    const sorgente = fs.readFileSync(percorso, 'utf8')
+    expect(mascheraSorgente(sorgente).struttura).toMatch(/function\s+anonimizzaAlunno\s*\(/)
+    const scoperte = chiamateSenzaControllo(sorgente).scoperte.map((s) => `src/lib/gdpr/esegui.ts:${s.riga}`)
+    expect(scoperte.filter((k) => !(k in GIUSTIFICATE))).toEqual([])
+  })
+
+  it('ogni chiamata ad anonimizzaAlunno ha un controllo del registro nel SUO gestore, prima di sé', () => {
+    const { scoperte } = scansione()
+    const ingiustificate = scoperte.filter((s) => !(s.split(' ')[0] in GIUSTIFICATE))
     expect(
-      senza,
-      'Questi file anonimizzano un alunno senza guardare il registro della primaria. Regola del ' +
-        'titolare (2026-10-08): voti, pagelle, scrutini, note e certificati delle competenze sono il ' +
-        'registro che la legge obbliga a conservare (GDPR art. 17 §3 lett. b) — NON si cancellano e ' +
-        'NON si anonimizzano, da nessuna porta. Prima di chiamare anonimizzaAlunno chiama ' +
-        'leggiRegistroPrimaria (un alunno) o alunniConRegistroPrimaria (più alunni) da ' +
-        '`@/lib/alunni/registro-primaria`, fermati su una lettura fallita (`ok: false`) e salta o ' +
-        'rifiuta chi ha il registro. Esempi: admin/gdpr/erase (409), admin/gdpr/richieste (salta e ' +
-        'lo scrive nell’esito).',
+      ingiustificate,
+      'Queste chiamate anonimizzano un alunno senza aver guardato il registro della primaria NEL ' +
+        'LORO GESTORE. Regola del titolare (2026-10-08): voti, pagelle, scrutini, note e certificati ' +
+        'delle competenze sono il registro che la legge obbliga a conservare (GDPR art. 17 §3 lett. b) ' +
+        '— NON si cancellano e NON si anonimizzano, da nessuna porta. Nello stesso gestore, PRIMA di ' +
+        'anonimizzaAlunno, chiama leggiRegistroPrimaria (un alunno) o alunniConRegistroPrimaria (più ' +
+        'alunni) da `@/lib/alunni/registro-primaria`, fermati su una lettura fallita (`ok: false`) e ' +
+        'salta o rifiuta chi ha il registro. Un controllo in un ALTRO gestore dello stesso file (per ' +
+        'esempio nel GET) non protegge la POST. Esempi: admin/gdpr/erase (409), admin/gdpr/richieste ' +
+        '(salta e lo scrive nell’esito).',
     ).toEqual([])
   })
 
-  it('nessuno importa anonimizzaAlunno con un altro nome (la scansione non lo vedrebbe)', () => {
+  it('nessuna giustificazione scaduta', () => {
+    const { scoperte } = scansione()
+    const chiavi = new Set(scoperte.map((s) => s.split(' ')[0]))
+    const scadute = Object.keys(GIUSTIFICATE).filter((k) => !chiavi.has(k))
+    expect(scadute, 'voci di GIUSTIFICATE che non corrispondono più a una chiamata scoperta').toEqual([])
+  })
+
+  it('nessuno dà un altro nome ad anonimizzaAlunno (la scansione non lo vedrebbe)', () => {
     const rinominati: string[] = []
     for (const assoluto of fileSorgente(SRC)) {
       const { struttura } = mascheraSorgente(fs.readFileSync(assoluto, 'utf8'))
-      if (ALIAS.test(struttura)) rinominati.push(path.relative(RADICE, assoluto).split(path.sep).join('/'))
+      if (ALIAS.some((r) => r.test(struttura))) rinominati.push(relativo(assoluto))
     }
-    expect(rinominati, 'importa anonimizzaAlunno col suo nome: il lock cerca `anonimizzaAlunno(`').toEqual([])
+    expect(rinominati, 'chiama anonimizzaAlunno col suo nome: il lock cerca `anonimizzaAlunno(`').toEqual([])
   })
 })

@@ -56,9 +56,12 @@ export const GET = withRoute('admin/gdpr/candidates:GET', async (request: NextRe
   // causa — il corpo dell'errore ce l'ha solo chi lo riceve, ed è la stessa
   // ragione per cui `403` senza corpo tenne nascosto per mesi il guasto delle
   // email. La risposta resta identica: qui si aggiunge la riga, non un canale.
+  // Il corpo dell'errore va nel log, NON nella risposta (2026-10-09): il
+  // messaggio grezzo di PostgREST riecheggia tabelle e filtri, e chi legge in
+  // inglese lo riceveva in un'altra lingua ancora. Il codice dice cosa fare.
   if (error) {
     logErrore({ operazione: OP, stato: 500, evento: 'db' }, error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_CANDIDATI_NON_LETTI' }, { status: 500 })
   }
 
   const ids = (alunni ?? []).map((a: { id: string }) => a.id)

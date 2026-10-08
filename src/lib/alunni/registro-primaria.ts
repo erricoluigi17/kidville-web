@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { schemaAssente } from '@/lib/news/schema-assente'
+import { logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
 // IL REGISTRO DELLA PRIMARIA NON SI CANCELLA E NON SI ANONIMIZZA.
@@ -20,8 +20,20 @@ import { schemaAssente } from '@/lib/news/schema-assente'
 // la seconda, qui, aprirebbe la porta a una cancellazione irreversibile del
 // registro. Per questo l'esito non è un booleano: senza guardare `ok` non si
 // arriva a `presente`. Una tabella che NON ESISTE (DB E2E della CI non migrato:
-// 42P01/PGRST205) vale invece «nessuna riga», che su quel database è la verità.
+// 42P01/PGRST205) vale invece «nessuna riga», che su quel database è la verità —
+// ma si LOGGA: in produzione non deve mai succedere, e se succede la protezione
+// è cieca. Una COLONNA assente (42703, PGRST204) invece è un guasto.
+//
+// Si legge con una GET (`select().eq().limit(1)`) e NON con una HEAD con
+// `count: 'exact'`: in postgrest-js (2.112, `dist/index.cjs` ~488-503) una HEAD
+// non ha corpo, quindi un 404 (tabella assente, gateway) torna `error: null,
+// count: null` — letto come «nessuna riga» — e gli altri errori arrivano senza
+// `code`, così il ramo «tabella assente» non scatterebbe mai.
 // =============================================================================
+
+// Solo «la tabella non esiste». Non si usa l'insieme delle news (tollera anche
+// colonne e funzioni assenti, e appartiene a un altro dominio).
+const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
 
 export const TABELLE_REGISTRO_PRIMARIA = [
   'valutazioni',
@@ -48,15 +60,25 @@ export async function leggiRegistroPrimaria(
   alunnoId: string,
 ): Promise<EsitoRegistroPrimaria> {
   for (const tabella of TABELLE_REGISTRO_PRIMARIA) {
-    const { count, error } = await supabase
+    const { data, error } = await supabase
       .from(tabella)
-      .select('alunno_id', { count: 'exact', head: true })
+      .select('alunno_id')
       .eq('alunno_id', alunnoId)
+      .limit(1)
     if (error) {
-      if (schemaAssente(error)) continue
+      const code = (error as { code?: string }).code
+      if (code && TABELLA_ASSENTE.has(code)) {
+        logEvento('db', 'warn', {
+          operazione: 'registro-primaria',
+          esito: 'tabella-assente-trattata-come-vuota',
+          tipo: tabella,
+        })
+        continue
+      }
       return { ok: false, errore: error }
     }
-    if ((count ?? 0) > 0) return { ok: true, presente: true }
+    if (!Array.isArray(data)) return { ok: false, errore: { message: 'risposta senza righe' } }
+    if (data.length > 0) return { ok: true, presente: true }
   }
   return { ok: true, presente: false }
 }

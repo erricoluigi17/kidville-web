@@ -32,7 +32,7 @@ ora:   Retta 10 2026 K7MXN3P RSSMRA85T10Z999X Mario Rossi GIUGLIANO
 4. **Il codice della voce resta `#K7MXN3P` dentro l'app** (modulo congelato intatto, `suggerimenti.codice_voce` e interfaccia di riconciliazione invariati): il `#` sparisce solo nella stringa per la banca, e l'estrattore legge già la forma senza.
 5. **Riconciliazione.**
    - I segnali deboli «nome in causale» e «descrizione in causale» confrontano anche la forma ripulita con **la stessa** `testoPerBanca` dell'uscita (la descrizione accorciata come esce), altrimenti ogni causale nuova li avrebbe persi (`retta 10/2026` non sta in `retta 10 2026`, `d'angelo` non sta in `d angelo`, `2 felpa` non sta in `2 x felpa`). `norm()` — dentro l'impronta anti doppio import — non si tocca.
-   - **Il CF spezzato dalla banca si ricuce** (`cfRicuciti` in `estraiCodiciFiscali`): token interi adiacenti la cui unione fa esattamente 16 caratteri con la forma del CF. Trovato dalla revisione: la variante senza spazi ricomponeva un CF spezzato solo grazie ai « - » del formato vecchio. Misura: **69 movimenti su 917 portano il CF solo spezzato**, con lo spazio in un punto sempre diverso (è l'export che va a capo).
+   - **Il CF spezzato dalla banca si ricuce** (`cfRicuciti` in `estraiCodiciFiscali`): token interi adiacenti la cui unione fa esattamente 16 caratteri con la forma del CF, **con l'anno di cifre vere** (unendo parole intere la forma omocodica piena si lascia comporre da sole lettere: «RETTA AL SILVESTRI» → `RETTAALSILVESTRI`; trovato in revisione). Trovato dalla revisione: la variante senza spazi ricomponeva un CF spezzato solo grazie ai « - » del formato vecchio. Misura: **69 movimenti su 917 portano il CF solo spezzato**, con lo spazio in un punto sempre diverso (è l'export che va a capo).
 6. **Pannello Causali**: l'esempio del chip `{codice}` è nella forma che esce (`MNKPRTF`) e la nota spiega che accenti, apostrofi e simboli vengono tolti apposta.
 
 **Log.** Nessuna route, integrazione esterna o percorso d'errore nuovo (funzioni pure): nessun log aggiunto. La causale non si logga — contiene codice fiscale e nome di un minore.
@@ -45,6 +45,7 @@ ora:   Retta 10 2026 K7MXN3P RSSMRA85T10Z999X Mario Rossi GIUGLIANO
   - Nel corpo testuale del sollecito la causale sta ancora fra virgolette (`"…"`): chi la seleziona a mano può prendersi anche quelle. La stessa email porta, nel riquadro «DATI PER IL BONIFICO», la riga `Causale:` pulita.
   - Sul segnale debole del nome, una particella cade («D'Angelo» → token «angelo»): un suggerimento può diventare un po' più largo. Mai un incasso automatico, che vuole codice o CF.
   - `{importo}` (nessuna sede lo usa oggi) esce come «EUR 150 00».
+  - Il taglio a 24 caratteri toglie a una rata proprio la parte che la distingue («Retta annuale 2026/27 — Rata 10/10» → «Retta annuale 2026 27»): all'abbinamento basta il codice, e oggi nessuna voce aperta supera i 24.
 
 ## 🗂️ Changelog — Non iscritti in un elenco a parte ed eliminazione definitiva di una scheda; il registro della primaria non si cancella né si anonimizza — 2026-10-08/09 (branch `feat/elimina-non-iscritti`)
 

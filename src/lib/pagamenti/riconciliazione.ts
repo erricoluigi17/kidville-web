@@ -168,8 +168,17 @@ const CF_REGEX = /\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/g
  */
 const CF_OMOCODE_REGEX = /\b[A-Z]{6}[\dLMNPQRSTUV]{2}[A-Z][\dLMNPQRSTUV]{2}[A-Z][\dLMNPQRSTUV]{3}[A-Z]\b/g
 
-/** Il CF intero (omocodia compresa), ANCORATO ai due capi: per la ricucitura, dove i confini sono i token. */
-const CF_INTERO = /^[A-Z]{6}[\dLMNPQRSTUV]{2}[A-Z][\dLMNPQRSTUV]{2}[A-Z][\dLMNPQRSTUV]{3}[A-Z]$/
+/**
+ * Il CF intero, ANCORATO ai due capi: per la ricucitura, dove i confini sono i token.
+ *
+ * L'omocodia è ammessa ovunque TRANNE che nell'anno (posizioni 7-8), che qui deve essere di
+ * cifre vere. La ragione è la ricucitura stessa: unendo parole INTERE la forma omocodica piena
+ * si lascia comporre da sole lettere — «RETTA AL SILVESTRI» → `RETTAALSILVESTRI` ha la forma
+ * di un CF (trovato in revisione, 2026-10-09). L'omocodia sostituisce le cifre da DESTRA, e
+ * quelle dell'anno sono le ultime a cadere: un CF omocodico fin lì è un caso che la ricucitura
+ * può permettersi di non vedere, mentre le due regex qui sopra continuano a vederlo intero.
+ */
+const CF_INTERO = /^[A-Z]{6}\d{2}[A-Z][\dLMNPQRSTUV]{2}[A-Z][\dLMNPQRSTUV]{3}[A-Z]$/
 
 /** In quanti token al massimo un export bancario spezza un CF (misurati: due spazi al più). */
 const PEZZI_CF_MASSIMI = 4

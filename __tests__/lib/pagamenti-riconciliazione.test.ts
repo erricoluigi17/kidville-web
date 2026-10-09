@@ -174,6 +174,17 @@ describe('estraiCodiciFiscali', () => {
     expect(estraiCodiciFiscali('RETTA RSSMRA 85T10A562SX MARIO')).toEqual([])
   })
 
+  it('la ricucitura NON fabbrica CF da parole intere (l’anno deve essere fatto di cifre)', () => {
+    // La forma omocodica ammette `LMNPQRSTUV` al posto delle cifre: unendo parole intere
+    // «RETTA AL SILVESTRI» diventa `RETTAALSILVESTRI`, che ha la forma di un CF. Trovato in
+    // revisione. L'omocodia sostituisce le cifre da DESTRA, e quelle dell'anno sono le ultime
+    // a cadere: nella ricucitura si pretendono cifre vere lì.
+    expect(estraiCodiciFiscali('BONIFICO RETTA AL SILVESTRI GIUSEPPE')).toEqual([])
+    expect(estraiCodiciFiscali('SEPA PER SILVESTRI ANNA')).toEqual([])
+    expect(estraiCodiciFiscali('BONIFICO DA MARCHETTI 26 RUSSO')).toEqual([])
+    expect(estraiCodiciFiscali('FAVORE 1 SILVESTRI BRUNO')).toEqual([])
+  })
+
   it('la ricucitura riconosce anche il CF omocodico spezzato', () => {
     expect(estraiCodiciFiscali(`PAGAMENTO ${CF_OMOCODE.slice(0, 9)} ${CF_OMOCODE.slice(9)} GRAZIE`)).toEqual([CF_OMOCODE])
   })

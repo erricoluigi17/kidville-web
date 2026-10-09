@@ -127,3 +127,53 @@ describe('POST /api/admin/gdpr/erase — l’esito degli account dei genitori', 
     expect(riga('oblio-eseguito')).toBeTruthy()
   })
 })
+
+// =============================================================================
+// LE CHIAVI CONDIVISE CON UN DOPPIONE (2026-10-09).
+//
+// Se il codice fiscale o il documento del bambino (o del genitore) sono anche di
+// un'altra scheda viva, `anonimizzaAlunno`/`anonimizzaParent` NON li usano per
+// ripulire domande d'iscrizione, bonifici e cassa — di proposito, perché sono
+// anche dell'altra persona — e lo dicono in `chiaviCondiviseEscluse`. Quei dati
+// restano in chiaro: l'oblio è PARZIALE, e va detto con il motivo.
+// =============================================================================
+describe('POST /api/admin/gdpr/erase — chiavi condivise con un’altra scheda', () => {
+  const MOTIVO = 'chiave condivisa con un’altra scheda: risolvere prima il doppione'
+  const alunnoCon = (chiaviCondiviseEscluse: { codiceFiscale: number; documento: number }) => ({
+    riconciliazione: 0, incassi: 0, cassa: 0, file: 0, fileNonRimossi: 0, segnalazioniBonificate: 0,
+    sospensioniBonificate: 0, iscrizioniScrubbate: 0, fotoRimosse: 0, fotoSganciate: 0,
+    presenzeBonificate: 0, notificheRimosse: 0, lettureFallite: 0, chiaviCondiviseEscluse,
+  })
+
+  it('chiave del BAMBINO condivisa → parziale, con il motivo nella risposta e nell’audit', async () => {
+    h.anonimizzaAlunno.mockResolvedValue(alunnoCon({ codiceFiscale: 1, documento: 1 }))
+    h.anonimizzaParent.mockResolvedValue(parent('rimosso'))
+    const json = await (await esegui()).json()
+    expect(json).toMatchObject({ chiavi_condivise_escluse: 2, chiavi_condivise_motivo: MOTIVO })
+    const audit = h.logScrittura.mock.calls[0][1] as { valoreDopo: Record<string, unknown> }
+    expect(audit.valoreDopo).toMatchObject({ chiavi_condivise_escluse: 2, chiavi_condivise_motivo: MOTIVO })
+    const parziale = riga('oblio-parziale')
+    expect(parziale, 'le domande del bambino vero restano in chiaro e il log dice «eseguito»').toBeTruthy()
+    expect(parziale![1]).toBe('error')
+    expect(parziale![2]).toMatchObject({ n_chiavi_condivise: 2 })
+    expect(riga('oblio-eseguito')).toBeFalsy()
+  })
+
+  it('chiave di un GENITORE condivisa → parziale anche se quella del bambino è sua', async () => {
+    h.anonimizzaParent
+      .mockResolvedValueOnce({ ...parent('rimosso'), chiaviCondiviseEscluse: { codiceFiscale: 1, documento: 0 } })
+      .mockResolvedValueOnce(parent('rimosso'))
+    const json = await (await esegui()).json()
+    expect(json.chiavi_condivise_escluse).toBe(1)
+    expect(riga('oblio-parziale')).toBeTruthy()
+  })
+
+  it('controllo: nessuna chiave condivisa → invariato, `oblio-eseguito` e nessun motivo', async () => {
+    h.anonimizzaAlunno.mockResolvedValue(alunnoCon({ codiceFiscale: 0, documento: 0 }))
+    h.anonimizzaParent.mockResolvedValue(parent('rimosso'))
+    const json = await (await esegui()).json()
+    expect(json).toMatchObject({ chiavi_condivise_escluse: 0, chiavi_condivise_motivo: null })
+    expect(riga('oblio-eseguito')).toBeTruthy()
+    expect(riga('oblio-parziale')).toBeFalsy()
+  })
+})

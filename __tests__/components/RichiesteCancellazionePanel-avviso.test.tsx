@@ -311,3 +311,23 @@ describe('RichiesteCancellazionePanel — dopo l’evasione: l’account che res
     expect(avviso.textContent).not.toMatch(/non (è stato|sono stati) anonimizzat/)
   })
 })
+
+describe('RichiesteCancellazionePanel — oblio parziale per una chiave condivisa', () => {
+  it('chiavi_condivise_escluse > 0 → il riquadro di esito dice il motivo', async () => {
+    fetchMock.mockImplementation((_url: string, init?: { method?: string; body?: string }) => {
+      if (init?.method === 'POST') {
+        if (String(init.body ?? '').includes('execute')) {
+          return Promise.resolve({ ok: true, json: async () => ({ ok: true, alunni_registro_primaria: 0, account_mantenuti: 0, chiavi_condivise_escluse: 2 }) })
+        }
+        return Promise.resolve({ ok: true, json: async () => DRY_RUN })
+      }
+      return Promise.resolve({ ok: true, json: async () => [RICHIESTA] })
+    })
+    await apriRichiesta()
+    await waitFor(() => expect(voce('Pagelle: 3')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('ANONIMIZZA'), { target: { value: 'ANONIMIZZA' } })
+    fireEvent.click(bottoneRosso())
+    const avviso = await screen.findByRole('status')
+    expect(avviso.textContent).toContain(itAdminAltro.oblioParzialeChiaviCondivise)
+  })
+})

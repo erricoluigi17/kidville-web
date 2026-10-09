@@ -9,6 +9,7 @@ import { contaAccountOblio } from '@/lib/gdpr/account-oblio'
 import { contaCosaDistrugge, sommaConteggiOblio } from '@/lib/gdpr/cosa-distrugge'
 import { eNonPiuIscritto, eAncoraIscritto } from '@/lib/alunni/stato'
 import { alunniConRegistroPrimaria } from '@/lib/alunni/registro-primaria'
+import { contaChiaviCondivise, MOTIVO_CHIAVI_CONDIVISE, type ConChiaviCondivise } from '@/lib/gdpr/chiavi-condivise'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -476,8 +477,12 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     // che diceva zero file non rimossi — mentre il fascicolo sanitario del bambino
     // non era stato nemmeno letto.
     let lettureFallite = 0
+    // Le chiavi di ricerca NON usate perché condivise con un doppione, dei figli e
+    // del genitore: vedi `@/lib/gdpr/chiavi-condivise`.
+    const esitiChiavi: ConChiaviCondivise[] = []
     for (const f of nonIscritti) {
       const r = await anonimizzaAlunno(admin, f as AlunnoOblio, at, op)
+      esitiChiavi.push(r)
       ricon += r.riconciliazione
       incassi += r.incassi
       cassa += r.cassa
@@ -507,6 +512,8 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     fileNonRimossi += rParent.fileNonRimossi ?? 0
     notificheRimosse += rParent.notificheRimosse ?? 0
     lettureFallite += rParent.lettureFallite ?? 0
+    esitiChiavi.push(rParent as ConChiaviCondivise)
+    const chiaviCondivise = contaChiaviCondivise(esitiChiavi)
     const account = contaAccountOblio([rParent.account])
     // L'account resta perché un figlio non è stato anonimizzato (registro da
     // conservare, ancora iscritto, altro plesso): lo stesso numero del dry-run,
@@ -517,8 +524,10 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     // che quei file non ci sono più. Riga PERSISTITA (`gdpr` è in
     // EVENTI_PERSISTITI), solo conteggi e uuid. «Incompleto» sono TRE cose: file
     // rimasti dentro, archivi che nessuno ha potuto aprire e — dal 2026-09-14 —
-    // un account che non si è potuto liberare, con email e nome della persona.
-    if (fileNonRimossi > 0 || lettureFallite > 0 || account.nonLiberati > 0) {
+    // un account che non si è potuto liberare, con email e nome della persona. Dal
+    // 2026-10-09 QUATTRO: una chiave condivisa con un doppione lascia in chiaro
+    // le domande, i bonifici e la cassa agganciati a quella chiave.
+    if (fileNonRimossi > 0 || lettureFallite > 0 || account.nonLiberati > 0 || chiaviCondivise > 0) {
       logEvento('gdpr', 'error', {
         operazione: op,
         esito: 'oblio-parziale',
@@ -526,6 +535,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
         n_file: fileNonRimossi,
         n_letture_fallite: lettureFallite,
         n_account_non_liberati: account.nonLiberati,
+        n_chiavi_condivise: chiaviCondivise,
       })
     }
 
@@ -567,6 +577,12 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       // figlio non è stato anonimizzato. La scheda è anonimizzata lo stesso: è
       // la frase che la risposta alla famiglia deve contenere.
       account_mantenuti: accountMantenuti,
+      // Chiavi di ricerca (codice fiscale, documento) di un figlio o del genitore
+      // condivise con un'altra scheda viva: ciò che vi era agganciato è RIMASTO in
+      // chiaro. Il motivo sta sulla riga della richiesta, perché chi risponde alla
+      // famiglia deve sapere che l'oblio è parziale e perché.
+      chiavi_condivise_escluse: chiaviCondivise,
+      chiavi_condivise_motivo: chiaviCondivise > 0 ? MOTIVO_CHIAVI_CONDIVISE : null,
     }
 
     // 3. Marca la richiesta come evasa.

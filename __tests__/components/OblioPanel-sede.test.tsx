@@ -615,3 +615,47 @@ describe('OblioPanel — il dry-run risponde «registro da conservare» (elenco 
     expect(screen.queryByText(itAdminAltro.oblioRegistroPrimariaTesto)).not.toBeInTheDocument()
   })
 })
+
+// =============================================================================
+// L'OBLIO PARZIALE PER UNA CHIAVE CONDIVISA CON UN DOPPIONE (2026-10-09).
+//
+// Il codice fiscale o il documento del bambino è anche di un'altra scheda viva:
+// la route non li usa per ripulire domande, bonifici e cassa, e quei dati restano
+// in chiaro. La risposta lo dice (`chiavi_condivise_escluse`): il pannello deve
+// dirlo alla Direzione, invece di chiudere come se fosse andato tutto bene.
+// =============================================================================
+describe('OblioPanel — oblio parziale per una chiave condivisa', () => {
+  function conEsecuzione(esito: Record<string, unknown>) {
+    fetchMock.mockImplementation((url: string, init?: { body?: string }) => {
+      if (String(url).includes('/api/admin/gdpr/erase')) {
+        const corpo = String(init?.body ?? '')
+        return Promise.resolve({ ok: true, json: async () => (corpo.includes('execute') ? esito : DRY_RUN) })
+      }
+      return Promise.resolve({ ok: true, json: async () => CANDIDATI })
+    })
+  }
+
+  async function anonimizzaBeta() {
+    render(<OblioPanel userId="dir-1" />)
+    await waitFor(() => expect(screen.getByText(/Rossi Beta/)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(/Rossi Beta/))
+    await waitFor(() => expect(voce('Pagelle: 2')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText(itAdminAltro.oblioPlaceholderNome), { target: { value: 'ROSSI BETA' } })
+    fireEvent.click(bottoneRosso())
+  }
+
+  it('chiavi_condivise_escluse > 0: dopo l’esecuzione resta a schermo il motivo', async () => {
+    conEsecuzione({ ok: true, chiavi_condivise_escluse: 1, chiavi_condivise_motivo: 'x' })
+    await anonimizzaBeta()
+    const avviso = await screen.findByRole('status')
+    expect(avviso.textContent).toBe(itAdminAltro.oblioParzialeChiaviCondivise)
+  })
+
+  it('controllo: nessuna chiave condivisa → nessun avviso', async () => {
+    conEsecuzione({ ok: true, chiavi_condivise_escluse: 0, chiavi_condivise_motivo: null })
+    await anonimizzaBeta()
+    // Si aspetta la PRESENZA di qualcosa (il ritorno a «nessuno selezionato»), non un'assenza.
+    await waitFor(() => expect(screen.getByText(itAdminAltro.oblioNonSelezionato)).toBeInTheDocument())
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+})

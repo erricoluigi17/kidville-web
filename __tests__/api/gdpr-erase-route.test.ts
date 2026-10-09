@@ -428,6 +428,10 @@ describe('POST /api/admin/gdpr/erase', () => {
         'account_rimossi',
         'account_anonimizzati',
         'account_non_liberati',
+        // Le chiavi di ricerca condivise con un doppione (2026-10-09) e il loro
+        // motivo: descrivono com'è andata l'esecuzione — che cosa è RIMASTO in chiaro.
+        'chiavi_condivise_escluse',
+        'chiavi_condivise_motivo',
       ].sort(),
     )
     // L'asserzione che regge il titolo, e che l'elenco da solo non renderebbe

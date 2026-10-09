@@ -63,6 +63,8 @@ interface DryRun extends ContiOblio {
 interface EsitoEvasione {
   registro: number;
   account: boolean;
+  /** Chiavi di ricerca condivise con un doppione: l'oblio è PARZIALE (2026-10-09). */
+  chiaviCondivise: number;
 }
 
 export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
@@ -137,7 +139,8 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
       if (!res.ok) { alert(messaggioDaCorpo(j, t('errore'))); return; }
       const registro = Number(j?.alunni_registro_primaria ?? 0);
       const account = Number(j?.account_mantenuti ?? 0) === 1;
-      setEsitoEvasione(registro > 0 || account ? { registro, account } : null);
+      const chiaviCondivise = Number(j?.chiavi_condivise_escluse ?? 0);
+      setEsitoEvasione(registro > 0 || account || chiaviCondivise > 0 ? { registro, account, chiaviCondivise } : null);
       setTarget(null);
       setMisura('assente');
       await load();
@@ -181,6 +184,9 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
           <ul className="mt-1 list-disc space-y-0.5 pl-5">
             {esitoEvasione.registro > 0 && <li>{t('richiesteEvasaRegistroPrimaria', { n: esitoEvasione.registro })}</li>}
             {esitoEvasione.account && <li>{t('richiesteEvasaAccountMantenuto')}</li>}
+            {esitoEvasione.chiaviCondivise > 0 && (
+              <li className="font-semibold text-kidville-warn-strong">{t('oblioParzialeChiaviCondivise')}</li>
+            )}
           </ul>
         </div>
       )}

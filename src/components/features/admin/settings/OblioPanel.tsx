@@ -107,6 +107,10 @@ export function OblioPanel({ userId }: { userId: string }) {
 
   // Ogni volta che sale, l'elenco si rilegge (dopo un'anonimizzazione).
   const [tentativo, setTentativo] = useState(0);
+  // L'ultima anonimizzazione è stata PARZIALE perché una chiave di ricerca era
+  // condivisa con un doppione (2026-10-09): il bambino sparisce dall'elenco, e
+  // senza questo avviso nessuno saprebbe che dei suoi dati sono rimasti.
+  const [parzialeChiavi, setParzialeChiavi] = useState(false);
 
   // La forma che soddisfa `react-hooks/set-state-in-effect` invece di spegnerla:
   // la lettura è una funzione di MODULO che non tocca lo stato, e i `setState`
@@ -184,6 +188,7 @@ export function OblioPanel({ userId }: { userId: string }) {
   }, [userId]);
 
   const apri = async (c: Candidato) => {
+    setParzialeChiavi(false);
     if (c.registro_primaria) {
       // Niente misura: la route risponderebbe 409. Si mostra il motivo e basta.
       setTarget(c);
@@ -204,6 +209,7 @@ export function OblioPanel({ userId }: { userId: string }) {
       const res = await fetch('/api/admin/gdpr/erase', { method: 'POST', headers: hdr, body: JSON.stringify({ alunno_id: target.id, mode: 'execute', confirm }) });
       const j = await res.json();
       if (!res.ok) { alert(messaggioDaCorpo(j, t('errore'))); return; }
+      setParzialeChiavi(Number((j as { chiavi_condivise_escluse?: unknown } | null)?.chiavi_condivise_escluse ?? 0) > 0);
       setTarget(null);
       setMisura('assente');
       setTentativo((n) => n + 1);
@@ -240,6 +246,12 @@ export function OblioPanel({ userId }: { userId: string }) {
         genitoriAnonimizzati={dry ? dry.parents : null}
         onRiprova={target ? () => { void misuraDi(target); } : undefined}
       />
+
+      {parzialeChiavi && (
+        <div role="status" className="rounded-2xl border border-kidville-warn/30 bg-kidville-warn-soft p-4 font-maven text-[13px] font-semibold leading-relaxed text-kidville-warn-strong">
+          {t('oblioParzialeChiaviCondivise')}
+        </div>
+      )}
 
       {erroreElenco !== null ? (
         <div role="alert" className="rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-[13px] font-semibold leading-relaxed text-kidville-error-strong">

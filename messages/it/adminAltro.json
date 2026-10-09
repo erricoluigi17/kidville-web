@@ -13,6 +13,7 @@
   "oblioStatoNonIscritto": "non iscritto",
   "oblioRegistroPrimariaBadge": "Registro da conservare",
   "oblioRegistroPrimariaTesto": "Questo bambino ha voti, pagelle, scrutini, note o certificati delle competenze della primaria: il registro va conservato per legge (GDPR art. 17 §3 lett. b), quindi la scheda non si anonimizza.",
+  "oblioParzialeChiaviCondivise": "Oblio PARZIALE: il codice fiscale o il documento è condiviso con un’altra scheda ancora attiva (un doppione), quindi le domande d’iscrizione, i bonifici e i movimenti di cassa agganciati a quella chiave sono rimasti in chiaro. Risolvi prima il doppione.",
   "oblioClasse": "Classe {classe} · ",
   "oblioSede": "Sede:",
   "oblioGenitori": "Genitori: {elenco}",

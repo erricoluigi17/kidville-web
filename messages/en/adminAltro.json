@@ -13,6 +13,7 @@
   "oblioStatoNonIscritto": "unenrolled",
   "oblioRegistroPrimariaBadge": "Register to keep",
   "oblioRegistroPrimariaTesto": "This child has primary school marks, report cards, assessments, notes or competence certificates: the register must be kept by law (GDPR art. 17(3)(b)), so the record cannot be anonymised.",
+  "oblioParzialeChiaviCondivise": "PARTIAL erasure: the tax code or the ID document is shared with another active record (a duplicate), so the enrolment applications, bank transfers and cash entries linked to it are still readable. Resolve the duplicate first.",
   "oblioClasse": "Class {classe} · ",
   "oblioSede": "Location:",
   "oblioGenitori": "Parents: {elenco}",

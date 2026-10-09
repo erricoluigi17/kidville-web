@@ -110,6 +110,19 @@ export function articoloMinore(codiceFiscale?: string | null): string {
  */
 export const DEFAULT_CAUSALE_TEMPLATE = '{descrizione} {codice} {codice_fiscale} {nome_completo} {sede}'
 
+/**
+ * Quanto può essere lunga, nella causale del BONIFICO, la descrizione della voce.
+ *
+ * Il conto è quello del modello di fabbrica qui sopra contro il taglio a 50 di alcune banche:
+ * 50 − (spazio + 7 del codice) − (spazio + 16 del codice fiscale) − 1 di margine = **24**. La
+ * descrizione sta in testa e da sola non ha un limite: un ordine di merchandise arriva a 300
+ * caratteri, una rata aggiunge « — Rata i/n», e senza questo tetto codice e CF scivolerebbero
+ * oltre il taglio della banca — o oltre i 140 dell'app stessa. Il 2026-10-09 nessuna voce
+ * APERTA lo superava (la più lunga, ripulita, ne fa 24), quindi oggi non accorcia niente: è la
+ * garanzia per le descrizioni di domani. Si taglia su un confine di parola (`causalePerBanca`).
+ */
+export const LUNGHEZZA_DESCRIZIONE_BONIFICO = 24
+
 /** Una voce del catalogo dei segnaposto: chiave · etichetta · esempio d'anteprima. */
 export interface SegnapostoCausale {
     chiave: string
@@ -271,8 +284,9 @@ const SEGNAPOSTO_CODICE = '{codice}'
  * Garantisce il segnaposto del codice in un modello che non lo cita.
  *
  * ─── PERCHÉ L'INSERIMENTO AUTOMATICO ESISTE ─────────────────────────────────────
- * Le tre sedi hanno modelli propri in `admin_settings.causali_config`, scritti quando il
- * codice non esisteva, e il titolare ha chiesto che il codice ci sia **comunque**.
+ * Le sedi possono avere modelli propri in `admin_settings.causali_config` scritti quando il
+ * codice non esisteva (il 2026-10-09 erano vuoti in tutte e quattro, ma il pannello resta
+ * aperto), e il titolare ha chiesto che il codice ci sia **comunque**.
  * Migrare quel JSONB darebbe una riga giusta oggi e sbagliata alla prima modifica
  * dell'admin: il pannello riscrive il campo per intero, quindi chi ritocca la propria
  * causale ributterebbe fuori il `{codice}` senza accorgersene, e senza un errore da
@@ -319,9 +333,13 @@ export function conCodiceVoce(template: string): string {
  * Da questa porta passano tutte le strade che la famiglia ricopia: l'elenco pagamenti
  * del genitore, le due copie del sollecito (testo e riquadro HTML) e l'anteprima che la
  * segreteria vede nel pannello delle causali.
+ *
+ * La descrizione entra già accorciata a `LUNGHEZZA_DESCRIZIONE_BONIFICO`, perché codice e
+ * codice fiscale restino nei primi 50 caratteri anche dietro una descrizione lunga.
  */
 export function causaleBonifico(dati: DatiCausale, template?: string | null): string {
-    return causalePerBanca(renderCausale(conCodiceVoce(template || DEFAULT_CAUSALE_TEMPLATE), dati))
+    const descrizione = causalePerBanca(dati.descrizione ?? '', LUNGHEZZA_DESCRIZIONE_BONIFICO)
+    return causalePerBanca(renderCausale(conCodiceVoce(template || DEFAULT_CAUSALE_TEMPLATE), { ...dati, descrizione }))
 }
 
 /**

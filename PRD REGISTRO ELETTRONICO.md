@@ -26,18 +26,25 @@ ora:   Retta 10 2026 K7MXN3P RSSMRA85T10Z999X Mario Rossi GIUGLIANO
 ```
 
 **Cosa cambia.**
-1. **`src/lib/pagamenti/causale-banca.ts`** (nuovo, puro, zero import — finisce nel bundle client): `causalePerBanca` toglie gli accenti, trasforma `€` in `EUR` e `×` in `x`, riduce ogni altro simbolo a uno spazio e taglia a 140 sull'ultimo spazio.
-2. **`causaleBonifico`** — l'unica porta del bonifico (elenco pagamenti del genitore, sollecito testo e HTML, anteprima della segreteria) — passa l'uscita per `causalePerBanca`. Modello di fabbrica: `{descrizione} {codice} {codice_fiscale} {nome_completo} {sede}`. Il segnaposto `{minore}` resta nel catalogo per i modelli personalizzati.
+1. **`src/lib/pagamenti/causale-banca.ts`** (nuovo, puro, zero import — finisce nel bundle client): `testoPerBanca` toglie gli accenti (`NFKD`), traslittera le lettere che nessuna normalizzazione scompone (ß→ss, æ→ae, ø→o, ł→l…), trasforma `€` in `EUR` e `×` in ` x ` (fra spazi: incollato, «245×367» diventerebbe un codice voce finto) e riduce ogni altro simbolo a uno spazio; `causalePerBanca` è la stessa pulizia più il taglio a 140 sull'ultimo spazio.
+2. **`causaleBonifico`** — l'unica porta del bonifico (elenco pagamenti del genitore, sollecito testo e HTML, anteprima della segreteria) — passa l'uscita per `causalePerBanca`. Modello di fabbrica: `{descrizione} {codice} {codice_fiscale} {nome_completo} {sede}`, con la descrizione **accorciata a 24 caratteri** (`LUNGHEZZA_DESCRIZIONE_BONIFICO` = 50 − codice − CF − spazi): così codice e CF restano nei primi 50 anche dietro un ordine di merchandise o una rata. Oggi nessuna voce aperta supera i 24 caratteri: è la garanzia per quelle di domani. Il segnaposto `{minore}` resta nel catalogo per i modelli personalizzati.
 3. **La fattura elettronica non cambia**: `renderCausale` è intatto, e il tracciato FatturaPA tiene accenti e `/` con le sue regole (lock in `pagamenti-causale-fattura.test.ts`).
 4. **Il codice della voce resta `#K7MXN3P` dentro l'app** (modulo congelato intatto, `suggerimenti.codice_voce` e interfaccia di riconciliazione invariati): il `#` sparisce solo nella stringa per la banca, e l'estrattore legge già la forma senza.
-5. **Riconciliazione**: i segnali deboli «nome in causale» e «descrizione in causale» confrontano anche la forma coi simboli ridotti a spazio (`soloParole`), altrimenti ogni causale nuova li avrebbe persi (`retta 10/2026` non sta in `retta 10 2026`, `d'angelo` non sta in `d angelo`). `norm()` — dentro l'impronta anti doppio import — non si tocca.
+5. **Riconciliazione.**
+   - I segnali deboli «nome in causale» e «descrizione in causale» confrontano anche la forma ripulita con **la stessa** `testoPerBanca` dell'uscita (la descrizione accorciata come esce), altrimenti ogni causale nuova li avrebbe persi (`retta 10/2026` non sta in `retta 10 2026`, `d'angelo` non sta in `d angelo`, `2 felpa` non sta in `2 x felpa`). `norm()` — dentro l'impronta anti doppio import — non si tocca.
+   - **Il CF spezzato dalla banca si ricuce** (`cfRicuciti` in `estraiCodiciFiscali`): token interi adiacenti la cui unione fa esattamente 16 caratteri con la forma del CF. Trovato dalla revisione: la variante senza spazi ricomponeva un CF spezzato solo grazie ai « - » del formato vecchio. Misura: **69 movimenti su 917 portano il CF solo spezzato**, con lo spazio in un punto sempre diverso (è l'export che va a capo).
 6. **Pannello Causali**: l'esempio del chip `{codice}` è nella forma che esce (`MNKPRTF`) e la nota spiega che accenti, apostrofi e simboli vengono tolti apposta.
 
 **Log.** Nessuna route, integrazione esterna o percorso d'errore nuovo (funzioni pure): nessun log aggiunto. La causale non si logga — contiene codice fiscale e nome di un minore.
 
 **Da fare / aperto.**
 - I **solleciti già spediti** portano ancora la causale vecchia col `#`: non si riscrivono email partite. La card del genitore cambia subito, perché la causale si ricalcola a ogni richiesta.
-- Prova sul campo: al prossimo import dell'estratto conto contare i movimenti col codice nella forma senza `#`, e sentire dalla segreteria se arrivano ancora bonifici rifiutati.
+- Prova sul campo: al prossimo import dell'estratto conto contare i movimenti col codice nella forma senza `#`, quelli col CF **ricucito**, e sentire dalla segreteria se arrivano ancora bonifici rifiutati.
+- **Limiti dichiarati, non corretti.**
+  - Un **codice voce** spezzato dalla banca («K7M XN3P») non si ricompone: il recupero si appoggiava al `#`, che dalla banca non è mai arrivato (0 su 451); misura: 1 caso al più, contro 160 codici interi. Il modulo è congelato, e il CF accanto resta l'aggancio di riserva.
+  - Nel corpo testuale del sollecito la causale sta ancora fra virgolette (`"…"`): chi la seleziona a mano può prendersi anche quelle. La stessa email porta, nel riquadro «DATI PER IL BONIFICO», la riga `Causale:` pulita.
+  - Sul segnale debole del nome, una particella cade («D'Angelo» → token «angelo»): un suggerimento può diventare un po' più largo. Mai un incasso automatico, che vuole codice o CF.
+  - `{importo}` (nessuna sede lo usa oggi) esce come «EUR 150 00».
 
 ## 🗂️ Changelog — Non iscritti in un elenco a parte ed eliminazione definitiva di una scheda; il registro della primaria non si cancella né si anonimizza — 2026-10-08/09 (branch `feat/elimina-non-iscritti`)
 

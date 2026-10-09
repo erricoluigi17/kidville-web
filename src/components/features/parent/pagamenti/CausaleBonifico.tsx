@@ -104,6 +104,12 @@ export interface SegmentoCausale {
  *     segmentiCausale(c).map((s) => s.testo).join(' ') === c
  *
  * Effetto tipografico identico, appunti identici anche via selezione manuale.
+ *
+ * ⚠️ Dal 2026-10-09 la causale arriva dal server di sole lettere, cifre e spazi
+ * (`causalePerBanca`: Poste rifiuta `#`, `/` e apostrofi), quindi né il separatore « - »
+ * né il trattino dentro un cognome compaiono più, e qui non scatta niente: ogni parola
+ * resta libera. La logica resta perché è innocua, e perché la card mostra quello che il
+ * server manda — se un giorno un trattino tornasse, il problema tipografico tornerebbe con lui.
  */
 export function segmentiCausale(causale: string): SegmentoCausale[] {
     const segmenti: SegmentoCausale[] = [];

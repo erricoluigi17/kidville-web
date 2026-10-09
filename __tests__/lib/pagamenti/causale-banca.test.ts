@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
-import { LIMITE_CAUSALE_BANCA, causalePerBanca } from '@/lib/pagamenti/causale-banca'
+import { LIMITE_CAUSALE_BANCA, causalePerBanca, testoPerBanca } from '@/lib/pagamenti/causale-banca'
 import { codiceVoce, estraiCodiciVoce } from '@/lib/pagamenti/codice-voce'
 import { estraiCodiciFiscali } from '@/lib/pagamenti/riconciliazione'
 
@@ -37,7 +37,9 @@ describe('causalePerBanca — il set sicuro', () => {
     ['il separatore « - » del modello storico', 'Retta - per il minore Mario', 'Retta per il minore Mario'],
     ['la lineetta delle rate e dei ticket', 'Ricarica mensa — 20 ticket', 'Ricarica mensa 20 ticket'],
     ['le lettere accentate', 'Niccolò Né Ù À È', 'Niccolo Ne U A E'],
-    ['il segno di moltiplicazione del merchandise', 'Merchandise: 2× Felpa (M)', 'Merchandise 2x Felpa M'],
+    ['il segno di moltiplicazione del merchandise', 'Merchandise: 2× Felpa (M)', 'Merchandise 2 x Felpa M'],
+    ['le lettere che nessuna normalizzazione scompone', 'Weiß Łukasz Ærø Đorđe Œuvre', 'Weiss Lukasz AEro Dorde OEuvre'],
+    ['legature e cifre «larghe» (NFKD)', 'ﬁore ２０２６', 'fiore 2026'],
     ['il simbolo dell’euro', '€ 150,00', 'EUR 150 00'],
     ['le parentesi quadre', '[Promemoria] Retta', 'Promemoria Retta'],
     ['tab, a capo e spazi doppi', 'Retta\t10\n\n2026   GIUGLIANO', 'Retta 10 2026 GIUGLIANO'],
@@ -75,7 +77,37 @@ describe('causalePerBanca — il set sicuro', () => {
   })
 })
 
+describe('causalePerBanca — il segno «×» non fabbrica un codice', () => {
+  it('«245×367» resta due numeri: incollati sarebbero un codice voce finto', () => {
+    // `245X367` è fatto di simboli dell'alfabeto del codice, con cifre e lettere: un `x`
+    // incollato lo farebbe estrarre, e l'abbinamento automatico lo tratterebbe da codice
+    // sconosciuto (giallo) anche su un movimento col codice vero e il CF.
+    const uscita = causalePerBanca('Tela 245×367')
+    expect(uscita).toBe('Tela 245 x 367')
+    expect(estraiCodiciVoce(uscita)).toEqual([])
+    // Controllo negativo: la forma incollata il codice lo fabbricherebbe davvero.
+    expect(estraiCodiciVoce('Tela 245x367')).toEqual(['#245X367'])
+  })
+})
+
+describe('testoPerBanca — la stessa pulizia, senza taglio', () => {
+  it('non taglia: serve a confrontare, non a stampare', () => {
+    const lunga = 'parola '.repeat(40).trim()
+    expect(testoPerBanca(lunga)).toBe(lunga)
+    expect(testoPerBanca(lunga).length).toBeGreaterThan(LIMITE_CAUSALE_BANCA)
+  })
+
+  it('causalePerBanca è testoPerBanca più il taglio, e nient’altro', () => {
+    const testo = "Retta 10/2026 — Rata 2/10 per Niccolò D'Angelo"
+    expect(causalePerBanca(testo)).toBe(testoPerBanca(testo))
+  })
+})
+
 describe('causalePerBanca — la lunghezza', () => {
+  it('il limite si può stringere: si taglia sull’ultimo spazio entro quel limite', () => {
+    expect(causalePerBanca('Retta 10/2026 — Rata 2/10 extra', 24)).toBe('Retta 10 2026 Rata 2 10')
+  })
+
   it('taglia a 140 caratteri sull’ultimo spazio, senza spezzare una parola', () => {
     const lunga = Array.from({ length: 60 }, (_, i) => `parola${i}`).join(' ')
     const uscita = causalePerBanca(lunga)

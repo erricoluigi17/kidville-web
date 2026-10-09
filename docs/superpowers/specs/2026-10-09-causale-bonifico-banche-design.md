@@ -42,7 +42,7 @@ nuova: Retta 10 2026 K7MXN3P RSSMRA85T10Z999X Mario Rossi GIUGLIANO
 ## Disegno
 
 1. **`src/lib/pagamenti/causale-banca.ts`** — modulo puro, zero import (finisce nel bundle client
-   attraverso `causale.ts`). `causalePerBanca(testo)`: accenti tolti (NFD), `€` → `EUR`, `×` → `x`,
+   attraverso `causale.ts`). `causalePerBanca(testo)`: accenti tolti (NFKD), `€` → `EUR`, `×` → ` x `,
    ogni altro carattere fuori da `[A-Za-z0-9]` diventa uno spazio, spazi compressi, taglio a
    `LIMITE_CAUSALE_BANCA = 140` sull'ultimo spazio. Idempotente; un non-stringa dà `''`.
 2. **`causale.ts`** — modello di fabbrica `{descrizione} {codice} {codice_fiscale} {nome_completo} {sede}`;
@@ -58,6 +58,15 @@ nuova: Retta 10 2026 K7MXN3P RSSMRA85T10Z999X Mario Rossi GIUGLIANO
    Il confronto di prima resta: nessun abbinamento di oggi va perso.
 5. **Pannello segreteria** — esempio del chip `{codice}` nella forma che esce davvero (`MNKPRTF`), e
    una frase che spiega che accenti e simboli vengono tolti apposta.
+
+## Correzioni dopo la revisione
+
+- **Descrizione accorciata a 24 caratteri** nella sola strada del bonifico (`LUNGHEZZA_DESCRIZIONE_BONIFICO`),
+  perché codice e CF restino nei primi 50 anche dietro merchandise e rate.
+- **CF spezzato ricucito** (`cfRicuciti`): 69 movimenti su 917 portano il CF solo spezzato, e la
+  variante senza spazi lo ricomponeva soltanto grazie ai « - » del formato vecchio.
+- **Una pulizia sola ai due capi** (`testoPerBanca`): la riconciliazione confronta con la stessa
+  trasformazione dell'uscita. `×` → ` x ` fra spazi (niente codici finti), `NFKD` e traslitterazioni.
 
 ## Fuori perimetro, dichiarato
 

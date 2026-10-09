@@ -92,10 +92,37 @@ describe('la causale che arriva alla BANCA (Poste, 2026-10-09)', () => {
     expect(estraiCodiciFiscali(tagliata)).toEqual([CF_SINTETICO])
   })
 
+  it('codice e CF nei primi 50 anche con le descrizioni LUNGHE (merchandise, rate)', () => {
+    // La descrizione sta in testa e non ha un limite suo: un ordine di merchandise arriva a
+    // 300 caratteri, una rata aggiunge « — Rata i/n». Senza accorciarla, codice e CF
+    // scivolerebbero oltre il taglio di 50 — e oltre i 140 dell'app stessa.
+    const descrizioni = [
+      'Merchandise: 2× Felpa (M), 1× Cappellino (U), 3× Maglietta (S), 1× Zaino (U), 2× Borraccia (U), 1× Grembiule (M), 1× Felpa (L)',
+      'Retta annuale 2026/27 — Rata 10/10',
+      'Iscrizione anno scolastico 2026/2027 — quota associativa e materiali',
+    ]
+    for (const descrizione of descrizioni) {
+      const causale = causaleBonifico({ descrizione, codice: CODICE, codiceFiscale: CF_SINTETICO, nome: 'Mario', cognome: 'Rossi', sede: 'Kidville Giugliano' })
+      const tagliata = causale.slice(0, 50)
+      expect(estraiCodiciVoce(tagliata), descrizione).toEqual([CODICE])
+      expect(estraiCodiciFiscali(tagliata), descrizione).toEqual([CF_SINTETICO])
+      expect(causale, descrizione).toMatch(SET_SICURO)
+    }
+    // La descrizione corta resta INTERA: l'accorciamento morde solo dove serve.
+    expect(causaleBonifico({ descrizione: 'Retta annuale 2026/27 — Rata 10/10', codice: CODICE }))
+      .toBe(`Retta annuale 2026 27 ${NUDO}`)
+  })
+
+  it('l’accorciamento della descrizione vale solo per il BONIFICO, non per il motore', () => {
+    const lunga = 'Iscrizione anno scolastico 2026/2027 — quota associativa e materiali'
+    expect(renderCausale('{descrizione}', { descrizione: lunga })).toBe(lunga)
+  })
+
   it('il modello di FABBRICA, con i dati più sporchi, esce dentro il set sicuro', () => {
     const causale = causaleBonifico(DATI_SPORCHI)
     expect(causale).toMatch(SET_SICURO)
-    expect(causale).toBe(`Retta 10 2026 rata 1 3 2x Felpa ${NUDO} ${CF_SINTETICO} Niccolo D Angelo Rossi GIUGLIANO`)
+    // La descrizione sporca, ripulita, fa 32 caratteri: entra accorciata ai 24 del bonifico.
+    expect(causale).toBe(`Retta 10 2026 rata 1 3 2 ${NUDO} ${CF_SINTETICO} Niccolo D Angelo Rossi GIUGLIANO`)
     expect(estraiCodiciVoce(causale)).toEqual([CODICE])
     expect(estraiCodiciFiscali(causale)).toEqual([CF_SINTETICO])
   })

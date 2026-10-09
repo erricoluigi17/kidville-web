@@ -15,7 +15,6 @@ import {
   type MotivoBloccoEliminazione,
 } from '@/lib/alunni/elimina-definitivo'
 import { leggiRegistroPrimaria } from '@/lib/alunni/registro-primaria'
-import { sondaFunzioneEliminazione } from '@/lib/alunni/sonda-eliminazione'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -32,12 +31,13 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 // ─── L'ORDINE È LA DIFESA ───────────────────────────────────────────────────
 //  1. gate di ruolo e di sede, poi la scheda letta con la sede accanto;
 //  2. la MISURA (sole SELECT): da lì le scelte disponibili;
-//  3. la SONDA: la funzione SQL esiste? Una chiamata su un uuid che nessuna
-//     scheda porta, a cui la migrazione risponde `non_trovato` PRIMA di
-//     qualunque scrittura. Su un database non migrato la risposta «non
-//     disponibile: nessuna modifica è stata fatta» deve essere VERA — e lo è
-//     solo se lo si sa prima del primo effetto, non dopo. Vive in
-//     `@/lib/alunni/sonda-eliminazione`, che spiega perché non sta qui;
+//  3. la VERIFICA nel database: la stessa funzione SQL con `p_solo_verifica:
+//     true`, che fa TUTTI i suoi controlli (con i suoi lock) e risponde
+//     `ammissibile` senza cancellare niente — oppure lo stesso rifiuto della
+//     cancellazione vera. Così un rifiuto del database arriva PRIMA del primo
+//     effetto, e su un database non migrato (`PGRST202`) la risposta «non
+//     disponibile: nessuna modifica è stata fatta» è VERA. Fra la verifica e la
+//     chiamata vera resta solo la finestra di una corsa;
 //  4. le TRACCE DI TESTO SENZA FK (`bonificaTracceTestualiAlunno`, la stessa
 //     funzione dell'oblio): notifiche che nominano il bambino, testo delle
 //     segnalazioni su sue voci di diario, suoi media e suoi thread, sospensioni,
@@ -108,13 +108,18 @@ function campiEffetti(e: Effetti): Record<string, number> {
 }
 
 /**
- * Il rifiuto della funzione SQL → la risposta, con gli effetti già avvenuti. Uno
- * `switch` con i corpi LETTERALI, e non una mappa `codice → { status, codice }`:
+ * Il rifiuto della funzione SQL → la risposta. `effetti` è `null` quando il
+ * rifiuto arriva dalla VERIFICA, prima di ogni effetto: allora il corpo non lo
+ * porta (`undefined` esce dal JSON), perché non c'è niente da dire. Dopo tracce
+ * e file invece c'è, ed è la verità registrata.
+ *
+ * Uno `switch` con i corpi LETTERALI, e non una mappa `codice → { status, codice }`:
  * il lock `errori-con-codice` legge il `codice` dentro `NextResponse.json({ … })`,
  * e `codice: rifiuto.codice` sarebbe un valore che non sa leggere — cioè un
  * codice che nessuno controlla.
  */
-function rispostaAlRifiutoDelDb(code: string | undefined, effetti: Effetti): NextResponse {
+function rispostaAlRifiutoDelDb(code: string | undefined, effettiGiaAvvenuti: Effetti | null): NextResponse {
+  const effetti = effettiGiaAvvenuti ?? undefined
   switch (code) {
     case 'non_trovato':
       return NextResponse.json(
@@ -410,36 +415,57 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
       return NextResponse.json({ ok: true, scelta: sceltaFatta, parziale, numeri, esito })
     }
 
-    // ─── ELIMINA: la sonda, poi le tracce di testo, poi i file, poi il database ─
-    const sonda = await sondaFunzioneEliminazione(supabase)
-    if (sonda.esito === 'assente') {
-      logEvento('gdpr', 'error', {
-        operazione: OP,
-        esito: 'funzione-eliminazione-assente',
-        entita_tipo: 'alunni',
-        entita_id: alunno_id,
-      }, sonda.errore)
-      return NextResponse.json(
-        { error: 'Non disponibile', codice: 'ALUNNO_ELIMINAZIONE_NON_DISPONIBILE' },
-        { status: 503 },
-      )
-    }
-    if (sonda.esito === 'guasto') {
-      logErrore({ operazione: OP, stato: 500, evento: 'elimina_sonda' }, sonda.errore)
+    // ─── ELIMINA: la verifica, poi le tracce di testo, poi i file, poi il database ─
+    const conPagamenti = sceltaFatta === 'elimina_con_pagamenti'
+
+    // La VERIFICA: la stessa funzione, con `p_solo_verifica: true` — tutti i
+    // controlli, nessuna cancellazione. Un rifiuto qui costa zero: non è ancora
+    // uscito niente. La misura TS qui sopra è un'anteprima; questa è la porta,
+    // chiesta prima di attraversarla.
+    const { data: verifica, error: verificaErr } = await supabase.rpc('elimina_alunno_definitivo', {
+      p_alunno: alunno_id,
+      p_con_pagamenti: conPagamenti,
+      p_solo_verifica: true,
+    })
+    if (verificaErr) {
+      if ((verificaErr as { code?: string }).code === 'PGRST202') {
+        logEvento('gdpr', 'error', {
+          operazione: OP,
+          esito: 'funzione-eliminazione-assente',
+          entita_tipo: 'alunni',
+          entita_id: alunno_id,
+        }, verificaErr)
+        return NextResponse.json(
+          { error: 'Non disponibile', codice: 'ALUNNO_ELIMINAZIONE_NON_DISPONIBILE' },
+          { status: 503 },
+        )
+      }
+      logErrore({ operazione: OP, stato: 500, evento: 'elimina_verifica' }, verificaErr)
       return NextResponse.json(
         { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA' },
         { status: 500 },
       )
     }
-    if (sonda.esito === 'inattesa') {
-      // La funzione c'è ma non risponde come la migrazione dice: non si sa che
-      // cosa farà con un uuid vero, quindi non si comincia.
-      logEvento('gdpr', 'error', {
+    const esitoVerifica = verifica as { ok?: boolean; code?: string } | null
+    if (esitoVerifica?.ok === false) {
+      logEvento('gdpr', 'warn', {
         operazione: OP,
-        esito: 'sonda-eliminazione-inattesa',
+        esito: 'eliminazione-rifiutata-in-verifica',
         entita_tipo: 'alunni',
         entita_id: alunno_id,
-        tipo: sonda.codice,
+        tipo: esitoVerifica.code ?? 'risposta-illeggibile',
+      })
+      return rispostaAlRifiutoDelDb(esitoVerifica.code, null)
+    }
+    if (esitoVerifica?.ok !== true || esitoVerifica.code !== 'ammissibile') {
+      // Né «ammissibile» né un rifiuto: la funzione non risponde come la
+      // migrazione dice, e non si sa che cosa farà. Non si comincia.
+      logEvento('gdpr', 'error', {
+        operazione: OP,
+        esito: 'verifica-eliminazione-inattesa',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: esitoVerifica?.code ?? 'risposta-illeggibile',
       })
       return NextResponse.json(
         { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA' },
@@ -496,7 +522,8 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
 
     const { data: rpc, error: rpcErr } = await supabase.rpc('elimina_alunno_definitivo', {
       p_alunno: alunno_id,
-      p_con_pagamenti: sceltaFatta === 'elimina_con_pagamenti',
+      p_con_pagamenti: conPagamenti,
+      p_solo_verifica: false,
     })
 
     let esitoIncerto = false
@@ -504,7 +531,7 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
     if (rpcErr) {
       // Un errore della chiamata NON vuol dire «non è successo»: la risposta può
       // essersi persa DOPO il commit (rete, gateway). Lo dice soltanto la scheda.
-      // Vale anche per un `PGRST202` qui: la sonda l'ha trovata un istante fa, e
+      // Vale anche per un `PGRST202` qui: la verifica l'ha trovata un istante fa, e
       // dopo tracce e file un 503 «nessuna modifica è stata fatta» sarebbe falso.
       logErrore({ operazione: OP, stato: 500, evento: 'db' }, rpcErr)
       const { data: ancora, error: ancoraErr } = await supabase

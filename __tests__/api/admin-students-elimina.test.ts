@@ -9,7 +9,7 @@ import { riduciValoreAudit } from '@/lib/audit/riassunto'
 // =============================================================================
 // `POST /api/admin/students/elimina` — l'eliminazione definitiva dai «non iscritti».
 // Le asserzioni sono sulla MUTAZIONE (che cosa è stato chiamato, scritto,
-// tolto dai bucket) e sull'ORDINE: la sonda della funzione SQL, poi le tracce
+// tolto dai bucket) e sull'ORDINE: la verifica della funzione SQL, poi le tracce
 // di testo senza FK, poi i file, poi il database, la traccia nuova solo a cose
 // fatte. Un 200 da solo non dice niente — e un errore da solo nemmeno: dopo il
 // primo effetto, ogni risposta deve dire che cosa è GIÀ successo.
@@ -51,8 +51,6 @@ const ANONIMIZZA_OK = {
 }
 
 const h = vi.hoisted(() => ({
-  /** L'uuid della chiamata-sonda: nessuna scheda lo porta, la funzione risponde `non_trovato`. */
-  SONDA: '00000000-0000-0000-0000-000000000000',
   requireStaff: vi.fn(),
   logScrittura: vi.fn(),
   logEvento: vi.fn(),
@@ -60,7 +58,7 @@ const h = vi.hoisted(() => ({
   bonificaAuditScritture: vi.fn(),
   bonificaTracce: vi.fn(),
   rpc: vi.fn(),
-  sonda: vi.fn(),
+  verifica: vi.fn(),
   db: {} as Record<string, Record<string, unknown>[]>,
   scritture: [] as unknown[],
   rimossi: [] as { bucket: string; percorsi: string[] }[],
@@ -119,7 +117,7 @@ vi.mock('@/lib/supabase/server-client', async () => {
       scritture: h.scritture as Scrittura[],
       rpc: {
         elimina_alunno_definitivo: (args) => {
-          if (args.p_alunno === h.SONDA) { h.ordine.push('sonda'); return h.sonda(args) }
+          if (args.p_solo_verifica === true) { h.ordine.push('verifica'); return h.verifica(args) }
           h.ordine.push('rpc')
           return h.rpc(args)
         },
@@ -195,8 +193,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SEDE_A } })
   h.rpc.mockReturnValue({ data: { ok: true, code: 'eliminato', righe: { legami: 0 } }, error: null })
-  // La migrazione risponde `non_trovato` a un uuid che nessuna scheda porta, PRIMA di qualunque scrittura.
-  h.sonda.mockReturnValue({ data: { ok: false, code: 'non_trovato' }, error: null })
+  // `p_solo_verifica: true`: tutti i controlli della funzione, nessuna cancellazione.
+  h.verifica.mockReturnValue({ data: { ok: true, code: 'ammissibile' }, error: null })
   // Come la funzione vera: la scheda risulta anonimizzata dopo la chiamata.
   h.anonimizzaAlunno.mockImplementation(async (_s: unknown, alunno: { id: string }) => {
     const riga = h.db.alunni.find((a) => a.id === alunno.id)
@@ -225,7 +223,7 @@ describe('POST /api/admin/students/elimina — chi, su chi', () => {
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(403)
     expect(h.rpc).not.toHaveBeenCalled()
-    expect(h.sonda).not.toHaveBeenCalled()
+    expect(h.verifica).not.toHaveBeenCalled()
     expect(h.bonificaTracce).not.toHaveBeenCalled()
     expect(h.rimossi).toEqual([])
   })
@@ -236,7 +234,7 @@ describe('POST /api/admin/students/elimina — chi, su chi', () => {
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(403)
     expect(h.rpc).not.toHaveBeenCalled()
-    expect(h.sonda).not.toHaveBeenCalled()
+    expect(h.verifica).not.toHaveBeenCalled()
     expect(h.bonificaTracce).not.toHaveBeenCalled()
     expect(h.rimossi).toEqual([])
   })
@@ -288,7 +286,7 @@ describe('dryrun', () => {
     expect(h.scritture).toEqual([])
     expect(h.rimossi).toEqual([])
     expect(h.rpc).not.toHaveBeenCalled()
-    expect(h.sonda).not.toHaveBeenCalled()
+    expect(h.verifica).not.toHaveBeenCalled()
     expect(h.bonificaTracce).not.toHaveBeenCalled()
   })
 
@@ -342,7 +340,7 @@ describe('execute — la scelta deve essere fra quelle offerte, e il rifiuto dic
     expect(res.status).toBe(409)
     expect((await res.json()).codice).toBe(codice)
     expect(h.rpc).not.toHaveBeenCalled()
-    expect(h.sonda).not.toHaveBeenCalled()
+    expect(h.verifica).not.toHaveBeenCalled()
     expect(h.bonificaTracce).not.toHaveBeenCalled()
     expect(h.anonimizzaAlunno).not.toHaveBeenCalled()
     expect(h.rimossi).toEqual([])
@@ -350,19 +348,19 @@ describe('execute — la scelta deve essere fra quelle offerte, e il rifiuto dic
 })
 
 describe('execute — elimina', () => {
-  it('ORDINE: sonda → tracce di testo → file → funzione SQL → bonifica audit → traccia', async () => {
+  it('ORDINE: verifica senza effetti → tracce di testo → file → funzione SQL → bonifica audit → traccia', async () => {
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(200)
-    expect(h.sonda).toHaveBeenCalledWith({ p_alunno: '00000000-0000-0000-0000-000000000000', p_con_pagamenti: false })
+    expect(h.verifica).toHaveBeenCalledWith({ p_alunno: AL, p_con_pagamenti: false, p_solo_verifica: true })
     expect(h.bonificaTracce).toHaveBeenCalledWith(expect.anything(), AL, OP)
-    expect(h.rpc).toHaveBeenCalledWith({ p_alunno: AL, p_con_pagamenti: false })
+    expect(h.rpc).toHaveBeenCalledWith({ p_alunno: AL, p_con_pagamenti: false, p_solo_verifica: false })
     expect(h.bonificaAuditScritture).toHaveBeenCalledWith(expect.anything(), [AL], OP)
-    const sonda = h.ordine.indexOf('sonda')
+    const verifica = h.ordine.indexOf('verifica')
     const tracce = h.ordine.indexOf('tracce')
     const primoStorage = h.ordine.indexOf('storage')
     const primoRpc = h.ordine.indexOf('rpc')
-    expect(sonda).toBeGreaterThanOrEqual(0)
-    expect(tracce).toBeGreaterThan(sonda)
+    expect(verifica).toBeGreaterThanOrEqual(0)
+    expect(tracce).toBeGreaterThan(verifica)
     expect(primoStorage).toBeGreaterThan(tracce)
     expect(h.ordine.lastIndexOf('storage')).toBeLessThan(primoRpc)
     expect(h.ordine.indexOf('bonifica')).toBeGreaterThan(primoRpc)
@@ -373,8 +371,8 @@ describe('execute — elimina', () => {
     )
   })
 
-  it('funzione assente (DB non migrato): la SONDA lo dice PRIMA di ogni effetto → 503, niente toccato', async () => {
-    h.sonda.mockReturnValue({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } })
+  it('funzione assente (DB non migrato): la VERIFICA lo dice PRIMA di ogni effetto → 503, niente toccato', async () => {
+    h.verifica.mockReturnValue({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } })
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(503)
     const j = await res.json()
@@ -386,8 +384,8 @@ describe('execute — elimina', () => {
     expect(h.logScrittura).not.toHaveBeenCalled()
   })
 
-  it('la sonda fallisce per un altro motivo: 500 e niente toccato', async () => {
-    h.sonda.mockReturnValue({ data: null, error: { code: '57014', message: 'canceling statement' } })
+  it('la verifica fallisce per un altro motivo: 500 e niente toccato', async () => {
+    h.verifica.mockReturnValue({ data: null, error: { code: '57014', message: 'canceling statement' } })
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(500)
     const j = await res.json()
@@ -398,13 +396,36 @@ describe('execute — elimina', () => {
     expect(h.rpc).not.toHaveBeenCalled()
   })
 
-  it('la sonda risponde qualcosa che non è `non_trovato`: 500 e niente toccato', async () => {
-    h.sonda.mockReturnValue({ data: { ok: true, code: 'eliminato' }, error: null })
+  it('la verifica risponde qualcosa che non è «ammissibile» né un rifiuto: 500 e niente toccato', async () => {
+    h.verifica.mockReturnValue({ data: { ok: true, code: 'eliminato' }, error: null })
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
     expect(res.status).toBe(500)
+    expect((await res.json()).effetti).toBeUndefined()
     expect(h.bonificaTracce).not.toHaveBeenCalled()
     expect(h.rimossi).toEqual([])
     expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it.each<{ code: string; status: number; codice: string }>([
+    { code: 'non_trovato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
+    { code: 'frequentante', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
+    { code: 'gia_anonimizzato', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
+    { code: 'registro_primaria', status: 409, codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
+    { code: 'ha_pagamenti', status: 409, codice: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI' },
+    { code: 'pagamenti_non_cancellabili', status: 409, codice: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI' },
+    { code: 'codice_mai_visto', status: 500, codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA' },
+  ])('la VERIFICA rifiuta con «$code»: $status $codice, e nessun effetto (niente `effetti` da dire)', async ({ code, status, codice }) => {
+    h.verifica.mockReturnValue({ data: { ok: false, code }, error: null })
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    expect(res.status).toBe(status)
+    const j = await res.json()
+    expect(j.codice).toBe(codice)
+    expect(j.effetti).toBeUndefined()
+    expect(h.bonificaTracce).not.toHaveBeenCalled()
+    expect(h.rimossi).toEqual([])
+    expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.logScrittura).not.toHaveBeenCalled()
+    expect(campiDelLog('eliminazione-rifiutata-in-verifica')).toMatchObject({ tipo: code, entita_id: AL })
   })
 
   it('tracce di testo incomplete: 500 PRIMA di file e database, con gli effetti già avvenuti', async () => {
@@ -509,11 +530,12 @@ describe('execute — elimina', () => {
     expect(campiDelLog('alunno-eliminato')).toMatchObject({ esito_incerto: true })
   })
 
-  it('con pagamenti cancellabili: «elimina_con_pagamenti» passa p_con_pagamenti=true', async () => {
+  it('con pagamenti cancellabili: «elimina_con_pagamenti» passa p_con_pagamenti=true, alla verifica e alla chiamata vera', async () => {
     h.db.pagamenti = [{ id: 'pag-1', alunno_id: AL, parent_payment_id: null }]
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina_con_pagamenti' }))
     expect(res.status).toBe(200)
-    expect(h.rpc).toHaveBeenCalledWith({ p_alunno: AL, p_con_pagamenti: true })
+    expect(h.verifica).toHaveBeenCalledWith({ p_alunno: AL, p_con_pagamenti: true, p_solo_verifica: true })
+    expect(h.rpc).toHaveBeenCalledWith({ p_alunno: AL, p_con_pagamenti: true, p_solo_verifica: false })
     expect(h.ordine.indexOf('tracce')).toBeLessThan(h.ordine.indexOf('storage'))
   })
 
@@ -549,7 +571,7 @@ describe('execute — elimina', () => {
 })
 
 describe('execute — anonimizza', () => {
-  it('chiama la funzione dell’oblio sul solo bambino, mai la RPC (nemmeno la sonda)', async () => {
+  it('chiama la funzione dell’oblio sul solo bambino, mai la RPC (nemmeno la verifica)', async () => {
     conPagamentoBloccato()
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'anonimizza' }))
     expect(res.status).toBe(200)
@@ -561,7 +583,7 @@ describe('execute — anonimizza', () => {
       OP,
     )
     expect(h.rpc).not.toHaveBeenCalled()
-    expect(h.sonda).not.toHaveBeenCalled()
+    expect(h.verifica).not.toHaveBeenCalled()
     // Il registro si rilegge SUBITO PRIMA dell'anonimizzazione, non solo nella misura.
     expect(h.lettureRegistro).toBe(2)
     expect(h.ordine.lastIndexOf('registro')).toBeLessThan(h.ordine.indexOf('anonimizza'))

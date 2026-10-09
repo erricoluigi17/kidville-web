@@ -39,11 +39,30 @@ let db: PGlite
 
 type PgErr = { code?: string; message: string }
 
-async function elimina(alunno: string, conPagamenti = false): Promise<{ ok: boolean; code: string; righe?: Record<string, number> }> {
+async function elimina(
+  alunno: string,
+  conPagamenti = false,
+  soloVerifica = false,
+): Promise<{ ok: boolean; code: string; righe?: Record<string, number> }> {
   const { rows } = await db.query<{ r: { ok: boolean; code: string; righe?: Record<string, number> } }>(
-    `SELECT public.elimina_alunno_definitivo('${alunno}', ${conPagamenti}) AS r`,
+    `SELECT public.elimina_alunno_definitivo('${alunno}', ${conPagamenti}, ${soloVerifica}) AS r`,
   )
   return rows[0].r
+}
+
+/** Quante righe ha l'alunno in ciascuna delle tabelle che la funzione cancella o tocca. */
+async function impronta(alunno: string): Promise<Record<string, number>> {
+  return {
+    alunni: await numero(`SELECT count(*) FROM public.alunni WHERE id = '${alunno}'`),
+    diario: await numero(`SELECT count(*) FROM public.eventi_diario WHERE alunno_id = '${alunno}'`),
+    legami: await numero(`SELECT count(*) FROM public.legame_genitori_alunni WHERE alunno_id = '${alunno}'`),
+    student_parents: await numero(`SELECT count(*) FROM public.student_parents WHERE student_id = '${alunno}'`),
+    presenze: await numero(`SELECT count(*) FROM public.presenze WHERE alunno_id = '${alunno}'`),
+    pagamenti: await numero(`SELECT count(*) FROM public.pagamenti WHERE alunno_id = '${alunno}'`),
+    solleciti: await numero(`SELECT count(*) FROM public.solleciti WHERE alunno_id = '${alunno}'`),
+    armadietto: await numero(`SELECT count(*) FROM public.armadietto WHERE alunno_id = '${alunno}'`),
+    tag_galleria: await numero(`SELECT count(*) FROM public.galleria_media WHERE '${alunno}' = ANY(tag_alunni)`),
+  }
 }
 
 async function numero(sql: string): Promise<number> {
@@ -280,12 +299,25 @@ describe('elimina_alunno_definitivo — il registro della primaria', () => {
   })
 })
 
-describe('elimina_alunno_definitivo — i pagamenti', () => {
-  async function pagamento(alunno: string): Promise<string> {
-    const { rows } = await db.query<{ id: string }>(`INSERT INTO public.pagamenti (alunno_id) VALUES ('${alunno}') RETURNING id`)
-    return rows[0].id
-  }
+async function pagamento(alunno: string): Promise<string> {
+  const { rows } = await db.query<{ id: string }>(`INSERT INTO public.pagamenti (alunno_id) VALUES ('${alunno}') RETURNING id`)
+  return rows[0].id
+}
 
+// [nome, la riga che blocca, la tabella in cui quella riga deve restare]
+const BLOCCHI: [string, (p: string) => string, string][] = [
+  ['incasso registrato', (p) => `INSERT INTO public.incassi (pagamento_id) VALUES ('${p}')`, 'incassi'],
+  ['ricevuta emessa', (p) => `INSERT INTO public.ricevute_emesse (alunno_id, pagamento_id) VALUES ('${DOPPIONE}', '${p}')`, 'ricevute_emesse'],
+  ['fattura emessa', (p) => `INSERT INTO public.fatture_emesse (pagamento_id) VALUES ('${p}')`, 'fatture_emesse'],
+  ['bonifico abbinato', (p) => `INSERT INTO public.riconciliazione_movimenti (pagamento_id) VALUES ('${p}')`, 'riconciliazione_movimenti'],
+  ['quota di un fratello appesa', (p) => `INSERT INTO public.pagamenti (alunno_id, parent_payment_id) VALUES ('${FRATELLO}', '${p}')`, 'pagamenti'],
+  // Il file può essere già partito verso Aruba/SDI: la voce sparirebbe in CASCADE col pagamento.
+  ['fattura in coda già in invio', (p) => `INSERT INTO public.fatture_coda (pagamento_id, stato) VALUES ('${p}', 'in_invio')`, 'fatture_coda'],
+  // Esito ambiguo: non si sa se la fattura è nata o no.
+  ['fattura in coda in errore', (p) => `INSERT INTO public.fatture_coda (pagamento_id, stato) VALUES ('${p}', 'errore')`, 'fatture_coda'],
+]
+
+describe('elimina_alunno_definitivo — i pagamenti', () => {
   it('con pagamenti e senza permesso: rifiuta «ha_pagamenti» e non tocca niente', async () => {
     await pagamento(DOPPIONE)
     await sentinella(DOPPIONE)
@@ -304,18 +336,6 @@ describe('elimina_alunno_definitivo — i pagamenti', () => {
     expect(await numero(`SELECT count(*) FROM public.solleciti`)).toBe(0)
   })
 
-  // [nome, la riga che blocca, la tabella in cui quella riga deve restare]
-  const BLOCCHI: [string, (p: string) => string, string][] = [
-    ['incasso registrato', (p) => `INSERT INTO public.incassi (pagamento_id) VALUES ('${p}')`, 'incassi'],
-    ['ricevuta emessa', (p) => `INSERT INTO public.ricevute_emesse (alunno_id, pagamento_id) VALUES ('${DOPPIONE}', '${p}')`, 'ricevute_emesse'],
-    ['fattura emessa', (p) => `INSERT INTO public.fatture_emesse (pagamento_id) VALUES ('${p}')`, 'fatture_emesse'],
-    ['bonifico abbinato', (p) => `INSERT INTO public.riconciliazione_movimenti (pagamento_id) VALUES ('${p}')`, 'riconciliazione_movimenti'],
-    ['quota di un fratello appesa', (p) => `INSERT INTO public.pagamenti (alunno_id, parent_payment_id) VALUES ('${FRATELLO}', '${p}')`, 'pagamenti'],
-    // Il file può essere già partito verso Aruba/SDI: la voce sparirebbe in CASCADE col pagamento.
-    ['fattura in coda già in invio', (p) => `INSERT INTO public.fatture_coda (pagamento_id, stato) VALUES ('${p}', 'in_invio')`, 'fatture_coda'],
-    // Esito ambiguo: non si sa se la fattura è nata o no.
-    ['fattura in coda in errore', (p) => `INSERT INTO public.fatture_coda (pagamento_id, stato) VALUES ('${p}', 'errore')`, 'fatture_coda'],
-  ]
   for (const [nome, sql, tabella] of BLOCCHI) {
     it(`${nome}: «pagamenti_non_cancellabili» anche col permesso, e niente si muove`, async () => {
       const p = await pagamento(DOPPIONE)
@@ -374,6 +394,96 @@ describe('elimina_alunno_definitivo — i pagamenti', () => {
   })
 })
 
+describe('elimina_alunno_definitivo — p_solo_verifica: tutti i controlli, nessuna cancellazione', () => {
+  // PERCHÉ ESISTE. La route toglie le tracce di testo e i file PRIMA di chiamare
+  // la funzione. Se la funzione rifiutava DOPO, i file erano già usciti e la
+  // scheda restava: «file tolti, scheda intatta». Con la verifica chiesta prima
+  // di ogni effetto, quella finestra si restringe alle sole corse fra le due
+  // chiamate — e la funzione vera ricontrolla comunque tutto da sé.
+
+  it('su un caso ammesso risponde «ammissibile» e non tocca NIENTE', async () => {
+    await db.exec(`
+      INSERT INTO public.eventi_diario (alunno_id) VALUES ('${ADULTO}');
+      INSERT INTO public.armadietto (alunno_id) VALUES ('${ADULTO}');
+      INSERT INTO public.galleria_media (tag_alunni) VALUES (ARRAY['${ADULTO}']::uuid[]);
+    `)
+    const prima = await impronta(ADULTO)
+    expect(prima).toMatchObject({ alunni: 1, diario: 1, legami: 1, student_parents: 1, armadietto: 1, tag_galleria: 1 })
+
+    const r = await elimina(ADULTO, false, true)
+    expect(r).toEqual({ ok: true, code: 'ammissibile' })
+    expect(await impronta(ADULTO)).toEqual(prima)
+
+    // E dopo la verifica la cancellazione vera procede: niente è rimasto appeso.
+    expect(await elimina(ADULTO)).toMatchObject({ ok: true, code: 'eliminato' })
+    expect(await numero(`SELECT count(*) FROM public.alunni WHERE id = '${ADULTO}'`)).toBe(0)
+  })
+
+  it('con pagamenti puliti e il permesso: «ammissibile», pagamenti e solleciti intatti', async () => {
+    const p = await pagamento(DOPPIONE)
+    await db.exec(`INSERT INTO public.solleciti (alunno_id, pagamento_id) VALUES ('${DOPPIONE}', '${p}')`)
+    const prima = await impronta(DOPPIONE)
+    expect(prima).toMatchObject({ pagamenti: 1, solleciti: 1, presenze: 1 })
+    expect(await elimina(DOPPIONE, true, true)).toEqual({ ok: true, code: 'ammissibile' })
+    expect(await impronta(DOPPIONE)).toEqual(prima)
+  })
+
+  // [nome, preparazione, alunno, con pagamenti, codice atteso]
+  const RIFIUTI: [string, () => Promise<void>, string, boolean, string][] = [
+    ['frequenta', async () => {}, ISCRITTO, false, 'frequentante'],
+    ['stato vuoto con la sezione', async () => { await db.exec(`UPDATE public.alunni SET stato = NULL WHERE id = '${FRATELLO}'`) }, FRATELLO, false, 'frequentante'],
+    ['id che non esiste', async () => {}, '99999999-0000-4000-8000-000000000099', false, 'non_trovato'],
+    ['già anonimizzato', async () => { await db.exec(`UPDATE public.alunni SET anonimizzato_il = now() WHERE id = '${DOPPIONE}'`) }, DOPPIONE, false, 'gia_anonimizzato'],
+    ...TABELLE_REGISTRO_PRIMARIA.map((tabella): [string, () => Promise<void>, string, boolean, string] => [
+      `registro della primaria (${tabella})`,
+      async () => { await db.exec(`INSERT INTO public.${tabella} (alunno_id) VALUES ('${DOPPIONE}')`) },
+      DOPPIONE, true, 'registro_primaria',
+    ]),
+    ['pagamenti senza permesso', async () => { await pagamento(DOPPIONE) }, DOPPIONE, false, 'ha_pagamenti'],
+    ...BLOCCHI.map(([nome, sql]): [string, () => Promise<void>, string, boolean, string] => [
+      `pagamento bloccato: ${nome}`,
+      async () => { await db.exec(sql(await pagamento(DOPPIONE))) },
+      DOPPIONE, true, 'pagamenti_non_cancellabili',
+    ]),
+    ['ricevuta senza pagamento', async () => { await db.exec(`INSERT INTO public.ricevute_emesse (alunno_id) VALUES ('${DOPPIONE}')`) }, DOPPIONE, true, 'pagamenti_non_cancellabili'],
+  ]
+  for (const [nome, prepara, alunno, conPagamenti, codice] of RIFIUTI) {
+    it(`${nome}: la verifica rifiuta con «${codice}», come la cancellazione vera, e niente si muove`, async () => {
+      await prepara()
+      const esiste = (await numero(`SELECT count(*) FROM public.alunni WHERE id = '${alunno}'`)) === 1
+      if (esiste) await sentinella(alunno)
+      const prima = await impronta(alunno)
+
+      expect(await elimina(alunno, conPagamenti, true)).toMatchObject({ ok: false, code: codice })
+      expect(await impronta(alunno)).toEqual(prima)
+
+      expect(await elimina(alunno, conPagamenti, false)).toMatchObject({ ok: false, code: codice })
+      expect(await impronta(alunno)).toEqual(prima)
+      if (esiste) await sentinellaIntatta(alunno)
+    })
+  }
+
+  it('una chiamata a DUE argomenti (la forma di prima) resta la cancellazione vera, e non è ambigua', async () => {
+    const { rows } = await db.query<{ r: { ok: boolean; code: string } }>(
+      `SELECT public.elimina_alunno_definitivo('${DOPPIONE}', false) AS r`,
+    )
+    expect(rows[0].r).toMatchObject({ ok: true, code: 'eliminato' })
+  })
+
+  it('una firma vecchia a due argomenti rimasta in un ambiente viene tolta: ne resta UNA', async () => {
+    // Senza la `drop`, la vecchia (uuid, boolean) e la nuova (uuid, boolean, boolean
+    // default false) convivrebbero, e ogni chiamata a due argomenti sarebbe ambigua.
+    await db.exec(`
+      CREATE FUNCTION public.elimina_alunno_definitivo(p_alunno uuid, p_con_pagamenti boolean DEFAULT false)
+        RETURNS jsonb LANGUAGE sql AS $$ SELECT '{"ok": false, "code": "firma_vecchia"}'::jsonb $$;
+    `)
+    expect(await numero(`SELECT count(*) FROM pg_proc WHERE proname = 'elimina_alunno_definitivo'`)).toBe(2)
+    await db.exec(MIGRAZIONE)
+    expect(await numero(`SELECT count(*) FROM pg_proc WHERE proname = 'elimina_alunno_definitivo'`)).toBe(1)
+    expect(await elimina(DOPPIONE, false, true)).toEqual({ ok: true, code: 'ammissibile' })
+  })
+})
+
 describe('elimina_alunno_definitivo — tutto o niente, e chi può chiamarla', () => {
   it('un errore all’ultimo passo annulla anche le cancellazioni già fatte', async () => {
     // Una FK senza CASCADE che la funzione NON conosce: la DELETE finale fallisce.
@@ -395,7 +505,7 @@ describe('elimina_alunno_definitivo — tutto o niente, e chi può chiamarla', (
   })
 
   it('la porta è chiusa ad anon e authenticated, aperta al solo service_role', async () => {
-    const firma = `'public.elimina_alunno_definitivo(uuid, boolean)'`
+    const firma = `'public.elimina_alunno_definitivo(uuid, boolean, boolean)'`
     const { rows } = await db.query<{ anon: boolean; auth: boolean; svc: boolean }>(`
       SELECT has_function_privilege('anon', ${firma}, 'EXECUTE') AS anon,
              has_function_privilege('authenticated', ${firma}, 'EXECUTE') AS auth,

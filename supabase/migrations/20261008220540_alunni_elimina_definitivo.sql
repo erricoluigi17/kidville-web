@@ -39,23 +39,42 @@
 --  · chat_vigilanza_accessi: registro di accountability, solo uuid.
 --  · enrollment_submissions: non è collegata per id; vive in Iscrizioni.
 --
+-- ─── p_solo_verifica: LA STESSA PORTA, SENZA ATTRAVERSARLA (2026-10-09) ───────
+-- La route toglie le tracce di testo e i file PRIMA di chiamare questa
+-- funzione. Se la funzione rifiutava dopo, i file erano già usciti e la scheda
+-- restava. Con `p_solo_verifica = true` la funzione fa TUTTI i controlli, con
+-- gli stessi lock (la scheda e i suoi pagamenti `for update`), e se tutto è
+-- ammesso risponde `{ ok: true, code: 'ammissibile' }` SENZA cancellare niente;
+-- se no, lo stesso rifiuto della modalità vera. I lock si rilasciano alla fine
+-- della transazione, cioè della chiamata. La route la chiama così prima del
+-- primo effetto, e poi di nuovo con `false`: fra le due chiamate resta solo la
+-- finestra di una corsa, e la seconda chiamata ricontrolla comunque tutto.
+-- Il default `false` lascia la chiamata a due argomenti com'era: cancellazione vera.
+--
 -- ─── IL REGISTRO DELLA PRIMARIA ────────────────────────────────────────────
 -- Non si cancella (né si anonimizza: lo decide la route). L'elenco delle tabelle
 -- fra i marcatori `registro-primaria` è la copia SQL di TABELLE_REGISTRO_PRIMARIA
 -- (`src/lib/alunni/registro-primaria.ts`): il test PGlite pretende che coincidano.
 --
 -- ─── COME SI VERIFICA ──────────────────────────────────────────────────────
---   select has_function_privilege('anon', 'public.elimina_alunno_definitivo(uuid, boolean)', 'EXECUTE');          -- false
---   select has_function_privilege('authenticated', 'public.elimina_alunno_definitivo(uuid, boolean)', 'EXECUTE'); -- false
---   select has_function_privilege('service_role', 'public.elimina_alunno_definitivo(uuid, boolean)', 'EXECUTE');  -- true
+--   select has_function_privilege('anon', 'public.elimina_alunno_definitivo(uuid, boolean, boolean)', 'EXECUTE');          -- false
+--   select has_function_privilege('authenticated', 'public.elimina_alunno_definitivo(uuid, boolean, boolean)', 'EXECUTE'); -- false
+--   select has_function_privilege('service_role', 'public.elimina_alunno_definitivo(uuid, boolean, boolean)', 'EXECUTE');  -- true
+--   select count(*) from pg_proc where proname = 'elimina_alunno_definitivo';  -- 1 (nessuna firma vecchia accanto)
 --
 -- ─── ROLLBACK ──────────────────────────────────────────────────────────────
---   drop function if exists public.elimina_alunno_definitivo(uuid, boolean);
+--   drop function if exists public.elimina_alunno_definitivo(uuid, boolean, boolean);
 -- =============================================================================
+
+-- Una prima stesura aveva la firma a DUE argomenti. Se un ambiente l'avesse,
+-- accanto alla nuova (stesso nome, terzo argomento con default) ogni chiamata a
+-- due argomenti diventerebbe ambigua. Idempotente: dove non c'è, non fa niente.
+drop function if exists public.elimina_alunno_definitivo(uuid, boolean);
 
 create or replace function public.elimina_alunno_definitivo(
   p_alunno uuid,
-  p_con_pagamenti boolean default false
+  p_con_pagamenti boolean default false,
+  p_solo_verifica boolean default false
 )
 returns jsonb
 language plpgsql
@@ -150,6 +169,12 @@ begin
     end if;
   end if;
 
+  -- La sola verifica si ferma QUI: dopo ogni controllo (e ogni lock) qui sopra,
+  -- prima della prima cancellazione qui sotto.
+  if coalesce(p_solo_verifica, false) then
+    return jsonb_build_object('ok', true, 'code', 'ammissibile');
+  end if;
+
   -- Le cancellazioni: prima ciò che bloccherebbe la DELETE finale, poi la scheda.
   delete from public.solleciti where alunno_id = p_alunno;
   get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('solleciti', v_n);
@@ -195,13 +220,13 @@ $$;
 
 -- La porta, chiusa a chiave: in Supabase anon e authenticated ricevono
 -- l'EXECUTE per GRANT esplicito, e vanno revocati per nome.
-alter function public.elimina_alunno_definitivo(uuid, boolean) owner to postgres;
-revoke all on function public.elimina_alunno_definitivo(uuid, boolean) from public;
-revoke all on function public.elimina_alunno_definitivo(uuid, boolean) from anon;
-revoke all on function public.elimina_alunno_definitivo(uuid, boolean) from authenticated;
-grant execute on function public.elimina_alunno_definitivo(uuid, boolean) to service_role;
+alter function public.elimina_alunno_definitivo(uuid, boolean, boolean) owner to postgres;
+revoke all on function public.elimina_alunno_definitivo(uuid, boolean, boolean) from public;
+revoke all on function public.elimina_alunno_definitivo(uuid, boolean, boolean) from anon;
+revoke all on function public.elimina_alunno_definitivo(uuid, boolean, boolean) from authenticated;
+grant execute on function public.elimina_alunno_definitivo(uuid, boolean, boolean) to service_role;
 
-comment on function public.elimina_alunno_definitivo(uuid, boolean) is
-  'Elimina davvero una scheda alunno NON iscritta (ritirata o senza sezione), in una sola transazione. Rifiuta il registro della primaria e la contabilita emessa. I file li toglie prima la route, con la Storage API.';
+comment on function public.elimina_alunno_definitivo(uuid, boolean, boolean) is
+  'Elimina davvero una scheda alunno NON iscritta (ritirata o senza sezione), in una sola transazione. Rifiuta il registro della primaria e la contabilita emessa. Con p_solo_verifica fa tutti i controlli e risponde ammissibile senza cancellare. I file li toglie prima la route, con la Storage API.';
 
 notify pgrst, 'reload schema';

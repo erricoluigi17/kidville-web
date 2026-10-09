@@ -40,10 +40,15 @@ import { AlertTriangle, Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { btnClass } from '@/components/ui/Btn';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { messaggioErrore } from '@/lib/ui/esito-fetch';
+import { messaggioDaCorpo, messaggioErrore } from '@/lib/ui/esito-fetch';
 // `import type`: viene cancellato in compilazione, del motore server non entra
 // una riga nel bundle del browser (stesso schema di `LiberaSpazioDialog`).
-import type { ConteggiEliminazione, MotivoBloccoEliminazione, SceltaEliminazione } from '@/lib/alunni/elimina-definitivo';
+import type {
+    ConteggiEliminazione,
+    EsitoFileAlunno,
+    MotivoBloccoEliminazione,
+    SceltaEliminazione,
+} from '@/lib/alunni/elimina-definitivo';
 
 export interface AlunnoDaEliminare {
     id: string;
@@ -71,7 +76,28 @@ interface Anteprima {
  * illeggibile): il ripiego tradotto lo sceglie il render.
  */
 type EsitoAnteprima = { ok: true; anteprima: Anteprima } | { ok: false; errore: string };
-type EsitoEsecuzione = { ok: true } | { ok: false; errore: string };
+
+/**
+ * Del corpo di un 200 d'esecuzione la finestra legge solo questi campi: sono
+ * quelli che cambiano la FRASE. `unknown` perché arrivano da fuori.
+ */
+interface CorpoEsecuzione {
+    /** `anonimizza`: qualcosa è rimasto (file, archivi, scheda, chiavi condivise). */
+    parziale?: unknown;
+    /** `elimina`: la RPC ha risposto errore ma la scheda non c'è più — esito dedotto. */
+    incerto?: unknown;
+    /** Chiavi (codice fiscale, documento) lasciate fuori perché condivise con un doppione. */
+    chiavi_condivise_escluse?: unknown;
+}
+
+/**
+ * `corpo: null` = 200 con un corpo illeggibile: il lavoro sul server è fatto, si
+ * dice con la frase standard e lo si registra. `effettiAvvenuti` = il rifiuto è
+ * arrivato DOPO che foto, documenti o notifiche erano già usciti.
+ */
+type EsitoEsecuzione =
+    | { ok: true; corpo: CorpoEsecuzione | null }
+    | { ok: false; errore: string; effettiAvvenuti: boolean };
 
 type Fase = 'misura' | 'pronta' | 'misura-fallita' | 'esecuzione';
 
@@ -121,15 +147,52 @@ async function misuraEliminazione(alunnoId: string): Promise<EsitoAnteprima> {
     return { ok: true, anteprima: { conteggi: corpo.conteggi, scelte: corpo.scelte, motivo: corpo.motivo ?? null } };
 }
 
-/** L'esecuzione. Un 200 vuol dire fatto: il corpo non serve alla finestra. */
+/**
+ * Le voci di `effetti` che dicono una cosa USCITA. `restanti`, `news_trattenuti`
+ * e `documento_condiviso` sono numeri di ciò che è RIMASTO: contarli farebbe
+ * dire «erano già stati tolti» su un rifiuto che non ha tolto niente.
+ */
+const EFFETTI_FILE = [
+    'foto_rimosse',
+    'foto_sganciate',
+    'news_ritirate',
+    'certificati',
+    'fascicolo',
+    'allegati_chat',
+    'documenti_rimossi',
+] as const satisfies readonly (keyof EsitoFileAlunno['numeri'])[];
+const EFFETTI_TRACCE = ['notifiche', 'segnalazioni', 'sospensioni'] as const;
+
+/** Nel corpo di un rifiuto, `effetti` dice che qualcosa era già uscito? */
+function effettiGiaAvvenuti(corpo: unknown): boolean {
+    const effetti = (corpo as { effetti?: unknown } | null)?.effetti;
+    if (!effetti || typeof effetti !== 'object') return false;
+    const { tracce, file } = effetti as { tracce?: Record<string, unknown> | null; file?: Record<string, unknown> | null };
+    const positivo = (v: unknown) => typeof v === 'number' && v > 0;
+    return EFFETTI_TRACCE.some((k) => positivo(tracce?.[k])) || EFFETTI_FILE.some((k) => positivo(file?.[k]));
+}
+
+/** L'esecuzione. Il corpo si legge UNA volta: serve sia al messaggio sia agli effetti. */
 async function eseguiEliminazione(alunnoId: string, scelta: SceltaEliminazione): Promise<EsitoEsecuzione> {
     const res = await chiama({ alunno_id: alunnoId, mode: 'execute', scelta }, 'elimina-esecuzione-non-arrivata');
-    if (res === null) return { ok: false, errore: '' };
+    if (res === null) return { ok: false, errore: '', effettiAvvenuti: false };
+    let motivo = 'forma';
+    const corpo: unknown = await res.json().catch((e: unknown) => {
+        motivo = nomeErrore(e);
+        return null;
+    });
     if (!res.ok) {
         logClient({ livello: 'error', evento: 'fetch', messaggio: 'elimina-esecuzione-rifiutata', route: '/admin/students', stato: res.status });
-        return { ok: false, errore: await messaggioErrore(res, '') };
+        return { ok: false, errore: messaggioDaCorpo(corpo, ''), effettiAvvenuti: effettiGiaAvvenuti(corpo) };
     }
-    return { ok: true };
+    if (corpo === null || typeof corpo !== 'object') {
+        // Un 200 è un lavoro FATTO: non si fa ripremere un comando che ripeterebbe
+        // una distruzione già avvenuta. Si dice con la frase standard, e il
+        // dettaglio perso (parziale? incerto?) resta almeno nei log.
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: `elimina-esito-illeggibile: ${motivo}`, route: '/admin/students', stato: res.status });
+        return { ok: true, corpo: null };
+    }
+    return { ok: true, corpo: corpo as CorpoEsecuzione };
 }
 
 export function EliminaDefinitivoDialog({ alunno, onChiudi, onEliminato }: EliminaDefinitivoDialogProps) {
@@ -146,6 +209,8 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
     const [erroreMisura, setErroreMisura] = useState('');
     /** `null` = nessuna esecuzione fallita da mostrare. Resta a schermo durante la rimisura. */
     const [erroreEsecuzione, setErroreEsecuzione] = useState<string | null>(null);
+    /** Il rifiuto è arrivato DOPO che foto, documenti o notifiche erano già usciti. */
+    const [effettiAvvenuti, setEffettiAvvenuti] = useState(false);
     /** La scelta in volo: è il SUO bottone a dire «Un momento…». */
     const [inCorso, setInCorso] = useState<SceltaEliminazione | null>(null);
     /** Ogni incremento rifà la misura: «Riprova», e dopo un'esecuzione fallita. */
@@ -153,7 +218,7 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
     /** Guardia di rientro, sincrona: due click nello stesso tick non fanno due POST. */
     const inVolo = useRef(false);
     /** Dove va il fuoco quando un'esecuzione fallisce e i comandi spariscono. */
-    const erroreRef = useRef<HTMLParagraphElement>(null);
+    const erroreRef = useRef<HTMLDivElement>(null);
 
     const alunnoId = alunno.id;
     const nominativo = [alunno.cognome, alunno.nome].filter((v) => typeof v === 'string' && v !== '').join(' ');
@@ -198,14 +263,11 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
         setInCorso(scelta);
         setFase('esecuzione');
         setErroreEsecuzione(null);
+        setEffettiAvvenuti(false);
         void eseguiEliminazione(alunnoId, scelta).then((esito) => {
             inVolo.current = false;
             if (esito.ok) {
-                onEliminato(
-                    scelta === 'anonimizza'
-                        ? t('elmEsitoAnonimizzato', { nome: nominativo })
-                        : t('elmEsitoEliminato', { nome: nominativo }),
-                );
+                onEliminato(fraseEsito(scelta, esito.corpo));
                 onChiudi();
                 return;
             }
@@ -213,8 +275,27 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
             // prima potrebbero non essere più veri (un file uscito, uno no).
             setInCorso(null);
             setErroreEsecuzione(esito.errore);
+            setEffettiAvvenuti(esito.effettiAvvenuti);
             rimisura();
         });
+    };
+
+    /**
+     * La frase per l'elenco, dal CORPO del 200: «anonimizzati» solo se lo sono
+     * tutti, «eliminata» detto incerto se l'esito è stato dedotto. Un corpo
+     * illeggibile (`null`) dà la frase standard: il log l'ha già registrato.
+     */
+    const fraseEsito = (scelta: SceltaEliminazione, corpo: CorpoEsecuzione | null): string => {
+        if (scelta === 'anonimizza') {
+            if (corpo?.parziale !== true) return t('elmEsitoAnonimizzato', { nome: nominativo });
+            const chiavi = corpo.chiavi_condivise_escluse;
+            return typeof chiavi === 'number' && chiavi > 0
+                ? `${t('elmEsitoAnonimizzatoParziale', { nome: nominativo })} ${t('elmParzialeChiaveCondivisa')}`
+                : t('elmEsitoAnonimizzatoParziale', { nome: nominativo });
+        }
+        return corpo?.incerto === true
+            ? t('elmEsitoEliminatoIncerto', { nome: nominativo })
+            : t('elmEsitoEliminato', { nome: nominativo });
     };
 
     const c = anteprima?.conteggi;
@@ -289,6 +370,13 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
 
             {decisione && scelte && (
                 <>
+                    {/* In evidenza e PRIMA dei numeri: quei numeri, qui, sono del bambino vero. */}
+                    {c?.cf_condiviso_con_frequentante === true && (
+                        <p className="mb-4 flex items-start gap-2 rounded-input border border-kidville-warn-strong bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] font-semibold text-kidville-warn-strong">
+                            <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                            {t('elmAvvisoDoppione')}
+                        </p>
+                    )}
                     <div className="mb-4 rounded-input bg-kidville-cream px-3 py-2.5 font-maven text-[13px] text-kidville-ink">
                         <p className="mb-1 font-semibold">{t('elmCollegati')}</p>
                         {righe.length === 0 ? (
@@ -326,14 +414,17 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
             )}
 
             {erroreEsecuzione !== null && (
-                <p
+                <div
                     ref={erroreRef}
                     role="alert"
                     tabIndex={-1}
                     className="mb-3 rounded-input bg-kidville-error-soft px-3 py-2.5 font-maven text-[13px] text-kidville-error-strong outline-none focus-visible:ring-2 focus-visible:ring-kidville-green"
                 >
-                    {erroreEsecuzione || t('elmErrore')}
-                </p>
+                    <p>{erroreEsecuzione || t('elmErrore')}</p>
+                    {/* Il rifiuto non dice «niente è cambiato» se qualcosa era già
+                        uscito: tracce e file non tornano indietro. */}
+                    {effettiAvvenuti && <p className="mt-1 font-semibold">{t('elmEffettiGiaAvvenuti')}</p>}
+                </div>
             )}
 
             <div className="flex flex-wrap justify-end gap-2">

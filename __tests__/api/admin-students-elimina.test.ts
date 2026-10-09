@@ -5,6 +5,7 @@ import type { DBFinto, Scrittura } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import { redact } from '@/lib/logging/redact'
 import { riduciValoreAudit } from '@/lib/audit/riassunto'
+import { MOTIVO_CHIAVI_CONDIVISE } from '@/lib/gdpr/chiavi-condivise'
 
 // =============================================================================
 // `POST /api/admin/students/elimina` — l'eliminazione definitiva dai «non iscritti».
@@ -633,6 +634,36 @@ describe('execute — anonimizza', () => {
     expect(ridotto).toMatchObject({
       chiavi_condivise_escluse: { codice_fiscale_escluso: 1, documento_escluso: 0 },
     })
+  })
+
+  it('una chiave condivisa con un doppione rende l’anonimizzazione PARZIALE: 200 parziale, log error, motivo in risposta', async () => {
+    // File tolti, archivi letti, scheda anonimizzata: l'unico motivo è la chiave
+    // lasciata fuori — e i dati agganciati a lei sono ancora in chiaro.
+    conPagamentoBloccato()
+    h.anonimizzaAlunno.mockImplementation(async (_s: unknown, alunno: { id: string }) => {
+      const riga = h.db.alunni.find((a) => a.id === alunno.id)
+      if (riga) riga.anonimizzato_il = '2026-10-09T00:00:00.000Z'
+      return { ...ANONIMIZZA_OK, chiaviCondiviseEscluse: { codiceFiscale: 1, documento: 1 } }
+    })
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'anonimizza' }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      parziale: true,
+      numeri: { file_non_rimossi: 0, letture_fallite: 0, scheda_anonimizzata: true },
+      chiavi_condivise_escluse: 2,
+      chiavi_condivise_motivo: MOTIVO_CHIAVI_CONDIVISE,
+    })
+    expect(h.logEvento).toHaveBeenCalledWith('gdpr', 'error', expect.objectContaining({ esito: 'anonimizzazione-parziale', entita_id: AL }))
+    expect(h.logEvento).not.toHaveBeenCalledWith('gdpr', 'info', expect.objectContaining({ esito: 'alunno-anonimizzato' }))
+    expect(redact(campiDelLog('anonimizzazione-parziale'))).toMatchObject({ n_chiavi_condivise: 2 })
+    expect(h.logScrittura.mock.calls[0][1].valoreDopo).toMatchObject({ parziale: true })
+  })
+
+  it('senza chiavi condivise la risposta lo dice: zero e nessun motivo', async () => {
+    conPagamentoBloccato()
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'anonimizza' }))
+    expect(await res.json()).toMatchObject({ parziale: false, chiavi_condivise_escluse: 0, chiavi_condivise_motivo: null })
   })
 
   it('con un voto arrivato DOPO la misura: 409 e nessuna anonimizzazione', async () => {

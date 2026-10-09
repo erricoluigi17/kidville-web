@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { anonimizzaAlunno, bonificaAuditScritture, bonificaTracceTestualiAlunno } from '@/lib/gdpr/esegui'
+import { contaChiaviCondivise, MOTIVO_CHIAVI_CONDIVISE } from '@/lib/gdpr/chiavi-condivise'
 import { eNonPiuIscritto } from '@/lib/alunni/stato'
 import { RUOLI_ELIMINA_DEFINITIVO } from '@/lib/alunni/archiviazione'
 import {
@@ -371,9 +372,14 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
         letture_fallite: esito.lettureFallite,
         scheda_anonimizzata: schedaAnonimizzata,
       }
-      // «Parziale» sono TRE cose, come nell'oblio: file rimasti, archivi che non
-      // si sono potuti nemmeno leggere, e la scheda stessa non anonimizzata.
-      const parziale = esito.fileNonRimossi > 0 || esito.lettureFallite > 0 || !schedaAnonimizzata
+      // «Parziale» sono QUATTRO cose, come nell'oblio: file rimasti, archivi che
+      // non si sono potuti nemmeno leggere, la scheda stessa non anonimizzata, e
+      // le chiavi (codice fiscale, documento) lasciate fuori perché condivise con
+      // un doppione — i dati agganciati a quelle chiavi sono ancora in chiaro.
+      // La regola è quella dell'oblio, in un posto solo (`contaChiaviCondivise`).
+      const nChiaviCondivise = contaChiaviCondivise([esito])
+      const parziale =
+        esito.fileNonRimossi > 0 || esito.lettureFallite > 0 || !schedaAnonimizzata || nChiaviCondivise > 0
       const chiaviCondivise = chiaviCondiviseDellEsito(esito)
 
       await logScrittura(supabase, {
@@ -403,6 +409,7 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
           n_file: esito.fileNonRimossi,
           n_letture_fallite: esito.lettureFallite,
           scheda_anonimizzata: schedaAnonimizzata,
+          n_chiavi_condivise: nChiaviCondivise,
         })
       } else {
         logEvento('gdpr', 'info', {
@@ -412,7 +419,16 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
           entita_id: alunno_id,
         })
       }
-      return NextResponse.json({ ok: true, scelta: sceltaFatta, parziale, numeri, esito })
+      return NextResponse.json({
+        ok: true,
+        scelta: sceltaFatta,
+        parziale,
+        numeri,
+        esito,
+        // Stessi nomi delle route dell'oblio: la finestra li legge per dire PERCHÉ.
+        chiavi_condivise_escluse: nChiaviCondivise,
+        chiavi_condivise_motivo: nChiaviCondivise > 0 ? MOTIVO_CHIAVI_CONDIVISE : null,
+      })
     }
 
     // ─── ELIMINA: la verifica, poi le tracce di testo, poi i file, poi il database ─

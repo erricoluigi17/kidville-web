@@ -166,6 +166,79 @@ describe('contaPerEliminazione', () => {
   })
 })
 
+describe('contaPerEliminazione — l’avviso doppione (stesso codice fiscale di un bambino che frequenta)', () => {
+  // Un valore finto, alfanumerico come un codice vero: il repository è pubblico.
+  const CF = 'CFDIPROVA0000001'
+  const conDoppione = (altro: Riga): DBFinto =>
+    db({
+      alunni: [
+        // Scritto come lo restituisce `character(16)` e come lo digita una famiglia: spazi e minuscole.
+        { id: AL, stato: 'ritirato', section_id: null, codice_fiscale: ` ${CF.toLowerCase()} `, fiscal_code: null, anonimizzato_il: null },
+        altro,
+      ],
+    })
+
+  it('l’altra scheda FREQUENTA (stesso codice in fiscal_code): vero', async () => {
+    const esito = await contaPerEliminazione(
+      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: 'iscritto', section_id: 's-1', codice_fiscale: null, fiscal_code: CF, anonimizzato_il: null })) as never,
+      AL,
+      'test',
+    )
+    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(true)
+  })
+
+  it('stato vuoto vale «iscritto» (è il default della colonna): vero', async () => {
+    const esito = await contaPerEliminazione(
+      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: null, section_id: 's-1', codice_fiscale: CF, fiscal_code: null, anonimizzato_il: null })) as never,
+      AL,
+      'test',
+    )
+    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(true)
+  })
+
+  it('nessun’altra scheda con quel codice: falso', async () => {
+    const esito = await contaPerEliminazione(
+      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: 'iscritto', section_id: 's-1', codice_fiscale: 'ALTROCODICE00001', fiscal_code: null, anonimizzato_il: null })) as never,
+      AL,
+      'test',
+    )
+    expect(esito.ok).toBe(true)
+    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(false)
+  })
+
+  it('l’altra scheda è RITIRATA: non frequenta, falso', async () => {
+    const esito = await contaPerEliminazione(
+      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: 'ritirato', section_id: null, codice_fiscale: CF, fiscal_code: null, anonimizzato_il: null })) as never,
+      AL,
+      'test',
+    )
+    expect(esito.ok).toBe(true)
+    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(false)
+  })
+
+  it('l’altra scheda è già ANONIMIZZATA: falso', async () => {
+    const esito = await contaPerEliminazione(
+      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: 'iscritto', section_id: 's-1', codice_fiscale: CF, fiscal_code: null, anonimizzato_il: '2026-10-01T00:00:00.000Z' })) as never,
+      AL,
+      'test',
+    )
+    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(false)
+  })
+
+  it.each([
+    { caso: 'il codice della scheda', n: 1 },
+    { caso: 'le altre schede con quel codice', n: 2 },
+  ])('lettura fallita ($caso) → ok=false, mai un «no» falso', async ({ n }) => {
+    const supabase = guastoAllaLettura(
+      conDoppione({ id: DOPPIONE, stato: 'iscritto', section_id: 's-1', codice_fiscale: CF, fiscal_code: null, anonimizzato_il: null }),
+      'alunni',
+      n,
+    )
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    expect(esito.ok).toBe(false)
+  })
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // I RAMI CHE PROTEGGONO UN GESTO IRREVERSIBILE.
 //

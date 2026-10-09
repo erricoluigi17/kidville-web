@@ -63,7 +63,7 @@ const anteprima = (scelte: Record<string, boolean>, motivo: string | null, conte
         conteggi: {
             presenze: 1, diario: 0, legami_genitori: 1, pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false,
             pagelle: 0, certificati_medici: 0, fascicolo_sanitario: 0, foto_solo_sue: 0, foto_di_gruppo: 0,
-            foto_non_rimovibili: 0, articoli_pubblici: 0, allegati_chat: 0, ...conteggi,
+            foto_non_rimovibili: 0, articoli_pubblici: 0, allegati_chat: 0, cf_condiviso_con_frequentante: false, ...conteggi,
         },
         scelte,
         motivo,
@@ -105,6 +105,8 @@ describe('EliminaDefinitivoDialog — si conta prima di offrire', () => {
 
         expect(screen.getByText('1 legame con un genitore')).toBeInTheDocument()
         expect(screen.getByText(/I genitori non vengono toccati/)).toBeInTheDocument()
+        // Nessun doppione: nessun avviso.
+        expect(screen.queryByText(/probabilmente è un doppione/)).toBeNull()
         // Le voci a zero non si stampano.
         expect(screen.queryByText(/diario/)).toBeNull()
         expect(screen.queryByRole('button', { name: /Anonimizza/ })).toBeNull()
@@ -272,6 +274,8 @@ describe('EliminaDefinitivoDialog — quando qualcosa va storto', () => {
         expect(await screen.findByText('4 presenze')).toBeInTheDocument()
         expect(corpoDi(2)).toEqual({ alunno_id: AL.id, mode: 'dryrun' })
         expect(screen.getByRole('alert')).toHaveTextContent(/non sono usciti/)
+        // Il corpo non porta `effetti`: niente riga «erano già stati tolti».
+        expect(screen.queryByText(itAdminStudents.elmEffettiGiaAvvenuti)).toBeNull()
         expect(screen.getByRole('button', { name: 'Elimina definitivamente' })).not.toHaveAttribute('aria-disabled', 'true')
         expect(onEliminato).not.toHaveBeenCalled()
         expect(onChiudi).not.toHaveBeenCalled()
@@ -312,6 +316,119 @@ describe('EliminaDefinitivoDialog — quando qualcosa va storto', () => {
         expect(logClient).not.toHaveBeenCalledWith(
             expect.objectContaining({ messaggio: expect.stringContaining('elimina-esecuzione-non-arrivata') }),
         )
+    })
+})
+
+describe('EliminaDefinitivoDialog — l’esito detto com’è', () => {
+    const conAnonimizza = () => anteprima(CON_PAGAMENTI, 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI', { pagamenti: 1 })
+
+    it('anonimizzazione PARZIALE: non si dice «anonimizzati», si dice parziale', async () => {
+        fetchMock
+            .mockResolvedValueOnce(conAnonimizza())
+            .mockResolvedValueOnce(risposta({ ok: true, scelta: 'anonimizza', parziale: true, chiavi_condivise_escluse: 0 }))
+        const onEliminato = vi.fn()
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={onEliminato} />)
+        fireEvent.click(await screen.findByRole('button', { name: /Anonimizza e tieni la contabilità/ }))
+        await waitFor(() => expect(onEliminato).toHaveBeenCalledTimes(1))
+        const frase = onEliminato.mock.calls[0][0] as string
+        expect(frase).toBe(
+            'DiProva Bambino: anonimizzazione PARZIALE — alcuni file o archivi non sono stati trattati. Riprova, e se resta parziale segnala all’assistenza.',
+        )
+        expect(frase).not.toContain('anonimizzati')
+    })
+
+    it('anonimizzazione parziale per una chiave condivisa con un doppione: lo dice, e dice di risolverlo prima', async () => {
+        fetchMock
+            .mockResolvedValueOnce(conAnonimizza())
+            .mockResolvedValueOnce(risposta({ ok: true, scelta: 'anonimizza', parziale: true, chiavi_condivise_escluse: 1 }))
+        const onEliminato = vi.fn()
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={onEliminato} />)
+        fireEvent.click(await screen.findByRole('button', { name: /Anonimizza e tieni la contabilità/ }))
+        await waitFor(() => expect(onEliminato).toHaveBeenCalledTimes(1))
+        const frase = onEliminato.mock.calls[0][0] as string
+        expect(frase).toContain('anonimizzazione PARZIALE')
+        expect(frase).toContain(itAdminStudents.elmParzialeChiaveCondivisa)
+    })
+
+    it('eliminazione con esito INCERTO: «risulta eliminata, ma non confermato»', async () => {
+        fetchMock
+            .mockResolvedValueOnce(anteprima(SOLO_ELIMINA, null))
+            .mockResolvedValueOnce(risposta({ ok: true, scelta: 'elimina', incerto: true }))
+        const onEliminato = vi.fn()
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={onEliminato} />)
+        fireEvent.click(await screen.findByRole('button', { name: 'Elimina definitivamente' }))
+        await waitFor(() =>
+            expect(onEliminato).toHaveBeenCalledWith('DiProva Bambino: la scheda risulta eliminata, ma l’esito non è stato confermato.'),
+        )
+    })
+
+    it('200 con un corpo illeggibile: frase standard (il lavoro è fatto) e una riga nei log', async () => {
+        fetchMock
+            .mockResolvedValueOnce(anteprima(SOLO_ELIMINA, null))
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected end of JSON input') } })
+        const onEliminato = vi.fn()
+        const onChiudi = vi.fn()
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={onChiudi} onEliminato={onEliminato} />)
+        fireEvent.click(await screen.findByRole('button', { name: 'Elimina definitivamente' }))
+        await waitFor(() => expect(onEliminato).toHaveBeenCalledWith('DiProva Bambino: scheda eliminata definitivamente.'))
+        expect(onChiudi).toHaveBeenCalledTimes(1)
+        expect(logClient).toHaveBeenCalledWith(
+            expect.objectContaining({ livello: 'warn', messaggio: expect.stringContaining('elimina-esito-illeggibile') }),
+        )
+    })
+
+    it('rifiuto DOPO gli effetti: sotto il messaggio, che foto, documenti e notifiche erano già usciti', async () => {
+        fetchMock
+            .mockResolvedValueOnce(anteprima(SOLO_ELIMINA, null))
+            .mockResolvedValueOnce(
+                risposta(
+                    {
+                        codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE',
+                        effetti: { tracce: { notifiche: 2, segnalazioni: 0, sospensioni: 0 }, file: { foto_rimosse: 1, restanti: 0 } },
+                    },
+                    false,
+                    409,
+                ),
+            )
+            .mockResolvedValueOnce(anteprima(SOLO_ELIMINA, null))
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={vi.fn()} />)
+        fireEvent.click(await screen.findByRole('button', { name: 'Elimina definitivamente' }))
+        const avviso = await screen.findByRole('alert')
+        expect(avviso).toHaveTextContent(itShared.erroreAlunnoEliminazioneFrequentante)
+        expect(avviso).toHaveTextContent(itAdminStudents.elmEffettiGiaAvvenuti)
+        await screen.findByRole('button', { name: 'Elimina definitivamente' })
+    })
+
+    it('effetti tutti a zero, o solo file RIMASTI: la riga non compare (non è uscito niente)', async () => {
+        fetchMock
+            .mockResolvedValueOnce(anteprima(SOLO_ELIMINA, null))
+            .mockResolvedValueOnce(
+                risposta(
+                    {
+                        codice: 'ALUNNO_ELIMINAZIONE_FILE_RESTANTI',
+                        effetti: { tracce: { notifiche: 0, segnalazioni: 0, sospensioni: 0 }, file: { foto_rimosse: 0, restanti: 3, news_trattenuti: 1 } },
+                    },
+                    false,
+                    502,
+                ),
+            )
+            .mockResolvedValueOnce(anteprima(SOLO_ELIMINA, null))
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={vi.fn()} />)
+        fireEvent.click(await screen.findByRole('button', { name: 'Elimina definitivamente' }))
+        expect(await screen.findByRole('alert')).toHaveTextContent(/non sono usciti/)
+        await screen.findByRole('button', { name: 'Elimina definitivamente' })
+        expect(screen.queryByText(itAdminStudents.elmEffettiGiaAvvenuti)).toBeNull()
+    })
+})
+
+describe('EliminaDefinitivoDialog — l’avviso doppione', () => {
+    it('stesso codice fiscale di un bambino che frequenta: avviso in evidenza, e i comandi restano', async () => {
+        fetchMock.mockResolvedValueOnce(anteprima(SOLO_ELIMINA, null, { cf_condiviso_con_frequentante: true, presenze: 3 }))
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={vi.fn()} />)
+        expect(await screen.findByText(itAdminStudents.elmAvvisoDoppione)).toBeInTheDocument()
+        // Non blocca: è un avviso, non un divieto.
+        expect(screen.getByRole('button', { name: 'Elimina definitivamente' })).not.toHaveAttribute('aria-disabled', 'true')
+        expect(screen.getByText('3 presenze')).toBeInTheDocument()
     })
 })
 

@@ -11,6 +11,8 @@ import {
 import { obliaFotoNewsAlunno } from '@/lib/news/permanenza-consenso'
 import { bloccanti, rimuoviEVerifica } from '@/lib/storage/rimozione-verificata'
 import { leggiRegistroPrimaria } from '@/lib/alunni/registro-primaria'
+import { eAncoraIscritto } from '@/lib/alunni/stato'
+import { normalizzaCodiceFiscale } from '@/lib/fiscale/validazione'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
@@ -58,6 +60,13 @@ export interface ConteggiEliminazione extends ConteggiOblioMisurati {
    */
   pagamenti_bloccati: number
   registro_primaria: boolean
+  /**
+   * Il codice fiscale della scheda è anche di un bambino che FREQUENTA (scheda
+   * non anonimizzata, stato non «non più iscritto»)? Allora questa è quasi
+   * certamente un doppione, e presenze e diario registrati qui appartengono al
+   * bambino vero. Non blocca niente: è un avviso, detto PRIMA.
+   */
+  cf_condiviso_con_frequentante: boolean
 }
 
 export type EsitoMisura = { ok: true; conteggi: ConteggiEliminazione } | { ok: false }
@@ -253,6 +262,9 @@ export async function contaPerEliminazione(
     return { ok: false }
   }
 
+  const doppione = await cfCondivisoConFrequentante(supabase, alunnoId, op)
+  if (doppione === null) return { ok: false }
+
   return {
     ok: true,
     conteggi: {
@@ -263,8 +275,86 @@ export async function contaPerEliminazione(
       pagamenti: pagIds.length,
       pagamenti_bloccati: bloccati.size + orfane,
       registro_primaria: registro.presente,
+      cf_condiviso_con_frequentante: doppione,
     },
   }
+}
+
+/** Solo lettere e cifre: il codice entra in un filtro `ilike`, dove `%` e `_` sono jolly. */
+const CODICE_FISCALE_FILTRABILE = /^[A-Z0-9]+$/
+
+type RigaDoppione = {
+  id?: unknown
+  codice_fiscale?: unknown
+  fiscal_code?: unknown
+  stato?: unknown
+  anonimizzato_il?: unknown
+}
+
+/**
+ * L'AVVISO DOPPIONE. Misurato in produzione: fra i non iscritti c'è una scheda
+ * con lo stesso codice fiscale di un bambino che frequenta. Eliminarla porta via
+ * presenze e diario registrati per sbaglio su di lei — cioè del bambino vero.
+ *
+ * Stesso schema della verifica delle chiavi dell'oblio (`codiceFiscaleDiAltri`):
+ * si cerca per sottostringa (`ilike '%CF%'`, la colonna è `character(16)` e
+ * torna impaginata) e si decide in TS confrontando il codice normalizzato.
+ * «Frequenta» è `eAncoraIscritto`: iscritto, sospeso o stato vuoto.
+ *
+ * `null` = non si è potuto sapere: la misura diventa `ok: false`, come ogni
+ * altra lettura fallita. Un avviso taciuto per un guasto sarebbe un «no» falso.
+ */
+async function cfCondivisoConFrequentante(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  op: string,
+): Promise<boolean | null> {
+  const { data: scheda, error } = await supabase
+    .from('alunni')
+    .select('codice_fiscale, fiscal_code')
+    .eq('id', alunnoId)
+    .maybeSingle()
+  if (error) {
+    logErrore({ operazione: op, evento: 'elimina_doppione_scheda' }, error)
+    return null
+  }
+  const riga = (scheda ?? {}) as RigaDoppione
+  const codici = [...new Set([normalizzaCodiceFiscale(riga.codice_fiscale), normalizzaCodiceFiscale(riga.fiscal_code)])]
+    .filter((cf) => cf !== '')
+  for (const cf of codici) {
+    if (!CODICE_FISCALE_FILTRABILE.test(cf)) {
+      // Un valore con caratteri che non sono lettere o cifre non è un codice
+      // fiscale: non identifica un doppione, e dentro un filtro cambierebbe la
+      // query. Si salta, e lo si dice.
+      logEvento('gdpr', 'info', {
+        operazione: op,
+        esito: 'elimina-doppione-cf-non-filtrabile',
+        entita_tipo: 'alunni',
+        entita_id: alunnoId,
+      })
+      continue
+    }
+    for (const colonna of ['codice_fiscale', 'fiscal_code'] as const) {
+      const { data, error: altriErr } = await supabase
+        .from('alunni')
+        .select('id, codice_fiscale, fiscal_code, stato, anonimizzato_il')
+        .is('anonimizzato_il', null)
+        .ilike(colonna, `%${cf}%`)
+      if (altriErr) {
+        logErrore({ operazione: op, evento: 'elimina_doppione_altri' }, altriErr)
+        return null
+      }
+      const frequentante = ((data ?? []) as RigaDoppione[]).some(
+        (r) =>
+          r.id !== alunnoId &&
+          r.anonimizzato_il == null &&
+          eAncoraIscritto(typeof r.stato === 'string' ? r.stato : null) &&
+          (normalizzaCodiceFiscale(r.codice_fiscale) === cf || normalizzaCodiceFiscale(r.fiscal_code) === cf),
+      )
+      if (frequentante) return true
+    }
+  }
+  return false
 }
 
 export interface EsitoFileAlunno {

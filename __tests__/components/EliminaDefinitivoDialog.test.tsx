@@ -500,6 +500,27 @@ describe('EliminaDefinitivoDialog — iscritto senza sezione: «prima ritira il 
         expect(screen.queryByText(itAdminStudents.elmIrreversibile)).toBeNull()
     })
 
+    it('pagamenti cancellabili ma non ritirato: resta «Cancella anche i pagamenti» e la riga dice perché manca «Anonimizza»', async () => {
+        fetchMock.mockResolvedValueOnce(
+            anteprima(
+                { elimina: false, elimina_con_pagamenti: true, anonimizza: false },
+                'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI',
+                { pagamenti: 2, pagamenti_bloccati: 0 },
+            ),
+        )
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={vi.fn()} />)
+        expect(await screen.findByRole('button', { name: 'Cancella anche i pagamenti' })).not.toHaveAttribute('aria-disabled', 'true')
+        expect(screen.getByText(itAdminStudents.elmBloccoArchiviaPrima)).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /Anonimizza/ })).toBeNull()
+    })
+
+    it('ritirato con pagamenti cancellabili («Anonimizza» offerta): la riga non c’è', async () => {
+        fetchMock.mockResolvedValueOnce(anteprima(CON_PAGAMENTI, 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI', { pagamenti: 2 }))
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={vi.fn()} />)
+        await screen.findByRole('button', { name: /Anonimizza/ })
+        expect(screen.queryByText(itAdminStudents.elmBloccoArchiviaPrima)).toBeNull()
+    })
+
     it('senza quel motivo la riga non c’è', async () => {
         fetchMock.mockResolvedValueOnce(anteprima(SOLO_ELIMINA, null))
         render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={vi.fn()} />)

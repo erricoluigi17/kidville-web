@@ -356,7 +356,13 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
     // Anche i pagamenti bloccati si dicono dal CONTEGGIO: con «prima ritira il
     // bambino» il motivo è quello, ma il blocco dei pagamenti resta vero.
     const pagamentiBloccati = c !== undefined && c.pagamenti_bloccati > 0 && !registro;
-    const archiviaPrima = motivo === 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA';
+    // «Prima ritira il bambino» si dice anche quando NON è il motivo principale: con
+    // pagamenti tutti cancellabili a un iscritto senza sezione resta «Cancella anche i
+    // pagamenti», e «Anonimizza» sparirebbe senza una parola. Fuori dal registro, con
+    // pagamenti e senza «anonimizza» offerta, la sola ragione è che non è ritirato.
+    const archiviaPrima =
+        motivo === 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA' ||
+        (c !== undefined && !registro && (c.pagamenti > 0 || c.pagamenti_bloccati > 0) && anteprima?.scelte.anonimizza === false);
     // Le foto non rimovibili si dicono dal CONTEGGIO, non dal motivo: con un
     // pagamento bloccato il motivo è quello, ma le foto restano lo stesso e
     // l'anonimizzazione non le toglierà. Col registro non c'è niente da fare.

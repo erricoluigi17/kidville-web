@@ -640,7 +640,7 @@
   "elmAnnulla": "Cancel",
   "elmArticoli": "{n, plural, one {# blog article showing this child will be hidden from the website} other {# blog articles showing this child will be hidden from the website}}",
   "elmAvvisoDoppione": "This record has the same tax code as a child who attends: it is probably a duplicate. Attendance, diary entries and photos recorded here belong to the real child and would be deleted: consider merging the records first.",
-  "elmBloccoArchiviaPrima": "To anonymise the record, first withdraw the child.",
+  "elmBloccoArchiviaPrima": "To anonymise the record, first withdraw the child: open their record and use “Move to not enrolled” (the status becomes “withdrawn”).",
   "elmBloccoFoto": "{n, plural, one {# photo of this child cannot be removed from storage: its address is not recognisable. Permanent deletion is not possible and repeating the operation will not remove it: please report this to support.} other {# photos of this child cannot be removed from storage: their addresses are not recognisable. Permanent deletion is not possible and repeating the operation will not remove them: please report this to support.}}",
   "elmBloccoPagamenti": "One or more payments have a receipt, an invoice, a matched bank transfer or a recorded collection: they cannot be deleted.",
   "elmBloccoRegistro": "This child has primary school marks, report cards, assessments or notes: the register must be kept by law. The record stays in the not-enrolled list.",

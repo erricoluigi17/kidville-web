@@ -75,6 +75,14 @@ pillola è la somma delle righe arrivate nei due gruppi (stessa regola di oggi: 
    - **pagamenti presenti** → «Cancella anche i pagamenti» (spento, con il motivo scritto accanto, se
      un pagamento ha ricevuta, fattura, bonifico abbinato o incasso registrato) · «Anonimizza e tieni
      la contabilità» · Annulla;
+   - **foto che l'archivio non sa togliere** (`foto_non_rimovibili > 0`) → niente eliminazione (riprovare
+     non serve): la finestra lo dice e manda all'assistenza; resta «Anonimizza» se ammessa;
+   - **«Anonimizza» solo per un ritirato**: un iscritto senza sezione con pagamenti bloccati non ha
+     scelte (motivo `ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA`: va prima ritirato dalla sua scheda); con
+     pagamenti cancellabili resta «Cancella anche i pagamenti» e la finestra dice perché manca
+     «Anonimizza»;
+   - **avviso doppione** (non blocca): stesso codice fiscale di un bambino che frequenta, nelle sedi
+     dell'operatore;
    - **registro della primaria presente** (valutazioni, pagelle, scrutini, note disciplinari,
      certificati delle competenze) → **nessuna scelta**: la finestra spiega che il registro va
      conservato e che la scheda resta fra i ritirati, e offre solo «Chiudi». Questa condizione vince
@@ -137,7 +145,8 @@ Corpo: `{ alunno_id: uuid, mode: 'dryrun' | 'execute', scelta?: 'elimina' | 'eli
    c. **solo dopo il successo**: `bonificaAuditScritture(supabase, [alunno_id], op)` e poi
       `logScrittura({ entitaTipo: 'alunno_eliminato', azione: 'delete', entitaId, scuolaId,
       valoreDopo: { scelta, conteggi } })` — uuid e numeri, **mai** la riga. `logEvento` di successo.
-8. `execute` + `anonimizza` (ammessa solo senza registro primaria, ricontrollato qui):
+8. `execute` + `anonimizza` (ammessa solo per un ritirato e senza registro primaria, ricontrollato qui; parziale
+   se restano file, letture fallite, chiavi condivise escluse o la scheda non risulta anonimizzata):
    `anonimizzaAlunno(...)` sul solo bambino (stessa funzione dell'oblio),
    `logScrittura({ entitaTipo: 'alunno_anonimizzato', … })`, log di successo. I genitori no: un
    genitore rimasto senza figli resta nella linguetta Genitori.

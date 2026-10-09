@@ -9,7 +9,7 @@ import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
 import { CodiciFiscaliDaVerificare, useCodiciFiscaliDaVerificare } from '@/components/features/admin/CodiciFiscaliDaVerificare';
-import { AlunniArchiviatiView, useAlunniArchiviati } from '@/components/features/admin/AlunniArchiviatiView';
+import { AlunniArchiviatiView, useAlunniArchiviati, type FaseSezioni } from '@/components/features/admin/AlunniArchiviatiView';
 import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
 import { useRuoloCockpit } from '@/lib/context/admin-identity';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
@@ -162,6 +162,16 @@ function AdminStudentsInner() {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [availableSections, setAvailableSections] = useState<{id: string, name: string, school_type: string, scuola_id?: string | null}[]>([]);
+  /**
+   * Com'è andata la lettura delle sezioni, PER CHIAVE DI SEDI: la fase vale solo
+   * per la `reFetchKey` con cui è stata letta. Al cambio di sedi torna da sé
+   * «in caricamento» senza un `setState` dentro l'effetto (che
+   * `react-hooks/set-state-in-effect` rifiuta). Serve alla linguetta «Non
+   * iscritti»: senza, un elenco di sezioni VUOTO perché la lettura è fallita (o
+   * non è ancora arrivata) diventava «Nessuna sezione in questa sede».
+   */
+  const [esitoSezioni, setEsitoSezioni] = useState<{ chiave: string; fase: 'pronto' | 'errore' } | null>(null);
+  const faseSezioni: FaseSezioni = esitoSezioni !== null && esitoSezioni.chiave === reFetchKey ? esitoSezioni.fase : 'caricamento';
   // P5.4 (DL-050): gruppi mensa per la bulk assign
   const [mensaGroups, setMensaGroups] = useState<{ id: string; nome: string }[]>([]);
   const [targetMensa, setTargetMensa] = useState('');
@@ -170,6 +180,9 @@ function AdminStudentsInner() {
   // attive (il server scopa dal cookie); così reFetchKey è referenziato (deps).
   useEffect(() => {
     const hdr = { 'x-sedi': reFetchKey };
+    const chiave = reFetchKey;
+    // Una risposta VECCHIA (sedi cambiate nel frattempo) non scrive sopra la nuova.
+    let vivo = true;
     // Il fallimento non è più muto (AGENTS.md regola 6). Qui c'erano due `.catch(() => {})`,
     // e l'unico effetto visibile di un guasto era un menù a tendina vuoto — che per chi sta
     // davanti allo schermo è indistinguibile da «in questa sede non c'è nessuna sezione».
@@ -185,8 +198,24 @@ function AdminStudentsInner() {
         }
         return r.json();
       })
-      .then(d => { if (Array.isArray(d)) setAvailableSections(d); })
-      .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `admin-students-sezioni-non-caricate: ${nomeErrore(err)}` }));
+      .then(d => {
+        if (!vivo) return;
+        if (Array.isArray(d)) {
+          setAvailableSections(d);
+          setEsitoSezioni({ chiave, fase: 'pronto' });
+          return;
+        }
+        // `null` = il `!ok` qui sopra, già loggato. Qualunque altra cosa è un 200
+        // con un corpo che non è un elenco: un guasto, non «nessuna sezione».
+        if (d !== null) {
+          logClient({ livello: 'warn', evento: 'fetch', messaggio: 'admin-students-sezioni-corpo-inatteso' });
+        }
+        setEsitoSezioni({ chiave, fase: 'errore' });
+      })
+      .catch(err => {
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: `admin-students-sezioni-non-caricate: ${nomeErrore(err)}` });
+        if (vivo) setEsitoSezioni({ chiave, fase: 'errore' });
+      });
     fetch('/api/admin/gruppi-mensa', { headers: hdr })
       .then(r => {
         if (!r.ok) {
@@ -197,6 +226,9 @@ function AdminStudentsInner() {
       })
       .then(d => { if (d?.success) setMensaGroups(d.data ?? []); })
       .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `admin-students-gruppi-mensa-non-caricati: ${nomeErrore(err)}` }));
+    return () => {
+      vivo = false;
+    };
   }, [reFetchKey]);
 
   // NOMI di classe univoci fra le sedi attive.
@@ -695,7 +727,13 @@ function AdminStudentsInner() {
            fiscali: quello è l'errore dell'ELENCO alunni, e mostrarlo qui
            racconterebbe il guasto di un'altra tab al posto di un pannello che
            ha i suoi stati e il suo «Riprova». */
-        <AlunniArchiviatiView esito={archiviati} ruolo={ruolo} userId={userId} sezioni={availableSections} />
+        <AlunniArchiviatiView
+          esito={archiviati}
+          ruolo={ruolo}
+          userId={userId}
+          sezioni={availableSections}
+          faseSezioni={faseSezioni}
+        />
       ) : erroreElenco !== null ? (
         /* L'elenco NON è arrivato. Questo riquadro prende il posto di contatori
            e tabella: lasciarli renderebbe «0 alunni» e «Nessun alunno trovato»,

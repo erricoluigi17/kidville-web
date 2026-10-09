@@ -373,12 +373,27 @@ export interface AlunniArchiviatiViewProps {
      * server la rifiuterebbe (`classeEsisteInOgniSede`, admin/students:PATCH).
      */
     sezioni?: { id: string; name: string; scuola_id?: string | null }[];
+    /**
+     * Com'è andata la lettura di `sezioni`. Senza `'pronto'` un elenco vuoto non
+     * dice niente: «Nessuna sezione in questa sede» su una lettura fallita (o
+     * ancora in volo) è un'affermazione sui dati fatta senza i dati. Assente =
+     * nessuno l'ha detto, e la vista si comporta come davanti a un guasto.
+     */
+    faseSezioni?: FaseSezioni;
 }
+
+export type FaseSezioni = 'caricamento' | 'pronto' | 'errore';
 
 /** Il default FUORI dal componente: un `[]` nuovo a ogni render rifarebbe `sezioniDi`. */
 const NESSUNA_SEZIONE: NonNullable<AlunniArchiviatiViewProps['sezioni']> = [];
 
-export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_SEZIONE }: AlunniArchiviatiViewProps) {
+/**
+ * Il comando spento deve SEMBRARE spento: `btnClass` stila `disabled`, non
+ * `aria-disabled`. Stesse classi di `SPENTO` in `EliminaDefinitivoDialog`.
+ */
+const SPENTO = 'aria-disabled:border-kidville-neutral aria-disabled:bg-kidville-neutral-soft aria-disabled:text-kidville-sub';
+
+export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_SEZIONE, faseSezioni }: AlunniArchiviatiViewProps) {
     const t = useTranslations('adminStudents');
     const router = useRouter();
     const { sedi } = useSediAttive();
@@ -475,6 +490,12 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
         },
         [router, userId],
     );
+
+    /** «Elimina definitivamente»: la finestra non si apre mentre un altro comando è in volo. */
+    const apriElimina = useCallback((r: AlunnoArchiviato) => {
+        if (inVoloRef.current !== null) return;
+        setDaEliminare(r);
+    }, []);
 
     const riattiva = useCallback(
         async (r: AlunnoArchiviato) => {
@@ -612,6 +633,14 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                     return;
                 }
                 setMessaggio({ tipo: 'ok', testo: t('arcEsitoSezioneAssegnata', { nome: nominativo(r), classe }) });
+                // La scelta è stata usata: se la riga resta a schermo (rilettura
+                // fallita, o lenta) la tendina non deve riproporre una sezione già
+                // assegnata come se fosse ancora da confermare.
+                setClasseScelta((m) => {
+                    const resto = { ...m };
+                    delete resto[r.id];
+                    return resto;
+                });
                 esito.ricarica();
             });
         },
@@ -665,17 +694,10 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
             <div className="mb-4 rounded-card bg-kidville-white p-4 shadow-sm">
                 <SectionTitle icon={Archive} title={t('arcTitolo')} sub={t('arcSottotitolo')} />
 
-                {/* COSA RESTA E COSA SE NE VA, prima di ogni comando: un elenco di
-                    distruzioni senza il suo contrappeso è metà informazione. */}
-                <p className="mb-3 font-maven text-[13px] text-kidville-sub">{t('arcSpiegazione')}</p>
-
-                {/* L'automa della retention è un FATTO, non un difetto, e va detto a
-                    chi archivia: entro 24 ore il motivo dell'assenza scritto dalle
-                    famiglie sparisce. È già promesso nell'informativa privacy. */}
-                <p className="mb-3 flex items-start gap-2 rounded-input bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn-strong">
-                    <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-                    {t('arcAvvisoMotivoAssenza')}
-                </p>
+                {/* La spiegazione dell'archiviazione e l'avviso delle 24 ore NON stanno
+                    qui: valgono per i ritirati e stanno nel loro gruppo, qui sotto.
+                    Sopra entrambi i gruppi raccontavano un ritiro anche a chi è
+                    soltanto senza sezione. */}
 
                 {esito.riletturaFallita && (
                     <div
@@ -776,6 +798,24 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                             {t('arcGruppoRitirati')}{' '}
                             <span className="font-maven text-sm font-normal normal-case text-kidville-sub">({ritirati.length})</span>
                         </h3>
+                        {ritirati.length > 0 && (
+                            <>
+                                {/* COSA RESTA E COSA SE NE VA, prima di ogni comando: un
+                                    elenco di distruzioni senza il suo contrappeso è metà
+                                    informazione. E dice anche che «Elimina
+                                    definitivamente» è l'eccezione: cancella davvero. */}
+                                <p className="mb-3 font-maven text-[13px] text-kidville-sub">{t('arcSpiegazione')}</p>
+
+                                {/* L'automa della retention è un FATTO, non un difetto, e va
+                                    detto accanto a chi è stato archiviato: entro 24 ore il
+                                    motivo dell'assenza scritto dalle famiglie sparisce. È già
+                                    promesso nell'informativa privacy. */}
+                                <p className="mb-3 flex items-start gap-2 rounded-input bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn-strong">
+                                    <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                                    {t('arcAvvisoMotivoAssenza')}
+                                </p>
+                            </>
+                        )}
                         {ritirati.length === 0 ? (
                             <p className="font-maven text-[13px] text-kidville-sub">{t('arcGruppoRitiratiVuoto')}</p>
                         ) : (
@@ -854,8 +894,12 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                                                             {puoEliminare && (
                                                                 <button
                                                                     type="button"
-                                                                    onClick={() => setDaEliminare(r)}
-                                                                    className={btnClass('ghost', 'sm', 'text-kidville-error-strong')}
+                                                                    onClick={() => apriElimina(r)}
+                                                                    // Spento mentre un altro comando è in volo: la
+                                                                    // finestra si apre su un bambino che sta già
+                                                                    // cambiando, e l'esito dell'uno coprirebbe l'altro.
+                                                                    aria-disabled={inVolo !== null}
+                                                                    className={btnClass('ghost', 'sm', cx('text-kidville-error-strong', SPENTO))}
                                                                 >
                                                                     <Trash2 size={14} strokeWidth={2} aria-hidden="true" />
                                                                     {t('arcAzioneElimina')}
@@ -919,7 +963,18 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                                                     )}
                                                     <td className={TD}>
                                                         <div className="flex flex-wrap items-center gap-2">
-                                                            {opzioni.length === 0 ? (
+                                                            {faseSezioni === 'caricamento' ? (
+                                                                <span className="font-maven text-[13px] text-kidville-sub">
+                                                                    {t('arcSezioniInCaricamento')}
+                                                                </span>
+                                                            ) : faseSezioni !== 'pronto' ? (
+                                                                // Lettura fallita, o nessuno ha detto com'è andata:
+                                                                // NON «nessuna sezione in questa sede», che sarebbe
+                                                                // un'affermazione sui dati fatta senza i dati.
+                                                                <span className="font-maven text-[13px] text-kidville-error-strong">
+                                                                    {t('arcSezioniNonCaricate')}
+                                                                </span>
+                                                            ) : opzioni.length === 0 ? (
                                                                 // Una tendina vuota direbbe «scegli» senza niente da
                                                                 // scegliere: si dice perché, e la sezione si crea dalla
                                                                 // linguetta «Sezioni».
@@ -955,7 +1010,7 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                                                                         // lo ferma `assegnaSezione` (nessuna scelta, o
                                                                         // un altro comando in volo).
                                                                         aria-disabled={inVolo !== null || scelta === ''}
-                                                                        className={btnClass('primary', 'sm')}
+                                                                        className={btnClass('primary', 'sm', SPENTO)}
                                                                     >
                                                                         {inVolo === r.id ? t('arcAzioneAssegnaSezioneInCorso') : t('arcAzioneAssegnaSezione')}
                                                                     </button>
@@ -964,8 +1019,12 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                                                             {puoEliminare && (
                                                                 <button
                                                                     type="button"
-                                                                    onClick={() => setDaEliminare(r)}
-                                                                    className={btnClass('ghost', 'sm', 'text-kidville-error-strong')}
+                                                                    onClick={() => apriElimina(r)}
+                                                                    // Spento mentre un altro comando è in volo: la
+                                                                    // finestra si apre su un bambino che sta già
+                                                                    // cambiando, e l'esito dell'uno coprirebbe l'altro.
+                                                                    aria-disabled={inVolo !== null}
+                                                                    className={btnClass('ghost', 'sm', cx('text-kidville-error-strong', SPENTO))}
                                                                 >
                                                                     <Trash2 size={14} strokeWidth={2} aria-hidden="true" />
                                                                     {t('arcAzioneElimina')}

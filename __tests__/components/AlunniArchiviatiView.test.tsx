@@ -466,6 +466,9 @@ describe('AlunniArchiviatiView — il ritorno fra gli iscritti', () => {
         expect(esito.textContent).toContain('Bianchi Anna')
         expect(esito.textContent).toContain('2 ANNI')
         expect(esito.textContent).toContain('non esiste più')
+        // …e DOVE si rimedia: qui sotto, nel gruppo degli iscritti senza sezione
+        // della stessa linguetta, non «dalla sua scheda».
+        expect(esito.textContent).toContain(`«${itAdminStudents.arcGruppoSenzaSezione}»`)
         // E il fuoco è lì sopra: il bottone premuto sta per sparire con la riga.
         expect(document.activeElement).toBe(esito)
     })
@@ -517,7 +520,7 @@ describe('AlunniArchiviatiView — il ritorno fra gli iscritti', () => {
 
         const esito = await screen.findByRole('status')
         expect(esito.textContent).toContain('2 ANNI')
-        expect(esito.textContent, 'gli si dice di assegnare una classe che ha già').not.toMatch(/Assegna una classe/i)
+        expect(esito.textContent, 'gli si dice di assegnare una classe che ha già').not.toMatch(/Iscritti senza sezione/i)
         expect(esito.textContent).not.toMatch(/non esiste più/i)
     })
 
@@ -531,7 +534,8 @@ describe('AlunniArchiviatiView — il ritorno fra gli iscritti', () => {
             fireEvent.click(screen.getByRole('button', { name: itAdminStudents.arcAzioneRiattiva }))
         })
 
-        expect((await screen.findByRole('status')).textContent).toMatch(/Assegna una classe/i)
+        // Il gesto si fa nella stessa linguetta, nel gruppo «Iscritti senza sezione».
+        expect((await screen.findByRole('status')).textContent).toContain(`«${itAdminStudents.arcGruppoSenzaSezione}»`)
     })
 
     it('dice che il GRUPPO MENSA non torna da solo: era la perdita che nessuno dichiarava', async () => {
@@ -597,7 +601,7 @@ describe('AlunniArchiviatiView — il ritorno fra gli iscritti', () => {
         const esito = await screen.findByRole('status')
         expect(esito.textContent).toContain('Bianchi Anna')
         // …ma non si inventa un gesto da fare sulla classe.
-        expect(esito.textContent).not.toMatch(/Assegna una classe/i)
+        expect(esito.textContent).not.toMatch(/Iscritti senza sezione/i)
         expect(esito.textContent).not.toMatch(/non esiste più/i)
         // E il motivo NON si perde.
         expect(logClient).toHaveBeenCalledWith(
@@ -656,7 +660,7 @@ describe('AlunniArchiviatiView — «Assegna sezione»', () => {
         fetchMock.mockResolvedValue({ ok: true, status: 200, headers: new Headers(), json: async () => ({ success: true, updated: 1 }) })
         const ricarica = vi.fn()
         render(
-            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1, ricarica })} ruolo="segreteria" sezioni={SEZIONI} />,
+            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1, ricarica })} ruolo="segreteria" sezioni={SEZIONI} faseSezioni="pronto" />,
         )
 
         // ⟵ La tendina offre SOLO le sezioni della sede del bambino, e un nome una volta sola:
@@ -690,7 +694,7 @@ describe('AlunniArchiviatiView — «Assegna sezione»', () => {
         fetchMock.mockResolvedValue({ ok: true, status: 200, headers: new Headers(), json: async () => ({ success: true, updated: 1 }) })
         const ricarica = vi.fn()
         render(
-            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1, ricarica })} ruolo="segreteria" sezioni={SEZIONI} />,
+            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1, ricarica })} ruolo="segreteria" sezioni={SEZIONI} faseSezioni="pronto" />,
         )
         fireEvent.change(screen.getByRole('combobox', { name: 'Sezione per Verdi Mario' }), { target: { value: 'SEZIONE A' } })
 
@@ -712,7 +716,7 @@ describe('AlunniArchiviatiView — «Assegna sezione»', () => {
         })
         const ricarica = vi.fn()
         render(
-            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1, ricarica })} ruolo="segreteria" sezioni={SEZIONI} />,
+            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1, ricarica })} ruolo="segreteria" sezioni={SEZIONI} faseSezioni="pronto" />,
         )
         fireEvent.change(screen.getByRole('combobox', { name: 'Sezione per Verdi Mario' }), { target: { value: 'SEZIONE A' } })
         await act(async () => {
@@ -730,7 +734,7 @@ describe('AlunniArchiviatiView — «Assegna sezione»', () => {
         fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
         const ricarica = vi.fn()
         render(
-            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1, ricarica })} ruolo="segreteria" sezioni={SEZIONI} />,
+            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1, ricarica })} ruolo="segreteria" sezioni={SEZIONI} faseSezioni="pronto" />,
         )
         fireEvent.change(screen.getByRole('combobox', { name: 'Sezione per Verdi Mario' }), { target: { value: 'SEZIONE A' } })
         await act(async () => {
@@ -751,6 +755,7 @@ describe('AlunniArchiviatiView — «Assegna sezione»', () => {
                 esito={esitoFinto({ righe: [MARIO], totale: 1 })}
                 ruolo="segreteria"
                 sezioni={[{ id: 'sez-b-1', name: 'SEZIONE B', scuola_id: SEDE_B }]}
+                faseSezioni="pronto"
             />,
         )
         expect(screen.getByText(itAdminStudents.arcNessunaSezioneInSede)).toBeInTheDocument()
@@ -821,5 +826,155 @@ describe('AlunniArchiviatiView — «Elimina definitivamente»', () => {
         const esito = await screen.findByRole('status')
         expect(esito.textContent).toContain('Verdi Mario')
         expect(esito.textContent).toContain('eliminata definitivamente')
+    })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CORREZIONI DELLA REVISIONE (2026-10-09)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('AlunniArchiviatiView — la spiegazione dell’archiviazione sta coi RITIRATI', () => {
+    it('la spiegazione e l’avviso delle 24 ore stanno nel gruppo «Ritirati», non sopra gli iscritti senza sezione', () => {
+        render(<AlunniArchiviatiView esito={esitoFinto({ righe: [ANNA, MARIO], totale: 2 })} ruolo="segreteria" sezioni={[]} />)
+        const ritirati = gruppo(itAdminStudents.arcGruppoRitirati)
+        const senzaSezione = gruppo(itAdminStudents.arcGruppoSenzaSezione)
+        expect(within(ritirati).getByText(itAdminStudents.arcAvvisoMotivoAssenza)).toBeInTheDocument()
+        expect(within(ritirati).getByText(itAdminStudents.arcSpiegazione)).toBeInTheDocument()
+        expect(within(senzaSezione).queryByText(itAdminStudents.arcAvvisoMotivoAssenza)).toBeNull()
+        expect(within(senzaSezione).queryByText(itAdminStudents.arcSpiegazione)).toBeNull()
+    })
+
+    it('la spiegazione non promette che «resta tutto» accanto a un comando che cancella', () => {
+        // «Restano pagamenti, presenze, … diario» era vero per l'archiviazione e
+        // falso per «Elimina definitivamente», che stava sulla stessa riga.
+        expect(itAdminStudents.arcSpiegazione).toContain(`«${itAdminStudents.arcAzioneElimina}»`)
+    })
+
+    it('senza ritirati, niente spiegazione dell’archiviazione sopra i soli iscritti senza sezione', () => {
+        render(<AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1 })} ruolo="segreteria" sezioni={[]} />)
+        expect(screen.queryByText(itAdminStudents.arcAvvisoMotivoAssenza)).toBeNull()
+        expect(screen.queryByText(itAdminStudents.arcSpiegazione)).toBeNull()
+    })
+})
+
+describe('AlunniArchiviatiView — sezioni non arrivate ≠ nessuna sezione', () => {
+    it('sezioni in ERRORE: dice «non caricate», mai «nessuna sezione in questa sede»', () => {
+        render(
+            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1 })} ruolo="segreteria" sezioni={[]} faseSezioni="errore" />,
+        )
+        expect(screen.getByText(itAdminStudents.arcSezioniNonCaricate)).toBeInTheDocument()
+        expect(screen.queryByText(itAdminStudents.arcNessunaSezioneInSede)).toBeNull()
+        expect(screen.queryByRole('combobox')).toBeNull()
+    })
+
+    it('sezioni ancora IN VOLO: lo dice, e non offre una tendina né la frase del vuoto', () => {
+        render(
+            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1 })} ruolo="segreteria" sezioni={SEZIONI} faseSezioni="caricamento" />,
+        )
+        expect(screen.getByText(itAdminStudents.arcSezioniInCaricamento)).toBeInTheDocument()
+        expect(screen.queryByText(itAdminStudents.arcNessunaSezioneInSede)).toBeNull()
+        expect(screen.queryByRole('combobox')).toBeNull()
+    })
+
+    it('se nessuno dice com’è andata la lettura delle sezioni, non si afferma il vuoto', () => {
+        render(<AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1 })} ruolo="segreteria" sezioni={[]} />)
+        expect(screen.getByText(itAdminStudents.arcSezioniNonCaricate)).toBeInTheDocument()
+        expect(screen.queryByText(itAdminStudents.arcNessunaSezioneInSede)).toBeNull()
+    })
+})
+
+describe('AlunniArchiviatiView — «Assegna sezione», i dettagli', () => {
+    const assegna = () => screen.getByRole('button', { name: itAdminStudents.arcAzioneAssegnaSezione })
+
+    it('CON sezioni disponibili un ritirato NON riceve la tendina: per lui il gesto è «Riporta fra gli iscritti»', () => {
+        render(
+            <AlunniArchiviatiView esito={esitoFinto({ righe: [ANNA, MARIO], totale: 2 })} ruolo="segreteria" sezioni={SEZIONI} faseSezioni="pronto" />,
+        )
+        expect(within(gruppo(itAdminStudents.arcGruppoRitirati)).queryByRole('combobox')).toBeNull()
+        expect(within(gruppo(itAdminStudents.arcGruppoRitirati)).queryByRole('button', { name: itAdminStudents.arcAzioneAssegnaSezione })).toBeNull()
+        // Il controllo positivo: la tendina esiste, ed è quella del bambino senza sezione.
+        expect(screen.getAllByRole('combobox')).toHaveLength(1)
+        expect(screen.getByRole('combobox', { name: 'Sezione per Verdi Mario' })).toBeInTheDocument()
+    })
+
+    it('senza una sezione scelta il comando si DICHIARA spento, e anche lo SEMBRA', () => {
+        render(
+            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1 })} ruolo="segreteria" sezioni={SEZIONI} faseSezioni="pronto" />,
+        )
+        expect(assegna()).toHaveAttribute('aria-disabled', 'true')
+        // Lo stile spento è quello di `EliminaDefinitivoDialog`: `btnClass` stila
+        // `disabled`, non `aria-disabled`, e senza queste classi il bottone
+        // sembrerebbe premibile.
+        expect(assegna().className).toContain('aria-disabled:bg-kidville-neutral-soft')
+        fireEvent.change(screen.getByRole('combobox', { name: 'Sezione per Verdi Mario' }), { target: { value: 'SEZIONE A' } })
+        expect(assegna()).toHaveAttribute('aria-disabled', 'false')
+    })
+
+    it('dopo un’assegnazione riuscita la scelta della riga si azzera', async () => {
+        fetchMock.mockResolvedValue({ ok: true, status: 200, headers: new Headers(), json: async () => ({ success: true, updated: 1 }) })
+        render(
+            <AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1 })} ruolo="segreteria" sezioni={SEZIONI} faseSezioni="pronto" />,
+        )
+        const tendina = screen.getByRole('combobox', { name: 'Sezione per Verdi Mario' }) as HTMLSelectElement
+        fireEvent.change(tendina, { target: { value: 'SEZIONE A' } })
+        await act(async () => {
+            fireEvent.click(assegna())
+        })
+        // Si aspetta la PRESENZA dell'esito, poi si guarda la tendina.
+        expect(await screen.findByRole('status')).toBeInTheDocument()
+        expect(tendina.value).toBe('')
+        expect(assegna()).toHaveAttribute('aria-disabled', 'true')
+    })
+})
+
+describe('AlunniArchiviatiView — un comando alla volta', () => {
+    it('mentre «Riporta fra gli iscritti» è in volo, «Elimina definitivamente» non apre la finestra', async () => {
+        // La POST di ritorno non risponde mai: è in volo per tutto il test.
+        fetchMock.mockImplementation(() => new Promise(() => {}))
+        render(<AlunniArchiviatiView esito={esitoFinto({ righe: [ANNA], totale: 1 })} ruolo="segreteria" sezioni={[]} />)
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: itAdminStudents.arcAzioneRiattiva }))
+        })
+        // Il ritorno è davvero partito (controllo positivo), e il bottone lo dice.
+        expect(await screen.findByRole('button', { name: itAdminStudents.arcAzioneRiattivaInCorso })).toBeInTheDocument()
+
+        const elimina = screen.getByRole('button', { name: itAdminStudents.arcAzioneElimina })
+        expect(elimina).toHaveAttribute('aria-disabled', 'true')
+        await act(async () => {
+            fireEvent.click(elimina)
+        })
+        expect(screen.queryByRole('dialog')).toBeNull()
+        expect(fetchMock.mock.calls.filter((c) => String(c[0]) === '/api/admin/students/elimina')).toHaveLength(0)
+    })
+
+    it('mentre un’assegnazione è in volo, «Assegna sezione» e «Elimina» delle altre righe restano fermi', async () => {
+        fetchMock.mockImplementation(() => new Promise(() => {}))
+        render(
+            <AlunniArchiviatiView
+                esito={esitoFinto({ righe: [MARIO, SENZA_STATO], totale: 2 })}
+                ruolo="segreteria"
+                sezioni={SEZIONI}
+                faseSezioni="pronto"
+            />,
+        )
+        fireEvent.change(screen.getByRole('combobox', { name: 'Sezione per Verdi Mario' }), { target: { value: 'SEZIONE A' } })
+        fireEvent.change(screen.getByRole('combobox', { name: 'Sezione per Neri Paolo' }), { target: { value: 'SEZIONE B' } })
+        // L'elenco è ordinato per cognome (Neri prima di Verdi): si prende la riga per nome.
+        const rigaMario = screen.getByText('Verdi Mario').closest('tr') as HTMLElement
+        await act(async () => {
+            fireEvent.click(within(rigaMario).getByRole('button', { name: itAdminStudents.arcAzioneAssegnaSezione }))
+        })
+        expect(await screen.findByRole('button', { name: itAdminStudents.arcAzioneAssegnaSezioneInCorso })).toBeInTheDocument()
+
+        const rigaPaolo = screen.getByText('Neri Paolo').closest('tr') as HTMLElement
+        const assegnaPaolo = within(rigaPaolo).getByRole('button', { name: itAdminStudents.arcAzioneAssegnaSezione })
+        expect(assegnaPaolo).toHaveAttribute('aria-disabled', 'true')
+        await act(async () => {
+            fireEvent.click(assegnaPaolo)
+            fireEvent.click(within(rigaPaolo).getByRole('button', { name: itAdminStudents.arcAzioneElimina }))
+        })
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        expect(screen.queryByRole('dialog')).toBeNull()
     })
 })

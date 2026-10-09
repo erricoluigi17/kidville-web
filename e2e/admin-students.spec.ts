@@ -12,8 +12,11 @@ test('anagrafica: lista, ricerca e tab funzionano', async ({ page }) => {
   await page.goto('/admin/students');
 
   await expect(page.getByText('Anagrafica Generale')).toBeVisible();
-  // KPI rinominata "Totale Alunni" → "Totale (tutti gli stati)".
-  await expect(page.getByText('Totale (tutti gli stati)')).toBeVisible({ timeout: 20_000 });
+  // KPI rinominata "Totale Alunni" → "Totale (tutti gli stati)" → "Frequentanti"
+  // (2026-10-09: l'elenco Alunni conta solo chi frequenta, i non iscritti hanno la
+  // loro linguetta). Selettore ESATTO: `getByText` cerca per sottostringa, e una
+  // parola sola come «Frequentanti» può stare dentro qualunque frase più lunga.
+  await expect(page.getByText('Frequentanti', { exact: true })).toBeVisible({ timeout: 20_000 });
 
   // La tabella ha almeno una riga (anagrafica demo popolata).
   const righe = page.locator('tbody tr');

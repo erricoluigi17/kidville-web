@@ -11,6 +11,13 @@ const h = vi.hoisted(() => ({
   // Quante righe il database DICE che ci sono (`count: 'exact'`), che può essere
   // più di quante ne arrivano: PostgREST taglia a un tetto di configurazione.
   contaTotale: null as number | null,
+  // Il registro della primaria (2026-10-08), per tabella. Vuoto di default: chi
+  // non ha voti, pagelle, scrutini o note è un candidato come prima.
+  registro: {} as Record<string, { alunno_id: string }[]>,
+  // Errore PostgREST iniettato su una tabella del registro.
+  erroreRegistro: {} as Record<string, { code: string; message: string }>,
+  // Errore PostgREST sulla lettura dell'elenco stesso.
+  erroreAlunni: null as { code: string; message: string } | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -30,15 +37,24 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // riga — cioè passerebbe anche con la query sbagliata. Le altre colonne
       // restano no-op di proposito: l'isolamento per sede ha il suo file
       // (`__tests__/api/gdpr-scope-sede.test.ts`) e qui non si riscrive PostgREST.
-      const filtri: { statoNeq?: string; statoIn?: string[] } = {}
+      const filtri: { statoNeq?: string; statoIn?: string[]; alunnoId?: string } = {}
       const b: Record<string, unknown> = {}
       b.select = () => b
-      b.eq = () => b
+      // `alunno_id` lo legge solo il controllo del registro della primaria: il
+      // doppio lo APPLICA, così un bambino con il registro non contagia gli altri.
+      b.eq = (col: string, val: unknown) => { if (col === 'alunno_id') filtri.alunnoId = String(val); return b }
       b.is = () => b
       b.neq = (col: string, val: unknown) => { if (col === 'stato') filtri.statoNeq = String(val); return b }
       b.in = (col: string, vals: unknown) => { if (col === 'stato') filtri.statoIn = (vals as unknown[]).map(String); return b }
       b.order = () => b
+      b.limit = () => b
       b.then = (res: (v: unknown) => unknown) => {
+        if (table === 'alunni' && h.erroreAlunni) return Promise.resolve({ data: null, error: h.erroreAlunni }).then(res)
+        if (h.erroreRegistro[table]) return Promise.resolve({ data: null, error: h.erroreRegistro[table] }).then(res)
+        if (table in h.registro) {
+          const righe = h.registro[table].filter((r) => r.alunno_id === filtri.alunnoId)
+          return Promise.resolve({ data: righe, error: null }).then(res)
+        }
         let data: Record<string, unknown>[] =
           table === 'alunni' ? h.alunni : table === 'student_parents' ? h.links : table === 'parents' ? h.parents : []
         if (table === 'alunni') {
@@ -69,6 +85,9 @@ beforeEach(() => {
   h.links = [{ student_id: 'al-1', parent_id: 'p-1' }]
   h.parents = [{ id: 'p-1', first_name: 'Maria', last_name: 'Rossi' }]
   h.contaTotale = null
+  h.registro = {}
+  h.erroreRegistro = {}
+  h.erroreAlunni = null
 })
 
 describe('GET /api/admin/gdpr/candidates', () => {
@@ -199,5 +218,56 @@ describe('GET /api/admin/gdpr/candidates — chi l’elenco chiuso lascia fuori'
     h.links = []
     await GET(get())
     expect(JSON.stringify(rigaGdpr()![2])).not.toMatch(/Luca|Bianchi/)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IL REGISTRO DELLA PRIMARIA (titolare, 2026-10-08): chi ce l'ha NON si
+// anonimizza, ma resta IN elenco con il motivo. Un bambino che sparisce in
+// silenzio dall'elenco dell'oblio è il difetto già pagato qui sopra
+// (`candidati-esclusi-fuori-elenco`): il pannello spegne il comando, non lo nasconde.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('GET /api/admin/gdpr/candidates — il registro della primaria', () => {
+  beforeEach(() => {
+    h.alunni = [
+      { id: 'al-1', nome: 'Bambino', cognome: 'DiProva', classe_sezione: 'A', stato: 'ritirato' },
+      { id: 'al-2', nome: 'Bambina', cognome: 'DiProva', classe_sezione: 'B', stato: 'ritirato' },
+    ]
+    h.links = []
+  })
+
+  it('chi ha il registro resta in elenco con `registro_primaria: true`; gli altri `false`', async () => {
+    h.registro = { valutazioni: [{ alunno_id: 'al-2' }] }
+    const res = await GET(get())
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { id: string; registro_primaria: boolean }[]
+    expect(json.map((a) => a.id)).toEqual(['al-1', 'al-2'])
+    expect(json.find((a) => a.id === 'al-1')!.registro_primaria).toBe(false)
+    expect(json.find((a) => a.id === 'al-2')!.registro_primaria).toBe(true)
+  })
+
+  it('ogni tabella del registro conta, non solo i voti', async () => {
+    h.registro = { certificati_competenze: [{ alunno_id: 'al-1' }] }
+    const json = (await (await GET(get())).json()) as { id: string; registro_primaria: boolean }[]
+    expect(json.find((a) => a.id === 'al-1')!.registro_primaria).toBe(true)
+    expect(json.find((a) => a.id === 'al-2')!.registro_primaria).toBe(false)
+  })
+
+  it('una lettura del registro FALLITA → 500: «non ho guardato» non è «non c’è»', async () => {
+    h.erroreRegistro = { note_disciplinari: { code: '57014', message: 'timeout' } }
+    const res = await GET(get())
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('GDPR_CANDIDATI_NON_LETTI')
+  })
+})
+
+describe('GET /api/admin/gdpr/candidates — l’elenco che non si legge', () => {
+  it('lettura dell’elenco fallita → 500 con il codice, mai il messaggio grezzo del database', async () => {
+    h.erroreAlunni = { code: '42501', message: 'permission denied for table alunni' }
+    const res = await GET(get())
+    expect(res.status).toBe(500)
+    const corpo = await res.json()
+    expect(corpo.codice).toBe('GDPR_CANDIDATI_NON_LETTI')
+    expect(JSON.stringify(corpo)).not.toContain('permission denied')
   })
 })

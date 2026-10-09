@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
-import { STATO_ISCRITTO } from '@/lib/alunni/stato';
+import { STATO_ISCRITTO, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente, formaConfronto } from '@/lib/auth/scope';
@@ -58,7 +58,7 @@ import { haAllergiaConteggiabile } from '@/lib/mensa/allergeni';
 //     letterale in `src/`.
 //
 // AL SUO POSTO, il modello a due tempi deciso dal titolare il 2026-08-12:
-// `POST /api/admin/students/archivia` sposta l'alunno fra i «non più iscritti»
+// `POST /api/admin/students/archivia` sposta l'alunno fra i ritirati (linguetta «Non iscritti»)
 // lasciando INTATTA l'anagrafica (registri e pagamenti si conservano dieci anni)
 // ed è REVERSIBILE; la liberazione dello spazio — foto, video, messaggi — è un
 // secondo gesto, che si fa solo da quell'elenco. Il diritto all'oblio vero, quello
@@ -126,6 +126,14 @@ const getQuerySchema = z.object({
     scuola_id: z.string().optional(),
     classe_sezione: z.string().optional(),
     stato: z.string().optional(),
+    // Quale ELENCO vuole chi chiama (2026-10-08). Assente = la sede intera, come
+    // sempre: pagamenti, sezioni e generatori di categoria non lo passano.
+    //  · `frequentanti` — il complemento ESATTO di `non_iscritti` fra le schede non
+    //    anonimizzate: chi ha una sezione e non è ritirato (uno stato NULL o
+    //    anomalo CON sezione sta qui, lato protetto): la linguetta «Alunni»;
+    //  · `non_iscritti` — ritirati (elenco chiuso) o senza sezione, anonimizzati
+    //    esclusi: la linguetta «Non iscritti».
+    elenco: z.enum(['frequentanti', 'non_iscritti']).optional(),
     // Clamp identico al comportamento precedente: default 200 (limit) / 0 (offset),
     // range 1..1000; input non numerico → default, mai 400.
     limit: z.preprocess((v) => Math.min(Math.max(Number(v ?? 200) || 200, 1), 1000), z.number()),
@@ -489,7 +497,7 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     // Paginazione: limit clampato 1..1000 (default 200) + offset; shape array nudo invariata.
-    const { scuola_id: sedeChiesta, classe_sezione: classeSezione, stato, limit, offset } = q.data;
+    const { scuola_id: sedeChiesta, classe_sezione: classeSezione, stato, elenco, limit, offset } = q.data;
 
     try {
         const supabase = await createAdminClient();
@@ -530,7 +538,7 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
         // migrato e una colonna assente va tolta, non trasformata in un 500.
         //
         // ─── LE TRE COLONNE DELL'ARCHIVIAZIONE (2026-08-12) ──────────────────
-        // Servono all'elenco dei «non più iscritti», e nessuna delle tre porta
+        // Servono al gruppo «Ritirati» della linguetta «Non iscritti», e nessuna delle tre porta
         // un dato di persona: due date e il NOME della classe da cui il bambino
         // è uscito. Escono di qui perché un elenco che non sa QUANDO qualcuno è
         // stato archiviato può solo ordinarlo per cognome, e `archiviato_il` è
@@ -576,6 +584,23 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
             if (sedeChiesta) query = query.eq('scuola_id', sedeChiesta);
             if (classeSezione) query = query.eq('classe_sezione', classeSezione);
             if (stato) query = query.eq('stato', stato);
+            // COMPLEMENTO ESATTO di `non_iscritti` fra le schede non anonimizzate
+            // (2026-10-09): uno stato NULL o fuori vocabolario CON sezione sta qui
+            // (lato protetto, come `eAncoraIscritto`), ed è anche dove
+            // `elimina_alunno_definitivo` risponde 'frequentante'. Per i tre stati
+            // della tendina il risultato è identico a `STATI_CHE_FREQUENTANO`: cambia
+            // solo per i valori anomali, che così non spariscono da entrambe le
+            // linguette. `stato.is.null` è esplicito: in SQL `NULL NOT IN (…)` dà NULL.
+            if (elenco === 'frequentanti') {
+                query = query
+                    .not('section_id', 'is', null)
+                    .or(`stato.is.null,stato.not.in.(${STATI_NON_PIU_ISCRITTO.join(',')})`)
+                    .is('anonimizzato_il', null);
+            } else if (elenco === 'non_iscritti') {
+                query = query
+                    .or(`stato.in.(${STATI_NON_PIU_ISCRITTO.join(',')}),section_id.is.null`)
+                    .is('anonimizzato_il', null);
+            }
             return query;
         };
 
@@ -844,8 +869,12 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                  * `{ stato = 'iscritto', archiviato_il = <valorizzato>, section_id = null,
                  * classe_sezione:null}` — un bambino ISCRITTO e senza classe, cioè
                  * invisibile a registro, appello, mensa, diario e valutazioni, e
-                 * sparito anche dalla linguetta «Non più iscritti» che filtra
-                 * `stato=ritirato`. Restava nella sola anagrafica piatta. Nessun log,
+                 * sparito anche dalla linguetta dei ritirati, che allora filtrava
+                 * `stato=ritirato` (dal 2026-10-09 la linguetta «Non iscritti» legge
+                 * `elenco=non_iscritti`, che comprende anche gli iscritti senza
+                 * sezione: oggi quel bambino ricomparirebbe lì, fra gli «Iscritti
+                 * senza sezione», ma con `archiviato_*` sporchi e la classe persa).
+                 * Restava nella sola anagrafica piatta. Nessun log,
                  * nessun avviso: il danno che tutto il modello dichiara di voler
                  * evitare, a un clic dalla scheda su cui l'elenco stesso manda.
                  *
@@ -871,7 +900,7 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     });
                     return NextResponse.json(
                         {
-                            error: 'Questo bambino è fra i «non più iscritti»: lo stato non si cambia da qui. Usa «Riporta fra gli iscritti», che gli restituisce anche la classe.',
+                            error: 'Questo bambino è fra i ritirati: lo stato non si cambia da qui. Usa «Riporta fra gli iscritti», che gli restituisce anche la classe.',
                             codice: 'STATO_ALUNNO_ARCHIVIATO',
                         },
                         { status: 409 },
@@ -1084,7 +1113,7 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                         });
                         return NextResponse.json(
                             {
-                                error: 'Questo bambino è fra i «non più iscritti»: non si sposta di sede da qui. Riportalo prima fra gli iscritti con «Riporta fra gli iscritti».',
+                                error: 'Questo bambino è fra i ritirati: non si sposta di sede da qui. Riportalo prima fra gli iscritti con «Riporta fra gli iscritti».',
                                 codice: 'STATO_ALUNNO_ARCHIVIATO',
                             },
                             { status: 409 },

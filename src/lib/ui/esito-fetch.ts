@@ -573,6 +573,17 @@ export const CODICI_ERRORE = {
      */
     GDPR_ERASE_NON_RIUSCITO: 'erroreGdprEraseNonRiuscito',
     /**
+     * 500 — l'elenco dei candidati all'oblio non si è potuto comporre: non è
+     * riuscita la lettura degli alunni o quella del registro della primaria
+     * (`GET /api/admin/gdpr/candidates`, 2026-10-09). `OblioPanel` usa la
+     * stessa frase anche per la rete caduta e per un 200 senza elenco.
+     *
+     * Non è «nessun candidato»: un elenco mostrato senza aver guardato il
+     * registro accenderebbe il comando d'oblio su un bambino il cui registro va
+     * conservato per legge. La frase chiede di riprovare, non dice «vuoto».
+     */
+    GDPR_CANDIDATI_NON_LETTI: 'erroreGdprCandidatiNonLetti',
+    /**
      * 409 — l'insegnante ha GIÀ fatto l'appello di quel giorno: la comunicazione
      * del genitore (e il suo annullamento) non sovrascrive il registro.
      *
@@ -1304,6 +1315,55 @@ export const CODICI_ERRORE = {
      * — la lezione già pagata su `ASSENZA_NON_ANNULLATA`.
      */
     ALUNNO_NON_ARCHIVIATO: 'erroreAlunnoNonArchiviato',
+    /** 404 — l'eliminazione definitiva non trova più l'alunno in elenco (`admin/students/elimina:POST`). */
+    ALUNNO_ELIMINAZIONE_NON_TROVATO: 'erroreAlunnoEliminazioneNonTrovato',
+    /** 409 — si elimina solo un ritirato o un iscritto senza sezione: questo frequenta. */
+    ALUNNO_ELIMINAZIONE_FREQUENTANTE: 'erroreAlunnoEliminazioneFrequentante',
+    /** 400 — `execute` senza `scelta`. */
+    ALUNNO_ELIMINAZIONE_SCELTA_MANCANTE: 'erroreAlunnoEliminazioneSceltaMancante',
+    /** 409 — la scelta inviata non è fra quelle che l'anteprima offre per questo bambino. */
+    ALUNNO_ELIMINAZIONE_SCELTA_NON_DISPONIBILE: 'erroreAlunnoEliminazioneSceltaNonDisponibile',
+    /** 409 — ci sono pagamenti: si sceglie se cancellarli o anonimizzare. */
+    ALUNNO_ELIMINAZIONE_HA_PAGAMENTI: 'erroreAlunnoEliminazioneHaPagamenti',
+    /** 409 — un pagamento ha ricevuta, fattura, bonifico abbinato, incasso o quote altrui: non si cancella. */
+    ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI: 'erroreAlunnoEliminazionePagamentiBloccati',
+    /**
+     * 409 — ci sono foto in cui il bambino è l'unico ritratto ma il cui indirizzo
+     * non è riconoscibile in questo archivio: non si tolgono, quindi l'eliminazione
+     * finirebbe sempre con file restanti. Riprovare non serve, e nemmeno toglierle
+     * dalla galleria (finiscono nel cestino, che si conta lo stesso): va all'assistenza.
+     */
+    ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI: 'erroreAlunnoEliminazioneFotoNonRimovibili',
+    /**
+     * 409 — «anonimizza» chiesta per un iscritto SENZA SEZIONE: frequenta ancora,
+     * e anonimizzarlo lascerebbe un bambino a scuola senza nome. Prima si ritira.
+     */
+    ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA: 'erroreAlunnoEliminazioneArchiviaPrima',
+    /**
+     * 409 — il registro della primaria (voti, pagelle, scrutini, note, certificati delle
+     * competenze) va conservato: né eliminazione né anonimizzazione. Lo usano
+     * `admin/students/elimina:POST` e `admin/gdpr/erase:POST`: una regola, una frase.
+     */
+    REGISTRO_PRIMARIA_DA_CONSERVARE: 'erroreRegistroPrimariaDaConservare',
+    /** 500 — non si è potuto misurare cosa è collegato: non si elimina niente. */
+    ALUNNO_ELIMINAZIONE_NON_MISURATA: 'erroreAlunnoEliminazioneNonMisurata',
+    /** 502 — alcuni file non sono usciti dall'archivio: la scheda resta intatta. */
+    ALUNNO_ELIMINAZIONE_FILE_RESTANTI: 'erroreAlunnoEliminazioneFileRestanti',
+    /**
+     * 500 — l'eliminazione non è avvenuta: la scheda è intatta. ⚠️ Può arrivare
+     * anche DOPO che tracce di testo e file sono già usciti (che non tornano): in
+     * quel caso il corpo porta `effetti`, e la frase lo dice («potrebbero essere già
+     * stati tolti: riprova per completare»).
+     */
+    ALUNNO_ELIMINAZIONE_NON_RIUSCITA: 'erroreAlunnoEliminazioneNonRiuscita',
+    /**
+     * 500 — la funzione SQL ha risposto errore E la rilettura della scheda non è
+     * riuscita: non si sa se il commit è avvenuto. Né «riuscita» né «intatta»: si
+     * ricarica l'elenco prima di riprovare. Il corpo porta `effetti`.
+     */
+    ALUNNO_ELIMINAZIONE_ESITO_SCONOSCIUTO: 'erroreAlunnoEliminazioneEsitoSconosciuto',
+    /** 503 — la funzione SQL non esiste su questo database (DB E2E non migrato). */
+    ALUNNO_ELIMINAZIONE_NON_DISPONIBILE: 'erroreAlunnoEliminazioneNonDisponibile',
     /**
      * 404 — quel bambino non è più raggiungibile da questa postazione: non esiste
      * più, oppure è uscito dalle sedi di chi guarda.

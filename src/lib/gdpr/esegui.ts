@@ -16,6 +16,7 @@ import { BUCKET_CHAT_ALLEGATI, normalizzaAllegatoChat } from '@/lib/chat/allegat
 import { rimuoviEVerifica, bloccanti } from '@/lib/storage/rimozione-verificata'
 import { obliaFotoNewsAlunno } from '@/lib/news/permanenza-consenso'
 import { liberaAccountGenitore, type EsitoAccountOblio } from '@/lib/gdpr/account-oblio'
+import { aBlocchi, ID_PER_QUERY, RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
@@ -81,33 +82,46 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  *  · `utente_id` = il destinatario, cioè l'account (`utenti.id`) del genitore —
  *    non `parents.id`: è la stessa trappola già pagata su
  *    `news_visualizzazioni` e `push_subscriptions`.
+ *
+ * `completo: false` = una cancellazione è stata rifiutata (schema assente escluso, che degrada
+ * come il resto del file). Aggiunto il 2026-10-09 per `bonificaTracceTestualiAlunno`, che deve
+ * poter dire «non tutto è uscito»; `anonimizzaParent` legge solo `rimosse`, come prima.
+ *
+ * A BLOCCHI DI `ID_PER_QUERY` (2026-10-09). Gli id viaggiano nell'URL (`.in()` è query string):
+ * un bambino del nido ha più di mille presenze in un anno, e mille uuid in una riga sola sono
+ * ~38 kB — la richiesta torna 414 e non si cancella NIENTE, nemmeno le notifiche che puntano
+ * all'alunno stesso. Un blocco rifiutato non ferma gli altri: si toglie tutto ciò che si può, e
+ * `completo: false` dice che non è tutto.
  */
 async function obliaNotifiche(
   supabase: SupabaseClient,
   bersagli: { entitaIds?: string[]; utenteIds?: string[] },
   op: string,
-): Promise<number> {
+): Promise<{ rimosse: number; completo: boolean }> {
   const entitaIds = [...new Set((bersagli.entitaIds ?? []).filter(Boolean))]
   const utenteIds = [...new Set((bersagli.utenteIds ?? []).filter(Boolean))]
   let rimosse = 0
+  let completo = true
 
   const cancella = async (colonna: 'entita_id' | 'utente_id', ids: string[]) => {
-    if (ids.length === 0) return
-    const { data, error } = await supabase.from('notifiche').delete().in(colonna, ids).select('id')
-    if (error) {
-      // PostgREST non lancia: senza questo controllo un guasto diventerebbe
-      // «nessuna notifica da togliere», cioè un oblio dichiarato e non fatto.
-      if (!schemaAssente(error)) {
+    for (const blocco of aBlocchi(ids, ID_PER_QUERY)) {
+      const { data, error } = await supabase.from('notifiche').delete().in(colonna, blocco).select('id')
+      if (error) {
+        // PostgREST non lancia: senza questo controllo un guasto diventerebbe
+        // «nessuna notifica da togliere», cioè un oblio dichiarato e non fatto.
+        // Schema assente: la tabella non c'è, e gli altri blocchi non la troverebbero.
+        if (schemaAssente(error)) return
         logErrore({ operazione: op, evento: 'oblio_notifiche' }, error)
+        completo = false
+        continue
       }
-      return
+      rimosse += (data ?? []).length
     }
-    rimosse += (data ?? []).length
   }
 
   await cancella('entita_id', entitaIds)
   await cancella('utente_id', utenteIds)
-  return rimosse
+  return { rimosse, completo }
 }
 
 /**
@@ -1111,7 +1125,8 @@ export async function obliaIscrizioni(
   // volte (la seconda ripartirebbe dal `data` già letto, non da quello scritto).
   const candidate = new Map<string, { data: unknown; consentsLog: unknown }>()
   const filtri: Record<string, unknown>[] = []
-  for (const ramo of ['children', 'adults'] as const) {
+  // Solo nel ramo del soggetto, quando il chiamante lo dichiara (vedi `SoggettiIscrizione.ramo`).
+  for (const ramo of soggetti.ramo ? [soggetti.ramo] : (['children', 'adults'] as const)) {
     for (const cf of cfVarianti) {
       filtri.push({ [ramo]: [{ codice_fiscale: cf }] })
       filtri.push({ [ramo]: [{ fiscal_code: cf }] })
@@ -1456,6 +1471,12 @@ export async function anonimizzaParent(
    * PARZIALE: le route li contano in `account_non_liberati`. Vedi `account-oblio.ts`.
    */
   account: EsitoAccountOblio
+  /**
+   * Le chiavi di ricerca (codice fiscale, documento) NON usate perché sono anche di un alunno vivo
+   * o di un altro genitore vivo (2026-10-09): vedi `chiaviDiRicercaProprie`. Gemello del campo
+   * omonimo di `anonimizzaAlunno`.
+   */
+  chiaviCondiviseEscluse: { codiceFiscale: number; documento: number }
 }> {
   // 1. Raccogli PRIMA dell'azzeramento: l'`auth_user_id` (ponte verso lo
   //    spazio-id `utenti`), il codice fiscale e il percorso del documento
@@ -1485,6 +1506,18 @@ export async function anonimizzaParent(
   const authUserId = (pRow?.auth_user_id as string | null) ?? null
   const cfParent = (pRow?.fiscal_code as string | null) ?? null
   const docParent = (pRow?.documento_path as string | null) ?? null
+
+  // 1-bis. LE CHIAVI DI RICERCA CHE SONO DAVVERO SUE (2026-10-09), prima di qualunque scrittura.
+  //    Misurato in produzione: tre genitori vivi portano in `fiscal_code` il codice del PROPRIO
+  //    figlio. Cercarlo nelle domande avrebbe ripulito la voce del figlio (identità, allergie, note
+  //    mediche) e tolto il suo documento. Un codice che è anche di un alunno vivo o di un altro
+  //    genitore vivo non si usa; con lui resta fuori il documento. Vedi `chiaviDiRicercaProprie`.
+  const chiavi = await chiaviDiRicercaProprie(
+    supabase,
+    { tabella: 'parents', id: parentId },
+    { codiciFiscali: [cfParent], documento: docParent },
+    op,
+  )
 
   // 2. Anonimizza il genitore (sgancia anche il login: auth_user_id → null).
   const { error: errU } = await supabase.from('parents').update(patchParent(parentId, at)).eq('id', parentId)
@@ -1538,7 +1571,7 @@ export async function anonimizzaParent(
   // `utenti.id`, non un `parents.id`.
   let notificheRimosse = 0
   if (authUserId) {
-    notificheRimosse = await obliaNotifiche(supabase, { utenteIds: [authUserId] }, op)
+    notificheRimosse = (await obliaNotifiche(supabase, { utenteIds: [authUserId] }, op)).rimosse
   }
 
   let pushSubscriptionsRimosse = 0
@@ -1617,11 +1650,23 @@ export async function anonimizzaParent(
   //    percorsi che la domanda restituisce si sommano a quello dell'anagrafica e
   //    si rimuovono in un blocco solo. Prima di oggi nessuna `.remove()` dello
   //    storage riguardava gli adulti: il file restava nel bucket per sempre.
-  const iscr = await obliaIscrizioni(supabase, { codiciFiscali: [cfParent], documentoPaths: [docParent] }, at, op)
+  //    Solo con le chiavi che sono sue (passo 1-bis) e SOLO nel ramo `adults`: un genitore non è mai
+  //    un figlio della domanda, e un codice uguale nel ramo `children` è di un bambino.
+  const iscr = await obliaIscrizioni(
+    supabase,
+    {
+      codiciFiscali: chiavi.perDomande,
+      documentoPaths: [chiavi.documento],
+      codiciFiscaliProtetti: chiavi.protetti,
+      ramo: 'adults',
+    },
+    at,
+    op,
+  )
   const esitoFile = await rimuoviFileOblio(
     supabase,
     BUCKET_ISCRIZIONI,
-    [docParent, ...iscr.documenti],
+    [chiavi.documento, ...(await allegatiDaTogliere(supabase, iscr.documenti, chiavi, op))],
     op,
   )
 
@@ -1705,8 +1750,9 @@ export async function anonimizzaParent(
     // Gli inventari NON letti. `obliaPdfCredenziali` non compare qui perché quando
     // non riesce a elencare il bucket lo dice già alzando `nonRimossi` (non ha una
     // tabella-indice: l'elenco È il suo inventario).
-    lettureFallite: [iscr.letto, allegatiChat.letto].filter((l) => l === false).length,
+    lettureFallite: [iscr.letto, allegatiChat.letto].filter((l) => l === false).length + chiavi.nonVerificate,
     account,
+    chiaviCondiviseEscluse: { ...chiavi.escluse },
   }
 }
 
@@ -1882,6 +1928,676 @@ export async function obliaIntentiVideoAlunno(
 }
 
 /**
+ * LE SEGNALAZIONI SU UN TIPO DI OGGETTO DEL BAMBINO (voci di diario, media), cercate AL ROVESCIO.
+ *
+ * PERCHÉ AL ROVESCIO (2026-10-09). La ricerca diritta — «tutte le voci di diario del bambino, poi
+ * le segnalazioni su quelle» — ha un costo che cresce con la lunghezza del diario, e si rompeva in
+ * due modi muti oltre le mille righe: la lettura troncata da PostgREST a `max_rows` e, peggio,
+ * l'update con TUTTI gli id nell'URL, che con un anno di nido (~1.400 voci) torna 414. Per
+ * l'eliminazione definitiva, che si ferma su `completo: false`, voleva dire non poter MAI
+ * eliminare proprio i ritirati del nido.
+ *
+ * Qui si parte dalle segnalazioni, che sono poche: quelle di questo tipo che hanno ANCORA testo
+ * (`motivo` o `note_gestione`), lette a pagine; poi si chiede a blocchi di `ID_PER_QUERY` quali dei
+ * loro oggetti sono del bambino (`verificaDelBambino`), e si bonificano a blocchi quelle. Il costo
+ * dipende dal numero di segnalazioni, non da quanto è lungo il diario.
+ *
+ * Il conteggio è quello delle segnalazioni a cui il testo è stato davvero tolto: una già senza
+ * testo (bonificata dall'oblio di un genitore, o da un oblio precedente) non si riscrive e non si
+ * conta, come per le presenze.
+ *
+ * `completo: false` = una lettura o una scrittura non è riuscita (schema assente escluso).
+ */
+async function bonificaSegnalazioniSuOggetti(
+  supabase: SupabaseClient,
+  tipo: 'voce_diario' | 'media_galleria',
+  verificaDelBambino: (blocco: string[]) => PromiseLike<{ data: unknown; error: unknown }>,
+  eventi: { candidate: string; verifica: string; scrittura: string },
+  op: string,
+): Promise<{ bonificate: number; completo: boolean }> {
+  let completo = true
+
+  // 1. Le segnalazioni candidate: di questo tipo, con testo ancora presente, a pagine.
+  const candidate: { id: string; oggetto: string }[] = []
+  for (let da = 0; ; da += RIGHE_MASSIME_POSTGREST) {
+    const { data, error } = await supabase
+      .from('segnalazioni')
+      .select('id, oggetto_id')
+      .eq('tipo_oggetto', tipo)
+      .or('motivo.not.is.null,note_gestione.not.is.null')
+      .order('id')
+      .range(da, da + RIGHE_MASSIME_POSTGREST - 1)
+    if (error) {
+      if (!schemaAssente(error)) {
+        logErrore({ operazione: op, evento: eventi.candidate }, error)
+        completo = false
+      }
+      break
+    }
+    const righe = (data ?? []) as { id?: unknown; oggetto_id?: unknown }[]
+    for (const r of righe) {
+      if (typeof r.id === 'string' && typeof r.oggetto_id === 'string') candidate.push({ id: r.id, oggetto: r.oggetto_id })
+    }
+    if (righe.length < RIGHE_MASSIME_POSTGREST) break
+  }
+
+  // 2. Quali di quegli oggetti sono del bambino, a blocchi. Si tiene solo ciò che si è chiesto:
+  //    una risposta che portasse un id fuori dal blocco non può allargare la bonifica.
+  const delBambino = new Set<string>()
+  for (const blocco of aBlocchi([...new Set(candidate.map((c) => c.oggetto))], ID_PER_QUERY)) {
+    const { data, error } = await verificaDelBambino(blocco)
+    if (error) {
+      if (!schemaAssente(error)) {
+        logErrore({ operazione: op, evento: eventi.verifica }, error)
+        completo = false
+      }
+      continue
+    }
+    const chiesti = new Set(blocco)
+    for (const r of (data ?? []) as { id?: unknown }[]) {
+      if (typeof r.id === 'string' && chiesti.has(r.id)) delBambino.add(r.id)
+    }
+  }
+
+  // 3. La bonifica, a blocchi di id di segnalazione. Il filtro sul tipo è una cintura: un id
+  //    di segnalazione di un altro tipo non ci può finire, ma se ci finisse non verrebbe toccato.
+  let bonificate = 0
+  const daBonificare = candidate.filter((c) => delBambino.has(c.oggetto)).map((c) => c.id)
+  for (const blocco of aBlocchi(daBonificare, ID_PER_QUERY)) {
+    const { data, error } = await supabase
+      .from('segnalazioni')
+      .update({ motivo: null, note_gestione: null })
+      .eq('tipo_oggetto', tipo)
+      .in('id', blocco)
+      .select('id')
+    if (error) {
+      if (!schemaAssente(error)) {
+        logErrore({ operazione: op, evento: eventi.scrittura }, error)
+        completo = false
+      }
+      continue
+    }
+    bonificate += (data ?? []).length
+  }
+  return { bonificate, completo }
+}
+
+/** Esito di `bonificaTracceTestualiAlunno`. */
+export interface EsitoTracceTestuali {
+  /** Righe di `notifiche` che nominavano il bambino, rimosse. */
+  notificheRimosse: number
+  /** Segnalazioni di moderazione su sue voci di diario, suoi media, suoi thread: `motivo`/`note_gestione` a null. */
+  segnalazioniBonificate: number
+  /** Sospensioni dei suoi thread di chat: `motivo` a null. */
+  sospensioniBonificate: number
+  /**
+   * `false` = almeno una lettura o una scrittura non è riuscita (lo schema assente non conta: degrada
+   * in silenzio come il resto del file). Chi lo riceve non può dichiarare la pulizia compiuta.
+   */
+  completo: boolean
+  /**
+   * Gli id dei thread di chat del bambino, letti qui. Esposti perché `anonimizzaAlunno` ci toglie
+   * poi gli allegati (`obliaAllegatiChat`) e non deve rileggerli: un solo posto in cui è scritto che i
+   * thread di un bambino si trovano per `student_id`.
+   *
+   * ⚠️ Vale SOLO se `threadLetti` è vero. Con la lettura fallita è un elenco vuoto che non vuol dire
+   * «nessun thread»: chi lo usa per decidere qualcosa guarda prima `threadLetti`.
+   */
+  threadIds: string[]
+  /** `false` = l'elenco dei thread non si è potuto leggere: segnalazioni e sospensioni di chat non sono state guardate. */
+  threadLetti: boolean
+  /** `false` = l'audit delle cancellazioni di diario senza `entita_id` non si è potuto bonificare. */
+  auditDiarioCompleto: boolean
+}
+
+/**
+ * LE TRACCE DI TESTO SUL BAMBINO CHE NON HANNO UNA FK VERSO `alunni` — una procedura, due canali.
+ *
+ * PERCHÉ ESISTE (2026-10-09). Questi passi vivevano dentro `anonimizzaAlunno`. Poi è arrivato un
+ * secondo canale che fa sparire un bambino dall'archivio: l'ELIMINAZIONE DEFINITIVA di una scheda non
+ * iscritta (`src/lib/alunni/elimina-definitivo.ts`), che cancella la riga `alunni` e ciò che le sta
+ * appeso in CASCADE. Ma le tracce trattate qui non le sono appese — non hanno FK, apposta, per
+ * sopravvivere agli altri oblii — e dopo la cancellazione resterebbero lì col nome del bambino o un
+ * suo dato sanitario, senza più nessuna riga a cui ricondurle e quindi senza che nessuno possa
+ * ritrovarle. Il principio è quello di `gdpr-erase-canale-unico.test.ts`: un canale nuovo passa dalle
+ * STESSE funzioni dell'oblio, mai da una copia. La copia diverge in silenzio: è già successo.
+ *
+ * Cosa tratta:
+ *  · le NOTIFICHE che lo nominano (`entita_id` = l'alunno o una delle sue presenze): la riga si
+ *    cancella, perché la riga È il messaggio (vedi `obliaNotifiche`);
+ *  · le SEGNALAZIONI di moderazione sulle sue voci di diario, sui media in cui è taggato e sui
+ *    messaggi dei suoi thread: si azzerano `motivo` e `note_gestione`;
+ *  · le SOSPENSIONI dei suoi thread: si azzera `motivo` (le righe andrebbero via in CASCADE col
+ *    thread, ma l'oblio non cancella i thread, e il testo va tolto comunque);
+ *  · l'AUDIT delle cancellazioni di diario scritte senza `entita_id` (`bonificaAuditDiarioSenzaId`).
+ *
+ * ⚠️ L'ORDINE È UN VINCOLO PER CHI LA CHIAMA. Presenze, voci di diario, media e thread li legge da
+ * sé, qui dentro: va chiamata PRIMA di qualunque passo che cancelli quelle righe. Dopo, le
+ * segnalazioni sarebbero irraggiungibili: l'unico aggancio è l'id dell'oggetto segnalato.
+ *  · in `anonimizzaAlunno`: prima di `obliaFotoAlunno`;
+ *  · nell'eliminazione definitiva: PRIMA di `rimuoviFileAlunno`/`obliaFotoAlunno` (che cancella i
+ *    media: dopo, le segnalazioni sui media non si ritroverebbero più) e prima della funzione SQL
+ *    (che cancella diario, presenze e thread in CASCADE); e solo in `execute`, dopo tutti i controlli
+ *    di ammissibilità — è una scrittura irreversibile, non una misura.
+ *
+ * Nessun elenco di id cresce con la storia del bambino dentro un URL, e nessuna lettura si ferma a
+ * `max_rows` (2026-10-09): presenze e segnalazioni si leggono a pagine, gli id viaggiano a blocchi di
+ * `ID_PER_QUERY`. Fino a quel giorno, oltre le mille righe, la scrittura tornava 414 e la funzione
+ * diceva `completo: false` per sempre — cioè un ritirato del nido non si poteva eliminare.
+ *
+ * ⚠️ NON SCRIVE UN LOG DI SUCCESSO PROPRIO, e non per dimenticanza: era codice inline di
+ * `anonimizzaAlunno`, che i suoi conteggi li porta già nella riga `oblio-eseguito` di chi la chiama, e
+ * un'estrazione che aggiungesse una riga cambierebbe i log dell'oblio. I conteggi tornano al chiamante,
+ * che li scrive nel proprio esito. Ogni ramo d'errore invece logga qui, come prima.
+ */
+export async function bonificaTracceTestualiAlunno(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  op: string,
+): Promise<EsitoTracceTestuali> {
+  let completo = true
+
+  // a. LE NOTIFICHE CHE NOMINANO IL BAMBINO (art. 17).
+  //
+  //    Le notifiche del registro puntano alla riga di `presenze` (`entita_id`),
+  //    non all'alunno: per ritrovarle servono gli id delle sue presenze — TUTTE,
+  //    non solo quelle col motivo bonificato, perché il nome sta nel corpo della
+  //    notifica anche quando la presenza non aveva alcun motivo scritto.
+  //    All'elenco si aggiunge l'id dell'alunno stesso, che è ciò a cui puntano
+  //    `assenza_non_comunicata` e `mensa_saldo_basso`.
+  //
+  //    A PAGINE (2026-10-09): PostgREST tronca in silenzio a `max_rows` (1000), e un bambino del
+  //    nido supera le mille presenze in un anno. Una lettura sola ne vedeva mille: le notifiche
+  //    della milleunesima in poi restavano, e il passo diceva «fatto». La cancellazione poi va a
+  //    blocchi dentro `obliaNotifiche`, perché mille id in un URL sono un 414.
+  const idPresenze: string[] = []
+  for (let da = 0; ; da += RIGHE_MASSIME_POSTGREST) {
+    const { data: righePresenze, error: errIdPresenze } = await supabase
+      .from('presenze')
+      .select('id')
+      .eq('alunno_id', alunnoId)
+      .order('id')
+      .range(da, da + RIGHE_MASSIME_POSTGREST - 1)
+    if (errIdPresenze) {
+      if (!schemaAssente(errIdPresenze)) {
+        logErrore({ operazione: op, evento: 'oblio_notifiche_presenze_non_lette' }, errIdPresenze)
+        completo = false
+      }
+      break
+    }
+    const righe = (righePresenze ?? []) as { id?: unknown }[]
+    for (const r of righe) if (typeof r.id === 'string') idPresenze.push(r.id)
+    if (righe.length < RIGHE_MASSIME_POSTGREST) break
+  }
+  const notifiche = await obliaNotifiche(supabase, { entitaIds: [alunnoId, ...idPresenze] }, op)
+  if (!notifiche.completo) completo = false
+
+  // b. Bonifica del testo libero UGC (C5) agganciato ai CONTENUTI del minore.
+  //    Le segnalazioni non hanno FK verso l'alunno: l'aggancio passa dall'oggetto
+  //    segnalato (voce di diario / media / thread), via tipo_oggetto + oggetto_id
+  //    o thread_id. Ogni ramo degrada in silenzio se lo schema C5 è assente.
+  let segnalazioniBonificate = 0
+  let sospensioniBonificate = 0
+
+  // b1) Segnalazioni su voci di diario dell'alunno. Ricerca ROVESCIATA: vedi
+  //     `bonificaSegnalazioniSuOggetti`. Fino al 2026-10-09 si leggevano tutte le voci di diario
+  //     del bambino (troncate in silenzio a 1000) e si mettevano TUTTE nell'URL dell'update: con un
+  //     anno di nido la richiesta tornava 414 e nessuna segnalazione veniva bonificata.
+  const segDiario = await bonificaSegnalazioniSuOggetti(
+    supabase,
+    'voce_diario',
+    (blocco) => supabase.from('eventi_diario').select('id').in('id', blocco).eq('alunno_id', alunnoId),
+    { candidate: 'oblio_segnalazioni_diario_candidate', verifica: 'oblio_segnalazioni_diario_select', scrittura: 'oblio_segnalazioni_diario' },
+    op,
+  )
+  segnalazioniBonificate += segDiario.bonificate
+  if (!segDiario.completo) completo = false
+
+  // b2) Segnalazioni su media di galleria taggati all'alunno (`tag_students` lo contiene), con la
+  //     stessa ricerca rovesciata.
+  // `ancheNelCestino`: questa lettura serve a TROVARE le segnalazioni da bonificare,
+  // e il testo libero di una segnalazione su una foto cestinata è PII su un minore
+  // esattamente come quello su una foto viva. Filtrare qui non lascerebbe in piedi
+  // una foto: lascerebbe in piedi il `motivo` scritto da un adulto su un bambino.
+  const segMedia = await bonificaSegnalazioniSuOggetti(
+    supabase,
+    'media_galleria',
+    (blocco) =>
+      ancheNelCestino(
+        supabase
+          .from('galleria_media_v2')
+          .select('id')
+          .in('id', blocco)
+          .contains('tag_students', [alunnoId]),
+        'ricerca delle segnalazioni da bonificare: il motivo e le note scritte su una foto ' +
+          'cestinata sono testo libero su un minore come quelli su una foto viva, e filtrare ' +
+          "qui li lascerebbe in tabella dopo l'oblio.",
+      ),
+    { candidate: 'oblio_segnalazioni_media_candidate', verifica: 'oblio_segnalazioni_media_select', scrittura: 'oblio_segnalazioni_media' },
+    op,
+  )
+  segnalazioniBonificate += segMedia.bonificate
+  if (!segMedia.completo) completo = false
+
+  // b3) Segnalazioni sui messaggi + sospensioni dei thread di chat dell'alunno.
+  //     Un alunno ha DUE genitori (student_parents molti-a-molti): se solo uno
+  //     chiede la cancellazione, un thread con l'ALTRO genitore (non
+  //     anonimizzato) o con la maestra non verrebbe mai toccato dallo scrub di
+  //     anonimizzaParent — questo è l'unico ramo che lo copre.
+  const { data: threadRows, error: errThread } = await supabase
+    .from('chat_threads')
+    .select('id')
+    .eq('student_id', alunnoId)
+  // Un elenco di thread che non si è potuto leggere rende ciechi DUE rami: lo scrub
+  // delle segnalazioni qui sotto e gli allegati di chat che `anonimizzaAlunno` toglie
+  // con questi stessi id. Non è «nessun thread»: è «non lo so», e va detto a chi
+  // scriverà l'esito.
+  let threadLetti = true
+  if (errThread && !schemaAssente(errThread)) {
+    logErrore({ operazione: op, evento: 'oblio_segnalazioni_thread_select' }, errThread)
+    threadLetti = false
+    completo = false
+  }
+  const threadIds = ((threadRows ?? []) as { id: string }[]).map((t) => t.id)
+  if (threadIds.length > 0) {
+    const { data: segChat, error: errSegC } = await supabase
+      .from('segnalazioni')
+      .update({ motivo: null, note_gestione: null })
+      .eq('tipo_oggetto', 'messaggio_chat')
+      .in('thread_id', threadIds)
+      .select('id')
+    if (errSegC) {
+      if (!schemaAssente(errSegC)) {
+        logErrore({ operazione: op, evento: 'oblio_segnalazioni_chat' }, errSegC)
+        completo = false
+      }
+    } else {
+      segnalazioniBonificate += (segChat ?? []).length
+    }
+
+    const { data: sospChat, error: errSospC } = await supabase
+      .from('conversazioni_sospensioni')
+      .update({ motivo: null })
+      .in('thread_id', threadIds)
+      .select('id')
+    if (errSospC) {
+      if (!schemaAssente(errSospC)) {
+        logErrore({ operazione: op, evento: 'oblio_sospensioni_chat' }, errSospC)
+        completo = false
+      }
+    } else {
+      sospensioniBonificate += (sospChat ?? []).length
+    }
+  }
+
+  // c. Le cancellazioni di voci del diario registrate SENZA `entita_id` (fino al 2026-09-28): il
+  //    loro valore di prima porta la nota del bambino e il testo delle routine. Si ritrovano per
+  //    contenuto (`valore_prima @> [{"alunno_id": …}]`). Misurate il 28/09: 79 righe, una con una nota.
+  //    La riga dell'audit resta (chi ha cancellato cosa e quando), il contenuto no.
+  const auditDiarioCompleto = await bonificaAuditDiarioSenzaId(supabase, alunnoId, op)
+  if (!auditDiarioCompleto) completo = false
+
+  return {
+    notificheRimosse: notifiche.rimosse,
+    segnalazioniBonificate,
+    sospensioniBonificate,
+    completo,
+    threadIds,
+    threadLetti,
+    auditDiarioCompleto,
+  }
+}
+
+/** Il codice fiscale come lo confronta `scrubDomandaIscrizione`: senza spazi ai lati, maiuscolo. */
+function normalizzaCodiceFiscale(v: unknown): string {
+  return typeof v === 'string' ? v.trim().toUpperCase() : ''
+}
+
+/**
+ * Solo lettere e cifre. Il codice fiscale finisce dentro filtri `ilike` (dove `%` e `_` sono
+ * caratteri jolly) e, al passo 3e, dentro un `.or()` di PostgREST scritto a mano (dove una virgola
+ * o una parentesi cambiano il filtro): un valore che non è alfanumerico non ci entra.
+ */
+const CODICE_FISCALE_FILTRABILE = /^[A-Z0-9]+$/
+
+type EsitoChiave = 'propria' | 'condivisa' | 'non_verificata'
+
+/** Di chi si sta facendo l'oblio: decide quale riga NON conta come «un altro». */
+interface SoggettoChiavi {
+  tabella: 'alunni' | 'parents'
+  id: string
+}
+
+/** Le righe lette per una verifica, ridotte a ciò che serve per decidere in TS. */
+type RigaVerifica = {
+  id?: unknown
+  codice_fiscale?: unknown
+  fiscal_code?: unknown
+  documento_path?: unknown
+  anonimizzato_il?: unknown
+}
+
+/** È la riga del soggetto stesso? Solo se è nella SUA tabella e ha il SUO id. */
+const eSeStesso = (soggetto: SoggettoChiavi, tabella: 'alunni' | 'parents', r: RigaVerifica) =>
+  soggetto.tabella === tabella && r.id === soggetto.id
+
+/**
+ * Il codice fiscale è anche di un'ALTRA persona viva (non anonimizzata)?
+ *  · per un ALUNNO: un'altra scheda alunno (`codice_fiscale` o `fiscal_code`);
+ *  · per un GENITORE: una scheda alunno qualunque, oppure un altro genitore (`fiscal_code`).
+ *    Misurato in produzione: tre genitori portano il codice del proprio figlio.
+ * Si cerca per sottostringa (`ilike '%CF%'`) e si decide in TS confrontando normalizzato: il valore
+ * in tabella può avere maiuscole o spazi diversi, e una riga che il filtro lasciasse passare per
+ * sbaglio non conta se non è davvero lo stesso codice. `cf` arriva GIÀ normalizzato e validato, ed
+ * è la stessa stringa che finisce nei filtri.
+ */
+async function codiceFiscaleDiAltri(
+  supabase: SupabaseClient,
+  soggetto: SoggettoChiavi,
+  cf: string,
+  op: string,
+): Promise<EsitoChiave> {
+  if (!CODICE_FISCALE_FILTRABILE.test(cf)) {
+    logEvento('gdpr', 'error', {
+      operazione: op,
+      esito: 'oblio-chiave-non-verificabile',
+      entita_tipo: soggetto.tabella,
+      entita_id: soggetto.id,
+      tipo: 'codice_fiscale',
+      msg: `${op}: il codice fiscale contiene caratteri che non sono lettere o cifre: non lo si usa come chiave di ricerca`,
+    })
+    return 'non_verificata'
+  }
+  const ricerche: { tabella: 'alunni' | 'parents'; colonna: string; select: string }[] = [
+    { tabella: 'alunni', colonna: 'codice_fiscale', select: 'id, codice_fiscale, fiscal_code, anonimizzato_il' },
+    { tabella: 'alunni', colonna: 'fiscal_code', select: 'id, codice_fiscale, fiscal_code, anonimizzato_il' },
+  ]
+  if (soggetto.tabella === 'parents') {
+    ricerche.push({ tabella: 'parents', colonna: 'fiscal_code', select: 'id, fiscal_code, anonimizzato_il' })
+  }
+  for (const { tabella, colonna, select } of ricerche) {
+    const { data, error } = await supabase
+      .from(tabella)
+      .select(select)
+      .is('anonimizzato_il', null)
+      .ilike(colonna, `%${cf}%`)
+    if (error) {
+      logErrore({ operazione: op, evento: 'oblio_chiavi_verifica' }, error)
+      return 'non_verificata'
+    }
+    const altri = ((data ?? []) as RigaVerifica[])
+      .filter((r) => !eSeStesso(soggetto, tabella, r) && r.anonimizzato_il == null)
+      .filter((r) => normalizzaCodiceFiscale(r.codice_fiscale) === cf || normalizzaCodiceFiscale(r.fiscal_code) === cf)
+    if (altri.length > 0) return 'condivisa'
+  }
+  return 'propria'
+}
+
+/**
+ * Un documento d'identità è nominato da un'ALTRA scheda alunno viva o da un ALTRO genitore?
+ *
+ * ⚠️ Non conta la domanda d'iscrizione del soggetto stesso: che la SUA domanda nomini il SUO
+ * documento è il caso normale (243 domande su 243 in produzione), non una condivisione. Conta
+ * solo un'altra persona che quel file lo usa ancora come proprio.
+ */
+async function documentoDiAltri(
+  supabase: SupabaseClient,
+  soggetto: SoggettoChiavi,
+  percorso: string,
+  op: string,
+): Promise<EsitoChiave> {
+  const alunni = await supabase
+    .from('alunni')
+    .select('id, documento_path, anonimizzato_il')
+    .eq('documento_path', percorso)
+    .is('anonimizzato_il', null)
+  if (alunni.error) {
+    logErrore({ operazione: op, evento: 'oblio_chiavi_verifica' }, alunni.error)
+    return 'non_verificata'
+  }
+  const altroAlunno = ((alunni.data ?? []) as RigaVerifica[]).some(
+    (r) =>
+      !eSeStesso(soggetto, 'alunni', r) &&
+      r.anonimizzato_il == null &&
+      typeof r.documento_path === 'string' &&
+      r.documento_path.trim() === percorso,
+  )
+  if (altroAlunno) return 'condivisa'
+
+  const genitori = await supabase.from('parents').select('id, documento_path').eq('documento_path', percorso)
+  if (genitori.error) {
+    logErrore({ operazione: op, evento: 'oblio_chiavi_verifica' }, genitori.error)
+    return 'non_verificata'
+  }
+  const altroGenitore = ((genitori.data ?? []) as RigaVerifica[]).some(
+    (r) => !eSeStesso(soggetto, 'parents', r) && typeof r.documento_path === 'string' && r.documento_path.trim() === percorso,
+  )
+  return altroGenitore ? 'condivisa' : 'propria'
+}
+
+/** Le chiavi di ricerca che sono davvero del soggetto, e il conto di quelle lasciate fuori. */
+interface ChiaviProprie {
+  soggetto: SoggettoChiavi
+  /** TUTTI i codici fiscali del soggetto, normalizzati (anche quelli esclusi): una voce che ne porta uno è sua. */
+  propri: Set<string>
+  /** I codici fiscali NORMALIZZATI e validati che si possono usare: sono la stringa dei filtri. */
+  codiciFiscali: string[]
+  /**
+   * Gli stessi codici più la forma in cui sono scritti in anagrafica (solo spazi tolti), per la
+   * ricerca nelle domande: lì il confronto `@>` è sensibile alle maiuscole e la famiglia scrive come
+   * le pare. È un valore JSON, non un filtro: niente da validare.
+   */
+  perDomande: string[]
+  /** I codici esclusi (condivisi o non verificati), normalizzati: chi li porta non si ripulisce mai. */
+  protetti: string[]
+  /** Il `documento_path`, se si può usare come chiave E togliere dall'archivio; altrimenti null. */
+  documento: string | null
+  /** Percorsi già verificati: non si ricontrollano quando la domanda restituisce i suoi allegati. */
+  verificati: Map<string, EsitoChiave>
+  escluse: { codiceFiscale: number; documento: number }
+  /** Verifiche che non si sono potute fare: ciascuna è un `lettureFallite` in più. */
+  nonVerificate: number
+}
+
+/** Il ramo della domanda in cui il soggetto può stare: un alunno è un figlio, un genitore un adulto. */
+const ramoDelSoggetto = (soggetto: SoggettoChiavi): 'children' | 'adults' =>
+  soggetto.tabella === 'alunni' ? 'children' : 'adults'
+
+/**
+ * IL DOCUMENTO NELLA VOCE DI UN'ALTRA PERSONA (2026-10-09, terza revisione).
+ *
+ * Misurato in produzione: tre schede vive SENZA codice fiscale, non iscritte, ognuna con lo stesso
+ * nome di un alunno iscritto; il loro `documento_path` compare in una domanda nella voce `children`
+ * che porta il codice fiscale di quell'alunno (la cui scheda punta a un documento diverso). Nessun
+ * altra SCHEDA ha quel percorso, e il soggetto non ha un codice da confrontare: `documentoDiAltri`
+ * risponde «proprio», e la pulizia — che tocca una persona anche solo per documento — ripuliva la
+ * voce del bambino iscritto e ne toglieva il file.
+ *
+ * Quindi si leggono le voci DEL SUO RAMO che nominano quel documento, e per ogni codice fiscale
+ * che vi compare e che non è del soggetto si chiede se è di un'altra persona viva:
+ *  · sì, o non si può verificare → il documento NON è suo (`condivisa`) e quel codice diventa
+ *    protetto: chi lo porta non si ripulisce. Una verifica non riuscita si conta anche fra le
+ *    letture fallite: non si è guardato, e l'oblio deve risultare parziale;
+ *  · no → è un refuso nella SUA domanda, e il documento resta suo (comportamento di prima);
+ *  · la lettura delle domande non riesce → `non_verificata`.
+ * Lo schema assente (DB E2E non migrato) vale «nessuna domanda», come in `obliaIscrizioni`.
+ */
+async function vociDiAltriSulDocumento(
+  supabase: SupabaseClient,
+  chiavi: ChiaviProprie,
+  percorso: string,
+  op: string,
+): Promise<EsitoChiave> {
+  const ramo = ramoDelSoggetto(chiavi.soggetto)
+  const { data, error } = await supabase
+    .from('enrollment_submissions')
+    .select('id, data')
+    .contains('data', { [ramo]: [{ documento_path: percorso }] })
+  if (error) {
+    if (schemaAssente(error)) return 'propria'
+    logErrore({ operazione: op, evento: 'oblio_chiavi_verifica_domande' }, error)
+    return 'non_verificata'
+  }
+  const codiciNelleVoci = new Set<string>()
+  for (const riga of (data ?? []) as { data?: unknown }[]) {
+    const lista = riga.data && typeof riga.data === 'object' ? (riga.data as Record<string, unknown>)[ramo] : null
+    if (!Array.isArray(lista)) continue
+    for (const voce of lista as Record<string, unknown>[]) {
+      if (!voce || typeof voce !== 'object') continue
+      // Il confronto lo rifà qui: una riga che il filtro lasciasse passare per sbaglio non conta.
+      if (typeof voce.documento_path !== 'string' || voce.documento_path.trim() !== percorso) continue
+      for (const k of ['codice_fiscale', 'fiscal_code'] as const) {
+        const cf = normalizzaCodiceFiscale(voce[k])
+        if (cf && !chiavi.propri.has(cf)) codiciNelleVoci.add(cf)
+      }
+    }
+  }
+  let diAltri = false
+  for (const cf of codiciNelleVoci) {
+    const esito = await codiceFiscaleDiAltri(supabase, chiavi.soggetto, cf, op)
+    if (esito === 'propria') continue
+    if (esito === 'non_verificata') chiavi.nonVerificate++
+    if (!chiavi.protetti.includes(cf)) chiavi.protetti.push(cf)
+    diAltri = true
+  }
+  return diAltri ? 'condivisa' : 'propria'
+}
+
+/**
+ * Il documento è davvero del soggetto? Prima le SCHEDE (un'altra scheda alunno viva, un altro
+ * genitore), poi le VOCI delle domande che lo nominano (vedi `vociDiAltriSulDocumento`).
+ */
+async function verificaDocumento(
+  supabase: SupabaseClient,
+  chiavi: ChiaviProprie,
+  percorso: string,
+  op: string,
+): Promise<EsitoChiave> {
+  const schede = await documentoDiAltri(supabase, chiavi.soggetto, percorso, op)
+  if (schede !== 'propria') return schede
+  return vociDiAltriSulDocumento(supabase, chiavi, percorso, op)
+}
+
+function registraEsclusione(chiavi: ChiaviProprie, esito: EsitoChiave, tipo: 'codice_fiscale' | 'documento', op: string): void {
+  if (esito === 'non_verificata') {
+    chiavi.nonVerificate++
+    return
+  }
+  if (esito !== 'condivisa') return
+  if (tipo === 'codice_fiscale') chiavi.escluse.codiceFiscale++
+  else chiavi.escluse.documento++
+  // Nessun valore in chiaro: né il codice fiscale né il percorso (che porta il nome scelto dalla famiglia).
+  logEvento('gdpr', 'warn', {
+    operazione: op,
+    esito: 'oblio-chiave-condivisa-esclusa',
+    entita_tipo: chiavi.soggetto.tabella,
+    entita_id: chiavi.soggetto.id,
+    tipo,
+  })
+}
+
+/**
+ * LE CHIAVI DI RICERCA CHE SONO DAVVERO SUE (2026-10-09).
+ *
+ * PERCHÉ ESISTE. L'oblio usa il codice fiscale e il documento della persona come CHIAVI per
+ * cercare fuori dalla sua riga: le voci da ripulire nelle domande d'iscrizione (e i loro allegati
+ * da togliere) e, per un alunno, i bonifici non confermati e i movimenti di cassa che citano il
+ * codice. Misurato in produzione: fra i non iscritti c'è un DOPPIONE con lo stesso codice fiscale di
+ * un bambino che frequenta, e tre genitori vivi portano il codice del proprio figlio. L'oblio del
+ * doppione, o di quel genitore, avrebbe ripulito le domande, tolto il documento e azzerato i
+ * bonifici del bambino VERO — irreversibile.
+ *
+ * Una chiave che è anche di un'altra persona viva non si usa: né per le domande, né per bonifici
+ * e cassa, né per togliere il file. E se un codice fiscale è escluso, è escluso ANCHE il documento:
+ * la pulizia di una domanda tocca una persona se corrisponde il codice OPPURE il documento, e un
+ * documento proprio di un doppione può stare nella voce del bambino vero (la domanda è la stessa).
+ * Un documento non è suo nemmeno quando lo nomina, nella domanda, la voce di un'altra persona viva
+ * (vedi `vociDiAltriSulDocumento`: le schede senza codice fiscale misurate in produzione).
+ * La RIGA del soggetto si azzera comunque: è sua. Una verifica che non si è potuta fare vale come
+ * «non sua» (il lato prudente: una cancellazione non si disfa) e si conta in `lettureFallite`.
+ *
+ * Sta dentro `anonimizzaAlunno` e `anonimizzaParent`, non nelle route: le porte che le chiamano
+ * sono tre (oblio della Direzione, richieste delle famiglie, eliminazione definitiva), e una guardia
+ * in una route sola lascerebbe aperte le altre.
+ */
+async function chiaviDiRicercaProprie(
+  supabase: SupabaseClient,
+  soggetto: SoggettoChiavi,
+  persona: { codiciFiscali: unknown[]; documento: unknown },
+  op: string,
+): Promise<ChiaviProprie> {
+  const chiavi: ChiaviProprie = {
+    soggetto,
+    propri: new Set(persona.codiciFiscali.map(normalizzaCodiceFiscale).filter((v) => v.length > 0)),
+    codiciFiscali: [],
+    perDomande: [],
+    protetti: [],
+    documento: null,
+    verificati: new Map(),
+    escluse: { codiceFiscale: 0, documento: 0 },
+    nonVerificate: 0,
+  }
+
+  const esitiCf = new Map<string, EsitoChiave>()
+  for (const grezzo of persona.codiciFiscali) {
+    const cf = normalizzaCodiceFiscale(grezzo)
+    if (!cf) continue
+    let esito = esitiCf.get(cf)
+    if (esito === undefined) {
+      esito = await codiceFiscaleDiAltri(supabase, soggetto, cf, op)
+      esitiCf.set(cf, esito)
+      registraEsclusione(chiavi, esito, 'codice_fiscale', op)
+      if (esito === 'propria') chiavi.codiciFiscali.push(cf)
+      else chiavi.protetti.push(cf)
+    }
+    if (esito === 'propria') chiavi.perDomande.push(cf, (grezzo as string).trim())
+  }
+  chiavi.perDomande = [...new Set(chiavi.perDomande)]
+
+  const documento = typeof persona.documento === 'string' ? persona.documento.trim() : ''
+  if (documento) {
+    if (chiavi.protetti.length > 0) {
+      // Il documento non riapre la strada che il codice fiscale ha chiuso. Si conta come escluso
+      // solo quando il codice era CONDIVISO: con una verifica fallita, quella è già in
+      // `lettureFallite` e l'oblio risulta parziale comunque.
+      const esito: EsitoChiave = chiavi.escluse.codiceFiscale > 0 ? 'condivisa' : 'non_verificata'
+      chiavi.verificati.set(documento, esito)
+      if (esito === 'condivisa') registraEsclusione(chiavi, esito, 'documento', op)
+    } else {
+      const esito = await verificaDocumento(supabase, chiavi, documento, op)
+      chiavi.verificati.set(documento, esito)
+      registraEsclusione(chiavi, esito, 'documento', op)
+      if (esito === 'propria') chiavi.documento = documento
+    }
+  }
+  return chiavi
+}
+
+/**
+ * Fra gli allegati che la domanda d'iscrizione restituisce, quelli che si possono togliere.
+ * Di solito è il documento del soggetto, già verificato; un percorso diverso si verifica qui, con la
+ * stessa regola (schede e voci delle domande): se lo usa un'altra persona viva, il file resta.
+ */
+async function allegatiDaTogliere(
+  supabase: SupabaseClient,
+  percorsi: string[],
+  chiavi: ChiaviProprie,
+  op: string,
+): Promise<string[]> {
+  const fuori: string[] = []
+  for (const p of percorsiUnici(percorsi)) {
+    let esito = chiavi.verificati.get(p)
+    if (esito === undefined) {
+      esito = await verificaDocumento(supabase, chiavi, p, op)
+      chiavi.verificati.set(p, esito)
+      registraEsclusione(chiavi, esito, 'documento', op)
+    }
+    if (esito === 'propria') fuori.push(p)
+  }
+  return fuori
+}
+
+/**
  * Anonimizza UN alunno + bonifica i suoi dati finanziari collegati
  * (riconciliazione/incassi/cassa), con la stessa logica del diritto all'oblio
  * admin (causale/controparte/`suggerimenti.label` e testo libero di cassa che
@@ -1929,8 +2645,26 @@ export async function anonimizzaAlunno(
    * `admin/gdpr/erase` e `admin/gdpr/richieste`, che fanno scattare `oblio-parziale`.
    */
   lettureFallite: number
+  /**
+   * Le chiavi di ricerca (codice fiscale, documento) NON usate perché sono anche di un'altra scheda
+   * alunno viva o di un genitore (2026-10-09): vedi `chiaviDiRicercaProprie`. Maggiore di zero vuol
+   * dire che domande, bonifici, cassa o file agganciati a quella chiave sono rimasti dov'erano — di
+   * proposito, perché sono anche dell'altra persona.
+   */
+  chiaviCondiviseEscluse: { codiceFiscale: number; documento: number }
 }> {
-  // 1. Anonimizza l'anagrafica dell'alunno.
+  // 0. LE CHIAVI DI RICERCA CHE SONO DAVVERO SUE — prima di qualunque scrittura. Il codice fiscale
+  //    e il documento servono più sotto a cercare FUORI dalla riga del bambino (domande d'iscrizione
+  //    e loro allegati, bonifici, cassa): se sono anche di un'altra scheda viva, cercarli distruggerebbe
+  //    i dati di quell'altro bambino. Vedi `chiaviDiRicercaProprie`.
+  const chiavi = await chiaviDiRicercaProprie(
+    supabase,
+    { tabella: 'alunni', id: alunno.id },
+    { codiciFiscali: [alunno.codice_fiscale, alunno.fiscal_code], documento: alunno.documento_path },
+    op,
+  )
+
+  // 1. Anonimizza l'anagrafica dell'alunno. La SUA riga si azzera comunque, chiavi condivise o no.
   const { error: e1 } = await supabase.from('alunni').update(patchAlunno(alunno.id, at)).eq('id', alunno.id)
   if (e1) logErrore({ operazione: op, evento: 'patch_alunno' }, e1)
 
@@ -1977,33 +2711,14 @@ export async function anonimizzaAlunno(
   //    Vedi `bonificaDiarioAlunno`.
   const diario = await bonificaDiarioAlunno(supabase, alunno.id, op)
 
-  // 2-bis. LE NOTIFICHE CHE NOMINANO IL BAMBINO (art. 17).
-  //
-  //    Le notifiche del registro puntano alla riga di `presenze` (`entita_id`),
-  //    non all'alunno: per ritrovarle servono gli id delle sue presenze — TUTTE,
-  //    non solo quelle appena bonificate, perché il nome sta nel corpo della
-  //    notifica anche quando la presenza non aveva alcun motivo scritto.
-  //    All'elenco si aggiunge l'id dell'alunno stesso, che è ciò a cui puntano
-  //    `assenza_non_comunicata` e `mensa_saldo_basso`.
-  const { data: righePresenze, error: errIdPresenze } = await supabase
-    .from('presenze')
-    .select('id')
-    .eq('alunno_id', alunno.id)
-  if (errIdPresenze && !schemaAssente(errIdPresenze)) {
-    logErrore({ operazione: op, evento: 'oblio_notifiche_presenze_non_lette' }, errIdPresenze)
-  }
-  const idPresenze = ((righePresenze ?? []) as { id?: unknown }[])
-    .map((r) => r.id)
-    .filter((v): v is string => typeof v === 'string')
-  const notificheRimosse = await obliaNotifiche(
-    supabase,
-    { entitaIds: [alunno.id, ...idPresenze] },
-    op,
-  )
+  // 2-bis. LE NOTIFICHE CHE NOMINANO IL BAMBINO stavano qui fino al 2026-10-09: ora sono il primo
+  //    passo di `bonificaTracceTestualiAlunno`, chiamata al punto 3f. Lo spostamento non cambia
+  //    niente di ciò che si toglie: i passi 3a–3e in mezzo toccano solo pagamenti, movimenti
+  //    bancari, incassi e cassa, mai `presenze` né `notifiche`.
 
-  const cf = [alunno.codice_fiscale, alunno.fiscal_code]
-    .map((v) => (typeof v === 'string' ? v.trim() : ''))
-    .find((v) => v.length > 0) ?? ''
+  // Il codice fiscale per 3c/3e: il primo dei due che è davvero suo (vedi il passo 0). Vuoto = quei
+  // rami non partono, ed è giusto: un bonifico che cita un codice condiviso non si sa di chi sia.
+  const cf = chiavi.codiciFiscali[0] ?? ''
 
   let riconciliazione = 0
   let incassi = 0
@@ -2123,112 +2838,21 @@ export async function anonimizzaAlunno(
     }
   }
 
-  // 3f. Bonifica del testo libero UGC (C5) agganciato ai CONTENUTI del minore.
-  //     Le segnalazioni non hanno FK verso l'alunno: l'aggancio passa dall'oggetto
-  //     segnalato (voce di diario / media / thread), via tipo_oggetto + oggetto_id
-  //     o thread_id. Ogni ramo degrada in silenzio se lo schema C5 è assente.
-  let segnalazioniBonificate = 0
-  let sospensioniBonificate = 0
+  // 3f. LE TRACCE DI TESTO SENZA FK — notifiche, segnalazioni, sospensioni, audit del diario senza
+  //     id. Vedi `bonificaTracceTestualiAlunno`, che le tratta per l'oblio E per l'eliminazione
+  //     definitiva. Sta QUI e non più in basso perché legge da sé gli id dei media del bambino per
+  //     trovare le segnalazioni da bonificare: dopo 3g, che li cancella, quel ramo sarebbe cieco.
+  //     (Due passi ci sono arrivati da altrove il 2026-10-09: le notifiche da 2-bis e l'audit del
+  //     diario senza id dal punto 5. Ciò che si toglie non cambia: fra 2-bis e qui nessun passo
+  //     tocca `presenze` o `notifiche`, e fra qui e il punto 5 l'unico che scrive su
+  //     `audit_scritture_docente` è `bonificaAuditScritture`, sulle righe con `entita_id` = il
+  //     bambino — insieme disgiunto da quelle senza id. Cambia solo l'ORDINE di alcune righe di
+  //     log: la riga `audit-diario-senza-id-bonificato` ora precede quelle dei passi 3g–5.)
+  const tracce = await bonificaTracceTestualiAlunno(supabase, alunno.id, op)
+  // Gli id dei thread servono ancora al punto 3h (allegati di chat): si riusano, non si rileggono.
+  const threadIds = tracce.threadIds
 
-  // 3f-a) Segnalazioni su voci di diario dell'alunno.
-  const { data: diarioRows, error: errDiario } = await supabase
-    .from('eventi_diario')
-    .select('id')
-    .eq('alunno_id', alunno.id)
-  if (errDiario && !schemaAssente(errDiario)) {
-    logErrore({ operazione: op, evento: 'oblio_segnalazioni_diario_select' }, errDiario)
-  }
-  const diarioIds = ((diarioRows ?? []) as { id: string }[]).map((d) => d.id)
-  if (diarioIds.length > 0) {
-    const { data: segDiario, error: errSegD } = await supabase
-      .from('segnalazioni')
-      .update({ motivo: null, note_gestione: null })
-      .eq('tipo_oggetto', 'voce_diario')
-      .in('oggetto_id', diarioIds)
-      .select('id')
-    if (errSegD) {
-      if (!schemaAssente(errSegD)) logErrore({ operazione: op, evento: 'oblio_segnalazioni_diario' }, errSegD)
-    } else {
-      segnalazioniBonificate += (segDiario ?? []).length
-    }
-  }
-
-  // 3f-b) Segnalazioni su media di galleria taggati all'alunno.
-  // `ancheNelCestino`: questa lettura serve a TROVARE le segnalazioni da bonificare,
-  // e il testo libero di una segnalazione su una foto cestinata è PII su un minore
-  // esattamente come quello su una foto viva. Filtrare qui non lascerebbe in piedi
-  // una foto: lascerebbe in piedi il `motivo` scritto da un adulto su un bambino.
-  const { data: mediaRows, error: errMedia } = await ancheNelCestino(
-    supabase
-      .from('galleria_media_v2')
-      .select('id')
-      .contains('tag_students', [alunno.id]),
-    'ricerca delle segnalazioni da bonificare: il motivo e le note scritte su una foto ' +
-      'cestinata sono testo libero su un minore come quelli su una foto viva, e filtrare ' +
-      "qui li lascerebbe in tabella dopo l'oblio.",
-  )
-  if (errMedia && !schemaAssente(errMedia)) {
-    logErrore({ operazione: op, evento: 'oblio_segnalazioni_media_select' }, errMedia)
-  }
-  const mediaIds = ((mediaRows ?? []) as { id: string }[]).map((m) => m.id)
-  if (mediaIds.length > 0) {
-    const { data: segMedia, error: errSegM } = await supabase
-      .from('segnalazioni')
-      .update({ motivo: null, note_gestione: null })
-      .eq('tipo_oggetto', 'media_galleria')
-      .in('oggetto_id', mediaIds)
-      .select('id')
-    if (errSegM) {
-      if (!schemaAssente(errSegM)) logErrore({ operazione: op, evento: 'oblio_segnalazioni_media' }, errSegM)
-    } else {
-      segnalazioniBonificate += (segMedia ?? []).length
-    }
-  }
-
-  // 3f-c) Segnalazioni sui messaggi + sospensioni dei thread di chat dell'alunno.
-  //       Un alunno ha DUE genitori (student_parents molti-a-molti): se solo uno
-  //       chiede la cancellazione, un thread con l'ALTRO genitore (non
-  //       anonimizzato) o con la maestra non verrebbe mai toccato dallo scrub di
-  //       anonimizzaParent — questo è l'unico ramo che lo copre.
-  const { data: threadRows, error: errThread } = await supabase
-    .from('chat_threads')
-    .select('id')
-    .eq('student_id', alunno.id)
-  // Un elenco di thread che non si è potuto leggere rende ciechi DUE rami: lo scrub
-  // delle segnalazioni qui sotto e gli allegati di chat al punto 3h. Non è «nessun
-  // thread»: è «non lo so», e va detto a chi scriverà l'esito.
-  let threadNonLetti = false
-  if (errThread && !schemaAssente(errThread)) {
-    logErrore({ operazione: op, evento: 'oblio_segnalazioni_thread_select' }, errThread)
-    threadNonLetti = true
-  }
-  const threadIds = ((threadRows ?? []) as { id: string }[]).map((t) => t.id)
-  if (threadIds.length > 0) {
-    const { data: segChat, error: errSegC } = await supabase
-      .from('segnalazioni')
-      .update({ motivo: null, note_gestione: null })
-      .eq('tipo_oggetto', 'messaggio_chat')
-      .in('thread_id', threadIds)
-      .select('id')
-    if (errSegC) {
-      if (!schemaAssente(errSegC)) logErrore({ operazione: op, evento: 'oblio_segnalazioni_chat' }, errSegC)
-    } else {
-      segnalazioniBonificate += (segChat ?? []).length
-    }
-
-    const { data: sospChat, error: errSospC } = await supabase
-      .from('conversazioni_sospensioni')
-      .update({ motivo: null })
-      .in('thread_id', threadIds)
-      .select('id')
-    if (errSospC) {
-      if (!schemaAssente(errSospC)) logErrore({ operazione: op, evento: 'oblio_sospensioni_chat' }, errSospC)
-    } else {
-      sospensioniBonificate += (sospChat ?? []).length
-    }
-  }
-
-  // 3g. Le FOTO del minore (warning privacy, ciclo 2). Va DOPO 3f-b, che si
+  // 3g. Le FOTO del minore (warning privacy, ciclo 2). Va DOPO 3f, che si
   //     serve proprio di `galleria_media_v2` per trovare le segnalazioni da
   //     bonificare: cancellare prima i media renderebbe quel ramo cieco.
   const foto = await obliaFotoAlunno(supabase, alunno.id, op)
@@ -2258,9 +2882,10 @@ export async function anonimizzaAlunno(
   //     in cima al file — dove sta anche la ragione scritta dei bucket che
   //     restano fuori di proposito.
   //
-  //     Gli allegati riusano i `threadIds` già letti al punto 3f-c: una sola
-  //     lettura di `chat_threads`, e soprattutto un solo posto in cui è scritto
-  //     che i thread di un bambino si trovano per `student_id`.
+  //     Gli allegati riusano i `threadIds` già letti al punto 3f (dentro
+  //     `bonificaTracceTestualiAlunno`): una sola lettura di `chat_threads`, e
+  //     soprattutto un solo posto in cui è scritto che i thread di un bambino si
+  //     trovano per `student_id`.
   const pagelle = await obliaPagelleAlunno(supabase, alunno.id, op)
   const certificati = await obliaCertificatiMediciAlunno(supabase, alunno.id, op)
   const allegatiChat = await obliaAllegatiChat(supabase, threadIds, op)
@@ -2282,16 +2907,24 @@ export async function anonimizzaAlunno(
   //    parziale deve essere visibile a chi l'ha eseguito, non finire in un
   //    `catch` muto come accadeva fino al 2026-07-31. Il bucket `fatture` resta
   //    escluso a monte (conservazione fiscale).
+  //    Solo con le chiavi che sono sue (passo 0), solo nel ramo `children` (un alunno non è mai un
+  //    adulto della domanda: tre domande in produzione hanno una voce adulto col codice di un alunno),
+  //    e solo i file che nessun'altra persona usa ancora.
   const iscr = await obliaIscrizioni(
     supabase,
-    { codiciFiscali: [alunno.codice_fiscale, alunno.fiscal_code], documentoPaths: [alunno.documento_path] },
+    {
+      codiciFiscali: chiavi.perDomande,
+      documentoPaths: [chiavi.documento],
+      codiciFiscaliProtetti: chiavi.protetti,
+      ramo: 'children',
+    },
     at,
     op,
   )
   const esitoFile = await rimuoviFileOblio(
     supabase,
     BUCKET_ISCRIZIONI,
-    [alunno.documento_path, ...iscr.documenti],
+    [chiavi.documento, ...(await allegatiDaTogliere(supabase, iscr.documenti, chiavi, op))],
     op,
   )
 
@@ -2299,11 +2932,9 @@ export async function anonimizzaAlunno(
   //    da docenti e segreteria su quel bambino — e, fino al 2026-08-01, il suo
   //    record integrale al momento dell'importazione. La riga resta (dice chi ha
   //    fatto cosa e quando), il contenuto no.
+  //    (Le cancellazioni del diario registrate SENZA `entita_id` si bonificavano qui fino al
+  //    2026-10-09: ora le tratta `bonificaTracceTestualiAlunno` al punto 3f.)
   await bonificaAuditScritture(supabase, [alunno.id], op)
-  // …e le cancellazioni di voci del diario registrate SENZA `entita_id` (fino al 2026-09-28): il
-  // loro valore di prima porta la nota del bambino e il testo delle routine. Si ritrovano per
-  // contenuto (`valore_prima @> [{"alunno_id": …}]`). Misurate il 28/09: 79 righe, una con una nota.
-  const auditDiario = await bonificaAuditDiarioSenzaId(supabase, alunno.id, op)
 
   // I conteggi dei file sono UNA somma su tutti i bucket toccati: chi legge la
   // risposta deve poter chiedere «è uscito tutto?» una volta sola. Il dettaglio
@@ -2328,14 +2959,14 @@ export async function anonimizzaAlunno(
       allegatiChat.nonRimossi +
       fascicolo.nonRimossi +
       fotoNews.fileNonRimossi,
-    segnalazioniBonificate,
-    sospensioniBonificate,
+    segnalazioniBonificate: tracce.segnalazioniBonificate,
+    sospensioniBonificate: tracce.sospensioniBonificate,
     iscrizioniScrubbate: iscr.domandeScrubbate,
     fotoRimosse: foto.fotoRimosse,
     fotoSganciate: foto.fotoSganciate,
     presenzeBonificate,
     diarioBonificate: diario.bonificate,
-    notificheRimosse,
+    notificheRimosse: tracce.notificheRimosse,
     videoIntentiTrattati: videoIntenti.intenti,
     videoIntentiRevocati: videoIntenti.revocati,
     // ── GLI INVENTARI CHE NON SI SONO POTUTI LEGGERE ──
@@ -2353,12 +2984,20 @@ export async function anonimizzaAlunno(
       fascicolo.letto,
       allegatiChat.letto,
       iscr.letto,
-      !threadNonLetti,
+      // Le due letture di `bonificaTracceTestualiAlunno` che questo conteggio guardava già prima
+      // dell'estrazione, una per voce come allora. Il suo `completo` è più largo (vede anche le
+      // scritture rifiutate su notifiche e segnalazioni) e qui di proposito NON entra: l'estrazione
+      // del 2026-10-09 è un refactoring, e allargare questo numero cambierebbe l'esito dell'oblio.
+      tracce.threadLetti,
       diario.completo,
-      auditDiario,
+      tracce.auditDiarioCompleto,
       // Dal 2026-10-02: l'oblio dei video in volo. `false` = la RPC non ha risposto o ha rifiutato, e il
       // bambino può essere ancora nominato da `video_intents.tag_alunni`.
       videoIntenti.letto,
-    ].filter((l) => l === false).length,
+    ].filter((l) => l === false).length
+      // Le verifiche delle chiavi di ricerca che non si sono potute fare (2026-10-09): la chiave non si
+      // è usata, quindi ciò che le stava agganciato non è stato guardato.
+      + chiavi.nonVerificate,
+    chiaviCondiviseEscluse: { ...chiavi.escluse },
   }
 }

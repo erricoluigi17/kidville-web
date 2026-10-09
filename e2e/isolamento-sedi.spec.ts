@@ -54,7 +54,9 @@ test('la segreteria della sede 1 non trova l’alunna della sede 2 (elenco e URL
   await entra(page, EMAILS.segreteria, 'admin');
 
   await page.goto('/admin/students');
-  await expect(page.getByText(itStudents.statTotale).first()).toBeVisible({ timeout: RENDER });
+  // ESATTO: dal 2026-10-09 la KPI dice «Frequentanti», una parola sola che per
+  // sottostringa può stare dentro qualunque frase più lunga della pagina.
+  await expect(page.getByText(itStudents.statTotale, { exact: true }).first()).toBeVisible({ timeout: RENDER });
 
   // Senza la punteggiatura finale: il catalogo è passato da `...` a `…` e il
   // match per sottostringa di Playwright non li considera equivalenti.

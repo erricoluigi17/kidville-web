@@ -42,6 +42,16 @@ import path from 'node:path'
  * misura maschera i commenti prima di guardare — altrimenti il lock sarebbe rosso
  * proprio sulla documentazione che lo spiega, e la prima mossa di chi lo vede
  * rosso sarebbe cancellare la spiegazione.
+ *
+ * ─── 2026-10-08: LA CANCELLAZIONE VERA È TORNATA, SENZA LA SUA CAUSA ─────────
+ *
+ * Il titolare ha chiesto di nuovo di poter eliminare una scheda (doppioni,
+ * adulti inseriti come bambini). `admin/students/elimina` lo fa senza ripetere
+ * il difetto: la cancellazione è UNA transazione SQL
+ * (`elimina_alunno_definitivo`) che prima toglie ogni riga che la bloccherebbe,
+ * e la traccia si scrive SOLO dopo una risposta `ok: true`, con uuid e numeri e
+ * mai la riga. Questo lock resta: il letterale qui sotto continua a non poter
+ * essere scritto da nessuno.
  */
 
 const RADICE = process.cwd()

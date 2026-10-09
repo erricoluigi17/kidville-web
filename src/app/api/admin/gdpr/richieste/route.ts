@@ -8,6 +8,8 @@ import { anonimizzaParent, anonimizzaAlunno, type AlunnoOblio } from '@/lib/gdpr
 import { contaAccountOblio } from '@/lib/gdpr/account-oblio'
 import { contaCosaDistrugge, sommaConteggiOblio } from '@/lib/gdpr/cosa-distrugge'
 import { eNonPiuIscritto, eAncoraIscritto } from '@/lib/alunni/stato'
+import { alunniConRegistroPrimaria } from '@/lib/alunni/registro-primaria'
+import { contaChiaviCondivise, MOTIVO_CHIAVI_CONDIVISE, type ConChiaviCondivise } from '@/lib/gdpr/chiavi-condivise'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -17,7 +19,8 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 // Evasione delle richieste di cancellazione account (Direzione).
 // GET: elenco richieste pending arricchito (nome genitore + figli). POST: dry-run
 // / execute → anonimizza il genitore + i figli NON iscritti (i figli iscritti
-// restano: la scuola è titolare del trattamento per gli iscritti).
+// restano: la scuola è titolare del trattamento per gli iscritti; dal 2026-10-09
+// restano anche i non iscritti col registro della primaria, vedi la POST).
 // =============================================================================
 
 const DIREZIONE = ['admin', 'coordinator'] as const
@@ -91,13 +94,23 @@ export const GET = withRoute('admin/gdpr/richieste:GET', async (request: NextReq
       let iscritti = 0
       let nonIscritti = 0
       let fuoriScope = 0
+      // I non iscritti col registro della primaria: la POST li SALTA, quindi qui
+      // escono da `nonIscritti` e si contano a parte. `null` = non misurato — e lo
+      // è anche quando non si sono potuti leggere i legami o i figli: senza figli
+      // letti «zero col registro» sarebbe un numero inventato.
+      let registroPrimaria: number | null = linksErr ? null : 0
+      const nonIscrittiIds: string[] = []
       if (childIds.length > 0) {
         const { data: figli, error: figliErr } = await admin
           .from('alunni')
           .select('id, stato, anonimizzato_il, scuola_id')
           .in('id', childIds)
-        if (figliErr) conteggiIncerti('figli-non-letti', r.id, figliErr)
+        if (figliErr) {
+          conteggiIncerti('figli-non-letti', r.id, figliErr)
+          registroPrimaria = null
+        }
         for (const f of (figli ?? []) as {
+          id: string
           stato: string | null
           anonimizzato_il: string | null
           scuola_id: string | null
@@ -115,7 +128,27 @@ export const GET = withRoute('admin/gdpr/richieste:GET', async (request: NextReq
           // e se contasse i figli in un modo diverso da come poi li anonimizza,
           // mostrerebbe un numero che non descrive l'operazione che sta per fare.
           if (eAncoraIscritto(f.stato)) iscritti++
-          else nonIscritti++
+          else {
+            nonIscritti++
+            nonIscrittiIds.push(f.id)
+          }
+        }
+        // Lo stesso confine della POST: chi ha il registro della primaria non si
+        // anonimizza, e l'elenco che la Direzione legge deve dirlo PRIMA di aprire
+        // la richiesta. Un guasto qui non diventa un 500 — una richiesta
+        // illeggibile non deve nascondere le altre — ma neanche uno zero: il
+        // numero diventa `null` («non misurato») e il riparto fra anonimizzati e
+        // conservati resta quello di prima. Il numero su cui si agisce lo dà il
+        // dry-run, che sullo stesso guasto si FERMA.
+        if (nonIscrittiIds.length > 0) {
+          const reg = await alunniConRegistroPrimaria(admin, nonIscrittiIds)
+          if (!reg.ok) {
+            conteggiIncerti('registro-primaria-non-letto', r.id, reg.errore)
+            registroPrimaria = null
+          } else {
+            registroPrimaria = reg.conRegistro.size
+            nonIscritti -= reg.conRegistro.size
+          }
         }
       }
       out.push({
@@ -124,6 +157,7 @@ export const GET = withRoute('admin/gdpr/richieste:GET', async (request: NextReq
         parent_nome: nome || '—',
         alunni_iscritti: iscritti,
         alunni_non_iscritti: nonIscritti,
+        alunni_registro_primaria: registroPrimaria,
         alunni_fuori_scope: fuoriScope,
       })
     }
@@ -256,8 +290,38 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     // (iscritto a tutti gli effetti) veniva anonimizzato insieme agli altri, e
     // nessuno l'avrebbe mai saputo. `eAncoraIscritto` è il complemento esatto di
     // `eNonPiuIscritto`: i due numeri qui sotto non possono divergere.
-    const nonIscritti = inScope.filter((f) => eNonPiuIscritto(f.stato))
+    const nonPiuIscritti = inScope.filter((f) => eNonPiuIscritto(f.stato))
     const iscrittiMantenuti = inScope.filter((f) => eAncoraIscritto(f.stato)).length
+
+    // ─── IL REGISTRO DELLA PRIMARIA NON SI ANONIMIZZA (titolare, 2026-10-08) ──
+    //
+    // Un figlio non più iscritto che ha voti, pagelle, scrutini, note o
+    // certificati delle competenze si SALTA, e il resto prosegue. È la stessa
+    // regola già in vigore per i figli ancora iscritti: restano, e la richiesta
+    // si evade lo stesso. L'eccezione dell'art. 17 §3 lett. b copre il SOLO
+    // registro del minore — che la legge obbliga a conservare — non i dati del
+    // genitore né quelli degli altri figli: fermare tutta la richiesta
+    // bloccherebbe per sempre l'oblio di chi l'ha chiesto, perché quel registro
+    // non scade.
+    //
+    // Il numero dei figli esclusi entra nel dry-run, nell'esito SALVATO sulla
+    // richiesta e nell'audit, così la risposta alla famiglia può citarlo.
+    //
+    // ⚠️ UNA LETTURA FALLITA FERMA TUTTO, qui, prima del dry-run e prima di ogni
+    // scrittura: «non ho potuto guardare» trattato come «nessun registro»
+    // manderebbe all'anonimizzazione irreversibile proprio il registro che la
+    // legge chiede di conservare. La richiesta resta `pending`, cioè ripetibile.
+    const registro = await alunniConRegistroPrimaria(admin, nonPiuIscritti.map((f) => f.id))
+    if (!registro.ok) {
+      logErrore({ operazione: 'admin/gdpr/richieste:POST', stato: 500, evento: 'db' }, registro.errore)
+      return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+    }
+    const conRegistro = nonPiuIscritti.filter((f) => registro.conRegistro.has(f.id))
+    // I soli figli che si anonimizzano davvero. Il nome resta quello di prima
+    // perché è ciò che il dry-run e l'esito hanno sempre chiamato
+    // `alunni_non_iscritti` / `alunni`: le quattro voci — questi, `conRegistro`,
+    // gli iscritti mantenuti e i fuori sede — sono una PARTIZIONE dei figli vivi.
+    const nonIscritti = nonPiuIscritti.filter((f) => !registro.conRegistro.has(f.id))
 
     if (mode === 'dryrun') {
       // ⚠️ E QUI IL DRY-RUN SMETTE DI MOSTRARE SOLO DEI CONTEGGI DI PERSONE.
@@ -291,25 +355,43 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       let fileDaRimuovere: number | null = documenti.length
       const { data: docParent, error: errDocParent } = await admin
         .from('parents')
-        .select('documento_path')
+        .select('documento_path, auth_user_id')
         .eq('id', parentId)
         .maybeSingle()
+      // L'ACCOUNT DI ACCESSO DEL GENITORE, che con un figlio rimasto NON si libera
+      // (revisione del 2026-10-09). `anonimizzaParent` anonimizza la scheda, ma
+      // l'account — email e nome — resta finché c'è un figlio non anonimizzato:
+      // col registro da conservare, ancora iscritto o in un altro plesso. È la
+      // regola di `liberaAccountGenitore` (esito `non-toccato-figli-vivi`) e non si
+      // cambia qui: qui si DICE, prima della conferma, perché la risposta alla
+      // famiglia deve poterlo citare. È una previsione: l'esito vero lo dà
+      // l'esecuzione, e la risposta di `execute` lo riporta con lo stesso nome.
+      // `null` = la scheda del genitore non si è letta, quindi non si sa.
+      const figliCheRestano = conRegistro.length + iscrittiMantenuti + fuoriScope
+      let accountMantenuti: number | null = 0
       if (errDocParent && !schemaAssente(errDocParent)) {
         // PostgREST non lancia: senza questo controllo un guasto di lettura
         // diventerebbe «nessun documento», cioè un numero più basso del vero
         // presentato come misura. `null` ⇒ il riquadro dice «non misurato».
         logErrore({ operazione: 'admin/gdpr/richieste:POST', evento: 'dryrun_documento_genitore' }, errDocParent)
         fileDaRimuovere = null
-      } else if (typeof docParent?.documento_path === 'string' && docParent.documento_path.trim().length > 0) {
-        fileDaRimuovere = documenti.length + 1
+        accountMantenuti = null
+      } else {
+        if (typeof docParent?.documento_path === 'string' && docParent.documento_path.trim().length > 0) {
+          fileDaRimuovere = documenti.length + 1
+        }
+        const haAccount = typeof docParent?.auth_user_id === 'string' && docParent.auth_user_id !== ''
+        accountMantenuti = haAccount && figliCheRestano > 0 ? 1 : 0
       }
 
       return NextResponse.json({
         dryrun: true,
         parent: 1,
         alunni_non_iscritti: nonIscritti.length,
+        alunni_registro_primaria: conRegistro.length,
         alunni_iscritti_mantenuti: iscrittiMantenuti,
         alunni_fuori_scope: fuoriScope,
+        account_mantenuti: accountMantenuti,
         ...conteggi,
         file_da_rimuovere: fileDaRimuovere,
       })
@@ -332,6 +414,22 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
         esito: 'figli-fuori-scope',
         richiesta: id,
         n: fuoriScope,
+      })
+    }
+
+    // Ogni bambino SALTATO per il registro della primaria lascia la sua riga, con
+    // lo stesso `esito` della route sorella (`admin/gdpr/erase`): la domanda
+    // «quali minori non sono stati anonimizzati, e perché?» ha una query, non
+    // un'opinione. Solo l'uuid: `gdpr` è persistito. Si logga all'ESECUZIONE e non
+    // al dry-run, che la Direzione può ripetere quante volte vuole: qui la
+    // decisione è presa.
+    for (const f of conRegistro) {
+      logEvento('gdpr', 'warn', {
+        operazione: op,
+        esito: 'oblio-rifiutato-registro-primaria',
+        entita_tipo: 'alunni',
+        entita_id: f.id,
+        richiesta: id,
       })
     }
 
@@ -379,8 +477,12 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     // che diceva zero file non rimossi — mentre il fascicolo sanitario del bambino
     // non era stato nemmeno letto.
     let lettureFallite = 0
+    // Le chiavi di ricerca NON usate perché condivise con un doppione, dei figli e
+    // del genitore: vedi `@/lib/gdpr/chiavi-condivise`.
+    const esitiChiavi: ConChiaviCondivise[] = []
     for (const f of nonIscritti) {
       const r = await anonimizzaAlunno(admin, f as AlunnoOblio, at, op)
+      esitiChiavi.push(r)
       ricon += r.riconciliazione
       incassi += r.incassi
       cassa += r.cassa
@@ -410,14 +512,22 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     fileNonRimossi += rParent.fileNonRimossi ?? 0
     notificheRimosse += rParent.notificheRimosse ?? 0
     lettureFallite += rParent.lettureFallite ?? 0
+    esitiChiavi.push(rParent)
+    const chiaviCondivise = contaChiaviCondivise(esitiChiavi)
     const account = contaAccountOblio([rParent.account])
+    // L'account resta perché un figlio non è stato anonimizzato (registro da
+    // conservare, ancora iscritto, altro plesso): lo stesso numero del dry-run,
+    // ma misurato sull'esito vero di `liberaAccountGenitore`.
+    const accountMantenuti = rParent.account === 'non-toccato-figli-vivi' ? 1 : 0
 
     // Un oblio incompleto non passa inosservato: alla famiglia è stato risposto
     // che quei file non ci sono più. Riga PERSISTITA (`gdpr` è in
     // EVENTI_PERSISTITI), solo conteggi e uuid. «Incompleto» sono TRE cose: file
     // rimasti dentro, archivi che nessuno ha potuto aprire e — dal 2026-09-14 —
-    // un account che non si è potuto liberare, con email e nome della persona.
-    if (fileNonRimossi > 0 || lettureFallite > 0 || account.nonLiberati > 0) {
+    // un account che non si è potuto liberare, con email e nome della persona. Dal
+    // 2026-10-09 QUATTRO: una chiave condivisa con un doppione lascia in chiaro
+    // le domande, i bonifici e la cassa agganciati a quella chiave.
+    if (fileNonRimossi > 0 || lettureFallite > 0 || account.nonLiberati > 0 || chiaviCondivise > 0) {
       logEvento('gdpr', 'error', {
         operazione: op,
         esito: 'oblio-parziale',
@@ -425,6 +535,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
         n_file: fileNonRimossi,
         n_letture_fallite: lettureFallite,
         n_account_non_liberati: account.nonLiberati,
+        n_chiavi_condivise: chiaviCondivise,
       })
     }
 
@@ -434,6 +545,10 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       // Sopravvive alla richiesta: chi la rilegge fra un mese deve poter sapere
       // che un pezzo di quell'oblio è rimasto in carico a un altro plesso.
       alunni_fuori_scope: fuoriScope,
+      // I figli NON anonimizzati perché il loro registro della primaria va
+      // conservato per legge (art. 17 §3 lett. b). Sopravvive sulla riga della
+      // richiesta e nell'audit: è il numero che la risposta alla famiglia cita.
+      alunni_registro_primaria: conRegistro.length,
       news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
       consensi_prova_bonificati: consensiProvaBonificati,
       riconciliazione_bonificati: ricon,
@@ -458,6 +573,16 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       account_rimossi: account.rimossi,
       account_anonimizzati: account.anonimizzati,
       account_non_liberati: account.nonLiberati,
+      // 1 = l'account di accesso del genitore (email e nome) è RIMASTO perché un
+      // figlio non è stato anonimizzato. La scheda è anonimizzata lo stesso: è
+      // la frase che la risposta alla famiglia deve contenere.
+      account_mantenuti: accountMantenuti,
+      // Chiavi di ricerca (codice fiscale, documento) di un figlio o del genitore
+      // condivise con un'altra scheda viva: ciò che vi era agganciato è RIMASTO in
+      // chiaro. Il motivo sta sulla riga della richiesta, perché chi risponde alla
+      // famiglia deve sapere che l'oblio è parziale e perché.
+      chiavi_condivise_escluse: chiaviCondivise,
+      chiavi_condivise_motivo: chiaviCondivise > 0 ? MOTIVO_CHIAVI_CONDIVISE : null,
     }
 
     // 3. Marca la richiesta come evasa.

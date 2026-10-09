@@ -31,8 +31,11 @@ interface Cfg {
   diario?: { id: string }[] // eventi_diario dell'alunno
   media?: { id: string }[] // galleria_media_v2 taggati all'alunno
   threads?: { id: string }[] // chat_threads dell'alunno
-  segDiario?: { id: string }[] // segnalazioni su voci di diario dell'alunno
-  segMedia?: { id: string }[] // segnalazioni su media taggati
+  // Le segnalazioni su diario e media portano `oggetto_id` (2026-10-09): l'oblio le cerca AL
+  // ROVESCIO — prima le segnalazioni con testo, poi quali dei loro oggetti sono del bambino — e
+  // l'aggancio è quella colonna, come nella tabella vera.
+  segDiario?: { id: string; oggetto_id?: string }[] // segnalazioni su voci di diario dell'alunno
+  segMedia?: { id: string; oggetto_id?: string }[] // segnalazioni su media taggati
   segChat?: { id: string }[] // segnalazioni su messaggi dei thread dell'alunno
   sospChat?: { id: string }[] // sospensioni dei thread dell'alunno
   // Errore per-tabella iniettabile (es. { segnalazioni: { code: 'PGRST205' } }).
@@ -360,7 +363,7 @@ describe('anonimizzaAlunno', () => {
   })
 
   it('bonifica segnalazioni via voce di diario collegata all’alunno', async () => {
-    const f = makeFake({ diario: [{ id: 'ev-1' }], segDiario: [{ id: 'seg-1' }] })
+    const f = makeFake({ diario: [{ id: 'ev-1' }], segDiario: [{ id: 'seg-1', oggetto_id: 'ev-1' }] })
     const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
     const segUpd = f.updates.find((u) => u.table === 'segnalazioni')
     expect(segUpd).toBeTruthy()
@@ -371,7 +374,7 @@ describe('anonimizzaAlunno', () => {
   })
 
   it('bonifica segnalazioni via media di galleria taggato all’alunno', async () => {
-    const f = makeFake({ media: [{ id: 'm-1' }], segMedia: [{ id: 's-1' }, { id: 's-2' }] })
+    const f = makeFake({ media: [{ id: 'm-1' }], segMedia: [{ id: 's-1', oggetto_id: 'm-1' }, { id: 's-2', oggetto_id: 'm-1' }] })
     const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
     expect(f.updates.some((u) => u.table === 'segnalazioni')).toBe(true)
     expect(r.segnalazioniBonificate).toBe(2)
@@ -393,7 +396,7 @@ describe('anonimizzaAlunno', () => {
   })
 
   it('nessuna UPDATE su segnalazioni/sospensioni se le liste di id sono vuote', async () => {
-    const f = makeFake({ segDiario: [{ id: 'x' }], segMedia: [{ id: 'y' }], segChat: [{ id: 'z' }], sospChat: [{ id: 'w' }] })
+    const f = makeFake({ segDiario: [{ id: 'x', oggetto_id: 'ev-x' }], segMedia: [{ id: 'y', oggetto_id: 'm-y' }], segChat: [{ id: 'z' }], sospChat: [{ id: 'w' }] })
     const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
     // diario/media/threads assenti → nessun id → nessuna UPDATE, pur essendoci righe segnalazioni configurate.
     expect(f.updates.some((u) => u.table === 'segnalazioni')).toBe(false)

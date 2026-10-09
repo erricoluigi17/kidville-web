@@ -791,6 +791,7 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['adminStudents.detailPageArchiviato', 'nome e cognome del bambino appena archiviato'],
         ['adminStudents.detailPageRiattivato', 'nome e cognome del bambino appena riportato fra gli iscritti'],
         ['adminStudents.detailPageRiattivatoSenzaClasse', 'nome e cognome del bambino, che rientra senza classe'],
+        ['adminStudents.arcEsitoSezioneAssegnata', 'nome e cognome del bambino a cui è stata appena assegnata una sezione'],
         ['adminPrimaria.materieNessunObiettivoDefinito', 'codice materia e livello ordinale'],
         ['diario.nannaDurata', 'orari di inizio e fine'],
         ['diario.attivitaOrarioDalleAlle', 'orari di inizio e fine di un’attività (HH:MM)'],
@@ -978,7 +979,16 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // controllo «punta a una chiave che ESISTE ANCORA», qui sotto, lo pretende. Il lock NON è
         // stato allentato — la regola è identica e il tetto stringe di una voce —; si è solo
         // smesso di giustificare una frase che nessuno leggeva.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(41)
+        //
+        // 2026-10-09 · 41 → 42. `adminStudents.arcEsitoSezioneAssegnata` («{nome} è in
+        // {classe}: ora è nell’elenco Alunni» / «{nome} is in {classe}: now listed under
+        // Students») è l'esito di «Assegna sezione» nella linguetta «Non iscritti»: dice
+        // QUALE bambino è appena passato fra chi frequenta. Categoria (a), gemella di
+        // `detailPageRiattivato`: `{nome}` è un nome e un cognome, il verbo che segue
+        // concorda con lui e non con un numero, e cade sotto il riconoscitore solo in
+        // inglese («is» ha due lettere, «è» una). Riscrivere la frase inglese per
+        // schivare la regexp è la scelta già scartata il 12 e il 13 agosto.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(42)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

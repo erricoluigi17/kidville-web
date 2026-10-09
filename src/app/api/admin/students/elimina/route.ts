@@ -1,0 +1,694 @@
+import { NextResponse } from 'next/server'
+import { z } from 'zod'
+import { createAdminClient } from '@/lib/supabase/server-client'
+import { requireStaff } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { anonimizzaAlunno, bonificaAuditScritture, bonificaTracceTestualiAlunno } from '@/lib/gdpr/esegui'
+import { contaChiaviCondivise, MOTIVO_CHIAVI_CONDIVISE } from '@/lib/gdpr/chiavi-condivise'
+import { eNonPiuIscritto } from '@/lib/alunni/stato'
+import { RUOLI_ELIMINA_DEFINITIVO } from '@/lib/alunni/archiviazione'
+import {
+  contaPerEliminazione,
+  rimuoviFileAlunno,
+  scelteDisponibili,
+  type EsitoFileAlunno,
+  type MotivoBloccoEliminazione,
+} from '@/lib/alunni/elimina-definitivo'
+import { leggiRegistroPrimaria } from '@/lib/alunni/registro-primaria'
+import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+
+// =============================================================================
+// ELIMINAZIONE DEFINITIVA — dall'elenco dei «non iscritti» (2026-10-08).
+//
+// Decisione del titolare: segreteria e Direzione eliminano DAVVERO una scheda
+// ritirata o senza sezione — un doppione, un adulto inserito come bambino.
+// Con pagamenti la segreteria sceglie: cancellarli (solo se non sono
+// contabilità emessa) oppure anonimizzare. Il registro della primaria non si
+// tocca mai.
+//
+// ─── L'ORDINE È LA DIFESA ───────────────────────────────────────────────────
+//  1. gate di ruolo e di sede, poi la scheda letta con la sede accanto;
+//  2. la MISURA (sole SELECT): da lì le scelte disponibili;
+//  3. la VERIFICA nel database: la stessa funzione SQL con `p_solo_verifica:
+//     true`, che fa TUTTI i suoi controlli (con i suoi lock) e risponde
+//     `ammissibile` senza cancellare niente — oppure lo stesso rifiuto della
+//     cancellazione vera. Così un rifiuto del database arriva PRIMA del primo
+//     effetto, e su un database non migrato (`PGRST202`) la risposta «non
+//     disponibile: nessuna modifica è stata fatta» è VERA. Fra la verifica e la
+//     chiamata vera resta solo la finestra di una corsa;
+//  4. le TRACCE DI TESTO SENZA FK (`bonificaTracceTestualiAlunno`, la stessa
+//     funzione dell'oblio): notifiche che nominano il bambino, testo delle
+//     segnalazioni su sue voci di diario, suoi media e suoi thread, sospensioni,
+//     audit del diario senza id. Vengono PRIMA dei file perché le segnalazioni
+//     sui media si ritrovano solo dall'id del media, e `obliaFotoAlunno` (dentro
+//     `rimuoviFileAlunno`) quei media li cancella. Se la pulizia non è completa
+//     ci si ferma qui: dopo la cancellazione della scheda nessuno potrebbe più
+//     ricondurre quel testo a un bambino, cioè nessuno lo toglierebbe più;
+//  5. i FILE, con le funzioni dell'oblio: se uno solo non esce ci si ferma, e
+//     il database non è stato toccato;
+//  6. il DATABASE, in UNA transazione (`elimina_alunno_definitivo`), che
+//     ricontrolla tutto da sé;
+//  7. SOLO DOPO un `ok: true`, la bonifica delle vecchie copie nel registro
+//     delle scritture e la traccia nuova — uuid e numeri, mai la riga.
+// Il 2026-08-12 una cancellazione era stata tolta perché scriveva la traccia
+// PRIMA di una DELETE che falliva (lock `registro-modifiche-senza-hard-delete`).
+//
+// ─── DAL PUNTO 4 IN POI, OGNI RISPOSTA DICE CHE COSA È GIÀ SUCCESSO ─────────
+// Tracce e file non tornano indietro. Un rifiuto o un errore che arriva dopo non
+// può rispondere «niente è cambiato»: il corpo e il log portano `effetti` (le
+// tracce tolte, i file usciti), così la verità è registrata e la frase a schermo
+// («potrebbero essere già stati tolti: riprova per completare») è onesta.
+//
+// «ANONIMIZZA» non passa dalla funzione SQL: chiama `anonimizzaAlunno`, la
+// stessa dell'oblio (che le tracce di testo le tratta già da sé). Ma prima
+// RILEGGE il registro della primaria: fra l'anteprima e il clic può essere
+// arrivato un voto, e qui non c'è una transazione che lo ricontrolli. E dopo
+// non si dichiara compiuta se non lo è: stesso schema dell'oblio
+// (`admin/gdpr/erase`, `oblio-parziale` contro `oblio-eseguito`).
+// =============================================================================
+
+const postBodySchema = z.object({
+  alunno_id: z.string().uuid(),
+  mode: z.enum(['dryrun', 'execute']),
+  scelta: z.enum(['elimina', 'elimina_con_pagamenti', 'anonimizza']).optional(),
+})
+
+const OP = 'admin/students/elimina:POST'
+
+/** Ciò che è già successo e non torna: le tracce di testo tolte e i file usciti. */
+interface Effetti {
+  tracce: { notifiche: number; segnalazioni: number; sospensioni: number }
+  /** `null` = la rimozione dei file non è nemmeno cominciata. */
+  file: EsitoFileAlunno['numeri'] | null
+}
+
+/**
+ * Gli effetti come campi PIATTI di un log: `logEvento` vuole valori semplici, e
+ * ogni chiave qui è un numero sotto un nome che la redazione lascia passare
+ * (provato nei test con `redact` vero).
+ */
+function campiEffetti(e: Effetti): Record<string, number> {
+  return {
+    n_notifiche: e.tracce.notifiche,
+    n_segnalazioni: e.tracce.segnalazioni,
+    n_sospensioni: e.tracce.sospensioni,
+    ...(e.file
+      ? {
+          n_foto: e.file.foto_rimosse,
+          n_documenti: e.file.documenti_rimossi,
+          n_certificati: e.file.certificati,
+          n_fascicolo: e.file.fascicolo,
+          n_allegati_chat: e.file.allegati_chat,
+          n_file_restanti: e.file.restanti,
+        }
+      : {}),
+  }
+}
+
+/**
+ * Il rifiuto della funzione SQL → la risposta. `effetti` è `null` quando il
+ * rifiuto arriva dalla VERIFICA, prima di ogni effetto: allora il corpo non lo
+ * porta (`undefined` esce dal JSON), perché non c'è niente da dire. Dopo tracce
+ * e file invece c'è, ed è la verità registrata.
+ *
+ * Uno `switch` con i corpi LETTERALI, e non una mappa `codice → { status, codice }`:
+ * il lock `errori-con-codice` legge il `codice` dentro `NextResponse.json({ … })`,
+ * e `codice: rifiuto.codice` sarebbe un valore che non sa leggere — cioè un
+ * codice che nessuno controlla.
+ */
+function rispostaAlRifiutoDelDb(code: string | undefined, effettiGiaAvvenuti: Effetti | null): NextResponse {
+  const effetti = effettiGiaAvvenuti ?? undefined
+  switch (code) {
+    case 'non_trovato':
+      return NextResponse.json(
+        { error: 'Alunno non trovato', codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO', effetti },
+        { status: 404 },
+      )
+    case 'gia_anonimizzato':
+      // Una scheda anonimizzata è uscita da ogni elenco: «questo frequenta ancora»
+      // sarebbe falso. La cosa da fare è ricaricare.
+      return NextResponse.json(
+        { error: 'Alunno non trovato', codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO', effetti },
+        { status: 404 },
+      )
+    case 'frequentante':
+      return NextResponse.json(
+        {
+          error: 'Si elimina solo un bambino ritirato o senza sezione',
+          codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE',
+          effetti,
+        },
+        { status: 409 },
+      )
+    case 'registro_primaria':
+      return NextResponse.json(
+        { error: 'Il registro della primaria va conservato', codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE', effetti },
+        { status: 409 },
+      )
+    case 'ha_pagamenti':
+      return NextResponse.json(
+        { error: 'Ci sono pagamenti', codice: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI', effetti },
+        { status: 409 },
+      )
+    case 'pagamenti_non_cancellabili':
+      return NextResponse.json(
+        { error: 'Pagamenti non cancellabili', codice: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI', effetti },
+        { status: 409 },
+      )
+    default:
+      return NextResponse.json(
+        { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA', effetti },
+        { status: 500 },
+      )
+  }
+}
+
+/**
+ * Una scelta che l'anteprima non offre → il codice del suo MOTIVO, perché la
+ * finestra possa dire perché (e non un generico «non disponibile»). Solo senza
+ * motivo il rifiuto è quello generico. Corpi letterali, come sopra.
+ */
+function rispostaSceltaNonDisponibile(motivo: MotivoBloccoEliminazione | null): NextResponse {
+  switch (motivo) {
+    case 'REGISTRO_PRIMARIA_DA_CONSERVARE':
+      return NextResponse.json(
+        { error: 'Il registro della primaria va conservato', codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
+        { status: 409 },
+      )
+    case 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI':
+      return NextResponse.json(
+        { error: 'Pagamenti non cancellabili', codice: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI' },
+        { status: 409 },
+      )
+    case 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI':
+      return NextResponse.json(
+        { error: 'Ci sono pagamenti', codice: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI' },
+        { status: 409 },
+      )
+    case 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI':
+      return NextResponse.json(
+        { error: 'Foto non rimovibili', codice: 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI' },
+        { status: 409 },
+      )
+    case 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA':
+      return NextResponse.json(
+        { error: 'Prima ritira il bambino', codice: 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA' },
+        { status: 409 },
+      )
+    default:
+      return NextResponse.json(
+        { error: 'Scelta non disponibile', codice: 'ALUNNO_ELIMINAZIONE_SCELTA_NON_DISPONIBILE' },
+        { status: 409 },
+      )
+  }
+}
+
+/**
+ * Le chiavi che `anonimizzaAlunno` NON ha toccato perché le condivide con un
+ * altro bambino (il doppione con lo stesso codice fiscale o lo stesso documento
+ * del bambino vero), come le scrive la traccia.
+ *
+ * I nomi in uscita NON sono `codice_fiscale` e `documento`: `riduciValoreAudit`
+ * riduce quelle chiavi a `[non registrato]` a qualunque profondità, e la traccia
+ * perderebbe proprio l'informazione.
+ */
+function chiaviCondiviseDellEsito(c: { codiceFiscale: number; documento: number }): Record<string, number> {
+  return { codice_fiscale_escluso: c.codiceFiscale, documento_escluso: c.documento }
+}
+
+export const POST = withRoute('admin/students/elimina:POST', async (request: Request) => {
+  const auth = await requireStaff(request, [...RUOLI_ELIMINA_DEFINITIVO])
+  if (auth.response) return auth.response
+
+  const b = await parseBody(request, postBodySchema)
+  if ('response' in b) return b.response
+  const { alunno_id, mode, scelta } = b.data
+
+  if (mode === 'execute' && !scelta) {
+    return NextResponse.json(
+      { error: 'Scegli che cosa fare', codice: 'ALUNNO_ELIMINAZIONE_SCELTA_MANCANTE' },
+      { status: 400 },
+    )
+  }
+
+  // Fuori dal `try` perché il `catch` deve poterli dire: un'eccezione dopo il
+  // primo effetto non è «niente è cambiato».
+  let effetti: Effetti | null = null
+
+  try {
+    const supabase = await createAdminClient()
+
+    const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id)
+    if (fuoriScope) return fuoriScope
+
+    // La sede ACCANTO al gate: due reti, non una — a valle c'è una cancellazione
+    // che non torna indietro.
+    const plessi = await scuoleDiUtente(supabase, auth.user)
+    const { data: alunno, error: alunnoErr } = await supabase
+      .from('alunni')
+      .select('id, stato, section_id, scuola_id, anonimizzato_il, documento_path, codice_fiscale, fiscal_code')
+      .eq('id', alunno_id)
+      .in('scuola_id', plessi)
+      .maybeSingle()
+    if (alunnoErr) {
+      logErrore({ operazione: OP, stato: 500, evento: 'db' }, alunnoErr)
+      return NextResponse.json(
+        { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA' },
+        { status: 500 },
+      )
+    }
+    if (!alunno) {
+      logEvento('multi_sede', 'warn', {
+        operazione: OP,
+        esito: 'alunno-non-piu-in-scope',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+      })
+      return NextResponse.json(
+        { error: 'Alunno non trovato', codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
+        { status: 404 },
+      )
+    }
+
+    // Una scheda già anonimizzata è uscita da ogni elenco: la si tratta come
+    // «non più in elenco» (ricarica), non come «frequenta ancora», che è falso.
+    if (alunno.anonimizzato_il != null) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-rifiutata-gia-anonimizzato',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: 'anonimizzato',
+      })
+      return NextResponse.json(
+        { error: 'Alunno non trovato', codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
+        { status: 404 },
+      )
+    }
+
+    // Solo dai «non iscritti»: ritirato (elenco chiuso) oppure senza sezione.
+    const ritirato = eNonPiuIscritto(alunno.stato as string | null)
+    const nonIscritto = ritirato || alunno.section_id == null
+    if (!nonIscritto) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-rifiutata-frequentante',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: (alunno.stato as string | null) ?? 'assente',
+      })
+      return NextResponse.json(
+        { error: 'Si elimina solo un bambino ritirato o senza sezione', codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
+        { status: 409 },
+      )
+    }
+
+    // Le sedi dell'operatore: l'avviso doppione non guarda fuori di lì.
+    const misura = await contaPerEliminazione(supabase, alunno_id, OP, plessi)
+    if (!misura.ok) {
+      return NextResponse.json(
+        { error: 'Misura non riuscita', codice: 'ALUNNO_ELIMINAZIONE_NON_MISURATA' },
+        { status: 500 },
+      )
+    }
+    // «Anonimizza» solo per un RITIRATO: un iscritto senza sezione frequenta
+    // ancora, e anonimizzarlo lascerebbe un bambino a scuola senza nome.
+    const { scelte, motivo } = scelteDisponibili(misura.conteggi, ritirato)
+
+    if (mode === 'dryrun') {
+      return NextResponse.json({ dryrun: true, conteggi: misura.conteggi, scelte, motivo })
+    }
+
+    const sceltaFatta = scelta!
+    if (!scelte[sceltaFatta]) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-scelta-non-disponibile',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: motivo ?? sceltaFatta,
+      })
+      // «Anonimizza» chiesta per un iscritto senza sezione: il motivo è QUELLO,
+      // anche quando l'anteprima ne dice un altro per le altre scelte (pagamenti).
+      return rispostaSceltaNonDisponibile(
+        sceltaFatta === 'anonimizza' && !ritirato && motivo !== 'REGISTRO_PRIMARIA_DA_CONSERVARE'
+          ? 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA'
+          : motivo,
+      )
+    }
+
+    // ─── ANONIMIZZA: la stessa funzione dell'oblio, sul solo bambino ───────
+    if (sceltaFatta === 'anonimizza') {
+      // Il registro si RILEGGE qui, direttamente, subito prima del gesto: la
+      // misura è di un istante fa, e `anonimizzaAlunno` non ha una transazione
+      // che lo ricontrolli come fa la funzione SQL. «Non l'ho potuto leggere»
+      // ferma quanto «c'è»: l'anonimizzazione non torna indietro.
+      const registro = await leggiRegistroPrimaria(supabase, alunno_id)
+      if (!registro.ok) {
+        logErrore({ operazione: OP, stato: 500, evento: 'elimina_registro_primaria' }, registro.errore)
+        return NextResponse.json(
+          { error: 'Misura non riuscita', codice: 'ALUNNO_ELIMINAZIONE_NON_MISURATA' },
+          { status: 500 },
+        )
+      }
+      if (registro.presente) {
+        logEvento('gdpr', 'warn', {
+          operazione: OP,
+          esito: 'anonimizzazione-rifiutata-registro-primaria',
+          entita_tipo: 'alunni',
+          entita_id: alunno_id,
+        })
+        return NextResponse.json(
+          { error: 'Il registro della primaria va conservato', codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
+          { status: 409 },
+        )
+      }
+
+      const esito = await anonimizzaAlunno(
+        supabase,
+        {
+          id: alunno_id,
+          documento_path: (alunno.documento_path as string | null) ?? null,
+          codice_fiscale: (alunno.codice_fiscale as string | null) ?? null,
+          fiscal_code: (alunno.fiscal_code as string | null) ?? null,
+        },
+        new Date().toISOString(),
+        OP,
+      )
+
+      // La scheda risulta DAVVERO anonimizzata? `anonimizzaAlunno` logga
+      // l'errore della patch e prosegue: senza rileggere, una patch respinta
+      // si leggerebbe come un'anonimizzazione riuscita.
+      const { data: dopo, error: dopoErr } = await supabase
+        .from('alunni')
+        .select('anonimizzato_il')
+        .eq('id', alunno_id)
+        .maybeSingle()
+      if (dopoErr) logErrore({ operazione: OP, evento: 'elimina_rilettura_anonimizzazione' }, dopoErr)
+      const schedaAnonimizzata = !dopoErr && dopo != null && dopo.anonimizzato_il != null
+
+      const numeri = {
+        file_non_rimossi: esito.fileNonRimossi,
+        letture_fallite: esito.lettureFallite,
+        scheda_anonimizzata: schedaAnonimizzata,
+      }
+      // «Parziale» sono QUATTRO cose, come nell'oblio: file rimasti, archivi che
+      // non si sono potuti nemmeno leggere, la scheda stessa non anonimizzata, e
+      // le chiavi (codice fiscale, documento) lasciate fuori perché condivise con
+      // un doppione — i dati agganciati a quelle chiavi sono ancora in chiaro.
+      // La regola è quella dell'oblio, in un posto solo (`contaChiaviCondivise`).
+      const nChiaviCondivise = contaChiaviCondivise([esito])
+      const parziale =
+        esito.fileNonRimossi > 0 || esito.lettureFallite > 0 || !schedaAnonimizzata || nChiaviCondivise > 0
+      const chiaviCondivise = chiaviCondiviseDellEsito(esito.chiaviCondiviseEscluse)
+
+      await logScrittura(supabase, {
+        attore: auth.user,
+        entitaTipo: 'alunno_anonimizzato',
+        entitaId: alunno_id,
+        azione: 'update',
+        scuolaId: (alunno.scuola_id as string | null) ?? null,
+        valoreDopo: {
+          alunno_id,
+          scelta: sceltaFatta,
+          pagamenti: misura.conteggi.pagamenti,
+          parziale,
+          ...numeri,
+          chiavi_condivise_escluse: chiaviCondivise,
+        },
+      })
+      if (parziale) {
+        // Riga PERSISTITA a livello `error`: alla segreteria si è detto «fatto»
+        // solo se lo è. Si risponde 200 con `parziale: true` e i numeri, mai come
+        // un successo pieno. ⚠️ Non è detto che si possa riprovare:
+        // `anonimizzaAlunno` scrive per PRIMO `anonimizzato_il`, quindi con
+        // `scheda_anonimizzata: true` la scheda è già uscita dagli elenchi e un
+        // secondo tentativo verrebbe rifiutato — il resto va all'assistenza. Solo
+        // con `scheda_anonimizzata: false` la scheda è ancora lì e si riprova.
+        // È il campo che la finestra legge per scegliere la frase.
+        logEvento('gdpr', 'error', {
+          operazione: OP,
+          esito: 'anonimizzazione-parziale',
+          entita_tipo: 'alunni',
+          entita_id: alunno_id,
+          n_file: esito.fileNonRimossi,
+          n_letture_fallite: esito.lettureFallite,
+          scheda_anonimizzata: schedaAnonimizzata,
+          n_chiavi_condivise: nChiaviCondivise,
+        })
+      } else {
+        logEvento('gdpr', 'info', {
+          operazione: OP,
+          esito: 'alunno-anonimizzato',
+          entita_tipo: 'alunni',
+          entita_id: alunno_id,
+        })
+      }
+      return NextResponse.json({
+        ok: true,
+        scelta: sceltaFatta,
+        parziale,
+        numeri,
+        esito,
+        // Stessi nomi delle route dell'oblio: la finestra li legge per dire PERCHÉ.
+        chiavi_condivise_escluse: nChiaviCondivise,
+        chiavi_condivise_motivo: nChiaviCondivise > 0 ? MOTIVO_CHIAVI_CONDIVISE : null,
+      })
+    }
+
+    // ─── ELIMINA: la verifica, poi le tracce di testo, poi i file, poi il database ─
+    const conPagamenti = sceltaFatta === 'elimina_con_pagamenti'
+
+    // La VERIFICA: la stessa funzione, con `p_solo_verifica: true` — tutti i
+    // controlli, nessuna cancellazione. Un rifiuto qui costa zero: non è ancora
+    // uscito niente. La misura TS qui sopra è un'anteprima; questa è la porta,
+    // chiesta prima di attraversarla.
+    const { data: verifica, error: verificaErr } = await supabase.rpc('elimina_alunno_definitivo', {
+      p_alunno: alunno_id,
+      p_con_pagamenti: conPagamenti,
+      p_solo_verifica: true,
+    })
+    if (verificaErr) {
+      if ((verificaErr as { code?: string }).code === 'PGRST202') {
+        logEvento('gdpr', 'error', {
+          operazione: OP,
+          esito: 'funzione-eliminazione-assente',
+          entita_tipo: 'alunni',
+          entita_id: alunno_id,
+        }, verificaErr)
+        return NextResponse.json(
+          { error: 'Non disponibile', codice: 'ALUNNO_ELIMINAZIONE_NON_DISPONIBILE' },
+          { status: 503 },
+        )
+      }
+      logErrore({ operazione: OP, stato: 500, evento: 'elimina_verifica' }, verificaErr)
+      return NextResponse.json(
+        { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA' },
+        { status: 500 },
+      )
+    }
+    const esitoVerifica = verifica as { ok?: boolean; code?: string } | null
+    if (esitoVerifica?.ok === false) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-rifiutata-in-verifica',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: esitoVerifica.code ?? 'risposta-illeggibile',
+      })
+      return rispostaAlRifiutoDelDb(esitoVerifica.code, null)
+    }
+    if (esitoVerifica?.ok !== true || esitoVerifica.code !== 'ammissibile') {
+      // Né «ammissibile» né un rifiuto: la funzione non risponde come la
+      // migrazione dice, e non si sa che cosa farà. Non si comincia.
+      logEvento('gdpr', 'error', {
+        operazione: OP,
+        esito: 'verifica-eliminazione-inattesa',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: esitoVerifica?.code ?? 'risposta-illeggibile',
+      })
+      return NextResponse.json(
+        { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA' },
+        { status: 500 },
+      )
+    }
+
+    // ── DA QUI IN POI CI SONO EFFETTI CHE NON TORNANO ──
+    const tracce = await bonificaTracceTestualiAlunno(supabase, alunno_id, OP)
+    effetti = {
+      tracce: {
+        notifiche: tracce.notificheRimosse,
+        segnalazioni: tracce.segnalazioniBonificate,
+        sospensioni: tracce.sospensioniBonificate,
+      },
+      file: null,
+    }
+    if (!tracce.completo) {
+      // Ogni ramo che non è riuscito ha già il suo `logErrore` dentro la
+      // funzione; questa riga dice CHE COSA ne è seguito: niente file tolti,
+      // niente database toccato, la scheda resta e un secondo tentativo riparte.
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-ferma-tracce-incomplete',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        ...campiEffetti(effetti),
+      })
+      return NextResponse.json(
+        { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA', effetti },
+        { status: 500 },
+      )
+    }
+
+    const file = await rimuoviFileAlunno(
+      supabase,
+      { id: alunno_id, documento_path: (alunno.documento_path as string | null) ?? null },
+      OP,
+    )
+    effetti = { ...effetti, file: file.numeri }
+    if (!file.ok) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-ferma-file-restanti',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        ...campiEffetti(effetti),
+      })
+      return NextResponse.json(
+        { error: 'File restanti', codice: 'ALUNNO_ELIMINAZIONE_FILE_RESTANTI', file: file.numeri, effetti },
+        { status: 502 },
+      )
+    }
+
+    const { data: rpc, error: rpcErr } = await supabase.rpc('elimina_alunno_definitivo', {
+      p_alunno: alunno_id,
+      p_con_pagamenti: conPagamenti,
+      p_solo_verifica: false,
+    })
+
+    let esitoIncerto = false
+    let righe: Record<string, number> = {}
+    if (rpcErr) {
+      // Un errore della chiamata NON vuol dire «non è successo»: la risposta può
+      // essersi persa DOPO il commit (rete, gateway). Lo dice soltanto la scheda.
+      // Vale anche per un `PGRST202` qui: la verifica l'ha trovata un istante fa, e
+      // dopo tracce e file un 503 «nessuna modifica è stata fatta» sarebbe falso.
+      logErrore({ operazione: OP, stato: 500, evento: 'db' }, rpcErr)
+      const { data: ancora, error: ancoraErr } = await supabase
+        .from('alunni')
+        .select('id')
+        .eq('id', alunno_id)
+        .maybeSingle()
+      if (ancoraErr) {
+        // Non si sa se il commit è avvenuto: né «riuscita» né «non riuscita»
+        // (che direbbe «la scheda è intatta»). Lo si dice, con gli effetti.
+        logErrore({ operazione: OP, evento: 'elimina_rilettura_scheda' }, ancoraErr)
+        logEvento('gdpr', 'error', {
+          operazione: OP,
+          esito: 'eliminazione-esito-sconosciuto',
+          entita_tipo: 'alunni',
+          entita_id: alunno_id,
+          ...campiEffetti(effetti),
+        })
+        return NextResponse.json(
+          { error: 'Esito sconosciuto', codice: 'ALUNNO_ELIMINAZIONE_ESITO_SCONOSCIUTO', effetti },
+          { status: 500 },
+        )
+      }
+      if (ancora) {
+        logEvento('gdpr', 'warn', {
+          operazione: OP,
+          esito: 'eliminazione-non-riuscita',
+          entita_tipo: 'alunni',
+          entita_id: alunno_id,
+          ...campiEffetti(effetti),
+        })
+        return NextResponse.json(
+          { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA', effetti },
+          { status: 500 },
+        )
+      }
+      // La scheda non c'è più: la transazione è andata a buon fine. Si completa
+      // come un successo, dichiarando che l'esito è stato DEDOTTO.
+      esitoIncerto = true
+    } else {
+      const risposta = rpc as { ok?: boolean; code?: string; righe?: Record<string, number> } | null
+      if (!risposta?.ok) {
+        // Tracce e file sono già usciti, la scheda è intatta: un esito onesto,
+        // registrato con i numeri, perché un secondo tentativo lo completerà.
+        logEvento('gdpr', 'warn', {
+          operazione: OP,
+          esito: 'eliminazione-rifiutata-dal-db',
+          entita_tipo: 'alunni',
+          entita_id: alunno_id,
+          tipo: risposta?.code ?? 'risposta-illeggibile',
+          ...campiEffetti(effetti),
+        })
+        return rispostaAlRifiutoDelDb(risposta?.code, effetti)
+      }
+      righe = risposta.righe ?? {}
+    }
+
+    // ─── SOLO ORA la traccia ────────────────────────────────────────────────
+    const auditBonificate = await bonificaAuditScritture(supabase, [alunno_id], OP)
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'alunno_eliminato',
+      entitaId: alunno_id,
+      azione: 'delete',
+      scuolaId: (alunno.scuola_id as string | null) ?? null,
+      valoreDopo: {
+        alunno_id,
+        scelta: sceltaFatta,
+        righe,
+        file: file.numeri,
+        tracce: effetti.tracce,
+        audit_bonificate: auditBonificate,
+        ...(esitoIncerto ? { esito_incerto: true } : {}),
+      },
+    })
+    // Evento critico → si logga anche il SUCCESSO, con i numeri: `gdpr` è
+    // persistito, e senza questi conteggi la domanda «le notifiche col suo nome
+    // sono state tolte?» non avrebbe una query.
+    logEvento('gdpr', esitoIncerto ? 'warn' : 'info', {
+      operazione: OP,
+      esito: 'alunno-eliminato',
+      entita_tipo: 'alunni',
+      entita_id: alunno_id,
+      ...campiEffetti(effetti),
+      n_audit_bonificate: auditBonificate,
+      ...(esitoIncerto ? { esito_incerto: true } : {}),
+    })
+    return NextResponse.json({
+      ok: true,
+      scelta: sceltaFatta,
+      righe,
+      file: file.numeri,
+      tracce: effetti.tracce,
+      ...(esitoIncerto ? { incerto: true } : {}),
+    })
+  } catch (err) {
+    logErrore({ operazione: OP, stato: 500 }, err)
+    if (effetti) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-non-riuscita',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        ...campiEffetti(effetti),
+      })
+      return NextResponse.json(
+        { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA', effetti },
+        { status: 500 },
+      )
+    }
+    return NextResponse.json(
+      { error: 'Errore interno', codice: 'ALUNNO_ELIMINAZIONE_NON_RIUSCITA' },
+      { status: 500 },
+    )
+  }
+})

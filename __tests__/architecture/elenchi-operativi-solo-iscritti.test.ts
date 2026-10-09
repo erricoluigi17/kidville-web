@@ -356,16 +356,18 @@ const AMMESSE: Record<string, Esenzione> = {
   // devono restare leggibili per dieci anni. Se l'anagrafica smettesse di
   // elencarli, quei dieci anni sarebbero conservati e irraggiungibili — cioè il
   // peggio dei due mondi.
-  // Qui il filtro di stato ESISTE ed è la tendina dell'interfaccia
-  // (`?stato=ritirato` è come si legge l'elenco dei non più iscritti): non conta
-  // come presidio proprio perché è facoltativo, ed è giusto che sia facoltativo.
+  // Qui il filtro ESISTE ed è dell'interfaccia (dal 2026-10-09 `?elenco=frequentanti`
+  // per la linguetta «Alunni» e `?elenco=non_iscritti` per la linguetta «Non
+  // iscritti», ritirati compresi; prima era `?stato=ritirato`): non conta come
+  // presidio proprio perché è facoltativo, ed è giusto che sia facoltativo.
   //
   // ⚠️ MA LA ROTTA NON HA UN SOLO SCOPO, e fino al 2026-08-13 questa riga era
   // scritta come se ce l'avesse. Misurato sui chiamanti (`grep` su
   // `/api/admin/students?` in `src/`): **undici** fetch, non uno. Tre passavano
   // già `stato=iscritto` (`PaymentsDashboard`, `GeneratoreCategoria`,
-  // `FiscalePanel`), uno passa `stato=ritirato` (la linguetta «Non più
-  // iscritti»), e **cinque erano elenchi OPERATIVI che non passavano niente** —
+  // `FiscalePanel`), uno passava `stato=ritirato` (la linguetta dei ritirati, oggi
+  // «Non iscritti» con `elenco=non_iscritti`), e **cinque erano elenchi OPERATIVI
+  // che non passavano niente** —
   // fra cui due schermate mensa in cui la segreteria seleziona un bambino e gli
   // inserisce un ticket o gli vende un pacchetto. Un'esenzione che vale per
   // l'anagrafica benediceva in silenzio anche quelli, e «tuo figlio archiviato è
@@ -376,7 +378,7 @@ const AMMESSE: Record<string, Esenzione> = {
   'src/app/api/admin/students/route.ts::admin/students:GET': {
     scoperte: 1,
     ragione:
-      "anagrafica: l'elenco completo della sede è il suo scopo, e lo stato è una tendina — `?stato=ritirato` È la vista «non più iscritti». Gli undici chiamanti dichiarano il loro (lock a fondo file)",
+      "anagrafica: l'elenco completo della sede è il suo scopo, e l'elenco è un parametro dell'interfaccia — `?elenco=non_iscritti` È la linguetta «Non iscritti» (ritirati e iscritti senza sezione), `?elenco=frequentanti` la linguetta «Alunni». I chiamanti dichiarano il loro (lock a fondo file)",
   },
 
   // ── ARCHIVIO DOCUMENTI: dieci anni di conservazione, e la ragione è la stessa
@@ -483,6 +485,20 @@ const AMMESSE: Record<string, Esenzione> = {
     scoperte: 1,
     ragione:
       'riconoscimento dei doppioni all’import: una copia ARCHIVIATA è ancora legata a genitori e rette, ed è proprio il gemello da trovare — con un filtro di stato l’import creerebbe un terzo alunno accanto a due già esistenti',
+  },
+
+  // L'AVVISO DOPPIONE dell'eliminazione definitiva (2026-10-09). Cerca UN codice
+  // fiscale nelle sedi dell'operatore per sapere se la scheda che si sta per
+  // eliminare è il doppione di un bambino che frequenta. Non mostra un elenco a
+  // nessuno: restituisce un booleano. Lo stato si decide in TS con la regola
+  // ESATTA della linguetta «Alunni» (`section_id` presente ed `eAncoraIscritto`),
+  // che include anche gli stati anomali; un `.in('stato', …)` a elenco chiuso li
+  // escluderebbe, e qui il verso prudente è l'opposto: un avviso in più costa un
+  // pensiero, uno in meno costa presenze e diario del bambino vero.
+  'src/lib/alunni/elimina-definitivo.ts::cfCondivisoConFrequentante': {
+    scoperte: 1,
+    ragione:
+      'avviso doppione prima di un’eliminazione: cerca un solo codice fiscale e risponde sì o no; «frequenta» si decide in TS come nella linguetta Alunni, stati anomali compresi, perché qui un avviso mancato è il danno',
   },
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -743,8 +759,9 @@ describe('elenchi operativi: chi legge `alunni` per sede intera dichiara lo stat
 // IL SECONDO LOCK — chi CHIAMA l'anagrafica dichiara che stato vuole
 //
 // `admin/students:GET` sta in `AMMESSE` perché è un'anagrafica: l'elenco
-// completo della sede è il suo scopo, e la vista «non più iscritti» è
-// letteralmente `?stato=ritirato`. Vero — ma l'esenzione era scritta come se la
+// completo della sede è il suo scopo, e la vista dei ritirati era letteralmente
+// `?stato=ritirato` (oggi la linguetta «Non iscritti», `?elenco=non_iscritti`).
+// Vero — ma l'esenzione era scritta come se la
 // rotta avesse un solo consumatore, e i consumatori sono undici. Fra quelli che
 // non passavano niente c'erano due schermate MENSA in cui la segreteria
 // seleziona un bambino e gli inserisce un ticket o gli vende un pacchetto: un
@@ -763,11 +780,10 @@ const CHIAMATA_ANAGRAFICA = /\/api\/admin\/students\?/g
  * Chiave: il percorso del file. Ognuno dichiara quante chiamate cieche ha.
  */
 const CHIAMANTI_SENZA_STATO: Record<string, Esenzione> = {
-  'src/app/(dashboard)/admin/students/page.tsx': {
-    scoperte: 1,
-    ragione:
-      'È l’anagrafica stessa: la linguetta «Non più iscritti» accanto chiede `?stato=ritirato`, quindi qui l’elenco completo è il contenuto della pagina, non una dimenticanza',
-  },
+  // `src/app/(dashboard)/admin/students/page.tsx` stava qui fino al 2026-10-09:
+  // l'elenco «Alunni» chiedeva la sede intera. Ora dichiara `elenco=frequentanti`
+  // (e la linguetta «Non iscritti» `elenco=non_iscritti`): non è più una chiamata
+  // cieca, e una voce rimasta qui sarebbe morta.
   'src/app/(dashboard)/admin/protocolli/page.tsx': {
     scoperte: 1,
     ragione:
@@ -809,7 +825,9 @@ describe('i chiamanti dell’anagrafica dichiarano lo stato che vogliono', () =>
         out.push({
           percorso: path.relative(process.cwd(), file).split(path.sep).join('/'),
           riga: riga(src, m.index),
-          conStato: /[?&]stato=/.test(url),
+          // `elenco=frequentanti|non_iscritti` (2026-10-08) è un insieme di stati
+          // DICHIARATO, esattamente come `stato=`: chi lo passa ha detto chi vuole.
+          conStato: /[?&](stato|elenco)=/.test(url),
         })
       }
     }
@@ -822,7 +840,7 @@ describe('i chiamanti dell’anagrafica dichiarano lo stato che vogliono', () =>
     const cieche = tutte.filter((c) => !c.conStato && !(c.percorso in CHIAMANTI_SENZA_STATO))
     expect(
       cieche.map((c) => `${c.percorso}:${c.riga}`),
-      'Chiamate a `/api/admin/students` senza `stato=`: la risposta PREDEFINITA è la sede intera, ' +
+      'Chiamate a `/api/admin/students` senza `stato=` (o `elenco=`; `elenco=` è per l’anagrafica e comprende i sospesi, gli elenchi operativi usano `stato=iscritto`): la risposta PREDEFINITA è la sede intera, ' +
         'archiviati compresi. Aggiungi `stato=iscritto` se è un elenco operativo, oppure aggiungi il ' +
         'file a `CHIAMANTI_SENZA_STATO` con la ragione per cui vuole anche chi non frequenta più.',
     ).toEqual([])

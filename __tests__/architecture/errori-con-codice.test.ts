@@ -208,8 +208,12 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * 🔻 272 → 271 il 2026-09-29, branch `feat/retta-a-carico-fratello` (terza revisione, R4). La
  * voce `pagamenti/export/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo
  * gemello su `MAX_OCCORRENZE`.
+ *
+ * 🔻 271 → 270 il 2026-10-09, branch `feat/elimina-non-iscritti` (Task 7, revisione). La voce
+ * `admin/gdpr/candidates/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo
+ * gemello su `MAX_OCCORRENZE`.
  */
-const MAX_FILE = 271;
+const MAX_FILE = 270;
 /**
  * ⚠️ 1416 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
  * il 2026-09-10, è **1384**. I due numeri divergono di 32 per le 18 voci stantie dette qui sopra.
@@ -397,8 +401,14 @@ const MAX_FILE = 271;
  * `sedeDellaGenerazione`, ora in `@/lib/pagamenti/generazione-server`, e porta
  * `codice: 'SEDE_DI_COLLAUDO'` (catalogo it/en). La voce di `genera-rette` scende da 5 a 4;
  * `MAX_FILE` non si muove (la voce non è arrivata a zero).
+ *
+ * 🔻 1362 → 1361 il 2026-10-09, branch `feat/elimina-non-iscritti` (Task 7, revisione). Debito
+ * PAGATO: il 500 della lettura dell'elenco di `admin/gdpr/candidates:GET` rispondeva con il
+ * messaggio grezzo di PostgREST e nessun codice; ora porta `GDPR_CANDIDATI_NON_LETTI`, lo stesso
+ * del 500 sul registro della primaria della stessa route, e il corpo dell'errore resta nel log. La
+ * voce scende da 1 a 0 ed esce dall'elenco; `MAX_FILE` scende di uno insieme a lei.
  */
-const MAX_OCCORRENZE = 1362;
+const MAX_OCCORRENZE = 1361;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

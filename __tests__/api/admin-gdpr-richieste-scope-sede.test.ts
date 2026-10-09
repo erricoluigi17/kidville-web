@@ -71,6 +71,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.not = () => b
       b.eq = (col: string, val: unknown) => { filtri.push({ col, vals: [val] }); return b }
       b.in = (col: string, vals: unknown[]) => { filtri.push({ col, vals }); return b }
+      // Il controllo del registro della primaria (2026-10-09) legge con `.limit(1)`:
+      // qui nessuna tabella del registro ha righe, cioè il registro è VUOTO.
+      b.limit = () => b
       b.update = (v: Riga) => { patch = v; return b }
       b.maybeSingle = async () =>
         table === 'richieste_cancellazione'

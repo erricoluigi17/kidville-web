@@ -188,3 +188,146 @@ describe('RichiesteCancellazionePanel — la misura fallita blocca la conferma',
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
+
+// =============================================================================
+// IL REGISTRO DELLA PRIMARIA NON SI ANONIMIZZA (titolare, 2026-10-08 · 2026-10-09).
+//
+// La richiesta si evade lo stesso — come per i figli ancora iscritti — ma i figli
+// col registro della primaria restano. Il pannello lo dice in TRE punti: nella
+// riga dell'elenco (prima di aprire), nel dry-run (prima di digitare ANONIMIZZA)
+// e dopo l'evasione, quando la richiesta è già sparita dall'elenco e chi risponde
+// alla famiglia deve poter citare il numero.
+// =============================================================================
+describe('RichiesteCancellazionePanel — i figli col registro della primaria', () => {
+  /** GET → la richiesta; POST dryrun → `dry`; POST execute → `esito`; dopo l'evasione l'elenco è vuoto. */
+  function conRegistro(richiesta: Record<string, unknown>, dry: Record<string, unknown>, esito: Record<string, unknown>) {
+    let evasa = false
+    fetchMock.mockImplementation((_url: string, init?: { method?: string; body?: string }) => {
+      if (init?.method === 'POST') {
+        if (String(init.body ?? '').includes('execute')) {
+          evasa = true
+          return Promise.resolve({ ok: true, json: async () => esito })
+        }
+        return Promise.resolve({ ok: true, json: async () => dry })
+      }
+      return Promise.resolve({ ok: true, json: async () => (evasa ? [] : [richiesta]) })
+    })
+  }
+
+  it('la riga dell’elenco dice quanti figli restano per il registro', async () => {
+    conRegistro({ ...RICHIESTA, alunni_non_iscritti: 1, alunni_registro_primaria: 1 }, DRY_RUN, { ok: true })
+    await monta()
+    const riga = (await screen.findByText('Genitore Prova')).closest('button') as HTMLElement
+    // Il verbo concorda col numero DENTRO il plurale: «1 figlio ha», «2 figli hanno».
+    expect(within(riga).getByText(/^1 figlio ha il registro della primaria: non si anonimizza$/)).toBeInTheDocument()
+  })
+
+  it('registro non misurato nell’elenco: lo dice, non tace e non scrive zero', async () => {
+    conRegistro({ ...RICHIESTA, alunni_registro_primaria: null }, DRY_RUN, { ok: true })
+    await monta()
+    const riga = (await screen.findByText('Genitore Prova')).closest('button') as HTMLElement
+    expect(within(riga).getByText(itAdminAltro.richiesteFigliRegistroNonMisurato)).toBeInTheDocument()
+  })
+
+  it('controllo: senza figli col registro la riga non aggiunge niente', async () => {
+    conRegistro({ ...RICHIESTA, alunni_registro_primaria: 0 }, DRY_RUN, { ok: true })
+    await monta()
+    const riga = (await screen.findByText('Genitore Prova')).closest('button') as HTMLElement
+    expect(within(riga).queryByText(/registro della primaria/)).not.toBeInTheDocument()
+  })
+
+  it('il dry-run lo dice PRIMA della conferma, con il numero, e solo per il SUO gruppo', async () => {
+    conRegistro(RICHIESTA, { ...DRY_RUN, alunni_non_iscritti: 1, alunni_registro_primaria: 1 }, { ok: true })
+    await apriRichiesta()
+    const riga = await screen.findByText(/ESCLUSI dall’anonimizzazione: 1\./)
+    expect(riga.textContent).toContain('la loro scheda resta intatta')
+    // La frase falsa della prima versione: «gli altri figli si anonimizzano lo
+    // stesso» — i figli iscritti NON si anonimizzano.
+    expect(document.body.textContent).not.toMatch(/altri figli si anonimizzano/)
+  })
+
+  it('il dry-run dice che l’ACCOUNT del genitore resta, quando resta', async () => {
+    conRegistro(RICHIESTA, { ...DRY_RUN, alunni_non_iscritti: 1, alunni_registro_primaria: 1, account_mantenuti: 1 }, { ok: true })
+    await apriRichiesta()
+    const riga = await screen.findByText(/Account di accesso del genitore: RESTA/)
+    expect(riga.textContent).toContain('scheda anagrafica si anonimizza comunque')
+  })
+
+  it('account non misurato nel dry-run: lo dice', async () => {
+    conRegistro(RICHIESTA, { ...DRY_RUN, account_mantenuti: null }, { ok: true })
+    await apriRichiesta()
+    expect(await screen.findByText(itAdminAltro.richiesteAccountNonMisurato)).toBeInTheDocument()
+  })
+
+  it('controllo: account liberato (0) → nessuna riga sull’account', async () => {
+    conRegistro(RICHIESTA, { ...DRY_RUN, account_mantenuti: 0 }, { ok: true })
+    await apriRichiesta()
+    await waitFor(() => expect(voce('Pagelle: 3')).toBeInTheDocument())
+    expect(screen.queryByText(/Account di accesso del genitore/)).not.toBeInTheDocument()
+  })
+
+  it('dopo l’evasione resta a schermo quanti figli non sono stati anonimizzati, e perché', async () => {
+    conRegistro(RICHIESTA, { ...DRY_RUN, alunni_non_iscritti: 1, alunni_registro_primaria: 2 }, { ok: true, alunni: 1, alunni_registro_primaria: 2 })
+    await apriRichiesta()
+    await waitFor(() => expect(voce('Pagelle: 3')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('ANONIMIZZA'), { target: { value: 'ANONIMIZZA' } })
+    fireEvent.click(bottoneRosso())
+    const avviso = await screen.findByRole('status')
+    expect(avviso.textContent).toContain(itAdminAltro.richiesteEvasaTitolo)
+    expect(avviso.textContent).toContain('2 figli non sono stati anonimizzati')
+    // La richiesta è evasa: è sparita dall'elenco, il numero no.
+    await waitFor(() => expect(screen.queryByText('Genitore Prova')).not.toBeInTheDocument())
+    expect(screen.getByRole('status')).toBeInTheDocument()
+  })
+
+  it('controllo: un’evasione senza esclusi non mostra il riquadro', async () => {
+    conRegistro(RICHIESTA, DRY_RUN, { ok: true, alunni: 2, alunni_registro_primaria: 0 })
+    await apriRichiesta()
+    await waitFor(() => expect(voce('Pagelle: 3')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('ANONIMIZZA'), { target: { value: 'ANONIMIZZA' } })
+    fireEvent.click(bottoneRosso())
+    await waitFor(() => expect(screen.queryByText('Genitore Prova')).not.toBeInTheDocument())
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+})
+
+describe('RichiesteCancellazionePanel — dopo l’evasione: l’account che resta', () => {
+  it('account_mantenuti 1 → il riquadro di esito lo dice, anche senza figli col registro', async () => {
+    fetchMock.mockImplementation((_url: string, init?: { method?: string; body?: string }) => {
+      if (init?.method === 'POST') {
+        if (String(init.body ?? '').includes('execute')) {
+          return Promise.resolve({ ok: true, json: async () => ({ ok: true, alunni_registro_primaria: 0, account_mantenuti: 1 }) })
+        }
+        return Promise.resolve({ ok: true, json: async () => ({ ...DRY_RUN, account_mantenuti: 1 }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [RICHIESTA] })
+    })
+    await apriRichiesta()
+    await waitFor(() => expect(voce('Pagelle: 3')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('ANONIMIZZA'), { target: { value: 'ANONIMIZZA' } })
+    fireEvent.click(bottoneRosso())
+    const avviso = await screen.findByRole('status')
+    expect(avviso.textContent).toContain('il suo account di accesso (email e nome) resta')
+    expect(avviso.textContent).not.toMatch(/non (è stato|sono stati) anonimizzat/)
+  })
+})
+
+describe('RichiesteCancellazionePanel — oblio parziale per una chiave condivisa', () => {
+  it('chiavi_condivise_escluse > 0 → il riquadro di esito dice il motivo', async () => {
+    fetchMock.mockImplementation((_url: string, init?: { method?: string; body?: string }) => {
+      if (init?.method === 'POST') {
+        if (String(init.body ?? '').includes('execute')) {
+          return Promise.resolve({ ok: true, json: async () => ({ ok: true, alunni_registro_primaria: 0, account_mantenuti: 0, chiavi_condivise_escluse: 2 }) })
+        }
+        return Promise.resolve({ ok: true, json: async () => DRY_RUN })
+      }
+      return Promise.resolve({ ok: true, json: async () => [RICHIESTA] })
+    })
+    await apriRichiesta()
+    await waitFor(() => expect(voce('Pagelle: 3')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('ANONIMIZZA'), { target: { value: 'ANONIMIZZA' } })
+    fireEvent.click(bottoneRosso())
+    const avviso = await screen.findByRole('status')
+    expect(avviso.textContent).toContain(itAdminAltro.oblioParzialeChiaviCondivise)
+  })
+})

@@ -82,6 +82,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // Le letture del dry-run che dicono CHE COSA distrugge (`contaCosaDistrugge`).
       b.contains = () => b
       b.not = () => b
+      // Il controllo del registro della primaria (2026-10-09) legge con `.limit(1)`:
+      // qui nessuna tabella del registro ha righe, cioè il registro è VUOTO.
+      b.limit = () => b
       b.update = (v: Record<string, unknown>) => { patch = v; return b }
       b.maybeSingle = async () =>
         table === 'richieste_cancellazione'

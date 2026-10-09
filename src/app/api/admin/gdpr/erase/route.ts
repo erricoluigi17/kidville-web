@@ -10,6 +10,8 @@ import { contaAccountOblio, type EsitoAccountOblio } from '@/lib/gdpr/account-ob
 import { contaCosaDistrugge } from '@/lib/gdpr/cosa-distrugge'
 import { leggiAltriFigliIscritti } from '@/lib/gdpr/orfano'
 import { eNonPiuIscritto, STATO_RITIRATO } from '@/lib/alunni/stato'
+import { leggiRegistroPrimaria } from '@/lib/alunni/registro-primaria'
+import { contaChiaviCondivise, MOTIVO_CHIAVI_CONDIVISE, type ConChiaviCondivise } from '@/lib/gdpr/chiavi-condivise'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -134,6 +136,29 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       return NextResponse.json(
         { error: `Operazione consentita solo su alunni con stato «${STATO_RITIRATO}»` },
         { status: 409 }
+      )
+    }
+
+    // IL REGISTRO DELLA PRIMARIA NON SI ANONIMIZZA (titolare, 2026-10-08).
+    // Voti, pagelle, scrutini, note e certificati delle competenze sono il
+    // registro che la legge obbliga a conservare: è l'eccezione dell'art. 17 §3
+    // lett. b. Vale in `dryrun` come in `execute`, e una lettura fallita FERMA:
+    // «non ho potuto guardare» non può aprire un'anonimizzazione irreversibile.
+    const registro = await leggiRegistroPrimaria(supabase, alunno_id)
+    if (!registro.ok) {
+      logErrore({ operazione: OP, stato: 500, evento: 'db' }, registro.errore)
+      return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+    }
+    if (registro.presente) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'oblio-rifiutato-registro-primaria',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+      })
+      return NextResponse.json(
+        { error: 'Il registro della primaria va conservato', codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
+        { status: 409 },
       )
     }
 
@@ -269,8 +294,12 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     // L'ACCOUNT di ciascun genitore (2026-09-14): `anonimizzaParent` lo libera per
     // ultimo e dice com'è andata. Qui si somma, e basta.
     const esitiAccount: (EsitoAccountOblio | undefined)[] = []
+    // Le chiavi di ricerca NON usate perché condivise con un doppione: vedi
+    // `@/lib/gdpr/chiavi-condivise`. Del bambino e di ogni genitore.
+    const esitiChiavi: ConChiaviCondivise[] = [esitoAlunno]
     for (const pid of parentiOrfani) {
       const e = await anonimizzaParent(supabase, pid, at, OP)
+      esitiChiavi.push(e)
       newsVisualizzazioniRimosse += e.newsVisualizzazioniRimosse
       consensiProvaBonificati += e.provaConsensiScrubbate
       pushRimosse += e.pushSubscriptionsRimosse
@@ -284,6 +313,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     const account = contaAccountOblio(esitiAccount)
 
     const nFileNonRimossi = esitoAlunno.fileNonRimossi + fileAdultiNonRimossi
+    const chiaviCondivise = contaChiaviCondivise(esitiChiavi)
 
     const esito = {
       alunno: 1,
@@ -330,6 +360,14 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       account_rimossi: account.rimossi,
       account_anonimizzati: account.anonimizzati,
       account_non_liberati: account.nonLiberati,
+      // ⚠️ IL QUARTO MODO DI ESSERE PARZIALE (2026-10-09). Il codice fiscale o il
+      // documento del bambino — o di un genitore — è anche di un'altra scheda viva
+      // (un doppione): `anonimizzaAlunno` non lo ha usato per ripulire domande
+      // d'iscrizione, bonifici e cassa, e quei dati, sanitari compresi, sono
+      // rimasti in chiaro. Il motivo sta accanto al numero: senza, «2» non dice
+      // alla Direzione che cosa fare.
+      chiavi_condivise_escluse: chiaviCondivise,
+      chiavi_condivise_motivo: chiaviCondivise > 0 ? MOTIVO_CHIAVI_CONDIVISE : null,
     }
 
     // Un oblio incompleto non può passare inosservato: riga PERSISTITA (`gdpr` è
@@ -343,8 +381,10 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     // minore la differenza è fra «tolto» e «non l'ho nemmeno guardato».
     //
     // Dal 2026-09-14 le cose sono TRE: anche un account che non si è potuto liberare
-    // lascia l'email e il nome di una persona che ha chiesto di sparire.
-    if (nFileNonRimossi > 0 || lettureFallite > 0 || account.nonLiberati > 0) {
+    // lascia l'email e il nome di una persona che ha chiesto di sparire. Dal
+    // 2026-10-09 QUATTRO: una chiave condivisa con un doppione lascia in chiaro
+    // ciò che era agganciato a quella chiave.
+    if (nFileNonRimossi > 0 || lettureFallite > 0 || account.nonLiberati > 0 || chiaviCondivise > 0) {
       logEvento('gdpr', 'error', {
         operazione: OP,
         esito: 'oblio-parziale',
@@ -353,10 +393,12 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
         n_file: nFileNonRimossi,
         n_letture_fallite: lettureFallite,
         n_account_non_liberati: account.nonLiberati,
+        n_chiavi_condivise: chiaviCondivise,
         msg:
           `${OP}: ${nFileNonRimossi} file di un interessato NON sono usciti dall'archivio` +
           (lettureFallite > 0 ? ` · ${lettureFallite} archivi non si sono potuti leggere` : '') +
-          (account.nonLiberati > 0 ? ` · ${account.nonLiberati} account non liberati` : ''),
+          (account.nonLiberati > 0 ? ` · ${account.nonLiberati} account non liberati` : '') +
+          (chiaviCondivise > 0 ? ` · ${chiaviCondivise} chiavi condivise con un'altra scheda (doppione da risolvere)` : ''),
       })
     } else {
       // Evento critico → si logga anche il SUCCESSO. Con i soli errori, «nessun

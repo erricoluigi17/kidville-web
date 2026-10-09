@@ -69,6 +69,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.not = () => b
       b.eq = (col: string, val: unknown) => { filtri.push({ col, vals: [val] }); return b }
       b.in = (col: string, vals: unknown[]) => { filtri.push({ col, vals }); return b }
+      // Il controllo del registro della primaria (2026-10-09) legge con `.limit(1)`:
+      // qui nessuna tabella del registro ha righe, cioè il registro è VUOTO.
+      b.limit = () => b
       b.update = (v: Riga) => { patch = v; return b }
       b.maybeSingle = async () =>
         table === 'richieste_cancellazione'
@@ -190,5 +193,39 @@ describe('POST /api/admin/gdpr/richieste — l’account del genitore', () => {
     expect(parziale, 'la richiesta si chiude «evasa» con email e nome della persona ancora lì').toBeTruthy()
     expect(parziale![1]).toBe('error')
     expect(parziale![2]).toMatchObject({ n_account_non_liberati: 1 })
+  })
+})
+
+// Le chiavi condivise con un doppione (2026-10-09): vedi la testata del caso
+// gemello in `gdpr-erase-account.test.ts`. Qui l'esito si SALVA sulla richiesta.
+describe('POST /api/admin/gdpr/richieste — chiavi condivise con un’altra scheda', () => {
+  const MOTIVO = 'chiave condivisa con un’altra scheda: risolvere prima il doppione'
+
+  it('chiave di un figlio condivisa → parziale, con il motivo nell’esito SALVATO', async () => {
+    h.anonimizzaAlunno
+      .mockResolvedValueOnce(esitoAlunno({ chiaviCondiviseEscluse: { codiceFiscale: 1, documento: 1 } }))
+      .mockResolvedValueOnce(esitoAlunno({ chiaviCondiviseEscluse: { codiceFiscale: 0, documento: 0 } }))
+    const json = await (await esegui()).json()
+    expect(json).toMatchObject({ chiavi_condivise_escluse: 2, chiavi_condivise_motivo: MOTIVO })
+    expect(esitoScritto()).toMatchObject({ chiavi_condivise_escluse: 2, chiavi_condivise_motivo: MOTIVO })
+    const audit = h.logScrittura.mock.calls[0][1] as { valoreDopo: Record<string, unknown> }
+    expect(audit.valoreDopo).toMatchObject({ chiavi_condivise_escluse: 2 })
+    const parziale = riga('oblio-parziale')
+    expect(parziale).toBeTruthy()
+    expect(parziale![1]).toBe('error')
+    expect(parziale![2]).toMatchObject({ n_chiavi_condivise: 2 })
+  })
+
+  it('chiave del GENITORE condivisa → parziale', async () => {
+    h.anonimizzaParent.mockResolvedValue(esitoParent({ chiaviCondiviseEscluse: { codiceFiscale: 0, documento: 1 } }))
+    const json = await (await esegui()).json()
+    expect(json.chiavi_condivise_escluse).toBe(1)
+    expect(riga('oblio-parziale')).toBeTruthy()
+  })
+
+  it('controllo: nessuna chiave condivisa → invariato', async () => {
+    const json = await (await esegui()).json()
+    expect(json).toMatchObject({ chiavi_condivise_escluse: 0, chiavi_condivise_motivo: null })
+    expect(riga('oblio-parziale')).toBeFalsy()
   })
 })

@@ -129,7 +129,11 @@ Corpo: `{ alunno_id: uuid, mode: 'dryrun' | 'execute', scelta?: 'elimina' | 'eli
       rimozione verificata di `alunni.documento_path` (`rimuoviEVerifica`). Le foto di gruppo si
       **sganciano**, non si cancellano. Un solo file non uscito o un inventario illeggibile →
       **stop prima del DB**, `502 ELIMINAZIONE_FILE_RESTANTI` con i numeri;
-   b. **DB in una transazione** — `supabase.rpc('elimina_alunno_definitivo', { p_alunno, p_con_pagamenti })`;
+   b. **DB in una transazione** — `supabase.rpc('elimina_alunno_definitivo', { p_alunno, p_con_pagamenti, p_solo_verifica: false })`
+      (la stessa funzione con `p_solo_verifica: true` è già stata chiamata prima del passo 0: funzione assente → 503
+      senza effetti; rifiuto → risposta senza effetti). Dopo l'inizio degli effetti, ogni errore porta `effetti`
+      (tracce e file già tolti) nella risposta e nel log; scheda sparita dopo un errore di rete → esito incerto,
+      traccia completata con `esito_incerto`;
    c. **solo dopo il successo**: `bonificaAuditScritture(supabase, [alunno_id], op)` e poi
       `logScrittura({ entitaTipo: 'alunno_eliminato', azione: 'delete', entitaId, scuolaId,
       valoreDopo: { scelta, conteggi } })` — uuid e numeri, **mai** la riga. `logEvento` di successo.
@@ -141,7 +145,9 @@ Corpo: `{ alunno_id: uuid, mode: 'dryrun' | 'execute', scelta?: 'elimina' | 'eli
 Ogni risposta d'errore ha un `codice` in `CODICI_ERRORE` tradotto in `messages/{it,en}/shared.json`.
 
 ### 4.3 Migrazione — `supabase/migrations/<UTC>_alunni_elimina_definitivo.sql`
-`public.elimina_alunno_definitivo(p_alunno uuid, p_con_pagamenti boolean) RETURNS jsonb`,
+`public.elimina_alunno_definitivo(p_alunno uuid, p_con_pagamenti boolean, p_solo_verifica boolean default false) RETURNS jsonb`
+(con `p_solo_verifica = true` fa tutti i controlli e risponde `ammissibile` senza cancellare: la route la
+chiama così sulla scheda vera PRIMA di qualunque effetto, poi di nuovo per davvero dopo tracce e file),
 `SECURITY DEFINER`, `SET search_path = public, pg_temp`, owner `postgres`, `REVOKE ALL … FROM
 PUBLIC`, `… FROM anon, authenticated`, `GRANT EXECUTE … TO service_role`, `NOTIFY pgrst`.
 Modello: `iscrizioni_rinvia` / `iscrizioni_annulla` (già cancellano da `alunni`).

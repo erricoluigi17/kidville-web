@@ -85,7 +85,7 @@ import { GET } from '@/app/api/pagamenti/route'
 // Si importa SOLO per la prova «due voci, due codici diversi»: le stringhe attese qui
 // sotto sono scritte a mano, una per una. Comporle chiamando la stessa funzione che la
 // route chiama renderebbe il test una tautologia — verde anche con la funzione rotta.
-import { codiceVoce } from '@/lib/pagamenti/codice-voce'
+import { codiceVoce, estraiCodiciVoce } from '@/lib/pagamenti/codice-voce'
 
 const url = (qs = '') => new Request(`http://localhost/api/pagamenti?${qs}`) as unknown as import('next/server').NextRequest
 
@@ -118,6 +118,14 @@ const COD_PADRE = '#T6X9T74'
 const COD_RATA = '#M4X2XH5'
 const COD_SPLIT = '#F7XNRKV'
 const COD_QUOTA = '#RFFFTR7'
+
+/**
+ * La forma in cui il codice esce nella causale del BONIFICO: senza il `#`, che Poste
+ * rifiuta (2026-10-09, v. `@/lib/pagamenti/causale-banca`). I valori d'oro qui sopra
+ * restano nella forma canonica perché è quella che `codiceVoce` produce e che
+ * l'estrattore restituisce: la causale nuova si legge con lo stesso codice di sempre.
+ */
+const nudo = (codice: string) => codice.replace(/^#/, '')
 
 const pagRetta = () => ({
   id: 'pg-1', alunno_id: 'al-1', scuola_id: 'sc-1', descrizione: 'Retta Settembre 2026',
@@ -170,21 +178,22 @@ describe('GET /api/pagamenti — causale_suggerita per categoria', () => {
     // Il modello non cita `{codice}`: l'append lo mette in testa, nel segmento della
     // descrizione (qui il primo), mai in coda — il campo causale della banca si taglia
     // da destra, e in coda il codice sarebbe il primo pezzo a sparire.
-    expect(j.data[0].causale_suggerita).toBe(`Retta settembre 2026 ${COD_1} - Mara Bianchi - ${CF} - GIUGLIANO - € 150,00`)
+    // Ripulita per la banca: i « - » diventano spazi e «€ 150,00» diventa «EUR 150 00».
+    expect(j.data[0].causale_suggerita).toBe(`Retta settembre 2026 ${nudo(COD_1)} Mara Bianchi ${CF} GIUGLIANO EUR 150 00`)
   })
 
-  it('config assente → ricade sul modello PREDEFINITO (formato storico + codice)', async () => {
+  it('config assente → ricade sul modello PREDEFINITO (dati chiave in testa, ripulito per la banca)', async () => {
     h.settingsRow = null // nessuna riga impostazioni
     const res = await GET(url())
     const j = await res.json()
-    expect(j.data[0].causale_suggerita).toBe(`Retta Settembre 2026 ${COD_1} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`)
+    expect(j.data[0].causale_suggerita).toBe(`Retta Settembre 2026 ${nudo(COD_1)} ${CF} Mara Bianchi GIUGLIANO`)
   })
 
   it('categoria senza modello dedicato → usa il modello «default» della config', async () => {
     h.settingsRow = { causali_config: { default: 'BONIFICO {descrizione} / {sede}' } }
     const res = await GET(url())
     const j = await res.json()
-    expect(j.data[0].causale_suggerita).toBe(`BONIFICO Retta Settembre 2026 / GIUGLIANO ${COD_1}`)
+    expect(j.data[0].causale_suggerita).toBe(`BONIFICO Retta Settembre 2026 GIUGLIANO ${nudo(COD_1)}`)
   })
 
   it('periodo_competenza null → {mese}/{anno} spariscono con grazia (il resto del segmento resta)', async () => {
@@ -193,7 +202,7 @@ describe('GET /api/pagamenti — causale_suggerita per categoria', () => {
     const res = await GET(url())
     const j = await res.json()
     // {mese}/{anno} vuoti collassano, ma {descrizione} tiene in vita il segmento.
-    expect(j.data[0].causale_suggerita).toBe(`Retta Settembre 2026 ${COD_1} - Mara Bianchi`)
+    expect(j.data[0].causale_suggerita).toBe(`Retta Settembre 2026 ${nudo(COD_1)} Mara Bianchi`)
   })
 })
 
@@ -215,13 +224,17 @@ describe('GET /api/pagamenti — il codice della voce dentro la causale', () => 
     h.settingsRow = null
   })
 
-  it('la causale contiene il codice della PROPRIA voce, in forma canonica col sigillo', async () => {
+  it('la causale contiene il codice della PROPRIA voce, senza `#` e riconoscibile dall’estrattore', async () => {
     const j = await (await GET(url())).json()
+    const causale = j.data[0].causale_suggerita as string
     // Le due asserzioni dicono cose diverse e servono entrambe: la prima lega la
     // risposta all'id della riga (se la route calcolasse il codice da un altro campo,
     // questa diventa rossa), la seconda inchioda il valore letterale.
-    expect(j.data[0].causale_suggerita).toContain(codiceVoce('pg-1'))
-    expect(j.data[0].causale_suggerita).toContain(COD_1)
+    expect(estraiCodiciVoce(causale)).toEqual([codiceVoce('pg-1')])
+    expect(estraiCodiciVoce(causale)).toEqual([COD_1])
+    // E il `#` non arriva al genitore: è il carattere che Poste rifiuta.
+    expect(causale).not.toContain('#')
+    expect(causale).toContain(nudo(COD_1))
   })
 
   it('DUE voci nella stessa risposta → DUE codici diversi (contro la costante cablata)', async () => {
@@ -232,10 +245,10 @@ describe('GET /api/pagamenti — il codice della voce dentro la causale', () => 
     const j = await (await GET(url())).json()
     expect(j.data).toHaveLength(2)
     expect(j.data[0].causale_suggerita).toBe(
-      `Retta Settembre 2026 ${COD_1} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+      `Retta Settembre 2026 ${nudo(COD_1)} ${CF} Mara Bianchi GIUGLIANO`,
     )
     expect(j.data[1].causale_suggerita).toBe(
-      `Mensa Settembre 2026 ${COD_2} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+      `Mensa Settembre 2026 ${nudo(COD_2)} ${CF} Mara Bianchi GIUGLIANO`,
     )
     expect(COD_1).not.toBe(COD_2)
   })
@@ -247,7 +260,7 @@ describe('GET /api/pagamenti — il codice della voce dentro la causale', () => 
     // alla prima modifica dell'admin. La garanzia sta in LETTURA.
     h.settingsRow = { causali_config: { rette: '{descrizione} - {nome_completo} - {sede}' } }
     const j = await (await GET(url())).json()
-    expect(j.data[0].causale_suggerita).toBe(`Retta Settembre 2026 ${COD_1} - Mara Bianchi - GIUGLIANO`)
+    expect(j.data[0].causale_suggerita).toBe(`Retta Settembre 2026 ${nudo(COD_1)} Mara Bianchi GIUGLIANO`)
   })
 
   it('modello che cita {codice} IN MEZZO → compare lì, e una volta sola', async () => {
@@ -256,8 +269,8 @@ describe('GET /api/pagamenti — il codice della voce dentro la causale', () => 
     h.settingsRow = { causali_config: { rette: '{descrizione} - pagamento {codice} - {nome_completo}' } }
     const j = await (await GET(url())).json()
     const causale = j.data[0].causale_suggerita as string
-    expect(causale).toBe(`Retta Settembre 2026 - pagamento ${COD_1} - Mara Bianchi`)
-    expect(causale.split(COD_1)).toHaveLength(2) // una sola occorrenza
+    expect(causale).toBe(`Retta Settembre 2026 pagamento ${nudo(COD_1)} Mara Bianchi`)
+    expect(causale.split(nudo(COD_1))).toHaveLength(2) // una sola occorrenza
   })
 
   // ─── IN VESTE DI GENITORE ───────────────────────────────────────────────────
@@ -283,9 +296,9 @@ describe('GET /api/pagamenti — il codice della voce dentro la causale', () => 
     expect(j.data).toHaveLength(1)
     expect(j.data[0].id).toBe('pg-rata')
     expect(j.data[0].causale_suggerita).toBe(
-      `Retta Settembre 2026 ${COD_RATA} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+      `Retta Settembre 2026 ${nudo(COD_RATA)} ${CF} Mara Bianchi GIUGLIANO`,
     )
-    expect(j.data[0].causale_suggerita).not.toContain(COD_PADRE)
+    expect(j.data[0].causale_suggerita).not.toContain(nudo(COD_PADRE))
   })
 
   it('in veste di GENITORE la quota di uno split porta il codice del PAGAMENTO, non della quota', async () => {
@@ -303,9 +316,9 @@ describe('GET /api/pagamenti — il codice della voce dentro la causale', () => 
     // riceverebbero due diversi per la stessa cosa, e la riconciliazione tornerebbe a
     // indovinare — esattamente il guasto che il codice della voce esiste per chiudere.
     expect(j.data[0].causale_suggerita).toBe(
-      `Retta Settembre 2026 ${COD_SPLIT} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+      `Retta Settembre 2026 ${nudo(COD_SPLIT)} ${CF} Mara Bianchi GIUGLIANO`,
     )
-    expect(j.data[0].causale_suggerita).not.toContain(COD_QUOTA)
+    expect(j.data[0].causale_suggerita).not.toContain(nudo(COD_QUOTA))
   })
 })
 
@@ -366,7 +379,7 @@ describe('GET /api/pagamenti — metodi ammessi e causale', () => {
     expect(j.data[1].id).toBe('pg-2')
     expect(j.data[1].metodi_ammessi).toEqual(['bonifico'])
     expect(j.data[1].causale_suggerita).toBe(
-      `Mensa Settembre 2026 ${COD_2} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+      `Mensa Settembre 2026 ${nudo(COD_2)} ${CF} Mara Bianchi GIUGLIANO`,
     )
   })
 
@@ -378,11 +391,11 @@ describe('GET /api/pagamenti — metodi ammessi e causale', () => {
     expect(j.data).toHaveLength(2)
     expect(j.data[0].metodi_ammessi).toEqual(['contanti', 'bonifico'])
     expect(j.data[0].causale_suggerita).toBe(
-      `Retta Settembre 2026 ${COD_1} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+      `Retta Settembre 2026 ${nudo(COD_1)} ${CF} Mara Bianchi GIUGLIANO`,
     )
     expect(j.data[1].metodi_ammessi).toEqual(['contanti', 'bonifico'])
     expect(j.data[1].causale_suggerita).toBe(
-      `Mensa Settembre 2026 ${COD_2} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+      `Mensa Settembre 2026 ${nudo(COD_2)} ${CF} Mara Bianchi GIUGLIANO`,
     )
   })
 
@@ -414,7 +427,7 @@ describe('GET /api/pagamenti — metodi ammessi e causale', () => {
     const j = await res.json()
     expect(j.data[0].metodi_ammessi).toEqual(['contanti', 'bonifico'])
     expect(j.data[0].causale_suggerita).toBe(
-      `Retta Settembre 2026 ${COD_1} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`,
+      `Retta Settembre 2026 ${nudo(COD_1)} ${CF} Mara Bianchi GIUGLIANO`,
     )
   })
 
@@ -434,6 +447,6 @@ describe('GET /api/pagamenti — metodi ammessi e causale', () => {
     ])
     const j = await res.json()
     expect(j.data[0].metodi_ammessi).toEqual(['contanti', 'bonifico'])
-    expect(j.data[0].causale_suggerita).toContain(COD_1)
+    expect(j.data[0].causale_suggerita).toContain(nudo(COD_1))
   })
 })

@@ -3,10 +3,11 @@
 //
 // Serve DUE strade, e da qui in avanti una sola volta:
 //   · la causale del BONIFICO che il genitore ricopia — predefinito
-//     «{descrizione} {codice} - per il minore {nome_completo} - {codice_fiscale} - {sede}»;
-//     scriverla per intero rende univoco l'abbinamento automatico (riconciliazione), e il
-//     `{codice}` dice QUALE voce si sta pagando quando la famiglia ne ha più d'una aperta
-//     — il codice fiscale dice di CHI è il pagamento, non di CHE COSA;
+//     «{descrizione} {codice} {codice_fiscale} {nome_completo} {sede}», ripulita per la banca
+//     (`./causale-banca`: solo lettere, cifre e spazi, perché Poste rifiuta `#`, `/` e
+//     apostrofi); scriverla per intero rende univoco l'abbinamento automatico
+//     (riconciliazione), e il `{codice}` dice QUALE voce si sta pagando quando la famiglia ne
+//     ha più d'una aperta — il codice fiscale dice di CHI è il pagamento, non di CHE COSA;
 //   · la causale della FATTURA elettronica (campo 2.1.1.11), il cui modello e i cui
 //     limiti stanno in `./causale-fattura`, che di qui riusa motore e catalogo.
 // Erano due configurazioni indipendenti perché sono due documenti diversi; il modo
@@ -20,6 +21,7 @@
 // Funzioni PURE, senza I/O: condivise da UI genitore, solleciti, fatture e anteprima admin.
 
 import { sessoDaCodiceFiscale } from '@/lib/fiscale/codice-fiscale'
+import { causalePerBanca } from './causale-banca'
 
 export interface DatiCausale {
     descrizione?: string | null
@@ -86,18 +88,40 @@ export function articoloMinore(codiceFiscale?: string | null): string {
 }
 
 /**
- * Modello PREDEFINITO del BONIFICO (retro-compatibile con la causale storica).
+ * Modello PREDEFINITO del BONIFICO: **i dati dell'abbinamento in testa**.
  *
- * Il `{codice}` sta nel PRIMO segmento, attaccato alla descrizione, e non in coda: il
- * campo causale dell'home banking si taglia **da destra**, e in coda il codice sarebbe
- * il primo pezzo a sparire — proprio nelle causali più lunghe, che sono quelle delle
- * famiglie con più voci aperte, cioè esattamente il caso per cui il codice esiste.
+ * Fino al 2026-10-09 era «{descrizione} {codice} - per il minore {nome_completo} -
+ * {codice_fiscale} - {sede}». È cambiato per due ragioni, entrambe delle banche:
+ *  · Poste rifiuta i simboli — il `#` del codice per primo — e la causale ora esce ripulita
+ *    (`causalePerBanca`): i « - » sarebbero diventati spazi comunque, e un modello che li
+ *    mostra all'admin senza che arrivino al genitore sarebbe un'anteprima falsa;
+ *  · alcune banche tagliano la causale a **50 caratteri** (AgID, avviso SPID n. 32), e da
+ *    destra. Con «per il minore» davanti al nome il codice fiscale cadeva oltre il taglio;
+ *    così codice della voce e codice fiscale stanno nei primi 50, e il taglio porta via
+ *    solo nome e sede, che all'abbinamento non servono (lock in
+ *    `__tests__/lib/pagamenti-causale.test.ts`). Scelta del titolare, «dati chiave in testa».
  *
- * Senza `codice` fra i dati il segmento rende la sola descrizione: la stringa esce
- * identica **byte per byte** a quella storica, e le causali già in circolazione
- * continuano a valere (lock in `__tests__/lib/pagamenti-causale.test.ts`).
+ * Un segmento solo, senza « - »: i segnaposto vuoti spariscono senza lasciare spazi doppi.
+ * Il segnaposto `{minore}` («del/della minore») resta nel catalogo per chi lo vuole in un
+ * modello personalizzato.
+ *
+ * Le causali VECCHIE già in circolazione continuano a valere: l'abbinamento non confronta
+ * la stringa intera ma ne estrae codice della voce e codice fiscale, che non cambiano.
  */
-export const DEFAULT_CAUSALE_TEMPLATE = '{descrizione} {codice} - per il minore {nome_completo} - {codice_fiscale} - {sede}'
+export const DEFAULT_CAUSALE_TEMPLATE = '{descrizione} {codice} {codice_fiscale} {nome_completo} {sede}'
+
+/**
+ * Quanto può essere lunga, nella causale del BONIFICO, la descrizione della voce.
+ *
+ * Il conto è quello del modello di fabbrica qui sopra contro il taglio a 50 di alcune banche:
+ * 50 − (spazio + 7 del codice) − (spazio + 16 del codice fiscale) − 1 di margine = **24**. La
+ * descrizione sta in testa e da sola non ha un limite: un ordine di merchandise arriva a 300
+ * caratteri, una rata aggiunge « — Rata i/n», e senza questo tetto codice e CF scivolerebbero
+ * oltre il taglio della banca — o oltre i 140 dell'app stessa. Il 2026-10-09 nessuna voce
+ * APERTA lo superava (la più lunga, ripulita, ne fa 24), quindi oggi non accorcia niente: è la
+ * garanzia per le descrizioni di domani. Si taglia su un confine di parola (`causalePerBanca`).
+ */
+export const LUNGHEZZA_DESCRIZIONE_BONIFICO = 24
 
 /** Una voce del catalogo dei segnaposto: chiave · etichetta · esempio d'anteprima. */
 export interface SegnapostoCausale {
@@ -116,7 +140,8 @@ export const PLACEHOLDER_CAUSALE: SegnapostoCausale[] = [
     // per lo stesso vincolo la rifiuta: se qualcuno ricopiasse questo esempio dentro
     // una causale vera, non aggancerebbe nessun movimento e nessuna voce di nessuno.
     // Un esempio con una cifra dentro sarebbe invece un codice a tutti gli effetti.
-    { chiave: 'codice', label: 'Codice della voce', esempio: '#MNKPRTF' },
+    // Senza `#`: è la forma che esce DAVVERO nella causale del bonifico (`causalePerBanca`).
+    { chiave: 'codice', label: 'Codice della voce', esempio: 'MNKPRTF' },
     // L'esempio è al maschile perché lo è il CF sintetico dell'anteprima: se un
     // giorno cambiasse, va cambiato anche qui — è la stessa persona finta.
     { chiave: 'minore', label: 'Del/della minore', esempio: 'del minore' },
@@ -259,8 +284,9 @@ const SEGNAPOSTO_CODICE = '{codice}'
  * Garantisce il segnaposto del codice in un modello che non lo cita.
  *
  * ─── PERCHÉ L'INSERIMENTO AUTOMATICO ESISTE ─────────────────────────────────────
- * Le tre sedi hanno modelli propri in `admin_settings.causali_config`, scritti quando il
- * codice non esisteva, e il titolare ha chiesto che il codice ci sia **comunque**.
+ * Le sedi possono avere modelli propri in `admin_settings.causali_config` scritti quando il
+ * codice non esisteva (il 2026-10-09 erano vuoti in tutte e quattro, ma il pannello resta
+ * aperto), e il titolare ha chiesto che il codice ci sia **comunque**.
  * Migrare quel JSONB darebbe una riga giusta oggi e sbagliata alla prima modifica
  * dell'admin: il pannello riscrive il campo per intero, quindi chi ritocca la propria
  * causale ributterebbe fuori il `{codice}` senza accorgersene, e senza un errore da
@@ -288,19 +314,32 @@ export function conCodiceVoce(template: string): string {
 
 /**
  * La causale consigliata col MODELLO indicato (o il predefinito): stringa da
- * copiare/incollare nel bonifico. Parti assenti omesse.
+ * copiare/incollare nel bonifico. Parti assenti omesse, ripulita per la banca.
  *
  * ⚠️ DIVERGE DA `renderCausale`, E LA DIVERGENZA È LA SCELTA: solo di qui il modello
- * passa per `conCodiceVoce`. L'append vive in questo ramo e **non** dentro il motore
- * perché il motore è condiviso con la causale della fattura elettronica, che il codice
- * non lo porta (decisione del titolare, v. `./causale-fattura`). Un `if` là dentro
- * sarebbe esattamente la divergenza che il lock `causale-fattura-un-motore-solo` esiste
- * per impedire: due documenti che partono dallo stesso modello e finiscono su due
- * stringhe diverse, in silenzio — `renderCausale` omette con grazia i segmenti vuoti, e
- * la grazia è proprio ciò che renderebbe invisibile lo scarto.
+ * passa per `conCodiceVoce`, e solo di qui l'uscita passa per `causalePerBanca`. Tutti e
+ * due vivono in questo ramo e **non** dentro il motore perché il motore è condiviso con
+ * la causale della fattura elettronica, che il codice non lo porta (decisione del
+ * titolare, v. `./causale-fattura`) e che accetta accenti e `/` (il tracciato FatturaPA
+ * ha le sue regole). Un `if` là dentro sarebbe esattamente la divergenza che il lock
+ * `causale-fattura-un-motore-solo` esiste per impedire: due documenti che partono dallo
+ * stesso modello e finiscono su due stringhe diverse, in silenzio — `renderCausale`
+ * omette con grazia i segmenti vuoti, e la grazia è proprio ciò che renderebbe
+ * invisibile lo scarto.
+ *
+ * La pulizia sta in USCITA, e non nella validazione del modello, perché i caratteri
+ * a rischio arrivano soprattutto dai DATI: «Retta 10/2026» (1.434 voci su 2.205 il
+ * 2026-10-09), le lineette delle rate, gli apostrofi dei cognomi, il `#` del codice.
+ * Da questa porta passano tutte le strade che la famiglia ricopia: l'elenco pagamenti
+ * del genitore, le due copie del sollecito (testo e riquadro HTML) e l'anteprima che la
+ * segreteria vede nel pannello delle causali.
+ *
+ * La descrizione entra già accorciata a `LUNGHEZZA_DESCRIZIONE_BONIFICO`, perché codice e
+ * codice fiscale restino nei primi 50 caratteri anche dietro una descrizione lunga.
  */
 export function causaleBonifico(dati: DatiCausale, template?: string | null): string {
-    return renderCausale(conCodiceVoce(template || DEFAULT_CAUSALE_TEMPLATE), dati)
+    const descrizione = causalePerBanca(dati.descrizione ?? '', LUNGHEZZA_DESCRIZIONE_BONIFICO)
+    return causalePerBanca(renderCausale(conCodiceVoce(template || DEFAULT_CAUSALE_TEMPLATE), { ...dati, descrizione }))
 }
 
 /**

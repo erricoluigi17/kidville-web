@@ -12,6 +12,7 @@ import {
   type CandidatoSede,
 } from '@/lib/pagamenti/riconciliazione'
 import { codiceVoce } from '@/lib/pagamenti/codice-voce'
+import { causaleBonifico } from '@/lib/pagamenti/causale'
 import {
   codiceDelSuggerimento,
   codiceDellaRiga,
@@ -144,6 +145,48 @@ describe('estraiCodiciFiscali', () => {
 
   it('testo benigno con parole e numeri → nessun falso positivo', () => {
     expect(estraiCodiciFiscali('STIPENDIO SETTEMBRE 2026 IMPORTO 1234,56 EUR GRAZIE')).toEqual([])
+  })
+
+  // ─── LA RICUCITURA (2026-10-09) ─────────────────────────────────────────────
+  // La variante senza spazi ricompone un CF spezzato solo se attorno c'è punteggiatura.
+  // La causale vecchia ce l'aveva (« - CF - »), quella nuova — ripulita per la banca, di
+  // sole lettere, cifre e spazi — no: «… K7MXN3P RSSMRA 85T10A562S Mario …» senza spazi è
+  // un run unico, e i `\b` non trovano appiglio. Misura del 2026-10-09: 69 movimenti su
+  // 917 portano il CF SOLO spezzato, con lo spazio in punti sempre diversi (è l'export che
+  // va a capo, non il genitore). La ricucitura unisce token interi adiacenti e accetta
+  // solo un'unione di ESATTAMENTE 16 caratteri con la forma del CF.
+  it('CF spezzato dentro la causale NUOVA (solo spazi attorno) → ricucito', () => {
+    expect(estraiCodiciFiscali(`RETTA 10 2026 K7MXN3P RSSMRA 85T10A562S MARIO ROSSI GIUGLIANO`)).toEqual([CF_MARIO])
+  })
+
+  it('CF spezzato in TRE pezzi, e in un punto qualunque → ricucito', () => {
+    expect(estraiCodiciFiscali('RETTA RSS MRA85T 10A562S MARIO')).toEqual([CF_MARIO])
+    expect(estraiCodiciFiscali('RETTA RSSMRA85T10A562 S MARIO')).toEqual([CF_MARIO])
+  })
+
+  it('la ricucitura rispetta la punteggiatura attaccata ai bordi', () => {
+    expect(estraiCodiciFiscali('CAUSALE:RSSMRA 85T10A562S. GRAZIE')).toEqual([CF_MARIO])
+  })
+
+  it('la ricucitura NON ritaglia un CF da un token più lungo, né lo allunga', () => {
+    // Un carattere in più a destra o a sinistra: il token non è un CF, e non lo diventa.
+    expect(estraiCodiciFiscali('RETTA XRSSMRA 85T10A562S MARIO')).toEqual([])
+    expect(estraiCodiciFiscali('RETTA RSSMRA 85T10A562SX MARIO')).toEqual([])
+  })
+
+  it('la ricucitura NON fabbrica CF da parole intere (l’anno deve essere fatto di cifre)', () => {
+    // La forma omocodica ammette `LMNPQRSTUV` al posto delle cifre: unendo parole intere
+    // «RETTA AL SILVESTRI» diventa `RETTAALSILVESTRI`, che ha la forma di un CF. Trovato in
+    // revisione. L'omocodia sostituisce le cifre da DESTRA, e quelle dell'anno sono le ultime
+    // a cadere: nella ricucitura si pretendono cifre vere lì.
+    expect(estraiCodiciFiscali('BONIFICO RETTA AL SILVESTRI GIUSEPPE')).toEqual([])
+    expect(estraiCodiciFiscali('SEPA PER SILVESTRI ANNA')).toEqual([])
+    expect(estraiCodiciFiscali('BONIFICO DA MARCHETTI 26 RUSSO')).toEqual([])
+    expect(estraiCodiciFiscali('FAVORE 1 SILVESTRI BRUNO')).toEqual([])
+  })
+
+  it('la ricucitura riconosce anche il CF omocodico spezzato', () => {
+    expect(estraiCodiciFiscali(`PAGAMENTO ${CF_OMOCODE.slice(0, 9)} ${CF_OMOCODE.slice(9)} GRAZIE`)).toEqual([CF_OMOCODE])
   })
 
   it('stringa vuota → []', () => {
@@ -790,5 +833,76 @@ describe('riconciliazione-ui — il codice si legge dal campo strutturato', () =
     expect(codiceDellaRiga(sugg)).toBe('#K7MXN3P')
     expect(codiceDellaRiga([])).toBeNull()
     expect(codiceDellaRiga(null)).toBeNull()
+  })
+})
+
+describe('la causale ripulita per la banca (2026-10-09) — i segnali si leggono ancora', () => {
+  // Dal 2026-10-09 la causale del bonifico esce di sole lettere, cifre e spazi: Poste rifiuta
+  // `#`, `/` e apostrofi. «Retta 10/2026» arriva come «Retta 10 2026», «D'Angelo» come
+  // «D Angelo», e il codice della voce arriva senza `#`. I due segnali FORTI (codice e CF) si
+  // estraggono comunque; i due DEBOLI (nome e descrizione) confrontavano sottostringhe con la
+  // punteggiatura dentro, e senza questa correzione li avrebbe persi ogni causale nuova.
+  const ID = '00000000-0000-4000-8000-0000000000a1'
+  const voce = {
+    id: ID,
+    descrizione: 'Retta 10/2026',
+    importo: 150,
+    importo_pagato: 0,
+    alunno_id: 'al-1',
+    codice_fiscale: CF_MARIO,
+    alunno_nome: "Mario D'Angelo",
+  }
+  const motiviDi = (causale: string, importo = 150) =>
+    suggerisciMatch({ data_operazione: '2026-10-05', importo, causale, controparte: '' }, [voce])
+      .suggerimenti[0]?.motivi ?? []
+
+  it('la causale NUOVA, copiata dall’app, aggancia per codice, CF, nome e descrizione', () => {
+    const causale = causaleBonifico({
+      descrizione: voce.descrizione, codice: codiceVoce(ID), codiceFiscale: CF_MARIO,
+      nome: 'Mario', cognome: "D'Angelo", sede: 'Kidville Giugliano',
+    })
+    expect(causale).not.toMatch(/[#/']/)
+    expect(motiviDi(causale)).toEqual(expect.arrayContaining([
+      'codice della voce', 'codice fiscale', 'nome in causale', 'descrizione in causale',
+    ]))
+  })
+
+  it('senza codice né CF restano i segnali deboli, anche con la punteggiatura tolta', () => {
+    // Importo diverso apposta: nessun «importo esatto» a coprire l'assenza degli altri.
+    const motivi = motiviDi('BONIFICO RETTA 10 2026 MARIO D ANGELO', 99)
+    expect(motivi).toContain('nome in causale')
+    expect(motivi).toContain('descrizione in causale')
+  })
+
+  it('la causale VECCHIA, col `#`, la `/` e l’apostrofo, aggancia come prima', () => {
+    const vecchia = `Retta 10/2026 ${codiceVoce(ID)} - per il minore Mario D'Angelo - ${CF_MARIO} - GIUGLIANO`
+    expect(motiviDi(vecchia)).toEqual(expect.arrayContaining([
+      'codice della voce', 'codice fiscale', 'nome in causale', 'descrizione in causale',
+    ]))
+  })
+
+  it('la pulizia è la STESSA ai due capi: merchandise («2×») e descrizioni lunghe (accorciate)', () => {
+    // In uscita «2× Felpa» diventa «2 x Felpa» e la descrizione si accorcia a 24 caratteri:
+    // se il confronto ripulisse in un altro modo, la voce perderebbe il segnale su ogni
+    // causale nuova. E la forma accorciata è un prefisso di quella intera: anche la causale
+    // VECCHIA, con la descrizione completa, continua ad agganciare.
+    for (const descrizione of ['Merchandise: 2× Felpa (M)', 'Iscrizione anno scolastico 2026/2027 — quota']) {
+      const v = { ...voce, descrizione }
+      const nuova = causaleBonifico({ descrizione, codiceFiscale: CF_MARIO, nome: 'Mario', cognome: "D'Angelo" })
+      const vecchia = `${descrizione} - per il minore Mario D'Angelo - ${CF_MARIO}`
+      for (const causale of [nuova, vecchia]) {
+        const r = suggerisciMatch({ data_operazione: '2026-10-05', importo: 99, causale, controparte: '' }, [v])
+        expect(r.suggerimenti[0]?.motivi, `${descrizione} | ${causale}`).toContain('descrizione in causale')
+      }
+    }
+  })
+
+  it('una descrizione di soli simboli non regala la «descrizione in causale» a tutti', () => {
+    // Ripulita, «— / —» diventerebbe la stringa vuota, e `includes('')` è sempre vero.
+    const r = suggerisciMatch(
+      { data_operazione: '2026-10-05', importo: 99, causale: 'GIROCONTO INTERNO', controparte: '' },
+      [{ ...voce, descrizione: '— / —', alunno_nome: null }],
+    )
+    expect(r.suggerimenti).toHaveLength(0)
   })
 })

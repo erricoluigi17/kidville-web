@@ -162,11 +162,15 @@ describe('CausaliFatturaPanel — un modello di causale per ogni tipologia di pa
     expect(screen.getByText('201/200')).toBeInTheDocument();
   });
 
-  it('il pannello del BONIFICO non avvisa mai sulla lunghezza (limite solo fiscale)', async () => {
+  it('il pannello del BONIFICO non avvisa sulla lunghezza: la causale si taglia da sé a 140', async () => {
     render(<CausaliPanel userId="u1" scuolaId="sc-1" />);
     const campo = (await screen.findByLabelText(/Gita/)) as HTMLInputElement;
     fireEvent.change(campo, { target: { value: 'z'.repeat(400) } });
-    await waitFor(() => expect(screen.getByText(new RegExp('z{400}'))).toBeInTheDocument());
+    // Dal 2026-10-09 la causale del bonifico esce ripulita per la banca, e tagliata ai 140
+    // caratteri del campo SEPA (`causalePerBanca`): l'anteprima mostra la stringa che la
+    // famiglia riceverà davvero, già tagliata — non un avviso su una stringa che non esce.
+    await waitFor(() => expect(screen.getByText('z'.repeat(140))).toBeInTheDocument());
+    expect(screen.queryByText(new RegExp('z{141}'))).toBeNull();
     expect(screen.queryByText(AVVISO_LIMITE)).toBeNull();
     // …e nemmeno il conteggio: una causale di bonifico non ha un limite che valga
     // la pena mostrare, e un contatore senza limite è solo rumore.

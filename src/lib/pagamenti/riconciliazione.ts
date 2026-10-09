@@ -1,6 +1,8 @@
 import { createHash } from 'crypto'
 import { interpretaFogli, tabellaDaTesto } from './estratto-conto/tabella'
 import { codiceVoce, estraiCodiciVoce } from './codice-voce'
+import { causalePerBanca, testoPerBanca } from './causale-banca'
+import { LUNGHEZZA_DESCRIZIONE_BONIFICO } from './causale'
 
 // Riconciliazione bancaria: parser CSV (formati export banca italiani) e
 // matcher sui pagamenti aperti. Funzioni PURE: l'I/O vive nelle route.
@@ -84,6 +86,22 @@ const norm = (s: string) =>
     s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
 
 /**
+ * Un testo ripulito COME LA CAUSALE DEL BONIFICO (`testoPerBanca`), in minuscolo: «D'Angelo» →
+ * «d angelo», «Retta 10/2026» → «retta 10 2026», «2× Felpa» → «2 x felpa».
+ *
+ * Serve ai segnali DEBOLI (nome e descrizione in causale) dal 2026-10-09, quando la causale
+ * del bonifico ha cominciato a uscire di sole lettere, cifre e spazi (Poste rifiuta `#`, `/` e
+ * apostrofi). Quei segnali confrontano sottostringhe: con la punteggiatura da una parte sola,
+ * `retta 10/2026` non sta più dentro `retta 10 2026`, e ogni causale nuova avrebbe perso
+ * «descrizione in causale» e, sui cognomi con l'apostrofo, «nome in causale». La pulizia è
+ * QUELLA dell'uscita, non una sua copia: due trasformazioni diverse ai due capi (una che fa
+ * «2 x», l'altra «2») sono due stringhe che non si riconoscono più. È un confronto IN PIÙ,
+ * accanto a quello di prima: nessun abbinamento di ieri va perso. E `norm()` resta intoccata
+ * (v. sopra: è dentro l'impronta).
+ */
+const parole = (s: string) => testoPerBanca(s).toLowerCase()
+
+/**
  * L'esito di una lettura: i movimenti e i CONTATORI, tenuti separati.
  *
  * I tre campi in coda sono opzionali perché la firma di `parseCsv` non doveva cambiare per
@@ -151,11 +169,62 @@ const CF_REGEX = /\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b/g
 const CF_OMOCODE_REGEX = /\b[A-Z]{6}[\dLMNPQRSTUV]{2}[A-Z][\dLMNPQRSTUV]{2}[A-Z][\dLMNPQRSTUV]{3}[A-Z]\b/g
 
 /**
+ * Il CF intero, ANCORATO ai due capi: per la ricucitura, dove i confini sono i token.
+ *
+ * L'omocodia è ammessa ovunque TRANNE che nell'anno (posizioni 7-8), che qui deve essere di
+ * cifre vere. La ragione è la ricucitura stessa: unendo parole INTERE la forma omocodica piena
+ * si lascia comporre da sole lettere — «RETTA AL SILVESTRI» → `RETTAALSILVESTRI` ha la forma
+ * di un CF (trovato in revisione, 2026-10-09). L'omocodia sostituisce le cifre da DESTRA, e
+ * quelle dell'anno sono le ultime a cadere: un CF omocodico fin lì è un caso che la ricucitura
+ * può permettersi di non vedere, mentre le due regex qui sopra continuano a vederlo intero.
+ */
+const CF_INTERO = /^[A-Z]{6}\d{2}[A-Z][\dLMNPQRSTUV]{2}[A-Z][\dLMNPQRSTUV]{3}[A-Z]$/
+
+/** In quanti token al massimo un export bancario spezza un CF (misurati: due spazi al più). */
+const PEZZI_CF_MASSIMI = 4
+
+/**
+ * I CF ricomposti UNENDO TOKEN INTERI ADIACENTI: la terza variante di `estraiCodiciFiscali`.
+ *
+ * La variante senza spazi ricompone un CF spezzato solo quando attorno c'è punteggiatura,
+ * perché altrimenti si fonde coi vicini e i `\b` non trovano appiglio. Fino al 2026-10-09 la
+ * causale dell'app quella punteggiatura la offriva (« - CF - »); da allora esce ripulita per
+ * la banca, di sole lettere, cifre e spazi (`causalePerBanca`), e «… K7MXN3P RSSMRA 85T10A562S
+ * Mario …» senza spazi è un run unico. Misura del 2026-10-09: 69 movimenti su 917 portano il CF
+ * SOLO spezzato, con lo spazio in un punto sempre diverso — è l'export che va a capo.
+ *
+ * Il primo pezzo è la coda alfanumerica di un token (dopo l'ultima punteggiatura), l'ultimo è
+ * la testa alfanumerica di un token, quelli in mezzo sono token interi: così l'unione comincia
+ * e finisce su un confine vero, e non si ritaglia mai un CF da dentro un run più lungo. Si
+ * accetta solo un'unione di ESATTAMENTE 16 caratteri con la forma del CF: un'unione più lunga
+ * non viene accorciata, e nemmeno una più corta allungata.
+ */
+function cfRicuciti(su: string): string[] {
+    const token = su.split(/\s+/).filter(Boolean)
+    const trovati: string[] = []
+    for (let i = 0; i < token.length; i++) {
+        let unito = /[A-Z0-9]*$/.exec(token[i])?.[0] ?? ''
+        if (unito === '') continue
+        for (let j = i + 1; j < token.length && j < i + PEZZI_CF_MASSIMI; j++) {
+            const pezzo = /^[A-Z0-9]*/.exec(token[j])?.[0] ?? ''
+            if (pezzo === '') break
+            unito += pezzo
+            if (unito.length > 16) break
+            if (unito.length === 16 && CF_INTERO.test(unito)) trovati.push(unito)
+            // Il token continua con della punteggiatura: oltre non si può più unire.
+            if (pezzo.length < token[j].length) break
+        }
+    }
+    return trovati
+}
+
+/**
  * Estrae i codici fiscali DISTINTI presenti nel testo (causale+controparte).
  * Porta a MAIUSCOLO e applica sia la regex esatta sia quella omocodica. Prova anche una
  * variante SENZA SPAZI: alcuni export bancari spezzano il CF ("RSSMRA 85T10A562S") e, quando
  * è delimitato da punteggiatura, ricomporlo lo rende di nuovo agganciabile. Nessun match
- * cross-token spurio: i `\b` restano ancorati ai delimitatori non-parola superstiti.
+ * cross-token spurio: i `\b` restano ancorati ai delimitatori non-parola superstiti. E, per
+ * il CF spezzato fra soli spazi, la RICUCITURA di token interi adiacenti (`cfRicuciti`).
  */
 export function estraiCodiciFiscali(testo: string): string[] {
     if (!testo) return []
@@ -167,6 +236,7 @@ export function estraiCodiciFiscali(testo: string): string[] {
             if (match) for (const cf of match) trovati.add(cf)
         }
     }
+    for (const cf of cfRicuciti(su)) trovati.add(cf)
     return [...trovati]
 }
 
@@ -290,12 +360,20 @@ export interface PagamentoPreparato {
     residuo: number
     /** I token (>2 caratteri) di ogni nome, già normalizzati: uno per alunno, uno per intestatario. */
     tokenNomi: string[][]
+    /** Gli stessi token ripuliti come la causale del bonifico (`parole`): «D'Angelo» → «angelo». */
+    tokenNomiParole: string[][]
     /** Il mese italiano del periodo di competenza, già risolto. */
     mese: string | null
     /** L'anno-mese `YYYY-MM` del periodo di competenza. */
     ym: string | null
     /** La descrizione normalizzata, o `null` quando il pagamento non ne ha una. */
     descrizioneNorm: string | null
+    /**
+     * La descrizione COME ESCE nella causale del bonifico — ripulita e accorciata a
+     * `LUNGHEZZA_DESCRIZIONE_BONIFICO` — o `null` se non ne resta niente. Accorciata è anche un
+     * prefisso di quella intera, quindi aggancia pure le causali vecchie.
+     */
+    descrizioneParole: string | null
     /** Il CF dell'alunno in MAIUSCOLO, o `null`. */
     cf: string | null
     /**
@@ -318,16 +396,22 @@ export function preparaAperti(aperti: PagamentoAperto[]): PagamentoPreparato[] {
     return aperti.map((p) => {
         const nomi = [p.alunno_nome, p.intestatario_nome].filter(Boolean) as string[]
         const mese = p.periodo_competenza ? MESI_IT[new Date(p.periodo_competenza).getMonth()] ?? null : null
+        const nomiNorm = nomi.map(norm)
+        const descrizioneNorm = p.descrizione ? norm(p.descrizione) : null
         return {
             id: p.id,
             alunnoId: p.alunno_id ?? null,
             residuo: Math.round((Number(p.importo) - Number(p.importo_pagato || 0)) * 100) / 100,
-            tokenNomi: nomi.map((n) => norm(n).split(' ').filter((t) => t.length > 2)),
+            tokenNomi: nomiNorm.map((n) => n.split(' ').filter((t) => t.length > 2)),
+            tokenNomiParole: nomi.map((n) => parole(n).split(' ').filter((t) => t.length > 2)),
             mese,
             ym: p.periodo_competenza ? p.periodo_competenza.slice(0, 7) : null,
             // ⚠️ `p.descrizione` VUOTA non è `''` normalizzato: è «nessuna descrizione».
             //    `testo.includes('')` è sempre vero, e regalerebbe 10 punti a chiunque.
-            descrizioneNorm: p.descrizione ? norm(p.descrizione) : null,
+            //    Vale due volte per la forma ripulita: «— / —» diventa `''` anche se la
+            //    descrizione c'era, e si torna a `null` per la stessa ragione.
+            descrizioneNorm,
+            descrizioneParole: p.descrizione ? parole(causalePerBanca(p.descrizione, LUNGHEZZA_DESCRIZIONE_BONIFICO)) || null : null,
             cf: p.codice_fiscale ? String(p.codice_fiscale).toUpperCase() : null,
             codice: codiceVoce(p.id),
         }
@@ -416,6 +500,7 @@ export function suggerisciMatchPreparato(
     // tutto in minuscolo. `norm()` resta per i segnali deboli, e resta intoccata.
     const grezzo = `${mov.causale} ${mov.controparte}`
     const testo = norm(grezzo)
+    const testoParole = parole(grezzo)
     const cfSet = new Set(estraiCodiciFiscali(grezzo))
     const codiciSet = new Set(estraiCodiciVoce(grezzo))
     const candidati: Suggerimento[] = []
@@ -429,16 +514,21 @@ export function suggerisciMatchPreparato(
         const motivi: string[] = []
         if (p.residuo === mov.importo) { score += 50; motivi.push('importo esatto') }
 
-        const nomeTrovato = p.tokenNomi.some(
-            (tokens) => tokens.length > 0 && tokens.every((t) => testo.includes(t)),
-        )
+        // Due confronti per segnale: quello di sempre, e quello coi simboli ridotti a spazio
+        // da entrambe le parti (`parole`), per la causale ripulita per la banca.
+        const nomeTrovato =
+            p.tokenNomi.some((tokens) => tokens.length > 0 && tokens.every((t) => testo.includes(t))) ||
+            p.tokenNomiParole.some((tokens) => tokens.length > 0 && tokens.every((t) => testoParole.includes(t)))
         if (nomeTrovato) { score += 25; motivi.push('nome in causale') }
 
         if (p.ym !== null) {
             if ((p.mese && testo.includes(p.mese)) || testo.includes(p.ym)) { score += 15; motivi.push('periodo citato') }
         }
 
-        if (p.descrizioneNorm !== null && testo.includes(p.descrizioneNorm)) { score += 10; motivi.push('descrizione in causale') }
+        const descrizioneTrovata =
+            (p.descrizioneNorm !== null && testo.includes(p.descrizioneNorm)) ||
+            (p.descrizioneParole !== null && testoParole.includes(p.descrizioneParole))
+        if (descrizioneTrovata) { score += 10; motivi.push('descrizione in causale') }
 
         const cfMatch = p.cf !== null && cfSet.has(p.cf)
         if (cfMatch) {

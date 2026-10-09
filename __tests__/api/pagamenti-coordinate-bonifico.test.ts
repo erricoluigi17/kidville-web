@@ -193,12 +193,13 @@ describe('GET /api/pagamenti — le coordinate del bonifico, una per sede', () =
     expect(j.data[0]).toMatchObject({
       id: 'pg-a',
       scuola_nome: NOME_SEDE_A,
-      // Il `#R3N397T` è `codiceVoce('pg-a')`, trascritto a mano: il codice dice QUALE
-      // voce si sta pagando quando la famiglia ne ha più d'una aperta, e qui si
-      // controlla che arrivi fino alla risposta che la card «Come pagare» legge.
-      // Scritto per esteso invece che composto con la funzione — un'asserzione che
-      // chiama ciò che vuole misurare è verde anche quando il codice non esce affatto.
-      causale_suggerita: `Retta Settembre 2026 #R3N397T - per il minore Mara Bianchi - ${CF} - ALFA`,
+      // `R3N397T` è `codiceVoce('pg-a')` senza il `#` (che Poste rifiuta, 2026-10-09),
+      // trascritto a mano: il codice dice QUALE voce si sta pagando quando la famiglia ne
+      // ha più d'una aperta, e qui si controlla che arrivi fino alla risposta che la card
+      // «Come pagare» legge. Scritto per esteso invece che composto con la funzione —
+      // un'asserzione che chiama ciò che vuole misurare è verde anche quando il codice
+      // non esce affatto.
+      causale_suggerita: `Retta Settembre 2026 R3N397T ${CF} Mara Bianchi ALFA`,
       residuo: 150,
     })
   })

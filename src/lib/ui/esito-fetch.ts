@@ -1330,7 +1330,8 @@ export const CODICI_ERRORE = {
     /**
      * 409 — ci sono foto in cui il bambino è l'unico ritratto ma il cui indirizzo
      * non è riconoscibile in questo archivio: non si tolgono, quindi l'eliminazione
-     * finirebbe sempre con file restanti. Si tolgono prima dalla galleria.
+     * finirebbe sempre con file restanti. Riprovare non serve, e nemmeno toglierle
+     * dalla galleria (finiscono nel cestino, che si conta lo stesso): va all'assistenza.
      */
     ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI: 'erroreAlunnoEliminazioneFotoNonRimovibili',
     /**

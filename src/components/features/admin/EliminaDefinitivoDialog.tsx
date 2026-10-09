@@ -77,23 +77,32 @@ type Fase = 'misura' | 'pronta' | 'misura-fallita' | 'esecuzione';
 
 const ROTTA = '/api/admin/students/elimina';
 const ID_MOTIVO = 'elimina-definitivo-motivo';
+const ID_MOTIVO_FOTO = 'elimina-definitivo-motivo-foto';
 /** Il comando spento deve SEMBRARE spento: `btnClass` stila `disabled`, non `aria-disabled`. */
 const SPENTO = 'aria-disabled:border-kidville-neutral aria-disabled:bg-kidville-neutral-soft aria-disabled:text-kidville-sub';
 
-function chiama(corpo: Record<string, unknown>): Promise<Response | null> {
+/**
+ * La POST, con il nome dell'evento da registrare se non arriva: per esteso e
+ * diverso fra anteprima ed esecuzione, perché nei log «non arrivata» deve dire
+ * SE si stava solo contando o se si stava cancellando.
+ */
+function chiama(
+    corpo: Record<string, unknown>,
+    eventoNonArrivata: 'elimina-anteprima-non-arrivata' | 'elimina-esecuzione-non-arrivata',
+): Promise<Response | null> {
     return fetch(ROTTA, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(corpo),
     }).catch((e: unknown) => {
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina-non-arrivata: ${nomeErrore(e)}`, route: '/admin/students' });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `${eventoNonArrivata}: ${nomeErrore(e)}`, route: '/admin/students' });
         return null;
     });
 }
 
 /** Il dry-run: SOLE letture sul server. Non tocca lo stato di nessun componente. */
 async function misuraEliminazione(alunnoId: string): Promise<EsitoAnteprima> {
-    const res = await chiama({ alunno_id: alunnoId, mode: 'dryrun' });
+    const res = await chiama({ alunno_id: alunnoId, mode: 'dryrun' }, 'elimina-anteprima-non-arrivata');
     if (res === null) return { ok: false, errore: '' };
     if (!res.ok) {
         logClient({ livello: 'error', evento: 'fetch', messaggio: 'elimina-anteprima-rifiutata', route: '/admin/students', stato: res.status });
@@ -114,10 +123,10 @@ async function misuraEliminazione(alunnoId: string): Promise<EsitoAnteprima> {
 
 /** L'esecuzione. Un 200 vuol dire fatto: il corpo non serve alla finestra. */
 async function eseguiEliminazione(alunnoId: string, scelta: SceltaEliminazione): Promise<EsitoEsecuzione> {
-    const res = await chiama({ alunno_id: alunnoId, mode: 'execute', scelta });
+    const res = await chiama({ alunno_id: alunnoId, mode: 'execute', scelta }, 'elimina-esecuzione-non-arrivata');
     if (res === null) return { ok: false, errore: '' };
     if (!res.ok) {
-        logClient({ livello: 'error', evento: 'fetch', messaggio: 'elimina-rifiutata', route: '/admin/students', stato: res.status });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: 'elimina-esecuzione-rifiutata', route: '/admin/students', stato: res.status });
         return { ok: false, errore: await messaggioErrore(res, '') };
     }
     return { ok: true };
@@ -231,7 +240,13 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
     const motivo = anteprima?.motivo ?? null;
     const registro = motivo === 'REGISTRO_PRIMARIA_DA_CONSERVARE';
     const pagamentiBloccati = motivo === 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI';
-    const fotoBloccano = motivo === 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI';
+    // Le foto non rimovibili si dicono dal CONTEGGIO, non dal motivo: con un
+    // pagamento bloccato il motivo è quello, ma le foto restano lo stesso e
+    // l'anonimizzazione non le toglierà. Col registro non c'è niente da fare.
+    const fotoNonRimovibili = c !== undefined && c.foto_non_rimovibili > 0 && !registro;
+    const descrizioneSpento = [pagamentiBloccati ? ID_MOTIVO : null, fotoNonRimovibili ? ID_MOTIVO_FOTO : null]
+        .filter((v): v is string => v !== null)
+        .join(' ');
     const scelte = anteprima?.scelte;
     const qualcheScelta = scelte ? scelte.elimina || scelte.elimina_con_pagamenti || scelte.anonimizza : false;
     const occupato = fase === 'esecuzione';
@@ -298,8 +313,8 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
                             {t('elmBloccoPagamenti')}
                         </p>
                     )}
-                    {fotoBloccano && c && (
-                        <p id={ID_MOTIVO} className="mb-3 rounded-input bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn-strong">
+                    {fotoNonRimovibili && c && (
+                        <p id={ID_MOTIVO_FOTO} className="mb-3 rounded-input bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn-strong">
                             {t('elmBloccoFoto', { n: c.foto_non_rimovibili })}
                         </p>
                     )}
@@ -342,7 +357,7 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
                                 type="button"
                                 onClick={() => esegui('elimina_con_pagamenti')}
                                 aria-disabled={occupato || !scelte.elimina_con_pagamenti}
-                                aria-describedby={scelte.elimina_con_pagamenti ? undefined : ID_MOTIVO}
+                                aria-describedby={scelte.elimina_con_pagamenti || descrizioneSpento === '' ? undefined : descrizioneSpento}
                                 className={btnClass('danger', 'sm', scelte.elimina_con_pagamenti ? undefined : SPENTO)}
                             >
                                 {inCorso === 'elimina_con_pagamenti' ? t('elmInCorso') : t('elmBtnEliminaConPagamenti')}

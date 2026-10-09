@@ -246,7 +246,7 @@
   "erroreStatoAlunnoArchiviato": "Questo bambino è fra i ritirati: lo stato non si cambia da qui. Per riportarlo dentro usa «Riporta fra gli iscritti», che gli restituisce anche la classe.",
   "erroreArchivioNonDisponibile": "L’archivio dei ritirati non è disponibile su questo ambiente: nessuna modifica è stata registrata.",
   "erroreAlunnoEliminazioneFileRestanti": "Alcuni file non sono usciti dall’archivio: la scheda non è stata eliminata. Riprova fra qualche minuto.",
-  "erroreAlunnoEliminazioneFotoNonRimovibili": "Ci sono foto di questo bambino che non si riescono a togliere dall’archivio: l’eliminazione definitiva non è possibile finché non vengono rimosse dalla galleria.",
+  "erroreAlunnoEliminazioneFotoNonRimovibili": "Ci sono foto di questo bambino che non si riescono a togliere dall’archivio: l’eliminazione definitiva non è possibile e ripetere l’operazione non le toglierà. Il caso va segnalato all’assistenza.",
   "erroreAlunnoEliminazioneFrequentante": "Si elimina solo un bambino ritirato o senza sezione: questo frequenta ancora.",
   "erroreAlunnoEliminazioneHaPagamenti": "Questo bambino ha dei pagamenti: scegli se cancellarli o anonimizzare la scheda.",
   "erroreAlunnoEliminazioneNonDisponibile": "L’eliminazione definitiva non è disponibile su questo ambiente: nessuna modifica è stata fatta.",

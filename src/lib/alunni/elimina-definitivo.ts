@@ -70,8 +70,10 @@ export type EsitoMisura = { ok: true; conteggi: ConteggiEliminazione } | { ok: f
  * non servirebbe a niente. Offrirla sarebbe un comando che non funziona mai.
  * L'oblio invece le tollera (le lascia e lo dice): «anonimizza» resta come da
  * regole sui pagamenti. Il motivo: il registro vince su tutto; i pagamenti
- * bloccati vengono prima delle foto, perché sono un blocco PERMANENTE mentre le
- * foto si tolgono dalla galleria.
+ * bloccati vengono prima delle foto. Il motivo è UNO, ma la finestra le foto
+ * non rimovibili le dice comunque, dal conteggio. ⚠️ Non c'è uno sblocco da
+ * promettere: cancellarle dalla galleria le sposta nel cestino, che conteggio
+ * ed esecuzione contano lo stesso. Il caso va all'assistenza.
  */
 export function scelteDisponibili(c: {
   pagamenti: number

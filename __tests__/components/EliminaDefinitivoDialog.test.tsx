@@ -188,6 +188,9 @@ describe('EliminaDefinitivoDialog — solo le scelte che il server offre', () =>
         expect(
             await screen.findByText(/2 foto di questo bambino non si riescono a togliere dall’archivio/),
         ).toBeInTheDocument()
+        // Nessuno sblocco promesso: toglierle dalla galleria le manda nel cestino, che si conta lo stesso.
+        expect(screen.getByText(/ripetere l’operazione non le toglierà: il caso va segnalato all’assistenza/)).toBeInTheDocument()
+        expect(screen.queryByText(/galleria/)).toBeNull()
         expect(screen.queryByRole('button', { name: /Elimina definitivamente|Cancella|Anonimizza/ })).toBeNull()
         expect(screen.getByRole('button', { name: 'Chiudi' })).toBeInTheDocument()
         expect(screen.queryByText(itAdminStudents.elmIrreversibile)).toBeNull()
@@ -201,6 +204,25 @@ describe('EliminaDefinitivoDialog — solo le scelte che il server offre', () =>
         expect(await screen.findByText(/1 foto di questo bambino non si riesce a togliere/)).toBeInTheDocument()
         expect(screen.getByRole('button', { name: /Anonimizza e tieni la contabilità/ })).toBeInTheDocument()
         expect(screen.queryByRole('button', { name: /Elimina definitivamente|Cancella/ })).toBeNull()
+        // Anonimizzare toglie le foto che SI POSSONO togliere: non promette quella che resta.
+        expect(screen.getByText(/e le sue foto che si possono togliere/)).toBeInTheDocument()
+    })
+
+    it('con pagamenti bloccati E foto che non si possono togliere: si dicono tutte e due le cose', async () => {
+        // Il motivo è uno solo (i pagamenti), ma le foto restano lo stesso e
+        // l'anonimizzazione non le toglierà: tacerle sarebbe una promessa a vuoto.
+        fetchMock.mockResolvedValueOnce(
+            anteprima(SOLO_ANONIMIZZA, 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI', {
+                pagamenti: 2, pagamenti_bloccati: 1, foto_non_rimovibili: 3,
+            }),
+        )
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={vi.fn()} />)
+        const cancella = await screen.findByRole('button', { name: /Cancella anche i pagamenti/ })
+        expect(screen.getByText(itAdminStudents.elmBloccoPagamenti)).toBeInTheDocument()
+        expect(screen.getByText(/3 foto di questo bambino non si riescono a togliere dall’archivio/)).toBeInTheDocument()
+        // Il comando spento è descritto da ENTRAMBI i motivi.
+        expect(cancella).toHaveAccessibleDescription(/non si possono cancellare.*3 foto di questo bambino/)
+        expect(screen.getByRole('button', { name: /Anonimizza e tieni la contabilità/ })).not.toHaveAttribute('aria-disabled', 'true')
     })
 
     it('con il registro della primaria: nessun comando distruttivo, solo «Chiudi»', async () => {
@@ -271,7 +293,24 @@ describe('EliminaDefinitivoDialog — quando qualcosa va storto', () => {
         expect(onEliminato).not.toHaveBeenCalled()
         expect(onChiudi).not.toHaveBeenCalled()
         expect(logClient).toHaveBeenCalledWith(
-            expect.objectContaining({ livello: 'error', messaggio: expect.stringContaining('elimina-non-arrivata') }),
+            expect.objectContaining({ livello: 'error', messaggio: expect.stringContaining('elimina-esecuzione-non-arrivata') }),
+        )
+        expect(logClient).not.toHaveBeenCalledWith(
+            expect.objectContaining({ messaggio: expect.stringContaining('elimina-anteprima-non-arrivata') }),
+        )
+    })
+
+    it('rete giù durante l’anteprima: non si offre niente, e il log dice che si stava solo contando', async () => {
+        fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        render(<EliminaDefinitivoDialog alunno={AL} onChiudi={vi.fn()} onEliminato={vi.fn()} />)
+        expect(await screen.findByRole('alert')).toHaveTextContent(itAdminStudents.elmMisuraFallita)
+        expect(screen.getByRole('button', { name: 'Riprova' })).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Elimina definitivamente' })).toBeNull()
+        expect(logClient).toHaveBeenCalledWith(
+            expect.objectContaining({ livello: 'error', messaggio: expect.stringContaining('elimina-anteprima-non-arrivata') }),
+        )
+        expect(logClient).not.toHaveBeenCalledWith(
+            expect.objectContaining({ messaggio: expect.stringContaining('elimina-esecuzione-non-arrivata') }),
         )
     })
 })

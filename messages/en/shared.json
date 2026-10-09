@@ -246,7 +246,7 @@
   "erroreStatoAlunnoArchiviato": "This child is among the withdrawn: the status cannot be changed from here. To bring them back use “Move back to enrolled”, which also restores their class.",
   "erroreArchivioNonDisponibile": "The archive of withdrawn children is not available in this environment: no change was recorded.",
   "erroreAlunnoEliminazioneFileRestanti": "Some files could not be removed from storage: the record was not deleted. Try again in a few minutes.",
-  "erroreAlunnoEliminazioneFotoNonRimovibili": "Some photos of this child cannot be removed from storage: permanent deletion is not possible until they are removed from the gallery.",
+  "erroreAlunnoEliminazioneFotoNonRimovibili": "Some photos of this child cannot be removed from storage: permanent deletion is not possible and repeating the operation will not remove them. Please report this to support.",
   "erroreAlunnoEliminazioneFrequentante": "Only a withdrawn child or one without a class can be deleted: this child still attends.",
   "erroreAlunnoEliminazioneHaPagamenti": "This child has payments: choose whether to delete them or anonymise the record.",
   "erroreAlunnoEliminazioneNonDisponibile": "Permanent deletion is not available in this environment: nothing was changed.",

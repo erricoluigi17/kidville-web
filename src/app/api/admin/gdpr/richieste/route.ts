@@ -512,7 +512,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     fileNonRimossi += rParent.fileNonRimossi ?? 0
     notificheRimosse += rParent.notificheRimosse ?? 0
     lettureFallite += rParent.lettureFallite ?? 0
-    esitiChiavi.push(rParent as ConChiaviCondivise)
+    esitiChiavi.push(rParent)
     const chiaviCondivise = contaChiaviCondivise(esitiChiavi)
     const account = contaAccountOblio([rParent.account])
     // L'account resta perché un figlio non è stato anonimizzato (registro da

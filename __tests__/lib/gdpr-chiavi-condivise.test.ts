@@ -510,3 +510,84 @@ describe('anonimizzaAlunno — il filtro usa la stessa stringa che si è validat
     expect(visti).toEqual([`%${CF}%`])
   })
 })
+
+// =============================================================================
+// LA SCHEDA SENZA CODICE FISCALE (terza revisione, 2026-10-09).
+//
+// Misurato in produzione: tre schede vive SENZA codice fiscale, non iscritte, ognuna con lo
+// stesso nome di un alunno iscritto; il loro `documento_path` compare in una domanda nella voce
+// `children` che porta il codice fiscale di quell'alunno iscritto (la cui scheda punta a un
+// documento diverso). Nessun'altra SCHEDA ha quel percorso, e il soggetto non ha un codice da
+// confrontare: la guardia lo dava per «suo», e la pulizia — che tocca una persona anche solo per
+// documento — avrebbe ripulito la voce del bambino iscritto e tolto il suo file.
+// =============================================================================
+
+describe('anonimizzaAlunno — il documento nominato dalla voce di un ALTRO bambino', () => {
+  const CF_VERO = 'VRBMBN20A01Z999W'
+  const DOC_VERO = 'iscrizioni/uuid-documento-del-vero.pdf'
+
+  function scenario(): DBFinto {
+    const d = dbBase()
+    d.alunni = [alunno(DOPPIONE, { documento_path: DOC_PROPRIO }), alunno(VERO, { codice_fiscale: CF_VERO, documento_path: DOC_VERO })]
+    d.enrollment_submissions = [domanda('es-1', { codice_fiscale: CF_VERO, documento_path: DOC_PROPRIO, allergie: 'ALLERGIA DI PROVA' })]
+    return d
+  }
+  const soggetto = { id: DOPPIONE, codice_fiscale: null, fiscal_code: null, documento_path: DOC_PROPRIO }
+
+  it('doppione senza CF, documento nella voce di un bambino VIVO con un altro CF → voce intatta, file resta, `documento: 1`', async () => {
+    const d = scenario()
+    const primaDomanda = structuredClone(d.enrollment_submissions[0])
+
+    const { r, archivio: arch } = await oblio(d, soggetto, { [BUCKET_ISCRIZIONI]: [DOC_PROPRIO] })
+
+    expect(d.enrollment_submissions[0], 'la voce del bambino iscritto è stata ripulita per il documento del doppione').toEqual(primaDomanda)
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_PROPRIO), 'il file nominato dalla domanda del bambino vero è uscito').toBe(true)
+    expect(r.chiaviCondiviseEscluse).toEqual({ codiceFiscale: 0, documento: 1 })
+    expect(r.lettureFallite).toBe(0)
+    expect(d.alunni.find((a) => a.id === DOPPIONE)!.documento_path, 'la riga del doppione si azzera comunque').toBeNull()
+    expect(JSON.stringify([spie.logEvento.mock.calls, spie.logErrore.mock.calls])).not.toContain(CF_VERO)
+  })
+
+  it('variante: il CF della voce non è di nessuna persona viva (refuso nella SUA domanda) → la voce si ripulisce e il file esce', async () => {
+    const d = scenario()
+    d.alunni = d.alunni.filter((a) => a.id !== VERO)
+
+    const { r, archivio: arch } = await oblio(d, soggetto, { [BUCKET_ISCRIZIONI]: [DOC_PROPRIO] })
+
+    expect(ramo(d, 'children')).toMatchObject({ codice_fiscale: null, allergie: null, anonimizzato_il: AT })
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_PROPRIO)).toBe(false)
+    expect(r.iscrizioniScrubbate).toBe(1)
+    expect(r.chiaviCondiviseEscluse).toEqual({ codiceFiscale: 0, documento: 0 })
+  })
+
+  it('lettura delle domande rifiutata → documento escluso, file resta, `lettureFallite` +1', async () => {
+    const d = scenario()
+    d.alunni = d.alunni.filter((a) => a.id !== VERO)
+    const primaDomanda = structuredClone(d.enrollment_submissions[0])
+
+    const { r, archivio: arch } = await oblio(d, soggetto, { [BUCKET_ISCRIZIONI]: [DOC_PROPRIO] }, {
+      'enrollment_submissions:select': { code: '42501' },
+    })
+
+    expect(d.enrollment_submissions[0]).toEqual(primaDomanda)
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_PROPRIO)).toBe(true)
+    // Una sola lettura fallita da contare: quella della verifica. La ricerca delle domande dopo
+    // non parte nemmeno, perché senza chiavi non c'è niente da cercare.
+    expect(r.lettureFallite).toBe(1)
+  })
+})
+
+describe('anonimizzaParent — il documento nominato dalla voce di un ALTRO adulto', () => {
+  it('genitore senza CF, documento nella voce adulto di un altro genitore VIVO → voce intatta, file resta', async () => {
+    const d = dbBase()
+    d.parents = [genitore(GENITORE, { documento_path: DOC_ADULTO }), genitore(ALTRO_GENITORE, { fiscal_code: CF_ADULTO })]
+    d.enrollment_submissions = [domandaFamiglia('es-1', { codice_fiscale: CF }, { fiscal_code: CF_ADULTO, documento_path: DOC_ADULTO, email: 'adulto@example.invalid' })]
+    const primaDomanda = structuredClone(d.enrollment_submissions[0])
+
+    const { r, archivio: arch } = await oblioGenitore(d, GENITORE, { [BUCKET_ISCRIZIONI]: [DOC_ADULTO] })
+
+    expect(d.enrollment_submissions[0]).toEqual(primaDomanda)
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_ADULTO)).toBe(true)
+    expect(r.chiaviCondiviseEscluse.documento).toBe(1)
+  })
+})

@@ -2378,6 +2378,8 @@ async function documentoDiAltri(
 /** Le chiavi di ricerca che sono davvero del soggetto, e il conto di quelle lasciate fuori. */
 interface ChiaviProprie {
   soggetto: SoggettoChiavi
+  /** TUTTI i codici fiscali del soggetto, normalizzati (anche quelli esclusi): una voce che ne porta uno è sua. */
+  propri: Set<string>
   /** I codici fiscali NORMALIZZATI e validati che si possono usare: sono la stringa dei filtri. */
   codiciFiscali: string[]
   /**
@@ -2395,6 +2397,85 @@ interface ChiaviProprie {
   escluse: { codiceFiscale: number; documento: number }
   /** Verifiche che non si sono potute fare: ciascuna è un `lettureFallite` in più. */
   nonVerificate: number
+}
+
+/** Il ramo della domanda in cui il soggetto può stare: un alunno è un figlio, un genitore un adulto. */
+const ramoDelSoggetto = (soggetto: SoggettoChiavi): 'children' | 'adults' =>
+  soggetto.tabella === 'alunni' ? 'children' : 'adults'
+
+/**
+ * IL DOCUMENTO NELLA VOCE DI UN'ALTRA PERSONA (2026-10-09, terza revisione).
+ *
+ * Misurato in produzione: tre schede vive SENZA codice fiscale, non iscritte, ognuna con lo stesso
+ * nome di un alunno iscritto; il loro `documento_path` compare in una domanda nella voce `children`
+ * che porta il codice fiscale di quell'alunno (la cui scheda punta a un documento diverso). Nessun
+ * altra SCHEDA ha quel percorso, e il soggetto non ha un codice da confrontare: `documentoDiAltri`
+ * risponde «proprio», e la pulizia — che tocca una persona anche solo per documento — ripuliva la
+ * voce del bambino iscritto e ne toglieva il file.
+ *
+ * Quindi si leggono le voci DEL SUO RAMO che nominano quel documento, e per ogni codice fiscale
+ * che vi compare e che non è del soggetto si chiede se è di un'altra persona viva:
+ *  · sì, o non si può verificare → il documento NON è suo (`condivisa`) e quel codice diventa
+ *    protetto: chi lo porta non si ripulisce. Una verifica non riuscita si conta anche fra le
+ *    letture fallite: non si è guardato, e l'oblio deve risultare parziale;
+ *  · no → è un refuso nella SUA domanda, e il documento resta suo (comportamento di prima);
+ *  · la lettura delle domande non riesce → `non_verificata`.
+ * Lo schema assente (DB E2E non migrato) vale «nessuna domanda», come in `obliaIscrizioni`.
+ */
+async function vociDiAltriSulDocumento(
+  supabase: SupabaseClient,
+  chiavi: ChiaviProprie,
+  percorso: string,
+  op: string,
+): Promise<EsitoChiave> {
+  const ramo = ramoDelSoggetto(chiavi.soggetto)
+  const { data, error } = await supabase
+    .from('enrollment_submissions')
+    .select('id, data')
+    .contains('data', { [ramo]: [{ documento_path: percorso }] })
+  if (error) {
+    if (schemaAssente(error)) return 'propria'
+    logErrore({ operazione: op, evento: 'oblio_chiavi_verifica_domande' }, error)
+    return 'non_verificata'
+  }
+  const codiciNelleVoci = new Set<string>()
+  for (const riga of (data ?? []) as { data?: unknown }[]) {
+    const lista = riga.data && typeof riga.data === 'object' ? (riga.data as Record<string, unknown>)[ramo] : null
+    if (!Array.isArray(lista)) continue
+    for (const voce of lista as Record<string, unknown>[]) {
+      if (!voce || typeof voce !== 'object') continue
+      // Il confronto lo rifà qui: una riga che il filtro lasciasse passare per sbaglio non conta.
+      if (typeof voce.documento_path !== 'string' || voce.documento_path.trim() !== percorso) continue
+      for (const k of ['codice_fiscale', 'fiscal_code'] as const) {
+        const cf = normalizzaCodiceFiscale(voce[k])
+        if (cf && !chiavi.propri.has(cf)) codiciNelleVoci.add(cf)
+      }
+    }
+  }
+  let diAltri = false
+  for (const cf of codiciNelleVoci) {
+    const esito = await codiceFiscaleDiAltri(supabase, chiavi.soggetto, cf, op)
+    if (esito === 'propria') continue
+    if (esito === 'non_verificata') chiavi.nonVerificate++
+    if (!chiavi.protetti.includes(cf)) chiavi.protetti.push(cf)
+    diAltri = true
+  }
+  return diAltri ? 'condivisa' : 'propria'
+}
+
+/**
+ * Il documento è davvero del soggetto? Prima le SCHEDE (un'altra scheda alunno viva, un altro
+ * genitore), poi le VOCI delle domande che lo nominano (vedi `vociDiAltriSulDocumento`).
+ */
+async function verificaDocumento(
+  supabase: SupabaseClient,
+  chiavi: ChiaviProprie,
+  percorso: string,
+  op: string,
+): Promise<EsitoChiave> {
+  const schede = await documentoDiAltri(supabase, chiavi.soggetto, percorso, op)
+  if (schede !== 'propria') return schede
+  return vociDiAltriSulDocumento(supabase, chiavi, percorso, op)
 }
 
 function registraEsclusione(chiavi: ChiaviProprie, esito: EsitoChiave, tipo: 'codice_fiscale' | 'documento', op: string): void {
@@ -2430,6 +2511,8 @@ function registraEsclusione(chiavi: ChiaviProprie, esito: EsitoChiave, tipo: 'co
  * e cassa, né per togliere il file. E se un codice fiscale è escluso, è escluso ANCHE il documento:
  * la pulizia di una domanda tocca una persona se corrisponde il codice OPPURE il documento, e un
  * documento proprio di un doppione può stare nella voce del bambino vero (la domanda è la stessa).
+ * Un documento non è suo nemmeno quando lo nomina, nella domanda, la voce di un'altra persona viva
+ * (vedi `vociDiAltriSulDocumento`: le schede senza codice fiscale misurate in produzione).
  * La RIGA del soggetto si azzera comunque: è sua. Una verifica che non si è potuta fare vale come
  * «non sua» (il lato prudente: una cancellazione non si disfa) e si conta in `lettureFallite`.
  *
@@ -2445,6 +2528,7 @@ async function chiaviDiRicercaProprie(
 ): Promise<ChiaviProprie> {
   const chiavi: ChiaviProprie = {
     soggetto,
+    propri: new Set(persona.codiciFiscali.map(normalizzaCodiceFiscale).filter((v) => v.length > 0)),
     codiciFiscali: [],
     perDomande: [],
     protetti: [],
@@ -2480,7 +2564,7 @@ async function chiaviDiRicercaProprie(
       chiavi.verificati.set(documento, esito)
       if (esito === 'condivisa') registraEsclusione(chiavi, esito, 'documento', op)
     } else {
-      const esito = await documentoDiAltri(supabase, soggetto, documento, op)
+      const esito = await verificaDocumento(supabase, chiavi, documento, op)
       chiavi.verificati.set(documento, esito)
       registraEsclusione(chiavi, esito, 'documento', op)
       if (esito === 'propria') chiavi.documento = documento
@@ -2492,7 +2576,7 @@ async function chiaviDiRicercaProprie(
 /**
  * Fra gli allegati che la domanda d'iscrizione restituisce, quelli che si possono togliere.
  * Di solito è il documento del soggetto, già verificato; un percorso diverso si verifica qui, con la
- * stessa regola: se lo usa un'altra persona viva, il file resta.
+ * stessa regola (schede e voci delle domande): se lo usa un'altra persona viva, il file resta.
  */
 async function allegatiDaTogliere(
   supabase: SupabaseClient,
@@ -2504,7 +2588,7 @@ async function allegatiDaTogliere(
   for (const p of percorsiUnici(percorsi)) {
     let esito = chiavi.verificati.get(p)
     if (esito === undefined) {
-      esito = await documentoDiAltri(supabase, chiavi.soggetto, p, op)
+      esito = await verificaDocumento(supabase, chiavi, p, op)
       chiavi.verificati.set(p, esito)
       registraEsclusione(chiavi, esito, 'documento', op)
     }

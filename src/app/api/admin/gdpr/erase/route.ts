@@ -299,7 +299,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     const esitiChiavi: ConChiaviCondivise[] = [esitoAlunno]
     for (const pid of parentiOrfani) {
       const e = await anonimizzaParent(supabase, pid, at, OP)
-      esitiChiavi.push(e as ConChiaviCondivise)
+      esitiChiavi.push(e)
       newsVisualizzazioniRimosse += e.newsVisualizzazioniRimosse
       consensiProvaBonificati += e.provaConsensiScrubbate
       pushRimosse += e.pushSubscriptionsRimosse

@@ -1,10 +1,11 @@
 // =============================================================================
 // LE CHIAVI CONDIVISE CON UN DOPPIONE RENDONO L'OBLIO PARZIALE (2026-10-09).
 //
-// `anonimizzaAlunno` (e, a breve, `anonimizzaParent`) NON usa il codice fiscale o
-// il documento per ripulire domande d'iscrizione, bonifici e cassa quando quella
-// chiave è anche di un'altra scheda viva — un doppione: cercarla distruggerebbe i
-// dati dell'altra persona. Lo dice in `chiaviCondiviseEscluse`. Ma i dati
+// `anonimizzaAlunno` e `anonimizzaParent` NON usano il codice fiscale o il
+// documento per ripulire domande d'iscrizione, bonifici e cassa quando quella
+// chiave è anche di un'altra persona viva — un doppione, un genitore che porta il
+// codice del figlio, la voce di un altro bambino nella domanda: cercarla
+// distruggerebbe i dati dell'altra persona. Lo dicono in `chiaviCondiviseEscluse`. Ma i dati
 // agganciati a quella chiave RESTANO IN CHIARO, e un oblio che li lascia non si
 // può chiamare «eseguito».
 //
@@ -22,8 +23,10 @@
 export const MOTIVO_CHIAVI_CONDIVISE = 'chiave condivisa con un’altra scheda: risolvere prima il doppione'
 
 /**
- * La forma di `chiaviCondiviseEscluse`, letta come FACOLTATIVA: `anonimizzaParent`
- * la restituirà a breve, e una route che la legge deve compilare anche prima.
+ * La forma di `chiaviCondiviseEscluse`, letta come FACOLTATIVA. Oggi la restituiscono
+ * sia `anonimizzaAlunno` sia `anonimizzaParent` (dal 2026-10-09); resta facoltativa
+ * perché un esito senza il campo — un finto di test, un esito salvato prima — vale zero,
+ * non un errore.
  */
 export interface ConChiaviCondivise {
   chiaviCondiviseEscluse?: { codiceFiscale?: unknown; documento?: unknown } | null

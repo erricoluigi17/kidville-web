@@ -114,7 +114,7 @@ if [ -n "${TIENI_ERRORI:-}" ]; then cp "$W/pgrestore.err" "$TIENI_ERRORI"; fi
 
 # ── i conteggi del ripristino, con la STESSA query del dump ──────────────────
 #@CONTEGGI-INIZIO
-SQL_CONTEGGI="(SELECT json_object_agg(schemaname || '.' || tablename, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', schemaname, tablename), false, true, '')))[1]::text::bigint) FROM pg_tables WHERE schemaname IN ('public','auth','storage','cron','supabase_migrations'))"
+SQL_CONTEGGI="(SELECT json_object_agg(schemaname || '.' || tablename, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', schemaname, tablename), false, true, '')))[1]::text::bigint) FROM pg_tables WHERE schemaname IN ('public','auth','storage','cron','supabase_migrations','scatola_nera'))"
 #@CONTEGGI-FINE
 RIPRISTINATI="$(P postgres -c "SELECT $SQL_CONTEGGI;")"
 [ -n "$RIPRISTINATI" ] || errore "non riesco a contare le righe del database ripristinato"

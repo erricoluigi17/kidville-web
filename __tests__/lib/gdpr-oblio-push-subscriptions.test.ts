@@ -81,6 +81,8 @@ function makeFake() {
       b.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(res)
       return b
     },
+    // L'oblio chiude con la scatola nera (2026-10-09): qui basta che risponda.
+    rpc: async () => ({ data: 0, error: null }),
     storage: {
       from: () => ({
         remove: async (paths: string[]) => ({ data: paths.map((p) => ({ name: p })), error: null }),

@@ -16,6 +16,7 @@ import { BUCKET_CHAT_ALLEGATI, normalizzaAllegatoChat } from '@/lib/chat/allegat
 import { rimuoviEVerifica, bloccanti } from '@/lib/storage/rimozione-verificata'
 import { obliaFotoNewsAlunno } from '@/lib/news/permanenza-consenso'
 import { liberaAccountGenitore, type EsitoAccountOblio } from '@/lib/gdpr/account-oblio'
+import { dimenticaNellaScatolaNera } from '@/lib/gdpr/scatola-nera'
 import { aBlocchi, ID_PER_QUERY, RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -1464,6 +1465,8 @@ export async function anonimizzaParent(
    * riporterebbe «zero» per metà dell'operazione.
    */
   lettureFallite: number
+  /** Righe tolte dalla scatola nera perché nominavano la scheda o l'account (2026-10-09). */
+  scatolaNeraDimenticate: number
   /**
    * Che ne è stato dell'ACCOUNT di accesso (`utenti` + `auth.users`). Campo nato il
    * 2026-09-14: fino ad allora l'oblio si fermava alla scheda e lasciava email, nome e
@@ -1735,6 +1738,12 @@ export async function anonimizzaParent(
     op,
   )
 
+  // 8. La SCATOLA NERA (2026-10-09). Ultimo passo, e non per caso: i passi sopra
+  //    cancellano righe (legami, l'account con le sue cascate), e ogni riga cancellata
+  //    da una tabella preziosa finisce in `scatola_nera.eliminazioni`. Si toglie tutto
+  //    ciò che nomina la scheda o l'account, compreso ciò che l'oblio ha appena tolto.
+  const scatola = await dimenticaNellaScatolaNera(supabase, [parentId, authUserId], 'genitore', op)
+
   return {
     newsVisualizzazioniRimosse,
     pushSubscriptionsRimosse,
@@ -1750,7 +1759,9 @@ export async function anonimizzaParent(
     // Gli inventari NON letti. `obliaPdfCredenziali` non compare qui perché quando
     // non riesce a elencare il bucket lo dice già alzando `nonRimossi` (non ha una
     // tabella-indice: l'elenco È il suo inventario).
-    lettureFallite: [iscr.letto, allegatiChat.letto].filter((l) => l === false).length + chiavi.nonVerificate,
+    lettureFallite:
+      [iscr.letto, allegatiChat.letto, scatola.completo].filter((l) => l === false).length + chiavi.nonVerificate,
+    scatolaNeraDimenticate: scatola.righe,
     account,
     chiaviCondiviseEscluse: { ...chiavi.escluse },
   }
@@ -2645,6 +2656,8 @@ export async function anonimizzaAlunno(
    * `admin/gdpr/erase` e `admin/gdpr/richieste`, che fanno scattare `oblio-parziale`.
    */
   lettureFallite: number
+  /** Righe tolte dalla scatola nera perché nominavano il bambino (2026-10-09). */
+  scatolaNeraDimenticate: number
   /**
    * Le chiavi di ricerca (codice fiscale, documento) NON usate perché sono anche di un'altra scheda
    * alunno viva o di un genitore (2026-10-09): vedi `chiaviDiRicercaProprie`. Maggiore di zero vuol
@@ -2936,6 +2949,10 @@ export async function anonimizzaAlunno(
   //    2026-10-09: ora le tratta `bonificaTracceTestualiAlunno` al punto 3f.)
   await bonificaAuditScritture(supabase, [alunno.id], op)
 
+  // 6. La SCATOLA NERA (2026-10-09), per ultima: i passi sopra cancellano righe, e
+  //    ogni riga cancellata da una tabella preziosa ne lascia una copia lì per 90 giorni.
+  const scatola = await dimenticaNellaScatolaNera(supabase, [alunno.id], 'alunno', op)
+
   // I conteggi dei file sono UNA somma su tutti i bucket toccati: chi legge la
   // risposta deve poter chiedere «è uscito tutto?» una volta sola. Il dettaglio
   // per magazzino resta nel log, dove `rimuoviFileOblio` scrive `bucket` e
@@ -2969,6 +2986,7 @@ export async function anonimizzaAlunno(
     notificheRimosse: tracce.notificheRimosse,
     videoIntentiTrattati: videoIntenti.intenti,
     videoIntentiRevocati: videoIntenti.revocati,
+    scatolaNeraDimenticate: scatola.righe,
     // ── GLI INVENTARI CHE NON SI SONO POTUTI LEGGERE ──
     //
     // Un elenco esplicito e non una somma di flag sparsi, così chi aggiunge un
@@ -2994,6 +3012,9 @@ export async function anonimizzaAlunno(
       // Dal 2026-10-02: l'oblio dei video in volo. `false` = la RPC non ha risposto o ha rifiutato, e il
       // bambino può essere ancora nominato da `video_intents.tag_alunni`.
       videoIntenti.letto,
+      // Dal 2026-10-09: la scatola nera. `false` = la funzione c'è e ha rifiutato, e le copie delle
+      // righe cancellate che nominano il bambino restano leggibili fino alla scadenza.
+      scatola.completo,
     ].filter((l) => l === false).length
       // Le verifiche delle chiavi di ricerca che non si sono potute fare (2026-10-09): la chiave non si
       // è usata, quindi ciò che le stava agganciato non è stato guardato.

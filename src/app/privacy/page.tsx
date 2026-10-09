@@ -823,6 +823,31 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 definitivo, <strong>sia la registrazione sia il file</strong>, e non è più
                 recuperabile da nessuno;
               </li>
+              {/*
+                LE COPIE TECNICHE, E PERCHÉ SONO DICHIARATE QUI (2026-10-09).
+                Dal 05/10 il database è copiato ogni notte, cifrato, su Cloudflare R2 in
+                giurisdizione UE (fase 2 della roadmap di robustezza): copie giornaliere
+                bloccate 30 giorni, la mensile 12 mesi. Dal 09/10 ogni riga cancellata dalle
+                tabelle preziose resta 90 giorni in `scatola_nera.eliminazioni` (fase 4),
+                e l'oblio la toglie subito (`public.scatola_nera_dimentica`). Una copia che
+                allunga la vita di un dato cancellato è conservazione, e chi ha prestato il
+                consenso ha diritto di saperlo (art. 13 §2 lett. a).
+                ⚠️ Niente «automaticamente» in questa voce: il lock
+                `informativa-conservazione-dichiarata` lega quella parola a un automa la cui
+                migrazione è già applicata, e al 09/10 quella della scatola nera non lo è.
+              */}
+              <li>
+                <strong>copie tecniche di sicurezza</strong>: una registrazione cancellata
+                dall&rsquo;archivio della scuola (anagrafica, frequenza, valutazioni, pagamenti)
+                resta in una copia tecnica protetta per <strong>novanta giorni</strong>, al solo
+                scopo di rimediare a una cancellazione sbagliata, e scaduti quelli è distrutta;
+                una richiesta di cancellazione (diritto all&rsquo;oblio) la toglie subito anche da
+                lì. L&rsquo;intero archivio è inoltre copiato ogni notte, cifrato, su server
+                nell&rsquo;Unione europea: le copie giornaliere si conservano{' '}
+                <strong>trenta giorni</strong> e una copia al mese <strong>dodici mesi</strong>. Se
+                una copia dovesse servire, le cancellazioni chieste dopo la sua data vengono
+                riapplicate;
+              </li>
               <li>
                 <strong>log tecnici di accesso e di utilizzo</strong>: <strong>30 giorni</strong>,
                 dopodiché sono cancellati automaticamente;

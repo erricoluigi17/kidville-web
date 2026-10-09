@@ -533,6 +533,21 @@ function validaChiaviErrori(errori: Record<string, ErrorePostgrest> | undefined,
 }
 
 /**
+ * Le sole RPC che il finto emula SENZA che il test le passi. È un'eccezione alla
+ * regola «una RPC non emulata lancia», e va tenuta stretta.
+ *
+ * `scatola_nera_dimentica` (2026-10-09): ogni oblio la chiama IN CODA (fase 4 della
+ * roadmap di robustezza), dopo l'ultima cancellazione. È un canale a parte, che
+ * nessuno dei test dell'oblio scritti prima di quel giorno misura: emularla in ogni
+ * file nasconderebbe l'oggetto di quei test. Qui risponde «zero righe tolte»; chi
+ * vuole provarla davvero la passa in `opzioni.rpc`, che vince. La funzione SQL vera
+ * è provata su Postgres in `__tests__/lib/scatola-nera-sql.test.ts`.
+ */
+const RPC_DI_SERIE: Record<string, (args: Riga) => RispostaRpc> = {
+  scatola_nera_dimentica: () => ({ data: 0, error: null }),
+}
+
+/**
  * @param db           tabella → righe (mutabile dal test fra un caso e l'altro,
  *                     e mutata DAVVERO dalle scritture)
  * @param tabelleLette accumulatore dei `from(<tabella>)` eseguiti: serve a
@@ -906,7 +921,7 @@ export function creaFintoSupabase(
   const client: Record<string, unknown> = {
     from,
     rpc: async (nome: string, args: Riga = {}) => {
-      const impl = opzioni.rpc?.[nome]
+      const impl = opzioni.rpc?.[nome] ?? RPC_DI_SERIE[nome]
       if (!impl) {
         throw new Error(
           `finto-supabase: rpc("${nome}") non emulata dal finto client. ` +

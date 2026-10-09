@@ -60,7 +60,10 @@ PREV_DUMP_BYTES="${PREV_DUMP_BYTES:-0}"
 MIN_BYTES="${MIN_BYTES:-1048576}"
 case "$PREV_DUMP_BYTES$MIN_BYTES" in *[!0-9]*) errore "PREV_DUMP_BYTES e MIN_BYTES devono essere numeri" ;; esac
 
-SCHEMI="public auth storage cron supabase_migrations"
+# `scatola_nera` (dal 2026-10-09, fase 4): le righe cancellate dalle tabelle preziose negli ultimi
+# 90 giorni e il registro degli oblii. È dato personale come `public` e va nella stessa copia
+# cifrata; il registro degli oblii serve proprio DOPO un ripristino.
+SCHEMI="public auth storage cron supabase_migrations scatola_nera"
 # I DATI di queste tabelle non entrano nel backup (la struttura sì): sono registri tecnici già
 # redatti o token di sessione. Un backup che contenesse sessioni valide, se trafugato, darebbe
 # accesso agli account; gli utenti, dopo un ripristino, rifanno il login.
@@ -102,7 +105,7 @@ printf '%s' "$SNAP" | grep -Eq '^[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9]+$' \
 # fra i due marcatori coincida): se i due script contassero in modo diverso, il confronto fra
 # dump e ripristino mentirebbe.
 #@CONTEGGI-INIZIO
-SQL_CONTEGGI="(SELECT json_object_agg(schemaname || '.' || tablename, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', schemaname, tablename), false, true, '')))[1]::text::bigint) FROM pg_tables WHERE schemaname IN ('public','auth','storage','cron','supabase_migrations'))"
+SQL_CONTEGGI="(SELECT json_object_agg(schemaname || '.' || tablename, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', schemaname, tablename), false, true, '')))[1]::text::bigint) FROM pg_tables WHERE schemaname IN ('public','auth','storage','cron','supabase_migrations','scatola_nera'))"
 #@CONTEGGI-FINE
 SQL_META="SELECT json_build_object("
 SQL_META="$SQL_META 'versione', version(),"

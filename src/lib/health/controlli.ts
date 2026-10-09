@@ -372,6 +372,16 @@ export const JOB_CRON: readonly JobCron[] = [
  */
 export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }[] = [
     {
+        nome: 'scatola-nera-scadenza',
+        perche:
+            'IN ATTESA DEL MERGE (2026-10-09, fase 4): il job nasce con la migrazione ' +
+            '`20261009171012_scatola_nera_registro_eliminazioni.sql`, che applica l’integrazione al ' +
+            'merge, e il lock `cron-sorvegliato-e-applicato` vieta di sorvegliare un lavoro la cui ' +
+            'migrazione non è nella fotografia. Il battito c’è già (evento `cron`, ' +
+            '`operazione: scatola-nera-scadenza`, esito `ok`, OGNI NOTTE alle 05:43 UTC): nella PR-B ' +
+            'passa in `JOB_CRON` con `finestraMs: 26 * ORA`, come gli altri giornalieri.',
+    },
+    {
         nome: 'notifiche-retention',
         perche:
             'MENSILE (`35 4 1 * *`): la finestra necessaria (~32 giorni) supera la conservazione ' +

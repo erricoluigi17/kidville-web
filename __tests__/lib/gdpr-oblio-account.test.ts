@@ -81,6 +81,7 @@ function creaMondo(cfg: CfgMondo) {
   const scritture: { tabella: string; operazione: Operazione; patch?: Riga; n: number }[] = []
   /** L'ordine delle operazioni che contano, per le prove sull'ordine. */
   const cronologia: string[] = []
+  const rpcArgs: Riga[] = []
 
   const deleteUser = vi.fn(async (id: string) => {
     cronologia.push('auth:deleteUser')
@@ -158,8 +159,15 @@ function creaMondo(cfg: CfgMondo) {
       }),
     },
     auth: { admin: { deleteUser, getUserById, updateUserById } },
+    // La scatola nera (2026-10-09): l'ultimo passo dell'oblio. La chiamata entra in
+    // `cronologia` come le altre, per poter dire che arriva DOPO l'account.
+    rpc: vi.fn(async (nome: string, args: Riga): Promise<{ data: number | null; error: ErrorePostgrest | null }> => {
+      cronologia.push(`rpc:${nome}`)
+      rpcArgs.push(args)
+      return { data: 0, error: null }
+    }),
   }
-  return { client, tabelle, scritture, cronologia, deleteUser, getUserById, updateUserById }
+  return { client, tabelle, scritture, cronologia, rpcArgs, deleteUser, getUserById, updateUserById }
 }
 
 /** Una famiglia che se n'è andata: una scheda, un account genitore, un figlio già anonimizzato. */
@@ -466,5 +474,47 @@ describe('contaAccountOblio · il riepilogo che finisce nella risposta della Dir
         undefined,
       ]),
     ).toEqual({ rimossi: 1, anonimizzati: 2, nonLiberati: 2 })
+  })
+})
+
+// =============================================================================
+// LA SCATOLA NERA (2026-10-09): l'ultimo passo dell'oblio del genitore.
+// I passi sopra cancellano righe (legami, l'account con le sue cascate), e ogni
+// riga cancellata da una tabella preziosa ne lascia una copia per 90 giorni in
+// `scatola_nera.eliminazioni`. Se la scatola si svuotasse PRIMA, le righe tolte
+// dopo resterebbero lì: l'ordine è il contenuto del test.
+// =============================================================================
+describe('oblio del genitore · la scatola nera, per ultima', () => {
+  it('si chiama DOPO la cancellazione dell’account, con la scheda E l’account', async () => {
+    const m = creaMondo({ tabelle: tabelleBase() })
+    const r = await anonimizzaParent(m.client as never, PARENT, AT, 'test')
+
+    const scatola = m.cronologia.indexOf('rpc:scatola_nera_dimentica')
+    expect(scatola, 'l’oblio non chiama la scatola nera').toBeGreaterThanOrEqual(0)
+    expect(scatola).toBeGreaterThan(m.cronologia.indexOf('auth:deleteUser'))
+    expect(scatola, 'non è l’ultimo passo: le righe cancellate dopo resterebbero in scatola').toBe(m.cronologia.length - 1)
+    expect(m.rpcArgs).toEqual([{ p_soggetti: [PARENT, ACCOUNT], p_tipo: 'genitore', p_canale: 'test' }])
+    expect(r.scatolaNeraDimenticate).toBe(0)
+    expect(r.lettureFallite).toBe(0)
+  })
+
+  it('una scatola che RIFIUTA rende l’oblio non completo (una lettura fallita in più), e lo grida', async () => {
+    const m = creaMondo({ tabelle: tabelleBase() })
+    m.client.rpc = vi.fn(async () => ({ data: null, error: { code: '42501', message: 'permesso negato' } }))
+    const r = await anonimizzaParent(m.client as never, PARENT, AT, 'test')
+
+    expect(r.lettureFallite).toBe(1)
+    const riga = rigaLog('scatola-nera-non-dimenticata')
+    expect(riga?.[1]).toBe('error')
+    expect(JSON.stringify(riga), 'l’uuid della persona è finito nel log').not.toContain(PARENT)
+  })
+
+  it('una scatola che NON ESISTE (database non migrato) non è un oblio incompleto', async () => {
+    const m = creaMondo({ tabelle: tabelleBase() })
+    m.client.rpc = vi.fn(async () => ({ data: null, error: { code: 'PGRST202', message: 'funzione assente' } }))
+    const r = await anonimizzaParent(m.client as never, PARENT, AT, 'test')
+
+    expect(r.lettureFallite).toBe(0)
+    expect(rigaLog('scatola-nera-assente')?.[1]).toBe('info')
   })
 })

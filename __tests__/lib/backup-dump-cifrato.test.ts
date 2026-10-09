@@ -139,7 +139,7 @@ describe('dump-cifrato.sh · il giro buono', () => {
         expect(args).toContain('--format=custom')
         expect(args).toContain('--no-owner')
         expect(args).toContain('--snapshot=00000003-0000001B-1')
-        for (const s of ['public', 'auth', 'storage', 'cron', 'supabase_migrations']) {
+        for (const s of ['public', 'auth', 'storage', 'cron', 'supabase_migrations', 'scatola_nera']) {
             expect(args).toContain(`--schema=${s}`)
         }
         expect(args).not.toContain('--schema=vault')

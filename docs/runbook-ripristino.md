@@ -78,9 +78,44 @@ rclone lsf CRIPTO:corrente --dirs-only
 
 ---
 
+## Scenario A0 — «Una riga è stata CANCELLATA negli ultimi 90 giorni» (la scatola nera)
+
+Dal 2026-10-09 (fase 4 della roadmap) ogni riga cancellata da una delle **42 tabelle preziose** resta per 90 giorni
+in `scatola_nera.eliminazioni`, con le righe portate via in CASCADE: anagrafica, presenze, diario, voti e scrutini,
+certificati e documenti, pagamenti e incassi, cassa, moduli, sezioni e sedi. L'elenco esatto sta nella migrazione
+`*_scatola_nera_registro_eliminazioni.sql`, fra i marcatori `tabelle-preziose`. **Fuori**: le tabelle che una retention
+svuota per legge (domande di iscrizione, personale, candidature, galleria, allegati del registro, notifiche), il
+protocollo e i registri. Per quelle si passa allo scenario A.
+
+Si lavora dal **SQL editor** del pannello Supabase (ruolo `postgres`): l'app non ha accesso allo schema. Si legge prima,
+si mostra, poi si scrive.
+
+1. **Trova** le righe. Per persona (uuid dell'alunno, del genitore, del pagamento…) o per tabella e periodo:
+   ```sql
+   SELECT id, eliminata_il, transazione, tabella, ruolo, origine, riga->>'id' AS id_riga
+     FROM scatola_nera.eliminazioni
+    WHERE '<uuid>' = ANY(soggetti)              -- oppure: tabella = 'presenze' AND eliminata_il > now() - interval '2 days'
+    ORDER BY id DESC;
+   ```
+   Righe cancellate insieme (una DELETE con le sue cascate) hanno la stessa `transazione`.
+2. **Guarda** che cosa torna, senza copiarlo in chat né in un file: sono dati di minori.
+   `SELECT tabella, count(*) FROM scatola_nera.eliminazioni WHERE transazione = <n> GROUP BY 1;`
+3. **Ripristina**, dopo averlo mostrato:
+   ```sql
+   SELECT scatola_nera.ripristina_transazione(<transazione>);   -- tutto ciò che è stato cancellato insieme
+   SELECT scatola_nera.ripristina(ARRAY[<id>, <id>]::bigint[]);  -- oppure solo alcune righe
+   ```
+   La risposta è `{"ripristinate": n, "gia_presenti": [...], "fallite": [...]}`. L'ordine delle FK lo risolve la
+   funzione: chi aspetta il padre riprova al giro dopo. Una riga con la stessa chiave già presente **non** si
+   sovrascrive: va in `gia_presenti`. Una riga di `utenti` torna solo se l'account esiste ancora in `auth.users`
+   (`23503` in `fallite` vuol dire «manca il padre»). I **file** non sono nella scatola: tornano dallo specchio di R2.
+4. **Gli oblii** non si ripristinano mai: chi è stato dimenticato non è più nella scatola (`public.scatola_nera_dimentica`
+   l'ha tolto), e `scatola_nera.oblii` dice chi e quando.
+
 ## Scenario A — «Un errore nei dati è stato scoperto» (riga o tabella sbagliata)
 
 1. **Non fare niente di fretta e non scrivere nulla in produzione.** Annota quando è successo l'errore e cosa è cambiato.
+   Se l'errore è una **cancellazione** degli ultimi 90 giorni su una tabella preziosa, la strada è lo scenario A0.
 2. **Entro 7 giorni**: i backup fisici di Supabase hanno ancora la versione giusta. Strada più sicura:
    pannello Supabase → Database → Backups → **Restore to a new project** (non tocca la produzione), poi si
    copiano nella produzione **solo** le righe sbagliate. ⚠️ Il progetto nuovo contiene i dati dei minori: va
@@ -88,7 +123,10 @@ rclone lsf CRIPTO:corrente --dirs-only
 3. **Da 8 a 30 giorni**: il dump cifrato di R2. Si scarica, si decifra e si ripristina in locale con
    `ripristina-prova.sh` (vedi sotto), si estraggono le righe giuste.
 4. **Oltre i 30 giorni**: solo la copia mensile (12 mesi), se la riga esisteva il primo del mese.
-5. Dopo il ripristino di quelle righe: riapplica gli **oblii GDPR** avvenuti dopo la data della copia.
+5. Dopo il ripristino di quelle righe: riapplica gli **oblii GDPR** avvenuti dopo la data della copia. Dal 2026-10-09
+   l'elenco è nel database di produzione, non più solo nei log (che si svuotano a 30 giorni):
+   `SELECT eseguito_il, soggetto, tipo, canale FROM scatola_nera.oblii WHERE eseguito_il > '<data della copia>' ORDER BY 1;`
+   Per ogni soggetto si rifà l'oblio dall'app (Direzione → GDPR) sulle righe appena ripristinate.
 
 ## Scenario B — «Il backup di stanotte è fallito» (email o segnalazione `backup-notturno`)
 

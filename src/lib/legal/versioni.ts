@@ -226,9 +226,31 @@
 //
 // I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `src/app/termini/page.tsx` è
 // invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31.
+// 2026-10-09 — SOLO l'informativa privacy. UNA voce nuova nella «Conservazione
+// dei dati»: le COPIE TECNICHE DI SICUREZZA.
+//
+// PERCHÉ È UNA MODIFICA SOSTANZIALE, e non un ritocco redazionale: dichiara due
+// trattamenti che allungano la vita di un dato cancellato, e che il documento non
+// diceva. (1) Dal 05/10 l'archivio intero è copiato ogni notte, cifrato, su server
+// in UE (Cloudflare R2, giurisdizione UE): giornaliere bloccate trenta giorni, una
+// mensile dodici mesi (fase 2 della roadmap di robustezza). (2) Dal 09/10 ogni
+// registrazione cancellata dalle tabelle preziose resta novanta giorni in
+// `scatola_nera.eliminazioni` per rimediare a una cancellazione sbagliata, e
+// l'oblio la toglie subito (fase 4). Dopo un ripristino da una copia, gli oblii
+// successivi alla sua data si riapplicano (`scatola_nera.oblii`): il documento lo
+// promette, e il runbook dice come.
+//
+// ⚠️ NON DICE «AUTOMATICAMENTE», per la stessa ragione del 12/09: la migrazione
+// della scatola nera la applica l'integrazione al merge, e il lock
+// `informativa-conservazione-dichiarata` lega quella parola a un automa attestato.
+//
+// ⚠️ Alzarla NON invalida i consensi già raccolti e non forza nessuno a
+// riaccettare (verifica del 10/08, sopra). È testo legale: il titolare lo rilegge.
+//
+// I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `VERSIONE_TERMINI` resta al 2026-07-31.
 
 /** Versione corrente dei Termini di servizio. */
 export const VERSIONE_TERMINI = '2026-07-31'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-09-12'
+export const VERSIONE_PRIVACY = '2026-10-09'

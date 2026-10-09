@@ -406,6 +406,13 @@ describe('lock — pagine legali', () => {
         // '2026-08-25' e '2026-08-20' sono i testi che le persone hanno letto, e sono
         // citate nei `consents_log` di chi ha gia accettato.
         '2026-09-12': '4fd9ea87d6ce3c332dafcedfdceb89ec2a4b01b872f1f26208bc1a850b28683e',
+        // 2026-10-09 — una voce nuova nella «Conservazione dei dati»: le COPIE TECNICHE.
+        // La scatola nera (fase 4 della roadmap di robustezza) tiene novanta giorni ogni
+        // registrazione cancellata dalle tabelle preziose, e l'oblio la toglie subito; il
+        // backup notturno cifrato in UE (fase 2, dal 05/10) tiene le giornaliere trenta
+        // giorni e una mensile dodici mesi. Due trattamenti che allungano la vita di un
+        // dato cancellato, e che il documento non diceva. La '2026-09-12' resta dov'è.
+        '2026-10-09': 'd9e596ad0b262768e8b1c27f53e0b074fe0162834815d7253eef07d8e92e65bf',
         // 2026-08-20 — la voce «candidature spontanee di personale» dichiara la COPIA
         // che arriva nella casella di OGNI sede scelta, e il fatto che quella copia il
         // job di cancellazione NON la tocca.

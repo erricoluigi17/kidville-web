@@ -49,6 +49,7 @@ const ANONIMIZZA_OK = {
   videoIntentiTrattati: 0,
   videoIntentiRevocati: 0,
   lettureFallite: 0,
+  chiaviCondiviseEscluse: { codiceFiscale: 0, documento: 0 },
 }
 
 const h = vi.hoisted(() => ({
@@ -73,6 +74,8 @@ const h = vi.hoisted(() => ({
    */
   registroDopoMisura: null as null | 'voto' | 'guasto',
   lettureRegistro: 0,
+  /** Errori del finto, letti a ogni query: si possono accendere a metà richiesta (es. dentro la RPC). */
+  errori: {} as Record<string, { code: string; message: string }>,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -116,6 +119,7 @@ vi.mock('@/lib/supabase/server-client', async () => {
   const client = () => {
     const base = creaFintoSupabase(h.db as DBFinto, [], {
       scritture: h.scritture as Scrittura[],
+      errori: h.errori,
       rpc: {
         elimina_alunno_definitivo: (args) => {
           if (args.p_solo_verifica === true) { h.ordine.push('verifica'); return h.verifica(args) }
@@ -211,6 +215,7 @@ beforeEach(() => {
   h.ordine = []
   h.registroDopoMisura = null
   h.lettureRegistro = 0
+  h.errori = {}
 })
 
 describe('POST /api/admin/students/elimina — chi, su chi', () => {
@@ -256,12 +261,14 @@ describe('POST /api/admin/students/elimina — chi, su chi', () => {
     expect(h.rpc).not.toHaveBeenCalled()
   })
 
-  it('execute su una scheda già anonimizzata: 409, nessun effetto, e il log dice «anonimizzato»', async () => {
+  it('execute su una scheda già anonimizzata: 404 «non è più in elenco», nessun effetto, e il log dice «anonimizzato»', async () => {
+    // Non «questo frequenta ancora», che sarebbe falso: dopo un'anonimizzazione la
+    // scheda è uscita da ogni elenco, e la cosa giusta da fare è ricaricare.
     h.db.alunni[0] = { ...h.db.alunni[0], anonimizzato_il: '2026-09-01T00:00:00.000Z' }
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
-    expect(res.status).toBe(409)
-    expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_FREQUENTANTE')
-    expect(campiDelLog('eliminazione-rifiutata-frequentante').tipo).toBe('anonimizzato')
+    expect(res.status).toBe(404)
+    expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_NON_TROVATO')
+    expect(campiDelLog('eliminazione-rifiutata-gia-anonimizzato').tipo).toBe('anonimizzato')
     expect(h.bonificaTracce).not.toHaveBeenCalled()
     expect(h.rpc).not.toHaveBeenCalled()
   })
@@ -296,6 +303,27 @@ describe('dryrun', () => {
     const j = await (await POST(req({ alunno_id: AL, mode: 'dryrun' }))).json()
     expect(j.scelte).toEqual({ elimina: false, elimina_con_pagamenti: false, anonimizza: false })
     expect(j.motivo).toBe('REGISTRO_PRIMARIA_DA_CONSERVARE')
+  })
+
+  it('iscritto SENZA SEZIONE con pagamenti bloccati: nessuna scelta, «prima ritira il bambino»', async () => {
+    h.db.alunni[0] = { ...h.db.alunni[0], stato: 'iscritto', section_id: null }
+    conPagamentoBloccato()
+    const j = await (await POST(req({ alunno_id: AL, mode: 'dryrun' }))).json()
+    expect(j.scelte).toEqual({ elimina: false, elimina_con_pagamenti: false, anonimizza: false })
+    expect(j.motivo).toBe('ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA')
+  })
+
+  it('l’avviso doppione guarda SOLO le sedi dell’operatore: niente si rivela fuori sede', async () => {
+    const CF = 'CFDIPROVA0000001'
+    h.db.alunni[0] = { ...h.db.alunni[0], codice_fiscale: CF }
+    // Lo stesso codice su un bambino che frequenta, ma in una sede che la segreteria non vede.
+    h.db.alunni[1] = { ...h.db.alunni[1], codice_fiscale: CF, scuola_id: SEDE_B }
+    let j = await (await POST(req({ alunno_id: AL, mode: 'dryrun' }))).json()
+    expect(j.conteggi.cf_condiviso_con_frequentante).toBe(false)
+    // Nella SUA sede, invece, l'avviso c'è: il filtro è la sede, non altro.
+    h.db.alunni[1] = { ...h.db.alunni[1], scuola_id: SEDE_A }
+    j = await (await POST(req({ alunno_id: AL, mode: 'dryrun' }))).json()
+    expect(j.conteggi.cf_condiviso_con_frequentante).toBe(true)
   })
 })
 
@@ -334,6 +362,24 @@ describe('execute — la scelta deve essere fra quelle offerte, e il rifiuto dic
       },
       scelta: 'elimina',
       codice: 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI',
+    },
+    {
+      caso: 'iscritto SENZA SEZIONE con pagamenti bloccati, scelta «anonimizza»',
+      prepara: () => {
+        h.db.alunni[0] = { ...h.db.alunni[0], stato: 'iscritto', section_id: null }
+        conPagamentoBloccato()
+      },
+      scelta: 'anonimizza',
+      codice: 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA',
+    },
+    {
+      caso: 'iscritto SENZA SEZIONE con pagamenti cancellabili, scelta «anonimizza»',
+      prepara: () => {
+        h.db.alunni[0] = { ...h.db.alunni[0], stato: 'iscritto', section_id: null }
+        h.db.pagamenti = [{ id: 'pag-1', alunno_id: AL, parent_payment_id: null }]
+      },
+      scelta: 'anonimizza',
+      codice: 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA',
     },
   ])('$caso → 409 $codice e nessun effetto', async ({ prepara, scelta, codice }) => {
     prepara()
@@ -410,7 +456,7 @@ describe('execute — elimina', () => {
   it.each<{ code: string; status: number; codice: string }>([
     { code: 'non_trovato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
     { code: 'frequentante', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
-    { code: 'gia_anonimizzato', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
+    { code: 'gia_anonimizzato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
     { code: 'registro_primaria', status: 409, codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
     { code: 'ha_pagamenti', status: 409, codice: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI' },
     { code: 'pagamenti_non_cancellabili', status: 409, codice: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI' },
@@ -476,7 +522,7 @@ describe('execute — elimina', () => {
   it.each<{ code: string; status: number; codice: string }>([
     { code: 'non_trovato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
     { code: 'frequentante', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
-    { code: 'gia_anonimizzato', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
+    { code: 'gia_anonimizzato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
     { code: 'registro_primaria', status: 409, codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
     { code: 'ha_pagamenti', status: 409, codice: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI' },
     { code: 'pagamenti_non_cancellabili', status: 409, codice: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI' },
@@ -508,6 +554,22 @@ describe('execute — elimina', () => {
     expect(campiDelLog('eliminazione-non-riuscita')).toMatchObject({ entita_id: AL, n_notifiche: 2 })
     expect(h.logScrittura).not.toHaveBeenCalled()
     expect(h.bonificaAuditScritture).not.toHaveBeenCalled()
+  })
+
+  it('RPC fallita E rilettura della scheda fallita: esito SCONOSCIUTO, non «non riuscita»', async () => {
+    // Non si sa se il commit è avvenuto: dire «non riuscita» (e quindi «la scheda
+    // è intatta») potrebbe essere falso. Si dice che non si sa, con gli effetti.
+    h.rpc.mockImplementation(() => {
+      h.errori['alunni:select'] = { code: '08006', message: 'connessione interrotta' }
+      return { data: null, error: { code: '08006', message: 'connessione interrotta' } }
+    })
+    const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+    expect(res.status).toBe(500)
+    const j = await res.json()
+    expect(j.codice).toBe('ALUNNO_ELIMINAZIONE_ESITO_SCONOSCIUTO')
+    expect(j.effetti).toMatchObject({ tracce: { notifiche: 2 }, file: { documenti_rimossi: 1 } })
+    expect(campiDelLog('eliminazione-esito-sconosciuto')).toMatchObject({ entita_id: AL, n_notifiche: 2 })
+    expect(h.logScrittura).not.toHaveBeenCalled()
   })
 
   it('esito incerto: la RPC risponde errore ma la scheda NON c’è più → completa la traccia, 200 incerto', async () => {

@@ -36,6 +36,7 @@ export type MotivoBloccoEliminazione =
   | 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI'
   | 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI'
   | 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI'
+  | 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA'
 
 /**
  * I conteggi dell'oblio quando sono stati TUTTI misurati. In `ConteggiOblio`
@@ -51,6 +52,11 @@ function tuttiMisurati(c: ConteggiOblio): c is ConteggiOblioMisurati {
 export interface ConteggiEliminazione extends ConteggiOblioMisurati {
   presenze: number
   diario: number
+  /**
+   * I genitori DISTINTI legati alla scheda, nelle DUE tabelle che la funzione SQL
+   * cancella: `student_parents` (anagrafica) e `legame_genitori_alunni` (account).
+   * Una persona presente in tutte e due conta una volta (ponte: `parents.auth_user_id`).
+   */
   legami_genitori: number
   pagamenti: number
   /**
@@ -61,10 +67,11 @@ export interface ConteggiEliminazione extends ConteggiOblioMisurati {
   pagamenti_bloccati: number
   registro_primaria: boolean
   /**
-   * Il codice fiscale della scheda è anche di un bambino che FREQUENTA (scheda
-   * non anonimizzata, stato non «non più iscritto»)? Allora questa è quasi
-   * certamente un doppione, e presenze e diario registrati qui appartengono al
-   * bambino vero. Non blocca niente: è un avviso, detto PRIMA.
+   * Il codice fiscale della scheda è anche di un bambino che FREQUENTA nelle sedi
+   * dell'operatore — come nella linguetta «Alunni»: non anonimizzato, con una
+   * sezione, stato non «non più iscritto»? Allora questa è quasi certamente un
+   * doppione, e presenze, diario e foto registrati qui appartengono al bambino
+   * vero. Non blocca niente: è un avviso, detto PRIMA.
    */
   cf_condiviso_con_frequentante: boolean
 }
@@ -83,13 +90,22 @@ export type EsitoMisura = { ok: true; conteggi: ConteggiEliminazione } | { ok: f
  * non rimovibili le dice comunque, dal conteggio. ⚠️ Non c'è uno sblocco da
  * promettere: cancellarle dalla galleria le sposta nel cestino, che conteggio
  * ed esecuzione contano lo stesso. Il caso va all'assistenza.
+ *
+ * ⚠️ «ANONIMIZZA» SOLO PER UNA SCHEDA RITIRATA (`ritirato` = `eNonPiuIscritto`).
+ * Un iscritto senza sezione non è uscito dalla scuola: anonimizzarlo lascerebbe
+ * un bambino che frequenta senza nome né codice fiscale. Prima si ritira, poi si
+ * anonimizza. Quando, tolta l'anonimizzazione, non resta nessuna scelta, il
+ * motivo è `ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA`: è l'unico passo che la sblocca.
  */
-export function scelteDisponibili(c: {
-  pagamenti: number
-  pagamenti_bloccati: number
-  registro_primaria: boolean
-  foto_non_rimovibili: number
-}): { scelte: Record<SceltaEliminazione, boolean>; motivo: MotivoBloccoEliminazione | null } {
+export function scelteDisponibili(
+  c: {
+    pagamenti: number
+    pagamenti_bloccati: number
+    registro_primaria: boolean
+    foto_non_rimovibili: number
+  },
+  ritirato: boolean,
+): { scelte: Record<SceltaEliminazione, boolean>; motivo: MotivoBloccoEliminazione | null } {
   if (c.registro_primaria) {
     return {
       scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
@@ -99,8 +115,12 @@ export function scelteDisponibili(c: {
   const fotoBloccano = c.foto_non_rimovibili > 0
   if (c.pagamenti > 0 || c.pagamenti_bloccati > 0) {
     const bloccati = c.pagamenti_bloccati > 0
+    const scelte = { elimina: false, elimina_con_pagamenti: !bloccati && !fotoBloccano, anonimizza: ritirato }
+    if (!scelte.elimina_con_pagamenti && !scelte.anonimizza) {
+      return { scelte, motivo: 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA' }
+    }
     return {
-      scelte: { elimina: false, elimina_con_pagamenti: !bloccati && !fotoBloccano, anonimizza: true },
+      scelte,
       motivo: bloccati
         ? 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI'
         : fotoBloccano
@@ -177,17 +197,23 @@ const TABELLE_CHE_BLOCCANO_UN_PAGAMENTO = [
   'incassi',
 ] as const
 
+/**
+ * `sediOperatore` = le sedi di chi sta guardando (`scuoleDiUtente` nella route):
+ * l'avviso doppione cerca SOLO lì, così non rivela niente di un'altra sede.
+ * Obbligatorio di proposito: un chiamante che lo dimenticasse non deve compilare.
+ */
 export async function contaPerEliminazione(
   supabase: SupabaseClient,
   alunnoId: string,
   op: string,
+  sediOperatore: readonly string[],
 ): Promise<EsitoMisura> {
   const oblio = await contaCosaDistrugge(supabase, alunnoId, op)
   if (!tuttiMisurati(oblio)) return { ok: false }
 
   const presenze = await conta(supabase, 'presenze', 'alunno_id', alunnoId, op)
   const diario = await conta(supabase, 'eventi_diario', 'alunno_id', alunnoId, op)
-  const legami = await conta(supabase, 'student_parents', 'student_id', alunnoId, op)
+  const legami = await genitoriDistinti(supabase, alunnoId, op)
   if (presenze === null || diario === null || legami === null) return { ok: false }
 
   const { data: pag, error: pagErr } = await supabase
@@ -262,7 +288,7 @@ export async function contaPerEliminazione(
     return { ok: false }
   }
 
-  const doppione = await cfCondivisoConFrequentante(supabase, alunnoId, op)
+  const doppione = await cfCondivisoConFrequentante(supabase, alunnoId, sediOperatore, op)
   if (doppione === null) return { ok: false }
 
   return {
@@ -288,7 +314,56 @@ type RigaDoppione = {
   codice_fiscale?: unknown
   fiscal_code?: unknown
   stato?: unknown
+  section_id?: unknown
   anonimizzato_il?: unknown
+}
+
+/**
+ * I genitori DISTINTI legati alla scheda. La funzione SQL cancella i legami in
+ * DUE tabelle — `student_parents` (l'anagrafica: `parent_id` → `parents.id`) e
+ * `legame_genitori_alunni` (gli account: `genitore_id` → `utenti.id`) — e
+ * l'anteprima deve dire quanti genitori perdono il legame, non quante righe.
+ * I due spazi di id si incontrano su `parents.auth_user_id`, che è l'id
+ * dell'account: un genitore con l'account conta una volta, chi ha solo la
+ * scheda anagrafica o solo l'account conta per sé.
+ * `null` = una lettura non è riuscita: la misura diventa `ok: false`.
+ */
+async function genitoriDistinti(supabase: SupabaseClient, alunnoId: string, op: string): Promise<number | null> {
+  const anagrafica = await supabase.from('student_parents').select('parent_id').eq('student_id', alunnoId)
+  if (anagrafica.error) {
+    logErrore({ operazione: op, evento: 'elimina_conta_student_parents' }, anagrafica.error)
+    return null
+  }
+  const account = await supabase.from('legame_genitori_alunni').select('genitore_id').eq('alunno_id', alunnoId)
+  if (account.error) {
+    logErrore({ operazione: op, evento: 'elimina_conta_legame_genitori_alunni' }, account.error)
+    return null
+  }
+  const idParents = [
+    ...new Set(
+      ((anagrafica.data ?? []) as { parent_id?: unknown }[])
+        .map((r) => r.parent_id)
+        .filter((v): v is string => typeof v === 'string'),
+    ),
+  ]
+  const persone = new Set<string>()
+  if (idParents.length > 0) {
+    const schede = await supabase.from('parents').select('id, auth_user_id').in('id', idParents)
+    if (schede.error) {
+      logErrore({ operazione: op, evento: 'elimina_conta_parents' }, schede.error)
+      return null
+    }
+    const accountDi = new Map(
+      ((schede.data ?? []) as { id?: unknown; auth_user_id?: unknown }[])
+        .filter((r): r is { id: string; auth_user_id?: unknown } => typeof r.id === 'string')
+        .map((r) => [r.id, typeof r.auth_user_id === 'string' ? r.auth_user_id : null] as const),
+    )
+    for (const id of idParents) persone.add(accountDi.get(id) ?? `scheda:${id}`)
+  }
+  for (const r of (account.data ?? []) as { genitore_id?: unknown }[]) {
+    if (typeof r.genitore_id === 'string') persone.add(r.genitore_id)
+  }
+  return persone.size
 }
 
 /**
@@ -307,8 +382,12 @@ type RigaDoppione = {
 async function cfCondivisoConFrequentante(
   supabase: SupabaseClient,
   alunnoId: string,
+  sediOperatore: readonly string[],
   op: string,
 ): Promise<boolean | null> {
+  // Nessuna sede: nessun confronto possibile. E niente `in` con lista vuota, che
+  // su PostgREST è un filtro che non filtra.
+  if (sediOperatore.length === 0) return false
   const { data: scheda, error } = await supabase
     .from('alunni')
     .select('codice_fiscale, fiscal_code')
@@ -337,7 +416,8 @@ async function cfCondivisoConFrequentante(
     for (const colonna of ['codice_fiscale', 'fiscal_code'] as const) {
       const { data, error: altriErr } = await supabase
         .from('alunni')
-        .select('id, codice_fiscale, fiscal_code, stato, anonimizzato_il')
+        .select('id, codice_fiscale, fiscal_code, stato, section_id, anonimizzato_il')
+        .in('scuola_id', [...sediOperatore])
         .is('anonimizzato_il', null)
         .ilike(colonna, `%${cf}%`)
       if (altriErr) {
@@ -348,6 +428,9 @@ async function cfCondivisoConFrequentante(
         (r) =>
           r.id !== alunnoId &&
           r.anonimizzato_il == null &&
+          // «Frequenta» come nella linguetta Alunni: una sezione E uno stato non
+          // ritirato. Due schede senza sezione sono due «non iscritti».
+          r.section_id != null &&
           eAncoraIscritto(typeof r.stato === 'string' ? r.stato : null) &&
           (normalizzaCodiceFiscale(r.codice_fiscale) === cf || normalizzaCodiceFiscale(r.fiscal_code) === cf),
       )

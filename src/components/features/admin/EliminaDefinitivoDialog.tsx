@@ -61,7 +61,12 @@ export interface EliminaDefinitivoDialogProps {
     alunno: AlunnoDaEliminare | null;
     onChiudi: () => void;
     /** Chiamata a operazione riuscita, con la frase da mostrare nell'elenco. */
-    onEliminato: (esito: string) => void;
+    /**
+     * Chiamata a operazione ESEGUITA, con la frase per l'elenco e il suo tipo:
+     * `avviso` quando il lavoro è fatto ma non tutto (anonimizzazione parziale,
+     * esito dedotto) — non va mostrato come un successo pieno.
+     */
+    onEliminato: (esito: string, tipo: TipoEsito) => void;
 }
 
 interface Anteprima {
@@ -81,9 +86,18 @@ type EsitoAnteprima = { ok: true; anteprima: Anteprima } | { ok: false; errore: 
  * Del corpo di un 200 d'esecuzione la finestra legge solo questi campi: sono
  * quelli che cambiano la FRASE. `unknown` perché arrivano da fuori.
  */
+/** `ok` = fatto per intero; `avviso` = fatto, ma con qualcosa che va guardato. */
+export type TipoEsito = 'ok' | 'avviso';
+
 interface CorpoEsecuzione {
     /** `anonimizza`: qualcosa è rimasto (file, archivi, scheda, chiavi condivise). */
     parziale?: unknown;
+    /**
+     * `anonimizza`: `numeri.scheda_anonimizzata`. Vero = la scheda è già uscita
+     * dagli elenchi (`anonimizzaAlunno` scrive per PRIMO `anonimizzato_il`) e un
+     * secondo tentativo sarebbe rifiutato; falso = è ancora lì, e si riprova.
+     */
+    numeri?: { scheda_anonimizzata?: unknown } | null;
     /** `elimina`: la RPC ha risposto errore ma la scheda non c'è più — esito dedotto. */
     incerto?: unknown;
     /** Chiavi (codice fiscale, documento) lasciate fuori perché condivise con un doppione. */
@@ -94,10 +108,12 @@ interface CorpoEsecuzione {
  * `corpo: null` = 200 con un corpo illeggibile: il lavoro sul server è fatto, si
  * dice con la frase standard e lo si registra. `effettiAvvenuti` = il rifiuto è
  * arrivato DOPO che foto, documenti o notifiche erano già usciti.
+ * `esitoSconosciuto` = il server non sa se la scheda è stata eliminata: allora
+ * non si può dire «la scheda è intatta».
  */
 type EsitoEsecuzione =
     | { ok: true; corpo: CorpoEsecuzione | null }
-    | { ok: false; errore: string; effettiAvvenuti: boolean };
+    | { ok: false; errore: string; effettiAvvenuti: boolean; esitoSconosciuto: boolean };
 
 type Fase = 'misura' | 'pronta' | 'misura-fallita' | 'esecuzione';
 
@@ -175,7 +191,7 @@ function effettiGiaAvvenuti(corpo: unknown): boolean {
 /** L'esecuzione. Il corpo si legge UNA volta: serve sia al messaggio sia agli effetti. */
 async function eseguiEliminazione(alunnoId: string, scelta: SceltaEliminazione): Promise<EsitoEsecuzione> {
     const res = await chiama({ alunno_id: alunnoId, mode: 'execute', scelta }, 'elimina-esecuzione-non-arrivata');
-    if (res === null) return { ok: false, errore: '', effettiAvvenuti: false };
+    if (res === null) return { ok: false, errore: '', effettiAvvenuti: false, esitoSconosciuto: false };
     let motivo = 'forma';
     const corpo: unknown = await res.json().catch((e: unknown) => {
         motivo = nomeErrore(e);
@@ -183,7 +199,12 @@ async function eseguiEliminazione(alunnoId: string, scelta: SceltaEliminazione):
     });
     if (!res.ok) {
         logClient({ livello: 'error', evento: 'fetch', messaggio: 'elimina-esecuzione-rifiutata', route: '/admin/students', stato: res.status });
-        return { ok: false, errore: messaggioDaCorpo(corpo, ''), effettiAvvenuti: effettiGiaAvvenuti(corpo) };
+        return {
+            ok: false,
+            errore: messaggioDaCorpo(corpo, ''),
+            effettiAvvenuti: effettiGiaAvvenuti(corpo),
+            esitoSconosciuto: (corpo as { codice?: unknown } | null)?.codice === 'ALUNNO_ELIMINAZIONE_ESITO_SCONOSCIUTO',
+        };
     }
     if (corpo === null || typeof corpo !== 'object') {
         // Un 200 è un lavoro FATTO: non si fa ripremere un comando che ripeterebbe
@@ -211,6 +232,8 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
     const [erroreEsecuzione, setErroreEsecuzione] = useState<string | null>(null);
     /** Il rifiuto è arrivato DOPO che foto, documenti o notifiche erano già usciti. */
     const [effettiAvvenuti, setEffettiAvvenuti] = useState(false);
+    /** Il server non sa se la scheda è stata eliminata: niente «la scheda è intatta». */
+    const [esitoSconosciuto, setEsitoSconosciuto] = useState(false);
     /** La scelta in volo: è il SUO bottone a dire «Un momento…». */
     const [inCorso, setInCorso] = useState<SceltaEliminazione | null>(null);
     /** Ogni incremento rifà la misura: «Riprova», e dopo un'esecuzione fallita. */
@@ -264,10 +287,12 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
         setFase('esecuzione');
         setErroreEsecuzione(null);
         setEffettiAvvenuti(false);
+        setEsitoSconosciuto(false);
         void eseguiEliminazione(alunnoId, scelta).then((esito) => {
             inVolo.current = false;
             if (esito.ok) {
-                onEliminato(fraseEsito(scelta, esito.corpo));
+                const { testo, tipo } = fraseEsito(scelta, esito.corpo);
+                onEliminato(testo, tipo);
                 onChiudi();
                 return;
             }
@@ -276,26 +301,34 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
             setInCorso(null);
             setErroreEsecuzione(esito.errore);
             setEffettiAvvenuti(esito.effettiAvvenuti);
+            setEsitoSconosciuto(esito.esitoSconosciuto);
             rimisura();
         });
     };
 
     /**
-     * La frase per l'elenco, dal CORPO del 200: «anonimizzati» solo se lo sono
-     * tutti, «eliminata» detto incerto se l'esito è stato dedotto. Un corpo
-     * illeggibile (`null`) dà la frase standard: il log l'ha già registrato.
+     * La frase per l'elenco, e il suo tipo, dal CORPO del 200: «anonimizzati» solo
+     * se lo sono tutti, «eliminata» detto incerto se l'esito è stato dedotto. Un
+     * corpo illeggibile (`null`) dà la frase standard: il log l'ha già registrato.
+     *
+     * ⚠️ «Riprova» solo quando la scheda NON risulta anonimizzata: altrimenti è
+     * già uscita dagli elenchi, la route la rifiuterebbe, e il resto va
+     * all'assistenza. Senza il numero si sceglie la frase che non promette.
      */
-    const fraseEsito = (scelta: SceltaEliminazione, corpo: CorpoEsecuzione | null): string => {
+    const fraseEsito = (scelta: SceltaEliminazione, corpo: CorpoEsecuzione | null): { testo: string; tipo: TipoEsito } => {
         if (scelta === 'anonimizza') {
-            if (corpo?.parziale !== true) return t('elmEsitoAnonimizzato', { nome: nominativo });
+            if (corpo?.parziale !== true) return { testo: t('elmEsitoAnonimizzato', { nome: nominativo }), tipo: 'ok' };
+            const base =
+                corpo.numeri?.scheda_anonimizzata === false
+                    ? t('elmEsitoAnonimizzazioneDaRiprovare', { nome: nominativo })
+                    : t('elmEsitoAnonimizzatoParziale', { nome: nominativo });
             const chiavi = corpo.chiavi_condivise_escluse;
-            return typeof chiavi === 'number' && chiavi > 0
-                ? `${t('elmEsitoAnonimizzatoParziale', { nome: nominativo })} ${t('elmParzialeChiaveCondivisa')}`
-                : t('elmEsitoAnonimizzatoParziale', { nome: nominativo });
+            const testo = typeof chiavi === 'number' && chiavi > 0 ? `${base} ${t('elmParzialeChiaveCondivisa')}` : base;
+            return { testo, tipo: 'avviso' };
         }
         return corpo?.incerto === true
-            ? t('elmEsitoEliminatoIncerto', { nome: nominativo })
-            : t('elmEsitoEliminato', { nome: nominativo });
+            ? { testo: t('elmEsitoEliminatoIncerto', { nome: nominativo }), tipo: 'avviso' }
+            : { testo: t('elmEsitoEliminato', { nome: nominativo }), tipo: 'ok' };
     };
 
     const c = anteprima?.conteggi;
@@ -320,7 +353,10 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
 
     const motivo = anteprima?.motivo ?? null;
     const registro = motivo === 'REGISTRO_PRIMARIA_DA_CONSERVARE';
-    const pagamentiBloccati = motivo === 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI';
+    // Anche i pagamenti bloccati si dicono dal CONTEGGIO: con «prima ritira il
+    // bambino» il motivo è quello, ma il blocco dei pagamenti resta vero.
+    const pagamentiBloccati = c !== undefined && c.pagamenti_bloccati > 0 && !registro;
+    const archiviaPrima = motivo === 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA';
     // Le foto non rimovibili si dicono dal CONTEGGIO, non dal motivo: con un
     // pagamento bloccato il motivo è quello, ma le foto restano lo stesso e
     // l'anonimizzazione non le toglierà. Col registro non c'è niente da fare.
@@ -406,6 +442,11 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
                             {t('elmBloccoFoto', { n: c.foto_non_rimovibili })}
                         </p>
                     )}
+                    {archiviaPrima && (
+                        <p className="mb-3 rounded-input bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn-strong">
+                            {t('elmBloccoArchiviaPrima')}
+                        </p>
+                    )}
                     {scelte.anonimizza && <p className="mb-3 font-maven text-[13px] text-kidville-sub">{t('elmSpiegaAnonimizza')}</p>}
                     {qualcheScelta && (
                         <p className="mb-3 font-maven text-[13px] font-semibold text-kidville-error-strong">{t('elmIrreversibile')}</p>
@@ -423,7 +464,13 @@ function Finestra({ alunno, onChiudi, onEliminato }: { alunno: AlunnoDaEliminare
                     <p>{erroreEsecuzione || t('elmErrore')}</p>
                     {/* Il rifiuto non dice «niente è cambiato» se qualcosa era già
                         uscito: tracce e file non tornano indietro. */}
-                    {effettiAvvenuti && <p className="mt-1 font-semibold">{t('elmEffettiGiaAvvenuti')}</p>}
+                    {effettiAvvenuti && (
+                        <p className="mt-1 font-semibold">
+                            {/* Con l'esito sconosciuto non si sa se la scheda c'è ancora:
+                                «la scheda è intatta» potrebbe essere falso. */}
+                            {esitoSconosciuto ? t('elmEffettiTolti') : t('elmEffettiGiaAvvenuti')}
+                        </p>
+                    )}
                 </div>
             )}
 

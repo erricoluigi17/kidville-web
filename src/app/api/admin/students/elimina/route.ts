@@ -127,8 +127,14 @@ function rispostaAlRifiutoDelDb(code: string | undefined, effettiGiaAvvenuti: Ef
         { error: 'Alunno non trovato', codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO', effetti },
         { status: 404 },
       )
-    case 'frequentante':
     case 'gia_anonimizzato':
+      // Una scheda anonimizzata è uscita da ogni elenco: «questo frequenta ancora»
+      // sarebbe falso. La cosa da fare è ricaricare.
+      return NextResponse.json(
+        { error: 'Alunno non trovato', codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO', effetti },
+        { status: 404 },
+      )
+    case 'frequentante':
       return NextResponse.json(
         {
           error: 'Si elimina solo un bambino ritirato o senza sezione',
@@ -187,6 +193,11 @@ function rispostaSceltaNonDisponibile(motivo: MotivoBloccoEliminazione | null): 
         { error: 'Foto non rimovibili', codice: 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI' },
         { status: 409 },
       )
+    case 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA':
+      return NextResponse.json(
+        { error: 'Prima ritira il bambino', codice: 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA' },
+        { status: 409 },
+      )
     default:
       return NextResponse.json(
         { error: 'Scelta non disponibile', codice: 'ALUNNO_ELIMINAZIONE_SCELTA_NON_DISPONIBILE' },
@@ -198,25 +209,14 @@ function rispostaSceltaNonDisponibile(motivo: MotivoBloccoEliminazione | null): 
 /**
  * Le chiavi che `anonimizzaAlunno` NON ha toccato perché le condivide con un
  * altro bambino (il doppione con lo stesso codice fiscale o lo stesso documento
- * del bambino vero). Il campo arriva con una correzione parallela di
- * `anonimizzaAlunno`: qui si legge come FACOLTATIVO, così il codice compila
- * prima e dopo.
+ * del bambino vero), come le scrive la traccia.
  *
  * I nomi in uscita NON sono `codice_fiscale` e `documento`: `riduciValoreAudit`
  * riduce quelle chiavi a `[non registrato]` a qualunque profondità, e la traccia
- * perderebbe proprio l'informazione. E il valore si riduce a numero o booleano:
- * un codice fiscale scritto per errore in quel campo non deve finire in un registro.
+ * perderebbe proprio l'informazione.
  */
-function chiaviCondiviseDellEsito(esito: unknown): Record<string, number | boolean> | null {
-  const grezzo = (esito as { chiaviCondiviseEscluse?: unknown } | null)?.chiaviCondiviseEscluse
-  if (!grezzo || typeof grezzo !== 'object') return null
-  const semplice = (v: unknown): number | boolean =>
-    typeof v === 'number' || typeof v === 'boolean' ? v : v != null
-  const c = grezzo as { codiceFiscale?: unknown; documento?: unknown }
-  return {
-    codice_fiscale_escluso: semplice(c.codiceFiscale),
-    documento_escluso: semplice(c.documento),
-  }
+function chiaviCondiviseDellEsito(c: { codiceFiscale: number; documento: number }): Record<string, number> {
+  return { codice_fiscale_escluso: c.codiceFiscale, documento_escluso: c.documento }
 }
 
 export const POST = withRoute('admin/students/elimina:POST', async (request: Request) => {
@@ -273,18 +273,32 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
       )
     }
 
+    // Una scheda già anonimizzata è uscita da ogni elenco: la si tratta come
+    // «non più in elenco» (ricarica), non come «frequenta ancora», che è falso.
+    if (alunno.anonimizzato_il != null) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-rifiutata-gia-anonimizzato',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: 'anonimizzato',
+      })
+      return NextResponse.json(
+        { error: 'Alunno non trovato', codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
+        { status: 404 },
+      )
+    }
+
     // Solo dai «non iscritti»: ritirato (elenco chiuso) oppure senza sezione.
-    const giaAnonimizzato = alunno.anonimizzato_il != null
-    const nonIscritto = eNonPiuIscritto(alunno.stato as string | null) || alunno.section_id == null
-    if (giaAnonimizzato || !nonIscritto) {
+    const ritirato = eNonPiuIscritto(alunno.stato as string | null)
+    const nonIscritto = ritirato || alunno.section_id == null
+    if (!nonIscritto) {
       logEvento('gdpr', 'warn', {
         operazione: OP,
         esito: 'eliminazione-rifiutata-frequentante',
         entita_tipo: 'alunni',
         entita_id: alunno_id,
-        // Una scheda anonimizzata è rifiutata per QUELLO, non per il suo stato:
-        // scrivere lo stato qui farebbe leggere «ritirato» a chi cerca il perché.
-        tipo: giaAnonimizzato ? 'anonimizzato' : ((alunno.stato as string | null) ?? 'assente'),
+        tipo: (alunno.stato as string | null) ?? 'assente',
       })
       return NextResponse.json(
         { error: 'Si elimina solo un bambino ritirato o senza sezione', codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
@@ -292,14 +306,17 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
       )
     }
 
-    const misura = await contaPerEliminazione(supabase, alunno_id, OP)
+    // Le sedi dell'operatore: l'avviso doppione non guarda fuori di lì.
+    const misura = await contaPerEliminazione(supabase, alunno_id, OP, plessi)
     if (!misura.ok) {
       return NextResponse.json(
         { error: 'Misura non riuscita', codice: 'ALUNNO_ELIMINAZIONE_NON_MISURATA' },
         { status: 500 },
       )
     }
-    const { scelte, motivo } = scelteDisponibili(misura.conteggi)
+    // «Anonimizza» solo per un RITIRATO: un iscritto senza sezione frequenta
+    // ancora, e anonimizzarlo lascerebbe un bambino a scuola senza nome.
+    const { scelte, motivo } = scelteDisponibili(misura.conteggi, ritirato)
 
     if (mode === 'dryrun') {
       return NextResponse.json({ dryrun: true, conteggi: misura.conteggi, scelte, motivo })
@@ -314,7 +331,13 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
         entita_id: alunno_id,
         tipo: motivo ?? sceltaFatta,
       })
-      return rispostaSceltaNonDisponibile(motivo)
+      // «Anonimizza» chiesta per un iscritto senza sezione: il motivo è QUELLO,
+      // anche quando l'anteprima ne dice un altro per le altre scelte (pagamenti).
+      return rispostaSceltaNonDisponibile(
+        sceltaFatta === 'anonimizza' && !ritirato && motivo !== 'REGISTRO_PRIMARIA_DA_CONSERVARE'
+          ? 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA'
+          : motivo,
+      )
     }
 
     // ─── ANONIMIZZA: la stessa funzione dell'oblio, sul solo bambino ───────
@@ -380,7 +403,7 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
       const nChiaviCondivise = contaChiaviCondivise([esito])
       const parziale =
         esito.fileNonRimossi > 0 || esito.lettureFallite > 0 || !schedaAnonimizzata || nChiaviCondivise > 0
-      const chiaviCondivise = chiaviCondiviseDellEsito(esito)
+      const chiaviCondivise = chiaviCondiviseDellEsito(esito.chiaviCondiviseEscluse)
 
       await logScrittura(supabase, {
         attore: auth.user,
@@ -394,13 +417,18 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
           pagamenti: misura.conteggi.pagamenti,
           parziale,
           ...numeri,
-          ...(chiaviCondivise ? { chiavi_condivise_escluse: chiaviCondivise } : {}),
+          chiavi_condivise_escluse: chiaviCondivise,
         },
       })
       if (parziale) {
         // Riga PERSISTITA a livello `error`: alla segreteria si è detto «fatto»
-        // solo se lo è. Qui si risponde 200 (la scheda resta e si può riprovare),
-        // ma con `parziale: true` e i numeri, mai come un successo pieno.
+        // solo se lo è. Si risponde 200 con `parziale: true` e i numeri, mai come
+        // un successo pieno. ⚠️ Non è detto che si possa riprovare:
+        // `anonimizzaAlunno` scrive per PRIMO `anonimizzato_il`, quindi con
+        // `scheda_anonimizzata: true` la scheda è già uscita dagli elenchi e un
+        // secondo tentativo verrebbe rifiutato — il resto va all'assistenza. Solo
+        // con `scheda_anonimizzata: false` la scheda è ancora lì e si riprova.
+        // È il campo che la finestra legge per scegliere la frase.
         logEvento('gdpr', 'error', {
           operazione: OP,
           esito: 'anonimizzazione-parziale',
@@ -555,8 +583,23 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
         .select('id')
         .eq('id', alunno_id)
         .maybeSingle()
-      if (ancoraErr || ancora) {
-        if (ancoraErr) logErrore({ operazione: OP, evento: 'elimina_rilettura_scheda' }, ancoraErr)
+      if (ancoraErr) {
+        // Non si sa se il commit è avvenuto: né «riuscita» né «non riuscita»
+        // (che direbbe «la scheda è intatta»). Lo si dice, con gli effetti.
+        logErrore({ operazione: OP, evento: 'elimina_rilettura_scheda' }, ancoraErr)
+        logEvento('gdpr', 'error', {
+          operazione: OP,
+          esito: 'eliminazione-esito-sconosciuto',
+          entita_tipo: 'alunni',
+          entita_id: alunno_id,
+          ...campiEffetti(effetti),
+        })
+        return NextResponse.json(
+          { error: 'Esito sconosciuto', codice: 'ALUNNO_ELIMINAZIONE_ESITO_SCONOSCIUTO', effetti },
+          { status: 500 },
+        )
+      }
+      if (ancora) {
         logEvento('gdpr', 'warn', {
           operazione: OP,
           esito: 'eliminazione-non-riuscita',

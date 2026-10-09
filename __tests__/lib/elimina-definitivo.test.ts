@@ -1,11 +1,14 @@
 // __tests__/lib/elimina-definitivo.test.ts
 import { describe, it, expect } from 'vitest'
 import { creaFintoSupabase, type DBFinto, type OpzioniFinto, type Riga } from '../fixtures/finto-supabase'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import { contaPerEliminazione, rimuoviFileAlunno, scelteDisponibili } from '@/lib/alunni/elimina-definitivo'
 
 const AL = '10000000-0000-4000-8000-000000000001'
 const FRATELLO = '10000000-0000-4000-8000-000000000002'
 const DOPPIONE = '10000000-0000-4000-8000-000000000003'
+/** Le sedi dell'operatore: la ricerca del doppione non esce di qui. */
+const SEDI = [SEDE_A]
 
 function db(extra: Partial<DBFinto> = {}): DBFinto {
   return {
@@ -33,71 +36,112 @@ function db(extra: Partial<DBFinto> = {}): DBFinto {
     chat_threads: [],
     chat_messages: [],
     enrollment_submissions: [],
+    legame_genitori_alunni: [],
     ...extra,
   }
 }
 
 describe('scelteDisponibili — la tabella delle decisioni del titolare', () => {
   it('nessun pagamento e nessun registro: solo «elimina»', () => {
-    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 0 })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 0 }, true)).toEqual({
       scelte: { elimina: true, elimina_con_pagamenti: false, anonimizza: false },
       motivo: null,
     })
   })
 
   it('pagamenti cancellabili: «cancella anche i pagamenti» oppure «anonimizza»', () => {
-    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 0 })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 0 }, true)).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: true, anonimizza: true },
       motivo: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI',
     })
   })
 
   it('un pagamento bloccato: resta solo «anonimizza»', () => {
-    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 1, registro_primaria: false, foto_non_rimovibili: 0 })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 1, registro_primaria: false, foto_non_rimovibili: 0 }, true)).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: true },
       motivo: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI',
     })
   })
 
   it('il registro della primaria vince su tutto: nessuna scelta, nemmeno anonimizzare', () => {
-    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: true, foto_non_rimovibili: 0 })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: true, foto_non_rimovibili: 0 }, true)).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
       motivo: 'REGISTRO_PRIMARIA_DA_CONSERVARE',
     })
   })
 
   it('foto non rimovibili: niente «elimina», che fallirebbe SEMPRE con file restanti', () => {
-    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 1 })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 1 }, true)).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
       motivo: 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI',
     })
   })
 
   it('foto non rimovibili e registro della primaria: vince il registro', () => {
-    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: true, foto_non_rimovibili: 3 })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: true, foto_non_rimovibili: 3 }, true)).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
       motivo: 'REGISTRO_PRIMARIA_DA_CONSERVARE',
     })
   })
 
   it('pagamenti cancellabili e foto non rimovibili: resta solo «anonimizza», che quelle foto le tollera', () => {
-    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 1 })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 1 }, true)).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: true },
       motivo: 'ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI',
     })
   })
 
   it('pagamenti bloccati e foto non rimovibili: il motivo è il blocco permanente, i pagamenti', () => {
-    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 1, registro_primaria: false, foto_non_rimovibili: 1 })).toEqual({
+    expect(scelteDisponibili({ pagamenti: 2, pagamenti_bloccati: 1, registro_primaria: false, foto_non_rimovibili: 1 }, true)).toEqual({
       scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: true },
       motivo: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI',
     })
   })
 })
 
+describe('scelteDisponibili — «anonimizza» solo per una scheda RITIRATA', () => {
+  // Un iscritto senza sezione non è uscito dalla scuola: anonimizzarlo lascerebbe
+  // un bambino che frequenta senza nome. Prima si ritira, poi si anonimizza.
+  const base = { pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false, foto_non_rimovibili: 0 }
+
+  it('iscritto senza sezione e pagamenti BLOCCATI: nessuna scelta, «prima ritira il bambino»', () => {
+    expect(scelteDisponibili({ ...base, pagamenti: 2, pagamenti_bloccati: 1 }, false)).toEqual({
+      scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
+      motivo: 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA',
+    })
+  })
+
+  it('iscritto senza sezione e pagamenti CANCELLABILI: resta «cancella anche i pagamenti», non «anonimizza»', () => {
+    expect(scelteDisponibili({ ...base, pagamenti: 2 }, false)).toEqual({
+      scelte: { elimina: false, elimina_con_pagamenti: true, anonimizza: false },
+      motivo: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI',
+    })
+  })
+
+  it('iscritto senza sezione, pagamenti cancellabili e foto non rimovibili: nessuna scelta, «prima ritira»', () => {
+    expect(scelteDisponibili({ ...base, pagamenti: 2, foto_non_rimovibili: 1 }, false)).toEqual({
+      scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: false },
+      motivo: 'ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA',
+    })
+  })
+
+  it('iscritto senza sezione e niente pagamenti: «elimina» come per un ritirato', () => {
+    expect(scelteDisponibili(base, false)).toEqual({
+      scelte: { elimina: true, elimina_con_pagamenti: false, anonimizza: false },
+      motivo: null,
+    })
+  })
+
+  it('col registro della primaria vince comunque il registro', () => {
+    expect(scelteDisponibili({ ...base, pagamenti: 2, pagamenti_bloccati: 1, registro_primaria: true }, false).motivo).toBe(
+      'REGISTRO_PRIMARIA_DA_CONSERVARE',
+    )
+  })
+})
+
 describe('contaPerEliminazione', () => {
   it('conta presenze, legami e pagamenti, e dice se il registro c’è', async () => {
-    const esito = await contaPerEliminazione(creaFintoSupabase(db()) as never, AL, 'test')
+    const esito = await contaPerEliminazione(creaFintoSupabase(db()) as never, AL, 'test', SEDI)
     expect(esito.ok).toBe(true)
     if (!esito.ok) return
     expect(esito.conteggi).toMatchObject({
@@ -120,7 +164,7 @@ describe('contaPerEliminazione', () => {
         incassi: [{ id: 'inc-1', pagamento_id: 'pag-1' }],
       }),
     )
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok && esito.conteggi).toMatchObject({ pagamenti: 2, pagamenti_bloccati: 1 })
   })
 
@@ -133,19 +177,19 @@ describe('contaPerEliminazione', () => {
         ],
       }),
     )
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok && esito.conteggi).toMatchObject({ pagamenti: 1, pagamenti_bloccati: 1 })
   })
 
   it('una ricevuta senza pagamento conta come contabilità bloccata', async () => {
     const supabase = creaFintoSupabase(db({ ricevute_emesse: [{ id: 'r-1', alunno_id: AL, pagamento_id: null }] }))
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok && esito.conteggi).toMatchObject({ pagamenti_bloccati: 1 })
   })
 
   it('una lettura fallita non diventa uno zero: ok=false', async () => {
     const supabase = creaFintoSupabase(db(), [], { errori: { presenze: { code: '57014', message: 'timeout' } } })
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok).toBe(false)
   })
 
@@ -161,7 +205,7 @@ describe('contaPerEliminazione', () => {
           ? { select: () => ({ eq: async () => ({ data: null, error: null, count: null }) }) }
           : vero.from(t),
     }
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok).toBe(false)
   })
 })
@@ -169,72 +213,98 @@ describe('contaPerEliminazione', () => {
 describe('contaPerEliminazione — l’avviso doppione (stesso codice fiscale di un bambino che frequenta)', () => {
   // Un valore finto, alfanumerico come un codice vero: il repository è pubblico.
   const CF = 'CFDIPROVA0000001'
+  /** «Frequenta» come nella linguetta Alunni: una sezione, uno stato non ritirato, non anonimizzato. */
+  const FREQUENTANTE = { stato: 'iscritto', section_id: 's-1', scuola_id: SEDE_A, anonimizzato_il: null }
   const conDoppione = (altro: Riga): DBFinto =>
     db({
       alunni: [
         // Scritto come lo restituisce `character(16)` e come lo digita una famiglia: spazi e minuscole.
-        { id: AL, stato: 'ritirato', section_id: null, codice_fiscale: ` ${CF.toLowerCase()} `, fiscal_code: null, anonimizzato_il: null },
-        altro,
+        { id: AL, stato: 'ritirato', section_id: null, scuola_id: SEDE_A, codice_fiscale: ` ${CF.toLowerCase()} `, fiscal_code: null, anonimizzato_il: null },
+        { id: DOPPIONE, codice_fiscale: null, fiscal_code: null, ...altro },
       ],
     })
+  const avviso = async (dati: DBFinto, sedi: string[] = SEDI) => {
+    const esito = await contaPerEliminazione(creaFintoSupabase(dati) as never, AL, 'test', sedi)
+    expect(esito.ok).toBe(true)
+    return esito.ok && esito.conteggi.cf_condiviso_con_frequentante
+  }
 
   it('l’altra scheda FREQUENTA (stesso codice in fiscal_code): vero', async () => {
-    const esito = await contaPerEliminazione(
-      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: 'iscritto', section_id: 's-1', codice_fiscale: null, fiscal_code: CF, anonimizzato_il: null })) as never,
-      AL,
-      'test',
-    )
-    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(true)
+    expect(await avviso(conDoppione({ ...FREQUENTANTE, fiscal_code: CF }))).toBe(true)
   })
 
   it('stato vuoto vale «iscritto» (è il default della colonna): vero', async () => {
-    const esito = await contaPerEliminazione(
-      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: null, section_id: 's-1', codice_fiscale: CF, fiscal_code: null, anonimizzato_il: null })) as never,
-      AL,
-      'test',
-    )
-    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(true)
+    expect(await avviso(conDoppione({ ...FREQUENTANTE, stato: null, codice_fiscale: CF }))).toBe(true)
   })
 
   it('nessun’altra scheda con quel codice: falso', async () => {
-    const esito = await contaPerEliminazione(
-      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: 'iscritto', section_id: 's-1', codice_fiscale: 'ALTROCODICE00001', fiscal_code: null, anonimizzato_il: null })) as never,
-      AL,
-      'test',
-    )
-    expect(esito.ok).toBe(true)
-    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(false)
+    expect(await avviso(conDoppione({ ...FREQUENTANTE, codice_fiscale: 'ALTROCODICE00001' }))).toBe(false)
   })
 
   it('l’altra scheda è RITIRATA: non frequenta, falso', async () => {
-    const esito = await contaPerEliminazione(
-      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: 'ritirato', section_id: null, codice_fiscale: CF, fiscal_code: null, anonimizzato_il: null })) as never,
-      AL,
-      'test',
-    )
-    expect(esito.ok).toBe(true)
-    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(false)
+    expect(await avviso(conDoppione({ ...FREQUENTANTE, stato: 'ritirato', codice_fiscale: CF }))).toBe(false)
+  })
+
+  it('l’altra scheda è iscritta ma SENZA sezione: non è nell’elenco Alunni, falso', async () => {
+    // Due schede senza sezione con lo stesso codice sono due «non iscritti»:
+    // nessuna delle due porta presenze e diario del bambino che frequenta.
+    expect(await avviso(conDoppione({ ...FREQUENTANTE, section_id: null, codice_fiscale: CF }))).toBe(false)
   })
 
   it('l’altra scheda è già ANONIMIZZATA: falso', async () => {
-    const esito = await contaPerEliminazione(
-      creaFintoSupabase(conDoppione({ id: DOPPIONE, stato: 'iscritto', section_id: 's-1', codice_fiscale: CF, fiscal_code: null, anonimizzato_il: '2026-10-01T00:00:00.000Z' })) as never,
-      AL,
-      'test',
-    )
-    expect(esito.ok && esito.conteggi.cf_condiviso_con_frequentante).toBe(false)
+    expect(await avviso(conDoppione({ ...FREQUENTANTE, anonimizzato_il: '2026-10-01T00:00:00.000Z', codice_fiscale: CF }))).toBe(false)
+  })
+
+  it('l’altra scheda è in una sede che l’operatore NON vede: falso (non si rivela niente fuori sede)', async () => {
+    expect(await avviso(conDoppione({ ...FREQUENTANTE, scuola_id: SEDE_B, codice_fiscale: CF }), [SEDE_A])).toBe(false)
+    // …e la stessa scheda, con quella sede fra le sue, lo è: il filtro è sulla sede, non altro.
+    expect(await avviso(conDoppione({ ...FREQUENTANTE, scuola_id: SEDE_B, codice_fiscale: CF }), [SEDE_A, SEDE_B])).toBe(true)
   })
 
   it.each([
     { caso: 'il codice della scheda', n: 1 },
     { caso: 'le altre schede con quel codice', n: 2 },
   ])('lettura fallita ($caso) → ok=false, mai un «no» falso', async ({ n }) => {
-    const supabase = guastoAllaLettura(
-      conDoppione({ id: DOPPIONE, stato: 'iscritto', section_id: 's-1', codice_fiscale: CF, fiscal_code: null, anonimizzato_il: null }),
-      'alunni',
-      n,
-    )
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const supabase = guastoAllaLettura(conDoppione({ ...FREQUENTANTE, codice_fiscale: CF }), 'alunni', n)
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
+    expect(esito.ok).toBe(false)
+  })
+})
+
+describe('contaPerEliminazione — i genitori collegati, DISTINTI, nelle due tabelle dei legami', () => {
+  // La funzione SQL cancella sia `student_parents` (anagrafica) sia
+  // `legame_genitori_alunni` (gli account): l'anteprima li conta tutti e due,
+  // una persona una volta sola. Il ponte fra i due spazi di id è
+  // `parents.auth_user_id`, che è l'id dell'account.
+  const P1 = 'p0000000-0000-4000-8000-000000000001'
+  const P2 = 'p0000000-0000-4000-8000-000000000002'
+  const U1 = 'u0000000-0000-4000-8000-000000000001'
+  const U3 = 'u0000000-0000-4000-8000-000000000003'
+
+  it('lo stesso genitore nelle due tabelle conta UNA volta; uno solo per parte conta in più', async () => {
+    const dati = db({
+      student_parents: [{ student_id: AL, parent_id: P1 }, { student_id: AL, parent_id: P2 }],
+      parents: [{ id: P1, auth_user_id: U1 }, { id: P2, auth_user_id: null }],
+      legame_genitori_alunni: [{ genitore_id: U1, alunno_id: AL }, { genitore_id: U3, alunno_id: AL }],
+    })
+    const esito = await contaPerEliminazione(creaFintoSupabase(dati) as never, AL, 'test', SEDI)
+    // P1 = U1 (una persona), P2 (solo anagrafica), U3 (solo account): tre.
+    expect(esito.ok && esito.conteggi.legami_genitori).toBe(3)
+  })
+
+  it('un legame SOLO fra gli account (nessuna riga in student_parents) non è uno zero', async () => {
+    const dati = db({ student_parents: [], legame_genitori_alunni: [{ genitore_id: U3, alunno_id: AL }] })
+    const esito = await contaPerEliminazione(creaFintoSupabase(dati) as never, AL, 'test', SEDI)
+    expect(esito.ok && esito.conteggi.legami_genitori).toBe(1)
+  })
+
+  it.each(['legame_genitori_alunni', 'parents'])('lettura fallita su %s → ok=false', async (tabella) => {
+    const dati = db({
+      student_parents: [{ student_id: AL, parent_id: P1 }],
+      parents: [{ id: P1, auth_user_id: U1 }],
+      legame_genitori_alunni: [{ genitore_id: U1, alunno_id: AL }],
+    })
+    const esito = await contaPerEliminazione(creaFintoSupabase(dati, [], { errori: { [tabella]: GUASTO } }) as never, AL, 'test', SEDI)
     expect(esito.ok).toBe(false)
   })
 })
@@ -290,22 +360,22 @@ describe('contaPerEliminazione — che cosa rende un pagamento contabilità vera
     { tabella: 'fatture_coda', riga: { id: 'q-1', pagamento_id: 'pag-1', stato: 'errore' } },
   ])('un pagamento con una riga in $tabella ($riga.stato) è bloccato', async ({ tabella, riga }) => {
     const supabase = creaFintoSupabase(db({ pagamenti: [PAG], [tabella]: [riga] }))
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok && esito.conteggi).toMatchObject({ pagamenti: 1, pagamenti_bloccati: 1 })
     if (!esito.ok) return
-    expect(scelteDisponibili(esito.conteggi).scelte.elimina_con_pagamenti).toBe(false)
+    expect(scelteDisponibili(esito.conteggi, true).scelte.elimina_con_pagamenti).toBe(false)
   })
 
   it('una voce di fatture_coda «tolta» è già fuori dalla coda: il pagamento NON è bloccato', async () => {
     const supabase = creaFintoSupabase(
       db({ pagamenti: [PAG], fatture_coda: [{ id: 'q-1', pagamento_id: 'pag-1', stato: 'tolta' }] }),
     )
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok && esito.conteggi).toMatchObject({ pagamenti: 1, pagamenti_bloccati: 0 })
   })
 
   it('i campi dell’oblio arrivano come numeri, mai null', async () => {
-    const esito = await contaPerEliminazione(creaFintoSupabase(db()) as never, AL, 'test')
+    const esito = await contaPerEliminazione(creaFintoSupabase(db()) as never, AL, 'test', SEDI)
     expect(esito.ok).toBe(true)
     if (!esito.ok) return
     for (const v of Object.values(esito.conteggi)) expect(v === null).toBe(false)
@@ -327,19 +397,19 @@ describe('contaPerEliminazione — una lettura fallita non diventa mai uno zero'
     { caso: 'la galleria (preventivo dell’oblio)', tabella: 'galleria_media_v2', extra: {} },
   ])('$caso ($tabella) → ok=false', async ({ tabella, extra }) => {
     const supabase = creaFintoSupabase(db(extra), [], { errori: { [tabella]: GUASTO } })
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok).toBe(false)
   })
 
   it('la lettura delle QUOTE di altri alunni (seconda lettura di pagamenti) → ok=false', async () => {
     const supabase = guastoAllaLettura(db({ pagamenti: [PAG] }), 'pagamenti', 2)
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok).toBe(false)
   })
 
   it('la lettura delle ricevute senza pagamento, CON un pagamento presente → ok=false', async () => {
     const supabase = guastoAllaLettura(db({ pagamenti: [PAG] }), 'ricevute_emesse', 2)
-    const esito = await contaPerEliminazione(supabase as never, AL, 'test')
+    const esito = await contaPerEliminazione(supabase as never, AL, 'test', SEDI)
     expect(esito.ok).toBe(false)
   })
 })

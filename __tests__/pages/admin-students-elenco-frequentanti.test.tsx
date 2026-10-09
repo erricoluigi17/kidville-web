@@ -112,7 +112,9 @@ describe('Anagrafica — la linguetta «Alunni» è l’elenco di chi frequenta'
     // Controllo POSITIVO prima: le tendine ci sono, e la sezione arrivata è offerta.
     await waitFor(() => expect(Array.from(tendinaClasse()?.options ?? []).map((o) => o.value)).toContain('SEZIONE PROVA'))
     const classi = Array.from(tendinaClasse().options)
-    expect(classi.map((o) => o.textContent)).not.toContain(itAdmin.filtroNonAssegnata)
+    // La voce «Non assegnata» non c'è più nemmeno nel catalogo (chiave tolta il
+    // 2026-10-09: nessuno la mostrava): si controlla il testo che aveva.
+    expect(classi.map((o) => o.textContent)).not.toContain('Non assegnata')
     expect(classi.map((o) => o.value)).not.toContain('')
 
     const stati = Array.from(tendinaStato().options).map((o) => o.value)

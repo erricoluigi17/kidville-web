@@ -826,6 +826,49 @@ describe('AlunniArchiviatiView — «Elimina definitivamente»', () => {
         const esito = await screen.findByRole('status')
         expect(esito.textContent).toContain('Verdi Mario')
         expect(esito.textContent).toContain('eliminata definitivamente')
+        expect(esito.className).toContain('bg-kidville-success-soft')
+    })
+
+    it('un’anonimizzazione PARZIALE non è un successo verde: è un avviso, e non promette un «riprova»', async () => {
+        // La scheda risulta anonimizzata ma un file è rimasto: è già uscita dagli
+        // elenchi, un secondo tentativo sarebbe rifiutato — va all'assistenza.
+        fetchMock.mockImplementation(async (_url: string, opzioni: { body: string }) => {
+            const corpo = JSON.parse(opzioni.body) as { mode: string }
+            return corpo.mode === 'dryrun'
+                ? {
+                      ok: true, status: 200, headers: new Headers(),
+                      json: async () => ({
+                          ...ANTEPRIMA_ELIMINA,
+                          conteggi: { ...ANTEPRIMA_ELIMINA.conteggi, pagamenti: 1, pagamenti_bloccati: 1 },
+                          scelte: { elimina: false, elimina_con_pagamenti: false, anonimizza: true },
+                          motivo: 'ALUNNO_ELIMINAZIONE_PAGAMENTI_BLOCCATI',
+                      }),
+                  }
+                : {
+                      ok: true, status: 200, headers: new Headers(),
+                      json: async () => ({
+                          ok: true, scelta: 'anonimizza', parziale: true, chiavi_condivise_escluse: 0,
+                          numeri: { file_non_rimossi: 1, letture_fallite: 0, scheda_anonimizzata: true },
+                      }),
+                  }
+        })
+        render(<AlunniArchiviatiView esito={esitoFinto({ righe: [MARIO], totale: 1 })} ruolo="segreteria" sezioni={[]} />)
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: itAdminStudents.arcAzioneElimina }))
+        })
+        const finestra = await screen.findByRole('dialog')
+        const anonimizza = await within(finestra).findByRole('button', { name: itAdminStudents.elmBtnAnonimizza })
+        await act(async () => {
+            fireEvent.click(anonimizza)
+        })
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+        const esito = await screen.findByRole('alert')
+        expect(esito.textContent).toContain('anonimizzazione PARZIALE')
+        expect(esito.textContent).toContain('Segnala all’assistenza')
+        expect(esito.textContent).not.toContain('Riprova')
+        expect(esito.className).toContain('bg-kidville-warn-soft')
+        expect(screen.queryByRole('status')).toBeNull()
     })
 })
 

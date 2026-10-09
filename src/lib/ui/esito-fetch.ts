@@ -1335,6 +1335,11 @@ export const CODICI_ERRORE = {
      */
     ALUNNO_ELIMINAZIONE_FOTO_NON_RIMOVIBILI: 'erroreAlunnoEliminazioneFotoNonRimovibili',
     /**
+     * 409 — «anonimizza» chiesta per un iscritto SENZA SEZIONE: frequenta ancora,
+     * e anonimizzarlo lascerebbe un bambino a scuola senza nome. Prima si ritira.
+     */
+    ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA: 'erroreAlunnoEliminazioneArchiviaPrima',
+    /**
      * 409 — il registro della primaria (voti, pagelle, scrutini, note, certificati delle
      * competenze) va conservato: né eliminazione né anonimizzazione. Lo usano
      * `admin/students/elimina:POST` e `admin/gdpr/erase:POST`: una regola, una frase.
@@ -1344,8 +1349,19 @@ export const CODICI_ERRORE = {
     ALUNNO_ELIMINAZIONE_NON_MISURATA: 'erroreAlunnoEliminazioneNonMisurata',
     /** 502 — alcuni file non sono usciti dall'archivio: la scheda resta intatta. */
     ALUNNO_ELIMINAZIONE_FILE_RESTANTI: 'erroreAlunnoEliminazioneFileRestanti',
-    /** 500 — guasto durante l'eliminazione: la transazione è annullata, la scheda è intatta. */
+    /**
+     * 500 — l'eliminazione non è avvenuta: la scheda è intatta. ⚠️ Può arrivare
+     * anche DOPO che tracce di testo e file sono già usciti (che non tornano): in
+     * quel caso il corpo porta `effetti`, e la frase lo dice («potrebbero essere già
+     * stati tolti: riprova per completare»).
+     */
     ALUNNO_ELIMINAZIONE_NON_RIUSCITA: 'erroreAlunnoEliminazioneNonRiuscita',
+    /**
+     * 500 — la funzione SQL ha risposto errore E la rilettura della scheda non è
+     * riuscita: non si sa se il commit è avvenuto. Né «riuscita» né «intatta»: si
+     * ricarica l'elenco prima di riprovare. Il corpo porta `effetti`.
+     */
+    ALUNNO_ELIMINAZIONE_ESITO_SCONOSCIUTO: 'erroreAlunnoEliminazioneEsitoSconosciuto',
     /** 503 — la funzione SQL non esiste su questo database (DB E2E non migrato). */
     ALUNNO_ELIMINAZIONE_NON_DISPONIBILE: 'erroreAlunnoEliminazioneNonDisponibile',
     /**

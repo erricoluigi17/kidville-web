@@ -487,6 +487,20 @@ const AMMESSE: Record<string, Esenzione> = {
       'riconoscimento dei doppioni all’import: una copia ARCHIVIATA è ancora legata a genitori e rette, ed è proprio il gemello da trovare — con un filtro di stato l’import creerebbe un terzo alunno accanto a due già esistenti',
   },
 
+  // L'AVVISO DOPPIONE dell'eliminazione definitiva (2026-10-09). Cerca UN codice
+  // fiscale nelle sedi dell'operatore per sapere se la scheda che si sta per
+  // eliminare è il doppione di un bambino che frequenta. Non mostra un elenco a
+  // nessuno: restituisce un booleano. Lo stato si decide in TS con la regola
+  // ESATTA della linguetta «Alunni» (`section_id` presente ed `eAncoraIscritto`),
+  // che include anche gli stati anomali; un `.in('stato', …)` a elenco chiuso li
+  // escluderebbe, e qui il verso prudente è l'opposto: un avviso in più costa un
+  // pensiero, uno in meno costa presenze e diario del bambino vero.
+  'src/lib/alunni/elimina-definitivo.ts::cfCondivisoConFrequentante': {
+    scoperte: 1,
+    ragione:
+      'avviso doppione prima di un’eliminazione: cerca un solo codice fiscale e risponde sì o no; «frequenta» si decide in TS come nella linguetta Alunni, stati anomali compresi, perché qui un avviso mancato è il danno',
+  },
+
   // ───────────────────────────────────────────────────────────────────────────
   // LETTURE PER SEZIONE — dal 2026-08-13 non più esenti per forma
   //

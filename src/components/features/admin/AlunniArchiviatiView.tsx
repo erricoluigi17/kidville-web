@@ -413,7 +413,8 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
     /** La sezione scelta nella tendina di ogni riga senza sezione: id alunno → nome classe. */
     const [classeScelta, setClasseScelta] = useState<Record<string, string>>({});
     /** L'esito dell'ultimo comando (ritorno, sezione, eliminazione): `null` = non è ancora stato fatto niente. */
-    const [messaggio, setMessaggio] = useState<{ tipo: 'ok' | 'errore'; testo: string } | null>(null);
+    /** `avviso` = fatto, ma non per intero (un'anonimizzazione parziale): non è un successo verde. */
+    const [messaggio, setMessaggio] = useState<{ tipo: 'ok' | 'avviso' | 'errore'; testo: string } | null>(null);
     /** Su quale riga è in volo la riattivazione: serve solo all'etichetta del comando. */
     const [inVolo, setInVolo] = useState<string | null>(null);
     /**
@@ -762,7 +763,9 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                         'mb-4 rounded-input px-3 py-2.5 font-maven text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-kidville-green',
                         messaggio.tipo === 'ok'
                             ? 'bg-kidville-success-soft text-kidville-success-strong'
-                            : 'bg-kidville-error-soft text-kidville-error-strong',
+                            : messaggio.tipo === 'avviso'
+                              ? 'bg-kidville-warn-soft text-kidville-warn-strong'
+                              : 'bg-kidville-error-soft text-kidville-error-strong',
                     )}
                 >
                     {messaggio.testo}
@@ -1071,8 +1074,10 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
             <EliminaDefinitivoDialog
                 alunno={daEliminare}
                 onChiudi={() => setDaEliminare(null)}
-                onEliminato={(testo) => {
-                    setMessaggio({ tipo: 'ok', testo });
+                onEliminato={(testo, tipo) => {
+                    // Un'anonimizzazione PARZIALE è fatta ma non finita: un avviso, non
+                    // un verde che direbbe «tutto a posto».
+                    setMessaggio({ tipo, testo });
                     esito.ricarica();
                 }}
             />

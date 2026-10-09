@@ -214,7 +214,7 @@
   "caus_es": "es.",
   "caus_help_post": ". Clicca un segnaposto per inserirlo nel campo selezionato.",
   "caus_help_pre": "Il modello della causale che il genitore copia nel bonifico. Personalizzabile per categoria; una riga lasciata vuota usa il ",
-  "caus_hint": "L’anteprima usa dati d’esempio; i dati reali del minore restano visibili solo al genitore.",
+  "caus_hint": "L’anteprima usa dati d’esempio; i dati reali del minore restano visibili solo al genitore. Accenti, apostrofi e simboli (# / - …) vengono tolti in automatico: alcune banche, come Poste, rifiutano le causali che li contengono.",
   "caus_msg_salvati": "Modelli di causale salvati",
   "caus_predefinito": "Predefinito",
   "caus_salva": "Salva",

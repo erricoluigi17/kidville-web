@@ -86,7 +86,9 @@ describe('CausaliPanel — modelli di causale per categoria + predefinito', () =
     // (l'esempio del chip vive in un `title`, non nel testo).
     expect(document.body.innerHTML).not.toMatch(/giugliano|aversa|cesa/i);
     // …e al suo posto c'è un segnaposto neutro, sia nell'anteprima sia nel chip.
-    expect(screen.getAllByText(/<SEDE>/).length).toBeGreaterThan(0);
+    // Nell'anteprima del bonifico esce come «SEDE»: la causale è ripulita per la banca
+    // (`causalePerBanca`), e i `< >` del segnaposto cadono come ogni altro simbolo.
+    expect(screen.getAllByText(/\bSEDE\b/).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /\{sede\}/ }).getAttribute('title')).toContain('<SEDE>');
   });
 
@@ -134,7 +136,8 @@ describe('CausaliPanel — l’anteprima dice quello che il documento dirà', ()
     // Controllo di sanità della MISURA, non del prodotto: con `ESEMPIO_CODICE` vuoto una
     // ricerca per «Retta Settembre 2026 ${ESEMPIO_CODICE}» sarebbe soddisfatta anche da
     // un'anteprima senza codice (il testo viene normalizzato e lo spazio in coda cade).
-    expect(ESEMPIO_CODICE).toMatch(/^#[A-Z0-9]{7}$/);
+    // Senza `#`: è la forma che esce nella causale del bonifico (Poste rifiuta il `#`).
+    expect(ESEMPIO_CODICE).toMatch(/^[A-Z0-9]{7}$/);
   });
 
   it('il chip {codice} c’è nell’editor del BONIFICO e NON in quello della FATTURA', async () => {
@@ -158,9 +161,10 @@ describe('CausaliPanel — l’anteprima dice quello che il documento dirà', ()
     // Stringa ESATTA: il codice è nel PRIMO segmento, attaccato alla descrizione, e mai
     // in coda — il campo causale dell'home banking si taglia da destra, e accodato il
     // codice sarebbe il primo pezzo a sparire proprio dalle causali più lunghe, cioè
-    // quelle delle famiglie con più voci aperte.
+    // quelle delle famiglie con più voci aperte. Il « - » del modello non arriva:
+    // l'anteprima è la causale ripulita per la banca, come la riceve il genitore.
     await waitFor(() => expect(
-      screen.getByText(`Retta Settembre 2026 ${ESEMPIO_CODICE} - Mario Rossi`),
+      screen.getByText(`Retta Settembre 2026 ${ESEMPIO_CODICE} Mario Rossi`),
     ).toBeInTheDocument());
   });
 

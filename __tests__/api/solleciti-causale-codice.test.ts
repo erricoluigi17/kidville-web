@@ -171,7 +171,7 @@ import { POST } from '@/app/api/pagamenti/solleciti/route'
 // Importato per legare l'asserzione all'ID della riga: se una delle due strade
 // ricavasse il codice da un altro campo, il `toContain` qui sotto diventa rosso.
 // I valori d'oro restano comunque trascritti a mano (vedi COD_1/COD_2).
-import { codiceVoce } from '@/lib/pagamenti/codice-voce'
+import { codiceVoce, estraiCodiciVoce } from '@/lib/pagamenti/codice-voce'
 
 // ─── La fixture: nessun dato reale (repo pubblico, dati di minori) ───────────
 /** CF SINTETICO: non appartiene a nessuna persona, e la checksum non torna apposta. */
@@ -191,6 +191,13 @@ const PID2 = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2'
  */
 const COD_1 = '#P228TKC'
 const COD_2 = '#C4V8626'
+/**
+ * Come i due codici escono nella causale del BONIFICO: senza il `#`, che Poste rifiuta
+ * (2026-10-09, v. `@/lib/pagamenti/causale-banca`). I valori d'oro qui sopra restano
+ * canonici: sono ciò che `codiceVoce` produce e che l'estrattore restituisce.
+ */
+const N_1 = COD_1.slice(1)
+const N_2 = COD_2.slice(1)
 
 const pagRetta = () => ({
   id: PID,
@@ -274,19 +281,21 @@ describe('Sollecito — il codice della voce arriva al genitore', () => {
     // codice all'id della riga sollecitata, la seconda inchioda il valore
     // letterale (rosso se cambia la mescola), la terza prova che la stessa
     // stringa esce dalle DUE stampe della stessa email.
-    expect(mail.corpo).toContain(codiceVoce(PID))
-    expect(mail.corpo).toContain(COD_1)
+    expect(estraiCodiciVoce(mail.corpo ?? '')).toEqual([codiceVoce(PID)])
+    expect(mail.corpo).toContain(N_1)
     expect(mail.riquadro).toBe(mail.corpo)
     // E che dal riquadro sia arrivata fino all'HTML davvero spedito: il taccuino
     // da solo proverebbe soltanto che il motore l'ha passata a qualcuno.
-    expect(mail.html).toContain(COD_1)
+    expect(mail.html).toContain(N_1)
+    // Il `#` non arriva più in nessuna delle due stampe: Poste lo rifiuta.
+    expect(mail.corpo).not.toContain('#')
   })
 
-  it('la causale del sollecito è quella storica, col codice in testa e mai in coda', async () => {
+  it('la causale del sollecito è quella di fabbrica, codice e CF in testa e mai in coda', async () => {
     const [mail] = await inviaSolleciti([PID])
-    // Il campo causale dell'home banking si taglia da DESTRA: in coda il codice
-    // sarebbe il primo pezzo a sparire, proprio nelle causali più lunghe.
-    expect(mail.corpo).toBe(`Retta Settembre 2026 ${COD_1} - per il minore Mara Bianchi - ${CF} - GIUGLIANO`)
+    // Il campo causale dell'home banking si taglia da DESTRA (alcune banche a 50
+    // caratteri): in coda il codice sarebbe il primo pezzo a sparire.
+    expect(mail.corpo).toBe(`Retta Settembre 2026 ${N_1} ${CF} Mara Bianchi GIUGLIANO`)
   })
 
   it('DUE voci sollecitate insieme → DUE codici diversi (contro la costante cablata)', async () => {
@@ -296,9 +305,9 @@ describe('Sollecito — il codice della voce arriva al genitore', () => {
     h.pagamenti = [pagRetta(), pagMensa()]
     const mail = await inviaSolleciti([PID, PID2])
     expect(mail).toHaveLength(2)
-    expect(mail[0].corpo).toContain(COD_1)
-    expect(mail[1].corpo).toContain(COD_2)
-    expect(mail[0].corpo).not.toContain(COD_2)
+    expect(mail[0].corpo).toContain(N_1)
+    expect(mail[1].corpo).toContain(N_2)
+    expect(mail[0].corpo).not.toContain(N_2)
     expect(COD_1).not.toBe(COD_2)
   })
 })
@@ -317,7 +326,7 @@ describe('Sollecito ed elenco pagamenti compongono la STESSA causale', () => {
     const [mail] = await inviaSolleciti([PID])
     expect(mail.corpo).toBe(app)
     expect(mail.riquadro).toBe(app)
-    expect(app).toContain(COD_1)
+    expect(app).toContain(N_1)
   })
 
   it('modello di sede SENZA {codice}: il codice ci finisce lo stesso, e nello stesso punto', async () => {
@@ -332,7 +341,7 @@ describe('Sollecito ed elenco pagamenti compongono la STESSA causale', () => {
     }
     const [app] = await causaliDellApp()
     const [mail] = await inviaSolleciti([PID])
-    expect(app).toBe(`Retta settembre 2026 ${COD_1} - Mara Bianchi - ${CF} - GIUGLIANO`)
+    expect(app).toBe(`Retta settembre 2026 ${N_1} Mara Bianchi ${CF} GIUGLIANO`)
     expect(mail.corpo).toBe(app)
     expect(mail.riquadro).toBe(app)
   })
@@ -347,10 +356,10 @@ describe('Sollecito ed elenco pagamenti compongono la STESSA causale', () => {
     }
     const [app] = await causaliDellApp()
     const [mail] = await inviaSolleciti([PID])
-    expect(app).toBe(`Retta Settembre 2026 - pagamento ${COD_1} - Mara Bianchi`)
+    expect(app).toBe(`Retta Settembre 2026 pagamento ${N_1} Mara Bianchi`)
     expect(mail.corpo).toBe(app)
-    expect(app.split(COD_1)).toHaveLength(2) // una sola occorrenza
-    expect((mail.corpo ?? '').split(COD_1)).toHaveLength(2)
+    expect(app.split(N_1)).toHaveLength(2) // una sola occorrenza
+    expect((mail.corpo ?? '').split(N_1)).toHaveLength(2)
   })
 
   it('DUE voci: ogni riga dell’app coincide col proprio sollecito, e le due non si scambiano', async () => {
@@ -408,8 +417,10 @@ describe('Voce «solo contanti» — nel sollecito niente causale, niente IBAN',
     const j = await res.json()
     expect(j.data[0].ok).toBe(true)
     const corpo = j.data[0].corpo as string
-    expect(corpo).not.toContain('#')
-    expect(corpo).not.toContain(COD_1)
+    // Nessun codice di nessuna voce, in nessuna forma: dal 2026-10-09 il codice esce
+    // senza `#`, quindi «niente `#`» sarebbe vero per costruzione e non proverebbe nulla.
+    expect(estraiCodiciVoce(corpo)).toEqual([])
+    expect(corpo).not.toContain(N_1)
     expect(corpo).not.toContain(CF)
     expect(corpo).toContain(FRASE)
     expect(h.sendEmailDetailed).not.toHaveBeenCalled()
@@ -421,8 +432,8 @@ describe('Voce «solo contanti» — nel sollecito niente causale, niente IBAN',
     expect(mail.riquadro).toBeNull()
     expect(mail.corpo).toBeNull()
     expect(mail.text).toContain(FRASE)
-    expect(mail.text).not.toContain(COD_1)
-    expect(mail.html).not.toContain(COD_1)
+    expect(mail.text).not.toContain(N_1)
+    expect(mail.html).not.toContain(N_1)
     expect(mail.html).not.toContain('IBAN')
     expect(mail.html).not.toContain('Dati per il bonifico')
     expect(mail.html).toContain(FRASE)
@@ -436,7 +447,7 @@ describe('Voce «solo contanti» — nel sollecito niente causale, niente IBAN',
     expect(mail).toHaveLength(2)
     expect(mail[0].corpo).toBeNull()
     expect(mail[0].html).not.toContain('IBAN')
-    expect(mail[1].corpo).toContain(COD_2)
+    expect(mail[1].corpo).toContain(N_2)
     expect(mail[1].riquadro).toBe(mail[1].corpo)
     // Il controllo che l'IBAN della sede arriva davvero: senza, l'assenza qui sopra
     // non proverebbe niente.
@@ -447,7 +458,7 @@ describe('Voce «solo contanti» — nel sollecito niente causale, niente IBAN',
   it('colonna `metodi_ammessi` assente (DB E2E non migrato): un gradino giù, un warn, il bonifico resta', async () => {
     h.colonneAssenti = ['metodi_ammessi']
     const [mail] = await inviaSolleciti([PID])
-    expect(mail.corpo).toContain(COD_1)
+    expect(mail.corpo).toContain(N_1)
     expect(mail.riquadro).toBe(mail.corpo)
     expect(gradini()).toHaveLength(1)
   })
@@ -455,7 +466,7 @@ describe('Voce «solo contanti» — nel sollecito niente causale, niente IBAN',
   it('assenti anche `sconto`: due gradini, due warn, e il sollecito parte lo stesso', async () => {
     h.colonneAssenti = ['metodi_ammessi', 'sconto']
     const [mail] = await inviaSolleciti([PID])
-    expect(mail.corpo).toContain(COD_1)
+    expect(mail.corpo).toContain(N_1)
     expect(gradini()).toHaveLength(2)
   })
 })

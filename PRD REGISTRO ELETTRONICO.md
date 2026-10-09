@@ -1,6 +1,47 @@
+## 🏦 Changelog — La causale del bonifico passa in tutte le banche: niente `#`, niente `/`, niente apostrofi; codice della voce e codice fiscale in testa — 2026-10-09 (branch `fix/causale-bonifico-banche`)
+
+**Stato.** 🟡 **In rilascio.** (Questa riga si aggiorna con merge e deploy.)
+
+**Il caso.** Un genitore non riusciva a fare il bonifico da Poste: la causale copiata dall'app portava il **cancelletto** del codice della voce (`Retta 10/2026 #K7MXN3P - per il minore …`). Il titolare ha confermato che è il `#` a dare errore — ma Poste rifiuta anche la `/` e gli apostrofi, quindi il cancelletto era solo il primo carattere a farsi notare.
+
+**La ricerca.**
+
+| Fonte | Esito |
+|---|---|
+| EPC, schema SEPA SCT (set latino di base) | lettere, cifre, spazio e `/ - ? : ( ) . , ' +`: **`#` e `*` sono fuori**, e ogni banca può restringere |
+| BancoPosta | rifiuta `" # $ % & ' / : ? \ ^ _ \| £ § ° € À Ç È É Ì Ò Ù` |
+| Fineco | elenca come ammessi solo `A-Z a-z 0-9 / ? '` |
+| AgID, avviso SPID n. 32 (14/10/2020) | SEPA dice 140 caratteri, ma alcune banche **tagliano a 50** |
+
+L'intersezione è una sola: **lettere, cifre e spazi**, al massimo 140 caratteri, con ciò che serve all'abbinamento nei primi 50.
+
+**Le misure (produzione, 2026-10-09, solo conteggi — rifarle, non copiarle).** `causali_config` è `{}` in tutte le sedi: vale ovunque il modello di fabbrica. 1.636 voci su 2.205 hanno simboli nella descrizione (`Retta MM/AAAA` da sola 1.434; `—` 188; `[ ]` 12). Nei nomi dei bambini: `'` 12, `’` 8, `-` 8, accenti 5. Sui 451 movimenti bancari arrivati dal 21/09 (da quando esiste il codice) **nessuno contiene il `#`**: al suo posto arriva uno spazio, un punto o un trattino. Il sigillo non ha mai aiutato l'abbinamento.
+
+**Decisione del titolare: «dati chiave in testa».**
+
+```
+prima: Retta 10/2026 #K7MXN3P - per il minore Mario Rossi - RSSMRA85T10Z999X - GIUGLIANO
+ora:   Retta 10 2026 K7MXN3P RSSMRA85T10Z999X Mario Rossi GIUGLIANO
+✂ 50:  Retta 10 2026 K7MXN3P RSSMRA85T10Z999X Mario Ross   → codice e CF restano
+```
+
+**Cosa cambia.**
+1. **`src/lib/pagamenti/causale-banca.ts`** (nuovo, puro, zero import — finisce nel bundle client): `causalePerBanca` toglie gli accenti, trasforma `€` in `EUR` e `×` in `x`, riduce ogni altro simbolo a uno spazio e taglia a 140 sull'ultimo spazio.
+2. **`causaleBonifico`** — l'unica porta del bonifico (elenco pagamenti del genitore, sollecito testo e HTML, anteprima della segreteria) — passa l'uscita per `causalePerBanca`. Modello di fabbrica: `{descrizione} {codice} {codice_fiscale} {nome_completo} {sede}`. Il segnaposto `{minore}` resta nel catalogo per i modelli personalizzati.
+3. **La fattura elettronica non cambia**: `renderCausale` è intatto, e il tracciato FatturaPA tiene accenti e `/` con le sue regole (lock in `pagamenti-causale-fattura.test.ts`).
+4. **Il codice della voce resta `#K7MXN3P` dentro l'app** (modulo congelato intatto, `suggerimenti.codice_voce` e interfaccia di riconciliazione invariati): il `#` sparisce solo nella stringa per la banca, e l'estrattore legge già la forma senza.
+5. **Riconciliazione**: i segnali deboli «nome in causale» e «descrizione in causale» confrontano anche la forma coi simboli ridotti a spazio (`soloParole`), altrimenti ogni causale nuova li avrebbe persi (`retta 10/2026` non sta in `retta 10 2026`, `d'angelo` non sta in `d angelo`). `norm()` — dentro l'impronta anti doppio import — non si tocca.
+6. **Pannello Causali**: l'esempio del chip `{codice}` è nella forma che esce (`MNKPRTF`) e la nota spiega che accenti, apostrofi e simboli vengono tolti apposta.
+
+**Log.** Nessuna route, integrazione esterna o percorso d'errore nuovo (funzioni pure): nessun log aggiunto. La causale non si logga — contiene codice fiscale e nome di un minore.
+
+**Da fare / aperto.**
+- I **solleciti già spediti** portano ancora la causale vecchia col `#`: non si riscrivono email partite. La card del genitore cambia subito, perché la causale si ricalcola a ogni richiesta.
+- Prova sul campo: al prossimo import dell'estratto conto contare i movimenti col codice nella forma senza `#`, e sentire dalla segreteria se arrivano ancora bonifici rifiutati.
+
 ## 🗂️ Changelog — Non iscritti in un elenco a parte ed eliminazione definitiva di una scheda; il registro della primaria non si cancella né si anonimizza — 2026-10-08/09 (branch `feat/elimina-non-iscritti`)
 
-**Stato.** 🟡 **In rilascio.** (Questa riga si aggiorna con merge, migrazione e deploy.)
+**Stato.** ✅ **In produzione dal 2026-10-09 07:40 UTC** (PR #207, squash `c7ce3da8`, merge a mano alle 07:37). Migrazione `20261008220540` applicata dall'integrazione al merge (una riga nel registro; firma `(uuid, boolean, boolean)`, solo service-role, SECURITY DEFINER). CI della PR: E2E 165 passati, 0 instabili. CI di `main`: E2E verde al primo giro; «Lint · Typecheck · Unit» caduto al primo giro su un test d'interfaccia instabile non legato a questo lavoro (`DialogoEliminaMedia`, scaduto a 5 s), verde al rilancio. Sonda dopo il deploy: `POST /api/admin/students/elimina` senza login → 401, `/api/health` ok, nessun errore in `app_log`.
 
 **Il caso.** Tre segnalazioni del titolare (2026-10-08): una scheda *alunno* nata per errore per un adulto (un papà); un bambino con una scheda doppia che non si riusciva a eliminare; l'elenco «Alunni» che mostrava anche chi non frequenta. Misurato in produzione con sole `SELECT`: nell'app **non esisteva una cancellazione vera** (solo «Archivia», «Libera spazio» e l'oblio GDPR, che anonimizza e lascia la riga). La vecchia `DELETE /api/admin/students` era stata tolta il 2026-08-12 perché scriveva l'audit *prima* di una cancellazione che falliva (lock `registro-modifiche-senza-hard-delete`).
 

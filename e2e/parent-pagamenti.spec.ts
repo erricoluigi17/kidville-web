@@ -149,8 +149,18 @@ test('lo storico mostra la retta aperta e la gita pagata', async ({ page, browse
    * ESATTAMENTE `codiceVoce('…0701')` lo provano i test unitari, che la funzione
    * la importano; qui no — gli spec Playwright non importano da `src/`, e
    * ricopiare un codice atteso creerebbe una seconda verità sullo stesso valore.
+   *
+   * ⚠️ SENZA `#` (2026-10-09). Poste rifiuta il cancelletto, e dalla stessa data la
+   * causale del bonifico esce di sole lettere, cifre e spazi: il codice è un token
+   * di sette simboli delimitato da non-alfanumerici, con almeno una cifra e almeno
+   * una lettera — la stessa forma «nuda» che l'estrattore della riconciliazione legge.
    */
-  const FORMA_CODICE_VOCE = /#[23456789CFHKMNPRTVXY]{7}/;
+  // Niente lookbehind, come in `codice-voce.ts`: il delimitatore iniziale si consuma, e il
+  // codice è il gruppo 1.
+  const FORMA_CODICE_VOCE =
+    /(?:^|[^0-9A-Za-z])((?=[0-9A-Z]*[0-9])(?=[0-9A-Z]*[A-Z])[23456789CFHKMNPRTVXY]{7})(?![0-9A-Za-z])/;
+  /** Il set che passa in TUTTE le banche: lettere, cifre e spazi. */
+  const SET_SICURO_BANCHE = /^[A-Za-z0-9 ]+$/;
 
   // Il blocco è quello che porta il bottone di copia della causale: `getByText`
   // pescherebbe i sosia — «Retta E2E luglio» è a schermo anche come titolo della
@@ -168,7 +178,7 @@ test('lo storico mostra la retta aperta e la gita pagata', async ({ page, browse
     'la causale consigliata non porta il codice della voce: senza, due rette identiche della stessa ' +
       'famiglia tornano dalla banca indistinguibili e la riconciliazione deve indovinare',
   ).toMatch(FORMA_CODICE_VOCE);
-  const codiceAschermo = testoCausale.match(FORMA_CODICE_VOCE)?.[0] ?? '';
+  const codiceAschermo = testoCausale.match(FORMA_CODICE_VOCE)?.[1] ?? '';
 
   /**
    * GLI APPUNTI, LETTI DAVVERO. È il canale primario: la card dice «Copiala così
@@ -209,6 +219,11 @@ test('lo storico mostra la retta aperta e la gita pagata', async ({ page, browse
     'il codice copiato non è quello mostrato: il genitore scriverebbe nell’home banking il ' +
       'riferimento di un’altra voce',
   ).toContain(codiceAschermo);
+  expect(
+    appunti,
+    'la causale copiata contiene un carattere che qualche banca rifiuta (Poste: `#`, `/`, apostrofi): ' +
+      'il genitore non riuscirebbe a fare il bonifico',
+  ).toMatch(SET_SICURO_BANCHE);
 
   /**
    * …e nient'altro è cambiato per strada. Il confronto è a spazi NORMALIZZATI e

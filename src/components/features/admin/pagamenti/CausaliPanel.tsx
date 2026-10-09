@@ -88,6 +88,9 @@ const DATI_ESEMPIO: DatiCausale = {
  * repository è pubblico. Il perché di quella forma sta accanto al catalogo, in
  * `@/lib/pagamenti/causale`: `codiceVoce` non la produce mai ed `estraiCodiciVoce` la
  * rifiuta, quindi ricopiata in una causale vera non aggancia il movimento di nessuno.
+ * Qui è scritto col `#`, cioè nella forma CANONICA che `codiceVoce` passa al motore; il
+ * chip mostra quella senza `#`, che è ciò che esce dall'anteprima e arriva al genitore
+ * (`causalePerBanca`, 2026-10-09: Poste rifiuta il `#`).
  */
 const DATI_ESEMPIO_BONIFICO: DatiCausale = { ...DATI_ESEMPIO, codice: '#MNKPRTF' };
 

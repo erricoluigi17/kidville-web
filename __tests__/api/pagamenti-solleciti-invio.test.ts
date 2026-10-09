@@ -167,16 +167,16 @@ describe('POST /api/pagamenti/solleciti', () => {
   })
 
   // Causale bonifico: il corpo dell'email deve portare la causale consigliata
-  // completa «{descrizione} - per il minore {Nome Cognome} - {CF} - {SEDE}»
-  // (abbinamento univoco dei bonifici in riconciliazione).
+  // completa «{descrizione} {codice} {CF} {Nome Cognome} {SEDE}», ripulita per la
+  // banca (abbinamento univoco dei bonifici in riconciliazione).
   it('causale: il corpo email contiene la causale completa (descrizione, minore, CF, sede)', async () => {
     const res = await POST(post({ pagamento_ids: [PID] }))
     expect(res.status).toBe(200)
     expect(h.sendEmailDetailed).toHaveBeenCalledTimes(1)
     const text = (h.sendEmailDetailed.mock.calls[0][0] as { text: string }).text
-    // Il codice sta ATTACCATO alla descrizione, nel primo segmento, e mai in coda:
-    // il campo causale dell'home banking si taglia da destra.
-    expect(text).toContain(`Retta Giugno ${COD_PID} - per il minore Mario Rossi - TSTTST00T00T000T - GIUGLIANO`)
+    // Il codice sta ATTACCATO alla descrizione, col CF subito dopo, e mai in coda:
+    // il campo causale dell'home banking si taglia da destra. Senza `#`: Poste lo rifiuta.
+    expect(text).toContain(`Retta Giugno ${COD_PID.slice(1)} TSTTST00T00T000T Mario Rossi GIUGLIANO`)
     expect(text.toLowerCase()).toContain('causale')
   })
 
@@ -199,7 +199,8 @@ describe('POST /api/pagamenti/solleciti', () => {
     // ACCODATO: il codice esce perciò in coda al primo segmento — che resta
     // comunque la testa della causale, ed è ciò che conta, perché il campo
     // dell'home banking si taglia da destra.
-    expect(j.data[0].corpo).toContain(`Retta giugno 2026 € 150,00 ${COD_PID} - Mario Rossi - TSTTST00T00T000T`)
+    // Ripulita per la banca: «€ 150,00» diventa «EUR 150 00», i « - » diventano spazi.
+    expect(j.data[0].corpo).toContain(`Retta giugno 2026 EUR 150 00 ${COD_PID.slice(1)} Mario Rossi TSTTST00T00T000T`)
   })
 
   it('anti-spam: sollecito recente → saltato con motivo cadenza', async () => {

@@ -264,6 +264,15 @@ describe('la causale della FATTURA non porta il codice della voce', () => {
     expect(VINCOLO_CAUSALE_FATTURAPA.perTracciato(CODICE)).toBe(CODICE)
     expect(eccedeLimiteFatturaPA(`${FABBRICA} - ${CODICE}`)).toBe(false)
   })
+
+  it('la pulizia «per la banca» del BONIFICO non arriva sulla fattura: accenti e `/` restano', () => {
+    // Dal 2026-10-09 la causale del bonifico esce di sole lettere, cifre e spazi (Poste
+    // rifiuta `#`, `/` e apostrofi). La fattura è un altro documento, con un altro tracciato
+    // che quei caratteri li accetta: ripulirla toglierebbe a un documento fiscale caratteri
+    // che sono suoi. Se questo test diventa rosso, la pulizia è scesa nel motore condiviso.
+    const dati = { ...DATI, descrizione: 'Retta 10/2026', nome: 'Niccolò', cognome: 'D’Angelo' }
+    expect(causaleFattura({ dati })).toBe(`Retta 10/2026 - a favore del minore Niccolò D’Angelo - CF: ${CF_MASCHIO}`)
+  })
 })
 
 describe('il limite del campo 2.1.1.11 (Causale) di FatturaPA', () => {

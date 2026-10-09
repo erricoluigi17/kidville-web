@@ -12,6 +12,7 @@ import {
   type CandidatoSede,
 } from '@/lib/pagamenti/riconciliazione'
 import { codiceVoce } from '@/lib/pagamenti/codice-voce'
+import { causaleBonifico } from '@/lib/pagamenti/causale'
 import {
   codiceDelSuggerimento,
   codiceDellaRiga,
@@ -790,5 +791,60 @@ describe('riconciliazione-ui — il codice si legge dal campo strutturato', () =
     expect(codiceDellaRiga(sugg)).toBe('#K7MXN3P')
     expect(codiceDellaRiga([])).toBeNull()
     expect(codiceDellaRiga(null)).toBeNull()
+  })
+})
+
+describe('la causale ripulita per la banca (2026-10-09) — i segnali si leggono ancora', () => {
+  // Dal 2026-10-09 la causale del bonifico esce di sole lettere, cifre e spazi: Poste rifiuta
+  // `#`, `/` e apostrofi. «Retta 10/2026» arriva come «Retta 10 2026», «D'Angelo» come
+  // «D Angelo», e il codice della voce arriva senza `#`. I due segnali FORTI (codice e CF) si
+  // estraggono comunque; i due DEBOLI (nome e descrizione) confrontavano sottostringhe con la
+  // punteggiatura dentro, e senza questa correzione li avrebbe persi ogni causale nuova.
+  const ID = '00000000-0000-4000-8000-0000000000a1'
+  const voce = {
+    id: ID,
+    descrizione: 'Retta 10/2026',
+    importo: 150,
+    importo_pagato: 0,
+    alunno_id: 'al-1',
+    codice_fiscale: CF_MARIO,
+    alunno_nome: "Mario D'Angelo",
+  }
+  const motiviDi = (causale: string, importo = 150) =>
+    suggerisciMatch({ data_operazione: '2026-10-05', importo, causale, controparte: '' }, [voce])
+      .suggerimenti[0]?.motivi ?? []
+
+  it('la causale NUOVA, copiata dall’app, aggancia per codice, CF, nome e descrizione', () => {
+    const causale = causaleBonifico({
+      descrizione: voce.descrizione, codice: codiceVoce(ID), codiceFiscale: CF_MARIO,
+      nome: 'Mario', cognome: "D'Angelo", sede: 'Kidville Giugliano',
+    })
+    expect(causale).not.toMatch(/[#/']/)
+    expect(motiviDi(causale)).toEqual(expect.arrayContaining([
+      'codice della voce', 'codice fiscale', 'nome in causale', 'descrizione in causale',
+    ]))
+  })
+
+  it('senza codice né CF restano i segnali deboli, anche con la punteggiatura tolta', () => {
+    // Importo diverso apposta: nessun «importo esatto» a coprire l'assenza degli altri.
+    const motivi = motiviDi('BONIFICO RETTA 10 2026 MARIO D ANGELO', 99)
+    expect(motivi).toContain('nome in causale')
+    expect(motivi).toContain('descrizione in causale')
+  })
+
+  it('la causale VECCHIA, col `#`, la `/` e l’apostrofo, aggancia come prima', () => {
+    const vecchia = `Retta 10/2026 ${codiceVoce(ID)} - per il minore Mario D'Angelo - ${CF_MARIO} - GIUGLIANO`
+    expect(motiviDi(vecchia)).toEqual(expect.arrayContaining([
+      'codice della voce', 'codice fiscale', 'nome in causale', 'descrizione in causale',
+    ]))
+  })
+
+  it('una descrizione di soli simboli non regala la «descrizione in causale» a tutti', () => {
+    // Ripulita, «— / —» diventerebbe la stringa vuota, e `includes('')` è sempre vero.
+    const r = suggerisciMatch(
+      { data_operazione: '2026-10-05', importo: 99, causale: 'GIROCONTO INTERNO', controparte: '' },
+      [{ ...voce, descrizione: '— / —', alunno_nome: null }],
+    )
+    expect(r.suggerimenti).toHaveLength(0)
   })
 })

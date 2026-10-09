@@ -214,7 +214,7 @@
   "caus_es": "e.g.",
   "caus_help_post": ". Click a placeholder to insert it into the selected field.",
   "caus_help_pre": "The payment reference template the parent copies into the bank transfer. Customizable per category; a row left empty uses the ",
-  "caus_hint": "The preview uses sample data; the child’s real data stays visible only to the parent.",
+  "caus_hint": "The preview uses sample data; the child’s real data stays visible only to the parent. Accents, apostrophes and symbols (# / - …) are removed automatically: some banks, such as Poste, reject payment references that contain them.",
   "caus_msg_salvati": "Payment reference templates saved",
   "caus_predefinito": "Default",
   "caus_salva": "Save",

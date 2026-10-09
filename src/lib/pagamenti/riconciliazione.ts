@@ -84,6 +84,20 @@ const norm = (s: string) =>
     s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
 
 /**
+ * Un testo GIÀ passato da `norm()`, con ogni simbolo ridotto a uno spazio: «d'angelo» →
+ * «d angelo», «retta 10/2026» → «retta 10 2026».
+ *
+ * Serve ai segnali DEBOLI (nome e descrizione in causale) dal 2026-10-09, quando la causale
+ * del bonifico ha cominciato a uscire di sole lettere, cifre e spazi (`causalePerBanca` in
+ * `./causale-banca`: Poste rifiuta `#`, `/` e apostrofi). Quei segnali confrontano
+ * sottostringhe: con la punteggiatura da una parte sola, `retta 10/2026` non sta più dentro
+ * `retta 10 2026`, e ogni causale nuova avrebbe perso «descrizione in causale» e, sui cognomi
+ * con l'apostrofo, «nome in causale». È un confronto IN PIÙ, accanto a quello di prima: nessun
+ * abbinamento di ieri va perso. E `norm()` resta intoccata (v. sopra: è dentro l'impronta).
+ */
+const soloParole = (normalizzato: string) => normalizzato.replace(/[^a-z0-9]+/g, ' ').trim()
+
+/**
  * L'esito di una lettura: i movimenti e i CONTATORI, tenuti separati.
  *
  * I tre campi in coda sono opzionali perché la firma di `parseCsv` non doveva cambiare per
@@ -290,12 +304,16 @@ export interface PagamentoPreparato {
     residuo: number
     /** I token (>2 caratteri) di ogni nome, già normalizzati: uno per alunno, uno per intestatario. */
     tokenNomi: string[][]
+    /** Gli stessi token con i simboli ridotti a spazio (`soloParole`): «d'angelo» → «angelo». */
+    tokenNomiParole: string[][]
     /** Il mese italiano del periodo di competenza, già risolto. */
     mese: string | null
     /** L'anno-mese `YYYY-MM` del periodo di competenza. */
     ym: string | null
     /** La descrizione normalizzata, o `null` quando il pagamento non ne ha una. */
     descrizioneNorm: string | null
+    /** La descrizione con i simboli ridotti a spazio, o `null` se non ne resta niente. */
+    descrizioneParole: string | null
     /** Il CF dell'alunno in MAIUSCOLO, o `null`. */
     cf: string | null
     /**
@@ -318,16 +336,22 @@ export function preparaAperti(aperti: PagamentoAperto[]): PagamentoPreparato[] {
     return aperti.map((p) => {
         const nomi = [p.alunno_nome, p.intestatario_nome].filter(Boolean) as string[]
         const mese = p.periodo_competenza ? MESI_IT[new Date(p.periodo_competenza).getMonth()] ?? null : null
+        const nomiNorm = nomi.map(norm)
+        const descrizioneNorm = p.descrizione ? norm(p.descrizione) : null
         return {
             id: p.id,
             alunnoId: p.alunno_id ?? null,
             residuo: Math.round((Number(p.importo) - Number(p.importo_pagato || 0)) * 100) / 100,
-            tokenNomi: nomi.map((n) => norm(n).split(' ').filter((t) => t.length > 2)),
+            tokenNomi: nomiNorm.map((n) => n.split(' ').filter((t) => t.length > 2)),
+            tokenNomiParole: nomiNorm.map((n) => soloParole(n).split(' ').filter((t) => t.length > 2)),
             mese,
             ym: p.periodo_competenza ? p.periodo_competenza.slice(0, 7) : null,
             // ⚠️ `p.descrizione` VUOTA non è `''` normalizzato: è «nessuna descrizione».
             //    `testo.includes('')` è sempre vero, e regalerebbe 10 punti a chiunque.
-            descrizioneNorm: p.descrizione ? norm(p.descrizione) : null,
+            //    Vale due volte per la forma ripulita: «— / —» diventa `''` anche se la
+            //    descrizione c'era, e si torna a `null` per la stessa ragione.
+            descrizioneNorm,
+            descrizioneParole: descrizioneNorm !== null ? soloParole(descrizioneNorm) || null : null,
             cf: p.codice_fiscale ? String(p.codice_fiscale).toUpperCase() : null,
             codice: codiceVoce(p.id),
         }
@@ -416,6 +440,7 @@ export function suggerisciMatchPreparato(
     // tutto in minuscolo. `norm()` resta per i segnali deboli, e resta intoccata.
     const grezzo = `${mov.causale} ${mov.controparte}`
     const testo = norm(grezzo)
+    const testoParole = soloParole(testo)
     const cfSet = new Set(estraiCodiciFiscali(grezzo))
     const codiciSet = new Set(estraiCodiciVoce(grezzo))
     const candidati: Suggerimento[] = []
@@ -429,16 +454,21 @@ export function suggerisciMatchPreparato(
         const motivi: string[] = []
         if (p.residuo === mov.importo) { score += 50; motivi.push('importo esatto') }
 
-        const nomeTrovato = p.tokenNomi.some(
-            (tokens) => tokens.length > 0 && tokens.every((t) => testo.includes(t)),
-        )
+        // Due confronti per segnale: quello di sempre, e quello coi simboli ridotti a spazio
+        // da entrambe le parti (`soloParole`), per la causale ripulita per la banca.
+        const nomeTrovato =
+            p.tokenNomi.some((tokens) => tokens.length > 0 && tokens.every((t) => testo.includes(t))) ||
+            p.tokenNomiParole.some((tokens) => tokens.length > 0 && tokens.every((t) => testoParole.includes(t)))
         if (nomeTrovato) { score += 25; motivi.push('nome in causale') }
 
         if (p.ym !== null) {
             if ((p.mese && testo.includes(p.mese)) || testo.includes(p.ym)) { score += 15; motivi.push('periodo citato') }
         }
 
-        if (p.descrizioneNorm !== null && testo.includes(p.descrizioneNorm)) { score += 10; motivi.push('descrizione in causale') }
+        const descrizioneTrovata =
+            (p.descrizioneNorm !== null && testo.includes(p.descrizioneNorm)) ||
+            (p.descrizioneParole !== null && testoParole.includes(p.descrizioneParole))
+        if (descrizioneTrovata) { score += 10; motivi.push('descrizione in causale') }
 
         const cfMatch = p.cf !== null && cfSet.has(p.cf)
         if (cfMatch) {

@@ -211,31 +211,42 @@ export function scrubDomandaIscrizione(
  *
  * Non è una cancellazione: la domanda accolta resta un atto amministrativo, con
  * dentro chi ha chiesto cosa e quando.
+ *
+ * `copiaPresente(indice)` dice, bambino per bambino, se i suoi dati sanitari sono
+ * DAVVERO arrivati in scheda (2026-10-09): un bambino per cui risponde `false`
+ * resta com'è, e la funzione conta quanti ne ha lasciati in `minoriConservati`.
+ * Senza il predicato (l'oblio) si toglie tutto, come prima.
  */
 export function scrubSanitariDomanda(
   data: unknown,
   at: string,
-): { data: Record<string, unknown>; minoriScrubbati: number } {
+  copiaPresente: (indice: number) => boolean = () => true,
+): { data: Record<string, unknown>; minoriScrubbati: number; minoriConservati: number } {
   const originale = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>
   const lista = originale.children
-  if (!Array.isArray(lista)) return { data: originale, minoriScrubbati: 0 }
+  if (!Array.isArray(lista)) return { data: originale, minoriScrubbati: 0, minoriConservati: 0 }
 
   let minoriScrubbati = 0
-  const children = lista.map((voce) => {
+  let minoriConservati = 0
+  const children = lista.map((voce, indice) => {
     if (!voce || typeof voce !== 'object') return voce
     const persona = voce as Record<string, unknown>
     const daPulire = CHIAVI_SANITARIE_ISCRIZIONE.filter(
       (k) => persona[k] !== null && persona[k] !== undefined && String(persona[k]).trim() !== '',
     )
     if (daPulire.length === 0) return persona
+    if (!copiaPresente(indice)) {
+      minoriConservati++
+      return persona
+    }
     minoriScrubbati++
     const copia: Record<string, unknown> = { ...persona, sanitari_rimossi_il: at }
     for (const k of CHIAVI_SANITARIE_ISCRIZIONE) copia[k] = null
     return copia
   })
 
-  if (minoriScrubbati === 0) return { data: originale, minoriScrubbati: 0 }
-  return { data: { ...originale, children }, minoriScrubbati }
+  if (minoriScrubbati === 0) return { data: originale, minoriScrubbati: 0, minoriConservati }
+  return { data: { ...originale, children }, minoriScrubbati, minoriConservati }
 }
 
 /**

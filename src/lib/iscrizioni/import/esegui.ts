@@ -72,6 +72,7 @@ import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { normalizzaNome } from './normalizza'
 import { consensiFotoDellaDomanda } from '@/lib/iscrizioni/consensi-foto'
 import { cercaGemelloGenitore } from '@/lib/iscrizioni/doppioni'
+import { sanitariDaScrivere, type SanitariScheda } from '@/lib/iscrizioni/sanitari'
 import { invitaGenitore, normalizzaEmail } from './inviti'
 import type { AssegnazioneBambino, Domanda } from './analisi'
 import { pausaFraEmail } from '@/lib/email/ritmo'
@@ -313,12 +314,12 @@ export async function alunnoDiRiferimento(
   if (cf) {
     const { data, error } = await supabase
       .from('alunni')
-      .select('id, scuola_id')
+      .select('id, scuola_id, allergies, note_mediche')
       .eq('codice_fiscale', cf)
       .maybeSingle()
     if (error) return { errore: `lettura alunno non riuscita: ${error.message}` }
     if (data) {
-      const trovato = data as { id: string; scuola_id: string }
+      const trovato = data as { id: string; scuola_id: string } & SanitariScheda
       // Lo stesso codice fiscale in un'ALTRA sede non si tocca: sarebbe un
       // trasferimento, e un trasferimento lo decide una persona.
       if (trovato.scuola_id !== scuolaId) {
@@ -329,10 +330,15 @@ export async function alunnoDiRiferimento(
       // che esiste già c'è una preferenza registrata, e una domanda vecchia e
       // muta non può cancellare un «no» raccolto altrove. Il bianco riempie un
       // vuoto, non sovrascrive una scelta.
+      // Allergie e note mediche (2026-10-09): fino a oggi non si scrivevano, e il
+      // job notturno le toglieva poi dalla domanda — il dato della famiglia non
+      // arrivava mai in scheda. La regola (riempi il vuoto, non sovrascrivere,
+      // aggiungi in coda ciò che è diverso) sta in `@/lib/iscrizioni/sanitari`.
       const patch: Record<string, unknown> = {
         classe_sezione: classe,
         importo_retta_mensile: assegnazione.retta,
         ...(consensi?.daProva ? consensi.colonne : {}),
+        ...sanitariDaScrivere(trovato, grezzo, new Date()),
       }
       const { error: errUp } = await conDegradoDiColonna(patch, (rec) =>
         supabase.from('alunni').update(rec).eq('id', trovato.id),

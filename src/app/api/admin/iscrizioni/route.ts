@@ -21,6 +21,15 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { scrubSanitariDomanda } from '@/lib/gdpr/anonimizza'
+import {
+  copiaSanitariPresente,
+  haSanitari,
+  leggiSanitariScheda,
+  normalizzaSanitario,
+  sanitariDaScrivere,
+  type CampoSanitario,
+  type SanitariScheda,
+} from '@/lib/iscrizioni/sanitari'
 import { consensiFotoDaProva, type ProvaConsensi } from '@/lib/iscrizioni/consensi-foto'
 import { LIMITE_ISCRIZIONI_DEFAULT, LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
 import { normalizzaNomeSezione, SCHEMA_ASSENTE } from '@/lib/alunni/sezione'
@@ -1702,6 +1711,51 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       return out
     }
 
+    // Dati sanitari (2026-10-09, regola in `@/lib/iscrizioni/sanitari`): per indice,
+    // i bambini le cui allergie e note mediche sono DAVVERO in scheda. Solo questi
+    // le perdono dalla domanda, in fondo a questo PATCH.
+    const sanitariInScheda = new Set<number>()
+    let sanitariAggiuntiAScheda = 0
+    const dataDomanda = new Date((sub as { created_at?: string | null }).created_at ?? Date.now())
+
+    /**
+     * Aggiorna una scheda che ESISTE GIÀ (re-iscrizione): classe, retta e, se la
+     * domanda li porta, i dati sanitari. Fino al 2026-10-09 i sanitari non c'erano,
+     * e un attimo dopo uscivano dalla domanda: il dato dichiarato dalla famiglia non
+     * arrivava mai dove lo legge la cucina. E l'errore dell'UPDATE non si guardava.
+     */
+    const aggiornaSchedaEsistente = async (ci: number, c: EnrollmentChild, alunnoId: string, classe: string) => {
+      const scheda: SanitariScheda | null = haSanitari(c)
+        ? await leggiSanitariScheda(supabase, alunnoId, 'admin/iscrizioni:PATCH')
+        : {}
+      const sanitari = scheda ? sanitariDaScrivere(scheda, c, dataDomanda) : {}
+      const daScrivere = { classe_sezione: classe, ...campiEconomici(ci), ...sanitari }
+      const { error: errScheda } = await supabase.from('alunni').update(daScrivere).eq('id', alunnoId)
+      if (errScheda) {
+        const d = descriviErroreDb(errScheda)
+        warnings.push(`Bambino ${ci + 1}: scheda esistente non aggiornata (${d.messaggio})`)
+        logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'update-bambino-esistente-fallito', entita: 'bambino', indice: ci + 1, campo: d.campo, codice: d.codice })
+        return
+      }
+      if (scheda && copiaSanitariPresente({ ...scheda, ...sanitari }, c)) sanitariInScheda.add(ci)
+      if (scheda && (Object.keys(sanitari) as CampoSanitario[]).some((k) => normalizzaSanitario(scheda[k]) !== '')) {
+        sanitariAggiuntiAScheda++
+      }
+      await logScrittura(supabase, {
+        attore: auth.user,
+        entitaTipo: 'alunni',
+        entitaId: alunnoId,
+        azione: 'update',
+        scuolaId,
+        // I sanitari per NOME di campo, mai per valore: come per l'insert (riassuntoCampi).
+        valoreDopo: {
+          classe_sezione: classe,
+          ...campiEconomici(ci),
+          ...(Object.keys(sanitari).length > 0 ? { sanitari_aggiornati: Object.keys(sanitari).sort() } : {}),
+        },
+      })
+    }
+
     for (let ci = 0; ci < children.length; ci++) {
       const c = children[ci] as EnrollmentChild
       const classe = assignments[String(ci)]
@@ -1713,16 +1767,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       if (studentId) {
         // Il re-import SOVRASCRIVE la retta esistente (decisione del titolare,
         // 2026-09-02): quello che la segreteria ha appena digitato è la retta.
-        const daScrivere = { classe_sezione: classe, ...campiEconomici(ci) }
-        await supabase.from('alunni').update(daScrivere).eq('id', studentId)
-        await logScrittura(supabase, {
-          attore: auth.user,
-          entitaTipo: 'alunni',
-          entitaId: studentId,
-          azione: 'update',
-          scuolaId,
-          valoreDopo: daScrivere,
-        })
+        await aggiornaSchedaEsistente(ci, c, studentId, classe)
         if (abbinati.has(ci)) {
           // Il riuso di una scheda scelta dalla segreteria si scrive QUI, dove avviene, e
           // non nel pre-flight: un import bloccato da un altro bambino non ha riusato
@@ -1764,16 +1809,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           logEvento('db', 'info', { operazione: 'admin/iscrizioni:PATCH', esito: 'dedup-soft-non-disponibile', entita: 'bambino', indice: ci + 1, codice: (softErr as { code?: string }).code ?? null })
         } else if (soft) {
           studentId = soft.id
-          const daScrivere = { classe_sezione: classe, ...campiEconomici(ci) }
-          await supabase.from('alunni').update(daScrivere).eq('id', studentId)
-          await logScrittura(supabase, {
-            attore: auth.user,
-            entitaTipo: 'alunni',
-            entitaId: studentId,
-            azione: 'update',
-            scuolaId,
-            valoreDopo: daScrivere,
-          })
+          await aggiornaSchedaEsistente(ci, c, soft.id, classe)
         }
       }
 
@@ -1833,6 +1869,9 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         }
         studentId = newChild.id
         createdStudents.push({ id: newChild.id, nome: newChild.nome })
+        // Scheda nuova: i sanitari sono entrati con l'insert — a meno che il degrado
+        // di colonna (DB E2E) non li abbia tolti dal record, e allora restano nella domanda.
+        if (copiaSanitariPresente(childRecord as SanitariScheda, c)) sanitariInScheda.add(ci)
         await logScrittura(supabase, {
           attore: auth.user,
           entitaTipo: 'alunni',
@@ -2051,8 +2090,30 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     // dentro chi ha chiesto cosa e quando. E solo QUI, dopo il ramo degli errori
     // bloccanti: se l'import non fosse riuscito, la segreteria riproverebbe su
     // una domanda già svuotata dei dati sanitari.
+    // E solo per i bambini i cui dati sono DAVVERO in scheda (2026-10-09): gli altri
+    // li conservano, e il job notturno li toglie solo quando la copia c'è.
     const at = new Date().toISOString()
-    const sanitari = scrubSanitariDomanda(data, at)
+    const sanitari = scrubSanitariDomanda(data, at, (indice) => sanitariInScheda.has(indice))
+    if (sanitari.minoriConservati > 0) {
+      logEvento('gdpr', 'warn', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'sanitari-conservati-nella-domanda',
+        entita_tipo: 'enrollment_submissions',
+        entita_id: id,
+        n: sanitari.minoriConservati,
+      })
+    }
+    if (sanitariAggiuntiAScheda > 0) {
+      // La scheda diceva altro: la dichiarazione nuova è in coda, con la data. È la
+      // segreteria a sistemare il testo; qui si dice solo QUANTE schede, mai cosa.
+      logEvento('iscrizione', 'info', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'sanitari-aggiunti-a-scheda-esistente',
+        entita_tipo: 'enrollment_submissions',
+        entita_id: id,
+        n: sanitariAggiuntiAScheda,
+      })
+    }
     const { error: updErr } = await supabase
       .from('enrollment_submissions')
       .update({

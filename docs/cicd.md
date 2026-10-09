@@ -248,7 +248,7 @@ rilascio.
 
 ### Collegare un monitor esterno (il campanello vero) — 5 minuti, account del titolare
 
-I cron di GitHub ritardano di 10-30 minuti: il workflow qui sotto è un **rinforzo**, non il campanello definitivo.
+I cron di GitHub **non sono affidabili**: misurato il 09/10/2026, il campanello programmato «ogni 15 minuti» è partito 12 volte in due giorni e mezzo, una ogni 3,5–7,5 ore. Il workflow qui sotto è un **rinforzo**, non il campanello: senza un monitor esterno un sito fermo può restare senza allarme per ore. UptimeRobot gratuito vale solo per uso non commerciale (dal 2024): per Kidville si usa Better Stack.
 Con Better Stack (gratis: 10 sonde ogni 3 minuti; avvisi via email, SMS e app) o UptimeRobot (gratis: 50 sonde ogni
 5 minuti):
 

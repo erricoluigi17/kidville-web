@@ -1,6 +1,6 @@
 ## 🗂️ Changelog — Non iscritti in un elenco a parte ed eliminazione definitiva di una scheda; il registro della primaria non si cancella né si anonimizza — 2026-10-08/09 (branch `feat/elimina-non-iscritti`)
 
-**Stato.** 🟡 **In rilascio.** Gate e merge: vedi in fondo a questo blocco (aggiornato a deploy avvenuto).
+**Stato.** 🟡 **In rilascio.** (Questa riga si aggiorna con merge, migrazione e deploy.)
 
 **Il caso.** Tre segnalazioni del titolare (2026-10-08): una scheda *alunno* nata per errore per un adulto (un papà); un bambino con una scheda doppia che non si riusciva a eliminare; l'elenco «Alunni» che mostrava anche chi non frequenta. Misurato in produzione con sole `SELECT`: nell'app **non esisteva una cancellazione vera** (solo «Archivia», «Libera spazio» e l'oblio GDPR, che anonimizza e lascia la riga). La vecchia `DELETE /api/admin/students` era stata tolta il 2026-08-12 perché scriveva l'audit *prima* di una cancellazione che falliva (lock `registro-modifiche-senza-hard-delete`).
 
@@ -14,6 +14,8 @@
 | Scheda con pagamenti | **Sceglie la segreteria**: «Cancella anche i pagamenti» (solo se nessun pagamento ha ricevuta, fattura, bonifico abbinato, incasso, fattura in coda o quote di un fratello) · «Anonimizza e tieni la contabilità» · Annulla |
 | Registro della primaria (voti, pagelle, scrutini, note, certificati delle competenze) | **Né cancellato né anonimizzato, da nessuna porta** — eliminazione, oblio `erase`, candidati all'oblio, richieste GDPR delle famiglie (art. 17 §3 lett. b) |
 | Genitori | Mai toccati dall'eliminazione: si toglie solo il legame |
+| Foto che l'archivio non sa togliere (indirizzo non riconoscibile) | Nessuna eliminazione possibile: la finestra lo dice e manda all'assistenza (ripetere non serve) |
+| «Anonimizza» | Solo per un bambino **ritirato**: un iscritto senza sezione va prima ritirato (altrimenti la famiglia lo vedrebbe «in iscrizione» per sempre) |
 | Richiesta GDPR di un genitore con un figlio che ha il registro | (decisa in esecuzione) il figlio è escluso e contato; genitore e altri figli non iscritti si anonimizzano; se resta un figlio non anonimizzato l'account di accesso del genitore resta, e il pannello lo **dice** perché la risposta alla famiglia lo citi |
 
 **Cosa cambia.**
@@ -29,6 +31,8 @@
 **Da fare / aperto.**
 - I due casi segnalati si eliminano dalla nuova linguetta (prima prova sul campo).
 - Decisione del titolare: l'account di accesso di un genitore resta finché c'è un figlio non anonimizzato (anche se quel figlio è solo ritirato col registro): valutare se debba contare solo un figlio che frequenta.
+- L'eliminazione non ripulisce ancora i testi contabili NON confermati che l'oblio ripulisce (suggerimenti di bonifico, causali, testi di cassa): oggi 0 casi; lavoro separato.
+- File che restano orfani dopo l'eliminazione: documenti dei delegati e PDF dei moduli (oggi 0 righe).
 - Esiste in produzione una coppia di schede con lo stesso codice fiscale (una ritirata con storia propria, una iscritta): va **unita**, non eliminata — oggi non c'è un comando di unione.
 
 ## 🔁 Changelog — Servizi mensili: pomeridiano, doposcuola e pulmino come voci ricorrenti per bambino, generate insieme alle rette — 2026-10-07 (branch `feat/servizi-mensili`)

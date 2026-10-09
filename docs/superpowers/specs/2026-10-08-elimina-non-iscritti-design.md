@@ -111,7 +111,7 @@ Corpo: `{ alunno_id: uuid, mode: 'dryrun' | 'execute', scelta?: 'elimina' | 'eli
    `contaPerEliminazione`): le voci di `contaCosaDistrugge` + pagamenti, pagamenti bloccati (ricevuta ·
    fattura · riconciliazione · incasso), registro primaria (via `leggiRegistroPrimaria`, §4.4). Una
    lettura fallita → `null`, mai `0`, e l'`execute` si ferma (`500 ELIMINAZIONE_NON_MISURATA`).
-5. `dryrun` → `{ dryrun: true, conteggi, scelte: { elimina, elimina_con_pagamenti, anonimizza }, motivi }`.
+5. `dryrun` → `{ dryrun: true, conteggi, scelte: { elimina, elimina_con_pagamenti, anonimizza }, motivo }`.
    Con registro primaria presente **tutte e tre** le scelte sono `false` e il motivo è
    `REGISTRO_PRIMARIA`.
 6. `execute`, `scelta` non disponibile → `409` con il codice del motivo
@@ -124,7 +124,7 @@ Corpo: `{ alunno_id: uuid, mode: 'dryrun' | 'execute', scelta?: 'elimina' | 'eli
       ritrovano). Letture a pagine, scritture a blocchi da 100 id: un bambino del nido supera le
       1000 voci l'anno. `completo: false` → stop prima di file e DB (500);
    a. **file prima** — con le funzioni dell'oblio, nessuna copia (`gdpr-erase-canale-unico`):
-      `obliaFotoAlunno`, `obliaFotoNewsAlunno`, `obliaIntentiVideoAlunno`, `obliaPagelleAlunno`,
+      `obliaFotoAlunno`, `obliaFotoNewsAlunno`, `obliaIntentiVideoAlunno` (le pagelle no: fanno parte del registro, che blocca a monte),
       `obliaCertificatiMediciAlunno`, `obliaFascicoloAlunno`, `obliaAllegatiChat` (thread del bambino),
       rimozione verificata di `alunni.documento_path` (`rimuoviEVerifica`). Le foto di gruppo si
       **sganciano**, non si cancellano. Un solo file non uscito o un inventario illeggibile →

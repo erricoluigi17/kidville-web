@@ -1125,7 +1125,8 @@ export async function obliaIscrizioni(
   // volte (la seconda ripartirebbe dal `data` già letto, non da quello scritto).
   const candidate = new Map<string, { data: unknown; consentsLog: unknown }>()
   const filtri: Record<string, unknown>[] = []
-  for (const ramo of ['children', 'adults'] as const) {
+  // Solo nel ramo del soggetto, quando il chiamante lo dichiara (vedi `SoggettiIscrizione.ramo`).
+  for (const ramo of soggetti.ramo ? [soggetti.ramo] : (['children', 'adults'] as const)) {
     for (const cf of cfVarianti) {
       filtri.push({ [ramo]: [{ codice_fiscale: cf }] })
       filtri.push({ [ramo]: [{ fiscal_code: cf }] })
@@ -1470,6 +1471,12 @@ export async function anonimizzaParent(
    * PARZIALE: le route li contano in `account_non_liberati`. Vedi `account-oblio.ts`.
    */
   account: EsitoAccountOblio
+  /**
+   * Le chiavi di ricerca (codice fiscale, documento) NON usate perché sono anche di un alunno vivo
+   * o di un altro genitore vivo (2026-10-09): vedi `chiaviDiRicercaProprie`. Gemello del campo
+   * omonimo di `anonimizzaAlunno`.
+   */
+  chiaviCondiviseEscluse: { codiceFiscale: number; documento: number }
 }> {
   // 1. Raccogli PRIMA dell'azzeramento: l'`auth_user_id` (ponte verso lo
   //    spazio-id `utenti`), il codice fiscale e il percorso del documento
@@ -1499,6 +1506,18 @@ export async function anonimizzaParent(
   const authUserId = (pRow?.auth_user_id as string | null) ?? null
   const cfParent = (pRow?.fiscal_code as string | null) ?? null
   const docParent = (pRow?.documento_path as string | null) ?? null
+
+  // 1-bis. LE CHIAVI DI RICERCA CHE SONO DAVVERO SUE (2026-10-09), prima di qualunque scrittura.
+  //    Misurato in produzione: tre genitori vivi portano in `fiscal_code` il codice del PROPRIO
+  //    figlio. Cercarlo nelle domande avrebbe ripulito la voce del figlio (identità, allergie, note
+  //    mediche) e tolto il suo documento. Un codice che è anche di un alunno vivo o di un altro
+  //    genitore vivo non si usa; con lui resta fuori il documento. Vedi `chiaviDiRicercaProprie`.
+  const chiavi = await chiaviDiRicercaProprie(
+    supabase,
+    { tabella: 'parents', id: parentId },
+    { codiciFiscali: [cfParent], documento: docParent },
+    op,
+  )
 
   // 2. Anonimizza il genitore (sgancia anche il login: auth_user_id → null).
   const { error: errU } = await supabase.from('parents').update(patchParent(parentId, at)).eq('id', parentId)
@@ -1631,11 +1650,23 @@ export async function anonimizzaParent(
   //    percorsi che la domanda restituisce si sommano a quello dell'anagrafica e
   //    si rimuovono in un blocco solo. Prima di oggi nessuna `.remove()` dello
   //    storage riguardava gli adulti: il file restava nel bucket per sempre.
-  const iscr = await obliaIscrizioni(supabase, { codiciFiscali: [cfParent], documentoPaths: [docParent] }, at, op)
+  //    Solo con le chiavi che sono sue (passo 1-bis) e SOLO nel ramo `adults`: un genitore non è mai
+  //    un figlio della domanda, e un codice uguale nel ramo `children` è di un bambino.
+  const iscr = await obliaIscrizioni(
+    supabase,
+    {
+      codiciFiscali: chiavi.perDomande,
+      documentoPaths: [chiavi.documento],
+      codiciFiscaliProtetti: chiavi.protetti,
+      ramo: 'adults',
+    },
+    at,
+    op,
+  )
   const esitoFile = await rimuoviFileOblio(
     supabase,
     BUCKET_ISCRIZIONI,
-    [docParent, ...iscr.documenti],
+    [chiavi.documento, ...(await allegatiDaTogliere(supabase, iscr.documenti, chiavi, op))],
     op,
   )
 
@@ -1719,8 +1750,9 @@ export async function anonimizzaParent(
     // Gli inventari NON letti. `obliaPdfCredenziali` non compare qui perché quando
     // non riesce a elencare il bucket lo dice già alzando `nonRimossi` (non ha una
     // tabella-indice: l'elenco È il suo inventario).
-    lettureFallite: [iscr.letto, allegatiChat.letto].filter((l) => l === false).length,
+    lettureFallite: [iscr.letto, allegatiChat.letto].filter((l) => l === false).length + chiavi.nonVerificate,
     account,
+    chiaviCondiviseEscluse: { ...chiavi.escluse },
   }
 }
 
@@ -2230,15 +2262,38 @@ const CODICE_FISCALE_FILTRABILE = /^[A-Z0-9]+$/
 
 type EsitoChiave = 'propria' | 'condivisa' | 'non_verificata'
 
+/** Di chi si sta facendo l'oblio: decide quale riga NON conta come «un altro». */
+interface SoggettoChiavi {
+  tabella: 'alunni' | 'parents'
+  id: string
+}
+
+/** Le righe lette per una verifica, ridotte a ciò che serve per decidere in TS. */
+type RigaVerifica = {
+  id?: unknown
+  codice_fiscale?: unknown
+  fiscal_code?: unknown
+  documento_path?: unknown
+  anonimizzato_il?: unknown
+}
+
+/** È la riga del soggetto stesso? Solo se è nella SUA tabella e ha il SUO id. */
+const eSeStesso = (soggetto: SoggettoChiavi, tabella: 'alunni' | 'parents', r: RigaVerifica) =>
+  soggetto.tabella === tabella && r.id === soggetto.id
+
 /**
- * Un'ALTRA scheda alunno ancora viva (non anonimizzata) porta lo stesso codice fiscale?
- * Si cerca per sottostringa (`ilike '%CF%'`) e si decide in TS confrontando normalizzato: il
- * valore in tabella può avere maiuscole, minuscole o spazi diversi, e una riga che il filtro
- * lasciasse passare per sbaglio non conta se non è davvero lo stesso codice.
+ * Il codice fiscale è anche di un'ALTRA persona viva (non anonimizzata)?
+ *  · per un ALUNNO: un'altra scheda alunno (`codice_fiscale` o `fiscal_code`);
+ *  · per un GENITORE: una scheda alunno qualunque, oppure un altro genitore (`fiscal_code`).
+ *    Misurato in produzione: tre genitori portano il codice del proprio figlio.
+ * Si cerca per sottostringa (`ilike '%CF%'`) e si decide in TS confrontando normalizzato: il valore
+ * in tabella può avere maiuscole o spazi diversi, e una riga che il filtro lasciasse passare per
+ * sbaglio non conta se non è davvero lo stesso codice. `cf` arriva GIÀ normalizzato e validato, ed
+ * è la stessa stringa che finisce nei filtri.
  */
 async function codiceFiscaleDiAltri(
   supabase: SupabaseClient,
-  alunnoId: string,
+  soggetto: SoggettoChiavi,
   cf: string,
   op: string,
 ): Promise<EsitoChiave> {
@@ -2246,26 +2301,32 @@ async function codiceFiscaleDiAltri(
     logEvento('gdpr', 'error', {
       operazione: op,
       esito: 'oblio-chiave-non-verificabile',
-      entita_tipo: 'alunni',
-      entita_id: alunnoId,
+      entita_tipo: soggetto.tabella,
+      entita_id: soggetto.id,
       tipo: 'codice_fiscale',
       msg: `${op}: il codice fiscale contiene caratteri che non sono lettere o cifre: non lo si usa come chiave di ricerca`,
     })
     return 'non_verificata'
   }
-  for (const colonna of ['codice_fiscale', 'fiscal_code'] as const) {
+  const ricerche: { tabella: 'alunni' | 'parents'; colonna: string; select: string }[] = [
+    { tabella: 'alunni', colonna: 'codice_fiscale', select: 'id, codice_fiscale, fiscal_code, anonimizzato_il' },
+    { tabella: 'alunni', colonna: 'fiscal_code', select: 'id, codice_fiscale, fiscal_code, anonimizzato_il' },
+  ]
+  if (soggetto.tabella === 'parents') {
+    ricerche.push({ tabella: 'parents', colonna: 'fiscal_code', select: 'id, fiscal_code, anonimizzato_il' })
+  }
+  for (const { tabella, colonna, select } of ricerche) {
     const { data, error } = await supabase
-      .from('alunni')
-      .select('id, codice_fiscale, fiscal_code, anonimizzato_il')
-      .neq('id', alunnoId)
+      .from(tabella)
+      .select(select)
       .is('anonimizzato_il', null)
       .ilike(colonna, `%${cf}%`)
     if (error) {
       logErrore({ operazione: op, evento: 'oblio_chiavi_verifica' }, error)
       return 'non_verificata'
     }
-    const altri = ((data ?? []) as { id?: unknown; codice_fiscale?: unknown; fiscal_code?: unknown; anonimizzato_il?: unknown }[])
-      .filter((r) => r.id !== alunnoId && r.anonimizzato_il == null)
+    const altri = ((data ?? []) as RigaVerifica[])
+      .filter((r) => !eSeStesso(soggetto, tabella, r) && r.anonimizzato_il == null)
       .filter((r) => normalizzaCodiceFiscale(r.codice_fiscale) === cf || normalizzaCodiceFiscale(r.fiscal_code) === cf)
     if (altri.length > 0) return 'condivisa'
   }
@@ -2273,15 +2334,15 @@ async function codiceFiscaleDiAltri(
 }
 
 /**
- * Un documento d'identità è nominato da un'ALTRA scheda alunno viva o da un GENITORE?
+ * Un documento d'identità è nominato da un'ALTRA scheda alunno viva o da un ALTRO genitore?
  *
- * ⚠️ Non conta la domanda d'iscrizione del bambino stesso: che la SUA domanda nomini il SUO
+ * ⚠️ Non conta la domanda d'iscrizione del soggetto stesso: che la SUA domanda nomini il SUO
  * documento è il caso normale (243 domande su 243 in produzione), non una condivisione. Conta
  * solo un'altra persona che quel file lo usa ancora come proprio.
  */
 async function documentoDiAltri(
   supabase: SupabaseClient,
-  alunnoId: string,
+  soggetto: SoggettoChiavi,
   percorso: string,
   op: string,
 ): Promise<EsitoChiave> {
@@ -2289,14 +2350,17 @@ async function documentoDiAltri(
     .from('alunni')
     .select('id, documento_path, anonimizzato_il')
     .eq('documento_path', percorso)
-    .neq('id', alunnoId)
     .is('anonimizzato_il', null)
   if (alunni.error) {
     logErrore({ operazione: op, evento: 'oblio_chiavi_verifica' }, alunni.error)
     return 'non_verificata'
   }
-  const altroAlunno = ((alunni.data ?? []) as { id?: unknown; documento_path?: unknown; anonimizzato_il?: unknown }[]).some(
-    (r) => r.id !== alunnoId && r.anonimizzato_il == null && typeof r.documento_path === 'string' && r.documento_path.trim() === percorso,
+  const altroAlunno = ((alunni.data ?? []) as RigaVerifica[]).some(
+    (r) =>
+      !eSeStesso(soggetto, 'alunni', r) &&
+      r.anonimizzato_il == null &&
+      typeof r.documento_path === 'string' &&
+      r.documento_path.trim() === percorso,
   )
   if (altroAlunno) return 'condivisa'
 
@@ -2305,17 +2369,26 @@ async function documentoDiAltri(
     logErrore({ operazione: op, evento: 'oblio_chiavi_verifica' }, genitori.error)
     return 'non_verificata'
   }
-  const diUnGenitore = ((genitori.data ?? []) as { documento_path?: unknown }[]).some(
-    (r) => typeof r.documento_path === 'string' && r.documento_path.trim() === percorso,
+  const altroGenitore = ((genitori.data ?? []) as RigaVerifica[]).some(
+    (r) => !eSeStesso(soggetto, 'parents', r) && typeof r.documento_path === 'string' && r.documento_path.trim() === percorso,
   )
-  return diUnGenitore ? 'condivisa' : 'propria'
+  return altroGenitore ? 'condivisa' : 'propria'
 }
 
-/** Le chiavi di ricerca che sono davvero di questo bambino, e il conto di quelle lasciate fuori. */
+/** Le chiavi di ricerca che sono davvero del soggetto, e il conto di quelle lasciate fuori. */
 interface ChiaviProprie {
-  /** I valori di `codice_fiscale`/`fiscal_code` (trim, in quell'ordine) che si possono usare. */
+  soggetto: SoggettoChiavi
+  /** I codici fiscali NORMALIZZATI e validati che si possono usare: sono la stringa dei filtri. */
   codiciFiscali: string[]
-  /** Il suo `documento_path`, se si può usare come chiave E togliere dall'archivio; altrimenti null. */
+  /**
+   * Gli stessi codici più la forma in cui sono scritti in anagrafica (solo spazi tolti), per la
+   * ricerca nelle domande: lì il confronto `@>` è sensibile alle maiuscole e la famiglia scrive come
+   * le pare. È un valore JSON, non un filtro: niente da validare.
+   */
+  perDomande: string[]
+  /** I codici esclusi (condivisi o non verificati), normalizzati: chi li porta non si ripulisce mai. */
+  protetti: string[]
+  /** Il `documento_path`, se si può usare come chiave E togliere dall'archivio; altrimenti null. */
   documento: string | null
   /** Percorsi già verificati: non si ricontrollano quando la domanda restituisce i suoi allegati. */
   verificati: Map<string, EsitoChiave>
@@ -2324,13 +2397,7 @@ interface ChiaviProprie {
   nonVerificate: number
 }
 
-function registraEsclusione(
-  chiavi: ChiaviProprie,
-  esito: EsitoChiave,
-  tipo: 'codice_fiscale' | 'documento',
-  alunnoId: string,
-  op: string,
-): void {
+function registraEsclusione(chiavi: ChiaviProprie, esito: EsitoChiave, tipo: 'codice_fiscale' | 'documento', op: string): void {
   if (esito === 'non_verificata') {
     chiavi.nonVerificate++
     return
@@ -2342,8 +2409,8 @@ function registraEsclusione(
   logEvento('gdpr', 'warn', {
     operazione: op,
     esito: 'oblio-chiave-condivisa-esclusa',
-    entita_tipo: 'alunni',
-    entita_id: alunnoId,
+    entita_tipo: chiavi.soggetto.tabella,
+    entita_id: chiavi.soggetto.id,
     tipo,
   })
 }
@@ -2351,30 +2418,36 @@ function registraEsclusione(
 /**
  * LE CHIAVI DI RICERCA CHE SONO DAVVERO SUE (2026-10-09).
  *
- * PERCHÉ ESISTE. `anonimizzaAlunno` usa il codice fiscale e il documento del bambino come
- * CHIAVI per cercare fuori dalla sua riga: le persone da ripulire nelle domande d'iscrizione
- * (e i loro allegati da togliere), i bonifici non confermati e i movimenti di cassa che citano il
- * codice. Misurato in produzione: fra i non iscritti c'è un DOPPIONE con lo stesso codice fiscale
- * di un bambino che frequenta, e tre domande contengono quel codice. L'oblio del doppione avrebbe
- * ripulito le domande, tolto il documento e azzerato i bonifici del bambino VERO — irreversibile.
+ * PERCHÉ ESISTE. L'oblio usa il codice fiscale e il documento della persona come CHIAVI per
+ * cercare fuori dalla sua riga: le voci da ripulire nelle domande d'iscrizione (e i loro allegati
+ * da togliere) e, per un alunno, i bonifici non confermati e i movimenti di cassa che citano il
+ * codice. Misurato in produzione: fra i non iscritti c'è un DOPPIONE con lo stesso codice fiscale di
+ * un bambino che frequenta, e tre genitori vivi portano il codice del proprio figlio. L'oblio del
+ * doppione, o di quel genitore, avrebbe ripulito le domande, tolto il documento e azzerato i
+ * bonifici del bambino VERO — irreversibile.
  *
- * Una chiave che è anche di un'ALTRA scheda alunno viva (o, per il documento, di un genitore) non
- * si usa: né per le domande, né per bonifici e cassa, né per togliere il file. La RIGA del bambino
- * si azzera comunque (`patchAlunno` non cambia): è sua. Una verifica che non si è potuta fare vale
- * come «non sua» (il lato prudente: una cancellazione non si disfa) e si conta in `lettureFallite`,
- * così l'oblio risulta parziale invece che compiuto.
+ * Una chiave che è anche di un'altra persona viva non si usa: né per le domande, né per bonifici
+ * e cassa, né per togliere il file. E se un codice fiscale è escluso, è escluso ANCHE il documento:
+ * la pulizia di una domanda tocca una persona se corrisponde il codice OPPURE il documento, e un
+ * documento proprio di un doppione può stare nella voce del bambino vero (la domanda è la stessa).
+ * La RIGA del soggetto si azzera comunque: è sua. Una verifica che non si è potuta fare vale come
+ * «non sua» (il lato prudente: una cancellazione non si disfa) e si conta in `lettureFallite`.
  *
- * Sta DENTRO `anonimizzaAlunno` e non nelle route perché le porte che la chiamano sono tre (oblio
- * della Direzione, richieste delle famiglie, eliminazione definitiva): una guardia in una route
- * sola lascerebbe aperte le altre due.
+ * Sta dentro `anonimizzaAlunno` e `anonimizzaParent`, non nelle route: le porte che le chiamano
+ * sono tre (oblio della Direzione, richieste delle famiglie, eliminazione definitiva), e una guardia
+ * in una route sola lascerebbe aperte le altre.
  */
 async function chiaviDiRicercaProprie(
   supabase: SupabaseClient,
-  alunno: AlunnoOblio,
+  soggetto: SoggettoChiavi,
+  persona: { codiciFiscali: unknown[]; documento: unknown },
   op: string,
 ): Promise<ChiaviProprie> {
   const chiavi: ChiaviProprie = {
+    soggetto,
     codiciFiscali: [],
+    perDomande: [],
+    protetti: [],
     documento: null,
     verificati: new Map(),
     escluse: { codiceFiscale: 0, documento: 0 },
@@ -2382,36 +2455,47 @@ async function chiaviDiRicercaProprie(
   }
 
   const esitiCf = new Map<string, EsitoChiave>()
-  for (const grezzo of [alunno.codice_fiscale, alunno.fiscal_code]) {
+  for (const grezzo of persona.codiciFiscali) {
     const cf = normalizzaCodiceFiscale(grezzo)
     if (!cf) continue
     let esito = esitiCf.get(cf)
     if (esito === undefined) {
-      esito = await codiceFiscaleDiAltri(supabase, alunno.id, cf, op)
+      esito = await codiceFiscaleDiAltri(supabase, soggetto, cf, op)
       esitiCf.set(cf, esito)
-      registraEsclusione(chiavi, esito, 'codice_fiscale', alunno.id, op)
+      registraEsclusione(chiavi, esito, 'codice_fiscale', op)
+      if (esito === 'propria') chiavi.codiciFiscali.push(cf)
+      else chiavi.protetti.push(cf)
     }
-    if (esito === 'propria') chiavi.codiciFiscali.push((grezzo as string).trim())
+    if (esito === 'propria') chiavi.perDomande.push(cf, (grezzo as string).trim())
   }
+  chiavi.perDomande = [...new Set(chiavi.perDomande)]
 
-  const documento = typeof alunno.documento_path === 'string' ? alunno.documento_path.trim() : ''
+  const documento = typeof persona.documento === 'string' ? persona.documento.trim() : ''
   if (documento) {
-    const esito = await documentoDiAltri(supabase, alunno.id, documento, op)
-    chiavi.verificati.set(documento, esito)
-    registraEsclusione(chiavi, esito, 'documento', alunno.id, op)
-    if (esito === 'propria') chiavi.documento = documento
+    if (chiavi.protetti.length > 0) {
+      // Il documento non riapre la strada che il codice fiscale ha chiuso. Si conta come escluso
+      // solo quando il codice era CONDIVISO: con una verifica fallita, quella è già in
+      // `lettureFallite` e l'oblio risulta parziale comunque.
+      const esito: EsitoChiave = chiavi.escluse.codiceFiscale > 0 ? 'condivisa' : 'non_verificata'
+      chiavi.verificati.set(documento, esito)
+      if (esito === 'condivisa') registraEsclusione(chiavi, esito, 'documento', op)
+    } else {
+      const esito = await documentoDiAltri(supabase, soggetto, documento, op)
+      chiavi.verificati.set(documento, esito)
+      registraEsclusione(chiavi, esito, 'documento', op)
+      if (esito === 'propria') chiavi.documento = documento
+    }
   }
   return chiavi
 }
 
 /**
  * Fra gli allegati che la domanda d'iscrizione restituisce, quelli che si possono togliere.
- * Di solito è il suo stesso documento, già verificato; un percorso diverso si verifica qui, con la
- * stessa regola: se lo usa un'altra scheda viva o un genitore, il file resta.
+ * Di solito è il documento del soggetto, già verificato; un percorso diverso si verifica qui, con la
+ * stessa regola: se lo usa un'altra persona viva, il file resta.
  */
 async function allegatiDaTogliere(
   supabase: SupabaseClient,
-  alunnoId: string,
   percorsi: string[],
   chiavi: ChiaviProprie,
   op: string,
@@ -2420,9 +2504,9 @@ async function allegatiDaTogliere(
   for (const p of percorsiUnici(percorsi)) {
     let esito = chiavi.verificati.get(p)
     if (esito === undefined) {
-      esito = await documentoDiAltri(supabase, alunnoId, p, op)
+      esito = await documentoDiAltri(supabase, chiavi.soggetto, p, op)
       chiavi.verificati.set(p, esito)
-      registraEsclusione(chiavi, esito, 'documento', alunnoId, op)
+      registraEsclusione(chiavi, esito, 'documento', op)
     }
     if (esito === 'propria') fuori.push(p)
   }
@@ -2489,7 +2573,12 @@ export async function anonimizzaAlunno(
   //    e il documento servono più sotto a cercare FUORI dalla riga del bambino (domande d'iscrizione
   //    e loro allegati, bonifici, cassa): se sono anche di un'altra scheda viva, cercarli distruggerebbe
   //    i dati di quell'altro bambino. Vedi `chiaviDiRicercaProprie`.
-  const chiavi = await chiaviDiRicercaProprie(supabase, alunno, op)
+  const chiavi = await chiaviDiRicercaProprie(
+    supabase,
+    { tabella: 'alunni', id: alunno.id },
+    { codiciFiscali: [alunno.codice_fiscale, alunno.fiscal_code], documento: alunno.documento_path },
+    op,
+  )
 
   // 1. Anonimizza l'anagrafica dell'alunno. La SUA riga si azzera comunque, chiavi condivise o no.
   const { error: e1 } = await supabase.from('alunni').update(patchAlunno(alunno.id, at)).eq('id', alunno.id)
@@ -2734,17 +2823,24 @@ export async function anonimizzaAlunno(
   //    parziale deve essere visibile a chi l'ha eseguito, non finire in un
   //    `catch` muto come accadeva fino al 2026-07-31. Il bucket `fatture` resta
   //    escluso a monte (conservazione fiscale).
-  //    Solo con le chiavi che sono sue (passo 0), e solo i file che nessun'altra persona usa ancora.
+  //    Solo con le chiavi che sono sue (passo 0), solo nel ramo `children` (un alunno non è mai un
+  //    adulto della domanda: tre domande in produzione hanno una voce adulto col codice di un alunno),
+  //    e solo i file che nessun'altra persona usa ancora.
   const iscr = await obliaIscrizioni(
     supabase,
-    { codiciFiscali: chiavi.codiciFiscali, documentoPaths: [chiavi.documento] },
+    {
+      codiciFiscali: chiavi.perDomande,
+      documentoPaths: [chiavi.documento],
+      codiciFiscaliProtetti: chiavi.protetti,
+      ramo: 'children',
+    },
     at,
     op,
   )
   const esitoFile = await rimuoviFileOblio(
     supabase,
     BUCKET_ISCRIZIONI,
-    [chiavi.documento, ...(await allegatiDaTogliere(supabase, alunno.id, iscr.documenti, chiavi, op))],
+    [chiavi.documento, ...(await allegatiDaTogliere(supabase, iscr.documenti, chiavi, op))],
     op,
   )
 

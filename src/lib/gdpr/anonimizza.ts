@@ -126,6 +126,22 @@ export interface SoggettiIscrizione {
   codiciFiscali?: (string | null | undefined)[]
   /** Percorsi di allegati già noti (`alunni.documento_path`, `parents.documento_path`). */
   documentoPaths?: (string | null | undefined)[]
+  /**
+   * IL RAMO DELLA DOMANDA in cui il soggetto può stare (2026-10-09): un alunno è un `children`,
+   * un genitore è un `adults`. Misurato in produzione: tre genitori vivi portano in
+   * `parents.fiscal_code` il codice fiscale del proprio figlio, e tre domande hanno una voce adulto
+   * col codice di un alunno. Cercando in entrambi i rami, l'oblio di quel genitore ripuliva la voce
+   * del FIGLIO iscritto (identità, allergie, note mediche). Assente = entrambi i rami, il
+   * comportamento di prima, per chi chiama l'helper da sé e decide il perimetro.
+   */
+  ramo?: 'children' | 'adults'
+  /**
+   * Codici fiscali PROTETTI (2026-10-09): quelli che il chiamante ha escluso perché sono anche di
+   * un'altra persona viva, o perché non si è potuto verificarlo. Una persona che porta uno di questi
+   * codici non si ripulisce MAI, nemmeno se le corrisponde il documento: il documento non deve
+   * riaprire la strada che il codice fiscale ha chiuso.
+   */
+  codiciFiscaliProtetti?: (string | null | undefined)[]
 }
 
 /**
@@ -153,18 +169,25 @@ export function scrubDomandaIscrizione(
   if (cfCercati.size === 0 && pathCercati.size === 0) {
     return { data: originale, personeScrubbate: 0, documenti: [] }
   }
+  const cfProtetti = new Set(
+    (soggetti.codiciFiscaliProtetti ?? []).map(normalizzaCf).filter((v) => v.length > 0),
+  )
+  const rami = soggetti.ramo ? [soggetti.ramo] : (['children', 'adults'] as const)
 
   let personeScrubbate = 0
   const documenti: string[] = []
   const out: Record<string, unknown> = { ...originale }
 
-  for (const ramo of ['children', 'adults'] as const) {
+  for (const ramo of rami) {
     const lista = originale[ramo]
     if (!Array.isArray(lista)) continue
     out[ramo] = lista.map((voce) => {
       if (!voce || typeof voce !== 'object') return voce
       const persona = voce as Record<string, unknown>
-      const cf = CHIAVI_CF.map((k) => normalizzaCf(persona[k])).find((v) => v.length > 0) ?? ''
+      // Tutti i codici che la persona porta, non solo il primo: basta che UNO sia protetto.
+      const codici = CHIAVI_CF.map((k) => normalizzaCf(persona[k])).filter((v) => v.length > 0)
+      if (codici.some((c) => cfProtetti.has(c))) return persona
+      const cf = codici[0] ?? ''
       const docPath = typeof persona.documento_path === 'string' ? persona.documento_path.trim() : ''
       const coinvolta = (cf !== '' && cfCercati.has(cf)) || (docPath !== '' && pathCercati.has(docPath))
       if (!coinvolta) return persona

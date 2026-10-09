@@ -27,7 +27,8 @@ vi.mock('@/lib/logging/logger', async (originale) => {
   return { ...vero, logErrore: spie.logErrore, logEvento: spie.logEvento }
 })
 
-import { anonimizzaAlunno, BUCKET_ISCRIZIONI } from '@/lib/gdpr/esegui'
+import { anonimizzaAlunno, anonimizzaParent, BUCKET_ISCRIZIONI } from '@/lib/gdpr/esegui'
+import { scrubDomandaIscrizione } from '@/lib/gdpr/anonimizza'
 
 const DOPPIONE = 'aaaaaaaa-0000-4000-8000-00000000000a'
 const VERO = 'bbbbbbbb-0000-4000-8000-00000000000b'
@@ -35,6 +36,11 @@ const VERO = 'bbbbbbbb-0000-4000-8000-00000000000b'
 const CF = 'DPRBMB20A01Z999X'
 const DOC_COMUNE = 'iscrizioni/uuid-documento-comune.pdf'
 const DOC_PROPRIO = 'iscrizioni/uuid-documento-proprio.pdf'
+const GENITORE = 'cccccccc-0000-4000-8000-00000000000c'
+const ALTRO_GENITORE = 'dddddddd-0000-4000-8000-00000000000d'
+// Il codice fiscale (inventato) di un adulto.
+const CF_ADULTO = 'GNTPRV80A01Z999K'
+const DOC_ADULTO = 'iscrizioni/uuid-documento-adulto.pdf'
 const AT = '2026-10-09T00:00:00Z'
 
 const alunno = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -286,5 +292,221 @@ describe('anonimizzaAlunno — una verifica che non si è potuta fare', () => {
     expect(d.riconciliazione_movimenti[0].causale).toBe(`RETTA OTTOBRE ${CF}`)
     expect(d.cassa_movimenti[0].descrizione).toBe(`QUOTA ${CF}`)
     expect(r.lettureFallite).toBe(1)
+  })
+})
+
+// =============================================================================
+// IL GENITORE E I RAMI DELLA DOMANDA (seconda revisione, 2026-10-09).
+//
+// Misurato in produzione: tre genitori vivi hanno in `parents.fiscal_code` il codice fiscale
+// del PROPRIO figlio (due di quei figli iscritti, e quei codici compaiono come figlio in una
+// domanda); e tre domande hanno una voce ADULTO con il codice fiscale di un alunno vivo.
+// `obliaIscrizioni` cercava e ripuliva TUTTI E DUE i rami della domanda: l'oblio di quel
+// genitore avrebbe cancellato identità, allergie e note mediche del figlio iscritto, e ne
+// avrebbe tolto il documento. La ricerca ora è per RAMO: un alunno è un `children`, un
+// genitore è un `adults`.
+// =============================================================================
+
+const genitore = (id: string, extra: Record<string, unknown> = {}) => ({
+  id, first_name: 'Genitore', last_name: 'DiProva', fiscal_code: null, documento_path: null,
+  auth_user_id: null, anonimizzato_il: null, ...extra,
+})
+
+const domandaFamiglia = (id: string, figlio: Record<string, unknown>, adulto: Record<string, unknown>) => ({
+  id,
+  data: {
+    children: [{ nome: 'Bambino', cognome: 'DiProva', ...figlio }],
+    adults: [{ ruolo: 'madre', first_name: 'Genitore', last_name: 'DiProva', ...adulto }],
+  },
+  consents_log: null,
+})
+
+async function oblioGenitore(d: DBFinto, parentId: string, file: Record<string, string[]> = {}, errori: OpzioniFinto['errori'] = {}) {
+  const client = creaFintoSupabase(d, [], { rpc: RPC, errori })
+  const arch = archivio(file)
+  ;(client as unknown as { storage: unknown }).storage = arch.storage
+  const r = await anonimizzaParent(client as SupabaseClient, parentId, AT, 'test')
+  return { r, archivio: arch.a }
+}
+
+const ramo = (d: DBFinto, nome: 'children' | 'adults') =>
+  (d.enrollment_submissions[0].data as Record<string, Record<string, unknown>[]>)[nome][0]
+
+describe('anonimizzaParent — il genitore che porta il codice fiscale del figlio', () => {
+  it('CF del genitore = CF del figlio iscritto → la voce del figlio e il suo documento NON si toccano', async () => {
+    const d = dbBase()
+    d.alunni = [alunno(VERO, { codice_fiscale: CF, documento_path: DOC_PROPRIO })]
+    d.parents = [genitore(GENITORE, { fiscal_code: CF })]
+    d.enrollment_submissions = [domandaFamiglia('es-1', { codice_fiscale: CF, documento_path: DOC_PROPRIO, allergie: 'ALLERGIA DI PROVA' }, { fiscal_code: CF_ADULTO })]
+    const primaDomanda = structuredClone(d.enrollment_submissions[0])
+
+    const { r, archivio: arch } = await oblioGenitore(d, GENITORE, { [BUCKET_ISCRIZIONI]: [DOC_PROPRIO] })
+
+    expect(d.enrollment_submissions[0], 'l’oblio del genitore ha ripulito la voce del figlio iscritto').toEqual(primaDomanda)
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_PROPRIO), 'il documento del figlio è uscito dall’archivio').toBe(true)
+    expect(r.chiaviCondiviseEscluse.codiceFiscale).toBe(1)
+    // La riga del genitore si azzera comunque.
+    expect(d.parents[0].fiscal_code).toBeNull()
+    expect(esclusioni()).toEqual([expect.objectContaining({ entita_tipo: 'parents', entita_id: GENITORE, tipo: 'codice_fiscale' })])
+    expect(JSON.stringify([spie.logEvento.mock.calls, spie.logErrore.mock.calls])).not.toContain(CF)
+  })
+
+  it('anche senza nessuna scheda alunno con quel CF, la voce `children` non si tocca: il genitore cerca solo fra gli adulti', async () => {
+    const d = dbBase()
+    d.parents = [genitore(GENITORE, { fiscal_code: CF })]
+    d.enrollment_submissions = [domandaFamiglia('es-1', { codice_fiscale: CF, documento_path: DOC_PROPRIO }, { fiscal_code: CF_ADULTO })]
+    const figlioPrima = structuredClone(ramo(d, 'children'))
+
+    const { archivio: arch } = await oblioGenitore(d, GENITORE, { [BUCKET_ISCRIZIONI]: [DOC_PROPRIO] })
+
+    expect(ramo(d, 'children')).toEqual(figlioPrima)
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_PROPRIO)).toBe(true)
+  })
+
+  it('CF del genitore uguale a quello di un ALTRO genitore vivo → chiave non usata', async () => {
+    const d = dbBase()
+    d.parents = [genitore(GENITORE, { fiscal_code: CF_ADULTO }), genitore(ALTRO_GENITORE, { fiscal_code: CF_ADULTO })]
+    d.enrollment_submissions = [domandaFamiglia('es-1', { codice_fiscale: CF }, { fiscal_code: CF_ADULTO, email: 'adulto@example.invalid' })]
+    const primaDomanda = structuredClone(d.enrollment_submissions[0])
+
+    const { r } = await oblioGenitore(d, GENITORE)
+
+    expect(d.enrollment_submissions[0]).toEqual(primaDomanda)
+    expect(r.chiaviCondiviseEscluse.codiceFiscale).toBe(1)
+  })
+
+  it('documento del genitore usato anche da un alunno vivo → il file NON esce', async () => {
+    const d = dbBase()
+    d.alunni = [alunno(VERO, { documento_path: DOC_COMUNE })]
+    d.parents = [genitore(GENITORE, { documento_path: DOC_COMUNE })]
+
+    const { r, archivio: arch } = await oblioGenitore(d, GENITORE, { [BUCKET_ISCRIZIONI]: [DOC_COMUNE] })
+
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_COMUNE)).toBe(true)
+    expect(r.chiaviCondiviseEscluse.documento).toBe(1)
+  })
+
+  it('caso normale: un genitore senza condivisioni → la SUA voce adulto si ripulisce e il documento esce, come prima', async () => {
+    const d = dbBase()
+    d.alunni = [alunno(VERO, { codice_fiscale: CF })]
+    d.parents = [genitore(GENITORE, { fiscal_code: CF_ADULTO, documento_path: DOC_ADULTO })]
+    d.enrollment_submissions = [domandaFamiglia('es-1', { codice_fiscale: CF }, { fiscal_code: CF_ADULTO, documento_path: DOC_ADULTO, email: 'adulto@example.invalid' })]
+    const figlioPrima = structuredClone(ramo(d, 'children'))
+
+    const { r, archivio: arch } = await oblioGenitore(d, GENITORE, { [BUCKET_ISCRIZIONI]: [DOC_ADULTO] })
+
+    expect(ramo(d, 'adults')).toMatchObject({ fiscal_code: null, email: null, anonimizzato_il: AT, ruolo: 'madre' })
+    expect(ramo(d, 'children'), 'controllo positivo: il figlio resta').toEqual(figlioPrima)
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_ADULTO)).toBe(false)
+    expect(r.iscrizioniScrubbate).toBe(1)
+    expect(r.chiaviCondiviseEscluse).toEqual({ codiceFiscale: 0, documento: 0 })
+    expect(r.lettureFallite).toBe(0)
+  })
+})
+
+describe('anonimizzaAlunno — la voce ADULTO non è sua', () => {
+  it('una voce adulto con il CF dell’alunno (refuso della famiglia) non si tocca', async () => {
+    const d = dbBase()
+    d.alunni = [alunno(DOPPIONE, { codice_fiscale: CF })]
+    d.enrollment_submissions = [domandaFamiglia('es-1', { codice_fiscale: 'ALTRBM20A01Z999Y' }, { fiscal_code: CF, email: 'adulto@example.invalid' })]
+    const primaDomanda = structuredClone(d.enrollment_submissions[0])
+
+    const { r } = await oblio(d, { id: DOPPIONE, codice_fiscale: CF, fiscal_code: null, documento_path: null })
+
+    expect(d.enrollment_submissions[0], 'l’oblio di un alunno ha ripulito un ADULTO').toEqual(primaDomanda)
+    expect(r.iscrizioniScrubbate).toBe(0)
+  })
+})
+
+describe('anonimizzaAlunno — il documento non aggira l’esclusione del codice fiscale', () => {
+  it('CF condiviso + documento PROPRIO nominato dalla domanda condivisa → domanda intatta, file non rimosso', async () => {
+    const d = dbBase()
+    d.alunni = [alunno(DOPPIONE, { codice_fiscale: CF, documento_path: DOC_PROPRIO }), alunno(VERO, { codice_fiscale: CF })]
+    d.enrollment_submissions = [domanda('es-1', { codice_fiscale: CF, documento_path: DOC_PROPRIO, allergie: 'ALLERGIA DI PROVA' })]
+    const primaDomanda = structuredClone(d.enrollment_submissions[0])
+
+    const { r, archivio: arch } = await oblio(
+      d,
+      { id: DOPPIONE, codice_fiscale: CF, fiscal_code: null, documento_path: DOC_PROPRIO },
+      { [BUCKET_ISCRIZIONI]: [DOC_PROPRIO] },
+    )
+
+    expect(d.enrollment_submissions[0], 'il documento ha riaperto la strada che il CF aveva chiuso').toEqual(primaDomanda)
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_PROPRIO)).toBe(true)
+    expect(r.chiaviCondiviseEscluse).toEqual({ codiceFiscale: 1, documento: 1 })
+  })
+
+  it('verifica del CF fallita + documento proprio → anche il documento resta fuori', async () => {
+    const d = dbBase()
+    d.alunni = [alunno(DOPPIONE, { codice_fiscale: CF, documento_path: DOC_PROPRIO })]
+    d.enrollment_submissions = [domanda('es-1', { codice_fiscale: CF, documento_path: DOC_PROPRIO })]
+    const primaDomanda = structuredClone(d.enrollment_submissions[0])
+
+    const { r, archivio: arch } = await oblio(
+      d,
+      { id: DOPPIONE, codice_fiscale: CF, fiscal_code: null, documento_path: DOC_PROPRIO },
+      { [BUCKET_ISCRIZIONI]: [DOC_PROPRIO] },
+      { 'alunni:select': { code: '42501' } },
+    )
+
+    expect(d.enrollment_submissions[0]).toEqual(primaDomanda)
+    expect(arch.get(BUCKET_ISCRIZIONI)!.has(DOC_PROPRIO)).toBe(true)
+    expect(r.lettureFallite).toBe(1)
+  })
+})
+
+describe('scrubDomandaIscrizione — ramo e codici fiscali protetti', () => {
+  const dom = () => ({
+    children: [{ nome: 'Bambino', codice_fiscale: CF, documento_path: DOC_PROPRIO }],
+    adults: [{ first_name: 'Genitore', fiscal_code: CF, documento_path: DOC_ADULTO }],
+  })
+
+  it('con `ramo` si guarda solo quel ramo', () => {
+    const r = scrubDomandaIscrizione(dom(), { codiciFiscali: [CF], ramo: 'adults' }, AT)
+    const out = r.data as ReturnType<typeof dom>
+    expect(out.adults[0].first_name).toBeNull()
+    expect(out.children[0].nome).toBe('Bambino')
+    expect(r.documenti).toEqual([DOC_ADULTO])
+  })
+
+  it('una persona con un CF PROTETTO non si ripulisce mai, anche se corrisponde il documento', () => {
+    const r = scrubDomandaIscrizione(dom(), { documentoPaths: [DOC_PROPRIO], codiciFiscaliProtetti: [CF.toLowerCase()], ramo: 'children' }, AT)
+    expect(r.personeScrubbate).toBe(0)
+    expect(r.data).toEqual(dom())
+  })
+})
+
+describe('anonimizzaAlunno — il filtro usa la stessa stringa che si è validata', () => {
+  it('un CF salvato in minuscolo arriva ai filtri di bonifici e cassa normalizzato', async () => {
+    const d = dbBase()
+    d.alunni = [alunno(DOPPIONE, { codice_fiscale: CF.toLowerCase() })]
+    const client = creaFintoSupabase(d, [], { rpc: RPC })
+    ;(client as unknown as { storage: unknown }).storage = archivio({}).storage
+    const visti: string[] = []
+    const avvolto = new Proxy(client, {
+      get(t, k) {
+        if (k !== 'from') return Reflect.get(t, k, t) as unknown
+        return (tabella: string) => {
+          const b = t.from(tabella) as unknown as Record<string, unknown>
+          if (tabella !== 'riconciliazione_movimenti') return b
+          const proxy: object = new Proxy(b, {
+            get(bb, kk) {
+              const v = Reflect.get(bb, kk, bb) as unknown
+              if (typeof v !== 'function') return v
+              return (...a: unknown[]) => {
+                if (kk === 'ilike') visti.push(String(a[1]))
+                const e = (v as (...x: unknown[]) => unknown).apply(bb, a)
+                return e === bb ? proxy : e
+              }
+            },
+          })
+          return proxy
+        }
+      },
+    }) as SupabaseClient
+
+    await anonimizzaAlunno(avvolto, { id: DOPPIONE, codice_fiscale: CF.toLowerCase(), fiscal_code: null, documento_path: null } as never, AT, 'test')
+
+    expect(visti).toEqual([`%${CF}%`])
   })
 })

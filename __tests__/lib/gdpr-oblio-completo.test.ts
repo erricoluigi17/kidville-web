@@ -466,7 +466,10 @@ beforeEach(() => {
     anonimizzato_il: null, documento_path: 'anagrafica/doc-alunno.pdf',
     codice_fiscale: 'AAABBB10A01H501X', fiscal_code: null, scuola_id: 'sc-1', section_id: null,
   }
-  h.parents = [{ auth_user_id: 'auth-1', fiscal_code: 'EEEFFF80C03H501Z', documento_path: 'anagrafica/doc-adulto.pdf' }]
+  // `id` è quello che `student_parents` qui sopra già dichiara (`p-1`): dal 2026-10-09 l'oblio
+  // controlla se il codice fiscale e il documento del genitore sono anche di un ALTRO genitore, e
+  // una riga senza id non si potrebbe riconoscere come la sua.
+  h.parents = [{ id: 'p-1', auth_user_id: 'auth-1', fiscal_code: 'EEEFFF80C03H501Z', documento_path: 'anagrafica/doc-adulto.pdf' }]
   h.iscrizioni = [{ id: 'sub-1', data: domandaDiProva() }]
   h.updates = []
   h.removed = []

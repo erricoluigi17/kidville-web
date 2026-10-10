@@ -678,5 +678,9 @@
   "erroreIscrizioneServizioNonTrovata": "L’iscrizione al servizio non esiste in questa sede.",
   "erroreServiziScritturaFallita": "Non è stato possibile salvare le iscrizioni ai servizi: riprova.",
   "erroreServiziLetturaFallita": "Non è stato possibile leggere i servizi mensili: riprova.",
-  "erroreVociFutureDaDecidere": "Ci sono voci già generate fuori dal nuovo periodo: scegli se eliminare quelle non pagate e non fatturate o mantenerle."
+  "erroreVociFutureDaDecidere": "Ci sono voci già generate fuori dal nuovo periodo: scegli se eliminare quelle non pagate e non fatturate o mantenerle.",
+  "erroreQuoteNonDisponibili": "La modifica delle quote non è ancora disponibile su questo database.",
+  "erroreQuoteDatiNonValidi": "Le quote non sono valide: controlla importi e persone.",
+  "erroreQuoteAdultoRipetuto": "La stessa persona compare in due quote.",
+  "erroreQuoteConIncassi": "Una quota da togliere ha già degli incassi: stornali prima di cambiare chi paga."
 }

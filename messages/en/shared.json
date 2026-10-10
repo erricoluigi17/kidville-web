@@ -678,5 +678,9 @@
   "erroreIscrizioneServizioNonTrovata": "The service enrolment does not exist at this location.",
   "erroreServiziScritturaFallita": "The service enrolments could not be saved: please try again.",
   "erroreServiziLetturaFallita": "The monthly services could not be loaded: please try again.",
-  "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them."
+  "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them.",
+  "erroreQuoteNonDisponibili": "Editing shares is not yet available on this database.",
+  "erroreQuoteDatiNonValidi": "The shares are not valid: check amounts and people.",
+  "erroreQuoteAdultoRipetuto": "The same person appears in two shares.",
+  "erroreQuoteConIncassi": "A share to be removed already has payments: reverse them before changing who pays."
 }

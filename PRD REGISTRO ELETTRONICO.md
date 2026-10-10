@@ -1,6 +1,59 @@
+## 🧯 Changelog — Roadmap di robustezza, fase 5 (sesto pezzo): in `pagamenti` ogni `{ error }` di PostgREST si guarda, e un guasto non diventa più un valore — 2026-10-10 (branch `robustezza/fase-5-errori`)
+
+**Stato.** 🟡 **In PR.** Nessuna migrazione. Il lock teneva in attesa `quote/route.ts` e `ticket/route.ts`, riscritte da #213 e #214: dopo i loro merge sono risultate già pulite e l'elenco d'attesa è vuoto.
+
+**Il problema (S6 / D5 della roadmap).** PostgREST non lancia: restituisce `{ data: null, error }`. Una ricognizione delle 261 chiamate `.from()`/`.rpc()` delle 57 route di `src/app/api/pagamenti/**`, e degli aiuti che chiamano, ne ha trovate **68 col risultato mai guardato** (28 gravi). Il `null` diventava un valore, e a volte una scrittura:
+- **doppio addebito**: `genera` non leggeva «chi ha già questo gruppo» e generava la voce una seconda volta;
+- **DELETE di una voce fatturata**: le due guardie di `DELETE /api/pagamenti/[id]` erano scritte `!errore && …`, e con un guasto della lettura la cancellazione partiva;
+- **importo sparito**: il riporto fra rate scriveva −X e +X con due insert, e col secondo fallito restava solo il −X;
+- **«nuova retta» a tutta la sede**: `genera-rette` non leggeva chi l'aveva già;
+- **anteprime gonfiate**: le rette già emesse lette in un colpo solo, tagliate a 1000 righe;
+- **valori zero**: credito famiglia, saldo ticket e attestazione 730 letti come zero;
+- **ricevute sbagliate**: una ricevuta numerata senza righe o senza intestatario;
+- **sollecito al genitore sbagliato**: il sollecito di una quota mandato all'altro genitore;
+- **incasso orfano**: un incasso rimasto senza il suo movimento bancario;
+- **tracce perse**: le scritture in `registro_modifiche` inghiottite da `.then(() => {}, () => {})`.
+
+**Cosa cambia.**
+1. **`src/lib/pagamenti/guasto-db.ts`** ha tre forme:
+   - `rispostaGuastoDb`: 500 con `LETTURA_FALLITA` o il nuovo `PAGAMENTI_SCRITTURA_FALLITA`, più la riga `logErrore` col codice Postgres;
+   - `rispostaBlocchiFalliti`: la stessa cosa per `leggiABlocchi`, con la riga `lettura-troncata` quando si arriva al tetto;
+   - `guastoSecondario`: per un passo accessorio dopo una scrittura già avvenuta, una riga `pagamento`/`error` e la risposta invariata.
+2. **Route.** Ogni lettura che decide controlla `error`. Nei casi dove lo schema manca davvero (DB E2E: 42P01, 42703, PGRST204/205) degrada come prima. Interventi specifici:
+   - le guardie della DELETE fermano invece di saltare;
+   - le rette già emesse si leggono a blocchi;
+   - lo sconto risponde `stato_ricalcolato`.
+3. **Aiuti.**
+   - `resolveParentRegistryEsito` distingue «non c'è» da «non letto»; la forma storica logga un `warn`.
+   - `saldoCredito` lancia su un guasto vero.
+   - `applyOverpaymentSpill` scrive le due righe in **un** insert, quindi tutte e due o nessuna.
+   - Le ricevute non si numerano su dati non letti.
+   - I solleciti non ripiegano su tutti i tutori.
+   - La compensazione della riconciliazione guarda il proprio esito.
+   - `famigliaDiAlunno` non mostra più «nessun fratello» per un guasto.
+
+**Log.** `logErrore` con `evento: 'db:<tabella>'` e `stato: 500` su ogni guasto che risponde. `pagamento`/`error` per:
+- `audit-non-scritto`;
+- `stato-non-ricalcolato`;
+- `riporto-non-scritto`, `rata-non-letta`;
+- `quote-non-lette`, `destinatari-non-letti`, `cadenza-non-scritta`;
+- `incasso-orfano`;
+- `stato-non-riletto`.
+
+Più `warn` per `lettura-fallita` (intestatario, forma storica) e `nome-sede-non-letto`, e `info` per `numerazione-assente`. Mai dati personali: uuid, conteggi, codici.
+
+**Prove.**
+- **Lock** `pagamenti-errori-controllati`: vieta 4 forme (`{ data }` senza `error`, risultato buttato, `.then` muto, `.catch` muto) nelle route di `pagamenti` e negli 8 aiuti. Verifica di scansionare più di 50 file, e l'elenco d'attesa può solo accorciarsi. È rosso rimettendo `spill.ts` e `[id]/route.ts` di `origin/main`.
+- **Test di comportamento** `pagamenti-errori-controllati`: 13 casi sul finto DB, che guardano lo stato e non le chiamate. **Gli 11 casi del guasto sono rossi sulle route di prima**; i 2 di controllo (schema assente) passano su entrambe le versioni.
+- `saldoCredito`: guasto → lancia.
+
+**Da fare / aperto.**
+- Dopo il merge di #213 e #214: correggere `quote` e `ticket` e svuotare l'elenco d'attesa.
+- Fuori da questo pezzo, stessa classe di difetto: `lib/pagamenti/scadenze.ts`, chiamata solo da `admin/students`.
+
 ## 📊 Changelog — Roadmap di robustezza, fase 5 (quinto pezzo): report di cassa e cruscotto non sommano più righe tagliate a 1000 — 2026-10-10 (branch `robustezza/fase-5-report`)
 
-**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010084330_report_cassa_aggregato.sql`). La applica l'integrazione al merge, **dopo** i pezzi 1–4 (timestamp crescenti).
+**Stato.** ✅ **In produzione dal 2026-10-10** (#216, `a8076175`). Verifica dopo il merge, sulle tre sedi reali: `report_cassa_aggregato` presente, permessi giusti (anon e authenticated no, service_role sì), una riga sola nello storico delle migrazioni, advisor 0 ERROR; **totali = SUM**: entrate 261.023,18 € identiche in quattro modi (controllo interno, gruppi di tutte le sedi, gruppi per sede, mensile) e uguali a un SUM indipendente sugli incassi con metodo reale; uscite 13.370,40 € uguali al SUM di `cassa_movimenti`. Una migrazione di sole funzioni (`20261010084330_report_cassa_aggregato.sql`), applicata dall'integrazione al merge, dopo i pezzi 1–4.
 
 **Il problema (D5-C, S6).** PostgREST taglia ogni risposta a `max_rows` (1000) senza dirlo.
 - Il **report di cassa** (`GET /api/pagamenti/cassa/report`) leggeva le righe di `incassi` e `cassa_movimenti` e sommava in JavaScript: entrate per categoria, mensile e per sede uscivano più basse con un 200.
@@ -33,7 +86,7 @@
 
 ## 📝 Changelog — Roadmap di robustezza, fase 5 (quarto pezzo): sullo scrutinio non vince più l'ultimo — controllo di versione su ogni riga — 2026-10-10 (branch `robustezza/fase-5-scrutinio`)
 
-**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010083156_scrutinio_controllo_versione.sql`). La applica l'integrazione al merge, **dopo** i pezzi 1–3 (timestamp crescenti). `scrutinio_periodi` non si tocca.
+**Stato.** ✅ **In produzione dal 2026-10-10** (#215, `04b3f264`). Verifica dopo il merge: `salva_giudizi_scrutinio` e `salva_comportamento_scrutinio` presenti, permessi giusti (anon e authenticated no, service_role sì), una riga sola nello storico delle migrazioni, advisor 0 ERROR. Una migrazione di sole funzioni (`20261010083156_scrutinio_controllo_versione.sql`), applicata dall'integrazione al merge, dopo i pezzi 1–3. `scrutinio_periodi` non si tocca.
 
 **Il problema (D5-B).** `POST` (giudizi sintetici) e `PATCH` (comportamento e giudizio globale) di `/api/primaria/scrutinio` facevano un upsert cieco, e la pagina rimandava **tutte** le celle della classe a ogni salvataggio, anche quelle non toccate. Due persone con la pagina aperta — due contitolari, o docente e segreteria — e il secondo che salva riscrive con i valori vecchi della sua schermata quello che l'altro ha appena cambiato. Nessun errore, nessuna traccia. **Provato con due sessioni vere su Postgres 17**: A «ok», B «ok», e il giudizio di A sparito.
 
@@ -53,7 +106,7 @@
 
 ## 🎫 Changelog — Roadmap di robustezza, fase 5 (terzo pezzo): la ricarica dei ticket mensa è una transazione sola, e due click non fanno due ricariche — 2026-10-10 (branch `robustezza/fase-5-ticket`)
 
-**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010081946_ricarica_ticket_in_una_transazione.sql`). La applica l'integrazione al merge, **dopo** i pezzi 1 e 2 (timestamp crescenti).
+**Stato.** ✅ **In produzione dal 2026-10-10** (#214, `4f1977d7`). Verifica dopo il merge: `ricarica_ticket_mensa` presente, permessi giusti (anon e authenticated no, service_role sì), una riga sola nello storico delle migrazioni, advisor 0 ERROR. Una migrazione di sole funzioni (`20261010081946_ricarica_ticket_in_una_transazione.sql`), applicata dall'integrazione al merge, dopo i pezzi 1 e 2.
 
 **Il problema (D5-A).** `POST /api/pagamenti/ticket` faceva quattro scritture separate — saldo (`varia_saldo_ticket`), pagamento Mensa, incasso, movimento del ledger — più un «rientro» del saldo a mano se il pagamento non nasceva. Ogni passo poteva fallire dopo i precedenti: saldo salito senza pagamento, pagamento senza incasso (la famiglia fra i morosi per una ricarica pagata), movimento perso. E la guardia «ha già ricaricato oggi?» leggeva il ledger senza blocco. **Provato con due sessioni vere su Postgres 17**: due click ravvicinati → saldo 20, 2 ricariche.
 

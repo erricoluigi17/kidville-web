@@ -9,6 +9,7 @@ import { buildRicevutaFamigliaPdf } from '@/lib/pagamenti/pdf'
 import { datiStruttura, isTracciabile } from '@/lib/pagamenti/fiscale'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import { formattaIstante } from '@/i18n/config'
 
 // Schema locale: l'unico input è il param dinamico [id] (uuid della transazione).
@@ -61,9 +62,9 @@ export const GET = withRoute('pagamenti/transazioni/[id]/ricevuta:GET', async (r
     const { supabase, tx, userId } = r
 
     const esito = await emettiORecuperaRicevutaTransazione(supabase, tx, { creatoDa: userId })
-    if (!esito.ok) {
-      return NextResponse.json({ error: 'Errore nell’emissione della ricevuta', details: esito.messaggio }, { status: 500 })
-    }
+    // Il messaggio di Postgres non va in risposta (può contenere dati): va nel log, che prima
+    // mancava del tutto — un 500 senza riga (fase 5 robustezza, sesto pezzo).
+    if (!esito.ok) return rispostaGuastoDb('pagamenti/transazioni/[id]/ricevuta:GET', 'db:ricevute_emesse', esito.error ?? new Error(esito.messaggio), 'scrittura')
     const record = esito.legacy ? null : esito.record
 
     const pdf = buildRicevutaFamigliaPdf({
@@ -106,9 +107,9 @@ export const POST = withRoute('pagamenti/transazioni/[id]/ricevuta:POST', async 
     const { supabase, tx, userId } = r
 
     const esito = await emettiORecuperaRicevutaTransazione(supabase, tx, { creatoDa: userId })
-    if (!esito.ok) {
-      return NextResponse.json({ error: 'Errore nell’emissione della ricevuta', details: esito.messaggio }, { status: 500 })
-    }
+    // Il messaggio di Postgres non va in risposta (può contenere dati): va nel log, che prima
+    // mancava del tutto — un 500 senza riga (fase 5 robustezza, sesto pezzo).
+    if (!esito.ok) return rispostaGuastoDb('pagamenti/transazioni/[id]/ricevuta:POST', 'db:ricevute_emesse', esito.error ?? new Error(esito.messaggio), 'scrittura')
     if (esito.legacy) {
       // Registro non disponibile su questo ambiente: nessun numero, ma non è un errore.
       return NextResponse.json({ success: true, data: { legacy: true } })

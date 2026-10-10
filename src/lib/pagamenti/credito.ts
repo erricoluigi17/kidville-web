@@ -42,7 +42,13 @@ export type AccreditaResult =
 /**
  * Saldo credito corrente di un parent (parents.id) = `saldo_dopo` dell'ultima
  * riga del ledger. `0` se non ci sono righe o se lo schema non è disponibile
- * (degradazione: nessun credito noto, mai un'eccezione).
+ * (DB E2E non migrato: nessun credito noto).
+ *
+ * Un guasto VERO lancia (fase 5 robustezza, sesto pezzo). Prima ogni errore era
+ * `0`: la scheda famiglia mostrava «nessun credito» e la POST di utilizzo
+ * rispondeva 409 «Credito insufficiente» a una famiglia che il credito l'aveva.
+ * I tre chiamanti (credito GET/POST, famiglia GET) stanno in un `try` che logga e
+ * risponde 500.
  */
 export async function saldoCredito(
   supabase: SupabaseClient,
@@ -55,7 +61,10 @@ export async function saldoCredito(
     .order('creato_il', { ascending: false })
     .limit(1)
     .maybeSingle()
-  if (error) return 0
+  if (error) {
+    if (SCHEMA_MANCANTE.has(codiceDi(error))) return 0
+    throw new Error('saldoCredito: lettura di crediti_famiglia non riuscita', { cause: error })
+  }
   return Number((data as { saldo_dopo?: number | string } | null)?.saldo_dopo ?? 0)
 }
 

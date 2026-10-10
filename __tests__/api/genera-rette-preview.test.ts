@@ -26,6 +26,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.is = () => b
       b.or = () => b
       b.limit = () => b
+      // `leggiABlocchi` (le rette già emesse si leggono a blocchi dal 2026-10-10): il blocco
+      // chiesto è una fetta vera di `h.esistenti`, non sempre le stesse righe.
+      let fetta: [number, number] | null = null
+      b.order = () => b
+      b.range = (da: number, a: number) => { fetta = [da, a]; return b }
       b.maybeSingle = async () => ({
         data: table === 'admin_settings' ? { retta_default_importo: 150, scuola_id: 'sc-1' } : null,
         error: null,
@@ -38,7 +43,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
           return resolve({ data: h.alunni, error: null })
         }
         if (table === 'payment_categories') return resolve({ data: [{ id: 'cat-retta', scuola_id: null }], error: null })
-        return resolve({ data: table === 'pagamenti' ? h.esistenti : [], error: null })
+        const righe = table === 'pagamenti' ? h.esistenti : []
+        return resolve({ data: fetta ? righe.slice(fetta[0], fetta[1] + 1) : righe, error: null })
       }
       return b
     },

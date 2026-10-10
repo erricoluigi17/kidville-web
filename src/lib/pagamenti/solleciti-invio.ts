@@ -169,7 +169,9 @@ export async function sollecitaPagamenti(
             const causaliCfg = await getModuleConfig<Record<string, string>>(supabase, 'causali_config', pag.scuola_id)
             // Nome sede per la causale consigliata (best-effort): `scuole.nome`
             // («Kidville Giugliano» → «GIUGLIANO» via sedeCausale nel builder).
-            const { data: sede } = await supabase.from('scuole').select('nome').eq('id', pag.scuola_id).maybeSingle()
+            const { data: sede, error: errSede } = await supabase.from('scuole').select('nome').eq('id', pag.scuola_id).maybeSingle()
+            // Best-effort davvero (la causale esce senza il nome della sede), ma non più muto.
+            if (errSede) logEvento('pagamento', 'warn', { operazione: 'solleciti-invio', esito: 'nome-sede-non-letto', scuola_id: pag.scuola_id }, errSede)
             scuolaCtx = {
                 cfg,
                 // La firma della prosa (`{scuola}` nei modelli): resta com'era,
@@ -271,8 +273,16 @@ export async function sollecitaPagamenti(
 
         // destinatari: titolari quota (split) oppure tutori del bambino
         let adultIds: string[] = []
+        //
+        // Fase 5 robustezza, sesto pezzo: un guasto su queste letture NON è «nessuna quota»
+        // né «nessun destinatario». Il primo ripiegava su TUTTI i tutori, cioè mandava il
+        // sollecito della quota di un genitore separato all'altro genitore.
         if (pag.tipo === 'split') {
-            const { data } = await supabase.from('pagamenti_quote').select('adult_id').eq('pagamento_id', id)
+            const { data, error: errQuote } = await supabase.from('pagamenti_quote').select('adult_id').eq('pagamento_id', id)
+            if (errQuote) {
+                logEvento('pagamento', 'error', { operazione: 'solleciti-invio', esito: 'quote-non-lette', pagamento_id: id }, errQuote)
+                esiti.push({ pagamento_id: id, ok: false, motivo: 'quote non lette: sollecito non inviato' }); continue
+            }
             adultIds = ((data || []) as { adult_id: string }[]).map((q) => q.adult_id)
         }
         if (adultIds.length === 0) {
@@ -285,7 +295,11 @@ export async function sollecitaPagamenti(
         }
         let destinatari: { id: string; email?: string | null }[] = []
         if (adultIds.length > 0) {
-            const { data } = await supabase.from('utenti').select('id, email').in('id', adultIds)
+            const { data, error: errUtenti } = await supabase.from('utenti').select('id, email').in('id', adultIds)
+            if (errUtenti) {
+                logEvento('pagamento', 'error', { operazione: 'solleciti-invio', esito: 'destinatari-non-letti', pagamento_id: id }, errUtenti)
+                esiti.push({ pagamento_id: id, ok: false, motivo: 'destinatari non letti: sollecito non inviato' }); continue
+            }
             destinatari = (data || []) as { id: string; email?: string | null }[]
         }
         if (destinatari.length === 0) { esiti.push({ pagamento_id: id, ok: false, motivo: 'nessun destinatario collegato' }); continue }
@@ -383,7 +397,10 @@ export async function sollecitaPagamenti(
                 pagamento_id: id,
             }, err)
         }
-        await supabase.from('pagamenti').update({ ultimo_sollecito_il: new Date().toISOString() }).eq('id', id)
+        // Il sollecito è GIÀ partito: l'esito resta ok. Ma senza questa data la cadenza
+        // anti-ripetizione non vede l'invio, e il giro dopo lo manda di nuovo — si dice.
+        const { error: errCadenza } = await supabase.from('pagamenti').update({ ultimo_sollecito_il: new Date().toISOString() }).eq('id', id)
+        if (errCadenza) logEvento('pagamento', 'error', { operazione: 'solleciti-invio', esito: 'cadenza-non-scritta', pagamento_id: id }, errCadenza)
         esiti.push({ pagamento_id: id, ok: true, livello, oggetto, destinatari })
     }
     return esiti

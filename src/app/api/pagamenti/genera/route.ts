@@ -8,6 +8,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import {
   normalizzaMetodiAmmessi,
   sonoTuttiIMetodi,
@@ -90,14 +91,18 @@ export const GET = withRoute('pagamenti/genera:GET', async (request: NextRequest
       .eq('stato', 'iscritto')
       .in('scuola_id', scuoleFiltro)
     if (classeSezione) alQuery = alQuery.eq('classe_sezione', classeSezione)
-    const { data: alunniRaw } = await alQuery
+    // Ogni lettura controlla `error` (fase 5 robustezza, sesto pezzo): un guasto non è
+    // «nessun candidato», né «nessuno l'ha già».
+    const { data: alunniRaw, error: errAlunni } = await alQuery
+    if (errAlunni) return rispostaGuastoDb('pagamenti/genera:GET', 'db:alunni:candidati', errAlunni)
     const alunni = (alunniRaw || []).filter((a) => a.classe_sezione != null || a.section_id != null)
 
     // esclude chi ha già un pagamento con lo stesso gruppo
     let giaFatti = new Set<string>()
     if (gruppo) {
-      const { data: esistenti } = await supabase
+      const { data: esistenti, error: errEsistenti } = await supabase
         .from('pagamenti').select('alunno_id').eq('gruppo', gruppo)
+      if (errEsistenti) return rispostaGuastoDb('pagamenti/genera:GET', 'db:pagamenti:gia-generati', errEsistenti)
       giaFatti = new Set((esistenti || []).map((e) => e.alunno_id))
     }
     const candidati = alunni.filter((a) => !giaFatti.has(a.id))
@@ -192,7 +197,10 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
 
     // esclude i duplicati per gruppo
     if (gruppo) {
-      const { data: esistenti } = await supabase.from('pagamenti').select('alunno_id').eq('gruppo', gruppo)
+      // Un guasto qui, letto come «nessuno l'ha già», generava la voce una SECONDA volta
+      // a chi l'aveva: un doppio addebito.
+      const { data: esistenti, error: errEsistenti } = await supabase.from('pagamenti').select('alunno_id').eq('gruppo', gruppo)
+      if (errEsistenti) return rispostaGuastoDb('pagamenti/genera:POST', 'db:pagamenti:gia-generati', errEsistenti)
       const giaFatti = new Set((esistenti || []).map((e) => e.alunno_id))
       alunnoIds = alunnoIds.filter((id) => !giaFatti.has(id))
     }
@@ -201,7 +209,9 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
     }
 
     // scuola_id per alunno (per coerenza multi-scuola)
-    const { data: alunniInfo } = await supabase.from('alunni').select('id, scuola_id').in('id', alunnoIds)
+    // Senza questa lettura le voci nascevano con `scuola_id` undefined.
+    const { data: alunniInfo, error: errInfo } = await supabase.from('alunni').select('id, scuola_id').in('id', alunnoIds)
+    if (errInfo) return rispostaGuastoDb('pagamenti/genera:POST', 'db:alunni:sede', errInfo)
     const scuolaByAlunno = new Map((alunniInfo || []).map((a) => [a.id, a.scuola_id]))
 
     const obbligatorio = body.obbligatorio ?? true

@@ -8,6 +8,7 @@ import { zUuid } from '@/lib/validation/common'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoSecondario } from '@/lib/pagamenti/guasto-db'
 
 const postBodySchema = z.object({
   sconto: z.coerce.number().min(0, 'Lo sconto non può essere negativo'),
@@ -81,14 +82,17 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
     }
 
     // Ricalcolo stato sconto-aware (dovuto = max(importo − sconto, 0)).
+    // Lo sconto è GIÀ scritto: un guasto del ricalcolo o della traccia non cambia l'esito, ma
+    // prima `.then(() => {}, () => {})` li inghiottiva tutti e due — una voce scontata che
+    // restava «da pagare», e nessuno lo sapeva (fase 5 robustezza, sesto pezzo). Ora una riga
+    // `error` ciascuno, e la risposta dice se lo stato è stato ricalcolato.
     const tipo = (pag as { tipo?: string }).tipo
-    if (tipo === 'padre') {
-      await supabase.rpc('ricalcola_stato_padre', { p_parent: id }).then(() => {}, () => {})
-    } else {
-      await supabase.rpc('ricalcola_stato_pagamento', { p_id: id }).then(() => {}, () => {})
-    }
+    const { error: errRicalcolo } = tipo === 'padre'
+      ? await supabase.rpc('ricalcola_stato_padre', { p_parent: id })
+      : await supabase.rpc('ricalcola_stato_pagamento', { p_id: id })
+    if (errRicalcolo) guastoSecondario('pagamenti/[id]/sconto:POST', 'stato-non-ricalcolato', errRicalcolo)
 
-    await supabase
+    const { error: errAudit } = await supabase
       .from('registro_modifiche')
       .insert({
         azione: 'applica_sconto',
@@ -97,7 +101,7 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
         nuovo_valore: { sconto, sconto_motivo },
         utente_id: user.id,
       })
-      .then(() => {}, () => {})
+    if (errAudit) guastoSecondario('pagamenti/[id]/sconto:POST', 'audit-non-scritto', errAudit)
 
     // Evento critico: logga il SUCCESSO (importo dello sconto, MAI il motivo).
     logEvento('pagamento', 'info', {
@@ -116,7 +120,7 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
       logEvento('pagamento', 'error', { operazione: 'pagamenti/[id]/sconto:POST', esito: 'revoca_non_verificata' }, e)
     }
 
-    return NextResponse.json({ success: true, data: { id, sconto } })
+    return NextResponse.json({ success: true, data: { id, sconto, stato_ricalcolato: !errRicalcolo } })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/[id]/sconto:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

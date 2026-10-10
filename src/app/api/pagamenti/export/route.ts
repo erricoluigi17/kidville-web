@@ -9,7 +9,8 @@ import { resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/attestazione'
-import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
+import { resolveParentRegistryEsito, type ParentRegistry } from '@/lib/pagamenti/intestatari'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { righeRetteACarico, type RigaScadenzario } from '@/lib/pagamenti/export-rette-a-carico'
 import { descriviTetto, leggiABlocchi, type EsitoABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
@@ -413,7 +414,12 @@ async function exportAde(
     if (adultId) {
       if (regCache.has(adultId)) reg = regCache.get(adultId) ?? null
       else {
-        reg = await resolveParentRegistry(supabase, adultId)
+        // Un guasto NON è «codice fiscale mancante» (fase 5 robustezza, sesto pezzo): prima
+        // la spesa finiva fra le escluse, cioè la famiglia perdeva la detrazione per un
+        // nostro errore di lettura. Un 500, e nessun file con una riga in meno.
+        const esitoReg = await resolveParentRegistryEsito(supabase, adultId)
+        if (!esitoReg.ok) return rispostaGuastoDb('pagamenti/export:GET', 'db:parents:export-ade', esitoReg.error)
+        reg = esitoReg.reg
         regCache.set(adultId, reg)
       }
     }

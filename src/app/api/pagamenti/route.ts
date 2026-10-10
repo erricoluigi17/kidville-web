@@ -12,6 +12,7 @@ import { resolveScuoleAttive, assertAlunnoInScope } from '@/lib/auth/scope'
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import { residuoEffettivo, statoEffettivo } from '@/lib/pagamenti/aging'
 import { getModuleConfig } from '@/lib/settings/module-config'
 // `causaleBonifico`, NON `renderCausale`: è l'unica porta che applica `conCodiceVoce`,
@@ -660,7 +661,9 @@ export const POST = withRoute('pagamenti:POST', async (request: Request) => {
     if (scopeErr) return scopeErr
 
     // scuola_id SEMPRE derivata dall'alunno: lo scuola_id del client viene ignorato.
-    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+    const { data: al, error: errAl } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+    // Un guasto non è «non trovato» (fase 5 robustezza, sesto pezzo).
+    if (errAl) return rispostaGuastoDb('pagamenti:POST', 'db:alunni', errAl)
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     const scuolaId = al.scuola_id
 

@@ -56,7 +56,9 @@ export const GET = withRoute('pagamenti/pagante-comune:GET', async (request: Nex
     const links = (sp ?? []) as { parent_id: string | null; student_id: string | null }[]
 
     // Intestatari di default fra i genitori candidati. Colonna assente sul DB E2E
-    // non migrato (42703) → si degrada a «nessun default», non è un errore.
+    // non migrato (42703) → si degrada a «nessun default», non è un errore. Ogni altro
+    // errore degradava allo stesso modo SENZA una riga: ora è un 500 (fase 5 robustezza,
+    // sesto pezzo) — un pagante proposto da un dato mancante non è un pagante proposto.
     const parentIds = [...new Set(links.map((l) => l.parent_id).filter(Boolean) as string[])]
     let defaults = new Set<string>()
     if (parentIds.length > 0) {
@@ -65,6 +67,10 @@ export const GET = withRoute('pagamenti/pagante-comune:GET', async (request: Nex
         .select('id')
         .in('id', parentIds)
         .eq('intestatario_default', true)
+      if (d.error && d.error.code !== '42703') {
+        logErrore({ operazione: 'pagamenti/pagante-comune:GET', stato: 500, evento: 'db' }, d.error)
+        return NextResponse.json({ error: 'Errore nel recupero dei legami', codice: 'LETTURA_FALLITA' }, { status: 500 })
+      }
       if (!d.error) defaults = new Set(((d.data ?? []) as { id: string }[]).map((r) => r.id))
     }
 

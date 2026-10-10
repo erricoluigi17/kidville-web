@@ -7,7 +7,8 @@ import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/attestazione'
 import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from '@/lib/pagamenti/fiscale'
-import { resolveParentRegistry } from '@/lib/pagamenti/intestatari'
+import { resolveParentRegistryEsito } from '@/lib/pagamenti/intestatari'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { buildAttestazionePdf } from '@/lib/pagamenti/pdf'
 import { getModuleConfig } from '@/lib/settings/module-config'
@@ -24,6 +25,12 @@ const getQuerySchema = z.object({
 // totale versato vs totale TRACCIABILE detraibile (contanti e categorie
 // divise/materiale esclusi). Accesso: SOLO staff (segreteria/direzione):
 // l'attestazione la rilascia la segreteria su richiesta del genitore.
+//
+// Ogni lettura controlla `error` (fase 5 robustezza, sesto pezzo): questo PDF il
+// genitore lo allega al 730, e un `null` letto come «nessun incasso» stampava
+// versato 0 e detraibile 0 come se fossero veri.
+const OP = 'pagamenti/attestazione:GET'
+
 export const GET = withRoute('pagamenti/attestazione:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
@@ -34,11 +41,12 @@ export const GET = withRoute('pagamenti/attestazione:GET', async (request: Reque
     const { alunno_id: alunnoId, anno } = q.data
 
     const supabase = await createAdminClient()
-    const { data: alunno } = await supabase
+    const { data: alunno, error: errAlunno } = await supabase
       .from('alunni')
       .select('id, nome, cognome, codice_fiscale, scuola_id, intestatario_fatture')
       .eq('id', alunnoId)
       .maybeSingle()
+    if (errAlunno) return rispostaGuastoDb(OP, 'db:alunni', errAlunno)
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     // L'alunno deve appartenere a una sede attiva della segreteria (niente PDF
@@ -49,10 +57,11 @@ export const GET = withRoute('pagamenti/attestazione:GET', async (request: Reque
     }
 
     // Pagamenti dell'alunno → incassi dell'anno solare (criterio di cassa).
-    const { data: pagamenti } = await supabase
+    const { data: pagamenti, error: errPagamenti } = await supabase
       .from('pagamenti')
       .select('id, descrizione, payment_categories ( slug )')
       .eq('alunno_id', alunnoId)
+    if (errPagamenti) return rispostaGuastoDb(OP, 'db:pagamenti', errPagamenti)
     const byId = new Map(
       ((pagamenti || []) as { id: string; descrizione?: string | null; payment_categories?: { slug?: string | null } | null }[])
         .map((p) => [p.id, p]),
@@ -60,12 +69,13 @@ export const GET = withRoute('pagamenti/attestazione:GET', async (request: Reque
 
     let voci: VoceAttestazione[] = []
     if (byId.size > 0) {
-      const { data: incassi } = await supabase
+      const { data: incassi, error: errIncassi } = await supabase
         .from('incassi')
         .select('pagamento_id, importo, metodo, data_incasso')
         .in('pagamento_id', [...byId.keys()])
         .gte('data_incasso', `${anno}-01-01`)
         .lte('data_incasso', `${anno}-12-31`)
+      if (errIncassi) return rispostaGuastoDb(OP, 'db:incassi', errIncassi)
       voci = ((incassi || []) as { pagamento_id: string; importo: number; metodo?: string | null }[]).map((i) => {
         const pag = byId.get(i.pagamento_id)
         return {
@@ -88,7 +98,9 @@ export const GET = withRoute('pagamenti/attestazione:GET', async (request: Reque
     // chi ottiene la detrazione.
     const digitata = anagraficaDaScheda(alunno.intestatario_fatture)
     const intestatarioCfg = alunno.intestatario_fatture as { adult_id?: string | null } | null
-    const reg = digitata ? null : await resolveParentRegistry(supabase, intestatarioCfg?.adult_id)
+    const esitoReg = digitata ? null : await resolveParentRegistryEsito(supabase, intestatarioCfg?.adult_id)
+    if (esitoReg && !esitoReg.ok) return rispostaGuastoDb(OP, 'db:parents', esitoReg.error)
+    const reg = esitoReg?.reg ?? null
     const famiglia = { nome: `Famiglia ${alunno.cognome ?? ''}`.trim() }
     const intestatario = digitata
       ? { nome: nomeDaAnagrafica(digitata) || famiglia.nome, codice_fiscale: digitata.codice_fiscale ?? null }
@@ -99,7 +111,7 @@ export const GET = withRoute('pagamenti/attestazione:GET', async (request: Reque
     const pdf = buildAttestazionePdf({
       anno,
       struttura: datiStruttura(fiscale, aruba, {
-        operazione: 'pagamenti/attestazione:GET',
+        operazione: OP,
         scuolaId: alunno.scuola_id,
       }),
       intestatario,
@@ -120,7 +132,7 @@ export const GET = withRoute('pagamenti/attestazione:GET', async (request: Reque
       },
     })
   } catch (err) {
-    logErrore({ operazione: 'pagamenti/attestazione:GET', stato: 500 }, err)
+    logErrore({ operazione: OP, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 })

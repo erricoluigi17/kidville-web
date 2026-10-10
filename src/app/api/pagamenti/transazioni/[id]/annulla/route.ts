@@ -129,8 +129,11 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
     // Annulla la ricevuta famiglia attiva (numero bruciato) — come oggi.
     await annullaRicevutaTransazioneAttiva(supabase, id, { da: user.id, motivo: 'annullo transazione' })
 
-    // Audit col MOTIVO (registro DB, non log). PostgREST non lancia → best-effort.
-    await supabase.from('registro_modifiche').insert({
+    // Audit col MOTIVO (registro DB, non log). PostgREST non lancia: il risultato si guarda
+    // (fase 5 robustezza, sesto pezzo). L'annullo è GIÀ avvenuto, quindi la risposta non
+    // cambia — ma prima `.then(() => {}, () => {})` inghiottiva l'errore, e questa riga è
+    // l'UNICA traccia di chi aveva confermato il bonifico riaperto.
+    const { error: errAudit } = await supabase.from('registro_modifiche').insert({
       azione: 'annulla_transazione',
       tabella_interessata: 'pagamenti_transazioni',
       record_id: id,
@@ -145,7 +148,16 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
         movimenti_riaperti: conteggi.movimenti_riaperti ?? 0,
       },
       utente_id: user.id,
-    }).then(() => {}, () => {})
+    })
+    if (errAudit) {
+      // Livello `error`, persistito: i conteggi (numeri) e l'uuid, mai il motivo.
+      logEvento('pagamento', 'error', {
+        operazione: 'pagamenti/transazioni/[id]/annulla:POST',
+        esito: 'audit-non-scritto',
+        transazione_id: id,
+        movimenti_riaperti: conteggi.movimenti_riaperti ?? 0,
+      }, errAudit)
+    }
 
     // Evento critico → SUCCESSO loggato (conteggi/uuid, MAI il motivo/PII).
     logEvento('pagamento', 'info', {
@@ -165,13 +177,15 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
     // qui è coerente col resto (best-effort, non blocca la risposta).
     try {
       const alunni = new Set<string>()
-      const { data: pagRows } = await supabase
+      const { data: pagRows, error: errRows } = await supabase
         .from('incassi')
         .select('pagamento_id')
         .eq('transazione_id', id)
+      if (errRows) throw new Error('lettura di incassi per la revoca non riuscita', { cause: errRows })
       const pids = [...new Set(((pagRows ?? []) as { pagamento_id?: string | null }[]).map((r) => r.pagamento_id).filter(Boolean) as string[])]
       if (pids.length > 0) {
-        const { data: pr } = await supabase.from('pagamenti').select('alunno_id').in('id', pids)
+        const { data: pr, error: errPr } = await supabase.from('pagamenti').select('alunno_id').in('id', pids)
+        if (errPr) throw new Error('lettura di pagamenti per la revoca non riuscita', { cause: errPr })
         for (const p of (pr ?? []) as { alunno_id?: string | null }[]) if (p.alunno_id) alunni.add(p.alunno_id)
       }
       if (alunni.size > 0) await verificaRevocaSospensioneMorosita(supabase, [...alunni])

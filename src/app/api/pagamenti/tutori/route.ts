@@ -7,6 +7,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -70,10 +71,13 @@ export const GET = withRoute('pagamenti/tutori:GET', async (request: Request) =>
     const conCF = new Set<string>()
     if (ids.length > 0) {
       const list = ids.join(',')
-      const { data: pRows } = await supabase
+      const { data: pRows, error: errParents } = await supabase
         .from('parents')
         .select('id, auth_user_id, fiscal_code')
         .or(`id.in.(${list}),auth_user_id.in.(${list})`)
+      // Un guasto non è «nessuno ha il codice fiscale»: la UI avvisava «non fatturabile» su
+      // tutte le quote (fase 5 robustezza, sesto pezzo).
+      if (errParents) return rispostaGuastoDb('pagamenti/tutori:GET', 'db:parents', errParents)
       for (const p of (pRows ?? []) as { id: string; auth_user_id: string | null; fiscal_code: string | null }[]) {
         if (!p.fiscal_code) continue
         if (ids.includes(p.id)) conCF.add(p.id)

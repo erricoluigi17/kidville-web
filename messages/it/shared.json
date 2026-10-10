@@ -695,5 +695,6 @@
   "erroreScrutinioChiuso": "Lo scrutinio è stato chiuso: le modifiche non sono più consentite.",
   "erroreReportCassaNonCalcolato": "Non è stato possibile calcolare il report di cassa: riprova fra poco.",
   "erroreReportCassaNonQuadra": "Il report di cassa non è stato mostrato perché i totali non coincidono con il controllo del database. Il problema è stato registrato: riprova più tardi.",
-  "erroreDashboardNonLetta": "Non è stato possibile leggere i dati della dashboard: riprova fra poco."
+  "erroreDashboardNonLetta": "Non è stato possibile leggere i dati della dashboard: riprova fra poco.",
+  "errorePagamentiScritturaFallita": "Il salvataggio non è riuscito. Ricarica la pagina per vedere cosa risulta registrato, poi riprova."
 }

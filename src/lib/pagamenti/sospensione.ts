@@ -270,7 +270,11 @@ export async function famigliaDiAlunno(
     for (const f of await getFigliDiGenitore(supabase, acc)) ids.add(f)
   }
   const figliIds = [...ids]
-  const { data } = await supabase.from('alunni').select('id, nome, cognome, sospeso').in('id', figliIds)
+  const { data, error } = await supabase.from('alunni').select('id, nome, cognome, sospeso').in('id', figliIds)
+  // Qui il fail-open di sopra NON vale: questo elenco è ciò che la Direzione conferma prima di
+  // sospendere, e un guasto letto come «nessun fratello» faceva sospendere mezza famiglia
+  // (fase 5 robustezza, sesto pezzo). Lancia: il chiamante sta in un `try` che risponde 500.
+  if (error) throw new Error('famigliaDiAlunno: lettura dei figli non riuscita', { cause: error })
   const figli = ((data ?? []) as { id: string; nome?: string | null; cognome?: string | null; sospeso?: boolean }[])
     .map((a) => ({ id: a.id, nome: a.nome ?? null, cognome: a.cognome ?? null, sospeso: a.sospeso === true }))
   return { parentAccountId: accounts[0] ?? null, figli }

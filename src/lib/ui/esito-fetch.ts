@@ -3239,6 +3239,14 @@ export const CODICI_ERRORE = {
     QUOTE_DATI_NON_VALIDI: 'erroreQuoteDatiNonValidi',
     QUOTE_ADULTO_RIPETUTO: 'erroreQuoteAdultoRipetuto',
     QUOTE_CON_INCASSI: 'erroreQuoteConIncassi',
+    /**
+     * Ricarica dei ticket mensa (`POST /api/pagamenti/ticket`, dal 2026-10-10 nella RPC
+     * `ricarica_ticket_mensa`). `TICKET_RICARICA_NON_DISPONIBILE` = la funzione non c'è ancora
+     * (database non migrato), nessuna scrittura; `TICKET_RICARICA_NON_VALIDA` = metodo fuori
+     * elenco, pezzi o costo non validi.
+     */
+    TICKET_RICARICA_NON_DISPONIBILE: 'erroreTicketRicaricaNonDisponibile',
+    TICKET_RICARICA_NON_VALIDA: 'erroreTicketRicaricaNonValida',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

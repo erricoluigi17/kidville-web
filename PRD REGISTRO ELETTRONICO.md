@@ -1,6 +1,24 @@
+## 🎫 Changelog — Roadmap di robustezza, fase 5 (terzo pezzo): la ricarica dei ticket mensa è una transazione sola, e due click non fanno due ricariche — 2026-10-10 (branch `robustezza/fase-5-ticket`)
+
+**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010081946_ricarica_ticket_in_una_transazione.sql`). La applica l'integrazione al merge, **dopo** i pezzi 1 e 2 (timestamp crescenti).
+
+**Il problema (D5-A).** `POST /api/pagamenti/ticket` faceva quattro scritture separate — saldo (`varia_saldo_ticket`), pagamento Mensa, incasso, movimento del ledger — più un «rientro» del saldo a mano se il pagamento non nasceva. Ogni passo poteva fallire dopo i precedenti: saldo salito senza pagamento, pagamento senza incasso (la famiglia fra i morosi per una ricarica pagata), movimento perso. E la guardia «ha già ricaricato oggi?» leggeva il ledger senza blocco. **Provato con due sessioni vere su Postgres 17**: due click ravvicinati → saldo 20, 2 ricariche.
+
+**Misure (produzione, 2026-10-10, sola lettura).** 197 ricariche; 0 senza incasso, 0 senza movimento: il difetto non ha ancora prodotto righe a metà.
+
+**Cosa cambia.**
+1. **`public.ricarica_ticket_mensa(...)`** (solo `service_role`): sede presa dall'alunno; `pg_advisory_xact_lock` per bambino (la riga di `ticket_mensa` può non esistere, quindi non si blocca quella); guardia del duplicato sui confini del giorno civile passati dalla route, letta **dopo** il blocco; poi saldo, pagamento (descrizione canonica con l'em dash, categoria mensa globale), incasso se il costo è > 0, movimento con il saldo restituito. Se un passo fallisce non resta niente.
+2. **La route** controlla la sede, calcola i confini del giorno civile, chiama la RPC e traduce l'esito (409 `TICKET_RICARICA_DUPLICATA` con la ricarica precedente e senza dati personali, 404, 400 `TICKET_RICARICA_NON_VALIDA`, 503 `TICKET_RICARICA_NON_DISPONIBILE`). `pezzi` ora deve essere un intero (il saldo è in pasti). Sparisce il percorso «storico non atomico» per i database senza `varia_saldo_ticket`: la funzione nuova o c'è o la route risponde 503 senza scrivere.
+
+**Log.** `ricarica_registrata` / `ricarica_duplicata_confermata` (successo, con saldo e importo), `ricarica_duplicata_fermata`, `warn` `input_rifiutato` e `guardia_duplicato_non_verificata`, `error` per funzione assente e ogni altro errore della RPC. Spariscono `saldo_non_rientrato_dopo_pagamento_fallito`, `incasso_non_registrato`, `movimento_ledger_non_registrato`, `saldo_non_atomico_rpc_assente`: con la transazione unica non possono più succedere.
+
+**Prove.** PGlite `ricarica-ticket-mensa-sql.test.ts` (10: le quattro scritture insieme, due ricariche col ledger che segue il saldo, costo 0, duplicato senza scritture, finestra, **un passo fallito a metà non lascia niente**, input, permessi, controllo negativo con le scritture separate). **Mutazione**: con la guardia spenta cade il caso del duplicato. Route `ticket-ricarica-route.test.ts` (9), che sostituisce `ticket-ricarica-atomica` e `ticket-ricarica-duplicata` (provavano le scritture separate). Lock `ticket-ricarica-una-transazione` (4). Concorrenza vera: PRIMA saldo 20 / 2 ricariche, DOPO click A `ok`, click B `duplicato`, saldo 10, 1 ricarica / 1 pagamento / 1 incasso.
+
+**Da fare / aperto.** Dopo il merge: funzione e permessi, advisor, fotografia delle migrazioni.
+
 ## 🧩 Changelog — Roadmap di robustezza, fase 5 (secondo pezzo): le quote di un pagamento diviso si aggiornano invece di cancellarle e reinserirle, e gli incassi restano di chi li ha pagati — 2026-10-10 (branch `robustezza/fase-5-quote`)
 
-**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010081206_aggiorna_quote_senza_reinserire.sql`). La applica l'integrazione al merge, **dopo** quella del primo pezzo (timestamp crescenti).
+**Stato.** ✅ **In produzione dal 2026-10-10** (#213, `fa2e4d50`). Verifica dopo il merge: `aggiorna_quote_pagamento` presente, permessi giusti (anon e authenticated no, service_role sì), una riga sola nello storico delle migrazioni, advisor 0 ERROR. Una migrazione di sole funzioni (`20261010081206_aggiorna_quote_senza_reinserire.sql`), applicata dall'integrazione al merge, dopo quella del primo pezzo.
 
 **Il problema (D5-A).** `POST/PATCH /api/pagamenti/quote` faceva `delete()` di tutte le quote del pagamento e poi `insert()` delle nuove. Ogni quota rinasceva con un id nuovo, e la FK `incassi.quota_id … ON DELETE SET NULL` staccava **in silenzio** ogni incasso già registrato su una quota: l'incasso restava, ma non si sapeva più di chi fosse. È lo stesso id con cui il genitore vede la propria parte. Le due scritture erano separate: un INSERT fallito dopo la DELETE lasciava il pagamento senza quote. Provato sullo stesso schema: con le due istruzioni vecchie l'incasso finisce con `quota_id` NULL.
 

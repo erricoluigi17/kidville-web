@@ -3218,6 +3218,16 @@ export const CODICI_ERRORE = {
      * scrittura è avvenuta.
      */
     VOCI_FUTURE_DA_DECIDERE: 'erroreVociFutureDaDecidere',
+    /**
+     * Registrazione di un incasso (`POST /api/pagamenti/incassi`, dal 2026-10-10 tutta nella RPC
+     * `registra_incasso_voce`). `INCASSO_NON_DISPONIBILE` = la funzione non c'è ancora (database
+     * non migrato), nessuna scrittura; `INCASSO_DATI_NON_VALIDI` = metodo fuori elenco, data
+     * illeggibile o importo zero; `INCASSO_QUOTA_ESTRANEA` = la quota indicata è di un altro
+     * pagamento.
+     */
+    INCASSO_NON_DISPONIBILE: 'erroreIncassoNonDisponibile',
+    INCASSO_DATI_NON_VALIDI: 'erroreIncassoDatiNonValidi',
+    INCASSO_QUOTA_ESTRANEA: 'erroreIncassoQuotaEstranea',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -4,8 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { applyOverpaymentSpill } from '@/lib/pagamenti/spill'
-import { residuoEffettivo } from '@/lib/pagamenti/aging'
-import { accreditaEccedenza, creditoDisponibile } from '@/lib/pagamenti/credito'
+import { creditoDisponibile } from '@/lib/pagamenti/credito'
 import { resolveParentRegistry } from '@/lib/pagamenti/intestatari'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { eseguiStornoIncasso } from './storno/route'
@@ -78,21 +77,37 @@ export const GET = withRoute('pagamenti/incassi:GET', async (request: Request) =
   }
 })
 
-// Riga di pagamento letta per l'incasso (SELECT con retry senza `sconto`).
+// Riga di pagamento letta per le notifiche e lo spill (NON per il residuo:
+// quello lo calcola la RPC con la riga bloccata).
 interface PagIncassoRow {
   id: string
-  importo: number | string
-  importo_pagato: number | string | null
-  sconto?: number | string | null
   parent_payment_id: string | null
   alunno_id: string | null
   scuola_id: string | null
   descrizione: string | null
 }
 
+/** Esito di `registra_incasso_voce` (supabase/migrations/…_registra_incasso_voce_bloccata.sql). */
+type EsitoRegistraIncasso =
+  | { esito: 'non_trovato' }
+  | { esito: 'quota_estranea' }
+  | { esito: 'eccedenza'; eccedenza: number | string; residuo: number | string }
+  | {
+      esito: 'ok'
+      residuo_prima: number | string
+      incasso: ({ id: string } & Record<string, unknown>) | null
+      importo_incassato: number | string
+      eccedenza: number | string
+      credito: { id: string; saldo_dopo: number | string } | null
+      sconto_dopo: number | string | null
+    }
+
 // POST /api/pagamenti/incassi  (staff) — registra un incasso
 // Body: { userId, pagamento_id, importo, ..., conferma_eccedenza?, pagante_parent_id?, abbuono? }
-// Confronta SEMPRE l'importo col residuo effettivo (importo − sconto − già incassato).
+// Tutte le decisioni sul residuo stanno in `registra_incasso_voce`: blocca la riga
+// del pagamento (FOR UPDATE), ricalcola il residuo DOPO il blocco e scrive incasso,
+// credito famiglia, abbuono e audit in una transazione sola. Prima due operatori
+// leggevano lo stesso residuo e incassavano entrambi, oltre il dovuto.
 // Voce non-rata sovraincassata → 409 { eccedenza } finché non arriva la conferma
 // «credito famiglia» + pagante: in quel caso incassa il residuo e accredita il resto.
 // Le rate restano gestite dallo spill (invariato).
@@ -114,165 +129,113 @@ export const POST = withRoute('pagamenti/incassi:POST', async (request: Request)
     const fuoriScopeIns = await assertPagamentoInScope(supabase, auth.user, pagamento_id)
     if (fuoriScopeIns) return fuoriScopeIns
 
-    // Verifica esistenza pagamento + legge `sconto` (retry senza su DB non migrato).
-    let pag: PagIncassoRow | null = null
-    const selCols = 'id, importo, importo_pagato, sconto, parent_payment_id, alunno_id, scuola_id, descrizione'
-    const selBase = 'id, importo, importo_pagato, parent_payment_id, alunno_id, scuola_id, descrizione'
-    const sel = await supabase.from('pagamenti').select(selCols).eq('id', pagamento_id).maybeSingle()
-    if (sel.error && (sel.error as { code?: string }).code === '42703') {
-      const retry = await supabase.from('pagamenti').select(selBase).eq('id', pagamento_id).maybeSingle()
-      pag = retry.data as unknown as PagIncassoRow | null
-      if (retry.error) {
-        logErrore({ operazione: 'pagamenti/incassi:POST', stato: 500, evento: 'db' }, retry.error)
-        return NextResponse.json({ error: 'Errore nel recupero del pagamento' }, { status: 500 })
-      }
-    } else if (sel.error) {
+    const sel = await supabase
+      .from('pagamenti')
+      .select('id, parent_payment_id, alunno_id, scuola_id, descrizione')
+      .eq('id', pagamento_id)
+      .maybeSingle()
+    if (sel.error) {
       logErrore({ operazione: 'pagamenti/incassi:POST', stato: 500, evento: 'db' }, sel.error)
       return NextResponse.json({ error: 'Errore nel recupero del pagamento' }, { status: 500 })
-    } else {
-      pag = sel.data as unknown as PagIncassoRow | null
     }
+    const pag = sel.data as PagIncassoRow | null
     if (!pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
 
-    // Residuo EFFETTIVO (fonte unica S1): importo − sconto − già incassato, clampato a 0.
-    const residuo = round2(residuoEffettivo({
-      importo: pag.importo,
-      importo_pagato: pag.importo_pagato ?? null,
-      sconto: pag.sconto ?? null,
-      stato: 'da_pagare',
-    }))
-    const isRata = !!pag.parent_payment_id
-    const importoBody = round2(Number(body.importo))
-
-    let importoIncasso = importoBody
-    let eccedenzaCredito: { parentId: string; importo: number } | null = null
-
-    // Gate eccedenza: solo per le voci NON-rata (le rate usano lo spill, invariato)
-    // e solo per un sovraincasso positivo.
-    if (!isRata && importoBody > residuo + 0.005) {
-      if (body.conferma_eccedenza !== 'credito_famiglia' || !body.pagante_parent_id) {
-        return NextResponse.json(
-          { error: 'Incasso oltre il residuo: conferma l\'eccedenza come credito famiglia o annulla.', eccedenza: round2(importoBody - residuo) },
-          { status: 409 },
-        )
-      }
-      // pagante_parent_id può essere parents.id o utenti.id → riga parents canonica.
+    // Pagante dell'eventuale eccedenza: si risolve PRIMA della transazione (può
+    // essere parents.id o utenti.id). La RPC lo usa solo se l'importo, ricalcolato
+    // con la riga bloccata, supera davvero il residuo.
+    let eccedenzaParentId: string | null = null
+    if (body.conferma_eccedenza === 'credito_famiglia' && body.pagante_parent_id) {
       const reg = await resolveParentRegistry(supabase, body.pagante_parent_id)
       if (!reg?.id) {
         return NextResponse.json({ error: 'Pagante non risolvibile: nessun profilo anagrafico collegato.' }, { status: 400 })
       }
-      // Verifica disponibilità del credito PRIMA di scrivere l'incasso: DB non
-      // migrato → 503 pulito, nessuna scrittura parziale.
+      // DB non migrato (credito assente) → 503 pulito, nessuna scrittura.
       if (!(await creditoDisponibile(supabase))) {
         return NextResponse.json({ error: 'Credito famiglia non disponibile su questo ambiente' }, { status: 503 })
       }
-      importoIncasso = residuo
-      eccedenzaCredito = { parentId: reg.id, importo: round2(importoBody - residuo) }
+      eccedenzaParentId = reg.id
     }
 
-    // Registra l'incasso (per il residuo, in caso di eccedenza). Se il residuo è 0
-    // non si inserisce nulla (violazione del CHECK importo <> 0): tutto a credito.
-    let incasso: { id: string } | null = null
-    if (Math.abs(importoIncasso) > 0.005) {
-      const ins = await supabase
-        .from('incassi')
-        .insert({
-          pagamento_id,
-          importo: importoIncasso,
-          data_incasso: body.data_incasso ?? undefined,
-          metodo: body.metodo ?? 'contanti',
-          note: body.note ?? null,
-          quota_id: body.quota_id ?? null,
-          registrato_da: user.id,
-        })
-        .select()
-        .single()
-      if (ins.error) {
-        logErrore({ operazione: 'pagamenti/incassi:POST', stato: 500, evento: 'db' }, ins.error)
-        return NextResponse.json({ error: 'Errore nella registrazione', details: ins.error.message }, { status: 500 })
+    const rpc = await supabase.rpc('registra_incasso_voce', {
+      p_pagamento_id: pagamento_id,
+      p_importo: round2(Number(body.importo)),
+      p_registrato_da: user.id,
+      p_data_incasso: body.data_incasso ?? null,
+      p_metodo: body.metodo ?? null,
+      p_note: body.note ?? null,
+      p_quota_id: body.quota_id ?? null,
+      p_eccedenza_parent_id: eccedenzaParentId,
+      p_abbuono_motivo: body.abbuono?.motivo ?? null,
+    })
+    if (rpc.error) {
+      const code = (rpc.error as { code?: string }).code
+      if (code === 'PGRST202') {
+        // Funzione assente: database non migrato (DB della CI, o i secondi fra il
+        // rilascio e l'integrazione). Nessuna scrittura è avvenuta.
+        logErrore({ operazione: 'pagamenti/incassi:POST', stato: 503, evento: 'config' }, rpc.error)
+        return NextResponse.json({ error: 'Registrazione incassi non disponibile su questo ambiente', codice: 'INCASSO_NON_DISPONIBILE' }, { status: 503 })
       }
-      incasso = ins.data as { id: string }
-
-      // audit
-      await supabase.from('registro_modifiche').insert({
-        azione: 'registra_incasso',
-        tabella_interessata: 'incassi',
-        record_id: incasso.id,
-        nuovo_valore: incasso,
-        utente_id: user.id,
-      }).then(() => {}, () => {})
+      if (code === '22P02' || code === '22023' || code === '22007' || code === '22008') {
+        // Metodo fuori elenco, data illeggibile, importo zero: errore dell'input.
+        logEvento('pagamento', 'warn', { operazione: 'pagamenti/incassi:POST', esito: 'input_rifiutato', pagamento_id, codice: code })
+        return NextResponse.json({ error: 'Dati dell\'incasso non validi', codice: 'INCASSO_DATI_NON_VALIDI' }, { status: 400 })
+      }
+      logErrore({ operazione: 'pagamenti/incassi:POST', stato: 500, evento: 'db' }, rpc.error)
+      return NextResponse.json({ error: 'Errore nella registrazione', details: rpc.error.message }, { status: 500 })
     }
 
-    // Accredita l'eccedenza in credito famiglia.
-    let credito: { saldoDopo: number; id: string } | { errore: true } | null = null
-    if (eccedenzaCredito) {
-      const acc = await accreditaEccedenza(supabase, {
-        parentId: eccedenzaCredito.parentId,
-        scuolaId: String(pag.scuola_id),
-        importo: eccedenzaCredito.importo,
-        incassoId: incasso?.id ?? null,
-        creatoDa: user.id,
+    const esito = rpc.data as EsitoRegistraIncasso | null
+    if (!esito || esito.esito === 'non_trovato') {
+      return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    }
+    if (esito.esito === 'quota_estranea') {
+      return NextResponse.json({ error: 'La quota indicata non appartiene a questo pagamento', codice: 'INCASSO_QUOTA_ESTRANEA' }, { status: 400 })
+    }
+    if (esito.esito === 'eccedenza') {
+      // Dato operativo (nessun PII): serve a contare quante volte la cassa ci arriva,
+      // anche per concorrenza (due operatori sulla stessa voce).
+      logEvento('pagamento', 'info', {
+        operazione: 'pagamenti/incassi:POST',
+        esito: 'eccedenza_rifiutata',
+        pagamento_id,
+        eccedenza: round2(Number(esito.eccedenza)),
       })
-      if (acc.ok) {
-        credito = { saldoDopo: acc.saldoDopo, id: acc.id }
-        // Evento critico: logga il SUCCESSO (importo, MAI PII).
-        logEvento('pagamento', 'info', {
-          operazione: 'pagamenti/incassi:POST',
-          esito: 'eccedenza_a_credito',
-          pagamento_id,
-          importo: eccedenzaCredito.importo,
-        })
-      } else {
-        // La probe è passata: qui è un errore inatteso. L'incasso del residuo resta
-        // valido; segnaliamo l'eccedenza non accreditata (logga, mai in silenzio).
-        credito = { errore: true }
-        logEvento('pagamento', 'error', {
-          operazione: 'pagamenti/incassi:POST',
-          esito: 'eccedenza_non_accreditata',
-          pagamento_id,
-        }, acc.motivo === 'errore' ? acc.error : undefined)
-      }
+      return NextResponse.json(
+        { error: 'Incasso oltre il residuo: conferma l\'eccedenza come credito famiglia o annulla.', eccedenza: round2(Number(esito.eccedenza)) },
+        { status: 409 },
+      )
     }
 
-    // Abbuono della differenza: setta pagamenti.sconto = sconto + (residuo − incassato)
-    // così la voce risulta saldata. Best-effort: colonna assente → warn, flusso invariato.
-    if (body.abbuono && !eccedenzaCredito && importoIncasso < residuo - 0.005) {
-      const scontoEsistente = Number(pag.sconto ?? 0)
-      const nuovoSconto = round2(scontoEsistente + (residuo - importoIncasso))
-      const upd = await supabase
-        .from('pagamenti')
-        .update({ sconto: nuovoSconto, sconto_motivo: body.abbuono.motivo, aggiornato_il: new Date().toISOString() })
-        .eq('id', pagamento_id)
-        .select('id')
-        .single()
-      if (upd.error) {
-        if ((upd.error as { code?: string }).code === 'PGRST204') {
-          // DB non migrato: l'abbuono non si applica, ma l'incasso base resta valido.
-          logEvento('pagamento', 'warn', {
-            operazione: 'pagamenti/incassi:POST',
-            esito: 'abbuono_non_disponibile',
-            pagamento_id,
-          })
-        } else {
-          logErrore({ operazione: 'pagamenti/incassi:POST', stato: 500, evento: 'db' }, upd.error)
-        }
-      } else {
-        await supabase.rpc('ricalcola_stato_pagamento', { p_id: pagamento_id }).then(() => {}, () => {})
-        await supabase.from('registro_modifiche').insert({
-          azione: 'abbuono_incasso',
-          tabella_interessata: 'pagamenti',
-          record_id: pagamento_id,
-          nuovo_valore: { sconto: nuovoSconto, sconto_motivo: body.abbuono.motivo },
-          utente_id: user.id,
-        }).then(() => {}, () => {})
-        // Evento critico: logga il SUCCESSO (importo dell'abbuono, MAI il motivo).
-        logEvento('pagamento', 'info', {
-          operazione: 'pagamenti/incassi:POST',
-          esito: 'abbuono_applicato',
-          pagamento_id,
-          sconto: nuovoSconto,
-        })
-      }
+    const incasso = esito.incasso
+    const importoIncasso = round2(Number(esito.importo_incassato))
+    // Evento critico: logga il SUCCESSO (importi e uuid, MAI PII).
+    logEvento('pagamento', 'info', {
+      operazione: 'pagamenti/incassi:POST',
+      esito: 'incasso_registrato',
+      pagamento_id,
+      incasso_id: incasso?.id ?? null,
+      importo: importoIncasso,
+    })
+
+    let credito: { saldoDopo: number; id: string } | null = null
+    if (esito.credito) {
+      credito = { saldoDopo: round2(Number(esito.credito.saldo_dopo)), id: esito.credito.id }
+      logEvento('pagamento', 'info', {
+        operazione: 'pagamenti/incassi:POST',
+        esito: 'eccedenza_a_credito',
+        pagamento_id,
+        importo: round2(Number(esito.eccedenza)),
+      })
+    }
+    if (esito.sconto_dopo !== null && esito.sconto_dopo !== undefined) {
+      // Evento critico: logga il SUCCESSO (importo dell'abbuono, MAI il motivo).
+      logEvento('pagamento', 'info', {
+        operazione: 'pagamenti/incassi:POST',
+        esito: 'abbuono_applicato',
+        pagamento_id,
+        sconto: round2(Number(esito.sconto_dopo)),
+      })
     }
 
     // Overpayment spill-over (solo per le rate, opzionale)
@@ -282,11 +245,15 @@ export const POST = withRoute('pagamenti/incassi:POST', async (request: Request)
     }
 
     // stato aggiornato dal trigger
-    const { data: aggiornato } = await supabase
+    const { data: aggiornato, error: aggErr } = await supabase
       .from('pagamenti')
       .select('id, importo, importo_pagato, stato, data_incasso')
       .eq('id', pagamento_id)
       .maybeSingle()
+    if (aggErr) {
+      // L'incasso è già registrato: si risponde 201 senza lo stato aggiornato.
+      logEvento('pagamento', 'warn', { operazione: 'pagamenti/incassi:POST', esito: 'stato_non_riletto', pagamento_id }, aggErr)
+    }
 
     // Conferma al genitore: pagamento registrato (best-effort). Il debounce
     // per pagamento collassa gli incassi multipli ravvicinati.

@@ -3247,6 +3247,20 @@ export const CODICI_ERRORE = {
      */
     TICKET_RICARICA_NON_DISPONIBILE: 'erroreTicketRicaricaNonDisponibile',
     TICKET_RICARICA_NON_VALIDA: 'erroreTicketRicaricaNonValida',
+    /**
+     * Salvataggio di giudizi e comportamento dello scrutinio (`POST`/`PATCH /api/primaria/scrutinio`,
+     * funzioni `salva_*_scrutinio`). `SCRUTINIO_CONFLITTO` (409) = qualcun altro ha cambiato una
+     * delle righe dopo che la pagina le ha lette: la risposta porta `conflitti` (solo uuid) e
+     * NIENTE è stato scritto. `SCRUTINIO_SALVATAGGIO_NON_DISPONIBILE` (503) = la funzione non c'è
+     * ancora (database non migrato); `SCRUTINIO_DATI_NON_VALIDI` (400) = versione o id malformati,
+     * o la stessa riga due volte. `SCRUTINIO_NON_TROVATO` (404) e `SCRUTINIO_CHIUSO` (423) quando
+     * lo scopre la funzione, sotto il blocco.
+     */
+    SCRUTINIO_CONFLITTO: 'erroreScrutinioConflitto',
+    SCRUTINIO_SALVATAGGIO_NON_DISPONIBILE: 'erroreScrutinioSalvataggioNonDisponibile',
+    SCRUTINIO_DATI_NON_VALIDI: 'erroreScrutinioDatiNonValidi',
+    SCRUTINIO_NON_TROVATO: 'erroreScrutinioNonTrovato',
+    SCRUTINIO_CHIUSO: 'erroreScrutinioChiuso',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

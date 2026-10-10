@@ -687,5 +687,10 @@
   "erroreQuoteAdultoRipetuto": "The same person appears in two shares.",
   "erroreQuoteConIncassi": "A share to be removed already has payments: reverse them before changing who pays.",
   "erroreTicketRicaricaNonDisponibile": "Topping up meal tickets is not yet available on this database.",
-  "erroreTicketRicaricaNonValida": "The top-up details are not valid: check quantity, cost and method."
+  "erroreTicketRicaricaNonValida": "The top-up details are not valid: check quantity, cost and method.",
+  "erroreScrutinioConflitto": "Someone else changed some of these rows after you opened the page: nothing was saved. Copy your changes aside, reload the page to see the updated values and redo them.",
+  "erroreScrutinioSalvataggioNonDisponibile": "Saving the assessment is not available right now: nothing was written. Please try again shortly.",
+  "erroreScrutinioDatiNonValidi": "Some of the data sent is not valid: reload the page and try again.",
+  "erroreScrutinioNonTrovato": "This assessment no longer exists: reload the page.",
+  "erroreScrutinioChiuso": "The assessment has been closed: changes are no longer allowed."
 }

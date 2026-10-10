@@ -687,5 +687,10 @@
   "erroreQuoteAdultoRipetuto": "La stessa persona compare in due quote.",
   "erroreQuoteConIncassi": "Una quota da togliere ha già degli incassi: stornali prima di cambiare chi paga.",
   "erroreTicketRicaricaNonDisponibile": "La ricarica dei ticket non è ancora disponibile su questo database.",
-  "erroreTicketRicaricaNonValida": "I dati della ricarica non sono validi: controlla pezzi, costo e metodo."
+  "erroreTicketRicaricaNonValida": "I dati della ricarica non sono validi: controlla pezzi, costo e metodo.",
+  "erroreScrutinioConflitto": "Qualcun altro ha modificato alcune di queste righe dopo che hai aperto la pagina: non è stato salvato niente. Copia a parte le tue modifiche, ricarica la pagina per vedere i valori aggiornati e rifalle.",
+  "erroreScrutinioSalvataggioNonDisponibile": "Il salvataggio dello scrutinio non è disponibile in questo momento: non è stato scritto niente. Riprova fra poco.",
+  "erroreScrutinioDatiNonValidi": "Alcuni dati inviati non sono validi: ricarica la pagina e riprova.",
+  "erroreScrutinioNonTrovato": "Lo scrutinio non esiste più: ricarica la pagina.",
+  "erroreScrutinioChiuso": "Lo scrutinio è stato chiuso: le modifiche non sono più consentite."
 }

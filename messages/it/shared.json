@@ -696,5 +696,14 @@
   "erroreReportCassaNonCalcolato": "Non è stato possibile calcolare il report di cassa: riprova fra poco.",
   "erroreReportCassaNonQuadra": "Il report di cassa non è stato mostrato perché i totali non coincidono con il controllo del database. Il problema è stato registrato: riprova più tardi.",
   "erroreDashboardNonLetta": "Non è stato possibile leggere i dati della dashboard: riprova fra poco.",
-  "errorePagamentiScritturaFallita": "Il salvataggio non è riuscito. Ricarica la pagina per vedere cosa risulta registrato, poi riprova."
+  "errorePagamentiScritturaFallita": "Il salvataggio non è riuscito. Ricarica la pagina per vedere cosa risulta registrato, poi riprova.",
+  "erroreVoceConIncassi": "La voce ha incassi registrati (anche stornati) e resta per la contabilità. Se è sbagliata, storna gli incassi e correggi la voce invece di eliminarla.",
+  "erroreVoceInTransazione": "La voce ha incassi di una transazione di famiglia: annulla prima la transazione.",
+  "erroreVoceInCodaFatture": "La voce ha una fattura in coda di emissione: toglila dalla coda prima di eliminare la voce.",
+  "erroreVoceConContabilita": "La voce è stata incassata o fatturata nel frattempo e non si può più eliminare. Ricarica la pagina.",
+  "erroreVociCambiate": "Una delle voci è stata incassata nel frattempo: nessuna voce è stata eliminata. Riprova per rivedere l’elenco.",
+  "errorePeriodoConScrutini": "Il periodo ha già scrutini e non si può eliminare. Si può correggere dalla modifica del periodo.",
+  "erroreMateriaInUso": "La materia ha già voti, ore di registro o giudizi di scrutinio e non si può eliminare.",
+  "erroreModuloConCompilazioni": "Il modulo ha già compilazioni, che restano come documenti: non si può eliminare. Per chiuderlo, imposta una scadenza.",
+  "erroreEliminazioneNonRiuscita": "L’eliminazione non è riuscita. Ricarica la pagina e riprova."
 }

@@ -6,7 +6,8 @@ import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
 
 // ============================================================
 // Periodi di scrutinio, per sede.
@@ -165,6 +166,20 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
   }
 })
 
+/** 409: il periodo porta scrutini o giudizi, e quelli sono documenti scolastici. */
+function rispostaPeriodoConScrutini(periodoId: string, causa: string, err?: unknown): NextResponse {
+  logEvento('pagella', 'warn', {
+    operazione: 'admin/primaria/scrutinio-periodi:DELETE', esito: 'periodo-con-scrutini', periodo_id: periodoId, tipo: causa,
+  }, err)
+  return NextResponse.json(
+    {
+      error: 'Il periodo ha già scrutini: non si può eliminare. Si può correggere (date, nome) dalla modifica del periodo.',
+      codice: 'PERIODO_CON_SCRUTINI',
+    },
+    { status: 409 },
+  )
+}
+
 // DELETE /api/admin/primaria/scrutinio-periodi?id=&userId=
 export const DELETE = withRoute('admin/primaria/scrutinio-periodi:DELETE', async (request: NextRequest) => {
   try {
@@ -177,14 +192,46 @@ export const DELETE = withRoute('admin/primaria/scrutinio-periodi:DELETE', async
 
     const supabase = await createAdminClient()
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
+
+    // Fase 7 della roadmap di robustezza: un periodo con scrutini (e quindi pagelle,
+    // giudizi, comportamento, ricevute) NON si cancella. Prima la cascata portava via
+    // l'intero scrutinio di un periodo con un clic, senza conferma né traccia; dalla PR 2
+    // la FK è RESTRICT e il database rifiuta comunque. Qui lo si dice prima, dopo aver
+    // verificato che il periodo sia di un plesso in scope (un 409 su un periodo altrui
+    // direbbe che esiste). I giudizi descrittivi del periodo NON trattengono: sono la
+    // tabella dei livelli che la sede configura, non un documento di un alunno, e se ne
+    // vanno col periodo come prima.
+    const { data: periodo, error: errPeriodo } = await supabase
+      .from('scrutinio_periodi')
+      .select('id')
+      .eq('id', id)
+      .in('scuola_id', plessi)
+      .maybeSingle()
+    if (errPeriodo) {
+      logErrore({ operazione: 'admin/primaria/scrutinio-periodi:DELETE', stato: 500, evento: 'db' }, errPeriodo)
+      return NextResponse.json({ error: 'Errore interno', codice: 'LETTURA_FALLITA' }, { status: 500 })
+    }
+    if (!periodo) return NextResponse.json({ error: 'Periodo non trovato' }, { status: 404 })
+    const { data: scrutini, error: errScrutini } = await supabase.from('scrutini').select('id').eq('periodo_id', id).limit(1)
+    if (errScrutini) {
+      logErrore({ operazione: 'admin/primaria/scrutinio-periodi:DELETE', stato: 500, evento: 'guardia_scrutini' }, errScrutini)
+      return NextResponse.json({ error: 'Errore interno', codice: 'LETTURA_FALLITA' }, { status: 500 })
+    }
+    if (scrutini && scrutini.length > 0) return rispostaPeriodoConScrutini(id, 'scrutini')
+
     const { data, error } = await supabase
       .from('scrutinio_periodi')
       .delete()
       .eq('id', id)
       .in('scuola_id', plessi)
       .select('id')
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      if (figlieTrattengono(error)) return rispostaPeriodoConScrutini(id, 'freno', error)
+      logErrore({ operazione: 'admin/primaria/scrutinio-periodi:DELETE', stato: 500, evento: 'db' }, error)
+      return NextResponse.json({ error: 'Errore interno', codice: 'ELIMINAZIONE_NON_RIUSCITA' }, { status: 500 })
+    }
     if (!data || data.length === 0) return NextResponse.json({ error: 'Periodo non trovato' }, { status: 404 })
+    logEvento('registro', 'info', { operazione: 'admin/primaria/scrutinio-periodi:DELETE', esito: 'periodo-eliminato', periodo_id: id })
     return NextResponse.json({ success: true })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/scrutinio-periodi:DELETE', stato: 500 }, err)

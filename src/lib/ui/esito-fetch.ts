@@ -3282,6 +3282,27 @@ export const CODICI_ERRORE = {
      * registrato»: in una route a più passi il primo può essere già scritto.
      */
     PAGAMENTI_SCRITTURA_FALLITA: 'errorePagamentiScritturaFallita',
+    /**
+     * 409 — fase 7 della roadmap di robustezza: una cancellazione che la contabilità o i
+     * documenti scolastici trattengono. Dalla PR 2 le FK di quelle catene sono RESTRICT; le
+     * route lo dicono prima, con la via d'uscita, e un rifiuto del database arrivato fra la
+     * guardia e la DELETE (23503 / 23001) è lo stesso 409 (`src/lib/db/figlie-trattengono.ts`).
+     *  · `DELETE /api/pagamenti/[id]`: incassi (anche stornati), incassi di una transazione
+     *    di famiglia, fattura in coda, contabilità arrivata nel frattempo;
+     *  · `pagamenti/servizi`: una voce incassata fra il primo e il secondo tempo;
+     *  · admin primaria: periodo con scrutini, materia con voti/registro/giudizi;
+     *  · admin moduli: modulo con compilazioni.
+     */
+    VOCE_CON_INCASSI: 'erroreVoceConIncassi',
+    VOCE_IN_TRANSAZIONE: 'erroreVoceInTransazione',
+    VOCE_IN_CODA_FATTURE: 'erroreVoceInCodaFatture',
+    VOCE_CON_CONTABILITA: 'erroreVoceConContabilita',
+    VOCI_CAMBIATE: 'erroreVociCambiate',
+    PERIODO_CON_SCRUTINI: 'errorePeriodoConScrutini',
+    MATERIA_IN_USO: 'erroreMateriaInUso',
+    MODULO_CON_COMPILAZIONI: 'erroreModuloConCompilazioni',
+    /** 500 — la DELETE di un periodo, di una materia o di un modulo non è riuscita per un guasto. */
+    ELIMINAZIONE_NON_RIUSCITA: 'erroreEliminazioneNonRiuscita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

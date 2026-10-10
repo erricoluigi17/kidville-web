@@ -1,3 +1,39 @@
+## 🧱 Changelog — Roadmap di robustezza, fase 7 (PR 1): chi cancella lo fa in ordine e lo dice, prima dei freni RESTRICT — 2026-10-11 (branch `robustezza/fase-7-eliminazioni-in-ordine`)
+
+**Stato.** 🟡 **In PR** (in pila sopra la fase 6). Una migrazione (`20261010223849_eliminazioni_in_ordine.sql`) e sei route. Prepara la PR 2, che porta a `ON DELETE RESTRICT` le catene con valore legale. Da quel giorno una DELETE del padre con figlie presenti fallisce invece di cancellarle in silenzio, e chi contava sulla cascata deve cancellare in ordine o dire di no.
+
+**Misura (catalogo di produzione, 10/10).**
+- Le 22 FK dei freni della PR 2 oggi sono tutte CASCADE, verso 11 tabelle padre: alunni, certificati_competenze, form_models, forms_templates, materie, pagamenti, protocolli, scrutini, scrutinio_periodi, scuole, sections. Restano CASCADE di proposito i giudizi descrittivi del periodo (sono la tabella dei livelli che la sede configura, non un documento di un alunno), la coda delle fatture e le firme delle docenti.
+- **Oblio, cancellazione dell'account ed eliminazione del personale non cambiano.** La chiusura delle cascate che partono da `auth.users` (30 tabelle), `utenti` (15), `anagrafica_personale`, `parents`, `pratiche_personale` e dalle altre tabelle che quei percorsi cancellano non tocca nessuna delle 11 tabelle padre. La roadmap prevedeva di trasformarli in RPC: per questo insieme di freni non serve, e la query che lo dimostra va nella PR 2.
+- Funzioni del database che cancellano quei padri: `elimina_alunno_definitivo`, `protocollo_elimina`, `iscrizioni_rinvia`/`iscrizioni_annulla` (alunni appena importati, senza documenti). Le prime due in produzione coincidono con i file (md5 del corpo uguale).
+
+**Cosa cambia.**
+1. **`elimina_alunno_definitivo`**:
+   - certificati medici e fascicolo si cancellano in modo esplicito e si contano in `righe`; i file li ha già tolti la route;
+   - una ricevuta di pagella (`pagella_ricezioni`) rifiuta con `registro_primaria`, anche in sola verifica.
+2. **`protocollo_elimina`**: prima gli allegati, poi la registrazione.
+3. **`DELETE /api/pagamenti/[id]`**: le guardie guardano la voce **e le sue rate e quote** (`parent_payment_id`, in CASCADE). Rispondono 409 con la via d'uscita:
+   - **incasso**, anche stornato → `VOCE_CON_INCASSI`. Prima la cascata cancellava gli incassi insieme alla voce, e si salvava solo quello di una transazione di famiglia, che ora dà `VOCE_IN_TRANSAZIONE`;
+   - fattura emessa su una rata;
+   - fattura in coda (`in_coda`/`in_invio`/`errore`) → `VOCE_IN_CODA_FATTURE`;
+   - rifiuto del database fra guardia e DELETE → `VOCE_CON_CONTABILITA`.
+4. **`pagamenti/servizi`**: il rifiuto del freno sul secondo tempo → 409 `VOCI_CAMBIATE`, e niente cambia (la DELETE è una sola istruzione).
+5. **Periodi di scrutinio, materie, moduli (admin)**: un periodo con scrutini → `PERIODO_CON_SCRUTINI` (i giudizi descrittivi del periodo, configurazione, se ne vanno con lui come prima); una materia con voti, registro o giudizi → `MATERIA_IN_USO` (prima 500 col messaggio grezzo di Postgres); un modulo con compilazioni → `MODULO_CON_COMPILAZIONI`. Su un periodo o un modulo di un altro plesso resta 404.
+6. **`src/lib/db/figlie-trattengono.ts`**: riconosce il rifiuto di un freno, che parla **23503** fino a Postgres 17 (la produzione, 17.6) e **23001** (`restrict_violation`) da Postgres 18. Lo ha scoperto il test PGlite, che è già 18.
+7. **Seed E2E e famiglia di prova**: cancellano gli incassi prima delle voci, e certificati e fascicolo prima della scheda.
+
+**Prove.**
+- `__tests__/lib/elimina-alunno-definitivo-sql.test.ts` (PGlite): applica **tutte** le definizioni della funzione, in ordine, su uno schema con i freni già RESTRICT. Prova 61 casi: certificati e fascicolo contati, ricevuta di pagella rifiutata anche in sola verifica, e la definizione del 08/10 che con gli stessi freni cadeva. **Rosso** togliendo le due righe nuove dalla migrazione.
+- `__tests__/lib/protocollo-elimina-sql.test.ts` (PGlite, nuovo): funzioni WORM vere lette dal file del registro. Prova che allegati e registrazione vanno via, che fuori dalla funzione il WORM resta chiuso e che la definizione del 12/07 col freno cadeva.
+- `__tests__/api/pagamenti-errori-controllati.test.ts` (+11) e `__tests__/api/eliminazioni-trattenute-dalle-figlie.test.ts` (15, nuovo), sullo stato del finto DB. **Rossi** con le route di prima: 9 su 11 e 11 su 15.
+
+**Log.**
+- Ogni 409 ha il suo esito: `eliminazione-rifiutata-incassi`, `eliminazione-rifiutata-dal-freno`, `voci-servizio-trattenute-dal-freno`, `periodo-con-scrutini`, `materia-in-uso`, `modulo-con-compilazioni`.
+- La cancellazione riuscita di un periodo ora si logga (`registro`, persistito).
+- Nessun dato personale: solo uuid.
+
+**Decisioni lasciate al titolare** (non in questa fase): freni su presenze, risposte agli avvisi, accessi al fascicolo, ricevute delle note, anagrafica del personale; e PEI/104 e certificati medici, che l'oblio oggi cancella.
+
 ## 🗂️ Changelog — Roadmap di robustezza, fase 6: ogni FK ha il suo indice, 15 policy non rivalutano più `auth.uid()` riga per riga, via due indici doppi — 2026-10-10 (branch `robustezza/fase-6-indici`)
 
 **Stato.** 🟡 **In PR.** Una migrazione (`20261010221643_indici_fk_initplan_doppioni.sql`) che applica l'integrazione al merge; nessun file in `src/`. È il prerequisito della fase 7 (freni RESTRICT): ogni ON DELETE, RESTRICT compreso, cerca le righe figlie, e senza indice le cerca leggendo la tabella intera.

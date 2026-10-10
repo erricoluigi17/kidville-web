@@ -696,5 +696,14 @@
   "erroreReportCassaNonCalcolato": "The cash report could not be calculated: please try again shortly.",
   "erroreReportCassaNonQuadra": "The cash report was not shown because its totals do not match the database check. The problem has been logged: please try again later.",
   "erroreDashboardNonLetta": "The dashboard data could not be loaded: please try again shortly.",
-  "errorePagamentiScritturaFallita": "Saving failed. Reload the page to see what was recorded, then try again."
+  "errorePagamentiScritturaFallita": "Saving failed. Reload the page to see what was recorded, then try again.",
+  "erroreVoceConIncassi": "This item has recorded payments (including reversed ones) and is kept for the accounts. If it is wrong, reverse the payments and correct the item instead of deleting it.",
+  "erroreVoceInTransazione": "This item has payments from a family transaction: cancel the transaction first.",
+  "erroreVoceInCodaFatture": "This item has an invoice waiting to be issued: remove it from the queue before deleting the item.",
+  "erroreVoceConContabilita": "This item was paid or invoiced in the meantime and can no longer be deleted. Reload the page.",
+  "erroreVociCambiate": "One of the items was paid in the meantime: no item was deleted. Try again to review the list.",
+  "errorePeriodoConScrutini": "This period already has end-of-term assessments and cannot be deleted. You can correct it by editing the period.",
+  "erroreMateriaInUso": "This subject already has grades, register hours or assessment reports and cannot be deleted.",
+  "erroreModuloConCompilazioni": "This form already has submissions, which are kept as documents: it cannot be deleted. To close it, set an expiry date.",
+  "erroreEliminazioneNonRiuscita": "Deletion failed. Reload the page and try again."
 }

@@ -686,5 +686,7 @@
   "erroreQuoteDatiNonValidi": "Le quote non sono valide: controlla importi e persone.",
   "erroreQuoteAdultoRipetuto": "La stessa persona compare in due quote.",
   "erroreQuoteConIncassi": "Una quota da togliere ha già degli incassi: stornali prima di cambiare chi paga.",
+  "erroreTicketRicaricaNonDisponibile": "La ricarica dei ticket non è ancora disponibile su questo database.",
+  "erroreTicketRicaricaNonValida": "I dati della ricarica non sono validi: controlla pezzi, costo e metodo.",
   "errorePagamentiScritturaFallita": "Il salvataggio non è riuscito. Ricarica la pagina per vedere cosa risulta registrato, poi riprova."
 }

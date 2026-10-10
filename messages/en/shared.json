@@ -686,5 +686,7 @@
   "erroreQuoteDatiNonValidi": "The shares are not valid: check amounts and people.",
   "erroreQuoteAdultoRipetuto": "The same person appears in two shares.",
   "erroreQuoteConIncassi": "A share to be removed already has payments: reverse them before changing who pays.",
+  "erroreTicketRicaricaNonDisponibile": "Topping up meal tickets is not yet available on this database.",
+  "erroreTicketRicaricaNonValida": "The top-up details are not valid: check quantity, cost and method.",
   "errorePagamentiScritturaFallita": "Saving failed. Reload the page to see what was recorded, then try again."
 }

@@ -20,13 +20,19 @@ export function migrazione(suffisso: string): string {
   return readFileSync(join(CARTELLA, f), 'utf8')
 }
 
-/** `CREATE [OR REPLACE] FUNCTION public.<nome>(…) … END $$;` tagliato dal testo. */
+/**
+ * `CREATE [OR REPLACE] FUNCTION public.<nome>(…) … $$;` tagliato dal testo. Le
+ * migrazioni chiudono il corpo in due modi, `END $$;` e `END;` + `$$;` a capo:
+ * si cerca il primo dei due dopo l'inizio.
+ */
 export function funzione(testo: string, nome: string): string {
   const m = new RegExp(`CREATE (OR REPLACE )?FUNCTION public\\.${nome}\\(`).exec(testo)
   if (!m) throw new Error(`corpo di ${nome} non trovato`)
-  const fine = testo.indexOf('END $$;', m.index)
-  if (fine < 0) throw new Error(`fine di ${nome} non trovata`)
-  return testo.slice(m.index, fine + 'END $$;'.length)
+  const chiusura = /END\s*;?\s*\$\$\s*;/g
+  chiusura.lastIndex = m.index
+  const f = chiusura.exec(testo)
+  if (!f) throw new Error(`fine di ${nome} non trovata`)
+  return testo.slice(m.index, f.index + f[0].length)
 }
 
 export async function schemaSoldi(db: PGlite): Promise<void> {
@@ -41,10 +47,18 @@ export async function schemaSoldi(db: PGlite): Promise<void> {
 
     CREATE TABLE public.utenti (id uuid PRIMARY KEY);
     CREATE TABLE public.parents (id uuid PRIMARY KEY);
+    CREATE TABLE public.alunni (id uuid PRIMARY KEY, scuola_id uuid);
+    CREATE TABLE public.payment_categories (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), slug text NOT NULL, scuola_id uuid
+    );
     CREATE TABLE public.pagamenti (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       scuola_id uuid,
       alunno_id uuid,
+      categoria_id uuid REFERENCES public.payment_categories(id),
+      descrizione text,
+      obbligatorio boolean DEFAULT true,
+      creato_da uuid,
       importo numeric(10,2) NOT NULL,
       sconto numeric(10,2) NOT NULL DEFAULT 0,
       sconto_motivo text,
@@ -86,6 +100,24 @@ export async function schemaSoldi(db: PGlite): Promise<void> {
       transazione_id uuid, incasso_id uuid, creato_da uuid,
       creato_il timestamptz NOT NULL DEFAULT now()
     );
+    CREATE TABLE public.ticket_mensa (
+      alunno_id uuid PRIMARY KEY REFERENCES public.alunni(id) ON DELETE CASCADE,
+      saldo_ticket integer DEFAULT 0,
+      ultimo_carico timestamptz
+    );
+    CREATE TABLE public.mensa_ticket_movimenti (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      alunno_id uuid NOT NULL REFERENCES public.alunni(id) ON DELETE CASCADE,
+      scuola_id uuid,
+      tipo text NOT NULL CHECK (tipo = ANY (ARRAY['ricarica','consumo','disdetta','rettifica'])),
+      delta integer NOT NULL,
+      saldo_dopo integer,
+      pagamento_id uuid REFERENCES public.pagamenti(id) ON DELETE SET NULL,
+      data date NOT NULL DEFAULT CURRENT_DATE,
+      origine text, note text, creato_da uuid,
+      creato_il timestamptz NOT NULL DEFAULT now(),
+      transazione_id uuid
+    );
     CREATE TABLE public.registro_modifiche (
       id bigserial PRIMARY KEY,
       utente_id uuid, azione text NOT NULL, tabella_interessata varchar, record_id uuid,
@@ -97,6 +129,7 @@ export async function schemaSoldi(db: PGlite): Promise<void> {
   await db.exec(funzione(v2, 'ricalcola_stato_padre'))
   await db.exec(funzione(v2, 'ricalcola_stato_pagamento'))
   await db.exec(funzione(base, 'trg_incassi_ricalcola'))
+  await db.exec(funzione(migrazione('_saldo_ticket_atomico.sql'), 'varia_saldo_ticket'))
   await db.exec(`
     CREATE TRIGGER incassi_ricalcola AFTER INSERT OR DELETE OR UPDATE ON public.incassi
       FOR EACH ROW EXECUTE FUNCTION public.trg_incassi_ricalcola();
@@ -104,4 +137,6 @@ export async function schemaSoldi(db: PGlite): Promise<void> {
 }
 
 export const TABELLE_SOLDI =
-  'public.registro_modifiche, public.crediti_famiglia, public.incassi, public.pagamenti_quote, public.pagamenti, public.parents, public.utenti'
+  'public.registro_modifiche, public.crediti_famiglia, public.mensa_ticket_movimenti, public.ticket_mensa, ' +
+  'public.incassi, public.pagamenti_quote, public.pagamenti, public.payment_categories, public.alunni, ' +
+  'public.parents, public.utenti'

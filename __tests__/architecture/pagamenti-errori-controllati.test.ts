@@ -39,15 +39,12 @@ const AIUTI = [
 ]
 
 /**
- * ⏳ In attesa, con la ragione accanto: questa route la riscrive una PR della fase 5 ancora
- * aperta (#214 ticket; `incassi` e `quote` sono uscite dall'elenco coi merge di #212 e #213,
- * già pulite). Si corregge DOPO il suo merge, nello
- * stesso ramo: correggerla ora vorrebbe dire scrivere due volte lo stesso file su due rami.
- * L'elenco può solo accorciarsi: un file che non ha più violazioni va tolto (test sotto).
+ * ⏳ In attesa: vuoto. Le route riscritte dalle altre PR della fase 5 (`incassi` #212, `quote`
+ * #213, `ticket` #214) sono uscite dall'elenco ai loro merge, già pulite. Resta il meccanismo,
+ * per la prossima volta che una riscrittura in corso altrove costringe ad aspettare: un file
+ * entra con la ragione accanto, ed esce appena non ha più violazioni (test sotto).
  */
-const IN_ATTESA = new Set<string>([
-  'src/app/api/pagamenti/ticket/route.ts',
-])
+const IN_ATTESA = new Set<string>([])
 
 const FORME: Array<{ nome: string; re: RegExp }> = [
   { nome: 'data-senza-error', re: /const\s*\{\s*data(?:\s*:\s*\w+)?\s*\}\s*=\s*await\s+(?!supabase\s*\.\s*storage)/g },

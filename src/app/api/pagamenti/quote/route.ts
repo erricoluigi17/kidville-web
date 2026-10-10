@@ -6,7 +6,7 @@ import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const upsertBodySchema = z.object({
@@ -29,10 +29,22 @@ const getQuerySchema = z.object({
   pagamento_id: zUuid,
 })
 
+/** Esito di `aggiorna_quote_pagamento` (supabase/migrations/…_aggiorna_quote_senza_reinserire.sql). */
+type EsitoQuote =
+  | { esito: 'non_trovato' }
+  | { esito: 'adulto_ripetuto'; adult_id: string }
+  | { esito: 'somma_diversa'; somma: number | string; importo: number | string }
+  | { esito: 'quota_con_incassi'; quote: string[] }
+  | { esito: 'ok'; quote: unknown[]; tolte: number }
+
 // POST/PATCH /api/pagamenti/quote  (staff) — crea/aggiorna le quote split
 // Body: { userId, pagamento_id, quote: [{adult_id, importo, etichetta?}] }
-// Valida che la somma delle quote == importo del pagamento. Imposta tipo='split'.
-async function upsertQuote(request: Request) {
+// Tutto in `aggiorna_quote_pagamento`, con la riga del pagamento bloccata: la quota
+// di chi resta si AGGIORNA (stesso id, gli incassi restano collegati), i nuovi si
+// inseriscono, gli assenti si tolgono solo se non hanno incassi. Prima si
+// cancellava tutto e si reinseriva, e `incassi.quota_id` finiva a NULL.
+// La somma delle quote deve coincidere con l'importo. Imposta tipo='split'.
+async function upsertQuote(request: Request, operazione: string) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
@@ -47,41 +59,68 @@ async function upsertQuote(request: Request) {
   // `scuola_id`, che per la contabilita' e' il dato che conta.
   const fuoriScopePag = await assertPagamentoInScope(supabase, auth.user, pagamento_id)
   if (fuoriScopePag) return fuoriScopePag
-  const { data: pag, error: pErr } = await supabase
-    .from('pagamenti').select('id, importo, tipo').eq('id', pagamento_id).maybeSingle()
-  if (pErr || !pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
 
-  const somma = quote.reduce((s, q) => s + Number(q.importo), 0)
-  if (Math.abs(somma - Number(pag.importo)) > 0.01) {
+  const rpc = await supabase.rpc('aggiorna_quote_pagamento', {
+    p_pagamento_id: pagamento_id,
+    p_quote: quote.map((q) => ({ adult_id: q.adult_id, importo: q.importo, etichetta: q.etichetta ?? null })),
+    p_utente_id: auth.user.id,
+  })
+  if (rpc.error) {
+    const code = (rpc.error as { code?: string }).code
+    if (code === 'PGRST202') {
+      // Funzione assente: database non migrato. Nessuna scrittura è avvenuta.
+      logErrore({ operazione, stato: 503, evento: 'config' }, rpc.error)
+      return NextResponse.json({ error: 'Modifica delle quote non disponibile su questo ambiente', codice: 'QUOTE_NON_DISPONIBILI' }, { status: 503 })
+    }
+    if (code === '22P02' || code === '22023' || code === '23503') {
+      // Importo illeggibile, quota senza adulto, adulto inesistente: errore dell'input.
+      logEvento('pagamento', 'warn', { operazione, esito: 'quote_rifiutate', pagamento_id, codice: code })
+      return NextResponse.json({ error: 'Quote non valide', codice: 'QUOTE_DATI_NON_VALIDI' }, { status: 400 })
+    }
+    logErrore({ operazione, stato: 500, evento: 'db' }, rpc.error)
+    return NextResponse.json({ error: 'Errore nel salvataggio delle quote' }, { status: 500 })
+  }
+
+  const esito = rpc.data as EsitoQuote | null
+  if (!esito || esito.esito === 'non_trovato') {
+    return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+  }
+  if (esito.esito === 'somma_diversa') {
     return NextResponse.json(
-      { error: `La somma delle quote (${somma}) deve coincidere con l'importo (${pag.importo})` },
+      { error: `La somma delle quote (${Number(esito.somma)}) deve coincidere con l'importo (${Number(esito.importo)})` },
       { status: 400 }
     )
   }
-
-  // sostituisce le quote esistenti
-  await supabase.from('pagamenti_quote').delete().eq('pagamento_id', pagamento_id)
-  const rows = quote.map((q) => ({
-    pagamento_id, adult_id: q.adult_id, importo: q.importo, etichetta: q.etichetta ?? null,
-  }))
-  const { data: created, error: qErr } = await supabase.from('pagamenti_quote').insert(rows).select()
-  if (qErr) return NextResponse.json({ error: qErr.message }, { status: 500 })
-
-  if (pag.tipo !== 'split') {
-    await supabase.from('pagamenti').update({ tipo: 'split' }).eq('id', pagamento_id)
+  if (esito.esito === 'adulto_ripetuto') {
+    return NextResponse.json({ error: 'Lo stesso adulto compare in due quote', codice: 'QUOTE_ADULTO_RIPETUTO' }, { status: 400 })
+  }
+  if (esito.esito === 'quota_con_incassi') {
+    logEvento('pagamento', 'info', { operazione, esito: 'quota_con_incassi_non_tolta', pagamento_id, n_quote: esito.quote.length })
+    return NextResponse.json(
+      { error: 'Una quota da togliere ha già degli incassi: stornali prima di cambiare chi paga.', codice: 'QUOTE_CON_INCASSI', quote: esito.quote },
+      { status: 409 }
+    )
   }
 
-  return NextResponse.json({ success: true, data: created }, { status: 200 })
+  // Evento critico (soldi): logga il SUCCESSO, solo conteggi e uuid.
+  logEvento('pagamento', 'info', {
+    operazione,
+    esito: 'quote_aggiornate',
+    pagamento_id,
+    n_quote: esito.quote.length,
+    n_tolte: esito.tolte,
+  })
+  return NextResponse.json({ success: true, data: esito.quote }, { status: 200 })
 }
 
 export const POST = withRoute('pagamenti/quote:POST', async (request: Request) => {
-  try { return await upsertQuote(request) } catch (err) {
+  try { return await upsertQuote(request, 'pagamenti/quote:POST') } catch (err) {
     logErrore({ operazione: 'pagamenti/quote:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 })
 export const PATCH = withRoute('pagamenti/quote:PATCH', async (request: Request) => {
-  try { return await upsertQuote(request) } catch (err) {
+  try { return await upsertQuote(request, 'pagamenti/quote:PATCH') } catch (err) {
     logErrore({ operazione: 'pagamenti/quote:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
@@ -107,7 +146,11 @@ export const GET = withRoute('pagamenti/quote:GET', async (request: Request) => 
       .from('pagamenti_quote')
       .select('id, pagamento_id, adult_id, importo, etichetta, utenti:adult_id ( id, nome, cognome )')
       .eq('pagamento_id', pagamentoId)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      // Il messaggio di PostgREST resta nel log, non va a schermo.
+      logErrore({ operazione: 'pagamenti/quote:GET', stato: 500, evento: 'db' }, error)
+      return NextResponse.json({ error: 'Errore nella lettura delle quote' }, { status: 500 })
+    }
     return NextResponse.json({ success: true, data })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/quote:GET', stato: 500 }, err)

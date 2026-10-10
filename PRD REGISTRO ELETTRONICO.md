@@ -4,7 +4,9 @@
 
 **Misura DOPO della fase 5 (10/10).** Totali = SUM: entrate 261.023,18 € e uscite 13.370,40 € uguali fra la funzione e un SUM indipendente (vedi il quinto pezzo). Incassi nuovi senza quota su pagamenti divisi: **0, ma su 0 incassi**. Dall'ultimo incasso (08/10) non ne è stato registrato nessuno, quindi il numero non prova ancora niente: va riletto dopo la prima settimana di uso della segreteria. Iscrizioni: 725.
 
-**Stato.** 🟡 **In PR.** Nessuna migrazione, nessun codice: solo la fotografia, il PRD e la roadmap.
+**E2E: il tetto delle candidature azzerato dal seed.** Il primo E2E di questa PR è caduto con un **429 invece di 201** su `public-candidatura-insegnante.spec.ts:528`, ×3 coi retry, senza nessun codice toccato. Il tetto di `POST /api/iscrizione/insegnanti` (3 l'ora per IP) vive in `tetto_frequenza`, che sul DB E2E migrato è condiviso fra i run. In CI tutte le richieste escono dallo stesso server locale, quindi l'E2E di `main` dopo un merge e quello di una PR, entro l'ora, si spartivano tre gettoni. Ora `scripts/seed-e2e.mjs` cancella le righe `candidature-insegnanti:%` di `tetto_frequenza` insieme alle candidature di prova. Tollera la tabella assente; il seed gira solo sul DB E2E, protetto dal lock `e2e-seed-database-isolato`.
+
+**Stato.** 🟡 **In PR.** Nessuna migrazione e nessun codice applicativo: la fotografia, una riga del seed E2E, il PRD e la roadmap.
 
 ## 🧯 Changelog — Roadmap di robustezza, fase 5 (sesto pezzo): in `pagamenti` ogni `{ error }` di PostgREST si guarda, e un guasto non diventa più un valore — 2026-10-10 (branch `robustezza/fase-5-errori`)
 

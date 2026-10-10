@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-08",
-  "generato_alle": "2026-10-08T09:34:05Z",
+  "generato_il": "2026-10-09",
+  "generato_alle": "2026-10-09T23:46:36Z",
   "sha256": "b658253a8336004d280ed27e68643179464a30dcfbf0aa2bba4e8152cfd83f91",
   "policy_solo_service_role": 74,
   "policies": [

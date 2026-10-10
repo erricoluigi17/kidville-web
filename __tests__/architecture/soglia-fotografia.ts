@@ -195,11 +195,11 @@ export function posterioriCheContengono(
 //
 // 2026-10-09 · FASE 4 «scatola nera»: `20261009171012_scatola_nera_registro_eliminazioni.sql`
 // (schema `scatola_nera`, due tabelle con PRIMARY KEY e RLS senza policy, trigger su 42
-// tabelle di `public`). Si toglie nella PR-B, dopo il merge, con le fotografie rigenerate.
+// tabelle di `public`). SVUOTATA il 10/10 (PR-B dopo il merge di #210, `d0fb54af`): applicata
+// in produzione dall'integrazione, una riga sola nel registro (209 migrazioni); fotografie
+// rigenerate dalla produzione — cambia solo quella delle migrazioni, perché le altre cinque
+// guardano `public` e la scatola sta nel suo schema.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261009171012_scatola_nera_registro_eliminazioni.sql':
-        'fase 4 della roadmap di robustezza: la applica l\'integrazione al merge; due tabelle nuove ' +
-        'in `scatola_nera` con PRIMARY KEY e RLS accesa senza policy. PR-B: fotografie rigenerate.',
 }
 
 /**

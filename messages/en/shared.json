@@ -681,5 +681,9 @@
   "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them.",
   "erroreIncassoNonDisponibile": "Recording payments is not yet available on this database.",
   "erroreIncassoDatiNonValidi": "The payment details are not valid: check method, date and amount.",
-  "erroreIncassoQuotaEstranea": "The selected share does not belong to this payment."
+  "erroreIncassoQuotaEstranea": "The selected share does not belong to this payment.",
+  "erroreQuoteNonDisponibili": "Editing shares is not yet available on this database.",
+  "erroreQuoteDatiNonValidi": "The shares are not valid: check amounts and people.",
+  "erroreQuoteAdultoRipetuto": "The same person appears in two shares.",
+  "erroreQuoteConIncassi": "A share to be removed already has payments: reverse them before changing who pays."
 }

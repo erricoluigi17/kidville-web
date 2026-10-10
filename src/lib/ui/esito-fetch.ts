@@ -3228,6 +3228,17 @@ export const CODICI_ERRORE = {
     INCASSO_NON_DISPONIBILE: 'erroreIncassoNonDisponibile',
     INCASSO_DATI_NON_VALIDI: 'erroreIncassoDatiNonValidi',
     INCASSO_QUOTA_ESTRANEA: 'erroreIncassoQuotaEstranea',
+    /**
+     * Quote di un pagamento diviso (`POST/PATCH /api/pagamenti/quote`, dal 2026-10-10 nella RPC
+     * `aggiorna_quote_pagamento`). `QUOTE_NON_DISPONIBILI` = la funzione non c'è ancora (database
+     * non migrato), nessuna scrittura; `QUOTE_DATI_NON_VALIDI` = importo illeggibile o adulto
+     * inesistente; `QUOTE_ADULTO_RIPETUTO` = lo stesso adulto in due quote; `QUOTE_CON_INCASSI`
+     * (409) = una quota da togliere ha incassi collegati, nessuna scrittura.
+     */
+    QUOTE_NON_DISPONIBILI: 'erroreQuoteNonDisponibili',
+    QUOTE_DATI_NON_VALIDI: 'erroreQuoteDatiNonValidi',
+    QUOTE_ADULTO_RIPETUTO: 'erroreQuoteAdultoRipetuto',
+    QUOTE_CON_INCASSI: 'erroreQuoteConIncassi',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

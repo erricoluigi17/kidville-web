@@ -571,7 +571,11 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
       `torna, aggiorna la soglia scrivendo qui accanto perché è scesa), oppure il SETACCIO ha ` +
       `smesso di leggerli — ed è il caso grave, perché un setaccio che non trova niente rende ` +
       `verde tutto il resto del file senza dire una parola.`,
-    ).toBeGreaterThan(60)
+      // 60 → 58 il 2026-10-10 (fase 5 robustezza, D5-B): `grep -rc '\.upsert(' src/` dà 60
+      // contro i 62 di main, e i due mancanti sono gli upsert di `scrutinio_giudizi` e
+      // `scrutinio_comportamento` in `primaria/scrutinio/route.ts`, ora DENTRO le funzioni SQL
+      // `salva_*_scrutinio` (controllo di versione). Tolti davvero, non persi dal setaccio.
+    ).toBeGreaterThan(58)
     expect(
       senzaChiave.length,
       `Ci sono ${senzaChiave.length} \`.upsert()\` senza \`onConflict\`, contro gli 0 misurati il ` +

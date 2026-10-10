@@ -3248,6 +3248,33 @@ export const CODICI_ERRORE = {
     TICKET_RICARICA_NON_DISPONIBILE: 'erroreTicketRicaricaNonDisponibile',
     TICKET_RICARICA_NON_VALIDA: 'erroreTicketRicaricaNonValida',
     /**
+     * Salvataggio di giudizi e comportamento dello scrutinio (`POST`/`PATCH /api/primaria/scrutinio`,
+     * funzioni `salva_*_scrutinio`). `SCRUTINIO_CONFLITTO` (409) = qualcun altro ha cambiato una
+     * delle righe dopo che la pagina le ha lette: la risposta porta `conflitti` (solo uuid) e
+     * NIENTE è stato scritto. `SCRUTINIO_SALVATAGGIO_NON_DISPONIBILE` (503) = la funzione non c'è
+     * ancora (database non migrato); `SCRUTINIO_DATI_NON_VALIDI` (400) = versione o id malformati,
+     * o la stessa riga due volte. `SCRUTINIO_NON_TROVATO` (404) e `SCRUTINIO_CHIUSO` (423) quando
+     * lo scopre la funzione, sotto il blocco.
+     */
+    SCRUTINIO_CONFLITTO: 'erroreScrutinioConflitto',
+    SCRUTINIO_SALVATAGGIO_NON_DISPONIBILE: 'erroreScrutinioSalvataggioNonDisponibile',
+    SCRUTINIO_DATI_NON_VALIDI: 'erroreScrutinioDatiNonValidi',
+    SCRUTINIO_NON_TROVATO: 'erroreScrutinioNonTrovato',
+    SCRUTINIO_CHIUSO: 'erroreScrutinioChiuso',
+    /**
+     * `GET /api/pagamenti/cassa/report` (funzione `report_cassa_aggregato`). 500
+     * `REPORT_CASSA_NON_CALCOLATO` = la funzione ha risposto con un errore; 500
+     * `REPORT_CASSA_NON_QUADRA` = i totali dei gruppi non coincidono con il SUM piatto del
+     * database: il report non esce, né a schermo né in CSV. Il dettaglio sta nel log.
+     */
+    REPORT_CASSA_NON_CALCOLATO: 'erroreReportCassaNonCalcolato',
+    REPORT_CASSA_NON_QUADRA: 'erroreReportCassaNonQuadra',
+    /**
+     * 500 — `GET /api/admin/dashboard`: una lettura dei KPI è fallita per un guasto vero (non per
+     * lo schema assente del DB E2E). Prima diventava uno zero che sembrava un dato.
+     */
+    DASHBOARD_NON_LETTA: 'erroreDashboardNonLetta',
+    /**
      * 500 — una scrittura sul database non riuscita in una route di `pagamenti`
      * (`src/lib/pagamenti/guasto-db.ts`, fase 5 robustezza, sesto pezzo). Le letture
      * riusano `LETTURA_FALLITA`: per chi guarda lo schermo la differenza è solo se

@@ -48,7 +48,91 @@ function guastoDb(operazione: string, esito: string, error: unknown): NextRespon
   return NextResponse.json({ error: 'Operazione sullo scrutinio non riuscita' }, { status: 500 })
 }
 
+/** Esito delle funzioni `salva_*_scrutinio` (supabase/migrations/…_scrutinio_controllo_versione.sql). */
+type EsitoSalvataggio =
+  | { esito: 'ok'; righe: Record<string, unknown>[] }
+  | { esito: 'non_trovato' }
+  | { esito: 'chiuso' }
+  | { esito: 'conflitto'; conflitti: Array<{ alunno_id: string; materia_id?: string; versione: string | null }> }
+
+type Supabase = Awaited<ReturnType<typeof createAdminClient>>
+
+/** La chiave `versione` passa solo se il client l'ha mandata: assente ≠ null («la riga non c'era»). */
+function conVersione(x: { versione?: string | null }): { versione?: string | null } {
+  return x.versione === undefined ? {} : { versione: x.versione }
+}
+
+/**
+ * Il salvataggio con CONTROLLO DI VERSIONE (fase 5 robustezza, D5-B).
+ *
+ * Fino al 2026-10-10 qui c'era un upsert cieco e la pagina rimandava tutta la classe:
+ * il secondo che salvava riscriveva con i valori vecchi della sua schermata quello che
+ * il primo aveva appena cambiato. Ora la decisione sta in SQL, sotto il blocco della
+ * riga di `scrutini`: una riga cambiata da altri dopo la lettura del client, con un
+ * valore diverso, è un conflitto e non si scrive NIENTE (409 con i soli uuid).
+ */
+async function salvaConVersione(
+  supabase: Supabase,
+  funzione: 'salva_giudizi_scrutinio' | 'salva_comportamento_scrutinio',
+  operazione: string,
+  scrutinioId: string,
+  righe: Record<string, unknown>[],
+): Promise<{ righe: Record<string, unknown>[] } | { response: NextResponse }> {
+  // Una pagina aperta prima del rilascio non manda la versione: quelle righe si
+  // scrivono come prima («vince l'ultimo»). Va saputo quante sono.
+  const senzaVersione = righe.filter((r) => !('versione' in r)).length
+  if (senzaVersione > 0) {
+    logEvento('registro', 'warn', { operazione, esito: 'versione_assente', scrutinio_id: scrutinioId, n: senzaVersione })
+  }
+
+  const { data, error } = await supabase.rpc(funzione, { p_scrutinio_id: scrutinioId, p_righe: righe })
+  if (error) {
+    const code = (error as { code?: string }).code
+    if (code === 'PGRST202' || code === '42883') {
+      logEvento('registro', 'error', { operazione, esito: 'funzione_assente', scrutinio_id: scrutinioId }, error)
+      return { response: NextResponse.json(
+        { error: 'Il salvataggio dello scrutinio non è disponibile in questo momento', codice: 'SCRUTINIO_SALVATAGGIO_NON_DISPONIBILE' },
+        { status: 503 },
+      ) }
+    }
+    if (code === '22P02' || code === '22007' || code === '22008' || code === '22023' || code === '21000') {
+      logEvento('registro', 'warn', { operazione, esito: 'input_rifiutato', scrutinio_id: scrutinioId, error_code: code }, error)
+      return { response: NextResponse.json(
+        { error: 'Dati dello scrutinio non validi', codice: 'SCRUTINIO_DATI_NON_VALIDI' },
+        { status: 400 },
+      ) }
+    }
+    return { response: guastoDb(operazione, 'scrittura-non-riuscita', error) }
+  }
+
+  const esito = data as EsitoSalvataggio
+  if (esito.esito === 'non_trovato') {
+    return { response: NextResponse.json({ error: 'Scrutinio non trovato', codice: 'SCRUTINIO_NON_TROVATO' }, { status: 404 }) }
+  }
+  if (esito.esito === 'chiuso') {
+    // La chiusura è passata fra il controllo qui sopra e il blocco della funzione.
+    return { response: NextResponse.json(
+      { error: 'Scrutinio chiuso: modifiche non consentite', codice: 'SCRUTINIO_CHIUSO', locked: true },
+      { status: 423 },
+    ) }
+  }
+  if (esito.esito === 'conflitto') {
+    logEvento('registro', 'info', { operazione, esito: 'conflitto_versione', scrutinio_id: scrutinioId, n: esito.conflitti.length })
+    return { response: NextResponse.json(
+      { error: 'Qualcun altro ha modificato queste righe dopo che le hai aperte', codice: 'SCRUTINIO_CONFLITTO', conflitti: esito.conflitti },
+      { status: 409 },
+    ) }
+  }
+
+  logEvento('registro', 'info', { operazione, esito: 'salvato', scrutinio_id: scrutinioId, n: esito.righe.length })
+  return { righe: esito.righe }
+}
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Un timestamp come lo restituisce PostgREST; il formato lo controlla il cast
+// nella funzione SQL (22007 → 400).
+const zVersione = z.string().min(1).max(64).nullable().optional()
+
 // periodoId assente o '' → lista periodi configurati (come oggi: '' è falsy).
 const getQuerySchema = z.object({
   sectionId: zUuid,
@@ -63,6 +147,9 @@ const giudizioItemSchema = z
     alunnoId: zUuid.or(z.literal('')).nullish(),
     materiaId: zUuid.or(z.literal('')).nullish(),
     giudizioSintetico: z.string().nullish(),
+    // La versione letta dal client (`updated_at` della riga; null = «non c'era»).
+    // ASSENTE solo da una pagina aperta prima del 2026-10-10: si scrive come prima.
+    versione: zVersione,
   })
   .nullable()
 const postBodySchema = z.object({
@@ -76,6 +163,7 @@ const comportamentoItemSchema = z
     giudizioTesto: z.string().nullish(),
     scalaValore: z.string().nullish(),
     giudizioGlobale: z.string().nullish(),
+    versione: zVersione,
   })
   .nullable()
 const patchBodySchema = z.object({
@@ -244,7 +332,7 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
     if (scopeErr) return scopeErr
 
     const valid = giudizi.filter(
-      (g): g is { alunnoId: string; materiaId: string; giudizioSintetico?: string | null } =>
+      (g): g is { alunnoId: string; materiaId: string; giudizioSintetico?: string | null; versione?: string | null } =>
         Boolean(g && g.alunnoId && g.materiaId),
     )
     if (valid.length === 0) return NextResponse.json({ success: true, data: [] })
@@ -286,14 +374,14 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
     //  - educator → sé stesso;
     //  - staff/segreteria → preserva il proponente esistente; per i giudizi nuovi
     //    risolve il docente titolare della materia (null se nessuno). Mai l'attore staff.
-    let rows: { scrutinio_id: string; alunno_id: string; materia_id: string; giudizio_sintetico: string | null; proposto_da: string | null }[]
+    let rows: { alunno_id: string; materia_id: string; giudizio_sintetico: string | null; proposto_da: string | null; versione?: string | null }[]
     if (auth.user.role === 'educator') {
       rows = valid.map((g) => ({
-        scrutinio_id: scrutinioId,
         alunno_id: g.alunnoId,
         materia_id: g.materiaId,
         giudizio_sintetico: g.giudizioSintetico ?? null,
         proposto_da: auth.user.id,
+        ...conVersione(g),
       }))
     } else {
       const { data: esistenti, error: errEsistenti } = await supabase
@@ -320,20 +408,18 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
           proposto = titolareCache.get(g.materiaId) ?? null
         }
         rows.push({
-          scrutinio_id: scrutinioId,
           alunno_id: g.alunnoId,
           materia_id: g.materiaId,
           giudizio_sintetico: g.giudizioSintetico ?? null,
           proposto_da: proposto, // mai la segreteria
+          ...conVersione(g),
         })
       }
     }
 
-    const { data, error } = await supabase
-      .from('scrutinio_giudizi')
-      .upsert(rows, { onConflict: 'scrutinio_id,alunno_id,materia_id' })
-      .select()
-    if (error) return guastoDb('primaria/scrutinio:POST', 'giudizi-non-scritti', error)
+    const salvato = await salvaConVersione(supabase, 'salva_giudizi_scrutinio', 'primaria/scrutinio:POST', scrutinioId, rows)
+    if ('response' in salvato) return salvato.response
+    const data = salvato.righe
 
     await logScrittura(supabase, {
       attore: auth.user,
@@ -341,11 +427,11 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
       entitaId: scrutinioId,
       azione: 'update',
       sectionId,
-      valoreDopo: data ?? [],
+      valoreDopo: data,
     })
     await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, area: 'scrutinio', link: `/teacher/primaria/${sectionId}/scrutinio` })
 
-    return NextResponse.json({ success: true, data: data ?? [] })
+    return NextResponse.json({ success: true, data })
   } catch (err) {
     logErrore({ operazione: 'primaria/scrutinio:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
@@ -380,14 +466,15 @@ export const PATCH = withRoute('primaria/scrutinio:PATCH', async (request: NextR
           giudizioTesto?: string | null
           scalaValore?: string | null
           giudizioGlobale?: string | null
+          versione?: string | null
         } => Boolean(c && c.alunnoId),
       )
       .map((c) => ({
-        scrutinio_id: scrutinioId,
         alunno_id: c.alunnoId,
         giudizio_testo: c.giudizioTesto ?? null,
         scala_valore: c.scalaValore ?? null,
         giudizio_globale: c.giudizioGlobale ?? null,
+        ...conVersione(c),
       }))
     if (rows.length === 0) return NextResponse.json({ success: true, data: [] })
 
@@ -395,15 +482,12 @@ export const PATCH = withRoute('primaria/scrutinio:PATCH', async (request: NextR
     const alunniErr = await assertAlunniInSezione(supabase, rows.map((r) => r.alunno_id), sectionId)
     if (alunniErr) return alunniErr
 
-    const { data, error } = await supabase
-      .from('scrutinio_comportamento')
-      .upsert(rows, { onConflict: 'scrutinio_id,alunno_id' })
-      .select()
-    // Gemello dell'upsert del POST, e fino a qui era rimasto l'unico punto del
-    // file che rimandava al browser il `message` di PostgREST: prosa inglese e
-    // nomi di meccanismi interni davanti a chi lavora in segreteria. Il motivo
+    // Il guasto non rimanda al browser il `message` di PostgREST (prosa inglese e
+    // nomi di meccanismi interni davanti a chi lavora in segreteria): il motivo
     // vero passa da `guastoDb`, cioè finisce nel log dove serve.
-    if (error) return guastoDb('primaria/scrutinio:PATCH', 'comportamento-non-scritto', error)
+    const salvato = await salvaConVersione(supabase, 'salva_comportamento_scrutinio', 'primaria/scrutinio:PATCH', scrutinioId, rows)
+    if ('response' in salvato) return salvato.response
+    const data = salvato.righe
 
     await logScrittura(supabase, {
       attore: auth.user,
@@ -411,11 +495,11 @@ export const PATCH = withRoute('primaria/scrutinio:PATCH', async (request: NextR
       entitaId: scrutinioId,
       azione: 'update',
       sectionId,
-      valoreDopo: data ?? [],
+      valoreDopo: data,
     })
     await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, area: 'scrutinio', link: `/teacher/primaria/${sectionId}/scrutinio` })
 
-    return NextResponse.json({ success: true, data: data ?? [] })
+    return NextResponse.json({ success: true, data })
   } catch (err) {
     logErrore({ operazione: 'primaria/scrutinio:PATCH', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'

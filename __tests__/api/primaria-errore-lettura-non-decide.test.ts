@@ -62,6 +62,15 @@ const h = vi.hoisted(() => {
           Promise.resolve(take(table)).then(res, rej)
         return qb
       },
+      // Dal 2026-10-10 giudizi e comportamento dello scrutinio si salvano con
+      // `salva_*_scrutinio` (controllo di versione): le righe passate alla funzione
+      // contano come scritte sulla tabella che la funzione scrive.
+      rpc(fn: string, args: { p_righe?: unknown }) {
+        const table = fn === 'salva_giudizi_scrutinio' ? 'scrutinio_giudizi'
+          : fn === 'salva_comportamento_scrutinio' ? 'scrutinio_comportamento' : fn
+        state.captured.upsert.push({ table, v: args?.p_righe })
+        return Promise.resolve(take(`rpc:${fn}`))
+      },
     }
   }
   return { state, makeClient }
@@ -369,7 +378,7 @@ describe('PATCH /api/primaria/scrutinio — il `message` di PostgREST resta nel 
 
   it('l’upsert respinto non rimanda al browser il testo di PostgREST', async () => {
     h.state.queues.scrutini = [{ data: { id: SCRUTINIO, stato: 'aperto', section_id: SEZIONE }, error: null }]
-    h.state.queues.scrutinio_comportamento = [{ data: null, error: GUASTO }]
+    h.state.queues['rpc:salva_comportamento_scrutinio'] = [{ data: null, error: GUASTO }]
 
     const res = await COMPORTAMENTO(req(url, body, 'PATCH'))
 
@@ -462,8 +471,8 @@ describe('controlli positivi — a letture riuscite la route fa quello che facev
     h.state.queues.materie = [{ data: [{ id: MATERIA }], error: null }]
     h.state.queues.scrutinio_giudizi = [
       { data: [{ alunno_id: ALUNNO, materia_id: MATERIA, proposto_da: TITOLARE_VERO }], error: null },
-      { data: [{ id: 'g-1' }], error: null },
     ]
+    h.state.queues['rpc:salva_giudizi_scrutinio'] = [{ data: { esito: 'ok', righe: [{ id: 'g-1' }] }, error: null }]
 
     const res = await PROPONI(req('http://localhost/api/primaria/scrutinio', {
       scrutinioId: SCRUTINIO,
@@ -478,7 +487,7 @@ describe('controlli positivi — a letture riuscite la route fa quello che facev
 
   it('scrutinio PATCH: upsert riuscito → 200 e la riga di comportamento scritta', async () => {
     h.state.queues.scrutini = [{ data: { id: SCRUTINIO, stato: 'aperto', section_id: SEZIONE }, error: null }]
-    h.state.queues.scrutinio_comportamento = [{ data: [{ id: 'c-1' }], error: null }]
+    h.state.queues['rpc:salva_comportamento_scrutinio'] = [{ data: { esito: 'ok', righe: [{ id: 'c-1' }] }, error: null }]
 
     const res = await COMPORTAMENTO(req('http://localhost/api/primaria/scrutinio', {
       scrutinioId: SCRUTINIO,

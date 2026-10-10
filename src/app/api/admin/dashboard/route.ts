@@ -5,8 +5,18 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import { dataCivile } from '@/i18n/config'
+import { descriviTetto, leggiABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
+
+/**
+ * Codici «lo schema non c'è» (DB E2E della CI, non migrato): lì il KPI degrada a
+ * zero CON una riga di log, come faceva già `form_submissions`. Ogni altro errore è
+ * un guasto vero e la risposta è un 500: uno zero che sembra un dato è il difetto
+ * S6 della roadmap («report che mentono»).
+ */
+const SCHEMA_ASSENTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST202', 'PGRST204', 'PGRST205'])
+const codiceDi = (e: unknown) => (e as { code?: string } | null | undefined)?.code ?? ''
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -42,8 +52,10 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
   const today = dataCivile()
 
   const [
-    alunniRes,
+    iscrittiRes,
+    perClasseRes,
     scadutiRes,
+    scadutiListRes,
     fattureRes,
     iscrizioniRes,
     iscrizioniListRes,
@@ -51,16 +63,38 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
     moduliTotRes,
     moduliPendingRes,
   ] = await Promise.all([
-    // Studenti iscritti (per totale + distribuzione per classe/sezione)
+    // ⚠️ I CONTEGGI SONO GET, NON HEAD (`count: 'exact'` + `.limit(1)`, non `head: true`).
+    // Una risposta HEAD non ha corpo: su un errore `postgrest-js` restituisce `{ message: '' }`
+    // SENZA codice, e «colonna assente» (42703, DB E2E non migrato) diventa indistinguibile da
+    // un guasto vero. Con la HEAD l'E2E della CI riceveva 500 DASHBOARD_NON_LETTA (2026-10-10).
+    // Con la GET il conteggio resta quello esatto del database (Content-Range), e l'errore porta
+    // il suo codice. La riga in più che torna non si usa.
+    //
+    // Studenti iscritti: il TOTALE lo conta il database. Fino al 2026-10-10 era la
+    // lunghezza di un elenco di righe, e PostgREST taglia ogni risposta a 1000 senza
+    // dirlo: il 10/10 gli iscritti delle tre sedi erano 750, a 250 dal taglio.
     supabase
       .from('alunni')
-      .select('id, classe_sezione, stato')
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('stato', 'iscritto'),
-    // Pagamenti scaduti (non saldati con scadenza passata) + dato per gli alert.
+    // La distribuzione per classe ha bisogno delle righe: si leggono TUTTE, a blocchi,
+    // e la loro somma si confronta qui sotto con il conteggio del database.
+    leggiABlocchi<{ classe_sezione: string | null }>(() =>
+      supabase.from('alunni').select('id, classe_sezione').in('scuola_id', sedi).eq('stato', 'iscritto'),
+    ),
+    // Pagamenti scaduti (non saldati con scadenza passata): il conteggio lo fa il
+    // database (il 10/10 erano 506); l'elenco per gli alert ne vuole solo 5.
     // Esclude i contenitori rateali 'padre' (gli incassi stanno sulle rate figlie:
     // contarlo raddoppierebbe conteggio/alert), coerente con
     // calcolaTotaliPagamenti/aging/export/solleciti.
+    supabase
+      .from('pagamenti')
+      .select('id', { count: 'exact' }).limit(1)
+      .in('scuola_id', sedi)
+      .neq('tipo', 'padre')
+      .neq('stato', 'pagato')
+      .lt('scadenza', today),
     supabase
       .from('pagamenti')
       .select('id, scadenza, stato, alunni ( nome, cognome )')
@@ -68,17 +102,18 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
       .neq('tipo', 'padre')
       .neq('stato', 'pagato')
       .lt('scadenza', today)
-      .order('scadenza', { ascending: true }),
+      .order('scadenza', { ascending: true })
+      .limit(5),
     // Fatture in attesa di emissione
     supabase
       .from('pagamenti')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('fattura_stato', 'in_attesa'),
     // Iscrizioni in attesa (conteggio)
     supabase
       .from('enrollment_submissions')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('status', 'pending'),
     // Iscrizioni in attesa (lista per alert) — SOLO l'id e la data d'arrivo.
@@ -101,52 +136,90 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
     // Prenotazioni mensa di oggi
     supabase
       .from('mensa_prenotazioni')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('data', today),
     // Submission moduli totali — filtrate per sede: senza `.in()` il contatore
     // includeva anche la riga della sede FINTA E2E, cioè un KPI di produzione
     // già sbagliato oggi.
-    supabase.from('form_submissions').select('id', { count: 'exact', head: true }).in('scuola_id', sedi),
+    supabase.from('form_submissions').select('id', { count: 'exact' }).limit(1).in('scuola_id', sedi),
     // Submission moduli da firmare/evadere
     supabase
       .from('form_submissions')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('status', 'pending_signature'),
   ])
 
-  // PostgREST non lancia: ogni aggregato si legge con `?? 0` / `?? []`, quindi
-  // un guasto diventa uno ZERO indistinguibile da «non ci sono dati». Con i
-  // filtri di sede aggiunti il 2026-07-31 il caso è concreto: sul DB E2E della
-  // CI, che non è migrato, `form_submissions.scuola_id` non esiste e PostgREST
-  // risponde `42703` sulla SELECT. La dashboard deve reggere — ma il motivo
-  // dello zero deve restare leggibile nei log, non sparire.
+  // PostgREST non lancia: un `{ error }` non controllato diventava uno ZERO
+  // indistinguibile da «non ci sono dati». Ogni lettura si controlla: schema assente
+  // (DB E2E non migrato) → zero e una riga di log; ogni altro errore → 500.
+  const guasti: string[] = []
   for (const [nome, res] of [
+    ['alunni:iscritti', iscrittiRes],
+    ['pagamenti:scaduti', scadutiRes],
+    ['pagamenti:scaduti_elenco', scadutiListRes],
+    ['pagamenti:fatture_in_attesa', fattureRes],
+    ['enrollment_submissions:pending', iscrizioniRes],
+    ['enrollment_submissions:elenco', iscrizioniListRes],
+    ['mensa_prenotazioni:oggi', mensaOggiRes],
     ['form_submissions:totale', moduliTotRes],
     ['form_submissions:da_firmare', moduliPendingRes],
   ] as const) {
-    if (res.error) {
-      // Il nome dell'aggregato va in `evento`: è l'unico campo libero del
-      // contesto, ed è ciò che distingue «quale KPI è a zero e perché».
+    if (!res.error) continue
+    // Il nome dell'aggregato va in `evento`: è l'unico campo libero del
+    // contesto, ed è ciò che distingue «quale KPI è a zero e perché».
+    if (SCHEMA_ASSENTE.has(codiceDi(res.error))) {
       logErrore({ operazione: 'admin/dashboard:GET', stato: 200, evento: `db:${nome}` }, res.error)
+    } else {
+      logErrore({ operazione: 'admin/dashboard:GET', stato: 500, evento: `db:${nome}` }, res.error)
+      guasti.push(nome)
     }
+  }
+  if (!perClasseRes.ok) {
+    if (perClasseRes.motivo === 'tetto') {
+      logErrore({ operazione: 'admin/dashboard:GET', stato: 500, evento: 'lettura-troncata' },
+        new Error(`${descriviTetto('dashboard-alunni-per-classe', perClasseRes)}, rifiutata per intero`))
+      guasti.push('alunni:per_classe')
+    } else if (SCHEMA_ASSENTE.has(codiceDi(perClasseRes.error))) {
+      logErrore({ operazione: 'admin/dashboard:GET', stato: 200, evento: 'db:alunni:per_classe' }, perClasseRes.error)
+    } else {
+      logErrore({ operazione: 'admin/dashboard:GET', stato: 500, evento: 'db:alunni:per_classe' }, perClasseRes.error)
+      guasti.push('alunni:per_classe')
+    }
+  }
+  if (guasti.length > 0) {
+    return NextResponse.json(
+      { error: 'Non è stato possibile leggere i dati della dashboard', codice: 'DASHBOARD_NON_LETTA' },
+      { status: 500 },
+    )
   }
 
   // --- Studenti ---
-  const alunni = alunniRes.data ?? []
+  const iscritti = iscrittiRes.count ?? 0
+  const righeClasse = perClasseRes.ok ? perClasseRes.righe : []
   const perClasseMap = new Map<string, number>()
-  for (const a of alunni) {
-    const k = (a.classe_sezione as string | null)?.trim() || 'Non assegnati'
+  for (const a of righeClasse) {
+    const k = a.classe_sezione?.trim() || 'Non assegnati'
     perClasseMap.set(k, (perClasseMap.get(k) ?? 0) + 1)
   }
   const perClasse = Array.from(perClasseMap.entries())
     .map(([classe, count]) => ({ classe, count }))
     .sort((a, b) => b.count - a.count)
+  // La distribuzione deve sommare al conteggio del database. Due letture separate
+  // possono differire per un'iscrizione arrivata fra l'una e l'altra: si registra,
+  // e il KPI resta quello del database.
+  if (perClasseRes.ok && righeClasse.length !== iscritti) {
+    logEvento('anagrafica', 'warn', {
+      operazione: 'admin/dashboard:GET',
+      esito: 'per-classe-non-quadra',
+      atteso: iscritti,
+      trovato: righeClasse.length,
+    })
+  }
 
   // --- Pagamenti scaduti ---
-  const scaduti = scadutiRes.data ?? []
-  const alertScaduti = scaduti.slice(0, 5).map((p) => {
+  const alertScaduti = (scadutiListRes.data ?? []).map((p) => {
     const al = Array.isArray(p.alunni) ? p.alunni[0] : (p.alunni as { nome?: string; cognome?: string } | null)
     return {
       id: p.id as string,
@@ -168,11 +241,11 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
 
   return NextResponse.json({
     studenti: {
-      iscritti: alunni.length,
+      iscritti,
       perClasse,
     },
     pagamenti: {
-      scadutoCount: scaduti.length,
+      scadutoCount: scadutiRes.count ?? 0,
       fattureInAttesa: fattureRes.count ?? 0,
     },
     iscrizioni: {

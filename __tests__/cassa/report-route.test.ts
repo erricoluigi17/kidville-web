@@ -14,6 +14,9 @@ const h = vi.hoisted(() => ({
   movimenti: { data: null as unknown, error: null as unknown },
   logEvento: vi.fn(),
   logErrore: vi.fn(),
+  // Sposta il SUM piatto della funzione: simula un report che non quadra.
+  spostaControllo: 0,
+  argsRpc: [] as Record<string, unknown>[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: (...a: unknown[]) => h.requireStaff(...a) }))
@@ -30,6 +33,21 @@ vi.mock('@/lib/logging/logger', () => ({
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    // Dal 2026-10-10 il report lo calcola `report_cassa_aggregato`: il finto la emula
+    // con la semantica di riferimento sulle stesse righe (e propaga l'errore iniettato).
+    rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome !== 'report_cassa_aggregato') throw new Error(`rpc ${nome} non emulata`)
+      const errore = h.incassi.error ?? h.movimenti.error
+      if (errore) return { data: null, error: errore }
+      h.argsRpc.push(args)
+      const { reportCassaDiRiferimento } = await import('../fixtures/report-cassa-riferimento')
+      const data = reportCassaDiRiferimento(
+        { incassi: (h.incassi.data ?? []) as Record<string, unknown>[], cassa_movimenti: (h.movimenti.data ?? []) as Record<string, unknown>[] },
+        args,
+      )
+      data.controllo.entrate += h.spostaControllo
+      return { data, error: null }
+    },
     from: (table: string) => {
       const result = table === 'incassi' ? h.incassi : table === 'schools' ? { data: [], error: null } : h.movimenti
       const b: Record<string, unknown> = {}
@@ -66,6 +84,8 @@ beforeEach(() => {
   h.scuola.mockResolvedValue([SC])
   h.incassi = { data: [], error: null }
   h.movimenti = { data: [], error: null }
+  h.spostaControllo = 0
+  h.argsRpc = []
 })
 
 // ── CONTRATTO ETICHETTE (P1/P3, condiviso con E3) ────────────────────────────
@@ -273,5 +293,44 @@ describe('GET /api/pagamenti/cassa/report', () => {
     const bytes = new Uint8Array(await res.arrayBuffer())
     expect([bytes[0], bytes[1], bytes[2]]).toEqual([0xef, 0xbb, 0xbf])
     expect(h.logEvento).toHaveBeenCalledWith('cassa', 'info', expect.objectContaining({ esito: 'export-csv' }))
+  })
+  it('passa alla funzione SQL sedi e filtri così come sono arrivati', async () => {
+    h.incassi = { data: [], error: null }
+    await GET(req(`scuola_id=${SC}&da=2026-01-01&a=2026-06-30&categoria_pagamento_id=${CAT_SAGGIO}`))
+    expect(h.argsRpc.at(-1)).toEqual({ p_scuola_ids: [SC], p_da: '2026-01-01', p_a: '2026-06-30', p_categoria: CAT_SAGGIO })
+  })
+
+  it('🔴 totali che non quadrano con il SUM piatto → 500 REPORT_CASSA_NON_QUADRA, e niente report', async () => {
+    h.incassi = {
+      data: [{ id: 'i1', importo: 20, metodo: 'contanti', storno_di: null, data_incasso: '2026-05-01', pagamenti: { scuola_id: SC, categoria_id: CAT_SAGGIO, payment_categories: { id: CAT_SAGGIO, nome: 'Saggio' } } }],
+      error: null,
+    }
+    h.spostaControllo = 0.01
+    const res = await GET(req(`scuola_id=${SC}`))
+    expect(res.status).toBe(500)
+    const body = await res.json()
+    expect(body.codice).toBe('REPORT_CASSA_NON_QUADRA')
+    expect(body.entrate_per_categoria).toBeUndefined()
+    expect(h.logErrore).toHaveBeenCalledWith(expect.objectContaining({ evento: 'totali-non-quadrano', stato: 500 }), expect.any(Error))
+    // E nemmeno il CSV esce.
+    const csv = await GET(req(`scuola_id=${SC}&format=csv`))
+    expect(csv.status).toBe(500)
+  })
+
+  it('report che quadra → 200 e il successo loggato con i conteggi', async () => {
+    h.incassi = {
+      data: [{ id: 'i1', importo: 20, metodo: 'contanti', storno_di: null, data_incasso: '2026-05-01', pagamenti: { scuola_id: SC, categoria_id: CAT_SAGGIO, payment_categories: { id: CAT_SAGGIO, nome: 'Saggio' } } }],
+      error: null,
+    }
+    const res = await GET(req(`scuola_id=${SC}`))
+    expect(res.status).toBe(200)
+    expect(h.logEvento).toHaveBeenCalledWith('cassa', 'info', expect.objectContaining({ esito: 'calcolato', incassi: 1, movimenti: 0 }))
+  })
+
+  it('errore della funzione che non è «schema assente» → 500 REPORT_CASSA_NON_CALCOLATO', async () => {
+    h.incassi = { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } }
+    const res = await GET(req(`scuola_id=${SC}`))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('REPORT_CASSA_NON_CALCOLATO')
   })
 })

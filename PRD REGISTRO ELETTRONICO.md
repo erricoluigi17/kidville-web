@@ -51,6 +51,59 @@ Più `warn` per `lettura-fallita` (intestatario, forma storica) e `nome-sede-non
 - Dopo il merge di #213 e #214: correggere `quote` e `ticket` e svuotare l'elenco d'attesa.
 - Fuori da questo pezzo, stessa classe di difetto: `lib/pagamenti/scadenze.ts`, chiamata solo da `admin/students`.
 
+## 📊 Changelog — Roadmap di robustezza, fase 5 (quinto pezzo): report di cassa e cruscotto non sommano più righe tagliate a 1000 — 2026-10-10 (branch `robustezza/fase-5-report`)
+
+**Stato.** ✅ **In produzione dal 2026-10-10** (#216, `a8076175`). Verifica dopo il merge, sulle tre sedi reali: `report_cassa_aggregato` presente, permessi giusti (anon e authenticated no, service_role sì), una riga sola nello storico delle migrazioni, advisor 0 ERROR; **totali = SUM**: entrate 261.023,18 € identiche in quattro modi (controllo interno, gruppi di tutte le sedi, gruppi per sede, mensile) e uguali a un SUM indipendente sugli incassi con metodo reale; uscite 13.370,40 € uguali al SUM di `cassa_movimenti`. Una migrazione di sole funzioni (`20261010084330_report_cassa_aggregato.sql`), applicata dall'integrazione al merge, dopo i pezzi 1–4.
+
+**Il problema (D5-C, S6).** PostgREST taglia ogni risposta a `max_rows` (1000) senza dirlo.
+- Il **report di cassa** (`GET /api/pagamenti/cassa/report`) leggeva le righe di `incassi` e `cassa_movimenti` e sommava in JavaScript: entrate per categoria, mensile e per sede uscivano più basse con un 200.
+- Il **cruscotto** (`GET /api/admin/dashboard`) contava iscritti e pagamenti scaduti con la **lunghezza** di un elenco, e sei letture su nove non controllavano l'`error`: un guasto diventava uno zero.
+
+**Misure (produzione, 2026-10-10, sola lettura).**
+- Report «tutte le sedi»: **1.672 incassi** da leggere (oltre 1000: ne mancavano circa 670), 72 uscite, 33 storni.
+- Il corpo della funzione nuova, eseguito come `SELECT` in produzione: **SUM piatto delle entrate 261.023,18 € = somma dei gruppi = somma per sede = somma del mensile**; uscite 13.370,40 €; 34 gruppi.
+- Cruscotto: **750 iscritti** (a 250 dal taglio), 506 pagamenti scaduti.
+- 725 domande di iscrizione.
+
+**Cosa cambia.**
+1. **`public.report_cassa_aggregato(sedi, da, a, categoria)`** (solo `service_role`, `STABLE`): un valore `jsonb` solo, quindi nessuna riga da tagliare. Restituisce entrate per categoria e metodo reale, uscite per categoria (contanti / altri) e mensile, per sede e per tutte le sedi (`GROUPING SETS`), più un **`controllo`** a SUM piatto e i conteggi delle righe. La semantica è quella di `src/lib/cassa/report.ts`: metodi reali, storno col metodo dell'originale solo se l'originale è nell'insieme, uscite non filtrate dalla categoria di pagamento. Quelle funzioni restano come **riferimento**.
+2. **La route del report** compone i livelli (`componiReport`) e **verifica i totali** (`differenzeTotali`) su sei voci (categorie, sedi e mensile, per entrate e uscite) contro il `controllo`. Se non quadrano: 500 `REPORT_CASSA_NON_QUADRA`, e non esce né la schermata né il CSV. Un errore della funzione dà 500 `REPORT_CASSA_NON_CALCOLATO`; lo schema assente (DB E2E) resta `{ disponibile: false }` come prima. Sparisce il `warn` `incassi-senza-sede`: la funzione unisce gli incassi ai pagamenti **delle sedi**, quindi un pagamento senza sede non può entrarci.
+3. **Il cruscotto**:
+   - iscritti e scaduti con `count: 'exact'`, cioè contati dal database;
+   - l'elenco degli alert limitato a 5;
+   - la distribuzione per classe letta tutta con `leggiABlocchi` e confrontata con il conteggio (`warn` `per-classe-non-quadra` se differiscono);
+   - ogni `error` controllato: schema assente → zero con log (come già `form_submissions`), ogni altro guasto → 500 `DASHBOARD_NON_LETTA`.
+
+**Log.** Report: `info` `calcolato` (successo, con il numero di incassi e movimenti), `error` `totali-non-quadrano` e `db`. Cruscotto: `logErrore` per KPI (`evento: db:<kpi>`, `stato` 200 o 500), `lettura-troncata` al tetto, `warn` `per-classe-non-quadra`.
+
+**Prove.**
+- **PGlite** `report-cassa-aggregato-sql.test.ts` (11): la funzione SQL vera contro le funzioni di riferimento su dati casuali riproducibili (1.400+ incassi, 120 storni anche fuori periodo, metodi non reali, 3 sedi più una fuori scope, uscite e loro storni), su 6 combinazioni di filtri. I totali quadrano, lo scope vuoto non dà niente, i permessi sono giusti. **Mutazioni**: storno attribuito al proprio metodo → 6 rossi; filtro di categoria tolto → 2 rossi.
+- **Route**: 4 casi nuovi (filtri passati, «non quadra» → 500 anche in CSV, successo loggato, errore con codice). I tre file esistenti usano `__tests__/fixtures/report-cassa-riferimento.ts`, che emula la funzione con la semantica di riferimento.
+- **Cruscotto** `admin-dashboard-conteggi-sql.test.ts` (4, col tetto a 1000 acceso: 1.500 iscritti, 1.200 scaduti): **rosso 4 su 4 sulla route di prima**.
+- **Lock** `report-aggregati-in-sql` (6): rosso sul report di prima (2) e sul cruscotto di prima (3).
+
+**Da fare / aperto.** Dopo il merge: funzione e permessi, advisor, fotografia delle migrazioni, e il report richiamato in produzione con i totali confrontati con il SUM di questa voce.
+
+## 📝 Changelog — Roadmap di robustezza, fase 5 (quarto pezzo): sullo scrutinio non vince più l'ultimo — controllo di versione su ogni riga — 2026-10-10 (branch `robustezza/fase-5-scrutinio`)
+
+**Stato.** ✅ **In produzione dal 2026-10-10** (#215, `04b3f264`). Verifica dopo il merge: `salva_giudizi_scrutinio` e `salva_comportamento_scrutinio` presenti, permessi giusti (anon e authenticated no, service_role sì), una riga sola nello storico delle migrazioni, advisor 0 ERROR. Una migrazione di sole funzioni (`20261010083156_scrutinio_controllo_versione.sql`), applicata dall'integrazione al merge, dopo i pezzi 1–3. `scrutinio_periodi` non si tocca.
+
+**Il problema (D5-B).** `POST` (giudizi sintetici) e `PATCH` (comportamento e giudizio globale) di `/api/primaria/scrutinio` facevano un upsert cieco, e la pagina rimandava **tutte** le celle della classe a ogni salvataggio, anche quelle non toccate. Due persone con la pagina aperta — due contitolari, o docente e segreteria — e il secondo che salva riscrive con i valori vecchi della sua schermata quello che l'altro ha appena cambiato. Nessun errore, nessuna traccia. **Provato con due sessioni vere su Postgres 17**: A «ok», B «ok», e il giudizio di A sparito.
+
+**Misure (produzione, 2026-10-10, sola lettura).** 0 scrutini, 0 giudizi, 0 righe di comportamento: il primo scrutinio vero è a gennaio, la correzione arriva prima. Il trigger `set_updated_at` è vivo su entrambe le tabelle (`NEW.updated_at = now()`). 725 domande di iscrizione.
+
+**Cosa cambia.**
+1. **La versione di una riga è il suo `updated_at`**, già mantenuto dal trigger: nessuna colonna nuova. Il GET la restituisce già (`select('*')`).
+2. **`public.salva_giudizi_scrutinio` e `public.salva_comportamento_scrutinio`** (solo `service_role`): bloccano la riga di `scrutini` (`FOR UPDATE`: i salvataggi della stessa classe passano uno alla volta e la chiusura non si infila in mezzo), ricontrollano lo stato chiuso sotto il blocco, poi confrontano. Una riga è in **conflitto** se è cambiata dopo la lettura del client **e** il valore che arriva è diverso da quello attuale (riscriverlo uguale non toglie niente a nessuno). Un conflitto solo ⇒ **nessuna scrittura**, e tornano gli uuid delle righe in conflitto. Altrimenti upsert e righe scritte con le versioni nuove.
+3. **La route** passa la versione così come arriva: presente, `null` («la riga non c'era»), oppure **assente** (pagina aperta prima del rilascio: si scrive come prima, con un `warn` che le conta). Esiti tradotti: 409 `SCRUTINIO_CONFLITTO` (con `conflitti`, solo uuid), 423 `SCRUTINIO_CHIUSO`, 404 `SCRUTINIO_NON_TROVATO`, 400 `SCRUTINIO_DATI_NON_VALIDI` (versione malformata o la stessa riga due volte), 503 `SCRUTINIO_SALVATAGGIO_NON_DISPONIBILE` (funzione assente: il DB E2E della CI, che però non salva scrutini).
+4. **La pagina** ricorda valore e versione letti di ogni riga, manda **solo le celle cambiate** con la loro versione, e dopo un salvataggio riuscito tiene le versioni nuove (il secondo salvataggio della stessa persona non va in conflitto con il primo). Gli errori passano da `messaggioDaCorpo`: il testo del catalogo, non la prosa del server.
+
+**Log** (evento `registro`, persistito anche a `info`). `info` `salvato` (successo, con il numero di righe), `info` `conflitto_versione`, `warn` `versione_assente` e `input_rifiutato`, `error` `funzione_assente` e ogni altro guasto (via `guastoDb`).
+
+**Prove.** PGlite `scrutinio-controllo-versione-sql.test.ts` (14: prima scrittura, due salvataggi di fila, **versione vecchia → conflitto senza scritture**, stesso valore → ok, riga creata nel frattempo da altri, un conflitto ferma tutto il lotto, riga senza versione, chiuso/non trovato, input, comportamento sui tre campi, permessi, controllo negativo con l'upsert cieco). **Mutazione**: col confronto spento cadono 6 casi. Route `primaria-scrutinio-controllo-versione.test.ts` (9; mutazione: con la versione scartata cadono 3). Lock `scrutinio-controllo-versione` (7), verificato rosso sulla route di prima. Adeguati i 3 casi di `primaria-errore-lettura-non-decide`. Il lock `onconflict-arbitro` passa la soglia degli upsert da 60 a 58, con la ragione scritta accanto: i due upsert dello scrutinio sono ora dentro le funzioni SQL. Concorrenza vera: PRIMA A ok / B ok / giudizio di A perso; DOPO A ok / B `conflitto` / giudizio di A intatto.
+
+**Da fare / aperto.** Dopo il merge: funzioni e permessi, advisor, fotografia delle migrazioni. Fuori da questo pezzo, scrivono ancora senza versione su `scrutinio_giudizi`: l'import CSV (`primaria/scrutinio/import`) e le due route admin (`admin/primaria/giudizi`, `admin/primaria/scrutinio-giudizio`). Il loro scritto aggiorna comunque `updated_at`, quindi la pagina se ne accorge al salvataggio dopo.
+
 ## 🎫 Changelog — Roadmap di robustezza, fase 5 (terzo pezzo): la ricarica dei ticket mensa è una transazione sola, e due click non fanno due ricariche — 2026-10-10 (branch `robustezza/fase-5-ticket`)
 
 **Stato.** ✅ **In produzione dal 2026-10-10** (#214, `4f1977d7`). Verifica dopo il merge: `ricarica_ticket_mensa` presente, permessi giusti (anon e authenticated no, service_role sì), una riga sola nello storico delle migrazioni, advisor 0 ERROR. Una migrazione di sole funzioni (`20261010081946_ricarica_ticket_in_una_transazione.sql`), applicata dall'integrazione al merge, dopo i pezzi 1 e 2.

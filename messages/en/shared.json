@@ -688,5 +688,13 @@
   "erroreQuoteConIncassi": "A share to be removed already has payments: reverse them before changing who pays.",
   "erroreTicketRicaricaNonDisponibile": "Topping up meal tickets is not yet available on this database.",
   "erroreTicketRicaricaNonValida": "The top-up details are not valid: check quantity, cost and method.",
+  "erroreScrutinioConflitto": "Someone else changed some of these rows after you opened the page: nothing was saved. Copy your changes aside, reload the page to see the updated values and redo them.",
+  "erroreScrutinioSalvataggioNonDisponibile": "Saving the assessment is not available right now: nothing was written. Please try again shortly.",
+  "erroreScrutinioDatiNonValidi": "Some of the data sent is not valid: reload the page and try again.",
+  "erroreScrutinioNonTrovato": "This assessment no longer exists: reload the page.",
+  "erroreScrutinioChiuso": "The assessment has been closed: changes are no longer allowed.",
+  "erroreReportCassaNonCalcolato": "The cash report could not be calculated: please try again shortly.",
+  "erroreReportCassaNonQuadra": "The cash report was not shown because its totals do not match the database check. The problem has been logged: please try again later.",
+  "erroreDashboardNonLetta": "The dashboard data could not be loaded: please try again shortly.",
   "errorePagamentiScritturaFallita": "Saving failed. Reload the page to see what was recorded, then try again."
 }

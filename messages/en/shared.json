@@ -692,5 +692,8 @@
   "erroreScrutinioSalvataggioNonDisponibile": "Saving the assessment is not available right now: nothing was written. Please try again shortly.",
   "erroreScrutinioDatiNonValidi": "Some of the data sent is not valid: reload the page and try again.",
   "erroreScrutinioNonTrovato": "This assessment no longer exists: reload the page.",
-  "erroreScrutinioChiuso": "The assessment has been closed: changes are no longer allowed."
+  "erroreScrutinioChiuso": "The assessment has been closed: changes are no longer allowed.",
+  "erroreReportCassaNonCalcolato": "The cash report could not be calculated: please try again shortly.",
+  "erroreReportCassaNonQuadra": "The cash report was not shown because its totals do not match the database check. The problem has been logged: please try again later.",
+  "erroreDashboardNonLetta": "The dashboard data could not be loaded: please try again shortly."
 }

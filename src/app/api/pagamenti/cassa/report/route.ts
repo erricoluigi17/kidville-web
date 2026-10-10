@@ -9,12 +9,10 @@ import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import {
-  aggregaEntratePerCategoria,
-  aggregaUscitePerCategoria,
-  aggregaMensile,
+  componiReport,
   costruisciCsvReport,
-  type IncassoReportData,
-  type UscitaReport,
+  differenzeTotali,
+  type ReportGrezzo,
 } from '@/lib/cassa/report'
 
 // Codici PostgREST/Postgres «schema cassa assente» (DB E2E CI non migrato). Copia
@@ -36,47 +34,14 @@ const getQuerySchema = z.object({
   format: z.preprocess((v) => v || undefined, z.enum(['csv']).optional()),
 })
 
-interface IncassoRow {
-  id: string
-  importo: number | string
-  metodo: string
-  storno_di: string | null
-  data_incasso: string | null
-  pagamenti?: {
-    scuola_id: string | null
-    categoria_id: string | null
-    payment_categories?: { id: string; nome: string } | null
-  } | null
-}
-
-interface MovimentoRow {
-  scuola_id: string | null
-  importo: number | string
-  metodo: string
-  data: string | null
-  categoria_id: string | null
-  cassa_categorie?: { id: string; nome: string } | null
-}
-
 const reportVuoto = () =>
   NextResponse.json({ disponibile: false, entrate_per_categoria: [], uscite_per_categoria: [], mensile: [], per_sede: [] })
 
-type IncassoConSede = IncassoReportData & { scuola_id: string }
-type UscitaConSede = UscitaReport & { data: string; scuola_id: string | null }
-
-/** I tre aggregati del report su un insieme di righe (tutte le sedi, o una). */
-function aggrega(incassi: IncassoReportData[], uscite: (UscitaReport & { data: string })[]) {
-  return {
-    entrate_per_categoria: aggregaEntratePerCategoria(incassi),
-    uscite_per_categoria: aggregaUscitePerCategoria(uscite),
-    mensile: aggregaMensile(incassi, uscite.map((u) => ({ importo: u.importo, data: u.data }))),
-  }
-}
-
 // GET /api/pagamenti/cassa/report?scuola_id&da?&a?&categoria_pagamento_id?&format=csv?
-// SOLO DIREZIONE (KPI economici). Entrate per categoria di PAGAMENTO (join incassi →
-// pagamenti → payment_categories, tutti i metodi, storni netti — copre «quota Saggio
-// per intero» su più mesi); uscite per categoria cassa; riepilogo mensile; export CSV.
+// SOLO DIREZIONE (KPI economici). Entrate per categoria di PAGAMENTO (metodi reali,
+// storni netti — copre «quota Saggio per intero» su più mesi); uscite per categoria
+// cassa; riepilogo mensile; export CSV. Dal 2026-10-10 li calcola
+// `public.report_cassa_aggregato` in SQL, e la route li verifica contro il SUM piatto.
 //
 // Dal 2026-09-26 (K3) la lettura è UNITA: senza scuola_id gli aggregati sono sommati
 // su tutte le sedi attive e `per_sede` porta gli stessi tre aggregati sede per sede;
@@ -96,83 +61,48 @@ export const GET = withRoute('pagamenti/cassa/report:GET', async (request: NextR
     if (scope.response) return scope.response
     const sedi = scope.sedi
 
-    // I filtri di sede si applicano SEMPRE: con `sedi` vuoto `.in(…, [])` non
-    // restituisce niente (lock `scope-vuoto-nega`: lo scope vuoto nega, non allarga).
-    // ── Entrate: incassi delle sedi (via pagamenti!inner) con la categoria di pagamento.
-    let incQuery = supabase
-      .from('incassi')
-      .select('id, importo, metodo, storno_di, data_incasso, pagamenti!inner ( scuola_id, categoria_id, payment_categories ( id, nome ) )')
-      .in('pagamenti.scuola_id', sedi)
-    if (q.data.da) incQuery = incQuery.gte('data_incasso', q.data.da)
-    if (q.data.a) incQuery = incQuery.lte('data_incasso', q.data.a)
-    if (q.data.categoria_pagamento_id) incQuery = incQuery.eq('pagamenti.categoria_id', q.data.categoria_pagamento_id)
-
-    const inc = await incQuery
-    if (inc.error) {
-      if (schemaAssente(inc.error)) {
+    // Gli aggregati li calcola il database (fase 5 robustezza, 2026-10-10): prima la
+    // route leggeva le RIGHE di incassi e movimenti, e PostgREST le taglia a 1000 in
+    // silenzio — il 10/10 il report «tutte le sedi» doveva leggerne 1.672. Una RPC che
+    // restituisce un valore solo non ha righe da tagliare. Con `sedi` vuoto la funzione
+    // non trova niente (lock `scope-vuoto-nega`: lo scope vuoto nega, non allarga).
+    const rpc = await supabase.rpc('report_cassa_aggregato', {
+      p_scuola_ids: sedi,
+      p_da: q.data.da ?? null,
+      p_a: q.data.a ?? null,
+      p_categoria: q.data.categoria_pagamento_id ?? null,
+    })
+    if (rpc.error) {
+      if (schemaAssente(rpc.error)) {
         logEvento('cassa', 'info', { operazione: 'report:GET', esito: 'schema-assente', sedi: sedi.length })
         return reportVuoto()
       }
-      logErrore({ operazione: 'pagamenti/cassa/report:GET', stato: 500, evento: 'db' }, inc.error)
-      return NextResponse.json({ error: 'Errore nel recupero delle entrate' }, { status: 500 })
+      logErrore({ operazione: 'pagamenti/cassa/report:GET', stato: 500, evento: 'db' }, rpc.error)
+      return NextResponse.json({ error: 'Errore nel calcolo del report', codice: 'REPORT_CASSA_NON_CALCOLATO' }, { status: 500 })
     }
+    const grezzo = rpc.data as ReportGrezzo
 
-    // ── Uscite: movimenti cassa di tipo 'uscita' (storni inclusi, importo negato).
-    let uscQuery = supabase
-      .from('cassa_movimenti')
-      .select('scuola_id, importo, metodo, data, categoria_id, cassa_categorie ( id, nome )')
-      .in('scuola_id', sedi)
-      .eq('tipo', 'uscita')
-    if (q.data.da) uscQuery = uscQuery.gte('data', q.data.da)
-    if (q.data.a) uscQuery = uscQuery.lte('data', q.data.a)
+    const report = componiReport(grezzo, null)
+    const perSedeReport = sedi.map((scuolaId) => ({ scuolaId, ...componiReport(grezzo, scuolaId) }))
 
-    const usc = await uscQuery
-    if (usc.error) {
-      if (schemaAssente(usc.error)) {
-        logEvento('cassa', 'info', { operazione: 'report:GET', esito: 'schema-assente', sedi: sedi.length })
-        return reportVuoto()
-      }
-      logErrore({ operazione: 'pagamenti/cassa/report:GET', stato: 500, evento: 'db' }, usc.error)
-      return NextResponse.json({ error: 'Errore nel recupero delle uscite' }, { status: 500 })
+    // I totali si verificano contro il SUM piatto della stessa funzione: un report che
+    // non quadra non esce, né a schermo né in CSV. Un file incompleto che sembra intero
+    // è peggio di un errore.
+    const differenze = differenzeTotali(grezzo, report, perSedeReport)
+    if (differenze.length > 0) {
+      logErrore(
+        { operazione: 'pagamenti/cassa/report:GET', stato: 500, evento: 'totali-non-quadrano' },
+        new Error(`report di cassa: ${differenze.map((d) => `${d.voce} atteso ${d.atteso} trovato ${d.trovato}`).join('; ')}`),
+      )
+      return NextResponse.json({ error: 'I totali del report non quadrano', codice: 'REPORT_CASSA_NON_QUADRA' }, { status: 500 })
     }
-
-    // Un incasso il cui pagamento non ha sede (dato sporco che `.in('pagamenti.scuola_id', …)`
-    // non dovrebbe lasciar passare) non si attribuisce a nessun cassetto: lo si scarta QUI,
-    // prima di `aggrega`, così gli aggregati in cima e `per_sede` partono dallo stesso
-    // insieme e la somma di `per_sede` coincide con la cima. Stessa regola di movimenti.
-    const incassi: IncassoConSede[] = []
-    let incassiSenzaSede = 0
-    for (const r of (inc.data ?? []) as unknown as IncassoRow[]) {
-      const sedeInc = r.pagamenti?.scuola_id
-      if (!sedeInc) {
-        incassiSenzaSede++
-        continue
-      }
-      incassi.push({
-        id: r.id,
-        importo: Number(r.importo),
-        metodo: r.metodo,
-        storno_di: r.storno_di,
-        data: r.data_incasso ?? '',
-        categoria_id: r.pagamenti?.categoria_id ?? null,
-        categoria_nome: r.pagamenti?.payment_categories?.nome ?? null,
-        scuola_id: sedeInc,
-      })
-    }
-    if (incassiSenzaSede > 0) {
-      logEvento('cassa', 'warn', { operazione: 'pagamenti/cassa/report:GET', esito: 'incassi-senza-sede', quantita: incassiSenzaSede })
-    }
-
-    const usciteRows: UscitaConSede[] = ((usc.data ?? []) as unknown as MovimentoRow[]).map((r) => ({
-      importo: Number(r.importo),
-      metodo: r.metodo,
-      data: r.data ?? '',
-      categoria_id: r.categoria_id,
-      categoria_nome: r.cassa_categorie?.nome ?? null,
-      scuola_id: r.scuola_id,
-    }))
-
-    const report = aggrega(incassi, usciteRows)
+    logEvento('cassa', 'info', {
+      operazione: 'report:GET',
+      esito: 'calcolato',
+      sedi: sedi.length,
+      incassi: Number(grezzo.controllo.incassi),
+      movimenti: Number(grezzo.controllo.movimenti),
+    })
 
     if (q.data.format === 'csv') {
       logEvento('cassa', 'info', { operazione: 'report:GET', esito: 'export-csv', sedi: sedi.length })
@@ -186,13 +116,10 @@ export const GET = withRoute('pagamenti/cassa/report:GET', async (request: NextR
     }
 
     const nomi = await nomiSediCassa(supabase, sedi, 'pagamenti/cassa/report:GET')
-    const per_sede = sedi.map((scuolaId) => ({
+    const per_sede = perSedeReport.map(({ scuolaId, ...aggregati }) => ({
       scuola_id: scuolaId,
       scuola_nome: nomi.get(scuolaId) ?? null,
-      ...aggrega(
-        incassi.filter((i) => i.scuola_id === scuolaId),
-        usciteRows.filter((u) => u.scuola_id === scuolaId),
-      ),
+      ...aggregati,
     }))
 
     return NextResponse.json({ disponibile: true, ...report, per_sede })

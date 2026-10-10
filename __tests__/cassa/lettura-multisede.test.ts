@@ -62,7 +62,17 @@ vi.mock('@/lib/auth/scope', async (importActual) => {
 })
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => {
-    const client = creaFintoSupabase(h.db as DBFinto, h.lette, h.opzioni as OpzioniFinto)
+    // `report_cassa_aggregato` emulata con la semantica di riferimento sulle righe di
+    // `h.db` (dal 2026-10-10 il report la chiama invece di leggere le righe).
+    const { reportCassaDiRiferimento } = await import('../fixtures/report-cassa-riferimento')
+    const opzioni = h.opzioni as OpzioniFinto
+    const client = creaFintoSupabase(h.db as DBFinto, h.lette, {
+      ...opzioni,
+      rpc: {
+        report_cassa_aggregato: (args) => ({ data: reportCassaDiRiferimento(h.db, args), error: null }),
+        ...opzioni.rpc,
+      },
+    })
     return h.guastoUsciteMese || h.incassiSenzaFiltroSede ? conGuasti(client) : client
   },
 }))
@@ -549,16 +559,13 @@ describe('GET report — aggregati sommati + per_sede', () => {
     expect(body).toMatchObject({ disponibile: true, entrate_per_categoria: [], uscite_per_categoria: [], mensile: [], per_sede: [] })
   })
 
-  it('un incasso senza sede è scartato PRIMA degli aggregati: in cima = somma di per_sede', async () => {
-    // Stesso dato sporco del caso di movimenti: embed `pagamenti` senza scuola_id.
-    // Prima entrava nelle entrate in cima ma in nessuna voce di per_sede, e le
-    // due parti del report non tornavano più.
+  it('un incasso senza sede non entra in nessun aggregato: in cima = somma di per_sede', async () => {
+    // Dato sporco: embed `pagamenti` senza scuola_id. Fino al 2026-10-10 la route lo
+    // scartava a mano (warn `incassi-senza-sede`); ora la funzione SQL unisce gli incassi
+    // ai pagamenti DELLE SEDI, e un pagamento senza sede non può entrarci.
     const orfano = incasso('i-orfano', SEDE_A, 500, OGGI)
     ;(orfano.pagamenti as { scuola_id: string | null }).scuola_id = null
-    // Il finto scarterebbe l'orfano col suo `.in('pagamenti.scuola_id', …)`: il filtro
-    // diventa un no-op, e si toglie l'incasso della sede C che passerebbe anche lui.
-    h.db.incassi = [...h.db.incassi.filter((i) => i.id !== 'i-c'), orfano]
-    h.incassiSenzaFiltroSede = true
+    h.db.incassi = [...h.db.incassi, orfano]
     const res = await reportGET(req('report'))
     expect(res.status).toBe(200)
     const body = await res.json()
@@ -567,11 +574,6 @@ describe('GET report — aggregati sommati + per_sede', () => {
     // L'orfano (500) è escluso: restano 40 (A) + 25 (B).
     expect(somma(body)).toBe(65)
     expect((body.per_sede as Agg[]).reduce((s, p) => s + somma(p), 0)).toBe(somma(body))
-    expect(h.logEvento).toHaveBeenCalledWith('cassa', 'warn', {
-      operazione: 'pagamenti/cassa/report:GET',
-      esito: 'incassi-senza-sede',
-      quantita: 1,
-    })
   })
 
   it('sede non propria → 403', async () => {

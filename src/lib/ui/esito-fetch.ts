@@ -3261,6 +3261,19 @@ export const CODICI_ERRORE = {
     SCRUTINIO_DATI_NON_VALIDI: 'erroreScrutinioDatiNonValidi',
     SCRUTINIO_NON_TROVATO: 'erroreScrutinioNonTrovato',
     SCRUTINIO_CHIUSO: 'erroreScrutinioChiuso',
+    /**
+     * `GET /api/pagamenti/cassa/report` (funzione `report_cassa_aggregato`). 500
+     * `REPORT_CASSA_NON_CALCOLATO` = la funzione ha risposto con un errore; 500
+     * `REPORT_CASSA_NON_QUADRA` = i totali dei gruppi non coincidono con il SUM piatto del
+     * database: il report non esce, né a schermo né in CSV. Il dettaglio sta nel log.
+     */
+    REPORT_CASSA_NON_CALCOLATO: 'erroreReportCassaNonCalcolato',
+    REPORT_CASSA_NON_QUADRA: 'erroreReportCassaNonQuadra',
+    /**
+     * 500 — `GET /api/admin/dashboard`: una lettura dei KPI è fallita per un guasto vero (non per
+     * lo schema assente del DB E2E). Prima diventava uno zero che sembrava un dato.
+     */
+    DASHBOARD_NON_LETTA: 'erroreDashboardNonLetta',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

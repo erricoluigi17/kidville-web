@@ -692,5 +692,8 @@
   "erroreScrutinioSalvataggioNonDisponibile": "Il salvataggio dello scrutinio non è disponibile in questo momento: non è stato scritto niente. Riprova fra poco.",
   "erroreScrutinioDatiNonValidi": "Alcuni dati inviati non sono validi: ricarica la pagina e riprova.",
   "erroreScrutinioNonTrovato": "Lo scrutinio non esiste più: ricarica la pagina.",
-  "erroreScrutinioChiuso": "Lo scrutinio è stato chiuso: le modifiche non sono più consentite."
+  "erroreScrutinioChiuso": "Lo scrutinio è stato chiuso: le modifiche non sono più consentite.",
+  "erroreReportCassaNonCalcolato": "Non è stato possibile calcolare il report di cassa: riprova fra poco.",
+  "erroreReportCassaNonQuadra": "Il report di cassa non è stato mostrato perché i totali non coincidono con il controllo del database. Il problema è stato registrato: riprova più tardi.",
+  "erroreDashboardNonLetta": "Non è stato possibile leggere i dati della dashboard: riprova fra poco."
 }

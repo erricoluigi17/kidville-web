@@ -1,3 +1,36 @@
+## 📊 Changelog — Roadmap di robustezza, fase 5 (quinto pezzo): report di cassa e cruscotto non sommano più righe tagliate a 1000 — 2026-10-10 (branch `robustezza/fase-5-report`)
+
+**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010084330_report_cassa_aggregato.sql`). La applica l'integrazione al merge, **dopo** i pezzi 1–4 (timestamp crescenti).
+
+**Il problema (D5-C, S6).** PostgREST taglia ogni risposta a `max_rows` (1000) senza dirlo.
+- Il **report di cassa** (`GET /api/pagamenti/cassa/report`) leggeva le righe di `incassi` e `cassa_movimenti` e sommava in JavaScript: entrate per categoria, mensile e per sede uscivano più basse con un 200.
+- Il **cruscotto** (`GET /api/admin/dashboard`) contava iscritti e pagamenti scaduti con la **lunghezza** di un elenco, e sei letture su nove non controllavano l'`error`: un guasto diventava uno zero.
+
+**Misure (produzione, 2026-10-10, sola lettura).**
+- Report «tutte le sedi»: **1.672 incassi** da leggere (oltre 1000: ne mancavano circa 670), 72 uscite, 33 storni.
+- Il corpo della funzione nuova, eseguito come `SELECT` in produzione: **SUM piatto delle entrate 261.023,18 € = somma dei gruppi = somma per sede = somma del mensile**; uscite 13.370,40 €; 34 gruppi.
+- Cruscotto: **750 iscritti** (a 250 dal taglio), 506 pagamenti scaduti.
+- 725 domande di iscrizione.
+
+**Cosa cambia.**
+1. **`public.report_cassa_aggregato(sedi, da, a, categoria)`** (solo `service_role`, `STABLE`): un valore `jsonb` solo, quindi nessuna riga da tagliare. Restituisce entrate per categoria e metodo reale, uscite per categoria (contanti / altri) e mensile, per sede e per tutte le sedi (`GROUPING SETS`), più un **`controllo`** a SUM piatto e i conteggi delle righe. La semantica è quella di `src/lib/cassa/report.ts`: metodi reali, storno col metodo dell'originale solo se l'originale è nell'insieme, uscite non filtrate dalla categoria di pagamento. Quelle funzioni restano come **riferimento**.
+2. **La route del report** compone i livelli (`componiReport`) e **verifica i totali** (`differenzeTotali`) su sei voci (categorie, sedi e mensile, per entrate e uscite) contro il `controllo`. Se non quadrano: 500 `REPORT_CASSA_NON_QUADRA`, e non esce né la schermata né il CSV. Un errore della funzione dà 500 `REPORT_CASSA_NON_CALCOLATO`; lo schema assente (DB E2E) resta `{ disponibile: false }` come prima. Sparisce il `warn` `incassi-senza-sede`: la funzione unisce gli incassi ai pagamenti **delle sedi**, quindi un pagamento senza sede non può entrarci.
+3. **Il cruscotto**:
+   - iscritti e scaduti con `count: 'exact'`, cioè contati dal database;
+   - l'elenco degli alert limitato a 5;
+   - la distribuzione per classe letta tutta con `leggiABlocchi` e confrontata con il conteggio (`warn` `per-classe-non-quadra` se differiscono);
+   - ogni `error` controllato: schema assente → zero con log (come già `form_submissions`), ogni altro guasto → 500 `DASHBOARD_NON_LETTA`.
+
+**Log.** Report: `info` `calcolato` (successo, con il numero di incassi e movimenti), `error` `totali-non-quadrano` e `db`. Cruscotto: `logErrore` per KPI (`evento: db:<kpi>`, `stato` 200 o 500), `lettura-troncata` al tetto, `warn` `per-classe-non-quadra`.
+
+**Prove.**
+- **PGlite** `report-cassa-aggregato-sql.test.ts` (11): la funzione SQL vera contro le funzioni di riferimento su dati casuali riproducibili (1.400+ incassi, 120 storni anche fuori periodo, metodi non reali, 3 sedi più una fuori scope, uscite e loro storni), su 6 combinazioni di filtri. I totali quadrano, lo scope vuoto non dà niente, i permessi sono giusti. **Mutazioni**: storno attribuito al proprio metodo → 6 rossi; filtro di categoria tolto → 2 rossi.
+- **Route**: 4 casi nuovi (filtri passati, «non quadra» → 500 anche in CSV, successo loggato, errore con codice). I tre file esistenti usano `__tests__/fixtures/report-cassa-riferimento.ts`, che emula la funzione con la semantica di riferimento.
+- **Cruscotto** `admin-dashboard-conteggi-sql.test.ts` (4, col tetto a 1000 acceso: 1.500 iscritti, 1.200 scaduti): **rosso 4 su 4 sulla route di prima**.
+- **Lock** `report-aggregati-in-sql` (6): rosso sul report di prima (2) e sul cruscotto di prima (3).
+
+**Da fare / aperto.** Dopo il merge: funzione e permessi, advisor, fotografia delle migrazioni, e il report richiamato in produzione con i totali confrontati con il SUM di questa voce.
+
 ## 📝 Changelog — Roadmap di robustezza, fase 5 (quarto pezzo): sullo scrutinio non vince più l'ultimo — controllo di versione su ogni riga — 2026-10-10 (branch `robustezza/fase-5-scrutinio`)
 
 **Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010083156_scrutinio_controllo_versione.sql`). La applica l'integrazione al merge, **dopo** i pezzi 1–3 (timestamp crescenti). `scrutinio_periodi` non si tocca.

@@ -9,7 +9,7 @@ import {
     type DatiStruttura,
     type FiscaleConfig,
 } from './fiscale'
-import { resolveParentRegistry } from './intestatari'
+import { resolveParentRegistryEsito } from './intestatari'
 import { annoFiscale } from '@/lib/format/fiscal-date'
 import { logEvento } from '@/lib/logging/logger'
 
@@ -112,7 +112,11 @@ export interface RicevutaTransazioneRecord extends Omit<RicevutaRecord, 'pagamen
 export type EsitoRicevutaTransazione =
     | { ok: true; legacy: false; record: RicevutaTransazioneRecord }
     | { ok: true; legacy: true }
-    | { ok: false; messaggio: string }
+    /** `error`: il guasto vero, per la riga di log di chi chiama (il `messaggio` non va in risposta). */
+    | { ok: false; messaggio: string; error?: unknown }
+
+/** La funzione di numerazione assente (DB E2E non migrato): l'unico guasto che degrada a «senza numero». */
+const FUNZIONE_MANCANTE = new Set(['PGRST202', '42883'])
 
 /**
  * Emette (o recupera) la ricevuta UNICA di famiglia di una transazione:
@@ -122,6 +126,11 @@ export type EsitoRicevutaTransazione =
  *  • intestata al pagante (`parents` via resolveParentRegistry);
  *  • con dettaglio per figlio nelle `righe` jsonb.
  * Degrada dove il registro/colonne non esistono (DB E2E CI): ok+legacy.
+ *
+ * Fase 5 robustezza, sesto pezzo: SOLO lì. Prima un guasto sulla lettura degli
+ * incassi dava una ricevuta NUMERATA e salvata senza righe, uno sull'intestatario
+ * una ricevuta senza pagante, e qualunque errore della numerazione una ricevuta
+ * senza numero. Una ricevuta emessa non si corregge: si annulla e brucia un numero.
  */
 export async function emettiORecuperaRicevutaTransazione(
     supabase: SupabaseClient,
@@ -142,10 +151,11 @@ export async function emettiORecuperaRicevutaTransazione(
 
     // Righe per figlio: incassi (voci) + ricariche mensa collegati alla transazione.
     const righe: RicevutaTransazioneRiga[] = []
-    const { data: incassi } = await supabase
+    const { data: incassi, error: errIncassi } = await supabase
         .from('incassi')
         .select('importo, pagamento_id, pagamenti:pagamento_id ( descrizione, alunni:alunno_id ( nome, cognome ) )')
         .eq('transazione_id', transazione.id)
+    if (errIncassi) return { ok: false, messaggio: errIncassi.message, error: errIncassi }
     for (const inc of (incassi ?? []) as {
         importo: number | string
         pagamenti?: { descrizione?: string | null; alunni?: { nome?: string | null; cognome?: string | null } | null } | null
@@ -155,10 +165,14 @@ export async function emettiORecuperaRicevutaTransazione(
         const figlio = `${al?.nome ?? ''} ${al?.cognome ?? ''}`.trim() || 'Alunno'
         righe.push({ figlio, descrizione: inc.pagamenti?.descrizione ?? 'Pagamento', importo: Number(inc.importo), tipo: 'voce' })
     }
-    const { data: ricariche } = await supabase
+    const { data: ricariche, error: errRicariche } = await supabase
         .from('mensa_ticket_movimenti')
         .select('delta, alunni:alunno_id ( nome, cognome )')
         .eq('transazione_id', transazione.id)
+    // Il ledger assente (DB E2E) vuol dire davvero «nessuna ricarica»; un guasto no.
+    if (errRicariche && !SCHEMA_MANCANTE.has(errRicariche.code ?? '')) {
+        return { ok: false, messaggio: errRicariche.message, error: errRicariche }
+    }
     for (const r of (ricariche ?? []) as { delta: number; alunni?: { nome?: string | null; cognome?: string | null } | null }[]) {
         const al = r.alunni
         const figlio = `${al?.nome ?? ''} ${al?.cognome ?? ''}`.trim() || 'Alunno'
@@ -166,7 +180,9 @@ export async function emettiORecuperaRicevutaTransazione(
     }
 
     // Intestatario = pagante (parents.id → riga fatturabile).
-    const reg = await resolveParentRegistry(supabase, transazione.pagante_parent_id)
+    const esitoReg = await resolveParentRegistryEsito(supabase, transazione.pagante_parent_id)
+    if (!esitoReg.ok) return { ok: false, messaggio: 'intestatario non letto', error: esitoReg.error }
+    const reg = esitoReg.reg
     const intestatario: RicevutaIntestatario | null = reg
         ? { nome: [reg.first_name, reg.last_name].filter(Boolean).join(' '), codice_fiscale: reg.fiscal_code }
         : null
@@ -183,7 +199,13 @@ export async function emettiORecuperaRicevutaTransazione(
     const anno = annoFiscale()
 
     const num = await supabase.rpc('prossimo_numero_ricevuta', { p_scuola: transazione.scuola_id, p_anno: anno })
-    if (num.error || typeof num.data !== 'number') return { ok: true, legacy: true }
+    if (num.error && !FUNZIONE_MANCANTE.has(num.error.code ?? '') && !SCHEMA_MANCANTE.has(num.error.code ?? '')) {
+        return { ok: false, messaggio: num.error.message, error: num.error }
+    }
+    if (num.error || typeof num.data !== 'number') {
+        logEvento('pagamento', 'info', { operazione: 'ricevute:emettiORecuperaRicevutaTransazione', esito: 'numerazione-assente' }, num.error ?? undefined)
+        return { ok: true, legacy: true }
+    }
 
     const riga = {
         transazione_id: transazione.id,
@@ -211,10 +233,11 @@ export async function emettiORecuperaRicevutaTransazione(
                 .eq('transazione_id', transazione.id)
                 .is('annullata_il', null)
                 .maybeSingle()
+            if (retry.error) return { ok: false, messaggio: retry.error.message, error: retry.error }
             if (retry.data) return { ok: true, legacy: false, record: retry.data as RicevutaTransazioneRecord }
         }
         if (SCHEMA_MANCANTE.has(ins.error.code ?? '')) return { ok: true, legacy: true }
-        return { ok: false, messaggio: ins.error.message }
+        return { ok: false, messaggio: ins.error.message, error: ins.error }
     }
     return { ok: true, legacy: false, record: ins.data as RicevutaTransazioneRecord }
 }

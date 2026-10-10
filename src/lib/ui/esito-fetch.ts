@@ -3274,6 +3274,14 @@ export const CODICI_ERRORE = {
      * lo schema assente del DB E2E). Prima diventava uno zero che sembrava un dato.
      */
     DASHBOARD_NON_LETTA: 'erroreDashboardNonLetta',
+    /**
+     * 500 — una scrittura sul database non riuscita in una route di `pagamenti`
+     * (`src/lib/pagamenti/guasto-db.ts`, fase 5 robustezza, sesto pezzo). Le letture
+     * riusano `LETTURA_FALLITA`: per chi guarda lo schermo la differenza è solo se
+     * qualcosa è stato salvato o no. La frase non promette «niente è stato
+     * registrato»: in una route a più passi il primo può essere già scritto.
+     */
+    PAGAMENTI_SCRITTURA_FALLITA: 'errorePagamentiScritturaFallita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

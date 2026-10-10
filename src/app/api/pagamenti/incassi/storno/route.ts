@@ -9,6 +9,7 @@ import { zUuid } from '@/lib/validation/common'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 
 const postBodySchema = z.object({
   incasso_id: zUuid,
@@ -226,8 +227,10 @@ export const POST = withRoute('pagamenti/incassi/storno:POST', async (request: R
     // si risale al pagamento, che ce l'ha. Senza questo si stornava un incasso
     // registrato in un'altra sede — e uno storno e' un movimento contabile
     // definitivo, non una lettura.
-    const { data: incassoDaStornare } = await supabase
+    const { data: incassoDaStornare, error: errIncasso } = await supabase
       .from('incassi').select('pagamento_id').eq('id', incasso_id).maybeSingle()
+    // Un guasto non è «non trovato» (fase 5 robustezza, sesto pezzo).
+    if (errIncasso) return rispostaGuastoDb('pagamenti/incassi/storno:POST', 'db:incassi', errIncasso)
     if (!incassoDaStornare) {
       return NextResponse.json({ error: 'Incasso non trovato' }, { status: 404 })
     }
@@ -245,7 +248,8 @@ export const POST = withRoute('pagamenti/incassi/storno:POST', async (request: R
       try {
         const pagId = (esito.body.data as { pagamento_id?: string } | undefined)?.pagamento_id
         if (pagId) {
-          const { data: pag } = await supabase.from('pagamenti').select('alunno_id').eq('id', pagId).maybeSingle()
+          const { data: pag, error: errPag } = await supabase.from('pagamenti').select('alunno_id').eq('id', pagId).maybeSingle()
+          if (errPag) throw new Error('lettura di pagamenti per la revoca non riuscita', { cause: errPag })
           const alunnoId = (pag as { alunno_id?: string | null } | null)?.alunno_id
           if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId])
         }

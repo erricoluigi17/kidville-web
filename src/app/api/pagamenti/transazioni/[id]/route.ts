@@ -6,6 +6,7 @@ import { parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 
 const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
 
@@ -44,17 +45,23 @@ export const GET = withRoute('pagamenti/transazioni/[id]:GET', async (request: R
       return NextResponse.json({ error: 'Transazione non trovata' }, { status: 404 })
     }
 
-    const { data: incassi } = await supabase
+    // La ripartizione di una transazione letta male non è una ripartizione vuota (fase 5
+    // robustezza, sesto pezzo): si risponde 500, non con un elenco che sembra vero.
+    const { data: incassi, error: errIncassi } = await supabase
       .from('incassi')
       .select('id, pagamento_id, importo, data_incasso, metodo, storno_di, stornato_il, creato_il, pagamenti:pagamento_id ( descrizione, alunni:alunno_id ( nome, cognome ) )')
       .eq('transazione_id', id)
       .order('creato_il', { ascending: true })
+    if (errIncassi) return rispostaGuastoDb('pagamenti/transazioni/[id]:GET', 'db:incassi', errIncassi)
 
-    const { data: crediti } = await supabase
+    const { data: crediti, error: errCrediti } = await supabase
       .from('crediti_famiglia')
       .select('id, causale, importo, saldo_dopo, creato_il')
       .eq('transazione_id', id)
       .order('creato_il', { ascending: true })
+    if (errCrediti && !TABELLA_ASSENTE.has(errCrediti.code ?? '')) {
+      return rispostaGuastoDb('pagamenti/transazioni/[id]:GET', 'db:crediti_famiglia', errCrediti)
+    }
 
     return NextResponse.json({ success: true, disponibile: true, data: { ...tx, incassi: incassi ?? [], crediti: crediti ?? [] } })
   } catch (err) {

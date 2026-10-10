@@ -119,7 +119,9 @@ export const POST = withRoute('pagamenti/credito:POST', async (request: Request)
 
     // Revoca automatica della sospensione se lo scaduto famiglia è azzerato.
     try {
-      const { data: pag } = await supabase.from('pagamenti').select('alunno_id').eq('id', pagamento_id).maybeSingle()
+      const { data: pag, error: errPag } = await supabase.from('pagamenti').select('alunno_id').eq('id', pagamento_id).maybeSingle()
+      // Il credito è GIÀ usato: un guasto qui non cambia la risposta, ma non resta muto.
+      if (errPag) throw new Error('lettura di pagamenti per la revoca non riuscita', { cause: errPag })
       const alunnoId = (pag as { alunno_id?: string | null } | null)?.alunno_id
       if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId])
     } catch (e) {

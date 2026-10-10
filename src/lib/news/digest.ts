@@ -10,6 +10,8 @@ import { risolviContestoSede, type ContestoSede } from '@/lib/email/contesto'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { MESI_IT } from '@/lib/news/tipi'
 import { pausaFraEmail } from '@/lib/email/ritmo'
+import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
+import { createHash, randomUUID } from 'node:crypto'
 
 // =============================================================================
 // Digest mensile «Kidville News».
@@ -29,7 +31,57 @@ import { pausaFraEmail } from '@/lib/email/ritmo'
 // externalFetch). PostgREST non lancia: si controlla sempre `{ error }` — e un
 // `{ error }` sui destinatari RIMANDA l'edizione invece di dichiararla inviata a
 // zero persone (T17-F4).
+//
+// ── LA PRESA SULL'EDIZIONE (fase 8 della roadmap di robustezza, 2026-10-11) ──
+//
+// Fino a qui due giri sulla stessa edizione (il cron del 1° e il bottone
+// «genera», o due clic) spedivano ENTRAMBI, e un giro troncato dal tetto della
+// Function ripartiva dall'ultimo avanzamento SALVATO — che si salvava solo sul
+// 429. Con ~866 famiglie a ~0,4 s l'una il muro dei 300 secondi è a portata:
+// il giro dopo avrebbe rispedito a centinaia di famiglie. Ora:
+//  · il giro PRENDE l'edizione (`presa_scade_il` + `presa_token`) con un UPDATE
+//    condizionato: un secondo giro la trova presa e la lascia;
+//  · l'avanzamento si salva ogni `AVANZAMENTO_OGNI` invii, col proprio token, e
+//    ogni salvataggio rinnova la presa;
+//  · un TETTO DI TEMPO ferma il giro prima del muro: avanzamento salvato, presa
+//    lasciata SCADUTA, e il tick dei dieci minuti (`riprendiDigestInterrotti`)
+//    riprende l'edizione da lì. Una Function morta davvero lascia la presa a
+//    scadere da sola, e il tick la riprende lo stesso;
+//  · ogni email porta una chiave d'idempotenza per destinatario: le poche spedite
+//    dopo l'ultimo salvataggio, se il giro muore, Resend non le rispedisce (24 h).
+// Senza le colonne (DB della CI, non migrato) si spedisce come prima, e lo si dice.
 // =============================================================================
+
+/** Quanto vale la presa di un giro sull'edizione. Più della vita massima della route
+ *  (`maxDuration` 300 s): una presa che scade mentre il giro è vivo farebbe partire un
+ *  secondo giro in parallelo. Ogni salvataggio dell'avanzamento la rinnova. */
+export const PRESTITO_DIGEST_MS = 330_000
+/** Il tetto di tempo di un giro, misurato dalla `scadenza` che passa il chiamante:
+ *  oltre, si salva e si lascia l'edizione al tick. 60 s di margine sotto i 300. */
+export const TETTO_GIRO_DIGEST_MS = 240_000
+/** Ogni quanti invii si salva l'avanzamento (e si rinnova la presa). */
+export const AVANZAMENTO_OGNI = 20
+/** Per quanto, dopo che una presa è scaduta, il tick prova a riprendere l'edizione.
+ *  Oltre resta al ripescaggio mensile di `eseguiDigest`: un'edizione che non riparte
+ *  per un motivo fisso (sede spenta, nessun post) non si ritenta ogni dieci minuti
+ *  per sempre. Un giro che avanza la rinnova a ogni tetto di tempo. */
+export const FINESTRA_RIPRESA_MS = 2 * 60 * 60_000
+/** Quante edizioni interrotte riprende un tick al massimo. */
+const RIPRESE_PER_TICK = 3
+
+/**
+ * La chiave d'idempotenza dell'edizione per UN destinatario.
+ *
+ * L'indirizzo non entra in chiaro: ne entra l'impronta sha256 (Resend l'indirizzo ce
+ * l'ha già, la chiave serve solo a riconoscere lo stesso invio). Non si usa
+ * `hashCorrelabile` del logging: senza `LOG_HASH_SALT` restituisce una COSTANTE, e la
+ * stessa chiave per famiglie diverse farebbe rifiutare da Resend tutte le email dopo la
+ * prima («stessa chiave, contenuto diverso»).
+ */
+export function chiaveDigest(edizioneId: string, email: string): string {
+  const impronta = createHash('sha256').update(email.trim().toLowerCase()).digest('hex').slice(0, 32)
+  return `digest:${edizioneId}:${impronta}`
+}
 
 export interface PostDigest {
   id: string
@@ -261,15 +313,111 @@ async function emailFamiglie(supabase: SupabaseClient, scuolaId: string): Promis
   return { ok: true, emails: [...new Set(emails)].sort() }
 }
 
+/** L'esito della presa sull'edizione. `conPresa: false` = il DB non ha le colonne
+ *  (CI non migrata): si spedisce come prima, senza presa. */
+type Presa =
+  | { esito: 'presa'; conPresa: boolean; token: string | null; destinatari_count: number | null; errori_count: number | null }
+  | { esito: 'altrui' }
+  | { esito: 'guasto' }
+
+/**
+ * Prende l'edizione per questo giro: UN `UPDATE` condizionato, atomico nel database.
+ * Riesce solo se l'edizione non è inviata e nessun altro giro la tiene (presa assente
+ * o scaduta). Restituisce l'avanzamento RILETTO nello stesso istante: quello letto
+ * prima può essere già vecchio, se un altro giro ha appena salvato.
+ */
+async function prendiEdizione(
+  supabase: SupabaseClient,
+  edizioneId: string,
+  campi: { scuola_id: string; anno: number; mese: number },
+): Promise<Presa> {
+  const token = randomUUID()
+  const adesso = Date.now()
+  const { data, error } = await supabase
+    .from('news_digest_edizioni')
+    .update({ presa_scade_il: new Date(adesso + PRESTITO_DIGEST_MS).toISOString(), presa_token: token })
+    .eq('id', edizioneId)
+    .is('inviata_il', null)
+    // Le virgolette non sono decorative: nella sintassi di `or` il punto e i due punti
+    // di una data ISO sono caratteri riservati di PostgREST.
+    .or(`presa_scade_il.is.null,presa_scade_il.lt."${new Date(adesso).toISOString()}"`)
+    .select('destinatari_count, errori_count')
+  if (error) {
+    if (colonnaNuovaAssente(error)) {
+      logEvento('news', 'info', {
+        operazione: 'digest', esito: 'presa-senza-colonne', edizione_id: edizioneId, ...campi,
+        msg: 'news_digest_edizioni senza presa_scade_il/presa_token (migrazione della fase 8 non applicata): si spedisce senza presa',
+      })
+      return { esito: 'presa', conPresa: false, token: null, destinatari_count: null, errori_count: null }
+    }
+    // Non sapendo se un altro giro sta spedendo, non si spedisce: l'edizione resta in
+    // coda (inviata_il null) e la riprende il giro successivo.
+    logEvento('news', 'error', { operazione: 'digest', esito: 'presa-non-riuscita', edizione_id: edizioneId, ...campi }, error)
+    return { esito: 'guasto' }
+  }
+  const riga = ((data ?? []) as { destinatari_count: number | null; errori_count: number | null }[])[0]
+  if (!riga) {
+    logEvento('news', 'info', {
+      operazione: 'digest', esito: 'presa-altrui', edizione_id: edizioneId, ...campi,
+      msg: 'un altro giro sta spedendo questa edizione, o l’ha appena chiusa: questo giro la lascia',
+    })
+    return { esito: 'altrui' }
+  }
+  return { esito: 'presa', conPresa: true, token, destinatari_count: riga.destinatari_count, errori_count: riga.errori_count }
+}
+
+/**
+ * Scrive sull'edizione SOLO se è ancora di questo giro (stesso token, non inviata).
+ * `campiPresa` si scrivono solo con la presa: senza le colonne un UPDATE che le nomina
+ * fallirebbe con `PGRST204` e non salverebbe nemmeno l'avanzamento.
+ *  · `ok`     — scritto;
+ *  · `persa`  — zero righe: la presa è scaduta e un altro giro l'ha presa (o chiusa);
+ *  · `guasto` — PostgREST ha risposto con un errore, già loggato qui.
+ */
+async function scriviSeMia(
+  supabase: SupabaseClient,
+  edizioneId: string,
+  presa: { conPresa: boolean; token: string | null },
+  campi: Record<string, unknown>,
+  campiPresa: Record<string, unknown>,
+  operazione: string,
+): Promise<'ok' | 'persa' | 'guasto'> {
+  if (!presa.conPresa || !presa.token) {
+    const { error } = await supabase.from('news_digest_edizioni').update(campi).eq('id', edizioneId).is('inviata_il', null)
+    if (error) {
+      logErrore({ operazione, stato: 500, evento: 'news' }, error)
+      return 'guasto'
+    }
+    return 'ok'
+  }
+  const { data, error } = await supabase
+    .from('news_digest_edizioni')
+    .update({ ...campi, ...campiPresa })
+    .eq('id', edizioneId)
+    .eq('presa_token', presa.token)
+    .is('inviata_il', null)
+    .select('id')
+  if (error) {
+    logErrore({ operazione, stato: 500, evento: 'news' }, error)
+    return 'guasto'
+  }
+  return (data ?? []).length > 0 ? 'ok' : 'persa'
+}
+
 /**
  * Genera e invia il digest del mese per una o tutte le sedi. Idempotente:
  * un'edizione già inviata non viene re-inviata. Ritorna l'esito per sede.
+ *
+ * `scadenza` (epoch ms) è il tetto di tempo del giro, CONDIVISO fra le sedi e fra
+ * chiamate successive nella stessa route: chi chiama più volte (il ripescaggio delle
+ * arretrate) passa la stessa. Senza, vale `TETTO_GIRO_DIGEST_MS` da adesso.
  */
 export async function generaEInviaDigest(
   supabase: SupabaseClient,
-  opts: { anno: number; mese: number; scuolaId?: string },
+  opts: { anno: number; mese: number; scuolaId?: string; scadenza?: number },
 ): Promise<{ edizioni: EdizioneEsito[] }> {
   const { anno, mese } = opts
+  const scadenza = opts.scadenza ?? Date.now() + TETTO_GIRO_DIGEST_MS
   const sedi = await sediBersaglio(supabase, opts.scuolaId)
   const edizioni: EdizioneEsito[] = []
 
@@ -438,12 +586,32 @@ export async function generaEInviaDigest(
     // Il verso sbagliato (spedire due volte) resta possibile solo se un indirizzo
     // cambia: si è preferito così, perché una mail doppia è un fastidio e una mail
     // mancante è una comunicazione istituzionale persa.
-    const giaFatti = Math.max(0, Math.min(edizione.destinatari_count ?? 0, destinatari.length))
-    let errori = 0
+    //
+    // 5) LA PRESA (vedi la testata): l'avanzamento da cui si riparte è quello riletto
+    //    DALLA presa, non quello letto all'inizio.
+    const presa = await prendiEdizione(supabase, edizione.id, { scuola_id: sede.id, anno, mese })
+    if (presa.esito !== 'presa') {
+      edizioni.push(esito)
+      continue
+    }
+    const giaFatti = Math.max(0, Math.min(presa.destinatari_count ?? edizione.destinatari_count ?? 0, destinatari.length))
+    // Gli errori di un giro precedente restano contati: `errori_count` è dell'edizione,
+    // non del giro (fino al 2026-10-11 ripartiva da zero a ogni ripresa).
+    let errori = giaFatti > 0 ? (presa.errori_count ?? edizione.errori_count ?? 0) : 0
     let inviate = giaFatti
     let rimandata = false
+    let fermataPerTempo = false
+    let presaPersa = false
+    let dalSalvataggio = 0
     for (let i = giaFatti; i < destinatari.length; i++) {
-      const res = await sendEmailDetailed({ to: destinatari[i], subject: composto.titolo, text: composto.testo, html: composto.html })
+      if (Date.now() >= scadenza) {
+        fermataPerTempo = true
+        break
+      }
+      const res = await sendEmailDetailed({
+        to: destinatari[i], subject: composto.titolo, text: composto.testo, html: composto.html,
+        chiaveIdempotenza: chiaveDigest(edizione.id, destinatari[i]),
+      })
       if (res.ok) {
         inviate++
       } else if (res.rinviabile) {
@@ -452,6 +620,22 @@ export async function generaEInviaDigest(
       } else {
         errori++
         inviate++ // tentato e rifiutato in via definitiva: non si ritenta al giro dopo
+      }
+      // L'AVANZAMENTO A INTERVALLI. Se la Function muore fra due salvataggi, il giro
+      // dopo riparte dall'ultimo: le email in mezzo (al massimo `AVANZAMENTO_OGNI`)
+      // tornano a Resend con la STESSA chiave, e Resend non le rispedisce.
+      if (++dalSalvataggio >= AVANZAMENTO_OGNI && i < destinatari.length - 1) {
+        dalSalvataggio = 0
+        const salvato = await scriviSeMia(
+          supabase, edizione.id, presa,
+          { destinatari_count: inviate, errori_count: errori },
+          { presa_scade_il: new Date(Date.now() + PRESTITO_DIGEST_MS).toISOString() },
+          'news/digest:avanzamento',
+        )
+        if (salvato === 'persa') {
+          presaPersa = true
+          break
+        }
       }
       // Il passo fra due email vive in un posto solo: `@/lib/email/ritmo`.
       //
@@ -464,33 +648,17 @@ export async function generaEInviaDigest(
       if (i < destinatari.length - 1) await pausaFraEmail()
     }
 
-    if (rimandata) {
-      // Si salva l'avanzamento e NON si marca `inviata_il`: l'edizione resta in coda
-      // e `eseguiDigest` la ripesca al giro successivo.
-      const { error: parzErr } = await supabase
-        .from('news_digest_edizioni')
-        .update({ destinatari_count: inviate, errori_count: errori })
-        .eq('id', edizione.id)
-        .is('inviata_il', null)
-      if (parzErr) {
-        // Se nemmeno l'avanzamento si scrive, il giro dopo ricomincia da `giaFatti`: si
-        // rispedisce a qualcuno, non si perde nessuno. Ma va detto (regola 6).
-        logErrore({ operazione: 'news/digest:avanzamento', stato: 500, evento: 'news' }, parzErr)
-      }
-      // `warn` e non `error`: non è un guasto, è il tetto del piano che si è fatto
-      // sentire — la stessa scelta già fatta in `send.ts`. Ma resta scritto, coi due
-      // numeri che contano: senza, «tutte le email» e «un terzo delle email» hanno
-      // lo stesso aspetto nei log.
+    const lascia = { presa_scade_il: null, presa_token: null }
+    const contatori = { scuola_id: sede.id, anno, mese, inviate, mancanti: destinatari.length - inviate, errori }
+
+    if (presaPersa) {
+      // La presa è scaduta mentre questo giro era vivo, e un altro l'ha presa: da qui
+      // spedisce lui. Questo giro non scrive più niente sull'edizione. Le email di
+      // questo giro dopo l'ultimo salvataggio l'altro le ritenta con la stessa chiave,
+      // e Resend non le rispedisce.
       logEvento('news', 'warn', {
-        operazione: 'digest',
-        esito: 'rimandata-quota',
-        scuola_id: sede.id,
-        anno,
-        mese,
-        inviate,
-        mancanti: destinatari.length - inviate,
-        errori,
-        msg: `digest ${anno}-${mese}: quota email esaurita dopo ${inviate}/${destinatari.length}, edizione lasciata in coda`,
+        operazione: 'digest', esito: 'presa-persa', ...contatori,
+        msg: `digest ${anno}-${mese}: presa scaduta durante il giro, l’edizione la continua un altro giro`,
       })
       esito.destinatari_count = inviate
       esito.errori_count = errori
@@ -498,14 +666,54 @@ export async function generaEInviaDigest(
       continue
     }
 
-    // 5) Marca inviata (guardia inviata_il IS NULL contro doppio invio concorrente).
-    const { error: updErr } = await supabase
-      .from('news_digest_edizioni')
-      .update({ inviata_il: new Date().toISOString(), destinatari_count: destinatari.length, errori_count: errori })
-      .eq('id', edizione.id)
-      .is('inviata_il', null)
-    if (updErr) {
-      logErrore({ operazione: 'news/digest:marca-inviata', stato: 500, evento: 'news' }, updErr)
+    if (rimandata || fermataPerTempo) {
+      // Si salva l'avanzamento e NON si marca `inviata_il`: l'edizione resta in coda.
+      //  · QUOTA (429): la presa si LASCIA (null). Ritentare fra dieci minuti
+      //    collezionerebbe solo altri 429: la ripesca `eseguiDigest` al giro mensile,
+      //    o il bottone «genera».
+      //  · TEMPO: la presa si lascia SCADUTA (adesso). È il segnale per il tick dei
+      //    dieci minuti (`riprendiDigestInterrotti`), che la riprende da qui.
+      // Se nemmeno l'avanzamento si scrive, il giro dopo ricomincia dall'ultimo
+      // salvataggio: le chiavi d'idempotenza evitano il doppione, e `scriviSeMia` lo
+      // ha già detto a livello `error` (regola 6).
+      await scriviSeMia(
+        supabase, edizione.id, presa,
+        { destinatari_count: inviate, errori_count: errori },
+        rimandata ? lascia : { presa_scade_il: new Date().toISOString(), presa_token: null },
+        'news/digest:avanzamento',
+      )
+      // `warn` e non `error`: non è un guasto, è un tetto (del piano o del tempo) che
+      // si è fatto sentire — la stessa scelta già fatta in `send.ts`. Ma resta scritto,
+      // coi due numeri che contano: senza, «tutte le email» e «un terzo delle email»
+      // hanno lo stesso aspetto nei log.
+      logEvento('news', 'warn', {
+        operazione: 'digest',
+        esito: rimandata ? 'rimandata-quota' : 'rimandata-tempo',
+        ...contatori,
+        msg: rimandata
+          ? `digest ${anno}-${mese}: quota email esaurita dopo ${inviate}/${destinatari.length}, edizione lasciata in coda`
+          : `digest ${anno}-${mese}: tetto di tempo del giro dopo ${inviate}/${destinatari.length}, la riprende il tick`,
+      })
+      esito.destinatari_count = inviate
+      esito.errori_count = errori
+      edizioni.push(esito)
+      continue
+    }
+
+    // 6) Marca inviata e lascia la presa (guardie: inviata_il IS NULL e il proprio token).
+    const chiusa = await scriviSeMia(
+      supabase, edizione.id, presa,
+      { inviata_il: new Date().toISOString(), destinatari_count: destinatari.length, errori_count: errori },
+      lascia,
+      'news/digest:marca-inviata',
+    )
+    if (chiusa === 'persa') {
+      // Tutte le email sono partite, ma la presa nel frattempo è passata a un altro
+      // giro: sarà lui a marcare. Le sue email tornano a Resend con le stesse chiavi.
+      logEvento('news', 'warn', {
+        operazione: 'digest', esito: 'presa-persa', ...contatori,
+        msg: `digest ${anno}-${mese}: spedita a tutti, ma la presa era scaduta: la marca il giro che l’ha presa`,
+      })
     }
 
     esito.inviata = true
@@ -525,4 +733,63 @@ export async function generaEInviaDigest(
   }
 
   return { edizioni }
+}
+
+/**
+ * LE EDIZIONI INTERROTTE, riprese dal tick dei dieci minuti.
+ *
+ * Un'edizione con la presa SCADUTA e `inviata_il` ancora null è un giro che non ha
+ * finito: fermato dal tetto di tempo (che la lascia scaduta apposta) o morto davvero
+ * (la presa scade da sola). Senza questa ripresa la riprenderebbe solo il giro
+ * mensile — un mese dopo — o qualcuno col bottone «genera».
+ *
+ * Solo prese scadute da meno di `FINESTRA_RIPRESA_MS`: oltre, l'edizione resta al
+ * ripescaggio mensile (vedi la costante). Non c'è rischio di doppio invio: la ripresa
+ * passa da `generaEInviaDigest`, cioè dalla stessa presa e dalle stesse chiavi.
+ *
+ * `disponibile: false` = il DB non ha le colonne (CI non migrata).
+ */
+export async function riprendiDigestInterrotti(
+  supabase: SupabaseClient,
+  opts: { scadenza: number },
+): Promise<{ disponibile: boolean; riprese: number; inviate: number }> {
+  const adesso = Date.now()
+  const { data, error } = await supabase
+    .from('news_digest_edizioni')
+    .select('scuola_id, anno, mese')
+    .is('inviata_il', null)
+    .lt('presa_scade_il', new Date(adesso).toISOString())
+    .gte('presa_scade_il', new Date(adesso - FINESTRA_RIPRESA_MS).toISOString())
+    .order('presa_scade_il', { ascending: true })
+    .limit(RIPRESE_PER_TICK)
+  if (error) {
+    if (colonnaNuovaAssente(error)) {
+      logEvento('news', 'info', {
+        operazione: 'digest:ripresa', esito: 'presa-senza-colonne',
+        msg: 'news_digest_edizioni senza presa_scade_il (migrazione della fase 8 non applicata): nessuna ripresa',
+      })
+      return { disponibile: false, riprese: 0, inviate: 0 }
+    }
+    logEvento('news', 'error', { operazione: 'digest:ripresa', esito: 'interrotte-non-lette' }, error)
+    return { disponibile: true, riprese: 0, inviate: 0 }
+  }
+  let riprese = 0
+  let inviate = 0
+  for (const e of (data ?? []) as { scuola_id: string; anno: number; mese: number }[]) {
+    if (Date.now() >= opts.scadenza) break
+    const { edizioni } = await generaEInviaDigest(supabase, {
+      anno: e.anno, mese: e.mese, scuolaId: e.scuola_id, scadenza: opts.scadenza,
+    })
+    riprese++
+    inviate += edizioni.filter((x) => x.inviata).length
+  }
+  if (riprese > 0) {
+    // Il successo di un canale critico si logga (regola 5): senza, «nessuna edizione
+    // interrotta» e «la ripresa non è mai partita» hanno lo stesso aspetto.
+    logEvento('news', 'info', {
+      operazione: 'digest:ripresa', esito: 'ok', riprese, chiuse: inviate,
+      msg: `digest: riprese ${riprese} edizioni interrotte, ${inviate} chiuse`,
+    })
+  }
+  return { disponibile: true, riprese, inviate }
 }

@@ -24,6 +24,13 @@ const h = vi.hoisted(() => ({
   livelliLancia: false,
   erroreRegistro: null as null | { code: string; message: string },
   registroLancia: false,
+  // Fase 8: la presa sulla cadenza, le letture a blocchi, l'ordine fra presa ed email.
+  presaVuota: false,
+  errorePresa: null as null | { code: string; message: string },
+  erroreLetturaPagamenti: null as null | { code: string; message: string },
+  ins: [] as { table: string; col: string; n: number }[],
+  ordini: [] as { table: string; col: string }[],
+  sequenza: [] as string[],
   logEvento: vi.fn(),
 }))
 
@@ -48,13 +55,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
       const b: Record<string, unknown> = {}
+      let aggiornamento: Record<string, unknown> | null = null
       b.select = () => b
       b.eq = () => b
-      b.in = () => b
+      b.in = (col: string, vals: unknown[]) => { h.ins.push({ table, col, n: vals.length }); return b }
       b.is = () => b
       b.lt = () => b
       b.neq = () => b
-      b.order = () => b
+      b.order = (col: string) => { h.ordini.push({ table, col }); return b }
       b.limit = () => b
       b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : table === 'scuole' ? { nome: 'Kidville Giugliano' } : null, error: null })
       b.insert = (row: Record<string, unknown>) => {
@@ -65,8 +73,20 @@ vi.mock('@/lib/supabase/server-client', () => ({
         const errore = table === 'solleciti' ? h.erroreRegistro : null
         return { then: (r: (v: unknown) => unknown) => r({ data: null, error: errore }), select: () => ({ single: async () => ({ data: row, error: null }) }) }
       }
-      b.update = (row: Record<string, unknown>) => { h.updates.push({ table, row }); return b }
+      b.update = (row: Record<string, unknown>) => {
+        h.updates.push({ table, row })
+        aggiornamento = row
+        if (table === 'pagamenti' && row.ultimo_sollecito_il) h.sequenza.push('presa')
+        return b
+      }
       b.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
+        if (table === 'pagamenti' && aggiornamento?.ultimo_sollecito_il) {
+          if (h.errorePresa) return resolve({ data: null, error: h.errorePresa })
+          return resolve({ data: h.presaVuota ? [] : [{ id: 'x' }], error: null })
+        }
+        if (table === 'pagamenti' && !aggiornamento && h.erroreLetturaPagamenti) {
+          return resolve({ data: null, error: h.erroreLetturaPagamenti })
+        }
         if (table === 'solleciti' && h.livelliLancia && reject) return reject(new TypeError('fetch failed'))
         if (table === 'solleciti' && h.erroreLivelli) return resolve({ data: null, error: h.erroreLivelli })
         return resolve({
@@ -112,6 +132,16 @@ beforeEach(() => {
   h.livelliLancia = false
   h.erroreRegistro = null
   h.registroLancia = false
+  h.presaVuota = false
+  h.errorePresa = null
+  h.erroreLetturaPagamenti = null
+  h.ins = []
+  h.ordini = []
+  h.sequenza = []
+  h.sendEmailDetailed.mockImplementation(async (opts) => {
+    h.sequenza.push('email')
+    return { ok: Boolean(opts), error: null }
+  })
   h.enqueueNotifiche.mockImplementation(async () => {})
   h.requireStaff.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
   h.pagamenti = [{
@@ -473,5 +503,127 @@ describe('sollecitaPagamenti — i guasti secondari non tacciono', () => {
     const log = eventi('registro-sollecito-non-scritto')
     expect(log).toHaveLength(1)
     expect(log[0][3]).toBeInstanceOf(TypeError)
+  })
+})
+
+// =============================================================================
+// FASE 8 DELLA ROADMAP DI ROBUSTEZZA — il giro può morire a metà.
+//
+// La cadenza (`ultimo_sollecito_il`) si scriveva DOPO email, push e registro: un giro
+// morto in mezzo lasciava la voce «mai sollecitata», e il giro dopo rispediva. E due
+// giri sulla stessa voce (cron + bottone) spedivano entrambi. Ora la cadenza è la
+// PRESA: un UPDATE condizionato prima dell'email.
+// =============================================================================
+const runReq = () => new Request('http://localhost/api/pagamenti/solleciti/run', {
+  method: 'POST', headers: { 'x-cron-secret': 'test-secret' },
+})
+
+describe('solleciti — la presa sulla cadenza, PRIMA dell’email (fase 8)', () => {
+  it('🔴 la cadenza si scrive prima dell’email, non dopo', async () => {
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    expect(res.status).toBe(200)
+    expect(h.sequenza).toEqual(['presa', 'email'])
+  })
+
+  it('🔴 un altro giro ha appena sollecitato la voce (la presa tocca zero righe) ⇒ nessuna email', async () => {
+    h.presaVuota = true
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    const j = await res.json()
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(h.inserts.filter((i) => i.table === 'solleciti')).toEqual([])
+    expect(j.data[0]).toMatchObject({ ok: false, motivo: 'sollecito già inviato da un altro giro' })
+    expect(h.logEvento.mock.calls.some((c) => c[1] === 'info' && (c[2] as { esito?: string }).esito === 'sollecito-gia-in-corso')).toBe(true)
+  })
+
+  it('la presa che fallisce ⇒ nessuna email, esito di GUASTO, riga `error` col codice', async () => {
+    h.errorePresa = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    const j = await res.json()
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+    expect(j.data[0]).toMatchObject({ ok: false, guasto: true })
+    const righe = h.logEvento.mock.calls.filter((c) => c[1] === 'error' && (c[2] as { esito?: string }).esito === 'cadenza-non-scritta')
+    expect(righe).toHaveLength(1)
+    expect((righe[0][3] as { code?: string }).code).toBe('57014')
+  })
+
+  it('l’anteprima non prende niente: nessuna scrittura della cadenza', async () => {
+    await POST(post({ pagamento_ids: [PID], anteprima: true }))
+    expect(h.sequenza).toEqual([])
+  })
+
+  it('ogni email porta la chiave d’idempotenza voce + livello + destinatario + giorno (solo uuid e data)', async () => {
+    await POST(post({ pagamento_ids: [PID] }))
+    const chiave = (h.sendEmailDetailed.mock.calls[0][0] as { chiaveIdempotenza?: string }).chiaveIdempotenza
+    expect(chiave).toMatch(new RegExp(`^sollecito:${PID}:L1:g-1:\\d{4}-\\d{2}-\\d{2}$`))
+    expect(chiave).not.toContain('@')
+  })
+})
+
+describe('solleciti — le letture a blocchi e la voce non letta (fase 8)', () => {
+  it('250 voci ⇒ tre letture da ≤100 sia delle voci sia dei livelli, non un `.in()` da 250', async () => {
+    const { sollecitaPagamenti } = await import('@/lib/pagamenti/solleciti-invio')
+    const { createAdminClient } = await import('@/lib/supabase/server-client')
+    const ids = Array.from({ length: 250 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
+    await sollecitaPagamenti(await createAdminClient(), ids, { anteprima: true })
+    const voci = h.ins.filter((x) => x.table === 'pagamenti' && x.col === 'id').map((x) => x.n)
+    const livelli = h.ins.filter((x) => x.table === 'solleciti').map((x) => x.n)
+    expect(voci).toEqual([100, 100, 50])
+    expect(livelli).toEqual([100, 100, 50])
+  })
+
+  it('🔴 voci NON LETTE (errore PostgREST) ⇒ guasto, non «pagamento non trovato»', async () => {
+    h.erroreLetturaPagamenti = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    const j = await res.json()
+    expect(j.data[0]).toMatchObject({ ok: false, guasto: true, motivo: 'pagamento non letto: sollecito non inviato' })
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+  })
+})
+
+describe('solleciti — il tetto di tempo (fase 8)', () => {
+  it('scadenza già passata ⇒ nessuna presa, nessuna email, esiti «rinviato», una riga `warn`', async () => {
+    const { sollecitaPagamenti } = await import('@/lib/pagamenti/solleciti-invio')
+    const { createAdminClient } = await import('@/lib/supabase/server-client')
+    const esiti = await sollecitaPagamenti(await createAdminClient(), [PID], { automatico: true, scadenza: Date.now() - 1 })
+    expect(esiti).toEqual([{ pagamento_id: PID, ok: false, motivo: 'rinviato per tempo', rinviato: true }])
+    expect(h.sequenza).toEqual([])
+    const righe = h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string }).esito === 'rinviati-per-tempo')
+    expect(righe).toHaveLength(1)
+    expect(righe[0][1]).toBe('warn')
+  })
+})
+
+describe('POST /api/pagamenti/solleciti/run — fase 8', () => {
+  beforeEach(() => {
+    vi.stubEnv('CRON_SECRET', 'test-secret')
+    h.settingsRows = [{ scuola_id: 'sc-1', solleciti_config: { enabled: true } }]
+  })
+  const battitoOk = () => h.logEvento.mock.calls.some((c) => c[0] === 'cron' && (c[2] as { esito?: string }).esito === 'ok')
+
+  it('i candidati si leggono in ordine di scadenza (i debiti più vecchi prima)', async () => {
+    await RUN(runReq())
+    expect(h.ordini).toContainEqual({ table: 'pagamenti', col: 'scadenza' })
+  })
+
+  it('500 candidati, il tetto della lettura ⇒ una riga `warn` lo dice', async () => {
+    h.pagamenti = Array.from({ length: 500 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`, alunno_id: 'al-1', scuola_id: 'sc-1',
+      descrizione: 'Retta', importo: 150, importo_pagato: 150, stato: 'pagato', scadenza: '2026-06-01',
+      tipo: 'singolo', obbligatorio: true, ultimo_sollecito_il: null,
+    }))
+    const res = await RUN(runReq())
+    expect(res.status).toBe(200)
+    const righe = h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string }).esito === 'candidati-troncati')
+    expect(righe).toHaveLength(1)
+    expect(righe[0][1]).toBe('warn')
+  })
+
+  it('🔴 un guasto su una voce ⇒ 500 e riga `error`, MAI il battito «ok»', async () => {
+    h.errorePresa = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const res = await RUN(runReq())
+    expect(res.status).toBe(500)
+    expect(h.logEvento.mock.calls.some((c) => c[0] === 'cron' && c[1] === 'error' && (c[2] as { esito?: string }).esito === 'solleciti-con-guasti')).toBe(true)
+    expect(battitoOk()).toBe(false)
   })
 })

@@ -19,6 +19,18 @@ const bodySchema = z.object({}).passthrough().optional()
 const JOB = 'pagamenti-solleciti'
 
 /**
+ * Fase 8 robustezza. Il giro del 06/10 è durato 104 s per 238 solleciti, senza una
+ * vita massima dichiarata: con tre sedi abilitate il muro del piano è a portata, e un
+ * giro troncato lasciava voci a metà. Ora la Function vive 300 s, e il giro smette di
+ * PRENDERE voci nuove a 240 s (`TETTO_GIRO_MS`): le restanti escono «rinviate» e le
+ * riprende il giro di domani, con 60 s di margine per chiudere quelle in corso.
+ */
+export const maxDuration = 300
+const TETTO_GIRO_MS = 240_000
+/** Quante voci legge un giro al massimo. Oltre, si dice (`candidati-troncati`). */
+const CANDIDATI_PER_GIRO = 500
+
+/**
  * Query fallita → riga d'errore parlante + 500, e NESSUN battito «ok».
  *
  * PostgREST non lancia, ritorna `{ error }` (regola 7 di AGENTS.md): il `try/catch` di questo
@@ -160,7 +172,10 @@ export const POST = withRoute('pagamenti/solleciti/run:POST', async (request: Re
       .lt('scadenza', oggi)
       .neq('tipo', 'padre')
       .eq('obbligatorio', true)
-      .limit(500)
+      // In ordine di scadenza, e non per estetica: con il tetto i debiti più vecchi
+      // passano per primi, e quali voci restano fuori non lo decide il caso.
+      .order('scadenza', { ascending: true })
+      .limit(CANDIDATI_PER_GIRO)
     // Il ramo `ids.length === 0` qui sotto scrive «ok, esaminati 0»: senza questo controllo una
     // query fallita si travestirebbe da «nessun moroso» — la notizia più bella e più falsa che
     // un log possa dare a una segreteria.
@@ -179,8 +194,29 @@ export const POST = withRoute('pagamenti/solleciti/run:POST', async (request: Re
       return NextResponse.json({ success: true, inviati: 0 })
     }
 
-    const esiti = await sollecitaPagamenti(supabase, ids, { automatico: true })
+    if (ids.length >= CANDIDATI_PER_GIRO) {
+      // Il tetto della lettura è stato toccato: altre voci aspettano domani. Non è un
+      // guasto, ma «tutti i morosi sollecitati» e «i primi 500» non devono sembrare uguali.
+      logEvento('cron', 'warn', {
+        operazione: JOB, esito: 'candidati-troncati', esaminati: ids.length,
+        msg: `${JOB}: ${ids.length} candidati, il tetto del giro: le voci oltre passano al giro successivo`,
+      })
+    }
+
+    const esiti = await sollecitaPagamenti(supabase, ids, { automatico: true, scadenza: t0 + TETTO_GIRO_MS })
     const inviati = esiti.filter((e) => e.ok).length
+    const guasti = esiti.filter((e) => e.guasto).length
+    const rinviati = esiti.filter((e) => e.rinviato).length
+    if (guasti > 0) {
+      // Voci non lette o cadenze non scritte: il giro NON è andato bene, e il battito
+      // «ok» lo direbbe. Le righe col codice PostgREST le ha già scritte il motore.
+      logEvento('cron', 'error', {
+        operazione: JOB, esito: 'solleciti-con-guasti', ms: Date.now() - t0,
+        guasti, inviati, rinviati, esaminati: ids.length,
+        msg: `${JOB}: ${guasti} voci non sollecitate per un guasto`,
+      })
+      return NextResponse.json({ error: 'Internal Server Error', inviati, guasti }, { status: 500 })
+    }
     // `esaminati` e `inviati` insieme: se divergono di molto, i solleciti partono ma non
     // arrivano — ed è esattamente il guasto (silenzioso) che è già costato mesi di email
     // di credenziali mai consegnate.
@@ -190,10 +226,11 @@ export const POST = withRoute('pagamenti/solleciti/run:POST', async (request: Re
       ms: Date.now() - t0,
       scuole_attive: abilitate.length,
       inviati,
+      rinviati,
       esaminati: ids.length,
       msg: `${JOB}: ok`,
     })
-    return NextResponse.json({ success: true, inviati, esaminati: ids.length })
+    return NextResponse.json({ success: true, inviati, esaminati: ids.length, rinviati })
   } catch (err) {
     // `evento: 'cron'`: il fallimento totale del job resta nello stesso flusso dei battiti
     // (`where evento = 'cron'`). `logErrore` emette anche l'Error nativo con lo stack VERO.

@@ -15,7 +15,13 @@ import { generaEInviaDigest } from '@/lib/news/digest'
 // inviata_il). `scuola_id` esplicito → deve essere fra le sedi ACCESSIBILI
 // (403 altrimenti); assente → si risolve la sede di scrittura corrente, che con
 // più plessi e nessuna selezione risponde 400.
+//
+// `maxDuration` (fase 8 robustezza): il giro scrive a tutte le famiglie della
+// sede. Il suo tetto di tempo (240 s, `TETTO_GIRO_DIGEST_MS`) sta sotto questa
+// vita; quello che non entra lo riprende il tick dei dieci minuti.
 // =============================================================================
+
+export const maxDuration = 300
 
 const bodySchema = z.object({
   anno: z.coerce.number().int().min(2000).max(2100),

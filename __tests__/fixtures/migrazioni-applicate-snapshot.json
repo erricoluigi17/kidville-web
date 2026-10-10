@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-08",
-  "generato_alle": "2026-10-08T09:33:07Z",
-  "sha256": "629335b8545895dc4e7ad7135311ae2a21b5755b0103ccee9d585fbbe53b51a5",
+  "generato_il": "2026-10-09",
+  "generato_alle": "2026-10-09T23:46:24Z",
+  "sha256": "8fbd89169a160a7749f8243bb52669df66f7f7ef5aa0ec58c4322f702b44cbf0",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -827,6 +827,18 @@
     {
       "version": "20261007170813",
       "name": "servizi_mensili"
+    },
+    {
+      "version": "20261008220540",
+      "name": "alunni_elimina_definitivo"
+    },
+    {
+      "version": "20261009162723",
+      "name": "sanitari_solo_con_copia_presente"
+    },
+    {
+      "version": "20261009171012",
+      "name": "scatola_nera_registro_eliminazioni"
     }
   ]
 }

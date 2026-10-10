@@ -39,6 +39,12 @@ const CANDIDATI_PER_GIRO = 500
  * stesso file, e il ramo non controllato è quello che chiude con «ok, inviati 0». La
  * spiegazione per esteso è in `src/app/api/push/dispatch/route.ts`.
  */
+/** Il 500 del giro, uno solo per tutti i rami: è una route da servizio a servizio, nessuno lo
+ *  legge a schermo, e ciò che conta (il perché) sta nella riga di log accanto. */
+function erroreInterno(): NextResponse {
+  return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+}
+
 function queryFallita(azione: string, error: unknown, t0: number): NextResponse {
   logEvento(
     'cron',
@@ -46,7 +52,7 @@ function queryFallita(azione: string, error: unknown, t0: number): NextResponse 
     { operazione: JOB, esito: 'query-fallita', azione, ms: Date.now() - t0, msg: `${JOB}: ${azione} fallita` },
     error,
   )
-  return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  return erroreInterno()
 }
 
 // POST /api/pagamenti/solleciti/run — giro automatico dei solleciti.
@@ -215,7 +221,7 @@ export const POST = withRoute('pagamenti/solleciti/run:POST', async (request: Re
         guasti, inviati, rinviati, esaminati: ids.length,
         msg: `${JOB}: ${guasti} voci non sollecitate per un guasto`,
       })
-      return NextResponse.json({ error: 'Internal Server Error', inviati, guasti }, { status: 500 })
+      return erroreInterno()
     }
     // `esaminati` e `inviati` insieme: se divergono di molto, i solleciti partono ma non
     // arrivano — ed è esattamente il guasto (silenzioso) che è già costato mesi di email

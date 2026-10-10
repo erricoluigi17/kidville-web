@@ -3229,6 +3229,39 @@ export const CODICI_ERRORE = {
     INCASSO_DATI_NON_VALIDI: 'erroreIncassoDatiNonValidi',
     INCASSO_QUOTA_ESTRANEA: 'erroreIncassoQuotaEstranea',
     /**
+     * Quote di un pagamento diviso (`POST/PATCH /api/pagamenti/quote`, dal 2026-10-10 nella RPC
+     * `aggiorna_quote_pagamento`). `QUOTE_NON_DISPONIBILI` = la funzione non c'è ancora (database
+     * non migrato), nessuna scrittura; `QUOTE_DATI_NON_VALIDI` = importo illeggibile o adulto
+     * inesistente; `QUOTE_ADULTO_RIPETUTO` = lo stesso adulto in due quote; `QUOTE_CON_INCASSI`
+     * (409) = una quota da togliere ha incassi collegati, nessuna scrittura.
+     */
+    QUOTE_NON_DISPONIBILI: 'erroreQuoteNonDisponibili',
+    QUOTE_DATI_NON_VALIDI: 'erroreQuoteDatiNonValidi',
+    QUOTE_ADULTO_RIPETUTO: 'erroreQuoteAdultoRipetuto',
+    QUOTE_CON_INCASSI: 'erroreQuoteConIncassi',
+    /**
+     * Ricarica dei ticket mensa (`POST /api/pagamenti/ticket`, dal 2026-10-10 nella RPC
+     * `ricarica_ticket_mensa`). `TICKET_RICARICA_NON_DISPONIBILE` = la funzione non c'è ancora
+     * (database non migrato), nessuna scrittura; `TICKET_RICARICA_NON_VALIDA` = metodo fuori
+     * elenco, pezzi o costo non validi.
+     */
+    TICKET_RICARICA_NON_DISPONIBILE: 'erroreTicketRicaricaNonDisponibile',
+    TICKET_RICARICA_NON_VALIDA: 'erroreTicketRicaricaNonValida',
+    /**
+     * Salvataggio di giudizi e comportamento dello scrutinio (`POST`/`PATCH /api/primaria/scrutinio`,
+     * funzioni `salva_*_scrutinio`). `SCRUTINIO_CONFLITTO` (409) = qualcun altro ha cambiato una
+     * delle righe dopo che la pagina le ha lette: la risposta porta `conflitti` (solo uuid) e
+     * NIENTE è stato scritto. `SCRUTINIO_SALVATAGGIO_NON_DISPONIBILE` (503) = la funzione non c'è
+     * ancora (database non migrato); `SCRUTINIO_DATI_NON_VALIDI` (400) = versione o id malformati,
+     * o la stessa riga due volte. `SCRUTINIO_NON_TROVATO` (404) e `SCRUTINIO_CHIUSO` (423) quando
+     * lo scopre la funzione, sotto il blocco.
+     */
+    SCRUTINIO_CONFLITTO: 'erroreScrutinioConflitto',
+    SCRUTINIO_SALVATAGGIO_NON_DISPONIBILE: 'erroreScrutinioSalvataggioNonDisponibile',
+    SCRUTINIO_DATI_NON_VALIDI: 'erroreScrutinioDatiNonValidi',
+    SCRUTINIO_NON_TROVATO: 'erroreScrutinioNonTrovato',
+    SCRUTINIO_CHIUSO: 'erroreScrutinioChiuso',
+    /**
      * `GET /api/pagamenti/cassa/report` (funzione `report_cassa_aggregato`). 500
      * `REPORT_CASSA_NON_CALCOLATO` = la funzione ha risposto con un errore; 500
      * `REPORT_CASSA_NON_QUADRA` = i totali dei gruppi non coincidono con il SUM piatto del

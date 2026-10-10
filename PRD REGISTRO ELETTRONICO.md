@@ -1,6 +1,14 @@
+## 📸 Changelog — Roadmap di robustezza, fase 5 chiusa: fotografia delle migrazioni rigenerata dalla produzione — 2026-10-10 (branch `robustezza/fase-5-fotografie`)
+
+**Cosa.** `__tests__/fixtures/migrazioni-applicate-snapshot.json` rigenerata con `migrazioni-fotografia.mjs` dallo storico della produzione: **214 migrazioni**, ultima `20261010084330_report_cassa_aggregato`. Le cinque nuove sono le migrazioni di sole funzioni della fase 5 (#212 incassi, #213 quote, #214 ticket, #215 scrutinio, #216 report). Prima di scriverla, conteggio e hash md5 dei nomi `<version>_<name>` confrontati con la produzione: identici. Le fotografie di RLS e FK di sede non cambiano: nessuna di queste migrazioni tocca tabelle, policy o indici.
+
+**Misura DOPO della fase 5 (10/10).** Totali = SUM: entrate 261.023,18 € e uscite 13.370,40 € uguali fra la funzione e un SUM indipendente (vedi il quinto pezzo). Incassi nuovi senza quota su pagamenti divisi: **0, ma su 0 incassi**. Dall'ultimo incasso (08/10) non ne è stato registrato nessuno, quindi il numero non prova ancora niente: va riletto dopo la prima settimana di uso della segreteria. Iscrizioni: 725.
+
+**Stato.** 🟡 **In PR.** Nessuna migrazione, nessun codice: solo la fotografia, il PRD e la roadmap.
+
 ## 🧯 Changelog — Roadmap di robustezza, fase 5 (sesto pezzo): in `pagamenti` ogni `{ error }` di PostgREST si guarda, e un guasto non diventa più un valore — 2026-10-10 (branch `robustezza/fase-5-errori`)
 
-**Stato.** 🟡 **In PR.** Nessuna migrazione. Il lock teneva in attesa `quote/route.ts` e `ticket/route.ts`, riscritte da #213 e #214: dopo i loro merge sono risultate già pulite e l'elenco d'attesa è vuoto.
+**Stato.** ✅ **In produzione dal 2026-10-10** (#217, `193a20dc`). Nessuna migrazione. Il lock teneva in attesa `quote/route.ts` e `ticket/route.ts`, riscritte da #213 e #214: dopo i loro merge sono risultate già pulite e l'elenco d'attesa è vuoto.
 
 **Il problema (S6 / D5 della roadmap).** PostgREST non lancia: restituisce `{ data: null, error }`. Una ricognizione delle 261 chiamate `.from()`/`.rpc()` delle 57 route di `src/app/api/pagamenti/**`, e degli aiuti che chiamano, ne ha trovate **68 col risultato mai guardato** (28 gravi). Il `null` diventava un valore, e a volte una scrittura:
 - **doppio addebito**: `genera` non leggeva «chi ha già questo gruppo» e generava la voce una seconda volta;

@@ -40,12 +40,12 @@ const AIUTI = [
 
 /**
  * ⏳ In attesa, con la ragione accanto: queste route le riscrivono le PR della fase 5 ancora
- * aperte (#212 incassi, #213 quote, #214 ticket). Si correggono DOPO il loro merge, nello
+ * aperte (#213 quote, #214 ticket; `incassi` è uscita dall'elenco col merge di #212, già
+ * pulita). Si correggono DOPO il loro merge, nello
  * stesso ramo: correggerle ora vorrebbe dire scrivere due volte lo stesso file su due rami.
  * L'elenco può solo accorciarsi: un file che non ha più violazioni va tolto (test sotto).
  */
 const IN_ATTESA = new Set<string>([
-  'src/app/api/pagamenti/incassi/route.ts',
   'src/app/api/pagamenti/quote/route.ts',
   'src/app/api/pagamenti/ticket/route.ts',
 ])

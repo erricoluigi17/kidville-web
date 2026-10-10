@@ -1,3 +1,56 @@
+## 🧯 Changelog — Roadmap di robustezza, fase 5 (sesto pezzo): in `pagamenti` ogni `{ error }` di PostgREST si guarda, e un guasto non diventa più un valore — 2026-10-10 (branch `robustezza/fase-5-errori`)
+
+**Stato.** 🟡 **In PR.** Nessuna migrazione. Il lock tiene in attesa `quote/route.ts` e `ticket/route.ts`, che riscrivono #213 e #214: si correggono in questo ramo dopo il loro merge.
+
+**Il problema (S6 / D5 della roadmap).** PostgREST non lancia: restituisce `{ data: null, error }`. Una ricognizione delle 261 chiamate `.from()`/`.rpc()` delle 57 route di `src/app/api/pagamenti/**`, e degli aiuti che chiamano, ne ha trovate **68 col risultato mai guardato** (28 gravi). Il `null` diventava un valore, e a volte una scrittura:
+- **doppio addebito**: `genera` non leggeva «chi ha già questo gruppo» e generava la voce una seconda volta;
+- **DELETE di una voce fatturata**: le due guardie di `DELETE /api/pagamenti/[id]` erano scritte `!errore && …`, e con un guasto della lettura la cancellazione partiva;
+- **importo sparito**: il riporto fra rate scriveva −X e +X con due insert, e col secondo fallito restava solo il −X;
+- **«nuova retta» a tutta la sede**: `genera-rette` non leggeva chi l'aveva già;
+- **anteprime gonfiate**: le rette già emesse lette in un colpo solo, tagliate a 1000 righe;
+- **valori zero**: credito famiglia, saldo ticket e attestazione 730 letti come zero;
+- **ricevute sbagliate**: una ricevuta numerata senza righe o senza intestatario;
+- **sollecito al genitore sbagliato**: il sollecito di una quota mandato all'altro genitore;
+- **incasso orfano**: un incasso rimasto senza il suo movimento bancario;
+- **tracce perse**: le scritture in `registro_modifiche` inghiottite da `.then(() => {}, () => {})`.
+
+**Cosa cambia.**
+1. **`src/lib/pagamenti/guasto-db.ts`** ha tre forme:
+   - `rispostaGuastoDb`: 500 con `LETTURA_FALLITA` o il nuovo `PAGAMENTI_SCRITTURA_FALLITA`, più la riga `logErrore` col codice Postgres;
+   - `rispostaBlocchiFalliti`: la stessa cosa per `leggiABlocchi`, con la riga `lettura-troncata` quando si arriva al tetto;
+   - `guastoSecondario`: per un passo accessorio dopo una scrittura già avvenuta, una riga `pagamento`/`error` e la risposta invariata.
+2. **Route.** Ogni lettura che decide controlla `error`. Nei casi dove lo schema manca davvero (DB E2E: 42P01, 42703, PGRST204/205) degrada come prima. Interventi specifici:
+   - le guardie della DELETE fermano invece di saltare;
+   - le rette già emesse si leggono a blocchi;
+   - lo sconto risponde `stato_ricalcolato`.
+3. **Aiuti.**
+   - `resolveParentRegistryEsito` distingue «non c'è» da «non letto»; la forma storica logga un `warn`.
+   - `saldoCredito` lancia su un guasto vero.
+   - `applyOverpaymentSpill` scrive le due righe in **un** insert, quindi tutte e due o nessuna.
+   - Le ricevute non si numerano su dati non letti.
+   - I solleciti non ripiegano su tutti i tutori.
+   - La compensazione della riconciliazione guarda il proprio esito.
+   - `famigliaDiAlunno` non mostra più «nessun fratello» per un guasto.
+
+**Log.** `logErrore` con `evento: 'db:<tabella>'` e `stato: 500` su ogni guasto che risponde. `pagamento`/`error` per:
+- `audit-non-scritto`;
+- `stato-non-ricalcolato`;
+- `riporto-non-scritto`, `rata-non-letta`;
+- `quote-non-lette`, `destinatari-non-letti`, `cadenza-non-scritta`;
+- `incasso-orfano`;
+- `stato-non-riletto`.
+
+Più `warn` per `lettura-fallita` (intestatario, forma storica) e `nome-sede-non-letto`, e `info` per `numerazione-assente`. Mai dati personali: uuid, conteggi, codici.
+
+**Prove.**
+- **Lock** `pagamenti-errori-controllati`: vieta 4 forme (`{ data }` senza `error`, risultato buttato, `.then` muto, `.catch` muto) nelle route di `pagamenti` e negli 8 aiuti. Verifica di scansionare più di 50 file, e l'elenco d'attesa può solo accorciarsi. È rosso rimettendo `spill.ts` e `[id]/route.ts` di `origin/main`.
+- **Test di comportamento** `pagamenti-errori-controllati`: 13 casi sul finto DB, che guardano lo stato e non le chiamate. **Gli 11 casi del guasto sono rossi sulle route di prima**; i 2 di controllo (schema assente) passano su entrambe le versioni.
+- `saldoCredito`: guasto → lancia.
+
+**Da fare / aperto.**
+- Dopo il merge di #213 e #214: correggere `quote` e `ticket` e svuotare l'elenco d'attesa.
+- Fuori da questo pezzo, stessa classe di difetto: `lib/pagamenti/scadenze.ts`, chiamata solo da `admin/students`.
+
 ## 💶 Changelog — Roadmap di robustezza, fase 5 (primo pezzo): l'incasso di una voce si decide con la riga bloccata, e due operatori non incassano più oltre il dovuto — 2026-10-10 (branch `robustezza/fase-5-incassi`)
 
 **Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010080056_registra_incasso_voce_bloccata.sql`): nessuna tabella, policy o indice. La applica l'integrazione al merge; dopo, la fotografia delle migrazioni applicate si rigenera dalla produzione (le tre fotografie delle guardie non cambiano, e il lock vieta di dichiarare in `MIGRAZIONI_ATTESE_AL_MERGE` una migrazione che nessuna guardia segnalerebbe).

@@ -1,3 +1,26 @@
+## 🗂️ Changelog — Roadmap di robustezza, fase 6: ogni FK ha il suo indice, 15 policy non rivalutano più `auth.uid()` riga per riga, via due indici doppi — 2026-10-10 (branch `robustezza/fase-6-indici`)
+
+**Stato.** 🟡 **In PR.** Una migrazione (`20261010221643_indici_fk_initplan_doppioni.sql`) che applica l'integrazione al merge; nessun file in `src/`. È il prerequisito della fase 7 (freni RESTRICT): ogni ON DELETE, RESTRICT compreso, cerca le righe figlie, e senza indice le cerca leggendo la tabella intera.
+
+**Misura PRIMA (produzione, 10/10 22:13 UTC).** Advisor di prestazioni: `unindexed_foreign_keys` **95** (ricalcolate dal catalogo: tutte a una colonna, nessun indice con lo stesso nome già presente), `auth_rls_initplan` **15**, `duplicate_index` **2** (le copie da togliere hanno 0 letture, le gemelle 523.524 e 27.559). Tabelle figlie tutte piccole (la più grande, `eventi_diario`, ~37 mila righe). 725 iscrizioni, 214 migrazioni, DB 411 MB.
+
+**Cosa cambia.**
+1. **95 indici** `idx_<tabella>_<colonna>`, uno per FK, con accanto il padre e la ON DELETE di oggi. `CREATE INDEX` normale (l'integrazione applica dentro una transazione, dove `CONCURRENTLY` non si può): sulle tabelle di questa taglia blocca le scritture per millisecondi.
+2. **15 policy** riscritte con `(select auth.uid())` via `ALTER POLICY`: Postgres calcola l'utente una volta per istruzione invece che per riga. Stesso nome, ruoli, comando e significato; non esiste un istante senza policy.
+3. **Via le due copie inutilizzate** degli indici doppi (`idx_firme_docenti_registro`, `idx_note_disciplinari_alunno`).
+4. Non tocca gli indici «mai usati» (statistiche dal 06/08, non coprono scrutini e iscrizioni) né le policy permissive multiple.
+
+**Prove.**
+- **`__tests__/lib/policy-initplan-equivalenti-sql.test.ts`** (PGlite, Postgres vero): crea le 15 policy col testo esatto di produzione, applica gli `ALTER POLICY` letti dal file, e confronta `pg_policies` prima e dopo. Tolto solo l'involucro `( SELECT auth.uid() AS uid)`, USING e WITH CHECK coincidono carattere per carattere; nessun `auth.uid()` nudo resta. **Rosso** togliendo una condizione da due policy nella migrazione, verde col file giusto.
+- **Lock nuovo `fk-nuove-con-indice`**: da questa migrazione in poi, ogni FK dichiarata in un file (in `CREATE TABLE`, `ADD COLUMN … REFERENCES`, `ADD CONSTRAINT … FOREIGN KEY`) deve avere nello stesso file un indice che comincia dalla sua colonna, o un'eccezione dichiarata col motivo (`-- fk senza indice:` / `-- fk già indicizzata:`). 7 controlli su SQL sintetico, compreso «indice con la colonna in seconda posizione non copre».
+- PR-B simulata in locale (fotografia della RLS rigenerata col testo nuovo, `MIGRAZIONI_ATTESE_AL_MERGE` svuotata): 177 file di lock verdi.
+- **Fotografia di `candidature_insegnanti` rigenerata dalla produzione** (sola lettura, 10/10 22:31 UTC). Il lock di `insegnanti-template` la pretende per ogni migrazione che nomina la tabella, e questa ci crea 3 indici. La fotografia registra colonne, CHECK ed enum, non gli indici: l'impronta sha256 del contenuto è **identica** a quella del 06/09 (`50844a93…`). È cambiata solo la data.
+- Gate locale: eslint 0, tsc 0, vitest 1756 file / 29.974 test verdi, build ok.
+
+**Log.** Nessuno nuovo: la migrazione non aggiunge route, integrazioni né percorsi d'errore.
+
+**Verifica dopo il merge.** Advisor: `unindexed_foreign_keys` 0, `auth_rls_initplan` 0, `duplicate_index` 0, 0 ERROR; una riga sola nello storico delle migrazioni; la query del catalogo in testa al file → 0. Poi la PR-B (fotografie dalla produzione).
+
 ## 🧯 Changelog — Roadmap di robustezza, fase 5 (sesto pezzo): in `pagamenti` ogni `{ error }` di PostgREST si guarda, e un guasto non diventa più un valore — 2026-10-10 (branch `robustezza/fase-5-errori`)
 
 **Stato.** 🟡 **In PR.** Nessuna migrazione. Il lock teneva in attesa `quote/route.ts` e `ticket/route.ts`, riscritte da #213 e #214: dopo i loro merge sono risultate già pulite e l'elenco d'attesa è vuoto.

@@ -163,6 +163,7 @@ describe('GET /api/health', () => {
         expect(corpo.controlli.map((c) => c.nome).sort()).toEqual([
             'auth',
             'coda-fatture',
+            'code-arretrate',
             'config',
             'cron-battito',
             'db-lettura',

@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-09",
-  "generato_alle": "2026-10-09T23:46:24Z",
-  "sha256": "8fbd89169a160a7749f8243bb52669df66f7f7ef5aa0ec58c4322f702b44cbf0",
+  "generato_il": "2026-10-10",
+  "generato_alle": "2026-10-10T16:12:06Z",
+  "sha256": "ca07ac664d51a6b7583a286435970a91da9eeb4f048850d94fafd20775cfa8e0",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -839,6 +839,26 @@
     {
       "version": "20261009171012",
       "name": "scatola_nera_registro_eliminazioni"
+    },
+    {
+      "version": "20261010080056",
+      "name": "registra_incasso_voce_bloccata"
+    },
+    {
+      "version": "20261010081206",
+      "name": "aggiorna_quote_senza_reinserire"
+    },
+    {
+      "version": "20261010081946",
+      "name": "ricarica_ticket_in_una_transazione"
+    },
+    {
+      "version": "20261010083156",
+      "name": "scrutinio_controllo_versione"
+    },
+    {
+      "version": "20261010084330",
+      "name": "report_cassa_aggregato"
     }
   ]
 }

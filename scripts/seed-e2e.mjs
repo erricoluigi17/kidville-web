@@ -553,6 +553,20 @@ async function ripulisciModuliPersonale() {
     }
   }
 
+  // Il tetto di `POST /api/iscrizione/insegnanti` (3 l'ora per IP) vive in
+  // `tetto_frequenza`, che sul DB E2E migrato è CONDIVISO fra i run: in CI le
+  // richieste escono tutte dallo stesso server locale, quindi l'E2E di `main`
+  // dopo un merge e quello di una PR, entro l'ora, si spartiscono tre gettoni.
+  // Misurato il 2026-10-10 (#218): 429 al primo tentativo, ×3 coi retry, su una
+  // PR che non toccava codice. Si azzera solo il gruppo di questo modulo.
+  {
+    const { error } = await db.from('tetto_frequenza').delete().like('chiave', 'candidature-insegnanti:%');
+    if (error) {
+      if (assente(error)) console.warn('↷ reset saltato: la tabella tetto_frequenza non esiste su questo database');
+      else console.error('reset tetto_frequenza:', error.message);
+    }
+  }
+
   // Gli account che l'approvazione ha creato. `anagrafica_personale` se ne va per
   // cascata; l'utente `auth` va tolto a parte, o al run successivo
   // `ensureStaffIdentity` troverebbe un'identità orfana e riuserebbe quella.

@@ -10,12 +10,13 @@ import { EliminaPagella, RiapriScrutinio, puoEliminarePagella, puoRiaprireScruti
 import { scaricaDocumento, type RisultatoScaricoNativo } from '@/lib/native/scarica';
 import { avvisoDocumento } from '@/lib/native/documento-genitore';
 import { isNativeApp } from '@/lib/push/native-register';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Alunno { id: string; nome: string; cognome: string }
 interface Materia { id: string; nome: string; e_civica: boolean }
 interface Periodo { id: string; nome: string; anno_scolastico: string }
-interface Giudizio { alunno_id: string; materia_id: string; giudizio_sintetico: string | null }
-interface Comportamento { alunno_id: string; giudizio_testo: string | null; giudizio_globale: string | null }
+interface Giudizio { alunno_id: string; materia_id: string; giudizio_sintetico: string | null; updated_at?: string | null }
+interface Comportamento { alunno_id: string; giudizio_testo: string | null; giudizio_globale: string | null; updated_at?: string | null }
 interface Scrutinio { id: string; stato: 'aperto' | 'chiuso'; chiuso_il: string | null; pubblicato?: boolean }
 
 export default function ScrutinioPage() {
@@ -71,6 +72,13 @@ export default function ScrutinioPage() {
   const templateInCorsoRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Controllo di versione (fase 5 robustezza): per ogni riga, il valore e la
+  // versione (`updated_at`) LETTI dal server. Si salva solo ciò che è cambiato
+  // rispetto a qui, con la versione letta: se nel frattempo un altro ha cambiato
+  // la stessa riga, il server risponde 409 e non scrive niente — prima vinceva
+  // l'ultimo, anche su celle che chi salvava non aveva mai toccato.
+  const lettiGiudizi = useRef<Map<string, { valore: string; versione: string | null }>>(new Map());
+  const lettiComp = useRef<Map<string, { testo: string; globale: string; versione: string | null }>>(new Map());
 
   const chiuso = scrutinio?.stato === 'chiuso';
   const pubblicato = !!scrutinio?.pubblicato;
@@ -116,14 +124,18 @@ export default function ScrutinioPage() {
         setPagelleArchiviate(Array.isArray(d.data.pagelleArchiviate) ? d.data.pagelleArchiviate : []);
         setPagelleArchiviateNonLette(d.data.pagelleArchiviateNonLette === true);
         const g: Record<string, Record<string, string>> = {};
+        lettiGiudizi.current = new Map();
         (d.data.giudizi as Giudizio[]).forEach((x) => {
           g[x.alunno_id] = g[x.alunno_id] || {};
           g[x.alunno_id][x.materia_id] = x.giudizio_sintetico || '';
+          lettiGiudizi.current.set(`${x.alunno_id}:${x.materia_id}`, { valore: x.giudizio_sintetico || '', versione: x.updated_at ?? null });
         });
         setGiudizi(g);
         const c: Record<string, { testo: string; globale: string }> = {};
+        lettiComp.current = new Map();
         (d.data.comportamento as Comportamento[]).forEach((x) => {
           c[x.alunno_id] = { testo: x.giudizio_testo || '', globale: x.giudizio_globale || '' };
+          lettiComp.current.set(x.alunno_id, { testo: c[x.alunno_id].testo, globale: c[x.alunno_id].globale, versione: x.updated_at ?? null });
         });
         setComp(c);
       }
@@ -160,12 +172,16 @@ export default function ScrutinioPage() {
   const salvaGiudizi = async () => {
     if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
-    const payload: { alunnoId: string; materiaId: string; giudizioSintetico: string }[] = [];
+    const payload: { alunnoId: string; materiaId: string; giudizioSintetico: string; versione: string | null }[] = [];
     alunni.forEach((a) => {
       materie.forEach((m) => {
         if (!canEdit(m.id)) return;
         const v = giudizi[a.id]?.[m.id];
-        if (v) payload.push({ alunnoId: a.id, materiaId: m.id, giudizioSintetico: v });
+        const letto = lettiGiudizi.current.get(`${a.id}:${m.id}`);
+        // Solo le celle CAMBIATE: una cella non toccata non riscrive quella di un altro.
+        if (v && v !== (letto?.valore ?? '')) {
+          payload.push({ alunnoId: a.id, materiaId: m.id, giudizioSintetico: v, versione: letto?.versione ?? null });
+        }
       });
     });
     const r = await fetch(`/api/primaria/scrutinio?userId=${userId}`, {
@@ -173,27 +189,48 @@ export default function ScrutinioPage() {
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
       body: JSON.stringify({ scrutinioId: scrutinio.id, giudizi: payload }),
     });
-    const d = await r.json();
+    const d = await r.json().catch(() => null);
     setSaving(false);
-    setMsg(r.ok ? t('scrutinioGiudiziSalvati') : (d.error || t('comuneErrore')));
+    if (r.ok) {
+      // Le versioni nuove: il prossimo salvataggio parte da qui, non da quelle lette all'apertura.
+      ((d?.data ?? []) as Giudizio[]).forEach((x) => {
+        lettiGiudizi.current.set(`${x.alunno_id}:${x.materia_id}`, { valore: x.giudizio_sintetico || '', versione: x.updated_at ?? null });
+      });
+      setMsg(t('scrutinioGiudiziSalvati'));
+    } else {
+      setMsg(messaggioDaCorpo(d, t('comuneErrore')));
+    }
   };
 
   const salvaComportamento = async () => {
     if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
-    const payload = alunni.map((a) => ({
-      alunnoId: a.id,
-      giudizioTesto: comp[a.id]?.testo || null,
-      giudizioGlobale: comp[a.id]?.globale || null,
-    }));
+    const payload = alunni
+      .filter((a) => {
+        const letto = lettiComp.current.get(a.id);
+        return (comp[a.id]?.testo || '') !== (letto?.testo ?? '') || (comp[a.id]?.globale || '') !== (letto?.globale ?? '');
+      })
+      .map((a) => ({
+        alunnoId: a.id,
+        giudizioTesto: comp[a.id]?.testo || null,
+        giudizioGlobale: comp[a.id]?.globale || null,
+        versione: lettiComp.current.get(a.id)?.versione ?? null,
+      }));
     const r = await fetch(`/api/primaria/scrutinio?userId=${userId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
       body: JSON.stringify({ scrutinioId: scrutinio.id, comportamento: payload }),
     });
-    const d = await r.json();
+    const d = await r.json().catch(() => null);
     setSaving(false);
-    setMsg(r.ok ? t('scrutinioComportamentoSalvato') : (d.error || t('comuneErrore')));
+    if (r.ok) {
+      ((d?.data ?? []) as Comportamento[]).forEach((x) => {
+        lettiComp.current.set(x.alunno_id, { testo: x.giudizio_testo || '', globale: x.giudizio_globale || '', versione: x.updated_at ?? null });
+      });
+      setMsg(t('scrutinioComportamentoSalvato'));
+    } else {
+      setMsg(messaggioDaCorpo(d, t('comuneErrore')));
+    }
   };
 
   const chiudiScrutinio = async () => {

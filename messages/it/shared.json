@@ -678,5 +678,10 @@
   "erroreIscrizioneServizioNonTrovata": "L’iscrizione al servizio non esiste in questa sede.",
   "erroreServiziScritturaFallita": "Non è stato possibile salvare le iscrizioni ai servizi: riprova.",
   "erroreServiziLetturaFallita": "Non è stato possibile leggere i servizi mensili: riprova.",
-  "erroreVociFutureDaDecidere": "Ci sono voci già generate fuori dal nuovo periodo: scegli se eliminare quelle non pagate e non fatturate o mantenerle."
+  "erroreVociFutureDaDecidere": "Ci sono voci già generate fuori dal nuovo periodo: scegli se eliminare quelle non pagate e non fatturate o mantenerle.",
+  "erroreScrutinioConflitto": "Qualcun altro ha modificato alcune di queste righe dopo che hai aperto la pagina: non è stato salvato niente. Copia a parte le tue modifiche, ricarica la pagina per vedere i valori aggiornati e rifalle.",
+  "erroreScrutinioSalvataggioNonDisponibile": "Il salvataggio dello scrutinio non è disponibile in questo momento: non è stato scritto niente. Riprova fra poco.",
+  "erroreScrutinioDatiNonValidi": "Alcuni dati inviati non sono validi: ricarica la pagina e riprova.",
+  "erroreScrutinioNonTrovato": "Lo scrutinio non esiste più: ricarica la pagina.",
+  "erroreScrutinioChiuso": "Lo scrutinio è stato chiuso: le modifiche non sono più consentite."
 }

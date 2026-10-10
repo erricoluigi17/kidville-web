@@ -678,5 +678,10 @@
   "erroreIscrizioneServizioNonTrovata": "The service enrolment does not exist at this location.",
   "erroreServiziScritturaFallita": "The service enrolments could not be saved: please try again.",
   "erroreServiziLetturaFallita": "The monthly services could not be loaded: please try again.",
-  "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them."
+  "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them.",
+  "erroreScrutinioConflitto": "Someone else changed some of these rows after you opened the page: nothing was saved. Copy your changes aside, reload the page to see the updated values and redo them.",
+  "erroreScrutinioSalvataggioNonDisponibile": "Saving the assessment is not available right now: nothing was written. Please try again shortly.",
+  "erroreScrutinioDatiNonValidi": "Some of the data sent is not valid: reload the page and try again.",
+  "erroreScrutinioNonTrovato": "This assessment no longer exists: reload the page.",
+  "erroreScrutinioChiuso": "The assessment has been closed: changes are no longer allowed."
 }

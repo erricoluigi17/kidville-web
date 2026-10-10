@@ -13,7 +13,7 @@ import { senzaCommenti } from './soglia-fotografia'
  *   1. il report non legge più righe di incassi né di movimenti: chiama
  *      `report_cassa_aggregato` e verifica i totali contro il suo SUM piatto;
  *   2. la funzione restituisce il `controllo` e la usa solo la `service_role`;
- *   3. il cruscotto conta col database (`count: 'exact'`) e controlla ogni `error`.
+ *   3. il cruscotto conta col database (`count: 'exact'`, in GET e non in HEAD) e controlla ogni `error`.
  * Sorgenti letti senza commenti: la prosa nomina le forme vecchie.
  */
 
@@ -70,8 +70,14 @@ describe('cruscotto · conteggi del database', () => {
   it('iscritti e scaduti non sono la lunghezza di un elenco', () => {
     expect(route).not.toMatch(/iscritti:\s*\w+\.length/)
     expect(route).not.toMatch(/scadutoCount:\s*\w+\.length/)
-    expect(route).toMatch(/from\('alunni'\)\s*\.select\('id',\s*\{\s*count:\s*'exact',\s*head:\s*true\s*\}\)/)
+    expect(route).toMatch(/from\('alunni'\)\s*\.select\('id',\s*\{\s*count:\s*'exact'\s*\}\)\.limit\(1\)/)
     expect(route).toMatch(/scadutoCount:\s*scadutiRes\.count/)
+  })
+
+  it('nessun conteggio con head: true — una HEAD fallita torna SENZA codice, e «schema assente» diventa un guasto', () => {
+    // Visto il 2026-10-10 sull'E2E della CI (DB non migrato): `{ message: '' }` al posto di 42703,
+    // quindi 500 DASHBOARD_NON_LETTA invece dello zero col suo log.
+    expect(route).not.toMatch(/head:\s*true/)
   })
 
   it('la distribuzione per classe si legge tutta, a blocchi', () => {

@@ -63,12 +63,19 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
     moduliTotRes,
     moduliPendingRes,
   ] = await Promise.all([
+    // ⚠️ I CONTEGGI SONO GET, NON HEAD (`count: 'exact'` + `.limit(1)`, non `head: true`).
+    // Una risposta HEAD non ha corpo: su un errore `postgrest-js` restituisce `{ message: '' }`
+    // SENZA codice, e «colonna assente» (42703, DB E2E non migrato) diventa indistinguibile da
+    // un guasto vero. Con la HEAD l'E2E della CI riceveva 500 DASHBOARD_NON_LETTA (2026-10-10).
+    // Con la GET il conteggio resta quello esatto del database (Content-Range), e l'errore porta
+    // il suo codice. La riga in più che torna non si usa.
+    //
     // Studenti iscritti: il TOTALE lo conta il database. Fino al 2026-10-10 era la
     // lunghezza di un elenco di righe, e PostgREST taglia ogni risposta a 1000 senza
     // dirlo: il 10/10 gli iscritti delle tre sedi erano 750, a 250 dal taglio.
     supabase
       .from('alunni')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('stato', 'iscritto'),
     // La distribuzione per classe ha bisogno delle righe: si leggono TUTTE, a blocchi,
@@ -83,7 +90,7 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
     // calcolaTotaliPagamenti/aging/export/solleciti.
     supabase
       .from('pagamenti')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .neq('tipo', 'padre')
       .neq('stato', 'pagato')
@@ -100,13 +107,13 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
     // Fatture in attesa di emissione
     supabase
       .from('pagamenti')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('fattura_stato', 'in_attesa'),
     // Iscrizioni in attesa (conteggio)
     supabase
       .from('enrollment_submissions')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('status', 'pending'),
     // Iscrizioni in attesa (lista per alert) — SOLO l'id e la data d'arrivo.
@@ -129,17 +136,17 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
     // Prenotazioni mensa di oggi
     supabase
       .from('mensa_prenotazioni')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('data', today),
     // Submission moduli totali — filtrate per sede: senza `.in()` il contatore
     // includeva anche la riga della sede FINTA E2E, cioè un KPI di produzione
     // già sbagliato oggi.
-    supabase.from('form_submissions').select('id', { count: 'exact', head: true }).in('scuola_id', sedi),
+    supabase.from('form_submissions').select('id', { count: 'exact' }).limit(1).in('scuola_id', sedi),
     // Submission moduli da firmare/evadere
     supabase
       .from('form_submissions')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' }).limit(1)
       .in('scuola_id', sedi)
       .eq('status', 'pending_signature'),
   ])

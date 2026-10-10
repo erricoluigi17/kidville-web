@@ -1,3 +1,36 @@
+## 📊 Changelog — Roadmap di robustezza, fase 5 (quinto pezzo): report di cassa e cruscotto non sommano più righe tagliate a 1000 — 2026-10-10 (branch `robustezza/fase-5-report`)
+
+**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010084330_report_cassa_aggregato.sql`). La applica l'integrazione al merge, **dopo** i pezzi 1–4 (timestamp crescenti).
+
+**Il problema (D5-C, S6).** PostgREST taglia ogni risposta a `max_rows` (1000) senza dirlo.
+- Il **report di cassa** (`GET /api/pagamenti/cassa/report`) leggeva le righe di `incassi` e `cassa_movimenti` e sommava in JavaScript: entrate per categoria, mensile e per sede uscivano più basse con un 200.
+- Il **cruscotto** (`GET /api/admin/dashboard`) contava iscritti e pagamenti scaduti con la **lunghezza** di un elenco, e sei letture su nove non controllavano l'`error`: un guasto diventava uno zero.
+
+**Misure (produzione, 2026-10-10, sola lettura).**
+- Report «tutte le sedi»: **1.672 incassi** da leggere (oltre 1000: ne mancavano circa 670), 72 uscite, 33 storni.
+- Il corpo della funzione nuova, eseguito come `SELECT` in produzione: **SUM piatto delle entrate 261.023,18 € = somma dei gruppi = somma per sede = somma del mensile**; uscite 13.370,40 €; 34 gruppi.
+- Cruscotto: **750 iscritti** (a 250 dal taglio), 506 pagamenti scaduti.
+- 725 domande di iscrizione.
+
+**Cosa cambia.**
+1. **`public.report_cassa_aggregato(sedi, da, a, categoria)`** (solo `service_role`, `STABLE`): un valore `jsonb` solo, quindi nessuna riga da tagliare. Restituisce entrate per categoria e metodo reale, uscite per categoria (contanti / altri) e mensile, per sede e per tutte le sedi (`GROUPING SETS`), più un **`controllo`** a SUM piatto e i conteggi delle righe. La semantica è quella di `src/lib/cassa/report.ts`: metodi reali, storno col metodo dell'originale solo se l'originale è nell'insieme, uscite non filtrate dalla categoria di pagamento. Quelle funzioni restano come **riferimento**.
+2. **La route del report** compone i livelli (`componiReport`) e **verifica i totali** (`differenzeTotali`) su sei voci (categorie, sedi e mensile, per entrate e uscite) contro il `controllo`. Se non quadrano: 500 `REPORT_CASSA_NON_QUADRA`, e non esce né la schermata né il CSV. Un errore della funzione dà 500 `REPORT_CASSA_NON_CALCOLATO`; lo schema assente (DB E2E) resta `{ disponibile: false }` come prima. Sparisce il `warn` `incassi-senza-sede`: la funzione unisce gli incassi ai pagamenti **delle sedi**, quindi un pagamento senza sede non può entrarci.
+3. **Il cruscotto**:
+   - iscritti e scaduti con `count: 'exact'`, cioè contati dal database;
+   - l'elenco degli alert limitato a 5;
+   - la distribuzione per classe letta tutta con `leggiABlocchi` e confrontata con il conteggio (`warn` `per-classe-non-quadra` se differiscono);
+   - ogni `error` controllato: schema assente → zero con log (come già `form_submissions`), ogni altro guasto → 500 `DASHBOARD_NON_LETTA`.
+
+**Log.** Report: `info` `calcolato` (successo, con il numero di incassi e movimenti), `error` `totali-non-quadrano` e `db`. Cruscotto: `logErrore` per KPI (`evento: db:<kpi>`, `stato` 200 o 500), `lettura-troncata` al tetto, `warn` `per-classe-non-quadra`.
+
+**Prove.**
+- **PGlite** `report-cassa-aggregato-sql.test.ts` (11): la funzione SQL vera contro le funzioni di riferimento su dati casuali riproducibili (1.400+ incassi, 120 storni anche fuori periodo, metodi non reali, 3 sedi più una fuori scope, uscite e loro storni), su 6 combinazioni di filtri. I totali quadrano, lo scope vuoto non dà niente, i permessi sono giusti. **Mutazioni**: storno attribuito al proprio metodo → 6 rossi; filtro di categoria tolto → 2 rossi.
+- **Route**: 4 casi nuovi (filtri passati, «non quadra» → 500 anche in CSV, successo loggato, errore con codice). I tre file esistenti usano `__tests__/fixtures/report-cassa-riferimento.ts`, che emula la funzione con la semantica di riferimento.
+- **Cruscotto** `admin-dashboard-conteggi-sql.test.ts` (4, col tetto a 1000 acceso: 1.500 iscritti, 1.200 scaduti): **rosso 4 su 4 sulla route di prima**.
+- **Lock** `report-aggregati-in-sql` (6): rosso sul report di prima (2) e sul cruscotto di prima (3).
+
+**Da fare / aperto.** Dopo il merge: funzione e permessi, advisor, fotografia delle migrazioni, e il report richiamato in produzione con i totali confrontati con il SUM di questa voce.
+
 ## 🗃️ Changelog — Roadmap di robustezza, fase 4 (secondo pezzo): la scatola nera delle cancellazioni, l'oblio che la svuota, il lucchetto sulle migrazioni distruttive — 2026-10-09 (branch `robustezza/fase-4-registro-eliminazioni`)
 
 **Stato.** ✅ **In produzione** (PR #210, auto-merge del 09/10 alle 18:36 UTC, `d0fb54af`; CI e `dopo-deploy` verdi). Migrazione applicata dall'integrazione (209 migrazioni, una riga sola); in produzione: 42 trigger di registrazione e 42 di blocco del TRUNCATE, schema senza USAGE per `anon`/`authenticated`, `scatola_nera_dimentica` solo `service_role`, job `scatola-nera-scadenza` a `43 5 * * *`; advisor 0 ERROR (INFO 63 → 65: le due tabelle della scatola, RLS senza policy, voluto). Il job eseguito una volta a mano il 09/10 alle 23:47 UTC: 0 righe scadute, battito `cron` `ok` in `app_log`. **PR-B** (branch `robustezza/fase-4-pr-b-fotografie`): fotografie rigenerate dalla produzione (migrazioni 206 → 209; le altre cinque guardano `public` e cambiano solo data e impronta), voce tolta da `MIGRAZIONI_ATTESE_AL_MERGE`, `scatola-nera-scadenza` in `JOB_CRON` (26 h). **Prova dal vivo ✅ (09/10, 23:48–23:51 UTC, con il sì del titolare)**: una categoria di cassa di prova (disattivata, sede fittizia «Kidville E2E», nessun dato personale) inserita e cancellata → in scatola una riga sola, completa, con transazione, ruolo `postgres`, origine `mgmt-api` e soggetti (la riga e la sede) → `ripristina_transazione` → `ripristinate: 1`, riga identica al microsecondo → ricancellata (in scatola due copie, una per cancellazione) → `scatola_nera_dimentica` → 2 righe tolte, scatola vuota, una voce nel registro degli oblii (`altro`, «prova dal vivo 2026-10-10»). Categorie di cassa: 9, come prima. Le due `DELETE` tentate dallo strumento MCP sono state rifiutate alla conferma e non hanno toccato niente; la cancellazione è passata dalla CLI (`supabase db query --linked`) dopo il sì del titolare in chat.

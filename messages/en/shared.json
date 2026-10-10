@@ -678,5 +678,8 @@
   "erroreIscrizioneServizioNonTrovata": "The service enrolment does not exist at this location.",
   "erroreServiziScritturaFallita": "The service enrolments could not be saved: please try again.",
   "erroreServiziLetturaFallita": "The monthly services could not be loaded: please try again.",
-  "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them."
+  "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them.",
+  "erroreReportCassaNonCalcolato": "The cash report could not be calculated: please try again shortly.",
+  "erroreReportCassaNonQuadra": "The cash report was not shown because its totals do not match the database check. The problem has been logged: please try again later.",
+  "erroreDashboardNonLetta": "The dashboard data could not be loaded: please try again shortly."
 }

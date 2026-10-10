@@ -81,6 +81,11 @@ const mem = vi.hoisted(() => {
             this.op = 'delete'
             return this
         }
+        // La scadenza della presa (fase 8): una riga senza scadenza non è mai «scaduta», come in Postgres.
+        lt(col: string, v: string) {
+          this.filtri.push((r) => valore(r, col) !== null && Date.parse(String(valore(r, col))) < Date.parse(v))
+          return this
+        }
         is(col: string, v: null) {
             this.filtri.push((r) => valore(r, col) === v)
             return this
@@ -114,7 +119,7 @@ const mem = vi.hoisted(() => {
                 }
                 for (const r of tocca) Object.assign(r, this.payload)
                 if (this.tabella === 'notifiche') {
-                    st.ordine.push(this.payload.push_inviata_il === null ? 'ritorno-in-coda' : 'presa')
+                    st.ordine.push(!('push_inviata_il' in this.payload) ? 'conferma-presa' : this.payload.push_inviata_il === null ? 'ritorno-in-coda' : 'presa')
                 }
                 return { data: this.restituisce ? tocca.map((r) => ({ id: r.id })) : null, error: null }
             }
@@ -667,7 +672,8 @@ describe('la consegna è accessoria: non ritarda le scritture che salvano le not
         const d = dati(await eseguiDispatch())
 
         expect(d).toMatchObject({ consegne_chat: 1, rimesse_in_coda: 1 })
-        expect(mem.st.ordine).toEqual(['presa', 'ritorno-in-coda', 'consegna-chat'])
+        // La conferma della presa (fase 8) sta fra il ritorno in coda e tutto il resto.
+        expect(mem.st.ordine).toEqual(['presa', 'ritorno-in-coda', 'conferma-presa', 'consegna-chat'])
     })
 
     it('la consegna viene dopo il ritorno in coda E dopo la rimozione dei dispositivi morti', async () => {
@@ -688,7 +694,7 @@ describe('la consegna è accessoria: non ritarda le scritture che salvano le not
         const d = dati(await eseguiDispatch())
 
         expect(d).toMatchObject({ consegne_chat: 1, rimesse_in_coda: 1, subs_rimosse: 1 })
-        expect(mem.st.ordine).toEqual(['presa', 'ritorno-in-coda', 'rimozione-dispositivi', 'consegna-chat'])
+        expect(mem.st.ordine).toEqual(['presa', 'ritorno-in-coda', 'conferma-presa', 'rimozione-dispositivi', 'consegna-chat'])
     })
 
     it('giro MISTO: si consegna SOLO il thread la cui notifica è stata ricevuta', async () => {

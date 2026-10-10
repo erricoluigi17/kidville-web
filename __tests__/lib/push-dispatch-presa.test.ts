@@ -50,6 +50,11 @@ const mem = vi.hoisted(() => {
      * ritentativi di postgrest-js sui GET, che il codice non vede).
      */
     primaDiServire: null as null | ((tabella: string, op: string) => void),
+    /**
+     * Fase 8: la risposta alla lettura del BIDELLO (la SELECT con `lt` sulla scadenza). `null` =
+     * la si serve davvero; un errore = PostgREST che la rifiuta (es. `42703`, colonna assente).
+     */
+    erroreBidello: null as unknown,
   }
 
   function valore(r: Riga, col: string): unknown {
@@ -75,6 +80,8 @@ const mem = vi.hoisted(() => {
     ordine: { col: string; asc: boolean } | null = null
     limite = Infinity
     erroreIn: unknown = null
+    /** La query porta un `lt` sulla scadenza della presa: è il bidello (fase 8). */
+    bidello = false
     constructor(readonly tabella: 'notifiche' | 'push_subscriptions') {}
     select() {
       if (this.op === 'update') this.restituisce = true
@@ -87,6 +94,12 @@ const mem = vi.hoisted(() => {
     }
     delete() {
       this.op = 'delete'
+      return this
+    }
+    // La scadenza della presa (fase 8): una riga senza scadenza non è mai «scaduta», come in Postgres.
+    lt(col: string, v: string) {
+      if (col === 'push_presa_scade_il') this.bidello = true
+      this.filtri.push((r) => valore(r, col) !== null && Date.parse(String(valore(r, col))) < Date.parse(v))
       return this
     }
     is(col: string, v: null) {
@@ -120,6 +133,7 @@ const mem = vi.hoisted(() => {
     private esegui(): { data: unknown; error: unknown } {
       st.primaDiServire?.(this.tabella, this.op)
       if (this.erroreIn) return { data: null, error: this.erroreIn }
+      if (this.bidello && this.op === 'select' && st.erroreBidello) return { data: null, error: st.erroreBidello }
       const righe = st[this.tabella]
       const tocca = righe.filter((r) => this.filtri.every((f) => f(r)))
       if (this.op === 'update') {
@@ -149,7 +163,8 @@ const mem = vi.hoisted(() => {
     }
     then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) {
       const attesa =
-        this.tabella === 'notifiche' && this.op === 'select' && st.barriera
+        // La barriera sincronizza le letture delle CANDIDATE, non quella del bidello.
+        this.tabella === 'notifiche' && this.op === 'select' && !this.bidello && st.barriera
           ? (() => {
               const b = st.barriera!
               b.arrivate++
@@ -199,6 +214,7 @@ vi.mock('@/lib/push/native-push', () => native)
 import {
   eseguiDispatch,
   FINESTRA_CODA_MS,
+  PRESTITO_PRESA_MS,
   TETTO_GIRO_MS,
   SOGLIA_PRESA_MS,
   BUDGET_RITENTATIVI_MS,
@@ -268,6 +284,7 @@ beforeEach(() => {
   mem.st.tettoIn = null
   mem.st.lunghezzeIn = []
   mem.st.primaDiServire = null
+  mem.st.erroreBidello = null
   web.vapidConfigured.mockReturnValue(true)
   web.sendPush.mockResolvedValue({ ok: true })
   native.fcmConfigured.mockReturnValue(true)
@@ -751,5 +768,128 @@ describe('le scritture: nessuna presa se non c\'è niente da prendere', () => {
     expect(mem.st.updateNotifiche).toHaveLength(0)
     expect(riga('n1').push_inviata_il).toBeNull()
     expect(righeLog('error', 'canale-non-configurato')).toEqual([expect.objectContaining({ rimandate: 1, saltate_native: 1 })])
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe('la presa ha una scadenza (fase 8): un giro morto non perde le notifiche', () => {
+  it('la presa scrive la scadenza (presa + PRESTITO_PRESA_MS), e a fine giro la conferma', async () => {
+    mem.st.notifiche = [notifica('n1', 'u1')]
+    mem.st.push_subscriptions = [subWeb('s1', 'u1')]
+    let scadenzaDuranteLInvio: unknown = undefined
+    web.sendPush.mockImplementation(async () => {
+      scadenzaDuranteLInvio = riga('n1').push_presa_scade_il
+      return { ok: true }
+    })
+
+    dati(await eseguiDispatch())
+
+    expect(Date.parse(String(scadenzaDuranteLInvio)) - Date.parse(String(riga('n1').push_inviata_il))).toBe(PRESTITO_PRESA_MS)
+    expect(riga('n1').push_inviata_il).not.toBeNull()
+    expect(riga('n1').push_presa_scade_il).toBeNull()
+  })
+
+  it('🔴 il giro muore dopo la presa: scaduta la presa, la notifica torna in coda e parte (prima: persa)', async () => {
+    mem.st.notifiche = [notifica('n1', 'u1')]
+    mem.st.push_subscriptions = [subWeb('s1', 'u1')]
+    // La Function troncata a metà invio: l'eccezione esce dal ciclo prima di qualunque conferma.
+    web.sendPush.mockRejectedValueOnce(new Error('Function troncata'))
+    expect((await eseguiDispatch()).stato).toBe(500)
+    expect(riga('n1').push_inviata_il).not.toBeNull()
+    expect(riga('n1').push_presa_scade_il).not.toBeNull()
+
+    // Prima della scadenza nessuno la tocca: il giro che l'ha presa potrebbe essere ancora vivo.
+    expect(dati(await eseguiDispatch()).notifiche).toBe(0)
+    expect(web.sendPush).toHaveBeenCalledTimes(1)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + PRESTITO_PRESA_MS + MIN)
+    const d = dati(await eseguiDispatch())
+
+    expect(d.notifiche).toBe(1)
+    expect(web.sendPush).toHaveBeenCalledTimes(2)
+    expect(riga('n1').push_inviata_il).not.toBeNull()
+    expect(riga('n1').push_presa_scade_il).toBeNull()
+    expect(righeLog('warn', 'prese-scadute-rimesse-in-coda')).toEqual([
+      expect.objectContaining({ rimesse_in_coda: 1 }),
+    ])
+  })
+
+  it('oltre la finestra dei 30 minuti: la presa si chiude, la notifica resta marcata, una riga `error` lo dice', async () => {
+    const presaMorta = iso(10 * MIN)
+    mem.st.notifiche = [
+      notifica('n1', 'u1', {
+        creato_il: iso(FINESTRA_CODA_MS + 10 * MIN),
+        invio_programmato_il: iso(FINESTRA_CODA_MS + 9 * MIN),
+        push_inviata_il: presaMorta,
+        push_presa_scade_il: iso(5 * MIN),
+      }),
+    ]
+    mem.st.push_subscriptions = [subWeb('s1', 'u1')]
+
+    dati(await eseguiDispatch())
+
+    expect(web.sendPush).not.toHaveBeenCalled()
+    expect(riga('n1').push_inviata_il).toBe(presaMorta)
+    expect(riga('n1').push_presa_scade_il).toBeNull()
+    expect(righeLog('error', 'prese-scadute-abbandonate')).toEqual([expect.objectContaining({ arrese: 1 })])
+  })
+
+  it('una presa NON scaduta (un giro ancora vivo) non si tocca', async () => {
+    const presa = iso(MIN)
+    const scade = new Date(Date.now() + 4 * MIN).toISOString()
+    mem.st.notifiche = [notifica('n1', 'u1', { push_inviata_il: presa, push_presa_scade_il: scade })]
+    mem.st.push_subscriptions = [subWeb('s1', 'u1')]
+
+    dati(await eseguiDispatch())
+
+    expect(web.sendPush).not.toHaveBeenCalled()
+    expect(riga('n1')).toMatchObject({ push_inviata_il: presa, push_presa_scade_il: scade })
+  })
+
+  it('rimessa in coda per un guasto transitorio: perde anche la scadenza, il bidello non la vedrà', async () => {
+    mem.st.notifiche = [notifica('n1', 'u1')]
+    mem.st.push_subscriptions = [subNativa('s1', 'u1', 'android')]
+    native.sendNativePush.mockResolvedValue(TRANSITORIO)
+
+    expect(dati(await eseguiDispatch()).rimesse_in_coda).toBe(1)
+    expect(riga('n1')).toMatchObject({ push_inviata_il: null, push_presa_scade_il: null })
+  })
+
+  it('colonna assente (DB della CI non migrato): si prende come prima, senza scadenza, e lo si dice', async () => {
+    mem.st.erroreBidello = { code: '42703', message: 'column notifiche.push_presa_scade_il does not exist' }
+    mem.st.notifiche = [notifica('n1', 'u1')]
+    mem.st.push_subscriptions = [subWeb('s1', 'u1')]
+
+    expect(dati(await eseguiDispatch()).notifiche).toBe(1)
+    expect(mem.st.updateNotifiche.map((u) => Object.keys(u.payload))).toEqual([['push_inviata_il']])
+    expect(righeLog('info', 'presa-senza-scadenza')).toHaveLength(1)
+  })
+
+  it('lo schema cache non conosce la colonna sull\'UPDATE (PGRST204): si riprende senza, niente perso', async () => {
+    mem.st.erroreUpdate = {
+      se: (p) => 'push_presa_scade_il' in p && 'push_inviata_il' in p && p.push_inviata_il !== null,
+      errore: { code: 'PGRST204', message: "Could not find the 'push_presa_scade_il' column of 'notifiche'" },
+    }
+    mem.st.notifiche = [notifica('n1', 'u1')]
+    mem.st.push_subscriptions = [subWeb('s1', 'u1')]
+
+    expect(dati(await eseguiDispatch()).notifiche).toBe(1)
+    expect(web.sendPush).toHaveBeenCalledTimes(1)
+    expect(riga('n1').push_inviata_il).not.toBeNull()
+    expect(righeLog('info', 'presa-senza-scadenza')).toHaveLength(1)
+  })
+
+  it('🔴 la conferma fallisce: 500 e una riga `error` che lo dice (la presa scadrà, possibile doppione)', async () => {
+    mem.st.erroreUpdate = {
+      se: (p) => Object.keys(p).join() === 'push_presa_scade_il',
+      errore: { code: 'XX000', message: 'guasto finto' },
+    }
+    mem.st.notifiche = [notifica('n1', 'u1')]
+    mem.st.push_subscriptions = [subWeb('s1', 'u1')]
+
+    expect((await eseguiDispatch()).stato).toBe(500)
+    expect(web.sendPush).toHaveBeenCalledTimes(1)
+    expect(righeLog('error', 'query-fallita').map((r) => r.azione)).toEqual(['conferma presa'])
   })
 })

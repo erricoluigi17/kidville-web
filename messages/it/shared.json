@@ -679,6 +679,9 @@
   "erroreServiziScritturaFallita": "Non è stato possibile salvare le iscrizioni ai servizi: riprova.",
   "erroreServiziLetturaFallita": "Non è stato possibile leggere i servizi mensili: riprova.",
   "erroreVociFutureDaDecidere": "Ci sono voci già generate fuori dal nuovo periodo: scegli se eliminare quelle non pagate e non fatturate o mantenerle.",
+  "erroreIncassoNonDisponibile": "La registrazione degli incassi non è ancora disponibile su questo database.",
+  "erroreIncassoDatiNonValidi": "I dati dell’incasso non sono validi: controlla metodo, data e importo.",
+  "erroreIncassoQuotaEstranea": "La quota scelta non appartiene a questo pagamento.",
   "erroreReportCassaNonCalcolato": "Non è stato possibile calcolare il report di cassa: riprova fra poco.",
   "erroreReportCassaNonQuadra": "Il report di cassa non è stato mostrato perché i totali non coincidono con il controllo del database. Il problema è stato registrato: riprova più tardi.",
   "erroreDashboardNonLetta": "Non è stato possibile leggere i dati della dashboard: riprova fra poco."

@@ -208,6 +208,12 @@ export const JOB_CRON: readonly JobCron[] = [
     // famiglie che quella cancellazione è automatica. Una promessa mantenuta da un lavoro che
     // nessuno guarda è una promessa a scadenza. 26 h come gli altri giornalieri.
     { nome: 'presenze-giustificazioni-retention', finestraMs: 26 * ORA },
+    // `scatola-nera-scadenza` (`43 5 * * *`, OGNI NOTTE, dal 2026-10-10): toglie dalla scatola nera
+    // le righe cancellate da più di novanta giorni, il termine che l'informativa dichiara per le
+    // copie tecniche. Se smettesse, la scatola terrebbe dati di famiglie oltre il termine promesso.
+    // Fino alla PR-B stava in `JOB_CRON_NON_SORVEGLIATI` per un vincolo di sequenza (la migrazione
+    // non era ancora nella fotografia). 26 h come gli altri giornalieri.
+    { nome: 'scatola-nera-scadenza', finestraMs: 26 * ORA },
     // `galleria-retention` (`POST /api/gdpr/retention-galleria`, `23 5 * * *`, OGNI NOTTE):
     // distrugge definitivamente — riga E file — le foto e i video di galleria che stanno nel
     // cestino da più di trenta giorni, e spazza gli oggetti del bucket che nessuna riga nomina
@@ -371,16 +377,6 @@ export const JOB_CRON: readonly JobCron[] = [
  * endpoint interrogato ogni minuto.
  */
 export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }[] = [
-    {
-        nome: 'scatola-nera-scadenza',
-        perche:
-            'IN ATTESA DEL MERGE (2026-10-09, fase 4): il job nasce con la migrazione ' +
-            '`20261009171012_scatola_nera_registro_eliminazioni.sql`, che applica l’integrazione al ' +
-            'merge, e il lock `cron-sorvegliato-e-applicato` vieta di sorvegliare un lavoro la cui ' +
-            'migrazione non è nella fotografia. Il battito c’è già (evento `cron`, ' +
-            '`operazione: scatola-nera-scadenza`, esito `ok`, OGNI NOTTE alle 05:43 UTC): nella PR-B ' +
-            'passa in `JOB_CRON` con `finestraMs: 26 * ORA`, come gli altri giornalieri.',
-    },
     {
         nome: 'notifiche-retention',
         perche:

@@ -51,9 +51,27 @@ Più `warn` per `lettura-fallita` (intestatario, forma storica) e `nome-sede-non
 - Dopo il merge di #213 e #214: correggere `quote` e `ticket` e svuotare l'elenco d'attesa.
 - Fuori da questo pezzo, stessa classe di difetto: `lib/pagamenti/scadenze.ts`, chiamata solo da `admin/students`.
 
+## 🧩 Changelog — Roadmap di robustezza, fase 5 (secondo pezzo): le quote di un pagamento diviso si aggiornano invece di cancellarle e reinserirle, e gli incassi restano di chi li ha pagati — 2026-10-10 (branch `robustezza/fase-5-quote`)
+
+**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010081206_aggiorna_quote_senza_reinserire.sql`). La applica l'integrazione al merge, **dopo** quella del primo pezzo (timestamp crescenti).
+
+**Il problema (D5-A).** `POST/PATCH /api/pagamenti/quote` faceva `delete()` di tutte le quote del pagamento e poi `insert()` delle nuove. Ogni quota rinasceva con un id nuovo, e la FK `incassi.quota_id … ON DELETE SET NULL` staccava **in silenzio** ogni incasso già registrato su una quota: l'incasso restava, ma non si sapeva più di chi fosse. È lo stesso id con cui il genitore vede la propria parte. Le due scritture erano separate: un INSERT fallito dopo la DELETE lasciava il pagamento senza quote. Provato sullo stesso schema: con le due istruzioni vecchie l'incasso finisce con `quota_id` NULL.
+
+**Misure (produzione, 2026-10-10, sola lettura).** Quote 5 su 3 pagamenti; incassi senza quota su pagamenti che hanno quote: 2 (non si può dire se sono nati così o se li ha staccati una riscrittura: la scatola nera c'è solo dal 09/10). Nessuna schermata chiama oggi questa route.
+
+**Cosa cambia.**
+1. **`public.aggiorna_quote_pagamento(pagamento, quote, utente)`** (solo `service_role`): `SELECT … FOR UPDATE` sul pagamento; la quota di un adulto che resta si **aggiorna** (`ON CONFLICT (pagamento_id, adult_id) DO UPDATE`: stesso id, incassi ancora collegati); i nuovi si inseriscono; gli assenti si tolgono, **mai** se hanno incassi (`quota_con_incassi`, 409, nessuna scrittura). Somma = importo come prima; lo stesso adulto due volte è rifiutato; `tipo='split'` e audit `aggiorna_quote` (quote prima e dopo) nella stessa transazione. Le quote tolte finiscono nella scatola nera.
+2. **La route** chiama la RPC e traduce l'esito; non scrive più `pagamenti_quote` né `pagamenti`. Il GET non mostra più il messaggio grezzo di PostgREST (lo logga). Codici nuovi tradotti: `QUOTE_NON_DISPONIBILI`, `QUOTE_DATI_NON_VALIDI`, `QUOTE_ADULTO_RIPETUTO`, `QUOTE_CON_INCASSI`.
+
+**Log.** `pagamento`/`info` `quote_aggiornate` (anche il successo: numero di quote e di quote tolte), `quota_con_incassi_non_tolta`; `warn` `quote_rifiutate` (codice Postgres); `error` per funzione assente, ogni altro errore della RPC e la lettura fallita del GET.
+
+**Prove.** PGlite `aggiorna-quote-pagamento-sql.test.ts` (11: stesso id e incasso collegato dopo il cambio di importi, adulto aggiunto e tolto, adulto con incassi non tolto, somma, adulto ripetuto, ROLLBACK su FK, permessi, **controllo negativo**: le istruzioni vecchie staccano l'incasso). **Mutazione**: con la DELETE di tutte le quote cadono 3 casi. Route `quote-route.test.ts` (6). Lock `quote-senza-reinserire` (nessuna scrittura diretta nella route, FOR UPDATE prima delle quote, ON CONFLICT … DO UPDATE, DELETE solo degli assenti e dopo il controllo degli incassi, controllo positivo). Helper `__tests__/helpers/schema-soldi-pglite.ts`: lo schema minimo dei soldi, con ricalcolo e trigger letti dalle migrazioni.
+
+**Da fare / aperto.** Dopo il merge: funzione e permessi, advisor, fotografia delle migrazioni. Verifica della roadmap: nuovi incassi senza quota **su pagamenti con quote** = 0.
+
 ## 💶 Changelog — Roadmap di robustezza, fase 5 (primo pezzo): l'incasso di una voce si decide con la riga bloccata, e due operatori non incassano più oltre il dovuto — 2026-10-10 (branch `robustezza/fase-5-incassi`)
 
-**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010080056_registra_incasso_voce_bloccata.sql`): nessuna tabella, policy o indice. La applica l'integrazione al merge; dopo, la fotografia delle migrazioni applicate si rigenera dalla produzione (le tre fotografie delle guardie non cambiano, e il lock vieta di dichiarare in `MIGRAZIONI_ATTESE_AL_MERGE` una migrazione che nessuna guardia segnalerebbe).
+**Stato.** ✅ **In produzione dal 2026-10-10** (#212, `1ef5d3cc`). Verifica dopo il merge: funzione presente, permessi giusti (anon e authenticated no, service_role sì), una riga sola nello storico delle migrazioni, advisor 0 ERROR; nessun incasso nuovo ancora registrato da allora (l'ultimo è dell'8/10), quindi «incassi nuovi senza quota = 0» va riletto alla prima settimana di uso. Una migrazione di sole funzioni (`20261010080056_registra_incasso_voce_bloccata.sql`): nessuna tabella, policy o indice. La applica l'integrazione al merge; dopo, la fotografia delle migrazioni applicate si rigenera dalla produzione (le tre fotografie delle guardie non cambiano, e il lock vieta di dichiarare in `MIGRAZIONI_ATTESE_AL_MERGE` una migrazione che nessuna guardia segnalerebbe).
 
 **Il problema (D5-A della roadmap).** `POST /api/pagamenti/incassi` leggeva il residuo (importo − sconto − già incassato), decideva in JavaScript e poi scriveva incasso, credito famiglia, abbuono e audit con quattro chiamate separate. Due operatori sulla stessa voce leggevano lo stesso residuo e passavano entrambi il controllo. **Provato con due sessioni vere su Postgres 17**: una voce da 100 €, due incassi da 100 € in parallelo → **2 incassi, 200 € incassati**. E se l'accredito dell'eccedenza falliva dopo l'incasso, restava l'incasso del solo residuo con l'eccedenza persa; l'audit era un INSERT con l'errore scartato.
 

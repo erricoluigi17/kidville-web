@@ -209,6 +209,9 @@ export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
     '20261010221643_indici_fk_initplan_doppioni.sql':
         'fase 6: indici sulle FK e policy con (select auth.uid()); la applica l\'integrazione al merge, ' +
         'la PR-B rigenera la fotografia della RLS dalla produzione',
+    '20261010230042_freni_restrict_catene_legali.sql':
+        'fase 7 PR 2: 22 FK da CASCADE a RESTRICT (drop + add constraint, nessuna verso utenti); ' +
+        'la applica l\'integrazione al merge, la PR-B rigenera la fotografia delle FK verso utenti dalla produzione',
 }
 
 /**

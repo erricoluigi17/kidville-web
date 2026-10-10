@@ -13,9 +13,14 @@ import { PGlite } from '@electric-sql/pglite'
  * le copie di una persona, il ripristino che rimette le righe nell'ordine delle FK.
  * Un finto client direbbe «sì» a tutto.
  *
- * Lo schema è un MINIMO con i nomi veri e le stesse FK in CASCADE della
- * produzione (alunni → presenze, pagamenti → incassi). Il file della migrazione è
- * LETTO DAL DISCO e applicato DUE volte. Solo dati finti.
+ * Lo schema è un MINIMO con i nomi veri e le FK in CASCADE (alunni → presenze,
+ * pagamenti → incassi). Il file della migrazione è LETTO DAL DISCO e applicato DUE
+ * volte. Solo dati finti.
+ *
+ * ⚠️ `incassi.pagamento_id` qui resta CASCADE com'era in produzione fino al
+ * 2026-10-11: serve a provare che il trigger vede una cascata a DUE livelli. In
+ * produzione, dalla fase 7, quella FK è RESTRICT e la stessa DELETE verrebbe
+ * rifiutata prima di arrivare alla scatola (`freni-restrict-sql.test.ts`).
  */
 
 const CARTELLA = join(process.cwd(), 'supabase/migrations')

@@ -1,3 +1,42 @@
+## 🛑 Changelog — Roadmap di robustezza, fase 7 (PR 2): i freni RESTRICT sulle catene con valore legale — 2026-10-11 (branch `robustezza/fase-7-freni-restrict`)
+
+**Stato.** 🟡 **In PR** (in pila sopra la PR 1 e la fase 6). Una migrazione (`20261010230042_freni_restrict_catene_legali.sql`), applicata dall'integrazione al merge; nessun file in `src/`.
+
+**Misura (catalogo di produzione, 11/10).**
+- I 22 vincoli sono tutti `ON DELETE CASCADE`, a colonna singola, validati e non differibili. `ON UPDATE` è NO ACTION.
+- Ognuno ha il suo indice: 17 c'erano già, 5 arrivano con la fase 6.
+- La figlia più grande è `incassi`, con circa 1.700 righe.
+- Le cascate di oblio, account e personale partono da 17 tabelle e raggiungono 39 tabelle: nessuna è uno degli 11 padri.
+- Chi cancella quei padri:
+  - le funzioni `elimina_alunno_definitivo`, `protocollo_elimina`, `iscrizioni_rinvia` e `iscrizioni_annulla`;
+  - le route adattate nella PR 1;
+  - i rollback di `genera`/`rate`, su un padre appena creato e senza incassi;
+  - `admin/wipe`, sigillata fuori dai test.
+  
+  Nessun job `pg_cron` lo fa.
+
+**Cosa cambia.**
+- I 22 vincoli passano a `ON DELETE RESTRICT`, con stesso nome, colonna e padre. DROP e ADD stanno nella stessa `ALTER TABLE`, quindi non c'è un istante senza vincolo.
+- Una DELETE del padre con figlie presenti viene rifiutata dal database: 23503 su Postgres 17, 23001 dal 18. Prima si portava via in silenzio pagelle, giudizi, comportamento e ricevute di scrutinio, certificati delle competenze e medici, fascicolo, compilazioni firmate, incassi, allegati protocollati, movimenti e chiusure di cassa.
+- Restano CASCADE di proposito tre vincoli:
+  - i giudizi descrittivi del periodo, che sono configurazione;
+  - la coda delle fatture, che le route guardano già;
+  - le firme delle lezioni: il registro della primaria cancella una lezione contando su quella cascata.
+
+**Prove.**
+- `__tests__/lib/freni-restrict-sql.test.ts` (PGlite, nuovo, 30 test) applica il file vero su uno schema con i nomi e le CASCADE di produzione. Verifica che:
+  - la migrazione dichiara esattamente i 22 freni attesi;
+  - per ognuno, la DELETE del padre con una figlia viene rifiutata, la figlia resta, e cancellando in ordine si riesce;
+  - i tre esclusi cancellano ancora in cascata;
+  - il **rollback** scritto in testata riporta tutto in CASCADE;
+  - la **verifica n. 3** della testata risponde «rifiutato» coi freni e fallisce senza, senza cambiare niente in nessuno dei due casi.
+  
+  Rimettendo in CASCADE un solo freno, i rossi sono 3.
+- Gli schemi PGlite scritti a mano (`schema-soldi-pglite`, `registra-incasso-voce-sql`) dichiarano ora `incassi.pagamento_id` RESTRICT come la produzione, e i loro test restano verdi. La scatola nera tiene la CASCADE per provare una cascata a due livelli, e lo dice nel commento.
+- `MIGRAZIONI_ATTESE_AL_MERGE` ha la voce della migrazione: il lock delle FK verso `utenti` grida su ogni `drop`/`add constraint`. La PR-B rigenera la fotografia.
+
+**Deviazione dalla roadmap.** La roadmap chiedeva di provare i freni su un progetto ricreato dal backup. Non lo si è ricreato, perché costa e porta altri dati veri di minori; il temporaneo precedente resta da distruggere a cura del titolare. Al suo posto ci sono PGlite sul file vero e, dopo il merge, la verifica n. 3 in produzione: o rifiuta, o torna indietro con un'eccezione, e in nessun caso cancella.
+
 ## 🧱 Changelog — Roadmap di robustezza, fase 7 (PR 1): chi cancella lo fa in ordine e lo dice, prima dei freni RESTRICT — 2026-10-11 (branch `robustezza/fase-7-eliminazioni-in-ordine`)
 
 **Stato.** 🟡 **In PR** (in pila sopra la fase 6). Una migrazione (`20261010223849_eliminazioni_in_ordine.sql`) e sei route. Prepara la PR 2, che porta a `ON DELETE RESTRICT` le catene con valore legale. Da quel giorno una DELETE del padre con figlie presenti fallisce invece di cancellarle in silenzio, e chi contava sulla cascata deve cancellare in ordine o dire di no.

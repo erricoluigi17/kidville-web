@@ -678,5 +678,6 @@
   "erroreIscrizioneServizioNonTrovata": "L’iscrizione al servizio non esiste in questa sede.",
   "erroreServiziScritturaFallita": "Non è stato possibile salvare le iscrizioni ai servizi: riprova.",
   "erroreServiziLetturaFallita": "Non è stato possibile leggere i servizi mensili: riprova.",
-  "erroreVociFutureDaDecidere": "Ci sono voci già generate fuori dal nuovo periodo: scegli se eliminare quelle non pagate e non fatturate o mantenerle."
+  "erroreVociFutureDaDecidere": "Ci sono voci già generate fuori dal nuovo periodo: scegli se eliminare quelle non pagate e non fatturate o mantenerle.",
+  "errorePagamentiScritturaFallita": "Il salvataggio non è riuscito. Ricarica la pagina per vedere cosa risulta registrato, poi riprova."
 }

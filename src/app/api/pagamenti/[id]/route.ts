@@ -10,6 +10,7 @@ import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import { normalizzaMetodiAmmessi, CODICI_COLONNA_ASSENTE } from '@/lib/pagamenti/metodi-ammessi'
 import { zMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi-zod'
 
@@ -99,8 +100,12 @@ export const GET = withRoute('pagamenti/[id]:GET', async (request: Request, cont
     const id = pid.data
 
     const supabase = await createAdminClient()
+    // Ogni lettura di questo dettaglio controlla `error` (fase 5 robustezza, sesto pezzo): un
+    // guasto non è «non trovato», «accesso negato» né un elenco vuoto di incassi, quote o rate
+    // — schermate che sembravano vere e non lo erano.
     const { data, error } = await supabase.from('pagamenti').select(SELECT).eq('id', id).maybeSingle()
-    if (error || !data) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    if (error) return rispostaGuastoDb('pagamenti/[id]:GET', 'db:pagamenti', error)
+    if (!data) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     const pag = data as unknown as PagamentoDettaglio
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
@@ -128,12 +133,13 @@ export const GET = withRoute('pagamenti/[id]:GET', async (request: Request, cont
       }
 
       if (pag.tipo === 'split') {
-        const { data: q } = await supabase
+        const { data: q, error: errQ } = await supabase
           .from('pagamenti_quote')
           .select('id, importo')
           .eq('pagamento_id', id)
           .eq('adult_id', user.id)
           .maybeSingle()
+        if (errQ) return rispostaGuastoDb('pagamenti/[id]:GET', 'db:pagamenti_quote:propria', errQ)
         if (!q) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
         ownQuotaId = q.id
         // proietta la propria quota come importo
@@ -149,7 +155,8 @@ export const GET = withRoute('pagamenti/[id]:GET', async (request: Request, cont
       .eq('pagamento_id', id)
       .order('creato_il', { ascending: true })
     if (ownQuotaId) incassiQuery = incassiQuery.eq('quota_id', ownQuotaId)
-    const { data: incassi } = await incassiQuery
+    const { data: incassi, error: errIncassi } = await incassiQuery
+    if (errIncassi) return rispostaGuastoDb('pagamenti/[id]:GET', 'db:incassi', errIncassi)
 
     // quote (staff vede tutte; genitore solo la propria)
     let quoteQuery = supabase
@@ -157,16 +164,18 @@ export const GET = withRoute('pagamenti/[id]:GET', async (request: Request, cont
       .select('id, pagamento_id, adult_id, importo, etichetta, utenti:adult_id ( id, nome, cognome )')
       .eq('pagamento_id', id)
     if (!isStaff) quoteQuery = quoteQuery.eq('adult_id', user.id)
-    const { data: quote } = pag.tipo === 'split' ? await quoteQuery : { data: [] }
+    const { data: quote, error: errQuote } = pag.tipo === 'split' ? await quoteQuery : { data: [], error: null }
+    if (errQuote) return rispostaGuastoDb('pagamenti/[id]:GET', 'db:pagamenti_quote', errQuote)
 
     // rate (se è un padre rateizzato)
     let rate: unknown[] = []
     if (pag.tipo === 'padre') {
-      const { data: r } = await supabase
+      const { data: r, error: errRate } = await supabase
         .from('pagamenti')
         .select('id, descrizione, importo, importo_pagato, scadenza, stato')
         .eq('parent_payment_id', id)
         .order('scadenza', { ascending: true })
+      if (errRate) return rispostaGuastoDb('pagamenti/[id]:GET', 'db:pagamenti:rate', errRate)
       rate = r || []
     }
 
@@ -209,7 +218,11 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
     const selE = await supabase.from('pagamenti').select(selEsistente).eq('id', id).maybeSingle()
     if (selE.error && (selE.error as { code?: string }).code === '42703') {
       const retry = await supabase.from('pagamenti').select(selEsistenteBase).eq('id', id).maybeSingle()
+      if (retry.error) return rispostaGuastoDb('pagamenti/[id]:PATCH', 'db:pagamenti', retry.error)
       esistente = retry.data as Record<string, unknown> | null
+    } else if (selE.error) {
+      // Ogni altro errore era un 404 «non trovato» (fase 5 robustezza, sesto pezzo).
+      return rispostaGuastoDb('pagamenti/[id]:PATCH', 'db:pagamenti', selE.error)
     } else {
       esistente = selE.data as Record<string, unknown> | null
     }
@@ -346,7 +359,8 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
     const id = pid.data
 
     const supabase = await createAdminClient()
-    const { data: old } = await supabase.from('pagamenti').select('*').eq('id', id).maybeSingle()
+    const { data: old, error: errOld } = await supabase.from('pagamenti').select('*').eq('id', id).maybeSingle()
+    if (errOld) return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:pagamenti', errOld)
     if (!old) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     // scoping di sede: non eliminare pagamenti fuori dalle sedi attive
     const sediDel = await resolveScuoleAttive(request as NextRequest, supabase, user)
@@ -356,7 +370,15 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
     // Conservazione fiscale: un pagamento con FATTURA emessa non è cancellabile
     // (FK RESTRICT + WORM). Le RICEVUTE già a registro restano (numero
     // conservato, `pagamento_id` azzerato via ON DELETE SET NULL).
+    //
+    // 🔴 Le due guardie qui sotto erano scritte `!errore && …`: con un guasto della lettura la
+    // guardia SALTAVA e la DELETE partiva — su una voce fatturata o legata a una transazione
+    // di famiglia (fase 5 robustezza, sesto pezzo). Una guardia che non ha potuto guardare
+    // ferma la cancellazione; salta solo dove lo schema manca davvero (DB E2E non migrato).
     const { data: fatt, error: fattErr } = await supabase.from('fatture_emesse').select('id').eq('pagamento_id', id).limit(1)
+    if (fattErr && !TABELLA_ASSENTE.has(fattErr.code ?? '')) {
+      return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:fatture_emesse:guardia', fattErr)
+    }
     if (!fattErr && fatt && fatt.length > 0) {
       return NextResponse.json({ error: 'Pagamento con fattura emessa: non eliminabile per conservazione fiscale. Annulla/storna prima la fattura.' }, { status: 409 })
     }
@@ -364,6 +386,9 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
     // (annullare la transazione). Retry sulla colonna transazione_id: se il DB non
     // la ha (E2E CI non migrato) il controllo si salta.
     const tx = await supabase.from('incassi').select('id').eq('pagamento_id', id).not('transazione_id', 'is', null).limit(1)
+    if (tx.error && !CODICI_COLONNA_ASSENTE.includes(tx.error.code ?? '')) {
+      return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:incassi:guardia-transazione', tx.error)
+    }
     if (!tx.error && tx.data && tx.data.length > 0) {
       return NextResponse.json({ error: 'Pagamento con incassi di una transazione di famiglia: annulla prima la transazione.' }, { status: 409 })
     }

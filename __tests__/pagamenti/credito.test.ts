@@ -47,6 +47,11 @@ describe('saldoCredito', () => {
     const s = await saldoCredito(db({ inserted: [], read: { data: null, error: { code: '42P01' } } }) as never, P1)
     expect(s).toBe(0)
   })
+  it('🔴 guasto vero (57014) → lancia: un credito non letto non è un credito zero', async () => {
+    await expect(
+      saldoCredito(db({ inserted: [], read: { data: null, error: { code: '57014', message: 'statement timeout' } } }) as never, P1),
+    ).rejects.toThrow(/crediti_famiglia/)
+  })
 })
 
 describe('accreditaEccedenza', () => {

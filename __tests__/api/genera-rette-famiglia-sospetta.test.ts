@@ -42,6 +42,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.is = () => b
       b.or = () => b
       b.limit = () => b
+      // `leggiABlocchi` (le rette già emesse si leggono a blocchi dal 2026-10-10).
+      b.order = () => b
+      b.range = () => b
       b.maybeSingle = async () => ({
         data: table === 'admin_settings' ? { retta_default_importo: 150, scuola_id: 'sc-1' } : null,
         error: null,

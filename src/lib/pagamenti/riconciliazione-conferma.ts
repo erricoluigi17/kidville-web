@@ -245,6 +245,11 @@ export async function confermaSuVoceSingola(
       .eq('id', pagamentoId)
       .maybeSingle())
   }
+  // Un guasto non è «pagamento non trovato» (fase 5 robustezza, sesto pezzo).
+  if (errPag) {
+    logErrore({ operazione, evento: 'db:pagamenti', stato: 500 }, errPag)
+    return { status: 500, body: { error: 'Lettura dal database non riuscita', codice: 'LETTURA_FALLITA' } }
+  }
   // Vincolo di SCRITTURA: una segreteria registra un incasso solo sulla PROPRIA sede.
   if (!pag || !sediAmmesse.includes((pag as { scuola_id: string }).scuola_id)) {
     return { status: 404, body: { error: 'Pagamento non trovato' } }
@@ -353,7 +358,21 @@ export async function confermaSuVoceSingola(
     .eq('stato', mov.stato)
     .select('id')
   if (errUpd || !updated || updated.length === 0) {
-    await supabase.from('incassi').delete().eq('id', (incasso as { id: string }).id)
+    // Compensazione: l'incasso appena scritto va tolto, o resta un incasso senza il suo
+    // movimento bancario. Prima la DELETE non guardava il risultato, e un guasto qui
+    // lasciava l'incasso orfano con una risposta 409 che diceva «nessuna scrittura»;
+    // e un guasto dell'UPDATE era raccontato come «già riconciliato da un altro» (fase 5
+    // robustezza, sesto pezzo).
+    const incassoId = (incasso as { id: string }).id
+    const { error: errComp } = await supabase.from('incassi').delete().eq('id', incassoId)
+    if (errComp) {
+      logEvento('pagamento', 'error', { operazione, esito: 'incasso-orfano', incasso_id: incassoId, movimento_id: mov.id }, errComp)
+      return { status: 500, body: { error: 'Scrittura sul database non riuscita', codice: 'PAGAMENTI_SCRITTURA_FALLITA' } }
+    }
+    if (errUpd) {
+      logErrore({ operazione, evento: 'db:riconciliazione_movimenti:update', stato: 500 }, errUpd)
+      return { status: 500, body: { error: 'Scrittura sul database non riuscita', codice: 'PAGAMENTI_SCRITTURA_FALLITA' } }
+    }
     return { status: 409, body: { error: 'Movimento già riconciliato da un altro operatore' } }
   }
 

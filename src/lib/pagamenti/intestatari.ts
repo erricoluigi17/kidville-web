@@ -33,20 +33,47 @@ export interface ParentRegistry {
 
 const REG_COLS = 'id, first_name, last_name, fiscal_code, residence_address, residence_city, zip_code'
 
+export type EsitoParentRegistry =
+  | { ok: true; reg: ParentRegistry | null }
+  | { ok: false; error: unknown }
+
 /**
  * Da un adultId (parents.id OPPURE utenti.id) alla riga `parents` fatturabile.
  * Prova prima parents.id (spazio intestatario_fatture), poi il ponte
- * parents.auth_user_id (spazio quote/utenti). `null` se non risolvibile.
+ * parents.auth_user_id (spazio quote/utenti). `reg: null` se non risolvibile.
+ *
+ * Distingue «non c'è» da «non si è potuto leggere» (fase 5 robustezza, sesto pezzo):
+ * prima un guasto sulla prima lettura ripiegava in silenzio sul ponte, e un guasto
+ * su tutte e due dava `null` — un'attestazione 730 intestata «Famiglia ⟨cognome⟩»
+ * senza codice fiscale, un export AdE che scartava la spesa per «CF mancante».
+ */
+export async function resolveParentRegistryEsito(
+  supabase: SupabaseClient,
+  adultId: string | null | undefined,
+): Promise<EsitoParentRegistry> {
+  if (!adultId) return { ok: true, reg: null }
+  const byId = await supabase.from('parents').select(REG_COLS).eq('id', adultId).maybeSingle()
+  if (byId.error) return { ok: false, error: byId.error }
+  if (byId.data) return { ok: true, reg: byId.data as ParentRegistry }
+  const byBridge = await supabase.from('parents').select(REG_COLS).eq('auth_user_id', adultId).maybeSingle()
+  if (byBridge.error) return { ok: false, error: byBridge.error }
+  return { ok: true, reg: (byBridge.data as ParentRegistry | null) ?? null }
+}
+
+/**
+ * La forma storica, per i chiamanti che un guasto lo trattano come «non risolto»
+ * (emissione Aruba, ricevute, registrazione incassi). Il guasto non è più muto:
+ * esce una riga `warn`. Le route che decidono su questo dato usano
+ * `resolveParentRegistryEsito` e rispondono 500.
  */
 export async function resolveParentRegistry(
   supabase: SupabaseClient,
   adultId: string | null | undefined,
 ): Promise<ParentRegistry | null> {
-  if (!adultId) return null
-  const byId = await supabase.from('parents').select(REG_COLS).eq('id', adultId).maybeSingle()
-  if (byId.data) return byId.data as ParentRegistry
-  const byBridge = await supabase.from('parents').select(REG_COLS).eq('auth_user_id', adultId).maybeSingle()
-  return (byBridge.data as ParentRegistry | null) ?? null
+  const esito = await resolveParentRegistryEsito(supabase, adultId)
+  if (esito.ok) return esito.reg
+  logEvento('pagamento', 'warn', { operazione: 'resolveParentRegistry', esito: 'lettura-fallita' }, esito.error)
+  return null
 }
 
 export interface Quota {

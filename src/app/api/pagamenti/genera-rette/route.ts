@@ -8,6 +8,8 @@ import { zUuid } from '@/lib/validation/common'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaBlocchiFalliti, rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
+import { leggiABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
 import { sedeDellaGenerazione, tracciaAuditGenerazione, generaServizi, rispostaServizi } from '@/lib/pagamenti/generazione-server'
 
 // `anno` e `periodo` NON sono vincolati nel formato: storicamente un valore
@@ -124,13 +126,16 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
 
     const catId = await categoriaRetta(supabase, scuolaId, 'pagamenti/genera-rette:GET')
 
-    // retta default della sede
-    const { data: sett } = await supabase
+    // retta default della sede. Un guasto qui NON è «nessuna impostazione»: era un'anteprima
+    // a 150 € a testa e con la generazione automatica data per accesa (fase 5 robustezza,
+    // sesto pezzo).
+    const { data: sett, error: errSett } = await supabase
       .from('admin_settings')
       .select('retta_default_importo, retta_auto_enabled, scuola_id')
       .eq('scuola_id', scuolaId)
       .limit(1)
       .maybeSingle()
+    if (errSett) return rispostaGuastoDb('pagamenti/genera-rette:GET', 'db:admin_settings', errSett)
     const rettaDefault = Number(sett?.retta_default_importo ?? 150)
     /**
      * ⚠️ LA RPC ONORA `retta_auto_enabled`, L'ANTEPRIMA LO IGNORAVA.
@@ -145,7 +150,6 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
 
     // alunni attivi = iscritti CON sezione valorizzata (classe_sezione o section_id)
     const COLONNE_ALUNNI = 'id, nome, cognome, classe_sezione, section_id, importo_retta_mensile, genitori_separati, scuola_id'
-    // eslint-disable-next-line prefer-const -- alunniRaw è riassegnato nel retry
     let { data: alunniRaw, error: errAlunni } = await supabase
       .from('alunni')
       .select(`${COLONNE_ALUNNI}, data_iscrizione, retta_a_carico_di`)
@@ -160,7 +164,10 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
         .eq('stato', 'iscritto')
         .eq('scuola_id', scuolaId)
       alunniRaw = (retry.data ?? null) as unknown as typeof alunniRaw
+      errAlunni = retry.error
     }
+    // Ogni altro errore (e quello del retry) è un guasto, non «nessun alunno attivo».
+    if (errAlunni) return rispostaGuastoDb('pagamenti/genera-rette:GET', 'db:alunni', errAlunni)
     /**
      * CHI PAGA PER CHI, ricavato dalla lettura che c'è già.
      *
@@ -194,13 +201,19 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
       const annoInizio = parseInt(annoParam, 10)
       const periodi = periodiAnno(annoInizio)
 
-      const { data: esistenti } = await supabase
-        .from('pagamenti')
-        .select('alunno_id, periodo_competenza')
-        .in('periodo_competenza', periodi)
-        .eq('categoria_id', catId)
+      // A BLOCCHI: dieci mesi di rette di una sede sono migliaia di righe, e PostgREST ne
+      // consegna 1000 senza dirlo — l'anteprima riproponeva come «da generare» le rette già
+      // emesse oltre il taglio, e un guasto le riproponeva tutte.
+      const esistentiLetti = await leggiABlocchi<{ alunno_id: string; periodo_competenza: string }>(() =>
+        supabase
+          .from('pagamenti')
+          .select('id, alunno_id, periodo_competenza')
+          .in('periodo_competenza', periodi)
+          .eq('categoria_id', catId),
+      )
+      if (!esistentiLetti.ok) return rispostaBlocchiFalliti('pagamenti/genera-rette:GET', 'pagamenti:rette-esistenti', esistentiLetti)
       const fattiPerPeriodo = new Map<string, Set<string>>()
-      for (const e of esistenti || []) {
+      for (const e of esistentiLetti.righe) {
         const key = String(e.periodo_competenza)
         if (!fattiPerPeriodo.has(key)) fattiPerPeriodo.set(key, new Set())
         fattiPerPeriodo.get(key)!.add(e.alunno_id)
@@ -242,12 +255,15 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
 
     // --- Anteprima MENSILE ---
     const periodo = firstOfMonth(q.data.periodo)
-    const { data: esistenti } = await supabase
-      .from('pagamenti')
-      .select('alunno_id')
-      .eq('periodo_competenza', periodo)
-      .eq('categoria_id', catId)
-    const giaFatti = new Set((esistenti || []).map((e) => e.alunno_id))
+    const esistentiLetti = await leggiABlocchi<{ alunno_id: string }>(() =>
+      supabase
+        .from('pagamenti')
+        .select('id, alunno_id')
+        .eq('periodo_competenza', periodo)
+        .eq('categoria_id', catId),
+    )
+    if (!esistentiLetti.ok) return rispostaBlocchiFalliti('pagamenti/genera-rette:GET', 'pagamenti:rette-esistenti', esistentiLetti)
+    const giaFatti = new Set(esistentiLetti.righe.map((e) => e.alunno_id))
 
     const candidati = alunni
       .filter((a) => !giaFatti.has(a.id) && iscrittoEntro(a, periodo))
@@ -367,13 +383,18 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
     const periodo = firstOfMonth(body.periodo)
     // Chi aveva GIÀ la retta di questo mese, letto PRIMA di generare: è l'unico
     // modo per avvisare solo i nuovi senza affidarsi a un orologio.
-    const { data: gia } = await supabase
-      .from('pagamenti')
-      .select('alunno_id')
-      .eq('periodo_competenza', periodo)
-      .eq('scuola_id', scuolaId)
-      .eq('gruppo', `retta-${periodo.slice(0, 7)}`)
-    const prima = new Set(((gia ?? []) as Array<{ alunno_id: string }>).map((p) => p.alunno_id))
+    // Un guasto qui, letto come «nessuno l'aveva», mandava «nuova retta» a TUTTE le famiglie
+    // della sede. Si legge prima di scrivere: un 500 qui non ha generato niente.
+    const giaLetti = await leggiABlocchi<{ alunno_id: string }>(() =>
+      supabase
+        .from('pagamenti')
+        .select('id, alunno_id')
+        .eq('periodo_competenza', periodo)
+        .eq('scuola_id', scuolaId)
+        .eq('gruppo', `retta-${periodo.slice(0, 7)}`),
+    )
+    if (!giaLetti.ok) return rispostaBlocchiFalliti('pagamenti/genera-rette:POST', 'pagamenti:rette-gia-emesse', giaLetti)
+    const prima = new Set(giaLetti.righe.map((p) => p.alunno_id))
     const { data, error } = await supabase.rpc('genera_rette_mensili', {
       p_periodo: periodo,
       p_scuola_id: scuolaId,

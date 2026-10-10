@@ -678,5 +678,6 @@
   "erroreIscrizioneServizioNonTrovata": "The service enrolment does not exist at this location.",
   "erroreServiziScritturaFallita": "The service enrolments could not be saved: please try again.",
   "erroreServiziLetturaFallita": "The monthly services could not be loaded: please try again.",
-  "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them."
+  "erroreVociFutureDaDecidere": "Some items already generated fall outside the new period: choose whether to delete the unpaid, uninvoiced ones or keep them.",
+  "errorePagamentiScritturaFallita": "Saving failed. Reload the page to see what was recorded, then try again."
 }

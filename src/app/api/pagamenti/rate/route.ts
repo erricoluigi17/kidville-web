@@ -7,6 +7,7 @@ import { zUuid } from '@/lib/validation/common'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import {
   normalizzaMetodiAmmessi,
   sonoTuttiIMetodi,
@@ -66,7 +67,9 @@ export const POST = withRoute('pagamenti/rate:POST', async (request: Request) =>
     if (scopeRes) return scopeRes
 
     // La sede è SEMPRE derivata dall'alunno: MAI fidarsi dello scuola_id del client
-    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+    const { data: al, error: errAl } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+    // Un guasto non è «non trovato» (fase 5 robustezza, sesto pezzo).
+    if (errAl) return rispostaGuastoDb('pagamenti/rate:POST', 'db:alunni', errAl)
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     const scuolaId = al.scuola_id
 

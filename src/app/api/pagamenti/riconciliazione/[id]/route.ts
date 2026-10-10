@@ -678,11 +678,17 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
     // il trigger; se l'avviso non parte, la conferma resta valida (si logga).
     try {
       if (pagDett.alunnoId) {
-        const { data: aggiornato } = await supabase
+        const { data: aggiornato, error: errStato } = await supabase
           .from('pagamenti')
           .select('stato')
           .eq('id', pagamentoId)
           .maybeSingle()
+        // Lo stato non riletto non ferma l'avviso (il bonifico è registrato e la famiglia va
+        // avvisata): il titolo resta il più prudente, «Acconto», e il guasto non è più muto
+        // (fase 5 robustezza, sesto pezzo).
+        if (errStato) {
+          logEvento('pagamento', 'error', { operazione: 'pagamenti/riconciliazione/[id]:PATCH', esito: 'stato-non-riletto', pagamento_id: pagamentoId }, errStato)
+        }
         const saldato = (aggiornato as { stato?: string } | null)?.stato === 'pagato'
         await notificaEvento(supabase, {
           tipo: 'pagamento_registrato',

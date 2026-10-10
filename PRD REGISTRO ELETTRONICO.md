@@ -18,7 +18,7 @@
 
 ## 🧩 Changelog — Roadmap di robustezza, fase 5 (secondo pezzo): le quote di un pagamento diviso si aggiornano invece di cancellarle e reinserirle, e gli incassi restano di chi li ha pagati — 2026-10-10 (branch `robustezza/fase-5-quote`)
 
-**Stato.** 🟡 **In PR.** Una migrazione di sole funzioni (`20261010081206_aggiorna_quote_senza_reinserire.sql`). La applica l'integrazione al merge, **dopo** quella del primo pezzo (timestamp crescenti).
+**Stato.** ✅ **In produzione dal 2026-10-10** (#213, `fa2e4d50`). Verifica dopo il merge: `aggiorna_quote_pagamento` presente, permessi giusti (anon e authenticated no, service_role sì), una riga sola nello storico delle migrazioni, advisor 0 ERROR. Una migrazione di sole funzioni (`20261010081206_aggiorna_quote_senza_reinserire.sql`), applicata dall'integrazione al merge, dopo quella del primo pezzo.
 
 **Il problema (D5-A).** `POST/PATCH /api/pagamenti/quote` faceva `delete()` di tutte le quote del pagamento e poi `insert()` delle nuove. Ogni quota rinasceva con un id nuovo, e la FK `incassi.quota_id … ON DELETE SET NULL` staccava **in silenzio** ogni incasso già registrato su una quota: l'incasso restava, ma non si sapeva più di chi fosse. È lo stesso id con cui il genitore vede la propria parte. Le due scritture erano separate: un INSERT fallito dopo la DELETE lasciava il pagamento senza quote. Provato sullo stesso schema: con le due istruzioni vecchie l'incasso finisce con `quota_id` NULL.
 

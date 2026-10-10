@@ -3219,6 +3219,16 @@ export const CODICI_ERRORE = {
      */
     VOCI_FUTURE_DA_DECIDERE: 'erroreVociFutureDaDecidere',
     /**
+     * Registrazione di un incasso (`POST /api/pagamenti/incassi`, dal 2026-10-10 tutta nella RPC
+     * `registra_incasso_voce`). `INCASSO_NON_DISPONIBILE` = la funzione non c'è ancora (database
+     * non migrato), nessuna scrittura; `INCASSO_DATI_NON_VALIDI` = metodo fuori elenco, data
+     * illeggibile o importo zero; `INCASSO_QUOTA_ESTRANEA` = la quota indicata è di un altro
+     * pagamento.
+     */
+    INCASSO_NON_DISPONIBILE: 'erroreIncassoNonDisponibile',
+    INCASSO_DATI_NON_VALIDI: 'erroreIncassoDatiNonValidi',
+    INCASSO_QUOTA_ESTRANEA: 'erroreIncassoQuotaEstranea',
+    /**
      * Salvataggio di giudizi e comportamento dello scrutinio (`POST`/`PATCH /api/primaria/scrutinio`,
      * funzioni `salva_*_scrutinio`). `SCRUTINIO_CONFLITTO` (409) = qualcun altro ha cambiato una
      * delle righe dopo che la pagina le ha lette: la risposta porta `conflitti` (solo uuid) e

@@ -22,9 +22,30 @@ import { TABELLE_REGISTRO_PRIMARIA } from '@/lib/alunni/registro-primaria'
  */
 
 const CARTELLA = join(process.cwd(), 'supabase/migrations')
-const FILE = readdirSync(CARTELLA).find((f) => f.endsWith('_alunni_elimina_definitivo.sql'))
-if (!FILE) throw new Error('migrazione *_alunni_elimina_definitivo.sql non trovata')
-const MIGRAZIONE = readFileSync(join(CARTELLA, FILE), 'utf8')
+/**
+ * Ogni migrazione che (ri)definisce la funzione, in ordine di version: la prima
+ * (08/10) e quella della fase 7 (cancellazioni esplicite prima dei freni
+ * RESTRICT). Si applicano tutte, in fila, come le ha applicate la produzione;
+ * ciò che si prova è la definizione IN VIGORE, cioè l'ultima.
+ */
+const DEFINIZIONI = readdirSync(CARTELLA)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .filter((f) =>
+    /create\s+or\s+replace\s+function\s+public\.elimina_alunno_definitivo\s*\(/i.test(
+      readFileSync(join(CARTELLA, f), 'utf8'),
+    ),
+  )
+if (DEFINIZIONI.length === 0) throw new Error('nessuna migrazione definisce public.elimina_alunno_definitivo')
+const MIGRAZIONI = DEFINIZIONI.map((f) => readFileSync(join(CARTELLA, f), 'utf8'))
+/** La definizione in vigore: l'ultima migrazione che la scrive. */
+const MIGRAZIONE = MIGRAZIONI[MIGRAZIONI.length - 1]
+/** La prima definizione (08/10), prima delle cancellazioni esplicite della fase 7. */
+const PRIMA_DEFINIZIONE = MIGRAZIONI[0]
+
+async function applicaTutte(conn: PGlite): Promise<void> {
+  for (const sql of MIGRAZIONI) await conn.exec(sql)
+}
 
 const SEDE = 'a0000000-0000-4000-8000-000000000001'
 const SEZ = 'c0000000-0000-4000-8000-000000000001'
@@ -126,18 +147,25 @@ async function schemaMinimo(conn: PGlite) {
     CREATE TABLE public.galleria_media (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tag_alunni uuid[]);
 
     CREATE TABLE public.valutazioni (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id));
-    CREATE TABLE public.pagelle (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE CASCADE);
-    CREATE TABLE public.scrutinio_giudizi (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE CASCADE);
-    CREATE TABLE public.scrutinio_comportamento (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE CASCADE);
+    -- I FRENI DELLA FASE 7. In produzione, prima della PR 2 della fase 7, queste FK
+    -- erano CASCADE; la PR 2 le porta a RESTRICT. Lo schema del test le dichiara già
+    -- RESTRICT: la funzione deve reggere con i freni accesi (e con la cascata, che
+    -- è più permissiva, regge a maggior ragione).
+    CREATE TABLE public.pagelle (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
+    CREATE TABLE public.scrutinio_giudizi (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
+    CREATE TABLE public.scrutinio_comportamento (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
     CREATE TABLE public.note_disciplinari (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id));
-    CREATE TABLE public.certificati_competenze (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE CASCADE);
+    CREATE TABLE public.certificati_competenze (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
+    CREATE TABLE public.pagella_ricezioni (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
+    CREATE TABLE public.certificati_medici (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
+    CREATE TABLE public.student_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), student_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
 
     CREATE TABLE public.pagamenti (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       alunno_id uuid REFERENCES public.alunni(id),
       parent_payment_id uuid REFERENCES public.pagamenti(id) ON DELETE CASCADE
     );
-    CREATE TABLE public.incassi (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), pagamento_id uuid REFERENCES public.pagamenti(id) ON DELETE CASCADE);
+    CREATE TABLE public.incassi (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), pagamento_id uuid REFERENCES public.pagamenti(id) ON DELETE RESTRICT);
     CREATE TABLE public.ricevute_emesse (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid, pagamento_id uuid REFERENCES public.pagamenti(id) ON DELETE SET NULL);
     CREATE TABLE public.fatture_emesse (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), pagamento_id uuid REFERENCES public.pagamenti(id) ON DELETE RESTRICT);
     CREATE TABLE public.riconciliazione_movimenti (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), pagamento_id uuid REFERENCES public.pagamenti(id) ON DELETE SET NULL);
@@ -155,8 +183,8 @@ async function schemaMinimo(conn: PGlite) {
 beforeAll(async () => {
   db = new PGlite()
   await schemaMinimo(db)
-  await db.exec(MIGRAZIONE)
-  await db.exec(MIGRAZIONE) // la seconda volta è la prova dell'idempotenza
+  await applicaTutte(db)
+  await applicaTutte(db) // la seconda volta è la prova dell'idempotenza
 })
 
 afterAll(async () => {
@@ -169,6 +197,7 @@ beforeEach(async () => {
              public.solleciti, public.riconciliazione_movimenti, public.fatture_emesse, public.ricevute_emesse,
              public.incassi, public.pagamenti, public.valutazioni, public.pagelle, public.scrutinio_giudizi,
              public.scrutinio_comportamento, public.note_disciplinari, public.certificati_competenze,
+             public.pagella_ricezioni, public.certificati_medici, public.student_documents,
              public.galleria_media, public.forms_submissions, public.ticket_mensa, public.armadietto,
              public.eventi_diario, public.presenze, public.legame_genitori_alunni, public.student_parents,
              public.parents, public.alunni CASCADE;
@@ -290,6 +319,14 @@ describe('elimina_alunno_definitivo — il registro della primaria', () => {
       await sentinellaIntatta(DOPPIONE)
     })
   }
+
+  it('una ricevuta di pagella blocca come il registro, anche da sola', async () => {
+    await db.exec(`INSERT INTO public.pagella_ricezioni (alunno_id) VALUES ('${DOPPIONE}')`)
+    await sentinella(DOPPIONE)
+    expect(await elimina(DOPPIONE, true)).toMatchObject({ ok: false, code: 'registro_primaria' })
+    expect(await numero(`SELECT count(*) FROM public.pagella_ricezioni`)).toBe(1)
+    await sentinellaIntatta(DOPPIONE)
+  })
 
   it('le tabelle controllate in SQL sono ESATTAMENTE quelle di TABELLE_REGISTRO_PRIMARIA', () => {
     const blocco = /-- registro-primaria:inizio([\s\S]*?)-- registro-primaria:fine/.exec(MIGRAZIONE)
@@ -439,6 +476,7 @@ describe('elimina_alunno_definitivo — p_solo_verifica: tutti i controlli, ness
       async () => { await db.exec(`INSERT INTO public.${tabella} (alunno_id) VALUES ('${DOPPIONE}')`) },
       DOPPIONE, true, 'registro_primaria',
     ]),
+    ['ricevuta di una pagella', async () => { await db.exec(`INSERT INTO public.pagella_ricezioni (alunno_id) VALUES ('${DOPPIONE}')`) }, DOPPIONE, true, 'registro_primaria'],
     ['pagamenti senza permesso', async () => { await pagamento(DOPPIONE) }, DOPPIONE, false, 'ha_pagamenti'],
     ...BLOCCHI.map(([nome, sql]): [string, () => Promise<void>, string, boolean, string] => [
       `pagamento bloccato: ${nome}`,
@@ -478,9 +516,57 @@ describe('elimina_alunno_definitivo — p_solo_verifica: tutti i controlli, ness
         RETURNS jsonb LANGUAGE sql AS $$ SELECT '{"ok": false, "code": "firma_vecchia"}'::jsonb $$;
     `)
     expect(await numero(`SELECT count(*) FROM pg_proc WHERE proname = 'elimina_alunno_definitivo'`)).toBe(2)
-    await db.exec(MIGRAZIONE)
+    await applicaTutte(db)
     expect(await numero(`SELECT count(*) FROM pg_proc WHERE proname = 'elimina_alunno_definitivo'`)).toBe(1)
     expect(await elimina(DOPPIONE, false, true)).toEqual({ ok: true, code: 'ammissibile' })
+  })
+})
+
+describe('elimina_alunno_definitivo — certificati medici e fascicolo, con i freni RESTRICT accesi (fase 7)', () => {
+  it('si cancellano in modo ESPLICITO prima della scheda, e si contano in «righe»', async () => {
+    await db.exec(`
+      INSERT INTO public.certificati_medici (alunno_id) VALUES ('${DOPPIONE}'), ('${DOPPIONE}');
+      INSERT INTO public.student_documents (student_id) VALUES ('${DOPPIONE}');
+      INSERT INTO public.certificati_medici (alunno_id) VALUES ('${FRATELLO}');
+    `)
+    const r = await elimina(DOPPIONE)
+    expect(r).toMatchObject({ ok: true, code: 'eliminato' })
+    expect(r.righe).toMatchObject({ certificati_medici: 2, fascicolo: 1 })
+    expect(await numero(`SELECT count(*) FROM public.alunni WHERE id = '${DOPPIONE}'`)).toBe(0)
+    // Solo quelli della scheda eliminata: il fratello conserva il suo.
+    expect(await numero(`SELECT count(*) FROM public.certificati_medici WHERE alunno_id = '${FRATELLO}'`)).toBe(1)
+  })
+
+  it('in sola verifica non li tocca', async () => {
+    await db.exec(`INSERT INTO public.certificati_medici (alunno_id) VALUES ('${DOPPIONE}')`)
+    expect(await elimina(DOPPIONE, false, true)).toEqual({ ok: true, code: 'ammissibile' })
+    expect(await numero(`SELECT count(*) FROM public.certificati_medici WHERE alunno_id = '${DOPPIONE}'`)).toBe(1)
+  })
+
+  it('la definizione di PRIMA (08/10), con gli stessi freni, cadeva con 23503: è il guasto che questa migrazione evita', async () => {
+    // La prova che il test qui sopra misura il cambio e non lo schema: stessa
+    // scheda, stesso certificato, la definizione senza cancellazioni esplicite.
+    const vecchio = new PGlite()
+    try {
+      await schemaMinimo(vecchio)
+      await vecchio.exec(PRIMA_DEFINIZIONE)
+      await vecchio.exec(`
+        INSERT INTO public.alunni (id, stato) VALUES ('${DOPPIONE}', 'ritirato');
+        INSERT INTO public.certificati_medici (alunno_id) VALUES ('${DOPPIONE}');
+      `)
+      let err: PgErr | null = null
+      try {
+        await vecchio.query(`SELECT public.elimina_alunno_definitivo('${DOPPIONE}') AS r`)
+      } catch (e) {
+        err = e as PgErr
+      }
+      expect(DEFINIZIONI.length, 'serve la definizione della fase 7 accanto a quella del 08/10').toBeGreaterThan(1)
+      // Un freno RESTRICT risponde 23503 fino a Postgres 17 (la produzione, 17.6) e
+      // 23001 (`restrict_violation`) da Postgres 18 (PGlite 0.5, 18.3).
+      expect(err?.code).toMatch(/^(23503|23001)$/)
+    } finally {
+      await vecchio.close()
+    }
   })
 })
 
@@ -513,7 +599,7 @@ describe('elimina_alunno_definitivo — tutto o niente, e chi può chiamarla', (
     expect(rows[0]).toEqual({ anon: false, auth: false, svc: true })
   })
 
-  it('la migrazione non cancella mai da storage.objects', () => {
-    expect(MIGRAZIONE.toLowerCase()).not.toContain('storage.objects')
+  it('nessuna migrazione della funzione cancella da storage.objects', () => {
+    for (const sql of MIGRAZIONI) expect(sql.toLowerCase()).not.toContain('storage.objects')
   })
 })

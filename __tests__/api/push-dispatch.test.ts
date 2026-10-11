@@ -16,6 +16,18 @@ const h = vi.hoisted(() => {
     calls: [] as Chiamata[],
   }
   function take(table: string, catena: Chiamata[]) {
+    // La presa con scadenza (fase 8) aggiunge due query di contorno che le code di questo file non
+    // prevedono: il BIDELLO (filtro `lt` sulla scadenza: nessuna presa scaduta) e la CONFERMA (un
+    // UPDATE che scrive solo `push_presa_scade_il`). Rispondono senza consumare la coda, così ogni
+    // test continua a descrivere le query che gli interessano. Le provano i test con la tabella in
+    // memoria (`__tests__/lib/push-dispatch-presa.test.ts`).
+    if (table === 'notifiche' && catena.some((c) => c.m === 'lt' && c.args[0] === 'push_presa_scade_il')) {
+      return { data: [], error: null }
+    }
+    const aggiornamento = catena.find((c) => c.m === 'update')?.args[0] as Record<string, unknown> | undefined
+    if (table === 'notifiche' && aggiornamento && Object.keys(aggiornamento).join() === 'push_presa_scade_il') {
+      return { data: null, error: null }
+    }
     const q = state.queues[table] || []
     const i = state.used[table] ?? 0
     state.used[table] = i + 1
@@ -33,7 +45,7 @@ const h = vi.hoisted(() => {
           catena.push(c)
           return qb
         }
-        for (const m of ['select', 'is', 'or', 'order', 'limit', 'in', 'update', 'delete', 'eq']) qb[m] = rec(m)
+        for (const m of ['select', 'is', 'or', 'order', 'limit', 'in', 'update', 'delete', 'eq', 'lt']) qb[m] = rec(m)
         qb.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
           Promise.resolve(take(table, catena)).then(res, rej)
         return qb
@@ -435,7 +447,8 @@ describe('POST /api/push/dispatch — lo staff riceve in push solo la coda fattu
     // togliendo la relazione dalla lettura.
     h.state.queues = { notifiche: [{ data: [], error: null }] }
     await POST(req('test-secret'))
-    const sel = h.state.calls.find((c) => c.table === 'notifiche' && c.m === 'select')
+    // La lettura delle CANDIDATE (quella che chiede `titolo`), non quella del bidello (fase 8).
+    const sel = h.state.calls.find((c) => c.table === 'notifiche' && c.m === 'select' && String(c.args[0]).includes('titolo'))
     expect(sel).toBeDefined()
     const arg = String(sel!.args[0])
     expect(arg.split(',').map((s) => s.trim())).toContain('tipo')

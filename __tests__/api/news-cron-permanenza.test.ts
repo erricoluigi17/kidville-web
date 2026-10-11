@@ -50,9 +50,14 @@ vi.mock('@/lib/news/permanenza-consenso', () => ({
 const news = vi.hoisted(() => ({
   notificaNewsPubblicata: vi.fn<(...a: unknown[]) => Promise<undefined>>(async () => undefined),
   generaEInviaDigest: vi.fn<(...a: unknown[]) => Promise<{ edizioni: unknown[] }>>(async () => ({ edizioni: [] })),
+  riprendiDigestInterrotti: vi.fn<(...a: unknown[]) => Promise<{ disponibile: boolean; riprese: number; inviate: number }>>(async () => ({ disponibile: true, riprese: 0, inviate: 0 })),
 }))
 vi.mock('@/lib/news/notifiche', () => ({ notificaNewsPubblicata: (...a: unknown[]) => news.notificaNewsPubblicata(...a) }))
-vi.mock('@/lib/news/digest', () => ({ generaEInviaDigest: (...a: unknown[]) => news.generaEInviaDigest(...a) }))
+vi.mock('@/lib/news/digest', () => ({
+  generaEInviaDigest: (...a: unknown[]) => news.generaEInviaDigest(...a),
+  riprendiDigestInterrotti: (...a: unknown[]) => news.riprendiDigestInterrotti(...a),
+  TETTO_GIRO_DIGEST_MS: 240_000,
+}))
 
 const ext = vi.hoisted(() => ({
   externalFetch: vi.fn<(...a: unknown[]) => Promise<{ stato: number; corpo: string; res: undefined }>>(
@@ -88,7 +93,8 @@ const db = vi.hoisted(() => {
           if (st.isUpdate) {
             ordine.passi.push('promozione')
             state.updates.push(st.rec ?? {})
-            return { data: null, error: null }
+            // La promozione chiede indietro le righe toccate (guardia di stato, fase 8).
+            return { data: [{ id: st.eqs.id }], error: null }
           }
           if (st.eqs.stato === 'programmata') return { data: state.programmate, error: null }
           return { data: [], error: null }

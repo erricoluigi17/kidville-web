@@ -78,7 +78,8 @@ async function schema(): Promise<void> {
     );
     CREATE TABLE public.incassi (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      pagamento_id uuid NOT NULL REFERENCES public.pagamenti(id) ON DELETE CASCADE,
+      -- RESTRICT come in produzione dalla fase 7 (20261010230042_freni_restrict_catene_legali).
+      pagamento_id uuid NOT NULL REFERENCES public.pagamenti(id) ON DELETE RESTRICT,
       importo numeric(10,2) NOT NULL CHECK (importo <> 0),
       data_incasso date NOT NULL DEFAULT CURRENT_DATE,
       metodo public.incasso_metodo NOT NULL DEFAULT 'contanti',

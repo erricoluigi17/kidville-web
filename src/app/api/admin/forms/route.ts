@@ -8,6 +8,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zOpzionale, zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { figlieTrattengono } from '@/lib/db/figlie-trattengono';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id restano stringhe libere (niente zUuid): oggi il codice non impone
@@ -222,6 +223,21 @@ export const PATCH = withRoute('admin/forms:PATCH', async (request: NextRequest)
 });
 
 // DELETE: Elimina un modulo
+/** 409: il modulo ha compilazioni (firmate), che sono documenti e restano. */
+function rispostaModuloCompilato(utente: { id: string; role?: string | null }, causa: string, err?: unknown): NextResponse {
+  logEvento('modulistica', 'warn', {
+    operazione: 'admin/forms:DELETE', esito: 'modulo-con-compilazioni', tipo: causa,
+    utente: utente.id, ruolo: utente.role ?? null,
+  }, err);
+  return NextResponse.json(
+    {
+      error: 'Il modulo ha già compilazioni: non si può eliminare, perché quelle restano come documenti. Per chiuderlo, imposta una scadenza.',
+      codice: 'MODULO_CON_COMPILAZIONI',
+    },
+    { status: 409 },
+  );
+}
+
 export const DELETE = withRoute('admin/forms:DELETE', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
@@ -232,9 +248,36 @@ export const DELETE = withRoute('admin/forms:DELETE', async (request: NextReques
     try {
       const supabase = await createAdminClient();
 
-      // Stesso vincolo della PATCH: la DELETE si porta via anche le compilazioni
-      // collegate, quindi il template dev'essere di un plesso in scope.
+      // Stesso vincolo della PATCH: il template dev'essere di un plesso in scope.
       const sedi = await resolveScuoleAttive(request, supabase, auth.user);
+
+      // Fase 7 della roadmap di robustezza: le COMPILAZIONI (firmate, con OTP) non se ne
+      // vanno più con il modulo. Prima la DELETE se le portava via in CASCADE; dalla PR 2
+      // la FK è RESTRICT. Un modulo già compilato si chiude con la scadenza, non si elimina. La guardia
+      // guarda solo dentro le sedi in scope: su un modulo altrui resta il 404 di sotto.
+      const { data: modulo, error: errModulo } = await supabase
+        .from('forms_templates')
+        .select('id')
+        .eq('id', b.data.id)
+        .in('scuola_id', sedi)
+        .maybeSingle();
+      if (errModulo) {
+        logErrore({ operazione: 'admin/forms:DELETE', stato: 500, evento: 'db' }, errModulo);
+        return NextResponse.json({ error: 'Errore interno', codice: 'LETTURA_FALLITA' }, { status: 500 });
+      }
+      if (modulo) {
+        const { data: compilazioni, error: errCompilazioni } = await supabase
+          .from('forms_submissions')
+          .select('id')
+          .eq('form_id', b.data.id)
+          .limit(1);
+        if (errCompilazioni) {
+          logErrore({ operazione: 'admin/forms:DELETE', stato: 500, evento: 'guardia_compilazioni' }, errCompilazioni);
+          return NextResponse.json({ error: 'Errore interno', codice: 'LETTURA_FALLITA' }, { status: 500 });
+        }
+        if (compilazioni && compilazioni.length > 0) return rispostaModuloCompilato(auth.user, 'compilazioni');
+      }
+
       const { data, error } = await supabase
         .from('forms_templates')
         .delete()
@@ -243,7 +286,9 @@ export const DELETE = withRoute('admin/forms:DELETE', async (request: NextReques
         .select('id');
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        if (figlieTrattengono(error)) return rispostaModuloCompilato(auth.user, 'freno', error);
+        logErrore({ operazione: 'admin/forms:DELETE', stato: 500, evento: 'db' }, error);
+        return NextResponse.json({ error: 'Errore interno', codice: 'ELIMINAZIONE_NON_RIUSCITA' }, { status: 500 });
       }
       if (((data ?? []) as unknown[]).length === 0) {
         logEvento('modulistica', 'warn', {

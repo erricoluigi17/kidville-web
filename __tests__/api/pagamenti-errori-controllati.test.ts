@@ -136,20 +136,96 @@ describe('eliminazione · una guardia che non ha potuto guardare ferma la DELETE
     expect(scritte('pagamenti', 'delete')).toEqual([])
   })
 
-  it('🔴 incassi di transazione non letti → 500, e la voce RESTA', async () => {
+  it('🔴 incassi non letti → 500, e la voce RESTA', async () => {
     h.db.pagamenti = [voce()]
     h.errori = { 'incassi:select': GUASTO }
     const res = await pagamentoDELETE(json(`/api/pagamenti/${PAG}`, 'DELETE'), ctx(PAG))
     expect(res.status).toBe(500)
     expect(h.db.pagamenti).toHaveLength(1)
   })
+})
 
-  it('schema assente (colonna transazione_id, 42703: DB E2E non migrato) → la guardia salta come prima', async () => {
+/**
+ * Fase 7 della roadmap di robustezza: la DELETE di una voce si porta via in CASCADE le sue
+ * rate e quote (`parent_payment_id`), e fino a qui anche i loro INCASSI. Dalla PR 2 la FK
+ * degli incassi è RESTRICT: le guardie della route lo dicono prima, con un 409 e la via
+ * d'uscita, e il rifiuto del database (23503 su Postgres 17, 23001 dal 18) diventa un 409.
+ */
+describe('eliminazione · la contabilità trattiene la voce (fase 7)', () => {
+  const RATA = 'b2b2b2b2-2222-4222-8222-bbbbbbbbbbbb'
+
+  it('🔴 una voce con un incasso (anche senza transazione) → 409 VOCE_CON_INCASSI, voce e incasso RESTANO', async () => {
     h.db.pagamenti = [voce()]
-    h.errori = { 'incassi:select': { code: '42703', message: 'column incassi.transazione_id does not exist' } }
+    h.db.incassi = [{ id: 'i1', pagamento_id: PAG, transazione_id: null, importo: 100 }]
+    const res = await pagamentoDELETE(json(`/api/pagamenti/${PAG}`, 'DELETE'), ctx(PAG))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('VOCE_CON_INCASSI')
+    expect(h.db.pagamenti).toHaveLength(1)
+    expect(h.db.incassi).toHaveLength(1)
+    expect(scritte('pagamenti', 'delete')).toEqual([])
+  })
+
+  it('🔴 l’incasso sta su una RATA figlia → 409, il padre resta (prima: rata e incasso via in cascata)', async () => {
+    h.db.pagamenti = [voce({ tipo: 'padre' }), voce({ id: RATA, tipo: 'rata', parent_payment_id: PAG })]
+    h.db.incassi = [{ id: 'i1', pagamento_id: RATA, transazione_id: null, importo: 50 }]
+    const res = await pagamentoDELETE(json(`/api/pagamenti/${PAG}`, 'DELETE'), ctx(PAG))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('VOCE_CON_INCASSI')
+    expect(h.db.pagamenti).toHaveLength(2)
+  })
+
+  it('🔴 la fattura emessa sta su una RATA figlia → 409 per conservazione fiscale', async () => {
+    h.db.pagamenti = [voce({ tipo: 'padre' }), voce({ id: RATA, tipo: 'rata', parent_payment_id: PAG })]
+    h.db.fatture_emesse = [{ id: 'f1', pagamento_id: RATA }]
+    const res = await pagamentoDELETE(json(`/api/pagamenti/${PAG}`, 'DELETE'), ctx(PAG))
+    expect(res.status).toBe(409)
+    expect(h.db.pagamenti).toHaveLength(2)
+  })
+
+  it('incasso di una transazione di famiglia → 409 con la via d’uscita della transazione', async () => {
+    h.db.pagamenti = [voce()]
+    h.db.incassi = [{ id: 'i1', pagamento_id: PAG, transazione_id: 'd1d1d1d1-1111-4111-8111-dddddddddddd', importo: 100 }]
+    const res = await pagamentoDELETE(json(`/api/pagamenti/${PAG}`, 'DELETE'), ctx(PAG))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('VOCE_IN_TRANSAZIONE')
+  })
+
+  for (const stato of ['in_coda', 'in_invio', 'errore']) {
+    it(`🔴 una fattura in coda «${stato}» → 409 VOCE_IN_CODA_FATTURE (prima: la voce di coda spariva in cascata)`, async () => {
+      h.db.pagamenti = [voce()]
+      h.db.fatture_coda = [{ id: 'q1', pagamento_id: PAG, stato }]
+      const res = await pagamentoDELETE(json(`/api/pagamenti/${PAG}`, 'DELETE'), ctx(PAG))
+      expect(res.status).toBe(409)
+      expect((await res.json()).codice).toBe('VOCE_IN_CODA_FATTURE')
+      expect(h.db.pagamenti).toHaveLength(1)
+    })
+  }
+
+  it('una voce di coda già «tolta» non trattiene: la voce pulita si elimina', async () => {
+    h.db.pagamenti = [voce()]
+    h.db.fatture_coda = [{ id: 'q1', pagamento_id: PAG, stato: 'tolta' }]
+    const res = await pagamentoDELETE(json(`/api/pagamenti/${PAG}`, 'DELETE'), ctx(PAG))
+    expect(res.status).toBe(200)
+    expect(scritte('pagamenti', 'delete')).toHaveLength(1)
+  })
+
+  for (const code of ['23503', '23001']) {
+    it(`🔴 il freno del database rifiuta (${code}: incassata fra le guardie e la DELETE) → 409, non 500`, async () => {
+      h.db.pagamenti = [voce()]
+      h.errori = { 'pagamenti:delete': { code, message: 'update or delete on table "pagamenti" violates foreign key constraint' } }
+      const res = await pagamentoDELETE(json(`/api/pagamenti/${PAG}`, 'DELETE'), ctx(PAG))
+      expect(res.status).toBe(409)
+      expect((await res.json()).codice).toBe('VOCE_CON_CONTABILITA')
+      expect(eventi('eliminazione-rifiutata-dal-freno')).toHaveLength(1)
+    })
+  }
+
+  it('una voce pulita, senza figlie né contabilità, si elimina e lascia l’audit', async () => {
+    h.db.pagamenti = [voce()]
     const res = await pagamentoDELETE(json(`/api/pagamenti/${PAG}`, 'DELETE'), ctx(PAG))
     expect(res.status).toBe(200)
     expect(h.db.pagamenti).toHaveLength(0)
+    expect(scritte('registro_modifiche', 'insert')).toHaveLength(1)
   })
 })
 

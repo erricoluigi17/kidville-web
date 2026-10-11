@@ -13,6 +13,8 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import { normalizzaMetodiAmmessi, CODICI_COLONNA_ASSENTE } from '@/lib/pagamenti/metodi-ammessi'
 import { zMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi-zod'
+import { STATI_CODA_OCCUPATA } from '@/lib/pagamenti/fatturazione-riga'
+import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
 
 // ─── Schemi di validazione input (M3 + Contabilità v2 S3) ────────────────────
 // PATCH: merge parziale sui soli campi ammessi, ora TIPIZZATI (finding #3: prima
@@ -367,33 +369,98 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
     if (!sediDel.includes(String((old as { scuola_id: string }).scuola_id))) {
       return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     }
+    // La DELETE di una voce porta via in CASCADE le sue rate e quote (`parent_payment_id`):
+    // ogni guardia guarda la voce E le figlie. Prima della fase 7 guardava la sola voce,
+    // e una rata fatturata o incassata se ne andava con il padre.
+    const { data: figlie, error: figlieErr } = await supabase.from('pagamenti').select('id').eq('parent_payment_id', id)
+    if (figlieErr) return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:pagamenti:figlie', figlieErr)
+    const famiglia = [id, ...((figlie ?? []) as { id: string }[]).map((f) => f.id)]
+
     // Conservazione fiscale: un pagamento con FATTURA emessa non è cancellabile
     // (FK RESTRICT + WORM). Le RICEVUTE già a registro restano (numero
     // conservato, `pagamento_id` azzerato via ON DELETE SET NULL).
     //
-    // 🔴 Le due guardie qui sotto erano scritte `!errore && …`: con un guasto della lettura la
+    // 🔴 Le guardie qui sotto erano scritte `!errore && …`: con un guasto della lettura la
     // guardia SALTAVA e la DELETE partiva — su una voce fatturata o legata a una transazione
     // di famiglia (fase 5 robustezza, sesto pezzo). Una guardia che non ha potuto guardare
     // ferma la cancellazione; salta solo dove lo schema manca davvero (DB E2E non migrato).
-    const { data: fatt, error: fattErr } = await supabase.from('fatture_emesse').select('id').eq('pagamento_id', id).limit(1)
+    const { data: fatt, error: fattErr } = await supabase.from('fatture_emesse').select('id').in('pagamento_id', famiglia).limit(1)
     if (fattErr && !TABELLA_ASSENTE.has(fattErr.code ?? '')) {
       return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:fatture_emesse:guardia', fattErr)
     }
     if (!fattErr && fatt && fatt.length > 0) {
       return NextResponse.json({ error: 'Pagamento con fattura emessa: non eliminabile per conservazione fiscale. Annulla/storna prima la fattura.' }, { status: 409 })
     }
-    // Voce agganciata a una transazione unica di famiglia: non si cancella qui
-    // (annullare la transazione). Retry sulla colonna transazione_id: se il DB non
-    // la ha (E2E CI non migrato) il controllo si salta.
-    const tx = await supabase.from('incassi').select('id').eq('pagamento_id', id).not('transazione_id', 'is', null).limit(1)
-    if (tx.error && !CODICI_COLONNA_ASSENTE.includes(tx.error.code ?? '')) {
-      return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:incassi:guardia-transazione', tx.error)
+    // Fase 7: un INCASSO qualunque, anche stornato, è contabilità. Gli incassi non si
+    // cancellano mai (lo storno è una riga in più): la voce che li porta resta. Prima
+    // la cascata li cancellava insieme alla voce, senza dirlo (restava fuori solo
+    // l'incasso di una transazione di famiglia); dalla PR 2 della fase 7 la FK è
+    // RESTRICT e il database rifiuterebbe comunque.
+    const inc = await supabase.from('incassi').select('id').in('pagamento_id', famiglia).limit(1)
+    if (inc.error) return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:incassi:guardia', inc.error)
+    if (inc.data && inc.data.length > 0) {
+      // Solo per dire la via d'uscita giusta: se l'incasso è di una transazione unica di
+      // famiglia, si annulla la transazione. La decisione è già presa (la voce resta):
+      // un guasto di questa lettura, o la colonna assente sul DB E2E non migrato,
+      // cambiano solo il messaggio.
+      const tx = await supabase.from('incassi').select('id').in('pagamento_id', famiglia).not('transazione_id', 'is', null).limit(1)
+      if (tx.error && !CODICI_COLONNA_ASSENTE.includes(tx.error.code ?? '')) {
+        logEvento('pagamento', 'warn', {
+          operazione: 'pagamenti/[id]:DELETE', esito: 'transazione-non-letta', pagamento_id: id,
+        }, tx.error)
+      }
+      const diTransazione = !tx.error && (tx.data?.length ?? 0) > 0
+      logEvento('pagamento', 'info', {
+        operazione: 'pagamenti/[id]:DELETE', esito: 'eliminazione-rifiutata-incassi', pagamento_id: id,
+        transazione: diTransazione,
+      })
+      return NextResponse.json(
+        diTransazione
+          ? { error: 'Pagamento con incassi di una transazione di famiglia: annulla prima la transazione.', codice: 'VOCE_IN_TRANSAZIONE' }
+          : {
+              error: 'La voce ha incassi registrati (anche stornati): resta per la contabilità. Se è sbagliata, storna gli incassi e correggi la voce invece di eliminarla.',
+              codice: 'VOCE_CON_INCASSI',
+            },
+        { status: 409 },
+      )
     }
-    if (!tx.error && tx.data && tx.data.length > 0) {
-      return NextResponse.json({ error: 'Pagamento con incassi di una transazione di famiglia: annulla prima la transazione.' }, { status: 409 })
+    // Una fattura ancora in coda (in coda, in invio, in errore) se ne andrebbe con la
+    // voce in CASCADE: «in invio» vuol dire che il file può essere già partito verso
+    // SDI. Si toglie prima dalla coda, poi si elimina la voce.
+    const coda = await supabase
+      .from('fatture_coda')
+      .select('id')
+      .in('pagamento_id', famiglia)
+      .in('stato', [...STATI_CODA_OCCUPATA])
+      .limit(1)
+    if (coda.error && !TABELLA_ASSENTE.has(coda.error.code ?? '')) {
+      return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:fatture_coda:guardia', coda.error)
+    }
+    if (!coda.error && coda.data && coda.data.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'La voce ha una fattura in coda di emissione: toglila dalla coda prima di eliminare la voce.',
+          codice: 'VOCE_IN_CODA_FATTURE',
+        },
+        { status: 409 },
+      )
     }
     const { error } = await supabase.from('pagamenti').delete().eq('id', id)
     if (error) {
+      // Un incasso o una fattura arrivati fra le guardie e la DELETE: il freno RESTRICT
+      // del database rifiuta, e non è un guasto.
+      if (figlieTrattengono(error)) {
+        logEvento('pagamento', 'warn', {
+          operazione: 'pagamenti/[id]:DELETE', esito: 'eliminazione-rifiutata-dal-freno', pagamento_id: id,
+        }, error)
+        return NextResponse.json(
+          {
+            error: 'La voce è stata incassata o fatturata nel frattempo: non si può più eliminare. Ricarica la pagina.',
+            codice: 'VOCE_CON_CONTABILITA',
+          },
+          { status: 409 },
+        )
+      }
       logErrore({ operazione: 'pagamenti/[id]:DELETE', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
     }

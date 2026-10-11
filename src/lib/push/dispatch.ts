@@ -7,6 +7,7 @@ import { TIPI_AVVISO_CODA } from '@/lib/fatture-coda/avvisi-testi'
 import { ENTITA_CHAT_THREAD, TIPI_NOTIFICA_CHAT } from '@/lib/chat/notifiche-chat'
 import { marcaConsegnati } from '@/lib/chat/delivered'
 import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
+import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
 
 // =============================================================================
 // IL DISPATCH DELLE PUSH — estratto dalla route `/api/push/dispatch` (PS2, 24/09).
@@ -32,7 +33,7 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 //
 // IL PREZZO DELLA PRESA, e come si paga. Prima un giro che moriva a metà (timeout della
 // funzione) lasciava le notifiche NON marcate: al giro dopo ripartivano, magari doppie. Ora le
-// lascerebbe PRESE e mai spedite — perse, che è peggio. Tre difese:
+// lascerebbe PRESE e mai spedite — perse, che è peggio. Tre difese, più una rete (la quarta):
 //  · il TETTO DI TEMPO del giro, guardato DUE volte. Subito prima della presa
 //    (`SOGLIA_PRESA_MS`): se le letture l'hanno già consumato non si prende niente, e le
 //    notifiche restano in coda intatte. Serve perché le letture che precedono la presa sono GET,
@@ -54,7 +55,17 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 //    `DURATA_MINIMA_FUNZIONE_S` in `./durata-dispatch.ts`; ogni route che chiama
 //    `eseguiDispatch` dichiara un `export const maxDuration` almeno così lungo. Senza, una
 //    Function si ferma prima e le notifiche prese restano perse. Lo impone il lock in
-//    `__tests__/lib/push-dispatch-durata.test.ts`.
+//    `__tests__/lib/push-dispatch-durata.test.ts`;
+//  · LA SCADENZA DELLA PRESA (fase 8 della roadmap di robustezza, 11/10). Le tre difese qui sopra
+//    valgono finché la Function arriva in fondo; un OOM, un crash, un `after()` troncato dalla
+//    piattaforma le scavalcano tutte. Ora la presa scrive anche `push_presa_scade_il` (presa +
+//    `PRESTITO_PRESA_MS`), e a fine giro le notifiche chiuse si CONFERMANO (colonna di nuovo
+//    null). Una presa ancora aperta dopo la scadenza vuol dire un giro morto prima di chiudere: il
+//    BIDELLO all'inizio del giro successivo la rimette in coda se è ancora entro la finestra dei
+//    30 minuti, e altrimenti la chiude lasciandola marcata, con una riga `error` che lo dice. Il
+//    prezzo è dichiarato: le notifiche che il giro morto aveva GIÀ spedito ripartono, cioè un
+//    doppione su quel telefono. Fra un doppione e una notifica persa in silenzio si sceglie il
+//    doppione. `push_inviata_il` resta ciò che sedici file leggono come «non ancora spedita».
 //
 // A BLOCCHI, OGNI `.in()`. PostgREST mette `.in()` nella query string: 500 uuid sono ~18,5 kB e
 // un proxy risponde 414 (`@/lib/db/blocchi`). La presa è la porta di TUTTI gli invii: rifiutata
@@ -97,6 +108,19 @@ export const JOB_DISPATCH = 'push-dispatch'
 
 /** Quanto a lungo una notifica non consegnata per un guasto transitorio resta in coda. */
 export const FINESTRA_CODA_MS = 30 * 60_000
+
+/**
+ * QUANTO DURA UNA PRESA (fase 8). La presa scrive `push_presa_scade_il = presa + PRESTITO_PRESA_MS`;
+ * a fine giro la si conferma. Una presa aperta oltre la scadenza è di un giro morto, e il bidello
+ * del giro dopo la rimette in coda.
+ *
+ * DEVE SUPERARE LA VITA MASSIMA DI UNA FUNCTION CHE CHIAMA `eseguiDispatch` (il `maxDuration`
+ * delle sue route, 300 s): prima di lì il giro che ha preso può essere ancora vivo, e il bidello di
+ * un altro giro gli rimetterebbe in coda notifiche che sta spedendo — il doppione che la presa
+ * esiste per evitare. 330 s, lo stesso prestito della coda fatture (`@/lib/fatture-coda/giro`).
+ * Lo tiene il lock in `__tests__/lib/push-dispatch-durata.test.ts`.
+ */
+export const PRESTITO_PRESA_MS = 330_000
 
 /**
  * Dopo quanti millisecondi di giro gli invii nativi smettono di fare ritentativi immediati. Un
@@ -345,6 +369,94 @@ function programmataIl(n: RigaNotifica): number {
 }
 
 /**
+ * IL BIDELLO (fase 8): le prese SCADUTE, cioè di un giro morto prima di chiudere.
+ *
+ * Si leggono (al più `LIMITE_LETTURA`, indice parziale sulle sole prese aperte: a regime zero
+ * righe) e si dividono con la stessa regola del ritorno in coda: entro `FINESTRA_CODA_MS` dalla
+ * programmazione tornano in coda (`push_inviata_il` e scadenza a null), oltre ci si arrende — la
+ * presa si chiude e la notifica resta marcata, con una riga `error`. Ogni UPDATE ripete la guardia
+ * `push_presa_scade_il < adesso`: una presa confermata fra la lettura e la scrittura (un giro lento
+ * ma vivo) non si tocca.
+ *
+ * Non ferma MAI il giro: un guasto qui è una riga `warn`, e le notifiche nuove partono lo stesso.
+ * Restituisce `conScadenza: false` quando la colonna non c'è (DB della CI non migrato): allora la
+ * presa si fa come prima, senza scadenza.
+ */
+async function rilasciaPreseScadute(
+  supabase: SupabaseClient,
+  origine: OrigineDispatch,
+): Promise<{ conScadenza: boolean }> {
+  const operazione = operazioneDi(origine)
+  const adessoMs = Date.now()
+  const adesso = new Date(adessoMs).toISOString()
+  const { data, error } = await supabase
+    .from('notifiche')
+    .select('id, creato_il, invio_programmato_il')
+    .lt('push_presa_scade_il', adesso)
+    .limit(LIMITE_LETTURA)
+  if (error) {
+    if (colonnaNuovaAssente(error)) {
+      riga(origine, 'info', {
+        operazione,
+        esito: 'presa-senza-scadenza',
+        msg: `${operazione}: colonna push_presa_scade_il assente (DB non migrato), presa senza scadenza come prima`,
+      })
+      return { conScadenza: false }
+    }
+    riga(origine, 'warn', { operazione, esito: 'bidello-non-riuscito', azione: 'lettura', msg: `${operazione}: prese scadute non lette, si riprova al giro dopo` }, error)
+    return { conScadenza: true }
+  }
+  const scadute = (data ?? []) as RigaNotifica[]
+  if (scadute.length === 0) return { conScadenza: true }
+
+  const entro = scadute.filter((n) => adessoMs - programmataIl(n) < FINESTRA_CODA_MS).map((n) => n.id)
+  const oltre = scadute.filter((n) => !(adessoMs - programmataIl(n) < FINESTRA_CODA_MS)).map((n) => n.id)
+  let rimesse = 0
+  let abbandonate = 0
+  let errScrittura: unknown = null
+  for (const [ids, payload] of [
+    [entro, { push_inviata_il: null, push_presa_scade_il: null }],
+    [oltre, { push_presa_scade_il: null }],
+  ] as const) {
+    for (const blocco of aBlocchi([...ids], ID_PER_QUERY)) {
+      const { data: toccate, error: errUpd } = await supabase
+        .from('notifiche')
+        .update(payload)
+        .in('id', blocco)
+        .lt('push_presa_scade_il', adesso)
+        .select('id')
+      if (errUpd) {
+        if (errScrittura === null) errScrittura = errUpd
+        continue
+      }
+      const n = ((toccate ?? []) as unknown[]).length
+      if ('push_inviata_il' in payload) rimesse += n
+      else abbandonate += n
+    }
+  }
+  if (rimesse > 0) {
+    riga(origine, 'warn', {
+      operazione,
+      esito: 'prese-scadute-rimesse-in-coda',
+      rimesse_in_coda: rimesse,
+      msg: `${operazione}: ${rimesse} notifiche prese da un giro che non ha chiuso tornano in coda (possibile doppione su chi le aveva già ricevute)`,
+    })
+  }
+  if (abbandonate > 0) {
+    riga(origine, 'error', {
+      operazione,
+      esito: 'prese-scadute-abbandonate',
+      arrese: abbandonate,
+      msg: `${operazione}: ${abbandonate} notifiche prese da un giro che non ha chiuso, oltre i 30 minuti: restano marcate e non partiranno`,
+    })
+  }
+  if (errScrittura !== null) {
+    riga(origine, 'warn', { operazione, esito: 'bidello-non-riuscito', azione: 'rilascio', msg: `${operazione}: prese scadute non rilasciate, si riprova al giro dopo` }, errScrittura)
+  }
+  return { conScadenza: true }
+}
+
+/**
  * IL BADGE iOS: quante notifiche NON LETTE (`letta_il` null) ha ciascun destinatario. UNA query
  * per giro, qualunque sia il numero di utenti: la RPC `notifiche_non_lette_per_utente` conta
  * con un `GROUP BY` sull'indice `(utente_id, letta_il)`. Leggere le righe e contarle qui non si
@@ -433,6 +545,11 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
     }
 
     const supabase = await createAdminClient()
+
+    // ── 0. IL BIDELLO: le prese di un giro morto (fase 8) ────────────────────────────────
+    // Prima di leggere le candidate, così le notifiche rimesse in coda partono IN QUESTO giro.
+    // Non ferma mai il giro: vedi `rilasciaPreseScadute`.
+    let { conScadenza } = await rilasciaPreseScadute(supabase, origine)
 
     // ── 1. LE CANDIDATE: push non ancora spedita E buffer scaduto ─────────────────────────
     const nowIso = new Date().toISOString()
@@ -567,16 +684,32 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
     // righe prese e mai spedite (perse) e muterebbe proprio le righe che dicono cosa si è perso.
     const scrittureFallite: Array<{ azione: string; error: unknown }> = []
     const presaIl = new Date().toISOString()
+    // La scadenza della presa (fase 8): se la Function muore prima della conferma, il bidello di
+    // un giro successivo la trova scaduta e rimette in coda. Vedi `PRESTITO_PRESA_MS`.
+    const scadeIl = new Date(Date.parse(presaIl) + PRESTITO_PRESA_MS).toISOString()
+    const prendi = (blocco: string[]) =>
+      supabase
+        .from('notifiche')
+        .update(conScadenza ? { push_inviata_il: presaIl, push_presa_scade_il: scadeIl } : { push_inviata_il: presaIl })
+        .in('id', blocco)
+        .is('push_inviata_il', null)
+        .select('id')
     const idsPresi = new Set<string>()
     let tentate = 0
     let errPresa: unknown = null
     for (const blocco of aBlocchi(candidate.map((n) => n.id), ID_PER_QUERY)) {
-      const { data: preseIds, error } = await supabase
-        .from('notifiche')
-        .update({ push_inviata_il: presaIl })
-        .in('id', blocco)
-        .is('push_inviata_il', null)
-        .select('id')
+      let { data: preseIds, error } = await prendi(blocco)
+      if (error && conScadenza && colonnaNuovaAssente(error)) {
+        // La lettura del bidello è passata ma lo schema cache non conosce la colonna: si prende
+        // come prima, senza scadenza, e lo si dice. L'UPDATE rifiutato non ha toccato niente.
+        conScadenza = false
+        riga(origine, 'info', {
+          operazione,
+          esito: 'presa-senza-scadenza',
+          msg: `${operazione}: colonna push_presa_scade_il sconosciuta allo schema, presa senza scadenza come prima`,
+        })
+        ;({ data: preseIds, error } = await prendi(blocco))
+      }
       if (error) {
         // Il DB rifiuta: ci si ferma qui. I blocchi non tentati restano NON presi, in coda.
         errPresa = error
@@ -732,12 +865,31 @@ export async function eseguiDispatch(opzioni: OpzioniDispatch = {}): Promise<Esi
     for (const blocco of aBlocchi(daRimettere, ID_PER_QUERY)) {
       const { error } = await supabase
         .from('notifiche')
-        .update({ push_inviata_il: null })
+        .update(conScadenza ? { push_inviata_il: null, push_presa_scade_il: null } : { push_inviata_il: null })
         .in('id', blocco)
         .eq('push_inviata_il', presaIl)
       if (error && errRitorno === null) errRitorno = error
     }
     if (errRitorno !== null) scrittureFallite.push({ azione: 'ritorno in coda', error: errRitorno })
+
+    // ── 7a. LA CONFERMA DELLA PRESA (fase 8) ────────────────────────────────────────────
+    // Le notifiche che questo giro ha CHIUSO (spedite, escluse, arrese, senza dispositivi)
+    // perdono la scadenza: il bidello non le toccherà mai. Solo dove c'è ancora la NOSTRA presa.
+    // Se la conferma fallisce la presa scadrà e il bidello le rimetterà in coda: un doppione per
+    // chi le ha già ricevute. È una scrittura fallita come le altre: riga `error` e 500.
+    if (conScadenza) {
+      const rimesse = new Set(daRimettere)
+      let errConferma: unknown = null
+      for (const blocco of aBlocchi(prese.filter((n) => !rimesse.has(n.id)).map((n) => n.id), ID_PER_QUERY)) {
+        const { error } = await supabase
+          .from('notifiche')
+          .update({ push_presa_scade_il: null })
+          .in('id', blocco)
+          .eq('push_inviata_il', presaIl)
+        if (error && errConferma === null) errConferma = error
+      }
+      if (errConferma !== null) scrittureFallite.push({ azione: 'conferma presa', error: errConferma })
+    }
 
     // Le subscription «gone» (410/404) che non si riesce a cancellare restano lì e ogni giro
     // riprovano a ricevere una push che non arriverà mai: un errore silenzioso e permanente.

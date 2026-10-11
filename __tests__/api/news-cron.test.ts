@@ -28,9 +28,14 @@ vi.mock('@/lib/logging/logger', () => ({ ...log, EVENTI_PERSISTITI: new Set(['ne
 const news = vi.hoisted(() => ({
   notificaNewsPubblicata: vi.fn<(...a: unknown[]) => Promise<undefined>>(async () => undefined),
   generaEInviaDigest: vi.fn<(...a: unknown[]) => Promise<{ edizioni: unknown[] }>>(async () => ({ edizioni: [] })),
+  riprendiDigestInterrotti: vi.fn<(...a: unknown[]) => Promise<{ disponibile: boolean; riprese: number; inviate: number }>>(async () => ({ disponibile: true, riprese: 0, inviate: 0 })),
 }))
 vi.mock('@/lib/news/notifiche', () => ({ notificaNewsPubblicata: (...a: unknown[]) => news.notificaNewsPubblicata(...a) }))
-vi.mock('@/lib/news/digest', () => ({ generaEInviaDigest: (...a: unknown[]) => news.generaEInviaDigest(...a) }))
+vi.mock('@/lib/news/digest', () => ({
+  generaEInviaDigest: (...a: unknown[]) => news.generaEInviaDigest(...a),
+  riprendiDigestInterrotti: (...a: unknown[]) => news.riprendiDigestInterrotti(...a),
+  TETTO_GIRO_DIGEST_MS: 240_000,
+}))
 
 const ext = vi.hoisted(() => ({ externalFetch: vi.fn() }))
 vi.mock('@/lib/logging/external', () => ({ externalFetch: (...a: unknown[]) => ext.externalFetch(...a) }))
@@ -44,6 +49,9 @@ const db = vi.hoisted(() => {
     instagramError: null as unknown,
     updates: [] as Array<{ rec: Record<string, unknown>; eqs: Record<string, unknown> }>,
     updateError: null as unknown,
+    // Un altro tick (o un operatore) ha già cambiato lo stato: l'UPDATE con la guardia
+    // `.eq('stato', 'programmata')` non tocca nessuna riga.
+    giaPromossa: false,
     // Edizioni digest rimaste in coda (`inviata_il IS NULL`): le ripesca `eseguiDigest`.
     pendenti: [] as Array<{ anno: number; mese: number }>,
     pendentiError: null as unknown,
@@ -68,7 +76,10 @@ const db = vi.hoisted(() => {
         const resolve = (): { data: unknown; error: unknown } => {
           if (st.isUpdate) {
             state.updates.push({ rec: st.updateRec ?? {}, eqs: { ...st.eqs } })
-            return { data: null, error: state.updateError }
+            if (state.updateError) return { data: null, error: state.updateError }
+            // Le righe toccate: zero se la guardia di stato non trova più la programmata.
+            const toccate = state.giaPromossa && st.eqs.stato === 'programmata' ? [] : [{ id: st.eqs.id }]
+            return { data: toccate, error: null }
           }
           // `.is('inviata_il', null)` senza nessun `.eq`: è il ripescaggio delle
           // edizioni rimaste in coda (`eseguiDigest`). Nessun'altra query di questa
@@ -119,6 +130,7 @@ beforeEach(() => {
   db.state.instagramError = null
   db.state.updates = []
   db.state.updateError = null
+  db.state.giaPromossa = false
   supa.createAdminClient.mockReset().mockImplementation(async () => db.client())
   supa.createClient.mockReset().mockImplementation(async () => db.client())
   ext.externalFetch.mockResolvedValue({ ok: true, stato: 200, corpo: '', res: { text: async () => 'interstiziale consent' } })
@@ -160,6 +172,47 @@ describe('news/cron/run — job tick: promozione programmate', () => {
     expect(pubblicazione!.eqs.id).toBe('p1')
     expect(news.notificaNewsPubblicata).toHaveBeenCalledTimes(1)
     expect(battitoOk()).toBe(true)
+  })
+
+  it('🔴 la promozione ha la guardia di stato: se il post non è più «programmata», niente pubblicazione forzata e niente notifica', async () => {
+    db.state.programmate = [{
+      id: 'p1', titolo: 'Festa', scuola_id: 'sc-1', target_scope: 'globale',
+      target_gradi: null, target_classes: null, contenuto_testo: 'testo',
+      invia_notifica: true, notifica_inviata_il: null,
+    }]
+    db.state.giaPromossa = true
+    const res = await cronPOST(req({ job: 'tick' }, SEGRETO))
+    expect(res.status).toBe(200)
+    const pubblicazione = db.state.updates.find((u) => u.rec.stato === 'pubblicata')
+    // l'UPDATE porta la guardia: senza, sovrascriverebbe la scelta di chi l'ha cambiato
+    expect(pubblicazione!.eqs.stato).toBe('programmata')
+    expect(news.notificaNewsPubblicata).not.toHaveBeenCalled()
+    expect(righe('info').some((r) => r.campi.esito === 'promozione-non-piu-programmata')).toBe(true)
+    expect(battitoOk()).toBe(true)
+  })
+})
+
+describe('news/cron/run — job tick: ripresa delle edizioni del digest interrotte (fase 8)', () => {
+  it('il tick chiama la ripresa con un tetto di tempo contato dall\'inizio del tick', async () => {
+    const prima = Date.now()
+    const res = await cronPOST(req({ job: 'tick' }, SEGRETO))
+    expect(res.status).toBe(200)
+    expect(news.riprendiDigestInterrotti).toHaveBeenCalledTimes(1)
+    const { scadenza } = news.riprendiDigestInterrotti.mock.calls[0][1] as { scadenza: number }
+    expect(scadenza).toBeGreaterThanOrEqual(prima + 240_000)
+    expect(scadenza).toBeLessThanOrEqual(Date.now() + 240_000)
+  })
+
+  it('il job digest passa UNA scadenza sola al mese precedente e alle arretrate', async () => {
+    db.state.pendenti = [{ anno: 2026, mese: 3 }]
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-01T08:00:00.000Z'))
+    const res = await cronPOST(req({ job: 'digest' }, SEGRETO))
+    expect(res.status).toBe(200)
+    const scadenze = news.generaEInviaDigest.mock.calls.map((c) => (c[1] as { scadenza?: number }).scadenza)
+    expect(scadenze).toHaveLength(2)
+    expect(scadenze[0]).toBe(Date.parse('2026-10-01T08:00:00.000Z') + 240_000)
+    expect(scadenze[1]).toBe(scadenze[0])
   })
 })
 
@@ -243,7 +296,7 @@ describe('news/cron/run — job digest', () => {
     news.generaEInviaDigest.mockResolvedValue({ edizioni: [{ scuola_id: 'sc-1', generata: true, inviata: true, destinatari_count: 3, errori_count: 0 }] })
     const res = await cronPOST(req({ job: 'digest' }, SEGRETO))
     expect(res.status).toBe(200)
-    expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2026, mese: 2 })
+    expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ anno: 2026, mese: 2 }))
     expect(battitoOk()).toBe(true)
   })
 
@@ -251,7 +304,7 @@ describe('news/cron/run — job digest', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-10T08:00:00Z'))
     await cronPOST(req({ job: 'digest' }, SEGRETO))
-    expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2025, mese: 12 })
+    expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ anno: 2025, mese: 12 }))
   })
 
   // ── LE EDIZIONI RIMASTE IN CODA ──────────────────────────────────────────────
@@ -275,8 +328,8 @@ describe('news/cron/run — job digest', () => {
 
       expect(res.status).toBe(200)
       // il mese corrente (agosto) + l'arretrato (luglio)
-      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2026, mese: 8 })
-      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2026, mese: 7 })
+      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ anno: 2026, mese: 8 }))
+      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ anno: 2026, mese: 7 }))
       expect(news.generaEInviaDigest).toHaveBeenCalledTimes(2)
     })
 
@@ -294,8 +347,8 @@ describe('news/cron/run — job digest', () => {
       // fosse spento del tutto — e un verde che non distingue «funziona» da «non
       // c'è» è peggio di nessun test. Luglio deve essere ripescato.
       expect(news.generaEInviaDigest).toHaveBeenCalledTimes(2)
-      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2026, mese: 8 })
-      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2026, mese: 7 })
+      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ anno: 2026, mese: 8 }))
+      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ anno: 2026, mese: 7 }))
     })
 
     it('oltre sei mesi si lascia perdere: una coda infinita cresce in silenzio', async () => {
@@ -307,7 +360,7 @@ describe('news/cron/run — job digest', () => {
 
       // agosto (corrente) + maggio (dentro i 6 mesi). Gennaio 2025 no.
       expect(news.generaEInviaDigest).toHaveBeenCalledTimes(2)
-      expect(news.generaEInviaDigest).not.toHaveBeenCalledWith(expect.anything(), { anno: 2025, mese: 1 })
+      expect(news.generaEInviaDigest).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ anno: 2025, mese: 1 }))
     })
 
     it('la stessa coppia anno/mese su più sedi si lavora UNA volta sola', async () => {

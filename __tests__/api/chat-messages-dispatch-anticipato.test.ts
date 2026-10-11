@@ -37,6 +37,12 @@ const h = vi.hoisted(() => ({
   after: vi.fn(),
   /** I callback consegnati ad `after()`, da eseguire a mano come farebbe la piattaforma. */
   programmati: [] as Array<() => Promise<void>>,
+  /** Fase 8: quante notifiche della conversazione sono ancora da spedire dopo l'attesa. Una
+   *  funzione, così una raffica può vederle sparire dopo il primo giro. */
+  inCoda: (() => 1) as () => number,
+  erroreCoda: null as null | { code: string; message: string },
+  /** I filtri della lettura della coda, per provare che guarda QUESTA conversazione. */
+  filtriCoda: [] as Array<Record<string, unknown>>,
 }))
 
 vi.mock('next/server', async (orig) => ({
@@ -62,9 +68,18 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 const adminClient = {
   from(table: string) {
     const b: Record<string, unknown> = {}
+    const filtri: Record<string, unknown> = {}
     b.select = () => b
-    b.eq = () => b
-    b.is = () => b
+    b.eq = (c: string, v: unknown) => { filtri[c] = v; return b }
+    b.is = (c: string, v: unknown) => { filtri[c] = v; return b }
+    if (table === 'notifiche') {
+      // La lettura della coda della conversazione (fase 8): `count` con `head: true`.
+      b.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
+        h.filtriCoda.push({ ...filtri })
+        const esito = h.erroreCoda ? { count: null, error: h.erroreCoda } : { count: h.inCoda(), error: null }
+        return Promise.resolve(esito).then(ok, ko)
+      }
+    }
     b.maybeSingle = async () => {
       if (table === 'chat_threads') return { data: { teacher_id: TEACHER, parent_id: PARENT, student_id: ALUNNO }, error: null }
       if (table === 'parents') return { data: { consensi_gdpr: { privacy: true, termini: true } }, error: null }
@@ -120,6 +135,9 @@ async function eseguiProgrammato(): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks()
   h.programmati.length = 0
+  h.inCoda = () => 1
+  h.erroreCoda = null
+  h.filtriCoda = []
   h.after.mockImplementation((cb: () => Promise<void>) => {
     h.programmati.push(cb)
   })
@@ -270,6 +288,36 @@ describe('POST /api/chat/messages — la push parte 30 s dopo il messaggio', () 
     await Promise.all(corse)
     expect(h.eseguiDispatch).toHaveBeenCalledTimes(3)
     for (const c of h.eseguiDispatch.mock.calls) expect(c[0]).toEqual({ origine: 'chat' })
+  })
+
+  it('🔴 fase 8: la raffica fa UN giro solo — dopo il primo la notifica della conversazione non è più in coda', async () => {
+    for (const content of ['uno', 'due', 'tre']) await POST(postReq({ thread_id: THREAD, content }))
+    // la notifica (una sola, per il debounce) resta in coda finché un giro non la prende
+    let presa = false
+    h.inCoda = () => (presa ? 0 : 1)
+    h.eseguiDispatch.mockImplementation(async () => { presa = true; return { stato: 200, data: DATI_OK } })
+    vi.useFakeTimers()
+    for (const cb of h.programmati) {
+      const corsa = cb()
+      await vi.advanceTimersByTimeAsync(30_000)
+      await corsa
+    }
+    expect(h.eseguiDispatch).toHaveBeenCalledTimes(1)
+    expect(righe('dispatch-anticipato-superfluo')).toHaveLength(2)
+    expect(righe('dispatch-anticipato-superfluo')[0][1]).toBe('info')
+    // la coda guardata è quella di QUESTA conversazione, e solo le notifiche non spedite
+    expect(h.filtriCoda[0]).toEqual({ entita_tipo: 'chat_thread', entita_id: THREAD, push_inviata_il: null })
+  })
+
+  it('fase 8: la coda della conversazione non si legge ⇒ il giro parte lo stesso, e una riga `warn` lo dice', async () => {
+    h.erroreCoda = { code: '57014', message: 'canceling statement due to statement timeout' }
+    await POST(postReq({ thread_id: THREAD, content: 'uno' }))
+    vi.useFakeTimers()
+    await eseguiProgrammato()
+    expect(h.eseguiDispatch).toHaveBeenCalledTimes(1)
+    const [riga] = righe('dispatch-anticipato-verifica-fallita')
+    expect(riga[1]).toBe('warn')
+    expect((riga[3] as { code?: string }).code).toBe('57014')
   })
 
   it('nei log del dispatch anticipato non finisce il testo del messaggio', async () => {

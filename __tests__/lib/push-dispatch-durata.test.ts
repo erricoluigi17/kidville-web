@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { ATTESA_MAX_MS, ATTESE_RITENTATIVO_MS } from '@/lib/push/native-push'
 import {
+  PRESTITO_PRESA_MS,
   BUDGET_RITENTATIVI_MS,
   LIMITE_LETTURA,
   SOGLIA_CONSEGNA_CHAT_MS,
@@ -234,5 +235,28 @@ describe('ogni route che chiama il dispatch vive quanto il caso peggiore del gir
     }
     // Non resta verde a vuoto: la route del cron c'è sempre.
     expect(chiamanti).toContain(join('src', 'app', 'api', 'push', 'dispatch', 'route.ts'))
+  })
+
+  it('la presa scade DOPO la vita massima di ogni Function che chiama il dispatch (fase 8)', () => {
+    // Una presa che scade mentre il giro che l'ha presa è ancora vivo viene rimessa in coda dal
+    // bidello di un altro giro: la stessa notifica partirebbe due volte. Il prestito deve
+    // superare il `maxDuration` più lungo fra le route che chiamano `eseguiDispatch`.
+    const radice = join(process.cwd(), 'src', 'app')
+    const durate: number[] = []
+    const visita = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name)
+        if (e.isDirectory()) visita(p)
+        else if (/^route\.(ts|tsx|js)$/.test(e.name)) {
+          const testo = senzaCommenti(readFileSync(p, 'utf8'))
+          if (!/\beseguiDispatch\b/.test(testo)) continue
+          const m = testo.match(/^export\s+const\s+maxDuration\s*=\s*(\d+)\s*$/m)
+          if (m) durate.push(Number(m[1]))
+        }
+      }
+    }
+    visita(radice)
+    expect(durate.length).toBeGreaterThan(0)
+    expect(PRESTITO_PRESA_MS).toBeGreaterThan(Math.max(...durate) * 1_000)
   })
 })

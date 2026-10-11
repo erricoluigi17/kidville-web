@@ -1264,6 +1264,106 @@ export function controlloRegione(regione: string | undefined = process.env.VERCE
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * 9. Le code che non smaltiscono (fase 8 della roadmap di robustezza)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/** Oltre quanti minuti una push maturata e mai presa è un arretrato: sei giri del cron. */
+export const MINUTI_ALLARME_PUSH = 30
+/** Oltre quanti minuti una presa scaduta e non chiusa dice che il bidello non passa: due giri. */
+export const MINUTI_ALLARME_PRESA = 10
+/** Oltre quanti minuti un'edizione del digest interrotta e non ripresa dice che il tick non la
+ *  riprende: tre tick. */
+export const MINUTI_ALLARME_DIGEST = 30
+/** Fin dove si guarda indietro per le edizioni interrotte: oltre, il problema è già stato visto
+ *  (o non si vedrà più), e un allarme senza fine viene spento. */
+export const GIORNI_GUARDIA_DIGEST = 7
+/** Oltre quanti minuti una news programmata e non pubblicata dice che il tick è fermo: tre tick. */
+export const MINUTI_ALLARME_NEWS = 30
+
+/** Una colonna o una tabella che questo database non ha ancora (CI non migrata). */
+const CODICI_NON_INSTALLATO = new Set([...CODICI_TABELLA_ASSENTE, '42703'])
+
+/**
+ * IL CONTROLLO CHE SI ACCORGE DELLE CODE CHE NON SI SVUOTANO.
+ *
+ * La fase 8 ha dato una scadenza alle prese e un tetto di tempo ai giri: un giro morto o
+ * fermato lascia il lavoro a quello dopo. Ma «quello dopo» è sempre un cron, e un cron fermo
+ * non logga — è ancora la forma del difetto della testata. Il battito (`cron-battito`) dice se
+ * un job è PARTITO; questo dice se la sua coda si è SVUOTATA:
+ *  · push maturate e mai prese da oltre `MINUTI_ALLARME_PUSH`: il dispatch non gira, o le
+ *    rimanda (canale non configurato);
+ *  · prese scadute da oltre `MINUTI_ALLARME_PRESA` e ancora aperte: il bidello non passa;
+ *  · edizioni del digest con la presa scaduta da oltre `MINUTI_ALLARME_DIGEST` e non inviate
+ *    (ultimi `GIORNI_GUARDIA_DIGEST` giorni): il tick non le riprende;
+ *  · news programmate scadute da oltre `MINUTI_ALLARME_NEWS`: il tick non le promuove (o ha
+ *    sospeso la promozione perché non rilegge il consenso fotografico — che va visto lo stesso).
+ *
+ * A regime sono quattro zeri (misurato il 10/10: 0 push maturate non prese, 0 programmate
+ * scadute). Colonna o tabella assente → `ok` con la nota, come per la coda fatture: la CI non è
+ * migrata, e un allarme che suona da solo viene spento.
+ *
+ * Escono SOLO conteggi e codici: la rotta è pubblica. Le letture sono `head: true`, sugli indici
+ * parziali delle code aperte (vuoti a regime).
+ *
+ * `degradato` e mai `giu`: una coda che non si svuota non impedisce a nessuno di aprire l'app.
+ */
+export async function controlloCodeArretrate(supabase: SupabaseClient, adesso: number): Promise<Controllo> {
+    return misura('code-arretrate', 'degradato', async () => {
+        const iso = (ms: number) => new Date(ms).toISOString()
+        const sogliaPush = iso(adesso - MINUTI_ALLARME_PUSH * MIN)
+        const [push, prese, digest, news] = await Promise.all([
+            supabase
+                .from('notifiche')
+                .select('id', { count: 'exact', head: true })
+                .is('push_inviata_il', null)
+                // Maturata = programmata nel passato, o senza programmazione: allora conta la
+                // creazione. Le virgolette: punto e due punti sono riservati nella sintassi di `or`.
+                .or(`and(invio_programmato_il.is.null,creato_il.lt."${sogliaPush}"),invio_programmato_il.lt."${sogliaPush}"`),
+            supabase
+                .from('notifiche')
+                .select('id', { count: 'exact', head: true })
+                .lt('push_presa_scade_il', iso(adesso - MINUTI_ALLARME_PRESA * MIN)),
+            supabase
+                .from('news_digest_edizioni')
+                .select('id', { count: 'exact', head: true })
+                .is('inviata_il', null)
+                .lt('presa_scade_il', iso(adesso - MINUTI_ALLARME_DIGEST * MIN))
+                .gte('presa_scade_il', iso(adesso - GIORNI_GUARDIA_DIGEST * 24 * ORA)),
+            supabase
+                .from('news_posts')
+                .select('id', { count: 'exact', head: true })
+                .eq('stato', 'programmata')
+                .lt('programmata_il', iso(adesso - MINUTI_ALLARME_NEWS * MIN)),
+        ])
+
+        const guasti: string[] = []
+        const note: string[] = []
+        const leggi = (
+            nome: string,
+            r: { count: number | null; error: unknown },
+            frase: (n: number) => string,
+        ): void => {
+            // PostgREST non lancia (regola 7): una lettura caduta non è «zero arretrati».
+            if (r.error) {
+                const codice = codiceDi(r.error)
+                if (CODICI_NON_INSTALLATO.has(codice)) note.push(`${nome} non installato (${codice})`)
+                else guasti.push(`${nome} ${codice}`)
+                return
+            }
+            const n = r.count ?? 0
+            if (n > 0) guasti.push(frase(n))
+        }
+        leggi('push', push, (n) => `${n} push maturate e non prese da oltre ${MINUTI_ALLARME_PUSH} min`)
+        leggi('prese push', prese, (n) => `${n} prese push scadute da oltre ${MINUTI_ALLARME_PRESA} min e non chiuse`)
+        leggi('digest', digest, (n) => `${n} edizioni del digest interrotte e non riprese da oltre ${MINUTI_ALLARME_DIGEST} min`)
+        leggi('news', news, (n) => `${n} news programmate non pubblicate da oltre ${MINUTI_ALLARME_NEWS} min`)
+
+        if (guasti.length > 0) return { esito: 'degradato', dettaglio: [...guasti, ...note].join('; ') }
+        return { esito: 'ok', dettaglio: note.length > 0 ? `nessun arretrato; ${note.join(', ')}` : 'nessun arretrato' }
+    })
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
 
@@ -1320,7 +1420,7 @@ export async function eseguiVivo(supabase: SupabaseClient): Promise<Salute> {
 
 /**
  * LA SALUTE — il vivo più tutto ciò che si rompe senza che nessun genitore lo veda subito: schema,
- * cron, errori del server, configurazione, coda delle fatture, regione. NON include la qualità dei
+ * cron, errori del server, configurazione, coda delle fatture, code che non si svuotano, regione. NON include la qualità dei
  * dati: vedi `eseguiQualita`.
  */
 export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSalute): Promise<Salute> {
@@ -1334,6 +1434,7 @@ export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSal
         controlloTassoErrore(supabase, adesso, opzioni.ambiente),
         controlloConfig(),
         controlloCodaFatture(supabase, adesso),
+        controlloCodeArretrate(supabase, adesso),
         Promise.resolve(controlloRegione()),
     ])
     return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })

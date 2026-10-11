@@ -13,6 +13,7 @@ import { ID_PER_QUERY, RIGHE_MASSIME_POSTGREST, aBlocchi } from '@/lib/db/blocch
 import { leggiABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
 import { rispostaServiziNonDisponibili } from '@/lib/pagamenti/generazione-server'
 import { STATI_CODA_OCCUPATA } from '@/lib/pagamenti/fatturazione-riga'
+import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
 import { meseDellaVoce } from '@/lib/pagamenti/selezione-voci'
 import {
   motivoIntoccabile,
@@ -669,6 +670,21 @@ async function applicaConVoci(
       .or('fattura_stato.is.null,fattura_stato.eq.non_richiesta')
       .select('id')
     if (del.error) {
+      // Fase 7: un incasso registrato su una delle voci fra il primo e il secondo tempo.
+      // La DELETE è una sola istruzione: il freno RESTRICT la rifiuta TUTTA, niente è
+      // cambiato, e la finestra si ripresenta con quella voce fra le intoccabili.
+      if (figlieTrattengono(del.error)) {
+        logEvento('pagamento', 'warn', {
+          operazione, esito: 'voci-servizio-trattenute-dal-freno', scuola_id: sede, iscrizione_id: iscr.id, n: ids.length,
+        }, del.error)
+        return NextResponse.json(
+          {
+            error: 'Una delle voci è stata incassata nel frattempo: nessuna voce è stata eliminata. Riprova per rivedere l’elenco.',
+            codice: 'VOCI_CAMBIATE',
+          },
+          { status: 409 },
+        )
+      }
       logEvento('pagamento', 'error', {
         operazione, esito: 'voci-servizio-non-eliminate', scuola_id: sede, iscrizione_id: iscr.id, n: ids.length,
       }, del.error)

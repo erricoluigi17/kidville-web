@@ -408,16 +408,23 @@ describe('AvvisoCard · le due scadenze nel corpo, con data E ora', () => {
 // ═════════════════════════════════════════════════════════════════════════════
 describe('AvvisoCard · al genitore non arriva MAI un numero di posti', () => {
     it('né il tetto, né gli ammessi, né la differenza fra i due', () => {
-        // I tre numeri sono scelti perché non possono nascere da nient'altro in
-        // questa card: 97 (il tetto), 40 (gli ammessi) e 57 (la sottrazione, che è
-        // il dato vietato vero — nessuno lo scrive, si ricava). La riga li porta
-        // come se una regressione avesse riaperto la proiezione del server: la card
-        // non deve comunque mostrarli.
+        // I tre numeri sono 97 (il tetto), 40 (gli ammessi) e 57 (la sottrazione, che è
+        // il dato vietato vero — nessuno lo scrive, si ricava). La riga li porta come se
+        // una regressione avesse riaperto la proiezione del server: la card non deve
+        // comunque mostrarli.
+        //
+        // 🔴 Qui c'era scritto che quei numeri «non possono nascere da nient'altro in
+        // questa card». Era falso: la card scrive l'ETÀ dell'avviso («40g fa»), e con
+        // `created_at` fisso al 01/09 l'11/10 il test è diventato rosso da solo — e lo
+        // sarebbe ridiventato il 28/10 (57) e il 07/12 (97). La creazione si mette
+        // ADESSO: l'età è «adesso», senza cifre, qualunque giorno giri il test.
+        // L'orologio NON si congela: è la fixture che segue l'orologio.
         const { container } = render(
             <AvvisoCard
                 index={0}
                 avviso={{
                     ...avvisoCon({
+                        created_at: new Date().toISOString(),
                         my_response: { letto_il: 'x', risposta: 'si', risposto_il: 'x', stato_adesione: 'in_attesa', numero_partecipanti: 2 },
                     }),
                     ...({ posti_totali: 97 } as Record<string, unknown>),
@@ -430,6 +437,9 @@ describe('AvvisoCard · al genitore non arriva MAI un numero di posti', () => {
         // Controllo positivo accanto: la card sta rendendo davvero qualcosa, e dice
         // alla famiglia la cosa che le spetta.
         expect(screen.getByText(T('seiInAttesaPersone', { count: 2 }))).toBeInTheDocument()
+        // …e l'età dell'avviso, l'unico altro numero che la card potrebbe scrivere, non
+        // ne porta: se questa riga cade, il ciclo qui sotto torna a dipendere dal giorno.
+        expect(screen.getByText(T('adesso'))).toBeInTheDocument()
 
         for (const proibito of ['97', '57', '40']) {
             expect(container.textContent, `«${proibito}» è comparso a schermo`).not.toContain(proibito)

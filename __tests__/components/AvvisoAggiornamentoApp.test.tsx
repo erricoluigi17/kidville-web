@@ -125,6 +125,21 @@ function messaggiLog(): string[] {
 }
 
 /**
+ * Il dialogo è comparso E la sua comparsa è registrata. Il log «mostrato» lo scrive un EFFETTO,
+ * dopo che il dialogo è già nel DOM: `findByRole` può restituire il controllo prima che l'effetto
+ * giri, e un click in quella finestra registra «rimandato» PRIMA di «mostrato» (sotto il carico
+ * della CI è successo il 02/10, il 09/10 e l'11/10, sempre in questo file). Si aspetta la PRESENZA
+ * della riga — `volte` comparse registrate — prima di toccare qualunque cosa.
+ */
+async function comparsoERegistrato(volte = 1): Promise<HTMLElement> {
+  const d = await screen.findByRole('dialog', { name: T.avvisoAggiornaTitolo })
+  await waitFor(() =>
+    expect(messaggiLog().filter((m) => m.startsWith('avviso-aggiorna-app-mostrato:'))).toHaveLength(volte),
+  )
+  return d
+}
+
+/**
  * Il messaggio porta PIATTAFORMA E VERSIONE, e non per ornamento: `app_log` accorpa le righe per
  * impronta, e l'impronta contiene il messaggio ma NON la piattaforma né i `campi`. Col solo
  * «avviso-aggiorna-app-mostrato», senza utente (pagina di login), tutte le comparse del giorno
@@ -187,7 +202,7 @@ describe('AvvisoAggiornamentoApp — a chi compare', () => {
   ])('binario 1.0 su %s: «Aggiorna ora» porta alla scheda dello store e chiude', async (piattaforma, url) => {
     stato.piattaforma = piattaforma
     await monta()
-    expect(await screen.findByRole('dialog', { name: T.avvisoAggiornaTitolo })).toBeTruthy()
+    expect(await comparsoERegistrato()).toBeTruthy()
     // Sotto la minima dello store il corpo è quello di sempre, non quello del personale.
     expect(screen.getByText(T.avvisoAggiornaCorpo)).toBeTruthy()
     expect(screen.queryByText(T.avvisoAggiornaCorpoPersonale)).toBeNull()
@@ -209,13 +224,14 @@ describe('AvvisoAggiornamentoApp — a chi compare', () => {
     stato.piattaforma = 'ios'
     stato.versione = '1.0.3'
     await monta()
-    await screen.findByRole('dialog')
+    await comparsoERegistrato()
     expect(messaggiLog()).toEqual(['avviso-aggiorna-app-mostrato: ios 1.0.3'])
   })
 
   it('«Più tardi» chiude e lo registra; non si naviga', async () => {
     await monta()
-    fireEvent.click(await screen.findByRole('button', { name: T.avvisoAggiornaPiuTardi }))
+    await comparsoERegistrato()
+    fireEvent.click(screen.getByRole('button', { name: T.avvisoAggiornaPiuTardi }))
     expect(dialogo()).toBeNull()
     expect(apriUrl).not.toHaveBeenCalled()
     expect(messaggiLog()).toEqual([M('mostrato'), M('rimandato')])
@@ -224,7 +240,7 @@ describe('AvvisoAggiornamentoApp — a chi compare', () => {
 
   it('Esc vale «Più tardi»', async () => {
     await monta()
-    await screen.findByRole('dialog')
+    await comparsoERegistrato()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(dialogo()).toBeNull()
     expect(messaggiLog()).toContain(M('rimandato'))
@@ -241,19 +257,21 @@ describe('AvvisoAggiornamentoApp — a chi compare', () => {
 describe('AvvisoAggiornamentoApp — «a ogni apertura»', () => {
   it('rimandato, ricompare tornando in primo piano dopo 30 minuti in background', async () => {
     await monta()
-    fireEvent.click(await screen.findByRole('button', { name: T.avvisoAggiornaPiuTardi }))
+    await comparsoERegistrato()
+    fireEvent.click(screen.getByRole('button', { name: T.avvisoAggiornaPiuTardi }))
     expect(dialogo()).toBeNull()
 
     cambiaVisibilita('hidden')
     stato.ora += 30 * MINUTO
     cambiaVisibilita('visible')
-    expect(await screen.findByRole('dialog', { name: T.avvisoAggiornaTitolo })).toBeTruthy()
+    expect(await comparsoERegistrato(2)).toBeTruthy()
     expect(messaggiLog().filter((m) => m === M('mostrato'))).toHaveLength(2)
   })
 
   it('un passaggio lampo a un\'altra app (5 minuti) non lo ripropone', async () => {
     await monta()
-    fireEvent.click(await screen.findByRole('button', { name: T.avvisoAggiornaPiuTardi }))
+    await comparsoERegistrato()
+    fireEvent.click(screen.getByRole('button', { name: T.avvisoAggiornaPiuTardi }))
 
     cambiaVisibilita('hidden')
     stato.ora += 5 * MINUTO
@@ -265,7 +283,8 @@ describe('AvvisoAggiornamentoApp — «a ogni apertura»', () => {
 
   it('anche dopo «Aggiorna ora» senza aggiornare, al ritorno dopo 30 minuti ricompare', async () => {
     await monta()
-    fireEvent.click(await screen.findByRole('button', { name: T.avvisoAggiornaBottone }))
+    await comparsoERegistrato()
+    fireEvent.click(screen.getByRole('button', { name: T.avvisoAggiornaBottone }))
     cambiaVisibilita('hidden')
     stato.ora += 45 * MINUTO
     cambiaVisibilita('visible')
@@ -299,7 +318,8 @@ describe('AvvisoAggiornamentoApp — «a ogni apertura»', () => {
 
   it('rimandato, smontato e rimontato nella stessa sessione non ricompare', async () => {
     const { Avviso, unmount } = await monta()
-    fireEvent.click(await screen.findByRole('button', { name: T.avvisoAggiornaPiuTardi }))
+    await comparsoERegistrato()
+    fireEvent.click(screen.getByRole('button', { name: T.avvisoAggiornaPiuTardi }))
     unmount()
     const { container } = render(albero(Avviso))
     await lasciaDecidere()
@@ -319,7 +339,7 @@ describe('AvvisoAggiornamentoApp — gate biometrico e doppio montaggio', () => 
 
     stato.bloccato = false
     rerender(albero(Avviso))
-    expect(await screen.findByRole('dialog', { name: T.avvisoAggiornaTitolo })).toBeTruthy()
+    expect(await comparsoERegistrato()).toBeTruthy()
     expect(messaggiLog()).toEqual([M('mostrato')])
   })
 
@@ -487,7 +507,8 @@ describe('AvvisoAggiornamentoApp — la minima del personale (T14)', () => {
   it('«Più tardi» chiude; dopo 30 minuti in background ricompare, e il ruolo si è letto una volta sola', async () => {
     stato.profili = DOCENTE
     await monta()
-    fireEvent.click(await screen.findByRole('button', { name: T.avvisoAggiornaPiuTardi }))
+    await comparsoERegistrato()
+    fireEvent.click(screen.getByRole('button', { name: T.avvisoAggiornaPiuTardi }))
     expect(dialogo()).toBeNull()
 
     cambiaVisibilita('hidden')

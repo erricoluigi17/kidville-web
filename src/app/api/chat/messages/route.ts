@@ -57,6 +57,42 @@ export const maxDuration = 300
 const ATTESA_DISPATCH_CHAT_MS = 30_000;
 
 /**
+ * IL GIRO SUPERFLUO (fase 8 della roadmap di robustezza, 2026-10-11).
+ *
+ * Ogni messaggio programmava un giro INTERO di `eseguiDispatch`: in sette giorni 2.177 giri
+ * anticipati contro 2.285 del cron, e il 27% partiva entro 30 s da un altro messaggio della
+ * STESSA conversazione — la cui notifica (una sola, per il `debounce`) l'aveva già presa il
+ * giro precedente. Quei giri non spedivano niente, ma leggevano la coda, prendevano,
+ * scrivevano il battito: lavoro e righe di log per zero push.
+ *
+ * Dopo l'attesa si guarda se la conversazione ha ANCORA una notifica non spedita. Nessuna ⇒
+ * il giro non parte (riga `info`). Il criterio è volutamente largo — qualunque notifica del
+ * thread con `push_inviata_il` null, maturata o no — perché saltare un giro che avrebbe
+ * spedito è peggio di farne uno inutile. Se la verifica non riesce si fa il giro, come prima.
+ * Il resto della coda (altre conversazioni) resta al cron, entro cinque minuti, o al giro
+ * anticipato del prossimo messaggio.
+ */
+async function notificaDelThreadInCoda(threadId: string, operazione: string): Promise<boolean> {
+    const supabase = await createAdminClient();
+    const { count, error } = await supabase
+        .from('notifiche')
+        .select('id', { count: 'exact', head: true })
+        .eq('entita_tipo', ENTITA_CHAT_THREAD)
+        .eq('entita_id', threadId)
+        .is('push_inviata_il', null);
+    if (error) {
+        logEvento('push', 'warn', {
+            operazione,
+            esito: 'dispatch-anticipato-verifica-fallita',
+            threadId,
+            msg: `${operazione}: coda della conversazione non letta, il giro anticipato parte lo stesso`,
+        }, error);
+        return true;
+    }
+    return (count ?? 0) > 0;
+}
+
+/**
  * Programma, DOPO la risposta, il giro di dispatch anticipato della chat: 30 s di attesa e poi
  * `eseguiDispatch({ origine: 'chat' })`. Nessun effetto sulla risposta: non lancia mai, e la POST
  * risponde 201 senza aspettarlo.
@@ -76,6 +112,15 @@ function programmaDispatchChat(threadId: string): void {
     const giro = async (): Promise<void> => {
         try {
             await new Promise<void>((fatto) => setTimeout(fatto, ATTESA_DISPATCH_CHAT_MS));
+            if (!(await notificaDelThreadInCoda(threadId, operazione))) {
+                logEvento('push', 'info', {
+                    operazione,
+                    esito: 'dispatch-anticipato-superfluo',
+                    threadId,
+                    msg: `${operazione}: la notifica della conversazione è già stata presa da un altro giro, nessun dispatch anticipato`,
+                });
+                return;
+            }
             logEvento('push', 'info', {
                 operazione,
                 esito: 'dispatch-anticipato-avviato',
@@ -598,11 +643,16 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        // Aggiorna last_message_at sul thread
-        await supabase
+        // Aggiorna last_message_at sul thread. PostgREST non lancia (regola 7): un errore qui
+        // non tocca il messaggio, già salvato, ma lascia la conversazione in fondo all'elenco
+        // — e va detto.
+        const { error: errUltimo } = await supabase
             .from('chat_threads')
             .update({ last_message_at: new Date().toISOString() })
             .eq('id', thread_id);
+        if (errUltimo) {
+            logEvento('chat', 'warn', { operazione: 'chat/messages:POST', esito: 'ultimo-messaggio-non-scritto', threadId: thread_id }, errUltimo);
+        }
 
         // Notifica alla controparte del thread (best-effort). Privacy: il corpo
         // NON contiene il testo del messaggio, solo il nome del mittente. Il

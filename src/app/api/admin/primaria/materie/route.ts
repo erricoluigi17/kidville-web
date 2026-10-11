@@ -7,6 +7,7 @@ import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
 
 // ============================================================
 // Materie (discipline) per sezione — catalogo editabile derivato dal preset.
@@ -245,6 +246,20 @@ export const PATCH = withRoute('admin/primaria/materie:PATCH', async (request: N
   }
 })
 
+/** 409: la materia ha voti, ore di registro o giudizi di scrutinio. */
+function rispostaMateriaInUso(materiaId: string, causa: string, err?: unknown): NextResponse {
+  logEvento('registro', 'warn', {
+    operazione: 'admin/primaria/materie:DELETE', esito: 'materia-in-uso', materia_id: materiaId, tipo: causa,
+  }, err)
+  return NextResponse.json(
+    {
+      error: 'La materia ha già voti, ore di registro o giudizi di scrutinio: non si può eliminare, perché quei dati restano nel registro.',
+      codice: 'MATERIA_IN_USO',
+    },
+    { status: 409 },
+  )
+}
+
 // DELETE /api/admin/primaria/materie?id=
 export const DELETE = withRoute('admin/primaria/materie:DELETE', async (request: NextRequest) => {
   try {
@@ -259,8 +274,23 @@ export const DELETE = withRoute('admin/primaria/materie:DELETE', async (request:
     const fuoriScope = await assertMateriaInScope(supabase, auth.user, id, 'admin/primaria/materie:DELETE')
     if (fuoriScope) return fuoriScope
 
+    // Fase 7 della roadmap di robustezza: i giudizi di scrutinio di una materia non se ne
+    // vanno più con lei (prima: CASCADE; dalla PR 2: RESTRICT). Voti e registro orario la
+    // trattenevano già (FK senza cascata), ma la route rispondeva 500 col messaggio grezzo
+    // di Postgres: ora è un 409 con la via d'uscita.
+    const { data: giudizi, error: errGiudizi } = await supabase.from('scrutinio_giudizi').select('id').eq('materia_id', id).limit(1)
+    if (errGiudizi) {
+      logErrore({ operazione: 'admin/primaria/materie:DELETE', stato: 500, evento: 'guardia_scrutinio_giudizi' }, errGiudizi)
+      return NextResponse.json({ error: 'Errore interno', codice: 'LETTURA_FALLITA' }, { status: 500 })
+    }
+    if (giudizi && giudizi.length > 0) return rispostaMateriaInUso(id, 'scrutinio_giudizi')
+
     const { error } = await supabase.from('materie').delete().eq('id', id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      if (figlieTrattengono(error)) return rispostaMateriaInUso(id, 'freno', error)
+      logErrore({ operazione: 'admin/primaria/materie:DELETE', stato: 500, evento: 'db' }, error)
+      return NextResponse.json({ error: 'Errore interno', codice: 'ELIMINAZIONE_NON_RIUSCITA' }, { status: 500 })
+    }
     return NextResponse.json({ success: true })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/materie:DELETE', stato: 500 }, err)

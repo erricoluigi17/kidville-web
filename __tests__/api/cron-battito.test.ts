@@ -61,8 +61,13 @@ const db = vi.hoisted(() => {
                 // si può asserire «l'UPDATE su `notifiche` NON è mai partito», che è il cuore del
                 // difetto distruttivo. Gli argomenti si ignorano di proposito (qui interessa SE
                 // una scrittura è avvenuta, non con quali valori).
+                // Il BIDELLO del dispatch (fase 8) legge le prese scadute con un `lt` su
+                // `notifiche`, prima di tutto il resto: risponde «nessuna» senza consumare la coda,
+                // così le code di questo file continuano a descrivere le letture del giro.
+                let bidello = false
                 const rec = (m: string) => () => {
                     state.calls.push({ table, m })
+                    if (table === 'notifiche' && m === 'lt') bidello = true
                     return qb
                 }
                 // ⚠️ L'ELENCO DEVE COPRIRE OGNI OPERATORE CHE LE CINQUE ROUTE USANO, e un buco
@@ -83,7 +88,7 @@ const db = vi.hoisted(() => {
                 qb.maybeSingle = async () => prendi(table)
                 qb.single = async () => prendi(table)
                 qb.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
-                    Promise.resolve(prendi(table)).then(res, rej)
+                    Promise.resolve(bidello ? { data: [], error: null } : prendi(table)).then(res, rej)
                 return qb
             },
             storage: { from: () => ({ upload: async () => ({}) }) },

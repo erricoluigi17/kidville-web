@@ -70,6 +70,13 @@ function queryFallita(azione: string, error: unknown, t0: number, canale: string
   return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
 }
 
+/**
+ * La vita massima della Function (fase 8 robustezza): un giro del cron che la supera
+ * muore a metà, e un lavoro troncato senza una vita dichiarata dipende dal default del
+ * piano. Il lock `cron-max-duration` la pretende da ogni route chiamata dal cron.
+ */
+export const maxDuration = 300
+
 // POST /api/mensa/allergie-check
 //   Job giornaliero: per ogni prenotazione attiva di `data` (default: oggi),
 //   verifica i conflitti allergia↔menu e avvisa segreteria/cuoca/insegnanti.

@@ -406,13 +406,15 @@ describe('DELETE /api/pagamenti/[id] — l’audit della cancellazione non tace'
   })
 
   it('la cancellazione stessa fallisce: 500, e il 500 si logga col codice', async () => {
-    h.errori = { 'pagamenti:delete': { code: '23503', message: 'update or delete on table "pagamenti" violates foreign key constraint' } }
+    // Un guasto vero (timeout), non un freno: dalla fase 7 un 23503/23001 sulla DELETE è un
+    // 409 «la contabilità trattiene la voce» (pagamenti-errori-controllati.test.ts).
+    h.errori = { 'pagamenti:delete': { code: '57014', message: 'canceling statement due to statement timeout' } }
     const res = await DELETE(del(), ctx)
     expect(res.status).toBe(500)
     expect(h.db.pagamenti).toHaveLength(1)
     expect(h.logErrore).toHaveBeenCalledTimes(1)
     expect(h.logErrore.mock.calls[0][0]).toMatchObject({ operazione: 'pagamenti/[id]:DELETE', stato: 500, evento: 'db' })
-    expect(h.logErrore.mock.calls[0][1]).toMatchObject({ code: '23503' })
+    expect(h.logErrore.mock.calls[0][1]).toMatchObject({ code: '57014' })
     // Nessun audit di una cancellazione che non è avvenuta.
     expect(h.db.registro_modifiche).toEqual([])
   })

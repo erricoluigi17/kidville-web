@@ -199,7 +199,19 @@ export function posterioriCheContengono(
 // in produzione dall'integrazione, una riga sola nel registro (209 migrazioni); fotografie
 // rigenerate dalla produzione — cambia solo quella delle migrazioni, perché le altre cinque
 // guardano `public` e la scatola sta nel suo schema.
+//
+// 2026-10-10 · FASE 6 «indici»: `20261010221643_indici_fk_initplan_doppioni.sql` (95 indici
+// sulle FK, 15 policy riscritte con `(select auth.uid())` via ALTER POLICY, 2 indici doppi
+// tolti). Tocca la fotografia della RLS (il testo delle 15 policy cambia, il significato no:
+// lo prova `__tests__/lib/policy-initplan-equivalenti-sql.test.ts`). Si toglie con la PR-B,
+// dopo che l'integrazione l'ha applicata al merge, rigenerando le fotografie dalla produzione.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261010221643_indici_fk_initplan_doppioni.sql':
+        'fase 6: indici sulle FK e policy con (select auth.uid()); la applica l\'integrazione al merge, ' +
+        'la PR-B rigenera la fotografia della RLS dalla produzione',
+    '20261010230042_freni_restrict_catene_legali.sql':
+        'fase 7 PR 2: 22 FK da CASCADE a RESTRICT (drop + add constraint, nessuna verso utenti); ' +
+        'la applica l\'integrazione al merge, la PR-B rigenera la fotografia delle FK verso utenti dalla produzione',
 }
 
 /**

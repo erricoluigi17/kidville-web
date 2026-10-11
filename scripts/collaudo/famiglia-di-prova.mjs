@@ -147,8 +147,18 @@ async function rimuovi() {
     // prodotto un documento a registro, la cancellazione del pagamento fallirebbe con
     // ON DELETE RESTRICT — ed è giusto così, un registro fiscale non si ripulisce.
     const alunni = esigi('alunni', await db.from('alunni').select('id').eq('cognome', COGNOME_MARCATORE)) ?? [];
+    //
+    // Fase 7 della roadmap di robustezza: incassi, certificati medici e fascicolo sono in
+    // RESTRICT verso la voce e verso la scheda. Prima li toglieva la cascata; ora si tolgono
+    // qui, esplicitamente, e SOLO quelli della famiglia di prova (il filtro è l'alunno marcato).
     for (const a of alunni) {
+        const voci = esigi('voci', await db.from('pagamenti').select('id').eq('alunno_id', a.id)) ?? [];
+        if (voci.length > 0) {
+            esigi('incassi', await db.from('incassi').delete().in('pagamento_id', voci.map((v) => v.id)));
+        }
         esigi('pagamenti', await db.from('pagamenti').delete().eq('alunno_id', a.id));
+        esigi('certificati_medici', await db.from('certificati_medici').delete().eq('alunno_id', a.id));
+        esigi('student_documents', await db.from('student_documents').delete().eq('student_id', a.id));
         esigi('student_parents', await db.from('student_parents').delete().eq('student_id', a.id));
     }
     esigi('alunni.delete', await db.from('alunni').delete().eq('cognome', COGNOME_MARCATORE));

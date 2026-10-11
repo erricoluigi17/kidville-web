@@ -94,6 +94,20 @@ export interface SendEmailParams {
    * nessuno dei due sa perché.
    */
   replyTo?: string
+  /**
+   * La chiave d'idempotenza di Resend (header `Idempotency-Key`; fase 8 della roadmap di
+   * robustezza). Per 24 ore la stessa chiave con lo stesso messaggio NON rispedisce: Resend
+   * risponde come al primo invio, con lo stesso id. Serve a chi spedisce in giro (digest,
+   * solleciti) e può ripartire dopo una Function troncata: la seconda volta il provider dice «già
+   * fatto» invece di mandare un doppione alla famiglia.
+   *
+   * SOLO CODICI: uuid, livelli, date, hash (`hashCorrelabile`). MAI un indirizzo né un nome. Da
+   * 1 a 256 caratteri fra lettere, cifre e `: _ - .`. Una chiave fuori forma NON ferma l'invio:
+   * si spedisce senza, con una riga `error`, perché un'email persa vale più di un doppione
+   * evitato. Stessa chiave con un messaggio DIVERSO è un errore del chiamante: Resend risponde
+   * `409 invalid_idempotent_request` e qui diventa un rifiuto definitivo, detto a livello `error`.
+   */
+  chiaveIdempotenza?: string
 }
 
 export interface SendEmailResult {
@@ -141,6 +155,19 @@ export interface SendEmailResult {
  */
 const QUOTA_ESAURITA = 429
 
+/** La forma ammessa di una chiave d'idempotenza: solo codici (vedi `chiaveIdempotenza`). */
+const FORMA_CHIAVE_IDEMPOTENZA = /^[A-Za-z0-9:_.-]{1,256}$/
+
+/**
+ * I due 409 dell'idempotenza di Resend, per nome (il campo `name` del corpo):
+ *  · `concurrent_idempotent_requests` — la richiesta con quella chiave è ANCORA in corso: si
+ *    riprova più tardi, quindi è rinviabile come il 429;
+ *  · `invalid_idempotent_request` — la chiave è già stata usata per un messaggio diverso: un
+ *    errore del chiamante, definitivo.
+ */
+const IDEMPOTENZA_CONCORRENTE = 'concurrent_idempotent_requests'
+const IDEMPOTENZA_CHIAVE_RIUSATA = 'invalid_idempotent_request'
+
 /**
  * Il campo `to` nella forma che Resend accetta: **sempre un elenco**.
  *
@@ -184,7 +211,7 @@ const DEFAULT_FROM = 'Kidville <onboarding@resend.dev>'
  * viene letto e propagato: un rifiuto (es. sandbox: "solo verso il proprio
  * indirizzo") non deve mai ridursi a un generico "non inviata".
  */
-export async function sendEmailDetailed({ to, subject, text, html, attachments, replyTo }: SendEmailParams): Promise<SendEmailResult> {
+export async function sendEmailDetailed({ to, subject, text, html, attachments, replyTo, chiaveIdempotenza }: SendEmailParams): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
     // `error`, non `info`: senza chiave NESSUNA email parte, e in produzione è un incidente.
@@ -199,6 +226,19 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
     return { ok: false, error: 'provider email non configurato (RESEND_API_KEY assente)' }
   }
 
+  let chiave = chiaveIdempotenza
+  if (chiave !== undefined && !FORMA_CHIAVE_IDEMPOTENZA.test(chiave)) {
+    // La chiave NON finisce nel log: se è fuori forma potrebbe contenere proprio ciò che non
+    // deve (un indirizzo). Basta la lunghezza per capire dove guardare.
+    logEvento('email', 'error', {
+      operazione: 'sendEmail',
+      esito: 'chiave-idempotenza-non-valida',
+      lunghezza: chiave.length,
+      msg: 'chiave d\'idempotenza fuori forma (solo codici, 1-256 caratteri): email spedita SENZA, il chiamante va corretto',
+    })
+    chiave = undefined
+  }
+
   const esito = await externalFetch(
     'resend',
     'https://api.resend.com/emails',
@@ -207,6 +247,7 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        ...(chiave ? { 'Idempotency-Key': chiave } : {}),
       },
       body: JSON.stringify({
         from: process.env.OTP_FROM_EMAIL ?? DEFAULT_FROM,
@@ -300,24 +341,56 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
     }
   }
 
+  if (esito.stato === 409) {
+    const nome = nomeDelProvider(esito.corpo)
+    if (nome === IDEMPOTENZA_CONCORRENTE) {
+      // Un altro giro sta spedendo QUESTA email adesso: non è un fallimento, e rispedirla subito
+      // sarebbe inutile. Come il 429: rinviabile.
+      logEvento('email', 'warn', {
+        operazione: 'sendEmail',
+        esito: 'idempotenza-concorrente',
+        stato: esito.stato,
+        msg: 'stessa chiave d\'idempotenza ancora in corso presso il provider: invio rinviato',
+      })
+      return { ok: false, rinviabile: true, error: `invio già in corso presso il provider (409)${dettaglio ? `: ${dettaglio}` : ''}` }
+    }
+    if (nome === IDEMPOTENZA_CHIAVE_RIUSATA) {
+      logEvento('email', 'error', {
+        operazione: 'sendEmail',
+        esito: 'idempotenza-chiave-riusata',
+        stato: esito.stato,
+        msg: 'chiave d\'idempotenza già usata per un messaggio diverso: email NON spedita, il chiamante va corretto',
+      })
+    }
+  }
+
   return {
     ok: false,
     error: `rifiutato dal provider email (${esito.stato})${dettaglio ? `: ${dettaglio}` : ''}`,
   }
 }
 
+/** Il `name` dell'errore di Resend (`{ name, message }`), se c'è. */
+function nomeDelProvider(corpo: string): string | null {
+  const n = corpoJson(corpo)?.name
+  return typeof n === 'string' && n !== '' ? n : null
+}
+
 /** Resend impacchetta il motivo in `{ message }`; se non è JSON, il corpo grezzo va benissimo. */
 function messaggioDelProvider(corpo: string): string {
+  const m = corpoJson(corpo)?.message
+  return typeof m === 'string' && m !== '' ? m : corpo
+}
+
+/** Il corpo del provider come oggetto JSON, o `null` se non lo è. */
+function corpoJson(corpo: string): Record<string, unknown> | null {
   try {
     const v: unknown = JSON.parse(corpo)
-    if (v !== null && typeof v === 'object') {
-      const m = (v as { message?: unknown }).message
-      if (typeof m === 'string' && m !== '') return m
-    }
+    return v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : null
   } catch {
-    // Non era JSON: è già il testo del provider.
+    // Non era JSON: è già il testo del provider, e chi chiama usa il corpo grezzo.
   }
-  return corpo
+  return null
 }
 
 /** Invia un'email. Ritorna true se consegnata al provider, false in fallback/errore. */

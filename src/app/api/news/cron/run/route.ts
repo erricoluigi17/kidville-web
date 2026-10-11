@@ -9,7 +9,7 @@ import { externalFetch, type EsitoEsterno } from '@/lib/logging/external'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseInstagramUrl, buildEmbedUrl, esitoHealthCheck } from '@/lib/news/instagram'
 import { notificaNewsPubblicata, type PostDaNotificare } from '@/lib/news/notifiche'
-import { generaEInviaDigest } from '@/lib/news/digest'
+import { generaEInviaDigest, riprendiDigestInterrotti, TETTO_GIRO_DIGEST_MS } from '@/lib/news/digest'
 import { verificaPermanenzaConsenso } from '@/lib/news/permanenza-consenso'
 
 // =============================================================================
@@ -20,7 +20,20 @@ import { verificaPermanenzaConsenso } from '@/lib/news/permanenza-consenso'
 //            post nascosto; 429/403 → indeterminato, NESSUN incremento).
 //   · digest (1° del mese): genera/invia il digest del MESE PRECEDENTE.
 // Query fallita → riga cron `error` + 500, MAI il battito «ok».
+//
+// Il tick riprende anche le edizioni del digest interrotte (fase 8 robustezza):
+// un giro fermato dal tetto di tempo, o morto, la riprende dieci minuti dopo
+// invece che il mese dopo. Vedi `riprendiDigestInterrotti`.
 // =============================================================================
+
+/**
+ * La vita massima della Function (fase 8 robustezza). Senza, vale il default del
+ * piano: un giro del digest che scrive a centinaia di famiglie può superarlo, e
+ * allora muore a metà. Il tetto del giro (`TETTO_GIRO_DIGEST_MS`, 240 s) lascia 60 s
+ * per salvare e chiudere; la presa sull'edizione (`PRESTITO_DIGEST_MS`, 330 s) dura
+ * più di questa vita, così non scade mai sotto un giro vivo.
+ */
+export const maxDuration = 300
 
 const JOB = 'news-cron'
 
@@ -110,12 +123,27 @@ async function eseguiTick(supabase: SupabaseClient, t0: number): Promise<NextRes
     return queryFallita('lettura programmate', progErr, t0)
   }
   for (const p of (prog ?? []) as PostDaNotificare[]) {
-    const { error: updErr } = await supabase
+    // LA GUARDIA DI STATO (fase 8 robustezza). Fra la lettura e questa scrittura
+    // passano secondi — un tick lento, un secondo tick sovrapposto, un operatore
+    // che nel frattempo ha nascosto o riprogrammato il post. Senza `.eq('stato',
+    // 'programmata')` l'UPDATE pubblicava comunque, sovrascrivendo la scelta
+    // dell'operatore e ripartendo con la notifica. Con la guardia, zero righe
+    // toccate = non è più una programmata da promuovere, e non si notifica.
+    const { data: promossi, error: updErr } = await supabase
       .from('news_posts')
       .update({ stato: 'pubblicata', pubblicata_il: nowIso, nascosta_motivo: null, updated_at: nowIso })
       .eq('id', p.id)
+      .eq('stato', 'programmata')
+      .select('id')
     if (updErr) {
       logEvento('cron', 'error', { operazione: JOB, esito: 'promozione-fallita', post_id: p.id }, updErr)
+      continue
+    }
+    if ((promossi ?? []).length === 0) {
+      logEvento('cron', 'info', {
+        operazione: JOB, esito: 'promozione-non-piu-programmata', post_id: p.id,
+        msg: `${JOB}: il post non era più «programmata» al momento di promuoverlo, lasciato com'è`,
+      })
       continue
     }
     await notificaNewsPubblicata(supabase, p)
@@ -167,7 +195,12 @@ async function eseguiTick(supabase: SupabaseClient, t0: number): Promise<NextRes
     }
   }
 
-  logEvento('cron', 'info', { operazione: JOB, esito: 'ok', azione: 'tick', ms: Date.now() - t0, msg: `${JOB}: ok` })
+  // 3) Le edizioni del digest interrotte (fase 8 robustezza). Ultime, perché sono le
+  //    uniche che possono durare minuti: la promozione e l'health-check non le
+  //    aspettano. Stesso tetto di tempo del job «digest», contato dall'inizio del tick.
+  const ripresa = await riprendiDigestInterrotti(supabase, { scadenza: t0 + TETTO_GIRO_DIGEST_MS })
+
+  logEvento('cron', 'info', { operazione: JOB, esito: 'ok', azione: 'tick', digest_ripresi: ripresa.riprese, ms: Date.now() - t0, msg: `${JOB}: ok` })
   return NextResponse.json({ success: true })
 }
 
@@ -182,7 +215,10 @@ async function eseguiDigest(supabase: SupabaseClient, t0: number): Promise<NextR
     mese = 12
     anno -= 1
   }
-  const { edizioni } = await generaEInviaDigest(supabase, { anno, mese })
+  // Un tetto di tempo SOLO per tutta la route: il mese precedente e le arretrate se
+  // lo dividono. Chi resta a metà lo riprende il tick (`riprendiDigestInterrotti`).
+  const scadenza = t0 + TETTO_GIRO_DIGEST_MS
+  const { edizioni } = await generaEInviaDigest(supabase, { anno, mese, scadenza })
 
   // ── LE EDIZIONI RIMASTE IN CODA ─────────────────────────────────────────────
   //
@@ -231,7 +267,10 @@ async function eseguiDigest(supabase: SupabaseClient, t0: number): Promise<NextR
 
   let edizioniArretrate = 0
   for (const a of arretrate) {
-    const { edizioni: rec } = await generaEInviaDigest(supabase, a)
+    // Niente `break` a tetto scaduto, di proposito: un'arretrata saltata qui non
+    // avrebbe nessuna presa, e il tick non la vedrebbe. Passando da
+    // `generaEInviaDigest` la prende e la lascia subito SCADUTA, e il tick la riprende.
+    const { edizioni: rec } = await generaEInviaDigest(supabase, { ...a, scadenza })
     edizioniArretrate += rec.length
   }
   if (arretrate.length > 0) {

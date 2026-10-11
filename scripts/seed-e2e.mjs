@@ -469,6 +469,24 @@ function must(label, { error }) {
   if (error) throw new Error(`${label}: ${error.message ?? JSON.stringify(error)}`);
 }
 
+/**
+ * Gli INCASSI delle voci di questi alunni, prima delle voci.
+ *
+ * Fase 7 della roadmap di robustezza: la FK `incassi.pagamento_id` passa da CASCADE a
+ * RESTRICT, perché un incasso è contabilità e non deve sparire con la voce. Un seed che
+ * cancella le voci lasciate dai run precedenti, con i loro incassi appesi, dal giorno del
+ * freno morirebbe su un 23503. Gli storni (`storno_di`, FK senza cascata verso l'incasso
+ * originale) se ne vanno nella stessa istruzione dell'originale, a blocchi di 100 voci.
+ */
+async function ripulisciIncassiDelleVoci(etichetta, alunniIds) {
+  const voci = await db.from('pagamenti').select('id').in('alunno_id', alunniIds);
+  must(`lettura voci ${etichetta}`, voci);
+  const ids = (voci.data ?? []).map((v) => v.id);
+  for (let i = 0; i < ids.length; i += 100) {
+    must(`reset incassi ${etichetta}`, await db.from('incassi').delete().in('pagamento_id', ids.slice(i, i + 100)));
+  }
+}
+
 // Auth user con UUID fisso: createUser accetta `id`; se esiste già, reset password.
 async function ensureAuthUser(id, email) {
   const { error } = await db.auth.admin.createUser({
@@ -1393,6 +1411,7 @@ async function main() {
   ];
   must('reset risposte avviso', await db.from('avvisi_risposte').delete().in('avviso_id', rispostaDaCancellare));
   must('reset avvisi dei test', await db.from('avvisi').delete().in('author_id', AUTORI_AVVISI_TEST));
+  await ripulisciIncassiDelleVoci('E2E', ALUNNI_E2E);
   must('reset pagamenti', await db.from('pagamenti').delete().in('alunno_id', ALUNNI_E2E));
   must('reset armadietto', await db.from('armadietto').delete().in('alunno_id', ALUNNI_E2E));
 
@@ -1428,6 +1447,7 @@ async function main() {
   if (alunniIscrIds.length > 0) {
     must('reset diario iscrizione', await db.from('eventi_diario').delete().in('alunno_id', alunniIscrIds));
     must('reset presenze iscrizione', await db.from('presenze').delete().in('alunno_id', alunniIscrIds));
+    await ripulisciIncassiDelleVoci('iscrizione', alunniIscrIds);
     must('reset pagamenti iscrizione', await db.from('pagamenti').delete().in('alunno_id', alunniIscrIds));
     must('reset armadietto iscrizione', await db.from('armadietto').delete().in('alunno_id', alunniIscrIds));
     must('reset legami iscrizione', await db.from('legame_genitori_alunni').delete().in('alunno_id', alunniIscrIds));

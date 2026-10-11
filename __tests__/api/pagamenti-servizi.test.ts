@@ -611,6 +611,19 @@ describe('PATCH — accorciare il periodo: il primo tempo CHIEDE', () => {
     expect(h.log.some((c) => c[1] === 'error' && JSON.stringify(c).includes('voci-servizio-non-eliminate'))).toBe(true)
   })
 
+  for (const code of ['23503', '23001']) {
+    it(`il freno RESTRICT rifiuta la cancellazione (${code}: una voce incassata nel frattempo): 409, NIENTE cambia`, async () => {
+      scenario()
+      h.errori = { 'pagamenti:delete': { code, message: 'update or delete on table "pagamenti" violates foreign key constraint' } }
+      const res = await patch({ ...accorcia, voci_future: 'elimina' })
+      expect(res.status).toBe(409)
+      expect((await res.json()).codice).toBe('VOCI_CAMBIATE')
+      expect(iscrizioni().find((r) => r.id === ISCR_1)).toMatchObject({ al: null })
+      expect(idsVoci()).toEqual(TUTTE)
+      expect(h.log.some((c) => c[1] === 'warn' && JSON.stringify(c).includes('voci-servizio-trattenute-dal-freno'))).toBe(true)
+    })
+  }
+
   it('la modifica dell\'iscrizione fallisce DOPO la cancellazione delle voci: 500 e il log dice quante erano', async () => {
     scenario()
     h.errori = { 'iscrizioni_servizi:update': { code: 'XX000', message: 'guasto' } }

@@ -1,6 +1,25 @@
+## ✅ Changelog — Roadmap di robustezza, fasi 6 · 7 · 8 chiuse: un solo rilascio, misura DOPO, fotografie rigenerate — 2026-10-11 (branch `robustezza/chiusura-fasi-6-7-8`)
+
+**Stato.** 🟡 **In PR** (la PR-B delle fasi 6·7·8). Nessuna migrazione e nessun codice applicativo: le sei fotografie del catalogo, `MIGRAZIONI_ATTESE_AL_MERGE` svuotata, il PRD e la roadmap.
+
+**Come sono arrivate in produzione.** Le quattro PR erano in pila: #219 (fase 6) ← #220 (fase 7 PR 1) ← #221 (fase 7 PR 2) ← #222 (fase 8). Ognuna ha avuto la sua CI verde. Poi la pila è stata chiusa dall'alto con merge commit fra rami secondari, senza toccare `main`, e #219 è andata in `main` con uno squash solo (`291f7a41`, 11/10 11:33 UTC): **un deploy, quattro migrazioni**. L'integrazione le ha applicate in ordine, una riga ciascuna con la version del file: 214 → **218** migrazioni.
+
+**Misura DOPO (produzione, 11/10 dopo il rilascio).**
+- Advisor: `unindexed_foreign_keys` **0** (erano 95), `auth_rls_initplan` **0** (15), `duplicate_index` **0** (2); **0 ERROR** sia in sicurezza sia in prestazioni. Gli «indici mai usati» crescono perché i 95 nuovi sono appena nati: la fase 6 non li tocca, per scelta.
+- Policy: nessuna policy di `public` con `auth.uid()` nudo; le 15 riscritte ora sono `( SELECT auth.uid() AS uid)`. Lo si vede nella fotografia della RLS rigenerata.
+- Freni: **22** vincoli con `confdeltype = 'r'`; le cascate partite da oblio, account e personale raggiungono **0** padri con valore legale. **Prova dal vivo**: la `DELETE` di un pagamento che ha un incasso, dentro un blocco che non può lasciare traccia, è stata **rifiutata** dal vincolo. Dopo: 1.734 incassi, 0 orfani, niente cambiato.
+- Fase 8: le tre colonne (`notifiche.push_presa_scade_il`, `news_digest_edizioni.presa_scade_il`, `presa_token`) e l'indice parziale ci sono. `/api/health` in produzione: stato **ok**, versione `291f7a41`, regione `dub1`, 9 controlli su 9 ok, fra cui `code-arretrate` «nessun arretrato». Legge davvero le colonne nuove: altrimenti direbbe «non installato».
+- Iscrizioni: 725, contate prima e dopo.
+
+**Due test rossi, nessuno legato alle fasi, corretti dentro #219.**
+- `AvvisoCard-adesione-stati` era **scaduto col calendario**. Vieta che la card mostri 97, 40 o 57 (tetto, ammessi, differenza), ma la card scrive anche l'età dell'avviso: con `created_at` fisso al 01/09, l'11/10 diceva «40g fa». Sarebbe ricaduto il 28/10 e il 07/12. Ora la creazione segue l'orologio («adesso», senza cifre); l'orologio non si congela.
+- `AvvisoAggiornamentoApp` era **una gara col log «mostrato»**, che scrive un effetto dopo che il dialogo è nel DOM. Sotto il carico della CI il click arrivava prima, e «rimandato» precedeva «mostrato» (caduto il 02/10, il 09/10 e l'11/10). Nuovo `comparsoERegistrato()`: si aspetta la presenza della riga prima di toccare. Con la gara simulata (log ritardato) i rossi passano da 10 a 2, e i 2 rimasti sono artefatti della simulazione.
+
+**Fotografie rigenerate dalla produzione.** Cambiano davvero quella delle migrazioni (218, ultima `20261010230945_code_robuste_prese_con_scadenza`) e quella della RLS (43 policy, testo delle 15 nuovo). FK di sede (79 tabelle, 0 senza FK), tabelle con sede (79, 22 legate all'alunno), FK verso `utenti` (58: 34 bloccano, 11 set-null, 13 cascade) e indici unici (233) cambiano solo nell'istante dello scatto, con la stessa sha256. Rigenerarle sposta avanti la soglia, ed è ciò che arma i lock.
+
 ## 📬 Changelog — Roadmap di robustezza, fase 8: le code reggono un giro morto a metà, e la salute vede quelle che non si svuotano — 2026-10-11 (branch `robustezza/fase-8-code-robuste`)
 
-**Stato.** 🟡 **In PR**, in pila sopra la fase 7. Una migrazione (`20261010230945_code_robuste_prese_con_scadenza.sql`): tre colonne nullable e un indice parziale. Nessun dato toccato. La applica l'integrazione al merge.
+**Stato.** ✅ **In produzione dal 2026-10-11** (#222 fusa nella pila, rilasciata con #219, `291f7a41`). Una migrazione (`20261010230945_code_robuste_prese_con_scadenza.sql`): tre colonne nullable e un indice parziale. Nessun dato toccato. La applica l'integrazione al merge.
 
 **Misura (produzione, 10/10).**
 - Push: 30 giorni, 8.616 giri avviati e 8.613 chiusi. La presa non aveva scadenza: un giro morto dopo la presa lasciava le notifiche marcate e mai spedite, senza una riga.
@@ -64,7 +83,7 @@
 
 ## 🛑 Changelog — Roadmap di robustezza, fase 7 (PR 2): i freni RESTRICT sulle catene con valore legale — 2026-10-11 (branch `robustezza/fase-7-freni-restrict`)
 
-**Stato.** 🟡 **In PR** (in pila sopra la PR 1 e la fase 6). Una migrazione (`20261010230042_freni_restrict_catene_legali.sql`), applicata dall'integrazione al merge; nessun file in `src/`.
+**Stato.** ✅ **In produzione dal 2026-10-11** (#221 fusa nella pila, rilasciata con #219, `291f7a41`). Una migrazione (`20261010230042_freni_restrict_catene_legali.sql`), applicata dall'integrazione al merge; nessun file in `src/`.
 
 **Misura (catalogo di produzione, 11/10).**
 - I 22 vincoli sono tutti `ON DELETE CASCADE`, a colonna singola, validati e non differibili. `ON UPDATE` è NO ACTION.
@@ -103,7 +122,7 @@
 
 ## 🧱 Changelog — Roadmap di robustezza, fase 7 (PR 1): chi cancella lo fa in ordine e lo dice, prima dei freni RESTRICT — 2026-10-11 (branch `robustezza/fase-7-eliminazioni-in-ordine`)
 
-**Stato.** 🟡 **In PR** (in pila sopra la fase 6). Una migrazione (`20261010223849_eliminazioni_in_ordine.sql`) e sei route. Prepara la PR 2, che porta a `ON DELETE RESTRICT` le catene con valore legale. Da quel giorno una DELETE del padre con figlie presenti fallisce invece di cancellarle in silenzio, e chi contava sulla cascata deve cancellare in ordine o dire di no.
+**Stato.** ✅ **In produzione dal 2026-10-11** (#220 fusa nella pila, rilasciata con #219, `291f7a41`). Una migrazione (`20261010223849_eliminazioni_in_ordine.sql`) e sei route. Prepara la PR 2, che porta a `ON DELETE RESTRICT` le catene con valore legale. Da quel giorno una DELETE del padre con figlie presenti fallisce invece di cancellarle in silenzio, e chi contava sulla cascata deve cancellare in ordine o dire di no.
 
 **Misura (catalogo di produzione, 10/10).**
 - Le 22 FK dei freni della PR 2 oggi sono tutte CASCADE, verso 11 tabelle padre: alunni, certificati_competenze, form_models, forms_templates, materie, pagamenti, protocolli, scrutini, scrutinio_periodi, scuole, sections. Restano CASCADE di proposito i giudizi descrittivi del periodo (sono la tabella dei livelli che la sede configura, non un documento di un alunno), la coda delle fatture e le firme delle docenti.
@@ -139,7 +158,7 @@
 
 ## 🗂️ Changelog — Roadmap di robustezza, fase 6: ogni FK ha il suo indice, 15 policy non rivalutano più `auth.uid()` riga per riga, via due indici doppi — 2026-10-10 (branch `robustezza/fase-6-indici`)
 
-**Stato.** 🟡 **In PR.** Una migrazione (`20261010221643_indici_fk_initplan_doppioni.sql`) che applica l'integrazione al merge; nessun file in `src/`. È il prerequisito della fase 7 (freni RESTRICT): ogni ON DELETE, RESTRICT compreso, cerca le righe figlie, e senza indice le cerca leggendo la tabella intera.
+**Stato.** ✅ **In produzione dal 2026-10-11** (#219, `291f7a41`). Una migrazione (`20261010221643_indici_fk_initplan_doppioni.sql`) che applica l'integrazione al merge; nessun file in `src/`. È il prerequisito della fase 7 (freni RESTRICT): ogni ON DELETE, RESTRICT compreso, cerca le righe figlie, e senza indice le cerca leggendo la tabella intera.
 
 **Misura PRIMA (produzione, 10/10 22:13 UTC).** Advisor di prestazioni: `unindexed_foreign_keys` **95** (ricalcolate dal catalogo: tutte a una colonna, nessun indice con lo stesso nome già presente), `auth_rls_initplan` **15**, `duplicate_index` **2** (le copie da togliere hanno 0 letture, le gemelle 523.524 e 27.559). Tabelle figlie tutte piccole (la più grande, `eventi_diario`, ~37 mila righe). 725 iscrizioni, 214 migrazioni, DB 411 MB.
 
@@ -168,7 +187,7 @@
 
 **E2E: il tetto delle candidature azzerato dal seed.** Il primo E2E di questa PR è caduto con un **429 invece di 201** su `public-candidatura-insegnante.spec.ts:528`, ×3 coi retry, senza nessun codice toccato. Il tetto di `POST /api/iscrizione/insegnanti` (3 l'ora per IP) vive in `tetto_frequenza`, che sul DB E2E migrato è condiviso fra i run. In CI tutte le richieste escono dallo stesso server locale, quindi l'E2E di `main` dopo un merge e quello di una PR, entro l'ora, si spartivano tre gettoni. Ora `scripts/seed-e2e.mjs` cancella le righe `candidature-insegnanti:%` di `tetto_frequenza` insieme alle candidature di prova. Tollera la tabella assente; il seed gira solo sul DB E2E, protetto dal lock `e2e-seed-database-isolato`.
 
-**Stato.** 🟡 **In PR.** Nessuna migrazione e nessun codice applicativo: la fotografia, una riga del seed E2E, il PRD e la roadmap.
+**Stato.** ✅ **In produzione dal 2026-10-11** (#218, `95136000`). Nessuna migrazione e nessun codice applicativo: la fotografia, una riga del seed E2E, il PRD e la roadmap.
 
 ## 🧯 Changelog — Roadmap di robustezza, fase 5 (sesto pezzo): in `pagamenti` ogni `{ error }` di PostgREST si guarda, e un guasto non diventa più un valore — 2026-10-10 (branch `robustezza/fase-5-errori`)
 

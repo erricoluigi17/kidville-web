@@ -205,14 +205,14 @@ export function posterioriCheContengono(
 // tolti). Tocca la fotografia della RLS (il testo delle 15 policy cambia, il significato no:
 // lo prova `__tests__/lib/policy-initplan-equivalenti-sql.test.ts`). Si toglie con la PR-B,
 // dopo che l'integrazione l'ha applicata al merge, rigenerando le fotografie dalla produzione.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261010221643_indici_fk_initplan_doppioni.sql':
-        'fase 6: indici sulle FK e policy con (select auth.uid()); la applica l\'integrazione al merge, ' +
-        'la PR-B rigenera la fotografia della RLS dalla produzione',
-    '20261010230042_freni_restrict_catene_legali.sql':
-        'fase 7 PR 2: 22 FK da CASCADE a RESTRICT (drop + add constraint, nessuna verso utenti); ' +
-        'la applica l\'integrazione al merge, la PR-B rigenera la fotografia delle FK verso utenti dalla produzione',
-}
+// Con lei, nella stessa PR (#219, fasi 6·7·8 in un solo rilascio), la FASE 7 PR 2
+// `20261010230042_freni_restrict_catene_legali.sql` (22 FK da CASCADE a RESTRICT, nessuna verso
+// `utenti`). SVUOTATA l'11/10 (PR-B dopo il merge di #219, `291f7a41`): le quattro migrazioni delle
+// fasi 6·7·8 sono applicate in produzione dall'integrazione, una riga ciascuna con la version del
+// file (218 migrazioni); fotografie rigenerate dalla produzione — cambiano davvero solo quella
+// delle migrazioni e quella della RLS (le 15 policy con `( SELECT auth.uid() AS uid)`); le altre
+// quattro cambiano solo l'istante dello scatto, con la stessa sha256.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

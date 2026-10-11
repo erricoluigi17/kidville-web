@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-09",
-  "generato_alle": "2026-10-09T23:46:36Z",
-  "sha256": "b658253a8336004d280ed27e68643179464a30dcfbf0aa2bba4e8152cfd83f91",
+  "generato_il": "2026-10-11",
+  "generato_alle": "2026-10-11T11:48:09Z",
+  "sha256": "491cb485f75840e9fab69f23babfeefca18c9a51c171409926cb833894dc3d12",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -35,7 +35,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(thread_id IN ( SELECT chat_threads.id FROM chat_threads WHERE ((chat_threads.teacher_id = auth.uid()) OR (chat_threads.parent_id = auth.uid()) OR (chat_threads.parent_id IN ( SELECT parents.id FROM parents WHERE (parents.auth_user_id = auth.uid()))))))",
+      "using_expr": "(thread_id IN ( SELECT chat_threads.id FROM chat_threads WHERE ((chat_threads.teacher_id = ( SELECT auth.uid() AS uid)) OR (chat_threads.parent_id = ( SELECT auth.uid() AS uid)) OR (chat_threads.parent_id IN ( SELECT parents.id FROM parents WHERE (parents.auth_user_id = ( SELECT auth.uid() AS uid)))))))",
       "check_expr": ""
     },
     {
@@ -46,7 +46,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "((teacher_id = auth.uid()) OR (parent_id = auth.uid()) OR (parent_id IN ( SELECT parents.id FROM parents WHERE (parents.auth_user_id = auth.uid()))))",
+      "using_expr": "((teacher_id = ( SELECT auth.uid() AS uid)) OR (parent_id = ( SELECT auth.uid() AS uid)) OR (parent_id IN ( SELECT parents.id FROM parents WHERE (parents.auth_user_id = ( SELECT auth.uid() AS uid)))))",
       "check_expr": ""
     },
     {
@@ -57,7 +57,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(creato_da = auth.uid())",
+      "using_expr": "(creato_da = ( SELECT auth.uid() AS uid))",
       "check_expr": ""
     },
     {
@@ -79,7 +79,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(EXISTS ( SELECT 1 FROM (registro_orario r JOIN utenti u ON ((r.scuola_id = u.scuola_id))) WHERE ((r.id = firme_docenti.registro_id) AND (u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text))))",
+      "using_expr": "(EXISTS ( SELECT 1 FROM (registro_orario r JOIN utenti u ON ((r.scuola_id = u.scuola_id))) WHERE ((r.id = firme_docenti.registro_id) AND (u.id = ( SELECT auth.uid() AS uid)) AND ((u.ruolo)::text <> 'genitore'::text))))",
       "check_expr": ""
     },
     {
@@ -113,7 +113,7 @@
         "authenticated"
       ],
       "using_expr": "",
-      "check_expr": "((auth.uid() IS NOT NULL) AND ((user_id = auth.uid()) OR (user_id IS NULL)))"
+      "check_expr": "((( SELECT auth.uid() AS uid) IS NOT NULL) AND ((user_id = ( SELECT auth.uid() AS uid)) OR (user_id IS NULL)))"
     },
     {
       "tabella": "form_submissions",
@@ -123,7 +123,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(user_id = auth.uid())",
+      "using_expr": "(user_id = ( SELECT auth.uid() AS uid))",
       "check_expr": ""
     },
     {
@@ -134,8 +134,8 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(user_id = auth.uid())",
-      "check_expr": "(user_id = auth.uid())"
+      "using_expr": "(user_id = ( SELECT auth.uid() AS uid))",
+      "check_expr": "(user_id = ( SELECT auth.uid() AS uid))"
     },
     {
       "tabella": "galleria_media_v2",
@@ -178,7 +178,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(EXISTS ( SELECT 1 FROM pagamenti p WHERE ((p.id = incassi.pagamento_id) AND (p.alunno_id IN ( SELECT legame_genitori_alunni.alunno_id FROM legame_genitori_alunni WHERE (legame_genitori_alunni.genitore_id = auth.uid()))) AND ((p.tipo <> 'split'::pagamento_tipo) OR (incassi.quota_id IN ( SELECT q.id FROM pagamenti_quote q WHERE ((q.pagamento_id = p.id) AND (q.adult_id = auth.uid()))))))))",
+      "using_expr": "(EXISTS ( SELECT 1 FROM pagamenti p WHERE ((p.id = incassi.pagamento_id) AND (p.alunno_id IN ( SELECT legame_genitori_alunni.alunno_id FROM legame_genitori_alunni WHERE (legame_genitori_alunni.genitore_id = ( SELECT auth.uid() AS uid)))) AND ((p.tipo <> 'split'::pagamento_tipo) OR (incassi.quota_id IN ( SELECT q.id FROM pagamenti_quote q WHERE ((q.pagamento_id = p.id) AND (q.adult_id = ( SELECT auth.uid() AS uid)))))))))",
       "check_expr": ""
     },
     {
@@ -277,7 +277,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(EXISTS ( SELECT 1 FROM legame_genitori_alunni WHERE ((legame_genitori_alunni.genitore_id = auth.uid()) AND (legame_genitori_alunni.alunno_id = note_disciplinari.alunno_id))))",
+      "using_expr": "(EXISTS ( SELECT 1 FROM legame_genitori_alunni WHERE ((legame_genitori_alunni.genitore_id = ( SELECT auth.uid() AS uid)) AND (legame_genitori_alunni.alunno_id = note_disciplinari.alunno_id))))",
       "check_expr": ""
     },
     {
@@ -288,7 +288,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(EXISTS ( SELECT 1 FROM (utenti u JOIN alunni a ON ((a.scuola_id = u.scuola_id))) WHERE ((u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text) AND (a.id = note_disciplinari.alunno_id))))",
+      "using_expr": "(EXISTS ( SELECT 1 FROM (utenti u JOIN alunni a ON ((a.scuola_id = u.scuola_id))) WHERE ((u.id = ( SELECT auth.uid() AS uid)) AND ((u.ruolo)::text <> 'genitore'::text) AND (a.id = note_disciplinari.alunno_id))))",
       "check_expr": ""
     },
     {
@@ -321,7 +321,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(utente_id = auth.uid())",
+      "using_expr": "(utente_id = ( SELECT auth.uid() AS uid))",
       "check_expr": ""
     },
     {
@@ -365,7 +365,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(adult_id = auth.uid())",
+      "using_expr": "(adult_id = ( SELECT auth.uid() AS uid))",
       "check_expr": ""
     },
     {
@@ -409,8 +409,8 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(utente_id = auth.uid())",
-      "check_expr": "(utente_id = auth.uid())"
+      "using_expr": "(utente_id = ( SELECT auth.uid() AS uid))",
+      "check_expr": "(utente_id = ( SELECT auth.uid() AS uid))"
     },
     {
       "tabella": "registro_orario",
@@ -420,8 +420,8 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text) AND (u.scuola_id = registro_orario.scuola_id))))",
-      "check_expr": "(EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text) AND (u.scuola_id = registro_orario.scuola_id))))"
+      "using_expr": "(EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = ( SELECT auth.uid() AS uid)) AND ((u.ruolo)::text <> 'genitore'::text) AND (u.scuola_id = registro_orario.scuola_id))))",
+      "check_expr": "(EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = ( SELECT auth.uid() AS uid)) AND ((u.ruolo)::text <> 'genitore'::text) AND (u.scuola_id = registro_orario.scuola_id))))"
     },
     {
       "tabella": "registro_orario",
@@ -431,7 +431,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(EXISTS ( SELECT 1 FROM (alunni a JOIN legame_genitori_alunni lga ON ((a.id = lga.alunno_id))) WHERE ((lga.genitore_id = auth.uid()) AND (a.scuola_id = registro_orario.scuola_id) AND ((a.classe_sezione)::text = (registro_orario.classe_sezione)::text))))",
+      "using_expr": "(EXISTS ( SELECT 1 FROM (alunni a JOIN legame_genitori_alunni lga ON ((a.id = lga.alunno_id))) WHERE ((lga.genitore_id = ( SELECT auth.uid() AS uid)) AND (a.scuola_id = registro_orario.scuola_id) AND ((a.classe_sezione)::text = (registro_orario.classe_sezione)::text))))",
       "check_expr": ""
     },
     {

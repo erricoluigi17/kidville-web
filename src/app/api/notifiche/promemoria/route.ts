@@ -106,6 +106,13 @@ function seFallita(error: { code?: string; message?: string } | null, azione: st
   throw new Error(`${JOB}: ${azione} fallita`, { cause: error })
 }
 
+/**
+ * La vita massima della Function (fase 8 robustezza): un giro del cron che la supera
+ * muore a metà, e un lavoro troncato senza una vita dichiarata dipende dal default del
+ * piano. Il lock `cron-max-duration` la pretende da ogni route chiamata dal cron.
+ */
+export const maxDuration = 300
+
 export const POST = withRoute('notifiche/promemoria:POST', async (request: Request) => {
   const t0 = Date.now()
   try {

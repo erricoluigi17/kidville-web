@@ -1,3 +1,106 @@
+## 📬 Changelog — Roadmap di robustezza, fase 8: le code reggono un giro morto a metà, e la salute vede quelle che non si svuotano — 2026-10-11 (branch `robustezza/fase-8-code-robuste`)
+
+**Stato.** 🟡 **In PR**, in pila sopra la fase 7. Una migrazione (`20261010230945_code_robuste_prese_con_scadenza.sql`): tre colonne nullable e un indice parziale. Nessun dato toccato. La applica l'integrazione al merge.
+
+**Misura (produzione, 10/10).**
+- Push: 30 giorni, 8.616 giri avviati e 8.613 chiusi. La presa non aveva scadenza: un giro morto dopo la presa lasciava le notifiche marcate e mai spedite, senza una riga.
+- Digest: ~866 account genitore con email, a ~0,4 s l'una, contro i 300 s della Function. L'avanzamento si salvava solo sul 429: un giro troncato avrebbe rispedito a tutti quelli già serviti. Due giri sulla stessa edizione spedivano entrambi.
+- Solleciti:
+  - 104 s per 238 invii il 06/10, senza `maxDuration`;
+  - un `.in()` di 500 voci, e una lettura dei livelli che poteva superare le 1.000 righe di PostgREST (troncate in silenzio);
+  - la cadenza si scriveva DOPO email, push e registro.
+- Chat: 2.177 giri anticipati in 8 giorni contro 2.285 del cron. Il 27% partiva entro 30 s da un altro messaggio della stessa conversazione.
+- 10 route cron senza `maxDuration`.
+- In coda oggi: 0 push maturate non prese, 0 news programmate scadute, 0 edizioni non inviate.
+
+**Cosa cambia.**
+- **Push** (`src/lib/push/dispatch.ts`):
+  - la presa scrive anche `push_presa_scade_il`, cioè la vita della route più un margine (330 s);
+  - a fine giro le prese chiuse si confermano (colonna di nuovo null);
+  - all'inizio di ogni giro un bidello rimette in coda le prese scadute entro la finestra dei 30 minuti e dice quelle oltre.
+- **Digest** (`src/lib/news/digest.ts`):
+  - il giro prende l'edizione (`presa_scade_il` + `presa_token`) con un UPDATE condizionato, e un secondo giro la lascia;
+  - l'avanzamento si salva ogni 20 invii, col proprio token, rinnovando la presa;
+  - un tetto di 240 s ferma il giro e lascia la presa scaduta. Il tick dei 10 minuti (`riprendiDigestInterrotti`) riprende l'edizione da lì, entro 2 ore;
+  - ogni email porta la chiave d'idempotenza `digest:<edizione>:<impronta sha256 dell'indirizzo>`;
+  - gli errori definitivi restano contati fra una ripresa e l'altra.
+- **Solleciti** (`src/lib/pagamenti/solleciti-invio.ts`, `run/route.ts`):
+  - letture a blocchi di 100;
+  - una voce non letta esce come guasto, e il giro risponde 500 senza battito «ok»;
+  - la cadenza `ultimo_sollecito_il` si scrive PRIMA dell'email, con un UPDATE condizionato sul valore letto: due giri non spediscono due volte. Il prezzo scelto: un giro morto fra la presa e l'email fa slittare quel sollecito di una cadenza;
+  - chiave d'idempotenza `sollecito:<voce>:L<livello>:<destinatario>:<giorno>`;
+  - tetto di 240 s («rinviato per tempo»);
+  - candidati in ordine di scadenza, e `warn` quando il giro tocca il tetto dei 500.
+- **Resend** (`src/lib/email/send.ts`):
+  - `chiaveIdempotenza` facoltativa, che diventa l'header `Idempotency-Key`;
+  - una chiave fuori forma (lettere, cifre e `:_.-`, al massimo 256) fa partire l'email senza header e lascia una riga `error`;
+  - il 409 `concurrent_idempotent_requests` è rinviabile, il 409 `invalid_idempotent_request` è definitivo.
+- **`maxDuration` 300** su 11 route: news cron, genera digest, solleciti, 5 retention GDPR, promemoria, scadenze documenti, allergie mensa. Il nuovo lock `__tests__/architecture/cron-max-duration.test.ts` lo pretende da ogni route che legge `x-cron-secret`, commenti esclusi. Non può diventare cieco: vede almeno 16 route.
+- **Chat**: dopo i 30 s si guarda la coda della SOLA conversazione. Vuota: niente giro intero, riga `info`. Verifica non riuscita: si fa il giro come prima, riga `warn`. Anche l'aggiornamento di `last_message_at` ora controlla `{ error }`.
+- **Tick news**: la promozione delle programmate porta `.eq('stato', 'programmata')` e notifica solo se ha toccato la riga.
+- **Salute**: nuovo controllo `code-arretrate`, `degradato` e mai `giù`. Segnala:
+  - push maturate e mai prese da oltre 30 min;
+  - prese scadute e non chiuse da oltre 10 min;
+  - edizioni interrotte e non riprese da oltre 30 min (ultimi 7 giorni);
+  - news programmate non pubblicate da oltre 30 min.
+
+  Colonna o tabella assente vale `ok`, con la nota.
+- **DB della CI non migrato**: senza le colonne si degrada (`colonnaNuovaAssente`, `src/lib/db/colonna-assente.ts`, che riconosce 42703 e PGRST204). Push e digest funzionano come prima, e una riga `info` lo dice.
+
+**Prove.**
+- Push: `push-dispatch-presa` (8 test nuovi: scadenza, conferma, giro morto rimesso in coda dopo la scadenza, abbandono oltre 30 min, degradazione 42703/PGRST204). Togliendo bidello e conferma, 5 rossi.
+- Digest: `news/digest-presa` (17 test nuovi: presa altrui viva o scaduta, morte alla 27ª email con ripresa dalla 21ª con le stesse chiavi, presa persa, tetto di tempo con ripresa dal tick, finestra di 2 ore, 429 senza ripresa, CI senza colonne, guasto vero). Togliendo la condizione della presa, 2 rossi; senza salvataggi a intervalli, 4.
+- Solleciti: 11 test nuovi in `pagamenti-solleciti-invio`. Sul codice di prima ne cadono 10; l'undicesimo (l'anteprima non prende) era già vero.
+- Resend: `email-send-idempotenza` (7 test). Togliendo l'header e il ramo del 409 concorrente, 2 rossi.
+- Chat: 2 test nuovi. Senza la verifica della coda, rossi entrambi.
+- Tick news: 1 test della guardia, 2 della scadenza condivisa e della ripresa.
+- Salute: `health/code-arretrate` (11 test, ognuno col gemello appena sotto la soglia).
+- Lock `cron-max-duration`: rosso togliendo una sola dichiarazione.
+
+**Deviazioni.**
+- Le notifiche push restano su `push_inviata_il` come «non ancora spedita», perché la leggono sedici file. La scadenza è una colonna accanto, non una presa nuova.
+- Il digest ripreso dal tick ricompone il testo dai post del mese. Se un post cambia fra il giro troncato e la ripresa (entro 24 h), le poche email dopo l'ultimo salvataggio ricevono da Resend «stessa chiave, contenuto diverso» (409 definitivo, riga `error`) invece di un doppione.
+- Il comportamento sui livelli dei solleciti non letti resta quello deciso nella fase 5: il sollecito parte, con una riga `error`.
+
+## 🛑 Changelog — Roadmap di robustezza, fase 7 (PR 2): i freni RESTRICT sulle catene con valore legale — 2026-10-11 (branch `robustezza/fase-7-freni-restrict`)
+
+**Stato.** 🟡 **In PR** (in pila sopra la PR 1 e la fase 6). Una migrazione (`20261010230042_freni_restrict_catene_legali.sql`), applicata dall'integrazione al merge; nessun file in `src/`.
+
+**Misura (catalogo di produzione, 11/10).**
+- I 22 vincoli sono tutti `ON DELETE CASCADE`, a colonna singola, validati e non differibili. `ON UPDATE` è NO ACTION.
+- Ognuno ha il suo indice: 17 c'erano già, 5 arrivano con la fase 6.
+- La figlia più grande è `incassi`, con circa 1.700 righe.
+- Le cascate di oblio, account e personale partono da 17 tabelle e raggiungono 39 tabelle: nessuna è uno degli 11 padri.
+- Chi cancella quei padri:
+  - le funzioni `elimina_alunno_definitivo`, `protocollo_elimina`, `iscrizioni_rinvia` e `iscrizioni_annulla`;
+  - le route adattate nella PR 1;
+  - i rollback di `genera`/`rate`, su un padre appena creato e senza incassi;
+  - `admin/wipe`, sigillata fuori dai test.
+  
+  Nessun job `pg_cron` lo fa.
+
+**Cosa cambia.**
+- I 22 vincoli passano a `ON DELETE RESTRICT`, con stesso nome, colonna e padre. DROP e ADD stanno nella stessa `ALTER TABLE`, quindi non c'è un istante senza vincolo.
+- Una DELETE del padre con figlie presenti viene rifiutata dal database: 23503 su Postgres 17, 23001 dal 18. Prima si portava via in silenzio pagelle, giudizi, comportamento e ricevute di scrutinio, certificati delle competenze e medici, fascicolo, compilazioni firmate, incassi, allegati protocollati, movimenti e chiusure di cassa.
+- Restano CASCADE di proposito tre vincoli:
+  - i giudizi descrittivi del periodo, che sono configurazione;
+  - la coda delle fatture, che le route guardano già;
+  - le firme delle lezioni: il registro della primaria cancella una lezione contando su quella cascata.
+
+**Prove.**
+- `__tests__/lib/freni-restrict-sql.test.ts` (PGlite, nuovo, 30 test) applica il file vero su uno schema con i nomi e le CASCADE di produzione. Verifica che:
+  - la migrazione dichiara esattamente i 22 freni attesi;
+  - per ognuno, la DELETE del padre con una figlia viene rifiutata, la figlia resta, e cancellando in ordine si riesce;
+  - i tre esclusi cancellano ancora in cascata;
+  - il **rollback** scritto in testata riporta tutto in CASCADE;
+  - la **verifica n. 3** della testata risponde «rifiutato» coi freni e fallisce senza, senza cambiare niente in nessuno dei due casi.
+  
+  Rimettendo in CASCADE un solo freno, i rossi sono 3.
+- Gli schemi PGlite scritti a mano (`schema-soldi-pglite`, `registra-incasso-voce-sql`) dichiarano ora `incassi.pagamento_id` RESTRICT come la produzione, e i loro test restano verdi. La scatola nera tiene la CASCADE per provare una cascata a due livelli, e lo dice nel commento.
+- `MIGRAZIONI_ATTESE_AL_MERGE` ha la voce della migrazione: il lock delle FK verso `utenti` grida su ogni `drop`/`add constraint`. La PR-B rigenera la fotografia.
+
+**Deviazione dalla roadmap.** La roadmap chiedeva di provare i freni su un progetto ricreato dal backup. Non lo si è ricreato, perché costa e porta altri dati veri di minori; il temporaneo precedente resta da distruggere a cura del titolare. Al suo posto ci sono PGlite sul file vero e, dopo il merge, la verifica n. 3 in produzione: o rifiuta, o torna indietro con un'eccezione, e in nessun caso cancella.
+
 ## 🧱 Changelog — Roadmap di robustezza, fase 7 (PR 1): chi cancella lo fa in ordine e lo dice, prima dei freni RESTRICT — 2026-10-11 (branch `robustezza/fase-7-eliminazioni-in-ordine`)
 
 **Stato.** 🟡 **In PR** (in pila sopra la fase 6). Una migrazione (`20261010223849_eliminazioni_in_ordine.sql`) e sei route. Prepara la PR 2, che porta a `ON DELETE RESTRICT` le catene con valore legale. Da quel giorno una DELETE del padre con figlie presenti fallisce invece di cancellarle in silenzio, e chi contava sulla cascata deve cancellare in ordine o dire di no.

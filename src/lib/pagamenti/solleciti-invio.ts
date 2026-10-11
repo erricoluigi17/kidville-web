@@ -24,6 +24,7 @@ import {
     type SollecitiConfig,
 } from './solleciti'
 import { formattaIstante } from '@/i18n/config'
+import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 
 // Motore d'invio dei solleciti (manuale e cron). Regole:
 //  • anti-spam: mai due invii entro la cadenza minima (ultimo_sollecito_il);
@@ -32,6 +33,23 @@ import { formattaIstante } from '@/i18n/config'
 //  • destinatari: titolari quota (split) oppure tutori del bambino;
 //  • ogni invio reale → riga in `solleciti` (testo effettivo = audit) + push.
 // Il registro può mancare (DB e2e CI): si degrada senza bloccare.
+//
+// FASE 8 DELLA ROADMAP DI ROBUSTEZZA (2026-10-11) — il giro può morire a metà:
+//  • le letture vanno a BLOCCHI di `ID_PER_QUERY`. Con 500 voci un solo `.in()`
+//    faceva un URL di ~19 KB, e la lettura dei livelli poteva superare le 1.000
+//    righe di PostgREST, che tronca IN SILENZIO: un livello già inviato spariva e
+//    alla famiglia ripartiva il sollecito precedente;
+//  • una voce non letta non è «non trovata»: l'esito porta `guasto: true`, e il
+//    giro automatico non chiude col battito «ok»;
+//  • LA PRESA: `ultimo_sollecito_il` si scrive PRIMA dell'email, con un UPDATE
+//    condizionato sul valore letto. Due giri sulla stessa voce (il cron e il bottone
+//    della segreteria) non spediscono due volte: il secondo trova la data cambiata e
+//    salta. Il prezzo, scelto: se il giro muore fra la presa e l'email, quel sollecito
+//    slitta di una cadenza invece di partire due volte;
+//  • ogni email porta una chiave d'idempotenza (voce, livello, destinatario, giorno):
+//    un ritentativo nello stesso giorno Resend non lo rispedisce;
+//  • un tetto di tempo (`scadenza`): oltre, le voci restanti escono `rinviato per
+//    tempo` e le riprende il giro dopo, invece di morire col muro della Function.
 
 export interface EsitoSollecito {
     pagamento_id: string
@@ -41,6 +59,11 @@ export interface EsitoSollecito {
     corpo?: string
     destinatari?: { id: string; email?: string | null }[]
     motivo?: string
+    /** `true` = non inviato per un GUASTO (lettura fallita, presa non scritta), non per una
+     *  regola: il giro automatico non lo può chiudere con il battito «ok». */
+    guasto?: boolean
+    /** `true` = non tentato perché il giro ha raggiunto il suo tetto di tempo. */
+    rinviato?: boolean
 }
 
 interface PagRow {
@@ -77,27 +100,39 @@ export async function sollecitaPagamenti(
         attoreId?: string | null
         /** Scoping multi-sede: pagamenti fuori da queste sedi vengono saltati. */
         sediAmmesse?: string[]
+        /** Tetto di tempo (epoch ms): oltre, le voci restanti escono `rinviato`. */
+        scadenza?: number
     } = {},
 ): Promise<EsitoSollecito[]> {
     const COLONNE_PAG_BASE = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, stato, scadenza, tipo, periodo_competenza, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale ), payment_categories:categoria_id ( slug )'
     const COLONNE_PAG = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, sconto, stato, scadenza, tipo, periodo_competenza, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale ), payment_categories:categoria_id ( slug )'
     const COLONNE_PAG_METODI = `${COLONNE_PAG}, metodi_ammessi`
-    let { data: pagRows, error: errPag } = await supabase.from('pagamenti').select(COLONNE_PAG_METODI).in('id', pagamentoIds)
-    // DB E2E CI non migrato, una colonna nuova alla volta (42703 ⇒ un gradino giù):
-    //   `metodi_ammessi` assente → senza: ogni voce ammette entrambi i metodi, come prima della colonna;
-    //   `sconto` assente         → senza: residuo = importo − pagato.
-    // Ogni gradino lascia un `warn`: in produzione la colonna c'è, e una degradazione
-    // muta nasconderebbe una migrazione mai applicata.
-    for (const colonne of [COLONNE_PAG, COLONNE_PAG_BASE]) {
-        if (!errPag || (errPag as { code?: string }).code !== '42703') break
-        logEvento('pagamento', 'warn', { operazione: 'solleciti:pagamenti', esito: 'select-in-degradazione' })
-        const retry = await supabase.from('pagamenti').select(colonne).in('id', pagamentoIds)
-        pagRows = retry.data as unknown as typeof pagRows
-        errPag = retry.error
+    const pags: PagRow[] = []
+    // Le voci il cui blocco non si è letto: «non letta» non è «non trovata».
+    const nonLetti = new Set<string>()
+    for (const blocco of aBlocchi(pagamentoIds, ID_PER_QUERY)) {
+        let { data: pagRows, error: errPag } = await supabase.from('pagamenti').select(COLONNE_PAG_METODI).in('id', blocco)
+        // DB E2E CI non migrato, una colonna nuova alla volta (42703 ⇒ un gradino giù):
+        //   `metodi_ammessi` assente → senza: ogni voce ammette entrambi i metodi, come prima della colonna;
+        //   `sconto` assente         → senza: residuo = importo − pagato.
+        // Ogni gradino lascia un `warn`: in produzione la colonna c'è, e una degradazione
+        // muta nasconderebbe una migrazione mai applicata.
+        for (const colonne of [COLONNE_PAG, COLONNE_PAG_BASE]) {
+            if (!errPag || (errPag as { code?: string }).code !== '42703') break
+            logEvento('pagamento', 'warn', { operazione: 'solleciti:pagamenti', esito: 'select-in-degradazione' })
+            const retry = await supabase.from('pagamenti').select(colonne).in('id', blocco)
+            pagRows = retry.data as unknown as typeof pagRows
+            errPag = retry.error
+        }
+        // PostgREST non lancia: un errore residuo (≠ colonna mancante) va tracciato, non
+        // ingoiato — e le voci del blocco escono come GUASTO, non come «non trovate».
+        if (errPag) {
+            logErrore({ operazione: 'solleciti:pagamenti', evento: 'db' }, errPag)
+            for (const id of blocco) nonLetti.add(id)
+            continue
+        }
+        pags.push(...((pagRows || []) as unknown as PagRow[]))
     }
-    // PostgREST non lancia: un errore residuo (≠ colonna mancante) va tracciato, non ingoiato.
-    if (errPag) logErrore({ operazione: 'solleciti:pagamenti', evento: 'db' }, errPag)
-    const pags = (pagRows || []) as unknown as PagRow[]
 
     // livello già raggiunto (registro; degrade → si riparte da 1)
     //
@@ -107,19 +142,27 @@ export async function sollecitaPagamenti(
     // Per il registro assente (DB della CI non migrato) è giusto ripartire da 1, e
     // basta un `info`; per un guasto vero è un `error`, perché vuol dire rimandare il
     // 1° sollecito a chi ha già ricevuto il 2°.
+    //
+    // A BLOCCHI (fase 8): tre livelli per voce, e un `.in()` di 500 voci poteva tornare
+    // più delle 1.000 righe che PostgREST restituisce — troncate senza dirlo.
     const maxLivello = new Map<string, number>()
     try {
-        const { data, error: errLivelli } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', pagamentoIds)
-        if (errLivelli) {
-            const assente = REGISTRO_ASSENTE.has((errLivelli as { code?: string }).code ?? '')
-            logEvento('pagamento', assente ? 'info' : 'error', {
-                operazione: 'solleciti:livelli',
-                esito: assente ? 'registro-solleciti-assente' : 'livelli-non-letti',
-                n: pagamentoIds.length,
-            }, errLivelli)
-        }
-        for (const s of (data || []) as { pagamento_id: string; livello: number }[]) {
-            maxLivello.set(s.pagamento_id, Math.max(maxLivello.get(s.pagamento_id) ?? 0, s.livello))
+        for (const blocco of aBlocchi(pagamentoIds, ID_PER_QUERY)) {
+            const { data, error: errLivelli } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', blocco)
+            if (errLivelli) {
+                const assente = REGISTRO_ASSENTE.has((errLivelli as { code?: string }).code ?? '')
+                logEvento('pagamento', assente ? 'info' : 'error', {
+                    operazione: 'solleciti:livelli',
+                    esito: assente ? 'registro-solleciti-assente' : 'livelli-non-letti',
+                    n: blocco.length,
+                }, errLivelli)
+                // Il registro assente lo è per tutti i blocchi: una riga sola basta.
+                if (assente) break
+                continue
+            }
+            for (const s of (data || []) as { pagamento_id: string; livello: number }[]) {
+                maxLivello.set(s.pagamento_id, Math.max(maxLivello.get(s.pagamento_id) ?? 0, s.livello))
+            }
         }
     } catch (err) {
         logEvento('pagamento', 'error', {
@@ -141,7 +184,17 @@ export async function sollecitaPagamenti(
     const esiti: EsitoSollecito[] = []
     const adesso = Date.now()
 
+    let rinviati = 0
     for (const id of pagamentoIds) {
+        // Il tetto di tempo: si guarda PRIMA della presa, così una voce rinviata resta
+        // intatta per il giro dopo.
+        if (opts.scadenza !== undefined && Date.now() >= opts.scadenza) {
+            rinviati++
+            esiti.push({ pagamento_id: id, ok: false, motivo: 'rinviato per tempo', rinviato: true }); continue
+        }
+        if (nonLetti.has(id)) {
+            esiti.push({ pagamento_id: id, ok: false, motivo: 'pagamento non letto: sollecito non inviato', guasto: true }); continue
+        }
         const pag = pags.find((p) => p.id === id)
         if (!pag) { esiti.push({ pagamento_id: id, ok: false, motivo: 'pagamento non trovato' }); continue }
         if (opts.sediAmmesse && !opts.sediAmmesse.includes(pag.scuola_id)) {
@@ -339,10 +392,41 @@ export async function sollecitaPagamenti(
             iban,
         }, contestoSede)
 
+        // LA PRESA (fase 8). La cadenza anti-ripetizione si scrive PRIMA dell'email, e solo
+        // se nessun altro l'ha cambiata dopo la lettura: un UPDATE condizionato è atomico
+        // nel database. Zero righe = un altro giro (il cron, o la segreteria dal bottone)
+        // ha appena sollecitato questa voce: qui si salta. Fino al 2026-10-11 la data si
+        // scriveva DOPO email, push e registro: un giro morto in mezzo lasciava la voce
+        // «mai sollecitata», e il giro dopo rispediva.
+        const presaIl = new Date().toISOString()
+        const aggiorna = supabase.from('pagamenti').update({ ultimo_sollecito_il: presaIl }).eq('id', id)
+        const { data: presa, error: errPresa } = await (pag.ultimo_sollecito_il
+            ? aggiorna.eq('ultimo_sollecito_il', pag.ultimo_sollecito_il)
+            : aggiorna.is('ultimo_sollecito_il', null)
+        ).select('id')
+        if (errPresa) {
+            // Senza la data scritta, non si sa se un altro giro sta spedendo: non si spedisce.
+            logEvento('pagamento', 'error', { operazione: 'solleciti-invio', esito: 'cadenza-non-scritta', pagamento_id: id }, errPresa)
+            esiti.push({ pagamento_id: id, ok: false, motivo: 'cadenza non scritta: sollecito non inviato', guasto: true }); continue
+        }
+        if ((presa ?? []).length === 0) {
+            logEvento('pagamento', 'info', {
+                operazione: 'solleciti-invio', esito: 'sollecito-gia-in-corso', pagamento_id: id,
+                msg: 'la cadenza della voce è cambiata dopo la lettura: un altro giro l’ha appena sollecitata',
+            })
+            esiti.push({ pagamento_id: id, ok: false, motivo: 'sollecito già inviato da un altro giro' }); continue
+        }
+
+        const giorno = presaIl.slice(0, 10)
         const esitiInvio: { id: string; email?: string | null; inviata: boolean }[] = []
         for (const d of destinatari) {
             const inviata = d.email
-                ? (await sendEmailDetailed({ to: d.email, subject: oggetto, text: corpo, html: messaggio.html })).ok
+                ? (await sendEmailDetailed({
+                    to: d.email, subject: oggetto, text: corpo, html: messaggio.html,
+                    // voce + livello + destinatario + giorno: lo stesso sollecito ritentato
+                    // lo stesso giorno Resend non lo rispedisce. Solo uuid e una data.
+                    chiaveIdempotenza: `sollecito:${id}:L${livello}:${d.id}:${giorno}`,
+                })).ok
                 : false
             esitiInvio.push({ id: d.id, email: d.email, inviata })
         }
@@ -397,11 +481,14 @@ export async function sollecitaPagamenti(
                 pagamento_id: id,
             }, err)
         }
-        // Il sollecito è GIÀ partito: l'esito resta ok. Ma senza questa data la cadenza
-        // anti-ripetizione non vede l'invio, e il giro dopo lo manda di nuovo — si dice.
-        const { error: errCadenza } = await supabase.from('pagamenti').update({ ultimo_sollecito_il: new Date().toISOString() }).eq('id', id)
-        if (errCadenza) logEvento('pagamento', 'error', { operazione: 'solleciti-invio', esito: 'cadenza-non-scritta', pagamento_id: id }, errCadenza)
+        // La cadenza è già scritta: è la presa, qui sopra, prima dell'email.
         esiti.push({ pagamento_id: id, ok: true, livello, oggetto, destinatari })
+    }
+    if (rinviati > 0) {
+        logEvento('pagamento', 'warn', {
+            operazione: 'solleciti-invio', esito: 'rinviati-per-tempo', rinviati,
+            msg: `solleciti: ${rinviati} voci rinviate al giro successivo per il tetto di tempo`,
+        })
     }
     return esiti
 }

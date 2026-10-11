@@ -661,6 +661,13 @@ async function spazzaCurriculumOrfani(
     }
 }
 
+/**
+ * La vita massima della Function (fase 8 robustezza): un giro del cron che la supera
+ * muore a metà, e un lavoro troncato senza una vita dichiarata dipende dal default del
+ * piano. Il lock `cron-max-duration` la pretende da ogni route chiamata dal cron.
+ */
+export const maxDuration = 300
+
 // POST /api/gdpr/retention-candidature
 // Auth: header `x-cron-secret` (cron) OPPURE staff (lancio manuale).
 export const POST = withRoute('gdpr/retention-candidature:POST', async (request: NextRequest) => {

@@ -74,6 +74,9 @@ function dbBase(): DBFinto {
 
 const updatesEdizioni = (scritture: Scrittura[]) =>
   scritture.filter((s) => s.tabella === 'news_digest_edizioni' && s.operazione === 'update')
+/** Gli UPDATE che MARCANO l'edizione inviata (dalla fase 8 prima c'è quello della presa). */
+const marcature = (scritture: Scrittura[]) =>
+  updatesEdizioni(scritture).filter((s) => s.valori.some((v) => v.inviata_il != null))
 
 const logConEsito = (esito: string) =>
   logEvento.mock.calls.filter((c) => (c[2] as { esito?: string })?.esito === esito)
@@ -144,8 +147,11 @@ describe('T17-F4 — destinatari illeggibili: si RIMANDA, non si mente', () => {
     expect(sendEmailDetailed.mock.calls.map((c) => c[0].to)).toEqual(['a@example.test'])
     expect(edizioni[0].inviata).toBe(true)
     expect(edizioni[0].destinatari_count).toBe(1)
-    expect(updatesEdizioni(scritture)).toHaveLength(1)
+    // Due scritture: la presa del giro (fase 8), poi la marcatura che la lascia.
+    expect(updatesEdizioni(scritture)).toHaveLength(2)
+    expect(marcature(scritture)).toHaveLength(1)
     expect(db.news_digest_edizioni[0]?.inviata_il).toBeTruthy()
+    expect(db.news_digest_edizioni[0]?.presa_scade_il ?? null).toBeNull()
   })
 
   it('sede senza nemmeno una famiglia ⇒ si marca inviata (niente da riprovare)', async () => {
@@ -159,7 +165,8 @@ describe('T17-F4 — destinatari illeggibili: si RIMANDA, non si mente', () => {
     expect(sendEmailDetailed).not.toHaveBeenCalled()
     expect(edizioni[0].inviata).toBe(true)
     expect(edizioni[0].destinatari_count).toBe(0)
-    expect(updatesEdizioni(scritture)).toHaveLength(1)
+    expect(updatesEdizioni(scritture)).toHaveLength(2)
+    expect(marcature(scritture)).toHaveLength(1)
   })
 
   it('errore sulla tabella alunni ⇒ anche lì si rimanda, non si marca', async () => {

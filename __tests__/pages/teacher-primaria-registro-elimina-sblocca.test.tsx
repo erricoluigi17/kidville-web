@@ -360,12 +360,17 @@ describe('voce bloccata (423) e «Sblocca»', () => {
         fireEvent.click(within(await screen.findByTestId('registro-conferma-eliminazione')).getByRole('button', { name: itPrimaria.registroEliminaFirmaConferma }))
 
         const avviso = await screen.findByTestId('registro-voce-bloccata')
+        // Si aspetta la PRESENZA del bottone col suo nome completo, e solo dopo si guardano le
+        // assenze: `findByTestId` restituisce il contenitore appena compare, e sotto il carico
+        // della CI (11/10) il `getByRole` sincrono che seguiva non trovava ancora il nome — e
+        // un'assenza letta prima di una presenza è vera anche a caricamento in corso.
+        const sblocca = await within(avviso).findByRole('button', { name: /Sblocca la firma della 1ª ora/ })
         expect(avviso.textContent).not.toContain(itPrimaria.registroChiediSblocco)
         expect(
             screen.queryByRole('button', { name: 'Elimina la mia firma della 1ª ora' }),
             'Dopo il 423, prima dello sblocco, il gesto non si offre.',
         ).toBeNull()
-        fireEvent.click(within(avviso).getByRole('button', { name: /Sblocca la firma della 1ª ora/ }))
+        fireEvent.click(sblocca)
         fireEvent.change(await screen.findByLabelText(itPrimaria.sbloccaMotivo), { target: { value: 'Errore di battitura segnalato' } })
         const primaLetture = letture()
         fireEvent.click(screen.getByRole('button', { name: itPrimaria.sbloccaAutorizza }))
@@ -417,11 +422,13 @@ describe('voce bloccata (423) e «Sblocca»', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'Elimina lezione della 1ª ora' }))
         fireEvent.click(within(await screen.findByTestId('registro-conferma-eliminazione')).getByRole('button', { name: itPrimaria.registroEliminaLezioneConferma }))
         const avviso = await screen.findByTestId('registro-voce-bloccata')
+        // Presenza prima delle assenze (vedi il test della FIRMA qui sopra).
+        const sblocca = await within(avviso).findByRole('button', { name: /Sblocca la lezione della 1ª ora/ })
         expect(
             screen.queryByRole('button', { name: 'Elimina lezione della 1ª ora' }),
             'Dopo il 423 «Elimina lezione» non si offre: fallirebbe di nuovo.',
         ).toBeNull()
-        fireEvent.click(within(avviso).getByRole('button', { name: /Sblocca la lezione della 1ª ora/ }))
+        fireEvent.click(sblocca)
         fireEvent.change(await screen.findByLabelText(itPrimaria.sbloccaMotivo), { target: { value: 'Lezione doppia' } })
         fireEvent.click(screen.getByRole('button', { name: itPrimaria.sbloccaAutorizza }))
         await waitFor(() => expect(postSblocca()).toHaveLength(1))
@@ -463,7 +470,7 @@ describe('voce bloccata (423) e «Sblocca»', () => {
 
         const avviso = await screen.findByTestId('registro-voce-bloccata')
         expect(avviso.textContent, 'Il POST dichiara giorniLimite: il numero sulla riga.').toContain('Bloccata: superato il termine di 2 giorni.')
-        fireEvent.click(within(avviso).getByRole('button', { name: /Sblocca l’ora: 2ª ora del 01\/09\/2026/ }))
+        fireEvent.click(await within(avviso).findByRole('button', { name: /Sblocca l’ora: 2ª ora del 01\/09\/2026/ }))
         fireEvent.change(await screen.findByLabelText(itPrimaria.sbloccaMotivo), { target: { value: 'Maestra assente due giorni' } })
         fireEvent.click(screen.getByRole('button', { name: itPrimaria.sbloccaAutorizza }))
         await waitFor(() => expect(postSblocca()).toHaveLength(1))

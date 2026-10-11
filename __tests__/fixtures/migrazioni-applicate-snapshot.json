@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-10",
-  "generato_alle": "2026-10-10T16:12:06Z",
-  "sha256": "ca07ac664d51a6b7583a286435970a91da9eeb4f048850d94fafd20775cfa8e0",
+  "generato_il": "2026-10-11",
+  "generato_alle": "2026-10-11T11:48:09Z",
+  "sha256": "fb8b0d7cc66b849bf34679b4247b117d23fd24799a859afa122cb8cc4dfb41d0",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -859,6 +859,22 @@
     {
       "version": "20261010084330",
       "name": "report_cassa_aggregato"
+    },
+    {
+      "version": "20261010221643",
+      "name": "indici_fk_initplan_doppioni"
+    },
+    {
+      "version": "20261010223849",
+      "name": "eliminazioni_in_ordine"
+    },
+    {
+      "version": "20261010230042",
+      "name": "freni_restrict_catene_legali"
+    },
+    {
+      "version": "20261010230945",
+      "name": "code_robuste_prese_con_scadenza"
     }
   ]
 }

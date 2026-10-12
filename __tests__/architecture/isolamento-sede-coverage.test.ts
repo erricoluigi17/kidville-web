@@ -1271,7 +1271,12 @@ const AMMESSE: Record<string, string> = {
     'pagamenti/incassi/storno:<modulo>': 'helper: ricalcola lo stato del pagamento appena stornato (`p_id` della riga verificata dal chiamante)',
     'pagamenti/cassa/movimenti/storno:POST': 'storno del movimento di cassa già letto e verificato in questo handler',
     'pagamenti/[id]:PATCH': 'la riga è letta e la sua `scuola_id` confrontata con le sedi attive (404 se fuori); le RPC ricalcolano lo stato di QUELLA riga',
-    'pagamenti/[id]:DELETE': 'stessa lettura+confronto della PATCH prima di cancellare',
+    // `pagamenti/[id]:DELETE` è USCITA il 2026-10-12 (eliminare una voce generata per errore):
+    // la lettura+confronto con le sedi attive si è SPOSTATA in `controllaVoceEliminabile`
+    // (`src/lib/pagamenti/voce-eliminabile.ts`), che questo lock non legge per le query. Il debito
+    // non è pagato, è spostato: lo copre `__tests__/pagamenti/voce-eliminabile.test.ts` («voce
+    // fuori dalle sedi attive → 404»), e la stessa funzione fa da guardia anche a
+    // `pagamenti/[id]/eliminabile:GET` e alla sostituzione di `pagamenti/rate:POST`.
     'pagamenti/[id]/sconto:POST': 'sconto sul pagamento già verificato contro le sedi attive',
     'pagamenti/attestazione:GET': 'attestazione fiscale di UN alunno, il cui scope è verificato prima (staff in sede o genitore del bambino)',
     'pagamenti/famiglia:GET': 'prospetto della FAMIGLIA: gli alunni sono i figli, che possono stare in plessi diversi; lo staff resta limitato ai propri',
@@ -2510,7 +2515,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // iscritti». Service-role con `assertAlunnoInScope` PRIMA di ogni lettura, e la scheda
             // riletta con `.in('scuola_id', scuoleDiUtente(…))` nella stessa catena: due reti, a
             // monte di una cancellazione che non torna. Misurato rieseguendo il lock: 349 → 350.
-            routeConServiceRole: 350,
+            // +1: pagamenti/[id]/eliminabile:GET (2026-10-12) — il verdetto «si può eliminare?»
+            // della finestra Modifica. Service-role, sola lettura, con `resolveScuoleAttive` e la
+            // voce confrontata con le sedi (404 se fuori) in `controllaVoceEliminabile`.
+            // Misurato rieseguendo il lock: 350 → 351.
+            routeConServiceRole: 351,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2798,7 +2807,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // +1: admin/students/elimina:POST (2026-10-08) (vedi sopra, a `routeConServiceRole`).
             // CONTROLLATO, `handlerEsentati` fermo a 113 (nessuna esenzione).
             // Misurato rieseguendo il lock: 547 → 548.
-            handlerControllati: 548,
+            // +1: pagamenti/[id]/eliminabile:GET (2026-10-12) (vedi sopra, a `routeConServiceRole`).
+            // Misurato rieseguendo il lock: 548 → 549.
+            handlerControllati: 549,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -3169,7 +3180,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // è del job che quel token identifica. Il saldo è zero, ma la voce nuova è una DECISIONE
             // e non un adeguamento: è scritta per esteso in AMMESSE e ha il suo gemello in
             // `gate-coverage` (dove la stessa porta sale da 19 a 20).
-            handlerEsentati: 113,
+            // 113 → 112 il 2026-10-12: ESCE `pagamenti/[id]:DELETE`, voce morta da quando le
+            // guardie della DELETE stanno in `controllaVoceEliminabile` (il racconto accanto alla
+            // voce tolta, in AMMESSE). È un debito SPOSTATO, non pagato: coperto dal test della
+            // funzione, non da questo lock.
+            handlerEsentati: 112,
         })
     })
 })

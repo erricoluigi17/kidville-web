@@ -13,8 +13,8 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import { normalizzaMetodiAmmessi, CODICI_COLONNA_ASSENTE } from '@/lib/pagamenti/metodi-ammessi'
 import { zMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi-zod'
-import { STATI_CODA_OCCUPATA } from '@/lib/pagamenti/fatturazione-riga'
 import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
+import { controllaVoceEliminabile, rispostaRifiuto, TABELLA_ASSENTE } from '@/lib/pagamenti/voce-eliminabile'
 
 // ─── Schemi di validazione input (M3 + Contabilità v2 S3) ────────────────────
 // PATCH: merge parziale sui soli campi ammessi, ora TIPIZZATI (finding #3: prima
@@ -40,11 +40,11 @@ const CAMPI_EDITABILI = [
   'periodo_competenza', 'gruppo', 'tipo', 'visibile_dal', 'metodi_ammessi',
 ] as const
 
-/** RPC di ricalcolo (`ricalcola_stato_padre`/`_pagamento`) assenti sul DB non migrato. */
+/**
+ * RPC assenti sul DB non migrato: quelle di ricalcolo (`ricalcola_stato_padre`/`_pagamento`) e,
+ * dal 2026-10-12, `elimina_voce_ricarica_ticket`.
+ */
 const RPC_ASSENTE = new Set(['PGRST202', '42883'])
-
-/** `registro_modifiche` assente sul DB non migrato. */
-const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
 
 type ErroreDb = { code?: string; message?: string }
 
@@ -349,10 +349,14 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
   }
 })
 
-// DELETE /api/pagamenti/[id]  (staff)
+// DELETE /api/pagamenti/[id]  (admin e segreteria, dal 2026-10-12)
+// Le guardie stanno in `controllaVoceEliminabile` (fattura, incassi anche stornati, transazione
+// di famiglia, coda fatture, rata, ordine divise attivo, ticket già usati). Una voce di ricarica
+// ticket si elimina con la RPC che storna i suoi ticket nella stessa transazione: cancellata da
+// sola lascerebbe i ticket accreditati (la FK del ledger è SET NULL).
 export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
-    const auth = await requireStaff(request)
+    const auth = await requireStaff(request, ['admin', 'segreteria'])
     if (auth.response) return auth.response
     const { user } = auth
     const { id: idGrezzo } = await context.params
@@ -361,119 +365,92 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
     const id = pid.data
 
     const supabase = await createAdminClient()
-    const { data: old, error: errOld } = await supabase.from('pagamenti').select('*').eq('id', id).maybeSingle()
-    if (errOld) return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:pagamenti', errOld)
-    if (!old) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
-    // scoping di sede: non eliminare pagamenti fuori dalle sedi attive
-    const sediDel = await resolveScuoleAttive(request as NextRequest, supabase, user)
-    if (!sediDel.includes(String((old as { scuola_id: string }).scuola_id))) {
-      return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
+    const c = await controllaVoceEliminabile(supabase, id, { sedi, perSostituzione: false, operazione: 'pagamenti/[id]:DELETE' })
+    if (!c.ok) {
+      if ('guasto' in c) return c.guasto
+      return rispostaRifiuto(c.codice)
     }
-    // La DELETE di una voce porta via in CASCADE le sue rate e quote (`parent_payment_id`):
-    // ogni guardia guarda la voce E le figlie. Prima della fase 7 guardava la sola voce,
-    // e una rata fatturata o incassata se ne andava con il padre.
-    const { data: figlie, error: figlieErr } = await supabase.from('pagamenti').select('id').eq('parent_payment_id', id)
-    if (figlieErr) return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:pagamenti:figlie', figlieErr)
-    const famiglia = [id, ...((figlie ?? []) as { id: string }[]).map((f) => f.id)]
 
-    // Conservazione fiscale: un pagamento con FATTURA emessa non è cancellabile
-    // (FK RESTRICT + WORM). Le RICEVUTE già a registro restano (numero
-    // conservato, `pagamento_id` azzerato via ON DELETE SET NULL).
-    //
-    // 🔴 Le guardie qui sotto erano scritte `!errore && …`: con un guasto della lettura la
-    // guardia SALTAVA e la DELETE partiva — su una voce fatturata o legata a una transazione
-    // di famiglia (fase 5 robustezza, sesto pezzo). Una guardia che non ha potuto guardare
-    // ferma la cancellazione; salta solo dove lo schema manca davvero (DB E2E non migrato).
-    const { data: fatt, error: fattErr } = await supabase.from('fatture_emesse').select('id').in('pagamento_id', famiglia).limit(1)
-    if (fattErr && !TABELLA_ASSENTE.has(fattErr.code ?? '')) {
-      return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:fatture_emesse:guardia', fattErr)
-    }
-    if (!fattErr && fatt && fatt.length > 0) {
-      return NextResponse.json({ error: 'Pagamento con fattura emessa: non eliminabile per conservazione fiscale. Annulla/storna prima la fattura.' }, { status: 409 })
-    }
-    // Fase 7: un INCASSO qualunque, anche stornato, è contabilità. Gli incassi non si
-    // cancellano mai (lo storno è una riga in più): la voce che li porta resta. Prima
-    // la cascata li cancellava insieme alla voce, senza dirlo (restava fuori solo
-    // l'incasso di una transazione di famiglia); dalla PR 2 della fase 7 la FK è
-    // RESTRICT e il database rifiuterebbe comunque.
-    const inc = await supabase.from('incassi').select('id').in('pagamento_id', famiglia).limit(1)
-    if (inc.error) return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:incassi:guardia', inc.error)
-    if (inc.data && inc.data.length > 0) {
-      // Solo per dire la via d'uscita giusta: se l'incasso è di una transazione unica di
-      // famiglia, si annulla la transazione. La decisione è già presa (la voce resta):
-      // un guasto di questa lettura, o la colonna assente sul DB E2E non migrato,
-      // cambiano solo il messaggio.
-      const tx = await supabase.from('incassi').select('id').in('pagamento_id', famiglia).not('transazione_id', 'is', null).limit(1)
-      if (tx.error && !CODICI_COLONNA_ASSENTE.includes(tx.error.code ?? '')) {
-        logEvento('pagamento', 'warn', {
-          operazione: 'pagamenti/[id]:DELETE', esito: 'transazione-non-letta', pagamento_id: id,
-        }, tx.error)
-      }
-      const diTransazione = !tx.error && (tx.data?.length ?? 0) > 0
-      logEvento('pagamento', 'info', {
-        operazione: 'pagamenti/[id]:DELETE', esito: 'eliminazione-rifiutata-incassi', pagamento_id: id,
-        transazione: diTransazione,
-      })
-      return NextResponse.json(
-        diTransazione
-          ? { error: 'Pagamento con incassi di una transazione di famiglia: annulla prima la transazione.', codice: 'VOCE_IN_TRANSAZIONE' }
-          : {
-              error: 'La voce ha incassi registrati (anche stornati): resta per la contabilità. Se è sbagliata, storna gli incassi e correggi la voce invece di eliminarla.',
-              codice: 'VOCE_CON_INCASSI',
-            },
-        { status: 409 },
-      )
-    }
-    // Una fattura ancora in coda (in coda, in invio, in errore) se ne andrebbe con la
-    // voce in CASCADE: «in invio» vuol dire che il file può essere già partito verso
-    // SDI. Si toglie prima dalla coda, poi si elimina la voce.
-    const coda = await supabase
-      .from('fatture_coda')
-      .select('id')
-      .in('pagamento_id', famiglia)
-      .in('stato', [...STATI_CODA_OCCUPATA])
-      .limit(1)
-    if (coda.error && !TABELLA_ASSENTE.has(coda.error.code ?? '')) {
-      return rispostaGuastoDb('pagamenti/[id]:DELETE', 'db:fatture_coda:guardia', coda.error)
-    }
-    if (!coda.error && coda.data && coda.data.length > 0) {
+    // Un incasso o una fattura arrivati fra le guardie e la DELETE: il freno RESTRICT del
+    // database rifiuta, e non è un guasto.
+    const frenoRisposta = (error: unknown) => {
+      logEvento('pagamento', 'warn', {
+        operazione: 'pagamenti/[id]:DELETE', esito: 'eliminazione-rifiutata-dal-freno', pagamento_id: id,
+      }, error)
       return NextResponse.json(
         {
-          error: 'La voce ha una fattura in coda di emissione: toglila dalla coda prima di eliminare la voce.',
-          codice: 'VOCE_IN_CODA_FATTURE',
+          error: 'La voce è stata incassata o fatturata nel frattempo: non si può più eliminare. Ricarica la pagina.',
+          codice: 'VOCE_CON_CONTABILITA',
         },
         { status: 409 },
       )
     }
-    const { error } = await supabase.from('pagamenti').delete().eq('id', id)
-    if (error) {
-      // Un incasso o una fattura arrivati fra le guardie e la DELETE: il freno RESTRICT
-      // del database rifiuta, e non è un guasto.
-      if (figlieTrattengono(error)) {
-        logEvento('pagamento', 'warn', {
-          operazione: 'pagamenti/[id]:DELETE', esito: 'eliminazione-rifiutata-dal-freno', pagamento_id: id,
-        }, error)
+
+    let ticketTolti = 0
+    if (c.ticket > 0) {
+      const rpc = await supabase.rpc('elimina_voce_ricarica_ticket', { p_pagamento_id: id, p_operatore: user.id })
+      if (rpc.error) {
+        if (RPC_ASSENTE.has(rpc.error.code ?? '')) {
+          // Mai la DELETE diretta al posto della RPC: i ticket resterebbero accreditati.
+          logEvento('pagamento', 'error', {
+            operazione: 'pagamenti/[id]:DELETE', esito: 'rpc-eliminazione-ricarica-assente', pagamento_id: id,
+          }, rpc.error)
+          return NextResponse.json(
+            { error: 'Eliminazione di una ricarica non disponibile su questo ambiente', codice: 'ELIMINAZIONE_RICARICA_NON_DISPONIBILE' },
+            { status: 503 },
+          )
+        }
+        if (figlieTrattengono(rpc.error)) return frenoRisposta(rpc.error)
+        logErrore({ operazione: 'pagamenti/[id]:DELETE', stato: 500, evento: 'rpc:elimina_voce_ricarica_ticket' }, rpc.error)
+        return NextResponse.json({ error: 'Errore eliminazione', details: rpc.error.message }, { status: 500 })
+      }
+      const esito = (rpc.data ?? {}) as { esito?: string; ticket_tolti?: number }
+      if (esito.esito === 'ticket_gia_usati') {
         return NextResponse.json(
-          {
-            error: 'La voce è stata incassata o fatturata nel frattempo: non si può più eliminare. Ricarica la pagina.',
-            codice: 'VOCE_CON_CONTABILITA',
-          },
+          { error: 'I ticket di questa ricarica sono già stati usati: la voce non si può eliminare.', codice: 'TICKET_GIA_USATI' },
           { status: 409 },
         )
       }
-      logErrore({ operazione: 'pagamenti/[id]:DELETE', stato: 500, evento: 'db' }, error)
-      return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
+      if (esito.esito === 'non_trovata') return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+      if (esito.esito !== 'eliminata') {
+        // «senza_ricarica» o un esito ignoto: la voce è cambiata fra la guardia e la RPC.
+        logEvento('pagamento', 'error', {
+          operazione: 'pagamenti/[id]:DELETE', esito: 'rpc-esito-inatteso', pagamento_id: id, rpc_esito: esito.esito ?? null,
+        })
+        return NextResponse.json(
+          { error: 'La voce è cambiata nel frattempo. Ricarica la pagina.', codice: 'VOCE_CON_CONTABILITA' },
+          { status: 409 },
+        )
+      }
+      ticketTolti = Number(esito.ticket_tolti ?? c.ticket)
+    } else {
+      const { error } = await supabase.from('pagamenti').delete().eq('id', id)
+      if (error) {
+        if (figlieTrattengono(error)) return frenoRisposta(error)
+        logErrore({ operazione: 'pagamenti/[id]:DELETE', stato: 500, evento: 'db' }, error)
+        return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
+      }
     }
 
-    // La voce è GIÀ cancellata: l'audit non cambia la risposta, ma un audit perso è
-    // una cancellazione senza traccia di chi l'ha fatta, e si dice. Il `vecchio_valore`
-    // (descrizione, alunno…) vive nell'audit, MAI nei log: lì solo uuid e codice.
+    // La voce è GIÀ cancellata: da qui niente cambia la risposta, ma ogni fallimento si dice.
+    // Una voce scaduta tolta può azzerare lo scaduto della famiglia → revoca della sospensione
+    // per morosità, come fa la PATCH quando cambiano importo o scadenza.
+    try {
+      if (c.voce.alunno_id) await verificaRevocaSospensioneMorosita(supabase, [String(c.voce.alunno_id)])
+    } catch (e) {
+      logEvento('pagamento', 'error', { operazione: 'pagamenti/[id]:DELETE', esito: 'revoca_non_verificata', pagamento_id: id }, e)
+    }
+
+    // Un audit perso è una cancellazione senza traccia di chi l'ha fatta, e si dice. Il
+    // `vecchio_valore` (descrizione, alunno…) vive nell'audit, MAI nei log: lì solo uuid e numeri.
     const audit = await erroreScrittura(
       supabase.from('registro_modifiche').insert({
         azione: 'elimina_pagamento',
         tabella_interessata: 'pagamenti',
         record_id: id,
-        vecchio_valore: old,
+        vecchio_valore: c.voce,
+        ...(ticketTolti > 0 ? { nuovo_valore: { ticket_tolti: ticketTolti } } : {}),
         utente_id: user.id,
       }),
     )
@@ -486,7 +463,17 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
       }, audit.errore)
     }
 
-    return NextResponse.json({ success: true })
+    // Evento critico: si logga anche il SUCCESSO, o «nessun log» non distingue «eliminata» da
+    // «mai partita».
+    logEvento('pagamento', 'info', {
+      operazione: 'pagamenti/[id]:DELETE',
+      esito: 'voce-eliminata',
+      pagamento_id: id,
+      tipo: c.voce.tipo,
+      rate: c.rate,
+      ticket_tolti: ticketTolti,
+    })
+    return NextResponse.json({ success: true, ticket_tolti: ticketTolti })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/[id]:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

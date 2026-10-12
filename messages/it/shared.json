@@ -705,5 +705,11 @@
   "errorePeriodoConScrutini": "Il periodo ha già scrutini e non si può eliminare. Si può correggere dalla modifica del periodo.",
   "erroreMateriaInUso": "La materia ha già voti, ore di registro o giudizi di scrutinio e non si può eliminare.",
   "erroreModuloConCompilazioni": "Il modulo ha già compilazioni, che restano come documenti: non si può eliminare. Per chiuderlo, imposta una scadenza.",
-  "erroreEliminazioneNonRiuscita": "L’eliminazione non è riuscita. Ricarica la pagina e riprova."
+  "erroreEliminazioneNonRiuscita": "L’eliminazione non è riuscita. Ricarica la pagina e riprova.",
+  "erroreVoceFatturata": "La voce ha una fattura emessa: non si elimina per conservazione fiscale. Annulla o storna prima la fattura.",
+  "erroreVoceRata": "È una rata di un piano: si elimina il piano intero dalla voce principale.",
+  "erroreVoceNonSostituibile": "Questa voce non si può sostituire con un piano rateale: deve essere una voce singola dello stesso bambino.",
+  "erroreOrdineDiviseAttivo": "È l’addebito di un ordine divise ancora attivo: annulla prima l’ordine.",
+  "erroreTicketGiaUsati": "I ticket di questa ricarica sono già stati usati: la voce non si può eliminare.",
+  "erroreEliminazioneRicaricaNonDisponibile": "L’eliminazione di una ricarica di ticket non è disponibile su questo ambiente: la voce non è stata eliminata."
 }

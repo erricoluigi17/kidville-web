@@ -43,7 +43,7 @@ async function creaPiano() {
 describe('RateizzaModal — i metodi ammessi della voce sostituita', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
-  it('una voce «solo contanti»: la POST del piano porta metodi_ammessi = [contanti], poi l’originale si cancella', async () => {
+  it('una voce «solo contanti»: la POST del piano porta metodi_ammessi = [contanti] e la voce da sostituire', async () => {
     const s = server();
     vi.stubGlobal('fetch', s.fetchMock);
     const onDone = vi.fn();
@@ -66,9 +66,10 @@ describe('RateizzaModal — i metodi ammessi della voce sostituita', () => {
     expect(s.post()).toHaveLength(1);
     expect(s.post()[0].url).toBe('/api/pagamenti/rate');
     expect(s.post()[0].corpo?.metodi_ammessi).toEqual(['contanti']);
-    // La sostituzione avviene DOPO, sulla voce originale.
-    expect(s.delete()).toHaveLength(1);
-    expect(s.delete()[0].url).toContain('/api/pagamenti/pg-originale');
+    // La sostituzione la fa il SERVER (2026-10-12) nella stessa POST: dal browser non parte
+    // più nessuna DELETE (un suo fallimento lasciava voce e piano insieme).
+    expect(s.post()[0].corpo?.sostituisce_pagamento_id).toBe('pg-originale');
+    expect(s.delete()).toEqual([]);
   });
 
   it('i metodi arrivano normalizzati: un valore ignoto non diventa un 400', async () => {
@@ -106,5 +107,6 @@ describe('RateizzaModal — i metodi ammessi della voce sostituita', () => {
     // Àncora positiva: il corpo è quello del piano.
     expect(s.post()[0].corpo?.descrizione).toBe('Divisa');
     expect(s.post()[0].corpo).not.toHaveProperty('metodi_ammessi');
+    expect(s.post()[0].corpo).not.toHaveProperty('sostituisce_pagamento_id');
   });
 });

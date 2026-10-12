@@ -3303,6 +3303,23 @@ export const CODICI_ERRORE = {
     MODULO_CON_COMPILAZIONI: 'erroreModuloConCompilazioni',
     /** 500 — la DELETE di un periodo, di una materia o di un modulo non è riuscita per un guasto. */
     ELIMINAZIONE_NON_RIUSCITA: 'erroreEliminazioneNonRiuscita',
+    /**
+     * 409 — eliminazione di una voce di pagamento (2026-10-12, «pagamenti generati per errore»).
+     * Le guardie stanno in `src/lib/pagamenti/voce-eliminabile.ts`; la zona «Elimina voce» della
+     * finestra Modifica mostra questi testi come motivo quando il pulsante non c'è.
+     *  · VOCE_FATTURATA: fattura emessa sulla voce o su una rata (conservazione fiscale);
+     *  · VOCE_RATA: si elimina il piano dalla voce principale, non la singola rata;
+     *  · VOCE_NON_SOSTITUIBILE: Rateizza su una voce non singola o di un altro bambino;
+     *  · ORDINE_DIVISE_ATTIVO: la voce è l'addebito di un ordine divise non annullato;
+     *  · TICKET_GIA_USATI: i ticket della ricarica sono già stati consumati.
+     * 503 — ELIMINAZIONE_RICARICA_NON_DISPONIBILE: la funzione SQL manca (DB non migrato), la voce resta.
+     */
+    VOCE_FATTURATA: 'erroreVoceFatturata',
+    VOCE_RATA: 'erroreVoceRata',
+    VOCE_NON_SOSTITUIBILE: 'erroreVoceNonSostituibile',
+    ORDINE_DIVISE_ATTIVO: 'erroreOrdineDiviseAttivo',
+    TICKET_GIA_USATI: 'erroreTicketGiaUsati',
+    ELIMINAZIONE_RICARICA_NON_DISPONIBILE: 'erroreEliminazioneRicaricaNonDisponibile',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

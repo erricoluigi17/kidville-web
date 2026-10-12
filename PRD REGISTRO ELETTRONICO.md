@@ -1,6 +1,25 @@
+## ✅ Changelog — Roadmap di robustezza, fasi 9a e 10 in produzione: verifica dopo il rilascio, fotografie rigenerate — 2026-10-12 (branch `robustezza/fase-9-10-pr-b`)
+
+**Stato.** ✅ **In produzione dal 2026-10-12** (PR-B di #224). Nessuna migrazione e nessun codice applicativo: le sei fotografie del catalogo, `MIGRAZIONI_ATTESE_AL_MERGE` svuotata, tre commenti e il titolo di un test che dicevano una cosa non più vera, il PRD e la roadmap.
+
+**Come è arrivata in produzione la #224.** Fusa alle 11:00:52 UTC del 12/10 (squash `685667e7`) dall'auto-merge attivato dall'account del titolare alle 10:03, appena la CI è tornata verde. Il job «Lint · Typecheck · Unit» era caduto una volta ed è stato rilanciato senza toccare il codice. L'integrazione ha applicato `20261012085225_chat_broadcast_privato.sql` con la version del file, una riga sola: 218 → **219** migrazioni. Sul merge la CI di `main` e «Verifica dopo il deploy» sono verdi.
+
+**Verifica dopo il rilascio (produzione, 12/10, sola lettura, le query della testata della migrazione).**
+- La funzione `chat_messaggio_broadcast` è `SECURITY DEFINER` con `search_path` vuoto; né `anon` né `authenticated` la possono eseguire. I trigger su `chat_messages` sono due (AFTER INSERT e AFTER UPDATE).
+- Su `realtime.messages` c'è una policy sola, di SELECT, per `authenticated`; nessuna di INSERT, quindi i client non trasmettono.
+- Il segnale gira: 44 segnali su 9 canali nei primi 13 minuti dopo il rilascio. Le chiavi del payload sono le sei dichiarate (id, thread_id, sender_id, created_at, read_at, delivered_at): contate con `jsonb_object_keys`, nessun valore letto.
+- `realtime.subscription` (chi ascolta `postgres_changes`): **2 → 0**.
+- `/api/health` ok in `dub1`, versione `685667e799b5`. Una lettura isolata subito dopo il deploy ha dato `down` per `schema-atteso` oltre il tetto di 2 s; le tre successive tutte ok. Iscrizioni: 726.
+
+**Misura DOPO del costo: ⏳ da fare.** `realtime.list_changes` è passata da 49.361 s / 7,38 M chiamate (12/10 ~09:00 UTC) a 49.607 s / 7,40 M (11:35 UTC). Due ore e mezza di mattina, di picco, non dicono niente sul calo: si confronta un giorno feriale intero. I bundle vecchi continuano a mandare la sonda di visibilità e gli errori `chat-realtime-*` finché `ControlloVersione` o la chiusura dell'app non li ricaricano: anche quelle serie si leggono dopo un giorno.
+
+**Fotografie rigenerate dalla produzione.** Cambia davvero solo quella delle migrazioni (219, ultima `20261012085225_chat_broadcast_privato`). RLS (43 policy), FK di sede (79 tabelle, 0 senza FK), tabelle con sede (79, 22 legate all'alunno), FK verso `utenti` (58) e indici unici (233) cambiano solo nell'istante dello scatto, con la stessa sha256: la policy nuova vive nello schema `realtime`, e quelle fotografie guardano `public`.
+
+**Un fatto non più vero, corretto.** Il commento in `GET /api/chat/messages` e la testata di `src/lib/chat/delivered.ts` dicevano che sul DB E2E della CI la colonna `delivered_at` non esiste. Dal 12/10 esiste: «DB migrate (CI)» (run 38232563240) le ha applicato `20260714100000_chat_delivered_at.sql` prima della migrazione della 9a. La consegna resta una query separata dal mark-read, e il ripiego su colonna assente resta: vale per qualunque database non migrato.
+
 ## 📡 Changelog — Roadmap di robustezza, fasi 9a e 10: chat su Broadcast privato, pagamenti senza tempo reale, ricarica del bundle vecchio; identità misurata e chiusa senza codice — 2026-10-12 (branch `robustezza/fase-9-10`)
 
-**Stato.** 🟡 **In PR**. Un rilascio solo per le due fasi, come chiesto dal titolare. Una migrazione (`20261012085225_chat_broadcast_privato.sql`), applicata dall'integrazione al merge; in `MIGRAZIONI_ATTESE_AL_MERGE` fino alla PR-B. La **9b** (togliere tabelle dalla pubblicazione `supabase_realtime`) **non c'è, per regola**: va fatta almeno due settimane dopo la 9a, quando non girano più app che ascoltano `postgres_changes`.
+**Stato.** ✅ **In produzione dal 2026-10-12** (#224, `685667e7`, fusa alle 11:00 UTC). Un rilascio solo per le due fasi, come chiesto dal titolare. Una migrazione (`20261012085225_chat_broadcast_privato.sql`), applicata dall'integrazione al merge con una riga sola (218 → 219); tolta da `MIGRAZIONI_ATTESE_AL_MERGE` nella PR-B, con le fotografie rigenerate. La **9b** (togliere tabelle dalla pubblicazione `supabase_realtime`) **non c'è, per regola**: va fatta almeno due settimane dopo la 9a, quando non girano più app che ascoltano `postgres_changes`.
 
 **Misura PRIMA (produzione, 12/10).** Iscrizioni 725, migrazioni 218. La query WAL del Realtime (`realtime.list_changes`) vale **49.361 s** di tempo DB e 7,38 M chiamate dal 06/08: la prima voce del database. `chat-realtime-errore` da 8 a 441 al giorno nell'ultima settimana. Sonda di visibilità ~1.300 righe al giorno per tipo.
 

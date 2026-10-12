@@ -156,7 +156,7 @@ describe('unisciMessaggio — un messaggio non torna mai indietro', () => {
         expect(unisciMessaggio(letto, { ...letto, read_at: null }, 'server').read_at).toBe('2026-09-14T09:00:00.000Z');
     });
 
-    it('delivered_at assente (DB E2E senza colonna) non cancella e vale null', () => {
+    it('delivered_at assente (DB non migrato) non cancella e vale null', () => {
         const consegnato = msg(1, { delivered_at: '2026-09-14T09:00:00.000Z' });
         const senzaColonna: ChatMessage = { ...consegnato };
         delete senzaColonna.delivered_at;

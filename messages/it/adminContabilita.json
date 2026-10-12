@@ -1513,5 +1513,16 @@
   "servGenModoMese": "Un mese",
   "servGenModoAnno": "Anno scolastico",
   "servGenAnno": "Anno scolastico",
-  "servGenAnnoAiuto": "L’anno copre da settembre a giugno. Luglio e agosto si generano scegliendo il mese."
+  "servGenAnnoAiuto": "L’anno copre da settembre a giugno. Luglio e agosto si generano scegliendo il mese.",
+  "eliminaTitolo": "Elimina voce",
+  "eliminaPulsante": "Elimina voce",
+  "eliminaDomanda": "Eliminare «{descrizione}», {importo}? Non si può annullare.",
+  "eliminaConRate": "Si eliminano anche le sue {n} rate.",
+  "eliminaConTicket": "Si tolgono anche i {n} ticket mensa di questa ricarica.",
+  "eliminaAnnulla": "Annulla",
+  "eliminaConferma": "Sì, elimina",
+  "eliminaInCorso": "Eliminazione…",
+  "eliminaNonControllabile": "Non riesco a controllare la voce: riapri la finestra.",
+  "eliminaErrRete": "Connessione non riuscita: la voce non è stata eliminata.",
+  "eliminaErrGenerico": "L’eliminazione non è riuscita."
 }

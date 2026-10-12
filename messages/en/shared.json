@@ -705,5 +705,11 @@
   "errorePeriodoConScrutini": "This period already has end-of-term assessments and cannot be deleted. You can correct it by editing the period.",
   "erroreMateriaInUso": "This subject already has grades, register hours or assessment reports and cannot be deleted.",
   "erroreModuloConCompilazioni": "This form already has submissions, which are kept as documents: it cannot be deleted. To close it, set an expiry date.",
-  "erroreEliminazioneNonRiuscita": "Deletion failed. Reload the page and try again."
+  "erroreEliminazioneNonRiuscita": "Deletion failed. Reload the page and try again.",
+  "erroreVoceFatturata": "This item has an issued invoice: it cannot be deleted for tax retention. Cancel or reverse the invoice first.",
+  "erroreVoceRata": "This is an instalment of a plan: delete the whole plan from its main item.",
+  "erroreVoceNonSostituibile": "This item cannot be replaced by an instalment plan: it must be a single item of the same child.",
+  "erroreOrdineDiviseAttivo": "This is the charge of a uniform order that is still active: cancel the order first.",
+  "erroreTicketGiaUsati": "The tickets of this top-up have already been used: the item cannot be deleted.",
+  "erroreEliminazioneRicaricaNonDisponibile": "Deleting a ticket top-up is not available in this environment: the item was not deleted."
 }

@@ -97,7 +97,8 @@ Chi la accende: la scheda «Report cucina» di `/admin/mensa` e `/admin/mensa/cu
 ### 4.6 `ConfermaAnnullaPasto` (nuovo, piccolo)
 
 Finestra su `Modal` di `@/components/ui/Modal` con «Annulla il pasto» e «Lascia com'è», condivisa da
-4.3 e 4.5. Il focus torna al pulsante che l'ha aperta (`returnFocusRef`).
+4.3 e 4.5. Il focus torna al pulsante che l'ha aperta: lo fa già `Modal` (ricorda l'elemento
+attivo all'apertura), e il pulsante non è disabilitato in quel momento.
 
 ## 5. Errori e log
 

@@ -21,8 +21,9 @@ import { renderHook, act } from '@testing-library/react';
  * questa app gira anche dentro una WebView Capacitor, e su iOS non è dato per scontato che
  * `visibilitychange` scatti quando l'app va in secondo piano. Non lo si assume: si montano
  * ENTRAMBI i segnali — `visibilitychange` e `appStateChange` di `@capacitor/app` — così la
- * correttezza non dipende da quale dei due funzioni. Quale sia arrivato davvero lo dice la sonda
- * (evento `client:visibilita`), che risponde con un dato invece che con un'opinione.
+ * correttezza non dipende da quale dei due funzioni. Una sonda ha confermato con un DATO che nella
+ * WebView arrivano entrambi, e dal 12/10/2026 non scrive più: vedi la prova 10 e
+ * `__tests__/lib/visibilita-pagina.test.ts`, dove il meccanismo adesso vive.
  *
  * Il precedente che impone questa cautela è in `client.ts`: per 31 giorni il campo `piattaforma`
  * ha detto `web` per 3.625 eventi su 3.626, perché Capacitor NON si scrive nello user-agent e
@@ -247,30 +248,32 @@ describe('usePollingVisibile', () => {
         expect(secondo, 'l\'orologio è ripartito da capo al cambio di callback').toHaveBeenCalledTimes(1);
     });
 
-    it('10. LA SONDA: su nativo dice quale segnale è arrivato; su web tace', async () => {
-        // Serve a rispondere con un dato alla domanda «`document.hidden` funziona nella WebView
-        // iOS?». Due silenzi opposti non si distinguono: per questo la sonda parla ANCHE quando
-        // tutto va bene, e non solo quando manca qualcosa.
-        // Modulo FRESCO: la sonda tiene il conto per sessione di pagina, e le prove precedenti
-        // l'hanno già consumata. Senza questo, il test misurerebbe l'ordine di esecuzione.
+    it('10. LA SONDA TACE: un segnale di visibilità non lascia righe in `app_log` (S7-D)', async () => {
+        // ─────────────────────────────────────────────────────────────────────────────
+        // QUI C'ERA L'ASSERZIONE OPPOSTA, e la sua ragione era buona: la sonda «segnale di
+        // visibilità ricevuto» rispondeva con un DATO — e non con un'opinione — alla domanda
+        // «`document.hidden` funziona nella WebView iOS?», e parlava anche a cose funzionanti
+        // perché «nessun log» non distingue «il segnale arriva» da «la sonda non è mai partita».
+        //
+        // HA RISPOSTO: i due segnali arrivano. E intanto scriveva ~1.300 righe al giorno PER
+        // TIPO (misurato il 12/10/2026), a livello `warn`, cioè persistite. Un canale che ripete
+        // ogni giorno una risposta acquisita non è osservabilità: è volume — e questo hook è
+        // nato proprio per togliere volume.
+        //
+        // Ciò che resta da sapere — il bridge nativo che NON risponde — si logga ancora, e il
+        // suo test sta accanto al meccanismo, in `__tests__/lib/visibilita-pagina.test.ts`.
+        // ROSSO SE: la sonda torna a scrivere a ogni ripresa.
+        // ─────────────────────────────────────────────────────────────────────────────
         vi.resetModules();
         const { usePollingVisibile: hook } = await import('@/lib/hooks/use-polling-visibile');
         nativo.è = true;
         renderHook(() => hook(vi.fn(), 30_000));
         await lasciaRegistrare();
 
-        act(() => visibilita(true));
-        expect(logClient).toHaveBeenCalledTimes(1);
-        expect(logClient.mock.calls[0][0]).toMatchObject({ evento: 'visibilita' });
-        expect(logClient.mock.calls[0][0].messaggio).toContain('visibilitychange');
+        act(() => { visibilita(true); statoApp(false); });
+        act(() => { visibilita(false); statoApp(true); });
 
-        act(() => statoApp(false));
-        expect(logClient, 'il secondo segnale non è stato registrato').toHaveBeenCalledTimes(2);
-        expect(logClient.mock.calls[1][0].messaggio).toContain('appStateChange');
-
-        // e non si ripete: una riga per segnale, per sessione di pagina
-        act(() => { visibilita(false); visibilita(true); statoApp(true); statoApp(false); });
-        expect(logClient, 'la sonda si ripete a ogni evento').toHaveBeenCalledTimes(2);
+        expect(logClient).not.toHaveBeenCalled();
     });
 
     it('11. `intervalloMs: null` = SOLO al ritorno: nessun orologio, ma chi riapre trova i dati freschi', async () => {

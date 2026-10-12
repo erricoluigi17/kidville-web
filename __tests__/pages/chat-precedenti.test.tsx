@@ -241,12 +241,32 @@ async function scorri() {
 
 /* ── Il realtime finto, che instrada come quello vero ─────────────────────── */
 
+/**
+ * Un messaggio appare: PRIMA nello storico del server, POI come SEGNALE sul canale privato.
+ *
+ * Dal 2026-10-12 (S4-B) il canale è un broadcast dal database e il suo payload ha solo lo stato di
+ * un messaggio — id, thread, mittente, istante, spunte — mai il testo: `realtime.messages` conserva
+ * le righe per giorni fuori dall'oblio, e una chat fra famiglia e maestra contiene dati sanitari di
+ * minori. La bolla la porta la rilettura dall'API, quindi il messaggio deve ESISTERE lato server:
+ * è anche l'ordine della produzione, dove il trigger scatta dopo l'INSERT.
+ */
 function emettiInsert(m: Json) {
+    const r = m as Record<string, unknown>;
+    const threadId = String(r.thread_id);
+    rete.storico[threadId] = [...(rete.storico[threadId] ?? []).filter((x) => (x as Record<string, unknown>).id !== r.id), m];
+    const segnale = {
+        id: r.id,
+        thread_id: r.thread_id,
+        sender_id: r.sender_id,
+        created_at: r.created_at,
+        read_at: r.read_at ?? null,
+        delivered_at: r.delivered_at ?? null,
+    } as Json;
     act(() => {
         if (!h.realtime) throw new Error('useChatRealtime non è stato montato');
         const o = h.realtime as unknown as OpzioniRealtime;
-        if (m.thread_id === o.threadAperto?.()) o.onNewMessage(m);
-        else o.onThreadUnread(String(m.thread_id), m);
+        if (threadId === o.threadAperto?.()) o.onNewMessage(segnale);
+        else o.onThreadUnread(threadId, segnale);
     });
 }
 

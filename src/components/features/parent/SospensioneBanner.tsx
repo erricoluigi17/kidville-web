@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { Ban } from 'lucide-react';
-import { getSupabase } from '@/lib/supabase/browser-client';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
+import { RITMO_PAGAMENTI_MS } from '@/lib/pagamenti/ritmo';
 import { formatEuro } from '@/lib/format/valuta';
 
 interface Props {
@@ -19,8 +20,14 @@ interface StatoSospensione {
 
 // Banner esplicito per il genitore la cui FAMIGLIA è sospesa per morosità.
 // Non mostra dati di altri: la GET `sospensione-stato` è ancorata all'identità del
-// gate. Se non sospeso non renderizza nulla. Si aggiorna in realtime quando un
-// pagamento/incasso cambia (la revoca automatica lo fa sparire da solo).
+// gate. Se non sospeso non renderizza nulla.
+//
+// Si rilegge da sé a ritmo lento e al ritorno in primo piano (la revoca automatica lo fa
+// sparire da solo), NON in realtime: fino al 12/10/2026 questo componente ascoltava
+// `postgres_changes` su `pagamenti`, `incassi` e `alunni`, tabelle INTERE. Il terzo di quei
+// canali era anche inutile — `alunni` non è nella pubblicazione `supabase_realtime`, quindi
+// quel `.on(...)` non ha mai consegnato niente. Il conto, e perché il ritmo è quello, in
+// `@/lib/pagamenti/ritmo`.
 export function SospensioneBanner({ userId, className }: Props) {
     const t = useTranslations('parentServizi');
     const [stato, setStato] = useState<StatoSospensione | null>(null);
@@ -40,16 +47,7 @@ export function SospensioneBanner({ userId, className }: Props) {
     }, [userId]);
 
     useEffect(() => { load(); }, [load]);
-    useEffect(() => {
-        const supabase = getSupabase();
-        const channel = supabase
-            .channel(`sospensione-banner-${userId}`)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'pagamenti' }, () => load())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'incassi' }, () => load())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'alunni' }, () => load())
-            .subscribe();
-        return () => { supabase.removeChannel(channel); };
-    }, [userId, load]);
+    usePollingVisibile(load, RITMO_PAGAMENTI_MS);
 
     if (loading || !stato?.sospeso) return null;
 

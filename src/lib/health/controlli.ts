@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
+import { versioneDeploy } from '@/lib/versione/deploy'
 
 /**
  * I CONTROLLI DI SALUTE — la parte che MISURA. La route (`/api/health`) fa solo da porta.
@@ -1380,19 +1381,16 @@ export interface OpzioniSalute {
     ambiente: string
 }
 
-/**
- * Lo sha del commit di questo deploy, SOLO se ha la forma di uno sha. `VERCEL_GIT_COMMIT_SHA` è
- * valorizzata da Vercel (`autoExposeSystemEnvs`), ma una risposta pubblica non deve mai rilanciare
- * il contenuto arbitrario di una variabile d'ambiente: se non è esadecimale non esce.
- */
-function versioneCorrente(): string | undefined {
-    const sha = process.env.VERCEL_GIT_COMMIT_SHA?.trim() ?? ''
-    return /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 12).toLowerCase() : undefined
-}
-
 function conIdentita(salute: Salute): Salute {
     const regione = process.env.VERCEL_REGION?.trim()
-    const versione = versioneCorrente()
+    // Lo sha del commit di questo deploy, SOLO se ha la forma di uno sha: una risposta pubblica
+    // non rilancia mai il contenuto arbitrario di una variabile d'ambiente.
+    //
+    // La regola NON vive più qui: dal 2026-10-12 la stessa stringa la servono anche
+    // `GET /api/versione` e il bundle del browser (`VERSIONE_BUNDLE`), e il client confronta i
+    // due. Due normalizzazioni diverse dello stesso commit sarebbero una ricarica a ogni
+    // ritorno in primo piano: la regola sta in `@/lib/versione/deploy` e si importa.
+    const versione = versioneDeploy() ?? undefined
     return {
         ...salute,
         ...(regione ? { regione } : {}),

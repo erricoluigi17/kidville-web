@@ -159,8 +159,8 @@ describe('useConversazioneChat — thread sconosciuti dal realtime', () => {
         const rt = realtime();
         expect(typeof rt.onThreadSconosciuto, 'il hook non ascolta i thread sconosciuti').toBe('function');
         act(() => {
-            rt.onThreadSconosciuto?.({ id: 'm-1', thread_id: 'th-nuovo', sender_id: 'doc-1' });
-            rt.onThreadSconosciuto?.({ id: 'm-2', thread_id: 'th-nuovo', sender_id: 'doc-1' });
+            rt.onThreadSconosciuto?.(segnale({ id: 'm-1', thread_id: 'th-nuovo', sender_id: 'doc-1' }));
+            rt.onThreadSconosciuto?.(segnale({ id: 'm-2', thread_id: 'th-nuovo', sender_id: 'doc-1' }));
         });
         await scorri();
 
@@ -183,6 +183,34 @@ function nuovoMessaggio(extra: Json = {}): Json {
     };
 }
 
+/**
+ * IL SEGNALE del canale privato: le SEI chiavi del trigger, e nessun contenuto (S4-B, 2026-10-12).
+ *
+ * Si costruisce dal messaggio e poi si TOGLIE tutto il resto, invece di scrivere a mano un oggetto
+ * parallelo: così un segnale resta sempre coerente col messaggio di cui parla, e nessun campo si
+ * intrufola per distrazione. Passare qui un messaggio intero renderebbe verdi dei test che il
+ * canale vero non può più soddisfare — il testo sul canale non c'è, e il hook non deve usarlo.
+ */
+function segnale(extra: Json = {}): Json {
+    const m = nuovoMessaggio(extra) as Record<string, unknown>;
+    return {
+        id: m.id,
+        thread_id: m.thread_id,
+        sender_id: m.sender_id,
+        created_at: m.created_at,
+        read_at: m.read_at ?? null,
+        delivered_at: m.delivered_at ?? null,
+    } as Json;
+}
+
+/** Il messaggio sta sul server (dove il hook lo rileggerà) E il suo segnale arriva dal canale. */
+function annuncia(extra: Json = {}): Json {
+    const m = nuovoMessaggio(extra);
+    const threadId = String((m as Record<string, unknown>).thread_id);
+    rete.messaggi[threadId] = [...(rete.messaggi[threadId] ?? []).filter((x) => (x as Record<string, unknown>).id !== (m as Record<string, unknown>).id), m];
+    return segnale(extra);
+}
+
 async function pronto(result: { current: { statoThreads: string } }) {
     await waitFor(() => expect(result.current.statoThreads).toBe('pronto'));
 }
@@ -201,7 +229,7 @@ describe('useConversazioneChat — C1: un messaggio inviato è UN messaggio', ()
         });
         await waitFor(() => expect(conta('POST', '/api/chat/messages')).toBe(1));
 
-        act(() => realtime().onNewMessage(nuovoMessaggio()));
+        act(() => realtime().onNewMessage(annuncia()));
         const post = rete.richieste.find((r) => r.metodo === 'POST');
         await act(async () => {
             post?.risolvi(ok(nuovoMessaggio(), 201));
@@ -224,7 +252,7 @@ describe('useConversazioneChat — C1: un messaggio inviato è UN messaggio', ()
             invio = result.current.invia('Ciao');
         });
         await waitFor(() => expect(conta('POST', '/api/chat/messages')).toBe(1));
-        act(() => realtime().onNewMessage(nuovoMessaggio()));
+        act(() => realtime().onNewMessage(annuncia()));
 
         // Il server ha già la riga: il tick di polling la riporta prima che la 201 torni.
         rete.messaggi['th-a'] = [nuovoMessaggio()];
@@ -315,11 +343,11 @@ describe('useConversazioneChat — D2: una risposta lenta non tocca la conversaz
     it('un MIO messaggio arrivato in un thread in background non accende il badge', async () => {
         const { result } = monta();
         await pronto(result);
-        act(() => realtime().onThreadUnread('th-b', nuovoMessaggio({ id: 'm-mio', thread_id: 'th-b', sender_id: IO, created_at: '2026-09-14T10:00:00.000Z' })));
+        act(() => realtime().onThreadUnread('th-b', segnale({ id: 'm-mio', thread_id: 'th-b', sender_id: IO, created_at: '2026-09-14T10:00:00.000Z' })));
         expect(result.current.threads.find((th) => th.id === 'th-b')?.unread_count).toBe(0);
         expect(result.current.nonLetti).toBe(0);
 
-        act(() => realtime().onThreadUnread('th-b', nuovoMessaggio({ id: 'm-suo', thread_id: 'th-b', sender_id: 'doc-1', created_at: '2026-09-14T10:01:00.000Z' })));
+        act(() => realtime().onThreadUnread('th-b', segnale({ id: 'm-suo', thread_id: 'th-b', sender_id: 'doc-1', created_at: '2026-09-14T10:01:00.000Z' })));
         expect(result.current.threads.find((th) => th.id === 'th-b')?.unread_count).toBe(1);
         expect(result.current.nonLetti).toBe(1);
     });
@@ -425,7 +453,7 @@ describe('useConversazioneChat — D3: segnare letto solo ciò che si è visto, 
 
     it('la PATCH immediata del realtime e quella dell’IntersectionObserver per lo stesso id partono UNA volta', async () => {
         const { result } = await aperto();
-        const altrui = nuovoMessaggio({ id: 'm-2', sender_id: 'doc-1', created_at: '2026-09-14T09:01:00.000Z' });
+        const altrui = annuncia({ id: 'm-2', sender_id: 'doc-1', created_at: '2026-09-14T09:01:00.000Z' });
         act(() => realtime().onNewMessage(altrui));
         await scorri();
         // L'ancora: la PATCH immediata è partita davvero. Senza, la deduplica qui sotto sarebbe verde
@@ -465,7 +493,7 @@ describe('useConversazioneChat — D3: segnare letto solo ciò che si è visto, 
         Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
         Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
         const prima = conta('PATCH', '/api/chat/messages/read');
-        act(() => realtime().onNewMessage(nuovoMessaggio({ id: 'm-4', sender_id: 'doc-1', created_at: '2026-09-14T09:03:00.000Z' })));
+        act(() => realtime().onNewMessage(annuncia({ id: 'm-4', sender_id: 'doc-1', created_at: '2026-09-14T09:03:00.000Z' })));
         await scorri();
         expect(conta('PATCH', '/api/chat/messages/read'), 'segnato letto col telefono in tasca').toBe(prima);
     });
@@ -680,7 +708,7 @@ describe('useConversazioneChat — carico: le richieste in volo si riusano, le a
         rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/threads');
         const prima = conta('GET', '/api/chat/threads');
 
-        act(() => realtime().onThreadSconosciuto?.(nuovoMessaggio({ id: 'm-x', thread_id: 'th-x', sender_id: 'doc-1' })));
+        act(() => realtime().onThreadSconosciuto?.(segnale({ id: 'm-x', thread_id: 'th-x', sender_id: 'doc-1' })));
         let esito: Promise<string> = Promise.resolve('');
         act(() => {
             esito = (result.current as unknown as ConApertura).apriPerId('th-x');
@@ -718,7 +746,7 @@ describe('useConversazioneChat — carico: le richieste in volo si riusano, le a
         expect(conta('GET', '/api/chat/threads'), 'la ricarica forzata ha riusato una lista partita prima').toBe(prima + 2);
     });
 
-    it('INSERT realtime del PROPRIO allegato (percorso) con la POST in volo: nessuna GET di rifirma', async () => {
+    it('il segnale del PROPRIO messaggio con la POST in volo: nessuna GET, la 201 porta già tutto', async () => {
         rete.trattieni = (metodo) => metodo === 'POST';
         const { result } = monta();
         await pronto(result);
@@ -730,9 +758,121 @@ describe('useConversazioneChat — carico: le richieste in volo si riusano, le a
         });
         await waitFor(() => expect(conta('POST', '/api/chat/messages')).toBe(1));
 
-        act(() => realtime().onNewMessage(nuovoMessaggio({ id: 'm-foto', attachment_url: 'gen-1/foto.png', attachment_type: 'image', content: '📎 Allegato' })));
+        act(() => realtime().onNewMessage(segnale({ id: 'm-foto' })));
         await scorri();
         expect(conta('GET', '/api/chat/messages'), 'la 201 porta già il link firmato: la GET di rifirma è di troppo').toBe(primaGet);
+    });
+});
+
+describe('useConversazioneChat — S4-B: il segnale non porta il messaggio, la bolla arriva dall’API', () => {
+    /**
+     * Dal 2026-10-12 il canale è un broadcast PRIVATO dal database, e il suo payload ha solo lo
+     * STATO di un messaggio: id, thread, mittente, istante, spunte. Niente testo e niente allegato,
+     * perché `realtime.messages` conserva le righe per giorni fuori dall'oblio, dalla scatola nera
+     * e dal backup cifrato, e una chat fra famiglia e maestra contiene dati sanitari di minori.
+     *
+     * Quindi il contenuto si rilegge: una GET silenziosa della finestra, che è anche quella che
+     * firma l'allegato. Questi casi tengono fermo che la rilettura ci sia, che non accenda lo
+     * spinner, e che nessuno si inventi un testo quando il server non ce l'ha ancora.
+     */
+    it('un messaggio altrui nella conversazione aperta: UNA GET silenziosa, e la bolla porta il testo DEL SERVER', async () => {
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1', read_at: '2026-09-14T08:00:00.000Z' })];
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(result.current.messaggi).toHaveLength(1));
+        const prima = conta('GET', '/api/chat/messages');
+
+        const s = annuncia({ id: 'm-2', sender_id: 'doc-1', content: 'Oggi è andata bene', created_at: '2026-09-14T09:30:00.000Z' });
+        expect(JSON.stringify(s), 'il segnale porta il testo: su quel canale non ci deve stare').not.toContain('andata bene');
+
+        act(() => realtime().onNewMessage(s));
+        expect(result.current.caricamentoMessaggi, 'la rilettura ha acceso lo spinner: la conversazione si smonta').toBe(false);
+        await scorri();
+
+        expect(conta('GET', '/api/chat/messages')).toBe(prima + 1);
+        expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        expect(result.current.messaggi.find((m) => m.id === 'm-2')?.content).toBe('Oggi è andata bene');
+    });
+
+    it('se il server non ha ancora la riga, NON compare una bolla vuota: niente testo inventato', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1', read_at: '2026-09-14T08:00:00.000Z' })];
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(result.current.messaggi).toHaveLength(1));
+
+        // Il segnale corre più della replica: la GET non lo trova ancora.
+        act(() => realtime().onNewMessage(segnale({ id: 'm-2', sender_id: 'doc-1', created_at: '2026-09-14T09:30:00.000Z' })));
+        await scorri();
+        expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-1']);
+
+        // E il polling a 30 s — la rete che resta — lo porta, col suo testo.
+        rete.messaggi['th-a'] = [...(rete.messaggi['th-a'] ?? []), nuovoMessaggio({ id: 'm-2', sender_id: 'doc-1', content: 'Eccolo', created_at: '2026-09-14T09:30:00.000Z' })];
+        await act(async () => {
+            vi.advanceTimersByTime(30_000);
+        });
+        await waitFor(() => expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-1', 'm-2']));
+        expect(result.current.messaggi.find((m) => m.id === 'm-2')?.content).toBe('Eccolo');
+    });
+
+    it('thread in background: badge +1 e riga in cima SUBITO, anteprima non inventata, e la lista si ricarica', async () => {
+        const anteprima = { content: 'Il messaggio di prima', sender_id: IO, created_at: '2026-09-14T07:00:00.000Z' };
+        rete.threads = [{ ...TA, last_message: anteprima }, { ...TB, last_message: anteprima }];
+        const { result } = monta();
+        await pronto(result);
+        const primaLista = conta('GET', '/api/chat/threads');
+
+        act(() => realtime().onThreadUnread('th-b', segnale({ id: 'm-b2', thread_id: 'th-b', sender_id: 'doc-1', created_at: '2026-09-14T10:00:00.000Z' })));
+
+        const b = result.current.threads.find((th) => th.id === 'th-b');
+        expect(b?.unread_count).toBe(1);
+        expect(result.current.threads[0].id, 'la riga che ha ricevuto non è salita in cima').toBe('th-b');
+        expect(b?.last_message, 'l’anteprima è stata inventata: il segnale non ha il testo').toEqual(anteprima);
+        await scorri();
+        expect(conta('GET', '/api/chat/threads'), 'l’anteprima vera non è stata chiesta a nessuno').toBe(primaLista + 1);
+    });
+
+    it('una raffica in background costa UNA ricarica nella finestra, e la rimandata parte alla fine', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const { result } = monta();
+        await pronto(result);
+        const prima = conta('GET', '/api/chat/threads');
+
+        const arriva = (n: number) =>
+            act(() =>
+                realtime().onThreadUnread(
+                    'th-b',
+                    segnale({ id: `m-r${n}`, thread_id: 'th-b', sender_id: 'doc-1', created_at: new Date(Date.UTC(2026, 9, 12, 10, n, 0)).toISOString() }),
+                ),
+            );
+
+        arriva(1);
+        await scorri();
+        expect(conta('GET', '/api/chat/threads'), 'il primo segnale non ha chiesto la lista').toBe(prima + 1);
+
+        for (let n = 2; n <= 6; n++) arriva(n);
+        await scorri();
+        expect(conta('GET', '/api/chat/threads'), 'cinque segnali nella stessa finestra: cinque GET della lista').toBe(prima + 1);
+
+        // La finestra si chiude: la ricarica rimandata parte, UNA sola per tutta la raffica.
+        await act(async () => {
+            vi.advanceTimersByTime(2_000);
+        });
+        await scorri();
+        expect(conta('GET', '/api/chat/threads'), 'la ricarica strozzata non è mai partita: l’anteprima resta vecchia').toBe(prima + 2);
+
+        /**
+         * E il TOTALE ha contato tutti e sei, non solo quelli che hanno chiesto la lista.
+         *
+         * Si guarda il totale e non `unread_count` della riga perché la lista la riscrive la
+         * risposta del server, che è la fonte autorevole dei badge per conversazione (qui il finto
+         * dice sempre zero): il `+1` locale copre solo i millisecondi prima che arrivi. Il totale
+         * invece vive qui fra un giro e l'altro della campanella, e se perdesse i segnali strozzati
+         * mostrerebbe un numero più BASSO del vero — la bugia «hai letto tutto».
+         */
+        expect(result.current.nonLetti).toBe(6);
     });
 });
 
@@ -834,7 +974,7 @@ describe('useConversazioneChat — [inert]: sotto il blocco biometrico non si se
             await waitFor(() => expect(result.current.messaggi).toHaveLength(1));
             const prima = conta('PATCH', '/api/chat/messages/read');
 
-            act(() => realtime().onNewMessage(nuovoMessaggio({ id: 'm-2', sender_id: 'doc-1', created_at: '2026-09-14T09:05:00.000Z' })));
+            act(() => realtime().onNewMessage(annuncia({ id: 'm-2', sender_id: 'doc-1', created_at: '2026-09-14T09:05:00.000Z' })));
             await scorri();
 
             expect(conta('PATCH', '/api/chat/messages/read'), 'segnato letto un messaggio coperto dal blocco: il mittente vede la spunta').toBe(prima);
@@ -873,7 +1013,7 @@ describe('useConversazioneChat — chi legge più su non si vede segnare letto i
     }
 
     const arrivaAltrui = (id: string) =>
-        act(() => realtime().onNewMessage(nuovoMessaggio({ id, sender_id: 'doc-1', created_at: '2026-09-14T09:20:00.000Z' })));
+        act(() => realtime().onNewMessage(annuncia({ id, sender_id: 'doc-1', created_at: '2026-09-14T09:20:00.000Z' })));
 
     it('chi legge più su: il messaggio altrui compare, ma NON parte come letto', async () => {
         smonta.push(montaContenitore(false, PIU_SU));

@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Euro, ChevronRight, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { getSupabase } from '@/lib/supabase/browser-client';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
+import { RITMO_PAGAMENTI_MS } from '@/lib/pagamenti/ritmo';
 import { isoToIt } from '@/lib/format/data';
 import { formatEuro } from '@/lib/format/valuta';
 import { riepilogoHome, residuoEffettivo, type AgingPagamentoDerivato } from '@/lib/pagamenti/aging';
@@ -21,7 +22,11 @@ interface Props { userId: string; href: string }
 //  • AMBRA  «€Y da pagare» se c'è del dovuto non ancora scaduto;
 //  • VERDE  «in regola»    solo se ogni residuo è zero.
 // Un sovraincasso su una voce NON compensa lo scaduto di un'altra (finding #1).
-// Si aggiorna in realtime quando vengono registrati incassi/pagamenti.
+//
+// Si rilegge a ritmo lento e al ritorno in primo piano, NON in realtime: fino al
+// 12/10/2026 ascoltava `postgres_changes` sulle tabelle INTERE `pagamenti` e `incassi`,
+// quindi riceveva (e rifetchava su) le modifiche di tutte le altre famiglie. Il conto sta
+// in `@/lib/pagamenti/ritmo`.
 export function PagamentiSummary({ userId, href }: Props) {
     const t = useTranslations('pagamenti');
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
@@ -36,15 +41,7 @@ export function PagamentiSummary({ userId, href }: Props) {
     }, [userId]);
 
     useEffect(() => { load(); }, [load]);
-    useEffect(() => {
-        const supabase = getSupabase();
-        const channel = supabase
-            .channel(`pagamenti-home-${userId}`)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'pagamenti' }, () => load())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'incassi' }, () => load())
-            .subscribe();
-        return () => { supabase.removeChannel(channel); };
-    }, [userId, load]);
+    usePollingVisibile(load, RITMO_PAGAMENTI_MS);
 
     if (loading) return null;
 

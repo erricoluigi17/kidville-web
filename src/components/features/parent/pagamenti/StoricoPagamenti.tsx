@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle } from 'lucide-react';
-import { getSupabase } from '@/lib/supabase/browser-client';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
+import { RITMO_PAGAMENTI_MS } from '@/lib/pagamenti/ritmo';
 import { FatturaDocumenti } from '@/components/features/pagamenti/FatturaDocumenti';
 import { BadgeMetodoPagamento } from '@/components/features/pagamenti/BadgeMetodoPagamento';
 import { raggruppaPerCategoria } from '@/lib/pagamenti/categorie';
@@ -99,16 +100,22 @@ export function StoricoPagamenti({ userId }: Props) {
 
     useEffect(() => { load(); }, [load]);
 
-    // Realtime: refetch su qualsiasi cambiamento di pagamenti/incassi
-    useEffect(() => {
-        const supabase = getSupabase();
-        const channel = supabase
-            .channel(`pagamenti-parent-${userId}`)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'pagamenti' }, () => load())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'incassi' }, () => load())
-            .subscribe();
-        return () => { supabase.removeChannel(channel); };
-    }, [userId, load]);
+    /**
+     * Rilettura a ritmo lento, e subito al ritorno in primo piano.
+     *
+     * Fino al 12/10/2026 era un canale `postgres_changes` sulle tabelle INTERE `pagamenti` e
+     * `incassi`: ogni genitore riceveva le modifiche di tutte le famiglie e rifetchava su
+     * ognuna. Il conto, e perché il ritmo è quello, in `@/lib/pagamenti/ritmo`.
+     *
+     * ⚠️ La ricarica NON deve rimontare le righe, altrimenti ogni giro costerebbe N chiamate
+     * a `/api/pagamenti/fattura/list` (una per riga con fattura) invece di una sola a
+     * `/api/pagamenti`. Due cose lo garantiscono, e vanno tenute insieme: le chiavi di lista
+     * sono stabili (`key={g.categoria}` sulla sezione, `key={p.id}` sulla card, e
+     * `raggruppaPerCategoria` è deterministica) e l'effetto di `useFattureScaricabili` dipende
+     * solo da `[pagamentoId, userId]`. Il lock è in
+     * `__tests__/components/pagamenti-senza-realtime.test.tsx`.
+     */
+    usePollingVisibile(load, RITMO_PAGAMENTI_MS);
 
     // Figli sospesi per morosità (DL-021): banner informativo, lettura preservata.
     const sospesi = [...new Set(

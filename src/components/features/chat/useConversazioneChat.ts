@@ -6,14 +6,15 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 import {
     CONVERSAZIONE_VUOTA,
     MARGINE_RIENTRO_MS,
-    allegatoMostrabile,
     applicaMessaggioAThread,
+    applicaSegnaleAThread,
     azzeraNonLettiThread,
     decidiRecupero,
     haPrecedenti,
     riduciConversazione,
     vicinoAlFondo,
     type ChatMessage,
+    type SegnaleChat,
 } from '@/lib/chat/stato-conversazione';
 import type { ChatThread, SospensioneInfo } from './ChatThreadList';
 import { useChatRealtime } from './useChatRealtime';
@@ -48,6 +49,9 @@ import { segnalaChatLetta, variaChatNonLetti } from './contatore-non-letti';
  */
 
 export type RottaChat = '/parent/chat' | '/teacher/chat';
+
+/** La finestra dello strozzatore della ricarica della lista: vedi `chiediRicaricaLista`. */
+const FINESTRA_RICARICA_LISTA_MS = 2_000;
 
 /** Lo stato della lista delle conversazioni. */
 export type StatoThreads = 'caricamento' | 'pronto' | 'errore';
@@ -320,6 +324,45 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         [ready, userId, scaricaThreads],
     );
 
+    /**
+     * LA RICARICA DELLA LISTA CHIESTA DAL CANALE: una ogni 2 s, e quella strozzata si recupera.
+     *
+     * Dal passaggio al broadcast privato (S4-B) il segnale di un messaggio in un thread in
+     * background non porta più l'anteprima, perché non porta il testo: l'anteprima vera la può dire
+     * solo `GET /api/chat/threads`. Senza strozzatore, una maestra con dieci conversazioni che
+     * ricevono insieme pagherebbe dieci GET della lista in un secondo; con la sola strozzatura
+     * l'ultimo messaggio della raffica resterebbe senza anteprima fino al polling (30 s). Quindi:
+     * la prima parte subito, le altre si fondono in UNA che parte alla fine della finestra.
+     *
+     * `nonPrimaDi` è obbligatorio e non è pignoleria: una GET partita PRIMA del messaggio non lo
+     * contiene, e la sua risposta sovrascriverebbe la lista riportando il badge a zero — cioè la
+     * bugia «hai letto tutto» detta a chi ha un messaggio nuovo.
+     */
+    const ricaricaListaRef = useRef<{ ultima: number; timer: ReturnType<typeof setTimeout> | null }>({ ultima: 0, timer: null });
+    const chiediRicaricaLista = useCallback(() => {
+        const stato = ricaricaListaRef.current;
+        const attesa = stato.ultima + FINESTRA_RICARICA_LISTA_MS - Date.now();
+        if (attesa <= 0) {
+            stato.ultima = Date.now();
+            void caricaThreads({ nonPrimaDi: stato.ultima });
+            return;
+        }
+        if (stato.timer) return; // una è già in coda: la raffica si fonde in quella
+        stato.timer = setTimeout(() => {
+            stato.timer = null;
+            stato.ultima = Date.now();
+            void caricaThreads({ nonPrimaDi: stato.ultima });
+        }, attesa);
+    }, [caricaThreads]);
+    useEffect(
+        () => () => {
+            const stato = ricaricaListaRef.current;
+            if (stato.timer) clearTimeout(stato.timer);
+            stato.timer = null;
+        },
+        [],
+    );
+
     /** «Riprova» della lista che non si era caricata. */
     const riprovaThreads = useCallback(async () => {
         setRiprovando(true);
@@ -473,45 +516,60 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         [userId, rotta, impostaThreads],
     );
 
-    // ── Realtime: nuovo messaggio nel thread attivo ──────────────────────
+    // ── Realtime: è arrivato un messaggio nella conversazione aperta ─────
+    /**
+     * ⚠️ IL SEGNALE NON PORTA IL MESSAGGIO (S4-B, 2026-10-12). Dal passaggio al broadcast privato
+     * dal database, il canale consegna solo lo STATO di un messaggio — id, thread, mittente,
+     * istante, spunte — e mai il testo né l'allegato: `realtime.messages` conserva le righe per
+     * giorni, fuori dall'oblio, dalla scatola nera e dal backup cifrato, e una chat fra famiglia e
+     * maestra contiene dati sanitari di minori. La bolla arriva quindi da una GET SILENZIOSA della
+     * finestra, che è anche quella che firma l'allegato (da S32 in `attachment_url` c'è il percorso
+     * nel bucket privato, e un percorso dentro un `<img src>` è un'immagine rotta).
+     *
+     * Costa una GET per messaggio ricevuto nella conversazione aperta, dove prima costava zero. È
+     * il prezzo di non mettere quel testo in un deposito che nessuna delle tre procedure conosce, e
+     * si paga su ciò che si riceve davvero — non, come la sottoscrizione `postgres_changes` di
+     * prima, su ogni messaggio di tutti moltiplicato per ogni client collegato.
+     *
+     * Con la PROPRIA POST in volo la GET è di troppo: la 201 porta già testo e link firmato.
+     */
     const handleRealtimeNewMessage = useCallback(
-        (msg: ChatMessage) => {
-            dispatch({ tipo: 'arrivato', messaggio: msg });
-            // Il Realtime consegna la riga del database GREZZA: da S32 l'allegato è
-            // un percorso nel bucket privato, e il link firmato lo genera la route.
-            // Si ricarica il thread — che firma — invece di aspettare il polling.
-            // Con la PROPRIA POST in volo la rifirma non serve: la 201 porta già il link firmato.
-            if (msg.attachment_url && !allegatoMostrabile(msg.attachment_url)) {
-                const propriaPostInVolo = msg.sender_id === userId && (inviiInVoloRef.current.get(msg.thread_id) ?? 0) > 0;
-                // `nonPrimaDi: ora`: una GET partita prima dell'INSERT non contiene questo messaggio.
-                if (!propriaPostInVolo) void caricaMessaggi(msg.thread_id, { silenzioso: true, nonPrimaDi: Date.now() });
-            }
+        (segnale: SegnaleChat) => {
+            const propriaPostInVolo = segnale.sender_id === userId && (inviiInVoloRef.current.get(segnale.thread_id) ?? 0) > 0;
+            // `nonPrimaDi: ora`: una GET partita prima del messaggio non lo contiene.
+            if (!propriaPostInVolo) void caricaMessaggi(segnale.thread_id, { silenzioso: true, nonPrimaDi: Date.now() });
             // Il messaggio altrui arriva nella conversazione aperta: lo si segna letto subito — ma
             // SOLO se lo si vede davvero. Col telefono in tasca (D3), sotto il blocco biometrico
             // ([inert]) o leggendo più su (il messaggio resta sotto la piega) il mittente vedeva la
             // spunta gialla su un messaggio che nessuno aveva letto. Passa da `segnaLetti`, che non
-            // ripete la PATCH quando poi l'IntersectionObserver vede la bolla.
-            if (msg.sender_id !== userId && ultimoMessaggioInVista()) {
-                void segnaLetti([msg.id], { contaNelBadge: false });
+            // ripete la PATCH quando poi l'IntersectionObserver vede la bolla. Le misure del
+            // contenitore sono quelle di PRIMA che la bolla entri nella lista — che è dove stava chi
+            // legge quando il messaggio è arrivato, e ciò che decide anche lo scorrimento.
+            if (segnale.sender_id !== userId && ultimoMessaggioInVista()) {
+                void segnaLetti([segnale.id], { contaNelBadge: false });
             }
         },
         [userId, caricaMessaggi, segnaLetti],
     );
 
     // ── Realtime: un messaggio del thread aperto è cambiato (spunta consegnato/letto) ──
-    // Merge per id, mai append, e monotono: una spunta non torna indietro e un percorso grezzo
-    // non cancella il link firmato dell'allegato.
-    const handleRealtimeMessageUpdate = useCallback((msg: ChatMessage) => {
-        dispatch({ tipo: 'cambiato', messaggio: msg });
+    // Merge per id, mai append, e monotono: una spunta non torna indietro. Il segnale non ha il
+    // testo né l'allegato, quindi non può cancellarli (lo garantisce il TIPO, vedi `applicaSegnale`).
+    const handleRealtimeMessageUpdate = useCallback((segnale: SegnaleChat) => {
+        dispatch({ tipo: 'cambiato', segnale });
     }, []);
 
-    // ── Realtime: nuovo messaggio in thread non attivo → anteprima e badge ──
+    // ── Realtime: un messaggio in un thread NON attivo → badge, ordine, e l'anteprima dalla lista ──
     // Il +1 vale solo per i messaggi ALTRUI: il proprio messaggio scritto da un altro dispositivo
     // accendeva il badge a chi l'aveva appena mandato.
     const handleRealtimeThreadUnread = useCallback(
-        (_threadId: string, msg: ChatMessage) => {
-            const esito = applicaMessaggioAThread(threadsRef.current, msg, userId ?? '', { inBackground: true });
+        (_threadId: string, segnale: SegnaleChat) => {
+            const esito = applicaSegnaleAThread(threadsRef.current, segnale, userId ?? '', { inBackground: true });
             impostaThreads(esito.threads);
+            // L'anteprima vera la porta solo la lista: il segnale non ha il testo, e inventarne uno
+            // («Nuovo messaggio», o il vuoto) metterebbe un segnaposto al posto di una cosa detta
+            // davvero. Strozzata: una raffica di messaggi non diventa una raffica di GET.
+            chiediRicaricaLista();
             if (esito.incrementoNonLetti) {
                 setNonLetti((prev) => prev + 1);
                 /**
@@ -532,19 +590,19 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
                 variaChatNonLetti(1);
             }
         },
-        [userId, impostaThreads],
+        [userId, impostaThreads, chiediRicaricaLista],
     );
 
-    // ── Realtime: INSERT di un thread che la lista non conosce ──────────
+    // ── Realtime: un segnale di un thread che la lista non conosce ──────
     // Una conversazione appena aperta dall'altra parte: il messaggio non va perso fino al polling.
     // Una sola GET della lista per thread per sessione (se la RLS consegna un thread che la lista
     // non elenca, ripeterla a ogni messaggio sarebbe un ciclo di richieste senza esito).
     const handleThreadSconosciuto = useCallback(
-        (msg: ChatMessage) => {
+        (segnale: SegnaleChat) => {
             if (!listaCaricataRef.current) return; // la prima lista in volo lo conterrà
-            if (threadIgnotiRef.current.has(msg.thread_id)) return;
-            threadIgnotiRef.current.add(msg.thread_id);
-            // Una lista partita prima di questo INSERT potrebbe non contenere il thread.
+            if (threadIgnotiRef.current.has(segnale.thread_id)) return;
+            threadIgnotiRef.current.add(segnale.thread_id);
+            // Una lista partita prima di questo messaggio potrebbe non contenere il thread.
             void caricaThreads({ nonPrimaDi: Date.now() });
         },
         [caricaThreads],

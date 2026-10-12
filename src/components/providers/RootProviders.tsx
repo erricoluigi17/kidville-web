@@ -8,6 +8,7 @@ import { PuliziaCacheOffline } from '@/components/providers/PuliziaCacheOffline'
 import { ChunkErrorBoundary } from '@/components/providers/ChunkErrorBoundary'
 import { BiometricGate } from '@/components/providers/BiometricGate'
 import { AvvisoAggiornamentoApp } from '@/components/providers/AvvisoAggiornamentoApp'
+import { ControlloVersione } from '@/components/providers/ControlloVersione'
 
 /** Compositore dei provider globali client-side (accessibilità, shell nativa). */
 export function RootProviders({
@@ -54,6 +55,17 @@ export function RootProviders({
       <BiometricGate autenticato={autenticato}>
         {children}
         <AvvisoAggiornamentoApp />
+        {/* Il bundle vecchio in memoria (robustezza, S7-B): al ritorno in primo piano dopo
+            un'assenza lunga chiede al server quale rilascio stia servendo, e se è un altro
+            ricarica. Sta QUI, accanto al pop-up dello store, perché la ragione è la stessa —
+            un posto solo che copre genitore, docente, segreteria e la WebView nativa — ma le
+            due cose sono diverse: quello riguarda il BINARIO dello store e chiede all'utente di
+            aggiornarlo, questo riguarda il bundle web e si risolve da sé.
+            `attivo={autenticato}`: sulla schermata di accesso non c'è niente da tenere fresco,
+            e una ricarica lì porterebbe via le credenziali appena digitate per guadagnare
+            nulla. Il lock che impedisce che si scolleghi è in
+            `__tests__/architecture/gate-shell-nativa.test.ts`. */}
+        <ControlloVersione attivo={autenticato} />
       </BiometricGate>
     </AccessibilityProvider>
   )

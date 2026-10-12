@@ -521,6 +521,25 @@ const PUBBLICHE: Record<string, string> = {
     'health/vivo:GET': "il livello «vivo» dell'endpoint di salute: DB + Auth, 200 o 503, per un campanello esterno che una sessione non ce l'ha e non può averla (se il login è il guasto, un gate misurerebbe il gate). Perimetro: tetto per IP PROPRIO + una risposta che non porta dati (nomi di controllo, esito, ms, la regione e lo sha del deploy — il repository è pubblico — mai messaggi, mai conteggi, mai valori di variabili). È MENO di `health:GET`: due controlli invece di otto",
     'health/qualita:GET': "il livello «qualità dei dati» dell'endpoint di salute, che non accende nessun allarme e risponde sempre 200. Perimetro: tetto per IP PROPRIO + una risposta che porta UN numero («2 alunni col testo classe divergente»), mai nomi di classi né di bambini, mai messaggi d'errore (solo il codice). È lo stesso dato che `health:GET` già esponeva fino al 2026-10-05, spostato in un livello a parte: un anonimo non ottiene niente in più",
 
+    // ── Quale rilascio sta servendo il server (robustezza, S7-B, 2026-10-12) ──
+    // COSA OTTIENE UN ANONIMO CHE PASSA: dodici caratteri dello sha di un commit di un
+    // repository PUBBLICO. Lo stesso valore che è già cucito nel bundle di ogni pagina
+    // (`NEXT_PUBLIC_VERSIONE_BUNDLE`) e che `health/vivo:GET` già pubblica da sé, con la
+    // ragione scritta due righe sopra. Dietro questa porta non c'è nessuna riga di nessuna
+    // famiglia, e non c'è nemmeno una query: l'handler legge una variabile d'ambiente
+    // attraverso `shaNormalizzato`, che risponde `null` a tutto ciò che non ha la forma di uno
+    // sha — quindi non può diventare un modo di farsi leggere un'altra variabile.
+    //
+    // UN GATE QUI SAREBBE PEGGIO, e non per comodità: `requireUser` aggiungerebbe una
+    // convalida di sessione (`/auth/v1/user`) a ogni controllo, e questa route nasce dentro un
+    // lavoro che esiste per TOGLIERE carico — il 12/10, sotto picco, il p95 di `/auth/v1/user`
+    // è stato di 350-470 ms contro i 25 ms normali. Stessa ragione per cui non ha `rateLimit()`:
+    // quel tetto fa `rpc('tetto_frequenza_consuma')`, cioè una SCRITTURA in Postgres per ogni
+    // richiesta, e difenderebbe una porta che da sola non costa niente al database spendendoci
+    // esattamente ciò che si vuole risparmiare. Un anonimo che la martellasse troverebbe una
+    // funzione che non fa I/O: nessuna amplificazione.
+    'versione:GET': "dice quale rilascio sta servendo il server (12 caratteri dello sha di un commit di un repository PUBBLICO, o `null`), perché il bundle in memoria da ore possa accorgersi di essere vecchio e ricaricarsi. Perimetro: nessun accesso al database, nessuna variabile letta in chiaro (passa solo ciò che ha la forma di uno sha), `Cache-Control: no-store`, nessun altro campo nel corpo. È lo stesso dato che `health/vivo:GET` già pubblica e che sta nel bundle di ogni pagina: un anonimo non ottiene niente che non abbia già",
+
     // ── Dato APERTO: la tabella dei comuni ───────────────────────────────────
     // La domanda che decide, quella di `health` e non quella di `send-otp`, è
     // «cosa ottiene un anonimo che passa». Qui ottiene l'elenco dei comuni
@@ -879,12 +898,30 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // dei dati (il 02-05/10 `/api/health` è stato `degraded` per due giorni per 2 alunni, e un
         // allarme sempre acceso vale come uno spento). Tetto per IP separato per ciascuna, risposta
         // senza messaggi d'errore: lo verificano `health.test.ts` e `health-livelli.test.ts`.
+        //
+        // 🔺 22 → 23 il 2026-10-12, una SALITA: `versione:GET` (robustezza, S7-B). Mi sono fermato,
+        // come chiede la riga qui sotto, e la domanda l'ho fatta: «cosa ottiene un anonimo che
+        // passa?». Dodici caratteri dello sha di un commit di un repository PUBBLICO — lo stesso
+        // valore che `health/vivo:GET` già pubblica (voce del 2026-10-06, «il repository è
+        // pubblico») e che sta cucito nel bundle di ogni pagina come `NEXT_PUBLIC_VERSIONE_BUNDLE`.
+        // Dietro la porta non c'è una query, non c'è una riga di nessuna famiglia, e non c'è modo di
+        // farsi restituire un'altra variabile d'ambiente: passa solo ciò che ha la forma di uno sha
+        // (`shaNormalizzato`), tutto il resto diventa `null`. È dunque il caso di `health` e di
+        // `anagrafiche/comuni`, non quello di `forms/send-otp`: non c'è NIENTE da leggere.
+        //
+        // La parte che va guardata con sospetto è l'assenza del tetto per IP, che le altre voci
+        // hanno: è deliberata e scritta nella voce. `rateLimit()` fa
+        // `rpc('tetto_frequenza_consuma')`, cioè una scrittura in Postgres per richiesta: su una
+        // route che da sola non tocca il database sarebbe il tetto a creare il carico da cui
+        // difendersi, dentro un lavoro che esiste per toglierlo. Quello che tiene ferma
+        // l'affermazione «non porta dati» è `__tests__/api/versione.test.ts`, che verifica che il
+        // corpo abbia ESATTAMENTE la chiave `versione` e che un valore non-sha non esca.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(22)
+        ).toBe(23)
     })
 
     it('la motivazione di `iscrizione/insegnanti/upload:POST` dichiara il tetto VERO', () => {

@@ -221,6 +221,35 @@ describe('shell nativa — il pop-up «Aggiorna l’app» è MONTATO, e dentro i
       'AvvisoAggiornamentoApp non è renderizzato dentro <BiometricGate>…</BiometricGate>',
     ).toMatch(/<BiometricGate\b[^>]*>[\s\S]*<AvvisoAggiornamentoApp\s*\/>[\s\S]*<\/BiometricGate>/)
   })
+
+  /**
+   * La STESSA lezione, applicata il giorno in cui il componente nasce invece di undici giorni
+   * dopo: `ControlloVersione` (S7-B, 12/10/2026) ha sedici test suoi che lo montano da soli, e
+   * passerebbero tutti con il componente scollegato da ogni pagina. Ciò che non si vedrebbe è
+   * che l'app non si ricarica più da sola — cioè nulla, perché è lo stato in cui l'applicazione
+   * è vissuta finora: il guasto più silenzioso che ci sia.
+   *
+   * ⚠️ E DEVE RICEVERE `attivo`: senza prop il componente non compila, ma con `attivo` cablato a
+   * `true` si accenderebbe anche sulla schermata di accesso, dove una ricarica porta via le
+   * credenziali appena digitate. Qui si pretende che il valore venga da `autenticato`.
+   */
+  it('RootProviders monta ControlloVersione dentro il gate, legato a `autenticato`', () => {
+    const sorgente = leggi('src/components/providers/RootProviders.tsx')
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+    expect(sorgente, 'ControlloVersione non è importato da RootProviders').toContain(
+      "from '@/components/providers/ControlloVersione'",
+    )
+    expect(
+      sorgente,
+      'ControlloVersione non è renderizzato dentro <BiometricGate>…</BiometricGate>',
+    ).toMatch(/<BiometricGate\b[^>]*>[\s\S]*<ControlloVersione\b[^>]*\/>[\s\S]*<\/BiometricGate>/)
+    expect(
+      sorgente,
+      'ControlloVersione non riceve `attivo={autenticato}`: acceso anche sul login ricaricherebbe la pagina di chi sta digitando la password',
+    ).toMatch(/<ControlloVersione\s+attivo=\{autenticato\}\s*\/>/)
+  })
 })
 
 describe('shell nativa — chi prescrive un sync di sviluppo dice anche come si torna indietro', () => {

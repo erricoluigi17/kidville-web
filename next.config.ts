@@ -1,5 +1,29 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
+import { shaNormalizzato } from "./src/lib/versione/deploy";
+
+/**
+ * ─── LA VERSIONE DEL BUNDLE, COTTA IN BUILD ──────────────────────────────────
+ *
+ * `GET /api/versione` dice quale rilascio sta servendo il server ADESSO; questa costante dice
+ * quale codice ha in mano il browser. Il confronto fra le due è ciò che permette all'app, al
+ * ritorno in primo piano dopo molto tempo, di accorgersi che sta eseguendo un bundle vecchio
+ * (`src/components/providers/ControlloVersione.tsx`).
+ *
+ * Perché passa da `env` e non da una variabile `NEXT_PUBLIC_*` impostata a mano: il valore
+ * cambia a OGNI commit, quindi un valore scritto una volta sarebbe sbagliato dal secondo deploy
+ * in poi. La fonte è `VERCEL_GIT_COMMIT_SHA`, che Vercel valorizza al momento della build; le
+ * chiavi dichiarate qui vengono sostituite nel bundle del client esattamente come le
+ * `NEXT_PUBLIC_*` (guida di Next 16.3, `03-api-reference/05-config/01-next-config-js/env.md`).
+ *
+ * `shaNormalizzato` è la STESSA funzione che usa la route: una seconda copia della regola che
+ * taglia a 12 caratteri e abbassa le maiuscole renderebbe il confronto diverso per sempre, cioè
+ * una ricarica a ogni ritorno in primo piano su ogni telefono.
+ *
+ * Fuori da Vercel (build locale, CI) la variabile non c'è: la chiave resta una stringa vuota,
+ * `VERSIONE_BUNDLE` vale `null` e il controllo non parte affatto.
+ */
+const VERSIONE_BUNDLE = shaNormalizzato(process.env.VERCEL_GIT_COMMIT_SHA) ?? "";
 
 /**
  * ─── HEADER DI SICUREZZA ─────────────────────────────────────────────────────
@@ -86,6 +110,9 @@ const HEADER_SICUREZZA = [
 
 const nextConfig: NextConfig = {
   /* config options here */
+
+  // La versione del rilascio dentro il bundle del browser (vedi `VERSIONE_BUNDLE` qui sopra).
+  env: { NEXT_PUBLIC_VERSIONE_BUNDLE: VERSIONE_BUNDLE },
 
   async headers() {
     return [{ source: '/:path*', headers: HEADER_SICUREZZA }];

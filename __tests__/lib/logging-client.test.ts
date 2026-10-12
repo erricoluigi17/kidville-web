@@ -723,3 +723,124 @@ describe('difetto 5 — la piattaforma la dichiara il bridge nativo', () => {
         expect(await piattaformaSpedita()).toBe('android');
     });
 });
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * S7-C — UN `stato: 0` DI SFONDO NON È UN GUASTO (2026-10-12).
+ *
+ * Il declassamento a `warn` (difetto 3 qui sopra) ha tolto il rumore dal livello su cui si
+ * filtra per primo, e si vede nei numeri: i «Failed to fetch» del client sono passati da
+ * ~1.400 al giorno feriale (fine settembre) a 50-70 (dal 09/10). Ciò che NON ha tolto è il
+ * rumore in sé — e la parte di quel rumore che si può riconoscere con certezza è una sola:
+ * la richiesta tagliata perché il telefono è andato in tasca.
+ *
+ * ⚠️ IL CONFINE, che è la parte da non sbagliare. Si sopprime SOLO `stato: 0`, e SOLO a
+ * pagina nascosta o nei primi `FINESTRA_RIPRESA_MS` dopo il ritorno — perché una richiesta
+ * troncata dal passaggio in background si RIFIUTA quando il motore ricomincia a girare, e
+ * l'ordine fra quel rifiuto e `visibilitychange` non è garantito.
+ *
+ * E la finestra è CORTA per una ragione misurabile: il secondo tentativo del diario parte a
+ * 4.000 ms dal ritorno (`RITENTA_DOPO_MS`), cioè FUORI. La serie su cui quel meccanismo è
+ * stato costruito — 967 letture del diario fallite a stato 0 in 14 giorni — resta contabile
+ * dal secondo tentativo in poi: un'interruzione di rete vera dura più di tre secondi, e
+ * continua a lasciare le sue righe.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('S7-C — il `stato: 0` di sfondo non lascia righe', () => {
+    /** L'orologio in mano al test: serve a misurare la finestra dopo il ritorno. */
+    let orologio: number;
+
+    beforeEach(() => {
+        orologio = 1_760_000_000_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => orologio);
+    });
+
+    /** Impone `document.visibilityState` e annuncia il cambiamento come fa il browser. */
+    function visibilita(nascosta: boolean): void {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => nascosta });
+        Object.defineProperty(document, 'visibilityState', {
+            configurable: true,
+            get: () => (nascosta ? 'hidden' : 'visible'),
+        });
+        document.dispatchEvent(new Event('visibilitychange'));
+    }
+
+    afterEach(() => {
+        visibilita(false);
+    });
+
+    /** Una fetch che non arriva mai a destinazione, come in una WebView che si addormenta. */
+    async function fetchCaduta(messaggio = 'Failed to fetch'): Promise<void> {
+        rete.mockRejectedValue(new TypeError(messaggio));
+        await expect(window.fetch('/api/notifiche')).rejects.toThrow(messaggio);
+        rete.mockResolvedValue(risposta(200));
+    }
+
+    function spedito(): boolean {
+        return rete.mock.calls.some(([u]) => String(u).startsWith('/api/logs'));
+    }
+
+    it('a pagina NASCOSTA non si spedisce affatto', async () => {
+        // ROSSO SE: la riga parte comunque. Era il 79% del canale, e la parte che si può
+        // riconoscere con certezza è questa: nessuno stava guardando.
+        const { flush } = await carica();
+        visibilita(true);
+        await fetchCaduta();
+        flush();
+        expect(spedito()).toBe(false);
+    });
+
+    it('nei primi istanti DOPO il ritorno in primo piano non si spedisce', async () => {
+        // È il caso vero: la richiesta è stata troncata dal passaggio in background e si
+        // rifiuta solo quando il motore riprende a girare — a quel punto la pagina è già
+        // `visible`, e senza questa finestra la riga sarebbe indistinguibile da un guasto.
+        const { flush } = await carica();
+        visibilita(true);
+        orologio += 60_000;
+        visibilita(false);
+        orologio += 500;
+
+        await fetchCaduta();
+        flush();
+        expect(spedito()).toBe(false);
+    });
+
+    it('passata la finestra, la riga torna a partire a `warn`', async () => {
+        // ROSSO SE: la finestra non si chiude mai. Allora un'interruzione di rete vera, su una
+        // pagina aperta e guardata, non lascerebbe più nessuna traccia — e il server non la
+        // vede per definizione (la richiesta non gli è mai arrivata).
+        const { flush } = await carica();
+        visibilita(true);
+        orologio += 60_000;
+        visibilita(false);
+        orologio += 4_000; // il secondo tentativo del diario (`RITENTA_DOPO_MS`) è qui
+
+        await fetchCaduta();
+        flush();
+
+        const e = batchSpedito().eventi[0];
+        expect(e.livello).toBe('warn');
+        expect(e.stato).toBe(0);
+    });
+
+    it('a pagina visibile e senza nessun ritorno recente parte come prima', async () => {
+        const { flush } = await carica();
+        await fetchCaduta('Load failed');
+        flush();
+        expect(batchSpedito().eventi[0].livello).toBe('warn');
+    });
+
+    it('un 500 a pagina nascosta resta `error`: la deroga è SOLO per `stato: 0`', async () => {
+        // ROSSO SE: la soppressione si allarga agli status di risposta. Un 500 è un guasto del
+        // server, e il telefono in tasca non lo rende meno vero — il server ha risposto, quindi
+        // qualcosa è arrivato fin là e si è rotto.
+        const { flush } = await carica();
+        visibilita(true);
+        rete.mockResolvedValueOnce(risposta(500));
+        await window.fetch('/api/notifiche');
+        flush();
+
+        const e = batchSpedito().eventi[0];
+        expect(e.livello).toBe('error');
+        expect(e.stato).toBe(500);
+    });
+});

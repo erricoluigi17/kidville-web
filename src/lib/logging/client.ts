@@ -217,17 +217,96 @@ function livelloFetch(stato: number): 'warn' | 'error' | null {
  * significherebbe sopprimere l'unica traccia possibile di un'interruzione di rete, che il
  * server per definizione non vede. Gli eventi senza `stato` (`js`, `react`, `offline`) non
  * hanno niente da giudicare: il livello resta di chi li emette.
+ *
+ * ⚠️ DAL 2026-10-12 c'è UNA eccezione dentro `stato: 0`, e una sola: se la pagina è nascosta —
+ * o è appena tornata in primo piano — quella riga non parte affatto. Il perché sta su
+ * `inSfondo()`, e il confine è lo stesso di sempre: un 500 resta un 500 anche col telefono in
+ * tasca, perché il server ha risposto.
  */
 function livelloEvento(e: EventoClient): 'warn' | 'error' | null {
     const dichiarato: 'warn' | 'error' = e.livello === 'warn' ? 'warn' : 'error';
     try {
         const stato = e.stato;
         if (typeof stato !== 'number' || !Number.isInteger(stato)) return dichiarato;
+        // La fetch che non è mai partita, mentre nessuno stava guardando: vedi `inSfondo()`.
+        if (stato === 0) return inSfondo() ? null : dichiarato;
         if (stato < 400 || stato >= 600) return dichiarato;
         return livelloFetch(stato);
     } catch {
         // Getter ostile su un oggetto evento: si tiene ciò che il chiamante ha dichiarato.
         return dichiarato;
+    }
+}
+
+/**
+ * LA FINESTRA, DOPO IL RITORNO IN PRIMO PIANO, IN CUI UN `stato: 0` È ANCORA RUMORE DI SFONDO.
+ *
+ * Perché serve una finestra e non basta `visibilityState === 'hidden'`: la richiesta troncata
+ * dal passaggio in background si RIFIUTA quando il motore JavaScript ricomincia a girare, cioè
+ * a schermo già riacceso. L'ordine fra quel rifiuto e l'evento `visibilitychange` non è
+ * garantito da nessuna specifica, e in una WebView non lo è di fatto: la vittima del periodo
+ * nascosto si presenta con la pagina `visible`.
+ *
+ * ⚠️ TRE SECONDI, E IL NUMERO NON È ROTONDO PER CASO. Il secondo tentativo del ritorno nel
+ * diario parte a 4.000 ms (`RITENTA_DOPO_MS` in `parent/diary/page.tsx` e in
+ * `DiaryTodayCard.tsx`), cioè FUORI da questa finestra. È la misura che tiene in piedi la serie
+ * su cui quel meccanismo è stato costruito — 967 letture del diario fallite a stato 0 in 14
+ * giorni, per ~220 utenti: se la finestra arrivasse a coprire anche il secondo tentativo,
+ * quella serie smetterebbe di esistere e con lei il modo di sapere se il ritorno funziona.
+ *
+ * Una finestra più larga, in cambio, non comprerebbe niente: un'interruzione di rete vera dura
+ * più di tre secondi e continua a lasciare le sue righe al giro successivo.
+ */
+const FINESTRA_RIPRESA_MS = 3_000;
+
+/**
+ * L'istante dell'ultimo ritorno in primo piano, o `0` se non ne è stato osservato nessuno.
+ *
+ * Lo scrive il gestore di `visibilitychange` installato da `installaLoggerClient` — quello che
+ * già c'era per il flush, non un secondo ascoltatore. `0` significa «non lo so», e in quel caso
+ * `inSfondo()` risponde `false`: nel dubbio si LOGGA (è la stessa disciplina di `daIgnorare`,
+ * dove un log di troppo è rumore e un log in meno è un guasto che non si vede).
+ */
+let ultimoRitornoInPrimoPiano = 0;
+
+/**
+ * «NESSUNO STAVA GUARDANDO» — la sola parte del rumore a `stato: 0` che si riconosce con
+ * certezza.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * IL FATTO. Il declassamento a `warn` (vedi `eAnnullata`) ha tolto il rumore dal livello su cui
+ * si filtra per primo, e si misura: i «Failed to fetch» del client sono passati da ~1.400 al
+ * giorno feriale (fine settembre) a 50-70 (dal 09/10). Quei numeri restano veri: qui non si
+ * tocca il livello di niente, si smette di SPEDIRE un sottoinsieme — perciò i conteggi citati
+ * sopra riguardano un periodo in cui questa regola non c'era ancora.
+ *
+ * PERCHÉ PROPRIO QUESTO SOTTOINSIEME. A pagina nascosta non c'è nessun utente che stia
+ * subendo qualcosa: il telefono è in tasca, l'app è dietro, e la richiesta tagliata è il
+ * comportamento normale del sistema operativo, non un guasto. È l'unica condizione in cui
+ * «troncata» e «rete caduta» — che a livello di JavaScript sono indistinguibili — si separano
+ * con un dato invece che con una congettura.
+ *
+ * PERCHÉ NON SI SPEDISCE INVECE DI DECLASSARE. Il livello che le spetterebbe è `info`, e
+ * `/api/logs` non lo accetta: lo schema ammette `warn|error` e la route persiste TUTTO ciò che
+ * riceve, senza passare da `vaPersistito`. L'unico modo di dire «non conservarlo» è non
+ * spedirlo — è la stessa strada già presa per i 401 (`livelloFetch`) e per l'`AbortError`
+ * (`eAnnullata`), e questa è la terza riga della stessa politica, non una politica nuova.
+ *
+ * COSA NON SI PERDE. Un'interruzione di rete che riguardi davvero un utente capita mentre
+ * quell'utente guarda lo schermo, e da lì le righe partono come prima. Resta scoperto il solo
+ * caso in cui la rete cade esattamente mentre il telefono è in tasca e si rialza prima che
+ * l'utente riapra: cioè un guasto che non ha avuto nessuna conseguenza per nessuno.
+ * ─────────────────────────────────────────────────────────────────────────────────
+ */
+function inSfondo(): boolean {
+    try {
+        if (typeof document === 'undefined') return false;
+        if (document.visibilityState === 'hidden') return true;
+        if (ultimoRitornoInPrimoPiano === 0) return false;
+        return Date.now() - ultimoRitornoInPrimoPiano < FINESTRA_RIPRESA_MS;
+    } catch {
+        // Niente `document` (worker, prerender) o getter ostile: nel dubbio si logga.
+        return false;
     }
 }
 
@@ -254,6 +333,14 @@ function livelloEvento(e: EventoClient): 'warn' | 'error' | null {
  * richiesta non è mai arrivata al server, quindi nessun log del server la vedrà mai. Si
  * declassa a `warn` — che è persistito e contabile — invece di sopprimerla: il livello
  * dice «capita, guardalo quando ne conti troppi», che è esattamente ciò che è.
+ *
+ * ⚠️ AGGIORNAMENTO DEL 2026-10-12, perché questo paragrafo da solo non è più tutta la storia:
+ * il declassamento a `warn` vale a pagina VISIBILE. A pagina nascosta — e nei tre secondi dopo
+ * il ritorno — la riga non parte affatto, ed è la sola parte di questo rumore che si riconosce
+ * con certezza invece di congetturarla. Il perché, con i numeri, sta su `inSfondo()`.
+ * I conteggi citati qui sopra (763 su 964; 372 su `/api/notifiche`) sono di PRIMA di quella
+ * regola: una query che li rifacesse oggi troverebbe meno righe, e non perché il guasto sia
+ * cambiato.
  *
  * L'ECCEZIONE È L'ABORT, e va nella direzione opposta: `AbortError` lo produce il NOSTRO
  * codice (un `AbortController` allo smontaggio, un timeout applicativo). Non si spedisce
@@ -1102,7 +1189,15 @@ export function installaLoggerClient(): void {
         // mobile è il vero "sto chiudendo", e senza di lui la coda morirebbe in memoria.
         window.addEventListener('pagehide', flush);
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'hidden') flush();
+            if (document.visibilityState === 'hidden') {
+                flush();
+                return;
+            }
+            // Il ritorno in primo piano si ANNOTA, e serve a `inSfondo()`: le richieste
+            // troncate dal periodo in background si rifiutano adesso, a schermo già
+            // riacceso. Un secondo ascoltatore per lo stesso evento sarebbe stato il modo di
+            // farli divergere — questo c'era già.
+            ultimoRitornoInPrimoPiano = Date.now();
         });
         // Il dispositivo è tornato in rete: è il momento in cui la coda accumulata offline —
         // cioè i log che raccontano l'offline — può finalmente partire.

@@ -12,11 +12,13 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi';
  * ─────────────────────────────────────────────────────────────────────────────────
  * REGOLA FERREA — UPDATE SEPARATO, MAI unito al mark-read.
  *
- * Il DB E2E della CI NON è migrato: la colonna `delivered_at` non esiste. Un `update`
- * che scrivesse `read_at` E `delivered_at` insieme fallirebbe TUTTO con PGRST204, e con
- * lui sparirebbe anche il mark-read — cioè una feature nuova (la doppia spunta) romperebbe
- * una feature vecchia (i messaggi letti). Perciò la consegna è una query a sé: se la colonna
- * manca, questa fallisce da sola e il mark-read (chiamato separatamente) resta intatto.
+ * Su un database senza la colonna `delivered_at` (il DB E2E della CI fino al 12/10, quando
+ * «DB migrate (CI)» le ha applicato `20260714100000_chat_delivered_at.sql`; domani un ambiente
+ * nuovo non ancora migrato) un `update` che scrivesse `read_at` E `delivered_at` insieme
+ * fallirebbe TUTTO con PGRST204, e con lui sparirebbe anche il mark-read — cioè una feature
+ * nuova (la doppia spunta) romperebbe una feature vecchia (i messaggi letti). Perciò la
+ * consegna è una query a sé: se fallisce, fallisce da sola e il mark-read (chiamato
+ * separatamente) resta intatto.
  *
  * Il fallimento per colonna-assente NON è un errore: è degrado pulito, e si logga `info`.
  * PostgREST codifica la colonna mancante in due modi a seconda di dove la incontra —
@@ -109,7 +111,7 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi';
  */
 
 /**
- * Codici emessi quando `delivered_at` non esiste ancora (CI non migrata):
+ * Codici emessi quando `delivered_at` non esiste ancora (database non migrato):
  *  · PGRST204 → il payload dell'UPDATE cita una colonna che PostgREST non trova;
  *  · 42703    → il filtro `is('delivered_at', null)` colpisce una colonna inesistente.
  *
@@ -135,7 +137,7 @@ interface EsitoBlocco {
 function riportaGuasto(operazione: string, error: unknown): void {
     const codice = (error as { code?: string } | null)?.code;
     if (codice && COLONNA_ASSENTE.has(codice)) {
-        // DB non migrato (E2E della CI): degrado pulito, non un guasto. `info` → non persistito.
+        // DB non migrato: degrado pulito, non un guasto. `info` → non persistito.
         // Nessun PII: solo l'operazione e l'esito.
         logEvento('db', 'info', { operazione, esito: 'colonna-delivered_at-assente' });
         return;

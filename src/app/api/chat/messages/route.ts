@@ -306,8 +306,9 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
 
         if (vuoleMarkRead) {
             // PRIMA del mark-read: consegna (delivered_at) di tutto il thread, in una query
-            // SEPARATA. Mai unita al mark-read: sul DB E2E la colonna delivered_at non esiste
-            // e un update congiunto porterebbe giù anche il mark-read qui sotto.
+            // SEPARATA. Mai unita al mark-read: se la consegna fallisce (fino al 12/10 succedeva
+            // sul DB E2E, a cui mancava la colonna delivered_at) un update congiunto porterebbe
+            // giù anche il mark-read qui sotto.
             // Identità = `uid` dal gate (mai il valore di markRead in query).
             await marcaConsegnati(supabase, { userId: uid, threadIds: [threadId] });
 

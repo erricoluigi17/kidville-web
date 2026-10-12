@@ -10,6 +10,7 @@ import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } f
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { normalizzaMetodiAmmessi, type MetodoAmmesso } from '@/lib/pagamenti/metodi-ammessi';
 import { ScegliMetodiAmmessi } from './ScegliMetodiAmmessi';
+import { EliminaVoceZona } from './EliminaVoceZona';
 
 // Campo inline compatto per la correzione di un incasso già registrato.
 const INLINE_FIELD = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -285,6 +286,15 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                     {saving ? t('modifSalvataggio') : t('modifSalvaModifiche')}
                 </button>
             </div>
+
+            {/* Eliminare una voce generata per errore (2026-10-12): solo admin e segreteria,
+                il verdetto lo dà il server. Dopo l'eliminazione la finestra si chiude come
+                dopo un salvataggio. */}
+            <EliminaVoceZona
+                pagamento={{ id: pagamento.id, descrizione: pagamento.descrizione, importo: Number(pagamento.importo) }}
+                userId={userId}
+                onEliminata={onDone}
+            />
         </Modal>
     );
 }

@@ -53,6 +53,7 @@ vi.mock('@/lib/supabase/server-client', async () => {
 })
 
 import { DELETE } from '@/app/api/pagamenti/[id]/route'
+import { GET as eliminabileGET } from '@/app/api/pagamenti/[id]/eliminabile/route'
 
 const req = () => new NextRequest(`http://localhost/api/pagamenti/${PAG}`, { method: 'DELETE' })
 const ctx = () => ({ params: Promise.resolve({ id: PAG }) })
@@ -177,5 +178,43 @@ describe('DELETE /api/pagamenti/[id] · ricarica di ticket', () => {
     const res = await DELETE(req(), ctx())
     expect(res.status).toBe(409)
     expect(eventi('rpc-esito-inatteso')).toHaveLength(1)
+  })
+})
+
+describe('GET /api/pagamenti/[id]/eliminabile · il verdetto per la finestra Modifica', () => {
+  const get = () => eliminabileGET(new NextRequest(`http://localhost/api/pagamenti/${PAG}/eliminabile`), ctx())
+
+  it('🔴 coordinatrice → 403', async () => {
+    h.ruolo = 'coordinator'
+    h.db.pagamenti = [voce()]
+    expect((await get()).status).toBe(403)
+  })
+
+  it('voce pulita → 200 eliminabile, 0 rate, 0 ticket, e NIENTE scritto', async () => {
+    h.db.pagamenti = [voce()]
+    const res = await get()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ success: true, eliminabile: true, rate: 0, ticket: 0 })
+    expect(h.scritture).toEqual([])
+    expect(h.db.pagamenti).toHaveLength(1)
+  })
+
+  it('ricarica intatta → eliminabile con i ticket da togliere', async () => {
+    h.db.pagamenti = [voce()]
+    h.db.mensa_ticket_movimenti = [{ id: 'm1', pagamento_id: PAG, alunno_id: ALU, tipo: 'ricarica', delta: 10 }]
+    h.db.ticket_mensa = [{ alunno_id: ALU, saldo_ticket: 10 }]
+    expect(await (await get()).json()).toMatchObject({ eliminabile: true, ticket: 10 })
+  })
+
+  it('voce con incassi → 200 NON eliminabile, col codice', async () => {
+    h.db.pagamenti = [voce()]
+    h.db.incassi = [{ id: 'i1', pagamento_id: PAG, importo: 10, transazione_id: null }]
+    const res = await get()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ success: true, eliminabile: false, codice: 'VOCE_CON_INCASSI' })
+  })
+
+  it('voce inesistente → 404', async () => {
+    expect((await get()).status).toBe(404)
   })
 })

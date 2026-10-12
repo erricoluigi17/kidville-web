@@ -1,10 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { assertAlunnoInScope } from '@/lib/auth/scope'
+import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
@@ -15,6 +15,8 @@ import {
   type MetodoAmmesso,
 } from '@/lib/pagamenti/metodi-ammessi'
 import { zMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi-zod'
+import { controllaVoceEliminabile, type VoceDaEliminare } from '@/lib/pagamenti/voce-eliminabile'
+import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -39,11 +41,15 @@ const postBodySchema = z.object({
   // il «solo contanti» spariva con lei). Assente = tutti e due (default della
   // colonna): «Acquisto rapido» non li manda.
   metodi_ammessi: zMetodiAmmessi.optional(),
+  // Rateizza (2026-10-12): la voce che il piano SOSTITUISCE. Il server controlla che sia
+  // eliminabile PRIMA di creare il piano, e la elimina DOPO; se non ci riesce, toglie il piano.
+  // Prima lo faceva il browser con una seconda chiamata, e un fallimento lasciava voce e piano.
+  sostituisce_pagamento_id: zUuid.optional(),
 })
 
 // POST /api/pagamenti/rate  (staff) — crea un piano rateale: 1 padre + N rate
 // Body: { userId, alunno_id, descrizione, importo_totale, rate: [{importo, scadenza}],
-//         categoria_id?, obbligatorio?, scuola_id?, metodi_ammessi? }
+//         categoria_id?, obbligatorio?, scuola_id?, metodi_ammessi?, sostituisce_pagamento_id? }
 export const POST = withRoute('pagamenti/rate:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
@@ -72,6 +78,31 @@ export const POST = withRoute('pagamenti/rate:POST', async (request: Request) =>
     if (errAl) return rispostaGuastoDb('pagamenti/rate:POST', 'db:alunni', errAl)
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     const scuolaId = al.scuola_id
+
+    // Sostituzione: tutte le guardie PRIMA di scrivere qualunque cosa.
+    let originale: VoceDaEliminare | null = null
+    if (body.sostituisce_pagamento_id) {
+      const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
+      const c = await controllaVoceEliminabile(supabase, body.sostituisce_pagamento_id, {
+        sedi,
+        perSostituzione: true,
+        operazione: 'pagamenti/rate:POST',
+      })
+      if (!c.ok) {
+        if ('guasto' in c) return c.guasto
+        return NextResponse.json({ error: c.error, ...(c.codice ? { codice: c.codice } : {}) }, { status: c.stato })
+      }
+      if (c.voce.alunno_id !== alunno_id || c.voce.tipo !== 'singolo') {
+        return NextResponse.json(
+          {
+            error: 'Questa voce non si può sostituire con un piano rateale: deve essere una voce singola dello stesso bambino.',
+            codice: 'VOCE_NON_SOSTITUIBILE',
+          },
+          { status: 409 },
+        )
+      }
+      originale = c.voce
+    }
 
     const scadenze = rate.map((r) => r.scadenza).sort()
     const ultimaScadenza = scadenze[scadenze.length - 1]
@@ -160,6 +191,61 @@ export const POST = withRoute('pagamenti/rate:POST', async (request: Request) =>
         esito: 'metodi-ammessi-scritti',
         solo_contanti: metodiDaScrivere.length === 1 && metodiDaScrivere[0] === 'contanti',
         pagamento_id: padre.id,
+      })
+    }
+
+    if (originale) {
+      const del = await supabase.from('pagamenti').delete().eq('id', originale.id)
+      if (del.error) {
+        // Compensazione: senza, la famiglia avrebbe voce e piano insieme (debito doppio). Le rate
+        // se ne vanno col padre (CASCADE su `parent_payment_id`).
+        const comp = await supabase.from('pagamenti').delete().eq('id', padre.id)
+        if (comp.error) {
+          logEvento('pagamento', 'error', {
+            operazione: 'pagamenti/rate:POST',
+            esito: 'compensazione-piano-fallita',
+            padre_id: padre.id,
+            originale_id: originale.id,
+          }, comp.error)
+          return NextResponse.json(
+            { error: 'Errore sostituzione: il piano è stato creato ma la voce originale non è stata tolta.', codice: 'PAGAMENTI_SCRITTURA_FALLITA' },
+            { status: 500 },
+          )
+        }
+        const freno = figlieTrattengono(del.error)
+        logEvento('pagamento', freno ? 'warn' : 'error', {
+          operazione: 'pagamenti/rate:POST',
+          esito: 'sostituzione-annullata',
+          padre_id: padre.id,
+          originale_id: originale.id,
+        }, del.error)
+        return freno
+          ? NextResponse.json(
+              { error: 'La voce è stata incassata o fatturata nel frattempo: non si può più sostituire. Ricarica la pagina.', codice: 'VOCE_CON_CONTABILITA' },
+              { status: 409 },
+            )
+          : NextResponse.json({ error: 'Errore sostituzione', details: del.error.message }, { status: 500 })
+      }
+      const audit = await supabase.from('registro_modifiche').insert({
+        azione: 'elimina_pagamento',
+        tabella_interessata: 'pagamenti',
+        record_id: originale.id,
+        vecchio_valore: originale,
+        nuovo_valore: { sostituito_da: padre.id },
+        utente_id: user.id,
+      })
+      if (audit.error) {
+        logEvento('pagamento', 'error', {
+          operazione: 'pagamenti/rate:POST',
+          esito: 'audit-sostituzione-non-scritto',
+          originale_id: originale.id,
+        }, audit.error)
+      }
+      logEvento('pagamento', 'info', {
+        operazione: 'pagamenti/rate:POST',
+        esito: 'voce-sostituita-da-piano',
+        originale_id: originale.id,
+        padre_id: padre.id,
       })
     }
 

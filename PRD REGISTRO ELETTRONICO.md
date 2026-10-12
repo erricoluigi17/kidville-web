@@ -1,3 +1,25 @@
+## 🍽️ Changelog — Mensa: la segreteria aggiunge e annulla i pasti a qualunque ora, dalla settimana del bambino e dal Report cucina — 2026-10-12 (branch `feat/mensa-segreteria-prenotazioni`)
+
+**Stato.** 🟡 **In PR** su `feat/mensa-segreteria-prenotazioni`; la conferma del rilascio va nella voce successiva. Nessuna migrazione, nessuna modifica di comportamento alle route.
+
+**La richiesta.** «La segreteria deve poter annullare e aggiungere le prenotazioni e i ticket mensa anche fuori orario (non vedo proprio il pulsante)», e lo stesso per aggiungerli.
+
+**Il problema, misurato.** Il server lo permetteva dal 2026-07-13 (DL-054): `POST`/`DELETE /api/mensa/prenotazioni` esentano `admin · coordinator · segreteria` da orario limite e blocco del saldo, anche su date passate, ed è coperto dai test. **Mancava l'interfaccia**: nessuna schermata dello staff chiamava la `DELETE` (l'unico chiamante era il calendario del genitore, che oltre l'orario mostra il lucchetto), e aggiungere si poteva solo dal modulo «Inserisci ticket», un giorno alla volta e senza vedere cosa il bambino avesse già. In produzione (sole `SELECT`, 12/10): 83 prenotazioni inserite dalla segreteria dal 07/09, **61 disdette, tutte di genitori, zero dello staff**.
+
+**Cosa cambia.**
+- **Scheda «Prenotazioni»** (era «Inserisci ticket») di `/admin/mensa`: scelto il bambino, la sua **settimana** (◀ ▶, «Oggi») con menù, stato e un pulsante per giorno, **Aggiungi** o **Annulla**, sempre attivi — oggi dopo l'orario e nei giorni passati compresi. Saldo in alto; a saldo ≤ 0 l'avviso che aggiungendo si va in negativo. Nuovo componente `SettimanaMensaStaff`.
+- **Report cucina** (scheda di `/admin/mensa` e `/admin/mensa/cucina`): per admin, coordinatrice e segreteria una **✕ Annulla** accanto a ogni prenotato e, per classe, **«Aggiungi un bambino»** con gli iscritti non prenotati di quel giorno; compaiono anche le classi con zero prenotati. Per loro il sottotitolo non dice più «sola lettura». **Cuoca e docenti: identico a prima**, e il report non chiede nemmeno l'elenco degli iscritti.
+- **Annulla chiede conferma** (decisione del titolare): «Annullare il pasto di …? Il ticket torna sul saldo di ….» — finestra in pagina (`ConfermaAnnullaPasto` su `Modal`), mai `confirm()` nativo. Aggiungere non chiede conferma.
+- Una lista sola dei ruoli: `RUOLI_GESTIONE_MENSA` in `src/lib/mensa/gestione-staff.ts`; la route la importa come `STAFF_FORZA` (stessi tre ruoli), l'interfaccia la usa per decidere chi vede i pulsanti.
+- Date della settimana calcolate su stringhe `AAAA-MM-GG` in UTC (`src/lib/mensa/settimana.ts`): nessuno slittamento di giorno per fuso o cambio d'ora.
+- Contrasto: il testo nuovo usa `text-kidville-sub` (6,46:1), mai `text-kidville-muted`. `PrenotazioneSegreteria.tsx` esce dall'allowlist del grigio (175 file, 1.140 occorrenze).
+
+**Log.** Il server registrava già ogni prenotazione e disdetta con `origine: segreteria` e, a parte, il saldo che va sotto zero. Lato client, gli errori di rete delle nuove azioni passano da `logClient` con uno slug (`mensa-staff-…`, `mensa-report-…`), senza nomi né uuid nel messaggio.
+
+**Test.** Puri: settimana (domenica, cambio d'ora del 25/10, fine anno; verdi in tre fusi), ruoli, non prenotati per classe. Componenti: settimana con oggi oltre l'orario e giorno passato → pulsanti attivi, `POST` e `DELETE` giuste, conferma che non chiama niente su «Lascia com'è», rifiuto del server mostrato col suo motivo; report senza prop → nessun pulsante né chiamata agli iscritti, con prop → `DELETE` dopo conferma, `POST` dai non prenotati della classe, filtro di sezione rispettato; pagina cucina → segreteria sì, cuoca no. Ogni test nuovo è stato visto **fallire** rompendo apposta il codice. Lock `limite-elenco-alunni`: `MensaReport.tsx` fra i chiamanti (dodici). E2E: in `gallery-caricamento.spec.ts` l'attesa della risposta persa passa da 5 a 60 s, come l'attesa dell'esito della stessa POST. Sulla CI di questa PR era caduta con la POST ancora in volo; non c'entra con la mensa.
+
+**Fuori perimetro.** Nessuna notifica al genitore quando la segreteria aggiunge o annulla (oggi non esiste). Il calendario del genitore non si tocca. Specifica: `docs/superpowers/specs/2026-10-12-mensa-segreteria-prenotazioni-design.md`; piano: `docs/superpowers/plans/2026-10-12-mensa-segreteria-prenotazioni.md`.
+
 ## ✅ Changelog — Roadmap di robustezza, fasi 9a e 10 in produzione: verifica dopo il rilascio, fotografie rigenerate — 2026-10-12 (branch `robustezza/fase-9-10-pr-b`)
 
 **Stato.** ✅ **In produzione dal 2026-10-12** (PR-B di #224). Nessuna migrazione e nessun codice applicativo: le sei fotografie del catalogo, `MIGRAZIONI_ATTESE_AL_MERGE` svuotata, tre commenti e il titolo di un test che dicevano una cosa non più vera, il PRD e la roadmap.
@@ -28215,6 +28237,7 @@ altri moduli (come il Diario e il Registro di Classe).
 • Orario di Cut-off: II limite orario (es. 09:30) per l'invio dei numeri definitivi dei pasti viene gestito direttamente dalla Dashboard della Cucina.
 • Approvazione Ritardi: Se un alunno entra in Ritardo (post cut-off), la sua presenza viene registrata, ma l'aggiunta del suo pasto alla lista della cucina richiede un'approvazione manuale da parte della Segreteria.
   🔄 **Sportello Segreteria (2026-07-13, DL-054):** la Segreteria (oltre a Direzione) può **forzare l'inserimento** di un pasto **fuori cut-off** su `/api/mensa/prenotazioni` (salta cutoff e vincolo saldo>0; il saldo può andare **negativo** → l'alunno confluisce nei **morosi**; origine `segreteria`, movimento tracciato su `mensa_ticket_movimenti` con `saldo_dopo`) e **disdire oltre il cut-off** (anche date passate: rettifica con riaccredito, tracciata con `creato_da`/`creato_il`). Il **Report Cucina** è ora leggibile anche dalla Segreteria (`requireKitchenRead`). Il genitore resta vincolato a cut-off + saldo positivo.
+  🔄 **I pulsanti (2026-10-12):** fino a questa data la disdetta dello staff esisteva solo nell'API. Ora admin, coordinatrice e segreteria **aggiungono e annullano** dalla **settimana del bambino** (scheda «Prenotazioni») e dal **Report cucina** (✕ sui prenotati, «Aggiungi un bambino» per classe), a qualunque ora; **Annulla chiede conferma**. Cuoca e docenti restano in sola lettura.
 
 ## 5. Interconnessioni Architetturali e di Flusso
 • Isolamento Finanziario: II tracciamento delle presenze/assenze non ha alcun impatto automatizzato sulla fatturazione o sulle rette mensili gestite nel modulo Pagamenti.
@@ -30234,7 +30257,7 @@ _Modulo PRD: Mensa §2 + §4_
 **Checklist controlli richiesti:**
 - Tab 'Menu' (Menu Builder)
 - Tab 'Report cucina'
-- Tab 'Inserisci ticket'
+- Tab 'Prenotazioni' (settimana del bambino; era 'Inserisci ticket' fino al 2026-10-12)
 - Pulsante 'Ricarica ticket' (vai a Pagamenti)
 - Pulsante 'Impostazioni mensa'
 - Selettore Menu (multi-menu / Menu unico legacy)
@@ -30262,12 +30285,14 @@ _Modulo PRD: Mensa §2 + §4_
 - Indicatore conflitto allergene-menu (riga rossa + dettaglio portate)
 - Indicatore numeri per tipo dieta (Standard/Bianco/Speciale)
 - Pulsante 'Esporta report catering' (Excel/PDF)
-- Campo ricerca alunno (inserimento ticket)
+- Campo ricerca alunno (prenotazioni)
 - Indicatore 'Saldo' ticket alunno
-- Campo 'Data del pasto'
-- Pulsante 'Inserisci ticket (scala 1)'
+- Navigazione settimana (◀ ▶ 'Oggi') del bambino
+- Pulsante 'Aggiungi' / 'Annulla' per giorno, senza orario limite (2026-10-12)
+- Finestra di conferma 'Annullare il pasto?' (ticket restituito)
 - Banner avviso forzatura saldo negativo (debito)
-- Badge conferma 'Ticket inserito / nuovo saldo'
+- Riga esito 'Pasto aggiunto / annullato · saldo ticket'
+- Report cucina: pulsante '✕ Annulla' per prenotato e 'Aggiungi un bambino' per classe (solo admin/coordinatrice/segreteria)
 - Pulsante 'Ricarica manuale ticket' (accredito pacchetto+importo)
 - Selettore 'Pacchetto ticket' (es. 10/20 pasti)
 - Azione 'Storno / rimborso ticket'

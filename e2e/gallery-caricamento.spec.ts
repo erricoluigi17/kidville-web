@@ -91,7 +91,11 @@ test(`foto docente → genitore e ripresa: ${interruzione}`, async ({ page, brow
   await page.getByRole('button', { name: /Aurora Arcobaleno-E2E/ }).click();
   await page.getByRole('button', { name: 'Pubblica 1 file', exact: true }).click();
   if (interruzione !== 'nessuna') {
-    await expect.poll(() => rispostaPersa).toBe(true);
+    // 60 s come l'attesa dell'esito più sotto: `rispostaPersa` diventa vera solo DOPO un
+    // caricamento vero sullo Storage e, per «risposta pubblicazione», dopo la POST vera, che
+    // risponde solo ad accodamento delle notifiche fatto. Col predefinito di 5 s la CI
+    // carica è caduta il 12/10 con la POST ancora in volo (chromium, 9,9 s in tutto).
+    await expect.poll(() => rispostaPersa, { timeout: 60_000 }).toBe(true);
     await expect(page.getByRole('button', { name: 'Riprova caricamenti', exact: true })).toBeVisible();
     // Ricrea React e legge IndexedDB: la ripresa non può dipendere dalla memoria.
     await page.reload();

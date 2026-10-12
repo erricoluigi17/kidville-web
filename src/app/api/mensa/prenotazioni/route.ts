@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireUser, type AppRole } from '@/lib/auth/require-staff'
+import { requireUser } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, entroCutoff } from '@/lib/mensa/server'
 import { oggiRoma } from '@/lib/mensa/cutoff'
@@ -14,12 +14,14 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { alunnoSospeso } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { RUOLI_GESTIONE_MENSA } from '@/lib/mensa/gestione-staff'
 
 // Ruoli che possono FORZARE prenotazione/disdetta della mensa anche fuori orario
 // (telefonate out-of-hours dei genitori dopo il cutoff), con saldo che può andare
 // in negativo. La Segreteria è inclusa perché gestisce lo sportello (PRD §3:
-// Segreteria↔Admin); dirigenza/FEA restano su liste esplicite altrove.
-const STAFF_FORZA: readonly AppRole[] = ['admin', 'coordinator', 'segreteria']
+// Segreteria↔Admin); dirigenza/FEA restano su liste esplicite altrove. La lista
+// vive in `@/lib/mensa/gestione-staff`: l'interfaccia mostra i pulsanti agli stessi ruoli.
+const STAFF_FORZA = RUOLI_GESTIONE_MENSA
 
 // Il genitore ha chiesto una data oltre l'orario limite della sua sede (in ora
 // italiana) o già passata. Codice stabile: l'interfaccia lo traduce invece di

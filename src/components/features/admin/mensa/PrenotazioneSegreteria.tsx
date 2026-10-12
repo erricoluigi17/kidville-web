@@ -1,24 +1,27 @@
 'use client';
 
 import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
-import { useDateFormat } from '@/lib/i18n/date';
-import { Search, CalendarPlus, Ticket, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Search, CalendarRange } from 'lucide-react';
+import { SettimanaMensaStaff } from './SettimanaMensaStaff';
 
 interface Props { userId: string; scuolaId: string }
 interface Alunno { id: string; nome: string; cognome: string; classe_sezione?: string }
-const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 
+/**
+ * Scheda «Prenotazioni» della mensa: la segreteria cerca un bambino e ne vede la
+ * settimana, con Aggiungi e Annulla a qualunque ora (`SettimanaMensaStaff`).
+ *
+ * Fino al 2026-10-12 a destra c'era un modulo a UN giorno («Inserisci ticket (scala
+ * 1)»): si poteva solo aggiungere, senza vedere cosa il bambino avesse già, e annullare
+ * non si poteva da nessuna schermata dello staff — benché il server lo permettesse.
+ */
 export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
   const t = useTranslations('adminMensa');
-  const f = useDateFormat();
   const [alunni, setAlunni] = useState<Alunno[]>([]);
   const [search, setSearch] = useState('');
   const [sel, setSel] = useState<Alunno | null>(null);
-  const [saldo, setSaldo] = useState<number | null>(null);
-  const [data, setData] = useState(() => new Date().toISOString().slice(0, 10));
-  const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
     // `stato=iscritto` (2026-08-13). `GET /api/admin/students` è un'ANAGRAFICA e
@@ -32,29 +35,6 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
       .then(d => { if (Array.isArray(d)) setAlunni(d.map((a: Alunno) => ({ id: a.id, nome: a.nome, cognome: a.cognome, classe_sezione: a.classe_sezione }))); });
   }, [scuolaId]);
 
-  const loadSaldo = useCallback((alunnoId: string) => {
-    fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${alunnoId}&from=${data}&to=${data}`, { headers: hdr(userId) })
-      .then(r => r.json()).then(d => { if (d.success) setSaldo(d.data.saldo); });
-  }, [userId, data]);
-
-  const select = (a: Alunno) => { setSel(a); setMsg(null); loadSaldo(a.id); };
-
-  const inserisci = async () => {
-    if (!sel) return;
-    setMsg(null);
-    const res = await fetch('/api/mensa/prenotazioni', {
-      method: 'POST', headers: hdr(userId),
-      body: JSON.stringify({ alunno_id: sel.id, date: [data], origine: 'segreteria' }),
-    });
-    const j = await res.json();
-    if (j.success) {
-      setSaldo(j.data.saldo);
-      const esito = j.data.esiti?.[0];
-      if (esito && !esito.ok) setMsg(esito.motivo ?? t('operazioneNonRiuscita'));
-      else setMsg(t('ticketInserito', { data: f.dataBreve(`${data}T00:00:00Z`), saldo: j.data.saldo }));
-    } else setMsg(j.error ?? t('errore'));
-  };
-
   const filtered = alunni.filter(a => `${a.nome} ${a.cognome}`.toLowerCase().includes(search.toLowerCase())).slice(0, 8);
 
   return (
@@ -65,7 +45,7 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
           className="w-full min-h-[44px] border-2 border-kidville-line rounded-full px-4 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green mb-2" />
         <div className="space-y-1 max-h-72 overflow-y-auto">
           {filtered.map(a => (
-            <button key={a.id} onClick={() => select(a)}
+            <button key={a.id} onClick={() => setSel(a)}
               className={`w-full min-h-[44px] text-left px-3 py-2 rounded-xl font-maven text-sm ${sel?.id === a.id ? 'bg-kidville-green text-white' : 'hover:bg-kidville-cream text-kidville-green'}`}>
               {a.nome} {a.cognome} <span className="text-xs opacity-70">{a.classe_sezione}</span>
             </button>
@@ -74,27 +54,11 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
       </div>
 
       <div>
-        <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><CalendarPlus size={14} /> {t('inserisciTicketGiornaliero')}</h3>
-        {!sel ? <p className="font-maven text-sm text-kidville-muted">{t('selezionaUnAlunno')}</p> : (
-          <div className="bg-kidville-cream/60 rounded-xl p-4">
-            <div className="flex justify-between mb-3">
-              <span className="font-maven text-sm text-kidville-green font-bold">{sel.nome} {sel.cognome}</span>
-              <span className="font-maven text-sm text-kidville-muted flex items-center gap-1">
-                <Ticket size={13} /> {t('saldoLabel')} <b className={saldo != null && saldo < 0 ? 'text-kidville-error' : 'text-kidville-green'}>{saldo ?? '—'}</b>
-              </span>
-            </div>
-            <label className="font-maven text-xs text-kidville-muted block mb-1">{t('dataDelPasto')}</label>
-            <input type="date" value={data} onChange={e => { setData(e.target.value); if (sel) loadSaldo(sel.id); }}
-              className="w-full min-h-[44px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green mb-3" />
-            <button onClick={inserisci} className="w-full min-h-[44px] py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center justify-center gap-1">
-              <CalendarPlus size={15} /> {t('inserisciTicketScala')}
-            </button>
-            <p className="mt-2 font-maven text-[11px] text-kidville-muted flex items-start gap-1">
-              <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" /> {t('notaForzaInserimento')}
-            </p>
-            {msg && <p className="mt-2 font-maven text-xs text-kidville-green flex items-center gap-1"><CheckCircle2 size={13} /> {msg}</p>}
-          </div>
-        )}
+        <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><CalendarRange size={14} /> {t('settimanaDelBambino')}</h3>
+        {/* `key`: cambiando bambino la settimana riparte da zero, senza il saldo o
+            l'esito del bambino di prima. */}
+        {!sel ? <p className="font-maven text-sm text-kidville-sub">{t('selezionaUnAlunno')}</p>
+          : <SettimanaMensaStaff key={sel.id} userId={userId} alunno={sel} />}
       </div>
     </div>
   );

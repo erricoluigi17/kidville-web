@@ -87,7 +87,7 @@ describe('SettimanaMensaStaff — la segreteria non ha orario limite', () => {
   it('«Annulla» chiede conferma: «Lascia com’è» non chiama niente, «Annulla il pasto» manda la DELETE', async () => {
     render(<SettimanaMensaStaff userId="seg-1" alunno={ALUNNO} />)
     fireEvent.click(await screen.findByRole('button', { name: /^Annulla il pasto di/ }))
-    expect(screen.getByText('Annullare il pasto di Bimbo Uno di Lunedì 12 ottobre? Il ticket torna sul saldo.')).toBeTruthy()
+    expect(screen.getByText('Annullare il pasto di Lunedì 12 ottobre? Il ticket torna sul saldo di Bimbo Uno.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Lascia com’è' }))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(fetchMock.mock.calls.some(c => metodo(c) === 'DELETE')).toBe(false)
@@ -97,7 +97,7 @@ describe('SettimanaMensaStaff — la segreteria non ha orario limite', () => {
     await waitFor(() => expect(fetchMock.mock.calls.filter(c => metodo(c) === 'DELETE')).toHaveLength(1))
     const del = fetchMock.mock.calls.find(c => metodo(c) === 'DELETE')!
     expect(String(del[0])).toBe('/api/mensa/prenotazioni?userId=seg-1&alunno_id=a1&data=2026-10-12')
-    expect((await screen.findByRole('status')).textContent).toBe('Pasto di Lunedì 12 ottobre annullato, ticket restituito. Saldo ticket: 1.')
+    expect((await screen.findByRole('status')).textContent).toBe('Pasto annullato per Lunedì 12 ottobre, ticket restituito. Saldo ticket: 1.')
   })
 
   it('un rifiuto del server si mostra con il suo motivo', async () => {

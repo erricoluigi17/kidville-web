@@ -138,7 +138,7 @@ export function SettimanaMensaStaff({ userId, alunno }: Props) {
     <div className="bg-kidville-cream/60 rounded-xl p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <span className="font-maven text-sm text-kidville-green font-bold">{alunno.nome} {alunno.cognome}</span>
-        <span className="font-maven text-sm text-kidville-muted flex items-center gap-1">
+        <span className="font-maven text-sm text-kidville-sub flex items-center gap-1">
           <Ticket size={13} /> {t('saldoLabel')}{' '}
           <b className={saldo != null && saldo < 0 ? 'text-kidville-error' : 'text-kidville-green'}>{saldo ?? '—'}</b>
         </span>
@@ -148,7 +148,7 @@ export function SettimanaMensaStaff({ userId, alunno }: Props) {
         <button type="button" onClick={() => setLunedi(piuGiorni(lunedi, -7))} aria-label={t('settimanaPrecedente')} className={navCls}>
           <ChevronLeft size={16} />
         </button>
-        <span className="flex-1 text-center font-maven text-xs text-kidville-muted">
+        <span className="flex-1 text-center font-maven text-xs text-kidville-sub">
           {f.giornoMese(`${lunedi}T12:00:00Z`)} – {f.giornoMese(`${piuGiorni(lunedi, 6)}T12:00:00Z`)}
         </span>
         <button type="button" onClick={() => setLunedi(piuGiorni(lunedi, 7))} aria-label={t('settimanaSuccessiva')} className={navCls}>
@@ -160,7 +160,7 @@ export function SettimanaMensaStaff({ userId, alunno }: Props) {
         </button>
       </div>
 
-      <p className="mb-2 font-maven text-[11px] text-kidville-muted flex items-start gap-1">
+      <p className="mb-2 font-maven text-[11px] text-kidville-sub flex items-start gap-1">
         <Info size={12} className="mt-0.5 flex-shrink-0" /> {t('notaSegreteriaSenzaOrario')}
       </p>
       {saldo != null && saldo <= 0 && (
@@ -173,9 +173,9 @@ export function SettimanaMensaStaff({ userId, alunno }: Props) {
       )}
 
       {caricando ? (
-        <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('caricamento')}</p>
       ) : giorni.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">{t('nessunGiornoSettimana')}</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('nessunGiornoSettimana')}</p>
       ) : (
         <ul className="space-y-2">
           {giorni.map(g => {
@@ -193,13 +193,13 @@ export function SettimanaMensaStaff({ userId, alunno }: Props) {
                       {giorno}{g.data === oggi ? ` · ${t('tornaAOggi')}` : ''}
                     </p>
                     {g.chiuso ? (
-                      <p className="font-maven text-xs text-kidville-muted flex items-center gap-1">
+                      <p className="font-maven text-xs text-kidville-sub flex items-center gap-1">
                         <CalendarOff size={13} /> {t('mensaChiusaGiorno')}{g.note ? ` · ${g.note}` : ''}
                       </p>
                     ) : (
                       <>
                         <p className="font-maven text-[12px] text-kidville-sub">{portate || t('menuNonPubblicato')}</p>
-                        <p className="font-maven text-[11px] text-kidville-muted">
+                        <p className="font-maven text-[11px] text-kidville-sub">
                           {prenotato ? t('pastoPrenotato') : t('pastoNonPrenotato')}
                           {prenotato && p?.origine === 'segreteria' ? ` · ${t('inseritoSegreteria')}` : ''}
                         </p>

@@ -65,8 +65,8 @@ Props `{ userId, alunno: { id, nome, cognome } }`.
 - Navigazione ◀ ▶ e «Oggi»; mostra i soli giorni attivi o chiusi (come il genitore).
 - Per ogni giorno: data, menù in breve, stato (prenotato / no), nota «inserito dalla segreteria» quando
   l'origine è quella, e **un** pulsante:
-  - prenotato → **Annulla** → finestra di conferma *«Annullare il pasto di {nome} di {giorno}? Il ticket
-    torna sul saldo.»* → `DELETE`;
+  - prenotato → **Annulla** → finestra di conferma *«Annullare il pasto di {giorno}? Il ticket torna sul
+    saldo di {nome}.»* → `DELETE`;
   - non prenotato → **Aggiungi** → `POST` con `date: [giorno]`.
   - Nessun lucchetto d'orario, nessun blocco per giorno passato. Giorno con mensa chiusa: nessun pulsante.
 - Saldo in alto; se `saldo ≤ 0` compare l'avviso che aggiungendo il saldo va in negativo.

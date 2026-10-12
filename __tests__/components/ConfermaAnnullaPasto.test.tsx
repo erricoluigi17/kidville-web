@@ -17,7 +17,7 @@ describe('ConfermaAnnullaPasto', () => {
   it('aperta nomina bambino e giorno e dice che il ticket torna sul saldo', () => {
     render(<ConfermaAnnullaPasto richiesta={{ nome: 'Bimbo Uno', dataLeggibile: 'Lunedì 12 ottobre' }} onConferma={vi.fn()} onChiudi={vi.fn()} />)
     expect(screen.getByRole('dialog')).toBeTruthy()
-    expect(screen.getByText('Annullare il pasto di Bimbo Uno di Lunedì 12 ottobre? Il ticket torna sul saldo.')).toBeTruthy()
+    expect(screen.getByText('Annullare il pasto di Lunedì 12 ottobre? Il ticket torna sul saldo di Bimbo Uno.')).toBeTruthy()
   })
   it('«Annulla il pasto» conferma, «Lascia com’è» chiude soltanto', () => {
     const onConferma = vi.fn()

@@ -9,9 +9,10 @@
 **Cosa cambia.**
 - **Scheda «Prenotazioni»** (era «Inserisci ticket») di `/admin/mensa`: scelto il bambino, la sua **settimana** (◀ ▶, «Oggi») con menù, stato e un pulsante per giorno, **Aggiungi** o **Annulla**, sempre attivi — oggi dopo l'orario e nei giorni passati compresi. Saldo in alto; a saldo ≤ 0 l'avviso che aggiungendo si va in negativo. Nuovo componente `SettimanaMensaStaff`.
 - **Report cucina** (scheda di `/admin/mensa` e `/admin/mensa/cucina`): per admin, coordinatrice e segreteria una **✕ Annulla** accanto a ogni prenotato e, per classe, **«Aggiungi un bambino»** con gli iscritti non prenotati di quel giorno; compaiono anche le classi con zero prenotati. Per loro il sottotitolo non dice più «sola lettura». **Cuoca e docenti: identico a prima**, e il report non chiede nemmeno l'elenco degli iscritti.
-- **Annulla chiede conferma** (decisione del titolare): «Annullare il pasto di … di …? Il ticket torna sul saldo.» — finestra in pagina (`ConfermaAnnullaPasto` su `Modal`), mai `confirm()` nativo. Aggiungere non chiede conferma.
+- **Annulla chiede conferma** (decisione del titolare): «Annullare il pasto di …? Il ticket torna sul saldo di ….» — finestra in pagina (`ConfermaAnnullaPasto` su `Modal`), mai `confirm()` nativo. Aggiungere non chiede conferma.
 - Una lista sola dei ruoli: `RUOLI_GESTIONE_MENSA` in `src/lib/mensa/gestione-staff.ts`; la route la importa come `STAFF_FORZA` (stessi tre ruoli), l'interfaccia la usa per decidere chi vede i pulsanti.
 - Date della settimana calcolate su stringhe `AAAA-MM-GG` in UTC (`src/lib/mensa/settimana.ts`): nessuno slittamento di giorno per fuso o cambio d'ora.
+- Contrasto: il testo nuovo usa `text-kidville-sub` (6,46:1), mai `text-kidville-muted`. `PrenotazioneSegreteria.tsx` esce dall'allowlist del grigio (175 file, 1.140 occorrenze).
 
 **Log.** Il server registrava già ogni prenotazione e disdetta con `origine: segreteria` e, a parte, il saldo che va sotto zero. Lato client, gli errori di rete delle nuove azioni passano da `logClient` con uno slug (`mensa-staff-…`, `mensa-report-…`), senza nomi né uuid nel messaggio.
 

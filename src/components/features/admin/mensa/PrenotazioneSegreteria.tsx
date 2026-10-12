@@ -57,7 +57,7 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
         <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><CalendarRange size={14} /> {t('settimanaDelBambino')}</h3>
         {/* `key`: cambiando bambino la settimana riparte da zero, senza il saldo o
             l'esito del bambino di prima. */}
-        {!sel ? <p className="font-maven text-sm text-kidville-muted">{t('selezionaUnAlunno')}</p>
+        {!sel ? <p className="font-maven text-sm text-kidville-sub">{t('selezionaUnAlunno')}</p>
           : <SettimanaMensaStaff key={sel.id} userId={userId} alunno={sel} />}
       </div>
     </div>

@@ -85,7 +85,7 @@ describe('MensaReport — la segreteria aggiunge e annulla dall’elenco del gio
     fireEvent.click(screen.getByRole('button', { name: 'Annulla il pasto' }))
     await waitFor(() => expect(chiamate('DELETE')).toHaveLength(1))
     expect(String(chiamate('DELETE')[0][0])).toMatch(/^\/api\/mensa\/prenotazioni\?userId=seg-1&alunno_id=a1&data=\d{4}-\d{2}-\d{2}$/)
-    expect((await screen.findByRole('status')).textContent).toBe('Pasto di Bimbo Uno annullato, ticket restituito. Saldo ticket: 5.')
+    expect((await screen.findByRole('status')).textContent).toBe('Pasto annullato per Bimbo Uno, ticket restituito. Saldo ticket: 5.')
   })
 
   it('«Aggiungi un bambino» elenca solo i non prenotati della classe; «Aggiungi» manda la POST', async () => {

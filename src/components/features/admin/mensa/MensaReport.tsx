@@ -386,7 +386,7 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
                           <Plus size={14} /> {t('aggiungiUnBambino')}
                         </button>
                         {classiAperte.has(c.classe) && ((nonPrenotati.get(c.classe) ?? []).length === 0 ? (
-                          <p className="pb-2 font-maven text-[11px] text-kidville-muted">{t('nessunNonPrenotato')}</p>
+                          <p className="pb-2 font-maven text-[11px] text-kidville-sub">{t('nessunNonPrenotato')}</p>
                         ) : (
                           <ul className="pb-1">
                             {(nonPrenotati.get(c.classe) ?? []).map(n => (

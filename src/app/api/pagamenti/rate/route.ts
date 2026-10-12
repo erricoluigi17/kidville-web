@@ -15,7 +15,7 @@ import {
   type MetodoAmmesso,
 } from '@/lib/pagamenti/metodi-ammessi'
 import { zMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi-zod'
-import { controllaVoceEliminabile, type VoceDaEliminare } from '@/lib/pagamenti/voce-eliminabile'
+import { controllaVoceEliminabile, rispostaRifiuto, type VoceDaEliminare } from '@/lib/pagamenti/voce-eliminabile'
 import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -90,7 +90,7 @@ export const POST = withRoute('pagamenti/rate:POST', async (request: Request) =>
       })
       if (!c.ok) {
         if ('guasto' in c) return c.guasto
-        return NextResponse.json({ error: c.error, ...(c.codice ? { codice: c.codice } : {}) }, { status: c.stato })
+        return rispostaRifiuto(c.codice)
       }
       if (c.voce.alunno_id !== alunno_id || c.voce.tipo !== 'singolo') {
         return NextResponse.json(
@@ -224,7 +224,7 @@ export const POST = withRoute('pagamenti/rate:POST', async (request: Request) =>
               { error: 'La voce è stata incassata o fatturata nel frattempo: non si può più sostituire. Ricarica la pagina.', codice: 'VOCE_CON_CONTABILITA' },
               { status: 409 },
             )
-          : NextResponse.json({ error: 'Errore sostituzione', details: del.error.message }, { status: 500 })
+          : NextResponse.json({ error: 'Errore sostituzione: la voce originale non è stata tolta, il piano è stato annullato.', codice: 'PAGAMENTI_SCRITTURA_FALLITA' }, { status: 500 })
       }
       const audit = await supabase.from('registro_modifiche').insert({
         azione: 'elimina_pagamento',

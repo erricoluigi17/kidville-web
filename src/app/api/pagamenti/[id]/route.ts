@@ -14,7 +14,7 @@ import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
 import { normalizzaMetodiAmmessi, CODICI_COLONNA_ASSENTE } from '@/lib/pagamenti/metodi-ammessi'
 import { zMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi-zod'
 import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
-import { controllaVoceEliminabile, TABELLA_ASSENTE } from '@/lib/pagamenti/voce-eliminabile'
+import { controllaVoceEliminabile, rispostaRifiuto, TABELLA_ASSENTE } from '@/lib/pagamenti/voce-eliminabile'
 
 // ─── Schemi di validazione input (M3 + Contabilità v2 S3) ────────────────────
 // PATCH: merge parziale sui soli campi ammessi, ora TIPIZZATI (finding #3: prima
@@ -369,7 +369,7 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
     const c = await controllaVoceEliminabile(supabase, id, { sedi, perSostituzione: false, operazione: 'pagamenti/[id]:DELETE' })
     if (!c.ok) {
       if ('guasto' in c) return c.guasto
-      return NextResponse.json({ error: c.error, ...(c.codice ? { codice: c.codice } : {}) }, { status: c.stato })
+      return rispostaRifiuto(c.codice)
     }
 
     // Un incasso o una fattura arrivati fra le guardie e la DELETE: il freno RESTRICT del

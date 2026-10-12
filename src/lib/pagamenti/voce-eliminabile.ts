@@ -1,4 +1,4 @@
-import type { NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
@@ -22,6 +22,22 @@ import { STATI_CODA_OCCUPATA } from '@/lib/pagamenti/fatturazione-riga'
 /** Tabella assente sul DB non migrato. */
 export const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
 
+/**
+ * I codici con cui queste guardie rifiutano: elenco CHIUSO, da cui nasce il tipo. Il testo e lo
+ * stato HTTP di ognuno stanno in `rispostaRifiuto`, una volta sola.
+ */
+export const CODICI_RIFIUTO_ELIMINAZIONE = [
+  'PAGAMENTO_NON_TROVATO',
+  'VOCE_RATA',
+  'VOCE_FATTURATA',
+  'VOCE_IN_TRANSAZIONE',
+  'VOCE_CON_INCASSI',
+  'VOCE_IN_CODA_FATTURE',
+  'ORDINE_DIVISE_ATTIVO',
+  'TICKET_GIA_USATI',
+] as const
+export type CodiceRifiutoEliminazione = (typeof CODICI_RIFIUTO_ELIMINAZIONE)[number]
+
 export type VoceDaEliminare = {
   id: string
   alunno_id: string | null
@@ -32,12 +48,75 @@ export type VoceDaEliminare = {
 
 export type EsitoEliminabile =
   | { ok: true; voce: VoceDaEliminare; famiglia: string[]; rate: number; ticket: number }
-  | { ok: false; stato: 404 | 409; codice?: string; error: string }
+  | RifiutoEliminazione
   | { ok: false; guasto: NextResponse }
+
+export type RifiutoEliminazione = { ok: false; stato: 404 | 409; codice: CodiceRifiutoEliminazione }
 
 type Opzioni = { sedi: string[]; perSostituzione: boolean; operazione: string }
 
-const rifiuto = (codice: string, error: string): EsitoEliminabile => ({ ok: false, stato: 409, codice, error })
+const rifiuto = (codice: Exclude<CodiceRifiutoEliminazione, 'PAGAMENTO_NON_TROVATO'>): EsitoEliminabile => ({
+  ok: false,
+  stato: 409,
+  codice,
+})
+
+/**
+ * Il rifiuto come risposta d'errore (DELETE e sostituzione di Rateizza). Uno `switch` con i corpi
+ * LETTERALI, come `admin/students/elimina`: il lock `errori-con-codice` legge il `codice` dentro
+ * `NextResponse.json({ … })`, e `codice: r.codice` sarebbe un valore che non sa leggere — cioè un
+ * codice che nessuno controlla. Il tipo rende lo `switch` esaustivo: un codice nuovo nell'elenco
+ * senza il suo ramo non compila.
+ */
+export function rispostaRifiuto(codice: CodiceRifiutoEliminazione): NextResponse {
+  switch (codice) {
+    case 'PAGAMENTO_NON_TROVATO':
+      // Fuori dalle sedi attive vale come «non esiste»: non si dice a chi non deve saperlo.
+      return NextResponse.json({ error: 'Pagamento non trovato', codice: 'PAGAMENTO_NON_TROVATO' }, { status: 404 })
+    case 'VOCE_RATA':
+      return NextResponse.json(
+        { error: 'È una rata di un piano: si elimina il piano intero dalla voce principale.', codice: 'VOCE_RATA' },
+        { status: 409 },
+      )
+    case 'VOCE_FATTURATA':
+      return NextResponse.json(
+        {
+          error: 'Pagamento con fattura emessa: non eliminabile per conservazione fiscale. Annulla/storna prima la fattura.',
+          codice: 'VOCE_FATTURATA',
+        },
+        { status: 409 },
+      )
+    case 'VOCE_IN_TRANSAZIONE':
+      return NextResponse.json(
+        { error: 'Pagamento con incassi di una transazione di famiglia: annulla prima la transazione.', codice: 'VOCE_IN_TRANSAZIONE' },
+        { status: 409 },
+      )
+    case 'VOCE_CON_INCASSI':
+      return NextResponse.json(
+        {
+          error:
+            'La voce ha incassi registrati (anche stornati): resta per la contabilità. Se è sbagliata, storna gli incassi e correggi la voce invece di eliminarla.',
+          codice: 'VOCE_CON_INCASSI',
+        },
+        { status: 409 },
+      )
+    case 'VOCE_IN_CODA_FATTURE':
+      return NextResponse.json(
+        { error: 'La voce ha una fattura in coda di emissione: toglila dalla coda prima di eliminare la voce.', codice: 'VOCE_IN_CODA_FATTURE' },
+        { status: 409 },
+      )
+    case 'ORDINE_DIVISE_ATTIVO':
+      return NextResponse.json(
+        { error: 'È l’addebito di un ordine divise ancora attivo: annulla prima l’ordine.', codice: 'ORDINE_DIVISE_ATTIVO' },
+        { status: 409 },
+      )
+    case 'TICKET_GIA_USATI':
+      return NextResponse.json(
+        { error: 'I ticket di questa ricarica sono già stati usati: la voce non si può eliminare.', codice: 'TICKET_GIA_USATI' },
+        { status: 409 },
+      )
+  }
+}
 
 export async function controllaVoceEliminabile(
   supabase: SupabaseClient,
@@ -53,10 +132,10 @@ export async function controllaVoceEliminabile(
   if (errVoce) return guasto('db:pagamenti', errVoce)
   const voce = letta as VoceDaEliminare | null
   // Fuori dalle sedi attive vale come «non esiste»: non si dice a chi non deve saperlo.
-  if (!voce || !sedi.includes(String(voce.scuola_id))) return { ok: false, stato: 404, error: 'Pagamento non trovato' }
+  if (!voce || !sedi.includes(String(voce.scuola_id))) return { ok: false, stato: 404, codice: 'PAGAMENTO_NON_TROVATO' }
 
   if (voce.tipo === 'rata') {
-    return rifiuto('VOCE_RATA', 'È una rata di un piano: si elimina il piano intero dalla voce principale.')
+    return rifiuto('VOCE_RATA')
   }
 
   // La DELETE porta via in CASCADE rate e quote (`parent_payment_id`): ogni guardia guarda la
@@ -69,10 +148,7 @@ export async function controllaVoceEliminabile(
   const fatt = await supabase.from('fatture_emesse').select('id').in('pagamento_id', famiglia).limit(1)
   if (fatt.error && !TABELLA_ASSENTE.has(fatt.error.code ?? '')) return guasto('db:fatture_emesse:guardia', fatt.error)
   if (!fatt.error && (fatt.data?.length ?? 0) > 0) {
-    return rifiuto(
-      'VOCE_FATTURATA',
-      'Pagamento con fattura emessa: non eliminabile per conservazione fiscale. Annulla/storna prima la fattura.',
-    )
+    return rifiuto('VOCE_FATTURATA')
   }
 
   // Un incasso qualunque, anche stornato, è contabilità: gli incassi non si cancellano mai (lo
@@ -89,11 +165,8 @@ export async function controllaVoceEliminabile(
     const diTransazione = !tx.error && (tx.data?.length ?? 0) > 0
     logEvento('pagamento', 'info', { operazione, esito: 'eliminazione-rifiutata-incassi', pagamento_id: id, transazione: diTransazione })
     return diTransazione
-      ? rifiuto('VOCE_IN_TRANSAZIONE', 'Pagamento con incassi di una transazione di famiglia: annulla prima la transazione.')
-      : rifiuto(
-          'VOCE_CON_INCASSI',
-          'La voce ha incassi registrati (anche stornati): resta per la contabilità. Se è sbagliata, storna gli incassi e correggi la voce invece di eliminarla.',
-        )
+      ? rifiuto('VOCE_IN_TRANSAZIONE')
+      : rifiuto('VOCE_CON_INCASSI')
   }
 
   // Una fattura in coda («in invio» = file forse già partito verso SDI) se ne andrebbe in CASCADE.
@@ -105,7 +178,7 @@ export async function controllaVoceEliminabile(
     .limit(1)
   if (coda.error && !TABELLA_ASSENTE.has(coda.error.code ?? '')) return guasto('db:fatture_coda:guardia', coda.error)
   if (!coda.error && (coda.data?.length ?? 0) > 0) {
-    return rifiuto('VOCE_IN_CODA_FATTURE', 'La voce ha una fattura in coda di emissione: toglila dalla coda prima di eliminare la voce.')
+    return rifiuto('VOCE_IN_CODA_FATTURE')
   }
 
   if (perSostituzione) return { ok: true, voce, famiglia, rate: famiglia.length - 1, ticket: 0 }
@@ -115,7 +188,7 @@ export async function controllaVoceEliminabile(
   const ord = await supabase.from('divise_ordini').select('id').in('pagamento_id', famiglia).neq('stato', 'annullato').limit(1)
   if (ord.error && !TABELLA_ASSENTE.has(ord.error.code ?? '')) return guasto('db:divise_ordini:guardia', ord.error)
   if (!ord.error && (ord.data?.length ?? 0) > 0) {
-    return rifiuto('ORDINE_DIVISE_ATTIVO', 'È l’addebito di un ordine divise ancora attivo: annulla prima l’ordine.')
+    return rifiuto('ORDINE_DIVISE_ATTIVO')
   }
 
   // Ricarica ticket: la voce si elimina insieme ai suoi ticket (RPC `elimina_voce_ricarica_ticket`),
@@ -128,7 +201,7 @@ export async function controllaVoceEliminabile(
     if (sal.error) return guasto('db:ticket_mensa:guardia', sal.error)
     const saldo = Number((sal.data as { saldo_ticket?: number | null } | null)?.saldo_ticket ?? 0)
     if (saldo < ticket) {
-      return rifiuto('TICKET_GIA_USATI', 'I ticket di questa ricarica sono già stati usati: la voce non si può eliminare.')
+      return rifiuto('TICKET_GIA_USATI')
     }
   }
 

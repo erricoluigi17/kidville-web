@@ -6,7 +6,7 @@ import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
-import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
+import { controllaVoceEliminabile, rispostaRifiuto } from '@/lib/pagamenti/voce-eliminabile'
 
 // GET /api/pagamenti/[id]/eliminabile  (admin e segreteria, 2026-10-12)
 // Il verdetto per la zona «Elimina voce» della finestra Modifica: le STESSE guardie della
@@ -27,10 +27,13 @@ export const GET = withRoute('pagamenti/[id]/eliminabile:GET', async (request: R
     const c = await controllaVoceEliminabile(supabase, id, { sedi, perSostituzione: false, operazione: 'pagamenti/[id]/eliminabile:GET' })
     if (c.ok) return NextResponse.json({ success: true, eliminabile: true, rate: c.rate, ticket: c.ticket })
     if ('guasto' in c) return c.guasto
-    if (c.stato === 404) return NextResponse.json({ error: c.error }, { status: 404 })
-    return NextResponse.json({ success: true, eliminabile: false, codice: c.codice, error: c.error })
+    if (c.stato === 404) return rispostaRifiuto(c.codice)
+    // Un «no» è un VERDETTO, non un errore della chiamata: 200, e solo il codice. Il codice viene
+    // dall'elenco chiuso `CODICI_RIFIUTO_ELIMINAZIONE`, ognuno col suo corpo letterale in
+    // `rispostaRifiuto` (letto dal lock `errori-con-codice`); il client lo traduce col catalogo.
+    return NextResponse.json({ success: true, eliminabile: false, codice: c.codice })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/[id]/eliminabile:GET', stato: 500 }, err)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    return NextResponse.json({ error: 'Internal Server Error', codice: 'LETTURA_FALLITA' }, { status: 500 })
   }
 })

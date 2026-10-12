@@ -11,7 +11,10 @@ import { creaFintoSupabase, type DBFinto, type Riga } from '../fixtures/finto-su
 
 vi.mock('@/lib/logging/logger', async (orig) => ({ ...(await orig<object>()), logEvento: vi.fn(), logErrore: vi.fn() }))
 
-import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
+import { controllaVoceEliminabile, rispostaRifiuto, CODICI_RIFIUTO_ELIMINAZIONE } from '@/lib/pagamenti/voce-eliminabile'
+import { CODICI_ERRORE } from '@/lib/ui/esito-fetch'
+import itShared from '../../messages/it/shared.json'
+import enShared from '../../messages/en/shared.json'
 
 const ALU = 'a1a1a1a1-1111-4111-8111-aaaaaaaaaaaa'
 const PAG = 'b1b1b1b1-1111-4111-8111-bbbbbbbbbbbb'
@@ -149,4 +152,20 @@ describe('controllaVoceEliminabile · una guardia che non ha potuto guardare fer
     }))
     expect(e).toMatchObject({ ok: true, ticket: 0 })
   })
+})
+
+describe('i codici di rifiuto: elenco chiuso, ognuno dichiarato, tradotto e col suo corpo', () => {
+  // Il verdetto negativo della GET «eliminabile» porta solo il codice, e il client lo traduce:
+  // un codice senza voce di catalogo darebbe a schermo il ripiego generico.
+  for (const codice of CODICI_RIFIUTO_ELIMINAZIONE) {
+    it(`${codice}: in CODICI_ERRORE, tradotto in it e en, e la risposta porta proprio lui`, async () => {
+      const chiave = (CODICI_ERRORE as Record<string, string>)[codice]
+      expect(chiave, 'non dichiarato in CODICI_ERRORE').toBeTruthy()
+      expect((itShared as Record<string, string>)[chiave]?.trim()).toBeTruthy()
+      expect((enShared as Record<string, string>)[chiave]?.trim()).toBeTruthy()
+      const res = rispostaRifiuto(codice)
+      expect(res.status).toBe(codice === 'PAGAMENTO_NON_TROVATO' ? 404 : 409)
+      expect(await res.json()).toMatchObject({ codice })
+    })
+  }
 })

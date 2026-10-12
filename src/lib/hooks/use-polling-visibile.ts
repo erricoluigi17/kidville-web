@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { isNativeApp } from '@/lib/push/native-register';
-import { logClient } from '@/lib/logging/client';
+import { osservaVisibilita } from '@/lib/hooks/visibilita-pagina';
 
 /**
  * IL POLLING SI FERMA QUANDO NESSUNO GUARDA.
@@ -20,56 +19,13 @@ import { logClient } from '@/lib/logging/client';
  * faceva ~11 richieste al minuto senza toccare niente — e continuava a farle col telefono in
  * tasca e lo schermo spento. Questo hook esiste perché quel caso costi zero.
  *
- * PERCHÉ DUE SEGNALI E NON UNO. `document.hidden` è lo standard del web, ma questa app gira anche
- * dentro una WebView Capacitor, e non è dato per scontato che `visibilitychange` scatti quando
- * l'app va in secondo piano — su iOS in particolare. Non lo si assume: si montano **entrambi** i
- * segnali, così la correttezza non dipende da quale dei due funzioni. Quale sia arrivato davvero
- * lo dice la sonda qui sotto, che risponde con un dato invece che con un'opinione.
- *
- * Il precedente che impone questa cautela sta in `client.ts`: per 31 giorni il campo `piattaforma`
- * ha detto `web` per 3.625 eventi su 3.626, perché Capacitor NON si scrive nello user-agent e
- * qualcuno l'aveva dedotto invece di chiederlo al bridge.
- *
- * LA COALESCENZA non è un ornamento. I due segnali possono scattare per la STESSA ripresa, e su
- * Android è documentato (`BiometricGate.tsx:33-45`) che arrivi un `isActive:true` spurio, perché
- * l'Activity del prompt biometrico è dichiarata traslucida. Senza coalescenza il risveglio
- * costerebbe due fetch invece di uno — cioè proprio il difetto che questo file toglie. Qui la
- * coalescenza è **strutturale**: lo stato è un booleano, e senza transizione non succede niente.
- * La finestra di tempo è la seconda cintura, contro lo sfarfallio.
+ * I DUE SEGNALI (`visibilitychange` e `appStateChange` di Capacitor), la loro coalescenza e la
+ * cautela che la impone non stanno più qui: stanno in `@/lib/hooks/visibilita-pagina`, perché
+ * dal 2026-10-12 lo stesso meccanismo serve anche al controllo della versione del bundle. Il
+ * perché di ciascuna scelta — e perché la sonda che annunciava i segnali adesso tace — si legge
+ * là, in un posto solo.
  * ─────────────────────────────────────────────────────────────────────────────────
  */
-
-/** Due segnali per la stessa ripresa entro questa finestra contano come uno. */
-const FINESTRA_COALESCENZA_MS = 1_000;
-
-/**
- * LA SONDA. Segna, una volta per sessione di pagina e per segnale, quale sorgente di visibilità
- * ha parlato davvero su un dispositivo nativo.
- *
- * Perché parla anche quando tutto va bene: due silenzi opposti non si distinguono. «Nessun log»
- * non separa «`visibilitychange` funziona» da «la sonda non è mai partita» — è la stessa
- * ambiguità che in questo progetto ha tenuto nascosto per mesi il guasto delle email, e la
- * ragione per cui AGENTS.md pretende che gli eventi critici registrino anche il successo.
- *
- * Il livello è `warn` perché il canale del client non ne ha altri (`livello: 'warn' | 'error'`),
- * non perché sia un guasto. La `piattaforma` non la si passa: la mette il logger, chiedendola al
- * bridge — e quella è già la versione corretta dopo il difetto del 2026-09-01.
- *
- * Costa al massimo due righe per sessione nativa, e `app_log` le deduplica per `(impronta,
- * giorno)`: i messaggi sono diversi apposta, altrimenti il secondo segnale sparirebbe dentro il
- * primo e la domanda resterebbe senza risposta.
- */
-const sondaVista = new Set<string>();
-
-function sonda(segnale: string, nativo: boolean): void {
-    if (!nativo || sondaVista.has(segnale)) return;
-    sondaVista.add(segnale);
-    logClient({
-        livello: 'warn',
-        evento: 'visibilita',
-        messaggio: `segnale di visibilità ricevuto: ${segnale}`,
-    });
-}
 
 interface Opzioni {
     /**
@@ -127,13 +83,8 @@ export function usePollingVisibile(
     useEffect(() => {
         if (!attivo) return;
 
-        const nativo = isNativeApp();
-        const rif: { timer: ReturnType<typeof setInterval> | null; nativoAgganciato: { remove: () => Promise<void> } | null } = {
-            timer: null,
-            nativoAgganciato: null,
-        };
+        const rif: { timer: ReturnType<typeof setInterval> | null } = { timer: null };
         let inPrimoPiano = !document.hidden;
-        let ultimaRipresa = 0;
         let smontato = false;
         // Il secondo tentativo in attesa, e il numero del ritorno a cui appartiene: un ritorno
         // nuovo, o la pagina che torna nascosta, lo rendono inutile.
@@ -182,50 +133,20 @@ export function usePollingVisibile(
             rif.timer = setInterval(esegui, ritmo);
         };
 
-        /** L'unico punto in cui i due segnali confluiscono. */
-        const aggiorna = (primoPiano: boolean, segnale: string) => {
-            sonda(segnale, nativo);
-            // Nessuna transizione ⇒ niente da fare. Qui vive la coalescenza fra i due segnali.
-            if (primoPiano === inPrimoPiano) return;
+        // I due segnali, la loro coalescenza e la cautela nativa stanno in `visibilita-pagina`.
+        //
+        // ⚠️ `arma()` va rifatto a OGNI transizione, non solo sulle riprese vere: lo sfarfallio
+        // visibile→nascosto→visibile dentro la finestra di coalescenza non è una ripresa (e non
+        // deve ricaricare niente), ma intanto l'orologio si è fermato e va rimesso.
+        const stacca = osservaVisibilita(({ primoPiano, ripresa }) => {
             inPrimoPiano = primoPiano;
             if (primoPiano) {
-                const ora = Date.now();
-                if (ora - ultimaRipresa >= FINESTRA_COALESCENZA_MS) {
-                    ultimaRipresa = ora;
-                    eseguiAlRitorno();
-                }
+                if (ripresa) eseguiAlRitorno();
             } else {
                 annullaRitentativo();
             }
             arma();
-        };
-
-        const suVisibilita = () => aggiorna(!document.hidden, 'visibilitychange');
-        document.addEventListener('visibilitychange', suVisibilita);
-
-        if (nativo) {
-            void (async () => {
-                try {
-                    const { App } = await import('@capacitor/app');
-                    const h = await App.addListener('appStateChange', ({ isActive }) =>
-                        aggiorna(isActive, 'appStateChange'),
-                    );
-                    // Lo smontaggio può avvenire mentre l'import è in volo: senza questo controllo
-                    // l'ascoltatore resterebbe agganciato a un componente che non c'è più.
-                    if (smontato) {
-                        void h.remove();
-                        return;
-                    }
-                    rif.nativoAgganciato = h;
-                } catch {
-                    // Il plugin manca o il bridge non risponde: si resta col solo
-                    // `visibilitychange`, che è comunque il segnale standard. Non è silenzioso —
-                    // la sonda lo dice, ed è esattamente l'informazione che serve a capire su
-                    // quale dei due segnali ci si stia reggendo davvero.
-                    sonda('appStateChange-non-disponibile', nativo);
-                }
-            })();
-        }
+        });
 
         arma();
 
@@ -233,8 +154,7 @@ export function usePollingVisibile(
             smontato = true;
             if (rif.timer !== null) clearInterval(rif.timer);
             annullaRitentativo();
-            document.removeEventListener('visibilitychange', suVisibilita);
-            void rif.nativoAgganciato?.remove();
+            stacca();
         };
     }, [attivo, intervalloMs, intervalloNascostoMs, ritentaDopoMs]);
 }

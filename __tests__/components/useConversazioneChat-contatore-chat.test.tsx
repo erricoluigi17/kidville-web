@@ -121,14 +121,17 @@ function unread() {
     return h.unread as { onUnreadChange?: (n: number) => void };
 }
 
+/**
+ * IL SEGNALE del canale privato per un messaggio altrui: le sei chiavi del trigger, e nessun
+ * contenuto (S4-B, 2026-10-12). Dal passaggio al broadcast dal database il canale porta solo lo
+ * stato di un messaggio; il testo si rilegge dall'API, perché `realtime.messages` conserva le
+ * righe per giorni fuori dall'oblio e una chat fra famiglia e maestra ha dati sanitari di minori.
+ */
 function messaggioAltrui(threadId: string, id: string): Json {
     return {
         id,
         thread_id: threadId,
         sender_id: 'doc-1',
-        content: 'Ciao',
-        attachment_url: null,
-        attachment_type: null,
         read_at: null,
         delivered_at: null,
         created_at: '2026-09-29T08:00:00.000Z',

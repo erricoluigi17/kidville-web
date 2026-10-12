@@ -119,6 +119,14 @@ export function confrontaMessaggi(
 /**
  * Da dove arriva un messaggio. Conta per una cosa sola: la riga del Realtime è quella GREZZA del
  * database (allegato come percorso), la risposta del server è firmata e autorevole.
+ *
+ * ⚠️ DAL 2026-10-12 (S4-B) L'APPLICAZIONE PASSA SEMPRE `'server'`. Il canale privato non consegna
+ * più righe del database, solo lo stato di un messaggio (vedi `SegnaleChat`), quindi nessun
+ * chiamante ha più una riga grezza fra le mani. Il valore `'realtime'` resta nel tipo perché resta
+ * nel CONTRATTO di `unisciMessaggio` — «un entrante non autorevole non sovrascrive ciò che si ha» —
+ * e i suoi casi in `stato-conversazione.test.ts` restano la prova di quel contratto. Chi togliesse
+ * il parametro `fonte` deve rifare anche `unisciElenco` e `unisciFinestra`: è una potatura a parte,
+ * non un residuo da ignorare.
  */
 export type FonteMessaggio = 'server' | 'realtime';
 
@@ -179,6 +187,86 @@ export function unisciMessaggio(
         delivered_at: deliveredAt,
         attachment_url: attachmentUrl,
     };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+ * IL SEGNALE DEL BROADCAST PRIVATO (S4-B, 2026-10-12)
+ * ═══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * CIÒ CHE ARRIVA DAL CANALE PRIVATO: lo STATO di un messaggio, mai il suo contenuto.
+ *
+ * Fino al 2026-10-12 il realtime della chat era una sottoscrizione `postgres_changes` senza
+ * filtro: il database decodificava il WAL e riapplicava la RLS riga per riga, per ogni client
+ * collegato. È la voce più costosa misurata in produzione — 49.361 s di tempo di database dal
+ * 6/8, 7,4 M di chiamate. Adesso il segnale lo manda un trigger (`realtime.send`) su un canale
+ * privato per destinatario, e il database non decodifica più niente per la chat.
+ *
+ * ⚠️ IL PAYLOAD NON HA `content` NÉ `attachment_url`, E NON È UNA DIMENTICANZA.
+ * `realtime.messages` conserva le righe per qualche giorno, in uno schema che sta FUORI
+ * dall'oblio, fuori dalla scatola nera e fuori dal backup notturno cifrato. Una chat fra una
+ * famiglia e una maestra contiene dati sanitari di minori («ha la febbre», «non ha preso la
+ * medicina»): quel testo non entra in un deposito che nessuna delle tre procedure conosce. Il
+ * contenuto lo rilegge chi ascolta, da `GET /api/chat/messages`, che firma anche l'allegato.
+ *
+ * Le quattro chiavi di identità sono obbligatorie; `read_at` e `delivered_at` sono lo stato delle
+ * spunte e possono mancare (`undefined` e `null` sono lo stesso «non ancora», come altrove qui).
+ */
+export interface SegnaleChat {
+    id: string;
+    thread_id: string;
+    sender_id: string;
+    created_at: string;
+    read_at?: string | null;
+    delivered_at?: string | null;
+}
+
+/** Una stringa non vuota, o `null`: tutto il resto di un payload non fidato degrada. */
+function testoOppureNull(valore: unknown): string | null {
+    return typeof valore === 'string' && valore !== '' ? valore : null;
+}
+
+/**
+ * Il payload di un broadcast letto come segnale, o `null` se non è instradabile.
+ *
+ * Non si fida e non ricopia: costruisce l'oggetto dalle SEI chiavi note e scarta tutto il resto.
+ * Così, se un domani il trigger mandasse per sbaglio il testo del messaggio, quel testo non
+ * entrerebbe comunque nello stato del client — e questa funzione è il punto in cui se ne discute,
+ * invece che in dieci callback.
+ */
+export function leggiSegnale(payload: unknown): SegnaleChat | null {
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return null;
+    const p = payload as Record<string, unknown>;
+    const id = testoOppureNull(p.id);
+    const threadId = testoOppureNull(p.thread_id);
+    const senderId = testoOppureNull(p.sender_id);
+    const createdAt = testoOppureNull(p.created_at);
+    if (!id || !threadId || !senderId || !createdAt) return null;
+    return {
+        id,
+        thread_id: threadId,
+        sender_id: senderId,
+        created_at: createdAt,
+        read_at: testoOppureNull(p.read_at),
+        delivered_at: testoOppureNull(p.delivered_at),
+    };
+}
+
+/**
+ * Il segnale applicato al messaggio che si ha in mano: SOLO le spunte, e monotone.
+ *
+ * È la metà di `unisciMessaggio` che riguarda un oggetto PARZIALE, scritta a parte invece di
+ * passare un finto `ChatMessage` con i campi mancanti: così è il TIPO a garantire che un segnale
+ * non possa cancellare il testo o il link firmato dell'allegato, non il ramo `fonte === 'realtime'`
+ * di una funzione che potrebbe cambiare per altri motivi.
+ *
+ * Se non cambia niente restituisce LA STESSA referenza: è ciò che tiene fermo il DOM.
+ */
+export function applicaSegnale(attuale: ChatMessage, segnale: SegnaleChat): ChatMessage {
+    const readAt = segnale.read_at ?? attuale.read_at ?? null;
+    const deliveredAt = segnale.delivered_at ?? attuale.delivered_at ?? null;
+    if (stessoValore(attuale.read_at, readAt) && stessoValore(attuale.delivered_at, deliveredAt)) return attuale;
+    return { ...attuale, read_at: readAt, delivered_at: deliveredAt };
 }
 
 /**
@@ -346,12 +434,26 @@ export type AzioneConversazione =
     | { tipo: 'caricati'; threadId: string; messaggi: ChatMessage[]; precedenti: number; utenteId: string }
     /** Una pagina più vecchia, chiesta a partire da `primoIdAtteso` (il primo in mano allora). */
     | { tipo: 'precedenti'; threadId: string; pagina: ChatMessage[]; primoIdAtteso: string; precedenti: number; utenteId: string }
-    /** INSERT dal realtime. */
-    | { tipo: 'arrivato'; messaggio: ChatMessage }
-    /** 201 della propria POST. */
+    /**
+     * 201 della propria POST.
+     *
+     * ⚠️ QUI NON C'È PIÙ UN'AZIONE «arrivato» (S4-B, 2026-10-12). Fino a quella data il realtime
+     * consegnava la riga del database e un INSERT diventava subito una bolla; adesso il canale porta
+     * solo lo STATO di un messaggio (vedi `SegnaleChat`) e il contenuto lo rimette in lista la GET
+     * della finestra, cioè `caricati`. L'azione è stata TOLTA e non lasciata inerte di proposito: un
+     * ramo che dice «INSERT dal realtime» e che nessuno percorre più è la prossima persona che
+     * scrive `dispatch({ tipo: 'arrivato', messaggio: segnale })` e si ritrova una bolla senza testo.
+     *
+     * La regola di C1 — un messaggio inviato è UN messaggio — resta e serve esattamente come prima,
+     * solo che la coppia che la mette alla prova adesso è `caricati` + `inviato`: la GET silenziosa
+     * che il segnale fa partire e la 201, che possono arrivare in qualunque ordine.
+     */
     | { tipo: 'inviato'; messaggio: ChatMessage }
-    /** UPDATE dal realtime (spunte). Unisce per id, non aggiunge mai. */
-    | { tipo: 'cambiato'; messaggio: ChatMessage }
+    /**
+     * UPDATE dal canale privato (spunte). Unisce per id, non aggiunge mai, e porta SOLO lo stato:
+     * un segnale non ha il testo né l'allegato, quindi non può cancellarli.
+     */
+    | { tipo: 'cambiato'; segnale: SegnaleChat }
     /** La PATCH di lettura è andata: `read_at` locale dove era null. */
     | { tipo: 'letti'; threadId: string; ids: string[]; at: string };
 
@@ -426,12 +528,6 @@ export function riduciConversazione(s: StatoConversazione, a: AzioneConversazion
             return { ...s, messaggi, precedenti, primoNonLettoId };
         }
 
-        case 'arrivato': {
-            if (s.threadId === null || a.messaggio.thread_id !== s.threadId) return s;
-            const messaggi = unisciElenco(s.messaggi, [a.messaggio], s.threadId, 'realtime');
-            return messaggi === s.messaggi ? s : { ...s, messaggi };
-        }
-
         case 'inviato': {
             if (s.threadId === null || a.messaggio.thread_id !== s.threadId) return s;
             const messaggi = unisciElenco(s.messaggi, [a.messaggio], s.threadId, 'server');
@@ -441,10 +537,10 @@ export function riduciConversazione(s: StatoConversazione, a: AzioneConversazion
         }
 
         case 'cambiato': {
-            if (s.threadId === null || a.messaggio.thread_id !== s.threadId) return s;
-            const i = s.messaggi.findIndex((m) => m.id === a.messaggio.id);
+            if (s.threadId === null || a.segnale.thread_id !== s.threadId) return s;
+            const i = s.messaggi.findIndex((m) => m.id === a.segnale.id);
             if (i < 0) return s;
-            const unito = unisciMessaggio(s.messaggi[i], a.messaggio, 'realtime');
+            const unito = applicaSegnale(s.messaggi[i], a.segnale);
             if (unito === s.messaggi[i]) return s;
             const messaggi = s.messaggi.slice();
             messaggi[i] = unito;
@@ -541,6 +637,44 @@ export function applicaMessaggioAThread<T extends ThreadConAnteprima>(
     const copia = threads.slice();
     copia[i] = aggiornato;
     return { threads: ordinaThreadPerRecenza(copia), incrementoNonLetti, sconosciuto: false };
+}
+
+/**
+ * Un SEGNALE aggiorna la sua riga nella lista: badge e posizione, MAI l'anteprima.
+ *
+ * ⚠️ `last_message` NON SI TOCCA, e non per pigrizia: il segnale non porta il testo (vedi
+ * `SegnaleChat`), e una stringa messa lì — «Nuovo messaggio», o il vuoto — sarebbe un contenuto
+ * inventato al posto di uno vero, mostrato fino al polling successivo. Meglio un'anteprima vecchia
+ * di trenta secondi, che è una cosa che è stata detta davvero, di un segnaposto che non lo è. Chi
+ * chiama fa partire una ricarica della lista (strozzata) e l'anteprima giusta arriva da lì.
+ *
+ * `last_message_at` invece sì: è solo l'ORDINE, e la riga che ha appena ricevuto un messaggio deve
+ * salire in cima subito. Un segnale più vecchio dell'istante già in mano non riordina niente.
+ *
+ * Il +1 vale SOLO se il thread è in background E il messaggio non è mio: chi scrive dallo stesso
+ * account su un altro dispositivo non deve vedersi accendere il badge per il proprio messaggio.
+ */
+export function applicaSegnaleAThread<T extends ThreadConAnteprima>(
+    threads: T[],
+    segnale: SegnaleChat,
+    utenteId: string,
+    { inBackground }: { inBackground: boolean },
+): { threads: T[]; incrementoNonLetti: 0 | 1; sconosciuto: boolean } {
+    const i = threads.findIndex((t) => t.id === segnale.thread_id);
+    if (i < 0) return { threads, incrementoNonLetti: 0, sconosciuto: true };
+
+    const t = threads[i];
+    const incrementoNonLetti: 0 | 1 = inBackground && segnale.sender_id !== utenteId ? 1 : 0;
+    const piuRecente = confrontaIstanti(segnale.created_at, t.last_message_at) > 0;
+    if (incrementoNonLetti === 0 && !piuRecente) return { threads, incrementoNonLetti, sconosciuto: false };
+
+    const copia = threads.slice();
+    copia[i] = {
+        ...t,
+        unread_count: t.unread_count + incrementoNonLetti,
+        ...(piuRecente ? { last_message_at: segnale.created_at } : {}),
+    };
+    return { threads: piuRecente ? ordinaThreadPerRecenza(copia) : copia, incrementoNonLetti, sconosciuto: false };
 }
 
 /** Badge a zero su un thread. Stesso array se era già a zero (o se il thread non c'è). */

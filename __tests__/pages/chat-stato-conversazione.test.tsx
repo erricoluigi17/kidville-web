@@ -184,15 +184,51 @@ function threadApertoPerIlCanale(o: OpzioniRealtime): string | null {
     return typeof o.threadAperto === 'function' ? o.threadAperto() : (o.selectedThreadId ?? null);
 }
 
+/**
+ * IL SEGNALE del canale privato: le sei chiavi del trigger, e NIENTE contenuto (S4-B, 2026-10-12).
+ * Dal passaggio al broadcast dal database il canale porta solo lo stato di un messaggio; il testo
+ * si rilegge dall'API. Passare qui il messaggio intero renderebbe verdi dei casi che il canale
+ * vero non può più soddisfare.
+ */
+function soloSegnale(m: Json): Json {
+    const r = m as Record<string, unknown>;
+    return { id: r.id, thread_id: r.thread_id, sender_id: r.sender_id, created_at: r.created_at, read_at: r.read_at ?? null, delivered_at: r.delivered_at ?? null } as Json;
+}
+
+/**
+ * Un messaggio appare: PRIMA sul server (dove il hook lo rileggerà, e dove il badge e l'anteprima
+ * della lista si calcolano), POI come segnale sul canale. L'ordine è quello della produzione: il
+ * trigger scatta dopo l'INSERT, quindi una GET successiva trova sempre la riga.
+ */
 function emettiInsert(m: Json) {
+    const r = m as Record<string, unknown>;
+    const threadId = String(r.thread_id);
+    rete.messaggi[threadId] = [...(rete.messaggi[threadId] ?? []).filter((x) => (x as Record<string, unknown>).id !== r.id), m];
+    const o0 = realtime();
+    const aperto = threadApertoPerIlCanale(o0);
+    // Il server conta i non letti e tiene l'anteprima: senza, la ricarica della lista che il
+    // segnale provoca riporterebbe il badge a zero — e il test misurerebbe il finto, non il codice.
+    rete.threads = rete.threads.map((t) => {
+        const riga = t as Record<string, unknown>;
+        if (riga.id !== threadId) return t;
+        const mio = r.sender_id === h.utente;
+        return {
+            ...riga,
+            unread_count: Number(riga.unread_count ?? 0) + (threadId !== aperto && !mio ? 1 : 0),
+            last_message: { content: r.content, sender_id: r.sender_id, created_at: r.created_at },
+            last_message_at: r.created_at,
+        } as Json;
+    });
+
     act(() => {
         const o = realtime();
-        if (!o.threads.some((t) => t.id === m.thread_id)) {
-            o.onThreadSconosciuto?.(m);
+        const segnale = soloSegnale(m);
+        if (!o.threads.some((t) => t.id === threadId)) {
+            o.onThreadSconosciuto?.(segnale);
             return;
         }
-        if (m.thread_id === threadApertoPerIlCanale(o)) o.onNewMessage(m);
-        else o.onThreadUnread(String(m.thread_id), m);
+        if (threadId === threadApertoPerIlCanale(o)) o.onNewMessage(segnale);
+        else o.onThreadUnread(threadId, segnale);
     });
 }
 

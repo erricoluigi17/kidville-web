@@ -212,7 +212,20 @@ export function posterioriCheContengono(
 // file (218 migrazioni); fotografie rigenerate dalla produzione — cambiano davvero solo quella
 // delle migrazioni e quella della RLS (le 15 policy con `( SELECT auth.uid() AS uid)`); le altre
 // quattro cambiano solo l'istante dello scatto, con la stessa sha256.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// 2026-10-12 · FASE 9 «chat sul broadcast privato» (S4-B):
+// `20261012085225_chat_broadcast_privato.sql` crea la policy di SELECT su
+// `realtime.messages` (più il trigger e la funzione su `public.chat_messages`), quindi la
+// guardia della RLS la vede per la parola `policy`. Il contenuto della fotografia della RLS
+// NON cambia — quella fotografia guarda `public`, e questa policy vive nello schema
+// `realtime` — ma la guardia non lo sa e grida comunque, come deve.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261012085225_chat_broadcast_privato.sql':
+        'Fase 9 (S4-B): la applica l’integrazione Supabase al merge, con la version del file. ' +
+        'Crea la policy di SELECT su realtime.messages, che la guardia della RLS riconosce per ' +
+        'la parola «policy» anche se la fotografia guarda il solo schema public. La voce si ' +
+        'toglie nella PR-B, insieme alla rigenerazione delle fotografie dalla produzione.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

@@ -5,10 +5,13 @@ import {
     CONVERSAZIONE_VUOTA,
     MARGINE_RIENTRO_MS,
     applicaMessaggioAThread,
+    applicaSegnale,
+    applicaSegnaleAThread,
     azzeraNonLettiThread,
     confrontaMessaggi,
     decidiRecupero,
     haPrecedenti,
+    leggiSegnale,
     motivoErroreCanale,
     riduciConversazione,
     unisciElenco,
@@ -16,6 +19,7 @@ import {
     unisciMessaggio,
     type AzioneConversazione,
     type ChatMessage,
+    type SegnaleChat,
     type StatoConversazione,
 } from '@/lib/chat/stato-conversazione';
 
@@ -52,6 +56,16 @@ function msg(n: number, extra: Partial<ChatMessage> = {}): ChatMessage {
         created_at: istante,
         ...extra,
     };
+}
+
+/**
+ * Il SEGNALE del messaggio numero `n`: le stesse chiavi che manda il trigger, e nessun contenuto.
+ * Costruito a partire da `msg(n)` di proposito: così un cambio di `created_at` non fa divergere le
+ * due fixture, e un segnale resta confrontabile col messaggio di cui parla.
+ */
+function seg(n: number, extra: Partial<SegnaleChat> = {}): SegnaleChat {
+    const m = msg(n);
+    return { id: m.id, thread_id: m.thread_id, sender_id: m.sender_id, created_at: m.created_at, read_at: null, delivered_at: null, ...extra };
 }
 
 function sequenza(da: number, a: number, extra: Partial<ChatMessage> = {}): ChatMessage[] {
@@ -243,15 +257,23 @@ describe('riduciConversazione — il riduttore della conversazione aperta', () =
         const s = riduci(aperta(T2), { tipo: 'caricati', threadId: T2, messaggi: [msg(1, { thread_id: T2 })], precedenti: 0, utenteId: IO });
         expect(riduciConversazione(s, { tipo: 'caricati', threadId: T1, messaggi: sequenza(1, 3), precedenti: 0, utenteId: IO })).toBe(s);
         expect(riduciConversazione(s, { tipo: 'inviato', messaggio: msg(9) })).toBe(s);
-        expect(riduciConversazione(s, { tipo: 'arrivato', messaggio: msg(9) })).toBe(s);
-        expect(riduciConversazione(s, { tipo: 'cambiato', messaggio: msg(1, { read_at: 'x' }) })).toBe(s);
+        expect(riduciConversazione(s, { tipo: 'cambiato', segnale: seg(1, { read_at: 'x' }) })).toBe(s);
         expect(riduciConversazione(s, { tipo: 'letti', threadId: T1, ids: ['m-001'], at: 'x' })).toBe(s);
     });
 
-    it('C1: arrivato + inviato dello stesso id = un messaggio, in entrambi gli ordini', () => {
+    /**
+     * C1 — la coppia che mette alla prova la regola «un messaggio inviato è UN messaggio» è
+     * cambiata il 2026-10-12 (S4-B) e la regola no. Prima erano l'INSERT del realtime e la 201;
+     * adesso sono la GET silenziosa che il segnale del canale fa partire (`caricati`) e la 201
+     * (`inviato`), che possono arrivare in qualunque ordine — con la GET quasi sempre prima, perché
+     * la 201 attende la notifica e la firma dell'allegato. Accodare invece di fare upsert per id
+     * produceva due bolle dello stesso messaggio, che è il difetto segnalato dal titolare.
+     */
+    it('C1: la finestra e la 201 dello stesso id = un messaggio, in entrambi gli ordini', () => {
         const m = msg(4, { sender_id: IO });
-        const a = riduci(aperta(), { tipo: 'arrivato', messaggio: m }, { tipo: 'inviato', messaggio: { ...m } });
-        const b = riduci(aperta(), { tipo: 'inviato', messaggio: m }, { tipo: 'arrivato', messaggio: { ...m } });
+        const dallaGet: AzioneConversazione = { tipo: 'caricati', threadId: T1, messaggi: [{ ...m }], precedenti: 0, utenteId: IO };
+        const a = riduci(aperta(), dallaGet, { tipo: 'inviato', messaggio: { ...m } });
+        const b = riduci(aperta(), { tipo: 'inviato', messaggio: m }, dallaGet);
         expect(ids(a.messaggi)).toEqual(['m-004']);
         expect(ids(b.messaggi)).toEqual(['m-004']);
     });
@@ -301,9 +323,26 @@ describe('riduciConversazione — il riduttore della conversazione aperta', () =
 
     it('cambiato unisce per id e non aggiunge mai un messaggio assente', () => {
         const s = riduci(aperta(), { tipo: 'caricati', threadId: T1, messaggi: sequenza(1, 2, { sender_id: IO }), precedenti: 0, utenteId: IO });
-        const letto = riduciConversazione(s, { tipo: 'cambiato', messaggio: msg(2, { sender_id: IO, read_at: '2026-09-14T09:00:00.000Z' }) });
+        const letto = riduciConversazione(s, { tipo: 'cambiato', segnale: seg(2, { sender_id: IO, read_at: '2026-09-14T09:00:00.000Z' }) });
         expect(letto.messaggi[1].read_at).toBe('2026-09-14T09:00:00.000Z');
-        expect(riduciConversazione(s, { tipo: 'cambiato', messaggio: msg(3) })).toBe(s);
+        expect(riduciConversazione(s, { tipo: 'cambiato', segnale: seg(3) })).toBe(s);
+    });
+
+    it('cambiato NON tocca il testo né il link firmato: il segnale non li ha', () => {
+        const s = riduci(aperta(), {
+            tipo: 'caricati',
+            threadId: T1,
+            messaggi: [msg(1, { sender_id: IO, content: 'Il testo vero', attachment_url: 'https://firmato/x.jpg', attachment_type: 'image/jpeg' })],
+            precedenti: 0,
+            utenteId: IO,
+        });
+        const dopo = riduciConversazione(s, { tipo: 'cambiato', segnale: seg(1, { sender_id: IO, delivered_at: '2026-09-14T09:00:00.000Z' }) });
+        expect(dopo.messaggi[0]).toMatchObject({
+            content: 'Il testo vero',
+            attachment_url: 'https://firmato/x.jpg',
+            attachment_type: 'image/jpeg',
+            delivered_at: '2026-09-14T09:00:00.000Z',
+        });
     });
 
     it('letti: read_at locale solo dove era null', () => {
@@ -449,5 +488,128 @@ describe('decidiRecupero — il rientro del realtime non raddoppia le GET', () =
 
     it('una richiesta partita prima del margine NON copre: i messaggi persi stanno fra lei e il rientro', () => {
         expect(decidiRecupero(RIENTRO - 10_000, RIENTRO)).toBe('ricarica');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+ * S4-B: IL SEGNALE DEL BROADCAST PRIVATO (2026-10-12)
+ * ═══════════════════════════════════════════════════════════════════════════════════════════ */
+
+describe('leggiSegnale — il payload del trigger, letto senza fidarsi', () => {
+    it('legge le sei chiavi e NIENTE altro: un contenuto sul canale non entra nel client', () => {
+        const letto = leggiSegnale({
+            id: 'm-1',
+            thread_id: T1,
+            sender_id: LEI,
+            created_at: '2026-09-14T08:01:00.000Z',
+            read_at: null,
+            delivered_at: '2026-09-14T08:02:00.000Z',
+            // Se un domani il trigger mandasse per sbaglio il testo, il client lo butta qui.
+            content: 'ha la febbre a 38 e mezzo',
+            attachment_url: 'privato/allegati/x.jpg',
+        });
+        expect(letto).toEqual({
+            id: 'm-1',
+            thread_id: T1,
+            sender_id: LEI,
+            created_at: '2026-09-14T08:01:00.000Z',
+            read_at: null,
+            delivered_at: '2026-09-14T08:02:00.000Z',
+        });
+        expect(JSON.stringify(letto)).not.toContain('febbre');
+        expect(JSON.stringify(letto)).not.toContain('allegati');
+    });
+
+    it('le chiavi di stato assenti valgono «non ancora» (null), non «undefined»', () => {
+        expect(leggiSegnale({ id: 'm-1', thread_id: T1, sender_id: LEI, created_at: 'x' })).toEqual({
+            id: 'm-1',
+            thread_id: T1,
+            sender_id: LEI,
+            created_at: 'x',
+            read_at: null,
+            delivered_at: null,
+        });
+    });
+
+    it('senza una delle quattro chiavi obbligatorie non è instradabile: null', () => {
+        const base = { id: 'm-1', thread_id: T1, sender_id: LEI, created_at: 'x' };
+        for (const chiave of ['id', 'thread_id', 'sender_id', 'created_at'] as const) {
+            const rotto: Record<string, unknown> = { ...base };
+            delete rotto[chiave];
+            expect(leggiSegnale(rotto), `manca ${chiave} e passa comunque`).toBeNull();
+            expect(leggiSegnale({ ...base, [chiave]: '' }), `${chiave} vuoto e passa comunque`).toBeNull();
+            expect(leggiSegnale({ ...base, [chiave]: 42 }), `${chiave} non è una stringa e passa comunque`).toBeNull();
+        }
+        expect(leggiSegnale(null)).toBeNull();
+        expect(leggiSegnale(undefined)).toBeNull();
+        expect(leggiSegnale('m-1')).toBeNull();
+        expect(leggiSegnale([])).toBeNull();
+    });
+
+    it('una chiave di stato di tipo assurdo degrada a null invece di entrare nello stato', () => {
+        expect(leggiSegnale({ id: 'm-1', thread_id: T1, sender_id: LEI, created_at: 'x', read_at: 7 })?.read_at).toBeNull();
+    });
+});
+
+describe('applicaSegnale — solo le spunte, monotone', () => {
+    const base = msg(1, { sender_id: IO, content: 'Testo', attachment_url: 'https://firmato/x.jpg' });
+
+    it('alza read_at e delivered_at, e lascia tutto il resto dov’è', () => {
+        const dopo = applicaSegnale(base, seg(1, { sender_id: IO, read_at: 'R', delivered_at: 'D' }));
+        expect(dopo).toMatchObject({ read_at: 'R', delivered_at: 'D', content: 'Testo', attachment_url: 'https://firmato/x.jpg' });
+    });
+
+    it('MONOTONO: un null in ritardo non fa tornare indietro la spunta', () => {
+        const letto = applicaSegnale(base, seg(1, { read_at: 'R', delivered_at: 'D' }));
+        expect(applicaSegnale(letto, seg(1, { read_at: null, delivered_at: null }))).toBe(letto);
+    });
+
+    it('senza novità restituisce LA STESSA referenza: è ciò che tiene fermo il DOM', () => {
+        expect(applicaSegnale(base, seg(1, { sender_id: IO }))).toBe(base);
+        const letto = applicaSegnale(base, seg(1, { read_at: 'R' }));
+        expect(applicaSegnale(letto, seg(1, { read_at: 'R' }))).toBe(letto);
+    });
+});
+
+describe('applicaSegnaleAThread — badge e ordine SENZA inventare l’anteprima', () => {
+    const riga = (extra: Partial<moduloPuro.ThreadConAnteprima> = {}): moduloPuro.ThreadConAnteprima => ({
+        id: T1,
+        unread_count: 0,
+        last_message: { content: 'Il messaggio di prima', sender_id: IO, created_at: '2026-09-14T08:00:00.000Z' },
+        last_message_at: '2026-09-14T08:00:00.000Z',
+        ...extra,
+    });
+
+    it('+1 e risale in cima, ma l’anteprima resta QUELLA VERA: il segnale non porta testo', () => {
+        // T2 è più recente di T1 (08:10 contro 08:00), e il segnale di T1 è di 08:30: dopo, T1 sale.
+        const esito = applicaSegnaleAThread([riga({ id: T2, last_message_at: '2026-09-14T08:10:00.000Z' }), riga()], seg(30), IO, {
+            inBackground: true,
+        });
+        expect(esito.incrementoNonLetti).toBe(1);
+        expect(esito.threads.map((t) => t.id)).toEqual([T1, T2]);
+        const aggiornata = esito.threads.find((t) => t.id === T1)!;
+        expect(aggiornata.unread_count).toBe(1);
+        expect(aggiornata.last_message_at).toBe(seg(30).created_at);
+        expect(aggiornata.last_message, 'l’anteprima è stata inventata: il payload non ha il testo').toEqual(riga().last_message);
+    });
+
+    it('il MIO messaggio da un altro dispositivo non accende il badge', () => {
+        const esito = applicaSegnaleAThread([riga()], seg(30, { sender_id: IO }), IO, { inBackground: true });
+        expect(esito.incrementoNonLetti).toBe(0);
+        expect(esito.threads[0].unread_count).toBe(0);
+    });
+
+    it('un segnale più VECCHIO dell’ultimo istante non riordina niente', () => {
+        const prima = [riga({ last_message_at: '2026-09-14T10:00:00.000Z' })];
+        const esito = applicaSegnaleAThread(prima, seg(1, { sender_id: IO }), IO, { inBackground: false });
+        expect(esito.threads).toBe(prima);
+    });
+
+    it('un thread che la lista non ha: sconosciuto, e la lista non cambia', () => {
+        const prima = [riga()];
+        const esito = applicaSegnaleAThread(prima, { ...seg(30), thread_id: 'th-ignoto' }, IO, { inBackground: true });
+        expect(esito.sconosciuto).toBe(true);
+        expect(esito.threads).toBe(prima);
+        expect(esito.incrementoNonLetti).toBe(0);
     });
 });

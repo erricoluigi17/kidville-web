@@ -16,7 +16,7 @@ const UTENTE = '22222222-2222-4222-8222-222222222222'
 
 const h = vi.hoisted(() => ({
   ruolo: 'segreteria',
-  revoca: vi.fn(async (..._a: unknown[]) => ({ revocati: [] as string[] })),
+  revoca: vi.fn<(...a: unknown[]) => Promise<{ revocati: string[] }>>(async () => ({ revocati: [] })),
   logEvento: vi.fn(),
   db: {} as Record<string, Record<string, unknown>[]>,
   scritture: [] as unknown[],

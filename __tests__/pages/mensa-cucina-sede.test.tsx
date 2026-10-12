@@ -19,6 +19,7 @@ import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi';
  */
 
 const h = vi.hoisted(() => ({
+  ruolo: 'segreteria',
   stato: {
     sedi: [] as { id: string; nome: string }[],
     sedeCorrente: null as string | null,
@@ -34,7 +35,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/lib/auth/use-session-identity', () => ({
-  useSessionIdentity: () => ({ userId: 'seg-1', role: 'segreteria', ready: true }),
+  useSessionIdentity: () => ({ userId: 'seg-1', role: h.ruolo, ready: true }),
 }));
 
 // Riproduzione fedele del guard vero (sede-context.tsx): senza UNA sede risolta
@@ -81,6 +82,7 @@ const report = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.ruolo = 'segreteria';
   h.stato.sedi = [
     { id: SEDE_A, nome: NOME_SEDE_A },
     { id: SEDE_B, nome: NOME_SEDE_B },
@@ -126,5 +128,28 @@ describe('/admin/mensa/cucina — la sede scelta arriva fino alla query', () => 
     // Niente ripiego silenzioso: nessuna riga di allergeni di una sede a caso.
     await waitFor(() => expect(screen.getByTestId('sede-notice')).toBeInTheDocument());
     expect(urlChiamate().filter((u) => u.includes('/api/mensa/'))).toEqual([]);
+  });
+});
+
+/**
+ * 2026-10-12 — la pagina accende i pulsanti Aggiungi/Annulla del report dal RUOLO
+ * (`gestisceMensa`): admin, coordinatrice e segreteria sì, la cuoca no. E il
+ * sottotitolo smette di dire «sola lettura» a chi non lo è più.
+ */
+describe('/admin/mensa/cucina — chi gestisce le prenotazioni', () => {
+  it('la segreteria vede «Annulla» sui prenotati e un sottotitolo che non dice «sola lettura»', async () => {
+    render(<CucinaPage />);
+    expect(await screen.findByRole('button', { name: 'Annulla il pasto di Bimbo Uno' })).toBeInTheDocument();
+    expect(screen.getByText('Pasti del giorno, allergie e menù. La segreteria aggiunge e annulla i pasti anche dopo l’orario limite.')).toBeInTheDocument();
+    await waitFor(() => expect(urlChiamate().some((u) => u.startsWith('/api/admin/students') && u.includes(`scuola_id=${SEDE_B}`))).toBe(true));
+  });
+
+  it('la cuoca vede il report com’era: nessun pulsante, sottotitolo «sola lettura», nessun elenco iscritti', async () => {
+    h.ruolo = 'cuoca';
+    render(<CucinaPage />);
+    expect(await screen.findByText('Bimbo Uno')).toBeInTheDocument();
+    expect(screen.getByText('Pasti del giorno, allergie e menù (sola lettura).')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /il pasto di/ })).toBeNull();
+    expect(urlChiamate().some((u) => u.startsWith('/api/admin/students'))).toBe(false);
   });
 });

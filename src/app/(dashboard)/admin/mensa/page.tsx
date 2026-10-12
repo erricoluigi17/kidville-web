@@ -12,12 +12,13 @@ import { TicketResiduiPanel } from '@/components/features/admin/mensa/TicketResi
 import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired, useSediAttive } from '@/lib/context/sede-context';
+import { gestisceMensa } from '@/lib/mensa/gestione-staff';
 
 type Tab = 'menu' | 'report' | 'prenota' | 'residui';
 
 function MensaInner() {
   const t = useTranslations('adminMensa');
-  const { userId } = useSessionIdentity();
+  const { userId, role } = useSessionIdentity();
   const { sedeCorrente } = useSediAttive();
   // Identità di sessione (M4): con identità non risolta il parametro viene
   // omesso (href invariato), mai `userId=null`.
@@ -68,7 +69,7 @@ function MensaInner() {
         {(scuolaId) => (
           <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6">
             {tab === 'menu' && userId && <MenuBuilder userId={userId} scuolaId={scuolaId} />}
-            {tab === 'report' && userId && <MensaReport userId={userId} scuolaId={scuolaId} sezioni={sezioni} />}
+            {tab === 'report' && userId && <MensaReport userId={userId} scuolaId={scuolaId} sezioni={sezioni} gestionePrenotazioni={gestisceMensa(role)} />}
             {tab === 'prenota' && userId && <PrenotazioneSegreteria userId={userId} scuolaId={scuolaId} />}
             {tab === 'residui' && userId && <TicketResiduiPanel userId={userId} scuolaId={scuolaId} />}
           </div>

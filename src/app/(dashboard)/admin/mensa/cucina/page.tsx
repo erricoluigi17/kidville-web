@@ -10,6 +10,7 @@ import { allergeniDelGiorno, useAllergeneLabel, allergeneEmoji, type AllergeniPo
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
+import { gestisceMensa } from '@/lib/mensa/gestione-staff';
 
 interface Portate { primo?: string; secondo?: string; contorno?: string; frutta?: string }
 interface MenuGiorno { data: string; attivo: boolean; chiuso: boolean; portate: Portate | null; ingredienti?: Portate | null; allergeni?: AllergeniPortate | null; note?: string | null }
@@ -18,9 +19,15 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
 function CucinaInner() {
   const t = useTranslations('adminMensa');
   const params = useSearchParams();
-  const { userId } = useSessionIdentity();
+  const { userId, role } = useSessionIdentity();
   // l'insegnante arriva con ?sezione=… per restare scoped alla sua classe
   const sezione = params.get('sezione') || undefined;
+  // Admin, coordinatrice e segreteria aggiungono e annullano i pasti dal report:
+  // per loro la pagina non è più «sola lettura», e il sottotitolo non lo dice.
+  const gestione = gestisceMensa(role);
+  const sottotitolo = gestione
+    ? (sezione ? t('cucinaSottotitoloGestioneConSezione', { sezione }) : t('cucinaSottotitoloGestione'))
+    : (sezione ? t('cucinaSottotitoloConSezione', { sezione }) : t('cucinaSottotitolo'));
 
   return (
     <CockpitPage max={1152}>
@@ -28,7 +35,7 @@ function CucinaInner() {
         eyebrow={t('eyebrowOperativo')}
         icon={ChefHat}
         title={t('cucinaTitolo')}
-        subtitle={sezione ? t('cucinaSottotitoloConSezione', { sezione }) : t('cucinaSottotitolo')}
+        subtitle={sottotitolo}
       />
 
       {/* La sede è OBBLIGATORIA, come nella sorella `/admin/mensa`. Questa pagina
@@ -37,13 +44,13 @@ function CucinaInner() {
           sul primo plesso utile — una sede sola presentata come «la» cucina.
           Per la cuoca (un plesso solo) il guard è trasparente. */}
       <SedeRequired cosa={t('sedeRequiredCosa')}>
-        {(scuolaId) => <CucinaContenuti userId={userId} scuolaId={scuolaId} sezione={sezione} />}
+        {(scuolaId) => <CucinaContenuti userId={userId} scuolaId={scuolaId} sezione={sezione} gestione={gestione} />}
       </SedeRequired>
     </CockpitPage>
   );
 }
 
-function CucinaContenuti({ userId, scuolaId, sezione }: { userId: string | null; scuolaId: string; sezione?: string }) {
+function CucinaContenuti({ userId, scuolaId, sezione, gestione }: { userId: string | null; scuolaId: string; sezione?: string; gestione: boolean }) {
   const t = useTranslations('adminMensa');
   const allergeneLabel = useAllergeneLabel();
   const [oggi, setOggi] = useState<MenuGiorno | null>(null);
@@ -92,7 +99,7 @@ function CucinaContenuti({ userId, scuolaId, sezione }: { userId: string | null;
 
       {/* Report pasti + allergie */}
       <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6 mb-4">
-        {userId && <MensaReport userId={userId} scuolaId={scuolaId} sezione={sezione} />}
+        {userId && <MensaReport userId={userId} scuolaId={scuolaId} sezione={sezione} gestionePrenotazioni={gestione} />}
       </div>
 
       {/* Pasti ancora disponibili per bambino. In cucina serve a sapere chi ha

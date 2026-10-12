@@ -3,9 +3,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
-import { ClipboardList, AlertTriangle, Users, UtensilsCrossed, Trash2, Plus } from 'lucide-react';
+import { ClipboardList, AlertTriangle, Users, UtensilsCrossed, Trash2, Plus, X } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { useAllergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
+import { logClient, nomeErrore } from '@/lib/logging/client';
+import { nonPrenotatiPerClasse, type IscrittoMensa, type NonPrenotato } from '@/lib/mensa/gestione-staff';
+import { ConfermaAnnullaPasto } from './ConfermaAnnullaPasto';
 
 interface Props {
   userId: string;
@@ -16,6 +20,10 @@ interface Props {
   sezioni?: string[];
   // cuoca/docente: nasconde le azioni di scrittura (registra/elimina alternativa)
   soloLettura?: boolean;
+  // admin/coordinator/segreteria (`gestisceMensa`): «Annulla» accanto a ogni
+  // prenotato e «Aggiungi un bambino» per classe, a QUALUNQUE ora — il server li
+  // esenta dal cutoff. Spenta (default) il report è quello di cuoca e docenti.
+  gestionePrenotazioni?: boolean;
 }
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 
@@ -31,7 +39,9 @@ interface Report {
 }
 interface AlternativaManuale { id: string; alunno_id: string; nome: string; classe: string; richiesta: string; origine: string; created_at: string }
 
-export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = false }: Props) {
+const ROUTE = '/admin/mensa';
+
+export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = false, gestionePrenotazioni = false }: Props) {
   const t = useTranslations('adminMensa');
   const f = useDateFormat();
   const allergeneLabel = useAllergeneLabel();
@@ -49,6 +59,13 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
   const [formNota, setFormNota] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [altError, setAltError] = useState<string | null>(null);
+
+  // Gestione prenotazioni (solo con `gestionePrenotazioni`).
+  const [iscritti, setIscritti] = useState<IscrittoMensa[]>([]);
+  const [classiAperte, setClassiAperte] = useState<ReadonlySet<string>>(() => new Set());
+  const [inVolo, setInVolo] = useState<string | null>(null);
+  const [daAnnullare, setDaAnnullare] = useState<{ id: string; nome: string } | null>(null);
+  const [esitoPren, setEsitoPren] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -82,6 +99,17 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadAlternative(); }, [loadAlternative]);
+
+  // Gli iscritti servono solo a chi può AGGIUNGERE: cuoca e docenti non li chiedono.
+  useEffect(() => {
+    if (!gestionePrenotazioni) return;
+    let vivo = true;
+    fetch(`/api/admin/students?stato=iscritto${scuolaId ? `&scuola_id=${encodeURIComponent(scuolaId)}` : ''}&limit=${LIMITE_ELENCO_ALUNNI}`, { headers: hdr(userId) })
+      .then(r => r.json())
+      .then(d => { if (vivo && Array.isArray(d)) setIscritti(d as IscrittoMensa[]); })
+      .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `mensa-report-iscritti-non-caricati: ${nomeErrore(err)}`, route: ROUTE }));
+    return () => { vivo = false; };
+  }, [gestionePrenotazioni, scuolaId, userId]);
 
   const totaleConflitti = report?.perClasse.reduce((n, c) => n + c.alunni.filter(a => a.conflitti.length > 0).length, 0) ?? 0;
   const automatiche = report?.alternative_automatiche ?? [];
@@ -124,6 +152,64 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
       setAltError(t('erroreReteEliminazione'));
     }
   };
+
+  // Dopo un pasto aggiunto o annullato cambiano conteggio, conflitti e alternative.
+  const ricarica = async () => { await Promise.all([load(), loadAlternative()]); };
+
+  const aggiungiPasto = async (alunnoId: string, nome: string) => {
+    setInVolo(alunnoId); setEsitoPren(null);
+    try {
+      const res = await fetch('/api/mensa/prenotazioni', {
+        method: 'POST', headers: hdr(userId), body: JSON.stringify({ alunno_id: alunnoId, date: [data] }),
+      });
+      const j = await res.json();
+      const delGiorno = j?.data?.esiti?.[0];
+      setEsitoPren(j?.success && delGiorno?.ok
+        ? t('pastoAggiuntoPer', { nome, saldo: Number(j.data.saldo) })
+        : (delGiorno?.motivo ?? j?.error ?? t('operazioneNonRiuscita')));
+    } catch (err) {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `mensa-report-aggiungi-fallita: ${nomeErrore(err)}`, route: ROUTE });
+      setEsitoPren(t('erroreReteMensa'));
+    } finally {
+      setInVolo(null);
+      await ricarica();
+    }
+  };
+
+  const annullaPasto = async (alunnoId: string, nome: string) => {
+    setDaAnnullare(null); setInVolo(alunnoId); setEsitoPren(null);
+    try {
+      const res = await fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${alunnoId}&data=${data}`, { method: 'DELETE', headers: hdr(userId) });
+      const j = await res.json();
+      setEsitoPren(j?.success
+        ? t('pastoAnnullatoPer', { nome, saldo: Number(j.data.saldo) })
+        : (j?.error ?? t('operazioneNonRiuscita')));
+    } catch (err) {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `mensa-report-annulla-fallita: ${nomeErrore(err)}`, route: ROUTE });
+      setEsitoPren(t('erroreReteMensa'));
+    } finally {
+      setInVolo(null);
+      await ricarica();
+    }
+  };
+
+  const alternaClasse = (classe: string) => setClassiAperte(prev => {
+    const s = new Set(prev);
+    if (s.has(classe)) s.delete(classe); else s.add(classe);
+    return s;
+  });
+
+  const sezAttiva = sezione ?? filtroSezione;
+  const nonPrenotati: Map<string, NonPrenotato[]> = gestionePrenotazioni
+    ? nonPrenotatiPerClasse(iscritti.filter(a => !sezAttiva || a.classe_sezione === sezAttiva), new Set(tuttiAlunni.map(a => a.id)))
+    : new Map();
+  // Con la gestione accesa compaiono anche le classi senza prenotati: senza, a una
+  // classe vuota non si potrebbe aggiungere nessuno.
+  const classi = [...(report?.perClasse ?? [])];
+  for (const classe of nonPrenotati.keys()) {
+    if (!classi.some(c => c.classe === classe)) classi.push({ classe, conteggio: 0, alunni: [] });
+  }
+  classi.sort((x, y) => x.classe.localeCompare(y.classe));
 
   return (
     <div className="kv-mensa-alt">
@@ -239,11 +325,14 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
 
           <div>
             <h4 className="font-barlow font-bold text-kidville-green uppercase text-xs mb-2 flex items-center gap-1.5"><ClipboardList size={13} /> {t('prenotatiPerSezione')}</h4>
-            {report.perClasse.length === 0 ? (
+            {esitoPren && (
+              <p role="status" aria-live="polite" className="mb-2 font-maven text-xs text-kidville-green">{esitoPren}</p>
+            )}
+            {classi.length === 0 ? (
               <p className="font-maven text-sm text-kidville-muted">{t('nessunaPrenotazione')}</p>
             ) : (
               <div className="grid md:grid-cols-2 gap-3">
-                {report.perClasse.map(c => (
+                {classi.map(c => (
                   <div key={c.classe} className="kv-admin-rowcard rounded-2xl border border-kidville-line bg-white overflow-hidden">
                     <div className="flex items-center justify-between px-3 py-2 bg-kidville-cream/60">
                       <span className="font-barlow font-bold text-kidville-green text-sm">{c.classe}</span>
@@ -272,6 +361,14 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
                                   })}
                                 </span>
                               )}
+                              {gestionePrenotazioni && (
+                                <button type="button" disabled={inVolo === a.id}
+                                  onClick={() => setDaAnnullare({ id: a.id, nome: a.nome })}
+                                  aria-label={t('annullaPastoDi', { nome: a.nome })}
+                                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-kidville-error hover:opacity-70 disabled:opacity-40">
+                                  <X size={16} />
+                                </button>
+                              )}
                             </div>
                             {conflitto && (
                               <p className="font-maven text-[11px] text-kidville-error-strong mt-0.5">
@@ -282,12 +379,45 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
                         );
                       })}
                     </ul>
+                    {gestionePrenotazioni && (
+                      <div className="border-t border-kidville-cream px-3 py-1">
+                        <button type="button" aria-expanded={classiAperte.has(c.classe)} onClick={() => alternaClasse(c.classe)}
+                          className="inline-flex min-h-[44px] items-center gap-1.5 font-maven text-xs font-bold text-kidville-green">
+                          <Plus size={14} /> {t('aggiungiUnBambino')}
+                        </button>
+                        {classiAperte.has(c.classe) && ((nonPrenotati.get(c.classe) ?? []).length === 0 ? (
+                          <p className="pb-2 font-maven text-[11px] text-kidville-muted">{t('nessunNonPrenotato')}</p>
+                        ) : (
+                          <ul className="pb-1">
+                            {(nonPrenotati.get(c.classe) ?? []).map(n => (
+                              <li key={n.id} className="flex min-h-[44px] items-center justify-between gap-2">
+                                <span className="font-maven text-sm text-kidville-ink">{n.nome}</span>
+                                <button type="button" disabled={inVolo === n.id} onClick={() => aggiungiPasto(n.id, n.nome)}
+                                  aria-label={t('aggiungiPastoDi', { nome: n.nome })}
+                                  className="inline-flex min-h-[44px] items-center gap-1 rounded-full bg-kidville-green px-3 font-maven text-xs font-bold text-white disabled:opacity-50">
+                                  <Plus size={13} /> {t('aggiungiPasto')}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
         </div>
+      )}
+
+      {gestionePrenotazioni && (
+        <ConfermaAnnullaPasto
+          richiesta={daAnnullare ? { nome: daAnnullare.nome, dataLeggibile: f.giornoMese(`${data}T12:00:00Z`) } : null}
+          inCorso={inVolo !== null}
+          onConferma={() => { if (daAnnullare) void annullaPasto(daAnnullare.id, daAnnullare.nome); }}
+          onChiudi={() => setDaAnnullare(null)}
+        />
       )}
     </div>
   );

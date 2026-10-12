@@ -19,7 +19,11 @@ import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione'
 // comportamento: `__tests__/api/students-troncamento-visibile.test.ts`.
 // =============================================================================
 
-/** I dieci punti che chiedono l'elenco alunni (misurati il 2026-08-04). */
+/**
+ * I punti che chiedono l'elenco alunni: dieci misurati il 2026-08-04, poi
+ * `servizi-client.ts` e, dal 2026-10-12, `MensaReport.tsx` (gli iscritti non
+ * prenotati a cui la segreteria aggiunge un pasto) — dodici in tutto.
+ */
 const CHIAMANTI = [
   'src/app/(dashboard)/admin/mensa/page.tsx',
   'src/app/(dashboard)/admin/students/page.tsx',
@@ -27,6 +31,7 @@ const CHIAMANTI = [
   'src/app/(dashboard)/admin/protocolli/page.tsx',
   'src/components/features/admin/SectionsView.tsx',
   'src/components/features/admin/mensa/PrenotazioneSegreteria.tsx',
+  'src/components/features/admin/mensa/MensaReport.tsx',
   'src/components/features/admin/pagamenti/PaymentsDashboard.tsx',
   'src/components/features/admin/pagamenti/GeneratoreCategoria.tsx',
   'src/components/features/admin/pagamenti/TicketMensaPanel.tsx',

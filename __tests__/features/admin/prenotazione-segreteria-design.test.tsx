@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { PrenotazioneSegreteria } from '@/components/features/admin/mensa/PrenotazioneSegreteria';
 
 /**
@@ -40,5 +40,19 @@ describe('PrenotazioneSegreteria — rifinitura mobile (Step 9)', () => {
     render(<PrenotazioneSegreteria userId="u1" scuolaId="s1" />);
     const btn = await screen.findByRole('button', { name: /Bimbo Uno/ });
     expect(btn.className).toContain('min-h-[44px]');
+  });
+
+  // 2026-10-12: al posto del modulo «un giorno» la settimana del bambino, con
+  // Aggiungi e Annulla a qualunque ora (`SettimanaMensaStaff`).
+  it('scelto un bambino, mostra la sua settimana (menu chiesto per quel bambino)', async () => {
+    render(<PrenotazioneSegreteria userId="u1" scuolaId="s1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Bimbo Uno/ }));
+    expect(await screen.findByText('Settimana del bambino')).toBeTruthy();
+    const chiamate = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    await waitFor(() =>
+      expect(chiamate.some(c => String(c[0]).startsWith('/api/mensa/menu') && String(c[0]).includes('alunno_id=a1'))).toBe(true),
+    );
+    // Il vecchio modulo a un giorno aveva un campo data: non c'è più.
+    expect(document.querySelector('input[type="date"]')).toBeNull();
   });
 });

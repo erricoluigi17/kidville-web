@@ -59,7 +59,7 @@ function MensaInner() {
         options={[
           { id: 'menu', label: t('tabMenu'), icon: CalendarRange },
           { id: 'report', label: t('tabReportCucina'), icon: ClipboardList },
-          { id: 'prenota', label: t('tabInserisciTicket'), icon: CalendarPlus },
+          { id: 'prenota', label: t('tabPrenotazioni'), icon: CalendarPlus },
           { id: 'residui', label: t('tabTicketResidui'), icon: Wallet },
         ]}
       />

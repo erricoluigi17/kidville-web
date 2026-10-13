@@ -1,6 +1,18 @@
+## ✅ Changelog — Eliminare una voce di pagamento: in produzione, verificata, fotografia delle migrazioni rigenerata — 2026-10-13 (branch `chore/fotografie-elimina-voce`)
+
+**Stato.** ✅ PR [#227](https://github.com/erricoluigi17/kidville-web/pull/227) mergeata a mano il 12/10 (`f6c89b2b`). Questa è la sua PR-B: solo la fotografia e il PRD, nessun codice.
+
+**Verifica dopo il rilascio** (sole letture in produzione, 13/10):
+- CI di `main` verde su tutti i job, «Verifica dopo il deploy» verde (il sito serve il rilascio nuovo, in `dub1`), «Campanello» verde ai due giri successivi. L'E2E della PR: 164 passati, 1 instabile al primo tentativo (`teacher-diary.spec.ts`, diario delle docenti: non tocca i pagamenti).
+- La migrazione `20261012183341_elimina_voce_ricarica_ticket` l'ha applicata l'integrazione al merge, con la version del file: **una riga sola** nello storico.
+- `elimina_voce_ricarica_ticket(p_pagamento_id uuid, p_operatore uuid)`: `SECURITY INVOKER`; `EXECUTE` **solo** a `service_role` (`anon` e `authenticated` no).
+- `get_advisors` (sicurezza): **0 ERROR**; gli avvisi INFO/WARN sono quelli di prima, nessuno sulla funzione nuova.
+
+**Fotografia.** `__tests__/fixtures/migrazioni-applicate-snapshot.json` rigenerata dalla produzione: 220 migrazioni applicate (220 file su disco), ultima `20261012183341`. Rigenerarla è ciò che arma il lock `migrazioni-complete` sulla migrazione nuova.
+
 ## 🗑️ Changelog — Contabilità: eliminare una voce di pagamento generata per errore, dalla finestra «Modifica» — 2026-10-12 (branch `feat/elimina-voce-pagamento`)
 
-**Stato.** 🟡 **In PR** su `feat/elimina-voce-pagamento`; la conferma del rilascio va nella voce successiva, con la verifica in produzione della funzione nuova. **Mensa della segreteria (voce qui sotto, PR #226): ✅ in produzione dal 12/10** (`93fabdd6`, CI di `main` e «Verifica dopo il deploy» verdi).
+**Stato.** ✅ **In produzione dal 2026-10-12** (PR [#227](https://github.com/erricoluigi17/kidville-web/pull/227), `f6c89b2b`; la verifica sta nella voce sopra). Era 🟡 in PR. ⏳ Resta la prova sul campo della segreteria. **Mensa della segreteria (voce qui sotto, PR #226): ✅ in produzione dal 12/10** (`93fabdd6`, CI di `main` e «Verifica dopo il deploy» verdi).
 
 **La richiesta.** «Dare la possibilità di eliminare pagamenti generati per errore.» Decisioni del titolare: **solo voci singole**, una alla volta; una voce con **incassi, anche stornati, non si elimina**; possono eliminare **admin e segreteria**, la coordinatrice no; il pulsante sta **dentro la finestra «Modifica»**; una **ricarica di ticket mensa** si elimina **togliendo i suoi ticket**, e si rifiuta se i ticket sono già stati usati.
 

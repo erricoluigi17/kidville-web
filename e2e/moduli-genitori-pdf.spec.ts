@@ -26,6 +26,13 @@ async function testoPdf(bytes: Uint8Array): Promise<string> {
     return chunks.join(' ').replace(/\s+/g, ' ')
   }
 }
+async function verificaContestoVuoto(context: BrowserContext) {
+  // Playwright eredita test.use anche nei newContext manuali. Controlliamo
+  // soltanto conteggi: cookie, localStorage e token non entrano negli artifact.
+  const state = await context.storageState()
+  expect(state.cookies.length, 'nuovo contesto senza cookie ereditati').toBe(0)
+  expect(state.origins.length, 'nuovo contesto senza origini ereditate').toBe(0)
+}
 async function negato(api: APIRequestContext, id: string, status: number, headers: Record<string, string> = {}) {
   for (const method of ['get', 'post'] as const) {
     const response = method === 'get'
@@ -165,14 +172,16 @@ test('firma OTP, archivio reale e riepilogo isolato per sede', async ({ page, br
     expect(adminPdf.status()).toBe(200)
     expect(sha256(await adminPdf.body())).toBe(sha256(storedBytes))
 
-    const anonymous = await browser.newContext({ baseURL: BASE })
+    const anonymous = await browser.newContext({ baseURL: BASE, storageState: { cookies: [], origins: [] } })
     extraContexts.push(anonymous)
+    await verificaContestoVuoto(anonymous)
     const forged = { 'x-user-id': IDS.GENITORE, 'x-user-role': 'admin', 'x-school-id': IDS.SCUOLA }
     await negato(anonymous.request, submissionId, 401)
     await negato(anonymous.request, submissionId, 401, forged)
     for (const [email, status] of [[EMAILS.genitore2, 403], [EMAILS.segreteria2, 404]] as const) {
-      const foreign = await browser.newContext({ baseURL: BASE })
+      const foreign = await browser.newContext({ baseURL: BASE, storageState: { cookies: [], origins: [] } })
       extraContexts.push(foreign)
+      await verificaContestoVuoto(foreign)
       const foreignPage = await foreign.newPage()
       await login(foreignPage, email)
       const area = email === EMAILS.genitore2 ? '/parent' : '/admin'

@@ -1,0 +1,2 @@
+# Il sentinel NUL storico del report non deve nascondere la revisione del codice.
+src/lib/cassa/report.ts diff

@@ -87,16 +87,15 @@ describe('CassaReport — una sede', () => {
     await screen.findByRole('option', { name: 'Gita' });
   });
 
-  it('una sede: due categorie con lo STESSO slug (globale e della sede) restano una voce sola', async () => {
+  it('una sede: categorie globali e locali con lo stesso slug conservano entrambi gli UUID', async () => {
     const globale = { id: 'gg', nome: 'Gita', slug: 'gita', scuola_id: null };
     installFetch({ report: REPORT_UNA, categorie: [globale, CATEGORIE_DUE[1]] });
     render(<CassaReport userId="u1" scuolaId="sc-a" sedi={[SEDI[0]]} />);
-    await screen.findByRole('option', { name: 'Gita' });
+    await screen.findByRole('option', { name: 'Gita — Globale' });
     const select = screen.getByLabelText('Categoria di pagamento') as HTMLSelectElement;
-    const gite = Array.from(select.options).filter((o) => o.textContent === 'Gita');
-    expect(gite).toHaveLength(1);
-    // ultima arrivata vince, come prima del multi-sede
-    expect(gite[0].value).toBe('ga');
+    const gite = Array.from(select.options).filter((o) => o.textContent?.startsWith('Gita'));
+    expect(gite).toHaveLength(2);
+    expect(gite.map((o) => o.value)).toEqual(['gg', 'ga']);
   });
 });
 

@@ -31,6 +31,8 @@ const CausaliPanel = dynamic(() => import('@/components/features/admin/pagamenti
 // Stesso modulo del pannello qui sopra (un solo chunk): l'editor è uno, le istanze due.
 const CausaliFatturaPanel = dynamic(() => import('@/components/features/admin/pagamenti/CausaliPanel').then((m) => m.CausaliFatturaPanel), { ssr: false, loading: Caricamento });
 const CassaPanel = dynamic(() => import('@/components/features/admin/pagamenti/CassaPanel').then((m) => m.CassaPanel), { ssr: false, loading: Caricamento });
+const UscitePanel = dynamic(() => import('@/components/features/admin/pagamenti/UscitePanel').then((m) => m.UscitePanel), { ssr: false, loading: Caricamento });
+const CassaReport = dynamic(() => import('@/components/features/admin/pagamenti/CassaReport').then((m) => m.CassaReport), { ssr: false, loading: Caricamento });
 type PrecompilaTransazione = import('@/components/features/admin/pagamenti/TransazioniPanel').PrecompilaTransazione;
 
 const isVista = (v: string | null): v is VistaContabilita => !!v && VISTE_CONTABILITA.some((o) => o.id === v);
@@ -91,6 +93,7 @@ function ContabilitaMultiSede({ children }: { children: (scuolaId: string | null
 function PagamentiInner() {
     const t = useTranslations('adminContabilita');
     const { userId } = useSessionIdentity();
+    const { sedi } = useSediAttive();
     const router = useRouter();
     const params = useSearchParams();
     const fromUrl = params.get('vista');
@@ -202,6 +205,8 @@ function PagamentiInner() {
                             {vista === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={scuolaId} />}
 
                             {vista === 'cassa' && userId && <CassaPanel userId={userId} scuolaId={scuolaId} />}
+                            {vista === 'uscite' && userId && <UscitePanel userId={userId} scuolaId={scuolaId} />}
+                            {vista === 'riepilogo' && userId && <CassaReport userId={userId} scuolaId={scuolaId} sedi={sedi} />}
                         </Card>
                     )}
                 </ContabilitaMultiSede>

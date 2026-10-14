@@ -3,9 +3,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ContabilitaNav, VISTE_CONTABILITA } from '@/components/features/admin/pagamenti/ContabilitaNav';
 
 describe('ContabilitaNav', () => {
-  it('espone le 10 viste attese («Servizi» subito dopo «Genera», «Cassa» fra «Ticket mensa» e «Causali»)', () => {
+  it('espone le 12 viste attese, con Uscite e Riepilogo dopo Cassa', () => {
     expect(VISTE_CONTABILITA.map((v) => v.id)).toEqual([
-      'scadenzario', 'transazioni', 'genera', 'servizi', 'solleciti', 'riconciliazione', 'fiscale', 'ticket', 'cassa', 'causali',
+      'scadenzario', 'transazioni', 'genera', 'servizi', 'solleciti', 'riconciliazione', 'fiscale', 'ticket', 'cassa', 'uscite', 'riepilogo', 'causali',
     ]);
   });
 

@@ -553,7 +553,7 @@ describe('ServiziPanel — correzioni della revisione', () => {
     fireEvent.click(screen.getByRole('button', { name: NOME_MODIFICA }))
     fireEvent.click(await screen.findByRole('button', { name: 'Salva' }))
     expect(await screen.findByText('Iscrizione aggiornata')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: NOME_ELIMINA }))
+    fireEvent.click(await screen.findByRole('button', { name: NOME_ELIMINA }))
     expect(screen.queryByText('Iscrizione aggiornata')).toBeNull()
   })
 })

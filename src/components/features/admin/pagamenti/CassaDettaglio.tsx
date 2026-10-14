@@ -116,7 +116,7 @@ function Paginazione({ pagina, conteggio, bloccata, cambia }: { pagina: number; 
   const ultima = bloccata || pagina * 50 >= conteggio;
   return <nav aria-label={t('cassaDetPaginazione')} aria-busy={bloccata} className="flex flex-wrap items-center justify-between gap-3">
     <button type="button" aria-disabled={prima} onClick={() => { if (!prima) cambia(pagina - 1); }} className={cx(BTN_SECONDARY, prima && 'cursor-not-allowed opacity-50')}>{t('cassaDetPrecedente')}</button>
-    <p role="status" className="font-maven text-sm text-kidville-sub">{t('cassaDetPagina', { pagina, pagine: Math.max(1, Math.ceil(conteggio / 50)), n: conteggio })}</p>
+    {!bloccata && <p role="status" className="font-maven text-sm text-kidville-sub">{t('cassaDetPagina', { pagina, pagine: Math.max(1, Math.ceil(conteggio / 50)), n: conteggio })}</p>}
     <button type="button" aria-disabled={ultima} onClick={() => { if (!ultima) cambia(pagina + 1); }} className={cx(BTN_SECONDARY, ultima && 'cursor-not-allowed opacity-50')}>{t('cassaDetSuccessiva')}</button>
   </nav>;
 }

@@ -58,6 +58,7 @@ describe('Dettaglio cassa paginato', () => {
     rerender(<CassaDettaglio userId="u" scuolaId={null} tipo="uscita" refreshKey={1} />);
     await screen.findByRole('alert');
     expect(screen.queryByText('Nessun movimento corrisponde ai filtri.')).toBeNull();
+    expect(screen.getByRole('navigation', { name: 'Paginazione dei movimenti' }).textContent).not.toContain('0 movimenti');
     fn.mockResolvedValue(json(staff));
     fireEvent.click(screen.getByRole('button', { name: 'Riprova' }));
     await screen.findByText('uscita-prima');

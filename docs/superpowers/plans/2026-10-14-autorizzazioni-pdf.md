@@ -15,9 +15,9 @@
 - [x] Recupero batch idempotente delle firme storiche e integrazione dei file nei percorsi esistenti di oblio/cancellazione. Dry-run e test su guasti/ambiguità senza dati reali nelle fixture.
 - [x] Revisione requisiti di recupero/oblio, poi qualità e revisione finale dell'intervento.
 - [x] Renderizzare tutti i PDF di prova e ispezionare tutte le pagine; eseguire ESLint, typecheck, Vitest completo e build.
-- [ ] PRD allineato, commit sul branch esistente, push e PR collegata; attendere CI qualità + E2E verdi.
-- [ ] Merge e deploy; misure SQL aggiornate e recupero storico; verificare file reali e anomalie residue, versione distribuita, salute e workflow dopo deploy.
-- [ ] Registrare risultati nel PRD e pulire i branch secondari solo dopo tutte le verifiche.
+- [x] PRD allineato, commit sul branch esistente, push e PR collegata; attendere CI qualità + E2E verdi.
+- [x] Merge e deploy; misure SQL aggiornate e recupero storico; verificare file reali e anomalie residue, versione distribuita, salute e workflow dopo deploy.
+- [x] Registrare risultati nel PRD e pulire i branch secondari solo dopo tutte le verifiche.
 
 ## Criteri di accettazione
 
@@ -42,3 +42,15 @@ La firma digitale accettata crea uno snapshot immutabile e un PDF completo realm
 - Gate locali conclusivi: ESLint zero warning e typecheck exit 0; Vitest completo **30.602/30.602 test, 1.797/1.797 file**, exit 0; build e postbuild exit 0, artefatto senza segnaposto su 3.012 file JavaScript. Playwright resta alla CI isolata.
 - CI iniziale: qualità e build PASS (30.600 test passati, due condizionali su Node 22); E2E 166 passati, nuovo scenario interrotto durante il caricamento iniziale dell’archivio. Readiness corretta con risposte API autorevoli e loader reale, senza ridurre asserzioni o aggiungere retry. Ricontrollo requisiti e qualità PASS; il prossimo CI deve confermare il percorso completo prima del merge.
 - CI secondo giro: qualità/build PASS; OTP, PDF archiviato, download genitore, riepilogo e download staff PASS. Negativo anonimo fermato dalla sessione genitore ereditata nei contesti manuali Playwright: `storageState` ora vuoto esplicito per anonimo e login fuori scope, con verifica dei soli conteggi prima delle richieste. Status 401/403/404, hash, retry zero, trace disattivato e guardia CI invariati. Typecheck ed ESLint del fix PASS; revisione requisiti PASS e successiva revisione qualità PASS. Il nuovo CI deve confermare i negativi prima del merge.
+
+## Esito del rilascio applicativo — 14/10/2026
+
+PR #229 mergeata in `main`, commit `4ab712130d184db74188dc903862994c034697de`. Tutti i gate PR verdi: 30.600 test CI passati (due condizionali Node 22), build e 167 Playwright passati, cinque condizionali e nessun test instabile. Il quality ha richiesto il rilancio del solo job dopo un test chat non modificato e non riproducibile in sei esecuzioni isolate; nessuna asserzione ridotta o test escluso.
+
+Produzione: versione corretta, HTTP 200, salute `ok`, `dub1`; download senza sessione e con ruolo contraffatto rifiutato con 401 senza cache. Workflow «Verifica dopo il deploy» 38584607409 PASS.
+
+Conteggi aggiornati prima dell’applicazione: `SELECT count(*) FROM enrollment_submissions;` → 729; 105 firme OTP, 105 PDF mancanti, zero cartacei e zero anomalie. Archiviati 105 PDF, firme e date originali conservate. Un timeout nel download della prima verifica è risolto dal ricontrollo completo: 105 file presenti, zero mancanti e zero anomalie; tutte le impronte documentali sono distinte dall’OTP e tutti gli snapshot dichiarano la ricostruzione. Il secondo apply termina exit 0 con zero nuovi documenti. Il branch applicativo è stato eliminato localmente e da origin dopo il rilascio verificato.
+
+## Correzione emersa durante l’attestazione
+
+Il CI della PR #230 ha concluso tutti i 30.600 test ma ha segnalato un’eccezione asincrona: il timer di una notifica aggiornava la pagina Modulistica già smontata. La riproduzione deterministica individua anche la scadenza anticipata del messaggio successivo e una risposta tardiva che ricrea il timer dopo unmount. Tre test RED→GREEN e 39 test mirati verificano timeout unico, annullamento su sostituzione/chiusura e guardia sulle risposte tardive; typecheck ed ESLint dell’area verdi. Il logger riceve soltanto metadati statici. Revisione requisiti PASS e successiva revisione qualità PASS, con 18 test indipendenti verdi; ESLint completo zero warning e typecheck exit 0. Il nuovo CI e la verifica del rilascio seguono il fix prima della pulizia finale.

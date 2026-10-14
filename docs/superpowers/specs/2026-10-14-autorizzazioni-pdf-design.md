@@ -33,3 +33,9 @@ Un timeout del client non prova che lo Storage abbia interrotto il caricamento. 
 Test red-green prima della correzione; verifiche di snapshot/hash, upload, guasti e concorrenza, autorizzazioni e isolamento delle tre sedi, recupero e oblio dei file. PDF reali con dati fittizi e testi lunghi vengono renderizzati e ispezionati su tutte le pagine. Gate: ESLint zero warning, typecheck, Vitest completo, build, Playwright in CI. Logging di errori e successi con redazione dei dati personali.
 
 Si continua sul branch esistente, si aggiorna il PRD nello stesso intervento e si passa da PR, CI e deploy. Prima del recupero in produzione si contano i dati con SELECT e si mostrano le operazioni. Dopo il deploy si verifica il commit servito e la salute del sito; solo allora si eliminano i branch secondari. Il rilascio autonomo è autorizzato dall'utente.
+
+## Stato verificato — 14/10/2026
+
+Implementazione rilasciata con PR #229 (`4ab71213`), gate qualità/build/Playwright verdi e verifica dopo il deploy PASS. Recuperate 105 autorizzazioni OTP con 105 PDF reali, snapshot storici dichiarati e impronte documentali distinte; firma e data originali conservate. Ricontrollo: zero documenti mancanti e zero anomalie; secondo batch idempotente, senza nuove firme o nuovi documenti. Evidenze e conteggi aggiornati sono nel PRD e nel piano.
+
+Le notifiche della segreteria hanno un solo timer attivo, annullato quando vengono sostituite o la pagina si chiude. Le risposte tardive non creano timer su una pagina già smontata; l’ultimo messaggio resta visibile per tre secondi. La diagnostica non include il testo dei messaggi né dati personali.

@@ -47,6 +47,8 @@ File: `CassaReport.tsx`, `ContabilitaNav.tsx`, `src/app/(dashboard)/admin/pagame
 
 - [x] Aggiornare PRD con stato e limiti reali; revisionare aderenza alla specifica e qualità con agenti separati.
 - [x] Eseguire `npx eslint . --max-warnings 0`, `npx vitest run`, `npm run build` e correggere ogni errore.
-- [ ] Commit, push e PR; attendere tutti i gate CI, compreso Playwright. Migrazione solo dall'integrazione al merge. Verificare rilascio prima della pulizia dei branch.
+- [x] Commit, push e PR; attendere tutti i gate CI, compreso Playwright. Migrazione solo dall'integrazione al merge. Verificare rilascio prima della pulizia dei branch.
+
+Verifica finale 15/10/2026: PR #231 mergeata (`9338857b14d6`), CI e verifica dopo il deploy verdi, funzione applicata una sola volta, privilegi e scope vuoto verificati via SQL/REST; fotografia reale a 221 migrazioni, lock 11/11 PASS, advisor 0 ERROR. Branch applicativo eliminato dopo il rilascio verificato; l’allineamento della fotografia e del PRD prosegue sul nuovo branch secondario `codex/contabilita-verifica-rilascio`.
 
 Autoverifica del piano: ogni requisito della specifica è coperto dai punti 1–4; la stessa risposta e gli stessi tipi sono usati dalla route e dall'elenco; nessun conteggio o somma derivato da righe tagliate da PostgREST.

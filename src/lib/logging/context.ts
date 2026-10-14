@@ -80,6 +80,16 @@ const als = new AsyncLocalStorage<ContestoRichiesta>();
  */
 const alsLogger = new AsyncLocalStorage<true>();
 
+/** Solo questa catena (dry-run) osserva senza scrivere audit nel database. */
+const alsSoloConsole = new AsyncLocalStorage<true>();
+export function conLogSoloConsole<T>(fn: () => Promise<T>): Promise<T> {
+    // run propaga risultato ed errori applicativi e non contamina le richieste sorelle.
+    return alsSoloConsole.run(true, fn);
+}
+export function logSoloConsole(): boolean {
+    return alsSoloConsole.getStore() === true;
+}
+
 /**
  * Il contesto è di SOLA LETTURA. Le scritture passano da `impostaUtente`/`impostaPayload`,
  * che sono i due punti dove valgono redazione, cap e conteggio degli slot. Consegnare lo

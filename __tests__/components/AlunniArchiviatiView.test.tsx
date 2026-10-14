@@ -770,7 +770,7 @@ describe('AlunniArchiviatiView — «Elimina definitivamente»', () => {
         dryrun: true,
         conteggi: {
             presenze: 0, diario: 0, legami_genitori: 0, pagamenti: 0, pagamenti_bloccati: 0, registro_primaria: false,
-            pagelle: 0, certificati_medici: 0, fascicolo_sanitario: 0, foto_solo_sue: 0, foto_di_gruppo: 0,
+            pagelle: 0, certificati_medici: 0, fascicolo_sanitario: 0, moduli_genitori: 0, foto_solo_sue: 0, foto_di_gruppo: 0,
             foto_non_rimovibili: 0, articoli_pubblici: 0, allegati_chat: 0,
         },
         scelte: { elimina: true, elimina_con_pagamenti: false, anonimizza: false },

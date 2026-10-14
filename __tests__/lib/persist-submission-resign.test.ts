@@ -1,47 +1,29 @@
 import { describe, it, expect } from 'vitest'
 import { persistSignedSubmission } from '@/lib/forms/persist-submission'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { signedFormsClient, FORM, PARENT, STUDENT, SUBMISSION, ORIGINAL_SIGNATURE } from '../fixtures/signed-forms'
 
 // M5 — ri-firma vietata: una sola forms_submissions FIRMATA per (form_id, student_id).
 // Difesa in profondità: pre-check applicativo + traduzione del vincolo DB (23505 → 409).
 
-const TEMPLATE = { id: 'form-1', fields: [] }
 
 type QueryResult = { data: unknown; error: unknown }
 
-/**
- * Mock table-aware con code di risultati per tabella (FIFO). Le chiavi note:
- *  - forms_templates.single → template
- *  - forms_submissions.maybeSingle → pre-check firma esistente
- *  - forms_submissions.single (dopo insert().select()) → esito INSERT
- */
-function makeClient(opts: {
-  precheck?: QueryResult
-  insert?: QueryResult
-}): SupabaseClient {
-  return {
-    from(table: string) {
-      const qb: Record<string, unknown> = {}
-      for (const m of ['select', 'insert', 'update', 'eq', 'limit', 'in']) qb[m] = () => qb
-      qb.single = () => {
-        if (table === 'forms_templates') return Promise.resolve({ data: TEMPLATE, error: null })
-        // forms_submissions insert().select().single()
-        return Promise.resolve(opts.insert ?? { data: { id: 'sub-1' }, error: null })
-      }
-      qb.maybeSingle = () => {
-        if (table === 'forms_submissions') return Promise.resolve(opts.precheck ?? { data: null, error: null })
-        return Promise.resolve({ data: null, error: null })
-      }
-      return qb
-    },
-  } as unknown as SupabaseClient
+/** Il finto applica filtri reali; il pre-check e il vincolo insert falliscono prima di mutare. */
+function makeClient(opts: { precheck?: QueryResult; insert?: QueryResult }): SupabaseClient {
+  const f = signedFormsClient()
+  if (!opts.precheck?.data) f.db.forms_submissions = []
+  if (opts.precheck?.error) f.faults['forms_submissions:select'] = opts.precheck.error
+  if (opts.insert?.error) f.faults['forms_submissions:insert'] = opts.insert.error
+  return f.client
 }
 
 const baseInput = {
-  form_id: 'form-1',
-  parent_id: 'parent-1',
-  student_id: 'student-1',
-  answers: {},
+  form_id: FORM,
+  parent_id: PARENT,
+  student_id: STUDENT,
+  answers: { accept: true },
+  signature_log: ORIGINAL_SIGNATURE,
   is_signed: true,
 }
 
@@ -63,13 +45,13 @@ describe('persistSignedSubmission — ri-firma vietata (M5)', () => {
     const supabase = makeClient({})
     const r = await persistSignedSubmission(supabase, baseInput)
     expect(r.status).toBe(201)
-    expect(r.submission).toMatchObject({ id: 'sub-1' })
+    expect(r.submission).toMatchObject({ id: SUBMISSION })
   })
 
-  it('degrada pulito se is_signed column assente al pre-check (42703) → prosegue all’INSERT', async () => {
+  it('se il pre-check non può verificare le firme (42703) si ferma senza inserirne altre', async () => {
     const supabase = makeClient({ precheck: { data: null, error: { code: '42703' } } })
     const r = await persistSignedSubmission(supabase, baseInput)
-    expect(r.status).toBe(201)
+    expect(r.status).toBe(500)
   })
 
   it('non applica il vincolo alle submission NON firmate (onboarding pending)', async () => {

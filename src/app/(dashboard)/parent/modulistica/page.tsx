@@ -28,6 +28,7 @@ import { dataCivile } from '@/i18n/config';
 import { decidiStatoElenco } from '@/lib/ui/filtri/motore';
 import { useFiltri } from '@/lib/ui/filtri/use-filtri';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { downloadSignedForm } from '@/lib/forms/signed-download';
 import { scaricaDocumento } from '@/lib/native/scarica';
 import { avvisoDocumento } from '@/lib/native/documento-genitore';
 import {
@@ -99,7 +100,7 @@ interface SignedArchiveItem {
   id: string;
   answers: Record<string, unknown>;
   is_signed: boolean;
-  pdf_path: string;
+  pdf_path: string | null;
   created_at: string;
   /** `online` = firmato dalla famiglia · `cartaceo` = scansione acquisita dallo staff. */
   origine?: string | null;
@@ -224,6 +225,8 @@ function ContenutoModulistica() {
   const [compilingForm, setCompilingForm] = useState<AssignedForm | null>(null);
   const [formAnswers, setFormAnswers] = useState<Record<string, AnswerValue>>({});
   // Firma OTP via email (FES)
+  const [pdfPending, setPdfPending] = useState<string | null>(null);
+  const [documentBusy, setDocumentBusy] = useState<string | null>(null);
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otpSession, setOtpSession] = useState<{ email: string | null; expiry: number; ticket: string; devCode?: string } | null>(null);
 
@@ -434,12 +437,13 @@ function ContenutoModulistica() {
       // cui esiste il locale, quindi la traduzione avviene qui e non lì (T10-F1).
       if (!res.ok) return { ok: false, error: soloCatalogoDaCorpo(json, t('modulisticaVerificaFallita')) };
 
-      // La ricevuta la DISEGNA IL SERVER, sulla carta intestata vera: qui si chiede
-      // soltanto, con l'id della submission appena creata. Se il server non lo
-      // restituisce non si inventa niente — la ricevuta resta nell'Archivio firmati,
-      // dove ha il suo pulsante.
+      // La firma è già registrata: disponibilità e consegna del documento sono
+      // recuperabili dalla stessa compilazione, senza un altro codice OTP.
       const submissionId = (json?.submission as { id?: string } | undefined)?.id;
-      if (submissionId) void apriRicevutaFirma(submissionId);
+      if (submissionId) {
+        if (json.pdf_ready === true) void apriDocumentoFirmato(submissionId, true);
+        else setPdfPending(submissionId);
+      }
 
       // La modale mostra l'esito; chiudiamo e ricarichiamo dopo un attimo
       setTimeout(() => {
@@ -450,8 +454,27 @@ function ContenutoModulistica() {
       }, 1600);
 
       return { ok: true };
-    } catch {
+    } catch (error) {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `modulistica-verifica-firma-fallita: ${nomeErrore(error)}`, route: '/parent/modulistica' });
       return { ok: false, error: t('modulisticaErrRete') };
+    }
+  };
+
+  const apriDocumentoFirmato = async (submissionId: string, alreadyPrepared = false) => {
+    setDocumentBusy(submissionId);
+    try {
+      const result = await downloadSignedForm(submissionId, { alreadyPrepared });
+      if (result.ok) {
+        setPdfPending((current) => current === submissionId ? null : current);
+        showToastMsg(t('modulisticaDocumentoScaricato'));
+      } else if (result.pdf_unavailable) {
+        setPdfPending(submissionId);
+      } else {
+        const avviso = result.delivery ? avvisoDocumento(result.delivery) : 'riprova';
+        showToastMsg(ts(avviso === 'aggiorna' ? 'documentoAppDaAggiornare' : 'documentoNonSalvato'));
+      }
+    } finally {
+      setDocumentBusy(null);
     }
   };
 
@@ -882,6 +905,15 @@ function ContenutoModulistica() {
             </div>
           )}
 
+          {pdfPending && (
+            <div role="status" className="rounded-card border border-kidville-line bg-kidville-warn-soft p-4 space-y-3">
+              <p className="font-maven text-sm text-kidville-ink">{t('modulisticaFirmaPdfNonDisponibile')}</p>
+              <Btn variant="ghost" size="sm" disabled={documentBusy === pdfPending} onClick={() => void apriDocumentoFirmato(pdfPending)}>
+                <Download size={14} /> {t('modulisticaRiprovaDocumento')}
+              </Btn>
+            </div>
+          )}
+
           {/* TAB 2: Archivio Firmati */}
           {activeTab === 'archivio' && (
             <div className="space-y-4">
@@ -914,6 +946,10 @@ function ContenutoModulistica() {
                       </div>
                     </div>
 
+                    <div className="flex flex-wrap gap-2 self-start md:self-auto">
+                    <Btn variant="ghost" size="sm" disabled={documentBusy === item.id} onClick={() => void apriDocumentoFirmato(item.id)}>
+                      <Download size={14} /> {t('modulisticaScaricaAutorizzazione')}
+                    </Btn>
                     <Btn
                       variant="ghost"
                       size="sm"
@@ -922,6 +958,7 @@ function ContenutoModulistica() {
                     >
                       <Download size={14} /> {t('modulisticaRicevutaPdf')}
                     </Btn>
+                    </div>
                   </div>
                 ))}
             </div>

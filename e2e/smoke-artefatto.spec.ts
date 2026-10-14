@@ -44,6 +44,11 @@ test.use({ storageState: STORAGE.genitore });
 /** Le rotte del genitore che il guasto aveva messo a terra, e che una sessione raggiunge. */
 const ROTTE = [
   {
+    nome: 'forms/signed-pdf:POST',
+    url: '/api/forms/signed-pdf',
+    corpo: { id: '00000000-0000-4000-8000-000000000000' },
+  },
+  {
     nome: 'comunica-assenza:POST',
     url: '/api/parent/presenze/comunica-assenza',
     corpo: { studentId: '00000000-0000-4000-8000-000000000000', data: '2099-12-31' },

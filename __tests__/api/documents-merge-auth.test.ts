@@ -15,7 +15,7 @@ const h = vi.hoisted(() => {
     // per un difetto del mock, non del codice.
     qb.in = () => qb
     qb.maybeSingle = () =>
-      Promise.resolve({ data: { id: 'f1', title: 'Modulo', description: '', fields: [] }, error: null })
+      Promise.resolve({ data: { id: 'f1', scuola_id: 'sc1', title: 'Modulo', description: '', fields: [] }, error: null })
     // `sections` deve risolvere la classe DENTRO il plesso dell'utente, altrimenti
     // lo scope nega 403; alunni / forms_submissions restano liste vuote.
     ;(qb as { then: unknown }).then = (res: (v: { data: unknown; error: null }) => unknown) =>

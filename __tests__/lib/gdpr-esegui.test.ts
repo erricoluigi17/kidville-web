@@ -128,6 +128,7 @@ function makeFake(cfg: Cfg) {
       b.is = () => b
       b.or = (filter: string) => { orFilters.push({ table, filter }); return b }
       b.like = () => b
+      b.limit = () => b
       b.order = () => b
       b.range = () => b
       b.ilike = (col: string, pattern: string) => { state.ilike = { col, pattern }; return b }

@@ -48,6 +48,7 @@ const SULLA_CARTA: Record<string, string> = {
   'src/lib/prestampati/impaginazione.ts': 'i 17 prestampati — il motore di riferimento',
   'src/lib/protocolli/documento-pdf.ts': 'documenti su richiesta, protocollati in uscita',
   'src/lib/fea/receipt-pdf.ts': 'ricevuta di firma FEA (senza pulsante, ma non diverge)',
+  'src/lib/forms/signed-pdf.ts': 'modulo genitori completo firmato — snapshot immutabile e archivio privato',
   'src/lib/presenze/registro-pdf.ts': "registro presenze — l'unico foglio orizzontale",
   'src/lib/merch/pdf.ts': "ordine al fornitore — l'unico che esce verso un terzo",
 }
@@ -116,9 +117,10 @@ const FUORI_PERIMETRO: Record<string, string> = {
     "730) e una banda della scuola in cima non aggiunge nulla e costa 1,1 MB a foglio.",
   'src/app/api/forms/export/delibera/route.ts':
     'export di lavoro del Sistema B, uso interno.',
-  'src/app/(dashboard)/admin/modulistica/page.tsx':
-    'stampa di servizio della segreteria, generata nel browser: la carta non può entrare in ' +
-    'un bundle client (lock `carta-fuori-dal-bundle-client`).',
+  'src/lib/forms/authorization-summary-pdf.ts':
+    'riepilogo interno della segreteria, ora generato sul server: è una stampa di servizio ' +
+    'con esiti, conteggi e date, non un atto emesso dalla scuola. Il documento completo ' +
+    'sottoscritto è invece su carta intestata in signed-pdf.ts.',
 }
 
 /** Ogni file di `src/` che costruisce un documento jsPDF, commenti esclusi. */

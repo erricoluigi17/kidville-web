@@ -26,7 +26,8 @@ import {
   campiModuliGenitori,
   opzioniClasseModuli,
 } from '@/components/features/admin/iscrizioni/filtri-moduli-genitori';
-import { formattaIstante } from '@/i18n/config';
+import { downloadSignedForm, prepareSignedForm } from '@/lib/forms/signed-download';
+import type { AuthorizationState } from '@/lib/forms/authorization-status';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica';
 
@@ -61,8 +62,13 @@ interface ProtocollaItem {
   nome_alunno: string;
   cognome_alunno: string;
   signed: boolean;
+  is_signed?: boolean;
+  signed_at?: string | null;
+  stato_autorizzazione?: AuthorizationState;
   submission_id?: string;
   pdf_path?: string | null;
+  /** Pronto solo dopo una verifica Storage del server, mai dal percorso legacy. */
+  pdf_verified?: boolean;
   origine?: string;
   created_at?: string;
 }
@@ -88,11 +94,6 @@ function defaultFieldForType(formType: FormType): FormField {
   if (formType === 'gradimento') return { id: 'f_1', type: 'rating', label: '', required: true };
   if (formType === 'autorizzazione') return { id: 'f_1', type: 'checkbox', label: '', required: true };
   return { id: 'f_1', type: 'text', label: '', required: true };
-}
-
-// Hash FES di fallback per il report PDF quando il log firma non contiene l'hash reale
-function fallbackFesHash(): string {
-  return 'FES-OK-' + Math.random().toString(16).substring(2, 10).toUpperCase();
 }
 
 /**
@@ -170,6 +171,7 @@ function ModulisticaInner() {
 
   // «Protocolla» moduli firmati (registro protocolli)
   const [protocollaTarget, setProtocollaTarget] = useState<{ form: FormTemplate; className: string; items: ProtocollaItem[] } | null>(null);
+  const [documentBusy, setDocumentBusy] = useState<string | null>(null);
   const [protocollaBusy, setProtocollaBusy] = useState<string | null>(null);
   const [protocollati, setProtocollati] = useState<Record<string, string>>({});
 
@@ -341,143 +343,111 @@ function ModulisticaInner() {
   const apriProtocolla = async (form: FormTemplate, className: string) => {
     showToastMsg(t('modToastCercoModuli'));
     try {
-      const res = await fetch(`/api/admin/documents-merge?form_id=${form.id}&class_name=${className}`);
+      const query = new URLSearchParams({ form_id: form.id, class_name: className });
+      const res = await fetch(`/api/admin/documents-merge?${query}`, { cache: 'no-store' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || t('modErroreCaricamentoModuli'));
-      const firmati = ((data.results || []) as ProtocollaItem[]).filter((r) => r.signed && r.pdf_path && r.submission_id);
+      const firmati = ((data.results || []) as ProtocollaItem[]).filter((r) => r.is_signed === true && r.submission_id);
       if (firmati.length === 0) {
         showToastMsg(t('modToastNessunModuloFirmato'));
         return;
       }
-      setProtocollaTarget({ form, className, items: firmati });
-    } catch {
+      setProtocollaTarget({ form, className, items: firmati.map((item) => ({ ...item, pdf_verified: false })) });
+    } catch (error) {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `moduli-firmati-lettura-fallita: ${nomeErrore(error)}`, route: '/admin/modulistica' });
       showToastMsg(t('modToastErroreCaricamentoModuli'));
     }
   };
 
   const protocollaModulo = async (submissionId: string) => {
+    if (!protocollaTarget?.items.find((item) => item.submission_id === submissionId)?.pdf_verified) return;
     setProtocollaBusy(submissionId);
     try {
+      // Una verifica precedente non autorizza un file diventato indisponibile.
+      // Il server recupera il PDF digitale o verifica la scansione originale.
+      const prepared = await prepareSignedForm(submissionId);
+      if (!prepared.pdf_ready || !prepared.pdf_path) {
+        aggiornaDocumentoPronto(submissionId, null);
+        showToastMsg(t('modFirmaPdfNonDisponibile'));
+        return;
+      }
+      aggiornaDocumentoPronto(submissionId, prepared.pdf_path);
       const res = await fetch('/api/admin/protocolli/da-documento', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sorgente: 'modulo_firmato', id: submissionId }),
       });
       const data = await res.json();
-      if (!res.ok) { showToastMsg(`❌ ${data.error ?? t('modProtocollazioneNonRiuscita')}`); return; }
+      if (!res.ok) {
+        aggiornaDocumentoPronto(submissionId, null);
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: 'modulistica-protocollo-rifiutato', stato: res.status, route: '/admin/modulistica' });
+        showToastMsg(`❌ ${data.error ?? t('modProtocollazioneNonRiuscita')}`);
+        return;
+      }
       const numero = data.data?.numeroFormattato ?? '';
       setProtocollati((prev) => ({ ...prev, [submissionId]: numero }));
+      // /api/logs ammette warn/error anche per gli esiti positivi del client.
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: 'modulistica-protocollo-riuscito', route: '/admin/modulistica' });
       showToastMsg(t('modToastProtocollato', { numero }));
-    } catch {
+    } catch (error) {
+      aggiornaDocumentoPronto(submissionId, null);
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `modulistica-protocollo-fallito: ${nomeErrore(error)}`, route: '/admin/modulistica' });
       showToastMsg(t('modToastErroreReteProtocollo'));
     } finally {
       setProtocollaBusy(null);
     }
   };
 
-  // Merge PDF Simulator & Exporter (Client-side jsPDF)
+  const aggiornaDocumentoPronto = (submissionId: string, pdfPath: string | null) => {
+    setProtocollaTarget((current) => current ? {
+      ...current,
+      items: current.items.map((item) => item.submission_id === submissionId
+        ? { ...item, pdf_path: pdfPath ?? item.pdf_path, pdf_verified: pdfPath !== null }
+        : item),
+    } : current);
+  };
+
+  const preparaModuloFirmato = async (submissionId: string) => {
+    setDocumentBusy(submissionId);
+    try {
+      const result = await prepareSignedForm(submissionId);
+      const path = result.pdf_ready && result.pdf_path ? result.pdf_path : null;
+      aggiornaDocumentoPronto(submissionId, path);
+      showToastMsg(path ? t('modDocumentoPronto') : t('modFirmaPdfNonDisponibile'));
+    } finally {
+      setDocumentBusy(null);
+    }
+  };
+
+  const scaricaModuloFirmato = async (submissionId: string) => {
+    setDocumentBusy(submissionId);
+    try {
+      const result = await downloadSignedForm(submissionId);
+      aggiornaDocumentoPronto(submissionId, !result.pdf_unavailable && result.pdf_path ? result.pdf_path : null);
+      showToastMsg(result.ok ? t('modDocumentoScaricato') : result.pdf_unavailable ? t('modFirmaPdfNonDisponibile') : t('modDocumentoNonSalvato'));
+    } finally {
+      setDocumentBusy(null);
+    }
+  };
+
   const handleExportMergePDF = async (form: FormTemplate, className: string) => {
     showToastMsg(t('modToastGenerazioneReport'));
     try {
-      const res = await fetch(`/api/admin/documents-merge?form_id=${form.id}&class_name=${className}`);
-      const data = await res.json();
-
-      if (!res.ok) throw new Error(data.error || t('modErroreCaricamentoMerge'));
-
-      // M9.4: jsPDF caricato on-demand solo quando si esporta (fuori dal bundle
-      // della pagina). L'import statico di jspdf-autotable è stato RIMOSSO:
-      // autoTable non è mai usato in questo file.
-      const { jsPDF } = await import('jspdf');
-      const doc = new jsPDF();
-      const results = data.results || [];
-
-      doc.setFont('Helvetica', 'bold');
-      doc.setFontSize(18);
-      doc.text(t('modPdfTitolo', { classe: className }), 20, 20);
-
-      doc.setFontSize(12);
-      doc.text(t('modPdfModulo', { titolo: form.title }), 20, 30);
-      doc.text(t('modPdfDescrizione', { descrizione: form.description || t('modPdfNessuna') }), 20, 37);
-      doc.text(t('modPdfDataStampa', { data: formattaIstante(new Date(), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }) }), 20, 44);
-      
-      doc.setDrawColor(0, 106, 95); // Kidville Green
-      doc.setLineWidth(1);
-      doc.line(20, 50, 190, 50);
-
-      let yOffset = 60;
-
-      for (let i = 0; i < results.length; i++) {
-        const item = results[i];
-        
-        // Verifica spazio pagina
-        if (yOffset > 240) {
-          doc.addPage();
-          yOffset = 20;
-        }
-
-        doc.setFont('Helvetica', 'bold');
-        doc.setFontSize(11);
-        doc.text(t('modPdfAlunno', { n: i + 1, cognome: item.cognome_alunno, nome: item.nome_alunno }), 20, yOffset);
-
-        doc.setFont('Helvetica', 'normal');
-        doc.setFontSize(10);
-
-        if (item.signed) {
-          doc.setTextColor(67, 160, 71); // Success Green
-          doc.text(
-            item.origine === 'cartaceo'
-              ? t('modPdfStatoAutorizzatoCartaceo')
-              : t('modPdfStatoAutorizzatoFes'),
-            20, yOffset + 6
-          );
-
-          doc.setTextColor(80, 80, 80);
-          doc.text(t('modPdfTimestamp', { ts: new Date(item.created_at).toLocaleString('it-IT', { timeZone: 'UTC' }) }), 20, yOffset + 12);
-          doc.text(t('modPdfIpClient', { ip: item.signature_log?.ip || t('modNd') }), 20, yOffset + 18);
-          doc.text(t('modPdfUserAgent', { ua: item.signature_log?.user_agent?.substring(0, 70) || t('modNd') }), 20, yOffset + 24);
-          doc.text(t('modPdfHashFes', { hash: item.signature_log?.hash || fallbackFesHash() }), 20, yOffset + 30);
-
-          yOffset += 40;
-        } else {
-          doc.setTextColor(229, 57, 53); // Error Red
-          doc.text(t('modPdfStatoNonAutorizzato'), 20, yOffset + 6);
-
-          doc.setTextColor(120, 120, 120);
-          doc.text(t('modPdfInAttesa'), 20, yOffset + 12);
-
-          yOffset += 22;
-        }
-
-        doc.setTextColor(0, 0, 0);
-        doc.setDrawColor(230, 230, 230);
-        doc.line(20, yOffset - 2, 190, yOffset - 2);
-        yOffset += 6;
+      const query = new URLSearchParams({ form_id: form.id, class_name: className, format: 'pdf' });
+      const res = await fetch(`/api/admin/documents-merge?${query}`, { cache: 'no-store' });
+      if (!res.ok) {
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: 'modulistica-riepilogo-rifiutato', stato: res.status, route: '/admin/modulistica' });
+        showToastMsg(t('modErroreCaricamentoMerge'));
+        return;
       }
-
-      // NON `doc.save()`: sul web è un'ancora `download` su un `blob:`, che nella WebView
-      // dell'app non scarica niente e non lancia — e il toast diceva «scaricato» lo stesso.
-      // Il Blob passa all'helper unico: sul web lo scarica come prima, nell'app apre il
-      // foglio «Salva su File». Il toast segue l'ESITO; il log (successo compreso) lo scrive
-      // l'helper, senza nome del file (porta titolo del modulo e classe).
       const esito = await scaricaDocumento({
-        sorgente: doc.output('blob'),
-        nomeFile: `Cumulative_${form.title.replace(/\s+/g, '_')}_${className}.pdf`,
-        mime: 'application/pdf',
-        etichetta: 'modulistica-cumulativo',
+        sorgente: await res.blob(), nomeFile: `riepilogo-autorizzazioni-${form.id.slice(0, 8)}.pdf`,
+        mime: 'application/pdf', etichetta: 'modulistica-cumulativo',
       });
-      showToastMsg(
-        fileConsegnato(esito) ? t('modToastReportScaricato') : `❌ ${t('modErroreEsportazione')}`,
-      );
+      showToastMsg(fileConsegnato(esito) ? t('modToastReportScaricato') : t('modErroreEsportazione'));
     } catch (err) {
-      // Un `catch` che non logga è un bug (AGENTS.md §6). Nel log va solo la classe
-      // dell'errore: il messaggio può ripetere dati della classe.
-      logClient({
-        livello: 'error',
-        evento: 'fetch',
-        messaggio: `modulistica-cumulativo-non-generato: ${nomeErrore(err)}`,
-        route: '/admin/modulistica',
-      });
-      showToastMsg(`❌ ${(err as { message?: string })?.message || t('modErroreEsportazione')}`);
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `modulistica-cumulativo-non-generato: ${nomeErrore(err)}`, route: '/admin/modulistica' });
+      showToastMsg(t('modErroreEsportazione'));
     }
   };
 
@@ -851,9 +821,26 @@ function ModulisticaInner() {
                   <div className="min-w-0">
                     <p className="truncate font-maven text-sm font-semibold text-kidville-ink">{item.cognome_alunno} {item.nome_alunno}</p>
                     <p className="font-maven text-[11.5px] text-kidville-muted">
-                      {t('modFirmato')} {item.origine === 'cartaceo' ? t('modCartaceoAcquisito') : t('modFesDigitale')}{item.created_at ? ` ${t('modIlData', { data: f.dataBreve(item.created_at) })}` : ''}
+                      {t('modFirmato')} {item.origine === 'cartaceo' ? t('modCartaceoAcquisito') : t('modFesDigitale')}{item.signed_at ? ` ${t('modIlData', { data: f.dataBreve(item.signed_at) })}` : ''}
                     </p>
                   </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                  {!item.pdf_verified && (
+                    <button
+                      onClick={() => void preparaModuloFirmato(item.submission_id!)}
+                      disabled={documentBusy === item.submission_id || protocollaBusy === item.submission_id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-pill border border-kidville-line text-kidville-green font-barlow font-bold text-xs disabled:opacity-50"
+                    >
+                      {t('modPreparaDocumento')}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => void scaricaModuloFirmato(item.submission_id!)}
+                    disabled={documentBusy === item.submission_id || protocollaBusy === item.submission_id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-pill border border-kidville-line text-kidville-green font-barlow font-bold text-xs disabled:opacity-50"
+                  >
+                    <Download size={12} /> {t('modScaricaAutorizzazione')}
+                  </button>
                   {protocollati[item.submission_id ?? ''] ? (
                     <span className="shrink-0 rounded-pill bg-kidville-success-soft px-2.5 py-1 font-maven text-[11.5px] font-bold text-kidville-success">
                       {t('modNumeroProt', { numero: protocollati[item.submission_id ?? ''] })}
@@ -861,12 +848,14 @@ function ModulisticaInner() {
                   ) : (
                     <button
                       onClick={() => protocollaModulo(item.submission_id!)}
-                      disabled={protocollaBusy === item.submission_id}
+                      disabled={protocollaBusy === item.submission_id || documentBusy === item.submission_id || !item.pdf_verified}
+                      title={!item.pdf_verified ? t('modPreparaPrimaProtocollo') : undefined}
                       className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-bold text-[11px] uppercase disabled:opacity-50"
                     >
                       <Stamp size={12} /> {protocollaBusy === item.submission_id ? t('modInCorso') : t('modProtocolla')}
                     </button>
                   )}
+                  </div>
                 </li>
               ))}
             </ul>

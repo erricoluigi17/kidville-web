@@ -199,6 +199,12 @@ const rigaLog = (esito: string) =>
   h.logEvento.mock.calls.find((c) => (c[2] as { esito?: string })?.esito === esito)
 
 describe('POST /api/parent/submissions — la sede della notifica è quella del MODULO', () => {
+  it.each([{ is_signed: true }, { signature_log: { method: 'OTP_EMAIL', hash: 'inventato' } }])('rifiuta una firma dichiarata dal client prima di persistere: %s', async (signature) => {
+    const response = await POST(req({ form_id: MODULO, answers: { x: 1 }, ...signature }))
+    expect(response.status).toBe(400)
+    expect(h.persistSignedSubmission).not.toHaveBeenCalled()
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining('OTP') })
+  })
   it('modulo legato a un bambino: decide il MODULO, non il bambino e tanto meno l’account', async () => {
     // Tre sedi in gioco: l'account è nato in A, il bambino sta in B, il modulo è
     // di C. Solo una di quelle tre è un dato certo, e non è una delle prime due.

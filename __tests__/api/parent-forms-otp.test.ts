@@ -69,7 +69,7 @@ vi.mock('@/lib/pagamenti/sospensione', () => ({
 vi.mock('@/lib/forms/persist-submission', () => ({
   persistSignedSubmission: vi.fn().mockImplementation(async () => {
     h.persistCalls++
-    return { submission: { id: 'sub-1' }, status: 201 }
+    return { submission: { id: 'sub-1' }, status: 201, pdf_ready: false, pdf_error: 'PDF_UPLOAD_FAILED', pdf_message: 'Firma salvata; puoi recuperare il PDF senza OTP' }
   }),
 }))
 
@@ -129,6 +129,7 @@ describe('PATCH /api/parent/forms/otp — anti-replay (M5)', () => {
     const body = firmaBody()
     const r1 = await PATCH(patchReq(body))
     expect(r1.status).toBe(201)
+    expect(await r1.json()).toMatchObject({ pdf_ready: false, pdf_error: 'PDF_UPLOAD_FAILED', submission: { id: 'sub-1' } })
 
     const r2 = await PATCH(patchReq(body))
     expect(r2.status).toBe(409)

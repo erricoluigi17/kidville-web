@@ -19,6 +19,7 @@ import { liberaAccountGenitore, type EsitoAccountOblio } from '@/lib/gdpr/accoun
 import { dimenticaNellaScatolaNera } from '@/lib/gdpr/scatola-nera'
 import { aBlocchi, ID_PER_QUERY, RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { obliaModuliGenitori } from './moduli-genitori'
 
 // =============================================================================
 // Esecuzione dell'oblio, PER SINGOLA ENTITÀ e riusabile.
@@ -326,7 +327,7 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
   form_attachments: {
     stato: 'coperto',
     canali: ['alunno', 'genitore'],
-    come: '`obliaIscrizioni` + `rimuoviFileOblio`: il documento d’identità del minore e quello degli adulti, agganciati per codice fiscale o per percorso dentro la domanda.',
+    come: '`obliaIscrizioni` + `rimuoviFileOblio`: documenti d’identità e domande; `obliaModuliGenitori`: PDF, scansioni e risposte dei moduli genitori, anche con percorso non collegato. Restano i file condivisi e gli originali vincolati al protocollo; le copie nel bucket protocollo sono escluse.',
   },
   gallery: {
     stato: 'coperto',
@@ -1487,6 +1488,7 @@ export async function anonimizzaParent(
   //    ritrova più la domanda d'iscrizione in cui quell'adulto compare — che è
   //    esattamente il modo in cui il difetto era diventato invisibile.
   let pRow: Record<string, unknown> | null = null
+  let ponteLetto = true
   {
     const esteso = await supabase
       .from('parents')
@@ -1497,12 +1499,16 @@ export async function anonimizzaParent(
       // DB E2E della CI non migrato: una colonna in meno non può far perdere
       // anche l'`auth_user_id`, da cui dipendono news/segnalazioni/sospensioni.
       const minimo = await supabase.from('parents').select('auth_user_id').eq('id', parentId).maybeSingle()
-      if (minimo.error && !schemaAssente(minimo.error)) {
+      if (minimo.error) {
+        ponteLetto = false
         logErrore({ operazione: op, evento: 'raccolta_auth_parent' }, minimo.error)
       }
       pRow = (minimo.data as Record<string, unknown> | null) ?? null
     } else {
-      if (esteso.error) logErrore({ operazione: op, evento: 'raccolta_auth_parent' }, esteso.error)
+      if (esteso.error) {
+        ponteLetto = false
+        logErrore({ operazione: op, evento: 'raccolta_auth_parent' }, esteso.error)
+      }
       pRow = (esteso.data as Record<string, unknown> | null) ?? null
     }
   }
@@ -1522,8 +1528,20 @@ export async function anonimizzaParent(
     op,
   )
 
+  // Prima dello sgancio del login: parent_id può essere parents.id oppure utenti.id.
+  const moduli = await obliaModuliGenitori(supabase, { parentIds: [parentId, authUserId] }, op, ponteLetto ? undefined : { righe: [], letto: false })
+
   // 2. Anonimizza il genitore (sgancia anche il login: auth_user_id → null).
-  const { error: errU } = await supabase.from('parents').update(patchParent(parentId, at)).eq('id', parentId)
+  const moduliCompleti = moduli.letto && moduli.nonRimossi === 0 && moduli.protetti === 0
+  let errU: unknown = null
+  if (moduliCompleti) {
+    const result = await supabase.from('parents').update(patchParent(parentId, at)).eq('id', parentId)
+    errU = result.error
+  } else {
+    // Conserviamo il ponte di ricerca per il prossimo tentativo: sganciarlo qui
+    // renderebbe irraggiungibili gli originali la cui rimozione è stata rifiutata.
+    errU = { code: 'MODULI_OBLIO_INCOMPLETO' }
+  }
   if (errU) logErrore({ operazione: op, evento: 'patch_parent' }, errU)
 
   // 3. Oblio del tracciamento di lettura news per quell'identità.
@@ -1734,7 +1752,7 @@ export async function anonimizzaParent(
   //    Usa l'`authUserId` letto al punto 1: `patchParent` l'ha già azzerato.
   const account = await liberaAccountGenitore(
     supabase,
-    { parentId, authUserId, schedaAnonimizzata: !errU, threadChat: threadChatAccount },
+    { parentId, authUserId, schedaAnonimizzata: !errU && moduliCompleti, threadChat: threadChatAccount },
     op,
   )
 
@@ -1754,13 +1772,13 @@ export async function anonimizzaParent(
     iscrizioniScrubbate: iscr.domandeScrubbate,
     // Somma su tutti i bucket, come per l'alunno: il dettaglio per magazzino è
     // nel log di `rimuoviFileOblio`.
-    fileRimossi: esitoFile.rimossi + allegatiChat.rimossi + credenziali.rimossi,
-    fileNonRimossi: esitoFile.nonRimossi + allegatiChat.nonRimossi + credenziali.nonRimossi,
+    fileRimossi: esitoFile.rimossi + allegatiChat.rimossi + credenziali.rimossi + moduli.rimossi,
+    fileNonRimossi: esitoFile.nonRimossi + allegatiChat.nonRimossi + credenziali.nonRimossi + moduli.nonRimossi,
     // Gli inventari NON letti. `obliaPdfCredenziali` non compare qui perché quando
     // non riesce a elencare il bucket lo dice già alzando `nonRimossi` (non ha una
     // tabella-indice: l'elenco È il suo inventario).
     lettureFallite:
-      [iscr.letto, allegatiChat.letto, scatola.completo].filter((l) => l === false).length + chiavi.nonVerificate,
+      [iscr.letto, allegatiChat.letto, scatola.completo, moduli.letto].filter((l) => l === false).length + chiavi.nonVerificate,
     scatolaNeraDimenticate: scatola.righe,
     account,
     chiaviCondiviseEscluse: { ...chiavi.escluse },
@@ -2677,6 +2695,9 @@ export async function anonimizzaAlunno(
     op,
   )
 
+  // Prima dell'azzeramento anagrafico, togliamo anche fonte e snapshot dei moduli genitori.
+  const moduli = await obliaModuliGenitori(supabase, { studentId: alunno.id }, op)
+
   // 1. Anonimizza l'anagrafica dell'alunno. La SUA riga si azzera comunque, chiavi condivise o no.
   const { error: e1 } = await supabase.from('alunni').update(patchAlunno(alunno.id, at)).eq('id', alunno.id)
   if (e1) logErrore({ operazione: op, evento: 'patch_alunno' }, e1)
@@ -2963,6 +2984,7 @@ export async function anonimizzaAlunno(
     cassa,
     file:
       esitoFile.rimossi +
+      moduli.rimossi +
       pagelle.rimossi +
       certificati.rimossi +
       allegatiChat.rimossi +
@@ -2970,6 +2992,7 @@ export async function anonimizzaAlunno(
       fotoNews.fileRimossi,
     fileNonRimossi:
       esitoFile.nonRimossi +
+      moduli.nonRimossi +
       foto.fileNonRimossi +
       pagelle.nonRimossi +
       certificati.nonRimossi +
@@ -2995,6 +3018,7 @@ export async function anonimizzaAlunno(
     // funzione che li produce sapeva distinguere l'ignoranza dal vuoto, e quella
     // che risponde alla Direzione no.
     lettureFallite: [
+      moduli.letto,
       foto.letto,
       fotoNews.letto,
       pagelle.letto,

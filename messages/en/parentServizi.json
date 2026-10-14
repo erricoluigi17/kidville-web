@@ -216,5 +216,9 @@
   "senzaFigliTesto": "No child is linked to this account yet. Please contact the school office: they will link your account to your child. If they wrote to you from a different email address, sign out and sign back in with that one.",
   "senzaFigliProfilo": "Go to profile",
   "nonPiuIscrittoTitolo": "No active enrolment",
-  "nonPiuIscrittoTesto": "There is currently no enrolled child linked to this account. For documents covering years already attended — including the attendance certificate — please contact the school office."
+  "nonPiuIscrittoTesto": "There is currently no enrolled child linked to this account. For documents covering years already attended — including the attendance certificate — please contact the school office.",
+  "modulisticaScaricaAutorizzazione": "Download signed authorization",
+  "modulisticaFirmaPdfNonDisponibile": "Signature recorded, PDF unavailable",
+  "modulisticaRiprovaDocumento": "Try downloading the document again",
+  "modulisticaDocumentoScaricato": "Document delivered: choose where to save it"
 }

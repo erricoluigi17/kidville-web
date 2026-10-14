@@ -13,6 +13,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { impostaPayloadEsito } from '@/lib/logging/context';
 
 // ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
 // L'identità viene dal gate (requireUser): il `parent_id` legacy in query/body
@@ -29,9 +30,9 @@ const postBodySchema = z.object({
   form_id: zUuid,
   student_id: zStudentIdOpzionale,
   // answers è un pass-through jsonb: oggi è accettato qualsiasi valore truthy.
-  answers: z.unknown().refine((v) => !!v, 'form_id e risposte obbligatori'),
+  answers: z.record(z.string(), z.unknown()),
   // is_signed è già coercito a boolean (`!!is_signed`) in persistSignedSubmission.
-  is_signed: z.coerce.boolean().optional(),
+  is_signed: z.boolean().optional(),
   signature_log: z.unknown().optional(),
 });
 
@@ -122,8 +123,13 @@ export const POST = withRoute('parent/submissions:POST', async (request: NextReq
     if (auth.response) return auth.response;
 
     const b = await parseBody(request, postBodySchema);
+    impostaPayloadEsito('body', 'modulo-risposte-non-registrate');
     if ('response' in b) return b.response;
     const { form_id, student_id, answers, is_signed, signature_log } = b.data;
+    if (is_signed === true || signature_log != null) {
+      logEvento('modulistica', 'warn', { operazione: 'parent/submissions:POST', esito: 'firma-client-rifiutata' });
+      return NextResponse.json({ error: 'Per firmare il modulo usa la verifica OTP', codice: 'MODULO_FIRMA_OTP_RICHIESTA' }, { status: 400 });
+    }
 
     const supabase = await createAdminClient();
 
@@ -165,9 +171,8 @@ export const POST = withRoute('parent/submissions:POST', async (request: NextReq
       form_id,
       parent_id: auth.user.id,
       student_id,
-      answers: answers as Record<string, unknown>,
-      is_signed,
-      signature_log,
+      answers,
+      is_signed: false,
     });
 
     if (result.error) {

@@ -1,3 +1,4 @@
+import { contaModuliGenitoriPerOblio } from './moduli-genitori'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -56,6 +57,7 @@ export interface ConteggiOblio {
   foto_non_rimovibili: number | null
   /** ARTICOLI del blog pubblico che lo dichiarano fra i ritratti — non immagini. */
   articoli_pubblici: number | null
+  moduli_genitori: number | null
   allegati_chat: number | null
 }
 
@@ -67,6 +69,7 @@ const NON_MISURATI: ConteggiOblio = {
   foto_di_gruppo: null,
   foto_non_rimovibili: null,
   articoli_pubblici: null,
+  moduli_genitori: null,
   allegati_chat: null,
 }
 
@@ -214,7 +217,9 @@ export async function contaCosaDistrugge(
     allegati = msg.letto ? msg.righe.length : null
   }
 
+  const moduli = await contaModuliGenitoriPerOblio(supabase, id, op)
   const conteggi: ConteggiOblio = {
+    moduli_genitori: moduli,
     pagelle: pag.letto ? pag.righe.length : null,
     certificati_medici: cert.letto ? cert.righe.length : null,
     fascicolo_sanitario: fascicolo.letto ? fascicolo.righe.length : null,
@@ -243,6 +248,7 @@ export async function contaCosaDistrugge(
     n_foto_trattenute: conteggi.foto_non_rimovibili,
     n_articoli: conteggi.articoli_pubblici,
     n_allegati: conteggi.allegati_chat,
+    n_moduli: conteggi.moduli_genitori,
   })
 
   return conteggi

@@ -71,6 +71,39 @@ beforeEach(() => {
 })
 
 describe('GET /api/admin/documents-merge — isolamento per sede (B1)', () => {
+  it('anche con tutte le sedi attive, il modello restringe gli alunni alla SUA sede', async () => {
+    h.requireStaff.mockResolvedValue({ user: { id: 'adm1', role: 'admin', scuola_id: SEDE_A } })
+    h.db.utenti_scuole = [{ utente_id: 'adm1', scuola_id: SEDE_A }, { utente_id: 'adm1', scuola_id: SEDE_B }]
+    const res = await GET(req(OMONIMA))
+    expect(res.status).toBe(200)
+    expect((await res.json()).results.map((r: { student_id: string }) => r.student_id)).toEqual([ALU_A])
+  })
+
+  it('una compilazione unsigned resta firma mancante e non autorizzata', async () => {
+    h.db.forms_submissions = [{ id: 'bozza', form_id: FORM, student_id: ALU_A, is_signed: false, answers: {}, created_at: '2026-10-14T08:00:00Z' }]
+    const res = await GET(req(OMONIMA))
+    expect(res.status).toBe(200)
+    expect((await res.json()).results[0]).toMatchObject({ signed: false, autorizzato: false, stato_autorizzazione: 'firma_mancante', signed_at: null })
+  })
+
+  it('la submission firmata prevale sulla bozza più recente e usa la data reale della firma', async () => {
+    h.db.forms_submissions = [
+      { id: 'bozza', form_id: FORM, student_id: ALU_A, is_signed: false, created_at: '2026-10-14T08:00:00Z' },
+      { id: 'firmata', form_id: FORM, student_id: ALU_A, is_signed: true, answers: {}, signature_log: { method: 'OTP_EMAIL', hash: 'hash-vero', signed_at: '2026-08-05T09:00:00Z' }, created_at: '2026-08-06T09:00:00Z' },
+    ]
+    const res = await GET(req(OMONIMA))
+    expect(res.status).toBe(200)
+    expect((await res.json()).results[0]).toMatchObject({ submission_id: 'firmata', signed: true, autorizzato: true, signed_at: '2026-08-05T09:00:00Z' })
+  })
+
+  it('format=pdf restituisce byte PDF privati; un formato arbitrario è rifiutato', async () => {
+    const pdf = await GET(new NextRequest(req(OMONIMA).url + '&format=pdf'))
+    expect(pdf.status).toBe(200)
+    expect(pdf.headers.get('Content-Type')).toContain('application/pdf')
+    expect(pdf.headers.get('Cache-Control')).toContain('no-store')
+    expect(new TextDecoder().decode(new Uint8Array(await pdf.arrayBuffer()).slice(0, 5))).toBe('%PDF-')
+    expect((await GET(new NextRequest(req(OMONIMA).url + '&format=xml'))).status).toBe(400)
+  })
   it('403 se la classe è di un\'altra sede, e gli alunni non vengono nemmeno letti', async () => {
     const res = await GET(req(SOLO_B))
     expect(res.status).toBe(403)

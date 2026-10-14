@@ -102,6 +102,23 @@ afterEach(() => cleanup());
 import ParentModulisticaPage from '@/app/(dashboard)/parent/modulistica/page';
 
 describe('parent/modulistica — la ricevuta di firma la disegna il server', () => {
+  it('archivio offre il documento completo anche senza pdf_path, preservando la ricevuta', async () => {
+    h.query = 'tab=archivio';
+    h.fetchMock.mockImplementation((url: string, options?: RequestInit) => {
+      if (url.includes('/api/parent/submissions')) return Promise.resolve({ ok: true, json: async () => [FIRMATO] });
+      if (url.includes('/api/forms/signed-pdf')) return Promise.resolve(options?.method === 'POST'
+        ? { ok: true, json: async () => ({ pdf_ready: true }) }
+        : { ok: true, headers: new Headers({ 'Content-Type': 'application/pdf' }), blob: async () => h.pdf });
+      return Promise.resolve({ ok: true, json: async () => [] });
+    });
+    render(<ParentModulisticaPage />);
+    await screen.findByText(FIRMATO.forms_templates.title);
+    fireEvent.click(screen.getByRole('button', { name: 'Scarica autorizzazione firmata' }));
+    await waitFor(() => expect(h.scarica).toHaveBeenCalledTimes(1));
+    expect(chiamate('/api/forms/signed-pdf')).toEqual(['/api/forms/signed-pdf', `/api/forms/signed-pdf?id=${SUBMISSION}`]);
+    expect(chiamate('/api/parent/forms/otp')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: new RegExp(itParentServizi.modulisticaRicevutaPdf) })).toBeInTheDocument();
+  });
   it('`?tab=archivio` apre l’Archivio anche col confine di sospensione', async () => {
     h.query = 'tab=archivio';
     render(<ParentModulisticaPage />);

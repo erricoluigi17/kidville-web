@@ -32,6 +32,7 @@
   "oblioDistruggeFotoGruppo": "Group photos (the file stays, only their name is removed):",
   "oblioDistruggeNews": "Public website posts picturing them (withdrawn along with their images):",
   "oblioDistruggeChat": "Attachments exchanged in chat:",
+  "oblioDistruggeModuliGenitori": "Parent forms: answers, signatures and ordinary documents (protocol copies and shared files are retained):",
   "oblioDistruggeIscrizione": "ID document and enrolment application:",
   "oblioDistruggeCredenziali": "Credentials PDF of the anonymized parents",
   "oblioDistruggeNotifiche": "Notifications already delivered that name the child",

@@ -24,6 +24,7 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
+import ts from 'typescript'
 
 const SRC = path.join(process.cwd(), 'src')
 
@@ -64,13 +65,30 @@ function risolvi(specificatore: string, daFile: string): string | null {
   return null
 }
 
-/** Ogni specificatore importato da un file: `import`, `import type` e `import()` dinamico. */
+/** Solo import runtime: TypeScript elimina `import type`, anche nelle liste miste. */
+const importCache = new Map<string, string[]>()
 function specificatori(sorgente: string): string[] {
+  const cached = importCache.get(sorgente)
+  if (cached) return cached
   const trovati: string[] = []
-  for (const [, s] of sorgente.matchAll(/^[ \t]*import\s+[^;]*?from\s+['"]([^'"]+)['"]/gm)) trovati.push(s)
-  for (const [, s] of sorgente.matchAll(/^[ \t]*import\s+['"]([^'"]+)['"]/gm)) trovati.push(s)
-  for (const [, s] of sorgente.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) trovati.push(s)
-  for (const [, s] of sorgente.matchAll(/^[ \t]*export\s+[^;]*?from\s+['"]([^'"]+)['"]/gm)) trovati.push(s)
+  const file = ts.createSourceFile('source.tsx', sorgente, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  function visit(node: ts.Node) {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.importClause
+      const named = clause?.namedBindings
+      const allTypes = named && ts.isNamedImports(named) && named.elements.length > 0 && named.elements.every((e) => e.isTypeOnly)
+      if (!clause?.isTypeOnly && !(allTypes && !clause?.name)) trovati.push(node.moduleSpecifier.text)
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      const named = node.exportClause
+      const allTypes = named && ts.isNamedExports(named) && named.elements.length > 0 && named.elements.every((e) => e.isTypeOnly)
+      if (!node.isTypeOnly && !allTypes) trovati.push(node.moduleSpecifier.text)
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) {
+      trovati.push(node.arguments[0].text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  importCache.set(sorgente, trovati)
   return trovati
 }
 
@@ -97,6 +115,10 @@ function stradaVerso(partenza: string): string[] | null {
 }
 
 describe('la carta intestata resta fuori dal bundle client', () => {
+  it('il grafo distingue tipi eliminati e valori inclusi nel bundle, anche in import misti', () => {
+    expect(specificatori(`import type { Documento } from '@/lib/carta'; import { type Documento } from '@/lib/carta'; export type { Documento } from '@/lib/carta';`)).toEqual([])
+    expect(specificatori(`import { type Documento, applicaCartaIntestata } from '@/lib/carta'; import '@/lib/carta'; void import('jspdf-autotable');`)).toEqual(['@/lib/carta', '@/lib/carta', 'jspdf-autotable'])
+  })
   it('ci sono file client da controllare (o questo lock è vacuo)', () => {
     expect(FILES.filter(eClient).length).toBeGreaterThan(50)
   })

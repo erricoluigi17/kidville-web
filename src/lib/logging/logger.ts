@@ -1,4 +1,4 @@
-import { contesto, inLogger, entraNelLogger, segnalaErroreLoggato } from './context';
+import { contesto, inLogger, entraNelLogger, segnalaErroreLoggato, logSoloConsole } from './context';
 import { descriviErrore, sanificaMessaggio, serializza, type ErroreDescritto } from './serialize';
 import { redact, valoreDistintivo } from './redact';
 import { appLog, type RigaLog } from './app-log';
@@ -861,7 +861,7 @@ export function vaPersistito(livello: Livello, evento: string): boolean {
  * Un log ricorsivo abbatte la funzione; un log in più, dentro il logger, è solo un log in più.
  */
 function persisti(riga: RigaLog): void {
-    if (SILENZIOSO) return;
+    if (SILENZIOSO || logSoloConsole()) return;
     if (!vaPersistito(riga.livello, riga.evento)) return;
     if (inLogger()) return;
     // `entraNelLogger` marca la catena async: se la scrittura su `app_log` fallisce e il suo

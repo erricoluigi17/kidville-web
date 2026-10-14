@@ -814,6 +814,48 @@ export async function requireUser(request: Request): Promise<AuthResult> {
 }
 
 /**
+ * Gate additivo per chi ha GIÀ verificato un UID con requireSessioneAuth.
+ * Non rilegge GoTrue e non consulta header/query: un guasto di una successiva
+ * lettura auth non può sostituire l'attore. I gate legacy restano invariati.
+ */
+export async function requireUserDaSessioneVerificata(request: Request, authUserId: string): Promise<AuthResult> {
+  if (!authUserId) return nega('requireUserDaSessioneVerificata', 401, 'non-autenticato', NON_AUTENTICATO)
+  try {
+    const supabase = await createAdminClient()
+    const [userResult, parentResult] = await Promise.all([
+      leggiRigaUtenti(supabase, authUserId, 'maybeSingle'),
+      supabase.from('parents').select('id, auth_user_id, first_name, last_name').eq('auth_user_id', authUserId).maybeSingle(),
+    ])
+    if (userResult.error || parentResult.error) {
+      if (userResult.error) logEvento('auth', 'error', { operazione: 'requireUserDaSessioneVerificata', esito: 'utenti-non-letti' }, userResult.error)
+      if (parentResult.error) logEvento('auth', 'error', { operazione: 'requireUserDaSessioneVerificata', esito: 'parents-non-letti' }, parentResult.error)
+      return { response: NextResponse.json({ error: 'Non è stato possibile verificare l’identità', codice: 'IDENTITA_NON_VERIFICATA' }, { status: 503 }) }
+    }
+    const riga = userResult.data
+    const parent = parentResult.data as { id?: string; auth_user_id?: string; first_name?: string | null; last_name?: string | null } | null
+    const ponte = !!parent?.id && parent.auth_user_id === authUserId
+    // La PK utenti rimane prioritaria, come nei gate esistenti; archivio e
+    // vesti usano gli stessi predicati e normalizzatori già presenti nel modulo.
+    if (riga) {
+      if (riga.id !== authUserId || !(riga.role || riga.ruolo)) return nega('requireUserDaSessioneVerificata', 401, 'utente-sconosciuto', 'Utente non trovato')
+      const user = proiettaAppUser(riga)
+      if (profiloStaffRevocato(riga.archiviato_il)) {
+        if (!ponte) return nega('requireUserDaSessioneVerificata', 403, 'account-archiviato', ARCHIVIATO.messaggio, undefined, ARCHIVIATO.codice)
+        return concedi({ ...user, role: 'genitore', ruoli: ['genitore'] })
+      }
+      return concedi(conRuoloAttivo(conPonteGenitore(user, ponte), request, 'session'))
+    }
+    // Un genitore può avere soltanto la riga anagrafica con il ponte Auth.
+    // È famiglia per quel ponte, senza ereditare alcun ruolo di lavoro.
+    if (ponte) return concedi({ id: parent!.id!, role: 'genitore', nome: parent!.first_name, cognome: parent!.last_name })
+    return nega('requireUserDaSessioneVerificata', 401, 'utente-sconosciuto', 'Utente non trovato')
+  } catch (error) {
+    logEvento('auth', 'error', { operazione: 'requireUserDaSessioneVerificata', esito: 'lookup-identita-fallito' }, error)
+    return { response: NextResponse.json({ error: 'Non è stato possibile verificare l’identità', codice: 'IDENTITA_NON_VERIFICATA' }, { status: 503 }) }
+  }
+}
+
+/**
  * Garantisce che la richiesta provenga dal personale DOCENTE/segreteria
  * (`educator`/`admin`/`coordinator`/`segreteria`). Esclude esplicitamente
  * `genitore` e `cuoca`.

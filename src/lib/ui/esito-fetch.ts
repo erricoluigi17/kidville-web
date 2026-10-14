@@ -3320,6 +3320,39 @@ export const CODICI_ERRORE = {
     ORDINE_DIVISE_ATTIVO: 'erroreOrdineDiviseAttivo',
     TICKET_GIA_USATI: 'erroreTicketGiaUsati',
     ELIMINAZIONE_RICARICA_NON_DISPONIBILE: 'erroreEliminazioneRicaricaNonDisponibile',
+    /** 503 — lookup applicativo fallito dopo la verifica Auth; nessun ripiego su header/query. */
+    IDENTITA_NON_VERIFICATA: 'erroreIdentitaNonVerificata',
+    /** 400 — la firma dei moduli genitore si attribuisce solo dopo la verifica OTP server. */
+    MODULO_FIRMA_OTP_RICHIESTA: 'erroreModuloFirmaOtpRichiesta',
+    /** `forms/signed-pdf`: dinieghi, letture dei permessi e guasti inattesi, senza dettagli DB. */
+    MODULO_FIRMATO_ACCESSO_NON_VERIFICATO: 'erroreModuloFirmatoAccessoNonVerificato',
+    MODULO_FIRMATO_ACCESSO_NEGATO: 'erroreModuloFirmatoAccessoNegato',
+    MODULO_FIRMATO_NON_DISPONIBILE: 'erroreModuloFirmatoNonDisponibile',
+    MODULO_FIRMATO_NON_PREPARATO: 'erroreModuloFirmatoNonPreparato',
+    MODULO_FIRMATO_NON_LETTO: 'erroreModuloFirmatoNonLetto',
+    /**
+     * Codici documentali di Sistema B (`pdf_error`): POST prepare e GET download li
+     * espongono anche come `codice`, conservando stato HTTP, messaggio e firma acquisita.
+     */
+    SUBMISSION_NOT_FOUND: 'erroreModuloFirmatoCompilazioneNonTrovata',
+    SUBMISSION_NOT_SIGNED: 'erroreModuloFirmatoCompilazioneNonFirmata',
+    SIGNATURE_INCOMPLETE: 'erroreModuloFirmatoFirmaIncompleta',
+    TEMPLATE_MISSING: 'erroreModuloFirmatoModelloAssente',
+    SCHOOL_MISMATCH: 'erroreModuloFirmatoSedeDiversa',
+    SIGNER_MISSING: 'erroreModuloFirmatoFirmatarioAssente',
+    STUDENT_MISSING: 'erroreModuloFirmatoBambinoAssente',
+    SNAPSHOT_INVALID: 'erroreModuloFirmatoContenutoNonValido',
+    SNAPSHOT_CONFLICT: 'erroreModuloFirmatoContenutoCambiato',
+    SNAPSHOT_SAVE_FAILED: 'erroreModuloFirmatoContenutoNonSalvato',
+    PDF_NOT_FOUND: 'erroreModuloFirmatoPdfAssente',
+    PDF_DOWNLOAD_FAILED: 'erroreModuloFirmatoPdfNonLetto',
+    PDF_GENERATION_FAILED: 'erroreModuloFirmatoPdfNonGenerato',
+    PDF_UPLOAD_FAILED: 'erroreModuloFirmatoPdfNonArchiviato',
+    PDF_PATH_SAVE_FAILED: 'erroreModuloFirmatoPdfNonCollegato',
+    SUBMISSION_READ_FAILED: 'erroreModuloFirmatoCompilazioneNonLetta',
+    PAPER_ORIGINAL_MISSING: 'erroreModuloFirmatoScansioneAssente',
+    PDF_TOO_LARGE: 'erroreModuloFirmatoPdfTroppoGrande',
+    SUBMISSION_ERASURE_PENDING: 'erroreModuloFirmatoInCancellazione',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

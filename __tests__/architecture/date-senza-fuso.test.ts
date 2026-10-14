@@ -339,7 +339,7 @@ describe('lock architettura · nessuna toLocale* su una data senza fuso', () => 
         // nessun render da idratare, e pretendere `useClientValue` significherebbe
         // congelare al primo render l'ora stampata su un documento.
         //
-        // ⚠️ Erano tre e ora è una: dal 2026-08-16 il registro presenze
+        // ⚠️ Erano tre: dal 2026-08-16 il registro presenze
         // (`MonthlyAttendanceTable.tsx`) non genera più il PDF nel browser — lo fa
         // `/api/admin/registro-presenze/pdf`, perché la carta intestata pesa 1,1 MB e non
         // può entrare in un bundle client. Un'eccezione che non trova più il suo caso è
@@ -352,9 +352,10 @@ describe('lock architettura · nessuna toLocale* su una data senza fuso', () => 
         // di lì. Quel generatore non c'è più: il certificato lo emette
         // `POST /api/parent/prestampati`, sulla carta intestata vera e con il numero di
         // protocollo, quindi nel componente non si formatta più nessun «adesso».
-        const SU_CLIC: Record<string, string> = {
-            'src/app/(dashboard)/admin/modulistica/page.tsx': 'timbro «data di stampa» dentro l\'esportazione PDF',
-        }
+        // Dal 2026-10-14 anche l'ultima eccezione, admin/modulistica/page.tsx,
+        // è passata al server: /api/admin/documents-merge genera il riepilogo e
+        // la sua data di stampa. Nessun componente client è più esentato.
+        const SU_CLIC: Record<string, string> = {}
 
         const colpevoli: string[] = []
         const eccezioniSmentite = new Set(Object.keys(SU_CLIC))

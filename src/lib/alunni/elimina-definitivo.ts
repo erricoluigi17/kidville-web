@@ -1,3 +1,4 @@
+import { leggiModuliPerOblio, obliaModuliGenitori } from '@/lib/gdpr/moduli-genitori'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { contaCosaDistrugge, type ConteggiOblio } from '@/lib/gdpr/cosa-distrugge'
 import {
@@ -603,7 +604,12 @@ export async function rimuoviFileAlunno(
     }
   }
 
+  const moduliInventario = await leggiModuliPerOblio(supabase, { studentId: alunno.id }, op)
+  if (!moduliInventario.letto) return { ok: false, numeri: { ...NUMERI_ZERO } }
+
   // ── I GESTI ──
+  const moduli = await obliaModuliGenitori(supabase, { studentId: alunno.id }, op, moduliInventario)
+  if (!moduli.letto || moduli.nonRimossi > 0 || moduli.protetti > 0) return { ok: false, numeri: { ...NUMERI_ZERO, restanti: moduli.nonRimossi + moduli.protetti } }
   const foto = await obliaFotoAlunno(supabase, alunno.id, op)
   const news = await obliaFotoNewsAlunno(supabase, alunno.id, op)
   const video = await obliaIntentiVideoAlunno(supabase, alunno.id, op)
@@ -638,7 +644,7 @@ export async function rimuoviFileAlunno(
       certificati: certificati.rimossi,
       fascicolo: fascicolo.rimossi,
       allegati_chat: chat.rimossi,
-      documenti_rimossi: documento.rimossi.length,
+      documenti_rimossi: documento.rimossi.length + moduli.rimossi,
       documento_condiviso: condiviso ? 1 : 0,
       restanti,
     },

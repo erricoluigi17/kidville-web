@@ -161,6 +161,7 @@ const HOST_VIETATI = new Map<string, string>([
  * l'inventario — senza, la regola 1 non potrebbe esistere e un provider nuovo passerebbe.
  */
 const HOST_NON_CHIAMATI = new Map<string, string>([
+    ['storage.invalid', 'base fittizia di `new URL` in `src/lib/gdpr/moduli-genitori.ts`: normalizza URL relativi e percorsi del bucket prima di confrontare le chiavi Storage. Passa solo al parser locale `percorsoNelBucket`; nessuna chiamata HTTP usa questo host.'],
     ['uimulkjyekgemjakmepp.supabase.co', 'il NOSTRO progetto Supabase: le sue chiamate passano da `supabase-fetch.ts`, che le strumenta già tutte.'],
     ['www.w3.org', 'namespace XSD del tracciato FatturaPA (`fatturapa-xml.ts`): è una stringa dentro un XML, non un indirizzo che si contatta.'],
     ['www.youtube-nocookie.com', 'sorgente di un `<iframe>` (`VideoEmbed.tsx`): lo carica il browser del genitore, il nostro server non ci parla.'],

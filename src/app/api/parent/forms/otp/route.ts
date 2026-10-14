@@ -12,7 +12,8 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { limitaInvioOtp, limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { impostaPayloadEsito } from '@/lib/logging/context'
 
 // ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
 // L'identità del firmatario viene dal gate (requireUser): il `parent_id`
@@ -37,7 +38,7 @@ const patchBodySchema = z.object({
   form_id: zUuid,
   student_id: zStudentIdOpzionale,
   // answers è un pass-through jsonb: oggi è accettato qualsiasi valore truthy.
-  answers: z.unknown().refine((v) => !!v, 'Parametri mancanti'),
+  answers: z.record(z.string(), z.unknown()),
 })
 
 // ── POST: genera e invia il codice OTP via email, ritorna il ticket firmato ──
@@ -95,6 +96,7 @@ export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextReq
     const supabase = await createAdminClient()
 
     const b = await parseBody(request, patchBodySchema)
+    impostaPayloadEsito('body', 'modulo-risposte-non-registrate')
     if ('response' in b) return b.response
     const { code, expiry, ticket, form_id, student_id, answers } = b.data
 
@@ -150,12 +152,6 @@ export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextReq
     // signature_log FES autorevole, costruito lato server
     const { ip, userAgent } = extractRequestMeta(request)
 
-    const { data: parent } = await supabase
-      .from('utenti')
-      .select('nome, cognome')
-      .eq('id', parentId)
-      .maybeSingle()
-
     const signature_log = {
       ...buildSignatureLog({
         method: 'OTP_EMAIL',
@@ -164,23 +160,25 @@ export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextReq
         userAgent,
         hash: codeHash(email, String(code), Number(expiry)),
       }),
-      parent_details: { nome: parent?.nome ?? null, cognome: parent?.cognome ?? null },
+      parent_details: { nome: auth.user.nome ?? null, cognome: auth.user.cognome ?? null },
     }
 
     const result = await persistSignedSubmission(supabase, {
       form_id,
       parent_id: parentId,
       student_id,
-      answers: answers as Record<string, unknown>,
+      answers,
       is_signed: true,
       signature_log,
+      signer: { id: parentId, nome: auth.user.nome, cognome: auth.user.cognome },
     })
 
     if (result.error) {
       return NextResponse.json({ error: result.error }, { status: result.status })
     }
 
-    return NextResponse.json({ ok: true, submission: result.submission, signature_log }, { status: 201 })
+    logEvento('modulistica', 'info', { operazione: 'parent/forms/otp:PATCH', esito: 'firma-finalizzata', entita_id: typeof result.submission?.id === 'string' ? result.submission.id : null, pdf_ready: result.pdf_ready === true })
+    return NextResponse.json({ ok: true, submission: result.submission, signature_log: result.submission?.signature_log ?? null, pdf_ready: result.pdf_ready === true, pdf_error: result.pdf_error, pdf_message: result.pdf_message }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
   } catch (err) {
     logErrore({ operazione: 'parent/forms/otp:PATCH', stato: 500 }, err)
     const message = err instanceof Error && err.message ? err.message : 'Errore interno'

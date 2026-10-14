@@ -2519,7 +2519,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // della finestra Modifica. Service-role, sola lettura, con `resolveScuoleAttive` e la
             // voce confrontata con le sedi (404 se fuori) in `controllaVoceEliminabile`.
             // Misurato rieseguendo il lock: 350 → 351.
-            routeConServiceRole: 351,
+            // 351 → 352 il 2026-10-14: `forms/signed-pdf` aggiunge prepara POST e
+            // download GET. Firmatario filtrato per parent_id; staff con gate e
+            // sedi attive del modello prima del contenuto. Nessuna esenzione.
+            routeConServiceRole: 352,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2809,7 +2812,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // Misurato rieseguendo il lock: 547 → 548.
             // +1: pagamenti/[id]/eliminabile:GET (2026-10-12) (vedi sopra, a `routeConServiceRole`).
             // Misurato rieseguendo il lock: 548 → 549.
-            handlerControllati: 549,
+            // 549 → 551 il 2026-10-14: i due handler di `forms/signed-pdf` sono
+            // entrambi controllati; handlerEsentati resta invariato.
+            handlerControllati: 551,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -73,6 +73,7 @@ export const CAMPI_CONTEGGIO = [
   'foto_non_rimovibili',
   'articoli_pubblici',
   'allegati_chat',
+  'moduli_genitori',
 ] as const
 
 export type CampoConteggioOblio = (typeof CAMPI_CONTEGGIO)[number]
@@ -189,6 +190,7 @@ export const OBLIO_DISTRUGGE: VoceOblio[] = [
     campo: 'file_da_rimuovere',
     stima: true,
   },
+  { chiave: 'oblioDistruggeModuliGenitori', bucket: 'form_attachments', canale: 'alunno', campo: 'moduli_genitori' },
   // Il PDF delle credenziali del genitore, che contiene una PASSWORD IN CHIARO.
   // Passa dal canale GENITORE — se ne va solo per gli adulti che restano senza
   // altri figli iscritti — ma questa operazione lo distrugge, quindi si dice.

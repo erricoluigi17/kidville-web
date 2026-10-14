@@ -12,8 +12,8 @@ import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
  * TUTTI E DUE mostravano lo stesso il toast di successo.
  *
  * Rosso senza la modifica:
- *  · l'helper riceve il Blob del CSV (col BOM e le righe dell'elenco filtrato) / il Blob di
- *    `doc.output('blob')`, e `doc.save` NON si chiama;
+ *  · l'helper riceve il Blob del CSV (col BOM e le righe dell'elenco filtrato) / i byte PDF
+ *    della route documents-merge, che dal 2026-10-14 genera il riepilogo sul server;
  *  · il toast segue l'ESITO: con un file non consegnato dice l'errore, non «Esportati».
  *
  * ⚠️ Nessun nome vero nei dati di prova: il repository è pubblico.
@@ -22,8 +22,9 @@ import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
 const h = vi.hoisted(() => ({
   scarica: vi.fn(),
   query: '',
-  save: vi.fn(),
-  output: vi.fn(),
+  fetch: vi.fn(),
+  pdf: null as Blob | null,
+  mergeStatus: 200,
 }))
 
 vi.mock('@/lib/native/scarica', async (importOriginal) => ({
@@ -53,21 +54,6 @@ vi.mock('@/lib/context/sede-context', () => ({
     ricarica: vi.fn(),
   }),
   SedeNotice: () => null,
-}))
-// Il jsPDF finto registra ciò che conta: `save` (la strada vecchia) e `output` (la nuova).
-vi.mock('jspdf', () => ({
-  jsPDF: class {
-    setFont() {}
-    setFontSize() {}
-    text() {}
-    setDrawColor() {}
-    setLineWidth() {}
-    line() {}
-    addPage() {}
-    setTextColor() {}
-    save = h.save
-    output = h.output
-  },
 }))
 // I pannelli delle altre linguette della modulistica non sono sotto esame.
 vi.mock('@/components/features/admin/iscrizioni/ModuliInviabili', () => ({ ModuliInviabili: () => null }))
@@ -106,6 +92,12 @@ function fetchFinto(input: RequestInfo | URL) {
   if (p.includes('/api/admin/gruppi-mensa')) return ok({ success: true, data: [] })
   if (p.includes('/api/admin/students')) return ok(u.searchParams.get('scuola_id') ? [] : [ALUNNO])
   if (p.includes('/api/admin/documents-merge')) {
+    if (u.searchParams.get('format') === 'pdf') return Promise.resolve({
+      ok: h.mergeStatus === 200, status: h.mergeStatus,
+      headers: new Headers({ 'Content-Type': h.mergeStatus === 200 ? 'application/pdf' : 'application/json' }),
+      blob: async () => h.pdf,
+      json: async () => ({ error: 'Riepilogo non disponibile' }),
+    })
     return ok({ results: [{ nome_alunno: 'Prova', cognome_alunno: 'Alunno', signed: false }] })
   }
   if (p.includes('/api/admin/forms')) return ok([MODULO])
@@ -126,8 +118,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.query = ''
   h.scarica.mockResolvedValue({ esito: 'web-blob' })
-  h.output.mockImplementation(() => new Blob(['%PDF-finto'], { type: 'application/pdf' }))
-  vi.stubGlobal('fetch', vi.fn(fetchFinto))
+  h.pdf = new Blob(['%PDF-1.7'], { type: 'application/pdf' })
+  h.mergeStatus = 200
+  h.fetch.mockImplementation(fetchFinto)
+  vi.stubGlobal('fetch', h.fetch)
 })
 
 afterEach(() => {
@@ -173,23 +167,31 @@ describe('Anagrafica — «Esporta» passa il CSV all’helper', () => {
 })
 
 describe('Modulistica — il PDF cumulativo di una classe', () => {
-  async function esportaCumulativo() {
+  async function avviaCumulativo() {
     h.query = 'tab=moduli-genitori'
     window.history.replaceState(null, '', '/admin/modulistica?tab=moduli-genitori')
     render(<AdminModulisticaPage />)
     const bottone = await screen.findByRole('button', { name: /Merge PRIMAVERA A/ })
     fireEvent.click(bottone)
+  }
+  async function esportaCumulativo() {
+    await avviaCumulativo()
     await waitFor(() => expect(h.scarica).toHaveBeenCalledTimes(1))
     return h.scarica.mock.calls[0][0]
   }
 
-  it('il Blob di `output(\'blob\')` va all’helper; `doc.save` non si chiama più', async () => {
+  it('i byte PDF della route server vanno all’helper con format=pdf e classe codificata', async () => {
     const arg = await esportaCumulativo()
-    expect(h.output).toHaveBeenCalledWith('blob')
-    expect(h.save).not.toHaveBeenCalled()
-    expect(arg.sorgente).toBe(h.output.mock.results[0].value)
+    expect(arg.sorgente).toBe(h.pdf)
+    const calls = h.fetch.mock.calls.filter(([input]) => String(input).includes('/api/admin/documents-merge'))
+    expect(calls).toHaveLength(1)
+    const url = new URL(String(calls[0][0]), 'http://t.test')
+    expect(url.searchParams.get('form_id')).toBe(MODULO.id)
+    expect(url.searchParams.get('class_name')).toBe('PRIMAVERA A')
+    expect(url.searchParams.get('format')).toBe('pdf')
+    expect(calls[0][1]).toMatchObject({ cache: 'no-store' })
     expect(arg).toMatchObject({
-      nomeFile: 'Cumulative_Uscita_di_prova_PRIMAVERA A.pdf',
+      nomeFile: `riepilogo-autorizzazioni-${MODULO.id.slice(0, 8)}.pdf`,
       mime: 'application/pdf',
       etichetta: 'modulistica-cumulativo',
     })
@@ -200,6 +202,14 @@ describe('Modulistica — il PDF cumulativo di una classe', () => {
     h.scarica.mockResolvedValue({ esito: 'non-riuscito', motivo: 'plugin-assenti:filesystem|link-non-condivisibile' })
     await esportaCumulativo()
     expect(await screen.findByText(new RegExp(itModulistica.modErroreEsportazione))).toBeInTheDocument()
+    expect(screen.queryByText(itModulistica.modToastReportScaricato)).toBeNull()
+  })
+
+  it('un rifiuto HTTP del riepilogo non arriva all’helper e non dice «scaricato»', async () => {
+    h.mergeStatus = 403
+    await avviaCumulativo()
+    expect(await screen.findByText(itModulistica.modErroreCaricamentoMerge, { exact: true })).toBeInTheDocument()
+    expect(h.scarica).not.toHaveBeenCalled()
     expect(screen.queryByText(itModulistica.modToastReportScaricato)).toBeNull()
   })
 })

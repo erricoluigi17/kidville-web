@@ -50,14 +50,14 @@ export function UscitePanel({ userId, scuolaId }: { userId: string; scuolaId: st
     <div className="flex flex-wrap items-end gap-3">
       <label className="font-maven text-sm text-kidville-ink">{t('cassaRepDal')}<input type="date" value={da} onChange={(e) => setDa(e.target.value)} className={INPUT} /></label>
       <label className="font-maven text-sm text-kidville-ink">{t('cassaRepAl')}<input type="date" value={a} onChange={(e) => setA(e.target.value)} className={INPUT} /></label>
-      <label className="max-w-full font-maven text-sm text-kidville-ink">{t('cassaRepThCategoria')}<select value={categoria} onChange={(e) => setCategoria(e.target.value)} className={SELECT} aria-describedby={categorieErrore ? 'uscite-categorie-errore' : undefined}>
+      <div className="max-w-full font-maven text-sm text-kidville-ink"><label htmlFor="uscite-categoria">{t('cassaRepThCategoria')}</label><select id="uscite-categoria" value={categoria} onChange={(e) => setCategoria(e.target.value)} className={SELECT} aria-describedby={categorieErrore ? 'uscite-categorie-errore' : undefined}>
         <option value="">{t('cassaRepTutte')}</option><option value="senza">{t('cassaRepSenzaCategoria')}</option>
         {categorie.map((c) => <option key={c.id} value={c.id}>{c.nome}{!scuolaId && c.scuola_id ? ` — ${c.scuola_nome ?? sedi.find((s) => s.id === c.scuola_id)?.nome ?? c.scuola_id}` : ''}</option>)}
-      </select></label>
-      <label className="font-maven text-sm text-kidville-ink">{t('cassaThMetodo')}<select value={metodo} onChange={(e) => setMetodo(e.target.value)} className={SELECT}>
+      </select></div>
+      <div className="font-maven text-sm text-kidville-ink"><label htmlFor="uscite-metodo">{t('cassaThMetodo')}</label><select id="uscite-metodo" value={metodo} onChange={(e) => setMetodo(e.target.value)} className={SELECT}>
         <option value="">{t('usciteTuttiMetodi')}</option>
         <option value="contanti">{t('cassaMovMetodoContanti')}</option><option value="bonifico">{t('cassaMovMetodoBonifico')}</option><option value="carta">{t('cassaMovMetodoCarta')}</option><option value="altro">{t('cassaMovMetodoAltro')}</option>
-      </select></label>
+      </select></div>
       <button type="button" ref={trigger} onClick={() => setModal(true)} className={BTN_PRIMARY_AA}>{t('cassaRegistraUscita')}</button>
     </div>
     {categorieErrore && <p id="uscite-categorie-errore" role="alert" className="font-maven text-sm text-kidville-error-strong">{t('usciteCategorieErrore')}</p>}

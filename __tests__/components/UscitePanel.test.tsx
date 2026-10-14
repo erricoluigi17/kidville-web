@@ -13,6 +13,8 @@ describe('Pagina delle uscite', () => {
     vi.stubGlobal('fetch', fn);
     render(<UscitePanel userId="u" scuolaId={null} />);
     await screen.findByRole('option', { name: 'Spese — Beta' });
+    const controlloCategoria = screen.getByLabelText('Categoria', { exact: true }) as HTMLSelectElement;
+    expect(Array.from(controlloCategoria.labels ?? []).map((l) => l.textContent)).toEqual(['Categoria']);
     fireEvent.change(screen.getByLabelText('Categoria', { exact: true }), { target: { value: 'cat-b' } });
     fireEvent.change(screen.getByLabelText('Metodo', { exact: true }), { target: { value: 'bonifico' } });
     fireEvent.change(screen.getByLabelText('Dal', { exact: true }), { target: { value: '2026-10-01' } });

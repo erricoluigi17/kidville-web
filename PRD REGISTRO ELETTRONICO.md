@@ -1,3 +1,13 @@
+## 🟡 Changelog — Contabilità: uscite dettagliate e riepilogo per categoria — 2026-10-14 (branch `codex/contabilita-uscite-categorie`)
+
+**Stato: implementazione e collaudo sul branch secondario; rilascio non ancora eseguito.**
+
+- Nuove viste **Uscite** e **Riepilogo** in Contabilità. Uscite offre periodo, categoria e metodo, elenco paginato con descrizione, note, storni e giustificativi, e registrazione con scelta esplicita della sede.
+- Il riepilogo mostra entrate e uscite per le rispettive categorie, contante e altri metodi, somme complessive e differenza del periodo. Le categorie aprono il dettaglio dei movimenti corrispondenti, anche sede per sede. Il contante incassato per categoria è distinto dal saldo fisico del cassetto, che include fondo, prelievi e rettifiche.
+- Dettaglio in SQL con conteggio e somme dell'intero filtro nello stesso snapshot, righe paginate senza il taglio silenzioso a 1.000. Entrate e storni rispettano la semantica dell'aggregato esistente; categorie omonime con ID diversi restano distinte. Date invertite rifiutate, errore distinto dall'elenco vuoto, dati precedenti nascosti al cambio filtro.
+- Accesso operativo alle uscite per lo staff, entrate e totali economici riservati alla Direzione dai gate server sui ruoli reali. Nuova route con `withRoute`, Zod, scope multisede, `no-store`, log di successo ed errore senza dati personali; RPC solo `service_role`. Nessuna modifica ai dati storici.
+- Migrazione `20261014215153_report_cassa_dettaglio.sql` scritta per l'integrazione al merge, **non applicata manualmente**. Specifica `docs/superpowers/specs/2026-10-14-contabilita-uscite-categorie-design.md`; piano `docs/superpowers/plans/2026-10-14-contabilita-uscite-categorie.md`. Verifiche locali e CI in corso: non dichiarate concluse.
+
 ## ✅ Changelog — Autorizzazioni dei genitori: PDF completo e riepilogo leggibile — 2026-10-14 (PR #229)
 
 **Stato: in produzione dal 14/10/2026**, PR [#229](https://github.com/erricoluigi17/kidville-web/pull/229), commit `4ab71213`. Recupero storico e verifica del rilascio completati.

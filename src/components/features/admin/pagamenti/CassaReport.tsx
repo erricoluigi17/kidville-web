@@ -16,15 +16,18 @@
 // Le categorie di pagamento arrivano da tutte le sedi: due «Gita» omonime di sedi
 // diverse sono due voci con `id` diversi, e il filtro deve prendere quella giusta.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { BarChart3, Download } from 'lucide-react';
+import { BarChart3, Download, X } from 'lucide-react';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formatEuro } from '@/lib/format/valuta';
 import { cx } from '@/lib/ui/cx';
-import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
+import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
+import { Modal } from '@/components/ui/Modal';
 import { hdr, card, h3, input, label } from '../settings/ui';
-import { BTN_SECONDARY } from './ui';
+import { BTN_SECONDARY, MODAL_CARD_QUASI_SCHERMO, MODAL_SHADOW } from './ui';
+import { CassaDettaglio } from './CassaDettaglio';
+import { LinkDocumento } from './LinkDocumento';
 import { metodoLabel, meseItaliano } from '@/lib/cassa/tipi';
 import type { SedeCassa } from './CassaSede';
 
@@ -68,6 +71,7 @@ interface ReportData {
   per_sede?: ReportDiSede[];
 }
 interface CategoriaPag { id: string; nome: string; slug?: string; scuola_id?: string | null }
+type ApriCategoria = (tipo: 'entrata' | 'uscita', categoria: { categoria_id: string | null; categoria_nome: string | null }, scuolaId: string | null, bottone: HTMLButtonElement) => void;
 
 const NESSUNA_SEDE: readonly SedeCassa[] = [];
 /** Id dell'avviso «categorie non lette», a cui il filtro rimanda con `aria-describedby`. */
@@ -76,16 +80,14 @@ const CATEGORIE_NON_LETTE_ID = 'report-cat-non-lette';
 const somma = (righe: { totale: number }[] | undefined) => (righe ?? []).reduce((s, r) => s + (Number(r.totale) || 0), 0);
 
 /**
- * Le categorie del filtro. Con UNA sede resta la regola di prima: una voce per slug.
- * Con più sedi lo slug non basta più: «Gita» di Alfa e «Gita» di Beta hanno lo stesso
- * slug e `id` diversi, e tenerne una sola filtrerebbe le entrate di UNA sede sotto
- * un'etichetta che sembra di tutte. Lì la chiave è sede + slug.
+ * Le categorie del filtro sono distinte per UUID, anche quando una categoria
+ * globale e una locale condividono lo slug. I pagamenti storici possono usare
+ * entrambe: rimuoverne una dal filtro renderebbe irraggiungibili i suoi incassi.
  */
-export function categorieDelFiltro(dati: readonly CategoriaPag[], piuSedi: boolean): CategoriaPag[] {
+export function categorieDelFiltro(dati: readonly CategoriaPag[]): CategoriaPag[] {
   const perChiave = new Map<string, CategoriaPag>();
   for (const c of dati) {
-    const base = c.slug ?? c.id;
-    perChiave.set(piuSedi ? `${c.scuola_id ?? ''}:${base}` : base, c);
+    perChiave.set(c.id, c);
   }
   return [...perChiave.values()];
 }
@@ -105,8 +107,9 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
   // Categorie NON lette (GET rifiutata, rete caduta, corpo senza `success`) ≠ «nessuna
   // categoria»: il filtro resta con il solo «Tutte», e la pagina dice perché.
   const [categorieNonLette, setCategorieNonLette] = useState(false);
-  const [dati, setDati] = useState<ReportData | null>(null);
-  const [errore, setErrore] = useState(false);
+  const [risposta, setRisposta] = useState<{ filtro: object; dati?: ReportData; stato?: number } | null>(null);
+  const [dettaglio, setDettaglio] = useState<{ filtro: object; tipo: 'entrata' | 'uscita'; categoriaId: string | null; nome: string; scuolaId: string | null } | null>(null);
+  const trigger = useRef<HTMLButtonElement | null>(null);
 
   // Categorie di PAGAMENTO (per il filtro entrate cross-mese).
   useEffect(() => {
@@ -122,7 +125,7 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
           return;
         }
         if (!active) return;
-        setCategoriePag(categorieDelFiltro(d.data ?? [], piuSedi));
+        setCategoriePag(categorieDelFiltro(d.data ?? []));
         setCategorieNonLette(false);
       })
       .catch((err) => {
@@ -130,7 +133,7 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
         if (active) { setCategoriePag([]); setCategorieNonLette(true); }
       });
     return () => { active = false; };
-  }, [userId, sedeQ, piuSedi]);
+  }, [userId, sedeQ]);
 
   // Query dei filtri correnti (intero azzera il periodo → totale cross-mese).
   const querystring = useCallback((formatCsv = false) => {
@@ -143,30 +146,39 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
     if (formatCsv) p.set('format', 'csv');
     return p.toString();
   }, [userId, scuolaId, da, a, categoriaPag, intero]);
+  const query = querystring();
+  // Ogni cambio di query ha una nuova identità, anche A→B→A: il vecchio risultato A
+  // non può ricomparire mentre la nuova lettura di A è ancora in corso.
+  const filtro = useMemo(() => ({ query }), [query]);
+  const corrente = risposta?.filtro === filtro ? risposta : null;
+  const dati = corrente?.dati ?? null;
+  const errore = corrente?.stato != null;
+  const periodoInvalido = !intero && !!(da && a && da > a);
 
   useEffect(() => {
     let active = true;
+    if (periodoInvalido) return;
     // setState solo DENTRO l'IIFE async (dopo l'await): niente setState sincrono
     // nel corpo dell'effetto (react-hooks/set-state-in-effect).
     (async () => {
       try {
-        const r = await fetch(`/api/pagamenti/cassa/report?${querystring()}`, { headers: hdr(userId) });
+        const r = await fetch(`/api/pagamenti/cassa/report?${filtro.query}`, { headers: hdr(userId) });
         if (!r.ok) {
           // 403 `SEDE_NON_ACCESSIBILE` o 500: prima diventava un report vuoto, cioè
           // «nessuna entrata nel periodo», che è un'altra cosa.
           logClient({ livello: 'error', evento: 'fetch', messaggio: 'cassa-report-lettura-rifiutata', route: '/admin/pagamenti', stato: r.status });
-          if (active) setErrore(true);
+          if (active) setRisposta({ filtro, stato: r.status });
           return;
         }
         const d = (await r.json()) as ReportData;
-        if (active) { setDati(d); setErrore(false); }
+        if (active) setRisposta({ filtro, dati: d });
       } catch (err) {
         logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-report-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-        if (active) setErrore(true);
+        if (active) setRisposta({ filtro, stato: 0 });
       }
     })();
     return () => { active = false; };
-  }, [querystring, userId]);
+  }, [filtro, userId, periodoInvalido]);
 
   const csvHref = useMemo(() => `/api/pagamenti/cassa/report?${querystring(true)}`, [querystring]);
 
@@ -177,8 +189,15 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
   // Il dettaglio per sede ha senso solo quando le sedi lette sono più d'una.
   const perSede = piuSedi ? (dati?.per_sede ?? []) : [];
   /** Con più sedi una categoria di sede porta il nome della sede (le globali no). */
-  const etichettaCategoria = (c: CategoriaPag) =>
-    piuSedi && c.scuola_id ? t('cassaMsRepCategoriaDiSede', { categoria: c.nome, nome: nomeSede(c.scuola_id) }) : c.nome;
+  const etichettaCategoria = (c: CategoriaPag) => {
+    const omonima = categoriePag.some((altra) => altra.id !== c.id && altra.nome === c.nome);
+    if (c.scuola_id && (piuSedi || omonima)) return t('cassaMsRepCategoriaDiSede', { categoria: c.nome, nome: nomeSede(c.scuola_id) });
+    return omonima ? t('cassaRepCategoriaGlobale', { categoria: c.nome }) : c.nome;
+  };
+  const apri: ApriCategoria = (tipo, r, sede, bottone) => {
+    trigger.current = bottone;
+    setDettaglio({ filtro, tipo, categoriaId: r.categoria_id, nome: r.categoria_nome ?? t('cassaRepSenzaCategoria'), scuolaId: sede });
+  };
 
   return (
     <section className={card}>
@@ -198,7 +217,7 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
           <select
             id="report-cat"
             value={categoriaPag}
-            onChange={(e) => setCategoriaPag(e.target.value)}
+            onChange={(e) => { setCategoriaPag(e.target.value); if (!e.target.value) setIntero(false); }}
             className={cx(input, 'cursor-pointer')}
             {...(categorieNonLette ? { 'aria-describedby': CATEGORIE_NON_LETTE_ID } : {})}
           >
@@ -217,10 +236,10 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
             <span className="font-maven text-xs text-kidville-green">{t('cassaRepInteroImporto')}</span>
           </label>
         )}
-        <a href={csvHref} className={cx(BTN_SECONDARY, 'ml-auto')}><Download size={14} /> {t('cassaRepScaricaCsv')}</a>
+        {dati?.disponibile && !periodoInvalido && <LinkDocumento href={csvHref} modo="scarica" nomeFile="report-cassa.csv" mime="text/csv" etichetta="report-cassa" className={cx(BTN_SECONDARY, 'ml-auto')}><Download size={14} /> {t('cassaRepScaricaCsv')}</LinkDocumento>}
       </div>
 
-      {dati === null && !errore ? (
+      {periodoInvalido ? <p role="alert" className="font-maven text-sm text-kidville-error-strong">{t('cassaDetPeriodoInvalido')}</p> : dati === null && !errore ? (
         <p className="py-6 text-center font-maven text-sm text-kidville-sub">{t('cassaRepCaricamento')}</p>
       ) : errore ? (
         <p role="alert" className="font-maven text-sm text-kidville-error-strong">{t('cassaRepErrore')}</p>
@@ -228,12 +247,23 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
         <p className="font-maven text-sm text-kidville-sub">{t('cassaRepNonAttivo')}</p>
       ) : (
         <div className="space-y-6">
-          <TabellaEntrate righe={entrate} />
-          <TabellaUscite righe={uscite} />
+          <div data-testid="cassa-report-totali" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <StatCard label={t('cassaRepTotEntrate')} value={formatEuro(somma(entrate))} />
+            <StatCard label={t('cassaRepTotUscite')} value={formatEuro(somma(uscite))} />
+            <StatCard label={t(categoriaPag ? 'cassaRepDifferenzaSelezione' : 'cassaRepDifferenza')} value={formatEuro(somma(entrate) - somma(uscite))} />
+          </div>
+          <p className="font-maven text-sm text-kidville-sub">{t('cassaRepContanteSpiegazione')}</p>
+          {categoriaPag && <p role="status" className="font-maven text-sm text-kidville-sub">{t('cassaRepFiltroSoloEntrate')}</p>}
+          <TabellaEntrate righe={entrate} apri={apri} scuolaId={scuolaId} />
+          <TabellaUscite righe={uscite} apri={apri} scuolaId={scuolaId} />
           {mensile.length > 0 && <TabellaMensile righe={mensile} />}
-          {perSede.length > 1 && <DettaglioPerSede perSede={perSede} nomeSede={nomeSede} />}
+          {perSede.length > 1 && <DettaglioPerSede perSede={perSede} nomeSede={nomeSede} apri={apri} />}
         </div>
       )}
+      {dettaglio && dettaglio.filtro === filtro && !errore && !periodoInvalido && <Modal open safeArea title={t('cassaRepDetTitolo', { categoria: dettaglio.nome })} onClose={() => setDettaglio(null)} returnFocusRef={trigger} className={MODAL_CARD_QUASI_SCHERMO} style={{ boxShadow: MODAL_SHADOW }}>
+        <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5"><h2 className={h3}>{t('cassaRepDetTitolo', { categoria: dettaglio.nome })}</h2><button type="button" onClick={() => setDettaglio(null)} aria-label={t('cassaDetChiudi')} className={BTN_SECONDARY}><X size={18} /></button></div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5"><CassaDettaglio userId={userId} scuolaId={dettaglio.scuolaId} tipo={dettaglio.tipo} categoriaId={dettaglio.categoriaId} da={intero ? undefined : da} a={intero ? undefined : a} /></div>
+      </Modal>}
     </section>
   );
 }
@@ -243,7 +273,7 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
  * categorie. Le somme di entrate e uscite sono quelle che il server ha già attribuito
  * alla sede (entrata = sede del pagamento, uscita = sede del movimento).
  */
-function DettaglioPerSede({ perSede, nomeSede }: { perSede: ReportDiSede[]; nomeSede: (id: string, dalServer?: string | null) => string }) {
+function DettaglioPerSede({ perSede, nomeSede, apri }: { perSede: ReportDiSede[]; nomeSede: (id: string, dalServer?: string | null) => string; apri: ApriCategoria }) {
   const t = useTranslations('adminContabilita');
   return (
     <div data-testid="cassa-report-per-sede">
@@ -276,8 +306,8 @@ function DettaglioPerSede({ perSede, nomeSede }: { perSede: ReportDiSede[]; nome
               {t('cassaMsRepDettaglioSede', { nome: nomeSede(s.scuola_id, s.scuola_nome) })}
             </summary>
             <div className="mt-3 space-y-4">
-              <TabellaEntrate righe={s.entrate_per_categoria ?? []} />
-              <TabellaUscite righe={s.uscite_per_categoria ?? []} />
+              <TabellaEntrate righe={s.entrate_per_categoria ?? []} apri={apri} scuolaId={s.scuola_id} />
+              <TabellaUscite righe={s.uscite_per_categoria ?? []} apri={apri} scuolaId={s.scuola_id} />
               {(s.mensile ?? []).length > 0 && <TabellaMensile righe={s.mensile ?? []} />}
             </div>
           </details>
@@ -287,7 +317,7 @@ function DettaglioPerSede({ perSede, nomeSede }: { perSede: ReportDiSede[]; nome
   );
 }
 
-function TabellaEntrate({ righe }: { righe: EntrataCat[] }) {
+function TabellaEntrate({ righe, apri, scuolaId }: { righe: EntrataCat[]; apri: ApriCategoria; scuolaId: string | null }) {
   const t = useTranslations('adminContabilita');
   return (
     <div>
@@ -298,12 +328,12 @@ function TabellaEntrate({ righe }: { righe: EntrataCat[] }) {
         <div className={TABLE_WRAP}>
           <table className={TABLE}>
             <thead>
-              <tr><th scope="col" className={TH}>{t('cassaRepThCategoria')}</th><th scope="col" className={TH}>{t('cassaRepThPerMetodo')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThTotale')}</th></tr>
+              <tr><th scope="col" className={TH}>{t('cassaRepThCategoria')}</th><th scope="col" className={TH}>{t('cassaRepThPerMetodo')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepContanteIncassato')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepAltriMetodi')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThTotale')}</th></tr>
             </thead>
             <tbody>
               {righe.map((r, i) => (
                 <tr key={r.categoria_id ?? `e${i}`} className={TROW}>
-                  <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? t('cassaRepSenzaCategoria')}</span></td>
+                  <td className={TD}><button type="button" onClick={(e) => apri('entrata', r, scuolaId, e.currentTarget)} aria-label={t('cassaRepVediEntrate', { categoria: r.categoria_nome ?? t('cassaRepSenzaCategoria') })} className="min-h-11 text-left font-maven text-sm font-bold text-kidville-green underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-kidville-green">{r.categoria_nome ?? t('cassaRepSenzaCategoria')}</button></td>
                   <td className={TD}>
                     <span className="font-maven text-xs text-kidville-sub">
                       {r.per_metodo && Object.keys(r.per_metodo).length > 0
@@ -311,10 +341,13 @@ function TabellaEntrate({ righe }: { righe: EntrataCat[] }) {
                         : '—'}
                     </span>
                   </td>
+                  <td className={cx(TD, 'text-right')}><span className="font-maven text-sm text-kidville-ink">{formatEuro(r.per_metodo?.contanti ?? 0)}</span></td>
+                  <td className={cx(TD, 'text-right')}><span className="font-maven text-sm text-kidville-ink">{formatEuro(r.totale - (r.per_metodo?.contanti ?? 0))}</span></td>
                   <td className={cx(TD, 'text-right')}><span className="font-barlow font-bold text-kidville-green">{formatEuro(r.totale)}</span></td>
                 </tr>
               ))}
             </tbody>
+            <tfoot><tr><th scope="row" className={TD} colSpan={2}>{t('cassaRepThTotale')}</th><td className={cx(TD, 'text-right')}>{formatEuro(righe.reduce((s, r) => s + (r.per_metodo?.contanti ?? 0), 0))}</td><td className={cx(TD, 'text-right')}>{formatEuro(righe.reduce((s, r) => s + r.totale - (r.per_metodo?.contanti ?? 0), 0))}</td><td className={cx(TD, 'text-right font-bold')}>{formatEuro(somma(righe))}</td></tr></tfoot>
           </table>
         </div>
       )}
@@ -322,7 +355,7 @@ function TabellaEntrate({ righe }: { righe: EntrataCat[] }) {
   );
 }
 
-function TabellaUscite({ righe }: { righe: UscitaCat[] }) {
+function TabellaUscite({ righe, apri, scuolaId }: { righe: UscitaCat[]; apri: ApriCategoria; scuolaId: string | null }) {
   const t = useTranslations('adminContabilita');
   return (
     <div>
@@ -333,17 +366,19 @@ function TabellaUscite({ righe }: { righe: UscitaCat[] }) {
         <div className={TABLE_WRAP}>
           <table className={TABLE}>
             <thead>
-              <tr><th scope="col" className={TH}>{t('cassaRepThCategoria')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThDiCuiContanti')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThTotale')}</th></tr>
+              <tr><th scope="col" className={TH}>{t('cassaRepThCategoria')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThDiCuiContanti')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepAltriMetodi')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThTotale')}</th></tr>
             </thead>
             <tbody>
               {righe.map((r, i) => (
                 <tr key={r.categoria_id ?? `u${i}`} className={TROW}>
-                  <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? t('cassaRepSenzaCategoria')}</span></td>
+                  <td className={TD}><button type="button" onClick={(e) => apri('uscita', r, scuolaId, e.currentTarget)} aria-label={t('cassaRepVediUscite', { categoria: r.categoria_nome ?? t('cassaRepSenzaCategoria') })} className="min-h-11 text-left font-maven text-sm font-bold text-kidville-green underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-kidville-green">{r.categoria_nome ?? t('cassaRepSenzaCategoria')}</button></td>
                   <td className={cx(TD, 'text-right')}><span className="font-maven text-xs text-kidville-sub">{r.contanti != null ? formatEuro(r.contanti) : '—'}</span></td>
+                  <td className={cx(TD, 'text-right')}><span className="font-maven text-xs text-kidville-sub">{r.contanti != null ? formatEuro(r.totale - r.contanti) : '—'}</span></td>
                   <td className={cx(TD, 'text-right')}><span className="font-barlow font-bold text-kidville-error-strong">{formatEuro(r.totale)}</span></td>
                 </tr>
               ))}
             </tbody>
+            <tfoot><tr><th scope="row" className={TD}>{t('cassaRepThTotale')}</th><td className={cx(TD, 'text-right')}>{formatEuro(righe.reduce((s, r) => s + (r.contanti ?? 0), 0))}</td><td className={cx(TD, 'text-right')}>{formatEuro(righe.reduce((s, r) => s + r.totale - (r.contanti ?? 0), 0))}</td><td className={cx(TD, 'text-right font-bold')}>{formatEuro(somma(righe))}</td></tr></tfoot>
           </table>
         </div>
       )}

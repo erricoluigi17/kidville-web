@@ -15,12 +15,15 @@ import { PGlite } from '@electric-sql/pglite'
  * versione letta dal client (`updated_at`) con quella attuale: riga cambiata nel
  * frattempo + valore diverso = conflitto, e NIENTE si scrive.
  *
- * Ogni `db.query` di PGlite è una transazione sua: `now()` cambia fra una
- * chiamata e l'altra, come fra due salvataggi veri. La serializzazione di due
+ * Ogni `db.query` di PGlite è una transazione sua, ma il clock dell'host ha
+ * precisione al millisecondo: due query consecutive possono avere lo stesso
+ * `now()`. La fixture usa una sequenza per assegnare versioni deterministiche
+ * crescenti di un microsecondo, sia all'INSERT sia all'UPDATE. La serializzazione di due
  * salvataggi SIMULTANEI (FOR UPDATE su `scrutini`) la sorveglia il lock
  * `scrutinio-controllo-versione`; la prova con due sessioni vere sta nel PR.
- * Lo schema qui sotto ricopia le tre tabelle del baseline e `set_updated_at`
- * (identica in produzione, letta il 2026-10-10). Solo dati finti.
+ * Lo schema qui sotto ricopia le tre tabelle del baseline; solo la sorgente
+ * temporale di `updated_at` è sostituita nella fixture. Le funzioni di salvataggio
+ * sono quelle della migrazione reale. Solo dati finti.
  */
 
 const CARTELLA = join(process.cwd(), 'supabase/migrations')
@@ -67,10 +70,17 @@ beforeAll(async () => {
     CREATE ROLE authenticated NOLOGIN;
     CREATE ROLE service_role NOLOGIN BYPASSRLS;
 
+    CREATE SEQUENCE public.scrutinio_versione_fixture;
+    CREATE FUNCTION public.prossima_versione_fixture() RETURNS timestamptz LANGUAGE sql VOLATILE
+      SET search_path TO 'public', 'pg_temp' AS $$
+      SELECT TIMESTAMPTZ '2026-01-01 00:00:00+00'
+        + nextval('public.scrutinio_versione_fixture'::regclass) * INTERVAL '1 microsecond';
+    $$;
+
     CREATE FUNCTION public.set_updated_at() RETURNS trigger LANGUAGE plpgsql
       SET search_path TO 'public', 'pg_temp' AS $$
     BEGIN
-      NEW.updated_at = now();
+      NEW.updated_at = public.prossima_versione_fixture();
       RETURN NEW;
     END;
     $$;
@@ -89,7 +99,7 @@ beforeAll(async () => {
       giudizio_sintetico text,
       proposto_da uuid,
       proposto_il timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT public.prossima_versione_fixture(),
       UNIQUE (scrutinio_id, alunno_id, materia_id)
     );
     CREATE TABLE public.scrutinio_comportamento (
@@ -99,7 +109,7 @@ beforeAll(async () => {
       giudizio_testo text,
       scala_valore text,
       giudizio_globale text,
-      updated_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT public.prossima_versione_fixture(),
       UNIQUE (scrutinio_id, alunno_id)
     );
     CREATE TRIGGER trg_scrut_giudizi_updated_at BEFORE UPDATE ON public.scrutinio_giudizi
@@ -114,6 +124,7 @@ afterAll(async () => {
 })
 beforeEach(async () => {
   await db.exec('TRUNCATE public.scrutinio_giudizi, public.scrutinio_comportamento, public.scrutini CASCADE;')
+  await db.exec('ALTER SEQUENCE public.scrutinio_versione_fixture RESTART WITH 1;')
   await db.query(`INSERT INTO public.scrutini (id, stato) VALUES ($1, 'aperto')`, [SCRUTINIO])
 })
 
@@ -134,6 +145,7 @@ describe('salva_giudizi_scrutinio · non vince più l’ultimo', () => {
     const e1 = await giudizi([g('Buono', { versione: null })])
     const e2 = await giudizi([g('Distinto', { versione: e1.righe?.[0].updated_at })])
     expect(e2.esito).toBe('ok')
+    expect(e2.righe?.[0].updated_at).not.toBe(e1.righe?.[0].updated_at)
     expect((await giudizioAttuale()).giudizio_sintetico).toBe('Distinto')
   })
 

@@ -37,3 +37,5 @@ Si continua sul branch esistente, si aggiorna il PRD nello stesso intervento e s
 ## Stato verificato — 14/10/2026
 
 Implementazione rilasciata con PR #229 (`4ab71213`), gate qualità/build/Playwright verdi e verifica dopo il deploy PASS. Recuperate 105 autorizzazioni OTP con 105 PDF reali, snapshot storici dichiarati e impronte documentali distinte; firma e data originali conservate. Ricontrollo: zero documenti mancanti e zero anomalie; secondo batch idempotente, senza nuove firme o nuovi documenti. Evidenze e conteggi aggiornati sono nel PRD e nel piano.
+
+Le notifiche della segreteria hanno un solo timer attivo, annullato quando vengono sostituite o la pagina si chiude. Le risposte tardive non creano timer su una pagina già smontata; l’ultimo messaggio resta visibile per tre secondi. La diagnostica non include il testo dei messaggi né dati personali.

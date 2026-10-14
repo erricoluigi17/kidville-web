@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, within, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within, cleanup, act } from '@testing-library/react'
 
 import itAdminModulistica from '../../messages/it/adminModulistica.json'
 
@@ -23,7 +23,8 @@ import itAdminModulistica from '../../messages/it/adminModulistica.json'
 const SEDE = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa'
 const GIORNO = 24 * 60 * 60 * 1000
 
-const h = vi.hoisted(() => ({ query: 'tab=moduli-genitori', scarica: vi.fn() }))
+const h = vi.hoisted(() => ({ query: 'tab=moduli-genitori', scarica: vi.fn(), log: vi.fn() }))
+vi.mock('@/lib/logging/client', () => ({ logClient: h.log, nomeErrore: (e: unknown) => e instanceof Error ? e.name : 'errore' }))
 vi.mock('@/lib/native/scarica', async (original) => ({ ...await original<typeof import('@/lib/native/scarica')>(), scaricaDocumento: h.scarica }))
 
 vi.mock('next/navigation', () => ({
@@ -133,6 +134,56 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  vi.useRealTimers()
+})
+
+describe('toast: timer della pagina montata', () => {
+  async function letturaInAttesa() {
+    moduliDaServire = [MODULI[0]]
+    let risolvi!: (value: { ok: boolean; json: () => Promise<unknown> }) => void
+    const risposta = new Promise<{ ok: boolean; json: () => Promise<unknown> }>((resolve) => { risolvi = resolve })
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => String(input).includes('/api/admin/documents-merge') ? risposta : fetchFinto(input)))
+    const view = render(<AdminModulisticaPage />)
+    const button = await screen.findByRole('button', { name: 'Protocolla PRIMAVERA A' })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    const clear = vi.spyOn(globalThis, 'clearTimeout')
+    fireEvent.click(button)
+    expect(screen.getByText(itAdminModulistica.modToastCercoModuli, { exact: true })).toBeInTheDocument()
+    const timerIds = () => timers.mock.calls.flatMap((call, i) => call[1] === 3000 ? [timers.mock.results[i].value] : [])
+    const completa = async () => { await act(async () => { risolvi({ ok: true, json: async () => ({ results: [] }) }) }) }
+    return { view, timerIds, clear, completa }
+  }
+  it('smontare la pagina annulla il timeout ancora pendente', async () => {
+    const f = await letturaInAttesa()
+    expect(f.timerIds()).toHaveLength(1)
+    f.view.unmount()
+    expect(f.clear).toHaveBeenCalledWith(f.timerIds()[0])
+    await f.completa()
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+  })
+  it('un nuovo toast dura tre secondi propri e non viene chiuso dal timer precedente', async () => {
+    const f = await letturaInAttesa()
+    act(() => { vi.advanceTimersByTime(2000) })
+    await f.completa()
+    expect(screen.getByText(itAdminModulistica.modToastNessunModuloFirmato, { exact: true })).toBeInTheDocument()
+    act(() => { vi.advanceTimersByTime(1000) })
+    expect(screen.getByText(itAdminModulistica.modToastNessunModuloFirmato, { exact: true })).toBeInTheDocument()
+    act(() => { vi.advanceTimersByTime(1999) })
+    expect(screen.getByText(itAdminModulistica.modToastNessunModuloFirmato, { exact: true })).toBeInTheDocument()
+    act(() => { vi.advanceTimersByTime(1) })
+    expect(screen.queryByText(itAdminModulistica.modToastNessunModuloFirmato, { exact: true })).toBeNull()
+  })
+  it('una risposta dopo unmount non ricrea il timer del toast', async () => {
+    const f = await letturaInAttesa()
+    f.view.unmount()
+    await f.completa()
+    expect(f.timerIds()).toHaveLength(1)
+    expect(h.log).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'modulistica-toast-dopo-smontaggio' }))
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain(itAdminModulistica.modToastCercoModuli)
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain(itAdminModulistica.modToastNessunModuloFirmato)
+  })
 })
 
 describe('segreteria: riepilogo server e documento completo recuperabile', () => {

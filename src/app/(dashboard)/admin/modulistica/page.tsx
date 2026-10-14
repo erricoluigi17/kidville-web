@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
@@ -168,6 +168,19 @@ function ModulisticaInner() {
 
   // Notifications
   const [toast, setToast] = useState('');
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastMontato = useRef(false);
+  useEffect(() => {
+    toastMontato.current = true;
+    return () => {
+      toastMontato.current = false;
+      if (toastTimer.current !== null) {
+        clearTimeout(toastTimer.current);
+        toastTimer.current = null;
+        logClient({ livello: 'warn', evento: 'react', messaggio: 'modulistica-toast-timer-annullato', route: '/admin/modulistica' });
+      }
+    };
+  }, []);
 
   // «Protocolla» moduli firmati (registro protocolli)
   const [protocollaTarget, setProtocollaTarget] = useState<{ form: FormTemplate; className: string; items: ProtocollaItem[] } | null>(null);
@@ -201,8 +214,19 @@ function ModulisticaInner() {
   }, [fetchInitialData]);
 
   const showToastMsg = (msg: string) => {
+    // Un await del provider può finire dopo che la pagina è stata smontata.
+    if (!toastMontato.current) {
+      logClient({ livello: 'warn', evento: 'react', messaggio: 'modulistica-toast-dopo-smontaggio', route: '/admin/modulistica' });
+      return;
+    }
+    if (toastTimer.current !== null) clearTimeout(toastTimer.current);
     setToast(msg);
-    setTimeout(() => setToast(''), 3000);
+    const timer = setTimeout(() => {
+      if (toastTimer.current !== timer) return;
+      toastTimer.current = null;
+      if (toastMontato.current) setToast('');
+    }, 3000);
+    toastTimer.current = timer;
   };
 
   // Form Builder fields

@@ -10,6 +10,10 @@ import { IDS, STORAGE, EMAILS, login } from './fixtures'
 test.describe.configure({ retries: 0 })
 test.use({ storageState: STORAGE.genitore, trace: 'off', video: 'off', screenshot: 'off' })
 const BASE = 'http://localhost:3100'
+// Come isolamento-sedi: next dev compila le pagine fredde e il bootstrap
+// genitore carica cinque API in sequenza. Il limite riguarda la readiness,
+// mentre titolo/download conservano le asserzioni strette e lo spec non ha retry.
+const READINESS_MS = 60_000
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 async function testoPdf(bytes: Uint8Array): Promise<string> {
   const doc = await getDocumentProxy(bytes.slice())
@@ -40,6 +44,8 @@ function controlloDb(error: unknown, operazione: string) {
 }
 
 test('firma OTP, archivio reale e riepilogo isolato per sede', async ({ page, browser }) => {
+  // Bootstrap archivio più due login fuori scope (stesso budget degli spec sede).
+  test.setTimeout(180_000)
   const db = clienteDatabaseCi() // prima di qualsiasi lettura/scrittura
   const formId = randomUUID()
   const title = `Autorizzazione museo CI ${formId.slice(0, 8)}`
@@ -99,7 +105,32 @@ test('firma OTP, archivio reale e riepilogo isolato per sede', async ({ page, br
     const repeated = await page.request.get(`/api/forms/signed-pdf?id=${submissionId}`)
     expect(sha256(await repeated.body())).toBe(sha256(storedBytes))
 
-    await page.goto('/parent/modulistica?tab=archivio')
+    // Registrate prima di goto: attendiamo i dati della pagina, non solo il
+    // guscio SSR. Status/campi essenziali espliciti impediscono falsi verdi
+    // in caso di API fallita o di arricchimento titolo/figlio mancante.
+    const archiveLoaded = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/parent/submissions' && response.request().method() === 'GET',
+    { timeout: READINESS_MS })
+    const childrenLoaded = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/parent/students' && response.request().method() === 'GET',
+    { timeout: READINESS_MS })
+    const [archiveResponse, childrenResponse] = await Promise.all([
+      archiveLoaded, childrenLoaded, page.goto(`/parent/modulistica?tab=archivio&id=${IDS.A1}`),
+    ])
+    expect(archiveResponse.status(), 'archivio caricato dalla pagina').toBe(200)
+    const archiveRows = await archiveResponse.json() as Array<{ id: string; form_id: string; student_id: string; forms_templates: { title: string } | null }>
+    expect(Array.isArray(archiveRows), 'archivio restituito come elenco').toBe(true)
+    const ownedArchiveRow = archiveRows.find((row) => row.id === submissionId)
+    // Nessuna asserzione sull'intero payload: signature_log e OTP restano in memoria.
+    expect(ownedArchiveRow !== undefined, 'compilazione firmata presente nell’archivio').toBe(true)
+    expect(ownedArchiveRow?.form_id).toBe(formId)
+    expect(ownedArchiveRow?.student_id).toBe(IDS.A1)
+    expect(ownedArchiveRow?.forms_templates?.title).toBe(title)
+    expect(childrenResponse.status(), 'figli riletti dal server').toBe(200)
+    const children = await childrenResponse.json() as { data: Array<{ id: string }> }
+    expect(Array.isArray(children.data), 'elenco figli autorevole').toBe(true)
+    expect(children.data.some((child) => child.id === IDS.A1), 'bambino della compilazione raggiungibile dal genitore').toBe(true)
+    await expect(page.locator('main#content').getByText('Caricamento in corso…', { exact: true })).toBeHidden({ timeout: READINESS_MS })
     const heading = page.getByRole('heading', { name: title, exact: true })
     await expect(heading).toBeVisible()
     const card = heading.locator('..').locator('..')
@@ -144,7 +175,8 @@ test('firma OTP, archivio reale e riepilogo isolato per sede', async ({ page, br
       extraContexts.push(foreign)
       const foreignPage = await foreign.newPage()
       await login(foreignPage, email)
-      await foreignPage.waitForURL(email === EMAILS.genitore2 ? /\/parent(?:\/|$)/ : /\/admin(?:\/|$)/)
+      const area = email === EMAILS.genitore2 ? '/parent' : '/admin'
+      await foreignPage.waitForURL((url) => url.pathname === area || url.pathname.startsWith(`${area}/`), { timeout: READINESS_MS })
       await negato(foreign.request, submissionId, status)
       await negato(foreign.request, submissionId, status, forged)
       const refusedReport = await foreign.request.get(query, { headers: forged })
